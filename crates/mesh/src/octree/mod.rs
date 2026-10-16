@@ -11,7 +11,8 @@
 //! 2. **Grid** ([`grid`]). Root cubes over the part's box, refined as a 27-tree where a B-rep
 //!    face curves (its normals turn by more than [`OctreeOptions::curvature_angle`] inside a
 //!    cell), where the part is thin (fewer than [`OctreeOptions::thickness_cells`] cells across a
-//!    wall, measured along the inward normal of each boundary triangle to a face that faces it)
+//!    wall, measured along the inward normal of a boundary triangle to a face that faces it, at
+//!    the triangle's centre and, on a triangle larger than the cell, where it is nearest the cell)
 //!    and where a patch is narrow, then strongly balanced and closed under the transition
 //!    templates. The levels the thinnest wall and narrowest patch need are found before the grid
 //!    is built, and the root size is chosen with them (see [`octree_hex_mesh`]'s plan): a part
@@ -580,17 +581,32 @@ fn choose_frame(g: &Geometry) -> [[f64; 3]; 3] {
 /// ray that starts near a convex edge leaves through the face beyond the edge after a distance
 /// that only measures how near the edge it started; the faces of a wall face each other.
 fn triangle_thickness(g: &Geometry) -> Vec<f64> {
+    (0..g.surface.triangles().len() as u32).map(|t| thickness_at(g, t, g.triangle_centre(t))).collect()
+}
+
+/// The distance through the part from point `p` of boundary triangle `t` (see
+/// [`triangle_thickness`]).
+fn thickness_at(g: &Geometry, t: u32, p: P) -> f64 {
     let far = 2.0 * norm(sub(g.bounds.hi, g.bounds.lo)) + 1.0;
     let opposed = -libm::cos(WALL_OPENING.to_radians());
-    (0..g.surface.triangles().len() as u32)
-        .map(|t| {
-            let n = g.normals.get(t as usize).copied().unwrap_or([0.0; 3]);
-            match g.ray(g.triangle_centre(t), n.map(|x| -x), far, t) {
-                Some((hit, s)) if g.normals.get(hit as usize).is_some_and(|&m| dot(m, n) <= opposed) => s,
-                _ => f64::INFINITY,
-            }
-        })
-        .collect()
+    let n = g.normals.get(t as usize).copied().unwrap_or([0.0; 3]);
+    match g.ray(p, n.map(|x| -x), far, t) {
+        Some((hit, s)) if g.normals.get(hit as usize).is_some_and(|&m| dot(m, n) <= opposed) => s,
+        _ => f64::INFINITY,
+    }
+}
+
+fn longest_edge(a: P, b: P, c: P) -> f64 {
+    norm(sub(b, a)).max(norm(sub(c, b))).max(norm(sub(a, c)))
+}
+
+/// How far [`toward_centre`] moves a point toward the triangle's centroid.
+const TOWARD_CENTRE: f64 = 1e-6; // unit-factors: a fraction of the distance to the centroid
+
+/// `p` on a triangle moved [`TOWARD_CENTRE`] of the way to its centroid, so a ray from it does
+/// not start on an edge it shares with a neighbour.
+fn toward_centre(p: P, [a, b, c]: [P; 3]) -> P {
+    [0, 1, 2].map(|k| p[k] + TOWARD_CENTRE * ((a[k] + b[k] + c[k]) / 3.0 - p[k]))
 }
 
 /// The outward normal at each vertex of the quads `q`: the sum of its quads' unit normals.
@@ -819,7 +835,8 @@ impl Context<'_> {
         let mut first: BTreeMap<u32, P> = BTreeMap::new();
         for t in self.g.overlapping(&bx) {
             let [a, b, c] = self.g.triangle(t);
-            if geom::dist2(centre, geom::closest_on_triangle(centre, a, b, c)) > reach * reach {
+            let near = geom::closest_on_triangle(centre, a, b, c);
+            if geom::dist2(centre, near) > reach * reach {
                 continue;
             }
             let n = self.g.normals.get(t as usize).copied().unwrap_or([0.0; 3]);
@@ -828,8 +845,18 @@ impl Context<'_> {
             if key.0 < self.options.curvature_levels && dot(f, n) < cos {
                 return Ok(true);
             }
-            // (With a relative margin, so cells planned at exactly the size a wall needs stay.)
-            if self.thickness.get(t as usize).is_some_and(|&th| th * (1.0 + ROUND_OFF) < self.options.thickness_cells * e) {
+            // The wall at the triangle's centre, and, on a triangle larger than the cell, where it
+            // is nearest the cell: a planar face beside a pocket is a few triangles whose centres
+            // may face a far wall while the wall here is thin. That reading is held to the
+            // thinnest wall the plan chose the levels for (towards a wedge's blade the wall
+            // thins to nothing). (With a relative margin, so cells planned at exactly the size a
+            // wall needs stay.)
+            let need = self.options.thickness_cells * e;
+            let thin = |th: f64| th * (1.0 + ROUND_OFF) < need;
+            if self.thickness.get(t as usize).is_some_and(|&th| thin(th)) {
+                return Ok(true);
+            }
+            if longest_edge(a, b, c) > e && thin(thickness_at(self.g, t, toward_centre(near, [a, b, c])).max(self.needs.wall)) {
                 return Ok(true);
             }
             // Narrow patches (a hole's wall, a thin rim) need cells across them.

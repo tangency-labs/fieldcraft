@@ -364,3 +364,44 @@ fn boxes_whose_core_is_a_fraction_of_a_cell_from_a_face_keep_their_layers() {
         assert!((r.volume - 80.0 * height).abs() < 1e-9 * 80.0 * height, "{height}: {r:?}");
     }
 }
+
+/// A prism: the polygon `profile` in the x–z plane (counter-clockwise, star-shaped from its
+/// first point) extruded from y = 0 to `depth`. Faces 0 and 1 are the caps, 2 + i the side on
+/// edge i.
+fn prism_surface(profile: &[[f64; 2]], depth: f64) -> BoundarySurface {
+    let n = profile.len();
+    let mut p: Vec<P> = profile.iter().map(|q| [q[0], 0.0, q[1]]).collect();
+    p.extend(profile.iter().map(|q| [q[0], depth, q[1]]));
+    let (f, b) = (|i: usize| (i % n) as u32, |i: usize| (n + i % n) as u32);
+    let (mut tris, mut face) = (Vec::new(), Vec::new());
+    for i in 1..n - 1 {
+        tris.extend([[f(0), f(i), f(i + 1)], [b(0), b(i + 1), b(i)]]);
+        face.extend([0, 1]);
+    }
+    for i in 0..n {
+        tris.extend([[f(i), b(i), b(i + 1)], [f(i), b(i + 1), f(i + 1)]]);
+        face.extend([2 + i as u32; 2]);
+    }
+    BoundarySurface::new(&p, &tris, &face, &crate::surface::SurfaceOptions::default()).unwrap()
+}
+
+#[test]
+fn a_wall_is_measured_where_a_large_triangle_meets_the_cell() {
+    // A 30 mm block with a 3 mm flange: the bottom face is two triangles whose centres lie under
+    // the block, so their centre rays measure 30, but under the flange the wall is 3 thick.
+    let s = prism_surface(&[[0.0, 0.0], [60.0, 0.0], [60.0, 3.0], [50.0, 3.0], [50.0, 30.0], [0.0, 30.0]], 40.0);
+    let g = Geometry::new(&s, 30.0, 160.0).unwrap();
+    let thickness = triangle_thickness(&g);
+    let bottom: Vec<u32> = (0..s.triangles().len() as u32).filter(|&t| s.tri_face()[t as usize] == 2).collect();
+    assert!(bottom.iter().all(|&t| thickness[t as usize] == 30.0), "{thickness:?}");
+    let o = OctreeOptions::default();
+    let needs = Needs::of(&g, &thickness, &o);
+    let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+    let field = UniformSize(100.0);
+    let ctx = Context::new(&g, &field, &o, &thickness, identity, 3.0, ([0.0; 3], [60.0, 40.0, 30.0]), needs).unwrap();
+    assert_eq!(ctx.origin, [-1.5, -2.5, -1.5]);
+    // Root cells of 3 on the bottom face, clear of every other face: under the flange
+    // (x 52.5..55.5, 3 cells across need cells of 1) and under the block (x 28.5..31.5).
+    assert!(ctx.needs_split((0, [18, 7, 0])).unwrap(), "under the flange");
+    assert!(!ctx.needs_split((0, [10, 7, 0])).unwrap(), "under the block");
+}
