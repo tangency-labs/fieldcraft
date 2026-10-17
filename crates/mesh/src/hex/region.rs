@@ -47,6 +47,23 @@ const MAX_ANNULUS_NODES: usize = 4096;
 /// Smoothing sweeps over the interior of a triangle primitive.
 const TRIANGLE_SWEEPS: usize = 20;
 
+/// How close (radians) an interior angle must come to a classification threshold to count as on
+/// it. Exact geometry lands on the thresholds (an O-grid's 45° cuts meet straight sides at
+/// exactly 135°), and the computed angle is then rounded either way by the last bits of its
+/// points: those differ between platforms' `sin`/`cos` and between tessellations, and the
+/// scheme must not (#556). An angle within this of a threshold is taken as exactly on it.
+const ANGLE_TOLERANCE: f64 = 1e-9;
+
+/// A corner: an interior angle of at most 135°.
+pub(crate) fn is_corner(angle: f64) -> bool {
+    angle <= 0.75 * PI + ANGLE_TOLERANCE
+}
+
+/// A reflex turn no mapped or triangle region can take: at least 225°.
+pub(crate) fn is_reflex(angle: f64) -> bool {
+    angle >= 1.25 * PI - ANGLE_TOLERANCE
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Scheme {
     /// Corner positions (curve uses) in the single loop.
@@ -89,10 +106,10 @@ pub(crate) fn classify(loops: &[Vec<Vec<Q>>]) -> Scheme {
     match loops {
         [lp] => {
             let Some(a) = angles(lp, ccw(lp)) else { return Scheme::Free };
-            if a.iter().any(|&x| x >= 1.25 * PI) {
+            if a.iter().any(|&x| is_reflex(x)) {
                 return Scheme::Free;
             }
-            let corners: Vec<usize> = (0..a.len()).filter(|&k| a.get(k).is_some_and(|&x| x <= 0.75 * PI)).collect();
+            let corners: Vec<usize> = (0..a.len()).filter(|&k| a.get(k).is_some_and(|&x| is_corner(x))).collect();
             if corners.is_empty() {
                 return Scheme::Disk;
             }
@@ -103,7 +120,7 @@ pub(crate) fn classify(loops: &[Vec<Vec<Q>>]) -> Scheme {
             }
         }
         [outer, inner] => {
-            let smooth = |lp: &Vec<Vec<Q>>| angles(lp, ccw(lp)).is_some_and(|a| a.iter().all(|&x| x > 0.75 * PI && x < 1.25 * PI));
+            let smooth = |lp: &Vec<Vec<Q>>| angles(lp, ccw(lp)).is_some_and(|a| a.iter().all(|&x| !is_corner(x) && !is_reflex(x)));
             if smooth(outer) && smooth(inner) { Scheme::Annulus } else { Scheme::Free }
         }
         _ => Scheme::Free,
@@ -567,6 +584,30 @@ fn disk(loops: &[Vec<Q>], size: &dyn SizeField, opts: &QuadOptions) -> Result<Op
 mod tests {
     use super::*;
     use crate::size::UniformSize;
+
+    /// A corner of exactly 135°, the threshold, is a corner however the last bits of its points
+    /// round (Windows' `sin` against glibc's, or two tessellations): a trapezoid stays mapped
+    /// rather than turning into a triangle when its 135° vertex moves by an ulp (#556).
+    #[test]
+    fn a_corner_on_the_threshold_is_one_whichever_way_it_rounds() {
+        // (0, 0) 90°, (3, 0) 45°, (2, 1) 135°, (0, 1) 90°: four corners.
+        let trapezoid = |p: Q| {
+            let pts = [[0.0, 0.0], [3.0, 0.0], p, [0.0, 1.0]];
+            let curves: Vec<Vec<Q>> = (0..4).map(|k| vec![pts[k], pts[(k + 1) % 4]]).collect();
+            classify(&[curves])
+        };
+        let steps: [fn(f64) -> f64; 3] = [|v| v, f64::next_up, f64::next_down];
+        for nx in steps {
+            for ny in steps {
+                let mut p = [nx(2.0), ny(1.0)];
+                // A few ulps further each way as well.
+                for _ in 0..3 {
+                    assert_eq!(trapezoid(p), Scheme::Mapped([0, 1, 2, 3]), "{p:?}");
+                    p = [nx(p[0]), ny(p[1])];
+                }
+            }
+        }
+    }
 
     fn circle(r: f64, n: usize, ccw: bool) -> Vec<Q> {
         (0..n)
