@@ -916,8 +916,8 @@ fn assignable(loops: &[Poly], cuts: &[Vec<Q>], s: &Settings) -> bool {
 fn o_grid(loops: &[Poly], s: &Settings, budget: &mut usize) -> Vec<Vec<Q>> {
     let (Some(outer), Some(hole)) = (loops.first(), loops.get(1)) else { return Vec::new() };
     let c = centroid(&hole.pts);
-    let corner = |p: &Poly, i: usize| p.is_end(i) && p.angle(i) <= 0.75 * std::f64::consts::PI;
-    let concave = |p: &Poly, i: usize| p.is_end(i) && p.angle(i) >= 1.25 * std::f64::consts::PI;
+    let corner = |p: &Poly, i: usize| p.is_end(i) && region::is_corner(p.angle(i));
+    let concave = |p: &Poly, i: usize| p.is_end(i) && region::is_reflex(p.angle(i));
     // A cut from loop point (l, i) along d that must end on loop `target`.
     let ray = |l: usize, i: usize, d: Q, target: usize| -> Option<Vec<Q>> {
         let o = loops.get(l)?.at(i);
@@ -1134,8 +1134,9 @@ mod tests {
         let n = ((a1 - a0).abs() / 5.0).ceil().max(1.0) as usize;
         (0..=n)
             .map(|k| {
+                // The mesher's portable trig, so every platform gets the same points (#556).
                 let t = (a0 + (a1 - a0) * k as f64 / n as f64).to_radians();
-                [c[0] + r * t.cos(), c[1] + r * t.sin()]
+                [c[0] + r * libm::cos(t), c[1] + r * libm::sin(t)]
             })
             .collect()
     }
