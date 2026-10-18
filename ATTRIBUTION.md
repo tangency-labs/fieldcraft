@@ -230,6 +230,7 @@ is committed and listed here with its exports.
 | .github/workflows/release.yml, .github/release-notes.md, docs/releasing.md | SolidCraft `.github/workflows/release.yml`, `.github/release-notes.md`, `docs/releasing.md`; VectorCraft `.github/workflows/release.yml` | MIT OR Apache-2.0 |
 | .github/workflows/packaging-lint.yml | SolidCraft `.github/workflows/packaging-lint.yml` (itself adapted from PhotoCraft, https://github.com/storytold/photocraft, Apache-2.0) | MIT OR Apache-2.0 |
 | .github/workflows/arch-check.yml (the riscv64 cross build) | SolidCraft `.github/workflows/ci.yml` (`riscv64-gates`) | MIT OR Apache-2.0 |
+| .github/workflows/claim.yml, .github/workflows/triage.yml, scripts/claim/, scripts/triage/ (the claim and triage bots and their tests) | SolidCraft `.github/workflows/claim.yml`, `triage.yml`, `scripts/claim/`, `scripts/triage/` | MIT OR Apache-2.0 |
 
 ## Test oracles
 

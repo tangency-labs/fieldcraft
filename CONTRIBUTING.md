@@ -61,12 +61,46 @@ Every change starts from an issue, and only the maintainer merges.
 
 1. Pick an open issue labelled **help wanted** or **good first issue** that is not labelled
    **claimed**. If what you want to do has no issue, open one first and wait for a reply.
-2. Comment that you would like to take it. The maintainer assigns it to you and labels it
-   **claimed**; then it is yours. Work on unassigned issues may not be accepted.
-3. Open a draft pull request early, linked with `Closes #N`. An issue with no visible progress
-   for 14 days goes back to the pool.
+2. Comment `/claim` on it. The bot assigns it to you, labels it **claimed** and replies; then it is
+   yours. It refuses an issue someone else holds (naming them and when their claim lapses), an
+   issue an open pull request already covers, and an issue without **help wanted** or **good
+   first issue**: on those, say what you would like to do and the maintainer replies. Work on
+   unassigned issues may not be accepted.
+3. Open a draft pull request early, linked with `Closes #N`. A pull request that references an
+   open-for-contributors issue nobody holds (`Closes #N` in the body, `(#N)` in the title) claims
+   it the same way; if someone holds it already, or an older open pull request references it,
+   the bot says so on your pull request instead.
+4. An issue with no visible progress for 14 days goes back to the pool: a daily sweep frees a claim
+   with no linked pull request 14 days after it was made, and one with a pull request after 14
+   days without pushes. `/unclaim` releases it early (you or a maintainer).
 
 Issues labelled **in progress** are being worked on by the core team; please don't start on them.
+The bot never lets them be claimed, and never frees an issue a maintainer holds.
+
+## Labels and triage
+
+The triage bot labels every new issue and pull request (`.github/workflows/triage.yml`). It only
+adds labels; correct them freely and it won't put them back.
+
+- **Pull requests** get `area:*` from the paths they change: `crates/mesh` → `area:mesh`,
+  `crates/lbm*` → `area:cfd`, `crates/solver`, `crates/fem`, `crates/explicit` → `area:solver`,
+  `crates/ui-egui` and `apps/` → `area:ui`, `crates/io`, `crates/decks` → `area:io`, `docs/` and
+  top-level `*.md` → `area:docs`, `.github/`, `xtask/`, `packaging/`, `scripts/`, `tools/` →
+  `area:infra`.
+- **Issues** get `bug` or `enhancement` from the form they were filed with (or a crash or
+  "Feature request" title), and an `area:*` from words in the title or the command an in-app
+  report names. Until it has a priority, an issue carries `needs-triage`; adding a `priority:`
+  label removes it.
+- **Maintainers** comment `/triage area:mesh high S` to sort an issue or pull request: any
+  existing label (case, and `-` or `_` for a space, don't matter: `in-progress`), `high` for
+  `priority: high`, `S`/`M`/`L` for a size (which replaces the old one), `-label` removes one.
+  Any `/triage` with a change clears `needs-triage`.
+- **Short bug reports without steps to reproduce** get `needs-info` and one comment asking for
+  the steps (and the version, when it's missing). The reporter's reply, or an edit that adds the
+  steps, removes the label; an issue that stays in `needs-info` for 14 days is closed, and can be
+  reopened any time. Feature requests, reports filed from the app (**Help › Report a Bug…**),
+  and maintainers' issues are never asked.
+- `needs-triage` is the queue: [open issues with it](https://github.com/tangency-labs/fieldcraft/issues?q=is%3Aopen+label%3Aneeds-triage).
 
 ## Reporting a problem or an idea
 
