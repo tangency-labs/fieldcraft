@@ -718,32 +718,51 @@ fn line_plot(ui: &mut egui::Ui, lines: &[Line], x_name: &str, x_unit: Option<&st
     (response, axes)
 }
 
-/// The quantities the XY plot offers for a result, as (label, `results.xy`'s `y`); a nodal
-/// field's `node` is filled in from the probed node.
-pub fn xy_options(r: &fieldcraft_engine::StepResult) -> Vec<(String, Value)> {
+/// The quantities the XY plot offers for a result, as (label, `results.xy`'s `y`, its `x` when
+/// not the step's own axis); a nodal field's `node` is filled in from the probed node. A
+/// nonlinear static step also offers the reaction on each of its boundary-condition sets,
+/// against the load factor and against the set's mean travel (a force–travel curve).
+pub fn xy_options(s: &fieldcraft_engine::Session, r: &fieldcraft_engine::StepResult) -> Vec<(String, Value, Option<Value>)> {
     use fieldcraft_engine::cmd::xy;
     let mut out = Vec::new();
     if let Kind::Frequency(f) = r.kind() {
         out.push(if f.buckling.is_some() {
-            ("Buckling load factor".to_string(), json!("load_factor"))
+            ("Buckling load factor".to_string(), json!("load_factor"), None)
         } else {
-            ("Frequency".to_string(), json!("frequency"))
+            ("Frequency".to_string(), json!("frequency"), None)
         });
     }
     if let Kind::Explicit(e) = r.kind() {
-        out.extend(xy::ENERGIES.iter().map(|n| (format!("Energy: {}", n.replace('_', " ")), json!({"energy": n}))));
-        out.extend(xy::HISTORIES.iter().map(|n| (n.replace('_', " "), json!({"history": n}))));
+        out.extend(xy::ENERGIES.iter().map(|n| (format!("Energy: {}", n.replace('_', " ")), json!({"energy": n}), None)));
+        out.extend(xy::HISTORIES.iter().map(|n| (n.replace('_', " "), json!({"history": n}), None)));
         for node in e.history.nodes.iter().take(8) {
             out.extend(
                 xy::NODE_QUANTITIES
                     .iter()
-                    .map(|q| (format!("History node {node}: {}", q.replace('_', " ")), json!({"history_node": node, "quantity": q}))),
+                    .map(|q| (format!("History node {node}: {}", q.replace('_', " ")), json!({"history_node": node, "quantity": q}), None)),
             );
         }
     }
-    let linear = matches!(r.kind(), Kind::Static(s) if s.nonlinear.is_none());
+    let linear = matches!(r.kind(), Kind::Static(st) if st.nonlinear.is_none());
     if !linear {
-        out.extend(xy::plottable(r).into_iter().map(|f| (format!("{} at a node", f.label()), json!({"field": f.id()}))));
+        out.extend(xy::plottable(r).into_iter().map(|f| (format!("{} at a node", f.label()), json!({"field": f.id()}), None)));
+    }
+    if matches!(r.kind(), Kind::Static(st) if st.nonlinear.is_some()) {
+        let mut sets: Vec<&str> = s
+            .model
+            .step(r.step())
+            .map(|st| st.boundary_conditions.iter().filter_map(|bc| s.model.boundary_condition(bc)?.target().set()).collect())
+            .unwrap_or_default();
+        sets.sort_unstable();
+        sets.dedup();
+        for set in sets.into_iter().take(8) {
+            for c in ["x", "y", "z"] {
+                let upper = c.to_uppercase();
+                let y = json!({"reaction": set, "component": c});
+                out.push((format!("Force–travel {upper}: {set}"), y.clone(), Some(json!({"displacement": set, "component": c}))));
+                out.push((format!("Reaction {upper} on {set}"), y, None));
+            }
+        }
     }
     out
 }
@@ -764,7 +783,7 @@ fn xy_section(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens, ru
         app.xy = None;
         return None;
     }
-    let options = xy_options(&plot.result);
+    let options = xy_options(&app.session, &plot.result);
     if options.is_empty() {
         ui.label(
             RichText::new("A linear static step has one state: plot a nonlinear static, explicit, heat or frequency step").small().color(t.text_dim),
@@ -776,17 +795,23 @@ fn xy_section(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens, ru
     if probed.is_some() {
         xy.node = probed;
     }
-    let template = xy.y.clone().filter(|y| options.iter().any(|(_, o)| o == y)).unwrap_or_else(|| options[0].1.clone());
-    let shown = options.iter().find(|(_, o)| *o == template).map_or("", |(l, _)| l.as_str());
-    let mut picked = template.clone();
+    let current = (xy.y.clone(), xy.x.clone());
+    let template = options
+        .iter()
+        .find(|(_, y, x)| current.0.as_ref() == Some(y) && current.1 == *x)
+        .or(options.first())
+        .map(|(_, y, x)| (y.clone(), x.clone()))
+        .unwrap_or_default();
+    let shown = options.iter().find(|(_, y, x)| (y, x) == (&template.0, &template.1)).map_or("", |(l, ..)| l.as_str());
+    let (mut picked, mut against) = template.clone();
     egui::ComboBox::from_id_salt("fc_results_xy").selected_text(shown).width(ui.available_width() - 8.0).truncate().show_ui(ui, |ui| {
-        for (label, y) in &options {
-            if ui.selectable_label(*y == template, label).clicked() {
-                picked = y.clone();
+        for (label, y, x) in &options {
+            if ui.selectable_label((y, x) == (&template.0, &template.1), label).clicked() {
+                (picked, against) = (y.clone(), x.clone());
             }
         }
     });
-    xy.y = Some(picked.clone());
+    (xy.y, xy.x) = (Some(picked.clone()), against.clone());
     let y = if picked.get("field").is_some() {
         let Some(node) = xy.node else {
             (xy.key, xy.series) = (None, None);
@@ -799,11 +824,15 @@ fn xy_section(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens, ru
     } else {
         picked
     };
-    let key = (step.clone(), Arc::as_ptr(&plot.result) as usize, y.clone());
+    let mut params = json!({"step": step, "y": y});
+    if let Some(x) = against {
+        params["x"] = x;
+    }
+    let key = (step.clone(), Arc::as_ptr(&plot.result) as usize, params.clone());
     if xy.key.as_ref() != Some(&key) {
         xy.key = Some(key);
         xy.series = None;
-        run.push(("results.xy", json!({"step": step, "y": y})));
+        run.push(("results.xy", params));
         return None;
     }
     let s = xy.series.clone().filter(|s| s["step"] == step.as_str())?;
@@ -825,9 +854,14 @@ fn xy_section(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens, ru
     let x_name = match axis {
         "load_factor" => "λ",
         "time" => "t",
+        "displacement" => "u",
         _ => "mode",
     };
-    let x_unit = (axis == "time").then(|| Quantity::Time.unit(plot.units)).flatten();
+    let x_unit = match axis {
+        "time" => Quantity::Time.unit(plot.units),
+        "displacement" => Quantity::Length.unit(plot.units),
+        _ => None,
+    };
     let line = Line { color: t.accent, points: xs.iter().copied().zip(ys.iter().copied()).collect() };
     let (response, axes) = line_plot(ui, &[line], x_name, x_unit.as_deref(), current.and_then(|i| xs.get(i).copied()), t);
     let x_label = s["x"]["label"].as_str().unwrap_or_default().to_string();
@@ -851,7 +885,7 @@ fn xy_section(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens, ru
         let at = |v: &[f64]| v.get(i).map_or("—".into(), |x| number(*x));
         ui.label(RichText::new(format!("{x_label} {}: {}", at(&xs), at(&ys))).small().color(t.text_dim));
     }
-    ui.button("Export CSV…").on_hover_text("Write the series to a CSV file (results.xy)").clicked().then(|| json!({"step": step, "y": y}))
+    ui.button("Export CSV…").on_hover_text("Write the series to a CSV file (results.xy)").clicked().then_some(params)
 }
 
 impl ModelApp {

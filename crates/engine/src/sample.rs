@@ -965,7 +965,10 @@ mod tests {
         assert_eq!((at["frame"].as_u64(), at["load_factor"].as_f64()), (Some(k as u64), Some(lambda[k])), "{at}");
         assert!((at["sets"][0]["force"][2].as_f64().unwrap() - force[k]).abs() < 1e-9 * scale, "{at}");
         let xy = s
-            .execute("results.xy", &json!({"step": "Squeeze", "y": {"reaction": "top", "component": "z"}, "x": {"displacement": "top", "component": "z"}}))
+            .execute(
+                "results.xy",
+                &json!({"step": "Squeeze", "y": {"reaction": "top", "component": "z"}, "x": {"displacement": "top", "component": "z"}}),
+            )
             .unwrap();
         assert_eq!(xy["x"]["axis"], "displacement");
         assert_eq!(floats(&xy["x"]["values"]), travel);

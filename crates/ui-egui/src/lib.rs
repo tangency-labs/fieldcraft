@@ -312,6 +312,8 @@ pub struct Viewport {
 pub struct XyPlot {
     /// `results.xy`'s `y`; a nodal field's `node` is filled from [`XyPlot::node`].
     pub y: Option<Value>,
+    /// `results.xy`'s `x` when it is a travel (`None`: the step's own axis).
+    pub x: Option<Value>,
     pub node: Option<u32>,
     pub key: Option<(String, usize, Value)>,
     pub series: Option<Value>,
@@ -686,6 +688,7 @@ impl ModelApp {
                     xy.node = node.as_u64().and_then(|n| u32::try_from(n).ok());
                 }
                 xy.y = Some(template);
+                xy.x = params.get("x").filter(|x| x.is_object()).cloned();
             }
         }
         // What the duplicate check found is selected, so the viewport shows it (#234).
@@ -3089,6 +3092,27 @@ mod tests {
         draw(&mut app, &ctx, 1280.0, 800.0);
         let s = app.xy.as_ref().and_then(|x| x.series.clone()).expect("the frequencies");
         assert_eq!(s["x"]["axis"], "mode");
+    }
+
+    /// A nonlinear static step's XY plot offers the force–travel curve of each boundary-condition
+    /// set (#204): picked, the panel runs results.xy with the set's travel as x.
+    #[test]
+    fn the_xy_plot_offers_force_travel_curves() {
+        let ctx = egui::Context::default();
+        let mut app = ModelApp::new(Session::default());
+        app.open_sample("rubber-seal");
+        app.run("solve.run", json!({})).unwrap();
+        app.start("results.xy").unwrap();
+        draw(&mut app, &ctx, 1280.0, 800.0);
+        let result = app.session.latest_result("Squeeze").unwrap().0.clone();
+        let options = crate::results_panel::xy_options(&app.session, &result);
+        let (_, y, x) = options.iter().find(|(l, ..)| l == "Force–travel Z: top").expect("the top's force–travel curve").clone();
+        let xy = app.xy.as_mut().unwrap();
+        (xy.y, xy.x) = (Some(y), x);
+        draw(&mut app, &ctx, 1280.0, 800.0);
+        let s = app.xy.as_ref().and_then(|x| x.series.clone()).expect("the panel ran results.xy");
+        assert_eq!(s["x"]["axis"], "displacement", "{s}");
+        assert!(s["points"].as_u64().unwrap_or(0) > 5, "{s}");
     }
 
     fn is_iso(cam: &Camera) -> bool {

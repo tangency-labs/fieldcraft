@@ -474,7 +474,8 @@ fn nonlinear_history(s: &Session, step: &str, r: &fieldcraft_solver::StaticResul
         None | Some(Value::Null) => None,
         Some(v) => {
             let label = v.as_u64().and_then(|n| u32::try_from(n).ok()).ok_or_else(|| EngineError::invalid("node", "must be a node label"))?;
-            let i = r.nodes.binary_search(&label).map_err(|_| EngineError::invalid("node", format!("node {label} has no result in step `{step}`")))?;
+            let i =
+                r.nodes.binary_search(&label).map_err(|_| EngineError::invalid("node", format!("node {label} has no result in step `{step}`")))?;
             Some((label, i))
         }
     };
@@ -507,7 +508,8 @@ fn nonlinear_history(s: &Session, step: &str, r: &fieldcraft_solver::StaticResul
         "sets": sets,
     });
     if let Some((label, i)) = node {
-        out["node"] = json!({"node": label, "displacement": picked.iter().map(|k| frames.get(*k).and_then(|f| f.displacement.get(i))).collect::<Vec<_>>()});
+        out["node"] =
+            json!({"node": label, "displacement": picked.iter().map(|k| frames.get(*k).and_then(|f| f.displacement.get(i))).collect::<Vec<_>>()});
     }
     Ok(out)
 }

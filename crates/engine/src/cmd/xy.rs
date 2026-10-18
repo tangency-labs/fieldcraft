@@ -293,7 +293,9 @@ fn nonlinear_frames<'a>(step: &str, r: &'a StepResult) -> std::result::Result<&'
         Kind::Static(st) => st.nonlinear.as_ref().map(|h| h.frames.as_slice()).ok_or_else(|| {
             format!("step `{step}` is a linear static step: one state (a nonlinear static step keeps its reactions and displacements per increment)")
         }),
-        _ => Err(format!("step `{step}` is not a nonlinear static step: reactions and set displacements per frame are kept for nonlinear static steps")),
+        _ => Err(format!(
+            "step `{step}` is not a nonlinear static step: reactions and set displacements per frame are kept for nonlinear static steps"
+        )),
     }
 }
 
@@ -331,7 +333,8 @@ fn travel<'a>(s: &'a Session, step: &str, r: &'a StepResult, x: &Value) -> Resul
             (set_indices(s, r, set)?, format!("of {set} (mean)"))
         }
         (None, Some(node)) => {
-            let label = node.as_u64().and_then(|n| u32::try_from(n).ok()).ok_or_else(|| x_error("`displacement_node` must be a node label".into()))?;
+            let label =
+                node.as_u64().and_then(|n| u32::try_from(n).ok()).ok_or_else(|| x_error("`displacement_node` must be a node label".into()))?;
             let i = r.nodes().binary_search(&label).map_err(|_| x_error(format!("node {label} has no result in step `{step}`")))?;
             (vec![i], format!("at node {label}"))
         }
@@ -369,7 +372,10 @@ fn xy(s: &mut Session, p: &Value) -> Result<Value> {
         None => match opt::<String>(p, "x")?.as_deref() {
             None | Some("auto") => None,
             Some(id) => Some(Axis::parse(id).ok_or_else(|| {
-                EngineError::invalid("x", "must be \"auto\", \"load_factor\", \"time\", \"mode\" or a travel ({\"displacement\": set} or {\"displacement_node\": label})")
+                EngineError::invalid(
+                    "x",
+                    "must be \"auto\", \"load_factor\", \"time\", \"mode\" or a travel ({\"displacement\": set} or {\"displacement_node\": label})",
+                )
             })?),
         },
     };
@@ -534,7 +540,12 @@ mod tests {
             assert!((f - l * end).abs() < 1e-6 * end.abs(), "λ {l}: {f} against {}", l * end);
         }
         // Against the tip's travel: the same reactions.
-        let t = s.execute("results.xy", &json!({"step": "Large", "y": {"reaction": "root", "component": "z"}, "x": {"displacement_node": 11, "component": "z"}})).unwrap();
+        let t = s
+            .execute(
+                "results.xy",
+                &json!({"step": "Large", "y": {"reaction": "root", "component": "z"}, "x": {"displacement_node": 11, "component": "z"}}),
+            )
+            .unwrap();
         assert_eq!(values(&t, "y"), y);
         assert_eq!(t["x"]["label"], "Displacement Z at node 11");
         // A stale result is refused.

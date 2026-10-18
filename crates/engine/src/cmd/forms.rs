@@ -2040,7 +2040,8 @@ pub const SOLVE_EXPLICIT: &[Field] = &[
 pub const SOLVE_HISTORY: &[Field] = &[
     SOLVED.req(),
     int("every", "Keep one in", 1, 1_000_000_000).help("Keep one history sample in this many."),
-    references("sets", "Sets", C::Set).help("Nonlinear static steps: the sets whose mean displacement and reaction sum to give per frame; the boundary-condition sets when none."),
+    references("sets", "Sets", C::Set)
+        .help("Nonlinear static steps: the sets whose mean displacement and reaction sum to give per frame; the boundary-condition sets when none."),
     int("node", "Node", 1, 4_294_967_295).help("Nonlinear static steps: a node whose displacement to give per frame."),
 ];
 pub const SOLVE_FLUID: &[Field] = &[
@@ -2211,7 +2212,8 @@ pub const REACTIONS: &[Field] = &[
         .help("The sets whose reaction forces to sum; the step's boundary-condition sets when empty.")
         .hint("the step's BC sets"),
     xyz("about", "About point", D::Length).help("The point moments are taken about."),
-    int("frame", "Frame", 0, 1_000_000_000).help("Nonlinear static steps: the frame (converged increment) whose reactions to sum; the final state when empty."),
+    int("frame", "Frame", 0, 1_000_000_000)
+        .help("Nonlinear static steps: the frame (converged increment) whose reactions to sum; the final state when empty."),
 ];
 
 #[cfg(test)]
