@@ -364,6 +364,10 @@ pub fn controls(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) 
             if ui.add(egui::Slider::new(&mut frame, 0..=n.saturating_sub(1))).changed() {
                 run.push(("results.frame", json!({"frame": frame})));
             }
+            let mut animate = plot.view.animate;
+            if ui.checkbox(&mut animate, "Animate").on_hover_text("Play the frames from the start-up transient to the settled flow").changed() {
+                run.push(("results.animate", json!({"on": animate})));
+            }
         });
         ui.label(RichText::new(format!("t = {}", with_unit(number(at), Quantity::Time.unit(plot.units).as_deref()))).color(t.text_dim));
     } else if let Some((k, factor, n)) = plot.frame().filter(|_| matches!(plot.result.kind(), Kind::Static(_))) {

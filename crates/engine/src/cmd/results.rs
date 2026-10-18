@@ -44,7 +44,7 @@ pub const MODES: CommandSpec = CommandSpec {
 pub const ANIMATE: CommandSpec = CommandSpec {
     id: "results.animate",
     label: "Animate",
-    params: r#"{"on": true} — animates the deformed shape: a mode swings through its positive and negative shape, a static step grows from undeformed to deformed"#,
+    params: r#"{"on": true} — animates the result over time: a mode swings through its positive and negative shape, a static step grows from undeformed to deformed, an explicit or fluid step plays its frames in order"#,
     form: Some(super::forms::ANIMATE),
     kind: CommandKind::Session,
     requires: &[Requirement::Result],
@@ -341,12 +341,12 @@ fn animate(s: &mut Session, p: &Value) -> Result<Value> {
         return Ok(s.results_report());
     }
     let step = step_for(s, &json!({}), Want::Any)?;
-    if s.latest_result(&step).is_some_and(|(r, _)| matches!(r.kind(), Kind::Fluid(_))) {
-        return Err(EngineError::Params(format!("step `{step}` is a fluid step: nothing deforms; show its frames with results.frame")));
-    }
+    let fluid = s.latest_result(&step).is_some_and(|(r, _)| matches!(r.kind(), Kind::Fluid(_)));
     let v = view_of(s, &step)?;
     v.animate = true;
-    v.deformed = true;
+    // A fluid step has nothing to deform; animating plays its frames (as results.frame does) in
+    // order. A structural step animates its deformation (or an explicit step its frames).
+    v.deformed = !fluid;
     Ok(s.results_report())
 }
 
@@ -1484,7 +1484,10 @@ mod tests {
         assert_eq!((r["traced"]["seeds"].as_u64(), r["traced"]["points"].as_u64()), (Some(5), Some(20)), "{r}");
         assert!(s.execute("results.streamlines", &json!({"show": false})).unwrap()["streamlines"].is_null());
         assert_eq!(s.execute("results.surface", &json!({"show": false})).unwrap()["surface"], false);
-        assert!(s.execute("results.animate", &json!({})).is_err(), "nothing deforms");
+        // A fluid step animates its frames (the start-up transient), not a deformation.
+        let r = s.execute("results.animate", &json!({})).unwrap();
+        assert_eq!((r["view"]["animate"].as_bool(), r["view"]["deformed"].as_bool()), (Some(true), Some(false)), "{r}");
+        assert!(s.execute("results.animate", &json!({"on": false})).unwrap()["view"]["animate"] == json!(false));
         assert_eq!((s.journal.len(), s.revision()), (journal, revision), "display commands are not edits");
         // Structural steps have none of it.
         let mut t = solved();

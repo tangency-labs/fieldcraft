@@ -1115,7 +1115,7 @@ impl ModelApp {
     /// frame; `None` when no results are shown.
     fn plot_key(&self) -> Option<PlotKey> {
         let (view, result, current) = results::shown(&self.session)?;
-        let frame = results::frame(view, self.now);
+        let frame = results::frame(view, result, self.now);
         let pick = results::pick(view, result, frame);
         Some(PlotKey { revision: self.revision, result: Arc::as_ptr(result) as usize, current, view: view.clone(), pick, frame })
     }

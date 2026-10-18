@@ -143,9 +143,12 @@ pub fn shown(session: &Session) -> Option<(&ResultsView, &Arc<StepResult>, bool)
     Some((view, result, current))
 }
 
-/// The animation frame shown at time `now` (seconds), when animating.
-pub fn frame(view: &ResultsView, now: f64) -> Option<u64> {
-    (view.animate && view.deformed && now.is_finite()).then(|| ((now.max(0.0) / PERIOD * FRAMES as f64).floor() as u64) % FRAMES)
+/// The animation frame shown at time `now` (seconds), when animating. A deformed step swings its
+/// shape; a fluid step plays its frames though it does not deform; a step with nothing to animate
+/// (Animate on but Deformed off, and not fluid) stays still.
+pub fn frame(view: &ResultsView, result: &StepResult, now: f64) -> Option<u64> {
+    let plays = view.deformed || matches!(result.kind(), Kind::Fluid(_));
+    (view.animate && plays && now.is_finite()).then(|| ((now.max(0.0) / PERIOD * FRAMES as f64).floor() as u64) % FRAMES)
 }
 
 /// The deformation multiplier of an animation frame: a mode swings through ±1, a static step
@@ -168,6 +171,7 @@ pub fn pick(view: &ResultsView, result: &StepResult, frame: Option<u64>) -> Pick
     let mut p = view.pick();
     let frames = match result.kind() {
         Kind::Explicit(e) => e.frames.len(),
+        Kind::Fluid(f) => f.frames.len(),
         Kind::Static(r) => r.nonlinear.as_ref().map_or(0, |h| h.frames.len()),
         _ => 0,
     };
@@ -481,10 +485,32 @@ pub(crate) mod tests {
         let scene = scene(&p, Style::ShadedEdges, crate::scene::Show::DEFAULT, &t);
         assert!(scene.tris.len() > base.surface_tris.len(), "the slice is drawn");
         assert!(!scene.lines.is_empty(), "streamlines and the part's edges are drawn");
-        // Pressure on the slice; the first frame (at rest at the inlet speed everywhere).
+        // Pressure on the slice; the first frame. This plate_in_a_tank fixture sets no initial
+        // velocity, so it starts at rest (unlike the flow-past sample's uniform inlet field).
         s.execute("results.slice", &json!({"field": "pressure", "frame": 0})).unwrap();
         let p = plot_at(&s, &base, None).unwrap();
         assert_eq!((p.contour.as_ref().map(|c| c.field), p.pick.frame), (Some(Field::Pressure), Some(0)));
+    }
+
+    /// Animating a fluid step plays its frames: the clock maps across the frames once per cycle,
+    /// and results.animate turns it on without deforming the part (the flow start-up transient).
+    #[test]
+    fn a_fluid_step_animates_its_frames() {
+        let mut s = plate_in_a_tank(false);
+        let (base, _) = fieldcraft_engine::view::display(&s);
+        s.execute("results.animate", &json!({})).unwrap();
+        let view = s.results_view.as_ref().unwrap();
+        let result = s.latest_result(&view.step).unwrap().0;
+        assert!(view.animate && !view.deformed, "fluid animates its frames, not a deformation");
+        // The animation clock runs even though the fluid step does not deform.
+        assert_eq!(frame(view, result, 0.0), Some(0));
+        assert_eq!(frame(view, result, PERIOD * 0.5), Some(FRAMES / 2));
+        // The clock maps across the three frames: the plate_in_a_tank field, which starts at rest
+        // (the fixture sets no initial velocity, unlike the flow-past sample), then the settled flow.
+        let n = plot_at(&s, &base, None).unwrap().frame().unwrap().2;
+        assert_eq!(n, 3);
+        assert_eq!(plot_at(&s, &base, Some(0)).unwrap().pick.frame, Some(0));
+        assert_eq!(plot_at(&s, &base, Some(FRAMES - 1)).unwrap().pick.frame, Some(n - 1));
     }
 
     #[test]
@@ -531,10 +557,14 @@ pub(crate) mod tests {
         s.execute("results.animate", &json!({})).unwrap();
         let base = DisplayMesh::from_model(&s.model);
         let view = s.results_view.clone().unwrap();
-        assert_eq!(frame(&view, 0.0), Some(0));
-        assert_eq!(frame(&view, PERIOD * 0.25), Some(FRAMES / 4));
-        assert_eq!(frame(&view, PERIOD * 1.25), Some(FRAMES / 4));
-        let (_, result, _) = shown(&s).unwrap();
+        let result = s.latest_result(&view.step).unwrap().0;
+        assert_eq!(frame(&view, result, 0.0), Some(0));
+        assert_eq!(frame(&view, result, PERIOD * 0.25), Some(FRAMES / 4));
+        assert_eq!(frame(&view, result, PERIOD * 1.25), Some(FRAMES / 4));
+        // Animate on but Deformed off, and not a fluid step: nothing to animate, so it stays still.
+        let mut still = view.clone();
+        still.deformed = false;
+        assert_eq!(frame(&still, result, PERIOD * 0.25), None);
         assert!((swing(result, Some(FRAMES / 4)) - 1.0).abs() < 1e-12);
         assert!((swing(result, Some(3 * FRAMES / 4)) + 1.0).abs() < 1e-12);
         // At frame 0 a mode is undeformed; a quarter cycle later fully deformed.
