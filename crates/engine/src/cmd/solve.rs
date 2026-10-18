@@ -484,6 +484,9 @@ fn nonlinear_history(s: &Session, step: &str, r: &fieldcraft_solver::StaticResul
     for name in super::results::reaction_sets(s, step, p)? {
         let resolved = s.model.resolve_set(&name)?;
         let at: Vec<usize> = resolved.nodes.iter().filter_map(|l| r.nodes.binary_search(l).ok()).collect();
+        if at.is_empty() {
+            return Err(EngineError::Params(format!("set `{name}` has no nodes with results in step `{step}`")));
+        }
         let (mut displacement, mut reaction) = (Vec::with_capacity(picked.len()), Vec::with_capacity(picked.len()));
         for f in picked.iter().filter_map(|k| frames.get(*k)) {
             let (mut u, mut force) = ([0.0; 3], [0.0; 3]);

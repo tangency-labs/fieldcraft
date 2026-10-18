@@ -721,7 +721,8 @@ fn line_plot(ui: &mut egui::Ui, lines: &[Line], x_name: &str, x_unit: Option<&st
 /// The quantities the XY plot offers for a result, as (label, `results.xy`'s `y`, its `x` when
 /// not the step's own axis); a nodal field's `node` is filled in from the probed node. A
 /// nonlinear static step also offers the reaction on each of its boundary-condition sets,
-/// against the load factor and against the set's mean travel (a force–travel curve).
+/// against the load factor and against the set's mean travel (a force–travel curve); all of
+/// them (the picker scrolls).
 pub fn xy_options(s: &fieldcraft_engine::Session, r: &fieldcraft_engine::StepResult) -> Vec<(String, Value, Option<Value>)> {
     use fieldcraft_engine::cmd::xy;
     let mut out = Vec::new();
@@ -755,7 +756,7 @@ pub fn xy_options(s: &fieldcraft_engine::Session, r: &fieldcraft_engine::StepRes
             .unwrap_or_default();
         sets.sort_unstable();
         sets.dedup();
-        for set in sets.into_iter().take(8) {
+        for set in sets {
             for c in ["x", "y", "z"] {
                 let upper = c.to_uppercase();
                 let y = json!({"reaction": set, "component": c});

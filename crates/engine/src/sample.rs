@@ -935,6 +935,8 @@ mod tests {
     #[test]
     fn the_rubber_seal_keeps_a_force_travel_curve() {
         let mut s = open("rubber-seal");
+        s.execute("mesh.node.add", &json!({"label": 99_999, "xyz": [0, 0, 50]})).unwrap();
+        s.execute("model.set.create", &json!({"name": "loose", "nodes": [99_999]})).unwrap();
         s.execute("solve.nonlinear", &json!({})).unwrap();
         let h = s.execute("solve.history", &json!({"step": "Squeeze", "sets": ["top", "bottom"]})).unwrap();
         let floats = |v: &Value| -> Vec<f64> { v.as_array().unwrap().iter().map(|x| x.as_f64().unwrap()).collect() };
@@ -973,7 +975,7 @@ mod tests {
         assert_eq!(xy["x"]["axis"], "displacement");
         assert_eq!(floats(&xy["x"]["values"]), travel);
         assert!(floats(&xy["y"]["values"]).iter().zip(&force).all(|(a, b)| (a - b).abs() < 1e-9 * scale), "{xy}");
-        // Hostile parameters are errors.
+        // Hostile parameters are errors; so is a set without result nodes.
         for (id, p) in [
             ("results.reactions", json!({"step": "Squeeze", "frame": 100000})),
             ("results.reactions", json!({"step": "Squeeze", "frame": -1})),
@@ -988,6 +990,9 @@ mod tests {
         ] {
             assert!(s.execute(id, &p).is_err(), "{id} {p}");
         }
+        // A set whose nodes have no results (a node outside the mesh) is an error too.
+        let e = s.execute("solve.history", &json!({"step": "Squeeze", "sets": ["loose"]})).unwrap_err().to_string();
+        assert!(e.contains("set `loose` has no nodes with results"), "{e}");
         // Load control: the top held laterally and pressed by a force.
         let press = -0.5 * scale;
         s.execute(
