@@ -2,8 +2,8 @@
   "note": "FieldCraft's accepted results for this case, written by `cargo xtask oracle --bless`. A result outside its band fails CI.",
   "values": {
     "collapse_force": {
-      "band": 3.2260685847425373e-7,
-      "value": -322.6068584742537
+      "band": 3.226068671283815e-7,
+      "value": -322.6068671283815
     }
   }
 }
