@@ -1,9 +1,52 @@
-//! The unit system label.
+//! Units: the unit system label a model carries today, and the SI unit table every conversion
+//! goes through.
 //!
-//! The model never converts: numbers are stored as entered. The label records which consistent
-//! system they are in, so the check can warn when a magnitude is implausible for it (a steel
-//! modulus of 210 000 in a metre–pascal model, a density of 7850 in a millimetre–tonne one), and
-//! so writers can say which system a deck is in.
+//! **The table** ([`Dimension`], [`Unit`], [`Quantity`], [`DisplaySystem`]) is the one place
+//! FieldCraft writes down a conversion factor. Each [`Quantity`] has a dimension and an SI unit;
+//! a [`Unit`] parses expressions such as `MPa`, `t/mm³` or `W/(m·K)` to a dimension and a factor
+//! to SI; [`Quantity::parse`] reads `"210 GPa"` or `"20 °C"` with a dimension check, and
+//! [`Quantity::format`] shows an SI value in a [`DisplaySystem`]. Absolute temperatures
+//! ([`Quantity::Temperature`]) take the °C/°F offset; temperature differences and every compound
+//! unit never do. Issue #579 moves model storage to SI on top of this table; until then the
+//! model still stores numbers as entered.
+//!
+//! **The label** ([`UnitSystem`]): the model never converts yet: numbers are stored as entered.
+//! The label records which consistent system they are in, so the check can warn when a magnitude
+//! is implausible for it (a steel modulus of 210 000 in a metre–pascal model, a density of 7850
+//! in a millimetre–tonne one), and so writers can say which system a deck is in.
+
+mod dimension;
+mod display;
+mod quantity;
+mod unit;
+
+pub use dimension::Dimension;
+pub use display::{DisplaySystem, Preset};
+pub use quantity::{Quantity, ValueInput, WithUnit, format_number};
+pub use unit::Unit;
+
+/// Why a unit or a value with a unit was refused.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum UnitError {
+    #[error("no value or unit given")]
+    Empty,
+    #[error("unit text is too long")]
+    TooLong,
+    #[error("`{0}` is not a finite number")]
+    NotFinite(String),
+    #[error("unknown unit `{0}`")]
+    UnknownUnit(String),
+    #[error("cannot read `{0}` as a value with a unit (for example `210 GPa`, `t/mm³`, `W/(m·K)`)")]
+    Syntax(String),
+    #[error("`{0}` is out of range")]
+    OutOfRange(String),
+    #[error("`{0}` is below absolute zero")]
+    BelowAbsoluteZero(String),
+    #[error("`{unit}` is not a unit of {quantity} (angles take rad, deg or °; ratios take 1 or %)")]
+    WrongKind { unit: String, quantity: &'static str },
+    #[error("`{unit}` is {found}, but a {quantity} is {expected}")]
+    WrongDimension { unit: String, found: Dimension, quantity: &'static str, expected: Dimension },
+}
 
 use serde::{Deserialize, Serialize};
 
