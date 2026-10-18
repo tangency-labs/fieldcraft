@@ -90,7 +90,7 @@ pub const EXPLICIT: CommandSpec = CommandSpec {
 pub const HISTORY: CommandSpec = CommandSpec {
     id: "solve.history",
     label: "Result Histories",
-    params: r#"{"step": "Impact", "every": 1} — the time histories of a solved explicit step: time, increment, energies, momentum, constraint force, the normal force across each contact (in `contacts` order) and the history nodes' displacement and velocity; `every` keeps one sample in so many (by default enough to return at most 10000)"#,
+    params: r#"{"step": "Impact", "every": 1, "sets": ["top"], "node": 21} — the time histories of a solved explicit step: time, increment, energies, momentum, constraint force, the normal force across each contact (in `contacts` order) and the history nodes' displacement and velocity; or the frame histories of a nonlinear static step (one frame per converged increment, from load factor 0): `frames` (indices for results.frame), `load_factor` and, per set of `sets` (default the sets of the step's boundary conditions), the mean displacement of its nodes and the sum of their reactions per frame (a force–travel curve), with `node` that node's displacement too; `every` keeps one sample in so many (by default enough to return at most 10000)"#,
     form: Some(super::forms::SOLVE_HISTORY),
     kind: CommandKind::Model,
     requires: &[Requirement::Result],
@@ -416,8 +416,13 @@ fn explicit_summary(r: &ExplicitResult) -> Value {
 fn history(s: &mut Session, p: &Value) -> Result<Value> {
     let step: String = req(p, "step")?;
     let result = s.result(&step).ok_or_else(|| EngineError::Params(format!("step `{step}` has no result; solve it first")))?;
+    if let crate::results::Kind::Static(r) = result.kind()
+        && r.nonlinear.is_some()
+    {
+        return nonlinear_history(s, &step, r, p);
+    }
     let StepResult::Explicit(r) = result.as_ref() else {
-        return Err(EngineError::Params(format!("step `{step}` is not an explicit dynamic step; it has no histories")));
+        return Err(EngineError::Params(format!("step `{step}` is neither an explicit dynamic nor a nonlinear static step; it has no histories")));
     };
     let h = &r.history;
     let samples = h.time.len();
@@ -454,6 +459,57 @@ fn history(s: &mut Session, p: &Value) -> Result<Value> {
         "contacts": r.contacts.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(),
         "nodes": nodes,
     }))
+}
+
+/// solve.history of a nonlinear static step: per frame the load factor and, per set, the mean
+/// displacement of its nodes and their reaction sum.
+fn nonlinear_history(s: &Session, step: &str, r: &fieldcraft_solver::StaticResult, p: &Value) -> Result<Value> {
+    let frames = r.nonlinear.as_ref().map(|h| h.frames.as_slice()).unwrap_or_default();
+    let every = match opt::<u64>(p, "every")? {
+        Some(0) => return Err(EngineError::param("every", ProblemKind::Below(1.0))),
+        Some(k) => usize::try_from(k).unwrap_or(usize::MAX),
+        None => frames.len().div_ceil(MAX_HISTORY_SAMPLES).max(1),
+    };
+    let node = match p.get("node") {
+        None | Some(Value::Null) => None,
+        Some(v) => {
+            let label = v.as_u64().and_then(|n| u32::try_from(n).ok()).ok_or_else(|| EngineError::invalid("node", "must be a node label"))?;
+            let i = r.nodes.binary_search(&label).map_err(|_| EngineError::invalid("node", format!("node {label} has no result in step `{step}`")))?;
+            Some((label, i))
+        }
+    };
+    let picked: Vec<usize> = (0..frames.len()).step_by(every).collect();
+    let mut sets = Vec::new();
+    for name in super::results::reaction_sets(s, step, p)? {
+        let resolved = s.model.resolve_set(&name)?;
+        let at: Vec<usize> = resolved.nodes.iter().filter_map(|l| r.nodes.binary_search(l).ok()).collect();
+        let (mut displacement, mut reaction) = (Vec::with_capacity(picked.len()), Vec::with_capacity(picked.len()));
+        for f in picked.iter().filter_map(|k| frames.get(*k)) {
+            let (mut u, mut force) = ([0.0; 3], [0.0; 3]);
+            for &i in &at {
+                let (d, q) = (f.displacement.get(i).copied().unwrap_or_default(), f.reaction_at(i));
+                for k in 0..3 {
+                    u[k] += d[k];
+                    force[k] += q[k];
+                }
+            }
+            let n = at.len().max(1) as f64;
+            displacement.push(u.map(|c| c / n));
+            reaction.push(force);
+        }
+        sets.push(json!({"set": name, "nodes": at.len(), "displacement": displacement, "reaction": reaction}));
+    }
+    let mut out = json!({
+        "step": step,
+        "every": every,
+        "frames": picked,
+        "load_factor": picked.iter().map(|k| frames.get(*k).map(|f| f.load_factor)).collect::<Vec<_>>(),
+        "sets": sets,
+    });
+    if let Some((label, i)) = node {
+        out["node"] = json!({"node": label, "displacement": picked.iter().map(|k| frames.get(*k).and_then(|f| f.displacement.get(i))).collect::<Vec<_>>()});
+    }
+    Ok(out)
 }
 
 /// The surfaces of a fluid domain's obstacles: bodies of the open design (triangulated at the

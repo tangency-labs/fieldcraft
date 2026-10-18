@@ -64,7 +64,7 @@ pub const FRAME: CommandSpec = CommandSpec {
 pub const REACTIONS: CommandSpec = CommandSpec {
     id: "results.reactions",
     label: "Reaction Sums",
-    params: r#"{"step": "Load", "sets": ["root"], "about": [0, 0, 0]} — reaction force and moment (about the point) summed over each node set, and over the whole model; `sets` (none or empty) defaults to the sets the step's boundary conditions hold"#,
+    params: r#"{"step": "Load", "sets": ["root"], "about": [0, 0, 0], "frame": 3} — reaction force and moment (about the point) summed over each node set, and over the whole model; `sets` (none or empty) defaults to the sets the step's boundary conditions hold; `frame` (nonlinear static steps, from 0 as in results.frame; default the final state) reads the reactions of that converged increment and adds its `load_factor` (solve.history gives every frame's sums at once)"#,
     form: Some(super::forms::REACTIONS),
     kind: CommandKind::Session,
     requires: &[Requirement::Result],
@@ -606,14 +606,58 @@ fn reactions(s: &mut Session, p: &Value) -> Result<Value> {
     if !about.iter().all(|c| c.is_finite()) {
         return Err(EngineError::param("about", ProblemKind::NotAVector { len: 3 }));
     }
+    let frame_index: Option<usize> = opt(p, "frame")?;
     let Some((result, current)) = s.latest_result(&step) else { return Err(EngineError::Params(solved_list(s))) };
     let Kind::Static(r) = result.kind() else {
         return Err(EngineError::Params(format!(
             "step `{step}` is not a static step: reactions are kept for static steps (explicit steps keep the constraint force history, solve.history)"
         )));
     };
-    // No sets (or an empty list, a form with none ticked): the step's boundary-condition sets.
-    let sets: Vec<String> = match p.get("sets").filter(|v| v.as_array().is_none_or(|a| !a.is_empty())) {
+    let frame = match frame_index {
+        None => None,
+        Some(k) => Some(nonlinear_frame(&step, r, k)?),
+    };
+    let sets = reaction_sets(s, &step, p)?;
+    let reaction = |i: usize| -> Option<[f64; 3]> {
+        match frame {
+            Some(f) => Some(f.reaction_at(i)),
+            None => r.reaction.get(i).copied(),
+        }
+    };
+    let mut per_set = Vec::with_capacity(sets.len());
+    for name in &sets {
+        let resolved = s.model.resolve_set(name)?;
+        let mut row = reaction_sum(s, r, &reaction, &mut resolved.nodes.iter().copied(), about);
+        row["set"] = json!(name);
+        per_set.push(row);
+    }
+    let total = reaction_sum(s, r, &reaction, &mut r.nodes.iter().copied(), about);
+    let mut out = json!({"step": step, "stale": !current, "about": about, "sets": per_set, "total": total});
+    match (frame_index, frame) {
+        (Some(k), Some(f)) => {
+            out["frame"] = json!(k);
+            out["load_factor"] = json!(f.load_factor);
+        }
+        _ => out["applied"] = json!(r.applied_total),
+    }
+    Ok(out)
+}
+
+/// Frame `k` of a nonlinear static step.
+pub(crate) fn nonlinear_frame<'a>(step: &str, r: &'a fieldcraft_solver::StaticResult, k: usize) -> Result<&'a fieldcraft_solver::nonlinear::Frame> {
+    let h = r
+        .nonlinear
+        .as_ref()
+        .ok_or_else(|| EngineError::invalid("frame", format!("step `{step}` is a linear static step: it has one state and no frames")))?;
+    h.frames.get(k).ok_or_else(|| {
+        EngineError::invalid("frame", format!("step `{step}` has frames 0 to {}; there is no frame {k}", h.frames.len().saturating_sub(1)))
+    })
+}
+
+/// The sets `p.sets` names (at most [`MAX_SETS`]); none or an empty list (a form with none
+/// ticked): the sets the step's boundary conditions hold.
+pub(crate) fn reaction_sets(s: &Session, step: &str, p: &Value) -> Result<Vec<String>> {
+    Ok(match p.get("sets").filter(|v| v.as_array().is_none_or(|a| !a.is_empty())) {
         Some(v) => {
             let list = v
                 .as_array()
@@ -626,40 +670,39 @@ fn reactions(s: &mut Session, p: &Value) -> Result<Value> {
         None => {
             let mut names: Vec<String> = s
                 .model
-                .step(&step)
+                .step(step)
                 .map(|st| st.boundary_conditions.iter().filter_map(|bc| s.model.boundary_condition(bc)?.target().set().map(str::to_string)).collect())
                 .unwrap_or_default();
             names.sort();
             names.dedup();
             names
         }
-    };
-    // Σ R and Σ (x − about) × R over nodes (undeformed positions).
-    let sum = |nodes: &mut dyn Iterator<Item = u32>| {
-        let (mut force, mut moment, mut count) = ([0.0; 3], [0.0; 3], 0usize);
-        for label in nodes {
-            let (Ok(i), Some(node)) = (r.nodes.binary_search(&label), s.model.node(label)) else { continue };
-            let Some(f) = r.reaction.get(i) else { continue };
-            let d = [node.xyz[0] - about[0], node.xyz[1] - about[1], node.xyz[2] - about[2]];
-            for k in 0..3 {
-                force[k] += f[k];
-            }
-            moment[0] += d[1] * f[2] - d[2] * f[1];
-            moment[1] += d[2] * f[0] - d[0] * f[2];
-            moment[2] += d[0] * f[1] - d[1] * f[0];
-            count += 1;
+    })
+}
+
+/// Σ R and Σ (x − about) × R over `nodes` (undeformed positions), the reaction of the node of
+/// index `i` in the result's order being `reaction(i)`: {nodes, force, moment}.
+pub(crate) fn reaction_sum(
+    s: &Session,
+    r: &fieldcraft_solver::StaticResult,
+    reaction: &dyn Fn(usize) -> Option<[f64; 3]>,
+    nodes: &mut dyn Iterator<Item = u32>,
+    about: [f64; 3],
+) -> Value {
+    let (mut force, mut moment, mut count) = ([0.0; 3], [0.0; 3], 0usize);
+    for label in nodes {
+        let (Ok(i), Some(node)) = (r.nodes.binary_search(&label), s.model.node(label)) else { continue };
+        let Some(f) = reaction(i) else { continue };
+        let d = [node.xyz[0] - about[0], node.xyz[1] - about[1], node.xyz[2] - about[2]];
+        for k in 0..3 {
+            force[k] += f[k];
         }
-        json!({"nodes": count, "force": force, "moment": moment})
-    };
-    let mut per_set = Vec::with_capacity(sets.len());
-    for name in &sets {
-        let resolved = s.model.resolve_set(name)?;
-        let mut row = sum(&mut resolved.nodes.iter().copied());
-        row["set"] = json!(name);
-        per_set.push(row);
+        moment[0] += d[1] * f[2] - d[2] * f[1];
+        moment[1] += d[2] * f[0] - d[0] * f[2];
+        moment[2] += d[0] * f[1] - d[1] * f[0];
+        count += 1;
     }
-    let total = sum(&mut r.nodes.iter().copied());
-    Ok(json!({"step": step, "stale": !current, "about": about, "sets": per_set, "total": total, "applied": r.applied_total}))
+    json!({"nodes": count, "force": force, "moment": moment})
 }
 
 /// Most files one `results.export.vtu` writes.

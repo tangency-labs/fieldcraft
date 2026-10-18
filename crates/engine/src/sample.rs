@@ -926,6 +926,84 @@ mod tests {
         assert!(stiffer > 1.05 && stiffer < 2.5, "bonded {bonded} N, frictionless {free} N");
     }
 
+    /// The seal's force–travel curve (#204): every frame keeps the reaction on `top`. Squeezed
+    /// by a prescribed travel, the top's mean travel is the load factor times the squeeze and its
+    /// reaction grows with it at every frame (a smooth, stiffening curve), the base reacting
+    /// equal and opposite; results.reactions of a frame and results.xy read the same numbers.
+    /// Pressed by a force instead, the base reacts with the load factor times that force at
+    /// every frame.
+    #[test]
+    fn the_rubber_seal_keeps_a_force_travel_curve() {
+        let mut s = open("rubber-seal");
+        s.execute("solve.nonlinear", &json!({})).unwrap();
+        let h = s.execute("solve.history", &json!({"step": "Squeeze", "sets": ["top", "bottom"]})).unwrap();
+        let floats = |v: &Value| -> Vec<f64> { v.as_array().unwrap().iter().map(|x| x.as_f64().unwrap()).collect() };
+        let lambda = floats(&h["load_factor"]);
+        assert!(lambda.len() >= 6 && lambda[0] == 0.0 && lambda.last() == Some(&1.0), "{lambda:?}");
+        let (top, bottom) = (&h["sets"][0], &h["sets"][1]);
+        let force: Vec<f64> = top["reaction"].as_array().unwrap().iter().map(|f| f[2].as_f64().unwrap()).collect();
+        let travel: Vec<f64> = top["displacement"].as_array().unwrap().iter().map(|u| u[2].as_f64().unwrap()).collect();
+        let scale = force.last().unwrap().abs();
+        for (k, l) in lambda.iter().enumerate() {
+            assert!((travel[k] + l * SEAL_SQUEEZE).abs() < 1e-9, "frame {k}: travel {} at λ {l}", travel[k]);
+            let base = bottom["reaction"][k][2].as_f64().unwrap();
+            assert!((force[k] + base).abs() < 1e-6 * scale, "frame {k}: top {} base {base}", force[k]);
+        }
+        // The press pushes the top down (the reaction on it is negative), harder at every frame,
+        // and the rubber stiffens in compression: the secant stiffness never falls.
+        for k in 1..force.len() {
+            assert!(force[k] < force[k - 1], "{force:?}");
+            if k > 1 {
+                let (a, b) = (force[k - 1] / travel[k - 1], force[k] / travel[k]);
+                assert!(b > a * (1.0 - 1e-3), "secant stiffness fell from {a} to {b}: {force:?}");
+            }
+        }
+        let last = s.execute("results.reactions", &json!({"step": "Squeeze", "sets": ["top"]})).unwrap();
+        assert!((last["sets"][0]["force"][2].as_f64().unwrap() + scale).abs() < 1e-9 * scale, "{last}");
+        let k = lambda.len() / 2;
+        let at = s.execute("results.reactions", &json!({"step": "Squeeze", "sets": ["top"], "frame": k})).unwrap();
+        assert_eq!((at["frame"].as_u64(), at["load_factor"].as_f64()), (Some(k as u64), Some(lambda[k])), "{at}");
+        assert!((at["sets"][0]["force"][2].as_f64().unwrap() - force[k]).abs() < 1e-9 * scale, "{at}");
+        let xy = s
+            .execute("results.xy", &json!({"step": "Squeeze", "y": {"reaction": "top", "component": "z"}, "x": {"displacement": "top", "component": "z"}}))
+            .unwrap();
+        assert_eq!(xy["x"]["axis"], "displacement");
+        assert_eq!(floats(&xy["x"]["values"]), travel);
+        assert!(floats(&xy["y"]["values"]).iter().zip(&force).all(|(a, b)| (a - b).abs() < 1e-9 * scale), "{xy}");
+        // Hostile parameters are errors.
+        for (id, p) in [
+            ("results.reactions", json!({"step": "Squeeze", "frame": 100000})),
+            ("results.reactions", json!({"step": "Squeeze", "frame": -1})),
+            ("results.reactions", json!({"step": "Squeeze", "sets": ["nope"], "frame": 1})),
+            ("solve.history", json!({"step": "Squeeze", "sets": ["nope"]})),
+            ("solve.history", json!({"step": "Squeeze", "node": 0})),
+            ("solve.history", json!({"step": "Squeeze", "every": 0})),
+            ("results.xy", json!({"step": "Squeeze", "y": {"reaction": "nope"}})),
+            ("results.xy", json!({"step": "Squeeze", "y": {"reaction": "top", "component": "w"}})),
+            ("results.xy", json!({"step": "Squeeze", "y": {"reaction": "top"}, "x": {"displacement": 3}})),
+            ("results.xy", json!({"step": "Squeeze", "y": {"reaction": "top"}, "x": {}})),
+        ] {
+            assert!(s.execute(id, &p).is_err(), "{id} {p}");
+        }
+        // Load control: the top held laterally and pressed by a force.
+        let press = -0.5 * scale;
+        s.execute(
+            "model.boundary_condition.edit",
+            &json!({"name": "Press", "type": "displacement", "target": {"set": "top"}, "values": [0, 0, null, null, null, null]}),
+        )
+        .unwrap();
+        s.execute("model.load.create", &json!({"name": "Push", "type": "force", "target": {"set": "top"}, "vector": [0, 0, press]})).unwrap();
+        s.execute("model.step.edit", &json!({"name": "Squeeze", "loads": ["Push"]})).unwrap();
+        s.execute("solve.nonlinear", &json!({})).unwrap();
+        let h = s.execute("solve.history", &json!({"step": "Squeeze", "sets": ["bottom"]})).unwrap();
+        let lambda = floats(&h["load_factor"]);
+        assert!(lambda.len() >= 3, "{h}");
+        for (k, l) in lambda.iter().enumerate() {
+            let base = h["sets"][0]["reaction"][k][2].as_f64().unwrap();
+            assert!((base + l * press).abs() < 1e-6 * press.abs(), "frame {k}: base {base} at λ {l}, applied {}", l * press);
+        }
+    }
+
     #[test]
     fn the_flow_sample_opens_ready_to_solve() {
         let s = open("flow-past");

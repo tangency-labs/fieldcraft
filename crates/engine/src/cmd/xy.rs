@@ -16,7 +16,7 @@ use crate::{CommandKind, CommandSpec, EngineError, Result, Session, StepResult};
 pub const XY: CommandSpec = CommandSpec {
     id: "results.xy",
     label: "XY Plot",
-    params: r#"{"step": "Load", "y": {"field": "displacement_z", "node": 21}, "x": "auto", "every": 1, "path": "tip.csv"} — a quantity of a solved step against its natural axis: `x` "load_factor" (nonlinear static), "time" (explicit, transient heat), "mode" (frequency and buckling) or "auto" (the step's own, the default). `y` is {"field": <a contour field id>, "node": <label>} (a nodal field per frame or mode: on nonlinear static steps the displacements, whose frames start at load factor 0; on heat steps the temperature), {"energy": "kinetic|internal|hourglass|viscous|external|constraint|contact|friction|plastic|eroded|added_kinetic|balance"}, {"history": "constraint_force_x|_y|_z|momentum_x|_y|_z|increment"}, {"history_node": 21, "quantity": "displacement|displacement_x|…|velocity_z"} (explicit histories), "frequency" (frequency steps) or "load_factor" (buckling steps). Reactions per increment are not stored by the nonlinear solver, so a reaction cannot be plotted against the load factor; an explicit step's `constraint_force` history is its reaction against time. At most 100000 points: `every` keeps one in so many (by default enough to fit). A stale result is refused. With `path` the series is written as CSV (a header line, then x,y rows). Replies {step, x: {label, values}, y: {label, values}, points, every, frames?} (`frames`: the field frame of each point, for results.frame)"#,
+    params: r#"{"step": "Load", "y": {"field": "displacement_z", "node": 21}, "x": "auto", "every": 1, "path": "tip.csv"} — a quantity of a solved step against its natural axis: `x` "load_factor" (nonlinear static), "time" (explicit, transient heat), "mode" (frequency and buckling) or "auto" (the step's own, the default). `y` is {"field": <a contour field id>, "node": <label>} (a nodal field per frame or mode: on nonlinear static steps the displacements, whose frames start at load factor 0; on heat steps the temperature), {"energy": "kinetic|internal|hourglass|viscous|external|constraint|contact|friction|plastic|eroded|added_kinetic|balance"}, {"history": "constraint_force_x|_y|_z|momentum_x|_y|_z|increment"}, {"history_node": 21, "quantity": "displacement|displacement_x|…|velocity_z"} (explicit histories), {"reaction": "top", "component": "x|y|z|magnitude"} (nonlinear static: the reaction sum on a set per frame), "frequency" (frequency steps) or "load_factor" (buckling steps). On nonlinear static steps `x` may instead be {"displacement": "top", "component": "x|y|z|magnitude"} (the mean displacement of a set's nodes per frame) or {"displacement_node": 21, "component": …}: a reaction against it is a force–travel curve. An explicit step's `constraint_force` history is its reaction against time. At most 100000 points: `every` keeps one in so many (by default enough to fit). A stale result is refused. With `path` the series is written as CSV (a header line, then x,y rows). Replies {step, x: {label, values}, y: {label, values}, points, every, frames?} (`frames`: the field frame of each point, for results.frame)"#,
     form: Some(super::forms::RESULTS_XY),
     kind: CommandKind::Session,
     requires: &[Requirement::Result],
@@ -187,10 +187,23 @@ fn series<'a>(s: &'a Session, step: &str, r: &'a StepResult, axis: Axis, y: &Val
         };
         return Ok(Series { x_label, y_label, len, point: Box::new(point), frames });
     }
-    if y.get("reaction").is_some() {
-        return Err(y_error(
-            "reactions are not stored per increment, so they cannot be plotted against the load factor (results.reactions gives the final sums; an explicit step's {\"history\": \"constraint_force_z\"} is its reaction against time)",
-        ));
+    if let Some(set) = y.get("reaction") {
+        let frames = nonlinear_frames(step, r).map_err(y_error)?;
+        let set = set.as_str().ok_or_else(|| y_error("`reaction` must be a set name"))?;
+        let (suffix, title) = vector_component(y).map_err(y_error)?;
+        let at = set_indices(s, r, set)?;
+        let point = move |i: usize| -> Result<(f64, f64)> {
+            let Some(f) = frames.get(i) else { return Ok((f64::NAN, f64::NAN)) };
+            let sum = at.iter().map(|k| f.reaction_at(*k)).fold([0.0; 3], |a, v| std::array::from_fn(|c| a[c] + v[c]));
+            Ok((f.load_factor, component(&sum, suffix).unwrap_or(f64::NAN)))
+        };
+        return Ok(Series {
+            x_label,
+            y_label: format!("{} on {set}", with_unit(&format!("Reaction {title}"), Quantity::Force.unit(units).as_deref())),
+            len: frames.len(),
+            point: Box::new(point),
+            frames: true,
+        });
     }
     let Kind::Explicit(e) = r.kind() else { return Err(not_explicit()) };
     let h = &e.history;
@@ -271,7 +284,67 @@ fn series<'a>(s: &'a Session, step: &str, r: &'a StepResult, axis: Axis, y: &Val
             frames: false,
         });
     }
-    Err(y_error("must have one of `field` (with `node`), `energy`, `history` or `history_node` (with `quantity`)"))
+    Err(y_error("must have one of `field` (with `node`), `reaction`, `energy`, `history` or `history_node` (with `quantity`)"))
+}
+
+/// The frames of a nonlinear static step.
+fn nonlinear_frames<'a>(step: &str, r: &'a StepResult) -> std::result::Result<&'a [fieldcraft_solver::nonlinear::Frame], String> {
+    match r.kind() {
+        Kind::Static(st) => st.nonlinear.as_ref().map(|h| h.frames.as_slice()).ok_or_else(|| {
+            format!("step `{step}` is a linear static step: one state (a nonlinear static step keeps its reactions and displacements per increment)")
+        }),
+        _ => Err(format!("step `{step}` is not a nonlinear static step: reactions and set displacements per frame are kept for nonlinear static steps")),
+    }
+}
+
+/// A vector's `component` (x, y, z or magnitude, the default): its [`component`] suffix and
+/// its title.
+fn vector_component(v: &Value) -> std::result::Result<(&'static str, &'static str), String> {
+    match v.get("component").map(|c| c.as_str()) {
+        None | Some(Some("magnitude")) => Ok(("", "magnitude")),
+        Some(Some("x")) => Ok(("_x", "X")),
+        Some(Some("y")) => Ok(("_y", "Y")),
+        Some(Some("z")) => Ok(("_z", "Z")),
+        _ => Err("`component` must be \"x\", \"y\", \"z\" or \"magnitude\"".into()),
+    }
+}
+
+/// The result indices of a set's nodes (an error for an unknown set or one without results).
+fn set_indices(s: &Session, r: &StepResult, set: &str) -> Result<Vec<usize>> {
+    let nodes = r.nodes();
+    let at: Vec<usize> = s.model.resolve_set(set)?.nodes.iter().filter_map(|l| nodes.binary_search(l).ok()).collect();
+    if at.is_empty() {
+        return Err(EngineError::Params(format!("set `{set}` has no nodes with results")));
+    }
+    Ok(at)
+}
+
+/// `x` as a travel on a nonlinear static step: {"displacement": set} (the mean over its nodes)
+/// or {"displacement_node": label}, and a component. Its label and value per frame.
+fn travel<'a>(s: &'a Session, step: &str, r: &'a StepResult, x: &Value) -> Result<(String, Box<dyn Fn(usize) -> f64 + 'a>)> {
+    let x_error = |why: String| EngineError::invalid("x", why);
+    let frames = nonlinear_frames(step, r).map_err(x_error)?;
+    let (suffix, title) = vector_component(x).map_err(x_error)?;
+    let (at, of) = match (x.get("displacement"), x.get("displacement_node")) {
+        (Some(set), None) => {
+            let set = set.as_str().ok_or_else(|| x_error("`displacement` must be a set name".into()))?;
+            (set_indices(s, r, set)?, format!("of {set} (mean)"))
+        }
+        (None, Some(node)) => {
+            let label = node.as_u64().and_then(|n| u32::try_from(n).ok()).ok_or_else(|| x_error("`displacement_node` must be a node label".into()))?;
+            let i = r.nodes().binary_search(&label).map_err(|_| x_error(format!("node {label} has no result in step `{step}`")))?;
+            (vec![i], format!("at node {label}"))
+        }
+        _ => return Err(x_error("an object must have one of `displacement` (a set) or `displacement_node` (a node label)".into())),
+    };
+    let label = format!("{} {of}", with_unit(&format!("Displacement {title}"), Quantity::Length.unit(s.model.units()).as_deref()));
+    let n = at.len() as f64;
+    let value = move |i: usize| -> f64 {
+        let Some(f) = frames.get(i) else { return f64::NAN };
+        let sum = at.iter().map(|k| f.displacement.get(*k).copied().unwrap_or_default()).fold([0.0; 3], |a, v| std::array::from_fn(|c| a[c] + v[c]));
+        component(&sum.map(|c| c / n), suffix).unwrap_or(f64::NAN)
+    };
+    Ok((label, Box::new(value)))
 }
 
 /// The step's own axis.
@@ -290,9 +363,15 @@ fn natural(step: &str, r: &StepResult) -> Result<Axis> {
 fn xy(s: &mut Session, p: &Value) -> Result<Value> {
     let step = step_for(s, p, Want::Any)?;
     let (r, current) = s.latest_result(&step).ok_or_else(|| EngineError::Params(format!("step `{step}` has no result")))?;
-    let axis = match opt::<String>(p, "x")?.as_deref() {
-        None | Some("auto") => None,
-        Some(id) => Some(Axis::parse(id).ok_or_else(|| EngineError::invalid("x", "must be \"auto\", \"load_factor\", \"time\" or \"mode\""))?),
+    let x_travel = p.get("x").filter(|x| x.is_object());
+    let axis = match x_travel {
+        Some(_) => None,
+        None => match opt::<String>(p, "x")?.as_deref() {
+            None | Some("auto") => None,
+            Some(id) => Some(Axis::parse(id).ok_or_else(|| {
+                EngineError::invalid("x", "must be \"auto\", \"load_factor\", \"time\", \"mode\" or a travel ({\"displacement\": set} or {\"displacement_node\": label})")
+            })?),
+        },
     };
     let y = p.get("y").filter(|v| !v.is_null()).ok_or_else(|| EngineError::param("y", ProblemKind::Required))?;
     if !current {
@@ -311,7 +390,17 @@ fn xy(s: &mut Session, p: &Value) -> Result<Value> {
         Some(_) => Some(super::file_param(s, p, "path", fieldcraft_io::roots::Access::Write)?),
         None => None,
     };
-    let series = series(s, &step, r, own, y)?;
+    let mut series = series(s, &step, r, own, y)?;
+    let mut x_axis = own.id();
+    if let Some(x) = x_travel {
+        let (label, value) = travel(s, &step, r, x)?;
+        if !series.frames {
+            return Err(EngineError::invalid("x", "a travel needs a series per frame of the nonlinear static step"));
+        }
+        let point = series.point;
+        series = Series { x_label: label, point: Box::new(move |i| Ok((value(i), point(i)?.1))), ..series };
+        x_axis = "displacement";
+    }
     let every = every.unwrap_or_else(|| series.len.div_ceil(MAX_POINTS).max(1));
     if series.len.div_ceil(every) > MAX_POINTS {
         return Err(EngineError::invalid("every", format!("{} points in steps of {every} are more than {MAX_POINTS}; raise `every`", series.len)));
@@ -325,7 +414,7 @@ fn xy(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let mut out = json!({
         "step": step,
-        "x": {"axis": own.id(), "label": series.x_label, "values": xs},
+        "x": {"axis": x_axis, "label": series.x_label, "values": xs},
         "y": {"label": series.y_label, "values": ys},
         "points": picked.len(),
         "every": every,
@@ -432,11 +521,22 @@ mod tests {
         assert_eq!(lines.len(), x.len() + 1);
         assert_eq!(lines.last().unwrap().split(',').nth(1).unwrap().parse::<f64>().unwrap(), *y.last().unwrap());
         let _ = std::fs::remove_file(&path);
-        // Stresses are the final state's only; a linear step has one state; reactions are not stored.
+        // Stresses are the final state's only; a linear step has one state.
         assert!(s.execute("results.xy", &json!({"step": "Large", "y": {"field": "von_mises", "node": 11}})).is_err());
         assert!(s.execute("results.xy", &json!({"step": "Bend", "y": {"field": "displacement_z", "node": 11}})).is_err());
-        let e = s.execute("results.xy", &json!({"step": "Large", "y": {"reaction": "root"}})).unwrap_err().to_string();
-        assert!(e.contains("not stored per increment"), "{e}");
+        assert!(s.execute("results.xy", &json!({"step": "Bend", "y": {"reaction": "root"}})).is_err());
+        // The root's reaction balances the dead end load at every frame: proportional to λ.
+        let r = s.execute("results.xy", &json!({"step": "Large", "y": {"reaction": "root", "component": "z"}})).unwrap();
+        let (x, y) = (values(&r, "x"), values(&r, "y"));
+        let end = *y.last().unwrap();
+        assert!(end.abs() > 0.0 && r["frames"].as_array().unwrap().len() == x.len(), "{r}");
+        for (l, f) in x.iter().zip(&y) {
+            assert!((f - l * end).abs() < 1e-6 * end.abs(), "λ {l}: {f} against {}", l * end);
+        }
+        // Against the tip's travel: the same reactions.
+        let t = s.execute("results.xy", &json!({"step": "Large", "y": {"reaction": "root", "component": "z"}, "x": {"displacement_node": 11, "component": "z"}})).unwrap();
+        assert_eq!(values(&t, "y"), y);
+        assert_eq!(t["x"]["label"], "Displacement Z at node 11");
         // A stale result is refused.
         s.execute("mesh.node.add", &json!({"label": 99_999, "xyz": [0, 0, 0]})).unwrap();
         let e = s.execute("results.xy", &json!({"step": "Large", "y": {"field": "displacement_z", "node": 11}})).unwrap_err().to_string();
