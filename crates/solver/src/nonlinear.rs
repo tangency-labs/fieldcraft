@@ -198,12 +198,23 @@ pub struct CriticalPoint {
     pub negative_after: usize,
 }
 
-/// The displacements at the end of a converged increment.
+/// The displacements and reactions at the end of a converged increment.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Frame {
     pub load_factor: f64,
     /// Per node, in [`StaticResult::nodes`] order.
     pub displacement: Vec<[f64; 3]>,
+    /// The reaction forces at the nodes that carry one, as (index in [`StaticResult::nodes`],
+    /// force), by index; nodes left out carry none. Sparse: only supported or prescribed nodes
+    /// appear, so a frame costs little beyond its displacements.
+    pub reaction: Vec<(usize, [f64; 3])>,
+}
+
+impl Frame {
+    /// The reaction force at the node of index `i` (zero when it carries none).
+    pub fn reaction_at(&self, i: usize) -> [f64; 3] {
+        self.reaction.binary_search_by_key(&i, |(k, _)| *k).ok().and_then(|k| self.reaction.get(k)).map_or([0.0; 3], |(_, f)| *f)
+    }
 }
 
 /// The increments of a nonlinear static step and the displacements after each converged one.
@@ -226,7 +237,8 @@ impl History {
     }
 }
 
-/// Most displacement values the frames of one step keep (3 per node per frame).
+/// Most values the frames of one step keep (3 per node per frame for the displacements, 4 per
+/// reacted node for the reactions).
 pub const MAX_FRAME_VALUES: usize = 30_000_000;
 
 /// Line search: accept a step whose residual work is at most this fraction of the first.
@@ -1210,19 +1222,26 @@ fn solve_on(model: &Model, step: &str, limits: &Limits, notes: Vec<String>) -> R
     let mut history = History::default();
     let (mut frame_values, mut frames_full) = (0usize, false);
     let values = 3 * mesh.labels.len();
-    let mut keep_frame = |history: &mut History, lambda: f64, u: &[f64], warnings: &mut Vec<String>| {
+    let mut keep_frame = |history: &mut History, lambda: f64, u: &[f64], at: Option<&Evaluation>, warnings: &mut Vec<String>| {
         if frames_full {
             return;
         }
-        if frame_values.saturating_add(values) > MAX_FRAME_VALUES {
-            warnings.push(format!("the displacement frames stop at load factor {lambda}: the step keeps at most {MAX_FRAME_VALUES} values"));
+        let reaction: Vec<(usize, [f64; 3])> = at
+            .map(|e| {
+                let out_of_balance: Vec<f64> = e.internal.iter().zip(&e.external).map(|(a, b)| a - b).collect();
+                split(&red.reactions_of(&out_of_balance), &mesh).0.into_iter().enumerate().filter(|(_, f)| f.iter().any(|c| *c != 0.0)).collect()
+            })
+            .unwrap_or_default();
+        let these = values.saturating_add(reaction.len().saturating_mul(4));
+        if frame_values.saturating_add(these) > MAX_FRAME_VALUES {
+            warnings.push(format!("the frames stop at load factor {lambda}: the step keeps at most {MAX_FRAME_VALUES} values"));
             frames_full = true;
             return;
         }
-        frame_values += values;
-        history.frames.push(Frame { load_factor: lambda, displacement: split(u, &mesh).0 });
+        frame_values += these;
+        history.frames.push(Frame { load_factor: lambda, displacement: split(u, &mesh).0, reaction });
     };
-    keep_frame(&mut history, 0.0, &vec![0.0; mesh.dofs()], &mut warnings);
+    keep_frame(&mut history, 0.0, &vec![0.0; mesh.dofs()], None, &mut warnings);
     let (q, lambda, last) = if let Some(arc) = &settings.arc_length {
         if problem.field.is_some() {
             return Err(Error::NotSupported(format!("temperatures in arc-length steps (step `{}`)", step.name)));
@@ -1298,7 +1317,7 @@ fn solve_on(model: &Model, step: &str, limits: &Limits, notes: Vec<String>) -> R
                     });
                     (t, lambda) = (target, target_lambda);
                     q = c.q;
-                    keep_frame(&mut history, lambda, &red.expand_scaled(&q, lambda), &mut warnings);
+                    keep_frame(&mut history, lambda, &red.expand_scaled(&q, lambda), Some(&c.evaluation), &mut warnings);
                     run.committed.clone_from(&c.evaluation.history);
                     for (l, s) in run.contact.iter_mut().zip(&c.evaluation.contact) {
                         l.commit(s);
@@ -1633,7 +1652,7 @@ fn arc_length(
     step: &Step,
     history: &mut History,
     warnings: &mut Vec<String>,
-    keep_frame: &mut dyn FnMut(&mut History, f64, &[f64], &mut Vec<String>),
+    keep_frame: &mut dyn FnMut(&mut History, f64, &[f64], Option<&Evaluation>, &mut Vec<String>),
 ) -> Result<(Vec<f64>, f64, Option<Evaluation>)> {
     let settings = run.settings;
     let red = run.problem.red;
@@ -1689,7 +1708,7 @@ fn arc_length(
                 (q, lambda) = (q1, lambda1);
                 run.committed.clone_from(&evaluation.history);
                 let u = red.expand_scaled(&q, lambda);
-                keep_frame(history, lambda, &u, warnings);
+                keep_frame(history, lambda, &u, Some(&evaluation), warnings);
                 start = run.arc_start(&mut evaluation, &q, lambda, false).map_err(fatal)?;
                 let negative = start.factor.inertia().negative;
                 history.increments.push(Increment {

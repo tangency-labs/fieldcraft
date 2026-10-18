@@ -545,3 +545,57 @@ fn nearly_incompressible_hybrids_under_prescribed_displacement() {
     }
     assert!(indefinite > 0, "the LDLᵀ path was exercised");
 }
+
+/// Every frame keeps its reactions: a linear elastic unit block (small displacements) in a
+/// nonlinear step, pulled along x by a prescribed travel δ, carries F = E λ δ on the pulled face
+/// at each load factor λ (force ∝ travel), and under a force P on that face the fixed face reacts
+/// with −λ P at every frame.
+#[test]
+fn frames_keep_their_reactions() {
+    let (e, nu, delta, force) = (1000.0, 0.3, 0.01, 5.0);
+    let procedure = || {
+        Procedure::NonlinearStatic(NonlinearStatic {
+            nonlinear_geometry: false,
+            initial_increment: 0.2,
+            max_increment: 0.2,
+            ..NonlinearStatic::default()
+        })
+    };
+    let block = |g: &mut Grid| {
+        g.define(iso(e, nu), None, full(), procedure());
+        g.symmetry("x0", Symmetry::X, |x| near(x[0], 0.0));
+        g.symmetry("y0", Symmetry::Y, |x| near(x[1], 0.0));
+        g.symmetry("z0", Symmetry::Z, |x| near(x[2], 0.0));
+        g.node_set("x1", |x| near(x[0], 1.0));
+    };
+    let sum = |r: &StaticResult, f: &fieldcraft_solver::nonlinear::Frame, nodes: &[u32]| -> [f64; 3] {
+        nodes.iter().map(|n| f.reaction_at(at(r, *n))).fold([0.0; 3], |a, v| std::array::from_fn(|k| a[k] + v[k]))
+    };
+    // Displacement control.
+    let mut g = grid([2, 2, 2], ElementKind::Hex8, |x| x);
+    block(&mut g);
+    g.bc("pull", BoundaryCondition::Displacement { target: Target::Set("x1".into()), values: [Some(delta), None, None, None, None, None] });
+    let r = solve(&g);
+    let (pulled, fixed) = (g.nodes_where(|x| near(x[0], 1.0)), g.nodes_where(|x| near(x[0], 0.0)));
+    let frames = &r.nonlinear.as_ref().unwrap().frames;
+    assert!(frames.len() >= 6, "{} frames", frames.len());
+    for f in frames {
+        let (p, q) = (sum(&r, f, &pulled), sum(&r, f, &fixed));
+        let want = e * f.load_factor * delta;
+        assert!((p[0] - want).abs() < 1e-8 * e * delta && (p[0] + q[0]).abs() < 1e-8 * e * delta, "λ {}: {p:?} {q:?} vs {want}", f.load_factor);
+        // The travel of the pulled face follows the load factor.
+        assert!(pulled.iter().all(|n| (f.displacement[at(&r, *n)][0] - f.load_factor * delta).abs() < 1e-12));
+    }
+    let last = frames.last().unwrap();
+    assert!((sum(&r, last, &pulled)[0] - pulled.iter().map(|n| r.reaction[at(&r, *n)][0]).sum::<f64>()).abs() < 1e-9);
+    // Load control.
+    let mut g = grid([2, 2, 2], ElementKind::Hex8, |x| x);
+    block(&mut g);
+    g.load("push", Load::Force { target: Target::Set("x1".into()), vector: [force, 0.0, 0.0], distribution: Distribution::Total });
+    let r = solve(&g);
+    let fixed = g.nodes_where(|x| near(x[0], 0.0));
+    for f in &r.nonlinear.as_ref().unwrap().frames {
+        let q = sum(&r, f, &fixed);
+        assert!((q[0] + f.load_factor * force).abs() < 1e-8 * force, "λ {}: {q:?}", f.load_factor);
+    }
+}
