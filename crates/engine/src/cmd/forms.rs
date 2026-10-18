@@ -2333,6 +2333,7 @@ mod tests {
         "`boundary_conditions` or `loads`",
         "give one of",
         "is not an explicit",
+        "is neither an explicit dynamic nor a nonlinear static step",
         "has no explicit dynamics step",
         "has a result",
         "no crash report",
