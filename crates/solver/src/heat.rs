@@ -28,7 +28,7 @@ use fieldcraft_model::{ElementKind, Load, Model, Procedure, Resolved, SectionKin
 use crate::cholesky::{Factor, FactorError, UpperColumns};
 use crate::constraints::{Budget, Reduction, Row};
 use crate::contact::thickness;
-use crate::ordering::nested_dissection;
+use crate::ordering::fill_reducing_order;
 use crate::sparse::{Csr, NodeGraph, add_block};
 use crate::system::hold;
 use crate::tie::{TieFace, TieNodes, rows_of};
@@ -398,7 +398,7 @@ fn run(model: &Model, resolved: &Resolved, step: &Step, limits: &Limits) -> Resu
     let mut warnings = Vec::new();
     let rows = tie_rows(model, resolved, &mesh, &mut warnings)?;
     let fixed = prescribed(model, resolved, &mesh, step)?;
-    let order = nested_dissection(&mesh.xyz, &graph.adjacency);
+    let order = fill_reducing_order(&mesh.xyz, &graph.adjacency);
     let budget = Budget { max_bytes: limits.max_factor_entries.saturating_mul(8), pattern_entries: graph.entries(&mesh.layout), matrices: 1 };
     let eqs = Reduction::new(&mesh.layout, std::iter::empty(), &order, &rows, |_| Ok(fixed), budget)?;
     if eqs.neq() == 0 {

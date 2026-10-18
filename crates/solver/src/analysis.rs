@@ -15,7 +15,7 @@ use crate::cholesky::{Factor, FactorError, UpperColumns};
 use crate::constraints::{Budget, Reduction, coupling_rows, symmetry_rows};
 use crate::eigen::{Operator, Wanted, lanczos};
 use crate::ldlt::{Kind, Symmetric};
-use crate::ordering::nested_dissection;
+use crate::ordering::fill_reducing_order;
 use crate::sparse::{Csr, NodeGraph, add_block, add_diagonal, add_scalar};
 use crate::system::{
     Mesh, Structural, StructuralKernel, add_thermal_loads, inelastic_warnings, loads, prescribed, structural_body_forces, temperature_loads,
@@ -311,10 +311,10 @@ pub(crate) fn pattern(mesh: &Mesh) -> (NodeGraph, Vec<usize>) {
     // The order covers the mesh nodes; reference point equations follow them.
     let n = mesh.labels.len();
     let order = if graph.adjacency.len() == n {
-        nested_dissection(&mesh.xyz, &graph.adjacency)
+        fill_reducing_order(&mesh.xyz, &graph.adjacency)
     } else {
         let mesh_part: Vec<Vec<usize>> = graph.adjacency.iter().take(n).map(|row| row.iter().copied().filter(|b| *b < n).collect()).collect();
-        nested_dissection(&mesh.xyz, &mesh_part)
+        fill_reducing_order(&mesh.xyz, &mesh_part)
     };
     (graph, order)
 }
