@@ -13,6 +13,7 @@ mod layers;
 mod licences;
 mod skill;
 mod test;
+mod unit_factors;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -53,6 +54,8 @@ commands:
                   and the flags CI plans its jobs with: everything (manifest, lock file,
                   toolchain, xtask or workflows changed), solver (the heavy tests or the oracle
                   are affected), wasm (a crate the wasm check builds is affected)
+  unit-factors    report literal unit-conversion factors (1e-3, 1e6, 273.15, 25.4, …) written
+                  outside the unit table, crates/model/src/units (report only, #579)
   wasm            cargo check every library crate and the web app for wasm32-unknown-unknown
   ci [--affected REV]
                   fmt --check, assets, layers, clippy -D warnings, then the tests
@@ -102,6 +105,7 @@ fn main() -> ExitCode {
             c.args(["run", "--release", "-p", affected::ORACLE_PACKAGE, "--bin", "oracle", "--"]).args(&rest);
             run(c, "oracle")
         }
+        Some("unit-factors") => unit_factors::run(&root()),
         Some("wasm") => cmd_wasm(),
         Some("-h" | "--help" | "help") | None => {
             print!("{USAGE}");
