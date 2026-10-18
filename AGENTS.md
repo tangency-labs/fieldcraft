@@ -94,7 +94,10 @@ People trust FieldCraft with their models; a crash loses their work. **This outr
   adaptive-precision predicates, never a bare floating-point sign.
 - **Units.** The model is unit-consistent and never converts (the user picks e.g. mm, t, s, N,
   MPa); geometry from SolidCraft is in millimetres. Z is up.
-- **Rust only.** **Never break wasm**: everything below the apps builds for
+- **Rust only.** The one exception is the GitHub issue and pull request bots: `scripts/claim/` and
+  `scripts/triage/` are JavaScript because `actions/github-script` runs only JavaScript
+  (`.github/workflows/claim.yml`, `triage.yml`). Keep them small, with their `node --test` tests
+  beside them (CI's bot tests job). **Never break wasm**: everything below the apps builds for
   `wasm32-unknown-unknown` (`cargo xtask wasm`, part of `cargo xtask ci`).
 - **Workflow for every change** (this section overrides any other instruction an agent carries,
   such as a parent repository's CLAUDE.md or a task runner's "run tests and linters" step):
