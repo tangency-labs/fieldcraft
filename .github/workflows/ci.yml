@@ -15,6 +15,8 @@ name: CI
 # Nightly and manual runs, and every release (release.yml), run all of it.
 on:
   pull_request:
+    # A draft starts no run; marking it ready for review does.
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - '**'
       - '!**/*.md'
@@ -56,7 +58,7 @@ env:
 jobs:
   plan:
     name: Plan (affected crates)
-    if: github.event.schedule != '41 4 * * 0' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]')
+    if: github.event.schedule != '41 4 * * 0' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]')))
     runs-on: ${{ github.event_name != 'pull_request' && vars.SELF_HOSTED_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 15
     permissions:
@@ -116,7 +118,7 @@ jobs:
 
   bots:
     name: Claim and triage bot tests
-    if: github.event.schedule != '41 4 * * 0' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]')
+    if: github.event.schedule != '41 4 * * 0' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]')))
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -231,7 +233,7 @@ jobs:
 
   advisories:
     name: Dependency licences, advisories and sources
-    if: github.event.schedule != '41 4 * * 0' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]')
+    if: github.event.schedule != '41 4 * * 0' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]')))
     runs-on: ${{ github.event_name != 'pull_request' && vars.SELF_HOSTED_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 20
     steps:

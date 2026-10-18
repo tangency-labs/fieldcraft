@@ -9,6 +9,8 @@ on:
     branches: [develop]
     paths: [".github/workflows/**", "packaging/**"]
   pull_request:
+    # A draft starts no run; marking it ready for review does.
+    types: [opened, synchronize, reopened, ready_for_review]
     paths: [".github/workflows/**", "packaging/**"]
   workflow_dispatch:
 
@@ -22,6 +24,7 @@ concurrency:
 jobs:
   lint:
     name: Packaging lint
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
