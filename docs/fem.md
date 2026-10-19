@@ -323,12 +323,33 @@ model's tangent is (the strain of the increment, not a model that can move freel
 search (off by default: on large elastic rotations the full step converges in fewer
 iterations), and convergence when the force residual (∞-norm over the largest force seen), the
 displacement correction (over the increment's largest displacement) and the energy (over the
-first iteration's) are all below their tolerances, or the residual is round-off. Each increment
+first iteration's) are all below their tolerances, or the residual is round-off. Rotations and
+their moments are measured apart from translations and forces (see *Convergence norms* below).
+Each increment
 starts from the linear extrapolation of the last one. Automatic incrementation grows an
 increment by half after two fast ones (≤ 4 iterations), shrinks it after a slow one (> 8), and
 cuts it to a quarter when an element inverts, the residual is not finite or grows twice, the
 tangent is singular, or the iterations run out; the step stops with the load factor
 and the reason at the minimum increment, the increment cap, or `Limits::max_newton_iterations`.
+
+**Convergence norms.** The residual and the correction are measured per kind of freedom, each
+against its own scale, so the test is the same in any consistent unit system and at any size of
+the part (a moment scales as a force times a length, a rotation not at all):
+
+| Check | Measured | Against |
+|---|---|---|
+| force | largest residual force | the largest force seen (applied, internal, reaction), at least 10⁻⁸ of the mean diagonal stiffness times L |
+| moment | largest residual moment | the largest moment seen, at least the force scale times L |
+| translation | largest translation of the correction | the increment's largest translation (or prescribed one), at least 10⁻¹² L |
+| rotation | largest rotation of the correction, in radians | the increment's largest rotation (or prescribed one), at least the translation reference over L |
+
+L is the diagonal of the model's bounding box. The force and moment checks share the `force`
+tolerance, the translation and rotation checks the `displacement` tolerance, and each iteration
+records the larger measure of each pair. The energy criterion's work, s δq · r, is in N·m for
+both kinds and stays one sum. Today only coupled reference points carry rotations in a nonlinear
+step (shells and beams are refused); a model without them converges exactly as with one norm.
+In the round-off floor of the force scale a rotation's diagonal stiffness counts over L² (the
+stiffness of the translation it gives at the model's size).
 
 **Indefinite tangents.** A tangent that is not positive definite (a strained nearly
 incompressible mixed element, an unstable material, a state past a limit or bifurcation point)

@@ -78,6 +78,15 @@ The model (`fieldcraft-model`), the solvers (`fieldcraft-solver`, `-fem`, `-expl
 size, the load, the stiffness) so a model in metres converges as it did in millimetres; the
 camera's clipping and minimum sizes are relative or in metres (`render::MIN_SIZE`).
 
+Relative is not enough where two dimensions meet in one norm. A nonlinear step's convergence
+test measures each kind of freedom against its own scale (docs/fem.md, *Convergence norms*):
+residual forces against the largest force, residual moments against the largest moment (at
+least the force scale times the model's size L), translations of a correction against the
+increment's translation, rotations in radians against the increment's rotation (at least the
+translation over L). One norm over newtons and newton-metres, or metres and radians, would
+change with the unit system and the part's size, since a moment scales as a force times a
+length and a rotation not at all.
+
 ## Exactness
 
 A typed value is scaled on its shortest decimal form (`units/decimal.rs`): `3.97` mm is stored as
