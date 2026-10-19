@@ -1,0 +1,70 @@
+[
+ {
+  "command": "solid.box",
+  "params": {
+   "length": 40,
+   "width": 30,
+   "height": 20,
+   "corner": [
+    0,
+    0,
+    0
+   ],
+   "body_name": "Case"
+  }
+ },
+ {
+  "command": "solid.shell",
+  "params": {
+   "faces": [
+    [
+     20,
+     15,
+     20
+    ]
+   ],
+   "thickness": 2,
+   "direction": "inside",
+   "body": "Case"
+  }
+ },
+ {
+  "command": "solid.box",
+  "params": {
+   "length": 40,
+   "width": 30,
+   "height": 2,
+   "corner": [
+    0,
+    0,
+    20
+   ],
+   "operation": "join",
+   "targets": [
+    "Case"
+   ]
+  }
+ },
+ {
+  "command": "solid.cylinder",
+  "params": {
+   "diameter": 6,
+   "height": 5,
+   "base": [
+    8,
+    8,
+    2
+   ],
+   "operation": "join",
+   "targets": [
+    "Case"
+   ]
+  }
+ },
+ {
+  "command": "file.save",
+  "params": {
+   "path": "hollow-box-post.solidcraft"
+  }
+ }
+]
