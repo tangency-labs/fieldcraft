@@ -259,6 +259,11 @@ pub struct Session {
     pub journal: Vec<(String, Value)>,
     /// The `.fieldcraft` file the session was opened from or last saved to.
     pub path: Option<String>,
+    /// The format of the file at `path` when it is older than the one this version writes: the model
+    /// was migrated from an older file (`file.open`), or recovered from an autosave of one
+    /// (`file.recover`). The first save over that file keeps a copy of it first
+    /// (`<stem>.v<N>.fieldcraft`, [`fieldcraft_io::fs::save_model`]); then it is `None`.
+    pub migrated_from: Option<u32>,
     /// The sample the session was opened as (`file.sample`), by its label; the document is named
     /// after it until it is saved under a name of its own.
     pub sample: Option<&'static str>,
@@ -467,6 +472,7 @@ impl Session {
     /// The current state is what `path` now holds.
     pub(crate) fn mark_saved(&mut self, path: String) {
         self.path = Some(path);
+        self.migrated_from = None;
         self.saved_revision = Some(self.revision);
         self.saved_view = self.view.clone();
     }

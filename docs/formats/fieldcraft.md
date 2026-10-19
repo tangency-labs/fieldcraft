@@ -122,6 +122,18 @@ file as `<file>.bak`, renames the new file over the target and flushes the folde
 moment leaves the old file or the new one. A path that exists and is not a regular file is
 refused.
 
+Opening a file never writes anything, whatever its format. A model opened from an older format
+is marked as migrated (`migrated_from` in `file.open`'s reply; the document tab shows
+"(from format N)"), and so is work recovered from an autosave of one. A save replaces a file
+only when there is none or it is positively a model of the current format; anything else (an
+older model it was migrated from, a later one, a damaged one or one whose manifest cannot be
+read, or any other file a Save As picks) is first copied beside it, flushed to disk:
+`<stem>.v<N>.fieldcraft` (`bracket.v1.fieldcraft`) for a model of format N, `<stem>.backup.<ext>`
+for anything else. The reply reports it as `backup`. The copy never replaces a file: when the
+name is taken, the next free one is used (`bracket.v1-2.fieldcraft`, …), and when no copy can be
+made the save is refused and the original stays as it was. Later saves replace `<file>.bak` as
+always, but not the copy. The browser build saves by download, which replaces nothing, so it keeps no copy.
+
 ## Autosave and recovery
 
 The desktop app autosaves every 30 seconds while there are unsaved changes, into the recovery
@@ -131,7 +143,8 @@ folder: `FIELDCRAFT_RECOVERY_DIR` when set; else, in runs driven by automation (
 and preferences), so they never add to the user's recoveries; else `FieldCraft/recovery` in the
 per-user data folder. An entry is `<id>.fieldcraft`, `<id>.json` (the model's own path, time,
 counts) and `<id>.lock`, held while the app runs. Saving (or undoing back to the saved state)
-drops the autosave. After a crash, the next launch reports the entries; `file.recovery.list`
+drops the autosave. An autosave is written only into the recovery folder, never over the
+model's own file. After a crash, the next launch reports the entries; `file.recovery.list`
 lists them newest first, `file.recover` opens one as unsaved work under its original path, and
 `file.recovery.discard` deletes one or all of them (File › Recover… shows each with its name,
 age and counts, with Recover, Discard and Discard all).

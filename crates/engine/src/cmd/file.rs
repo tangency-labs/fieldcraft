@@ -32,7 +32,7 @@ pub const NEW: CommandSpec = CommandSpec {
 pub const OPEN: CommandSpec = CommandSpec {
     id: "file.open",
     label: "Open Model",
-    params: r#"{"path": "bracket.fieldcraft"} — opens the model, its mesh and its journal, and opens its design and imported meshes again from their files (one that is missing or changed is listed in `warnings`; the model still opens); unsaved changes of the current model are discarded and the undo history starts empty"#,
+    params: r#"{"path": "bracket.fieldcraft"} — opens the model, its mesh and its journal, and opens its design and imported meshes again from their files (one that is missing or changed is listed in `warnings`; the model still opens); unsaved changes of the current model are discarded and the undo history starts empty. A file of an older format is migrated as it is read (`migrated_from` in the reply) and nothing is written; a later format is refused"#,
     form: Some(super::forms::FILE_OPEN),
     kind: CommandKind::Session,
     requires: &[],
@@ -42,7 +42,7 @@ pub const OPEN: CommandSpec = CommandSpec {
 pub const SAVE: CommandSpec = CommandSpec {
     id: "file.save",
     label: "Save Model",
-    params: r#"{"path"?: "bracket.fieldcraft"} — saves to `path`, else to the file the model was opened from or last saved to; written atomically, the previous version kept as `<file>.bak`"#,
+    params: r#"{"path"?: "bracket.fieldcraft"} — saves to `path`, else to the file the model was opened from or last saved to; written atomically, the previous version kept as `<file>.bak`. A file there that is not a model of the current format (one this model was migrated from, a later or damaged one, any other file) is first copied to `<stem>.v<N>.fieldcraft` (`<stem>.backup.<ext>` when it is not a model), never replaced later (`backup` in the reply)"#,
     form: Some(super::forms::FILE_SAVE),
     kind: CommandKind::Session,
     requires: &[],
@@ -52,7 +52,7 @@ pub const SAVE: CommandSpec = CommandSpec {
 pub const SAVE_AS: CommandSpec = CommandSpec {
     id: "file.save_as",
     label: "Save Model As",
-    params: r#"{"path": "bracket.fieldcraft"} — saves to a new file, which becomes the model's file"#,
+    params: r#"{"path": "bracket.fieldcraft"} — saves to a new file, which becomes the model's file (a file there that is not a model of the current format is first copied, as file.save does)"#,
     form: Some(super::forms::FILE_SAVE_AS),
     kind: CommandKind::Session,
     requires: &[],
@@ -284,15 +284,26 @@ fn summary(s: &Session, warnings: &[String]) -> Value {
         "journal": s.journal.len(),
         "design": s.design.as_ref().map(|d| d.name.clone()),
         "surfaces": s.surfaces.len(),
+        "migrated_from": s.migrated_from,
         "warnings": warnings,
     })
 }
 
 /// Replace the session with a `.fieldcraft` file's content; `path` is its own file (geometry
-/// paths are relative to its folder), `saved` whether that file holds this content.
+/// paths are relative to its folder), `saved` whether that file holds this content (else the
+/// content is an autosave of it). Nothing is written.
 fn load(s: &mut Session, bytes: &[u8], path: Option<String>, saved: bool) -> Result<Value> {
-    let file = fieldcraft_io::read(bytes)?;
+    let (file, format) = fieldcraft_io::read_versioned(bytes)?;
     let (mut opened, warnings) = Session::from_file(file, path.as_deref().and_then(|p| Path::new(p).parent()), &s.file_access);
+    // The format of the file at `path`: the one just read, or (an autosave) the one on disk,
+    // read only where the session may read. Only an older one is "migrated from"; a save over a
+    // later one keeps a copy all the same (fs::save_model decides from the file itself).
+    let on_disk = match &path {
+        Some(_) if saved => Some(format),
+        Some(p) => s.checked_path(p, Access::Read).ok().and_then(|p| fieldcraft_io::fs::format_of_file(Path::new(&p))),
+        None => None,
+    };
+    opened.migrated_from = on_disk.filter(|&f| f < fieldcraft_io::FORMAT_VERSION);
     opened.path = path;
     if saved {
         opened.saved_revision = Some(opened.revision);
@@ -314,9 +325,20 @@ fn save_to(s: &mut Session, path: &str) -> Result<Value> {
         return Err(EngineError::Params(format!("`{target}` exists and is not a regular file")));
     }
     let bytes = s.file_bytes(Path::new(&target).parent())?;
-    fieldcraft_io::fs::write_atomic(Path::new(&target), &bytes, true)?;
+    let kept = fieldcraft_io::fs::save_model(Path::new(&target), &bytes)?;
     s.mark_saved(target.clone());
-    Ok(json!({"path": target, "bytes": bytes.len()}))
+    let mut reply = json!({"path": target, "bytes": bytes.len()});
+    if let Some(kept) = kept {
+        let name = |p: &Path| p.file_name().map_or_else(|| p.display().to_string(), |n| n.to_string_lossy().into_owned());
+        reply["backup"] = json!(kept.to_string_lossy());
+        reply["summary"] = json!(format!(
+            "saved {} in format {}; the file it replaced is kept as {}",
+            name(Path::new(&target)),
+            fieldcraft_io::FORMAT_VERSION,
+            name(&kept)
+        ));
+    }
+    Ok(reply)
 }
 
 fn save(s: &mut Session, p: &Value) -> Result<Value> {
@@ -507,6 +529,163 @@ mod tests {
         assert!(s.design.is_none());
         assert!(s.file_access.is_confined());
         refused(s.execute("file.save", &json!({})));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// The writers of the format 1 fixtures of `fieldcraft-io` (crates/io/tests/formats/v1).
+    const V1_WRITERS: [&str; 5] = ["0.4.0", "0.5.0", "0.6.0", "0.7.0", "develop-2eb3515c"];
+
+    /// The format 1 fixtures `writer` made, copied to a fresh folder.
+    fn v1_fixtures(tag: &str, writer: &str) -> PathBuf {
+        let d = dir(&format!("{tag}-{writer}"));
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../io/tests/formats/v1").join(writer);
+        for e in std::fs::read_dir(src).unwrap() {
+            let p = e.unwrap().path();
+            if p.extension().is_some_and(|x| x == "fieldcraft" || x == "solidcraft") {
+                std::fs::copy(&p, d.join(p.file_name().unwrap())).unwrap();
+            }
+        }
+        d
+    }
+
+    /// Every file in `d` with its bytes and modification time.
+    fn contents(d: &Path) -> Vec<(String, Vec<u8>, std::time::SystemTime)> {
+        let mut all: Vec<_> = std::fs::read_dir(d)
+            .unwrap()
+            .map(|e| {
+                let p = e.unwrap().path();
+                (
+                    p.file_name().unwrap().to_string_lossy().into_owned(),
+                    std::fs::read(&p).unwrap(),
+                    std::fs::metadata(&p).unwrap().modified().unwrap(),
+                )
+            })
+            .collect();
+        all.sort();
+        all
+    }
+
+    /// Every format 1 fixture opens, migrated, as the reader gives it, with its geometry; opening
+    /// writes nothing.
+    #[test]
+    fn format_1_models_open_migrated_and_opening_writes_nothing() {
+        for writer in V1_WRITERS {
+            format_1_models_of(writer);
+        }
+    }
+
+    fn format_1_models_of(writer: &str) {
+        let d = v1_fixtures("v1-open", writer);
+        let before = contents(&d);
+        let models: Vec<PathBuf> = before.iter().filter(|f| f.0.ends_with(".fieldcraft")).map(|f| d.join(&f.0)).collect();
+        assert!(models.len() >= 6, "{writer}");
+        for path in &models {
+            let mut s = Session::default();
+            let r = s.execute("file.open", &json!({"path": path})).unwrap();
+            assert_eq!(r["migrated_from"], 1, "{r}");
+            assert_eq!(r["warnings"], json!([]), "{}: {r}", path.display());
+            assert_eq!(s.migrated_from, Some(1));
+            assert!(!s.is_dirty(), "a migrated model has nothing unsaved: opening it again gives the same");
+            let file = fieldcraft_io::read(&std::fs::read(path).unwrap()).unwrap();
+            assert_eq!((&s.model, &s.journal, &s.view), (&file.model, &file.journal, &file.view));
+        }
+        assert_eq!(contents(&d), before, "opening wrote nothing");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// The first save over a format 1 file keeps a copy of it, says so, and is the only one.
+    #[test]
+    fn the_first_save_over_a_format_1_file_keeps_it() {
+        let d = v1_fixtures("v1-save", "0.7.0");
+        let path = d.join("hex-static.fieldcraft");
+        let original = std::fs::read(&path).unwrap();
+        let mut s = Session::default();
+        s.execute("file.open", &json!({"path": path})).unwrap();
+        s.execute("model.material.create", &json!({"name": "Alu", "elastic": {"type": "isotropic", "young": 70000, "poisson": 0.33}})).unwrap();
+        // Undo back to the migrated state keeps the mark.
+        s.execute("edit.undo", &json!({})).unwrap();
+        s.execute("edit.redo", &json!({})).unwrap();
+        assert_eq!(s.migrated_from, Some(1));
+        let r = s.execute("file.save", &json!({})).unwrap();
+        let kept = d.join("hex-static.v1.fieldcraft");
+        assert_eq!(r["backup"], json!(kept.to_string_lossy()), "{r}");
+        assert!(r["summary"].as_str().unwrap().contains("kept as hex-static.v1.fieldcraft"), "{r}");
+        assert_eq!(std::fs::read(&kept).unwrap(), original);
+        assert_eq!(s.migrated_from, None);
+        assert_eq!(fieldcraft_io::fs::format_of_file(&path), Some(fieldcraft_io::FORMAT_VERSION));
+        let r = s.execute("file.save", &json!({})).unwrap();
+        assert!(r.get("backup").is_none(), "{r}");
+        assert_eq!(std::fs::read(&kept).unwrap(), original, "the copy stays as it was");
+
+        // Save As elsewhere leaves the format 1 original alone and drops the mark.
+        let other = d.join("every-kind.fieldcraft");
+        let other_bytes = std::fs::read(&other).unwrap();
+        s.execute("file.open", &json!({"path": other})).unwrap();
+        s.execute("file.save_as", &json!({"path": d.join("copy.fieldcraft")})).unwrap();
+        assert_eq!((s.migrated_from, std::fs::read(&other).unwrap()), (None, other_bytes));
+        assert!(!d.join("every-kind.v1.fieldcraft").exists());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Work recovered from an autosave of a migrated model still counts as migrated: the autosave
+    /// is format 2, but the file it saves over is format 1.
+    #[test]
+    fn recovered_work_over_a_format_1_file_keeps_it_too() {
+        let d = v1_fixtures("v1-recover", "0.6.0");
+        let recovery = d.join("recovery");
+        let path = d.join("tet-frequency.fieldcraft");
+        let original = std::fs::read(&path).unwrap();
+        let mut s = Session::default();
+        s.execute("file.open", &json!({"path": path})).unwrap();
+        s.execute("model.material.create", &json!({"name": "Alu", "elastic": {"type": "isotropic", "young": 70000, "poisson": 0.33}})).unwrap();
+        let mut autosave = crate::autosave::Autosaver::new(&recovery).unwrap();
+        assert!(autosave.save(&s).unwrap());
+        let id = autosave.id().to_string();
+        drop(autosave);
+        assert_eq!(std::fs::read(&path).unwrap(), original, "autosaving never touches the model's own file");
+
+        let mut t = Session::default();
+        let r = t.execute("file.recover", &json!({"id": id, "dir": recovery})).unwrap();
+        assert_eq!(r["migrated_from"], 1, "{r}");
+        assert!(t.is_dirty());
+        assert_eq!(std::fs::read(&path).unwrap(), original, "recovering writes nothing");
+        t.execute("file.save", &json!({})).unwrap();
+        assert_eq!(std::fs::read(d.join("tet-frequency.v1.fieldcraft")).unwrap(), original);
+
+        // The file was replaced by a later FieldCraft since the autosave: the work is not
+        // "migrated from" it, but a save still keeps it. A confined session reads no file
+        // outside its roots to find out.
+        let later = {
+            use std::io::{Read, Write};
+            let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&original)).unwrap();
+            let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+            for i in 0..zip.len() {
+                let mut f = zip.by_index(i).unwrap();
+                let (name, mut b) = (f.name().unwrap().to_string(), Vec::new());
+                f.read_to_end(&mut b).unwrap();
+                if name == "fieldcraft.json" {
+                    b = String::from_utf8(b)
+                        .unwrap()
+                        .replace("fieldcraft/1", &format!("fieldcraft/{}", fieldcraft_io::FORMAT_VERSION + 1))
+                        .into_bytes();
+                }
+                out.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
+                out.write_all(&b).unwrap();
+            }
+            out.finish().unwrap().into_inner()
+        };
+        std::fs::write(&path, &later).unwrap();
+        let mut u = Session::default();
+        let r = u.execute("file.recover", &json!({"id": id, "dir": recovery})).unwrap();
+        assert_eq!(r["migrated_from"], Value::Null, "{r}");
+        let r = u.execute("file.save", &json!({})).unwrap();
+        assert!(r["backup"].as_str().unwrap().ends_with(&format!("tet-frequency.v{}.fieldcraft", fieldcraft_io::FORMAT_VERSION + 1)), "{r}");
+        let elsewhere = d.join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        let mut confined = Session { file_access: Roots::new(Some(&recovery), Some(&elsewhere)).unwrap(), ..Session::default() };
+        std::fs::write(&path, &original).unwrap();
+        let r = confined.execute("file.recover", &json!({"id": id, "dir": recovery})).unwrap();
+        assert_eq!(r["migrated_from"], Value::Null, "the file outside the read root is not read: {r}");
         let _ = std::fs::remove_dir_all(&d);
     }
 

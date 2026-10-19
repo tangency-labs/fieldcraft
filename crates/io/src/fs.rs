@@ -5,6 +5,11 @@
 //! moment leaves the old file or the new one, never a torn mix. The file being replaced can be
 //! kept as `<file>.bak` (itself written the same way).
 //!
+//! A file that is not positively a model of the format this version writes is never replaced by
+//! a model without a lasting copy: [`save_model`] first copies it beside it, to
+//! `<stem>.v<N>.fieldcraft` for a model of format N, `<stem>.backup.<ext>` for anything else (a
+//! name not taken yet; `.bak` is replaced by the next save, this copy never is).
+//!
 //! Adapted from SolidCraft's `crates/io/src/safe_write.rs` (MIT OR Apache-2.0), see
 //! ATTRIBUTION.md.
 //!
@@ -26,6 +31,22 @@ pub fn backup_path(path: &Path) -> PathBuf {
     PathBuf::from(s)
 }
 
+/// Most names tried for a format backup before a save gives up.
+const MAX_VERSION_BACKUPS: u32 = 1000;
+
+/// The names a copy of the file at `path` may take before a model replaces it, in order:
+/// `<stem>.v<N>.<ext>` for a model of format N, `<stem>.backup.<ext>` for any other file, then
+/// the same with `-2`, `-3`, … (`ext` is the file's own extension, `fieldcraft` when it has none).
+pub fn version_backup_paths(path: &Path, format: Option<u32>) -> impl Iterator<Item = PathBuf> + '_ {
+    let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "model".into());
+    let ext = path.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_else(|| crate::EXTENSION.into());
+    let tag = format.map_or_else(|| "backup".to_string(), |f| format!("v{f}"));
+    (1..=MAX_VERSION_BACKUPS).map(move |k| {
+        let suffix = if k == 1 { String::new() } else { format!("-{k}") };
+        path.with_file_name(format!("{stem}.{tag}{suffix}.{ext}"))
+    })
+}
+
 #[cfg(target_arch = "wasm32")]
 mod browser {
     use std::cell::RefCell;
@@ -43,6 +64,17 @@ mod browser {
     /// download).
     pub fn write_atomic(path: &Path, bytes: &[u8], _backup: bool) -> Result<()> {
         FILES.with(|f| f.borrow_mut().write(path, bytes))
+    }
+
+    /// Save a model file. The host hands each save out as a download, which replaces nothing,
+    /// so no copy is kept.
+    pub fn save_model(path: &Path, bytes: &[u8]) -> Result<Option<PathBuf>> {
+        write_atomic(path, bytes, false).map(|()| None)
+    }
+
+    /// The format of the model file at `path` (see [`crate::format_of`]).
+    pub fn format_of_file(path: &Path) -> Option<u32> {
+        FILES.with(|f| f.borrow().read(path, crate::MAX_FILE_BYTES).ok()).and_then(|b| crate::format_of(std::io::Cursor::new(b)))
     }
 
     /// Read a file of at most `max` bytes.
@@ -90,8 +122,8 @@ mod disk {
     use std::io::{Read, Write};
     use std::path::{Path, PathBuf};
 
-    use super::backup_path;
-    use crate::{Error, Result};
+    use super::{backup_path, version_backup_paths};
+    use crate::{Error, FORMAT_VERSION, Result};
 
     fn io_error(path: &Path, e: std::io::Error) -> Error {
         Error::Io(format!("{}: {e}", path.display()))
@@ -173,6 +205,56 @@ mod disk {
     /// `<path>.bak` first.
     pub fn write_atomic(path: &Path, bytes: &[u8], backup: bool) -> Result<()> {
         write_steps(path, bytes, backup, Step::Replaced).map_err(|e| io_error(path, e))
+    }
+
+    /// The format of the model file at `path`, from its manifest alone (see
+    /// [`crate::format_of`]); `None` when there is no such file or it is not a FieldCraft model.
+    pub fn format_of_file(path: &Path) -> Option<u32> {
+        let f = fs::File::open(path).ok().filter(|f| f.metadata().is_ok_and(|m| m.is_file() && m.len() <= crate::MAX_FILE_BYTES))?;
+        crate::format_of(std::io::BufReader::new(f))
+    }
+
+    /// Save a model file atomically, the old file kept as `<path>.bak`. Unless there is no file
+    /// at `path` or it is positively a model of the format this version writes, the file is first
+    /// copied to the first free name of [`version_backup_paths`], which no later save replaces:
+    /// an older model opened and migrated, a later one, a damaged one, one whose manifest this
+    /// version cannot read, or any other file a Save As replaces. The save is refused when that
+    /// copy cannot be made. Returns the copy's path.
+    pub fn save_model(path: &Path, bytes: &[u8]) -> Result<Option<PathBuf>> {
+        let format = format_of_file(path);
+        let kept = if path.exists() && format != Some(FORMAT_VERSION) { Some(keep_copy(path, format)?) } else { None };
+        write_atomic(path, bytes, true)?;
+        Ok(kept)
+    }
+
+    /// Copy `path` (a model of `format`, or another file) to the first of its backup names not
+    /// taken.
+    fn keep_copy(path: &Path, format: Option<u32>) -> Result<PathBuf> {
+        let what = format.map_or_else(|| "file".to_string(), |f| format!("format {f} file"));
+        let refused =
+            |e: std::io::Error| Error::Io(format!("{}: not saved, because a copy of the {what} could not be kept first: {e}", path.display()));
+        for target in version_backup_paths(path, format) {
+            match copy_new(path, &target) {
+                Ok(()) => return Ok(target),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(e) => return Err(refused(e)),
+            }
+        }
+        Err(refused(std::io::Error::other("every backup name is taken")))
+    }
+
+    /// Copy `from` to `to`, which must not exist yet (never replaced), flushed to disk. A copy
+    /// that fails part way is removed.
+    fn copy_new(from: &Path, to: &Path) -> std::io::Result<()> {
+        let mut out = OpenOptions::new().write(true).create_new(true).open(to)?;
+        let copied = fs::File::open(from).and_then(|mut src| std::io::copy(&mut src, &mut out)).and_then(|_| out.sync_all());
+        if let Err(e) = copied {
+            drop(out);
+            let _ = fs::remove_file(to);
+            return Err(e);
+        }
+        sync_dir(to);
+        Ok(())
     }
 
     /// Leftover temporary files of saves that never finished (a crash part way), next to `path`.

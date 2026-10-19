@@ -61,6 +61,7 @@ pub(crate) struct State {
 pub(crate) struct Document {
     pub(crate) path: Option<String>,
     pub(crate) saved_revision: Option<u64>,
+    pub(crate) migrated_from: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -167,7 +168,7 @@ impl Session {
     }
 
     pub(crate) fn document(&self) -> Document {
-        Document { path: self.path.clone(), saved_revision: self.saved_revision }
+        Document { path: self.path.clone(), saved_revision: self.saved_revision, migrated_from: self.migrated_from }
     }
 
     /// Make `document` current; returns the one it replaces.
@@ -175,6 +176,7 @@ impl Session {
         Document {
             path: std::mem::replace(&mut self.path, document.path),
             saved_revision: std::mem::replace(&mut self.saved_revision, document.saved_revision),
+            migrated_from: std::mem::replace(&mut self.migrated_from, document.migrated_from),
         }
     }
 
