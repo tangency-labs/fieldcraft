@@ -185,6 +185,14 @@ pub fn cell_values(r: &FluidResult, field: Field, f: &Frame) -> Result<Vec<f64>>
     Ok(values.into_iter().enumerate().map(|(k, v)| if solid(k) || !v.is_finite() { f64::NAN } else { v }).collect())
 }
 
+/// The smallest and largest value over the interior fluid cells, with their cells: the
+/// open-boundary (inlet and outlet) layers are excluded because a wake reaching a pressure outlet
+/// distorts the last layer (#590), which would otherwise report a spurious peak there.
+pub fn interior_range(r: &FluidResult, values: &[f64]) -> Option<((usize, f64), (usize, f64))> {
+    let inner: Vec<f64> = values.iter().enumerate().map(|(k, v)| if r.in_open_layer(k) { f64::NAN } else { *v }).collect();
+    cell_range(&inner).or_else(|| cell_range(values))
+}
+
 /// The smallest and largest value, with their cells.
 pub fn cell_range(values: &[f64]) -> Option<((usize, f64), (usize, f64))> {
     let mut out: Option<((usize, f64), (usize, f64))> = None;
@@ -326,7 +334,7 @@ pub fn plot(view: &ResultsView, result: &Arc<StepResult>, traced: &TraceCache) -
     let contour = match view.contour.filter(|c| matches!(c, Field::Velocity | Field::Pressure | Field::Temperature)) {
         Some(field) => {
             let values = cell_values(r, field, f)?;
-            cell_range(&values).map(|(min, max)| CellContour { field, bands: view.bands(min.1, max.1), min, max, values })
+            interior_range(r, &values).map(|(min, max)| CellContour { field, bands: view.bands(min.1, max.1), min, max, values })
         }
         None => None,
     };
@@ -542,7 +550,7 @@ pub fn report(view: &ResultsView, r: &FluidResult, display: &fieldcraft_model::D
         let q = field.quantity();
         let value = |v: f64| q.map_or(v, |q| shown(q, v, display));
         let end = |(k, v): (usize, f64)| json!({"cell": k, "at": shown_all(Quantity::Length, cell_centre(r, k), display), "value": value(v)});
-        let range = cell_range(&values).map(|(lo, hi)| json!({"min": end(lo), "max": end(hi)}));
+        let range = interior_range(r, &values).map(|(lo, hi)| json!({"min": end(lo), "max": end(hi)}));
         let unit = q.and_then(|q| unit_of(q, display));
         out["contour"] = json!({"field": field, "label": field.label(), "unit": unit, "range": range});
         if view.range_min.is_some() || view.range_max.is_some() {
@@ -609,6 +617,7 @@ pub(crate) mod tests {
             step: "Flow".into(),
             grid,
             solid,
+            open_faces: [false; 6],
             frames: vec![at_rest, last],
             history_times: Vec::new(),
             forces: Vec::new(),

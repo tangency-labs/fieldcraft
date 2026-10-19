@@ -1,7 +1,7 @@
 //! Verification of the lattice Boltzmann solver against analytic solutions: plane Poiseuille
 //! (exact with Λ = 3/16, second order otherwise), Couette (exact, with the wall shear force),
 //! Taylor–Green vortex decay (second order), Poiseuille pipe flow on a staircase wall, Stokes drag
-//! of a periodic array of spheres (Hasimoto 1959), inlet/outlet channel flow, mass conservation
+//! of a periodic array of spheres (Hasimoto 1959), inlet/outlet and pressure-driven channel flow, backflow at a short outlet, the wake-at-outlet limitation, mass conservation
 //! to round-off, and the stability limits.
 //!
 //! Each test prints its errors and measured orders (`cargo test -p fieldcraft-lbm -- --nocapture`).
@@ -325,6 +325,115 @@ fn channel_with_a_parabolic_inlet_and_a_pressure_outlet_develops_poiseuille_flow
     // The walls take the pressure drop: their drag balances it.
     let wall: f64 = r.forces.iter().filter(|f| f.name == "y_min" || f.name == "y_max").map(|f| f.force.last().unwrap()[0]).sum();
     assert!(wall > 0.0);
+}
+
+/// Plane Poiseuille flow driven by the pressures alone: Zou–He pressure faces at both ends
+/// (Δp = 12 μ Ū L / H²), plates 1 apart, 3 long, 16 cells across. The profile is the parabola
+/// within 3 % and each end holds its pressure: a guard for any later change of the open
+/// boundaries (an anti-bounce-back outlet tried in #598 doubled the error and shifted both ends).
+#[test]
+fn pressure_driven_poiseuille_holds_its_end_pressures() {
+    let (h, l, nu, umax, n) = (1.0, 3.0, 0.05, 0.1, 16);
+    let dx = h / n as f64;
+    let dp = 12.0 * nu * (2.0 / 3.0 * umax) * l / (h * h);
+    let mut d = domain([0.0; 3], [l, h, dx], dx);
+    d.faces.x_min = FaceCondition::Pressure { pressure: dp };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0 };
+    d.faces.z_min = PERIODIC;
+    d.faces.z_max = PERIODIC;
+    let dt = 0.1 / 3.0 * dx * dx / nu;
+    let procedure = fieldcraft_model::Procedure::Fluid {
+        domain: "Flow".into(),
+        end_time: Some(4.0 * h * h / nu),
+        steps: None,
+        time_step: Some(dt),
+        frames: 1,
+        magic: None,
+        steady: None,
+        collision: None,
+    };
+    let r = solve_fluid(&model(1.0, nu, d, procedure), Some("Run"), &[], &Limits::default()).unwrap();
+    let last = r.frames.last().unwrap();
+    let nx = r.grid.cells[0];
+    let mut err: f64 = 0.0;
+    for j in 0..n {
+        let y = (j as f64 + 0.5) * dx;
+        let exact = 4.0 * umax * y * (h - y) / (h * h);
+        err = err.max((f64::from(last.velocity[r.grid.index([nx / 2, j, 0])][0]) - exact).abs() / umax);
+    }
+    let p = |i: usize| f64::from(last.pressure[r.grid.index([i, n / 2, 0])]);
+    println!("pressure-driven Poiseuille: profile error {err:.3e}, end pressures {:.5} / {:.5} of {dp:.5} / 0", p(0), p(nx - 1));
+    assert!(err < 0.03, "{err}");
+    assert!((p(0) / dp - 1.0).abs() < 1e-3 && (p(nx - 1) / dp).abs() < 1e-3, "{} {}", p(0), p(nx - 1));
+}
+
+/// Schäfer–Turek's channel at Re = 100, cut 1 diameter behind the cylinder (l = 0.3): the
+/// shedding wake reaches the pressure outlet with reversed flow in some of its cells, and the run
+/// stays stable and conserves mass (an anti-bounce-back outlet tried in #598 diverged here).
+#[test]
+fn a_short_channel_at_re_100_survives_backflow_at_the_outlet() {
+    let (h, l, d, um, nu, dx) = (0.41, 0.3, 0.1, 1.5, 1e-3, 0.01);
+    let mut dom = domain([0.0; 3], [l, h, dx], dx);
+    dom.faces.x_min = FaceCondition::Velocity { velocity: [um, 0.0, 0.0], profile: Profile::Parabolic };
+    dom.faces.x_max = FaceCondition::Pressure { pressure: 0.0 };
+    dom.faces.z_min = PERIODIC;
+    dom.faces.z_max = PERIODIC;
+    dom.obstacles = vec!["Cylinder".into()];
+    let cyl = obstacle("Cylinder", cylinder([0.2, 0.2], d / 2.0, -0.1, 0.1, 256), &["side", "bottom", "top"]);
+    let procedure = fieldcraft_model::Procedure::Fluid {
+        domain: "Flow".into(),
+        end_time: Some(4.0),
+        steps: None,
+        time_step: Some(0.05 * dx / um),
+        frames: 8,
+        magic: None,
+        steady: None,
+        collision: None,
+    };
+    let r = solve_fluid(&model(1.0, nu, dom, procedure), None, std::slice::from_ref(&cyl), &Limits::default()).unwrap();
+    let [nx, ny, _] = r.grid.cells;
+    let reversed = r.frames.iter().map(|f| (0..ny).filter(|j| f.velocity[r.grid.index([nx - 1, *j, 0])][0] < 0.0).count()).max().unwrap_or(0);
+    let (m0, m1) = (r.frames[0].mass, r.frames.last().unwrap().mass);
+    println!("Re 100 short channel: up to {reversed} reversed outlet cells, mass change {:.2e}", m1 / m0 - 1.0);
+    // The case must actually reverse flow at the outlet, or the test passes vacuously.
+    assert!(reversed > 0, "no reversed outlet cells: the wake no longer reaches the outlet");
+    assert!((m1 / m0 - 1.0).abs() < 0.01);
+}
+
+/// Known limitation (#590): a Zou–He pressure outlet forces its layer to one pressure, so where a
+/// wake has not recovered (Schäfer–Turek 2D-1 cut 1.5 diameters behind the cylinder) the last
+/// layer departs from the profile of the layers inside it: the speed rises through that one-cell
+/// pressure step. The reported extremes leave the open-boundary layers out for this reason. The
+/// interior must stay smooth; the outlet layer's departure is printed, not checked.
+#[test]
+fn a_wake_at_a_pressure_outlet_distorts_only_the_last_layer() {
+    let (h, l, d, um, nu, dx) = (0.41, 0.4, 0.1, 0.3, 1e-3, 0.01);
+    let mut dom = domain([0.0; 3], [l, h, dx], dx);
+    dom.faces.x_min = FaceCondition::Velocity { velocity: [um, 0.0, 0.0], profile: Profile::Parabolic };
+    dom.faces.x_max = FaceCondition::Pressure { pressure: 0.0 };
+    dom.faces.z_min = PERIODIC;
+    dom.faces.z_max = PERIODIC;
+    dom.obstacles = vec!["Cylinder".into()];
+    let cyl = obstacle("Cylinder", cylinder([0.2, 0.2], d / 2.0, -0.1, 0.1, 256), &["side", "bottom", "top"]);
+    let procedure = fieldcraft_model::Procedure::Fluid {
+        domain: "Flow".into(),
+        end_time: Some(4.0),
+        steps: None,
+        time_step: Some(0.025 * dx / um),
+        frames: 1,
+        magic: None,
+        steady: None,
+        collision: None,
+    };
+    let r = solve_fluid(&model(1.0, nu, dom, procedure), None, std::slice::from_ref(&cyl), &Limits::default()).unwrap();
+    let last = r.frames.last().unwrap();
+    let [nx, ny, _] = r.grid.cells;
+    let ux = |i: usize, j: usize| f64::from(last.velocity[r.grid.index([i, j, 0])][0]);
+    let departure = |i: usize| (0..ny).map(|j| (ux(i, j) - (2.0 * ux(i - 1, j) - ux(i - 2, j))).abs()).fold(0.0, f64::max);
+    println!("wake at the outlet: interior departure {:.2e}, outlet layer {:.2e} (of {um})", departure(nx - 2), departure(nx - 1));
+    assert!(ux(nx - 1, ny / 2) < 0.5 * um, "the wake reaches the outlet");
+    assert!(departure(nx - 2) < 0.03 * um, "{}", departure(nx - 2));
+    assert!(r.in_open_layer(r.grid.index([nx - 1, 0, 0])) && !r.in_open_layer(r.grid.index([nx - 2, 0, 0])));
 }
 
 #[test]

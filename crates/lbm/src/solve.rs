@@ -103,6 +103,8 @@ pub struct FluidResult {
     pub grid: Grid,
     /// Per cell: not fluid (inside an obstacle).
     pub solid: Vec<bool>,
+    /// Per box face (in [`fieldcraft_model::BoxFace::ALL`] order): an inlet or outlet.
+    pub open_faces: [bool; 6],
     /// The initial field and `frames` more, evenly spaced to the end.
     pub frames: Vec<Frame>,
     pub history_times: Vec<f64>,
@@ -122,6 +124,17 @@ pub struct FluidResult {
 }
 
 impl FluidResult {
+    /// Whether a cell lies in the layer of an inlet or outlet face. A Zou–He pressure outlet
+    /// forces its layer to one pressure; where a wake still carries its pressure field there,
+    /// the speed in that layer is distorted (#590), so the reported extremes leave these out.
+    pub fn in_open_layer(&self, cell: usize) -> bool {
+        let ijk = self.grid.coords(cell);
+        fieldcraft_model::BoxFace::ALL.iter().zip(self.open_faces).any(|(f, open)| {
+            let a = f.axis();
+            open && ijk[a] == if f.is_max() { self.grid.cells[a].saturating_sub(1) } else { 0 }
+        })
+    }
+
     /// The cell containing a point and the frame's velocity, pressure and temperature (`None`
     /// without heat) there (`None` outside the grid; zeros in a solid cell).
     pub fn probe(&self, frame: usize, p: [f64; 3]) -> Option<(usize, [f32; 3], f32, Option<f64>)> {
@@ -328,10 +341,14 @@ pub fn run(setup: &Setup, flow: &mut dyn Backend, limits: &Limits) -> Result<Flu
             .push(format!("solved on {}: single precision, deterministic on this device, within the backend's tolerance of the CPU", flow.name()));
     }
     let solid: Vec<bool> = (0..n).map(|c| !flow.is_fluid(c)).collect();
+    let open_faces = fieldcraft_model::BoxFace::ALL.map(|f| {
+        matches!(setup.domain.faces.get(f), fieldcraft_model::FaceCondition::Velocity { .. } | fieldcraft_model::FaceCondition::Pressure { .. })
+    });
     Ok(FluidResult {
         step: setup.step.clone(),
         grid: setup.grid,
         solid,
+        open_faces,
         frames: out_frames,
         history_times,
         forces: flow.groups().iter().zip(forces).map(|(g, force)| ForceHistory { name: g.name.clone(), body: g.body.clone(), force }).collect(),

@@ -102,7 +102,7 @@ pub const HISTORY: CommandSpec = CommandSpec {
 pub const FLUID: CommandSpec = CommandSpec {
     id: "solve.fluid",
     label: "Solve Fluid Step",
-    params: r#"{"step": "Flow", "backend": "cpu", "max_cells": 16000000, "max_steps": 10000000, "max_cell_updates": 1e12, "max_frame_bytes": 2e9, "threads": 8} — runs a fluid step with the lattice Boltzmann solver (the only fluid step when `step` is left out): obstacles are triangulated from the open design or taken from imported surfaces; returns the time step, relaxation time, Mach number, mass, the largest speed of all frames (`max_speed`, at `max_speed_time`) and of the last frame (`final_max_speed`), the final force on every wall and, with heat, the thermal relaxation time, the temperature range and the heat into every wall; with fans and porous zones, each one's volume flow and its pressure rise (a fan's operating point: `pressure_rise` from its curve, and `measured_pressure_rise`) or `pressure_drop`; the measured values are the static-pressure difference between the fluid cell layers just outside the zone, so they include the wall friction over its thickness plus one cell (final and mean over the last quarter of the run); `backend` is `cpu` (the default: double precision, the same result on every machine) or `gpu` (the step on the GPU `FIELDCRAFT_GPU` picks, single precision, within the backend's stated tolerance of the CPU; an error when the build has none); the caps may only be lowered; `threads` as for solve.static"#,
+    params: r#"{"step": "Flow", "backend": "cpu", "max_cells": 16000000, "max_steps": 10000000, "max_cell_updates": 1e12, "max_frame_bytes": 2e9, "threads": 8} — runs a fluid step with the lattice Boltzmann solver (the only fluid step when `step` is left out): obstacles are triangulated from the open design or taken from imported surfaces; returns the time step, relaxation time, Mach number, mass, the largest speed of all frames (`max_speed`, at `max_speed_time`) and of the last frame (`final_max_speed`), over interior fluid cells (the open-boundary layers are excluded because a wake reaching a pressure outlet distorts the last layer), the final force on every wall and, with heat, the thermal relaxation time, the temperature range and the heat into every wall; with fans and porous zones, each one's volume flow and its pressure rise (a fan's operating point: `pressure_rise` from its curve, and `measured_pressure_rise`) or `pressure_drop`; the measured values are the static-pressure difference between the fluid cell layers just outside the zone, so they include the wall friction over its thickness plus one cell (final and mean over the last quarter of the run); `backend` is `cpu` (the default: double precision, the same result on every machine) or `gpu` (the step on the GPU `FIELDCRAFT_GPU` picks, single precision, within the backend's stated tolerance of the CPU; an error when the build has none); the caps may only be lowered; `threads` as for solve.static"#,
     form: Some(super::forms::SOLVE_FLUID),
     kind: CommandKind::Model,
     requires: &[Requirement::FluidDomain, Requirement::Step],
@@ -579,7 +579,13 @@ fn fluid_summary(r: &FluidResult, display: &DisplaySystem) -> Value {
     let last = r.frames.last();
     // The largest speed of every frame: `max_speed` is the largest of all (the start-up often
     // passes the final state), `final_max_speed` the last frame's.
-    let frame_max: Vec<f64> = r.frames.iter().map(|f| f.velocity.iter().map(speed).fold(0.0, f64::max)).collect();
+    // Over interior fluid cells: the open-boundary layers are excluded because a wake reaching a
+    // pressure outlet distorts the last layer (#590).
+    let frame_max: Vec<f64> = r
+        .frames
+        .iter()
+        .map(|f| f.velocity.iter().enumerate().filter(|(k, _)| !r.in_open_layer(*k)).map(|(_, v)| speed(v)).fold(0.0, f64::max))
+        .collect();
     let (peak_frame, max_speed) = frame_max.iter().copied().enumerate().fold((0, 0.0), |best, (k, v)| if v > best.1 { (k, v) } else { best });
     // The mean over the last quarter of the history smooths the acoustic noise of the
     // weakly compressible scheme.
@@ -1377,6 +1383,12 @@ pub(crate) mod tests {
         assert_eq!((summary["max_speed"].as_f64(), summary["max_speed_time"].as_f64()), (Some(50.0), Some(0.5)), "{summary}");
         // The last frame's fastest cell: x = 9 of ten cells, speed 10.
         assert_eq!(summary["final_max_speed"].as_f64(), Some(10.0), "{summary}");
+        // With an inlet and an outlet on the x faces, their layers (x = 0 and 9) are left out.
+        r.open_faces[0] = true;
+        r.open_faces[1] = true;
+        assert_eq!(fluid_summary(&r, &fieldcraft_model::DisplaySystem::default())["final_max_speed"].as_f64(), Some(9.0));
+        let values = crate::flow::cell_values(&r, crate::results::Field::Velocity, r.frames.last().unwrap()).unwrap();
+        assert_eq!(crate::flow::interior_range(&r, &values).map(|(lo, hi)| (lo.1, hi.1)), Some((2.0, 9.0)));
     }
 
     #[test]
