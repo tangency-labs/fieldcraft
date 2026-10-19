@@ -54,6 +54,9 @@ pub const REGULARIZED_TAU_LIMIT: f64 = 0.508;
 /// The default two-relaxation-time parameter Λ: bounce-back walls exactly halfway between cells
 /// (Ginzburg, Verhaeghe & d'Humières 2008).
 pub const DEFAULT_MAGIC: f64 = 3.0 / 16.0;
+/// A lattice Mach number above this (with its round-off) is warned about: the compressibility
+/// error, of order Ma², becomes visible.
+const MACH_WARNING: f64 = 0.1 + 1e-12; // unit-factors: a Mach number, with its round-off
 
 /// The surface of an obstacle body and the persistent name of each of its faces (by the
 /// triangles' face tags); prepared by the caller from the geometry.
@@ -178,7 +181,7 @@ impl ZoneSetup {
 
 /// The cells whose centres lie in `[min, max]`, per axis `lo..=hi`, or `None` when there are none.
 fn cell_range(grid: &Grid, min: [f64; 3], max: [f64; 3]) -> Option<([usize; 3], [usize; 3])> {
-    const TOL: f64 = 1e-9;
+    const TOL: f64 = 1e-9; // unit-factors: a fraction of a cell
     let (mut lo, mut hi) = ([0usize; 3], [0usize; 3]);
     for a in 0..3 {
         let h = grid.spacing;
@@ -506,7 +509,7 @@ impl Setup {
             domain_obstacles.push(ObstacleFaces { index, names, velocities, thermal: thermal_faces });
         }
         let zones = zones(&domain, &grid, viscosity, dt, density)?;
-        if mach > 0.1 + 1e-12 {
+        if mach > MACH_WARNING {
             warnings.push(format!(
                 "lattice Mach number {mach:.3}: the compressibility error, of order Ma² ≈ {:.1}%, may be visible",
                 100.0 * mach * mach

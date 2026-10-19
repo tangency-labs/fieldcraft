@@ -656,6 +656,10 @@ impl Mesh {
     }
 }
 
+/// Loads and reactions balance when they differ by less than this fraction of
+/// [`balance_scale`]; heat supplied and removed, of the gross heat flows.
+pub const BALANCE_TOLERANCE: f64 = 1e-6; // unit-factors: relative to the balance's scale
+
 /// The scale of the loads-and-reactions balance check: the largest load or reaction, nodal ones
 /// too, since reactions that cancel out (a part squeezed between held faces) still set it.
 pub(crate) fn balance_scale(applied: &[f64; 3], total: &[f64; 3], reaction: &[[f64; 3]]) -> f64 {

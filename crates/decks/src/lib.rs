@@ -226,7 +226,10 @@ pub(crate) struct Equation {
 }
 
 /// A coefficient below this fraction of its row's largest is round-off of the elimination.
-const NEGLIGIBLE: f64 = 1e-12;
+const NEGLIGIBLE: f64 = 1e-12; // unit-factors: relative to the row's largest coefficient
+/// A held node is on its inclined plane when the equation's residual is below this fraction of
+/// the sum of its terms' magnitudes.
+const ON_PLANE: f64 = 1e-9; // unit-factors: relative to the equation's terms
 
 /// The equations of the inclined symmetry conditions `names` (others are skipped), node by node
 /// in label order: n · u = 0 and, at a node in `rotating`, t₁ · θ = 0 and t₂ · θ = 0 for the
@@ -303,7 +306,7 @@ pub(crate) fn symmetry_equations<'a>(
                     problems.insert(format!(
                         "boundary condition `{name}`: at node {node} every degree of freedom the inclined symmetry plane relates is held in some steps only or follows a coupling or tie, so none can be eliminated by its equation"
                     ));
-                } else if residual.abs() > 1e-9 * size {
+                } else if residual.abs() > ON_PLANE * size {
                     problems.insert(format!("boundary condition `{name}`: node {node} is held off the inclined symmetry plane"));
                 }
                 continue;

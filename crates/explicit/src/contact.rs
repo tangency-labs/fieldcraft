@@ -98,6 +98,10 @@ pub const DEPTH_FRACTION: f64 = 0.5;
 /// Facing faces: the dot product of their unit normals is below minus this.
 pub const FACING: f64 = 0.1;
 
+/// A node behind a face by less than this fraction of the coordinates' size is touching it:
+/// coordinates are exact to a few units in the last place.
+const ROUND_OFF: f64 = 1e-9; // unit-factors: relative to the coordinates' size
+
 /// Faces per parallel task.
 const BLOCK: usize = 64;
 
@@ -618,7 +622,7 @@ impl Interface {
                 // Coordinates are exact to a few units in the last place: a node a hair behind a
                 // face it was meshed on is touching, not inside.
                 let scale = x.iter().fold(extent, |m, c| m.max(c.abs()));
-                if -q.gap <= 1e-9 * scale {
+                if -q.gap <= ROUND_OFF * scale {
                     continue;
                 }
                 let label = labels.get(n).copied().unwrap_or(0);

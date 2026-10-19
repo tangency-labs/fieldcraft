@@ -63,7 +63,7 @@ type Vec3 = fieldcraft_fem::frame::Vec3;
 const GRID_CELLS_PER_FACE: usize = 4;
 
 /// A secondary coefficient below this fraction of its node's total is round-off.
-const NEGLIGIBLE: f64 = 1e-12;
+const NEGLIGIBLE: f64 = 1e-12; // unit-factors: relative to the node's total
 
 /// x = M⁻¹ b for a small symmetric positive definite M (Gauss–Jordan with partial pivoting);
 /// `None` when it is singular.

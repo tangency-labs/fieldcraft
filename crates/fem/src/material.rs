@@ -52,13 +52,17 @@ pub fn isotropic(young: f64, poisson: f64) -> Result<Elasticity> {
     Ok(d)
 }
 
+/// Engineering constants whose compliance's determinant is below this fraction of the product of
+/// its diagonal are not positive definite (or as good as singular).
+const SINGULAR_COMPLIANCE: f64 = 1e-12; // unit-factors: relative to the diagonal's product
+
 /// The orthotropic elasticity matrix from engineering constants.
 pub fn orthotropic(young: [f64; 3], poisson: [f64; 3], shear: [f64; 3]) -> Result<Elasticity> {
     let [e1, e2, e3] = young;
     let [n12, n13, n23] = poisson;
     let s = [[1.0 / e1, -n12 / e1, -n13 / e1], [-n12 / e1, 1.0 / e2, -n23 / e2], [-n13 / e1, -n23 / e2, 1.0 / e3]];
     let scale = (1.0 / e1) * (1.0 / e2) * (1.0 / e3);
-    let inverse = inverse3(&s).filter(|(_, det)| *det > 1e-12 * scale);
+    let inverse = inverse3(&s).filter(|(_, det)| *det > SINGULAR_COMPLIANCE * scale);
     let Some((normal, _)) = inverse.filter(|_| shear.iter().all(|g| *g > 0.0 && g.is_finite())) else {
         return Err(Error::Invalid("the orthotropic constants do not describe a stable material".into()));
     };

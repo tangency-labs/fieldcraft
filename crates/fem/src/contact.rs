@@ -73,10 +73,13 @@ pub fn closest_point(face: &[Vec3], p: Vec3) -> Option<Projection> {
     Some(Projection { xi, weights, point, normal, gap, distance, lateral })
 }
 
+/// A vector shorter than this fraction of its scale has no direction.
+const NO_DIRECTION: f64 = 1e-12; // unit-factors: relative to the vector's scale
+
 /// The unit vector along `v`, unless it is too short against `scale` (a squared length).
 fn unit(v: Vec3, scale: f64) -> Option<Vec3> {
     let n = norm(v);
-    (n > 1e-12 * scale && n.is_finite()).then(|| v.map(|c| c / n))
+    (n > NO_DIRECTION * scale && n.is_finite()).then(|| v.map(|c| c / n))
 }
 
 /// Ericson's closest point on triangle abc: (barycentric v, w), weights, unit normal.
@@ -203,6 +206,9 @@ pub const MAX_GRID_CELLS: usize = 1 << 24;
 /// Most entries of a grid (box × cell overlaps).
 pub const MAX_GRID_ITEMS: usize = 1 << 27;
 
+/// The smallest grid cell, as a fraction of the boxes' span (point-like boxes).
+const MIN_CELL: f64 = 1e-6; // unit-factors: relative to the boxes' span
+
 impl Grid {
     /// The grid of `boxes` (their indices are the entries; boxes that are not finite are left
     /// out), with at most `max_cells` cells (and [`MAX_GRID_CELLS`]).
@@ -225,7 +231,7 @@ impl Grid {
         let span = (0..3).map(|k| highest[k] - lowest[k]).fold(0.0, f64::max);
         let max_cells = max_cells.clamp(1, MAX_GRID_CELLS);
         // Twice the mean box size, but not below a millionth of the span (point-like boxes).
-        let mut cell = (2.0 * extent / count as f64).max(1e-6 * span).max(f64::MIN_POSITIVE);
+        let mut cell = (2.0 * extent / count as f64).max(MIN_CELL * span).max(f64::MIN_POSITIVE);
         for _ in 0..200 {
             let dims = [0, 1, 2].map(|k| ((highest[k] - lowest[k]) / cell).floor() + 1.0);
             let cells = dims[0] * dims[1] * dims[2];

@@ -46,6 +46,13 @@ pub const BALANCE_TOLERANCE: f64 = 0.01;
 /// (the internal energy may fall back to zero, as in a rebound).
 pub const HOURGLASS_TOLERANCE: f64 = 0.1;
 
+/// Times this close to another, as a fraction of it, are the same time (the schedule's next
+/// output, the step's end): what is left of summing time increments.
+const SAME_TIME: f64 = 1e-12; // unit-factors: relative to the time compared with
+
+/// Hourglass energy below this fraction of the run's largest energy is round-off.
+const HOURGLASS_ROUND_OFF: f64 = 1e-9; // unit-factors: relative to the largest energy
+
 /// The step named `name`, or the model's only explicit dynamic step.
 fn select_step<'m>(model: &'m Model, name: Option<&str>) -> Result<(&'m Step, &'m ExplicitDynamic)> {
     let step = model.select_step(name, Procedure::is_dynamic, "explicit dynamic")?;
@@ -63,7 +70,7 @@ struct Schedule {
 
 impl Schedule {
     fn due(&mut self, t: f64) -> bool {
-        if t < self.next * (1.0 - 1e-12) {
+        if t < self.next * (1.0 - SAME_TIME) {
             return false;
         }
         self.next = ((t / self.interval).floor() + 1.0) * self.interval;
@@ -392,7 +399,7 @@ pub fn solve_explicit(model: &Model, step: Option<&str>, limits: &Limits) -> Res
             eroded.push(ErodedElement { label: sys.elements.get(index).copied().unwrap_or(0), time: t, failure, internal_energy: internal });
         }
         let remaining = end - t;
-        let last = remaining <= 1e-12 * end;
+        let last = remaining <= SAME_TIME * end;
         let dt_next = if last { 0.0 } else { (scale * crit).min(remaining) };
         let dt_n = 0.5 * (dt_half + dt_next);
         if !contacts.is_empty() {
@@ -481,8 +488,8 @@ pub fn solve_explicit(model: &Model, step: Option<&str>, limits: &Limits) -> Res
         warnings.push(format!("the energy balance is off by {:.2}% of the largest energy (kinetic, internal or work)", 100.0 * error));
     }
     // Round-off hourglass energy in a model at rest or in rigid motion is not worth a warning.
-    let floor =
-        1e-9 * [initial_kinetic, energy.kinetic, peak_internal, energy.external.abs(), energy.constraint.abs()].into_iter().fold(0.0, f64::max);
+    let floor = HOURGLASS_ROUND_OFF
+        * [initial_kinetic, energy.kinetic, peak_internal, energy.external.abs(), energy.constraint.abs()].into_iter().fold(0.0, f64::max);
     if energy.hourglass.abs() > HOURGLASS_TOLERANCE * peak_internal && energy.hourglass.abs() > floor {
         warnings.push(format!(
             "hourglass energy is {:.1}% of the largest internal energy; refine the mesh or change the hourglass control",

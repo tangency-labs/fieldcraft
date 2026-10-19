@@ -15,6 +15,9 @@ pub const MAX_HISTORY: u64 = 10_000;
 /// A relative density variation above this at the end of a run is reported.
 pub const COMPRESSIBILITY_WARNING: f64 = 0.01;
 
+/// Bytes in a megabyte, for messages.
+const MEGABYTE: f64 = 1e6; // unit-factors: bytes of memory, not a physical quantity
+
 /// The velocity and pressure field at one time, per cell (index `i + nx (j + ny k)`; zero in
 /// solid cells). Stored in single precision: output for display and probing.
 #[derive(Debug, Clone, PartialEq)]
@@ -199,8 +202,8 @@ pub fn run(setup: &Setup, flow: &mut dyn Backend, limits: &Limits) -> Result<Flu
         return Err(Error::Limit(format!(
             "{} frames of {n} cells need {:.0} MB, above the cap of {:.0} MB; write fewer frames or raise `max_frame_bytes`",
             frames + 1,
-            frame_bytes / 1e6,
-            limits.max_frame_bytes as f64 / 1e6
+            frame_bytes / MEGABYTE,
+            limits.max_frame_bytes as f64 / MEGABYTE
         )));
     }
     let every = total.div_ceil(MAX_HISTORY).max(1);

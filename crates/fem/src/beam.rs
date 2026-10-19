@@ -218,13 +218,16 @@ fn line_axis(xyz: &[[f64; 3]]) -> Result<(Vec3, f64)> {
     Ok((ex, length))
 }
 
+/// An orientation vector within this sine of the beam's axis is parallel to it.
+const PARALLEL: f64 = 1e-6; // unit-factors: the sine of an angle
+
 /// The beam's local axes from its end points and orientation vector.
 fn beam_axes(xyz: &[[f64; 3]], orientation: Vec3) -> Result<(Axes, f64)> {
     let (ex, length) = line_axis(xyz)?;
     let o = unit(orientation).ok_or_else(|| Error::Invalid("a beam's orientation vector must be nonzero and finite".into()))?;
     let proj = sub(o, ex.map(|c| c * dot(o, ex)));
     let ey = unit(proj)
-        .filter(|_| norm(proj) > 1e-6)
+        .filter(|_| norm(proj) > PARALLEL)
         .ok_or_else(|| Error::Invalid("the beam section's orientation vector is parallel to the beam".into()))?;
     Ok(([ex, ey, cross(ex, ey)], length))
 }

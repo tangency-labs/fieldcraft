@@ -268,7 +268,14 @@ const SHRINK: f64 = 0.75;
 const FAST_ITERATIONS: usize = 4;
 const SLOW_ITERATIONS: usize = 8;
 /// A force residual this fraction of its tolerance is round-off.
-const ROUND_OFF: f64 = 1e-3;
+const ROUND_OFF: f64 = 1e-3; // unit-factors: relative to the force tolerance
+/// Increments and times within this fraction of each other are the same: what is left of summing
+/// increments.
+const SAME_TIME: f64 = 1e-9; // unit-factors: relative to the increment
+/// The smallest displacement scale, as a fraction of the model's size.
+const LENGTH_FLOOR: f64 = 1e-12; // unit-factors: relative to the model's size
+/// A follower load's skew stiffness above this fraction of the whole is worth a note.
+const NOTABLE_ASYMMETRY: f64 = 1e-6; // unit-factors: a ratio of norms
 
 /// A pressure on element faces (or 2D edges) that follows the deformation.
 struct Follower {
@@ -726,7 +733,7 @@ impl Run<'_> {
     /// reference (so a rotation the increment barely changes is measured by what its error
     /// moves, not against round-off).
     fn motion_references(&self, translation: f64, rotation: f64) -> (f64, f64) {
-        let t = translation.max(1e-12 * self.length);
+        let t = translation.max(LENGTH_FLOOR * self.length);
         (t, rotation.max(t / self.length))
     }
 
@@ -1378,7 +1385,7 @@ fn solve_on(model: &Model, step: &str, limits: &Limits, notes: Vec<String>) -> R
             // An increment ends at the next point of the load path at the latest.
             let turn = settings.next_turn(t);
             let remaining = turn - t;
-            let (target, this) = if size >= remaining * (1.0 - 1e-9) { (turn, remaining) } else { (t + size, size) };
+            let (target, this) = if size >= remaining * (1.0 - SAME_TIME) { (turn, remaining) } else { (t + size, size) };
             let target_lambda = settings.load_factor(target);
             let change = if settings.load_path.is_some() { target_lambda - lambda } else { this };
             let mut iterations = Vec::new();
@@ -1458,7 +1465,7 @@ fn solve_on(model: &Model, step: &str, limits: &Limits, notes: Vec<String>) -> R
                     });
                     fast = 0;
                     size = this * CUTBACK;
-                    if size < settings.min_increment * (1.0 - 1e-9) {
+                    if size < settings.min_increment * (1.0 - SAME_TIME) {
                         return Err(Error::NotConverged(format!(
                             "step `{}` stopped at load factor {lambda:.6} (step fraction {t:.6}): the increment to {target_lambda:.6} failed ({reason}) and a smaller one would be below the minimum increment {}",
                             step.name, settings.min_increment
@@ -1488,7 +1495,7 @@ fn solve_on(model: &Model, step: &str, limits: &Limits, notes: Vec<String>) -> R
         ));
     }
     if let Some(a) = problem.follower_asymmetry(&u, lambda)?
-        && a > 1e-6
+        && a > NOTABLE_ASYMMETRY
     {
         warnings.push(format!(
             "follower pressure: the skew part of its load stiffness ({a:.1e} of it, over the free degrees of freedom) is left out of the tangent; the solution is exact, Newton may converge more slowly"
@@ -1587,7 +1594,7 @@ fn finish(
     let scale = crate::system::balance_scale(&applied_total, &reaction_total, &reaction);
     let ground = mesh.discrete.ground_force(&u, mesh);
     let imbalance = (0..3).map(|c| (applied_total[c] + reaction_total[c] + ground[c]).abs()).fold(0.0, f64::max);
-    if scale > 0.0 && imbalance > 1e-6 * scale {
+    if scale > 0.0 && imbalance > crate::system::BALANCE_TOLERANCE * scale {
         warnings.push(format!("loads and reactions differ by {imbalance:.3e} (relative {:.1e})", imbalance / scale));
     }
     Ok(StaticResult {
@@ -1871,7 +1878,7 @@ fn arc_length(
                 });
                 fast = 0;
                 size *= CUTBACK;
-                if size < smallest * (1.0 - 1e-9) {
+                if size < smallest * (1.0 - SAME_TIME) {
                     return Err(Error::NotConverged(format!(
                         "arc-length step `{}` stopped at load factor {lambda:.6}: an increment failed ({reason}) and a shorter arc would be below the minimum increment",
                         step.name

@@ -50,7 +50,7 @@ use crate::{Error, Result};
 pub const MAX_ITERATIONS: u32 = 100;
 
 /// The smallest Johnson–Cook fracture strain.
-pub const MIN_FRACTURE_STRAIN: f64 = 1e-6;
+pub const MIN_FRACTURE_STRAIN: f64 = 1e-6; // unit-factors: a strain
 
 /// The flow stress of a plastic material.
 #[derive(Debug, Clone, PartialEq)]

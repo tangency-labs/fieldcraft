@@ -99,6 +99,13 @@ const NEGLIGIBLE: f64 = 1e-10;
 /// constraints: eliminating it would divide by round-off (#389), so it is a conflict.
 const NEARLY_REPEATED: f64 = 1e-4;
 
+/// A row held by prescribed values alone is consistent with them when its residual is below this
+/// fraction of the size of its terms.
+const CONSISTENT: f64 = 1e-9; // unit-factors: relative to the row's terms
+
+/// Bytes in a gigabyte, for messages.
+const GIGABYTE: f64 = 1e9; // unit-factors: bytes of memory, not a physical quantity
+
 fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
 }
@@ -445,7 +452,7 @@ fn reserved<T>(n: usize) -> Result<Vec<T>> {
 }
 
 fn gigabytes(bytes: usize) -> String {
-    format!("{:.2} GB", bytes as f64 / 1e9)
+    format!("{:.2} GB", bytes as f64 / GIGABYTE)
 }
 
 impl Reduction {
@@ -552,7 +559,7 @@ impl Reduction {
                 let value = |t: &(usize, f64)| t.1 * values.get(t.0).copied().unwrap_or(0.0);
                 let residual: f64 = terms.iter().filter(|t| state.get(t.0) == Some(&State::Fixed)).map(value).sum();
                 let size: f64 = terms.iter().map(|t| value(t).abs()).sum();
-                if residual.abs() > 1e-9 * size.max(f64::MIN_POSITIVE) && residual.abs() > 0.0 {
+                if residual.abs() > CONSISTENT * size.max(f64::MIN_POSITIVE) && residual.abs() > 0.0 {
                     return Err(Error::Invalid(format!(
                         "{} `{}` contradicts the prescribed values (boundary conditions or couplings hold its nodes in a way it cannot follow)",
                         row.source.what(),
@@ -584,7 +591,7 @@ impl Reduction {
                 let value = |t: &(usize, f64)| t.1 * values.get(t.0).copied().unwrap_or(0.0);
                 let residual: f64 = terms.iter().filter(|t| state.get(t.0) == Some(&State::Fixed)).map(value).sum();
                 let size: f64 = terms.iter().map(|t| value(t).abs()).sum();
-                if residual.abs() > 1e-9 * size.max(f64::MIN_POSITIVE) && residual.abs() > 0.0 {
+                if residual.abs() > CONSISTENT * size.max(f64::MIN_POSITIVE) && residual.abs() > 0.0 {
                     return Err(Error::Invalid(format!(
                         "{} `{}` contradicts the prescribed values (boundary conditions or couplings hold its nodes in a way it cannot follow)",
                         row.source.what(),

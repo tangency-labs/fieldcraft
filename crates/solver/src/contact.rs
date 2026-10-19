@@ -125,10 +125,14 @@ pub const GAP_TOLERANCE: f64 = 1e-5;
 /// of a contact that lifts, otherwise flips between open and closed from one Newton iteration to
 /// the next, each state's correction pushing it into the other, and a smaller increment does not
 /// help under proportional loading.
-pub const ENGAGED_BAND: f64 = 1e-3;
+pub const ENGAGED_BAND: f64 = 1e-3; // unit-factors: relative to the element's thickness
 
 /// Most augmentations of one increment.
 pub const MAX_AUGMENTATIONS: usize = 25;
+
+/// A node behind a face by less than this fraction of the model's extent is touching it:
+/// coordinates are exact to a few units in the last place.
+const ROUND_OFF: f64 = 1e-9; // unit-factors: relative to the model's extent
 
 /// An increment is cut back when the active set alternates between two states this many times
 /// (and the step takes [`ENGAGED_BAND`] from then on).
@@ -635,7 +639,7 @@ impl Interface {
             let depth = -g / a;
             // Coordinates are exact to a few units in the last place: a node a hair behind a
             // face it was meshed on is touching.
-            if depth <= 1e-9 * scale {
+            if depth <= ROUND_OFF * scale {
                 continue;
             }
             let label = self.nodes.get(i).and_then(|n| mesh.labels.get(*n)).copied().unwrap_or(0);

@@ -160,6 +160,10 @@ fn counter_clockwise<T: Real>(t: &[usize; 3], points: &[Flat<T>]) -> Vec<Flat<T>
 /// A vertex this close to a clip edge, relative to the edge's length, is on it.
 const ON_EDGE: f64 = 1e-8;
 
+/// A quadratic term below this fraction of the linear one is round-off: the equation is linear.
+/// A span below it, along an edge of unit length, is no overlap.
+const NEGLIGIBLE: f64 = 1e-12; // unit-factors: relative to the linear term, or to the edge's length
+
 /// `subject` clipped by the convex counter-clockwise polygon `clip` (Sutherland–Hodgman), the
 /// sides decided on the values. A vertex within [`ON_EDGE`] of a clip edge's line counts as on
 /// it (kept, and never cut): the intersection of two nearly coincident edges is ill-conditioned,
@@ -215,7 +219,7 @@ fn shape_at<T: Real>(p: &[Flat<T>], y: Flat<T>) -> Option<[T; 4]> {
             let k2 = cross2(b, d);
             let k1 = cross2(b, c) - cross2(h, d);
             let k0 = -cross2(h, c);
-            let u = if k2.val().abs() <= 1e-12 * k1.val().abs() {
+            let u = if k2.val().abs() <= NEGLIGIBLE * k1.val().abs() {
                 if !(k1.val().abs() > 0.0) {
                     return None;
                 }
@@ -378,7 +382,7 @@ pub fn integrate_edges<T: Real>(secondary: &[Point<T>], main: &[Point<T>], exten
     let along = |p: &Point<T>| ((p[0] - s0[0]) * t[0] + (p[1] - s0[1]) * t[1]) * inv;
     let (a, b) = (along(m0), along(m1));
     let span = b - a;
-    if !(span.val().abs() > 1e-12) || !span.val().is_finite() {
+    if !(span.val().abs() > NEGLIGIBLE) || !span.val().is_finite() {
         return Some(());
     }
     let zero = T::cst(0.0);

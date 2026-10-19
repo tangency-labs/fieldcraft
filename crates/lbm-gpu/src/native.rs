@@ -31,6 +31,9 @@ const MAX_CHUNK: u64 = 64;
 /// How long one wait for the device may take before the solve gives up on it.
 const DEVICE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
+/// Seconds in a nanosecond: GPU timestamp periods are in nanoseconds (wgpu).
+const NANOSECOND: f64 = 1e-9; // unit-factors: wall-clock profiling time, not a model quantity
+
 /// A bounded chunk's dispatches, shared by the normal and timestamped paths.
 type Dispatch = (usize, &'static str, (u32, u32));
 
@@ -635,7 +638,7 @@ impl GpuFlow {
             let ticks = u64::from_le_bytes(*end).checked_sub(u64::from_le_bytes(*begin)).ok_or_else(|| gpu_error("invalid GPU timestamps"))?;
             let total = totals.entry(name).or_default();
             total.dispatches += 1;
-            total.seconds += ticks as f64 * period * 1e-9;
+            total.seconds += ticks as f64 * period * NANOSECOND;
         }
         Ok(())
     }

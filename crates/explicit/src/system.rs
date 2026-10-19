@@ -131,6 +131,11 @@ impl SymmetryRow {
 /// earlier ones, or the prescribed velocities hold it.
 const REPEATED: f64 = 1e-10;
 
+/// Prescribed velocities satisfy a constraint row, and a node lies on a rigid wall's side, within
+/// this fraction of the size of the terms compared: coordinates and velocities are exact to a few
+/// units in the last place.
+const ROUND_OFF: f64 = 1e-9; // unit-factors: relative to the terms compared
+
 /// The discrete system of an explicit dynamic step.
 ///
 /// Its elements are solids, so every node carries the three translations and the layout is
@@ -635,7 +640,7 @@ impl System {
                 // Nothing free is left: the prescribed velocities must satisfy the row.
                 let along: f64 = (0..3).map(|k| c[k] * p[k].unwrap_or(0.0)).sum();
                 let size: f64 = (0..3).map(|k| (n[k] * p[k].unwrap_or(0.0)).abs()).sum();
-                if along.abs() > 1e-9 * size {
+                if along.abs() > ROUND_OFF * size {
                     let label = self.labels.get(node).copied().unwrap_or_default();
                     return Err(invalid(format!("node {label} moves off a symmetry plane (normal {n:?}) by its prescribed velocities")));
                 }
@@ -818,7 +823,7 @@ impl System {
             for &i in &nodes {
                 let x = self.xyz.get(i).copied().unwrap_or_default();
                 let gap: f64 = (0..3).map(|k| (x[k] - w.point[k]) * normal[k]).sum();
-                if gap < -1e-9 * size {
+                if gap < -ROUND_OFF * size {
                     let label = self.labels.get(i).copied().unwrap_or(0);
                     return Err(invalid(format!("node {label} of set `{}` starts behind its rigid wall (gap {gap:e})", w.set)));
                 }

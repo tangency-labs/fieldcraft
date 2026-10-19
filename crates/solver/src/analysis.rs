@@ -525,7 +525,7 @@ pub(crate) fn static_on(setup: &Setup<'_>, limits: &Limits) -> Result<StaticResu
     let scale = crate::system::balance_scale(&applied_total, &reaction_total, &reaction);
     let ground = mesh.discrete.ground_force(&u, mesh);
     let imbalance = (0..3).map(|c| (applied_total[c] + reaction_total[c] + ground[c]).abs()).fold(0.0, f64::max);
-    if scale > 0.0 && imbalance > 1e-6 * scale {
+    if scale > 0.0 && imbalance > crate::system::BALANCE_TOLERANCE * scale {
         warnings.push(format!("loads and reactions differ by {imbalance:.3e} (relative {:.1e})", imbalance / scale));
     }
     Ok(StaticResult {
@@ -578,8 +578,12 @@ pub(crate) fn lanczos_basis(limits: &Limits, neq: usize) -> usize {
     limits.max_lanczos_vectors.min(by_memory).max(BLOCK.min(neq))
 }
 
+/// A free body's frequency shift, as a fraction of the mean squared angular frequency of its
+/// diagonal (stiffness over mass): below the rigid-body modes, above round-off.
+const RIGID_SHIFT: f64 = 1e-6; // unit-factors: relative to the diagonal's ratio
+
 /// Relative residual of an accepted Ritz pair.
-pub(crate) const TOLERANCE: f64 = 1e-9;
+pub(crate) const TOLERANCE: f64 = 1e-9; // unit-factors: a relative residual
 
 /// Solve a frequency step (the step named `step`, or the model's only frequency step): the
 /// lowest natural modes within the step's frequency range.
@@ -639,7 +643,7 @@ pub fn solve_frequency(model: &Model, step: Option<&str>, options: &FrequencyOpt
                 if !(tk > 0.0 && tm > 0.0) {
                     return Err(Error::Singular("the stiffness or mass has no positive diagonal".into()));
                 }
-                let s = -1e-6 * tk / tm;
+                let s = -RIGID_SHIFT * tk / tm;
                 warnings.push("the structure is not fully supported; rigid-body modes appear at (near) zero frequency".into());
                 (s, shifted(s)?)
             }

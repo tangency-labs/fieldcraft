@@ -37,6 +37,10 @@ use crate::{Error, Result};
 /// out-of-plane motion is held; trusses of planar models will declare [`DofSet::PLANE`]).
 pub const DOFS: ElementDofs = ElementDofs::new(DofSet::TRANSLATIONS);
 
+/// A member whose tangent is shorter than this fraction of its chord somewhere has folded back
+/// or has no length.
+const FOLDED: f64 = 1e-9; // unit-factors: relative to the member's chord
+
 /// The Young's modulus a truss uses, or why there is none.
 pub fn young_modulus(elastic: &Elastic) -> Result<f64> {
     match *elastic {
@@ -93,7 +97,7 @@ impl<'a> Truss<'a> {
         let reference = at(xyz, 0.0, 0.0)?.tangent;
         for xi in [-1.0, -0.5, 0.5, 1.0] {
             let p = at(xyz, xi, 0.0)?;
-            if !(p.jacobian > 1e-9 * scale) || p.tangent.iter().zip(&reference).map(|(a, b)| a * b).sum::<f64>() <= 0.0 {
+            if !(p.jacobian > FOLDED * scale) || p.tangent.iter().zip(&reference).map(|(a, b)| a * b).sum::<f64>() <= 0.0 {
                 return Err(Error::Degenerate("the member folds back on itself or has no length".into()));
             }
         }

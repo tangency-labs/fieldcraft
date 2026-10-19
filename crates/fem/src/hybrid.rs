@@ -52,11 +52,14 @@ pub fn pressures(kind: ElementKind) -> Option<usize> {
     }
 }
 
+/// Two moduli are equal when they differ by less than this fraction of the largest.
+const SAME_MODULUS: f64 = 1e-12; // unit-factors: relative to the largest modulus
+
 /// The deviatoric elasticity and the bulk modulus of an isotropic elasticity; orthotropic
 /// materials have no such split and are refused.
 pub fn split(d: &Elasticity) -> Result<(Elasticity, f64)> {
     let scale = d.iter().flatten().fold(0.0f64, |m, v| m.max(v.abs()));
-    let same = |a: f64, b: f64| (a - b).abs() <= 1e-12 * scale;
+    let same = |a: f64, b: f64| (a - b).abs() <= SAME_MODULUS * scale;
     let (c11, c12, c44) = (d[0][0], d[0][1], d[3][3]);
     let isotropic = (0..3).all(|i| same(d[i][i], c11) && same(d[i + 3][i + 3], c44))
         && (0..3).all(|i| (0..3).all(|j| i == j || same(d[i][j], c12)))

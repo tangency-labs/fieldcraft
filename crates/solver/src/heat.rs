@@ -500,7 +500,7 @@ pub fn solve_heat(model: &Model, step: Option<&str>, limits: &Limits) -> Result<
     let loads = load_flows(model, &resolved, &s.mesh, step, t)?;
     // Measured against the gross heat flows, which cancel in the net sums.
     let scale = reaction.iter().chain(&s.f).map(|v| v.abs()).sum::<f64>();
-    if s.c.is_none() && scale > 0.0 && (applied_total + reaction_total).abs() > 1e-6 * scale {
+    if s.c.is_none() && scale > 0.0 && (applied_total + reaction_total).abs() > crate::system::BALANCE_TOLERANCE * scale {
         warnings.push(format!("heat supplied and removed differ by {:.3e}", (applied_total + reaction_total).abs()));
     }
     let stats = Stats { dofs: s.mesh.layout.dofs(), equations: s.eqs.neq(), factor_entries: s.factor_entries, lanczos_vectors: 0 };
