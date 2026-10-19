@@ -192,7 +192,7 @@ fn flow_past_a_sphere_matches_the_cpu_fields_and_forces() {
             1.0,
             1.0 / 6.0,
             d,
-            Procedure::Fluid { domain: "Flow".into(), end_time: None, steps: Some(300), time_step: Some(1.0), frames: 1, magic: None },
+            Procedure::Fluid { domain: "Flow".into(), end_time: None, steps: Some(300), time_step: Some(1.0), frames: 1, magic: None, steady: None },
         );
         let (setup, flow) = prepare(&m, std::slice::from_ref(&ball));
         let Some((mut cpu, mut gpu)) = both(&setup, flow, streaming) else { continue };
@@ -421,7 +421,7 @@ fn odd_even_and_chunk_readbacks_match_the_cpu_with_heat_open_and_slip_faces() {
             0.1,
             0.05,
             d,
-            Procedure::Fluid { domain: "Flow".into(), end_time: None, steps: Some(194), time_step: Some(1.0), frames: 1, magic: None },
+            Procedure::Fluid { domain: "Flow".into(), end_time: None, steps: Some(194), time_step: Some(1.0), frames: 1, magic: None, steady: None },
         );
         let (_, flow) = prepare(&m, &[]);
         compare_incremental(flow, true, streaming);
@@ -443,7 +443,7 @@ fn odd_even_and_chunk_readbacks_match_the_cpu_around_an_obstacle() {
             1.0,
             1.0 / 6.0,
             d,
-            Procedure::Fluid { domain: "Flow".into(), end_time: None, steps: Some(194), time_step: Some(1.0), frames: 1, magic: None },
+            Procedure::Fluid { domain: "Flow".into(), end_time: None, steps: Some(194), time_step: Some(1.0), frames: 1, magic: None, steady: None },
         );
         let (_, flow) = prepare(&m, &[ball]);
         compare_incremental(flow, false, streaming);

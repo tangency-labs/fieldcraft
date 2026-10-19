@@ -33,6 +33,7 @@ fn cell_updates_per_second() {
                 time_step: Some(1.0),
                 frames: 1,
                 magic: None,
+                steady: None,
             },
         );
         let (setup, mut flow) = prepare(&m, &obstacles);

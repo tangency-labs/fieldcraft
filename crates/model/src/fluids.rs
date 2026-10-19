@@ -793,7 +793,8 @@ mod tests {
         assert!(matches!(m.remove_material("Water"), Err(Error::InUse(_))));
 
         // A step refers to the domain, which then cannot be deleted.
-        let fluid = Procedure::Fluid { domain: "Flow".into(), end_time: Some(1.0), steps: None, time_step: None, frames: 4, magic: None };
+        let fluid =
+            Procedure::Fluid { domain: "Flow".into(), end_time: Some(1.0), steps: None, time_step: None, frames: 4, magic: None, steady: None };
         m.add_step(Step::new("Run", fluid.clone()), None).unwrap();
         assert!(matches!(m.remove_fluid_domain("Flow"), Err(Error::InUse(_))));
         // The JSON form reads back to the same model, through the same checks.
@@ -805,17 +806,73 @@ mod tests {
         listed.output.insert(crate::OutputVariable::Stress);
         assert!(m.add_step(listed, None).is_err());
         for bad in [
-            Procedure::Fluid { domain: "Nope".into(), end_time: Some(1.0), steps: None, time_step: None, frames: 4, magic: None },
-            Procedure::Fluid { domain: "Flow".into(), end_time: Some(1.0), steps: Some(5), time_step: None, frames: 4, magic: None },
-            Procedure::Fluid { domain: "Flow".into(), end_time: None, steps: None, time_step: None, frames: 4, magic: None },
-            Procedure::Fluid { domain: "Flow".into(), end_time: Some(-1.0), steps: None, time_step: None, frames: 4, magic: None },
-            Procedure::Fluid { domain: "Flow".into(), end_time: None, steps: Some(0), time_step: None, frames: 4, magic: None },
-            Procedure::Fluid { domain: "Flow".into(), end_time: Some(1.0), steps: None, time_step: Some(0.0), frames: 4, magic: None },
-            Procedure::Fluid { domain: "Flow".into(), end_time: Some(1.0), steps: None, time_step: None, frames: 0, magic: None },
-            Procedure::Fluid { domain: "Flow".into(), end_time: Some(1.0), steps: None, time_step: None, frames: 4, magic: Some(0.0) },
-            Procedure::Fluid { domain: "Flow".into(), end_time: Some(1.0), steps: None, time_step: None, frames: 4, magic: Some(f64::NAN) },
+            Procedure::Fluid { domain: "Nope".into(), end_time: Some(1.0), steps: None, time_step: None, frames: 4, magic: None, steady: None },
+            Procedure::Fluid { domain: "Flow".into(), end_time: Some(1.0), steps: Some(5), time_step: None, frames: 4, magic: None, steady: None },
+            Procedure::Fluid { domain: "Flow".into(), end_time: None, steps: None, time_step: None, frames: 4, magic: None, steady: None },
+            Procedure::Fluid { domain: "Flow".into(), end_time: Some(-1.0), steps: None, time_step: None, frames: 4, magic: None, steady: None },
+            Procedure::Fluid { domain: "Flow".into(), end_time: None, steps: Some(0), time_step: None, frames: 4, magic: None, steady: None },
+            Procedure::Fluid { domain: "Flow".into(), end_time: Some(1.0), steps: None, time_step: Some(0.0), frames: 4, magic: None, steady: None },
+            Procedure::Fluid { domain: "Flow".into(), end_time: Some(1.0), steps: None, time_step: None, frames: 0, magic: None, steady: None },
+            Procedure::Fluid { domain: "Flow".into(), end_time: Some(1.0), steps: None, time_step: None, frames: 4, magic: Some(0.0), steady: None },
+            Procedure::Fluid {
+                domain: "Flow".into(),
+                end_time: Some(1.0),
+                steps: None,
+                time_step: None,
+                frames: 4,
+                magic: Some(f64::NAN),
+                steady: None,
+            },
         ] {
             assert!(m.add_step(Step::new("Bad", bad.clone()), None).is_err(), "{bad:?}");
+        }
+        // The steady-state rule's numbers are checked too.
+        let steady = |st: crate::Steady| Procedure::Fluid {
+            domain: "Flow".into(),
+            end_time: Some(1.0),
+            steps: None,
+            time_step: None,
+            frames: 4,
+            magic: None,
+            steady: Some(st),
+        };
+        let rule = crate::Steady { monitors: vec![], tolerance: 1e-3, window: None, min_time: None, divergence: None };
+        let monitored = crate::Steady {
+            monitors: vec![
+                crate::FlowMonitor::MassFlow { face: BoxFace::XMax },
+                crate::FlowMonitor::Force {
+                    faces: vec![FluidBoundary::Box(BoxFace::YMin), FluidBoundary::Surface(crate::GeometryRef::face("Ball", "F3").unwrap())],
+                },
+                crate::FlowMonitor::Heat { faces: vec![FluidBoundary::Box(BoxFace::XMin)] },
+                crate::FlowMonitor::MeanTemperature {},
+            ],
+            tolerance: 1e-4,
+            window: Some(0.1),
+            min_time: Some(0.2),
+            divergence: Some(0.5),
+        };
+        m.add_step(Step::new("Steady", steady(monitored)), None).unwrap();
+        // The rule and its monitors read back from JSON to the same model.
+        let text = serde_json::to_string(&m).unwrap();
+        assert!(text.contains("\"mean_temperature\"") && text.contains("\"F3\""), "{text}");
+        assert_eq!(serde_json::from_str::<Model>(&text).unwrap(), m);
+        m.remove_step("Steady").unwrap();
+        let force = |n: usize| crate::FlowMonitor::Force { faces: vec![FluidBoundary::Box(BoxFace::XMin); n] };
+        for bad in [
+            crate::Steady { tolerance: 0.0, ..rule.clone() },
+            crate::Steady { tolerance: f64::NAN, ..rule.clone() },
+            crate::Steady { tolerance: 1.0, ..rule.clone() },
+            crate::Steady { window: Some(-1.0), ..rule.clone() },
+            crate::Steady { window: Some(f64::INFINITY), ..rule.clone() },
+            crate::Steady { min_time: Some(-1.0), ..rule.clone() },
+            crate::Steady { min_time: Some(f64::NAN), ..rule.clone() },
+            crate::Steady { divergence: Some(1e-4), ..rule.clone() },
+            crate::Steady { divergence: Some(f64::INFINITY), ..rule.clone() },
+            crate::Steady { monitors: vec![force(0)], ..rule.clone() },
+            crate::Steady { monitors: vec![force(1001)], ..rule.clone() },
+            crate::Steady { monitors: vec![crate::FlowMonitor::MeanTemperature {}; 101], ..rule.clone() },
+        ] {
+            assert!(m.add_step(Step::new("Bad", steady(bad.clone())), None).is_err(), "{bad:?}");
         }
         m.remove_step("Run").unwrap();
         m.remove_fluid_domain("Flow").unwrap();

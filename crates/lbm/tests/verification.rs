@@ -239,6 +239,7 @@ fn sphere_drag(r: f64, l: usize, steps: u64) -> (f64, f64) {
             time_step: Some(1.0),
             frames: 1,
             magic: None,
+            steady: None,
         },
     );
     let (setup, mut flow) = prepare(&m, std::slice::from_ref(&ball));
@@ -294,6 +295,7 @@ fn channel_with_a_parabolic_inlet_and_a_pressure_outlet_develops_poiseuille_flow
         time_step: Some(dt),
         frames: 4,
         magic: None,
+        steady: None,
     };
     let m = model(1.0, nu, d, procedure);
     let r = solve_fluid(&m, Some("Run"), &[], &Limits::default()).unwrap();
@@ -372,7 +374,15 @@ fn results_are_bit_for_bit_reproducible() {
         1.0,
         0.01,
         d,
-        fieldcraft_model::Procedure::Fluid { domain: "Flow".into(), end_time: Some(1.0), steps: None, time_step: None, frames: 3, magic: None },
+        fieldcraft_model::Procedure::Fluid {
+            domain: "Flow".into(),
+            end_time: Some(1.0),
+            steps: None,
+            time_step: None,
+            frames: 3,
+            magic: None,
+            steady: None,
+        },
     );
     let a = solve_fluid(&m, None, std::slice::from_ref(&ball), &Limits::default()).unwrap();
     let b = solve_fluid(&m, None, std::slice::from_ref(&ball), &Limits::default()).unwrap();

@@ -71,6 +71,8 @@ pub enum Procedure {
     /// and pressure fields are written, evenly spaced, after the initial one; forces on every
     /// wall are recorded throughout. `magic` is the lattice Boltzmann two-relaxation-time
     /// parameter Λ (default 3/16, which puts bounce-back walls exactly halfway between cells).
+    /// With `steady`, the run stops on its own once the flow stops changing ([`Steady`]); its
+    /// length is then the most it may run.
     Fluid {
         domain: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -83,6 +85,8 @@ pub enum Procedure {
         frames: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         magic: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        steady: Option<Steady>,
     },
     /// Heat conduction: the steady temperature field, or its history over time when `transient`
     /// is given. Temperature boundary conditions and heat loads (flux, convection, sources)
@@ -99,6 +103,109 @@ pub enum Procedure {
     /// materials and follower pressure. Loads and prescribed displacements are the step's load
     /// factor times their values: a ramp from 0 to 1, or the step's load path.
     NonlinearStatic(NonlinearStatic),
+}
+
+/// Most quantities a steady-state rule monitors besides the residual.
+pub const MAX_FLOW_MONITORS: usize = 100;
+
+/// Most faces one monitored quantity sums over.
+pub const MAX_MONITOR_FACES: usize = 1000;
+
+fn default_steady_tolerance() -> f64 {
+    1e-3
+}
+
+/// The stop rule of a fluid step run to steady state.
+///
+/// The run samples its monitored quantities 8 times per `window` of flow time: the velocity
+/// field (and the temperature field when the flow carries heat) and every quantity of
+/// `monitors`. `tolerance` is the relative change per window: the spread (largest minus smallest
+/// sample) of each quantity over the window, relative to the largest magnitude it has had. The
+/// run stops as steady after two consecutive full windows, ending at or after `min_time`, with
+/// every relative change below `tolerance`; when `divergence` is given, a relative change above
+/// it after `min_time` stops the run as diverged. Otherwise it runs the step's full length.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Steady {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub monitors: Vec<FlowMonitor>,
+    #[serde(default = "default_steady_tolerance")]
+    pub tolerance: f64,
+    /// Flow time the change is measured over (default: a twentieth of the step's length).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_time: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub divergence: Option<f64>,
+}
+
+impl Steady {
+    pub fn validate(&self) -> Result<()> {
+        if !(self.tolerance > 0.0 && self.tolerance < 1.0) {
+            return Err(Error::Invalid(format!("the steady-state tolerance is a relative change above 0 and below 1, got {}", self.tolerance)));
+        }
+        if let Some(w) = self.window {
+            positive("steady-state window", w)?;
+        }
+        if let Some(t) = self.min_time
+            && !(t >= 0.0 && t.is_finite())
+        {
+            return Err(Error::Invalid(format!("the steady-state minimum time is not negative, got {t}")));
+        }
+        if let Some(d) = self.divergence
+            && !(d > self.tolerance && d.is_finite())
+        {
+            return Err(Error::Invalid(format!("the divergence limit is a relative change above the tolerance, got {d}")));
+        }
+        if self.monitors.len() > MAX_FLOW_MONITORS {
+            return Err(Error::Invalid(format!("a steady-state rule monitors at most {MAX_FLOW_MONITORS} quantities, got {}", self.monitors.len())));
+        }
+        for m in &self.monitors {
+            if let FlowMonitor::Force { faces } | FlowMonitor::Heat { faces } = m
+                && !(1..=MAX_MONITOR_FACES).contains(&faces.len())
+            {
+                return Err(Error::Invalid(format!("a monitored force or heat sums 1 to {MAX_MONITOR_FACES} faces, got {}", faces.len())));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// A quantity a steady-state rule monitors besides the residual.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum FlowMonitor {
+    /// The mass flow out through a box face.
+    MassFlow { face: crate::BoxFace },
+    /// The total force of the fluid on walls (box faces or obstacle faces).
+    Force { faces: Vec<crate::FluidBoundary> },
+    /// The total heat the fluid gives walls.
+    Heat { faces: Vec<crate::FluidBoundary> },
+    /// The mean temperature of the fluid.
+    MeanTemperature {},
+}
+
+impl FlowMonitor {
+    /// A short label for reports: `mass_flow x_max`, `force x_min, Body1/F3`, `mean_temperature`.
+    pub fn label(&self) -> String {
+        let faces = |faces: &[crate::FluidBoundary]| {
+            faces
+                .iter()
+                .map(|f| match f {
+                    crate::FluidBoundary::Box(b) => b.name().to_string(),
+                    crate::FluidBoundary::Surface(r) => format!("{}/{}", r.body, r.entity.name().unwrap_or_default()),
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        match self {
+            FlowMonitor::MassFlow { face } => format!("mass_flow {}", face.name()),
+            FlowMonitor::Force { faces: f } => format!("force {}", faces(f)),
+            FlowMonitor::Heat { faces: f } => format!("heat {}", faces(f)),
+            FlowMonitor::MeanTemperature {} => "mean_temperature".into(),
+        }
+    }
 }
 
 /// Most load increments a nonlinear static step may take.
@@ -710,7 +817,10 @@ impl Procedure {
         if let Procedure::NonlinearStatic(n) = self {
             return n.validate();
         }
-        if let Procedure::Fluid { end_time, steps, time_step, frames, magic, .. } = *self {
+        if let Procedure::Fluid { end_time, steps, time_step, frames, magic, ref steady, .. } = *self {
+            if let Some(st) = steady {
+                st.validate()?;
+            }
             match (end_time, steps) {
                 (Some(t), None) => {
                     crate::positive("end time", t)?;
