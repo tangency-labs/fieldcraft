@@ -599,3 +599,84 @@ fn frames_keep_their_reactions() {
         assert!((q[0] + f.load_factor * force).abs() < 1e-8 * force, "λ {}: {q:?}", f.load_factor);
     }
 }
+
+/// A neo-Hookean cantilever 0.2 × 0.02 × 0.02 (SI) clamped at its root and loaded through a
+/// reference point kinematically coupled to its tip face: a transverse force and a torque on the
+/// point. Its numbers are those of the same part with lengths times `a` and stresses times `b`
+/// (forces times b a², moments times b a³): a = 1000, b = 10⁻⁶ is the part in mm-t-s-N-MPa, a =
+/// 1000, b = 1 the part a thousand times larger in SI.
+fn coupled_cantilever(a: f64, b: f64, tolerances: Tolerances) -> Grid {
+    let (length, side) = (0.2 * a, 0.02 * a);
+    let mut g = grid([4, 1, 1], ElementKind::Hex20, |q| [length * q[0], side * q[1], side * q[2]]);
+    let step = NonlinearStatic { initial_increment: 0.5, tolerances, ..NonlinearStatic::default() };
+    g.define(iso(1e7 * b, 0.3), None, full(), Procedure::NonlinearStatic(step));
+    neo_hookean(&mut g, 1e7 * b, 0.3);
+    g.fixed("root", |q| near(q[0], 0.0));
+    g.couple("Tip", [length, 0.5 * side, 0.5 * side], CouplingKind::Kinematic, &[1, 2, 3, 4, 5, 6], |q| near(q[0], 1.0));
+    let tip = || Target::ReferencePoint("Tip".into());
+    g.load("shear", Load::Force { target: tip(), vector: [0.0, 0.0, -b * a * a], distribution: Distribution::default() });
+    g.load("twist", Load::Moment { target: tip(), vector: [0.05 * b * a * a * a, 0.0, 0.0], distribution: Distribution::default() });
+    g
+}
+
+/// The convergence tests measure forces against a force scale and moments against a moment
+/// scale (the force scale times the model's size, or the largest moment), translations and
+/// rotations each against their own reference: a model with a coupled reference point takes the
+/// same increments and iterations, with the same convergence measures, whether its numbers are in
+/// SI, in mm-t-s-N-MPa, or those of the part a thousand times larger. The point's rotations are
+/// the same and its translations scale with the part.
+#[test]
+fn coupled_reference_point_converges_the_same_in_any_units_and_at_any_size() {
+    let solve_at = |a: f64, b: f64| {
+        let r = solve(&coupled_cantilever(a, b, Tolerances::default()));
+        let point = r.reference_points[0].displacement;
+        (r.nonlinear.unwrap(), point)
+    };
+    let (si, si_point) = solve_at(1.0, 1.0);
+    assert!(si_point[3] > 0.05 && si_point[2] < -0.005, "a twist and a deflection large enough to iterate: {si_point:?}");
+    for (a, b, name) in
+        [(1e3, 1e-6, "mm-t-s-N-MPa"), (1e3, 1.0, "the part a thousand times larger"), (1e-3, 1e3, "the part a thousand times smaller")]
+    {
+        let (h, point) = solve_at(a, b);
+        let counts = |h: &fieldcraft_solver::nonlinear::History| h.increments.iter().map(|i| i.iterations.len()).collect::<Vec<_>>();
+        eprintln!("{name}: iterations per increment {:?} (SI {:?})", counts(&h), counts(&si));
+        assert_eq!(counts(&h), counts(&si), "{name}");
+        for (x, y) in h.increments.iter().zip(&si.increments) {
+            assert_eq!(x.load_factor, y.load_factor, "{name}");
+            for (p, q) in x.iterations.iter().zip(&y.iterations) {
+                // Equal but for round-off (the scaled numbers are not exact in binary): the
+                // measures fall to round-off in the last iteration, so compare above it.
+                for (u, v) in [(p.force, q.force), (p.displacement, q.displacement)] {
+                    assert!((u - v).abs() <= 1e-6 * u.abs().max(v.abs()) + 1e-12, "{name}: {p:?} vs {q:?}");
+                }
+            }
+        }
+        // Translations scale with the part, rotations do not.
+        let size = si_point.iter().take(3).fold(0.0f64, |m, v| m.max(v.abs()));
+        for k in 0..6 {
+            let (value, reference) = if k < 3 { (point[k] / a, size) } else { (point[k], si_point[3].abs()) };
+            assert!((value - si_point[k]).abs() <= 1e-9 * reference, "{name}: {point:?} vs {si_point:?}");
+        }
+    }
+}
+
+/// Tight tolerances, where the last iterations reach round-off: the cantilever's moment residual
+/// (round-off of order ε times its forces times its size) is measured against the moment scale.
+/// Measured against the force scale, as when every degree of freedom shared one norm, it grew
+/// with the part's size in model units: the part in SI a thousand times larger, or ten times
+/// larger in mm-t-s-N-MPa (2 m, 2000 in its numbers), missed the round-off rule and took one more
+/// Newton iteration than the part in SI.
+#[test]
+fn tight_tolerances_take_the_same_iterations_at_any_size() {
+    let tight = Tolerances { force: 1e-8, displacement: 1e-8, energy: 1e-16 };
+    let counts = |a: f64, b: f64| {
+        let r = solve(&coupled_cantilever(a, b, tight));
+        r.nonlinear.unwrap().increments.iter().map(|i| i.iterations.len()).collect::<Vec<_>>()
+    };
+    let si = counts(1.0, 1.0);
+    for (a, b, name) in [(1e3, 1.0, "SI, a thousand times larger"), (1e3, 1e-6, "mm-t-s-N-MPa"), (1e4, 1e-6, "mm-t-s-N-MPa, ten times larger")] {
+        let these = counts(a, b);
+        eprintln!("{name}: iterations per increment {these:?} (SI {si:?})");
+        assert_eq!(these, si, "{name}");
+    }
+}
