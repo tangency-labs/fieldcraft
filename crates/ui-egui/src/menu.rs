@@ -467,6 +467,7 @@ mod tests {
         // A material a section uses is refused: no Delete.
         let mut app = ModelApp::new(Session::default());
         app.open_sample("cantilever");
+        app.wait_loaded();
         app.ask_delete(Def::Material, "Steel");
         let Some(crate::files::Prompt::Delete(ask)) = app.prompt.clone() else { panic!() };
         assert!(!ask.allowed() && !ask.users.is_empty());

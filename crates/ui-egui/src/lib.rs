@@ -728,6 +728,9 @@ impl ModelApp {
     /// Run a script (a JSON array of `{command, params}`), stopping at the first error. The
     /// ribbon follows its last command that has a stage.
     pub fn run_script(&mut self, script: &Value) -> Result<(), String> {
+        // A script waits for the background job, as a command does: the job's session would
+        // replace what it changed.
+        self.ensure_idle()?;
         let r = self.session.run_script(script).map(|_| ()).map_err(|e| e.to_string());
         self.model_changed();
         if r.is_ok() {
@@ -2558,6 +2561,7 @@ mod tests {
         let empty = Session::default();
         let mut solved = ModelApp::new(Session::default());
         solved.open_sample("cantilever");
+        solved.wait_loaded();
         solved.run("solve.run", json!({})).unwrap();
         let mut ran = 0;
         for session in [empty, solved.session.clone()] {
@@ -2600,6 +2604,7 @@ mod tests {
         assert!(!messages.contains("the mesh has no elements"), "the check follows the model: {messages}");
         let mut app = ModelApp::new(Session::default());
         app.open_sample("cantilever");
+        app.wait_loaded();
         app.run("model.activity", json!({})).unwrap();
         assert_eq!(app.status.unwrap().text, "Step Table: 2 steps, 1 boundary condition, 1 load (details in the panel)");
     }
@@ -3170,6 +3175,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut app = ModelApp::new(Session::default());
         app.open_sample("impact");
+        app.wait_loaded();
         app.run("solve.run", json!({})).unwrap();
         app.start("results.xy").unwrap();
         assert!(app.dialog.is_none(), "the plot opens in the panel, not a form");
@@ -3188,6 +3194,7 @@ mod tests {
         // A linear static step offers nothing; a frequency step its frequencies.
         let mut app = ModelApp::new(Session::default());
         app.open_sample("cantilever");
+        app.wait_loaded();
         app.run("solve.run", json!({})).unwrap();
         app.run("results.modes", json!({"step": "Modes"})).unwrap();
         app.start("results.xy").unwrap();
@@ -3203,6 +3210,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut app = ModelApp::new(Session::default());
         app.open_sample("rubber-seal");
+        app.wait_loaded();
         app.run("solve.run", json!({})).unwrap();
         app.start("results.xy").unwrap();
         draw(&mut app, &ctx, 1280.0, 800.0);
@@ -3526,6 +3534,7 @@ mod tests {
     fn the_window_is_laid_out_like_the_other_crafts() {
         let mut app = ModelApp::new(Session::default());
         app.open_sample("cantilever");
+        app.wait_loaded();
         let size = capture::CaptureSize { width: 1400.0, height: 900.0, scale: 1.0 };
         // `layout` is the live window's; a capture leaves it, so draw a frame of the UI directly.
         let frame = |app: &mut ModelApp| {

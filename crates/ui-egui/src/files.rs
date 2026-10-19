@@ -117,16 +117,29 @@ fn kind_of_command(command: &str) -> Option<Kind> {
     [Kind::Model, Kind::Design, Kind::Mesh].into_iter().find(|k| k.command() == command)
 }
 
-/// Commands a form runs in the background: they can take a while on a large part.
-/// Whether `command` may run long: a solve or a mesher, run as a job off the window thread.
+/// Whether `command` may run long: a solve, a mesher or an open (a sample meshes, a file can be
+/// large), run as a job off the window thread.
 pub fn is_long(command: &str) -> bool {
     BACKGROUND.contains(&command)
+        || opens(command)
         || matches!(
             command,
             "solve.run" | "solve.static" | "solve.nonlinear" | "solve.heat" | "solve.frequency" | "solve.buckle" | "solve.explicit" | "solve.fluid"
         )
 }
 
+/// Whether `command` opens a model, a sample, a design or a mesh.
+fn opens(command: &str) -> bool {
+    fresh(command) || kind_of_command(command).is_some()
+}
+
+/// Whether `command` replaces the whole model: its job starts from an empty session rather than
+/// a copy of the window's (copying a large model would stall the window).
+fn fresh(command: &str) -> bool {
+    matches!(command, "file.open" | "file.recover" | "file.sample")
+}
+
+/// Commands a form runs in the background: they can take a while on a large part.
 pub const BACKGROUND: &[&str] = &[
     "mesh.tet.generate",
     "mesh.hex.generate",
@@ -341,9 +354,14 @@ fn finished(command: &str, done: &str, took: &str, reply: &Value) -> String {
             let n = fieldcraft_engine::thousands(usize::try_from(n).unwrap_or(usize::MAX));
             format!("{done}: {n} {kind}{q} in {took} — Mesh › Quality checks them")
         }
-        _ if is_long(command) => format!("{done} in {took}"),
+        _ if is_long(command) && !opens(command) => format!("{done} in {took}"),
         _ => done.to_string(),
     }
+}
+
+/// What the window says while a sample opens, and once it has.
+fn sample_job(sample: &fieldcraft_engine::sample::Sample) -> (String, String) {
+    (format!("Opening the {} sample", sample.label), format!("Opened the {} sample", sample.label))
 }
 
 /// A duration as `0.4 s`, `12 s` or `3 min 05 s`.
@@ -357,6 +375,8 @@ pub fn elapsed(seconds: f64) -> String {
 
 /// A finished background job whose session has not replaced the window's yet.
 pub struct Opened {
+    /// The command the job ran.
+    command: &'static str,
     session: Box<Session>,
     reply: Value,
     done: String,
@@ -525,15 +545,19 @@ impl ModelApp {
     /// Run `command` in the background; the session it ran on replaces this one when it
     /// succeeds. A command that brings a whole model (`fresh`: opening a model, recovering one)
     /// starts from an empty session, the others from a copy of this one. One at a time.
-    fn begin_job(&mut self, command: &'static str, params: Value, fresh: bool, title: String, done: String, recent: Option<String>) -> bool {
+    fn begin_job(&mut self, command: &'static str, params: Value, title: String, done: String, recent: Option<String>) -> bool {
         if self.ensure_idle().is_err() {
             return false;
         }
-        // A fresh session is the app's own model too (its commands go into the crash journal).
-        let base = if fresh {
+        // A fresh session is the app's own model too (its commands go into the crash journal),
+        // with the same work caps and file access, as the engine keeps them when a command
+        // replaces the session.
+        let base = if fresh(command) {
             let mut s = Session::default();
             s.crash_journal = self.session.crash_journal;
             s.origin = self.session.origin;
+            s.limits = self.session.limits;
+            s.file_access = self.session.file_access.clone();
             s
         } else {
             self.session.clone()
@@ -579,7 +603,7 @@ impl ModelApp {
         }
         let Ok((command, params)) = self.dialog_params() else { return };
         let label = crate::command_label(command).to_string();
-        if self.begin_job(command, params, false, label.clone(), format!("{label} done"), None)
+        if self.begin_job(command, params, label.clone(), format!("{label} done"), None)
             && let Some(l) = self.loading.as_mut()
         {
             l.form = Some(command);
@@ -625,7 +649,7 @@ impl ModelApp {
         }
         let name = file_name(&path);
         let (doing, done) = kind.verbs();
-        self.begin_job(kind.command(), json!({"path": path}), kind == Kind::Model, format!("{doing} {name}"), format!("{done} {name}"), Some(path));
+        self.begin_job(kind.command(), json!({"path": path}), format!("{doing} {name}"), format!("{done} {name}"), Some(path));
     }
 
     /// Help › Samples (and the empty viewport): open a sample model, asking first when that
@@ -661,13 +685,11 @@ impl ModelApp {
         }
     }
 
+    /// Open a sample in the background: building its design and meshing it can take seconds.
     fn load_sample(&mut self, name: &str) {
         let Some(sample) = fieldcraft_engine::sample::find(name) else { return };
-        if self.run("file.sample", json!({"name": sample.name})).is_ok() {
-            self.model_changed();
-            let next = if self.session.model.steps().is_empty() { "" } else { " — Solve shows its results" };
-            self.set_status(format!("Opened the {} sample{next}", sample.label), false);
-        }
+        let (title, done) = sample_job(sample);
+        self.begin_job("file.sample", json!({"name": sample.name}), title, done, None);
     }
 
     /// Solve every step (`solve.run`) in the background; the results come up when it is done.
@@ -678,7 +700,7 @@ impl ModelApp {
         }
         let n = self.session.model.steps().len();
         let done = format!("Solved {n} step{}", if n == 1 { "" } else { "s" });
-        self.begin_job("solve.run", json!({}), false, "Solving".into(), done, None);
+        self.begin_job("solve.run", json!({}), "Solving".into(), done, None);
     }
 
     /// Run `command` as a background job for the control channel: the job's number (its
@@ -691,11 +713,13 @@ impl ModelApp {
         let label = crate::command_label(spec.id).to_string();
         let title = if spec.id.starts_with("solve.") { "Solving".to_string() } else { label.clone() };
         let steps = self.session.model.steps().len();
-        let done = match spec.id {
-            "solve.run" => format!("Solved {steps} step{}", if steps == 1 { "" } else { "s" }),
-            _ => format!("{label} done"),
+        let sample = || params.get("name").and_then(Value::as_str).and_then(fieldcraft_engine::sample::find);
+        let (title, done) = match spec.id {
+            "file.sample" if let Some(sample) = sample() => sample_job(sample),
+            "solve.run" => (title, format!("Solved {steps} step{}", if steps == 1 { "" } else { "s" })),
+            _ => (title, format!("{label} done")),
         };
-        if !self.begin_job(spec.id, params, false, title, done, None) {
+        if !self.begin_job(spec.id, params, title, done, None) {
             return Err(self.busy().map_or_else(|| "busy".to_string(), |b| format!("{b}: wait for it or cancel it")));
         }
         self.jobs = self.jobs.wrapping_add(1);
@@ -705,14 +729,7 @@ impl ModelApp {
     /// Recover an autosaved model (`file.recover`) in the background.
     pub fn recover(&mut self, id: &str) {
         self.prompt = None;
-        self.begin_job(
-            "file.recover",
-            json!({"id": id}),
-            true,
-            "Recovering the autosaved model".into(),
-            "Recovered the autosaved model".into(),
-            None,
-        );
+        self.begin_job("file.recover", json!({"id": id}), "Recovering the autosaved model".into(), "Recovered the autosaved model".into(), None);
     }
 
     /// Cancel the background job: its command stops at its next check
@@ -757,7 +774,7 @@ impl ModelApp {
         let l = Loading { done: finished(l.command, &l.done, &took, &reply), ..l };
         match outcome {
             Some((session, Ok(reply))) => {
-                let opened = Opened { session, reply, done: l.done, recent: l.recent, form: l.form };
+                let opened = Opened { command: l.command, session, reply, done: l.done, recent: l.recent, form: l.form };
                 // A design of another part over a meshed or defined model: ask what to do with
                 // the model before it changes (the job ran with the default, keep).
                 let unrelated = opened.reply.get("related").and_then(Value::as_bool) == Some(false)
@@ -809,10 +826,14 @@ impl ModelApp {
             self.form_done();
         }
         let warnings: Vec<&str> = o.reply.get("warnings").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).collect();
+        let mut done = o.done;
+        if o.command == "file.sample" && !self.session.model.steps().is_empty() {
+            done.push_str(" — Solve shows its results");
+        }
         if warnings.is_empty() {
-            self.set_status(o.done, false);
+            self.set_status(done, false);
         } else {
-            self.set_status(format!("{} — {}", o.done, warnings.join("; ")), true);
+            self.set_status(format!("{done} — {}", warnings.join("; ")), true);
         }
     }
 
@@ -833,7 +854,6 @@ impl ModelApp {
                 self.begin_job(
                     "geometry.open",
                     json!({"path": path, "model": "new"}),
-                    false,
                     format!("Opening {name}"),
                     format!("Opened {name} as a new model"),
                     Some(path),
@@ -1557,6 +1577,7 @@ mod tests {
         let target = dir.join("sums").to_string_lossy().to_string();
         let mut app = ModelApp::new(Session::default());
         app.open_sample("cantilever");
+        app.wait_loaded();
         app.run("solve.static", json!({})).unwrap();
         let params = json!({"what": "reactions", "step": "Load"});
         app.export_csv(params.clone());
@@ -1611,7 +1632,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A sample opens with nothing to save; Solve runs its steps in the background and the
+    /// A sample opens in the background with nothing to save (building and meshing one takes
+    /// seconds: the window keeps drawing, #552); Solve runs its steps in the background and the
     /// Results tab comes up with the first step's result.
     #[test]
     fn a_sample_solves_into_the_results_view() {
@@ -1620,7 +1642,11 @@ mod tests {
         assert_eq!(app.prompt, Some(Prompt::Samples));
         app.prompt = None;
         app.open_sample("cantilever");
+        assert_eq!(app.busy(), Some("Opening the Cantilever sample"));
+        assert!(app.session.model.nodes().is_empty(), "the window's model stays until the job is done");
+        app.wait_loaded();
         assert!(!app.session.is_dirty() && !app.session.model.steps().is_empty());
+        assert_eq!(app.status.as_ref().map(|s| s.text.as_str()), Some("Opened the Cantilever sample — Solve shows its results"));
         app.start("solve.run").unwrap();
         assert_eq!(app.busy(), Some("Solving"));
         assert!(app.run("model.info", serde_json::json!({})).is_err(), "commands wait for the solve");
@@ -1634,6 +1660,8 @@ mod tests {
         app.open_sample("impact");
         assert_eq!(app.prompt, Some(Prompt::Unsaved(Replace::Sample("impact"))));
         app.answer_unsaved(Answer::Discard);
+        assert_eq!(app.busy(), Some("Opening the Bar Impact sample"));
+        app.wait_loaded();
         assert!(app.session.model.step("Impact").is_some());
         // An unknown sample name opens the samples to choose from, and says why.
         app.open_sample("crank-armm");
@@ -1659,6 +1687,7 @@ mod tests {
         use fieldcraft_engine::catalogue::Workspace;
         let mut app = ModelApp::new(Session::default());
         app.open_sample("cantilever");
+        app.wait_loaded();
         app.ui.select_workspace(Workspace::Model);
         let job = app.start_job("solve.run", serde_json::json!({})).unwrap();
         assert_eq!(job, 1);

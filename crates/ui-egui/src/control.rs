@@ -823,6 +823,7 @@ mod tests {
     fn the_cantilevers_end_is_picked_and_made_a_set_over_the_control_channel() {
         let mut app = ModelApp::new(Session::default());
         app.open_sample("cantilever");
+        app.wait_loaded();
         let ctx = egui::Context::default();
         assert_eq!(call_in(&mut app, &ctx, "ui.view", json!({"view": "right"}))["ok"], true);
         app.fit_view();
@@ -976,6 +977,29 @@ mod tests {
         let r = call(&mut app, "ui.dialog", json!({"params": {"label": 3, "xyz": [1, 2, 3]}, "run": true}));
         assert_eq!(r["ok"], true, "{r}");
         assert!(app.dialog.is_none() && app.session.model.node(3).is_some());
+    }
+
+    /// A sample opens as a job however it is asked for (the Samples window, `engine.execute`):
+    /// the window and the control channel answer while it is built and meshed (#552).
+    #[test]
+    fn a_sample_opens_while_the_window_answers() {
+        let mut app = ModelApp::new(Session::default());
+        assert_eq!(call(&mut app, "ui.start", json!({"command": "file.sample"}))["ok"], true);
+        let r = call(&mut app, "ui.prompt", json!({"answer": "open", "name": "cantilever"}));
+        assert_eq!(r["ok"], true, "{r}");
+        let r = call(&mut app, "ui.inspect", json!({}));
+        assert_eq!((r["result"]["busy"].as_str(), r["result"]["model"]["nodes"].as_u64()), (Some("Opening the Cantilever sample"), Some(0)), "{r}");
+        // Commands and scripts wait for it: the opened session replaces the window's.
+        let script = json!({"commands": [{"command": "mesh.node.add", "params": {"label": 1, "xyz": [0, 0, 0]}}]});
+        let r = call(&mut app, "engine.script", script);
+        assert!(r["error"].as_str().is_some_and(|e| e.contains("Opening the Cantilever sample")), "{r}");
+        app.wait_loaded();
+        assert!(!app.session.model.nodes().is_empty());
+        let r = call(&mut app, "engine.execute", json!({"command": "file.sample", "params": {"name": "impact"}, "wait": false}));
+        assert_eq!((r["ok"].as_bool(), app.busy()), (Some(true), Some("Opening the Bar Impact sample")), "{r}");
+        let r = call(&mut app, "job.wait", json!({}));
+        assert_eq!(r["result"]["sample"], "impact", "{r}");
+        assert!(app.session.model.step("Impact").is_some() && !app.session.is_dirty());
     }
 
     /// `ui.drop` stands in for the window system: the next frame opens the files as a drop does.

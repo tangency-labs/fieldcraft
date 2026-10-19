@@ -1097,6 +1097,7 @@ mod tests {
     fn mesh_quality_shows_its_metrics_and_frames_the_worst_element() {
         let mut app = ModelApp::new(fieldcraft_engine::Session::default());
         app.open_sample("cantilever");
+        app.wait_loaded();
         app.run("mesh.quality", json!({})).unwrap();
         assert_eq!(app.reply.as_ref().map(|r| r.command.as_str()), Some("mesh.quality"));
         let t = Tokens::get(false);
