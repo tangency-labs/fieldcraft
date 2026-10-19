@@ -129,6 +129,17 @@ fn extreme_lines(plot: &Plot) -> Option<[(String, u32); 2]> {
     Some([line("Max", l.max), line("Min", l.min)])
 }
 
+/// The legend's frame of `n`, `k` counted from 0 like the slider and `results.frame`: a time
+/// step's `frame k of n` (frame 0 the initial field), a nonlinear static step's `increment k of
+/// n − 1` at its load factor (increment 0 the unloaded state).
+fn frame_text(increments: bool, k: usize, n: usize, at: f64, time_unit: Option<&str>) -> String {
+    if increments {
+        format!(", increment {k} of {}: load factor {}", n.saturating_sub(1), number(at))
+    } else {
+        format!(", frame {k} of {n}: t = {}", with_unit(number(at), time_unit))
+    }
+}
+
 /// The legend's text and frame: top left (below the selection bar when they would meet), as wide
 /// as its longest line and as tall as its lines and bands.
 fn legend_layout(plot: &Plot, painter: &egui::Painter, rect: Rect, bar: Option<Rect>, t: &Tokens) -> Legend {
@@ -139,12 +150,8 @@ fn legend_layout(plot: &Plot, painter: &egui::Painter, rect: Rect, bar: Option<R
         step.push_str(&format!(", mode {mode}: {value}"));
     }
     if let Some((k, at, n)) = plot.frame() {
-        let last = n.saturating_sub(1);
-        match plot.result.kind() {
-            // A nonlinear static step's frames are its increments, at their load factors.
-            Kind::Static(_) => step.push_str(&format!(", increment {k} of {last}: load factor {}", number(at))),
-            _ => step.push_str(&format!(", frame {k} of {last}: t = {}", with_unit(number(at), unit_of(Quantity::Time, &plot.units).as_deref()))),
-        }
+        let increments = matches!(plot.result.kind(), Kind::Static(_));
+        step.push_str(&frame_text(increments, k, n, at, unit_of(Quantity::Time, &plot.units).as_deref()));
     }
     lines.push((step, t.overlay_text));
     if !plot.is_fluid() {
@@ -553,10 +560,18 @@ fn flow_rows(plot: &Plot, ui: &mut egui::Ui, run: &mut Vec<(&'static str, Value)
             run.push(("results.streamlines", json!({"show": on})));
         }
         if let Some(sl) = &view.streamlines {
-            let mut count = sl.count;
-            let drag = egui::DragValue::new(&mut count).range(1..=fieldcraft_engine::flow::MAX_STREAMLINES).speed(1.0).suffix(" seeds");
-            if ui.add(drag).on_hover_text("Seeds on the inlet face, upstream of the obstacles").changed() {
-                run.push(("results.streamlines", json!({"count": count})));
+            if sl.seeds.is_some() {
+                // Given seeds (or a line of them): their number; `count` does not change them.
+                ui.label(format!("{} seeds", flow.seeds)).on_hover_text("The seeds given to results.streamlines");
+            } else {
+                let mut count = sl.count;
+                let drag = egui::DragValue::new(&mut count).range(1..=fieldcraft_engine::flow::MAX_STREAMLINES).speed(1.0).suffix(" seeds");
+                if ui.add(drag).on_hover_text("Seeds on the inlet face, upstream of the obstacles").changed() {
+                    run.push(("results.streamlines", json!({"count": count})));
+                }
+                if flow.seeds != sl.count as usize {
+                    ui.label(format!("{} traced", flow.seeds)).on_hover_text("The seeds the grid across the inlet face fits");
+                }
             }
         }
     });
@@ -1005,6 +1020,15 @@ mod tests {
 
     /// A label goes right of its point, left when right runs off, inside the top and bottom;
     /// one that would cover a placed label goes under it, or over it at the bottom edge.
+    /// #590: 65 frames (0 to 64) end at "frame 64 of 65", not "64 of 64"; four increments after
+    /// the unloaded state end at "increment 4 of 4".
+    #[test]
+    fn the_legend_counts_frames_from_zero_of_all_frames() {
+        assert!(frame_text(false, 64, 65, 16.0, Some("s")).starts_with(", frame 64 of 65: t = 16"));
+        assert!(frame_text(false, 0, 65, 0.0, Some("s")).starts_with(", frame 0 of 65: t = "));
+        assert!(frame_text(true, 4, 5, 1.0, None).starts_with(", increment 4 of 4: load factor "));
+    }
+
     #[test]
     fn labels_keep_inside_the_view_and_off_each_other() {
         let bounds = Rect::from_min_max(pos2(0.0, 0.0), pos2(400.0, 300.0));

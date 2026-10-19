@@ -1616,6 +1616,9 @@ mod tests {
         let r = s.execute("results.streamlines", &json!({"seeds": [[0.5, 0.5, 0.5], [5.5, 1.5, 1.5], [50, 0, 0]]})).unwrap();
         assert_eq!((r["traced"]["streamlines"].as_u64(), r["traced"]["no_start"].as_u64()), (Some(1), Some(2)), "{r}");
         assert_eq!(r["streamlines"]["seeds"], 3);
+        // #590: the plot (and the results panel) counts the seeds used, not the default `count`.
+        let (view, result) = (s.results_view.as_ref().unwrap(), s.latest_result("Flow").unwrap().0);
+        assert_eq!(crate::flow::plot(view, result, &s.traced).unwrap().seeds, 3);
         let r =
             s.execute("results.streamlines", &json!({"line": {"from": [0.5, 0.5, 0.5], "to": [0.5, 3.5, 3.5]}, "count": 5, "max_steps": 3})).unwrap();
         assert_eq!((r["traced"]["seeds"].as_u64(), r["traced"]["points"].as_u64()), (Some(5), Some(20)), "{r}");

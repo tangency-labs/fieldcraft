@@ -299,6 +299,8 @@ pub struct FlowPlot {
     pub surface: bool,
     /// Shared with the [`TraceCache`] they came from.
     pub streamlines: Arc<Vec<Streamline>>,
+    /// The seeds they were traced from (the given ones, or those the inlet face's grid fits).
+    pub seeds: usize,
     /// The bands streamlines are coloured by speed over: the legend's when it shows velocity;
     /// `None` draws them in one colour (the legend shows another field).
     pub speed: Option<Bands>,
@@ -336,12 +338,23 @@ pub fn plot(view: &ResultsView, result: &Arc<StepResult>, traced: &TraceCache) -
         }
         _ => None,
     };
-    let streamlines = match &fv.streamlines {
-        Some(s) => traced.trace(result, k, s)?.1,
-        None => Arc::default(),
+    let (seeds, streamlines) = match &fv.streamlines {
+        Some(s) => traced.trace(result, k, s)?,
+        None => (0, Arc::default()),
     };
     let speed = contour.as_ref().filter(|c| c.field == Field::Velocity).map(|c| c.bands);
-    Ok(FlowPlot { grid: g, contour, slice, surface: fv.surface, streamlines, speed, view: fv, wall_values: Vec::new(), wall_positions: Vec::new() })
+    Ok(FlowPlot {
+        grid: g,
+        contour,
+        slice,
+        surface: fv.surface,
+        streamlines,
+        seeds,
+        speed,
+        view: fv,
+        wall_values: Vec::new(),
+        wall_positions: Vec::new(),
+    })
 }
 
 /// Add the obstacle face mapping shared by the desktop and headless views.
