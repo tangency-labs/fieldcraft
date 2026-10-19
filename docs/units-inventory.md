@@ -46,6 +46,9 @@ goes where the form value is read: `Field` → `Quantity` and `ValueInput::to_si
   datums, hex project, defeature, mesh plan, geometry check), while the same quantities in mesh
   editing commands (node add/move/relax, seeds, size regions, block, mirror, planar, stitch) are
   `Dim::Length` and follow the system. One physical quantity, two assumptions.
+  *Resolved:* `Dim::Millimetre` is gone; every length is `Dim::Length` and follows the display
+  system, the geometry frame converting at the command boundary (docs/units.md). Journals from
+  before SI storage keep their millimetres through a frozen table.
 - Missing dimensions: load heat_source power (`forms.rs:561`, really W/m³), frequency shift
   (`forms.rs:2024`, really 1/s²), contact decay (`forms.rs:1015`, s/m), JC reference strain
   rate (`forms.rs:137`, 1/s).

@@ -44,9 +44,19 @@ confirmation.
   `{"value": 210, "unit": "GPa"}` carries its own unit. The parameters are converted field by
   field into the system the command works in ([`Frame`](../crates/engine/src/units.rs)): SI for
   the model and the solvers, millimetres for the geometry commands and the meshers. A value of the
-  wrong dimension or an unknown unit is refused, naming the field. Fields of a fixed unit
-  (`Dim::Millimetre` for datum coordinates and mesh sizes typed against the geometry,
-  `Dim::Degree`) take that unit always.
+  wrong dimension or an unknown unit is refused, naming the field. Numbers inside a JSON-valued
+  field (a polygon, a block grid, a mesh plan object) are described by the field's `numbers` and
+  converted alike. Only `Dim::Degree` fields have a fixed unit.
+- **The geometry frame**: the geometry commands and the meshers work in millimetres, the unit
+  SolidCraft designs are in and the meshers' absolute floors were tuned for; the frame is internal.
+  Their parameters, their replies (`units::REPLIES`, with a `units` map) and their messages
+  (`units::shown`) are in the display system like every other command's: a datum, a mesh size or
+  a tolerance typed as `1` in an inch display is an inch. A journal of a model from before SI
+  storage (its header has `model_units`) built on a design or 3MF meshes typed the numbers of its
+  geometry and mesher commands in millimetres whatever its system, as its stored datums, plans,
+  seeds and size controls migrate: replay reads them in millimetres (without a design, in the
+  declared unit), and a command typed into such a journal now is recorded with its units
+  (`Session::journal_reads`).
 - **Replies**: each command's dimensional reply fields are listed in `units::REPLIES` and
   converted into the display system, with a `units` map naming the unit of each. A fluid
   step's steady-state monitor history follows its monitors, so `solve.fluid` converts it per
@@ -68,7 +78,7 @@ confirmation.
 - **Files**: `.fieldcraft` format 3 stores SI (see below).
 - **Geometry**: SolidCraft designs and imported surfaces are in millimetres; their
   tessellations become metres where they meet the model (`units::geometry_point`), and the
-  meshers run in millimetres inside the geometry frame. 3MF files are read in their declared unit
+  meshers run in millimetres inside the geometry frame (above). 3MF files are read in their declared unit
   through the table.
 
 ## Where conversion never happens
