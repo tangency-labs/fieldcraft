@@ -27,6 +27,10 @@ use serde_json::Value;
 
 use crate::{Error, FORMAT_VERSION, Result, invalid};
 
+// Joins the chain with format 3, once the model stores SI.
+#[allow(dead_code)]
+mod v2_to_v3;
+
 /// The format tag's prefix (`fieldcraft/<N>`).
 const TAG_PREFIX: &str = "fieldcraft/";
 
