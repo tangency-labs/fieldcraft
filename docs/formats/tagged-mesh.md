@@ -9,7 +9,7 @@ FieldCraft reads it into a `SurfaceMesh` (`fieldcraft_geometry::tagged_mesh`, co
 
 SolidCraft defines and writes the format (**File → Export 3MF with Face Tags**, `file.export` with
 `format: "3mf-tagged"`). The specification is
-[`docs/formats/3mf-face-tags.md`](https://github.com/bherbruck/solidcraft/blob/main/docs/formats/3mf-face-tags.md)
+[`docs/formats/3mf-face-tags.md`](https://github.com/tangency-labs/solidcraft/blob/main/docs/formats/3mf-face-tags.md)
 in the SolidCraft repository. In short:
 
 - The file is an ordinary 3MF Core 1.3 package.

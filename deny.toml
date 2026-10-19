@@ -1,14 +1,15 @@
 [advisories]
 unmaintained = "all"
 yanked = "warn"
-# zip 3 comes only through solidcraft-io (pinned rev, still on zip 3; our own zip is 9.0.4,
-# which is fixed). All three are in `ZipArchive::extract` / `ZipStreamReader::extract`, which
-# neither FieldCraft nor solidcraft-io calls: 3MF parts are read by name into memory. Drop these
-# once SolidCraft moves to a fixed zip.
+# zip 8.6 (the last of 8, unfixed) comes only through SolidCraft's FreeCAD importer
+# (cadmpeg-codec-freecad, pinned =0.6.1 by solidcraft-io); our own zip and solidcraft-io's are 9,
+# which is fixed. All three are in `ZipArchive::extract` / `ZipStreamReader::extract`, which no
+# crate in the tree calls: 3MF and FCStd parts are read by name into memory. Drop these once
+# SolidCraft moves to a cadmpeg on zip 9 (0.6.2 is).
 ignore = [
-    { id = "RUSTSEC-2026-0367", reason = "zip 3 via solidcraft-io; extract() is never called" },
-    { id = "RUSTSEC-2026-0368", reason = "zip 3 via solidcraft-io; extract() is never called" },
-    { id = "RUSTSEC-2026-0369", reason = "zip 3 via solidcraft-io; extract() is never called" },
+    { id = "RUSTSEC-2026-0367", reason = "zip 8 via cadmpeg-codec-freecad (solidcraft-io); extract() is never called" },
+    { id = "RUSTSEC-2026-0368", reason = "zip 8 via cadmpeg-codec-freecad (solidcraft-io); extract() is never called" },
+    { id = "RUSTSEC-2026-0369", reason = "zip 8 via cadmpeg-codec-freecad (solidcraft-io); extract() is never called" },
 ]
 
 [bans]
@@ -22,7 +23,7 @@ unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 # SolidCraft's kernel and its patched truck crates, pinned by rev in Cargo.toml.
 # storytold/craft-libs: the Craft family's shared UI components (craft-ui), pinned by rev.
-allow-git = ["https://github.com/bherbruck/solidcraft", "https://github.com/storytold/craft-libs"]
+allow-git = ["https://github.com/tangency-labs/solidcraft", "https://github.com/storytold/craft-libs"]
 
 # What FieldCraft may ship: permissive licences only (no copyleft). A crate offering
 # a choice (MIT OR LGPL) passes on its permissive option. THIRD-PARTY-LICENSES.txt is generated at

@@ -2,7 +2,7 @@
 //! file is committed (docs/adr/0001-libraries.md, test geometry).
 
 use solidcraft_doc::sketch::{ConstraintKind, Sketch};
-use solidcraft_doc::{Direction, Document, Extent, FeatureKind, Operation, PlaneRef, ProfileSel};
+use solidcraft_doc::{Direction, Document, Extent, ExtrudeConvention, FeatureKind, Operation, PlaneRef, ProfileSel};
 use solidcraft_geom::Vec2;
 
 use crate::{Error, Result};
@@ -35,10 +35,12 @@ fn failed(e: impl std::fmt::Display) -> Error {
 
 fn extrude(sketch: u64, distance: &str, operation: Operation) -> FeatureKind {
     FeatureKind::Extrude {
-        sketch,
+        sketch: sketch.into(),
         profiles: ProfileSel::All,
         extent: Extent {
             distance: distance.into(),
+            // What SolidCraft gives a new extrude; one-sided, so both conventions agree.
+            convention: ExtrudeConvention::TotalDistance,
             direction: Direction::Positive,
             distance2: None,
             start_offset: None,

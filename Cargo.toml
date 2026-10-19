@@ -38,7 +38,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 log = "0.4"
 
-# 3MF packages (docs/formats/tagged-mesh.md). zip is ahead of SolidCraft (still on 3), so both are built.
+# 3MF packages (docs/formats/tagged-mesh.md). The same zip line as SolidCraft, so one is built.
 zip = { version = "9", default-features = false, features = ["deflate"] }
 quick-xml = "0.42"
 
@@ -63,15 +63,16 @@ craft-ui = { git = "https://github.com/storytold/craft-libs", rev = "5c874d51eeb
 # native file pickers (the desktop app only; the UI crate takes them as services)
 rfd = "0.17"
 
-# Geometry: SolidCraft's B-rep kernel (MIT OR Apache-2.0), pinned. Only crates/geometry uses it
+# Geometry: SolidCraft's B-rep kernel (MIT OR Apache-2.0), pinned at a release tag's commit (v0.16.2;
+# docs/architecture.md, "SolidCraft pin"). Only crates/geometry uses it
 # (plan/adr/0001-libraries.md).
-solidcraft-geom = { git = "https://github.com/bherbruck/solidcraft", rev = "b1695873f5d0031f51a8d5e7ec036fced6f000e2" }
-solidcraft-kernel = { git = "https://github.com/bherbruck/solidcraft", rev = "b1695873f5d0031f51a8d5e7ec036fced6f000e2" }
-solidcraft-doc = { git = "https://github.com/bherbruck/solidcraft", rev = "b1695873f5d0031f51a8d5e7ec036fced6f000e2" }
-solidcraft-io = { git = "https://github.com/bherbruck/solidcraft", rev = "b1695873f5d0031f51a8d5e7ec036fced6f000e2" }
+solidcraft-geom = { git = "https://github.com/tangency-labs/solidcraft", rev = "5de48e916df2d659586a36b15c90ed05293a0954" }
+solidcraft-kernel = { git = "https://github.com/tangency-labs/solidcraft", rev = "5de48e916df2d659586a36b15c90ed05293a0954" }
+solidcraft-doc = { git = "https://github.com/tangency-labs/solidcraft", rev = "5de48e916df2d659586a36b15c90ed05293a0954" }
+solidcraft-io = { git = "https://github.com/tangency-labs/solidcraft", rev = "5de48e916df2d659586a36b15c90ed05293a0954" }
 # Runs SolidCraft command scripts (the test corpus recipes); only behind fieldcraft-geometry's
 # `scripts` feature.
-solidcraft-engine = { git = "https://github.com/bherbruck/solidcraft", rev = "b1695873f5d0031f51a8d5e7ec036fced6f000e2" }
+solidcraft-engine = { git = "https://github.com/tangency-labs/solidcraft", rev = "5de48e916df2d659586a36b15c90ed05293a0954" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -135,10 +136,11 @@ debug = "line-tables-only"
 # reach a dependent workspace, so FieldCraft applies the same ones from the same pinned commit;
 # keep this list and the rev in step with SolidCraft's [patch.crates-io].
 [patch.crates-io]
-truck-shapeops = { git = "https://github.com/bherbruck/solidcraft", rev = "b1695873f5d0031f51a8d5e7ec036fced6f000e2" }
-truck-stepio = { git = "https://github.com/bherbruck/solidcraft", rev = "b1695873f5d0031f51a8d5e7ec036fced6f000e2" }
-truck-meshalgo = { git = "https://github.com/bherbruck/solidcraft", rev = "b1695873f5d0031f51a8d5e7ec036fced6f000e2" }
-matext4cgmath = { git = "https://github.com/bherbruck/solidcraft", rev = "b1695873f5d0031f51a8d5e7ec036fced6f000e2" }
+truck-geometry = { git = "https://github.com/tangency-labs/solidcraft", rev = "5de48e916df2d659586a36b15c90ed05293a0954" }
+truck-shapeops = { git = "https://github.com/tangency-labs/solidcraft", rev = "5de48e916df2d659586a36b15c90ed05293a0954" }
+truck-stepio = { git = "https://github.com/tangency-labs/solidcraft", rev = "5de48e916df2d659586a36b15c90ed05293a0954" }
+truck-meshalgo = { git = "https://github.com/tangency-labs/solidcraft", rev = "5de48e916df2d659586a36b15c90ed05293a0954" }
+matext4cgmath = { git = "https://github.com/tangency-labs/solidcraft", rev = "5de48e916df2d659586a36b15c90ed05293a0954" }
 # egui-wgpu with SolidCraft's fixes (vendor/egui-wgpu there): MSAA clamped to what the device
 # supports and 1x on OpenGL adapters, so the requested 4x never fails pipeline validation at start.
-egui-wgpu = { git = "https://github.com/bherbruck/solidcraft", rev = "b1695873f5d0031f51a8d5e7ec036fced6f000e2" }
+egui-wgpu = { git = "https://github.com/tangency-labs/solidcraft", rev = "5de48e916df2d659586a36b15c90ed05293a0954" }

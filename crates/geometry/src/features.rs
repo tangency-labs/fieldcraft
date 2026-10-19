@@ -16,7 +16,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
 use solidcraft_doc::expr::Kind;
-use solidcraft_doc::{Document, FeatureKind, ModelState, Operation, SolvedSketch};
+use solidcraft_doc::{Document, FeatureKind, ModelState, Operation, SolvedSketch, plain};
 use solidcraft_geom::{Seg2, Vec3};
 use solidcraft_kernel::guard;
 
@@ -261,9 +261,10 @@ impl History {
                 values.insert(key, v);
             }
         }
-        let point =
-            |p: &[String; 3]| -> Option<[f64; 3]> { Some([eval(&p[0], Kind::Length)?, eval(&p[1], Kind::Length)?, eval(&p[2], Kind::Length)?]) };
-        let sketch_of = |id: u64| self.state.sketch(id);
+        let point = |p: &[solidcraft_doc::Expr; 3]| -> Option<[f64; 3]> {
+            Some([eval(&p[0], Kind::Length)?, eval(&p[1], Kind::Length)?, eval(&p[2], Kind::Length)?])
+        };
+        let sketch_of = |id: solidcraft_doc::SketchId| self.state.sketch(*id);
         let mut node = FeatureNode {
             id: f.id,
             name: f.name.clone(),
@@ -287,7 +288,7 @@ impl History {
         match &f.kind {
             FeatureKind::Extrude { sketch, profiles, extent, operation, targets, .. } => {
                 node.operation = Some(operation_name(*operation).into());
-                node.targets = targets.clone();
+                node.targets = plain(targets);
                 if let Some(ss) = sketch_of(*sketch) {
                     let n = xyz(ss.plane.normal());
                     let negative = matches!(extent.direction, solidcraft_doc::Direction::Negative);
@@ -298,12 +299,12 @@ impl History {
             }
             FeatureKind::Revolve { sketch, profiles, operation, targets, .. } | FeatureKind::Sweep { sketch, profiles, operation, targets, .. } => {
                 node.operation = Some(operation_name(*operation).into());
-                node.targets = targets.clone();
+                node.targets = plain(targets);
                 node.sketch = sketch_of(*sketch).map(|ss| sketch_geometry(ss, Some(profiles)));
             }
             FeatureKind::Loft { operation, targets, .. } => {
                 node.operation = Some(operation_name(*operation).into());
-                node.targets = targets.clone();
+                node.targets = plain(targets);
             }
             FeatureKind::Box { corner, operation, .. } => {
                 node.operation = Some(operation_name(*operation).into());
@@ -313,7 +314,7 @@ impl History {
             FeatureKind::Cylinder { base, axis, operation, .. } => {
                 node.operation = Some(operation_name(*operation).into());
                 node.placement = point(base);
-                node.direction = unit(xyz(*axis));
+                node.direction = unit(xyz(**axis));
             }
             FeatureKind::Sphere { center, operation, .. } | FeatureKind::Torus { center, operation, .. } => {
                 node.operation = Some(operation_name(*operation).into());
@@ -321,20 +322,20 @@ impl History {
             }
             FeatureKind::Hole { position, direction, .. } => {
                 node.operation = Some("cut".into());
-                node.placement = Some(xyz(*position));
-                node.direction = unit(xyz(*direction));
+                node.placement = Some(xyz(**position));
+                node.direction = unit(xyz(**direction));
             }
             FeatureKind::Combine { target, tools, operation, .. } => {
                 node.operation = Some(operation_name(*operation).into());
-                node.targets = vec![target.clone()];
-                node.tools = tools.clone();
+                node.targets = vec![target.to_string()];
+                node.tools = plain(tools);
             }
             FeatureKind::Shell { body, .. } | FeatureKind::Fillet { body, .. } | FeatureKind::Chamfer { body, .. } => {
-                node.targets = body.iter().cloned().collect();
+                node.targets = body.iter().map(ToString::to_string).collect();
             }
-            FeatureKind::Split { body, .. } => node.targets = vec![body.clone()],
+            FeatureKind::Split { body, .. } => node.targets = vec![body.to_string()],
             FeatureKind::Pattern { pattern, bodies, .. } => {
-                node.targets = bodies.clone();
+                node.targets = plain(bodies);
                 if let Ok(m) = solidcraft_doc::pattern_matrices(&self.doc, &self.state, pattern) {
                     // SolidCraft's matrices are column-major (`m[3]` the translation); the graph's are row-major.
                     let rows = |m: [[f64; 4]; 4]| std::array::from_fn(|i| std::array::from_fn(|j| m[j][i]));
@@ -342,7 +343,7 @@ impl History {
                 }
             }
             FeatureKind::Mirror { plane, bodies, .. } => {
-                node.targets = bodies.clone();
+                node.targets = plain(bodies);
                 if let Ok(p) = self.doc.resolve_plane_in(&vals, plane, 0, Some(&self.state))
                     && let Some(n) = unit(xyz(p.normal()))
                 {
@@ -397,10 +398,10 @@ fn body_features(history: &History, shape: &Shape) -> Result<BodyFeatures> {
     // `Bracket (1)`): features name it by its base.
     let base = shape.name.rsplit_once('.').filter(|(_, n)| n.bytes().all(|b| b.is_ascii_digit())).map_or(shape.name.as_str(), |(b, _)| b);
     let names_body = |f: &solidcraft_doc::Feature| {
-        let mentioned = |n: &String| n == &shape.name || n == base || crate::design::split_base(n) == base;
+        let mentioned = |n: &str| n == shape.name || n == base || crate::design::split_base(n) == base;
         // The bodies the feature changes. A combine's tools are not among them: kept tools come
         // out unchanged, and the others are gone.
-        let targets: Vec<&String> = match &f.kind {
+        let targets: Vec<&solidcraft_doc::BodyName> = match &f.kind {
             FeatureKind::Extrude { targets, .. }
             | FeatureKind::Revolve { targets, .. }
             | FeatureKind::Sweep { targets, .. }
@@ -412,7 +413,7 @@ fn body_features(history: &History, shape: &Shape) -> Result<BodyFeatures> {
             FeatureKind::Pattern { bodies, .. } | FeatureKind::Mirror { bodies, .. } => bodies.iter().collect(),
             _ => Vec::new(),
         };
-        targets.into_iter().chain(&f.body_names).any(mentioned)
+        targets.into_iter().map(|b| &**b).chain(f.body_names.iter().map(String::as_str)).any(mentioned)
     };
     let mut features = Vec::new();
     for f in history.doc.features.iter().filter(|f| !f.suppressed) {

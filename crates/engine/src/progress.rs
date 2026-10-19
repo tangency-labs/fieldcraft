@@ -308,7 +308,7 @@ mod tests {
         let mut s = Session::default();
         s.execute("file.sample", &json!({"name": "bracket-hex"})).unwrap();
         assert_eq!(status(&s, Stage::Mesh), Done);
-        let edge = json!({"body": "Bracket.17", "edge": "F17:face:5|F2:side:l1"});
+        let edge = json!({"body": "Bracket.17", "edge": "F17:section|F2:side:l1"});
         s.execute("mesh.seed.edge", &json!({"edges": [edge], "count": 6})).unwrap();
         assert_eq!(status(&s, Stage::Mesh), Outdated);
         let why = s.mesh_outdated().unwrap();
