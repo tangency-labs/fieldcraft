@@ -380,3 +380,160 @@ fn a_steady_run_scales_a_slow_solid_and_lands_on_the_same_temperatures() {
     );
     assert!(diff < 1e-3 * rise, "{diff} of {rise}");
 }
+
+/// The de Vahl Davis cavity (hot wall x = 0 at 1, cold wall x = H at 0, adiabatic top and
+/// bottom, Pr 0.71, `n` cells across, one cell deep and periodic in z) with a centred square
+/// body of side H / 2 conducting `kappa` times the fluid, its heat capacity the fluid's.
+/// Returns the Nusselt number of the hot wall and the heats into the hot and cold walls.
+fn conjugate_cavity(ra: f64, kappa: f64, n: usize, u_max: f64, diffusive_times: f64) -> (f64, f64, f64) {
+    use fieldcraft_lbm::{Limits, run};
+    let (h, pr, alpha) = (1.0, 0.71, 1.0);
+    let dx = h / n as f64;
+    let nu = pr * alpha;
+    let g_beta = ra * nu * alpha / (h * h * h);
+    let mut d = domain([0.0; 3], [h, h, dx], dx);
+    d.faces.z_min = PERIODIC;
+    d.faces.z_max = PERIODIC;
+    d.obstacles = vec!["Body".into()];
+    let mut t = FluidThermal { initial_temperature: kelvin(0.5), gravity: [0.0, -g_beta, 0.0], expansion: Some(1.0), ..FluidThermal::default() };
+    t.faces.x_min = ThermalCondition::Temperature { value: kelvin(1.0) };
+    t.faces.x_max = ThermalCondition::Temperature { value: kelvin(0.0) };
+    t.solids = vec![ConductingSolid { body: "Body".into(), material: "Solid".into(), power: 0.0 }];
+    d.thermal = Some(t);
+    let dt = (0.05 * dx / (u_max * alpha / h)).min(dx * dx / (4.0 * alpha));
+    let m = cht_model([1.0, nu, alpha], (1.0, [kappa * alpha; 3], 1.0), d, step(diffusive_times * h * h / alpha, dt, None));
+    let body = [obstacle("Body", cuboid([0.25, 0.25, -1.0], [0.75, 0.75, 1.0]), &CUBOID_FACES)];
+    let setup = fieldcraft_lbm::Setup::new(&m, None, &body, &Limits::default()).unwrap();
+    let mut flow = Flow::new(&setup, &body).unwrap();
+    let r = run(&setup, &mut flow, &Limits::default()).unwrap();
+    let steady = |name: &str| {
+        let w = r.heat.iter().find(|w| w.name == name && w.body.is_none()).unwrap();
+        let m = w.power.len();
+        let tail = &w.power[m - m / 10..];
+        tail.iter().sum::<f64>() / tail.len() as f64
+    };
+    let (hot, cold) = (steady("x_min"), steady("x_max"));
+    let nusselt = -hot * h / (alpha * h * dx);
+    println!("conjugate cavity Ra {ra:.0e}, κ {kappa}, {n} cells: Nu = {nusselt:.4}, hot {hot:.6e}, cold {cold:.6e}, {} steps", setup.steps);
+    (nusselt, hot, cold)
+}
+
+/// The conduction limit of the House et al. cavity (no flow), every run: the hot wall's Nusselt
+/// number against the paper's 0.7069, 1 and 1.4138 for conductivities 0.2, 1 and 5 times the
+/// fluid's, and the heat balances. (On 32 cells the low ratio is within 0.06 % and the high one
+/// within 0.5 %: the heat crowds into the body's corners.)
+#[test]
+fn a_conducting_body_in_a_cavity_without_flow_matches_house_et_al() {
+    for (kappa, published) in [(0.2, 0.7069), (1.0, 1.0), (5.0, 1.4138)] {
+        let (nu, hot, cold) = conjugate_cavity(0.0, kappa, 16, 1.0, 1.0);
+        assert!((nu / published - 1.0).abs() < 0.015, "κ {kappa}: Nu {nu} vs {published}");
+        assert!((hot + cold).abs() < 1e-6 * cold, "κ {kappa}: {hot} vs {cold}");
+    }
+}
+
+/// House, Beckermann and Smith, Numer. Heat Transfer A 18 (1990) 213–225, Table 3: natural
+/// convection at Ra = 10⁵, Pr = 0.71, round a centred body of half the cavity's side conducting
+/// 0.2, 1 and 5 times the fluid: the published hot-wall Nusselt numbers are 4.6257, 4.5061 and
+/// 4.3221. The grid converges at second order from above: on 48 cells 4.6511, 4.5299 and 4.3433
+/// (+0.5 %), on 64 cells 4.6356, 4.5151 and 4.3297 (+0.2 %); extrapolated from those two,
+/// 4.6157, 4.4961 and 4.3122, −0.22 % from the published values. The heat into the hot wall is the heat out of the cold one
+/// to 1e-7. The test runs 48 cells within 0.7 %.
+#[test]
+#[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+fn conjugate_cavity_matches_house_et_al() {
+    for (kappa, published) in [(0.2, 4.6257), (1.0, 4.5061), (5.0, 4.3221)] {
+        let (nu, hot, cold) = conjugate_cavity(1e5, kappa, N_HEAVY, 68.6, 1.0);
+        assert!((nu / published - 1.0).abs() < 0.007, "κ {kappa}: Nu {nu} vs {published}");
+        assert!((hot + cold).abs() < 1e-4 * cold, "κ {kappa}: {hot} vs {cold}");
+    }
+}
+
+/// Cells across the heavy cavity (48: 2.5 minutes in release on one core).
+const N_HEAVY: usize = 48;
+
+/// Rayleigh's square array of cylinders, conduction only: the effective conductivity of a square
+/// array (period 1) of cylinders of area fraction `f` conducting `kappa` times the matrix, from
+/// the lattice-sum series of Y. A. Godin, J. Math. Phys. 53:063703 (2012) (arXiv:1201.1419; the
+/// f⁸ pole term from arXiv:1301.0110), whose square-array lattice
+/// sums `S₂ = 3.15121`, `S₄ = 4.25577` give the coefficients of W. T. Perrins, D. R. McKenzie,
+/// R. C. McPhedran, Proc. R. Soc. Lond. A 369:207–225 (1979):
+/// `1 + 2fρ / (1 − fρ − 0.305827 ρ² f⁴ / (1 − 1.402958 ρ² f⁸) − 0.013362 ρ² f⁸)`,
+/// `ρ = (κ − 1)/(κ + 1)`.
+fn square_array(f: f64, kappa: f64) -> f64 {
+    let r = (kappa - 1.0) / (kappa + 1.0);
+    1.0 + 2.0 * f * r / (1.0 - f * r - 0.305827 * r * r * f.powi(4) / (1.0 - 1.402958 * r * r * f.powi(8)) - 0.013362 * r * r * f.powi(8))
+}
+
+/// One period of the array, a cylinder of radius 0.3 at its centre (`n` cells across, one deep):
+/// the faces between cylinders across the gradient are isotherms and the faces along it carry no
+/// heat (mirror symmetry), so x = 0 held at 1, x = 1 at 0 and adiabatic y faces are exact.
+/// Returns the effective conductivity over the matrix's, and the series at the voxelised area
+/// fraction (the staircase changes the area; that change is factored out, so what remains is
+/// the interface's own error).
+fn cylinder_array(n: usize, kappa: f64) -> (f64, f64) {
+    let (alpha, r) = (1.0, 0.3);
+    let dx = 1.0 / n as f64;
+    let mut d = domain([0.0; 3], [1.0, 1.0, dx], dx);
+    d.faces.z_min = PERIODIC;
+    d.faces.z_max = PERIODIC;
+    d.obstacles = vec!["Rod".into()];
+    let mut th = FluidThermal::default();
+    th.faces.x_min = ThermalCondition::Temperature { value: kelvin(1.0) };
+    th.faces.x_max = ThermalCondition::Temperature { value: kelvin(0.0) };
+    th.solids = vec![ConductingSolid { body: "Rod".into(), material: "Solid".into(), power: 0.0 }];
+    d.thermal = Some(th);
+    // τ_T = 1; the rods' heat capacity at most the fluid's (a larger one only slows the settling:
+    // the steady state does not depend on it), and no less than κ times it, so they diffuse at
+    // least as fast as the fluid
+    let dt = dx * dx / (8.0 * alpha);
+    let m = cht_model([1.0, 0.1, alpha], (kappa.min(1.0), [kappa * alpha; 3], 1.0), d, step(2.0 / alpha, dt, None));
+    let rod = [obstacle("Rod", cylinder([0.5, 0.5], r, -1.0, 1.0, 256), &["side", "bottom", "top"])];
+    let (setup, mut flow) = prepare(&m, &rod);
+    run_all(&setup, &mut flow);
+    let hs = setup.thermal.as_ref().unwrap().heat_scale;
+    let (hot, cold) = (-flow.heat()[BoxFace::XMin.index()] * hs, flow.heat()[BoxFace::XMax.index()] * hs);
+    let effective = cold / (alpha * dx);
+    let f = flow.thermal().unwrap().solid().unwrap().cells.len() as f64 / (n * n) as f64;
+    let series = square_array(f, kappa);
+    println!(
+        "cylinder array, {n} cells, κ {kappa}: k_eff {effective:.6} vs {series:.6} at f {f:.5} ({:+.2} %), heat in {hot:.6e} out {cold:.6e}",
+        100.0 * (effective / series - 1.0)
+    );
+    assert!((hot - cold).abs() < 1e-6 * cold, "{hot} vs {cold}");
+    (effective, series)
+}
+
+/// The array on 16 cells, every run: conducting rods (κ 10) within 1 % of the series, insulating
+/// ones (κ 0.1) within 5 %: for them the staircase is a first-order error (the heavy test follows
+/// it down). The series itself against its value at the round area fraction, and Keller's
+/// reciprocity (a square array's k(κ) k(1/κ) = 1).
+#[test]
+fn a_square_array_of_cylinders_conducts_as_rayleigh_s_series() {
+    let f = std::f64::consts::PI * 0.09;
+    assert!((square_array(f, 10.0) - 1.602942).abs() < 1e-6 && (square_array(f, 0.1) - 0.623853).abs() < 1e-6);
+    assert!((square_array(f, 10.0) * square_array(f, 0.1) - 1.0).abs() < 1e-12);
+    let (k10, s10) = cylinder_array(16, 10.0);
+    assert!((k10 / s10 - 1.0).abs() < 0.01, "{k10} vs {s10}");
+    let (k01, s01) = cylinder_array(16, 0.1);
+    assert!((k01 / s01 - 1.0).abs() < 0.05, "{k01} vs {s01}");
+}
+
+/// Insulating rods (κ 0.1) on 32 and 64 cells: −2.2 % and −0.85 % of the series, the staircase
+/// interface converging at first order or better; conducting rods (κ 10) within 0.5 %.
+#[test]
+#[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+fn insulating_cylinders_converge_at_first_order() {
+    let (k10, s10) = cylinder_array(32, 10.0);
+    assert!((k10 / s10 - 1.0).abs() < 0.005, "{k10} vs {s10}");
+    let errors: Vec<f64> = [32, 64]
+        .iter()
+        .map(|n| {
+            let (k, s) = cylinder_array(*n, 0.1);
+            (k / s - 1.0).abs()
+        })
+        .collect();
+    let order = orders(&errors, 2.0);
+    println!("insulating cylinders: errors {errors:?}, orders {order:?}");
+    assert!(errors[1] < 0.01, "{errors:?}");
+    assert!(order.iter().all(|o| *o > 0.9), "{order:?}");
+}

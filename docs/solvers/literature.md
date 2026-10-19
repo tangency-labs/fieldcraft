@@ -671,6 +671,7 @@ D3Q19 f32 ≈ 80 B/cell (with flags): 10⁸ cells ≈ 8 GB. These numbers decide
 | Sphere Stokes drag | analytic | `F = 6πμRU` (with confinement correction) |
 | Differentially heated cavity Ra 10³–10⁶ | G. de Vahl Davis, *Natural convection of air in a square cavity: a bench mark numerical solution*, Int. J. Numer. Meth. Fluids 3:249–264, 1983 | hot-wall Nusselt numbers (published numerical reference) |
 | Cavity with a centred conducting body (conjugate) | J. M. House, C. Beckermann, T. F. Smith, *Effect of a centered conducting body on natural convection heat transfer in an enclosure*, Numer. Heat Transfer A 18(2):213–225, 1990, DOI [10.1080/10407789008944791](https://doi.org/10.1080/10407789008944791) | hot-wall Nusselt numbers at Ra 10⁵ for conductivity ratios 0.2, 1, 5, and the conduction limit (Table 3; published numerical reference) |
+| Square array of cylinders, conduction (conjugate, curved interfaces) | W. T. Perrins, D. R. McKenzie, R. C. McPhedran, *Transport properties of regular arrays of cylinders*, Proc. R. Soc. Lond. A 369:207–225, 1979; the coefficients from the lattice sums of Y. A. Godin, J. Math. Phys. 53:063703, 2012 | effective conductivity series at a given area fraction (analytic, truncated series); Keller's reciprocity k(κ) k(1/κ) = 1 |
 
 ### C9. Heat: the scalar lattice and conjugate heat transfer, as implemented
 
