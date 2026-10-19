@@ -115,13 +115,16 @@ pub fn selection_json(app: &ModelApp) -> Value {
     })
 }
 
+/// The largest window coordinate a request may give.
+const MAX_POINT: f64 = 1e6; // unit-factors: a cap in window points
+
 /// The window points in `v`, a list of `n` numbers (two per point).
 fn points<const N: usize>(v: &Value, key: &str, what: &str) -> Result<[f32; N], String> {
     let bad = || format!("`{key}` must be {what} in window points");
     let list = v.as_array().filter(|a| a.len() == N).ok_or_else(bad)?;
     let mut out = [0.0; N];
     for (slot, x) in out.iter_mut().zip(list) {
-        *slot = x.as_f64().filter(|x| x.is_finite() && x.abs() <= 1e6).ok_or_else(bad)? as f32;
+        *slot = x.as_f64().filter(|x| x.is_finite() && x.abs() <= MAX_POINT).ok_or_else(bad)? as f32;
     }
     Ok(out)
 }

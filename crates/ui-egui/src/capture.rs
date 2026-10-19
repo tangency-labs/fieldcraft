@@ -27,6 +27,8 @@ pub const MAX_PIXELS: usize = 4096 * 4096;
 pub const SCALE_RANGE: std::ops::RangeInclusive<f32> = 0.5..=4.0;
 /// Frames run before the one rasterised: egui sizes some panels and windows in a first pass.
 const WARMUP_FRAMES: usize = 2;
+/// A triangle of less (twice signed) area than this, in pixels², is degenerate.
+const MIN_AREA: f32 = 1e-6; // unit-factors: an area in pixels
 
 /// A texture the offscreen context uploaded.
 struct Texture {
@@ -232,7 +234,7 @@ impl Canvas {
         let p = v.map(|v| [v.pos.x * ppp, v.pos.y * ppp]);
         let [a, b, c] = p;
         let area = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
-        if !(area.abs() > 1e-6) {
+        if !(area.abs() > MIN_AREA) {
             return;
         }
         let x0 = a[0].min(b[0]).min(c[0]).floor().max(clip[0]);

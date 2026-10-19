@@ -39,6 +39,10 @@ const EDGE_WIDTH: f64 = 4.0;
 const NODE_SIZE: f64 = 9.0;
 /// Width of the outline around highlighted faces (points).
 const OUTLINE_WIDTH: f64 = 2.5;
+/// How far a point may lie behind the first face along its ray and still be on it, as a fraction
+/// of the model's diagonal, and at least (metres).
+const SLACK: f64 = 1e-4;
+const MIN_SLACK: f64 = 1e-9; // unit-factors: a floor in metres (SI)
 
 /// What a pick selects.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -426,7 +430,7 @@ impl Picker<'_> {
     /// How far a point may lie behind the first face along its ray and still be on it.
     fn slack(&self) -> f64 {
         let d = self.display.bounds.diagonal();
-        if d.is_finite() { (d * 1e-4).max(1e-9) } else { 1e-9 }
+        if d.is_finite() { (d * SLACK).max(MIN_SLACK) } else { MIN_SLACK }
     }
 
     /// Whether `p` is in front: the ray through its pixel reaches it before any drawn face.

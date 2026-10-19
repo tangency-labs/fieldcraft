@@ -11,6 +11,9 @@ use serde::Serialize;
 use crate::results::Pick;
 use crate::{EngineError, Result, Session};
 
+/// The chordal tolerance the faces are tessellated with, as a fraction of the body's size.
+const TESSELLATION: f64 = 0.001; // unit-factors: relative to the body's size
+
 #[derive(Clone, Debug, Serialize)]
 pub struct FaceHeat {
     pub body: String,
@@ -64,7 +67,7 @@ pub fn faces(s: &Session, r: &FluidResult, pick: Pick) -> Result<Vec<FaceHeat>> 
             .face_index(&h.name)
             .ok_or_else(|| EngineError::Params(format!("wall heat: face `{}` of `{name}` is no longer in the design", h.name)))?;
         if let std::collections::btree_map::Entry::Vacant(entry) = areas.entry(name.to_owned()) {
-            let mesh = body.tessellate((body.size()? * 0.001).max(1e-4))?;
+            let mesh = body.tessellate((body.size()? * TESSELLATION).max(1e-4))?;
             let mut by_face = BTreeMap::<u32, f64>::new();
             for (tri, face) in mesh.triangles.iter().zip(&mesh.tri_face) {
                 let point = |k: u32| mesh.positions.get(k as usize).copied().map(Vec3::from);

@@ -24,7 +24,13 @@ use fieldcraft_mesh::tet::{QualityOptions, quality_mesh};
 
 pub const FILE: &str = "docs/meshing/corpus.md";
 /// Chordal tolerance of the boundary surface, relative to the part's bounding-box diagonal.
-const RELATIVE_TOLERANCE: f64 = 1e-3;
+const RELATIVE_TOLERANCE: f64 = 1e-3; // unit-factors: relative to the diagonal
+
+/// The wall-clock milliseconds since `start`, as the tables give times.
+fn elapsed_ms(start: Instant) -> f64 {
+    const MS_PER_SECOND: f64 = 1e3; // unit-factors: wall-clock time of the report, not a model quantity
+    start.elapsed().as_secs_f64() * MS_PER_SECOND
+}
 
 /// A built part with its boundary surfaces.
 pub struct Loaded<'a> {
@@ -89,7 +95,7 @@ impl Stage for BoundaryCheck {
             genus.extend(s.shells().iter().map(|sh| if sh.void { format!("{} (void)", sh.genus) } else { sh.genus.to_string() }));
             features += s.feature_edges().len();
         }
-        let ms = start.elapsed().as_secs_f64() * 1e3;
+        let ms = elapsed_ms(start);
         Ok(vec![format!("ok, {vertices} vertices"), genus.join(", "), features.to_string(), format!("{ms:.1}")])
     }
 }
@@ -119,7 +125,7 @@ impl Stage for TetCdt {
             steiner += m.steiner.len();
             cavities += m.stats.cavities;
         }
-        let ms = start.elapsed().as_secs_f64() * 1e3;
+        let ms = elapsed_ms(start);
         let gate = if inadmissible == 0 { "pass".to_string() } else { format!("{inadmissible} flat") };
         Ok(vec![tets.to_string(), steiner.to_string(), cavities.to_string(), gate, format!("{ms:.0}")])
     }
@@ -158,7 +164,7 @@ impl Stage for TetQualityStage {
             before += r.input.slivers;
             after += r.output.slivers;
         }
-        let ms = start.elapsed().as_secs_f64() * 1e3;
+        let ms = elapsed_ms(start);
         Ok(vec![
             tets.to_string(),
             format!("{lo:.1}"),
@@ -194,7 +200,7 @@ impl Stage for StructuredHex {
         let quadratic = HexOptions { quadratic: true, ..linear.clone() };
         if l.part.categories.iter().any(|c| c == "partitioned") {
             return blocks(l, &size, &linear, &quadratic).map(|mut cells| {
-                cells.push(format!("{:.0}", start.elapsed().as_secs_f64() * 1e3));
+                cells.push(format!("{:.0}", elapsed_ms(start)));
                 cells
             });
         }
@@ -214,7 +220,7 @@ impl Stage for StructuredHex {
                 }
                 Err(e) => {
                     let reason: String = e.to_string().chars().take(REASON_CHARS).collect();
-                    let ms = start.elapsed().as_secs_f64() * 1e3;
+                    let ms = elapsed_ms(start);
                     return Ok(vec![format!("no: {}: {reason}", body.name), String::new(), String::new(), String::new(), format!("{ms:.0}")]);
                 }
             };
@@ -228,7 +234,7 @@ impl Stage for StructuredHex {
         }
         methods.sort_unstable();
         methods.dedup();
-        let ms = start.elapsed().as_secs_f64() * 1e3;
+        let ms = elapsed_ms(start);
         let sj20 = sj20.map_or_else(|e| format!("error: {e}"), |v| format!("{v:.3}"));
         Ok(vec![methods.join(", "), elements.to_string(), format!("{sj8:.3}"), sj20, format!("{ms:.0}")])
     }
@@ -305,7 +311,7 @@ impl Stage for OctreeHex {
                 Ok(m) => m,
                 Err(e) => {
                     let reason: String = e.to_string().chars().take(REASON_CHARS).collect();
-                    let ms = start.elapsed().as_secs_f64() * 1e3;
+                    let ms = elapsed_ms(start);
                     return Ok(vec![format!("no: {}: {reason}", body.name), String::new(), String::new(), String::new(), format!("{ms:.0}")]);
                 }
             };
@@ -316,7 +322,7 @@ impl Stage for OctreeHex {
         }
         let measured: f64 = l.measures.iter().map(|m| m.volume).sum();
         let rel = if measured.abs() > 0.0 { (volume - measured) / measured } else { f64::NAN };
-        let ms = start.elapsed().as_secs_f64() * 1e3;
+        let ms = elapsed_ms(start);
         Ok(vec![hexes.to_string(), format!("{min_sj:.3}"), format!("{:.3}", sum_sj / hexes.max(1) as f64), format!("{rel:.1e}"), format!("{ms:.0}")])
     }
 }
@@ -339,7 +345,7 @@ fn load(part: &Part) -> Result<(Loaded<'_>, f64), String> {
     let tolerance = RELATIVE_TOLERANCE * if diagonal.is_finite() && diagonal > 0.0 { diagonal } else { 1.0 };
     let surfaces =
         design.bodies.iter().map(|b| b.tessellate(tolerance).map_err(|e| format!("tessellate {}: {e}", b.name))).collect::<Result<Vec<_>, _>>()?;
-    let ms = start.elapsed().as_secs_f64() * 1e3;
+    let ms = elapsed_ms(start);
     Ok((Loaded { part, design, measures, surfaces, tolerance, diagonal }, ms))
 }
 

@@ -15,10 +15,13 @@ const LIST: usize = 6;
 /// Nesting followed at most.
 const MAX_DEPTH: usize = 6;
 
+/// Whole numbers below this are written in full.
+const IN_FULL_BELOW: f64 = 1e9; // unit-factors: a count of digits, not a unit
+
 /// A number in a few significant figures: whole numbers below a billion in full, with thin spaces
 /// between groups of three digits ("210 000"); others as [`crate::results::number`].
 pub fn quantity(v: f64) -> String {
-    if v.is_finite() && v.fract() == 0.0 && v.abs() < 1e9 {
+    if v.is_finite() && v.fract() == 0.0 && v.abs() < IN_FULL_BELOW {
         let digits = format!("{}", v.abs() as u64);
         let mut out = String::new();
         for (i, c) in digits.chars().enumerate() {

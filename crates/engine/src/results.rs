@@ -18,6 +18,12 @@ use serde_json::{Value, json};
 
 use crate::{EngineError, Result, Session, StepResult};
 
+/// Loads and reactions balance when they differ by less than this fraction of the largest.
+pub use fieldcraft_solver::system::BALANCE_TOLERANCE;
+
+/// The largest deformation scale factor.
+pub const MAX_DEFORMATION_SCALE: f64 = 1e12; // unit-factors: a cap on a scale factor
+
 /// A result by its procedure.
 pub enum Kind<'a> {
     Static(&'a StaticResult),

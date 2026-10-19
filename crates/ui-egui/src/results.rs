@@ -24,7 +24,9 @@ pub const PERIOD: f64 = 2.0;
 /// Significant digits of the numbers the results show.
 const DIGITS: i32 = 4;
 /// A value below this fraction of the largest it is read with is round-off, shown as 0.
-const ROUND_OFF: f64 = 1e-9;
+const ROUND_OFF: f64 = 1e-9; // unit-factors: relative to the largest value
+/// Magnitudes written as plain decimals; others in scientific notation.
+const PLAIN: std::ops::Range<f64> = 1e-3..1e6; // unit-factors: magnitudes of a written number
 
 /// A contour plot: its field, bands, extremes and the value at every node.
 #[derive(Clone, Debug, PartialEq)]
@@ -304,7 +306,7 @@ pub fn number(v: f64) -> String {
     if a == 0.0 {
         return "0".into();
     }
-    if !(1e-3..1e6).contains(&a) {
+    if !PLAIN.contains(&a) {
         return format!("{:.*e}", (DIGITS - 1) as usize, v);
     }
     let decimals = (DIGITS - 1 - a.log10().floor() as i32).clamp(0, 6) as usize;

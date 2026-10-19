@@ -13,6 +13,7 @@
 //! once the camera is known.
 
 use fieldcraft_model::ElementKind;
+use fieldcraft_model::units::{Quantity, Typed};
 use fieldcraft_render::contour::{banded, bands_color};
 use fieldcraft_render::glyphs::{self, GlyphColors, GlyphShow, GlyphView, Glyphs};
 use fieldcraft_render::{Aabb3, Camera, DisplayMesh, Orientation, Rgb, Scene, SceneLine, ScenePoint, SceneTri, Vec3};
@@ -163,6 +164,14 @@ const GEOMETRY_EDGE_WIDTH: f64 = 1.5;
 const LINE_ELEMENT_WIDTH: f64 = 3.0;
 const NODE_SIZE: f64 = 5.0;
 
+/// Coordinates beyond this magnitude in a camera command are refused.
+const MAX_TARGET: f64 = 1e12; // unit-factors: a cap on hostile input
+/// A closed surface's volume is well away from 0 when above this fraction of its area times
+/// its size.
+const ENCLOSES: f64 = 1e-6; // unit-factors: relative to the area times the size
+/// The smallest sine of the half angle a perspective fit divides by.
+const MIN_SINE: f64 = 1e-6; // unit-factors: the sine of an angle
+
 /// The scene for `display` drawn in `style` with `p`'s colours: the one builder of the window's
 /// viewport and the headless pictures, so both draw the same model.
 ///
@@ -212,10 +221,18 @@ pub fn build(display: &DisplayMesh, style: Style, show: Show, p: &Palette) -> Sc
     s
 }
 
-/// The chordal tolerance geometry is tessellated with for display: a thousandth of its size.
-fn display_tolerance(b: &Aabb3) -> f64 {
+/// The chordal tolerance bodies are drawn with, in the geometry's millimetres (`b` too): a
+/// thousandth of their size, within 1 µm–1 mm.
+pub fn display_tolerance(b: &Aabb3) -> f64 {
+    const RELATIVE: f64 = 1e-3; // unit-factors: relative to the body's size
+    static RANGE: std::sync::OnceLock<(f64, f64)> = std::sync::OnceLock::new();
+    let (lo, hi) = *RANGE.get_or_init(|| {
+        let mm = |t: Typed| t.express(Quantity::Length, crate::units::geometry()).unwrap_or(f64::NAN);
+        (mm(Typed::new(1.0, "µm")), mm(Typed::new(1.0, "mm")))
+    });
     let d = b.diagonal();
-    if d.is_finite() { (d * 1e-3).clamp(1e-3, 1.0) } else { 0.1 }
+    // `max` and `min`, not `clamp`: no panic whatever the bounds.
+    if d.is_finite() { (d * RELATIVE).max(lo).min(hi) } else { 0.1 }
 }
 
 /// The findings of a `geometry.check`, to draw over the design it checked.
@@ -709,7 +726,7 @@ pub fn camera(p: &Value) -> Result<Aim> {
 fn target(v: &Value) -> Result<Target> {
     let bad = |m: &str| EngineError::Params(format!("camera: target {m}"));
     if let Some(a) = v.as_array() {
-        let c: Vec<f64> = a.iter().filter_map(Value::as_f64).filter(|x| x.is_finite() && x.abs() <= 1e12).collect();
+        let c: Vec<f64> = a.iter().filter_map(Value::as_f64).filter(|x| x.is_finite() && x.abs() <= MAX_TARGET).collect();
         return match c[..] {
             [x, y, z] if a.len() == 3 => Ok(Target::Point(Vec3::new(x, y, z))),
             _ => Err(bad("must be [x, y, z] (finite numbers)")),
@@ -754,7 +771,7 @@ fn centre_of_mass<'a>(tris: impl Iterator<Item = &'a [Vec3; 3]>) -> Option<Vec3>
     // A closed surface's volume is well away from 0 compared with its area times its size;
     // an open one (a shell) has none worth the name.
     let size = area.sqrt();
-    let c = if volume.abs() > 1e-6 * area * size { moment * (1.0 / volume) } else { areal * (1.0 / area) };
+    let c = if volume.abs() > ENCLOSES * area * size { moment * (1.0 / volume) } else { areal * (1.0 / area) };
     c.is_finite().then_some(c)
 }
 
@@ -819,14 +836,14 @@ fn aimed(pic: &Picture, aim: &Aim, mut cam: Camera, aspect: f64) -> Result<Camer
     } else if aim.fit {
         cam.fit_about(&framed, aspect);
     } else if !pic.bounds.is_empty() {
-        let aspect = if aspect.is_finite() && aspect > 1e-6 { aspect } else { 1.0 };
+        let aspect = if aspect.is_finite() && aspect > fieldcraft_render::ASPECT_RANGE.0 { aspect } else { 1.0 };
         let radius = pic.bounds.corners().iter().map(|c| c.dist(point)).fold(fieldcraft_render::MIN_SIZE, f64::max)
             / (1.0 - 2.0 * fieldcraft_render::FIT_MARGIN);
         // The half height the sphere needs, then the distance that shows it.
         let half = radius / aspect.min(1.0);
         let d = if cam.fov > 0.0 {
             let half_angle = ((cam.fov * 0.5).tan() * aspect.min(1.0)).atan();
-            radius / half_angle.sin().max(1e-6)
+            radius / half_angle.sin().max(MIN_SINE)
         } else {
             half / Camera { distance: 1.0, ..cam }.half_height()
         };

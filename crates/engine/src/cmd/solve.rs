@@ -221,13 +221,16 @@ fn run_all(s: &mut Session, _: &Value) -> Result<Value> {
     Ok(json!({"steps": done}))
 }
 
+/// A sum's component below this fraction of its terms' magnitudes is round-off.
+const CANCELLED: f64 = 1e-9; // unit-factors: relative to the terms' magnitudes
+
 /// A sum of nodal values with its round-off set to 0: a component below a billionth of the sum
 /// of the terms' magnitudes is what cancelling left (a balanced load sums to ~1e-11, not 0).
 fn settled(total: [f64; 3], terms: &[[f64; 3]]) -> [f64; 3] {
     let mut out = total;
     for (k, c) in out.iter_mut().enumerate() {
         let scale: f64 = terms.iter().filter_map(|t| t.get(k)).map(|x| x.abs()).filter(|x| x.is_finite()).sum();
-        if c.abs() <= 1e-9 * scale {
+        if c.abs() <= CANCELLED * scale {
             *c = 0.0;
         }
     }

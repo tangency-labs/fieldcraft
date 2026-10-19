@@ -77,11 +77,14 @@ pub struct Preview {
     pub note: Option<String>,
 }
 
+/// A ray whose direction has less than this component along a plane's normal runs along it.
+const ALONG_PLANE: f64 = 1e-12; // unit-factors: a component of a direction
+
 /// Where the ray `origin + t·dir` meets the plane through `point` with normal `normal`; `None`
 /// when it runs along the plane.
 pub fn on_plane(origin: Vec3, dir: Vec3, point: Vec3, normal: Vec3) -> Option<Vec3> {
     let denom = dir.dot(normal);
-    if denom.abs() < 1e-12 {
+    if denom.abs() < ALONG_PLANE {
         return None;
     }
     let t = (point - origin).dot(normal) / denom;

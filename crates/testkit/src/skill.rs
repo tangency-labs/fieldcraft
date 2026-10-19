@@ -26,6 +26,8 @@ pub const PICTURES: &str = "docs/meshing/skill";
 /// The skill's acceptance limits (§6).
 const MIN_SCALED_JACOBIAN: f64 = 0.3;
 const MAX_EDGE_RATIO: f64 = 10.0;
+/// A quality measure that changes by less than this is unchanged.
+const ROUND_OFF: f64 = 1e-9; // unit-factors: a change of a quality measure
 /// The mesh's volume against the geometry's (§6.1): a larger difference is a missing cell or a
 /// mesh too coarse for the curvature.
 const MAX_VOLUME_ERROR: f64 = 0.01;
@@ -281,9 +283,9 @@ pub fn run_case(case: &Case, path: &Path) -> Result<Outcome, String> {
             let worse = |k: &str, higher_is_better: bool| match (r["before"][k].as_f64(), r["after"][k].as_f64()) {
                 (Some(b), Some(a)) => {
                     if higher_is_better {
-                        a < b - 1e-9
+                        a < b - ROUND_OFF
                     } else {
-                        a > b.max(MAX_EDGE_RATIO) + 1e-9
+                        a > b.max(MAX_EDGE_RATIO) + ROUND_OFF
                     }
                 }
                 _ => false,

@@ -148,13 +148,16 @@ pub fn profile(r: &FluidResult, frame_index: usize, field: LineField, points: Ve
     Ok(Profile::new(points, values))
 }
 
+/// A point lies on a wall within this fraction of a cell.
+const ON_WALL: f64 = 1e-6; // unit-factors: relative to the cell size
+
 /// The heat per area into `wall` in frame `frame_index` of `r` at `points`, which must lie on the
 /// wall.
 pub fn wall_heat_flux(r: &FluidResult, frame_index: usize, wall: &Wall, points: Vec<[f64; 3]>) -> Result<Profile> {
     let h = r.grid.spacing;
     let axis = wall.face.axis();
     let (plane, inward) = if wall.face.is_max() { (r.grid.origin[axis] + h * r.grid.cells[axis] as f64, -1.0) } else { (r.grid.origin[axis], 1.0) };
-    if points.iter().any(|p| (p[axis] - plane).abs() > 1e-6 * h) {
+    if points.iter().any(|p| (p[axis] - plane).abs() > ON_WALL * h) {
         return Err(EngineError::Params(format!("the line must lie on box face {} for `wall_heat_flux`", wall.face.name())));
     }
     let values = match wall.condition {

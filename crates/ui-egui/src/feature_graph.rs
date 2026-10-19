@@ -58,7 +58,7 @@ fn deg(radians: f64) -> String {
 
 /// A direction as its axis (`+Z`) when it is one, else its components.
 pub fn axis(d: [f64; 3]) -> String {
-    const TOL: f64 = 1e-6;
+    const TOL: f64 = 1e-6; // unit-factors: a component of a unit vector
     for (i, name) in ["X", "Y", "Z"].iter().enumerate() {
         let c = d.get(i).copied().unwrap_or(0.0);
         let rest: f64 = d.iter().enumerate().filter(|(j, _)| *j != i).map(|(_, v)| v.abs()).sum();

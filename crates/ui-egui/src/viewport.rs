@@ -30,6 +30,10 @@ use crate::{ModelApp, NavMode, Style};
 
 /// Wheel zoom per point scrolled.
 const ZOOM_PER_POINT: f64 = 0.0015;
+/// The smallest pinch factor a zoom divides by.
+const MIN_PINCH: f64 = 1e-3; // unit-factors: a zoom ratio
+/// A zoom factor this close to 1 is no zoom.
+const NO_ZOOM: f64 = 1e-9; // unit-factors: a zoom ratio
 
 pub fn show(app: &mut ModelApp, ui: &mut egui::Ui) {
     let rect = ui.available_rect_before_wrap();
@@ -432,12 +436,12 @@ fn navigate(app: &mut ModelApp, ui: &egui::Ui, response: &egui::Response, rect: 
     if response.hovered() {
         let options = ui.ctx().options(|o| o.input_options);
         let (scroll, pinch, at) = ui.input(|i| (wheel_points(i, &options), i.zoom_delta(), i.pointer.hover_pos()));
-        let factor = (-f64::from(scroll) * ZOOM_PER_POINT * zoom_sign(app)).exp() / f64::from(pinch).max(1e-3);
+        let factor = (-f64::from(scroll) * ZOOM_PER_POINT * zoom_sign(app)).exp() / f64::from(pinch).max(MIN_PINCH);
         // Alt + scroll sizes the Relax Nodes sphere, or the Move Nodes radius, instead of zooming.
         let alt = ui.input(|i| i.modifiers.alt) && scroll != 0.0;
         let step = (f64::from(scroll) * ZOOM_PER_POINT).exp();
         let sized = alt && ((app.relaxing() && app.relax_scale_radius(step)) || (app.moving_nodes() && app.node_move_scale_radius(step)));
-        if !sized && (factor - 1.0).abs() > 1e-9 {
+        if !sized && (factor - 1.0).abs() > NO_ZOOM {
             let anchor = at.and_then(|p| {
                 app.surface_point(p).or_else(|| app.cam.target_plane_point(f64::from(p.x - rect.left()), f64::from(p.y - rect.top()), w, h))
             });

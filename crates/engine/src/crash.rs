@@ -875,7 +875,7 @@ fn unclean_exit(dir: &Path, build: &Build, journal: &Path) {
     // A run that never got to drawing died while starting up: say at which step.
     let starting = j.phase.as_ref().filter(|(p, _)| p != RUNNING).cloned();
     let during = match (&starting, &doing, &j.activity) {
-        (Some((p, ms)), ..) => format!("during startup ({p}, {:.1} s after launch)", *ms as f64 / 1000.0),
+        (Some((p, ms)), ..) => format!("during startup ({p}, {:.1} s after launch)", std::time::Duration::from_millis(*ms).as_secs_f64()),
         (None, Some(c), _) => format!("while running `{c}`"),
         (None, None, Some(a)) => format!("between commands (last: {a})"),
         (None, None, None) => "between commands".to_string(),

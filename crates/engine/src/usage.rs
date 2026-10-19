@@ -265,7 +265,7 @@ pub fn closing() {
     let started = with_state(|s| s.as_ref().map(|s| s.started));
     if let Some(started) = started {
         let seconds = match (started, now) {
-            (Some(a), Some(b)) if b >= a => ((b - a) / 1000.0).round() as u64,
+            (Some(a), Some(b)) if b >= a => ((b - a) / MS_PER_SECOND).round() as u64,
             _ => 0,
         };
         record(Event::AppClosed { seconds });
@@ -314,6 +314,9 @@ pub fn queued() -> usize {
     with_state(|s| s.as_ref().map_or(0, |s| s.queue.len()))
 }
 
+/// Milliseconds in a second, for the session's length and the native clock.
+const MS_PER_SECOND: f64 = 1000.0; // unit-factors: wall-clock time of the usage counts, not a model quantity
+
 /// A clock in milliseconds for command durations. The plain wasm target has none: the web page
 /// sets one ([`set_clock`]).
 static CLOCK: Mutex<Option<fn() -> f64>> = Mutex::new(None);
@@ -330,7 +333,7 @@ fn now_ms() -> Option<f64> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-        Some(START.get_or_init(std::time::Instant::now).elapsed().as_secs_f64() * 1000.0)
+        Some(START.get_or_init(std::time::Instant::now).elapsed().as_secs_f64() * MS_PER_SECOND)
     }
     #[cfg(target_arch = "wasm32")]
     None

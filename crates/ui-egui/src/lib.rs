@@ -65,6 +65,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender};
 
 use fieldcraft_engine::catalogue::{self, Tab, Workspace};
+use fieldcraft_engine::view::display_tolerance;
 use fieldcraft_engine::{EngineError, Session};
 use fieldcraft_model::DisplaySystem;
 use fieldcraft_render::glyphs::{self, Definition, Drawn, Glyphs};
@@ -1275,7 +1276,7 @@ impl ModelApp {
         };
         let (point, normal) = (Vec3::from(point), Vec3::from(normal));
         let display = &self.display.1;
-        let tol = 1e-6 * display.bounds.diagonal().max(1e-9);
+        let tol = SECTION_SIDE * display.bounds.diagonal().max(MIN_SECTION_DIAGONAL);
         // Per body: whether it has surface points below and above the plane.
         let mut sides = vec![(false, false); self.pick.names.len()];
         for t in &display.surface_tris {
@@ -2477,16 +2478,16 @@ fn draw(session: &Session) -> DisplayMesh {
     DisplayMesh::from_model_hiding(&session.model, &session.hidden_elements())
 }
 
-/// The chordal tolerance bodies are drawn with: a thousandth of their size, within 1 µm–1 mm.
-fn display_tolerance(b: &Aabb3) -> f64 {
-    let d = b.diagonal();
-    if d.is_finite() { (d * 1e-3).clamp(1e-3, 1.0) } else { 0.1 }
-}
-
 /// Seconds a screenshot waits for a presented frame.
 const SHOT_TIMEOUT: f64 = 8.0;
 /// Vertical field of view of the perspective camera (radians).
 const PERSPECTIVE_FOV: f64 = 0.6;
+
+/// A body is cut by a section plane when it has surface points farther from the plane than this
+/// fraction of the model's diagonal, on both sides.
+const SECTION_SIDE: f64 = 1e-6; // unit-factors: relative to the model's diagonal
+/// The smallest diagonal [`SECTION_SIDE`] is taken of (metres), so an empty model still has a side.
+const MIN_SECTION_DIAGONAL: f64 = 1e-9; // unit-factors: a floor in metres (SI)
 
 impl ModelApp {
     /// Why a toolbar entry or a command cannot start now: what its command needs that the

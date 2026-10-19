@@ -19,6 +19,10 @@ use crate::theme::Tokens;
 /// Width of the panel's drop-down lists.
 const COMBO_WIDTH: f32 = 160.0;
 const SWATCH: egui::Vec2 = vec2(18.0, 15.0);
+/// The smallest span a drag speed is taken of, so a zero range still drags.
+const MIN_DRAG_SPAN: f64 = 1e-9; // unit-factors: a floor on a span in any unit
+/// The smallest scale factor a drag speed is taken of.
+const MIN_DRAG_SCALE: f64 = 1e-6; // unit-factors: a floor on a scale factor
 /// Height of the energy plot's drawing area (points), the room its axis labels take, and the
 /// most points one of its lines draws.
 const PLOT_HEIGHT: f32 = 110.0;
@@ -339,7 +343,7 @@ pub fn controls(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) 
                     }
                     // The clamp is stored in SI; the legend shows the display units.
                     let mut v = set.map_or(value, |v| l.field.shown(&plot.result, v, &plot.units));
-                    let speed = (l.max.1 - l.min.1).abs().max(1e-9) * 0.005;
+                    let speed = (l.max.1 - l.min.1).abs().max(MIN_DRAG_SPAN) * 0.005;
                     let drag = egui::DragValue::new(&mut v)
                         .speed(speed)
                         .custom_formatter(|v, _| number(v))
@@ -470,8 +474,8 @@ fn deformation_rows(plot: &Plot, ui: &mut egui::Ui, run: &mut Vec<(&'static str,
         // The scale ticking Deformed draws with, also while it is off.
         let mut scale = plot.scale;
         let drag = egui::DragValue::new(&mut scale)
-            .speed(plot.scale.abs().max(1e-6) * 0.01)
-            .range(0.0..=1e12)
+            .speed(plot.scale.abs().max(MIN_DRAG_SCALE) * 0.01)
+            .range(0.0..=fieldcraft_engine::results::MAX_DEFORMATION_SCALE)
             .prefix("× ")
             .custom_formatter(|v, _| number(v))
             .custom_parser(|s| s.replace(',', "").trim().parse::<f64>().ok());
@@ -526,7 +530,7 @@ fn flow_rows(plot: &Plot, ui: &mut egui::Ui, run: &mut Vec<(&'static str, Value)
             let (lo, hi) = (length(flow.grid.start(s.axis.index())), length(flow.grid.end(s.axis.index())));
             let mut at = length(slice_position(f, s));
             let drag = egui::DragValue::new(&mut at)
-                .speed((hi - lo).abs().max(1e-9) * 0.002)
+                .speed((hi - lo).abs().max(MIN_DRAG_SPAN) * 0.002)
                 .range(lo..=hi)
                 .custom_formatter(|v, _| number(v))
                 .custom_parser(|s| s.replace(',', "").trim().parse::<f64>().ok());
@@ -985,7 +989,7 @@ fn reactions_table(ui: &mut egui::Ui, r: &Value, plot: &Plot, t: &Tokens) {
     // Equilibrium: the reactions over the whole model balance the applied loads.
     if let (Some(total), Some(applied)) = (rows.last().and_then(|r| r.1), applied) {
         let residual = (0..3).map(|k| (total[k] + applied[k]).abs()).fold(0.0, f64::max);
-        let balanced = residual <= 1e-6 * force_scale.max(f64::MIN_POSITIVE);
+        let balanced = residual <= fieldcraft_engine::results::BALANCE_TOLERANCE * force_scale.max(f64::MIN_POSITIVE);
         let (text, color) = if balanced {
             ("✔ Reactions balance the applied loads".to_string(), t.ok)
         } else {

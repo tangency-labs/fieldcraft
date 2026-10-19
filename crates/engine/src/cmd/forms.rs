@@ -7,6 +7,11 @@ use crate::schema::*;
 
 // ---- Shared pieces ----
 
+/// The smallest fan relaxation a form takes (the model takes any in (0, 1]).
+const MIN_FAN_RELAXATION: f64 = 1e-6; // unit-factors: a fraction per time step
+/// The largest merge distance a form takes: a cap on hostile input in the field's fixed unit.
+const MAX_MERGE_MM: f64 = 1.0e9; // unit-factors: a cap in millimetres (`Dim::Millimetre`)
+
 /// `{"set": …}` or `{"reference_point": …}`.
 const TARGET_OPTIONS: &[Field] = &[
     reference("set", "Set", C::Set).help("A named set of nodes, elements or faces."),
@@ -714,7 +719,7 @@ const FAN: &[Field] = &[
     table("curve", "Fan curve", D::FanCurve, &["flow", "pressure rise"], fieldcraft_model::fluid_zones::MAX_CURVE_POINTS)
         .help("The pressure–flow curve: volume flow (volume per time) increasing from 0, pressure rise not increasing.")
         .req(),
-    range("relaxation", "Relaxation", D::None, 1e-6, 1.0)
+    range("relaxation", "Relaxation", D::None, MIN_FAN_RELAXATION, 1.0)
         .help("How far the pressure rise moves toward the curve each time step; smaller is steadier.")
         .hint("0.01"),
 ];
@@ -1195,7 +1200,7 @@ const SURFACE: Field =
 const TOLERANCE: Field = positive("tolerance", "Chordal tolerance", D::Millimetre)
     .help("Largest distance between the tessellation and the true curved surface. Smaller follows curves closer, with more elements.")
     .hint("1e-3 of the diagonal");
-const WELD: Field = range("weld", "Weld", D::None, 0.0, 1e-3)
+const WELD: Field = range("weld", "Weld", D::None, 0.0, fieldcraft_mesh::surface::MAX_RELATIVE_WELD)
     .help("Points closer than this fraction of the diagonal are merged when the surface is assembled.")
     .hint("1e-9 of the diagonal");
 const WELD_DISTANCE: Field = positive("weld_distance", "Weld distance", D::Millimetre)
@@ -1363,7 +1368,7 @@ pub const HEX_PROJECT: &[Field] = &[
     range("max_arc_angle", "Max arc angle", D::Degree, 0.0, 90.0)
         .help("The most a curved face may turn across one element; the divisions grow to keep it. 0 for no limit.")
         .def("30"),
-    range("merge", "Merge distance", D::Millimetre, 0.0, 1.0e9)
+    range("merge", "Merge distance", D::Millimetre, 0.0, MAX_MERGE_MM)
         .help("Join this mesh's nodes with other bodies' meshes within this distance; 0 never.")
         .hint("1e-6 of the diagonal"),
     flag("preview", "Preview only").help("Return the block topology without meshing."),
@@ -1436,7 +1441,7 @@ pub const HEX_EXTRUDE: &[Field] = &[
     flag("normal", "Along the normal").help("Each node along the section's normal toward the target (the default when no direction is given)."),
     int("layers", "Layers", 1, 10_000).help("The number of element layers; from Size when empty.").hint("from the size"),
     positive("size", "Size", D::Length).help("Layer thickness, and the element size of a section meshed here.").hint("1/25 of the body"),
-    range("bias", "Bias", D::None, 0.001, 1000.0).help("The last layer's thickness over the first's: below 1 grades toward the target, above 1 toward the source.").def("1"),
+    range("bias", "Bias", D::None, 1.0 / fieldcraft_mesh::hex::MAX_BIAS, fieldcraft_mesh::hex::MAX_BIAS).help("The last layer's thickness over the first's: below 1 grades toward the target, above 1 toward the source.").def("1"),
     reference("body", "Body", C::Body).help("The body the elements fill; its mesh is replaced.").hint("the source face's body"),
     TOLERANCE,
 ];

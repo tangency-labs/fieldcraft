@@ -32,7 +32,19 @@ use serde_json::{Value, json};
 /// Fixture band: a result may move by this fraction of its size (and a thousandth of the
 /// reference's absolute tolerance) before CI calls it a change. Results are deterministic on one
 /// platform; the band only absorbs last-digit differences of the system maths library.
-pub const FIXTURE_RELATIVE: f64 = 1e-9;
+pub const FIXTURE_RELATIVE: f64 = 1e-9; // unit-factors: relative to the result
+/// The widest band a case may ask for (`fixture_relative`).
+const MAX_FIXTURE_RELATIVE: f64 = 1e-3; // unit-factors: relative to the result
+/// The share of the reference's absolute tolerance a fixture band adds.
+const ABSOLUTE_SHARE: f64 = 1e-3; // unit-factors: a fraction of a tolerance
+/// Magnitudes the page writes as plain decimals.
+const PLAIN: std::ops::Range<f64> = 1e-3..1e5; // unit-factors: magnitudes of a written number
+/// Bounds below this are written in scientific notation.
+const SMALL_BOUND: f64 = 1e-3; // unit-factors: a magnitude of a written number
+/// An error's floor is this many times its band, on the decade above.
+const FLOOR_OVER_BAND: f64 = 1000.0; // unit-factors: a ratio
+/// The slack that keeps a decade's own bound on it (1000 · 1e-9 is 1.0000000000000002e-6).
+const DECADE_SLACK: f64 = 1e-9; // unit-factors: a fraction of a decade's logarithm
 
 /// The kinds of reference (docs/verification.md).
 pub const KINDS: [&str; 3] = ["theory", "benchmark", "experiment"];
@@ -180,7 +192,10 @@ impl Expected {
             let fixture_relative = match q.get("fixture_relative") {
                 None => FIXTURE_RELATIVE,
                 Some(r) => {
-                    let r = r.as_f64().filter(|r| *r > 0.0 && *r <= 1e-3).ok_or_else(|| context("`fixture_relative` must be in (0, 1e-3]".into()))?;
+                    let r = r
+                        .as_f64()
+                        .filter(|r| *r > 0.0 && *r <= MAX_FIXTURE_RELATIVE)
+                        .ok_or_else(|| context("`fixture_relative` must be in (0, 1e-3]".into()))?;
                     text(q, "fixture_reason").map_err(|_| context("`fixture_relative` needs a `fixture_reason`".into()))?;
                     r
                 }
@@ -223,7 +238,7 @@ pub fn fixture_band(value: f64, reference: f64, tolerance: Tolerance, relative: 
     if reference == 0.0 {
         return tolerance.absolute;
     }
-    relative * value.abs().max(reference.abs()) + 1e-3 * tolerance.absolute
+    relative * value.abs().max(reference.abs()) + ABSOLUTE_SHARE * tolerance.absolute
 }
 
 fn read_json(path: &Path) -> Result<Value, String> {
@@ -566,7 +581,7 @@ pub fn number(x: f64) -> String {
     // Round to five significant digits first; `{:e}` output always parses back.
     let x = format!("{x:.4e}").parse::<f64>().unwrap_or(x);
     let a = x.abs();
-    if (1e-3..1e5).contains(&a) {
+    if PLAIN.contains(&a) {
         let digits = 4 - a.log10().floor() as i32;
         let s = format!("{x:.*}", digits.max(0) as usize);
         if s.contains('.') { s.trim_end_matches('0').trim_end_matches('.').to_string() } else { s }
@@ -668,8 +683,7 @@ fn banded(error: f64, band: f64) -> Banded {
     if !(band > 0.0 && band.is_finite() && error.is_finite()) {
         return Banded::Error(error);
     }
-    // The slack keeps 1000 · 1e-9 (which is 1.0000000000000002e-6) on its own decade.
-    let exponent = ((1000.0 * band).log10() - 1e-9).ceil() as i32;
+    let exponent = ((FLOOR_OVER_BAND * band).log10() - DECADE_SLACK).ceil() as i32;
     let bound = 10f64.powi(exponent);
     let step = 10f64.powi(exponent - 1);
     if error.abs() < bound { Banded::Below(bound) } else { Banded::Error((error / step).round() * step) }
@@ -677,7 +691,7 @@ fn banded(error: f64, band: f64) -> Banded {
 
 /// A power of ten as the page writes a bound: "1e-7" when small, a plain number otherwise.
 fn decade(x: f64) -> String {
-    if x < 1e-3 { format!("{x:.0e}") } else { number(x) }
+    if x < SMALL_BOUND { format!("{x:.0e}") } else { number(x) }
 }
 
 fn verdict_text(v: &Verdict) -> &'static str {

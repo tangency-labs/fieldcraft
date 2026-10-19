@@ -134,7 +134,7 @@ pub const CLEAR: CommandSpec = CommandSpec {
 /// Most sets one reaction sum lists.
 const MAX_SETS: usize = 1000;
 /// Largest deformation scale factor.
-const MAX_SCALE: f64 = 1e12;
+const MAX_SCALE: f64 = crate::results::MAX_DEFORMATION_SCALE;
 
 fn solved_list(s: &Session) -> String {
     let names: Vec<&str> = s.result_steps().map(|(n, _)| n).collect();
@@ -422,7 +422,7 @@ fn count_param(p: &Value, key: &str, max: u32) -> Result<Option<u32>> {
 }
 
 /// Largest coordinate a seed may have.
-const MAX_COORDINATE: f64 = 1e12;
+const MAX_COORDINATE: f64 = 1e12; // unit-factors: a cap on hostile input
 
 /// A point `[x, y, z]` of finite coordinates no larger than [`MAX_COORDINATE`].
 fn seed_point(v: &Value) -> Option<[f64; 3]> {
