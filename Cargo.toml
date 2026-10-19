@@ -38,6 +38,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 log = "0.4"
 
+# xtask: reading Rust sources as syntax trees (`cargo xtask unit-factors`)
+syn = { version = "2", default-features = false, features = ["full", "parsing", "visit"] }
+proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
+
 # 3MF packages (docs/formats/tagged-mesh.md). The same zip line as SolidCraft, so one is built.
 zip = { version = "9", default-features = false, features = ["deflate"] }
 quick-xml = "0.42"
