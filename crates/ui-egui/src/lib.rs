@@ -420,7 +420,10 @@ pub struct ModelApp {
     /// The open document ([`Session::opened`]) the view was framed for.
     framed_document: Option<u64>,
     /// Tessellated design bodies with their names, kept while the same design is open.
-    bodies: (Option<Arc<fieldcraft_geometry::Design>>, Vec<(selection::BodyNames, fieldcraft_geometry::SurfaceMesh)>),
+    bodies: (Option<Arc<fieldcraft_geometry::Design>>, BodyMeshes),
+    /// The display data a finished job built for the session it brought, adopted by the next
+    /// [`Self::display`]; any later change to the model drops it.
+    prebuilt: Option<Prebuilt>,
     /// The frame-independent part of the results plot (scale, contour) and what it was built for.
     prepared: (Option<PlotKey>, results::Prepared),
     /// The built scene, its key and the box around its datums (they reach beyond the model).
@@ -555,6 +558,7 @@ impl ModelApp {
             reframe: None,
             framed_document: None,
             bodies: (None, Vec::new()),
+            prebuilt: None,
             prepared: (None, results::Prepared::default()),
             scene: (None, Scene::default(), Aabb3::EMPTY),
             symbols: (None, Scene::default(), Drawn::default()),
@@ -1047,6 +1051,10 @@ impl ModelApp {
     /// The model may have changed: display data and the scene are rebuilt when next drawn.
     pub fn model_changed(&mut self) {
         self.revision = self.revision.wrapping_add(1);
+        // Display data built for the model before this change is out of date (and may be large).
+        if let Some(stale) = self.prebuilt.take() {
+            files::off_thread("fieldcraft drop".into(), move || drop(stale));
+        }
         self.frame_new_document();
         self.follow_units();
         // A reply about the model is read again; any other one is out of date.
@@ -1085,36 +1093,19 @@ impl ModelApp {
     }
 
     /// The model's display data with its geometry (the open design's bodies, tessellated once
-    /// per design, and the imported surfaces), rebuilt when the model changed. The first content
-    /// to appear is framed.
+    /// per design, and the imported surfaces), rebuilt when the model changed; what a finished
+    /// job built off the window thread ([`Prebuilt`]) is taken as it is. The first content to
+    /// appear is framed.
     pub fn display(&mut self) -> &DisplayMesh {
         if self.display.0 != Some(self.revision) {
-            let mut d = DisplayMesh::from_model_hiding(&self.session.model, &self.session.hidden_elements());
+            let prebuilt = self.prebuilt.take().filter(|p| p.revision == self.session.revision());
+            let (mut d, prebodies) = match prebuilt {
+                Some(p) => (p.model, p.bodies),
+                None => (draw(&self.session), None),
+            };
             let design = self.session.design.clone();
-            if !match (&design, &self.bodies.0) {
-                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
-                (None, None) => true,
-                _ => false,
-            } {
-                let mut failed = Vec::new();
-                let meshes: Vec<_> = design
-                    .iter()
-                    .flat_map(|d| &d.bodies)
-                    .filter_map(|body| {
-                        let tolerance = body.measure().map(|m| display_tolerance(&Aabb3 { min: m.bbox_min.into(), max: m.bbox_max.into() }));
-                        let mut mesh = tolerance.and_then(|t| body.tessellate(t)).map_err(|e| failed.push(format!("{}: {e}", body.name))).ok()?;
-                        // The geometry is in millimetres, the scene in metres.
-                        let m = fieldcraft_engine::units::geometry_point;
-                        let names = selection::BodyNames {
-                            name: body.name.clone(),
-                            faces: body.faces().iter().map(|f| f.name.clone()).collect(),
-                            edges: body.edge_names(&mesh),
-                            vertices: body.vertex_names(&mesh).into_iter().map(|v| (v.name, m(v.point).into())).collect(),
-                        };
-                        mesh.positions.iter_mut().chain(mesh.edges.iter_mut().flatten()).for_each(|p| *p = m(*p));
-                        Some((names, mesh))
-                    })
-                    .collect();
+            if !same_design(&design, &self.bodies.0) {
+                let (meshes, failed) = prebodies.unwrap_or_else(|| design.as_deref().map(tessellate).unwrap_or_default());
                 self.bodies = (design, meshes);
                 if !failed.is_empty() {
                     self.set_status(format!("Some bodies cannot be drawn: {}", failed.join("; ")), true);
@@ -2410,6 +2401,70 @@ impl ModelApp {
     }
 }
 
+/// A design's bodies tessellated for drawing and picking, each with its names.
+type BodyMeshes = Vec<(selection::BodyNames, fieldcraft_geometry::SurfaceMesh)>;
+
+/// Whether `a` and `b` are the same open design (or both none).
+fn same_design(a: &Option<Arc<fieldcraft_geometry::Design>>, b: &Option<Arc<fieldcraft_geometry::Design>>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+/// Tessellate `design`'s bodies (seconds for a large part): the bodies drawn, and why the
+/// others cannot be.
+fn tessellate(design: &fieldcraft_geometry::Design) -> (BodyMeshes, Vec<String>) {
+    let mut failed = Vec::new();
+    let meshes = design
+        .bodies
+        .iter()
+        .filter_map(|body| {
+            let tolerance = body.measure().map(|m| display_tolerance(&Aabb3 { min: m.bbox_min.into(), max: m.bbox_max.into() }));
+            let mut mesh = tolerance.and_then(|t| body.tessellate(t)).map_err(|e| failed.push(format!("{}: {e}", body.name))).ok()?;
+            // The geometry is in millimetres, the scene in metres.
+            let m = fieldcraft_engine::units::geometry_point;
+            let names = selection::BodyNames {
+                name: body.name.clone(),
+                faces: body.faces().iter().map(|f| f.name.clone()).collect(),
+                edges: body.edge_names(&mesh),
+                vertices: body.vertex_names(&mesh).into_iter().map(|v| (v.name, m(v.point).into())).collect(),
+            };
+            mesh.positions.iter_mut().chain(mesh.edges.iter_mut().flatten()).for_each(|p| *p = m(*p));
+            Some((names, mesh))
+        })
+        .collect();
+    (meshes, failed)
+}
+
+/// A session's display data, built by the job that made the session on its worker so that the
+/// window only adopts it ([`ModelApp::display`]): drawing a large model and tessellating its
+/// design take long enough to stall a frame (#552).
+pub struct Prebuilt {
+    /// The session revision it was built for.
+    revision: u64,
+    /// The model's elements as drawn ([`draw`]).
+    model: DisplayMesh,
+    /// The design's bodies tessellated and why the others cannot be drawn; `None` when the
+    /// window has drawn this design already.
+    bodies: Option<(BodyMeshes, Vec<String>)>,
+}
+
+impl Prebuilt {
+    /// Build `session`'s display data (on a job's worker); its design is tessellated unless it
+    /// is `drawn`, the one the window draws.
+    pub fn of(session: &Session, drawn: &Option<Arc<fieldcraft_geometry::Design>>) -> Prebuilt {
+        let bodies = (!same_design(&session.design, drawn)).then(|| session.design.as_deref().map(tessellate).unwrap_or_default());
+        Prebuilt { revision: session.revision(), model: draw(session), bodies }
+    }
+}
+
+/// The model's elements as drawn, without the hidden bodies'.
+fn draw(session: &Session) -> DisplayMesh {
+    DisplayMesh::from_model_hiding(&session.model, &session.hidden_elements())
+}
+
 /// The chordal tolerance bodies are drawn with: a thousandth of their size, within 1 µm–1 mm.
 fn display_tolerance(b: &Aabb3) -> f64 {
     let d = b.diagonal();
@@ -3656,6 +3711,30 @@ mod tests {
         app.run("mesh.node.add", json!({"label": 100_000, "xyz": [50, 50, 50]})).unwrap();
         app.logic(&egui::Context::default());
         assert_eq!(app.pick.selection.items().iter().collect::<Vec<_>>(), vec![&selection::Item::Node(1)]);
+    }
+
+    /// A job builds the display data of the session it brings on its worker (the model drawn,
+    /// a new design tessellated), and the window adopts it as it is: the same as building it in a
+    /// frame, which a large part would stall (#552). A change before it is drawn drops it.
+    #[test]
+    fn a_job_brings_its_display_data() {
+        let mut app = ModelApp::new(Session::default());
+        app.open_sample("ibeam");
+        app.wait_loaded();
+        assert!(app.prebuilt.is_some(), "built with the session");
+        let adopted = app.display().clone();
+        assert!(app.prebuilt.is_none() && !app.bodies.1.is_empty());
+        let mut framed = ModelApp::new(app.session.clone());
+        assert_eq!(&adopted, framed.display(), "the same as built in a frame");
+        assert_eq!(app.bodies.1, framed.bodies.1);
+        // A job on the same design (a solve, a mesher) does not tessellate it again.
+        assert!(Prebuilt::of(&app.session, &app.bodies.0).bodies.is_none());
+        assert!(Prebuilt::of(&app.session, &None).bodies.is_some_and(|(b, _)| b == app.bodies.1));
+        app.open_sample("ibeam");
+        app.wait_loaded();
+        app.run("mesh.node.add", json!({"label": 900000, "xyz": [0, 0, 0]})).unwrap();
+        assert!(app.prebuilt.is_none(), "the model changed after the job");
+        assert!(app.display().nodes.len() > adopted.nodes.len());
     }
 
     #[test]

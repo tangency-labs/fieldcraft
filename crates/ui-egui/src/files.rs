@@ -22,7 +22,7 @@ use fieldcraft_model::progress::Progress;
 use fieldcraft_engine::Session;
 use serde_json::{Value, json};
 
-use crate::ModelApp;
+use crate::{ModelApp, Prebuilt};
 
 /// A file type a picker offers: a name and its extensions (without the dot).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -303,7 +303,7 @@ pub struct Loading {
     /// The command form that started it: closed when it succeeds, showing the error when not.
     form: Option<&'static str>,
     /// The finished session copy and the command's reply.
-    rx: Receiver<(Box<Session>, Result<Value, String>)>,
+    rx: Receiver<Finished>,
     /// The work, while it waits to run on the window thread (the web, which has no threads).
     pending: Option<Work>,
     /// Whether the window has drawn the job's progress: on the web the work runs (and the page
@@ -378,6 +378,8 @@ pub struct Opened {
     /// The command the job ran.
     command: &'static str,
     session: Box<Session>,
+    /// The session's display data, built with it.
+    prebuilt: Box<Prebuilt>,
     reply: Value,
     done: String,
     recent: Option<String>,
@@ -476,7 +478,7 @@ fn with_extension(path: String, ext: &str) -> String {
 }
 
 /// Run `work` off the window thread (inline on the web, which has no threads).
-fn off_thread(name: String, work: impl FnOnce() + Send + 'static) {
+pub(crate) fn off_thread(name: String, work: impl FnOnce() + Send + 'static) {
     if let Some(work) = start(name, Box::new(work)) {
         work();
     }
@@ -484,6 +486,10 @@ fn off_thread(name: String, work: impl FnOnce() + Send + 'static) {
 
 /// A background job's work.
 type Work = Box<dyn FnOnce() + Send>;
+
+/// What a background job sends back: the session it ran on and the command's reply, with the
+/// session's display data when it succeeded.
+type Finished = (Box<Session>, Result<(Value, Box<Prebuilt>), String>);
 
 /// Start `work` on a worker thread. The web has no threads: the work comes back, to run on the
 /// window thread once the window has shown that it runs ([`Loading::shown`]).
@@ -505,18 +511,22 @@ fn start(name: String, work: Work) -> Option<Work> {
 
 /// Run `command` on `session` off the window thread: the reply's receiver, and the work when it
 /// waits to run on the window thread (the web).
+/// The display data is built with it, the design tessellated unless it is `drawn` (the window's).
 fn spawn(
     session: Session,
     command: &'static str,
     params: Value,
     progress: Arc<Progress>,
-) -> (Receiver<(Box<Session>, Result<Value, String>)>, Option<Work>) {
+    drawn: Option<Arc<fieldcraft_geometry::Design>>,
+) -> (Receiver<Finished>, Option<Work>) {
     let (tx, rx) = std::sync::mpsc::channel();
     let work = start(
         format!("fieldcraft {command}"),
         Box::new(move || {
             let mut s = session;
             let r = fieldcraft_model::progress::scoped(Some(progress), || s.execute(command, &params)).map_err(|e| e.to_string());
+            // What the window draws of the new session is built here too, not in a frame.
+            let r = r.map(|v| (v, Box::new(Prebuilt::of(&s, &drawn))));
             let _ = tx.send((Box::new(s), r));
         }),
     );
@@ -563,7 +573,7 @@ impl ModelApp {
             self.session.clone()
         };
         let progress = Progress::new();
-        let (rx, pending) = spawn(base, command, params, progress.clone());
+        let (rx, pending) = spawn(base, command, params, progress.clone(), self.bodies.0.clone());
         self.set_status(format!("{title}…"), false);
         let started = self.now;
         self.loading = Some(Loading { title, done, recent, form: None, rx, pending, shown: false, command, progress, started, waiters: Vec::new() });
@@ -763,7 +773,7 @@ impl ModelApp {
         };
         let Some(l) = self.loading.take() else { return false };
         let reply = match &outcome {
-            Some((_, Ok(v))) => json!({"ok": true, "result": v}),
+            Some((_, Ok((v, _)))) => json!({"ok": true, "result": v}),
             Some((_, Err(e))) => json!({"ok": false, "error": e}),
             None => json!({"ok": false, "error": format!("{}: stopped unexpectedly", l.title)}),
         };
@@ -773,8 +783,8 @@ impl ModelApp {
         let took = elapsed((self.now - l.started).max(0.0));
         let l = Loading { done: finished(l.command, &l.done, &took, &reply), ..l };
         match outcome {
-            Some((session, Ok(reply))) => {
-                let opened = Opened { command: l.command, session, reply, done: l.done, recent: l.recent, form: l.form };
+            Some((session, Ok((reply, prebuilt)))) => {
+                let opened = Opened { command: l.command, session, prebuilt, reply, done: l.done, recent: l.recent, form: l.form };
                 // A design of another part over a meshed or defined model: ask what to do with
                 // the model before it changes (the job ran with the default, keep).
                 let unrelated = opened.reply.get("related").and_then(Value::as_bool) == Some(false)
@@ -819,6 +829,7 @@ impl ModelApp {
         let old = std::mem::replace(&mut self.session, session);
         off_thread("fieldcraft drop".into(), move || drop(old));
         self.model_changed();
+        self.prebuilt = Some(*o.prebuilt);
         if let Some(p) = &o.recent {
             self.recent.add(p);
         }
