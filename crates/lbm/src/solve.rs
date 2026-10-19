@@ -72,6 +72,18 @@ pub struct ForceHistory {
     pub force: Vec<[f64; 3]>,
 }
 
+/// An obstacle that conducts heat: its cells, its power and how its heat capacity was scaled.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SolidResult {
+    pub body: String,
+    /// Its cells (grid indices), in cell order.
+    pub cells: Vec<u32>,
+    /// The heat it generates (model units).
+    pub power: f64,
+    /// The factor its heat capacity was scaled by for a steady state (1 otherwise).
+    pub capacity_scale: f64,
+}
+
 /// Run statistics.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FluidStats {
@@ -121,6 +133,8 @@ pub struct FluidResult {
     /// What the frames' temperatures are above, in kelvin: the lattice's zero
     /// ([`crate::setup::ThermalSetup::zero`]) with heat, 0 without.
     pub temperature_reference: f64,
+    /// The obstacles that conduct heat.
+    pub solids: Vec<SolidResult>,
 }
 
 impl FluidResult {
@@ -345,6 +359,17 @@ pub fn run(setup: &Setup, flow: &mut dyn Backend, limits: &Limits) -> Result<Flu
     let open_faces = fieldcraft_model::BoxFace::ALL.map(|f| {
         matches!(setup.domain.faces.get(f), fieldcraft_model::FaceCondition::Velocity { .. } | fieldcraft_model::FaceCondition::Pressure { .. })
     });
+    let solids = setup
+        .thermal
+        .iter()
+        .flat_map(|t| t.solids.iter().enumerate())
+        .map(|(k, s)| SolidResult {
+            body: s.body.clone(),
+            cells: flow.conducting().get(k).cloned().unwrap_or_default(),
+            power: s.power * hs,
+            capacity_scale: s.capacity_scale,
+        })
+        .collect();
     Ok(FluidResult {
         step: setup.step.clone(),
         grid: setup.grid,
@@ -375,5 +400,6 @@ pub fn run(setup: &Setup, flow: &mut dyn Backend, limits: &Limits) -> Result<Flu
         warnings,
         steady,
         temperature_reference: setup.thermal.as_ref().map_or(0.0, |t| t.zero),
+        solids,
     })
 }

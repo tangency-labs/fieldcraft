@@ -672,6 +672,18 @@ const FLUID_THERMAL: Field = group(
             ],
         )
         .help("Thermal conditions on single obstacle faces; every other obstacle face is adiabatic."),
+        rows(
+            "solids",
+            "Conducting solids",
+            &[
+                reference("body", "Body", C::Body).help("An obstacle body that conducts heat.").req(),
+                reference("material", "Material", C::Material)
+                    .help("Its material: a density, a conductivity (isotropic, or per axis of the box) and a specific heat.")
+                    .req(),
+                num("power", "Power", D::Power).help("The heat it generates, spread over its volume (a component's dissipation).").def("0"),
+            ],
+        )
+        .help("Obstacles heat conducts through, exchanging heat with the fluid across their faces (conjugate heat transfer); their faces take no thermal condition."),
     ],
 )
 .help("Heat carried by the flow: needs the material's conductivity and specific heat. Off for an isothermal flow.")

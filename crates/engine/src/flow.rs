@@ -623,6 +623,7 @@ pub(crate) mod tests {
             forces: Vec::new(),
             heat: Vec::new(),
             zones: Vec::new(),
+            solids: Vec::new(),
             stats,
             warnings: Vec::new(),
             steady: None,
@@ -646,6 +647,53 @@ pub(crate) mod tests {
         s.run_script(&script).unwrap();
         s.execute("solve.fluid", &json!({})).unwrap();
         s
+    }
+
+    /// The plate conducts heat and generates power in the tank's flow, through commands: the solve
+    /// reports its temperatures, power and the heat its faces give the water; its faces take no
+    /// thermal condition, its material must conduct, and the GPU refuses it for now.
+    #[test]
+    fn a_conducting_plate_reports_its_temperatures_and_heat() {
+        let mut s = plate_in_a_tank();
+        let face = s.design.as_ref().unwrap().bodies[0].faces()[0].name.clone();
+        let script = json!([
+            {"command": "model.material.edit", "params": {"name": "Water", "density": 1e-9, "fluid": {"type": "newtonian", "viscosity": 1e-7}, "thermal": {"conductivity": 400, "specific_heat": 4e9}}},
+            {"command": "model.material.create", "params": {"name": "Alu", "density": 2.7e-9, "thermal": {"conductivity": 237, "specific_heat": 9e8}}},
+            {"command": "model.material.create", "params": {"name": "Steel", "density": 7.8e-9}},
+        ]);
+        s.run_script(&script).unwrap();
+        let domain = |solids: Value| {
+            json!({"name": "Tank", "material": "Water", "min": [-20, -20, -20], "max": [60, 50, 30], "spacing": 5, "obstacles": ["Body1"],
+                "faces": {"x_min": {"type": "velocity", "velocity": [10, 0, 0]}, "x_max": {"type": "pressure", "pressure": 0}},
+                "thermal": {"initial_temperature": 20, "solids": solids}})
+        };
+        s.execute("model.fluid_domain.edit", &domain(json!([{"body": "Body1", "material": "Alu", "power": 2e5}]))).unwrap();
+        // typed in the display system (mm-t-s: mW), stored in SI (W); the reply converts back
+        let stored = s.model.fluid_domain("Tank").and_then(|d| d.solids().next()).map(|c| c.power);
+        assert!(stored.is_some_and(|p| (p - 200.0).abs() < 1e-9), "{stored:?}");
+        let r = s.execute("solve.fluid", &json!({})).unwrap();
+        let solid = &r["solids"][0];
+        assert_eq!(solid["body"], "Body1", "{r}");
+        assert!(solid["cells"].as_u64().unwrap() > 0, "{solid}");
+        assert!((solid["power"].as_f64().unwrap() - 2e5).abs() < 1e-6 * 2e5, "{solid}");
+        let (t, given) = (&solid["temperature"], solid["heat_to_fluid"]["final"].as_f64().unwrap());
+        let [lo, mean, hi] = ["min", "mean", "max"].map(|k| t[k].as_f64().unwrap());
+        assert!(20.0 <= lo && lo <= mean && mean <= hi && hi > 20.0, "{solid}");
+        assert!(given > 0.0, "the heated plate warms the water: {solid}");
+        // a thermal condition on a conducting face, a material that does not conduct, the GPU
+        assert!(
+            s.execute(
+                "model.fluid_domain.thermal_boundary",
+                &json!({"domain": "Tank", "at": {"body": "Body1", "face": face}, "condition": {"type": "temperature", "value": 80}}),
+            )
+            .is_err()
+        );
+        assert!(s.execute("model.fluid_domain.edit", &domain(json!([{"body": "Body1", "material": "Steel"}]))).is_err());
+        assert!(s.execute("model.fluid_domain.edit", &domain(json!([{"body": "Nope", "material": "Alu"}]))).is_err());
+        assert!(s.execute("model.fluid_domain.edit", &domain(json!([{"body": "Body1", "material": "Alu", "power": "nan"}]))).is_err());
+        // (this build registers no GPU backend: lbm-gpu's tests check its own refusal by name)
+        let e = s.execute("solve.fluid", &json!({"backend": "gpu"})).unwrap_err().to_string();
+        assert!(e.contains("GPU") && e.contains("cpu"), "{e}");
     }
 
     /// A face held at a temperature is drawn at that temperature, and the legend reaches it,
