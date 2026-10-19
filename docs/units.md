@@ -7,8 +7,8 @@ the program, through one table: `crates/model/src/units/` (#579).
 
 **Store SI, convert only at boundaries through `crates/model/src/units`.** The model, the result
 types and every solver work in metres, kilograms, seconds, newtons, pascals, kelvin and radians.
-A conversion factor written anywhere else is a bug (`cargo xtask unit-factors` lists the literals
-that look like one; most of what it lists today are tolerances, see the end of this page).
+A conversion factor written anywhere else is a bug, and `cargo xtask unit-factors` (part of
+`cargo xtask ci`) refuses one; see the end of this page.
 
 ## The display system
 
@@ -164,8 +164,36 @@ Notes on migrating older files:
 
 ## Literal factors
 
-`cargo xtask unit-factors` reports float literals equal to common conversion factors outside the
-table. What remains are tolerances and limits (1e-12, 1e-3 relative tolerances, 1e12 caps), the
-frozen factors of the 2 → 3 migration step (which must not follow the table), and the
-mm-t-s sample scripts' typed values (`sample::GRAVITY`, 9810 mm/s²): typed input, converted like
-any other. None converts a stored value.
+`cargo xtask unit-factors` (`xtask/src/unit_factors.rs`, a gate of `cargo xtask ci`) fails on a
+float literal equal to a common conversion factor (1e-3, 1e6, 1e-9, 1e12, 273.15, 459.67, 25.4,
+0.0254, 9.80665, 9.81, 9810) written outside `crates/model/src/units/`. It reads the sources as
+syntax trees: comments, strings (help texts, WGSL) and test code (`#[cfg(test)]` and `#[test]`
+items, and the module files a `#[cfg(test)] mod` declares) are not code that converts.
+
+What a number that looks like a factor must be instead:
+
+- **A conversion** goes through the table: `DisplaySystem::to_si`/`express`, `Quantity::parse`,
+  or `units::Typed`, a constant written with its unit (`Typed::new(1.0, "mm")`) and converted
+  where it is used. The plane-strain default thickness is `Typed 1 mm`; the display tessellation's
+  range is `1 µm`–`1 mm` expressed in the geometry frame.
+- **A tolerance or a cap** is a named constant whose line carries the marker
+  `// unit-factors: <what it is>`: relative (`relative to the model's size`), dimensionless (`the
+  sine of an angle`, `a component of a unit vector`), or an absolute amount in SI with its unit
+  stated (`render::MIN_SIZE`, `1 µm in metres, the scene's unit (SI)`). An absolute amount in
+  another system is a `Typed`. Bytes and wall-clock times for messages are marked as not model
+  quantities.
+- **A sample's physical constant** is written with its unit: `"young": STEEL_YOUNG` (210 GPa),
+  `"density": "1100 kg/m^3"`, `sample::GRAVITY` (9.81 m/s²). A script that computes with one
+  converts it once into the samples' mm-t-s system (`sample::sample_value`): the drop test's
+  speed √(2 g h) from 9810 mm/s².
+
+The marker is the only exemption a line gets; one without a reason, or on a line without a
+factor, fails the check. Two parts of the tree are named in the checker with their reason:
+
+- `crates/io/src/migrate/v2_to_v3.rs`, the frozen 2 → 3 step: it keeps its own copy of the old
+  factors so a later change to the table cannot change how an old file migrates. Only this file
+  is exempt, not the io crate.
+- The geometry frame (`GEOMETRY_FRAME`: `crates/geometry`, `crates/mesh`, `crates/mesh-gpu` and
+  the engine's `geometry.*` and `mesh.*` command files), which works in millimetres around the
+  model: its factors are listed apart and do not fail the check until the change that moves it
+  onto the table lands and removes the list.

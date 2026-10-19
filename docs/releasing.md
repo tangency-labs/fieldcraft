@@ -171,7 +171,7 @@ the version instead.
 
 | When | What runs |
 |---|---|
-| Push to `develop` | `plan` takes the newest `develop` commit whose CI run passed as the base and runs `cargo xtask affected --base <it>`. `cargo xtask ci --affected <base>`: fmt, assets, layers (always, whole tree), then clippy and the tests of the changed crates and every crate that depends on them, and the wasm check when one of them builds for wasm. `heavy` (`cargo xtask test --heavy`) and `oracle` run only when the change reaches the solvers or the oracle (`solver`), or everything. A newer push cancels the run before it; the next one tests everything since the last green run, so nothing is skipped. |
+| Push to `develop` | `plan` takes the newest `develop` commit whose CI run passed as the base and runs `cargo xtask affected --base <it>`. `cargo xtask ci --affected <base>`: fmt, assets, layers, unit-factors (always, whole tree), then clippy and the tests of the changed crates and every crate that depends on them, and the wasm check when one of them builds for wasm. `heavy` (`cargo xtask test --heavy`) and `oracle` run only when the change reaches the solvers or the oracle (`solver`), or everything. A newer push cancels the run before it; the next one tests everything since the last green run, so nothing is skipped. |
 | Change to `Cargo.toml`, `Cargo.lock`, the toolchain, `xtask/` or `.github/` | Everything: the full gate, heavy and oracle (`everything`). |
 | Pull request from a fork or Dependabot | The same plan against the pull request's merge base; never the heavy job. |
 | Nightly (03:23 UTC) and `gh workflow run CI --ref <branch>` | Everything: the full `cargo xtask ci`, heavy and oracle on Linux, the oracle with its `nightly` cases (manual runs add the macOS oracle). |

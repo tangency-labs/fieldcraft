@@ -129,7 +129,7 @@ People trust FieldCraft with their models; a crash loses their work. **This outr
   5. Never run the full gate locally: no `cargo xtask ci`, no `cargo clippy --workspace`, no
      `cargo xtask wasm` or `oracle` unless step 2 calls for it. Never watch CI. GitHub CI runs,
      per merge on `develop`, `cargo xtask ci --affected <last green commit>` (fmt, assets,
-     layers on the whole tree; clippy and tests on the crates the change reaches; wasm when one
+     layers and unit-factors on the whole tree; clippy and tests on the crates the change reaches; wasm when one
      of them builds for it), the oracle and heavy tests when the change reaches the solvers or
      the oracle, and the dependency licences and advisories; a change to Cargo.toml, Cargo.lock,
      xtask or the workflows, the nightly run and every release run all of it (docs/releasing.md,
