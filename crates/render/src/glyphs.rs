@@ -888,6 +888,8 @@ impl Glyphs {
 const DATUM_MARGIN: f64 = 0.05;
 /// A datum point's cross: each arm's length, as a fraction of the bounding box diagonal.
 const DATUM_POINT: f64 = 0.02;
+/// The smallest diagonal a datum is sized against, so an empty model still draws one.
+const MIN_DIAGONAL: f64 = 1e-9; // unit-factors: a floor in metres (SI) against a zero-size box
 /// A datum plane's fill: how opaque its translucent rectangle is.
 pub const DATUM_FILL_ALPHA: f64 = 0.12;
 
@@ -931,7 +933,7 @@ fn plane_rect(bounds: &Aabb3, p: Vec3, n: Vec3, u: Vec3, v: Vec3) -> (Vec3, f64,
         (u0, u1, v0, v1) = (u0.min(a), u1.max(a), v0.min(b), v1.max(b));
     }
     let size = (u1 - u0).max(v1 - v0);
-    let margin = if size > 0.0 { DATUM_MARGIN * size } else { DATUM_MARGIN * bounds.diagonal().max(1e-9) };
+    let margin = if size > 0.0 { DATUM_MARGIN * size } else { DATUM_MARGIN * bounds.diagonal().max(MIN_DIAGONAL) };
     let centre = p + u * ((u0 + u1) * 0.5) + v * ((v0 + v1) * 0.5);
     (centre, (u1 - u0) * 0.5 + margin, (v1 - v0) * 0.5 + margin)
 }
@@ -948,7 +950,7 @@ fn axis_ends(bounds: &Aabb3, p: Vec3, a: Vec3) -> (Vec3, Vec3) {
         (t0, t1) = (t0.min(t), t1.max(t));
     }
     let span = t1 - t0;
-    let margin = if span > 0.0 { DATUM_MARGIN * span } else { DATUM_MARGIN * bounds.diagonal().max(1e-9) };
+    let margin = if span > 0.0 { DATUM_MARGIN * span } else { DATUM_MARGIN * bounds.diagonal().max(MIN_DIAGONAL) };
     (p + a * (t0 - margin), p + a * (t1 + margin))
 }
 
@@ -966,7 +968,7 @@ pub fn datums(
     scene: &mut Scene,
 ) -> Aabb3 {
     let mut d = Draw { scene, bounds: Aabb3::EMPTY, color: colors.datum, width: OUTLINE_WIDTH, on_top: false };
-    let diagonal = if bounds.is_empty() { 1.0 } else { bounds.diagonal().max(1e-9) };
+    let diagonal = if bounds.is_empty() { 1.0 } else { bounds.diagonal().max(MIN_DIAGONAL) };
     // A suppressed datum is out of the model: drawn only while selected in the browser.
     let drawn = |n: &String| (shown(n) && !model.datum_suppressed(n)) || highlight == Some(n.as_str());
     for (name, datum) in model.datums().iter().filter(|(n, _)| drawn(n)) {

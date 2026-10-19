@@ -182,6 +182,11 @@ pub fn fit_size(w: usize, h: usize) -> (usize, usize) {
 }
 /// Largest half-width of a line or point, in supersampled pixels.
 const MAX_MARK: f64 = 64.0;
+
+/// A triangle of less (twice signed) area than this, in pixels², is degenerate.
+const MIN_AREA: f64 = 1e-12; // unit-factors: an area in pixels
+/// A pixel centre this far outside an edge (in barycentric weight) is still inside: shared edges leave no gap.
+const EDGE_ROUND_OFF: f64 = 1e-9; // unit-factors: a barycentric weight
 /// Most labels drawn, and most characters drawn of one.
 const MAX_LABELS: usize = 200;
 const MAX_LABEL_CHARS: usize = 48;
@@ -377,7 +382,7 @@ pub(crate) fn raster_tri(a: [f64; 3], b: [f64; 3], c: [f64; 3], w: usize, h: usi
         return;
     }
     let area = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
-    if !(area.abs() >= 1e-12) {
+    if !(area.abs() >= MIN_AREA) {
         return;
     }
     for y in y0 as usize..=y1 as usize {
@@ -386,7 +391,7 @@ pub(crate) fn raster_tri(a: [f64; 3], b: [f64; 3], c: [f64; 3], w: usize, h: usi
             let w0 = ((b[0] - px) * (c[1] - py) - (b[1] - py) * (c[0] - px)) / area;
             let w1 = ((c[0] - px) * (a[1] - py) - (c[1] - py) * (a[0] - px)) / area;
             let w2 = 1.0 - w0 - w1;
-            if w0 < -1e-9 || w1 < -1e-9 || w2 < -1e-9 {
+            if w0 < -EDGE_ROUND_OFF || w1 < -EDGE_ROUND_OFF || w2 < -EDGE_ROUND_OFF {
                 continue;
             }
             pixel(x, y, (w0 * a[2] + w1 * b[2] + w2 * c[2]) as f32);

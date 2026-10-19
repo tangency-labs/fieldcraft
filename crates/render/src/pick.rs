@@ -119,7 +119,7 @@ impl Projector {
     /// eye ([`Camera::to_screen`]).
     pub fn screen(&self, p: Vec3) -> Option<[f64; 3]> {
         let c = self.vp.apply(p);
-        if !(c[3] > 1e-12) {
+        if !(c[3] > IN_FRONT) {
             return None;
         }
         let (x, y, z) = (c[0] / c[3], c[1] / c[3], c[2] / c[3]);
@@ -141,6 +141,9 @@ impl Projector {
 pub const MAX_DEPTH_PIXELS: usize = 2048 * 2048;
 /// Depth (of the 0…1 range) a point may lie behind the drawn surface and still count as on it.
 const DEPTH_ALLOWANCE: f64 = 2e-3;
+
+/// A point whose clip-space w is not above this is at or behind the eye.
+const IN_FRONT: f64 = 1e-12; // unit-factors: clip-space w, above zero by round-off
 
 /// The depth of the nearest drawn face at every pixel: which points are in front.
 #[derive(Clone, Debug)]

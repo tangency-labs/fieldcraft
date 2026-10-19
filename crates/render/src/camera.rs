@@ -6,7 +6,20 @@
 use serde::{Deserialize, Serialize};
 
 /// The smallest size the camera frames or clips at: a micrometre (model lengths are metres).
-pub const MIN_SIZE: f64 = 1e-6;
+pub const MIN_SIZE: f64 = 1e-6; // unit-factors: 1 µm in metres, the scene's unit (SI)
+
+/// Aspect ratios (width over height) the camera takes: outside, a viewport is degenerate.
+pub const ASPECT_RANGE: (f64, f64) = (1e-6, 1e6); // unit-factors: a ratio of sizes
+
+/// The nearest a perspective near plane comes, as a fraction of the camera's distance, and a
+/// fitted camera to the box it frames, as a fraction of the box's size.
+const NEAR_FRACTION: f64 = 1e-3; // unit-factors: relative to the distance or the box's size
+
+/// How far short of straight up or down the pitch stays (radians).
+const POLE_MARGIN: f64 = 1e-6; // unit-factors: an angle in radians
+
+/// A ray whose direction has less than this component along the target plane's normal misses it.
+const GRAZING: f64 = 1e-12; // unit-factors: a component of a unit vector
 
 use crate::pick::Projector;
 use crate::{Aabb3, Vec3};
@@ -116,7 +129,7 @@ pub struct Orientation {
 
 impl Orientation {
     /// Closest and farthest camera distance (metres: a micrometre to a million kilometres).
-    pub const DISTANCE: (f64, f64) = (MIN_SIZE, 1e9);
+    pub const DISTANCE: (f64, f64) = (MIN_SIZE, 1e9); // unit-factors: a million kilometres in metres (SI)
 
     /// The orientation of a standard view.
     pub fn of(view: StandardView) -> Self {
@@ -206,7 +219,7 @@ impl Camera {
     pub fn clip(&self, radius: f64) -> (f64, f64) {
         let r = radius.max(MIN_SIZE);
         if self.fov > 0.0 {
-            ((self.distance - r * 2.0).max(self.distance * 1e-3).max(MIN_SIZE), self.distance + r * 2.0)
+            ((self.distance - r * 2.0).max(self.distance * NEAR_FRACTION).max(MIN_SIZE), self.distance + r * 2.0)
         } else {
             // A margin of a fiftieth of the radius beyond the scene: relative, so the depth
             // range (and what a depth difference means) is the same at every scale.
@@ -215,8 +228,8 @@ impl Camera {
     }
     /// Projection to clip space (wgpu style, depth 0..1).
     pub fn proj(&self, aspect: f64, near: f64, far: f64) -> Mat4 {
-        let aspect = if aspect.is_finite() && aspect > 1e-6 { aspect } else { 1.0 };
-        let (n, f) = (near, far.max(near + 1e-6));
+        let aspect = if aspect.is_finite() && aspect > ASPECT_RANGE.0 { aspect } else { 1.0 };
+        let (n, f) = (near, far.max(near + MIN_SIZE));
         if self.fov > 0.0 {
             let t = 1.0 / (self.fov * 0.5).tan();
             Mat4([[t / aspect, 0.0, 0.0, 0.0], [0.0, t, 0.0, 0.0], [0.0, 0.0, f / (n - f), -1.0], [0.0, 0.0, n * f / (n - f), 0.0]])
@@ -256,7 +269,7 @@ impl Camera {
         let (o, d) = self.ray(x, y, w, h);
         let b = self.back();
         let dn = d.dot(b);
-        if dn.abs() < 1e-12 {
+        if dn.abs() < GRAZING {
             return None;
         }
         let p = o + d * ((self.target - o).dot(b) / dn);
@@ -309,7 +322,7 @@ impl Camera {
         }
     }
     pub fn set_view(&mut self, v: StandardView) {
-        let lim = std::f64::consts::FRAC_PI_2 - 1e-6;
+        let lim = std::f64::consts::FRAC_PI_2 - POLE_MARGIN;
         let (y, p) = v.angles();
         self.yaw = y;
         self.pitch = p.clamp(-lim, lim);
@@ -317,7 +330,7 @@ impl Camera {
     /// Turn to `o` (and move to its distance, when it has one); the pitch stays just short of the
     /// poles, as an orbit's does.
     pub fn orient(&mut self, o: &Orientation) {
-        let lim = std::f64::consts::FRAC_PI_2 - 1e-6;
+        let lim = std::f64::consts::FRAC_PI_2 - POLE_MARGIN;
         if o.yaw.is_finite() && o.pitch.is_finite() {
             self.yaw = o.yaw.to_radians();
             self.pitch = o.pitch.to_radians().clamp(-lim, lim);
@@ -350,7 +363,7 @@ impl Camera {
         if b.is_empty() || !(b.min.is_finite() && b.max.is_finite()) {
             return;
         }
-        let aspect = if aspect.is_finite() && aspect > 1e-6 { aspect.min(1e6) } else { 1.0 };
+        let aspect = if aspect.is_finite() && aspect > ASPECT_RANGE.0 { aspect.min(ASPECT_RANGE.1) } else { 1.0 };
         let [x0, y0, x1, y1] = checked_free(free);
         // The free part's edges in normalized device coordinates (y up), inside the margin.
         let (mx, my) = ((x1 - x0) * FIT_MARGIN, (y1 - y0) * FIT_MARGIN);
@@ -368,9 +381,9 @@ impl Camera {
         let size = (b.diagonal() * 0.5).max(MIN_SIZE);
         // Nearest distance: a tiny box still has a size, and in perspective every corner is in
         // front of the eye (an orthographic distance is only a zoom).
-        let mut d = size * 1e-3 / alpha;
+        let mut d = size * NEAR_FRACTION / alpha;
         if beta > 0.0 {
-            d = corners.iter().map(|q| q[2] + size * 1e-3).fold(d, f64::max);
+            d = corners.iter().map(|q| q[2] + size * NEAR_FRACTION).fold(d, f64::max);
         }
         for (axis, (a0, a1), k) in [(0, ax, aspect), (1, ay, 1.0)] {
             for i in &corners {
@@ -409,19 +422,19 @@ impl Camera {
         if b.is_empty() || !(b.min.is_finite() && b.max.is_finite() && self.target.is_finite()) {
             return;
         }
-        let aspect = if aspect.is_finite() && aspect > 1e-6 { aspect.min(1e6) } else { 1.0 };
+        let aspect = if aspect.is_finite() && aspect > ASPECT_RANGE.0 { aspect.min(ASPECT_RANGE.1) } else { 1.0 };
         let a = 1.0 - 2.0 * FIT_MARGIN;
         let (r, u, back) = self.basis();
         let alpha = Camera { distance: 1.0, ..*self }.half_height();
         let beta = if self.fov > 0.0 { alpha } else { 0.0 };
         let size = (b.diagonal() * 0.5).max(MIN_SIZE);
-        let mut d = size * 1e-3 / alpha;
+        let mut d = size * NEAR_FRACTION / alpha;
         for p in b.corners() {
             let p = p - self.target;
             let (x, y, z) = (p.dot(r), p.dot(u), p.dot(back));
             d = d.max((x.abs() / (a * aspect) + beta * z) / alpha).max((y.abs() / a + beta * z) / alpha);
             if beta > 0.0 {
-                d = d.max(z + size * 1e-3);
+                d = d.max(z + size * NEAR_FRACTION);
             }
         }
         if d.is_finite() {

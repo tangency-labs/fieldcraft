@@ -28,7 +28,9 @@ pub const MAX_STREAMLINE_POINTS: usize = 2_000_000;
 /// A streamline's step, in cells.
 const STEP: f64 = 0.5;
 /// A speed below this fraction of the field's largest is still fluid, where a streamline ends.
-const STILL: f64 = 1e-6;
+const STILL: f64 = 1e-6; // unit-factors: relative to the field's largest speed
+/// Interpolation weights summing to less than this leave no value to interpolate.
+const NO_WEIGHT: f64 = 1e-9; // unit-factors: a sum of interpolation weights
 
 /// A regular grid of cubic cells: cell `(i, j, k)` spans `origin + spacing · (i, j, k)` to one
 /// spacing further, and its values sit at index `i + nx (j + ny k)`.
@@ -278,7 +280,7 @@ pub fn sample_with(grid: &CellGrid, value: impl Fn(usize) -> Option<f64>, p: Vec
             weight += w;
         }
     }
-    if weight > 1e-9 {
+    if weight > NO_WEIGHT {
         return sum / weight;
     }
     // The nearest cell with a value, two cells around the nearest centre at most.
