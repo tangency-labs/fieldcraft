@@ -78,11 +78,14 @@ it is saved deliberately; each definition still naming what the design lacks is 
 (`stale.references`) and asked to be picked again, and a remesh says which seeds and size
 controls it could not apply.
 
-Two checks keep the pin current:
+Three checks keep the pin current:
 - `crates/geometry/tests/design_formats.rs` opens every design in
   `crates/geometry/tests/designs` (the older fixtures and `solidcraft-<version>/`, each saved by
   that release) and checks that a later release's copy of a recipe gives the same bodies,
   volumes and face names as the older one.
+- `crates/geometry/tests/design_names.rs` freezes every face, edge and vertex name of the split
+  corpus bracket (`tests/names/`): a pin bump that renames anything shows the renames there, to
+  bless once opening older models finds them again.
 - The scheduled `SolidCraft compatibility` workflow (`.github/workflows/solidcraft-compat.yml`,
   daily and on demand) downloads SolidCraft's latest release, saves the same recipes with it
   into `solidcraft-latest/` and runs those tests. Red means a SolidCraft release saves designs

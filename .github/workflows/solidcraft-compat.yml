@@ -1,7 +1,8 @@
 # SolidCraft compatibility, daily and on demand (#605): SolidCraft's latest release saves the
 # design test recipes (crates/geometry/tests/designs/*.json) as its desktop app saves designs,
 # and fieldcraft-geometry's design tests open them beside the committed fixtures, checking the
-# same bodies, volumes and face names. A SolidCraft release whose designs this FieldCraft can't
+# same bodies, volumes and face names; the frozen names of a split body (tests/design_names.rs)
+# are checked against the pinned SolidCraft. A SolidCraft release whose designs this FieldCraft can't
 # open (a newer design format than the pinned SolidCraft reads; docs/architecture.md, "SolidCraft
 # pin") turns this red before a person finds out. Kept cheap: the released Linux CLI is
 # downloaded and its checksum verified, not built, and only fieldcraft-geometry's design tests
@@ -66,5 +67,5 @@ jobs:
             (cd solidcraft-latest && "$SOLIDCRAFT_CLI" run "$recipe" >/dev/null)
           done
           ls -l solidcraft-latest
-      - name: FieldCraft opens them as the fixtures
-        run: cargo test --locked --profile ci -p fieldcraft-geometry --test design_formats
+      - name: FieldCraft opens them as the fixtures, and the pinned SolidCraft's names are the frozen ones
+        run: cargo test --locked --profile ci -p fieldcraft-geometry --features scripts --test design_formats --test design_names
