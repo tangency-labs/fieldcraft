@@ -372,6 +372,69 @@ fn natural_convection_matches_the_cpu() {
     }
 }
 
+/// Runs to steady state take their decisions at the same steps on both backends: the plane
+/// Poiseuille channel and the de Vahl Davis cavity (Ra 10³, 16 cells) stop as steady at the same
+/// sample, with the same monitored values within the stated tolerances.
+#[test]
+fn runs_to_steady_state_stop_where_the_cpu_does() {
+    let steady = |tolerance: f64, window: f64, monitors: Vec<fieldcraft_model::FlowMonitor>| {
+        Some(fieldcraft_model::Steady { monitors, tolerance, window: Some(window), min_time: None, divergence: None })
+    };
+    let fluid = |end_time: f64, dt: f64, steady: Option<fieldcraft_model::Steady>| Procedure::Fluid {
+        domain: "Flow".into(),
+        end_time: Some(end_time),
+        steps: None,
+        time_step: Some(dt),
+        frames: 2,
+        magic: None,
+        steady,
+    };
+    let (h, nu, n) = (1.0, 1.0 / 6.0, 16usize);
+    let dx = h / n as f64;
+    let mut d = domain([0.0; 3], [dx, h, dx], dx);
+    for f in [BoxFace::XMin, BoxFace::XMax, BoxFace::ZMin, BoxFace::ZMax] {
+        *d.faces.get_mut(f) = PERIODIC;
+    }
+    d.acceleration = [8.0 * nu * 0.1 / (h * h), 0.0, 0.0];
+    let walls = vec![fieldcraft_model::FlowMonitor::Force {
+        faces: vec![fieldcraft_model::FluidBoundary::Box(BoxFace::YMin), fieldcraft_model::FluidBoundary::Box(BoxFace::YMax)],
+    }];
+    let channel = model(1.0, nu, d, fluid(24.0, dx * dx, steady(1e-4, 0.5, walls)));
+
+    let (pr, alpha, u_max) = (0.71, 1.0, 3.65);
+    let nu = pr * alpha;
+    let mut d = domain([0.0; 3], [h, h, dx], dx);
+    d.faces.z_min = PERIODIC;
+    d.faces.z_max = PERIODIC;
+    let mut t = FluidThermal { initial_temperature: 0.5, gravity: [0.0, -1e3 * nu * alpha, 0.0], expansion: Some(1.0), ..FluidThermal::default() };
+    t.faces.x_min = ThermalCondition::Temperature { value: 1.0 };
+    t.faces.x_max = ThermalCondition::Temperature { value: 0.0 };
+    d.thermal = Some(t);
+    let dt = (0.05 * dx / u_max).min(dx * dx / 4.0);
+    let heat = vec![fieldcraft_model::FlowMonitor::Heat { faces: vec![fieldcraft_model::FluidBoundary::Box(BoxFace::XMin)] }];
+    let cavity = hot_model(1.0, nu, alpha, d, fluid(4.0, dt, steady(1e-3, 0.05, heat)));
+
+    for (name, m) in [("channel", channel), ("cavity", cavity)] {
+        let limits = fieldcraft_lbm::Limits::default();
+        let (setup, flow) = prepare(&m, &[]);
+        let Some(mut g) = gpu(&flow, Streaming::default()) else { return };
+        let mut cpu = flow;
+        let a = fieldcraft_lbm::run(&setup, &mut cpu, &limits).unwrap();
+        let b = fieldcraft_lbm::run(&setup, &mut g, &limits).unwrap();
+        let (ra, rb) = (a.steady.unwrap(), b.steady.unwrap());
+        println!("{name}: CPU {:?} at step {}, GPU {:?} at step {}", ra.reason, a.stats.steps, rb.reason, b.stats.steps);
+        assert_eq!(ra.reason, fieldcraft_lbm::StopReason::Steady, "{ra:?}");
+        assert_eq!((rb.reason, b.stats.steps), (ra.reason, a.stats.steps), "{rb:?}");
+        let (sa, sb) = (ra.samples.last().unwrap(), rb.samples.last().unwrap());
+        for (va, vb) in sa.values.iter().zip(&sb.values) {
+            let scale = va.iter().map(|v| v.abs()).fold(0.0, f64::max);
+            for (x, y) in va.iter().zip(vb) {
+                assert!((x - y).abs() <= 1e-4 * scale, "{name}: {sa:?} vs {sb:?}");
+            }
+        }
+    }
+}
+
 /// Readbacks and force caches must describe the same state on both AA orientations,
 /// including calls that cross a 64-step submission boundary. The CPU defines the result.
 fn compare_incremental(mut cpu: Flow, heated: bool, streaming: Streaming) {
