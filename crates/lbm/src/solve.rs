@@ -39,6 +39,23 @@ pub struct HeatHistory {
     pub power: Vec<f64>,
 }
 
+/// A fan's or porous zone's flow and pressure over time (model units).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ZoneHistory {
+    pub name: String,
+    /// Whether it is a fan (else a porous zone: a vent, grille, filter or plate).
+    pub fan: bool,
+    /// One value per [`FluidResult::history_times`]: the volume flow through it (along its axis;
+    /// a fan's along its direction).
+    pub flow: Vec<f64>,
+    /// The static-pressure difference between the fluid cell layers just outside it (so it
+    /// includes the wall friction over its thickness plus one cell): the drop across a porous
+    /// zone, the rise across a fan.
+    pub pressure: Vec<f64>,
+    /// A fan's pressure rise from its curve at that time (empty for a porous zone).
+    pub fan_rise: Vec<f64>,
+}
+
 /// The force the fluid exerts on one wall over time.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ForceHistory {
@@ -87,6 +104,8 @@ pub struct FluidResult {
     pub forces: Vec<ForceHistory>,
     /// The heat every wall receives, with heat (empty otherwise), the same walls and times.
     pub heat: Vec<HeatHistory>,
+    /// Every fan and porous zone, the same times.
+    pub zones: Vec<ZoneHistory>,
     pub stats: FluidStats,
     pub warnings: Vec<String>,
     /// How the run to steady state went, when the step has a stop rule.
@@ -172,6 +191,12 @@ pub fn run(setup: &Setup, flow: &mut dyn Backend, limits: &Limits) -> Result<Flu
     let mut history_times = Vec::new();
     let mut forces: Vec<Vec<[f64; 3]>> = vec![Vec::new(); flow.groups().len()];
     let mut heats: Vec<Vec<f64>> = vec![Vec::new(); if setup.thermal.is_some() { flow.groups().len() } else { 0 }];
+    let mut zones: Vec<ZoneHistory> = setup
+        .zones
+        .iter()
+        .map(|z| ZoneHistory { name: z.name.clone(), fan: z.is_fan(), flow: Vec::new(), pressure: Vec::new(), fan_rise: Vec::new() })
+        .collect();
+    let (qs, ps) = (setup.volume_flow_scale(), setup.pressure_scale());
     let mut next_frame = 1u64;
     // Frame j (1..=frames) at step round(j · total / frames).
     let frame_step = |j: u64| (j * total + frames / 2) / frames;
@@ -210,6 +235,15 @@ pub fn run(setup: &Setup, flow: &mut dyn Backend, limits: &Limits) -> Result<Flu
             history_times.push(k as f64 * setup.time_step);
             for (h, f) in forces.iter_mut().zip(flow.forces()?) {
                 h.push(f.map(|c| c * fs));
+            }
+            if !zones.is_empty() {
+                for (h, z) in zones.iter_mut().zip(flow.zones()?) {
+                    h.flow.push(z.flow * qs);
+                    h.pressure.push(z.pressure * ps);
+                    if h.fan {
+                        h.fan_rise.push(z.fan_rise * ps);
+                    }
+                }
             }
             if !heats.is_empty() {
                 for (h, q) in heats.iter_mut().zip(flow.heat()?) {
@@ -278,6 +312,7 @@ pub fn run(setup: &Setup, flow: &mut dyn Backend, limits: &Limits) -> Result<Flu
         frames: out_frames,
         history_times,
         forces: flow.groups().iter().zip(forces).map(|(g, force)| ForceHistory { name: g.name.clone(), body: g.body.clone(), force }).collect(),
+        zones,
         heat: flow.groups().iter().zip(heats).map(|(g, power)| HeatHistory { name: g.name.clone(), body: g.body.clone(), power }).collect(),
         stats: FluidStats {
             cells: n,

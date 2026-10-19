@@ -597,6 +597,7 @@ pub(crate) mod tests {
             history_times: Vec::new(),
             forces: Vec::new(),
             heat: Vec::new(),
+            zones: Vec::new(),
             stats,
             warnings: Vec::new(),
             steady: None,

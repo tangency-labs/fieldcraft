@@ -40,6 +40,11 @@ pub trait Backend {
     /// The heat each force group received in the last step (lattice units: temperature times
     /// cell faces per step); empty without heat.
     fn heat(&mut self) -> Result<Vec<f64>>;
+    /// Each fan's and porous zone's flow and pressure now (lattice units). A backend that does
+    /// not step zones refuses a flow with any when it is made, so the default has none.
+    fn zones(&mut self) -> Result<Vec<crate::flow::ZoneSample>> {
+        Ok(Vec::new())
+    }
     fn groups(&self) -> &[Group];
     fn fluid_cells(&self) -> usize;
     fn is_fluid(&self, cell: usize) -> bool;

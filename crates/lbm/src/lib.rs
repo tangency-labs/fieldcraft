@@ -9,7 +9,8 @@
 //! - [`setup`]: the step in lattice units, the time step, and the stability limits.
 //! - [`flow`]: the D3Q19 two-relaxation-time scheme with Guo forcing, halfway bounce-back
 //!   walls (moving walls after Ladd), slip faces, Zou–He inlets and outlets, and the
-//!   momentum-exchange force on every wall.
+//!   momentum-exchange force on every wall; fans (a pressure–flow curve) and porous zones
+//!   (Darcy–Forchheimer resistance) as body forces.
 //! - [`solve`]: the time loop, output frames and force histories in model units.
 //! - [`steady`]: the steady-state monitor and stop rule of a run.
 //!
@@ -31,6 +32,8 @@
 //! - Q. Zou, X. He, *On pressure and velocity boundary conditions for the lattice Boltzmann BGK
 //!   model*, Phys. Fluids 9(6):1591–1598, 1997; M. Hecht, J. Harting, J. Stat. Mech. 2010,
 //!   P01018 (the D3Q19 transverse correction).
+//! - Z. Guo, T. S. Zhao, *Lattice Boltzmann model for incompressible flows through porous
+//!   media*, PRE 66:036304, 2002 (the implicit velocity with a Darcy–Forchheimer force).
 //! - P. Lallemand, L.-S. Luo, *Theory of the lattice Boltzmann method: dispersion, dissipation,
 //!   isotropy, Galilean invariance, and stability*, PRE 61:6546, 2000 (stability limits).
 //! - H. Edelsbrunner, E. P. Mücke, *Simulation of Simplicity*, ACM TOG 9(1):66–104, 1990;
@@ -58,10 +61,10 @@ pub mod steady;
 pub mod voxel;
 
 pub use backend::{Backend, Choice, Fields, register_backend};
-pub use flow::{Flow, Group, Link, OpenCell, Rule, Target, ThermalState};
+pub use flow::{Flow, Group, Link, OpenCell, Rule, Target, ThermalState, ZoneSample};
 pub use setup::ThermalSetup;
-pub use setup::{Obstacle, Setup, fluid_step};
-pub use solve::{FluidResult, FluidStats, ForceHistory, Frame, HeatHistory, run, solve_fluid, solve_fluid_on};
+pub use setup::{Obstacle, Setup, ZoneKind, ZoneSetup, fluid_step};
+pub use solve::{FluidResult, FluidStats, ForceHistory, Frame, HeatHistory, ZoneHistory, run, solve_fluid, solve_fluid_on};
 pub use steady::{MonitorSample, SteadyReport, SteadySetup, StopReason};
 pub use voxel::Grid;
 

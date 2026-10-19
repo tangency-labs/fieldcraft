@@ -26,7 +26,8 @@
 //! density stops the run with [`crate::Error::Unstable`].
 
 use fieldcraft_mesh::surface::BoundarySurface;
-use fieldcraft_model::{BoxFace, Directional, FaceCondition, FluidDomain, Model, Procedure, SurfaceCondition, ThermalCondition};
+use fieldcraft_model::fluid_zones::DEFAULT_FAN_RELAXATION;
+use fieldcraft_model::{BoxFace, Directional, FaceCondition, FluidDomain, Model, Procedure, Resistance, SurfaceCondition, ThermalCondition};
 
 use crate::voxel::Grid;
 use crate::{Error, Limits, Result};
@@ -116,7 +117,95 @@ pub struct Setup {
     pub thermal: Option<ThermalSetup>,
     /// The stop rule, when the step runs to steady state.
     pub steady: Option<crate::steady::SteadySetup>,
+    /// The domain's porous zones, then its fans, in lattice units.
+    pub zones: Vec<ZoneSetup>,
     pub warnings: Vec<String>,
+}
+
+/// What a zone of the domain does, in lattice units.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ZoneKind {
+    /// Porous resistance: the acceleration `−α u − β |u| u` (α = ν/K, β = C₂/2).
+    Porous { alpha: f64, beta: f64 },
+    /// A fan pushing along its axis with `sign`; its curve's `[Q, Δp]` points in lattice units
+    /// (cell volumes per step, `ρ₀ Δx²/Δt²`) and its relaxation per step.
+    Fan { sign: f64, curve: Vec<[f64; 2]>, relaxation: f64 },
+}
+
+/// A fan or porous zone: the cells whose centres its box contains, `lo..=hi` along each axis.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ZoneSetup {
+    pub name: String,
+    pub kind: ZoneKind,
+    pub lo: [usize; 3],
+    pub hi: [usize; 3],
+    /// The axis the flow goes through it along (its thickness and its reported flow).
+    pub axis: usize,
+}
+
+impl ZoneSetup {
+    /// The cell layers along its axis.
+    pub fn layers(&self) -> usize {
+        let a = self.axis.min(2);
+        self.hi[a] + 1 - self.lo[a]
+    }
+
+    pub fn is_fan(&self) -> bool {
+        matches!(self.kind, ZoneKind::Fan { .. })
+    }
+}
+
+/// The cells whose centres lie in `[min, max]`, per axis `lo..=hi`, or `None` when there are none.
+fn cell_range(grid: &Grid, min: [f64; 3], max: [f64; 3]) -> Option<([usize; 3], [usize; 3])> {
+    const TOL: f64 = 1e-9;
+    let (mut lo, mut hi) = ([0usize; 3], [0usize; 3]);
+    for a in 0..3 {
+        let h = grid.spacing;
+        let first = ((min[a] - grid.origin[a]) / h - 0.5 - TOL).ceil().max(0.0);
+        let last = ((max[a] - grid.origin[a]) / h - 0.5 + TOL).floor().min(grid.cells[a] as f64 - 1.0);
+        if !(first <= last) {
+            return None;
+        }
+        (lo[a], hi[a]) = (first as usize, last as usize);
+    }
+    Some((lo, hi))
+}
+
+/// The domain's porous zones and fans in lattice units.
+fn zones(domain: &FluidDomain, grid: &Grid, viscosity: f64, dt: f64, density: f64) -> Result<Vec<ZoneSetup>> {
+    let h = grid.spacing;
+    let pressure_scale = density * h * h / (dt * dt);
+    let volume_flow_scale = h * h * h / dt;
+    let place = |kind: &str, name: &str, min, max| {
+        cell_range(grid, min, max).ok_or_else(|| {
+            Error::Invalid(format!("{kind} `{name}` contains no cell centre: make it at least one spacing ({h}) thick and put it inside the box"))
+        })
+    };
+    let mut out = Vec::with_capacity(domain.porous.len() + domain.fans.len());
+    for z in &domain.porous {
+        let (lo, hi) = place("porous zone", &z.name, z.min, z.max)?;
+        let axis = z.axis.index();
+        let layers = (hi[axis] + 1 - lo[axis]) as f64;
+        let (alpha, beta) = match z.resistance {
+            Resistance::DarcyForchheimer { permeability, inertial } => (viscosity * dt / permeability, 0.5 * inertial * h),
+            Resistance::LossCoefficient { coefficient } => (0.0, 0.5 * coefficient / layers),
+        };
+        if !(alpha.is_finite() && beta.is_finite()) {
+            return Err(Error::Invalid(format!("porous zone `{}`: its resistance is too large for this lattice", z.name)));
+        }
+        out.push(ZoneSetup { name: z.name.clone(), kind: ZoneKind::Porous { alpha, beta }, lo, hi, axis });
+    }
+    for f in &domain.fans {
+        let (lo, hi) = place("fan", &f.name, f.min, f.max)?;
+        let (axis, sign) = f.direction.axis_sign();
+        let curve: Vec<[f64; 2]> = f.curve.iter().map(|p| [p[0] / volume_flow_scale, p[1] / pressure_scale]).collect();
+        if curve.iter().flatten().any(|v| !v.is_finite()) {
+            return Err(Error::Invalid(format!("fan `{}`: its curve does not fit this lattice", f.name)));
+        }
+        let relaxation = f.relaxation.unwrap_or(DEFAULT_FAN_RELAXATION);
+        out.push(ZoneSetup { name: f.name.clone(), kind: ZoneKind::Fan { sign, curve, relaxation }, lo, hi, axis });
+    }
+    Ok(out)
 }
 
 fn norm(v: [f64; 3]) -> f64 {
@@ -201,6 +290,9 @@ impl Setup {
             if let SurfaceCondition::MovingWall { velocity } = sb.condition {
                 u_char = u_char.max(norm(velocity));
             }
+        }
+        for fan in &domain.fans {
+            u_char = u_char.max((2.0 * fan.max_pressure_rise() / density).sqrt());
         }
         let lo = pressures.iter().copied().fold(f64::INFINITY, f64::min);
         let hi = pressures.iter().copied().fold(f64::NEG_INFINITY, f64::max);
@@ -387,6 +479,7 @@ impl Setup {
             }
             domain_obstacles.push(ObstacleFaces { index, names, velocities, thermal: thermal_faces });
         }
+        let zones = zones(&domain, &grid, viscosity, dt, density)?;
         if mach > 0.1 + 1e-12 {
             warnings.push(format!(
                 "lattice Mach number {mach:.3}: the compressibility error, of order Ma² ≈ {:.1}%, may be visible",
@@ -416,9 +509,15 @@ impl Setup {
             obstacles: domain_obstacles,
             thermal,
             steady: steady.as_ref().map(|r| crate::steady::SteadySetup::new(r, n, dt)).transpose()?,
+            zones,
             warnings,
             domain,
         })
+    }
+
+    /// Model units per lattice unit of volume flow (cell volumes per step).
+    pub fn volume_flow_scale(&self) -> f64 {
+        self.grid.spacing.powi(3) / self.time_step
     }
 
     /// Model units per lattice unit of velocity, pressure and force.

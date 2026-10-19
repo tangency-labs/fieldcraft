@@ -26,6 +26,15 @@
 //!   Luo, *Force evaluation in the lattice Boltzmann method involving curved geometry*, PRE
 //!   65:041203, 2002): a population `f*` leaving a fluid cell toward the wall and the one `f'`
 //!   coming back transfer `c_out f* − c_in f'` to the wall.
+//! - **Fans and porous zones:** a porous zone (a vent, grille, filter or perforated plate) adds
+//!   the Darcy–Forchheimer force per volume `−ρ (α u + β |u| u)` (α = ν/K, β = C₂/2) to its
+//!   cells through Guo's term; because it depends on the velocity it defines, the velocity comes
+//!   from the exact root of that quadratic (Z. Guo, T. S. Zhao, *Lattice Boltzmann model for
+//!   incompressible flows through porous media*, PRE 66:036304, 2002). A fan pushes its cells
+//!   along its direction with `Δp / t` (t its thickness): before every step its volume flow `Q`
+//!   (the mean over its cell layers of `Σ u_axis`) is read, and its pressure rise moves toward
+//!   its curve's `Δp(Q)` by its relaxation factor, so the operating point is where the curve
+//!   meets the system's resistance. Zones stay off the inlet and outlet layers.
 //!
 //! # Heat
 //! With thermal settings a second lattice carries the temperature: D3Q7 (the rest direction and
@@ -55,7 +64,7 @@ use fieldcraft_model::{BoxFace, FaceCondition, Profile, ThermalCondition};
 use fieldcraft_parallel as parallel;
 
 use crate::lattice::{C, Q, W, c, equilibrium, moving_wall, opposite};
-use crate::setup::{MAX_LATTICE_SPEED, Obstacle, Setup};
+use crate::setup::{MAX_LATTICE_SPEED, Obstacle, Setup, ZoneKind, ZoneSetup};
 use crate::voxel::{Grid, TriangleTree, voxelise};
 use crate::{Error, Result};
 
@@ -107,6 +116,61 @@ pub struct Group {
     pub name: String,
     /// The obstacle body, for obstacle faces.
     pub body: Option<String>,
+}
+
+/// What a fan or porous zone does to its cells in the current step.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+struct ZoneAction {
+    /// A force per volume (a fan's push, lattice units).
+    push: [f64; 3],
+    /// Porous resistance: the acceleration `−α u − β |u| u`.
+    alpha: f64,
+    beta: f64,
+}
+
+/// A zone's flow and pressure at one time (lattice units).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct ZoneSample {
+    /// The volume flow through it along its axis (a fan: along its direction), the mean over its
+    /// cell layers.
+    pub flow: f64,
+    /// The static-pressure difference between the fluid cell layers just outside it (so it
+    /// includes the wall friction over its thickness plus one cell): the drop
+    /// `p_upstream − p_downstream` for a porous zone (upstream by the flow's sign), the rise
+    /// `p_downstream − p_upstream` along a fan's direction.
+    pub pressure: f64,
+    /// A fan's imposed pressure rise this step (zero for a porous zone).
+    pub fan_rise: f64,
+}
+
+/// The velocity (with the half force) and the force per volume of a cell from its density `rho`
+/// and momentum `j`, with body acceleration `a` and its zone's action. Porous resistance depends
+/// on the velocity it defines, `u = (j + F/2)/ρ`; solving that quadratic exactly keeps strong
+/// resistances stable (Z. Guo, T. S. Zhao, *Lattice Boltzmann model for incompressible flows
+/// through porous media*, PRE 66:036304, 2002): with `v = (j + (ρ a + push)/2)/ρ`,
+/// `u = v / (c₀ + √(c₀² + c₁ |v|))`, `c₀ = (1 + α/2)/2`, `c₁ = β/2`.
+#[inline(always)]
+fn velocity_force(rho: f64, j: [f64; 3], a: [f64; 3], zone: Option<&ZoneAction>) -> ([f64; 3], [f64; 3]) {
+    let mut force = [rho * a[0], rho * a[1], rho * a[2]];
+    let Some(z) = zone else {
+        return ([0, 1, 2].map(|k| (j[k] + 0.5 * force[k]) / rho), force);
+    };
+    for k in 0..3 {
+        force[k] += z.push[k];
+    }
+    let v = [0, 1, 2].map(|k| (j[k] + 0.5 * force[k]) / rho);
+    if z.alpha == 0.0 && z.beta == 0.0 {
+        return (v, force);
+    }
+    let c0 = 0.5 * (1.0 + 0.5 * z.alpha);
+    let speed = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    let scale = 1.0 / (c0 + (c0 * c0 + 0.5 * z.beta * speed).sqrt());
+    let u = v.map(|c| c * scale);
+    let us = speed * scale;
+    for k in 0..3 {
+        force[k] -= rho * (z.alpha + z.beta * us) * u[k];
+    }
+    (u, force)
 }
 
 /// The scalar lattice: directions 0..7 of D3Q19 (rest and the axes).
@@ -202,6 +266,15 @@ pub struct Flow {
     cell_force: Vec<[f64; 3]>,
     /// With heat: every cell's velocity from the last collision, for the scalar equilibrium.
     cell_u: Vec<[f64; 3]>,
+    /// The fans and porous zones (porous first), their fluid cells, and per cell its zone
+    /// (`NONE` outside them; empty without zones).
+    zones: Vec<ZoneSetup>,
+    zone_cells: Vec<Vec<u32>>,
+    zone_of: Vec<u32>,
+    /// Each zone's action this step.
+    actions: Vec<ZoneAction>,
+    /// Each fan's pressure rise (lattice units; zero for porous zones), relaxed toward its curve.
+    fan_rise: Vec<f64>,
 }
 
 const NONE: u32 = u32::MAX;
@@ -402,6 +475,44 @@ impl Flow {
             }
         }
 
+        // Fans and porous zones: their fluid cells (the first zone that contains a cell owns it),
+        // kept off the inlet and outlet layers, whose boundary rule knows only the body force.
+        let mut zone_of = if setup.zones.is_empty() { Vec::new() } else { filled(n, NONE, "zone cells")? };
+        let mut zone_cells = Vec::with_capacity(setup.zones.len());
+        for (z, zone) in setup.zones.iter().enumerate() {
+            let mut cells = Vec::new();
+            for k in zone.lo[2]..=zone.hi[2] {
+                for j in zone.lo[1]..=zone.hi[1] {
+                    for i in zone.lo[0]..=zone.hi[0] {
+                        let cell = grid.index([i, j, k]);
+                        if fluid.get(cell).copied().unwrap_or(false) && zone_of.get(cell) == Some(&NONE) {
+                            zone_of[cell] = z as u32;
+                            cells.push(cell as u32);
+                        }
+                    }
+                }
+            }
+            if cells.is_empty() {
+                return Err(Error::Invalid(format!("`{}` has no fluid cell: it lies inside obstacles or another zone", zone.name)));
+            }
+            zone_cells.push(cells);
+        }
+        if let Some(oc) = open.iter().find(|oc| zone_of.get(oc.cell as usize).is_some_and(|z| *z != NONE)) {
+            let name = zone_of.get(oc.cell as usize).and_then(|z| setup.zones.get(*z as usize)).map_or("", |z| z.name.as_str());
+            return Err(Error::Invalid(format!(
+                "`{name}` reaches the inlet or outlet layer of box face {}: keep fans and porous zones at least one cell inside it",
+                BoxFace::of(oc.axis, oc.inward < 0.0).name()
+            )));
+        }
+        let actions: Vec<ZoneAction> = setup
+            .zones
+            .iter()
+            .map(|z| match z.kind {
+                ZoneKind::Porous { alpha, beta } => ZoneAction { push: [0.0; 3], alpha, beta },
+                ZoneKind::Fan { .. } => ZoneAction::default(),
+            })
+            .collect();
+
         // The initial state: equilibrium at density 1 and the initial velocity.
         let mut f = filled(q_n, 0.0, "populations")?;
         let g = filled(q_n, 0.0, "populations")?;
@@ -482,7 +593,95 @@ impl Flow {
             thermal,
             cell_force,
             cell_u,
+            fan_rise: vec![0.0; setup.zones.len()],
+            zones: setup.zones.clone(),
+            zone_cells,
+            zone_of,
+            actions,
         })
+    }
+
+    /// The action of a cell's zone, if it is in one.
+    #[inline(always)]
+    fn action_at(&self, cell: usize) -> Option<&ZoneAction> {
+        self.zone_of.get(cell).and_then(|z| self.actions.get(*z as usize))
+    }
+
+    /// The fans and porous zones (porous first).
+    pub fn zones(&self) -> &[ZoneSetup] {
+        &self.zones
+    }
+
+    /// Each zone's fluid cells.
+    pub fn zone_cells(&self) -> &[Vec<u32>] {
+        &self.zone_cells
+    }
+
+    /// The volume flow through zone `z` along its axis, signed along a fan's direction: the
+    /// mean over its layers of the flux through each, `Σ u_axis / layers`.
+    fn zone_flow(&self, z: usize) -> f64 {
+        let (Some(zone), Some(cells)) = (self.zones.get(z), self.zone_cells.get(z)) else { return 0.0 };
+        let axis = zone.axis.min(2);
+        let sum: f64 = cells.iter().filter_map(|c| self.moments(*c as usize)).map(|(_, u)| u[axis]).sum();
+        let sign = if let ZoneKind::Fan { sign, .. } = zone.kind { sign } else { 1.0 };
+        sign * sum / zone.layers() as f64
+    }
+
+    /// Before a step: every fan's flow, its pressure rise moved toward its curve's value, and
+    /// its push (the rise over its thickness, along its direction).
+    fn refresh_fans(&mut self) {
+        for z in 0..self.zones.len() {
+            let Some(ZoneKind::Fan { sign, curve, relaxation }) = self.zones.get(z).map(|zone| &zone.kind) else { continue };
+            let (sign, relaxation) = (*sign, *relaxation);
+            let target = fieldcraft_model::fluid_zones::curve_value(curve, self.zone_flow(z));
+            let (Some(rise), Some(zone)) = (self.fan_rise.get_mut(z), self.zones.get(z)) else { continue };
+            *rise += relaxation * (target - *rise);
+            let mut push = [0.0; 3];
+            push[zone.axis.min(2)] = sign * *rise / zone.layers() as f64;
+            if let Some(a) = self.actions.get_mut(z) {
+                a.push = push;
+            }
+        }
+    }
+
+    /// Every zone's flow and pressure difference now (lattice units).
+    pub fn zone_samples(&self) -> Vec<ZoneSample> {
+        (0..self.zones.len()).map(|z| self.zone_sample(z)).collect()
+    }
+
+    fn zone_sample(&self, z: usize) -> ZoneSample {
+        let Some(zone) = self.zones.get(z) else { return ZoneSample::default() };
+        let flow = self.zone_flow(z);
+        let axis = zone.axis.min(2);
+        // The mean density of the layer `layer` along the axis over the zone's footprint.
+        let layer_density = |layer: usize| {
+            let (mut sum, mut count) = (0.0, 0usize);
+            let (t1, t2) = ((axis + 1) % 3, (axis + 2) % 3);
+            for b in zone.lo[t2]..=zone.hi[t2] {
+                for a in zone.lo[t1]..=zone.hi[t1] {
+                    let mut ijk = [0usize; 3];
+                    ijk[axis] = layer;
+                    ijk[t1] = a;
+                    ijk[t2] = b;
+                    if let Some((rho, _)) = self.moments(self.grid.index(ijk)) {
+                        sum += rho;
+                        count += 1;
+                    }
+                }
+            }
+            (count > 0).then(|| sum / count as f64)
+        };
+        // The layers just outside the zone (its own end layers at the box's ends).
+        let before = layer_density(zone.lo[axis].saturating_sub(1)).or_else(|| layer_density(zone.lo[axis])).unwrap_or(1.0);
+        let after =
+            layer_density((zone.hi[axis] + 1).min(self.grid.cells[axis].saturating_sub(1))).or_else(|| layer_density(zone.hi[axis])).unwrap_or(1.0);
+        let up_minus_down = crate::lattice::CS2 * (before - after);
+        match zone.kind {
+            ZoneKind::Fan { sign, .. } => {
+                ZoneSample { flow, pressure: -sign * up_minus_down, fan_rise: self.fan_rise.get(z).copied().unwrap_or(0.0) }
+            }
+            ZoneKind::Porous { .. } => ZoneSample { flow, pressure: if flow < 0.0 { -up_minus_down } else { up_minus_down }, fan_rise: 0.0 },
+        }
     }
 
     /// The body acceleration of a cell: the constant one, plus the buoyant one with heat.
@@ -611,8 +810,15 @@ impl Flow {
                 continue;
             }
             let (rho, u) = state(cell);
-            let force = self.force_at(cell);
-            let bare = [0, 1, 2].map(|a| u[a] - 0.5 * force[a]);
+            let a = self.force_at(cell);
+            let mut force = a.map(|c| rho * c);
+            if let Some(z) = self.action_at(cell) {
+                let speed = (u[0] * u[0] + u[1] * u[1] + u[2] * u[2]).sqrt();
+                for k in 0..3 {
+                    force[k] += z.push[k] - rho * (z.alpha + z.beta * speed) * u[k];
+                }
+            }
+            let bare = [0, 1, 2].map(|k| u[k] - 0.5 * force[k] / rho);
             for q in 0..Q {
                 self.f[q * s + cell] = equilibrium(q, rho, bare);
             }
@@ -634,8 +840,7 @@ impl Flow {
             j[1] += fq * cq[1];
             j[2] += fq * cq[2];
         }
-        let force = self.force_at(cell);
-        let u = [0, 1, 2].map(|a| (j[a] + 0.5 * rho * force[a]) / rho);
+        let (u, _) = velocity_force(rho, j, self.force_at(cell), self.action_at(cell));
         Some((rho, u))
     }
 
@@ -656,6 +861,7 @@ impl Flow {
     /// number or a lattice speed exceeds [`MAX_LATTICE_SPEED`].
     pub fn step(&mut self) -> Result<()> {
         self.refresh_buoyancy();
+        self.refresh_fans();
         let max_u2 = self.collide();
         if !(max_u2 <= MAX_LATTICE_SPEED * MAX_LATTICE_SPEED) {
             return Err(Error::Unstable(format!(
@@ -847,8 +1053,9 @@ impl Flow {
         let (sp, sm) = (1.0 - 0.5 * wp, 1.0 - 0.5 * wm);
         let constant = self.acceleration;
         let cell_force = &self.cell_force;
-        let forced = constant != [0.0; 3] || !cell_force.is_empty();
+        let forced = constant != [0.0; 3] || !cell_force.is_empty() || !self.zone_of.is_empty();
         let fluid = &self.fluid;
+        let (zone_of, actions) = (&self.zone_of, &self.actions);
         let mut blocks = cell_blocks(&mut self.f, self.stride, n);
         let mut maxima = vec![0.0f64; blocks.len()];
         // with heat, each block's velocities go to its slice of cell_u (empty otherwise)
@@ -880,8 +1087,8 @@ impl Flow {
                     **max_u2 = f64::NAN;
                     return;
                 }
-                let force = [rho * a[0], rho * a[1], rho * a[2]];
-                let u = [(j[0] + 0.5 * force[0]) / rho, (j[1] + 0.5 * force[1]) / rho, (j[2] + 0.5 * force[2]) / rho];
+                let zone = zone_of.get(b * CELLS + i).and_then(|z| actions.get(*z as usize));
+                let (u, force) = velocity_force(rho, j, a, zone);
                 let uu = u[0] * u[0] + u[1] * u[1] + u[2] * u[2];
                 **max_u2 = max_u2.max(uu);
                 if let Some(slot) = u_out.as_mut().and_then(|u| u.get_mut(i)) {
@@ -1096,6 +1303,10 @@ impl crate::backend::Backend for Flow {
 
     fn heat(&mut self) -> Result<Vec<f64>> {
         Ok(Flow::heat(self).to_vec())
+    }
+
+    fn zones(&mut self) -> Result<Vec<ZoneSample>> {
+        Ok(self.zone_samples())
     }
 
     fn mass(&mut self) -> Result<f64> {
