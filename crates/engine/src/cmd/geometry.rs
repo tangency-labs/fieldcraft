@@ -16,7 +16,7 @@ use crate::{CommandKind, CommandSpec, EngineError, Result, Session};
 pub const OPEN: CommandSpec = CommandSpec {
     id: "geometry.open",
     label: "Open Design",
-    params: r#"{"path": "part.solidcraft", "model"?: "keep"} — rebuilds the SolidCraft design and makes its bodies the geometry. `model`: "keep" (default) keeps the mesh and every definition, so opening the same design again after an edit picks up the change and sets follow their persistent face names; "new" starts a new model with the design (no mesh, sets, materials, sections, BCs, loads or steps; the unit system stays; the model is untitled until saved, and undo restores the previous file). The reply's `related` is false when the model (before the open) refers to bodies (mesh tags, set geometry) and the design has none of them, and `stale` lists what no longer resolves: `mesh_bodies` (bodies the mesh is tagged with that the design lacks) `sets` (sets naming a body or face it lacks) and `seeds` (edge seeds on edges it lacks). `errors` lists the features that failed to rebuild with the `bodies` each may change, and `warnings` says so in one line each. One undo step"#,
+    params: r#"{"path": "part.solidcraft", "model"?: "keep"} — rebuilds the SolidCraft design and makes its bodies the geometry. `model`: "keep" (default) keeps the mesh and every definition, so opening the same design again after an edit picks up the change and sets follow their persistent face names; "new" starts a new model with the design (no mesh, sets, materials, sections, BCs, loads or steps; the unit system stays; the model is untitled until saved, and undo restores the previous file). The reply's `related` is false when the model (before the open) refers to bodies (mesh tags, set geometry) and the design has none of them, and `stale` lists what no longer resolves: `mesh_bodies` (bodies the mesh is tagged with that the design lacks) `sets` (sets naming a body or face it lacks) and `seeds` (edge seeds on edges it lacks), and `references` every definition naming a face, edge or vertex of a body the design has but not that entity ({owner, reference, why}). Such a name is first looked for again as file.open does (`renamed`, `mismatched`). `errors` lists the features that failed to rebuild with the `bodies` each may change, and `warnings` says so in one line each. One undo step"#,
     form: Some(super::forms::OPEN_DESIGN),
     kind: CommandKind::Model,
     requires: &[],
@@ -96,8 +96,14 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
     let bytes = super::file::read_file(&path, MAX_DESIGN_BYTES as u64)?;
     let source = SourceFile::of(super::file::absolute(&path), &bytes)?;
     let opened = open_design(&bytes)?;
-    // The model's partitions cut the design again (a new model has none).
-    let design = if new_model { opened } else { super::datum::partitioned(&opened, &s.model)? };
+    // The model's partitions cut the design again (a new model has none), and its names are
+    // brought to the design's (#605).
+    let (design, names) = if new_model {
+        (opened, super::names::Report::default())
+    } else {
+        let cut = super::datum::partitioned(&opened, &s.model)?;
+        super::names::reconcile(&mut s.model, None, &opened, cut)?
+    };
     let mut fit = fit(s, &design);
     if new_model {
         let mut model = Model::default();
@@ -118,10 +124,13 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
         "bodies": design.bodies.iter().map(|b| b.name.as_str()).collect::<Vec<_>>(),
         "errors": design.errors.iter().map(|e| json!({"feature": e.feature, "message": e.message, "bodies": e.bodies})).collect::<Vec<_>>(),
         // Shown with the open: a body that differs from the design is never silent.
-        "warnings": design.errors.iter().map(|e| e.warning()).collect::<Vec<_>>(),
+        // So is a definition whose name the design no longer has, or one it now names otherwise.
+        "warnings": design.errors.iter().map(|e| e.warning()).chain(names.warnings()).collect::<Vec<_>>(),
         "model": if new_model { "new" } else { "kept" },
         "related": fit.related,
-        "stale": {"mesh_bodies": fit.mesh_bodies, "sets": fit.sets, "seeds": fit.seeds},
+        "renamed": names.json()["renamed"],
+        "mismatched": names.json()["mismatched"],
+        "stale": stale_json(&fit, &names),
     });
     // Another design file (or a new model) is another document; the same file opened again after
     // an edit is the same one.
@@ -144,6 +153,19 @@ struct Fit {
     sets: Vec<String>,
     /// Edge seeds on an edge the design lacks.
     seeds: Vec<String>,
+}
+
+/// The `stale` object of geometry.open and file.open: what of the model the design does not have.
+fn stale_json(fit: &Fit, names: &super::names::Report) -> Value {
+    json!({"mesh_bodies": fit.mesh_bodies, "sets": fit.sets, "seeds": fit.seeds, "references": names.json()["references"]})
+}
+
+/// file.open's `stale` (see [`stale_json`]), for the session it opened.
+pub(super) fn opened_stale(s: &Session, names: &super::names::Report) -> Value {
+    match s.design.as_deref() {
+        Some(design) => stale_json(&fit(s, design), names),
+        None => stale_json(&Fit { related: true, mesh_bodies: Vec::new(), sets: Vec::new(), seeds: Vec::new() }, names),
+    }
 }
 
 fn fit(s: &Session, design: &Design) -> Fit {

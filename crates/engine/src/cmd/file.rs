@@ -32,7 +32,7 @@ pub const NEW: CommandSpec = CommandSpec {
 pub const OPEN: CommandSpec = CommandSpec {
     id: "file.open",
     label: "Open Model",
-    params: r#"{"path": "bracket.fieldcraft"} — opens the model, its mesh and its journal, and opens its design and imported meshes again from their files (one that is missing or changed is listed in `warnings`; the model still opens); unsaved changes of the current model are discarded and the undo history starts empty. A file of an older format is migrated as it is read (`migrated_from` in the reply; what migrating changed in what it means, such as a mesh of the design in a model of metres, leads `warnings`) and nothing is written; a later format is refused"#,
+    params: r#"{"path": "bracket.fieldcraft"} — opens the model, its mesh and its journal, and opens its design and imported meshes again from their files (one that is missing or changed is listed in `warnings`; the model still opens); unsaved changes of the current model are discarded and the undo history starts empty. A file of an older format is migrated as it is read (`migrated_from` in the reply; what migrating changed in what it means, such as a mesh of the design in a model of metres, leads `warnings`) and nothing is written; a later format is refused. Names the design no longer has (a SolidCraft that names a face otherwise): a face the mesh lies on is found again by where the mesh is, its edges and vertices through their faces, and every definition follows (`renamed`, and a warning each; the model is then changed, to save); what is not found again is listed in `warnings`, to pick again, and in `stale` (as geometry.open's: `mesh_bodies`, `sets`, `seeds` and `references` [{owner, reference, why}]); `mismatched` lists mesh faces that lie on another face of the design than their name's (a name SolidCraft now gives another face)"#,
     form: Some(super::forms::FILE_OPEN),
     kind: CommandKind::Session,
     requires: &[],
@@ -202,6 +202,12 @@ fn reopen<T>(
     }
 }
 
+/// The model expressed in millimetres, as the geometry is (the stored model is in SI).
+pub(crate) fn frame_geometry(model: &fieldcraft_model::Model) -> std::result::Result<fieldcraft_model::Model, String> {
+    let mm = crate::units::geometry();
+    model.converted(&|q, v| mm.express(q, v).ok()).map_err(|e| e.to_string())
+}
+
 impl Session {
     /// The bytes of the `.fieldcraft` file holding this session, with geometry paths inside
     /// `base` (the folder the file goes to) stored relative to it.
@@ -217,24 +223,35 @@ impl Session {
     /// A session holding what a file holds, its geometry opened again from the paths it names
     /// (relative ones against `base`) where `roots` lets it read them; problems with the
     /// geometry come back as warnings. The session's own file access is unconfined.
-    pub fn from_file(file: ModelFile, base: Option<&Path>, roots: &Roots) -> (Session, Vec<String>) {
+    /// The model's names are brought to the design's ([`super::names::reconcile`]): what was
+    /// renamed and what is still stale come back in the report, and as warnings.
+    pub(crate) fn from_file(file: ModelFile, base: Option<&Path>, roots: &Roots) -> (Session, Vec<String>, super::names::Report) {
         // What migrating an older file changed in what it means comes first.
         let mut warnings = file.notes.clone();
         // The geometry is in millimetres: it is cut and stitched by the model expressed in them.
-        let mm = crate::units::geometry();
-        let framed = file.model.converted(&|q, v| mm.express(q, v).ok()).unwrap_or_else(|e| {
-            warnings.push(format!("the model's lengths cannot be expressed in millimetres ({e}); its partitions and stitches are not applied"));
-            fieldcraft_model::Model::default()
-        });
+        let mut framed = match frame_geometry(&file.model) {
+            Ok(m) => m,
+            Err(e) => {
+                warnings.push(format!("the model's lengths cannot be expressed in millimetres ({e}); its partitions and stitches are not applied"));
+                fieldcraft_model::Model::default()
+            }
+        };
         let mut sources = Geometry::default();
         let mut design: Option<Arc<Design>> = None;
+        let mut model = file.model;
+        let mut names = super::names::Report::default();
         if let Some(stored) = &file.geometry.design {
             let (opened, source) = reopen("design", stored, base, roots, MAX_DESIGN_BYTES as u64, open_design, &mut warnings);
-            design = opened.and_then(|d| match super::datum::partitioned(&d, &framed) {
-                Ok(cut) => Some(Arc::new(cut)),
-                Err(e) => {
-                    warnings.push(format!("the design's partitions could not be applied ({e}); the model opens without the design"));
-                    None
+            design = opened.and_then(|d| {
+                match super::datum::partitioned(&d, &framed).and_then(|cut| super::names::reconcile(&mut model, Some(&mut framed), &d, cut)) {
+                    Ok((cut, report)) => {
+                        names = report;
+                        Some(Arc::new(cut))
+                    }
+                    Err(e) => {
+                        warnings.push(format!("the design's partitions could not be applied ({e}); the model opens without the design"));
+                        None
+                    }
                 }
             });
             if let Some(d) = &design {
@@ -245,6 +262,7 @@ impl Session {
                         .map(|e| format!("{}: {}", e.feature, e.message)),
                 );
             }
+            warnings.extend(names.warnings());
             sources.design = Some(source);
         }
         let mut surfaces = Vec::new();
@@ -254,7 +272,7 @@ impl Session {
             sources.meshes.push(source);
         }
         let mut session = Session {
-            model: file.model,
+            model,
             design,
             surfaces,
             sources,
@@ -268,7 +286,7 @@ impl Session {
         };
         let (_, failed) = super::stitch::restitch_surfaces(&mut session.surfaces, &framed);
         warnings.extend(failed.into_iter().map(|(n, why)| format!("stitch `{n}`: {why}")));
-        (session, warnings)
+        (session, warnings, names)
     }
 
     /// Replace this session with `opened`, keeping its undo memory limit, its work caps and its
@@ -304,7 +322,7 @@ fn summary(s: &Session, warnings: &[String]) -> Value {
 /// content is an autosave of it). Nothing is written.
 fn load(s: &mut Session, bytes: &[u8], path: Option<String>, saved: bool) -> Result<Value> {
     let (file, format) = fieldcraft_io::read_versioned(bytes)?;
-    let (mut opened, warnings) = Session::from_file(file, path.as_deref().and_then(|p| Path::new(p).parent()), &s.file_access);
+    let (mut opened, warnings, names) = Session::from_file(file, path.as_deref().and_then(|p| Path::new(p).parent()), &s.file_access);
     // The format of the file at `path`: the one just read, or (an autosave) the one on disk,
     // read only where the session may read. Only an older one is "migrated from"; a save over a
     // later one keeps a copy all the same (fs::save_model decides from the file itself).
@@ -318,8 +336,17 @@ fn load(s: &mut Session, bytes: &[u8], path: Option<String>, saved: bool) -> Res
     if saved {
         opened.saved_revision = Some(opened.revision);
     }
+    // Names rewritten to the design's are a change: the person saves it, opening writes nothing.
+    if names.changed_model() {
+        opened.revision = next_revision();
+    }
     s.replace_with(opened);
-    Ok(summary(s, &warnings))
+    let mut reply = summary(s, &warnings);
+    reply["stale"] = super::geometry::opened_stale(s, &names);
+    let names = names.json();
+    reply["renamed"] = names["renamed"].clone();
+    reply["mismatched"] = names["mismatched"].clone();
+    Ok(reply)
 }
 
 fn open(s: &mut Session, p: &Value) -> Result<Value> {

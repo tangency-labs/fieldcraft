@@ -74,6 +74,22 @@ impl Cleared {
             if !results.is_empty() {
                 o.insert("results_cleared".into(), json!(results));
             }
+            // A seed or size control on what the design lacks shaped nothing: never in silence.
+            let skipped: Vec<Value> = s
+                .design
+                .as_deref()
+                .map(|d| super::names::stale_uses(&s.model, d))
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|u| u.owner == "edge seed" || u.owner.starts_with("size control"))
+                .map(|u| json!(format!("{} was not applied: the design has no {}; pick it again", u.owner, u.reference)))
+                .collect();
+            if !skipped.is_empty() {
+                let warnings = o.entry("warnings").or_insert_with(|| json!([]));
+                if let Some(w) = warnings.as_array_mut() {
+                    w.extend(skipped);
+                }
+            }
         }
         reply
     }

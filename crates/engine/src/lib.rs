@@ -1108,7 +1108,7 @@ mod tests {
         let before = s.model.clone();
         let r = s.execute("geometry.open", &json!({"path": path})).unwrap();
         assert_eq!((r["model"].as_str(), r["related"].as_bool()), (Some("kept"), Some(true)), "{r}");
-        assert_eq!(r["stale"], json!({"mesh_bodies": [], "sets": [], "seeds": []}));
+        assert_eq!(r["stale"], json!({"mesh_bodies": [], "sets": [], "seeds": [], "references": []}));
         assert_eq!(s.model, before);
     }
 
@@ -1123,7 +1123,7 @@ mod tests {
         let mut kept = defined.clone();
         let r = kept.execute("geometry.open", &json!({"path": path})).unwrap();
         assert_eq!((r["model"].as_str(), r["related"].as_bool()), (Some("kept"), Some(false)), "{r}");
-        assert_eq!(r["stale"], json!({"mesh_bodies": ["Seal"], "sets": ["all", "hole"], "seeds": []}));
+        assert_eq!(r["stale"], json!({"mesh_bodies": ["Seal"], "sets": ["all", "hole"], "seeds": [], "references": []}));
         assert_eq!(kept.model, before);
 
         // New: the mesh and every definition go, the units stay; one undo brings them back.
@@ -1133,7 +1133,7 @@ mod tests {
         let before = fresh.model.clone();
         let r = fresh.execute("geometry.open", &json!({"path": path, "model": "new"})).unwrap();
         assert_eq!((r["model"].as_str(), r["related"].as_bool()), (Some("new"), Some(false)), "{r}");
-        assert_eq!(r["stale"], json!({"mesh_bodies": [], "sets": [], "seeds": []}));
+        assert_eq!(r["stale"], json!({"mesh_bodies": [], "sets": [], "seeds": [], "references": []}));
         assert!(fresh.model.elements().is_empty() && fresh.model.nodes().is_empty());
         assert!(fresh.model.definition_counts().iter().all(|(_, n)| *n == 0));
         assert_eq!(fresh.model.display_units().cloned(), units);

@@ -1,0 +1,8 @@
+[
+ {"command": "geometry.open", "params": {"path": "bracket.solidcraft"}},
+ {"command": "model.set.create", "params": {"name": "cut", "geometry": [{"body": "Bracket.1", "face": "F9:face:4"}]}},
+ {"command": "model.load.create", "params": {"name": "press", "type": "pressure", "set": "cut", "magnitude": 1.0}},
+ {"command": "mesh.seed.edge", "params": {"edges": [{"body": "Bracket.1", "edge": "F2:side:l4|F9:face:4"}], "count": 7}},
+ {"command": "mesh.tet.generate", "params": {"body": "Bracket.1", "size": 3}},
+ {"command": "file.save", "params": {"path": "meshed.fieldcraft"}}
+]

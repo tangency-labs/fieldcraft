@@ -29,6 +29,7 @@ pub use plan::untagged_faces;
 pub use relax::{Preview as RelaxPreview, preview as relax_preview, sphere as relax_sphere};
 mod mirror;
 mod model;
+pub(crate) mod names;
 pub(crate) mod node_move;
 pub(crate) mod nodes;
 pub(crate) mod octree;

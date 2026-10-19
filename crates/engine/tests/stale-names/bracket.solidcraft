@@ -1,0 +1,1030 @@
+{
+  "format": "solidcraft/20",
+  "name": "Untitled",
+  "units": "mm",
+  "params": [],
+  "features": [
+    {
+      "id": 1,
+      "name": "Profile",
+      "suppressed": false,
+      "type": "sketch",
+      "plane": {
+        "type": "origin",
+        "name": "XY"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "l1.start",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "l1.end",
+            "pos": [
+              60.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "l2.end",
+            "pos": [
+              60.0,
+              8.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "l3.end",
+            "pos": [
+              8.0,
+              8.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "l4.end",
+            "pos": [
+              8.0,
+              50.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "l5.end",
+            "pos": [
+              0.0,
+              50.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "l1",
+            "type": "line",
+            "a": 1,
+            "b": 2,
+            "construction": false
+          },
+          {
+            "id": "l2",
+            "type": "line",
+            "a": 2,
+            "b": 3,
+            "construction": false
+          },
+          {
+            "id": "l3",
+            "type": "line",
+            "a": 3,
+            "b": 4,
+            "construction": false
+          },
+          {
+            "id": "l4",
+            "type": "line",
+            "a": 4,
+            "b": 5,
+            "construction": false
+          },
+          {
+            "id": "l5",
+            "type": "line",
+            "a": 5,
+            "b": 6,
+            "construction": false
+          },
+          {
+            "id": "l6",
+            "type": "line",
+            "a": 6,
+            "b": 1,
+            "construction": false
+          }
+        ],
+        "constraints": [
+          {
+            "id": "k1",
+            "type": "coincident",
+            "p": 0,
+            "q": 1
+          }
+        ],
+        "counters": {
+          "k": 1,
+          "l": 6
+        }
+      }
+    },
+    {
+      "id": 2,
+      "name": "Extrude1",
+      "suppressed": false,
+      "body_names": [
+        "Bracket"
+      ],
+      "param_names": [
+        "d1"
+      ],
+      "type": "extrude",
+      "sketch": 1,
+      "profiles": {
+        "type": "all"
+      },
+      "extent": {
+        "distance": "40",
+        "direction": "positive"
+      },
+      "operation": "new_body"
+    },
+    {
+      "id": 3,
+      "name": "Fillet1",
+      "suppressed": false,
+      "param_names": [
+        "d2"
+      ],
+      "edge_refs": [
+        {
+          "dir": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "min": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "max": [
+            60.0,
+            50.0,
+            40.0
+          ]
+        }
+      ],
+      "edge_names": [
+        "F2:side:l3|F2:side:l4"
+      ],
+      "type": "fillet",
+      "edges": [
+        [
+          8.0,
+          8.0,
+          20.0
+        ]
+      ],
+      "radius": "6"
+    },
+    {
+      "id": 4,
+      "name": "Hole1",
+      "suppressed": false,
+      "param_names": [
+        "d3"
+      ],
+      "face_names": [
+        "F2:side:l3"
+      ],
+      "type": "hole",
+      "position": [
+        40.0,
+        8.0,
+        20.0
+      ],
+      "direction": [
+        -0.0,
+        -1.0,
+        0.0
+      ],
+      "diameter": "8",
+      "hole": {
+        "type": "simple"
+      }
+    },
+    {
+      "id": 5,
+      "name": "Hole2",
+      "suppressed": false,
+      "param_names": [
+        "d4"
+      ],
+      "face_names": [
+        "F2:side:l4"
+      ],
+      "type": "hole",
+      "position": [
+        8.0,
+        32.0,
+        20.0
+      ],
+      "direction": [
+        -1.0,
+        -0.0,
+        -0.0
+      ],
+      "diameter": "8",
+      "hole": {
+        "type": "simple"
+      }
+    },
+    {
+      "id": 6,
+      "name": "Split1",
+      "suppressed": false,
+      "type": "split",
+      "body": "Bracket",
+      "plane": {
+        "type": "custom",
+        "plane": {
+          "origin": [
+            0.0,
+            0.0,
+            30.0
+          ],
+          "x_dir": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "y_dir": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        }
+      }
+    },
+    {
+      "id": 7,
+      "name": "Split2",
+      "suppressed": false,
+      "type": "split",
+      "body": "Bracket (1)",
+      "plane": {
+        "type": "custom",
+        "plane": {
+          "origin": [
+            0.0,
+            0.0,
+            10.0
+          ],
+          "x_dir": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "y_dir": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        }
+      }
+    },
+    {
+      "id": 8,
+      "name": "Split3",
+      "suppressed": false,
+      "type": "split",
+      "body": "Bracket (1) (1)",
+      "plane": {
+        "type": "custom",
+        "plane": {
+          "origin": [
+            16.0,
+            0.0,
+            0.0
+          ],
+          "x_dir": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "y_dir": [
+            0.0,
+            0.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "id": 9,
+      "name": "Split4",
+      "suppressed": false,
+      "type": "split",
+      "body": "Bracket (1) (1) (1)",
+      "plane": {
+        "type": "custom",
+        "plane": {
+          "origin": [
+            0.0,
+            16.0,
+            0.0
+          ],
+          "x_dir": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "y_dir": [
+            0.0,
+            -0.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "id": 10,
+      "name": "Split5",
+      "suppressed": false,
+      "type": "split",
+      "body": "Bracket (1) (1) (1) (1)",
+      "plane": {
+        "type": "custom",
+        "plane": {
+          "origin": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "x_dir": [
+            0.7071067811865476,
+            0.7071067811865476,
+            -0.0
+          ],
+          "y_dir": [
+            0.0,
+            0.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "id": 11,
+      "name": "Split6",
+      "suppressed": false,
+      "type": "split",
+      "body": "Bracket (1) (1)",
+      "plane": {
+        "type": "custom",
+        "plane": {
+          "origin": [
+            30.0,
+            0.0,
+            0.0
+          ],
+          "x_dir": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "y_dir": [
+            0.0,
+            0.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "id": 12,
+      "name": "Split7",
+      "suppressed": false,
+      "type": "split",
+      "body": "Bracket (1) (1)",
+      "plane": {
+        "type": "custom",
+        "plane": {
+          "origin": [
+            50.0,
+            0.0,
+            0.0
+          ],
+          "x_dir": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "y_dir": [
+            0.0,
+            0.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "id": 13,
+      "name": "Split8",
+      "suppressed": false,
+      "type": "split",
+      "body": "Bracket (1) (1) (1)",
+      "plane": {
+        "type": "custom",
+        "plane": {
+          "origin": [
+            0.0,
+            22.0,
+            0.0
+          ],
+          "x_dir": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "y_dir": [
+            0.0,
+            -0.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "id": 14,
+      "name": "Split9",
+      "suppressed": false,
+      "type": "split",
+      "body": "Bracket (1) (1) (1)",
+      "plane": {
+        "type": "custom",
+        "plane": {
+          "origin": [
+            0.0,
+            42.0,
+            0.0
+          ],
+          "x_dir": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "y_dir": [
+            0.0,
+            -0.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "id": 15,
+      "name": "Split10",
+      "suppressed": false,
+      "type": "split",
+      "body": "Bracket (1)",
+      "plane": {
+        "type": "custom",
+        "plane": {
+          "origin": [
+            16.0,
+            0.0,
+            0.0
+          ],
+          "x_dir": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "y_dir": [
+            0.0,
+            0.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "id": 16,
+      "name": "Split11",
+      "suppressed": false,
+      "type": "split",
+      "body": "Bracket (1) (1)'",
+      "plane": {
+        "type": "custom",
+        "plane": {
+          "origin": [
+            0.0,
+            16.0,
+            0.0
+          ],
+          "x_dir": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "y_dir": [
+            0.0,
+            -0.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "id": 17,
+      "name": "Split12",
+      "suppressed": false,
+      "type": "split",
+      "body": "Bracket (1) (1)' (1)",
+      "plane": {
+        "type": "custom",
+        "plane": {
+          "origin": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "x_dir": [
+            0.7071067811865476,
+            0.7071067811865476,
+            -0.0
+          ],
+          "y_dir": [
+            0.0,
+            0.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "id": 18,
+      "name": "Split13",
+      "suppressed": false,
+      "type": "split",
+      "body": "Bracket (1)",
+      "plane": {
+        "type": "custom",
+        "plane": {
+          "origin": [
+            30.0,
+            0.0,
+            0.0
+          ],
+          "x_dir": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "y_dir": [
+            0.0,
+            0.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "id": 19,
+      "name": "Split14",
+      "suppressed": false,
+      "type": "split",
+      "body": "Bracket (1)",
+      "plane": {
+        "type": "custom",
+        "plane": {
+          "origin": [
+            50.0,
+            0.0,
+            0.0
+          ],
+          "x_dir": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "y_dir": [
+            0.0,
+            0.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "id": 20,
+      "name": "Split15",
+      "suppressed": false,
+      "type": "split",
+      "body": "Bracket (1) (1)'",
+      "plane": {
+        "type": "custom",
+        "plane": {
+          "origin": [
+            0.0,
+            22.0,
+            0.0
+          ],
+          "x_dir": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "y_dir": [
+            0.0,
+            -0.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "id": 21,
+      "name": "Split16",
+      "suppressed": false,
+      "type": "split",
+      "body": "Bracket (1) (1)'",
+      "plane": {
+        "type": "custom",
+        "plane": {
+          "origin": [
+            0.0,
+            42.0,
+            0.0
+          ],
+          "x_dir": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "y_dir": [
+            0.0,
+            -0.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "id": 22,
+      "name": "Split17",
+      "suppressed": false,
+      "type": "split",
+      "body": "Bracket",
+      "plane": {
+        "type": "custom",
+        "plane": {
+          "origin": [
+            16.0,
+            0.0,
+            0.0
+          ],
+          "x_dir": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "y_dir": [
+            0.0,
+            0.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "id": 23,
+      "name": "Split18",
+      "suppressed": false,
+      "type": "split",
+      "body": "Bracket (1)'",
+      "plane": {
+        "type": "custom",
+        "plane": {
+          "origin": [
+            0.0,
+            16.0,
+            0.0
+          ],
+          "x_dir": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "y_dir": [
+            0.0,
+            -0.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "id": 24,
+      "name": "Split19",
+      "suppressed": false,
+      "type": "split",
+      "body": "Bracket (1)' (1)",
+      "plane": {
+        "type": "custom",
+        "plane": {
+          "origin": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "x_dir": [
+            0.7071067811865476,
+            0.7071067811865476,
+            -0.0
+          ],
+          "y_dir": [
+            0.0,
+            0.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "id": 25,
+      "name": "Split20",
+      "suppressed": false,
+      "type": "split",
+      "body": "Bracket",
+      "plane": {
+        "type": "custom",
+        "plane": {
+          "origin": [
+            30.0,
+            0.0,
+            0.0
+          ],
+          "x_dir": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "y_dir": [
+            0.0,
+            0.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "id": 26,
+      "name": "Split21",
+      "suppressed": false,
+      "type": "split",
+      "body": "Bracket",
+      "plane": {
+        "type": "custom",
+        "plane": {
+          "origin": [
+            50.0,
+            0.0,
+            0.0
+          ],
+          "x_dir": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "y_dir": [
+            0.0,
+            0.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "id": 27,
+      "name": "Split22",
+      "suppressed": false,
+      "type": "split",
+      "body": "Bracket (1)'",
+      "plane": {
+        "type": "custom",
+        "plane": {
+          "origin": [
+            0.0,
+            22.0,
+            0.0
+          ],
+          "x_dir": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "y_dir": [
+            0.0,
+            -0.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "id": 28,
+      "name": "Split23",
+      "suppressed": false,
+      "type": "split",
+      "body": "Bracket (1)'",
+      "plane": {
+        "type": "custom",
+        "plane": {
+          "origin": [
+            0.0,
+            42.0,
+            0.0
+          ],
+          "x_dir": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "y_dir": [
+            0.0,
+            -0.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "id": 29,
+      "name": "Split24",
+      "suppressed": false,
+      "type": "split",
+      "body": "Bracket (1) (1)'''",
+      "plane": {
+        "type": "custom",
+        "plane": {
+          "origin": [
+            40.0,
+            0.0,
+            20.0
+          ],
+          "x_dir": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "y_dir": [
+            -0.7071067811865476,
+            0.0,
+            0.7071067811865476
+          ]
+        }
+      }
+    },
+    {
+      "id": 30,
+      "name": "Split25",
+      "suppressed": false,
+      "type": "split",
+      "body": "Bracket (1) (1)'''",
+      "plane": {
+        "type": "custom",
+        "plane": {
+          "origin": [
+            40.0,
+            0.0,
+            20.0
+          ],
+          "x_dir": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "y_dir": [
+            0.7071067811865476,
+            0.0,
+            0.7071067811865476
+          ]
+        }
+      }
+    },
+    {
+      "id": 31,
+      "name": "Split26",
+      "suppressed": false,
+      "type": "split",
+      "body": "Bracket (1) (1)''' (1)",
+      "plane": {
+        "type": "custom",
+        "plane": {
+          "origin": [
+            40.0,
+            0.0,
+            20.0
+          ],
+          "x_dir": [
+            -0.0,
+            1.0,
+            0.0
+          ],
+          "y_dir": [
+            0.7071067811865476,
+            0.0,
+            0.7071067811865476
+          ]
+        }
+      }
+    },
+    {
+      "id": 32,
+      "name": "Split27",
+      "suppressed": false,
+      "type": "split",
+      "body": "Bracket (1) (1)' (1)''",
+      "plane": {
+        "type": "custom",
+        "plane": {
+          "origin": [
+            0.0,
+            32.0,
+            20.0
+          ],
+          "x_dir": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "y_dir": [
+            0.0,
+            -0.7071067811865476,
+            0.7071067811865476
+          ]
+        }
+      }
+    },
+    {
+      "id": 33,
+      "name": "Split28",
+      "suppressed": false,
+      "type": "split",
+      "body": "Bracket (1) (1)' (1)''",
+      "plane": {
+        "type": "custom",
+        "plane": {
+          "origin": [
+            0.0,
+            32.0,
+            20.0
+          ],
+          "x_dir": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "y_dir": [
+            0.0,
+            0.7071067811865476,
+            0.7071067811865476
+          ]
+        }
+      }
+    },
+    {
+      "id": 34,
+      "name": "Split29",
+      "suppressed": false,
+      "type": "split",
+      "body": "Bracket (1) (1)' (1)'' (1)",
+      "plane": {
+        "type": "custom",
+        "plane": {
+          "origin": [
+            0.0,
+            32.0,
+            20.0
+          ],
+          "x_dir": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "y_dir": [
+            0.0,
+            0.7071067811865476,
+            0.7071067811865476
+          ]
+        }
+      }
+    }
+  ],
+  "next_id": 35
+}

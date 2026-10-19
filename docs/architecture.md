@@ -62,8 +62,23 @@ The pin decides which designs FieldCraft opens: SolidCraft's reader migrates eve
 format and refuses a newer one, and SolidCraft releases often raise the format. A design newer
 than the pin reads (`fieldcraft_geometry::DESIGN_FORMAT`) fails with "this design was saved by a
 newer SolidCraft (format N); this FieldCraft reads up to M. Update FieldCraft to open it" (#605:
-FieldCraft 0.7.0 read up to format 21, SolidCraft 0.16.2 saves 27). Two checks keep the pin
-current:
+FieldCraft 0.7.0 read up to format 21, SolidCraft 0.16.2 saves 27).
+
+A newer pin can also name the same geometry otherwise: SolidCraft 0.16 names the pieces of a
+split face from their history (`F9:face:4` became `F9:section`), so a model saved before names
+faces, edges and vertices the design no longer has. Opening a model or a design never lets that
+pass in silence (`crates/engine/src/cmd/names.rs`): a stale face the model's mesh lies on is
+found again where the mesh's facets tagged with it land on the new tessellation (all on one face
+whose area agrees, no other tag's mesh there), its edges and vertices through the faces they
+separate, and every definition and mesh tag follows, after the renamed definitions are checked
+to read back from a file; anything else is refused. A name that still resolves but whose mesh
+lies on another face is reported (`mismatched`). The open lists
+each rename (`renamed`, and the warnings the status line shows) and marks the model changed, so
+it is saved deliberately; each definition still naming what the design lacks is listed
+(`stale.references`) and asked to be picked again, and a remesh says which seeds and size
+controls it could not apply.
+
+Two checks keep the pin current:
 - `crates/geometry/tests/design_formats.rs` opens every design in
   `crates/geometry/tests/designs` (the older fixtures and `solidcraft-<version>/`, each saved by
   that release) and checks that a later release's copy of a recipe gives the same bodies,
