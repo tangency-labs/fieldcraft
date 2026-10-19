@@ -277,9 +277,9 @@ fn conduction_between_plates_matches_the_analytic_profile_and_the_cpu() {
         d.faces.x_max = PERIODIC;
         d.faces.z_min = PERIODIC;
         d.faces.z_max = PERIODIC;
-        let mut t = FluidThermal { initial_temperature: 20.0, ..FluidThermal::default() };
-        t.faces.y_min = ThermalCondition::Temperature { value: 20.0 };
-        t.faces.y_max = ThermalCondition::Temperature { value: 21.0 };
+        let mut t = FluidThermal { initial_temperature: kelvin(20.0), ..FluidThermal::default() };
+        t.faces.y_min = ThermalCondition::Temperature { value: kelvin(20.0) };
+        t.faces.y_max = ThermalCondition::Temperature { value: kelvin(21.0) };
         d.thermal = Some(t);
         let m = hot_model(1.0, 0.1, alpha, d, step(8.0 * h * h / alpha, dx * dx / (8.0 * alpha), None));
         let (setup, cpu) = prepare(&m, &[]);
@@ -324,9 +324,9 @@ fn a_heated_channel_matches_the_cpu() {
         d.faces.z_min = PERIODIC;
         d.faces.z_max = PERIODIC;
         let mut t = FluidThermal::default();
-        t.faces.x_min = ThermalCondition::Temperature { value: 1.0 };
+        t.faces.x_min = ThermalCondition::Temperature { value: kelvin(1.0) };
         t.faces.y_min = ThermalCondition::Flux { value: 0.05 };
-        t.faces.y_max = ThermalCondition::Temperature { value: 0.0 };
+        t.faces.y_max = ThermalCondition::Temperature { value: kelvin(0.0) };
         d.thermal = Some(t);
         let m = hot_model(1.0, nu, alpha, d, step(2.0 * l / umax, 0.05 * dx / umax, None));
         let (setup, cpu) = prepare(&m, &[]);
@@ -353,9 +353,9 @@ fn natural_convection_matches_the_cpu() {
         let mut d = domain([0.0; 3], [h, h, dx], dx);
         d.faces.z_min = PERIODIC;
         d.faces.z_max = PERIODIC;
-        let mut t = FluidThermal { initial_temperature: 0.5, gravity: [0.0, -g_beta, 0.0], expansion: Some(1.0), ..FluidThermal::default() };
-        t.faces.x_min = ThermalCondition::Temperature { value: 1.0 };
-        t.faces.x_max = ThermalCondition::Temperature { value: 0.0 };
+        let mut t = FluidThermal { initial_temperature: kelvin(0.5), gravity: [0.0, -g_beta, 0.0], expansion: Some(1.0), ..FluidThermal::default() };
+        t.faces.x_min = ThermalCondition::Temperature { value: kelvin(1.0) };
+        t.faces.x_max = ThermalCondition::Temperature { value: kelvin(0.0) };
         d.thermal = Some(t);
         let dt = (0.05 * dx / (u_max * alpha / h)).min(dx * dx / (4.0 * alpha));
         let m = hot_model(1.0, nu, alpha, d, step(h * h / alpha, dt, None));
@@ -406,9 +406,10 @@ fn runs_to_steady_state_stop_where_the_cpu_does() {
     let mut d = domain([0.0; 3], [h, h, dx], dx);
     d.faces.z_min = PERIODIC;
     d.faces.z_max = PERIODIC;
-    let mut t = FluidThermal { initial_temperature: 0.5, gravity: [0.0, -1e3 * nu * alpha, 0.0], expansion: Some(1.0), ..FluidThermal::default() };
-    t.faces.x_min = ThermalCondition::Temperature { value: 1.0 };
-    t.faces.x_max = ThermalCondition::Temperature { value: 0.0 };
+    let mut t =
+        FluidThermal { initial_temperature: kelvin(0.5), gravity: [0.0, -1e3 * nu * alpha, 0.0], expansion: Some(1.0), ..FluidThermal::default() };
+    t.faces.x_min = ThermalCondition::Temperature { value: kelvin(1.0) };
+    t.faces.x_max = ThermalCondition::Temperature { value: kelvin(0.0) };
     d.thermal = Some(t);
     let dt = (0.05 * dx / u_max).min(dx * dx / 4.0);
     let heat = vec![fieldcraft_model::FlowMonitor::Heat { faces: vec![fieldcraft_model::FluidBoundary::Box(BoxFace::XMin)] }];
@@ -474,10 +475,10 @@ fn odd_even_and_chunk_readbacks_match_the_cpu_with_heat_open_and_slip_faces() {
         d.faces.y_max = FaceCondition::Slip {};
         d.faces.z_min = PERIODIC;
         d.faces.z_max = PERIODIC;
-        let mut t = FluidThermal { initial_temperature: 0.5, ..FluidThermal::default() };
-        t.faces.x_min = ThermalCondition::Temperature { value: 1.0 };
+        let mut t = FluidThermal { initial_temperature: kelvin(0.5), ..FluidThermal::default() };
+        t.faces.x_min = ThermalCondition::Temperature { value: kelvin(1.0) };
         t.faces.y_min = ThermalCondition::Flux { value: 0.001 };
-        t.faces.y_max = ThermalCondition::Temperature { value: 0.0 };
+        t.faces.y_max = ThermalCondition::Temperature { value: kelvin(0.0) };
         d.thermal = Some(t);
         let m = hot_model(
             1.0,

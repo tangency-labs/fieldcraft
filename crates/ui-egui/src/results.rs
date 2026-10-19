@@ -10,7 +10,7 @@
 use std::sync::Arc;
 
 use fieldcraft_engine::flow::FlowPlot;
-use fieldcraft_engine::results::{Field, Kind, Pick, ResultsView, auto_scale, displacements, field_values, range};
+use fieldcraft_engine::results::{Field, Kind, Pick, ResultsView, displacements, field_values, range};
 use fieldcraft_engine::{Session, StepResult};
 use fieldcraft_render::contour::{Bands, banded, bands_color};
 use fieldcraft_render::{DisplayMesh, Scene, Vec3};
@@ -62,8 +62,8 @@ pub struct Plot {
     pub flow: Option<Arc<FlowPlot>>,
     /// The mode and field frame drawn.
     pub pick: Pick,
-    /// The model's unit system, which the numbers shown with the plot are in.
-    pub units: fieldcraft_model::UnitSystem,
+    /// The display units, which the numbers shown with the plot (the contour's too) are in.
+    pub units: fieldcraft_model::DisplaySystem,
 }
 
 /// The part of a plot that does not change with the animation frame.
@@ -75,22 +75,28 @@ pub struct Prepared {
 }
 
 /// A mode's value as the results show it: its frequency, or a buckling mode's load factor.
-pub fn mode_value(buckling: bool, eigenvalue: f64, frequency: f64) -> String {
-    if buckling { format!("λ = {}", number(eigenvalue)) } else { format!("{} Hz", number(frequency)) }
+pub fn mode_value(buckling: bool, eigenvalue: f64, frequency: f64, units: &fieldcraft_model::DisplaySystem) -> String {
+    use fieldcraft_engine::results::{Quantity, shown, unit_of};
+    if buckling {
+        format!("λ = {}", number(eigenvalue))
+    } else {
+        with_unit(number(shown(Quantity::Frequency, frequency, units)), unit_of(Quantity::Frequency, units).as_deref())
+    }
 }
 
 impl Plot {
     /// A frequency or buckling step's mode shown, and its frequency (Hz) or load factor.
     pub fn mode(&self) -> Option<(usize, String)> {
         match self.result.kind() {
-            Kind::Frequency(f) => {
-                f.modes.get(self.pick.mode.checked_sub(1)?).map(|m| (self.pick.mode, mode_value(f.buckling.is_some(), m.eigenvalue, m.frequency)))
-            }
+            Kind::Frequency(f) => f
+                .modes
+                .get(self.pick.mode.checked_sub(1)?)
+                .map(|m| (self.pick.mode, mode_value(f.buckling.is_some(), m.eigenvalue, m.frequency, &self.units))),
             Kind::Static(_) | Kind::Explicit(_) | Kind::Fluid(_) | Kind::Heat(_) => None,
         }
     }
 
-    /// An explicit or transient heat step's frame shown, its time (a nonlinear static step's:
+    /// An explicit or transient heat step's frame shown, its time in the display units (a nonlinear static step's:
     /// its load factor) and the number of frames.
     pub fn frame(&self) -> Option<(usize, f64, usize)> {
         let (n, time): (usize, &dyn Fn(usize) -> Option<f64>) = match self.result.kind() {
@@ -104,7 +110,13 @@ impl Plot {
             _ => return None,
         };
         let k = self.pick.frame.unwrap_or(n.checked_sub(1)?);
-        Some((k, time(k)?, n))
+        let at = time(k)?;
+        let at = if matches!(self.result.kind(), Kind::Static(_)) {
+            at
+        } else {
+            fieldcraft_engine::results::shown(fieldcraft_engine::results::Quantity::Time, at, &self.units)
+        };
+        Some((k, at, n))
     }
 
     /// The node's position in the plot, if it is drawn.
@@ -183,8 +195,8 @@ pub fn pick(view: &ResultsView, result: &StepResult, frame: Option<u64>) -> Pick
 
 /// The deformation scale factor: the view's, or automatic ([`auto_scale`]), whether or not the
 /// view is deformed.
-pub fn scale(view: &ResultsView, result: &StepResult, pick: Pick, base: &DisplayMesh) -> f64 {
-    view.scale.unwrap_or_else(|| auto_scale(result, pick, base.bounds.diagonal()))
+pub fn scale(view: &ResultsView, result: &StepResult, pick: Pick, base: &DisplayMesh, units: &fieldcraft_model::DisplaySystem) -> f64 {
+    fieldcraft_engine::results::shown_scale(view, result, pick, base.bounds.diagonal(), units)
 }
 
 /// The part of the session's results plot that depends on what is drawn (`pick`), not on the
@@ -195,15 +207,23 @@ pub fn prepare(session: &Session, base: &DisplayMesh, pick: Pick, bodies: &[&str
         let mut view = view.clone();
         view.frame = pick.frame;
         let flow = fieldcraft_engine::flow::plot_with_surfaces(&view, result, &session.traced, session, base, bodies).ok();
-        let cell = |(k, v): (usize, f64)| (u32::try_from(k).unwrap_or(u32::MAX), v);
-        let contour = flow
-            .as_ref()
-            .and_then(|p| p.contour.as_ref())
-            .map(|c| Arc::new(Contour { field: c.field, bands: c.bands, min: cell(c.min), max: cell(c.max), values: Vec::new() }));
+        // The legend's numbers in the display units (the cells are coloured in SI: the same
+        // bands, as the conversion keeps the order and the spacing of values).
+        let units = session.units();
+        let cell = |field: Field, (k, v): (usize, f64)| (u32::try_from(k).unwrap_or(u32::MAX), field.shown(result, v, units));
+        let contour = flow.as_ref().and_then(|p| p.contour.as_ref()).map(|c| {
+            let bands = Bands { min: c.field.shown(result, c.bands.min, units), max: c.field.shown(result, c.bands.max, units), ..c.bands };
+            Arc::new(Contour { field: c.field, bands, min: cell(c.field, c.min), max: cell(c.field, c.max), values: Vec::new() })
+        });
         return Some(Prepared { scale: 0.0, contour, flow: flow.map(Arc::new) });
     }
+    let units = session.units();
     let contour = view.contour.and_then(|field| {
         let mut values = field_values(&session.model, result, field, pick).ok()?;
+        // In the display units, the legend's range too (stored in SI).
+        for v in &mut values {
+            *v = field.shown(result, *v, units);
+        }
         // The range (and the bands) follow what is drawn: a hidden body's nodes have no value.
         for (v, label) in values.iter_mut().zip(result.nodes()) {
             if base.node_position(*label).is_none() {
@@ -211,9 +231,11 @@ pub fn prepare(session: &Session, base: &DisplayMesh, pick: Pick, bodies: &[&str
             }
         }
         let (min, max) = range(result.nodes(), &values)?;
-        Some(Arc::new(Contour { field, bands: view.bands(min.1, max.1), min, max, values }))
+        let shown = |v: Option<f64>| v.map(|v| field.shown(result, v, units));
+        let bands = Bands::clamped(min.1, max.1, shown(view.range_min), shown(view.range_max), view.bands);
+        Some(Arc::new(Contour { field, bands, min, max, values }))
     });
-    Some(Prepared { scale: scale(view, result, pick, base), contour, flow: None })
+    Some(Prepared { scale: scale(view, result, pick, base, units), contour, flow: None })
 }
 
 /// The plot of the session's results view on the model's display data at animation `frame`,
@@ -222,7 +244,9 @@ pub fn plot(session: &Session, base: &DisplayMesh, frame: Option<u64>, prepared:
     let (view, result, current) = shown(session)?;
     let nodes = result.nodes();
     let pick = pick(view, result, frame);
-    let factor = if view.deformed { prepared.scale * swing(result, frame) } else { 0.0 };
+    // The shown scale multiplies the shape as the display units show it.
+    let unit = fieldcraft_engine::results::deformation_unit(result, session.units());
+    let factor = if view.deformed { prepared.scale * unit * swing(result, frame) } else { 0.0 };
     let u = displacements(result, pick).unwrap_or(&[]);
     // A fluid step does not move the part: it stays drawn as it is, geometry included.
     let display = if matches!(result.kind(), Kind::Fluid(_)) {
@@ -242,7 +266,7 @@ pub fn plot(session: &Session, base: &DisplayMesh, frame: Option<u64>, prepared:
         contour: prepared.contour.clone(),
         flow: prepared.flow.clone(),
         pick,
-        units: session.model.units(),
+        units: session.units().clone(),
     })
 }
 
@@ -365,9 +389,15 @@ pub(crate) mod tests {
         s
     }
 
-    /// The label of the node at `xyz`.
+    /// The label of the node at `xyz`, given in millimetres (the model is in metres).
     pub(crate) fn node_at(s: &Session, xyz: [f64; 3]) -> u32 {
-        *s.model.nodes().iter().find(|(_, n)| n.xyz == xyz).unwrap().0
+        let at = fieldcraft_engine::units::geometry_point(xyz);
+        *s.model.nodes().iter().find(|(_, n)| n.xyz == at).unwrap().0
+    }
+
+    /// A point given in millimetres, in the scene's metres.
+    pub(crate) fn mm(xyz: [f64; 3]) -> Vec3 {
+        Vec3::from(fieldcraft_engine::units::geometry_point(xyz))
     }
 
     #[test]
@@ -384,7 +414,7 @@ pub(crate) mod tests {
         let Kind::Static(r) = p.result.kind() else { panic!("a static result") };
         let u = r.displacement[r.nodes.binary_search(&tip).unwrap()];
         let at = p.node_position(tip).unwrap();
-        assert!((at.z - 2.0 * u[2]).abs() < 1e-12 && u[2] < -0.2, "{at:?} {u:?}");
+        assert!((at.z - 2.0 * u[2]).abs() < 1e-15 && u[2] < -0.2e-3, "{at:?} {u:?}");
         // Automatic: the largest displacement is a tenth of the model's size.
         s.execute("results.deformed", &json!({"scale": "auto"})).unwrap();
         let p = plot_at(&s, &base, None).unwrap();
@@ -413,9 +443,10 @@ pub(crate) mod tests {
         let stops = t.contour_stops();
         let (low, high) = (band_color(&stops, 0, 4), band_color(&stops, 3, 4));
         // Faces whose corners are all near the root are in the top band; near the tip, the bottom.
-        let root_end = scene.tris.iter().filter(|tri| tri.p.iter().all(|q| q.x < 0.5)).map(|tri| tri.color).collect::<Vec<_>>();
+        // (The scene is in metres: the beam runs from x = 0 to 0.1.)
+        let root_end = scene.tris.iter().filter(|tri| tri.p.iter().all(|q| q.x < 0.0005)).map(|tri| tri.color).collect::<Vec<_>>();
         assert!(!root_end.is_empty() && root_end.iter().all(|c| *c == high), "{root_end:?}");
-        let tip_end = scene.tris.iter().filter(|tri| tri.p.iter().all(|q| q.x > 99.5)).map(|tri| tri.color).collect::<Vec<_>>();
+        let tip_end = scene.tris.iter().filter(|tri| tri.p.iter().all(|q| q.x > 0.0995)).map(|tri| tri.color).collect::<Vec<_>>();
         assert!(!tip_end.is_empty() && tip_end.iter().all(|c| *c == low), "{tip_end:?}");
         // Every band appears, and the pieces still cover the faces (more triangles than before).
         for k in 0..4 {
@@ -520,7 +551,7 @@ pub(crate) mod tests {
         s.execute("results.slice", &json!({"field": "temperature"})).unwrap();
         let p = plot_at(&s, &base, None).unwrap();
         assert_eq!(p.contour.as_ref().unwrap().field, Field::Temperature);
-        assert!(Field::Temperature.title(&p.result, p.units).contains("°C or K"));
+        assert_eq!(Field::Temperature.title(&p.result, &p.units), "Temperature [°C]");
         assert!(Field::available(&p.result).any(|f| f == Field::Temperature));
         assert!(p.contour.as_ref().unwrap().max.1 > 20.0);
         let last = p.frame().unwrap().2 - 1;
@@ -528,7 +559,8 @@ pub(crate) mod tests {
         let at_rest = plot_at(&s, &base, None).unwrap();
         let c = at_rest.contour.as_ref().unwrap();
         let cells = &at_rest.flow.as_ref().unwrap().contour.as_ref().unwrap().values;
-        assert!(cells.iter().filter(|t| t.is_finite()).all(|t| *t == 20.0), "the frame selector changes the temperature shown");
+        // The cells are coloured from SI (20 °C), the legend in the display units.
+        assert!(cells.iter().filter(|t| t.is_finite()).all(|t| *t == 293.15), "the frame selector changes the temperature shown");
         // The faces are held at 60 °C from the start: the legend's maximum is a face, at a point on it.
         assert_eq!(c.max.1, 60.0);
         assert!(at_rest.extreme_position(c.max.0).is_some());
@@ -537,7 +569,7 @@ pub(crate) mod tests {
         let p = plot_at(&s, &base, None).unwrap();
         let c = p.contour.as_ref().unwrap();
         assert_eq!(c.field, Field::WallHeatFlux);
-        assert_eq!(c.field.unit(&p.result, p.units).as_deref(), Some("mW/mm²"));
+        assert_eq!(c.field.unit(&p.result, &p.units).as_deref(), Some("mW/mm²"));
         assert!(c.min.1 < 0.0, "hot wall gives heat to fluid");
         assert!(p.extreme_position(c.min.0).is_some());
         assert!(p.flow.as_ref().unwrap().slice.is_none());

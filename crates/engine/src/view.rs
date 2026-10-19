@@ -18,7 +18,7 @@ use fieldcraft_render::glyphs::{self, GlyphColors, GlyphShow, GlyphView, Glyphs}
 use fieldcraft_render::{Aabb3, Camera, DisplayMesh, Orientation, Rgb, Scene, SceneLine, ScenePoint, SceneTri, Vec3};
 use serde_json::Value;
 
-use crate::results::{Kind, auto_scale, displacements, field_values, range};
+use crate::results::{Kind, deformation_unit, displacements, field_values, range, shown_scale};
 use crate::{EngineError, Result, Session};
 
 /// The colours of a picture.
@@ -269,13 +269,15 @@ pub fn draw_geometry_marks(scene: &mut Scene, display: &DisplayMesh, bodies: &[&
             }
         }
     }
+    // The marks are on the geometry, in millimetres.
+    let point = |p: [f64; 3]| Vec3::from(crate::units::geometry_point(p));
     for m in &marks.marks {
         for w in m.path.windows(2) {
             if let [a, b] = w {
-                scene.on_top.push(SceneLine { a: Vec3::from(*a), b: Vec3::from(*b), color, width: MARK_WIDTH });
+                scene.on_top.push(SceneLine { a: point(*a), b: point(*b), color, width: MARK_WIDTH });
             }
         }
-        let at = Vec3::from(m.at);
+        let at = point(m.at);
         scene.on_top.push(SceneLine { a: at, b: at, color, width: MARK_DOT });
     }
 }
@@ -378,6 +380,8 @@ pub fn display_cut(s: &Session, section: Option<Section>, toward: Vec3) -> (Disp
 fn display_parts(s: &Session, section: Option<Section>, toward: Vec3) -> (DisplayMesh, Vec<String>, Vec<String>) {
     let mut bodies = Vec::new();
     let mut hidden = s.hidden_elements();
+    // The section's position is given in the display units; the mesh is in metres.
+    let section = section.map(|c| Section { at: c.at.map(|x| length_si(s, x)), ..c });
     let cut = section.filter(|_| !s.model.elements().is_empty());
     if let Some(c) = cut {
         hidden.extend(c.beyond(&s.model, toward));
@@ -396,14 +400,17 @@ fn display_parts(s: &Session, section: Option<Section>, toward: Vec3) -> (Displa
                 if !body.merged_faces().is_empty() {
                     weld_points(&mut m.positions, m.weld_distance);
                 }
-                d.add_surface(&m.positions, &m.triangles, &m.tri_face);
+                // The geometry is in millimetres, the model in metres.
+                let positions: Vec<[f64; 3]> = m.positions.iter().map(|p| crate::units::geometry_point(*p)).collect();
+                d.add_surface(&positions, &m.triangles, &m.tri_face);
                 bodies.push(body.name.clone());
             }
             Err(e) => failed.push(format!("{}: {e}", body.name)),
         }
     }
     for surface in s.surfaces.iter().filter(|x| s.shows(fieldcraft_io::ItemKind::Surface, &x.name)) {
-        d.add_surface(&surface.mesh.positions, &surface.mesh.triangles, &surface.mesh.tri_face);
+        let positions: Vec<[f64; 3]> = surface.mesh.positions.iter().map(|p| crate::units::geometry_point(*p)).collect();
+        d.add_surface(&positions, &surface.mesh.triangles, &surface.mesh.tri_face);
     }
     (d, failed, bodies)
 }
@@ -525,11 +532,12 @@ fn picture(s: &Session, p: &Palette, section: Option<Section>, toward: Vec3) -> 
     let pick = view.pick();
     let nodes = result.nodes();
     let u = displacements(result, pick).unwrap_or(&[]);
-    let scale = if !view.deformed { 0.0 } else { view.scale.unwrap_or_else(|| auto_scale(result, pick, base.bounds.diagonal())) };
+    let scale = if !view.deformed { 0.0 } else { shown_scale(view, result, pick, base.bounds.diagonal(), s.units()) };
     shown.scale = scale;
+    let factor = scale * deformation_unit(result, s.units());
     let drawn = base.displaced(|label| {
         let i = nodes.binary_search(&label).ok()?;
-        u.get(i).map(|d| Vec3::from(*d) * scale)
+        u.get(i).map(|d| Vec3::from(*d) * factor)
     });
     let mut scene = model_scene(&drawn, p);
     let contour = view.contour.and_then(|field| {
@@ -565,7 +573,7 @@ pub fn scene(s: &Session, p: &Palette) -> (Scene, Aabb3, Shown) {
 }
 
 /// A camera orientation from JSON, `{"yaw": …, "pitch": …, "distance"?: …}`: degrees, and the
-/// distance from the target in model units (the control channel's `ui.camera`, the MCP
+/// distance from the target in the display units' length (converted where the session draws it) (the control channel's `ui.camera`, the MCP
 /// `screenshot` tool's `camera`). Hostile input is refused or clamped
 /// ([`Orientation::checked`]).
 pub fn orientation(p: &Value) -> Result<Orientation> {
@@ -812,7 +820,8 @@ fn aimed(pic: &Picture, aim: &Aim, mut cam: Camera, aspect: f64) -> Result<Camer
         cam.fit_about(&framed, aspect);
     } else if !pic.bounds.is_empty() {
         let aspect = if aspect.is_finite() && aspect > 1e-6 { aspect } else { 1.0 };
-        let radius = pic.bounds.corners().iter().map(|c| c.dist(point)).fold(1e-3, f64::max) / (1.0 - 2.0 * fieldcraft_render::FIT_MARGIN);
+        let radius = pic.bounds.corners().iter().map(|c| c.dist(point)).fold(fieldcraft_render::MIN_SIZE, f64::max)
+            / (1.0 - 2.0 * fieldcraft_render::FIT_MARGIN);
         // The half height the sphere needs, then the distance that shows it.
         let half = radius / aspect.min(1.0);
         let d = if cam.fov > 0.0 {
@@ -833,7 +842,7 @@ fn aimed(pic: &Picture, aim: &Aim, mut cam: Camera, aspect: f64) -> Result<Camer
 /// has no target.
 pub fn aim(s: &Session, aim: &Aim, cam: Camera, aspect: f64) -> Result<Camera> {
     let pic = picture(s, &Palette::LIGHT, None, cam.back());
-    aimed(&pic, aim, cam, aspect)
+    aimed(&pic, &aim_si(s, aim), cam, aspect)
 }
 
 /// A picture ready to draw: the scene (with its background and clipping radius), the setup's
@@ -852,6 +861,7 @@ pub struct Framed {
 /// the GPU (`fieldcraft-cli snapshot`) draw the same [`Framed`]. A `section` draws the mesh cut
 /// ([`Section`]).
 pub fn frame(s: &Session, at: &Orientation, w: usize, h: usize, p: &Palette, section: Option<Section>) -> Framed {
+    let at = &orientation_si(s, at);
     let mut cam = Camera::default();
     cam.orient(at);
     let mut pic = picture(s, p, section, cam.back());
@@ -870,7 +880,8 @@ pub fn frame(s: &Session, at: &Orientation, w: usize, h: usize, p: &Palette, sec
     let mut bounds = pic.bounds;
     bounds.union(pic.symbols(unit(&cam), &mut symbols));
     bounds.union(pic.datums);
-    pic.scene.radius = if bounds.is_empty() { 1.0 } else { (cam.target.dist(bounds.center()) + bounds.diagonal() * 0.5).max(1e-3) };
+    pic.scene.radius =
+        if bounds.is_empty() { 1.0 } else { (cam.target.dist(bounds.center()) + bounds.diagonal() * 0.5).max(fieldcraft_render::MIN_SIZE) };
     Framed { scene: pic.scene, symbols, cam, shown: pic.shown }
 }
 
@@ -879,7 +890,8 @@ pub fn frame(s: &Session, at: &Orientation, w: usize, h: usize, p: &Palette, sec
 /// a `section` as [`frame`] draws them. An error names a body the target asks for that is not
 /// drawn.
 pub fn frame_at(s: &Session, aim: &Aim, w: usize, h: usize, p: &Palette, section: Option<Section>) -> Result<Framed> {
-    let aim = Aim { target: Some(aim.target.clone().unwrap_or(Target::MODEL)), ..aim.clone() };
+    let aim = aim_si(s, aim);
+    let aim = Aim { target: Some(aim.target.clone().unwrap_or(Target::MODEL)), ..aim };
     let mut cam = Camera::default();
     cam.orient(&aim.at);
     let mut pic = picture(s, p, section, cam.back());
@@ -888,8 +900,43 @@ pub fn frame_at(s: &Session, aim: &Aim, w: usize, h: usize, p: &Palette, section
     let mut bounds = pic.bounds;
     bounds.union(pic.symbols(glyphs::unit_for(&cam, h as f64, glyphs::DEFAULT_SIZE, 1.0).unwrap_or(f64::NAN), &mut symbols));
     bounds.union(pic.datums);
-    pic.scene.radius = if bounds.is_empty() { 1.0 } else { (cam.target.dist(bounds.center()) + bounds.diagonal() * 0.5).max(1e-3) };
+    pic.scene.radius =
+        if bounds.is_empty() { 1.0 } else { (cam.target.dist(bounds.center()) + bounds.diagonal() * 0.5).max(fieldcraft_render::MIN_SIZE) };
     Ok(Framed { scene: pic.scene, symbols, cam, shown: pic.shown })
+}
+
+/// A length given in the session's display units, in metres (NaN when it cannot be one).
+fn length_si(s: &Session, x: f64) -> f64 {
+    s.units().to_si(fieldcraft_model::units::Quantity::Length, x).unwrap_or(f64::NAN)
+}
+
+/// `at` with its distance in metres (within [`Orientation::DISTANCE`]): it is given in the
+/// display units.
+fn orientation_si(s: &Session, at: &Orientation) -> Orientation {
+    let (near, far) = Orientation::DISTANCE;
+    Orientation { distance: at.distance.map(|d| length_si(s, d)).filter(|d| d.is_finite()).map(|d| d.clamp(near, far)), ..*at }
+}
+
+/// `aim` with its lengths (distance, target point) in metres: they are given in the display
+/// units.
+fn aim_si(s: &Session, aim: &Aim) -> Aim {
+    let target = match &aim.target {
+        Some(Target::Point(p)) => Some(Target::Point(Vec3::new(length_si(s, p.x), length_si(s, p.y), length_si(s, p.z)))),
+        t => t.clone(),
+    };
+    Aim { at: orientation_si(s, &aim.at), target, ..aim.clone() }
+}
+
+/// The camera `cam` as agents read it: its fields, with the distance and the target in the
+/// session's display units (the camera itself works in metres).
+pub fn camera_shown(cam: &Camera, s: &Session) -> Value {
+    let mut v = serde_json::json!(cam);
+    let length = |m: f64| s.units().express(fieldcraft_model::units::Quantity::Length, m).unwrap_or(f64::NAN);
+    if let Some(o) = v.as_object_mut() {
+        o.insert("distance".into(), serde_json::json!(length(cam.distance)));
+        o.insert("target".into(), serde_json::json!({"x": length(cam.target.x), "y": length(cam.target.y), "z": length(cam.target.z)}));
+    }
+    v
 }
 
 /// A PNG of the session seen from `at`, `w` × `h` pixels ([`frame`]), drawn on the CPU.
@@ -1009,7 +1056,7 @@ mod tests {
                     assert!(off < tolerance, "{p}: centroid ({x:.1}, {y:.1})");
                     sizes.push(n);
                     let cam = frame_at(&s, &camera(&p).unwrap(), w, h, &Palette::LIGHT, None).unwrap().cam;
-                    let (cx, cy, _) = cam.to_screen(Vec3::new(230.0, 55.0, 40.0), w as f64, h as f64, 100.0).unwrap();
+                    let (cx, cy, _) = cam.to_screen(Vec3::new(0.230, 0.055, 0.040), w as f64, h as f64, 100.0).unwrap();
                     assert!((cx - w as f64 / 2.0).abs() < 1e-6 && (cy - h as f64 / 2.0).abs() < 1e-6, "{p}");
                 }
                 // Without `fit` the distance is the same from every side; with it the box fills
@@ -1022,6 +1069,28 @@ mod tests {
         }
     }
 
+    /// A mode shape drawn at a fixed scale moves a node by the shape shown (mass-normalised in
+    /// the display units, as the probe reads it) times the scale, in the display length: as
+    /// large as before SI storage, and as large again in other display units' own terms.
+    #[test]
+    fn a_mode_drawn_at_a_fixed_scale_moves_by_the_shape_shown() {
+        let mut s = Session::default();
+        s.run_script(&crate::sample::cantilever()).unwrap();
+        s.execute("solve.frequency", &json!({})).unwrap();
+        s.execute("results.modes", &json!({"mode": 1})).unwrap();
+        s.execute("results.deformed", &json!({"show": true, "scale": 5})).unwrap();
+        let tip = *s.model.nodes().iter().find(|(_, n)| n.xyz == [0.1, 0.0, 0.0]).unwrap().0;
+        for (system, length) in [("mm-t-s-N-MPa", 1e-3), ("m-kg-s-N-Pa", 1.0)] {
+            s.execute("model.units", &json!({"system": system})).unwrap();
+            let shape = s.execute("solve.probe", &json!({"step": "Modes", "nodes": [tip], "mode": 1})).unwrap()["nodes"][0]["shape"].clone();
+            let shape: [f64; 3] = serde_json::from_value(shape).unwrap();
+            let pic = picture(&s, &Palette::LIGHT, None, Vec3::Z);
+            let moved = pic.drawn.node_position(tip).unwrap() - Vec3::new(0.1, 0.0, 0.0);
+            let want = Vec3::from(shape) * (5.0 * length);
+            assert!(moved.dist(want) <= 1e-12 * want.dist(Vec3::ZERO), "{system}: {moved:?} vs {want:?}");
+        }
+    }
+
     /// The target is the centre of mass by default, the bounding box's centre or a point when
     /// asked; bodies name what it frames, and a body not drawn is an error.
     #[test]
@@ -1031,9 +1100,10 @@ mod tests {
         let pic = picture(&s, &Palette::LIGHT, None, Vec3::Z);
         let (mass, _) = pic.aim_point(&Target::MODEL).unwrap();
         // Volumes 9000 and 3000: x = (45·9000 + 5·3000)/12000 = 35, z = (5·9000 + 25·3000)/12000 = 10.
-        assert!(mass.dist(Vec3::new(35.0, 5.0, 10.0)) < 1e-9, "{mass:?}");
+        // (The scene is in metres.)
+        assert!(mass.dist(Vec3::new(0.035, 0.005, 0.010)) < 1e-12, "{mass:?}");
         let (bbox, _) = pic.aim_point(&Target::Bbox(None)).unwrap();
-        assert!(bbox.dist(Vec3::new(45.0, 5.0, 20.0)) < 1e-9, "{bbox:?}");
+        assert!(bbox.dist(Vec3::new(0.045, 0.005, 0.020)) < 1e-12, "{bbox:?}");
         let (point, _) = pic.aim_point(&Target::Point(Vec3::new(1.0, 2.0, 3.0))).unwrap();
         assert_eq!(point, Vec3::new(1.0, 2.0, 3.0));
         // An open surface (one face of a box) has its centre of area.
@@ -1053,6 +1123,9 @@ mod tests {
         let cam = Camera { target: Vec3::new(7.0, 8.0, 9.0), distance: 321.0, ..Camera::default() };
         let turned = aim(&s, &camera(&json!({"yaw": 90, "pitch": 10})).unwrap(), cam, 1.5).unwrap();
         assert_eq!((turned.target, turned.distance), (cam.target, cam.distance));
+        // A point and a distance are given in the display units (mm here) and drawn in metres.
+        let given = aim(&s, &camera(&json!({"yaw": 0, "pitch": 0, "target": [35, 5, 10], "distance": 200})).unwrap(), cam, 1.5).unwrap();
+        assert!(given.target.dist(mass) < 1e-12 && (given.distance - 0.2).abs() < 1e-15, "{given:?}");
         let aimed = aim(&s, &camera(&json!({"yaw": 90, "pitch": 10, "target": {"center_of": "mass"}, "fit": true})).unwrap(), cam, 1.5).unwrap();
         assert!(aimed.target.dist(mass) < 1e-9 && aimed.distance != cam.distance);
     }
@@ -1100,8 +1173,9 @@ mod tests {
         assert!(field == "velocity" && max.1 > min.1, "{shown:?}");
         assert!(scene.tris.len() > base.surface_tris.len(), "the slice is drawn");
         assert!(!scene.lines.is_empty(), "streamlines are drawn");
-        let tank = Aabb3 { min: Vec3::new(-20.0, -20.0, -20.0), max: Vec3::new(60.0, 50.0, 30.0) };
-        assert_eq!(bounds, tank, "the picture frames the tank");
+        // The tank, in metres.
+        let tank = Aabb3 { min: Vec3::new(-0.02, -0.02, -0.02), max: Vec3::new(0.06, 0.05, 0.03) };
+        assert!(bounds.min.dist(tank.min) < 1e-12 && bounds.max.dist(tank.max) < 1e-12, "the picture frames the tank: {bounds:?}");
         // The part is coloured by the flow; in its own colours without the surface colours.
         let in_part_colour = |scene: &Scene| scene.tris.iter().filter(|t| part.contains(&t.color)).count();
         assert!(in_part_colour(&scene) < base.surface_tris.len());

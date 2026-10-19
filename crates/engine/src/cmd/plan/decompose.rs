@@ -167,7 +167,9 @@ mod tests {
     /// displacement of the loaded end along `k`.
     fn pull(s: &mut Session, force: [f64; 3], k: usize) -> f64 {
         let m = &s.model;
-        let at = |x: f64| -> Vec<u32> { m.nodes().iter().filter(|(_, n)| (n.xyz[0] - x).abs() < 1e-6).map(|(l, _)| *l).collect() };
+        // The model is stored in metres; the plate is drawn in millimetres.
+        let mm = crate::units::to_geometry_length;
+        let at = |x: f64| -> Vec<u32> { m.nodes().iter().filter(|(_, n)| (mm(n.xyz[0]) - x).abs() < 1e-6).map(|(l, _)| *l).collect() };
         let (root, tip) = (at(0.0), at(80.0));
         // The loaded end's element faces, so the force is shared by consistent weights.
         let end: Vec<Value> = m
@@ -176,7 +178,7 @@ mod tests {
             .flat_map(|(&e, el)| (1..=el.kind.faces().len() as u8).map(move |f| (e, f)))
             .filter(|&(e, f)| {
                 m.face_nodes(fieldcraft_model::ElementFace { element: e, face: f })
-                    .is_some_and(|ns| ns.iter().all(|n| (m.node(*n).unwrap().xyz[0] - 80.0).abs() < 1e-6))
+                    .is_some_and(|ns| ns.iter().all(|n| (mm(m.node(*n).unwrap().xyz[0]) - 80.0).abs() < 1e-6))
             })
             .map(|(e, f)| json!({"element": e, "face": f}))
             .collect();

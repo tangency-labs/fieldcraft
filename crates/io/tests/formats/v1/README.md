@@ -34,6 +34,16 @@ a reader change that breaks one of them breaks those files too. A new case is a 
 | `unspecified-units` | a wedge6 block in the `unspecified` unit system, a transient heat transfer step |
 | `every-kind` | two hex8 blocks with every boundary condition and load kind, reference points, both coupling kinds, point masses, a spring and a dashpot, plastic, damaged and orthotropic materials and every step procedure the release had; from 0.6.0 also a tie, contact pairs and general contact, a rigid wall, datum planes, axes and points and hidden view items; from 0.5.0 a hyperelastic material (neo-Hookean in 0.5.0, Mooney–Rivlin later) |
 | `empty` | an empty model |
+| `design-metres` (0.7.0 only) | a tet4 mesh of `hollow-box.solidcraft` with an edge seed and two size controls, in m-kg-s-N-Pa: 0.7.0 solved the design's millimetre coordinates as metres; format 3 reads the mesh in millimetres and says so |
+| `design-inches` (0.7.0 only) | the same in in-lbf-s-psi |
+| `mixed-metres` (0.7.0 only) | a hex8 block typed in metres beside a tet4 mesh of the design, m-kg-s-N-Pa: each body migrates by its origin |
+| `thermal-inches` (0.7.0 only) | a hex8 block in in-lbf-s-psi with a thermal material that leaves out its reference temperature, a Johnson–Cook material without a reference strain rate, a plane-strain section without a thickness, a transient heat step without an initial temperature, a convection load and a fluid domain whose heat settings leave out the initial temperature (format 2's defaults, in this system) |
+| `thermal-millisecond-kn`, `thermal-millisecond-gram` (0.7.0 only) | the same in mm-kg-ms-kN-GPa and mm-g-ms-N-MPa, beside a tet4 mesh of the design with edge seeds (count with bias, size), size controls (faces, box), a size growth rate, a hex-meshing plan and a relaxation field (`mesh.node.relax`) |
+
+| `fluid-metres` (0.7.0 only) | a heated duct in m-kg-s-N-Pa (an inlet, a moving wall and held temperatures, in kelvin) with a fluid step: its lattice counts from 0 K, as 0.7.0 ran it |
+
+The 0.7.0 release had no porous zones or fans, and stitching needs an imported 3MF surface, so
+no fixture holds those.
 
 ## How they were made
 

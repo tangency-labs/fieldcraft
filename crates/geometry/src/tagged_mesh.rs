@@ -148,16 +148,20 @@ fn det(m: &Xf) -> f64 {
     m[0] * (m[4] * m[8] - m[5] * m[7]) - m[1] * (m[3] * m[8] - m[5] * m[6]) + m[2] * (m[3] * m[7] - m[4] * m[6])
 }
 
+/// Millimetres per 3MF model unit, from the unit table (`fieldcraft_model::units`).
 fn unit_mm(u: &str) -> Option<f64> {
-    Some(match u {
-        "micron" => 1e-3,
-        "millimeter" => 1.0,
-        "centimeter" => 10.0,
-        "inch" => 25.4,
-        "foot" => 304.8,
-        "meter" => 1000.0,
+    use fieldcraft_model::units::{Quantity, Unit};
+    let symbol = match u {
+        "micron" => "µm",
+        "millimeter" => "mm",
+        "centimeter" => "cm",
+        "inch" => "in",
+        "foot" => "ft",
+        "meter" => "m",
         _ => return None,
-    })
+    };
+    let (from, mm) = (Unit::parse(symbol).ok()?, Unit::parse("mm").ok()?);
+    Quantity::Length.express(Quantity::Length.to_si(1.0, &from).ok()?, &mm).ok()
 }
 
 #[derive(Clone, Default)]
@@ -416,6 +420,15 @@ mod tests {
     use std::io::Write as _;
 
     use super::*;
+
+    /// The 3MF units, through the unit table, are the exact millimetre factors.
+    #[test]
+    fn units_of_3mf_are_exact_millimetres() {
+        for (u, mm) in [("micron", 1e-3), ("millimeter", 1.0), ("centimeter", 10.0), ("inch", 25.4), ("foot", 304.8), ("meter", 1000.0)] {
+            assert_eq!(unit_mm(u), Some(mm), "{u}");
+        }
+        assert_eq!(unit_mm("furlong"), None);
+    }
 
     const HEAD: &str = r#"<model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:ft="https://github.com/bherbruck/solidcraft/formats/3mf-face-tags/2026/10"><resources>"#;
 

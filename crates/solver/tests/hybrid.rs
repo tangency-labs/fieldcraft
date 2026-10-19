@@ -115,7 +115,7 @@ fn heated_confined_block_carries_the_bulk_thermal_stress() {
     for (kind, name) in hybrids() {
         let mut g = grid([2, 2, 2], kind, |x| x);
         g.define(iso(e, NU), None, hybrid(), Procedure::Static {});
-        let thermal = Thermal { expansion: Some(Directional::Isotropic(alpha)), ..Thermal::default() };
+        let thermal = Thermal { expansion: Some(Directional::Isotropic(alpha)), reference_temperature: 0.0, ..Thermal::default() };
         g.model.replace_material("Mat", Material { elastic: Some(iso(e, NU)), thermal: Some(thermal), ..Material::default() }).unwrap();
         for (set, plane, k, v) in [
             ("x0", Symmetry::X, 0, 0.0),

@@ -640,7 +640,9 @@ fn export_stl(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let triangles = fieldcraft_io::stl::triangles(m, &faces)?.len();
     fieldcraft_io::fs::write_output(std::path::Path::new(&path), &bytes)?;
-    Ok(json!({"path": path, "triangles": triangles, "bytes": bytes.len()}))
+    // The file has no unit of its own: it is in the display length (the command's frame).
+    let length = s.input_units().symbol(fieldcraft_model::units::Quantity::Length).to_string();
+    Ok(json!({"path": path, "triangles": triangles, "bytes": bytes.len(), "units": {"length": length}}))
 }
 
 fn quality_report(s: &mut Session, p: &Value) -> Result<Value> {
@@ -900,6 +902,17 @@ mod tests {
         assert!(text.starts_with("solid skin\n"));
         assert_eq!(text.matches("facet normal").count(), skin);
         assert_eq!(out["triangles"], skin);
+        // In the display length: the 100 mm beam reaches x = 100, and 0.1 in SI.
+        let reach = |text: &str| {
+            text.lines()
+                .filter_map(|l| l.trim().strip_prefix("vertex "))
+                .filter_map(|v| v.split_whitespace().next()?.parse::<f64>().ok())
+                .fold(0.0, f64::max)
+        };
+        assert_eq!((reach(&text), out["units"]["length"].as_str()), (100.0, Some("mm")));
+        s.execute("model.units", &json!({"system": "m-kg-s-N-Pa"})).unwrap();
+        let out = s.execute("mesh.export.stl", &json!({"path": path_str, "format": "ascii"})).unwrap();
+        assert_eq!((reach(&std::fs::read_to_string(&path).unwrap()), out["units"]["length"].as_str()), (0.1, Some("m")));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -972,7 +985,8 @@ mod tests {
         assert!(s.model.set(super::MARKED_SET).is_none() && r["set"].is_null());
         assert_eq!(r["limits"]["scaled_jacobian"], 0.2);
         // Pull the far top corner of the second hex nearly onto its middle.
-        let (&corner, _) = s.model.nodes().iter().find(|(_, n)| n.xyz == [2.0, 1.0, 1.0]).unwrap();
+        // Stored in metres: the corner at 2, 1, 1 mm.
+        let (&corner, _) = s.model.nodes().iter().find(|(_, n)| n.xyz == [0.002, 0.001, 0.001]).unwrap();
         let (&bad, _) = s.model.elements().iter().find(|(_, e)| e.nodes.contains(&corner)).unwrap();
         s.execute("mesh.node.add", &json!({"label": corner, "xyz": [1.7, 0.7, 0.7]})).unwrap();
         let r = s.execute("mesh.quality.mark", &json!({})).unwrap();
@@ -1308,10 +1322,12 @@ mod tests {
         let radius = plate.hole_diameter / 2.0;
         let mut on_bore = 0;
         for n in s.model.nodes().values() {
-            let d = ((n.xyz[0] - cx).powi(2) + (n.xyz[1] - cy).powi(2)).sqrt();
+            // In millimetres, as the design is.
+            let xyz = crate::units::to_geometry_point(n.xyz);
+            let d = ((xyz[0] - cx).powi(2) + (xyz[1] - cy).powi(2)).sqrt();
             if (d - radius).abs() < 0.05 {
                 on_bore += 1;
-                assert!((d - radius).abs() < 1e-9, "a bore node at {:?} is {d} from the axis", n.xyz);
+                assert!((d - radius).abs() < 1e-9, "a bore node at {xyz:?} is {d} from the axis");
             }
         }
         assert!(on_bore > 20, "{on_bore}");

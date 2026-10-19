@@ -525,7 +525,7 @@ mod tests {
             assert!(s.execute("interaction.tie", &bad).is_err(), "{bad}");
         }
         s.execute("interaction.tie.edit", &json!({"name": "glue", "main": "b", "secondary": "a", "position_tolerance": 0.01})).unwrap();
-        assert_eq!(s.model.tie("glue").and_then(|t| t.position_tolerance), Some(0.01));
+        assert_eq!(s.model.tie("glue").and_then(|t| t.position_tolerance), Some(1e-5), "0.01 mm, stored in metres");
         assert!(s.execute("interaction.tie.edit", &json!({"name": "nope", "main": "a", "secondary": "b"})).is_err());
         assert!(s.execute("model.set.delete", &json!({"name": "a"})).unwrap_err().to_string().contains("tie `glue`"));
         s.execute("interaction.tie.delete", &json!({"name": "glue"})).unwrap();

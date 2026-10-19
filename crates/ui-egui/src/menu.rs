@@ -145,13 +145,13 @@ pub fn apply(app: &mut ModelApp, target: Target, action: Action) {
     let _ = match action {
         Action::Edit => {
             if let Target::Def(def, name) = &target
-                && let Some((command, params)) = def.edit(&app.session.model, name)
+                && let Some((command, params)) = def.edit(&app.session.model, name, app.session.units())
             {
                 app.select_definition(Some((*def, name.clone())));
                 app.open_form(&command, params);
             }
             if let Target::Seed(edge) = target
-                && let Some(params) = app.seed(&edge).and_then(seed_params)
+                && let Some(params) = app.seed(&edge).and_then(|s| seed_params(s, app.session.units()))
             {
                 app.select_seed(edge);
                 app.open_form("mesh.seed.edge", params);
@@ -207,13 +207,13 @@ fn suppression(app: &ModelApp, kind: Def, name: &str) -> Option<(&'static str, b
     }
 }
 
-/// `mesh.seed.edge`'s parameters that make `seed` as it is: its edit form, filled in.
-pub fn seed_params(seed: &fieldcraft_model::Seed) -> Option<Value> {
+/// `mesh.seed.edge`'s parameters that make `seed` as it is, in `units`: its edit form, filled in.
+pub fn seed_params(seed: &fieldcraft_model::Seed, units: &fieldcraft_model::DisplaySystem) -> Option<Value> {
     let mut v = serde_json::to_value(seed).ok()?;
     let o = v.as_object_mut()?;
     let edge = o.remove("edge")?;
     o.insert("edges".into(), json!([edge]));
-    Some(v)
+    fieldcraft_engine::units::shown_params("mesh.seed.edge", &v, units).ok()
 }
 
 /// The question a deletion asks ([`crate::files::Prompt::Delete`]).
@@ -393,7 +393,7 @@ mod tests {
         // A hidden body is neither drawn nor picked.
         let cell = app.session.design.as_ref().unwrap().bodies[0].name.clone();
         let centre = app.session.design.as_ref().unwrap().bodies[0].measure().unwrap().centroid;
-        let top = viewport::to_screen(&app, fieldcraft_render::Vec3::new(centre[0], centre[1], 10.0)).unwrap();
+        let top = viewport::to_screen(&app, crate::results::tests::mm([centre[0], centre[1], 10.0])).unwrap();
         assert!(app.pick_at(top).is_some());
         apply(&mut app, Target::Body(cell.clone()), Action::Isolate);
         assert!(app.session.shows(ItemKind::Body, &cell) && !app.session.shows(ItemKind::Datum, "P"));
@@ -427,7 +427,7 @@ mod tests {
         app.select_seed(seed.edge.clone());
         assert!(app.selected.is_none() && crate::context::has_context(&mut app));
         assert_eq!(app.pick.selection.len(), 1, "its edge is picked");
-        let rows = crate::describe::seed_rows(&app.session.model, &seed);
+        let rows = crate::describe::seed_rows(&seed, app.session.units());
         let text: Vec<String> = rows.iter().map(|(k, v)| format!("{k}: {v}")).collect();
         assert!(text.iter().any(|r| r.contains('6')) && text.iter().any(|r| r.contains('4')), "{text:?}");
         assert!(!text.iter().any(|r| r.contains('{')), "{text:?}");

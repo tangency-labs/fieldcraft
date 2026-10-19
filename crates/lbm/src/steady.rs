@@ -223,6 +223,7 @@ impl Monitor {
         let n = fluid.len().max(1) as f64;
         let vs = setup.velocity_scale();
         let t0 = setup.thermal.as_ref().map_or(0.0, |t| t.initial_temperature);
+        let zero = setup.thermal.as_ref().map_or(0.0, |t| t.zero);
         let forces = if self.quantities.iter().any(|q| matches!(q.kind, Kind::Force(_))) { flow.forces()? } else { Vec::new() };
         let heat = if self.quantities.iter().any(|q| matches!(q.kind, Kind::Heat(_))) { flow.heat()? } else { Vec::new() };
         let end = k.is_multiple_of(self.setup.window);
@@ -243,7 +244,8 @@ impl Monitor {
                 }
                 Kind::MeanTemperature => {
                     let mean = fluid.iter().map(|c| temperature.get(*c).copied().unwrap_or(t0) - t0).sum::<f64>() / n;
-                    (vec![mean], vec![mean + t0])
+                    // The lattice is above `zero`; the report in kelvin.
+                    (vec![mean], vec![fieldcraft_model::units::kelvin_from(mean + t0, zero)])
                 }
                 Kind::MassFlow(face) => {
                     let axis = face.axis();

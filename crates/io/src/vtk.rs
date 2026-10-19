@@ -82,6 +82,13 @@ pub fn points_and_cells(model: &Model) -> (Vec<u32>, Vec<u32>) {
 /// The model and `fields` as a `.vtu` document; `field_data` are whole-dataset values (a mode's
 /// frequency, a frame's time).
 pub fn write_vtu(model: &Model, fields: &[Field], field_data: &[(&str, f64)], encoding: Encoding) -> Result<String> {
+    write_vtu_in(model, fields, field_data, encoding, &[])
+}
+
+/// [`write_vtu`] stating the unit of each array (`Points`, the fields, the field data) in a
+/// comment after the XML declaration: `<!-- units: Points mm; displacement mm; … -->`. The
+/// numbers are written as given: the caller expresses them in those units.
+pub fn write_vtu_in(model: &Model, fields: &[Field], field_data: &[(&str, f64)], encoding: Encoding, units: &[(String, String)]) -> Result<String> {
     let (nodes, elements) = points_and_cells(model);
     for f in fields {
         let count = match f.location {
@@ -109,6 +116,17 @@ pub fn write_vtu(model: &Model, fields: &[Field], field_data: &[(&str, f64)], en
 
     let mut out = String::new();
     out.push_str("<?xml version=\"1.0\"?>\n");
+    if !units.is_empty() {
+        // A comment holds no `--`; unit symbols never do, names are kept to letters and `_`.
+        let list: Vec<String> = units
+            .iter()
+            .map(|(name, unit)| {
+                let clean = |t: &str| t.chars().filter(|c| c.is_alphanumeric() || "_·²³⁴⁻¹/()°%".contains(*c)).collect::<String>();
+                format!("{} {}", clean(name), clean(unit))
+            })
+            .collect();
+        let _ = writeln!(out, "<!-- units: {} -->", list.join("; "));
+    }
     out.push_str("<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" byte_order=\"LittleEndian\" header_type=\"UInt64\">\n");
     out.push_str("  <UnstructuredGrid>\n");
     if !field_data.is_empty() {

@@ -1,19 +1,13 @@
-//! Units: the unit system label a model carries today, and the SI unit table every conversion
-//! goes through.
+//! Units: the SI unit table every conversion goes through.
 //!
-//! **The table** ([`Dimension`], [`Unit`], [`Quantity`], [`DisplaySystem`]) is the one place
-//! FieldCraft writes down a conversion factor. Each [`Quantity`] has a dimension and an SI unit;
+//! The model stores every quantity in SI (m, kg, s, N, Pa, K, rad). This table is the one place
+//! FieldCraft writes down a conversion factor: each [`Quantity`] has a dimension and an SI unit;
 //! a [`Unit`] parses expressions such as `MPa`, `t/mm³` or `W/(m·K)` to a dimension and a factor
 //! to SI; [`Quantity::parse`] reads `"210 GPa"` or `"20 °C"` with a dimension check, and
-//! [`Quantity::format`] shows an SI value in a [`DisplaySystem`]. Absolute temperatures
-//! ([`Quantity::Temperature`]) take the °C/°F offset; temperature differences and every compound
-//! unit never do. Issue #579 moves model storage to SI on top of this table; until then the
-//! model still stores numbers as entered.
-//!
-//! **The label** ([`UnitSystem`]): the model never converts yet: numbers are stored as entered.
-//! The label records which consistent system they are in, so the check can warn when a magnitude
-//! is implausible for it (a steel modulus of 210 000 in a metre–pascal model, a density of 7850
-//! in a millimetre–tonne one), and so writers can say which system a deck is in.
+//! [`Quantity::format`] shows an SI value in a [`DisplaySystem`] (a consistent [`Preset`] with
+//! optional per-quantity overrides). Absolute temperatures ([`Quantity::Temperature`]) take the
+//! °C/°F offset; temperature differences and every compound unit never do. Conversion happens
+//! only at the boundaries (commands, forms, replies, files of other formats); docs/units.md.
 
 mod decimal;
 mod dimension;
@@ -24,7 +18,7 @@ mod unit;
 pub use dimension::Dimension;
 pub use display::{DisplaySystem, Preset};
 pub use quantity::{Quantity, ValueInput, WithUnit, format_number};
-pub use unit::Unit;
+pub use unit::{CELSIUS_ZERO, Unit};
 
 /// Why a unit or a value with a unit was refused.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -51,142 +45,57 @@ pub enum UnitError {
     WrongDimension { unit: String, found: Dimension, quantity: &'static str, expected: Dimension },
 }
 
-use serde::{Deserialize, Serialize};
-
-/// A consistent unit system: length, mass, time, force, stress.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub enum UnitSystem {
-    /// Not chosen: magnitudes are not checked.
-    #[default]
-    #[serde(rename = "unspecified")]
-    Unspecified,
-    /// Metre, kilogram, second, newton, pascal.
-    #[serde(rename = "m-kg-s-N-Pa")]
-    MKgS,
-    /// Millimetre, tonne, second, newton, megapascal: the usual choice for parts in millimetres.
-    #[serde(rename = "mm-t-s-N-MPa")]
-    MmTonneS,
-    /// Millimetre, kilogram, millisecond, kilonewton, gigapascal.
-    #[serde(rename = "mm-kg-ms-kN-GPa")]
-    MmKgMs,
-    /// Millimetre, gram, millisecond, newton, megapascal.
-    #[serde(rename = "mm-g-ms-N-MPa")]
-    MmGMs,
-    /// Inch, pound-force second squared per inch, second, pound-force, psi.
-    #[serde(rename = "in-lbf-s-psi")]
-    InLbfS,
+/// `kelvin` less `zero`, in decimal when both are short decimals (so 293.15 K less 273.15 is 20).
+pub fn kelvin_above(kelvin: f64, zero: f64) -> f64 {
+    decimal::add(kelvin, -zero)
 }
 
-impl UnitSystem {
-    pub const ALL: [UnitSystem; 6] =
-        [UnitSystem::Unspecified, UnitSystem::MKgS, UnitSystem::MmTonneS, UnitSystem::MmKgMs, UnitSystem::MmGMs, UnitSystem::InLbfS];
-
-    /// The label used in commands and files (`mm-t-s-N-MPa`, …).
-    pub fn label(self) -> &'static str {
-        match self {
-            UnitSystem::Unspecified => "unspecified",
-            UnitSystem::MKgS => "m-kg-s-N-Pa",
-            UnitSystem::MmTonneS => "mm-t-s-N-MPa",
-            UnitSystem::MmKgMs => "mm-kg-ms-kN-GPa",
-            UnitSystem::MmGMs => "mm-g-ms-N-MPa",
-            UnitSystem::InLbfS => "in-lbf-s-psi",
-        }
-    }
-
-    pub fn from_label(label: &str) -> Option<UnitSystem> {
-        UnitSystem::ALL.into_iter().find(|u| u.label() == label)
-    }
-
-    /// The length unit (`m`, `mm`, `in`), or `None` when unspecified.
-    pub fn length(self) -> Option<&'static str> {
-        match self {
-            UnitSystem::Unspecified => None,
-            UnitSystem::MKgS => Some("m"),
-            UnitSystem::MmTonneS | UnitSystem::MmKgMs | UnitSystem::MmGMs => Some("mm"),
-            UnitSystem::InLbfS => Some("in"),
-        }
-    }
-
-    /// Size of one stress unit in pascals, one density unit in kg/m³ and one acceleration unit in
-    /// m/s², or `None` when unspecified.
-    fn scales(self) -> Option<Scales> {
-        const IN: f64 = 0.0254;
-        const LBF: f64 = 4.448_221_615_260_5;
-        Some(match self {
-            UnitSystem::Unspecified => return None,
-            UnitSystem::MKgS => Scales { stress: 1.0, density: 1.0, acceleration: 1.0 },
-            UnitSystem::MmTonneS => Scales { stress: 1e6, density: 1e12, acceleration: 1e-3 },
-            UnitSystem::MmKgMs => Scales { stress: 1e9, density: 1e9, acceleration: 1e3 },
-            UnitSystem::MmGMs => Scales { stress: 1e6, density: 1e6, acceleration: 1e3 },
-            // Mass unit lbf·s²/in = LBF / IN kg; density unit = that per cubic inch.
-            UnitSystem::InLbfS => Scales { stress: LBF / (IN * IN), density: LBF / IN / (IN * IN * IN), acceleration: IN },
-        })
-    }
-
-    /// A warning when a Young's or shear modulus is implausible for any engineering material in
-    /// this system (outside 10 kPa – 2 TPa).
-    pub fn check_modulus(self, what: &str, value: f64) -> Option<String> {
-        self.check(what, value, |s| s.stress, (1e4, 2e12), "Pa")
-    }
-
-    /// A warning when a mass density is implausible (outside 1 – 25 000 kg/m³).
-    pub fn check_density(self, value: f64) -> Option<String> {
-        self.check("density", value, |s| s.density, (1.0, 25_000.0), "kg/m³")
-    }
-
-    /// A warning when a gravitational acceleration is implausible (outside 0.1 – 100 m/s²).
-    pub fn check_gravity(self, magnitude: f64) -> Option<String> {
-        self.check("gravity", magnitude, |s| s.acceleration, (0.1, 100.0), "m/s²")
-    }
-
-    fn check(self, what: &str, value: f64, scale: fn(&Scales) -> f64, (lo, hi): (f64, f64), si: &str) -> Option<String> {
-        let s = self.scales()?;
-        let si_value = value.abs() * scale(&s);
-        if (lo..=hi).contains(&si_value) {
-            return None;
-        }
-        let k = scale(&s);
-        Some(format!(
-            "{what} {value} is {si_value:.3e} {si}, outside the plausible {lo:.0e}–{hi:.0e} {si} ({:.3e}–{:.3e} in {}); check the unit system",
-            lo / k,
-            hi / k,
-            self.label()
-        ))
-    }
+/// `above` plus `zero` (the inverse of [`kelvin_above`]).
+pub fn kelvin_from(above: f64, zero: f64) -> f64 {
+    decimal::add(above, zero)
 }
 
-struct Scales {
-    stress: f64,
-    density: f64,
-    acceleration: f64,
+/// An absolute temperature in kelvin as degrees Celsius (in decimal: a typed value converts
+/// exactly).
+pub fn kelvin_to_celsius(kelvin: f64) -> f64 {
+    decimal::add(kelvin, -unit::CELSIUS_ZERO)
 }
+
+/// An absolute temperature in degrees Celsius as kelvin.
+pub fn celsius_to_kelvin(celsius: f64) -> f64 {
+    decimal::add(celsius, unit::CELSIUS_ZERO)
+}
+
+/// A warning when `si`, a value of quantity `q` called `what`, lies outside `lo..=hi` (SI): a
+/// magnitude no engineering value has, which usually means a number typed in the wrong unit.
+/// The values are shown in `display`.
+pub fn check_magnitude(what: &str, q: Quantity, si: f64, (lo, hi): (f64, f64), display: &DisplaySystem) -> Option<String> {
+    if (lo..=hi).contains(&si.abs()) {
+        return None;
+    }
+    let show = |v: f64| q.format(v, display).unwrap_or_else(|_| format!("{v:e} {}", q.si_symbol()));
+    Some(format!("{what} {} is outside the plausible {} to {}; check the unit it was given in", show(si), show(lo), show(hi)))
+}
+
+/// Plausible moduli: 10 kPa (soft foams) to 2 TPa (diamond, graphene), in Pa.
+pub const MODULUS_RANGE: (f64, f64) = (1e4, 2e12);
+/// Plausible densities, kg/m³.
+pub const DENSITY_RANGE: (f64, f64) = (1.0, 25_000.0);
+/// Plausible gravitational accelerations, m/s².
+pub const GRAVITY_RANGE: (f64, f64) = (0.1, 100.0);
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn steel_is_plausible_in_every_system_and_wrong_systems_warn() {
-        // Steel: E = 210 GPa, ρ = 7850 kg/m³, g = 9.81 m/s², in each system's own units.
-        let steel = [
-            (UnitSystem::MKgS, 2.1e11, 7850.0, 9.81),
-            (UnitSystem::MmTonneS, 2.1e5, 7.85e-9, 9810.0),
-            (UnitSystem::MmKgMs, 210.0, 7.85e-6, 9.81e-3),
-            (UnitSystem::MmGMs, 2.1e5, 7.85e-3, 9.81e-3),
-            (UnitSystem::InLbfS, 3.05e7, 7.35e-4, 386.1),
-        ];
-        for (u, e, rho, g) in steel {
-            assert_eq!(u.check_modulus("E", e), None, "{u:?}");
-            assert_eq!(u.check_density(rho), None, "{u:?}");
-            assert_eq!(u.check_gravity(g), None, "{u:?}");
-            assert_eq!(UnitSystem::from_label(u.label()), Some(u));
-            assert_eq!(serde_json::to_value(u).unwrap(), serde_json::json!(u.label()));
-        }
-        // SI numbers in a millimetre–tonne model.
-        assert!(UnitSystem::MmTonneS.check_modulus("E", 2.1e11).is_some());
-        assert!(UnitSystem::MmTonneS.check_density(7850.0).is_some());
-        assert!(UnitSystem::MKgS.check_gravity(9810.0).is_some());
-        assert_eq!(UnitSystem::Unspecified.check_density(1e30), None);
-        assert!(UnitSystem::MKgS.check_density(f64::NAN).is_some());
+    fn magnitudes_are_checked_in_si_and_shown_in_the_display_system() {
+        let mm = DisplaySystem::default();
+        assert_eq!(check_magnitude("E", Quantity::Pressure, 2.1e11, MODULUS_RANGE, &mm), None);
+        // 210000 typed as Pa where MPa was meant.
+        let w = check_magnitude("E", Quantity::Pressure, 2.1e5 * 1e6 * 1e6, MODULUS_RANGE, &mm).unwrap();
+        assert_eq!(w, "E 2.1e11 MPa is outside the plausible 0.01 MPa to 2000000 MPa; check the unit it was given in");
+        assert!(check_magnitude("density", Quantity::Density, 7.85e-9, DENSITY_RANGE, &mm).is_some());
+        assert!(check_magnitude("g", Quantity::Acceleration, f64::NAN, GRAVITY_RANGE, &mm).is_some());
     }
 }

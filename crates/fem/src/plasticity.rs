@@ -234,7 +234,8 @@ impl J2 {
         matches!(self.flow, Some(Flow::JohnsonCook { .. }))
     }
 
-    /// The temperature a point starts at.
+    /// The temperature a point starts at: Johnson–Cook's room temperature; 0 for a law that
+    /// does not read it (a placeholder, never reported: see `is_temperature_dependent`).
     pub fn initial_temperature(&self) -> f64 {
         match self.flow {
             Some(Flow::JohnsonCook { room, .. }) => room,

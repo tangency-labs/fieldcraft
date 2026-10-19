@@ -2,11 +2,11 @@
 //! deformation scale, a stale-result warning), markers at the contour's largest and smallest
 //! value, and the probed node; and the results controls of the context panel (right), which run
 //! the `results.*` commands (a fluid step's: its slice, coloured obstacles, streamlines and
-//! frames). Numbers go through one formatter ([`crate::results::number`]) with
-//! the units of the model's unit system ([`Quantity`]).
+//! frames). Numbers go through one formatter ([`crate::results::number`]), in the display
+//! units ([`Plot::units`]): the result is stored in SI and converted here as it is shown.
 
 use egui::{Align2, Color32, FontId, Pos2, Rect, RichText, Stroke, pos2, vec2};
-use fieldcraft_engine::results::{Field, Kind, Quantity, true_scale, with_unit as titled};
+use fieldcraft_engine::results::{Field, Kind, Quantity, shown as shown_in, true_scale, unit_of, with_unit as titled};
 use fieldcraft_explicit::{Energies, ExplicitResult};
 use serde_json::{Value, json};
 
@@ -85,9 +85,9 @@ pub fn legend_rect(plot: &Plot, painter: &egui::Painter, rect: Rect, t: &Tokens)
 /// The legend's title: the field with its unit (a mode shape normalised), or the shape drawn.
 fn title(plot: &Plot) -> String {
     match (&plot.contour, plot.mode()) {
-        (Some(l), _) => l.field.title(&plot.result, plot.units),
+        (Some(l), _) => l.field.title(&plot.result, &plot.units),
         (None, Some(_)) => "Mode shape (normalised)".into(),
-        (None, None) if plot.is_fluid() => plot.view.contour.map_or_else(|| "Flow".into(), |f| f.title(&plot.result, plot.units)),
+        (None, None) if plot.is_fluid() => plot.view.contour.map_or_else(|| "Flow".into(), |f| f.title(&plot.result, &plot.units)),
         (None, None) => "Deformed shape".into(),
     }
 }
@@ -108,10 +108,13 @@ fn deformation(plot: &Plot) -> String {
 /// The contour's Max and Min lines.
 fn extreme_lines(plot: &Plot) -> Option<[(String, u32); 2]> {
     let l = plot.contour.as_ref()?;
-    let unit = l.field.unit(&plot.result, plot.units);
+    let unit = l.field.unit(&plot.result, &plot.units);
     let scale = l.max.1.abs().max(l.min.1.abs());
     let at = |node: u32| match plot.extreme_position(node).filter(|_| plot.is_fluid()) {
-        Some(p) => format!("at {}", components(&[p.x, p.y, p.z], 0.0)),
+        Some(p) => {
+            let at = fieldcraft_engine::results::shown_all(Quantity::Length, [p.x, p.y, p.z], &plot.units);
+            format!("at {}", with_unit(components(&at, 0.0), unit_of(Quantity::Length, &plot.units).as_deref()))
+        }
         None => format!("at node {node}"),
     };
     let line = |what: &str, (node, v): (u32, f64)| (format!("{what} {} {}", with_unit(number_in(v, scale), unit.as_deref()), at(node)), node);
@@ -132,7 +135,7 @@ fn legend_layout(plot: &Plot, painter: &egui::Painter, rect: Rect, t: &Tokens) -
         match plot.result.kind() {
             // A nonlinear static step's frames are its increments, at their load factors.
             Kind::Static(_) => step.push_str(&format!(", increment {k} of {last}: load factor {}", number(at))),
-            _ => step.push_str(&format!(", frame {k} of {last}: t = {}", with_unit(number(at), Quantity::Time.unit(plot.units).as_deref()))),
+            _ => step.push_str(&format!(", frame {k} of {last}: t = {}", with_unit(number(at), unit_of(Quantity::Time, &plot.units).as_deref()))),
         }
     }
     lines.push((step, t.overlay_text));
@@ -250,7 +253,7 @@ fn label_beside(painter: &egui::Painter, at: Pos2, text: String, bounds: Rect, a
 /// Markers with their values at the contour's largest and smallest value.
 fn markers(app: &ModelApp, plot: &Plot, painter: &egui::Painter, rect: Rect, t: &Tokens) {
     let Some(l) = &plot.contour else { return };
-    let unit = l.field.unit(&plot.result, plot.units);
+    let unit = l.field.unit(&plot.result, &plot.units);
     let scale = l.max.1.abs().max(l.min.1.abs());
     let (high, low) = (t.contour[4], t.contour[0]);
     // The Min label keeps off the Max label when the two cells are close on screen.
@@ -325,7 +328,8 @@ pub fn controls(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) 
                     if ui.checkbox(&mut auto, "Auto").on_hover_text(tip).changed() {
                         run.push(("results.contour", legend_params(plot, key, if auto { json!("auto") } else { json!(value) })));
                     }
-                    let mut v = set.unwrap_or(value);
+                    // The clamp is stored in SI; the legend shows the display units.
+                    let mut v = set.map_or(value, |v| l.field.shown(&plot.result, v, &plot.units));
                     let speed = (l.max.1 - l.min.1).abs().max(1e-9) * 0.005;
                     let drag = egui::DragValue::new(&mut v)
                         .speed(speed)
@@ -369,7 +373,7 @@ pub fn controls(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) 
                 run.push(("results.animate", json!({"on": animate})));
             }
         });
-        ui.label(RichText::new(format!("t = {}", with_unit(number(at), Quantity::Time.unit(plot.units).as_deref()))).color(t.text_dim));
+        ui.label(RichText::new(format!("t = {}", with_unit(number(at), unit_of(Quantity::Time, &plot.units).as_deref()))).color(t.text_dim));
     } else if let Some((k, factor, n)) = plot.frame().filter(|_| matches!(plot.result.kind(), Kind::Static(_))) {
         // A nonlinear static step: its increments, the deformed shape following the slider.
         ui.separator();
@@ -390,7 +394,7 @@ pub fn controls(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) 
                 if ui
                     .selectable_label(
                         plot.view.mode == mode,
-                        format!("{mode}   {}", crate::results::mode_value(f.buckling.is_some(), m.eigenvalue, m.frequency)),
+                        format!("{mode}   {}", crate::results::mode_value(f.buckling.is_some(), m.eigenvalue, m.frequency, &plot.units)),
                     )
                     .clicked()
                 {
@@ -400,7 +404,7 @@ pub fn controls(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) 
         });
     } else if let Kind::Heat(h) = plot.result.kind() {
         ui.separator();
-        heat_flows(ui, &fieldcraft_engine::results::heat_flows(h), t);
+        heat_flows(ui, &fieldcraft_engine::results::heat_flows(h, &plot.units), &plot.units, t);
     }
     if matches!(plot.result.kind(), Kind::Static(_)) {
         ui.separator();
@@ -509,8 +513,9 @@ fn flow_rows(plot: &Plot, ui: &mut egui::Ui, run: &mut Vec<(&'static str, Value)
             }
         });
         if let Some(s) = &view.slice {
-            let (lo, hi) = (flow.grid.start(s.axis.index()), flow.grid.end(s.axis.index()));
-            let mut at = slice_position(f, s);
+            let length = |m: f64| shown_in(Quantity::Length, m, &plot.units);
+            let (lo, hi) = (length(flow.grid.start(s.axis.index())), length(flow.grid.end(s.axis.index())));
+            let mut at = length(slice_position(f, s));
             let drag = egui::DragValue::new(&mut at)
                 .speed((hi - lo).abs().max(1e-9) * 0.002)
                 .range(lo..=hi)
@@ -576,7 +581,7 @@ fn probed(app: &ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) -> Option<
 /// histories, plotted against time with a cursor at the frame shown (a click or drag moves it)
 /// and read there.
 fn explicit(ui: &mut egui::Ui, e: &ExplicitResult, plot: &Plot, t: &Tokens, run: &mut Vec<(&'static str, Value)>) {
-    let time_unit = Quantity::Time.unit(plot.units);
+    let time_unit = unit_of(Quantity::Time, &plot.units);
     if let Some((k, time, n)) = plot.frame() {
         ui.horizontal(|ui| {
             ui.label("Frame");
@@ -597,17 +602,19 @@ fn explicit(ui: &mut egui::Ui, e: &ExplicitResult, plot: &Plot, t: &Tokens, run:
         ("Hourglass", t.warm, |e| e.hourglass),
         ("External work", t.error, |e| e.external),
     ];
-    let energy_unit = Quantity::Energy.unit(plot.units);
+    let energy_unit = unit_of(Quantity::Energy, &plot.units);
     ui.label(RichText::new(titled("Energies", energy_unit.as_deref())).color(t.text_dim));
+    let (time, energy) = (|s: f64| shown_in(Quantity::Time, s, &plot.units), |j: f64| shown_in(Quantity::Energy, j, &plot.units));
     let lines: Vec<Line> = series
         .iter()
-        .map(|(_, color, f)| Line { color: *color, points: h.time.iter().zip(&h.energies).map(|(time, e)| (*time, f(e))).collect() })
+        .map(|(_, color, f)| Line { color: *color, points: h.time.iter().zip(&h.energies).map(|(t, e)| (time(*t), energy(f(e)))).collect() })
         .collect();
-    let t_end = h.time.last().copied().unwrap_or(0.0);
+    let t_end = h.time.last().copied().map_or(0.0, time);
     let now = plot.frame().map_or(t_end, |(_, time, _)| time);
     let (response, axes) = line_plot(ui, &lines, "t", time_unit.as_deref(), Some(now), t);
     let scale = axes.lo.abs().max(axes.hi.abs());
-    let nearest = |time: f64| h.time.iter().enumerate().min_by(|a, b| (a.1 - time).abs().total_cmp(&(b.1 - time).abs())).map_or(0, |(i, _)| i);
+    let nearest =
+        |at: f64| h.time.iter().enumerate().min_by(|a, b| (time(*a.1) - at).abs().total_cmp(&(time(*b.1) - at).abs())).map_or(0, |(i, _)| i);
     // A click or drag on the plot shows the frame nearest that time.
     if (response.clicked() || response.dragged())
         && let Some(p) = response.interact_pointer_pos()
@@ -619,7 +626,7 @@ fn explicit(ui: &mut egui::Ui, e: &ExplicitResult, plot: &Plot, t: &Tokens, run:
         && let Some(e) = h.energies.get(nearest(axes.x_of(p.x)))
     {
         let mut text = vec![format!("t = {}", with_unit(number(axes.x_of(p.x)), time_unit.as_deref()))];
-        text.extend(series.iter().map(|(name, _, f)| format!("{name} {}", number_in(f(e), scale))));
+        text.extend(series.iter().map(|(name, _, f)| format!("{name} {}", number_in(energy(f(e)), scale))));
         response.on_hover_text(text.join("\n"));
     }
     // The values at the frame's time.
@@ -629,7 +636,7 @@ fn explicit(ui: &mut egui::Ui, e: &ExplicitResult, plot: &Plot, t: &Tokens, run:
     egui::Grid::new("fc_results_energies").num_columns(2).spacing(vec2(8.0, 2.0)).show(ui, |ui| {
         for (name, color, f) in &series {
             ui.label(RichText::new(*name).color(*color));
-            ui.label(with_unit(number_in(f(at_now), scale), energy_unit.as_deref()));
+            ui.label(with_unit(number_in(energy(f(at_now)), scale), energy_unit.as_deref()));
             ui.end_row();
         }
         ui.label(RichText::new("Balance").color(t.text_dim)).on_hover_text("The energy balance's relative error");
@@ -859,8 +866,8 @@ fn xy_section(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens, ru
         _ => "mode",
     };
     let x_unit = match axis {
-        "time" => Quantity::Time.unit(plot.units),
-        "displacement" => Quantity::Length.unit(plot.units),
+        "time" => unit_of(Quantity::Time, &plot.units),
+        "displacement" => unit_of(Quantity::Length, &plot.units),
         _ => None,
     };
     let line = Line { color: t.accent, points: xs.iter().copied().zip(ys.iter().copied()).collect() };
@@ -902,8 +909,8 @@ impl ModelApp {
 
 /// A heat step's balance: the heat each heat load carries in (negative: out), the prescribed
 /// temperatures' total, and what is left over (about 0 when steady).
-fn heat_flows(ui: &mut egui::Ui, flows: &Value, t: &Tokens) {
-    ui.label(RichText::new("Heat flow into the body").color(t.text_dim));
+fn heat_flows(ui: &mut egui::Ui, flows: &Value, units: &fieldcraft_model::DisplaySystem, t: &Tokens) {
+    ui.label(RichText::new(titled("Heat flow into the body", unit_of(Quantity::Power, units).as_deref())).color(t.text_dim));
     egui::Grid::new("fc_results_heat").num_columns(2).spacing(vec2(8.0, 2.0)).show(ui, |ui| {
         let row = |ui: &mut egui::Ui, name: &str, v: Option<f64>| {
             ui.label(name);
@@ -937,7 +944,7 @@ fn reactions_table(ui: &mut egui::Ui, r: &Value, plot: &Plot, t: &Tokens) {
     let largest = |vs: &mut dyn Iterator<Item = [f64; 3]>| vs.flatten().map(f64::abs).filter(|x| x.is_finite()).fold(0.0, f64::max);
     let force_scale = largest(&mut rows.iter().filter_map(|r| r.1).chain(applied));
     let moment_scale = largest(&mut rows.iter().filter_map(|r| r.2));
-    let (force, moment) = (Quantity::Force.unit(plot.units), Quantity::Moment.unit(plot.units));
+    let (force, moment) = (unit_of(Quantity::Force, &plot.units), unit_of(Quantity::Moment, &plot.units));
     let about = vector(&r["about"]).unwrap_or_default();
     ui.label(RichText::new(format!("Moments about ({})", components(&about, 0.0))).small().color(t.text_dim));
     let cells = |ui: &mut egui::Ui, v: Option<[f64; 3]>, scale: f64| {

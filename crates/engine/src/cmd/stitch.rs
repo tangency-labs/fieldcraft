@@ -41,16 +41,28 @@ pub(crate) fn surface_name(index: usize, t: &TaggedSurface) -> String {
     if t.name.trim().is_empty() { format!("Surface{index}") } else { t.name.clone() }
 }
 
-/// Stitch the session's surfaces again from what was read, by the model's stitches. Replies each
-/// stitch's report by name, and the stitches whose surface is not there or that failed (with why).
+/// Stitch the session's surfaces again from what was read, by the model's stitches (the model in
+/// millimetres, as geometry commands see it). Replies each stitch's report by name, and the
+/// stitches whose surface is not there or that failed (with why).
 pub(crate) fn restitch(s: &mut Session) -> (Vec<(String, Value)>, Vec<(String, String)>) {
+    let model = std::mem::take(&mut s.model);
+    let out = restitch_surfaces(&mut s.surfaces, &model);
+    s.model = model;
+    out
+}
+
+/// [`restitch`] of `surfaces` by `model`'s stitches, its lengths in millimetres.
+pub(crate) fn restitch_surfaces(
+    surfaces: &mut [Arc<TaggedSurface>],
+    model: &fieldcraft_model::Model,
+) -> (Vec<(String, Value)>, Vec<(String, String)>) {
     let mut reports = Vec::new();
     let mut failed = Vec::new();
-    let stitches = s.model.stitches().to_vec();
-    for st in stitches.iter().filter(|st| !s.surfaces.iter().enumerate().any(|(i, t)| surface_name(i, t) == st.surface)) {
+    let stitches = model.stitches().to_vec();
+    for st in stitches.iter().filter(|st| !surfaces.iter().enumerate().any(|(i, t)| surface_name(i, t) == st.surface)) {
         failed.push((st.name.clone(), format!("no surface `{}`", st.surface)));
     }
-    for (i, slot) in s.surfaces.iter_mut().enumerate() {
+    for (i, slot) in surfaces.iter_mut().enumerate() {
         let name = surface_name(i, slot);
         let mine: Vec<&Stitch> = stitches.iter().filter(|st| st.surface == name).collect();
         if mine.is_empty() && slot.original.is_none() {
@@ -69,7 +81,7 @@ pub(crate) fn restitch(s: &mut Session) -> (Vec<(String, Value)>, Vec<(String, S
                 Err(e) => failed.push((st.name.clone(), e.to_string())),
             }
         }
-        let original = (!s.model.stitches().iter().all(|st| st.surface != name)).then_some(raw);
+        let original = (!model.stitches().iter().all(|st| st.surface != name)).then_some(raw);
         *slot = Arc::new(TaggedSurface { name: slot.name.clone(), mesh, faces: slot.faces, original });
     }
     (reports, failed)

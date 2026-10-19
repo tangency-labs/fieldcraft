@@ -1,4 +1,5 @@
-//! Face-averaged heat received by obstacle walls, in the model's consistent units.
+//! Face-averaged heat received by obstacle walls, in SI: the faces' areas come from the
+//! design's tessellation, in millimetres, converted once.
 //! The history is interpolated only between recorded samples: frame zero predates it.
 
 use std::collections::BTreeMap;
@@ -76,6 +77,7 @@ pub fn faces(s: &Session, r: &FluidResult, pick: Pick) -> Result<Vec<FaceHeat>> 
             .get(name)
             .and_then(|a| a.get(&index))
             .copied()
+            .and_then(|a| crate::units::geometry().to_si(fieldcraft_model::units::Quantity::Area, a).ok())
             .filter(|a| a.is_finite() && *a > 0.0)
             .ok_or_else(|| EngineError::Params(format!("wall heat: face `{}` of `{name}` has no finite positive area", h.name)))?;
         let power = interpolate(&r.history_times, &h.power, time);
@@ -83,6 +85,24 @@ pub fn faces(s: &Session, r: &FluidResult, pick: Pick) -> Result<Vec<FaceHeat>> 
         output.push(FaceHeat { body: name.into(), face: h.name.clone(), index, area, power, flux });
     }
     Ok(output)
+}
+
+/// Faces as [`faces`] lists them (JSON) with their areas, powers and fluxes in `display`.
+pub fn show(faces: &mut serde_json::Value, display: &fieldcraft_model::DisplaySystem) {
+    use crate::results::{Quantity, shown};
+    for f in faces.as_array_mut().into_iter().flatten() {
+        for (key, q) in [("area", Quantity::Area), ("power", Quantity::Power), ("flux", Quantity::HeatFlux)] {
+            if let Some(v) = f.get(key).and_then(serde_json::Value::as_f64) {
+                f[key] = serde_json::json!(shown(q, v, display));
+            }
+        }
+    }
+}
+
+/// The units [`show`] gives faces in.
+pub fn units(display: &fieldcraft_model::DisplaySystem) -> serde_json::Value {
+    use fieldcraft_model::units::Quantity;
+    serde_json::json!({"area": display.symbol(Quantity::Area), "power": display.symbol(Quantity::Power), "flux": display.symbol(Quantity::HeatFlux)})
 }
 
 /// One optional value per displayed surface triangle. Imported/unrecorded faces remain plain.
@@ -123,15 +143,18 @@ mod tests {
         }
         let face_values = faces(&session, &r, Pick::default()).unwrap();
         assert!(face_values.iter().all(|f| f.area > 0.0));
-        assert!(face_values.iter().any(|f| (f.area - 400.0).abs() < 1e-8), "40 by 10 mm outer face");
-        assert!(face_values.iter().any(|f| (f.area - 300.0).abs() < 1e-8), "30 by 10 mm outer face");
+        // Areas in m² (the design's 40 × 10 mm is 4e-4 m²).
+        assert!(face_values.iter().any(|f| (f.area - 4e-4).abs() < 1e-14), "40 by 10 mm outer face");
+        assert!(face_values.iter().any(|f| (f.area - 3e-4).abs() < 1e-14), "30 by 10 mm outer face");
         assert!(face_values[0].flux.unwrap() < 0.0);
         assert!((face_values.iter().map(|f| f.flux.unwrap() * f.area).sum::<f64>() + 120.0).abs() < 1e-10);
         assert!(face_values[1..].iter().all(|f| f.flux == Some(0.0)), "adiabatic faces are zero");
         session.store_result(crate::StepResult::Fluid(r));
         let report = session.execute("results.surface", &json!({"field": "wall_heat_flux"})).unwrap();
         assert_eq!(report["wall_heat"]["positive"], "into wall");
-        assert_eq!(report["wall_heat"]["faces"][0]["power"], -120.0);
+        // 120 W, shown in the default display system's mW.
+        assert_eq!(report["wall_heat"]["faces"][0]["power"], -120_000.0);
+        assert_eq!(report["wall_heat"]["units"]["power"], "mW");
         assert!(report["slice"].is_null(), "wall heat is a surface-only field");
         session.execute("results.streamlines", &json!({"show": false})).unwrap();
         let (scene, _, shown) = crate::view::scene(&session, &crate::view::Palette::LIGHT);

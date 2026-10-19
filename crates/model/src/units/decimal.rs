@@ -50,7 +50,7 @@ pub(super) fn short_decimal(v: f64) -> Option<(i128, i32)> {
 }
 
 /// The double nearest to `mantissa × 10^exponent`.
-fn from_decimal(mantissa: i128, exponent: i32) -> f64 {
+pub(super) fn from_decimal(mantissa: i128, exponent: i32) -> f64 {
     // Rust's float parsing rounds correctly.
     format!("{mantissa}e{exponent}").parse().unwrap_or(f64::NAN)
 }
@@ -79,6 +79,50 @@ fn binary_shift(mut v: f64, mut k: i32) -> f64 {
         k -= n;
     }
     v
+}
+
+/// Largest integer a double holds exactly.
+const EXACT_INTEGER: i128 = 1 << 53;
+
+/// An absolute temperature `f` in °F, in kelvin: (F + 459.67) × 5/9 worked out on the decimal F
+/// was written as (one correctly rounded division of two exact integers), so 68 °F is 293.15 K.
+pub(super) fn fahrenheit_to_kelvin(f: f64) -> f64 {
+    if let Some((m, e)) = short_decimal(f)
+        && let Some(p) = u32::try_from(-e).ok().map(|p| p.max(2)).filter(|p| *p <= 6)
+    {
+        let scale = 10i128.pow(p);
+        let n = m.checked_mul(10i128.pow(p - u32::try_from(-e).unwrap_or(0))).and_then(|m| m.checked_add(45967 * scale / 100));
+        if let Some(n) = n.and_then(|n| n.checked_mul(5)).filter(|n| n.abs() < EXACT_INTEGER) {
+            return n as f64 / (9 * scale) as f64;
+        }
+    } else if f.fract() == 0.0 && f.abs() < 1e12 {
+        // A whole number written with no decimals (short_decimal's exponent is ≥ 0).
+        return fahrenheit_to_kelvin_whole(f);
+    }
+    (f + 459.67) * 5.0 / 9.0
+}
+
+fn fahrenheit_to_kelvin_whole(f: f64) -> f64 {
+    let n = (f as i128) * 100 + 45967;
+    (n * 5) as f64 / 900.0
+}
+
+/// The inverse of [`fahrenheit_to_kelvin`]: a kelvin value that one gave from a decimal of up to
+/// six places comes back as that decimal; any other in binary.
+pub(super) fn kelvin_to_fahrenheit(k: f64) -> f64 {
+    for p in 2..=6u32 {
+        let scale = 10f64.powi(p as i32);
+        let q = k * 9.0 * scale / 5.0;
+        let n = q.round();
+        if (q - n).abs() < 1e-6 && n.abs() < EXACT_INTEGER as f64 {
+            let digits = n as i128 - 45967 * 10i128.pow(p) / 100;
+            let f = from_decimal(digits, -(p as i32));
+            if fahrenheit_to_kelvin(f) == k {
+                return f;
+            }
+        }
+    }
+    k * 9.0 / 5.0 - 459.67
 }
 
 /// `a + b`, exact in decimal when both are short decimals (an offset such as 273.15 added to a
@@ -141,6 +185,14 @@ mod tests {
         assert_eq!(shift(v, 30), v * 1e22 * 1e8);
         assert_eq!(shift(-0.0, 3).to_bits(), (-0.0f64).to_bits());
         assert!(shift(1e300, 30).is_infinite());
+    }
+
+    #[test]
+    fn fahrenheit_converts_on_its_decimal() {
+        assert_eq!(fahrenheit_to_kelvin(68.0), 293.15);
+        assert_eq!(kelvin_to_fahrenheit(353.15), 176.0);
+        assert_eq!(kelvin_to_fahrenheit(fahrenheit_to_kelvin(-196.0)), -196.0);
+        assert_eq!(kelvin_to_fahrenheit(fahrenheit_to_kelvin(98.6)), 98.6);
     }
 
     #[test]

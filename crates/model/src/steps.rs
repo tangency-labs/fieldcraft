@@ -451,7 +451,8 @@ pub struct Transient {
     /// 1 is backward Euler (the default), ½ Crank–Nicolson; θ ≥ ½ is unconditionally stable.
     #[serde(default = "default_theta")]
     pub theta: f64,
-    #[serde(default)]
+    /// The uniform temperature at the start (kelvin; 0 °C when left out).
+    #[serde(default = "default_initial_temperature")]
     pub initial_temperature: f64,
 }
 
@@ -459,10 +460,14 @@ fn default_theta() -> f64 {
     1.0
 }
 
+fn default_initial_temperature() -> f64 {
+    crate::units::CELSIUS_ZERO
+}
+
 impl Transient {
     /// Backward Euler from 0.
     pub fn new(end_time: f64, increment: f64) -> Transient {
-        Transient { end_time, increment, theta: default_theta(), initial_temperature: 0.0 }
+        Transient { end_time, increment, theta: default_theta(), initial_temperature: default_initial_temperature() }
     }
 
     /// The number of increments (the last one may be shorter).
@@ -951,7 +956,6 @@ pub struct StepInputs<'a> {
     nodes: &'a BTreeMap<u32, crate::Node>,
     elements: &'a BTreeMap<u32, crate::Element>,
     classification: &'a crate::Classification,
-    units: crate::UnitSystem,
     sets: BTreeMap<&'a str, &'a crate::Set>,
     materials: &'a BTreeMap<String, crate::Material>,
     sections: &'a BTreeMap<String, crate::Section>,
@@ -979,7 +983,6 @@ impl Model {
             nodes: &self.nodes,
             elements: &self.elements,
             classification: &self.classification,
-            units: self.units,
             sets: self.sets.iter().filter(|(n, _)| self.step_uses_set(step, n)).map(|(n, s)| (n.as_str(), s)).collect(),
             materials: &self.materials,
             sections: &self.sections,
@@ -1276,7 +1279,8 @@ mod tests {
         let t: Procedure =
             serde_json::from_value(serde_json::json!({"type": "heat_transfer", "transient": {"end_time": 10, "increment": 0.3}})).unwrap();
         let Procedure::HeatTransfer { transient: Some(tr) } = t else { panic!() };
-        assert_eq!((tr.theta, tr.initial_temperature, tr.increments()), (1.0, 0.0, 34));
+        // From 0 °C by default.
+        assert_eq!((tr.theta, tr.initial_temperature, tr.increments()), (1.0, 273.15, 34));
         assert_eq!(Transient::new(1.0, 0.25).increments(), 4);
         for bad in [
             Transient { theta: 0.4, ..Transient::new(1.0, 0.1) },

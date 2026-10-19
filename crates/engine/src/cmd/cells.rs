@@ -852,7 +852,9 @@ mod tests {
         assert_eq!(r["interfaces"][0]["joined"], joined, "{r}");
 
         let m = &s.model;
-        let on = |k: usize, v: f64| -> Vec<u32> { m.nodes().iter().filter(|(_, n)| (n.xyz[k] - v).abs() < 1e-9).map(|(l, _)| *l).collect() };
+        // The model is stored in metres, the geometry's bounding box in millimetres.
+        let mm = crate::units::to_geometry_length;
+        let on = |k: usize, v: f64| -> Vec<u32> { m.nodes().iter().filter(|(_, n)| (mm(n.xyz[k]) - v).abs() < 1e-9).map(|(l, _)| *l).collect() };
         let others: Vec<usize> = (0..3).filter(|k| *k != axis).collect();
         let end: Vec<Value> = m
             .elements()
@@ -860,7 +862,7 @@ mod tests {
             .flat_map(|(&e, el)| (1..=el.kind.faces().len() as u8).map(move |f| (e, f)))
             .filter(|&(e, f)| {
                 m.face_nodes(ElementFace { element: e, face: f })
-                    .is_some_and(|ns| ns.iter().all(|n| (m.node(*n).unwrap().xyz[axis] - hi[axis]).abs() < 1e-9))
+                    .is_some_and(|ns| ns.iter().all(|n| (mm(m.node(*n).unwrap().xyz[axis]) - hi[axis]).abs() < 1e-9))
             })
             .map(|(e, f)| json!({"element": e, "face": f}))
             .collect();

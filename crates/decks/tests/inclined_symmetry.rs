@@ -2,7 +2,10 @@
 //! Nastran `MPC` sets and an LS-DYNA `*BOUNDARY_SPC` in a local coordinate system, on a small
 //! shell plate of our own whose diagonal x = y is the plane.
 
-use fieldcraft_decks::{Error, abaqus, lsdyna, nastran};
+mod common;
+
+use common::{abaqus, lsdyna, nastran};
+use fieldcraft_decks::Error;
 use fieldcraft_model::{
     BoundaryCondition, Elastic, ElementFace, ElementKind, Formulation, Load, Material, Model, Procedure, Section, SectionKind, Set, Step, Symmetry,
     Target,

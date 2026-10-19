@@ -568,7 +568,8 @@ fn tied_conductor(lower: ElementKind, lower_n: [usize; 3], graded: bool, upper: 
             conductivity: Some(Directional::Isotropic(k)),
             specific_heat: Some(1.0),
             expansion: Some(Directional::Isotropic(1e-5)),
-            ..Thermal::default()
+            // Temperatures here are above a reference of 0 (the default is 0 °C, 273.15 K).
+            reference_temperature: 0.0,
         };
         let material = Material {
             elastic: Some(Elastic::Isotropic { young: 1000.0, poisson: 0.3 }),
@@ -652,7 +653,7 @@ fn heat_crosses_a_tie_exactly() {
 /// meshes represent alike, so the tie is the only difference).
 #[test]
 fn transient_heat_through_a_tie_is_the_single_body_s() {
-    let tr = Procedure::HeatTransfer { transient: Some(Transient { theta: 1.0, ..Transient::new(1.0, 0.05) }) };
+    let tr = Procedure::HeatTransfer { transient: Some(Transient { theta: 1.0, initial_temperature: 0.0, ..Transient::new(1.0, 0.05) }) };
     // The single body: one 2 × 2 × 4 block of the same material.
     let mut single = Blocks::default();
     let all = single.block(ElementKind::Hex8, [2, 2, 4], |p| [p[0], p[1], 2.0 * p[2]]);

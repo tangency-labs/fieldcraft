@@ -213,7 +213,7 @@ fn distance_to_segment(p: Vec3, a: Vec3, b: Vec3) -> f64 {
 
 /// The radius around the camera target that holds the bounds (for the clipping planes).
 pub fn radius(b: &Aabb3, cam: &Camera) -> f64 {
-    if b.is_empty() { 1.0 } else { (cam.target.dist(b.center()) + b.diagonal() * 0.5).max(1e-3) }
+    if b.is_empty() { 1.0 } else { (cam.target.dist(b.center()) + b.diagonal() * 0.5).max(fieldcraft_render::MIN_SIZE) }
 }
 
 #[cfg(test)]

@@ -492,22 +492,36 @@ pub struct Preview {
     pub relaxed: Relaxed,
 }
 
+/// The relaxation `params` (as typed, in the display system) ask for on the session's mesh,
+/// without doing it: positions and the sphere in SI, as the session is stored.
 pub fn preview(s: &Session, params: &Value) -> Option<Preview> {
     // The strong mode morphs a whole region: too heavy for a live preview.
     if params.get("mode").and_then(Value::as_str) == Some("strong") {
         return None;
     }
-    let (w, sphere) = weights(&s.model, params).ok()?;
-    let g = design_geometry(s, &touched(&s.model, &w)).ok()?;
-    let relaxed = relax::relax(&s.model, &w, iterations(params).ok()?, &g).ok()?;
-    Some(Preview { sphere, relaxed })
+    // The meshers work in millimetres: the preview is made there and brought back.
+    let framed = crate::units::geometry_session(s).ok()?;
+    let params = crate::units::geometry_params(s, RELAX.id, params).ok()?;
+    let (w, sphere) = weights(&framed.model, &params).ok()?;
+    let g = design_geometry(&framed, &touched(&framed.model, &w)).ok()?;
+    let mut relaxed = relax::relax(&framed.model, &w, iterations(&params).ok()?, &g).ok()?;
+    for p in relaxed.positions.values_mut() {
+        *p = crate::units::geometry_point(*p);
+    }
+    relaxed.max_displacement = crate::units::geometry_length(relaxed.max_displacement);
+    Some(Preview { sphere: sphere.map(|(c, r)| (crate::units::geometry_point(c), crate::units::geometry_length(r))), relaxed })
 }
 
-/// The sphere `params` describe, for the form's gizmo before the rest is valid.
+/// The sphere `params` (as typed) describe, in SI, for the form's gizmo before the rest is valid.
 pub fn sphere(s: &Session, params: &Value) -> Option<([f64; 3], f64)> {
+    let length = |v: &Value| crate::units::read(v, fieldcraft_model::units::Quantity::Length, s.input_units())?.ok();
     let around = params.get("around_element").and_then(Value::as_u64).and_then(|e| around_element(&s.model, u32::try_from(e).ok()?).ok());
-    let c = point(params, "center").ok().flatten().or(around.map(|a| a.0))?;
-    let r = params.get("radius").and_then(Value::as_f64).filter(|r| *r > 0.0 && r.is_finite()).or(around.map(|a| a.1))?;
+    let centre = params.get("center").and_then(Value::as_array).and_then(|a| match a.as_slice() {
+        [x, y, z] => Some([length(x)?, length(y)?, length(z)?]),
+        _ => None,
+    });
+    let c = centre.or(around.map(|a| a.0))?;
+    let r = params.get("radius").and_then(length).filter(|r| *r > 0.0 && r.is_finite()).or(around.map(|a| a.1))?;
     Some((c, r))
 }
 

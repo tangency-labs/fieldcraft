@@ -92,6 +92,10 @@ fn keep(p: &Value) -> Result<Keep> {
 /// The merges `mesh.node.merge` with `params` would make, as [node, survivor] pairs: what its
 /// form previews. `None` when the parameters are not (yet) valid.
 pub fn merge_preview(s: &Session, params: &Value) -> Option<Vec<[u32; 2]>> {
+    // The meshers work in millimetres.
+    let framed = crate::units::geometry_session(s).ok()?;
+    let params = crate::units::geometry_params(s, MERGE.id, params).ok()?;
+    let (s, params) = (&framed, &params);
     let tol = tolerance(&s.model, params).ok()?;
     let only = candidates(&s.model, params).ok()?;
     let plan = merge_plan(&s.model, only.as_ref(), tol, keep(params).ok()?).ok()?;
@@ -307,7 +311,7 @@ mod tests {
         let mut s = bar(true);
         s.execute(
             "model.set.create",
-            &json!({"name": "seam", "nodes": s.model.nodes().iter().filter(|(_, n)| n.xyz[0] == 1.0).map(|(l, _)| *l).collect::<Vec<_>>()}),
+            &json!({"name": "seam", "nodes": s.model.nodes().iter().filter(|(_, n)| n.xyz[0] == 0.001).map(|(l, _)| *l).collect::<Vec<_>>()}),
         )
         .unwrap();
         let d = s.execute("mesh.check.duplicates", &json!({})).unwrap();
@@ -363,7 +367,7 @@ mod tests {
                 assert!((x - y).abs() <= 1e-9, "{a} vs {b}");
             }
         }
-        let deck = fieldcraft_decks::abaqus::write(&s.model).unwrap();
+        let deck = fieldcraft_decks::abaqus::write(&s.model, fieldcraft_model::units::Preset::MmTonneS).unwrap();
         assert!(deck.lines().any(|l| l.starts_with("1000,")) && deck.lines().any(|l| l.starts_with("501,")), "{deck}");
         // Body by body and compact, then refusals that change nothing.
         s.execute("mesh.renumber", &json!({"by": "body"})).unwrap();

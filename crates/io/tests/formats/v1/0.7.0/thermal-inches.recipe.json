@@ -1,0 +1,18 @@
+[
+  {"command": "model.units", "params": {"system": "in-lbf-s-psi"}},
+  {"command": "mesh.block", "params": {"body": "Fin", "kind": "hex8", "corners": [[0, 0, 0], [1, 0, 0], [1, 0.25, 0], [0, 0.25, 0], [0, 0, 0.1], [1, 0, 0.1], [1, 0.25, 0.1], [0, 0.25, 0.1]], "divisions": [4, 1, 1], "faces": {"6": "base", "4": "tip"}}},
+  {"command": "model.set.create", "params": {"name": "all", "geometry": [{"body": "Fin"}]}},
+  {"command": "model.set.create", "params": {"name": "base", "geometry": [{"body": "Fin", "face": "base"}]}},
+  {"command": "model.set.create", "params": {"name": "tip", "geometry": [{"body": "Fin", "face": "tip"}]}},
+  {"command": "model.material.create", "params": {"name": "Copper", "elastic": {"type": "isotropic", "young": 17000000, "poisson": 0.34}, "density": 0.000838, "thermal": {"conductivity": 0.0518, "specific_heat": 3.6, "expansion": 9.4e-06}}},
+  {"command": "model.material.create", "params": {"name": "Steel", "elastic": {"type": "isotropic", "young": 17000000, "poisson": 0.3}, "density": 0.000838, "plastic": {"type": "johnson_cook", "a": 17000.0, "b": 34000.0, "n": 0.3, "c": 0.01, "m": 1.0, "room_temperature": 68, "melt_temperature": 1568}}},
+  {"command": "model.section.create", "params": {"name": "solid", "set": "all", "material": "Copper", "kind": {"type": "solid"}}},
+  {"command": "model.section.create", "params": {"name": "slice", "set": "tip", "material": "Steel", "kind": {"type": "plane_strain"}}},
+  {"command": "model.boundary_condition.create", "params": {"name": "hot", "type": "temperature", "target": {"set": "base"}, "value": 194}},
+  {"command": "model.load.create", "params": {"name": "cooling", "type": "convection", "set": "tip", "film": 0.0002, "sink": 68}},
+  {"command": "model.step.create", "params": {"name": "Heat", "procedure": {"type": "heat_transfer", "transient": {"end_time": 10.0, "increment": 0.5}}}},
+  {"command": "model.step.activate", "params": {"step": "Heat", "boundary_conditions": ["hot"], "loads": ["cooling"]}},
+  {"command": "model.material.create", "params": {"name": "Water", "density": 9.311111111111111e-05, "fluid": {"type": "newtonian", "viscosity": 1.45e-07}, "thermal": {"conductivity": 8.633333333333334e-05, "specific_heat": 39.6}}},
+  {"command": "model.fluid_domain.create", "params": {"name": "Tank", "material": "Water", "min": [0, 0, 0], "max": [1, 1, 0.25], "spacing": 0.125, "thermal": {"faces": {"y_min": {"type": "temperature", "value": 194}, "y_max": {"type": "flux", "value": 0.5}}}}},
+  {"command": "file.save_as", "params": {"path": "thermal-inches.fieldcraft"}}
+]

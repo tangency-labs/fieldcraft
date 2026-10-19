@@ -124,7 +124,7 @@ pub enum SectionKind {
     /// thickness. The elements lie in the XY plane.
     PlaneStress { thickness: f64 },
     /// 2D continuum in plane strain (εzz = 0: a slice of a long body), of the given thickness
-    /// (1 by default, so results are per unit length). The elements lie in the XY plane.
+    /// (1 mm by default, so results are per millimetre). The elements lie in the XY plane.
     PlaneStrain {
         #[serde(default = "unit_thickness")]
         thickness: f64,
@@ -140,8 +140,9 @@ fn default_shell_points() -> u32 {
     5
 }
 
+/// 1 mm in metres.
 fn unit_thickness() -> f64 {
-    1.0
+    1e-3
 }
 
 /// How a 2D continuum section extends out of its plane: what turns a length along an element
@@ -377,7 +378,8 @@ mod tests {
     #[test]
     fn planar_sections() {
         let strain: SectionKind = serde_json::from_value(serde_json::json!({"type": "plane_strain"})).unwrap();
-        assert_eq!(strain, SectionKind::PlaneStrain { thickness: 1.0 });
+        // 1 mm by default (results per millimetre, as before SI storage).
+        assert_eq!(strain, SectionKind::PlaneStrain { thickness: 1e-3 });
         let stress: SectionKind = serde_json::from_value(serde_json::json!({"type": "plane_stress", "thickness": 2.5})).unwrap();
         assert_eq!(stress.extent(), Some(Extent::Thickness(2.5)));
         assert!(serde_json::from_value::<SectionKind>(serde_json::json!({"type": "plane_stress"})).is_err(), "plane stress needs a thickness");

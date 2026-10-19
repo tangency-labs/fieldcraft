@@ -82,7 +82,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Sections | Composite — Composite layups and continuum shells | coming soon (M8) |  |
 | Sections | Orientation — Material orientations | coming soon (M8) |  |
 | Sets | Set — A set of nodes, elements and faces, or of named geometry that survives remeshing | ready | `model.set.create`, `model.set.edit`, `model.set.delete`, `model.set.resolve` |
-| Model | Units — The model's unit system (never converted) | ready | `model.units` |
+| Model | Units — The units the model is shown and typed in | ready | `model.units` |
 
 ## Assembly
 

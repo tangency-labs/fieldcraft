@@ -3,6 +3,10 @@
 //! vendor's public reference manual in our own words; examples and expected files are our own.
 //! Writers read [`fieldcraft_model::Model`] and its `resolve()` result, never another format.
 //!
+//! The model stores SI; a deck is written in one consistent unit system ([`Preset`]), stated in
+//! its header: [`express`] converts the model into it and the writers write its numbers as they
+//! are (Nastran's `PARAM,WTMASS,1.0` and LS-DYNA's `*CONTROL_UNITS` say so too).
+//!
 //! Writers produce text; saving it is the caller's business (the engine's `deck.write`), so the
 //! crate stays free of the file system. [`FORMATS`] lists every writer by the name `deck.write`
 //! takes.
@@ -16,6 +20,7 @@ pub mod nastran;
 use std::collections::{BTreeMap, BTreeSet};
 
 use fieldcraft_model::nodal::edge_pressure;
+use fieldcraft_model::units::{DisplaySystem, Preset};
 use fieldcraft_model::{BoundaryCondition, Diagnostic, Load, Model, Resolved, ResolvedDirection};
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -38,7 +43,7 @@ pub struct Format {
     pub name: &'static str,
     /// The usual file extension, without the dot.
     pub extension: &'static str,
-    writer: fn(&Model, &Resolved) -> Result<String>,
+    writer: fn(&Model, &Resolved, Preset) -> Result<String>,
 }
 
 /// A written deck: its text and the model check's warnings.
@@ -49,20 +54,42 @@ pub struct Deck {
 }
 
 impl Format {
-    /// Resolve the model once and write it in this format.
-    pub fn write(&self, model: &Model) -> Result<Deck> {
-        let resolved = model.resolve()?;
-        let text = (self.writer)(model, &resolved)?;
-        Ok(Deck { text, warnings: resolved.warnings })
+    /// Write the model (SI) in this format, in the consistent system `units`.
+    pub fn write(&self, model: &Model, units: Preset) -> Result<Deck> {
+        // The check's warnings come from the model as stored (its magnitudes are judged in SI);
+        // the deck from the model expressed in `units`.
+        let warnings = model.resolve()?.warnings;
+        let expressed = express(model, units)?;
+        let resolved = expressed.resolve()?;
+        let text = (self.writer)(&expressed, &resolved, units)?;
+        Ok(Deck { text, warnings })
     }
 
     /// Write only the named steps (in the model's order), or every step when `steps` is `None`;
     /// for runs that hold some steps only, such as a Nastran run (static or frequency steps).
-    pub fn write_steps(&self, model: &Model, steps: Option<&[String]>) -> Result<Deck> {
+    pub fn write_steps(&self, model: &Model, steps: Option<&[String]>, units: Preset) -> Result<Deck> {
         match steps {
-            None => self.write(model),
-            Some(names) => self.write(&with_steps(model, names)?),
+            None => self.write(model, units),
+            Some(names) => self.write(&with_steps(model, names)?, units),
         }
+    }
+}
+
+/// The model, stored in SI, with every number expressed in `units`: what a deck in that system
+/// writes as it is.
+pub fn express(model: &Model, units: Preset) -> Result<Model> {
+    let system = DisplaySystem::new(units);
+    Ok(model.converted(&|q, v| system.express(q, v).ok())?)
+}
+
+/// What a preset's units are, in words, for a deck's header.
+pub(crate) fn units_in_words(units: Preset) -> &'static str {
+    match units {
+        Preset::MKgS => "metre, kilogram, second, newton, pascal, kelvin",
+        Preset::MmTonneS => "millimetre, tonne, second, newton, megapascal, degree Celsius",
+        Preset::MmKgMs => "millimetre, kilogram, millisecond, kilonewton, gigapascal, degree Celsius",
+        Preset::MmGMs => "millimetre, gram, millisecond, newton, megapascal, degree Celsius",
+        Preset::InLbfS => "inch, lbf*s^2/in, second, pound-force, psi, degree Fahrenheit",
     }
 }
 

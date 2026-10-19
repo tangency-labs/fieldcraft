@@ -188,3 +188,44 @@ fn typed_values_convert_exactly_in_metric_presets() {
     assert_eq!(mm.to_si(Q::Temperature, 20.0).unwrap(), 293.15);
     assert_eq!(mm.to_si(Q::SpecificHeat, 4.6e8).unwrap(), 460.0);
 }
+
+/// °F goes through °C in decimal: whole degrees convert exactly both ways (80 °C is 176 °F, a
+/// legend range of 68 … 176 °F is 293.15 … 353.15 K), and every whole °F comes back as typed.
+#[test]
+fn fahrenheit_is_exact_through_celsius() {
+    use Quantity as Q;
+    let f = DisplaySystem::new(Preset::InLbfS);
+    let c = DisplaySystem::new(Preset::MmTonneS);
+    assert_eq!(f.express(Q::Temperature, c.to_si(Q::Temperature, 80.0).unwrap()).unwrap(), 176.0);
+    assert_eq!(f.to_si(Q::Temperature, 68.0).unwrap(), 293.15);
+    assert_eq!(f.to_si(Q::Temperature, 176.0).unwrap(), 353.15);
+    for whole in -273..=2000 {
+        let t = f64::from(whole);
+        let k = c.to_si(Q::Temperature, t).unwrap();
+        let shown = f.express(Q::Temperature, k).unwrap();
+        assert_eq!(c.to_si(Q::Temperature, c.express(Q::Temperature, f.to_si(Q::Temperature, shown).unwrap()).unwrap()).unwrap(), k, "{t} °C");
+        assert_eq!(f.express(Q::Temperature, f.to_si(Q::Temperature, t).unwrap()).unwrap(), t, "{t} °F");
+    }
+}
+
+/// A temperature override carries to the temperature difference and the per-degree units unless
+/// they have their own: mm-t-s with °F shows ΔT in °F and an expansion per °F.
+#[test]
+fn a_temperature_override_carries_to_the_per_degree_units() {
+    use Quantity as Q;
+    let d = DisplaySystem::new(Preset::MmTonneS).with_override(Q::Temperature, "°F").unwrap();
+    let symbols: Vec<&str> = [Q::TemperatureDifference, Q::ThermalExpansion, Q::ThermalConductivity, Q::SpecificHeat, Q::HeatTransferCoefficient]
+        .iter()
+        .map(|q| d.symbol(*q))
+        .collect();
+    assert_eq!(symbols, ["°F", "°F⁻¹", "mW/(mm·°F)", "mJ/(t·°F)", "mW/(mm²·°F)"]);
+    // 1.8 °F of difference is 1 K; 1e-5 per K is 5.555…e-6 per °F.
+    assert!((d.to_si(Q::TemperatureDifference, 1.8).unwrap() - 1.0).abs() < 1e-15);
+    assert!((d.express(Q::ThermalExpansion, 1e-5).unwrap() - 1e-5 / 1.8).abs() < 1e-20);
+    // Unless overridden itself; and nothing else changes.
+    let own = d.clone().with_override(Q::ThermalExpansion, "1/K").unwrap();
+    assert_eq!((own.symbol(Q::ThermalExpansion), own.symbol(Q::TemperatureDifference), own.symbol(Q::Pressure)), ("1/K", "°F", "MPa"));
+    // SI shown in °C: per-degree units in °C (the same step as K).
+    let si = DisplaySystem::new(Preset::MKgS).with_override(Q::Temperature, "°C").unwrap();
+    assert_eq!((si.symbol(Q::ThermalConductivity), si.to_si(Q::TemperatureDifference, 3.0).unwrap()), ("W/(m·°C)", 3.0));
+}

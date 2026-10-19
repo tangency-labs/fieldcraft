@@ -1,6 +1,6 @@
 *HEADING
 FieldCraft model, units mm-t-s-N-MPa
-** Written by FieldCraft. The numbers are in one consistent unit system and are not converted.
+** Written by FieldCraft in one consistent unit system: millimetre, tonne, second, newton, megapascal, degree Celsius.
 ** Nodes
 *NODE
 1, 0.0, 0.0, 0.0

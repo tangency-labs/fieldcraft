@@ -7,7 +7,7 @@
 //!   was meshed on);
 //! - named sets ([`sets`]) defined by geometry names or explicit labels, resolved to nodes,
 //!   elements and element faces against the current mesh, so they survive remeshing;
-//! - materials and the unit system ([`materials`], [`units`]), sections with their element
+//! - materials ([`materials`]), sections with their element
 //!   formulation ([`sections`]), reference points and couplings ([`constraints`]), point masses,
 //!   springs and dashpots ([`discrete`]);
 //! - boundary conditions ([`bcs`]), loads ([`loads`]) and steps with an explicit table of which
@@ -18,9 +18,9 @@
 //! Solver formats (Abaqus input, Nastran bulk data, LS-DYNA keyword) translate to and from this
 //! model; nothing here knows any of them.
 //!
-//! The model is unit-consistent: it stores numbers in whatever consistent system the user chose
-//! (for example mm, tonne, s, N, MPa), never converts them, and only warns when a magnitude looks
-//! wrong for the chosen system.
+//! Every number is stored in SI (m, kg, s, N, Pa, K, rad; [`units`]), whatever the model is
+//! shown in: the display system (`display_units`, or the user's when the model sets none) is
+//! applied at the boundaries (commands, forms, replies, files of other formats), never here.
 //!
 //! Every mutation validates its input, because labels, names and numbers come from files, scripts
 //! and the control channel: a bad value is an [`Error`], never a panic. Definitions that refer to
@@ -35,6 +35,7 @@ pub mod bcs;
 pub mod check;
 pub mod constraints;
 pub mod contact;
+mod convert;
 pub mod datums;
 pub mod discrete;
 pub mod fluid_zones;
@@ -91,7 +92,7 @@ pub use steps::{
     Procedure, RigidWall, Steady, Step, StepInputs, StressRate, Tolerances, Transient,
 };
 pub use tie::Tie;
-pub use units::UnitSystem;
+pub use units::DisplaySystem;
 pub use virtual_faces::{Defeature, FaceMerge, FaceSplit, Stitch};
 
 /// The largest node or element label. Nastran's GRID and element ids stop at 99 999 999 (eight
@@ -102,7 +103,7 @@ pub const MAX_LABEL: u32 = 99_999_999;
 pub const MAX_NODES: usize = 50_000_000;
 pub const MAX_ELEMENTS: usize = 50_000_000;
 
-/// Coordinates beyond this magnitude are rejected (1e9 model units).
+/// Coordinates beyond this magnitude are rejected (metres).
 pub const MAX_COORD: f64 = 1e9;
 
 /// Most definitions of one kind (sets, materials, sections, …) a model holds.
@@ -144,7 +145,10 @@ pub struct Model {
     elements: BTreeMap<u32, Element>,
     #[serde(skip_serializing_if = "Classification::is_unused")]
     classification: Classification,
-    units: UnitSystem,
+    /// The unit system the model is shown and typed in, when it sets its own (a model of format
+    /// 2 or older shows the system it declared); `None` follows the user's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    display_units: Option<DisplaySystem>,
     sets: BTreeMap<String, Set>,
     materials: BTreeMap<String, Material>,
     sections: BTreeMap<String, Section>,
@@ -212,7 +216,7 @@ struct ModelData {
     #[serde(default)]
     classification: geometry::ClassificationData,
     #[serde(default)]
-    units: UnitSystem,
+    display_units: Option<DisplaySystem>,
     #[serde(default)]
     sets: BTreeMap<String, Set>,
     #[serde(default)]
@@ -269,7 +273,7 @@ impl TryFrom<ModelData> for Model {
     type Error = Error;
 
     fn try_from(d: ModelData) -> Result<Model> {
-        let mut m = Model { units: d.units, ..Model::default() };
+        let mut m = Model { display_units: d.display_units, ..Model::default() };
         for (label, node) in d.nodes {
             m.set_node(label, node.xyz)?;
         }
@@ -464,23 +468,24 @@ fn require<T>(map: &BTreeMap<String, T>, what: &str, name: &str) -> Result<()> {
 }
 
 impl Model {
-    pub fn units(&self) -> UnitSystem {
-        self.units
+    /// The unit system the model is shown in when it sets its own; `None` follows the user's.
+    pub fn display_units(&self) -> Option<&DisplaySystem> {
+        self.display_units.as_ref()
     }
 
-    /// Label the unit system the model's numbers are in (nothing is converted).
-    pub fn set_units(&mut self, units: UnitSystem) {
-        self.units = units;
+    /// Show the model in `units` (`None`: the user's system). Stored values do not change.
+    pub fn set_display_units(&mut self, units: Option<DisplaySystem>) {
+        self.display_units = units;
     }
 
-    /// A copy with the unit system and every definition but no mesh: no nodes, elements or
+    /// A copy with the display system and every definition but no mesh: no nodes, elements or
     /// geometry tags. A `.fieldcraft` file stores this part as text and the mesh in binary.
     pub fn without_mesh(&self) -> Model {
         Model {
             nodes: BTreeMap::new(),
             elements: BTreeMap::new(),
             classification: Classification::default(),
-            units: self.units,
+            display_units: self.display_units.clone(),
             sets: self.sets.clone(),
             materials: self.materials.clone(),
             sections: self.sections.clone(),

@@ -70,7 +70,7 @@ pub struct Frame {
     /// integral of the rate of deformation, rotated with the material).
     pub strain: Vec<[f64; 6]>,
     /// Per element, with stress output in a model with plasticity: equivalent plastic strain,
-    /// damage and temperature.
+    /// damage and temperature (NaN for an element whose material has no temperature).
     pub plastic_strain: Vec<f64>,
     pub damage: Vec<f64>,
     pub temperature: Vec<f64>,

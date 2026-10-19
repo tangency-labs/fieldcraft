@@ -1,5 +1,6 @@
 $ Nastran bulk data written by FieldCraft
 $ units: mm-t-s-N-MPa
+$ in one consistent unit system: millimetre, tonne, second, newton, megapascal, degree Celsius; masses are masses (WTMASS 1.0)
 SOL 101
 CEND
 TITLE = FieldCraft model
@@ -15,6 +16,7 @@ SUBCASE 1
 BEGIN BULK
 PARAM       POST      -1
 PARAM    AUTOSPC     YES
+PARAM*            WTMASS              1.
 $ nodes
 GRID*                  1                              0.              0.
 *                     0.

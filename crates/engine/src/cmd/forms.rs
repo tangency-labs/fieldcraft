@@ -77,7 +77,7 @@ const ELASTIC: Field = variants(
             "Isotropic",
             &[
                 num("young", "Young's modulus", D::Stress)
-                    .help("Stiffness in tension: stress over elastic strain. Steel ≈ 210 GPa (210000 MPa), aluminium ≈ 70 GPa, rubber a few MPa.")
+                    .help("Stiffness in tension: stress over elastic strain. Steel ≈ 210 GPa, aluminium ≈ 70 GPa, rubber a few MPa.")
                     .req(),
                 range("poisson", "Poisson's ratio", D::None, -1.0, 0.5)
                     .help("Lateral contraction over axial stretch, between -1 and 0.5. Metals ≈ 0.3, rubber close to 0.5.")
@@ -134,10 +134,10 @@ const PLASTIC: Field = variants(
                 num("n", "n", D::None).help("Johnson–Cook hardening exponent, typically 0.1–0.6.").req(),
                 num("c", "C", D::None).help("Johnson–Cook strain-rate coefficient, typically 0.01–0.03; 0 ignores the strain rate.").def("0"),
                 num("m", "m", D::None).help("Johnson–Cook thermal softening exponent, typically about 1.").def("1"),
-                positive("reference_strain_rate", "Reference strain rate", D::None).help("The plastic strain rate at which A, B and n were measured, per time unit (often 1/s).").def("1").hint("per time unit"),
+                positive("reference_strain_rate", "Reference strain rate", D::StrainRate).help("The plastic strain rate at which A, B and n were measured, per time unit (often 1/s).").hint("1/s"),
                 num("room_temperature", "Room temperature", D::Temperature).help("The temperature at which A, B and n hold; no thermal softening below it.").req(),
                 num("melt_temperature", "Melt temperature", D::Temperature).help("The temperature at which strength drops to zero. Steel ≈ 1800 K, aluminium ≈ 900 K.").req(),
-                positive("specific_heat", "Specific heat", D::SpecificHeat).help("Heat that raises a unit mass by one degree, for heating by plastic work. Steel ≈ 4.6e8 mm²/(s²·K) in mm-t-s.").hint("isothermal when empty"),
+                positive("specific_heat", "Specific heat", D::SpecificHeat).help("Heat that raises a unit mass by one degree, for heating by plastic work. Steel ≈ 460 J/(kg·K).").hint("isothermal when empty"),
                 range("taylor_quinney", "Taylor–Quinney", D::None, 0.0, 1.0).help("Fraction of plastic work turned into heat, 0 to 1; usually 0.9.").def("0.9"),
             ],
         ),
@@ -200,12 +200,13 @@ const THERMAL: Field = group(
     "Thermal",
     &[
         per_axis("conductivity", "Conductivity", D::Conductivity, Some(0.0), AXES_123)
-            .help("Thermal conductivity, one value or one per material axis. Steel ≈ 50 W/(m·K), i.e. 50 in mm-t-s-N."),
-        positive("specific_heat", "Specific heat", D::SpecificHeat)
-            .help("Heat that raises a unit mass by one degree. Steel ≈ 460 J/(kg·K), 4.6e8 in mm-t-s."),
+            .help("Thermal conductivity, one value or one per material axis. Steel ≈ 50 W/(m·K)."),
+        positive("specific_heat", "Specific heat", D::SpecificHeat).help("Heat that raises a unit mass by one degree. Steel ≈ 460 J/(kg·K)."),
         per_axis("expansion", "Expansion", D::Expansion, None, AXES_123)
             .help("Thermal expansion coefficient, one value or one per material axis. Steel ≈ 1.2e-5, aluminium ≈ 2.3e-5."),
-        num("reference_temperature", "Reference temperature", D::Temperature).help("The temperature at which there is no thermal strain.").def("0"),
+        num("reference_temperature", "Reference temperature", D::Temperature)
+            .help("The temperature at which there is no thermal strain.")
+            .hint("0 °C"),
     ],
 )
 .help("Heat conduction, specific heat and thermal expansion, for heat-transfer and thermal-stress steps.");
@@ -214,7 +215,7 @@ pub const MATERIAL: &[Field] = &[
     NAME,
     ELASTIC,
     positive("density", "Density", D::Density)
-        .help("Mass per volume; needed for dynamics, frequencies and gravity. Steel ≈ 7.85e-9 t/mm³ (7850 kg/m³), aluminium ≈ 2.7e-9 t/mm³."),
+        .help("Mass per volume; needed for dynamics, frequencies and gravity. Steel ≈ 7850 kg/m³, aluminium ≈ 2700 kg/m³."),
     PLASTIC,
     HYPERELASTIC,
     DAMAGE,
@@ -330,7 +331,9 @@ pub const SECTION: &[Field] = &[
             variant(
                 "plane_strain",
                 "Plane strain",
-                &[positive("thickness", "Thickness", D::Length).help("Out-of-plane thickness of the plane-strain slice.").def("1")],
+                &[positive("thickness", "Thickness", D::Length)
+                    .help("Out-of-plane thickness of the plane-strain slice; results are per this length.")
+                    .hint("1 mm")],
             ),
             variant("axisymmetric", "Axisymmetric", &[]),
         ],
@@ -414,7 +417,9 @@ pub const SPRING: &[Field] = &[
                     SPRING_FIRST,
                     SPRING_SECOND,
                     SPRING_DIRECTION,
-                    positive("stiffness", "Stiffness", D::Stiffness).help("Force per unit stretch. For a 10 N/mm spring enter 10 in mm-t-s-N.").req(),
+                    positive("stiffness", "Stiffness", D::SpringStiffness)
+                        .help("Force per unit stretch (moment per radian for a rotational spring).")
+                        .req(),
                 ],
             ),
             variant(
@@ -424,7 +429,7 @@ pub const SPRING: &[Field] = &[
                     SPRING_FIRST,
                     SPRING_SECOND,
                     SPRING_DIRECTION,
-                    positive("coefficient", "Coefficient", D::Damping).help("Damping force per unit velocity.").req(),
+                    positive("coefficient", "Coefficient", D::SpringDamping).help("Damping force per unit velocity.").req(),
                 ],
             ),
         ],
@@ -449,7 +454,7 @@ pub const BOUNDARY_CONDITION: &[Field] = &[
                 "Displacement",
                 &[
                     TARGET,
-                    free_vector("values", "Values", D::Length, &["u1", "u2", "u3", "ur1", "ur2", "ur3"])
+                    free_vector("values", "Values", D::Motion, &["u1", "u2", "u3", "ur1", "ur2", "ur3"])
                         .help("Displacements u1–u3 along X, Y, Z and rotations ur1–ur3; empty entries stay free.")
                         .req()
                         .def("[0, 0, 0, null, null, null]")
@@ -517,7 +522,7 @@ pub const LOAD: &[Field] = &[
                 "Gravity",
                 &[
                     xyz("acceleration", "Acceleration", D::Acceleration)
-                        .help("Gravity or other acceleration. Earth gravity downward is [0, 0, -9810] mm/s² in mm-t-s.")
+                        .help("Gravity or other acceleration. Earth gravity downward is 9.81 m/s² along −Z.")
                         .req(),
                     reference("set", "Region", C::Set).help("Where gravity acts; the whole model when empty.").hint("the whole model"),
                 ],
@@ -558,7 +563,7 @@ pub const LOAD: &[Field] = &[
             variant(
                 "heat_source",
                 "Heat source",
-                &[LOAD_SET, num("power", "Power per volume", D::None).help("Heat generated per unit volume.").req()],
+                &[LOAD_SET, num("power", "Power per volume", D::HeatGeneration).help("Heat generated per unit volume.").req()],
             ),
             variant("temperature", "Temperature", &[TARGET, num("value", "Temperature", D::Temperature).help("The prescribed temperature.").req()]),
         ],
@@ -628,7 +633,7 @@ const FLUID_THERMAL: Field = group(
     &[
         num("initial_temperature", "Initial temperature", D::Temperature)
             .help("The temperature everywhere at the start, and the reference of the buoyancy.")
-            .def("0"),
+            .hint("0 °C"),
         xyz("gravity", "Gravity", D::Acceleration).help("Gravity for the buoyancy; zero for none. Needs the expansion coefficient."),
         positive("expansion", "Expansion β", D::Expansion).help("Volumetric thermal expansion coefficient of the fluid, for the buoyancy."),
         group(
@@ -669,7 +674,7 @@ const RESISTANCE: &[Variant] = &[
         "Darcy–Forchheimer",
         &[
             positive("permeability", "Permeability K", D::Area).help("The viscous resistance: a force per volume of μ/K times the velocity.").req(),
-            num("inertial", "Inertial C₂", D::None)
+            num("inertial", "Inertial C₂", D::InverseLength)
                 .help(
                     "The inertial resistance per length: a force per volume of ρ C₂/2 times the velocity squared. Zero for a purely viscous medium.",
                 )
@@ -707,8 +712,8 @@ const FAN: &[Field] = &[
     choice("direction", "Direction", &[("\"+x\"", "+X"), ("\"-x\"", "−X"), ("\"+y\"", "+Y"), ("\"-y\"", "−Y"), ("\"+z\"", "+Z"), ("\"-z\"", "−Z")])
         .help("The direction the fan blows.")
         .req(),
-    table("curve", "Fan curve", D::None, &["flow", "pressure rise"], fieldcraft_model::fluid_zones::MAX_CURVE_POINTS)
-        .help("The pressure–flow curve: volume flow (volume per time) increasing from 0, pressure rise not increasing, in the model's units.")
+    table("curve", "Fan curve", D::FanCurve, &["flow", "pressure rise"], fieldcraft_model::fluid_zones::MAX_CURVE_POINTS)
+        .help("The pressure–flow curve: volume flow (volume per time) increasing from 0, pressure rise not increasing.")
         .req(),
     range("relaxation", "Relaxation", D::None, 1e-6, 1.0)
         .help("How far the pressure rise moves toward the curve each time step; smaller is steadier.")
@@ -839,7 +844,7 @@ const PROCEDURE: Field = variants(
                             &[
                                 int("node", "Node", 1, u32::MAX as i64).help("The label of the node watched.").req(),
                                 int("direction", "Direction", 1, 3).help("1, 2, 3: its translation along X, Y, Z.").req().def("3"),
-                                num("displacement", "Displacement", D::Length)
+                                num("displacement", "Displacement", D::DofDisplacement)
                                     .help("The step stops when that translation reaches this size (its sign is ignored).")
                                     .req(),
                             ],
@@ -944,7 +949,7 @@ const PROCEDURE: Field = variants(
                     positive("end_time", "End time", D::Time).help("Duration of the transient.").req(),
                     positive("increment", "Increment", D::Time).help("Time step of the transient.").req(),
                     range("theta", "θ", D::None, 0.0, 1.0).help("Time integration: 0.5 Crank–Nicolson, 1 backward Euler (default, most stable)."),
-                    num("initial_temperature", "Initial temperature", D::Temperature).help("Temperature at the start of the transient."),
+                    num("initial_temperature", "Initial temperature", D::Temperature).help("Temperature at the start of the transient.").hint("0 °C"),
                 ],
             )
             .help("Solve over time instead of for the steady state.")
@@ -1063,20 +1068,27 @@ pub const RENAME: &[Field] = &[
     text("to", "New name").help("Every definition that refers to it is changed to the new name.").req(),
 ];
 
-pub const UNITS: &[Field] = &[choice(
-    "system",
-    "Unit system",
-    &[
-        ("mm-t-s-N-MPa", "mm, t, s, N, MPa"),
-        ("m-kg-s-N-Pa", "m, kg, s, N, Pa"),
-        ("mm-kg-ms-kN-GPa", "mm, kg, ms, kN, GPa"),
-        ("mm-g-ms-N-MPa", "mm, g, ms, N, MPa"),
-        ("in-lbf-s-psi", "in, lbf·s²/in, s, lbf, psi"),
-        ("unspecified", "Unspecified"),
-    ],
-).help("The units the model's numbers are in. FieldCraft never converts: enter every value in this system. Designs from SolidCraft are in mm, so mm-t-s-N-MPa fits them.")
-.req()
-.def("\"mm-t-s-N-MPa\"")];
+pub const UNITS: &[Field] = &[
+    choice(
+        "system",
+        "Unit system",
+        &[
+            ("mm-t-s-N-MPa", "mm, t, s, N, MPa, °C"),
+            ("m-kg-s-N-Pa", "m, kg, s, N, Pa, K"),
+            ("mm-kg-ms-kN-GPa", "mm, kg, ms, kN, GPa, °C"),
+            ("mm-g-ms-N-MPa", "mm, g, ms, N, MPa, °C"),
+            ("in-lbf-s-psi", "in, lbf·s²/in, s, lbf, psi, °F"),
+            ("default", "My setting"),
+        ],
+    )
+    .help("The units this model is shown and typed in. Every value is stored in SI, so changing them never changes the model: the numbers shown follow.")
+    .req()
+    .def("\"mm-t-s-N-MPa\""),
+    choice("temperature", "Temperature", &[("°C", "°C"), ("K", "K"), ("°F", "°F")])
+        .help("The temperature scale, when not the system's. Temperature differences and the per-degree units (expansion, conductivity, specific heat, film coefficient) follow it unless overridden too: with °F, ΔT is in °F and expansion per °F.")
+        .hint("the system's"),
+    json("overrides", "Overrides").help("Units for single quantities, by name: {\"energy\": \"J\", \"angle\": \"deg\"}.").hint("none"),
+];
 
 // ---- Contact ----
 
@@ -1090,7 +1102,9 @@ const FRICTION: Field = group(
         positive("kinetic", "Kinetic μ", D::None)
             .help("Friction coefficient while sliding, usually a little lower than the static.")
             .hint("the static μ"),
-        positive("decay", "Decay", D::None).help("How fast friction falls from static to kinetic with slip rate.").hint("0; per slip rate"),
+        positive("decay", "Decay", D::InverseVelocity)
+            .help("How fast friction falls from static to kinetic with slip rate.")
+            .hint("0; per slip rate"),
     ],
 )
 .help("Coulomb friction between the surfaces; frictionless when off.")
@@ -2071,6 +2085,19 @@ pub const DECK: &[Field] = &[
         .def("\"abaqus\""),
     path("path", "File", true).help("Where to write the deck.").req(),
     references("steps", "Steps", C::Step).help("The steps to write; all when empty.").hint("all"),
+    choice(
+        "units",
+        "Units",
+        &[
+            ("mm-t-s-N-MPa", "mm, t, s, N, MPa"),
+            ("m-kg-s-N-Pa", "m, kg, s, N, Pa"),
+            ("mm-kg-ms-kN-GPa", "mm, kg, ms, kN, GPa"),
+            ("mm-g-ms-N-MPa", "mm, g, ms, N, MPa"),
+            ("in-lbf-s-psi", "in, lbf·s²/in, s, lbf, psi"),
+        ],
+    )
+    .help("The consistent unit system the deck is written in, stated in its header.")
+    .hint("the display system's"),
 ];
 
 pub const EXPORT_STL: &[Field] = &[
@@ -2102,7 +2129,7 @@ pub const SOLVE_FREQUENCY: &[Field] = &[
     choice("mass", "Mass matrix", &[("consistent", "Consistent"), ("lumped", "Lumped")])
         .help("Consistent is more accurate; lumped is cheaper.")
         .def("\"consistent\""),
-    num("shift", "Shift", D::None).help("Look for frequencies near this eigenvalue; 0 finds the lowest.").hint("0"),
+    num("shift", "Shift", D::Eigenvalue).help("Look for frequencies near this eigenvalue (ω²); 0 finds the lowest.").hint("0"),
     MAX_DOFS,
     MAX_FACTOR,
     int("max_iterations", "Max Lanczos vectors", 1, 3000).help("Cap on the Lanczos vectors.").hint("3000"),
@@ -2207,7 +2234,7 @@ pub const ANIMATE: &[Field] = &[flag("on", "Animate").help("Play the deformation
 pub const FRAME: &[Field] = &[
     SOLVED,
     int("frame", "Frame", 0, 1_000_000_000).help("The frame shown."),
-    positive("time", "Time", D::Time).help("Show the frame nearest this time; the last when empty.").hint("the last frame"),
+    positive("time", "Time", D::None).help("Show the frame nearest this time (a nonlinear static step: its load factor); the last when empty. A time is in the display system's unit.").hint("the last frame"),
 ];
 const FLUID_FRAME: Field = int("frame", "Frame", 0, 1_000_000_000).help("The frame shown, from 0.").hint("the frame shown");
 pub const SLICE: &[Field] = &[
@@ -2299,7 +2326,8 @@ pub const REACTIONS: &[Field] = &[
 
 #[cfg(test)]
 mod tests {
-    use fieldcraft_model::UnitSystem;
+    use fieldcraft_model::DisplaySystem;
+    use fieldcraft_model::units::Preset;
     use serde_json::{Value, json};
 
     use super::*;
@@ -2453,9 +2481,10 @@ mod tests {
                     missing.push(format!("{id}: {} ({}) has no help", f.label, f.key));
                 }
                 if f.dim().is_some_and(|d| d != D::None) {
-                    for system in [UnitSystem::Unspecified, UnitSystem::MmTonneS, UnitSystem::MKgS] {
-                        if f.unit_label(system).is_none_or(|u| u.is_empty()) {
-                            missing.push(format!("{id}: {} shows no unit in {system:?}", f.label));
+                    for preset in Preset::ALL {
+                        // Angles are radians: a unit of their own, not a ratio's.
+                        if f.unit_label(&DisplaySystem::new(preset)).is_none_or(|u| u.is_empty()) {
+                            missing.push(format!("{id}: {} shows no unit in {preset:?}", f.label));
                         }
                     }
                 }
@@ -2476,9 +2505,9 @@ mod tests {
         }
         assert!(missing.is_empty(), "{missing:#?}");
         let stress = positive("s", "S", D::Stress);
-        assert_eq!(stress.unit_label(UnitSystem::Unspecified).as_deref(), Some("[stress]"));
-        assert_eq!(stress.unit_label(UnitSystem::MmTonneS).as_deref(), Some("MPa"));
-        assert!(stress.help_text(UnitSystem::Unspecified).contains(UNITS_HINT));
+        assert_eq!(stress.unit_label(&DisplaySystem::new(Preset::MKgS)).as_deref(), Some("Pa"));
+        assert_eq!(stress.unit_label(&DisplaySystem::default()).as_deref(), Some("MPa"));
+        assert!(stress.help_text(&DisplaySystem::default()).contains("Unit: MPa."));
     }
 
     /// Every default is JSON; every variant field's default names a variant.

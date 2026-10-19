@@ -1,10 +1,13 @@
 //! Trusses (rod3), point masses, rotary inertia, springs and dashpots in every deck format:
 //! what each writes, and what each reports as unsupported.
 
-use fieldcraft_decks::{Error, abaqus, lsdyna, nastran};
+mod common;
+
+use common::{abaqus, lsdyna, nastran};
+use fieldcraft_decks::Error;
 use fieldcraft_model::{
     BoundaryCondition, Direction, Elastic, ElementKind, Formulation, Mass, Material, Model, PointMass, Procedure, ReferencePoint, Section,
-    SectionKind, Set, Spring, Step, Target, UnitSystem,
+    SectionKind, Set, Spring, Step, Target,
 };
 
 /// A rod2 (or rod3) bar from node 1 to node 2 and a rod2 on to node 4, a reference point beyond
@@ -12,7 +15,6 @@ use fieldcraft_model::{
 /// the tip, a spring along the line from the tip to the hub, a dashpot to the ground.
 fn model(rod3: bool) -> Model {
     let mut m = Model::default();
-    m.set_units(UnitSystem::MmTonneS);
     for (l, x) in [(1, 0.0), (2, 1000.0), (3, 500.0), (4, 2000.0)] {
         m.set_node(l, [x, 0.0, 0.0]).unwrap();
     }

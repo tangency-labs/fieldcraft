@@ -329,7 +329,8 @@ mod tests {
                 })
             })
         };
-        s.model.nodes().values().filter(|n| on(n.xyz)).count()
+        // In millimetres, as the design is.
+        s.model.nodes().values().filter(|n| on(crate::units::to_geometry_point(n.xyz))).count()
     }
 
     /// The sample plate made square (30 × 30 × 10, the Ø10 hole in the middle): no layout of the
@@ -434,8 +435,10 @@ mod tests {
         let tris = merged(&s);
         assert!(!tris.is_empty());
         // The hole: Ø10 about (15, 15).
+        // The scene is in metres.
+        let mm = crate::units::to_geometry_length;
         for t in &tris {
-            assert!(t.p.iter().all(|v| ((v.x - 15.0).hypot(v.y - 15.0) - 5.0).abs() < 1e-3), "{t:?}");
+            assert!(t.p.iter().all(|v| ((mm(v.x) - 15.0).hypot(mm(v.y) - 15.0) - 5.0).abs() < 1e-3), "{t:?}");
         }
         std::fs::remove_dir_all(dir).ok();
     }
@@ -565,7 +568,8 @@ mod tests {
 
     /// Mesh nodes on the top along x = `x`.
     fn nodes_along(s: &Session, x: f64) -> usize {
-        s.model.nodes().values().filter(|n| (n.xyz[0] - x).abs() < 1e-6 && (n.xyz[2] - 10.0).abs() < 1e-6).count()
+        let mm = crate::units::to_geometry_point;
+        s.model.nodes().values().filter(|n| (mm(n.xyz)[0] - x).abs() < 1e-6 && (mm(n.xyz)[2] - 10.0).abs() < 1e-6).count()
     }
 
     /// Splitting the top along a datum plane gives two faces the tet mesher tags, with a row of

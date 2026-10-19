@@ -54,15 +54,19 @@ const TABLE: &[Row] = {
         (Q::Frequency, ["Hz", "Hz", "kHz", "kHz", "Hz"]),
         (Q::AngularVelocity, ["rad/s", "rad/s", "rad/ms", "rad/ms", "rad/s"]),
         (Q::StrainRate, ["1/s", "1/s", "1/ms", "1/ms", "1/s"]),
+        (Q::Eigenvalue, ["1/s²", "1/s²", "1/ms²", "1/ms²", "1/s²"]),
         (Q::Velocity, ["m/s", "mm/s", "mm/ms", "mm/ms", "in/s"]),
         (Q::InverseVelocity, ["s/m", "s/mm", "ms/mm", "ms/mm", "s/in"]),
         (Q::Acceleration, ["m/s²", "mm/s²", "mm/ms²", "mm/ms²", "in/s²"]),
         (Q::VolumeFlow, ["m³/s", "mm³/s", "mm³/ms", "mm³/ms", "in³/s"]),
+        (Q::MassFlow, ["kg/s", "t/s", "kg/ms", "g/ms", "lbf·s/in"]),
+        (Q::Momentum, ["N·s", "N·s", "kN·ms", "N·ms", "lbf·s"]),
         (Q::Force, ["N", "N", "kN", "N", "lbf"]),
         (Q::Moment, ["N·m", "N·mm", "kN·mm", "N·mm", "lbf·in"]),
         (Q::Pressure, ["Pa", "MPa", "GPa", "MPa", "psi"]),
         (Q::ForcePerVolume, ["N/m³", "N/mm³", "kN/mm³", "N/mm³", "lbf/in³"]),
         (Q::Stiffness, ["N/m", "N/mm", "kN/mm", "N/mm", "lbf/in"]),
+        (Q::ForcePerLength, ["N/m", "N/mm", "kN/mm", "N/mm", "lbf/in"]),
         (Q::RotationalStiffness, ["N·m/rad", "N·mm/rad", "kN·mm/rad", "N·mm/rad", "lbf·in/rad"]),
         (Q::Damping, ["N·s/m", "N·s/mm", "kN·ms/mm", "N·ms/mm", "lbf·s/in"]),
         (Q::RotationalDamping, ["N·m·s/rad", "N·mm·s/rad", "kN·mm·ms/rad", "N·mm·ms/rad", "lbf·in·s/rad"]),
@@ -136,6 +140,26 @@ impl Default for DisplaySystem {
     }
 }
 
+/// The quantities whose unit holds the temperature's step: they follow a temperature override.
+const PER_DEGREE: [Quantity; 5] = [
+    Quantity::TemperatureDifference,
+    Quantity::ThermalExpansion,
+    Quantity::ThermalConductivity,
+    Quantity::SpecificHeat,
+    Quantity::HeatTransferCoefficient,
+];
+
+/// The degree of a temperature unit as the per-degree units write it: `K`, `°C` or `°F`
+/// (`None` for another scale).
+fn degree_symbol(u: &Unit) -> Option<&'static str> {
+    let t = Quantity::Temperature;
+    let (zero, step) = (t.to_si(0.0, u).ok()?, t.to_si(1.0, u).ok()? - t.to_si(0.0, u).ok()?);
+    [("K", 0.0, 1.0), ("°C", 273.15, 1.0), ("°F", 255.3722222222222, 5.0 / 9.0)]
+        .into_iter()
+        .find(|(_, z, s)| (zero - z).abs() < 1e-9 && (step - s).abs() < 1e-12)
+        .map(|(d, ..)| d)
+}
+
 impl DisplaySystem {
     pub fn new(preset: Preset) -> DisplaySystem {
         let mut d = DisplaySystem { preset, overrides: Vec::new(), units: Vec::new() };
@@ -149,12 +173,26 @@ impl DisplaySystem {
     }
 
     fn build(&mut self) {
+        // A temperature shown in another scale carries to the temperature difference and the
+        // per-degree quantities, unless they have overrides of their own: with mm-t-s and °F,
+        // ΔT is in °F and an expansion coefficient per °F.
+        let degree = self.overrides.iter().find(|(o, _)| *o == Quantity::Temperature).and_then(|(_, u)| degree_symbol(u));
+        let step = self.preset.symbol(Quantity::TemperatureDifference);
         self.units = Quantity::ALL
             .iter()
             .map(|&q| match self.overrides.iter().find(|(o, _)| *o == q) {
                 Some((_, u)) => u.clone(),
-                // Every table entry parses (`every_preset_unit_has_its_quantitys_dimension`).
-                None => Unit::parse(self.preset.symbol(q)).or_else(|_| Unit::parse(q.si_symbol())).unwrap_or_else(|_| Unit::one()),
+                None => {
+                    let symbol = match degree {
+                        Some(d) if PER_DEGREE.contains(&q) && d != step => self.preset.symbol(q).replace(step, d),
+                        _ => self.preset.symbol(q).to_string(),
+                    };
+                    // Every table entry parses (`every_preset_unit_has_its_quantitys_dimension`).
+                    Unit::parse(&symbol)
+                        .or_else(|_| Unit::parse(self.preset.symbol(q)))
+                        .or_else(|_| Unit::parse(q.si_symbol()))
+                        .unwrap_or_else(|_| Unit::one())
+                }
             })
             .collect();
     }

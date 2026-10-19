@@ -3,16 +3,17 @@
 //! A `.fieldcraft` file ([`write`], [`read`]; docs/formats/fieldcraft.md) is a ZIP package of four
 //! parts, stored uncompressed so each can be read with any unzip tool:
 //!
-//! - `fieldcraft.json`: the manifest. The format tag (`fieldcraft/2`), the program that wrote
+//! - `fieldcraft.json`: the manifest. The format tag (`fieldcraft/3`), the program that wrote
 //!   it, the geometry the model is built on (the SolidCraft design and the imported 3MF meshes,
 //!   each a path and the SHA-256 of its content, opened again when the model is), the view state
 //!   ([`View`]: what the viewport hides), and the size and SHA-256 of every other part.
-//! - `model.json`: the model definition (unit system, sets, materials, sections, reference
+//! - `model.json`: the model definition (display system, sets, materials, sections, reference
 //!   points, couplings, boundary conditions, loads, steps) as pretty-printed JSON with a stable
-//!   key order, so two versions of a model diff line by line.
-//! - `mesh.bin`: nodes, elements and geometry tags in a compact little-endian binary form
-//!   ([`mesh`]).
-//! - `journal.json`: the commands that built the model, one per line: a script that replays.
+//!   key order, so two versions of a model diff line by line. Every number is SI.
+//! - `mesh.bin`: nodes (in metres), elements and geometry tags in a compact little-endian binary
+//!   form ([`mesh`]).
+//! - `journal.json`: the commands that built the model, one per line, as typed: a script that
+//!   replays, headed by the unit system its bare numbers are in ([`JournalHeader`]).
 //!
 //! Files of every earlier format are read: their parts are brought to the current format by the
 //! migration chain ([`migrate`]) before they are deserialised; a file of a later format is refused
@@ -38,17 +39,17 @@ pub mod vtk;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Read, Write};
 
-use fieldcraft_model::Model;
+use fieldcraft_model::{DisplaySystem, Model};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 /// The format version of the files this version writes, and the latest it reads (it reads every
 /// earlier one through [`migrate`]).
-pub const FORMAT_VERSION: u32 = 2;
+pub const FORMAT_VERSION: u32 = 3;
 
 /// The format tag of the files this version writes: `fieldcraft/<FORMAT_VERSION>`.
-pub const FORMAT: &str = "fieldcraft/2";
+pub const FORMAT: &str = "fieldcraft/3";
 
 /// The file name extension.
 pub const EXTENSION: &str = "fieldcraft";
@@ -259,13 +260,28 @@ impl View {
 /// One journal entry: a command id and its parameters.
 pub type JournalEntry = (String, Value);
 
+/// What a journal's numbers mean: the unit system its bare numbers were typed in, and, for a
+/// journal of a model that predates SI storage (format 2 or older), the system the model was
+/// shown in before its first command. Replaying the journal reads every bare number in `units`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JournalHeader {
+    pub units: DisplaySystem,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_units: Option<DisplaySystem>,
+}
+
 /// What a `.fieldcraft` file holds.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ModelFile {
     pub model: Model,
     pub geometry: Geometry,
     pub journal: Vec<JournalEntry>,
+    pub journal_header: JournalHeader,
     pub view: View,
+    /// What migrating an older file changed in what it means (empty for a current file, and
+    /// never written): the reader's note to the user.
+    pub notes: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -287,6 +303,27 @@ struct Part {
     sha256: String,
 }
 
+/// `journal.json`: the header and the commands.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JournalFile {
+    units: DisplaySystem,
+    #[serde(default)]
+    model_units: Option<DisplaySystem>,
+    commands: Vec<JournalLine>,
+}
+
+/// A format 3 `journal.json`: a header naming its units, then the commands. A bare list of
+/// commands (format 2 and older) is refused saying what is missing.
+fn journal_file(bytes: &[u8]) -> Result<JournalFile> {
+    if bytes.iter().find(|b| !b.is_ascii_whitespace()) == Some(&b'[') {
+        return invalid(format!(
+            "`{JOURNAL}` of format {FORMAT_VERSION} is an object naming the units its numbers were typed in, {{\"units\": …, \"commands\": […]}}; this one is a bare list of commands, as format 2 and older wrote it"
+        ));
+    }
+    serde_json::from_slice(bytes).map_err(|e| json_error(JOURNAL, e))
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct JournalLine {
@@ -306,20 +343,25 @@ fn json_error(part: &str, e: serde_json::Error) -> Error {
     Error::Invalid(format!("{part}: {e}"))
 }
 
-/// The journal as text: one entry per line, so a diff shows the commands added.
-fn journal_text(journal: &[JournalEntry]) -> Result<Vec<u8>> {
-    let mut out = b"[".to_vec();
+/// The journal as text: the header, then one entry per line, so a diff shows the commands added.
+fn journal_text(header: &JournalHeader, journal: &[JournalEntry]) -> Result<Vec<u8>> {
+    let mut out = b"{".to_vec();
+    let head = serde_json::to_vec(header).map_err(|e| json_error(JOURNAL, e))?;
+    // The header's fields, then `commands`, in one object.
+    out.extend_from_slice(head.get(1..head.len().saturating_sub(1)).unwrap_or_default());
+    out.extend_from_slice(b", \"commands\": [");
     for (i, (command, params)) in journal.iter().enumerate() {
         out.extend_from_slice(if i == 0 { b"\n  " } else { b",\n  " });
         serde_json::to_writer(&mut out, &JournalLineRef { command, params }).map_err(|e| json_error(JOURNAL, e))?;
     }
-    out.extend_from_slice(if journal.is_empty() { b"]\n" } else { b"\n]\n" });
+    out.extend_from_slice(if journal.is_empty() { b"]}\n" } else { b"\n]}\n" });
     Ok(out)
 }
 
 /// The bytes of a `.fieldcraft` file holding `model`, built on `geometry` by the commands in
-/// `journal`, shown with `view`. The same arguments always give the same bytes.
-pub fn write(model: &Model, geometry: &Geometry, journal: &[JournalEntry], view: &View) -> Result<Vec<u8>> {
+/// `journal` (whose numbers `header` describes), shown with `view`. The same arguments always
+/// give the same bytes.
+pub fn write(model: &Model, geometry: &Geometry, journal: &[JournalEntry], header: &JournalHeader, view: &View) -> Result<Vec<u8>> {
     if geometry.meshes.len() > MAX_MESH_SOURCES {
         return Err(Error::Limit(format!("a model refers to at most {MAX_MESH_SOURCES} imported meshes")));
     }
@@ -327,7 +369,7 @@ pub fn write(model: &Model, geometry: &Geometry, journal: &[JournalEntry], view:
     let mut model_json = serde_json::to_vec_pretty(&model.without_mesh()).map_err(|e| json_error(MODEL, e))?;
     model_json.push(b'\n');
     let mesh = mesh::encode(model)?;
-    let journal = journal_text(journal)?;
+    let journal = journal_text(header, journal)?;
     let parts = [(MODEL, model_json), (MESH, mesh), (JOURNAL, journal)];
     let manifest = Manifest {
         format: FORMAT.into(),
@@ -424,12 +466,13 @@ pub fn read_versioned(bytes: &[u8]) -> Result<(ModelFile, u32)> {
     let journal_json = part(JOURNAL, MAX_TEXT_PART_BYTES)?;
     // A current file is deserialised straight from its bytes (a duplicate key is an error there,
     // and no copy of the parts is made); an older one goes through plain JSON for the steps.
-    let (manifest, mut model, journal, mesh_bin): (Manifest, Model, Vec<JournalLine>, Vec<u8>) = if format == FORMAT_VERSION {
+    let mut notes = Vec::new();
+    let (manifest, mut model, journal, mesh_bin): (Manifest, Model, JournalFile, Vec<u8>) = if format == FORMAT_VERSION {
         drop(manifest);
         (
             serde_json::from_slice(&manifest_bytes).map_err(|e| json_error(MANIFEST, e))?,
             serde_json::from_slice(&model_json).map_err(|e| json_error(MODEL, e))?,
-            serde_json::from_slice(&journal_json).map_err(|e| json_error(JOURNAL, e))?,
+            journal_file(&journal_json)?,
             mesh,
         )
     } else {
@@ -438,8 +481,10 @@ pub fn read_versioned(bytes: &[u8]) -> Result<(ModelFile, u32)> {
             model: serde_json::from_slice(&model_json).map_err(|e| json_error(MODEL, e))?,
             mesh,
             journal: serde_json::from_slice(&journal_json).map_err(|e| json_error(JOURNAL, e))?,
+            notes: Vec::new(),
         };
         migrate::migrate(&mut parts)?;
+        notes = parts.notes;
         (
             serde_json::from_value(parts.manifest).map_err(|e| json_error(MANIFEST, e))?,
             serde_json::from_value(parts.model).map_err(|e| json_error(MODEL, e))?,
@@ -457,8 +502,9 @@ pub fn read_versioned(bytes: &[u8]) -> Result<(ModelFile, u32)> {
     }
     mesh::decode_into(&mut model, &mesh_bin)?;
     drop(mesh_bin);
-    let journal = read_journal(journal)?;
-    Ok((ModelFile { model, geometry: manifest.geometry, journal, view: manifest.view }, format))
+    let journal_header = JournalHeader { units: journal.units, model_units: journal.model_units };
+    let journal = read_journal(journal.commands)?;
+    Ok((ModelFile { model, geometry: manifest.geometry, journal, journal_header, view: manifest.view, notes }, format))
 }
 
 /// The format version of the `.fieldcraft` file `reader` holds, from its manifest alone (nothing

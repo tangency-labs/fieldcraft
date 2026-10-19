@@ -243,3 +243,9 @@ pub fn cylinder(centre: [f64; 2], r: f64, z0: f64, z1: f64, m: usize) -> Boundar
 pub fn obstacle(body: &str, surface: BoundarySurface, faces: &[&str]) -> Obstacle {
     Obstacle { body: body.into(), surface, faces: faces.iter().map(|s| s.to_string()).collect() }
 }
+
+/// A temperature given in degrees Celsius, in kelvin (the model's unit): the lattice runs in
+/// degrees Celsius, so these are the lattice's own temperatures.
+pub fn kelvin(celsius: f64) -> f64 {
+    fieldcraft_model::units::celsius_to_kelvin(celsius)
+}

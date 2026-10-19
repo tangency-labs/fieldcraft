@@ -52,13 +52,12 @@ fn bar(m: &mut Model, n: u32, offset: u32) {
 fn defined() -> Model {
     let mut m = Model::default();
     bar(&mut m, 2, 0);
-    m.set_units(UnitSystem::MmTonneS);
     m.add_set("all", Set::of_geometry(vec![GeometryRef::body("Bar").unwrap()])).unwrap();
     m.add_set("root", Set::of_geometry(vec![GeometryRef::face("Bar", "left").unwrap()])).unwrap();
     m.add_set("end", Set::of_geometry(vec![GeometryRef::face("Bar", "right").unwrap()])).unwrap();
     m.add_material(
         "Steel",
-        Material { elastic: Some(Elastic::Isotropic { young: 2.1e5, poisson: 0.3 }), density: Some(7.85e-9), ..Material::default() },
+        Material { elastic: Some(Elastic::Isotropic { young: 2.1e11, poisson: 0.3 }), density: Some(7850.0), ..Material::default() },
     )
     .unwrap();
     m.add_section("bar", Section { set: "all".into(), material: "Steel".into(), kind: SectionKind::Solid {}, formulation: Formulation::default() })
@@ -124,7 +123,7 @@ fn the_check_names_what_is_missing() {
     m.add_set("side", Set { faces: vec![ElementFace { element: 1, face: 3 }], ..Set::default() }).unwrap();
     m.add_load("ghost-load", Load::Pressure { set: "ghost".into(), magnitude: 1.0 }).unwrap();
     m.add_load("twist", Load::Moment { target: Target::Set("end".into()), vector: [1.0, 0.0, 0.0], distribution: Distribution::Total }).unwrap();
-    m.add_material("Soft", Material { elastic: Some(Elastic::Isotropic { young: 2.1e11, poisson: 0.3 }), density: None, ..Material::default() })
+    m.add_material("Soft", Material { elastic: Some(Elastic::Isotropic { young: 2.1e17, poisson: 0.3 }), density: None, ..Material::default() })
         .unwrap();
     m.add_section("again", Section { set: "side".into(), material: "Soft".into(), kind: SectionKind::Solid {}, formulation: Formulation::default() })
         .unwrap();
@@ -149,7 +148,7 @@ fn the_check_names_what_is_missing() {
     assert!(has("error: section `shell`: set `root` has no elements"), "{text:#?}");
     assert!(has("error: section `again`: set `side` has no elements"), "{text:#?}");
     assert!(has("error: material `Soft`: has no density, and step `Modes` extracts frequencies"), "{text:#?}");
-    assert!(has("warning: material `Soft`: Young's modulus 210000000000"), "{text:#?}");
+    assert!(has("warning: material `Soft`: Young's modulus 2.1e11 MPa"), "{text:#?}");
     assert!(has("warning: load `twist`: is not active in any step"), "{text:#?}");
     assert_eq!(diagnostics.first().map(|d| d.severity), Some(Severity::Error), "errors first");
     assert!(m.resolve().is_err());
@@ -328,12 +327,11 @@ fn sum(values: &[(u32, [f64; 3])]) -> [f64; 3] {
 fn a_total_force_on_a_face_is_the_same_on_every_mesh() {
     let mut m = Model::default();
     block(&mut m, 2);
-    m.set_units(UnitSystem::MmTonneS);
     m.add_set("all", Set::of_geometry(vec![GeometryRef::body("Block").unwrap()])).unwrap();
     m.add_set("end", Set::of_geometry(vec![GeometryRef::face("Block", "end").unwrap()])).unwrap();
     m.add_material(
         "Steel",
-        Material { elastic: Some(Elastic::Isotropic { young: 2.1e5, poisson: 0.3 }), density: Some(7.85e-9), ..Material::default() },
+        Material { elastic: Some(Elastic::Isotropic { young: 2.1e11, poisson: 0.3 }), density: Some(7850.0), ..Material::default() },
     )
     .unwrap();
     m.add_section("block", Section { set: "all".into(), material: "Steel".into(), kind: SectionKind::Solid {}, formulation: Formulation::default() })
@@ -426,7 +424,7 @@ fn plate(kind: SectionKind, x0: f64) -> Model {
     m.add_set("right", Set::of_geometry(vec![GeometryRef::new("Plate", Entity::Edge("right".into())).unwrap()])).unwrap();
     m.add_material(
         "Steel",
-        Material { elastic: Some(Elastic::Isotropic { young: 2.1e5, poisson: 0.3 }), density: Some(7.85e-9), ..Material::default() },
+        Material { elastic: Some(Elastic::Isotropic { young: 2.1e11, poisson: 0.3 }), density: Some(7850.0), ..Material::default() },
     )
     .unwrap();
     m.add_section("plate", Section { set: "all".into(), material: "Steel".into(), kind, formulation: Formulation::default() }).unwrap();

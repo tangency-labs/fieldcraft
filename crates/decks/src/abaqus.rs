@@ -152,6 +152,8 @@ use fieldcraft_model::{
     Integration, Load, Model, OutputVariable, Plastic, Procedure, Resolved, Section, SectionKind, Step, Target,
 };
 
+use fieldcraft_model::units::Preset;
+
 use crate::{Error, Result, unsupported};
 
 const FORMAT: &str = "Abaqus";
@@ -172,18 +174,19 @@ const CONTINUATION_NODES: usize = 16;
 /// Write the model as an Abaqus input deck. Fails when the model does not resolve (its check
 /// finds an error) or has something the format cannot express ([`Error::Unsupported`], every such
 /// item named).
-pub fn write(model: &Model) -> Result<String> {
-    write_resolved(model, &model.resolve()?)
+pub fn write(model: &Model, units: Preset) -> Result<String> {
+    let expressed = crate::express(model, units)?;
+    write_resolved(&expressed, &expressed.resolve()?, units)
 }
 
-/// [`write`] for a model already resolved.
-pub fn write_resolved(model: &Model, r: &Resolved) -> Result<String> {
+/// [`write`] for a model already expressed in `units` ([`crate::express`]) and resolved.
+pub fn write_resolved(model: &Model, r: &Resolved, units: Preset) -> Result<String> {
     crate::refuse_fluid(FORMAT, model)?;
     let by_type = elements_by_type(model, r)?;
     check_expressible(model)?;
     let discrete = discrete_groups(model, r)?;
     let mut d = Deck::default();
-    d.heading(model);
+    d.heading(units);
     d.nodes(model)?;
     d.elements(&by_type);
     d.discrete_elements(&discrete);
@@ -731,14 +734,10 @@ impl Deck {
         }
     }
 
-    fn heading(&mut self, model: &Model) {
-        let units = match model.units().length() {
-            Some(_) => format!("units {}", model.units().label()),
-            None => "units not specified".to_string(),
-        };
+    fn heading(&mut self, units: Preset) {
         self.line("*HEADING");
-        self.line(&format!("FieldCraft model, {units}"));
-        self.comment("Written by FieldCraft. The numbers are in one consistent unit system and are not converted.");
+        self.line(&format!("FieldCraft model, units {}", units.label()));
+        self.comment(&format!("Written by FieldCraft in one consistent unit system: {}.", crate::units_in_words(units)));
     }
 
     fn nodes(&mut self, model: &Model) -> Result<()> {

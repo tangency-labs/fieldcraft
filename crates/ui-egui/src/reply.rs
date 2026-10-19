@@ -13,7 +13,7 @@ use crate::results::{components, count, number, with_unit};
 use crate::theme::{Tokens, label_font};
 use crate::{ModelApp, Tab};
 use fieldcraft_engine::results::Quantity;
-use fieldcraft_model::UnitSystem;
+use fieldcraft_model::DisplaySystem;
 
 /// The reply shown in the context panel.
 #[derive(Clone, Debug, PartialEq)]
@@ -39,14 +39,19 @@ const MAX_COLUMNS: usize = 8;
 /// Nesting shown at most; deeper values are compact text.
 const MAX_DEPTH: usize = 4;
 
+/// The unit of `q` in `units`; `None` without a system or for a plain number.
+fn unit(q: Quantity, units: Option<&DisplaySystem>) -> Option<String> {
+    units.and_then(|d| fieldcraft_engine::results::unit_of(q, d))
+}
+
 /// One line saying what `command` answered: the reply's own `summary`, a sentence for the
 /// commands with a well-known reply, otherwise its top-level numbers and words. Never JSON.
 pub fn summary(command: &str, v: &Value) -> String {
-    summary_in(command, v, UnitSystem::Unspecified)
+    summary_in(command, v, None)
 }
 
 /// [`summary`] with the numbers' units in `units`.
-pub fn summary_in(command: &str, v: &Value, units: UnitSystem) -> String {
+pub fn summary_in(command: &str, v: &Value, units: Option<&DisplaySystem>) -> String {
     if let Some(s) = v.get("summary").and_then(Value::as_str) {
         return one_line(s);
     }
@@ -85,14 +90,14 @@ pub fn summary_in(command: &str, v: &Value, units: UnitSystem) -> String {
                 "{}, {}, units {}",
                 plural(v["nodes"].as_u64().unwrap_or(0), "node"),
                 plural(elements, "element"),
-                v["units"].as_str().unwrap_or("—")
+                v["display_units"].as_str().unwrap_or("—")
             )
         }
         "interaction.contact.find" => {
             format!("{} among {}", plural(count("touching") as u64, "touching pair"), plural(v["parts"].as_u64().unwrap_or(0), "part"))
         }
         "results.reactions" => match serde_json::from_value::<Vec<f64>>(v["total"]["force"].clone()) {
-            Ok(f) => format!("total reaction force ({})", with_unit(components(&f, 0.0), Quantity::Force.unit(units).as_deref())),
+            Ok(f) => format!("total reaction force ({})", with_unit(components(&f, 0.0), unit(Quantity::Force, units).as_deref())),
             Err(_) => scalars(v),
         },
         _ => scalars(v),
@@ -275,9 +280,9 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
         });
     });
     ui.add_space(4.0);
-    ui.add(egui::Label::new(RichText::new(summary_in(&reply.command, &reply.value, app.session.model.units())).color(t.text_dim)).wrap());
+    ui.add(egui::Label::new(RichText::new(summary_in(&reply.command, &reply.value, Some(app.session.units()))).color(t.text_dim)).wrap());
     ui.add_space(4.0);
-    let units = app.session.model.units();
+    let units = Some(app.session.units());
     match reply.command.as_str() {
         "model.check" => diagnostics(app, ui, t, &reply.value, &mut acts),
         c if SOLVES.contains(&c) => solve_summary(ui, t, &reply.value, units),
@@ -819,16 +824,16 @@ fn activity(ui: &mut egui::Ui, t: &Tokens, v: &Value) {
 }
 
 /// A solved step's peaks in one line: `max |U| 0.05063 mm, max Mises 1,368 MPa, 115,665 DOFs`.
-fn solve_line(v: &Value, units: UnitSystem) -> String {
+fn solve_line(v: &Value, units: Option<&DisplaySystem>) -> String {
     let mut parts = Vec::new();
     let peak = |key: &str| v.get(key).and_then(|p| p.get("value")).and_then(Value::as_f64);
     for (key, what, q) in [
         ("max_displacement", "max |U|", Quantity::Length),
-        ("max_von_mises", "max Mises", Quantity::Stress),
+        ("max_von_mises", "max Mises", Quantity::Pressure),
         ("max_temperature", "max T", Quantity::Temperature),
     ] {
         if let Some(x) = peak(key) {
-            parts.push(format!("{what} {}", with_unit(number(x), q.unit(units).as_deref())));
+            parts.push(format!("{what} {}", with_unit(number(x), unit(q, units).as_deref())));
         }
     }
     if let Some(m) = v["modes"].as_array().and_then(|m| m.first()) {
@@ -857,25 +862,25 @@ enum Row {
 /// A solve's summary: the step's peaks and totals with their units first, round-off as 0, rows
 /// that do not apply left out (a steady step's end time), counts with thousands separators;
 /// lists (modes, contacts) as tables, and the solver's internals folded under Details.
-fn solve_summary(ui: &mut egui::Ui, t: &Tokens, v: &Value, units: UnitSystem) {
+fn solve_summary(ui: &mut egui::Ui, t: &Tokens, v: &Value, units: Option<&DisplaySystem>) {
     let Some(m) = v.as_object() else { return value(ui, t, egui::Id::new("fc_reply_solve"), v, 0) };
     let steady = m.get("frames").and_then(Value::as_u64).is_some_and(|n| n <= 1);
     let rows: [(&str, &str, Row); 18] = [
         ("step", "Step", Row::Text),
         ("max_displacement", "Max |U|", Row::Peak(Quantity::Length)),
-        ("max_von_mises", "Max Mises", Row::Peak(Quantity::Stress)),
+        ("max_von_mises", "Max Mises", Row::Peak(Quantity::Pressure)),
         ("max_temperature", "Max T", Row::Peak(Quantity::Temperature)),
         ("min_temperature", "Min T", Row::Peak(Quantity::Temperature)),
-        ("max_plastic_strain", "Max plastic strain", Row::Peak(Quantity::None)),
+        ("max_plastic_strain", "Max plastic strain", Row::Peak(Quantity::Dimensionless)),
         ("applied_total", "Applied force", Row::Vector(Quantity::Force)),
         ("reaction_total", "Reaction force", Row::Vector(Quantity::Force)),
-        ("heat_supplied", "Heat flow through", Row::Number(Quantity::HeatFlow)),
+        ("heat_supplied", "Heat flow through", Row::Number(Quantity::Power)),
         ("total_mass", "Total mass", Row::Number(Quantity::Mass)),
-        ("load_factor", "Load factor", Row::Number(Quantity::None)),
+        ("load_factor", "Load factor", Row::Number(Quantity::Dimensionless)),
         ("time", "Time reached", Row::Number(Quantity::Time)),
         ("end_time", "End time", Row::Number(Quantity::Time)),
         ("completed", "Completed", Row::Text),
-        ("energy_balance", "Energy balance error", Row::Number(Quantity::None)),
+        ("energy_balance", "Energy balance error", Row::Number(Quantity::Dimensionless)),
         ("dofs", "Degrees of freedom", Row::Count),
         ("elements", "Elements", Row::Count),
         ("frames", "Frames", Row::Count),
@@ -890,13 +895,13 @@ fn solve_summary(ui: &mut egui::Ui, t: &Tokens, v: &Value, units: UnitSystem) {
                 continue;
             }
             let text = match row {
-                Row::Number(q) => x.as_f64().map(|f| with_unit(number(f), q.unit(units).as_deref())),
+                Row::Number(q) => x.as_f64().map(|f| with_unit(number(f), unit(*q, units).as_deref())),
                 Row::Peak(q) => x["value"].as_f64().map(|f| {
                     let at = x["node"].as_u64().map_or_else(String::new, |n| format!(" at node {n}"));
-                    format!("{}{at}", with_unit(number(f), q.unit(units).as_deref()))
+                    format!("{}{at}", with_unit(number(f), unit(*q, units).as_deref()))
                 }),
                 Row::Vector(q) => {
-                    serde_json::from_value::<Vec<f64>>(x.clone()).ok().map(|c| with_unit(components(&c, 0.0), q.unit(units).as_deref()))
+                    serde_json::from_value::<Vec<f64>>(x.clone()).ok().map(|c| with_unit(components(&c, 0.0), unit(*q, units).as_deref()))
                 }
                 Row::Count => x.as_u64().map(count),
                 Row::Text => inline(x),
@@ -1116,7 +1121,10 @@ mod tests {
         assert_eq!(summary("geometry.bodies", &json!([{}, {}])), "2 bodies");
         assert_eq!(summary("mesh.info", &json!({"dofs": 945, "modes": [1, 2], "x": {"y": 1}})), "dofs 945, modes 2");
         let solved = json!({"dofs": 115665, "max_displacement": {"node": 17, "value": 0.0506333}, "max_von_mises": {"node": 3, "value": 1368.07}});
-        assert_eq!(summary_in("solve.static", &solved, UnitSystem::MmTonneS), "max |U| 0.05063 mm, max Mises 1,368 MPa, 115,665 DOFs");
+        assert_eq!(
+            summary_in("solve.static", &solved, Some(&DisplaySystem::new(fieldcraft_model::units::Preset::MmTonneS))),
+            "max |U| 0.05063 mm, max Mises 1,368 MPa, 115,665 DOFs"
+        );
         assert_eq!(summary("any", &json!({"summary": "a\nb"})), "a b");
         assert_eq!(summary("any", &json!({})), "done");
         assert!(summary("any", &json!({"s": "x".repeat(500)})).chars().count() <= MAX_LINE + 1);
@@ -1127,7 +1135,7 @@ mod tests {
         let mut s = fieldcraft_engine::Session::default();
         let check = s.execute("model.check", &json!({})).unwrap();
         let messages: Vec<&str> = check["diagnostics"].as_array().unwrap().iter().filter_map(|d| d["message"].as_str()).collect();
-        assert!(messages.len() >= 3, "{check}");
+        assert!(messages.len() >= 2, "{check}");
         for m in messages {
             assert!(model_fix(m).is_some(), "no fix for `{m}`");
         }

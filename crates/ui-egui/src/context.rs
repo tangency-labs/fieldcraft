@@ -131,7 +131,7 @@ fn form(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
     // While a job runs (this form's mesher, a solve) OK waits for it.
     let running = app.busy().map(str::to_string);
     let relax_note = app.relax_note().or_else(|| app.node_move_note());
-    let units = app.session.model.units();
+    let units = app.session.units().clone();
     let session = &app.session;
     // The set Use selection will make on OK is offered with the others.
     let pending = app.dialog.as_ref().and_then(|d| d.pending_set.as_ref()).and_then(|s| s.get("name")).and_then(Value::as_str).map(str::to_string);
@@ -227,7 +227,7 @@ fn form(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
         (Some(fields), Some(mut obj)) if !d.advanced => {
             let refused = d.refused.as_ref().map(|(k, p)| (k.as_str(), p.as_str()));
             let cx = crate::form::Context {
-                units,
+                units: &units,
                 names: &|c| {
                     let mut names = session.names(c);
                     if c == fieldcraft_engine::schema::Collection::Set
@@ -328,13 +328,13 @@ fn form(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
 /// The selected definition's fields as (label, text) in its form's words and units, read again only
 /// when the model changes.
 fn property_rows(app: &mut ModelApp, kind: Def, name: &str) -> Option<std::sync::Arc<Vec<(String, String)>>> {
-    let key = (app.session.revision(), kind, name.to_string());
+    let key = (app.session.revision(), app.session.units().label(), kind, name.to_string());
     if let Some((k, rows)) = &app.properties
         && *k == key
     {
         return Some(rows.clone());
     }
-    let rows = crate::describe::rows(&app.session.model, kind, name)?;
+    let rows = crate::describe::rows(&app.session.model, kind, name, app.session.units())?;
     let rows = std::sync::Arc::new(rows);
     app.properties = Some((key, rows.clone()));
     Some(rows)
@@ -364,7 +364,7 @@ fn properties(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, kind: Def, name
     });
     if deselect {
         app.select_definition(None);
-    } else if edit && let Some((command, params)) = kind.edit(&app.session.model, name) {
+    } else if edit && let Some((command, params)) = kind.edit(&app.session.model, name, app.session.units()) {
         app.open_form(&command, params);
     } else if delete {
         app.ask_delete(kind, name);
@@ -375,7 +375,7 @@ fn properties(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, kind: Def, name
 /// filled in) and Delete (`mesh.seed.clear`).
 fn seed_card(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, edge: fieldcraft_model::GeometryRef) {
     let Some(seed) = app.seed(&edge) else { return };
-    let rows = crate::describe::seed_rows(&app.session.model, seed);
+    let rows = crate::describe::seed_rows(seed, app.session.units());
     let mut deselect = false;
     heading(ui, t, Level::Title, |ui| {
         ui.label(RichText::new("SEED").font(label_font(ui.ctx(), 12.0)));
@@ -404,16 +404,16 @@ fn seed_card(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, edge: fieldcraft
 /// The mesh: its size, then each command that made it with its parameters (in its form's
 /// words), with Edit… opening that command's form filled in (#343).
 fn mesh_card(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
-    let key = app.session.revision();
+    let key = (app.session.revision(), app.session.units().label());
     let made = match &app.mesh_made {
         Some((k, made)) if *k == key => made.clone(),
         _ => {
-            let model = &app.session.model;
+            let units = app.session.units();
             let made: Vec<(String, Value, Vec<(String, String)>)> = app
                 .mesh_history()
                 .into_iter()
                 .map(|(c, p)| {
-                    let rows = p.as_object().map(|o| crate::describe::command_rows(model, &c, o)).unwrap_or_default();
+                    let rows = p.as_object().map(|o| crate::describe::command_rows(&c, o, units)).unwrap_or_default();
                     (c, p, rows)
                 })
                 .collect();

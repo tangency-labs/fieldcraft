@@ -672,7 +672,8 @@ mod tests {
         // Tet volumes are positive and add up to the cube's.
         let mut volume = 0.0;
         for e in s.model.elements().values().filter(|e| e.kind == fieldcraft_model::ElementKind::Tet4) {
-            let p: Vec<[f64; 3]> = e.nodes.iter().map(|n| s.model.node(*n).unwrap().xyz).collect();
+            // In millimetres, as the sample is drawn.
+            let p: Vec<[f64; 3]> = e.nodes.iter().map(|n| crate::units::to_geometry_point(s.model.node(*n).unwrap().xyz)).collect();
             let v = signed_volume(&p) / 6.0;
             assert!(v > 0.0);
             volume += v;
@@ -893,7 +894,8 @@ mod tests {
         let mut s = open("rubber-seal");
         let bonded = squeeze(&mut s);
         let node = |s: &Session, xyz: [f64; 3]| -> u32 {
-            *s.model.nodes().iter().find(|(_, n)| (0..3).all(|k| (n.xyz[k] - xyz[k]).abs() < 1e-9)).unwrap().0
+            let mm = crate::units::to_geometry_point;
+            *s.model.nodes().iter().find(|(_, n)| (0..3).all(|k| (mm(n.xyz)[k] - xyz[k]).abs() < 1e-9)).unwrap().0
         };
         let held = [
             ("hold_y", [inner, 0.0, 0.0], [None, Some(0.0), None]),

@@ -91,9 +91,10 @@ fn cavity(steady: Option<Steady>) -> Model {
     let mut d = domain([0.0; 3], [h, h, dx], dx);
     d.faces.z_min = PERIODIC;
     d.faces.z_max = PERIODIC;
-    let mut t = FluidThermal { initial_temperature: 0.5, gravity: [0.0, -ra * nu * alpha, 0.0], expansion: Some(1.0), ..FluidThermal::default() };
-    t.faces.x_min = ThermalCondition::Temperature { value: 1.0 };
-    t.faces.x_max = ThermalCondition::Temperature { value: 0.0 };
+    let mut t =
+        FluidThermal { initial_temperature: kelvin(0.5), gravity: [0.0, -ra * nu * alpha, 0.0], expansion: Some(1.0), ..FluidThermal::default() };
+    t.faces.x_min = ThermalCondition::Temperature { value: kelvin(1.0) };
+    t.faces.x_max = ThermalCondition::Temperature { value: kelvin(0.0) };
     d.thermal = Some(t);
     let dt = (0.05 * dx / u_max).min(dx * dx / 4.0);
     hot_model(1.0, nu, alpha, d, fluid(4.0, dt, steady))
@@ -130,7 +131,7 @@ fn the_de_vahl_davis_cavity_stops_at_steady_state_with_the_long_run_s_heat() {
     assert!(velocity_difference(&run, &fixed) < 1e-2, "{}", velocity_difference(&run, &fixed));
     // The mean temperature of the symmetric cavity stays at ½.
     let mean = report.samples.last().unwrap().values[4][0];
-    assert!((mean - 0.5).abs() < 1e-3, "{mean}");
+    assert!((mean - kelvin(0.5)).abs() < 1e-3, "{mean}");
 }
 
 /// A periodic box under a body force with no walls accelerates without bound: the stability

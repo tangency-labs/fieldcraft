@@ -166,9 +166,7 @@ pub fn cell_values(r: &FluidResult, field: Field, f: &Frame) -> Result<Vec<f64>>
     let values: Vec<f64> = match field {
         Field::Velocity => f.velocity.iter().map(|v| magnitude(v.map(f64::from))).collect(),
         Field::Pressure => f.pressure.iter().map(|p| f64::from(*p)).collect(),
-        Field::Temperature if f.temperature.len() == r.grid.len() && !f.temperature.is_empty() => {
-            f.temperature.iter().map(|t| f64::from(*t)).collect()
-        }
+        Field::Temperature if f.temperature.len() == r.grid.len() && !f.temperature.is_empty() => r.temperatures(f),
         Field::Temperature => {
             return Err(EngineError::Params(format!(
                 "temperature is not available for fluid step `{}`: this frame has no complete temperature field (isothermal flow)",
@@ -519,24 +517,27 @@ pub fn draw(plot: &FlowPlot, scene: &mut Scene, colors: &FlowColors) {
 
 /// What a fluid step's display shows, for the `results.*` replies: the field's range with the
 /// cells (and their centres) of its extremes, the slice and the streamlines' settings.
-pub fn report(view: &ResultsView, r: &FluidResult, units: fieldcraft_model::UnitSystem) -> Value {
+pub fn report(view: &ResultsView, r: &FluidResult, display: &fieldcraft_model::DisplaySystem) -> Value {
+    use crate::results::{Quantity, shown, shown_all, unit_of};
     let mut out = json!({});
     let Ok(f) = frame(r, view.pick()) else { return out };
-    out["time"] = json!(f.time);
+    out["time"] = json!(shown(Quantity::Time, f.time, display));
     if let Some(field) = view.contour
         && let Ok(values) = cell_values(r, field, f)
     {
-        let end = |(k, v): (usize, f64)| json!({"cell": k, "at": cell_centre(r, k), "value": v});
+        let q = field.quantity();
+        let value = |v: f64| q.map_or(v, |q| shown(q, v, display));
+        let end = |(k, v): (usize, f64)| json!({"cell": k, "at": shown_all(Quantity::Length, cell_centre(r, k), display), "value": value(v)});
         let range = cell_range(&values).map(|(lo, hi)| json!({"min": end(lo), "max": end(hi)}));
-        let unit = field.quantity().unit(units);
+        let unit = q.and_then(|q| unit_of(q, display));
         out["contour"] = json!({"field": field, "label": field.label(), "unit": unit, "range": range});
         if view.range_min.is_some() || view.range_max.is_some() {
-            out["contour"]["legend"] = json!({"min": view.range_min, "max": view.range_max});
+            out["contour"]["legend"] = json!({"min": view.range_min.map(value), "max": view.range_max.map(value)});
         }
     }
     let fv = FlowView::of(view, r);
     out["slice"] = match fv.slice.as_ref().filter(|_| view.contour != Some(Field::WallHeatFlux)) {
-        Some(s) => json!({"axis": s.axis, "position": slice_position(r, s)}),
+        Some(s) => json!({"axis": s.axis, "position": shown(Quantity::Length, slice_position(r, s), display)}),
         None => Value::Null,
     };
     out["surface"] = json!(fv.surface);
@@ -601,6 +602,7 @@ pub(crate) mod tests {
             stats,
             warnings: Vec::new(),
             steady: None,
+            temperature_reference: 0.0,
         }
     }
 
@@ -660,19 +662,20 @@ pub(crate) mod tests {
         let fp = plot_with_surfaces(&view, result, &s.traced, &s, &base, &names).unwrap();
         let c = fp.contour.as_ref().unwrap();
         // The fluid never quite reaches the wall's 80 °C; the legend does, and its maximum is the
-        // held face (a label past the cells, at a point on that face).
-        assert!(c.values.iter().all(|t| t.is_nan() || *t < 80.0));
-        assert_eq!((c.max.1, c.bands.max), (80.0, 80.0), "{:?}", c.bands);
+        // held face (a label past the cells, at a point on that face). The plot is in kelvin.
+        let hot = fieldcraft_model::DisplaySystem::default().to_si(fieldcraft_model::units::Quantity::Temperature, 80.0).unwrap();
+        assert!(c.values.iter().all(|t| t.is_nan() || *t < hot));
+        assert_eq!((c.max.1, c.bands.max), (hot, hot), "{:?}", c.bands);
         let at = c.max.0.checked_sub(c.values.len()).and_then(|k| fp.wall_positions.get(k).copied().flatten());
         assert!(at.is_some(), "{:?}", c.max);
         let held: Vec<f64> = fp.wall_values.iter().filter_map(|(_, v)| *v).collect();
-        assert!(!held.is_empty() && held.iter().all(|t| *t == 80.0), "{held:?}");
+        assert!(!held.is_empty() && held.iter().all(|t| *t == hot), "{held:?}");
         // A script reads the same maximum as the app shows: the held face.
         let reply = s.results_report();
         assert_eq!(reply["contour"]["range"]["max"], json!({"body": "Body1", "face": face, "value": 80.0}), "{reply}");
         // The headless picture draws the held face in the top band's colour.
         let p = crate::view::Palette::LIGHT;
-        let top = bands_color(&p.contour, p.contour_over, &c.bands, c.bands.band(80.0).unwrap());
+        let top = bands_color(&p.contour, p.contour_over, &c.bands, c.bands.band(hot).unwrap());
         let (scene, ..) = crate::view::scene(&s, &p);
         assert!(scene.tris.iter().any(|t| t.color == top));
     }

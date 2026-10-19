@@ -1,17 +1,19 @@
 //! 2D models (plane stress, plane strain, axisymmetric) in every deck format: element names,
 //! section data, edge surfaces and pressures, centrifugal loads, and what a format cannot write.
 
-use fieldcraft_decks::{Error, abaqus, edge_pressure_loads, lsdyna, nastran};
+mod common;
+
+use common::{abaqus, lsdyna, nastran};
+use fieldcraft_decks::{Error, edge_pressure_loads};
 use fieldcraft_model::{
     BoundaryCondition, Elastic, ElementEdge, ElementKind, Formulation, Integration, Load, Material, Model, Procedure, Section, SectionKind, Set,
-    Step, Target, UnitSystem,
+    Step, Target,
 };
 
 /// Two quad4 over [1, 3] × [0, 1] (or the given kind on the same corners), the left edge held,
 /// a pressure on the right edge and a centrifugal load.
 fn plate(kind: SectionKind, element: ElementKind, formulation: Formulation) -> Model {
     let mut m = Model::default();
-    m.set_units(UnitSystem::MmTonneS);
     for (i, x) in [1.0, 2.0, 3.0].iter().enumerate() {
         m.set_node(i as u32 + 1, [*x, 0.0, 0.0]).unwrap();
         m.set_node(i as u32 + 4, [*x, 1.0, 0.0]).unwrap();

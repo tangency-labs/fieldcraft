@@ -60,6 +60,8 @@ use fieldcraft_model::{
     Plastic, Procedure, Resolved, SectionKind, Step,
 };
 
+use fieldcraft_model::units::Preset;
+
 use crate::{Error, Result};
 use card::Card;
 
@@ -74,16 +76,17 @@ const SPC1_GRIDS: usize = 1000;
 
 /// The model as a Nastran deck, with every step (a deck of some steps:
 /// [`crate::Format::write_steps`]).
-pub fn write(model: &Model) -> Result<String> {
-    write_resolved(model, &model.resolve()?)
+pub fn write(model: &Model, units: Preset) -> Result<String> {
+    let expressed = crate::express(model, units)?;
+    write_resolved(&expressed, &expressed.resolve()?, units)
 }
 
-/// [`write`] for a model already resolved.
-pub fn write_resolved(model: &Model, r: &Resolved) -> Result<String> {
+/// [`write`] for a model already expressed in `units` ([`crate::express`]) and resolved.
+pub fn write_resolved(model: &Model, r: &Resolved, units: Preset) -> Result<String> {
     crate::refuse_fluid(FORMAT, model)?;
     let mut deck = Deck::new(model, r, model.steps().iter().collect());
     deck.plan()?;
-    deck.emit()
+    deck.emit(units)
 }
 
 /// The Nastran grid order of an element's nodes (model order in, Nastran order out).
@@ -725,10 +728,11 @@ impl<'m> Deck<'m> {
         Ok(())
     }
 
-    fn emit(&self) -> Result<String> {
+    fn emit(&self, units: Preset) -> Result<String> {
         let mut out = String::new();
         out.push_str("$ Nastran bulk data written by FieldCraft\n");
-        let _ = writeln!(out, "$ units: {}", self.model.units().label());
+        let _ = writeln!(out, "$ units: {}", units.label());
+        let _ = writeln!(out, "$ in one consistent unit system: {}; masses are masses (WTMASS 1.0)", crate::units_in_words(units));
         let _ = writeln!(out, "SOL {}\nCEND\nTITLE = FieldCraft model\nECHO = NONE", self.sol);
         for (i, sub) in self.subcases.iter().enumerate() {
             let _ = writeln!(out, "SUBCASE {}", i + 1);
@@ -755,6 +759,8 @@ impl<'m> Deck<'m> {
         out.push_str("BEGIN BULK\n");
         Card::new("PARAM").text("POST").int(-1).write(&mut out)?;
         Card::new("PARAM").text("AUTOSPC").text("YES").write(&mut out)?;
+        // The deck's mass unit is consistent with its force, length and time units.
+        Card::new("PARAM").text("WTMASS").real(1.0).write(&mut out)?;
         if self.sol == 103 {
             // Consistent (coupled) mass, as the other formats use by default.
             Card::new("PARAM").text("COUPMASS").int(1).write(&mut out)?;

@@ -259,9 +259,20 @@ fn contour(s: &mut Session, p: &Value) -> Result<Value> {
         }
         return Err(EngineError::Params(format!("{} is not available for step `{step}` (mode shapes have no stress scale)", f.label())));
     }
-    let range = match p.get("range") {
-        None => None,
-        Some(r) => Some(legend_range(r)?),
+    // The legend's range is in the field's display unit; it is kept in SI.
+    let range = match (p.get("range"), field, s.latest_result(&step)) {
+        (None, ..) => None,
+        (Some(r), Some(f), Some((result, _))) => {
+            let input = s.input_units().clone();
+            let stored = |v: f64| f.stored(result, v, &input);
+            Some(legend_range(r, &|k, v| match f.quantity().filter(|_| !f.is_mode_shape(result)) {
+                Some(q) if !v.is_number() => {
+                    crate::units::read(v, q, &input).map(|x| x.map_err(|e| EngineError::invalid(format!("range/{k}"), e.to_string())))
+                }
+                _ => v.as_f64().filter(|x| x.is_finite()).map(|x| Ok(stored(x))),
+            })?)
+        }
+        (Some(r), ..) => Some(legend_range(r, &|_, v| v.as_f64().filter(|x| x.is_finite()).map(Ok))?),
     };
     if field == Some(Field::WallHeatFlux)
         && let Some((r, _)) = s.latest_result(&step)
@@ -285,15 +296,13 @@ fn contour(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// `results.contour`'s `range`: `"auto"` or null (follow the field), or `{min?, max?}`, each a
-/// finite number, null or `"auto"`; `min` below `max`.
-fn legend_range(r: &Value) -> Result<(Option<f64>, Option<f64>)> {
+/// value `value` reads (to SI; `None`: not a value), null or `"auto"`; `min` below `max`.
+fn legend_range(r: &Value, value: &dyn Fn(&str, &Value) -> Option<Result<f64>>) -> Result<(Option<f64>, Option<f64>)> {
     let bound = |k: &str| -> Result<Option<f64>> {
         match r.get(k) {
             None | Some(Value::Null) => Ok(None),
             Some(Value::String(a)) if a == "auto" => Ok(None),
-            Some(v) => {
-                v.as_f64().filter(|x| x.is_finite()).map(Some).ok_or_else(|| EngineError::Params(format!("`range.{k}` must be a number or \"auto\"")))
-            }
+            Some(v) => value(k, v).ok_or_else(|| EngineError::Params(format!("`range.{k}` must be a number or \"auto\"")))?.map(Some),
         }
     };
     match r {
@@ -359,7 +368,17 @@ fn frame(s: &mut Session, p: &Value) -> Result<Value> {
         _ => Vec::new(),
     };
     let last = times.len().checked_sub(1).ok_or_else(|| EngineError::Params(format!("step `{step}` has no field frames")))?;
-    let k = match (p.get("frame"), opt::<f64>(p, "time")?) {
+    // A time (explicit, fluid) is in the display system; a nonlinear static step's is a load factor.
+    let time_value = match (p.get("time"), s.latest_result(&step).map(|(r, _)| r.kind())) {
+        (None, _) | (Some(Value::Null), _) => None,
+        (Some(v), Some(Kind::Static(_))) => Some(v.as_f64().ok_or_else(|| EngineError::param("time", ProblemKind::NotANumber))?),
+        (Some(v), _) => Some(
+            crate::units::read(v, crate::results::Quantity::Time, s.input_units())
+                .ok_or_else(|| EngineError::param("time", ProblemKind::NotANumber))?
+                .map_err(|e| EngineError::invalid("time", e.to_string()))?,
+        ),
+    };
+    let k = match (p.get("frame"), time_value) {
         (Some(f), _) => f
             .as_u64()
             .and_then(|n| usize::try_from(n).ok())
@@ -774,12 +793,14 @@ fn export_vtu(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(EngineError::Params(format!("step `{step}` has {} frames; at most {MAX_VTU_FILES} files are written", states.len())));
     }
 
-    let model = &s.model;
+    // Written in the display system, its units named in each file.
+    let display = s.units().clone();
+    let model = &s.model.converted(&|q, v| display.express(q, v).ok())?;
     let (nodes, elements) = vtk::points_and_cells(model);
     let build = |state: State| -> Result<(f64, String)> {
-        let (time, fields, data) = vtu_fields(&r, state, &nodes, &elements);
+        let (time, fields, data, units) = vtu_fields(&r, state, &nodes, &elements, &display);
         let data: Vec<(&str, f64)> = data.iter().map(|(n, v)| (*n, *v)).collect();
-        Ok((time, vtk::write_vtu(model, &fields, &data, encoding)?))
+        Ok((time, vtk::write_vtu_in(model, &fields, &data, encoding, &units)?))
     };
     // The last state has the most fields: its size times the count bounds the output before
     // anything is written.
@@ -824,7 +845,9 @@ fn export_vtu(s: &mut Session, p: &Value) -> Result<Value> {
         Ok(files)
     })();
     match result {
-        Ok(files) => Ok(json!({"files": files, "bytes": bytes, "points": nodes.len(), "cells": elements.len()})),
+        Ok(files) => Ok(
+            json!({"files": files, "bytes": bytes, "points": nodes.len(), "cells": elements.len(), "units": display.label(), "display_units": display.label()}),
+        ),
         Err(e) => {
             // Leave nothing half written behind.
             for f in &written {
@@ -858,17 +881,51 @@ fn scalars(values: &[f64]) -> Vec<[f64; 1]> {
     values.iter().map(|v| [*v]).collect()
 }
 
-/// The fields of one state of a result, its time (load factor, mode number) and its field data.
+/// The fields of one state of a result, its time (load factor, mode number), its field data and
+/// the units of each, every value in `display`.
 fn vtu_fields(
     r: &crate::StepResult,
     state: State,
     nodes: &[u32],
     elements: &[u32],
-) -> (f64, Vec<fieldcraft_io::vtk::Field>, Vec<(&'static str, f64)>) {
+    display: &fieldcraft_model::DisplaySystem,
+) -> (f64, Vec<fieldcraft_io::vtk::Field>, Vec<(&'static str, f64)>, Vec<(String, String)>) {
+    use crate::results::Quantity as Q;
     use fieldcraft_io::vtk::{Field, Location};
     let mut fields = Vec::new();
     let mut data = Vec::new();
-    let mut add = |name: &str, location: Location, components: usize, values: Vec<f64>, integer: bool| {
+    let mut units = vec![("Points".to_string(), display.symbol(Q::Length).to_string())];
+    // A field's values in `display`: a quantity, a factor (a mode shape), or as they are.
+    enum Unit {
+        Of(Q),
+        Factor(f64),
+        Plain,
+    }
+    let heat = matches!(r.kind(), Kind::Heat(_));
+    let mut add = |name: &str, location: Location, components: usize, mut values: Vec<f64>, integer: bool| {
+        let unit = match name {
+            "displacement" => Unit::Of(Q::Length),
+            "rotation" => Unit::Of(Q::Angle),
+            "reaction" if heat => Unit::Of(Q::Power),
+            "reaction" => Unit::Of(Q::Force),
+            "stress" | "von_mises" => Unit::Of(Q::Pressure),
+            "temperature" => Unit::Of(Q::Temperature),
+            "velocity" => Unit::Of(Q::Velocity),
+            "heat_flux" => Unit::Of(Q::HeatFlux),
+            "mode_shape" => Unit::Factor(crate::results::mode_scale(r, display).0),
+            _ => Unit::Plain,
+        };
+        match unit {
+            Unit::Of(q) => {
+                // A node without a result keeps its 0 (`has_result` says which).
+                for v in values.iter_mut().filter(|v| **v != 0.0) {
+                    *v = crate::results::shown(q, *v, display);
+                }
+                units.push((name.to_string(), display.symbol(q).to_string()));
+            }
+            Unit::Factor(k) => values.iter_mut().for_each(|v| *v *= k),
+            Unit::Plain => {}
+        }
         fields.push(Field { name: name.into(), location, components, values, integer });
     };
     let on = |labels: &[u32]| -> Vec<f64> { nodes.iter().map(|n| if labels.binary_search(n).is_ok() { 1.0 } else { 0.0 }).collect() };
@@ -905,12 +962,16 @@ fn vtu_fields(
         (Kind::Frequency(f), State::Mode(m)) => {
             if let Some(mode) = m.checked_sub(1).and_then(|k| f.modes.get(k)) {
                 add("mode_shape", point, 3, spread(nodes, &f.nodes, &mode.shape), false);
-                data.extend([("mode", m as f64), ("frequency", mode.frequency), ("eigenvalue", mode.eigenvalue)]);
+                data.extend([
+                    ("mode", m as f64),
+                    ("frequency", crate::results::shown(Q::Frequency, mode.frequency, display)),
+                    ("eigenvalue", crate::results::shown(Q::Eigenvalue, mode.eigenvalue, display)),
+                ]);
             }
             m as f64
         }
         (Kind::Explicit(e), State::Frame(k)) => {
-            let Some(f) = e.frames.get(k) else { return (0.0, fields, data) };
+            let Some(f) = e.frames.get(k) else { return (0.0, fields, data, units) };
             if !f.displacement.is_empty() {
                 add("displacement", point, 3, spread(nodes, &e.nodes, &f.displacement), false);
             }
@@ -931,11 +992,12 @@ fn vtu_fields(
                 let eroded: Vec<[f64; 1]> = f.failed.iter().map(|&b| [if b { 1.0 } else { 0.0 }]).collect();
                 add("eroded", cell, 1, spread(elements, &e.elements, &eroded), true);
             }
-            data.push(("time", f.time));
-            f.time
+            let time = crate::results::shown(Q::Time, f.time, display);
+            data.push(("time", time));
+            time
         }
         (Kind::Heat(h), State::Frame(k)) => {
-            let time = h.times.get(k).copied().unwrap_or(0.0);
+            let time = crate::results::shown(Q::Time, h.times.get(k).copied().unwrap_or(0.0), display);
             if let Some(t) = h.frames.get(k) {
                 add("temperature", point, 1, spread(nodes, &h.nodes, &scalars(t)), false);
             }
@@ -947,16 +1009,23 @@ fn vtu_fields(
         }
         _ => 0.0,
     };
-    (time, fields, data)
+    for (name, q) in [("frequency", Q::Frequency), ("eigenvalue", Q::Eigenvalue), ("time", Q::Time)] {
+        if data.iter().any(|(n, _)| *n == name) {
+            units.push((name.to_string(), display.symbol(q).to_string()));
+        }
+    }
+    (time, fields, data, units)
 }
 
 fn export_csv(s: &mut Session, p: &Value) -> Result<Value> {
     let what: String = super::req(p, "what")?;
     let path = super::file_param(s, p, "path", fieldcraft_io::roots::Access::Write)?;
+    let display = s.units().clone();
     let (step, table) = match what.as_str() {
         "probe" => {
             let r = super::solve::probe(s, p)?;
-            (r.get("step").cloned().unwrap_or(Value::Null), probe_table(&r, &|label| s.model.node(label).map(|n| n.xyz))?)
+            let position = |label: u32| s.model.node(label).map(|n| crate::results::shown_all(crate::results::Quantity::Length, n.xyz, &display));
+            (r.get("step").cloned().unwrap_or(Value::Null), probe_table(&r, &position, &display)?)
         }
         "reactions" => {
             let r = reactions(s, p)?;
@@ -966,13 +1035,17 @@ fn export_csv(s: &mut Session, p: &Value) -> Result<Value> {
                     "the result of step `{step}` is stale (the model changed since it was solved); solve it again"
                 )));
             }
-            (r.get("step").cloned().unwrap_or(Value::Null), reactions_table(&r))
+            let mut r = r;
+            crate::units::convert_reply("results.reactions", &mut r, crate::units::si(), &display)?;
+            (r.get("step").cloned().unwrap_or(Value::Null), reactions_table(&r, &display))
         }
         _ => return Err(EngineError::Params("`what` must be \"probe\" or \"reactions\"".into())),
     };
     let text = table.csv();
     fieldcraft_io::fs::write_output(std::path::Path::new(&path), text.as_bytes())?;
-    Ok(json!({"path": path, "rows": table.rows.len(), "columns": table.header, "step": step, "units": s.model.units()}))
+    Ok(
+        json!({"path": path, "rows": table.rows.len(), "columns": table.header, "step": step, "units": display.label(), "display_units": display.label()}),
+    )
 }
 
 /// A table of cells (a number, text, or empty) under a header, written as CSV.
@@ -1032,9 +1105,18 @@ impl Table {
     }
 }
 
+/// A column name with its unit: `ux [mm]`.
+fn titled(name: &str, unit: Option<&str>) -> String {
+    match unit {
+        Some(u) => format!("{name} [{u}]"),
+        None => name.to_string(),
+    }
+}
+
 /// The CSV columns of a quantity of a probe's node entry: a vector's components (and a
-/// displacement's magnitude), a stress tensor's six components, a scalar under its own name.
-fn quantity_cells(key: &str, v: &Value, out: &mut Vec<(String, Cell)>) {
+/// displacement's magnitude), a stress tensor's six components, a scalar under its own name;
+/// each with `unit`.
+fn quantity_cells(key: &str, v: &Value, unit: Option<&str>, out: &mut Vec<(String, Cell)>) {
     const VECTORS: [(&str, &[&str]); 7] = [
         ("displacement", &["ux", "uy", "uz"]),
         ("rotation", &["rx", "ry", "rz"]),
@@ -1045,25 +1127,27 @@ fn quantity_cells(key: &str, v: &Value, out: &mut Vec<(String, Cell)>) {
         ("stress", &["s_xx", "s_yy", "s_zz", "s_xy", "s_xz", "s_yz"]),
     ];
     match v {
-        Value::Number(n) => out.push((key.to_string(), n.as_f64().map_or(Cell::Empty, Cell::Number))),
+        Value::Number(n) => out.push((titled(key, unit), n.as_f64().map_or(Cell::Empty, Cell::Number))),
         Value::Array(items) if items.iter().all(Value::is_number) => {
             let nums: Vec<f64> = items.iter().filter_map(Value::as_f64).collect();
             let names: Vec<String> = match VECTORS.iter().find(|(k, _)| *k == key) {
                 Some((_, n)) if n.len() == nums.len() => n.iter().map(|s| (*s).to_string()).collect(),
                 _ => (1..=nums.len()).map(|i| format!("{key}_{i}")).collect(),
             };
-            out.extend(names.into_iter().zip(nums.iter().map(|&x| Cell::Number(x))));
+            out.extend(names.into_iter().map(|n| titled(&n, unit)).zip(nums.iter().map(|&x| Cell::Number(x))));
             if key == "displacement" && nums.len() == 3 {
-                out.push(("u_mag".into(), Cell::Number(nums.iter().map(|x| x * x).sum::<f64>().sqrt())));
+                out.push((titled("u_mag", unit), Cell::Number(nums.iter().map(|x| x * x).sum::<f64>().sqrt())));
             }
         }
         _ => {}
     }
 }
 
-/// `solve.probe`'s reply as a table: a row per node with its label, undeformed position and
-/// the quantities the step has.
-fn probe_table(r: &Value, position: &dyn Fn(u32) -> Option<[f64; 3]>) -> Result<Table> {
+/// `solve.probe`'s reply (in the display system, with its `units`) as a table: a row per node
+/// with its label, undeformed position and the quantities the step has, the units in the header.
+fn probe_table(r: &Value, position: &dyn Fn(u32) -> Option<[f64; 3]>, display: &fieldcraft_model::DisplaySystem) -> Result<Table> {
+    let length = display.symbol(fieldcraft_model::units::Quantity::Length).to_string();
+    let unit_of = |key: &str| r.get("units").and_then(|u| u.get(key)).and_then(Value::as_str).map(str::to_string);
     let nodes = r.get("nodes").and_then(Value::as_array).ok_or_else(|| EngineError::Params("the probe has no node results to export".into()))?;
     let rows = nodes
         .iter()
@@ -1075,11 +1159,11 @@ fn probe_table(r: &Value, position: &dyn Fn(u32) -> Option<[f64; 3]>) -> Result<
             }
             let xyz = label.and_then(position);
             for (k, axis) in ["x", "y", "z"].iter().enumerate() {
-                row.push(((*axis).to_string(), xyz.and_then(|p| p.get(k).copied()).map_or(Cell::Empty, Cell::Number)));
+                row.push((titled(axis, Some(&length)), xyz.and_then(|p| p.get(k).copied()).map_or(Cell::Empty, Cell::Number)));
             }
             if let Some(o) = e.as_object() {
                 for (k, v) in o.iter().filter(|(k, _)| !matches!(k.as_str(), "node" | "reference_point" | "xyz" | "distance")) {
-                    quantity_cells(k, v, &mut row);
+                    quantity_cells(k, v, unit_of(k).as_deref(), &mut row);
                 }
             }
             row
@@ -1088,15 +1172,18 @@ fn probe_table(r: &Value, position: &dyn Fn(u32) -> Option<[f64; 3]>) -> Result<
     Ok(Table::from_named(rows))
 }
 
-/// `results.reactions`' reply as a table: a row per set, the total and the applied load.
-fn reactions_table(r: &Value) -> Table {
+/// `results.reactions`' reply (in `display`) as a table: a row per set, the total and the
+/// applied load, the units in the header.
+fn reactions_table(r: &Value, display: &fieldcraft_model::DisplaySystem) -> Table {
+    use fieldcraft_model::units::Quantity;
+    let (force, moment) = (display.symbol(Quantity::Force).to_string(), display.symbol(Quantity::Moment).to_string());
     let row = |name: &str, e: &Value| {
         let mut row = vec![("set".to_string(), Cell::Text(name.to_string()))];
         row.push(("nodes".into(), e.get("nodes").and_then(Value::as_f64).map_or(Cell::Empty, Cell::Number)));
-        for (key, names) in [("force", ["fx", "fy", "fz"]), ("moment", ["mx", "my", "mz"])] {
+        for (key, names, unit) in [("force", ["fx", "fy", "fz"], &force), ("moment", ["mx", "my", "mz"], &moment)] {
             let v = e.get(key).and_then(Value::as_array);
             for (k, n) in names.iter().enumerate() {
-                row.push(((*n).to_string(), v.and_then(|a| a.get(k)).and_then(Value::as_f64).map_or(Cell::Empty, Cell::Number)));
+                row.push((titled(n, Some(unit)), v.and_then(|a| a.get(k)).and_then(Value::as_f64).map_or(Cell::Empty, Cell::Number)));
             }
         }
         row
@@ -1160,6 +1247,10 @@ mod tests {
         let tip_label = st.nodes[k];
         let probe = s.execute("solve.probe", &json!({"step": "Load", "nodes": [tip_label]})).unwrap();
         let i = labels.iter().position(|&l| l == f64::from(tip_label)).unwrap();
+        // The file is in the display system (mm, MPa), as the probe is, and says so.
+        let display = s.units().clone();
+        assert!(xml.contains("<!-- units: Points mm; displacement mm;") && xml.contains("stress MPa"), "{}", &xml[..200]);
+        let tip = crate::results::shown_all(crate::results::Quantity::Length, *tip, &display);
         assert_eq!(&u[3 * i..3 * i + 3], tip.as_slice());
         assert_eq!(
             probe["nodes"][0]["displacement"].as_array().map(|a| a.iter().filter_map(Value::as_f64).collect::<Vec<_>>()),
@@ -1168,7 +1259,7 @@ mod tests {
         );
         // Stress components in VTK order: XY at 3, YZ at 4, XZ at 5.
         let stress = vtu_array(&xml, "stress");
-        let t = st.stress[k];
+        let t = crate::results::shown_all(crate::results::Quantity::Pressure, st.stress[k], &display);
         assert_eq!(&stress[6 * i..6 * i + 6], [t[0], t[1], t[2], t[3], t[5], t[4]].as_slice());
         assert_eq!(vtu_array(&xml, "has_result").iter().filter(|&&h| h == 1.0).count(), st.nodes.len());
         // Deterministic.
@@ -1326,7 +1417,7 @@ mod tests {
         let reply = s.execute("results.export.csv", &json!({"what": "reactions", "path": path, "step": "Bend", "sets": sets})).unwrap();
         let sums = s.execute("results.reactions", &json!({"step": "Bend", "sets": sets})).unwrap();
         let rows = read_csv(&std::fs::read_to_string(&path).unwrap());
-        assert_eq!(rows[0], ["set", "nodes", "fx", "fy", "fz", "mx", "my", "mz"]);
+        assert_eq!(rows[0], ["set", "nodes", "fx [N]", "fy [N]", "fz [N]", "mx [N·mm]", "my [N·mm]", "mz [N·mm]"]);
         assert_eq!((reply["rows"].as_u64(), reply["step"].as_str()), (Some(4), Some("Bend")), "{reply}");
         // A name with a comma and a quote round-trips through a CSV reader.
         let named =
@@ -1344,9 +1435,9 @@ mod tests {
         let col = |name: &str| rows[0].iter().position(|h| h == name).unwrap_or_else(|| panic!("no {name}: {:?}", rows[0]));
         for (i, node) in probe["nodes"].as_array().unwrap().iter().enumerate() {
             assert_eq!(rows[i + 1][col("node")], node["node"].to_string());
-            assert_eq!(rows[i + 1][col("uz")].parse::<f64>().unwrap(), node["displacement"][2].as_f64().unwrap());
-            assert_eq!(rows[i + 1][col("s_yz")].parse::<f64>().unwrap(), node["stress"][5].as_f64().unwrap());
-            assert_eq!(rows[i + 1][col("von_mises")].parse::<f64>().unwrap(), node["von_mises"].as_f64().unwrap());
+            assert_eq!(rows[i + 1][col("uz [mm]")].parse::<f64>().unwrap(), node["displacement"][2].as_f64().unwrap());
+            assert_eq!(rows[i + 1][col("s_yz [MPa]")].parse::<f64>().unwrap(), node["stress"][5].as_f64().unwrap());
+            assert_eq!(rows[i + 1][col("von_mises [MPa]")].parse::<f64>().unwrap(), node["von_mises"].as_f64().unwrap());
         }
         assert!(!rows[0].iter().any(|h| h == "temperature"), "columns the step does not have are left out: {:?}", rows[0]);
         // A stale result is refused.
@@ -1369,13 +1460,15 @@ mod tests {
         let top = r["contour"]["range"]["max"]["value"].as_f64().unwrap();
         assert!(top > 10.0, "{r}");
         assert_eq!(r["contour"]["legend"], json!({"min": null, "max": 10.0}), "{r}");
+        // The view keeps its range in SI: 10 MPa.
+        let pa = |mpa: f64| fieldcraft_model::DisplaySystem::default().to_si(crate::results::Quantity::Pressure, mpa).unwrap();
         let v = s.results_view.clone().unwrap();
-        let b = v.bands(0.0, top);
-        assert!(b.over && b.max == 10.0 && b.band(top) == Some(b.count));
+        let b = v.bands(0.0, pa(top));
+        assert!(b.over && b.max == pa(10.0) && b.band(pa(top)) == Some(b.count));
         s.execute("results.contour", &json!({"field": "von_mises", "bands": 6})).unwrap();
-        assert_eq!(s.results_view.as_ref().unwrap().range_max, Some(10.0), "kept with the field");
-        s.execute("results.contour", &json!({"field": "von_mises", "range": {"max": "auto", "min": 2}})).unwrap();
-        assert_eq!(s.results_view.as_ref().map(|v| (v.range_min, v.range_max)), Some((Some(2.0), None)));
+        assert_eq!(s.results_view.as_ref().unwrap().range_max, Some(pa(10.0)), "kept with the field");
+        s.execute("results.contour", &json!({"field": "von_mises", "range": {"max": "auto", "min": "2 MPa"}})).unwrap();
+        assert_eq!(s.results_view.as_ref().map(|v| (v.range_min, v.range_max)), Some((Some(pa(2.0)), None)));
         s.execute("results.contour", &json!({"field": "displacement"})).unwrap();
         assert_eq!(s.results_view.as_ref().map(|v| (v.range_min, v.range_max)), Some((None, None)), "another field follows its own range");
         s.execute("results.contour", &json!({"field": "displacement", "range": {"max": 1e-3}})).unwrap();
@@ -1479,7 +1572,8 @@ mod tests {
 
     /// A session showing a synthetic fluid result ([`crate::flow::tests::channel`]).
     fn fluid() -> Session {
-        let mut s = Session::default();
+        // The synthetic result is in SI, and shown so.
+        let mut s = Session { default_units: crate::units::si().clone(), ..Session::default() };
         s.store_result(crate::StepResult::Fluid(crate::flow::tests::channel()));
         s
     }
@@ -1545,7 +1639,8 @@ mod tests {
         let mut r = crate::flow::tests::channel();
         r.frames[0].temperature = vec![20.0; r.grid.len()];
         r.frames[1].temperature = vec![70.0; r.grid.len()];
-        let mut s = Session::default();
+        // The synthetic result is in SI (70 K), and shown so.
+        let mut s = Session { default_units: crate::units::si().clone(), ..Session::default() };
         s.store_result(crate::StepResult::Fluid(r));
         for command in ["results.slice", "results.surface", "results.streamlines", "results.contour"] {
             let report = s.execute(command, &json!({"field": "temperature"})).unwrap();

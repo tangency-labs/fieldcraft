@@ -238,7 +238,9 @@ mod tests {
             .nodes()
             .values()
             .filter_map(|n| {
-                let v = [n.xyz[0] - a[0], n.xyz[1] - a[1], n.xyz[2] - a[2]];
+                // In millimetres, as the design is.
+                let xyz = crate::units::to_geometry_point(n.xyz);
+                let v = [xyz[0] - a[0], xyz[1] - a[1], xyz[2] - a[2]];
                 let t = (v[0] * d[0] + v[1] * d[1] + v[2] * d[2]) / len;
                 let off = [v[0] - t * d[0] / len, v[1] - t * d[1] / len, v[2] - t * d[2] / len];
                 let off = (off[0] * off[0] + off[1] * off[1] + off[2] * off[2]).sqrt();

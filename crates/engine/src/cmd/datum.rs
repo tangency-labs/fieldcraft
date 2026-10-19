@@ -384,14 +384,26 @@ pub fn preview(s: &Session, command: &str, params: &Value) -> Option<Datum> {
         "geometry.datum.point" | "geometry.datum.point.edit" => "point",
         _ => return None,
     };
-    datum_of(s, kind, params).ok()
+    // Datums are made in millimetres, with the geometry; the session stores them in SI.
+    let framed = crate::units::geometry_session(s).ok()?;
+    let params = crate::units::geometry_params(s, command, params).ok()?;
+    let mut d = datum_of(&framed, kind, &params).ok()?;
+    match &mut d {
+        Datum::Plane { point, .. } | Datum::Axis { point, .. } | Datum::Point { point } => *point = crate::units::geometry_point(*point),
+    }
+    Some(d)
 }
 
-/// The parameters of the command that edits datum `name`, describing it as it is (a plane by
-/// its point and normal, an axis by its point and direction, a point by its coordinates); and
-/// that command.
+/// The parameters of the command that edits datum `name` (stored in SI), describing it as it is
+/// (a plane by its point and normal, an axis by its point and direction, a point by its
+/// coordinates), its coordinates in millimetres as the datum commands take them; and that
+/// command.
 pub fn edit_params(name: &str, d: &Datum) -> (&'static str, Value) {
-    match *d {
+    let mut d = *d;
+    match &mut d {
+        Datum::Plane { point, .. } | Datum::Axis { point, .. } | Datum::Point { point } => *point = crate::units::to_geometry_point(*point),
+    }
+    match d {
         Datum::Plane { point, normal } => (DATUM_EDIT.id, json!({"name": name, "by": {"type": "point_normal", "point": point, "normal": normal}})),
         Datum::Axis { point, direction } => {
             (DATUM_AXIS_EDIT.id, json!({"name": name, "by": {"type": "point_direction", "point": point, "direction": direction}}))
@@ -735,7 +747,9 @@ pub(crate) mod tests {
     #[test]
     fn datum_points_by_each_definition_and_planes_and_axes_through_them() {
         let (mut s, dir) = plate();
-        let point = |s: &Session, n: &str| s.model.datum(n).and_then(Datum::point).unwrap();
+        // Datums are stored in metres; the plate is drawn in millimetres.
+        let stored = |s: &Session, n: &str| s.model.datum(n).and_then(Datum::point).unwrap();
+        let point = |s: &Session, n: &str| stored(s, n).map(crate::units::to_geometry_length);
         let close = |a: [f64; 3], b: [f64; 3]| a.iter().zip(&b).all(|(x, y)| (x - y).abs() < 1e-6);
         s.execute("geometry.datum.point", &json!({"name": "O", "by": {"type": "coordinates", "point": [0, 0, 0]}})).unwrap();
         s.execute("geometry.datum.point", &json!({"name": "X", "by": {"type": "coordinates", "point": [10, 0, 0]}})).unwrap();
@@ -764,7 +778,7 @@ pub(crate) mod tests {
         s.execute("geometry.datum.axis", &json!({"name": "Ax", "by": {"type": "datum_points", "a": "O", "b": "X"}})).unwrap();
         assert_eq!(s.model.datum("Ax"), Some(&Datum::Axis { point: [0.0; 3], direction: [1.0, 0.0, 0.0] }));
         s.execute("geometry.datum", &json!({"name": "Cut", "by": {"type": "normal_to_axis", "axis": "Ax", "point": "Mid"}})).unwrap();
-        assert_eq!(s.model.datum("Cut"), Some(&Datum::Plane { point: point(&s, "Mid"), normal: [1.0, 0.0, 0.0] }));
+        assert_eq!(s.model.datum("Cut"), Some(&Datum::Plane { point: stored(&s, "Mid"), normal: [1.0, 0.0, 0.0] }));
         s.execute("geometry.datum.point", &json!({"name": "Hit", "by": {"type": "axis_plane", "axis": "Ax", "plane": "Cut"}})).unwrap();
         assert!(close(point(&s, "Hit"), [20.0, 0.0, 0.0]));
 
@@ -804,7 +818,7 @@ pub(crate) mod tests {
         )
         .unwrap();
         s.execute("geometry.datum.point", &json!({"name": "Tip", "by": {"type": "vertex", "body": "Bar", "vertex": "tip"}})).unwrap();
-        assert_eq!(s.model.datum("Tip").and_then(Datum::point), Some([4.0, 1.0, 1.0]));
+        assert_eq!(s.model.datum("Tip").and_then(Datum::point), Some([0.004, 0.001, 0.001]), "4, 1, 1 mm, stored in metres");
     }
 
     #[test]

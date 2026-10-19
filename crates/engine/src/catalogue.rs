@@ -507,7 +507,7 @@ pub static CATALOGUE: &[Capability] = &[
         "A set of nodes, elements and faces, or of named geometry that survives remeshing",
         &["model.set.edit", "model.set.delete", "model.set.resolve"],
     ),
-    ready("model.units", "Units", Properties, "Model", "The model's unit system (never converted)"),
+    ready("model.units", "Units", Properties, "Model", "The units the model is shown and typed in"),
     // ---- Assembly ----
     soon("assembly.instance", "Instances", Assembly, "Instances", "M7", "Part instances placed from SolidCraft occurrences"),
     // ---- Steps ----

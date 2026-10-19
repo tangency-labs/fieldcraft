@@ -42,8 +42,9 @@ pub const MAX_CONTACTS: usize = 1000;
 /// Largest friction coefficient (a coefficient of 10 already locks every practical interface).
 pub const MAX_FRICTION: f64 = 10.0;
 
-/// Largest exponential decay coefficient (time per length: 1/d is the slip rate at which the
-/// coefficient has gone 63% of the way from static to kinetic).
+/// Largest exponential decay coefficient, in s/m (time per length: 1/d is the slip rate at which
+/// the coefficient has gone 63% of the way from static to kinetic): 10¹⁵ s/m, a slip rate of
+/// a femtometre per second, is a limit no interface reaches.
 pub const MAX_DECAY: f64 = 1e15;
 
 /// Penalty scale factors outside this range are refused (above 1 the contact springs would

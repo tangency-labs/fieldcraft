@@ -83,7 +83,8 @@ fn bar(kind: ElementKind, clamped: bool, plastic: Option<Plastic>) -> Model {
         m.add_boundary_condition(&name, BoundaryCondition::Symmetry { target: Target::Set(set.into()), plane }).unwrap();
         step.boundary_conditions.insert(name);
     }
-    m.add_load("warm", Load::Temperature { target: Target::Set("all".into()), value: DT }).unwrap();
+    // DT above the reference temperature (0 °C by default; temperatures are kelvin).
+    m.add_load("warm", Load::Temperature { target: Target::Set("all".into()), value: fieldcraft_model::units::celsius_to_kelvin(DT) }).unwrap();
     step.loads.insert("warm".into());
     m.add_step(step, None).unwrap();
     m
@@ -119,6 +120,8 @@ fn a_clamped_bar_carries_minus_e_alpha_dt_up_to_yield() {
             assert!((mises - 0.5 * sigma.abs()).abs() < 0.02 * sigma.abs(), "{kind:?}: {s:?}");
             assert!(*ep > 0.0, "{kind:?}: plastic strain {ep}");
         }
+        // A bilinear material follows no temperature: none is reported (not 0 K).
+        assert!(!last.temperature.is_empty() && last.temperature.iter().all(|t| t.is_nan()), "{kind:?}: {:?}", last.temperature);
     }
 }
 

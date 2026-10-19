@@ -243,6 +243,8 @@ pub struct Prefs {
     pub update_checked_at: u64,
     /// The version the user skipped (the automatic check does not offer it); empty for none.
     pub update_skip: String,
+    /// The units numbers are shown and typed in, for a model without its own (docs/units.md).
+    pub units: fieldcraft_model::DisplaySystem,
 }
 
 impl Default for Prefs {
@@ -256,6 +258,7 @@ impl Default for Prefs {
             update_check: true,
             update_checked_at: 0,
             update_skip: String::new(),
+            units: fieldcraft_model::DisplaySystem::default(),
         }
     }
 }
@@ -1363,6 +1366,12 @@ mod tests {
         app.save_prefs();
         let again = ModelApp::new(Session::default()).with_services(services());
         assert_eq!((again.ui.nav_preset.as_str(), again.ui.reverse_zoom), ("solidworks", true));
+        // The display units too: the session shows and takes numbers in them.
+        let mut app = again;
+        let si = fieldcraft_model::DisplaySystem::new(fieldcraft_model::units::Preset::MKgS);
+        app.set_default_units(si.clone());
+        let again = ModelApp::new(Session::default()).with_services(services());
+        assert_eq!((&again.prefs().units, again.session.units()), (&si, &si));
         std::fs::write(&file, b"{nope").unwrap();
         assert_eq!(Prefs::load(Some(&store)), Prefs::default());
     }
@@ -1560,7 +1569,8 @@ mod tests {
         }));
         app.export_csv(params);
         let text = std::fs::read_to_string(format!("{target}.csv")).unwrap();
-        assert!(text.starts_with("set,nodes,fx,fy,fz,mx,my,mz\r\n") && text.contains("\r\ntotal,"), "{text}");
+        // The headers state the units (the display units, here mm-t-s-N-MPa).
+        assert!(text.starts_with("set,nodes,fx [N],fy [N],fz [N],mx [N·mm],my [N·mm],mz [N·mm]\r\n") && text.contains("\r\ntotal,"), "{text}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

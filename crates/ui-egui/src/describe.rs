@@ -5,7 +5,7 @@
 //! its JSON.
 
 use fieldcraft_engine::schema::{self, Field, Kind};
-use fieldcraft_model::{Model, UnitSystem};
+use fieldcraft_model::{DisplaySystem, Model};
 use serde_json::{Map, Value};
 
 use crate::browser::Def;
@@ -45,25 +45,31 @@ fn with_unit(v: f64, unit: Option<&str>) -> String {
     }
 }
 
-/// The definition `name` of `kind` as (label, text) rows, in its form's words and units; `None`
-/// when it is gone.
-pub fn rows(model: &Model, kind: Def, name: &str) -> Option<Vec<(String, String)>> {
+/// The definition `name` of `kind` as (label, text) rows, in its form's words and in `units`;
+/// `None` when it is gone (or its numbers cannot be told apart).
+pub fn rows(model: &Model, kind: Def, name: &str, units: &DisplaySystem) -> Option<Vec<(String, String)>> {
     let v = crate::browser::definition(model, kind, name)?;
-    let obj = v.as_object()?;
     if kind == Def::Set {
-        return Some(set_rows(model, name, obj));
+        return Some(set_rows(model, name, v.as_object()?));
     }
-    Some(command_rows(model, &kind.command("create"), obj))
+    // A datum reads as its edit command's parameters (its geometry in millimetres).
+    if kind == Def::Datum {
+        let (command, params) = kind.edit(model, name, units)?;
+        return Some(command_rows(&command, params.as_object()?, units));
+    }
+    let shown = fieldcraft_engine::units::shown_params(&kind.command("create"), &v, units).ok()?;
+    let obj = shown.as_object()?;
+    Some(command_rows(&kind.command("create"), obj, units))
 }
 
-/// Parameters of `command` as (label, text) rows in its form's words and units; fields its form
-/// does not show stay readable by their key.
-pub fn command_rows(model: &Model, command: &str, obj: &Map<String, Value>) -> Vec<(String, String)> {
+/// Parameters of `command`, given in `units`, as (label, text) rows in its form's words and units;
+/// fields its form does not show stay readable by their key.
+pub fn command_rows(command: &str, obj: &Map<String, Value>, units: &DisplaySystem) -> Vec<(String, String)> {
     let form = fieldcraft_engine::find_command(command).and_then(|spec| spec.form);
     let mut out = Vec::new();
     let mut used = Vec::new();
     if let Some(fields) = form {
-        object(fields, obj, model.units(), &mut out, &mut used, 0);
+        object(fields, obj, units, &mut out, &mut used, 0);
     }
     for (k, field) in obj {
         if k != "name" && !used.iter().any(|u| u == k) {
@@ -73,14 +79,14 @@ pub fn command_rows(model: &Model, command: &str, obj: &Map<String, Value>) -> V
     out
 }
 
-/// The seed on `edge` as (label, text) rows: the edge, then `mesh.seed.edge`'s fields.
-pub fn seed_rows(model: &Model, seed: &fieldcraft_model::Seed) -> Vec<(String, String)> {
+/// The seed on `edge` as (label, text) rows: the edge, then `mesh.seed.edge`'s fields in `units`.
+pub fn seed_rows(seed: &fieldcraft_model::Seed, units: &DisplaySystem) -> Vec<(String, String)> {
     let mut out = vec![("Edge".to_string(), format!("{} · {}", seed.edge.body, seed.edge.entity.name().unwrap_or_default()))];
-    let params = crate::menu::seed_params(seed).unwrap_or_default();
+    let params = crate::menu::seed_params(seed, units).unwrap_or_default();
     if let (Some(fields), Some(obj)) = (fieldcraft_engine::find_command("mesh.seed.edge").and_then(|s| s.form), params.as_object()) {
         let mut obj = obj.clone();
         obj.remove("edges");
-        object(fields, &obj, model.units(), &mut out, &mut Vec::new(), 0);
+        object(fields, &obj, units, &mut out, &mut Vec::new(), 0);
     }
     out
 }
@@ -93,7 +99,7 @@ fn sentence(key: &str) -> String {
 }
 
 /// The rows of one object's fields; `used` collects the top-level keys described.
-fn object(fields: &[Field], obj: &Map<String, Value>, units: UnitSystem, out: &mut Vec<(String, String)>, used: &mut Vec<String>, depth: usize) {
+fn object(fields: &[Field], obj: &Map<String, Value>, units: &DisplaySystem, out: &mut Vec<(String, String)>, used: &mut Vec<String>, depth: usize) {
     if depth > MAX_DEPTH {
         return;
     }
@@ -140,7 +146,7 @@ fn object(fields: &[Field], obj: &Map<String, Value>, units: UnitSystem, out: &m
 }
 
 /// One field's value as text, with its unit.
-fn scalar(f: &Field, v: &Value, units: UnitSystem) -> String {
+fn scalar(f: &Field, v: &Value, units: &DisplaySystem) -> String {
     let unit = f.unit_label(units);
     match f.kind {
         Kind::Number { .. } => v.as_f64().map_or_else(|| crate::context::value_text(v), |x| with_unit(x, unit.as_deref())),
@@ -348,20 +354,24 @@ mod tests {
         let mut s = Session::default();
         s.run_script(&fieldcraft_engine::sample::cantilever()).unwrap();
         let m = &s.model;
-        let steel = text(&rows(m, Def::Material, "Steel").unwrap());
-        assert!(steel.contains("Elasticity: Isotropic") && steel.contains("MPa") && steel.contains("t/mm³"), "{steel}");
+        let mm = DisplaySystem::new(fieldcraft_model::units::Preset::MmTonneS);
+        let steel = text(&rows(m, Def::Material, "Steel", &mm).unwrap());
+        assert!(steel.contains("Elasticity: Isotropic") && steel.contains("210\u{2009}000 MPa") && steel.contains("7.85e−9 t/mm³"), "{steel}");
+        // The same steel in SI: the stored numbers, in their units.
+        let si = text(&rows(m, Def::Material, "Steel", &DisplaySystem::new(fieldcraft_model::units::Preset::MKgS)).unwrap());
+        assert!(si.contains("2.1e11 Pa") && si.contains("7\u{2009}850 kg/m³"), "{si}");
         assert!(!steel.contains('{'), "{steel}");
         let load = Def::Load.names(m).into_iter().next().unwrap();
-        let load = text(&rows(m, Def::Load, &load).unwrap());
+        let load = text(&rows(m, Def::Load, &load, &mm).unwrap());
         assert!(load.contains("Type: Force") && load.contains("Target: Set ") && load.contains(" N"), "{load}");
         assert!(!load.contains('{') && !load.contains('['), "{load}");
         let set = Def::Set.names(m).into_iter().next().unwrap();
-        let set = text(&rows(m, Def::Set, &set).unwrap());
+        let set = text(&rows(m, Def::Set, &set, &mm).unwrap());
         assert!(set.contains("In the mesh: "), "{set}");
 
         let mut s = Session::default();
         s.run_script(&fieldcraft_engine::sample::rubber_seal()).unwrap();
-        let press = text(&rows(&s.model, Def::BoundaryCondition, "Press").unwrap());
+        let press = text(&rows(&s.model, Def::BoundaryCondition, "Press", &mm).unwrap());
         assert!(press.contains("Type: Displacement") && press.contains("U3 −2.5 mm") && press.contains("UR1, UR2, UR3 free"), "{press}");
     }
 }

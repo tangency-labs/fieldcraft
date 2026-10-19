@@ -5,10 +5,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-use fieldcraft_decks::{Error, abaqus};
+mod common;
+
+use common::{abaqus, lsdyna, nastran};
+use fieldcraft_decks::Error;
 use fieldcraft_model::{
     BeamProfile, BoundaryCondition, Coupling, CouplingKind, Distribution, Dofs, Elastic, ElementFace, ElementKind, Formulation, Integration, Load,
-    Material, Model, OutputVariable, Procedure, ReferencePoint, Section, SectionKind, Set, Step, Symmetry, Target, UnitSystem,
+    Material, Model, OutputVariable, Procedure, ReferencePoint, Section, SectionKind, Set, Step, Symmetry, Target,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -37,7 +40,6 @@ fn step(name: &str, procedure: Procedure, bcs: &[&str], loads: &[&str]) -> Step 
 /// (25 i, 10 j, 10 k) is labelled 1 + 4 i + 2 j + k.
 fn cantilever_mesh() -> Model {
     let mut m = Model::default();
-    m.set_units(UnitSystem::MmTonneS);
     let n = |i: u32, j: u32, k: u32| 1 + 4 * i + 2 * j + k;
     for i in 0..=4 {
         for j in 0..=1 {
@@ -73,7 +75,6 @@ fn cantilever() -> Model {
 /// top face and its own weight, with a symmetry plane along x = 100.
 fn plate() -> Model {
     let mut m = Model::default();
-    m.set_units(UnitSystem::MmTonneS);
     let n = |i: u32, j: u32| 1 + i + 3 * j;
     for j in 0..=2 {
         for i in 0..=2 {
@@ -844,7 +845,7 @@ fn buckling_steps() {
     assert!(abaqus::write(&shifted).unwrap_err().to_string().contains("shift"));
     m.add_step(step("Bend", Procedure::Static {}, &["clamp"], &["end"]), Some("Buckle")).unwrap();
     assert!(abaqus::write(&m).unwrap_err().to_string().contains("after a general step"));
-    assert!(fieldcraft_decks::lsdyna::write(&m).is_err() && fieldcraft_decks::nastran::write(&m).is_err());
+    assert!(lsdyna::write(&m).is_err() && nastran::write(&m).is_err());
 }
 
 /// An arc-length step is `*STATIC, RIKS` with the arcs, the maximum load factor and the
@@ -863,7 +864,7 @@ fn arc_length_steps() {
     m.add_step(step("Snap", Procedure::NonlinearStatic(settings), &["clamp"], &["end"]), None).unwrap();
     let deck = abaqus::write(&m).unwrap();
     assert!(deck.contains("*STATIC, RIKS\n0.1, 1.0, 1.0E-5, 1.0, 3.0, 2, 3, -5.0\n"), "{deck}");
-    assert!(fieldcraft_decks::lsdyna::write(&m).is_err());
+    assert!(lsdyna::write(&m).is_err());
     let spherical = NonlinearStatic { arc_length: Some(ArcLength { constraint: ArcConstraint::Spherical, ..arc }), ..NonlinearStatic::default() };
     m.replace_step(step("Snap", Procedure::NonlinearStatic(spherical), &["clamp"], &["end"])).unwrap();
     assert!(abaqus::write(&m).is_err());

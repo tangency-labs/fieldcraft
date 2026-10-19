@@ -32,7 +32,7 @@ pub const NEW: CommandSpec = CommandSpec {
 pub const OPEN: CommandSpec = CommandSpec {
     id: "file.open",
     label: "Open Model",
-    params: r#"{"path": "bracket.fieldcraft"} — opens the model, its mesh and its journal, and opens its design and imported meshes again from their files (one that is missing or changed is listed in `warnings`; the model still opens); unsaved changes of the current model are discarded and the undo history starts empty. A file of an older format is migrated as it is read (`migrated_from` in the reply) and nothing is written; a later format is refused"#,
+    params: r#"{"path": "bracket.fieldcraft"} — opens the model, its mesh and its journal, and opens its design and imported meshes again from their files (one that is missing or changed is listed in `warnings`; the model still opens); unsaved changes of the current model are discarded and the undo history starts empty. A file of an older format is migrated as it is read (`migrated_from` in the reply; what migrating changed in what it means, such as a mesh of the design in a model of metres, leads `warnings`) and nothing is written; a later format is refused"#,
     form: Some(super::forms::FILE_OPEN),
     kind: CommandKind::Session,
     requires: &[],
@@ -211,19 +211,26 @@ impl Session {
             design: self.sources.design.as_ref().map(stored).transpose()?,
             meshes: self.sources.meshes.iter().map(stored).collect::<fieldcraft_io::Result<_>>()?,
         };
-        Ok(fieldcraft_io::write(&self.model, &geometry, &self.journal, &self.view)?)
+        Ok(fieldcraft_io::write(&self.model, &geometry, &self.journal, &self.journal_header, &self.view)?)
     }
 
     /// A session holding what a file holds, its geometry opened again from the paths it names
     /// (relative ones against `base`) where `roots` lets it read them; problems with the
     /// geometry come back as warnings. The session's own file access is unconfined.
     pub fn from_file(file: ModelFile, base: Option<&Path>, roots: &Roots) -> (Session, Vec<String>) {
-        let mut warnings = Vec::new();
+        // What migrating an older file changed in what it means comes first.
+        let mut warnings = file.notes.clone();
+        // The geometry is in millimetres: it is cut and stitched by the model expressed in them.
+        let mm = crate::units::geometry();
+        let framed = file.model.converted(&|q, v| mm.express(q, v).ok()).unwrap_or_else(|e| {
+            warnings.push(format!("the model's lengths cannot be expressed in millimetres ({e}); its partitions and stitches are not applied"));
+            fieldcraft_model::Model::default()
+        });
         let mut sources = Geometry::default();
         let mut design: Option<Arc<Design>> = None;
         if let Some(stored) = &file.geometry.design {
             let (opened, source) = reopen("design", stored, base, roots, MAX_DESIGN_BYTES as u64, open_design, &mut warnings);
-            design = opened.and_then(|d| match super::datum::partitioned(&d, &file.model) {
+            design = opened.and_then(|d| match super::datum::partitioned(&d, &framed) {
                 Ok(cut) => Some(Arc::new(cut)),
                 Err(e) => {
                     warnings.push(format!("the design's partitions could not be applied ({e}); the model opens without the design"));
@@ -252,12 +259,14 @@ impl Session {
             surfaces,
             sources,
             journal: file.journal,
+            journal_header: file.journal_header,
             revision: next_revision(),
             saved_view: file.view.clone(),
             view: file.view,
+            migration_notes: file.notes,
             ..Session::default()
         };
-        let (_, failed) = super::stitch::restitch(&mut session);
+        let (_, failed) = super::stitch::restitch_surfaces(&mut session.surfaces, &framed);
         warnings.extend(failed.into_iter().map(|(n, why)| format!("stitch `{n}`: {why}")));
         (session, warnings)
     }
@@ -270,6 +279,7 @@ impl Session {
         opened.file_access = std::mem::take(&mut self.file_access);
         opened.crash_journal = self.crash_journal;
         opened.origin = self.origin;
+        opened.default_units = self.default_units.clone();
         opened.clear_history();
         opened.mark_opened();
         *self = opened;
@@ -583,13 +593,240 @@ mod tests {
             let mut s = Session::default();
             let r = s.execute("file.open", &json!({"path": path})).unwrap();
             assert_eq!(r["migrated_from"], 1, "{r}");
-            assert_eq!(r["warnings"], json!([]), "{}: {r}", path.display());
+            // A mesh of the millimetre design in a model of metres or inches opens with a note
+            // saying what changed, kept with the migrated-from note until the first save.
+            if ["design-metres", "design-inches", "mixed-metres"].iter().any(|n| path.file_stem().is_some_and(|s| s == *n)) {
+                let w = r["warnings"].to_string();
+                assert!(w.contains("was made from a SolidCraft design") && w.contains("results will differ"), "{w}");
+                assert_eq!(s.migration_notes.len(), 1, "{}", path.display());
+            } else {
+                assert_eq!(r["warnings"], json!([]), "{}: {r}", path.display());
+            }
             assert_eq!(s.migrated_from, Some(1));
             assert!(!s.is_dirty(), "a migrated model has nothing unsaved: opening it again gives the same");
             let file = fieldcraft_io::read(&std::fs::read(path).unwrap()).unwrap();
             assert_eq!((&s.model, &s.journal, &s.view), (&file.model, &file.journal, &file.view));
         }
         assert_eq!(contents(&d), before, "opening wrote nothing");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// The journal of every migrated fixture replays to its migrated model: the step keeps the
+    /// journal's numbers as they were typed and names their units, and replay reads them so.
+    #[test]
+    fn every_migrated_journal_replays_to_its_migrated_model() {
+        // As written, and relabelled into every system (the defaults format 2 filled in mean
+        // other numbers in each): bit for bit.
+        const SYSTEMS: [Option<&str>; 6] =
+            [None, Some("mm-t-s-N-MPa"), Some("m-kg-s-N-Pa"), Some("mm-kg-ms-kN-GPa"), Some("mm-g-ms-N-MPa"), Some("in-lbf-s-psi")];
+        let (mut checked, mut worst) = (0, 0.0f64);
+        for writer in V1_WRITERS {
+            let d = v1_fixtures("v1-replay", writer);
+            let mut models: Vec<PathBuf> =
+                std::fs::read_dir(&d).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|x| x == "fieldcraft")).collect();
+            models.sort();
+            for original in &models {
+                for system in SYSTEMS {
+                    let path = match system {
+                        None => original.clone(),
+                        Some(system) => {
+                            let p = d.join(format!("relabelled-{system}.fieldcraft"));
+                            std::fs::write(&p, relabelled(&std::fs::read(original).unwrap(), system)).unwrap();
+                            p
+                        }
+                    };
+                    let what = format!("{writer} {} as {system:?}", original.display());
+                    let mut opened = Session::default();
+                    opened.execute("file.open", &json!({"path": path})).unwrap_or_else(|e| panic!("{what}: {e}"));
+                    let file = fieldcraft_io::read(&std::fs::read(&path).unwrap()).unwrap();
+                    let h = &file.journal_header;
+                    let commands: Vec<Value> = file.journal.iter().map(|(c, p)| json!({"command": c, "params": p})).collect();
+                    let mut script = json!({"units": h.units, "model_units": h.model_units, "commands": commands});
+                    // A design is named relative to the model's folder.
+                    for c in script["commands"].as_array_mut().unwrap() {
+                        if c["command"] == "geometry.open"
+                            && let Some(p) = c["params"]["path"].as_str()
+                        {
+                            c["params"]["path"] = json!(d.join(p));
+                        }
+                    }
+                    let mut replayed = Session::default();
+                    replayed.run_script(&script).unwrap_or_else(|e| panic!("{what}: {e}"));
+                    // Bit for bit, but for coordinates a mesher computed after another one on
+                    // the same mesh (a relaxation after a tet mesh): it sees the millimetre image
+                    // of the stored metres, within an ulp of what 0.7.0 saw.
+                    let (mut a, mut b) = (serde_json::to_value(&replayed.model).unwrap(), serde_json::to_value(&opened.model).unwrap());
+                    worst = worst.max(settle_coordinates(&mut a, &mut b, ""));
+                    if a != b {
+                        panic!("{what}: the replay differs at {}", difference(&a, &b, ""));
+                    }
+                    checked += 1;
+                }
+            }
+            let _ = std::fs::remove_dir_all(&d);
+        }
+        assert!(checked >= 100, "{checked}");
+        // Of models about 0.1 m across: a few ulps.
+        assert!(worst < 1e-15, "{worst}");
+    }
+
+    /// Where `a` and `b` hold the same node or relaxation coordinate up to 1e-12 (relative to
+    /// 1 m), make them equal; the largest such difference.
+    fn settle_coordinates(a: &mut Value, b: &mut Value, at: &str) -> f64 {
+        let coordinate = at.starts_with("/nodes/") || (at.starts_with("/relaxations/") && (at.contains("/at/") || at.contains("/moved/")));
+        match (a, b) {
+            (Value::Number(x), Value::Number(y)) if coordinate => {
+                let (p, q) = (x.as_f64().unwrap_or(f64::NAN), y.as_f64().unwrap_or(f64::NAN));
+                let d = (p - q).abs();
+                if d > 0.0 && d < 1e-12 {
+                    *x = y.clone();
+                    return d;
+                }
+                0.0
+            }
+            (Value::Object(x), Value::Object(y)) => {
+                x.iter_mut().filter_map(|(k, v)| y.get_mut(k).map(|w| settle_coordinates(v, w, &format!("{at}/{k}")))).fold(0.0, f64::max)
+            }
+            (Value::Array(x), Value::Array(y)) => {
+                x.iter_mut().zip(y.iter_mut()).enumerate().map(|(i, (v, w))| settle_coordinates(v, w, &format!("{at}/{i}"))).fold(0.0, f64::max)
+            }
+            _ => 0.0,
+        }
+    }
+
+    /// Where `a` and `b` first differ, with both values there.
+    fn difference(a: &Value, b: &Value, at: &str) -> String {
+        match (a, b) {
+            (Value::Object(x), Value::Object(y)) => x.keys().chain(y.keys()).find(|k| x.get(*k) != y.get(*k)).map_or(format!("{at}: (same)"), |k| {
+                difference(x.get(k).unwrap_or(&Value::Null), y.get(k).unwrap_or(&Value::Null), &format!("{at}/{k}"))
+            }),
+            (Value::Array(x), Value::Array(y)) if x.len() == y.len() => x
+                .iter()
+                .zip(y)
+                .enumerate()
+                .find(|(_, (p, q))| p != q)
+                .map_or(format!("{at}: (same)"), |(i, (p, q))| difference(p, q, &format!("{at}/{i}"))),
+            _ => format!("{at}: {a} vs {b}"),
+        }
+    }
+
+    /// The format 1 file `bytes` declaring `system`: its model's `units` and the journal's
+    /// `model.units` say so, the manifest's sizes and hashes follow.
+    fn relabelled(bytes: &[u8], system: &str) -> Vec<u8> {
+        use std::io::{Read, Write};
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut parts: Vec<(String, Vec<u8>)> = (0..zip.len())
+            .map(|i| {
+                let mut f = zip.by_index(i).unwrap();
+                let mut b = Vec::new();
+                f.read_to_end(&mut b).unwrap();
+                (f.name().unwrap().to_string(), b)
+            })
+            .collect();
+        let mut hashes = Vec::new();
+        for (name, b) in &mut parts {
+            let edited = match name.as_str() {
+                "model.json" => {
+                    let mut m: Value = serde_json::from_slice(b).unwrap();
+                    m["units"] = json!(system);
+                    serde_json::to_vec(&m).unwrap()
+                }
+                "journal.json" => {
+                    // A model gets its system from a command (a file of a system names it in
+                    // its journal): changed where there is one, the first command otherwise.
+                    let mut j: Value = serde_json::from_slice(b).unwrap();
+                    let list = j.as_array_mut().unwrap();
+                    let mut named = false;
+                    for c in list.iter_mut() {
+                        if c["command"] == "model.units" {
+                            c["params"]["system"] = json!(system);
+                            named = true;
+                        }
+                    }
+                    if !named {
+                        list.insert(0, json!({"command": "model.units", "params": {"system": system}}));
+                    }
+                    serde_json::to_vec(&j).unwrap()
+                }
+                _ => continue,
+            };
+            hashes.push((name.clone(), json!({"bytes": edited.len(), "sha256": fieldcraft_io::sha256_hex(&edited)})));
+            *b = edited;
+        }
+        let mut manifest: Value = serde_json::from_slice(&parts[0].1).unwrap();
+        for (name, h) in hashes {
+            manifest["parts"][&name] = h;
+        }
+        parts[0].1 = serde_json::to_vec(&manifest).unwrap();
+        let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        for (name, b) in &parts {
+            out.start_file(name, zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored)).unwrap();
+            out.write_all(b).unwrap();
+        }
+        out.finish().unwrap().into_inner()
+    }
+
+    /// Replaying a 0.7.0 journal reads a geometry command's numbers as millimetres only in a
+    /// model built on a design: a block model of metres moves its nodes in metres, and a command
+    /// that acted on a block beside a mesh of the design is refused rather than guessed.
+    #[test]
+    fn legacy_geometry_commands_replay_in_the_unit_they_were_typed_in() {
+        let d = v1_fixtures("v1-legacy", "0.7.0");
+        let replay = |name: &str, system: &str, extra: Value| -> Result<Session> {
+            let path = d.join(format!("{name}-{system}.fieldcraft"));
+            std::fs::write(&path, relabelled(&std::fs::read(d.join(format!("{name}.fieldcraft"))).unwrap(), system)).unwrap();
+            let file = fieldcraft_io::read(&std::fs::read(&path).unwrap()).unwrap();
+            let mut commands: Vec<Value> = file.journal.iter().map(|(c, p)| json!({"command": c, "params": p})).collect();
+            for c in &mut commands {
+                if c["command"] == "geometry.open" {
+                    c["params"]["path"] = json!(d.join(c["params"]["path"].as_str().unwrap()));
+                }
+            }
+            commands.push(extra);
+            let h = &file.journal_header;
+            let mut s = Session::default();
+            s.run_script(&json!({"units": h.units, "model_units": h.model_units, "commands": commands}))?;
+            Ok(s)
+        };
+        let s = replay(
+            "hex-static",
+            "m-kg-s-N-Pa",
+            json!({"command": "mesh.node.move", "params": {"nodes": [20], "by": [1, 0, 0], "on_geometry": false, "guard": "none"}}),
+        )
+        .unwrap();
+        assert_eq!(s.model.node(20).unwrap().xyz[0], 41.0);
+        // Node 1 is the block `Bar`'s (typed in metres) beside the design's `Case`.
+        let e = replay(
+            "mixed-metres",
+            "m-kg-s-N-Pa",
+            json!({"command": "mesh.node.move", "params": {"nodes": [1], "by": [1, 0, 0], "on_geometry": false, "guard": "none"}}),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(e.contains("from FieldCraft 0.7 acted on node 1 of block body `Bar`, typed in m") && e.contains("cannot be replayed exactly"), "{e}");
+        // So is one over the whole mesh, given no target.
+        let e = replay("mixed-metres", "m-kg-s-N-Pa", json!({"command": "mesh.node.relax", "params": {"mode": "strong"}})).unwrap_err().to_string();
+        assert!(e.contains("acted on every body of the mesh, the block body `Bar` (typed in m)") && e.contains("cannot be replayed exactly"), "{e}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// A fluid model of 0.7.0 typed in kelvin keeps its lattice counting from 0 K (the scheme is
+    /// not invariant under a shift of the temperature scale), whatever it is shown in: the same
+    /// heat in SI shown in K or in °C.
+    #[test]
+    fn a_kelvin_fluid_model_solves_as_it_did_whatever_it_is_shown_in() {
+        let d = v1_fixtures("v1-fluid", "0.7.0");
+        let mut s = Session::default();
+        s.execute("file.open", &json!({"path": d.join("fluid-metres.fieldcraft")})).unwrap();
+        assert_eq!(s.model.fluid_domain("Duct").and_then(|f| f.thermal.as_ref()).map(|t| t.temperature_zero), Some(0.0));
+        let heat = |s: &mut Session| -> Vec<f64> {
+            s.execute("solve.fluid", &json!({})).unwrap();
+            let Some(crate::StepResult::Fluid(r)) = s.result("Flow").map(|r| r.as_ref()) else { panic!("no fluid result") };
+            r.heat.iter().map(|h| *h.power.last().unwrap()).collect()
+        };
+        let in_kelvin = heat(&mut s);
+        s.execute("model.units", &json!({"system": "mm-t-s-N-MPa"})).unwrap();
+        assert_eq!(heat(&mut s), in_kelvin, "how it is shown changes nothing solved");
         let _ = std::fs::remove_dir_all(&d);
     }
 

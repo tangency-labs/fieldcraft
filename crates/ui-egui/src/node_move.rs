@@ -273,8 +273,8 @@ impl ModelApp {
         let (Some(drag), Some(rect), Some(mut params)) = (self.node_drag, self.viewport.rect, self.move_params()) else { return };
         let (o, d) = self.cam.ray(f64::from(at.x - rect.left()), f64::from(at.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));
         let Some(p) = on_plane(o, d, drag.start, drag.normal) else { return };
-        let by = p - drag.start;
-        params["by"] = json!([by.x, by.y, by.z]);
+        // The form is in the display units; the scene in metres.
+        params["by"] = json!(self.shown_point(p - drag.start));
         self.set_move_params(params);
     }
 
@@ -314,7 +314,8 @@ impl ModelApp {
                 for n in self.session.model.nodes().values() {
                     bounds.add(Vec3::from(n.xyz));
                 }
-                bounds.diagonal() / 20.0
+                // A twentieth of the mesh's size (metres), in the form's display units.
+                self.shown_length(bounds.diagonal() / 20.0)
             }
         };
         if !(radius > 0.0 && radius.is_finite()) {

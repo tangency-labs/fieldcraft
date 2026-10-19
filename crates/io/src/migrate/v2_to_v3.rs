@@ -18,13 +18,20 @@
 //!     temperature differences, so nothing computed changes). They go to kelvin with the offset;
 //!     temperature differences, expansion coefficients and every other per-degree quantity
 //!     scale without it.
-//!   - Lengths that the commands always took in millimetres, whatever the system (datum points,
-//!     mesh plans: geometry from SolidCraft is in millimetres), scale from millimetres.
+//!   - Lengths typed against the geometry (datum points, mesh plans, seeds and size controls)
+//!     scale from millimetres in a file built on a design or 3MF meshes (SolidCraft geometry is
+//!     in millimetres), from the declared unit in one that was not.
+//!   - A mesh made from the geometry in a model of another length unit (metres, inches) holds
+//!     millimetres (format 2 never scaled it, and solved them as that unit): its nodes migrate
+//!     from millimetres, a block's (and its mirror images' and extrusions') from the declared
+//!     unit, by body ([`mesh_units`]), and the file gets a note saying so (`Parts::notes`). A
+//!     relaxation field follows its mesh. A node of both kinds refuses the file.
 //!   - Defaults the model read for absent dimensional fields (a reference temperature of 0, a
 //!     plane strain thickness and a Johnson–Cook reference strain rate of 1) are written out,
 //!     converted, since a default means the same number in SI no longer.
 //! - **`mesh.bin`**: `MCMESH01` → `MCMESH02`, the same layout with node coordinates scaled from
-//!   the declared length unit to metres ([`mesh`]; its own reader of the `MCMESH01` layout).
+//!   the declared length unit (millimetres for a mesh of the geometry) to metres ([`mesh`]; its
+//!   own reader of the `MCMESH01` layout).
 //! - **`journal.json`**: its numbers are not touched. The list of commands gets a header naming
 //!   the system its bare numbers were typed in (`units`, the declared system) and the system a
 //!   model started in before the first command (`model_units`: `unspecified`, read as
@@ -35,7 +42,7 @@
 //! unit table of the release that made format 3 did, so a typed 3.97 mm is the double nearest
 //! 0.00397 m.
 
-use std::collections::BTreeSet;
+use std::collections::HashSet;
 
 use serde_json::{Map, Value};
 
@@ -158,6 +165,16 @@ impl System {
         }
     }
 
+    /// The zero of the system's temperature unit in kelvin, when it is not 0 °C (format 3's
+    /// default for a fluid's `temperature_zero`): 0 K for m-kg-s-N-Pa, 0 °F for in-lbf-s-psi.
+    fn temperature_zero(self) -> Option<f64> {
+        match self {
+            System::MKgS => Some(0.0),
+            System::InLbfS => Some(FAHRENHEIT_ZERO),
+            System::MmTonneS | System::MmKgMs | System::MmGMs => None,
+        }
+    }
+
     /// The factor of quantity `q` in this system.
     fn factor(self, q: Q) -> Factor {
         // The metric systems' base units are powers of ten of SI's: (length, mass, time).
@@ -204,6 +221,11 @@ fn inch_pound(q: Q) -> Factor {
 
 impl Factor {
     fn to_si(self, v: f64) -> f64 {
+        // An absolute °F: (F + 459.67) × 5/9 on the decimal F was written as, one correctly
+        // rounded division of exact integers (68 °F is 293.15 K).
+        if self.offset == FAHRENHEIT_ZERO {
+            return decimal::fahrenheit_to_kelvin(v);
+        }
         let scaled = if self.mantissa == 1.0 { v } else { v * self.mantissa };
         let scaled = decimal::shift(scaled, self.exp10);
         if self.offset != 0.0 { decimal::add(scaled, self.offset) } else { scaled }
@@ -212,19 +234,30 @@ impl Factor {
 
 /// Run the step.
 pub(super) fn v2_to_v3(parts: &mut Parts) -> Result<()> {
-    let Some(model) = parts.model.as_object_mut() else { return invalid("`model.json` is not a JSON object") };
-    let label = match model.remove("units") {
+    let Some(model) = parts.model.as_object() else { return invalid("`model.json` is not a JSON object") };
+    let label = match model.get("units") {
         None => "unspecified".to_string(),
-        Some(Value::String(s)) => s,
+        Some(Value::String(s)) => s.clone(),
         Some(_) => return invalid("`model.json`: `units` is not a unit system label"),
     };
     let system = System::of(&label)
         .ok_or_else(|| Error::Invalid(format!("`model.json`: unknown unit system `{}`", label.chars().take(64).collect::<String>())))?;
+    // Meshes of the geometry are millimetres whatever was declared (read before anything changes).
+    let units = mesh_units(system, parts)?;
+    // Lengths the commands took against the geometry (datums, plans, seeds, size controls):
+    // millimetres in a file built on a design or 3MF meshes, else the declared unit.
+    let geometry = parts.manifest.get("geometry");
+    let built_on_geometry = geometry.and_then(|g| g.get("design")).is_some_and(|d| !d.is_null())
+        || geometry.and_then(|g| g.get("meshes")).and_then(Value::as_array).is_some_and(|m| !m.is_empty());
+    let geometry_length = if built_on_geometry { Q::Millimetre } else { Q::Length };
+    let Some(model) = parts.model.as_object_mut() else { return invalid("`model.json` is not a JSON object") };
+    model.remove("units");
     model.insert("display_units".into(), Value::String(system.label().into()));
-    let mut walk = Walk { system, handled: BTreeSet::new() };
+    let mut walk = Walk { system, handled: HashSet::new(), geometry_length, units };
     walk.model(&mut parts.model)?;
     walk.check_all_handled(&parts.model)?;
-    parts.mesh = mesh(&parts.mesh, system.factor(Q::Length))?;
+    parts.mesh = mesh(&parts.mesh, system.factor(Q::Length), system.factor(Q::Millimetre), &walk.units.millimetre_nodes)?;
+    parts.notes.extend(walk.units.note.take());
     let commands = std::mem::take(&mut parts.journal);
     if !commands.is_array() {
         return invalid("`journal.json` is not a list of commands");
@@ -237,11 +270,406 @@ pub(super) fn v2_to_v3(parts: &mut Parts) -> Result<()> {
     set_format(parts, 3)
 }
 
+/// Where each mesh body of a format 2 file came from, and so in which unit its node coordinates
+/// are: [`Origin::Typed`] in the declared system, [`Origin::Geometry`] in millimetres.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Origin {
+    /// Made from numbers typed in the declared system: `mesh.block`, elements tagged onto a body
+    /// (`mesh.tag`), and what was mirrored or extruded from those.
+    Typed,
+    /// Made from the geometry (a SolidCraft design or a 3MF file), always in millimetres.
+    Geometry,
+}
+
+/// The meshers of format 2 that mesh the geometry, and the parameter naming their bodies.
+const GEOMETRY_MESHERS: [(&str, &str); 10] = [
+    ("mesh.tet.generate", "body"),
+    ("mesh.hex.generate", "body"),
+    ("mesh.hex.blocks", "bodies"),
+    ("mesh.hex.sweep", "body"),
+    ("mesh.hex.mapped", "body"),
+    ("mesh.hex.octree", "bodies"),
+    ("mesh.hex.project", "body"),
+    ("mesh.planar", "body"),
+    ("mesh.cells", "bodies"),
+    ("mesh.plan.apply", "body"),
+];
+
+/// The names a parameter holds: a name or a list of them.
+fn names(v: Option<&Value>) -> Vec<String> {
+    match v {
+        Some(Value::String(s)) => vec![s.clone()],
+        Some(Value::Array(a)) => a.iter().filter_map(Value::as_str).map(str::to_string).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// The origin of each body the journal names, traced through the commands in order: blocks and
+/// tagged elements are typed, the geometry meshers' bodies geometry, and a mirror image or an
+/// extrusion takes its source's origin. Bounded by the journal's size.
+fn origins_from_journal(journal: &Value) -> std::collections::BTreeMap<String, Origin> {
+    let mut origin = std::collections::BTreeMap::new();
+    for c in journal.as_array().into_iter().flatten() {
+        let (Some(id), p) = (c.get("command").and_then(Value::as_str), c.get("params").unwrap_or(&Value::Null)) else { continue };
+        match id {
+            "mesh.block" => {
+                for b in names(p.get("body")) {
+                    origin.insert(b, Origin::Typed);
+                }
+            }
+            "mesh.tag" => {
+                if let Some(b) = p.get("geometry").and_then(|g| g.get("body")).and_then(Value::as_str) {
+                    origin.entry(b.to_string()).or_insert(Origin::Typed);
+                }
+            }
+            "mesh.mirror" => {
+                let sources = match p.get("bodies") {
+                    Some(_) => names(p.get("bodies")),
+                    None => origin.keys().cloned().collect(),
+                };
+                for s in sources {
+                    let Some(o) = origin.get(&s).copied() else { continue };
+                    let image = p.get("as").and_then(|a| a.get(&s)).and_then(Value::as_str).map_or_else(|| format!("{s}/mirror"), str::to_string);
+                    origin.insert(image, o);
+                }
+            }
+            "mesh.hex.extrude" => {
+                let from: Vec<String> = p
+                    .get("source")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|f| f.get("body")?.as_str().map(str::to_string))
+                    .collect();
+                let Some(out) = p.get("body").and_then(Value::as_str).map(str::to_string).or_else(|| from.first().cloned()) else { continue };
+                // From a typed section the layers are typed; from the geometry's, millimetres.
+                let o = if from.iter().any(|b| origin.get(b) == Some(&Origin::Typed)) { Origin::Typed } else { Origin::Geometry };
+                origin.insert(out, o);
+            }
+            _ => {
+                if let Some((_, key)) = GEOMETRY_MESHERS.iter().find(|(m, _)| *m == id) {
+                    for b in names(p.get(*key)) {
+                        origin.insert(b, Origin::Geometry);
+                    }
+                }
+            }
+        }
+    }
+    origin
+}
+
+/// The bodies a format 2 journal (`[{command, params}]`) made from numbers typed in its own
+/// system (blocks, tagged elements, and what was mirrored or extruded from them): with them, a
+/// replay can tell the geometry and mesher commands that acted on them.
+pub fn format_2_typed_bodies(journal: &Value) -> Vec<String> {
+    origins_from_journal(journal).into_iter().filter(|(_, o)| *o == Origin::Typed).map(|(b, _)| b).collect()
+}
+
+/// How the step reads a format 2 mesh: the nodes in millimetres, the coordinates (bits) of the
+/// nodes of each origin and the box round the millimetre ones (for relaxation fields), and a
+/// note for the user.
+#[derive(Default)]
+struct MeshUnits {
+    millimetre_nodes: HashSet<u32>,
+    millimetre_points: HashSet<[u64; 3]>,
+    typed_points: HashSet<[u64; 3]>,
+    millimetre_box: Option<([f64; 3], [f64; 3])>,
+    /// The origin of each body.
+    origins: std::collections::BTreeMap<String, Origin>,
+    note: Option<String>,
+}
+
+/// The unit of each mesh body of a file that declared metres or inches and was built on a design
+/// or 3MF meshes: format 2 never scaled a mesh of the geometry (its numbers are millimetres,
+/// solved as the declared unit, so the part analysed was 1000× or 25.4× the design), while a
+/// block's numbers are the declared unit. Each body migrates by its origin
+/// ([`origins_from_journal`]; a body the journal does not explain is taken as the geometry's,
+/// and the note says so). A node of both kinds (a block joined onto a mesh of the design) has no
+/// consistent scale: the file is refused, unchanged.
+fn mesh_units(system: System, parts: &Parts) -> Result<MeshUnits> {
+    let mut out = MeshUnits::default();
+    let (unit, times) = match system {
+        System::MKgS => ("metres", "1000"),
+        System::InLbfS => ("inches", "25.4"),
+        System::MmTonneS | System::MmKgMs | System::MmGMs => return Ok(out),
+    };
+    let geometry = parts.manifest.get("geometry");
+    let design = geometry.and_then(|g| g.get("design")).is_some_and(|d| !d.is_null());
+    let meshes = geometry.and_then(|g| g.get("meshes")).and_then(Value::as_array).is_some_and(|m| !m.is_empty());
+    if !design && !meshes {
+        return Ok(out);
+    }
+    let traced = origins_from_journal(&parts.journal);
+    let layout = MeshLayout::read(&parts.mesh)?;
+    // Each element's body (untagged elements were typed: `mesh.element.add`).
+    let mut body_of: std::collections::HashMap<u32, &str> = std::collections::HashMap::new();
+    for (element, region) in &layout.regions {
+        if let Some(b) = layout.bodies.get(*region as usize) {
+            body_of.insert(*element, b.as_str());
+        }
+    }
+    let mut inferred: Vec<String> = Vec::new();
+    let mut origin_of = |b: &str| -> Origin {
+        match traced.get(b) {
+            Some(o) => *o,
+            None => {
+                if !inferred.iter().any(|i| i == b) {
+                    inferred.push(b.to_string());
+                }
+                Origin::Geometry
+            }
+        }
+    };
+    // Each node's bodies, by origin: (a millimetre body, a typed body or untagged element).
+    let mut node_bodies: std::collections::HashMap<u32, (Option<String>, Option<String>)> = std::collections::HashMap::new();
+    let mut geometry_bodies: Vec<String> = Vec::new();
+    for (element, nodes) in &layout.elements {
+        let (body, origin) = match body_of.get(element) {
+            Some(b) => (b.to_string(), origin_of(b)),
+            None => ("(elements of no body)".to_string(), Origin::Typed),
+        };
+        if origin == Origin::Geometry && !geometry_bodies.contains(&body) {
+            geometry_bodies.push(body.clone());
+        }
+        out.origins.insert(body.clone(), origin);
+        for n in nodes {
+            let slot = node_bodies.entry(*n).or_default();
+            match origin {
+                Origin::Geometry => slot.0 = Some(body.clone()),
+                Origin::Typed => slot.1 = Some(body.clone()),
+            }
+        }
+    }
+    if let Some((n, (Some(g), Some(t)))) = node_bodies.iter().find(|(_, (g, t))| g.is_some() && t.is_some()) {
+        return invalid(format!(
+            "this model declares the unit system {label}, and its node {n} joins the mesh of body `{g}`, made from a SolidCraft design or 3MF file in millimetres, \
+             to `{t}`, typed in {unit}: FieldCraft 0.7 and earlier joined the two as if they had one scale, so there is no consistent one to read them in. \
+             Nothing was converted and the file is unchanged; it still opens in FieldCraft 0.7.x.",
+            label = system.label(),
+            g = g.chars().take(64).collect::<String>(),
+            t = t.chars().take(64).collect::<String>(),
+        ));
+    }
+    if geometry_bodies.is_empty() {
+        return Ok(out);
+    }
+    for (n, (g, _)) in &node_bodies {
+        if g.is_some() {
+            out.millimetre_nodes.insert(*n);
+        }
+    }
+    for (label, xyz) in &layout.nodes {
+        let bits = xyz.map(f64::to_bits);
+        if out.millimetre_nodes.contains(label) {
+            out.millimetre_points.insert(bits);
+            let (lo, hi) = out.millimetre_box.get_or_insert((*xyz, *xyz));
+            for k in 0..3 {
+                lo[k] = lo[k].min(xyz[k]);
+                hi[k] = hi[k].max(xyz[k]);
+            }
+        } else {
+            out.typed_points.insert(bits);
+        }
+    }
+    let quoted =
+        |list: &[String]| list.iter().take(8).map(|b| format!("`{}`", b.chars().take(64).collect::<String>())).collect::<Vec<_>>().join(", ");
+    let source = if design { "a SolidCraft design" } else { "a 3MF file" };
+    let mut note = format!(
+        "This model declared {label}, but the mesh of {which} {names} was made from {source}, which is in millimetres: \
+         FieldCraft 0.7 and earlier solved those millimetre coordinates as {unit}, so the part it analysed was {times}× the design. \
+         The mesh is now read in millimetres and overlays the design again (block meshes typed in {unit} stay as they were); \
+         results will differ from the old ones. The first save keeps the old file beside the new one.",
+        label = system.label(),
+        which = if geometry_bodies.len() == 1 { "body" } else { "bodies" },
+        names = quoted(&geometry_bodies),
+    );
+    if !inferred.is_empty() {
+        note.push_str(&format!(
+            " No command in the journal made {} ({}); {} read as made from the {}.",
+            if inferred.len() == 1 { "body" } else { "bodies" },
+            quoted(&inferred),
+            if inferred.len() == 1 { "it is" } else { "they are" },
+            if design { "design" } else { "3MF file" },
+        ));
+    }
+    out.note = Some(note);
+    Ok(out)
+}
+
+/// Most entries `MeshLayout::read` takes from a hostile count before checking it: no more
+/// records than the bytes left can hold.
+fn records(count: u64, left: usize, smallest: usize) -> Result<usize> {
+    usize::try_from(count)
+        .ok()
+        .filter(|n| n.checked_mul(smallest).is_some_and(|b| b <= left))
+        .ok_or_else(|| Error::Invalid("`mesh.bin` lists more records than it holds".into()))
+}
+
+/// What the migration needs of an `MCMESH01` part (format 2's layout): node coordinates, each
+/// element's nodes, the body name of each entity, and each tagged element's region (an entity).
+struct MeshLayout {
+    nodes: Vec<(u32, [f64; 3])>,
+    elements: Vec<(u32, Vec<u32>)>,
+    bodies: Vec<String>,
+    regions: Vec<(u32, u32)>,
+}
+
+impl MeshLayout {
+    fn read(bytes: &[u8]) -> Result<MeshLayout> {
+        const HEADER: usize = 8 + 5 * 8;
+        const NODE: usize = 4 + 3 * 8;
+        let truncated = || Error::Invalid("`mesh.bin` is truncated".into());
+        let u32_at = |at: usize| bytes.get(at..at + 4).and_then(|b| <[u8; 4]>::try_from(b).ok()).map(u32::from_le_bytes).ok_or_else(truncated);
+        let u64_at = |at: usize| bytes.get(at..at + 8).and_then(|b| <[u8; 8]>::try_from(b).ok()).map(u64::from_le_bytes).ok_or_else(truncated);
+        if bytes.get(..8) != Some(b"MCMESH01".as_slice()) {
+            return invalid("`mesh.bin` of format 2 must start with MCMESH01");
+        }
+        let left = |at: usize| bytes.len().saturating_sub(at);
+        let node_count = records(u64_at(8)?, left(HEADER), NODE)?;
+        let mut nodes = Vec::with_capacity(node_count);
+        let mut at = HEADER;
+        for _ in 0..node_count {
+            let label = u32_at(at)?;
+            let c = |k: usize| u64_at(at + 4 + 8 * k).map(f64::from_bits);
+            nodes.push((label, [c(0)?, c(1)?, c(2)?]));
+            at += NODE;
+        }
+        // The smallest records: an element of two nodes, a body's entity, an untagged element.
+        let element_count = records(u64_at(16)?, left(at), 5 + 8)?;
+        let mut elements = Vec::with_capacity(element_count);
+        for _ in 0..element_count {
+            let label = u32_at(at)?;
+            let kind = *bytes.get(at + 4).ok_or_else(truncated)?;
+            // Nodes per element kind (format 2's codes).
+            let n: usize = match kind {
+                1 | 2 => 2,
+                3 | 12 => 3,
+                4 | 9 => 6,
+                5 | 7 => 4,
+                6 | 10 => 8,
+                8 => 10,
+                11 => 20,
+                13 => 5,
+                _ => return invalid(format!("`mesh.bin`: unknown element kind {kind}")),
+            };
+            let of = (0..n).map(|k| u32_at(at + 5 + 4 * k)).collect::<Result<Vec<u32>>>()?;
+            elements.push((label, of));
+            at = at.checked_add(5 + 4 * n).filter(|a| *a <= bytes.len()).ok_or_else(truncated)?;
+        }
+        let name = |at: usize| -> Result<(String, usize)> {
+            let len = bytes.get(at..at + 2).and_then(|b| <[u8; 2]>::try_from(b).ok()).map(u16::from_le_bytes).ok_or_else(truncated)? as usize;
+            let text = bytes.get(at + 2..at + 2 + len).ok_or_else(truncated)?;
+            Ok((String::from_utf8_lossy(text).into_owned(), at + 2 + len))
+        };
+        let entity_count = records(u64_at(24)?, left(at), 3)?;
+        let mut bodies = Vec::with_capacity(entity_count);
+        for _ in 0..entity_count {
+            let kind = *bytes.get(at).ok_or_else(truncated)?;
+            let (body, next) = name(at + 1)?;
+            at = if kind == 0 { next } else { name(next)?.1 };
+            bodies.push(body);
+        }
+        let tagged = records(u64_at(32)?, left(at), 10)?;
+        let mut regions = Vec::with_capacity(tagged);
+        for _ in 0..tagged {
+            let (element, region) = (u32_at(at)?, u32_at(at + 4)?);
+            if region != u32::MAX {
+                regions.push((element, region));
+            }
+            at += 8;
+            for size in [5usize, 5] {
+                let n = *bytes.get(at).ok_or_else(truncated)? as usize;
+                at = at.checked_add(1 + n * size).filter(|a| *a <= bytes.len()).ok_or_else(truncated)?;
+            }
+        }
+        Ok(MeshLayout { nodes, elements, bodies, regions })
+    }
+}
+
+/// The defaults of format 2 that format 3 changed, as a command of a journal written before
+/// format 3 meant them when it left them out: `params` of `command` get them written in where
+/// they are missing, in the journal's own units (a bare number), so a replay builds the model
+/// the step built (which writes the same defaults into `model.json`). Frozen with the step:
+/// - Johnson–Cook plasticity's `reference_strain_rate` (under `plastic`): 1 (per the system's
+///   time unit);
+/// - a material's `thermal.reference_temperature` and a fluid domain's
+///   `thermal.initial_temperature`: 0 (in the system's temperature unit);
+/// - a transient heat step's `transient.initial_temperature`: 0;
+/// - a plane-strain section's `thickness`: 1 (the system's length unit);
+/// - a fluid's `thermal.temperature_zero`, which format 3 added: the zero of the system's
+///   temperature unit in kelvin (the step writes the same), outside the millimetre systems.
+///
+/// Each default goes into an object the command gives, never into one it leaves out: that is
+/// when format 2 read the default.
+pub fn format_2_defaults(command: &str, params: &mut Value, system: &str) {
+    let material = command.starts_with("model.material.");
+    let fluid = command.starts_with("model.fluid_domain.");
+    // A fluid's heat counted from the zero of the system the journal was typed in (in kelvin;
+    // a field no form shows, so it is passed on as it is).
+    let zero = System::of(system).and_then(System::temperature_zero);
+    legacy_defaults(params, "", material, fluid, zero, 0);
+}
+
+/// Most nesting [`format_2_defaults`] follows.
+const LEGACY_DEPTH: usize = 12;
+
+fn legacy_defaults(v: &mut Value, key: &str, material: bool, fluid: bool, zero: Option<f64>, depth: usize) {
+    if depth > LEGACY_DEPTH {
+        return;
+    }
+    match v {
+        Value::Object(o) => {
+            let default = |o: &mut Map<String, Value>, field: &str, value: f64| {
+                if !o.contains_key(field)
+                    && let Some(n) = serde_json::Number::from_f64(value)
+                {
+                    o.insert(field.into(), Value::Number(n));
+                }
+            };
+            match (key, o.get("type").and_then(Value::as_str)) {
+                ("plastic", Some("johnson_cook")) => default(o, "reference_strain_rate", 1.0),
+                (_, Some("plane_strain")) => default(o, "thickness", 1.0),
+                _ => {}
+            }
+            match key {
+                "thermal" if material => default(o, "reference_temperature", 0.0),
+                "thermal" if fluid => {
+                    default(o, "initial_temperature", 0.0);
+                    if let Some(z) = zero {
+                        default(o, "temperature_zero", z);
+                    }
+                }
+                "transient" => default(o, "initial_temperature", 0.0),
+                _ => {}
+            }
+            for (k, x) in o.iter_mut() {
+                legacy_defaults(x, k, material, fluid, zero, depth + 1);
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(|x| legacy_defaults(x, key, material, fluid, zero, depth + 1)),
+        _ => {}
+    }
+}
+
 /// Walks `model.json`, converting each number it knows and recording the JSON pointer of every
-/// number it has dealt with (converted or dimensionless).
+/// value it has dealt with (a number, or a whole list or subtree of them, converted or
+/// dimensionless): one entry per field, never one per number of a long list.
 struct Walk {
     system: System,
-    handled: BTreeSet<String>,
+    handled: HashSet<String>,
+    /// The unit of lengths typed against the geometry (datums, plans, seeds, size controls).
+    geometry_length: Q,
+    /// The mesh's units by body ([`mesh_units`]).
+    units: MeshUnits,
+}
+
+/// Whether `v` is a number, a null or a list (nested) of them only.
+fn numeric(v: &Value) -> bool {
+    match v {
+        Value::Number(_) | Value::Null => true,
+        Value::Array(items) => items.iter().all(numeric),
+        _ => false,
+    }
 }
 
 /// A JSON pointer token (RFC 6901).
@@ -268,6 +696,12 @@ impl Walk {
                 }
                 self.handled.insert(at.to_string());
             }
+            // A list of numbers (nested, with nulls) is handled whole: one entry, not one per
+            // number. Anything else in it is walked item by item and left for the check.
+            Value::Array(_) if numeric(v) => {
+                self.convert_all(v, at, q)?;
+                self.handled.insert(at.to_string());
+            }
             Value::Array(items) => {
                 for (i, item) in items.iter_mut().enumerate() {
                     self.value(item, &format!("{at}/{i}"), q)?;
@@ -276,6 +710,56 @@ impl Walk {
             _ => {}
         }
         Ok(())
+    }
+
+    /// Every number under `v`, a number or nested lists of numbers and nulls, converted as `q`.
+    fn convert_all(&self, v: &mut Value, at: &str, q: Option<Q>) -> Result<()> {
+        match v {
+            Value::Number(n) => {
+                if let Some(q) = q {
+                    let x = n.as_f64().ok_or_else(|| Error::Invalid(format!("`model.json`: the number at {at} is not finite")))?;
+                    *v = self.convert(x, q, at)?;
+                }
+                Ok(())
+            }
+            Value::Array(items) => items.iter_mut().try_for_each(|item| self.convert_all(item, at, q)),
+            _ => Ok(()),
+        }
+    }
+
+    /// The unit of a relaxation field's cell (of the field made on `bodies`): that of the mesh
+    /// it was made on. Its moved corners are nodes of that mesh unless it was remeshed since;
+    /// then the field's bodies say, and failing those, whether the cell lies among the
+    /// millimetre nodes.
+    fn relaxation_unit(&self, cell: &Value, bodies: &[String]) -> Q {
+        let u = &self.units;
+        if u.millimetre_points.is_empty() {
+            return Q::Length;
+        }
+        let points: Vec<[f64; 3]> = ["moved", "at"]
+            .iter()
+            .flat_map(|k| cell.get(*k).and_then(Value::as_array).into_iter().flatten())
+            .filter_map(|p| <[f64; 3]>::try_from(p.as_array()?.iter().filter_map(Value::as_f64).collect::<Vec<_>>()).ok())
+            .collect();
+        let bits = |p: &[f64; 3]| p.map(f64::to_bits);
+        if points.iter().any(|p| u.millimetre_points.contains(&bits(p))) {
+            return Q::Millimetre;
+        }
+        if points.iter().any(|p| u.typed_points.contains(&bits(p))) {
+            return Q::Length;
+        }
+        let of: Vec<Origin> = bodies.iter().filter_map(|b| u.origins.get(b).copied()).collect();
+        if !of.is_empty() {
+            return if of.iter().all(|o| *o == Origin::Geometry) { Q::Millimetre } else { Q::Length };
+        }
+        match u.millimetre_box {
+            Some((lo, hi)) => {
+                let margin = (0..3).map(|k| hi[k] - lo[k]).fold(0.0, f64::max) * 0.01;
+                let inside = |p: &[f64; 3]| (0..3).all(|k| p[k] >= lo[k] - margin && p[k] <= hi[k] + margin);
+                if !points.is_empty() && points.iter().all(inside) { Q::Millimetre } else { Q::Length }
+            }
+            None => Q::Length,
+        }
     }
 
     /// Field `key` of `parent` (at `at`), when present.
@@ -300,19 +784,8 @@ impl Walk {
 
     /// Every number under `parent`'s `key` is dimensionless (a count, a label, a ratio).
     fn plain(&mut self, parent: &mut Value, at: &str, key: &str) {
-        if let Some(v) = parent.get_mut(key) {
-            self.mark_all(v, &format!("{at}/{}", token(key)));
-        }
-    }
-
-    fn mark_all(&mut self, v: &Value, at: &str) {
-        match v {
-            Value::Number(_) => {
-                self.handled.insert(at.to_string());
-            }
-            Value::Array(items) => items.iter().enumerate().for_each(|(i, x)| self.mark_all(x, &format!("{at}/{i}"))),
-            Value::Object(m) => m.iter().for_each(|(k, x)| self.mark_all(x, &format!("{at}/{}", token(k)))),
-            _ => {}
+        if parent.get(key).is_some() {
+            self.handled.insert(format!("{at}/{}", token(key)));
         }
     }
 
@@ -370,49 +843,62 @@ impl Walk {
         self.each_named(m, "fluid_domains", Walk::fluid_domain)?;
         self.each(m, "", "steps", Walk::step)?;
         self.each_named(m, "datums", |w, d, at| {
-            w.field(d, at, "point", Some(Q::Millimetre))?;
+            w.field(d, at, "point", Some(w.geometry_length))?;
             w.plain(d, at, "normal");
             w.plain(d, at, "direction");
             Ok(())
         })?;
         self.each(m, "", "seeds", |w, s, at| {
             w.plain(s, at, "count");
-            w.field(s, at, "size", Some(Q::Length))?;
+            // Seeds and size controls were read by the meshers, on the geometry: millimetres.
+            w.field(s, at, "size", Some(w.geometry_length))?;
             w.plain(s, at, "bias");
             Ok(())
         })?;
         self.each_named(m, "size_controls", |w, c, at| {
-            w.field(c, at, "size", Some(Q::Length))?;
+            w.field(c, at, "size", Some(w.geometry_length))?;
+            // A region is a box, a sphere, or geometry (bodies, faces: names).
             if let Some(region) = c.get_mut("region") {
                 let at = format!("{at}/region");
-                for key in ["min", "max", "center", "radius"] {
-                    w.field(region, &at, key, Some(Q::Length))?;
+                if let Some(b) = region.get_mut("box") {
+                    let at = format!("{at}/box");
+                    w.field(b, &at, "min", Some(w.geometry_length))?;
+                    w.field(b, &at, "max", Some(w.geometry_length))?;
+                }
+                if let Some(sphere) = region.get_mut("sphere") {
+                    let at = format!("{at}/sphere");
+                    w.field(sphere, &at, "center", Some(w.geometry_length))?;
+                    w.field(sphere, &at, "radius", Some(w.geometry_length))?;
                 }
             }
             Ok(())
         })?;
         self.plain(m, "", "size_growth");
         self.each_named(m, "relaxations", |w, r, at| {
+            // A cell is in the coordinates of the mesh it was made on: millimetres for a mesh of
+            // the geometry (its moved corners are nodes of it), else the declared length.
+            let bodies = names(r.get("bodies"));
             w.each(r, at, "cells", |w, cell, at| {
-                w.field(cell, at, "at", Some(Q::Length))?;
-                w.field(cell, at, "moved", Some(Q::Length))
+                let q = w.relaxation_unit(cell, &bodies);
+                w.field(cell, at, "at", Some(q))?;
+                w.field(cell, at, "moved", Some(q))
             })
         })?;
         self.each_named(m, "mesh_plans", |w, p, at| {
-            w.field(p, at, "size", Some(Q::Millimetre))?;
-            w.field(p, at, "tolerance", Some(Q::Millimetre))?;
+            w.field(p, at, "size", Some(w.geometry_length))?;
+            w.field(p, at, "tolerance", Some(w.geometry_length))?;
             for key in ["layers", "direction", "directions", "features", "unmapped"] {
                 w.plain(p, at, key);
             }
             w.each(p, at, "cuts", |w, cut, at| {
-                w.field(cut, at, "point", Some(Q::Millimetre))?;
+                w.field(cut, at, "point", Some(w.geometry_length))?;
                 w.plain(cut, at, "normal");
                 w.plain(cut, at, "feature");
                 Ok(())
             })?;
             w.each(p, at, "rings", |w, ring, at| {
                 for key in ["center", "radius", "frame"] {
-                    w.field(ring, at, key, Some(Q::Millimetre))?;
+                    w.field(ring, at, key, Some(w.geometry_length))?;
                 }
                 w.plain(ring, at, "axis");
                 w.plain(ring, at, "feature");
@@ -464,12 +950,9 @@ impl Walk {
             self.field(p, &at, "melt_temperature", Some(Q::Temperature))?;
             self.field(p, &at, "specific_heat", Some(Q::SpecificHeat))?;
         }
-        if let Some(d) = m.get_mut("damage") {
-            self.mark_all(d, &format!("{at}/damage"));
-        }
-        if let Some(e) = m.get_mut("erosion") {
-            self.mark_all(e, &format!("{at}/erosion"));
-        }
+        // Damage parameters and erosion limits are dimensionless.
+        self.plain(m, at, "damage");
+        self.plain(m, at, "erosion");
         if let Some(t) = m.get_mut("thermal").filter(|t| t.is_object()) {
             let at = format!("{at}/thermal");
             self.field(t, &at, "conductivity", Some(Q::ThermalConductivity))?;
@@ -530,9 +1013,7 @@ impl Walk {
                 self.value(v, &format!("{at}/values/{i}"), (i < 3).then_some(Q::Length))?;
             }
         }
-        if let Some(plane) = bc.get_mut("plane") {
-            self.mark_all(plane, &format!("{at}/plane"));
-        }
+        self.plain(bc, at, "plane");
         self.field(bc, at, "value", Some(Q::Temperature))
     }
 
@@ -593,6 +1074,13 @@ impl Walk {
         if let Some(t) = d.get_mut("thermal").filter(|t| t.is_object()) {
             let at = format!("{at}/thermal");
             self.field_or(t, &at, "initial_temperature", Q::Temperature, 0.0)?;
+            // The lattice ran on the numbers as typed: it keeps counting from the system's zero.
+            if let Some(zero) = self.system.temperature_zero()
+                && let (Some(obj), Some(n)) = (t.as_object_mut(), serde_json::Number::from_f64(zero))
+            {
+                obj.insert("temperature_zero".into(), Value::Number(n));
+                self.handled.insert(format!("{at}/temperature_zero"));
+            }
             self.field(t, &at, "gravity", Some(Q::Acceleration))?;
             self.field(t, &at, "expansion", Some(Q::ThermalExpansion))?;
             if let Some(Value::Object(faces)) = t.get_mut("faces") {
@@ -725,9 +1213,7 @@ impl Walk {
 
     /// Refuse a number the map does not know: it would be read as SI unscaled.
     fn check_all_handled(&self, model: &Value) -> Result<()> {
-        let mut numbers = Vec::new();
-        collect_numbers(model, String::new(), &mut numbers);
-        match numbers.into_iter().find(|p| !self.handled.contains(p)) {
+        match self.unhandled(model, "") {
             None => Ok(()),
             Some(p) => invalid(format!(
                 "cannot bring `model.json` to format 3: no unit is known for the number at {}",
@@ -735,21 +1221,26 @@ impl Walk {
             )),
         }
     }
-}
 
-fn collect_numbers(v: &Value, at: String, out: &mut Vec<String>) {
-    match v {
-        Value::Number(_) => out.push(at),
-        Value::Array(items) => items.iter().enumerate().for_each(|(i, x)| collect_numbers(x, format!("{at}/{i}"), out)),
-        Value::Object(m) => m.iter().for_each(|(k, x)| collect_numbers(x, format!("{at}/{}", token(k)), out)),
-        _ => {}
+    /// The pointer of the first number under `v` (at `at`) outside every handled value; a
+    /// handled value is skipped whole.
+    fn unhandled(&self, v: &Value, at: &str) -> Option<String> {
+        if self.handled.contains(at) {
+            return None;
+        }
+        match v {
+            Value::Number(_) => Some(at.to_string()),
+            Value::Array(items) => items.iter().enumerate().find_map(|(i, x)| self.unhandled(x, &format!("{at}/{i}"))),
+            Value::Object(m) => m.iter().find_map(|(k, x)| self.unhandled(x, &format!("{at}/{}", token(k)))),
+            _ => None,
+        }
     }
 }
 
 /// `MCMESH01` → `MCMESH02`: node coordinates scaled by `length` to metres, every other byte as
 /// it was. This reads only the `MCMESH01` header and node table (layout of format 2's
 /// docs/formats/fieldcraft.md); the rest is checked when the current reader decodes the result.
-fn mesh(bytes: &[u8], length: Factor) -> Result<Vec<u8>> {
+fn mesh(bytes: &[u8], length: Factor, millimetre: Factor, in_millimetres: &HashSet<u32>) -> Result<Vec<u8>> {
     const HEADER: usize = 8 + 5 * 8;
     const NODE: usize = 4 + 3 * 8;
     if bytes.get(..8) != Some(b"MCMESH01".as_slice()) {
@@ -769,9 +1260,13 @@ fn mesh(bytes: &[u8], length: Factor) -> Result<Vec<u8>> {
     for record in bytes.get(HEADER..nodes_end).unwrap_or_default().as_chunks::<NODE>().0 {
         let (label, coordinates) = record.split_at(4);
         out.extend_from_slice(label);
+        let unit = match <[u8; 4]>::try_from(label).map(u32::from_le_bytes) {
+            Ok(l) if in_millimetres.contains(&l) => millimetre,
+            _ => length,
+        };
         for c in coordinates.as_chunks::<8>().0 {
             let x = f64::from_le_bytes(*c);
-            let si = length.to_si(x);
+            let si = unit.to_si(x);
             if !si.is_finite() {
                 return invalid("`mesh.bin` holds a node coordinate that is not finite in metres");
             }
@@ -837,6 +1332,27 @@ mod decimal {
         v
     }
 
+    /// An absolute temperature `f` in °F, in kelvin: (F + 459.67) × 5/9 on the decimal F was
+    /// written as, as one correctly rounded division of two exact integers.
+    pub(super) fn fahrenheit_to_kelvin(f: f64) -> f64 {
+        const EXACT_INTEGER: i128 = 1 << 53;
+        if f.fract() == 0.0 && f.abs() < 1e12 {
+            return ((f as i128 * 100 + 45967) * 5) as f64 / 900.0;
+        }
+        if let Some((m, e)) = short_decimal(f)
+            && let Ok(places) = u32::try_from(-e)
+            && places <= 6
+        {
+            let p = places.max(2);
+            let scale = 10i128.pow(p);
+            let n = m.checked_mul(10i128.pow(p - places)).and_then(|m| m.checked_add(45967 * scale / 100)).and_then(|n| n.checked_mul(5));
+            if let Some(n) = n.filter(|n| n.abs() < EXACT_INTEGER) {
+                return n as f64 / (9 * scale) as f64;
+            }
+        }
+        (f + 459.67) * 5.0 / 9.0
+    }
+
     pub(super) fn add(a: f64, b: f64) -> f64 {
         if a == 0.0 || b == 0.0 {
             return a + b;
@@ -865,7 +1381,7 @@ mod tests {
     use super::*;
 
     fn parts(model: Value, mesh: Vec<u8>) -> Parts {
-        Parts { manifest: json!({"format": "fieldcraft/2", "generator": "FieldCraft 0.7.0"}), model, mesh, journal: json!([]) }
+        Parts { manifest: json!({"format": "fieldcraft/2", "generator": "FieldCraft 0.7.0"}), model, mesh, journal: json!([]), notes: Vec::new() }
     }
 
     /// An `MCMESH01` part with `nodes` and no elements.
@@ -879,6 +1395,136 @@ mod tests {
             xyz.iter().for_each(|c| b.extend_from_slice(&c.to_le_bytes()));
         }
         b
+    }
+
+    /// About 80 MB of `model.json` (large sets): the step's time and memory are measured with
+    /// `/usr/bin/time` (`cargo test -p fieldcraft-io --release migrating_a_large -- --ignored`).
+    #[test]
+    #[ignore = "a measurement, not a check"]
+    fn migrating_a_large_model_takes_little_time_and_memory() {
+        let labels: Vec<u32> = (1..=500_000).collect();
+        let sets: serde_json::Map<String, Value> = (0..16).map(|k| (format!("set{k}"), json!({"nodes": labels, "elements": labels}))).collect();
+        let mut p = parts(json!({"units": "m-kg-s-N-Pa", "sets": sets}), mesh01(&[]));
+        println!("model.json: {} MB", serde_json::to_vec(&p.model).unwrap().len() / 1_000_000);
+        let start = std::time::Instant::now();
+        v2_to_v3(&mut p).unwrap();
+        println!("step: {:.2} s", start.elapsed().as_secs_f64());
+    }
+
+    /// An `MCMESH01` part with `nodes`, tet4 `elements` (label, nodes), body entities and each
+    /// element's region (an index into `bodies`).
+    fn mesh01_bodies(nodes: &[(u32, [f64; 3])], elements: &[(u32, [u32; 4], u32)], bodies: &[&str]) -> Vec<u8> {
+        let mut b = b"MCMESH01".to_vec();
+        for n in [nodes.len(), elements.len(), bodies.len(), elements.len(), 0] {
+            b.extend_from_slice(&(n as u64).to_le_bytes());
+        }
+        for (label, xyz) in nodes {
+            b.extend_from_slice(&label.to_le_bytes());
+            xyz.iter().for_each(|c| b.extend_from_slice(&c.to_le_bytes()));
+        }
+        for (label, of, _) in elements {
+            b.extend_from_slice(&label.to_le_bytes());
+            b.push(7);
+            of.iter().for_each(|n| b.extend_from_slice(&n.to_le_bytes()));
+        }
+        for body in bodies {
+            b.push(0);
+            b.extend_from_slice(&(body.len() as u16).to_le_bytes());
+            b.extend_from_slice(body.as_bytes());
+        }
+        for (label, _, region) in elements {
+            b.extend_from_slice(&label.to_le_bytes());
+            b.extend_from_slice(&region.to_le_bytes());
+            b.extend_from_slice(&[0, 0]);
+        }
+        b
+    }
+
+    /// A model of metres built on a design, with `journal`, a tet of `Case` (the design's)
+    /// on nodes 1–4 and a tet of `body` on nodes 5–8 (or `shared` with Case's node 4).
+    fn metres_on_a_design(journal: Value, body: &str, shared: bool) -> Parts {
+        let nodes: Vec<(u32, [f64; 3])> = (1..=8).map(|n| (n, [f64::from(n), 0.0, 0.0])).collect();
+        let second = if shared { [4, 6, 7, 8] } else { [5, 6, 7, 8] };
+        let mut p = parts(json!({"units": "m-kg-s-N-Pa"}), mesh01_bodies(&nodes, &[(1, [1, 2, 3, 4], 0), (2, second, 1)], &["Case", body]));
+        p.manifest["geometry"] = json!({"design": {"path": "d.solidcraft", "sha256": "00"}});
+        p.journal = journal;
+        p
+    }
+
+    /// The x of each node after the step, by label.
+    fn xs(mesh: &[u8]) -> Vec<f64> {
+        (0..8).map(|i| f64::from_le_bytes(mesh[48 + i * 28 + 4..48 + i * 28 + 12].try_into().unwrap())).collect()
+    }
+
+    /// A mesh of the design in a model of metres is millimetres; a block, its mirror image and
+    /// what was extruded from it stay metres; a body no command made is read as the design's,
+    /// and the note says so.
+    #[test]
+    fn bodies_migrate_by_their_origin() {
+        let block = json!({"command": "mesh.block", "params": {"body": "Bar"}});
+        let tet = json!({"command": "mesh.tet.generate", "params": {"body": "Case"}});
+        let mm = [0.001, 0.002, 0.003, 0.004];
+        for (journal, second) in [
+            (json!([block, tet]), "Bar"),
+            (json!([block, {"command": "mesh.mirror", "params": {"plane": "Sym", "bodies": ["Bar"]}}, tet]), "Bar/mirror"),
+            (json!([block, {"command": "mesh.mirror", "params": {"plane": "Sym", "bodies": ["Bar"], "as": {"Bar": "Left"}}}, tet]), "Left"),
+            (json!([block, {"command": "mesh.hex.extrude", "params": {"source": [{"body": "Bar", "face": "top"}], "body": "Post"}}, tet]), "Post"),
+        ] {
+            let mut p = metres_on_a_design(journal, second, false);
+            v2_to_v3(&mut p).unwrap();
+            assert_eq!(xs(&p.mesh), [mm.as_slice(), &[5.0, 6.0, 7.0, 8.0]].concat(), "{second}");
+            assert!(p.notes.len() == 1 && p.notes[0].contains("`Case`") && !p.notes[0].contains(second), "{second}: {:?}", p.notes);
+        }
+        // Nothing in the journal made `Bar`: read as the design's, saying so.
+        let mut p = metres_on_a_design(json!([tet]), "Bar", false);
+        v2_to_v3(&mut p).unwrap();
+        assert_eq!(xs(&p.mesh), [0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.007, 0.008]);
+        assert!(p.notes[0].contains("No command in the journal made body (`Bar`)"), "{:?}", p.notes);
+    }
+
+    /// A node of both a mesh of the design and a block has no consistent scale: refused,
+    /// naming both, with nothing changed.
+    #[test]
+    fn a_block_joined_to_a_mesh_of_the_design_is_refused() {
+        let mut p = metres_on_a_design(json!([{"command": "mesh.block", "params": {"body": "Bar"}}]), "Bar", true);
+        let before = p.clone();
+        let e = v2_to_v3(&mut p).unwrap_err().to_string();
+        for want in ["m-kg-s-N-Pa", "node 4", "`Case`", "`Bar`", "typed in metres", "no consistent", "unchanged", "0.7.x"] {
+            assert!(e.contains(want), "`{want}` in {e}");
+        }
+        assert_eq!(p, before);
+    }
+
+    /// A relaxation field whose corners are no longer nodes (made before a remesh) takes its
+    /// bodies' unit, else where it lies.
+    #[test]
+    fn relaxation_fields_follow_their_mesh() {
+        let journal = json!([{"command": "mesh.block", "params": {"body": "Bar"}}, {"command": "mesh.tet.generate", "params": {"body": "Case"}}]);
+        let cell = |x: f64| json!({"kind": "tet4", "at": [[x, 0.0, 0.0]], "moved": [[x, 0.0, 0.0]]});
+        let mut p = metres_on_a_design(journal, "Bar", false);
+        p.model["relaxations"] = json!({
+            "OnCase": {"bodies": ["Case"], "cells": [cell(9.0)]},
+            "OnBar": {"bodies": ["Bar"], "cells": [cell(1.5)]},
+            "Inside": {"cells": [cell(2.5)]},
+            "Outside": {"cells": [cell(7.5)]},
+            "Node": {"cells": [cell(6.0)]},
+        });
+        v2_to_v3(&mut p).unwrap();
+        let x = |f: &str| p.model["relaxations"][f]["cells"][0]["at"][0][0].as_f64().unwrap();
+        assert_eq!([x("OnCase"), x("OnBar"), x("Inside"), x("Outside"), x("Node")], [0.009, 1.5, 0.0025, 7.5, 6.0]);
+    }
+
+    /// Hostile counts in `mesh.bin` are refused before anything is set aside for them.
+    #[test]
+    fn hostile_mesh_counts_are_refused_cheaply() {
+        for at in [8, 16, 24, 32] {
+            let mut b = mesh01_bodies(&[(1, [0.0; 3])], &[], &["Case"]);
+            b[at..at + 8].copy_from_slice(&(u64::MAX / 2).to_le_bytes());
+            assert!(MeshLayout::read(&b).is_err(), "{at}");
+            let mut p = parts(json!({"units": "m-kg-s-N-Pa"}), b);
+            p.manifest["geometry"] = json!({"design": {"path": "d.solidcraft", "sha256": "00"}});
+            assert!(v2_to_v3(&mut p).is_err(), "{at}");
+        }
     }
 
     #[test]
@@ -914,7 +1560,7 @@ mod tests {
     }
 
     #[test]
-    fn metres_stay_and_datums_were_millimetres() {
+    fn metres_stay_and_datums_follow_what_the_file_was_built_on() {
         let mut p = parts(
             json!({"units": "m-kg-s-N-Pa", "reference_points": {"RP": {"xyz": [0.1, 0.0, 2.0], "label": 7}},
                 "boundary_conditions": {"b": {"type": "displacement", "target": {"set": "s"}, "values": [0.001, null, 0.0, 0.5, null, null]},
@@ -928,9 +1574,15 @@ mod tests {
         // Rotations are radians; temperatures were kelvin.
         assert_eq!(p.model["boundary_conditions"]["b"]["values"], json!([0.001, null, 0.0, 0.5, null, null]));
         assert_eq!(p.model["boundary_conditions"]["t"]["value"].as_f64(), Some(300.0));
-        assert_eq!(p.model["datums"]["P"]["point"], json!([0.005, 0.0, 0.0]));
+        // No design: the datum was typed against the block, in metres.
+        assert_eq!(p.model["datums"]["P"]["point"], json!([5.0, 0.0, 0.0]));
         assert_eq!(p.mesh[..8], *b"MCMESH02");
         assert_eq!(p.mesh[8..], mesh01(&[(1, [0.1, 0.05, 0.005])])[8..]);
+        // Built on a design, a datum was millimetres (the design's).
+        let mut p = parts(json!({"units": "m-kg-s-N-Pa", "datums": {"P": {"type": "point", "point": [5.0, 0.0, 0.0]}}}), mesh01(&[]));
+        p.manifest["geometry"] = json!({"design": {"path": "d.solidcraft", "sha256": "00"}});
+        v2_to_v3(&mut p).unwrap();
+        assert_eq!(p.model["datums"]["P"]["point"], json!([0.005, 0.0, 0.0]));
     }
 
     #[test]
@@ -950,7 +1602,7 @@ mod tests {
             mesh01(&[(1, [1.0, 0.0, 0.0])]),
         );
         v2_to_v3(&mut p).unwrap();
-        assert!((p.model["loads"]["t"]["value"].as_f64().unwrap() - 293.15).abs() < 1e-12);
+        assert_eq!(p.model["loads"]["t"]["value"].as_f64(), Some(293.15), "68 °F exactly");
         assert_eq!(p.model["loads"]["p"]["magnitude"].as_f64(), Some(6894.757293168361));
         let x = f64::from_le_bytes(p.mesh[52..60].try_into().unwrap());
         assert_eq!(x, 0.0254);
@@ -1026,10 +1678,15 @@ mod tests {
                     model: json(part("model.json")),
                     mesh: part("mesh.bin"),
                     journal: json(part("journal.json")),
+                    notes: Vec::new(),
                 };
                 super::super::step(&mut p, 1).unwrap();
                 let journal = p.journal.clone();
                 v2_to_v3(&mut p).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+                // A mesh of the design in a model of metres or inches says what changed.
+                let stem = path.file_stem().unwrap().to_string_lossy();
+                let noted = ["design-metres", "design-inches", "mixed-metres"].contains(&stem.as_ref());
+                assert_eq!(p.notes.iter().any(|n| n.contains("made from a SolidCraft design")), noted, "{stem}: {:?}", p.notes);
                 assert_eq!(p.manifest["format"], "fieldcraft/3");
                 assert_eq!(p.journal["commands"], journal, "{}: the journal's commands are untouched", path.display());
                 assert_eq!(&p.mesh[..8], b"MCMESH02");

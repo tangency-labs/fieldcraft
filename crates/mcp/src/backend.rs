@@ -158,7 +158,7 @@ impl Backend for Headless {
         if let Some(o) = info.as_object_mut() {
             o.insert("source".into(), "model".into());
             o.insert("view".into(), self.view.json());
-            o.insert("camera".into(), json!(f.cam));
+            o.insert("camera".into(), fieldcraft_engine::view::camera_shown(&f.cam, &self.session));
             o.insert("width".into(), w.into());
             o.insert("height".into(), h.into());
         }

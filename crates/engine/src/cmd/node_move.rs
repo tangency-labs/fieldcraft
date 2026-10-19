@@ -57,6 +57,11 @@ pub struct Prepared {
     geometry: Geometry,
     /// The region's elements' quality before the move, measured by the first live preview.
     baseline: std::sync::OnceLock<Vec<(f64, bool)>>,
+    /// The mesh the move works on, in millimetres (the meshers' system).
+    model: std::sync::Arc<fieldcraft_model::Model>,
+    /// For a tool's preview ([`prepare`]): the system its parameters are typed in. Its
+    /// parameters are then brought to millimetres, and what it shows back to SI.
+    typed_in: Option<fieldcraft_model::DisplaySystem>,
 }
 
 /// Halvings of the guard's bisection in a live preview (the scale to within 2⁻⁶; the command
@@ -74,8 +79,16 @@ impl Prepared {
         &self.handles
     }
 
-    /// The displacement `params` ask for (`by`, or `to` less the origin).
+    /// The displacement `params` ask for (`by`, or `to` less the origin), in millimetres.
     pub fn displacement(&self, params: &Value) -> Result<[f64; 3]> {
+        let converted;
+        let params = match &self.typed_in {
+            Some(input) => {
+                converted = crate::units::convert_params(super::forms::NODE_MOVE, params, input, crate::units::geometry())?;
+                &converted
+            }
+            None => params,
+        };
         match (point(params, "by")?, point(params, "to")?) {
             (Some(_), Some(_)) => Err(EngineError::Params("give `by` or `to`, not both".into())),
             (Some(d), None) => Ok(d),
@@ -87,24 +100,38 @@ impl Prepared {
         }
     }
 
-    /// The move by `d` on `s`'s mesh, without doing it.
-    pub fn preview(&self, s: &Session, d: [f64; 3]) -> Result<Moved> {
-        Ok(relax::move_nodes(&s.model, &self.weights, d, self.guard, self.geometry.constraints())?)
+    /// The move by `d` ([`Prepared::displacement`]) on the mesh it was prepared on, without doing
+    /// it; for a tool's preview, its positions and largest displacement in SI.
+    pub fn preview(&self, _s: &Session, d: [f64; 3]) -> Result<Moved> {
+        let m = relax::move_nodes(&self.model, &self.weights, d, self.guard, self.geometry.constraints())?;
+        Ok(self.shown(m))
     }
 
     /// [`Prepared::preview`] for a drag frame: the region's quality before the move is measured
     /// once and reused, and the guard's scale is found more coarsely.
-    pub fn preview_live(&self, s: &Session, d: [f64; 3]) -> Result<Moved> {
+    pub fn preview_live(&self, _s: &Session, d: [f64; 3]) -> Result<Moved> {
         let run = relax::MoveRun { baseline: self.baseline.get().cloned(), guard_steps: PREVIEW_GUARD_STEPS };
-        let m = relax::move_nodes_with(&s.model, &self.weights, d, self.guard, self.geometry.constraints(), &run)?;
+        let m = relax::move_nodes_with(&self.model, &self.weights, d, self.guard, self.geometry.constraints(), &run)?;
         if self.baseline.get().is_none() {
             let _ = self.baseline.set(m.elements.iter().map(|c| (c.before, c.valid_before)).collect());
         }
-        Ok(m)
+        Ok(self.shown(m))
+    }
+
+    /// A move as the session (SI) has it, for a tool's preview.
+    fn shown(&self, mut m: Moved) -> Moved {
+        if self.typed_in.is_some() {
+            for p in m.positions.values_mut() {
+                *p = crate::units::geometry_point(*p);
+            }
+            m.max_displacement = crate::units::geometry_length(m.max_displacement);
+        }
+        m
     }
 }
 
-/// The corner node nearest `p`: the node a drag in the view grabs.
+/// The corner node nearest `p` (SI, as the session stores the mesh): the node a drag in the
+/// view grabs.
 pub fn nearest_node(s: &Session, p: [f64; 3]) -> Option<u32> {
     relax::nearest_corner(&s.model, p)
 }
@@ -120,7 +147,8 @@ fn positive(p: &Value, key: &str) -> Result<Option<f64>> {
     }
 }
 
-/// Everything of `mesh.node.move` but its displacement.
+/// Everything of `mesh.node.move` but its displacement, for the tool's preview: `p` as typed (in
+/// the display system), the session as stored (SI); what it shows comes back in SI.
 pub fn prepare(s: &Session, p: &Value) -> Result<Prepared> {
     match prepare_capped(s, p, None)? {
         Capped::Ready(prep) => Ok(*prep),
@@ -137,6 +165,21 @@ pub enum Capped {
 
 /// [`prepare`] that stops before the costly part when more than `cap` nodes would follow.
 pub fn prepare_capped(s: &Session, p: &Value, cap: Option<usize>) -> Result<Capped> {
+    let framed = crate::units::geometry_session(s)?;
+    let params = crate::units::geometry_params(s, MOVE.id, p)?;
+    Ok(match prepare_framed(&framed, &params, cap)? {
+        Capped::Ready(mut prep) => {
+            prep.typed_in = Some(s.input_units().clone());
+            prep.sphere = prep.sphere.map(|(c, r)| (crate::units::geometry_point(c), crate::units::geometry_length(r)));
+            Capped::Ready(prep)
+        }
+        c => c,
+    })
+}
+
+/// [`prepare_capped`] on a session whose model is in millimetres, with parameters in them (the
+/// command's own frame).
+fn prepare_framed(s: &Session, p: &Value, cap: Option<usize>) -> Result<Capped> {
     let model = &s.model;
     let propagate = match super::opt::<String>(p, "propagate")? {
         None => Propagate::Falloff,
@@ -222,7 +265,17 @@ pub fn prepare_capped(s: &Session, p: &Value, cap: Option<usize>) -> Result<Capp
         return Err(EngineError::Params("no mesh nodes to move: the nodes given are no element's corners, or none lies in the sphere".into()));
     }
     let sphere = radius.and_then(|r| centre.or(origin).map(|c| (c, r)));
-    Ok(Capped::Ready(Box::new(Prepared { weights, handles, origin, sphere, guard, geometry, baseline: std::sync::OnceLock::new() })))
+    Ok(Capped::Ready(Box::new(Prepared {
+        weights,
+        handles,
+        origin,
+        sphere,
+        guard,
+        geometry,
+        baseline: std::sync::OnceLock::new(),
+        model: std::sync::Arc::new(model.clone()),
+        typed_in: None,
+    })))
 }
 
 /// The quality of the region as JSON, with its mean scaled Jacobian.
@@ -235,7 +288,10 @@ fn quality(q: &relax::RegionQuality, mean: f64) -> Value {
 }
 
 fn move_nodes(s: &mut Session, p: &Value) -> Result<Value> {
-    let prep = prepare(s, p)?;
+    let prep = match prepare_framed(s, p, None)? {
+        Capped::Ready(prep) => *prep,
+        Capped::TooLarge(n) => return Err(EngineError::Params(format!("{n} nodes to move"))),
+    };
     let d = prep.displacement(p)?;
     let r = prep.preview(s, d)?;
     let asked = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();

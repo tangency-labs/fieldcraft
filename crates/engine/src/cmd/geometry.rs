@@ -101,7 +101,7 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
     let mut fit = fit(s, &design);
     if new_model {
         let mut model = Model::default();
-        model.set_units(s.model.units());
+        model.set_display_units(s.model.display_units().cloned());
         s.model = model;
         s.surfaces.clear();
         s.sources.meshes.clear();
@@ -616,8 +616,10 @@ pub(crate) mod tests {
         assert_eq!(dots, r["findings"].as_array().unwrap().len(), "a dot at each finding");
         // Every marked triangle lies on the riser, x = 20, between z = 10 and 10.4.
         let (scene, _, _) = crate::view::scene(&s, &p);
+        // The scene is in metres, the design in millimetres.
+        let mm = crate::units::to_geometry_length;
         for t in scene.tris.iter().filter(|t| t.color == p.marked) {
-            assert!(t.p.iter().all(|v| (v.x - 20.0).abs() < 1e-6 && v.z > 10.0 - 1e-6 && v.z < 10.4 + 1e-6), "{t:?}");
+            assert!(t.p.iter().all(|v| (mm(v.x) - 20.0).abs() < 1e-6 && mm(v.z) > 10.0 - 1e-6 && mm(v.z) < 10.4 + 1e-6), "{t:?}");
         }
         s.execute("geometry.check", &json!({"size": 5, "mark": false})).unwrap();
         assert_eq!(marked(&s), (0, 0, 0), "mark: false clears");
@@ -730,8 +732,9 @@ pub(crate) mod tests {
         let r = s.execute("geometry.centre", &json!({"geometry": [{"body": body.name, "face": bottom.name}]})).unwrap();
         assert_eq!(r["from"], "centroid");
         // Nodes, and what is refused.
-        s.model.set_node(1, [1.0, 2.0, 3.0]).unwrap();
-        s.model.set_node(2, [3.0, 2.0, 1.0]).unwrap();
+        // The model is stored in metres: these are 1, 2, 3 mm and 3, 2, 1 mm.
+        s.model.set_node(1, [0.001, 0.002, 0.003]).unwrap();
+        s.model.set_node(2, [0.003, 0.002, 0.001]).unwrap();
         near(&s.execute("geometry.centre", &json!({"nodes": [1, 2]})).unwrap(), [2.0, 2.0, 2.0]);
         for bad in [
             json!({}),

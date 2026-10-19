@@ -12,7 +12,8 @@ const POUND_MASS: f64 = 0.453_592_37;
 const STANDARD_GRAVITY: f64 = 9.806_65;
 const POUND_FORCE: f64 = POUND_MASS * STANDARD_GRAVITY;
 /// Celsius zero in kelvin.
-const CELSIUS_ZERO: f64 = 273.15;
+/// 0 °C in kelvin.
+pub const CELSIUS_ZERO: f64 = 273.15;
 /// One degree Fahrenheit (or Rankine) in kelvin.
 const FAHRENHEIT_STEP: f64 = 5.0 / 9.0;
 /// Fahrenheit zero in kelvin: 459.67 °R.
@@ -201,13 +202,27 @@ impl Unit {
     /// Converts a value in this unit to SI. `absolute` applies the zero offset (absolute
     /// temperatures); temperature differences and every other quantity pass `false`.
     pub(super) fn to_si(&self, value: f64, absolute: bool) -> f64 {
+        // °F on its decimal: (F + 459.67) × 5/9 as one rounding of exact integers, and back to
+        // the decimal it came from, so whole and typed °C and °F convert both ways exactly (68 °F
+        // is 293.15 K, 80 °C is 176 °F).
+        if self.is_fahrenheit() {
+            return if absolute { super::decimal::fahrenheit_to_kelvin(value) } else { value * 5.0 / 9.0 };
+        }
         let scaled = if self.mantissa == 1.0 { value } else { value * self.mantissa };
         let scaled = super::decimal::shift(scaled, self.exp10);
         if absolute && self.offset != 0.0 { super::decimal::add(scaled, self.offset) } else { scaled }
     }
 
+    /// Whether it is the degree Fahrenheit alone (whose step 5/9 K is no decimal).
+    fn is_fahrenheit(&self) -> bool {
+        self.mantissa == FAHRENHEIT_STEP && self.exp10 == 0 && self.offset == FAHRENHEIT_ZERO
+    }
+
     /// Converts an SI value to this unit; the inverse of [`Unit::to_si`].
     pub(super) fn express(&self, si: f64, absolute: bool) -> f64 {
+        if self.is_fahrenheit() {
+            return if absolute { super::decimal::kelvin_to_fahrenheit(si) } else { si * 9.0 / 5.0 };
+        }
         let v = if absolute && self.offset != 0.0 { super::decimal::add(si, -self.offset) } else { si };
         let v = super::decimal::shift(v, -self.exp10);
         if self.mantissa == 1.0 { v } else { v / self.mantissa }

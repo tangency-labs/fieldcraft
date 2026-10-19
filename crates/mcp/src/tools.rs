@@ -312,7 +312,7 @@ pub fn tool_definitions() -> Vec<Value> {
              the app's camera (source \"model\"; ui.render). `view` turns the camera to a standard view first, or `camera` \
              aims it: {yaw, pitch} in degrees (yaw 0 looks along +Y, -45 is the iso view's; pitch is the elevation, \
              clamped to ±90) at `target` (default: the centre of mass of the model drawn, so a sequence of yaws orbits \
-             it), from `distance` (model units), or with `fit` the targeted bodies filling the frame; without either, \
+             it), from `distance` (in the display units' length, as `target`), or with `fit` the targeted bodies filling the frame; without either, \
              from the distance that keeps the whole model in view from every side. A camera given moves the app's too. \
              `section` cuts the mesh (headless).",
             obj(
@@ -324,7 +324,7 @@ pub fn tool_definitions() -> Vec<Value> {
                         "properties": {
                             "yaw": {"type": "number", "description": "Degrees about Z; 0 looks along +Y"},
                             "pitch": {"type": "number", "description": "Degrees of elevation, -90 to 90"},
-                            "distance": {"type": "number", "description": "From the target, in model units (not with fit)"},
+                            "distance": {"type": "number", "description": "From the target, in the display units' length (not with fit)"},
                             "target": {
                                 "description": "What to look at: [x, y, z], or {center_of: mass | bbox, bodies?: [design body names]} (default {center_of: mass}, the model drawn)",
                                 "oneOf": [

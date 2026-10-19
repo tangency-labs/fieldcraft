@@ -129,6 +129,9 @@ pub struct ElementState {
     /// Plastic work on the element.
     pub plastic_work: f64,
     pub failed: Option<Failure>,
+    /// Whether its material follows a temperature (Johnson–Cook): the others have none to
+    /// report (their point's temperature is a placeholder the flow law never reads).
+    pub has_temperature: bool,
 }
 
 /// The element states and the erosions of a run.
@@ -151,8 +154,10 @@ impl State {
         let elements = material
             .into_iter()
             .map(|m| {
-                let temperature = sys.materials.get(m).and_then(|m| m.j2.as_ref()).map_or(0.0, |j| j.initial_temperature());
+                let j2 = sys.materials.get(m).and_then(|m| m.j2.as_ref());
+                let temperature = j2.map_or(0.0, |j| j.initial_temperature());
                 ElementState {
+                    has_temperature: j2.is_some_and(|j| j.is_temperature_dependent()),
                     point: PointState::new(temperature),
                     strain: [0.0; 6],
                     polar: Polar::default(),

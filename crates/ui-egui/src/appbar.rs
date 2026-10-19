@@ -243,6 +243,9 @@ pub fn app_bar(app: &mut ModelApp, ui: &mut egui::Ui) {
             let mut tip = app.session.path.clone().unwrap_or_else(|| "Not saved yet".into());
             if let Some(n) = app.session.migrated_from {
                 tip.push_str(&format!("\nOpened from a format {n} file: the first save keeps that file as a copy beside it"));
+                for note in &app.session.migration_notes {
+                    tip.push_str(&format!("\n{note}"));
+                }
             }
             craft_ui::tabs::Tab::new(egui::Id::new("fc_document_tab"), &label, true).show_at(ui, tab, |ui, resp| {
                 ui.painter().rect_filled(tab, CornerRadius { nw: 5, ne: 5, sw: 0, se: 0 }, t.toolbar);

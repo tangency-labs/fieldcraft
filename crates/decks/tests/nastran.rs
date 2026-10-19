@@ -6,11 +6,13 @@
 
 use std::collections::BTreeMap;
 
-use fieldcraft_decks::nastran;
+mod common;
+
+use common::nastran;
 use fieldcraft_decks::{Error, with_steps};
 use fieldcraft_model::{
     BeamProfile, BoundaryCondition, Coupling, CouplingKind, Distribution, Dofs, Elastic, ElementFace, ElementKind, Formulation, Integration, Load,
-    Material, Model, Procedure, ReferencePoint, Section, SectionKind, Set, Step, Target, UnitSystem,
+    Material, Model, Procedure, ReferencePoint, Section, SectionKind, Set, Step, Target,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -137,7 +139,6 @@ fn steel() -> Material {
 /// A bar of `n` unit hex8 along X; node (i, y, z) = 1 + 4i + 2y + z.
 fn bar(n: u32) -> Model {
     let mut m = Model::default();
-    m.set_units(UnitSystem::MmTonneS);
     for i in 0..=n {
         for (j, (y, z)) in [(0.0, 0.0), (0.0, 1.0), (1.0, 0.0), (1.0, 1.0)].into_iter().enumerate() {
             m.set_node(1 + 4 * i + j as u32, [f64::from(i), y, z]).unwrap();
@@ -175,7 +176,6 @@ fn cantilever() -> Model {
 /// A 2 × 2 quad4 plate in z = 0, 10 × 10, clamped along x = 0, under pressure and gravity.
 fn plate() -> Model {
     let mut m = Model::default();
-    m.set_units(UnitSystem::MmTonneS);
     for j in 0..3u32 {
         for i in 0..3u32 {
             m.set_node(1 + i + 3 * j, [5.0 * f64::from(i), 5.0 * f64::from(j), 0.0]).unwrap();
@@ -641,7 +641,10 @@ fn steps_are_chosen_and_mixed_solutions_are_refused() {
     assert!(r.cards("FORCE").next().is_none());
     assert_eq!(read(&nastran::write(&with_steps(&m, &only(&["Bend"])).unwrap()).unwrap()).sol, 101);
     let nastran = fieldcraft_decks::format("nastran").unwrap();
-    assert_eq!(nastran.write_steps(&m, Some(&only(&["Bend"]))).unwrap().text, nastran::write(&with_steps(&m, &only(&["Bend"])).unwrap()).unwrap());
+    assert_eq!(
+        nastran.write_steps(&common::si(&m), Some(&only(&["Bend"])), fieldcraft_model::units::Preset::MmTonneS).unwrap().text,
+        nastran::write(&with_steps(&m, &only(&["Bend"])).unwrap()).unwrap()
+    );
 
     for bad in [only(&[]), only(&["Nope"]), only(&[&"x".repeat(100_000)]), only(&["", "\u{0}"])] {
         assert!(matches!(with_steps(&m, &bad), Err(Error::Model(_))), "{bad:?}");

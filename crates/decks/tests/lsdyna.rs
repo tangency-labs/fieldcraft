@@ -6,7 +6,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use fieldcraft_decks::{Error, lsdyna};
+mod common;
+
+use common::lsdyna;
+use fieldcraft_decks::Error;
 use fieldcraft_model::*;
 
 // ---------------------------------------------------------------------------------------------
@@ -26,7 +29,6 @@ fn step(name: &str, procedure: Procedure, bcs: &[&str], loads: &[&str]) -> Step 
 /// A 4 × 1 × 1 cantilever of four hex8 elements along x, fixed at x = 0. Nodes are numbered
 /// x-fastest: label = 1 + i + 5·(j + 2·k).
 fn cantilever_mesh(m: &mut Model) {
-    m.set_units(UnitSystem::MmTonneS);
     let label = |i: u32, j: u32, k: u32| 1 + i + 5 * (j + 2 * k);
     for k in 0..2 {
         for j in 0..2 {
@@ -90,7 +92,6 @@ fn cantilever_modes() -> Model {
 /// under gravity.
 fn plate() -> Model {
     let mut m = Model::default();
-    m.set_units(UnitSystem::MmTonneS);
     for (l, x, y) in
         [(1, 0.0, 0.0), (2, 10.0, 0.0), (3, 20.0, 0.0), (4, 0.0, 10.0), (5, 10.0, 10.0), (6, 20.0, 10.0), (7, 30.0, 0.0), (8, 30.0, 10.0)]
     {
@@ -126,7 +127,6 @@ fn plate() -> Model {
 /// distributing coupling, a prescribed displacement and a traction.
 fn solids() -> Model {
     let mut m = Model::default();
-    m.set_units(UnitSystem::MKgS);
     let mut next = 0u32;
     let mut node = |m: &mut Model, xyz: [f64; 3]| {
         next += 1;
@@ -196,8 +196,10 @@ fn hex20_nodes(o: [f64; 3]) -> Vec<[f64; 3]> {
 // Golden files.
 
 fn golden(name: &str, model: &Model) -> lsdyna::Written {
-    let written = lsdyna::write(model).unwrap();
-    let again = lsdyna::write(model).unwrap();
+    // The solids are in SI numbers; the others in mm-t-s.
+    let write = |m: &Model| if name == "solids" { lsdyna::write_si(m) } else { lsdyna::write(m) };
+    let written = write(model).unwrap();
+    let again = write(model).unwrap();
     assert_eq!(written, again, "deterministic");
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/lsdyna").join(format!("{name}.k"));
     if std::env::var_os("FIELDCRAFT_BLESS").is_some() {
@@ -354,7 +356,7 @@ fn awkward_coordinates_round_trip_or_are_counted() {
     for (i, v) in values.iter().enumerate() {
         m.set_node(100 + i as u32, [*v, -*v, *v / 3.0]).unwrap();
     }
-    let w = lsdyna::write(&m).unwrap();
+    let w = lsdyna::write_si(&m).unwrap();
     let deck = read(&w.text);
     let mut inexact = 0;
     for (i, _) in values.iter().enumerate() {
@@ -430,7 +432,7 @@ fn written_coordinates(kind: ElementKind, xyz: &[[f64; 3]]) -> Vec<[f64; 3]> {
     m.add_section("s", Section { set: "all".into(), material: "M".into(), kind: kind_of, formulation: Formulation::default() }).unwrap();
     m.add_boundary_condition("b", BoundaryCondition::Fixed { target: Target::Set("fix".into()) }).unwrap();
     m.add_step(step("S", Procedure::Frequency { modes: 1, min_hz: None, max_hz: None }, &["b"], &[]), None).unwrap();
-    let deck = read(&lsdyna::write(&m).unwrap().text);
+    let deck = read(&lsdyna::write_si(&m).unwrap().text);
     deck.elements[&1].iter().map(|n| deck.nodes[n]).collect()
 }
 
@@ -689,7 +691,7 @@ fn explicit_steps_are_refused_by_every_format() {
     let mut m = cantilever();
     m.add_step(step("Impact", Procedure::ExplicitDynamic(ExplicitDynamic::new(1e-3)), &["clamp"], &[]), None).unwrap();
     for f in fieldcraft_decks::FORMATS {
-        let e = f.write(&m).unwrap_err();
+        let e = f.write(&common::si(&m), fieldcraft_model::units::Preset::MmTonneS).unwrap_err();
         assert!(matches!(e, Error::Unsupported { .. }), "{}: {e}", f.name);
         assert!(e.to_string().contains("step `Impact`: explicit dynamic"), "{}: {e}", f.name);
     }

@@ -24,7 +24,9 @@ pub struct Frame {
     pub velocity: Vec<[f32; 3]>,
     /// Gauge pressure.
     pub pressure: Vec<f32>,
-    /// Temperature, when the flow carries heat (empty otherwise).
+    /// Temperature above [`FluidResult::temperature_reference`] (the lattice's scale, see
+    /// [`crate::setup::ThermalSetup`]; [`FluidResult::temperatures`] gives kelvin), when the flow
+    /// carries heat (empty otherwise).
     pub temperature: Vec<f32>,
     /// The total fluid mass (density times volume).
     pub mass: f64,
@@ -110,15 +112,24 @@ pub struct FluidResult {
     pub warnings: Vec<String>,
     /// How the run to steady state went, when the step has a stop rule.
     pub steady: Option<SteadyReport>,
+    /// What the frames' temperatures are above, in kelvin: the lattice's zero
+    /// ([`crate::setup::ThermalSetup::zero`]) with heat, 0 without.
+    pub temperature_reference: f64,
 }
 
 impl FluidResult {
     /// The cell containing a point and the frame's velocity, pressure and temperature (`None`
     /// without heat) there (`None` outside the grid; zeros in a solid cell).
-    pub fn probe(&self, frame: usize, p: [f64; 3]) -> Option<(usize, [f32; 3], f32, Option<f32>)> {
+    pub fn probe(&self, frame: usize, p: [f64; 3]) -> Option<(usize, [f32; 3], f32, Option<f64>)> {
         let cell = self.grid.cell_at(p)?;
         let f = self.frames.get(frame)?;
-        Some((cell, *f.velocity.get(cell)?, *f.pressure.get(cell)?, f.temperature.get(cell).copied()))
+        let temperature = f.temperature.get(cell).map(|t| fieldcraft_model::units::kelvin_from(f64::from(*t), self.temperature_reference));
+        Some((cell, *f.velocity.get(cell)?, *f.pressure.get(cell)?, temperature))
+    }
+
+    /// The temperature of every cell in `frame` (empty without heat).
+    pub fn temperatures(&self, frame: &Frame) -> Vec<f64> {
+        frame.temperature.iter().map(|t| fieldcraft_model::units::kelvin_from(f64::from(*t), self.temperature_reference)).collect()
     }
 }
 
@@ -157,7 +168,15 @@ fn frame(setup: &Setup, flow: &mut dyn Backend, step: u64) -> Result<Frame> {
             pressure.push(0.0);
         }
         if !t.is_empty() {
-            temperature.push(t.get(cell).copied().unwrap_or(0.0) as f32);
+            let v = t.get(cell).copied().unwrap_or(0.0);
+            // Single precision holds about ±3.4e38: a temperature beyond it cannot be stored.
+            let stored = v as f32;
+            if v.is_finite() && !stored.is_finite() {
+                return Err(Error::Limit(format!(
+                    "a temperature of {v:.3e} °C at time step {step} is beyond what the results can hold; check the heat fluxes"
+                )));
+            }
+            temperature.push(stored);
         }
     }
     let mass = flow.mass()? * setup.density * setup.grid.spacing.powi(3);
@@ -332,5 +351,6 @@ pub fn run(setup: &Setup, flow: &mut dyn Backend, limits: &Limits) -> Result<Flu
         },
         warnings,
         steady,
+        temperature_reference: setup.thermal.as_ref().map_or(0.0, |t| t.zero),
     })
 }

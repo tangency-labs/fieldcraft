@@ -32,6 +32,7 @@ pub mod requirement;
 pub mod results;
 pub mod sample;
 pub mod schema;
+pub mod units;
 pub mod usage;
 pub mod view;
 
@@ -257,8 +258,20 @@ pub struct Session {
     /// what a `.fieldcraft` file records to open them again.
     pub sources: fieldcraft_io::Geometry,
     /// Commands that changed the model, in order (a script that rebuilds it). Undo takes the
-    /// last one off; redo puts it back.
+    /// last one off; redo puts it back. Its parameters are as they were given: bare numbers in
+    /// `journal_header.units`, others with their units.
     pub journal: Vec<(String, Value)>,
+    /// The unit system the journal's bare numbers are in (the input system of its first
+    /// command), and, for a journal of a model that predates SI storage, the system the model was
+    /// shown in before its first command.
+    pub journal_header: fieldcraft_io::JournalHeader,
+    /// The display system of a model that sets none of its own ([`Session::units`]): the user's
+    /// setting in the app, mm-t-s-N-MPa elsewhere. A file replacing the session keeps it.
+    pub default_units: fieldcraft_model::DisplaySystem,
+    /// While a script with a units header replays: the system its bare numbers are in.
+    pinned_input: Option<fieldcraft_model::DisplaySystem>,
+    /// While a journal from before format 3 replays (its header names `model_units`).
+    legacy_replay: bool,
     /// The `.fieldcraft` file the session was opened from or last saved to.
     pub path: Option<String>,
     /// The format of the file at `path` when it is older than the one this version writes: the model
@@ -266,6 +279,9 @@ pub struct Session {
     /// (`file.recover`). The first save over that file keeps a copy of it first
     /// (`<stem>.v<N>.fieldcraft`, [`fieldcraft_io::fs::save_model`]); then it is `None`.
     pub migrated_from: Option<u32>,
+    /// What migrating that older file changed in what it means ([`fieldcraft_io::ModelFile::notes`]):
+    /// shown with the migrated-from note until the first save.
+    pub migration_notes: Vec<String>,
     /// The sample the session was opened as (`file.sample`), by its label; the document is named
     /// after it until it is saved under a name of its own.
     pub sample: Option<&'static str>,
@@ -343,8 +359,34 @@ impl Session {
         let scope = crash::Scope::enter();
         let journaled = crash::command_begin(&scope, self, id, params);
         let (revision, opened) = (self.revision, self.opened);
-        let outcome =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (spec.run)(self, params).and_then(|v| cmd::relax::after_remesh(self, id, v))));
+        // Before format 3 the geometry and mesher commands read their numbers as millimetres in a
+        // model built on a design or 3MF meshes, whatever it declared: a replayed journal from
+        // then is read so. One that acted on a block typed in another unit cannot be replayed
+        // exactly, and is refused rather than guessed.
+        let on_geometry = self.design.is_some() || !self.surfaces.is_empty();
+        let legacy_geometry = self.legacy_replay && units::frame(id) == units::Frame::Geometry && on_geometry;
+        // Without one, its fixed millimetre fields (datums) followed the declared unit.
+        let legacy_free = self.legacy_replay && !on_geometry;
+        if legacy_geometry && let Some(why) = self.legacy_block_target(id, params) {
+            return Err(EngineError::Params(format!("this {id} from FieldCraft 0.7 acted on {why}; its numbers cannot be replayed exactly")));
+        }
+        let input = if legacy_geometry { units::geometry().clone() } else { self.input_units().clone() };
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let target = match units::frame(id) {
+                units::Frame::Si => units::si().clone(),
+                units::Frame::Geometry => units::geometry().clone(),
+                units::Frame::Input => input.clone(),
+            };
+            let converted = match spec.form {
+                Some(form) if legacy_free => units::convert_legacy_params(form, params, &input, &target)?,
+                Some(form) => units::convert_params(form, params, &input, &target)?,
+                None => params.clone(),
+            };
+            let mut reply = self.in_frame(&target, |s| (spec.run)(s, &converted).and_then(|v| cmd::relax::after_remesh(s, id, v)))?;
+            let shown = self.units().clone();
+            units::convert_reply(id, &mut reply, &target, &shown)?;
+            Ok(reply)
+        }));
         let result = match outcome {
             Ok(Err(EngineError::Param(p))) => Err(EngineError::Param(match spec.form {
                 Some(form) => schema::refine(form, params, p),
@@ -366,7 +408,14 @@ impl Session {
             if result.is_err() {
                 self.restore(before);
             } else if before.document.is_some() || self.differs_from(&before) {
-                self.journal.push((id.to_string(), params.clone()));
+                if self.journal.is_empty() {
+                    self.journal_header.units = input.clone();
+                }
+                let entry = match spec.form {
+                    Some(form) if input != self.journal_header.units => units::with_units(form, params, &input),
+                    _ => params.clone(),
+                };
+                self.journal.push((id.to_string(), entry));
                 self.revision = next_revision();
                 self.record_undo(before);
                 // An item deleted (or a body cut into cells) is no longer hidden.
@@ -381,18 +430,179 @@ impl Session {
         result
     }
 
-    /// Run a script: a JSON array of `{"command": id, "params": {...}}`.
+    /// Run a script: a JSON array of `{"command": id, "params": {...}}` (bare numbers in the
+    /// session's display system), or a journal's form, `{"units": system, "model_units"?:
+    /// system, "commands": [...]}`, whose bare numbers are all read in `units` (and whose model,
+    /// when `model_units` is given and nothing was done yet, starts shown in that system).
     /// Returns each step's output, in order. Other fields of a step (such as an `id` naming it)
     /// are left to the caller.
     pub fn run_script(&mut self, script: &Value) -> Result<Vec<Value>> {
-        let steps = script.as_array().ok_or_else(|| EngineError::Params("a script is a JSON array of steps".into()))?;
-        let mut outputs = Vec::with_capacity(steps.len());
-        for (i, step) in steps.iter().enumerate() {
-            let id = step.get("command").and_then(Value::as_str).ok_or_else(|| EngineError::Params(format!("step {}: no `command`", i + 1)))?;
-            let params = step.get("params").cloned().unwrap_or(Value::Object(Default::default()));
-            outputs.push(self.execute(id, &params).map_err(|e| EngineError::Params(format!("step {} ({id}): {e}", i + 1)))?);
+        let (steps, header) = match script {
+            Value::Array(steps) => (steps, None),
+            Value::Object(o) => {
+                let steps = o
+                    .get("commands")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| EngineError::Params("a script with a header lists its `commands`".into()))?;
+                let mut head = o.clone();
+                head.remove("commands");
+                let header: fieldcraft_io::JournalHeader =
+                    serde_json::from_value(Value::Object(head)).map_err(|e| EngineError::Params(format!("the script's header: {e}")))?;
+                (steps, Some(header))
+            }
+            _ => return Err(EngineError::Params("a script is a JSON array of steps, or {\"units\", \"commands\"}".into())),
+        };
+        let pinned = self.pinned_input.clone();
+        let was_legacy = self.legacy_replay;
+        // A journal from before format 3 names the units its model was in; format 2's defaults
+        // were in its own units.
+        let legacy = header.as_ref().filter(|h| h.model_units.is_some()).map(|h| h.units.preset().label());
+        self.legacy_replay = legacy.is_some() || was_legacy;
+        if let Some(h) = &header {
+            if self.journal.is_empty() && h.model_units.is_some() && self.model == fieldcraft_model::Model::default() {
+                self.model.set_display_units(h.model_units.clone());
+                self.journal_header.model_units = h.model_units.clone();
+            }
+            self.pinned_input = Some(h.units.clone());
         }
-        Ok(outputs)
+        let mut outputs = Vec::with_capacity(steps.len());
+        let mut failed = None;
+        for (i, step) in steps.iter().enumerate() {
+            let Some(id) = step.get("command").and_then(Value::as_str) else {
+                failed = Some(EngineError::Params(format!("step {}: no `command`", i + 1)));
+                break;
+            };
+            let mut params = step.get("params").cloned().unwrap_or(Value::Object(Default::default()));
+            // A journal from before format 3 (it names the units its model was in) left out what
+            // format 2's defaults filled in, in its own units.
+            if let Some(system) = legacy {
+                fieldcraft_io::migrate::format_2_defaults(id, &mut params, system);
+            }
+            match self.execute(id, &params) {
+                Ok(v) => outputs.push(v),
+                Err(e) => {
+                    failed = Some(EngineError::Params(format!("step {} ({id}): {e}", i + 1)));
+                    break;
+                }
+            }
+        }
+        self.pinned_input = pinned;
+        self.legacy_replay = was_legacy;
+        match failed {
+            Some(e) => Err(e),
+            None => Ok(outputs),
+        }
+    }
+
+    /// The display system: the model's own, else the session's default.
+    pub fn units(&self) -> &fieldcraft_model::DisplaySystem {
+        self.model.display_units().unwrap_or(&self.default_units)
+    }
+
+    /// The system bare numbers of commands are read in: a replaying script's, else the display
+    /// system.
+    /// A journal entry's parameters in the display units, for a form to show and run again: the
+    /// journal's bare numbers are in its own units. Left as they are when they cannot be converted
+    /// (a command without a form has no numbers that follow the units).
+    pub fn journal_params_shown(&self, command: &str, params: &Value) -> Value {
+        match find_command(command).and_then(|spec| spec.form) {
+            Some(form) => units::convert_params(form, params, &self.journal_header.units, self.units()).unwrap_or_else(|_| params.clone()),
+            None => params.clone(),
+        }
+    }
+
+    pub fn input_units(&self) -> &fieldcraft_model::DisplaySystem {
+        self.pinned_input.as_ref().unwrap_or_else(|| self.units())
+    }
+
+    /// A block body (typed in the journal's own units, not millimetres) a replayed format 2
+    /// geometry command `id` acts on: named in `body`/`bodies`, holding one of its `nodes`, with a
+    /// node in its sphere (`center`, `radius`, in millimetres as it was then), or, for a command
+    /// over the whole mesh given no target, any block beside a mesh of the design.
+    fn legacy_block_target(&self, id: &str, params: &Value) -> Option<String> {
+        let unit = self.input_units().symbol(fieldcraft_model::units::Quantity::Length).to_string();
+        if unit == "mm" {
+            return None;
+        }
+        let journal: Vec<Value> = self.journal.iter().map(|(c, p)| serde_json::json!({"command": c, "params": p})).collect();
+        let blocks = fieldcraft_io::migrate::format_2_typed_bodies(&Value::Array(journal));
+        let named: Vec<&str> = match (params.get("body"), params.get("bodies")) {
+            (Some(Value::String(b)), _) => vec![b.as_str()],
+            (_, Some(Value::Array(a))) => a.iter().filter_map(Value::as_str).collect(),
+            _ => Vec::new(),
+        };
+        if let Some(b) = named.iter().find(|b| blocks.iter().any(|x| x == *b)) {
+            return Some(format!("block body `{b}`, typed in {unit}"));
+        }
+        // A command over the whole mesh (no body, nodes, region or sphere) acts on the blocks too
+        // when the mesh has both kinds.
+        const WHOLE_MESH: [&str; 4] = ["mesh.node.relax", "mesh.node.relax.apply", "mesh.node.merge", "mesh.mirror"];
+        const TARGETS: [&str; 10] = ["body", "bodies", "nodes", "elements", "faces", "edges", "set", "center", "around_element", "geometry"];
+        if WHOLE_MESH.contains(&id)
+            && !TARGETS.iter().any(|k| params.get(*k).is_some_and(|v| !v.is_null()))
+            && let Some(b) = blocks.iter().find(|b| !self.model.body_elements(b).is_empty())
+        {
+            let meshed: Vec<String> = self.model.classification().entities().iter().map(|e| e.body.clone()).collect();
+            if meshed.iter().any(|m| !blocks.contains(m) && !self.model.body_elements(m).is_empty()) {
+                return Some(format!("every body of the mesh, the block body `{b}` (typed in {unit}) among them beside meshes of the design"));
+            }
+        }
+        let given: Vec<u32> = params
+            .get("nodes")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|n| n.as_u64())
+            .filter_map(|n| u32::try_from(n).ok())
+            .collect();
+        let centre = params.get("center").and_then(|c| serde_json::from_value::<[f64; 3]>(c.clone()).ok());
+        let radius = params.get("radius").and_then(Value::as_f64);
+        for b in &blocks {
+            for e in self.model.body_elements(b) {
+                for n in self.model.element(e).map(|e| e.nodes.clone()).unwrap_or_default() {
+                    let in_sphere = match (centre, radius, self.model.node(n)) {
+                        (Some(c), Some(r), Some(p)) => {
+                            let c = units::geometry_point(c);
+                            let r = units::geometry_length(r);
+                            (0..3).map(|k| (p.xyz[k] - c[k]).powi(2)).sum::<f64>() <= r * r
+                        }
+                        _ => false,
+                    };
+                    if given.contains(&n) || in_sphere {
+                        return Some(format!("node {n} of block body `{b}`, typed in {unit}"));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// The model expressed in `frame`, as a command run there sees it: a function of the stored
+    /// model alone, never of what ran before (so a replay sees what the live session saw, and a
+    /// preview what the command will).
+    pub(crate) fn framed_model(&self, frame: &fieldcraft_model::DisplaySystem) -> Result<fieldcraft_model::Model> {
+        Ok(self.model.converted(&|q, v| frame.express(q, v).ok())?)
+    }
+
+    /// Run `f` with the model expressed in `frame` (unchanged when it is SI): what the command
+    /// leaves changed comes back to SI, what it left alone keeps its exact SI value.
+    fn in_frame(&mut self, frame: &fieldcraft_model::DisplaySystem, f: impl FnOnce(&mut Session) -> Result<Value>) -> Result<Value> {
+        if frame == units::si() {
+            return f(self);
+        }
+        let stored = self.model.clone();
+        let framed = self.framed_model(frame)?;
+        self.model = framed.clone();
+        let result = f(self);
+        let after = std::mem::take(&mut self.model);
+        match after.from_converted(&framed, &stored, &|q, v| frame.to_si(q, v).ok()) {
+            Ok(m) => self.model = m,
+            Err(e) => {
+                self.model = stored;
+                return Err(e.into());
+            }
+        }
+        result
     }
 
     /// Identifies the open document: it changes when `file.open`, `file.recover` or `file.sample`
@@ -475,6 +685,7 @@ impl Session {
     pub(crate) fn mark_saved(&mut self, path: String) {
         self.path = Some(path);
         self.migrated_from = None;
+        self.migration_notes.clear();
         self.saved_revision = Some(self.revision);
         self.saved_view = self.view.clone();
     }
@@ -918,14 +1129,14 @@ mod tests {
         // New: the mesh and every definition go, the units stay; one undo brings them back.
         let mut fresh = defined.clone();
         fresh.execute("model.units", &json!({"system": "m-kg-s-N-Pa"})).unwrap();
-        let units = fresh.model.units();
+        let units = fresh.model.display_units().cloned();
         let before = fresh.model.clone();
         let r = fresh.execute("geometry.open", &json!({"path": path, "model": "new"})).unwrap();
         assert_eq!((r["model"].as_str(), r["related"].as_bool()), (Some("new"), Some(false)), "{r}");
         assert_eq!(r["stale"], json!({"mesh_bodies": [], "sets": [], "seeds": []}));
         assert!(fresh.model.elements().is_empty() && fresh.model.nodes().is_empty());
         assert!(fresh.model.definition_counts().iter().all(|(_, n)| *n == 0));
-        assert_eq!(fresh.model.units(), units);
+        assert_eq!(fresh.model.display_units().cloned(), units);
         assert!(fresh.design.is_some());
         fresh.execute("edit.undo", &json!({})).unwrap();
         assert_eq!(fresh.model, before);

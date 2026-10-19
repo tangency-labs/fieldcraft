@@ -9,12 +9,13 @@
 //! earlier revision is still shown, marked stale ([`Session::latest_result`]).
 
 use fieldcraft_explicit::{ExplicitResult, Frame};
-use fieldcraft_model::{Model, UnitSystem};
+use fieldcraft_model::Model;
+use fieldcraft_model::units::DisplaySystem;
+pub use fieldcraft_model::units::Quantity;
 use fieldcraft_solver::{FrequencyResult, HeatResult, StaticResult};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::schema::Dim;
 use crate::{EngineError, Result, Session, StepResult};
 
 /// A result by its procedure.
@@ -194,15 +195,17 @@ impl Field {
         }
     }
 
-    /// What it measures.
-    pub fn quantity(self) -> Quantity {
-        match self {
-            Field::Displacement | Field::DisplacementX | Field::DisplacementY | Field::DisplacementZ | Field::ContactSlip => Quantity::Length,
+    /// What it measures; `None` for a code (a contact status).
+    pub fn quantity(self) -> Option<Quantity> {
+        Some(match self {
+            Field::Displacement | Field::DisplacementX | Field::DisplacementY | Field::DisplacementZ | Field::ContactSlip | Field::ContactGap => {
+                Quantity::Length
+            }
             Field::Velocity => Quantity::Velocity,
-            Field::Pressure => Quantity::Stress,
+            Field::Pressure => Quantity::Pressure,
             Field::Temperature => Quantity::Temperature,
             Field::HeatFlux | Field::WallHeatFlux => Quantity::HeatFlux,
-            Field::ContactGap | Field::ContactStatus => Quantity::None,
+            Field::ContactStatus => return None,
             Field::ContactPressure
             | Field::ContactShear
             | Field::VonMises
@@ -214,28 +217,53 @@ impl Field {
             | Field::StressZz
             | Field::StressXy
             | Field::StressXz
-            | Field::StressYz => Quantity::Stress,
-        }
+            | Field::StressYz => Quantity::Pressure,
+        })
     }
 
     /// Whether `r` holds it as a mode shape: normalised, with no unit.
     pub fn is_mode_shape(self, r: &StepResult) -> bool {
-        matches!(r.kind(), Kind::Frequency(_)) && self.quantity() == Quantity::Length
+        matches!(r.kind(), Kind::Frequency(_)) && self.quantity() == Some(Quantity::Length)
     }
 
-    /// Its unit for result `r` in `system`: none for a mode shape (it is normalised).
-    pub fn unit(self, r: &StepResult, system: UnitSystem) -> Option<String> {
-        if self.is_mode_shape(r) { None } else { self.quantity().unit(system) }
+    /// Its unit for result `r` in `display`: none for a mode shape (it is normalised).
+    pub fn unit(self, r: &StepResult, display: &DisplaySystem) -> Option<String> {
+        if self.is_mode_shape(r) { None } else { self.quantity().and_then(|q| unit_of(q, display)) }
     }
 
     /// Its title over result `r`: the label with its unit (`Von Mises stress [MPa]`), or, for
     /// a mode shape, saying it is normalised.
-    pub fn title(self, r: &StepResult, system: UnitSystem) -> String {
+    pub fn title(self, r: &StepResult, display: &DisplaySystem) -> String {
         if self.is_mode_shape(r) {
             let label = self.label().trim_end_matches(" magnitude");
             return format!("{label} (mode shape, normalised)");
         }
-        with_unit(self.label(), self.unit(r, system).as_deref())
+        with_unit(self.label(), self.unit(r, display).as_deref())
+    }
+
+    /// A value of this field over `r`, stored in SI, as `display` shows it (a mode shape
+    /// normalised as the display system's mass unit makes it, [`mode_scale`]).
+    pub fn shown(self, r: &StepResult, si: f64, display: &DisplaySystem) -> f64 {
+        if self.is_mode_shape(r) {
+            return si * mode_scale(r, display).0;
+        }
+        match self.quantity() {
+            Some(q) => shown(q, si, display),
+            None => si,
+        }
+    }
+
+    /// A value of this field over `r` as `display` shows it, stored in SI: the inverse of
+    /// [`Field::shown`].
+    pub fn stored(self, r: &StepResult, v: f64, display: &DisplaySystem) -> f64 {
+        if self.is_mode_shape(r) {
+            let k = mode_scale(r, display).0;
+            return if k != 0.0 { v / k } else { v };
+        }
+        match self.quantity() {
+            Some(q) => display.to_si(q, v).unwrap_or(f64::NAN),
+            None => v,
+        }
     }
 
     pub fn parse(id: &str) -> Option<Field> {
@@ -307,66 +335,58 @@ impl Field {
     }
 }
 
-/// What a number the results show measures: its unit follows the model's unit system
-/// ([`Quantity::unit`]). The legend, the probe, the reaction sums and the solve summary all name
-/// their units through it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Quantity {
-    /// No unit (a ratio, a code, a normalised value).
-    None,
-    Length,
-    Stress,
-    Force,
-    Moment,
-    Mass,
-    Time,
-    Velocity,
-    Temperature,
-    /// Energy (work): force × length.
-    Energy,
-    /// Heat flow (power): energy per time.
-    HeatFlow,
-    /// Heat flux: heat flow per area.
-    HeatFlux,
+/// The unit of `q` in `display`: `None` for a number without one.
+pub fn unit_of(q: Quantity, display: &DisplaySystem) -> Option<String> {
+    let symbol = display.symbol(q);
+    (symbol != "1").then(|| symbol.to_string())
 }
 
-impl Quantity {
-    /// Its unit in `system` (`mm`, `MPa`, `N·mm`, `mW`…), or `None` (no unit, or the system is
-    /// unspecified). The model never converts, so this only names the system's own unit; a
-    /// temperature is in whatever scale its values were entered in.
-    pub fn unit(self, system: UnitSystem) -> Option<String> {
-        let dim = match self {
-            Quantity::None => return None,
-            Quantity::Length => Dim::Length,
-            Quantity::Stress => Dim::Stress,
-            Quantity::Force => Dim::Force,
-            Quantity::Moment => Dim::Moment,
-            Quantity::Mass => Dim::Mass,
-            Quantity::Time => Dim::Time,
-            Quantity::Velocity => Dim::Velocity,
-            Quantity::Temperature | Quantity::Energy | Quantity::HeatFlow | Quantity::HeatFlux => {
-                // Named units where the system's force × length (per time) has one.
-                let (energy, power, flux) = match system {
-                    UnitSystem::Unspecified => return None,
-                    UnitSystem::MKgS => ("J", "W", "W/m²"),
-                    UnitSystem::MmTonneS => ("mJ", "mW", "mW/mm²"),
-                    UnitSystem::MmKgMs => ("J", "kW", "kW/mm²"),
-                    UnitSystem::MmGMs => ("mJ", "W", "W/mm²"),
-                    UnitSystem::InLbfS => ("lbf·in", "lbf·in/s", "lbf/(in·s)"),
-                };
-                return Some(
-                    match self {
-                        Quantity::Energy => energy,
-                        Quantity::HeatFlow => power,
-                        Quantity::HeatFlux => flux,
-                        _ => "°C or K",
-                    }
-                    .into(),
-                );
-            }
-        };
-        dim.unit(system)
+/// An SI value of `q` as `display` shows it (not a number when it cannot be expressed).
+pub fn shown(q: Quantity, si: f64, display: &DisplaySystem) -> f64 {
+    display.express(q, si).unwrap_or(f64::NAN)
+}
+
+/// SI values of `q` as `display` shows them.
+pub fn shown_all<const N: usize>(q: Quantity, si: [f64; N], display: &DisplaySystem) -> [f64; N] {
+    si.map(|v| shown(q, v, display))
+}
+
+/// The factors a natural mode's shape, mass-normalised (φᵀ M φ = 1) in SI, takes to be
+/// mass-normalised in `display`: (translations, rotations). The normalisation fixes the scale by
+/// the mass unit: φ in a system of mass unit M and length unit L is √M (translations) and L √M
+/// (rotations, per length) times φ in SI, where M and L are the units' sizes in kg and m. A
+/// buckling mode is scaled to a largest component of 1 and needs neither.
+pub fn mode_scale(r: &StepResult, display: &DisplaySystem) -> (f64, f64) {
+    match r.kind() {
+        Kind::Frequency(f) if f.buckling.is_none() => {
+            let mass = display.unit_ref(Quantity::Mass).factor().sqrt();
+            (mass, display.unit_ref(Quantity::Length).factor() * mass)
+        }
+        _ => (1.0, 1.0),
     }
+}
+
+/// The displacement in SI that one unit of a result's shape, as `display` shows it, stands for:
+/// a deformation scale multiplies the shown shape. A static or explicit displacement is a length
+/// (1: the scale is a ratio); a mode shape is drawn as the display units normalise it (a
+/// frequency mode by the mass, [`mode_scale`]; a buckling mode to a largest component of one
+/// length unit), so a scale of 5 draws it as large in every system as before SI storage.
+pub fn deformation_unit(r: &StepResult, display: &DisplaySystem) -> f64 {
+    match r.kind() {
+        Kind::Frequency(f) if f.buckling.is_none() => mode_scale(r, display).1,
+        Kind::Frequency(_) => display.unit_ref(Quantity::Length).factor(),
+        Kind::Static(_) | Kind::Explicit(_) | Kind::Fluid(_) | Kind::Heat(_) => 1.0,
+    }
+}
+
+/// The deformation scale `view` draws `r` with, as it is shown (the view's, or the automatic
+/// one, [`auto_scale`], for a model `size` across in metres): the displacement drawn is the SI
+/// one times this and [`deformation_unit`].
+pub fn shown_scale(view: &ResultsView, r: &StepResult, pick: Pick, size: f64, display: &DisplaySystem) -> f64 {
+    view.scale.unwrap_or_else(|| {
+        let unit = deformation_unit(r, display);
+        if unit > 0.0 { auto_scale(r, pick, size) / unit } else { 0.0 }
+    })
 }
 
 /// `label` with `unit` in brackets when there is one: `Von Mises stress [MPa]`.
@@ -690,34 +710,44 @@ impl Session {
 
     /// What the results display shows: the view, whether its result is stale, the contour
     /// field's range, a frequency step's modes and an explicit step's frame times (the
-    /// `results.*` commands' reply).
+    /// `results.*` commands' reply), every number in the display system ([`Session::units`]).
     pub fn results_report(&self) -> Value {
+        let display = self.units();
         let Some(v) = &self.results_view else { return json!({"view": null}) };
-        let Some((r, current)) = self.latest_result(&v.step) else { return json!({"view": v}) };
-        let mut out = json!({"view": v, "stale": !current});
+        let Some((r, current)) = self.latest_result(&v.step) else { return json!({"view": view_json(v, None, display)}) };
+        let mut out = json!({"view": view_json(v, Some(r), display), "stale": !current});
+        let legend =
+            |field: Field| json!({"min": v.range_min.map(|x| field.shown(r, x, display)), "max": v.range_max.map(|x| field.shown(r, x, display))});
         if let Some(f) = v.contour
             && let Ok(values) = field_values(&self.model, r, f, v.pick())
         {
-            let ends =
-                range(r.nodes(), &values).map(|((ln, lv), (hn, hv))| json!({"min": {"node": ln, "value": lv}, "max": {"node": hn, "value": hv}}));
-            out["contour"] = json!({"field": f, "label": f.label(), "unit": f.unit(r, self.model.units()), "range": ends});
+            let ends = range(r.nodes(), &values).map(|((ln, lv), (hn, hv))| {
+                json!({"min": {"node": ln, "value": f.shown(r, lv, display)}, "max": {"node": hn, "value": f.shown(r, hv, display)}})
+            });
+            out["contour"] = json!({"field": f, "label": f.label(), "unit": f.unit(r, display), "range": ends});
             if v.range_min.is_some() || v.range_max.is_some() {
-                out["contour"]["legend"] = json!({"min": v.range_min, "max": v.range_max});
+                out["contour"]["legend"] = legend(f);
             }
         }
+        let time = |t: f64| shown(Quantity::Time, t, display);
         match r.kind() {
             Kind::Frequency(fr) => {
-                out["modes"] = fr.modes.iter().enumerate().map(|(i, m)| json!({"mode": i + 1, "frequency": m.frequency})).collect();
+                out["modes"] = fr
+                    .modes
+                    .iter()
+                    .enumerate()
+                    .map(|(i, m)| json!({"mode": i + 1, "frequency": shown(Quantity::Frequency, m.frequency, display)}))
+                    .collect();
             }
             Kind::Explicit(e) => {
-                out["frames"] = e.frames.iter().map(|f| f.time).collect();
+                out["frames"] = e.frames.iter().map(|f| time(f.time)).collect();
                 if let Ok(f) = frame(e, v.pick()) {
-                    out["time"] = json!(f.time);
+                    out["time"] = json!(time(f.time));
                 }
             }
             Kind::Fluid(f) => {
-                out["frames"] = f.frames.iter().map(|f| f.time).collect();
-                if let Value::Object(flow) = crate::flow::report(v, f, self.model.units()) {
+                out["frames"] = f.frames.iter().map(|f| time(f.time)).collect();
+                if let Value::Object(flow) = crate::flow::report(v, f, display) {
                     for (k, x) in flow {
                         out[k.as_str()] = x;
                     }
@@ -725,11 +755,12 @@ impl Session {
                 // A face held beyond the fluid's range is the extreme, as the legend shows it.
                 if v.contour == Some(Field::Temperature) && out["contour"]["range"].is_object() {
                     for h in crate::flow::held_faces(self, f) {
-                        let end = json!({"body": h.body, "face": h.face, "value": h.value});
+                        let value = shown(Quantity::Temperature, h.value, display);
+                        let end = json!({"body": h.body, "face": h.face, "value": value});
                         let range = &mut out["contour"]["range"];
-                        if range["max"]["value"].as_f64().is_some_and(|m| h.value > m) {
+                        if range["max"]["value"].as_f64().is_some_and(|m| value > m) {
                             range["max"] = end;
-                        } else if range["min"]["value"].as_f64().is_some_and(|m| h.value < m) {
+                        } else if range["min"]["value"].as_f64().is_some_and(|m| value < m) {
                             range["min"] = end;
                         }
                     }
@@ -737,21 +768,24 @@ impl Session {
                 if v.contour == Some(Field::WallHeatFlux)
                     && let Ok(faces) = crate::flow::wall::faces(self, f, v.pick())
                 {
-                    let values: Vec<f64> = faces.iter().map(|f| f.flux.unwrap_or(f64::NAN)).collect();
+                    let flux = |q: f64| shown(Quantity::HeatFlux, q, display);
+                    let values: Vec<f64> = faces.iter().map(|f| f.flux.map_or(f64::NAN, flux)).collect();
                     let end = |(k, value): (usize, f64)| json!({"body": faces.get(k).map(|f| &f.body), "face": faces.get(k).map(|f| &f.face), "value": value});
                     let range = crate::flow::cell_range(&values).map(|(a, b)| json!({"min": end(a), "max": end(b)}));
-                    out["contour"] = json!({"field": Field::WallHeatFlux, "label": Field::WallHeatFlux.label(), "unit": Quantity::HeatFlux.unit(self.model.units()), "range": range});
+                    out["contour"] = json!({"field": Field::WallHeatFlux, "label": Field::WallHeatFlux.label(), "unit": unit_of(Quantity::HeatFlux, display), "range": range});
                     if v.range_min.is_some() || v.range_max.is_some() {
-                        out["contour"]["legend"] = json!({"min": v.range_min, "max": v.range_max});
+                        out["contour"]["legend"] = legend(Field::WallHeatFlux);
                     }
-                    out["wall_heat"] = json!({"faces": faces, "positive": "into wall", "history": "linear interpolation between recorded samples; no extrapolation", "unrecorded": "uncoloured"});
+                    let mut faces_json = json!(faces);
+                    crate::flow::wall::show(&mut faces_json, display);
+                    out["wall_heat"] = json!({"faces": faces_json, "positive": "into wall", "history": "linear interpolation between recorded samples; no extrapolation", "unrecorded": "uncoloured", "units": crate::flow::wall::units(display)});
                 }
             }
             Kind::Heat(h) => {
-                out["heat_flows"] = heat_flows(h);
-                out["frames"] = json!(h.times);
+                out["heat_flows"] = heat_flows(h, display);
+                out["frames"] = h.times.iter().map(|t| time(*t)).collect();
                 if let Ok((t, _)) = heat_frame(h, v.pick()) {
-                    out["time"] = json!(t);
+                    out["time"] = json!(time(t));
                 }
             }
             Kind::Static(s) => {
@@ -774,11 +808,32 @@ impl Session {
 /// The heat balance of a heat transfer result: each heat load's flow into the body (`loads`:
 /// `{name, type, heat}`, negative out of it), the prescribed temperatures' total (`reactions`),
 /// and `imbalance`, their sum: about 0 in a steady state, the heat stored per time in a
-/// transient one.
-pub fn heat_flows(h: &HeatResult) -> Value {
-    let loads: Vec<Value> = h.loads.iter().map(|l| json!({"name": l.name, "type": l.kind, "heat": l.heat})).collect();
+/// transient one. Heat flows (powers) in `display`.
+pub fn heat_flows(h: &HeatResult, display: &DisplaySystem) -> Value {
+    let power = |w: f64| shown(Quantity::Power, w, display);
+    let loads: Vec<Value> = h.loads.iter().map(|l| json!({"name": l.name, "type": l.kind, "heat": power(l.heat)})).collect();
     let applied: f64 = h.loads.iter().map(|l| l.heat).sum();
-    json!({"loads": loads, "reactions": h.reaction_total, "imbalance": applied + h.reaction_total})
+    json!({"loads": loads, "reactions": power(h.reaction_total), "imbalance": power(applied + h.reaction_total)})
+}
+
+/// A view as a reply shows it: its legend range in its field's unit, its slice position a
+/// length, in `display`.
+pub fn view_json(v: &ResultsView, r: Option<&StepResult>, display: &DisplaySystem) -> Value {
+    let mut out = json!(v);
+    if let (Some(field), Some(r)) = (v.contour, r) {
+        for (key, x) in [("range_min", v.range_min), ("range_max", v.range_max)] {
+            if let Some(x) = x {
+                out[key] = json!(field.shown(r, x, display));
+            }
+        }
+    }
+    if let Some(position) = v.flow.as_ref().and_then(|f| f.slice.as_ref()).and_then(|s| s.position) {
+        out["flow"]["slice"]["position"] = json!(shown(Quantity::Length, position, display));
+    }
+    if let Some(seeds) = v.flow.as_ref().and_then(|f| f.streamlines.as_ref()).and_then(|s| s.seeds.as_ref()) {
+        out["flow"]["streamlines"]["seeds"] = json!(seeds.iter().map(|p| shown_all(Quantity::Length, *p, display)).collect::<Vec<_>>());
+    }
+    out
 }
 
 #[cfg(test)]
@@ -801,9 +856,9 @@ mod tests {
         for (m, z) in mag.iter().zip(&uz) {
             assert!(*m >= z.abs() - 1e-12);
         }
-        // The tip bends down the most; the clamped root does not move.
+        // The tip bends down the most (3.8 mm, in metres); the clamped root does not move.
         let ((lo_node, lo), (_, hi)) = range(bend.nodes(), &uz).unwrap();
-        assert!(lo < -3.8 && hi.abs() < 1e-12, "{lo} {hi}");
+        assert!(lo < -3.8e-3 && hi.abs() < 1e-15, "{lo} {hi}");
         assert!([11, 22, 33, 44].contains(&lo_node), "{lo_node}");
         let vm = field_values(&s.model, bend, Field::VonMises, Pick { mode: 1, frame: None }).unwrap();
         let max = field_values(&s.model, bend, Field::MaxPrincipal, Pick { mode: 1, frame: None }).unwrap();
@@ -859,22 +914,26 @@ mod tests {
         cantilever(&mut s);
         s.execute("solve.static", &json!({})).unwrap();
         s.execute("solve.frequency", &json!({})).unwrap();
-        let mm = UnitSystem::MmTonneS;
+        let mm = &fieldcraft_model::DisplaySystem::default();
+        let si = crate::units::si();
         let (bend, _) = s.latest_result("Bend").unwrap();
         let (modes, _) = s.latest_result("Modes").unwrap();
         assert_eq!(Field::VonMises.title(bend, mm), "Von Mises stress [MPa]");
         assert_eq!(Field::Displacement.title(bend, mm), "Displacement magnitude [mm]");
         assert_eq!(Field::Displacement.title(modes, mm), "Displacement (mode shape, normalised)");
         assert_eq!(Field::DisplacementZ.title(modes, mm), "Displacement Z (mode shape, normalised)");
-        assert_eq!(Field::VonMises.title(bend, UnitSystem::Unspecified), "Von Mises stress");
+        assert_eq!(Field::VonMises.title(bend, si), "Von Mises stress [Pa]");
         assert_eq!(Field::ContactStatus.unit(bend, mm), None);
-        let unit = |q: Quantity, u: UnitSystem| q.unit(u);
-        assert_eq!(unit(Quantity::HeatFlow, mm).as_deref(), Some("mW"));
-        assert_eq!(unit(Quantity::Energy, mm).as_deref(), Some("mJ"));
-        assert_eq!(unit(Quantity::Moment, mm).as_deref(), Some("N·mm"));
-        assert_eq!(unit(Quantity::Energy, UnitSystem::MKgS).as_deref(), Some("J"));
-        assert_eq!(unit(Quantity::Temperature, UnitSystem::Unspecified), None);
-        assert_eq!(unit(Quantity::None, mm), None);
+        assert_eq!(Field::ContactGap.unit(bend, mm).as_deref(), Some("mm"));
+        assert_eq!(unit_of(Quantity::Power, mm).as_deref(), Some("mW"));
+        assert_eq!(unit_of(Quantity::Energy, mm).as_deref(), Some("mJ"));
+        assert_eq!(unit_of(Quantity::Moment, mm).as_deref(), Some("N·mm"));
+        assert_eq!(unit_of(Quantity::Energy, si).as_deref(), Some("J"));
+        assert_eq!(unit_of(Quantity::Temperature, mm).as_deref(), Some("°C"));
+        assert_eq!(unit_of(Quantity::Dimensionless, mm), None);
+        // A natural mode is mass-normalised: in tonnes it is √1000 times its value in kilograms.
+        assert_eq!(mode_scale(modes, mm).0, 1000f64.sqrt());
+        assert_eq!(mode_scale(bend, mm), (1.0, 1.0));
     }
 
     #[test]

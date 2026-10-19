@@ -1,6 +1,9 @@
 *KEYWORD long=y
 $ Written by FieldCraft: implicit linear analysis, long format (20-column fields).
-$ Units: mm-t-s-N-MPa (consistent; nothing is converted).
+$ Units: mm-t-s-N-MPa (millimetre, tonne, second, newton, megapascal, degree Celsius, consistent).
+*CONTROL_UNITS
+$             length                time                mass                temp
+                  mm                 sec            mtrc_ton                   c
 $ 2 steps are written as *CASE analyses: run LS-DYNA with CASE on its command line.
 *NODE
 $                nid                   x                   y                   z

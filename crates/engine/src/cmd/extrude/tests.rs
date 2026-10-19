@@ -46,7 +46,8 @@ fn sides(s: &Session, body: &str) -> Vec<Value> {
 fn nodes_on(s: &mut Session, name: &str, face: &Value) -> Vec<[f64; 3]> {
     s.execute("model.set.create", &json!({"name": name, "geometry": [face]})).unwrap();
     let r = s.model.resolve_set(name).unwrap();
-    r.nodes.iter().map(|n| s.model.nodes()[n].xyz).collect()
+    // In millimetres, as the design is.
+    r.nodes.iter().map(|n| crate::units::to_geometry_point(s.model.nodes()[n].xyz)).collect()
 }
 
 #[test]

@@ -10,7 +10,7 @@
 //! schema cannot express (a mass given per direction, a table of load-path points) stays reachable
 //! through the form's JSON view.
 
-use fieldcraft_model::UnitSystem;
+use fieldcraft_model::units::{DisplaySystem, Quantity};
 use serde_json::{Map, Value, json};
 
 use crate::Session;
@@ -296,13 +296,16 @@ impl Session {
     }
 }
 
-/// A physical dimension: its unit follows the model's unit system.
+/// What a number of a command measures. Most follow the display system (bare numbers are in its
+/// unit; [`Dim::quantity`]); [`Dim::Millimetre`] and [`Dim::Degree`] keep the fixed unit their
+/// commands always took ([`Dim::fixed`]); a few depend on the value beside them ([`Dim::resolve`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dim {
     /// No unit (a ratio, a count, a factor).
     None,
     Length,
     Area,
+    InverseLength,
     Stress,
     Density,
     Force,
@@ -311,110 +314,146 @@ pub enum Dim {
     Inertia,
     Time,
     Velocity,
+    InverseVelocity,
     Acceleration,
     AngularVelocity,
+    StrainRate,
     Stiffness,
     Damping,
     Viscosity,
     ForcePerVolume,
+    VolumeFlow,
+    Momentum,
     Power,
+    HeatGeneration,
     HeatFlux,
     FilmCoefficient,
     Conductivity,
     SpecificHeat,
     Expansion,
     Temperature,
-    /// Always millimetres (geometry from SolidCraft).
-    Millimetre,
-    Degree,
+    TemperatureDifference,
     Hertz,
+    /// An eigenvalue ω² (`1/s²`).
+    Eigenvalue,
+    /// Always millimetres, whatever the display system: lengths of the geometry commands, which
+    /// SolidCraft geometry (in millimetres) gave them.
+    Millimetre,
+    /// Always degrees.
+    Degree,
+    /// A spring's stiffness: torsional (per radian) when the spring's `direction` is a rotation.
+    SpringStiffness,
+    /// A dashpot's coefficient, torsional likewise.
+    SpringDamping,
+    /// Prescribed motion `[u1, u2, u3, ur1, ur2, ur3]`: three lengths, then three angles.
+    Motion,
+    /// A reaction `[f1, f2, f3, m1, m2, m3]`: three forces, then three moments.
+    Reaction,
+    /// A displacement along the `direction` beside it: a length, or an angle for 4 to 6.
+    DofDisplacement,
+    /// A fan curve's `[flow, pressure rise]` rows.
+    FanCurve,
+    /// Any other quantity.
+    Of(Quantity),
 }
 
 impl Dim {
-    /// The dimension's name ("stress", "length"); `None` for [`Dim::None`].
+    /// The quantity, for a dimension that has one of its own (not the dependent ones).
+    pub fn quantity(self) -> Option<Quantity> {
+        use Quantity as Q;
+        Some(match self {
+            Dim::None | Dim::SpringStiffness | Dim::SpringDamping | Dim::Motion | Dim::Reaction | Dim::DofDisplacement | Dim::FanCurve => {
+                return None;
+            }
+            Dim::Length | Dim::Millimetre => Q::Length,
+            Dim::Area => Q::Area,
+            Dim::InverseLength => Q::InverseLength,
+            Dim::Stress => Q::Pressure,
+            Dim::Density => Q::Density,
+            Dim::Force => Q::Force,
+            Dim::Moment => Q::Moment,
+            Dim::Mass => Q::Mass,
+            Dim::Inertia => Q::RotaryInertia,
+            Dim::Time => Q::Time,
+            Dim::Velocity => Q::Velocity,
+            Dim::InverseVelocity => Q::InverseVelocity,
+            Dim::Acceleration => Q::Acceleration,
+            Dim::AngularVelocity => Q::AngularVelocity,
+            Dim::StrainRate => Q::StrainRate,
+            Dim::Stiffness => Q::Stiffness,
+            Dim::Damping => Q::Damping,
+            Dim::Viscosity => Q::DynamicViscosity,
+            Dim::ForcePerVolume => Q::ForcePerVolume,
+            Dim::VolumeFlow => Q::VolumeFlow,
+            Dim::Momentum => Q::Momentum,
+            Dim::Power => Q::Power,
+            Dim::HeatGeneration => Q::HeatGeneration,
+            Dim::HeatFlux => Q::HeatFlux,
+            Dim::FilmCoefficient => Q::HeatTransferCoefficient,
+            Dim::Conductivity => Q::ThermalConductivity,
+            Dim::SpecificHeat => Q::SpecificHeat,
+            Dim::Expansion => Q::ThermalExpansion,
+            Dim::Temperature => Q::Temperature,
+            Dim::TemperatureDifference => Q::TemperatureDifference,
+            Dim::Hertz => Q::Frequency,
+            Dim::Eigenvalue => Q::Eigenvalue,
+            Dim::Degree => Q::Angle,
+            Dim::Of(q) => q,
+        })
+    }
+
+    /// The fixed unit a bare number is in, for the dimensions that never follow the display
+    /// system.
+    pub fn fixed(self) -> Option<&'static str> {
+        match self {
+            Dim::Millimetre => Some("mm"),
+            Dim::Degree => Some("deg"),
+            _ => None,
+        }
+    }
+
+    /// The quantity of entry `index` of a value of this dimension in `parent` (the object that
+    /// holds it, for the dependent dimensions); `None` for a number without a unit.
+    pub fn resolve(self, parent: Option<&Value>, index: usize) -> Option<Quantity> {
+        use Quantity as Q;
+        let dof = |key: &str| parent.and_then(|p| p.get(key)).and_then(|d| d.get("dof").or(Some(d))).and_then(Value::as_u64);
+        match self {
+            Dim::SpringStiffness => Some(if dof("direction").is_some_and(|d| d >= 4) { Q::RotationalStiffness } else { Q::Stiffness }),
+            Dim::SpringDamping => Some(if dof("direction").is_some_and(|d| d >= 4) { Q::RotationalDamping } else { Q::Damping }),
+            Dim::Motion => Some(if index < 3 { Q::Length } else { Q::Angle }),
+            Dim::Reaction => Some(if index < 3 { Q::Force } else { Q::Moment }),
+            Dim::DofDisplacement => {
+                Some(if parent.and_then(|p| p.get("direction")).and_then(Value::as_u64).is_some_and(|d| d >= 4) { Q::Angle } else { Q::Length })
+            }
+            Dim::FanCurve => Some(if index == 0 { Q::VolumeFlow } else { Q::Pressure }),
+            d => d.quantity(),
+        }
+    }
+
+    /// The dimension's name ("pressure", "length"); `None` for [`Dim::None`].
     pub fn name(self) -> Option<&'static str> {
         Some(match self {
             Dim::None => return None,
-            Dim::Length | Dim::Millimetre => "length",
-            Dim::Area => "area",
-            Dim::Stress => "stress",
-            Dim::Density => "density",
-            Dim::Force => "force",
-            Dim::Moment => "moment",
-            Dim::Mass => "mass",
-            Dim::Inertia => "rotary inertia",
-            Dim::Time => "time",
-            Dim::Velocity => "velocity",
-            Dim::Acceleration => "acceleration",
-            Dim::AngularVelocity => "angular velocity",
-            Dim::Stiffness => "stiffness",
-            Dim::Damping => "damping",
-            Dim::Viscosity => "viscosity",
-            Dim::ForcePerVolume => "force per volume",
-            Dim::Power => "power",
-            Dim::HeatFlux => "heat flux",
-            Dim::FilmCoefficient => "film coefficient",
-            Dim::Conductivity => "conductivity",
-            Dim::SpecificHeat => "specific heat",
-            Dim::Expansion => "expansion",
-            Dim::Temperature => "temperature",
-            Dim::Degree => "angle",
-            Dim::Hertz => "frequency",
+            Dim::SpringStiffness => "stiffness",
+            Dim::SpringDamping => "damping",
+            Dim::Motion => "displacement",
+            Dim::Reaction => "force",
+            Dim::DofDisplacement => "displacement",
+            Dim::FanCurve => "volume flow and pressure",
+            d => d.quantity().map(Quantity::name)?,
         })
     }
 
-    /// Whether its unit follows the model's unit system (a fixed unit such as degrees does not).
-    pub fn follows_system(self) -> bool {
-        self.name().is_some() && self.unit(UnitSystem::Unspecified).is_none()
-    }
-
-    /// Its unit in `system`, or `None` (no unit, or the system is unspecified).
-    pub fn unit(self, system: UnitSystem) -> Option<String> {
-        let fixed = match self {
-            Dim::Millimetre => Some("mm"),
-            Dim::Degree => Some("°"),
-            Dim::Hertz => Some("Hz"),
-            Dim::Expansion => Some("1/K"),
-            _ => None,
-        };
-        if let Some(f) = fixed {
-            return Some(f.into());
+    /// Its unit in `display` (a fixed unit stays), or `None` for a number without one. The
+    /// dependent dimensions give the unit of their usual case (a translation, a spring along
+    /// a direction).
+    pub fn unit(self, display: &DisplaySystem) -> Option<String> {
+        if let Some(fixed) = self.fixed() {
+            return Some(fixed.to_string());
         }
-        let (l, m, t, f, s) = match system {
-            UnitSystem::Unspecified => return None,
-            UnitSystem::MKgS => ("m", "kg", "s", "N", "Pa"),
-            UnitSystem::MmTonneS => ("mm", "t", "s", "N", "MPa"),
-            UnitSystem::MmKgMs => ("mm", "kg", "ms", "kN", "GPa"),
-            UnitSystem::MmGMs => ("mm", "g", "ms", "N", "MPa"),
-            UnitSystem::InLbfS => ("in", "lbf·s²/in", "s", "lbf", "psi"),
-        };
-        let inch = system == UnitSystem::InLbfS;
-        Some(match self {
-            Dim::Length => l.into(),
-            Dim::Area => format!("{l}²"),
-            Dim::Stress => s.into(),
-            Dim::Density if inch => "lbf·s²/in⁴".into(),
-            Dim::Density => format!("{m}/{l}³"),
-            Dim::Force => f.into(),
-            Dim::Moment => format!("{f}·{l}"),
-            Dim::Mass => m.into(),
-            Dim::Inertia if inch => "lbf·s²·in".into(),
-            Dim::Inertia => format!("{m}·{l}²"),
-            Dim::Time => t.into(),
-            Dim::Velocity => format!("{l}/{t}"),
-            Dim::Acceleration => format!("{l}/{t}²"),
-            Dim::AngularVelocity => format!("rad/{t}"),
-            Dim::Stiffness => format!("{f}/{l}"),
-            Dim::Damping => format!("{f}·{t}/{l}"),
-            Dim::Viscosity => format!("{s}·{t}"),
-            Dim::ForcePerVolume => format!("{f}/{l}³"),
-            Dim::Power => format!("{f}·{l}/{t}"),
-            Dim::HeatFlux => format!("{f}/({l}·{t})"),
-            Dim::FilmCoefficient => format!("{f}/({l}·{t}·K)"),
-            Dim::Conductivity => format!("{f}/({t}·K)"),
-            Dim::SpecificHeat => format!("{l}²/({t}²·K)"),
-            Dim::None | Dim::Temperature | Dim::Millimetre | Dim::Degree | Dim::Hertz | Dim::Expansion => return None,
-        })
+        let q = self.resolve(None, 0)?;
+        let symbol = display.symbol(q);
+        (symbol != "1").then(|| symbol.to_string())
     }
 }
 
@@ -464,38 +503,25 @@ impl Field {
         }
     }
 
-    /// What its value is measured in, as a form shows it: the unit in `system` ("MPa"), or, with
-    /// no unit system, the dimension in brackets ("[stress]"). `None` for a number without a unit.
-    pub fn unit_label(&self, system: UnitSystem) -> Option<String> {
-        let dim = self.dim()?;
-        dim.unit(system).or_else(|| dim.name().map(|n| format!("[{n}]")))
+    /// What its value is measured in, as a form shows it: the unit in `display` ("MPa"); `None`
+    /// for a number without a unit.
+    pub fn unit_label(&self, display: &DisplaySystem) -> Option<String> {
+        self.dim()?.unit(display)
     }
 
-    /// The help as the form's tooltip shows it: [`Field::help`] and the unit (or, with no unit system, the dimension and where to set the system).
-    pub fn help_text(&self, system: UnitSystem) -> String {
+    /// The help as the form's tooltip shows it: [`Field::help`] and the unit.
+    pub fn help_text(&self, display: &DisplaySystem) -> String {
         let mut out = self.help.to_string();
-        let mut line = |s: String| {
+        if let Some(unit) = self.unit_label(display) {
             if !out.is_empty() {
                 out.push('\n');
             }
-            out.push_str(&s);
-        };
-        if let Some(dim) = self.dim() {
-            match (dim.unit(system), dim.name()) {
-                (Some(u), _) => line(format!("Unit: {u}.")),
-                (None, Some(n)) => {
-                    let hint = if system == UnitSystem::Unspecified { format!(" {UNITS_HINT}") } else { String::new() };
-                    line(format!("Unit: a {n} in the model's units.{hint}"))
-                }
-                (None, None) => {}
-            }
+            let fixed = self.dim().and_then(Dim::fixed).is_some();
+            out.push_str(&if fixed { format!("Unit: {unit} (always).") } else { format!("Unit: {unit}.") });
         }
         out
     }
 }
-
-/// What a form says when the model has no unit system.
-pub const UNITS_HINT: &str = "Set a unit system: Properties › Units.";
 
 pub const fn num(key: &'static str, label: &'static str, dim: Dim) -> Field {
     field(key, label, Kind::Number { dim, min: None, max: None })
@@ -1370,13 +1396,22 @@ mod tests {
 
     #[test]
     fn units_follow_the_system() {
-        assert_eq!(Dim::Stress.unit(UnitSystem::MmTonneS).as_deref(), Some("MPa"));
-        assert_eq!(Dim::Density.unit(UnitSystem::MmTonneS).as_deref(), Some("t/mm³"));
-        assert_eq!(Dim::Moment.unit(UnitSystem::MKgS).as_deref(), Some("N·m"));
-        assert_eq!(Dim::Density.unit(UnitSystem::InLbfS).as_deref(), Some("lbf·s²/in⁴"));
-        assert_eq!(Dim::Stress.unit(UnitSystem::Unspecified), None);
-        assert_eq!(Dim::Millimetre.unit(UnitSystem::Unspecified).as_deref(), Some("mm"));
-        assert_eq!(Dim::None.unit(UnitSystem::MKgS), None);
+        use fieldcraft_model::units::Preset;
+        let (mm, si, inch) = (DisplaySystem::new(Preset::MmTonneS), DisplaySystem::new(Preset::MKgS), DisplaySystem::new(Preset::InLbfS));
+        assert_eq!(Dim::Stress.unit(&mm).as_deref(), Some("MPa"));
+        assert_eq!(Dim::Density.unit(&mm).as_deref(), Some("t/mm³"));
+        assert_eq!(Dim::Moment.unit(&si).as_deref(), Some("N·m"));
+        assert_eq!(Dim::Density.unit(&inch).as_deref(), Some("lbf·s²/in⁴"));
+        assert_eq!(Dim::Temperature.unit(&mm).as_deref(), Some("°C"));
+        assert_eq!(Dim::Millimetre.unit(&si).as_deref(), Some("mm"));
+        assert_eq!(Dim::Degree.unit(&mm).as_deref(), Some("deg"));
+        assert_eq!(Dim::None.unit(&si), None);
+        // The dependent dimensions follow the value beside them.
+        let torsional = json!({"direction": {"dof": 5}});
+        assert_eq!(Dim::SpringStiffness.resolve(Some(&torsional), 0), Some(Quantity::RotationalStiffness));
+        assert_eq!(Dim::SpringStiffness.resolve(Some(&json!({"direction": "line"})), 0), Some(Quantity::Stiffness));
+        assert_eq!(Dim::Motion.resolve(None, 4), Some(Quantity::Angle));
+        assert_eq!(Dim::FanCurve.resolve(None, 1), Some(Quantity::Pressure));
     }
 
     const LOADISH: &[Field] = &[

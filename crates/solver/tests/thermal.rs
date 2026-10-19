@@ -259,7 +259,7 @@ fn bimetal_strip_bends_as_timoshenko_says() {
                 Material {
                     elastic: Some(iso(2e5, 0.0)),
                     density: None,
-                    thermal: Some(Thermal { expansion: Some(Directional::Isotropic(alpha)), ..Thermal::default() }),
+                    thermal: Some(Thermal { expansion: Some(Directional::Isotropic(alpha)), reference_temperature: 0.0, ..Thermal::default() }),
                     ..Material::default()
                 },
             )
@@ -402,7 +402,7 @@ fn heated_rod(kind: ElementKind, len: f64, alpha: [f64; 3], dt: f64, held: bool)
     m.add_set("a", Set { nodes: vec![1], ..Set::default() }).unwrap();
     m.add_set("b", Set { nodes: vec![2], ..Set::default() }).unwrap();
     m.add_set("c", Set { nodes: vec![3], ..Set::default() }).unwrap();
-    let thermal = Thermal { expansion: Some(Directional::Orthotropic(alpha)), ..Thermal::default() };
+    let thermal = Thermal { expansion: Some(Directional::Orthotropic(alpha)), reference_temperature: 0.0, ..Thermal::default() };
     m.add_material("Mat", Material { elastic: Some(iso(2e5, 0.3)), thermal: Some(thermal), ..Material::default() }).unwrap();
     m.add_section("rod", Section { set: "rod".into(), material: "Mat".into(), kind: SectionKind::Rod { area: 4.0 }, formulation: full() }).unwrap();
     let mut step = Step::new("Step", Procedure::Static {});

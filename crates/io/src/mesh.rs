@@ -4,9 +4,9 @@
 //! Little-endian throughout:
 //!
 //! ```text
-//! "MCMESH01"                                   magic, 8 bytes
+//! "MCMESH02"                                   magic, 8 bytes
 //! u64 nodes, u64 elements, u64 entities, u64 tagged elements, u64 tagged nodes
-//! nodes      × { u32 label, f64 x, f64 y, f64 z }            labels ascending
+//! nodes      × { u32 label, f64 x, f64 y, f64 z }            labels ascending, metres
 //! elements   × { u32 label, u8 kind, u32 node × n(kind) }    labels ascending
 //! entities   × { u8 kind (0 body, 1 face, 2 edge, 3 vertex),
 //!                u16 length, body name (UTF-8), [u16 length, entity name] unless a body }
@@ -26,9 +26,11 @@ use fieldcraft_model::{ElementKind, Entity, GeometryRef, MAX_ELEMENTS, MAX_NODES
 
 use crate::{Error, MAX_FILE_BYTES, Result, invalid, model_error};
 
-/// The magic bytes the part starts with (the `01` is the mesh encoding's version). A new encoding
-/// is a new magic, brought in by a new file format whose migration step rewrites older parts.
-pub const MAGIC: &[u8; 8] = b"MCMESH01";
+/// The magic bytes the part starts with (the `02` is the mesh encoding's version: `01`, of
+/// formats 1 and 2, had the same layout with coordinates in the model's own length unit). A new
+/// encoding is a new magic, brought in by a new file format whose migration step rewrites older
+/// parts.
+pub const MAGIC: &[u8; 8] = b"MCMESH02";
 
 /// Largest mesh part read.
 pub const MAX_BYTES: u64 = MAX_FILE_BYTES;

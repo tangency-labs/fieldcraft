@@ -329,7 +329,8 @@ pub struct SurfaceThermalBoundary {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct FluidThermal {
-    /// The temperature everywhere at the start, and the reference of the buoyancy.
+    /// The temperature everywhere at the start (kelvin; 0 °C when left out), and the reference
+    /// of the buoyancy.
     pub initial_temperature: f64,
     /// Gravity for the buoyancy (Boussinesq: a force per mass of −β (T − T₀) g on the fluid);
     /// zero for none. Separate from the domain's `acceleration`, which is a plain body force.
@@ -342,17 +343,36 @@ pub struct FluidThermal {
     /// Conditions on named faces of the obstacles (adiabatic unless listed).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub surfaces: Vec<SurfaceThermalBoundary>,
+    /// The temperature (kelvin) the lattice-Boltzmann scheme's temperature lattice counts from:
+    /// its walls are not invariant under a shift of the temperature scale, so this is part of
+    /// the model, never of how it is shown. 0 °C, the scale the scheme was verified on; a model
+    /// from before SI storage keeps the zero of the system it was typed in (0 K for
+    /// m-kg-s-N-Pa, 0 °F for in-lbf-s-psi), so it solves as it did.
+    #[serde(skip_serializing_if = "is_celsius_zero")]
+    pub temperature_zero: f64,
+}
+
+fn is_celsius_zero(t: &f64) -> bool {
+    *t == crate::units::CELSIUS_ZERO
 }
 
 impl Default for FluidThermal {
     fn default() -> Self {
-        FluidThermal { initial_temperature: 0.0, gravity: [0.0; 3], expansion: None, faces: BoxThermalFaces::default(), surfaces: Vec::new() }
+        FluidThermal {
+            initial_temperature: crate::units::CELSIUS_ZERO,
+            gravity: [0.0; 3],
+            expansion: None,
+            faces: BoxThermalFaces::default(),
+            surfaces: Vec::new(),
+            temperature_zero: crate::units::CELSIUS_ZERO,
+        }
     }
 }
 
 impl FluidThermal {
     fn validate(&self, obstacles: &[String]) -> Result<()> {
         finite("initial temperature", self.initial_temperature)?;
+        finite("temperature zero", self.temperature_zero)?;
         vector("gravity", self.gravity)?;
         if let Some(b) = self.expansion {
             finite("expansion coefficient", b)?;

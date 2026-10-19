@@ -348,7 +348,8 @@ pub fn solve_explicit(model: &Model, step: Option<&str>, limits: &Limits) -> Res
             strain: if output.strain { state.elements.iter().map(|e| e.strain).collect() } else { Vec::new() },
             plastic_strain: each(inelastic, &|e| e.point.plastic_strain),
             damage: each(inelastic, &|e| e.point.damage),
-            temperature: each(inelastic, &|e| e.point.temperature),
+            // An element whose material has no temperature reports none (not 0 K).
+            temperature: each(inelastic, &|e| if e.has_temperature { e.point.temperature } else { f64::NAN }),
             failed: if output.stress { state.elements.iter().map(|e| e.failed.is_some()).collect() } else { Vec::new() },
         }
     };

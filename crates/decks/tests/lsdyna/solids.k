@@ -1,6 +1,9 @@
 *KEYWORD long=y
 $ Written by FieldCraft: implicit linear analysis, long format (20-column fields).
-$ Units: m-kg-s-N-Pa (consistent; nothing is converted).
+$ Units: m-kg-s-N-Pa (metre, kilogram, second, newton, pascal, kelvin, consistent).
+*CONTROL_UNITS
+$             length                time                mass                temp
+                   m                 sec                  kg                   k
 *NODE
 $                nid                   x                   y                   z
                    1                 0.0                 0.0                 0.0

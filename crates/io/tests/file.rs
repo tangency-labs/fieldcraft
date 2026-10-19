@@ -3,7 +3,7 @@
 use std::io::{Cursor, Read, Write};
 
 use fieldcraft_io::{Error, Geometry, Item, ItemKind, ModelFile, SourceFile, View, mesh, read, write};
-use fieldcraft_model::{ElementKind, Entity, GeometryRef, Model, UnitSystem};
+use fieldcraft_model::{DisplaySystem, ElementKind, Entity, GeometryRef, Model};
 use serde_json::{Value, json};
 
 /// A hex and a tet sharing a face, tagged on geometry, with a few definitions.
@@ -25,7 +25,7 @@ fn sample() -> ModelFile {
     m.tag_element_edge(1, 1, edge).unwrap();
     m.tag_element(7, body).unwrap();
     m.tag_node(1, vertex).unwrap();
-    m.set_units(UnitSystem::from_label("mm-t-s-N-MPa").unwrap());
+    m.set_display_units(DisplaySystem::from_label("mm-t-s-N-MPa"));
     let set = serde_json::from_value(json!({"geometry": [{"body": "Body1"}]})).unwrap();
     m.add_set("all", set).unwrap();
     let steel = serde_json::from_value(json!({"elastic": {"type": "isotropic", "young": 210000.0, "poisson": 0.3}, "density": 7.85e-9})).unwrap();
@@ -37,11 +37,11 @@ fn sample() -> ModelFile {
     let journal =
         vec![("mesh.node.add".to_string(), json!({"label": 1, "xyz": [0, 0, 0]})), ("model.units".to_string(), json!({"system": "mm-t-s-N-MPa"}))];
     let view = View { hidden: [Item { kind: ItemKind::Datum, name: "Sym".into() }, Item { kind: ItemKind::Body, name: "Body1".into() }].into() };
-    ModelFile { model: m, geometry, journal, view }
+    ModelFile { model: m, geometry, journal, journal_header: Default::default(), view, notes: Vec::new() }
 }
 
 fn bytes_of(f: &ModelFile) -> Vec<u8> {
-    write(&f.model, &f.geometry, &f.journal, &f.view).unwrap()
+    write(&f.model, &f.geometry, &f.journal, &f.journal_header, &f.view).unwrap()
 }
 
 /// The package's parts, by name.
@@ -236,14 +236,16 @@ fn hostile_files_are_refused_cleanly() {
         json!({"materials": {"1bad": {}}}),
         json!({"sections": {"S": {"set": "nope", "material": "nope", "kind": {"type": "solid"}}}}),
         json!({"nodes": {"1": {"xyz": [0, 0, 0]}}}),
-        json!({"units": "furlongs"}),
+        json!({"display_units": "furlongs"}),
+        json!({"units": "mm-t-s-N-MPa"}),
+        json!({"display_units": {"preset": "mm-t-s-N-MPa", "overrides": {"length": "MPa"}}}),
     ] {
         let b = with_part(&good, "model.json", serde_json::to_vec(&model).unwrap());
         assert!(read(&b).is_err(), "{model}");
     }
 
     // A key given twice is an error in a current file, not the last one silently winning.
-    let twice = with_part(&good, "model.json", br#"{"units": "mm-t-s-N-MPa", "units": "m-kg-s-N-Pa"}"#.to_vec());
+    let twice = with_part(&good, "model.json", br#"{"display_units": "mm-t-s-N-MPa", "display_units": "m-kg-s-N-Pa"}"#.to_vec());
     let e = read(&twice).unwrap_err();
     assert!(e.to_string().contains("duplicate field"), "{e}");
     let mut ps = parts(&good);
@@ -252,11 +254,25 @@ fn hostile_files_are_refused_cleanly() {
     assert!(read(&package(&ps)).unwrap_err().to_string().contains("duplicate field"));
 
     // Journals: not a list, entries without a command, unknown fields.
-    for journal in [json!({}), json!([{"params": {}}]), json!([{"command": ""}]), json!([{"command": "a.b", "when": 1}]), json!([7])] {
+    for journal in [
+        json!({}),
+        json!([]),
+        json!({"units": "mm-t-s-N-MPa", "commands": [{"params": {}}]}),
+        json!({"units": "mm-t-s-N-MPa", "commands": [{"command": ""}]}),
+        json!({"units": "mm-t-s-N-MPa", "commands": [{"command": "a.b", "when": 1}]}),
+        json!({"units": "mm-t-s-N-MPa", "commands": [7]}),
+        json!({"units": "furlongs", "commands": []}),
+        json!({"commands": []}),
+        json!({"units": "mm-t-s-N-MPa", "commands": [], "extra": 1}),
+    ] {
         let b = with_part(&good, "journal.json", serde_json::to_vec(&journal).unwrap());
         assert!(read(&b).is_err(), "{journal}");
     }
-    let ok = with_part(&good, "journal.json", br#"[{"command": "model.check"}]"#.to_vec());
+    // A bare list (format 2's journal) in a format 3 file says what it lacks.
+    let bare = with_part(&good, "journal.json", br#"[{"command": "model.check"}]"#.to_vec());
+    let e = read(&bare).unwrap_err().to_string();
+    assert!(e.contains("naming the units") && e.contains("bare list"), "{e}");
+    let ok = with_part(&good, "journal.json", br#"{"units": "mm-t-s-N-MPa", "commands": [{"command": "model.check"}]}"#.to_vec());
     assert_eq!(read(&ok).unwrap().journal, vec![("model.check".to_string(), Value::Null)]);
 }
 
@@ -297,7 +313,7 @@ fn the_view_state_round_trips_and_is_checked() {
         assert!(read(&package(&ps)).is_err(), "{bad}");
     }
     let empty = View::default();
-    let plain = write(&f.model, &f.geometry, &f.journal, &empty).unwrap();
+    let plain = write(&f.model, &f.geometry, &f.journal, &f.journal_header, &empty).unwrap();
     let manifest: Value = serde_json::from_slice(&parts(&plain)[0].1).unwrap();
     assert!(manifest.get("view").is_none(), "an empty view writes nothing: {manifest}");
 }

@@ -2,16 +2,16 @@
   "note": "FieldCraft's accepted results for this case, written by `cargo xtask oracle --bless`. A result outside its band fails CI.",
   "values": {
     "dissipated": {
-      "band": 1.0012078586619573e-9,
-      "value": 1.0012078586619573
+      "band": 1.0012079221209105e-9,
+      "value": 1.0012079221209105
     },
     "distance": {
       "band": 1.5000000000000002e-9,
-      "value": 1.4999205464422256
+      "value": 1.4999205214049351
     },
     "velocity": {
       "band": 0.03,
-      "value": 0.00027058229054461555
+      "value": 0.00027092657707787306
     }
   }
 }

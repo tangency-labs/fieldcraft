@@ -177,7 +177,11 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
             let available = app.usage_available();
             let (mut sharing, mut automation) = (app.prefs.usage_sharing == Some(true), app.prefs.usage_automation);
             let (mut close, mut link, mut updates, mut unskip, mut check) = (false, false, None, false, false);
+            let mut units = None;
             crate::frame::window(ctx, "Settings", crate::frame::Width::Normal).id(egui::Id::new("fc_settings")).show(ctx, |ui| {
+                crate::frame::menu_heading(ui, &t, "UNITS");
+                units = units_choice(ui, &t, app.prefs.units.preset());
+                ui.add_space(6.0);
                 if app.updates_available() {
                     crate::frame::menu_heading(ui, &t, "UPDATES");
                     updates = update_check(ui, &t, app.prefs.update_check);
@@ -221,6 +225,9 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
             if updates.is_some() || unskip {
                 app.set_update_prefs(updates.unwrap_or(app.prefs.update_check), unskip.then(String::new));
             }
+            if let Some(preset) = units {
+                app.set_default_units(fieldcraft_model::DisplaySystem::new(preset));
+            }
             if check {
                 app.check_for_updates();
             }
@@ -233,6 +240,25 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
         }
         _ => {}
     }
+}
+
+/// The display units' drop-down (Settings › Units); the preset chosen when it changed.
+fn units_choice(ui: &mut egui::Ui, t: &crate::theme::Tokens, current: fieldcraft_model::units::Preset) -> Option<fieldcraft_model::units::Preset> {
+    use fieldcraft_model::units::Preset;
+    let mut chosen = None;
+    egui::ComboBox::from_id_salt("fc_settings_units").selected_text(current.label()).width(200.0).show_ui(ui, |ui| {
+        for p in Preset::ALL {
+            if ui.selectable_label(p == current, p.label()).clicked() && p != current {
+                chosen = Some(p);
+            }
+        }
+    });
+    ui.label(
+        RichText::new("Numbers are shown and typed in these units; a model can keep its own (Model › Units). Models are stored in SI, so nothing in them changes.")
+            .color(t.text_dim)
+            .size(11.0),
+    );
+    chosen
 }
 
 /// The automatic update check's checkbox; the new value when it was clicked.

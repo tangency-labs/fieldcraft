@@ -192,7 +192,9 @@ impl Model {
     fn analyze(&self) -> (Resolved, Vec<Diagnostic>) {
         let mut d = Diagnostics::default();
         let mut resolved = Resolved::default();
-        let units = self.units;
+        let shown = self.display_units.clone().unwrap_or_default();
+        let modulus =
+            |what: &str, v: f64| crate::units::check_magnitude(what, crate::units::Quantity::Pressure, v, crate::units::MODULUS_RANGE, &shown);
         // Whether a step needs elasticity (every step but pure heat transfer).
         let structural = self.steps.is_empty() || self.steps.iter().any(|s| s.procedure.is_structural());
 
@@ -202,10 +204,6 @@ impl Model {
         if self.elements.is_empty() && !fluid_only && self.masses.is_empty() && self.springs.is_empty() {
             d.error("model", "the mesh has no elements");
         }
-        if units.length().is_none() {
-            d.warning("model", "no unit system is chosen, so magnitudes are not checked");
-        }
-
         // Sets.
         for (name, set) in &self.sets {
             let (r, missing) = self.resolve_definition(set);
@@ -236,19 +234,20 @@ impl Model {
         for (name, m) in &self.materials {
             let subject = format!("material `{name}`");
             match m.elastic {
-                Some(Elastic::Isotropic { young, .. }) => d.warning_if(&subject, units.check_modulus("Young's modulus", young)),
+                Some(Elastic::Isotropic { young, .. }) => d.warning_if(&subject, modulus("Young's modulus", young)),
                 Some(Elastic::EngineeringConstants { young, shear, .. }) => {
                     for (i, e) in young.iter().enumerate() {
-                        d.warning_if(&subject, units.check_modulus(&format!("E{}", i + 1), *e));
+                        d.warning_if(&subject, modulus(&format!("E{}", i + 1), *e));
                     }
                     for (n, g) in crate::materials::SHEAR_MODULI.iter().zip(shear) {
-                        d.warning_if(&subject, units.check_modulus(n, g));
+                        d.warning_if(&subject, modulus(n, g));
                     }
                 }
                 None => {}
             }
             if let Some(rho) = m.density {
-                d.warning_if(&subject, units.check_density(rho));
+                let check = crate::units::check_magnitude("density", crate::units::Quantity::Density, rho, crate::units::DENSITY_RANGE, &shown);
+                d.warning_if(&subject, check);
             }
         }
 
@@ -487,7 +486,9 @@ impl Model {
                 Load::BodyForce { set, .. } if set_of(set).elements.is_empty() => d.error(&subject, format!("set `{set}` has no elements")),
                 Load::Gravity { acceleration, set } => {
                     let g = acceleration.iter().map(|c| c * c).sum::<f64>().sqrt();
-                    d.warning_if(&subject, units.check_gravity(g));
+                    let check =
+                        crate::units::check_magnitude("gravity", crate::units::Quantity::Acceleration, g, crate::units::GRAVITY_RANGE, &shown);
+                    d.warning_if(&subject, check);
                     if let Some(s) = set
                         && set_of(s).elements.is_empty()
                     {

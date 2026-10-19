@@ -2,7 +2,7 @@
 //!
 //! The manifest's `format` is `fieldcraft/<N>`, N an integer that grows by one with every change
 //! to what a file holds or how ([`FORMAT_VERSION`] is the one this version writes). Parts with an
-//! encoding of their own also carry its version: `mesh.bin` starts with `MCMESH01`.
+//! encoding of their own also carry its version: `mesh.bin` starts with `MCMESH02`.
 //!
 //! A file of any format up to [`FORMAT_VERSION`] is read: its parts are parsed (the JSON parts to
 //! [`Value`], `mesh.bin` kept as bytes), then [`migrate`] applies the steps `N → N+1`, one after
@@ -27,9 +27,9 @@ use serde_json::Value;
 
 use crate::{Error, FORMAT_VERSION, Result, invalid};
 
-// Joins the chain with format 3, once the model stores SI.
-#[allow(dead_code)]
 mod v2_to_v3;
+
+pub use v2_to_v3::{format_2_defaults, format_2_typed_bodies};
 
 /// The format tag's prefix (`fieldcraft/<N>`).
 const TAG_PREFIX: &str = "fieldcraft/";
@@ -48,13 +48,16 @@ pub struct Parts {
     pub mesh: Vec<u8>,
     /// `journal.json`.
     pub journal: Value,
+    /// What the steps tell the user about the file (a change in what it means, not only in how
+    /// it is written); none for most files.
+    pub notes: Vec<String>,
 }
 
 /// One step: format N to N+1.
 type Step = fn(&mut Parts) -> Result<()>;
 
 /// `STEPS[i]` takes format `i + 1` to `i + 2`.
-const STEPS: [Step; FORMAT_VERSION as usize - 1] = [v1_to_v2];
+const STEPS: [Step; FORMAT_VERSION as usize - 1] = [v1_to_v2, v2_to_v3::v2_to_v3];
 
 /// The format version a manifest declares, checked before anything else in it is read: a later
 /// format than this version reads is [`Error::Version`] (naming the program that wrote it), a
@@ -143,7 +146,10 @@ mod tests {
     use crate::FORMAT;
 
     fn parts(format: &str) -> Parts {
-        Parts { manifest: json!({"format": format, "generator": "FieldCraft 0.7.0"}), model: json!({}), mesh: vec![1, 2], journal: json!([]) }
+        // An empty MCMESH01 mesh: the magic and five zero counts.
+        let mut mesh = b"MCMESH01".to_vec();
+        mesh.extend_from_slice(&[0; 40]);
+        Parts { manifest: json!({"format": format, "generator": "FieldCraft 0.7.0"}), model: json!({}), mesh, journal: json!([]), notes: Vec::new() }
     }
 
     #[test]

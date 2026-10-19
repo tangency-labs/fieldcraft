@@ -85,6 +85,7 @@ use crate::{Error, Result};
 use card::{Deck, Field};
 use card::{WIDTH, ints};
 use elements::{Hourglass, Keyword};
+use fieldcraft_model::units::Preset;
 
 /// The format's name in [`Error::Unsupported`].
 pub(crate) const FORMAT: &str = "LS-DYNA";
@@ -152,17 +153,30 @@ struct Plan<'a> {
 }
 
 /// Write the model as an LS-DYNA keyword deck.
-pub fn write(model: &Model) -> Result<Written> {
-    let r = model.resolve()?;
-    write_with(model, &r)
+pub fn write(model: &Model, units: Preset) -> Result<Written> {
+    let expressed = crate::express(model, units)?;
+    let r = expressed.resolve()?;
+    write_with(&expressed, &r, units)
 }
 
-/// The writer of [`crate::FORMATS`]: the deck's text from a resolved model.
-pub(crate) fn write_resolved(model: &Model, r: &Resolved) -> Result<String> {
-    write_with(model, r).map(|w| w.text)
+/// The writer of [`crate::FORMATS`]: the deck's text from a model expressed in `units` and
+/// resolved.
+pub(crate) fn write_resolved(model: &Model, r: &Resolved, units: Preset) -> Result<String> {
+    write_with(model, r, units).map(|w| w.text)
 }
 
-fn write_with(model: &Model, r: &Resolved) -> Result<Written> {
+/// `*CONTROL_UNITS`' length, time, mass and temperature words for a preset.
+fn control_units(units: Preset) -> [&'static str; 4] {
+    match units {
+        Preset::MKgS => ["m", "sec", "kg", "k"],
+        Preset::MmTonneS => ["mm", "sec", "mtrc_ton", "c"],
+        Preset::MmKgMs => ["mm", "ms", "kg", "c"],
+        Preset::MmGMs => ["mm", "ms", "g", "c"],
+        Preset::InLbfS => ["in", "sec", "lbf*s2/in", "f"],
+    }
+}
+
+fn write_with(model: &Model, r: &Resolved, units: Preset) -> Result<Written> {
     crate::refuse_fluid(FORMAT, model)?;
     let estimate = (model.nodes().len() + model.reference_points().len()) * 130 + model.elements().len() * 260;
     if estimate > MAX_DECK_BYTES {
@@ -175,7 +189,10 @@ fn write_with(model: &Model, r: &Resolved) -> Result<Written> {
 
     d.line("*KEYWORD long=y");
     d.comment("Written by FieldCraft: implicit linear analysis, long format (20-column fields).");
-    d.comment(&format!("Units: {} (consistent; nothing is converted).", model.units().label()));
+    d.comment(&format!("Units: {} ({}, consistent).", units.label(), crate::units_in_words(units)));
+    d.line("*CONTROL_UNITS");
+    d.header(&["length", "time", "mass", "temp"]);
+    d.line(&control_units(units).iter().map(|w| format!("{w:>WIDTH$}")).collect::<String>());
     if cases > 0 {
         d.comment(&format!("{cases} steps are written as *CASE analyses: run LS-DYNA with CASE on its command line."));
     }

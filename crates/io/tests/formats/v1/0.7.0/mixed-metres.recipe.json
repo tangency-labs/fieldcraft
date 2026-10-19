@@ -1,0 +1,7 @@
+[
+  {"command": "geometry.open", "params": {"path": "hollow-box.solidcraft"}},
+  {"command": "model.units", "params": {"system": "m-kg-s-N-Pa"}},
+  {"command": "mesh.block", "params": {"body": "Bar", "kind": "hex8", "corners": [[0, 0, 0.1], [0.04, 0, 0.1], [0.04, 0.01, 0.1], [0, 0.01, 0.1], [0, 0, 0.11], [0.04, 0, 0.11], [0.04, 0.01, 0.11], [0, 0.01, 0.11]], "divisions": [4, 1, 1], "faces": {"6": "root"}}},
+  {"command": "mesh.tet.generate", "params": {"body": "Case", "size": 40, "order": "linear"}},
+  {"command": "file.save_as", "params": {"path": "mixed-metres.fieldcraft"}}
+]

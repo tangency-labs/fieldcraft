@@ -1,0 +1,7 @@
+[
+  {"command": "model.units", "params": {"system": "m-kg-s-N-Pa"}},
+  {"command": "model.material.create", "params": {"name": "Air", "density": 1.2e-12, "fluid": {"type": "newtonian", "viscosity": 1.8e-11}, "thermal": {"conductivity": 0.026, "specific_heat": 1005000000.0}}},
+  {"command": "model.fluid_domain.create", "params": {"name": "Duct", "material": "Air", "min": [-30, -20, 0], "max": [100, 60, 70], "spacing": 5, "faces": {"x_min": {"type": "velocity", "velocity": [1, 0, 0]}, "x_max": {"type": "pressure", "pressure": 0}, "y_min": {"type": "wall"}, "y_max": {"type": "slip"}, "z_min": {"type": "moving_wall", "velocity": [0.5, 0, 0]}, "z_max": {"type": "slip"}}, "initial_velocity": [1, 0, 0], "thermal": {"initial_temperature": 293.15, "faces": {"x_min": {"type": "temperature", "value": 293.15}, "y_min": {"type": "temperature", "value": 353.15}, "z_min": {"type": "temperature", "value": 313.15}}}}},
+  {"command": "model.step.create", "params": {"name": "Flow", "procedure": {"type": "fluid", "domain": "Duct", "steps": 180, "frames": 2}}},
+  {"command": "file.save_as", "params": {"path": "fluid-metres.fieldcraft"}}
+]

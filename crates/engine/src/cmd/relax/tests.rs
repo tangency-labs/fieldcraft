@@ -8,6 +8,11 @@ fn plate() -> Session {
     super::super::datum::tests::plate().0
 }
 
+/// The model in millimetres, as the plate is drawn (it is stored in metres).
+fn mm(m: &Model) -> Model {
+    m.converted(&|q, v| crate::units::geometry().express(q, v).ok()).unwrap()
+}
+
 fn hole_radius(p: [f64; 3]) -> f64 {
     ((p[0] - HOLE.0[0]).powi(2) + (p[1] - HOLE.0[1]).powi(2)).sqrt()
 }
@@ -27,7 +32,7 @@ fn on_faces(p: [f64; 3]) -> Vec<&'static str> {
 /// Spikes near the hole: interior nodes pushed about; nodes on the hole turned round it and
 /// moved along its axis (still on the cylinder), nodes on the caps moved in their plane.
 fn perturb(s: &mut Session, centre: [f64; 3], radius: f64, amount: f64) {
-    let nodes: Vec<(u32, [f64; 3])> = s.model.nodes().iter().map(|(n, p)| (*n, p.xyz)).collect();
+    let nodes: Vec<(u32, [f64; 3])> = mm(&s.model).nodes().iter().map(|(n, p)| (*n, p.xyz)).collect();
     for (k, (n, p)) in nodes.into_iter().enumerate() {
         let d2: f64 = (0..3).map(|i| (p[i] - centre[i]).powi(2)).sum();
         if d2 > radius * radius {
@@ -45,7 +50,11 @@ fn perturb(s: &mut Session, centre: [f64; 3], radius: f64, amount: f64) {
             ["cap"] if hole_radius(p) > HOLE.1 + 1e-6 => [p[0] + wiggle(3), p[1] + wiggle(5), p[2]],
             _ => continue,
         };
-        s.model.set_node(n, q).unwrap();
+        // Through the command (millimetres, as typed), as develop moved them; a mid-side node,
+        // which the command does not move, directly (its millimetres stored as metres).
+        if s.execute("mesh.node.move", &json!({"nodes": [n], "to": q, "on_geometry": false, "guard": "none"})).is_err() {
+            s.model.set_node(n, crate::units::geometry_point(q)).unwrap();
+        }
     }
 }
 
@@ -79,9 +88,10 @@ fn hex_spikes_near_a_hole_relax_on_the_geometry() {
     assert!(after > before + 0.05, "{r}");
     assert_eq!(r["after"]["invalid"], 0, "{r}");
     assert!(r["moved"].as_u64().unwrap() > 0 && r["field"] == "Relax1", "{r}");
-    check_on_geometry(&perturbed, &s.model);
-    for (n, p) in s.model.nodes() {
-        let old = perturbed.node(*n).unwrap().xyz;
+    check_on_geometry(&mm(&perturbed), &mm(&s.model));
+    let (perturbed_mm, now) = (mm(&perturbed), mm(&s.model));
+    for (n, p) in now.nodes() {
+        let old = perturbed_mm.node(*n).unwrap().xyz;
         if old != p.xyz {
             let d2: f64 = (0..3).map(|i| (old[i] - ON_HOLE[i]).powi(2)).sum();
             assert!(d2 < 16.0, "node {n} outside the sphere moved");
@@ -109,7 +119,7 @@ fn tet10_relaxes_with_curved_mid_side_nodes_on_the_hole() {
         .values()
         .flat_map(|e| e.kind.edges().iter().map(|ed| (e.nodes[ed[0]], e.nodes[ed[1]], e.nodes[ed[2]])).collect::<Vec<_>>())
         .collect();
-    let original = s.model.clone();
+    let original = mm(&s.model);
     for (a, b, m) in mids {
         let (pa, pb, pm) = (original.node(a).unwrap().xyz, original.node(b).unwrap().xyz, original.node(m).unwrap().xyz);
         let mut q = [(pa[0] + pb[0]) / 2.0, (pa[1] + pb[1]) / 2.0, (pa[2] + pb[2]) / 2.0];
@@ -117,13 +127,13 @@ fn tet10_relaxes_with_curved_mid_side_nodes_on_the_hole() {
             let r = hole_radius(q);
             q = [HOLE.0[0] + (q[0] - HOLE.0[0]) * HOLE.1 / r, HOLE.0[1] + (q[1] - HOLE.0[1]) * HOLE.1 / r, q[2]];
         }
-        s.model.set_node(m, q).unwrap();
+        s.model.set_node(m, crate::units::geometry_point(q)).unwrap();
     }
     let perturbed = s.model.clone();
     let r = s.execute("mesh.node.relax", &json!({"center": ON_HOLE, "radius": 4.0, "iterations": 8})).unwrap();
     assert!(r["after"]["min_scaled_jacobian"].as_f64().unwrap() >= r["before"]["min_scaled_jacobian"].as_f64().unwrap(), "{r}");
     assert_eq!(r["after"]["invalid"], 0, "{r}");
-    check_on_geometry(&perturbed, &s.model);
+    check_on_geometry(&mm(&perturbed), &mm(&s.model));
 }
 
 /// A partition cut is not geometry: nodes on it move freely, shared by the cells on both sides.
@@ -137,8 +147,8 @@ fn nodes_on_a_partition_cut_move_freely() {
     perturb(&mut s, centre, 2.5, 0.3);
     let before = s.model.clone();
     s.execute("mesh.node.relax", &json!({"center": centre, "radius": 3.5, "iterations": 10})).unwrap();
-    let moved_off = s
-        .model
+    let (before, now) = (mm(&before), mm(&s.model));
+    let moved_off = now
         .nodes()
         .iter()
         .filter(|(n, p)| {
@@ -229,7 +239,8 @@ fn relaxing_fillet_faces_improves_them() {
     assert!(after > before, "{r}");
     assert_eq!(r["after"]["invalid"], 0, "{r}");
     assert_eq!(invalid(&mut s), 0);
-    for (n, p) in s.model.nodes() {
+    let (perturbed, now) = (mm(&perturbed), mm(&s.model));
+    for (n, p) in now.nodes() {
         let old = perturbed.node(*n).unwrap().xyz;
         if old[0] > 18.0 && old[2] > 18.0 && (fillet_radius(old) - 2.0).abs() < 1e-6 {
             assert!((fillet_radius(p.xyz) - 2.0).abs() < 1e-6, "node {n} left the fillet");
@@ -285,7 +296,8 @@ fn strong_relaxation_of_a_filleted_box_keeps_faces_and_edges() {
     assert_eq!(invalid(&mut s), 0);
     let rounds = r["rounds"].as_array().unwrap();
     assert!(!rounds.is_empty() && rounds.iter().all(|k| k["region_nodes"].as_u64() >= k["bad_nodes"].as_u64() && k["min"].is_number()), "{r}");
-    for (n, p) in s.model.nodes() {
+    let (before, now) = (mm(&before), mm(&s.model));
+    for (n, p) in now.nodes() {
         let (old, new) = (before.node(*n).unwrap().xyz, p.xyz);
         if on_box_edge(old) {
             assert_eq!(old, new, "node {n} on an edge moved");
@@ -325,9 +337,10 @@ fn strong_relaxation_untangles_a_distorted_plate() {
         assert!(strong.get("below").is_some() || min(&r, "after") > min(&guarded, "after") - 0.05, "strong {r}\nguarded {guarded}");
         assert_eq!(r["after"]["invalid"], 0, "{r}");
         assert_eq!(invalid(&mut s), 0);
-        check_on_geometry(&perturbed, &s.model);
-        for (n, p) in s.model.nodes() {
-            let old = perturbed.node(*n).unwrap().xyz;
+        check_on_geometry(&mm(&perturbed), &mm(&s.model));
+        let (perturbed_mm, now) = (mm(&perturbed), mm(&s.model));
+        for (n, p) in now.nodes() {
+            let old = perturbed_mm.node(*n).unwrap().xyz;
             if on_faces(old).len() >= 2 {
                 assert_eq!(old, p.xyz, "node {n} on the hole's edge moved");
             }
@@ -392,5 +405,38 @@ fn mesh_and_strong_relaxation_are_the_same_bits_everywhere() {
     let one = fieldcraft_parallel::with_threads(1, run);
     let many = fieldcraft_parallel::with_threads(4, run);
     assert_eq!(one, many, "1 and 4 threads differ");
-    assert_eq!(one, 0x7445_e04c_0d65_c1d0, "fingerprint {one:#018x}");
+    // The meshers alone give what develop gave, stored in metres. A relaxation (guarded or
+    // strong) starts from the millimetre image of the stored metres, which differs from the
+    // millimetres develop kept by an ulp for 6–18% of computed coordinates, and amplifies that
+    // (on develop a 1-ulp nudge moves it as much): its bits differ from develop's.
+    assert_eq!(one, 0x3783_1b08_604b_e7a0, "fingerprint {one:#018x}");
+}
+
+/// A mesher's result depends on the stored model alone: relaxing, undoing and relaxing again
+/// gives the same mesh, and so does relaxing the model saved and opened again (what a replay
+/// and a crash replay see).
+#[test]
+fn relaxing_depends_on_the_stored_model_alone() {
+    let mut s = plate();
+    s.execute("mesh.hex.generate", &json!({"size": 2.0})).unwrap();
+    perturb(&mut s, ON_HOLE, 6.0, 0.35);
+    // A command in another frame between (the display length), and a display override.
+    s.execute("model.units", &json!({"system": "mm-t-s-N-MPa", "overrides": {"length": "m"}})).unwrap();
+    let dir = std::env::temp_dir().join(format!("fieldcraft-relax-history-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    s.execute("mesh.export.stl", &json!({"path": dir.join("skin.stl")})).unwrap();
+    let relax = json!({"mode": "strong", "below": 0.5, "reach": 4.0});
+    s.execute("mesh.node.relax", &relax).unwrap();
+    let live = s.model.clone();
+    s.execute("edit.undo", &json!({})).unwrap();
+    s.execute("mesh.node.relax", &relax).unwrap();
+    assert!(s.model == live, "relax, undo, relax again");
+    s.execute("edit.undo", &json!({})).unwrap();
+    let path = dir.join("plate.fieldcraft");
+    s.execute("file.save_as", &json!({"path": path})).unwrap();
+    let mut opened = Session::default();
+    opened.execute("file.open", &json!({"path": path})).unwrap();
+    opened.execute("mesh.node.relax", &relax).unwrap();
+    assert!(opened.model.nodes() == live.nodes(), "saved, opened and relaxed");
+    let _ = std::fs::remove_dir_all(&dir);
 }

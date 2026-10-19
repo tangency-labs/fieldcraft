@@ -227,7 +227,7 @@ pub fn handle(app: &mut ModelApp, ctx: &egui::Context, req: &ControlRequest) -> 
         "engine.commands" => ok(Value::Array(fieldcraft_engine::commands().iter().map(fieldcraft_engine::CommandSpec::listing).collect())),
         "ui.inspect" => ok(json!({
             "ui": app.ui,
-            "camera": app.cam,
+            "camera": fieldcraft_engine::view::camera_shown(&app.cam, &app.session),
             "viewport": app.viewport.rect.map(|r| json!([r.left(), r.top(), r.width(), r.height()])),
             "renderer": if app.viewport.gpu.is_some() { "gpu" } else { "cpu" },
             "gpu": app.gpu_info,
@@ -325,10 +325,10 @@ pub fn handle(app: &mut ModelApp, ctx: &egui::Context, req: &ControlRequest) -> 
                     None => return err(format!("unknown view `{v}` (front, back, left, right, top, bottom, iso, home, fit)")),
                 },
             }
-            ok(json!(app.cam))
+            ok(fieldcraft_engine::view::camera_shown(&app.cam, &app.session))
         }
         "ui.camera" => match fieldcraft_engine::view::camera(p).map_err(|e| e.to_string()).and_then(|a| app.aim_camera(&a)) {
-            Ok(()) => ok(json!(app.cam)),
+            Ok(()) => ok(fieldcraft_engine::view::camera_shown(&app.cam, &app.session)),
             Err(e) => err(e),
         },
         "ui.start" => {
@@ -469,6 +469,15 @@ pub fn handle(app: &mut ModelApp, ctx: &egui::Context, req: &ControlRequest) -> 
                     app.answer_consent(a == "share");
                     ok(privacy_json(app))
                 }
+                (crate::files::Prompt::Settings, Some("set")) if p.get("units").is_some() => {
+                    match p.get("units").cloned().map(serde_json::from_value::<fieldcraft_model::DisplaySystem>) {
+                        Some(Ok(units)) => {
+                            app.set_default_units(units);
+                            ok(json!({"units": app.prefs().units}))
+                        }
+                        _ => err("`units` must be a unit system (mm-t-s-N-MPa, m-kg-s-N-Pa, mm-kg-ms-kN-GPa, mm-g-ms-N-MPa, in-lbf-s-psi)"),
+                    }
+                }
                 (crate::files::Prompt::Settings, Some("set")) if p.get("update_check").is_some() || p.get("update_skip").is_some() => {
                     let automatic = p.get("update_check").and_then(Value::as_bool).unwrap_or(app.prefs().update_check);
                     let skip = p.get("update_skip").and_then(Value::as_str).map(str::to_string);
@@ -583,7 +592,8 @@ pub fn handle(app: &mut ModelApp, ctx: &egui::Context, req: &ControlRequest) -> 
                 .take(1000)
                 .map(|v| {
                     let c = |i: usize| v.get(i).and_then(Value::as_f64).unwrap_or(f64::NAN);
-                    crate::viewport::to_screen(app, fieldcraft_render::Vec3::new(c(0), c(1), c(2))).map_or(Value::Null, |q| json!([q.x, q.y]))
+                    // Given in the display units; the scene is in metres.
+                    crate::viewport::to_screen(app, app.scene_point([c(0), c(1), c(2)])).map_or(Value::Null, |q| json!([q.x, q.y]))
                 })
                 .collect();
             ok(json!(pts))
@@ -743,14 +753,16 @@ mod tests {
         ] {
             assert_eq!(call(&mut app, "ui.camera", hostile.clone())["ok"], false, "{hostile}");
         }
-        assert_eq!(app.cam.distance, 250.0);
+        // Given in the display units (mm), held in metres.
+        assert!((app.cam.distance - 0.25).abs() < 1e-15);
         assert_eq!(call(&mut app, "ui.camera", json!({"yaw": -1e12, "pitch": 1e300, "distance": 1e300}))["ok"], true);
         // Aimed at a point it looks at it; at the model's centre of mass, framed (#467).
         let r = call(&mut app, "ui.camera", json!({"yaw": 30, "pitch": 20, "target": [1, 2, 3], "distance": 40}));
-        assert_eq!((app.cam.target, app.cam.distance), (fieldcraft_render::Vec3::new(1.0, 2.0, 3.0), 40.0), "{r}");
+        assert!(app.cam.target.dist(fieldcraft_render::Vec3::new(0.001, 0.002, 0.003)) < 1e-15 && (app.cam.distance - 0.04).abs() < 1e-15, "{r}");
+        assert_eq!(r["result"]["target"], json!({"x": 1.0, "y": 2.0, "z": 3.0}), "{r}");
         let r = call(&mut app, "ui.camera", json!({"yaw": 30, "pitch": 20, "target": {"center_of": "mass"}, "fit": true}));
         assert_eq!(r["ok"], true, "{r}");
-        assert!(app.cam.target.dist(fieldcraft_render::Vec3::new(1.0, 2.0, 3.0)) > 1.0 && app.cam.distance < 1e8, "{r}");
+        assert!(app.cam.target.dist(fieldcraft_render::Vec3::new(0.001, 0.002, 0.003)) > 1e-3 && app.cam.distance < 1e5, "{r}");
         assert_eq!(call(&mut app, "ui.camera", json!({"yaw": 0, "pitch": 0, "target": {"bodies": ["Nope"]}}))["ok"], false);
         assert!(app.cam.is_valid() && app.cam.pitch < std::f64::consts::FRAC_PI_2);
         assert_eq!(call(&mut app, "ui.inspect", json!({}))["result"]["model"]["elements"], 64 + 162);
@@ -817,7 +829,7 @@ mod tests {
         frame(&mut app, &ctx);
         let viewport = app.viewport.rect.unwrap();
         // A click on the end cell at y ∈ [0, 5], z ∈ [5, 10]: element 1 + 19 + 0·20 + 1·40, face 4.
-        let at = crate::viewport::to_screen(&app, fieldcraft_render::Vec3::new(100.0, 2.5, 7.5)).unwrap();
+        let at = crate::viewport::to_screen(&app, crate::results::tests::mm([100.0, 2.5, 7.5])).unwrap();
         assert_eq!(call_in(&mut app, &ctx, "ui.select", json!({"filter": "element_faces"}))["result"]["count"], 0);
         call_in(&mut app, &ctx, "ui.click", json!({"x": at.x, "y": at.y}));
         for _ in 0..4 {

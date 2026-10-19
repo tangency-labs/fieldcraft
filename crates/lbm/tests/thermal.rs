@@ -23,8 +23,8 @@ fn conduction_between_plates_is_linear() {
         d.faces.z_min = PERIODIC;
         d.faces.z_max = PERIODIC;
         let mut t = FluidThermal::default();
-        t.faces.y_min = ThermalCondition::Temperature { value: 0.0 };
-        t.faces.y_max = ThermalCondition::Temperature { value: 1.0 };
+        t.faces.y_min = ThermalCondition::Temperature { value: kelvin(0.0) };
+        t.faces.y_max = ThermalCondition::Temperature { value: kelvin(1.0) };
         d.thermal = Some(t);
         // τ_T = 1: Δt = Δx² / (8 α)
         let dt = dx * dx / (8.0 * alpha);
@@ -57,7 +57,7 @@ fn a_heat_flux_sets_the_gradient_and_the_wall_heat_balances() {
     let q = 0.3;
     let mut t = FluidThermal::default();
     t.faces.y_min = ThermalCondition::Flux { value: q };
-    t.faces.y_max = ThermalCondition::Temperature { value: 1.0 };
+    t.faces.y_max = ThermalCondition::Temperature { value: kelvin(1.0) };
     d.thermal = Some(t);
     let dt = dx * dx / (8.0 * alpha);
     let m = hot_model(rho, 0.1, alpha, d, step(8.0 * h * h / alpha, dt, None));
@@ -95,7 +95,7 @@ fn the_flow_carries_the_inlet_temperature() {
     d.faces.z_min = PERIODIC;
     d.faces.z_max = PERIODIC;
     let mut t = FluidThermal::default();
-    t.faces.x_min = ThermalCondition::Temperature { value: 1.0 };
+    t.faces.x_min = ThermalCondition::Temperature { value: kelvin(1.0) };
     d.thermal = Some(t);
     let lattice_u = 0.05;
     let m = hot_model(1.0, nu, alpha, d, step(4.0 * l / umax, lattice_u * dx / umax, None));
@@ -131,9 +131,9 @@ fn cavity(ra: f64, n: usize, u_max: f64) -> (f64, f64, f64) {
     let mut d = domain([0.0; 3], [h, h, dx], dx);
     d.faces.z_min = PERIODIC;
     d.faces.z_max = PERIODIC;
-    let mut t = FluidThermal { initial_temperature: 0.5, gravity: [0.0, -g_beta, 0.0], expansion: Some(1.0), ..FluidThermal::default() };
-    t.faces.x_min = ThermalCondition::Temperature { value: 1.0 };
-    t.faces.x_max = ThermalCondition::Temperature { value: 0.0 };
+    let mut t = FluidThermal { initial_temperature: kelvin(0.5), gravity: [0.0, -g_beta, 0.0], expansion: Some(1.0), ..FluidThermal::default() };
+    t.faces.x_min = ThermalCondition::Temperature { value: kelvin(1.0) };
+    t.faces.x_max = ThermalCondition::Temperature { value: kelvin(0.0) };
     d.thermal = Some(t);
     // the fastest flow at lattice speed 0.05, and a lattice diffusivity of at most 1/4 (τ_T ≤ 1.5)
     let dt = (0.05 * dx / (u_max * alpha / h)).min(dx * dx / (4.0 * alpha));
@@ -230,7 +230,7 @@ fn a_drifting_sine_decays_at_the_diffusivity() {
             *d.faces.get_mut(f) = PERIODIC;
         }
         d.initial_velocity = [u0, 0.0, 0.0];
-        d.thermal = Some(FluidThermal { initial_temperature: 0.5, ..FluidThermal::default() });
+        d.thermal = Some(FluidThermal { initial_temperature: kelvin(0.5), ..FluidThermal::default() });
         let m = hot_model(1.0, nu, alpha, d, step(decay_time, dt, None));
         let (setup, mut flow) = prepare(&m, &[]);
         let tau = setup.thermal.as_ref().unwrap().tau;

@@ -5,7 +5,9 @@ use crate::schema::ProblemKind;
 use fieldcraft_explicit::{ExplicitResult, solve_explicit};
 use fieldcraft_lbm::{FluidResult, Obstacle};
 use fieldcraft_mesh::surface::{BoundarySurface, SurfaceOptions};
+use fieldcraft_model::DisplaySystem;
 use fieldcraft_model::FluidDomain;
+use fieldcraft_model::units::Quantity;
 use fieldcraft_parallel as parallel;
 use fieldcraft_solver::{
     FrequencyOptions, Limits, Location, MassKind, StaticResult, StepResult as ImplicitResult, solve_buckle, solve_frequency, solve_heat,
@@ -184,21 +186,22 @@ fn with_threads<R: Send>(threads: usize, f: impl FnOnce() -> R + Send) -> R {
 fn run_all(s: &mut Session, _: &Value) -> Result<Value> {
     use fieldcraft_model::Procedure;
     type Solve = fn(&mut Session, &Value) -> Result<Value>;
-    let steps: Vec<(String, &'static str, Solve)> = s
+    // Each solve with the command whose summary it gives (its units).
+    let steps: Vec<(String, &'static str, Solve, &'static str)> = s
         .model
         .steps()
         .iter()
         .map(|st| {
-            let solve: Solve = match st.procedure {
-                Procedure::Static {} | Procedure::CoupledTemperatureDisplacement {} => run_static,
-                Procedure::HeatTransfer { .. } => run_heat,
-                Procedure::Frequency { .. } => run_frequency,
-                Procedure::Buckle { .. } => run_buckle,
-                Procedure::ExplicitDynamic(_) => run_explicit,
-                Procedure::Fluid { .. } => run_fluid,
-                Procedure::NonlinearStatic(_) => run_nonlinear,
+            let (solve, id): (Solve, &str) = match st.procedure {
+                Procedure::Static {} | Procedure::CoupledTemperatureDisplacement {} => (run_static, "solve.static"),
+                Procedure::HeatTransfer { .. } => (run_heat, "solve.heat"),
+                Procedure::Frequency { .. } => (run_frequency, "solve.frequency"),
+                Procedure::Buckle { .. } => (run_buckle, "solve.buckle"),
+                Procedure::ExplicitDynamic(_) => (run_explicit, "solve.explicit"),
+                Procedure::Fluid { .. } => (run_fluid, "solve.fluid"),
+                Procedure::NonlinearStatic(_) => (run_nonlinear, "solve.nonlinear"),
             };
-            (st.name.clone(), st.procedure.name(), solve)
+            (st.name.clone(), st.procedure.name(), solve, id)
         })
         .collect();
     if steps.is_empty() {
@@ -206,11 +209,13 @@ fn run_all(s: &mut Session, _: &Value) -> Result<Value> {
     }
     let mut done = Vec::new();
     let count = steps.len();
-    for (index, (name, procedure, solve)) in steps.into_iter().enumerate() {
+    for (index, (name, procedure, solve, id)) in steps.into_iter().enumerate() {
         fieldcraft_model::progress::step(&name, index + 1, count);
         fieldcraft_model::progress::check()?;
-        let summary =
+        let mut summary =
             solve(s, &json!({"step": name})).map_err(|e| if e.is_cancelled() { e } else { EngineError::Params(format!("step `{name}`: {e}")) })?;
+        let display = s.units().clone();
+        crate::units::convert_reply(id, &mut summary, crate::units::si(), &display)?;
         done.push(json!({"step": name, "procedure": procedure, "summary": summary}));
     }
     Ok(json!({"steps": done}))
@@ -325,7 +330,7 @@ fn run_heat(s: &mut Session, p: &Value) -> Result<Value> {
         "max_temperature": largest(r.nodes.iter().copied().zip(t.iter().copied())),
         "heat_supplied": r.applied_total,
         "heat_removed": r.reaction_total,
-        "heat_flows": crate::results::heat_flows(&r),
+        "heat_flows": crate::results::heat_flows(&r, crate::units::si()),
         "warnings": r.warnings,
     });
     s.store_result(StepResult::Implicit(ImplicitResult::Heat(r)));
@@ -518,9 +523,10 @@ fn nonlinear_history(s: &Session, step: &str, r: &fieldcraft_solver::StaticResul
 }
 
 /// The surfaces of a fluid domain's obstacles: bodies of the open design (triangulated at the
-/// domain's tolerance) or imported surfaces, by name.
+/// domain's tolerance) or imported surfaces, by name. The geometry is in millimetres; the
+/// surfaces come out in metres, as the domain is.
 fn obstacles(s: &Session, domain: &FluidDomain) -> Result<Vec<Obstacle>> {
-    let tolerance = domain.tolerance.unwrap_or(domain.spacing / 10.0);
+    let tolerance = crate::units::to_geometry_length(domain.tolerance.unwrap_or(domain.spacing / 10.0));
     let mut out = Vec::with_capacity(domain.obstacles.len());
     for body in &domain.obstacles {
         let (mesh, faces) = if let Some(shape) = s.design.as_deref().and_then(|d| d.body(body)) {
@@ -531,8 +537,9 @@ fn obstacles(s: &Session, domain: &FluidDomain) -> Result<Vec<Obstacle>> {
         } else {
             return Err(EngineError::Params(format!("obstacle `{body}` is neither a body of the open design nor an imported surface")));
         };
-        let options = SurfaceOptions { weld_distance: mesh.weld_distance, ..SurfaceOptions::default() };
-        let surface = BoundarySurface::new(&mesh.positions, &mesh.triangles, &mesh.tri_face, &options)
+        let positions: Vec<[f64; 3]> = mesh.positions.iter().map(|p| crate::units::geometry_point(*p)).collect();
+        let options = SurfaceOptions { weld_distance: crate::units::geometry_length(mesh.weld_distance), ..SurfaceOptions::default() };
+        let surface = BoundarySurface::new(&positions, &mesh.triangles, &mesh.tri_face, &options)
             .map_err(|e| EngineError::Params(format!("obstacle `{body}`: its surface cannot bound a solid: {e}")))?;
         out.push(Obstacle { body: body.clone(), surface, faces });
     }
@@ -557,12 +564,14 @@ fn run_fluid(s: &mut Session, p: &Value) -> Result<Value> {
     let obstacles = obstacles(s, domain)?;
     let model = &s.model;
     let r = with_threads(threads(s, p)?, || fieldcraft_lbm::solve_fluid_on(model, step.as_deref(), &obstacles, &limits, backend))?;
-    let summary = fluid_summary(&r);
+    let summary = fluid_summary(&r, s.units());
     s.store_result(StepResult::Fluid(r));
     Ok(summary)
 }
 
-fn fluid_summary(r: &FluidResult) -> Value {
+/// The reply of a fluid solve, in SI but for the steady monitors' history, which is in `display`
+/// (its quantities follow the monitors, so the reply table cannot name them).
+fn fluid_summary(r: &FluidResult, display: &DisplaySystem) -> Value {
     let speed = |v: &[f32; 3]| (f64::from(v[0]).powi(2) + f64::from(v[1]).powi(2) + f64::from(v[2]).powi(2)).sqrt();
     let last = r.frames.last();
     let max_speed = last.map_or(0.0, |f| f.velocity.iter().map(speed).fold(0.0, f64::max));
@@ -614,7 +623,7 @@ fn fluid_summary(r: &FluidResult) -> Value {
         })
         .collect();
     let temperature = last.filter(|f| !f.temperature.is_empty()).map(|f| {
-        let fluid = f.temperature.iter().zip(&r.solid).filter(|(_, solid)| !**solid).map(|(t, _)| f64::from(*t));
+        let fluid = r.temperatures(f).into_iter().zip(&r.solid).filter(|(_, solid)| !**solid).map(|(t, _)| t);
         let (lo, hi) = fluid.fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), t| (lo.min(t), hi.max(t)));
         json!({"min": lo, "max": hi})
     });
@@ -639,23 +648,49 @@ fn fluid_summary(r: &FluidResult) -> Value {
         "tau_thermal": r.stats.tau_thermal,
         "temperature": temperature,
         "heat": heat,
-        "stop": r.steady.as_ref().map(|s| steady_summary(s, &r.stats)),
+        "stop": r.steady.as_ref().map(|s| steady_summary(s, &r.stats, display)),
         "zones": zones,
         "warnings": r.warnings,
     })
 }
 
-/// Why a run to steady state stopped, when, and its monitor history.
-fn steady_summary(s: &fieldcraft_lbm::SteadyReport, stats: &fieldcraft_lbm::FluidStats) -> Value {
-    let value = |v: &Vec<f64>| if let [x] = v.as_slice() { json!(x) } else { json!(v) };
+/// The quantity of a steady-state monitor's values, by its name in the report (`velocity`,
+/// `temperature`, `mass_flow x_max`, `force …`, `heat …`, `mean_temperature`): residuals are the
+/// root mean square of the field (a temperature's of its change, so a difference).
+fn monitor_quantity(name: &str) -> Option<Quantity> {
+    let kind = name.split_whitespace().next().unwrap_or_default();
+    Some(match kind {
+        "velocity" => Quantity::Velocity,
+        "temperature" => Quantity::TemperatureDifference,
+        "mass_flow" => Quantity::MassFlow,
+        "force" => Quantity::Force,
+        "heat" => Quantity::Power,
+        "mean_temperature" => Quantity::Temperature,
+        _ => return None,
+    })
+}
+
+/// Why a run to steady state stopped, when, and its monitor history, in `display`.
+fn steady_summary(s: &fieldcraft_lbm::SteadyReport, stats: &fieldcraft_lbm::FluidStats, display: &DisplaySystem) -> Value {
+    let quantities: Vec<Option<Quantity>> = s.quantities.iter().map(|q| monitor_quantity(q)).collect();
+    let value = |k: usize, v: &Vec<f64>| {
+        let shown: Vec<f64> = match quantities.get(k).copied().flatten() {
+            Some(q) => v.iter().map(|x| crate::results::shown(q, *x, display)).collect(),
+            None => v.clone(),
+        };
+        if let [x] = shown.as_slice() { json!(x) } else { json!(shown) }
+    };
     let history: Vec<Value> = s
         .samples
         .iter()
         .map(|m| {
+            // (The time converts with the reply, `units::REPLIES`.)
             json!({"step": m.step, "time": m.time,
-                "values": m.values.iter().map(value).collect::<Vec<_>>(), "changes": m.changes})
+                "values": m.values.iter().enumerate().map(|(k, v)| value(k, v)).collect::<Vec<_>>(), "changes": m.changes})
         })
         .collect();
+    let units: serde_json::Map<String, Value> =
+        s.quantities.iter().zip(&quantities).filter_map(|(n, q)| Some((n.clone(), json!(crate::results::unit_of((*q)?, display)?)))).collect();
     json!({
         "reason": s.reason.name(),
         "steps": stats.steps,
@@ -665,6 +700,7 @@ fn steady_summary(s: &fieldcraft_lbm::SteadyReport, stats: &fieldcraft_lbm::Flui
         "quantities": s.quantities,
         "message": s.message,
         "history": history,
+        "units": units,
     })
 }
 
@@ -737,7 +773,10 @@ pub(crate) fn probe(s: &mut Session, p: &Value) -> Result<Value> {
         })
     })?;
     if let StepResult::Fluid(r) = result.as_ref() {
-        return probe_fluid(r, p);
+        let mut out = probe_fluid(r, p)?;
+        let display = s.units().clone();
+        show_probe(&mut out, result, &display);
+        return Ok(out);
     }
     let (nodes, located) = match (p.get("nodes"), p.get("at")) {
         (Some(_), None) => (labels(p, "nodes", MAX_PROBE)?, None),
@@ -783,7 +822,63 @@ pub(crate) fn probe(s: &mut Session, p: &Value) -> Result<Value> {
             }
         }
     }
+    let display = s.units().clone();
+    show_probe(&mut out, result, &display);
     Ok(out)
+}
+
+/// What a value of a probe reply is, by its key: a quantity per entry of a vector (its index,
+/// of `len`), or a scale (a mode shape's), or nothing (a label, a code, a strain).
+fn probe_quantity(r: &StepResult, display: &fieldcraft_model::DisplaySystem, key: &str, len: usize, index: usize) -> Option<crate::units::Show> {
+    use crate::units::Show;
+    use fieldcraft_model::units::Quantity as Q;
+    let heat = matches!(r.kind(), crate::results::Kind::Heat(_));
+    let (translation, rotation) = crate::results::mode_scale(r, display);
+    let q = match key {
+        // A natural mode, mass-normalised: translations (and a reference point's rotations).
+        "shape" => return Some(Show::Factor(if index < 3 { translation } else { rotation })),
+        "rotation" if matches!(r.kind(), crate::results::Kind::Frequency(_)) => return Some(Show::Factor(rotation)),
+        "displacement" if len == 6 && index >= 3 => Q::Angle,
+        "displacement" | "xyz" | "distance" | "gap" | "slip" | "point" | "at" | "max_penetration" => Q::Length,
+        "rotation" => Q::Angle,
+        "reaction" if heat => Q::Power,
+        "reaction" if len == 6 && index >= 3 => Q::Moment,
+        "reaction" | "force" | "final" | "mean" if !heat => Q::Force,
+        "reaction_moment" => Q::Moment,
+        "stress" | "principal" | "von_mises" | "pressure" | "shear" | "nodal" | "bottom" | "middle" | "top" | "value" => Q::Pressure,
+        // Shell section forces N_x, N_y, N_xy, M_x, M_y, M_xy, Q_x, Q_y, per unit length.
+        "forces" if len == 8 => {
+            if (3..6).contains(&index) {
+                Q::Force
+            } else {
+                Q::ForcePerLength
+            }
+        }
+        // Beam end forces: N, V2, V3, T, M2, M3.
+        "ends" => {
+            if index < 3 {
+                Q::Force
+            } else {
+                Q::Moment
+            }
+        }
+        "temperature" => Q::Temperature,
+        "heat_flux" => Q::HeatFlux,
+        "velocity" => Q::Velocity,
+        "time" | "times" => Q::Time,
+        "power" => Q::Power,
+        _ => return None,
+    };
+    Some(Show::Quantity(q))
+}
+
+/// A probe reply (SI) as `display` shows it, with `units`: the unit of each key that has one.
+fn show_probe(out: &mut Value, r: &StepResult, display: &fieldcraft_model::DisplaySystem) {
+    let mut units = serde_json::Map::new();
+    crate::units::show_by_key(out, display, &|key, len, index| probe_quantity(r, display, key, len, index), &mut units);
+    if let Some(o) = out.as_object_mut() {
+        o.insert("units".into(), Value::Object(units));
+    }
 }
 
 /// The node with a result nearest to each point (lowest label on a tie), where it is and how far.
@@ -1056,8 +1151,11 @@ pub(crate) mod tests {
         assert!(probe["nodes"][1]["reaction"][2].as_f64().unwrap() != 0.0, "{probe}");
         // The principal stresses of the nodal stress, largest first.
         let root = &probe["nodes"][1];
+        // (Computed in SI and shown in MPa, as the stress: equal to round-off.)
         let stress: [f64; 6] = serde_json::from_value(root["stress"].clone()).unwrap();
-        assert_eq!(root["principal"], json!(fieldcraft_fem::principal(&stress)), "{root}");
+        let principal: [f64; 3] = serde_json::from_value(root["principal"].clone()).unwrap();
+        let scale = stress.iter().fold(0.0f64, |m, s| m.max(s.abs()));
+        assert!(principal.iter().zip(fieldcraft_fem::principal(&stress)).all(|(a, b)| (a - b).abs() <= 1e-12 * scale), "{root}");
         // By location: the nearest node, with where it is.
         let at = s.execute("solve.probe", &json!({"step": "Bend", "at": [[10.1, -0.2, 0.1], [0, 0, 0]]})).unwrap();
         assert_eq!((at["nodes"][0]["node"].clone(), at["nodes"][1]["node"].clone()), (json!(11), json!(1)), "{at}");
@@ -1314,6 +1412,18 @@ pub(crate) mod tests {
         assert_eq!(h["heat"].as_array().unwrap().len(), 2);
         assert_eq!(h["times"].as_array().unwrap().len(), h["heat"][0]["power"].as_array().unwrap().len());
         assert!(s.execute("solve.probe", &json!({"step": "Shear", "heat": ["nope"]})).is_err());
+        // A steady monitor's history is in the display units: the mean of the linear profile
+        // from 0 to 1 °C is ½ °C (not 273.65 K), its heat in mW.
+        let steady = json!({"tolerance": 1e-3, "monitors": [{"type": "mean_temperature"}, {"type": "heat", "faces": ["y_min"]}]});
+        let mut t = s.clone();
+        t.execute("model.step.create", &json!({"name": "Settle", "procedure": {"type": "fluid", "domain": "Gap", "end_time": 50, "steady": steady}}))
+            .unwrap();
+        let stop = t.execute("solve.fluid", &json!({"step": "Settle"})).unwrap()["stop"].clone();
+        let last = stop["history"].as_array().unwrap().last().unwrap().clone();
+        let mean = last["values"][2].as_f64().unwrap();
+        assert!((mean - 0.5).abs() < 1e-3, "{stop}");
+        assert!((last["values"][3].as_f64().unwrap() / expected - 1.0).abs() < 1e-2, "{stop}");
+        assert_eq!((stop["units"]["mean_temperature"].as_str(), stop["units"]["heat y_min"].as_str()), (Some("°C"), Some("mW")), "{stop}");
 
         // The thermal boundary needs the domain's heat settings; the material must keep its
         // heat properties while a domain carries heat.
@@ -1346,11 +1456,13 @@ pub(crate) mod tests {
         }
         // A finite flux the lattice cannot hold, or one on a periodic face, is refused by the
         // solve, not by the model.
-        for (at, value) in [("y_max", 1e308), ("x_min", 1.0)] {
+        // (1e300 mW/mm² is 1e303 W/m²: finite in SI.)
+        for (at, value) in [("y_max", 1e300), ("x_min", 1.0)] {
             let mut t = s.clone();
             t.execute("model.fluid_domain.thermal_boundary", &json!({"domain": "Gap", "at": at, "condition": {"type": "flux", "value": value}}))
                 .unwrap();
-            assert!(t.execute("solve.fluid", &json!({})).is_err(), "{at}");
+            let r = t.execute("solve.fluid", &json!({}));
+            assert!(r.is_err(), "{at}: {r:?}");
         }
     }
 
@@ -1489,7 +1601,10 @@ pub(crate) mod tests {
         s.execute("model.fluid_domain.edit", &outside).unwrap();
         let e = s.execute("solve.fluid", &json!({})).unwrap_err().to_string();
         assert!(e.contains("Fan"), "{e}");
-        s.execute("model.fluid_domain.edit", &fan_with(json!({"curve": [[0, f64::MAX], [1, f64::MIN]]}))).unwrap();
+        // A rise past what SI holds (f64::MAX MPa) is refused as it is given; a huge one that
+        // holds, when the step solves.
+        assert!(s.execute("model.fluid_domain.edit", &fan_with(json!({"curve": [[0, f64::MAX], [1, f64::MIN]]}))).is_err());
+        s.execute("model.fluid_domain.edit", &fan_with(json!({"curve": [[0, 1e290], [1, -1e290]]}))).unwrap();
         assert!(s.execute("solve.fluid", &json!({})).is_err());
     }
 
@@ -1518,6 +1633,8 @@ pub(crate) mod tests {
         // The wall shear μ U / H over the wall's area, as the full run gives it.
         let shear = history.last().unwrap()["values"][1][0].as_f64().unwrap();
         assert!((shear / (0.1 * 0.1 * 0.125 * 0.125) - 1.0).abs() < 1e-3, "{shear}");
+        // The history is in the display units, which it names.
+        assert_eq!(stop["units"], json!({"velocity": "mm/s", "force y_min": "N", "mass_flow x_max": "t/s"}), "{stop}");
 
         // Hostile rules are refused and leave the model as it was.
         let hostile = [
@@ -1644,6 +1761,8 @@ pub(crate) mod tests {
     /// corner node `tip`; a frequency step `Modes` and the section `beam`.
     fn explicit_cantilever(s: &mut Session, length: f64, n: [usize; 2]) {
         use fieldcraft_model::{ElementKind, Set};
+        // The mesh is built in the model as stored (SI); the commands' numbers are SI too.
+        s.default_units = crate::units::si().clone();
         let [nx, ny] = n;
         let label = |i: usize, j: usize, k: usize| (1 + i + (nx + 1) * (j + (ny + 1) * k)) as u32;
         for k in 0..=ny {
@@ -2211,7 +2330,8 @@ pub(crate) mod tests {
                 .flat_map(|e| (1..=m.element(e).unwrap().kind.faces().len() as u8).map(move |f| (e, f)))
                 .filter(|&(e, f)| {
                     let ns = m.face_nodes(fieldcraft_model::ElementFace { element: e, face: f }).unwrap();
-                    ns.iter().all(|n| on(m.node(*n).unwrap().xyz))
+                    // In millimetres, as the design is.
+                    ns.iter().all(|n| on(crate::units::to_geometry_point(m.node(*n).unwrap().xyz)))
                 })
                 .map(|(e, f)| json!({"element": e, "face": f}))
                 .collect()

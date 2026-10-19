@@ -23,9 +23,9 @@ const INVALID_PARAMS: i64 = -32602;
 const INTERNAL_ERROR: i64 = -32603;
 const RESOURCE_NOT_FOUND: i64 = -32002;
 
-const INSTRUCTIONS: &str = "FieldCraft turns geometry into finite element models and solves them. The model is \
-unit-consistent and never converts (SolidCraft geometry is in mm, so use mm-t-s-N-MPa: E in MPa, density in t/mm³, \
-forces in N); Z is up. A typical analysis: `open` a .solidcraft design (or a .fieldcraft model, or a face-tagged \
+const INSTRUCTIONS: &str = "FieldCraft turns geometry into finite element models and solves them. The model \
+stores SI and shows and takes numbers in its display units (default mm-t-s-N-MPa with °C: E in MPa, density in t/mm³, \
+forces in N; `model.units` changes them, and a value may carry its unit: \"210 GPa\"); Z is up. A typical analysis: `open` a .solidcraft design (or a .fieldcraft model, or a face-tagged \
 .3mf); `inspect_model` for its bodies and their persistent face names; `mesh` (method tet: {body, tolerance}); \
 then `execute` the model definition commands (model.set.create {name, geometry: [{body, face}]}, \
 model.material.create, model.section.create, model.boundary_condition.create, model.load.create, model.step.create \

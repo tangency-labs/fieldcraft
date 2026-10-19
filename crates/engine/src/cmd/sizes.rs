@@ -306,7 +306,8 @@ mod tests {
             .unwrap()
     }
 
-    /// Every element edge of the model's tet4 or hex8 elements, once: its two end points.
+    /// Every element edge of the model's tet4 or hex8 elements, once: its two end points, in
+    /// millimetres as the design is.
     fn edges(s: &Session) -> Vec<([f64; 3], [f64; 3])> {
         const TET: &[[usize; 2]] = &[[0, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3]];
         const HEX: &[[usize; 2]] = &[[0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4], [0, 4], [1, 5], [2, 6], [3, 7]];
@@ -317,7 +318,8 @@ mod tests {
             for [a, b] in pairs {
                 let (a, b) = (e.nodes[*a], e.nodes[*b]);
                 if seen.insert((a.min(b), a.max(b))) {
-                    out.push((s.model.nodes()[&a].xyz, s.model.nodes()[&b].xyz));
+                    let mm = crate::units::to_geometry_point;
+                    out.push((mm(s.model.nodes()[&a].xyz), mm(s.model.nodes()[&b].xyz)));
                 }
             }
         }

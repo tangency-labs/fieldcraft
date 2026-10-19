@@ -50,7 +50,7 @@ impl Axis {
     fn label(self, s: &Session) -> String {
         match self {
             Axis::LoadFactor => "Load factor".into(),
-            Axis::Time => with_unit("Time", Quantity::Time.unit(s.model.units()).as_deref()),
+            Axis::Time => with_unit("Time", crate::results::unit_of(Quantity::Time, s.units()).as_deref()),
             Axis::Mode => "Mode".into(),
         }
     }
@@ -71,9 +71,26 @@ struct Series<'a> {
     x_label: String,
     y_label: String,
     len: usize,
+    /// Point `i`, in SI.
     point: Box<dyn Fn(usize) -> Result<(f64, f64)> + 'a>,
+    /// The values as the display system shows them.
+    x_shown: Shown<'a>,
+    y_shown: Shown<'a>,
     /// Whether point `i` is field frame `i` (results.frame can show it).
     frames: bool,
+}
+
+/// An SI value as the display system shows it.
+type Shown<'a> = Box<dyn Fn(f64) -> f64 + 'a>;
+
+/// Values of `q` as `s` shows them.
+fn shown_as<'a>(s: &'a Session, q: Quantity) -> Shown<'a> {
+    Box::new(move |v| crate::results::shown(q, v, s.units()))
+}
+
+/// Values without a unit.
+fn plain<'a>() -> Shown<'a> {
+    Box::new(|v| v)
 }
 
 fn y_error(why: impl Into<String>) -> EngineError {
@@ -123,7 +140,9 @@ fn ids(list: &[&str]) -> String {
 /// The series `y` asks for on step `step`'s result `r`, against `axis`.
 fn series<'a>(s: &'a Session, step: &str, r: &'a StepResult, axis: Axis, y: &Value) -> Result<Series<'a>> {
     let x_label = axis.label(s);
-    let units = s.model.units();
+    let units = s.units();
+    let unit = |q: Quantity| crate::results::unit_of(q, units);
+    let x_shown = || if axis == Axis::Time { shown_as(s, Quantity::Time) } else { plain() };
     let not_explicit = || y_error(format!("step `{step}` is not an explicit dynamic step; it has no histories"));
     if let Some(name) = y.as_str() {
         let Kind::Frequency(f) = r.kind() else {
@@ -131,7 +150,7 @@ fn series<'a>(s: &'a Session, step: &str, r: &'a StepResult, axis: Axis, y: &Val
         };
         let buckling = f.buckling.is_some();
         let (y_label, field): (String, fn(&fieldcraft_solver::Mode) -> f64) = match (name, buckling) {
-            ("frequency", false) => (with_unit("Frequency", Some("cycles per time unit")), |m| m.frequency),
+            ("frequency", false) => (with_unit("Frequency", unit(Quantity::Frequency).as_deref()), |m| m.frequency),
             ("load_factor", true) => ("Buckling load factor".into(), |m| m.eigenvalue),
             ("frequency", true) => return Err(y_error(format!("step `{step}` is a buckling step: its modes are load factors (y: \"load_factor\")"))),
             ("load_factor", false) => return Err(y_error(format!("step `{step}` is a frequency step: y: \"frequency\""))),
@@ -146,6 +165,8 @@ fn series<'a>(s: &'a Session, step: &str, r: &'a StepResult, axis: Axis, y: &Val
             y_label,
             len: f.modes.len(),
             point: Box::new(move |i| Ok((i as f64 + 1.0, f.modes.get(i).map_or(f64::NAN, field)))),
+            x_shown: plain(),
+            y_shown: if buckling { plain() } else { shown_as(s, Quantity::Frequency) },
             frames: false,
         });
     }
@@ -185,7 +206,15 @@ fn series<'a>(s: &'a Session, step: &str, r: &'a StepResult, axis: Axis, y: &Val
             let pick = if frames { Pick { mode: 1, frame: Some(i) } } else { Pick { mode: i + 1, frame: None } };
             Ok((x(i), value(pick)?))
         };
-        return Ok(Series { x_label, y_label, len, point: Box::new(point), frames });
+        return Ok(Series {
+            x_label,
+            y_label,
+            len,
+            point: Box::new(point),
+            x_shown: x_shown(),
+            y_shown: Box::new(move |v| field.shown(r, v, units)),
+            frames,
+        });
     }
     if let Some(set) = y.get("reaction") {
         let frames = nonlinear_frames(step, r).map_err(y_error)?;
@@ -199,9 +228,11 @@ fn series<'a>(s: &'a Session, step: &str, r: &'a StepResult, axis: Axis, y: &Val
         };
         return Ok(Series {
             x_label,
-            y_label: format!("{} on {set}", with_unit(&format!("Reaction {title}"), Quantity::Force.unit(units).as_deref())),
+            y_label: format!("{} on {set}", with_unit(&format!("Reaction {title}"), unit(Quantity::Force).as_deref())),
             len: frames.len(),
             point: Box::new(point),
+            x_shown: plain(),
+            y_shown: shown_as(s, Quantity::Force),
             frames: true,
         });
     }
@@ -228,9 +259,11 @@ fn series<'a>(s: &'a Session, step: &str, r: &'a StepResult, axis: Axis, y: &Val
         let label = label.get(..1).map(str::to_uppercase).unwrap_or_default() + label.get(1..).unwrap_or_default();
         return Ok(Series {
             x_label,
-            y_label: with_unit(&label, Quantity::Energy.unit(units).as_deref()),
+            y_label: with_unit(&label, unit(Quantity::Energy).as_deref()),
             len: h.time.len(),
             point: Box::new(move |i| Ok((time(i), h.energies.get(i).map_or(f64::NAN, pick)))),
+            x_shown: shown_as(s, Quantity::Time),
+            y_shown: shown_as(s, Quantity::Energy),
             frames: false,
         });
     }
@@ -241,19 +274,36 @@ fn series<'a>(s: &'a Session, step: &str, r: &'a StepResult, axis: Axis, y: &Val
             "y" => 1,
             _ => 2,
         };
-        let (y_label, value): (String, Box<dyn Fn(usize) -> f64 + 'a>) = if let Some(c) = name.strip_prefix("constraint_force_") {
+        let (y_label, value, q): (String, Box<dyn Fn(usize) -> f64 + 'a>, Quantity) = if let Some(c) = name.strip_prefix("constraint_force_") {
             let k = axis_of(c);
             (
-                with_unit(&format!("Constraint force {}", c.to_uppercase()), Quantity::Force.unit(units).as_deref()),
+                with_unit(&format!("Constraint force {}", c.to_uppercase()), unit(Quantity::Force).as_deref()),
                 Box::new(move |i| h.constraint_force.get(i).map_or(f64::NAN, |v| v[k])),
+                Quantity::Force,
             )
         } else if let Some(c) = name.strip_prefix("momentum_") {
             let k = axis_of(c);
-            (format!("Momentum {}", c.to_uppercase()), Box::new(move |i| h.momentum.get(i).map_or(f64::NAN, |v| v[k])))
+            (
+                with_unit(&format!("Momentum {}", c.to_uppercase()), unit(Quantity::Momentum).as_deref()),
+                Box::new(move |i| h.momentum.get(i).map_or(f64::NAN, |v| v[k])),
+                Quantity::Momentum,
+            )
         } else {
-            (with_unit("Time increment", Quantity::Time.unit(units).as_deref()), Box::new(move |i| h.increment.get(i).copied().unwrap_or(f64::NAN)))
+            (
+                with_unit("Time increment", unit(Quantity::Time).as_deref()),
+                Box::new(move |i| h.increment.get(i).copied().unwrap_or(f64::NAN)),
+                Quantity::Time,
+            )
         };
-        return Ok(Series { x_label, y_label, len: h.time.len(), point: Box::new(move |i| Ok((time(i), value(i)))), frames: false });
+        return Ok(Series {
+            x_label,
+            y_label,
+            len: h.time.len(),
+            point: Box::new(move |i| Ok((time(i), value(i)))),
+            x_shown: shown_as(s, Quantity::Time),
+            y_shown: shown_as(s, q),
+            frames: false,
+        });
     }
     if y.get("history_node").is_some() {
         let label = node_label(y, "history_node")?;
@@ -278,9 +328,11 @@ fn series<'a>(s: &'a Session, step: &str, r: &'a StepResult, axis: Axis, y: &Val
         let suffix = suffix.to_string();
         return Ok(Series {
             x_label,
-            y_label: format!("{} at node {label}", with_unit(&name, q.unit(units).as_deref())),
+            y_label: format!("{} at node {label}", with_unit(&name, unit(q).as_deref())),
             len: h.time.len(),
             point: Box::new(move |i| Ok((time(i), values.get(i).and_then(|row| row.get(k)).and_then(|v| component(v, &suffix)).unwrap_or(f64::NAN)))),
+            x_shown: shown_as(s, Quantity::Time),
+            y_shown: shown_as(s, q),
             frames: false,
         });
     }
@@ -340,7 +392,7 @@ fn travel<'a>(s: &'a Session, step: &str, r: &'a StepResult, x: &Value) -> Resul
         }
         _ => return Err(x_error("an object must have one of `displacement` (a set) or `displacement_node` (a node label)".into())),
     };
-    let label = format!("{} {of}", with_unit(&format!("Displacement {title}"), Quantity::Length.unit(s.model.units()).as_deref()));
+    let label = format!("{} {of}", with_unit(&format!("Displacement {title}"), crate::results::unit_of(Quantity::Length, s.units()).as_deref()));
     let n = at.len() as f64;
     let value = move |i: usize| -> f64 {
         let Some(f) = frames.get(i) else { return f64::NAN };
@@ -404,7 +456,7 @@ fn xy(s: &mut Session, p: &Value) -> Result<Value> {
             return Err(EngineError::invalid("x", "a travel needs a series per frame of the nonlinear static step"));
         }
         let point = series.point;
-        series = Series { x_label: label, point: Box::new(move |i| Ok((value(i), point(i)?.1))), ..series };
+        series = Series { x_label: label, point: Box::new(move |i| Ok((value(i), point(i)?.1))), x_shown: shown_as(s, Quantity::Length), ..series };
         x_axis = "displacement";
     }
     let every = every.unwrap_or_else(|| series.len.div_ceil(MAX_POINTS).max(1));
@@ -415,8 +467,8 @@ fn xy(s: &mut Session, p: &Value) -> Result<Value> {
     let (mut xs, mut ys) = (Vec::with_capacity(picked.len()), Vec::with_capacity(picked.len()));
     for &i in &picked {
         let (x, y) = (series.point)(i)?;
-        xs.push(x);
-        ys.push(y);
+        xs.push((series.x_shown)(x));
+        ys.push((series.y_shown)(y));
     }
     let mut out = json!({
         "step": step,
@@ -523,7 +575,7 @@ mod tests {
         assert_eq!(*y.last().unwrap(), probe["nodes"][0]["displacement"][2].as_f64().unwrap());
         let csv = std::fs::read_to_string(&path).unwrap();
         let lines: Vec<&str> = csv.lines().collect();
-        assert_eq!(lines[0], "Load factor,Displacement Z at node 11");
+        assert_eq!(lines[0], "Load factor,Displacement Z [mm] at node 11");
         assert_eq!(lines.len(), x.len() + 1);
         assert_eq!(lines.last().unwrap().split(',').nth(1).unwrap().parse::<f64>().unwrap(), *y.last().unwrap());
         let _ = std::fs::remove_file(&path);
@@ -547,7 +599,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(values(&t, "y"), y);
-        assert_eq!(t["x"]["label"], "Displacement Z at node 11");
+        assert_eq!(t["x"]["label"], "Displacement Z [mm] at node 11");
         // A stale result is refused.
         s.execute("mesh.node.add", &json!({"label": 99_999, "xyz": [0, 0, 0]})).unwrap();
         let e = s.execute("results.xy", &json!({"step": "Large", "y": {"field": "displacement_z", "node": 11}})).unwrap_err().to_string();

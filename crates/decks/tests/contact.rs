@@ -1,17 +1,19 @@
 //! Contact definitions in every deck format: Abaqus surface interactions, contact pairs and
 //! general contact; LS-DYNA automatic contacts; Nastran refuses them by name.
 
-use fieldcraft_decks::{Error, abaqus, lsdyna, nastran};
+mod common;
+
+use common::{abaqus, lsdyna, nastran};
+use fieldcraft_decks::Error;
 use fieldcraft_model::{
     BoundaryCondition, Contact, ContactSurfaces, Elastic, ElementFace, ElementKind, Friction, InitialPenetration, Material, Model, Procedure,
-    Section, SectionKind, Set, Step, Target, Tie, UnitSystem,
+    Section, SectionKind, Set, Step, Target, Tie,
 };
 
 /// Two unit hex8 cubes, the second on top of the first (separate nodes), with face sets for the
 /// touching faces and a static step.
 fn model() -> Model {
     let mut m = Model::default();
-    m.set_units(UnitSystem::MmTonneS);
     let corners = [[0., 0., 0.], [1., 0., 0.], [1., 1., 0.], [0., 1., 0.], [0., 0., 1.], [1., 0., 1.], [1., 1., 1.], [0., 1., 1.]];
     for cube in 0..2u32 {
         for (i, c) in corners.iter().enumerate() {

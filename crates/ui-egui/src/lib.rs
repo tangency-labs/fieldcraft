@@ -63,7 +63,7 @@ use std::sync::mpsc::{Receiver, Sender};
 
 use fieldcraft_engine::catalogue::{self, Tab, Workspace};
 use fieldcraft_engine::{EngineError, Session};
-use fieldcraft_model::UnitSystem;
+use fieldcraft_model::DisplaySystem;
 use fieldcraft_render::glyphs::{self, Definition, Drawn, Glyphs};
 use fieldcraft_render::{Aabb3, Camera, DisplayMesh, Scene, StandardView, Vec3};
 use serde::{Deserialize, Serialize};
@@ -343,6 +343,8 @@ struct PlotKey {
     /// The mode and field frame drawn (an animated explicit step changes frames).
     pick: fieldcraft_engine::results::Pick,
     frame: Option<u64>,
+    /// The display units its numbers (legend, scale) are in.
+    units: String,
 }
 
 /// A datum form's datum and what it was worked out for (revision, command, form text).
@@ -401,6 +403,8 @@ pub struct ModelApp {
     plot: (Option<PlotKey>, Option<Arc<results::Plot>>),
     /// The node probed last (a click on a results plot).
     pub probe: Option<Probe>,
+    /// The display units the probe, the reaction sums and the XY series were read in.
+    shown_units: String,
     /// The reaction sums asked for last in the results panel.
     pub reactions: Option<Value>,
     /// The XY plot, while it is open in the results panel.
@@ -507,9 +511,10 @@ pub struct ModelApp {
     /// The browser's element counts and the model revision they were counted at.
     element_counts: Option<(u64, Vec<(fieldcraft_model::ElementKind, usize)>)>,
     /// The selected definition's property rows and what they were read for.
-    properties: Option<((u64, browser::Def, String), std::sync::Arc<Vec<(String, String)>>)>,
+    /// The selected definition's rows, by (revision, display units, kind, name).
+    properties: Option<((u64, String, browser::Def, String), std::sync::Arc<Vec<(String, String)>>)>,
     /// [`ModelApp::mesh_history`] with each command's rows, by model revision.
-    mesh_made: Option<(u64, std::sync::Arc<Vec<(String, Value, Vec<(String, String)>)>>)>,
+    mesh_made: Option<((u64, String), std::sync::Arc<Vec<(String, Value, Vec<(String, String)>)>>)>,
     /// The search's query and its results.
     search: Option<(String, std::sync::Arc<Vec<palette::Hit>>)>,
 }
@@ -541,6 +546,7 @@ impl ModelApp {
             glyphs: Glyphs::default(),
             plot: (None, None),
             probe: None,
+            shown_units: String::new(),
             reactions: None,
             xy: None,
             reply: None,
@@ -610,6 +616,7 @@ impl ModelApp {
     pub fn with_services(mut self, services: files::Services) -> Self {
         self.recent = files::Recent::load(services.recent_path.clone());
         self.prefs = files::Prefs::load(services.prefs.as_ref());
+        self.session.default_units = self.prefs.units.clone();
         self.ui.nav_preset = self.prefs.nav_preset.clone();
         self.ui.reverse_zoom = self.prefs.reverse_zoom;
         self.services = services;
@@ -676,6 +683,7 @@ impl ModelApp {
             && let Ok(v) = &r
         {
             self.reactions = Some(v.clone());
+            self.shown_units = self.session.units().label();
         }
         // The XY plot's series, however it was asked for; the panel opens on it.
         if id == "results.xy" && (r.is_ok() || params.get("path").is_none()) {
@@ -705,7 +713,7 @@ impl ModelApp {
             // A reply reads as one line; the whole of a rich one shows in the context panel (the
             // reaction sums have their own place in the results panel).
             Ok(v) => {
-                let mut line = format!("{label}: {}", reply::summary_in(id, v, self.session.model.units()));
+                let mut line = format!("{label}: {}", reply::summary_in(id, v, Some(self.session.units())));
                 if reply::is_rich(v) && !(id == "results.reactions" && self.plot().is_some()) {
                     line.push_str(" (details in the panel)");
                     self.reply = Some(reply::Reply { command: id.to_string(), label: label.to_string(), params: params.clone(), value: v.clone() });
@@ -1001,12 +1009,19 @@ impl ModelApp {
         if self.reply.as_ref().is_some_and(|r| r.command == "solve.probe") {
             self.reply = None;
         }
-        let plot = self.plot();
-        let rows = probe_rows(&reply, plot.as_deref(), self.session.model.units(), node, pick.mode);
-        let lines: Vec<String> = std::iter::once(format!("Node {node}")).chain(rows.iter().map(|(what, value)| format!("{what} {value}"))).collect();
-        self.set_status(lines.join("   "), false);
-        self.probe = Some(Probe { node, step: view.step, mode: pick.mode, frame: pick.frame, rows, lines });
+        let probe = self.read_probe(&reply, node, view.step, pick);
+        self.set_status(probe.lines.join("   "), false);
+        self.probe = Some(probe);
+        self.shown_units = self.session.units().label();
         Ok(())
+    }
+
+    /// The probe of `node` from `solve.probe`'s reply, in the display units.
+    fn read_probe(&mut self, reply: &Value, node: u32, step: String, pick: fieldcraft_engine::results::Pick) -> Probe {
+        let plot = self.plot();
+        let rows = probe_rows(reply, plot.as_deref(), self.session.units(), node, pick.mode);
+        let lines: Vec<String> = std::iter::once(format!("Node {node}")).chain(rows.iter().map(|(what, value)| format!("{what} {value}"))).collect();
+        Probe { node, step, mode: pick.mode, frame: pick.frame, rows, lines }
     }
 
     pub fn set_status(&mut self, text: impl Into<String>, error: bool) {
@@ -1030,12 +1045,40 @@ impl ModelApp {
     pub fn model_changed(&mut self) {
         self.revision = self.revision.wrapping_add(1);
         self.frame_new_document();
+        self.follow_units();
         // A reply about the model is read again; any other one is out of date.
         self.reply = self.reply.take().and_then(|mut r| {
             reply::LIVE.contains(&r.command.as_str()).then_some(())?;
             r.value = self.session.execute(&r.command, &r.params).ok()?;
             Some(r)
         });
+    }
+
+    /// Read the probe, the reaction sums and the XY series again when the display units changed
+    /// (`model.units`, Settings › Units): they are kept as shown, in the units they were read in.
+    fn follow_units(&mut self) {
+        let units = self.session.units().label();
+        if units == self.shown_units {
+            return;
+        }
+        self.shown_units = units;
+        if let Some(old) = self.probe.take() {
+            let mut params = json!({"step": old.step, "nodes": [old.node], "mode": old.mode});
+            if let Some(frame) = old.frame {
+                params["frame"] = json!(frame);
+            }
+            // A failure (a stale result) leaves no probe, as a click would.
+            if let Ok(reply) = self.session.execute("solve.probe", &params) {
+                let pick = fieldcraft_engine::results::Pick { mode: old.mode, frame: old.frame };
+                self.probe = Some(self.read_probe(&reply, old.node, old.step, pick));
+            }
+        }
+        if let Some(step) = self.reactions.as_ref().and_then(|r| r["step"].as_str()).map(str::to_string) {
+            self.reactions = self.session.execute("results.reactions", &json!({"step": step})).ok();
+        }
+        if let Some(xy) = self.xy.as_mut() {
+            (xy.key, xy.series) = (None, None);
+        }
     }
 
     /// The model's display data with its geometry (the open design's bodies, tessellated once
@@ -1056,13 +1099,16 @@ impl ModelApp {
                     .flat_map(|d| &d.bodies)
                     .filter_map(|body| {
                         let tolerance = body.measure().map(|m| display_tolerance(&Aabb3 { min: m.bbox_min.into(), max: m.bbox_max.into() }));
-                        let mesh = tolerance.and_then(|t| body.tessellate(t)).map_err(|e| failed.push(format!("{}: {e}", body.name))).ok()?;
+                        let mut mesh = tolerance.and_then(|t| body.tessellate(t)).map_err(|e| failed.push(format!("{}: {e}", body.name))).ok()?;
+                        // The geometry is in millimetres, the scene in metres.
+                        let m = fieldcraft_engine::units::geometry_point;
                         let names = selection::BodyNames {
                             name: body.name.clone(),
                             faces: body.faces().iter().map(|f| f.name.clone()).collect(),
                             edges: body.edge_names(&mesh),
-                            vertices: body.vertex_names(&mesh).into_iter().map(|v| (v.name, v.point.into())).collect(),
+                            vertices: body.vertex_names(&mesh).into_iter().map(|v| (v.name, m(v.point).into())).collect(),
                         };
+                        mesh.positions.iter_mut().chain(mesh.edges.iter_mut().flatten()).for_each(|p| *p = m(*p));
                         Some((names, mesh))
                     })
                     .collect();
@@ -1080,7 +1126,8 @@ impl ModelApp {
             }
             // An imported surface's faces are named by their tags.
             for s in self.session.surfaces.iter().filter(|s| self.session.shows(fieldcraft_engine::ItemKind::Surface, &s.name)) {
-                d.add_surface(&s.mesh.positions, &s.mesh.triangles, &s.mesh.tri_face);
+                let positions: Vec<[f64; 3]> = s.mesh.positions.iter().map(|p| fieldcraft_engine::units::geometry_point(*p)).collect();
+                d.add_surface(&positions, &s.mesh.triangles, &s.mesh.tri_face);
                 self.pick.names.push(selection::BodyNames {
                     name: s.name.clone(),
                     faces: (0..s.faces).map(|f| f.to_string()).collect(),
@@ -1120,7 +1167,15 @@ impl ModelApp {
         let (view, result, current) = results::shown(&self.session)?;
         let frame = results::frame(view, result, self.now);
         let pick = results::pick(view, result, frame);
-        Some(PlotKey { revision: self.revision, result: Arc::as_ptr(result) as usize, current, view: view.clone(), pick, frame })
+        Some(PlotKey {
+            revision: self.revision,
+            result: Arc::as_ptr(result) as usize,
+            current,
+            view: view.clone(),
+            pick,
+            frame,
+            units: self.session.units().label(),
+        })
     }
 
     /// The results plot the viewport draws, rebuilt when its key changes; `None` shows the
@@ -1292,6 +1347,22 @@ impl ModelApp {
             .is_some_and(|p| p.get("faces").and_then(Value::as_array).is_some_and(|f| !f.is_empty()))
     }
 
+    /// A length of the scene (metres) in the display units, as a form takes it.
+    pub(crate) fn shown_length(&self, m: f64) -> f64 {
+        fieldcraft_engine::results::shown(fieldcraft_model::units::Quantity::Length, m, self.session.units())
+    }
+
+    /// A point of the scene (metres) in the display units, as a form takes it.
+    pub(crate) fn shown_point(&self, p: Vec3) -> [f64; 3] {
+        [p.x, p.y, p.z].map(|c| self.shown_length(c))
+    }
+
+    /// A point given in the display units (an agent's) as a point of the scene, in metres.
+    pub(crate) fn scene_point(&self, p: [f64; 3]) -> Vec3 {
+        let [x, y, z] = p.map(|c| self.session.units().to_si(fieldcraft_model::units::Quantity::Length, c).unwrap_or(f64::NAN));
+        Vec3::new(x, y, z)
+    }
+
     /// Put the open Relax Nodes form's sphere at `at` (a click on the mesh); a sphere without a
     /// radius yet gets a twentieth of the mesh's size.
     pub fn relax_place(&mut self, at: Vec3) -> bool {
@@ -1300,16 +1371,18 @@ impl ModelApp {
             bounds.add(Vec3::from(n.xyz));
         }
         let size = bounds.diagonal();
+        // The form is in the display units; the scene in metres.
+        let (center, radius) = (self.shown_point(at), self.shown_length(size / 20.0));
         let Some(d) = self.dialog.as_mut().filter(|d| d.command == "mesh.node.relax") else { return false };
         let mut params = serde_json::from_str::<Value>(&d.text).ok().filter(Value::is_object).unwrap_or_else(|| json!({}));
-        params["center"] = json!([at.x, at.y, at.z]);
+        params["center"] = json!(center);
         if let Some(o) = params.as_object_mut() {
             for key in ["around_element", "nodes", "elements", "faces"] {
                 o.remove(key);
             }
         }
         if params.get("radius").and_then(Value::as_f64).is_none_or(|r| !(r > 0.0)) && size > 0.0 && size.is_finite() {
-            params["radius"] = json!(size / 20.0);
+            params["radius"] = json!(radius);
         }
         d.text = params.to_string();
         d.touched.insert("center".into());
@@ -1326,9 +1399,10 @@ impl ModelApp {
         else {
             return false;
         };
+        let radius = self.shown_length(sphere.1 * factor);
         let Some(d) = self.dialog.as_mut() else { return false };
         let mut params = serde_json::from_str::<Value>(&d.text).ok().filter(Value::is_object).unwrap_or_else(|| json!({}));
-        params["radius"] = json!(sphere.1 * factor);
+        params["radius"] = json!(radius);
         d.text = params.to_string();
         true
     }
@@ -1759,6 +1833,7 @@ impl ModelApp {
     /// earlier run, a mirror adds its image). Empty for a mesh no mesher made (imported, built
     /// node by node).
     pub fn mesh_history(&self) -> Vec<(String, Value)> {
+        // The journal's numbers are in its own units; the forms show the display units.
         let mut covered: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
         let mut out = Vec::new();
         for (command, params) in self.session.journal.iter().rev() {
@@ -1770,7 +1845,7 @@ impl ModelApp {
                 continue;
             }
             covered.extend(fresh);
-            out.push((command.clone(), params.clone()));
+            out.push((command.clone(), self.session.journal_params_shown(command, params)));
         }
         out.reverse();
         out
@@ -2229,6 +2304,15 @@ impl ModelApp {
     }
 
     /// Save the preferences the window changed (a View menu toggle, `ui.set`).
+    /// Show and take numbers in `units` from now on, in models without their own, and remember
+    /// it (Help › Settings). Nothing in the model changes: it is stored in SI.
+    pub fn set_default_units(&mut self, units: fieldcraft_model::DisplaySystem) {
+        self.session.default_units = units.clone();
+        self.prefs.units = units;
+        self.prefs.save(self.services.prefs.as_ref());
+        self.follow_units();
+    }
+
     pub(crate) fn save_prefs(&mut self) {
         if self.ui.nav_preset != self.prefs.nav_preset || self.ui.reverse_zoom != self.prefs.reverse_zoom {
             self.prefs.nav_preset = self.ui.nav_preset.clone();
@@ -2351,17 +2435,20 @@ pub fn command_label(id: &str) -> &str {
 }
 
 /// What a probe of `node` read (`solve.probe`'s reply), as (what, value) rows with units from
-/// `units`: displacement, reaction, stresses, temperature, velocity or a mode's shape, and the
+/// `units` (the reply's): displacement, reaction, stresses, temperature, velocity or a mode's shape, and the
 /// contour shown when it is none of those. Round-off beside the result's largest value is 0.
-fn probe_rows(reply: &Value, plot: Option<&results::Plot>, units: UnitSystem, node: u32, mode: usize) -> Vec<(String, String)> {
-    use fieldcraft_engine::results::{Field, Pick, Quantity, displacements, magnitude, with_unit as titled};
+fn probe_rows(reply: &Value, plot: Option<&results::Plot>, units: &DisplaySystem, node: u32, mode: usize) -> Vec<(String, String)> {
+    use fieldcraft_engine::results::{Field, Pick, Quantity, displacements, magnitude, unit_of, with_unit as titled};
     let at = reply.pointer("/nodes/0").cloned().unwrap_or(Value::Null);
     let vector = |key: &str| at.get(key).and_then(|v| serde_json::from_value::<[f64; 3]>(v.clone()).ok());
-    let unit = |q: Quantity| q.unit(units);
-    // The largest displacement of the result shown: the scale round-off is read against.
-    let largest = plot
-        .and_then(|p| displacements(&p.result, Pick { mode, frame: p.pick.frame }).ok())
-        .map_or(0.0, |u| u.iter().map(|v| magnitude(*v)).filter(|m| m.is_finite()).fold(0.0, f64::max));
+    let unit = |q: Quantity| unit_of(q, units);
+    // The largest displacement of the result shown, in the display units: the scale round-off
+    // is read against.
+    let largest = plot.map_or(0.0, |p| {
+        let si = displacements(&p.result, Pick { mode, frame: p.pick.frame })
+            .map_or(0.0, |u| u.iter().map(|v| magnitude(*v)).filter(|m| m.is_finite()).fold(0.0, f64::max));
+        Field::Displacement.shown(&p.result, si, units)
+    });
     let mut rows = Vec::new();
     let vector_row = |rows: &mut Vec<(String, String)>, name: &str, v: [f64; 3], q: Quantity, scale: f64| {
         let u = unit(q);
@@ -2376,7 +2463,7 @@ fn probe_rows(reply: &Value, plot: Option<&results::Plot>, units: UnitSystem, no
     }
     let stress = at.get("stress").and_then(|v| serde_json::from_value::<[f64; 6]>(v.clone()).ok());
     let mises = at.get("von_mises").and_then(Value::as_f64);
-    let stress_unit = unit(Quantity::Stress);
+    let stress_unit = unit(Quantity::Pressure);
     if let Some(m) = mises {
         rows.push(("Mises".into(), results::with_unit(results::number(m), stress_unit.as_deref())));
     }
@@ -2495,11 +2582,13 @@ mod tests {
         let mut app = ModelApp::new(Session::default());
         app.run("model.check", json!({})).unwrap();
         let status = app.status.clone().unwrap();
-        assert_eq!(status.text, "Check Model: 2 errors, 1 warning (details in the panel)");
+        assert_eq!(status.text, "Check Model: 2 errors, 0 warnings (details in the panel)");
         assert!(app.reply.as_ref().is_some_and(|r| r.command == "model.check"));
         assert!(context::has_context(&mut app));
-        app.run("model.units", json!({"system": "mm-t-s-N-MPa"})).unwrap();
-        assert_eq!(app.reply.as_ref().map(|r| r.value["warnings"].clone()), Some(json!(0)), "the check follows the model");
+        let corners = [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]];
+        app.run("mesh.block", json!({"body": "A", "kind": "hex8", "corners": corners, "divisions": [1, 1, 1]})).unwrap();
+        let messages = app.reply.as_ref().map(|r| r.value["diagnostics"].to_string()).unwrap_or_default();
+        assert!(!messages.contains("the mesh has no elements"), "the check follows the model: {messages}");
         let mut app = ModelApp::new(Session::default());
         app.open_sample("cantilever");
         app.run("model.activity", json!({})).unwrap();
@@ -2562,13 +2651,14 @@ mod tests {
         let c = [[0., 0., 0.], [4., 0., 0.], [4., 4., 0.], [0., 4., 0.], [0., 0., 4.], [4., 0., 4.], [4., 4., 4.], [0., 4., 4.]];
         app.run("mesh.block", json!({"body": "A", "kind": "hex8", "corners": c, "divisions": [4, 4, 4]})).unwrap();
         // A spike inside.
-        let n = *app.session.model.nodes().iter().find(|(_, p)| p.xyz == [2.0, 2.0, 2.0]).unwrap().0;
-        app.session.model.set_node(n, [2.7, 2.6, 2.5]).unwrap();
+        let n = node_at(&app, [2.0, 2.0, 2.0]);
+        let spike = fieldcraft_engine::units::geometry_point([2.7, 2.6, 2.5]);
+        app.session.model.set_node(n, spike).unwrap();
         app.model_changed();
         assert!(!app.relaxing() && app.relax_preview().is_none());
         app.start("mesh.node.relax").unwrap();
         assert!(app.relaxing());
-        assert!(app.relax_place(Vec3 { x: 2.0, y: 2.0, z: 2.0 }));
+        assert!(app.relax_place(results::tests::mm([2.0, 2.0, 2.0])));
         assert!(app.relax_scale_radius(10.0));
         let note = app.relax_note().unwrap();
         assert!(note.starts_with("Preview:"), "{note}");
@@ -2580,7 +2670,7 @@ mod tests {
         let text = app.dialog.as_ref().unwrap().text.clone();
         app.dialog = None;
         app.run("mesh.node.relax", serde_json::from_str(&text).unwrap()).unwrap();
-        assert_ne!(app.session.model.node(n).unwrap().xyz, [2.7, 2.6, 2.5]);
+        assert_ne!(app.session.model.node(n).unwrap().xyz, spike);
     }
 
     /// Move Nodes: the form previews the move (the region's quality before and now, the ghost and
@@ -2591,7 +2681,7 @@ mod tests {
         let mut app = ModelApp::new(Session::default());
         let c = [[0., 0., 0.], [4., 0., 0.], [4., 4., 0.], [0., 4., 0.], [0., 0., 4.], [4., 0., 4.], [4., 4., 4.], [0., 4., 4.]];
         app.run("mesh.block", json!({"body": "A", "kind": "hex8", "corners": c, "divisions": [4, 4, 4]})).unwrap();
-        let n = *app.session.model.nodes().iter().find(|(_, p)| p.xyz == [2.0, 2.0, 2.0]).unwrap().0;
+        let n = node_at(&app, [2.0, 2.0, 2.0]);
         assert!(!app.moving_nodes() && app.node_move_preview().is_none());
         app.start(node_move::COMMAND).unwrap();
         assert!(app.moving_nodes());
@@ -2618,7 +2708,7 @@ mod tests {
         assert!(app.node_move_preview().unwrap().moved.is_some() && !app.node_move_pending());
         // Esc during a drag: nothing moves, the form stays.
         let start = app.session.model.clone();
-        app.node_drag = Some(node_move::Drag { start: Vec3::new(2.0, 2.0, 2.0), normal: Vec3::Z });
+        app.node_drag = Some(node_move::Drag { start: results::tests::mm([2.0, 2.0, 2.0]), normal: Vec3::Z });
         app.node_move_cancel();
         assert!(app.node_drag.is_none() && app.moving_nodes() && app.session.model == start);
         assert!(app.dialog.as_ref().unwrap().text.contains("\"by\":[0.0,0.0,0.0]"));
@@ -2628,9 +2718,11 @@ mod tests {
             p["by"] = json!([0.4, 0.2, 0.0]);
             d.text = p.to_string();
         }
-        app.node_drag = Some(node_move::Drag { start: Vec3::new(2.0, 2.0, 2.0), normal: Vec3::Z });
+        app.node_drag = Some(node_move::Drag { start: results::tests::mm([2.0, 2.0, 2.0]), normal: Vec3::Z });
         app.node_move_release().unwrap();
-        assert_eq!(app.session.model.node(n).unwrap().xyz, [2.4, 2.2, 2.0]);
+        // Moved by the form's 0.4 and 0.2 mm (the model is in metres).
+        let moved = app.session.model.node(n).unwrap().xyz;
+        assert!(Vec3::from(moved).dist(results::tests::mm([2.4, 2.2, 2.0])) < 1e-15, "{moved:?}");
         assert!(app.moving_nodes() && app.node_drag.is_none(), "the form stays open for the next drag");
         app.run("edit.undo", json!({})).unwrap();
         assert_eq!(app.session.model, start);
@@ -3304,8 +3396,8 @@ mod tests {
             [canvas.rgba[i], canvas.rgba[i + 1], canvas.rgba[i + 2]]
         };
         // Cell centres on the front face (y = 0), one at each end.
-        let tip = pixel(Vec3::new(97.5, 0.0, 12.5));
-        let root = pixel(Vec3::new(2.5, 0.0, 12.5));
+        let tip = pixel(results::tests::mm([97.5, 0.0, 12.5]));
+        let root = pixel(results::tests::mm([2.5, 0.0, 12.5]));
         assert!(tip[2] > tip[0] + 60, "the free end is blue: {tip:?}");
         assert!(root[0] > root[2] + 60, "the clamped end is red: {root:?}");
     }
@@ -3314,6 +3406,8 @@ mod tests {
     fn probing_a_node_reads_its_values_and_stale_results_say_so() {
         let mut app = solved_app();
         app.run("results.deformed", json!({"step": "Load"})).unwrap();
+        // The window has framed its document, as it does on its first frame.
+        app.model_changed();
         let tip = node_at(&app, [100.0, 0.0, 0.0]);
         app.probe_node(tip).unwrap();
         let probe = app.probe.clone().unwrap();
@@ -3321,13 +3415,19 @@ mod tests {
         assert!(probe.lines.iter().any(|l| l.starts_with("U ")) && probe.lines.iter().any(|l| l.starts_with("Mises")), "{probe:?}");
         // Units, and round-off shown as 0 (#329).
         assert!(probe.lines.iter().any(|l| l.starts_with("U [mm] ")) && probe.lines.iter().any(|l| l.ends_with(" MPa")), "{probe:?}");
+        // Other display units read the probe again in them.
+        app.run("model.units", json!({"system": "m-kg-s-N-Pa"})).unwrap();
+        let si = app.probe.clone().unwrap();
+        assert!(si.node == tip && si.lines.iter().any(|l| l.starts_with("U [m] ")) && si.lines.iter().any(|l| l.ends_with(" Pa")), "{si:?}");
+        app.run("model.units", json!({"system": "mm-t-s-N-MPa"})).unwrap();
+        assert_eq!(app.probe.as_ref().map(|p| &p.lines), Some(&probe.lines), "and back");
         // A root node carries a reaction.
         app.probe_node(node_at(&app, [0.0, 0.0, 0.0])).unwrap();
         assert!(app.probe.as_ref().unwrap().lines.iter().any(|l| l.starts_with("RF ")));
         // The plot under a click: a ray onto the tip's end face picks a node there.
         let plot = app.plot().unwrap();
-        let (node, _) = plot.display.pick(Vec3::new(1000.0, 0.5, 0.5), Vec3::new(-1.0, 0.0, 0.0)).unwrap();
-        assert_eq!(app.session.model.node(node).unwrap().xyz[0], 100.0);
+        let (node, _) = plot.display.pick(results::tests::mm([1000.0, 0.5, 0.5]), Vec3::new(-1.0, 0.0, 0.0)).unwrap();
+        assert_eq!(app.session.model.node(node).unwrap().xyz[0], 0.1);
         // An edit leaves the plot shown but stale; probing it is refused.
         app.run(
             "model.material.edit",
@@ -3349,7 +3449,7 @@ mod tests {
         let last = app.plot().unwrap();
         assert_eq!(last.frame().map(|(k, _, n)| (k, n)), Some((10, 11)));
         assert!(last.contour.as_ref().is_some_and(|c| c.field == fieldcraft_engine::results::Field::VonMises));
-        assert!(last.display.bounds.min.x > -1e-6, "{:?}", last.display.bounds);
+        assert!(last.display.bounds.min.x > -1e-9, "{:?}", last.display.bounds);
         // Frame 0 is the undeformed bar at rest on its initial velocity.
         app.run("results.frame", json!({"frame": 0})).unwrap();
         let first = app.plot().unwrap();
@@ -3494,7 +3594,7 @@ mod tests {
         app.viewport.rect = Some(egui::Rect::from_min_size(egui::pos2(100.0, 50.0), egui::vec2(800.0, 600.0)));
         app.set_view(StandardView::Right);
         app.fit_view();
-        let at = viewport::to_screen(&app, Vec3::new(10.0, 5.5, 4.5)).unwrap();
+        let at = viewport::to_screen(&app, results::tests::mm([10.0, 5.5, 4.5])).unwrap();
         let tip = selection::Item::Geometry(fieldcraft_model::GeometryRef::face("Bar", "tip").unwrap());
         assert_eq!(app.select_at(at, selection::Mode::Replace), Some(tip.clone()));
         assert_eq!(app.overlay().1.tris.len(), 2 * 2 * 2);
@@ -3551,16 +3651,16 @@ mod tests {
         app.set_view(StandardView::Right);
         app.fit_view();
         // The right view looks along −X: the face under the cursor is x = 10.
-        let on = Vec3::new(10.0, 7.0, 3.0);
+        let on = results::tests::mm([10.0, 7.0, 3.0]);
         let at = viewport::to_screen(&app, on).unwrap();
         let pivot = app.surface_point(at).unwrap();
-        assert!(pivot.dist(on) < 1e-6, "{pivot:?}");
+        assert!(pivot.dist(on) < 1e-9, "{pivot:?}");
         app.cam.orbit_about(pivot, 60.0, -30.0);
         let after = viewport::to_screen(&app, pivot).unwrap();
         assert!((after - at).length() < 1e-3, "{at:?} -> {after:?}");
         // Empty space: the centre of the drawn bounds.
         let pivot = app.drawn_centre();
-        assert!(pivot.dist(Vec3::new(5.0, 5.0, 5.0)) < 1e-6, "{pivot:?}");
+        assert!(pivot.dist(results::tests::mm([5.0, 5.0, 5.0])) < 1e-9, "{pivot:?}");
         assert!(app.surface_point(egui::pos2(105.0, 55.0)).is_none());
         // Nothing drawn: the target.
         let mut empty = ModelApp::new(Session::default());

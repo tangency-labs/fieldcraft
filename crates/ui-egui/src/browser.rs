@@ -325,17 +325,21 @@ impl Def {
         }
     }
 
-    /// The command that edits definition `name` and its parameters as it is (its edit form,
-    /// filled in); `None` when it is gone or cannot be edited (a partition).
-    pub fn edit(self, m: &Model, name: &str) -> Option<(String, Value)> {
-        match self {
-            Def::Partition => None,
+    /// The command that edits definition `name` and its parameters as it is, in `units` (its
+    /// edit form, filled in); `None` when it is gone or cannot be edited (a partition).
+    pub fn edit(self, m: &Model, name: &str, units: &fieldcraft_model::DisplaySystem) -> Option<(String, Value)> {
+        let (command, params) = match self {
+            Def::Partition => return None,
             Def::Datum => m.datum(name).map(|d| {
                 let (command, params) = fieldcraft_engine::cmd::datum_edit_params(name, d);
                 (command.to_string(), params)
-            }),
-            _ => definition(m, self, name).map(|v| (self.command("edit"), v)),
-        }
+            })?,
+            _ => (self.command("edit"), definition(m, self, name)?),
+        };
+        // The model is in SI, the form in the display units: an edit that changes nothing must
+        // give back the same values.
+        let shown = fieldcraft_engine::units::shown_params(&command, &params, units).ok()?;
+        Some((command, shown))
     }
 
     /// The viewport item it is, for the kinds the viewport draws one by one (and can hide).
@@ -1187,8 +1191,8 @@ mod tests {
         let sets = Def::Set.names(&app.session.model);
         app.run("interaction.tie", json!({"name": "glue", "main": sets[0], "secondary": sets[1]})).unwrap();
         assert_eq!(Def::Tie.names(&app.session.model), ["glue"]);
-        assert_eq!(Def::Tie.edit(&app.session.model, "glue").map(|(c, _)| c).as_deref(), Some("interaction.tie.edit"));
-        assert!(crate::describe::rows(&app.session.model, Def::Tie, "glue").is_some_and(|r| !r.is_empty()));
+        assert_eq!(Def::Tie.edit(&app.session.model, "glue", app.session.units()).map(|(c, _)| c).as_deref(), Some("interaction.tie.edit"));
+        assert!(crate::describe::rows(&app.session.model, Def::Tie, "glue", app.session.units()).is_some_and(|r| !r.is_empty()));
     }
 
     #[test]

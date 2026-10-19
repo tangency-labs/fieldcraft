@@ -330,7 +330,7 @@ impl Directional {
 }
 
 /// Heat conduction and thermal expansion.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Thermal {
     /// Conductivity k (power per length per temperature): q = −k ∇T.
@@ -343,9 +343,19 @@ pub struct Thermal {
     /// Linear expansion coefficient α (strain per temperature): ε_th = α (T − T_ref).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expansion: Option<Directional>,
-    /// The temperature at which thermal strain is zero.
-    #[serde(default)]
+    /// The temperature at which thermal strain is zero (kelvin; 0 °C when left out).
+    #[serde(default = "celsius_zero")]
     pub reference_temperature: f64,
+}
+
+fn celsius_zero() -> f64 {
+    crate::units::CELSIUS_ZERO
+}
+
+impl Default for Thermal {
+    fn default() -> Self {
+        Thermal { conductivity: None, specific_heat: None, expansion: None, reference_temperature: celsius_zero() }
+    }
 }
 
 impl Thermal {

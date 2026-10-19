@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use egui::{Id, RichText, Ui};
 use fieldcraft_engine::schema::{self, Collection, Field, Kind, MAX_DEPTH, MAX_ROWS, join};
-use fieldcraft_model::UnitSystem;
+use fieldcraft_model::DisplaySystem;
 use serde_json::{Map, Value, json};
 
 use crate::fields::{self, NumberEdit, Style};
@@ -23,7 +23,8 @@ const INDENT: f32 = 10.0;
 
 /// What the form reads beside the parameters.
 pub struct Context<'a> {
-    pub units: UnitSystem,
+    /// The display system: the numbers' units.
+    pub units: &'a DisplaySystem,
     /// The names of a collection's items.
     pub names: &'a dyn Fn(Collection) -> Vec<String>,
     /// A salt for the widget ids: the open form (its command and the opening), so no widget
@@ -83,7 +84,7 @@ pub fn style(t: &Tokens, label_width: f32) -> Style {
 /// marks, within [`LABEL_MIN`] and [`LABEL_SHARE`] of the width. Labels longer than that wrap; the
 /// column widens when one would need more than [`fields::LABEL_LINES`] lines, as long as a field
 /// keeps [`FIELD_MIN`].
-pub fn label_column(ui: &Ui, fields: &[Field], units: UnitSystem, width: f32) -> f32 {
+pub fn label_column(ui: &Ui, fields: &[Field], units: &DisplaySystem, width: f32) -> f32 {
     let share = (width * LABEL_SHARE).max(LABEL_MIN);
     let most = (width - FIELD_MIN - ui.spacing().item_spacing.x).max(share);
     let mut column = LABEL_MIN;
@@ -127,7 +128,7 @@ fn fill(ui: &Ui) -> f32 {
 }
 
 /// Each row label of `fields` (nested too): its text, whether it is required and has help.
-fn each_label(fields: &[Field], units: UnitSystem, depth: usize, out: &mut dyn FnMut(&str, bool, bool)) {
+fn each_label(fields: &[Field], units: &DisplaySystem, depth: usize, out: &mut dyn FnMut(&str, bool, bool)) {
     if depth > MAX_DEPTH {
         return;
     }
@@ -157,10 +158,6 @@ pub fn show(ui: &mut Ui, t: &Tokens, cx: &Context, fields: &'static [Field], par
     let label_width = label_column(ui, fields, cx.units, ui.available_width());
     let mut f = Form { cx, style: style(t, label_width), problems, names: BTreeMap::new(), out: Outcome::default() };
     ui.spacing_mut().item_spacing.y = 3.0;
-    if cx.units == UnitSystem::Unspecified && has_system_units(fields, 0) {
-        let note = format!("No unit system: numbers are in the model's own consistent units. {}", schema::UNITS_HINT);
-        ui.add(egui::Label::new(RichText::new(note).small().color(f.style.dim)).wrap());
-    }
     f.fields(ui, fields, fields, params, "", 0);
     f.out
 }
@@ -1066,18 +1063,6 @@ fn caption(component: &str) -> String {
 }
 
 /// Whether any of `fields` (nested too) is a number whose unit follows the unit system.
-pub fn has_system_units(fields: &[Field], depth: usize) -> bool {
-    depth <= MAX_DEPTH
-        && fields.iter().any(|f| match f.kind {
-            Kind::Number { dim, .. } | Kind::Vector { dim, .. } | Kind::PerAxis { dim, .. } => dim.follows_system(),
-            Kind::Group(inner) | Kind::Rows { fields: inner, .. } | Kind::Either(inner) | Kind::NameOr { fields: inner, .. } => {
-                has_system_units(inner, depth + 1)
-            }
-            Kind::Variants { variants, .. } => variants.iter().any(|v| has_system_units(v.fields, depth + 1)),
-            _ => false,
-        })
-}
-
 /// What is missing or wrong in `params`, in the form's order: (field path, message), each
 /// phrased with the field's label as the form shows it ([`schema::Problem::for_form`]).
 pub fn messages(fields: &'static [Field], params: &Map<String, Value>) -> Vec<(String, String)> {
@@ -1170,7 +1155,7 @@ mod tests {
                 let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
                     let touched = BTreeSet::new();
                     let cx = Context {
-                        units: UnitSystem::MmTonneS,
+                        units: &mm(),
                         names,
                         salt: Id::new(c.id),
                         touched: &touched,
@@ -1208,14 +1193,14 @@ mod tests {
                 let Some(form) = c.form else { continue };
                 let mut params = schema::prefill(form, &json!({})).as_object().cloned().unwrap_or_default();
                 let mut labels = BTreeSet::new();
-                each_label(form, UnitSystem::MmTonneS, 0, &mut |l, _, _| {
+                each_label(form, &mm(), 0, &mut |l, _, _| {
                     labels.insert(l.to_string());
                 });
                 let (mut left, mut column, mut cut) = (0.0, 0.0, Vec::new());
                 let mut out = ctx.run_ui(input(), |ui| {
                     let touched = BTreeSet::new();
                     let cx = Context {
-                        units: UnitSystem::MmTonneS,
+                        units: &mm(),
                         names: &one,
                         salt: Id::new(c.id),
                         touched: &touched,
@@ -1265,7 +1250,7 @@ mod tests {
     /// Long labels share the column: the Plasticity form's "Hardening modulus" shows whole.
     #[test]
     fn hardening_modulus_shows_whole() {
-        let text = drawn("model.material.plasticity", UnitSystem::MmTonneS, json!({"plastic": {"type": "bilinear"}}));
+        let text = drawn("model.material.plasticity", &mm(), json!({"plastic": {"type": "bilinear"}}));
         assert!(text.lines().any(|l| l == "Hardening modulus"), "{text}");
     }
 
@@ -1321,7 +1306,7 @@ mod tests {
             let names = |_: Collection| Vec::new();
             let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
                 let cx = Context {
-                    units: UnitSystem::MmTonneS,
+                    units: &mm(),
                     names: &names,
                     salt: Id::new("t"),
                     touched,
@@ -1352,7 +1337,7 @@ mod tests {
     }
 
     /// The text a form draws, with `units`.
-    fn drawn(id: &str, units: UnitSystem, params: Value) -> String {
+    fn drawn(id: &str, units: &DisplaySystem, params: Value) -> String {
         let form = fieldcraft_engine::find_command(id).and_then(|c| c.form).unwrap();
         let ctx = egui::Context::default();
         let mut params = params.as_object().cloned().unwrap_or_default();
@@ -1379,17 +1364,21 @@ mod tests {
             .join("\n")
     }
 
-    /// Without a unit system a number shows its dimension and the form says where to set the
-    /// system; with one, the unit. A vector's components are captioned.
+    fn mm() -> DisplaySystem {
+        DisplaySystem::new(fieldcraft_model::units::Preset::MmTonneS)
+    }
+
+    /// A number shows its unit in the display system; a vector's components are captioned.
     #[test]
-    fn units_dimensions_and_vector_captions_show() {
-        let bare = drawn("model.material.plasticity", UnitSystem::Unspecified, json!({"plastic": {"type": "bilinear"}}));
-        assert!(bare.contains("[stress]") && bare.contains(schema::UNITS_HINT), "{bare}");
-        let mpa = drawn("model.material.plasticity", UnitSystem::MmTonneS, json!({"plastic": {"type": "bilinear"}}));
-        assert!(mpa.contains("MPa") && !mpa.contains(schema::UNITS_HINT), "{mpa}");
-        let load = drawn("model.load.create", UnitSystem::Unspecified, json!({"type": "force"}));
+    fn units_follow_the_display_system_and_vector_captions_show() {
+        let mpa = drawn("model.material.plasticity", &mm(), json!({"plastic": {"type": "bilinear"}}));
+        assert!(mpa.lines().any(|l| l == "MPa"), "{mpa}");
+        let si = DisplaySystem::new(fieldcraft_model::units::Preset::MKgS);
+        let pa = drawn("model.material.plasticity", &si, json!({"plastic": {"type": "bilinear"}}));
+        assert!(pa.lines().any(|l| l == "Pa") && !pa.contains("MPa"), "{pa}");
+        let load = drawn("model.load.create", &si, json!({"type": "force"}));
         let lines: Vec<&str> = load.lines().collect();
-        assert!(["X", "Y", "Z", "[force]"].iter().all(|w| lines.contains(w)), "{load}");
+        assert!(["X", "Y", "Z", "N"].iter().all(|w| lines.contains(w)), "{load}");
     }
 
     /// Label lists, point lists, multi-choices and number-or-auto are typed fields (#169): a
@@ -1397,15 +1386,15 @@ mod tests {
     /// output choices are checkboxes, the scale an Auto box.
     #[test]
     fn typed_lists_choices_and_auto_show() {
-        let probe = drawn("solve.probe", UnitSystem::MmTonneS, json!({"nodes": [1, 2, 3, 7], "at": [[1.5, 0, 0]]}));
+        let probe = drawn("solve.probe", &mm(), json!({"nodes": [1, 2, 3, 7], "at": [[1.5, 0, 0]]}));
         assert!(
             probe.contains("1-3, 7") && probe.contains("Use selection (2 nodes)") && probe.contains("1.5") && probe.contains("Add point"),
             "{probe}"
         );
         assert!(!probe.contains("set in JSON"), "{probe}");
-        let step = drawn("model.step.create", UnitSystem::MmTonneS, json!({"name": "S", "procedure": {"type": "static"}, "output": ["stress"]}));
+        let step = drawn("model.step.create", &mm(), json!({"name": "S", "procedure": {"type": "static"}, "output": ["stress"]}));
         assert!(step.contains("Reaction force") && step.contains("Heat flux"), "{step}");
-        let deformed = drawn("results.deformed", UnitSystem::MmTonneS, json!({"scale": "auto"}));
+        let deformed = drawn("results.deformed", &mm(), json!({"scale": "auto"}));
         assert!(deformed.contains("Auto"), "{deformed}");
     }
 }

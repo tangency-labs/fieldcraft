@@ -27,6 +27,7 @@
 
 use fieldcraft_mesh::surface::BoundarySurface;
 use fieldcraft_model::fluid_zones::DEFAULT_FAN_RELAXATION;
+use fieldcraft_model::units::kelvin_above;
 use fieldcraft_model::{BoxFace, Directional, FaceCondition, FluidDomain, Model, Procedure, Resistance, SurfaceCondition, ThermalCondition};
 
 use crate::voxel::Grid;
@@ -73,6 +74,16 @@ pub struct ObstacleFaces {
 
 /// Heat in the fluid, in lattice units: a D3Q7 scalar lattice for the temperature
 /// (`flow::ThermalState`).
+///
+/// **The lattice's temperatures are the model's kelvin less [`ThermalSetup::zero`], the fluid
+/// domain's `temperature_zero`**: 0 °C, or for a model from before SI storage the zero of the
+/// system it was typed in (0 K for m-kg-s-N-Pa, 0 °F for in-lbf-s-psi). The scheme's walls are
+/// not invariant under a shift of the temperature scale (a wall's bounce-back carries `T u`),
+/// and before SI storage the lattice ran on the numbers as typed: this keeps every model's
+/// results as they were, and how a model is shown never changes them. (A change of the scale's
+/// step, °F against K, only scales the lattice's temperatures, which the scheme is invariant
+/// under to round-off.) Single precision (the frames, the GPU backend) keeps the differences that
+/// drive the heat.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ThermalSetup {
     /// The scalar lattice's relaxation time: its diffusivity is `(τ_T − ½) / 4`.
@@ -80,6 +91,8 @@ pub struct ThermalSetup {
     /// The fluid's thermal diffusivity k / (ρ c), model units.
     pub diffusivity: f64,
     pub initial_temperature: f64,
+    /// The temperature, in kelvin, the lattice's 0 stands for (see above).
+    pub zero: f64,
     /// `−β g` in lattice units: the buoyant acceleration per temperature above the initial one.
     pub buoyancy: [f64; 3],
     /// The box faces' conditions (fluxes in lattice units: temperature per step through a face).
@@ -222,8 +235,9 @@ pub fn fluid_step<'m>(model: &'m Model, step: Option<&str>) -> Result<(&'m field
 
 /// A thermal condition in lattice units: a flux (power per area) becomes the temperature it adds
 /// to the cell behind the face per step.
-fn lattice_thermal(c: &ThermalCondition, flux_scale: f64) -> Result<ThermalCondition> {
+fn lattice_thermal(c: &ThermalCondition, flux_scale: f64, zero: f64) -> Result<ThermalCondition> {
     Ok(match *c {
+        ThermalCondition::Temperature { value } => ThermalCondition::Temperature { value: kelvin_above(value, zero) },
         ThermalCondition::Flux { value } => {
             let lattice = value * flux_scale;
             if !lattice.is_finite() {
@@ -403,6 +417,8 @@ impl Setup {
                     warnings.push(format!("the thermal relaxation time τ_T = {tau:.3} is large: heat diffuses fast on this grid and time step; a shorter time step is more accurate"));
                 }
                 let flux_scale = dt / (rho_c * h);
+                // The temperature the lattice counts from (the model's, never how it is shown).
+                let zero = t.temperature_zero;
                 let mut faces = [ThermalCondition::Adiabatic {}; 6];
                 for face in BoxFace::ALL {
                     let c = t.faces.get(face);
@@ -418,14 +434,15 @@ impl Setup {
                         )));
                     }
                     if let Some(slot) = faces.get_mut(face.index()) {
-                        *slot = lattice_thermal(c, flux_scale)?;
+                        *slot = lattice_thermal(c, flux_scale, zero)?;
                     }
                 }
                 let beta = t.expansion.unwrap_or(0.0);
                 Some(ThermalSetup {
                     tau,
                     diffusivity,
-                    initial_temperature: t.initial_temperature,
+                    initial_temperature: kelvin_above(t.initial_temperature, zero),
+                    zero,
                     buoyancy: t.gravity.map(|g| -beta * g * dt * dt / h),
                     faces,
                     heat_scale: rho_c * h * h * h / dt,
@@ -454,7 +471,7 @@ impl Setup {
                         if sb.face.selects(&fieldcraft_model::GeometryRef::face(body.as_str(), name.as_str())?) {
                             hit = true;
                             if let Some(slot) = thermal_faces.get_mut(tag) {
-                                *slot = lattice_thermal(&sb.condition, flux_scale)?;
+                                *slot = lattice_thermal(&sb.condition, flux_scale, ts.zero)?;
                             }
                         }
                     }
