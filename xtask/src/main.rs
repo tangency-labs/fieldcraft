@@ -55,11 +55,12 @@ commands:
                   and the flags CI plans its jobs with: everything (manifest, lock file,
                   toolchain, xtask or workflows changed), solver (the heavy tests or the oracle
                   are affected), wasm (a crate the wasm check builds is affected)
-  unit-factors    report literal unit-conversion factors (1e-3, 1e6, 273.15, 25.4, …) written
-                  outside the unit table, crates/model/src/units (report only, #579)
+  unit-factors    check for literal unit-conversion factors (1e-3, 1e6, 273.15, 25.4, …) written
+                  outside the unit table, crates/model/src/units (docs/units.md); the geometry
+                  frame is reported apart until its change lands
   wasm            cargo check every library crate and the web app for wasm32-unknown-unknown
   ci [--affected REV]
-                  fmt --check, assets, layers, clippy -D warnings, then the tests
+                  fmt --check, assets, layers, unit-factors, clippy -D warnings, then the tests
                   (not the heavy ones) with the wasm check alongside (stops at the first failing
                   step); --affected REV lints and tests only the crates `affected --base REV`
                   lists, and checks wasm only when it flags wasm
@@ -236,7 +237,8 @@ fn quick_gates() -> Result<(), String> {
     c.args(["fmt", "--all", "--", "--check"]);
     run(c, "cargo fmt --check")?;
     assets::run(&root())?;
-    cmd_layers()
+    cmd_layers()?;
+    unit_factors::run(&root())
 }
 
 /// `ci --affected REV`: the quick gates, then clippy and the tests of the affected crates only, and
