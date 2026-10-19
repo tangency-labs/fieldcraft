@@ -679,3 +679,23 @@ fn fans_and_porous_zones_are_refused_clearly() {
     let e = GpuFlow::with_options(&flow, Policy::from_env().expect("FIELDCRAFT_GPU names a policy"), Options::default()).err().map(|e| e.to_string());
     assert!(e.as_deref().is_some_and(|e| e.contains("Vent") && e.contains("cpu")), "{e:?}");
 }
+
+/// Conducting solids run on the CPU only for now: the backend says so before it looks for a
+/// device.
+#[test]
+fn conducting_solids_are_refused_clearly() {
+    let mut d = domain([0.0; 3], [1.0; 3], 0.125);
+    d.obstacles = vec!["Block".into()];
+    d.thermal = Some(fieldcraft_model::FluidThermal {
+        solids: vec![fieldcraft_model::ConductingSolid { body: "Block".into(), material: "Solid".into(), power: 1.0 }],
+        ..Default::default()
+    });
+    let mut m = Model::default();
+    m.add_material("Fluid", hot_fluid(1.0, 0.1, 0.1)).unwrap();
+    add_solid_material(&mut m, "Solid", 1.0, [1.0; 3], 1.0);
+    m.add_fluid_domain("Flow", d).unwrap();
+    m.add_step(Step::new("Run", step(1.0, 0.01, None)), None).unwrap();
+    let (_, flow) = prepare(&m, &[obstacle("Block", cuboid([0.25; 3], [0.75; 3]), &CUBOID_FACES)]);
+    let e = GpuFlow::with_options(&flow, Policy::from_env().expect("FIELDCRAFT_GPU names a policy"), Options::default()).err().map(|e| e.to_string());
+    assert!(e.as_deref().is_some_and(|e| e.contains("conduct heat through solids") && e.contains("cpu")), "{e:?}");
+}

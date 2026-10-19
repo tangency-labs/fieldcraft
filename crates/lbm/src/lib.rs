@@ -56,6 +56,7 @@
 #![allow(clippy::needless_range_loop)]
 
 pub mod backend;
+pub mod conduction;
 pub mod flow;
 pub mod lattice;
 pub mod outlet;
@@ -67,7 +68,7 @@ pub mod voxel;
 
 pub use backend::{Backend, Choice, Fields, register_backend};
 pub use flow::{Flow, Group, Link, OpenCell, Rule, Target, ThermalState, ZoneSample};
-pub use setup::ThermalSetup;
+pub use setup::{SolidSetup, ThermalSetup};
 pub use setup::{Obstacle, Setup, ZoneKind, ZoneSetup, fluid_step};
 pub use solve::{FluidResult, FluidStats, ForceHistory, Frame, HeatHistory, ZoneHistory, run, solve_fluid, solve_fluid_on};
 pub use steady::{MonitorSample, SteadyReport, SteadySetup, StopReason};

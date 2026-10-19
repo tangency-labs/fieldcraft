@@ -669,6 +669,31 @@ D3Q19 f32 ≈ 80 B/cell (with flags): 10⁸ cells ≈ 8 GB. These numbers decide
 | Lid-driven cavity Re 100–1000 | U. Ghia, K. N. Ghia, C. T. Shin, JCP 48(3):387–411, 1982, DOI [10.1016/0021-9991(82)90058-4](https://doi.org/10.1016/0021-9991(82)90058-4) | published numerical reference values (not analytic: owner decision, same as Taylor bar) |
 | Flow past a cylinder 2D-1/2D-2/3D | M. Schäfer, S. Turek, *Benchmark computations of laminar flow around a cylinder*, NNFM 52:547–566, 1996, DOI [10.1007/978-3-322-89849-4_39](https://doi.org/10.1007/978-3-322-89849-4_39); LBM results: J. Geller et al., Comput. Fluids 35:888–897, 2006, DOI [10.1016/j.compfluid.2005.08.009](https://doi.org/10.1016/j.compfluid.2005.08.009) | drag/lift coefficient intervals and Strouhal number given by the benchmark (published numerical reference) |
 | Sphere Stokes drag | analytic | `F = 6πμRU` (with confinement correction) |
+| Differentially heated cavity Ra 10³–10⁶ | G. de Vahl Davis, *Natural convection of air in a square cavity: a bench mark numerical solution*, Int. J. Numer. Meth. Fluids 3:249–264, 1983 | hot-wall Nusselt numbers (published numerical reference) |
+| Cavity with a centred conducting body (conjugate) | J. M. House, C. Beckermann, T. F. Smith, *Effect of a centered conducting body on natural convection heat transfer in an enclosure*, Numer. Heat Transfer A 18(2):213–225, 1990, DOI [10.1080/10407789008944791](https://doi.org/10.1080/10407789008944791) | hot-wall Nusselt numbers at Ra 10⁵ for conductivity ratios 0.2, 1, 5, and the conduction limit (Table 3; published numerical reference) |
+
+### C9. Heat: the scalar lattice and conjugate heat transfer, as implemented
+
+- **Temperature lattice.** D3Q7 BGK passive scalar on the flow's links, equilibrium linear in u
+  (T. Krüger et al., *The Lattice Boltzmann Method: Principles and Practice*, Springer 2017,
+  ch. 8); its velocity-dependent numerical diffusion −(τ_T − ½) u² (B. Chopard, J.-L. Falcone,
+  J. Latt, Eur. Phys. J. Special Topics 171:245–249, 2009) bounds the lattice speed of a heat
+  problem. Held temperatures by anti-bounce-back, fluxes added to the bounced population.
+- **Conduction in solids.** Cell-centred finite volumes on the lattice's cells with the
+  harmonic mean of the two cells' conductivities on each face (S. V. Patankar, *Numerical Heat
+  Transfer and Fluid Flow*, Hemisphere 1980, ch. 4), explicit and sub-cycled under its stability
+  limit (`fieldcraft_lbm::conduction`).
+- **Fluid–solid interface.** Each scalar link into a conducting cell is an anti-bounce-back at
+  the temperature that equalises the conductive fluxes of the two half cells, and the heat it
+  takes is given to the solid cell: continuity of temperature and flux with heat conserved to
+  round-off. The link's heat is affine in the solid's temperature, so the solid takes it
+  point-implicitly (an explicit link needs `Σ 2 w_q k_s / (k_s + k_f) < ρ c / (ρ c)_f`, which a
+  corner cell of aluminium in water breaks). Interface conditions for the thermal lattice equation, conjugate ones among them:
+  L. Li, R. Mei, J. F. Klausner, *Boundary conditions for thermal lattice Boltzmann equation
+  method*, J. Comput. Phys. 237:366–395, 2013.
+- **Limits.** Staircase interfaces (cell faces, not the true surface): curved interfaces lose
+  accuracy, which cut cells with the flux on the true surface recover; a steady run scales the
+  solids' heat capacity, so its transient is not physical.
 
 ---
 

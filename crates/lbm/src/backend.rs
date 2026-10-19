@@ -48,6 +48,9 @@ pub trait Backend {
     fn groups(&self) -> &[Group];
     fn fluid_cells(&self) -> usize;
     fn is_fluid(&self, cell: usize) -> bool;
+    /// The cells of each obstacle that conducts heat (in the setup's order of solids), in cell
+    /// order; a backend that does not conduct refuses such a flow when it is made and has none.
+    fn conducting(&self) -> &[Vec<u32>];
     /// Obstacles that cover no cell centre.
     fn empty_obstacles(&self) -> &[String];
 }

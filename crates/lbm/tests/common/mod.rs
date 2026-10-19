@@ -63,23 +63,25 @@ pub fn model(density: f64, nu: f64, domain: FluidDomain, procedure: Procedure) -
 /// ρ α, unit specific heat), so k / (ρ c) = α.
 pub fn hot_model(density: f64, nu: f64, alpha: f64, domain: fieldcraft_model::FluidDomain, procedure: Procedure) -> Model {
     let mut m = Model::default();
-    m.add_material(
-        "Fluid",
-        Material {
-            density: Some(density),
-            fluid: Some(Fluid::Newtonian { viscosity: nu * density }),
-            thermal: Some(fieldcraft_model::Thermal {
-                conductivity: Some(fieldcraft_model::Directional::Isotropic(density * alpha)),
-                specific_heat: Some(1.0),
-                ..Default::default()
-            }),
-            ..Material::default()
-        },
-    )
-    .unwrap();
+    m.add_material("Fluid", hot_fluid(density, nu, alpha)).unwrap();
     m.add_fluid_domain("Flow", domain).unwrap();
     m.add_step(Step::new("Run", procedure), None).unwrap();
     m
+}
+
+/// A fluid with heat: density ρ, kinematic viscosity ν, thermal diffusivity α (conductivity ρ α,
+/// unit specific heat).
+pub fn hot_fluid(density: f64, nu: f64, alpha: f64) -> Material {
+    Material {
+        density: Some(density),
+        fluid: Some(Fluid::Newtonian { viscosity: nu * density }),
+        thermal: Some(fieldcraft_model::Thermal {
+            conductivity: Some(fieldcraft_model::Directional::Isotropic(density * alpha)),
+            specific_heat: Some(1.0),
+            ..Default::default()
+        }),
+        ..Material::default()
+    }
 }
 
 /// The setup and the flow at its initial state.
@@ -265,4 +267,45 @@ pub fn obstacle(body: &str, surface: BoundarySurface, faces: &[&str]) -> Obstacl
 /// degrees Celsius, so these are the lattice's own temperatures.
 pub fn kelvin(celsius: f64) -> f64 {
     fieldcraft_model::units::celsius_to_kelvin(celsius)
+}
+
+/// An axis-aligned box from `lo` to `hi`. Faces: 0 x_min, 1 x_max, 2 y_min, 3 y_max, 4 z_min,
+/// 5 z_max.
+pub fn cuboid(lo: [f64; 3], hi: [f64; 3]) -> BoundarySurface {
+    let corner = |k: usize| [0, 1, 2].map(|a| if k >> a & 1 == 1 { hi[a] } else { lo[a] });
+    let positions: Vec<[f64; 3]> = (0..8).map(corner).collect();
+    let mut tris = Vec::new();
+    let mut tags = Vec::new();
+    for axis in 0..3 {
+        let (t1, t2) = ((axis + 1) % 3, (axis + 2) % 3);
+        for side in 0..2u32 {
+            let v = |a: u32, b: u32| ((side as usize) << axis | (a as usize) << t1 | (b as usize) << t2) as u32;
+            tris.push([v(0, 0), v(1, 0), v(1, 1)]);
+            tris.push([v(0, 0), v(1, 1), v(0, 1)]);
+            tags.extend([2 * axis as u32 + side; 2]);
+        }
+    }
+    surface(positions, tris, tags, |_, tag| {
+        let mut n = [0.0; 3];
+        n[tag as usize / 2] = if tag % 2 == 1 { 1.0 } else { -1.0 };
+        n
+    })
+}
+
+/// The face names of a [`cuboid`].
+pub const CUBOID_FACES: [&str; 6] = ["x_min", "x_max", "y_min", "y_max", "z_min", "z_max"];
+
+/// Add a conducting material `name`: density ρ, conductivity k (per axis), specific heat c.
+pub fn add_solid_material(m: &mut Model, name: &str, density: f64, k: [f64; 3], c: f64) {
+    let conductivity =
+        if k[0] == k[1] && k[1] == k[2] { fieldcraft_model::Directional::Isotropic(k[0]) } else { fieldcraft_model::Directional::Orthotropic(k) };
+    m.add_material(
+        name,
+        Material {
+            density: Some(density),
+            thermal: Some(fieldcraft_model::Thermal { conductivity: Some(conductivity), specific_heat: Some(c), ..Default::default() }),
+            ..Material::default()
+        },
+    )
+    .unwrap();
 }

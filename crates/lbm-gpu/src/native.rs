@@ -172,6 +172,9 @@ impl GpuFlow {
 
     /// [`GpuFlow::new`] with `options`.
     pub fn with_options(flow: &Flow, policy: Policy, options: Options) -> Result<GpuFlow> {
+        if flow.thermal().is_some_and(|t| t.solid().is_some()) {
+            return Err(Error::Invalid("the GPU backend does not conduct heat through solids yet: solve on the CPU (`backend: \"cpu\"`)".into()));
+        }
         if let Some(zone) = flow.zones().first() {
             return Err(Error::Invalid(format!(
                 "the GPU backend does not step fans or porous zones yet (`{}`): solve on the CPU (`backend: \"cpu\"`)",
@@ -867,5 +870,9 @@ impl Backend for GpuFlow {
 
     fn empty_obstacles(&self) -> &[String] {
         &self.empty_obstacles
+    }
+
+    fn conducting(&self) -> &[Vec<u32>] {
+        &[]
     }
 }

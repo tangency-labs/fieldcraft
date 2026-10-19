@@ -65,6 +65,9 @@
 //! force of every cell (Guo forcing as for the constant acceleration). The heat each wall face
 //! receives is summed over its links like the momentum exchange.
 //!
+//! Obstacles that conduct heat carry their own temperature, conducted on their cells and coupled
+//! to this lattice through their faces (conjugate heat transfer, [`crate::conduction`]).
+//!
 //! # Layout and determinism
 //! Two arrays of populations, structure of arrays (`f[q n + cell]`), A–B pattern. Streaming
 //! pulls: every population of a cell comes from one source (a neighbour, a periodic image, the
@@ -78,6 +81,7 @@ use fieldcraft_model::{BoxFace, Collision, FaceCondition, Outflow, Profile, Ther
 
 use fieldcraft_parallel as parallel;
 
+use crate::conduction::{Interface, Layout, SolidHeat};
 use crate::lattice::{C, Q, W, c, equilibrium, moving_wall, opposite};
 use crate::outlet::{Action, Outlets, Populations};
 use crate::setup::{MAX_LATTICE_SPEED, Obstacle, Setup, ZoneKind, ZoneSetup};
@@ -224,6 +228,13 @@ pub struct ThermalState {
     /// The heat each group received in the last step (lattice units: temperature times cell
     /// faces per step).
     heat: Vec<f64>,
+    /// The obstacles that conduct heat; `None` without any.
+    solid: Option<SolidHeat>,
+    /// Per group: whether it is a face of a conducting obstacle, whose links the interface
+    /// handles (empty without conducting obstacles).
+    conjugate: Vec<bool>,
+    /// Whether the solids' temperatures stayed finite in the last step.
+    solid_finite: bool,
 }
 
 impl ThermalState {
@@ -250,6 +261,11 @@ impl ThermalState {
     /// Per open cell, the temperature it holds, or `None` to take its neighbour's.
     pub fn open(&self) -> &[Option<f64>] {
         &self.open
+    }
+
+    /// The conducting obstacles' cells and state, when there are any.
+    pub fn solid(&self) -> Option<&SolidHeat> {
+        self.solid.as_ref()
     }
 }
 
@@ -369,6 +385,34 @@ impl Flow {
             groups.extend(faces.names.iter().map(|name| Group { name: name.clone(), body: Some(o.body.clone()) }));
         }
 
+        // Conducting cells: per grid cell its index among them (empty without conducting solids),
+        // and per conducting cell its solid.
+        let solids = setup.thermal.as_ref().map_or(&[][..], |t| &t.solids[..]);
+        let mut solid_of = vec![None; setup.obstacles.len()];
+        for (kind, s) in solids.iter().enumerate() {
+            if let Some(slot) = solid_of.get_mut(s.obstacle) {
+                *slot = Some(kind);
+            }
+        }
+        let mut conducting = if solids.is_empty() { Vec::new() } else { filled(n, NONE, "conducting cells")? };
+        let (mut solid_cells, mut solid_kind) = (Vec::new(), Vec::new());
+        for (cell, slot) in conducting.iter_mut().enumerate() {
+            if let Some(&Some(kind)) = owner.get(cell).and_then(|k| solid_of.get(*k as usize)) {
+                *slot = solid_cells.len() as u32;
+                solid_cells.push(cell as u32);
+                solid_kind.push(kind);
+            }
+        }
+        // A powered solid that covers no cell would lose its power without a word.
+        if let Some(s) = solids.iter().enumerate().find(|(k, s)| s.power != 0.0 && !solid_kind.contains(k)).map(|(_, s)| s) {
+            return Err(Error::Invalid(format!(
+                "conducting solid `{}` generates heat but covers no cell centre: it is thinner than the spacing ({}) or outside the box; refine the spacing",
+                s.body, grid.spacing
+            )));
+        }
+        let conducting_at = |cell: usize| conducting.get(cell).copied().filter(|k| *k != NONE);
+        let mut interface: Vec<Interface> = Vec::new();
+
         let domain = &setup.domain;
         let periodic = [domain.faces.periodic(0), domain.faces.periodic(1), domain.faces.periodic(2)];
         let wall_velocity = |face: BoxFace| match *domain.faces.get(face) {
@@ -431,7 +475,13 @@ impl Flow {
                         match (fluid.get(from as usize).copied().unwrap_or(false), wrapped) {
                             (true, false) => continue,
                             (true, true) => Rule::Pull { from },
-                            (false, _) => obstacle_link(cell, from, q),
+                            (false, _) => {
+                                let rule = obstacle_link(cell, from, q);
+                                if let (true, Some(solid), Rule::Bounce { group, .. }) = (q < QT, conducting_at(from as usize), rule) {
+                                    interface.push(Interface { cell: cell as u32, q: q as u8, solid, group, weight: 0.0 });
+                                }
+                                rule
+                            }
                         }
                     }
                     Some(_) => {
@@ -587,6 +637,33 @@ impl Flow {
                         }
                     }
                 }
+                let solid = if solid_cells.is_empty() {
+                    None
+                } else {
+                    let walls = BoxFace::ALL.map(|face| {
+                        let wall = wall_velocity(face).is_some() || is_slip(face);
+                        wall.then(|| ts.faces.get(face.index()).copied().unwrap_or_default())
+                    });
+                    let layout = Layout { grid: &grid, periodic, conducting: &conducting, walls, kf: ts.conductivity };
+                    Some(SolidHeat::build(
+                        &layout,
+                        solids,
+                        std::mem::take(&mut solid_cells),
+                        &solid_kind,
+                        std::mem::take(&mut interface),
+                        ts.initial_temperature,
+                    )?)
+                };
+                let mut conjugate = Vec::new();
+                if solid.is_some() {
+                    conjugate = vec![false; groups.len()];
+                    for (k, faces) in setup.obstacles.iter().enumerate() {
+                        let (Some(Some(_)), Some(&first)) = (solid_of.get(k), base.get(k)) else { continue };
+                        for flag in conjugate.iter_mut().skip(first as usize).take(faces.names.len()) {
+                            *flag = true;
+                        }
+                    }
+                }
                 let buoyant = ts.buoyancy != [0.0; 3];
                 let state = ThermalState {
                     g: tg,
@@ -598,6 +675,9 @@ impl Flow {
                     groups: group_conditions,
                     open: open_t,
                     heat: vec![0.0; groups.len()],
+                    solid,
+                    conjugate,
+                    solid_finite: true,
                 };
                 (
                     Some(state),
@@ -929,7 +1009,7 @@ impl Flow {
             if let Some(t) = &mut self.thermal {
                 std::mem::swap(&mut t.g, &mut t.g2);
             }
-            if !self.update_temperature() {
+            if !(self.update_temperature() && self.conduct()) {
                 return Err(Error::Unstable(format!(
                     "the heat went unstable at time step {}: a temperature stopped being a number; lower the time step, refine the spacing or check the heat fluxes",
                     self.steps_done + 1
@@ -1026,12 +1106,47 @@ impl Flow {
             }
             if let (Rule::Bounce { group, .. } | Rule::Reflect { group, .. }, Some(back)) =
                 (link.rule, thermal_rule(g, s, groups, cell, q, link.rule))
+                && !t.conjugate.get(group as usize).copied().unwrap_or(false)
             {
                 let out = g.get(opposite(q) * s + cell).copied().unwrap_or(0.0);
                 if let Some(h) = t.heat.get_mut(group as usize) {
                     // what left the fluid toward the wall minus what came back
                     *h += out - back;
                 }
+            }
+        }
+        // Links into conducting cells: anti-bounce-back at the interface temperature, the heat
+        // to the solid cell.
+        // The heat a link takes, `out − back` with `back = −out + 2 w T_i`, is affine in the
+        // solid's temperature: `a − b T_s`. The solid steps with it implicit, then each link
+        // takes its heat at the solid's mean temperature over the step.
+        if let Some(sh) = &mut t.solid {
+            let link = |i: &Interface| {
+                let (cell, q) = (i.cell as usize, i.q as usize);
+                let w2 = 2.0 * WT.get(q).copied().unwrap_or(0.0);
+                let tf = t.temperature.get(cell).copied().unwrap_or(0.0);
+                let out = g.get(opposite(q) * s + cell).copied().unwrap_or(0.0);
+                (out, 2.0 * out - w2 * (1.0 - i.weight) * tf, w2 * i.weight)
+            };
+            for k in 0..sh.interface.len() {
+                let Some(i) = sh.interface.get(k).copied() else { continue };
+                let (_, a, b) = link(&i);
+                sh.link(i.solid, a, b);
+            }
+            t.solid_finite = sh.step();
+            for i in &sh.interface {
+                let (out, a, b) = link(i);
+                let heat = a - b * sh.effective.get(i.solid as usize).copied().unwrap_or(0.0);
+                if let Some(x) = t.g2.get_mut(i.q as usize * s + i.cell as usize) {
+                    *x = out - heat;
+                }
+                if let Some(h) = t.heat.get_mut(i.group as usize) {
+                    *h += heat;
+                }
+            }
+            // the box faces' heat from the solids (the box faces are the first six groups)
+            for (h, w) in t.heat.iter_mut().zip(sh.wall_heat) {
+                *h += w;
             }
         }
     }
@@ -1069,7 +1184,20 @@ impl Flow {
         }
     }
 
-    /// Every fluid cell's temperature from its populations.
+    /// The solids' temperatures (stepped with the scalar lattice's streaming, through their
+    /// links) into the field; false when one is not finite.
+    fn conduct(&mut self) -> bool {
+        let Some(t) = &mut self.thermal else { return true };
+        let Some(sh) = &t.solid else { return true };
+        let finite = t.solid_finite;
+        for (cell, temp) in sh.cells.iter().zip(&sh.temperature) {
+            if let Some(slot) = t.temperature.get_mut(*cell as usize) {
+                *slot = *temp;
+            }
+        }
+        finite
+    }
+
     /// The temperature of every fluid cell from its populations; false when one is not finite.
     fn update_temperature(&mut self) -> bool {
         let n = self.n;
@@ -1473,5 +1601,9 @@ impl crate::backend::Backend for Flow {
 
     fn empty_obstacles(&self) -> &[String] {
         &self.empty_obstacles
+    }
+
+    fn conducting(&self) -> &[Vec<u32>] {
+        self.thermal.as_ref().and_then(|t| t.solid.as_ref()).map_or(&[], |s| &s.by_solid)
     }
 }

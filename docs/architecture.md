@@ -27,7 +27,7 @@ crates in strictly lower layers.
 | L1 | `fieldcraft-render` | Display data without a GPU dependency: the visible faces, element edges and nodes of a model, the orbit camera, a CPU rasterizer for headless snapshots, geometry surfaces with their face boundaries, deformed shapes and banded contour plots of nodal results, slices, surface values and streamlines of flow fields on grids of cells, picking. | started |
 | L2 | `fieldcraft-solver` | Implicit solver: assembly from the resolved model, boundary conditions, sparse direct solution, linear static and modal analysis, stresses and reactions. | started |
 | L2 | `fieldcraft-explicit` | Explicit dynamics: central-difference time integration with lumped mass, one-point hex8 with hourglass control, nodal-pressure tet4, bulk viscosity, rigid walls, large deformation with objective rates, plasticity, damage and erosion, energy account, histories and field frames. | started |
-| L2 | `fieldcraft-lbm` | Lattice Boltzmann flow solver on the CPU: D3Q19 two-relaxation-time or recursive regularized scheme, bounce-back and slip walls, Zou–He inlets and outlets, convective outlets, obstacles voxelised from the face-tagged surface with exact predicates, momentum-exchange forces per face; a D3Q7 temperature lattice carried by the flow (held temperatures, heat fluxes, adiabatic faces, Boussinesq buoyancy, the heat into every face). Uses `mesh` for the predicates and the boundary surface. | started |
+| L2 | `fieldcraft-lbm` | Lattice Boltzmann flow solver on the CPU: D3Q19 two-relaxation-time or recursive regularized scheme, bounce-back and slip walls, Zou–He inlets and outlets, convective outlets, obstacles voxelised from the face-tagged surface with exact predicates, momentum-exchange forces per face; a D3Q7 temperature lattice carried by the flow (held temperatures, heat fluxes, adiabatic faces, Boussinesq buoyancy, the heat into every face) and conjugate heat transfer: conduction through the obstacles that conduct, coupled to it at their faces. Uses `mesh` for the predicates and the boundary surface. | started |
 | L3 | `fieldcraft-fsi` | Fluid–structure coupling between the L2 solvers (later). | planned |
 | L4 | `fieldcraft-doc` | The document: geometry, mesh, model, results, history. | planned |
 | L5 | `fieldcraft-io` | `.fieldcraft` files (docs/formats/fieldcraft.md): text model definition, binary mesh, geometry references with content hashes, the journal; atomic saves; autosave storage for crash recovery; read and write roots that confine an automation client's file access (`roots`). Bytes in, bytes out; the file system only in `fs`, `recovery` and `roots` (in the browser, files kept in memory: `memory`). Result files later. | started |
@@ -362,7 +362,8 @@ module docs and in `docs/solvers/literature.md` (Part I).
    periodic pair; obstacle bodies and moving-wall conditions on their named faces; initial
    velocity; body acceleration; optional `thermal` settings: the initial temperature, a thermal
    condition per box face and per named obstacle face — held temperature, heat flux or
-   adiabatic — and gravity with the expansion coefficient for buoyancy) and a fluid step (end
+   adiabatic — gravity with the expansion coefficient for buoyancy, and the obstacles that
+   conduct heat, each with its material and power) and a fluid step (end
    time or steps, optional time step, frames, the collision operator, the TRT parameter Λ).
    Deck writers refuse fluid steps.
 2. **Setup.** Lattice units from the spacing, the time step and the density. Without a given
@@ -390,7 +391,16 @@ module docs and in `docs/solvers/literature.md` (Part I).
    faces bounce-back, a flux is added to the bounced population; velocity inlets carry the
    held temperature in at the cell's velocity, pressure outlets copy their neighbour. The heat
    crossing every wall link is summed per face as the flow's force is. The temperature feeds
-   back through a per-cell Boussinesq force −β (T − T₀) g.
+   back through a per-cell Boussinesq force −β (T − T₀) g. Conducting obstacles carry their own
+   temperature on their cells (`conduction.rs`): finite-volume conduction with harmonic-mean
+   face conductivities per axis, explicit and sub-cycled, their power spread over their cells,
+   the heat they give a held or flux box face counted as that face's;
+   each D3Q7 link from the fluid into one is an anti-bounce-back at the interface temperature of
+   the two half cells in series, and the heat it takes from the fluid goes to the solid cell,
+   so heat is conserved to round-off; that heat is affine in the solid's temperature and taken
+   point-implicitly, which keeps the coupling stable for any heat capacity. A run to steady state scales the solids' heat capacity
+   down to the smallest the lattice allows (the steady temperatures do not depend on it). The
+   GPU backend refuses conducting solids for now.
 5. **Results.** Frames of velocity, gauge pressure and (with heat) temperature per cell (single
    precision), force and heat histories per wall and the fluid mass, in model units, stored
    per step like the implicit results.
@@ -407,7 +417,16 @@ conserved to round-off; bit-for-bit reproducibility. `crates/lbm/tests/thermal.r
 linear conduction between held plates to round-off; a flux wall against q H / k and the wall's
 heat balance; an inlet temperature carried through a plug flow; a periodic blob that keeps its
 total and returns after one lap; (ignored, minutes) the de Vahl Davis cavity at Ra 10³ and 10⁴
-against the published Nusselt numbers (both within 0.1 %). `crates/lbm/tests/benchmark.rs` (ignored, published
+against the published Nusselt numbers (both within 0.1 %). `crates/lbm/tests/conjugate.rs`
+(conjugate heat transfer): a composite wall in series to round-off (orthotropic too); a
+heat-generating slab at second order with its whole power reaching the plates; a heated wall
+under a channel flow against the conduction profile; a heated block in a channel conserving
+heat every step to round-off; a slow solid scaled for steady state landing on a long run's
+temperatures; House, Beckermann and Smith's cavity with a centred conducting body (conduction
+limit every run; Ra 10⁵, ignored: +0.5 % on 48 cells, converging at second order to −0.22 %
+extrapolated); Rayleigh's square array of cylinders against the Perrins series (conducting
+rods within 0.3 %, insulating ones a first-order staircase error, −0.85 % on 64 cells); a
+low-capacity solid with strong links stable at τ_T = 0.52. `crates/lbm/tests/benchmark.rs` (ignored, published
 reference values): Schäfer–Turek 2D-1 and 2D-2, the lid-driven cavity at Re 100 (Ghia et al. 1982).
 
 ## Commands

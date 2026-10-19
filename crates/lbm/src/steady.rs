@@ -238,8 +238,10 @@ impl Monitor {
                     (s, vec![rms])
                 }
                 Kind::Temperature => {
-                    let s: Vec<f64> = fluid.iter().map(|c| temperature.get(*c).copied().unwrap_or(t0) - t0).collect();
-                    let rms = norm(&s) / n.sqrt();
+                    // the fluid's cells and the conducting solids' (the slowest to settle)
+                    let cells = fluid.iter().copied().chain(flow.conducting().iter().flatten().map(|c| *c as usize));
+                    let s: Vec<f64> = cells.map(|c| temperature.get(c).copied().unwrap_or(t0) - t0).collect();
+                    let rms = norm(&s) / (s.len().max(1) as f64).sqrt();
                     (s, vec![rms])
                 }
                 Kind::MeanTemperature => {
@@ -404,6 +406,9 @@ mod tests {
             true
         }
         fn empty_obstacles(&self) -> &[String] {
+            &[]
+        }
+        fn conducting(&self) -> &[Vec<u32>] {
             &[]
         }
     }

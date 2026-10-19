@@ -108,6 +108,27 @@ pub struct ThermalSetup {
     pub faces: [ThermalCondition; 6],
     /// Power per lattice heat flow (a temperature per step through one cell face): ρ c Δx³ / Δt.
     pub heat_scale: f64,
+    /// The fluid's lattice conductivity, its lattice diffusivity `(τ_T − ½) / 4`.
+    pub conductivity: f64,
+    /// The obstacles that conduct heat.
+    pub solids: Vec<SolidSetup>,
+}
+
+/// An obstacle that conducts heat, in the fluid's lattice heat units (`crate::conduction`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SolidSetup {
+    pub body: String,
+    /// Its index in [`Setup::obstacles`].
+    pub obstacle: usize,
+    /// `k Δt / ((ρ c)_f Δx²)` along each axis.
+    pub conductivity: [f64; 3],
+    /// `ρ c / (ρ c)_f`, scaled for a steady state (see `scale`).
+    pub capacity: f64,
+    /// The factor its heat capacity is scaled by to reach a steady state sooner (1 for a
+    /// transient run).
+    pub capacity_scale: f64,
+    /// Its power per step, `P Δt / ((ρ c)_f Δx³)`.
+    pub power: f64,
 }
 
 /// A fluid step in lattice units.
@@ -228,6 +249,32 @@ fn zones(domain: &FluidDomain, grid: &Grid, viscosity: f64, dt: f64, density: f6
         }
         let relaxation = f.relaxation.unwrap_or(DEFAULT_FAN_RELAXATION);
         out.push(ZoneSetup { name: f.name.clone(), kind: ZoneKind::Fan { sign, curve, relaxation }, lo, hi, axis });
+    }
+    Ok(out)
+}
+
+/// The domain's conducting obstacles in lattice units (`rho_c` the fluid's `ρ c`).
+fn solids(model: &Model, t: &fieldcraft_model::FluidThermal, obstacles: &[String], rho_c: f64, dt: f64, h: f64) -> Result<Vec<SolidSetup>> {
+    let scale = dt / (h * h);
+    let mut out = Vec::with_capacity(t.solids.len());
+    for c in &t.solids {
+        let obstacle = obstacles
+            .iter()
+            .position(|o| *o == c.body)
+            .ok_or_else(|| Error::NotFound(format!("conducting solid `{}` is not an obstacle of the domain", c.body)))?;
+        let m = model.material(&c.material);
+        let props = m.and_then(|m| m.thermal.as_ref());
+        let (Some(k), Some(cp), Some(density)) = (props.and_then(|p| p.conductivity), props.and_then(|p| p.specific_heat), m.and_then(|m| m.density))
+        else {
+            return Err(Error::Invalid(format!("material `{}` needs a density, a conductivity and a specific heat to conduct heat", c.material)));
+        };
+        let conductivity = k.axes().map(|k| k * scale / rho_c);
+        let capacity = density * cp / rho_c;
+        let power = c.power * dt / (rho_c * h * h * h);
+        if !(conductivity.iter().all(|k| *k > 0.0 && k.is_finite()) && capacity > 0.0 && capacity.is_finite() && power.is_finite()) {
+            return Err(Error::Invalid(format!("conducting solid `{}`: its material does not fit this lattice", c.body)));
+        }
+        out.push(SolidSetup { body: c.body.clone(), obstacle, conductivity, capacity, capacity_scale: 1.0, power });
     }
     Ok(out)
 }
@@ -402,7 +449,7 @@ impl Setup {
         // Heat: the scalar lattice's relaxation time from the diffusivity, the conditions in
         // lattice units (a flux is a temperature per step through a cell face).
         let mut warnings = Vec::new();
-        let thermal = match &domain.thermal {
+        let mut thermal = match &domain.thermal {
             None => None,
             Some(t) => {
                 let props = material.and_then(|m| m.thermal.as_ref());
@@ -458,6 +505,8 @@ impl Setup {
                     buoyancy: t.gravity.map(|g| -beta * g * dt * dt / h),
                     faces,
                     heat_scale: rho_c * h * h * h / dt,
+                    conductivity: alpha,
+                    solids: solids(model, t, &domain.obstacles, rho_c, dt, h)?,
                 })
             }
         };
@@ -507,6 +556,22 @@ impl Setup {
                 }
             }
             domain_obstacles.push(ObstacleFaces { index, names, velocities, thermal: thermal_faces });
+        }
+        // A run to steady state: the solids' heat capacity as small as the lattice allows.
+        if steady.is_some()
+            && let Some(ts) = &mut thermal
+        {
+            for s in &mut ts.solids {
+                let floor = crate::conduction::smallest_capacity(s.conductivity);
+                if floor < s.capacity {
+                    s.capacity_scale = floor / s.capacity;
+                    s.capacity = floor;
+                    warnings.push(format!(
+                        "conducting solid `{}`: its heat capacity is scaled by {:.3e} to reach the steady state sooner; the temperatures before it are not a physical transient",
+                        s.body, s.capacity_scale
+                    ));
+                }
+            }
         }
         let zones = zones(&domain, &grid, viscosity, dt, density)?;
         if mach > MACH_WARNING {
