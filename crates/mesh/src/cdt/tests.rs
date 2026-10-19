@@ -135,9 +135,9 @@ fn caps_are_reported() {
     let (p, t) = schonhardt(30.0);
     let s = surface(&p, &t, [0.0, 0.0, 0.75]);
     let none = CdtOptions { max_steiner: 0, max_tets: 1_000_000 };
-    assert!(matches!(tetrahedralize(&s, &none), Err(Error::Limit(_))));
+    assert!(matches!(tetrahedralize(&s, &none), Err(ref e) if e.kind() == Some(crate::Kind::Limit)));
     let few = CdtOptions { max_steiner: 1000, max_tets: 10 };
-    assert!(matches!(tetrahedralize(&s, &few), Err(Error::Limit(_))));
+    assert!(matches!(tetrahedralize(&s, &few), Err(ref e) if e.kind() == Some(crate::Kind::Limit)));
 }
 
 fn e(x: f64, y: f64, z: f64) -> GenericPoint {

@@ -517,7 +517,8 @@ fn locate_face(facets: &[Vec<[f64; 3]>], at: &Located) -> Result<u32, String> {
     for f in facets {
         let reach = at.reach(f).ok_or("its mesh has a facet larger than the body")?;
         for p in samples(f) {
-            let (g, _) = at.nearest(p, reach).ok_or_else(|| format!("the mesh on it lies off every face of the design near {p:?}"))?;
+            // Its point is in the geometry's millimetres, which the user may not read: not named.
+            let (g, _) = at.nearest(p, reach).ok_or("the mesh on it lies off every face of the design")?;
             match face {
                 None => face = Some(g),
                 Some(h) if h != g => {
@@ -531,7 +532,9 @@ fn locate_face(facets: &[Vec<[f64; 3]>], at: &Located) -> Result<u32, String> {
     let g = face.ok_or("no mesh lies on it to find it by")?;
     let want = at.areas.get(g as usize).copied().unwrap_or(0.0);
     if !(want > 0.0) || (area - want).abs() > AREA_TOLERANCE * want {
-        return Err(format!("the mesh on it covers {area:.6} of the {want:.6} of face {}: a part of a face, or more than one", at.name(g)));
+        // As a share of the face: its areas are in the geometry's mm².
+        let share = if want > 0.0 { 100.0 * area / want } else { f64::INFINITY };
+        return Err(format!("the mesh on it covers {share:.1} % of the area of face {}: a part of a face, or more than one", at.name(g)));
     }
     Ok(g)
 }

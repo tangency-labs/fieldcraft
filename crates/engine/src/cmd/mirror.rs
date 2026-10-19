@@ -171,7 +171,7 @@ fn mirror_mesh(s: &mut Session, p: &Value) -> Result<Value> {
     let model = &mut s.model;
     let cleared = super::replace::clear(model, image.values().map(|(name, _)| name.as_str()));
     let before = model.clone();
-    let r = mirror(model, &region, point, n, ON_PLANE * diagonal).map_err(|e| EngineError::Params(e.to_string()))?;
+    let r = mirror(model, &region, point, n, ON_PLANE * diagonal)?;
     tag_image(model, &before, &r, &image, design.as_deref(), point, n, diagonal)?;
     let added_nodes = model.nodes().len() - before.nodes().len();
     let images: Vec<Value> = image.iter().map(|(b, (t, shape))| json!({"body": b, "image": t, "in_design": shape.is_some()})).collect();
@@ -212,7 +212,7 @@ fn tag_image(
         let mesh = shape.tessellate(tolerance)?;
         let options = SurfaceOptions { weld_distance: mesh.weld_distance, ..SurfaceOptions::default() };
         let surface = BoundarySurface::new(&mesh.positions, &mesh.triangles, &mesh.tri_face, &options)
-            .map_err(|e| EngineError::Params(format!("body `{target}`: {e}")))?;
+            .map_err(|e| EngineError::context(format!("body `{target}`"), e))?;
         let names = shape.faces().iter().map(|f| f.name.clone()).collect();
         targets.insert(target.as_str(), (Tessellation::new(&surface, Vec::new()), names));
     }

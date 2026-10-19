@@ -315,10 +315,11 @@ pub(crate) fn finish(
     }
     if invalid > 0 {
         let at = first_invalid.and_then(|e| quads.get(e)).and_then(|q| nodes.get(q[0] as usize)).copied().unwrap_or_default();
-        return Err(Error::Failed(format!(
-            "{invalid} of {} quadrilaterals are inverted or degenerate (first near {at:?}); refine the boundary there or use a finer size",
-            quads.len()
-        )));
+        return Err(Error::failed(crate::message![
+            format!("{invalid} of {} quadrilaterals are inverted or degenerate (first near ", quads.len()),
+            crate::message::point(at),
+            "); refine the boundary there or use a finer size"
+        ]));
     }
     if !quads.is_empty() {
         stats.min_scaled_jacobian = sj;

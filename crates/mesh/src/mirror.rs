@@ -100,7 +100,7 @@ pub fn mirror(model: &mut Model, region: &BTreeSet<u32>, point: [f64; 3], normal
         return Err(Error::Invalid("the mirror plane needs a finite point and a non-zero normal".into()));
     }
     if !(tol.is_finite() && tol > 0.0) {
-        return Err(Error::Invalid(format!("the merge distance must be a positive number, not {tol}")));
+        return Err(Error::invalid(crate::message!["the merge distance must be a positive number, not ", crate::message::length(tol)]));
     }
     let n = normal.map(|x| x / len);
     let mut elements = Vec::with_capacity(region.len());

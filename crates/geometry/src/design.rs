@@ -49,7 +49,8 @@ pub struct FeatureError {
 impl FeatureError {
     /// One line for the person opening the design, naming the bodies it may change.
     pub fn warning(&self) -> String {
-        format!("{} failed to build, so {} may differ from the design: {}", self.feature, quoted(&self.bodies), self.message)
+        // The message is SolidCraft's own, in the design's units.
+        format!("{} failed to build, so {} may differ from the design (SolidCraft: {})", self.feature, quoted(&self.bodies), self.message)
     }
 }
 

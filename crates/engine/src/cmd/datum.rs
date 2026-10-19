@@ -515,6 +515,7 @@ pub(super) fn recut(s: &mut Session) -> Result<super::replace::Cleared> {
 }
 
 fn partition(s: &mut Session, p: &Value) -> Result<Value> {
+    let display = s.units().clone();
     let name = super::name(p)?.to_string();
     let datum: String = super::req(p, "datum")?;
     let bodies: Vec<String> = super::opt(p, "bodies")?.unwrap_or_default();
@@ -539,7 +540,7 @@ fn partition(s: &mut Session, p: &Value) -> Result<Value> {
     for (k, cell) in cells.iter().enumerate() {
         fieldcraft_model::progress::count(k as f64);
         fieldcraft_model::progress::check()?;
-        if let Some(why) = design.body(cell).and_then(|shape| unmeshable(shape, None).err()) {
+        if let Some(why) = design.body(cell).and_then(|shape| unmeshable(shape, None, &display).err()) {
             warnings.push(format!(
                 "partition `{name}`: cell `{cell}` has a boundary no mesher takes ({why}): the plane passes within the kernel's tolerance of a face, edge or vertex it cut (along a face, through the axis of a hole); move the plane off it (by a fraction of the element size)"
             ));
@@ -567,12 +568,13 @@ fn partition(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// Whether a cell's boundary, tessellated as the meshers take it (by default, or at `tolerance`), bounds a volume mesh:
 /// the defects (open edges, edges on three triangles) when it does not.
-pub(super) fn unmeshable(shape: &fieldcraft_geometry::Shape, tolerance: Option<f64>) -> Result<()> {
+/// Why `shape`'s boundary bounds no volume mesh, its numbers shown in `display`.
+pub(super) fn unmeshable(shape: &fieldcraft_geometry::Shape, tolerance: Option<f64>, display: &fieldcraft_model::DisplaySystem) -> Result<()> {
     let input = super::hex::shape_input(shape, tolerance)?;
     let options = fieldcraft_mesh::surface::SurfaceOptions { weld_distance: input.mesh.weld_distance, ..Default::default() };
     fieldcraft_mesh::surface::BoundarySurface::new(&input.mesh.positions, &input.mesh.triangles, &input.mesh.tri_face, &options)
         .map(|_| ())
-        .map_err(|e| EngineError::Params(e.to_string()))
+        .map_err(|e| EngineError::Mesh(e).shown(crate::units::geometry(), display))
 }
 
 fn datum_suppress(s: &mut Session, p: &Value) -> Result<Value> {

@@ -440,7 +440,7 @@ fn build(ctx: &Ctx, topo: &Topology, refine: u32) -> Result<Raw> {
         }
     }
     let stages: usize = topo.rings.first().map_or(0, Vec::len);
-    let description = format!(
+    let description = crate::message![format!(
         "swept from face {} to face {} through {stages} stage{} of linking faces: {n_layers} layers of {} {} source quadrilaterals",
         brep.face_tag(topo.source),
         brep.face_tag(topo.target),
@@ -453,7 +453,7 @@ fn build(ctx: &Ctx, topo: &Topology, refine: u32) -> Result<Raw> {
             region::Scheme::Disk => "disk",
             region::Scheme::Free => "free",
         }
-    );
+    )];
     Ok(Raw { nodes: nodes.xyz, hexes, description })
 }
 

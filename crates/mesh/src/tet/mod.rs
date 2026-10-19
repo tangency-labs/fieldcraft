@@ -481,7 +481,7 @@ pub fn quality_mesh(surface: &BoundarySurface, cdt: &TetMesh, analytic: Vec<Opti
     let (lo, hi) = bounds(surface.points());
     let global = match o.size {
         Some(h) if h > 0.0 && h.is_finite() => h,
-        Some(h) => return Err(Error::Invalid(format!("size {h} must be a positive number"))),
+        Some(h) => return Err(Error::invalid(crate::message!["size ", crate::message::length(h), " must be a positive number"])),
         None => measure::dist(lo, hi) / 20.0,
     };
     if !(global > 0.0 && global.is_finite()) {

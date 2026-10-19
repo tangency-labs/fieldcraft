@@ -312,7 +312,7 @@ pub(super) fn mesh_body(
             surface_volume: surface.volume(),
         })
     };
-    mesh().map_err(|e| if several && !e.is_cancelled() { EngineError::Params(format!("body `{}`: {e}", input.name)) } else { e })
+    mesh().map_err(|e| if several { EngineError::context(format!("body `{}`", input.name), e) } else { e })
 }
 
 fn tet_generate(s: &mut Session, p: &Value) -> Result<Value> {
@@ -822,8 +822,9 @@ fn surface_input<'a>(s: &'a Session, p: &Value) -> Result<Cow<'a, SurfaceMesh>> 
     }
 }
 
-fn defect_json(d: &Defect) -> Value {
-    json!({"kind": d.kind(), "message": d.to_string(), "at": d.at()})
+fn defect_json(d: &Defect, display: &fieldcraft_model::DisplaySystem) -> Value {
+    let message = d.message().render(&crate::units::MeshUnits { from: crate::units::geometry(), to: display });
+    json!({"kind": d.kind(), "message": message, "at": d.at()})
 }
 
 fn surface_check(s: &mut Session, p: &Value) -> Result<Value> {
@@ -832,7 +833,9 @@ fn surface_check(s: &mut Session, p: &Value) -> Result<Value> {
     let surface = match BoundarySurface::new(&mesh.positions, &mesh.triangles, &mesh.tri_face, &options) {
         Ok(surface) => surface,
         Err(fieldcraft_mesh::Error::Surface(d)) => {
-            return Ok(json!({"valid": false, "defects": {"count": d.total, "listed": d.listed.iter().map(defect_json).collect::<Vec<_>>()}}));
+            return Ok(
+                json!({"valid": false, "defects": {"count": d.total, "listed": d.listed.iter().map(|x| defect_json(x, s.units())).collect::<Vec<_>>()}}),
+            );
         }
         Err(e) => return Err(e.into()),
     };
@@ -1278,7 +1281,7 @@ mod tests {
         let mut s = Session { design: Some(design), limits: Limits { max_tets: 10, ..Limits::default() }, ..Session::default() };
         let plate = json!({"body": "Body1", "tolerance": 0.5});
         let refused = s.execute("mesh.tet.generate", &plate).unwrap_err();
-        assert!(matches!(refused, EngineError::Mesh(fieldcraft_mesh::Error::Limit(_))), "{refused}");
+        assert!(matches!(refused, EngineError::Mesh(ref e) if e.kind() == Some(fieldcraft_mesh::Kind::Limit)), "{refused}");
         assert!(s.model.elements().is_empty());
         let r = s.execute("mesh.tet.generate", &json!({"body": "Body1", "tolerance": 0.5, "max_tets": 1_000_000})).unwrap();
         assert!(r["elements"].as_u64().unwrap() > 0, "{r}");

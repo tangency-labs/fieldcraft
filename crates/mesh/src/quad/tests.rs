@@ -306,7 +306,7 @@ fn no_smoothing_is_still_valid() {
 fn hostile_free_input() {
     let s = UniformSize(1.0);
     let ok = rect(0.0, 0.0, 4.0, 4.0, 4, 4);
-    let invalid = |loops: Vec<Vec<[f64; 2]>>| matches!(free_quad_mesh(&loops, &s, &opts()), Err(Error::Invalid(_)));
+    let invalid = |loops: Vec<Vec<[f64; 2]>>| matches!(free_quad_mesh(&loops, &s, &opts()), Err(ref e) if e.kind() == Some(crate::Kind::Invalid));
     assert!(invalid(vec![]));
     assert!(invalid(vec![vec![[0.0, 0.0], [1.0, 0.0]]]));
     // Odd count: an error, never a silent repair.
@@ -346,11 +346,16 @@ fn hostile_free_input() {
     assert!(invalid(vec![rect(0.0, 0.0, 10.0, 10.0, 10, 10), circle(4.0, 5.0, 2.0, 16), circle(6.0, 5.0, 2.0, 16)]));
     // Bad size fields.
     for h in [0.0, -1.0, f64::NAN, f64::INFINITY] {
-        assert!(matches!(free_quad_mesh(std::slice::from_ref(&ok), &UniformSize(h), &opts()), Err(Error::Invalid(_))), "{h}");
+        assert!(
+            matches!(free_quad_mesh(std::slice::from_ref(&ok), &UniformSize(h), &opts()), Err(ref e) if e.kind() == Some(crate::Kind::Invalid)),
+            "{h}"
+        );
     }
     // Limits.
-    assert!(matches!(free_quad_mesh(std::slice::from_ref(&ok), &UniformSize(1e-4), &opts()), Err(Error::Limit(_))));
-    assert!(matches!(free_quad_mesh(&[ok], &UniformSize(0.1), &QuadOptions { max_elements: 10, ..opts() }), Err(Error::Limit(_))));
+    assert!(matches!(free_quad_mesh(std::slice::from_ref(&ok), &UniformSize(1e-4), &opts()), Err(ref e) if e.kind() == Some(crate::Kind::Limit)));
+    assert!(
+        matches!(free_quad_mesh(&[ok], &UniformSize(0.1), &QuadOptions { max_elements: 10, ..opts() }), Err(ref e) if e.kind() == Some(crate::Kind::Limit))
+    );
 }
 
 #[test]
@@ -385,7 +390,7 @@ fn random_boundaries_never_panic() {
                 check(&m, &loops);
                 meshed += 1;
             }
-            Err(Error::Invalid(_)) => rejected += 1,
+            Err(ref e) if e.kind() == Some(crate::Kind::Invalid) => rejected += 1,
             Err(e) => panic!("case {case}: {e}"),
         }
     }
@@ -454,7 +459,7 @@ fn mapped_hostile() {
     // A region whose TFI folds: the top side dips almost to the bottom between its corners.
     let fold = vec![[0.0, 0.0], [1.0, 0.0], [2.0, 0.0], [3.0, 0.0], [4.0, 0.0], [4.0, 4.0], [3.0, 4.0], [2.2, 0.2], [1.8, 0.2], [1.0, 4.0]];
     let r = mapped_quad_mesh(&fold, [0, 4, 5, 9], &opts());
-    assert!(matches!(r, Err(Error::Failed(_)) | Err(Error::Invalid(_))), "{r:?}");
+    assert!(matches!(r, Err(ref e) if matches!(e.kind(), Some(crate::Kind::Failed | crate::Kind::Invalid))), "{r:?}");
 }
 
 #[test]

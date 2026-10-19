@@ -116,12 +116,12 @@ fn walls_beyond_the_limits_fail_before_anything_is_built() {
     // Too few levels: the requested size needs 2, the shrunk root 1.
     let shallow = OctreeOptions { max_depth: 0, curvature_levels: 0, ..OctreeOptions::default() };
     let e = octree_hex_mesh(&s, &UniformSize(3.0), &shallow).unwrap_err().to_string();
-    assert!(e.contains("walls 1.0000 thick") && e.contains("levels"), "{e}");
+    assert!(e.contains("walls 1 thick") && e.contains("levels"), "{e}");
     // Too few cells: refused with the count, at once.
     let small = OctreeOptions { max_elements: 50, ..OctreeOptions::default() };
     let start = std::time::Instant::now();
     let e = octree_hex_mesh(&s, &UniformSize(3.0), &small).unwrap_err().to_string();
-    assert!(e.contains("walls 1.0000 thick") && e.contains("more than"), "{e}");
+    assert!(e.contains("walls 1 thick") && e.contains("more than"), "{e}");
     assert!(start.elapsed().as_secs_f64() < 5.0);
 }
 

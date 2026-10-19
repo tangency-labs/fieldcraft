@@ -380,7 +380,10 @@ impl Complex {
         let seed = match self.locate(v, start)? {
             Located::Vertex(u) => {
                 let at = self.approx(u)?;
-                return Err(Error::Failed(format!("a Steiner point coincides with vertex {u} at {at:?}")));
+                return Err(Error::Measured(
+                    crate::Kind::Failed,
+                    crate::message![format!("a Steiner point coincides with vertex {u} at "), crate::message::point(at)],
+                ));
             }
             Located::Inside(t) => t,
         };

@@ -177,6 +177,11 @@ fn geometry_and_mesh_replies_name_no_fixed_unit() {
         ("mesh.hex.generate", json!({"body": "Plate", "size": 1e-9})),
         ("mesh.hex.project", json!({"body": "Plate", "size": 1e-9})),
         ("mesh.hex.octree", json!({"body": "Plate", "size": 1e-9})),
+        // The meshers' own refusals: a weld limit, an octree grid limit, a point.
+        ("mesh.surface.check", json!({"body": "Plate", "weld_distance": 10})),
+        ("mesh.tet.generate", json!({"body": "Plate", "weld_distance": 10})),
+        ("mesh.hex.octree", json!({"body": "Plate", "size": 0.01, "max_depth": 1, "max_elements": 10})),
+        ("mesh.planar", json!({"polygon": [[0, 0], [2, 0], [1, 1], [2, 2], [0, 2], [1, 1]], "size": 0.1})),
     ];
     for (command, params) in runs {
         match s.execute(command, &params) {
@@ -186,6 +191,32 @@ fn geometry_and_mesh_replies_name_no_fixed_unit() {
     }
     let millimetre = regex_free_word(&texts, "mm");
     assert!(millimetre.is_empty(), "named millimetres in an inch display: {millimetre:#?}");
+    // The meshers' refusals name their numbers in inches.
+    let said = |what: &str| texts.iter().any(|t| t.contains(what) && t.contains(" in"));
+    for what in ["weld distance", "a size of", "coincide at ("] {
+        assert!(said(what), "no `{what}` in inches: {texts:#?}");
+    }
+}
+
+/// A mesher's refusal keeps its numbers as data: shown at the boundary in the display units,
+/// whatever the frame it was made in (the volume gate, a point, a size).
+#[test]
+fn mesher_errors_are_shown_in_the_display_units() {
+    use fieldcraft_mesh::message::{length, point, volume};
+    let inch = fieldcraft_model::DisplaySystem::new(fieldcraft_model::units::Preset::InLbfS);
+    let gate = fieldcraft_mesh::Error::failed(fieldcraft_mesh::message![
+        "mesh validity gate: mesh volume ",
+        volume(16387.064),
+        " differs from the boundary's ",
+        volume(32774.128)
+    ]);
+    let e = crate::EngineError::context("body `Block`", gate).shown(super::geometry(), &inch).to_string();
+    assert_eq!(e, "body `Block`: meshing failed: mesh validity gate: mesh volume 1 in³ differs from the boundary's 2 in³");
+    let near = fieldcraft_mesh::Error::invalid(fieldcraft_mesh::message!["size ", length(-25.4), " at ", point([25.4, 0.0, 50.8])]);
+    assert_eq!(crate::EngineError::Mesh(near).shown(super::geometry(), &inch).to_string(), "invalid input: size -1 in at (1, 0, 2) in");
+    // A command in SI shows its SI numbers in the display units too.
+    let si = fieldcraft_mesh::Error::invalid(fieldcraft_mesh::message!["at ", point([0.0254, 0.0, 0.0])]);
+    assert_eq!(crate::EngineError::Mesh(si).shown(super::si(), &inch).to_string(), "invalid input: at (1, 0, 0) in");
 }
 
 /// The texts that hold `word` (or `word²`, `word³`) as a word of its own.
@@ -239,6 +270,18 @@ fn geometry_and_mesh_sources_name_no_fixed_unit() {
     .map(|f| root.join(cmd).join(f))
     .collect();
     files.extend(["ui-egui/src/reply.rs", "ui-egui/src/feature_graph.rs"].map(|f| root.join(f)));
+    // The meshers, whose messages keep their numbers as data.
+    let mut dirs = vec![root.join("mesh/src")];
+    while let Some(d) = dirs.pop() {
+        for e in std::fs::read_dir(&d).unwrap() {
+            let p = e.unwrap().path();
+            if p.is_dir() {
+                dirs.push(p);
+            } else if p.extension().is_some_and(|x| x == "rs") && !p.file_name().is_some_and(|n| n == "tests.rs") {
+                files.push(p);
+            }
+        }
+    }
     // The geometry crate, but for its 3MF unit table and the SolidCraft scripts of its samples.
     for e in std::fs::read_dir(root.join("geometry/src")).unwrap() {
         let p = e.unwrap().path();

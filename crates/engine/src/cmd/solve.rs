@@ -543,7 +543,7 @@ fn obstacles(s: &Session, domain: &FluidDomain) -> Result<Vec<Obstacle>> {
         let positions: Vec<[f64; 3]> = mesh.positions.iter().map(|p| crate::units::geometry_point(*p)).collect();
         let options = SurfaceOptions { weld_distance: crate::units::geometry_length(mesh.weld_distance), ..SurfaceOptions::default() };
         let surface = BoundarySurface::new(&positions, &mesh.triangles, &mesh.tri_face, &options)
-            .map_err(|e| EngineError::Params(format!("obstacle `{body}`: its surface cannot bound a solid: {e}")))?;
+            .map_err(|e| EngineError::context(format!("obstacle `{body}`: its surface cannot bound a solid"), e))?;
         out.push(Obstacle { body: body.clone(), surface, faces });
     }
     Ok(out)

@@ -35,9 +35,13 @@ pub(crate) fn weld(positions: &[[f64; 3]], triangles: &[[u32; 3]], relative: f64
     let diagonal = bounds.diagonal();
     let tol = (relative * diagonal).max(absolute);
     if tol > MAX_RELATIVE_WELD * diagonal {
-        return Err(Error::Invalid(format!(
-            "weld distance {tol} is more than {MAX_RELATIVE_WELD} of the surface's size ({diagonal}): it would merge distinct vertices"
-        )));
+        return Err(Error::invalid(crate::message![
+            "weld distance ",
+            crate::message::length(tol),
+            format!(" is more than {MAX_RELATIVE_WELD} of the surface's size ("),
+            crate::message::length(diagonal),
+            "): it would merge distinct vertices"
+        ]));
     }
 
     let mut lookup = if tol >= 1e-15 * diagonal && tol > 0.0 {

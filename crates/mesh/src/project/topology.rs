@@ -614,7 +614,10 @@ impl Topology {
     /// centre and six blocks between the cube's faces and the sphere (the cube-to-sphere O-grid).
     pub fn sphere(center: P, radius: f64, inset: f64) -> Result<Topology> {
         if !(radius > 0.0 && radius.is_finite()) || !center.iter().all(|x| x.is_finite()) {
-            return Err(Error::Invalid(format!("a sphere needs a finite centre and a positive radius, got {radius}")));
+            return Err(Error::invalid(crate::message![
+                "a sphere needs a finite centre and a positive radius, got ",
+                crate::message::length(radius)
+            ]));
         }
         let h = radius / 3f64.sqrt();
         let mut t = Topology::grid([&[center[0] - h, center[0] + h], &[center[1] - h, center[1] + h], &[center[2] - h, center[2] + h]])?;
@@ -628,7 +631,10 @@ impl Topology {
     /// it out to the circle, per level.
     pub fn butterfly(center: P, axis: P, radius: f64, levels: &[f64], inset: f64) -> Result<Topology> {
         if !(radius > 0.0 && radius.is_finite()) || !center.iter().all(|x| x.is_finite()) {
-            return Err(Error::Invalid(format!("a butterfly needs a finite centre and a positive radius, got {radius}")));
+            return Err(Error::invalid(crate::message![
+                "a butterfly needs a finite centre and a positive radius, got ",
+                crate::message::length(radius)
+            ]));
         }
         let z = crate::vec3::norm(axis);
         if !(z > 0.0 && z.is_finite()) {

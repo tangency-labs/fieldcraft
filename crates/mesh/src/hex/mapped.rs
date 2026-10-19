@@ -239,5 +239,5 @@ pub(crate) fn mesh(ctx: &Ctx) -> Result<Raw> {
             }
         }
     }
-    Ok(Raw { nodes, hexes, description: format!("mapped block of {ni} × {nj} × {nk}") })
+    Ok(Raw { nodes, hexes, description: crate::message![format!("mapped block of {ni} × {nj} × {nk}")] })
 }

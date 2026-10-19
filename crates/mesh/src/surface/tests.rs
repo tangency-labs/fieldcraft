@@ -295,9 +295,9 @@ fn hostile_input_is_an_error() {
     assert_eq!(kinds(&defects(&degenerate)), vec!["degenerate"]);
 
     let o = SurfaceOptions::default();
-    assert!(matches!(BoundarySurface::new(&[], &[], &[], &o), Err(Error::Invalid(_))));
-    assert!(matches!(BoundarySurface::new(&c.0, &c.1, &[0, 1], &o), Err(Error::Invalid(_))));
-    assert!(matches!(BoundarySurface::new(&[[1.0; 3]; 3], &[[0, 1, 2]], &[], &o), Err(Error::Invalid(_))));
+    assert!(matches!(BoundarySurface::new(&[], &[], &[], &o), Err(ref e) if e.kind() == Some(crate::Kind::Invalid)));
+    assert!(matches!(BoundarySurface::new(&c.0, &c.1, &[0, 1], &o), Err(ref e) if e.kind() == Some(crate::Kind::Invalid)));
+    assert!(matches!(BoundarySurface::new(&[[1.0; 3]; 3], &[[0, 1, 2]], &[], &o), Err(ref e) if e.kind() == Some(crate::Kind::Invalid)));
     for w in [-1.0, f64::NAN, 1e-20, 0.5, f64::INFINITY] {
         assert!(BoundarySurface::new(&c.0, &c.1, &c.2, &SurfaceOptions { weld_tolerance: w, ..o }).is_err(), "{w}");
     }

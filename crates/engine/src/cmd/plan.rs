@@ -1689,7 +1689,8 @@ fn copy_corner(
         // A corner copy that does not mesh leaves the cell to be meshed whole.
         Err(e) => {
             s.restore(before);
-            Ok(Err(Some(e.to_string())))
+            let shown = s.units().clone();
+            Ok(Err(Some(e.shown(crate::units::geometry(), &shown).to_string())))
         }
     }
 }
@@ -1932,9 +1933,8 @@ fn apply_projection(s: &mut Session, name: &str, plan: &MeshPlan, tolerance: f64
     let (fixed, fixed_faces) = cut_face_patches(s, &body, &plan.body, plan.size)?;
     let field = super::sizes::sizing(s)?.local_field(plan.size)?;
     let opts = fieldcraft_mesh::project::ProjectOptions { size: plan.size, fixed, field, ..Default::default() };
-    let mut mesh = super::project::project_body(s, &plan.body, body, &layout.topology, &opts, merge).map_err(|e| {
-        if e.is_cancelled() { e } else { EngineError::Params(format!("mesh plan `{name}`: the projected layout does not mesh: {e}")) }
-    })?;
+    let mut mesh = super::project::project_body(s, &plan.body, body, &layout.topology, &opts, merge)
+        .map_err(|e| EngineError::context(format!("mesh plan `{name}`: the projected layout does not mesh"), e))?;
     if let Some(m) = mesh.as_object_mut() {
         // The block listing is long; the plan reports the layout instead.
         m.remove("topology");
@@ -1987,6 +1987,7 @@ fn cut(
     cuts: &[&PlanCut],
     tolerance: f64,
 ) -> Result<(super::replace::Cleared, Vec<String>, Vec<(String, String)>)> {
+    let display = s.units().clone();
     for old in plan_cut_names(s, name) {
         s.model.remove_partition(&old)?;
         if s.model.datum_users(&old).is_empty() && s.model.datum(&old).is_some() {
@@ -2020,7 +2021,7 @@ fn cut(
             .collect();
         if failed.is_empty() {
             let bad = design.bodies.iter().filter(|b| design.source_of(&b.name) == Some(body)).find_map(|cell| {
-                let why = super::datum::unmeshable(cell, Some(tolerance)).err()?;
+                let why = super::datum::unmeshable(cell, Some(tolerance), &display).err()?;
                 // The latest of the plan's cuts that bound the cell.
                 let latest = live.iter().rev().find(|n| cell.faces().iter().any(|f| f.name.starts_with(&format!("partition:{n}:"))))?;
                 Some(((*latest).clone(), format!("cell `{}` it bounds has a boundary no mesher takes ({why})", cell.name)))

@@ -53,7 +53,7 @@ pub fn mesh_region(loops: &[Vec<Curve>], kind: ElementKind, size: f64, opts: &Qu
         return Err(Error::Invalid(format!("a planar mesh has tri3, tri6, quad4 or quad8 elements, not {}", kind.name())));
     }
     if !(size > 0.0 && size.is_finite()) {
-        return Err(Error::Invalid(format!("the element size must be a positive number, got {size}")));
+        return Err(Error::invalid(crate::message!["the element size must be a positive number, got ", crate::message::length(size)]));
     }
     if loops.is_empty() || loops.iter().any(Vec::is_empty) {
         return Err(Error::Invalid("a region needs at least one loop of curves".into()));
@@ -191,7 +191,7 @@ pub struct FaceBoundary {
 /// within `tolerance` are the same point.
 pub fn face_boundary(positions: &[[f64; 3]], triangles: &[[u32; 3]], tri_face: &[u32], face: u32, tolerance: f64) -> Result<FaceBoundary> {
     if !(tolerance >= 0.0 && tolerance.is_finite()) {
-        return Err(Error::Invalid(format!("tolerance must be a non-negative number, got {tolerance}")));
+        return Err(Error::invalid(crate::message!["tolerance must be a non-negative number, got ", crate::message::length(tolerance)]));
     }
     if let Some(v) = triangles.iter().flatten().find(|v| **v as usize >= positions.len()) {
         return Err(Error::Invalid(format!("triangle vertex {v} is out of range")));

@@ -39,6 +39,7 @@ pub use target::Geometry;
 pub use topology::Topology;
 
 use crate::hex::BoundaryFace;
+use crate::message::Message;
 use crate::quality::{Metric, element_quality};
 use crate::surface::{BoundarySurface, FeatureKind};
 use crate::vec3::{P, add, dist, lerp, scale};
@@ -372,7 +373,7 @@ pub(crate) fn project_ordered(
 ) -> Result<ProjectedMesh> {
     t.check()?;
     if !(opts.size > 0.0 && opts.size.is_finite()) {
-        return Err(Error::Invalid(format!("the element size must be a positive number, got {}", opts.size)));
+        return Err(Error::invalid(crate::message!["the element size must be a positive number, got ", crate::message::length(opts.size)]));
     }
     let uses = face_uses(t)?;
     let face_count = surface.tri_face().iter().max().map_or(1, |m| *m as usize + 1);
@@ -912,35 +913,50 @@ pub(crate) fn project_ordered(
             .iter()
             .zip(&lat.hex_cell)
             .min_by(|a, b| smooth::hex_scaled_jacobian(&corners_of(&nodes, a.0)).total_cmp(&smooth::hex_scaled_jacobian(&corners_of(&nodes, b.0))))
-            .map_or_else(String::new, |(h, c)| {
+            .map_or_else(Message::default, |(h, c)| {
                 let x = scale(corners_of(&nodes, h).iter().fold([0.0; 3], |a, p| add(a, *p)), 0.125);
-                format!("worst in block {} near ({:.3}, {:.3}, {:.3})", c.0, x[0], x[1], x[2])
+                crate::message![format!("worst in block {} near ", c.0), crate::message::point(x)]
             })
     };
     if !invalid.is_empty() {
-        return Err(Error::Failed(format!(
-            "{} of {} elements are inverted, twisted or degenerate after projection (certified Jacobian; smallest corner scaled Jacobian {min_sj:.3}): {}. The blocks do not fit the part there — add an O-grid or a template where a block corner lands on a curved face, or split the blocks so the faces meeting at that junction are not squeezed",
-            invalid.len(),
-            lat.hexes.len(),
-            where_invalid(t, &lat, &nodes, &invalid)
-        )));
+        return Err(Error::failed(
+            crate::message![format!(
+                "{} of {} elements are inverted, twisted or degenerate after projection (certified Jacobian; smallest corner scaled Jacobian {min_sj:.3}): ",
+                invalid.len(),
+                lat.hexes.len()
+            )]
+            .then(where_invalid(t, &lat, &nodes, &invalid))
+            .then(crate::message![
+                ". The blocks do not fit the part there — add an O-grid or a template where a block corner lands on a curved face, or split the blocks so the faces meeting at that junction are not squeezed"
+            ]),
+        ));
     }
     if min_sj < opts.min_quality {
-        return Err(Error::Failed(format!(
-            "the smallest scaled Jacobian is {min_sj:.3}, below {} ({}): a block corner flattens on a curved face — use an O-grid or a butterfly/sphere template there, or lower `min_quality`",
-            opts.min_quality,
-            worst()
-        )));
+        return Err(Error::failed(
+            crate::message![format!("the smallest scaled Jacobian is {min_sj:.3}, below {} (", opts.min_quality)].then(worst()).then(
+                crate::message![
+                    "): a block corner flattens on a curved face — use an O-grid or a butterfly/sphere template there, or lower `min_quality`"
+                ],
+            ),
+        ));
     }
     if (enclosed - volume).abs() > 1e-6 * volume.abs().max(1e-300) {
-        return Err(Error::Failed(format!(
-            "the elements overlap or leave a gap inside (their volume {volume} differs from the {enclosed} their outer faces enclose): check that block faces meet face to face"
-        )));
+        return Err(Error::failed(crate::message![
+            "the elements overlap or leave a gap inside (their volume ",
+            crate::message::volume(volume),
+            " differs from the ",
+            crate::message::volume(enclosed),
+            " their outer faces enclose): check that block faces meet face to face"
+        ]));
     }
     if (volume - surface_volume).abs() > 0.2 * surface_volume.abs() {
-        return Err(Error::Failed(format!(
-            "the mesh volume {volume} is far from the body's {surface_volume}: the blocks do not cover the part (every outer block face must stand for part of its surface)"
-        )));
+        return Err(Error::failed(crate::message![
+            "the mesh volume ",
+            crate::message::volume(volume),
+            " is far from the body's ",
+            crate::message::volume(surface_volume),
+            ": the blocks do not cover the part (every outer block face must stand for part of its surface)"
+        ]));
     }
     Ok(ProjectedMesh { nodes, hexes: lat.hexes, boundary, report })
 }
@@ -950,12 +966,12 @@ const NAMED_INVALID: usize = 4;
 
 /// Where the invalid elements `invalid` are: per element its block, cell and centre, and when it
 /// touches a block vertex (a junction), the vertex and the blocks that meet there.
-fn where_invalid(t: &Topology, lat: &lattice::Lattice, nodes: &[P], invalid: &[usize]) -> String {
-    let mut parts: Vec<String> = Vec::new();
+fn where_invalid(t: &Topology, lat: &lattice::Lattice, nodes: &[P], invalid: &[usize]) -> Message {
+    let mut parts: Vec<Message> = Vec::new();
     for &e in invalid.iter().take(NAMED_INVALID) {
         let (Some(h), Some((b, cell))) = (lat.hexes.get(e), lat.hex_cell.get(e)) else { continue };
         let x = scale(h.iter().fold([0.0; 3], |a, &v| add(a, nodes.get(v as usize).copied().unwrap_or_default())), 0.125);
-        let mut s = format!("block {b} cell {cell:?} near ({:.3}, {:.3}, {:.3})", x[0], x[1], x[2]);
+        let mut s = crate::message![format!("block {b} cell {cell:?} near "), crate::message::point(x)];
         let vertices: BTreeSet<u32> = h
             .iter()
             .filter_map(|&v| match lat.entity.get(v as usize) {
@@ -965,14 +981,14 @@ fn where_invalid(t: &Topology, lat: &lattice::Lattice, nodes: &[P], invalid: &[u
             .collect();
         for k in vertices {
             let around: Vec<String> = t.blocks.iter().enumerate().filter(|(_, blk)| blk.contains(&k)).map(|(i, _)| i.to_string()).collect();
-            s.push_str(&format!(" at block vertex {k} where blocks {} meet", around.join(", ")));
+            s.0.push(format!(" at block vertex {k} where blocks {} meet", around.join(", ")).into());
         }
         parts.push(s);
     }
     if invalid.len() > NAMED_INVALID {
-        parts.push(format!("and {} more", invalid.len() - NAMED_INVALID));
+        parts.push(crate::message![format!("and {} more", invalid.len() - NAMED_INVALID)]);
     }
-    parts.join("; ")
+    Message::join(parts, "; ")
 }
 
 /// The polyline's points redistributed evenly by arc length (ends kept).

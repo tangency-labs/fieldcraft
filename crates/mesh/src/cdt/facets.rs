@@ -233,7 +233,14 @@ impl Recovery {
                     (false, true) => (&mut fixed_down, &mut back_down),
                     _ => {
                         let at = self.cx.approx(face[0])?;
-                        return Err(Error::Failed(format!("facet {f}: a cavity face near {at:?} is not on one side of the facet's plane")));
+                        return Err(Error::Measured(
+                            crate::Kind::Failed,
+                            crate::message![
+                                format!("facet {f}: a cavity face near "),
+                                crate::message::point(at),
+                                " is not on one side of the facet's plane"
+                            ],
+                        ));
                     }
                 };
                 fixed.push(face);
@@ -270,7 +277,10 @@ impl Recovery {
         let used: HashSet<u32> = new.iter().flatten().copied().collect();
         if let Some(&lost) = vertices.iter().find(|v| !used.contains(v)) {
             let at = self.cx.approx(lost)?;
-            return Err(Error::Failed(format!("facet {f}: refilling a cavity lost vertex {lost} at {at:?}")));
+            return Err(Error::Measured(
+                crate::Kind::Failed,
+                crate::message![format!("facet {f}: refilling a cavity lost vertex {lost} at "), crate::message::point(at)],
+            ));
         }
         self.stats.gift_wrapped_tets += new.len();
         self.cx.replace(cavity, &new)?;
@@ -338,7 +348,10 @@ impl Recovery {
                 let r = [g[0], g[2], g[1]];
                 if index.insert(canon(r), faces.len()).is_some() {
                     let at = self.cx.approx(r[0])?;
-                    return Err(Error::Failed(format!("facet {f}: gift-wrapping overlapped itself near {at:?}")));
+                    return Err(Error::Measured(
+                        crate::Kind::Failed,
+                        crate::message![format!("facet {f}: gift-wrapping overlapped itself near "), crate::message::point(at)],
+                    ));
                 }
                 queue.push(faces.len());
                 faces.push(r);
@@ -385,7 +398,10 @@ impl Recovery {
             }
         }
         let at = self.cx.approx(sigma[0])?;
-        Err(Error::Failed(format!("facet {f}: gift-wrapping found no valid apex for a cavity face near {at:?}")))
+        Err(Error::Measured(
+            crate::Kind::Failed,
+            crate::message![format!("facet {f}: gift-wrapping found no valid apex for a cavity face near "), crate::message::point(at)],
+        ))
     }
 
     /// Condition (ii): the tetrahedron `sigma w` meets every front and fixed triangle properly

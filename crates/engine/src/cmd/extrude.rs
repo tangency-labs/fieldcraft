@@ -112,7 +112,7 @@ impl Faces {
             &mesh.tri_face,
             &SurfaceOptions { weld_distance: mesh.weld_distance, ..SurfaceOptions::default() },
         )
-        .map_err(|e| EngineError::Params(format!("body `{}`: {e}", shape.name)))?;
+        .map_err(|e| EngineError::context(format!("body `{}`", shape.name), e))?;
         self.bodies.push(Tessellation::new(&surface, super::mesh::analytic_surfaces(shape)));
         self.names.push((shape.name.clone(), shape.faces().iter().map(|f| f.name.clone()).collect()));
         self.tolerance = self.tolerance.max(tol);

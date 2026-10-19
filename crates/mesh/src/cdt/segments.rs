@@ -131,10 +131,11 @@ impl Recovery {
                     self.steiner.push((s, t));
                     if self.steiner.len() > self.options.max_steiner {
                         let at = self.cx.approx(u)?;
-                        return Err(Error::Limit(format!(
-                            "more than {} Steiner points on boundary edges (the last near {at:?}): the boundary has features much thinner than its triangles are long; raise the cap or tessellate coarser",
-                            self.options.max_steiner
-                        )));
+                        return Err(Error::limit(crate::message![
+                            format!("more than {} Steiner points on boundary edges (the last near ", self.options.max_steiner),
+                            crate::message::point(at),
+                            "): the boundary has features much thinner than its triangles are long; raise the cap or tessellate coarser"
+                        ]));
                     }
                     let touched = self.cx.insert(w, u)?;
                     if let Some(seg) = self.segments.get_mut(s) {
@@ -218,7 +219,10 @@ impl Recovery {
         let t = if chosen.is_finite() && chosen > tu && chosen < tv { chosen } else { mid };
         if !(t > tu && t < tv) {
             let at = self.cx.approx(u)?;
-            return Err(Error::Failed(format!("a missing segment near {at:?} is too short to split further in double precision")));
+            return Err(Error::Measured(
+                crate::Kind::Failed,
+                crate::message!["a missing segment near ", crate::message::point(at), " is too short to split further in double precision"],
+            ));
         }
         Ok(t)
     }
@@ -255,7 +259,14 @@ impl Recovery {
                 let radius = if area2 > 0.0 { norm(ea) * norm(eb) * norm(sub(ea, eb)) / (2.0 * area2) } else { f64::INFINITY };
                 if !radius.is_finite() && self.on_segment(u, v, x)? {
                     let at = self.cx.approx(x)?;
-                    return Err(Error::Invalid(format!("vertex {x} at {at:?} lies on a boundary edge: the surface is not a valid complex")));
+                    return Err(Error::Measured(
+                        crate::Kind::Invalid,
+                        crate::message![
+                            format!("vertex {x} at "),
+                            crate::message::point(at),
+                            " lies on a boundary edge: the surface is not a valid complex"
+                        ],
+                    ));
                 }
                 if best.is_none_or(|(b, _)| radius > b) {
                     best = Some((radius, x));

@@ -397,7 +397,11 @@ impl<'a> Inside<'a> {
         } else if w.abs() < 0.25 {
             Ok(false)
         } else {
-            Err(Error::Failed(format!("cannot tell whether {x:?} is inside the solid (winding number {w:.3})")))
+            Err(Error::failed(crate::message![
+                "cannot tell whether ",
+                crate::message::point(x),
+                format!(" is inside the solid (winding number {w:.3})")
+            ]))
         }
     }
 }

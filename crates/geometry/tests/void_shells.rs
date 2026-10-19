@@ -65,5 +65,5 @@ fn a_feature_that_fails_names_the_body_it_changes() {
     assert_eq!(error.feature, "Cylinder1");
     assert_eq!(error.bodies, ["Case"]);
     let warning = error.warning();
-    assert!(warning.starts_with(r#"Cylinder1 failed to build, so body "Case" may differ from the design: "#), "{warning}");
+    assert!(warning.starts_with(r#"Cylinder1 failed to build, so body "Case" may differ from the design (SolidCraft: "#), "{warning}");
 }

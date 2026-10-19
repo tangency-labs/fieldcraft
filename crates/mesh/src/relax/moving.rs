@@ -174,7 +174,12 @@ pub fn move_weights(model: &Model, handles: &BTreeSet<u32>, influence: &Influenc
         let size = if positions.is_empty() { 0.0 } else { dist(lo, hi) };
         let min = MIN_RELATIVE_RADIUS * size;
         if r < min {
-            return Err(Error::Invalid(format!("the radius must be at least {min:.3e} (a millionth of the mesh's size), got {r:.3e}")));
+            return Err(Error::invalid(crate::message![
+                "the radius must be at least ",
+                crate::message::length(min),
+                " (a millionth of the mesh's size), got ",
+                crate::message::length(r)
+            ]));
         }
     }
     // The nodes within the radius, with their distance to the nearest handle (or the centre).

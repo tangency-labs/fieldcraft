@@ -58,7 +58,7 @@ fn hex_octree(s: &mut Session, p: &Value) -> Result<Value> {
         }
         let surface_options = super::mesh::surface_options(p, &b.mesh)?;
         let surface = BoundarySurface::new(&b.mesh.positions, &b.mesh.triangles, &b.mesh.tri_face, &surface_options)
-            .map_err(|e| EngineError::Params(format!("body `{}`: {e}", b.name)))?;
+            .map_err(|e| EngineError::context(format!("body `{}`", b.name), e))?;
         let left = OctreeOptions { max_elements: options.max_elements.saturating_sub(total).max(1), ..options.clone() };
         let field = sizing.field(&b.name, h)?;
         let mesh = octree_hex_mesh(&surface, &field, &left).map_err(|e| EngineError::of_body(&b.name, e))?;
@@ -94,7 +94,7 @@ fn hex_octree(s: &mut Session, p: &Value) -> Result<Value> {
             "grid": {"cells": r.grid_cells, "root_size": r.root_size, "levels": r.levels, "thinnest_wall": finite(r.thinnest_wall), "narrowest_patch": finite(r.narrowest_patch), "refined_per_level": r.refined_cells, "closed_per_level": r.closed_cells, "core_elements": r.core_elements, "layer_elements": r.layer_elements, "frame": r.frame},
             "features": {"corners": r.corners, "curves": r.curves, "patches": r.patches},
             "attempts": r.attempts,
-            "retries": r.retries,
+            "retries": r.retries.iter().map(|m| crate::units::mesh_text(s, m)).collect::<Vec<_>>(),
             "sweeps": r.sweeps,
         }));
     }

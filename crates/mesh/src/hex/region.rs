@@ -220,7 +220,7 @@ pub(crate) fn mesh_structured(
             let pos = c.map(|k| s0.and_then(|s| s.get(k)).copied().unwrap_or(0));
             match loops.first().map(|b| mapped_quad_mesh(b, pos, opts)) {
                 Some(Ok(m)) => Some(m.mesh),
-                Some(Err(e @ Error::Limit(_))) => return Err(e),
+                Some(Err(e)) if e.kind() == Some(crate::Kind::Limit) => return Err(e),
                 _ => None,
             }
         }

@@ -153,7 +153,7 @@ fn mapped_block_with_a_curved_top() {
     let m = hex_mesh(&s, &[], &UniformSize(0.5), &opts).unwrap();
     assert!(m.report.gate.passed());
     assert!(m.report.min_scaled_jacobian > 0.8, "{}", m.report.min_scaled_jacobian);
-    assert!(m.report.description.contains("mapped block of 8 × 4 × 4"), "{}", m.report.description);
+    assert!(m.report.description.to_string().contains("mapped block of 8 × 4 × 4"), "{}", m.report.description);
     // Top nodes lie on the tessellated top.
     let quadratic = hex_mesh(&s, &[], &UniformSize(0.5), &HexOptions { quadratic: true, ..opts }).unwrap();
     assert!(quadratic.report.gate.passed());
@@ -307,7 +307,8 @@ fn unsweepable_bodies_say_why_and_hostile_input_is_an_error() {
         &[vec![0, 2, 1], vec![0, 1, 3], vec![1, 2, 3], vec![0, 3, 2]],
     );
     match hex_mesh(&tet, &[], &UniformSize(0.2), &HexOptions::default()) {
-        Err(Error::Unsupported(why)) => {
+        Err(e) if e.kind() == Some(crate::Kind::Unsupported) => {
+            let why = e.to_string();
             for m in ["extrude", "sweep", "revolve", "mapped"] {
                 assert!(why.contains(m), "{why}");
             }
@@ -319,8 +320,10 @@ fn unsweepable_bodies_say_why_and_hostile_input_is_an_error() {
     for f in bad_sizes {
         assert!(hex_mesh(&s, &[], f, &HexOptions::default()).is_err());
     }
-    assert!(matches!(hex_mesh(&s, &[], &UniformSize(1e-4), &HexOptions::default()), Err(Error::Limit(_))));
-    assert!(matches!(hex_mesh(&s, &[], &UniformSize(0.1), &HexOptions { max_elements: 100, ..HexOptions::default() }), Err(Error::Limit(_))));
+    assert!(matches!(hex_mesh(&s, &[], &UniformSize(1e-4), &HexOptions::default()), Err(ref e) if e.kind() == Some(crate::Kind::Limit)));
+    assert!(
+        matches!(hex_mesh(&s, &[], &UniformSize(0.1), &HexOptions { max_elements: 100, ..HexOptions::default() }), Err(ref e) if e.kind() == Some(crate::Kind::Limit))
+    );
     assert!(hex_mesh(&s, &[], &UniformSize(1.0), &HexOptions { chordal_tolerance: f64::NAN, ..HexOptions::default() }).is_err());
     // Analytic surfaces with garbage numbers are treated as free-form, not trusted.
     let garbage = vec![Some(Surface::Cylinder { origin: [f64::NAN; 3], axis: [0.0; 3], radius: -1.0 }); 6];
@@ -435,14 +438,18 @@ fn hostile_cell_input_is_an_error() {
     let cells = cells_of(&two, &none);
     assert!(hex_mesh_cells(&[], &UniformSize(1.0), &HexOptions::default()).is_err());
     for method in [HexMethod::Sweep, HexMethod::Extrude, HexMethod::Revolve, HexMethod::Swept] {
-        assert!(matches!(hex_mesh_cells(&cells, &UniformSize(1.0), &HexOptions { method, ..HexOptions::default() }), Err(Error::Invalid(_))));
+        assert!(
+            matches!(hex_mesh_cells(&cells, &UniformSize(1.0), &HexOptions { method, ..HexOptions::default() }), Err(ref e) if e.kind() == Some(crate::Kind::Invalid))
+        );
     }
     let bad_sizes: [&dyn crate::size::SizeField; 3] = [&UniformSize(f64::NAN), &UniformSize(0.0), &UniformSize(-1.0)];
     for f in bad_sizes {
         assert!(hex_mesh_cells(&cells, f, &HexOptions::default()).is_err());
     }
-    assert!(matches!(hex_mesh_cells(&cells, &UniformSize(1e-4), &HexOptions::default()), Err(Error::Limit(_))));
-    assert!(matches!(hex_mesh_cells(&cells, &UniformSize(0.1), &HexOptions { max_elements: 100, ..HexOptions::default() }), Err(Error::Limit(_))));
+    assert!(matches!(hex_mesh_cells(&cells, &UniformSize(1e-4), &HexOptions::default()), Err(ref e) if e.kind() == Some(crate::Kind::Limit)));
+    assert!(
+        matches!(hex_mesh_cells(&cells, &UniformSize(0.1), &HexOptions { max_elements: 100, ..HexOptions::default() }), Err(ref e) if e.kind() == Some(crate::Kind::Limit))
+    );
     assert!(hex_mesh_cells(&cells, &UniformSize(1.0), &HexOptions { chordal_tolerance: -1.0, ..HexOptions::default() }).is_err());
     // The same cell twice: two cells on the same side of every face.
     let same = [two[0].clone(), two[0].clone()];

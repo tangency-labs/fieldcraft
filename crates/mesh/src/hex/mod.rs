@@ -63,6 +63,8 @@ use crate::seeds::EdgeSeed;
 use brep::Brep;
 use geom::{TriangleTree, add, dist, scale, unit};
 
+use crate::message;
+use crate::message::Message;
 use crate::quad::QuadOptions;
 use crate::quality::{GateOptions, GateReport, Metric, element_quality, validity_gate_checks};
 use crate::size::SizeField;
@@ -151,7 +153,7 @@ pub struct BoundaryFace {
 pub struct HexReport {
     pub method: HexMethod,
     /// What the method found (direction, levels, regions, layers, …).
-    pub description: String,
+    pub description: Message,
     /// Smallest and mean scaled Jacobian (Knupp) over the elements.
     pub min_scaled_jacobian: f64,
     pub mean_scaled_jacobian: f64,
@@ -263,7 +265,7 @@ pub(crate) fn seed_tolerance(opts: &HexOptions, tol: f64) -> f64 {
 pub(crate) struct Raw {
     pub nodes: Vec<P>,
     pub hexes: Vec<[u32; 8]>,
-    pub description: String,
+    pub description: Message,
 }
 
 /// Refinements of the cross-section curves tried when a face mesher fails (each halves them).
@@ -278,7 +280,10 @@ pub(crate) const RELATIVE_TOLERANCE: f64 = 1e-6;
 /// with the reasons.
 pub fn hex_mesh(surface: &BoundarySurface, faces: &[Option<Surface>], field: &dyn SizeField, opts: &HexOptions) -> Result<HexMesh> {
     if !(opts.chordal_tolerance >= 0.0 && opts.chordal_tolerance.is_finite()) {
-        return Err(Error::Invalid(format!("the chordal tolerance must be a non-negative number, got {}", opts.chordal_tolerance)));
+        return Err(Error::invalid(crate::message![
+            "the chordal tolerance must be a non-negative number, got ",
+            crate::message::length(opts.chordal_tolerance)
+        ]));
     }
     if surface.shells().len() != 1 {
         return Err(Error::Unsupported(format!(
@@ -298,7 +303,7 @@ pub fn hex_mesh(surface: &BoundarySurface, faces: &[Option<Surface>], field: &dy
         HexMethod::Revolve => &[HexMethod::Revolve],
         HexMethod::Mapped => &[HexMethod::Mapped],
     };
-    let mut reasons: Vec<String> = Vec::new();
+    let mut reasons: Vec<Message> = Vec::new();
     for &method in methods {
         fieldcraft_model::progress::check()?;
         let mut last = None;
@@ -307,7 +312,7 @@ pub fn hex_mesh(surface: &BoundarySurface, faces: &[Option<Surface>], field: &dy
                 let setups = match candidate_setups(std::slice::from_ref(&ctx), method) {
                     Ok(s) => s,
                     Err(why) => {
-                        reasons.push(format!("{}: {why}", method.name()));
+                        reasons.push(message![format!("{}: ", method.name())].then(why));
                         continue;
                     }
                 };
@@ -316,7 +321,7 @@ pub fn hex_mesh(surface: &BoundarySurface, faces: &[Option<Surface>], field: &dy
                     // The cross-section is laid out once per frame; refinement retries reuse it.
                     let prepared = match layered::prepare(std::slice::from_ref(&ctx), setup) {
                         Ok(p) => p,
-                        Err(e @ Error::Limit(_)) => return Err(e),
+                        Err(e) if e.kind() == Some(crate::Kind::Limit) => return Err(e),
                         Err(e) => {
                             last = Some(e);
                             continue;
@@ -324,27 +329,30 @@ pub fn hex_mesh(surface: &BoundarySurface, faces: &[Option<Surface>], field: &dy
                     };
                     match with_refinement(&ctx, method, |refine| layered::mesh(std::slice::from_ref(&ctx), &prepared, refine).map(|m| m.0)) {
                         Ok(mesh) => return Ok(mesh),
-                        Err(e @ Error::Limit(_)) => return Err(e),
+                        Err(e) if e.kind() == Some(crate::Kind::Limit) => return Err(e),
                         Err(e) => last = Some(e),
                     }
                 }
             }
             HexMethod::Sweep => match with_refinement(&ctx, method, |refine| sweep::mesh(&ctx, refine)) {
                 Ok(mesh) => return Ok(mesh),
-                Err(e @ Error::Limit(_)) => return Err(e),
+                Err(e) if e.kind() == Some(crate::Kind::Limit) => return Err(e),
                 Err(e) => last = Some(e),
             },
             _ => match mapped::mesh(&ctx).and_then(|raw| finish(&Cells::one(&ctx), raw, method)) {
                 Ok(mesh) => return Ok(mesh),
-                Err(e @ Error::Limit(_)) => return Err(e),
+                Err(e) if e.kind() == Some(crate::Kind::Limit) => return Err(e),
                 Err(e) => last = Some(e),
             },
         }
         if let Some(e) = last {
-            reasons.push(format!("{}: {}", method.name(), plain(&e)));
+            reasons.push(message![format!("{}: ", method.name())].then(plain(&e)));
         }
     }
-    Err(Error::Unsupported(format!("no structured hex method fits this body ({})", reasons.join("; "))))
+    Err(Error::Measured(
+        crate::Kind::Unsupported,
+        message!["no structured hex method fits this body ("].then(Message::join(reasons, "; ")).then(message![")"]),
+    ))
 }
 
 /// Refuse a mesh far beyond the element limit before any work: the solids' volume over the cube
@@ -365,7 +373,7 @@ fn check_estimate(surfaces: &[&BoundarySurface], field: &dyn SizeField, opts: &H
 }
 
 /// The frames a layered method can try, fewest levels first, or the first reason none fits.
-pub(crate) fn candidate_setups(ctxs: &[Ctx], method: HexMethod) -> std::result::Result<Vec<layered::Setup>, String> {
+pub(crate) fn candidate_setups(ctxs: &[Ctx], method: HexMethod) -> std::result::Result<Vec<layered::Setup>, Message> {
     let breps: Vec<&Brep> = ctxs.iter().map(|c| c.brep).collect();
     let frames = if method == HexMethod::Extrude { layered::translations(&breps) } else { layered::rotations(&breps) };
     let mut fitting: Vec<(usize, usize, layered::Setup)> = Vec::new();
@@ -379,7 +387,7 @@ pub(crate) fn candidate_setups(ctxs: &[Ctx], method: HexMethod) -> std::result::
         }
     }
     if fitting.is_empty() {
-        return Err(first_reason.unwrap_or_else(|| if method == HexMethod::Extrude { "no direction to try".into() } else { "no axis to try".into() }));
+        return Err(first_reason.unwrap_or_else(|| message![if method == HexMethod::Extrude { "no direction to try" } else { "no axis to try" }]));
     }
     fitting.sort_by_key(|x| (x.0, x.1));
     Ok(fitting.into_iter().take(layered::MAX_CANDIDATES).map(|x| x.2).collect())
@@ -394,7 +402,7 @@ fn with_refinement(ctx: &Ctx, method: HexMethod, run: impl Fn(u32) -> Result<Raw
         fieldcraft_model::progress::check()?;
         match run(refine).and_then(|raw| finish(&Cells::one(ctx), raw, method)) {
             Ok(mesh) => return Ok(mesh),
-            Err(e @ Error::Failed(_)) => last = e,
+            Err(e) if e.kind() == Some(crate::Kind::Failed) => last = e,
             Err(e) => return Err(e),
         }
     }
@@ -402,10 +410,11 @@ fn with_refinement(ctx: &Ctx, method: HexMethod, run: impl Fn(u32) -> Result<Raw
 }
 
 /// An error's message without the "not supported yet" prefix (for the combined reasons).
-fn plain(e: &Error) -> String {
+fn plain(e: &Error) -> Message {
     match e {
-        Error::Unsupported(m) => m.clone(),
-        other => other.to_string(),
+        Error::Unsupported(m) => message![m.clone()],
+        Error::Measured(crate::Kind::Unsupported, m) => m.clone(),
+        other => other.message(),
     }
 }
 
@@ -645,14 +654,23 @@ fn finish(cells: &Cells, raw: Raw, method: HexMethod) -> Result<HexMesh> {
     }
     let gate = validity_gate_checks(checks.iter().map(|(l, c)| (*l, c)), &GateOptions { expected_volume: Some(enclosed), volume_tolerance: 1e-9 })?
         .into_result()
-        .map_err(|e| Error::Failed(format!("{} ({description})", plain(&e))))?;
+        .map_err(|e| Error::failed(plain(&e).then(message![" ("]).then(description.clone()).then(message![")"])))?;
     let surface_volume: f64 = cells.ctxs.iter().map(|c| c.brep.surface.volume()).sum();
     let slack = 2.0 * fidelity + 1e-9 * surface_volume.abs();
     if (gate.volume - surface_volume).abs() > slack {
-        return Err(Error::Failed(format!(
-            "the mesh volume {} differs from the boundary's {surface_volume} by more than the gap between them allows ({slack}): the mesh does not fill the body ({description})",
-            gate.volume
-        )));
+        return Err(Error::failed(
+            crate::message![
+                "the mesh volume ",
+                crate::message::volume(gate.volume),
+                " differs from the boundary's ",
+                crate::message::volume(surface_volume),
+                " by more than the gap between them allows (",
+                crate::message::volume(slack),
+                "): the mesh does not fill the body ("
+            ]
+            .then(description)
+            .then(message![")"]),
+        ));
     }
     let report = HexReport {
         method,

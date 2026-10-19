@@ -109,7 +109,8 @@ fn check_distinct(r: &Region) -> Result<()> {
             } else {
                 "repeated point"
             };
-            return Err(Error::Invalid(format!("{what}: {} and {} coincide at {:?}", locate(r, a), locate(r, b), r.pts.get(a as usize))));
+            let at = r.pts.get(a as usize).copied().map_or(crate::message::Part::from("an unknown point"), crate::message::point);
+            return Err(Error::invalid(crate::message![format!("{what}: {} and {} coincide at ", locate(r, a), locate(r, b)), at]));
         }
     }
     Ok(())

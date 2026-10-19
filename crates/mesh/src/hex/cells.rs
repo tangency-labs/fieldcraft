@@ -37,11 +37,13 @@ use super::brep::Brep;
 use super::geom::{TriangleTree, add, dist, scale};
 use super::mapped::{self, Cube, face_ring, other};
 use super::{Cells, Ctx, HexMesh, HexMethod, HexOptions, Raw, Surface, finish, project_to_face, project_to_faces};
+use crate::message;
 use crate::quad::{lattice_index, transfinite_grid, transfinite_volume};
 use crate::seeds::EdgeSeed;
 use crate::size::{SizeField, divide_polyline, ideal_divisions};
 use crate::surface::BoundarySurface;
 use crate::vec3::{P, cross, dot, norm, sub};
+
 use crate::{Error, Result};
 
 /// One cell: its name (for messages), its boundary surface (face-tagged) and the analytic
@@ -101,7 +103,10 @@ pub fn hex_mesh_cells(cells: &[Cell], field: &dyn SizeField, opts: &HexOptions) 
         return Err(Error::Invalid(format!("conforming cells are meshed as mapped blocks; method `{}` does not apply", opts.method.name())));
     }
     if !(opts.chordal_tolerance >= 0.0 && opts.chordal_tolerance.is_finite()) {
-        return Err(Error::Invalid(format!("the chordal tolerance must be a non-negative number, got {}", opts.chordal_tolerance)));
+        return Err(Error::invalid(crate::message![
+            "the chordal tolerance must be a non-negative number, got ",
+            crate::message::length(opts.chordal_tolerance)
+        ]));
     }
     if cells.is_empty() || cells.len() > MAX_CELLS {
         return Err(Error::Invalid(format!("{} cells; 1 to {MAX_CELLS} are meshed together", cells.len())));
@@ -151,7 +156,10 @@ pub fn hex_mesh_swept_cells(cells: &[Cell], field: &dyn SizeField, opts: &HexOpt
         m => return Err(Error::Invalid(format!("cells are swept together by extrusion or revolution; method `{}` does not apply", m.name()))),
     };
     if !(opts.chordal_tolerance >= 0.0 && opts.chordal_tolerance.is_finite()) {
-        return Err(Error::Invalid(format!("the chordal tolerance must be a non-negative number, got {}", opts.chordal_tolerance)));
+        return Err(Error::invalid(crate::message![
+            "the chordal tolerance must be a non-negative number, got ",
+            crate::message::length(opts.chordal_tolerance)
+        ]));
     }
     if cells.is_empty() || cells.len() > MAX_CELLS {
         return Err(Error::Invalid(format!("{} cells; 1 to {MAX_CELLS} are meshed together", cells.len())));
@@ -191,7 +199,7 @@ pub fn hex_mesh_swept_cells(cells: &[Cell], field: &dyn SizeField, opts: &HexOpt
             fieldcraft_model::progress::check()?;
             let prepared = match super::layered::prepare(&ctxs, setup) {
                 Ok(p) => p,
-                Err(e @ Error::Limit(_)) => return Err(e),
+                Err(e) if e.kind() == Some(crate::Kind::Limit) => return Err(e),
                 Err(e) => {
                     last = Some(e);
                     continue;
@@ -207,8 +215,8 @@ pub fn hex_mesh_swept_cells(cells: &[Cell], field: &dyn SizeField, opts: &HexOpt
                         let interfaces = shared_faces(&mesh, &element_cell);
                         return Ok(CellsMesh { mesh, element_cell, blocks: Vec::new(), interfaces });
                     }
-                    Err(e @ Error::Limit(_)) => return Err(e),
-                    Err(e @ Error::Failed(_)) => last = Some(e),
+                    Err(e) if e.kind() == Some(crate::Kind::Limit) => return Err(e),
+                    Err(e) if e.kind() == Some(crate::Kind::Failed) => last = Some(e),
                     Err(e) => {
                         last = Some(e);
                         break;
@@ -297,10 +305,14 @@ impl Topology {
                                     for &v in grid.get(&near).map(Vec::as_slice).unwrap_or(&[]) {
                                         if vertices.get(v).is_some_and(|&x| dist(x, p) <= merge) {
                                             if found.is_some_and(|f| f != v) {
-                                                return Err(Error::Unsupported(format!(
-                                                    "cell `{}`: a corner at {p:?} is within the merge distance of two vertices",
-                                                    name(c)
-                                                )));
+                                                return Err(Error::Measured(
+                                                    crate::Kind::Unsupported,
+                                                    crate::message![
+                                                        format!("cell `{}`: a corner at ", name(c)),
+                                                        crate::message::point(p),
+                                                        " is within the merge distance of two vertices"
+                                                    ],
+                                                ));
                                             }
                                             found = Some(v);
                                         }
@@ -317,7 +329,10 @@ impl Topology {
                             }
                         };
                         if seen.contains(&v) {
-                            return Err(Error::Unsupported(format!("cell `{}`: two corners at the same point {p:?}", name(c))));
+                            return Err(Error::Measured(
+                                crate::Kind::Unsupported,
+                                crate::message![format!("cell `{}`: two corners at the same point ", name(c)), crate::message::point(p)],
+                            ));
                         }
                         seen.push(v);
                         *slot = v;
@@ -773,13 +788,13 @@ impl Builder<'_, '_, '_> {
             }
         }
         let shared = topo.interfaces();
-        let description = format!(
+        let description = message![format!(
             "{} cell{} as conforming mapped blocks, {} shared face{}",
             blocks.len(),
             if blocks.len() == 1 { "" } else { "s" },
             shared,
             if shared == 1 { "" } else { "s" }
-        );
+        )];
         let nodes = std::mem::take(&mut self.nodes);
         Ok((Raw { nodes, hexes, description }, element_cell, blocks))
     }

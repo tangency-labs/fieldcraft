@@ -63,7 +63,7 @@ fn bounds(points: impl Iterator<Item = P>) -> Option<(P, P)> {
 /// Two points may not weld to the same node. `tol` = 0 welds nothing.
 pub fn weld(model: &Model, points: &[P], tol: f64) -> Result<Vec<Option<u32>>> {
     if !(tol.is_finite() && tol >= 0.0) {
-        return Err(Error::Invalid(format!("the weld distance must be finite and not negative, not {tol}")));
+        return Err(Error::invalid(crate::message!["the weld distance must be finite and not negative, not ", crate::message::length(tol)]));
     }
     let Some((lo, hi)) = bounds(points.iter().copied()).filter(|_| tol > 0.0) else { return Ok(vec![None; points.len()]) };
     let inside = |p: P| (0..3).all(|k| p[k] >= lo[k] - tol && p[k] <= hi[k] + tol);
@@ -85,7 +85,11 @@ pub fn weld(model: &Model, points: &[P], tol: f64) -> Result<Vec<Option<u32>>> {
             if let Some(label) = best
                 && let Some(other) = taken.insert(label, i)
             {
-                return Err(Error::Invalid(format!("points {other} and {i} both lie within {tol} of node {label}: lower the distance or refine")));
+                return Err(Error::invalid(crate::message![
+                    format!("points {other} and {i} both lie within "),
+                    crate::message::length(tol),
+                    format!(" of node {label}: lower the distance or refine")
+                ]));
             }
             Ok(best)
         })
@@ -107,7 +111,7 @@ pub fn coincident_nodes(model: &Model, candidates: Option<&BTreeSet<u32>>, tol: 
 /// label of a group survives, and wins a tie).
 pub fn coincident_nodes_from(model: &Model, candidates: Option<&BTreeSet<u32>>, tol: f64, highest: bool) -> Result<BTreeMap<u32, u32>> {
     if !(tol.is_finite() && tol > 0.0) {
-        return Err(Error::Invalid(format!("the merge distance must be a positive number, not {tol}")));
+        return Err(Error::invalid(crate::message!["the merge distance must be a positive number, not ", crate::message::length(tol)]));
     }
     let mut nodes: Vec<(u32, P)> = match candidates {
         Some(c) => c.iter().filter_map(|&l| model.node(l).map(|n| (l, n.xyz))).collect(),
@@ -217,15 +221,16 @@ pub fn check_conforming(model: &Model, new: &[(ElementKind, Vec<u32>)], joined: 
     if joined.is_empty() {
         return Ok(());
     }
-    let refuse =
-        |what: String| Err(Error::Invalid(format!("{what}: new elements must meet the mesh face to face, with the same divisions and element kind")));
+    let refuse = |what: crate::message::Message| {
+        Err(Error::invalid(what.then(crate::message![": new elements must meet the mesh face to face, with the same divisions and element kind"])))
+    };
     let new_skin = Skin::of(new.iter().map(|(k, n)| (*k, n.as_slice())), true);
     let touching = model.elements().values().filter(|e| e.nodes.iter().any(|n| joined.contains(n)));
     let old_skin = Skin::of(touching.map(|e| (e.kind, e.nodes.as_slice())), false);
     for (mine, theirs, what) in [(&new_skin, &old_skin, "a new face"), (&old_skin, &new_skin, "an element face")] {
         for (corners, nodes) in &mine.faces {
             if corners.iter().all(|n| joined.contains(n)) && theirs.faces.get(corners) != Some(nodes) {
-                return refuse(format!("{what} on nodes {corners:?} lies on shared nodes but the other side has no such face"));
+                return refuse(crate::message![format!("{what} on nodes {corners:?} lies on shared nodes but the other side has no such face")]);
             }
         }
     }
@@ -250,7 +255,11 @@ pub fn check_conforming(model: &Model, new: &[(ElementKind, Vec<u32>)], joined: 
                 let d = sub(ap, ab.map(|x| t * x));
                 let margin = tol / len2.sqrt();
                 if t > margin && t < 1.0 - margin && dot(d, d) <= tol * tol {
-                    return refuse(format!("node {n} at {p:?} lies on the edge between nodes {a} and {b}"));
+                    return refuse(crate::message![
+                        format!("node {n} at "),
+                        crate::message::point(p),
+                        format!(" lies on the edge between nodes {a} and {b}")
+                    ]);
                 }
             }
         }

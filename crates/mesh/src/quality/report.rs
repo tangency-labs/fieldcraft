@@ -253,18 +253,34 @@ impl GateReport {
         if self.passed() {
             return Ok(self);
         }
-        let mut why = Vec::new();
+        let mut why: Vec<crate::message::Message> = Vec::new();
         let list = |v: &[u32]| v.iter().take(10).map(u32::to_string).collect::<Vec<_>>().join(", ");
         if !self.invalid.is_empty() {
-            why.push(format!("{} inverted or degenerate elements ({})", self.invalid.len(), list(&self.invalid)));
+            why.push(crate::message![format!("{} inverted or degenerate elements ({})", self.invalid.len(), list(&self.invalid))]);
         }
         if !self.undetermined.is_empty() {
-            why.push(format!("{} elements whose validity could not be proven ({})", self.undetermined.len(), list(&self.undetermined)));
+            why.push(crate::message![format!(
+                "{} elements whose validity could not be proven ({})",
+                self.undetermined.len(),
+                list(&self.undetermined)
+            )]);
         }
         if let (false, Some(v)) = (self.volume_matches(), self.options.expected_volume) {
-            why.push(format!("mesh volume {} differs from the boundary's {v}", self.volume));
+            why.push(crate::message![
+                "mesh volume ",
+                crate::message::volume(self.volume),
+                " differs from the boundary's ",
+                crate::message::volume(v)
+            ]);
         }
-        Err(Error::Failed(format!("mesh validity gate: {}", why.join("; "))))
+        let mut message = crate::message!["mesh validity gate: "];
+        for (i, w) in why.into_iter().enumerate() {
+            if i > 0 {
+                message.0.push("; ".into());
+            }
+            message.0.extend(w.0);
+        }
+        Err(Error::failed(message))
     }
 }
 

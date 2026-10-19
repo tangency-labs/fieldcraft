@@ -40,6 +40,8 @@ use super::interval::Intervals;
 use super::region::{self, Scheme};
 use super::section;
 use super::{Ctx, Raw};
+use crate::message;
+use crate::message::Message;
 use crate::predicates::Sign;
 use crate::seeds::EdgeSeed;
 use crate::size::{SizeField, divide_polyline, edge_divisions, ideal_divisions};
@@ -135,11 +137,11 @@ impl Frame {
         }
     }
 
-    pub(crate) fn describe(&self) -> String {
+    pub(crate) fn describe(&self) -> Message {
         let f = |p: P| format!("({:.6}, {:.6}, {:.6})", p[0], p[1], p[2]);
         match *self {
-            Frame::Translate { d, .. } => format!("extruded along {}", f(d)),
-            Frame::Rotate { o, a, .. } => format!("revolved about the axis through {} along {}", f(o), f(a)),
+            Frame::Translate { d, .. } => message![format!("extruded along {}", f(d))],
+            Frame::Rotate { o, a, .. } => message!["revolved about the axis through ", crate::message::point(o), format!(" along {}", f(a))],
         }
     }
 }
@@ -327,7 +329,14 @@ fn classify(ctx: &Ctx, frame: &Frame, tol: f64, heights: &mut Vec<f64>) -> Resul
     if frame.periodic() {
         // A revolved region touching the axis would collapse its elements there.
         if let Some(p) = brep.surface.points().iter().find(|&&p| frame.coords(p).0[1] <= tol) {
-            return Err(Error::Unsupported(format!("the body reaches the axis of revolution (at {p:?}); revolved hexahedra would collapse there")));
+            return Err(Error::Measured(
+                crate::Kind::Unsupported,
+                crate::message![
+                    "the body reaches the axis of revolution (at ",
+                    crate::message::point(*p),
+                    "); revolved hexahedra would collapse there"
+                ],
+            ));
         }
     }
     for (e, edge) in brep.edges.iter().enumerate() {
@@ -611,9 +620,8 @@ pub(crate) fn mesh(ctxs: &[Ctx], prepared: &Prepared, refine: u32) -> Result<(Ra
     let filled_regions = used.iter().filter(|&&u| u).count();
     let structured = schemes.iter().zip(used.iter()).filter(|(s, u)| **u && **s != Scheme::Free).count();
     let bodies = if ctxs.len() > 1 { format!(" ({} cells together)", ctxs.len()) } else { String::new() };
-    let description = format!(
-        "{}{bodies}: {} level{}, {} region{} ({} structured, {} free), {} layer{}",
-        frame.describe(),
+    let description = frame.describe().then(message![format!(
+        "{bodies}: {} level{}, {} region{} ({} structured, {} free), {} layer{}",
         levels.len(),
         if levels.len() == 1 { "" } else { "s" },
         filled_regions,
@@ -622,7 +630,7 @@ pub(crate) fn mesh(ctxs: &[Ctx], prepared: &Prepared, refine: u32) -> Result<(Ra
         filled_regions - structured,
         total_layers.saturating_sub(usize::from(!frame.periodic())),
         if total_layers == 2 { "" } else { "s" },
-    );
+    )]);
     Ok((Raw { nodes, hexes, description }, cells))
 }
 

@@ -92,6 +92,8 @@ use fieldcraft_model::ElementKind;
 
 pub use crate::hex::BoundaryFace;
 use crate::hex::face_flux;
+use crate::message;
+use crate::message::{Message, length};
 use crate::quality::{GateOptions, Metric, Validity, element_quality, validity_gate_checks};
 use crate::size::{SizeField, checked_size};
 use crate::surface::BoundarySurface;
@@ -189,7 +191,7 @@ pub struct OctreeReport {
     /// elements can follow (blades, slits), the mesh stays this far off.
     pub boundary_distance: f64,
     /// Why earlier builds were refined.
-    pub retries: Vec<String>,
+    pub retries: Vec<Message>,
 }
 
 /// An all-hex8 mesh.
@@ -227,7 +229,7 @@ const CORE_ROUNDS: usize = 1000;
 /// A failure that refining at `at` may cure.
 struct Retry {
     at: Vec<P>,
-    why: String,
+    why: Message,
 }
 
 enum Attempt {
@@ -245,7 +247,7 @@ pub fn octree_hex_mesh(surface: &BoundarySurface, field: &dyn SizeField, options
     let thickness = triangle_thickness(&g);
     let ctx = plan(&g, field, options, &thickness)?;
     let mut hints: Vec<P> = Vec::new();
-    let mut retries: Vec<String> = Vec::new();
+    let mut retries: Vec<Message> = Vec::new();
     for attempt in 0..options.attempts {
         fieldcraft_model::progress::check()?;
         let cap = if attempt == 0 {
@@ -254,8 +256,8 @@ pub fn octree_hex_mesh(surface: &BoundarySurface, field: &dyn SizeField, options
             options.max_elements.min(RETRY_GROWTH.saturating_mul(ctx.last_leaves.get()).max(RETRY_MIN_CELLS))
         };
         let built = match ctx.build(&hints, cap) {
-            Err(Error::Limit(why)) if attempt > 0 => {
-                retries.push(format!("refining for another build needs more than {cap} grid cells ({why})"));
+            Err(e) if attempt > 0 && e.is_limit() => {
+                retries.push(message![format!("refining for another build needs more than {cap} grid cells (")].then(e.detail()).then(message![")"]));
                 break;
             }
             other => other?,
@@ -272,7 +274,7 @@ pub fn octree_hex_mesh(surface: &BoundarySurface, field: &dyn SizeField, options
             }
         }
     }
-    Err(Error::Failed(format!("octree hex meshing failed after {} builds: {}", retries.len(), retries.join("; "))))
+    Err(Error::failed(message![format!("octree hex meshing failed after {} builds: ", retries.len())].then(Message::join(retries, "; "))))
 }
 
 /// What the part's walls and narrow patches ask of the grid, measured before it is built.
@@ -296,11 +298,16 @@ impl Needs {
     }
 
     /// Why the cells must be as small as [`Needs::edge`].
-    fn reason(&self, options: &OctreeOptions) -> String {
+    fn reason(&self, options: &OctreeOptions) -> Message {
         if options.thickness_cells > 0.0 && self.wall / options.thickness_cells <= 0.5 * self.patch {
-            format!("the part has walls {:.4} thick, which {} cells across need cells of {:.4}", self.wall, options.thickness_cells, self.edge)
+            message![
+                "the part has walls ",
+                length(self.wall),
+                format!(" thick, which {} cells across need cells of ", options.thickness_cells),
+                length(self.edge)
+            ]
         } else {
-            format!("the part has a face {:.4} wide, which two cells across need cells of {:.4}", self.patch, self.edge)
+            message!["the part has a face ", length(self.patch), " wide, which two cells across need cells of ", length(self.edge)]
         }
     }
 }
@@ -337,10 +344,13 @@ fn plan<'a>(g: &'a Geometry<'a>, field: &'a dyn SizeField, options: &'a OctreeOp
             Some(d) if d <= options.max_depth => {}
             d => {
                 let n = d.map_or_else(|| format!("more than {}", grid::MAX_LEVEL), |l| l.to_string());
-                return Err(Error::Limit(format!(
-                    "a size of {finest:.4} below the root size {h:.4} needs {n} levels (each a third); `max_depth` is {}: raise it, or use a larger local size",
-                    options.max_depth
-                )));
+                return Err(Error::limit(message![
+                    "a size of ",
+                    length(finest),
+                    " below the root size ",
+                    length(h),
+                    format!(" needs {n} levels (each a third); `max_depth` is {}: raise it, or use a larger local size", options.max_depth)
+                ]));
             }
         }
     }
@@ -351,11 +361,11 @@ fn plan<'a>(g: &'a Geometry<'a>, field: &'a dyn SizeField, options: &'a OctreeOp
         anchors.push((needs.edge * 3f64.powi(i32::from(d) - 1), Some(d - 1)));
     }
     let mut best: Option<(usize, Context<'a>)> = None;
-    let mut refused: Vec<String> = Vec::new();
+    let mut refused: Vec<Message> = Vec::new();
     for (root, levels) in anchors {
         let Some(levels) = levels.filter(|&l| l <= options.max_depth) else {
             let n = levels.map_or_else(|| format!("more than {}", grid::MAX_LEVEL), |l| l.to_string());
-            refused.push(format!("{n} levels below a size of {root:.4}"));
+            refused.push(message![format!("{n} levels below a size of "), length(root)]);
             continue;
         };
         let ctx = Context::new(g, field, options, thickness, frame, root, (lo, hi), needs)?;
@@ -378,36 +388,36 @@ fn plan<'a>(g: &'a Geometry<'a>, field: &'a dyn SizeField, options: &'a OctreeOp
                         best = Some((n, ctx));
                         break;
                     }
-                    Err(Error::Limit(_)) => {
-                        refused.push(format!(
-                            "{levels} levels below a size of {root:.4}, {} grid cells refined and more than {} after balancing and closure",
-                            tree.leaf_count(),
-                            options.max_elements
-                        ));
+                    Err(e) if e.is_limit() => {
+                        refused.push(message![
+                            format!("{levels} levels below a size of "),
+                            length(root),
+                            format!(", {} grid cells refined and more than {} after balancing and closure", tree.leaf_count(), options.max_elements)
+                        ]);
                     }
                     Err(e) => return Err(e),
                 }
             }
             Refined::Over { level, at_least } => {
-                refused.push(format!("{levels} levels below a size of {root:.4}, more than {at_least} grid cells by level {level}"));
+                refused.push(message![
+                    format!("{levels} levels below a size of "),
+                    length(root),
+                    format!(", more than {at_least} grid cells by level {level}")
+                ]);
             }
         }
     }
     match best {
         Some((_, ctx)) => Ok(ctx),
-        None if needs.edge.is_finite() => Err(Error::Limit(format!(
-            "{}: {}; the limits are {} levels (`max_depth`) and {} cells (`max_elements`); use a smaller size, more levels or cells, or a structured (swept) hex mesh",
-            needs.reason(options),
-            refused.join("; or "),
-            options.max_depth,
-            options.max_elements
+        None if needs.edge.is_finite() => Err(Error::limit(needs.reason(options).then(message![": "]).then(Message::join(refused, "; or ")).then(
+            message![format!(
+                "; the limits are {} levels (`max_depth`) and {} cells (`max_elements`); use a smaller size, more levels or cells, or a structured (swept) hex mesh",
+                options.max_depth, options.max_elements
+            )],
         ))),
-        None => Err(Error::Limit(format!(
-            "the grid at a size of {h:.4} needs {}; the limits are {} levels (`max_depth`) and {} cells (`max_elements`)",
-            refused.join("; or "),
-            options.max_depth,
-            options.max_elements
-        ))),
+        None => Err(Error::limit(message!["the grid at a size of ", length(h), " needs "].then(Message::join(refused, "; or ")).then(message![
+            format!("; the limits are {} levels (`max_depth`) and {} cells (`max_elements`)", options.max_depth, options.max_elements)
+        ]))),
     }
 }
 
@@ -570,14 +580,14 @@ impl<'a> Context<'a> {
         needs: Needs,
     ) -> Result<Context<'a>> {
         if !(h.is_finite() && h > 0.0) {
-            return Err(Error::Invalid(format!("a root cell size of {h}")));
+            return Err(Error::invalid(message!["a root cell size of ", length(h)]));
         }
         let centre_u = [0, 1, 2].map(|k| 0.5 * (lo[k] + hi[k]));
         let mut roots = [0i64; 3];
         for k in 0..3 {
             let n = ((hi[k] - lo[k]) / h + 1.0).ceil();
             if !(n.is_finite() && n >= 1.0 && n <= options.max_elements as f64) {
-                return Err(Error::Limit(format!("a size of {h} needs {n} root cells along an axis")));
+                return Err(Error::limit(message!["a size of ", length(h), format!(" needs {n} root cells along an axis")]));
             }
             roots[k] = n as i64;
         }
@@ -688,7 +698,7 @@ impl Context<'_> {
     fn refine(&self, max_leaves: usize) -> Result<Refined> {
         let roots = self.roots.iter().try_fold(1usize, |a, &n| usize::try_from(n).ok().and_then(|n| a.checked_mul(n))).unwrap_or(usize::MAX);
         let mut tree = match Tree::new(self.roots, self.options.max_depth, max_leaves) {
-            Err(Error::Limit(_)) => return Ok(Refined::Over { level: 0, at_least: roots }),
+            Err(ref e) if e.kind() == Some(crate::Kind::Limit) => return Ok(Refined::Over { level: 0, at_least: roots }),
             other => other?,
         };
         for level in 0..self.options.max_depth {
@@ -700,7 +710,7 @@ impl Context<'_> {
                 }
                 match tree.split(key) {
                     Ok(()) => {}
-                    Err(Error::Limit(_)) if tree.leaf_count() + 26 > max_leaves => {
+                    Err(e) if e.kind() == Some(crate::Kind::Limit) && tree.leaf_count() + 26 > max_leaves => {
                         let mut more = 1usize;
                         for &k in keys.get(i + 1..).unwrap_or(&[]) {
                             if self.needs_split(k)? {
@@ -769,7 +779,7 @@ impl Context<'_> {
         let core: Vec<usize> = (0..lattice.hexes.len()).filter(|&i| keep[i]).collect();
         if core.is_empty() {
             let at = (0..g.surface.triangles().len() as u32).map(|t| g.triangle_centre(t)).collect();
-            return Ok(Attempt::Retry(Retry { at, why: "no grid element lies inside the part".into() }));
+            return Ok(Attempt::Retry(Retry { at, why: message!["no grid element lies inside the part"] }));
         }
         let mut w = Work {
             hexes: core.iter().map(|&i| lattice.hexes[i]).collect(),
@@ -814,14 +824,14 @@ impl Context<'_> {
             .collect();
         if !inverted.is_empty() {
             let why = format!("{} elements stay inverted after untangling", inverted.len());
-            return Ok(Attempt::Retry(Retry { at: inverted, why }));
+            return Ok(Attempt::Retry(Retry { at: inverted, why: why.into() }));
         }
         opt.improve_worst(IMPROVE_BELOW, 4);
         let uncertified = opt.repair_certified(6);
         if !uncertified.is_empty() {
             let at: Vec<P> = uncertified.iter().filter_map(|&e| w.hexes.get(e as usize)).map(|hx| centroid(&opt.points, hx)).collect();
             let why = format!("{} elements fail the certified validity check", at.len());
-            return Ok(Attempt::Retry(Retry { at, why }));
+            return Ok(Attempt::Retry(Retry { at, why: why.into() }));
         }
         w.points = opt.points;
         self.finish(&w, &tree, ran, boundary_distance)
@@ -947,7 +957,7 @@ impl Context<'_> {
         }
         if !bad.is_empty() {
             let why = format!("{} elements fail the certified validity check", bad.len());
-            return Ok(Attempt::Retry(Retry { at: bad, why }));
+            return Ok(Attempt::Retry(Retry { at: bad, why: why.into() }));
         }
         // The volume the mesh's own boundary encloses equals the elements' total exactly when they
         // tile it without overlapping.
@@ -1047,5 +1057,5 @@ fn check_topology(g: &Geometry, quads: &[[u32; 4]]) -> Option<Retry> {
         return None;
     }
     let at = (0..g.surface.triangles().len() as u32).map(|t| g.triangle_centre(t)).collect();
-    Some(Retry { at, why: format!("the core's boundary has components of genus {got:?}, the part {want:?}") })
+    Some(Retry { at, why: message![format!("the core's boundary has components of genus {got:?}, the part {want:?}")] })
 }

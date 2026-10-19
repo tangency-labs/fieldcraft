@@ -69,7 +69,17 @@ pub const SAMPLES_PER_SEGMENT: usize = 8;
 /// length.
 pub fn checked_size(field: &dyn SizeField, p: [f64; 3]) -> Result<f64> {
     let h = field.size(p);
-    if h.is_finite() && h > 0.0 { Ok(h) } else { Err(Error::Invalid(format!("size field returned {h} at {p:?}; sizes must be finite and positive"))) }
+    if h.is_finite() && h > 0.0 {
+        Ok(h)
+    } else {
+        Err(Error::invalid(crate::message![
+            "size field returned ",
+            crate::message::length(h),
+            " at ",
+            crate::message::point(p),
+            "; sizes must be finite and positive"
+        ]))
+    }
 }
 
 fn check_polyline(polyline: &[[f64; 3]]) -> Result<()> {

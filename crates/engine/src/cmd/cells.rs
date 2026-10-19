@@ -98,6 +98,8 @@ enum Transition {
 }
 
 fn cells(s: &mut Session, p: &Value) -> Result<Value> {
+    // What the reasons the meshers give are shown in.
+    let display = s.units().clone();
     if p.get("default").and_then(Value::as_str) == Some("blocks") {
         if p.get("methods").is_some_and(|m| m.as_object().is_none_or(|o| !o.is_empty())) {
             return Err(EngineError::param(
@@ -208,7 +210,7 @@ fn cells(s: &mut Session, p: &Value) -> Result<Value> {
             .filter_map(|&i| shapes.get(i))
             .map(|shape| Ok(Input { seeds: seeds.clone(), ..super::hex::shape_input(shape, Some(tolerance))? }))
             .collect::<Result<_>>()?;
-        match swept_together(p, &inputs, m, quadratic, size, tolerance, &seeds, &sizing)? {
+        match swept_together(p, &inputs, m, quadratic, size, tolerance, &seeds, &sizing, &display)? {
             Ok(cm) => {
                 for &i in &members {
                     if let Some(slot) = joint.get_mut(i) {
@@ -253,7 +255,7 @@ fn cells(s: &mut Session, p: &Value) -> Result<Value> {
                 }
                 // A cancelled job stops; any other failure falls back to tet.
                 Err(e) if e.is_cancelled() => return Err(e),
-                Err(e) => (Meshed::Tet, json!({"method": "tet", "why": e.to_string()})),
+                Err(e) => (Meshed::Tet, json!({"method": "tet", "why": e.shown(crate::units::geometry(), &display).to_string()})),
             },
         };
         if let Some(o) = info.as_object_mut() {
@@ -267,6 +269,7 @@ fn cells(s: &mut Session, p: &Value) -> Result<Value> {
 
     // Replace the cells' meshes (replace.rs), each after the labels before it; other bodies
     // and the definitions stay.
+    let describe = |m: &fieldcraft_mesh::message::Message| m.render(&crate::units::MeshUnits { from: crate::units::geometry(), to: &display });
     let model = &mut s.model;
     let cleared = super::replace::clear(model, names.iter().map(String::as_str));
     let mut report: Vec<(usize, Value)> = Vec::with_capacity(shapes.len());
@@ -279,7 +282,7 @@ fn cells(s: &mut Session, p: &Value) -> Result<Value> {
             let nodes: BTreeSet<u32> = elements.iter().filter_map(|&e| m.element(e)).flatten().copied().collect();
             report.push((
                 i,
-                json!({"body": b.name, "method": m.report.method.name(), "swept_together": source, "description": m.report.description, "kind": m.kind.name(), "elements": elements.len(), "nodes": nodes.len()}),
+                json!({"body": b.name, "method": m.report.method.name(), "swept_together": source, "description": describe(&m.report.description), "kind": m.kind.name(), "elements": elements.len(), "nodes": nodes.len()}),
             ));
         }
         interfaces.extend(swept_interfaces(&design, inputs, cm));
@@ -317,7 +320,7 @@ fn cells(s: &mut Session, p: &Value) -> Result<Value> {
         } else if quadratic {
             Err("pyramid transitions are linear (pyramid5); order 2 is tied".to_string())
         } else {
-            transition::mesh_with_pyramids(&design, model, &tet_params, &input, &hex_cells, &cdt, &tet_options)?
+            transition::mesh_with_pyramids(&design, model, &tet_params, &input, &hex_cells, &cdt, &tet_options, &display)?
         };
         let (kind, elements, nodes) = match pyramids {
             Ok(c) => {
@@ -378,6 +381,7 @@ fn swept_together(
     tolerance: f64,
     seeds: &[fieldcraft_mesh::seeds::EdgeSeed],
     sizing: &super::sizes::Sizing,
+    display: &fieldcraft_model::DisplaySystem,
 ) -> Result<std::result::Result<CellsMesh, String>> {
     let h = size.ok_or_else(|| EngineError::Params("no element size".into()))?;
     let field = sizing.field("", h)?;
@@ -386,7 +390,7 @@ fn swept_together(
         let options = super::mesh::surface_options(p, &b.mesh)?;
         match BoundarySurface::new(&b.mesh.positions, &b.mesh.triangles, &b.mesh.tri_face, &options) {
             Ok(surface) => surfaces.push(surface),
-            Err(e) => return Ok(Err(format!("body `{}`: {e}", b.name))),
+            Err(e) => return Ok(Err(format!("body `{}`: {}", b.name, crate::units::mesh_error_text(&e, display)))),
         }
     }
     let cells: Vec<Cell> = surfaces.iter().zip(inputs).map(|(surface, b)| Cell { name: &b.name, surface, faces: &b.surfaces }).collect();
@@ -401,8 +405,8 @@ fn swept_together(
     match hex_mesh_swept_cells(&cells, &field, &options) {
         Ok(cm) => Ok(Ok(cm)),
         Err(fieldcraft_mesh::Error::Model(fieldcraft_model::Error::Cancelled)) => Err(EngineError::Model(fieldcraft_model::Error::Cancelled)),
-        Err(e @ fieldcraft_mesh::Error::Limit(_)) => Err(EngineError::Params(e.to_string())),
-        Err(e) => Ok(Err(e.to_string())),
+        Err(e) if e.kind() == Some(fieldcraft_mesh::Kind::Limit) => Err(e.into()),
+        Err(e) => Ok(Err(crate::units::mesh_error_text(&e, display))),
     }
 }
 

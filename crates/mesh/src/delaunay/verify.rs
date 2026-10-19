@@ -176,7 +176,12 @@ impl Triangulation {
             return failed("a lower-dimensional triangulation has tetrahedra".into());
         }
         if (finite_volume - hull_volume).abs() > 1e-9 * scale {
-            return failed(format!("the tetrahedra fill {finite_volume}, the hull encloses {hull_volume}"));
+            return Err(Error::failed(crate::message![
+                "Delaunay verification: the tetrahedra fill ",
+                crate::message::volume(finite_volume),
+                ", the hull encloses ",
+                crate::message::volume(hull_volume)
+            ]));
         }
         Ok(())
     }

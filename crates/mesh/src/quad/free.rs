@@ -50,7 +50,7 @@ pub(crate) fn mesh(loops: &[Vec<[f64; 2]>], size: &dyn SizeField, opts: &QuadOpt
     for coarse in coarse_regions(&region)? {
         match attempt(&region, coarse, size, opts) {
             Ok(mesh) => return Ok(mesh),
-            Err(e @ Error::Failed(_)) => last = Some(e),
+            Err(e) if e.kind() == Some(crate::Kind::Failed) => last = Some(e),
             Err(e) => return Err(e),
         }
     }

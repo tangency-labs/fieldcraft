@@ -97,6 +97,33 @@ pub(crate) fn geometry_params_shown(s: &crate::Session, id: &str, params: &Value
     }
 }
 
+/// How the meshers' messages show their numbers ([`fieldcraft_mesh::message`]): in `from` (the
+/// command's frame), shown in `to` (the display system).
+pub struct MeshUnits<'a> {
+    pub from: &'a DisplaySystem,
+    pub to: &'a DisplaySystem,
+}
+
+impl fieldcraft_mesh::message::Units for MeshUnits<'_> {
+    fn value(&self, q: Quantity, v: f64) -> f64 {
+        self.from.to_si(q, v).and_then(|si| self.to.express(q, si)).unwrap_or(v)
+    }
+    fn symbol(&self, q: Quantity) -> String {
+        let s = self.to.symbol(q);
+        if s == "1" { String::new() } else { s.to_string() }
+    }
+}
+
+/// A mesher's error (its numbers in the geometry's millimetres) as text in `display`.
+pub fn mesh_error_text(e: &fieldcraft_mesh::Error, display: &DisplaySystem) -> String {
+    e.clone().shown(&MeshUnits { from: geometry(), to: display }).to_string()
+}
+
+/// A mesher's message (its numbers in the geometry's millimetres) as `s`'s user reads it.
+pub fn mesh_text(s: &crate::Session, m: &fieldcraft_mesh::message::Message) -> String {
+    m.render(&MeshUnits { from: geometry(), to: s.units() })
+}
+
 /// The system a command works in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Frame {

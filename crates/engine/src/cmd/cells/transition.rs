@@ -46,6 +46,7 @@ pub(super) fn mesh_with_pyramids(
     hex: &[String],
     cdt: &CdtOptions,
     options: &QualityOptions,
+    display: &fieldcraft_model::DisplaySystem,
 ) -> Result<std::result::Result<Pyramids, String>> {
     // The hex element faces across each of the cell's cut faces.
     let sides = super::sides(model, hex);
@@ -118,11 +119,11 @@ pub(super) fn mesh_with_pyramids(
     let (mesh, transition, steiner, cavities, volume) = match built() {
         Ok(x) => x,
         Err(fieldcraft_mesh::Error::Model(fieldcraft_model::Error::Cancelled)) => return Err(EngineError::Model(fieldcraft_model::Error::Cancelled)),
-        Err(e @ fieldcraft_mesh::Error::Limit(_)) => return Err(EngineError::Params(e.to_string())),
-        Err(e) => return Ok(Err(e.to_string())),
+        Err(e) if e.kind() == Some(fieldcraft_mesh::Kind::Limit) => return Err(e.into()),
+        Err(e) => return Ok(Err(crate::units::mesh_error_text(&e, display))),
     };
     if let Err(e) = apex_points(&mesh, &transition) {
-        return Ok(Err(e.to_string()));
+        return Ok(Err(crate::units::mesh_error_text(&e, display)));
     }
     let tets = BodyTets::new(input.name.clone(), input.face_names.clone(), mesh, steiner, cavities, volume);
     let interfaces = interfaces

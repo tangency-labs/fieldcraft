@@ -223,7 +223,7 @@ pub(super) fn hex_blocks(s: &mut Session, p: &Value) -> Result<Value> {
         let options = super::mesh::surface_options(p, &b.mesh)?;
         surfaces.push(
             BoundarySurface::new(&b.mesh.positions, &b.mesh.triangles, &b.mesh.tri_face, &options)
-                .map_err(|e| EngineError::Params(format!("body `{}`: {e}", b.name)))?,
+                .map_err(|e| EngineError::context(format!("body `{}`", b.name), e))?,
         );
     }
     let cells: Vec<Cell> = surfaces.iter().zip(&inputs).map(|(surface, b)| Cell { name: &b.name, surface, faces: &b.surfaces }).collect();
@@ -239,7 +239,7 @@ pub(super) fn hex_blocks(s: &mut Session, p: &Value) -> Result<Value> {
     let field = super::sizes::sizing(s)?.joint(&names).field("", h)?;
     let cm = hex_mesh_cells(&cells, &field, &options).map_err(|e| match e {
         fieldcraft_mesh::Error::Model(fieldcraft_model::Error::Cancelled) => EngineError::Model(fieldcraft_model::Error::Cancelled),
-        e => EngineError::Params(e.to_string()),
+        e => EngineError::Mesh(e),
     })?;
     let m = &cm.mesh;
     // Replace the cells' meshes (replace.rs); other bodies and the definitions stay.
@@ -251,7 +251,7 @@ pub(super) fn hex_blocks(s: &mut Session, p: &Value) -> Result<Value> {
     let reply = json!({
         "cells": inputs.len(),
         "interfaces": cm.interfaces,
-        "description": m.report.description,
+        "description": crate::units::mesh_text(s, &m.report.description),
         "kind": m.kind.name(),
         "elements": m.element_count(),
         "nodes": m.nodes.len(),
@@ -318,7 +318,7 @@ fn generate(s: &mut Session, p: &Value, default: HexMethod, allowed: &[HexMethod
         report.push(json!({
             "body": b.name,
             "method": m.report.method.name(),
-            "description": m.report.description,
+            "description": crate::units::mesh_text(s, &m.report.description),
             "kind": m.kind.name(),
             "elements": m.element_count(),
             "nodes": m.nodes.len(),
@@ -345,7 +345,7 @@ pub(super) fn hex_body(p: &Value, b: &Input, method: HexMethod, quadratic: bool,
     }
     let surface_options = super::mesh::surface_options(p, &b.mesh)?;
     let surface = BoundarySurface::new(&b.mesh.positions, &b.mesh.triangles, &b.mesh.tri_face, &surface_options)
-        .map_err(|e| EngineError::Params(format!("body `{}`: {e}", b.name)))?;
+        .map_err(|e| EngineError::context(format!("body `{}`", b.name), e))?;
     let chord = if b.surfaces.is_empty() { 0.0 } else { number(p, "tolerance")?.unwrap_or(DEFAULT_RELATIVE_TOLERANCE * b.diagonal) };
     let options = HexOptions {
         method,

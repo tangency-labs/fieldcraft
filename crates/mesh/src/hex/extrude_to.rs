@@ -151,7 +151,11 @@ pub fn extrude_to_surface(spec: &ExtrudeSpec, geometry: &dyn Geometry) -> Result
             let p = at(spec.nodes, v)?;
             let on: Vec<u32> = spec.sides.iter().copied().filter(|&f| geometry.project(f, p).is_some_and(|q| dist(p, q) <= 10.0 * tol)).collect();
             if on.is_empty() {
-                return Err(Error::Invalid(format!("the section's boundary node at {} is on none of the side faces", fmt(p))));
+                return Err(Error::invalid(crate::message![
+                    "the section's boundary node at ",
+                    crate::message::point(p),
+                    " is on none of the side faces"
+                ]));
             }
             side_faces.insert(v, on);
         }
@@ -161,7 +165,13 @@ pub fn extrude_to_surface(spec: &ExtrudeSpec, geometry: &dyn Geometry) -> Result
     let mut straight = Vec::with_capacity(n_src);
     for (i, (&s, &d)) in spec.nodes.iter().zip(&dirs).enumerate() {
         let (e, _) = ex.hit(s, d, true).ok_or_else(|| {
-            Error::Failed(format!("the path of section node {i} from {} along {} does not reach the target surface", fmt(s), fmt(d)))
+            Error::failed(crate::message![
+                format!("the path of section node {i} from "),
+                crate::message::point(s),
+                " along ",
+                format!("({:.4}, {:.4}, {:.4})", d[0], d[1], d[2]),
+                " does not reach the target surface"
+            ])
         })?;
         straight.push(e);
     }
@@ -170,7 +180,8 @@ pub fn extrude_to_surface(spec: &ExtrudeSpec, geometry: &dyn Geometry) -> Result
         let e = at(&straight, v)?;
         ends.insert(
             v,
-            ex.corner(faces, e).ok_or_else(|| Error::Failed(format!("the side faces and the target surface do not meet near {}", fmt(e))))?,
+            ex.corner(faces, e)
+                .ok_or_else(|| Error::failed(crate::message!["the side faces and the target surface do not meet near ", crate::message::point(e)]))?,
         );
     }
 
@@ -224,7 +235,9 @@ pub fn extrude_to_surface(spec: &ExtrudeSpec, geometry: &dyn Geometry) -> Result
                 let faces = side_faces.get(&v).map_or(&[][..], Vec::as_slice);
                 let s = at(spec.nodes, v)?;
                 let target = lerp(s, ends.get(&v).copied().unwrap_or(straight_at), t);
-                ex.onto(faces, target).ok_or_else(|| Error::Failed(format!("cannot place a layer node on the side faces near {}", fmt(target))))?
+                ex.onto(faces, target).ok_or_else(|| {
+                    Error::failed(crate::message!["cannot place a layer node on the side faces near ", crate::message::point(target)])
+                })?
             };
             residual.push(sub(x, straight_at));
             if let Some(slot) = layer.get_mut(i) {
@@ -242,10 +255,9 @@ pub fn extrude_to_surface(spec: &ExtrudeSpec, geometry: &dyn Geometry) -> Result
             let mut y = add(y0, correction);
             if last && correct {
                 let d = dirs.get(i).copied().unwrap_or([0.0, 0.0, 1.0]);
-                y = ex
-                    .hit(y, d, false)
-                    .map(|(p, _)| p)
-                    .ok_or_else(|| Error::Failed(format!("the path near {} does not reach the target surface", fmt(y))))?;
+                y = ex.hit(y, d, false).map(|(p, _)| p).ok_or_else(|| {
+                    Error::failed(crate::message!["the path near ", crate::message::point(y), " does not reach the target surface"])
+                })?;
             }
             if let Some(slot) = layer.get_mut(i) {
                 *slot = y;
@@ -333,11 +345,11 @@ pub fn extrude_to_surface(spec: &ExtrudeSpec, geometry: &dyn Geometry) -> Result
     let gate = validity_gate_checks(checks.iter().map(|(l, c)| (*l, c)), &GateOptions { expected_volume: Some(enclosed), volume_tolerance: 1e-9 })?
         .into_result()
         .map_err(|e| {
-            Error::Failed(format!(
-                "{e} (worst element {} near {}: a path crosses another or a side; try other layers, a smaller bias or the side faces)",
-                worst + 1,
-                fmt(centre(worst, 0))
-            ))
+            Error::failed(e.message().then(crate::message![
+                format!(" (worst element {} near ", worst + 1),
+                crate::message::point(centre(worst, 0)),
+                ": a path crosses another or a side; try other layers, a smaller bias or the side faces)"
+            ]))
         })?;
     let max_target_gap = nodes
         .iter()
@@ -570,10 +582,6 @@ fn across(d: P) -> (P, P) {
 
 fn at(nodes: &[P], v: u32) -> Result<P> {
     nodes.get(v as usize).copied().ok_or_else(|| Error::Failed(format!("node {v} out of range")))
-}
-
-fn fmt(p: P) -> String {
-    format!("({:.4}, {:.4}, {:.4})", p[0], p[1], p[2])
 }
 
 #[cfg(test)]

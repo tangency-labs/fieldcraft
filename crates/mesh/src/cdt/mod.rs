@@ -237,7 +237,11 @@ impl Recovery {
                     && !self.cx.has_edge(u, v, &mut scratch)?
                 {
                     let at = self.cx.approx(u)?;
-                    return Err(Error::Failed(format!("a boundary edge near {at:?} was lost during facet recovery")));
+                    return Err(Error::failed(crate::message![
+                        "a boundary edge near ",
+                        crate::message::point(at),
+                        " was lost during facet recovery"
+                    ]));
                 }
             }
         }
@@ -256,7 +260,11 @@ impl Recovery {
         for vs in live {
             if self.cx.volume(vs)? != Sign::Positive {
                 let at = self.cx.approx(vs[0])?;
-                return Err(corrupt(&format!("a tetrahedron near {at:?} is not positive")));
+                return Err(Error::failed(crate::message![
+                    "constrained tetrahedralization is inconsistent: a tetrahedron near ",
+                    crate::message::point(at),
+                    " is not positive"
+                ]));
             }
         }
         Ok(())
@@ -287,9 +295,11 @@ impl Recovery {
                     }
                     Some(Some(got)) if *got != want => {
                         let at = self.cx.approx(vs[k])?;
-                        return Err(Error::Failed(format!(
-                            "inside/outside labelling is inconsistent near {at:?}: the surface does not bound a volume"
-                        )));
+                        return Err(Error::failed(crate::message![
+                            "inside/outside labelling is inconsistent near ",
+                            crate::message::point(at),
+                            ": the surface does not bound a volume"
+                        ]));
                     }
                     Some(_) => {}
                 }
@@ -307,7 +317,11 @@ impl Recovery {
                         let x = vs.get(k).copied().unwrap_or(NONE);
                         if self.cx.volume([a, b, c, x])? != Sign::Negative {
                             let at = self.cx.approx(a)?;
-                            return Err(Error::Failed(format!("input triangle {f} near {at:?} faces into the solid: the surface is inverted")));
+                            return Err(Error::failed(crate::message![
+                                format!("input triangle {f} near "),
+                                crate::message::point(at),
+                                " faces into the solid: the surface is inverted"
+                            ]));
                         }
                     }
                 }

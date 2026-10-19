@@ -55,6 +55,8 @@ use std::fmt;
 
 use fieldcraft_model::{MAX_COORD, MAX_ELEMENTS, MAX_NODES};
 
+use crate::message;
+use crate::message::{Message, length, point, volume};
 use crate::predicates::Point3;
 use crate::vec3::{cross, norm, sub};
 use crate::{Error, Result};
@@ -154,35 +156,39 @@ impl Defect {
     }
 }
 
-struct Xyz([f64; 3]);
-impl fmt::Display for Xyz {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "({}, {}, {})", self.0[0], self.0[1], self.0[2])
+impl Defect {
+    /// What the defect is, its points as data.
+    pub fn message(&self) -> Message {
+        match *self {
+            Defect::BadCoordinate { vertex } => {
+                message![format!("vertex {vertex}: a coordinate is not a finite number within ±"), length(MAX_COORD)]
+            }
+            Defect::BadIndex { triangle } => message![format!("triangle {triangle} refers to a vertex that does not exist")],
+            Defect::Degenerate { triangle, at } => message![format!("triangle {triangle} at "), point(at), " has collinear corners"],
+            Defect::OpenEdge { vertices: [a, b], triangle, at } => {
+                message![format!("open edge {a}–{b} at "), point(at), format!(" (only triangle {triangle} uses it)")]
+            }
+            Defect::NonManifoldEdge { vertices: [a, b], triangles, at } => {
+                message![format!("edge {a}–{b} at "), point(at), format!(" is shared by {triangles} triangles")]
+            }
+            Defect::Flipped { vertices: [a, b], triangles: [s, t], at } => {
+                message![format!("triangles {s} and {t} are oriented inconsistently across edge {a}–{b} at "), point(at)]
+            }
+            Defect::NonManifoldVertex { vertex, at } => message![format!("vertex {vertex} at "), point(at), " joins separate sheets"],
+            Defect::SelfIntersection { triangles: [s, t], at } => message![format!("triangles {s} and {t} intersect near "), point(at)],
+            Defect::Inverted { shell, triangle, volume: v } => message![
+                format!("shell {shell} (from triangle {triangle}) is inside out: it encloses "),
+                volume(v),
+                " where the opposite sign is expected"
+            ],
+            Defect::Flat { shell, triangle } => message![format!("shell {shell} (from triangle {triangle}) encloses no measurable volume")],
+        }
     }
 }
 
 impl fmt::Display for Defect {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            Defect::BadCoordinate { vertex } => write!(f, "vertex {vertex}: a coordinate is not a finite number within ±{MAX_COORD}"),
-            Defect::BadIndex { triangle } => write!(f, "triangle {triangle} refers to a vertex that does not exist"),
-            Defect::Degenerate { triangle, at } => write!(f, "triangle {triangle} at {} has collinear corners", Xyz(at)),
-            Defect::OpenEdge { vertices: [a, b], triangle, at } => {
-                write!(f, "open edge {a}–{b} at {} (only triangle {triangle} uses it)", Xyz(at))
-            }
-            Defect::NonManifoldEdge { vertices: [a, b], triangles, at } => {
-                write!(f, "edge {a}–{b} at {} is shared by {triangles} triangles", Xyz(at))
-            }
-            Defect::Flipped { vertices: [a, b], triangles: [s, t], at } => {
-                write!(f, "triangles {s} and {t} are oriented inconsistently across edge {a}–{b} at {}", Xyz(at))
-            }
-            Defect::NonManifoldVertex { vertex, at } => write!(f, "vertex {vertex} at {} joins separate sheets", Xyz(at)),
-            Defect::SelfIntersection { triangles: [s, t], at } => write!(f, "triangles {s} and {t} intersect near {}", Xyz(at)),
-            Defect::Inverted { shell, triangle, volume } => {
-                write!(f, "shell {shell} (from triangle {triangle}) is inside out: it encloses {volume} where the opposite sign is expected")
-            }
-            Defect::Flat { shell, triangle } => write!(f, "shell {shell} (from triangle {triangle}) encloses no measurable volume"),
-        }
+        self.message().fmt(f)
     }
 }
 
@@ -216,17 +222,29 @@ impl Defects {
     }
 }
 
-impl fmt::Display for Defects {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Defects {
+    /// The defects, their points as data.
+    pub fn message(&self) -> Message {
         let s = if self.total == 1 { "" } else { "s" };
-        write!(f, "{} defect{s}", self.total)?;
+        let mut out = message![format!("{} defect{s}", self.total)];
         for d in self.listed.iter().take(3) {
-            write!(f, "; {d}")?;
+            out = out.then(message!["; "]).then(d.message());
         }
         if self.total > 3 {
-            write!(f, "; …")?;
+            out.0.push("; …".into());
         }
-        Ok(())
+        out
+    }
+
+    /// The defects as text, their points shown in `units`.
+    pub fn render(&self, units: &dyn crate::message::Units) -> String {
+        self.message().render(units)
+    }
+}
+
+impl fmt::Display for Defects {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.render(&crate::message::Bare))
     }
 }
 
@@ -420,7 +438,7 @@ fn check_options(o: &SurfaceOptions) -> Result<()> {
         )));
     }
     if !(o.weld_distance >= 0.0 && o.weld_distance <= MAX_COORD) {
-        return Err(Error::Invalid(format!("weld distance must be a length of at least 0, got {}", o.weld_distance)));
+        return Err(Error::invalid(crate::message!["weld distance must be a length of at least 0, got ", crate::message::length(o.weld_distance)]));
     }
     if !(o.feature_angle > 0.0 && o.feature_angle <= 180.0) {
         return Err(Error::Invalid(format!("feature angle must be in (0, 180] degrees, got {}", o.feature_angle)));

@@ -219,7 +219,7 @@ fn halves(body: &Shape, plane: &Plane) -> solidcraft_kernel::Result<Vec<solidcra
             solidcraft_kernel::capture_boolean_diagnostics(|| solidcraft_kernel::boolean(&body.body, &side, solidcraft_kernel::BoolOp::Intersect));
         if let Some(moved) = report.warning() {
             return Err(solidcraft_kernel::KernelError::Failed(format!(
-                "the cut is only made off the plane ({moved}); the plane runs along a face or edge of the body: move it off (by a fraction of the element size)"
+                "the cut is only made off the plane (SolidCraft's kernel: {moved}); the plane runs along a face or edge of the body: move it off (by a fraction of the element size)"
             )));
         }
         out.extend(cut?);

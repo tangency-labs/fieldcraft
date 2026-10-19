@@ -34,7 +34,7 @@ const CLEAN_ROUNDS: usize = 16;
 #[derive(Debug, Clone)]
 pub(crate) struct MapFailure {
     pub at: Vec<P>,
-    pub why: String,
+    pub why: crate::message::Message,
 }
 
 /// The map: a constraint per quad vertex and a patch per quad.
@@ -173,7 +173,7 @@ pub(crate) fn map_features(g: &Geometry, quads: &[[u32; 4]], xyz: &dyn Fn(u32) -
     for (p, patch) in g.patches.iter().enumerate() {
         if !present.contains(&(p as u32)) {
             let at: Vec<P> = patch.triangles.iter().take(64).map(|&t| g.triangle_centre(t)).collect();
-            return Err(MapFailure { at, why: format!("patch {p} (B-rep faces {:?}) has no region", patch.faces) });
+            return Err(MapFailure { at, why: crate::message![format!("patch {p} (B-rep faces {:?}) has no region", patch.faces)] });
         }
     }
     let mut curves_between: BTreeMap<(u32, u32), Vec<u32>> = BTreeMap::new();
@@ -202,7 +202,10 @@ pub(crate) fn map_features(g: &Geometry, quads: &[[u32; 4]], xyz: &dyn Fn(u32) -
             continue;
         }
         let Some(cs) = curves_between.get(&(la, lb)) else {
-            return Err(MapFailure { at: vec![xyz(*a), xyz(*b)], why: format!("regions of patches {la} and {lb} meet where the part has no curve") });
+            return Err(MapFailure {
+                at: vec![xyz(*a), xyz(*b)],
+                why: crate::message![format!("regions of patches {la} and {lb} meet where the part has no curve")],
+            });
         };
         border_pairs.insert((la, lb));
         let mid = [0, 1, 2].map(|k| 0.5 * (xyz(*a)[k] + xyz(*b)[k]));
@@ -214,7 +217,10 @@ pub(crate) fn map_features(g: &Geometry, quads: &[[u32; 4]], xyz: &dyn Fn(u32) -
     for (pair, cs) in &curves_between {
         if pair.0 != pair.1 && !border_pairs.contains(pair) {
             let at: Vec<P> = cs.iter().flat_map(|&c| g.curves[c as usize].vertices.iter().map(|&v| g.xyz(v)).collect::<Vec<_>>()).collect();
-            return Err(MapFailure { at, why: format!("the regions of patches {} and {} do not meet along their curve", pair.0, pair.1) });
+            return Err(MapFailure {
+                at,
+                why: crate::message![format!("the regions of patches {} and {} do not meet along their curve", pair.0, pair.1)],
+            });
         }
     }
 
@@ -235,7 +241,7 @@ pub(crate) fn map_features(g: &Geometry, quads: &[[u32; 4]], xyz: &dyn Fn(u32) -
                 taken.insert(c);
                 role.insert(v, Constraint::Corner(c));
             }
-            None => return Err(MapFailure { at: vec![p], why: format!("regions {labels:?} meet where the part has no corner") }),
+            None => return Err(MapFailure { at: vec![p], why: crate::message![format!("regions {labels:?} meet where the part has no corner")] }),
         }
     }
     for &c in &g.corners {
@@ -254,7 +260,9 @@ pub(crate) fn map_features(g: &Geometry, quads: &[[u32; 4]], xyz: &dyn Fn(u32) -
             Some(v) => {
                 role.insert(v, Constraint::Corner(c));
             }
-            None => return Err(MapFailure { at: vec![p], why: format!("the feature corner at {p:?} has no vertex") }),
+            None => {
+                return Err(MapFailure { at: vec![p], why: crate::message!["the feature corner at ", crate::message::point(p), " has no vertex"] });
+            }
         }
     }
     for (q, quad) in quads.iter().enumerate() {

@@ -286,7 +286,7 @@ pub(crate) fn open_body(s: &Session, name: &str, tolerance: Option<f64>, raw: &V
     let input = super::hex::shape_input(shape, tolerance)?;
     let surface =
         BoundarySurface::new(&input.mesh.positions, &input.mesh.triangles, &input.mesh.tri_face, &super::mesh::surface_options(raw, &input.mesh)?)
-            .map_err(|e| EngineError::Params(format!("body `{name}`: {e}")))?;
+            .map_err(|e| EngineError::context(format!("body `{name}`"), e))?;
     let target = Tessellation::new(&surface, super::mesh::analytic_surfaces(shape)).with_pieces(&surface, super::mesh::pieces(shape, &input.pieces));
     let m = shape.measure()?;
     Ok(Body { input, surface, target, lo: m.bbox_min, hi: m.bbox_max })

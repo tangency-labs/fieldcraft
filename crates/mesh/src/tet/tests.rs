@@ -344,7 +344,7 @@ mod pipeline {
         ] {
             match quality_mesh(&s, &cdt, Vec::new(), &o) {
                 Ok(m) => assert!(!m.report.stopped.is_empty(), "{:?}", m.report),
-                Err(e) => assert!(matches!(e, crate::Error::Limit(_) | crate::Error::Invalid(_)), "{e}"),
+                Err(e) => assert!(matches!(e.kind(), Some(crate::Kind::Limit | crate::Kind::Invalid)), "{e}"),
             }
         }
     }

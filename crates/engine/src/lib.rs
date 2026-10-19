@@ -80,6 +80,10 @@ pub enum EngineError {
     /// A command panicked; the model is unchanged.
     #[error("internal error in {command}: {message}")]
     Internal { command: String, message: String },
+    /// An error of what `context` names (`body `Block``): kept whole, so its numbers are shown
+    /// in the display units at the command's boundary ([`EngineError::shown`]).
+    #[error("{context}: {source}")]
+    Context { context: String, source: Box<EngineError> },
 }
 
 impl EngineError {
@@ -87,6 +91,9 @@ impl EngineError {
     /// ([`fieldcraft_model::progress::Progress::cancel`]).
     pub fn is_cancelled(&self) -> bool {
         use fieldcraft_model::Error::Cancelled;
+        if let EngineError::Context { source, .. } = self {
+            return source.is_cancelled();
+        }
         matches!(
             self,
             EngineError::Model(Cancelled)
@@ -98,12 +105,29 @@ impl EngineError {
         )
     }
 
-    /// A body's mesher failure as a parameter problem naming the body, or the cancellation as
-    /// it is.
+    /// A body's mesher failure naming the body, or the cancellation as it is.
     pub(crate) fn of_body(body: &str, e: fieldcraft_mesh::Error) -> Self {
         match e {
             fieldcraft_mesh::Error::Model(fieldcraft_model::Error::Cancelled) => EngineError::Model(fieldcraft_model::Error::Cancelled),
-            e => EngineError::Params(format!("body `{body}`: {e}")),
+            e => EngineError::context(format!("body `{body}`"), e),
+        }
+    }
+
+    /// `e` as an error of what `context` names; a cancellation stays one.
+    pub(crate) fn context(context: impl Into<String>, e: impl Into<EngineError>) -> Self {
+        let e = e.into();
+        if e.is_cancelled() { e } else { EngineError::Context { context: context.into(), source: Box::new(e) } }
+    }
+
+    /// The error with the numbers its meshers' messages name, which are in `from` (the command's
+    /// frame), shown in `to` (the display system) with their units.
+    pub fn shown(self, from: &fieldcraft_model::DisplaySystem, to: &fieldcraft_model::DisplaySystem) -> Self {
+        let units = units::MeshUnits { from, to };
+        match self {
+            EngineError::Mesh(e) => EngineError::Mesh(e.shown(&units)),
+            EngineError::Fluid(fieldcraft_lbm::Error::Mesh(e)) => EngineError::Fluid(fieldcraft_lbm::Error::Mesh(e.shown(&units))),
+            EngineError::Context { context, source } => EngineError::Context { context, source: Box::new(source.shown(from, to)) },
+            e => e,
         }
     }
 
@@ -378,8 +402,10 @@ impl Session {
                 Some(form) => units::convert_params(form, params, &input, &target)?,
                 None => params.clone(),
             };
-            let mut reply = self.in_frame(&target, |s| (spec.run)(s, &converted).and_then(|v| cmd::relax::after_remesh(s, id, v)))?;
             let shown = self.units().clone();
+            let mut reply = self
+                .in_frame(&target, |s| (spec.run)(s, &converted).and_then(|v| cmd::relax::after_remesh(s, id, v)))
+                .map_err(|e| e.shown(&target, &shown))?;
             units::convert_reply(id, &mut reply, &target, &shown)?;
             Ok(reply)
         }));

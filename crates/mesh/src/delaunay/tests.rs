@@ -301,7 +301,7 @@ fn locate_finds_the_containing_tetrahedron() {
 #[test]
 fn hostile_coordinates_are_rejected() {
     for bad in [[f64::NAN, 0.0, 0.0], [f64::INFINITY, 0.0, 0.0], [1e300, 0.0, 0.0], [1e-300, 0.0, 0.0]] {
-        assert!(matches!(Triangulation::new(&[[0.0; 3], bad]), Err(Error::Invalid(_))));
+        assert!(matches!(Triangulation::new(&[[0.0; 3], bad]), Err(ref e) if e.kind() == Some(crate::Kind::Invalid)));
     }
     let mut tri = Triangulation::new(&grid(2, 2, 2)).unwrap();
     assert!(tri.insert([0.0, f64::NEG_INFINITY, 0.0]).is_err());

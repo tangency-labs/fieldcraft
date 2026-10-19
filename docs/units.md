@@ -50,7 +50,9 @@ confirmation.
 - **The geometry frame**: the geometry commands and the meshers work in millimetres, the unit
   SolidCraft designs are in and the meshers' absolute floors were tuned for; the frame is internal.
   Their parameters, their replies (`units::REPLIES`, with a `units` map) and their messages
-  (`units::shown`) are in the display system like every other command's: a datum, a mesh size or
+  (`units::shown`; the meshers' errors keep their lengths, areas, volumes and points as data,
+  `fieldcraft_mesh::message`, and `EngineError::shown` renders them at the command's boundary)
+  are in the display system like every other command's: a datum, a mesh size or
   a tolerance typed as `1` in an inch display is an inch. A journal of a model from before SI
   storage (its header has `model_units`) built on a design or 3MF meshes typed the numbers of its
   geometry and mesher commands in millimetres whatever its system, as its stored datums, plans,
@@ -76,6 +78,9 @@ confirmation.
   preset), stated in the header; Nastran gets `PARAM,WTMASS,1.0`, LS-DYNA `*CONTROL_UNITS`.
   Written in a model's old system, a deck is byte-identical to before apart from the unit lines.
 - **Files**: `.fieldcraft` format 3 stores SI (see below).
+- **SolidCraft's own text** (a feature's rebuild error, the kernel's boolean diagnostics, a
+  feature's stored `definition`) is passed on as SolidCraft wrote it, in the design's units, and
+  marked as SolidCraft's (`SolidCraft: …`).
 - **Geometry**: SolidCraft designs and imported surfaces are in millimetres; their
   tessellations become metres where they meet the model (`units::geometry_point`), and the
   meshers run in millimetres inside the geometry frame (above). 3MF files are read in their declared unit
