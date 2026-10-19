@@ -607,14 +607,10 @@ pub(crate) mod tests {
     /// A 40 × 30 × 10 mm plate (the geometry sample) in a tank 20 mm larger on every side, of
     /// 5 mm cells, a liquid flowing along x past it: solved, so its result is shown.
     pub(crate) fn plate_in_a_tank() -> crate::Session {
-        use fieldcraft_geometry::sample::{Plate, plate_design};
-        let dir = std::env::temp_dir().join(format!("fieldcraft-flow-view-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("plate.solidcraft");
-        std::fs::write(&path, plate_design(&Plate::default()).unwrap()).unwrap();
+        use fieldcraft_geometry::sample::Plate;
+        let (_dir, path) = crate::tests::sample_design_file(&Plate::default());
         let mut s = crate::Session::default();
-        s.execute("geometry.open", &json!({"path": path.to_str().unwrap()})).unwrap();
-        let _ = std::fs::remove_dir_all(&dir);
+        s.execute("geometry.open", &json!({"path": path})).unwrap();
         let script = json!([
             {"command": "model.material.create", "params": {"name": "Water", "density": 1e-9, "fluid": {"type": "newtonian", "viscosity": 1e-7}}},
             {"command": "model.fluid_domain.create", "params": {"name": "Tank", "material": "Water", "min": [-20, -20, -20], "max": [60, 50, 30], "spacing": 5, "obstacles": ["Body1"],

@@ -431,7 +431,11 @@ pub(crate) mod tests {
     /// A 40 × 30 × 10 mm plate in a tank of 5 mm cells, a liquid flowing past it along x, solved.
     fn plate_in_a_tank(thermal: bool) -> Session {
         use fieldcraft_geometry::sample::{Plate, plate_design};
-        let dir = std::env::temp_dir().join(format!("fieldcraft-ui-flow-{}-{thermal}", std::process::id()));
+        // A folder of its own per call: tests run in parallel, and one removing a shared folder
+        // took the design from under another's `geometry.open`.
+        static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("fieldcraft-ui-flow-{}-{n}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("plate.solidcraft");
         std::fs::write(&path, plate_design(&Plate::default()).unwrap()).unwrap();
