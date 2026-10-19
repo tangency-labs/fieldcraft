@@ -1733,6 +1733,60 @@ pub(crate) mod tests {
         }
     }
 
+    /// A cantilever twisted and bent through a coupled reference point in a nonlinear step,
+    /// typed in mm-t-s-N-MPa and in m-kg-s-N-Pa: the same model (stored in SI), so the same
+    /// increments, iterations and convergence measures.
+    #[test]
+    fn a_coupled_nonlinear_step_converges_the_same_in_either_display_system() {
+        let script = |system: &str, mm: f64, mpa: f64| {
+            let (l, w) = (0.2 * mm, 0.02 * mm);
+            let corners = json!([[0, 0, 0], [l, 0, 0], [l, w, 0], [0, w, 0], [0, 0, w], [l, 0, w], [l, w, w], [0, w, w]]);
+            json!([
+                {"command": "model.units", "params": {"system": system}},
+                {"command": "mesh.block", "params": {"body": "Beam", "kind": "hex20", "corners": corners, "divisions": [4, 1, 1], "faces": {"6": "root", "4": "tip"}}},
+                {"command": "model.set.create", "params": {"name": "all", "geometry": [{"body": "Beam"}]}},
+                {"command": "model.set.create", "params": {"name": "root", "geometry": [{"body": "Beam", "face": "root"}]}},
+                {"command": "model.set.create", "params": {"name": "tip", "geometry": [{"body": "Beam", "face": "tip"}]}},
+                {"command": "model.material.create", "params": {"name": "Rubber", "elastic": {"type": "isotropic", "young": 1e7 / mpa, "poisson": 0.3}}},
+                {"command": "model.section.create", "params": {"name": "beam", "set": "all", "material": "Rubber", "kind": {"type": "solid"}}},
+                {"command": "model.boundary_condition.create", "params": {"name": "clamp", "type": "fixed", "target": {"set": "root"}}},
+                {"command": "model.reference_point.create", "params": {"name": "Tip", "xyz": [l, 0.5 * w, 0.5 * w]}},
+                {"command": "model.coupling.create", "params": {"name": "end", "reference_point": "Tip", "set": "tip", "kind": "kinematic"}},
+                {"command": "model.load.create", "params": {"name": "shear", "type": "force", "target": {"reference_point": "Tip"}, "vector": [0, 0, -1]}},
+                {"command": "model.load.create", "params": {"name": "twist", "type": "moment", "target": {"reference_point": "Tip"}, "vector": [0.05 * mm, 0, 0]}},
+                {"command": "model.step.create", "params": {"name": "Twist", "procedure": {"type": "nonlinear_static", "initial_increment": 0.5}, "boundary_conditions": ["clamp"], "loads": ["shear", "twist"]}},
+                {"command": "solve.nonlinear", "params": {"step": "Twist"}}
+            ])
+        };
+        let solve = |system: &str, mm: f64, mpa: f64| {
+            let mut s = Session::default();
+            let out = s.run_script(&script(system, mm, mpa)).unwrap();
+            (out.last().cloned().unwrap(), s.model)
+        };
+        let (millimetres, a) = solve("mm-t-s-N-MPa", 1000.0, 1e6);
+        let (metres, b) = solve("m-kg-s-N-Pa", 1.0, 1.0);
+        assert_eq!(b.display_units().map(|u| u.preset()), Some(fieldcraft_model::units::Preset::MKgS));
+        assert_eq!(a.display_units().map(|u| u.preset()), Some(fieldcraft_model::units::Preset::MmTonneS), "the model keeps its display system");
+        let iterations =
+            |r: &Value| r["increments"].as_array().unwrap().iter().map(|i| i["iterations"].as_array().unwrap().len()).collect::<Vec<_>>();
+        assert!(iterations(&millimetres).iter().all(|n| *n > 2), "{millimetres}");
+        assert_eq!(iterations(&millimetres), iterations(&metres));
+        // The same convergence measures, but for round-off: the block is meshed in the geometry's
+        // millimetres from corners typed in either system.
+        let measures = |r: &Value| -> Vec<f64> {
+            let increments = r["increments"].as_array().unwrap();
+            increments
+                .iter()
+                .flat_map(|i| i["iterations"].as_array().unwrap().iter())
+                .flat_map(|it| [&it["force"], &it["displacement"]])
+                .map(|v| v.as_f64().unwrap())
+                .collect()
+        };
+        for (x, y) in measures(&millimetres).iter().zip(measures(&metres)) {
+            assert!((x - y).abs() <= 1e-6 * x.abs().max(y.abs()) + 1e-12, "{x} vs {y}");
+        }
+    }
+
     #[test]
     fn solve_and_probe_a_coupled_reference_point() {
         // The defined bar: a force on a reference point kinematically coupled to the free end.

@@ -804,9 +804,9 @@ const PROCEDURE: Field = variants(
                     "tolerances",
                     "Tolerances",
                     &[
-                        positive("force", "Force", D::None).help("Residual force, relative to the applied forces.").def("1e-6"),
+                        positive("force", "Force", D::None).help("Residual force (moment), relative to the step's forces (moments).").def("1e-6"),
                         positive("displacement", "Displacement", D::None)
-                            .help("Displacement correction, relative to the increment's displacement.")
+                            .help("Displacement (rotation) correction, relative to the increment's displacement (rotation).")
                             .def("1e-5"),
                         positive("energy", "Energy", D::None).help("Work of the residual, relative to the increment's work.").def("1e-10"),
                     ],
