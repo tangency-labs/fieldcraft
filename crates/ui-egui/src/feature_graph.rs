@@ -138,7 +138,11 @@ pub fn describe(f: &Value) -> Feature {
                 if def["extent"]["through_all"] == true {
                     format!("{verb} through all{along}")
                 } else if f["two_sided"] == true {
-                    format!("{verb} {} both sides", d.map(mm).unwrap_or_default())
+                    // A symmetric extrude's distance is the total in designs saved since
+                    // SolidCraft 0.16 (`convention`), per side before.
+                    let total = def["extent"]["direction"] == "symmetric" && def["extent"]["convention"] == "total_distance";
+                    let per_side = if total { d.map(|d| d / 2.0) } else { d };
+                    format!("{verb} {} both sides", per_side.map(mm).unwrap_or_default())
                 } else {
                     format!("{verb} {}{along}", d.map(mm).unwrap_or_default())
                 }
@@ -374,6 +378,9 @@ mod tests {
         let f = json!({"type": "extrude", "operation": "cut", "values": {"distance": 0.0}, "direction": [0, 0, 1], "definition": {"extent": {"through_all": true}}});
         assert_eq!(summary(f), "Cut through all along +Z");
         let f = json!({"type": "extrude", "operation": "join", "two_sided": true, "values": {"distance": 10.0}, "definition": {}});
+        assert_eq!(summary(f), "Join 10 mm both sides");
+        let total = json!({"extent": {"direction": "symmetric", "convention": "total_distance"}});
+        let f = json!({"type": "extrude", "operation": "join", "two_sided": true, "values": {"distance": 20.0}, "definition": total});
         assert_eq!(summary(f), "Join 10 mm both sides");
         let f = json!({"type": "extrude", "values": {"distance": 5.0, "taper_angle": 0.0523599}, "direction": [0.6, 0.8, 0], "definition": {}});
         assert_eq!(describe(&f).kind, Kind::Extrude);
