@@ -16,6 +16,7 @@
 //! recipe (`tests/corpus`) or [`UPRIGHT_BRACKET`].
 
 use fieldcraft_geometry::Shape;
+use fieldcraft_model::units::{DisplaySystem, Preset, Quantity, Typed};
 use serde_json::{Value, json};
 
 mod cooling;
@@ -249,11 +250,29 @@ pub fn script() -> Value {
     Value::Array(steps)
 }
 
+// The samples type their geometry in mm-t-s-N-MPa (each script starts with `model.units`) and
+// their physical constants with their own units, converted through the table like any input.
+
+/// The samples' system, for a constant a script computes with ([`sample_value`]).
+fn sample_units() -> DisplaySystem {
+    DisplaySystem::new(Preset::MmTonneS)
+}
+
+/// `t`, a value of quantity `q`, in the samples' system (mm-t-s-N-MPa). A constant of a known
+/// unit always converts; a NaN would be refused by the command it went into.
+pub fn sample_value(q: Quantity, t: Typed) -> f64 {
+    t.express(q, &sample_units()).unwrap_or(f64::NAN)
+}
+
+/// Structural steel: E = 210 GPa (ν = 0.3), ρ = 7850 kg/m³.
+const STEEL_YOUNG: Typed = Typed::new(210.0, "GPa");
+const STEEL_DENSITY: Typed = Typed::new(7850.0, "kg/m^3");
+
 /// The cantilever's length (x), width (y) and height (z) in mm, and its hex8 cells along each.
 pub const CANTILEVER_SIZE: [f64; 3] = [100.0, 10.0, 20.0];
 const CANTILEVER_CELLS: [u32; 3] = [20, 2, 4];
 
-/// The beam's mesh in steel (E = 210 GPa, ν = 0.3, ρ = 7.85 t/m³ in mm, t, s, N, MPa): nodes,
+/// The beam's mesh in steel ([`STEEL_YOUNG`], [`STEEL_DENSITY`]): nodes,
 /// hex8 elements, sets `beam` (elements), `root` (nodes at x = 0) and `tip` (at x = L), the
 /// material `Steel` and a solid section `Beam` with the given formulation.
 fn beam(formulation: Value) -> Vec<Value> {
@@ -293,7 +312,7 @@ fn beam(formulation: Value) -> Vec<Value> {
         json!({"command": "model.set.create", "params": {"name": "beam", "elements": (1..=element).collect::<Vec<_>>()}}),
         json!({"command": "model.set.create", "params": {"name": "root", "nodes": end(0)}}),
         json!({"command": "model.set.create", "params": {"name": "tip", "nodes": end(nx)}}),
-        json!({"command": "model.material.create", "params": {"name": "Steel", "elastic": {"type": "isotropic", "young": 210000, "poisson": 0.3}, "density": 7.85e-9}}),
+        json!({"command": "model.material.create", "params": {"name": "Steel", "elastic": {"type": "isotropic", "young": STEEL_YOUNG, "poisson": 0.3}, "density": STEEL_DENSITY}}),
         json!({"command": "model.section.create", "params": {"name": "Beam", "set": "beam", "material": "Steel", "kind": {"type": "solid"}, "formulation": formulation}}),
     ]);
     steps
@@ -338,8 +357,8 @@ pub fn impact() -> Value {
 /// (x = 200).
 pub const CANTILEVER_I_BEAM: &str = include_str!("../../../tests/corpus/cantilever-i-beam/recipe.json");
 
-/// The I-beam's tip load (N).
-pub const IBEAM_LOAD: f64 = 1000.0;
+/// The I-beam's tip load.
+pub const IBEAM_LOAD: Typed = Typed::new(1.0, "kN");
 
 /// [`CANTILEVER_I_BEAM`] swept all-hex (hex8 of 4 mm, incompatible modes) in steel, clamped at
 /// x = 0 (set `root`), [`IBEAM_LOAD`] down (−z) on a reference point on the beam's axis at the
@@ -347,18 +366,19 @@ pub const IBEAM_LOAD: f64 = 1000.0;
 /// `Load` (linear static). The README demo's model (tools/demo-video).
 pub fn ibeam() -> Value {
     let face = |f: &str| json!([{"body": "Beam", "face": f}]);
+    let load = sample_value(Quantity::Force, IBEAM_LOAD);
     json!([
         {"command": "model.units", "params": {"system": "mm-t-s-N-MPa"}},
         {"command": "mesh.hex.sweep", "params": {"body": "Beam", "size": 4}},
         {"command": "model.set.create", "params": {"name": "beam", "geometry": [{"body": "Beam"}]}},
-        {"command": "model.material.create", "params": {"name": "Steel", "elastic": {"type": "isotropic", "young": 210000, "poisson": 0.3}, "density": 7.85e-9}},
+        {"command": "model.material.create", "params": {"name": "Steel", "elastic": {"type": "isotropic", "young": STEEL_YOUNG, "poisson": 0.3}, "density": STEEL_DENSITY}},
         {"command": "model.section.create", "params": {"name": "Beam", "set": "beam", "material": "Steel", "kind": {"type": "solid"}, "formulation": {"incompatible_modes": true}}},
         {"command": "model.set.create", "params": {"name": "root", "geometry": face("F2:start")}},
         {"command": "model.boundary_condition.create", "params": {"name": "Clamp", "type": "fixed", "target": {"set": "root"}}},
         {"command": "model.set.create", "params": {"name": "tip", "geometry": face("F2:top")}},
         {"command": "model.reference_point.create", "params": {"name": "End", "xyz": [200, 0, 20]}},
         {"command": "model.coupling.create", "params": {"name": "EndPlate", "reference_point": "End", "set": "tip", "kind": "kinematic"}},
-        {"command": "model.load.create", "params": {"name": "Push", "type": "force", "target": {"reference_point": "End"}, "vector": [0, 0, -IBEAM_LOAD]}},
+        {"command": "model.load.create", "params": {"name": "Push", "type": "force", "target": {"reference_point": "End"}, "vector": [0, 0, -load]}},
         {"command": "model.step.create", "params": {"name": "Load", "procedure": {"type": "static"}, "boundary_conditions": ["Clamp"], "loads": ["Push"]}},
     ])
 }
@@ -376,15 +396,17 @@ pub const UPRIGHT_BRACKET: &str = r#"{"commands": [
     {"command": "solid.fillet", "params": {"edges": [[8, 20, 8]], "radius": 6}}
 ]}"#;
 
-/// Aluminium (E = 70 GPa, ν = 0.33, ρ = 2.7 t/m³, yield 240 MPa with 700 MPa linear hardening),
-/// in mm, t, s, N, MPa.
+/// Aluminium (E = 70 GPa, ν = 0.33, ρ = 2700 kg/m³, yield 240 MPa with 700 MPa linear hardening).
 fn aluminium(name: &str) -> Value {
-    json!({"command": "model.material.create", "params": {"name": name, "elastic": {"type": "isotropic", "young": 70000, "poisson": 0.33}, "density": 2.7e-9,
+    json!({"command": "model.material.create", "params": {"name": name, "elastic": {"type": "isotropic", "young": "70 GPa", "poisson": 0.33}, "density": ALUMINIUM_DENSITY,
         "plastic": {"type": "bilinear", "yield_stress": 240, "hardening_modulus": 700, "hardening": "isotropic"}}})
 }
 
-/// Standard gravity, mm/s².
-pub const GRAVITY: f64 = 9810.0;
+/// Aluminium's density.
+pub const ALUMINIUM_DENSITY: Typed = Typed::new(2700.0, "kg/m^3");
+
+/// Gravity at the Earth's surface, as the samples take it.
+pub const GRAVITY: Typed = Typed::new(9.81, "m/s^2"); // unit-factors: the samples' gravity, written in its unit
 /// The drop test's height of fall, mm: the bracket meets the floor at √(2 g h) = 6.26 m/s.
 pub const DROP_HEIGHT: f64 = 2000.0;
 /// The drop test's floor tilt about y, degrees: the foot's end strikes first.
@@ -396,10 +418,11 @@ const DROP_TILT: f64 = 15.0;
 /// stress waves through the bend and the bracket pivoting onto its foot; 20 field frames, the
 /// upright's top (set `top`) in the histories).
 pub fn drop_test() -> Value {
-    let speed = (2.0 * GRAVITY * DROP_HEIGHT).sqrt();
+    let gravity = sample_value(Quantity::Acceleration, GRAVITY);
+    let speed = (2.0 * gravity * DROP_HEIGHT).sqrt();
     let tilt = DROP_TILT.to_radians();
     let step = json!({
-        "type": "explicit_dynamic", "end_time": 1e-3, "output_interval": 5e-5, "history_interval": 5e-6, "history_nodes": "top",
+        "type": "explicit_dynamic", "end_time": "1 ms", "output_interval": "50 µs", "history_interval": "5 µs", "history_nodes": "top",
         "initial_velocities": [{"set": "bracket", "velocity": [0, 0, -speed]}],
         "rigid_walls": [{"set": "bracket", "point": [60, 0, -0.1], "normal": [-tilt.sin(), 0, tilt.cos()]}],
         "hourglass": {"type": "stiffness", "coefficient": 0.05}
@@ -411,7 +434,7 @@ pub fn drop_test() -> Value {
         {"command": "model.set.create", "params": {"name": "top", "geometry": [{"body": "Bracket", "face": "F2:side:l5"}]}},
         aluminium("Aluminium"),
         {"command": "model.section.create", "params": {"name": "Bracket", "set": "bracket", "material": "Aluminium", "kind": {"type": "solid"}, "formulation": {"integration": "reduced"}}},
-        {"command": "model.load.create", "params": {"name": "Gravity", "type": "gravity", "acceleration": [0, 0, -GRAVITY]}},
+        {"command": "model.load.create", "params": {"name": "Gravity", "type": "gravity", "acceleration": [0, 0, -gravity]}},
         {"command": "model.step.create", "params": {"name": "Drop", "procedure": step, "loads": ["Gravity"]}},
     ])
 }
@@ -452,7 +475,7 @@ pub fn rubber_seal() -> Value {
         json!({"command": "model.set.create", "params": {"name": "seal", "geometry": [{"body": "Seal"}]}}),
         json!({"command": "model.set.create", "params": {"name": "bottom", "geometry": [{"body": "Seal", "face": "bottom"}]}}),
         json!({"command": "model.set.create", "params": {"name": "top", "geometry": [{"body": "Seal", "face": "top"}]}}),
-        json!({"command": "model.material.create", "params": {"name": "Rubber", "elastic": {"type": "isotropic", "young": 6, "poisson": 0.49}, "density": 1.1e-9,
+        json!({"command": "model.material.create", "params": {"name": "Rubber", "elastic": {"type": "isotropic", "young": "6 MPa", "poisson": 0.49}, "density": "1100 kg/m^3",
             "hyperelastic": {"type": "mooney_rivlin", "c01": 0.2}}}),
         json!({"command": "model.section.create", "params": {"name": "Seal", "set": "seal", "material": "Rubber", "kind": {"type": "solid"}, "formulation": {"hybrid": true}}}),
         json!({"command": "model.boundary_condition.create", "params": {"name": "Base", "type": "fixed", "target": {"set": "bottom"}}}),
@@ -464,8 +487,8 @@ pub fn rubber_seal() -> Value {
 
 /// The flow sample's free-stream speed, mm/s.
 pub const FLOW_SPEED: f64 = 25.0;
-/// Air at 20 °C: density (t/mm³) and dynamic viscosity (MPa s).
-const AIR: [f64; 2] = [1.2e-12, 1.8e-11];
+/// Air at 20 °C: density and dynamic viscosity.
+const AIR: [Typed; 2] = [Typed::new(1.2, "kg/m^3"), Typed::new(1.8e-5, "Pa s")];
 
 /// Air at [`FLOW_SPEED`] past [`UPRIGHT_BRACKET`] standing on the floor, the upright's back face
 /// to the wind: a 240 × 120 × 100 mm box of 2.5 mm cells (184 320), a uniform inlet at x_min, an
@@ -504,8 +527,7 @@ pub const STEEL_EXPANSION: f64 = 1.2e-5;
 /// elements of 4 mm: its upright's end (`F2:side:l5`, set `hot`) held at [`HEATER`], the rest of
 /// its outside (set `skin`) cooled by still air at [`AMBIENT`] (h = 10 W/(m² K)), both hole bores
 /// clamped (set `holes`). Step `Heat` (coupled temperature–displacement, steady): the
-/// temperature field and the stress of the expansion the clamps hold back. In mm, t, s, N, MPa:
-/// k in mW/(mm K), h in mW/(mm² K).
+/// temperature field and the stress of the expansion the clamps hold back.
 pub fn heated_bracket() -> Value {
     let face = |f: &str| json!({"body": "Bracket", "face": f});
     let skin: Vec<Value> =
@@ -521,12 +543,12 @@ pub fn heated_bracket() -> Value {
         {"command": "model.set.create", "params": {"name": "holes", "geometry": holes}},
         {"command": "model.set.create", "params": {"name": "hot", "geometry": [face("F2:side:l5")]}},
         {"command": "model.set.create", "params": {"name": "skin", "geometry": skin}},
-        {"command": "model.material.create", "params": {"name": "Steel", "elastic": {"type": "isotropic", "young": 210000, "poisson": 0.3}, "density": 7.85e-9,
-            "thermal": {"conductivity": 50, "specific_heat": 4.6e8, "expansion": STEEL_EXPANSION, "reference_temperature": AMBIENT}}},
+        {"command": "model.material.create", "params": {"name": "Steel", "elastic": {"type": "isotropic", "young": STEEL_YOUNG, "poisson": 0.3}, "density": STEEL_DENSITY,
+            "thermal": {"conductivity": "50 W/(m K)", "specific_heat": "460 J/(kg K)", "expansion": STEEL_EXPANSION, "reference_temperature": AMBIENT}}},
         {"command": "model.section.create", "params": {"name": "Bracket", "set": "bracket", "material": "Steel", "kind": {"type": "solid"}}},
         {"command": "model.boundary_condition.create", "params": {"name": "Clamp", "type": "fixed", "target": {"set": "holes"}}},
         {"command": "model.boundary_condition.create", "params": {"name": "Heater", "type": "temperature", "target": {"set": "hot"}, "value": HEATER}},
-        {"command": "model.load.create", "params": {"name": "Air", "type": "convection", "set": "skin", "film": 0.01, "sink": AMBIENT}},
+        {"command": "model.load.create", "params": {"name": "Air", "type": "convection", "set": "skin", "film": "10 W/(m^2 K)", "sink": AMBIENT}},
         {"command": "model.step.create", "params": {"name": "Heat", "procedure": {"type": "coupled_temperature_displacement"}, "boundary_conditions": ["Clamp", "Heater"], "loads": ["Air"]}},
     ])
 }
@@ -550,7 +572,7 @@ pub fn bracket_hex(bodies: &[Shape]) -> Value {
         {"command": "model.set.create", "params": {"name": "bracket", "geometry": cells}},
         {"command": "model.set.create", "params": {"name": "top", "geometry": faces("F2:side:l5")}},
         {"command": "model.set.create", "params": {"name": "tip", "geometry": faces("F2:side:l2")}},
-        {"command": "model.material.create", "params": {"name": "Steel", "elastic": {"type": "isotropic", "young": 210000, "poisson": 0.3}, "density": 7.85e-9}},
+        {"command": "model.material.create", "params": {"name": "Steel", "elastic": {"type": "isotropic", "young": STEEL_YOUNG, "poisson": 0.3}, "density": STEEL_DENSITY}},
         {"command": "model.section.create", "params": {"name": "Bracket", "set": "bracket", "material": "Steel", "kind": {"type": "solid"}}},
         {"command": "model.boundary_condition.create", "params": {"name": "Clamp", "type": "fixed", "target": {"set": "top"}}},
         {"command": "model.load.create", "params": {"name": "Push", "type": "force", "target": {"set": "tip"}, "vector": [0, -1000, 0]}},
@@ -612,7 +634,7 @@ fn crank_model(bodies: &[Shape], mesh: Vec<Value>) -> Value {
         {"command": "model.set.create", "params": {"name": "crank", "geometry": bodies.iter().map(|b| json!({"body": b.name})).collect::<Vec<_>>()}},
         {"command": "model.set.create", "params": {"name": "spindle", "geometry": spindle}},
         {"command": "model.set.create", "params": {"name": "pedal", "geometry": pedal}},
-        {"command": "model.material.create", "params": {"name": "Al6061-T6", "elastic": {"type": "isotropic", "young": 68900, "poisson": 0.33}, "density": 2.7e-9}},
+        {"command": "model.material.create", "params": {"name": "Al6061-T6", "elastic": {"type": "isotropic", "young": "68.9 GPa", "poisson": 0.33}, "density": ALUMINIUM_DENSITY}},
         {"command": "model.section.create", "params": {"name": "Crank", "set": "crank", "material": "Al6061-T6", "kind": {"type": "solid"}}},
         {"command": "model.boundary_condition.create", "params": {"name": "Spindle", "type": "fixed", "target": {"set": "spindle"}}},
         {"command": "model.load.create", "params": {"name": "Rider", "type": "force", "target": {"set": "pedal"}, "vector": [0, -PEDAL_LOAD, 0]}},
@@ -631,7 +653,10 @@ fn json_array(v: Value) -> Vec<Value> {
 /// The crank's square-bore faces and pedal-hole faces as set members, found by their surfaces.
 fn crank_faces(bodies: &[Shape]) -> [Vec<Value>; 2] {
     use fieldcraft_geometry::FaceSurface;
-    let vertical = |axis: [f64; 3]| axis[2].abs() > 1.0 - 1e-6;
+    // Directions are unit vectors; the geometry is in millimetres.
+    const SAME_DIRECTION: f64 = 1e-6; // unit-factors: a component of a unit vector
+    let on = Typed::new(1.0, "nm").express(Quantity::Length, crate::units::geometry()).unwrap_or(f64::NAN);
+    let vertical = |axis: [f64; 3]| axis[2].abs() > 1.0 - SAME_DIRECTION;
     let (mut spindle, mut pedal) = (Vec::new(), Vec::new());
     for body in bodies {
         let surfaces = body.face_surfaces().unwrap_or_default();
@@ -639,17 +664,17 @@ fn crank_faces(bodies: &[Shape]) -> [Vec<Value>; 2] {
             let member = json!({"body": body.name, "face": face.name});
             match surface {
                 Some(FaceSurface::Plane { normal, point })
-                    if normal[2].abs() < 1e-6 && ((normal[0] * point[0] + normal[1] * point[1]).abs() - 6.35).abs() < 1e-6 =>
+                    if normal[2].abs() < SAME_DIRECTION && ((normal[0] * point[0] + normal[1] * point[1]).abs() - 6.35).abs() < on =>
                 {
                     spindle.push(member)
                 }
                 Some(FaceSurface::Cylinder { origin, axis, radius })
-                    if vertical(axis) && (radius - 1.5).abs() < 1e-6 && origin[0].hypot(origin[1]) < 8.0 =>
+                    if vertical(axis) && (radius - 1.5).abs() < on && origin[0].hypot(origin[1]) < 8.0 =>
                 {
                     spindle.push(member)
                 }
                 Some(FaceSurface::Cylinder { origin, axis, radius })
-                    if vertical(axis) && (radius - 7.0).abs() < 1e-6 && (origin[0] - 170.0).hypot(origin[1]) < 1e-6 =>
+                    if vertical(axis) && (radius - 7.0).abs() < on && (origin[0] - 170.0).hypot(origin[1]) < on =>
                 {
                     pedal.push(member)
                 }
@@ -731,7 +756,8 @@ mod tests {
         let tip = -p["nodes"][0]["displacement"][2].as_f64().unwrap();
         let (e, g) = (210000.0, 210000.0 / 2.6);
         let i = (40.0 * 40.0f64.powi(3) - 38.0 * 34.0f64.powi(3)) / 12.0;
-        let theory = IBEAM_LOAD * 200.0f64.powi(3) / (3.0 * e * i) + IBEAM_LOAD * 200.0 / (g * 2.0 * 37.0);
+        let load = sample_value(Quantity::Force, IBEAM_LOAD);
+        let theory = load * 200.0f64.powi(3) / (3.0 * e * i) + load * 200.0 / (g * 2.0 * 37.0);
         assert!((tip - theory).abs() < 0.05 * theory, "{tip} against {theory}");
     }
 
@@ -1056,7 +1082,7 @@ mod tests {
         let r = s.execute("solve.run", &json!({})).unwrap();
         let r = &r["steps"][0]["summary"];
         let drag: f64 = r["forces"].as_array().unwrap().iter().filter(|f| f["body"] == "Bracket").map(|f| f["mean"][0].as_f64().unwrap()).sum();
-        let [density, _] = AIR;
+        let density = sample_value(Quantity::Density, AIR[0]);
         let cd = drag / (0.5 * density * FLOW_SPEED * FLOW_SPEED * 40.0 * 50.0);
         assert!(cd > 1.0 && cd < 3.5, "Cd {cd}: {r}");
         assert!(r["mass"]["relative_change"].as_f64().unwrap().abs() < 0.01, "{r}");
@@ -1233,12 +1259,12 @@ mod tests {
         let r = s.execute("solve.run", &json!({})).unwrap();
         let r = &r["steps"][0]["summary"];
         let volume = 60.0 * 8.0 * 40.0 + 8.0 * 42.0 * 40.0 + (36.0 - 9.0 * std::f64::consts::PI) * 40.0;
-        let mass = 2.7e-9 * volume;
+        let mass = sample_value(Quantity::Density, ALUMINIUM_DENSITY) * volume;
         let close = |a: f64, b: f64, rel: f64| (a - b).abs() <= rel * b.abs();
         assert!(close(r["total_mass"].as_f64().unwrap(), mass, 0.005), "{r}");
         assert!(r["completed"].as_bool() == Some(true) && r["energy_balance"].as_f64().unwrap() < 0.01, "{r}");
         let h = s.execute("solve.history", &json!({"step": "Drop"})).unwrap();
-        let speed = (2.0 * GRAVITY * DROP_HEIGHT).sqrt();
+        let speed = (2.0 * sample_value(Quantity::Acceleration, GRAVITY) * DROP_HEIGHT).sqrt();
         let pz = |i: usize| h["momentum"][i][2].as_f64().unwrap();
         let kinetic = |i: usize| h["energies"][i]["kinetic"].as_f64().unwrap();
         assert!(close(pz(0), -mass * speed, 0.005), "{}", pz(0));

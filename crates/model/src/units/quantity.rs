@@ -220,8 +220,9 @@ pub struct WithUnit {
 
 /// A constant written with its unit, `Typed::new(1.0, "mm")`: a default, a limit or a sample's
 /// value that is a physical amount. It is converted through the table where it is used, so no
-/// factor is written beside it (docs/units.md).
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// factor is written beside it (docs/units.md). As a command parameter it serializes as
+/// `{"value": 1.0, "unit": "mm"}`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct Typed {
     pub value: f64,
     pub unit: &'static str,
@@ -299,5 +300,8 @@ mod tests {
         assert_eq!(Typed::new(7850.0, "kg/m^3").express(Quantity::Density, &mm), Ok(7.85e-9));
         assert!(Typed::new(1.0, "mm").si(Quantity::Pressure).is_err());
         assert!(Typed::new(1.0, "furlong").si(Quantity::Length).is_err());
+        let json = serde_json::to_value(Typed::new(210.0, "GPa")).unwrap();
+        let input: ValueInput = serde_json::from_value(json).unwrap();
+        assert_eq!(input.to_si(Quantity::Pressure, &mm), Ok(2.1e11));
     }
 }

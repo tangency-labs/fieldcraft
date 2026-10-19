@@ -22,7 +22,7 @@ pub(super) fn script(bodies: &[Shape]) -> Value {
         {"command": "model.units", "params": {"system": "mm-t-s-N-MPa"}},
         {"command": "model.material.create", "params": {"name": "Air", "density": density,
             "fluid": {"type": "newtonian", "viscosity": viscosity},
-            "thermal": {"conductivity": 0.026, "specific_heat": 1.005e9}}},
+            "thermal": {"conductivity": "0.026 W/(m K)", "specific_heat": "1005 J/(kg K)"}}},
         {"command": "model.fluid_domain.create", "params": {
             "name": "WarmAir", "material": "Air", "min": [-30, -20, 0], "max": [100, 60, 70], "spacing": 5,
             "faces": {"x_min": {"type": "velocity", "velocity": [1, 0, 0]}, "x_max": {"type": "pressure", "pressure": 0},

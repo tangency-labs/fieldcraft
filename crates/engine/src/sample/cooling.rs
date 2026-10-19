@@ -10,6 +10,7 @@
 //! `tools/cooling/make.py` opens the samples, solves them and renders the gallery's pictures.
 
 use fieldcraft_geometry::Shape;
+use fieldcraft_model::units::{Quantity, Typed};
 use serde_json::{Value, json};
 
 /// The geometry: SolidCraft recipes, the sink's and the enclosure's in the corpus.
@@ -37,8 +38,16 @@ struct Run {
 
 /// Boussinesq expansion coefficient of air near room temperature, 1/K.
 const AIR_EXPANSION: f64 = 3.4e-3;
-/// Gravity along −z, mm/s².
-const GRAVITY: [f64; 3] = [0.0, 0.0, -9810.0];
+/// Gravity along −z, in the samples' mm/s² ([`super::GRAVITY`]).
+fn gravity() -> [f64; 3] {
+    [0.0, 0.0, -super::sample_value(Quantity::Acceleration, super::GRAVITY)]
+}
+/// The steady rule's tolerance on the hot body's heat.
+const STEADY_TOLERANCE: f64 = 1e-3; // unit-factors: relative to the heat
+/// Extents are whole numbers of cells up to this fraction of a cell (round-off).
+const CELL_ROUND_OFF: f64 = 1e-9; // unit-factors: a fraction of a cell
+/// Extents are rounded to this.
+const EXTENT_STEP: Typed = Typed::new(1.0, "µm");
 
 /// Heat sink: air speed (mm/s), sink and inlet temperatures (°C).
 const SINK_SPEED: f64 = 100.0;
@@ -89,7 +98,7 @@ fn step(name: &str, domain: &str, run: &Run, hot: Vec<Value>) -> Value {
         procedure["time_step"] = json!(dt);
     }
     if run.steady {
-        procedure["steady"] = json!({"tolerance": 1e-3, "monitors": [{"type": "heat", "faces": hot}]});
+        procedure["steady"] = json!({"tolerance": STEADY_TOLERANCE, "monitors": [{"type": "heat", "faces": hot}]});
     }
     json!({"command": "model.step.create", "params": {"name": name, "procedure": procedure}})
 }
@@ -109,7 +118,8 @@ fn script(domain: &str, mut params: Value, name: &str, run: &Run, hot: Vec<Value
 /// An extent from `lo` that is a whole number of cells and reaches at least `hi`.
 fn snap(lo: f64, hi: f64, spacing: f64) -> f64 {
     // Rounded to a micrometre, so the extent is a whole number of cells.
-    ((lo + ((hi - lo) / spacing - 1e-9).ceil() * spacing) * 1e3).round() / 1e3
+    let steps = 1.0 / super::sample_value(Quantity::Length, EXTENT_STEP);
+    ((lo + ((hi - lo) / spacing - CELL_ROUND_OFF).ceil() * spacing) * steps).round() / steps
 }
 
 pub(super) fn heat_sink(bodies: &[Shape]) -> Value {
@@ -128,7 +138,7 @@ fn heat_sink_with(bodies: &[Shape], run: &Run) -> Value {
             "faces": {"x_min": {"type": "velocity", "velocity": v}, "x_max": {"type": "pressure", "pressure": 0},
                 "y_min": {"type": "wall"}, "y_max": {"type": "wall"}, "z_min": {"type": "wall"}, "z_max": {"type": "wall"}},
             "obstacles": ["HeatSink"], "initial_velocity": v,
-            "thermal": {"initial_temperature": SINK_INLET, "gravity": GRAVITY, "expansion": AIR_EXPANSION,
+            "thermal": {"initial_temperature": SINK_INLET, "gravity": gravity(), "expansion": AIR_EXPANSION,
                 "faces": {"x_min": {"type": "temperature", "value": SINK_INLET}},
                 "surfaces": held(bodies, "HeatSink", SINK_TEMPERATURE)}
         }),
@@ -155,7 +165,7 @@ fn enclosure_with(bodies: &[Shape], run: &Run) -> Value {
         json!({
             "material": "Air", "min": [0, 0, 0], "max": [60, 40, 60], "spacing": run.spacing,
             "faces": walls, "obstacles": ["PCB", "Chip"], "initial_velocity": [0, 0, 0],
-            "thermal": {"initial_temperature": ENCLOSURE_WALLS, "gravity": GRAVITY, "expansion": AIR_EXPANSION,
+            "thermal": {"initial_temperature": ENCLOSURE_WALLS, "gravity": gravity(), "expansion": AIR_EXPANSION,
                 "faces": held_walls, "surfaces": held(bodies, "Chip", CHIP_TEMPERATURE)}
         }),
         "Natural",
@@ -206,6 +216,14 @@ mod tests {
 
     /// Air's volumetric heat capacity ρ c_p, mJ/(mm³ K).
     const AIR_RHO_CP: f64 = 1.2e-12 * 1.005e9;
+
+    /// The constants written with their units give the numbers the studies were tuned with,
+    /// to the bit: gravity 9810 mm/s², extents rounded to 1/1000 mm.
+    #[test]
+    fn typed_constants_give_the_tuned_numbers() {
+        assert_eq!(gravity(), [0.0, 0.0, -9810.0]);
+        assert_eq!(1.0 / crate::sample::sample_value(Quantity::Length, EXTENT_STEP), 1000.0);
+    }
 
     /// A session with `design` open and `script` (given its bodies) run.
     fn open(design: &str, script: impl Fn(&[Shape]) -> Value) -> Session {
