@@ -37,6 +37,7 @@ pub mod constraints;
 pub mod contact;
 pub mod datums;
 pub mod discrete;
+pub mod fluid_zones;
 pub mod fluids;
 pub mod geometry;
 pub mod loads;
@@ -66,6 +67,7 @@ pub use constraints::{Coupling, CouplingKind, ReferencePoint};
 pub use contact::{Contact, ContactSurfaces, Friction, InitialPenetration};
 pub use datums::{Datum, Partition};
 pub use discrete::{Direction, Mass, PointMass, ResolvedDirection, ResolvedMass, ResolvedSpring, Spring};
+pub use fluid_zones::{Axis, Fan, FanDirection, PorousZone, Resistance};
 pub use fluids::{
     BoxFace, BoxFaces, BoxThermalFaces, FaceCondition, FluidBoundary, FluidDomain, FluidThermal, Profile, SurfaceBoundary, SurfaceCondition,
     SurfaceThermalBoundary, ThermalCondition,

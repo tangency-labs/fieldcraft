@@ -15,6 +15,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::fluid_zones::{Fan, PorousZone};
 use crate::geometry::{Entity, GeometryRef};
 use crate::{Error, Material, Model, Result, context, finite, insert_new, not_in_use, positive, remove_existing, replace_existing, require};
 
@@ -453,6 +454,12 @@ pub struct FluidDomain {
     /// Heat in the fluid (a temperature field, buoyancy); `None` for an isothermal flow.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thermal: Option<FluidThermal>,
+    /// Vents, grilles, filters and perforated plates as porous resistance zones.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub porous: Vec<PorousZone>,
+    /// Fans: zones that raise the pressure by their pressure–flow curve.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fans: Vec<Fan>,
 }
 
 fn is_zero(v: &[f64; 3]) -> bool {
@@ -546,6 +553,7 @@ impl FluidDomain {
         if let Some(t) = self.tolerance {
             positive("tolerance", t)?;
         }
+        crate::fluid_zones::validate_zones(&self.porous, &self.fans)?;
         Ok(())
     }
 
@@ -684,6 +692,8 @@ mod tests {
             acceleration: [0.0; 3],
             tolerance: None,
             thermal: None,
+            porous: vec![],
+            fans: vec![],
         }
     }
 
