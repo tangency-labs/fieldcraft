@@ -232,14 +232,18 @@ pub fn app_bar(app: &mut ModelApp, ui: &mut egui::Ui) {
         }
         anchors.push((Quick::Solve, solve));
         // The model's document tab, joined to the ribbon below it, centred in its room.
-        let label = format!("{}{}", app.model_name(), if app.session.is_dirty() { " •" } else { "" });
+        let migrated = app.session.migrated_from.map(|n| format!(" (from format {n})")).unwrap_or_default();
+        let label = format!("{}{migrated}{}", app.model_name(), if app.session.is_dirty() { " •" } else { "" });
         let text_w = ui.painter().layout_no_wrap(label.clone(), FontId::proportional(13.0), t.text).size().x;
         let (room_l, room_r) = lay.tab_room;
         let tab_w = (text_w + 40.0).clamp(120.0, 260.0).min((room_r - room_l).max(0.0));
         let tab_x = (r.center().x - tab_w / 2.0).clamp(room_l, (room_r - tab_w).max(room_l));
         if tab_w > 40.0 {
             let tab = Rect::from_min_size(pos2(tab_x, r.top() + 5.0), vec2(tab_w, r.height() - 5.0));
-            let path = app.session.path.clone();
+            let mut tip = app.session.path.clone().unwrap_or_else(|| "Not saved yet".into());
+            if let Some(n) = app.session.migrated_from {
+                tip.push_str(&format!("\nOpened from a format {n} file: the first save keeps that file as a copy beside it"));
+            }
             craft_ui::tabs::Tab::new(egui::Id::new("fc_document_tab"), &label, true).show_at(ui, tab, |ui, resp| {
                 ui.painter().rect_filled(tab, CornerRadius { nw: 5, ne: 5, sw: 0, se: 0 }, t.toolbar);
                 let clip = tab.shrink2(vec2(10.0, 0.0));
@@ -250,7 +254,7 @@ pub fn app_bar(app: &mut ModelApp, ui: &mut egui::Ui) {
                     FontId::proportional(13.0),
                     t.text,
                 );
-                let _ = resp.clone().on_hover_text(path.as_deref().unwrap_or("Not saved yet"));
+                let _ = resp.clone().on_hover_text(&tip);
             });
             app.place("document_tab", tab);
         }
