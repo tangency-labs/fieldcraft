@@ -56,6 +56,16 @@ impl Entity {
         }
     }
 
+    /// The same kind of entity named `name` (the body stays the body).
+    pub fn with_name(&self, name: &str) -> Entity {
+        match self {
+            Entity::Body => Entity::Body,
+            Entity::Face(_) => Entity::Face(name.to_string()),
+            Entity::Edge(_) => Entity::Edge(name.to_string()),
+            Entity::Vertex(_) => Entity::Vertex(name.to_string()),
+        }
+    }
+
     /// The topological dimension: 3 body, 2 face, 1 edge, 0 vertex.
     pub fn dimension(&self) -> u8 {
         match self {
@@ -252,6 +262,16 @@ impl Classification {
     /// The tags of every entity `reference` selects ([`GeometryRef::selects`]).
     pub fn tags_selected_by(&self, reference: &GeometryRef) -> Vec<u32> {
         self.entities.iter().enumerate().filter(|(_, e)| reference.selects(e)).filter_map(|(i, _)| u32::try_from(i).ok()).collect()
+    }
+
+    /// The entity `from` becomes `to`, keeping its tag (the caller checked `to` is not interned).
+    pub(crate) fn rename_entity(&mut self, from: &GeometryRef, to: &GeometryRef) {
+        if let Some(tag) = self.index.remove(from) {
+            if let Some(e) = self.entities.get_mut(tag as usize) {
+                *e = to.clone();
+            }
+            self.index.insert(to.clone(), tag);
+        }
     }
 
     pub(crate) fn forget_element(&mut self, label: u32) {

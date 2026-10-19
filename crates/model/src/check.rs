@@ -211,10 +211,21 @@ impl Model {
                 d.error(format!("set `{name}`"), m);
             }
             if r.is_empty() {
-                if self.set_users(name).is_empty() {
-                    d.warning(format!("set `{name}`"), "resolves to nothing on the current mesh");
+                // Name what it lists that the mesh lacks: a face the design renamed or lost.
+                let gone: Vec<String> =
+                    set.geometry.iter().filter(|g| self.classification.tags_selected_by(g).is_empty()).map(|g| g.to_string()).collect();
+                let message = if gone.is_empty() {
+                    "resolves to nothing on the current mesh".to_string()
                 } else {
-                    d.error(format!("set `{name}`"), "resolves to nothing on the current mesh");
+                    format!(
+                        "resolves to nothing on the current mesh: the mesh has no {} (renamed or gone from the design: pick it again)",
+                        gone.join(", ")
+                    )
+                };
+                if self.set_users(name).is_empty() {
+                    d.warning(format!("set `{name}`"), message);
+                } else {
+                    d.error(format!("set `{name}`"), message);
                 }
             }
             resolved.sets.insert(name.clone(), r);

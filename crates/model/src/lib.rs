@@ -41,6 +41,7 @@ pub mod discrete;
 pub mod fluid_zones;
 pub mod fluids;
 pub mod geometry;
+pub mod geometry_names;
 pub mod loads;
 pub mod materials;
 mod mesh;
@@ -74,6 +75,7 @@ pub use fluids::{
     SurfaceThermalBoundary, ThermalCondition,
 };
 pub use geometry::{BodyMesh, Classification, Entity, GeometryRef};
+pub use geometry_names::NameUse;
 pub use loads::{Distribution, Load, centrifugal_acceleration};
 pub use materials::{Damage, Directional, Elastic, Erosion, Fluid, Hardening, HardeningPoint, Hyperelastic, Material, Plastic, Thermal};
 pub use mesh::{

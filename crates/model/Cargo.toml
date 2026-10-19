@@ -10,7 +10,6 @@ workspace = true
 
 [dependencies]
 serde = { workspace = true }
-thiserror = { workspace = true }
-
-[dev-dependencies]
+# A rename is checked by reading the renamed definitions back (geometry_names.rs).
 serde_json = { workspace = true }
+thiserror = { workspace = true }
