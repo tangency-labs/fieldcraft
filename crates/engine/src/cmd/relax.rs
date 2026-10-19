@@ -12,6 +12,7 @@
 //! both sides share it, so the mesh stays conforming across the cut. A node on the skin whose
 //! geometry is unknown (an imported mesh) stays.
 
+use fieldcraft_model::units::{Quantity, Typed};
 use std::collections::{BTreeMap, BTreeSet};
 
 use fieldcraft_mesh::relax::{self, Constraints, Falloff, Freedom, RegionQuality, Relaxed};
@@ -24,6 +25,17 @@ use serde_json::{Value, json};
 use crate::requirement::Requirement;
 use crate::schema::ProblemKind;
 use crate::{CommandKind, CommandSpec, EngineError, Result, Session};
+
+/// Unit directions this close to parallel are one direction.
+const SAME_DIRECTION: f64 = 1e-9; // unit-factors: a component of a unit vector
+/// Cone angles this close are one angle.
+const SAME_ANGLE: f64 = 1e-9; // unit-factors: an angle in radians
+/// The tessellation of a body found again, relative to its size.
+const RELATIVE_TOLERANCE: f64 = 1e-3; // unit-factors: relative to the body's size
+/// The finest tessellation of a body found again.
+const MIN_TOLERANCE: Typed = Typed::new(1e-6, "mm"); // unit-factors: a floor on a tolerance, in the geometry frame's millimetres
+/// Surfaces this close, relative to the coordinates' size, are one surface.
+const SAME_SURFACE: f64 = 1e-6; // unit-factors: relative to the coordinates' size
 
 pub const RELAX: CommandSpec = CommandSpec {
     id: "mesh.node.relax",
@@ -131,7 +143,7 @@ fn same_surface(a: &AnalyticSurface, b: &AnalyticSurface, tol: f64) -> bool {
         let l = len(x);
         if l > 0.0 { [x[0] / l, x[1] / l, x[2] / l] } else { x }
     };
-    let parallel = |x: [f64; 3], y: [f64; 3]| (dot(unit(x), unit(y)).abs() - 1.0).abs() < 1e-9;
+    let parallel = |x: [f64; 3], y: [f64; 3]| (dot(unit(x), unit(y)).abs() - 1.0).abs() < SAME_DIRECTION;
     let on_axis = |p: [f64; 3], o: [f64; 3], a: [f64; 3]| {
         let d = sub(p, o);
         let a = unit(a);
@@ -145,7 +157,7 @@ fn same_surface(a: &AnalyticSurface, b: &AnalyticSurface, tol: f64) -> bool {
         }
         (S::Sphere { center: c1, radius: r1 }, S::Sphere { center: c2, radius: r2 }) => len(sub(c1, c2)) <= tol && (r1 - r2).abs() <= tol,
         (S::Cone { apex: p1, axis: a1, half_angle: h1 }, S::Cone { apex: p2, axis: a2, half_angle: h2 }) => {
-            len(sub(p1, p2)) <= tol && dot(unit(a1), unit(a2)) > 1.0 - 1e-9 && (h1 - h2).abs() <= 1e-9
+            len(sub(p1, p2)) <= tol && dot(unit(a1), unit(a2)) > 1.0 - SAME_DIRECTION && (h1 - h2).abs() <= SAME_ANGLE
         }
         (S::Torus { center: c1, axis: a1, major: m1, minor: n1 }, S::Torus { center: c2, axis: a2, major: m2, minor: n2 }) => {
             len(sub(c1, c2)) <= tol && parallel(a1, a2) && (m1 - m2).abs() <= tol && (n1 - n2).abs() <= tol
@@ -193,7 +205,7 @@ pub(crate) fn design_geometry(s: &Session, nodes: &BTreeSet<u32>) -> Result<Desi
         let entry = match shape {
             None => None,
             Some(shape) => {
-                let tol = (shape.size()? * 1e-3).max(1e-6);
+                let tol = (shape.size()? * RELATIVE_TOLERANCE).max(crate::units::geometry_amount(Quantity::Length, MIN_TOLERANCE));
                 let (mesh, pieces) = shape.tessellate_pieces(tol)?;
                 let surface = BoundarySurface::new(
                     &mesh.positions,
@@ -209,7 +221,7 @@ pub(crate) fn design_geometry(s: &Session, nodes: &BTreeSet<u32>) -> Result<Desi
         loaded.insert(name.to_string(), entry.clone());
         Ok(entry)
     };
-    let tol = 1e-6 * s.model.nodes().values().fold(0.0f64, |m, n| m.max(n.xyz.iter().fold(0.0f64, |a, x| a.max(x.abs())))).max(1.0);
+    let tol = SAME_SURFACE * s.model.nodes().values().fold(0.0f64, |m, n| m.max(n.xyz.iter().fold(0.0f64, |a, x| a.max(x.abs())))).max(1.0);
     let mut face_ids: BTreeMap<(usize, u32), u32> = BTreeMap::new();
     let mut curve_ids: BTreeMap<(usize, [u32; 2]), u32> = BTreeMap::new();
     for &n in nodes {

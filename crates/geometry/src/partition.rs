@@ -22,12 +22,25 @@ use solidcraft_kernel::guard;
 
 use crate::{Design, Error, Face, FaceSurface, FeatureError, Result, Shape, SurfaceMesh};
 
+/// The largest coordinate a cut plane may have.
+const MAX_COORD: f64 = 1e9; // unit-factors: a cap on hostile input
+/// A cut plane's normal must be longer than this.
+const MIN_NORMAL: f64 = 1e-12; // unit-factors: the length of a direction vector
+/// Unit directions this close to parallel are one.
+const SAME_DIRECTION: f64 = 1e-9; // unit-factors: a component of a unit vector
+/// Unit directions whose cross product is shorter than this are parallel.
+const PARALLEL_SINE: f64 = 1e-6; // unit-factors: the sine of an angle
+/// Cone angles this close are one.
+const SAME_ANGLE: f64 = 1e-9; // unit-factors: an angle in radians
+/// A face lies on the cut within this fraction of the tessellation tolerance.
+const ON_FACE: f64 = 1e-3; // unit-factors: relative to the tolerance
+
 /// Most partitions a design takes.
 pub const MAX_CUTS: usize = 256;
 /// Most cells the partitions make in all.
 pub const MAX_CELLS: usize = 4096;
 /// A cut face lies on the plane within this fraction of its body's size.
-const ON_PLANE: f64 = 1e-6;
+const ON_PLANE: f64 = 1e-6; // unit-factors: relative to the body's size
 /// Tessellation tolerance (fraction of a body's size) for matching and ordering faces.
 const MATCH_TOLERANCE: f64 = 2e-3;
 
@@ -79,9 +92,9 @@ fn lexical(a: &[f64; 3], b: &[f64; 3]) -> std::cmp::Ordering {
 
 /// The plane of a cut, with its unit normal.
 fn plane_of(cut: &Cut) -> Result<(Plane, [f64; 3])> {
-    let finite = cut.point.iter().chain(&cut.normal).all(|v| v.is_finite() && v.abs() <= 1e9);
+    let finite = cut.point.iter().chain(&cut.normal).all(|v| v.is_finite() && v.abs() <= MAX_COORD);
     let len = dot(cut.normal, cut.normal).sqrt();
-    if !finite || !(len > 1e-12) {
+    if !finite || !(len > MIN_NORMAL) {
         return Err(Error::Invalid(format!("partition `{}`: the plane needs a finite point and a non-zero normal", cut.name)));
     }
     let n = cut.normal.map(|v| v / len);
@@ -236,7 +249,7 @@ fn coincident(body: &Shape, parent: &Faces, cut: &Cut, n: [f64; 3], size: f64) -
         let Some(FaceSurface::Plane { normal, point }) = surface else { continue };
         let along = dot(*normal, n).abs();
         let distance = dot(sub(*point, cut.point), n).abs();
-        if (along - 1.0).abs() < 1e-9 && distance <= reach {
+        if (along - 1.0).abs() < SAME_DIRECTION && distance <= reach {
             let name = parent.names.get(i).map_or_else(|| i.to_string(), |f| f.name.clone());
             out.push(format!(
                 "partition `{}`: the plane lies on face `{name}` of `{}` ({:.1e} of its size from it); a cut along an existing face can leave micrometre slivers that no mesher takes: move the plane off the face (by a fraction of the element size)",
@@ -357,7 +370,7 @@ impl Shape {
 /// free-form face.
 pub(crate) fn same_surface(a: Option<FaceSurface>, b: Option<FaceSurface>, tol: f64) -> bool {
     let close = |x: [f64; 3], y: [f64; 3]| dot(sub(x, y), sub(x, y)).sqrt() <= tol;
-    let parallel = |x: [f64; 3], y: [f64; 3]| dot(cross(x, y), cross(x, y)).sqrt() <= 1e-6;
+    let parallel = |x: [f64; 3], y: [f64; 3]| dot(cross(x, y), cross(x, y)).sqrt() <= PARALLEL_SINE;
     let on_line = |p: [f64; 3], o: [f64; 3], axis: [f64; 3]| {
         let c = cross(sub(p, o), axis);
         dot(c, c).sqrt() <= tol
@@ -365,13 +378,13 @@ pub(crate) fn same_surface(a: Option<FaceSurface>, b: Option<FaceSurface>, tol: 
     match (a, b) {
         (None, None) => true,
         (Some(FaceSurface::Plane { normal: n1, point: p1 }), Some(FaceSurface::Plane { normal: n2, point: p2 })) => {
-            dot(n1, n2) > 1.0 - 1e-9 && dot(sub(p2, p1), n1).abs() <= tol
+            dot(n1, n2) > 1.0 - SAME_DIRECTION && dot(sub(p2, p1), n1).abs() <= tol
         }
         (Some(FaceSurface::Cylinder { origin: o1, axis: a1, radius: r1 }), Some(FaceSurface::Cylinder { origin: o2, axis: a2, radius: r2 })) => {
             (r1 - r2).abs() <= tol && parallel(a1, a2) && on_line(o2, o1, a1)
         }
         (Some(FaceSurface::Cone { apex: p1, axis: a1, half_angle: h1 }), Some(FaceSurface::Cone { apex: p2, axis: a2, half_angle: h2 })) => {
-            close(p1, p2) && dot(a1, a2) > 1.0 - 1e-9 && (h1 - h2).abs() <= 1e-9
+            close(p1, p2) && dot(a1, a2) > 1.0 - SAME_DIRECTION && (h1 - h2).abs() <= SAME_ANGLE
         }
         (Some(FaceSurface::Sphere { center: c1, radius: r1 }), Some(FaceSurface::Sphere { center: c2, radius: r2 })) => {
             close(c1, c2) && (r1 - r2).abs() <= tol
@@ -463,7 +476,7 @@ fn name_faces(cell: &mut Shape, parent: &Faces, cut: &Cut, n: [f64; 3], size: f6
         let surface = own.surfaces.get(i).copied().flatten();
         if let Some(FaceSurface::Plane { normal, point }) = surface {
             let along = dot(normal, n);
-            if (along.abs() - 1.0).abs() < 1e-9 && dot(sub(point, cut.point), n).abs() < on_plane.max(tol * 1e-3) {
+            if (along.abs() - 1.0).abs() < SAME_DIRECTION && dot(sub(point, cut.point), n).abs() < on_plane.max(tol * ON_FACE) {
                 // Outward along the normal: the cell is on the negative side.
                 let side = if along > 0.0 { "a" } else { "b" };
                 names.push((format!("partition:{}:{side}", cut.name), true));

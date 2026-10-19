@@ -14,6 +14,13 @@ use serde_json::{Value, json};
 use crate::requirement::Requirement;
 use crate::{CommandKind, CommandSpec, EngineError, Result, Session};
 
+/// Points lie on one circle when their distances from its centre agree to this fraction of its radius.
+const ON_CIRCLE: f64 = 1e-3; // unit-factors: relative to the radius
+/// Two unit axes are one direction when the square of the sine between them is below this.
+const SAME_AXIS_SINE2: f64 = 1e-12; // unit-factors: the square of the sine of an angle
+/// Points this close, relative to the body's size, are on one axis.
+const SAME_AXIS: f64 = 1e-6; // unit-factors: relative to the body's size
+
 pub const OPEN: CommandSpec = CommandSpec {
     id: "geometry.open",
     label: "Open Design",
@@ -277,7 +284,7 @@ fn circle_centre(points: &[[f64; 3]]) -> Option<[f64; 3]> {
     let (a, b, c) = if closed { (pick(0.0)?, pick(1.0 / 3.0)?, pick(2.0 / 3.0)?) } else { (pick(0.0)?, pick(0.5)?, pick(1.0)?) };
     let centre = circumcentre(a, b, c)?;
     let r = dot3(sub3(a, centre), sub3(a, centre)).sqrt();
-    let on = points.iter().all(|p| (dot3(sub3(*p, centre), sub3(*p, centre)).sqrt() - r).abs() <= 1e-3 * r);
+    let on = points.iter().all(|p| (dot3(sub3(*p, centre), sub3(*p, centre)).sqrt() - r).abs() <= ON_CIRCLE * r);
     on.then_some(centre)
 }
 
@@ -357,7 +364,8 @@ fn centre(s: &mut Session, p: &Value) -> Result<Value> {
                         let same = axis.is_none_or(|(o, a)| {
                             let off = sub3(foot, o);
                             let across = sub3(off, scale3(a, dot3(off, a)));
-                            dot3(cross3(a, d), cross3(a, d)) < 1e-12 && dot3(across, across).sqrt() <= 1e-6 * body.size().unwrap_or(1.0).max(1e-9)
+                            dot3(cross3(a, d), cross3(a, d)) < SAME_AXIS_SINE2
+                                && dot3(across, across).sqrt() <= SAME_AXIS * body.size().unwrap_or(1.0).max(crate::units::min_length())
                         });
                         round &= same;
                         axis.get_or_insert((foot, d));
@@ -384,9 +392,9 @@ fn centre(s: &mut Session, p: &Value) -> Result<Value> {
     }
     // Arcs of one circle share a centre; faces of one axis were checked as they came.
     let spread = circles.iter().map(|c| circles.first().map_or(0.0, |f| dot3(sub3(*c, *f), sub3(*c, *f)).sqrt())).fold(0.0f64, f64::max);
-    let size = geometry.first().and_then(|g| design.body(&g.body)).and_then(|b| b.size().ok()).unwrap_or(1.0).max(1e-9);
+    let size = geometry.first().and_then(|g| design.body(&g.body)).and_then(|b| b.size().ok()).unwrap_or(1.0).max(crate::units::min_length());
     let edges_only = geometry.iter().all(|g| matches!(g.entity, Entity::Edge(_)));
-    if round && !circles.is_empty() && (!edges_only || spread <= 1e-6 * size) {
+    if round && !circles.is_empty() && (!edges_only || spread <= SAME_AXIS * size) {
         let point = match axis {
             // Cylinder faces: the axis point at the mean of their centres' feet.
             Some((_, d)) => {

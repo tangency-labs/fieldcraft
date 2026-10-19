@@ -31,6 +31,9 @@ use super::topology::{CORNERS, corner_at};
 use crate::vec3::{P, add, cross, dist, dot, norm, scale, sub};
 use crate::{Error, Result};
 
+/// The projection's tolerance, relative to the smoothing's.
+const PROJECTION: f64 = 1e-3; // unit-factors: relative to the tolerance
+
 /// Smoothing never takes an element's scaled Jacobian below this (unless it already was).
 pub const QUALITY_FLOOR: f64 = 0.5;
 
@@ -43,7 +46,7 @@ pub const EDGE_RATIO_CEILING: f64 = 5.0;
 const SWEEP_FLOOR: f64 = 0.3;
 
 /// Scaled Jacobians closer than this count as the same when two grids are compared.
-const SAME_QUALITY: f64 = 1e-6;
+const SAME_QUALITY: f64 = 1e-6; // unit-factors: a difference of scaled Jacobians
 
 /// The compass search lifts every element below this scaled Jacobian, as far as its nodes can
 /// move without lowering another below the lower of its own value and [`QUALITY_FLOOR`].
@@ -525,7 +528,7 @@ impl SweepScore {
 }
 
 /// Two smallest scaled Jacobians this close count as equal.
-const SCORE_TIE: f64 = 1e-9;
+const SCORE_TIE: f64 = 1e-9; // unit-factors: a difference of scaled Jacobians
 
 /// The lift from the best sweep grid replaces the lift from where the sweeps stopped only when
 /// it raises the smallest scaled Jacobian by more than this: an earlier sweep grid is less smooth
@@ -641,7 +644,7 @@ fn pass(m: &mut Mesh, g: &dyn Geometry, targets: &[Vec<u32>], run: Run, sweep_fl
     if method == Smoothing::None {
         return Ok(report);
     }
-    let ptol = 1e-3 * tol;
+    let ptol = PROJECTION * tol;
     // The sweeps do not raise the smallest scaled Jacobian monotonically (a move may take an
     // element down to the sweep floor), so where they stop decides the result; keep the best grid
     // seen (smallest scaled Jacobian, then the mean) and lift the worst elements from that.
@@ -796,7 +799,7 @@ fn pass(m: &mut Mesh, g: &dyn Geometry, targets: &[Vec<u32>], run: Run, sweep_fl
                             *slot = x;
                         }
                         let qx = quality(m.nodes, v);
-                        if qx.sj > best.0 + 1e-9 && qx.keeps(start_quality) {
+                        if qx.sj > best.0 + SCORE_TIE && qx.keeps(start_quality) {
                             best = (qx.sj, x);
                         }
                     }

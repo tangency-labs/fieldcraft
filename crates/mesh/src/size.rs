@@ -301,11 +301,18 @@ impl RegionSize {
     /// positive, regions with finite coordinates and at most [`MAX_REGION_TRIANGLES`] triangles
     /// in all. Local sizes not below `global` change nothing and are dropped.
     pub fn new(global: f64, growth: f64, locals: Vec<LocalSize>) -> Result<RegionSize> {
+        // A length named with its value as data (the caller shows its unit).
         let positive = |what: &str, v: f64| {
-            if v > 0.0 && v.is_finite() { Ok(v) } else { Err(Error::Invalid(format!("{what} must be finite and positive, got {v}"))) }
+            if v > 0.0 && v.is_finite() {
+                Ok(v)
+            } else {
+                Err(Error::invalid(crate::message![format!("{what} must be finite and positive, got "), crate::message::length(v)]))
+            }
         };
         positive("the global size", global)?;
-        positive("the growth rate", growth)?;
+        if !(growth > 0.0 && growth.is_finite()) {
+            return Err(Error::Invalid(format!("the growth rate must be finite and positive, got {growth}")));
+        }
         let triangles: usize = locals.iter().map(|l| if let Region::Triangles(t) = &l.region { t.len() } else { 0 }).sum();
         if triangles > MAX_REGION_TRIANGLES {
             return Err(Error::Limit(format!("size regions hold {triangles} triangles; the limit is {MAX_REGION_TRIANGLES}")));

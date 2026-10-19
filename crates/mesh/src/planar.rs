@@ -21,6 +21,9 @@ use crate::size::{UniformSize, divide_polyline, edge_divisions, even_divisions, 
 use crate::surface::weld::weld;
 use crate::{Error, Result};
 
+/// Round-off in a face's height, relative to it.
+const ROUND_OFF: f64 = 1e-12; // unit-factors: relative to the coordinate
+
 /// A boundary curve: a polyline from its start to the start of the next curve of its loop (the
 /// end point is not repeated), and an id reported on the element edges that lie on it.
 #[derive(Debug, Clone, PartialEq)]
@@ -209,7 +212,7 @@ pub fn face_boundary(positions: &[[f64; 3]], triangles: &[[u32; 3]], tri_face: &
         return Err(Error::Invalid(format!("face {face} has no triangles")));
     }
     let z = mine.first().and_then(|w| xyz.get(w[0] as usize)).map_or(0.0, |p| p[2]);
-    let flat = mine.iter().flatten().filter_map(|v| xyz.get(*v as usize)).all(|p| (p[2] - z).abs() <= tolerance.max(1e-12 * (1.0 + z.abs())));
+    let flat = mine.iter().flatten().filter_map(|v| xyz.get(*v as usize)).all(|p| (p[2] - z).abs() <= tolerance.max(ROUND_OFF * (1.0 + z.abs())));
     if !flat {
         return Err(Error::Invalid("the face does not lie in a plane parallel to XY (a 2D model lies in the XY plane)".into()));
     }

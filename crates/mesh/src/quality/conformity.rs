@@ -44,7 +44,7 @@ pub fn conformity<'a>(
     tolerance: f64,
 ) -> Result<Conformity> {
     if !(tolerance >= 0.0 && tolerance.is_finite()) {
-        return Err(Error::Invalid(format!("the tolerance must be a non-negative number, got {tolerance}")));
+        return Err(Error::invalid(crate::message!["the tolerance must be a non-negative number, got ", crate::message::length(tolerance)]));
     }
     let mut labels: Vec<u32> = nodes.iter().map(|n| n.0).collect();
     labels.sort_unstable();

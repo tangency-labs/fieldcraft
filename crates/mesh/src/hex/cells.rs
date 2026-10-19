@@ -46,6 +46,9 @@ use crate::vec3::{P, cross, dot, norm, sub};
 
 use crate::{Error, Result};
 
+/// Two faces' centres agree within this, relative to their size.
+const SAME_CENTRE: f64 = 1e-3; // unit-factors: relative to the face's size
+
 /// One cell: its name (for messages), its boundary surface (face-tagged) and the analytic
 /// surfaces of its faces by tag.
 #[derive(Clone, Copy)]
@@ -266,7 +269,7 @@ struct Topology {
 }
 
 /// Points at most this far apart (relative to the diagonal of all cells) are one vertex.
-const RELATIVE_MERGE: f64 = 1e-6;
+const RELATIVE_MERGE: f64 = 1e-6; // unit-factors: relative to the diagonal
 
 impl Topology {
     fn new(breps: &[Brep], cubes: &[Cube], names: &[&str], chordal: f64) -> Result<Topology> {
@@ -403,7 +406,7 @@ impl Topology {
                                 let b0 = breps.get(c0).ok_or_else(|| Error::Failed("cell index".into()))?;
                                 let (centre0, area0) = face_centre(b0, f0);
                                 let (centre1, area1) = face_centre(brep, face);
-                                if dist(centre0, centre1) > edge_tol + 1e-3 * norm(area0).sqrt() || dot(area0, area1) >= 0.0 {
+                                if dist(centre0, centre1) > edge_tol + SAME_CENTRE * norm(area0).sqrt() || dot(area0, area1) >= 0.0 {
                                     return Err(Error::Unsupported(format!(
                                         "cells `{}` and `{}` share the four edges of a face but not the face (different surfaces, or on the same side)",
                                         name(c0),

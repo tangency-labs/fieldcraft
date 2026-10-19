@@ -36,8 +36,8 @@ use fieldcraft_model::{ElementKind, admissible_jacobian, check_coordinates, tet4
 pub use conformity::{Conformity, conformity};
 pub use jacobian::{JacobianCheck, Validity};
 pub use report::{
-    GateOptions, GateReport, Marked, MetricStats, QualityReport, enclosed_volume, mark_elements, quality_report, validity_gate, validity_gate_checks,
-    validity_gate_elements,
+    GateOptions, GateReport, Marked, MetricStats, QualityReport, VOLUME_TOLERANCE, enclosed_volume, mark_elements, quality_report, validity_gate,
+    validity_gate_checks, validity_gate_elements,
 };
 pub(crate) use shape::{planar_corner, quad_axes};
 

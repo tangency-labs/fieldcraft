@@ -35,9 +35,40 @@ use std::collections::BTreeSet;
 use fieldcraft_geometry::{Curve, Design, FaceSurface, FeatureNode, Shape};
 use fieldcraft_mesh::project::{ProjectOptions, Topology};
 use fieldcraft_model::geometry::Entity;
-use fieldcraft_model::units::Quantity;
+use fieldcraft_model::units::{Quantity, Typed};
 use fieldcraft_model::{CutRole, Datum, MeshPlan, Partition, PlanCut, PlanFeature, PlanMesher, PlanRing, PlanUnmapped, RingKind};
 use serde_json::{Value, json};
+
+/// A vector shorter than this has no direction.
+const MIN_NORM: f64 = 1e-12; // unit-factors: the length of a direction vector
+/// Unit directions are parallel (or square) within this.
+const SAME_DIRECTION: f64 = 1e-6; // unit-factors: a component of a unit vector
+/// A unit direction's component taken as not zero.
+const NON_ZERO_COMPONENT: f64 = 1e-9; // unit-factors: a component of a unit vector
+/// Circles agree within this fraction of their radius (at least a millimetre).
+const SAME_CIRCLE: f64 = 1e-6; // unit-factors: relative to the radius
+/// Concentric circles of radii this close (relative) are one.
+const CONCENTRIC: f64 = 1e-9; // unit-factors: relative to the radius
+/// A circle's centre is on a cylinder's axis within this, relative to its radius.
+const ON_AXIS: f64 = 1e-9; // unit-factors: relative to the radius
+/// Sketch lines whose directions cross by less than this are parallel.
+const SAME_LINE: f64 = 1e-9; // unit-factors: the sine of an angle
+/// The meshers' default chordal tolerance, relative to the diagonal.
+const DEFAULT_RELATIVE_TOLERANCE: f64 = 1e-3; // unit-factors: relative to the diagonal
+/// Corner planes this close, relative to the diagonal, are one.
+const CORNER_EPS: f64 = 1e-6; // unit-factors: relative to the diagonal
+/// Scaled Jacobians this close are equal.
+const SAME_QUALITY: f64 = 1e-9; // unit-factors: a difference of scaled Jacobians
+/// How much worse than the whole cell a mesh round the corners may be.
+const QUALITY_SLACK: f64 = 1e-3; // unit-factors: a difference of scaled Jacobians
+/// Distances of the geometry this close are one (a cut on a face, a section's end).
+const SAME_LENGTH: Typed = Typed::new(1e-6, "mm"); // unit-factors: an absolute amount, in the geometry frame's millimetres
+/// Coordinates this close are one (a sketch's, a cell's bounds).
+const SAME_COORDINATE: Typed = Typed::new(1e-9, "mm"); // unit-factors: an absolute amount, in the geometry frame's millimetres
+/// A sketch line shorter than this has no direction.
+const MIN_SEGMENT: Typed = Typed::new(1e-12, "mm"); // unit-factors: a floor against a zero length, in the geometry frame's millimetres
+/// Axes whose squared distance apart is below this are one.
+const SAME_AXIS: Typed = Typed::new(1e-12, "mm^2"); // unit-factors: an absolute amount, in the geometry frame's millimetres
 
 mod blocks;
 mod decompose;
@@ -50,6 +81,16 @@ use crate::{CommandKind, CommandSpec, EngineError, Result, Session};
 /// How a message shows a number of the geometry (millimetres): in the display system, with its
 /// unit ([`crate::units::shown`]).
 pub(crate) type Show<'a> = &'a dyn Fn(Quantity, f64) -> String;
+
+/// An absolute length of the geometry frame ([`crate::units::geometry_amount`]).
+fn length(t: Typed) -> f64 {
+    crate::units::geometry_amount(Quantity::Length, t)
+}
+
+/// [`SAME_AXIS`] in the geometry frame.
+fn axis_gap() -> f64 {
+    crate::units::geometry_amount(Quantity::Area, SAME_AXIS)
+}
 
 /// [`Show`] for `s`'s display system.
 fn show_for(s: &Session) -> impl Fn(Quantity, f64) -> String + use<> {
@@ -173,20 +214,20 @@ fn cross(a: V3, b: V3) -> V3 {
 
 fn unit(v: V3) -> Option<V3> {
     let n = dot(v, v).sqrt();
-    (n.is_finite() && n > 1e-12).then(|| v.map(|c| c / n))
+    (n.is_finite() && n > MIN_NORM).then(|| v.map(|c| c / n))
 }
 
 /// Parallel or opposite, within 1e-6 of a radian.
 fn parallel(a: V3, b: V3) -> bool {
     match (unit(a), unit(b)) {
-        (Some(a), Some(b)) => dot(a, b).abs() > 1.0 - 1e-6,
+        (Some(a), Some(b)) => dot(a, b).abs() > 1.0 - SAME_DIRECTION,
         _ => false,
     }
 }
 
 fn perpendicular(a: V3, b: V3) -> bool {
     match (unit(a), unit(b)) {
-        (Some(a), Some(b)) => dot(a, b).abs() < 1e-6,
+        (Some(a), Some(b)) => dot(a, b).abs() < SAME_DIRECTION,
         _ => false,
     }
 }
@@ -194,7 +235,7 @@ fn perpendicular(a: V3, b: V3) -> bool {
 /// A direction up to its sign: the first non-zero component positive.
 fn canonical(d: V3) -> Option<V3> {
     let d = unit(d)?;
-    let first = d.iter().copied().find(|c| c.abs() > 1e-9).unwrap_or(1.0);
+    let first = d.iter().copied().find(|c| c.abs() > NON_ZERO_COMPONENT).unwrap_or(1.0);
     Some(if first < 0.0 { d.map(|c| if c == 0.0 { 0.0 } else { -c }) } else { d })
 }
 
@@ -330,8 +371,9 @@ fn placed(stored: Vec<Circle>, f: &FeatureNode, d: V3, shape: &Shape, surfaces: 
             // The axis's point in the plane through the origin square to `d`.
             let along = dot(origin, d);
             let p: V3 = std::array::from_fn(|k| origin[k] - along * d[k]);
-            let same =
-                |(q, r): &(V3, f64)| (r - radius).abs() < 1e-6 * radius.max(1.0) && (0..3).all(|k| (q[k] - p[k]).abs() < 1e-6 * radius.max(1.0));
+            let same = |(q, r): &(V3, f64)| {
+                (r - radius).abs() < SAME_CIRCLE * radius.max(1.0) && (0..3).all(|k| (q[k] - p[k]).abs() < SAME_CIRCLE * radius.max(1.0))
+            };
             if !axes.iter().any(same) {
                 axes.push((p, radius));
             }
@@ -342,7 +384,7 @@ fn placed(stored: Vec<Circle>, f: &FeatureNode, d: V3, shape: &Shape, surfaces: 
         let near = |(p, r): &(V3, f64)| {
             let off: V3 = std::array::from_fn(|k| c.center[k] - p[k]);
             let along = dot(off, d);
-            ((r - c.radius).abs() < 1e-6 * c.radius.max(1.0), dot(off, off) - along * along)
+            ((r - c.radius).abs() < SAME_CIRCLE * c.radius.max(1.0), dot(off, off) - along * along)
         };
         let best = axes.iter().enumerate().filter(|(_, a)| near(a).0).min_by(|a, b| near(a.1).1.total_cmp(&near(b.1).1)).map(|(k, _)| k);
         if let Some(k) = best {
@@ -380,9 +422,10 @@ impl Clearance<'_> {
     /// Whether the plane passes through a curved face (between its points' extremes along `n`,
     /// by more than `gap`): the partitions' tessellation does not close along such a cut.
     fn crosses_curved(&self, n: V3, t: f64) -> bool {
+        let same = length(SAME_LENGTH);
         self.curved.iter().any(|pts| {
             let (lo, hi) = pts.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), p| (l.min(dot(*p, n)), h.max(dot(*p, n))));
-            t > lo + 1e-6 && t < hi - 1e-6
+            t > lo + same && t < hi - same
         })
     }
 
@@ -440,13 +483,14 @@ fn imprint_of(f: &FeatureNode, d: V3, cut: bool) -> Option<Imprint> {
                 return None;
             }
             // A rectangle's sides (four lines, each along a sketch axis).
+            let same = length(SAME_COORDINATE);
             for p in &sk.profiles {
                 let lines: Vec<([f64; 2], [f64; 2])> =
                     p.outer.iter().filter_map(|c| if let Curve::Line { a, b } = c { Some((*a, *b)) } else { None }).collect();
                 let square = lines.len() == 4
                     && p.outer.len() == 4
                     && p.holes.is_empty()
-                    && lines.iter().all(|(a, b)| (a[0] - b[0]).abs() < 1e-9 || (a[1] - b[1]).abs() < 1e-9);
+                    && lines.iter().all(|(a, b)| (a[0] - b[0]).abs() < same || (a[1] - b[1]).abs() < same);
                 if square {
                     let world = |q: [f64; 2]| -> V3 { std::array::from_fn(|k| sk.origin[k] + q[0] * sk.x_dir[k] + q[1] * sk.y_dir[k]) };
                     let mid = lines.iter().fold([0.0; 2], |m, (a, _)| [m[0] + a[0] / 4.0, m[1] + a[1] / 4.0]);
@@ -476,6 +520,7 @@ fn imprint_of(f: &FeatureNode, d: V3, cut: bool) -> Option<Imprint> {
 /// wall) is moved one element (twice `gap`) out of the opening: the kernel cannot cut along a
 /// face (#427, #455), and a strip one element wide is left between the cut and the face.
 fn imprint_cuts(tools: &[Imprint], d: V3, body: &Clearance, cuts: &mut Vec<PlanCut>, show: Show) {
+    let same = length(SAME_LENGTH);
     let tool_ids: Vec<u64> = tools.iter().map(|t| t.feature).collect();
     // `off`: the distance from `t` of the face a frame side was moved off, allowed exactly.
     let mut add = |n: V3, t: f64, reason: String, feature: u64, off: Option<f64>| {
@@ -486,9 +531,9 @@ fn imprint_cuts(tools: &[Imprint], d: V3, body: &Clearance, cuts: &mut Vec<PlanC
         // on): a sliver, or a cut along a face that the kernel splits badly.
         let near_face = body.faces_near(n, t).any(|(x, name)| {
             if let Some(o) = off {
-                return (x - o).abs() > 1e-6;
+                return (x - o).abs() > same;
             }
-            x > 1e-6 || !fieldcraft_geometry::features::feature_ids(name).any(|id| tool_ids.contains(&id))
+            x > same || !fieldcraft_geometry::features::feature_ids(name).any(|id| tool_ids.contains(&id))
         });
         if near_face || cuts.iter().any(|k| parallel(k.normal, n) && (dot(k.point, n) - t).abs() < body.gap) {
             return;
@@ -505,7 +550,7 @@ fn imprint_cuts(tools: &[Imprint], d: V3, body: &Clearance, cuts: &mut Vec<PlanC
         }
         for (n, off) in &tool.sides {
             let why = format!("frame: a side of the opening F{} cuts, carried across the body", tool.feature);
-            let on_face = body.faces_near(*n, *off).any(|(x, _)| x <= 1e-6);
+            let on_face = body.faces_near(*n, *off).any(|(x, _)| x <= same);
             match tool.center.filter(|_| on_face) {
                 Some(c) => {
                     let out = (off - dot(*n, c)).signum();
@@ -572,27 +617,28 @@ fn profile_wall(p: &fieldcraft_geometry::ProfileGeometry) -> Option<f64> {
         .filter_map(|c| if let Curve::Line { a, b } = c { Some((*a, *b)) } else { None })
         .take(MAX_WALL_SEGMENTS)
         .collect();
+    let (min_segment, same) = (length(MIN_SEGMENT), length(SAME_COORDINATE));
     let mut best: Option<f64> = None;
     for (i, (a, b)) in lines.iter().enumerate() {
         let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
         let len = (dx * dx + dy * dy).sqrt();
-        if !(len > 1e-12) {
+        if !(len > min_segment) {
             continue;
         }
         let (ux, uy) = (dx / len, dy / len);
         for (c, e) in lines.iter().skip(i + 1) {
             let (ex, ey) = (e[0] - c[0], e[1] - c[1]);
-            if (ux * ey - uy * ex).abs() > 1e-9 * (ex * ex + ey * ey).sqrt().max(1e-12) {
+            if (ux * ey - uy * ex).abs() > SAME_LINE * (ex * ex + ey * ey).sqrt().max(min_segment) {
                 continue;
             }
             let gap = ux * (c[1] - a[1]) - uy * (c[0] - a[0]);
-            if gap.abs() < 1e-9 {
+            if gap.abs() < same {
                 continue;
             }
             // The overlap of the two along the direction.
             let along = |q: [f64; 2]| (q[0] - a[0]) * ux + (q[1] - a[1]) * uy;
             let (lo, hi) = (along(*c).min(along(*e)).max(0.0), along(*c).max(along(*e)).min(len));
-            if hi - lo <= 1e-9 {
+            if hi - lo <= same {
                 continue;
             }
             let m = 0.5 * (lo + hi);
@@ -627,12 +673,13 @@ fn in_plane_axes(d: V3) -> [V3; 2] {
 /// the body square to the axis, clear of the other circles (1.3 of their radius), and not next to another cut (one
 /// within 0.6 of the radius serves instead). A side with no such place gets no cut, and a note.
 fn frame_cuts(circles: &[Circle], d: V3, body: &Clearance, cuts: &mut Vec<PlanCut>, show: Show) -> Vec<String> {
+    let axis_gap = axis_gap();
     let mut groups: Vec<Circle> = Vec::new();
     for c in circles.iter().filter(|c| c.framed) {
         let same_axis = |g: &Circle| {
             let off = std::array::from_fn::<f64, 3, _>(|k| c.center[k] - g.center[k]);
             let along = dot(off, d);
-            dot(off, off) - along * along < 1e-12
+            dot(off, off) - along * along < axis_gap
         };
         match groups.iter_mut().find(|g| same_axis(g)) {
             Some(g) if c.radius > g.radius => *g = *c,
@@ -711,15 +758,16 @@ fn plan_rings(
     surfaces: &[Option<FaceSurface>],
     features: &[FeatureNode],
 ) -> Vec<PlanRing> {
+    let axis_gap = axis_gap();
     let mut out: Vec<PlanRing> = Vec::new();
     for c in circles {
         let same = |r: &PlanRing| {
             let off: V3 = std::array::from_fn(|k| c.center[k] - r.center[k]);
             let along = dot(off, d);
-            dot(off, off) - along * along < 1e-12
+            dot(off, off) - along * along < axis_gap
         };
         // Concentric circles each get a ring (a boss and its hole: squares inside squares).
-        if out.iter().any(|r| same(r) && (r.radius - c.radius).abs() < 1e-9 * c.radius.max(1.0)) {
+        if out.iter().any(|r| same(r) && (r.radius - c.radius).abs() < CONCENTRIC * c.radius.max(1.0)) {
             continue;
         }
         let frame = match c.kind {
@@ -746,8 +794,8 @@ fn plan_rings(
                         let off: V3 = std::array::from_fn(|k| c.center[k] - origin[k]);
                         let along = dot(off, d);
                         parallel(axis, d)
-                            && (radius - c.radius).abs() < 1e-6 * c.radius.max(1.0)
-                            && dot(off, off) - along * along < 1e-9 * c.radius.max(1.0)
+                            && (radius - c.radius).abs() < SAME_CIRCLE * c.radius.max(1.0)
+                            && dot(off, off) - along * along < ON_AXIS * c.radius.max(1.0)
                     }
                     _ => false,
                 }
@@ -951,7 +999,7 @@ pub(crate) fn build(design: &Design, body: &str, size: Option<f64>, layers: u32,
         }
     }
     // The curved faces: fine enough that the chords keep the volume.
-    let chords = shape.tessellate(1e-3 * diagonal)?;
+    let chords = shape.tessellate(DEFAULT_RELATIVE_TOLERANCE * diagonal)?;
     if let Some((c, face, r)) = curvature_size(&surfaces, &chords, m.volume)
         && c < h
     {
@@ -987,7 +1035,7 @@ pub(crate) fn build(design: &Design, body: &str, size: Option<f64>, layers: u32,
             })
             .collect();
         // The curved faces' points, from a tessellation at the meshers' default tolerance.
-        let mesh = shape.tessellate(1e-3 * diagonal)?;
+        let mesh = shape.tessellate(DEFAULT_RELATIVE_TOLERANCE * diagonal)?;
         let mut curved: Vec<Vec<V3>> = vec![Vec::new(); surfaces.len()];
         for (t, &f) in mesh.triangles.iter().zip(&mesh.tri_face) {
             if !matches!(surfaces.get(f as usize), Some(Some(FaceSurface::Plane { .. })))
@@ -1006,10 +1054,11 @@ pub(crate) fn build(design: &Design, body: &str, size: Option<f64>, layers: u32,
         rings = plan_rings(&circle_list, d, &body, &cuts, shape, &surfaces, &features);
         // A cell holds the rings whose axis runs through it.
         if is_cell {
+            let same = crate::units::geometry_amount(Quantity::Length, SAME_COORDINATE);
             rings.retain(|r| {
                 (0..3).all(|k| {
-                    (r.center[k] - d[k] * dot(r.center, d)) >= lo[k] - d[k] * dot(lo, d) - 1e-9
-                        && (r.center[k] - d[k] * dot(r.center, d)) <= hi[k] - d[k] * dot(hi, d) + 1e-9
+                    (r.center[k] - d[k] * dot(r.center, d)) >= lo[k] - d[k] * dot(lo, d) - same
+                        && (r.center[k] - d[k] * dot(r.center, d)) <= hi[k] - d[k] * dot(hi, d) + same
                 })
             });
         }
@@ -1024,8 +1073,8 @@ pub(crate) fn build(design: &Design, body: &str, size: Option<f64>, layers: u32,
             _ => None,
         })
         .fold(f64::INFINITY, f64::min);
-    let tolerance = (1e-3 * diagonal).min(0.01 * radius).max(MIN_RELATIVE_TOLERANCE * diagonal);
-    if tolerance < 1e-3 * diagonal {
+    let tolerance = (DEFAULT_RELATIVE_TOLERANCE * diagonal).min(0.01 * radius).max(MIN_RELATIVE_TOLERANCE * diagonal);
+    if tolerance < DEFAULT_RELATIVE_TOLERANCE * diagonal {
         notes.push(format!("tolerance {}: a hundredth of the smallest radius ({})", length(tolerance), length(radius)));
     }
     let mesher = if cuts.is_empty() { PlanMesher::Sweep } else { PlanMesher::Cells };
@@ -1086,7 +1135,7 @@ fn layout_of(design: &Design, plan: &MeshPlan, show: Show) -> Result<Option<std:
     let surfaces = shape.face_surfaces()?;
     let m = shape.measure()?;
     let diagonal = (0..3).map(|k| (m.bbox_max[k] - m.bbox_min[k]).powi(2)).sum::<f64>().sqrt();
-    let mesh = shape.tessellate(plan.tolerance.unwrap_or(1e-3 * diagonal).max(1e-5 * diagonal))?;
+    let mesh = shape.tessellate(plan.tolerance.unwrap_or(DEFAULT_RELATIVE_TOLERANCE * diagonal).max(1e-5 * diagonal))?;
     let blend_faces = blends.iter().flat_map(|f| &f.faces).filter_map(|n| shape.face_index(n)).collect();
     let shell = if plan.features.iter().any(|f| f.kind == "shell") {
         design
@@ -1277,7 +1326,7 @@ fn apply_one(s: &mut Session, name: &str, plan: &MeshPlan) -> Result<Value> {
         Some(t) => t,
         None => {
             let b = source.measure()?;
-            1e-3 * (0..3).map(|k| (b.bbox_max[k] - b.bbox_min[k]).powi(2)).sum::<f64>().sqrt()
+            DEFAULT_RELATIVE_TOLERANCE * (0..3).map(|k| (b.bbox_max[k] - b.bbox_min[k]).powi(2)).sum::<f64>().sqrt()
         }
     };
     if plan.mesher == PlanMesher::Project {
@@ -1443,7 +1492,7 @@ fn apply_symmetric(s: &mut Session, name: &str, plan: &MeshPlan, corners: bool) 
         Some(t) => t,
         None => {
             let b = shape.measure()?;
-            1e-3 * (0..3).map(|k| (b.bbox_max[k] - b.bbox_min[k]).powi(2)).sum::<f64>().sqrt()
+            DEFAULT_RELATIVE_TOLERANCE * (0..3).map(|k| (b.bbox_max[k] - b.bbox_min[k]).powi(2)).sum::<f64>().sqrt()
         }
     };
     let cuts: Vec<PlanCut> = planes
@@ -1654,7 +1703,7 @@ fn copy_corner(
     let m = shape.measure()?;
     let (lo, hi) = (m.bbox_min, m.bbox_max);
     let diagonal = (0..3).map(|k| (hi[k] - lo[k]).powi(2)).sum::<f64>().sqrt();
-    let eps = 1e-6 * diagonal.max(1.0);
+    let eps = CORNER_EPS * diagonal.max(1.0);
     let Some(mirror) = Mirror::of(shape)? else { return Ok(Err(None)) };
     let mut found = None;
     for a in in_plane_axes(d).into_iter().filter(|a| AXES.iter().any(|x| parallel(*x, *a))) {
@@ -1745,7 +1794,7 @@ fn corner_meshes(
         return Err(EngineError::Params("no corner cut meshes".into()));
     };
     let [x1, x2] = at;
-    if corner_sj < reference - 1e-9 {
+    if corner_sj < reference - SAME_QUALITY {
         return Err(EngineError::Params(format!(
             "the best corner has a smallest scaled Jacobian of {corner_sj:.3}, below the {reference:.3} of the cell meshed whole"
         )));
@@ -1797,7 +1846,7 @@ fn corner_meshes(
     let opts = fieldcraft_mesh::project::ProjectOptions { fixed, ..opts };
     let mut mesh = super::project::project_body(s, &middle, body, &middle_blocks, &opts, merge)?;
     let middle_sj = mesh["min_scaled_jacobian"].as_f64().unwrap_or(-1.0);
-    if middle_sj < reference - 1e-3 {
+    if middle_sj < reference - QUALITY_SLACK {
         return Err(EngineError::Params(format!(
             "the middle meshed round the corners has a smallest scaled Jacobian of {middle_sj:.3}, below the {reference:.3} of the cell meshed whole"
         )));

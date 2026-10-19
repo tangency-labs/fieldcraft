@@ -26,7 +26,7 @@ use crate::{Error, Result};
 /// Every tetrahedron a change creates has a normalized Jacobian above this: FieldCraft's validity
 /// criterion ([`fieldcraft_model::admissible_jacobian`]) with a margin of a thousand, so the
 /// finished mesh passes the gate and the solvers whatever the operations did.
-pub const ADMISSIBLE_MARGIN: f64 = 1e3 * fieldcraft_model::MIN_NORMALIZED_JACOBIAN;
+pub const ADMISSIBLE_MARGIN: f64 = 1e3 * fieldcraft_model::MIN_NORMALIZED_JACOBIAN; // unit-factors: a multiple of a normalized Jacobian
 
 /// No tetrahedron, no vertex, no tag.
 pub const NONE: u32 = u32::MAX;

@@ -43,6 +43,15 @@ use super::geom::dist2;
 
 use super::geom::Geometry;
 
+/// The square of the least regularisation of a normalized corner determinant.
+const MIN_EPS2: f64 = 1e-12; // unit-factors: the square of a normalized determinant
+/// A step this small, relative to the reach, ends the search.
+const MIN_STEP: f64 = 1e-9; // unit-factors: relative to the reach
+/// Qualities this close are equal.
+const SAME_QUALITY: f64 = 1e-12; // unit-factors: a difference of normalized qualities
+/// The score of an inverted corner.
+const WORST: f64 = -1e9; // unit-factors: a score below every quality
+
 /// How a vertex may move.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Constraint {
@@ -370,7 +379,7 @@ impl<'a> Optimizer<'a> {
     fn update_eps(&mut self) -> (f64, f64) {
         let (min_d, energy) = self.measure();
         let old = self.eps;
-        self.eps = (1e-12 + 0.04 * min_d.min(0.0).powi(2)).sqrt();
+        self.eps = (MIN_EPS2 + 0.04 * min_d.min(0.0).powi(2)).sqrt();
         (min_d, if self.eps == old { energy } else { self.measure().1 })
     }
 
@@ -476,7 +485,7 @@ impl Optimizer<'_> {
         let mut cur = p0;
         let mut moved = false;
         for _ in 0..12 {
-            if step <= 1e-9 * reach.max(1e-300) {
+            if step <= MIN_STEP * reach.max(1e-300) {
                 break;
             }
             let mut improved = false;
@@ -490,7 +499,7 @@ impl Optimizer<'_> {
                     *p = trial;
                 }
                 let q = quality(self, v);
-                if q > best + 1e-12 {
+                if q > best + SAME_QUALITY {
                     best = q;
                     cur = trial;
                     improved = true;
@@ -517,11 +526,11 @@ impl Optimizer<'_> {
                 .map(|&(e, _)| {
                     let x = self.element(e).0;
                     if min_scaled_jacobian(&x) <= 0.0 {
-                        return -1e9;
+                        return WORST;
                     }
                     element_validity(ElementKind::Hex8, &x).map_or(-1.0, |c| match c.validity {
                         Validity::Valid => c.ratio.max(1e-300),
-                        _ => c.ratio.min(0.0) - 1e-12,
+                        _ => c.ratio.min(0.0) - SAME_QUALITY,
                     })
                 })
                 .fold(f64::INFINITY, f64::min)

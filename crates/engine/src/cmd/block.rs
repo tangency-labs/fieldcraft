@@ -14,6 +14,9 @@ use serde_json::{Value, json};
 use super::fresh_labels;
 use crate::{CommandKind, CommandSpec, EngineError, Result, Session};
 
+/// The default merge distance, relative to the block's diagonal.
+const DEFAULT_RELATIVE_MERGE: f64 = 1e-6; // unit-factors: relative to the block's diagonal
+
 pub const BLOCK: CommandSpec = CommandSpec {
     id: "mesh.block",
     label: "Mesh Block",
@@ -147,7 +150,7 @@ fn block_mesh(s: &mut Session, p: &Value) -> Result<Value> {
         let hi = (0..3).map(|d| p.corners.iter().map(|c| c[d]).fold(f64::NEG_INFINITY, f64::max));
         lo.zip(hi).map(|(l, h)| (h - l) * (h - l)).sum::<f64>().sqrt()
     };
-    let merge = p.merge.unwrap_or(1e-6 * diagonal);
+    let merge = p.merge.unwrap_or(DEFAULT_RELATIVE_MERGE * diagonal);
     if !(merge.is_finite() && merge >= 0.0 && merge <= 1e-2 * diagonal) {
         return Err(EngineError::Params(format!("`merge` must be from 0 to 1/100 of the block's diagonal ({diagonal})")));
     }

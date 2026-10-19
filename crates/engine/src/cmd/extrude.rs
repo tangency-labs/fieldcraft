@@ -38,7 +38,7 @@ pub const HEX_EXTRUDE: CommandSpec = CommandSpec {
 const MAX_FACES: usize = 1000;
 /// Default layer size and chordal tolerance, relative to the extent.
 const DEFAULT_RELATIVE_SIZE: f64 = 1.0 / 25.0;
-const DEFAULT_RELATIVE_TOLERANCE: f64 = 1e-3;
+const DEFAULT_RELATIVE_TOLERANCE: f64 = 1e-3; // unit-factors: relative to the extent
 const MIN_RELATIVE_TOLERANCE: f64 = 1e-5;
 /// Most quadrilaterals of a section meshed here.
 const MAX_SECTION_QUADS: usize = 1_000_000;
@@ -100,10 +100,7 @@ impl Faces {
         let diag = shape.size()?;
         let tol = tolerance.unwrap_or(DEFAULT_RELATIVE_TOLERANCE * diag);
         if tol < MIN_RELATIVE_TOLERANCE * diag {
-            return Err(EngineError::Params(format!(
-                "`tolerance` must be at least {MIN_RELATIVE_TOLERANCE:e} of body `{}`'s bounding-box diagonal",
-                shape.name
-            )));
+            return Err(crate::units::below_diagonal("tolerance", MIN_RELATIVE_TOLERANCE, diag, &format!("body `{}`'s", shape.name)));
         }
         let mesh = shape.tessellate(tol)?;
         let surface = BoundarySurface::new(
@@ -226,7 +223,7 @@ fn tagged_quads(model: &Model, refs: &[GeometryRef], exclude: &std::collections:
 
 /// The boundary faces of other bodies' meshes (tagged faces) that lie on the source faces.
 fn neighbour_quads(model: &Model, geometry: &Faces, source: &[u32], exclude: &std::collections::BTreeSet<u32>) -> Vec<[u32; 4]> {
-    let tol = 10.0 * geometry.tolerance.max(1e-9);
+    let tol = 10.0 * geometry.tolerance.max(crate::units::min_length());
     let on = |p: [f64; 3]| {
         source.iter().any(|&f| geometry.project(f, p).is_some_and(|q| (0..3).map(|k| (q[k] - p[k]).powi(2)).sum::<f64>().sqrt() <= tol))
     };
@@ -438,7 +435,7 @@ fn hex_extrude(s: &mut Session, p: &Value) -> Result<Value> {
         sides: &side_ids,
         layers,
         bias,
-        tolerance: faces.tolerance.max(1e-9),
+        tolerance: faces.tolerance.max(crate::units::min_length()),
         max_elements: fieldcraft_model::MAX_ELEMENTS / 8,
     };
     let m = extrude_to_surface(&spec, &faces).map_err(|e| EngineError::of_body(&body, e))?;

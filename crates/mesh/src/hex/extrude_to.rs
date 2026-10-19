@@ -45,6 +45,11 @@ use crate::quality::{GateOptions, GateReport, Metric, element_quality, validity_
 use crate::vec3::{P, cross, dot, norm, sub};
 use crate::{Error, Result};
 
+/// A path meets a surface when it crosses at this slope, relative to the gradient.
+const MIN_SLOPE: f64 = 1e-6; // unit-factors: relative to the gradient
+/// A Newton step this small, relative to the coordinates, has converged.
+const CONVERGED: f64 = 1e-12; // unit-factors: relative to the coordinates' size
+
 /// The most layers.
 pub const MAX_LAYERS: usize = 10_000;
 /// Newton steps per path end, and alternating-projection rounds per node.
@@ -53,7 +58,7 @@ const MAX_ALTERNATING: usize = 100;
 /// The most interior-node × boundary-node × layer products the residual correction may spend.
 const MAX_CORRECTION_WORK: u64 = 2_000_000_000;
 /// The largest layer bias (last over first thickness) and its inverse.
-pub const MAX_BIAS: f64 = 1000.0;
+pub const MAX_BIAS: f64 = 1000.0; // unit-factors: a ratio of layer sizes
 
 /// The path of each source node.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -342,15 +347,18 @@ pub fn extrude_to_surface(spec: &ExtrudeSpec, geometry: &dyn Geometry) -> Result
         sum_sj += sj;
         checks.push((e as u32 + 1, q.jacobian.ok_or_else(|| Error::Failed("an element was not certified".into()))?));
     }
-    let gate = validity_gate_checks(checks.iter().map(|(l, c)| (*l, c)), &GateOptions { expected_volume: Some(enclosed), volume_tolerance: 1e-9 })?
-        .into_result()
-        .map_err(|e| {
-            Error::failed(e.message().then(crate::message![
-                format!(" (worst element {} near ", worst + 1),
-                crate::message::point(centre(worst, 0)),
-                ": a path crosses another or a side; try other layers, a smaller bias or the side faces)"
-            ]))
-        })?;
+    let gate = validity_gate_checks(
+        checks.iter().map(|(l, c)| (*l, c)),
+        &GateOptions { expected_volume: Some(enclosed), volume_tolerance: crate::quality::VOLUME_TOLERANCE },
+    )?
+    .into_result()
+    .map_err(|e| {
+        Error::failed(e.message().then(crate::message![
+            format!(" (worst element {} near ", worst + 1),
+            crate::message::point(centre(worst, 0)),
+            ": a path crosses another or a side; try other layers, a smaller bias or the side faces)"
+        ]))
+    })?;
     let max_target_gap = nodes
         .iter()
         .skip(n * n_src)
@@ -482,7 +490,7 @@ impl Extrusion<'_> {
                 return Some((q, t));
             }
             let den = dot(d, gap);
-            if den.abs() <= 1e-6 * g2.sqrt() {
+            if den.abs() <= MIN_SLOPE * g2.sqrt() {
                 return None;
             }
             t -= g2 / den;
@@ -507,7 +515,7 @@ impl Extrusion<'_> {
             for &f in faces {
                 x = self.g.project(f, x)?;
             }
-            if dist(before, x) <= 1e-12 * (1.0 + norm(x)) {
+            if dist(before, x) <= CONVERGED * (1.0 + norm(x)) {
                 break;
             }
         }
@@ -526,7 +534,7 @@ impl Extrusion<'_> {
             }
             face = self.nearest_target(x)?;
             x = self.g.project(face, x)?;
-            if dist(before, x) <= 1e-12 * (1.0 + norm(x)) {
+            if dist(before, x) <= CONVERGED * (1.0 + norm(x)) {
                 break;
             }
         }

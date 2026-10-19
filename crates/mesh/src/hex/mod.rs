@@ -73,6 +73,9 @@ use crate::vec3::{P, cross, dot, sub};
 use crate::{Error, Result};
 use fieldcraft_model::ElementKind;
 
+/// A projection step this small, relative to the tolerance, has converged.
+const CONVERGED: f64 = 1e-3; // unit-factors: relative to the tolerance
+
 /// Which structured method to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum HexMethod {
@@ -272,7 +275,7 @@ pub(crate) struct Raw {
 const MAX_REFINE: u32 = 2;
 
 /// Classification tolerance relative to the bounding-box diagonal.
-pub(crate) const RELATIVE_TOLERANCE: f64 = 1e-6;
+pub(crate) const RELATIVE_TOLERANCE: f64 = 1e-6; // unit-factors: relative to the diagonal
 
 /// Mesh the solid bounded by `surface` with hexahedra. `faces[tag]` is the analytic surface of
 /// B-rep face `tag` when known (exact node placement; free-form faces use the triangles);
@@ -652,11 +655,14 @@ fn finish(cells: &Cells, raw: Raw, method: HexMethod) -> Result<HexMesh> {
         sum_sj += sj;
         checks.push((e as u32 + 1, q.jacobian.ok_or_else(|| Error::Failed("an element was not certified".into()))?));
     }
-    let gate = validity_gate_checks(checks.iter().map(|(l, c)| (*l, c)), &GateOptions { expected_volume: Some(enclosed), volume_tolerance: 1e-9 })?
-        .into_result()
-        .map_err(|e| Error::failed(plain(&e).then(message![" ("]).then(description.clone()).then(message![")"])))?;
+    let gate = validity_gate_checks(
+        checks.iter().map(|(l, c)| (*l, c)),
+        &GateOptions { expected_volume: Some(enclosed), volume_tolerance: crate::quality::VOLUME_TOLERANCE },
+    )?
+    .into_result()
+    .map_err(|e| Error::failed(plain(&e).then(message![" ("]).then(description.clone()).then(message![")"])))?;
     let surface_volume: f64 = cells.ctxs.iter().map(|c| c.brep.surface.volume()).sum();
-    let slack = 2.0 * fidelity + 1e-9 * surface_volume.abs();
+    let slack = 2.0 * fidelity + crate::quality::VOLUME_TOLERANCE * surface_volume.abs();
     if (gate.volume - surface_volume).abs() > slack {
         return Err(Error::failed(
             crate::message![
@@ -765,7 +771,7 @@ fn project_alternating(faces: &[(&Ctx, usize)], tol: f64, p: P) -> P {
                 x = q;
             }
         }
-        if faces.len() < 2 || dist(before, x) <= tol * 1e-3 {
+        if faces.len() < 2 || dist(before, x) <= tol * CONVERGED {
             break;
         }
     }

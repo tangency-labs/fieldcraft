@@ -162,7 +162,7 @@ fn cells(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(EngineError::Params("the cells have no extent".into()));
     }
     let size = Some(size.unwrap_or(diagonal / 25.0));
-    let tolerance = super::hex::number(p, "tolerance")?.unwrap_or(1e-3 * diagonal);
+    let tolerance = super::hex::number(p, "tolerance")?.unwrap_or(super::hex::DEFAULT_RELATIVE_TOLERANCE * diagonal);
     // The tet mesher's parameters: the same size and tolerance, its own order names.
     let mut tet_params = json!({"size": size, "tolerance": tolerance, "order": if quadratic { "quadratic" } else { "linear" }});
     for key in ["weld", "weld_distance", "feature_angle"] {

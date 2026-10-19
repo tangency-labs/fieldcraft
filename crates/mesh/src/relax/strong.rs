@@ -44,6 +44,9 @@ use fieldcraft_model::Model;
 use super::{Constraints, Elem, Freedom, P, RegionQuality, State, add, dist, dot, measure, region_quality, scale, sub};
 use crate::{Error, Result};
 
+/// The smallest fraction of a step tried.
+const MIN_STEP: f64 = 1e-6; // unit-factors: a fraction of a step
+
 /// Weight of an invalid element in the objective: above every valid element's term (the shape
 /// term is at most [`shape`] at 0, a few 1e9, plus the size term), so no step that untangles an
 /// element ever looks worse than staying inverted.
@@ -249,7 +252,7 @@ impl State<'_> {
             }
             t *= 0.5;
         }
-        *step = (t * 2.0).max(1e-6);
+        *step = (t * 2.0).max(MIN_STEP);
         moved
     }
 }
@@ -341,7 +344,7 @@ const TARGET_SWEEPS: usize = 5;
 /// Most Gauss–Seidel sweeps of the harmonic solve, and its tolerance (of the largest prescribed
 /// displacement).
 const HARMONIC_SWEEPS: usize = 2000;
-const HARMONIC_TOL: f64 = 1e-6;
+const HARMONIC_TOL: f64 = 1e-6; // unit-factors: relative to the largest prescribed displacement
 /// Most rounds of [`morph`].
 pub const MAX_ROUNDS: usize = 200;
 

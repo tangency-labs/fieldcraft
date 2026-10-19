@@ -299,7 +299,9 @@ fn geometry_and_mesh_sources_name_no_fixed_unit() {
             if line.trim_start().starts_with("//") {
                 continue;
             }
-            let literals: Vec<String> = line.split('"').skip(1).step_by(2).map(str::to_string).collect();
+            // A unit written as a `Typed` amount's own ("mm", "mm^3") is the amount's unit, not text.
+            let literals: Vec<String> =
+                line.split('"').skip(1).step_by(2).filter(|l| !matches!(*l, "mm" | "mm^2" | "mm^3")).map(str::to_string).collect();
             for l in regex_free_word(&literals, "mm") {
                 found.push(format!("{}:{}: {l}", f.display(), n + 1));
             }

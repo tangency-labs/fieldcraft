@@ -7,9 +7,8 @@
 //! conversion>`. The sources are read as syntax trees: comments, strings (help texts, WGSL) and
 //! test code (`#[cfg(test)]` items and the module files they declare) are not code that converts.
 //!
-//! Two parts of the tree are not counted, both listed here with their reason: the frozen
-//! migration step ([`FROZEN`]), and the geometry frame ([`GEOMETRY_FRAME`]), reported apart until
-//! its own change brings it to zero.
+//! One part of the tree is not counted, listed here with its reason: the frozen migration step
+//! ([`FROZEN`]).
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -47,44 +46,6 @@ const FROZEN: &[(&str, &str)] = &[(
      factors, so a later change to the table cannot change how an old file migrates",
 )];
 
-/// The geometry frame: the geometry and mesher crates and the engine's geometry and mesh commands,
-/// which work in millimetres around the model (crates/engine/src/units.rs, `Frame::Geometry`).
-/// Their factors are reported apart and do not fail the check yet; the change that moves them
-/// onto the table removes this list. A path ending in `/` is a directory.
-const GEOMETRY_FRAME: &[&str] = &[
-    "crates/geometry/",
-    "crates/mesh/",
-    "crates/mesh-gpu/",
-    "crates/engine/src/cmd/block.rs",
-    "crates/engine/src/cmd/cells.rs",
-    "crates/engine/src/cmd/cells/",
-    "crates/engine/src/cmd/datum.rs",
-    "crates/engine/src/cmd/defeature.rs",
-    "crates/engine/src/cmd/extrude.rs",
-    "crates/engine/src/cmd/extrude/",
-    "crates/engine/src/cmd/geometry.rs",
-    "crates/engine/src/cmd/hex.rs",
-    "crates/engine/src/cmd/mesh.rs",
-    "crates/engine/src/cmd/mirror.rs",
-    "crates/engine/src/cmd/node_move.rs",
-    "crates/engine/src/cmd/node_move/",
-    "crates/engine/src/cmd/nodes.rs",
-    "crates/engine/src/cmd/octree.rs",
-    "crates/engine/src/cmd/plan.rs",
-    "crates/engine/src/cmd/plan/",
-    "crates/engine/src/cmd/project.rs",
-    "crates/engine/src/cmd/project/",
-    "crates/engine/src/cmd/relax.rs",
-    "crates/engine/src/cmd/relax/",
-    "crates/engine/src/cmd/replace.rs",
-    "crates/engine/src/cmd/seeds.rs",
-    "crates/engine/src/cmd/sizes.rs",
-    "crates/engine/src/cmd/stitch.rs",
-    "crates/engine/src/cmd/symmetry.rs",
-    "crates/engine/src/cmd/tags.rs",
-    "crates/engine/src/cmd/virtual_faces.rs",
-];
-
 /// The per-line exemption: `// unit-factors: <reason>` on the line of the literal.
 const MARKER: &str = "// unit-factors:";
 
@@ -121,7 +82,6 @@ pub fn run(root: &Path) -> Result<(), String> {
     }
 
     let mut checked = Vec::new();
-    let mut frame = Vec::new();
     let mut frozen = 0usize;
     for (path, rel, text, found) in &parsed {
         if tests.contains(path) {
@@ -142,7 +102,7 @@ pub fn run(root: &Path) -> Result<(), String> {
                 Some(_) => {}
                 None => {
                     let hit = format!("{rel}:{line}: {value:e} ({what}): {}", source.trim());
-                    if in_geometry_frame(rel) { frame.push(hit) } else { checked.push(hit) }
+                    checked.push(hit);
                 }
             }
         }
@@ -153,13 +113,6 @@ pub fn run(root: &Path) -> Result<(), String> {
         }
     }
 
-    if !frame.is_empty() {
-        println!("Geometry frame (reported apart until its change lands, see GEOMETRY_FRAME):");
-        for h in &frame {
-            println!("  {h}");
-        }
-        println!();
-    }
     for h in &checked {
         println!("{h}");
     }
@@ -169,11 +122,7 @@ pub fn run(root: &Path) -> Result<(), String> {
     for (file, why) in FROZEN {
         println!("unit-factors: {file} keeps its factors: {why}");
     }
-    println!(
-        "unit-factors: {} literal factor(s) outside {TABLE}; {} in the geometry frame (pending); {frozen} in the frozen step",
-        checked.len(),
-        frame.len()
-    );
+    println!("unit-factors: {} literal factor(s) outside {TABLE}; {frozen} in the frozen step", checked.len());
     if checked.is_empty() && errors.is_empty() {
         Ok(())
     } else {
@@ -192,10 +141,6 @@ fn relative(root: &Path, path: &Path) -> String {
 
 fn factor(value: f64) -> Option<&'static str> {
     FACTORS.iter().find(|(f, _)| *f == value).map(|(_, what)| *what)
-}
-
-fn in_geometry_frame(rel: &str) -> bool {
-    GEOMETRY_FRAME.iter().any(|p| if p.ends_with('/') { rel.starts_with(p) } else { rel == *p })
 }
 
 /// The reason of a line's marker (empty when it gives none), if it has one.
@@ -431,13 +376,9 @@ mod tests {
     }
 
     #[test]
-    fn markers_and_areas() {
+    fn markers() {
         assert_eq!(marker("const X: f64 = 1e-9; // unit-factors: relative to the size"), Some("relative to the size"));
         assert_eq!(marker("let x = 1e-9; // unit-factors:"), Some(""));
         assert_eq!(marker("let x = 1e-9;"), None);
-        assert!(in_geometry_frame("crates/mesh/src/block.rs"));
-        assert!(in_geometry_frame("crates/engine/src/cmd/plan/mod.rs"));
-        assert!(!in_geometry_frame("crates/engine/src/cmd/planner.rs"));
-        assert!(!in_geometry_frame("crates/mesh-io/src/lib.rs"));
     }
 }

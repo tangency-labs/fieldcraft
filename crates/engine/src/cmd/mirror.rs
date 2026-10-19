@@ -7,6 +7,7 @@
 //! face names.
 
 use crate::schema::ProblemKind;
+use fieldcraft_model::units::{Quantity, Typed};
 use std::collections::{BTreeMap, BTreeSet};
 
 use fieldcraft_geometry::{Design, Shape};
@@ -19,6 +20,15 @@ use serde_json::{Value, json};
 
 use crate::requirement::Requirement;
 use crate::{CommandKind, CommandSpec, EngineError, Result, Session};
+
+/// A volume the image search takes for none at all.
+const MIN_VOLUME: Typed = Typed::new(1e-12, "mm^3"); // unit-factors: a floor against a zero volume, in the geometry frame's millimetres
+/// A plane's normal must be longer than this.
+const MIN_NORMAL: f64 = 1e-12; // unit-factors: the length of a direction vector
+/// How far an element face may lie from an image face, relative to the mesh's diagonal.
+const RELATIVE_FACE_TOLERANCE: f64 = 1e-3; // unit-factors: relative to the mesh's diagonal
+/// The finest tessellation the image faces are found on: a floor for a tiny mesh.
+const MIN_FACE_TOLERANCE: Typed = Typed::new(1e-4, "mm");
 
 pub const MIRROR: CommandSpec = CommandSpec {
     id: "mesh.mirror",
@@ -69,12 +79,14 @@ fn reflect(x: [f64; 3], point: [f64; 3], n: [f64; 3]) -> [f64; 3] {
 /// two halves of a symmetric part measure alike only to its accuracy).
 fn image_body<'a>(bodies: &'a [Shape], source: &Shape, point: [f64; 3], n: [f64; 3]) -> Result<Option<&'a Shape>> {
     let m = source.measure()?;
-    let size = source.size()?.max(1e-9);
+    let size = source.size()?.max(crate::units::min_length());
     let want = reflect(m.centroid, point, n);
     for b in bodies.iter().filter(|b| b.name != source.name) {
         let o = b.measure()?;
         let d = (0..3).map(|k| (o.centroid[k] - want[k]).powi(2)).sum::<f64>().sqrt();
-        if (o.volume - m.volume).abs() <= SAME_PLACE * m.volume.abs().max(1e-12) && d <= SAME_PLACE * size {
+        if (o.volume - m.volume).abs() <= SAME_PLACE * m.volume.abs().max(crate::units::geometry_amount(Quantity::Volume, MIN_VOLUME))
+            && d <= SAME_PLACE * size
+        {
             return Ok(Some(b));
         }
     }
@@ -95,7 +107,7 @@ struct Plan<'d> {
 fn plan<'d>(s: &Session, design: Option<&'d fieldcraft_geometry::Design>, p: &Value) -> Result<Plan<'d>> {
     let (point, normal) = plane(s, p)?;
     let len = normal.iter().map(|x| x * x).sum::<f64>().sqrt();
-    if !(len > 1e-12 && len.is_finite() && point.iter().all(|x| x.is_finite())) {
+    if !(len > MIN_NORMAL && len.is_finite() && point.iter().all(|x| x.is_finite())) {
         return Err(EngineError::Params("the plane needs a finite point and a non-zero normal".into()));
     }
     let n = normal.map(|x| x / len);
@@ -166,7 +178,7 @@ fn mirror_mesh(s: &mut Session, p: &Value) -> Result<Value> {
             hi[k] = hi[k].max(node.xyz[k]);
         }
     }
-    let diagonal = (0..3).map(|k| (hi[k] - lo[k]).powi(2)).sum::<f64>().sqrt().max(1e-9);
+    let diagonal = (0..3).map(|k| (hi[k] - lo[k]).powi(2)).sum::<f64>().sqrt().max(crate::units::min_length());
     // An image body's earlier mesh is replaced (replace.rs).
     let model = &mut s.model;
     let cleared = super::replace::clear(model, image.values().map(|(name, _)| name.as_str()));
@@ -205,7 +217,7 @@ fn tag_image(
     // differently); each element face goes to the one of them nearest its reflected centre. So
     // an element face the mesher gave a face narrower than the elements (its centre on a
     // neighbour) keeps that face's image.
-    let tolerance = (1e-3 * diagonal).max(1e-4);
+    let tolerance = (RELATIVE_FACE_TOLERANCE * diagonal).max(crate::units::geometry_amount(Quantity::Length, MIN_FACE_TOLERANCE));
     let mut targets: BTreeMap<&str, (Tessellation, Vec<String>)> = BTreeMap::new();
     for (target, shape) in image.values() {
         let Some(shape) = shape else { continue };

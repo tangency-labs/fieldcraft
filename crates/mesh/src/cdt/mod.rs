@@ -152,7 +152,7 @@ impl TetMesh {
             Ok([p(t[0])?, p(t[1])?, p(t[2])?, p(t[3])?])
         };
         let elements = self.tets.iter().enumerate().map(|(i, t)| Ok((i as u32 + 1, ElementKind::Tet4, coords(t)?))).collect::<Result<Vec<_>>>()?;
-        validity_gate_elements(elements, &GateOptions { expected_volume: Some(expected_volume), volume_tolerance: 1e-9 })
+        validity_gate_elements(elements, &GateOptions { expected_volume: Some(expected_volume), volume_tolerance: crate::quality::VOLUME_TOLERANCE })
     }
 }
 

@@ -26,6 +26,9 @@
 
 use crate::{Error, Result};
 
+/// The smallest division goal the error divides by.
+const MIN_GOAL: f64 = 1e-3; // unit-factors: a count of divisions
+
 /// The constraint system.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Intervals {
@@ -131,7 +134,7 @@ impl Intervals {
             }
         }
         let error = |i: usize, c: usize| -> f64 {
-            let g = self.goals.get(i).copied().unwrap_or(1.0).max(1e-3);
+            let g = self.goals.get(i).copied().unwrap_or(1.0).max(MIN_GOAL);
             // Squared relative deviation: strictly convex, so repeated increments spread over
             // the candidates instead of piling onto one.
             ((c as f64 - g) / g).powi(2)

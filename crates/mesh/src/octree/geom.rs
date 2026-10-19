@@ -21,6 +21,11 @@ use crate::surface::BoundarySurface;
 use crate::vec3::{P, cross, dot, norm, sub};
 use crate::{Error, Result};
 
+/// A box is padded by this, relative to its size.
+const PAD: f64 = 1e-9; // unit-factors: relative to the box's size
+/// Round-off allowed, relative to the numbers compared (or of a barycentric coordinate).
+const ROUND_OFF: f64 = 1e-12; // unit-factors: relative to the terms compared
+
 /// A degree-2 feature vertex whose curve turns by more than this (degrees) is a corner.
 pub(crate) const CORNER_TURN: f64 = 30.0;
 /// Triangles per tree leaf.
@@ -56,7 +61,7 @@ impl Aabb {
     fn meets_segment(&self, a: P, b: P) -> bool {
         let (mut t0, mut t1) = (0.0f64, 1.0f64);
         for k in 0..3 {
-            let pad = 1e-9 * (self.hi[k] - self.lo[k]).abs().max(1e-300) + 1e-12 * (a[k].abs() + b[k].abs());
+            let pad = PAD * (self.hi[k] - self.lo[k]).abs().max(1e-300) + ROUND_OFF * (a[k].abs() + b[k].abs());
             let (lo, hi) = (self.lo[k] - pad, self.hi[k] + pad);
             let d = b[k] - a[k];
             if d == 0.0 {
@@ -219,7 +224,8 @@ impl<'a> Geometry<'a> {
         }
         let tree = Tree::build(&boxes);
         let diag = norm(sub(bounds.hi, bounds.lo));
-        let far = 4.0 * diag.max(1e-9) + (0..3).map(|k| bounds.lo[k].abs().max(bounds.hi[k].abs())).fold(0.0, f64::max);
+        let far = 4.0 * diag.max(fieldcraft_model::units::min_geometry_length())
+            + (0..3).map(|k| bounds.lo[k].abs().max(bounds.hi[k].abs())).fold(0.0, f64::max);
 
         // Feature edges and corners.
         // A boundary between two B-rep faces is kept or dropped as a whole, by the median angle
@@ -588,12 +594,12 @@ fn ray_triangle(o: P, d: P, a: P, b: P, c: P) -> Option<f64> {
     let inv = 1.0 / det;
     let s = sub(o, a);
     let u = inv * dot(s, h);
-    if !(-1e-12..=1.0 + 1e-12).contains(&u) {
+    if !(-ROUND_OFF..=1.0 + ROUND_OFF).contains(&u) {
         return None;
     }
     let q = cross(s, e1);
     let v = inv * dot(d, q);
-    if v < -1e-12 || u + v > 1.0 + 1e-12 {
+    if v < -ROUND_OFF || u + v > 1.0 + ROUND_OFF {
         return None;
     }
     Some(inv * dot(e2, q))

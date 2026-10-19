@@ -31,8 +31,7 @@ pub fn si() -> &'static DisplaySystem {
 
 /// What the geometry and the meshers work in: millimetres, in mm-t-s-N-MPa.
 pub fn geometry() -> &'static DisplaySystem {
-    static MM: OnceLock<DisplaySystem> = OnceLock::new();
-    MM.get_or_init(|| DisplaySystem::new(Preset::MmTonneS))
+    fieldcraft_model::units::geometry_frame()
 }
 
 /// A length of the geometry (millimetres) in SI.
@@ -76,6 +75,17 @@ pub(crate) fn geometry_params(s: &crate::Session, id: &str, params: &Value) -> R
 /// in the display system, with its unit (`0.19685 in`).
 pub fn shown(display: &DisplaySystem, from: &DisplaySystem, q: Quantity, v: f64) -> String {
     from.to_si(q, v).and_then(|si| q.format(si, display)).unwrap_or_else(|_| fieldcraft_model::units::format_number(v))
+}
+
+/// `what` (a parameter of a command of the geometry frame) below `fraction` of the bounding-box
+/// diagonal `diagonal` of `of` ("body `Base`'s"): the error names the fraction and the length it
+/// is, which the command's boundary shows in the display units ([`crate::EngineError::shown`]).
+pub(crate) fn below_diagonal(what: &str, fraction: f64, diagonal: f64, of: &str) -> EngineError {
+    EngineError::Mesh(fieldcraft_mesh::Error::invalid(fieldcraft_mesh::message![
+        format!("`{what}` must be at least {fraction:e} of {of} bounding-box diagonal ("),
+        fieldcraft_mesh::message::length(fraction * diagonal),
+        ")"
+    ]))
 }
 
 /// A length of the geometry (millimetres) as a message to the user of `s` shows it.
@@ -123,6 +133,8 @@ pub fn mesh_error_text(e: &fieldcraft_mesh::Error, display: &DisplaySystem) -> S
 pub fn mesh_text(s: &crate::Session, m: &fieldcraft_mesh::message::Message) -> String {
     m.render(&MeshUnits { from: geometry(), to: s.units() })
 }
+
+pub use fieldcraft_model::units::{MIN_GEOMETRY_LENGTH as MIN_LENGTH, geometry_amount, min_geometry_length as min_length};
 
 /// The system a command works in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -932,6 +944,20 @@ mod tests {
             json!({"angle": 5, "values": [1.0, 0.0, 0.0, 0.0, 0.0, 0.0]})
         );
         assert_eq!(convert_params(FORM, &json!({"angle": "90 deg"}), &m, si()).unwrap(), json!({"angle": 90.0}));
+    }
+
+    /// The geometry frame's absolute amounts are written in units the table reads, and are the
+    /// same number in the frame.
+    #[test]
+    fn geometry_amounts_read_in_millimetres() {
+        for (q, t) in [
+            (Quantity::Length, MIN_LENGTH),
+            (Quantity::Area, fieldcraft_model::units::Typed::new(1e-12, "mm^2")),
+            (Quantity::Volume, fieldcraft_model::units::Typed::new(1e-12, "mm^3")),
+        ] {
+            assert!(t.express(q, geometry()).is_ok(), "{t:?}");
+            assert_eq!(geometry_amount(q, t).to_bits(), t.value.to_bits(), "{t:?}");
+        }
     }
 
     #[test]

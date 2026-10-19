@@ -104,6 +104,9 @@ use geom::{Aabb, Geometry};
 use grid::Tree;
 use smooth::{Constraint, Optimizer};
 
+/// Round-off allowed in a comparison, relative to the numbers compared.
+const ROUND_OFF: f64 = 1e-9; // unit-factors: relative to the terms compared
+
 /// Options and caps of [`octree_hex_mesh`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct OctreeOptions {
@@ -210,7 +213,7 @@ pub const RETRY_GROWTH: usize = 4;
 /// … or this many cells, whichever is more.
 const RETRY_MIN_CELLS: usize = 250_000;
 /// The fitting weights of the successive optimisation stages.
-const FIT_STAGES: &[f64] = &[1e-3, 1e-2, 1e-1, 1.0, 10.0, 100.0];
+const FIT_STAGES: &[f64] = &[1e-3, 1e-2, 1e-1, 1.0, 10.0, 100.0]; // unit-factors: weights of the fit, dimensionless
 /// A boundary vertex goes exactly onto its feature only if its elements keep at least this
 /// corner scaled Jacobian.
 const MIN_SNAP_QUALITY: f64 = 0.05;
@@ -315,7 +318,7 @@ impl Needs {
 /// The levels below a root cell of edge `h` down to cells no larger than `edge` (`None` past
 /// [`grid::MAX_LEVEL`]).
 fn levels_below(h: f64, edge: f64) -> Option<u8> {
-    (0..=grid::MAX_LEVEL).find(|&d| h / 3f64.powi(i32::from(d)) <= edge * (1.0 + 1e-9))
+    (0..=grid::MAX_LEVEL).find(|&d| h / 3f64.powi(i32::from(d)) <= edge * (1.0 + ROUND_OFF))
 }
 
 /// Choose the grid before building it. An octree's cell sizes are the root size divided by
@@ -501,7 +504,7 @@ fn choose_frame(g: &Geometry) -> [[f64; 3]; 3] {
             })
             .sum()
     };
-    if score(&candidate) > score(&identity) * (1.0 + 1e-9) { candidate } else { identity }
+    if score(&candidate) > score(&identity) * (1.0 + ROUND_OFF) { candidate } else { identity }
 }
 
 /// The distance through the part from each boundary triangle: a ray from its centre along the
@@ -631,7 +634,7 @@ impl Context<'_> {
     fn needs_split(&self, key: grid::Key) -> Result<bool> {
         let e = self.edge(key.0);
         let (bx, centre) = self.cell_box(key, 0.05);
-        if e > checked_size(self.field, centre)? * (1.0 + 1e-9) {
+        if e > checked_size(self.field, centre)? * (1.0 + ROUND_OFF) {
             return Ok(true);
         }
         let reach = 0.5 * 3f64.sqrt() * e * 1.05;
@@ -649,11 +652,12 @@ impl Context<'_> {
                 return Ok(true);
             }
             // (With a relative margin, so cells planned at exactly the size a wall needs stay.)
-            if self.thickness.get(t as usize).is_some_and(|&th| th * (1.0 + 1e-9) < self.options.thickness_cells * e) {
+            if self.thickness.get(t as usize).is_some_and(|&th| th * (1.0 + ROUND_OFF) < self.options.thickness_cells * e) {
                 return Ok(true);
             }
             // Narrow patches (a hole's wall, a thin rim) need cells across them.
-            if self.g.tri_patch.get(t as usize).and_then(|&p| self.g.patches.get(p as usize)).is_some_and(|pt| pt.width * (1.0 + 1e-9) < 2.0 * e) {
+            if self.g.tri_patch.get(t as usize).and_then(|&p| self.g.patches.get(p as usize)).is_some_and(|pt| pt.width * (1.0 + ROUND_OFF) < 2.0 * e)
+            {
                 return Ok(true);
             }
         }
@@ -669,7 +673,7 @@ impl Context<'_> {
         }
         let (_, centre) = self.cell_box(key, 0.0);
         let half = 0.5 * 3f64.sqrt() * self.edge(key.0);
-        let far = self.g.nearest(centre, |_| true).is_some_and(|x| x.2 > half * half * (1.0 + 1e-9));
+        let far = self.g.nearest(centre, |_| true).is_some_and(|x| x.2 > half * half * (1.0 + ROUND_OFF));
         let v = far && self.g.inside(centre) == Some(false);
         self.outside_memo.borrow_mut().insert(key, v);
         v
@@ -963,9 +967,11 @@ impl Context<'_> {
         // tile it without overlapping.
         let faces = topo::boundary(&w.hexes);
         let enclosed: f64 = faces.iter().map(|(_, quad)| face_flux(&quad.map(|v| w.points[v as usize]))).sum();
-        let gate =
-            validity_gate_checks(checks.iter().map(|(l, c)| (*l, c)), &GateOptions { expected_volume: Some(enclosed), volume_tolerance: 1e-9 })?
-                .into_result()?;
+        let gate = validity_gate_checks(
+            checks.iter().map(|(l, c)| (*l, c)),
+            &GateOptions { expected_volume: Some(enclosed), volume_tolerance: crate::quality::VOLUME_TOLERANCE },
+        )?
+        .into_result()?;
         let volume = gate.volume;
         let mut new_id = vec![u32::MAX; w.points.len()];
         let mut nodes = Vec::new();

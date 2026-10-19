@@ -10,6 +10,9 @@ use solidcraft_kernel::{KernelError, guard};
 
 use crate::{Face, Result, Shape};
 
+/// The grid centres are matched on, relative to their spread.
+const GRID: f64 = 1e-6; // unit-factors: relative to the spread
+
 /// Largest design file opened (SolidCraft's own limit).
 pub const MAX_DESIGN_BYTES: usize = solidcraft_io::MAX_DESIGN_BYTES;
 
@@ -250,7 +253,7 @@ fn number_split_bodies(bodies: &mut [Shape]) -> Vec<(String, String)> {
                 hi - lo
             })
             .fold(0.0f64, f64::max);
-        let grid = if spread.is_finite() && spread > 0.0 { spread * 1e-6 } else { 1.0 };
+        let grid = if spread.is_finite() && spread > 0.0 { spread * GRID } else { 1.0 };
         let key = |j: usize| centres.get(j).map_or([0; 3], |c| c.map(|v| (v / grid).round() as i64));
         let mut order: Vec<usize> = (0..members.len()).collect();
         order.sort_by_key(|&j| (key(j), j));

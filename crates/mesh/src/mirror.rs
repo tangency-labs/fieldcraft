@@ -14,6 +14,9 @@ use fieldcraft_model::{ElementKind, MAX_LABEL, Model};
 
 use crate::{Error, Result};
 
+/// A mirror plane's normal must be longer than this.
+const MIN_NORMAL: f64 = 1e-12; // unit-factors: the length of a direction vector
+
 /// The reflected node order of an element kind: the copy of an element with nodes `n` lists
 /// `n[order[i]]` (mirrored) as its node `i`. `None` for kinds that are not mirrored yet.
 pub fn reflected_order(kind: ElementKind) -> Option<&'static [usize]> {
@@ -96,7 +99,7 @@ pub struct Mirrored {
 /// mirrored yet ([`reflected_order`]) or a node too far for the coordinate range.
 pub fn mirror(model: &mut Model, region: &BTreeSet<u32>, point: [f64; 3], normal: [f64; 3], tol: f64) -> Result<Mirrored> {
     let len = normal.iter().map(|x| x * x).sum::<f64>().sqrt();
-    if !(len > 1e-12 && len.is_finite() && point.iter().all(|x| x.is_finite())) {
+    if !(len > MIN_NORMAL && len.is_finite() && point.iter().all(|x| x.is_finite())) {
         return Err(Error::Invalid("the mirror plane needs a finite point and a non-zero normal".into()));
     }
     if !(tol.is_finite() && tol > 0.0) {

@@ -40,6 +40,11 @@ use fieldcraft_model::{ElementKind, Model, RelaxationCell};
 use crate::quality::{self, Metric, Validity};
 use crate::{Error, Result};
 
+/// Qualities this close are equal.
+const SAME_QUALITY: f64 = 1e-9; // unit-factors: a difference of qualities
+/// The difference step in an element's parameters.
+const STEP: f64 = 1e-3; // unit-factors: a step in an element's parameters
+
 type P = [f64; 3];
 
 /// Most sweeps over the nodes.
@@ -500,13 +505,13 @@ impl State<'_> {
             grad[k] = (f[0] - f[1]) / (2.0 * eps);
         }
         let g = dot(grad, grad).sqrt();
-        if !(g > 0.0 && g.is_finite()) || q0 >= 1.0 - 1e-9 {
+        if !(g > 0.0 && g.is_finite()) || q0 >= 1.0 - SAME_QUALITY {
             return moved;
         }
         let before = self.local(n);
         let mut step = 0.25 * w * h;
         for _ in 0..5 {
-            if self.attempt(n, freedom, scale(grad, step / g), &before, 1e-9) {
+            if self.attempt(n, freedom, scale(grad, step / g), &before, SAME_QUALITY) {
                 return true;
             }
             step *= 0.5;
@@ -765,7 +770,7 @@ fn locate(c: &RelaxationCell, x: P) -> (P, f64) {
         let r = sub(x, map(xi));
         // The Jacobian's columns (the map is at most trilinear: a unit-step difference of the
         // two sides of `xi` is exact along each axis).
-        let h = 1e-3;
+        let h = STEP;
         let mut j = [[0.0; 3]; 3];
         for (k, col) in j.iter_mut().enumerate().take(dim) {
             let (mut a, mut b) = (xi, xi);

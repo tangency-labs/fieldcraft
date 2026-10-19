@@ -49,10 +49,13 @@ use crate::vec3::{P, cross, dot, norm, sub};
 use crate::{Error, Result};
 use fieldcraft_model::SeedConstraint;
 
+/// The fractions of a step tried in turn.
+const SHRINKS: [f64; 6] = [0.5, 0.25, 0.1, 0.03, 0.01, 1e-3]; // unit-factors: fractions of a step
+
 /// Angular tolerance (radians) of "parallel" and "perpendicular" for the recognition.
-const ANGLE_TOL: f64 = 1e-6;
+const ANGLE_TOL: f64 = 1e-6; // unit-factors: an angle in radians
 /// Distance (relative to the diagonal) within which two axes of revolution are one.
-const RELATIVE_AXIS: f64 = 1e-6;
+const RELATIVE_AXIS: f64 = 1e-6; // unit-factors: relative to the diagonal
 /// The most candidate frames tried per method.
 pub(crate) const MAX_CANDIDATES: usize = 6;
 
@@ -897,7 +900,7 @@ pub(crate) fn interior_point(arr: &Arrangement, region: &arrangement::Region) ->
         let (a, b) = (outer[k], outer[(k + 1) % outer.len()]);
         let len = len2.sqrt();
         let (m, n) = ([(a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5], [-(b[1] - a[1]) / len, (b[0] - a[0]) / len]);
-        for f in [0.5, 0.25, 0.1, 0.03, 0.01, 1e-3] {
+        for f in SHRINKS {
             let p = [m[0] + n[0] * f * len, m[1] + n[1] * f * len];
             if winding(p, outer) == 0 || loops.iter().skip(1).any(|h| winding(p, h) != 0) {
                 continue;

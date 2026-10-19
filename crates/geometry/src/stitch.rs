@@ -17,6 +17,9 @@ use std::collections::BTreeMap;
 
 use crate::{Error, Result, SurfaceMesh};
 
+/// A point is inside an edge when its parameter is this far from the ends.
+const INSIDE: f64 = 1e-9; // unit-factors: a fraction of the edge
+
 /// Most vertices a surface stitched may have.
 pub const MAX_VERTICES: usize = 20_000_000;
 /// Most grid cells the T-junction search visits in one pass (a bound, far above what the grid
@@ -101,7 +104,8 @@ fn open_edges(triangles: &[[u32; 3]]) -> Vec<((u32, u32), usize, usize)> {
 /// `mesh` with its gaps under `tolerance` (mm) closed (see the module docs).
 pub fn stitch(mesh: &SurfaceMesh, tolerance: f64) -> Result<(SurfaceMesh, StitchReport)> {
     if !(tolerance > 0.0 && tolerance.is_finite()) {
-        return Err(Error::Invalid(format!("the stitch tolerance must be a positive number, got {tolerance}")));
+        // Its value is in the geometry's millimetres, which the caller may not show: not named.
+        return Err(Error::Invalid("the stitch tolerance must be a finite, positive length".into()));
     }
     if mesh.positions.len() > MAX_VERTICES {
         return Err(Error::Invalid(format!("a surface stitched has at most {MAX_VERTICES} vertices")));
@@ -182,7 +186,7 @@ pub fn stitch(mesh: &SurfaceMesh, tolerance: f64) -> Result<(SurfaceMesh, Stitch
                 }
                 let Some(&p) = out.positions.get(v as usize) else { continue };
                 let s = ((p[0] - pa[0]) * ab[0] + (p[1] - pa[1]) * ab[1] + (p[2] - pa[2]) * ab[2]) / l2;
-                if !(s > 1e-9 && s < 1.0 - 1e-9) {
+                if !(s > INSIDE && s < 1.0 - INSIDE) {
                     continue;
                 }
                 let q = [pa[0] + s * ab[0], pa[1] + s * ab[1], pa[2] + s * ab[2]];

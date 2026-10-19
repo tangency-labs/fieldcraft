@@ -23,7 +23,7 @@ pub const HEX_OCTREE: CommandSpec = CommandSpec {
 
 /// Smallest element size, relative to the bounding-box diagonal (the grid's cell count grows
 /// with the cube of its inverse).
-const MIN_RELATIVE_SIZE: f64 = 1e-3;
+const MIN_RELATIVE_SIZE: f64 = 1e-3; // unit-factors: relative to the bounding-box diagonal
 /// Default element size, relative to the bounding-box diagonal.
 const DEFAULT_RELATIVE_SIZE: f64 = 1.0 / 25.0;
 /// Caps on the options.
@@ -54,7 +54,7 @@ fn hex_octree(s: &mut Session, p: &Value) -> Result<Value> {
         }
         let h = sizing.body_size(&b.name, size.unwrap_or(DEFAULT_RELATIVE_SIZE * b.diagonal));
         if h < MIN_RELATIVE_SIZE * b.diagonal {
-            return Err(EngineError::Params(format!("`size` must be at least {MIN_RELATIVE_SIZE:e} of body `{}`'s bounding-box diagonal", b.name)));
+            return Err(crate::units::below_diagonal("size", MIN_RELATIVE_SIZE, b.diagonal, &format!("body `{}`'s", b.name)));
         }
         let surface_options = super::mesh::surface_options(p, &b.mesh)?;
         let surface = BoundarySurface::new(&b.mesh.positions, &b.mesh.triangles, &b.mesh.tri_face, &surface_options)

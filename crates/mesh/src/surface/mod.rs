@@ -61,6 +61,9 @@ use crate::predicates::Point3;
 use crate::vec3::{cross, norm, sub};
 use crate::{Error, Result};
 
+/// The default relative weld distance.
+const DEFAULT_WELD: f64 = 1e-9; // unit-factors: relative to the diagonal
+
 /// Defects listed in an error; the count covers the rest.
 pub const MAX_LISTED_DEFECTS: usize = 100;
 /// Cap on exact triangle-pair tests in the self-intersection check.
@@ -69,7 +72,7 @@ pub const MAX_PAIR_TESTS: u64 = 1_000_000_000;
 pub const MAX_WINDING_WORK: u64 = 500_000_000;
 
 /// The largest weld distance, as a fraction of the bounding-box diagonal.
-pub const MAX_RELATIVE_WELD: f64 = 1e-3;
+pub const MAX_RELATIVE_WELD: f64 = 1e-3; // unit-factors: relative to the diagonal
 
 /// How [`BoundarySurface::new`] welds and finds features.
 ///
@@ -94,7 +97,7 @@ pub struct SurfaceOptions {
 
 impl Default for SurfaceOptions {
     fn default() -> Self {
-        SurfaceOptions { weld_tolerance: 1e-9, weld_distance: 0.0, feature_angle: 45.0 }
+        SurfaceOptions { weld_tolerance: DEFAULT_WELD, weld_distance: 0.0, feature_angle: 45.0 }
     }
 }
 

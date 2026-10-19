@@ -25,6 +25,9 @@ use std::collections::BTreeSet;
 use crate::edges::EDGE_TOLERANCE;
 use crate::{Design, Error, Face, FaceSurface, FeatureError, Result, Shape, SurfaceMesh};
 
+/// Surfaces this close, relative to the body's size, are one.
+const SAME_SURFACE: f64 = 1e-6; // unit-factors: relative to the body's size
+
 /// Most merges a design takes.
 pub const MAX_MERGES: usize = 1024;
 /// Most faces one merge names.
@@ -354,7 +357,7 @@ impl Shape {
         if self.face_map.is_empty() {
             return Ok(brep);
         }
-        let tol = (self.size()? * 1e-6).max(1e-9);
+        let tol = (self.size()? * SAME_SURFACE).max(fieldcraft_model::units::min_geometry_length());
         let mut out: Vec<Option<Option<FaceSurface>>> = vec![None; self.faces.len()];
         for (b, &v) in self.face_map.iter().enumerate() {
             let surface = brep.get(b).copied().flatten();
@@ -398,7 +401,7 @@ impl Shape {
             edges.push(points);
             edge_faces.push(mapped);
         }
-        join_pieces(&mut edges, &mut edge_faces, (2.0 * mesh.weld_distance).max(1e-9));
+        join_pieces(&mut edges, &mut edge_faces, (2.0 * mesh.weld_distance).max(fieldcraft_model::units::min_geometry_length()));
         mesh.edges = edges;
         mesh.edge_faces = edge_faces;
         mesh

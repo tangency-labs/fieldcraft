@@ -21,6 +21,9 @@ use serde_json::{Value, json};
 use crate::requirement::Requirement;
 use crate::{CommandKind, CommandSpec, EngineError, Result, Session};
 
+/// An axis crosses a plane when the sine of their angle is at least this.
+const MIN_SINE: f64 = 1e-9; // unit-factors: the sine of an angle
+
 pub const DATUM_PLANE: CommandSpec = CommandSpec {
     id: "geometry.datum",
     label: "Datum Plane",
@@ -356,7 +359,7 @@ fn point_datum(s: &Session, by: PointBy) -> Result<Datum> {
             let along = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
             let across = along(d, n);
             // Unit vectors: the sine of the angle between the axis and the plane.
-            if across.abs() < 1e-9 {
+            if across.abs() < MIN_SINE {
                 return Err(EngineError::Params(format!("axis `{axis}` is parallel to plane `{plane}`: they do not cross")));
             }
             let t = along(sub(q, p), n) / across;

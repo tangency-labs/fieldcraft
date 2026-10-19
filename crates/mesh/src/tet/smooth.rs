@@ -26,6 +26,9 @@ use super::complex::{NONE, TetComplex, VertexKind, face_toward};
 use super::measure::{self, P, add, dot, scale, sub};
 use super::refine::Context;
 
+/// The difference step, relative to the edge's length.
+const STEP: f64 = 1e-6; // unit-factors: relative to the edge's length
+
 /// The worst quality around `v` with `v` at `p` (the tetrahedra of `star`).
 fn star_quality(cx: &TetComplex, v: u32, p: P, star: &[u32]) -> Result<f64> {
     let mut q = f64::INFINITY;
@@ -237,7 +240,7 @@ pub fn smooth_vertex(cx: &mut TetComplex, ctx: &Context, v: u32) -> Result<bool>
     if !(len > 0.0 && len.is_finite()) {
         return Ok(false);
     }
-    let delta = 1e-6 * len;
+    let delta = STEP * len;
     let mut x = x0;
     let mut worst = local.worst_at(x);
     let mut moved = false;

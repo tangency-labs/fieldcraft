@@ -23,6 +23,9 @@ use crate::surface::{BoundarySurface, FeatureKind};
 use crate::vec3::{P, cross, dot, norm, sub};
 use crate::{Error, Result};
 
+/// A face is flat when its points lie on its plane within this, relative to their distance.
+const FLAT: f64 = 1e-9; // unit-factors: relative to the distance
+
 /// A B-rep face.
 #[derive(Debug, Clone)]
 pub(crate) struct Face {
@@ -89,7 +92,7 @@ pub(crate) const RELATIVE_EPS: f64 = 1e-7;
 const SMOOTH_ANGLE: f64 = 0.017_453_292_519_943_295;
 /// Distance from a member's vertices to the first member's analytic surface (relative to the
 /// bounding-box diagonal) within which a composite face keeps that surface.
-const RELATIVE_ON_SURFACE: f64 = 1e-6;
+const RELATIVE_ON_SURFACE: f64 = 1e-6; // unit-factors: relative to the diagonal
 
 impl<'a> Brep<'a> {
     /// Recover the topology. `surfaces[tag]` is the analytic surface of B-rep face `tag`, if any.
@@ -337,7 +340,7 @@ fn planarity(pts: &[P], verts: &[u32], normal: P, analytic: Option<Surface>, eps
             (first, normal)
         }
     };
-    let flat = verts.iter().all(|&v| pts.get(v as usize).is_some_and(|p| dot(sub(*p, point), n).abs() <= eps.max(1e-9 * norm(sub(*p, point)))));
+    let flat = verts.iter().all(|&v| pts.get(v as usize).is_some_and(|p| dot(sub(*p, point), n).abs() <= eps.max(FLAT * norm(sub(*p, point)))));
     // An analytic plane is trusted within a looser bound: its vertices lie on it to the kernel's
     // tolerance, not to ours.
     (flat || matches!(analytic, Some(Surface::Plane { .. }))).then_some((point, n))

@@ -18,6 +18,13 @@ use crate::surface::BoundarySurface;
 
 use super::measure::{self, P, add, cross, dot, norm, scale, sub};
 
+/// A cone's half-angle cosine is at least this.
+const MIN_COSINE: f64 = 1e-12; // unit-factors: the cosine of an angle
+/// A projection within this of a point, relative to its coordinates, is on it.
+const ROUND_OFF: f64 = 1e-9; // unit-factors: relative to the coordinates' size
+/// A curve turning less than this is straight.
+const MIN_TURN: f64 = 1e-6; // unit-factors: an angle in radians
+
 /// A face's exact surface. Axes are unit vectors.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AnalyticSurface {
@@ -222,7 +229,7 @@ impl AnalyticSurface {
                 let d = sub(p, apex);
                 let rho = norm(sub(d, scale(a, dot(d, a))));
                 // Normal curvature of the circle of radius rho: cos(α)/rho.
-                rho / sin_cos(half_angle).1.abs().max(1e-12)
+                rho / sin_cos(half_angle).1.abs().max(MIN_COSINE)
             }
             AnalyticSurface::Plane { .. } => f64::INFINITY,
             AnalyticSurface::Cylinder { radius, .. } | AnalyticSurface::Sphere { radius, .. } => radius.abs(),
@@ -604,7 +611,7 @@ impl Tessellation {
 
 /// How far off a face's triangles, in triangle sizes, a point of its surface may lie and still
 /// be on the face, beyond the triangles' own gap to the surface (rounding only).
-const PLANE_SLACK: f64 = 1e-6;
+const PLANE_SLACK: f64 = 1e-6; // unit-factors: relative to the triangles' size
 
 impl Tessellation {
     /// The closest point to `p` on the trimmed face `face`: the exact surface's closest point
@@ -701,7 +708,7 @@ impl BoundaryGeometry for Tessellation {
         // Both surfaces must agree at the result, and it must stay near the polyline.
         let gap = a.project(q).map_or(f64::INFINITY, |qa| measure::dist(qa, q));
         let tol = (0.5 * seg_len).max(2.0 * measure::dist(p, near));
-        if gap <= 1e-9 * (1.0 + norm(q)) && measure::dist(q, near) <= tol { Some(q) } else { Some(near) }
+        if gap <= ROUND_OFF * (1.0 + norm(q)) && measure::dist(q, near) <= tol { Some(q) } else { Some(near) }
     }
 }
 
@@ -809,7 +816,7 @@ pub fn curvature_radii(surface: &BoundarySurface, geometry: &Tessellation) -> Ve
             // correctly rounded operations (the same on every platform).
             let turn = norm(sub(n, m));
             let d = measure::dist(centroid(t), centroid(u));
-            if !(turn > 1e-6) || !(d > 0.0) {
+            if !(turn > MIN_TURN) || !(d > 0.0) {
                 continue;
             }
             let r = d / turn;

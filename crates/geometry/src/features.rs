@@ -14,6 +14,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use fieldcraft_model::units::Typed;
 use serde::Serialize;
 use solidcraft_doc::expr::Kind;
 use solidcraft_doc::{Document, FeatureKind, ModelState, Operation, SolvedSketch, plain};
@@ -21,6 +22,15 @@ use solidcraft_geom::{Seg2, Vec3};
 use solidcraft_kernel::guard;
 
 use crate::{Design, Result, Shape};
+
+/// A vector shorter than this has no direction.
+const MIN_NORM: f64 = 1e-12; // unit-factors: the length of a direction vector
+/// A unit vector's component this small is zero.
+const ZERO_COMPONENT: f64 = 1e-12; // unit-factors: a component of a unit vector
+/// Arcs whose centres and radii agree within this are of one circle.
+const SAME_ARC: Typed = Typed::new(1e-9, "mm"); // unit-factors: an absolute amount, in the geometry frame's millimetres
+/// Arcs that turn a full circle within this close it.
+const FULL_TURN: f64 = 1e-6; // unit-factors: an angle in radians
 
 /// Most features listed per body (a design's timeline is capped far above any real part).
 pub const MAX_FEATURES_PER_BODY: usize = 10_000;
@@ -199,7 +209,7 @@ fn xyz(v: Vec3) -> [f64; 3] {
 /// found from the geometry carries round-off).
 fn unit(v: [f64; 3]) -> Option<[f64; 3]> {
     let n = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
-    (n.is_finite() && n > 1e-12).then(|| v.map(|c| if (c / n).abs() < 1e-12 { 0.0 } else { c / n }))
+    (n.is_finite() && n > MIN_NORM).then(|| v.map(|c| if (c / n).abs() < ZERO_COMPONENT { 0.0 } else { c / n }))
 }
 
 /// The ids of the features a persistent face name mentions (`F3:inner:F1:+y` → 3, 1).
@@ -243,9 +253,10 @@ fn curves(segs: &[Seg2]) -> Vec<Curve> {
         segs.iter().filter_map(|s| if let Seg2::Arc { center, radius, sweep, .. } = s { Some((*center, *radius, *sweep)) } else { None }).collect();
     if !arcs.is_empty() && arcs.len() == segs.len() {
         let (c0, r0, _) = arcs[0];
-        let same = arcs.iter().all(|(c, r, _)| (c.x - c0.x).abs() < 1e-9 && (c.y - c0.y).abs() < 1e-9 && (r - r0).abs() < 1e-9);
+        let tol = fieldcraft_model::units::geometry_amount(fieldcraft_model::units::Quantity::Length, SAME_ARC);
+        let same = arcs.iter().all(|(c, r, _)| (c.x - c0.x).abs() < tol && (c.y - c0.y).abs() < tol && (r - r0).abs() < tol);
         let turn: f64 = arcs.iter().map(|a| a.2).sum();
-        if same && (turn.abs() - std::f64::consts::TAU).abs() < 1e-6 {
+        if same && (turn.abs() - std::f64::consts::TAU).abs() < FULL_TURN {
             return vec![Curve::Circle { center: [c0.x, c0.y], radius: r0 }];
         }
     }

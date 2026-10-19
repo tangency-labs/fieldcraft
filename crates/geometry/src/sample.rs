@@ -7,6 +7,9 @@ use solidcraft_geom::Vec2;
 
 use crate::{Error, Result};
 
+/// The largest dimension a sample design takes.
+const MAX_DIMENSION: f64 = 1e6; // unit-factors: a cap on hostile input
+
 /// A rectangular plate with a round through hole, as a parametric design: the sketch's width is
 /// driven by the design parameter `width` and the extrusion by `thickness`, so editing either
 /// rebuilds the same faces at a new size.
@@ -62,7 +65,7 @@ fn sketch_on_xy(doc: &mut Document, sketch: Sketch, name: &str) -> Result<u64> {
 
 /// The plate as `.solidcraft` file bytes.
 pub fn plate_design(p: &Plate) -> Result<Vec<u8>> {
-    let ok = |v: f64| v.is_finite() && v > 0.0 && v <= 1e6;
+    let ok = |v: f64| v.is_finite() && v > 0.0 && v <= MAX_DIMENSION;
     if !(ok(p.width) && ok(p.depth) && ok(p.thickness) && ok(p.hole_diameter)) || p.width < p.depth || p.hole_diameter >= p.depth {
         return Err(Error::Invalid(format!("plate dimensions out of range: {p:?}")));
     }

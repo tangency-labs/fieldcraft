@@ -203,12 +203,13 @@ What a number that looks like a factor must be instead:
   speed √(2 g h) from 9810 mm/s².
 
 The marker is the only exemption a line gets; one without a reason, or on a line without a
-factor, fails the check. Two parts of the tree are named in the checker with their reason:
+factor, fails the check. One file is named in the checker with its reason:
+`crates/io/src/migrate/v2_to_v3.rs`, the frozen 2 → 3 step: it keeps its own copy of the old
+factors so a later change to the table cannot change how an old file migrates. Only this file
+is exempt, not the io crate.
 
-- `crates/io/src/migrate/v2_to_v3.rs`, the frozen 2 → 3 step: it keeps its own copy of the old
-  factors so a later change to the table cannot change how an old file migrates. Only this file
-  is exempt, not the io crate.
-- The geometry frame (`GEOMETRY_FRAME`: `crates/geometry`, `crates/mesh`, `crates/mesh-gpu` and
-  the engine's `geometry.*` and `mesh.*` command files), which works in millimetres around the
-  model: its factors are listed apart and do not fail the check until the change that moves it
-  onto the table lands and removes the list.
+The geometry frame (the geometry and mesher crates and the engine's geometry and mesh commands,
+which work in millimetres) is checked like everything else: its tolerances are relative or
+dimensionless, and an absolute amount of it is a `Typed` in millimetres, taken in the frame
+through `fieldcraft_model::units::geometry_amount` (with `MIN_GEOMETRY_LENGTH`, the floor against a
+zero size), which the geometry, mesh and engine crates share.

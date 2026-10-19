@@ -43,7 +43,7 @@ pub const TET_EDGES: [(usize, usize); 6] = [(0, 1), (1, 2), (2, 0), (0, 3), (1, 
 
 /// A Jacobian determinant is positive when it exceeds this fraction of its largest magnitude.
 /// Anything smaller is degenerate to rounding and counts as invalid.
-pub const RELATIVE_TOLERANCE: f64 = 1e-12;
+pub const RELATIVE_TOLERANCE: f64 = 1e-12; // unit-factors: relative to the largest magnitude
 /// Subdivision caps for the certificate: depth of one piece and pieces per element.
 pub const MAX_DEPTH: u32 = 30;
 pub const MAX_PIECES: usize = 4096;

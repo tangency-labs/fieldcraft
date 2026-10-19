@@ -33,6 +33,9 @@ use fieldcraft_model::Model;
 use super::{Constraints, Falloff, Freedom, P, RegionQuality, State, add, corner_nodes, dist, dot, measure, scale, sub};
 use crate::{Error, Result};
 
+/// A node whose falloff weight is below this does not move.
+const MIN_WEIGHT: f64 = 1e-12; // unit-factors: a weight from 0 to 1
+
 /// How the displacement reaches the nodes round the grabbed ones.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Propagate {
@@ -78,7 +81,7 @@ pub const DEFAULT_MIN_QUALITY: f64 = 0.05;
 
 /// The smallest radius of influence, relative to the mesh's size (its bounding box diagonal):
 /// below it no node but the grabbed ones is within reach, and the search grid would overflow.
-pub const MIN_RELATIVE_RADIUS: f64 = 1e-6;
+pub const MIN_RELATIVE_RADIUS: f64 = 1e-6; // unit-factors: relative to the mesh's size
 
 /// Every node moves in space, on the skin too: a move with the geometry off.
 #[derive(Debug, Clone, Copy, Default)]
@@ -219,7 +222,7 @@ pub fn move_weights(model: &Model, handles: &BTreeSet<u32>, influence: &Influenc
             let u = state.harmonic(&free, &fixed)?;
             for n in free {
                 let w = u.get(&n).map_or(0.0, |v| v[0]).clamp(0.0, 1.0);
-                if w > 1e-12 {
+                if w > MIN_WEIGHT {
                     out.insert(n, w);
                 }
             }
@@ -273,7 +276,7 @@ pub struct Moved {
 }
 
 /// A change in quality smaller than this is no change.
-const SAME: f64 = 1e-9;
+const SAME: f64 = 1e-9; // unit-factors: a difference of qualities
 
 /// Move each node of `weights` by its share of `d`, as `geometry` lets it, the displacement
 /// scaled back under `guard`. The model is not changed: the result has the new positions.

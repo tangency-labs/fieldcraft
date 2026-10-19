@@ -24,7 +24,7 @@ use crate::{CommandKind, CommandSpec, EngineError, Result, Session};
 const MAX_NAMES: usize = 10_000;
 /// The chordal tolerance of the tessellation a face control is resolved on, relative to the
 /// body's diagonal (as the meshers' default).
-const FACE_TOLERANCE: f64 = 1e-3;
+const FACE_TOLERANCE: f64 = 1e-3; // unit-factors: relative to the body's diagonal
 
 pub const SIZE_SET: CommandSpec = CommandSpec {
     id: "mesh.size.set",

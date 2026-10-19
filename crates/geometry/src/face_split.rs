@@ -14,6 +14,13 @@ use std::collections::BTreeMap;
 use crate::edges::EDGE_TOLERANCE;
 use crate::{Design, Error, Face, FeatureError, Result, Shape, SurfaceMesh};
 
+/// The largest coordinate a split plane may have.
+const MAX_COORD: f64 = 1e9; // unit-factors: a cap on hostile input
+/// A split plane's normal must be longer than this.
+const MIN_NORMAL: f64 = 1e-12; // unit-factors: the length of a direction vector
+/// A point within this of the plane, relative to the coordinates' size, is on it.
+const ON_PLANE: f64 = 1e-12; // unit-factors: relative to the coordinates' size
+
 /// Most splits a design takes.
 pub const MAX_SPLITS: usize = 1024;
 
@@ -81,7 +88,7 @@ impl Shape {
     /// `split:<name>:a` on its negative side, `split:<name>:b` on the other.
     pub fn split_face(&self, name: &str, face: &str, point: [f64; 3], normal: [f64; 3]) -> Result<Shape> {
         let len = normal.iter().map(|v| v * v).sum::<f64>().sqrt();
-        if !(point.iter().chain(&normal).all(|v| v.is_finite() && v.abs() <= 1e9) && len > 1e-12) {
+        if !(point.iter().chain(&normal).all(|v| v.is_finite() && v.abs() <= MAX_COORD) && len > MIN_NORMAL) {
             return Err(Error::Invalid("a split needs a plane with a finite point and a non-zero normal".into()));
         }
         let named = self.faces_named(face);
@@ -125,7 +132,7 @@ fn lerp(p: [f64; 3], q: [f64; 3], t: f64) -> [f64; 3] {
 
 fn cut(mesh: &mut SurfaceMesh, c: &Cut) {
     let scale = mesh.positions.iter().flatten().fold(0.0f64, |m, v| m.max(v.abs())).max(1.0);
-    let eps = 1e-12 * scale;
+    let eps = ON_PLANE * scale;
     let side = |d: f64| {
         if d > eps {
             1

@@ -17,9 +17,12 @@
 
 use crate::{Result, Shape, SurfaceMesh};
 
+/// The grid points are matched on, relative to their spread.
+const GRID: f64 = 1e-6; // unit-factors: relative to the spread
+
 /// Tessellation tolerance (a fraction of the body's size) of [`Shape::edges`]: the edge polylines
 /// are for display, picking and matching edges by position.
-pub const EDGE_TOLERANCE: f64 = 1e-3;
+pub const EDGE_TOLERANCE: f64 = 1e-3; // unit-factors: relative to the body's size
 
 /// A B-rep edge of a body.
 #[derive(Debug, Clone, PartialEq)]
@@ -115,7 +118,7 @@ fn number_repeats(names: &mut [String], centres: &[[f64; 3]]) {
         } else {
             [2, 0, 1]
         };
-        let grid = spread.iter().fold(0.0f64, |m, s| m.max(*s)).max(1e-9) * 1e-6;
+        let grid = spread.iter().fold(0.0f64, |m, s| m.max(*s)).max(fieldcraft_model::units::min_geometry_length()) * GRID;
         let key = |i: usize| axes.map(|k| (at(i)[k] / grid).round() as i64);
         same.sort_by_key(|&i| (key(i), i));
         for (k, i) in same.into_iter().enumerate() {
@@ -161,7 +164,7 @@ impl Shape {
         if mesh.edges.len().saturating_mul(2) > MAX_EDGE_ENDS {
             return Vec::new();
         }
-        let close = (2.0 * mesh.weld_distance).max(1e-9);
+        let close = (2.0 * mesh.weld_distance).max(fieldcraft_model::units::min_geometry_length());
         // Per vertex: its point and the edges that end at it.
         let mut found: Vec<([f64; 3], Vec<usize>)> = Vec::new();
         for (edge, p) in ends {

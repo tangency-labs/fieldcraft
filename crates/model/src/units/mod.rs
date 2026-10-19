@@ -12,11 +12,13 @@
 mod decimal;
 mod dimension;
 mod display;
+mod geometry;
 mod quantity;
 mod unit;
 
 pub use dimension::Dimension;
 pub use display::{DisplaySystem, Preset};
+pub use geometry::{MIN_GEOMETRY_LENGTH, geometry_amount, geometry_frame, min_geometry_length};
 pub use quantity::{Quantity, Typed, ValueInput, WithUnit, format_number};
 pub use unit::{CELSIUS_ZERO, Unit};
 

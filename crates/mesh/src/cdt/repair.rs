@@ -23,7 +23,7 @@ use crate::{Error, Result};
 
 /// A tetrahedron is repaired when its normalized Jacobian is at most this (a margin of a
 /// thousand above the validity criterion, so rounding differences cannot bring it back).
-const REPAIR_BELOW: f64 = 1e3 * fieldcraft_model::MIN_NORMALIZED_JACOBIAN;
+const REPAIR_BELOW: f64 = 1e3 * fieldcraft_model::MIN_NORMALIZED_JACOBIAN; // unit-factors: a multiple of a normalized Jacobian
 /// Passes over the tetrahedra still to repair.
 const MAX_PASSES: usize = 8;
 

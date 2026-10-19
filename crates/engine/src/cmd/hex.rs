@@ -30,7 +30,7 @@ const MIN_RELATIVE_SIZE: f64 = 1e-4;
 const MIN_RELATIVE_TOLERANCE: f64 = 1e-5;
 /// Default element size and chordal tolerance, relative to the bounding-box diagonal.
 const DEFAULT_RELATIVE_SIZE: f64 = 1.0 / 25.0;
-const DEFAULT_RELATIVE_TOLERANCE: f64 = 1e-3;
+pub(super) const DEFAULT_RELATIVE_TOLERANCE: f64 = 1e-3; // unit-factors: relative to the bounding-box diagonal
 
 /// One body to mesh (also the input of `mesh.hex.octree`).
 pub(super) struct Input<'a> {
@@ -72,10 +72,7 @@ pub(super) fn shape_input(shape: &Shape, tolerance: Option<f64>) -> Result<Input
     let diag = shape.size()?;
     let tol = tolerance.unwrap_or(DEFAULT_RELATIVE_TOLERANCE * diag);
     if tol < MIN_RELATIVE_TOLERANCE * diag {
-        return Err(EngineError::Params(format!(
-            "`tolerance` must be at least {MIN_RELATIVE_TOLERANCE:e} of body `{}`'s bounding-box diagonal",
-            shape.name
-        )));
+        return Err(crate::units::below_diagonal("tolerance", MIN_RELATIVE_TOLERANCE, diag, &format!("body `{}`'s", shape.name)));
     }
     let surfaces = shape.face_surfaces()?.into_iter().map(|f| f.map(analytic)).collect();
     let face_names = shape.faces().iter().map(|f| f.name.clone()).collect();
@@ -211,11 +208,11 @@ pub(super) fn hex_blocks(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let tolerance = number(p, "tolerance")?.unwrap_or(DEFAULT_RELATIVE_TOLERANCE * diag);
     if tolerance < MIN_RELATIVE_TOLERANCE * diag {
-        return Err(EngineError::Params(format!("`tolerance` must be at least {MIN_RELATIVE_TOLERANCE:e} of the bodies' bounding-box diagonal")));
+        return Err(crate::units::below_diagonal("tolerance", MIN_RELATIVE_TOLERANCE, diag, "the bodies'"));
     }
     let h = size.unwrap_or(DEFAULT_RELATIVE_SIZE * diag);
     if h < MIN_RELATIVE_SIZE * diag {
-        return Err(EngineError::Params(format!("`size` must be at least {MIN_RELATIVE_SIZE:e} of the bodies' bounding-box diagonal")));
+        return Err(crate::units::below_diagonal("size", MIN_RELATIVE_SIZE, diag, "the bodies'"));
     }
     let inputs: Vec<Input> = shapes.iter().map(|b| shape_input(b, Some(tolerance))).collect::<Result<_>>()?;
     let mut surfaces = Vec::with_capacity(inputs.len());
@@ -341,7 +338,7 @@ pub(super) fn hex_body(p: &Value, b: &Input, method: HexMethod, quadratic: bool,
     }
     let h = sizing.body_size(&b.name, size.unwrap_or(DEFAULT_RELATIVE_SIZE * b.diagonal));
     if h < MIN_RELATIVE_SIZE * b.diagonal {
-        return Err(EngineError::Params(format!("`size` must be at least {MIN_RELATIVE_SIZE:e} of body `{}`'s bounding-box diagonal", b.name)));
+        return Err(crate::units::below_diagonal("size", MIN_RELATIVE_SIZE, b.diagonal, &format!("body `{}`'s", b.name)));
     }
     let surface_options = super::mesh::surface_options(p, &b.mesh)?;
     let surface = BoundarySurface::new(&b.mesh.positions, &b.mesh.triangles, &b.mesh.tri_face, &surface_options)

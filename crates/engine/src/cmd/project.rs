@@ -16,6 +16,13 @@ use serde_json::{Value, json};
 use crate::requirement::Requirement;
 use crate::{CommandKind, CommandSpec, EngineError, Result, Session};
 
+/// The default merge distance, relative to the body's diagonal.
+const DEFAULT_RELATIVE_MERGE: f64 = 1e-6; // unit-factors: relative to the body's diagonal
+/// The steps per millimetre a listed corner is rounded to (three decimals of the geometry frame).
+const PER_MILLIMETRE: f64 = 1000.0; // unit-factors: steps per millimetre of the geometry frame, a rounding of listed numbers
+/// The least distance from a face a node is on it within, relative to the body's diagonal.
+const MIN_RELATIVE_ON_FACE: f64 = 1e-9; // unit-factors: relative to the body's diagonal
+
 pub const HEX_PROJECT: CommandSpec = CommandSpec {
     id: "mesh.hex.project",
     label: "Projection Blocking",
@@ -304,13 +311,13 @@ fn face_index(b: &Body, body: &str, name: &str) -> Result<u32> {
 fn element_size(size: Option<f64>, diag: f64) -> Result<f64> {
     let h = size.unwrap_or(DEFAULT_RELATIVE_SIZE * diag);
     if !(h.is_finite() && h >= MIN_RELATIVE_SIZE * diag) {
-        return Err(EngineError::Params(format!("`size` must be at least {MIN_RELATIVE_SIZE:e} of the body's bounding-box diagonal")));
+        return Err(crate::units::below_diagonal("size", MIN_RELATIVE_SIZE, diag, "the body's"));
     }
     Ok(h)
 }
 
 pub(crate) fn merge_distance(merge: Option<f64>, diag: f64) -> Result<f64> {
-    let m = merge.unwrap_or(1e-6 * diag);
+    let m = merge.unwrap_or(DEFAULT_RELATIVE_MERGE * diag);
     if !(m.is_finite() && m >= 0.0 && m <= 1e-2 * diag) {
         return Err(EngineError::Params("`merge` must be from 0 to 1/100 of the body's bounding-box diagonal".into()));
     }
@@ -371,7 +378,7 @@ fn extend(reply: &mut Value, more: Value) {
 }
 
 fn round3(x: f64) -> Value {
-    if x.is_finite() { json!((x * 1000.0).round() / 1000.0) } else { Value::Null }
+    if x.is_finite() { json!((x * PER_MILLIMETRE).round() / PER_MILLIMETRE) } else { Value::Null }
 }
 
 fn bounded<T>(v: &[T], what: &str) -> Result<()> {
@@ -631,7 +638,7 @@ const ON_FACE: f64 = 0.05;
 pub(crate) fn fixed_patch(s: &Session, b: &Body, body: &str, names: &[String], size: f64) -> Result<FixedPatch> {
     use fieldcraft_mesh::project::Geometry;
     let faces: Vec<u32> = names.iter().map(|n| face_index(b, body, n)).collect::<Result<_>>()?;
-    let tol = (ON_FACE * size).max(1e-9 * b.diagonal());
+    let tol = (ON_FACE * size).max(MIN_RELATIVE_ON_FACE * b.diagonal());
     let c = s.model.classification();
     let mut on: BTreeMap<u32, Option<usize>> = BTreeMap::new();
     let mut index: BTreeMap<u32, u32> = BTreeMap::new();

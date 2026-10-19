@@ -12,6 +12,9 @@ use std::collections::BTreeMap;
 use crate::vec3::{P, add, det, dist, scale, sub};
 use crate::{Error, Result};
 
+/// Vertices this close, relative to the template's size, are one.
+const MERGE: f64 = 1e-9; // unit-factors: relative to the template's size
+
 /// Most blocks one topology holds.
 pub const MAX_BLOCKS: usize = 20_000;
 
@@ -656,7 +659,7 @@ impl Topology {
         for b in 0..levels.len() - 1 {
             t.o_grid(b, &[1, 2], [inset; 3])?;
         }
-        t.merge(1e-9 * (radius + levels.iter().fold(0.0f64, |m, x| m.max(x.abs()))));
+        t.merge(MERGE * (radius + levels.iter().fold(0.0f64, |m, x| m.max(x.abs()))));
         Ok(t)
     }
 }

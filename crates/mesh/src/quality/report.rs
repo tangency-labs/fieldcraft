@@ -7,6 +7,9 @@ use fieldcraft_model::{Element, ElementKind, Model, check_coordinates};
 use super::{ElementQuality, JacobianCheck, Metric, Validity, element_quality, element_validity, is_measured};
 use crate::{Error, Result};
 
+/// The volume gate's tolerance: the mesh's volume matches the boundary's within this fraction.
+pub const VOLUME_TOLERANCE: f64 = 1e-9; // unit-factors: relative to the volume
+
 /// The most histogram bins a report may ask for.
 pub const MAX_BINS: usize = 1000;
 
@@ -221,7 +224,7 @@ pub struct GateOptions {
 
 impl Default for GateOptions {
     fn default() -> Self {
-        Self { expected_volume: None, volume_tolerance: 1e-9 }
+        Self { expected_volume: None, volume_tolerance: VOLUME_TOLERANCE }
     }
 }
 

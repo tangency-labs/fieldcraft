@@ -48,6 +48,17 @@ use lattice::{Entity, build, edge_classes, face_key, face_uses};
 use target::{Constraint, on_target, place};
 use topology::{CORNERS, FACE_SIDES, corner_at, trilinear};
 
+/// The difference step in a block's parameters.
+const STEP: f64 = 1e-3; // unit-factors: a step in a block's parameters (0 to 1)
+/// Points this close, relative to the diagonal, are one.
+const RELATIVE_TOLERANCE: f64 = 1e-9; // unit-factors: relative to the diagonal
+/// A plane's normal must be of unit length within this.
+const UNIT_LENGTH: f64 = 1e-6; // unit-factors: the length of a direction vector
+/// The probe distance off a face, relative to the element size.
+const PROBE: f64 = 1e-3; // unit-factors: relative to the element size
+/// The elements fill what their outer faces enclose within this fraction.
+const ENCLOSES: f64 = 1e-6; // unit-factors: relative to the volume
+
 /// Faces meeting at less than this angle (degrees) along their shared edge belong to one smooth
 /// group, the default target of a block face.
 pub const SMOOTH_ANGLE: f64 = 20.0;
@@ -295,7 +306,7 @@ fn smooth_groups(surface: &BoundarySurface, faces: usize) -> Vec<usize> {
 fn facing(g: &dyn Geometry, faces: &[u32], c: &[P; 8], d: usize, s: usize, u: [f64; 3]) -> Option<u32> {
     let p = trilinear(c, u);
     let (e1, e2) = other(d);
-    let h = 1e-3;
+    let h = STEP;
     let diff = |k: usize| {
         let (mut a, mut b) = (u, u);
         a[k] -= h;
@@ -379,9 +390,9 @@ pub(crate) fn project_ordered(
     let face_count = surface.tri_face().iter().max().map_or(1, |m| *m as usize + 1);
     let groups = smooth_groups(surface, face_count);
     let diag = t.diagonal().max(opts.size);
-    let tol = 1e-9 * diag;
+    let tol = RELATIVE_TOLERANCE * diag;
     if opts.planes.len() > MAX_PLANES
-        || opts.planes.iter().any(|(p, n)| !(p.iter().chain(n).all(|x| x.is_finite()) && (crate::vec3::norm(*n) - 1.0).abs() < 1e-6))
+        || opts.planes.iter().any(|(p, n)| !(p.iter().chain(n).all(|x| x.is_finite()) && (crate::vec3::norm(*n) - 1.0).abs() < UNIT_LENGTH))
     {
         return Err(Error::Invalid(format!("at most {MAX_PLANES} planes, each a finite point and a unit normal")));
     }
@@ -615,7 +626,7 @@ pub(crate) fn project_ordered(
     // onto it, from the turn of the B-rep face's normal over a short step on that face) times
     // the face's length there, over the largest turn an element may span, is the least count
     // of that direction's class.
-    let probe = 1e-3 * opts.size;
+    let probe = PROBE * opts.size;
     let mut class_arc = vec![0usize; nclass];
     if opts.max_arc_angle > 0.0 {
         for &(b, d, s) in &outer {
@@ -940,7 +951,7 @@ pub(crate) fn project_ordered(
             ),
         ));
     }
-    if (enclosed - volume).abs() > 1e-6 * volume.abs().max(1e-300) {
+    if (enclosed - volume).abs() > ENCLOSES * volume.abs().max(1e-300) {
         return Err(Error::failed(crate::message![
             "the elements overlap or leave a gap inside (their volume ",
             crate::message::volume(volume),

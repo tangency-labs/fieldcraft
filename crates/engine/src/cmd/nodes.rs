@@ -17,6 +17,9 @@ use crate::requirement::Requirement;
 use crate::schema::ProblemKind;
 use crate::{CommandKind, CommandSpec, EngineError, Result, Session};
 
+/// The default merge distance, relative to the mesh's diagonal.
+const RELATIVE_TOLERANCE: f64 = 1e-6; // unit-factors: relative to the mesh's diagonal
+
 pub const MERGE: CommandSpec = CommandSpec {
     id: "mesh.node.merge",
     label: "Merge Nodes",
@@ -63,7 +66,7 @@ pub(crate) fn tolerance(model: &Model, p: &Value) -> Result<f64> {
                 }
             }
             let diagonal = (0..3).map(|k| (hi[k] - lo[k]).powi(2)).sum::<f64>().sqrt();
-            Ok(if diagonal > 0.0 && diagonal.is_finite() { 1e-6 * diagonal } else { 1e-9 })
+            Ok(if diagonal > 0.0 && diagonal.is_finite() { RELATIVE_TOLERANCE * diagonal } else { crate::units::min_length() })
         }
     }
 }

@@ -175,7 +175,7 @@ impl Triangulation {
         } else if self.tets.iter().any(|vs| vs[0] != DEAD) {
             return failed("a lower-dimensional triangulation has tetrahedra".into());
         }
-        if (finite_volume - hull_volume).abs() > 1e-9 * scale {
+        if (finite_volume - hull_volume).abs() > crate::quality::VOLUME_TOLERANCE * scale {
             return Err(Error::failed(crate::message![
                 "Delaunay verification: the tetrahedra fill ",
                 crate::message::volume(finite_volume),

@@ -280,7 +280,8 @@ impl Shape {
     /// The B-rep's own tessellation, tagged by B-rep face.
     fn tessellate_brep(&self, tolerance: f64) -> Result<SurfaceMesh> {
         if !(tolerance > 0.0 && tolerance.is_finite()) {
-            return Err(Error::Invalid(format!("tessellation tolerance must be a positive number, got {tolerance}")));
+            // Its value is in the geometry's millimetres, which the caller may not show: not named.
+            return Err(Error::Invalid("the tessellation tolerance must be a finite, positive length".into()));
         }
         let m = guard("tessellate", || self.body.tessellate(tolerance))?;
         Ok(SurfaceMesh {

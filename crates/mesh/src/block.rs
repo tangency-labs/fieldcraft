@@ -25,6 +25,19 @@ use crate::quality::{Validity, element_validity, planar_quad_validity};
 use crate::vec3::{P, cross, dot, norm, sub};
 use crate::{Error, Result};
 
+/// Points on an arc within this, relative to its radius.
+const ON_ARC: f64 = 1e-9; // unit-factors: relative to the radius
+/// An arc's plane needs this much sine between its sides, relative to the radius squared.
+const MIN_SINE: f64 = 1e-12; // unit-factors: relative to the radius squared
+/// The least sweep of an arc.
+const MIN_SWEEP: f64 = 1e-12; // unit-factors: an angle in radians
+/// An arc short of a half turn by less than this is ambiguous.
+const HALF_TURN_SLACK: f64 = 1e-9; // unit-factors: an angle in radians
+/// The smallest grading ratio a block takes.
+const MIN_BIAS: f64 = 1e-6; // unit-factors: a ratio of element sizes
+/// The largest grading ratio a block takes.
+const MAX_BIAS: f64 = 1e6; // unit-factors: a ratio of element sizes
+
 /// Most elements one block makes.
 pub const MAX_BLOCK_ELEMENTS: usize = 4_000_000;
 
@@ -119,13 +132,13 @@ impl Path {
             Curve::Arc { center } => {
                 let (p, q) = (sub(from, center), sub(to, center));
                 let r = norm(p);
-                if !(r > 0.0) || (norm(q) - r).abs() > 1e-9 * r.max(norm(q)) {
+                if !(r > 0.0) || (norm(q) - r).abs() > ON_ARC * r.max(norm(q)) {
                     return Err(Error::Invalid(format!(
                         "an arc's corners {from:?} and {to:?} must be at the same distance from its centre {center:?}"
                     )));
                 }
                 let n = cross(p, q);
-                if !(norm(n) > 1e-12 * r * r) {
+                if !(norm(n) > MIN_SINE * r * r) {
                     return Err(Error::Invalid(format!(
                         "the arc from {from:?} to {to:?} about {center:?} has no plane (it spans 0 or 180 degrees); split it"
                     )));
@@ -136,14 +149,14 @@ impl Path {
             Curve::Ellipse { center, axes: [a, b] } => (center, a, b),
         };
         let (la, lb) = (norm(a), norm(b));
-        if !(la > 0.0 && lb > 0.0) || dot(a, b).abs() > 1e-9 * la * lb {
+        if !(la > 0.0 && lb > 0.0) || dot(a, b).abs() > ON_ARC * la * lb {
             return Err(Error::Invalid("an ellipse's two axes must be non-zero and perpendicular".into()));
         }
         let angle = |p: P| -> Result<f64> {
             let d = sub(p, center);
             let (c, s) = (dot(d, a) / (la * la), dot(d, b) / (lb * lb));
             let back = add_scaled(add_scaled(center, c, a), s, b);
-            if norm(sub(back, p)) > 1e-9 * la.max(lb) || ((c * c + s * s).sqrt() - 1.0).abs() > 1e-9 {
+            if norm(sub(back, p)) > ON_ARC * la.max(lb) || ((c * c + s * s).sqrt() - 1.0).abs() > ON_ARC {
                 return Err(Error::Invalid(format!("corner {p:?} is not on the edge's ellipse or arc about {center:?}")));
             }
             Ok(crate::vec3::atan2(s, c))
@@ -155,7 +168,7 @@ impl Path {
         } else if sweep <= -std::f64::consts::PI {
             sweep += 2.0 * std::f64::consts::PI;
         }
-        if !(sweep.abs() > 1e-12) || std::f64::consts::PI - sweep.abs() < 1e-9 {
+        if !(sweep.abs() > MIN_SWEEP) || std::f64::consts::PI - sweep.abs() < HALF_TURN_SLACK {
             return Err(Error::Invalid(format!("the arc from {from:?} to {to:?} spans 0 or 180 degrees; split it")));
         }
         Ok(Path::Ellipse { center, a, b, start, sweep, ends: [from, to] })
@@ -280,7 +293,7 @@ pub fn block(b: &Block) -> Result<BlockMesh> {
     if b.divisions.iter().any(|&n| n == 0 || n > MAX_DIVISIONS) {
         return Err(Error::Invalid(format!("divisions must be 1 to {MAX_DIVISIONS} in each direction")));
     }
-    if b.bias.iter().any(|&r| !(r.is_finite() && (1e-6..=1e6).contains(&r))) {
+    if b.bias.iter().any(|&r| !(r.is_finite() && (MIN_BIAS..=MAX_BIAS).contains(&r))) {
         return Err(Error::Invalid("bias must be between 1e-6 and 1e6 (1 is uniform)".into()));
     }
     let per_cell = cell_elements(kind).len();
@@ -460,7 +473,7 @@ pub fn patch(b: &Patch) -> Result<BlockMesh> {
     if b.divisions.iter().any(|&n| n == 0 || n > MAX_DIVISIONS) {
         return Err(Error::Invalid(format!("divisions must be 1 to {MAX_DIVISIONS} in each direction")));
     }
-    if b.bias.iter().any(|&r| !(r.is_finite() && (1e-6..=1e6).contains(&r))) {
+    if b.bias.iter().any(|&r| !(r.is_finite() && (MIN_BIAS..=MAX_BIAS).contains(&r))) {
         return Err(Error::Invalid("bias must be between 1e-6 and 1e6 (1 is uniform)".into()));
     }
     let pattern = cell_elements_2d(kind);

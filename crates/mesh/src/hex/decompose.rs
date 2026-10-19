@@ -55,6 +55,13 @@ use crate::quality::planar_corner;
 use crate::size::SizeField;
 use crate::{Error, Result};
 
+/// A ray crosses an edge when their cross product is at least this, relative to the edge.
+const MIN_SINE: f64 = 1e-12; // unit-factors: relative to the edge's length
+/// A crossing within this of a segment's ends is on it.
+const ON_SEGMENT: f64 = 1e-9; // unit-factors: a fraction of the segment
+/// Angles this close are one.
+const SAME_ANGLE: f64 = 1e-6; // unit-factors: an angle in radians
+
 /// The tag of cut lines (no wall behind them).
 pub(crate) const CUT: usize = usize::MAX;
 
@@ -284,13 +291,13 @@ fn cast(loops: &[Poly], from: Option<(usize, usize)>, o: Q, d: Q, snap: f64, min
             let (a, b) = (poly.at(k), poly.at(k + 1));
             let e = sub(b, a);
             let den = cross(d, e);
-            if den.abs() <= 1e-12 * len(e) {
+            if den.abs() <= MIN_SINE * len(e) {
                 continue;
             }
             let w = sub(a, o);
             let t = cross(w, e) / den;
             let u = cross(w, d) / den;
-            if t > min_t && (-1e-9..=1.0 + 1e-9).contains(&u) && best.is_none_or(|(bt, ..)| t < bt) {
+            if t > min_t && (-ON_SEGMENT..=1.0 + ON_SEGMENT).contains(&u) && best.is_none_or(|(bt, ..)| t < bt) {
                 best = Some((t, l, k));
             }
         }
@@ -389,7 +396,7 @@ fn admissible(loops: &[Poly], a: End, b: End, h: f64) -> bool {
         // The cut must leave into the region: between the outgoing and the incoming edge.
         let (a1, a2) = (interior(prev, o, tip), interior(tip, o, next));
         let total = interior(prev, o, next);
-        if (a1 + a2 - total).abs() > 1e-6 || a1 < MIN_CUT_ANGLE || a2 < MIN_CUT_ANGLE {
+        if (a1 + a2 - total).abs() > SAME_ANGLE || a1 < MIN_CUT_ANGLE || a2 < MIN_CUT_ANGLE {
             return false;
         }
     }
@@ -802,7 +809,7 @@ fn separate_holes(loops: &[Poly], s: &Settings) -> Vec<Vec<Q>> {
                 let (a, b) = (poly.at(k), poly.at(k + 1));
                 let e = sub(b, a);
                 let den = cross(d, e);
-                if den.abs() <= 1e-12 * len(e) {
+                if den.abs() <= MIN_SINE * len(e) {
                     continue;
                 }
                 let w = sub(a, from);

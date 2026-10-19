@@ -33,7 +33,7 @@ const MAX_XML_DEPTH: usize = 256;
 use fieldcraft_model::MAX_COORD;
 /// A transform whose determinant is below this fraction of its largest row length cubed
 /// flattens the object (relative, so a uniform scale is never refused).
-const MIN_RELATIVE_DET: f64 = 1e-12;
+const MIN_RELATIVE_DET: f64 = 1e-12; // unit-factors: relative to the transform's scale
 
 const CORE_NS: &str = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02";
 /// SolidCraft's face-tag namespace, version 1.

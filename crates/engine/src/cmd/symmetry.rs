@@ -14,6 +14,9 @@ use serde_json::{Value, json};
 use crate::requirement::Requirement;
 use crate::{CommandKind, CommandSpec, EngineError, Result, Session};
 
+/// A face normal this close to the plane's, relative to its length, is parallel.
+const PARALLEL: f64 = 1e-9; // unit-factors: relative to the normal's length
+
 pub const SYMMETRY: CommandSpec = CommandSpec {
     id: "model.boundary_condition.symmetry",
     label: "Symmetry Plane",
@@ -25,7 +28,7 @@ pub const SYMMETRY: CommandSpec = CommandSpec {
 };
 
 /// A face lies on the plane within this fraction of its body's size.
-const ON_PLANE: f64 = 1e-6;
+const ON_PLANE: f64 = 1e-6; // unit-factors: relative to the body's size
 
 fn symmetry(s: &mut Session, p: &Value) -> Result<Value> {
     let name = super::name(p)?.to_string();
@@ -50,7 +53,7 @@ fn symmetry(s: &mut Session, p: &Value) -> Result<Value> {
                 for (f, surface) in b.faces().iter().zip(b.face_surfaces()?) {
                     if let Some(FaceSurface::Plane { normal: m, point: q }) = surface {
                         let length = m.iter().map(|c| c * c).sum::<f64>().sqrt();
-                        let parallel = (along(m).abs() - length).abs() < 1e-9 * length;
+                        let parallel = (along(m).abs() - length).abs() < PARALLEL * length;
                         if parallel && (along(q) - along(point)).abs() < tol {
                             faces.push(GeometryRef::face(b.name.as_str(), f.name.as_str())?);
                         }

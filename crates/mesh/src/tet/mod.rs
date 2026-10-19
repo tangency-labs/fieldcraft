@@ -59,6 +59,11 @@ use geometry::{AnalyticSurface, GradedSize, Tessellation};
 use improve::{ImproveOptions, ImproveStats};
 use refine::{Context, RefineOptions, RefineStats};
 
+/// A node is on a seeded edge within this, relative to the size.
+const ON_EDGE: f64 = 1e-6; // unit-factors: relative to the size
+/// A tetrahedron of quality below this is a sliver.
+const SLIVER: f64 = 1e-6; // unit-factors: a normalized quality
+
 /// Element order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Order {
@@ -289,7 +294,7 @@ pub fn size_field(surface: &BoundarySurface, geometry: &Tessellation, global: f6
 /// instead.
 fn seed_curves(cx: &mut TetComplex, ctx: &Context, seeds: &[crate::seeds::EdgeSeed], global: f64) -> Result<()> {
     for seed in seeds {
-        let tol = 2.0 * seed.tolerance + 1e-6 * global;
+        let tol = 2.0 * seed.tolerance + ON_EDGE * global;
         let on = |x: [f64; 3]| crate::seeds::distance_to(&seed.points, x) <= tol;
         let nodes = crate::seeds::place(&seed.points, &seed.fractions(seed.count, false))?;
         for p in nodes.iter().skip(1).take(nodes.len().saturating_sub(2)) {
@@ -341,7 +346,7 @@ fn seed_counts(points: &[[f64; 3]], tets: &[[u32; 4]], boundary: &[TaggedFace], 
     edges.sort_unstable();
     edges.dedup();
     let (lo, hi) = bounds(points);
-    let eps = 1e-6 * measure::dist(lo, hi);
+    let eps = ON_EDGE * measure::dist(lo, hi);
     seeds
         .iter()
         .map(|seed| {
@@ -500,7 +505,7 @@ pub fn quality_mesh(surface: &BoundarySurface, cdt: &TetMesh, analytic: Vec<Opti
     let exact = Context { size: &size, geometry: &geometry, curve_faces: &curve_faces };
     // Remove what rounding left flat first, so refinement starts from a valid mesh.
     let flat =
-        |cx: &TetComplex| -> Vec<(u32, [u32; 4])> { cx.live_tets().filter(|(_, vs)| ops::tet_quality(cx, *vs).is_ok_and(|q| q < 1e-6)).collect() };
+        |cx: &TetComplex| -> Vec<(u32, [u32; 4])> { cx.live_tets().filter(|(_, vs)| ops::tet_quality(cx, *vs).is_ok_and(|q| q < SLIVER)).collect() };
     let bad: Vec<u32> = flat(&cx).into_iter().map(|(t, _)| t).collect();
     if !bad.is_empty() {
         improve::topological_pass(&mut cx, &bad)?;
@@ -619,5 +624,5 @@ pub fn linear_gate(points: &[[f64; 3]], tets: &[[u32; 4]], boundary_volume: f64)
         Ok([p(t[0])?, p(t[1])?, p(t[2])?, p(t[3])?])
     };
     let elements = tets.iter().enumerate().map(|(i, t)| Ok((i as u32 + 1, ElementKind::Tet4, coords(t)?))).collect::<Result<Vec<_>>>()?;
-    validity_gate_elements(elements, &GateOptions { expected_volume: Some(boundary_volume), volume_tolerance: 1e-9 })
+    validity_gate_elements(elements, &GateOptions { expected_volume: Some(boundary_volume), volume_tolerance: crate::quality::VOLUME_TOLERANCE })
 }

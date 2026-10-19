@@ -18,6 +18,9 @@ use super::super::hex::Input;
 use super::super::mesh::{BodyTets, add_tets, analytic_surfaces};
 use crate::{EngineError, Result};
 
+/// The hex faces cover the cut faces when their areas agree to this fraction.
+const AREA_MATCH: f64 = 1e-3; // unit-factors: relative to the cut's area
+
 /// A tet cell meshed against the pyramids on its hex neighbours' faces.
 pub(super) struct Pyramids {
     pub(super) tets: BodyTets,
@@ -94,7 +97,7 @@ pub(super) fn mesh_with_pyramids(
             0.5 * norm(cross(sub(c[1], c[0]), sub(c[2], c[0])))
         })
         .sum();
-    if !((quad_area - cut_area).abs() <= 1e-3 * cut_area) {
+    if !((quad_area - cut_area).abs() <= AREA_MATCH * cut_area) {
         return Ok(Err(format!(
             "the hex cells' faces do not cover its cut faces (their areas differ by {:.3} %)",
             100.0 * (quad_area - cut_area).abs() / cut_area

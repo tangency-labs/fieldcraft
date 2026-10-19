@@ -36,6 +36,11 @@ use crate::size::ideal_divisions;
 use crate::vec3::{P, dot, sub};
 use crate::{Error, Result};
 
+/// Unit normals this close to parallel are one direction.
+const SAME_DIRECTION: f64 = 1e-9; // unit-factors: a component of a unit vector
+/// A face's metric is degenerate below this, relative to its diagonal's product.
+const MIN_DET: f64 = 1e-12; // unit-factors: relative to the diagonal's product
+
 /// The most source faces tried.
 const MAX_SOURCES: usize = 8;
 /// The most interior-node × ring-node × layer products the residual correction may spend.
@@ -150,7 +155,7 @@ fn topology(brep: &Brep, s: usize) -> std::result::Result<Topology, String> {
 fn cap(brep: &Brep, s: usize, f: usize) -> Option<String> {
     let (_, ns) = brep.faces.get(s)?.plane?;
     let (_, nf) = brep.faces.get(f)?.plane?;
-    (dot(ns, nf).abs() > 1.0 - 1e-9).then(|| {
+    (dot(ns, nf).abs() > 1.0 - SAME_DIRECTION).then(|| {
         format!(
             "face {} is parallel to the source and only part of the ring reaches it: the body ends at more than one level (a step, a boss or a pocket), and a one-to-one sweep has one target face; method `extrude` meshes such bodies level by level",
             brep.face_tag(f)
@@ -520,7 +525,7 @@ impl Affine {
             xm = add(xm, scale(*xi, 1.0 / n));
         }
         let det = suu * svv - suv * suv;
-        if !(det > 1e-12 * suu * svv) {
+        if !(det > MIN_DET * suu * svv) {
             return Err(Error::Failed("the source ring is collinear; the sweep's layers cannot be mapped".into()));
         }
         let mu_vec = scale(sub(scale(xu, svv), scale(xv, suv)), 1.0 / det);
