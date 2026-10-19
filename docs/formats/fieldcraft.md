@@ -134,6 +134,11 @@ name is taken, the next free one is used (`bracket.v1-2.fieldcraft`, …), and w
 made the save is refused and the original stays as it was. Later saves replace `<file>.bak` as
 always, but not the copy. The browser build saves by download, which replaces nothing, so it keeps no copy.
 
+Nothing else FieldCraft writes where a user points it (decks, STL, VTU and CSV exports, XY
+tables, pictures from the control channel, MCP and `fieldcraft-cli snapshot`) replaces a
+FieldCraft model or a SolidCraft design: a target that is one, by its extension or by its
+content, is refused with "choose another file name" (`fieldcraft_io::fs::write_output`).
+
 ## Autosave and recovery
 
 The desktop app autosaves every 30 seconds while there are unsaved changes, into the recovery

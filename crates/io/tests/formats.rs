@@ -271,3 +271,43 @@ fn no_copy_no_save() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// No export, deck or picture replaces a model or a design, whatever its name.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn outputs_never_replace_a_model_or_a_design() {
+    use fieldcraft_io::fs::{protected_kind, write_output};
+    let (dir, model) = folder_with_v1("outputs", "hex-static.fieldcraft");
+    let original = std::fs::read(&model).unwrap();
+    let renamed = dir.join("deck.inp");
+    std::fs::copy(&model, &renamed).unwrap();
+    let design = dir.join("plate.json");
+    std::fs::write(&design, b"{\n  \"format\": \"solidcraft/21\",\n  \"features\": []\n}").unwrap();
+    let named_design = dir.join("empty.SolidCraft");
+    std::fs::write(&named_design, b"").unwrap();
+    let named_model = dir.join("blank.FIELDCRAFT");
+    std::fs::write(&named_model, b"").unwrap();
+    for (path, kind) in [
+        (&model, "FieldCraft model"),
+        (&renamed, "FieldCraft model"),
+        (&named_model, "FieldCraft model"),
+        (&design, "SolidCraft design"),
+        (&named_design, "SolidCraft design"),
+    ] {
+        assert_eq!(protected_kind(path), Some(kind), "{}", path.display());
+        let before = std::fs::read(path).unwrap();
+        let e = write_output(path, b"*HEADING").unwrap_err();
+        assert!(e.to_string().contains(kind) && e.to_string().contains("choose another file name"), "{e}");
+        assert_eq!(std::fs::read(path).unwrap(), before);
+    }
+    assert_eq!(std::fs::read(&model).unwrap(), original);
+    // Other files, and new ones, are written as before.
+    let notes = dir.join("notes.inp");
+    std::fs::write(&notes, b"{\"format\": \"something/1\"}").unwrap();
+    assert_eq!(protected_kind(&notes), None);
+    write_output(&notes, b"*HEADING").unwrap();
+    write_output(&dir.join("new.inp"), b"*HEADING").unwrap();
+    assert_eq!(std::fs::read(&notes).unwrap(), b"*HEADING");
+    assert_eq!(protected_kind(&dir.join("missing.fieldcraft")), None);
+    let _ = std::fs::remove_dir_all(&dir);
+}

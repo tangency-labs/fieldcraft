@@ -29,7 +29,7 @@ fn write(s: &mut Session, p: &Value) -> Result<Value> {
     let path = super::file_param(s, p, "path", Access::Write)?;
     let steps: Option<Vec<String>> = super::opt(p, "steps")?;
     let deck = format.write_steps(&s.model, steps.as_deref())?;
-    fieldcraft_io::fs::write_atomic(Path::new(&path), deck.text.as_bytes(), false)?;
+    fieldcraft_io::fs::write_output(Path::new(&path), deck.text.as_bytes())?;
     Ok(json!({"format": format.name, "path": path, "bytes": deck.text.len(), "warnings": deck.warnings}))
 }
 

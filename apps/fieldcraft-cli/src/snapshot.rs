@@ -126,7 +126,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     let o = options(args)?;
     let policy = Policy::from_env().map_err(|e| e.to_string())?;
     let (png, renderer, shown) = picture(&o, policy)?;
-    std::fs::write(&o.out, &png).map_err(|e| format!("{}: {e}", o.out))?;
+    fieldcraft_engine::write_output(std::path::Path::new(&o.out), &png).map_err(|e| e.to_string())?;
     let mut report = crate::picture_report(&renderer, &shown);
     if let Some(r) = report.as_object_mut() {
         r.insert("out".into(), o.out.clone().into());

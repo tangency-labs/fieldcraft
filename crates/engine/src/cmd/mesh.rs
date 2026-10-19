@@ -639,7 +639,7 @@ fn export_stl(s: &mut Session, p: &Value) -> Result<Value> {
         fieldcraft_io::stl::write_binary(m, &faces)?
     };
     let triangles = fieldcraft_io::stl::triangles(m, &faces)?.len();
-    fieldcraft_io::fs::write_atomic(std::path::Path::new(&path), &bytes, false)?;
+    fieldcraft_io::fs::write_output(std::path::Path::new(&path), &bytes)?;
     Ok(json!({"path": path, "triangles": triangles, "bytes": bytes.len()}))
 }
 

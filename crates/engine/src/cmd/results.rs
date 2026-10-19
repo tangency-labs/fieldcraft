@@ -796,7 +796,7 @@ fn export_vtu(s: &mut Session, p: &Value) -> Result<Value> {
     let mut bytes = 0usize;
     let result = (|| -> Result<Vec<String>> {
         if !series {
-            fieldcraft_io::fs::write_atomic(target, sample.1.as_bytes(), false)?;
+            fieldcraft_io::fs::write_output(target, sample.1.as_bytes())?;
             written.push(target.to_path_buf());
             bytes += sample.1.len();
             return Ok(vec![path.clone()]);
@@ -810,7 +810,7 @@ fn export_vtu(s: &mut Session, p: &Value) -> Result<Value> {
             let file = dir.join(&name);
             let built = if state == last { None } else { Some(build(state)?) };
             let (time, text) = built.as_ref().map_or((sample.0, sample.1.as_str()), |(t, x)| (*t, x.as_str()));
-            fieldcraft_io::fs::write_atomic(&file, text.as_bytes(), false)?;
+            fieldcraft_io::fs::write_output(&file, text.as_bytes())?;
             written.push(file.clone());
             bytes += text.len();
             entries.push((time, name));
@@ -818,7 +818,7 @@ fn export_vtu(s: &mut Session, p: &Value) -> Result<Value> {
         }
         let list: Vec<(f64, &str)> = entries.iter().map(|(t, n)| (*t, n.as_str())).collect();
         let collection = vtk::pvd(&list);
-        fieldcraft_io::fs::write_atomic(target, collection.as_bytes(), false)?;
+        fieldcraft_io::fs::write_output(target, collection.as_bytes())?;
         bytes += collection.len();
         files.push(path.clone());
         Ok(files)
@@ -971,7 +971,7 @@ fn export_csv(s: &mut Session, p: &Value) -> Result<Value> {
         _ => return Err(EngineError::Params("`what` must be \"probe\" or \"reactions\"".into())),
     };
     let text = table.csv();
-    fieldcraft_io::fs::write_atomic(std::path::Path::new(&path), text.as_bytes(), false)?;
+    fieldcraft_io::fs::write_output(std::path::Path::new(&path), text.as_bytes())?;
     Ok(json!({"path": path, "rows": table.rows.len(), "columns": table.header, "step": step, "units": s.model.units()}))
 }
 

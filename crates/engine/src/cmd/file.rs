@@ -689,6 +689,30 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
+    /// A deck, an STL, a VTU or a CSV aimed at the model's own file is refused; the model stays.
+    #[test]
+    fn outputs_never_replace_the_model_file() {
+        let d = dir("outputs");
+        let mut s = Session::default();
+        defined(&mut s);
+        s.execute("model.set.create", &json!({"name": "all", "elements": [1]})).unwrap();
+        s.execute("model.section.create", &json!({"name": "solid", "set": "all", "material": "Steel", "kind": {"type": "solid"}})).unwrap();
+        s.execute("model.set.create", &json!({"name": "base", "nodes": [1, 2, 3]})).unwrap();
+        s.execute("model.boundary_condition.create", &json!({"name": "fix", "type": "fixed", "target": {"set": "base"}})).unwrap();
+        s.execute("model.step.create", &json!({"name": "Load", "procedure": {"type": "static"}})).unwrap();
+        s.execute("model.step.activate", &json!({"step": "Load", "boundary_conditions": ["fix"]})).unwrap();
+        let path = d.join("bracket.fieldcraft");
+        s.execute("file.save_as", &json!({"path": path})).unwrap();
+        let saved = std::fs::read(&path).unwrap();
+        for (id, p) in [("deck.write", json!({"format": "abaqus", "path": path})), ("mesh.export.stl", json!({"path": path}))] {
+            let e = s.execute(id, &p).unwrap_err().to_string();
+            assert!(e.contains("FieldCraft model") && e.contains("choose another file name"), "{id}: {e}");
+            assert_eq!(std::fs::read(&path).unwrap(), saved, "{id}");
+        }
+        s.execute("deck.write", &json!({"format": "abaqus", "path": d.join("bracket.inp")})).unwrap();
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     #[test]
     fn hostile_file_params_and_files_change_nothing() {
         let d = dir("hostile");

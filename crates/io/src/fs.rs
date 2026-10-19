@@ -47,6 +47,35 @@ pub fn version_backup_paths(path: &Path, format: Option<u32>) -> impl Iterator<I
     })
 }
 
+/// What the existing file at `path` is when it is a FieldCraft model or a SolidCraft design,
+/// which no export, deck or picture may replace: by its extension (`.fieldcraft`,
+/// `.solidcraft`, any case) or by its content (a FieldCraft package with a format tag, a
+/// SolidCraft design's `"format": "solidcraft/…"`). `None` when there is no file or it is
+/// neither.
+pub fn protected_kind(path: &Path) -> Option<&'static str> {
+    if !is_file(path) {
+        return None;
+    }
+    let ext = path.extension().map(|e| e.to_string_lossy().to_ascii_lowercase());
+    if ext.as_deref() == Some(crate::EXTENSION) || format_of_file(path).is_some() {
+        return Some("FieldCraft model");
+    }
+    let head = read_prefix(path, 4096);
+    let text = String::from_utf8_lossy(&head);
+    let design = text.trim_start().starts_with('{') && text.contains("\"solidcraft/");
+    (ext.as_deref() == Some("solidcraft") || design).then_some("SolidCraft design")
+}
+
+/// Write an export, a deck, a picture or any other output that is not the model's own file:
+/// atomically, with no backup, but never over a FieldCraft model or SolidCraft design
+/// ([`protected_kind`]), which that would destroy with nothing kept.
+pub fn write_output(path: &Path, bytes: &[u8]) -> crate::Result<()> {
+    if let Some(kind) = protected_kind(path) {
+        return Err(crate::Error::Refused(format!("{} is a {kind}; an export never replaces one (choose another file name)", path.display())));
+    }
+    write_atomic(path, bytes, false)
+}
+
 #[cfg(target_arch = "wasm32")]
 mod browser {
     use std::cell::RefCell;
@@ -80,6 +109,11 @@ mod browser {
     /// Read a file of at most `max` bytes.
     pub fn read_capped(path: &Path, max: u64) -> Result<Vec<u8>> {
         FILES.with(|f| f.borrow().read(path, max))
+    }
+
+    /// The first `n` bytes of a file (fewer when it is shorter; none when it cannot be read).
+    pub fn read_prefix(path: &Path, n: usize) -> Vec<u8> {
+        FILES.with(|f| f.borrow().read(path, crate::MAX_FILE_BYTES).map(|b| b.get(..n.min(b.len())).unwrap_or_default().to_vec()).unwrap_or_default())
     }
 
     pub fn is_file(path: &Path) -> bool {
@@ -293,6 +327,13 @@ mod disk {
 
     pub fn is_file(path: &Path) -> bool {
         path.is_file()
+    }
+
+    /// The first `n` bytes of a file (fewer when it is shorter; none when it cannot be read).
+    pub fn read_prefix(path: &Path, n: usize) -> Vec<u8> {
+        let mut out = Vec::with_capacity(n);
+        let _ = fs::File::open(path).and_then(|f| f.take(n as u64).read_to_end(&mut out));
+        out
     }
 
     pub fn remove(path: &Path) -> Result<()> {

@@ -663,7 +663,7 @@ fn capture(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<(Vec<u8>, Valu
     let picture = b.picture(&request)?;
     let mut info = picture.info;
     if let Some(path) = &keep {
-        fieldcraft_io::fs::write_atomic(path, &picture.png, false).map_err(|e| e.to_string())?;
+        fieldcraft_io::fs::write_output(path, &picture.png).map_err(|e| e.to_string())?;
         info["path"] = json!(path.to_string_lossy());
     }
     info["bytes"] = json!(picture.png.len());

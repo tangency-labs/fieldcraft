@@ -431,7 +431,7 @@ fn xy(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(path) = path {
         let cell = |v: f64| if v.is_finite() { Cell::Number(v) } else { Cell::Empty };
         let table = Table { header: vec![series.x_label, series.y_label], rows: xs.iter().zip(&ys).map(|(x, y)| vec![cell(*x), cell(*y)]).collect() };
-        fieldcraft_io::fs::write_atomic(std::path::Path::new(&path), table.csv().as_bytes(), false)?;
+        fieldcraft_io::fs::write_output(std::path::Path::new(&path), table.csv().as_bytes())?;
         out["path"] = json!(path);
     }
     Ok(out)

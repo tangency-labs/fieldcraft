@@ -635,7 +635,7 @@ pub fn handle(app: &mut ModelApp, ctx: &egui::Context, req: &ControlRequest) -> 
                 Ok(drawn) => drawn,
                 Err(e) => return err(e),
             };
-            match std::fs::write(path, &png) {
+            match fieldcraft_engine::write_output(std::path::Path::new(path), &png) {
                 Ok(()) => ok(json!({"path": path, "width": w, "height": h, "scale": scale, "bytes": png.len(), "renderer": renderer.report()})),
                 Err(e) => err(format!("{path}: {e}")),
             }
@@ -683,7 +683,7 @@ pub fn save_screenshot(image: &egui::ColorImage, path: Option<&str>) -> Value {
     let rgba: Vec<u8> = image.pixels.iter().flat_map(|c| c.to_array()).collect();
     let Some(png) = fieldcraft_render::png(w, h, &rgba) else { return json!({"ok": false, "error": "could not encode the screenshot"}) };
     let path = path.map(str::to_string).unwrap_or_else(|| std::env::temp_dir().join("fieldcraft-shot.png").to_string_lossy().to_string());
-    match std::fs::write(&path, &png) {
+    match fieldcraft_engine::write_output(std::path::Path::new(&path), &png) {
         Ok(()) => json!({"ok": true, "result": {"path": path, "width": w, "height": h}}),
         Err(e) => json!({"ok": false, "error": format!("{path}: {e}")}),
     }
