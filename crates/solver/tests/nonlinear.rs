@@ -606,9 +606,13 @@ fn frames_keep_their_reactions() {
 /// (forces times b a², moments times b a³): a = 1000, b = 10⁻⁶ is the part in mm-t-s-N-MPa, a =
 /// 1000, b = 1 the part a thousand times larger in SI.
 fn coupled_cantilever(a: f64, b: f64, tolerances: Tolerances) -> Grid {
+    coupled_cantilever_in(a, b, NonlinearStatic { initial_increment: 0.5, tolerances, ..NonlinearStatic::default() })
+}
+
+/// [`coupled_cantilever`] in the nonlinear static step `step`.
+fn coupled_cantilever_in(a: f64, b: f64, step: NonlinearStatic) -> Grid {
     let (length, side) = (0.2 * a, 0.02 * a);
     let mut g = grid([4, 1, 1], ElementKind::Hex20, |q| [length * q[0], side * q[1], side * q[2]]);
-    let step = NonlinearStatic { initial_increment: 0.5, tolerances, ..NonlinearStatic::default() };
     g.define(iso(1e7 * b, 0.3), None, full(), Procedure::NonlinearStatic(step));
     neo_hookean(&mut g, 1e7 * b, 0.3);
     g.fixed("root", |q| near(q[0], 0.0));
@@ -678,5 +682,40 @@ fn tight_tolerances_take_the_same_iterations_at_any_size() {
         let these = counts(a, b);
         eprintln!("{name}: iterations per increment {these:?} (SI {si:?})");
         assert_eq!(these, si, "{name}");
+    }
+}
+
+/// The arc length weighs the reference point's rotations by the model's size squared, so an
+/// arc-length step on the coupled cantilever (cylindrical and spherical arcs) takes the same
+/// increments along the same load-factor path whether its numbers are in SI, in mm-t-s-N-MPa, or
+/// those of the part a thousand times larger or smaller.
+#[test]
+fn arc_length_on_a_coupled_reference_point_follows_the_same_path_in_any_units_and_at_any_size() {
+    for constraint in [ArcConstraint::Cylindrical, ArcConstraint::Spherical] {
+        let path = |a: f64, b: f64| {
+            let arc = ArcLength { constraint, max_load_factor: 1.0, displacement_limit: None };
+            let step = NonlinearStatic { arc_length: Some(arc), initial_increment: 0.2, ..NonlinearStatic::default() };
+            let h = solve(&coupled_cantilever_in(a, b, step)).nonlinear.unwrap();
+            h.increments.iter().map(|i| (i.converged, i.iterations.len(), i.load_factor)).collect::<Vec<_>>()
+        };
+        let si = path(1.0, 1.0);
+        assert!(si.len() > 3 && si.last().is_some_and(|i| i.2 >= 1.0), "{constraint:?}: {si:?}");
+        eprintln!("{constraint:?} SI: {si:?}");
+        let scaled: Vec<_> =
+            [(1e3, 1e-6, "mm-t-s-N-MPa"), (1e3, 1.0, "the part a thousand times larger"), (1e-3, 1e3, "the part a thousand times smaller")]
+                .into_iter()
+                .map(|(a, b, name)| {
+                    let these = path(a, b);
+                    eprintln!("{constraint:?} {name}: {these:?}");
+                    (name, these)
+                })
+                .collect();
+        for (name, these) in scaled {
+            assert_eq!(these.len(), si.len(), "{constraint:?} {name}: {these:?} vs {si:?}");
+            for (x, y) in these.iter().zip(&si) {
+                assert_eq!((x.0, x.1), (y.0, y.1), "{constraint:?} {name}: {these:?} vs {si:?}");
+                assert!((x.2 - y.2).abs() <= 1e-6 * y.2.abs(), "{constraint:?} {name}: {these:?} vs {si:?}");
+            }
+        }
     }
 }

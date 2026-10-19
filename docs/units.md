@@ -85,7 +85,8 @@ least the force scale times the model's size L), translations of a correction ag
 increment's translation, rotations in radians against the increment's rotation (at least the
 translation over L). One norm over newtons and newton-metres, or metres and radians, would
 change with the unit system and the part's size, since a moment scales as a force times a
-length and a rotation not at all.
+length and a rotation not at all. The arc length of an arc-length step weighs rotations by L² for
+the same reason.
 
 ## Exactness
 

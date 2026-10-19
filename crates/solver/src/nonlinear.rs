@@ -1621,6 +1621,15 @@ struct ArcStart {
 }
 
 impl Run<'_> {
+    /// The arc length's inner product of two motions over the free equations: translations as
+    /// they are, rotations times L² (the translation a rotation gives at the model's size), so
+    /// the arc is a length² in any unit system and at any size of the part. Without rotations it
+    /// is the plain dot product, term for term.
+    fn arc_dot(&self, a: &[f64], b: &[f64]) -> f64 {
+        let lever = self.length * self.length;
+        a.iter().zip(b).enumerate().map(|(i, (x, y))| if self.rotation_eq.get(i).copied().unwrap_or(false) { x * y * lever } else { x * y }).sum()
+    }
+
     /// The tangent at (q, λ) factored (Cholesky, or LDLᵀ past a critical point), the unit load
     /// ∂r/∂λ at that state over the free equations (the loads at factor 1, less K T_p u_p for
     /// prescribed motions), and the evaluation's residual.
@@ -1654,8 +1663,9 @@ impl Run<'_> {
 
     /// One arc-length increment from the converged (q0, λ0) (M. A. Crisfield, *A fast
     /// incremental/iterative solution procedure that handles "snap-through"*, Computers &
-    /// Structures 13:55–62, 1981): the constraint Δqᵀ Δq + w Δλ² = Δl² (w = 0 cylindrical, w =
-    /// ‖q_f‖² spherical) with the load factor an unknown. Predictor along the tangent, its sign
+    /// Structures 13:55–62, 1981): the constraint Δqᵀ W Δq + w Δλ² = Δl² (W the identity on
+    /// translations and L² on rotations, [`Run::arc_dot`]; w = 0 cylindrical, w = ‖q_f‖²_W
+    /// spherical) with the load factor an unknown. Predictor along the tangent, its sign
     /// by the angle with the last increment (M. Feng, D. Perić, D. R. J. Owen, *A new criterion for
     /// determination of initial loading parameter in arc-length methods*, Computers & Structures
     /// 58(3):479–485, 1996); each correction δq = δq_r + δλ δq_g solves the quadratic for δλ and
@@ -1675,10 +1685,10 @@ impl Run<'_> {
         let tol = self.settings.tolerances;
         let qg = &start.load_displacement;
         let sign = match previous {
-            Some((dq, dl)) if dot(dq, qg) + weight * dl < 0.0 => -1.0,
+            Some((dq, dl)) if self.arc_dot(dq, qg) + weight * dl < 0.0 => -1.0,
             _ => 1.0,
         };
-        let mut dlam = sign * arc / (dot(qg, qg) + weight).sqrt();
+        let mut dlam = sign * arc / (self.arc_dot(qg, qg) + weight).sqrt();
         let mut dq: Vec<f64> = qg.iter().map(|g| dlam * g).collect();
         let mut correction = f64::INFINITY;
         let mut first_energy: Option<f64> = None;
@@ -1712,9 +1722,9 @@ impl Run<'_> {
             factor.solve(&mut dqg)?;
             // (Δq + δq_r + δλ δq_g)² + w (Δλ + δλ)² = Δl².
             let base: Vec<f64> = dq.iter().zip(&dqr).map(|(a, b)| a + b).collect();
-            let a = dot(&dqg, &dqg) + weight;
-            let b = 2.0 * (dot(&dqg, &base) + weight * dlam);
-            let c = dot(&base, &base) + weight * dlam * dlam - arc * arc;
+            let a = self.arc_dot(&dqg, &dqg) + weight;
+            let b = 2.0 * (self.arc_dot(&dqg, &base) + weight * dlam);
+            let c = self.arc_dot(&base, &base) + weight * dlam * dlam - arc * arc;
             let disc = b * b - 4.0 * a * c;
             if !(disc >= 0.0) || !(a > 0.0) {
                 return Err(Failure::Cutback("the arc-length constraint has no real root (the arc is too long here)".into()));
@@ -1723,7 +1733,7 @@ impl Run<'_> {
             // Stable roots of a x² + b x + c (no cancellation).
             let qr = -0.5 * (b + b.signum() * root);
             let roots = if qr == 0.0 { [0.0, 0.0] } else { [qr / a, c / qr] };
-            let cosine = |dl: f64| dot(&dq, &base) + dl * dot(&dq, &dqg) + weight * dlam * (dlam + dl);
+            let cosine = |dl: f64| self.arc_dot(&dq, &base) + dl * self.arc_dot(&dq, &dqg) + weight * dlam * (dlam + dl);
             let dl = if cosine(roots[0]) >= cosine(roots[1]) { roots[0] } else { roots[1] };
             let step: Vec<f64> = dqr.iter().zip(&dqg).map(|(r, g)| r + dl * g).collect();
             if step.iter().any(|v| !v.is_finite()) {
@@ -1792,7 +1802,7 @@ fn arc_length(
     let mut start = run.arc_start(&mut initial, &q, lambda, true).map_err(fatal)?;
     // States: load factor and negative eigenvalues, from the undeformed one.
     let mut states: Vec<(usize, f64, usize)> = vec![(0, 0.0, start.factor.inertia().negative)];
-    let scale = (dot(&start.load_displacement, &start.load_displacement)).sqrt();
+    let scale = (run.arc_dot(&start.load_displacement, &start.load_displacement)).sqrt();
     let weight = if arc.constraint == ArcConstraint::Spherical { scale * scale } else { 0.0 };
     let unit = (scale * scale + weight).sqrt();
     let mut size = settings.initial_increment * unit;

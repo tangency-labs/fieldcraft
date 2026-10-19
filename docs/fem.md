@@ -363,7 +363,9 @@ materials keeps Cholesky and is skipped when the tangent is indefinite.
 **Arc length.** `"arc_length": {"constraint": "cylindrical"|"spherical", "max_load_factor": 1,
 "displacement_limit": {"node", "direction", "displacement"}}` makes the load factor an unknown
 (Riks 1979, Crisfield 1981): each increment keeps ‖Δq‖² + w Δλ² = Δl² (w = 0 cylindrical, w the
-first tangent displacement's ‖q_f‖² for the spherical arc), predicts along the tangent with the
+first tangent displacement's ‖q_f‖² for the spherical arc; the norm weighs a rotation by L², the
+model's size squared, so the arc is a length² in any unit system and at any size of the part,
+and a step driven by rotations is still measured by them), predicts along the tangent with the
 sign of its angle to the last increment (Feng, Perić & Owen 1996), and corrects with
 δq = δq_r + δλ δq_g, δλ the root of the constraint's quadratic whose increment turns least
 (Crisfield's angle criterion). The first increment's load factor change is `initial_increment`,
