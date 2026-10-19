@@ -661,6 +661,60 @@ const FLUID_THERMAL: Field = group(
 .help("Heat carried by the flow: needs the material's conductivity and specific heat. Off for an isothermal flow.")
 .hint("isothermal when off");
 
+const AXIS: &[(&str, &str)] = &[("\"x\"", "X"), ("\"y\"", "Y"), ("\"z\"", "Z")];
+
+const RESISTANCE: &[Variant] = &[
+    variant(
+        "darcy_forchheimer",
+        "Darcy–Forchheimer",
+        &[
+            positive("permeability", "Permeability K", D::Area).help("The viscous resistance: a force per volume of μ/K times the velocity.").req(),
+            num("inertial", "Inertial C₂", D::None)
+                .help(
+                    "The inertial resistance per length: a force per volume of ρ C₂/2 times the velocity squared. Zero for a purely viscous medium.",
+                )
+                .def("0"),
+        ],
+    ),
+    variant(
+        "loss_coefficient",
+        "Loss coefficient",
+        &[positive("coefficient", "Loss coefficient k", D::None)
+            .help("The pressure drop across the zone is k ρ u²/2 at the velocity u through it (a grille's or filter's data sheet value).")
+            .req()],
+    ),
+];
+
+const POROUS_ZONE: &[Field] = &[
+    text("name", "Name").help("The vent's name, in the solve report.").req(),
+    xyz("min", "Box min", D::Length).help("The zone's corner with the smallest coordinates.").req(),
+    xyz("max", "Box max", D::Length).help("The zone's corner with the largest coordinates; it holds the cells whose centres it contains.").req(),
+    choice("axis", "Flow axis", AXIS)
+        .help("The axis the flow goes through it along: the thickness of a loss coefficient and the direction of its reported flow.")
+        .req(),
+    variants("resistance", "Resistance", RESISTANCE)
+        .help("How the zone resists the flow (in every direction).")
+        .req()
+        .def(r#"{"type": "loss_coefficient"}"#),
+];
+
+const FAN: &[Field] = &[
+    text("name", "Name").help("The fan's name, in the solve report.").req(),
+    xyz("min", "Box min", D::Length).help("The fan's corner with the smallest coordinates.").req(),
+    xyz("max", "Box max", D::Length)
+        .help("The fan's corner with the largest coordinates: usually one or a few cells thick along its direction.")
+        .req(),
+    choice("direction", "Direction", &[("\"+x\"", "+X"), ("\"-x\"", "−X"), ("\"+y\"", "+Y"), ("\"-y\"", "−Y"), ("\"+z\"", "+Z"), ("\"-z\"", "−Z")])
+        .help("The direction the fan blows.")
+        .req(),
+    table("curve", "Fan curve", D::None, &["flow", "pressure rise"], fieldcraft_model::fluid_zones::MAX_CURVE_POINTS)
+        .help("The pressure–flow curve: volume flow (volume per time) increasing from 0, pressure rise not increasing, in the model's units.")
+        .req(),
+    range("relaxation", "Relaxation", D::None, 1e-6, 1.0)
+        .help("How far the pressure rise moves toward the curve each time step; smaller is steadier.")
+        .hint("0.01"),
+];
+
 pub const FLUID_DOMAIN: &[Field] = &[
     NAME,
     reference("material", "Fluid", C::Material).help("The fluid material: needs a density and a viscosity.").req(),
@@ -699,6 +753,9 @@ pub const FLUID_DOMAIN: &[Field] = &[
         .help("How close a cell must be to an obstacle surface to count as on it.")
         .hint("a tenth of the cell size"),
     FLUID_THERMAL,
+    rows("porous", "Vents and filters", POROUS_ZONE)
+        .help("Porous resistance zones: vents, grilles, filters and perforated plates without resolving every hole."),
+    rows("fans", "Fans", FAN).help("Fans: zones that raise the pressure by their pressure–flow curve; the solve finds the operating point."),
 ];
 
 pub const FLUID_BOUNDARY: &[Field] = &[

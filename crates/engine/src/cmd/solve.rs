@@ -100,7 +100,7 @@ pub const HISTORY: CommandSpec = CommandSpec {
 pub const FLUID: CommandSpec = CommandSpec {
     id: "solve.fluid",
     label: "Solve Fluid Step",
-    params: r#"{"step": "Flow", "backend": "cpu", "max_cells": 16000000, "max_steps": 10000000, "max_cell_updates": 1e12, "max_frame_bytes": 2e9, "threads": 8} — runs a fluid step with the lattice Boltzmann solver (the only fluid step when `step` is left out): obstacles are triangulated from the open design or taken from imported surfaces; returns the time step, relaxation time, Mach number, mass, the final force on every wall and, with heat, the thermal relaxation time, the temperature range and the heat into every wall; `backend` is `cpu` (the default: double precision, the same result on every machine) or `gpu` (the step on the GPU `FIELDCRAFT_GPU` picks, single precision, within the backend's stated tolerance of the CPU; an error when the build has none); the caps may only be lowered; `threads` as for solve.static"#,
+    params: r#"{"step": "Flow", "backend": "cpu", "max_cells": 16000000, "max_steps": 10000000, "max_cell_updates": 1e12, "max_frame_bytes": 2e9, "threads": 8} — runs a fluid step with the lattice Boltzmann solver (the only fluid step when `step` is left out): obstacles are triangulated from the open design or taken from imported surfaces; returns the time step, relaxation time, Mach number, mass, the final force on every wall and, with heat, the thermal relaxation time, the temperature range and the heat into every wall; with fans and porous zones, each one's volume flow and its pressure rise (a fan's operating point: `pressure_rise` from its curve, and `measured_pressure_rise`) or `pressure_drop`; the measured values are the static-pressure difference between the fluid cell layers just outside the zone, so they include the wall friction over its thickness plus one cell (final and mean over the last quarter of the run); `backend` is `cpu` (the default: double precision, the same result on every machine) or `gpu` (the step on the GPU `FIELDCRAFT_GPU` picks, single precision, within the backend's stated tolerance of the CPU; an error when the build has none); the caps may only be lowered; `threads` as for solve.static"#,
     form: Some(super::forms::SOLVE_FLUID),
     kind: CommandKind::Model,
     requires: &[Requirement::FluidDomain, Requirement::Step],
@@ -591,6 +591,28 @@ fn fluid_summary(r: &FluidResult) -> Value {
             json!({"name": h.name, "body": h.body, "final": h.power.last(), "mean": mean})
         })
         .collect();
+    let tail_mean = |v: &[f64]| {
+        let recent = v.get(v.len().saturating_sub(tail)..).unwrap_or_default();
+        recent.iter().sum::<f64>() / recent.len().max(1) as f64
+    };
+    let zones: Vec<Value> = r
+        .zones
+        .iter()
+        .map(|z| {
+            let mut v = json!({
+                "name": z.name,
+                "kind": if z.fan { "fan" } else { "porous" },
+                "flow": {"final": z.flow.last(), "mean": tail_mean(&z.flow)},
+            });
+            if z.fan {
+                v["pressure_rise"] = json!({"final": z.fan_rise.last(), "mean": tail_mean(&z.fan_rise)});
+                v["measured_pressure_rise"] = json!({"final": z.pressure.last(), "mean": tail_mean(&z.pressure)});
+            } else {
+                v["pressure_drop"] = json!({"final": z.pressure.last(), "mean": tail_mean(&z.pressure)});
+            }
+            v
+        })
+        .collect();
     let temperature = last.filter(|f| !f.temperature.is_empty()).map(|f| {
         let fluid = f.temperature.iter().zip(&r.solid).filter(|(_, solid)| !**solid).map(|(t, _)| f64::from(*t));
         let (lo, hi) = fluid.fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), t| (lo.min(t), hi.max(t)));
@@ -618,6 +640,7 @@ fn fluid_summary(r: &FluidResult) -> Value {
         "temperature": temperature,
         "heat": heat,
         "stop": r.steady.as_ref().map(|s| steady_summary(s, &r.stats)),
+        "zones": zones,
         "warnings": r.warnings,
     })
 }
@@ -1369,6 +1392,104 @@ pub(crate) mod tests {
             &json!({"name": "Tank", "material": "Water", "min": min, "max": max, "spacing": 5, "obstacles": ["Nope"]}),
         )
         .unwrap();
+        assert!(s.execute("solve.fluid", &json!({})).is_err());
+    }
+
+    /// A duct 60 × 4 × 4 with walls around, periodic along x (a closed loop): a fan at x 2..4
+    /// blowing +x and a filter at x 10..12 (Darcy, permeability 0.05), through commands.
+    fn fan_duct(s: &mut Session) {
+        let periodic = json!({"type": "periodic"});
+        let script = json!([
+            {"command": "model.material.create", "params": {"name": "Air", "density": 1.0, "fluid": {"type": "newtonian", "viscosity": 0.1}}},
+            {"command": "model.fluid_domain.create", "params": {"name": "Duct", "material": "Air", "min": [0, 0, 0], "max": [60, 4, 4], "spacing": 1,
+                "faces": {"x_min": periodic, "x_max": periodic},
+                "porous": [{"name": "Grille", "min": [10, 0, 0], "max": [12, 4, 4], "axis": "x", "resistance": {"type": "darcy_forchheimer", "permeability": 0.05}}],
+                "fans": [{"name": "Fan", "min": [2, 0, 0], "max": [4, 4, 4], "direction": "+x", "curve": [[0, 0.002], [1.0, 0]], "relaxation": 0.05}]}},
+            {"command": "model.step.create", "params": {"name": "Blow", "procedure": {"type": "fluid", "domain": "Duct", "steps": 3000, "time_step": 1, "frames": 2}}},
+        ]);
+        s.run_script(&script).unwrap();
+    }
+
+    #[test]
+    fn a_fan_drives_a_duct_through_a_grille_and_the_reply_reports_the_operating_point() {
+        let mut s = Session::default();
+        fan_duct(&mut s);
+        let r = s.execute("solve.fluid", &json!({})).unwrap();
+        let zone = |name: &str| r["zones"].as_array().unwrap().iter().find(|z| z["name"] == name).cloned().unwrap();
+        let (fan, grille) = (zone("Fan"), zone("Grille"));
+        assert_eq!(fan["kind"], "fan");
+        assert_eq!(grille["kind"], "porous");
+        let q = fan["flow"]["final"].as_f64().unwrap();
+        let rise = fan["pressure_rise"]["final"].as_f64().unwrap();
+        assert!(q > 0.0 && rise > 0.0 && rise < 0.002, "{fan}");
+        // On its curve: Δp = 0.002 (1 − Q).
+        assert!((rise - 0.002 * (1.0 - q)).abs() < 0.01 * rise, "{fan}");
+        // What goes through the fan goes through the filter.
+        assert!((grille["flow"]["final"].as_f64().unwrap() / q - 1.0).abs() < 0.01, "{grille}");
+        // The measured differences are between the fluid layers next to each zone, so they
+        // include the duct's wall shear over t + Δx = 3 (G per length). Around the loop:
+        // the fan loses G·3 between its push and what is measured, the filter adds G·3 to its
+        // own loss, and the duct between them (60 − 2·3 = 54) loses the rest.
+        let drop = grille["pressure_drop"]["final"].as_f64().unwrap();
+        let measured = fan["measured_pressure_rise"]["final"].as_f64().unwrap();
+        let g = (rise - measured) / 3.0;
+        assert!(g > 0.0, "{fan}");
+        assert!(((measured - drop) / 54.0 / g - 1.0).abs() < 0.01, "loop momentum balance: {fan} {grille}");
+        // The filter's own loss is Darcy's (μ/K) u t at the mean velocity Q / 16 (linear, so
+        // the duct's profile does not matter), t = 2, and dominates the filter's drop. What
+        // remains above it (about 6%) is wall shear the duct's G does not cover: the filter
+        // flattens the profile, which shears the walls harder inside it, and the flow redevelops
+        // just after it. This is an integration bound; the precise check of the resistance law
+        // is wall-free: `a_porous_plate_drops_the_pressure_by_the_darcy_forchheimer_law` in
+        // crates/lbm/tests/zones.rs (within 0.5%).
+        let darcy = 0.1 / 0.05 * (q / 16.0) * 2.0;
+        assert!(((drop - 3.0 * g) / darcy - 1.0).abs() < 0.1, "filter loss {} vs Darcy {darcy}", drop - 3.0 * g);
+        assert!(darcy > 0.5 * drop, "the filter, not the walls, dominates its drop: {darcy} of {drop}");
+        assert!(r["mass"]["relative_change"].as_f64().unwrap().abs() < 1e-10, "{r}");
+
+        // Hostile zones are refused and leave the model as it was.
+        let before = s.model.clone();
+        let fan_with = |patch: Value| {
+            let mut f = json!({"name": "Fan", "min": [2, 0, 0], "max": [4, 4, 4], "direction": "+x", "curve": [[0, 0.002], [1.0, 0]]});
+            if let (Some(f), Some(p)) = (f.as_object_mut(), patch.as_object()) {
+                f.extend(p.clone());
+            }
+            json!({"name": "Duct", "material": "Air", "min": [0, 0, 0], "max": [20, 4, 4], "spacing": 1, "fans": [f]})
+        };
+        for patch in [
+            json!({"curve": [[0, 1]]}),
+            json!({"curve": [[0, 1], [0, 0]]}),
+            json!({"curve": [[0, 1], [1, 2]]}),
+            json!({"curve": [[-1, 1], [1, 0]]}),
+            json!({"curve": [[0, -1], [1, -2]]}),
+            json!({"curve": vec![[0.0, 1.0]; 2000]}),
+            json!({"curve": "fast"}),
+            json!({"direction": "up"}),
+            json!({"relaxation": 0}),
+            json!({"relaxation": 5}),
+            json!({"min": [5, 0, 0], "max": [4, 4, 4]}),
+            json!({"name": ""}),
+        ] {
+            assert!(s.execute("model.fluid_domain.edit", &fan_with(patch.clone())).is_err(), "{patch}");
+            assert_eq!(s.model, before);
+        }
+        for porous in [
+            json!({"name": "G", "min": [10, 0, 0], "max": [12, 4, 4], "axis": "x", "resistance": {"type": "loss_coefficient", "coefficient": -1}}),
+            json!({"name": "G", "min": [10, 0, 0], "max": [12, 4, 4], "axis": "w", "resistance": {"type": "loss_coefficient", "coefficient": 1}}),
+            json!({"name": "G", "min": [10, 0, 0], "max": [12, 4, 4], "axis": "x", "resistance": {"type": "darcy_forchheimer", "permeability": 0}}),
+            json!({"name": "G", "min": [10, 0, 0], "max": [12, 4, 4], "axis": "x", "resistance": {"type": "darcy_forchheimer", "permeability": 1, "inertial": -3}}),
+        ] {
+            let p = json!({"name": "Duct", "material": "Air", "min": [0, 0, 0], "max": [20, 4, 4], "spacing": 1, "porous": [porous]});
+            assert!(s.execute("model.fluid_domain.edit", &p).is_err(), "{p}");
+            assert_eq!(s.model, before);
+        }
+        // A fan outside the box, or one too strong for any time step, is refused when the
+        // step solves.
+        let outside = fan_with(json!({"min": [30, 0, 0], "max": [31, 4, 4]}));
+        s.execute("model.fluid_domain.edit", &outside).unwrap();
+        let e = s.execute("solve.fluid", &json!({})).unwrap_err().to_string();
+        assert!(e.contains("Fan"), "{e}");
+        s.execute("model.fluid_domain.edit", &fan_with(json!({"curve": [[0, f64::MAX], [1, f64::MIN]]}))).unwrap();
         assert!(s.execute("solve.fluid", &json!({})).is_err());
     }
 
