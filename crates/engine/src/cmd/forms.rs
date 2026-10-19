@@ -906,6 +906,27 @@ const PROCEDURE: Field = variants(
                     .hint("chosen for Mach 0.087"),
                 int("frames", "Frames", 1, 100_000).help("How many result frames to keep.").def("10"),
                 positive("magic", "TRT Λ", D::None).help("The two-relaxation-time magic parameter; 0.1875 is usual.").hint("0.1875"),
+                group(
+                    "steady",
+                    "Stop at steady state",
+                    &[
+                        range("tolerance", "Tolerance", D::None, 0.0, 1.0)
+                            .help("The relative change per window: steady when, two windows in a row, every monitored quantity varies by less than this fraction of its largest value.")
+                            .def("0.001"),
+                        positive("window", "Window", D::Time)
+                            .help("Flow time over which the change is measured; each window is sampled 8 times.")
+                            .hint("a twentieth of the step"),
+                        positive("min_time", "Minimum time", D::Time).help("No decision before this flow time.").hint("0"),
+                        positive("divergence", "Divergence limit", D::None)
+                            .help("Stop as diverged when a monitored quantity changes by more than this fraction over a window (after the minimum time).")
+                            .hint("off"),
+                        json("monitors", "Also monitor")
+                            .help("Quantities watched besides the velocity (and temperature) residual, as JSON: mass_flow through a box face, force or heat on walls, mean_temperature.")
+                            .hint("[{\"type\": \"force\", \"faces\": [\"x_min\"]}]"),
+                    ],
+                )
+                .help("Stop on its own once the flow stops changing; End time or Steps is then the longest it runs.")
+                .hint("runs its full length when off"),
             ],
         ),
     ],

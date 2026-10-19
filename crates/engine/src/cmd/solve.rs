@@ -617,7 +617,31 @@ fn fluid_summary(r: &FluidResult) -> Value {
         "tau_thermal": r.stats.tau_thermal,
         "temperature": temperature,
         "heat": heat,
+        "stop": r.steady.as_ref().map(|s| steady_summary(s, &r.stats)),
         "warnings": r.warnings,
+    })
+}
+
+/// Why a run to steady state stopped, when, and its monitor history.
+fn steady_summary(s: &fieldcraft_lbm::SteadyReport, stats: &fieldcraft_lbm::FluidStats) -> Value {
+    let value = |v: &Vec<f64>| if let [x] = v.as_slice() { json!(x) } else { json!(v) };
+    let history: Vec<Value> = s
+        .samples
+        .iter()
+        .map(|m| {
+            json!({"step": m.step, "time": m.time,
+                "values": m.values.iter().map(value).collect::<Vec<_>>(), "changes": m.changes})
+        })
+        .collect();
+    json!({
+        "reason": s.reason.name(),
+        "steps": stats.steps,
+        "time": stats.end_time,
+        "tolerance": s.tolerance,
+        "window": s.window,
+        "quantities": s.quantities,
+        "message": s.message,
+        "history": history,
     })
 }
 
@@ -1346,6 +1370,78 @@ pub(crate) mod tests {
         )
         .unwrap();
         assert!(s.execute("solve.fluid", &json!({})).is_err());
+    }
+
+    #[test]
+    fn a_fluid_step_stops_at_steady_state_and_says_why() {
+        let mut s = Session::default();
+        couette(&mut s);
+        let full = s.execute("solve.fluid", &json!({"step": "Shear"})).unwrap();
+        assert!(full["stop"].is_null(), "{full}");
+        let steady =
+            json!({"tolerance": 1e-5, "window": 1, "monitors": [{"type": "force", "faces": ["y_min"]}, {"type": "mass_flow", "face": "x_max"}]});
+        s.execute(
+            "model.step.create",
+            &json!({"name": "Settle", "procedure": {"type": "fluid", "domain": "Gap", "end_time": 50, "frames": 4, "steady": steady}}),
+        )
+        .unwrap();
+        let r = s.execute("solve.fluid", &json!({"step": "Settle"})).unwrap();
+        let stop = &r["stop"];
+        assert_eq!(stop["reason"], "steady", "{stop}");
+        assert_eq!(stop["quantities"], json!(["velocity", "force y_min", "mass_flow x_max"]));
+        assert_eq!(stop["steps"], r["steps"]);
+        assert!(r["steps"].as_u64().unwrap() < full["steps"].as_u64().unwrap() / 2, "{r}");
+        assert_eq!(r["frames"].as_array().unwrap().last(), Some(&r["end_time"]), "a frame at the stop: {r}");
+        let history = stop["history"].as_array().unwrap();
+        assert!(history[0]["changes"][0].is_null() && history.last().unwrap()["changes"][0].as_f64().unwrap() < 1e-5, "{stop}");
+        // The wall shear μ U / H over the wall's area, as the full run gives it.
+        let shear = history.last().unwrap()["values"][1][0].as_f64().unwrap();
+        assert!((shear / (0.1 * 0.1 * 0.125 * 0.125) - 1.0).abs() < 1e-3, "{shear}");
+
+        // Hostile rules are refused and leave the model as it was.
+        let hostile = [
+            json!({"tolerance": -1}),
+            json!({"tolerance": 2}),
+            json!({"tolerance": "tight"}),
+            json!({"window": 0}),
+            json!({"window": -1e308}),
+            json!({"min_time": -1}),
+            json!({"divergence": 0}),
+            json!({"monitors": [{"type": "vorticity"}]}),
+            json!({"monitors": [{"type": "force", "faces": []}]}),
+            json!({"monitors": [{"type": "force", "faces": vec!["x_min"; 5000]}]}),
+            json!({"monitors": [{"type": "mass_flow", "face": "top"}]}),
+            json!({"monitors": vec![json!({"type": "mean_temperature"}); 500]}),
+            json!({"monitors": 3}),
+            json!({"oops": 1}),
+            json!(7),
+        ];
+        for steady in &hostile {
+            let before = s.model.clone();
+            let p = json!({"name": "Bad", "procedure": {"type": "fluid", "domain": "Gap", "end_time": 50, "steady": steady}});
+            assert!(s.execute("model.step.create", &p).is_err(), "{steady}");
+            assert_eq!(s.model, before, "{steady}");
+        }
+        // Rules the model accepts but the flow cannot measure fail the solve, not the session.
+        for (name, monitors) in [
+            ("Ghost", json!([{"type": "force", "faces": [{"body": "Ghost", "face": "F1"}]}])),
+            ("Cold", json!([{"type": "mean_temperature"}])),
+            ("Huge", json!([{"type": "heat", "faces": ["y_min"]}])),
+        ] {
+            let steady = json!({"window": 1e300, "min_time": 1e300, "monitors": monitors});
+            s.execute("model.step.create", &json!({"name": name, "procedure": {"type": "fluid", "domain": "Gap", "end_time": 50, "steady": steady}}))
+                .unwrap();
+            assert!(s.execute("solve.fluid", &json!({"step": name})).is_err(), "{name}");
+        }
+        // A huge window and minimum time just run the full length.
+        s.execute(
+            "model.step.create",
+            &json!({"name": "Long", "procedure": {"type": "fluid", "domain": "Gap", "end_time": 50, "steady": {"window": 1e300, "min_time": 1e300}}}),
+        )
+        .unwrap();
+        let r = s.execute("solve.fluid", &json!({"step": "Long"})).unwrap();
+        assert_eq!(r["stop"]["reason"], "max_time", "{r}");
+        assert_eq!(r["steps"], full["steps"]);
     }
 
     #[test]
