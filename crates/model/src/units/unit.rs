@@ -30,73 +30,89 @@ const POWER: Dimension = Dimension::new(2, 1, -3, 0);
 const FREQUENCY: Dimension = Dimension::new(0, 0, -1, 0);
 
 /// A named unit: its spellings (the first is the canonical symbol), dimension, the size of one
-/// unit in SI, and the SI value of its zero (non-zero only for °C and °F).
+/// unit in SI as `mantissa × 10^exp10` (prefixes are exact powers of ten, so `t/mm³` is exactly
+/// 10^12 and its conversions are exact in decimal, see [`super::decimal`]), the SI value of its
+/// zero (non-zero only for °C and °F), and whether it is an angle.
 struct Atom {
     names: &'static [&'static str],
     dimension: Dimension,
-    factor: f64,
+    mantissa: f64,
+    exp10: i32,
     offset: f64,
+    angle: bool,
 }
 
-const fn atom(names: &'static [&'static str], dimension: Dimension, factor: f64) -> Atom {
-    Atom { names, dimension, factor, offset: 0.0 }
+/// A unit that is a power of ten of the SI one (`mm` is 10^-3 m).
+const fn ten(names: &'static [&'static str], dimension: Dimension, exp10: i32) -> Atom {
+    Atom { names, dimension, mantissa: 1.0, exp10, offset: 0.0, angle: false }
+}
+
+/// A unit with another factor (`in` is 0.0254 m).
+const fn times(names: &'static [&'static str], dimension: Dimension, mantissa: f64) -> Atom {
+    Atom { names, dimension, mantissa, exp10: 0, offset: 0.0, angle: false }
+}
+
+const fn angle(names: &'static [&'static str], dimension: Dimension, mantissa: f64) -> Atom {
+    Atom { names, dimension, mantissa, exp10: 0, offset: 0.0, angle: true }
 }
 
 const ATOMS: &[Atom] = &[
     // Length.
-    atom(&["m"], L, 1.0),
-    atom(&["km"], L, 1e3),
-    atom(&["cm"], L, 1e-2),
-    atom(&["mm"], L, 1e-3),
-    atom(&["µm", "μm", "um"], L, 1e-6),
-    atom(&["nm"], L, 1e-9),
-    atom(&["in", "inch"], L, INCH),
-    atom(&["ft"], L, FOOT),
+    ten(&["m"], L, 0),
+    ten(&["km"], L, 3),
+    ten(&["cm"], L, -2),
+    ten(&["mm"], L, -3),
+    ten(&["µm", "μm", "um"], L, -6),
+    ten(&["nm"], L, -9),
+    times(&["in", "inch"], L, INCH),
+    times(&["ft"], L, FOOT),
     // Mass.
-    atom(&["kg"], M, 1.0),
-    atom(&["g"], M, 1e-3),
-    atom(&["mg"], M, 1e-6),
-    atom(&["t", "tonne"], M, 1e3),
-    atom(&["lb", "lbm"], M, POUND_MASS),
+    ten(&["kg"], M, 0),
+    ten(&["g"], M, -3),
+    ten(&["mg"], M, -6),
+    ten(&["t", "tonne"], M, 3),
+    times(&["lb", "lbm"], M, POUND_MASS),
     // Time.
-    atom(&["s"], T, 1.0),
-    atom(&["ms"], T, 1e-3),
-    atom(&["µs", "μs", "us"], T, 1e-6),
-    atom(&["min"], T, 60.0),
-    atom(&["h"], T, 3600.0),
-    atom(&["Hz"], FREQUENCY, 1.0),
-    atom(&["kHz"], FREQUENCY, 1e3),
+    ten(&["s"], T, 0),
+    ten(&["ms"], T, -3),
+    ten(&["µs", "μs", "us"], T, -6),
+    times(&["min"], T, 60.0),
+    times(&["h"], T, 3600.0),
+    ten(&["Hz"], FREQUENCY, 0),
+    ten(&["kHz"], FREQUENCY, 3),
     // Temperature: as an absolute temperature °C and °F carry their offset; inside a compound unit
     // (W/(m·°C)) or as a temperature difference they are only a step size.
-    atom(&["K"], TH, 1.0),
-    Atom { names: &["°C", "degC", "℃"], dimension: TH, factor: 1.0, offset: CELSIUS_ZERO },
-    Atom { names: &["°F", "degF", "℉"], dimension: TH, factor: FAHRENHEIT_STEP, offset: FAHRENHEIT_ZERO },
+    ten(&["K"], TH, 0),
+    Atom { names: &["°C", "degC", "℃"], dimension: TH, mantissa: 1.0, exp10: 0, offset: CELSIUS_ZERO, angle: false },
+    Atom { names: &["°F", "degF", "℉"], dimension: TH, mantissa: FAHRENHEIT_STEP, exp10: 0, offset: FAHRENHEIT_ZERO, angle: false },
     // Force.
-    atom(&["N"], FORCE, 1.0),
-    atom(&["mN"], FORCE, 1e-3),
-    atom(&["kN"], FORCE, 1e3),
-    atom(&["MN"], FORCE, 1e6),
-    atom(&["lbf"], FORCE, POUND_FORCE),
-    atom(&["kip"], FORCE, 1e3 * POUND_FORCE),
+    ten(&["N"], FORCE, 0),
+    ten(&["mN"], FORCE, -3),
+    ten(&["kN"], FORCE, 3),
+    ten(&["MN"], FORCE, 6),
+    times(&["lbf"], FORCE, POUND_FORCE),
+    Atom { names: &["kip"], dimension: FORCE, mantissa: POUND_FORCE, exp10: 3, offset: 0.0, angle: false },
     // Pressure and stress.
-    atom(&["Pa"], PRESSURE, 1.0),
-    atom(&["kPa"], PRESSURE, 1e3),
-    atom(&["MPa"], PRESSURE, 1e6),
-    atom(&["GPa"], PRESSURE, 1e9),
-    atom(&["bar"], PRESSURE, 1e5),
-    atom(&["psi"], PRESSURE, POUND_FORCE / (INCH * INCH)),
-    atom(&["ksi"], PRESSURE, 1e3 * POUND_FORCE / (INCH * INCH)),
+    ten(&["Pa"], PRESSURE, 0),
+    ten(&["kPa"], PRESSURE, 3),
+    ten(&["MPa"], PRESSURE, 6),
+    ten(&["GPa"], PRESSURE, 9),
+    ten(&["bar"], PRESSURE, 5),
+    times(&["psi"], PRESSURE, POUND_FORCE / (INCH * INCH)),
+    Atom { names: &["ksi"], dimension: PRESSURE, mantissa: POUND_FORCE / (INCH * INCH), exp10: 3, offset: 0.0, angle: false },
     // Energy and power.
-    atom(&["J"], ENERGY, 1.0),
-    atom(&["mJ"], ENERGY, 1e-3),
-    atom(&["kJ"], ENERGY, 1e3),
-    atom(&["W"], POWER, 1.0),
-    atom(&["mW"], POWER, 1e-3),
-    atom(&["kW"], POWER, 1e3),
+    ten(&["J"], ENERGY, 0),
+    ten(&["mJ"], ENERGY, -3),
+    ten(&["kJ"], ENERGY, 3),
+    ten(&["W"], POWER, 0),
+    ten(&["mW"], POWER, -3),
+    ten(&["kW"], POWER, 3),
     // Dimensionless: angles and ratios.
-    atom(&["rad"], ONE, 1.0),
-    atom(&["deg", "°"], ONE, std::f64::consts::PI / 180.0),
-    atom(&["%"], ONE, 1e-2),
+    angle(&["rad"], ONE, 1.0),
+    angle(&["deg", "°"], ONE, std::f64::consts::PI / 180.0),
+    // Revolutions per minute: an angular velocity.
+    angle(&["rpm"], FREQUENCY, std::f64::consts::TAU / 60.0),
+    ten(&["%"], ONE, -2),
 ];
 
 /// Longest accepted unit or quantity text; longer input is refused unparsed.
@@ -105,13 +121,18 @@ pub(super) const MAX_TEXT: usize = 64;
 const MAX_POWER: i8 = 6;
 /// Deepest accepted parenthesis nesting.
 const MAX_DEPTH: usize = 4;
+/// Largest power of ten a unit's factor may have (`(km)^6` is 10^18).
+const MAX_EXP10: u32 = 60;
 
-/// A unit, possibly compound, reduced to SI: `value_si = value * factor + offset`.
+/// A unit, possibly compound, reduced to SI: `value_si = value × mantissa × 10^exp10 + offset`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Unit {
     symbol: String,
     dimension: Dimension,
-    factor: f64,
+    /// The factor to SI is `mantissa × 10^exp10`: the power of ten of the prefixes is kept apart,
+    /// so it scales exactly in decimal ([`super::decimal`]).
+    mantissa: f64,
+    exp10: i32,
     /// The SI value of the unit's zero: non-zero only for a lone °C or °F.
     offset: f64,
     /// Whether the unit names an angle (`rad`, `deg`, `°`): only angles accept it.
@@ -132,19 +153,25 @@ impl Unit {
             return Err(UnitError::TooLong);
         }
         if text == "1" {
-            return Ok(Unit { symbol: text.to_string(), dimension: Dimension::NONE, factor: 1.0, offset: 0.0, angle: false });
+            return Ok(Unit { symbol: text.to_string(), dimension: Dimension::NONE, mantissa: 1.0, exp10: 0, offset: 0.0, angle: false });
         }
         let mut p = Parser { chars: text.chars().collect(), pos: 0, text, angle: false };
-        let (dimension, factor, atoms, offset) = p.expression(0)?;
+        let Parsed { dimension, mantissa, exp10, atoms, offset } = p.expression(0)?;
         if p.pos != p.chars.len() {
             return Err(p.syntax());
         }
         // An offset only means something for a lone temperature unit.
         let offset = if atoms == 1 { offset } else { 0.0 };
-        if !(factor.is_finite() && factor > 0.0) {
+        let factor = super::decimal::shift(mantissa, exp10);
+        if !(mantissa.is_finite() && mantissa > 0.0 && factor.is_finite() && factor > 0.0 && exp10.unsigned_abs() <= MAX_EXP10) {
             return Err(UnitError::OutOfRange(text.to_string()));
         }
-        Ok(Unit { symbol: text.to_string(), dimension, factor, offset, angle: p.angle })
+        Ok(Unit { symbol: text.to_string(), dimension, mantissa, exp10, offset, angle: p.angle })
+    }
+
+    /// The unit of a ratio, `1`.
+    pub fn one() -> Unit {
+        Unit { symbol: "1".to_string(), dimension: Dimension::NONE, mantissa: 1.0, exp10: 0, offset: 0.0, angle: false }
     }
 
     pub fn symbol(&self) -> &str {
@@ -157,7 +184,13 @@ impl Unit {
 
     /// The size of one unit in SI (for °C and °F, the size of one degree).
     pub fn factor(&self) -> f64 {
-        self.factor
+        super::decimal::shift(self.mantissa, self.exp10)
+    }
+
+    /// Whether this unit is SI's for its dimension (factor exactly one, no offset): converting
+    /// through it changes nothing.
+    pub fn is_si(&self) -> bool {
+        self.mantissa == 1.0 && self.exp10 == 0 && self.offset == 0.0
     }
 
     /// Whether the unit names an angle (`rad`, `deg`, `°`).
@@ -168,12 +201,16 @@ impl Unit {
     /// Converts a value in this unit to SI. `absolute` applies the zero offset (absolute
     /// temperatures); temperature differences and every other quantity pass `false`.
     pub(super) fn to_si(&self, value: f64, absolute: bool) -> f64 {
-        value * self.factor + if absolute { self.offset } else { 0.0 }
+        let scaled = if self.mantissa == 1.0 { value } else { value * self.mantissa };
+        let scaled = super::decimal::shift(scaled, self.exp10);
+        if absolute && self.offset != 0.0 { super::decimal::add(scaled, self.offset) } else { scaled }
     }
 
     /// Converts an SI value to this unit; the inverse of [`Unit::to_si`].
     pub(super) fn express(&self, si: f64, absolute: bool) -> f64 {
-        (si - if absolute { self.offset } else { 0.0 }) / self.factor
+        let v = if absolute && self.offset != 0.0 { super::decimal::add(si, -self.offset) } else { si };
+        let v = super::decimal::shift(v, -self.exp10);
+        if self.mantissa == 1.0 { v } else { v / self.mantissa }
     }
 }
 
@@ -184,8 +221,16 @@ struct Parser<'a> {
     angle: bool,
 }
 
-/// Dimension, factor, number of named units, offset of the last named unit.
-type Parsed = (Dimension, f64, usize, f64);
+/// A parsed unit expression: its dimension, factor (`mantissa × 10^exp10`), number of named
+/// units and the offset of the last named unit.
+#[derive(Clone, Copy)]
+struct Parsed {
+    dimension: Dimension,
+    mantissa: f64,
+    exp10: i32,
+    atoms: usize,
+    offset: f64,
+}
 
 impl Parser<'_> {
     fn syntax(&self) -> UnitError {
@@ -208,13 +253,13 @@ impl Parser<'_> {
         self.skip_spaces();
         // A leading `1` is a numerator: `1/K`, `1/s`.
         let leading_one = self.peek() == Some('1') && !self.chars.get(self.pos + 1).is_some_and(char::is_ascii_digit);
-        let (mut dim, mut factor, mut atoms, mut offset) = if leading_one {
+        let mut acc = if leading_one {
             self.pos += 1;
             self.skip_spaces();
             if self.peek() != Some('/') {
                 return Err(self.syntax());
             }
-            (Dimension::NONE, 1.0, 0, 0.0)
+            Parsed { dimension: Dimension::NONE, mantissa: 1.0, exp10: 0, atoms: 0, offset: 0.0 }
         } else {
             self.term(depth)?
         };
@@ -232,23 +277,25 @@ impl Parser<'_> {
             };
             self.pos += 1;
             self.skip_spaces();
-            let (d, f, a, o) = self.term(depth)?;
+            let t = self.term(depth)?;
             let overflow = || UnitError::OutOfRange(self.text.to_string());
             if divide {
-                dim = dim.checked_div(d).ok_or_else(overflow)?;
-                factor /= f;
+                acc.dimension = acc.dimension.checked_div(t.dimension).ok_or_else(overflow)?;
+                acc.mantissa /= t.mantissa;
+                acc.exp10 = acc.exp10.checked_sub(t.exp10).ok_or_else(overflow)?;
             } else {
-                dim = dim.checked_mul(d).ok_or_else(overflow)?;
-                factor *= f;
+                acc.dimension = acc.dimension.checked_mul(t.dimension).ok_or_else(overflow)?;
+                acc.mantissa *= t.mantissa;
+                acc.exp10 = acc.exp10.checked_add(t.exp10).ok_or_else(overflow)?;
             }
-            atoms += a;
-            offset = o;
+            acc.atoms += t.atoms;
+            acc.offset = t.offset;
         }
-        Ok((dim, factor, atoms, offset))
+        Ok(acc)
     }
 
     fn term(&mut self, depth: usize) -> Result<Parsed, UnitError> {
-        let (dim, factor, atoms, offset) = if self.peek() == Some('(') {
+        let base = if self.peek() == Some('(') {
             if depth >= MAX_DEPTH {
                 return Err(self.syntax());
             }
@@ -265,11 +312,13 @@ impl Parser<'_> {
         };
         let power = self.power()?;
         if power == 1 {
-            return Ok((dim, factor, atoms, offset));
+            return Ok(base);
         }
-        let dim = dim.checked_pow(power).ok_or_else(|| UnitError::OutOfRange(self.text.to_string()))?;
+        let overflow = || UnitError::OutOfRange(self.text.to_string());
+        let dimension = base.dimension.checked_pow(power).ok_or_else(overflow)?;
+        let exp10 = base.exp10.checked_mul(i32::from(power)).ok_or_else(overflow)?;
         // A powered unit is never a lone absolute temperature.
-        Ok((dim, factor.powi(i32::from(power)), atoms + 1, 0.0))
+        Ok(Parsed { dimension, mantissa: base.mantissa.powi(i32::from(power)), exp10, atoms: base.atoms + 1, offset: 0.0 })
     }
 
     fn atom(&mut self) -> Result<Parsed, UnitError> {
@@ -286,8 +335,8 @@ impl Parser<'_> {
         }
         let name: String = self.chars.get(start..self.pos).unwrap_or_default().iter().collect();
         let atom = ATOMS.iter().find(|a| a.names.contains(&name.as_str())).ok_or_else(|| UnitError::UnknownUnit(name.clone()))?;
-        self.angle |= matches!(atom.names.first(), Some(&("rad" | "deg")));
-        Ok((atom.dimension, atom.factor, 1, atom.offset))
+        self.angle |= atom.angle;
+        Ok(Parsed { dimension: atom.dimension, mantissa: atom.mantissa, exp10: atom.exp10, atoms: 1, offset: atom.offset })
     }
 
     /// An optional integer exponent; 1 when absent.

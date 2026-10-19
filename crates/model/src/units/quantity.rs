@@ -47,17 +47,26 @@ quantities! {
     Area = "area", d(2, 0, 0, 0), "m²";
     Volume = "volume", d(3, 0, 0, 0), "m³";
     SecondMomentOfArea = "second_moment_of_area", d(4, 0, 0, 0), "m⁴";
+    InverseLength = "inverse_length", d(-1, 0, 0, 0), "1/m";
     Mass = "mass", d(0, 1, 0, 0), "kg";
+    RotaryInertia = "rotary_inertia", d(2, 1, 0, 0), "kg·m²";
     Density = "density", d(-3, 1, 0, 0), "kg/m³";
     Time = "time", d(0, 0, 1, 0), "s";
     Frequency = "frequency", d(0, 0, -1, 0), "Hz";
+    AngularVelocity = "angular_velocity", d(0, 0, -1, 0), "rad/s";
+    StrainRate = "strain_rate", d(0, 0, -1, 0), "1/s";
     Velocity = "velocity", d(1, 0, -1, 0), "m/s";
+    InverseVelocity = "inverse_velocity", d(-1, 0, 1, 0), "s/m";
     Acceleration = "acceleration", d(1, 0, -2, 0), "m/s²";
+    VolumeFlow = "volume_flow", d(3, 0, -1, 0), "m³/s";
     Force = "force", d(1, 1, -2, 0), "N";
     Moment = "moment", d(2, 1, -2, 0), "N·m";
     Pressure = "pressure", d(-1, 1, -2, 0), "Pa";
+    ForcePerVolume = "force_per_volume", d(-2, 1, -2, 0), "N/m³";
     Stiffness = "stiffness", d(0, 1, -2, 0), "N/m";
+    RotationalStiffness = "rotational_stiffness", d(2, 1, -2, 0), "N·m/rad";
     Damping = "damping", d(0, 1, -1, 0), "N·s/m";
+    RotationalDamping = "rotational_damping", d(2, 1, -1, 0), "N·m·s/rad";
     Energy = "energy", d(2, 1, -2, 0), "J";
     Power = "power", d(2, 1, -3, 0), "W";
     DynamicViscosity = "dynamic_viscosity", d(-1, 1, -1, 0), "Pa·s";
@@ -106,10 +115,18 @@ impl Quantity {
         if v.is_finite() { Ok(v) } else { Err(UnitError::NotFinite(v.to_string())) }
     }
 
+    /// Whether the quantity is per radian or in radians (an angle, an angular velocity, a
+    /// torsional spring): its units name the angle (`rad`, `deg`, `°`, `rpm`), and other
+    /// quantities' units never do.
+    pub fn is_angular(self) -> bool {
+        matches!(self, Quantity::Angle | Quantity::AngularVelocity | Quantity::RotationalStiffness | Quantity::RotationalDamping)
+    }
+
     fn check(self, unit: &Unit) -> Result<(), UnitError> {
         if unit.dimension() == self.dimension() {
-            // Angles and ratios share the empty dimension: only an angle takes rad, deg or °.
-            if unit.is_angle() == (self == Quantity::Angle) {
+            // Angles and ratios share the empty dimension (and an angular velocity a frequency's):
+            // only angular quantities take rad, deg or °, and they must.
+            if unit.is_angle() == self.is_angular() {
                 Ok(())
             } else {
                 Err(UnitError::WrongKind { unit: unit.symbol().to_string(), quantity: self.name() })

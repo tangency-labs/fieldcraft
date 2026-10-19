@@ -15,6 +15,7 @@
 //! is implausible for it (a steel modulus of 210 000 in a metre–pascal model, a density of 7850
 //! in a millimetre–tonne one), and so writers can say which system a deck is in.
 
+mod decimal;
 mod dimension;
 mod display;
 mod quantity;
@@ -42,7 +43,9 @@ pub enum UnitError {
     OutOfRange(String),
     #[error("`{0}` is below absolute zero")]
     BelowAbsoluteZero(String),
-    #[error("`{unit}` is not a unit of {quantity} (angles take rad, deg or °; ratios take 1 or %)")]
+    #[error(
+        "`{unit}` is not a unit of {quantity} (angles, angular velocities and torsional springs take rad, deg, ° or rpm; no other quantity does)"
+    )]
     WrongKind { unit: String, quantity: &'static str },
     #[error("`{unit}` is {found}, but a {quantity} is {expected}")]
     WrongDimension { unit: String, found: Dimension, quantity: &'static str, expected: Dimension },

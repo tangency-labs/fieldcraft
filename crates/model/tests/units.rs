@@ -7,7 +7,7 @@ fn close(a: f64, b: f64) -> bool {
 }
 
 fn si(q: Quantity, text: &str) -> f64 {
-    q.parse(text, &DisplaySystem::new(Preset::Si)).unwrap_or_else(|e| panic!("{text}: {e}"))
+    q.parse(text, &DisplaySystem::new(Preset::MKgS)).unwrap_or_else(|e| panic!("{text}: {e}"))
 }
 
 fn shown(q: Quantity, si_value: f64, preset: Preset) -> f64 {
@@ -149,9 +149,42 @@ fn angles_and_ratios_are_kept_apart() {
     assert!(matches!(Q::Angle.parse("90 mm", &mm), Err(UnitError::WrongDimension { .. })));
     assert!(Q::Pressure.parse("1 MPa·deg", &mm).is_err());
     assert!(close(Q::Angle.parse("90 °", &mm).unwrap(), std::f64::consts::FRAC_PI_2));
-    assert!(close(Q::Angle.parse("90", &mm).unwrap(), std::f64::consts::FRAC_PI_2)); // display: deg
+    assert!(close(Q::Angle.parse("1.5", &mm).unwrap(), 1.5)); // display: rad, as rotations always were
+    assert!(close(Q::AngularVelocity.parse("60 rpm", &mm).unwrap(), std::f64::consts::TAU));
+    assert!(close(Q::AngularVelocity.parse("180 deg/s", &mm).unwrap(), std::f64::consts::PI));
+    assert!(matches!(Q::AngularVelocity.parse("1 Hz", &mm), Err(UnitError::WrongKind { .. })));
+    assert!(matches!(Q::Frequency.parse("1 rad/s", &mm), Err(UnitError::WrongKind { .. })));
+    assert!(close(Q::RotationalStiffness.parse("2 N·m/rad", &mm).unwrap(), 2.0));
+    assert!(close(Q::RotationalStiffness.parse("2", &mm).unwrap(), 2e-3)); // N·mm/rad
     assert!(close(Q::Dimensionless.parse("0.3", &mm).unwrap(), 0.3));
     assert!(close(Q::ThermalExpansion.parse("12e-6 1/K", &mm).unwrap(), 12e-6));
     assert!(close(Q::Frequency.parse("0.01 1/s", &mm).unwrap(), 0.01));
     assert!(close(Q::ThermalConductivity.parse("50 W/(m K)", &mm).unwrap(), 50.0));
+}
+
+/// A value typed with up to 15 significant digits in a metric preset converts to SI and back to
+/// exactly what was typed, and its SI value is the double nearest the exact decimal (7.85e-9
+/// t/mm³ is 7850 kg/m³, not 7850.000000000001).
+#[test]
+fn typed_values_convert_exactly_in_metric_presets() {
+    use Quantity as Q;
+    for preset in [Preset::MKgS, Preset::MmTonneS, Preset::MmKgMs, Preset::MmGMs] {
+        let d = DisplaySystem::new(preset);
+        for &q in Quantity::ALL {
+            for i in 1..2000 {
+                for v in [f64::from(i) / 100.0, -f64::from(i) * 7.0, format!("{i}e-9").parse::<f64>().unwrap()] {
+                    // Absolute temperatures stop at absolute zero.
+                    let v = if q == Q::Temperature { v.abs() } else { v };
+                    let si = d.to_si(q, v).unwrap();
+                    assert_eq!(d.express(q, si).unwrap(), v, "{preset:?} {q:?} {v}");
+                }
+            }
+        }
+    }
+    let mm = DisplaySystem::default();
+    assert_eq!(mm.to_si(Q::Density, 7.85e-9).unwrap(), 7850.0);
+    assert_eq!(mm.to_si(Q::Length, 3.97).unwrap(), 0.00397);
+    assert_eq!(mm.to_si(Q::Pressure, 210000.0).unwrap(), 2.1e11);
+    assert_eq!(mm.to_si(Q::Temperature, 20.0).unwrap(), 293.15);
+    assert_eq!(mm.to_si(Q::SpecificHeat, 4.6e8).unwrap(), 460.0);
 }
