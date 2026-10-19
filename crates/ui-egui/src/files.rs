@@ -313,8 +313,10 @@ pub struct Loading {
     pub command: &'static str,
     /// Where the command is, reported from the worker ([`fieldcraft_model::progress`]).
     pub progress: Arc<Progress>,
-    /// When it started (app time, seconds).
-    pub started: f64,
+    /// When it started, on a monotonic clock: the window's frame time stands still while the
+    /// window is hidden or covered (no frames are drawn), which made a 6 s solve "done in 0.0 s"
+    /// (#590).
+    pub started: web_time::Instant,
     /// Control-channel requests waiting for its reply (`engine.execute` of a long command,
     /// `job.wait`): each gets the command's result, or why it has none.
     pub waiters: Vec<Sender<Value>>,
@@ -322,12 +324,12 @@ pub struct Loading {
 
 impl Loading {
     /// The job for `ui.inspect` and `job.status`: what runs, where it is and for how long.
-    pub fn to_json(&self, now: f64) -> Value {
+    pub fn to_json(&self) -> Value {
         let p = self.progress.snapshot();
         json!({
             "title": self.title,
             "command": self.command,
-            "elapsed": (now - self.started).max(0.0),
+            "elapsed": self.started.elapsed().as_secs_f64(),
             "progress": p,
             "fraction": p.fraction(),
             "line": p.line(),
@@ -335,9 +337,9 @@ impl Loading {
     }
 
     /// The overlay's line: `Solving · Step 1/2 Load · Load factor 0.3 of 1 · 12 s`.
-    pub fn line(&self, now: f64) -> String {
+    pub fn line(&self) -> String {
         let p = self.progress.snapshot().line();
-        let elapsed = elapsed((now - self.started).max(0.0));
+        let elapsed = elapsed(self.started.elapsed().as_secs_f64());
         if p.is_empty() { format!("{}… · {elapsed}", self.title) } else { format!("{}… · {p} · {elapsed}", self.title) }
     }
 }
@@ -576,7 +578,7 @@ impl ModelApp {
         let progress = Progress::new();
         let (rx, pending) = spawn(base, command, params, progress.clone(), self.bodies.0.clone());
         self.set_status(format!("{title}…"), false);
-        let started = self.now;
+        let started = web_time::Instant::now();
         self.loading = Some(Loading { title, done, recent, form: None, rx, pending, shown: false, command, progress, started, waiters: Vec::new() });
         true
     }
@@ -781,7 +783,7 @@ impl ModelApp {
         for w in &l.waiters {
             let _ = w.send(reply.clone());
         }
-        let took = elapsed((self.now - l.started).max(0.0));
+        let took = elapsed(l.started.elapsed().as_secs_f64());
         let l = Loading { done: finished(l.command, &l.done, &took, &reply), ..l };
         match outcome {
             Some((session, Ok((reply, prebuilt)))) => {
@@ -1087,7 +1089,7 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
     if hovering || app.loading.is_some() {
         let fraction = app.loading.as_ref().and_then(|l| l.progress.snapshot().fraction());
         let text = match app.loading.as_ref() {
-            Some(l) => l.line(app.now),
+            Some(l) => l.line(),
             None => "Drop to open: .fieldcraft models, .solidcraft designs, .3mf tagged meshes".into(),
         };
         let mut cancel = false;
@@ -1708,7 +1710,7 @@ mod tests {
         assert_eq!(job, 1);
         let (tx, rx) = std::sync::mpsc::channel();
         app.loading.as_mut().unwrap().waiters.push(tx);
-        assert_eq!(app.loading.as_ref().unwrap().to_json(app.now)["command"], "solve.run");
+        assert_eq!(app.loading.as_ref().unwrap().to_json()["command"], "solve.run");
         app.cancel_loading();
         app.logic(&egui::Context::default());
         assert_eq!(app.ui.workspace, Workspace::Model);
@@ -1719,6 +1721,25 @@ mod tests {
         empty.solve_all();
         empty.logic(&egui::Context::default());
         assert_eq!(empty.ui.workspace, Workspace::Model);
+    }
+
+    /// A job's time comes from a clock, not the window's frame time, which stands still while no
+    /// frames are drawn (a hidden or covered window): a solve that took 6 s said "done in 0.0 s"
+    /// (#590). Here no frame is drawn at all (`now` stays 0) while the job runs 0.3 s or more.
+    #[test]
+    fn a_job_reports_its_time_without_frames() {
+        let mut app = ModelApp::new(Session::default());
+        app.open_sample("cantilever");
+        app.wait_loaded();
+        let frozen = app.now;
+        app.start_job("solve.run", serde_json::json!({})).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(app.loading.as_ref().unwrap().to_json()["elapsed"].as_f64().unwrap() >= 0.3);
+        app.wait_loaded();
+        assert_eq!(app.now, frozen);
+        let status = app.status.clone().unwrap();
+        let took: f64 = status.text.rsplit(" in ").next().and_then(|t| t.trim_end_matches(" s").parse().ok()).unwrap_or(0.0);
+        assert!(status.text.starts_with("Solved ") && took >= 0.3, "{}", status.text);
     }
 
     /// A first-time user's path: Open picks a SolidCraft design, the Tet Mesh button opens its

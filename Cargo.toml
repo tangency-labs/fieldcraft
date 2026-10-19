@@ -37,6 +37,8 @@ thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 log = "0.4"
+# std::time::Instant on the web too (already in the tree through egui).
+web-time = "1.1"
 
 # xtask: reading Rust sources as syntax trees (`cargo xtask unit-factors`)
 syn = { version = "2", default-features = false, features = ["full", "parsing", "visit"] }

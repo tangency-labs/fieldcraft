@@ -216,10 +216,10 @@ pub fn handle(app: &mut ModelApp, ctx: &egui::Context, req: &ControlRequest) -> 
             }
             wrap(app.run(id, params))
         }
-        "job.status" => ok(json!({"job": app.loading.as_ref().map(|l| l.to_json(app.now))})),
+        "job.status" => ok(json!({"job": app.loading.as_ref().map(|l| l.to_json())})),
         "job.wait" => wait_job(app, req),
         "job.cancel" => {
-            let job = app.loading.as_ref().map(|l| l.to_json(app.now));
+            let job = app.loading.as_ref().map(|l| l.to_json());
             app.cancel_loading();
             ok(json!({"cancelled": job}))
         }
@@ -240,7 +240,7 @@ pub fn handle(app: &mut ModelApp, ctx: &egui::Context, req: &ControlRequest) -> 
             "results": app.session.results_report(),
             "probe": app.probe,
             "busy": app.busy(),
-            "job": app.loading.as_ref().map(|l| l.to_json(app.now)),
+            "job": app.loading.as_ref().map(|l| l.to_json()),
             "solve": solve_json(app),
             "selected": app.selected.as_ref().map(|(k, n)| json!({"kind": k, "name": n})).or_else(|| app.selected_seed.as_ref().map(|e| json!({"kind": "seed", "edge": e}))),
             "browser": crate::browser::describe(app),

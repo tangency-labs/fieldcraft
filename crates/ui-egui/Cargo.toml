@@ -24,6 +24,7 @@ fieldcraft-gpu = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
+web-time = { workspace = true }
 resvg = { workspace = true }
 png = { workspace = true }
 
