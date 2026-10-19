@@ -1,0 +1,14 @@
+[
+  {"command": "model.units", "params": {"system": "unspecified"}},
+  {"command": "mesh.block", "params": {"body": "Fin", "kind": "wedge6", "corners": [[0,0,0],[20,0,0],[20,5,0],[0,5,0],[0,0,2],[20,0,2],[20,5,2],[0,5,2]], "divisions": [2, 1, 1], "faces": {"6": "base", "4": "tip"}}},
+  {"command": "model.set.create", "params": {"name": "all", "geometry": [{"body": "Fin"}]}},
+  {"command": "model.set.create", "params": {"name": "base", "geometry": [{"body": "Fin", "face": "base"}]}},
+  {"command": "model.set.create", "params": {"name": "tip", "geometry": [{"body": "Fin", "face": "tip"}]}},
+  {"command": "model.material.create", "params": {"name": "Copper", "elastic": {"type": "isotropic", "young": 117000, "poisson": 0.34}, "density": 8.96e-9, "thermal": {"conductivity": 0.4, "specific_heat": 3.85e8, "expansion": 1.7e-5, "reference_temperature": 20}}},
+  {"command": "model.section.create", "params": {"name": "solid", "set": "all", "material": "Copper", "kind": {"type": "solid"}}},
+  {"command": "model.boundary_condition.create", "params": {"name": "hot", "type": "temperature", "target": {"set": "base"}, "value": 90}},
+  {"command": "model.load.create", "params": {"name": "cooling", "type": "convection", "set": "tip", "film": 2.5e-5, "sink": 20}},
+  {"command": "model.step.create", "params": {"name": "Heat", "procedure": {"type": "heat_transfer", "transient": {"end_time": 10, "increment": 0.5, "theta": 1, "initial_temperature": 20}}}},
+  {"command": "model.step.activate", "params": {"step": "Heat", "boundary_conditions": ["hot"], "loads": ["cooling"]}},
+  {"command": "file.save_as", "params": {"path": "unspecified-units.fieldcraft"}}
+]

@@ -1,0 +1,8 @@
+[
+  {"command": "model.units", "params": {"system": "mm-t-s-N-MPa"}},
+  {"command": "model.material.create", "params": {"name": "Air", "density": 1.2e-12, "fluid": {"type": "newtonian", "viscosity": 1.8e-11}, "thermal": {"conductivity": 0.026, "specific_heat": 1005000000.0}}},
+  {"command": "model.fluid_domain.create", "params": {"name": "Flow", "material": "Air", "min": [0, 0, 0], "max": [40, 20, 20], "spacing": 5, "faces": {"x_min": {"type": "velocity", "velocity": [25, 0, 0], "profile": "uniform"}, "x_max": {"type": "pressure", "pressure": 0}, "y_min": {"type": "wall"}, "y_max": {"type": "slip"}, "z_min": {"type": "periodic"}, "z_max": {"type": "periodic"}}, "initial_velocity": [25, 0, 0], "thermal": {"initial_temperature": 20, "gravity": [0, -9810, 0], "expansion": 0.0034, "faces": {"y_min": {"type": "temperature", "value": 80}, "y_max": {"type": "flux", "value": 0.5}}}}},
+  {"command": "model.fluid_domain.boundary", "params": {"domain": "Flow", "at": "y_max", "condition": {"type": "moving_wall", "velocity": [5, 0, 0]}}},
+  {"command": "model.step.create", "params": {"name": "Flow", "procedure": {"type": "fluid", "domain": "Flow", "end_time": 2.0, "frames": 4}}},
+  {"command": "file.save_as", "params": {"path": "fluid-box.fieldcraft"}}
+]

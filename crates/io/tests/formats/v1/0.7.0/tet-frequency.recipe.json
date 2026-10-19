@@ -1,0 +1,12 @@
+[
+  {"command": "model.units", "params": {"system": "m-kg-s-N-Pa"}},
+  {"command": "mesh.block", "params": {"body": "Plate", "kind": "tet10", "corners": [[0,0,0],[0.1,0,0],[0.1,0.05,0],[0,0.05,0],[0,0,0.005],[0.1,0,0.005],[0.1,0.05,0.005],[0,0.05,0.005]], "divisions": [2, 1, 1], "faces": {"6": "edge"}}},
+  {"command": "model.set.create", "params": {"name": "all", "geometry": [{"body": "Plate"}]}},
+  {"command": "model.set.create", "params": {"name": "edge", "geometry": [{"body": "Plate", "face": "edge"}]}},
+  {"command": "model.material.create", "params": {"name": "Aluminium", "elastic": {"type": "isotropic", "young": 7.0e10, "poisson": 0.33}, "density": 2700}},
+  {"command": "model.section.create", "params": {"name": "solid", "set": "all", "material": "Aluminium", "kind": {"type": "solid"}}},
+  {"command": "model.boundary_condition.create", "params": {"name": "clamp", "type": "fixed", "target": {"set": "edge"}}},
+  {"command": "model.step.create", "params": {"name": "Modes", "procedure": {"type": "frequency", "modes": 6, "min_hz": 0, "max_hz": 20000}}},
+  {"command": "model.step.activate", "params": {"step": "Modes", "boundary_conditions": ["clamp"]}},
+  {"command": "file.save_as", "params": {"path": "tet-frequency.fieldcraft"}}
+]

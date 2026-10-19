@@ -1,0 +1,14 @@
+[
+  {"command": "model.units", "params": {"system": "mm-t-s-N-MPa"}},
+  {"command": "mesh.block", "params": {"body": "Beam", "kind": "hex8", "corners": [[0,0,0],[40,0,0],[40,10,0],[0,10,0],[0,0,10],[40,0,10],[40,10,10],[0,10,10]], "divisions": [4, 1, 1], "faces": {"6": "root", "4": "tip", "2": "top"}}},
+  {"command": "model.set.create", "params": {"name": "all", "geometry": [{"body": "Beam"}]}},
+  {"command": "model.set.create", "params": {"name": "root", "geometry": [{"body": "Beam", "face": "root"}]}},
+  {"command": "model.set.create", "params": {"name": "top", "geometry": [{"body": "Beam", "face": "top"}]}},
+  {"command": "model.material.create", "params": {"name": "Steel", "elastic": {"type": "isotropic", "young": 210000, "poisson": 0.3}, "density": 7.85e-9}},
+  {"command": "model.section.create", "params": {"name": "solid", "set": "all", "material": "Steel", "kind": {"type": "solid"}, "formulation": {"integration": "full", "incompatible_modes": true}}},
+  {"command": "model.boundary_condition.create", "params": {"name": "clamp", "type": "fixed", "target": {"set": "root"}}},
+  {"command": "model.load.create", "params": {"name": "press", "type": "pressure", "set": "top", "magnitude": 0.5}},
+  {"command": "model.step.create", "params": {"name": "Bend", "procedure": {"type": "static"}}},
+  {"command": "model.step.activate", "params": {"step": "Bend", "boundary_conditions": ["clamp"], "loads": ["press"]}},
+  {"command": "file.save_as", "params": {"path": "hex-static.fieldcraft"}}
+]
