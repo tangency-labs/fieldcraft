@@ -16,7 +16,7 @@ use crate::{CommandKind, CommandSpec, EngineError, Result, Session};
 pub const HEX_GENERATE: CommandSpec = CommandSpec {
     id: "mesh.hex.generate",
     label: "Hex Mesh",
-    params: r#"{"body": "Body1" (default: every body of the open design) or "surface": 0 (an imported surface), "size": 2.0 (element size, mm; default 1/25 of the bounding-box diagonal), "order": 1 (hex8) or 2 (hex20, mid-edge nodes on the geometry), "method": "auto" (default) | "swept" (any sweep) | "extrude" | "sweep" | "revolve" | "mapped", "tolerance": 0.05 (chordal tolerance of the tessellation, mm; default 1e-3 of the diagonal)} — replaces the meshes of the bodies it meshes (as mesh.tet.generate; other bodies keep theirs) with structured hexahedra: multi-level sweeps along a direction or around an axis (their cross-section cut into mappable blocks automatically: O-grids round holes, triangle primitives, four-sided blocks; nothing is added to the model), one-to-one sweeps through linking faces, or mapped blocks. Boundary element faces are tagged with their B-rep faces (named as in geometry.bodies; by index when a face has no name; `weld`, `weld_distance` and `feature_angle` as in mesh.tet.generate), so sets by geometry resolve. Edge seeds (mesh.seed.edge) set the counts and spacing of their edges: exact seeds are held, and seeds that cannot all hold (opposite sides of a mapped face, the layers between two levels) are an error naming them. Size controls (mesh.size.set) set the division counts and spacing of the other edges through the graded size field (a structured mesh carries a count across its block, so a control refines the whole layer or row it lies in). Reports per body the method, counts and quality; a body no structured method fits is an error that says why"#,
+    params: r#"{"body": "Body1" (default: every body of the open design) or "surface": 0 (an imported surface), "size": 2.0 (element size, a length; default 1/25 of the bounding-box diagonal), "order": 1 (hex8) or 2 (hex20, mid-edge nodes on the geometry), "method": "auto" (default) | "swept" (any sweep) | "extrude" | "sweep" | "revolve" | "mapped", "tolerance": 0.05 (chordal tolerance of the tessellation, a length; default 1e-3 of the diagonal)} — replaces the meshes of the bodies it meshes (as mesh.tet.generate; other bodies keep theirs) with structured hexahedra: multi-level sweeps along a direction or around an axis (their cross-section cut into mappable blocks automatically: O-grids round holes, triangle primitives, four-sided blocks; nothing is added to the model), one-to-one sweeps through linking faces, or mapped blocks. Boundary element faces are tagged with their B-rep faces (named as in geometry.bodies; by index when a face has no name; `weld`, `weld_distance` and `feature_angle` as in mesh.tet.generate), so sets by geometry resolve. Edge seeds (mesh.seed.edge) set the counts and spacing of their edges: exact seeds are held, and seeds that cannot all hold (opposite sides of a mapped face, the layers between two levels) are an error naming them. Size controls (mesh.size.set) set the division counts and spacing of the other edges through the graded size field (a structured mesh carries a count across its block, so a control refines the whole layer or row it lies in). Reports per body the method, counts and quality; a body no structured method fits is an error that says why"#,
     form: Some(super::forms::HEX_GENERATE),
     kind: CommandKind::Model,
     requires: &[Requirement::Geometry],
@@ -72,7 +72,10 @@ pub(super) fn shape_input(shape: &Shape, tolerance: Option<f64>) -> Result<Input
     let diag = shape.size()?;
     let tol = tolerance.unwrap_or(DEFAULT_RELATIVE_TOLERANCE * diag);
     if tol < MIN_RELATIVE_TOLERANCE * diag {
-        return Err(EngineError::Params(format!("`tolerance` must be at least {} mm for body `{}`", MIN_RELATIVE_TOLERANCE * diag, shape.name)));
+        return Err(EngineError::Params(format!(
+            "`tolerance` must be at least {MIN_RELATIVE_TOLERANCE:e} of body `{}`'s bounding-box diagonal",
+            shape.name
+        )));
     }
     let surfaces = shape.face_surfaces()?.into_iter().map(|f| f.map(analytic)).collect();
     let face_names = shape.faces().iter().map(|f| f.name.clone()).collect();
@@ -158,7 +161,7 @@ pub const HEX_MAPPED: CommandSpec = CommandSpec {
 pub const HEX_BLOCKS: CommandSpec = CommandSpec {
     id: "mesh.hex.blocks",
     label: "Block Hex Mesh",
-    params: r#"{"bodies": ["Cell1", "Cell2"] (default: every body of the open design), "size": 2.0 (element size, mm; default 1/25 of the bounding-box diagonal of all of them), "order": 1 (hex8) or 2 (hex20, mid-edge nodes on the geometry), "tolerance": 0.05 (chordal tolerance of the tessellation, mm; default 1e-3 of that diagonal)} — replaces the cells' meshes (as mesh.tet.generate; other bodies keep theirs) with one conforming all-hex mesh of a part partitioned into cells (bodies that meet face to face, such as the pieces of solid.split_body in SolidCraft): every cell a mapped block (six four-sided faces; faces that meet smoothly, such as the two halves of a hole, count as one), division counts assigned over all cells together, each shared face meshed once and its nodes merged, radial lines graded off holes and fillets, size controls (mesh.size.set; one on a whole cell refines its surface) setting the counts and spacing through the graded size field. Elements are tagged with their cell's body and boundary faces with its B-rep faces (`weld`, `weld_distance` and `feature_angle` as in mesh.tet.generate). Reports the cells, the shared faces, counts and quality; a cell that is not a block, or cells that touch without sharing whole faces, is an error that says which"#,
+    params: r#"{"bodies": ["Cell1", "Cell2"] (default: every body of the open design), "size": 2.0 (element size, a length; default 1/25 of the bounding-box diagonal of all of them), "order": 1 (hex8) or 2 (hex20, mid-edge nodes on the geometry), "tolerance": 0.05 (chordal tolerance of the tessellation, a length; default 1e-3 of that diagonal)} — replaces the cells' meshes (as mesh.tet.generate; other bodies keep theirs) with one conforming all-hex mesh of a part partitioned into cells (bodies that meet face to face, such as the pieces of solid.split_body in SolidCraft): every cell a mapped block (six four-sided faces; faces that meet smoothly, such as the two halves of a hole, count as one), division counts assigned over all cells together, each shared face meshed once and its nodes merged, radial lines graded off holes and fillets, size controls (mesh.size.set; one on a whole cell refines its surface) setting the counts and spacing through the graded size field. Elements are tagged with their cell's body and boundary faces with its B-rep faces (`weld`, `weld_distance` and `feature_angle` as in mesh.tet.generate). Reports the cells, the shared faces, counts and quality; a cell that is not a block, or cells that touch without sharing whole faces, is an error that says which"#,
     form: Some(super::forms::HEX_BLOCKS),
     kind: CommandKind::Model,
     requires: &[Requirement::Design],
@@ -208,11 +211,11 @@ pub(super) fn hex_blocks(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let tolerance = number(p, "tolerance")?.unwrap_or(DEFAULT_RELATIVE_TOLERANCE * diag);
     if tolerance < MIN_RELATIVE_TOLERANCE * diag {
-        return Err(EngineError::Params(format!("`tolerance` must be at least {} mm", MIN_RELATIVE_TOLERANCE * diag)));
+        return Err(EngineError::Params(format!("`tolerance` must be at least {MIN_RELATIVE_TOLERANCE:e} of the bodies' bounding-box diagonal")));
     }
     let h = size.unwrap_or(DEFAULT_RELATIVE_SIZE * diag);
     if h < MIN_RELATIVE_SIZE * diag {
-        return Err(EngineError::Params(format!("`size` must be at least {} mm", MIN_RELATIVE_SIZE * diag)));
+        return Err(EngineError::Params(format!("`size` must be at least {MIN_RELATIVE_SIZE:e} of the bodies' bounding-box diagonal")));
     }
     let inputs: Vec<Input> = shapes.iter().map(|b| shape_input(b, Some(tolerance))).collect::<Result<_>>()?;
     let mut surfaces = Vec::with_capacity(inputs.len());
@@ -338,7 +341,7 @@ pub(super) fn hex_body(p: &Value, b: &Input, method: HexMethod, quadratic: bool,
     }
     let h = sizing.body_size(&b.name, size.unwrap_or(DEFAULT_RELATIVE_SIZE * b.diagonal));
     if h < MIN_RELATIVE_SIZE * b.diagonal {
-        return Err(EngineError::Params(format!("`size` must be at least {} mm for body `{}`", MIN_RELATIVE_SIZE * b.diagonal, b.name)));
+        return Err(EngineError::Params(format!("`size` must be at least {MIN_RELATIVE_SIZE:e} of body `{}`'s bounding-box diagonal", b.name)));
     }
     let surface_options = super::mesh::surface_options(p, &b.mesh)?;
     let surface = BoundarySurface::new(&b.mesh.positions, &b.mesh.triangles, &b.mesh.tri_face, &surface_options)

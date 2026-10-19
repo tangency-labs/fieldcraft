@@ -8,17 +8,19 @@
 //! works in ([`frame`]): SI for the model and the solvers, millimetres for the geometry and the
 //! meshers (SolidCraft geometry is in millimetres and the meshers' tolerances are tuned for it;
 //! the model is expressed in it around such a command, [`crate::Session`]'s frame). Its reply is
-//! converted back into the display system ([`REPLIES`]), with the units it is in.
+//! converted back into the display system ([`REPLIES`]), with the units it is in. The frame is
+//! the command's own business: what goes in and comes out is in the display system, like every
+//! other command's, and a message that names a number of the frame shows it through [`shown`].
 //!
-//! A command's own numbers that the form cannot describe (a JSON-valued parameter) are in the
-//! command's working system: millimetres for the meshers.
+//! The numbers inside a JSON-valued parameter are described by its field's
+//! [`Field::numbers`](crate::schema::Field::numbers) and converted alike.
 
 use std::sync::OnceLock;
 
 use fieldcraft_model::units::{DisplaySystem, Preset, Quantity, Unit, UnitError, ValueInput, WithUnit};
 use serde_json::{Map, Value, json};
 
-use crate::schema::{Dim, Field, Kind, MAX_DEPTH, join};
+use crate::schema::{Dim, Field, Kind, MAX_DEPTH, Numbers, join};
 use crate::{EngineError, Result};
 
 /// SI: what the model stores and the solvers work in.
@@ -66,6 +68,31 @@ pub(crate) fn geometry_session(s: &crate::Session) -> Result<crate::Session> {
 pub(crate) fn geometry_params(s: &crate::Session, id: &str, params: &Value) -> Result<Value> {
     match crate::find_command(id).and_then(|c| c.form) {
         Some(form) => convert_params(form, params, s.input_units(), geometry()),
+        None => Ok(params.clone()),
+    }
+}
+
+/// A number of `q` in `s`'s frame `from` (the geometry's millimetres, say) as a message shows it:
+/// in the display system, with its unit (`0.19685 in`).
+pub fn shown(display: &DisplaySystem, from: &DisplaySystem, q: Quantity, v: f64) -> String {
+    from.to_si(q, v).and_then(|si| q.format(si, display)).unwrap_or_else(|_| fieldcraft_model::units::format_number(v))
+}
+
+/// A length of the geometry (millimetres) as a message to the user of `s` shows it.
+pub fn shown_length(s: &crate::Session, mm: f64) -> String {
+    shown(s.units(), geometry(), Quantity::Length, mm)
+}
+
+/// An area of the geometry (mm²) as a message to the user of `s` shows it.
+pub fn shown_area(s: &crate::Session, mm2: f64) -> String {
+    shown(s.units(), geometry(), Quantity::Area, mm2)
+}
+
+/// The parameters of command `id` written in millimetres (a command a reply proposes to run
+/// next), in `s`'s display system: what running it reads.
+pub(crate) fn geometry_params_shown(s: &crate::Session, id: &str, params: &Value) -> Result<Value> {
+    match crate::find_command(id).and_then(|c| c.form) {
+        Some(form) => convert_params(form, params, geometry(), s.units()),
         None => Ok(params.clone()),
     }
 }
@@ -136,9 +163,6 @@ trait Leaf {
 struct ToTarget<'a> {
     input: &'a DisplaySystem,
     target: &'a DisplaySystem,
-    /// A field of a fixed millimetre unit reads its bare number in `input` too (a replayed
-    /// format 2 journal of a model not built on a design: its datums followed the declared unit).
-    free_millimetres: bool,
 }
 
 impl ToTarget<'_> {
@@ -157,15 +181,6 @@ impl Leaf for ToTarget<'_> {
     fn number(&mut self, v: &mut Value, q: Option<Quantity>, fixed: Option<&'static str>, path: &str) -> Result<()> {
         // A field of a fixed unit is given to its command in that unit; the others in the target.
         let fixed_unit = fixed.map(Unit::parse).transpose().map_err(|e| unit_error(path, e))?;
-        if self.free_millimetres && fixed == Some("mm") && matches!(v, Value::Number(_)) {
-            // Read in the input's length, given to the command in millimetres.
-            let x = v.as_f64().unwrap_or(f64::NAN);
-            let q = Quantity::Length;
-            let si = q.to_si(x, self.input.unit_ref(q)).map_err(|e| unit_error(path, e))?;
-            let mm = fixed_unit.as_ref().map_or(Ok(si), |u| q.express(si, u)).map_err(|e| unit_error(path, e))?;
-            *v = serde_json::Number::from_f64(mm).map(Value::Number).ok_or_else(|| EngineError::invalid(path, "is out of range"))?;
-            return Ok(());
-        }
         let out = match (&*v, q) {
             (Value::Null, _) => return Ok(()),
             // A number without a unit passes as it is, and so does a bare number of a fixed unit.
@@ -245,6 +260,9 @@ fn field(f: &Field, v: &mut Value, parent: &Value, path: &str, leaf: &mut dyn Le
     if depth > MAX_DEPTH {
         return Ok(());
     }
+    if !f.numbers.is_empty() && (v.is_object() || v.is_array()) {
+        inner_numbers(f.numbers, v, None, &mut Vec::new(), path, leaf, 0)?;
+    }
     let parent = Some(parent);
     match f.kind {
         Kind::Number { dim, .. } => leaf.number(v, dim.resolve(parent, 0), dim.fixed(), path),
@@ -306,23 +324,69 @@ fn field(f: &Field, v: &mut Value, parent: &Value, path: &str, leaf: &mut dyn Le
     }
 }
 
+/// The numbers of a JSON value `v` (at `at` inside it, under `parent`) by `rules`: every number of
+/// a matched value goes to `leaf`.
+fn inner_numbers(
+    rules: Numbers,
+    v: &mut Value,
+    parent: Option<&Value>,
+    at: &mut Vec<String>,
+    path: &str,
+    leaf: &mut dyn Leaf,
+    depth: usize,
+) -> Result<()> {
+    if depth > 2 * MAX_DEPTH {
+        return Ok(());
+    }
+    if let Some(dim) = rule_for(rules, at) {
+        return each_number(v, dim, parent, 0, path, leaf, depth);
+    }
+    let holder = if v.is_object() && rules.iter().any(|(_, d)| depends(*d)) { Some(v.clone()) } else { None };
+    match v {
+        Value::Object(o) => {
+            for (k, x) in o.iter_mut() {
+                at.push(k.clone());
+                inner_numbers(rules, x, holder.as_ref(), at, path, leaf, depth + 1)?;
+                at.pop();
+            }
+        }
+        Value::Array(a) => {
+            for (i, x) in a.iter_mut().enumerate() {
+                at.push(i.to_string());
+                inner_numbers(rules, x, None, at, path, leaf, depth + 1)?;
+                at.pop();
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Whether a dimension's quantity depends on the values beside it.
+fn depends(d: Dim) -> bool {
+    d != Dim::None && d.quantity().is_none()
+}
+
+/// Every number of `v` (a number, a value with its unit, or a list of lists of them) to `leaf`.
+fn each_number(v: &mut Value, dim: Dim, parent: Option<&Value>, index: usize, path: &str, leaf: &mut dyn Leaf, depth: usize) -> Result<()> {
+    match v {
+        Value::Array(items) if depth <= 2 * MAX_DEPTH => {
+            for (i, x) in items.iter_mut().enumerate() {
+                each_number(x, dim, parent, i, path, leaf, depth + 1)?;
+            }
+            Ok(())
+        }
+        _ => leaf.number(v, dim.resolve(parent, index), dim.fixed(), path),
+    }
+}
+
 /// `params` with every number its form describes converted into `target`: bare numbers are in
 /// `input` (or their field's fixed unit), others carry their unit. A value of the wrong
 /// dimension, an unknown unit or a number out of range is refused, naming the field.
 pub fn convert_params(form: &[Field], params: &Value, input: &DisplaySystem, target: &DisplaySystem) -> Result<Value> {
-    convert(form, params, input, target, false)
-}
-
-/// [`convert_params`] for a replayed format 2 journal of a model not built on a design: its
-/// fixed millimetre fields (datums) were typed in the declared unit too.
-pub(crate) fn convert_legacy_params(form: &[Field], params: &Value, input: &DisplaySystem, target: &DisplaySystem) -> Result<Value> {
-    convert(form, params, input, target, true)
-}
-
-fn convert(form: &[Field], params: &Value, input: &DisplaySystem, target: &DisplaySystem, free_millimetres: bool) -> Result<Value> {
     let mut out = params.clone();
     if let Value::Object(o) = &mut out {
-        walk(form, o, "", &mut ToTarget { input, target, free_millimetres }, 0)?;
+        walk(form, o, "", &mut ToTarget { input, target }, 0)?;
     }
     Ok(out)
 }
@@ -454,6 +518,138 @@ pub const REPLIES: &[(&str, &[(&str, Dim)])] = &[
     ),
 ];
 
+/// The lengths of a mesh plan ([`fieldcraft_model::MeshPlan`]) as JSON: `mesh.plan`'s reply and
+/// `mesh.plan.apply`'s `plan` object.
+pub const MESH_PLAN: Numbers = &[
+    ("/size", Dim::Length),
+    ("/tolerance", Dim::Length),
+    ("/cuts/*/point", Dim::Length),
+    ("/rings/*/center", Dim::Length),
+    ("/rings/*/radius", Dim::Length),
+    ("/rings/*/frame", Dim::Length),
+];
+
+/// A datum as the datum commands reply it.
+const DATUM: Numbers = &[("/point", Dim::Length)];
+
+/// A mesher's volumes and size, at the top of its reply and per body.
+const MESHED: Numbers = &[
+    ("/size", Dim::Length),
+    ("/volume", Dim::Of(Quantity::Volume)),
+    ("/boundary_volume", Dim::Of(Quantity::Volume)),
+    ("/surface_volume", Dim::Of(Quantity::Volume)),
+    ("/body_volume", Dim::Of(Quantity::Volume)),
+    ("/max_gap", Dim::Length),
+    ("/bodies/*/size", Dim::Length),
+    ("/bodies/*/volume", Dim::Of(Quantity::Volume)),
+    ("/bodies/*/boundary_volume", Dim::Of(Quantity::Volume)),
+    ("/bodies/*/surface_volume", Dim::Of(Quantity::Volume)),
+    ("/bodies/*/grid/root_size", Dim::Length),
+    ("/bodies/*/grid/thinnest_wall", Dim::Length),
+    ("/bodies/*/grid/narrowest_patch", Dim::Length),
+    ("/cells/*/quality/volume", Dim::Of(Quantity::Volume)),
+    ("/topology/*/corners", Dim::Length),
+];
+
+/// The meshes `mesh.plan.apply` made, under `mesh`, and what it decided.
+const PLAN_APPLIED: Numbers = &[
+    ("/size", Dim::Length),
+    ("/tolerance", Dim::Length),
+    ("/pending/*/radius", Dim::Length),
+    ("/blend_layers/*/depth", Dim::Length),
+    ("/symmetry/*/offset", Dim::Length),
+    ("/corners/cuts/*", Dim::Length),
+    ("/mesh/size", Dim::Length),
+    ("/mesh/volume", Dim::Of(Quantity::Volume)),
+    ("/mesh/surface_volume", Dim::Of(Quantity::Volume)),
+    ("/mesh/body_volume", Dim::Of(Quantity::Volume)),
+    ("/mesh/max_gap", Dim::Length),
+    ("/mesh/bodies/*/volume", Dim::Of(Quantity::Volume)),
+    ("/mesh/bodies/*/surface_volume", Dim::Of(Quantity::Volume)),
+    ("/mesh/cells/*/quality/volume", Dim::Of(Quantity::Volume)),
+];
+
+/// A size control's region as JSON, under `prefix`.
+const SIZE_CONTROL: Numbers = &[
+    ("/size", Dim::Length),
+    ("/region/box/min", Dim::Length),
+    ("/region/box/max", Dim::Length),
+    ("/region/sphere/center", Dim::Length),
+    ("/region/sphere/radius", Dim::Length),
+    ("/controls/*/size", Dim::Length),
+    ("/controls/*/region/box/min", Dim::Length),
+    ("/controls/*/region/box/max", Dim::Length),
+    ("/controls/*/region/sphere/center", Dim::Length),
+    ("/controls/*/region/sphere/radius", Dim::Length),
+];
+
+/// The replies of the commands that work in the geometry's millimetres ([`Frame::Geometry`]).
+const GEOMETRY_REPLIES: &[(&str, Numbers)] = &[
+    (
+        "geometry.bodies",
+        &[
+            ("/*/volume", Dim::Of(Quantity::Volume)),
+            ("/*/area", Dim::Area),
+            ("/*/centroid", Dim::Length),
+            ("/*/bbox", Dim::Length),
+            ("/*/edges/*/length", Dim::Length),
+            ("/*/vertices/*/point", Dim::Length),
+        ],
+    ),
+    ("geometry.centre", &[("/point", Dim::Length)]),
+    (
+        "geometry.check",
+        &[("/size", Dim::Length), ("/findings/*/value", Dim::Finding), ("/findings/*/limit", Dim::Finding), ("/findings/*/at", Dim::Length)],
+    ),
+    ("geometry.datum", DATUM),
+    ("geometry.datum.edit", DATUM),
+    ("geometry.datum.axis", DATUM),
+    ("geometry.datum.axis.edit", DATUM),
+    ("geometry.datum.point", DATUM),
+    ("geometry.datum.point.edit", DATUM),
+    ("geometry.defeature.propose", &[("/candidates/*/size", Dim::Length)]),
+    ("mesh.quality", &[("/volume", Dim::Of(Quantity::Volume)), ("/area", Dim::Area)]),
+    ("mesh.quality.mark", &[("/elements/*/at", Dim::Length)]),
+    (
+        "mesh.surface.check",
+        &[("/volume", Dim::Of(Quantity::Volume)), ("/shells/*/volume", Dim::Of(Quantity::Volume)), ("/defects/listed/*/at", Dim::Length)],
+    ),
+    ("mesh.tet.generate", MESHED),
+    ("mesh.hex.generate", MESHED),
+    ("mesh.hex.sweep", MESHED),
+    ("mesh.hex.mapped", MESHED),
+    ("mesh.hex.blocks", MESHED),
+    ("mesh.hex.octree", MESHED),
+    ("mesh.hex.project", MESHED),
+    ("mesh.cells", MESHED),
+    ("mesh.hex.extrude", &[("/volume", Dim::Of(Quantity::Volume)), ("/max_target_gap", Dim::Length)]),
+    ("mesh.node.merge", &[("/tolerance", Dim::Length)]),
+    ("mesh.check.duplicates", &[("/tolerance", Dim::Length), ("/coincident/*/2", Dim::Length)]),
+    (
+        "mesh.node.move",
+        &[("/max_displacement", Dim::Length), ("/displacement", Dim::Length), ("/sphere/center", Dim::Length), ("/sphere/radius", Dim::Length)],
+    ),
+    (
+        "mesh.node.relax",
+        &[("/max_displacement", Dim::Length), ("/sphere/center", Dim::Length), ("/sphere/radius", Dim::Length), ("/rounds/*/reach", Dim::Length)],
+    ),
+    ("mesh.node.relax.apply", &[("/max_displacement", Dim::Length)]),
+    ("mesh.seed.edge", &[("/seeds/*/size", Dim::Length), ("/seeds/*/on/*/length", Dim::Length)]),
+    ("mesh.seed.list", &[("/*/size", Dim::Length), ("/*/on/*/length", Dim::Length)]),
+    ("mesh.size.set", SIZE_CONTROL),
+    ("mesh.size.list", SIZE_CONTROL),
+    ("mesh.plan", MESH_PLAN),
+    (
+        "mesh.plan",
+        &[
+            ("/decomposition/cuts/*/point", Dim::Length),
+            ("/decomposition/tet_region/min", Dim::Length),
+            ("/decomposition/tet_region/max", Dim::Length),
+        ],
+    ),
+    ("mesh.plan.apply", PLAN_APPLIED),
+];
+
 /// A static step's summary.
 const STATIC: &[(&str, Dim)] = &[
     ("/max_displacement/value", Dim::Length),
@@ -479,21 +675,34 @@ const NONLINEAR: &[(&str, Dim)] = &[
     ("/contacts/*/penetration", Dim::Length),
 ];
 
-/// The dimension of the reply value at `path` (pointer segments) by `rules`.
+/// Whether JSON pointer `pattern` (`*` for any segment, empty for the root) names `path`.
+fn matches(pattern: &str, path: &[String]) -> bool {
+    let mut segments = pattern.split('/').filter(|s| !s.is_empty());
+    let mut count = 0;
+    // The path first: a pattern segment is taken only when a path segment is there for it.
+    let all = path.iter().zip(segments.by_ref()).all(|(p, s)| {
+        count += 1;
+        s == "*" || s == p
+    });
+    all && count == path.len() && segments.next().is_none()
+}
+
+/// The dimension of the value at `path` (pointer segments) by `rules`.
 fn rule_for(rules: &[(&'static str, Dim)], path: &[String]) -> Option<Dim> {
-    rules.iter().find_map(|(pattern, dim)| {
-        let segments: Vec<&str> = pattern.trim_start_matches('/').split('/').collect();
-        (segments.len() == path.len() && segments.iter().zip(path).all(|(s, p)| *s == "*" || s == p)).then_some(*dim)
-    })
+    rules.iter().find_map(|(pattern, dim)| matches(pattern, path).then_some(*dim))
 }
 
 /// Convert `reply` of command `id` from `from` (the command's frame) to `to` (the display
 /// system), and name the units it is in.
 pub fn convert_reply(id: &str, reply: &mut Value, from: &DisplaySystem, to: &DisplaySystem) -> Result<()> {
-    let Some((_, rules)) = REPLIES.iter().find(|(c, _)| *c == id) else { return Ok(()) };
+    let rules: Vec<(&'static str, Dim)> =
+        REPLIES.iter().chain(GEOMETRY_REPLIES).filter(|(c, _)| *c == id).flat_map(|(_, rules)| rules.iter().copied()).collect();
+    if rules.is_empty() {
+        return Ok(());
+    }
     let mut units = Map::new();
     let mut path = Vec::new();
-    reply_values(reply, &mut path, rules, from, to, &mut units)?;
+    reply_values(reply, None, &mut path, &rules, from, to, &mut units)?;
     if let Value::Object(o) = reply
         && !units.is_empty()
         && !o.contains_key("units")
@@ -503,8 +712,10 @@ pub fn convert_reply(id: &str, reply: &mut Value, from: &DisplaySystem, to: &Dis
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn reply_values(
     v: &mut Value,
+    parent: Option<&Value>,
     path: &mut Vec<String>,
     rules: &[(&'static str, Dim)],
     from: &DisplaySystem,
@@ -515,20 +726,22 @@ fn reply_values(
         return Ok(());
     }
     if let Some(dim) = rule_for(rules, path) {
-        return express_all(v, dim, None, 0, from, to, units);
+        return express_all(v, dim, parent, 0, from, to, units);
     }
+    // The holder of the values below, for a dimension that depends on its siblings.
+    let holder = if v.is_object() && rules.iter().any(|(_, d)| depends(*d)) { Some(v.clone()) } else { None };
     match v {
         Value::Object(o) => {
             for (k, x) in o.iter_mut() {
                 path.push(k.clone());
-                reply_values(x, path, rules, from, to, units)?;
+                reply_values(x, holder.as_ref(), path, rules, from, to, units)?;
                 path.pop();
             }
         }
         Value::Array(a) => {
             for (i, x) in a.iter_mut().enumerate() {
                 path.push(i.to_string());
-                reply_values(x, path, rules, from, to, units)?;
+                reply_values(x, None, path, rules, from, to, units)?;
                 path.pop();
             }
         }
@@ -659,13 +872,16 @@ pub fn show_by_key(v: &mut Value, display: &DisplaySystem, rule: &dyn Fn(&str, u
 }
 
 #[cfg(test)]
+mod geometry_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::schema::*;
 
     const FORM: &[Field] = &[
         num("young", "E", Dim::Stress),
-        num("size", "Size", Dim::Millimetre),
+        num("angle", "Angle", Dim::Degree),
         free_vector("values", "Values", Dim::Motion, &["u1", "u2", "u3", "ur1", "ur2", "ur3"]),
         num("t", "T", Dim::Temperature),
         num("ratio", "Ratio", Dim::None),
@@ -674,20 +890,21 @@ mod tests {
     #[test]
     fn bare_numbers_are_in_the_input_system_and_units_override() {
         let mm = DisplaySystem::default();
-        let p = json!({"young": 210000, "size": 5, "values": [1, null, 2, 0.5, null, null], "t": "20 °C", "ratio": 0.3});
+        let p = json!({"young": 210000, "angle": 5, "values": [1, null, 2, 0.5, null, null], "t": "20 °C", "ratio": 0.3});
         let si_params = convert_params(FORM, &p, &mm, si()).unwrap();
-        assert_eq!(si_params, json!({"young": 2.1e11, "size": 5, "values": [0.001, null, 0.002, 0.5, null, null], "t": 293.15, "ratio": 0.3}));
+        assert_eq!(si_params, json!({"young": 2.1e11, "angle": 5, "values": [0.001, null, 0.002, 0.5, null, null], "t": 293.15, "ratio": 0.3}));
         // Into millimetres a millimetre stays as typed.
-        let framed = convert_params(FORM, &json!({"size": 3.97, "young": {"value": 210, "unit": "GPa"}}), &mm, geometry()).unwrap();
-        assert_eq!(framed, json!({"size": 3.97, "young": 210000.0}));
-        // A metre display: bare lengths are metres; the fixed millimetres stay millimetres, and a
+        let framed =
+            convert_params(FORM, &json!({"values": [3.97, 0, 0, 0, 0, 0], "young": {"value": 210, "unit": "GPa"}}), &mm, geometry()).unwrap();
+        assert_eq!(framed, json!({"values": [3.97, 0.0, 0.0, 0.0, 0.0, 0.0], "young": 210000.0}));
+        // A metre display: bare lengths are metres; the fixed degrees stay degrees, and a
         // fixed-unit field reaches its command in its unit whatever it is given in.
         let m = DisplaySystem::new(Preset::MKgS);
         assert_eq!(
-            convert_params(FORM, &json!({"size": 5, "values": [1, 0, 0, 0, 0, 0]}), &m, si()).unwrap(),
-            json!({"size": 5, "values": [1.0, 0.0, 0.0, 0.0, 0.0, 0.0]})
+            convert_params(FORM, &json!({"angle": 5, "values": [1, 0, 0, 0, 0, 0]}), &m, si()).unwrap(),
+            json!({"angle": 5, "values": [1.0, 0.0, 0.0, 0.0, 0.0, 0.0]})
         );
-        assert_eq!(convert_params(FORM, &json!({"size": "0.5 cm"}), &m, si()).unwrap(), json!({"size": 5.0}));
+        assert_eq!(convert_params(FORM, &json!({"angle": "90 deg"}), &m, si()).unwrap(), json!({"angle": 90.0}));
     }
 
     #[test]
@@ -703,7 +920,7 @@ mod tests {
             (json!({"t": -300}), "t"),
             (json!({"values": ["5 MPa", 0, 0, 0, 0, 0]}), "values"),
             (json!({"values": [0, 0, 0, "1 m", 0, 0]}), "values"),
-            (json!({"size": "x".repeat(10_000)}), "size"),
+            (json!({"angle": "x".repeat(10_000)}), "angle"),
         ] {
             let e = convert_params(FORM, &p, &mm, si()).unwrap_err();
             assert!(matches!(&e, EngineError::Param(problem) if problem.path == field), "{p}: {e:?}");
@@ -715,35 +932,13 @@ mod tests {
     #[test]
     fn a_journal_entry_typed_in_another_system_keeps_its_units() {
         let m = DisplaySystem::new(Preset::MKgS);
-        let p = json!({"young": 2.1e11, "size": 5, "values": [0.001, null, 0, 0.5, null, null], "ratio": 0.3});
+        let p = json!({"young": 2.1e11, "angle": 5, "values": [0.001, null, 0, 0.5, null, null], "ratio": 0.3});
         let annotated = with_units(FORM, &p, &m);
         assert_eq!(
             annotated,
-            json!({"young": {"value": 2.1e11, "unit": "Pa"}, "size": 5, "values": [{"value": 0.001, "unit": "m"}, null, {"value": 0.0, "unit": "m"}, {"value": 0.5, "unit": "rad"}, null, null], "ratio": 0.3})
+            json!({"young": {"value": 2.1e11, "unit": "Pa"}, "angle": 5, "values": [{"value": 0.001, "unit": "m"}, null, {"value": 0.0, "unit": "m"}, {"value": 0.5, "unit": "rad"}, null, null], "ratio": 0.3})
         );
         // Read in any other system, it is what was typed.
         assert_eq!(convert_params(FORM, &annotated, &DisplaySystem::default(), si()).unwrap(), convert_params(FORM, &p, &m, si()).unwrap());
-    }
-
-    /// A field always in millimetres is a length of the geometry: only the commands that work in
-    /// millimetres take one.
-    #[test]
-    fn millimetre_fields_belong_to_millimetre_commands() {
-        fn has(fields: &[Field], depth: usize) -> bool {
-            depth < 8
-                && fields.iter().any(|f| {
-                    f.dim() == Some(Dim::Millimetre)
-                        || match f.kind {
-                            Kind::Group(g) | Kind::Rows { fields: g, .. } | Kind::Either(g) | Kind::NameOr { fields: g, .. } => has(g, depth + 1),
-                            Kind::Variants { variants, .. } => variants.iter().any(|v| has(v.fields, depth + 1)),
-                            _ => false,
-                        }
-                })
-        }
-        for c in crate::commands() {
-            if has(c.form.unwrap_or_default(), 0) {
-                assert_eq!(frame(c.id), Frame::Geometry, "{}", c.id);
-            }
-        }
     }
 }

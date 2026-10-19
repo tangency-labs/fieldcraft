@@ -35,6 +35,7 @@ use std::collections::BTreeSet;
 use fieldcraft_geometry::{Curve, Design, FaceSurface, FeatureNode, Shape};
 use fieldcraft_mesh::project::{ProjectOptions, Topology};
 use fieldcraft_model::geometry::Entity;
+use fieldcraft_model::units::Quantity;
 use fieldcraft_model::{CutRole, Datum, MeshPlan, Partition, PlanCut, PlanFeature, PlanMesher, PlanRing, PlanUnmapped, RingKind};
 use serde_json::{Value, json};
 
@@ -45,6 +46,16 @@ mod pillow;
 use crate::requirement::Requirement;
 use crate::schema::ProblemKind;
 use crate::{CommandKind, CommandSpec, EngineError, Result, Session};
+
+/// How a message shows a number of the geometry (millimetres): in the display system, with its
+/// unit ([`crate::units::shown`]).
+pub(crate) type Show<'a> = &'a dyn Fn(Quantity, f64) -> String;
+
+/// [`Show`] for `s`'s display system.
+fn show_for(s: &Session) -> impl Fn(Quantity, f64) -> String + use<> {
+    let display = s.units().clone();
+    move |q, v| crate::units::shown(&display, crate::units::geometry(), q, v)
+}
 
 /// Elements a plan aims at most for one body unless told otherwise.
 pub const DEFAULT_MAX_ELEMENTS: usize = 300_000;
@@ -133,7 +144,7 @@ fn curvature_size(surfaces: &[Option<FaceSurface>], mesh: &fieldcraft_geometry::
 pub const PLAN: CommandSpec = CommandSpec {
     id: "mesh.plan",
     label: "Mesh Plan",
-    params: r#"{"body": "Base", "name"?: "Plan-Base", "size"?: mm (largest element size; default 1/25 of the body's diagonal), "layers"?: 2 (elements through the thinnest wall: a shell's thickness, a plate's; 1..=10), "max_elements"?: 300000 (the size grows past the walls' when more would be needed)} — the body's hex-meshing plan derived from the features that built it (geometry.features), saved in the model under `name` (replacing a plan of that name); nothing is meshed (mesh.plan.apply). The plan: the sweep `direction` (and every direction the mapped features are prismatic along), the element `size`, `tolerance` and `layers`; per mapped feature its `template` (sweep of an extrude's profile along its stored direction, block for a box, butterfly for a cylinder or a circular boss, o_grid for a hole or a circular cut, layers through a shell's thickness, imprint of a join, cut or combine tool's cross-section, copy for a pattern or mirror, partition for a split body) and the `faces` it made (the projection targets); the `rings` round the body's circles (o_grid or butterfly: centre, axis, radius, half-side of the square `frame`, the cylindrical `faces` they project onto); the partition `cuts` the frames and imprints need (each with its feature and reason, never on a face of the body); the `mesher` (cells when there are cuts, else sweep); the `copies` (the other bodies a pattern or mirror made from it); the features it does not map with the reason (`unmapped`: fillets, chamfers, revolves, sweeps and lofts are step 3; a feature not prismatic along the sweep needs projection blocking, #399) and `notes`; with unmapped features that the sweep cannot mesh, a `decomposition` proposal (not saved): the partition `cuts` (point, normal) that box those features' faces into one cell, one element size clear of them, inside the body and clear of its faces (`open_sides` where no such cut fits), the boxed `tet_region`, an upper bound of its share of the volume, and the `commands` that make the cuts and mesh the cells with mesh.cells (the boxed cell tet, joined to the hex cells by pyramids)"#,
+    params: r#"{"body": "Base", "name"?: "Plan-Base", "size"?: length (largest element size; default 1/25 of the body's diagonal), "layers"?: 2 (elements through the thinnest wall: a shell's thickness, a plate's; 1..=10), "max_elements"?: 300000 (the size grows past the walls' when more would be needed)} — the body's hex-meshing plan derived from the features that built it (geometry.features), saved in the model under `name` (replacing a plan of that name); nothing is meshed (mesh.plan.apply). The plan: the sweep `direction` (and every direction the mapped features are prismatic along), the element `size`, `tolerance` and `layers`; per mapped feature its `template` (sweep of an extrude's profile along its stored direction, block for a box, butterfly for a cylinder or a circular boss, o_grid for a hole or a circular cut, layers through a shell's thickness, imprint of a join, cut or combine tool's cross-section, copy for a pattern or mirror, partition for a split body) and the `faces` it made (the projection targets); the `rings` round the body's circles (o_grid or butterfly: centre, axis, radius, half-side of the square `frame`, the cylindrical `faces` they project onto); the partition `cuts` the frames and imprints need (each with its feature and reason, never on a face of the body); the `mesher` (cells when there are cuts, else sweep); the `copies` (the other bodies a pattern or mirror made from it); the features it does not map with the reason (`unmapped`: fillets, chamfers, revolves, sweeps and lofts are step 3; a feature not prismatic along the sweep needs projection blocking, #399) and `notes`; with unmapped features that the sweep cannot mesh, a `decomposition` proposal (not saved): the partition `cuts` (point, normal) that box those features' faces into one cell, one element size clear of them, inside the body and clear of its faces (`open_sides` where no such cut fits), the boxed `tet_region`, an upper bound of its share of the volume, and the `commands` that make the cuts and mesh the cells with mesh.cells (the boxed cell tet, joined to the hex cells by pyramids)"#,
     form: Some(super::forms::MESH_PLAN),
     kind: CommandKind::Model,
     requires: &[Requirement::Design],
@@ -464,7 +475,7 @@ fn imprint_of(f: &FeatureNode, d: V3, cut: bool) -> Option<Imprint> {
 /// sliver), and not next to another cut. A frame side on a face of the body (an opening's end
 /// wall) is moved one element (twice `gap`) out of the opening: the kernel cannot cut along a
 /// face (#427, #455), and a strip one element wide is left between the cut and the face.
-fn imprint_cuts(tools: &[Imprint], d: V3, body: &Clearance, cuts: &mut Vec<PlanCut>) {
+fn imprint_cuts(tools: &[Imprint], d: V3, body: &Clearance, cuts: &mut Vec<PlanCut>, show: Show) {
     let tool_ids: Vec<u64> = tools.iter().map(|t| t.feature).collect();
     // `off`: the distance from `t` of the face a frame side was moved off, allowed exactly.
     let mut add = |n: V3, t: f64, reason: String, feature: u64, off: Option<f64>| {
@@ -499,7 +510,13 @@ fn imprint_cuts(tools: &[Imprint], d: V3, body: &Clearance, cuts: &mut Vec<PlanC
                 Some(c) => {
                     let out = (off - dot(*n, c)).signum();
                     let shift = 2.0 * body.gap;
-                    add(*n, off + out * shift, format!("{why}, {shift:.4} mm out of the opening off its end face"), tool.feature, Some(shift));
+                    add(
+                        *n,
+                        off + out * shift,
+                        format!("{why}, {} out of the opening off its end face", show(Quantity::Length, shift)),
+                        tool.feature,
+                        Some(shift),
+                    );
                 }
                 None => add(*n, *off, why, tool.feature, None),
             }
@@ -609,7 +626,7 @@ fn in_plane_axes(d: V3) -> [V3; 2] {
 /// that keeps the plane inside the body, off its curved faces, at least `gap` off every face of
 /// the body square to the axis, clear of the other circles (1.3 of their radius), and not next to another cut (one
 /// within 0.6 of the radius serves instead). A side with no such place gets no cut, and a note.
-fn frame_cuts(circles: &[Circle], d: V3, body: &Clearance, cuts: &mut Vec<PlanCut>) -> Vec<String> {
+fn frame_cuts(circles: &[Circle], d: V3, body: &Clearance, cuts: &mut Vec<PlanCut>, show: Show) -> Vec<String> {
     let mut groups: Vec<Circle> = Vec::new();
     for c in circles.iter().filter(|c| c.framed) {
         let same_axis = |g: &Circle| {
@@ -657,7 +674,12 @@ fn frame_cuts(circles: &[Circle], d: V3, body: &Clearance, cuts: &mut Vec<PlanCu
                         normal: a,
                         role: CutRole::Frame,
                         feature: Some(g.feature),
-                        reason: format!("frame of the O-grid round the circle of radius {r:.4} at F{}: {h:.4} mm from its centre", g.feature),
+                        reason: format!(
+                            "frame of the O-grid round the circle of radius {} at F{}: {} from its centre",
+                            show(Quantity::Length, r),
+                            g.feature,
+                            show(Quantity::Length, h)
+                        ),
                     });
                     placed = true;
                     break;
@@ -770,7 +792,8 @@ fn plan_shape<'a>(design: &'a Design, body: &str) -> Option<&'a Shape> {
 
 /// Build the plan of `body`: a body of the design as opened, or a cell of one (planned from the
 /// features that built the body it was cut from, with the rings the cell holds).
-pub(crate) fn build(design: &Design, body: &str, size: Option<f64>, layers: u32, max_elements: usize) -> Result<MeshPlan> {
+pub(crate) fn build(design: &Design, body: &str, size: Option<f64>, layers: u32, max_elements: usize, show: Show) -> Result<MeshPlan> {
+    let length = |v: f64| show(Quantity::Length, v);
     let shape = plan_shape(design, body).ok_or_else(|| EngineError::Params(format!("no body `{body}` in the design")))?;
     let source = design.source_of(body).unwrap_or(body);
     let is_cell = source != body;
@@ -866,22 +889,25 @@ pub(crate) fn build(design: &Design, body: &str, size: Option<f64>, layers: u32,
                     "its rectangle imprinted on the swept cross-section".into()
                 }
             }
-            ("cylinder", "butterfly") => format!("a butterfly round its circle (radius {:.4})", v("radius").unwrap_or_default()),
-            ("cylinder", _) => format!("an O-grid round its circle (radius {:.4})", v("radius").unwrap_or_default()),
-            ("hole", _) => format!("an O-grid round the hole (diameter {:.4}) along its stored axis", v("diameter").unwrap_or_default()),
+            ("cylinder", "butterfly") => format!("a butterfly round its circle (radius {})", length(v("radius").unwrap_or_default())),
+            ("cylinder", _) => format!("an O-grid round its circle (radius {})", length(v("radius").unwrap_or_default())),
+            ("hole", _) => format!("an O-grid round the hole (diameter {}) along its stored axis", length(v("diameter").unwrap_or_default())),
             ("shell", _) => {
                 let t = v("thickness").unwrap_or_default();
                 thinner(t, format!("{} thickness", f.name));
-                format!("{layers} layers through the {t:.4} mm wall")
+                format!("{layers} layers through the {} wall", length(t))
             }
             ("combine", _) => format!("the cross-sections of {} imprinted on the target", f.tools.join(", ")),
             ("pattern" | "mirror", _) => format!("the instance meshed and repeated by {} transforms", f.transforms.len()),
             ("split", _) => "the pieces meshed as cells of the split".into(),
             ("fillet", _) => {
-                format!("a blend layer of blocks along its edges, {:.4} mm deep, projected onto the fillet faces", v("radius").unwrap_or_default())
+                format!("a blend layer of blocks along its edges, {} deep, projected onto the fillet faces", length(v("radius").unwrap_or_default()))
             }
             ("chamfer", _) => {
-                format!("a blend layer of blocks along its edges, {:.4} mm deep, projected onto the chamfer faces", v("distance").unwrap_or_default())
+                format!(
+                    "a blend layer of blocks along its edges, {} deep, projected onto the chamfer faces",
+                    length(v("distance").unwrap_or_default())
+                )
             }
             _ => String::new(),
         };
@@ -920,7 +946,7 @@ pub(crate) fn build(design: &Design, body: &str, size: Option<f64>, layers: u32,
     if let Some((t, why)) = &thin {
         let through = t / f64::from(layers);
         if through < h {
-            notes.push(format!("size {through:.4} mm: {layers} layers through the {t:.4} mm wall ({why})"));
+            notes.push(format!("size {}: {layers} layers through the {} wall ({why})", length(through), length(*t)));
             h = through;
         }
     }
@@ -931,14 +957,20 @@ pub(crate) fn build(design: &Design, body: &str, size: Option<f64>, layers: u32,
     {
         let name = shape.faces().get(face).map_or_else(|| format!("face {face}"), |f| f.name.clone());
         notes.push(format!(
-            "size {c:.4} mm: the chords of {name} (radius ~{r:.4} mm) cost at most {:.1} % of the volume",
+            "size {}: the chords of {name} (radius ~{}) cost at most {:.1} % of the volume",
+            length(c),
+            length(r),
             100.0 * CHORD_VOLUME_BUDGET
         ));
         h = c;
     }
     let floor = (m.volume.abs() / max_elements as f64).cbrt();
     if h < floor {
-        notes.push(format!("size {floor:.4} mm instead of {h:.4}: at most {max_elements} elements (fewer layers through the thinnest wall)"));
+        notes.push(format!(
+            "size {} instead of {}: at most {max_elements} elements (fewer layers through the thinnest wall)",
+            length(floor),
+            length(h)
+        ));
         h = floor;
     }
     let mut cuts = Vec::new();
@@ -969,8 +1001,8 @@ pub(crate) fn build(design: &Design, body: &str, size: Option<f64>, layers: u32,
             .map(|i| [if i & 1 == 0 { lo[0] } else { hi[0] }, if i & 2 == 0 { lo[1] } else { hi[1] }, if i & 4 == 0 { lo[2] } else { hi[2] }])
             .collect();
         let body = Clearance { corners, planes, curved, gap: 0.5 * h };
-        imprint_cuts(&imprints, d, &body, &mut cuts);
-        frame_notes = frame_cuts(&circle_list, d, &body, &mut cuts);
+        imprint_cuts(&imprints, d, &body, &mut cuts, show);
+        frame_notes = frame_cuts(&circle_list, d, &body, &mut cuts, show);
         rings = plan_rings(&circle_list, d, &body, &cuts, shape, &surfaces, &features);
         // A cell holds the rings whose axis runs through it.
         if is_cell {
@@ -994,7 +1026,7 @@ pub(crate) fn build(design: &Design, body: &str, size: Option<f64>, layers: u32,
         .fold(f64::INFINITY, f64::min);
     let tolerance = (1e-3 * diagonal).min(0.01 * radius).max(MIN_RELATIVE_TOLERANCE * diagonal);
     if tolerance < 1e-3 * diagonal {
-        notes.push(format!("tolerance {tolerance:.4} mm: a hundredth of the smallest radius ({radius:.4} mm)"));
+        notes.push(format!("tolerance {}: a hundredth of the smallest radius ({})", length(tolerance), length(radius)));
     }
     let mesher = if cuts.is_empty() { PlanMesher::Sweep } else { PlanMesher::Cells };
     // A cell's copies are its body's (meshed with it), not its own.
@@ -1017,7 +1049,7 @@ pub(crate) fn build(design: &Design, body: &str, size: Option<f64>, layers: u32,
     plan.check()?;
     // Rings and blends: one block topology over the whole body when it fits (no cuts needed);
     // else the frame cuts and swept cells, with the reason.
-    match layout_of(design, &plan)? {
+    match layout_of(design, &plan, show)? {
         Some(Ok(layout)) => {
             plan.mesher = PlanMesher::Project;
             plan.cuts.clear();
@@ -1029,7 +1061,7 @@ pub(crate) fn build(design: &Design, body: &str, size: Option<f64>, layers: u32,
                     }
                 }
             }
-            plan.notes.push(layout.summary());
+            plan.notes.push(layout.summary(show));
         }
         Some(Err(why)) => {
             plan.notes.extend(frame_notes);
@@ -1044,7 +1076,7 @@ pub(crate) fn build(design: &Design, body: &str, size: Option<f64>, layers: u32,
 /// The block layout of `plan` for the projection mesher, when the plan has rings or blends
 /// (`None` when it has neither: the sweep meshes it); `Err` inside says why the body does not
 /// take one.
-fn layout_of(design: &Design, plan: &MeshPlan) -> Result<Option<std::result::Result<blocks::Layout, String>>> {
+fn layout_of(design: &Design, plan: &MeshPlan, show: Show) -> Result<Option<std::result::Result<blocks::Layout, String>>> {
     let blends: Vec<&PlanFeature> = plan.features.iter().filter(|f| f.template == "blend").collect();
     if plan.rings.is_empty() && blends.is_empty() {
         return Ok(None);
@@ -1066,7 +1098,8 @@ fn layout_of(design: &Design, plan: &MeshPlan) -> Result<Option<std::result::Res
     } else {
         None
     };
-    let input = blocks::Input { shape, surfaces: &surfaces, mesh: &mesh, direction, rings: &plan.rings, blends: blend_faces, shell, size: plan.size };
+    let input =
+        blocks::Input { shape, surfaces: &surfaces, mesh: &mesh, direction, rings: &plan.rings, blends: blend_faces, shell, size: plan.size, show };
     // The grid layout, else the ring-and-pillow layout (a section at an angle to the axes); the
     // grid's reason when neither fits.
     Ok(Some(blocks::layout(&input).or_else(|why| pillow::layout(&input).map_err(|other| format!("{why}; ring and pillow: {other}")))))
@@ -1087,14 +1120,22 @@ fn plan(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(EngineError::Params(format!("`max_elements` must be 1 to {MAX_ELEMENTS}")));
     }
     let name: String = super::opt(p, "name")?.unwrap_or_else(|| MeshPlan::default_name(&body));
+    let show = show_for(s);
     let design = s.design.as_deref().ok_or_else(|| EngineError::Params("open a design first".into()))?;
-    let plan = build(design, &body, size, layers, max_elements)?;
+    let plan = build(design, &body, size, layers, max_elements, &show)?;
     s.model.set_mesh_plan(&name, plan.clone())?;
     let decomposition = decompose::proposal(design, &plan)?;
     let mut reply = serde_json::to_value(&plan).map_err(|e| EngineError::Params(e.to_string()))?;
     if let Some(o) = reply.as_object_mut() {
         o.insert("name".into(), json!(name));
-        if let Some(d) = decomposition {
+        if let Some(mut d) = decomposition {
+            // Its commands are for the user to run: their numbers in the display system.
+            for c in d.get_mut("commands").and_then(Value::as_array_mut).into_iter().flatten() {
+                if let Some(id) = c.get("command").and_then(Value::as_str).map(str::to_string) {
+                    let shown = crate::units::geometry_params_shown(s, &id, &c["params"])?;
+                    c["params"] = shown;
+                }
+            }
             o.insert("decomposition".into(), d);
         }
     }
@@ -1139,7 +1180,9 @@ fn apply(s: &mut Session, p: &Value) -> Result<Value> {
         if design.source_body(copy).is_none() {
             return Err(EngineError::Params(format!("mesh plan `{name}`: no copy `{copy}` in the design")));
         }
-        let mut theirs = build(design, copy, Some(plan.size), plan.layers, MAX_ELEMENTS)?;
+        let show = show_for(s);
+        let design = s.design.as_deref().ok_or_else(|| EngineError::Params("open a design first".into()))?;
+        let mut theirs = build(design, copy, Some(plan.size), plan.layers, MAX_ELEMENTS, &show)?;
         // Its copies are this body and the others: they are meshed here, not again.
         theirs.copies.clear();
         theirs.size = plan.size;
@@ -1432,7 +1475,7 @@ fn apply_symmetric(s: &mut Session, name: &str, plan: &MeshPlan, corners: bool) 
         undo(s)?;
         return Ok(None);
     };
-    let mut cell_plan = build(design, &cell, Some(plan.size), plan.layers, MAX_ELEMENTS)?;
+    let mut cell_plan = build(design, &cell, Some(plan.size), plan.layers, MAX_ELEMENTS, &show_for(s))?;
     cell_plan.size = plan.size;
     cell_plan.tolerance = Some(tolerance);
     if cell_plan.mesher != PlanMesher::Project {
@@ -1604,7 +1647,7 @@ fn copy_corner(
 ) -> Result<std::result::Result<CornerCopy, Option<String>>> {
     let design = s.design.as_deref().ok_or_else(|| EngineError::Params("open a design first".into()))?;
     let (Some(shape), Some(d)) = (design.body(cell), cell_plan.direction) else { return Ok(Err(None)) };
-    let layout = match layout_of(design, cell_plan)? {
+    let layout = match layout_of(design, cell_plan, &show_for(s))? {
         Some(Ok(l)) => l,
         _ => return Ok(Err(None)),
     };
@@ -1634,7 +1677,7 @@ fn copy_corner(
         Ok(mut copy) => {
             // The layout is the cell's, split at the cuts.
             if let Some(o) = copy.reply.as_object_mut() {
-                o.insert("layout".into(), json!(layout.summary()));
+                o.insert("layout".into(), json!(layout.summary(&show_for(s))));
                 o.insert(
                     "blend_layers".into(),
                     json!(layout.layers.iter().map(|(side, depth, what)| json!({"side": side, "depth": depth, "for": what})).collect::<Vec<_>>()),
@@ -1867,7 +1910,7 @@ fn cut_face_patches(
 fn apply_projection(s: &mut Session, name: &str, plan: &MeshPlan, tolerance: f64) -> Result<Value> {
     let (cleared, _, _) = cut(s, name, &plan.body, &[], tolerance)?;
     let design = s.design.as_deref().ok_or_else(|| EngineError::Params("open a design first".into()))?;
-    let layout = match layout_of(design, plan)? {
+    let layout = match layout_of(design, plan, &show_for(s))? {
         Some(Ok(l)) => l,
         Some(Err(why)) => return Err(EngineError::Params(format!("mesh plan `{name}`: no projection layout for body `{}`: {why}", plan.body))),
         None => return Err(EngineError::Params(format!("mesh plan `{name}`: projection blocking needs rings or blends; set the mesher to sweep"))),
@@ -1900,7 +1943,7 @@ fn apply_projection(s: &mut Session, name: &str, plan: &MeshPlan, tolerance: f64
         "name": name,
         "body": plan.body,
         "mesher": "project",
-        "layout": layout.summary(),
+        "layout": layout.summary(&show_for(s)),
         "blend_layers": layout.layers.iter().map(|(side, depth, what)| json!({"side": side, "depth": depth, "for": what})).collect::<Vec<_>>(),
         "cuts": [],
         "skipped_cuts": [],
@@ -2228,7 +2271,7 @@ mod tests {
             center: Some([89.0, 0.0, 4.0]),
         };
         let mut cuts = Vec::new();
-        super::imprint_cuts(&[pocket], z, &body, &mut cuts);
+        super::imprint_cuts(&[pocket], z, &body, &mut cuts, &|q, v| crate::units::shown(crate::units::geometry(), crate::units::geometry(), q, v));
         let at = |n: [f64; 3]| -> Vec<f64> {
             let mut v: Vec<f64> = cuts.iter().filter(|c| super::parallel(c.normal, n)).map(|c| super::dot(c.point, n)).collect();
             v.sort_by(f64::total_cmp);

@@ -8,6 +8,7 @@ use fieldcraft_io::SourceFile;
 use fieldcraft_io::roots::Access;
 use fieldcraft_model::Model;
 use fieldcraft_model::geometry::{Entity, GeometryRef};
+use fieldcraft_model::units::Quantity;
 use serde_json::{Value, json};
 
 use crate::requirement::Requirement;
@@ -36,7 +37,7 @@ pub const BODIES: CommandSpec = CommandSpec {
 pub const FEATURES: CommandSpec = CommandSpec {
     id: "geometry.features",
     label: "Feature Graph",
-    params: r#"{"body"?: "Base" (default: every body)} — the features of the SolidCraft timeline that built each body of the open design, in order (read-only): each feature's `id` (`F<id>` in persistent names), `name`, `type` (extrude, box, cylinder, hole, shell, fillet, combine, pattern, mirror, split, …), `operation` (new_body, join, cut, intersect), `values` (its numeric inputs evaluated: mm, radians, counts), `placement` (a primitive's corner, base or centre), `direction` (an extrude's along the sketch normal, a cylinder's axis, a hole's drilling direction), `two_sided`, `sketch` (plane origin, axes and normal, and the profiles used: lines, arcs and circles in sketch coordinates, holes, curve ids), `transforms` (pattern and mirror copies, 4×4 row-major), `targets` and `tools`, the stored `definition`, the persistent `faces` and `edges` of the body it made, and `error` when it failed to rebuild. A partition cell is described by the body it was cut from"#,
+    params: r#"{"body"?: "Base" (default: every body)} — the features of the SolidCraft timeline that built each body of the open design, in order (read-only): each feature's `id` (`F<id>` in persistent names), `name`, `type` (extrude, box, cylinder, hole, shell, fillet, combine, pattern, mirror, split, …), `operation` (new_body, join, cut, intersect), `values` (its numeric inputs evaluated: lengths in the display units, radians, counts), `placement` (a primitive's corner, base or centre), `direction` (an extrude's along the sketch normal, a cylinder's axis, a hole's drilling direction), `two_sided`, `sketch` (plane origin, axes and normal, and the profiles used: lines, arcs and circles in sketch coordinates, holes, curve ids), `transforms` (pattern and mirror copies, 4×4 row-major), `targets` and `tools`, the stored `definition`, the persistent `faces` and `edges` of the body it made, and `error` when it failed to rebuild. A partition cell is described by the body it was cut from"#,
     form: Some(super::forms::FEATURES),
     kind: CommandKind::Model,
     requires: &[Requirement::Design],
@@ -56,7 +57,7 @@ pub const CENTRE: CommandSpec = CommandSpec {
 pub const CHECK: CommandSpec = CommandSpec {
     id: "geometry.check",
     label: "Check Geometry",
-    params: r#"{"body"?: "Body1" (default: every body of the open design), "size"?: mm (the target element size; default a twentieth of the smallest checked body's bounding-box diagonal), "short_edge": 0.3, "small_face": 0.1, "sliver": 0.3, "gap": 0.3 (fractions of the size, 0..=10), "parallel_angle": 10 (degrees, 0..=60)} — before meshing, finds what is small against the size (read-only): `short_edge` edges shorter than short_edge × size, `small_face` faces with area below small_face × size², `sliver_face` faces narrower (2 × area / perimeter) than sliver × size, and `near_faces` pairs of faces within parallel_angle of parallel that are closer than gap × size without touching (a gap between bodies or cells, an overlap, or a wall thinner than the gap; faces within twice the tessellation tolerance touch). Replies `size`, `counts` per kind, `summary`, and `findings` (by kind, worst first, at most 1000; `truncated` says when more were found), each with `kind`, `body`, `edge`, `faces` (persistent names; near faces: the second on `other_body`), `value` (mm, mm²), `limit` and `at` (a point on it). `mark` (default true): the viewport and pictures mark the findings in the marker colour (their faces, short edges as lines, and a dot at each `at`) until the design changes or a check with `mark: false` or nothing found"#,
+    params: r#"{"body"?: "Body1" (default: every body of the open design), "size"?: length (the target element size; default a twentieth of the smallest checked body's bounding-box diagonal), "short_edge": 0.3, "small_face": 0.1, "sliver": 0.3, "gap": 0.3 (fractions of the size, 0..=10), "parallel_angle": 10 (degrees, 0..=60)} — before meshing, finds what is small against the size (read-only): `short_edge` edges shorter than short_edge × size, `small_face` faces with area below small_face × size², `sliver_face` faces narrower (2 × area / perimeter) than sliver × size, and `near_faces` pairs of faces within parallel_angle of parallel that are closer than gap × size without touching (a gap between bodies or cells, an overlap, or a wall thinner than the gap; faces within twice the tessellation tolerance touch). Replies `size`, `counts` per kind, `summary`, and `findings` (by kind, worst first, at most 1000; `truncated` says when more were found), each with `kind`, `body`, `edge`, `faces` (persistent names; near faces: the second on `other_body`), `value` (a length; an area for `small_face`), `limit` and `at` (a point on it). `mark` (default true): the viewport and pictures mark the findings in the marker colour (their faces, short edges as lines, and a dot at each `at`) until the design changes or a check with `mark: false` or nothing found"#,
     form: Some(super::forms::GEOMETRY_CHECK),
     kind: CommandKind::Model,
     requires: &[Requirement::Design],
@@ -66,7 +67,7 @@ pub const CHECK: CommandSpec = CommandSpec {
 pub const TESSELLATE: CommandSpec = CommandSpec {
     id: "geometry.tessellate",
     label: "Tessellate Body",
-    params: r#"{"body": "Body1", "tolerance": 0.05} — triangulates the body's boundary within the chordal tolerance (mm); reports triangles per face"#,
+    params: r#"{"body": "Body1", "tolerance": 0.05} — triangulates the body's boundary within the chordal tolerance; reports triangles per face"#,
     form: Some(super::forms::TESSELLATE),
     kind: CommandKind::Model,
     requires: &[Requirement::Design],
@@ -218,8 +219,15 @@ fn features(s: &mut Session, p: &Value) -> Result<Value> {
         Some(v) => Some(v.as_str().ok_or_else(|| EngineError::param("body", ProblemKind::NotAName))?),
     };
     let design = s.design.as_deref().ok_or_else(|| EngineError::Params("open a design first".into()))?;
-    let graph = design.features(body)?;
-    Ok(json!({"bodies": graph}))
+    let mut graph = design.features(body)?;
+    // Its lengths keyed by the feature's own labels, so shown here rather than by the reply
+    // table: the design's millimetres in the display system.
+    let (display, mm) = (s.units(), crate::units::geometry());
+    let show = |q: Quantity, v: f64| mm.to_si(q, v).and_then(|si| display.express(q, si)).unwrap_or(f64::NAN);
+    for b in &mut graph {
+        b.convert(&|v| show(Quantity::Length, v), &|v| show(Quantity::Area, v));
+    }
+    Ok(json!({"bodies": graph, "units": {"length": display.symbol(Quantity::Length), "area": display.symbol(Quantity::Area)}}))
 }
 
 /// Most geometry items and nodes `geometry.centre` takes.
@@ -475,8 +483,7 @@ fn check(s: &mut Session, p: &Value) -> Result<Value> {
     });
     let counts: serde_json::Map<String, Value> =
         Kind::ALL.iter().map(|k| (k.name().to_string(), json!(findings.iter().filter(|f| f.kind == *k).count()))).collect();
-    // The size to three decimals, without trailing zeros.
-    let shown = format!("{size:.3}").trim_end_matches('0').trim_end_matches('.').to_string();
+    let shown = crate::units::shown_length(s, size);
     let summary = if findings.is_empty() {
         format!("nothing small against size {shown}")
     } else {
@@ -581,7 +588,7 @@ pub(crate) mod tests {
         let (_dir, mut s) = design(json!([{"command": "solid.box", "params": {"length": 40, "width": 20, "height": 10, "body_name": "Base"}}]));
         let clean = s.execute("geometry.check", &json!({"size": 5})).unwrap();
         assert!(kinds(&clean).is_empty(), "{clean}");
-        assert_eq!(clean["summary"], "nothing small against size 5");
+        assert_eq!(clean["summary"], "nothing small against size 5 mm");
         let (_dir, mut s) = design(json!([
             {"command": "solid.box", "params": {"length": 40, "width": 20, "height": 10, "body_name": "Base"}},
             {"command": "solid.box", "params": {"length": 20, "width": 20, "height": 10.4, "operation": "join", "targets": ["Base"]}},

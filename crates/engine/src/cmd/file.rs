@@ -684,6 +684,7 @@ mod tests {
                     // of the stored metres, within an ulp of what 0.7.0 saw.
                     let (mut a, mut b) = (serde_json::to_value(&replayed.model).unwrap(), serde_json::to_value(&opened.model).unwrap());
                     worst = worst.max(settle_coordinates(&mut a, &mut b, ""));
+                    settle_prose(&mut a, &mut b, "");
                     if a != b {
                         panic!("{what}: the replay differs at {}", difference(&a, &b, ""));
                     }
@@ -718,6 +719,26 @@ mod tests {
                 x.iter_mut().zip(y.iter_mut()).enumerate().map(|(i, (v, w))| settle_coordinates(v, w, &format!("{at}/{i}"))).fold(0.0, f64::max)
             }
             _ => 0.0,
+        }
+    }
+
+    /// Where `a` and `b` hold a mesh plan's prose (a feature's note, a cut's or unmapped
+    /// feature's reason, the plan's notes), make them equal: the text is this release's wording
+    /// and number format, the release that wrote the file had its own; the plan's data is
+    /// compared as it is.
+    fn settle_prose(a: &mut Value, b: &mut Value, at: &str) {
+        let prose = at.starts_with("/mesh_plans/") && (at.ends_with("/note") || at.ends_with("/reason") || at.rsplit('/').nth(1) == Some("notes"));
+        match (a, b) {
+            (Value::String(x), Value::String(y)) if prose => *x = y.clone(),
+            (Value::Object(x), Value::Object(y)) => x.iter_mut().for_each(|(k, v)| {
+                if let Some(w) = y.get_mut(k) {
+                    settle_prose(v, w, &format!("{at}/{k}"));
+                }
+            }),
+            (Value::Array(x), Value::Array(y)) => {
+                x.iter_mut().zip(y.iter_mut()).enumerate().for_each(|(i, (v, w))| settle_prose(v, w, &format!("{at}/{i}")))
+            }
+            _ => {}
         }
     }
 

@@ -79,8 +79,9 @@ impl Layout {
         })
     }
 
-    pub(crate) fn summary(&self) -> String {
-        let layers: Vec<String> = self.layers.iter().map(|(s, d, w)| format!("{s} {d:.4} mm ({w})")).collect();
+    pub(crate) fn summary(&self, show: super::Show) -> String {
+        let length = |v: f64| show(fieldcraft_model::units::Quantity::Length, v);
+        let layers: Vec<String> = self.layers.iter().map(|(s, d, w)| format!("{s} {} ({w})", length(*d))).collect();
         format!(
             "projection blocking: {} blocks over a {}×{}×{} grid, {} circle(s) ringed{}{}",
             self.topology.blocks.len(),
@@ -89,7 +90,7 @@ impl Layout {
             self.planes[2].saturating_sub(1),
             self.rings,
             if layers.is_empty() { String::new() } else { format!(", a blend layer on {}", layers.join(", ")) },
-            self.pillow.map_or_else(String::new, |t| format!(", a pillow layer from the carved grid to the walls ({t:.4} mm and more)"))
+            self.pillow.map_or_else(String::new, |t| format!(", a pillow layer from the carved grid to the walls ({} and more)", length(t)))
         )
     }
 }
@@ -106,6 +107,8 @@ pub(crate) struct Input<'a> {
     /// A shell's wall thickness.
     pub(crate) shell: Option<f64>,
     pub(crate) size: f64,
+    /// How a message shows a length or an area.
+    pub(crate) show: super::Show<'a>,
 }
 
 /// The local frame: local axis `a` is world axis `PERM[k][a]`, `k` the sweep's world axis (a
@@ -183,6 +186,7 @@ struct Group {
 // Axes index several per-axis arrays at once (planes, frames, layers).
 #[allow(clippy::needless_range_loop)]
 pub(crate) fn layout(inp: &Input) -> Result<Layout, String> {
+    let length = |v: f64| (inp.show)(fieldcraft_model::units::Quantity::Length, v);
     let d = inp.direction;
     let k = (0..3).find(|&k| (d[k].abs() - 1.0).abs() < 1e-9).ok_or("the sweep direction is not along an axis")?;
     let perm = PERM[k];
@@ -289,7 +293,7 @@ pub(crate) fn layout(inp: &Input) -> Result<Layout, String> {
         for f in crossing {
             let pts = face_points.get(f).map_or(&[][..], Vec::as_slice);
             if pts.iter().any(|p| (p[0] - g.c[0]).hypot(p[1] - g.c[1]) < r0 * (1.0 - 1e-3)) {
-                return Err(format!("face `{}` runs through the circle of radius {r0:.4}", name(f)));
+                return Err(format!("face `{}` runs through the circle of radius {}", name(f), length(r0)));
             }
         }
         g.patch = true;
@@ -387,7 +391,7 @@ pub(crate) fn layout(inp: &Input) -> Result<Layout, String> {
         for a in 0..2 {
             let c = g.c[a];
             if !g.patch && fixed[a].iter().any(|v| (v - c).abs() < r0 - eps) {
-                return Err(format!("a face of the body runs through the circle of radius {r0:.4}"));
+                return Err(format!("a face of the body runs through the circle of radius {}", length(r0)));
             }
         }
         let half = match outer.kind {
@@ -407,14 +411,14 @@ pub(crate) fn layout(inp: &Input) -> Result<Layout, String> {
                 h
             }),
             RingKind::Butterfly => [[r0 / 2f64.sqrt(); 2]; 2],
-            RingKind::OGrid => o_grid_frame(g, &fixed, eps)?,
+            RingKind::OGrid => o_grid_frame(g, &fixed, eps, inp.show)?,
         };
         for a in 0..2 {
             let c = g.c[a];
             for s in 0..2 {
                 let h = half[a][s];
                 if outer.kind == RingKind::Butterfly && !g.patch && fixed[a].iter().any(|v| (v - c).abs() < h - eps) {
-                    return Err(format!("a face of the body runs through the square inside the circle of radius {r0:.4}"));
+                    return Err(format!("a face of the body runs through the square inside the circle of radius {}", length(r0)));
                 }
                 g.frame[a][s] = if s == 0 { c - h } else { c + h };
             }
@@ -482,10 +486,10 @@ pub(crate) fn layout(inp: &Input) -> Result<Layout, String> {
             let r0 = g.circles.first().map_or(0.0, |c| c.r);
             let hold = if g.patch { 1.2 * g.circles.get(1).map_or(0.0, |c| c.r) } else { 0.7 * r0 };
             if !(g.frame[a][0] < g.c[a] - hold && g.frame[a][1] > g.c[a] + hold) {
-                return Err(format!("the frame round the circle of radius {r0:.4} does not hold it"));
+                return Err(format!("the frame round the circle of radius {} does not hold it", length(r0)));
             }
             if !g.patch && planes[a].iter().any(|p| *p > g.frame[a][0] + eps && *p < g.frame[a][1] - eps) {
-                return Err(format!("a plane of the body runs through the frame round the circle of radius {r0:.4}"));
+                return Err(format!("a plane of the body runs through the frame round the circle of radius {}", length(r0)));
             }
         }
     }
@@ -534,7 +538,7 @@ pub(crate) fn layout(inp: &Input) -> Result<Layout, String> {
         let inner = g.circles.last().map_or(0.0, |c| c.r);
         squares.push(([inner / (2.0 * 2f64.sqrt()); 4], [0.0; 4]));
         if squares.windows(2).any(|w| (0..4).any(|i| !(w[1].0[i] < w[0].0[i] - eps))) {
-            return Err(format!("the frame round the circle of radius {r0:.4} is too tight for its ring"));
+            return Err(format!("the frame round the circle of radius {} is too tight for its ring", length(r0)));
         }
         // The frame's subdivision by the grid's planes, as fractions along each side: every
         // square inside is divided alike, so the ring's blocks meet node to node.
@@ -773,7 +777,8 @@ fn patch_blend(groups: &[Group], pts: &[V3]) -> Option<(usize, [[f64; 2]; 2])> {
 /// side, and the frame's other side is as far from the centre unless the body's side is nearer
 /// there too; an axis with no side near takes the half-side of the other axis's (a square
 /// frame) when that is 1.5 to 3 radii, else 2 radii.
-fn o_grid_frame(g: &Group, fixed: &[Vec<f64>; 3], eps: f64) -> Result<[[f64; 2]; 2], String> {
+fn o_grid_frame(g: &Group, fixed: &[Vec<f64>; 3], eps: f64, show: super::Show) -> Result<[[f64; 2]; 2], String> {
+    let length = |v: f64| show(fieldcraft_model::units::Quantity::Length, v);
     let r0 = g.circles.first().map_or(0.0, |c| c.r);
     let mut half: [Option<[f64; 2]>; 2] = [None; 2];
     for a in 0..2 {
@@ -782,10 +787,10 @@ fn o_grid_frame(g: &Group, fixed: &[Vec<f64>; 3], eps: f64) -> Result<[[f64; 2];
         for (s, d) in dist.iter_mut().enumerate() {
             *d = fixed[a].iter().map(|v| if s == 0 { c - v } else { v - c }).filter(|x| *x > 0.0).fold(f64::INFINITY, f64::min);
             if !d.is_finite() {
-                return Err(format!("the hole of radius {r0:.4} has no side of the body round it"));
+                return Err(format!("the hole of radius {} has no side of the body round it", length(r0)));
             }
             if *d < 1.05 * r0 {
-                return Err(format!("the hole of radius {r0:.4} is {d:.4} mm from a face: too close for a ring"));
+                return Err(format!("the hole of radius {} is {} from a face: too close for a ring", length(r0), length(*d)));
             }
         }
         let near = dist[0].min(dist[1]);

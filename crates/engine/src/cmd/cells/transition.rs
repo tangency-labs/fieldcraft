@@ -94,7 +94,10 @@ pub(super) fn mesh_with_pyramids(
         })
         .sum();
     if !((quad_area - cut_area).abs() <= 1e-3 * cut_area) {
-        return Ok(Err(format!("the hex cells' faces ({quad_area:.6} mm²) do not cover its cut faces ({cut_area:.6} mm²)")));
+        return Ok(Err(format!(
+            "the hex cells' faces do not cover its cut faces (their areas differ by {:.3} %)",
+            100.0 * (quad_area - cut_area).abs() / cut_area
+        )));
     }
     let tag = u32::try_from(input.face_names.len()).map_err(|_| EngineError::Params("too many faces".into()))?;
     let welding = super::super::mesh::surface_options(p, m)?;

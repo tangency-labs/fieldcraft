@@ -363,10 +363,7 @@ impl Session {
         // model built on a design or 3MF meshes, whatever it declared: a replayed journal from
         // then is read so. One that acted on a block typed in another unit cannot be replayed
         // exactly, and is refused rather than guessed.
-        let on_geometry = self.design.is_some() || !self.surfaces.is_empty();
-        let legacy_geometry = self.legacy_replay && units::frame(id) == units::Frame::Geometry && on_geometry;
-        // Without one, its fixed millimetre fields (datums) followed the declared unit.
-        let legacy_free = self.legacy_replay && !on_geometry;
+        let legacy_geometry = self.legacy_replay && units::frame(id) == units::Frame::Geometry && self.on_geometry();
         if legacy_geometry && let Some(why) = self.legacy_block_target(id, params) {
             return Err(EngineError::Params(format!("this {id} from FieldCraft 0.7 acted on {why}; its numbers cannot be replayed exactly")));
         }
@@ -378,7 +375,6 @@ impl Session {
                 units::Frame::Input => input.clone(),
             };
             let converted = match spec.form {
-                Some(form) if legacy_free => units::convert_legacy_params(form, params, &input, &target)?,
                 Some(form) => units::convert_params(form, params, &input, &target)?,
                 None => params.clone(),
             };
@@ -411,8 +407,9 @@ impl Session {
                 if self.journal.is_empty() {
                     self.journal_header.units = input.clone();
                 }
+                // Bare numbers the journal would read otherwise say their units.
                 let entry = match spec.form {
-                    Some(form) if input != self.journal_header.units => units::with_units(form, params, &input),
+                    Some(form) if input != *self.journal_reads(id) => units::with_units(form, params, &input),
                     _ => params.clone(),
                 };
                 self.journal.push((id.to_string(), entry));
@@ -506,13 +503,38 @@ impl Session {
     /// (a command without a form has no numbers that follow the units).
     pub fn journal_params_shown(&self, command: &str, params: &Value) -> Value {
         match find_command(command).and_then(|spec| spec.form) {
-            Some(form) => units::convert_params(form, params, &self.journal_header.units, self.units()).unwrap_or_else(|_| params.clone()),
+            Some(form) => units::convert_params(form, params, self.journal_reads(command), self.units()).unwrap_or_else(|_| params.clone()),
             None => params.clone(),
         }
     }
 
     pub fn input_units(&self) -> &fieldcraft_model::DisplaySystem {
         self.pinned_input.as_ref().unwrap_or_else(|| self.units())
+    }
+
+    /// `params` of `command` with every bare number given its unit in the input system: they
+    /// mean the same when run again after the display units change (a reply the UI refreshes).
+    pub fn params_with_units(&self, command: &str, params: &Value) -> Value {
+        match find_command(command).and_then(|spec| spec.form) {
+            Some(form) => units::with_units(form, params, self.input_units()),
+            None => params.clone(),
+        }
+    }
+
+    /// Whether the model is built on the geometry: a design, or imported 3MF meshes.
+    fn on_geometry(&self) -> bool {
+        self.design.is_some() || !self.surfaces.is_empty()
+    }
+
+    /// The system a replay of the journal reads the bare numbers of command `id` in: the journal's
+    /// own, except in a journal from before format 3 of a model built on the geometry, whose
+    /// geometry and mesher commands read them in millimetres, as they did then.
+    fn journal_reads(&self, id: &str) -> &fieldcraft_model::DisplaySystem {
+        if self.journal_header.model_units.is_some() && units::frame(id) == units::Frame::Geometry && self.on_geometry() {
+            units::geometry()
+        } else {
+            &self.journal_header.units
+        }
     }
 
     /// A block body (typed in the journal's own units, not millimetres) a replayed format 2

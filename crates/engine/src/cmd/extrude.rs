@@ -27,7 +27,7 @@ use crate::{CommandKind, CommandSpec, EngineError, Result, Session};
 pub const HEX_EXTRUDE: CommandSpec = CommandSpec {
     id: "mesh.hex.extrude",
     label: "Extrude to Surface",
-    params: r#"{"source": [{"body": "Post", "face": "F1"}] (the section: faces already meshed, by this body or a neighbour, or one planar face meshed here) or "source_set": "Section" (a set of quad shell elements or element faces, such as a 2D mesh), "to_surface": [{"body": "Wall", "face": "F7"}] (the target faces the last layer lies on), "sides": [{"body": "Post", "face": "F3"}, …] (optional: the faces the section's sides follow), "direction": [0, 0, 1] or "normal": true (each node along the section's normal toward the target; the default), "layers": 8 or "size": 2.0 (layer thickness, mm; also the size of a section meshed here; default 1/25 of the paths' extent), "bias": 1.0 (last layer's thickness over the first's, 0.001 to 1000), "body": "Post" (the body the elements fill; default: the first source face's body), "tolerance": 0.05 (chordal tolerance of the tessellation, mm; default 1e-3 of each body's diagonal)} — replaces `body`'s mesh with hex8 layers stacked on the section, each node along its own straight path, the last layer on the target surface; with `sides`, every layer's boundary nodes lie on the side faces (which need not be straight) and the interior follows them. A section taken from an existing mesh keeps its nodes, so the extrusion conforms with the neighbour across it. Boundary element faces are tagged with `body`'s source, target and side faces. Reports the layers, counts, quality, the target gap and where the section came from; a path that misses the target, or elements that would invert, is an error that says where"#,
+    params: r#"{"source": [{"body": "Post", "face": "F1"}] (the section: faces already meshed, by this body or a neighbour, or one planar face meshed here) or "source_set": "Section" (a set of quad shell elements or element faces, such as a 2D mesh), "to_surface": [{"body": "Wall", "face": "F7"}] (the target faces the last layer lies on), "sides": [{"body": "Post", "face": "F3"}, …] (optional: the faces the section's sides follow), "direction": [0, 0, 1] or "normal": true (each node along the section's normal toward the target; the default), "layers": 8 or "size": 2.0 (layer thickness, a length; also the size of a section meshed here; default 1/25 of the paths' extent), "bias": 1.0 (last layer's thickness over the first's, 0.001 to 1000), "body": "Post" (the body the elements fill; default: the first source face's body), "tolerance": 0.05 (chordal tolerance of the tessellation, a length; default 1e-3 of each body's diagonal)} — replaces `body`'s mesh with hex8 layers stacked on the section, each node along its own straight path, the last layer on the target surface; with `sides`, every layer's boundary nodes lie on the side faces (which need not be straight) and the interior follows them. A section taken from an existing mesh keeps its nodes, so the extrusion conforms with the neighbour across it. Boundary element faces are tagged with `body`'s source, target and side faces. Reports the layers, counts, quality, the target gap and where the section came from; a path that misses the target, or elements that would invert, is an error that says where"#,
     form: Some(super::forms::HEX_EXTRUDE),
     kind: CommandKind::Model,
     requires: &[Requirement::Design],
@@ -100,7 +100,10 @@ impl Faces {
         let diag = shape.size()?;
         let tol = tolerance.unwrap_or(DEFAULT_RELATIVE_TOLERANCE * diag);
         if tol < MIN_RELATIVE_TOLERANCE * diag {
-            return Err(EngineError::Params(format!("`tolerance` must be at least {} mm for body `{}`", MIN_RELATIVE_TOLERANCE * diag, shape.name)));
+            return Err(EngineError::Params(format!(
+                "`tolerance` must be at least {MIN_RELATIVE_TOLERANCE:e} of body `{}`'s bounding-box diagonal",
+                shape.name
+            )));
         }
         let mesh = shape.tessellate(tol)?;
         let surface = BoundarySurface::new(

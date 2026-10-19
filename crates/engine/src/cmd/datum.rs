@@ -24,7 +24,7 @@ use crate::{CommandKind, CommandSpec, EngineError, Result, Session};
 pub const DATUM_PLANE: CommandSpec = CommandSpec {
     id: "geometry.datum",
     label: "Datum Plane",
-    params: r#"{"name": "Mid", "by": {"type": "offset", "plane": "yz" | "zx" | "xy", "offset": 15} | {"type": "three_points", "a": [x, y, z], "b": […], "c": […]} | {"type": "point_normal", "point": [x, y, z], "normal": [nx, ny, nz]} | {"type": "datum_points", "a": "P1", "b": "P2", "c": "P3"} | {"type": "normal_to_axis", "axis": "Spindle", "point"?: "P1"}} — a named datum plane (model coordinates, mm for SolidCraft geometry): a principal plane moved along its normal (yz: normal +x, zx: normal +y, xy: normal +z), through three points or three datum points (normal (b − a) × (c − a)), through a point with a normal, or normal to a datum axis through a datum point (the axis's point by default). Partitions (geometry.partition) cut by it; shown in the viewport"#,
+    params: r#"{"name": "Mid", "by": {"type": "offset", "plane": "yz" | "zx" | "xy", "offset": 15} | {"type": "three_points", "a": [x, y, z], "b": […], "c": […]} | {"type": "point_normal", "point": [x, y, z], "normal": [nx, ny, nz]} | {"type": "datum_points", "a": "P1", "b": "P2", "c": "P3"} | {"type": "normal_to_axis", "axis": "Spindle", "point"?: "P1"}} — a named datum plane (model coordinates): a principal plane moved along its normal (yz: normal +x, zx: normal +y, xy: normal +z), through three points or three datum points (normal (b − a) × (c − a)), through a point with a normal, or normal to a datum axis through a datum point (the axis's point by default). Partitions (geometry.partition) cut by it; shown in the viewport"#,
     form: Some(super::forms::DATUM_PLANE),
     kind: CommandKind::Model,
     requires: &[],
@@ -394,16 +394,12 @@ pub fn preview(s: &Session, command: &str, params: &Value) -> Option<Datum> {
     Some(d)
 }
 
-/// The parameters of the command that edits datum `name` (stored in SI), describing it as it is
-/// (a plane by its point and normal, an axis by its point and direction, a point by its
-/// coordinates), its coordinates in millimetres as the datum commands take them; and that
-/// command.
+/// The parameters of the command that edits datum `name`, describing it as it is (a plane by its
+/// point and normal, an axis by its point and direction, a point by its coordinates), in SI as
+/// the model stores it ([`crate::units::shown_params`] shows them in the display system); and
+/// that command.
 pub fn edit_params(name: &str, d: &Datum) -> (&'static str, Value) {
-    let mut d = *d;
-    match &mut d {
-        Datum::Plane { point, .. } | Datum::Axis { point, .. } | Datum::Point { point } => *point = crate::units::to_geometry_point(*point),
-    }
-    match d {
+    match *d {
         Datum::Plane { point, normal } => (DATUM_EDIT.id, json!({"name": name, "by": {"type": "point_normal", "point": point, "normal": normal}})),
         Datum::Axis { point, direction } => {
             (DATUM_AXIS_EDIT.id, json!({"name": name, "by": {"type": "point_direction", "point": point, "direction": direction}}))
@@ -629,7 +625,7 @@ pub(crate) mod tests {
     fn datums_by_each_definition() {
         let mut s = Session::default();
         let r = s.execute("geometry.datum", &json!({"name": "Mid", "by": {"type": "offset", "plane": "yz", "offset": 15}})).unwrap();
-        assert_eq!(r, json!({"name": "Mid", "type": "plane", "point": [15.0, 0.0, 0.0], "normal": [1.0, 0.0, 0.0]}));
+        assert_eq!(r, json!({"name": "Mid", "type": "plane", "point": [15.0, 0.0, 0.0], "normal": [1.0, 0.0, 0.0], "units": {"length": "mm"}}));
         let r = s
             .execute("geometry.datum", &json!({"name": "Tri", "by": {"type": "three_points", "a": [0, 0, 1], "b": [1, 0, 1], "c": [0, 1, 1]}}))
             .unwrap();
@@ -637,7 +633,7 @@ pub(crate) mod tests {
         s.execute("geometry.datum", &json!({"name": "Tilt", "by": {"type": "point_normal", "point": [0, 0, 0], "normal": [0, 3, 4]}})).unwrap();
         assert_eq!(s.model.datum("Tilt"), Some(&Datum::Plane { point: [0.0; 3], normal: [0.0, 0.6, 0.8] }));
         let r = s.execute("geometry.datum.axis", &json!({"name": "Z", "by": {"type": "principal", "axis": "z", "through": [1, 2, 0]}})).unwrap();
-        assert_eq!(r, json!({"name": "Z", "type": "axis", "point": [1.0, 2.0, 0.0], "direction": [0.0, 0.0, 1.0]}));
+        assert_eq!(r, json!({"name": "Z", "type": "axis", "point": [1.0, 2.0, 0.0], "direction": [0.0, 0.0, 1.0], "units": {"length": "mm"}}));
         s.execute("geometry.datum.axis", &json!({"name": "D", "by": {"type": "two_points", "a": [0, 0, 0], "b": [0, 2, 0]}})).unwrap();
         s.execute("geometry.datum.axis", &json!({"name": "E", "by": {"type": "point_direction", "point": [0, 0, 0], "direction": [5, 0, 0]}}))
             .unwrap();
@@ -838,10 +834,14 @@ pub(crate) mod tests {
         s.execute("geometry.datum.axis.edit", &json!({"name": "Ax", "by": {"type": "principal", "axis": "y"}})).unwrap();
         assert_eq!(s.model.datum("Ax"), Some(&Datum::Axis { point: [0.0; 3], direction: [0.0, 1.0, 0.0] }));
 
-        // The edit commands take the parameters edit_params gives back.
+        // The edit commands take the parameters edit_params gives back, shown in the display
+        // system, and they change nothing.
         for name in ["Mid", "Ax"] {
-            let (command, params) = edit_params(name, s.model.datum(name).unwrap());
-            s.execute(command, &params).unwrap();
+            let before = *s.model.datum(name).unwrap();
+            let (command, params) = edit_params(name, &before);
+            let shown = crate::units::shown_params(command, &params, s.units()).unwrap();
+            s.execute(command, &shown).unwrap();
+            assert_eq!(s.model.datum(name), Some(&before));
         }
 
         // Deleting the plane names its partition, or deletes it too.

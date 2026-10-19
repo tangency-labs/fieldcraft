@@ -39,7 +39,16 @@ pub struct Field {
     /// For a [`Kind::Choice`]: a one-line note per option value (what it needs), shown under the
     /// field for the option chosen.
     pub notes: &'static [(&'static str, &'static str)],
+    /// The numbers inside a JSON value (a [`Kind::Json`] field, or a name-or-object [`Kind::Text`]
+    /// one), by JSON pointer pattern relative to the value: what they measure, converted like any
+    /// other number of the form ([`crate::units`]).
+    pub numbers: Numbers,
 }
+
+/// Numbers inside a JSON value: (JSON pointer pattern, dimension). A `*` segment matches any key
+/// or index, the empty pattern the value itself; a matched value is a number or a list (of
+/// lists) of numbers.
+pub type Numbers = &'static [(&'static str, Dim)];
 
 /// What a field holds.
 #[derive(Debug, Clone, Copy)]
@@ -297,8 +306,8 @@ impl Session {
 }
 
 /// What a number of a command measures. Most follow the display system (bare numbers are in its
-/// unit; [`Dim::quantity`]); [`Dim::Millimetre`] and [`Dim::Degree`] keep the fixed unit their
-/// commands always took ([`Dim::fixed`]); a few depend on the value beside them ([`Dim::resolve`]).
+/// unit; [`Dim::quantity`]); [`Dim::Degree`] keeps the fixed unit its commands always took
+/// ([`Dim::fixed`]); a few depend on the value beside them ([`Dim::resolve`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dim {
     /// No unit (a ratio, a count, a factor).
@@ -336,9 +345,6 @@ pub enum Dim {
     Hertz,
     /// An eigenvalue ω² (`1/s²`).
     Eigenvalue,
-    /// Always millimetres, whatever the display system: lengths of the geometry commands, which
-    /// SolidCraft geometry (in millimetres) gave them.
-    Millimetre,
     /// Always degrees.
     Degree,
     /// A spring's stiffness: torsional (per radian) when the spring's `direction` is a rotation.
@@ -353,6 +359,8 @@ pub enum Dim {
     DofDisplacement,
     /// A fan curve's `[flow, pressure rise]` rows.
     FanCurve,
+    /// A geometry check finding's `value` or `limit`: an area for a `small_face`, else a length.
+    Finding,
     /// Any other quantity.
     Of(Quantity),
 }
@@ -362,10 +370,17 @@ impl Dim {
     pub fn quantity(self) -> Option<Quantity> {
         use Quantity as Q;
         Some(match self {
-            Dim::None | Dim::SpringStiffness | Dim::SpringDamping | Dim::Motion | Dim::Reaction | Dim::DofDisplacement | Dim::FanCurve => {
+            Dim::None
+            | Dim::SpringStiffness
+            | Dim::SpringDamping
+            | Dim::Motion
+            | Dim::Reaction
+            | Dim::DofDisplacement
+            | Dim::FanCurve
+            | Dim::Finding => {
                 return None;
             }
-            Dim::Length | Dim::Millimetre => Q::Length,
+            Dim::Length => Q::Length,
             Dim::Area => Q::Area,
             Dim::InverseLength => Q::InverseLength,
             Dim::Stress => Q::Pressure,
@@ -406,7 +421,6 @@ impl Dim {
     /// system.
     pub fn fixed(self) -> Option<&'static str> {
         match self {
-            Dim::Millimetre => Some("mm"),
             Dim::Degree => Some("deg"),
             _ => None,
         }
@@ -426,6 +440,7 @@ impl Dim {
                 Some(if parent.and_then(|p| p.get("direction")).and_then(Value::as_u64).is_some_and(|d| d >= 4) { Q::Angle } else { Q::Length })
             }
             Dim::FanCurve => Some(if index == 0 { Q::VolumeFlow } else { Q::Pressure }),
+            Dim::Finding => Some(if parent.and_then(|p| p.get("kind")).and_then(Value::as_str) == Some("small_face") { Q::Area } else { Q::Length }),
             d => d.quantity(),
         }
     }
@@ -440,6 +455,7 @@ impl Dim {
             Dim::Reaction => "force",
             Dim::DofDisplacement => "displacement",
             Dim::FanCurve => "volume flow and pressure",
+            Dim::Finding => "length",
             d => d.quantity().map(Quantity::name)?,
         })
     }
@@ -460,7 +476,7 @@ impl Dim {
 // ---- Building fields (const, so schemas are static tables) ----
 
 const fn field(key: &'static str, label: &'static str, kind: Kind) -> Field {
-    Field { key, label, kind, required: false, default: None, hint: "", help: "", notes: &[] }
+    Field { key, label, kind, required: false, default: None, hint: "", help: "", notes: &[], numbers: &[] }
 }
 
 impl Field {
@@ -484,6 +500,10 @@ impl Field {
     /// A one-line note per option value ([`Field::notes`]).
     pub const fn notes(self, notes: &'static [(&'static str, &'static str)]) -> Field {
         Field { notes, ..self }
+    }
+    /// The numbers inside its JSON value ([`Field::numbers`]).
+    pub const fn numbers(self, numbers: Numbers) -> Field {
+        Field { numbers, ..self }
     }
     /// The note for this option value (the default when `None`).
     pub fn note(&self, value: Option<&str>) -> Option<&'static str> {
@@ -1403,7 +1423,7 @@ mod tests {
         assert_eq!(Dim::Moment.unit(&si).as_deref(), Some("N·m"));
         assert_eq!(Dim::Density.unit(&inch).as_deref(), Some("lbf·s²/in⁴"));
         assert_eq!(Dim::Temperature.unit(&mm).as_deref(), Some("°C"));
-        assert_eq!(Dim::Millimetre.unit(&si).as_deref(), Some("mm"));
+        assert_eq!(Dim::Length.unit(&inch).as_deref(), Some("in"));
         assert_eq!(Dim::Degree.unit(&mm).as_deref(), Some("deg"));
         assert_eq!(Dim::None.unit(&si), None);
         // The dependent dimensions follow the value beside them.

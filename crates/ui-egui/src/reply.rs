@@ -287,9 +287,9 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
         "model.check" => diagnostics(app, ui, t, &reply.value, &mut acts),
         c if SOLVES.contains(&c) => solve_summary(ui, t, &reply.value, units),
         "model.activity" => activity(ui, t, &reply.value),
-        "geometry.bodies" => bodies(ui, t, &reply.value, &mut acts),
+        "geometry.bodies" => bodies(ui, t, &reply.value, app.session.units(), &mut acts),
         "mesh.quality" => quality(ui, t, &reply.value, &mut acts),
-        "geometry.defeature.propose" => defeature_list(ui, t, &reply.value, &mut acts),
+        "geometry.defeature.propose" => defeature_list(ui, t, &reply.value, app.session.units(), &mut acts),
         "geometry.features" => {
             let hovered = feature_graph(ui, t, &reply.value, &app.features_open, &mut acts);
             app.set_feature_hover(hovered);
@@ -356,7 +356,13 @@ fn set_defeature(app: &mut ModelApp, name: &str, features: Vec<u64>) -> Result<V
 
 /// Propose Defeaturing: each candidate with a switch (on: in the mesh; off: defeatured), its
 /// kind, size and the defeature that takes it out, and a button that defeatures the proposal.
-fn defeature_list(ui: &mut egui::Ui, t: &Tokens, v: &Value, acts: &mut Vec<Act>) {
+/// The symbol of geometry quantity `q` in `units` (a reply's numbers are in them).
+fn geometry_unit(units: &DisplaySystem, q: fieldcraft_model::units::Quantity) -> &str {
+    units.symbol(q)
+}
+
+fn defeature_list(ui: &mut egui::Ui, t: &Tokens, v: &Value, units: &DisplaySystem, acts: &mut Vec<Act>) {
+    use fieldcraft_model::units::Quantity as Q;
     let name = v["name"].as_str().unwrap_or("Defeature").to_string();
     let body = v["body"].as_str().unwrap_or_default();
     let candidates = v["candidates"].as_array().map(Vec::as_slice).unwrap_or_default();
@@ -400,7 +406,7 @@ fn defeature_list(ui: &mut egui::Ui, t: &Tokens, v: &Value, acts: &mut Vec<Act>)
                 _ => "",
             };
             ui.label(format!("{}{method}", c["category"].as_str().unwrap_or_default()));
-            ui.label(format!("{} mm", crate::describe::quantity(sig(c["size"].as_f64().unwrap_or(0.0)))));
+            ui.label(format!("{} {}", crate::describe::quantity(sig(c["size"].as_f64().unwrap_or(0.0))), geometry_unit(units, Q::Length)));
             ui.end_row();
         }
     });
@@ -436,7 +442,7 @@ fn feature_graph(
         let head = RichText::new(format!("{body}  ·  {}", plural(nodes.len() as u64, "feature"))).strong();
         egui::CollapsingHeader::new(head).id_salt(("fc_features_body", bi)).default_open(true).show(ui, |ui| {
             for (fi, node) in nodes.iter().take(MAX_ENTITIES).enumerate() {
-                let f = describe(node);
+                let f = describe(node, v["units"]["length"].as_str().unwrap_or_default());
                 let id = ui.id().with(("fc_feature", bi, fi));
                 let key = (body.to_string(), f.id);
                 let open = opened.contains(&key);
@@ -701,7 +707,9 @@ fn histogram(ui: &mut egui::Ui, t: &Tokens, counts: &[u64], range: (f64, f64), l
     });
 }
 
-fn bodies(ui: &mut egui::Ui, t: &Tokens, v: &Value, acts: &mut Vec<Act>) {
+fn bodies(ui: &mut egui::Ui, t: &Tokens, v: &Value, units: &DisplaySystem, acts: &mut Vec<Act>) {
+    use fieldcraft_model::units::Quantity as Q;
+    let (length, area, volume) = (geometry_unit(units, Q::Length), geometry_unit(units, Q::Area), geometry_unit(units, Q::Volume));
     let q = crate::describe::quantity;
     let pick = |body: &str, entity: fieldcraft_model::Entity| fieldcraft_model::GeometryRef { body: body.to_string(), entity };
     for (i, b) in v.as_array().into_iter().flatten().enumerate() {
@@ -709,8 +717,9 @@ fn bodies(ui: &mut egui::Ui, t: &Tokens, v: &Value, acts: &mut Vec<Act>) {
         let faces = b["faces"].as_array().map(Vec::as_slice).unwrap_or_default();
         let edges = b["edges"].as_array().map(Vec::as_slice).unwrap_or_default();
         let corner = |k: usize| -> Option<[f64; 3]> { serde_json::from_value(b["bbox"][k].clone()).ok() };
-        let size =
-            corner(0).zip(corner(1)).map(|(lo, hi)| format!("{} × {} × {} mm", q(sig(hi[0] - lo[0])), q(sig(hi[1] - lo[1])), q(sig(hi[2] - lo[2]))));
+        let size = corner(0)
+            .zip(corner(1))
+            .map(|(lo, hi)| format!("{} × {} × {} {length}", q(sig(hi[0] - lo[0])), q(sig(hi[1] - lo[1])), q(sig(hi[2] - lo[2]))));
         let id = egui::Id::new(("fc_reply_body", i));
         if ui.link(RichText::new(name).strong()).on_hover_text("Pick this body in the viewport").clicked() {
             acts.push(Act::Pick(pick(name, fieldcraft_model::Entity::Body)));
@@ -722,17 +731,17 @@ fn bodies(ui: &mut egui::Ui, t: &Tokens, v: &Value, acts: &mut Vec<Act>) {
                 ui.end_row();
             };
             if let Some(v) = b["volume"].as_f64() {
-                row("Volume", format!("{} mm³", q(sig(v))));
+                row("Volume", format!("{} {volume}", q(sig(v))));
             }
             if let Some(a) = b["area"].as_f64() {
-                row("Area", format!("{} mm²", q(sig(a))));
+                row("Area", format!("{} {area}", q(sig(a))));
             }
             row("Faces, edges", format!("{}, {}", faces.len(), edges.len()));
             if let Some(size) = size {
                 row("Size", size);
             }
         });
-        body_list(ui, t, id.with("faces"), "Faces", faces, &|f| (f["name"].as_str().unwrap_or_default().to_string(), None), name, acts);
+        body_list(ui, t, id.with("faces"), "Faces", faces, &|f| (f["name"].as_str().unwrap_or_default().to_string(), None), name, length, acts);
         body_list(
             ui,
             t,
@@ -741,6 +750,7 @@ fn bodies(ui: &mut egui::Ui, t: &Tokens, v: &Value, acts: &mut Vec<Act>) {
             edges,
             &|e| (e["name"].as_str().unwrap_or_default().to_string(), e["length"].as_f64()),
             name,
+            length,
             acts,
         );
         ui.separator();
@@ -757,6 +767,7 @@ fn body_list(
     items: &[Value],
     read: &dyn Fn(&Value) -> (String, Option<f64>),
     body: &str,
+    length_unit: &str,
     acts: &mut Vec<Act>,
 ) {
     if items.is_empty() {
@@ -772,7 +783,7 @@ fn body_list(
                     acts.push(Act::Pick(fieldcraft_model::GeometryRef { body: body.to_string(), entity }));
                 }
                 if let Some(l) = length {
-                    ui.label(RichText::new(format!("{} mm", crate::describe::quantity(sig(l)))).color(t.text_dim));
+                    ui.label(RichText::new(format!("{} {length_unit}", crate::describe::quantity(sig(l)))).color(t.text_dim));
                 }
             });
         }
@@ -1056,7 +1067,8 @@ mod tests {
         let reply = app.reply.clone().expect("the graph is shown");
         assert!(summary("geometry.features", &reply.value).contains("building 1 body"));
         let body = reply.value["bodies"][0]["body"].as_str().unwrap().to_string();
-        let features: Vec<_> = reply.value["bodies"][0]["features"].as_array().unwrap().iter().map(crate::feature_graph::describe).collect();
+        let features: Vec<_> =
+            reply.value["bodies"][0]["features"].as_array().unwrap().iter().map(|f| crate::feature_graph::describe(f, "mm")).collect();
         assert!(!features.is_empty());
         for f in &features {
             assert!(!f.summary.contains('{') && !f.summary.is_empty(), "{f:?}");
@@ -1088,6 +1100,27 @@ mod tests {
         set_defeature(&mut app, "Defeature", Vec::new()).unwrap();
         assert_eq!((faces(&app), app.reply.as_ref().unwrap().value["candidates"][0]["suppressed"].as_bool()), (8, Some(false)));
         assert!(app.session.model.defeatures().is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A live reply runs again in the units it was asked in: a defeature proposal below half an
+    /// inch still lists the plate's hole after the display switches to millimetres.
+    #[test]
+    fn a_live_reply_keeps_its_units_when_the_display_changes() {
+        let dir = std::env::temp_dir().join(format!("fieldcraft-ui-live-units-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let design = dir.join("plate.solidcraft");
+        std::fs::write(&design, fieldcraft_geometry::sample::plate_design(&fieldcraft_geometry::sample::Plate::default()).unwrap()).unwrap();
+        let mut app = ModelApp::new(fieldcraft_engine::Session::default());
+        app.run("geometry.open", json!({"path": design.to_string_lossy()})).unwrap();
+        app.run("model.units", json!({"system": "in-lbf-s-psi"})).unwrap();
+        let body = app.session.design.as_ref().unwrap().bodies[0].name.clone();
+        app.run("geometry.defeature.propose", json!({"body": body, "below": {"hole_diameter": 0.5}})).unwrap();
+        let proposal = |app: &ModelApp| app.reply.as_ref().map(|r| r.value["proposal"].clone());
+        let before = proposal(&app);
+        assert_eq!(before.as_ref().and_then(|p| p.as_array()).map(Vec::len), Some(1), "{before:?}");
+        app.run("model.units", json!({"system": "mm-t-s-N-MPa"})).unwrap();
+        assert_eq!(proposal(&app), before);
         std::fs::remove_dir_all(&dir).ok();
     }
 

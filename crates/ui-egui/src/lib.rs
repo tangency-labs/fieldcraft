@@ -725,7 +725,9 @@ impl ModelApp {
                 let mut line = format!("{label}: {}", reply::summary_in(id, v, Some(self.session.units())));
                 if reply::is_rich(v) && !(id == "results.reactions" && self.plot().is_some()) {
                     line.push_str(" (details in the panel)");
-                    self.reply = Some(reply::Reply { command: id.to_string(), label: label.to_string(), params: params.clone(), value: v.clone() });
+                    // Kept with their units: a live reply runs again in whatever units are shown then.
+                    let params = self.session.params_with_units(id, &params);
+                    self.reply = Some(reply::Reply { command: id.to_string(), label: label.to_string(), params, value: v.clone() });
                 }
                 self.set_status(line, false)
             }

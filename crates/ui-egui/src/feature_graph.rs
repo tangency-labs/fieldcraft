@@ -48,8 +48,9 @@ fn num(v: f64) -> String {
     quantity((v * scale).round() / scale)
 }
 
-fn mm(v: f64) -> String {
-    format!("{} mm", num(v))
+/// A length with `unit`, the display system's (the reply's numbers are in it).
+fn length(v: f64, unit: &str) -> String {
+    format!("{} {unit}", num(v))
 }
 
 fn deg(radians: f64) -> String {
@@ -77,14 +78,14 @@ fn label(key: &str) -> String {
 }
 
 /// An input's value with its unit, from its key: angles in degrees, counts and scales bare,
-/// everything else a length in mm.
-fn input(key: &str, v: f64) -> String {
+/// everything else a length in `unit`.
+fn input(key: &str, v: f64, unit: &str) -> String {
     if key.contains("angle") {
         deg(v)
     } else if key.contains("quantity") || key.contains("scale") || key.contains("factor") || key == "ribs" {
         num(v)
     } else {
-        mm(v)
+        length(v, unit)
     }
 }
 
@@ -101,7 +102,9 @@ fn strings(v: &Value) -> Vec<String> {
 }
 
 /// The feature node `f` of a `geometry.features` reply made readable.
-pub fn describe(f: &Value) -> Feature {
+/// The feature node `f` of a `geometry.features` reply, whose lengths are in `unit`.
+pub fn describe(f: &Value, unit: &str) -> Feature {
+    let len = |v: f64| length(v, unit);
     let kind_name = f["type"].as_str().unwrap_or_default();
     let op = f["operation"].as_str();
     let def = &f["definition"];
@@ -142,42 +145,42 @@ pub fn describe(f: &Value) -> Feature {
                     // SolidCraft 0.16 (`convention`), per side before.
                     let total = def["extent"]["direction"] == "symmetric" && def["extent"]["convention"] == "total_distance";
                     let per_side = if total { d.map(|d| d / 2.0) } else { d };
-                    format!("{verb} {} both sides", per_side.map(mm).unwrap_or_default())
+                    format!("{verb} {} both sides", per_side.map(len).unwrap_or_default())
                 } else {
-                    format!("{verb} {}{along}", d.map(mm).unwrap_or_default())
+                    format!("{verb} {}{along}", d.map(len).unwrap_or_default())
                 }
             };
             if let Some(a) = take("taper_angle").filter(|a| *a != 0.0) {
                 s += &format!(", taper {}", deg(a));
             }
             if let Some(t) = take("thickness") {
-                s += &format!(", thin {}", mm(t));
+                s += &format!(", thin {}", len(t));
             }
             (kind, s.trim_end().to_string())
         }
         "box" => {
             let (l, w, h) = (take("length"), take("width"), take("height"));
             let dims: Vec<String> = [l, w, h].into_iter().flatten().map(num).collect();
-            (Kind::Primitive, format!("Box {} mm{joined}", dims.join(" × ")))
+            (Kind::Primitive, format!("Box {} {unit}{joined}", dims.join(" × ")))
         }
         "cylinder" => {
             let (r, h) = (take("radius"), take("height"));
-            let s = format!("Cylinder Ø {} × {} mm{along}{joined}", r.map(|r| num(2.0 * r)).unwrap_or_default(), h.map(num).unwrap_or_default());
+            let s = format!("Cylinder Ø {} × {} {unit}{along}{joined}", r.map(|r| num(2.0 * r)).unwrap_or_default(), h.map(num).unwrap_or_default());
             (Kind::Primitive, s)
         }
-        "sphere" => (Kind::Primitive, format!("Sphere Ø {}{joined}", take("radius").map(|r| mm(2.0 * r)).unwrap_or_default())),
+        "sphere" => (Kind::Primitive, format!("Sphere Ø {}{joined}", take("radius").map(|r| len(2.0 * r)).unwrap_or_default())),
         "torus" => {
             let (a, b) = (take("major_radius"), take("minor_radius"));
-            (Kind::Primitive, format!("Torus R {} × r {}{joined}", a.map(num).unwrap_or_default(), b.map(mm).unwrap_or_default()))
+            (Kind::Primitive, format!("Torus R {} × r {}{joined}", a.map(num).unwrap_or_default(), b.map(len).unwrap_or_default()))
         }
         "hole" => {
             let d = take("diameter").map(num).unwrap_or_default();
             let mut s = match take("depth") {
-                Some(depth) => format!("Hole Ø {d} × {} deep", mm(depth)),
+                Some(depth) => format!("Hole Ø {d} × {} deep", len(depth)),
                 None => format!("Hole Ø {d} through"),
             };
             if let (Some(a), Some(b)) = (take("counterbore_diameter"), take("counterbore_depth")) {
-                s += &format!(", counterbore Ø {} × {}", num(a), mm(b));
+                s += &format!(", counterbore Ø {} × {}", num(a), len(b));
             }
             if let (Some(a), Some(b)) = (take("countersink_diameter"), take("countersink_angle")) {
                 s += &format!(", countersink Ø {} × {}", num(a), deg(b));
@@ -193,20 +196,20 @@ pub fn describe(f: &Value) -> Feature {
             (Kind::Fillet, format!("Fillet {r}{on_edges}").replace("  ", " "))
         }
         "chamfer" => {
-            let d = take("distance").map(mm).unwrap_or_default();
+            let d = take("distance").map(len).unwrap_or_default();
             let a = take("angle").map(|a| format!(" × {}", deg(a))).unwrap_or_default();
             (Kind::Chamfer, format!("Chamfer {d}{a}{on_edges}"))
         }
         "shell" => {
             let faces = def["faces"].as_array().map(Vec::len).unwrap_or(0);
             let open = if faces > 0 { format!(", {} open", plural(faces, "face", "faces")) } else { String::new() };
-            (Kind::Shell, format!("Shell, {} wall{open}", take("thickness").map(mm).unwrap_or_default()))
+            (Kind::Shell, format!("Shell, {} wall{open}", take("thickness").map(len).unwrap_or_default()))
         }
         "pattern" | "linear_pattern" | "circular_pattern" => {
             let n = take("quantity");
             let s = match (n, take("spacing").or_else(|| take("distance")), take("total_angle")) {
                 (Some(n), _, Some(a)) => format!("Pattern {} × over {}", num(n), deg(a)),
-                (Some(n), Some(d), _) => format!("Pattern {} × {} apart", num(n), mm(d)),
+                (Some(n), Some(d), _) => format!("Pattern {} × {} apart", num(n), len(d)),
                 _ => format!("Pattern of {}", plural(copies + 1, "instance", "instances")),
             };
             (Kind::Pattern, s)
@@ -233,7 +236,7 @@ pub fn describe(f: &Value) -> Feature {
                 .into_iter()
                 .flatten()
                 .take(2)
-                .filter_map(|(k, v)| v.as_f64().map(|v| format!("{} {}", label(k).to_lowercase(), input(k, v))))
+                .filter_map(|(k, v)| v.as_f64().map(|v| format!("{} {}", label(k).to_lowercase(), input(k, v, unit))))
                 .collect();
             if !first.is_empty() {
                 s += &format!(", {}", first.join(", "));
@@ -246,7 +249,7 @@ pub fn describe(f: &Value) -> Feature {
         if let Some(v) = v.as_f64()
             && !used.contains(&k.as_str())
         {
-            details.push((label(k), input(k, v)));
+            details.push((label(k), input(k, v, unit)));
         }
     }
     if let Some(sk) = f["sketch"].as_object() {
@@ -258,7 +261,7 @@ pub fn describe(f: &Value) -> Feature {
         details.push(("Direction".into(), d));
     }
     if let Some(p) = vec3(&f["placement"]) {
-        details.push(("At".into(), format!("({}, {}, {}) mm", num(p[0]), num(p[1]), num(p[2]))));
+        details.push(("At".into(), format!("({}, {}, {}) {unit}", num(p[0]), num(p[1]), num(p[2]))));
     }
     if let Some(op) = op {
         details.push(("Operation".into(), op.replace('_', " ")));
@@ -366,7 +369,7 @@ mod tests {
     use serde_json::json;
 
     fn summary(f: Value) -> String {
-        describe(&f).summary
+        describe(&f, "mm").summary
     }
 
     #[test]
@@ -383,7 +386,7 @@ mod tests {
         let f = json!({"type": "extrude", "operation": "join", "two_sided": true, "values": {"distance": 20.0}, "definition": total});
         assert_eq!(summary(f), "Join 10 mm both sides");
         let f = json!({"type": "extrude", "values": {"distance": 5.0, "taper_angle": 0.0523599}, "direction": [0.6, 0.8, 0], "definition": {}});
-        assert_eq!(describe(&f).kind, Kind::Extrude);
+        assert_eq!(describe(&f, "mm").kind, Kind::Extrude);
         assert_eq!(summary(f), "Extrude 5 mm along (0.6, 0.8, 0), taper 3°");
     }
 
@@ -401,7 +404,7 @@ mod tests {
     #[test]
     fn holes_say_through_or_how_deep() {
         let f = json!({"type": "hole", "operation": "cut", "values": {"diameter": 3.2}, "definition": {}});
-        assert_eq!(describe(&f).kind, Kind::Hole);
+        assert_eq!(describe(&f, "mm").kind, Kind::Hole);
         assert_eq!(summary(f), "Hole Ø 3.2 through");
         let f = json!({"type": "hole", "values": {"diameter": 6.0, "depth": 10.0, "counterbore_diameter": 11.0, "counterbore_depth": 6.5}, "definition": {}});
         assert_eq!(summary(f), "Hole Ø 6 × 10 mm deep, counterbore Ø 11 × 6.5 mm");
@@ -410,12 +413,12 @@ mod tests {
     #[test]
     fn edge_features_count_their_edges() {
         let f = json!({"type": "fillet", "values": {"radius": 2.0}, "definition": {"edges": [[0, 0, 0], [1, 0, 0], [2, 0, 0], [3, 0, 0]]}});
-        assert_eq!(describe(&f).kind, Kind::Fillet);
+        assert_eq!(describe(&f, "mm").kind, Kind::Fillet);
         assert_eq!(summary(f), "Fillet R 2 on 4 edges");
         let f = json!({"type": "fillet", "values": {"start_radius": 1.0, "end_radius": 3.0}, "definition": {"edges": [[0, 0, 0]]}});
         assert_eq!(summary(f), "Fillet R 1–3 on 1 edge");
         let f = json!({"type": "chamfer", "values": {"distance": 0.5}, "definition": {"edges": [[0, 0, 0], [1, 1, 1]]}});
-        assert_eq!(describe(&f).kind, Kind::Chamfer);
+        assert_eq!(describe(&f, "mm").kind, Kind::Chamfer);
         assert_eq!(summary(f), "Chamfer 0.5 mm on 2 edges");
     }
 
@@ -424,15 +427,15 @@ mod tests {
         let f = json!({"type": "shell", "values": {"thickness": 2.0}, "definition": {"faces": ["top"]}});
         assert_eq!(summary(f), "Shell, 2 mm wall, 1 face open");
         let f = json!({"type": "pattern", "values": {"quantity": 4.0, "spacing": 30.0}, "definition": {}});
-        assert_eq!(describe(&f).kind, Kind::Pattern);
+        assert_eq!(describe(&f, "mm").kind, Kind::Pattern);
         assert_eq!(summary(f), "Pattern 4 × 30 mm apart");
         let f = json!({"type": "pattern", "values": {"quantity": 6.0, "total_angle": std::f64::consts::TAU}, "definition": {}});
         assert_eq!(summary(f), "Pattern 6 × over 360°");
         let f = json!({"type": "mirror", "values": {}, "transforms": [[[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]], "definition": {}});
-        assert_eq!(describe(&f).kind, Kind::Mirror);
+        assert_eq!(describe(&f, "mm").kind, Kind::Mirror);
         assert_eq!(summary(f), "Mirror, 1 copy");
         let f = json!({"type": "combine", "operation": "cut", "targets": ["Base"], "tools": ["Tool"], "values": {}, "definition": {}});
-        assert_eq!(describe(&f).kind, Kind::Boolean);
+        assert_eq!(describe(&f, "mm").kind, Kind::Boolean);
         assert_eq!(summary(f), "Combine: cut Base with Tool");
     }
 
@@ -445,7 +448,7 @@ mod tests {
             "direction": [0, 0, 1], "creates": ["CrankArm"], "sketch": {"name": "ArmProfile", "profiles": [{}]},
             "faces": ["F2:top", "F2:start"], "edges": ["e1"], "definition": {}, "error": "no profile"
         });
-        let d = describe(&f);
+        let d = describe(&f, "mm");
         assert_eq!((d.id, d.name.as_str(), d.faces.len(), d.error.as_deref()), (2, "Arm", 2, Some("no profile")));
         let get = |k: &str| d.details.iter().find(|(l, _)| l == k).map(|(_, v)| v.as_str());
         assert_eq!(get("Start offset"), Some("1 mm"));
@@ -460,7 +463,7 @@ mod tests {
         for f in
             [json!(null), json!([]), json!({"type": 3, "values": "x", "direction": [1]}), json!({"type": "hole", "values": {"diameter": f64::MAX}})]
         {
-            let _ = describe(&f);
+            let _ = describe(&f, "mm");
         }
         assert_eq!(axis([0.0, 0.0, 0.0]), "(0, 0, 0)");
     }

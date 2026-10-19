@@ -239,8 +239,10 @@ fn coincident(body: &Shape, parent: &Faces, cut: &Cut, n: [f64; 3], size: f64) -
         if (along - 1.0).abs() < 1e-9 && distance <= reach {
             let name = parent.names.get(i).map_or_else(|| i.to_string(), |f| f.name.clone());
             out.push(format!(
-                "partition `{}`: the plane lies on face `{name}` of `{}` ({distance:.2e} mm from it); a cut along an existing face can leave micrometre slivers that no mesher takes: move the plane off the face (by a fraction of the element size)",
-                cut.name, body.name
+                "partition `{}`: the plane lies on face `{name}` of `{}` ({:.1e} of its size from it); a cut along an existing face can leave micrometre slivers that no mesher takes: move the plane off the face (by a fraction of the element size)",
+                cut.name,
+                body.name,
+                if size > 0.0 { distance / size } else { 0.0 }
             ));
         }
     }

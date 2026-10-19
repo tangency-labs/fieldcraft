@@ -40,6 +40,7 @@ use std::collections::BTreeMap;
 use fieldcraft_geometry::FaceSurface;
 use fieldcraft_mesh::project::Topology;
 use fieldcraft_model::RingKind;
+use fieldcraft_model::units::Quantity;
 
 use super::blocks::{Input, Layout, PERM, corner_det, winding};
 
@@ -206,6 +207,7 @@ enum Wall {
 /// share points, so its crossings chain by mesh edge; the pieces of different faces chain by their
 /// ends (each face carries its own copy of the points it shares, within `join`).
 fn slice(inp: &Input, local: &dyn Fn(V3) -> V3, z: f64, join: f64) -> Result<Vec<Loop>, String> {
+    let length = |v: f64| (inp.show)(Quantity::Length, v);
     let m = inp.mesh;
     // Segments as (start key, end key, start, end, face); a key is a mesh edge (its two points).
     let mut segs: Vec<([u32; 2], [u32; 2], V2, V2, u32)> = Vec::new();
@@ -239,7 +241,7 @@ fn slice(inp: &Input, local: &dyn Fn(V3) -> V3, z: f64, join: f64) -> Result<Vec
         }
     }
     if segs.len() > MAX_LOOP {
-        return Err(format!("the section at {z:.4} has {} segments", segs.len()));
+        return Err(format!("the section at {} has {} segments", length(z), segs.len()));
     }
     // Pieces: chains within a face, by mesh edge.
     let mut by_start: BTreeMap<(u32, [u32; 2]), usize> = BTreeMap::new();
@@ -307,7 +309,7 @@ fn slice(inp: &Input, local: &dyn Fn(V3) -> V3, z: f64, join: f64) -> Result<Vec
                     taken[j] = true;
                     cur = j;
                 }
-                None => return Err(format!("the section at {z:.4} does not close")),
+                None => return Err(format!("the section at {} does not close", length(z))),
             }
         }
         if lp.pts.len() >= 3 {
@@ -408,6 +410,8 @@ fn convex(q: &[V2; 4]) -> bool {
 // Several per-axis and per-loop arrays are indexed together.
 #[allow(clippy::needless_range_loop)]
 pub(crate) fn layout(inp: &Input) -> Result<Layout, String> {
+    let length = |v: f64| (inp.show)(Quantity::Length, v);
+    let area_shown = |v: f64| (inp.show)(Quantity::Area, v);
     let d = inp.direction;
     let k = (0..3).find(|&k| (d[k].abs() - 1.0).abs() < 1e-9).ok_or("the sweep direction is not along an axis")?;
     let perm = PERM[k];
@@ -500,7 +504,7 @@ pub(crate) fn layout(inp: &Input) -> Result<Layout, String> {
         }
         let inside: Vec<&&Loop> = holes.iter().filter(|h| h.pts.iter().all(|p| norm(sub(*p, c)) < r.radius - eps)).collect();
         let [inner] = inside.as_slice() else {
-            return Err(format!("the boss of radius {:.4} holds {} holes (this layout rings a boss round one)", r.radius, inside.len()));
+            return Err(format!("the boss of radius {} holds {} holes (this layout rings a boss round one)", length(r.radius), inside.len()));
         };
         // Its corners: the middles of the runs of blend faces (corner fillets).
         let mut corners = Vec::new();
@@ -538,7 +542,7 @@ pub(crate) fn layout(inp: &Input) -> Result<Layout, String> {
     for r in inp.rings.iter().filter(|r| r.kind == RingKind::OGrid) {
         let c = ring_at(r)?;
         if !bosses.iter().any(|b| norm(sub(b.c, c)) < 1e-6 * b.r.max(1.0) && r.radius < b.r) {
-            return Err(format!("the hole of radius {:.4} is not inside a boss", r.radius));
+            return Err(format!("the hole of radius {} is not inside a boss", length(r.radius)));
         }
     }
     for h in &holes {
@@ -550,7 +554,7 @@ pub(crate) fn layout(inp: &Input) -> Result<Layout, String> {
     // Each boss's circle runs along the outline (its own side).
     for b in &bosses {
         if !outline.pts.iter().any(|p| on_boss(b, *p)) {
-            return Err(format!("the boss of radius {:.4} is not on the outline", b.r));
+            return Err(format!("the boss of radius {} is not on the outline", length(b.r)));
         }
     }
 
@@ -581,7 +585,7 @@ pub(crate) fn layout(inp: &Input) -> Result<Layout, String> {
             let radial = unit(sub(p, b.c)).ok_or("a kink at a boss's centre")?;
             let angle = dot(dir, radial).abs().clamp(0.0, 1.0).asin();
             if angle < MIN_KINK {
-                return Err(format!("the outline meets the boss of radius {:.4} tangentially (at {:.1}°)", b.r, angle.to_degrees()));
+                return Err(format!("the outline meets the boss of radius {} tangentially (at {:.1}°)", length(b.r), angle.to_degrees()));
             }
             kinks[bi].push(p);
         }
@@ -946,7 +950,7 @@ pub(crate) fn layout(inp: &Input) -> Result<Layout, String> {
         let edges: Vec<usize> = (0..n).filter(|&k| wall(k) == Wall::Boss(bi)).collect();
         let starts: Vec<usize> = edges.iter().copied().filter(|&k| wall(k + n - 1) != Wall::Boss(bi)).collect();
         let [ja] = starts.as_slice() else {
-            return Err(format!("the arm meets the boss of radius {:.4} in {} places", b.r, starts.len()));
+            return Err(format!("the arm meets the boss of radius {} in {} places", length(b.r), starts.len()));
         };
         let mut run = vec![*ja];
         while run.len() < n && wall(run.last().copied().unwrap_or(0) + 1) == Wall::Boss(bi) {
@@ -954,7 +958,7 @@ pub(crate) fn layout(inp: &Input) -> Result<Layout, String> {
         }
         let jb = (run.last().copied().unwrap_or(0) + 1) % n;
         let (Some(ka), Some(kb)) = (junction_kink[*ja], junction_kink[jb]) else {
-            return Err(format!("the arm's run along the boss of radius {:.4} has no kinks at its ends", b.r));
+            return Err(format!("the arm's run along the boss of radius {} has no kinks at its ends", length(b.r)));
         };
         // Counterclockwise round the boss: the run backwards, then the kink at its start, the
         // boss's own side and the kink at its end.
@@ -979,7 +983,7 @@ pub(crate) fn layout(inp: &Input) -> Result<Layout, String> {
             end += std::f64::consts::TAU;
         }
         if end - first >= std::f64::consts::TAU - 1e-9 || angles.len() < 3 {
-            return Err(format!("the arm's landings round the boss of radius {:.4} are out of order", b.r));
+            return Err(format!("the arm's landings round the boss of radius {} are out of order", length(b.r)));
         }
         // The own side in steps of the run's mean step (within bounds).
         let step = ((angles[angles.len() - 2] - first) / (angles.len() - 2) as f64).clamp(MIN_OWN_ARC, MAX_OWN_ARC);
@@ -1005,7 +1009,7 @@ pub(crate) fn layout(inp: &Input) -> Result<Layout, String> {
             let ca = ang(*c);
             let best = (0..angles.len()).min_by(|p, q| wrap(angles[*p] - ca).abs().total_cmp(&wrap(angles[*q] - ca).abs())).ok_or("an empty ring")?;
             if snapped[best] {
-                return Err(format!("the ring round the hole in the boss of radius {:.4} has too few blocks for its corners", b.r));
+                return Err(format!("the ring round the hole in the boss of radius {} has too few blocks for its corners", length(b.r)));
             }
             snapped[best] = true;
             inner[best] = *c;
@@ -1078,7 +1082,13 @@ pub(crate) fn layout(inp: &Input) -> Result<Layout, String> {
         // The blocks cover the slab's section: no wall of it is left out of the layout.
         let section = sections.get(s).map_or(0.0, |l| area(l));
         if (covered - section).abs() > AREA_TOLERANCE * section.abs() {
-            return Err(format!("the layout covers {covered:.1} of the {section:.1} mm² section between {z0:.4} and {z1:.4}"));
+            return Err(format!(
+                "the layout covers {} of the {} section between {} and {}",
+                area_shown(covered),
+                area_shown(section),
+                length(z0),
+                length(z1)
+            ));
         }
     }
     t.check().map_err(|e| format!("the layout's blocks do not fit: {e}"))?;
@@ -1119,6 +1129,7 @@ mod tests {
             blends: Vec::new(),
             shell: None,
             size: 1.0,
+            show: &|q, v| crate::units::shown(crate::units::geometry(), crate::units::geometry(), q, v),
         };
         let loops = slice(&inp, &|p| p, 1.0, 1e-6).unwrap();
         assert_eq!(loops.len(), 1, "{loops:?}");

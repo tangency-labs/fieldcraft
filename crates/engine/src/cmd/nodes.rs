@@ -20,7 +20,7 @@ use crate::{CommandKind, CommandSpec, EngineError, Result, Session};
 pub const MERGE: CommandSpec = CommandSpec {
     id: "mesh.node.merge",
     label: "Merge Nodes",
-    params: r#"{"tolerance"?: mm (default a millionth of the mesh's bounding-box diagonal), "set"?: "Name" (only the set's nodes and those of its elements and faces), "keep"?: "lowest" (default) | "highest"} — equivalences coincident nodes: every node within the distance of another becomes that one (the lowest or highest label of each group survives, keeping its position) in every element, set and geometry tag, and is removed. A merge that would put two nodes of one element together (collapsing it) is left out and listed under `refused`; the rest are made. Reports `merged`, the `pairs` [node, survivor] (the first 1000) and `refused`"#,
+    params: r#"{"tolerance"?: length (default a millionth of the mesh's bounding-box diagonal), "set"?: "Name" (only the set's nodes and those of its elements and faces), "keep"?: "lowest" (default) | "highest"} — equivalences coincident nodes: every node within the distance of another becomes that one (the lowest or highest label of each group survives, keeping its position) in every element, set and geometry tag, and is removed. A merge that would put two nodes of one element together (collapsing it) is left out and listed under `refused`; the rest are made. Reports `merged`, the `pairs` [node, survivor] (the first 1000) and `refused`"#,
     form: Some(super::forms::NODE_MERGE),
     kind: CommandKind::Model,
     requires: &[Requirement::Mesh],
@@ -30,7 +30,7 @@ pub const MERGE: CommandSpec = CommandSpec {
 pub const DUPLICATES: CommandSpec = CommandSpec {
     id: "mesh.check.duplicates",
     label: "Check Duplicates",
-    params: r#"{"tolerance"?: mm (default a millionth of the mesh's bounding-box diagonal)} — checks the mesh for what was not merged or does not join, changing nothing: `coincident` nodes within the distance of another ([node, other, distance]), `duplicate_elements` (groups on the same nodes), `free_faces` (faces of solid elements no other element shares: the skin), `cracks` (free faces lying on another free face: parts that touch without sharing nodes) and `free_edges` (edges of the skin and of 2D elements on one facet only: open borders). Lists hold the first 1000; `counts` has the totals"#,
+    params: r#"{"tolerance"?: length (default a millionth of the mesh's bounding-box diagonal)} — checks the mesh for what was not merged or does not join, changing nothing: `coincident` nodes within the distance of another ([node, other, distance]), `duplicate_elements` (groups on the same nodes), `free_faces` (faces of solid elements no other element shares: the skin), `cracks` (free faces lying on another free face: parts that touch without sharing nodes) and `free_edges` (edges of the skin and of 2D elements on one facet only: open borders). Lists hold the first 1000; `counts` has the totals"#,
     form: Some(super::forms::CHECK_DUPLICATES),
     kind: CommandKind::Model,
     requires: &[Requirement::Mesh],
@@ -112,7 +112,8 @@ fn merge(s: &mut Session, p: &Value) -> Result<Value> {
     let pairs: Vec<[u32; 2]> = plan.map.iter().take(MAX_LISTED).map(|(&a, &b)| [a, b]).collect();
     let refused: Vec<Value> =
         plan.refused.iter().take(MAX_LISTED).map(|r| json!({"node": r.node, "survivor": r.survivor, "element": r.element})).collect();
-    let mut summary = format!("merged {} node{} within {tol:.3e}", plan.map.len(), if plan.map.len() == 1 { "" } else { "s" });
+    let mut summary =
+        format!("merged {} node{} within {}", plan.map.len(), if plan.map.len() == 1 { "" } else { "s" }, crate::units::shown_length(s, tol));
     if !plan.refused.is_empty() {
         summary.push_str(&format!("; {} left apart (they would collapse an element)", plan.refused.len()));
     }

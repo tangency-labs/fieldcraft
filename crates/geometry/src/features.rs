@@ -61,6 +61,9 @@ pub struct FeatureNode {
     /// The numeric inputs evaluated: lengths in mm, angles in radians, counts as numbers, keyed
     /// by their snake-case label (`distance`, `radius`, `thickness`, …).
     pub values: BTreeMap<String, f64>,
+    /// The keys of `values` that are lengths.
+    #[serde(skip)]
+    pub lengths: BTreeSet<String>,
     /// Where a primitive sits (a box's corner, a cylinder's base, a sphere's centre), mm.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub placement: Option<[f64; 3]>,
@@ -145,6 +148,47 @@ pub enum Curve {
     Other {
         kind: String,
     },
+}
+
+impl BodyFeatures {
+    /// Every length (by `length`) and area (by `area`) of the graph converted: the graph is in
+    /// millimetres, as the design.
+    pub fn convert(&mut self, length: &dyn Fn(f64) -> f64, area: &dyn Fn(f64) -> f64) {
+        for f in &mut self.features {
+            for (k, v) in f.values.iter_mut() {
+                if f.lengths.contains(k) {
+                    *v = length(*v);
+                }
+            }
+            if let Some(p) = &mut f.placement {
+                *p = p.map(length);
+            }
+            for t in &mut f.transforms {
+                for row in t.iter_mut().take(3) {
+                    row[3] = length(row[3]);
+                }
+            }
+            if let Some(sk) = &mut f.sketch {
+                sk.origin = sk.origin.map(length);
+                for p in &mut sk.profiles {
+                    p.area = area(p.area);
+                    for c in p.outer.iter_mut().chain(p.holes.iter_mut().flatten()) {
+                        match c {
+                            Curve::Line { a, b } => {
+                                *a = a.map(length);
+                                *b = b.map(length);
+                            }
+                            Curve::Arc { center, radius, start: _, sweep: _ } | Curve::Circle { center, radius } => {
+                                *center = center.map(length);
+                                *radius = length(*radius);
+                            }
+                            Curve::Other { kind: _ } => {}
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn xyz(v: Vec3) -> [f64; 3] {
@@ -250,6 +294,7 @@ impl History {
         let (vals, _) = self.doc.param_values();
         let eval = |e: &str, k: Kind| Document::eval_in(&vals, e, k).ok().filter(|v| v.is_finite());
         let mut values = BTreeMap::new();
+        let mut lengths = BTreeSet::new();
         for (label, e, k) in f.kind.inputs() {
             if let Some(v) = eval(&e, k) {
                 let mut key = snake(label);
@@ -257,6 +302,9 @@ impl History {
                 while values.contains_key(&key) {
                     key = format!("{}_{n}", snake(label));
                     n += 1;
+                }
+                if k == Kind::Length {
+                    lengths.insert(key.clone());
                 }
                 values.insert(key, v);
             }
@@ -271,6 +319,7 @@ impl History {
             kind: String::new(),
             operation: None,
             values,
+            lengths,
             placement: None,
             direction: None,
             two_sided: false,

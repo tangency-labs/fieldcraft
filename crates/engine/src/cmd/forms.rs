@@ -9,8 +9,8 @@ use crate::schema::*;
 
 /// The smallest fan relaxation a form takes (the model takes any in (0, 1]).
 const MIN_FAN_RELAXATION: f64 = 1e-6; // unit-factors: a fraction per time step
-/// The largest merge distance a form takes: a cap on hostile input in the field's fixed unit.
-const MAX_MERGE_MM: f64 = 1.0e9; // unit-factors: a cap in millimetres (`Dim::Millimetre`)
+/// The largest merge distance a form takes: a cap on hostile input, in the display unit it is typed in.
+const MAX_MERGE: f64 = 1.0e9; // unit-factors: a cap on a typed number, not a conversion
 
 /// `{"set": …}` or `{"reference_point": …}`.
 const TARGET_OPTIONS: &[Field] = &[
@@ -1197,13 +1197,13 @@ const BODY: Field =
     reference("body", "Body", C::Body).help("The body to mesh; every body of the design when empty.").hint("every body of the design");
 const SURFACE: Field =
     int("surface", "Imported surface", 0, 1_000_000).help("An imported surface mesh to mesh instead of a design body.").hint("instead of a body");
-const TOLERANCE: Field = positive("tolerance", "Chordal tolerance", D::Millimetre)
+const TOLERANCE: Field = positive("tolerance", "Chordal tolerance", D::Length)
     .help("Largest distance between the tessellation and the true curved surface. Smaller follows curves closer, with more elements.")
     .hint("1e-3 of the diagonal");
 const WELD: Field = range("weld", "Weld", D::None, 0.0, fieldcraft_mesh::surface::MAX_RELATIVE_WELD)
     .help("Points closer than this fraction of the diagonal are merged when the surface is assembled.")
     .hint("1e-9 of the diagonal");
-const WELD_DISTANCE: Field = positive("weld_distance", "Weld distance", D::Millimetre)
+const WELD_DISTANCE: Field = positive("weld_distance", "Weld distance", D::Length)
     .help("Points closer than this are merged when the surface is assembled.")
     .hint("the surface's own");
 const FEATURE_ANGLE: Field = range("feature_angle", "Feature angle", D::Degree, 0.0, 180.0)
@@ -1213,7 +1213,7 @@ const FEATURE_ANGLE: Field = range("feature_angle", "Feature angle", D::Degree, 
 pub const TET: &[Field] = &[
     BODY,
     SURFACE,
-    positive("size", "Element size", D::Millimetre)
+    positive("size", "Element size", D::Length)
         .help("Target element edge length. Several elements through the thinnest wall are needed for accurate stresses.")
         .hint("1/20 of the diagonal"),
     choice("order", "Order", &[("linear", "Linear (tet4)"), ("quadratic", "Quadratic (tet10)")])
@@ -1235,7 +1235,7 @@ pub const TET: &[Field] = &[
     FEATURE_ANGLE,
 ];
 
-const HEX_SIZE: Field = positive("size", "Element size", D::Millimetre).help("Target element edge length.").hint("1/25 of the diagonal");
+const HEX_SIZE: Field = positive("size", "Element size", D::Length).help("Target element edge length.").hint("1/25 of the diagonal");
 const HEX_ORDER: Field =
     int("order", "Order", 1, 2).help("1: linear hex8. 2: quadratic hex20, more accurate in bending.").def("1").hint("1: hex8, 2: hex20");
 
@@ -1343,15 +1343,18 @@ pub const HEX_PROJECT: &[Field] = &[
     .help("The block topology projected onto the body: a grid of blocks you may carve, the seven-block sphere, the five-block butterfly for round sections, or blocks you list.")
     .def("\"grid\""),
     xyz("center", "Centre", POINT).help("Sphere or butterfly centre.").hint("from the body's bounding box"),
-    positive("radius", "Radius", D::Millimetre).help("Sphere or butterfly radius.").hint("from the body"),
+    positive("radius", "Radius", D::Length).help("Sphere or butterfly radius.").hint("from the body"),
     xyz("axis", "Axis", D::None).help("Butterfly axis direction.").hint("0, 0, 1"),
     json("levels", "Levels")
+        .numbers(&[("", D::Length)])
         .help("Sphere and butterfly levels; for a butterfly, distances along the axis from the centre, as JSON.")
         .hint("[z0, z1, ...]; from the bounding box"),
     range("inset", "Inset", D::None, 0.05, 0.95).help("Inner square or cube corner at this fraction of the radius.").def("0.55"),
-    json("grid", "Grid").help("The block grid: planes per axis or a cell count, and blocks to carve away, as JSON.").hint(r#"{"cells": [ni, nj, nk], "carve": [{"i": [a, b], "j": [c, d], "k": [e, f]}]}"#),
-    json("blocks", "Blocks").help("Template Blocks: vertices and hex8 blocks, as JSON.").hint(r#"{"vertices": [[x, y, z], ...], "blocks": [[v1..v8], ...]}"#),
-    json("operations", "Operations").help("O-grids, extrusions, connections, removals and merges applied in order, as JSON.").hint(r#"[{"op": "o_grid", "block": 0, "open": ["+z"]}]"#),
+    json("grid", "Grid").numbers(&[("/planes/*", D::Length)]).help("The block grid: planes per axis or a cell count, and blocks to carve away, as JSON.").hint(r#"{"cells": [ni, nj, nk], "carve": [{"i": [a, b], "j": [c, d], "k": [e, f]}]}"#),
+    json("blocks", "Blocks").numbers(&[("/vertices", D::Length)]).help("Template Blocks: vertices and hex8 blocks, as JSON.").hint(r#"{"vertices": [[x, y, z], ...], "blocks": [[v1..v8], ...]}"#),
+    json("operations", "Operations")
+        .numbers(&[("/*/offset", D::Length), ("/*/extrude/offset", D::Length), ("/*/distance", D::Length)])
+        .help("O-grids, extrusions, connections, removals and merges applied in order, as JSON.").hint(r#"[{"op": "o_grid", "block": 0, "open": ["+z"]}]"#),
     json("faces", "Face targets").help("Block faces sent to chosen B-rep faces; other outer faces go to the nearest surfaces.").hint(r#"[{"block": 0, "face": "+x", "to": ["F1:+x"]}]"#),
     json("divisions", "Divisions").help("Element counts per block direction.").hint(r#"[{"block": 0, "direction": 1, "count": 8}]"#),
     json("fixed", "Fixed faces")
@@ -1368,7 +1371,7 @@ pub const HEX_PROJECT: &[Field] = &[
     range("max_arc_angle", "Max arc angle", D::Degree, 0.0, 90.0)
         .help("The most a curved face may turn across one element; the divisions grow to keep it. 0 for no limit.")
         .def("30"),
-    range("merge", "Merge distance", D::Millimetre, 0.0, MAX_MERGE_MM)
+    range("merge", "Merge distance", D::Length, 0.0, MAX_MERGE)
         .help("Join this mesh's nodes with other bodies' meshes within this distance; 0 never.")
         .hint("1e-6 of the diagonal"),
     flag("preview", "Preview only").help("Return the block topology without meshing."),
@@ -1491,8 +1494,11 @@ pub const PLANAR: &[Field] = &[
     BODY,
     text("face", "Face").help("A planar face of the body to mesh.").hint("a planar face of the body"),
     TOLERANCE,
-    json("polygon", "Polygon").help("An outline to mesh instead of a face, as JSON points.").hint("[[x, y], …] instead of a face"),
-    json("holes", "Holes").help("Holes in the polygon, as JSON point lists."),
+    json("polygon", "Polygon")
+        .numbers(&[("", D::Length)])
+        .help("An outline to mesh instead of a face, as JSON points.")
+        .hint("[[x, y], …] instead of a face"),
+    json("holes", "Holes").numbers(&[("", D::Length)]).help("Holes in the polygon, as JSON point lists."),
     text("name", "Body name").help("Name of the new 2D body.").hint("Plane"),
     int("max_elements", "Max elements", 1, 4_000_000).help("Cap on the elements created."),
 ];
@@ -1731,7 +1737,7 @@ pub const OPEN_DESIGN: &[Field] = &[
         .help("Keep the current model with the new geometry, or start a new one.")
         .def("\"keep\""),
 ];
-const POINT: Dim = D::Millimetre;
+const POINT: Dim = D::Length;
 pub const DATUM_PLANE: &[Field] = &[
     NAME,
     variants(
@@ -1984,10 +1990,10 @@ pub const DEFEATURE_PROPOSE: &[Field] = &[
         "below",
         "Propose below",
         &[
-            positive("hole_diameter", "Hole diameter", D::Millimetre).help("Propose holes narrower than this."),
-            positive("fillet_radius", "Fillet radius", D::Millimetre).help("Propose fillets with a smaller radius."),
-            positive("chamfer", "Chamfer", D::Millimetre).help("Propose chamfers smaller than this."),
-            positive("boss_height", "Boss height", D::Millimetre).help("Propose bosses lower than this."),
+            positive("hole_diameter", "Hole diameter", D::Length).help("Propose holes narrower than this."),
+            positive("fillet_radius", "Fillet radius", D::Length).help("Propose fillets with a smaller radius."),
+            positive("chamfer", "Chamfer", D::Length).help("Propose chamfers smaller than this."),
+            positive("boss_height", "Boss height", D::Length).help("Propose bosses lower than this."),
         ],
     )
     .help("Size thresholds: a feature below its threshold is proposed."),
@@ -1997,12 +2003,12 @@ pub const DEFEATURE_PROPOSE: &[Field] = &[
 pub const MESH_PLAN: &[Field] = &[
     reference("body", "Body", C::Body).help("The body of the design to plan (as opened, not a partition cell).").req(),
     text("name", "Name").help("The name the plan is saved under.").hint("Plan-<body>"),
-    positive("size", "Element size", D::Millimetre).help("The largest element size; thin walls make it smaller.").hint("1/25 of the diagonal"),
+    positive("size", "Element size", D::Length).help("The largest element size; thin walls make it smaller.").hint("1/25 of the diagonal"),
     int("layers", "Layers through walls", 1, 10).help("Elements through the thinnest wall the features give (a shell, a plate).").hint("2"),
     int("max_elements", "Most elements", 1, 5_000_000).help("The size grows past the walls' when more elements would be needed.").hint("300000"),
 ];
 pub const MESH_PLAN_APPLY: &[Field] = &[
-    text("plan", "Plan").help("The name of a saved mesh plan (mesh.plan).").req(),
+    text("plan", "Plan").numbers(crate::units::MESH_PLAN).help("The name of a saved mesh plan (mesh.plan), or a plan object.").req(),
     flag("symmetry", "Use symmetry")
         .help("Mesh one cell of a body that is its own mirror image across planes through its middle, and mirror it.")
         .def("true"),
@@ -2014,7 +2020,7 @@ pub const MESH_PLAN_APPLY: &[Field] = &[
 pub const FEATURES: &[Field] = &[reference("body", "Body", C::Body).help("Only this body's features.").hint("every body")];
 pub const GEOMETRY_CHECK: &[Field] = &[
     reference("body", "Body", C::Body).help("The body to check; every body when empty.").hint("every body"),
-    positive("size", "Element size", D::Millimetre)
+    positive("size", "Element size", D::Length)
         .help("The element size you intend to mesh with; features are small against it.")
         .hint("1/20 of the diagonal"),
     range("short_edge", "Short edge", D::None, 0.0, 10.0).help("Edges shorter than this fraction of the size are reported.").def("0.3"),
