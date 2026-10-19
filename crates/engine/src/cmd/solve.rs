@@ -102,7 +102,7 @@ pub const HISTORY: CommandSpec = CommandSpec {
 pub const FLUID: CommandSpec = CommandSpec {
     id: "solve.fluid",
     label: "Solve Fluid Step",
-    params: r#"{"step": "Flow", "backend": "cpu", "max_cells": 16000000, "max_steps": 10000000, "max_cell_updates": 1e12, "max_frame_bytes": 2e9, "threads": 8} — runs a fluid step with the lattice Boltzmann solver (the only fluid step when `step` is left out): obstacles are triangulated from the open design or taken from imported surfaces; returns the time step, relaxation time, Mach number, mass, the final force on every wall and, with heat, the thermal relaxation time, the temperature range and the heat into every wall; with fans and porous zones, each one's volume flow and its pressure rise (a fan's operating point: `pressure_rise` from its curve, and `measured_pressure_rise`) or `pressure_drop`; the measured values are the static-pressure difference between the fluid cell layers just outside the zone, so they include the wall friction over its thickness plus one cell (final and mean over the last quarter of the run); `backend` is `cpu` (the default: double precision, the same result on every machine) or `gpu` (the step on the GPU `FIELDCRAFT_GPU` picks, single precision, within the backend's stated tolerance of the CPU; an error when the build has none); the caps may only be lowered; `threads` as for solve.static"#,
+    params: r#"{"step": "Flow", "backend": "cpu", "max_cells": 16000000, "max_steps": 10000000, "max_cell_updates": 1e12, "max_frame_bytes": 2e9, "threads": 8} — runs a fluid step with the lattice Boltzmann solver (the only fluid step when `step` is left out): obstacles are triangulated from the open design or taken from imported surfaces; returns the time step, relaxation time, Mach number, mass, the largest speed of all frames (`max_speed`, at `max_speed_time`) and of the last frame (`final_max_speed`), the final force on every wall and, with heat, the thermal relaxation time, the temperature range and the heat into every wall; with fans and porous zones, each one's volume flow and its pressure rise (a fan's operating point: `pressure_rise` from its curve, and `measured_pressure_rise`) or `pressure_drop`; the measured values are the static-pressure difference between the fluid cell layers just outside the zone, so they include the wall friction over its thickness plus one cell (final and mean over the last quarter of the run); `backend` is `cpu` (the default: double precision, the same result on every machine) or `gpu` (the step on the GPU `FIELDCRAFT_GPU` picks, single precision, within the backend's stated tolerance of the CPU; an error when the build has none); the caps may only be lowered; `threads` as for solve.static"#,
     form: Some(super::forms::SOLVE_FLUID),
     kind: CommandKind::Model,
     requires: &[Requirement::FluidDomain, Requirement::Step],
@@ -577,7 +577,10 @@ fn run_fluid(s: &mut Session, p: &Value) -> Result<Value> {
 fn fluid_summary(r: &FluidResult, display: &DisplaySystem) -> Value {
     let speed = |v: &[f32; 3]| (f64::from(v[0]).powi(2) + f64::from(v[1]).powi(2) + f64::from(v[2]).powi(2)).sqrt();
     let last = r.frames.last();
-    let max_speed = last.map_or(0.0, |f| f.velocity.iter().map(speed).fold(0.0, f64::max));
+    // The largest speed of every frame: `max_speed` is the largest of all (the start-up often
+    // passes the final state), `final_max_speed` the last frame's.
+    let frame_max: Vec<f64> = r.frames.iter().map(|f| f.velocity.iter().map(speed).fold(0.0, f64::max)).collect();
+    let (peak_frame, max_speed) = frame_max.iter().copied().enumerate().fold((0, 0.0), |best, (k, v)| if v > best.1 { (k, v) } else { best });
     // The mean over the last quarter of the history smooths the acoustic noise of the
     // weakly compressible scheme.
     let tail = r.history_times.len().div_ceil(4).max(1);
@@ -647,6 +650,8 @@ fn fluid_summary(r: &FluidResult, display: &DisplaySystem) -> Value {
         "mach": r.stats.mach,
         "frames": r.frames.iter().map(|f| f.time).collect::<Vec<_>>(),
         "max_speed": max_speed,
+        "max_speed_time": r.frames.get(peak_frame).map_or(0.0, |f| f.time),
+        "final_max_speed": frame_max.last().copied().unwrap_or(0.0),
         "mass": {"first": m0, "last": m1, "relative_change": if m0 != 0.0 { (m1 - m0) / m0 } else { 0.0 }},
         "forces": forces,
         "tau_thermal": r.stats.tau_thermal,
@@ -1357,6 +1362,21 @@ pub(crate) mod tests {
             {"command": "model.step.create", "params": {"name": "Shear", "procedure": {"type": "fluid", "domain": "Gap", "end_time": 50, "frames": 4}}},
         ]);
         s.run_script(&script).unwrap();
+    }
+
+    /// #590: `max_speed` is the largest speed of all frames (the start-up may pass the final
+    /// state), with its time; `final_max_speed` the last frame's.
+    #[test]
+    fn the_fluid_summary_reports_the_largest_speed_of_all_frames() {
+        let mut r = crate::flow::tests::channel();
+        let mut surge = r.frames[1].clone();
+        surge.time = 0.5;
+        surge.velocity[0] = [30.0, 40.0, 0.0];
+        r.frames.insert(1, surge);
+        let summary = fluid_summary(&r, &fieldcraft_model::DisplaySystem::default());
+        assert_eq!((summary["max_speed"].as_f64(), summary["max_speed_time"].as_f64()), (Some(50.0), Some(0.5)), "{summary}");
+        // The last frame's fastest cell: x = 9 of ten cells, speed 10.
+        assert_eq!(summary["final_max_speed"].as_f64(), Some(10.0), "{summary}");
     }
 
     #[test]
