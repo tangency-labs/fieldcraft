@@ -393,12 +393,15 @@ fn admissible(loops: &[Poly], a: End, b: End, h: f64) -> bool {
             return false;
         }
     }
-    // No crossing, and clear of every other boundary point.
+    // No crossing, and clear of every other boundary point. An end on an edge touches that
+    // edge by construction: its crossing test would read only the rounding of the end point (the
+    // sign of a zero orientation), so a cut was taken or refused by noise at 1e-15 (#605).
     let clear = 0.05 * h.min(l);
+    let on = |x: End, li: usize, k: usize| matches!(x, End::Edge(l2, k2, _) if l2 == li && k2 == k);
     for (li, poly) in loops.iter().enumerate() {
         for k in 0..poly.len() {
             let (c, e) = (poly.at(k), poly.at(k + 1));
-            if segments_meet(pa, pb, c, e) {
+            if !on(a, li, k) && !on(b, li, k) && segments_meet(pa, pb, c, e) {
                 return false;
             }
             let is_end = |x: End| match x {
@@ -1426,6 +1429,19 @@ mod tests {
     /// A loop of points, every one a curve end.
     fn corners(pts: &[Q]) -> Poly {
         Poly { pts: pts.to_vec(), end: vec![true; pts.len()], locked: vec![false; pts.len()] }
+    }
+
+    /// A cut that ends on an edge is admissible whichever side of the edge the rounding of its
+    /// end point falls: the crank's O-grid lost a cut, and its pocket floor its blocks, when
+    /// SolidCraft 0.16 moved the geometry by 1e-15 (#605).
+    #[test]
+    fn a_cut_ending_on_an_edge_does_not_read_the_rounding() {
+        let square = [corners(&[[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]])];
+        for eps in [-1e-13, 0.0, 1e-13] {
+            let a = End::Edge(0, 0, [5.0, eps]);
+            let b = End::Edge(0, 2, [5.0, 10.0 - eps]);
+            assert!(admissible(&square, a, b, 2.0), "{eps}");
+        }
     }
 
     /// Mapped pieces round a hole chain their opposite sides; when one cut leaves the outer loop

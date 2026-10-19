@@ -378,7 +378,9 @@ fn strong_mode_parameters_are_checked() {
 /// the plate's hex mesh differed between macOS and Linux (the system maths library's `atan2`,
 /// `sin` … are not correctly rounded), so the distorted-plate test passed on one and failed on
 /// the other (#438). The fingerprint is of the nodes after mesh.hex.generate, after the
-/// perturbation and after the strong relaxation; CI checks it on Linux, it was taken on macOS.
+/// perturbation and after the strong relaxation; CI checks it on Linux, it was taken on macOS
+/// (again for the model stored in SI, #579, and when the plate's O-grid kept the cut that
+/// rounding used to refuse, #605).
 #[test]
 fn mesh_and_strong_relaxation_are_the_same_bits_everywhere() {
     let fingerprint = |s: &Session, h: &mut u64| {
@@ -409,7 +411,7 @@ fn mesh_and_strong_relaxation_are_the_same_bits_everywhere() {
     // strong) starts from the millimetre image of the stored metres, which differs from the
     // millimetres develop kept by an ulp for 6–18% of computed coordinates, and amplifies that
     // (on develop a 1-ulp nudge moves it as much): its bits differ from develop's.
-    assert_eq!(one, 0x3783_1b08_604b_e7a0, "fingerprint {one:#018x}");
+    assert_eq!(one, 0xecde_db9e_44da_ef8e, "fingerprint {one:#018x}");
 }
 
 /// A mesher's result depends on the stored model alone: relaxing, undoing and relaxing again
