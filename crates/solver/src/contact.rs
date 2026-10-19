@@ -627,7 +627,8 @@ impl Interface {
     fn overclosure(mut self, mesh: &Mesh, mode: InitialPenetration, warnings: &mut Vec<String>) -> Result<Interface> {
         let zero = vec![0.0; mesh.dofs()];
         let (gaps, _) = self.gaps(mesh, &zero)?;
-        let scale = mesh.xyz.iter().flatten().fold(1.0f64, |m, c| m.max(c.abs()));
+        // The model's extent (relative, so the test reads the same in any unit of length).
+        let scale = mesh.xyz.iter().flatten().fold(0.0f64, |m, c| m.max(c.abs()));
         let (mut count, mut deepest) = (0usize, (0.0f64, 0u32));
         for (i, g) in gaps.iter().enumerate() {
             let (Some(g), Some(a)) = (g, self.area.get(i)) else { continue };

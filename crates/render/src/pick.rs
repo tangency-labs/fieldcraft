@@ -112,7 +112,7 @@ impl Projector {
     /// clipping planes', as drawn).
     pub fn new(cam: &Camera, w: f64, h: f64, radius: f64) -> Projector {
         let (w, h) = (if w.is_finite() { w.max(1.0) } else { 1.0 }, if h.is_finite() { h.max(1.0) } else { 1.0 });
-        Projector { cam: *cam, vp: cam.view_proj(w / h, radius.max(1e-3)), w, h }
+        Projector { cam: *cam, vp: cam.view_proj(w / h, radius.max(crate::camera::MIN_SIZE)), w, h }
     }
 
     /// The pixel (x right, y down) and depth (0 near … 1 far) of a world point in front of the

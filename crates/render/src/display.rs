@@ -402,6 +402,10 @@ impl DisplayMesh {
             .iter()
             .map(|t| {
                 let p = [at(t.p[0], t.nodes[0]), at(t.p[1], t.nodes[1]), at(t.p[2], t.nodes[2])];
+                // Unmoved, it is as it was (a normal worked out again could differ in its last bit).
+                if p == t.p {
+                    return *t;
+                }
                 // The triangle's own normal, on the side its face's normal was.
                 let before = (t.p[1] - t.p[0]).cross(t.p[2] - t.p[0]);
                 let side = if before.dot(t.normal) < 0.0 { -1.0 } else { 1.0 };

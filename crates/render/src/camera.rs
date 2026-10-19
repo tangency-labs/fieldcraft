@@ -5,6 +5,9 @@
 
 use serde::{Deserialize, Serialize};
 
+/// The smallest size the camera frames or clips at: a micrometre (model lengths are metres).
+pub const MIN_SIZE: f64 = 1e-6;
+
 use crate::pick::Projector;
 use crate::{Aabb3, Vec3};
 
@@ -112,8 +115,8 @@ pub struct Orientation {
 }
 
 impl Orientation {
-    /// Closest and farthest camera distance.
-    pub const DISTANCE: (f64, f64) = (1e-3, 1e9);
+    /// Closest and farthest camera distance (metres: a micrometre to a million kilometres).
+    pub const DISTANCE: (f64, f64) = (MIN_SIZE, 1e9);
 
     /// The orientation of a standard view.
     pub fn of(view: StandardView) -> Self {
@@ -201,11 +204,13 @@ impl Camera {
     }
     /// Near/far planes that keep a scene of radius `radius` around the target visible.
     pub fn clip(&self, radius: f64) -> (f64, f64) {
-        let r = radius.max(1e-3);
+        let r = radius.max(MIN_SIZE);
         if self.fov > 0.0 {
-            ((self.distance - r * 2.0).max(self.distance * 1e-3).max(1e-3), self.distance + r * 2.0)
+            ((self.distance - r * 2.0).max(self.distance * 1e-3).max(MIN_SIZE), self.distance + r * 2.0)
         } else {
-            (self.distance - r * 4.0 - 1.0, self.distance + r * 4.0 + 1.0)
+            // A margin of a fiftieth of the radius beyond the scene: relative, so the depth
+            // range (and what a depth difference means) is the same at every scale.
+            (self.distance - r * 4.02, self.distance + r * 4.02)
         }
     }
     /// Projection to clip space (wgpu style, depth 0..1).
@@ -260,7 +265,7 @@ impl Camera {
     /// Zoom by `factor` (< 1 zooms in) toward a world point that stays put on screen.
     pub fn zoom_at(&mut self, factor: f64, anchor: Option<Vec3>) {
         let f = if factor.is_finite() { factor.clamp(0.05, 20.0) } else { 1.0 };
-        let nd = (self.distance * f).clamp(1e-3, 1e9);
+        let nd = (self.distance * f).clamp(Orientation::DISTANCE.0, Orientation::DISTANCE.1);
         if let Some(a) = anchor.filter(|a| a.is_finite()) {
             self.target = a + (self.target - a) * (nd / self.distance);
         }
@@ -360,7 +365,7 @@ impl Camera {
         // The half height per unit of distance (`half_height`), and its change with depth.
         let alpha = Camera { distance: 1.0, ..*self }.half_height();
         let beta = if self.fov > 0.0 { alpha } else { 0.0 };
-        let size = (b.diagonal() * 0.5).max(1e-3);
+        let size = (b.diagonal() * 0.5).max(MIN_SIZE);
         // Nearest distance: a tiny box still has a size, and in perspective every corner is in
         // front of the eye (an orthographic distance is only a zoom).
         let mut d = size * 1e-3 / alpha;
@@ -409,7 +414,7 @@ impl Camera {
         let (r, u, back) = self.basis();
         let alpha = Camera { distance: 1.0, ..*self }.half_height();
         let beta = if self.fov > 0.0 { alpha } else { 0.0 };
-        let size = (b.diagonal() * 0.5).max(1e-3);
+        let size = (b.diagonal() * 0.5).max(MIN_SIZE);
         let mut d = size * 1e-3 / alpha;
         for p in b.corners() {
             let p = p - self.target;

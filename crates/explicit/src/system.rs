@@ -809,7 +809,8 @@ impl System {
         for row in &self.planes {
             row.project(&mut self.initial_velocity);
         }
-        let size = self.xyz.iter().flatten().fold(0.0f64, |m, c| m.max(c.abs())).max(1.0);
+        // The model's extent (relative, so the test reads the same in any unit of length).
+        let size = self.xyz.iter().flatten().fold(0.0f64, |m, c| m.max(c.abs()));
         for w in &settings.rigid_walls {
             let len = w.normal.iter().map(|c| c * c).sum::<f64>().sqrt();
             let normal = w.normal.map(|c| c / len);

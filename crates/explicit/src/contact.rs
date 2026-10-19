@@ -599,6 +599,9 @@ impl Interface {
     /// Move the nodes that start inside a face onto it, or refuse them.
     fn adjust(&mut self, xyz: &mut [Vec3], labels: &[u32], mode: InitialPenetration) -> Result<()> {
         let zero: Vec<f64> = Vec::new();
+        // The model's extent: the round-off of a coordinate is relative to the larger of it and
+        // this (so the test reads the same in any unit of length).
+        let extent = xyz.iter().flatten().fold(0.0f64, |m, c| m.max(c.abs()));
         for pass in &self.passes {
             let (Some(nodes), Some(faces)) = (self.surfaces.get(pass.secondary), self.surfaces.get(pass.main)) else { continue };
             let positions = faces.positions(xyz, &zero);
@@ -614,7 +617,7 @@ impl Interface {
                 let Some(face) = faces.faces.get(c) else { continue };
                 // Coordinates are exact to a few units in the last place: a node a hair behind a
                 // face it was meshed on is touching, not inside.
-                let scale = x.iter().fold(1.0f64, |m, c| m.max(c.abs()));
+                let scale = x.iter().fold(extent, |m, c| m.max(c.abs()));
                 if -q.gap <= 1e-9 * scale {
                     continue;
                 }
