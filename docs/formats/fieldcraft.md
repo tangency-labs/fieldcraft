@@ -1,4 +1,4 @@
-# The `.fieldcraft` file (format `fieldcraft/2`)
+# The `.fieldcraft` file (format `fieldcraft/3`)
 
 A `.fieldcraft` file holds one model: its definition, its mesh, the geometry it is built on and
 the commands that built it. It is written and read by `fieldcraft-io` (`write`, `read`; bytes in,
@@ -12,10 +12,10 @@ unzip tool reads them: `unzip -p bracket.fieldcraft model.json`):
 
 | Part | Content |
 |---|---|
-| `fieldcraft.json` | Manifest: `format` (`"fieldcraft/2"`, [Versions](#versions-and-migration)), `generator` (`"FieldCraft 0.7.0"`), `geometry`, `view` (left out when empty), and `parts`: the byte size and SHA-256 of each other part. |
-| `model.json` | The model definition: unit system, sets, materials, sections, reference points, couplings, boundary conditions, loads, steps, datum planes, axes and points, and the partitions that cut the geometry (in order; applied again when the design is opened). Pretty-printed JSON with a fixed key order (maps sorted by name), so a change shows as a line diff. Its form is the model's own JSON form, which commands take as parameters. |
+| `fieldcraft.json` | Manifest: `format` (`"fieldcraft/3"`, [Versions](#versions-and-migration)), `generator` (`"FieldCraft 0.7.0"`), `geometry`, `view` (left out when empty), and `parts`: the byte size and SHA-256 of each other part. |
+| `model.json` | The model definition, every quantity in SI (docs/units.md): its display units (`display_units`, left out when the model has none of its own), sets, materials, sections, reference points, couplings, boundary conditions, loads, steps, datum planes, axes and points, and the partitions that cut the geometry (in order; applied again when the design is opened). Pretty-printed JSON with a fixed key order (maps sorted by name), so a change shows as a line diff. Its form is the model's own JSON form, which commands take as parameters. |
 | `mesh.bin` | Nodes, elements and geometry tags, binary (below). |
-| `journal.json` | The commands that built the model, `[{"command": id, "params": {...}}, ...]`, one per line. It is a script `fieldcraft-cli run` replays. |
+| `journal.json` | The commands that built the model, `{"units": system, "commands": [{"command": id, "params": {...}}, ...]}`, one command per line, as they were typed: `units` names the display system their bare numbers are in (a number typed in another system carries its unit, `{"value", "unit"}`); a migrated journal also names `model_units`, the system its model-level numbers were in. It is a script `fieldcraft-cli run` replays (a plain list of commands is a script in the session's units). |
 
 The same model gives the same bytes on every platform: entry times are fixed (1980-01-01),
 permissions are fixed, and every map is written in sorted order. To diff two versions with git,
@@ -49,7 +49,7 @@ reference, so saving again does not lose it.
 Little-endian:
 
 ```
-"MCMESH01"                                    magic (the mesh encoding's version is 01)
+"MCMESH02"                                    magic (the mesh encoding's version is 02: coordinates in metres)
 u64 nodes, u64 elements, u64 entities, u64 tagged elements, u64 tagged nodes
 nodes      × { u32 label, f64 x, f64 y, f64 z }             labels strictly ascending
 elements   × { u32 label, u8 kind, u32 node × n(kind) }     labels strictly ascending
@@ -86,17 +86,18 @@ Every file is treated as hostile:
 
 `format` is `fieldcraft/<N>`, N an integer that grows by one with every change to what a file
 holds or how it is encoded. A part with an encoding of its own carries that encoding's version
-too: `mesh.bin` starts with `MCMESH01`; a new mesh encoding is a new magic, brought in by a new
+too: `mesh.bin` starts with `MCMESH02`; a new mesh encoding is a new magic, brought in by a new
 format.
 
 | Format | Written by | Change |
 |---|---|---|
 | `fieldcraft/1` | FieldCraft 0.4.0 to 0.7.0 | the first format |
 | `fieldcraft/2` | FieldCraft after 0.7.0 | versioning and migration; the parts hold the same as format 1 |
+| `fieldcraft/3` | FieldCraft after 0.7.0 | SI storage (#579): `model.json` in SI with `display_units` in place of `units`, `mesh.bin` `MCMESH02` (coordinates in metres), the journal with a header naming its units. Step 2 → 3 scales by the file's declared `units` (`unspecified` as mm-t-s-N-MPa) with its own frozen field map and MCMESH01 codec; the journal's numbers are kept as typed. |
 
 FieldCraft reads every format up to its own. A file of a later one is refused, before anything
 else in it is read, with a message naming what wrote it: "this model was made by FieldCraft
-0.9.0 (format 3); FieldCraft 0.8.0 reads formats up to 2. Update FieldCraft to open it."
+0.9.0 (format 4); FieldCraft 0.8.0 reads formats up to 3. Update FieldCraft to open it."
 
 An older file is migrated as it is read (`fieldcraft-io`, `migrate.rs`). The package is checked
 as it is on disk (the four parts, their sizes and SHA-256); then the JSON parts are parsed as

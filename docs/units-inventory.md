@@ -1,5 +1,8 @@
 # Units inventory (#579)
 
+*The state before SI storage, kept as the map the conversion followed; docs/units.md describes
+how units work now.*
+
 Every place a dimensional number enters or leaves FieldCraft today, the unit it is assumed to be
 in, and where the SI conversion goes. Today nothing converts: every stored `f64` means "whatever
 consistent system the user chose", labelled by `model.units` (`UnitSystem`,

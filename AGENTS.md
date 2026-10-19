@@ -92,8 +92,11 @@ People trust FieldCraft with their models; a crash loses their work. **This outr
   the CPU reference within a stated tolerance.
 - **Robust geometry.** Meshing decisions (orientation, in-sphere, intersection) use exact or
   adaptive-precision predicates, never a bare floating-point sign.
-- **Units.** The model is unit-consistent and never converts (the user picks e.g. mm, t, s, N,
-  MPa); geometry from SolidCraft is in millimetres. Z is up.
+- **Units: store SI, convert only at boundaries through `crates/model/src/units`.** The model,
+  results and solvers are in SI; command parameters, replies, forms, panels, exports and decks
+  convert through the display system (docs/units.md). Never write a conversion factor anywhere
+  else (`cargo xtask unit-factors`), and keep solver tolerances relative. Geometry from SolidCraft
+  is in millimetres and becomes metres where it meets the model. Z is up.
 - **Rust only.** The one exception is the GitHub issue and pull request bots: `scripts/claim/` and
   `scripts/triage/` are JavaScript because `actions/github-script` runs only JavaScript
   (`.github/workflows/claim.yml`, `triage.yml`). Keep them small, with their `node --test` tests
