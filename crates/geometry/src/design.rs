@@ -100,10 +100,42 @@ impl Design {
     }
 }
 
+/// The newest design format the pinned SolidCraft reads (and the one it writes).
+pub const DESIGN_FORMAT: u32 = solidcraft_doc::format::FORMAT;
+
 /// Open a design from its file bytes (a `.solidcraft` container or a JSON design) and rebuild it.
+/// A design of a newer format than [`DESIGN_FORMAT`] is [`crate::Error::NewerDesign`].
 pub fn open_design(bytes: &[u8]) -> Result<Design> {
-    let doc = guard("read design", || solidcraft_io::read_design(bytes).map_err(|e| KernelError::Invalid(format!("not a readable design: {e}"))))?;
+    let doc = guard("read design", || solidcraft_io::read_design(bytes).map_err(|e| KernelError::Invalid(format!("not a readable design: {e}"))))
+        .map_err(|e| match saved_format(bytes) {
+            Some(format) if format > DESIGN_FORMAT => crate::Error::NewerDesign { format, reads: DESIGN_FORMAT },
+            _ => e.into(),
+        })?;
     rebuild(&doc)
+}
+
+/// The format a design file says it has (`"format": "solidcraft/N"`), in a JSON design or in a
+/// container's `document.json`; `None` when the file doesn't say. Read only when SolidCraft
+/// refused the file, to tell a newer design from a broken one.
+fn saved_format(bytes: &[u8]) -> Option<u32> {
+    use std::io::Read;
+    #[derive(serde::Deserialize)]
+    struct Head {
+        format: String,
+    }
+    if bytes.len() > MAX_DESIGN_BYTES {
+        return None;
+    }
+    let json = if solidcraft_io::is_design_container(bytes) {
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).ok()?;
+        let mut out = Vec::new();
+        zip.by_name("document.json").ok()?.take(MAX_DESIGN_BYTES as u64).read_to_end(&mut out).ok()?;
+        std::borrow::Cow::Owned(out)
+    } else {
+        std::borrow::Cow::Borrowed(bytes)
+    };
+    let head: Head = serde_json::from_slice(&json).ok()?;
+    solidcraft_doc::format::version_of(&head.format)
 }
 
 /// Rebuild an in-memory document (the design half of [`open_design`]).
@@ -338,6 +370,42 @@ mod tests {
             };
             assert!(face.exact, "{} ({kind}) is named from geometry", face.name);
         }
+    }
+
+    #[test]
+    fn a_newer_design_asks_for_a_newer_fieldcraft() {
+        let newer = DESIGN_FORMAT + 1;
+        let container = sample::plate_design(&Plate::default()).unwrap();
+        let text = String::from_utf8(solidcraft_io::write_design(&solidcraft_io::read_design(&container).unwrap())).unwrap();
+        let json = text.replacen(&format!("\"solidcraft/{DESIGN_FORMAT}\""), &format!("\"solidcraft/{newer}\""), 1);
+        assert_ne!(json, text, "the sample design says its format");
+        let error = open_design(json.as_bytes()).unwrap_err();
+        assert_eq!(error, crate::Error::NewerDesign { format: newer, reads: DESIGN_FORMAT });
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "this design was saved by a newer SolidCraft (format {newer}); this FieldCraft reads up to {DESIGN_FORMAT}. Update FieldCraft to open it"
+            )
+        );
+        // The same inside a container, as the desktop app saves it.
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&container[..])).unwrap();
+        let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        for i in 0..zip.len() {
+            let mut part = zip.by_index(i).unwrap();
+            let name = part.name().unwrap().to_string();
+            let mut data = String::new();
+            std::io::Read::read_to_string(&mut part, &mut data).unwrap();
+            if name == "document.json" {
+                data = data.replacen(&format!("\"solidcraft/{DESIGN_FORMAT}\""), &format!("\"solidcraft/{newer}\""), 1);
+            }
+            out.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
+            std::io::Write::write_all(&mut out, data.as_bytes()).unwrap();
+        }
+        let container = out.finish().unwrap().into_inner();
+        assert_eq!(open_design(&container).unwrap_err(), crate::Error::NewerDesign { format: newer, reads: DESIGN_FORMAT });
+        // A broken design of a format this build reads is still SolidCraft's own error.
+        let broken = text.replacen("\"features\"", "\"features\": 1, \"x\"", 1);
+        assert!(matches!(open_design(broken.as_bytes()), Err(crate::Error::Invalid(_))));
     }
 
     #[test]

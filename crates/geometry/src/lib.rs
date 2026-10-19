@@ -30,7 +30,7 @@ mod script;
 pub mod stitch;
 pub mod virtual_faces;
 
-pub use design::{Design, FeatureError, MAX_DESIGN_BYTES, open_design};
+pub use design::{DESIGN_FORMAT, Design, FeatureError, MAX_DESIGN_BYTES, open_design};
 pub use edges::{EDGE_TOLERANCE, Edge, Vertex};
 pub use features::{BodyFeatures, Curve, FeatureNode, ProfileGeometry, SketchGeometry};
 pub use partition::{Cut, CutReport};
@@ -46,6 +46,10 @@ pub enum Error {
     Invalid(String),
     #[error("the geometry operation failed: {0}")]
     Failed(String),
+    /// A design saved by a SolidCraft newer than the one FieldCraft is built with
+    /// ([`open_design`]): FieldCraft needs updating, not SolidCraft.
+    #[error("this design was saved by a newer SolidCraft (format {format}); this FieldCraft reads up to {reads}. Update FieldCraft to open it")]
+    NewerDesign { format: u32, reads: u32 },
     /// From the model layer: a cancelled job ([`fieldcraft_model::progress::check`]).
     #[error(transparent)]
     Model(#[from] fieldcraft_model::Error),
