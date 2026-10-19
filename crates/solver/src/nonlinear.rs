@@ -15,11 +15,15 @@
 //! |G(1)| ≤ 0.8 |G(0)| (always near the solution, so quadratic convergence is kept), otherwise
 //! s is moved to the root of the line through (0, G(0)) and (s, G(s)), within [0.1, 1], at most
 //! five times (Crisfield 1991, §9.3). An increment has converged when, at once,
-//! - **force**: the largest residual component is at most `force` times the largest force the
-//!   step has seen (applied, internal, reaction), never less than a round-off floor of 10⁻⁸ of a
-//!   typical diagonal stiffness times the model's size;
-//! - **displacement**: the largest correction is at most `displacement` times the largest
-//!   displacement of the increment;
+//! - **force**: the largest residual force is at most `force` times the force scale, the largest
+//!   force the step has seen (applied, internal, reaction), never less than a round-off floor of
+//!   10⁻⁸ of a typical diagonal stiffness times the model's size; and the largest residual
+//!   moment is at most `force` times the moment scale, the largest moment the step has seen, never
+//!   less than the force scale times the model's size L (the diagonal of its bounding box);
+//! - **displacement**: the largest translation of the correction is at most `displacement` times
+//!   the largest translation of the increment (at least 10⁻¹² L), and its largest rotation at
+//!   most `displacement` times the largest rotation of the increment, never less than that
+//!   translation over L (the rotation that moves a point at the model's size by it);
 //! - **energy**: the work of the correction against the residual, s δq · r, is at most `energy`
 //!   times that of the first iteration (K.-J. Bathe, A. P. Cimento, *Some practical procedures
 //!   for the solution of nonlinear finite element equations*, CMAME 22:59–85, 1980);
@@ -28,6 +32,15 @@
 //! improve it). With path-dependent materials, an increment that starts within the force
 //! tolerance (a predictor that already solved it) waives the energy criterion, whose reference
 //! would be round-off.
+//!
+//! **Norms by kind of freedom.** Rotations (today those of coupled reference points; shells and
+//! beams are refused) are radians and their residuals moments, so neither shares a norm with the
+//! translations (metres, newtons): a mixed norm would change with the unit system and with the
+//! part's size, since a moment scales as a force times a length and a rotation not at all. Each
+//! kind is measured against its own scale, as the field-by-field checks of nonlinear finite
+//! element practice do, and the measures recorded per iteration are the larger of the two. The
+//! work of the energy criterion is consistent across kinds (N·m either way) and stays one sum.
+//! A model without rotations converges exactly as with a single norm.
 //!
 //! **Automatic incrementation.** Each increment starts from the linear extrapolation of the
 //! last converged one (the free motion scaled by the ratio of their sizes), which keeps the
@@ -129,9 +142,11 @@ use crate::{Error, Limits, Result};
 /// One Newton iteration of an increment.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct Iteration {
-    /// Largest residual component over the force scale.
+    /// Largest residual force over the force scale, or largest residual moment over the moment
+    /// scale, whichever is larger.
     pub force: f64,
-    /// Largest correction over the largest displacement of the increment.
+    /// Largest translation of the correction over the increment's translation reference, or
+    /// largest rotation over its rotation reference, whichever is larger.
     pub displacement: f64,
     /// Work of the correction against the residual over the first iteration's.
     pub energy: f64,
@@ -332,6 +347,18 @@ fn active_sets(e: &Evaluation) -> u64 {
 
 fn norm_inf(v: &[f64]) -> f64 {
     v.iter().fold(0.0, |m, x| m.max(x.abs()))
+}
+
+/// The largest magnitudes of `v`'s translational and rotational entries (`rotation` marks the
+/// rotations; entries past its end are translations): forces and moments of a force vector,
+/// translations and rotations of a motion.
+fn norm_inf_split(v: &[f64], rotation: &[bool]) -> (f64, f64) {
+    v.iter().enumerate().fold(
+        (0.0f64, 0.0f64),
+        |(t, r), (i, x)| {
+            if rotation.get(i).copied().unwrap_or(false) { (t, r.max(x.abs())) } else { (t.max(x.abs()), r) }
+        },
+    )
 }
 
 fn dot(a: &[f64], b: &[f64]) -> f64 {
@@ -579,10 +606,23 @@ struct Run<'a> {
     problem: &'a Problem<'a>,
     settings: &'a NonlinearStatic,
     limits: &'a Limits,
-    /// The largest force seen so far (∞-norm), and the round-off floor of the force scale.
+    /// The largest force seen so far (∞-norm over the translations), and the round-off floor of
+    /// the force scale.
     force_scale: f64,
     force_floor: Option<f64>,
+    /// The largest moment seen so far (∞-norm over the rotations); the moment scale is at least
+    /// the force scale times [`Run::length`] ([`Run::moment_scale`]).
+    moment_scale: f64,
+    /// The model's size (the diagonal of its bounding box): the characteristic length that
+    /// relates moments to forces and rotations to translations.
     length: f64,
+    /// Which degrees of freedom are rotations (reference points' today; their forces are
+    /// moments), over every degree of freedom and over the free equations: the convergence
+    /// tests measure them apart from the translations.
+    rotation: Vec<bool>,
+    rotation_eq: Vec<bool>,
+    /// The largest prescribed translation and rotation at load factor 1.
+    prescribed: (f64, f64),
     iterations: usize,
     factor_entries: usize,
     /// Every element's material history at the end of the last converged increment
@@ -603,8 +643,10 @@ struct Run<'a> {
     augmentations: usize,
     /// The augmentation being solved in the current increment.
     augmentation: usize,
-    /// The largest force of the converged states (contact's force scale, [`Run::residual`]).
+    /// The largest force and moment of the converged states (contact's scales,
+    /// [`Run::residual`]).
     converged_scale: f64,
+    converged_moment: f64,
 }
 
 /// The outcome of a converged increment.
@@ -622,22 +664,79 @@ impl Run<'_> {
     /// before the active set settles, its contact forces huge), so the scale is not the largest
     /// force of every trial but that of the converged states, the loads and the current state.
     fn residual(&mut self, e: &Evaluation) -> Vec<f64> {
-        let current = norm_inf(&e.external).max(norm_inf(&e.internal));
-        self.force_scale = if self.problem.contacts.is_empty() { self.force_scale.max(current) } else { self.converged_scale.max(current) };
+        let (external, external_moment) = norm_inf_split(&e.external, &self.rotation);
+        let (internal, internal_moment) = norm_inf_split(&e.internal, &self.rotation);
+        let (current, moment) = (external.max(internal), external_moment.max(internal_moment));
+        if self.problem.contacts.is_empty() {
+            self.force_scale = self.force_scale.max(current);
+            self.moment_scale = self.moment_scale.max(moment);
+        } else {
+            self.force_scale = self.converged_scale.max(current);
+            self.moment_scale = self.converged_moment.max(moment);
+        }
         free_residual(self.problem.red, e)
     }
 
-    /// The round-off floor of the force scale, from the first tangent's mean diagonal.
+    /// The round-off floor of the force scale, from the first tangent's mean diagonal: a
+    /// translation's stiffness as it is, a rotation's over the length squared (the stiffness of
+    /// the translation a rotation gives at the model's size).
     fn seed_force_floor(&mut self, kff: &Csr) {
         if self.force_floor.is_none() {
             let diagonal = kff.diagonal();
-            let mean = diagonal.iter().map(|d| d.abs()).sum::<f64>() / diagonal.len().max(1) as f64;
+            let lever = self.length * self.length;
+            let sum: f64 = diagonal
+                .iter()
+                .enumerate()
+                .map(|(i, d)| if self.rotation_eq.get(i).copied().unwrap_or(false) { d.abs() / lever } else { d.abs() })
+                .sum();
+            let mean = sum / diagonal.len().max(1) as f64;
             self.force_floor = Some(1e-8 * mean * self.length);
         }
     }
 
+    /// The force scale: the largest force seen, at least the round-off floor.
     fn scale(&self) -> f64 {
         self.force_scale.max(self.force_floor.unwrap_or(0.0)).max(f64::MIN_POSITIVE)
+    }
+
+    /// The moment scale: the largest moment seen, at least the force scale times the model's
+    /// size (the moment of the largest force about a point of the model).
+    fn moment_scale(&self) -> f64 {
+        self.moment_scale.max(self.scale() * self.length).max(f64::MIN_POSITIVE)
+    }
+
+    /// The force criterion's measure of a residual over the free equations: its largest force
+    /// over the force scale or its largest moment over the moment scale, whichever is larger.
+    fn force_measure(&self, r: &[f64]) -> f64 {
+        let (force, moment) = norm_inf_split(r, &self.rotation_eq);
+        let measure = force / self.scale();
+        if moment > 0.0 { measure.max(moment / self.moment_scale()) } else { measure }
+    }
+
+    /// Whether a residual's forces are within `fraction` of the force scale and its moments
+    /// within `fraction` of the moment scale.
+    fn force_within(&self, r: &[f64], fraction: f64) -> bool {
+        let (force, moment) = norm_inf_split(r, &self.rotation_eq);
+        force <= fraction * self.scale() && moment <= fraction * self.moment_scale()
+    }
+
+    /// The displacement criterion's references from the largest translation and rotation of
+    /// the increment so far: a translation's, at least 10⁻¹² of the model's size; a rotation's,
+    /// at least the rotation that moves a point at the model's size by the translation's
+    /// reference (so a rotation the increment barely changes is measured by what its error
+    /// moves, not against round-off).
+    fn motion_references(&self, translation: f64, rotation: f64) -> (f64, f64) {
+        let t = translation.max(1e-12 * self.length);
+        (t, rotation.max(t / self.length))
+    }
+
+    /// The displacement criterion's measure of the correction `s · dq`: its largest translation
+    /// over the translation reference or its largest rotation over the rotation reference,
+    /// whichever is larger.
+    fn correction_measure(&self, dq: &[f64], s: f64, (translation, rotation): (f64, f64)) -> f64 {
+        let (t, r) = norm_inf_split(dq, &self.rotation_eq);
+        let measure = s * t / translation;
+        if r > 0.0 { measure.max(s * r / rotation) } else { measure }
     }
 
     fn state(&self, q: &[f64], lambda: f64, tangent: bool) -> std::result::Result<Evaluation, Failure> {
@@ -748,8 +847,8 @@ impl Run<'_> {
         // With path-dependent materials, an increment that starts within the force tolerance (a
         // predictor that already solved it) has only round-off left for the energy criterion to
         // measure against: it is waived.
-        let started_converged = self.path_dependent && self.force_floor.is_some() && norm_inf(&r) <= tol.force * self.scale();
-        let prescribed = size * red.largest_prescribed();
+        let started_converged = self.path_dependent && self.force_floor.is_some() && self.force_within(&r, tol.force);
+        let prescribed = (size * self.prescribed.0, size * self.prescribed.1);
         // The energy criterion's reference: the first correction's work, or the tangent
         // predictor's when the increment started from one that is still in use.
         let mut first_energy: Option<f64> = predicted_energy.filter(|_| q.as_slice() != q0);
@@ -762,7 +861,7 @@ impl Run<'_> {
         for _ in 0..max_iterations {
             fieldcraft_model::progress::check().map_err(Error::from)?;
             // The round-off rule: nothing left to correct.
-            if norm_inf(&r) <= ROUND_OFF * tol.force * self.scale() && self.force_floor.is_some() {
+            if self.force_within(&r, ROUND_OFF * tol.force) && self.force_floor.is_some() {
                 return Ok(Converged { q, evaluation: eval, energy: first_energy });
             }
             if self.iterations >= self.limits.max_newton_iterations {
@@ -809,11 +908,12 @@ impl Run<'_> {
             let r_old = std::mem::replace(&mut r, self.residual(&eval));
             let energy = (s * dot(&dq, &r_old)).abs();
             let first = *first_energy.get_or_insert(energy);
-            let moved = q.iter().zip(q0).fold(0.0f64, |m, (a, b)| m.max((a - b).abs()));
-            let reference = moved.max(prescribed).max(1e-12 * self.length);
+            let moved: Vec<f64> = q.iter().zip(q0).map(|(a, b)| a - b).collect();
+            let (translated, rotated) = norm_inf_split(&moved, &self.rotation_eq);
+            let reference = self.motion_references(translated.max(prescribed.0), rotated.max(prescribed.1));
             let it = Iteration {
-                force: norm_inf(&r) / self.scale(),
-                displacement: s * norm_inf(&dq) / reference,
+                force: self.force_measure(&r),
+                displacement: self.correction_measure(&dq, s, reference),
                 energy: if first > 0.0 { energy / first } else { 0.0 },
                 line_search: s,
                 negative_pivots: factor.inertia().negative,
@@ -1199,13 +1299,20 @@ fn solve_on(model: &Model, step: &str, limits: &Limits, notes: Vec<String>) -> R
     // the model, not a reason to cut increments back.
     problem.evaluate(&vec![0.0; mesh.dofs()], 0.0, false, &committed, &[], &[], 0.0)?;
     let path_dependent = problem.materials.iter().any(MaterialModel::is_path_dependent);
+    // Rotations (radians, their forces moments) are measured apart from translations.
+    let rotation: Vec<bool> = (0..mesh.dofs()).map(|d| matches!(mesh.layout.locate(d), Some((_, DofKind::Rx | DofKind::Ry | DofKind::Rz)))).collect();
+    let is_rotation = |d: usize| rotation.get(d).copied().unwrap_or(false);
     let mut run = Run {
         problem: &problem,
         settings,
         limits,
         force_scale: 0.0,
         force_floor: None,
+        moment_scale: 0.0,
         length,
+        prescribed: (red.largest_prescribed_where(|d| !is_rotation(d)), red.largest_prescribed_where(is_rotation)),
+        rotation_eq: red.eq_dof.iter().map(|d| is_rotation(*d)).collect(),
+        rotation,
         iterations: 0,
         factor_entries: 0,
         committed,
@@ -1217,6 +1324,7 @@ fn solve_on(model: &Model, step: &str, limits: &Limits, notes: Vec<String>) -> R
         augmentations: 0,
         augmentation: 0,
         converged_scale: 0.0,
+        converged_moment: 0.0,
     };
 
     let mut history = History::default();
@@ -1323,7 +1431,10 @@ fn solve_on(model: &Model, step: &str, limits: &Limits, notes: Vec<String>) -> R
                         l.commit(s);
                     }
                     run.reference = red.expand_scaled(&q, lambda);
-                    run.converged_scale = run.converged_scale.max(norm_inf(&c.evaluation.external)).max(norm_inf(&c.evaluation.internal));
+                    let (external, external_moment) = norm_inf_split(&c.evaluation.external, &run.rotation);
+                    let (internal, internal_moment) = norm_inf_split(&c.evaluation.internal, &run.rotation);
+                    run.converged_scale = run.converged_scale.max(external).max(internal);
+                    run.converged_moment = run.converged_moment.max(external_moment).max(internal_moment);
                     last = Some(c.evaluation);
                     fast = if count <= FAST_ITERATIONS { fast + 1 } else { 0 };
                     if fast >= 2 {
@@ -1577,7 +1688,7 @@ impl Run<'_> {
             let q = at(&dq);
             let mut e = self.state(&q, lambda0 + dlam, true)?;
             let r = self.residual(&e);
-            let force = norm_inf(&r) / self.scale();
+            let force = self.force_measure(&r);
             if !force.is_finite() {
                 return Err(Failure::Cutback("the residual is not finite".into()));
             }
@@ -1620,7 +1731,8 @@ impl Run<'_> {
             }
             dq.iter_mut().zip(&step).for_each(|(a, s)| *a += s);
             dlam += dl;
-            correction = norm_inf(&step) / norm_inf(&dq).max(1e-12 * self.length);
+            let (translated, rotated) = norm_inf_split(&dq, &self.rotation_eq);
+            correction = self.correction_measure(&step, 1.0, self.motion_references(translated, rotated));
             let energy = dot(&step, &r).abs();
             let first = *first_energy.get_or_insert(energy);
             iterations.push(Iteration {

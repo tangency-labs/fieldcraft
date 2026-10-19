@@ -836,6 +836,12 @@ impl Reduction {
         self.prescribed_motion.iter().fold(0.0, |m, v| m.max(v.abs()))
     }
 
+    /// The largest prescribed motion over the degrees of freedom `select` picks (the
+    /// translations, or the rotations, which a nonlinear step measures apart).
+    pub fn largest_prescribed_where(&self, select: impl Fn(usize) -> bool) -> f64 {
+        self.prescribed_motion.iter().enumerate().filter(|(d, _)| select(*d)).fold(0.0, |m, (_, v)| m.max(v.abs()))
+    }
+
     /// T_pᵀ g for a vector g over every degree of freedom (the reactions of the out-of-balance
     /// forces g = f_int − f_ext), zero where nothing is prescribed; at the degrees of freedom an
     /// inclined symmetry plane supports, g itself.

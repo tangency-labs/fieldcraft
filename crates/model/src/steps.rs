@@ -320,10 +320,13 @@ pub const MAX_LOAD_PATH_POINTS: usize = 1000;
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Tolerances {
-    /// The largest residual force component over the largest force (applied, internal or
-    /// reaction) the step has seen.
+    /// The largest residual force over the largest force (applied, internal or reaction) the
+    /// step has seen, and the largest residual moment over the moment scale (the largest moment,
+    /// at least that force times the model's size).
     pub force: f64,
-    /// The largest displacement correction over the largest displacement of the increment.
+    /// The largest translation of the correction over the largest translation of the increment,
+    /// and its largest rotation over the largest rotation of the increment (at least that
+    /// translation over the model's size).
     pub displacement: f64,
     /// The work of the last correction against the residual over that of the first.
     pub energy: f64,
