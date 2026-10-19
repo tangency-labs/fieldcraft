@@ -66,7 +66,7 @@ pub struct Friction {
     pub decay: f64,
 }
 
-fn is_zero(v: &f64) -> bool {
+pub(crate) fn is_zero(v: &f64) -> bool {
     *v == 0.0
 }
 

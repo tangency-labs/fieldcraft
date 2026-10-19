@@ -259,7 +259,7 @@ impl Quantities for FluidDomain {
         if let Some(t) = tolerance {
             f(Q::Length, t);
         }
-        if let Some(FluidThermal { initial_temperature, gravity, expansion, faces, surfaces, temperature_zero }) = thermal {
+        if let Some(FluidThermal { initial_temperature, gravity, expansion, faces, surfaces, solids, temperature_zero }) = thermal {
             f(Q::Temperature, initial_temperature);
             f(Q::Temperature, temperature_zero);
             each(gravity, Q::Acceleration, f);
@@ -272,6 +272,9 @@ impl Quantities for FluidDomain {
             }
             for SurfaceThermalBoundary { face: _, condition } in surfaces {
                 thermal_condition(condition, f);
+            }
+            for ConductingSolid { body: _, material: _, power } in solids {
+                f(Q::Power, power);
             }
         }
         for PorousZone { name: _, min, max, axis: _, resistance } in porous {

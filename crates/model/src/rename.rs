@@ -196,6 +196,9 @@ impl Model {
                 }
                 for d in self.fluid_domains.values_mut() {
                     swap(&mut d.material, from, to);
+                    for c in d.thermal.iter_mut().flat_map(|t| t.solids.iter_mut()) {
+                        swap(&mut c.material, from, to);
+                    }
                 }
             }
             Kind::BoundaryCondition | Kind::Load => {

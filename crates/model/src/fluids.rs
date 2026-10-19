@@ -350,6 +350,23 @@ pub struct SurfaceThermalBoundary {
     pub condition: ThermalCondition,
 }
 
+/// An obstacle that conducts heat (conjugate heat transfer): its cells carry a temperature that
+/// diffuses with its material's conductivity and heat capacity, coupled to the fluid's
+/// temperature across every face it shares with the fluid (the temperature and the heat flux are
+/// continuous there), and it may generate heat (a component's power).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConductingSolid {
+    /// An obstacle body of the domain.
+    pub body: String,
+    /// A material with a density, a conductivity (isotropic, or orthotropic along the domain's
+    /// axes: a board's in-plane and through-thickness values) and a specific heat.
+    pub material: String,
+    /// The heat it generates (power), spread evenly over its volume; negative draws heat out.
+    #[serde(default, skip_serializing_if = "crate::contact::is_zero")]
+    pub power: f64,
+}
+
 /// Heat in the fluid: a temperature field advected with the flow and diffused with the
 /// material's diffusivity k / (ρ c), its conditions on the boundaries, and buoyancy.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -369,6 +386,9 @@ pub struct FluidThermal {
     /// Conditions on named faces of the obstacles (adiabatic unless listed).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub surfaces: Vec<SurfaceThermalBoundary>,
+    /// Obstacles that conduct heat; the others are walls with the conditions in `surfaces`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub solids: Vec<ConductingSolid>,
     /// The temperature (kelvin) the lattice-Boltzmann scheme's temperature lattice counts from:
     /// its walls are not invariant under a shift of the temperature scale, so this is part of
     /// the model, never of how it is shown. 0 °C, the scale the scheme was verified on; a model
@@ -390,6 +410,7 @@ impl Default for FluidThermal {
             expansion: None,
             faces: BoxThermalFaces::default(),
             surfaces: Vec::new(),
+            solids: Vec::new(),
             temperature_zero: crate::units::CELSIUS_ZERO,
         }
     }
@@ -429,9 +450,34 @@ impl FluidThermal {
             if self.surfaces.get(..i).is_some_and(|before| before.iter().any(|b| b.face == s.face)) {
                 return Err(Error::Invalid(format!("the {} has two thermal conditions", s.face)));
             }
+            if self.solids.iter().any(|c| c.body == s.face.body) {
+                return Err(Error::Invalid(format!(
+                    "the {} is on a conducting solid: its faces exchange heat with the fluid, so they take no thermal condition",
+                    s.face
+                )));
+            }
+        }
+        for (i, c) in self.solids.iter().enumerate() {
+            finite("power", c.power).map_err(|e| context("conducting solid", &c.body, e))?;
+            if !obstacles.contains(&c.body) {
+                return Err(Error::Invalid(format!("conducting solid `{}` is not an obstacle of the domain (list it in `obstacles`)", c.body)));
+            }
+            if self.solids.get(..i).is_some_and(|before| before.iter().any(|b| b.body == c.body)) {
+                return Err(Error::Invalid(format!("conducting solid `{}` is listed twice", c.body)));
+            }
         }
         Ok(())
     }
+}
+
+/// What a conducting solid needs of its material: a density, a conductivity and a specific heat
+/// (the material keeps them positive).
+fn material_fits_solid(m: &Material, name: &str) -> Result<()> {
+    let thermal = m.thermal.as_ref();
+    if !(thermal.is_some_and(|t| t.conductivity.is_some() && t.specific_heat.is_some()) && m.density.is_some()) {
+        return Err(Error::Invalid(format!("material `{name}` needs a density, a positive conductivity and a specific heat to conduct heat")));
+    }
+    Ok(())
 }
 
 /// What a fluid domain needs of its material: a density and fluid behaviour, and with heat a
@@ -542,6 +588,11 @@ impl FluidDomain {
             *slot = whole as u64;
         }
         Ok(n)
+    }
+
+    /// The obstacles that conduct heat (none without thermal settings).
+    pub fn solids(&self) -> impl Iterator<Item = &ConductingSolid> {
+        self.thermal.iter().flat_map(|t| t.solids.iter())
     }
 
     /// Check everything that does not need the rest of the model.
@@ -656,16 +707,27 @@ impl Model {
     fn check_fluid_domain(&self, d: &FluidDomain) -> Result<()> {
         d.validate()?;
         require(&self.materials, "material", &d.material)?;
-        match self.materials.get(&d.material) {
-            Some(m) => material_fits_fluid_domain(m, &d.material, d),
-            None => Ok(()),
+        if let Some(m) = self.materials.get(&d.material) {
+            material_fits_fluid_domain(m, &d.material, d)?;
         }
+        for c in d.solids() {
+            require(&self.materials, "material", &c.material)?;
+            if let Some(m) = self.materials.get(&c.material) {
+                material_fits_solid(m, &c.material).map_err(|e| context("conducting solid", &c.body, e))?;
+            }
+        }
+        Ok(())
     }
 
     /// The fluid domains `material` must keep fitting when it is replaced.
     pub(crate) fn check_material_fits_fluid_domains(&self, name: &str, material: &Material) -> Result<()> {
-        for (domain, d) in self.fluid_domains.iter().filter(|(_, d)| d.material == name) {
-            material_fits_fluid_domain(material, name, d).map_err(|e| context("fluid domain", domain, e))?;
+        for (domain, d) in &self.fluid_domains {
+            if d.material == name {
+                material_fits_fluid_domain(material, name, d).map_err(|e| context("fluid domain", domain, e))?;
+            }
+            for c in d.solids().filter(|c| c.material == name) {
+                material_fits_solid(material, name).map_err(|e| context("fluid domain", domain, context("conducting solid", &c.body, e)))?;
+            }
         }
         Ok(())
     }
@@ -706,7 +768,7 @@ impl Model {
 
     /// The fluid domains that use a material.
     pub(crate) fn fluid_domains_of_material(&self, material: &str) -> impl Iterator<Item = &str> {
-        self.fluid_domains.iter().filter(move |(_, d)| d.material == material).map(|(n, _)| n.as_str())
+        self.fluid_domains.iter().filter(move |(_, d)| d.material == material || d.solids().any(|c| c.material == material)).map(|(n, _)| n.as_str())
     }
 }
 
@@ -803,6 +865,75 @@ mod tests {
             m.set_fluid_thermal_boundary("Plain", FluidBoundary::Box(BoxFace::XMin), ThermalCondition::Adiabatic {}).is_err(),
             "no thermal settings"
         );
+    }
+
+    #[test]
+    fn conducting_solids_need_an_obstacle_and_a_material_that_conducts() {
+        let mut m = Model::default();
+        let mut hot = water();
+        hot.thermal = Some(crate::Thermal { conductivity: Some(Directional::Isotropic(0.6)), specific_heat: Some(4180.0), ..Default::default() });
+        m.add_material("Water", hot).unwrap();
+        let alu = Material {
+            density: Some(2700.0),
+            thermal: Some(crate::Thermal { conductivity: Some(Directional::Isotropic(237.0)), specific_heat: Some(900.0), ..Default::default() }),
+            ..Material::default()
+        };
+        m.add_material("Alu", alu.clone()).unwrap();
+        // a board: in-plane and through-thickness conductivities
+        let mut fr4 = alu.clone();
+        fr4.thermal = Some(crate::Thermal {
+            conductivity: Some(Directional::Orthotropic([20.0, 20.0, 0.3])),
+            specific_heat: Some(1100.0),
+            ..Default::default()
+        });
+        m.add_material("Board", fr4).unwrap();
+        m.add_material("Steel", Material { density: Some(7800.0), ..Material::default() }).unwrap();
+        let with = |f: &dyn Fn(&mut FluidDomain)| {
+            let mut d = channel();
+            d.obstacles = vec!["Sink".into(), "Pcb".into()];
+            d.thermal = Some(FluidThermal {
+                initial_temperature: 293.15,
+                solids: vec![
+                    ConductingSolid { body: "Sink".into(), material: "Alu".into(), power: 0.0 },
+                    ConductingSolid { body: "Pcb".into(), material: "Board".into(), power: 5.0 },
+                ],
+                ..FluidThermal::default()
+            });
+            f(&mut d);
+            d
+        };
+        fn solids(d: &mut FluidDomain) -> &mut Vec<ConductingSolid> {
+            &mut d.thermal.as_mut().unwrap().solids
+        }
+        m.add_fluid_domain("Flow", with(&|_| {})).unwrap();
+        for (why, d) in [
+            ("not an obstacle", with(&|d| d.obstacles.truncate(1))),
+            ("listed twice", with(&|d| solids(d)[1].body = "Sink".into())),
+            ("power not a number", with(&|d| solids(d)[0].power = f64::NAN)),
+            ("no such material", with(&|d| solids(d)[0].material = "Nope".into())),
+            ("no conductivity", with(&|d| solids(d)[0].material = "Steel".into())),
+            (
+                "a thermal condition on a conducting face",
+                with(&|d| {
+                    d.thermal.as_mut().unwrap().surfaces = vec![SurfaceThermalBoundary {
+                        face: GeometryRef::face("Sink", "F1").unwrap(),
+                        condition: ThermalCondition::Temperature { value: 1.0 },
+                    }]
+                }),
+            ),
+        ] {
+            assert!(m.add_fluid_domain("Bad", d).is_err(), "{why}");
+        }
+        // the solid's material is in use, keeps fitting, and follows a rename
+        assert!(m.material_users("Alu").contains(&"fluid domain `Flow`".to_string()));
+        assert!(m.remove_material("Alu").is_err());
+        assert!(m.replace_material("Alu", Material { density: Some(1.0), ..Material::default() }).is_err());
+        m.rename(crate::rename::Kind::Material, "Alu", "Aluminium").unwrap();
+        assert_eq!(m.fluid_domain("Flow").unwrap().solids().next().unwrap().material, "Aluminium");
+        // it round-trips, and a domain without solids writes none
+        let json = serde_json::to_string(m.fluid_domain("Flow").unwrap()).unwrap();
+        assert_eq!(&serde_json::from_str::<FluidDomain>(&json).unwrap(), m.fluid_domain("Flow").unwrap());
+        assert!(!serde_json::to_string(&FluidThermal::default()).unwrap().contains("solids"));
     }
 
     #[test]
