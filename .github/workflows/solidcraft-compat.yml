@@ -1,0 +1,70 @@
+# SolidCraft compatibility, daily and on demand (#605): SolidCraft's latest release saves the
+# design test recipes (crates/geometry/tests/designs/*.json) as its desktop app saves designs,
+# and fieldcraft-geometry's design tests open them beside the committed fixtures, checking the
+# same bodies, volumes and face names. A SolidCraft release whose designs this FieldCraft can't
+# open (a newer design format than the pinned SolidCraft reads; docs/architecture.md, "SolidCraft
+# pin") turns this red before a person finds out. Kept cheap: the released Linux CLI is
+# downloaded and its checksum verified, not built, and only fieldcraft-geometry's design tests
+# build and run.
+name: SolidCraft compatibility
+
+on:
+  schedule:
+    - cron: '7 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: solidcraft-compat-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  latest:
+    name: Open designs saved by SolidCraft's latest release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      # The downloaded binary runs in the checkout: leave no token in it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: solidcraft-compat
+          save-if: ${{ github.ref == 'refs/heads/develop' }}
+      # SHA256SUMS proves the archive arrived intact, not who made it: SolidCraft's releases are
+      # not signed, so this trusts GitHub's release of tangency-labs/solidcraft.
+      - name: SolidCraft's latest release (Linux CLI, checksum verified)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/solidcraft"
+          mkdir -p "$dir" && cd "$dir"
+          tag=$(gh release view -R tangency-labs/solidcraft --json tagName --jq .tagName)
+          archive="solidcraft-${tag#v}-linux-x86_64.tar.gz"
+          gh release download "$tag" -R tangency-labs/solidcraft -p "$archive" -p SHA256SUMS.txt
+          grep "  $archive\$" SHA256SUMS.txt | sha256sum -c -
+          tar xzf "$archive"
+          echo "SOLIDCRAFT_CLI=$dir/${archive%.tar.gz}/bin/solidcraft-cli" >>"$GITHUB_ENV"
+          echo "SolidCraft $tag" >>"$GITHUB_STEP_SUMMARY"
+      - name: Save the design recipes with it (tests/designs/solidcraft-latest)
+        working-directory: crates/geometry/tests/designs
+        run: |
+          set -euo pipefail
+          "$SOLIDCRAFT_CLI" --version
+          mkdir solidcraft-latest
+          for recipe in *.json; do
+            name=${recipe%.json}
+            jq --arg out "$name.solidcraft" '. + [{"command": "file.save", "params": {"path": $out}}]' "$recipe" >"solidcraft-latest/$recipe"
+            (cd solidcraft-latest && "$SOLIDCRAFT_CLI" run "$recipe" >/dev/null)
+          done
+          ls -l solidcraft-latest
+      - name: FieldCraft opens them as the fixtures
+        run: cargo test --locked --profile ci -p fieldcraft-geometry --test design_formats

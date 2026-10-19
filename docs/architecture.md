@@ -41,15 +41,39 @@ crates in strictly lower layers.
 
 Rules beyond the layer order:
 - Nothing below L7 uses egui, eframe, winit, wgpu or rfd.
-- Only `fieldcraft-geometry` uses `solidcraft-*`, pinned by rev in the workspace `Cargo.toml`.
-  SolidCraft's `[patch.crates-io]` (its fixed truck crates) does not reach dependents, so the
-  workspace repeats it from the same rev; bump both together. The same goes for SolidCraft's
-  patched `egui-wgpu` (MSAA clamped to what the device supports, 1x on OpenGL adapters, so the
-  desktop app's 4x never fails pipeline validation at start).
+- Only `fieldcraft-geometry` uses `solidcraft-*`, pinned by rev in the workspace `Cargo.toml`
+  ("SolidCraft pin" below).
 - Everything below the apps builds for `wasm32-unknown-unknown`.
 - `fieldcraft-geometry`'s non-default `scripts` feature builds designs from SolidCraft command
   scripts (`script_design`, through `solidcraft-engine`) for the test corpus; the library opens
   designs without it.
+
+### SolidCraft pin
+
+`solidcraft-*` come from https://github.com/tangency-labs/solidcraft (formerly
+bherbruck/solidcraft, which redirects there), pinned in the workspace `Cargo.toml` to the commit
+of a SolidCraft release tag (now v0.16.2). SolidCraft's `[patch.crates-io]` (its fixed truck
+crates) does not reach dependents, so the workspace repeats it from the same rev; bump both
+together, and keep the list in step with SolidCraft's (v0.16 added `truck-geometry`). The same
+goes for SolidCraft's patched `egui-wgpu` (MSAA clamped to what the device supports, 1x on
+OpenGL adapters, so the desktop app's 4x never fails pipeline validation at start).
+
+The pin decides which designs FieldCraft opens: SolidCraft's reader migrates every older design
+format and refuses a newer one, and SolidCraft releases often raise the format. A design newer
+than the pin reads (`fieldcraft_geometry::DESIGN_FORMAT`) fails with "this design was saved by a
+newer SolidCraft (format N); this FieldCraft reads up to M. Update FieldCraft to open it" (#605:
+FieldCraft 0.7.0 read up to format 21, SolidCraft 0.16.2 saves 27). Two checks keep the pin
+current:
+- `crates/geometry/tests/design_formats.rs` opens every design in
+  `crates/geometry/tests/designs` (the older fixtures and `solidcraft-<version>/`, each saved by
+  that release) and checks that a later release's copy of a recipe gives the same bodies,
+  volumes and face names as the older one.
+- The scheduled `SolidCraft compatibility` workflow (`.github/workflows/solidcraft-compat.yml`,
+  daily and on demand) downloads SolidCraft's latest release, saves the same recipes with it
+  into `solidcraft-latest/` and runs those tests. Red means a SolidCraft release saves designs
+  this FieldCraft can't open (or opens differently): move the pin to that release, port the API
+  changes in `fieldcraft-geometry`, add its designs as `solidcraft-<version>/`, and check the
+  meshing corpus (`cargo xtask corpus`), the heavy tests and the oracle stay the same.
 
 ## Meshing pipeline
 

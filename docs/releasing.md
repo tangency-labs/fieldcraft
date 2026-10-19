@@ -176,6 +176,7 @@ the version instead.
 | Pull request from a fork or Dependabot | The same plan against the pull request's merge base; never the heavy job. |
 | Nightly (03:23 UTC) and `gh workflow run CI --ref <branch>` | Everything: the full `cargo xtask ci`, heavy and oracle on Linux (manual runs add the macOS oracle). |
 | Weekly (Sunday) | The oracle on macOS. |
+| Daily (06:07 UTC) and `gh workflow run solidcraft-compat.yml` | `SolidCraft compatibility`: SolidCraft's latest release saves the design test recipes and `fieldcraft-geometry`'s design tests open them (docs/architecture.md, "SolidCraft pin"). |
 | Release (`release.yml`, push to `main` and dry runs) | `verify-ci` (full `cargo xtask ci`), `verify-heavy`, and `verify-oracle` on Linux and macOS, in parallel with the packaging jobs (macOS universal, Linux, Windows), which only upload workflow artifacts. The `release` job, the only one that signs `SHA256SUMS.txt` or creates/updates the draft, needs every verify and packaging job: a failing verify means no draft and no signature. The verify jobs restore develop's CI caches (shared keys); only `main` saves release caches. A run takes about as long as its slowest job, ~30 min (the macOS universal package; it was ~55–60 min when packaging waited for verify). |
 
 `cargo xtask affected --base <rev> [--head <rev>]` prints the plan for any range, e.g. what a

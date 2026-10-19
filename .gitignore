@@ -8,3 +8,5 @@
 *.swp
 __pycache__/
 /THIRD-PARTY-LICENSES.txt
+# Saved by SolidCraft's latest release in the SolidCraft compatibility workflow
+/crates/geometry/tests/designs/solidcraft-latest/

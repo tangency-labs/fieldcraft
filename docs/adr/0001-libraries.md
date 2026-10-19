@@ -121,4 +121,7 @@ docs/verification.md).
 - The tet and hex meshers are significant original work; the literature survey decides the
   order and the methods.
 - SolidCraft and FieldCraft move together: bumping the pinned rev bumps the repeated
-  `[patch.crates-io]` entries in the same commit.
+  `[patch.crates-io]` entries in the same commit. The pin is a SolidCraft release tag's commit,
+  and a scheduled check opens designs saved by SolidCraft's latest release, so a release that
+  saves a design format the pin can't read is caught before users meet it
+  (docs/architecture.md, "SolidCraft pin").
