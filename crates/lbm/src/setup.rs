@@ -114,6 +114,8 @@ pub struct Setup {
     pub obstacles: Vec<ObstacleFaces>,
     /// Heat in the fluid, when the domain has thermal settings.
     pub thermal: Option<ThermalSetup>,
+    /// The stop rule, when the step runs to steady state.
+    pub steady: Option<crate::steady::SteadySetup>,
     pub warnings: Vec<String>,
 }
 
@@ -150,7 +152,7 @@ impl Setup {
         // The model checked the domain and its material when they were defined.
         let (s, domain) = fluid_step(model, step)?;
         let domain = domain.clone();
-        let Procedure::Fluid { end_time, steps, time_step, frames, magic, .. } = &s.procedure else {
+        let Procedure::Fluid { end_time, steps, time_step, frames, magic, steady, .. } = &s.procedure else {
             return Err(Error::Invalid(format!("step `{}` is not a fluid step", s.name)));
         };
         let material = model.material(&domain.material);
@@ -413,6 +415,7 @@ impl Setup {
             initial_velocity: domain.initial_velocity.map(|c| c * dt / h),
             obstacles: domain_obstacles,
             thermal,
+            steady: steady.as_ref().map(|r| crate::steady::SteadySetup::new(r, n, dt)).transpose()?,
             warnings,
             domain,
         })

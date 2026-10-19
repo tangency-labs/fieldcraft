@@ -40,6 +40,29 @@ pub fn model(density: f64, nu: f64, domain: FluidDomain, procedure: Procedure) -
     m
 }
 
+/// A fluid with heat: density ρ, kinematic viscosity ν, thermal diffusivity α (conductivity
+/// ρ α, unit specific heat), so k / (ρ c) = α.
+pub fn hot_model(density: f64, nu: f64, alpha: f64, domain: fieldcraft_model::FluidDomain, procedure: Procedure) -> Model {
+    let mut m = Model::default();
+    m.add_material(
+        "Fluid",
+        Material {
+            density: Some(density),
+            fluid: Some(Fluid::Newtonian { viscosity: nu * density }),
+            thermal: Some(fieldcraft_model::Thermal {
+                conductivity: Some(fieldcraft_model::Directional::Isotropic(density * alpha)),
+                specific_heat: Some(1.0),
+                ..Default::default()
+            }),
+            ..Material::default()
+        },
+    )
+    .unwrap();
+    m.add_fluid_domain("Flow", domain).unwrap();
+    m.add_step(Step::new("Run", procedure), None).unwrap();
+    m
+}
+
 /// The setup and the flow at its initial state.
 pub fn prepare(m: &Model, obstacles: &[Obstacle]) -> (Setup, Flow) {
     let setup = Setup::new(m, None, obstacles, &Limits::default()).unwrap();

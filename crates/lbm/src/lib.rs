@@ -11,6 +11,7 @@
 //!   walls (moving walls after Ladd), slip faces, Zou–He inlets and outlets, and the
 //!   momentum-exchange force on every wall.
 //! - [`solve`]: the time loop, output frames and force histories in model units.
+//! - [`steady`]: the steady-state monitor and stop rule of a run.
 //!
 //! # Sources
 //! - T. Krüger, H. Kusumaatmaja, A. Kuzmin, O. Shardt, G. Silva, E. M. Viggen, *The Lattice
@@ -53,6 +54,7 @@ pub mod flow;
 pub mod lattice;
 pub mod setup;
 pub mod solve;
+pub mod steady;
 pub mod voxel;
 
 pub use backend::{Backend, Choice, Fields, register_backend};
@@ -60,6 +62,7 @@ pub use flow::{Flow, Group, Link, OpenCell, Rule, Target, ThermalState};
 pub use setup::ThermalSetup;
 pub use setup::{Obstacle, Setup, fluid_step};
 pub use solve::{FluidResult, FluidStats, ForceHistory, Frame, HeatHistory, run, solve_fluid, solve_fluid_on};
+pub use steady::{MonitorSample, SteadyReport, SteadySetup, StopReason};
 pub use voxel::Grid;
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]

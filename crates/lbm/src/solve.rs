@@ -5,6 +5,7 @@ use fieldcraft_model::Model;
 use crate::backend::{Backend, Choice, Fields};
 use crate::flow::Flow;
 use crate::setup::{Obstacle, Setup};
+use crate::steady::{Monitor, SteadyReport, StopReason};
 use crate::voxel::Grid;
 use crate::{Error, Limits, Result};
 
@@ -88,6 +89,8 @@ pub struct FluidResult {
     pub heat: Vec<HeatHistory>,
     pub stats: FluidStats,
     pub warnings: Vec<String>,
+    /// How the run to steady state went, when the step has a stop rule.
+    pub steady: Option<SteadyReport>,
 }
 
 impl FluidResult {
@@ -144,7 +147,10 @@ fn frame(setup: &Setup, flow: &mut dyn Backend, step: u64) -> Result<Frame> {
 
 /// Run a prepared flow (fresh from [`Flow::new`], possibly with its own initial state, on any
 /// backend) through the setup's steps, recording frames and force histories. The steps go to
-/// the backend in chunks, up to the next frame, history sample or progress check.
+/// the backend in chunks, up to the next frame, history sample, monitor sample or progress
+/// check. With a stop rule ([`crate::steady`]) the run may end early: steady, or diverged
+/// (an unstable flow then ends the run with the frames saved so far instead of an error); a
+/// frame is added at the stop when the flow is still sound.
 pub fn run(setup: &Setup, flow: &mut dyn Backend, limits: &Limits) -> Result<FluidResult> {
     let n = setup.grid.len();
     let total = setup.steps;
@@ -170,6 +176,11 @@ pub fn run(setup: &Setup, flow: &mut dyn Backend, limits: &Limits) -> Result<Flu
     // Frame j (1..=frames) at step round(j · total / frames).
     let frame_step = |j: u64| (j * total + frames / 2) / frames;
     fieldcraft_model::progress::stage("Fluid steps", Some(total as f64), "");
+    let mut monitor = Monitor::new(setup, flow)?;
+    if let Some(m) = monitor.as_mut() {
+        m.sample(setup, flow, 0)?;
+    }
+    let mut sound = true;
     let mut k = 0u64;
     while k < total {
         fieldcraft_model::progress::check()?;
@@ -179,7 +190,18 @@ pub fn run(setup: &Setup, flow: &mut dyn Backend, limits: &Limits) -> Result<Flu
         if next_frame <= frames {
             next = next.min(frame_step(next_frame).max(k + 1));
         }
-        flow.advance(next - k)?;
+        if let Some(m) = &monitor {
+            next = next.min((k / m.setup.sample + 1) * m.setup.sample);
+        }
+        match (flow.advance(next - k), monitor.as_mut()) {
+            (Ok(()), _) => {}
+            (Err(Error::Unstable(e)), Some(m)) => {
+                m.unstable(e);
+                sound = false;
+                break;
+            }
+            (Err(e), _) => return Err(e),
+        }
         k = next;
         if k.is_multiple_of(64) || k == total {
             fieldcraft_model::progress::count(k as f64);
@@ -199,13 +221,42 @@ pub fn run(setup: &Setup, flow: &mut dyn Backend, limits: &Limits) -> Result<Flu
             out_frames.push(frame(setup, flow, k)?);
             next_frame += 1;
         }
+        if let Some(m) = monitor.as_mut()
+            && m.samples_at(k)
+            && let Some(reason) = m.sample(setup, flow, k)?
+        {
+            sound = reason != StopReason::Diverged;
+            if sound && out_frames.last().is_some_and(|f| f.step != k) {
+                out_frames.push(frame(setup, flow, k)?);
+            }
+            break;
+        }
     }
 
     let mut warnings = setup.warnings.clone();
+    let steady = monitor.map(Monitor::report);
+    if let Some(r) = &steady {
+        match r.reason {
+            StopReason::Diverged => warnings.push(format!(
+                "the run diverged at time {}: {}; the frames end there",
+                k as f64 * setup.time_step,
+                r.message.as_deref().unwrap_or("a monitored quantity blew up")
+            )),
+            StopReason::MaxTime => warnings.push(format!(
+                "the flow did not reach steady state (relative changes below {:e}) within the step's length; run longer or loosen the tolerance",
+                r.tolerance
+            )),
+            StopReason::Steady => {}
+        }
+    }
     // The weakly compressible scheme turns pressure differences into density differences of
     // Δp / (ρ c_s²) in lattice units; large ones show the time step is too long for the flow.
-    let end = flow.fields()?;
-    let spread = (0..n).filter(|c| flow.is_fluid(*c)).filter_map(|c| end.density.get(c)).map(|rho| (rho - 1.0).abs()).fold(0.0, f64::max);
+    let spread = if sound {
+        let end = flow.fields()?;
+        (0..n).filter(|c| flow.is_fluid(*c)).filter_map(|c| end.density.get(c)).map(|rho| (rho - 1.0).abs()).fold(0.0, f64::max)
+    } else {
+        0.0
+    };
     if spread > COMPRESSIBILITY_WARNING {
         warnings.push(format!(
             "the density varies by {:.1}% at the end: the weakly compressible error is visible; a shorter time step reduces it (quadratically)",
@@ -231,19 +282,20 @@ pub fn run(setup: &Setup, flow: &mut dyn Backend, limits: &Limits) -> Result<Flu
         stats: FluidStats {
             cells: n,
             fluid_cells: flow.fluid_cells(),
-            steps: total,
+            steps: k,
             time_step: setup.time_step,
-            end_time: total as f64 * setup.time_step,
+            end_time: k as f64 * setup.time_step,
             tau_plus: setup.tau_plus,
             tau_minus: setup.tau_minus,
             magic: setup.magic,
             velocity: setup.velocity,
             lattice_velocity: setup.lattice_velocity,
             mach: setup.mach,
-            cell_updates: (flow.fluid_cells() as u64).saturating_mul(total),
+            cell_updates: (flow.fluid_cells() as u64).saturating_mul(k),
             backend: flow.name(),
             tau_thermal: setup.thermal.as_ref().map(|t| t.tau),
         },
         warnings,
+        steady,
     })
 }

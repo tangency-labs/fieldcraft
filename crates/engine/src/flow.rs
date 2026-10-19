@@ -599,6 +599,7 @@ pub(crate) mod tests {
             heat: Vec::new(),
             stats,
             warnings: Vec::new(),
+            steady: None,
         }
     }
 
