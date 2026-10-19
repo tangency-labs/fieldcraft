@@ -140,9 +140,13 @@ fn default_shell_points() -> u32 {
     5
 }
 
-/// 1 mm in metres.
+/// A plane-strain section's thickness when none is given: 1 mm, the default display system's
+/// unit of length.
+const UNIT_THICKNESS: crate::units::Typed = crate::units::Typed::new(1.0, "mm");
+
 fn unit_thickness() -> f64 {
-    1e-3
+    // `1 mm` always converts; a NaN would be refused as a thickness.
+    UNIT_THICKNESS.si(crate::units::Quantity::Length).unwrap_or(f64::NAN)
 }
 
 /// How a 2D continuum section extends out of its plane: what turns a length along an element

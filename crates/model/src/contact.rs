@@ -49,7 +49,7 @@ pub const MAX_DECAY: f64 = 1e15;
 
 /// Penalty scale factors outside this range are refused (above 1 the contact springs would
 /// shorten the stable time increment; see the module docs).
-pub const PENALTY_SCALE_RANGE: (f64, f64) = (1e-6, 1.0);
+pub const PENALTY_SCALE_RANGE: (f64, f64) = (1e-6, 1.0); // unit-factors: a factor on the penalty stiffness
 
 /// Coulomb friction with an exponential decay from the static to the kinetic coefficient.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]

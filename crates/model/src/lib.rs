@@ -106,7 +106,7 @@ pub const MAX_NODES: usize = 50_000_000;
 pub const MAX_ELEMENTS: usize = 50_000_000;
 
 /// Coordinates beyond this magnitude are rejected (metres).
-pub const MAX_COORD: f64 = 1e9;
+pub const MAX_COORD: f64 = 1e9; // unit-factors: a cap on hostile input, in metres (SI)
 
 /// Most definitions of one kind (sets, materials, sections, …) a model holds.
 pub const MAX_DEFINITIONS: usize = 100_000;

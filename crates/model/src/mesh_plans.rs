@@ -16,6 +16,11 @@ use crate::{Error, Result, check_coordinates, check_name};
 /// Most entries in each list of a plan.
 pub const MAX_PLAN_ITEMS: usize = 10_000;
 
+/// A direction or axis is a unit vector when its length is within this of 1.
+const UNIT_LENGTH: f64 = 1e-6; // unit-factors: the length of a direction vector
+/// A normal shorter than this is zero.
+const ZERO_NORMAL: f64 = 1e-9; // unit-factors: the length of a direction vector
+
 /// What a plan meshes with today.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -192,21 +197,21 @@ impl MeshPlan {
         }
         for d in self.direction.iter().chain(&self.directions) {
             check_coordinates(d)?;
-            if (unit_length(*d) - 1.0).abs() > 1e-6 {
+            if (unit_length(*d) - 1.0).abs() > UNIT_LENGTH {
                 return Err(Error::Invalid(format!("a sweep direction is a unit vector, got {d:?}")));
             }
         }
         for c in &self.cuts {
             check_coordinates(&c.point)?;
             check_coordinates(&c.normal)?;
-            if !(unit_length(c.normal) > 1e-9) {
+            if !(unit_length(c.normal) > ZERO_NORMAL) {
                 return Err(Error::Invalid("a cut's normal must not be zero".into()));
             }
         }
         for r in &self.rings {
             check_coordinates(&r.center)?;
             check_coordinates(&r.axis)?;
-            if (unit_length(r.axis) - 1.0).abs() > 1e-6 {
+            if (unit_length(r.axis) - 1.0).abs() > UNIT_LENGTH {
                 return Err(Error::Invalid(format!("a ring's axis is a unit vector, got {:?}", r.axis)));
             }
             if !(r.radius.is_finite() && r.radius > 0.0 && r.frame.is_finite() && r.frame > 0.0) {

@@ -17,7 +17,7 @@ mod unit;
 
 pub use dimension::Dimension;
 pub use display::{DisplaySystem, Preset};
-pub use quantity::{Quantity, ValueInput, WithUnit, format_number};
+pub use quantity::{Quantity, Typed, ValueInput, WithUnit, format_number};
 pub use unit::{CELSIUS_ZERO, Unit};
 
 /// Why a unit or a value with a unit was refused.

@@ -125,7 +125,7 @@ pub enum Symmetry {
 }
 
 /// A normal whose component along an axis is within this of 1 (unit length) is that axis.
-const ALONG_AXIS: f64 = 1e-12;
+const ALONG_AXIS: f64 = 1e-12; // unit-factors: a component of a unit vector
 
 impl Symmetry {
     /// The plane normal to `normal`: [`Symmetry::X`], `Y` or `Z` when it lies along an axis,

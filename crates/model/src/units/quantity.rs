@@ -218,6 +218,32 @@ pub struct WithUnit {
     pub unit: String,
 }
 
+/// A constant written with its unit, `Typed::new(1.0, "mm")`: a default, a limit or a sample's
+/// value that is a physical amount. It is converted through the table where it is used, so no
+/// factor is written beside it (docs/units.md).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Typed {
+    pub value: f64,
+    pub unit: &'static str,
+}
+
+impl Typed {
+    pub const fn new(value: f64, unit: &'static str) -> Typed {
+        Typed { value, unit }
+    }
+
+    /// Its SI value as quantity `q`. A power-of-ten unit scales in decimal: `1 mm` is the double
+    /// nearest 0.001 m.
+    pub fn si(self, q: Quantity) -> Result<f64, UnitError> {
+        q.to_si(self.value, &Unit::parse(self.unit)?)
+    }
+
+    /// Its value in `display`'s unit of `q`.
+    pub fn express(self, q: Quantity, display: &DisplaySystem) -> Result<f64, UnitError> {
+        display.express(q, self.si(q)?)
+    }
+}
+
 impl ValueInput {
     /// The SI value of this input as quantity `q`; a bare number is in `display`'s unit.
     pub fn to_si(&self, q: Quantity, display: &DisplaySystem) -> Result<f64, UnitError> {
@@ -263,5 +289,15 @@ mod tests {
         assert_eq!(format_number(-20.0), "-20");
         assert_eq!(format_number(1.0 / 3.0), "0.333333");
         assert_eq!(format_number(0.0), "0");
+    }
+
+    #[test]
+    fn typed_constants_convert_through_the_table() {
+        let mm = DisplaySystem::new(super::super::Preset::MmTonneS);
+        assert_eq!(Typed::new(1.0, "mm").si(Quantity::Length), Ok(1e-3));
+        assert_eq!(Typed::new(9.81, "m/s^2").express(Quantity::Acceleration, &mm), Ok(9810.0));
+        assert_eq!(Typed::new(7850.0, "kg/m^3").express(Quantity::Density, &mm), Ok(7.85e-9));
+        assert!(Typed::new(1.0, "mm").si(Quantity::Pressure).is_err());
+        assert!(Typed::new(1.0, "furlong").si(Quantity::Length).is_err());
     }
 }

@@ -31,6 +31,10 @@ use crate::{Error, Model, Result, context, finite, insert_new, remove_existing, 
 /// Most copies of discrete elements a model resolves to (definitions × target nodes).
 pub const MAX_DISCRETE: usize = 10_000_000;
 
+/// A principal minor of an inertia above minus this fraction of its largest component is
+/// non-negative (to round-off).
+const INERTIA_ROUND_OFF: f64 = 1e-12; // unit-factors: relative to the largest component
+
 /// A translational mass: the same in every direction, or one per global direction.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -85,7 +89,7 @@ impl PointMass {
             // Positive semidefinite: every principal minor is non-negative (to round-off).
             let j = inertia_matrix(i);
             let scale = i.iter().fold(0.0f64, |m, c| m.max(c.abs()));
-            let tolerance = 1e-12 * scale;
+            let tolerance = INERTIA_ROUND_OFF * scale;
             let minors = [
                 j[0][0],
                 j[1][1],

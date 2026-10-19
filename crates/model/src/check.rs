@@ -119,6 +119,9 @@ impl Resolved {
 /// Labels listed in a message before it says how many more there are.
 const LISTED: usize = 5;
 
+/// A vector is parallel to an element's axis when the sine of the angle between them is below this.
+const PARALLEL: f64 = 1e-9; // unit-factors: the sine of an angle
+
 fn first_labels(labels: &[u32]) -> String {
     let shown: Vec<String> = labels.iter().take(LISTED).map(u32::to_string).collect();
     match labels.len().saturating_sub(LISTED) {
@@ -854,6 +857,6 @@ impl Model {
         let t = [b.xyz[0] - a.xyz[0], b.xyz[1] - a.xyz[1], b.xyz[2] - a.xyz[2]];
         let c = [t[1] * v[2] - t[2] * v[1], t[2] * v[0] - t[0] * v[2], t[0] * v[1] - t[1] * v[0]];
         let norm = |x: [f64; 3]| (x[0] * x[0] + x[1] * x[1] + x[2] * x[2]).sqrt();
-        !(norm(c) > 1e-9 * norm(t) * norm(v))
+        !(norm(c) > PARALLEL * norm(t) * norm(v))
     }
 }

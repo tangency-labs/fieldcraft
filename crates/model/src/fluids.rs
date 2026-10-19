@@ -30,7 +30,7 @@ pub const MAX_SURFACE_CONDITIONS: usize = 10_000;
 pub const MAX_CELLS_PER_SIDE: u64 = 1 << 20;
 
 /// How far the box extent may be from a whole number of spacings, relative to the spacing.
-const WHOLE_CELLS_TOLERANCE: f64 = 1e-6;
+const WHOLE_CELLS_TOLERANCE: f64 = 1e-6; // unit-factors: relative to the spacing
 
 /// A face of the domain box.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

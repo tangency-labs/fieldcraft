@@ -19,6 +19,9 @@ pub const MAX_PARTITIONS: usize = 256;
 /// Most bodies one partition names.
 pub const MAX_PARTITION_BODIES: usize = 1000;
 
+/// A direction shorter than this has none; one this close to unit length is kept bit for bit.
+const UNIT_ROUND_OFF: f64 = 1e-12; // unit-factors: the length of a direction vector
+
 /// A datum plane, axis or point.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -36,9 +39,9 @@ impl Datum {
     fn checked(self) -> Result<Datum> {
         let unit = |what: &str, v: [f64; 3]| -> Result<[f64; 3]> {
             let len = v.iter().map(|x| x * x).sum::<f64>().sqrt();
-            if v.iter().all(|x| x.is_finite()) && len > 1e-12 && len.is_finite() {
+            if v.iter().all(|x| x.is_finite()) && len > UNIT_ROUND_OFF && len.is_finite() {
                 // A unit vector stays bit for bit, so a model read back equals the one written.
-                Ok(if (len - 1.0).abs() <= 1e-12 { v } else { v.map(|x| x / len) })
+                Ok(if (len - 1.0).abs() <= UNIT_ROUND_OFF { v } else { v.map(|x| x / len) })
             } else {
                 Err(Error::Invalid(format!("the {what} must be a finite, non-zero vector")))
             }

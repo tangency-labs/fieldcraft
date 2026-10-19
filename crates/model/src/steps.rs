@@ -25,7 +25,7 @@ pub const MAX_INCREMENTS: u64 = 1_000_000_000;
 pub const MAX_FRAMES: f64 = 10_000.0;
 
 /// Most history samples an explicit dynamic step records (end time over history interval).
-pub const MAX_HISTORY_SAMPLES: f64 = 1_000_000.0;
+pub const MAX_HISTORY_SAMPLES: f64 = 1_000_000.0; // unit-factors: a count of samples
 
 /// Most initial velocities or rigid walls an explicit dynamic step lists.
 pub const MAX_STEP_ITEMS: usize = 10_000;
@@ -138,8 +138,11 @@ pub const MAX_FLOW_MONITORS: usize = 100;
 /// Most faces one monitored quantity sums over.
 pub const MAX_MONITOR_FACES: usize = 1000;
 
+/// The relative change per window below which a flow is steady, when none is given.
+const STEADY_TOLERANCE: f64 = 1e-3; // unit-factors: a relative change
+
 fn default_steady_tolerance() -> f64 {
-    1e-3
+    STEADY_TOLERANCE
 }
 
 /// The stop rule of a fluid step run to steady state.
@@ -343,6 +346,9 @@ pub struct Imperfection {
 /// Most points of a nonlinear step's load path.
 pub const MAX_LOAD_PATH_POINTS: usize = 1000;
 
+/// Load fractions this close to each other (relatively, or absolutely near 0) are the same.
+const SAME_FRACTION: f64 = 1e-12; // unit-factors: a load fraction
+
 /// When an increment's Newton iterations have converged: all three hold.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -361,7 +367,7 @@ pub struct Tolerances {
 
 impl Default for Tolerances {
     fn default() -> Tolerances {
-        Tolerances { force: 1e-6, displacement: 1e-5, energy: 1e-10 }
+        Tolerances { force: 1e-6, displacement: 1e-5, energy: 1e-10 } // unit-factors: relative tolerances
     }
 }
 
@@ -464,12 +470,16 @@ impl NonlinearStatic {
     /// The first point of the load path after fraction `t` (1 without a path), where an
     /// increment from `t` must end.
     pub fn next_turn(&self, t: f64) -> f64 {
-        self.load_path.as_ref().and_then(|path| path.iter().map(|p| p[0]).find(|f| *f > t * (1.0 + 1e-12) + 1e-12)).unwrap_or(1.0)
+        self.load_path.as_ref().and_then(|path| path.iter().map(|p| p[0]).find(|f| *f > t * (1.0 + SAME_FRACTION) + SAME_FRACTION)).unwrap_or(1.0)
     }
 }
 
 /// Most time increments of a transient heat transfer step.
 pub const MAX_HEAT_INCREMENTS: f64 = 100_000.0;
+
+/// An increment count this close above a whole number is that number: what is left of dividing
+/// the end time by the increment.
+const INCREMENT_ROUND_OFF: f64 = 1e-9; // unit-factors: a fraction of an increment
 
 /// Time integration of a transient heat transfer step: the generalized trapezoidal (θ) method
 /// with fixed increments, from a uniform initial temperature.
@@ -502,7 +512,7 @@ impl Transient {
 
     /// The number of increments (the last one may be shorter).
     pub fn increments(&self) -> usize {
-        (self.end_time / self.increment - 1e-9).ceil().max(1.0) as usize
+        (self.end_time / self.increment - INCREMENT_ROUND_OFF).ceil().max(1.0) as usize
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -636,7 +646,7 @@ impl ExplicitDynamic {
 
     /// The time between history samples.
     pub fn history_interval(&self) -> f64 {
-        self.history_interval.unwrap_or(self.end_time / 1000.0)
+        self.history_interval.unwrap_or(self.end_time / DEFAULT_HISTORY_SAMPLES)
     }
 
     /// The sets the step refers to.
@@ -738,6 +748,9 @@ pub struct Hourglass {
 
 /// Largest hourglass coefficient.
 pub const MAX_HOURGLASS_COEFFICIENT: f64 = 0.25;
+
+/// History samples of an explicit dynamic step when no interval is given.
+const DEFAULT_HISTORY_SAMPLES: f64 = 1000.0; // unit-factors: a count of samples
 
 fn default_hourglass_coefficient() -> f64 {
     0.1

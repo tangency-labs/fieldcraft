@@ -247,7 +247,7 @@ pub fn check_coordinates(xyz: &[f64]) -> Result<()> {
 /// the whole element (`fieldcraft_mesh::quality`), so a mesh that passes the gate always passes
 /// the solvers. A linear tetrahedron has one constant Jacobian ([`tet4_jacobian`]), which the gate
 /// and the solvers compute from the same coordinate differences, so they agree on it bit for bit.
-pub const MIN_NORMALIZED_JACOBIAN: f64 = 1e-12;
+pub const MIN_NORMALIZED_JACOBIAN: f64 = 1e-12; // unit-factors: a normalized Jacobian
 
 /// The normalized Jacobian `det J / (|J₁| |J₂| |J₃|)` of a Jacobian matrix with rows
 /// `J_a = ∂x/∂ξ_a`: the signed volume of the parallelepiped its rows span over that of a box with
