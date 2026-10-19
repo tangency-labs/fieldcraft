@@ -96,6 +96,7 @@ impl ModelApp {
     /// Help › Crash Reports: the saved reports (`diagnostics.crash_reports`), newest first.
     pub fn open_crash_reports(&mut self) {
         // Read directly: a listing changes nothing, and the window shows it instead of the reply.
+        #[allow(clippy::disallowed_methods, reason = "lists the crash report folder: a few small files")]
         let reports = match self.session.execute("diagnostics.crash_reports", &json!({})) {
             Ok(r) => r.get("reports").and_then(Value::as_array).map_or_else(Vec::new, |a| a.iter().filter_map(summary_of).collect()),
             Err(e) => {

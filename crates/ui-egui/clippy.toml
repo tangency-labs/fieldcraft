@@ -1,0 +1,25 @@
+# The window crate's clippy configuration. It replaces the workspace's clippy.toml for this crate
+# (clippy reads the nearest one), so the workspace's settings are repeated here.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true
+
+# Work that can take seconds must not run on the window thread (#552): a command runs as a job
+# (`files.rs`, `begin_job`), display data is built by the job that brings the model
+# (`Prebuilt`), and the window never blocks. Where one of these runs in the window it says why
+# with `#[allow(clippy::disallowed_methods, reason = "…")]`.
+disallowed-methods = [
+    { path = "fieldcraft_engine::Session::execute", reason = "runs the command on the window thread: run what can take long as a job (`begin_job`), or go through `ModelApp::run`" },
+    { path = "fieldcraft_engine::Session::run_script", reason = "runs every command of the script on the window thread: run what can take long as a job" },
+    { path = "fieldcraft_geometry::Shape::tessellate", reason = "tessellating a body can take seconds: let the job that opens the design build it (`Prebuilt`)" },
+    { path = "fieldcraft_geometry::Shape::tessellate_pieces", reason = "tessellating a body can take seconds: let the job that opens the design build it (`Prebuilt`)" },
+    { path = "fieldcraft_render::DisplayMesh::from_model", reason = "drawing a large model takes long: let the job that brings it build it (`Prebuilt`)" },
+    { path = "fieldcraft_render::DisplayMesh::from_model_hiding", reason = "drawing a large model takes long: let the job that brings it build it (`Prebuilt`)" },
+    { path = "std::thread::sleep", reason = "the window thread never sleeps" },
+    { path = "std::sync::mpsc::Receiver::recv", reason = "the window thread never blocks on a channel: `try_recv` each frame" },
+    { path = "std::sync::mpsc::Receiver::recv_timeout", reason = "the window thread never blocks on a channel: `try_recv` each frame" },
+    { path = "std::sync::mpsc::Receiver::iter", reason = "the window thread never blocks on a channel: `try_recv` each frame" },
+    { path = "std::thread::JoinHandle::join", reason = "the window thread never waits for a thread" },
+    { path = "std::thread::ScopedJoinHandle::join", reason = "the window thread never waits for a thread" },
+]

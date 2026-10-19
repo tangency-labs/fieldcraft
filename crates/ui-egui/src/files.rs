@@ -524,6 +524,7 @@ fn spawn(
         format!("fieldcraft {command}"),
         Box::new(move || {
             let mut s = session;
+            #[allow(clippy::disallowed_methods, reason = "the job's worker thread")]
             let r = fieldcraft_model::progress::scoped(Some(progress), || s.execute(command, &params)).map_err(|e| e.to_string());
             // What the window draws of the new session is built here too, not in a frame.
             let r = r.map(|v| (v, Box::new(Prebuilt::of(&s, &drawn))));
@@ -877,7 +878,8 @@ impl ModelApp {
         }
     }
 
-    /// Block until the background open finishes (tests and the offscreen harness).
+    /// Block until the background job finishes (tests: a frame never waits for a job).
+    #[cfg(test)]
     pub fn wait_loaded(&mut self) {
         for _ in 0..6000 {
             if !self.poll_loading() {
@@ -975,7 +977,9 @@ impl ModelApp {
 
     /// The autosaved models that can be recovered (`file.recovery.list`), newest first.
     pub fn recoverable(&mut self) -> Vec<Value> {
-        self.session.execute("file.recovery.list", &json!({})).ok().and_then(|v| v.as_array().cloned()).unwrap_or_default()
+        #[allow(clippy::disallowed_methods, reason = "lists the autosave folder: a few small files")]
+        let listed = self.session.execute("file.recovery.list", &json!({}));
+        listed.ok().and_then(|v| v.as_array().cloned()).unwrap_or_default()
     }
 
     /// Answer the unsaved-changes prompt.

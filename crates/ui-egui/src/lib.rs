@@ -22,6 +22,9 @@
 //! see ATTRIBUTION.md.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
+// Slow work stays off the window thread (clippy.toml's `disallowed-methods`, #552); tests drive the
+// session and wait for jobs directly.
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
 
 pub mod appbar;
 pub mod browser;
@@ -653,6 +656,7 @@ impl ModelApp {
 
     /// [`Self::run`], from a form when `form`: a refused parameter is then named by its field's
     /// label (the engine's message names its key, which agents need).
+    #[allow(clippy::disallowed_methods, reason = "the window's quick commands; long ones (`files::is_long`) start as jobs")]
     fn run_form(&mut self, id: &str, params: Value, form: bool) -> Result<Value, Failure> {
         self.ensure_idle().map_err(|message| Failure { message, refused: None })?;
         let (revision, view) = (self.session.revision(), self.session.view.clone());
@@ -735,6 +739,7 @@ impl ModelApp {
         // A script waits for the background job, as a command does: the job's session would
         // replace what it changed.
         self.ensure_idle()?;
+        #[allow(clippy::disallowed_methods, reason = "scripts are not jobs yet")]
         let r = self.session.run_script(script).map(|_| ()).map_err(|e| e.to_string());
         self.model_changed();
         if r.is_ok() {
@@ -945,6 +950,7 @@ impl ModelApp {
     }
 
     /// Run the open parameter form; it closes when the command succeeds.
+    #[allow(clippy::disallowed_methods, reason = "creates the form's new set, and takes it back when the form's command fails")]
     pub fn run_dialog(&mut self) -> Result<Value, String> {
         let (command, params) = self.dialog_params()?;
         // The set Use selection made, when the form still names it: created first, and taken back
@@ -1060,13 +1066,16 @@ impl ModelApp {
         // A reply about the model is read again; any other one is out of date.
         self.reply = self.reply.take().and_then(|mut r| {
             reply::LIVE.contains(&r.command.as_str()).then_some(())?;
-            r.value = self.session.execute(&r.command, &r.params).ok()?;
+            #[allow(clippy::disallowed_methods, reason = "reads the model again for its reply (`reply::LIVE`: listings and checks)")]
+            let value = self.session.execute(&r.command, &r.params);
+            r.value = value.ok()?;
             Some(r)
         });
     }
 
     /// Read the probe, the reaction sums and the XY series again when the display units changed
     /// (`model.units`, Settings › Units): they are kept as shown, in the units they were read in.
+    #[allow(clippy::disallowed_methods, reason = "reads one probed node and one step's reaction sums again")]
     fn follow_units(&mut self) {
         let units = self.session.units().label();
         if units == self.shown_units {
@@ -1929,6 +1938,7 @@ impl ModelApp {
             }
             selection::Target::Position | selection::Target::DatumPoint => {
                 // A query that fills the form: it changes nothing and has no reply panel of its own.
+                #[allow(clippy::disallowed_methods, reason = "the selection's centre: a sum over the picked items")]
                 let centre = self.session.execute("geometry.centre", &self.pick.selection.params()).map_err(|e| e.to_string())?;
                 let mut out = params.as_object().cloned().unwrap_or_default();
                 if target == selection::Target::Position {
@@ -2415,6 +2425,7 @@ fn same_design(a: &Option<Arc<fieldcraft_geometry::Design>>, b: &Option<Arc<fiel
 
 /// Tessellate `design`'s bodies (seconds for a large part): the bodies drawn, and why the
 /// others cannot be.
+#[allow(clippy::disallowed_methods, reason = "on a job's worker (`Prebuilt`), or in the window when a command run there changed the design")]
 fn tessellate(design: &fieldcraft_geometry::Design) -> (BodyMeshes, Vec<String>) {
     let mut failed = Vec::new();
     let meshes = design
@@ -2461,6 +2472,7 @@ impl Prebuilt {
 }
 
 /// The model's elements as drawn, without the hidden bodies'.
+#[allow(clippy::disallowed_methods, reason = "on a job's worker (`Prebuilt`), or in the window after a change made there")]
 fn draw(session: &Session) -> DisplayMesh {
     DisplayMesh::from_model_hiding(&session.model, &session.hidden_elements())
 }
