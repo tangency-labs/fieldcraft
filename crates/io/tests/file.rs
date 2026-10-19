@@ -104,7 +104,7 @@ fn round_trip_keeps_everything_and_bytes_are_stable() {
     assert_eq!(names, ["fieldcraft.json", "model.json", "mesh.bin", "journal.json"]);
     let ps = parts(&bytes);
     let manifest: Value = serde_json::from_slice(&ps[0].1).unwrap();
-    assert_eq!(manifest["format"], "fieldcraft/1");
+    assert_eq!(manifest["format"], fieldcraft_io::FORMAT);
     assert_eq!(manifest["geometry"]["design"]["path"], "parts/plate.solidcraft");
     let model_text = String::from_utf8(ps[1].1.clone()).unwrap();
     assert!(model_text.contains("\"Steel\"") && !model_text.contains("\"nodes\""), "{model_text}");
@@ -153,10 +153,28 @@ fn hostile_files_are_refused_cleanly() {
         assert!(matches!(read(junk), Err(Error::Invalid(_))), "{junk:?}");
     }
 
-    // Wrong and future versions.
-    let v2 = with_manifest(&good, |m| m["format"] = json!("fieldcraft/2"));
-    assert!(matches!(read(&v2), Err(Error::Version(_))));
-    for f in [json!("solidcraft/16"), json!(null), json!(1)] {
+    // Wrong and later versions. A later format is refused for its version even when it holds
+    // fields and parts this version does not know (which would otherwise be the first error).
+    let later = format!("fieldcraft/{}", fieldcraft_io::FORMAT_VERSION + 1);
+    let newer = with_manifest(&good, |m| m["format"] = json!(later));
+    assert!(matches!(read(&newer), Err(Error::Version(_))));
+    let newer_fields = with_manifest(&good, |m| {
+        m["format"] = json!(later);
+        m["generator"] = json!("FieldCraft 9.0.0");
+        m["colour"] = json!("red");
+        m["parts"]["results.bin"] = json!({"bytes": 1, "sha256": "0".repeat(64)});
+    });
+    let mut ps = parts(&newer_fields);
+    ps.push(("results.bin".into(), b"r".to_vec()));
+    ps[1].1 = br#"{"units": "m-kg-s-N-Pa", "temperature_scale": "kelvin"}"#.to_vec();
+    match read(&package(&ps)) {
+        Err(Error::Version(m)) => {
+            assert!(m.contains("made by FieldCraft 9.0.0") && m.contains(&format!("format {}", fieldcraft_io::FORMAT_VERSION + 1)), "{m}");
+            assert!(m.contains("Update FieldCraft"), "{m}");
+        }
+        other => panic!("{other:?}"),
+    }
+    for f in [json!("solidcraft/16"), json!(null), json!(1), json!("fieldcraft/"), json!("fieldcraft/0"), json!("fieldcraft/two")] {
         let b = with_manifest(&good, |m| m["format"] = f.clone());
         assert!(matches!(read(&b), Err(Error::Invalid(_))), "{f}");
     }
@@ -207,7 +225,11 @@ fn hostile_files_are_refused_cleanly() {
     assert!(read(&with_part(&good, "mesh.bin", trailing)).is_err());
     let mut magic = mesh_bin.clone();
     magic[7] = b'9';
-    assert!(read(&with_part(&good, "mesh.bin", magic)).is_err());
+    let e = read(&with_part(&good, "mesh.bin", magic)).unwrap_err();
+    assert!(matches!(&e, Error::Version(m) if m.contains("mesh encoding `09`")), "{e}");
+    let mut magic = mesh_bin.clone();
+    magic[0] = b'X';
+    assert!(matches!(read(&with_part(&good, "mesh.bin", magic)), Err(Error::Invalid(_))));
 
     // Model definitions that commands would refuse, and mesh data in the text part.
     for model in [
@@ -219,6 +241,15 @@ fn hostile_files_are_refused_cleanly() {
         let b = with_part(&good, "model.json", serde_json::to_vec(&model).unwrap());
         assert!(read(&b).is_err(), "{model}");
     }
+
+    // A key given twice is an error in a current file, not the last one silently winning.
+    let twice = with_part(&good, "model.json", br#"{"units": "mm-t-s-N-MPa", "units": "m-kg-s-N-Pa"}"#.to_vec());
+    let e = read(&twice).unwrap_err();
+    assert!(e.to_string().contains("duplicate field"), "{e}");
+    let mut ps = parts(&good);
+    let manifest = String::from_utf8(ps[0].1.clone()).unwrap();
+    ps[0].1 = manifest.replacen("\"generator\"", "\"generator\": \"FieldCraft 0.0.1\",\n  \"generator\"", 1).into_bytes();
+    assert!(read(&package(&ps)).unwrap_err().to_string().contains("duplicate field"));
 
     // Journals: not a list, entries without a command, unknown fields.
     for journal in [json!({}), json!([{"params": {}}]), json!([{"command": ""}]), json!([{"command": "a.b", "when": 1}]), json!([7])] {

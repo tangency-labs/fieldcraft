@@ -3,7 +3,7 @@
 //! A `.fieldcraft` file ([`write`], [`read`]; docs/formats/fieldcraft.md) is a ZIP package of four
 //! parts, stored uncompressed so each can be read with any unzip tool:
 //!
-//! - `fieldcraft.json`: the manifest. The format tag (`fieldcraft/1`), the program that wrote
+//! - `fieldcraft.json`: the manifest. The format tag (`fieldcraft/2`), the program that wrote
 //!   it, the geometry the model is built on (the SolidCraft design and the imported 3MF meshes,
 //!   each a path and the SHA-256 of its content, opened again when the model is), the view state
 //!   ([`View`]: what the viewport hides), and the size and SHA-256 of every other part.
@@ -13,6 +13,10 @@
 //! - `mesh.bin`: nodes, elements and geometry tags in a compact little-endian binary form
 //!   ([`mesh`]).
 //! - `journal.json`: the commands that built the model, one per line: a script that replays.
+//!
+//! Files of every earlier format are read: their parts are brought to the current format by the
+//! migration chain ([`migrate`]) before they are deserialised; a file of a later format is refused
+//! with a message naming the FieldCraft that wrote it. Reading never writes.
 //!
 //! The same model always gives the same bytes. Reading treats the file as hostile: every size is
 //! capped before anything is allocated, every part's checksum is verified, and the model is
@@ -25,6 +29,7 @@
 pub mod fs;
 pub mod memory;
 pub mod mesh;
+pub mod migrate;
 pub mod recovery;
 pub mod roots;
 pub mod stl;
@@ -38,8 +43,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-/// The format tag of the files this version writes and reads.
-pub const FORMAT: &str = "fieldcraft/1";
+/// The format version of the files this version writes, and the latest it reads (it reads every
+/// earlier one through [`migrate`]).
+pub const FORMAT_VERSION: u32 = 2;
+
+/// The format tag of the files this version writes: `fieldcraft/<FORMAT_VERSION>`.
+pub const FORMAT: &str = "fieldcraft/2";
 
 /// The file name extension.
 pub const EXTENSION: &str = "fieldcraft";
@@ -362,8 +371,14 @@ fn read_part(zip: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str, cap: u64, fil
     Ok(buf)
 }
 
-/// Read a `.fieldcraft` file.
+/// Read a `.fieldcraft` file of any format up to [`FORMAT_VERSION`].
 pub fn read(bytes: &[u8]) -> Result<ModelFile> {
+    read_versioned(bytes).map(|(file, _)| file)
+}
+
+/// Read a `.fieldcraft` file, with the format it was written in: one older than
+/// [`FORMAT_VERSION`] was migrated, and saving it again writes the current format.
+pub fn read_versioned(bytes: &[u8]) -> Result<(ModelFile, u32)> {
     if bytes.len() as u64 > MAX_FILE_BYTES {
         return Err(Error::Limit(format!("the file is {} MB (at most {} MB)", bytes.len() >> 20, MAX_FILE_BYTES >> 20)));
     }
@@ -371,6 +386,13 @@ pub fn read(bytes: &[u8]) -> Result<ModelFile> {
         return invalid("not a FieldCraft file (not a ZIP package)");
     }
     let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|e| Error::Invalid(format!("not a FieldCraft file: {e}")))?;
+
+    // The version first: a later format may have parts and fields this version does not know,
+    // and its reader is told to update FieldCraft, not that a field is unknown.
+    let manifest_bytes = read_part(&mut zip, MANIFEST, MAX_TEXT_PART_BYTES, bytes.len())?;
+    let manifest: Value = serde_json::from_slice(&manifest_bytes).map_err(|e| json_error(MANIFEST, e))?;
+    let format = migrate::version(&manifest)?;
+
     let names = [MANIFEST, MODEL, MESH, JOURNAL];
     let mut seen = Vec::with_capacity(zip.len());
     for name in zip.file_names() {
@@ -383,53 +405,79 @@ pub fn read(bytes: &[u8]) -> Result<ModelFile> {
         }
         seen.push(name);
     }
-
-    let manifest_bytes = read_part(&mut zip, MANIFEST, MAX_TEXT_PART_BYTES, bytes.len())?;
-    let manifest: Value = serde_json::from_slice(&manifest_bytes).map_err(|e| json_error(MANIFEST, e))?;
-    match manifest.get("format").and_then(Value::as_str) {
-        Some(FORMAT) => {}
-        Some(f) if f.starts_with("fieldcraft/") => {
-            return Err(Error::Version(format!(
-                "the file is format `{}`; this version of FieldCraft reads `{FORMAT}`",
-                f.chars().take(40).collect::<String>()
-            )));
-        }
-        _ => return invalid(format!("not a FieldCraft file: `{MANIFEST}` has no `{FORMAT}` format tag")),
-    }
-    let manifest: Manifest = serde_json::from_value(manifest).map_err(|e| json_error(MANIFEST, e))?;
-    if manifest.geometry.meshes.len() > MAX_MESH_SOURCES {
-        return Err(Error::Limit(format!("a model refers to at most {MAX_MESH_SOURCES} imported meshes")));
-    }
-    manifest.view.check()?;
-    if manifest.parts.len() != 3 {
+    // The package (its parts' sizes and hashes) is checked as it is on disk, before migration.
+    let listed: BTreeMap<String, Part> =
+        serde_json::from_value(manifest.get("parts").cloned().unwrap_or(Value::Null)).map_err(|e| json_error(MANIFEST, e))?;
+    if listed.len() != 3 {
         return invalid(format!("`{MANIFEST}` must list exactly the parts {MODEL}, {MESH} and {JOURNAL}"));
     }
-
     let mut part = |name: &str, cap: u64| -> Result<Vec<u8>> {
-        let listed = manifest.parts.get(name).ok_or_else(|| Error::Invalid(format!("`{MANIFEST}` does not list `{name}`")))?;
+        let entry = listed.get(name).ok_or_else(|| Error::Invalid(format!("`{MANIFEST}` does not list `{name}`")))?;
         let data = read_part(&mut zip, name, cap, bytes.len())?;
-        if data.len() as u64 != listed.bytes || sha256_hex(&data) != listed.sha256 {
+        if data.len() as u64 != entry.bytes || sha256_hex(&data) != entry.sha256 {
             return invalid(format!("part `{name}` is damaged: its size or SHA-256 differs from the manifest"));
         }
         Ok(data)
     };
     let model_json = part(MODEL, MAX_TEXT_PART_BYTES)?;
-    let mesh_bin = part(MESH, mesh::MAX_BYTES)?;
+    let mesh = part(MESH, mesh::MAX_BYTES)?;
     let journal_json = part(JOURNAL, MAX_TEXT_PART_BYTES)?;
-
-    let mut model: Model = serde_json::from_slice(&model_json).map_err(|e| json_error(MODEL, e))?;
+    // A current file is deserialised straight from its bytes (a duplicate key is an error there,
+    // and no copy of the parts is made); an older one goes through plain JSON for the steps.
+    let (manifest, mut model, journal, mesh_bin): (Manifest, Model, Vec<JournalLine>, Vec<u8>) = if format == FORMAT_VERSION {
+        drop(manifest);
+        (
+            serde_json::from_slice(&manifest_bytes).map_err(|e| json_error(MANIFEST, e))?,
+            serde_json::from_slice(&model_json).map_err(|e| json_error(MODEL, e))?,
+            serde_json::from_slice(&journal_json).map_err(|e| json_error(JOURNAL, e))?,
+            mesh,
+        )
+    } else {
+        let mut parts = migrate::Parts {
+            manifest,
+            model: serde_json::from_slice(&model_json).map_err(|e| json_error(MODEL, e))?,
+            mesh,
+            journal: serde_json::from_slice(&journal_json).map_err(|e| json_error(JOURNAL, e))?,
+        };
+        migrate::migrate(&mut parts)?;
+        (
+            serde_json::from_value(parts.manifest).map_err(|e| json_error(MANIFEST, e))?,
+            serde_json::from_value(parts.model).map_err(|e| json_error(MODEL, e))?,
+            serde_json::from_value(parts.journal).map_err(|e| json_error(JOURNAL, e))?,
+            parts.mesh,
+        )
+    };
+    drop((manifest_bytes, model_json, journal_json));
+    if manifest.geometry.meshes.len() > MAX_MESH_SOURCES {
+        return Err(Error::Limit(format!("a model refers to at most {MAX_MESH_SOURCES} imported meshes")));
+    }
+    manifest.view.check()?;
     if !model.nodes().is_empty() || !model.elements().is_empty() || !model.classification().entities().is_empty() {
         return invalid(format!("`{MODEL}` holds mesh data; the mesh belongs in `{MESH}`"));
     }
-    drop(model_json);
     mesh::decode_into(&mut model, &mesh_bin)?;
     drop(mesh_bin);
-    let journal = read_journal(&journal_json)?;
-    Ok(ModelFile { model, geometry: manifest.geometry, journal, view: manifest.view })
+    let journal = read_journal(journal)?;
+    Ok((ModelFile { model, geometry: manifest.geometry, journal, view: manifest.view }, format))
 }
 
-fn read_journal(bytes: &[u8]) -> Result<Vec<JournalEntry>> {
-    let lines: Vec<JournalLine> = serde_json::from_slice(bytes).map_err(|e| json_error(JOURNAL, e))?;
+/// The format version of the `.fieldcraft` file `reader` holds, from its manifest alone (nothing
+/// else is read or checked); `None` when it is not a FieldCraft file with a format tag. A later
+/// format than this version reads gives its number.
+pub fn format_of<R: Read + std::io::Seek>(reader: R) -> Option<u32> {
+    let mut zip = zip::ZipArchive::new(reader).ok()?;
+    let f = zip.by_name(MANIFEST).ok()?;
+    let mut buf = Vec::new();
+    f.take(MAX_TEXT_PART_BYTES).read_to_end(&mut buf).ok()?;
+    let manifest: Value = serde_json::from_slice(&buf).ok()?;
+    match migrate::version(&manifest) {
+        Ok(n) => Some(n),
+        Err(Error::Version(_)) => manifest.get("format")?.as_str()?.strip_prefix("fieldcraft/")?.parse().ok().or(Some(u32::MAX)),
+        Err(_) => None,
+    }
+}
+
+fn read_journal(lines: Vec<JournalLine>) -> Result<Vec<JournalEntry>> {
     if lines.len() > MAX_JOURNAL_ENTRIES {
         return Err(Error::Limit(format!("a journal holds at most {MAX_JOURNAL_ENTRIES} commands")));
     }

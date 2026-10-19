@@ -1,4 +1,4 @@
-# The `.fieldcraft` file (format `fieldcraft/1`)
+# The `.fieldcraft` file (format `fieldcraft/2`)
 
 A `.fieldcraft` file holds one model: its definition, its mesh, the geometry it is built on and
 the commands that built it. It is written and read by `fieldcraft-io` (`write`, `read`; bytes in,
@@ -12,7 +12,7 @@ unzip tool reads them: `unzip -p bracket.fieldcraft model.json`):
 
 | Part | Content |
 |---|---|
-| `fieldcraft.json` | Manifest: `format` (`"fieldcraft/1"`), `generator` (`"FieldCraft 0.6.0"`), `geometry`, `view` (left out when empty), and `parts`: the byte size and SHA-256 of each other part. |
+| `fieldcraft.json` | Manifest: `format` (`"fieldcraft/2"`, [Versions](#versions-and-migration)), `generator` (`"FieldCraft 0.7.0"`), `geometry`, `view` (left out when empty), and `parts`: the byte size and SHA-256 of each other part. |
 | `model.json` | The model definition: unit system, sets, materials, sections, reference points, couplings, boundary conditions, loads, steps, datum planes, axes and points, and the partitions that cut the geometry (in order; applied again when the design is opened). Pretty-printed JSON with a fixed key order (maps sorted by name), so a change shows as a line diff. Its form is the model's own JSON form, which commands take as parameters. |
 | `mesh.bin` | Nodes, elements and geometry tags, binary (below). |
 | `journal.json` | The commands that built the model, `[{"command": id, "params": {...}}, ...]`, one per line. It is a script `fieldcraft-cli run` replays. |
@@ -72,14 +72,48 @@ Every file is treated as hostile:
   allocation is larger than the input.
 - Only the four parts, each once. The ZIP CRC and the manifest's size and SHA-256 are checked for
   every part.
-- A `format` other than `fieldcraft/1` is refused: a later `fieldcraft/N` as a version error, any
-  other value as not a FieldCraft file. Unknown fields are errors.
+- The `format` is read first, before anything else in the file: a later `fieldcraft/N` is refused
+  as a version error naming the program that wrote it, any value that is not `fieldcraft/<N>` as
+  not a FieldCraft file. Unknown fields are errors (after migration).
 - `mesh.bin`: counts are capped (50 million nodes and elements, one million entities) and checked
   against the bytes present before anything is read; labels must ascend; unknown kinds and
   trailing bytes are refused.
 - The model is rebuilt through the same checked methods commands use: names, references,
   finite coordinates within ±1e9, element connectivity, tag dimensions. A file cannot hold what
   commands would refuse.
+
+## Versions and migration
+
+`format` is `fieldcraft/<N>`, N an integer that grows by one with every change to what a file
+holds or how it is encoded. A part with an encoding of its own carries that encoding's version
+too: `mesh.bin` starts with `MCMESH01`; a new mesh encoding is a new magic, brought in by a new
+format.
+
+| Format | Written by | Change |
+|---|---|---|
+| `fieldcraft/1` | FieldCraft 0.4.0 to 0.7.0 | the first format |
+| `fieldcraft/2` | FieldCraft after 0.7.0 | versioning and migration; the parts hold the same as format 1 |
+
+FieldCraft reads every format up to its own. A file of a later one is refused, before anything
+else in it is read, with a message naming what wrote it: "this model was made by FieldCraft
+0.9.0 (format 3); FieldCraft 0.8.0 reads formats up to 2. Update FieldCraft to open it."
+
+An older file is migrated as it is read (`fieldcraft-io`, `migrate.rs`). The package is checked
+as it is on disk (the four parts, their sizes and SHA-256); then the JSON parts are parsed as
+plain JSON, `mesh.bin` kept as bytes, and the steps `N → N+1` run in order up to the current
+format; only then are the parts read into the model, with every check a current file gets.
+
+- A step is a pure function of the parts: the same file always gives the same model.
+- **A step is never edited once a release has written its format.** Files that went through it
+  are out there and later steps build on its output; a mistake is fixed by a new step and a new
+  format.
+- Every released format keeps fixtures: real files written by every release that wrote it, one
+  folder per release (`crates/io/tests/formats/v<N>/<version>/`, never edited; format 1 has
+  0.4.0, 0.5.0, 0.6.0 and 0.7.0), each with what that release's own reader gave for it. The tests
+  open every one and check that the current reader gives that record, changed only as the
+  migration steps say (compared as raw JSON), that each step does only what it says on the real
+  files, and that saving the migrated model and reading it again gives the same model and the
+  same bytes.
 
 ## Saving
 

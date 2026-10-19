@@ -26,7 +26,8 @@ use fieldcraft_model::{ElementKind, Entity, GeometryRef, MAX_ELEMENTS, MAX_NODES
 
 use crate::{Error, MAX_FILE_BYTES, Result, invalid, model_error};
 
-/// The magic bytes the part starts with (the `01` is the mesh encoding's version).
+/// The magic bytes the part starts with (the `01` is the mesh encoding's version). A new encoding
+/// is a new magic, brought in by a new file format whose migration step rewrites older parts.
 pub const MAGIC: &[u8; 8] = b"MCMESH01";
 
 /// Largest mesh part read.
@@ -221,8 +222,18 @@ pub fn decode_into(model: &mut Model, bytes: &[u8]) -> Result<()> {
         return Err(Error::Limit(format!("{PART} is larger than {} MB", MAX_BYTES >> 20)));
     }
     let mut r = Reader { bytes, pos: 0 };
-    if r.take(MAGIC.len()).ok() != Some(MAGIC.as_slice()) {
-        return invalid(format!("{PART} is not a FieldCraft mesh (no {} header)", String::from_utf8_lossy(MAGIC)));
+    match r.take(MAGIC.len()).ok() {
+        Some(m) if m == MAGIC.as_slice() => {}
+        // Another encoding of ours: the file's format migrates it before decoding, so one left
+        // here is not what the format says.
+        Some(m) if m.starts_with(&MAGIC[..6]) => {
+            let found = String::from_utf8_lossy(&m[6..]).chars().filter(|c| !c.is_control()).collect::<String>();
+            return Err(Error::Version(format!(
+                "{PART} is mesh encoding `{found}`; this version decodes `{}`",
+                String::from_utf8_lossy(&MAGIC[6..])
+            )));
+        }
+        _ => return invalid(format!("{PART} is not a FieldCraft mesh (no {} header)", String::from_utf8_lossy(MAGIC))),
     }
     let nodes = count(&mut r, "nodes", MAX_NODES)?;
     let elements = count(&mut r, "elements", MAX_ELEMENTS)?;
