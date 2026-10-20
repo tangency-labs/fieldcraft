@@ -1,0 +1,10 @@
+{"corpus": {"categories": ["thin-wall", "blocky", "sweepable"], "volume_mm3": 11280.0},
+ "commands": [
+  {"command": "solid.box", "params": {"corner": [0, 0, 0], "length": 40, "width": 40, "height": 3, "body_name": "HeatSink"}},
+  {"command": "solid.box", "params": {"corner": [0, 4.25, 3], "length": 40, "width": 1.5, "height": 18, "operation": "join", "targets": ["HeatSink"]}},
+  {"command": "solid.box", "params": {"corner": [0, 10.25, 3], "length": 40, "width": 1.5, "height": 18, "operation": "join", "targets": ["HeatSink"]}},
+  {"command": "solid.box", "params": {"corner": [0, 16.25, 3], "length": 40, "width": 1.5, "height": 18, "operation": "join", "targets": ["HeatSink"]}},
+  {"command": "solid.box", "params": {"corner": [0, 22.25, 3], "length": 40, "width": 1.5, "height": 18, "operation": "join", "targets": ["HeatSink"]}},
+  {"command": "solid.box", "params": {"corner": [0, 28.25, 3], "length": 40, "width": 1.5, "height": 18, "operation": "join", "targets": ["HeatSink"]}},
+  {"command": "solid.box", "params": {"corner": [0, 34.25, 3], "length": 40, "width": 1.5, "height": 18, "operation": "join", "targets": ["HeatSink"]}}
+ ]}

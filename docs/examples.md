@@ -3,7 +3,7 @@
 Every example is a built-in sample: open it from **File ▸ Samples** (or the start screen), with
 `fieldcraft --sample NAME`, or with the `file.sample` command (`{"name": "drop-test"}`), then
 press **Solve** (`solve.run`). Each opens fully defined — geometry, mesh, materials, boundary
-conditions, loads and steps — in mm, t, s, N and MPa, and opens and solves within half a minute. The geometry is our
+conditions, loads and steps — in mm, t, s, N and MPa, and opens and solves within half a minute (the electronics cooling studies at the end take minutes). The geometry is our
 own: SolidCraft scripts run when the sample opens (a recipe from [`tests/corpus`](../tests/corpus)
 or one written in `crates/engine/src/sample.rs`). Each sample has a test in
 `crates/engine/src/sample.rs` or its modules that opens it, checks it clean, solves it and holds its result to
@@ -227,3 +227,59 @@ temperature (with a small numerical tolerance); recorded hot walls give heat to 
 This coarse, short transient is a quick display demonstration, not a converged convection
 benchmark. It has neither buoyancy nor solid heat conduction. The sample is isolated in
 `crates/engine/src/sample/heated_flow.rs` and its gallery registration.
+
+# Electronics cooling studies
+
+Larger thermal lattice-Boltzmann studies, samples like the rest but slower to solve: the heat sink
+takes about four minutes on a CPU. Their setup is `crates/engine/src/sample/cooling.rs`, their
+geometry the `cooling-*` SolidCraft recipes in [`tests/corpus`](../tests/corpus); trunk tests solve
+each one briefly, heavy tests hold their numbers below. `tools/cooling/make.py` (see its
+[README](../tools/cooling/README.md)) opens each sample headless, solves it, prints the numbers and
+renders the pictures. They show what the fluid solver can do for electronics cooling today, and
+where it stands in for what it cannot yet do:
+
+- **No conjugate heat transfer into solids yet**
+  ([#157](https://github.com/tangency-labs/fieldcraft/issues/157)): a high-conductivity heat sink
+  is an **isothermal surface**, and a component a **held-temperature face**. Real
+  junction temperatures need conduction through the solid, and a component given its power in W
+  needs [#609](https://github.com/tangency-labs/fieldcraft/pull/609).
+- **Fans are a uniform inlet velocity** here. The solver now has fan curves and porous vents
+  ([#596](https://github.com/tangency-labs/fieldcraft/pull/596)); the studies keep a fixed face
+  velocity because the two-relaxation-time collision is resolution-bound near its stability limit
+  ([#557](https://github.com/tangency-labs/fieldcraft/issues/557)), which caps them at a gentle
+  0.1 m/s, below where a fan curve's operating point would sit.
+- The colour legend under each picture is the temperature range it is clamped to.
+
+Background for the planned electronics-cooling release is in
+[discussion #584](https://github.com/tangency-labs/fieldcraft/discussions/584).
+
+## Heat sink in forced air (`cooling-heat-sink`)
+
+![Air at 25 °C entering a six-fin heat sink held at 50 °C, warming between the fins, the warm layer lifting off the sink into a rising wake, streamlines coloured by air temperature](media/examples/cooling-heat-sink.png)
+
+A 40 × 40 mm aluminium heat sink with six 18 mm fins, held isothermal at 50 °C (a
+high-conductivity sink with fin efficiency near 1), in a closed 120 × 44 × 30 mm duct. Air at
+25 °C enters at 100 mm/s (0.1 m/s, a gentle fan), the outlet at zero pressure. **Buoyancy is on**
+(Boussinesq, β = 3.4 × 10⁻³ K⁻¹, g along −z): at 0.1 m/s this is mixed convection (Re ≈ 270 on the
+fin length, Ri = Gr/Re² ≈ 3), and the 25 K rise keeps βΔT at 0.085, well inside Boussinesq. D3Q19
+TRT with the D3Q7 thermal lattice on 158,400 cells of 1 mm, 12,000 steps of 0.25 ms to 3 s. The
+wake behind the sink keeps shedding, so the steady stop rule never fires; the heat holds within
+about 1 % from 2 s on (1.92–1.95 W out to 20 s).
+
+**Numbers:** the sink sheds **1.93 W**, a sink-to-inlet **resistance of 13.0 K/W**. The duct's
+air could carry 3.98 W if it all left at the sink's temperature; it carries **48 %** of that
+(**ε = 0.48**), a bulk rise of **12 K** at the outlet. So at this airflow the sink is
+airflow-limited: per area it does about as well as natural convection off a small part (h ≈ 7 W/m²K over its
+110 cm²), and its low resistance comes from its area. Buoyancy lifts the
+warm layer off the fins into a rising wake and adds about 4 % (1.85 W without it at 3 s).
+
+**Look at:** the temperature slice between the middle fins and the streamlines coloured by
+temperature (`results.slice` / `results.streamlines` with `field: "temperature"`), the hot layer
+rising behind the sink. The heat each face gives the air is in the `solve.fluid` report (`heat`,
+negative into the fluid).
+
+**Caveat:** the air's minimum is **20.4 °C against the 25 °C inlet** (4.6 K under), at the sharp
+fin corners: the D3Q7 anti-bounce-back wall at a convex edge, not a physical undershoot. The
+maximum overshoots the sink by 0.5 K at the same corners.
+
+**Regenerate:** `python3 tools/cooling/make.py heat-sink`.

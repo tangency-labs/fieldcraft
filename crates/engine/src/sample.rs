@@ -18,6 +18,7 @@
 use fieldcraft_geometry::Shape;
 use serde_json::{Value, json};
 
+mod cooling;
 mod heated_flow;
 
 /// A sample the app offers (Help › Samples, the empty viewport, `file.sample`, `--sample NAME`).
@@ -101,6 +102,14 @@ pub const SAMPLES: &[Sample] = &[
         design: Some(UPRIGHT_BRACKET),
         prepare: None,
         script: heated_flow::script,
+    },
+    Sample {
+        name: "cooling-heat-sink",
+        label: "Heat Sink in Forced Air",
+        about: "A six-fin heat sink held at 50 °C in a duct of 25 °C air at 0.1 m/s, buoyancy on: thermal lattice Boltzmann, the heat it sheds and the air's rise (minutes on a CPU)",
+        design: Some(cooling::HEAT_SINK_DESIGN),
+        prepare: None,
+        script: cooling::heat_sink,
     },
     Sample {
         name: "heated-bracket",
