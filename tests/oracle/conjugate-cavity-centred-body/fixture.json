@@ -1,0 +1,17 @@
+{
+  "note": "FieldCraft's accepted results for this case, written by `cargo xtask oracle --bless`. A result outside its band fails CI.",
+  "values": {
+    "nu_k02": {
+      "band": 4.635611879671692e-9,
+      "value": 4.635611879671692
+    },
+    "nu_k1": {
+      "band": 4.5151490939630926e-9,
+      "value": 4.5151490939630925
+    },
+    "nu_k5": {
+      "band": 4.329780463633046e-9,
+      "value": 4.329780463633045
+    }
+  }
+}

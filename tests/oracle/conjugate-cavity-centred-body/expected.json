@@ -1,24 +1,49 @@
 {
  "title": "Natural convection in a square cavity with a centred conducting body, Ra = 10⁵",
  "kind": "benchmark",
- "source": "House, Beckermann and Smith, 'Effect of a centered conducting body on natural convection heat transfer in an enclosure', Numerical Heat Transfer Part A 18 (1990) 213–225, Table 3 (finest grid)",
- "status": "pending",
- "requires": "lattice Boltzmann CFD with conjugate heat transfer (M12)",
+ "source": "J. M. House, C. Beckermann and T. F. Smith, 'Effect of a centered conducting body on natural convection heat transfer in an enclosure', Numerical Heat Transfer Part A 18 (1990) 213–225, doi:10.1080/10407789008944791, Table 3 (finest grid)",
  "quantities": [
   {
    "id": "nu_k02",
    "quantity": "hot-wall Nusselt number, body conductivity 0.2 of the fluid's",
-   "value": 4.6257
+   "value": 4.6257,
+   "measure": {
+    "from": "solve_k02",
+    "pointer": "/heat/0/mean",
+    "scale": -64
+   },
+   "tolerance": {
+    "relative": 0.006
+   },
+   "reason": "the grid's distance to its own extrapolated limit (64 cells +0.2 %, the 48/64 extrapolation −0.22 % from the reference: README) plus a margin; House et al. state no accuracy for their finest grid"
   },
   {
    "id": "nu_k1",
    "quantity": "hot-wall Nusselt number, body conductivity equal to the fluid's",
-   "value": 4.5061
+   "value": 4.5061,
+   "measure": {
+    "from": "solve_k1",
+    "pointer": "/heat/0/mean",
+    "scale": -64
+   },
+   "tolerance": {
+    "relative": 0.006
+   },
+   "reason": "the grid's distance to its own extrapolated limit (64 cells +0.2 %, the 48/64 extrapolation −0.22 % from the reference: README) plus a margin; House et al. state no accuracy for their finest grid"
   },
   {
    "id": "nu_k5",
    "quantity": "hot-wall Nusselt number, body conductivity 5 times the fluid's",
-   "value": 4.3221
+   "value": 4.3221,
+   "measure": {
+    "from": "solve_k5",
+    "pointer": "/heat/0/mean",
+    "scale": -64
+   },
+   "tolerance": {
+    "relative": 0.006
+   },
+   "reason": "the grid's distance to its own extrapolated limit (64 cells +0.2 %, the 48/64 extrapolation −0.22 % from the reference: README) plus a margin; House et al. state no accuracy for their finest grid"
   }
  ]
 }

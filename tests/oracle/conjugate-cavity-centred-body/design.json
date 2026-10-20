@@ -1,0 +1,18 @@
+{
+ "commands": [
+  {
+   "command": "solid.box",
+   "params": {
+    "corner": [
+     250,
+     250,
+     -100
+    ],
+    "length": 500,
+    "width": 500,
+    "height": 200,
+    "body_name": "Body"
+   }
+  }
+ ]
+}
