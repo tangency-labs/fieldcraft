@@ -230,24 +230,28 @@ benchmark. It has neither buoyancy nor solid heat conduction. The sample is isol
 
 # Electronics cooling studies
 
-Larger thermal lattice-Boltzmann studies, samples like the rest but slower to solve: the heat sink
-takes about four minutes on a CPU, the enclosure about twenty. Their setup is
-`crates/engine/src/sample/cooling.rs`, their geometry the `cooling-*` SolidCraft recipes in
-[`tests/corpus`](../tests/corpus); trunk tests solve each one briefly, heavy tests hold their
-numbers below. `tools/cooling/make.py` (see its [README](../tools/cooling/README.md)) opens each
-sample headless, solves it, prints the numbers and renders the pictures. They show what the fluid
-solver can do for electronics cooling today, and where it stands in for what it cannot yet do:
+Three larger thermal lattice-Boltzmann studies, samples like the rest but slower to solve: the heat
+sink takes about four minutes on a CPU, the enclosure about twenty, and the AIO radiator (5 M cells)
+needs a GPU (`solve.fluid` with `"backend": "gpu"`). Their setup is
+`crates/engine/src/sample/cooling.rs`, their geometry SolidCraft recipes (the `cooling-*` parts of
+[`tests/corpus`](../tests/corpus) and `crates/engine/samples/cooling-aio*.json`); trunk tests solve
+the heat sink and the enclosure briefly, heavy tests the AIO's start and the heat sink's and the
+enclosure's numbers below.
+`tools/cooling/make.py` (see its [README](../tools/cooling/README.md)) opens each sample headless,
+solves it, prints the numbers and renders the pictures. They show what the fluid solver can do for
+electronics cooling today, and where it stands in for what it cannot yet do:
 
 - **No conjugate heat transfer into solids yet**
   ([#157](https://github.com/tangency-labs/fieldcraft/issues/157)): a high-conductivity heat sink
-  is an **isothermal surface**, and a component a **held-temperature face**. Real
+  or radiator is an **isothermal surface**, and a component a **held-temperature face**. Real
   junction temperatures need conduction through the solid, and a component given its power in W
   needs [#609](https://github.com/tangency-labs/fieldcraft/pull/609).
 - **Fans are a uniform inlet velocity** here. The solver now has fan curves and porous vents
   ([#596](https://github.com/tangency-labs/fieldcraft/pull/596)); the studies keep a fixed face
   velocity because the two-relaxation-time collision is resolution-bound near its stability limit
   ([#557](https://github.com/tangency-labs/fieldcraft/issues/557)), which caps them at a gentle
-  0.1 m/s, below where a fan curve's operating point would sit.
+  0.1 m/s, below where a fan curve's operating point would sit. A fan zone in the AIO's shroud is
+  the natural next step.
 - **No surface-to-surface radiation**: the sealed enclosure is **convection only** (radiation
   carries a real share of the heat in a sealed box).
 - The colour legend under each picture is the temperature range it is clamped to.
@@ -314,3 +318,63 @@ over-accelerates the first instant and goes unstable (lattice speed 0.505 at ste
 radiation**, which the solver does not model yet.
 
 **Regenerate:** `python3 tools/cooling/make.py enclosure`.
+
+## AIO cooler radiator (`cooling-aio`)
+
+![A 240-class all-in-one liquid cooler: a cold plate and a two-tier pump block, two coolant tubes running side by side to the radiator, whose fine air channels sit in a recessed pocket behind a rounded raised border](media/examples/cooling-aio.png)
+
+A 240-class all-in-one liquid cooler, modelled in SolidCraft for this study
+([`tools/cooling/aio_recipe.py`](../tools/cooling/aio_recipe.py) writes the `cooling-aio` and
+`cooling-aio-half` recipes): a cold plate and a two-tier pump block, two Ø6.5 mm coolant tubes
+running as a parallel pair from barbs on the pump to ports on the radiator, and a
+230 × 118 × 30 mm radiator whose fin pocket sits recessed behind a filleted, raised border, with
+2.4 mm air channels cut through its whole depth.
+
+**Only the radiator's air side is simulated.** The water-cooling half of the cooler (coolant
+pumped through the cold plate, the tubes and the radiator's core, and the heat conducted from the
+CPU into it) is still to do: the cold plate, the pump and the tubes are drawn for context, and the
+radiator stands in for the coolant by being held at an assumed coolant temperature.
+
+**The study:** a fan shroud seals to the radiator's frame, so air at 25 °C entering at 0.1 m/s
+across the face has to pass through the channels; the radiator is held at a 45 °C coolant
+temperature. The sample is the half of the cooler with the ports (`cooling-aio-half`), with a
+symmetry plane on the radiator's middle, which is also what lets the picture look into the
+channels. D3Q19 TRT with the D3Q7 thermal lattice on 5.07 M cells of 0.6 mm (10.1 M for the whole
+radiator), 20,513 steps to 1.6 s, solved on the GPU (NVIDIA GB10, single precision) in about four
+minutes.
+
+![Cutaway through the radiator's middle plane: cool air arriving from the left, each channel heating its air between the fins, warm jets leaving into the exhaust behind, slow recirculation behind the frame's top and bottom](media/examples/cooling-aio-airflow.png)
+
+**Numbers:** 163 L/min of air (5.8 cfm) goes through the radiator, and the radiator gives it
+**61 W**: an effectiveness of **0.93**, of the 66 W the air could carry if it left at the
+coolant temperature. At this airflow the radiator is nearly saturated: the air leaves almost as
+warm as the coolant.
+
+**Checks:** refining the cells from 0.6 to 0.5 mm moves the heat by 0.4 %. That shows the heat
+is converged, but says little about the channels' heat transfer coefficient: at NTU ≈ 3 a 10 %
+change in h moves the heat by only about 1.6 %. The time step matters more, through the weakly
+compressible error of the fast channel flow: the heat falls from 69 to 64 to 61 W as the inlet
+lattice speed goes from 0.03 to 0.02 to 0.013 (a density swing of 9.3, 3.9 and 1.6 %), linearly
+in its square, and extrapolates to about 59 W (effectiveness 0.90) at zero time step. The study
+uses 0.013, within about 3 % of that. The air's minimum is 20.8 °C against the 25 °C inlet, at
+the channels' sharp corners (the same wall artefact as the heat sink's).
+
+**Look at:** the cutaway temperature slice (`results.slice` with `axis: "x"` on the cut): cool air
+in front, each channel heating its air between the fins, warm jets into the exhaust, and slow
+recirculation behind the frame's top and bottom.
+[The clip](media/examples/cooling-aio-airflow.mp4) shows the start-up: the warm front leaving the
+channels with a vortex curling at either end of the frame, then the settled exhaust.
+
+**Caveats:** 0.1 m/s is the ceiling of today's collision operator: the channel flow reaches about
+470 mm/s, a cell Reynolds number of about 19 at 0.6 mm, where the heat-sink study found the
+two-relaxation-time collision going unstable
+([#557](https://github.com/tangency-labs/fieldcraft/issues/557)). A pair of 120 mm fans pushes 1–2
+m/s through a real radiator, where it no longer saturates and the fin design decides the heat,
+so this study cannot rank radiator designs yet. The water loop is to do: the radiator is
+isothermal, with no coolant flow and no conduction inside it
+([#157](https://github.com/tangency-labs/fieldcraft/issues/157) and a coupled coolant loop), so
+the coolant temperature is an input here rather than a result. The heavy tests do not hold the
+AIO's numbers: its run is 10¹¹ cell updates, hours on a CPU; a heavy test solves a coarse start.
+
+**Regenerate:** `python3 tools/cooling/make.py aio --backend gpu` (the CPU solver also runs it,
+far more slowly at 5 M cells).

@@ -2,9 +2,9 @@
 """Solve the electronics-cooling samples and regenerate their gallery numbers and pictures.
 
 The cases are engine samples (`crates/engine/src/sample/cooling.rs`, geometry in
-`tests/corpus/cooling-*`): this script opens one with `file.sample`, solves it, prints the
+`tests/corpus/cooling-*` and `crates/engine/samples/cooling-aio*.json`): this script opens one with `file.sample`, solves it, prints the
 headline numbers (heat moved, temperatures, flow, effectiveness) and renders a still with a colour
-legend into `docs/media/examples/`.
+legend (and, for the AIO, an MP4) into `docs/media/examples/`.
 
 Everything runs headless: the model is driven through `fieldcraft-cli mcp --headless` (the `execute`
 tool for every command, the `screenshot` tool for the pictures), so no window or display is needed.
@@ -41,6 +41,9 @@ BAR_UNDER = f"[0:v]pad={WIDTH}:{HEIGHT + CAPTION_HEIGHT}:0:0[w];[w][1:v]overlay=
 CONTOUR = [(0x2B, 0x4F, 0xD8), (0x2F, 0xB8, 0xE0), (0x3C, 0xC8, 0x64), (0xF0, 0xD2, 0x3C), (0xE0, 0x40, 0x2E)]
 BANDS = 12
 POWER = {"W": 1.0, "mW": 1e-3, "kW": 1e3}
+# The AIO's half shroud at its 0.6 mm cells, mm: keep in step with cooling::aio_shroud.
+AIO_SPACING = 0.6
+AIO_SHROUD = ([-100.0, 70.0, 4.8], [15.2, 150.4, 123.0])
 
 
 def ffmpeg(*args):
@@ -162,6 +165,16 @@ def enclosure(report, cold, hot):
             "h_W_per_m2K": round(q / (wetted * 1e-6) / (hot - cold), 2), "walls_take_W": round(walls, 4), **common(report)}
 
 
+def aio(report, cold, hot):
+    """The half radiator: the numbers for the whole one (twice the half's)."""
+    lo, hi = AIO_SHROUD
+    area = (hi[0] - lo[0]) * (hi[2] - lo[2])
+    half_q = wall_heat_w(report, "Radiator")
+    half = exchanger(half_q, 100.0, area, cold, hot)
+    return {"air_flow_l_per_min": round(2 * 100.0 * area * 60 / 1e6, 1), "heat_to_air_W": round(2 * half_q, 2),
+            "airflow_limit_W": round(2 * half["airflow_limit_W"], 2), "effectiveness": half["effectiveness"], **common(report)}
+
+
 CASES = {
     "heat-sink": {
         "sample": "cooling-heat-sink", "numbers": heat_sink, "out": "cooling-heat-sink", "clip": False,
@@ -177,6 +190,14 @@ CASES = {
                    "streamlines": {"count": 14, "max_steps": 1400, "line": {"from": [35, 24, 30], "to": [35, 38, 30]}},
                    "camera": {"yaw": -90.0, "pitch": 6.0, "target": {"center_of": "bbox"}, "fit": True},
                    "caption": "sealed enclosure · natural convection"},
+    },
+    "aio": {
+        "sample": "cooling-aio", "numbers": aio, "out": "cooling-aio-airflow", "clip": True, "still": "cooling-aio",
+        "temperatures": [25.0, 45.0],
+        # the last layer of cells before the symmetry plane
+        "render": {"surface": False, "slice": {"axis": "x", "position": round(AIO_SHROUD[1][0] - AIO_SPACING / 2, 4)},
+                   "camera": {"yaw": -70.0, "pitch": 18.0, "fit": True},
+                   "caption": "AIO radiator · fan air through the channels (cutaway)"},
     },
 }
 

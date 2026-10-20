@@ -25,3 +25,8 @@ serde_json = { workspace = true }
 # Build designs from SolidCraft command scripts (`script_design`): the test corpus and tooling.
 # Off by default; the library itself only opens designs.
 scripts = ["dep:solidcraft-engine"]
+
+[[example]]
+# Compiles a SolidCraft recipe into a design (tools/cooling); needs the script interpreter.
+name = "compile_recipe"
+required-features = ["scripts"]

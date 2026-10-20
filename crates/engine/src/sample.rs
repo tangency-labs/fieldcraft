@@ -120,6 +120,14 @@ pub const SAMPLES: &[Sample] = &[
         script: cooling::enclosure,
     },
     Sample {
+        name: "cooling-aio",
+        label: "AIO Cooler Radiator",
+        about: "Fan air through the half of an AIO cooler's radiator held at a 45 °C coolant temperature: the heat the air takes and the exchanger effectiveness (5 M cells: solve on a GPU)",
+        design: Some(cooling::AIO_HALF_DESIGN),
+        prepare: None,
+        script: cooling::aio,
+    },
+    Sample {
         name: "heated-bracket",
         label: "Heated Bracket",
         about: "A steel bracket clamped at its holes and heated at one end: steady heat conduction and the thermal stress",

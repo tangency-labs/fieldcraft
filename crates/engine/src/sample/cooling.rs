@@ -1,10 +1,11 @@
 //! The electronics-cooling studies (docs/examples.md, discussion #584): a heat sink in forced
-//! air and a chip on a PCB in a sealed box (natural convection). Each is thermal lattice Boltzmann flow past solids held at a temperature: there is no
+//! air, a chip on a PCB in a sealed box (natural convection) and the air side of an AIO cooler's
+//! radiator. Each is thermal lattice Boltzmann flow past solids held at a temperature: there is no
 //! conduction inside solids yet (#157), so a high-conductivity sink or radiator is an isothermal
 //! surface and a component a held-temperature face.
 //!
 //! Every case is a function of its [`Run`] (cell size, time step, how long): the samples open
-//! with the published settings ([`HEAT_SINK`], [`ENCLOSURE`]), the trunk tests solve a
+//! with the published settings ([`HEAT_SINK`], [`ENCLOSURE`], [`AIO`]), the trunk tests solve a
 //! coarse, short version and the heavy tests hold the published numbers.
 //! `tools/cooling/make.py` opens the samples, solves them and renders the gallery's pictures.
 
@@ -14,6 +15,11 @@ use serde_json::{Value, json};
 /// The geometry: SolidCraft recipes, the sink's and the enclosure's in the corpus.
 pub(super) const HEAT_SINK_DESIGN: &str = include_str!("../../../../tests/corpus/cooling-heat-sink/recipe.json");
 pub(super) const ENCLOSURE_DESIGN: &str = include_str!("../../../../tests/corpus/cooling-enclosure/recipe.json");
+/// The AIO cooler with its radiator cut at the middle plane (x = 15): the half the study solves,
+/// with a symmetry plane on the cut. The whole cooler is `crates/engine/samples/cooling-aio.json`.
+/// Both are written by `tools/cooling/aio_recipe.py`; they stay out of the corpus, whose trunk
+/// test plans every part (about two minutes each for these in a test build).
+pub(super) const AIO_HALF_DESIGN: &str = include_str!("../../samples/cooling-aio-half.json");
 
 /// How a case is solved.
 #[derive(Clone, Copy, Debug)]
@@ -49,6 +55,15 @@ const CHIP_TEMPERATURE: f64 = 40.0;
 const ENCLOSURE_WALLS: f64 = 25.0;
 /// To steady state (about 18 s of flow): the chip's heat and the walls' then agree.
 const ENCLOSURE: Run = Run { spacing: 1.0, time_step: Some(0.0002), end_time: 40.0, frames: 40, steady: true };
+
+/// AIO radiator: face speed (mm/s), coolant and inlet temperatures (°C).
+const AIO_SPEED: f64 = 100.0;
+const AIO_COOLANT: f64 = 45.0;
+const AIO_INLET: f64 = 25.0;
+/// The lattice speed at the inlet that sets the AIO's time step: the channels run about 5× faster,
+/// and the weakly compressible error grows with the square of that speed.
+const AIO_LATTICE_SPEED: f64 = 0.013;
+const AIO: Run = Run { spacing: 0.6, time_step: Some(AIO_LATTICE_SPEED * 0.6 / AIO_SPEED), end_time: 1.6, frames: 15, steady: false };
 
 /// The material every case's air is made of.
 fn air() -> Value {
@@ -89,6 +104,12 @@ fn script(domain: &str, mut params: Value, name: &str, run: &Run, hot: Vec<Value
         {"command": "model.fluid_domain.create", "params": params},
         step(name, domain, run, hot),
     ])
+}
+
+/// An extent from `lo` that is a whole number of cells and reaches at least `hi`.
+fn snap(lo: f64, hi: f64, spacing: f64) -> f64 {
+    // Rounded to a micrometre, so the extent is a whole number of cells.
+    ((lo + ((hi - lo) / spacing - 1e-9).ceil() * spacing) * 1e3).round() / 1e3
 }
 
 pub(super) fn heat_sink(bodies: &[Shape]) -> Value {
@@ -143,6 +164,40 @@ fn enclosure_with(bodies: &[Shape], run: &Run) -> Value {
     )
 }
 
+/// The AIO study's shroud for cells of `spacing`: the radiator's frame across, 22 mm in front of
+/// it and 28 mm behind, x from the outer end to the cut (a symmetry plane), mm.
+fn aio_shroud(spacing: f64) -> ([f64; 3], [f64; 3]) {
+    let lo = [-100.0, 70.0, 4.8];
+    let top = [15.0, 150.0, 123.0];
+    (lo, [0, 1, 2].map(|i| snap(lo[i], top[i], spacing)))
+}
+
+pub(super) fn aio(bodies: &[Shape]) -> Value {
+    aio_with(bodies, &AIO)
+}
+
+/// Forced air through the half radiator ([`AIO_HALF_DESIGN`]): a shroud seals the fan to the
+/// frame, so air at [`AIO_INLET`] entering at [`AIO_SPEED`] across the face passes through the
+/// 2.4 mm channels; the radiator is held at the coolant temperature [`AIO_COOLANT`].
+fn aio_with(bodies: &[Shape], run: &Run) -> Value {
+    let (lo, hi) = aio_shroud(run.spacing);
+    let v = [0.0, AIO_SPEED, 0.0];
+    script(
+        "Shroud",
+        json!({
+            "material": "Air", "min": lo, "max": hi, "spacing": run.spacing,
+            "faces": {"y_min": {"type": "velocity", "velocity": v}, "y_max": {"type": "pressure", "pressure": 0},
+                "x_min": {"type": "wall"}, "x_max": {"type": "slip"}, "z_min": {"type": "wall"}, "z_max": {"type": "wall"}},
+            "obstacles": ["Radiator", "Tube1", "Tube2"], "initial_velocity": v,
+            "thermal": {"initial_temperature": AIO_INLET, "faces": {"y_min": {"type": "temperature", "value": AIO_INLET}},
+                "surfaces": held(bodies, "Radiator", AIO_COOLANT)}
+        }),
+        "Air",
+        run,
+        faces(bodies, "Radiator"),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,6 +249,8 @@ mod tests {
         (value - expected).abs() <= tolerance * expected.abs()
     }
 
+    /// The heat sink and the enclosure open clean; the AIO is checked in its short run (heavy: its
+    /// geometry takes most of half a minute to build in a test build).
     #[test]
     fn the_cooling_samples_open_ready_to_solve() {
         for name in ["cooling-heat-sink", "cooling-enclosure"] {
@@ -220,6 +277,20 @@ mod tests {
         let (q, r) = solve(&mut s, "Chip");
         assert!(near(q, 0.06915, 0.05), "{q} W: {r}");
         air_between(&r, ENCLOSURE_WALLS, CHIP_TEMPERATURE, 0.5);
+    }
+
+    /// 1 mm cells (two or three across a channel; every wall of the radiator at least 0.1 mm from
+    /// a cell centre, so no cell is decided by round-off), 50 steps (6.5 ms): the radiator heats
+    /// the air in its channels at once, 674 W for the half at the start-up. Heavy only for the
+    /// cooler's geometry, which takes 15–40 s to build in a test build.
+    #[test]
+    #[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+    fn a_short_aio_radiator_run_warms_the_air() {
+        let mut s = open(AIO_HALF_DESIGN, |b| aio_with(b, &short(1.0, 0.00013, 0.0065)));
+        assert_ready(&mut s);
+        let (q, r) = solve(&mut s, "Radiator");
+        assert!(near(q, 673.6, 0.05), "{q} W: {r}");
+        air_between(&r, AIO_INLET, AIO_COOLANT, 7.0);
     }
 
     /// The published heat sink (docs/examples.md): 1.93 W at 3 s, a sink-to-inlet resistance of

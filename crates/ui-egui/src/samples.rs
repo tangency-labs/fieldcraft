@@ -23,6 +23,7 @@ const THUMBNAILS: &[(&str, &[u8])] = &[
     ("heated-flow", include_bytes!("../thumbnails/heated-flow.png")),
     ("cooling-heat-sink", include_bytes!("../thumbnails/cooling-heat-sink.png")),
     ("cooling-enclosure", include_bytes!("../thumbnails/cooling-enclosure.png")),
+    ("cooling-aio", include_bytes!("../thumbnails/cooling-aio.png")),
     ("cantilever", include_bytes!("../thumbnails/cantilever.png")),
     ("impact", include_bytes!("../thumbnails/impact.png")),
     ("parts", include_bytes!("../thumbnails/parts.png")),
