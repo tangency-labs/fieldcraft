@@ -152,6 +152,12 @@ you review and submit yourself, with your session or model attached only if you 
 
 FieldCraft's continuous integration runs on [Blacksmith](https://www.blacksmith.sh), which sponsors its CI minutes.
 
+## Disclaimer
+
+The files in this repository are provided as is, without warranty, liability or indemnity, and
+Tangency Labs and the contributors accept no responsibility for any harmful or unlawful use of
+them: read [DISCLAIMER.md](DISCLAIMER.md).
+
 ## License
 
 Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option. Notices
