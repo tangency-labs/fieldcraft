@@ -466,14 +466,28 @@ fn scatter_links(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_i
 
 // Every streamed population of an open cell set to the equilibrium of `rho` and `bare` (the
 // velocity without the half force), as deviations from the weights: what an outflow cell holds
-// under the regularised collision (fieldcraft_lbm::flow::hold_equilibrium).
-fn hold_equilibrium(cell: u32, xyz: vec3<i32>, rho: f32, bare: vec3<f32>) {
+// under the regularised collision (fieldcraft_lbm::flow::hold_equilibrium). Only where `apply`
+// (see OPEN_CELLS_WALK_TOGETHER).
+fn hold_equilibrium(cell: u32, xyz: vec3<i32>, rho: f32, bare: vec3<f32>, apply: bool) {
     let uu = dot(bare, bare);
     for (var q = 0u; q < Q; q = q + 1u) {
         let cu = dot(vec3<f32>(c_of(q)), bare);
-        store_streamed(q, cell, xyz, w_of(q) * ((rho - 1.0) + rho * (3.0 * cu + 4.5 * cu * cu - 1.5 * uu)));
+        if apply {
+            store_streamed(q, cell, xyz, w_of(q) * ((rho - 1.0) + rho * (3.0 * cu + 4.5 * cu * cu - 1.5 * uu)));
+        }
     }
 }
+
+// OPEN_CELLS_WALK_TOGETHER. Every thread of the open-cell kernels below walks the same loops
+// over the directions, whatever its cell's kind: the kind decides which values a thread reads and
+// stores, never whether a loop that touches a buffer runs. lavapipe before Mesa 26.2 crashes on
+// the other shape. It runs threads in SIMD groups; a value set inside a loop that only some
+// threads of a group entered, the group's first not among them, is read for that first thread
+// wherever the group's mask is empty, and when the value is a buffer's descriptor address it is
+// unset there, so the access dereferences null (fixed by Mesa commit 63b89856, "gallivm: don't
+// deref a NULL buffer descriptor with an empty exec mask"). Zou–He run only by the convective
+// cells whose flow came back in crashed every CI run on a software GPU (Ubuntu 24.04, Mesa
+// 25.2.8). Threads past the last open cell may return early: they are the last of their group.
 
 const OUTLET: u32 = 16u;
 // The open-cell kind whose closure a convective outlet cell takes where the flow comes back in:
@@ -506,12 +520,13 @@ fn outward(rho: f32, jn: f32, cell: u32, axis: u32, sign: f32) -> f32 {
 // the cell inside, (own + λ inside) / (1 + λ); the density shift to the face's density, and
 // whether the flow leaves. Reads only populations, so every cell sees them before any open
 // boundary changes them.
+// The other open cells walk along (OPEN_CELLS_WALK_TOGETHER) and store nothing.
 @compute @workgroup_size(256)
 fn outlet_convect(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
     let o = cell_of(lid, wg);
     if o >= params.open { return; }
     let ou = open_u[o];
-    if ou.z != 2u { return; }
+    let convective = ou.z == 2u;
     let cell = ou.x;
     let axis = ou.y;
     let sign = open_f[o].w;
@@ -521,7 +536,8 @@ fn outlet_convect(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_
     var inside_xyz = vec3<i32>(0);
     if has_inside { inside_xyz = aa_coords(inside); }
     let base = ou.w * OUTLET;
-    let lambda = outlet[base + 5u];
+    var lambda = 0.0;
+    if convective { lambda = outlet[base + 5u]; }
     var k = 0u;
     var drho = 0.0;
     var jn = 0.0;
@@ -530,23 +546,30 @@ fn outlet_convect(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_
         if !is_unknown(q, axis, sign) {
             v = streamed(q, cell, xyz);
         } else {
-            v = outlet[base + k];
-            if has_inside { v = (v + lambda * streamed(q, inside, inside_xyz)) / (1.0 + lambda); }
-            outlet[base + 6u + k] = v;
+            if convective {
+                v = outlet[base + k];
+                if has_inside { v = (v + lambda * streamed(q, inside, inside_xyz)) / (1.0 + lambda); }
+                outlet[base + 6u + k] = v;
+            }
             k = k + 1u;
         }
         drho = drho + v;
         jn = jn + f32(c_of(q)[axis]) * v;
     }
-    outlet[base + 11u] = (open_f[o].x - 1.0) - drho;
-    outlet[base + 12u] = select(0.0, 1.0, outward(1.0 + drho, jn, cell, axis, sign) > 0.0);
+    if convective {
+        outlet[base + 11u] = (open_f[o].x - 1.0) - drho;
+        outlet[base + 12u] = select(0.0, 1.0, outward(1.0 + drho, jn, cell, axis, sign) > 0.0);
+    }
 }
 
 // Zou–He velocity and pressure boundaries on the streamed populations in g (Zou & He 1997;
 // Hecht & Harting 2010 for the D3Q19 transverse correction), and the second pass of the
 // convective outlet: where the flow leaves, the convected unknowns and every population shifted
 // by w_q times the density shift; where it comes back in, the Zou–He pressure outlet. A
-// convective cell then keeps its unknowns and its outward velocity for the next step.
+// convective cell then keeps its unknowns and its outward velocity for the next step. Every
+// cell walks through both (OPEN_CELLS_WALK_TOGETHER): Zou–He stores nothing where the outlet
+// convects, and Zou–He leaves the known populations the convection reads as they are (the
+// regularised hold, which sets them all, is not applied there either).
 @compute @workgroup_size(256)
 fn open_boundaries(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
     let o = cell_of(lid, wg);
@@ -557,41 +580,40 @@ fn open_boundaries(@builtin(local_invocation_index) lid: u32, @builtin(workgroup
     let sign = open_f[o].w;
     let xyz = aa_coords(cell);
     let base = ou.w * OUTLET;
-    if ou.z == 2u && outlet[base + 12u] > 0.5 {
-        let shift = outlet[base + 11u];
-        var k = 0u;
-        for (var q = 0u; q < Q; q = q + 1u) {
-            var v = 0.0;
-            if !is_unknown(q, axis, sign) {
-                v = streamed(q, cell, xyz);
-            } else {
-                v = outlet[base + 6u + k];
-                k = k + 1u;
-            }
-            store_streamed(q, cell, xyz, v + w_of(q) * shift);
-        }
-    } else {
-        zou_he(o, select(ou.z, BACKFLOW_KIND, ou.z == 2u), cell, axis, sign, xyz);
+    let convective = ou.z == 2u;
+    var convects = false;
+    var shift = 0.0;
+    if convective {
+        convects = outlet[base + 12u] > 0.5;
+        shift = outlet[base + 11u];
     }
-    if ou.z == 2u {
-        var k = 0u;
-        var drho = 0.0;
-        var jn = 0.0;
-        for (var q = 0u; q < Q; q = q + 1u) {
-            let v = streamed(q, cell, xyz);
-            if is_unknown(q, axis, sign) {
-                outlet[base + k] = v;
-                k = k + 1u;
-            }
-            drho = drho + v;
-            jn = jn + f32(c_of(q)[axis]) * v;
+    zou_he(o, select(ou.z, BACKFLOW_KIND, convective), cell, axis, sign, xyz, !convects);
+    var k = 0u;
+    var drho = 0.0;
+    var jn = 0.0;
+    for (var q = 0u; q < Q; q = q + 1u) {
+        let unknown = is_unknown(q, axis, sign);
+        var v = streamed(q, cell, xyz);
+        if convects {
+            if unknown { v = outlet[base + 6u + k]; }
+            v = v + w_of(q) * shift;
+            store_streamed(q, cell, xyz, v);
         }
+        if unknown {
+            if convective { outlet[base + k] = v; }
+            k = k + 1u;
+        }
+        drho = drho + v;
+        jn = jn + f32(c_of(q)[axis]) * v;
+    }
+    if convective {
         outlet[base + 5u] = clamp(outward(1.0 + drho, jn, cell, axis, sign), 0.0, MAX_SPEED);
     }
 }
 
-// Zou–He on open cell `o`: the velocity (kind 0) or the density (kind 1) of its target.
-fn zou_he(o: u32, kind: u32, cell: u32, axis: u32, sign: f32, xyz: vec3<i32>) {
+// Zou–He on open cell `o`: the velocity (kind 0) or the density (kind 1) of its target, stored
+// only where `apply` (OPEN_CELLS_WALK_TOGETHER).
+fn zou_he(o: u32, kind: u32, cell: u32, axis: u32, sign: f32, xyz: vec3<i32>, apply: bool) {
     let ot = open_f[o];
     let a_half = 0.5 * acc_of(cell);
     // The sums of h over the tangential (c_n = 0) and outgoing (c_n < 0) directions. The sums of
@@ -625,26 +647,26 @@ fn zou_he(o: u32, kind: u32, cell: u32, axis: u32, sign: f32, xyz: vec3<i32>) {
     // With the regularised collision a density target holds the equilibrium of its density and
     // the normal velocity just found (fieldcraft_lbm::flow::zou_he): a pressure outlet, and a
     // convective outlet's cell where the flow comes back in (BACKFLOW_KIND).
-    if REGULARIZED && kind == 1u {
-        hold_equilibrium(cell, xyz, rho, bare);
-        return;
-    }
+    let hold = REGULARIZED && kind == 1u;
+    hold_equilibrium(cell, xyz, rho, bare, apply && hold);
+    let closure = apply && !hold;
     for (var q = 1u; q < Q; q = q + 1u) {
         let c = c_of(q);
-        if f32(c[axis]) * sign > 0.0 {
+        if closure && f32(c[axis]) * sign > 0.0 {
             let cu = dot(vec3<f32>(c), bare);
             store_streamed(q, cell, xyz, streamed(opp(q), cell, xyz) + 6.0 * w_of(q) * rho * cu);
         }
     }
+    // The tangential momentum along each axis but the normal one (the normal's pass stores
+    // nothing).
     for (var t = 0u; t < 3u; t = t + 1u) {
-        if t == axis { continue; }
         var m = -rho * bare[t];
         for (var q = 0u; q < Q; q = q + 1u) {
             m = m + streamed(q, cell, xyz) * f32(c_of(q)[t]);
         }
         for (var q = 1u; q < Q; q = q + 1u) {
             let c = c_of(q);
-            if f32(c[axis]) * sign > 0.0 && c[t] != 0 {
+            if closure && t != axis && f32(c[axis]) * sign > 0.0 && c[t] != 0 {
                 store_streamed(q, cell, xyz, streamed(q, cell, xyz) - 0.5 * m * f32(c[t]));
             }
         }
