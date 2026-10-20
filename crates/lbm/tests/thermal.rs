@@ -6,7 +6,7 @@ mod common;
 use common::*;
 use fieldcraft_lbm::backend::Backend;
 use fieldcraft_lbm::{Limits, run};
-use fieldcraft_model::{BoxFace, FaceCondition, FluidThermal, ThermalCondition};
+use fieldcraft_model::{BoxFace, FaceCondition, FluidThermal, Outflow, ThermalCondition};
 
 const PERIODIC: FaceCondition = FaceCondition::Periodic {};
 
@@ -89,7 +89,7 @@ fn the_flow_carries_the_inlet_temperature() {
     let dx = h / 8.0;
     let mut d = domain([0.0; 3], [l, h, dx], dx);
     d.faces.x_min = FaceCondition::Velocity { velocity: [umax, 0.0, 0.0], profile: fieldcraft_model::Profile::Uniform };
-    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0 };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
     d.faces.y_min = FaceCondition::Slip {};
     d.faces.y_max = FaceCondition::Slip {};
     d.faces.z_min = PERIODIC;

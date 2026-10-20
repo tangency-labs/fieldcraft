@@ -124,9 +124,10 @@ pub struct FluidResult {
 }
 
 impl FluidResult {
-    /// Whether a cell lies in the layer of an inlet or outlet face. A Zou–He pressure outlet
-    /// forces its layer to one pressure; where a wake still carries its pressure field there,
-    /// the speed in that layer is distorted (#590), so the reported extremes leave these out.
+    /// Whether a cell lies in the layer of an inlet or outlet face. A uniform (Zou–He) pressure
+    /// outlet sets its layer's velocity from one pressure; where a wake still carries its
+    /// pressure field there, the speed in that layer is distorted (#590; a convective outlet,
+    /// [`crate::outlet`], carries the wake out), so the reported extremes leave these out.
     pub fn in_open_layer(&self, cell: usize) -> bool {
         let ijk = self.grid.coords(cell);
         fieldcraft_model::BoxFace::ALL.iter().zip(self.open_faces).any(|(f, open)| {

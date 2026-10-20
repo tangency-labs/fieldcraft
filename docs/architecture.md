@@ -27,7 +27,7 @@ crates in strictly lower layers.
 | L1 | `fieldcraft-render` | Display data without a GPU dependency: the visible faces, element edges and nodes of a model, the orbit camera, a CPU rasterizer for headless snapshots, geometry surfaces with their face boundaries, deformed shapes and banded contour plots of nodal results, slices, surface values and streamlines of flow fields on grids of cells, picking. | started |
 | L2 | `fieldcraft-solver` | Implicit solver: assembly from the resolved model, boundary conditions, sparse direct solution, linear static and modal analysis, stresses and reactions. | started |
 | L2 | `fieldcraft-explicit` | Explicit dynamics: central-difference time integration with lumped mass, one-point hex8 with hourglass control, nodal-pressure tet4, bulk viscosity, rigid walls, large deformation with objective rates, plasticity, damage and erosion, energy account, histories and field frames. | started |
-| L2 | `fieldcraft-lbm` | Lattice Boltzmann flow solver on the CPU: D3Q19 two-relaxation-time or recursive regularized scheme, bounce-back and slip walls, Zou–He inlets and outlets, obstacles voxelised from the face-tagged surface with exact predicates, momentum-exchange forces per face; a D3Q7 temperature lattice carried by the flow (held temperatures, heat fluxes, adiabatic faces, Boussinesq buoyancy, the heat into every face). Uses `mesh` for the predicates and the boundary surface. | started |
+| L2 | `fieldcraft-lbm` | Lattice Boltzmann flow solver on the CPU: D3Q19 two-relaxation-time or recursive regularized scheme, bounce-back and slip walls, Zou–He inlets and outlets, convective outlets, obstacles voxelised from the face-tagged surface with exact predicates, momentum-exchange forces per face; a D3Q7 temperature lattice carried by the flow (held temperatures, heat fluxes, adiabatic faces, Boussinesq buoyancy, the heat into every face). Uses `mesh` for the predicates and the boundary surface. | started |
 | L3 | `fieldcraft-fsi` | Fluid–structure coupling between the L2 solvers (later). | planned |
 | L4 | `fieldcraft-doc` | The document: geometry, mesh, model, results, history. | planned |
 | L5 | `fieldcraft-io` | `.fieldcraft` files (docs/formats/fieldcraft.md): text model definition, binary mesh, geometry references with content hashes, the journal; atomic saves; autosave storage for crash recovery; read and write roots that confine an automation client's file access (`roots`). Bytes in, bytes out; the file system only in `fs`, `recovery` and `roots` (in the browser, files kept in memory: `memory`). Result files later. | started |
@@ -379,8 +379,11 @@ module docs and in `docs/solvers/literature.md` (Part I).
 4. **Stepping.** TRT collision (or, per step, the recursive regularized collision that stays
    stable as τ approaches ½, `docs/lbm-collision.md`) with Guo forcing in place; pull streaming as one shifted copy per
    direction with per-link rules for the cells next to walls and box faces; Zou–He on inlet and
-   outlet layers. Wall links give the momentum exchanged with every box face and B-rep face
-   (the face of the triangle nearest the link). A non-positive density or a lattice speed above
+   outlet layers, or on a convective outlet the unknown populations updated by a convective
+   outflow condition and each cell held at the face's pressure (Zou–He where the flow comes back
+   in); a cell on the edge of two open faces belongs to one of them (velocity faces first).
+   Wall links give the momentum exchanged with every box face and B-rep face (the face of the
+   triangle nearest the link). A non-positive density or a lattice speed above
    0.5 stops the run with an error. With heat, a D3Q7 BGK scalar lattice (weights ¼ and ⅛,
    c_s² = ¼) steps after the flow on the same links: it is advected by the cell velocity and
    diffuses with the scalar relaxation time; held temperatures are anti-bounce-back, adiabatic

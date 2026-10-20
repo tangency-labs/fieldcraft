@@ -22,7 +22,7 @@ use fieldcraft_lbm::backend::Backend;
 use fieldcraft_lbm::{Flow, Setup};
 use fieldcraft_lbm_gpu::{GpuFlow, Options, Streaming};
 use fieldcraft_model::{
-    BoxFace, Collision, Directional, FaceCondition, Fluid, FluidDomain, FluidThermal, Material, Model, Procedure, Profile, Step, Thermal,
+    BoxFace, Collision, Directional, FaceCondition, Fluid, FluidDomain, FluidThermal, Material, Model, Outflow, Procedure, Profile, Step, Thermal,
     ThermalCondition,
 };
 
@@ -272,7 +272,7 @@ fn zou_he_channel_matches_the_cpu() {
         let dx = h / 10.0;
         let mut d = domain([0.0; 3], [l, h, dx], dx);
         d.faces.x_min = FaceCondition::Velocity { velocity: [umax, 0.0, 0.0], profile: Profile::Parabolic };
-        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0 };
+        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
         d.faces.z_min = PERIODIC;
         d.faces.z_max = PERIODIC;
         let m = model(1.0, nu, d, collide(2.0 * l / umax, 0.05 * dx / umax, None, collision));
@@ -377,7 +377,7 @@ fn a_heated_channel_matches_the_cpu() {
         let dx = h / 8.0;
         let mut d = domain([0.0; 3], [l, h, dx], dx);
         d.faces.x_min = FaceCondition::Velocity { velocity: [umax, 0.0, 0.0], profile: Profile::Parabolic };
-        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0 };
+        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
         d.faces.z_min = PERIODIC;
         d.faces.z_max = PERIODIC;
         let mut t = FluidThermal::default();
@@ -531,7 +531,7 @@ fn odd_even_and_chunk_readbacks_match_the_cpu_with_heat_open_and_slip_faces() {
     for (collision, streaming) in cases() {
         let mut d = domain([0.0; 3], [16.0, 8.0, 1.0], 1.0);
         d.faces.x_min = FaceCondition::Velocity { velocity: [0.01, 0.0, 0.0], profile: Profile::Uniform };
-        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0 };
+        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
         d.faces.y_max = FaceCondition::Slip {};
         d.faces.z_min = PERIODIC;
         d.faces.z_max = PERIODIC;

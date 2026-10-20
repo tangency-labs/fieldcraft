@@ -11,7 +11,7 @@ mod common;
 
 use common::{COLLISIONS, collide, domain, model, prepare, run_all, step};
 use fieldcraft_lbm::{Flow, Limits, Setup, solve_fluid};
-use fieldcraft_model::{Axis, Collision, FaceCondition, Fan, FanDirection, PorousZone, Profile, Resistance};
+use fieldcraft_model::{Axis, Collision, FaceCondition, Fan, FanDirection, Outflow, PorousZone, Profile, Resistance};
 
 const NU: f64 = 0.1;
 
@@ -24,7 +24,7 @@ fn plate(x0: f64, x1: f64, resistance: Resistance) -> PorousZone {
 fn plate_drop(u: f64, resistance: Resistance, collision: Collision) -> (f64, f64) {
     let mut d = domain([0.0; 3], [40.0, 2.0, 2.0], 1.0);
     d.faces.x_min = FaceCondition::Velocity { velocity: [u, 0.0, 0.0], profile: Profile::Uniform };
-    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0 };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
     for f in [&mut d.faces.y_min, &mut d.faces.y_max, &mut d.faces.z_min, &mut d.faces.z_max] {
         *f = FaceCondition::Periodic {};
     }
@@ -116,7 +116,7 @@ fn zones_off_the_grid_or_on_an_open_layer_are_refused() {
     let base = || {
         let mut d = domain([0.0; 3], [10.0, 2.0, 2.0], 1.0);
         d.faces.x_min = FaceCondition::Velocity { velocity: [0.01, 0.0, 0.0], profile: Profile::Uniform };
-        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0 };
+        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
         d
     };
     let resistance = Resistance::LossCoefficient { coefficient: 1.0 };

@@ -307,7 +307,7 @@ impl Setup {
         for face in BoxFace::ALL {
             match *domain.faces.get(face) {
                 FaceCondition::MovingWall { velocity } | FaceCondition::Velocity { velocity, .. } => u_char = u_char.max(norm(velocity)),
-                FaceCondition::Pressure { pressure } => pressures.push(pressure),
+                FaceCondition::Pressure { pressure, .. } => pressures.push(pressure),
                 FaceCondition::Wall {} | FaceCondition::Slip {} | FaceCondition::Periodic {} => {}
             }
         }

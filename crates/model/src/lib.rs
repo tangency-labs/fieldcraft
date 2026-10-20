@@ -71,7 +71,7 @@ pub use datums::{Datum, Partition};
 pub use discrete::{Direction, Mass, PointMass, ResolvedDirection, ResolvedMass, ResolvedSpring, Spring};
 pub use fluid_zones::{Axis, Fan, FanDirection, PorousZone, Resistance};
 pub use fluids::{
-    BoxFace, BoxFaces, BoxThermalFaces, FaceCondition, FluidBoundary, FluidDomain, FluidThermal, Profile, SurfaceBoundary, SurfaceCondition,
+    BoxFace, BoxFaces, BoxThermalFaces, FaceCondition, FluidBoundary, FluidDomain, FluidThermal, Outflow, Profile, SurfaceBoundary, SurfaceCondition,
     SurfaceThermalBoundary, ThermalCondition,
 };
 pub use geometry::{BodyMesh, Classification, Entity, GeometryRef};

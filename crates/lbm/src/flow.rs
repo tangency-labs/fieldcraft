@@ -34,6 +34,9 @@
 //!   in the cell next to the outlet, more as τ⁺ approaches ½ (3.2 % at τ⁺ = 0.6, 7–7.5 % at 0.52,
 //!   9.6 % in the outlet cell itself; the bounce-back outlet, where it stays stable, 0.4 %), and
 //!   unchanged at mid-channel. A convective outflow is the better outlet for this collision.
+//!   A convective outlet ([`crate::outlet`]) updates the unknown populations by a convective
+//!   outflow condition instead, holds each cell at the face's density, and falls back to Zou–He
+//!   where the flow comes back in. A cell on the edge of two open faces belongs to one of them.
 //! - **Forces:** momentum exchange on every wall link (Ladd 1994; R. Mei, D. Yu, W. Shyy, L.-S.
 //!   Luo, *Force evaluation in the lattice Boltzmann method involving curved geometry*, PRE
 //!   65:041203, 2002): a population `f*` leaving a fluid cell toward the wall and the one `f'`
@@ -71,11 +74,12 @@
 //! only its own populations; the wall forces are summed in link order. There are no parallel
 //! reductions, so the result is the same bit for bit on any number of threads and platform.
 
-use fieldcraft_model::{BoxFace, Collision, FaceCondition, Profile, ThermalCondition};
+use fieldcraft_model::{BoxFace, Collision, FaceCondition, Outflow, Profile, ThermalCondition};
 
 use fieldcraft_parallel as parallel;
 
 use crate::lattice::{C, Q, W, c, equilibrium, moving_wall, opposite};
+use crate::outlet::{Action, Outlets, Populations};
 use crate::setup::{MAX_LATTICE_SPEED, Obstacle, Setup, ZoneKind, ZoneSetup};
 use crate::voxel::{Grid, TriangleTree, voxelise};
 use crate::{Error, Result};
@@ -119,6 +123,9 @@ pub enum Target {
     Velocity([f64; 3]),
     /// The density.
     Density(f64),
+    /// The density of a convective outlet: each cell is held at it while its velocity follows the
+    /// flow leaving it ([`crate::outlet`]).
+    Convective(f64),
 }
 
 /// A force group: a box face or a face of an obstacle.
@@ -288,6 +295,8 @@ pub struct Flow {
     actions: Vec<ZoneAction>,
     /// Each fan's pressure rise (lattice units; zero for porous zones), relaxed toward its curve.
     fan_rise: Vec<f64>,
+    /// What the convective outlet cells keep between steps.
+    outlets: Outlets,
 }
 
 const NONE: u32 = u32::MAX;
@@ -453,9 +462,17 @@ impl Flow {
             }
         }
 
-        // Inlets and outlets: the fluid cells of each open face's layer.
+        // Inlets and outlets: the fluid cells of each open face's layer. A cell on the edge of two
+        // open faces (or the corner of three) belongs to one of them only, so one rule sets it and
+        // the GPU's one thread per open cell never races: a velocity face before a pressure face,
+        // otherwise the first in `BoxFace::ALL` order (x_min, x_max, y_min, …). Its populations
+        // from outside the other faces keep the placeholder, the bounce-back of its own.
         let mut open = Vec::new();
-        for face in BoxFace::ALL {
+        let mut taken = filled(n, false, "open cells")?;
+        let velocity_first = |f: &BoxFace| !matches!(domain.faces.get(*f), FaceCondition::Velocity { .. });
+        let mut faces = BoxFace::ALL;
+        faces.sort_by_key(velocity_first);
+        for face in faces {
             let a = face.axis();
             let layer = if face.is_max() { grid.cells[a] - 1 } else { 0 };
             let (t1, t2) = ((a + 1) % 3, (a + 2) % 3);
@@ -466,7 +483,7 @@ impl Flow {
                     ijk[t1] = i;
                     ijk[t2] = j;
                     let cell = grid.index(ijk);
-                    if !fluid[cell] {
+                    if !fluid[cell] || taken.get(cell).copied().unwrap_or(true) {
                         continue;
                     }
                     let target = match *domain.faces.get(face) {
@@ -480,9 +497,13 @@ impl Flow {
                             }
                             Target::Velocity(setup.to_lattice(velocity).map(|v| v * scale))
                         }
-                        FaceCondition::Pressure { pressure } => Target::Density(setup.lattice_density(pressure)),
+                        FaceCondition::Pressure { pressure, outflow: Outflow::Uniform } => Target::Density(setup.lattice_density(pressure)),
+                        FaceCondition::Pressure { pressure, outflow: Outflow::Convective } => Target::Convective(setup.lattice_density(pressure)),
                         _ => break,
                     };
+                    if let Some(t) = taken.get_mut(cell) {
+                        *t = true;
+                    }
                     open.push(OpenCell { cell: cell as u32, axis: a, inward: if face.is_max() { -1.0 } else { 1.0 }, target });
                 }
             }
@@ -552,7 +573,7 @@ impl Flow {
                         match (oc.target, ts.faces.get(face.index()).copied().unwrap_or_default()) {
                             (_, ThermalCondition::Temperature { value }) => Some(value),
                             (Target::Velocity(_), _) => Some(ts.initial_temperature),
-                            (Target::Density(_), _) => None,
+                            (Target::Density(_) | Target::Convective(_), _) => None,
                         }
                     })
                     .collect();
@@ -585,7 +606,7 @@ impl Flow {
                 )
             }
         };
-        Ok(Flow {
+        let mut flow = Flow {
             grid,
             n,
             stride,
@@ -612,7 +633,15 @@ impl Flow {
             zone_cells,
             zone_of,
             actions,
-        })
+            outlets: Outlets::default(),
+        };
+        flow.outlets = Outlets::new(&flow.open, &View { flow: &flow, f: &flow.f });
+        Ok(flow)
+    }
+
+    /// What the convective outlet cells keep between steps.
+    pub fn outlets(&self) -> &Outlets {
+        &self.outlets
     }
 
     /// The action of a cell's zone, if it is in one.
@@ -842,6 +871,7 @@ impl Flow {
                 self.f[q * s + cell] = equilibrium(q, rho, bare);
             }
         }
+        self.outlets = Outlets::new(&self.open, &View { flow: self, f: &self.f });
     }
 
     /// The density and velocity of a cell (lattice units), or `None` for a solid cell.
@@ -1229,62 +1259,127 @@ impl Flow {
         }
     }
 
-    /// Zou–He velocity and pressure boundaries on the streamed populations.
+    /// Zou–He velocity and pressure boundaries on the streamed populations, and convective
+    /// outlets ([`crate::outlet`]), whose convected populations are all taken from the streamed
+    /// populations before any open cell is changed.
     fn open_boundaries(&mut self) {
         let s = self.stride;
         let regularized = self.collision == Collision::Regularized;
-        for oc in &self.open {
+        let mut outlets = std::mem::take(&mut self.outlets);
+        let [nx, ny, _] = self.grid.cells;
+        outlets.convect(&self.open, &View { flow: self, f: &self.g }, [1, nx, nx * ny]);
+        for (k, oc) in self.open.iter().enumerate() {
             let cell = oc.cell as usize;
             let a_half = self.force_at(cell).map(|v| 0.5 * v);
-            let axis = oc.axis;
-            let sign = oc.inward;
-            let ci = |q: usize| f64::from(C[q][axis]);
-            // Tangential (c_n = 0) and outgoing (c_n = −s, known) sums.
-            let (mut tangential, mut outgoing) = (0.0, 0.0);
-            for q in 0..Q {
-                let v = self.g[q * s + cell];
-                let cn = ci(q) * sign;
-                if cn == 0.0 {
-                    tangential += v;
-                } else if cn < 0.0 {
-                    outgoing += v;
+            let (axis, sign) = (oc.axis, oc.inward);
+            match (oc.target, outlets.action(k)) {
+                (Target::Convective(_), Action::Convect { unknowns, shift }) => {
+                    let mut convected = [None; Q];
+                    for (q, v) in crate::outlet::unknowns(axis, sign).into_iter().zip(unknowns) {
+                        if let Some(slot) = convected.get_mut(q) {
+                            *slot = Some(v);
+                        }
+                    }
+                    for (q, v) in convected.into_iter().enumerate() {
+                        if let Some(x) = self.g.get_mut(q * s + cell) {
+                            *x = v.unwrap_or(*x) + W[q] * shift;
+                        }
+                    }
                 }
+                (Target::Convective(rho), Action::Hold) => {
+                    zou_he(&mut self.g, s, cell, axis, sign, a_half, crate::outlet::backflow(rho), regularized)
+                }
+                (target, _) => zou_he(&mut self.g, s, cell, axis, sign, a_half, target, regularized),
             }
-            // The bare velocity (without the half force) the populations must carry.
-            let (rho, bare) = match oc.target {
-                Target::Velocity(u) => {
-                    let bare = [u[0] - a_half[0], u[1] - a_half[1], u[2] - a_half[2]];
-                    let un = sign * bare[axis];
-                    ((tangential + 2.0 * outgoing) / (1.0 - un), bare)
-                }
-                Target::Density(rho) => {
-                    let un = 1.0 - (tangential + 2.0 * outgoing) / rho;
-                    let mut bare = [-a_half[0], -a_half[1], -a_half[2]];
-                    bare[axis] = sign * un;
-                    (rho, bare)
-                }
-            };
-            // Unknowns: bounce-back of the non-equilibrium part.
-            for q in (1..Q).filter(|q| ci(*q) * sign > 0.0) {
-                let cq = c(q);
-                let cu = cq[0] * bare[0] + cq[1] * bare[1] + cq[2] * bare[2];
-                self.g[q * s + cell] = self.g[opposite(q) * s + cell] + 6.0 * W[q] * rho * cu;
+            if matches!(oc.target, Target::Convective(_)) {
+                outlets.record(k, oc, a_half, |q| self.g.get(q * s + cell).copied().unwrap_or(0.0));
             }
-            // With the regularised collision a pressure outlet holds the equilibrium of its density
-            // and the normal velocity just found (see the module notes).
-            if regularized && matches!(oc.target, Target::Density(_)) {
-                hold_equilibrium(&mut self.g, s, cell, rho, bare);
-                continue;
-            }
-            // Transverse momentum: correct the two diagonal unknowns along each tangential axis.
-            for t in (0..3).filter(|t| *t != axis) {
-                let mut m = -rho * bare[t];
-                for q in 0..Q {
-                    m += self.g[q * s + cell] * f64::from(C[q][t]);
-                }
-                for q in (1..Q).filter(|q| ci(*q) * sign > 0.0 && C[*q][t] != 0) {
-                    self.g[q * s + cell] -= 0.5 * m * f64::from(C[q][t]);
-                }
+        }
+        self.outlets = outlets;
+    }
+}
+
+/// A flow's populations as the outlets read them: `f` is the flow's own array or the one it
+/// streamed into.
+struct View<'a> {
+    flow: &'a Flow,
+    f: &'a [f64],
+}
+
+impl Populations for View<'_> {
+    fn get(&self, q: usize, cell: usize) -> f64 {
+        self.f.get(q * self.flow.stride + cell).copied().unwrap_or(0.0)
+    }
+
+    fn is_fluid(&self, cell: usize) -> bool {
+        self.flow.is_fluid(cell)
+    }
+
+    fn half_force(&self, cell: usize) -> [f64; 3] {
+        self.flow.force_at(cell).map(|v| 0.5 * v)
+    }
+}
+
+/// Zou & He 1997 on open cell `cell` (normal `axis`, `sign` +1 at a min face) of the streamed
+/// populations `g`: the unknown incoming populations are the opposite ones plus the equilibrium
+/// difference (bounce-back of the non-equilibrium part), the density (a velocity inlet) or the
+/// normal velocity (a density) follows from mass and normal momentum, and the transverse momentum
+/// is corrected on the diagonal unknowns (Hecht & Harting 2010). `a_half` is half the body
+/// acceleration. A convective outlet's cell takes the density, with no tangential velocity. With
+/// the regularised collision (`regularized`) a density target then holds the equilibrium of its
+/// density and that normal velocity (see the module notes): a pressure outlet, and a convective
+/// outlet's cell where the flow comes back in ([`crate::outlet::backflow`]).
+#[allow(clippy::too_many_arguments)]
+fn zou_he(g: &mut [f64], s: usize, cell: usize, axis: usize, sign: f64, a_half: [f64; 3], target: Target, regularized: bool) {
+    let ci = |q: usize| f64::from(C[q][axis]);
+    let at = |g: &[f64], q: usize| g.get(q * s + cell).copied().unwrap_or(0.0);
+    // Tangential (c_n = 0) and outgoing (c_n = −s, known) sums.
+    let (mut tangential, mut outgoing) = (0.0, 0.0);
+    for q in 0..Q {
+        let v = at(g, q);
+        let cn = ci(q) * sign;
+        if cn == 0.0 {
+            tangential += v;
+        } else if cn < 0.0 {
+            outgoing += v;
+        }
+    }
+    // The bare velocity (without the half force) the populations must carry.
+    let (rho, bare) = match target {
+        Target::Velocity(u) => {
+            let bare = [u[0] - a_half[0], u[1] - a_half[1], u[2] - a_half[2]];
+            let un = sign * bare[axis];
+            ((tangential + 2.0 * outgoing) / (1.0 - un), bare)
+        }
+        Target::Density(rho) | Target::Convective(rho) => {
+            let un = 1.0 - (tangential + 2.0 * outgoing) / rho;
+            let mut bare = [-a_half[0], -a_half[1], -a_half[2]];
+            bare[axis] = sign * un;
+            (rho, bare)
+        }
+    };
+    // Unknowns: bounce-back of the non-equilibrium part.
+    for q in (1..Q).filter(|q| ci(*q) * sign > 0.0) {
+        let cq = c(q);
+        let cu = cq[0] * bare[0] + cq[1] * bare[1] + cq[2] * bare[2];
+        let v = at(g, opposite(q)) + 6.0 * W[q] * rho * cu;
+        if let Some(x) = g.get_mut(q * s + cell) {
+            *x = v;
+        }
+    }
+    if regularized && matches!(target, Target::Density(_)) {
+        hold_equilibrium(g, s, cell, rho, bare);
+        return;
+    }
+    // Transverse momentum: correct the two diagonal unknowns along each tangential axis.
+    for t in (0..3).filter(|t| *t != axis) {
+        let mut m = -rho * bare[t];
+        for q in 0..Q {
+            m += at(g, q) * f64::from(C[q][t]);
+        }
+        for q in (1..Q).filter(|q| ci(*q) * sign > 0.0 && C[*q][t] != 0) {
+            if let Some(x) = g.get_mut(q * s + cell) {
+                *x -= 0.5 * m * f64::from(C[q][t]);
             }
         }
     }

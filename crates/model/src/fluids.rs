@@ -134,10 +134,36 @@ pub enum FaceCondition {
         #[serde(default, skip_serializing_if = "is_uniform")]
         profile: Profile,
     },
-    /// A pressure outlet (or inlet) at this gauge pressure; the flow crosses it normally.
-    Pressure { pressure: f64 },
+    /// A pressure outlet (or inlet) at this gauge pressure.
+    Pressure {
+        pressure: f64,
+        /// How the flow leaves through the face (default: uniform).
+        #[serde(default, skip_serializing_if = "Outflow::is_uniform")]
+        outflow: Outflow,
+    },
     /// What leaves through this face enters through the opposite one, which must be periodic too.
     Periodic {},
+}
+
+/// How the flow leaves through a pressure face.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Outflow {
+    /// The face at the given pressure, the flow crossing it normally, its velocity set by that
+    /// pressure. Where a wake that has not recovered reaches the face, the speed jumps in the last
+    /// cell layer.
+    #[default]
+    Uniform,
+    /// The face at the given pressure, the flow leaving it as it arrives: its velocity, normal and
+    /// tangential, is carried out from inside by a convective outflow condition. Where the flow
+    /// comes back in, as the uniform outlet. For outlets that a wake or vortices reach.
+    Convective,
+}
+
+impl Outflow {
+    pub fn is_uniform(&self) -> bool {
+        *self == Outflow::Uniform
+    }
 }
 
 fn is_uniform(p: &Profile) -> bool {
@@ -177,7 +203,7 @@ impl FaceCondition {
                 Ok(())
             }
             FaceCondition::Velocity { velocity, .. } => vector("inlet velocity", velocity).map(|_| ()),
-            FaceCondition::Pressure { pressure } => finite("pressure", pressure).map(|_| ()),
+            FaceCondition::Pressure { pressure, .. } => finite("pressure", pressure).map(|_| ()),
         }
     }
 }
@@ -701,7 +727,7 @@ mod tests {
             spacing: 0.5,
             faces: BoxFaces {
                 x_min: FaceCondition::Velocity { velocity: [1.0, 0.0, 0.0], profile: Profile::Parabolic },
-                x_max: FaceCondition::Pressure { pressure: 0.0 },
+                x_max: FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform },
                 z_min: FaceCondition::Periodic {},
                 z_max: FaceCondition::Periodic {},
                 ..BoxFaces::default()
@@ -802,7 +828,7 @@ mod tests {
             bad(&|d| d.faces.z_max = FaceCondition::Wall {}),
             bad(&|d| d.faces.y_min = FaceCondition::MovingWall { velocity: [1.0, 1.0, 0.0] }),
             bad(&|d| d.faces.x_min = FaceCondition::Velocity { velocity: [f64::NAN, 0.0, 0.0], profile: Profile::Uniform }),
-            bad(&|d| d.faces.x_max = FaceCondition::Pressure { pressure: f64::INFINITY }),
+            bad(&|d| d.faces.x_max = FaceCondition::Pressure { pressure: f64::INFINITY, outflow: Outflow::Convective }),
             bad(&|d| d.obstacles = vec!["A".into(), "A".into()]),
             bad(&|d| d.obstacles = vec![String::new()]),
             bad(&|d| d.surfaces = vec![SurfaceBoundary { face: GeometryRef::face("B", "f").unwrap(), condition: SurfaceCondition::Wall {} }]),
@@ -1029,5 +1055,14 @@ mod tests {
         let at: FluidBoundary = serde_json::from_value(serde_json::json!({"body": "Ball", "face": "F1"})).unwrap();
         assert!(matches!(at, FluidBoundary::Surface(_)));
         assert!(serde_json::from_value::<FaceCondition>(serde_json::json!({"type": "wall", "velocity": [1, 0, 0]})).is_err());
+        // A pressure face is uniform unless it says otherwise, and writes `outflow` only then.
+        let uniform = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+        assert_eq!(serde_json::from_value::<FaceCondition>(serde_json::json!({"type": "pressure", "pressure": 0})).unwrap(), uniform);
+        assert_eq!(serde_json::to_value(uniform).unwrap(), serde_json::json!({"type": "pressure", "pressure": 0.0}));
+        let convective = serde_json::json!({"type": "pressure", "pressure": 0.0, "outflow": "convective"});
+        let c: FaceCondition = serde_json::from_value(convective.clone()).unwrap();
+        assert_eq!(c, FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Convective });
+        assert_eq!(serde_json::to_value(c).unwrap(), convective);
+        assert!(serde_json::from_value::<FaceCondition>(serde_json::json!({"type": "pressure", "pressure": 0, "outflow": "sponge"})).is_err());
     }
 }

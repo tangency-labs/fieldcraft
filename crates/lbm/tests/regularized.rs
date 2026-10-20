@@ -8,7 +8,7 @@ mod common;
 
 use common::*;
 use fieldcraft_lbm::{Error, Flow, Limits, Setup, solve_fluid};
-use fieldcraft_model::{BoxFace, Collision, FaceCondition, Procedure, Profile};
+use fieldcraft_model::{BoxFace, Collision, FaceCondition, Outflow, Procedure, Profile};
 
 const PERIODIC: FaceCondition = FaceCondition::Periodic {};
 const REGULARIZED: Collision = Collision::Regularized;
@@ -187,7 +187,7 @@ fn bounce_back_walls_conserve_mass_and_balance_the_driving_force() {
 fn ball_channel(collision: Collision) -> (fieldcraft_model::Model, fieldcraft_lbm::Obstacle) {
     let mut d = domain([0.0; 3], [2.0, 1.0, 1.0], 0.05);
     d.faces.x_min = FaceCondition::Velocity { velocity: [0.1, 0.02, 0.0], profile: Profile::Parabolic };
-    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0 };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
     d.faces.z_max = FaceCondition::Slip {};
     d.obstacles = vec!["Ball".into()];
     d.acceleration = [0.0, 0.0, -0.01];
@@ -258,7 +258,7 @@ fn cylinder_failure(cells: f64, re: f64, steps_run: u64, collision: Collision) -
     let dx = d / cells;
     let mut dom = domain([0.0; 3], [2.2, 0.41, dx], dx);
     dom.faces.x_min = FaceCondition::Velocity { velocity: [1.5, 0.0, 0.0], profile: Profile::Parabolic };
-    dom.faces.x_max = FaceCondition::Pressure { pressure: 0.0 };
+    dom.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
     dom.faces.z_min = PERIODIC;
     dom.faces.z_max = PERIODIC;
     dom.initial_velocity = [1.0, 0.0, 0.0];
@@ -306,7 +306,7 @@ fn channel(n: usize, collision: Collision) -> (f64, f64, f64, f64) {
     let dx = h / n as f64;
     let mut d = domain([0.0; 3], [l, h, dx], dx);
     d.faces.x_min = FaceCondition::Velocity { velocity: [umax, 0.0, 0.0], profile: Profile::Parabolic };
-    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0 };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
     d.faces.z_min = PERIODIC;
     d.faces.z_max = PERIODIC;
     let dt = 0.1 / 3.0 * dx * dx / nu;
@@ -364,7 +364,7 @@ fn channel_with_a_parabolic_inlet_and_a_pressure_outlet_develops_poiseuille_flow
 fn outlet_channel_failure(steps_run: u64, collision: Collision) -> Option<u64> {
     let mut d = domain([0.0; 3], [48.0, 16.0, 1.0], 1.0);
     d.faces.x_min = FaceCondition::Velocity { velocity: [0.1, 0.0, 0.0], profile: Profile::Parabolic };
-    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0 };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
     d.faces.z_min = PERIODIC;
     d.faces.z_max = PERIODIC;
     d.initial_velocity = [0.1, 0.0, 0.0];
@@ -385,7 +385,7 @@ fn a_regularised_channel_with_a_pressure_outlet_stays_stable_at_tau_0_52() {
 fn a_step_names_its_collision_in_the_setup_and_the_result() {
     let mut d = domain([0.0; 3], [1.0, 1.0, 0.25], 0.25);
     d.faces.x_min = FaceCondition::Velocity { velocity: [0.01, 0.0, 0.0], profile: Profile::Uniform };
-    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0 };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
     let m = model(1.0, 0.1, d.clone(), collide(0.1, 0.01, None, REGULARIZED));
     let setup = Setup::new(&m, None, &[], &Limits::default()).unwrap();
     assert_eq!(setup.collision, REGULARIZED);

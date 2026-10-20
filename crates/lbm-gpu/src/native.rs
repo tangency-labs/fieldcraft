@@ -173,6 +173,9 @@ impl GpuFlow {
                 zone.name
             )));
         }
+        if flow.open_cells().iter().any(|oc| matches!(oc.target, Target::Convective(_))) {
+            return Err(Error::Invalid("the GPU backend does not step convective outlets yet: solve on the CPU (`backend: \"cpu\"`)".into()));
+        }
         let Some((adapter, tier)) = select::adapter(policy).map_err(gpu_error)? else {
             return Err(Error::Invalid(format!("{}=cpu: no GPU device; solve with `backend: \"cpu\"`", select::ENV)));
         };
@@ -311,7 +314,7 @@ impl GpuFlow {
         for oc in open {
             let (kind, target) = match oc.target {
                 Target::Velocity(u) => (0u32, [u[0] as f32, u[1] as f32, u[2] as f32]),
-                Target::Density(rho) => (1u32, [rho as f32, 0.0, 0.0]),
+                Target::Density(rho) | Target::Convective(rho) => (1u32, [rho as f32, 0.0, 0.0]),
             };
             open_u.extend_from_slice(&[oc.cell, oc.axis as u32, kind, 0]);
             open_f.extend_from_slice(&[target[0], target[1], target[2], oc.inward as f32]);

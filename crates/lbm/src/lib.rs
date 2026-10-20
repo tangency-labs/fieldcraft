@@ -11,6 +11,7 @@
 //!   walls (moving walls after Ladd), slip faces, Zou–He inlets and outlets, and the
 //!   momentum-exchange force on every wall; fans (a pressure–flow curve) and porous zones
 //!   (Darcy–Forchheimer resistance) as body forces.
+//! - [`outlet`]: convective pressure outlets, which carry a wake or vortices out of the box.
 //! - [`solve`]: the time loop, output frames and force histories in model units.
 //! - [`steady`]: the steady-state monitor and stop rule of a run.
 //!
@@ -34,6 +35,8 @@
 //!   P01018 (the D3Q19 transverse correction).
 //! - Z. Guo, T. S. Zhao, *Lattice Boltzmann model for incompressible flows through porous
 //!   media*, PRE 66:036304, 2002 (the implicit velocity with a Darcy–Forchheimer force).
+//! - I. Orlanski, *A simple boundary condition for unbounded hyperbolic flows*, J. Comput. Phys.
+//!   21(3):251–269, 1976 (the convective outflow condition).
 //! - P. Lallemand, L.-S. Luo, *Theory of the lattice Boltzmann method: dispersion, dissipation,
 //!   isotropy, Galilean invariance, and stability*, PRE 61:6546, 2000 (stability limits).
 //! - H. Edelsbrunner, E. P. Mücke, *Simulation of Simplicity*, ACM TOG 9(1):66–104, 1990;
@@ -55,6 +58,7 @@
 pub mod backend;
 pub mod flow;
 pub mod lattice;
+pub mod outlet;
 pub mod regularized;
 pub mod setup;
 pub mod solve;

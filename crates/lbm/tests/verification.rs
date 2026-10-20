@@ -10,7 +10,7 @@ mod common;
 
 use common::*;
 use fieldcraft_lbm::{Error, Limits, Setup, solve_fluid};
-use fieldcraft_model::{FaceCondition, Profile};
+use fieldcraft_model::{FaceCondition, Outflow, Profile};
 
 const PERIODIC: FaceCondition = FaceCondition::Periodic {};
 
@@ -283,7 +283,7 @@ fn channel_with_a_parabolic_inlet_and_a_pressure_outlet_develops_poiseuille_flow
     let dx = h / n as f64;
     let mut d = domain([0.0; 3], [l, h, dx], dx);
     d.faces.x_min = FaceCondition::Velocity { velocity: [umax, 0.0, 0.0], profile: Profile::Parabolic };
-    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0 };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
     d.faces.z_min = PERIODIC;
     d.faces.z_max = PERIODIC;
     // τ = 0.6. The pressure drop changes the density along the channel by Δp / (ρ c_s²) in lattice
@@ -337,8 +337,8 @@ fn pressure_driven_poiseuille_holds_its_end_pressures() {
     let dx = h / n as f64;
     let dp = 12.0 * nu * (2.0 / 3.0 * umax) * l / (h * h);
     let mut d = domain([0.0; 3], [l, h, dx], dx);
-    d.faces.x_min = FaceCondition::Pressure { pressure: dp };
-    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0 };
+    d.faces.x_min = FaceCondition::Pressure { pressure: dp, outflow: Outflow::Uniform };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
     d.faces.z_min = PERIODIC;
     d.faces.z_max = PERIODIC;
     let dt = 0.1 / 3.0 * dx * dx / nu;
@@ -375,7 +375,7 @@ fn a_short_channel_at_re_100_survives_backflow_at_the_outlet() {
     let (h, l, d, um, nu, dx) = (0.41, 0.3, 0.1, 1.5, 1e-3, 0.01);
     let mut dom = domain([0.0; 3], [l, h, dx], dx);
     dom.faces.x_min = FaceCondition::Velocity { velocity: [um, 0.0, 0.0], profile: Profile::Parabolic };
-    dom.faces.x_max = FaceCondition::Pressure { pressure: 0.0 };
+    dom.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
     dom.faces.z_min = PERIODIC;
     dom.faces.z_max = PERIODIC;
     dom.obstacles = vec!["Cylinder".into()];
@@ -410,7 +410,7 @@ fn a_wake_at_a_pressure_outlet_distorts_only_the_last_layer() {
     let (h, l, d, um, nu, dx) = (0.41, 0.4, 0.1, 0.3, 1e-3, 0.01);
     let mut dom = domain([0.0; 3], [l, h, dx], dx);
     dom.faces.x_min = FaceCondition::Velocity { velocity: [um, 0.0, 0.0], profile: Profile::Parabolic };
-    dom.faces.x_max = FaceCondition::Pressure { pressure: 0.0 };
+    dom.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
     dom.faces.z_min = PERIODIC;
     dom.faces.z_max = PERIODIC;
     dom.obstacles = vec!["Cylinder".into()];
@@ -441,7 +441,7 @@ fn stability_limits_are_enforced_with_clear_errors() {
     let channel = |u: f64, dt: f64, nu: f64| {
         let mut d = domain([0.0; 3], [4.0, 1.0, 0.25], 0.25);
         d.faces.x_min = FaceCondition::Velocity { velocity: [u, 0.0, 0.0], profile: Profile::Uniform };
-        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0 };
+        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
         model(1.0, nu, d, step(10.0 * dt, dt, None))
     };
     let limits = Limits::default();
@@ -477,7 +477,7 @@ fn stability_limits_are_enforced_with_clear_errors() {
 fn results_are_bit_for_bit_reproducible() {
     let mut d = domain([0.0; 3], [2.0, 1.0, 1.0], 0.125);
     d.faces.x_min = FaceCondition::Velocity { velocity: [0.1, 0.02, 0.0], profile: Profile::Parabolic };
-    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0 };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
     d.faces.z_max = FaceCondition::Slip {};
     d.obstacles = vec!["Ball".into()];
     let ball = obstacle("Ball", sphere([0.7, 0.5, 0.45], 0.2, 3), &["skin"]);

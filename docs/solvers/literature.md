@@ -572,6 +572,19 @@ JCP 232(1):100–117, 2013, DOI [10.1016/j.jcp.2012.07.023](https://doi.org/10.1
 - **Limits.** Defined for flat, axis-aligned boundaries; corners need special treatment; unstable at high Re outlets —
   use regularised or convective/sponge outlets there.
 
+**C3.4 Orlanski 1976, convective outflow condition.** **Verdict: build on (convective outlets, #599).**
+- **Citation.** I. Orlanski, *A simple boundary condition for unbounded hyperbolic flows*, J. Comput. Phys.
+  21(3):251–269, 1976 (DOI not checked).
+- **Method.** At an open boundary every quantity obeys `∂φ/∂t + U ∂φ/∂n = 0`, discretised upwind and implicitly
+  in time, `φ_N^{t+1} = (φ_N^t + λ φ_{N−1}^{t+1}) / (1 + λ)`, `λ = U Δt/Δx`; Orlanski estimates `U` from the
+  interior, others prescribe it. For lattice Boltzmann it is applied to the unknown populations: Q. Lou, Z. Guo,
+  B. Shi, PRE 87:063301, 2013; Z. Yang, Comput. Math. Appl. 65(2):160–171, 2013 (DOIs not checked).
+- **Used as.** `Outflow::Convective` on a pressure face: the unknown populations convected with the cell's own
+  outward speed, the cell then held at the face's density (`w_q δρ` on every population, the momentum unchanged),
+  Zou–He where the flow comes back in (`fieldcraft_lbm::outlet`).
+- **Limits.** Holding each cell at the face's pressure still reflects part of a strong vortex's pressure field;
+  a characteristic (non-reflecting) outlet would pass it.
+
 ### C4. Grid refinement
 
 **C4.1 Filippova & Hänel 1998; Dupuis & Chopard 2003.** **Verdict: build on (Dupuis–Chopard cell-vertex refinement).**
@@ -1080,7 +1093,8 @@ lattice Boltzmann package's code was opened.
   lattice Boltzmann method involving curved geometry*, PRE 65:041203, 2002 (DOI not checked).
 - Inlets and outlets: Zou & He 1997 (C3.3), with the D3Q19 transverse-momentum correction of
   M. Hecht, J. Harting, *Implementation of on-site velocity boundary conditions for D3Q19
-  lattice Boltzmann simulations*, J. Stat. Mech. 2010, P01018 (DOI not checked).
+  lattice Boltzmann simulations*, J. Stat. Mech. 2010, P01018 (DOI not checked); convective
+  outlets after Orlanski 1976 (C3.4).
 - Stability limits (Mach ≤ 0.3, τ⁺ ≥ 0.505, runtime speed ≤ 0.5): Sterling & Chen 1996 and
   Lallemand & Luo 2000 (C1.5) for the shrinking stable region as τ → ½.
 - Voxelisation: Shewchuk's exact `orient2d`/`orient3d` (`fieldcraft_mesh::predicates`) with a

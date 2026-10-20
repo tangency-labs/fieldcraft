@@ -7,7 +7,7 @@ mod common;
 
 use common::*;
 use fieldcraft_lbm::{Limits, solve_fluid};
-use fieldcraft_model::{Collision, FaceCondition, Procedure, Profile};
+use fieldcraft_model::{Collision, FaceCondition, Outflow, Procedure, Profile};
 
 /// Benchmark "2D-1" (steady flow around a cylinder at Re = 20): M. Schäfer, S. Turek, *Benchmark
 /// computations of laminar flow around a cylinder*, in: Flow Simulation with High-Performance
@@ -21,7 +21,7 @@ fn schafer_turek_2d1(dx: f64, time_step: Option<f64>, collision: Collision) -> (
     let (h, l, d, um, nu) = (0.41, 2.2, 0.1, 0.3, 1e-3);
     let mut dom = domain([0.0; 3], [l, h, dx], dx);
     dom.faces.x_min = FaceCondition::Velocity { velocity: [um, 0.0, 0.0], profile: Profile::Parabolic };
-    dom.faces.x_max = FaceCondition::Pressure { pressure: 0.0 };
+    dom.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
     dom.faces.z_min = FaceCondition::Periodic {};
     dom.faces.z_max = FaceCondition::Periodic {};
     dom.obstacles = vec!["Cylinder".into()];
@@ -94,7 +94,7 @@ fn schafer_turek_2d2(cells: f64, lattice: f64, end_time: f64, window: f64, colli
     let dx = d / cells;
     let mut dom = domain([0.0; 3], [l, h, dx], dx);
     dom.faces.x_min = FaceCondition::Velocity { velocity: [um, 0.0, 0.0], profile: Profile::Parabolic };
-    dom.faces.x_max = FaceCondition::Pressure { pressure: 0.0 };
+    dom.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
     dom.faces.z_min = FaceCondition::Periodic {};
     dom.faces.z_max = FaceCondition::Periodic {};
     dom.initial_velocity = [2.0 / 3.0 * um, 0.0, 0.0];
