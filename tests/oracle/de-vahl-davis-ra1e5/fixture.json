@@ -1,0 +1,41 @@
+{
+  "note": "FieldCraft's accepted results for this case, written by `cargo xtask oracle --bless`. A result outside its band fails CI.",
+  "values": {
+    "nu_max": {
+      "band": 7.737107276089548e-9,
+      "value": 7.737107276089548
+    },
+    "nu_max_at": {
+      "band": 7.900082661271725e-6,
+      "value": 0.0826612717242907
+    },
+    "nu_mean": {
+      "band": 4.5345739499567116e-9,
+      "value": 4.5345739499567115
+    },
+    "nu_min": {
+      "band": 7.498003641764323e-10,
+      "value": 0.7498003641764323
+    },
+    "nu_min_at": {
+      "band": 0.000018001,
+      "value": 0.9921875
+    },
+    "u_max": {
+      "band": 3.497808843406686e-8,
+      "value": 34.978088434066855
+    },
+    "u_max_at": {
+      "band": 6.40085500611633e-6,
+      "value": 0.8550061163296144
+    },
+    "w_max": {
+      "band": 6.868692561959408e-8,
+      "value": 68.68692561959408
+    },
+    "w_max_at": {
+      "band": 7.000066777867553e-6,
+      "value": 0.06677786755351614
+    }
+  }
+}

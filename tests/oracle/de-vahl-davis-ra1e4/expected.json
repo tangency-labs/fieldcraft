@@ -1,0 +1,267 @@
+{
+ "title": "Natural convection in a square cavity (de Vahl Davis), Ra = 10⁴, Pr = 0.71",
+ "kind": "benchmark",
+ "source": "G. de Vahl Davis, 'Natural convection of air in a square cavity: a bench mark numerical solution', Int. J. Numer. Methods Fluids 3 (1983) 249–264, doi:10.1002/fld.1650030305, Table V (the bench mark solution), p. 256",
+ "quantities": [
+  {
+   "id": "nu_mean",
+   "quantity": "mean Nusselt number, from the heat the lattice gives the hot wall",
+   "measure": {
+    "from": "solve",
+    "pointer": "/heat/0/mean",
+    "scale": -64
+   },
+   "value": 2.243,
+   "tolerance": {
+    "relative": 0.0027
+   },
+   "reason": "de Vahl Davis's accuracy at this Ra (0.22 %) plus the change between the two grids of the refinement study (README); the reference is his cavity average, which at steady state equals the heat through the wall (his own wall value Nu₀ differs from it by his wall-derivative error)"
+  },
+  {
+   "id": "nu_max",
+   "quantity": "largest local Nusselt number on the hot wall",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Run",
+     "line": {
+      "from": [
+       0,
+       0.0078125,
+       0.0078125
+      ],
+      "to": [
+       0,
+       0.9921875,
+       0.0078125
+      ],
+      "count": 64,
+      "field": "wall_heat_flux",
+      "face": "x_min"
+     }
+    },
+    "pointer": "/line/min/heat_flux",
+    "scale": -1.0
+   },
+   "value": 3.528,
+   "tolerance": {
+    "relative": 0.0055
+   },
+   "reason": "the reference's accuracy plus the change between the two grids of the refinement study (README)"
+  },
+  {
+   "id": "nu_max_at",
+   "quantity": "height of the largest local Nusselt number, z/H",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Run",
+     "line": {
+      "from": [
+       0,
+       0.0078125,
+       0.0078125
+      ],
+      "to": [
+       0,
+       0.9921875,
+       0.0078125
+      ],
+      "count": 64,
+      "field": "wall_heat_flux",
+      "face": "x_min"
+     }
+    },
+    "pointer": "/line/min/xyz/1"
+   },
+   "value": 0.143,
+   "tolerance": {
+    "absolute": 0.014
+   },
+   "reason": "half of the finest mesh de Vahl Davis solved at this Ra (h = 0.025 for Ra ≤ 10⁴, 0.0125 above; his bench mark itself is extrapolated on a coarser 21 × 21 or 41 × 41 subset, and his positions come from polynomial interpolation) plus the change between the two grids"
+  },
+  {
+   "id": "nu_min",
+   "quantity": "smallest local Nusselt number on the hot wall (at its top, z = H)",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Run",
+     "line": {
+      "from": [
+       0,
+       0.0078125,
+       0.0078125
+      ],
+      "to": [
+       0,
+       0.9921875,
+       0.0078125
+      ],
+      "count": 64,
+      "field": "wall_heat_flux",
+      "face": "x_min"
+     }
+    },
+    "pointer": "/line/max/heat_flux",
+    "scale": -1.0
+   },
+   "value": 0.586,
+   "tolerance": {
+    "relative": 0.011
+   },
+   "reason": "the reference's accuracy, the change between the two grids, and the change of the profile over the half cell between the top cell's centre, where it is read, and the corner, where the reference is"
+  },
+  {
+   "id": "nu_min_at",
+   "quantity": "height of the smallest local Nusselt number, z/H",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Run",
+     "line": {
+      "from": [
+       0,
+       0.0078125,
+       0.0078125
+      ],
+      "to": [
+       0,
+       0.9921875,
+       0.0078125
+      ],
+      "count": 64,
+      "field": "wall_heat_flux",
+      "face": "x_min"
+     }
+    },
+    "pointer": "/line/max/xyz/1"
+   },
+   "value": 1.0,
+   "tolerance": {
+    "absolute": 0.025
+   },
+   "reason": "half of the finest mesh de Vahl Davis solved at this Ra (h = 0.025 for Ra ≤ 10⁴, 0.0125 above; his bench mark itself is extrapolated on a coarser 21 × 21 or 41 × 41 subset, and his positions come from polynomial interpolation), plus half a cell: the profile is read at the cell centres, the last half a cell below the top wall"
+  },
+  {
+   "id": "u_max",
+   "quantity": "largest horizontal velocity on the vertical mid-plane, u H/α",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Run",
+     "line": {
+      "from": [
+       0.5,
+       0.0078125,
+       0.0078125
+      ],
+      "to": [
+       0.5,
+       0.9921875,
+       0.0078125
+      ],
+      "count": 64,
+      "field": "velocity_x"
+     }
+    },
+    "pointer": "/line/max/velocity"
+   },
+   "value": 16.178,
+   "tolerance": {
+    "relative": 0.0023
+   },
+   "reason": "the reference's accuracy plus the change between the two grids of the refinement study (README)"
+  },
+  {
+   "id": "u_max_at",
+   "quantity": "its height, z/H",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Run",
+     "line": {
+      "from": [
+       0.5,
+       0.0078125,
+       0.0078125
+      ],
+      "to": [
+       0.5,
+       0.9921875,
+       0.0078125
+      ],
+      "count": 64,
+      "field": "velocity_x"
+     }
+    },
+    "pointer": "/line/max/xyz/1"
+   },
+   "value": 0.823,
+   "tolerance": {
+    "absolute": 0.013
+   },
+   "reason": "half of the finest mesh de Vahl Davis solved at this Ra (h = 0.025 for Ra ≤ 10⁴, 0.0125 above; his bench mark itself is extrapolated on a coarser 21 × 21 or 41 × 41 subset, and his positions come from polynomial interpolation) plus the change between the two grids"
+  },
+  {
+   "id": "w_max",
+   "quantity": "largest vertical velocity on the horizontal mid-plane, w H/α",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Run",
+     "line": {
+      "from": [
+       0.0078125,
+       0.5,
+       0.0078125
+      ],
+      "to": [
+       0.9921875,
+       0.5,
+       0.0078125
+      ],
+      "count": 64,
+      "field": "velocity_y"
+     }
+    },
+    "pointer": "/line/max/velocity"
+   },
+   "value": 19.617,
+   "tolerance": {
+    "relative": 0.0023
+   },
+   "reason": "the reference's accuracy plus the change between the two grids of the refinement study (README)"
+  },
+  {
+   "id": "w_max_at",
+   "quantity": "its distance from the hot wall, x/H",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Run",
+     "line": {
+      "from": [
+       0.0078125,
+       0.5,
+       0.0078125
+      ],
+      "to": [
+       0.9921875,
+       0.5,
+       0.0078125
+      ],
+      "count": 64,
+      "field": "velocity_y"
+     }
+    },
+    "pointer": "/line/max/xyz/0"
+   },
+   "value": 0.119,
+   "tolerance": {
+    "absolute": 0.013
+   },
+   "reason": "half of the finest mesh de Vahl Davis solved at this Ra (h = 0.025 for Ra ≤ 10⁴, 0.0125 above; his bench mark itself is extrapolated on a coarser 21 × 21 or 41 × 41 subset, and his positions come from polynomial interpolation) plus the change between the two grids"
+  }
+ ]
+}

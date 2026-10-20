@@ -1,0 +1,7 @@
+[
+ {"command": "model.units", "params": {"system": "m-kg-s-N-Pa", "temperature": "°C"}},
+ {"command": "model.material.create", "params": {"name": "Air", "density": 1.0, "fluid": {"type": "newtonian", "viscosity": 0.71}, "thermal": {"conductivity": 1.0, "specific_heat": 1.0}}},
+ {"command": "model.fluid_domain.create", "params": {"name": "Cavity", "material": "Air", "min": [0, 0, 0], "max": [1.0, 1.0, 0.015625], "spacing": 0.015625, "faces": {"z_min": {"type": "periodic"}, "z_max": {"type": "periodic"}}, "thermal": {"initial_temperature": 0.5, "gravity": [0, -710.0, 0], "expansion": 1.0, "faces": {"x_min": {"type": "temperature", "value": 1.0}, "x_max": {"type": "temperature", "value": 0.0}}}}},
+ {"command": "model.step.create", "params": {"name": "Run", "procedure": {"type": "fluid", "domain": "Cavity", "end_time": 4.0, "time_step": 1.831054688e-05, "frames": 1, "steady": {"tolerance": 1e-05, "window": 0.02, "monitors": [{"type": "heat", "faces": ["x_min"]}, {"type": "heat", "faces": ["x_max"]}]}}}},
+ {"command": "solve.fluid", "params": {"step": "Run"}, "id": "solve"}
+]
