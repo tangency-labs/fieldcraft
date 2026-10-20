@@ -595,7 +595,14 @@ const FACE_CONDITION: &[Variant] = &[
     variant(
         "pressure",
         "Pressure outlet",
-        &[num("pressure", "Pressure", D::Stress).help("Pressure at the outlet, relative to the domain's reference.").req().def("0")],
+        &[
+            num("pressure", "Pressure", D::Stress).help("Pressure at the outlet, relative to the domain's reference.").req().def("0"),
+            choice("outflow", "Outflow", &[("uniform", "Uniform"), ("convective", "Convective")])
+                .help(
+                    "Uniform: the flow crosses the outlet normally. Convective: the flow leaves as it arrives, for outlets a wake or vortices reach.",
+                )
+                .def("\"uniform\""),
+        ],
     ),
     variant("periodic", "Periodic", &[]),
 ];

@@ -102,7 +102,7 @@ pub const HISTORY: CommandSpec = CommandSpec {
 pub const FLUID: CommandSpec = CommandSpec {
     id: "solve.fluid",
     label: "Solve Fluid Step",
-    params: r#"{"step": "Flow", "backend": "cpu", "max_cells": 16000000, "max_steps": 10000000, "max_cell_updates": 1e12, "max_frame_bytes": 2e9, "threads": 8} — runs a fluid step with the lattice Boltzmann solver (the only fluid step when `step` is left out): obstacles are triangulated from the open design or taken from imported surfaces; returns the time step, relaxation time, Mach number, mass, the largest speed of all frames (`max_speed`, at `max_speed_time`) and of the last frame (`final_max_speed`), over interior fluid cells (the open-boundary layers are excluded because a wake reaching a pressure outlet distorts the last layer), the final force on every wall and, with heat, the thermal relaxation time, the temperature range and the heat into every wall; with fans and porous zones, each one's volume flow and its pressure rise (a fan's operating point: `pressure_rise` from its curve, and `measured_pressure_rise`) or `pressure_drop`; the measured values are the static-pressure difference between the fluid cell layers just outside the zone, so they include the wall friction over its thickness plus one cell (final and mean over the last quarter of the run); `backend` is `cpu` (the default: double precision, the same result on every machine) or `gpu` (the step on the GPU `FIELDCRAFT_GPU` picks, single precision, within the backend's stated tolerance of the CPU; an error when the build has none); the caps may only be lowered; `threads` as for solve.static"#,
+    params: r#"{"step": "Flow", "backend": "cpu", "max_cells": 16000000, "max_steps": 10000000, "max_cell_updates": 1e12, "max_frame_bytes": 2e9, "threads": 8} — runs a fluid step with the lattice Boltzmann solver (the only fluid step when `step` is left out): obstacles are triangulated from the open design or taken from imported surfaces; returns the time step, relaxation time, Mach number, mass, the largest speed of all frames (`max_speed`, at `max_speed_time`) and of the last frame (`final_max_speed`), over interior fluid cells (the open-boundary layers are excluded, convective outlets too, because a wake reaching a uniform pressure outlet distorts the last layer), the final force on every wall and, with heat, the thermal relaxation time, the temperature range and the heat into every wall; with fans and porous zones, each one's volume flow and its pressure rise (a fan's operating point: `pressure_rise` from its curve, and `measured_pressure_rise`) or `pressure_drop`; the measured values are the static-pressure difference between the fluid cell layers just outside the zone, so they include the wall friction over its thickness plus one cell (final and mean over the last quarter of the run); `backend` is `cpu` (the default: double precision, the same result on every machine) or `gpu` (the step on the GPU `FIELDCRAFT_GPU` picks, single precision, within the backend's stated tolerance of the CPU; an error when the build has none); the caps may only be lowered; `threads` as for solve.static"#,
     form: Some(super::forms::SOLVE_FLUID),
     kind: CommandKind::Model,
     requires: &[Requirement::FluidDomain, Requirement::Step],
@@ -580,7 +580,7 @@ fn fluid_summary(r: &FluidResult, display: &DisplaySystem) -> Value {
     // The largest speed of every frame: `max_speed` is the largest of all (the start-up often
     // passes the final state), `final_max_speed` the last frame's.
     // Over interior fluid cells: the open-boundary layers are excluded because a wake reaching a
-    // pressure outlet distorts the last layer (#590).
+    // uniform pressure outlet distorts the last layer (#590).
     let frame_max: Vec<f64> = r
         .frames
         .iter()
@@ -1451,6 +1451,36 @@ pub(crate) mod tests {
             let e = s.execute("deck.write", &json!({"format": format, "path": "/no/such/dir/x.deck"})).unwrap_err().to_string();
             assert!(e.contains("fluid step"), "{format}: {e}");
         }
+    }
+
+    /// A pressure outlet made convective through the boundary command solves, and the model keeps
+    /// the choice; a uniform outlet does not write it.
+    #[test]
+    fn a_convective_outlet_is_set_by_command_and_solves() {
+        let mut s = Session::default();
+        let script = json!([
+            {"command": "model.material.create", "params": {"name": "Oil", "density": 1.0, "fluid": {"type": "newtonian", "viscosity": 0.1}}},
+            {"command": "model.fluid_domain.create", "params": {"name": "Duct", "material": "Oil", "min": [0, 0, 0], "max": [2, 1, 0.125], "spacing": 0.125,
+                "faces": {"x_min": {"type": "velocity", "velocity": [0.1, 0, 0], "profile": "parabolic"}, "x_max": {"type": "pressure", "pressure": 0},
+                    "z_min": {"type": "periodic"}, "z_max": {"type": "periodic"}}}},
+            {"command": "model.step.create", "params": {"name": "Flow", "procedure": {"type": "fluid", "domain": "Duct", "steps": 200, "frames": 2}}},
+        ]);
+        s.run_script(&script).unwrap();
+        let faces = |s: &Session| serde_json::to_value(s.model.fluid_domain("Duct").unwrap().faces).unwrap();
+        assert_eq!(faces(&s)["x_max"], json!({"type": "pressure", "pressure": 0.0}));
+        s.execute(
+            "model.fluid_domain.boundary",
+            &json!({"domain": "Duct", "at": "x_max", "condition": {"type": "pressure", "pressure": 0, "outflow": "convective"}}),
+        )
+        .unwrap();
+        assert_eq!(faces(&s)["x_max"], json!({"type": "pressure", "pressure": 0.0, "outflow": "convective"}));
+        let r = s.execute("solve.fluid", &json!({})).unwrap();
+        assert!(r["max_speed"].as_f64().is_some_and(|v| v > 0.0 && v.is_finite()), "{r}");
+        let e = s.execute(
+            "model.fluid_domain.boundary",
+            &json!({"domain": "Duct", "at": "x_max", "condition": {"type": "pressure", "pressure": 0, "outflow": "sponge"}}),
+        );
+        assert!(e.is_err());
     }
 
     /// The Couette gap with heat: the sliding top wall held at 1, the bottom at 0, the fluid's
