@@ -7,13 +7,13 @@ Start-card thumbnails in `crates/ui-egui/thumbnails/`). The cases are engine sam
 `crates/engine/src/sample/cooling.rs` and their geometry SolidCraft recipes
 (`tests/corpus/cooling-heat-sink`, `tests/corpus/cooling-enclosure` and
 `crates/engine/samples/cooling-aio*.json`). `make.py` opens a sample with `file.sample`, solves it,
-prints the headline numbers and renders a still with a colour legend (and, for the AIO, a short MP4
-and a still of the whole cooler).
+prints the headline numbers and renders a still with a colour legend (and, for the AIO, a still of
+the whole cooler; the AIO's clip is recorded in the desktop app, see ATTRIBUTION.md).
 
 ```sh
 python3 tools/cooling/make.py heat-sink                # build, solve, render into docs/media/examples
 python3 tools/cooling/make.py enclosure --no-build     # with fieldcraft-cli already built (release)
-python3 tools/cooling/make.py aio --backend gpu        # the radiator study on the GPU, with its clip
+python3 tools/cooling/make.py aio --backend gpu        # the radiator study on the GPU
 python3 tools/cooling/make.py heat-sink --no-render    # numbers only
 ```
 

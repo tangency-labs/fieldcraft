@@ -192,7 +192,9 @@ CASES = {
                    "caption": "sealed enclosure · natural convection"},
     },
     "aio": {
-        "sample": "cooling-aio", "numbers": aio, "out": "cooling-aio-airflow", "clip": True, "still": "cooling-aio",
+        # no clip: docs/media/examples/cooling-aio-airflow.mp4 is now recorded in the desktop app on a
+        # longer domain (see its ATTRIBUTION.md row); a headless clip here would overwrite it.
+        "sample": "cooling-aio", "numbers": aio, "out": "cooling-aio-airflow", "clip": False, "still": "cooling-aio",
         "temperatures": [25.0, 45.0],
         # the last layer of cells before the symmetry plane
         "render": {"surface": False, "slice": {"axis": "x", "position": round(AIO_SHROUD[1][0] - AIO_SPACING / 2, 4)},

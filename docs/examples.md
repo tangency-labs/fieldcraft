@@ -362,8 +362,9 @@ the channels' sharp corners (the same wall artefact as the heat sink's).
 **Look at:** the cutaway temperature slice (`results.slice` with `axis: "x"` on the cut): cool air
 in front, each channel heating its air between the fins, warm jets into the exhaust, and slow
 recirculation behind the frame's top and bottom.
-[The clip](media/examples/cooling-aio-airflow.mp4) shows the start-up: the warm front leaving the
-channels with a vortex curling at either end of the frame, then the settled exhaust.
+[The clip](media/examples/cooling-aio-airflow.mp4), recorded in the desktop app on a longer domain
+(130 mm of exhaust behind the radiator, 12.6 M cells to 2.4 s), shows the start-up: the warm front
+leaving the channels with a vortex curling at either end of the frame, then the settled exhaust.
 
 **Caveats:** 0.1 m/s is the ceiling of today's collision operator: the channel flow reaches about
 470 mm/s, a cell Reynolds number of about 19 at 0.6 mm, where the heat-sink study found the
