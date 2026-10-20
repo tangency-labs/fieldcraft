@@ -146,6 +146,12 @@ property. Crash reports and the log stay on your computer; Help › Report a Bug
 you review and submit yourself, with your session or model attached only if you tick them
 ([docs/crash-reports.md](docs/crash-reports.md)).
 
+## Sponsors
+
+[![CI powered by Blacksmith](docs/sponsors/blacksmith-ci-powered.png)](https://www.blacksmith.sh)
+
+FieldCraft's continuous integration runs on [Blacksmith](https://www.blacksmith.sh), which sponsors its CI minutes.
+
 ## License
 
 Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option. Notices

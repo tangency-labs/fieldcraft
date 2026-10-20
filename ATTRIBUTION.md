@@ -204,6 +204,7 @@ is committed and listed here with its exports.
 | assets/app-icon/icon.iconset/icon_512x512@2x.png | FieldCraft contributors | sips export (1024 px) of assets/app-icon/icon.png | MIT OR Apache-2.0 |
 | packaging/macos/README.txt, packaging/linux/io.github.jyviko.fieldcraft.desktop, packaging/macos/entitlements.plist | FieldCraft contributors | Original packaging text: the disk image's install note, the Linux desktop entry and the (empty) hardened-runtime entitlements | MIT OR Apache-2.0 |
 | crates/ui-egui/fonts/Inter-SemiBold.ttf | The Inter Project Authors | https://github.com/rsms/inter release v4.1 (Inter-4.1.zip, extras/ttf/Inter-SemiBold.ttf), unmodified; licence text in crates/ui-egui/fonts/OFL.txt; the interface's caps labels (theme::LABEL_FAMILY) | SIL OFL 1.1 |
+| docs/sponsors/blacksmith-ci-powered.png | Blacksmith (blacksmith.sh) | "CI powered by Blacksmith" sponsor banner supplied by Blacksmith for the sponsorship credit; used only to credit the sponsor, not part of the application | © Blacksmith, used with permission |
 
 ## Adapted code
 
