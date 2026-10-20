@@ -28,6 +28,9 @@
 // contrib.w and forces.w). The temperature feeds back as the buoyant acceleration −β g θ.
 
 override AA_MODE: bool = true;
+// The recursive regularised collision instead of the two-relaxation-time one
+// (fieldcraft_lbm::regularized).
+override REGULARIZED: bool = false;
 
 const Q: u32 = 19u;
 const QT: u32 = 7u;
@@ -273,6 +276,10 @@ fn collide_cell(cell: u32, lid: u32) {
     if has_heat() { moments[cell] = vec4<f32>(u, rho); }
     let uf = dot(u, force);
     let forced = forced();
+    if REGULARIZED {
+        collide_regularized(cell, xyz, &fq, drho, rho, u, force, forced);
+        return;
+    }
     let wp = params.omega_plus;
     let wm = params.omega_minus;
     let sp = params.s_plus;
@@ -302,6 +309,75 @@ fn collide_cell(cell: u32, lid: u32) {
         }
         f[post_index(q, cell, xyz)] = fq[q] - relax_plus - relax_minus + s_plus + s_minus;
         f[post_index(o, cell, xyz)] = fq[o] - relax_plus + relax_minus + s_plus - s_minus;
+    }
+}
+
+// The recursive regularised collision with Guo forcing (fieldcraft_lbm::regularized, whose notes
+// derive it): every population rebuilt from ρ, u, the non-equilibrium flux
+// P = Π − ρ (c_s² I + u u) + ½ (u F + F u) and the third-order moments D3Q19 holds (equilibrium
+// ρ u_a u_b u_c, non-equilibrium u_a P_bc + u_b P_ac + u_c P_ab, as the orthogonal sums and
+// differences of each pair), then f* = f^eq + (1 − ω) f^(1)[P] + ½ F_q. In deviations from the
+// weights, Π − ρ c_s² I = Σ c c h − δρ c_s² I.
+fn collide_regularized(cell: u32, xyz: vec3<i32>, fq: ptr<function, array<f32, 19>>, drho: f32, rho: f32, u: vec3<f32>, force: vec3<f32>, forced: bool) {
+    // Σ c c h: the diagonal (xx, yy, zz) and the off-diagonal (xy, xz, yz).
+    // (Opposite directions share c c, so by pairs.)
+    var d = vec3<f32>(0.0);
+    var o = vec3<f32>(0.0);
+    for (var q = 1u; q < Q; q = q + 2u) {
+        let c = vec3<f32>(c_of(q));
+        let v = (*fq)[q] + (*fq)[q + 1u];
+        d = d + c * c * v;
+        o = o + vec3<f32>(c.x * c.y, c.x * c.z, c.y * c.z) * v;
+    }
+    let cs2 = 1.0 / 3.0;
+    var pd = d - vec3<f32>(drho * cs2) - rho * u * u;
+    var po = o - rho * vec3<f32>(u.x * u.y, u.x * u.z, u.y * u.z);
+    if forced {
+        pd = pd + u * force;
+        po = po + 0.5 * vec3<f32>(u.x * force.y + force.x * u.y, u.x * force.z + force.x * u.z, u.y * force.z + force.y * u.z);
+    }
+    let trace = pd.x + pd.y + pd.z;
+    let relax = 1.0 - params.omega_plus;
+    // Third-order coefficients (equilibrium plus (1 − ω) times the recursive part).
+    let xyy = rho * u.x * u.y * u.y + relax * (2.0 * u.y * po.x + u.x * pd.y);
+    let xzz = rho * u.x * u.z * u.z + relax * (2.0 * u.z * po.y + u.x * pd.z);
+    let xxy = rho * u.x * u.x * u.y + relax * (2.0 * u.x * po.x + u.y * pd.x);
+    let yzz = rho * u.y * u.z * u.z + relax * (2.0 * u.z * po.z + u.y * pd.z);
+    let xxz = rho * u.x * u.x * u.z + relax * (2.0 * u.x * po.y + u.z * pd.x);
+    let yyz = rho * u.y * u.y * u.z + relax * (2.0 * u.y * po.z + u.z * pd.y);
+    let sums = 13.5 * vec3<f32>(xyy + xzz, xxy + yzz, xxz + yyz);
+    let diffs = 4.5 * vec3<f32>(xyy - xzz, xxy - yzz, xxz - yyz);
+    let uu = dot(u, u);
+    let uf = dot(u, force);
+    let third = 1.0 / 3.0;
+    // The rest population, then each pair of opposite directions: the even terms are shared, the
+    // odd ones (orders 1 and 3, the force's first) change sign.
+    var rest = w_of(0u) * (drho - 1.5 * rho * uu - relax * 1.5 * trace);
+    if forced { rest = rest - 1.5 * w_of(0u) * uf; }
+    f[post_index(0u, cell, xyz)] = rest;
+    for (var q = 1u; q < Q; q = q + 2u) {
+        let c = vec3<f32>(c_of(q));
+        let w = w_of(q);
+        let cu = dot(c, u);
+        // H_abb = c_a c_b² − c_a/3, paired as in fieldcraft_lbm::regularized.
+        let hxyy = c.x * c.y * c.y - c.x * third;
+        let hxzz = c.x * c.z * c.z - c.x * third;
+        let hxxy = c.x * c.x * c.y - c.y * third;
+        let hyzz = c.y * c.z * c.z - c.y * third;
+        let hxxz = c.x * c.x * c.z - c.z * third;
+        let hyyz = c.y * c.y * c.z - c.z * third;
+        let h3 = dot(vec3<f32>(hxyy + hxzz, hxxy + hyzz, hxxz + hyyz), sums) + dot(vec3<f32>(hxyy - hxzz, hxxy - hyzz, hxxz - hyyz), diffs);
+        let cpc = dot(c * c, pd) + 2.0 * dot(vec3<f32>(c.x * c.y, c.x * c.z, c.y * c.z), po);
+        let second = 4.5 * (cpc - trace * third);
+        var even = w * (drho + rho * (4.5 * cu * cu - 1.5 * uu) + relax * second);
+        var odd = w * (rho * 3.0 * cu + h3);
+        if forced {
+            let cf = dot(c, force);
+            even = even + 0.5 * w * (9.0 * cu * cf - 3.0 * uf);
+            odd = odd + 1.5 * w * cf;
+        }
+        f[post_index(q, cell, xyz)] = even + odd;
+        f[post_index(q + 1u, cell, xyz)] = even - odd;
     }
 }
 
@@ -380,6 +456,17 @@ fn scatter_links(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_i
     store_streamed(lu.x & 0xffu, lu.w, aa_coords(lu.w), g[l]);
 }
 
+// Every streamed population of an open cell set to the equilibrium of `rho` and `bare` (the
+// velocity without the half force), as deviations from the weights: what an outflow cell holds
+// under the regularised collision (fieldcraft_lbm::flow::hold_equilibrium).
+fn hold_equilibrium(cell: u32, xyz: vec3<i32>, rho: f32, bare: vec3<f32>) {
+    let uu = dot(bare, bare);
+    for (var q = 0u; q < Q; q = q + 1u) {
+        let cu = dot(vec3<f32>(c_of(q)), bare);
+        store_streamed(q, cell, xyz, w_of(q) * ((rho - 1.0) + rho * (3.0 * cu + 4.5 * cu * cu - 1.5 * uu)));
+    }
+}
+
 // Zou–He velocity and pressure boundaries on the streamed populations in g (Zou & He 1997;
 // Hecht & Harting 2010 for the D3Q19 transverse correction).
 @compute @workgroup_size(256)
@@ -421,6 +508,12 @@ fn open_boundaries(@builtin(local_invocation_index) lid: u32, @builtin(workgroup
         // Not `bare[axis] = …`: DX12's shader compiler (FXC) refuses a write through a
         // dynamic index into a local vector (X3500).
         bare = select(-a_half, vec3<f32>(sign * un), vec3<u32>(0u, 1u, 2u) == vec3<u32>(axis));
+    }
+    // With the regularised collision a pressure outlet holds the equilibrium of its density and
+    // the normal velocity just found (fieldcraft_lbm::flow).
+    if REGULARIZED && ou.z == 1u {
+        hold_equilibrium(cell, xyz, rho, bare);
+        return;
     }
     for (var q = 1u; q < Q; q = q + 1u) {
         let c = c_of(q);

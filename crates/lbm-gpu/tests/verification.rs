@@ -1,5 +1,5 @@
 //! The GPU backend against the CPU scheme and the analytic cases of `fieldcraft-lbm`'s
-//! verification suite. The stated tolerances of the backend, with populations stored as
+//! verification suite, with both collision operators. The stated tolerances of the backend, with populations stored as
 //! deviations from their weights in single precision (measured on lavapipe at 2–5e-6, with
 //! a margin): velocity fields within 2e-5 of the largest speed, densities within 1e-6, wall
 //! forces within 5e-5 of their magnitude (a wall's shear within 5e-5 of itself), mass drift below
@@ -22,7 +22,8 @@ use fieldcraft_lbm::backend::Backend;
 use fieldcraft_lbm::{Flow, Setup};
 use fieldcraft_lbm_gpu::{GpuFlow, Options, Streaming};
 use fieldcraft_model::{
-    BoxFace, Directional, FaceCondition, Fluid, FluidDomain, FluidThermal, Material, Model, Procedure, Profile, Step, Thermal, ThermalCondition,
+    BoxFace, Collision, Directional, FaceCondition, Fluid, FluidDomain, FluidThermal, Material, Model, Procedure, Profile, Step, Thermal,
+    ThermalCondition,
 };
 
 const PERIODIC: FaceCondition = FaceCondition::Periodic {};
@@ -74,6 +75,11 @@ fn gpu(flow: &Flow, streaming: Streaming) -> Option<Gpu> {
     }
 }
 
+/// Every collision with every layout.
+fn cases() -> impl Iterator<Item = (Collision, Streaming)> {
+    COLLISIONS.into_iter().flat_map(|c| [Streaming::InPlace, Streaming::TwoBuffers].map(move |s| (c, s)))
+}
+
 /// Both backends through every step; the CPU's fields and the GPU's.
 fn both(setup: &Setup, mut cpu: Flow, streaming: Streaming) -> Option<(Flow, Gpu)> {
     let mut gpu = gpu(&cpu, streaming)?;
@@ -99,8 +105,8 @@ fn field_difference(cpu: &mut Flow, gpu: &mut GpuFlow) -> (f64, f64) {
 
 #[test]
 fn plane_poiseuille_matches_the_analytic_profile_and_the_cpu() {
-    // Both layouts: the default depends on the device (see `Streaming`).
-    for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+    // Both collisions and both layouts (the default layout depends on the device, see `Streaming`).
+    for (collision, streaming) in cases() {
         let (h, nu, umax, n) = (1.0, 1.0 / 6.0, 0.1, 16usize);
         let dx = h / n as f64;
         let a = 8.0 * nu * umax / (h * h);
@@ -110,7 +116,7 @@ fn plane_poiseuille_matches_the_analytic_profile_and_the_cpu() {
         d.faces.z_min = PERIODIC;
         d.faces.z_max = PERIODIC;
         d.acceleration = [a, 0.0, 0.0];
-        let m = model(1.0, nu, d, step(4.0 * h * h / nu, dx * dx, Some(3.0 / 16.0)));
+        let m = model(1.0, nu, d, collide(4.0 * h * h / nu, dx * dx, Some(3.0 / 16.0), collision));
         let (setup, flow) = prepare(&m, &[]);
         let Some((mut cpu, mut gpu)) = both(&setup, flow, streaming) else { continue };
         let f = gpu.fields().unwrap();
@@ -121,16 +127,18 @@ fn plane_poiseuille_matches_the_analytic_profile_and_the_cpu() {
             err = err.max((f.velocity[j][0] * setup.velocity_scale() - exact).abs() / umax);
         }
         let (du, drho) = field_difference(&mut cpu, &mut gpu);
-        println!("Poiseuille on the GPU: max error {err:.2e} of the peak; CPU/GPU velocity {du:.2e}, density {drho:.2e}");
-        assert!(err < 2e-5, "{err}");
+        println!("{collision:?} Poiseuille on the GPU: max error {err:.2e} of the peak; CPU/GPU velocity {du:.2e}, density {drho:.2e}");
+        // Exact with Λ = 3/16; the regularised collision's wall is second-order accurate (its
+        // CPU test), 1.3e-3 of the peak on 16 cells.
+        assert!(err < if collision == Collision::Trt { 2e-5 } else { 2e-3 }, "{err}");
         assert!(du < 2e-5 && drho < 1e-6, "{du} {drho}");
     }
 }
 
 #[test]
 fn couette_wall_forces_match_the_cpu() {
-    // Both layouts: the default depends on the device (see `Streaming`).
-    for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+    // Both collisions and both layouts (the default layout depends on the device, see `Streaming`).
+    for (collision, streaming) in cases() {
         let (h, nu, uw, n) = (1.0, 0.1, 0.05, 16usize);
         let dx = h / n as f64;
         let mut d = domain([0.0; 3], [dx, h, dx], dx);
@@ -139,20 +147,25 @@ fn couette_wall_forces_match_the_cpu() {
         d.faces.z_min = PERIODIC;
         d.faces.z_max = PERIODIC;
         d.faces.y_max = FaceCondition::MovingWall { velocity: [uw, 0.0, 0.0] };
-        let m = model(1.0, nu, d, step(3.0 * h * h / nu, 0.5 * dx * dx / (3.0 * nu), None));
+        let m = model(1.0, nu, d, collide(3.0 * h * h / nu, 0.5 * dx * dx / (3.0 * nu), None, collision));
         let (setup, flow) = prepare(&m, &[]);
         let Some((mut cpu, mut gpu)) = both(&setup, flow, streaming) else { continue };
         let (fc, fg) = (Backend::forces(&mut cpu).unwrap(), gpu.forces().unwrap());
         let bottom = BoxFace::ALL.iter().position(|f| f.name() == "y_min").unwrap();
         let top = BoxFace::ALL.iter().position(|f| f.name() == "y_max").unwrap();
         let tau = nu * uw / h / setup.force_scale() * dx * dx;
-        println!("Couette: wall force CPU {:?} / GPU {:?} (expected ±{tau:.3e} per step)", fc[bottom], fg[bottom]);
+        println!("{collision:?} Couette: wall force CPU {:?} / GPU {:?} (expected ±{tau:.3e} per step)", fc[bottom], fg[bottom]);
         // The tangential force is the shear: a cancellation of the links' exchanges to 1e-6 per link,
         // summed from the stored deviations alone (adding the weights back in single precision left
         // it 1e-4 of itself on an RTX 4090; 3e-6 on lavapipe this way). The normal force is the
         // pressure.
         for g in [bottom, top] {
-            println!("Couette group {g}: CPU {:.9e}, GPU {:.9e}, shear parity {:.9e}", fc[g][0], fg[g][0], (fc[g][0] - fg[g][0]).abs() / tau.abs());
+            println!(
+                "{collision:?} Couette group {g}: CPU {:.9e}, GPU {:.9e}, shear parity {:.9e}",
+                fc[g][0],
+                fg[g][0],
+                (fc[g][0] - fg[g][0]).abs() / tau.abs()
+            );
             assert!((fc[g][0] - fg[g][0]).abs() <= 5e-5 * tau.abs(), "group {g} shear: {} vs {}", fc[g][0], fg[g][0]);
             assert!((fc[g][1] - fg[g][1]).abs() <= 1e-6 * fc[g][1].abs(), "group {g} normal: {} vs {}", fc[g][1], fg[g][1]);
         }
@@ -163,8 +176,8 @@ fn couette_wall_forces_match_the_cpu() {
 
 #[test]
 fn taylor_green_decays_like_the_cpu_and_conserves_mass() {
-    // Both layouts: the default depends on the device (see `Streaming`).
-    for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+    // Both collisions and both layouts (the default layout depends on the device, see `Streaming`).
+    for (collision, streaming) in cases() {
         let (nu, u0, l, n) = (0.1, 0.1, 2.0 * std::f64::consts::PI, 32usize);
         let dx = l / n as f64;
         let mut d = domain([0.0; 3], [l, l, dx], dx);
@@ -173,7 +186,7 @@ fn taylor_green_decays_like_the_cpu_and_conserves_mass() {
         }
         let dt = 0.3 * dx * dx / (3.0 * nu);
         let half_life = std::f64::consts::LN_2 / (2.0 * nu);
-        let m = model(1.0, nu, d, step(half_life, dt, None));
+        let m = model(1.0, nu, d, collide(half_life, dt, None, collision));
         let (setup, mut flow) = prepare(&m, &[]);
         let grid = *flow.grid();
         let to_lattice = 1.0 / setup.velocity_scale();
@@ -200,7 +213,9 @@ fn taylor_green_decays_like_the_cpu_and_conserves_mass() {
         let amplitude = num / den * setup.velocity_scale();
         let exact = u0 * (-2.0 * nu * setup.steps as f64 * setup.time_step).exp();
         let err = (amplitude / exact - 1.0).abs();
-        println!("Taylor–Green on the GPU: amplitude error {err:.2e}; CPU/GPU velocity {du:.2e}, density {drho:.2e}; mass drift {drift:.2e}");
+        println!(
+            "{collision:?} Taylor–Green on the GPU: amplitude error {err:.2e}; CPU/GPU velocity {du:.2e}, density {drho:.2e}; mass drift {drift:.2e}"
+        );
         // The amplitude error is the scheme's at 32 cells (the CPU test shows second order).
         assert!(err < 5e-3, "{err}");
         assert!(du < 2e-5 && drho < 1e-6, "{du} {drho}");
@@ -210,8 +225,8 @@ fn taylor_green_decays_like_the_cpu_and_conserves_mass() {
 
 #[test]
 fn flow_past_a_sphere_matches_the_cpu_fields_and_forces() {
-    // Both layouts: the default depends on the device (see `Streaming`).
-    for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+    // Both collisions and both layouts (the default layout depends on the device, see `Streaming`).
+    for (collision, streaming) in cases() {
         let l = 24usize;
         let side = l as f64;
         let mut d = domain([0.0; 3], [side; 3], 1.0);
@@ -232,7 +247,7 @@ fn flow_past_a_sphere_matches_the_cpu_fields_and_forces() {
                 time_step: Some(1.0),
                 frames: 1,
                 magic: None,
-                collision: None,
+                collision: Some(collision),
                 steady: None,
             },
         );
@@ -243,7 +258,7 @@ fn flow_past_a_sphere_matches_the_cpu_fields_and_forces() {
         let skin = cpu.groups().iter().position(|g| g.name == "skin").unwrap();
         let scale = fc[skin].iter().map(|v| v.abs()).fold(0.0, f64::max);
         let dforce = (0..3).map(|a| (fc[skin][a] - fg[skin][a]).abs()).fold(0.0, f64::max) / scale;
-        println!("Sphere: CPU/GPU velocity {du:.2e}, density {drho:.2e}; drag CPU {:?} GPU {:?} ({dforce:.2e})", fc[skin], fg[skin]);
+        println!("{collision:?} Sphere: CPU/GPU velocity {du:.2e}, density {drho:.2e}; drag CPU {:?} GPU {:?} ({dforce:.2e})", fc[skin], fg[skin]);
         assert!(du < 2e-5 && drho < 1e-6, "{du} {drho}");
         assert!(dforce < 5e-5, "{dforce}");
     }
@@ -251,8 +266,8 @@ fn flow_past_a_sphere_matches_the_cpu_fields_and_forces() {
 
 #[test]
 fn zou_he_channel_matches_the_cpu() {
-    // Both layouts: the default depends on the device (see `Streaming`).
-    for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+    // Both collisions and both layouts (the default layout depends on the device, see `Streaming`).
+    for (collision, streaming) in cases() {
         let (h, l, umax, nu) = (1.0, 4.0, 0.1, 0.05);
         let dx = h / 10.0;
         let mut d = domain([0.0; 3], [l, h, dx], dx);
@@ -260,11 +275,11 @@ fn zou_he_channel_matches_the_cpu() {
         d.faces.x_max = FaceCondition::Pressure { pressure: 0.0 };
         d.faces.z_min = PERIODIC;
         d.faces.z_max = PERIODIC;
-        let m = model(1.0, nu, d, step(2.0 * l / umax, 0.05 * dx / umax, None));
+        let m = model(1.0, nu, d, collide(2.0 * l / umax, 0.05 * dx / umax, None, collision));
         let (setup, flow) = prepare(&m, &[]);
         let Some((mut cpu, mut gpu)) = both(&setup, flow, streaming) else { continue };
         let (du, drho) = field_difference(&mut cpu, &mut gpu);
-        println!("Zou–He channel: CPU/GPU velocity {du:.2e}, density {drho:.2e}");
+        println!("{collision:?} Zou–He channel: CPU/GPU velocity {du:.2e}, density {drho:.2e}");
         assert!(du < 2e-5 && drho < 1e-6, "{du} {drho}");
     }
 }
@@ -310,8 +325,8 @@ fn heat_difference(cpu: &mut Flow, gpu: &mut GpuFlow) -> (f64, f64) {
 /// about T₀ = 20 in single precision.
 #[test]
 fn conduction_between_plates_matches_the_analytic_profile_and_the_cpu() {
-    // Both layouts: the default depends on the device (see `Streaming`).
-    for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+    // Both collisions and both layouts (the default layout depends on the device, see `Streaming`).
+    for (collision, streaming) in cases() {
         let (h, alpha, n) = (1.0, 0.05, 16usize);
         let dx = h / n as f64;
         let mut d = domain([0.0; 3], [dx, h, dx], dx);
@@ -323,7 +338,7 @@ fn conduction_between_plates_matches_the_analytic_profile_and_the_cpu() {
         t.faces.y_min = ThermalCondition::Temperature { value: kelvin(20.0) };
         t.faces.y_max = ThermalCondition::Temperature { value: kelvin(21.0) };
         d.thermal = Some(t);
-        let m = hot_model(1.0, 0.1, alpha, d, step(8.0 * h * h / alpha, dx * dx / (8.0 * alpha), None));
+        let m = hot_model(1.0, 0.1, alpha, d, collide(8.0 * h * h / alpha, dx * dx / (8.0 * alpha), None, collision));
         let (setup, cpu) = prepare(&m, &[]);
         let Some((mut cpu, mut gpu)) = both(&setup, cpu, streaming) else { continue };
         let f = gpu.fields().unwrap();
@@ -356,8 +371,8 @@ fn conduction_between_plates_matches_the_analytic_profile_and_the_cpu() {
 /// lattice (pulls, the three wall conditions, the inlet and the outlet) agrees with the CPU.
 #[test]
 fn a_heated_channel_matches_the_cpu() {
-    // Both layouts: the default depends on the device (see `Streaming`).
-    for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+    // Both collisions and both layouts (the default layout depends on the device, see `Streaming`).
+    for (collision, streaming) in cases() {
         let (h, l, umax, nu, alpha) = (1.0, 2.0, 0.1, 0.05, 0.02);
         let dx = h / 8.0;
         let mut d = domain([0.0; 3], [l, h, dx], dx);
@@ -370,12 +385,12 @@ fn a_heated_channel_matches_the_cpu() {
         t.faces.y_min = ThermalCondition::Flux { value: 0.05 };
         t.faces.y_max = ThermalCondition::Temperature { value: kelvin(0.0) };
         d.thermal = Some(t);
-        let m = hot_model(1.0, nu, alpha, d, step(2.0 * l / umax, 0.05 * dx / umax, None));
+        let m = hot_model(1.0, nu, alpha, d, collide(2.0 * l / umax, 0.05 * dx / umax, None, collision));
         let (setup, cpu) = prepare(&m, &[]);
         let Some((mut cpu, mut gpu)) = both(&setup, cpu, streaming) else { continue };
         let (du, drho) = field_difference(&mut cpu, &mut gpu);
         let (dt, dh) = heat_difference(&mut cpu, &mut gpu);
-        println!("heated channel: GPU vs CPU: velocity {du:.2e} density {drho:.2e} temperature {dt:.2e} heat {dh:.2e}");
+        println!("{collision:?} heated channel: GPU vs CPU: velocity {du:.2e} density {drho:.2e} temperature {dt:.2e} heat {dh:.2e}");
         assert!(du < 2e-5 && drho < 1e-6, "{du} {drho}");
         assert!(dt < 2e-5 && dh < 1e-4, "{dt} {dh}");
     }
@@ -386,8 +401,8 @@ fn a_heated_channel_matches_the_cpu() {
 /// alike.
 #[test]
 fn natural_convection_matches_the_cpu() {
-    // Both layouts: the default depends on the device (see `Streaming`).
-    for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+    // Both collisions and both layouts (the default layout depends on the device, see `Streaming`).
+    for (collision, streaming) in cases() {
         let (h, pr, alpha, n, u_max) = (1.0, 0.71, 1.0, 16usize, 3.65);
         let nu = pr * alpha;
         let g_beta = 1e3 * nu * alpha / (h * h * h);
@@ -400,14 +415,16 @@ fn natural_convection_matches_the_cpu() {
         t.faces.x_max = ThermalCondition::Temperature { value: kelvin(0.0) };
         d.thermal = Some(t);
         let dt = (0.05 * dx / (u_max * alpha / h)).min(dx * dx / (4.0 * alpha));
-        let m = hot_model(1.0, nu, alpha, d, step(h * h / alpha, dt, None));
+        let m = hot_model(1.0, nu, alpha, d, collide(h * h / alpha, dt, None, collision));
         let (setup, cpu) = prepare(&m, &[]);
         let Some((mut cpu, mut gpu)) = both(&setup, cpu, streaming) else { continue };
         let (du, drho) = field_difference(&mut cpu, &mut gpu);
         let (dt, dh) = heat_difference(&mut cpu, &mut gpu);
         // the fields are in lattice units: the time step puts the cavity's fastest flow at 0.05
         let speed = cpu.fields().unwrap().velocity.iter().map(|v| (v[0] * v[0] + v[1] * v[1]).sqrt()).fold(0.0, f64::max);
-        println!("cavity: fastest lattice speed {speed:.3e}; GPU vs CPU: velocity {du:.2e} density {drho:.2e} temperature {dt:.2e} heat {dh:.2e}");
+        println!(
+            "{collision:?} cavity: fastest lattice speed {speed:.3e}; GPU vs CPU: velocity {du:.2e} density {drho:.2e} temperature {dt:.2e} heat {dh:.2e}"
+        );
         assert!(speed > 0.01, "the buoyancy drives a flow: {speed}");
         assert!(du < 2e-5 && drho < 1e-6, "{du} {drho}");
         assert!(dt < 2e-5 && dh < 1e-4, "{dt} {dh}");
@@ -510,8 +527,8 @@ fn compare_incremental(mut cpu: Flow, heated: bool, streaming: Streaming) {
 
 #[test]
 fn odd_even_and_chunk_readbacks_match_the_cpu_with_heat_open_and_slip_faces() {
-    // Both layouts: the default depends on the device (see `Streaming`).
-    for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+    // Both collisions and both layouts (the default layout depends on the device, see `Streaming`).
+    for (collision, streaming) in cases() {
         let mut d = domain([0.0; 3], [16.0, 8.0, 1.0], 1.0);
         d.faces.x_min = FaceCondition::Velocity { velocity: [0.01, 0.0, 0.0], profile: Profile::Uniform };
         d.faces.x_max = FaceCondition::Pressure { pressure: 0.0 };
@@ -535,7 +552,7 @@ fn odd_even_and_chunk_readbacks_match_the_cpu_with_heat_open_and_slip_faces() {
                 time_step: Some(1.0),
                 frames: 1,
                 magic: None,
-                collision: None,
+                collision: Some(collision),
                 steady: None,
             },
         );
@@ -546,8 +563,8 @@ fn odd_even_and_chunk_readbacks_match_the_cpu_with_heat_open_and_slip_faces() {
 
 #[test]
 fn odd_even_and_chunk_readbacks_match_the_cpu_around_an_obstacle() {
-    // Both layouts: the default depends on the device (see `Streaming`).
-    for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+    // Both collisions and both layouts (the default layout depends on the device, see `Streaming`).
+    for (collision, streaming) in cases() {
         let mut d = domain([0.0; 3], [12.0; 3], 1.0);
         for face in BoxFace::ALL {
             *d.faces.get_mut(face) = PERIODIC;
@@ -566,7 +583,7 @@ fn odd_even_and_chunk_readbacks_match_the_cpu_around_an_obstacle() {
                 time_step: Some(1.0),
                 frames: 1,
                 magic: None,
-                collision: None,
+                collision: Some(collision),
                 steady: None,
             },
         );

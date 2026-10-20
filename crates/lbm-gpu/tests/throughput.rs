@@ -1,7 +1,7 @@
 //! Throughput of the GPU backend (ignored; run with
 //! `cargo test --release -p fieldcraft-lbm-gpu --test throughput -- --ignored --nocapture`),
-//! on the cases of `fieldcraft-lbm`'s throughput test, streaming in place and with two buffers
-//! (what `Streaming::Auto` picks on this device is marked). `FIELDCRAFT_LBM_GPU_PROFILE=1`
+//! on the cases of `fieldcraft-lbm`'s throughput test, with both collisions, streaming in place
+//! and with two buffers (what `Streaming::Auto` picks on this device is marked). `FIELDCRAFT_LBM_GPU_PROFILE=1`
 //! adds each kernel's GPU time (timestamp queries; the throughput is then not representative).
 
 #[path = "../../lbm/tests/common/mod.rs"]
@@ -16,7 +16,8 @@ use fieldcraft_model::{BoxFace, FaceCondition};
 #[test]
 #[ignore]
 fn cell_updates_per_second() {
-    for (name, l, sphere_radius) in [("periodic box", 64usize, 0.0), ("periodic box", 128, 0.0), ("box with a sphere", 128, 32.0)] {
+    let cases = [("periodic box", 64usize, 0.0), ("periodic box", 128, 0.0), ("box with a sphere", 128, 32.0)];
+    for ((name, l, sphere_radius), collision) in cases.into_iter().flat_map(|c| COLLISIONS.map(move |k| (c, k))) {
         let side = l as f64;
         let mut d = domain([0.0; 3], [side; 3], 1.0);
         for f in BoxFace::ALL {
@@ -40,7 +41,7 @@ fn cell_updates_per_second() {
                 time_step: Some(1.0),
                 frames: 1,
                 magic: None,
-                collision: None,
+                collision: Some(collision),
                 steady: None,
             },
         );
@@ -48,7 +49,7 @@ fn cell_updates_per_second() {
         let policy = Policy::from_env().expect("FIELDCRAFT_GPU names a policy");
         let profile = std::env::var("FIELDCRAFT_LBM_GPU_PROFILE").is_ok_and(|v| v == "1");
         let Ok(auto) = GpuFlow::new(&flow, policy) else {
-            println!("skipping {name}, {l}³: no GPU or not enough memory");
+            println!("skipping {name}, {l}³ ({collision:?}): no GPU or not enough memory");
             continue;
         };
         let picked = auto.streams_in_place();
@@ -62,7 +63,7 @@ fn cell_updates_per_second() {
             let _ = gpu.mass().unwrap();
             let s = start.elapsed().as_secs_f64();
             println!(
-                "{name}, {l}³ on {}, {}{}: {:.1} M cell updates/s (pipelines {:.2} s)",
+                "{name}, {l}³, {collision:?} on {}, {}{}: {:.1} M cell updates/s (pipelines {:.2} s)",
                 gpu.adapter_name(),
                 if in_place { "in place" } else { "two buffers" },
                 if in_place == picked { " (auto)" } else { "" },

@@ -322,6 +322,7 @@ impl GpuFlow {
         }
 
         let (omega_plus, omega_minus) = flow.omegas();
+        let regularized = flow.collision() == fieldcraft_model::Collision::Regularized;
         let acc = flow.acceleration();
         let forced = acc != [0.0; 3];
         let cells = groups(n)?;
@@ -508,7 +509,10 @@ impl GpuFlow {
                 layout: Some(&pl),
                 module: &module,
                 entry_point: Some(name),
-                compilation_options: wgpu::PipelineCompilationOptions { constants: &[("AA_MODE", if aa { 1.0 } else { 0.0 })], ..Default::default() },
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &[("AA_MODE", if aa { 1.0 } else { 0.0 }), ("REGULARIZED", if regularized { 1.0 } else { 0.0 })],
+                    ..Default::default()
+                },
                 cache: None,
             });
             pipelines.insert(name, p);
