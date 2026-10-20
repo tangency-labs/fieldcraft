@@ -27,15 +27,10 @@ pub struct ControlRequest {
 }
 
 impl ControlRequest {
-    /// A request and the receiver of its reply, which the control server's thread waits on.
-    #[allow(
-        clippy::disallowed_types,
-        clippy::disallowed_methods,
-        reason = "the reply's receiver goes to the control server's thread, not the window"
-    )]
-    pub fn new(method: impl Into<String>, params: Value) -> (Self, std::sync::mpsc::Receiver<Value>) {
-        let (tx, rx) = std::sync::mpsc::channel();
-        (Self { method: method.into(), params, reply: tx }, rx)
+    /// A request whose reply goes to `reply`. The channel is the caller's: the control server's
+    /// thread makes it and waits on it, so the window never holds a receiver it could block on.
+    pub fn new(method: impl Into<String>, params: Value, reply: Sender<Value>) -> Self {
+        Self { method: method.into(), params, reply }
     }
 }
 
@@ -723,7 +718,8 @@ mod tests {
     use super::*;
 
     fn call(app: &mut ModelApp, method: &str, params: Value) -> Value {
-        let (req, rx) = ControlRequest::new(method, params);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let req = ControlRequest::new(method, params, tx);
         match handle(app, &egui::Context::default(), &req) {
             Outcome::Done(v) => v,
             Outcome::Screenshot { .. } => json!({"screenshot": true}),
@@ -795,7 +791,8 @@ mod tests {
     }
 
     fn call_in(app: &mut ModelApp, ctx: &egui::Context, method: &str, params: Value) -> Value {
-        let (req, rx) = ControlRequest::new(method, params);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let req = ControlRequest::new(method, params, tx);
         match handle(app, ctx, &req) {
             Outcome::Done(v) => v,
             Outcome::Screenshot { .. } => json!({"screenshot": true}),

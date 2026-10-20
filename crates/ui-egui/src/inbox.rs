@@ -2,7 +2,8 @@
 //! blocking receive and no iterator that waits, so a `for` loop over it (which would wait for
 //! the next message forever) does not compile. The crate's clippy configuration disallows
 //! `std::sync::mpsc::Receiver` and the channel constructors everywhere else, so the window
-//! receives only through here.
+//! receives only through here. (The web app has an unrelated `Inbox` of its own, for messages
+//! from the page: `apps/fieldcraft-web/src/web.rs`.)
 #![allow(clippy::disallowed_types, clippy::disallowed_methods, reason = "the one place the window holds a `Receiver`, behind polling only")]
 
 use std::sync::mpsc::{Receiver, Sender, TryIter, TryRecvError};

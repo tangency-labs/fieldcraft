@@ -109,7 +109,9 @@ fn serve(stream: TcpStream, tx: Sender<ControlRequest>, ctx: egui::Context) {
                 let id = msg.get("id").cloned().unwrap_or(Value::Null);
                 let method = msg.get("method").and_then(Value::as_str).unwrap_or("").to_string();
                 let params = msg.get("params").cloned().unwrap_or(json!({}));
-                let (req, rrx) = ControlRequest::new(method, params);
+                // The reply's channel is this thread's: it waits on it, the window only sends.
+                let (rtx, rrx) = channel();
+                let req = ControlRequest::new(method, params, rtx);
                 if tx.send(req).is_err() {
                     break;
                 }
