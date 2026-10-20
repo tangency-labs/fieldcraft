@@ -1,7 +1,8 @@
 //! Every design SolidCraft saved for these tests opens (`tests/designs`): the format 21 designs
 //! and those of later SolidCraft releases, which SolidCraft's reader migrates. A copy of a recipe
 //! saved by a later release opens as the same bodies with the same face names as the format 21
-//! design of that recipe (#605: FieldCraft 0.7.0 refused SolidCraft 0.16.2's designs).
+//! design of that recipe (#605: FieldCraft 0.7.0 refused SolidCraft 0.16.2's designs; #655: the
+//! 0.16.2 pin refused 0.17's and 0.18's).
 
 use std::path::{Path, PathBuf};
 
@@ -74,14 +75,17 @@ fn a_later_release_saves_the_same_design() {
     assert!(compared >= 1, "no saved copy of a recipe");
 }
 
-/// SolidCraft 0.16.2 saves design format 27; this FieldCraft reads it.
-const _: () = assert!(DESIGN_FORMAT >= 27);
+/// SolidCraft 0.17 and 0.18 save design format 28; this FieldCraft reads it.
+const _: () = assert!(DESIGN_FORMAT >= 28);
 
+/// The hollow box with a post as each release saved it: one body, `Case`, of 15 faces.
 #[test]
-fn reads_solidcraft_0_16_2_designs() {
-    let path = designs().join("solidcraft-0.16.2/hollow-box-post.solidcraft");
-    let design = open(&path);
-    let [body] = design.bodies.as_slice() else { panic!("{:?}", summary(&design)) };
-    assert_eq!(body.name, "Case");
-    assert_eq!(body.faces().len(), 15);
+fn reads_every_release_s_designs() {
+    for release in ["0.16.2", "0.17.0", "0.18.1"] {
+        let path = designs().join(format!("solidcraft-{release}/hollow-box-post.solidcraft"));
+        let design = open(&path);
+        let [body] = design.bodies.as_slice() else { panic!("{release}: {:?}", summary(&design)) };
+        assert_eq!(body.name, "Case", "{release}");
+        assert_eq!(body.faces().len(), 15, "{release}");
+    }
 }

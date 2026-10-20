@@ -5,8 +5,9 @@ person's file would be. Each `<name>.solidcraft` here is `solidcraft-cli run <na
 `solidcraft-<version>/` holds designs saved by that SolidCraft release, as the desktop app saves
 them (a container): `cd solidcraft-<version> && solidcraft-cli run <name>.json`, where
 `solidcraft-<version>/<name>.json` is the recipe `<name>.json` of this folder with a `file.save`
-step. `tests/design_formats.rs` opens every
-design here and checks that each saved copy of a recipe gives the bodies and face names of
+step. From 0.17 on a saved design also carries SolidCraft's model cache (`cache/` in the
+container), which FieldCraft never reads: opening rebuilds the timeline.
+`tests/design_formats.rs` opens every design here and checks that each saved copy of a recipe gives the bodies and face names of
 `<name>.solidcraft`, so a newer SolidCraft's designs keep opening as the older ones did
 (docs/architecture.md, "SolidCraft pin"). The scheduled `SolidCraft compatibility` workflow saves
 `solidcraft-latest/` with SolidCraft's latest release the same way before running these tests.
