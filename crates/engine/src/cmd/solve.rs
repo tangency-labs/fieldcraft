@@ -1924,7 +1924,10 @@ pub(crate) mod tests {
             );
             assert!(ups.len() >= 4, "{ups:?}");
             assert!(r["energy_balance"].as_f64().unwrap() < 0.01, "{r}");
-            assert!(r["warnings"].as_array().unwrap().iter().all(|w| w.as_str().unwrap().contains("unit system")), "{r}");
+            // The beam's material is deliberately unit-free (E = 1), so the only warnings are about
+            // its units: none from the solve itself.
+            let about_units = |w: &str| w.contains("unit system") || w.contains("check the unit it was given in");
+            assert!(r["warnings"].as_array().unwrap().iter().all(|w| about_units(w.as_str().unwrap())), "{r}");
             measured.push(t);
         }
         // Viscous control adds no stiffness: the one-point estimate holds closely.
