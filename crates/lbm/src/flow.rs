@@ -7,7 +7,9 @@
 //!   part of each opposite pair relaxes with `1/τ⁺` (which sets the viscosity), the antisymmetric
 //!   part with `1/τ⁻`, related by the parameter `Λ = (τ⁺ − ½)(τ⁻ − ½)`. With `Λ = 3/16`
 //!   halfway bounce-back puts the wall exactly halfway between nodes and steady solutions do not
-//!   depend on the viscosity.
+//!   depend on the viscosity. Or, per step, the recursive regularised collision
+//!   ([`crate::regularized`]): every population rebuilt from the density, the velocity and the
+//!   momentum flux before it relaxes, which stays stable as τ⁺ approaches ½.
 //! - **Body force:** Guo, Zheng & Shi 2002 (PRE 65:046308): the velocity is
 //!   `(Σ f c + F/2) / ρ` and the forcing term is split into its symmetric part, relaxed with
 //!   `1 − 1/(2τ⁺)`, and its antisymmetric part, with `1 − 1/(2τ⁻)` (the TRT form of Guo's
@@ -22,6 +24,16 @@
 //!   corrected on the diagonal unknowns as M. Hecht and J. Harting do for D3Q19 (*Implementation
 //!   of on-site velocity boundary conditions for D3Q19 lattice Boltzmann simulations*, J. Stat.
 //!   Mech. 2010, P01018). The prescribed velocity is the one with the half force of Guo's scheme.
+//!   With the regularised collision a pressure outlet then holds the equilibrium of its density
+//!   and that normal velocity (the equilibrium scheme, Krüger et al. 2017, ch. 5), dropping the
+//!   non-equilibrium part the bounce-back gave it: rebuilt from that part, the outlet's momentum
+//!   flux feeds an oscillation that flips sign every step along the outlet and grows (measured in
+//!   a channel at τ⁺ = 0.52: unstable within 150 steps), which the slowly relaxing antisymmetric
+//!   part of the two-relaxation-time scheme damps. The cost is near the outlet: the viscous
+//!   stress is not imposed on the outlet layer, so a fully developed channel profile is 3–8 % off
+//!   in the cell next to the outlet, more as τ⁺ approaches ½ (3.2 % at τ⁺ = 0.6, 7–7.5 % at 0.52,
+//!   9.6 % in the outlet cell itself; the bounce-back outlet, where it stays stable, 0.4 %), and
+//!   unchanged at mid-channel. A convective outflow is the better outlet for this collision.
 //! - **Forces:** momentum exchange on every wall link (Ladd 1994; R. Mei, D. Yu, W. Shyy, L.-S.
 //!   Luo, *Force evaluation in the lattice Boltzmann method involving curved geometry*, PRE
 //!   65:041203, 2002): a population `f*` leaving a fluid cell toward the wall and the one `f'`
@@ -59,7 +71,7 @@
 //! only its own populations; the wall forces are summed in link order. There are no parallel
 //! reductions, so the result is the same bit for bit on any number of threads and platform.
 
-use fieldcraft_model::{BoxFace, FaceCondition, Profile, ThermalCondition};
+use fieldcraft_model::{BoxFace, Collision, FaceCondition, Profile, ThermalCondition};
 
 use fieldcraft_parallel as parallel;
 
@@ -249,6 +261,7 @@ pub struct Flow {
     open: Vec<OpenCell>,
     omega_plus: f64,
     omega_minus: f64,
+    collision: Collision,
     acceleration: [f64; 3],
     /// The momentum transferred to each group in the last step (lattice units).
     forces: Vec<[f64; 3]>,
@@ -583,6 +596,7 @@ impl Flow {
             open,
             omega_plus: 1.0 / setup.tau_plus,
             omega_minus: 1.0 / setup.tau_minus,
+            collision: setup.collision,
             acceleration: setup.acceleration,
             forces: vec![[0.0; 3]; groups.len()],
             groups,
@@ -788,6 +802,11 @@ impl Flow {
     /// `1/τ⁺` and `1/τ⁻`.
     pub fn omegas(&self) -> (f64, f64) {
         (self.omega_plus, self.omega_minus)
+    }
+
+    /// The collision operator.
+    pub fn collision(&self) -> Collision {
+        self.collision
     }
 
     /// The body acceleration in lattice units.
@@ -1044,11 +1063,12 @@ impl Flow {
         finite
     }
 
-    /// Two-relaxation-time collision with Guo forcing, in place, by blocks of [`CELLS`] cells
-    /// in parallel. Returns the largest squared lattice speed, or NaN when a density is not
-    /// positive.
+    /// The collision with Guo forcing (two relaxation times, or recursive regularised), in place,
+    /// by blocks of [`CELLS`] cells in parallel. Returns the largest squared lattice speed, or
+    /// NaN when a density is not positive.
     fn collide(&mut self) -> f64 {
         let n = self.n;
+        let regularized = self.collision == Collision::Regularized;
         let (wp, wm) = (self.omega_plus, self.omega_minus);
         let (sp, sm) = (1.0 - 0.5 * wp, 1.0 - 0.5 * wm);
         let constant = self.acceleration;
@@ -1067,6 +1087,7 @@ impl Flow {
         }
         parallel::for_each_mut(&mut work, |b, (f, max_u2, u_out)| {
             let mut fq = [0.0; Q];
+            let mut post = [0.0; Q];
             let len = f.first().map_or(0, |d| d.len());
             for i in 0..len {
                 if !fluid.get(b * CELLS + i).copied().unwrap_or(false) {
@@ -1100,6 +1121,13 @@ impl Flow {
                         *x = v;
                     }
                 };
+                if regularized {
+                    crate::regularized::collide(&fq, rho, u, force, wp, forced, &mut post);
+                    for (q, v) in post.iter().enumerate() {
+                        put(q, *v);
+                    }
+                    continue;
+                }
                 // Rest population: symmetric only.
                 let eq0 = W[0] * rho * (1.0 - 1.5 * uu);
                 let mut out0 = fq[0] - wp * (fq[0] - eq0);
@@ -1204,6 +1232,7 @@ impl Flow {
     /// Zou–He velocity and pressure boundaries on the streamed populations.
     fn open_boundaries(&mut self) {
         let s = self.stride;
+        let regularized = self.collision == Collision::Regularized;
         for oc in &self.open {
             let cell = oc.cell as usize;
             let a_half = self.force_at(cell).map(|v| 0.5 * v);
@@ -1241,6 +1270,12 @@ impl Flow {
                 let cu = cq[0] * bare[0] + cq[1] * bare[1] + cq[2] * bare[2];
                 self.g[q * s + cell] = self.g[opposite(q) * s + cell] + 6.0 * W[q] * rho * cu;
             }
+            // With the regularised collision a pressure outlet holds the equilibrium of its density
+            // and the normal velocity just found (see the module notes).
+            if regularized && matches!(oc.target, Target::Density(_)) {
+                hold_equilibrium(&mut self.g, s, cell, rho, bare);
+                continue;
+            }
             // Transverse momentum: correct the two diagonal unknowns along each tangential axis.
             for t in (0..3).filter(|t| *t != axis) {
                 let mut m = -rho * bare[t];
@@ -1251,6 +1286,18 @@ impl Flow {
                     self.g[q * s + cell] -= 0.5 * m * f64::from(C[q][t]);
                 }
             }
+        }
+    }
+}
+
+/// Set every streamed population of open cell `cell` to the equilibrium of `rho` and `bare` (the
+/// velocity without the half force): what an outflow cell holds under the regularised collision,
+/// whose rebuilt non-equilibrium part would otherwise grow there (see the module notes). `g` holds
+/// the populations with direction stride `s`.
+pub(crate) fn hold_equilibrium(g: &mut [f64], s: usize, cell: usize, rho: f64, bare: [f64; 3]) {
+    for q in 0..Q {
+        if let Some(x) = g.get_mut(q * s + cell) {
+            *x = equilibrium(q, rho, bare);
         }
     }
 }

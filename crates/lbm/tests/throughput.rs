@@ -9,7 +9,8 @@ use fieldcraft_model::{BoxFace, FaceCondition};
 #[test]
 #[ignore]
 fn cell_updates_per_second() {
-    for (name, l, sphere_radius) in [("periodic box", 64usize, 0.0), ("periodic box", 60, 0.0), ("box with a sphere", 64, 16.0)] {
+    let cases = [("periodic box", 64usize, 0.0), ("periodic box", 60, 0.0), ("box with a sphere", 64, 16.0)];
+    for ((name, l, sphere_radius), collision) in cases.into_iter().flat_map(|c| COLLISIONS.map(move |k| (c, k))) {
         let side = l as f64;
         let mut d = domain([0.0; 3], [side; 3], 1.0);
         for f in BoxFace::ALL {
@@ -33,7 +34,7 @@ fn cell_updates_per_second() {
                 time_step: Some(1.0),
                 frames: 1,
                 magic: None,
-                collision: None,
+                collision: Some(collision),
                 steady: None,
             },
         );
@@ -41,6 +42,6 @@ fn cell_updates_per_second() {
         let start = std::time::Instant::now();
         run_all(&setup, &mut flow);
         let s = start.elapsed().as_secs_f64();
-        println!("{name}, {l}³: {:.1} M cell updates/s", (flow.fluid_cells() as f64 * steps as f64) / s / 1e6);
+        println!("{name}, {l}³, {collision:?}: {:.1} M cell updates/s", (flow.fluid_cells() as f64 * steps as f64) / s / 1e6);
     }
 }

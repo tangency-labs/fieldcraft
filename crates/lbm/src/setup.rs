@@ -28,7 +28,9 @@
 use fieldcraft_mesh::surface::BoundarySurface;
 use fieldcraft_model::fluid_zones::DEFAULT_FAN_RELAXATION;
 use fieldcraft_model::units::kelvin_above;
-use fieldcraft_model::{BoxFace, Directional, FaceCondition, FluidDomain, Model, Procedure, Resistance, SurfaceCondition, ThermalCondition};
+use fieldcraft_model::{
+    BoxFace, Collision, Directional, FaceCondition, FluidDomain, Model, Procedure, Resistance, SurfaceCondition, ThermalCondition,
+};
 
 use crate::voxel::Grid;
 use crate::{Error, Limits, Result};
@@ -45,6 +47,10 @@ pub const MIN_TAU: f64 = 0.505;
 pub const MAX_LATTICE_ACCELERATION: f64 = 0.01;
 /// A lattice speed above this during a run means it went unstable (Mach 0.87).
 pub const MAX_LATTICE_SPEED: f64 = 0.5;
+/// Below this τ⁺ the regularized collision is warned about: on the flow-past sample's 2.5 mm grid
+/// it ran at τ⁺ 0.508 and went unstable at 0.5075, the reflecting inlet and outlet failing
+/// (`docs/lbm-collision.md`).
+pub const REGULARIZED_TAU_LIMIT: f64 = 0.508;
 /// The default two-relaxation-time parameter Λ: bounce-back walls exactly halfway between cells
 /// (Ginzburg, Verhaeghe & d'Humières 2008).
 pub const DEFAULT_MAGIC: f64 = 3.0 / 16.0;
@@ -117,6 +123,8 @@ pub struct Setup {
     pub tau_plus: f64,
     pub tau_minus: f64,
     pub magic: f64,
+    /// The collision operator.
+    pub collision: Collision,
     /// The characteristic velocity in model and lattice units, and its lattice Mach number.
     pub velocity: f64,
     pub lattice_velocity: f64,
@@ -255,7 +263,7 @@ impl Setup {
         // The model checked the domain and its material when they were defined.
         let (s, domain) = fluid_step(model, step)?;
         let domain = domain.clone();
-        let Procedure::Fluid { end_time, steps, time_step, frames, magic, steady, .. } = &s.procedure else {
+        let Procedure::Fluid { end_time, steps, time_step, frames, magic, collision, steady, .. } = &s.procedure else {
             return Err(Error::Invalid(format!("step `{}` is not a fluid step", s.name)));
         };
         let material = model.material(&domain.material);
@@ -377,6 +385,7 @@ impl Setup {
                 if nu > 0.0 { lattice_velocity / nu } else { f64::INFINITY }
             )));
         }
+        let magic_given = magic.is_some();
         let magic = magic.unwrap_or(DEFAULT_MAGIC);
         let tau_minus = 0.5 + magic / (tau_plus - 0.5);
         let acceleration = domain.acceleration.map(|c| c * dt * dt / h);
@@ -503,8 +512,19 @@ impl Setup {
                 100.0 * mach * mach
             ));
         }
-        if tau_plus < 0.51 {
-            warnings.push(format!("τ = {tau_plus:.4} is close to ½: under-resolved flows may go unstable; a finer spacing is safer"));
+        let collision = collision.unwrap_or_default();
+        if tau_plus < 0.51 && collision == Collision::Trt {
+            warnings.push(format!(
+                "τ = {tau_plus:.4} is close to ½: under-resolved flows may go unstable; a finer spacing or the regularized collision (`collision: \"regularized\"`) is safer"
+            ));
+        }
+        if tau_plus < REGULARIZED_TAU_LIMIT && collision == Collision::Regularized {
+            warnings.push(format!(
+                "τ = {tau_plus:.4} is below {REGULARIZED_TAU_LIMIT}, where even the regularized collision went unstable on a coarse bluff-body grid: the inlet and outlet still reflect pressure waves there; a finer spacing is safer"
+            ));
+        }
+        if collision == Collision::Regularized && magic_given {
+            warnings.push("the two-relaxation-time parameter Λ (`magic`) has no effect with the regularized collision".into());
         }
 
         Ok(Setup {
@@ -518,6 +538,7 @@ impl Setup {
             tau_plus,
             tau_minus,
             magic,
+            collision,
             velocity: u_char,
             lattice_velocity,
             mach,

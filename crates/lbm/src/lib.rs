@@ -55,6 +55,7 @@
 pub mod backend;
 pub mod flow;
 pub mod lattice;
+pub mod regularized;
 pub mod setup;
 pub mod solve;
 pub mod steady;

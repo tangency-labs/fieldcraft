@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 
 use fieldcraft_lbm::{Flow, Limits, Obstacle, Setup};
 use fieldcraft_mesh::surface::{BoundarySurface, SurfaceOptions};
-use fieldcraft_model::{BoxFaces, Fluid, FluidDomain, Material, Model, Procedure, Step};
+use fieldcraft_model::{BoxFaces, Collision, Fluid, FluidDomain, Material, Model, Procedure, Step};
 
 /// A domain over [min, max] with walls on every face.
 pub fn domain(min: [f64; 3], max: [f64; 3], spacing: f64) -> FluidDomain {
@@ -29,6 +29,11 @@ pub fn domain(min: [f64; 3], max: [f64; 3], spacing: f64) -> FluidDomain {
 
 /// A fluid step `Run` over `end_time` with a given time step.
 pub fn step(end_time: f64, time_step: f64, magic: Option<f64>) -> Procedure {
+    collide(end_time, time_step, magic, Collision::Trt)
+}
+
+/// [`step`] with a collision operator.
+pub fn collide(end_time: f64, time_step: f64, magic: Option<f64>, collision: Collision) -> Procedure {
     Procedure::Fluid {
         domain: "Flow".into(),
         end_time: Some(end_time),
@@ -36,10 +41,13 @@ pub fn step(end_time: f64, time_step: f64, magic: Option<f64>) -> Procedure {
         time_step: Some(time_step),
         frames: 2,
         magic,
-        collision: None,
+        collision: Some(collision),
         steady: None,
     }
 }
+
+/// Both collision operators.
+pub const COLLISIONS: [Collision; 2] = [Collision::Trt, Collision::Regularized];
 
 /// A model with fluid `Fluid` (density ρ, kinematic viscosity ν), domain `Flow` and step `Run`.
 pub fn model(density: f64, nu: f64, domain: FluidDomain, procedure: Procedure) -> Model {

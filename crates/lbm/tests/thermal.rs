@@ -121,7 +121,7 @@ fn the_flow_carries_the_inlet_temperature() {
 /// fastest flow in the cavity in units of α / H (3.65 and 19.6). Returns the Nusselt number
 /// and the steady power into the hot wall and into the cold wall (the mean over the last
 /// tenth of the run).
-fn cavity(ra: f64, n: usize, u_max: f64) -> (f64, f64, f64) {
+fn cavity(ra: f64, n: usize, u_max: f64, collision: fieldcraft_model::Collision) -> (f64, f64, f64) {
     let (h, pr) = (1.0, 0.71);
     let dx = h / n as f64;
     let alpha = 1.0;
@@ -137,7 +137,7 @@ fn cavity(ra: f64, n: usize, u_max: f64) -> (f64, f64, f64) {
     d.thermal = Some(t);
     // the fastest flow at lattice speed 0.05, and a lattice diffusivity of at most 1/4 (τ_T ≤ 1.5)
     let dt = (0.05 * dx / (u_max * alpha / h)).min(dx * dx / (4.0 * alpha));
-    let m = hot_model(1.0, nu, alpha, d, step(4.0 * h * h / alpha, dt, None));
+    let m = hot_model(1.0, nu, alpha, d, collide(4.0 * h * h / alpha, dt, None, collision));
     let setup = fieldcraft_lbm::Setup::new(&m, None, &[], &Limits::default()).unwrap();
     let mut flow = fieldcraft_lbm::Flow::new(&setup, &[]).unwrap();
     let r = run(&setup, &mut flow, &Limits::default()).unwrap();
@@ -153,7 +153,7 @@ fn cavity(ra: f64, n: usize, u_max: f64) -> (f64, f64, f64) {
     let k = alpha;
     let area = h * dx;
     let nu_mean = -hot * h / (k * 1.0 * area);
-    println!("cavity Ra = {ra:.0e}, {n} cells: Nu = {nu_mean:.4}, hot wall {hot:.6e}, cold wall {cold:.6e}; {:?}", r.warnings);
+    println!("{collision:?} cavity Ra = {ra:.0e}, {n} cells: Nu = {nu_mean:.4}, hot wall {hot:.6e}, cold wall {cold:.6e}; {:?}", r.warnings);
     (nu_mean, hot, cold)
 }
 
@@ -167,20 +167,25 @@ fn heat_balances(hot: f64, cold: f64, tolerance: f64) {
 /// de Vahl Davis (the heavy test refines it), and the heat balances between the walls.
 #[test]
 fn natural_convection_cavity_is_close_on_a_coarse_grid() {
-    let (nu3, hot, cold) = cavity(1e3, 16, 3.65);
-    assert!((nu3 / 1.118 - 1.0).abs() < 0.02, "Ra 1e3: {nu3}");
-    heat_balances(hot, cold, 1e-3);
+    // Both collisions: buoyancy enters through Guo's force term, which each re-derives.
+    for collision in COLLISIONS {
+        let (nu3, hot, cold) = cavity(1e3, 16, 3.65, collision);
+        assert!((nu3 / 1.118 - 1.0).abs() < 0.02, "{collision:?} Ra 1e3: {nu3}");
+        heat_balances(hot, cold, 1e-3);
+    }
 }
 
 #[test]
 #[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
 fn natural_convection_cavity_matches_de_vahl_davis() {
-    let (nu3, hot, cold) = cavity(1e3, 32, 3.65);
-    assert!((nu3 / 1.118 - 1.0).abs() < 0.01, "Ra 1e3: {nu3}");
-    heat_balances(hot, cold, 1e-3);
-    let (nu4, hot, cold) = cavity(1e4, 48, 19.6);
-    assert!((nu4 / 2.243 - 1.0).abs() < 0.01, "Ra 1e4: {nu4}");
-    heat_balances(hot, cold, 1e-3);
+    for collision in COLLISIONS {
+        let (nu3, hot, cold) = cavity(1e3, 32, 3.65, collision);
+        assert!((nu3 / 1.118 - 1.0).abs() < 0.01, "{collision:?} Ra 1e3: {nu3}");
+        heat_balances(hot, cold, 1e-3);
+        let (nu4, hot, cold) = cavity(1e4, 48, 19.6, collision);
+        assert!((nu4 / 2.243 - 1.0).abs() < 0.01, "{collision:?} Ra 1e4: {nu4}");
+        heat_balances(hot, cold, 1e-3);
+    }
 }
 
 /// A periodic box with a uniform flow and a blob of heat: the total temperature is conserved

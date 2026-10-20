@@ -80,6 +80,7 @@ pub struct FluidStats {
     pub tau_plus: f64,
     pub tau_minus: f64,
     pub magic: f64,
+    pub collision: fieldcraft_model::Collision,
     /// The characteristic velocity (model units), its lattice value and its lattice Mach number.
     pub velocity: f64,
     pub lattice_velocity: f64,
@@ -342,6 +343,7 @@ pub fn run(setup: &Setup, flow: &mut dyn Backend, limits: &Limits) -> Result<Flu
             tau_plus: setup.tau_plus,
             tau_minus: setup.tau_minus,
             magic: setup.magic,
+            collision: setup.collision,
             velocity: setup.velocity,
             lattice_velocity: setup.lattice_velocity,
             mach: setup.mach,
