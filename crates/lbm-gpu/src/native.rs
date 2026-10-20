@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use fieldcraft_gpu::select::{self, Policy};
 use fieldcraft_lbm::backend::{Backend, Fields};
 use fieldcraft_lbm::lattice::{C, Q, W};
+use fieldcraft_lbm::outlet::UNKNOWN;
 use fieldcraft_lbm::setup::MAX_LATTICE_SPEED;
 use fieldcraft_lbm::{Error, Flow, Group, Result, Rule, Target};
 use fieldcraft_model::ThermalCondition;
@@ -17,6 +18,8 @@ const KIND_PULL: u32 = 0;
 const KIND_BOUNCE: u32 = 1;
 const KIND_REFLECT: u32 = 2;
 const KIND_OPEN: u32 = 3;
+/// Floats per open cell in the outlet buffer (see lbm.wgsl).
+const OUTLET: usize = 16;
 /// The scalar lattice's directions (the first seven of D3Q19) and weights.
 const QT: usize = 7;
 const WT: [f64; QT] = [0.25, 0.125, 0.125, 0.125, 0.125, 0.125, 0.125];
@@ -129,6 +132,8 @@ pub struct GpuFlow {
     links_groups: (u32, u32),
     open_count: usize,
     open_groups: (u32, u32),
+    /// Whether a face is a convective outlet.
+    convective: bool,
     group_count: usize,
     force_groups: (u32, u32),
     stats: wgpu::Buffer,
@@ -172,9 +177,6 @@ impl GpuFlow {
                 "the GPU backend does not step fans or porous zones yet (`{}`): solve on the CPU (`backend: \"cpu\"`)",
                 zone.name
             )));
-        }
-        if flow.open_cells().iter().any(|oc| matches!(oc.target, Target::Convective(_))) {
-            return Err(Error::Invalid("the GPU backend does not step convective outlets yet: solve on the CPU (`backend: \"cpu\"`)".into()));
         }
         let Some((adapter, tier)) = select::adapter(policy).map_err(gpu_error)? else {
             return Err(Error::Invalid(format!("{}=cpu: no GPU device; solve with `backend: \"cpu\"`", select::ENV)));
@@ -307,18 +309,32 @@ impl GpuFlow {
             group_t.extend_from_slice(&[kind, value, 0.0, 0.0]);
         }
 
-        // The open cells.
+        // The open cells, and what each convective outlet cell keeps between steps in its slot
+        // (`open_u.w`) of the outlet buffer: its unknown populations as deviations from their
+        // weights, and its convection speed (see lbm.wgsl).
         let open = flow.open_cells();
         let mut open_u = reserved(4 * open.len(), "open cells")?;
         let mut open_f = reserved(4 * open.len(), "open cells")?;
-        for oc in open {
+        let mut outlet = reserved(OUTLET * open.iter().filter(|oc| matches!(oc.target, Target::Convective(_))).count(), "outlet cells")?;
+        let states = flow.outlets().states();
+        for (k, oc) in open.iter().enumerate() {
             let (kind, target) = match oc.target {
                 Target::Velocity(u) => (0u32, [u[0] as f32, u[1] as f32, u[2] as f32]),
-                Target::Density(rho) | Target::Convective(rho) => (1u32, [rho as f32, 0.0, 0.0]),
+                Target::Density(rho) => (1u32, [rho as f32, 0.0, 0.0]),
+                Target::Convective(rho) => (2u32, [rho as f32, 0.0, 0.0]),
             };
-            open_u.extend_from_slice(&[oc.cell, oc.axis as u32, kind, 0]);
+            let slot = u32::try_from(outlet.len() / OUTLET).map_err(|_| Error::Limit("too many open cells for the GPU solver".into()))?;
+            open_u.extend_from_slice(&[oc.cell, oc.axis as u32, kind, slot]);
             open_f.extend_from_slice(&[target[0], target[1], target[2], oc.inward as f32]);
+            if let Target::Convective(_) = oc.target {
+                let state = states.get(k).copied().unwrap_or_default();
+                let dirs = fieldcraft_lbm::outlet::unknowns(oc.axis, oc.inward);
+                outlet.extend(state.unknowns.iter().zip(dirs).map(|(v, q)| (v - W.get(q).copied().unwrap_or(0.0)) as f32));
+                outlet.push(state.speed as f32);
+                outlet.extend([0.0; OUTLET - UNKNOWN - 1]);
+            }
         }
+        let convective = !outlet.is_empty();
         let mut open_t = reserved(4 * open.len(), "open cell temperatures")?;
         for k in 0..open.len() {
             match thermal.and_then(|t| t.open().get(k)).copied().flatten() {
@@ -409,6 +425,7 @@ impl GpuFlow {
         let link_f = storage("lbm link du", &bytes_f32(&link_f));
         let open_u = storage("lbm open cells", &bytes_u32(&open_u));
         let open_f = storage("lbm open targets", &bytes_f32(&open_f));
+        let outlet = storage("lbm outlet cells", &bytes_f32(&outlet));
         let moments = empty("lbm moments", 16 * n as u64);
         let stats = storage("lbm stats", &bytes_u32(&[0, 0, 0, 0]));
         let contrib = empty("lbm link forces", 16 * links.len() as u64);
@@ -442,6 +459,7 @@ impl GpuFlow {
                 entry(1, read),
                 entry(2, write),
                 entry(3, write),
+                entry(4, write),
                 entry(5, read),
                 entry(6, read),
                 entry(7, read),
@@ -468,6 +486,7 @@ impl GpuFlow {
                     wgpu::BindGroupEntry { binding: 1, resource: fluid_buf.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 2, resource: pops[if aa { 0 } else { k }].as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 3, resource: pops[if aa { 1 } else { 1 - k }].as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 4, resource: outlet.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 5, resource: link_u.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 6, resource: link_f.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 7, resource: open_u.as_entire_binding() },
@@ -499,6 +518,7 @@ impl GpuFlow {
             "stream_links",
             "stream_links_exchange",
             "scatter_links",
+            "outlet_convect",
             "open_boundaries",
             "link_forces",
             "group_forces",
@@ -516,7 +536,11 @@ impl GpuFlow {
                 module: &module,
                 entry_point: Some(name),
                 compilation_options: wgpu::PipelineCompilationOptions {
-                    constants: &[("AA_MODE", if aa { 1.0 } else { 0.0 }), ("REGULARIZED", if regularized { 1.0 } else { 0.0 })],
+                    constants: &[
+                        ("AA_MODE", if aa { 1.0 } else { 0.0 }),
+                        ("REGULARIZED", if regularized { 1.0 } else { 0.0 }),
+                        ("MAX_SPEED", MAX_LATTICE_SPEED),
+                    ],
                     ..Default::default()
                 },
                 cache: None,
@@ -545,6 +569,7 @@ impl GpuFlow {
             links_groups,
             open_count: open.len(),
             open_groups,
+            convective,
             group_count,
             force_groups,
             stats,
@@ -718,6 +743,9 @@ impl GpuFlow {
                 if self.aa {
                     commands.push((self.current, "scatter_links", self.links_groups));
                 }
+            }
+            if self.convective {
+                commands.push((self.current, "outlet_convect", self.open_groups));
             }
             if self.open_count > 0 {
                 commands.push((self.current, "open_boundaries", self.open_groups));

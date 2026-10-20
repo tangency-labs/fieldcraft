@@ -284,6 +284,75 @@ fn zou_he_channel_matches_the_cpu() {
     }
 }
 
+/// A convective outlet (fieldcraft_lbm::outlet) that a vortex crosses with reversed flow: the
+/// cells where the flow leaves convect, the reversed ones hold the pressure (Zou–He). Uniform
+/// stream U = 0.05 (lattice), periodic sides, a vortex of peak swirl 1.8 U placed at the outlet.
+/// Both collisions: under the regularised one the reversed cells hold the equilibrium, as the
+/// uniform outlet does, on both backends.
+#[test]
+fn convective_outlet_matches_the_cpu_with_a_vortex_and_backflow() {
+    for (collision, streaming) in
+        [Collision::Trt, Collision::Regularized].into_iter().flat_map(|c| [(c, Streaming::InPlace), (c, Streaming::TwoBuffers)])
+    {
+        let n = 40usize;
+        let (u0, r, x0) = (0.05, 6.0, 30.0);
+        let side = n as f64;
+        let mut d = domain([0.0; 3], [side, side, 1.0], 1.0);
+        d.faces.x_min = FaceCondition::Velocity { velocity: [u0, 0.0, 0.0], profile: Profile::Uniform };
+        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Convective };
+        for f in [BoxFace::YMin, BoxFace::YMax, BoxFace::ZMin, BoxFace::ZMax] {
+            *d.faces.get_mut(f) = PERIODIC;
+        }
+        let m = model(1.0, 0.01, d, collide(400.0, 1.0, None, collision));
+        let (setup, mut flow) = prepare(&m, &[]);
+        let grid = *flow.grid();
+        let a = 1.8 * u0 * r / (-0.5f64).exp();
+        flow.set_equilibrium(|c| {
+            let [x, y, _] = grid.centre(c);
+            let (dx, dy) = (x - x0, y - 0.5 * side);
+            let e = (-(dx * dx + dy * dy) / (2.0 * r * r)).exp();
+            let p = -a * a / (2.0 * r * r) * e * e;
+            (setup.lattice_density(p), [u0 - a * dy / (r * r) * e, a * dx / (r * r) * e, 0.0])
+        });
+        let Some(mut gpu) = gpu(&flow, streaming) else { continue };
+        let mut cpu = flow;
+        let mut reversed = 0;
+        for chunk in [1, 1, 61, 1, 64, 72, 200] {
+            cpu.advance(chunk).unwrap();
+            gpu.advance(chunk).unwrap();
+            let (du, drho) = field_difference(&mut cpu, &mut gpu);
+            reversed += (0..n).filter(|j| cpu.moments(grid.index([n - 1, *j, 0])).is_some_and(|(_, u)| u[0] < 0.0)).count();
+            println!("convective outlet with a vortex ({collision:?}), step {}: CPU/GPU velocity {du:.2e}, density {drho:.2e}", cpu.steps_done());
+            assert!(du < 2e-5 && drho < 1e-6, "step {}: {du} {drho}", cpu.steps_done());
+        }
+        assert!(reversed > 0, "the vortex reverses the flow at the outlet");
+    }
+}
+
+/// Pressure faces meeting in an edge (x_max and y_max of a 16 × 8 box with an inlet at x_min):
+/// each edge cell belongs to one face, so the GPU's one thread per open cell never writes a cell
+/// twice. Two entries for one cell raced: a uniform edge diverged on the GPU at step 128 and a
+/// convective one differed from the CPU by the whole velocity scale.
+#[test]
+fn edges_of_two_pressure_faces_match_the_cpu() {
+    for outflow in [Outflow::Uniform, Outflow::Convective] {
+        for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+            let mut d = domain([0.0; 3], [16.0, 8.0, 1.0], 1.0);
+            d.faces.x_min = FaceCondition::Velocity { velocity: [0.05, 0.0, 0.0], profile: Profile::Uniform };
+            d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow };
+            d.faces.y_max = FaceCondition::Pressure { pressure: 0.0, outflow };
+            d.faces.z_min = PERIODIC;
+            d.faces.z_max = PERIODIC;
+            let m = model(1.0, 0.05, d, step(800.0, 1.0, None));
+            let (setup, flow) = prepare(&m, &[]);
+            let Some((mut cpu, mut gpu)) = both(&setup, flow, streaming) else { continue };
+            let (du, drho) = field_difference(&mut cpu, &mut gpu);
+            println!("edges of two {outflow:?} faces ({streaming:?}): CPU/GPU velocity {du:.2e}, density {drho:.2e}");
+            assert!(du < 2e-5 && drho < 1e-6, "{du} {drho}");
+        }
+    }
+}
+
 // ---- Heat ----
 
 /// A fluid with heat: density ρ, kinematic viscosity ν, thermal diffusivity α (conductivity

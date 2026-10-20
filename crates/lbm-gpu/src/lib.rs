@@ -10,7 +10,7 @@
 //! The device is the one `fieldcraft_gpu`'s adapter policy picks (`FIELDCRAFT_GPU`).
 //!
 //! Sources: the same as `fieldcraft_lbm` (Krüger et al. 2017; Ginzburg et al. 2008; Guo et al.
-//! 2002; Ladd 1994; Mei et al. 2002; Zou & He 1997; Hecht & Harting 2010). No code of any
+//! 2002; Ladd 1994; Mei et al. 2002; Zou & He 1997; Hecht & Harting 2010; Orlanski 1976). No code of any
 //! lattice Boltzmann package was read.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]

@@ -31,6 +31,9 @@ override AA_MODE: bool = true;
 // The recursive regularised collision instead of the two-relaxation-time one
 // (fieldcraft_lbm::regularized).
 override REGULARIZED: bool = false;
+// The largest lattice speed (fieldcraft_lbm::setup::MAX_LATTICE_SPEED): the cap of a convective
+// outlet's convection speed.
+override MAX_SPEED: f32 = 0.5;
 
 const Q: u32 = 19u;
 const QT: u32 = 7u;
@@ -69,8 +72,13 @@ struct Params {
 @group(0) @binding(3) var<storage, read_write> g: array<f32>;
 // Per link: (q | kind << 8 | q2 << 16, from, group, 0) and the moving-wall term.
 @group(0) @binding(5) var<storage, read> link_u: array<vec4<u32>>;
+// Per convective outlet cell (fieldcraft_lbm::outlet), OUTLET floats at its slot: its five unknown
+// populations after the last step (h, 0..5) and its convection speed (5), kept between steps;
+// this step's convected unknowns (6..11), the density shift (11) and whether it convects (12),
+// from `outlet_convect` for `open_boundaries`.
+@group(0) @binding(4) var<storage, read_write> outlet: array<f32>;
 @group(0) @binding(6) var<storage, read> link_f: array<f32>;
-// Per open cell: (cell, axis, kind: 0 velocity / 1 density, 0) and (target xyz or density in x, inward sign in w).
+// Per open cell: (cell, axis, kind: 0 velocity / 1 density / 2 convective outlet, its slot in `outlet`) and (target xyz or density in x, inward sign in w).
 @group(0) @binding(7) var<storage, read> open_u: array<vec4<u32>>;
 @group(0) @binding(8) var<storage, read> open_f: array<vec4<f32>>;
 // Per cell: velocity (with the half force) and density, from the moments kernel.
@@ -467,20 +475,125 @@ fn hold_equilibrium(cell: u32, xyz: vec3<i32>, rho: f32, bare: vec3<f32>) {
     }
 }
 
+const OUTLET: u32 = 16u;
+// The open-cell kind whose closure a convective outlet cell takes where the flow comes back in:
+// the uniform pressure outlet's (fieldcraft_lbm::outlet::backflow).
+const BACKFLOW_KIND: u32 = 1u;
+
+// Whether direction q enters an open cell of normal `axis` (inward sign `sign`) from outside.
+fn is_unknown(q: u32, axis: u32, sign: f32) -> bool {
+    return f32(c_of(q)[axis]) * sign > 0.0;
+}
+
+// The index step of `axis` and the cell one layer in from an open cell.
+fn inside_of(cell: u32, axis: u32, sign: f32) -> u32 {
+    var step = 1u;
+    if axis == 1u { step = params.nx; }
+    if axis == 2u { step = params.nx * params.ny; }
+    if sign > 0.0 { return cell + step; }
+    return cell - step;
+}
+
+// The outward velocity (with the half force) of a cell of an open face from its density and
+// normal momentum.
+fn outward(rho: f32, jn: f32, cell: u32, axis: u32, sign: f32) -> f32 {
+    if !(rho > 0.0) { return 0.0; }
+    return -sign * (jn + 0.5 * rho * acc_of(cell)[axis]) / rho;
+}
+
+// The convective outlet (fieldcraft_lbm::outlet), first pass, one thread per open cell: the
+// unknown populations convected from the cell's own after the last step and the streamed ones of
+// the cell inside, (own + λ inside) / (1 + λ); the density shift to the face's density, and
+// whether the flow leaves. Reads only populations, so every cell sees them before any open
+// boundary changes them.
+@compute @workgroup_size(256)
+fn outlet_convect(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
+    let o = cell_of(lid, wg);
+    if o >= params.open { return; }
+    let ou = open_u[o];
+    if ou.z != 2u { return; }
+    let cell = ou.x;
+    let axis = ou.y;
+    let sign = open_f[o].w;
+    let xyz = aa_coords(cell);
+    let inside = inside_of(cell, axis, sign);
+    let has_inside = is_fluid(inside);
+    var inside_xyz = vec3<i32>(0);
+    if has_inside { inside_xyz = aa_coords(inside); }
+    let base = ou.w * OUTLET;
+    let lambda = outlet[base + 5u];
+    var k = 0u;
+    var drho = 0.0;
+    var jn = 0.0;
+    for (var q = 0u; q < Q; q = q + 1u) {
+        var v = 0.0;
+        if !is_unknown(q, axis, sign) {
+            v = streamed(q, cell, xyz);
+        } else {
+            v = outlet[base + k];
+            if has_inside { v = (v + lambda * streamed(q, inside, inside_xyz)) / (1.0 + lambda); }
+            outlet[base + 6u + k] = v;
+            k = k + 1u;
+        }
+        drho = drho + v;
+        jn = jn + f32(c_of(q)[axis]) * v;
+    }
+    outlet[base + 11u] = (open_f[o].x - 1.0) - drho;
+    outlet[base + 12u] = select(0.0, 1.0, outward(1.0 + drho, jn, cell, axis, sign) > 0.0);
+}
+
 // Zou–He velocity and pressure boundaries on the streamed populations in g (Zou & He 1997;
-// Hecht & Harting 2010 for the D3Q19 transverse correction).
+// Hecht & Harting 2010 for the D3Q19 transverse correction), and the second pass of the
+// convective outlet: where the flow leaves, the convected unknowns and every population shifted
+// by w_q times the density shift; where it comes back in, the Zou–He pressure outlet. A
+// convective cell then keeps its unknowns and its outward velocity for the next step.
 @compute @workgroup_size(256)
 fn open_boundaries(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
     let o = cell_of(lid, wg);
     if o >= params.open { return; }
-    let n = params.n;
     let ou = open_u[o];
-    let ot = open_f[o];
     let cell = ou.x;
     let axis = ou.y;
-    let sign = ot.w;
-    let a_half = 0.5 * acc_of(cell);
+    let sign = open_f[o].w;
     let xyz = aa_coords(cell);
+    let base = ou.w * OUTLET;
+    if ou.z == 2u && outlet[base + 12u] > 0.5 {
+        let shift = outlet[base + 11u];
+        var k = 0u;
+        for (var q = 0u; q < Q; q = q + 1u) {
+            var v = 0.0;
+            if !is_unknown(q, axis, sign) {
+                v = streamed(q, cell, xyz);
+            } else {
+                v = outlet[base + 6u + k];
+                k = k + 1u;
+            }
+            store_streamed(q, cell, xyz, v + w_of(q) * shift);
+        }
+    } else {
+        zou_he(o, select(ou.z, BACKFLOW_KIND, ou.z == 2u), cell, axis, sign, xyz);
+    }
+    if ou.z == 2u {
+        var k = 0u;
+        var drho = 0.0;
+        var jn = 0.0;
+        for (var q = 0u; q < Q; q = q + 1u) {
+            let v = streamed(q, cell, xyz);
+            if is_unknown(q, axis, sign) {
+                outlet[base + k] = v;
+                k = k + 1u;
+            }
+            drho = drho + v;
+            jn = jn + f32(c_of(q)[axis]) * v;
+        }
+        outlet[base + 5u] = clamp(outward(1.0 + drho, jn, cell, axis, sign), 0.0, MAX_SPEED);
+    }
+}
+
+// Zou–He on open cell `o`: the velocity (kind 0) or the density (kind 1) of its target.
+fn zou_he(o: u32, kind: u32, cell: u32, axis: u32, sign: f32, xyz: vec3<i32>) {
+    let ot = open_f[o];
+    let a_half = 0.5 * acc_of(cell);
     // The sums of h over the tangential (c_n = 0) and outgoing (c_n < 0) directions. The sums of
     // f add the weights' (2/3 and 1/6 for D3Q19, so tangential + 2 outgoing gains exactly 1): the
     // weight is added after the deviations are summed, not before, which in single precision would
@@ -498,7 +611,7 @@ fn open_boundaries(@builtin(local_invocation_index) lid: u32, @builtin(workgroup
     }
     var rho = 0.0;
     var bare = vec3<f32>(0.0);
-    if ou.z == 0u {
+    if kind == 0u {
         bare = ot.xyz - a_half;
         let un = sign * bare[axis];
         rho = (1.0 + (tangential + 2.0 * outgoing)) / (1.0 - un);
@@ -509,9 +622,10 @@ fn open_boundaries(@builtin(local_invocation_index) lid: u32, @builtin(workgroup
         // dynamic index into a local vector (X3500).
         bare = select(-a_half, vec3<f32>(sign * un), vec3<u32>(0u, 1u, 2u) == vec3<u32>(axis));
     }
-    // With the regularised collision a pressure outlet holds the equilibrium of its density and
-    // the normal velocity just found (fieldcraft_lbm::flow).
-    if REGULARIZED && ou.z == 1u {
+    // With the regularised collision a density target holds the equilibrium of its density and
+    // the normal velocity just found (fieldcraft_lbm::flow::zou_he): a pressure outlet, and a
+    // convective outlet's cell where the flow comes back in (BACKFLOW_KIND).
+    if REGULARIZED && kind == 1u {
         hold_equilibrium(cell, xyz, rho, bare);
         return;
     }
