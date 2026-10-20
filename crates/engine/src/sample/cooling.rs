@@ -75,7 +75,7 @@ const AIO_LATTICE_SPEED: f64 = 0.013;
 const AIO: Run = Run { spacing: 0.6, time_step: Some(AIO_LATTICE_SPEED * 0.6 / AIO_SPEED), end_time: 1.6, frames: 15, steady: false };
 
 /// The material every case's air is made of.
-fn air() -> Value {
+pub(super) fn air() -> Value {
     let [density, viscosity] = super::AIR;
     json!({"name": "Air", "density": density, "fluid": {"type": "newtonian", "viscosity": viscosity},
         "thermal": {"conductivity": 0.026, "specific_heat": 1.005e9}})
@@ -116,7 +116,7 @@ fn script(domain: &str, mut params: Value, name: &str, run: &Run, hot: Vec<Value
 }
 
 /// An extent from `lo` that is a whole number of cells and reaches at least `hi`.
-fn snap(lo: f64, hi: f64, spacing: f64) -> f64 {
+pub(super) fn snap(lo: f64, hi: f64, spacing: f64) -> f64 {
     // Rounded to a micrometre, so the extent is a whole number of cells.
     let steps = 1.0 / super::sample_value(Quantity::Length, EXTENT_STEP);
     ((lo + ((hi - lo) / spacing - CELL_ROUND_OFF).ceil() * spacing) * steps).round() / steps
