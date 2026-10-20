@@ -54,8 +54,11 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # The version and verify jobs run on Blacksmith (it sponsors the CI minutes); the jobs that sign
+  # or publish keep their GitHub runners. Fallback: change the `blacksmith-*` labels back to
+  # `ubuntu-24.04` (the verify-oracle matrix too).
   version:
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     outputs:
       version: ${{ steps.v.outputs.version }}
       prerelease: ${{ steps.v.outputs.prerelease }}
@@ -85,7 +88,7 @@ jobs:
   # its ci.yml counterpart on develop (same shared-key), so it starts warm.
   verify-ci:
     name: Verify (cargo xtask ci)
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-16vcpu-ubuntu-2404
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -102,7 +105,7 @@ jobs:
 
   verify-heavy:
     name: Verify (cargo xtask test --heavy)
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-16vcpu-ubuntu-2404
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -112,6 +115,11 @@ jobs:
           shared-key: heavy
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo xtask test --heavy
+        env:
+          # Blacksmith's image has a software Vulkan adapter that GitHub's ubuntu-24.04 lacks; the
+          # GPU throughput benchmark needs more per buffer (131 MB) than it allows (128 MB), so the
+          # heavy tests stay off the GPU here, as they were on GitHub's runners.
+          FIELDCRAFT_GPU: cpu
 
   verify-oracle:
     name: Verify (cargo xtask oracle, ${{ matrix.os }})
@@ -119,7 +127,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-24.04
+          - os: blacksmith-8vcpu-ubuntu-2404
             cache: oracle
           - os: macos-14
             cache: oracle-macos

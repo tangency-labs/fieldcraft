@@ -15,6 +15,8 @@ on:
     - cron: '17 5 * * *'
   workflow_dispatch:
 
+# Linux jobs run on Blacksmith (it sponsors the CI minutes); fallback: change the `blacksmith-*`
+# labels back to `ubuntu-24.04`.
 permissions:
   contents: read # to check out scripts/claim
   issues: write
@@ -28,7 +30,7 @@ concurrency:
 jobs:
   claim:
     name: Claim bot
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     if: >-
       github.event_name != 'issue_comment' ||

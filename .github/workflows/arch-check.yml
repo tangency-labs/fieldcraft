@@ -13,6 +13,8 @@ on:
     - cron: '17 5 * * 1'
   workflow_dispatch:
 
+# Linux jobs run on Blacksmith (it sponsors the CI minutes); fallback: change the `blacksmith-*`
+# labels back to `ubuntu-24.04`.
 permissions:
   contents: read
 
@@ -48,7 +50,7 @@ jobs:
 
   riscv64:
     name: Linux riscv64 (cross)
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 90
     env:
       TARGET: riscv64gc-unknown-linux-gnu

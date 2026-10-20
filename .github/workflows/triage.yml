@@ -21,6 +21,8 @@ on:
         type: boolean
         default: true
 
+# Linux jobs run on Blacksmith (it sponsors the CI minutes); fallback: change the `blacksmith-*`
+# labels back to `ubuntu-24.04`.
 permissions:
   contents: read # to check out scripts/triage
   issues: write
@@ -33,7 +35,7 @@ concurrency:
 jobs:
   triage:
     name: Triage bot
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 30
     # Filtered here so the common events (every comment, every label) start no runner.
     if: >-

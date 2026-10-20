@@ -14,6 +14,8 @@ on:
     paths: [".github/workflows/**", "packaging/**"]
   workflow_dispatch:
 
+# Linux jobs run on Blacksmith (it sponsors the CI minutes); fallback: change the `blacksmith-*`
+# labels back to `ubuntu-24.04`.
 permissions:
   contents: read
 
@@ -25,7 +27,7 @@ jobs:
   lint:
     name: Packaging lint
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     env:
       ACTIONLINT_VERSION: 1.7.12

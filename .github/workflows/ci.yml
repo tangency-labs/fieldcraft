@@ -13,6 +13,12 @@ name: CI
 # then lints and tests those crates and their dependents only; the heavy and oracle jobs run when
 # the change reaches the solvers, the oracle or everything (Cargo.toml/Cargo.lock/xtask/workflows).
 # Nightly and manual runs, and every release (release.yml), run all of it.
+#
+# Runners: Linux jobs run on Blacksmith's Ubuntu 24.04 runners (blacksmith-<N>vcpu-ubuntu-2404),
+# which Blacksmith sponsors (it pays the CI minutes). Sized per job: 16 vCPU for `cargo xtask ci`
+# and the heavy tests, 8 for the oracle, 2 for the plan, bot tests and dependency checks. Pushes,
+# nightly and manual runs still go to `vars.SELF_HOSTED_RUNNER` when it is set; macOS and Windows
+# jobs stay on GitHub's runners. Fallback: change the `blacksmith-*` labels back to `ubuntu-24.04`.
 on:
   pull_request:
     # A draft starts no run; marking it ready for review does.
@@ -59,7 +65,7 @@ jobs:
   plan:
     name: Plan (affected crates)
     if: github.event.schedule != '41 4 * * 0' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]')))
-    runs-on: ${{ github.event_name != 'pull_request' && vars.SELF_HOSTED_RUNNER || 'ubuntu-24.04' }}
+    runs-on: ${{ github.event_name != 'pull_request' && vars.SELF_HOSTED_RUNNER || 'blacksmith-2vcpu-ubuntu-2404' }}
     timeout-minutes: 15
     permissions:
       contents: read
@@ -119,7 +125,7 @@ jobs:
   bots:
     name: Claim and triage bot tests
     if: github.event.schedule != '41 4 * * 0' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]')))
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -132,7 +138,7 @@ jobs:
   ci:
     name: cargo xtask ci
     needs: plan
-    runs-on: ${{ github.event_name != 'pull_request' && vars.SELF_HOSTED_RUNNER || 'ubuntu-24.04' }}
+    runs-on: ${{ github.event_name != 'pull_request' && vars.SELF_HOSTED_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -164,7 +170,7 @@ jobs:
     name: cargo xtask test --heavy
     needs: plan
     if: github.event_name != 'pull_request' && (needs.plan.outputs.solver == 'true' || needs.plan.outputs.everything == 'true')
-    runs-on: ${{ github.event_name != 'pull_request' && vars.SELF_HOSTED_RUNNER || 'ubuntu-24.04' }}
+    runs-on: ${{ github.event_name != 'pull_request' && vars.SELF_HOSTED_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -174,6 +180,12 @@ jobs:
           shared-key: heavy
           save-if: ${{ github.ref == 'refs/heads/develop' }}
       - run: cargo xtask test --heavy
+        env:
+          # Blacksmith's image has a software Vulkan adapter that GitHub's ubuntu-24.04 lacks; the
+          # GPU throughput benchmark needs more per buffer (131 MB) than it allows (128 MB), so the
+          # heavy tests stay off the GPU there, as they were on GitHub's runners. The self-hosted
+          # runner keeps the default policy.
+          FIELDCRAFT_GPU: ${{ vars.SELF_HOSTED_RUNNER && 'auto' || 'cpu' }}
 
   oracle:
     # Verification and validation (docs/verification.md): every case against its reference and
@@ -183,7 +195,7 @@ jobs:
     name: cargo xtask oracle
     needs: plan
     if: needs.plan.outputs.solver == 'true' || needs.plan.outputs.everything == 'true'
-    runs-on: ${{ github.event_name != 'pull_request' && vars.SELF_HOSTED_RUNNER || 'ubuntu-24.04' }}
+    runs-on: ${{ github.event_name != 'pull_request' && vars.SELF_HOSTED_RUNNER || 'blacksmith-8vcpu-ubuntu-2404' }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -234,7 +246,7 @@ jobs:
   advisories:
     name: Dependency licences, advisories and sources
     if: github.event.schedule != '41 4 * * 0' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]')))
-    runs-on: ${{ github.event_name != 'pull_request' && vars.SELF_HOSTED_RUNNER || 'ubuntu-24.04' }}
+    runs-on: ${{ github.event_name != 'pull_request' && vars.SELF_HOSTED_RUNNER || 'blacksmith-2vcpu-ubuntu-2404' }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
