@@ -2068,6 +2068,7 @@ pub const SAMPLE: &[Field] = &[choice(
         ("flow-past", "Flow past a bracket"),
         ("heated-flow", "Heated flow past a bracket"),
         ("cooling-heat-sink", "Heat sink in forced air"),
+        ("cooling-enclosure", "Sealed enclosure cooling"),
         ("heated-bracket", "Heated bracket"),
         ("bracket-hex", "Hex-meshed bracket"),
         ("crank-arm", "Bicycle crank arm"),

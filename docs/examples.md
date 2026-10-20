@@ -231,12 +231,12 @@ benchmark. It has neither buoyancy nor solid heat conduction. The sample is isol
 # Electronics cooling studies
 
 Larger thermal lattice-Boltzmann studies, samples like the rest but slower to solve: the heat sink
-takes about four minutes on a CPU. Their setup is `crates/engine/src/sample/cooling.rs`, their
-geometry the `cooling-*` SolidCraft recipes in [`tests/corpus`](../tests/corpus); trunk tests solve
-each one briefly, heavy tests hold their numbers below. `tools/cooling/make.py` (see its
-[README](../tools/cooling/README.md)) opens each sample headless, solves it, prints the numbers and
-renders the pictures. They show what the fluid solver can do for electronics cooling today, and
-where it stands in for what it cannot yet do:
+takes about four minutes on a CPU, the enclosure about twenty. Their setup is
+`crates/engine/src/sample/cooling.rs`, their geometry the `cooling-*` SolidCraft recipes in
+[`tests/corpus`](../tests/corpus); trunk tests solve each one briefly, heavy tests hold their
+numbers below. `tools/cooling/make.py` (see its [README](../tools/cooling/README.md)) opens each
+sample headless, solves it, prints the numbers and renders the pictures. They show what the fluid
+solver can do for electronics cooling today, and where it stands in for what it cannot yet do:
 
 - **No conjugate heat transfer into solids yet**
   ([#157](https://github.com/tangency-labs/fieldcraft/issues/157)): a high-conductivity heat sink
@@ -248,6 +248,8 @@ where it stands in for what it cannot yet do:
   velocity because the two-relaxation-time collision is resolution-bound near its stability limit
   ([#557](https://github.com/tangency-labs/fieldcraft/issues/557)), which caps them at a gentle
   0.1 m/s, below where a fan curve's operating point would sit.
+- **No surface-to-surface radiation**: the sealed enclosure is **convection only** (radiation
+  carries a real share of the heat in a sealed box).
 - The colour legend under each picture is the temperature range it is clamped to.
 
 Background for the planned electronics-cooling release is in
@@ -269,8 +271,8 @@ about 1 % from 2 s on (1.92–1.95 W out to 20 s).
 **Numbers:** the sink sheds **1.93 W**, a sink-to-inlet **resistance of 13.0 K/W**. The duct's
 air could carry 3.98 W if it all left at the sink's temperature; it carries **48 %** of that
 (**ε = 0.48**), a bulk rise of **12 K** at the outlet. So at this airflow the sink is
-airflow-limited: per area it does about as well as natural convection off a small part (h ≈ 7 W/m²K over its
-110 cm²), and its low resistance comes from its area. Buoyancy lifts the
+airflow-limited: per area it does about as well as the bare chip below (h ≈ 7 W/m²K over its
+110 cm² against the chip's 7.9), and its lower resistance comes from its area. Buoyancy lifts the
 warm layer off the fins into a rising wake and adds about 4 % (1.85 W without it at 3 s).
 
 **Look at:** the temperature slice between the middle fins and the streamlines coloured by
@@ -283,3 +285,32 @@ fin corners: the D3Q7 anti-bounce-back wall at a convex edge, not a physical und
 maximum overshoots the sink by 0.5 K at the same corners.
 
 **Regenerate:** `python3 tools/cooling/make.py heat-sink`.
+
+## Sealed enclosure with a PCB (`cooling-enclosure`)
+
+![Side section through a chip on a vertical PCB in a sealed box: the warm plume rising off the chip, spilling over the top of the board and recirculating down the walls](media/examples/cooling-enclosure.png)
+
+A small package held at 40 °C on a vertical PCB inside a sealed 60 × 40 × 60 mm air box whose
+walls are held at 25 °C, no fan. Buoyancy (Boussinesq, β = 3.4 × 10⁻³ K⁻¹, g along −z) drives a
+plume up off the chip, over the top of the board and down the cool walls. D3Q19 TRT with the D3Q7
+thermal lattice and buoyancy on 144,000 cells of 1 mm at a fixed 0.2 ms step, run to **steady
+state** with the steady stop rule ([#595](https://github.com/tangency-labs/fieldcraft/pull/595):
+flow, temperature and the chip's heat each changing by under 0.1 % per 2 s window): it stops at
+18 s, after 90,000 steps, when the walls take back the chip's heat to within 0.01 %.
+
+**Numbers:** the chip sheds **62.7 mW** by natural convection: over its 528 mm² of wetted faces at
+15 K that is **h ≈ 7.9 W/m²K**, against 9.5 from the Churchill–Chu correlation for a vertical
+plate of the chip's height, and a chip-to-wall resistance of **239 K/W**. The air stays between
+the walls' and the chip's temperatures (24.9–39.5 °C). The plume's 72 mm/s peak matches its scale
+√(gβΔT·L) ≈ 77 mm/s. Solved on 2 mm cells instead, the steady heat is 1.3 % lower.
+
+**Look at:** the side section through the chip (`results.slice` with `axis: "x"` at 35): the
+plume rising off the chip, spilling over the board's top edge, and the recirculation the
+streamlines draw down the walls.
+
+**Caveats:** the buoyant **start-up** needs a small fixed time step: the solver's automatic step
+over-accelerates the first instant and goes unstable (lattice speed 0.505 at step 38). This is
+**convection only**: a sealed enclosure also loses a real share of its heat by **surface-to-surface
+radiation**, which the solver does not model yet.
+
+**Regenerate:** `python3 tools/cooling/make.py enclosure`.

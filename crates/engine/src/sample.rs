@@ -112,6 +112,14 @@ pub const SAMPLES: &[Sample] = &[
         script: cooling::heat_sink,
     },
     Sample {
+        name: "cooling-enclosure",
+        label: "Sealed Enclosure Cooling",
+        about: "A 40 °C chip on a PCB in a sealed box with 25 °C walls, no fan: the buoyant plume and the heat natural convection carries, to steady state (minutes on a CPU)",
+        design: Some(cooling::ENCLOSURE_DESIGN),
+        prepare: None,
+        script: cooling::enclosure,
+    },
+    Sample {
         name: "heated-bracket",
         label: "Heated Bracket",
         about: "A steel bracket clamped at its holes and heated at one end: steady heat conduction and the thermal stress",

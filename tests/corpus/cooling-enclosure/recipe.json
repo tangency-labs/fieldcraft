@@ -1,0 +1,5 @@
+{"corpus": {"categories": ["blocky", "small-feature"], "volume_mm3": 4672.0},
+ "commands": [
+  {"command": "solid.box", "params": {"corner": [10, 19, 6], "length": 40, "width": 2, "height": 44, "body_name": "PCB"}},
+  {"command": "solid.box", "params": {"corner": [27, 21, 26], "length": 16, "width": 6, "height": 12, "body_name": "Chip"}}
+ ]}

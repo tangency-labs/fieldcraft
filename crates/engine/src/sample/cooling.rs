@@ -1,17 +1,19 @@
-//! The electronics-cooling studies (docs/examples.md, discussion #584), starting with a heat sink
-//! in forced air: thermal lattice Boltzmann flow past a solid held at a temperature. There is no
-//! conduction inside solids yet (#157), so a high-conductivity sink is an isothermal surface.
+//! The electronics-cooling studies (docs/examples.md, discussion #584): a heat sink in forced
+//! air and a chip on a PCB in a sealed box (natural convection). Each is thermal lattice Boltzmann flow past solids held at a temperature: there is no
+//! conduction inside solids yet (#157), so a high-conductivity sink or radiator is an isothermal
+//! surface and a component a held-temperature face.
 //!
 //! Every case is a function of its [`Run`] (cell size, time step, how long): the samples open
-//! with the published settings ([`HEAT_SINK`]), the trunk tests solve a
+//! with the published settings ([`HEAT_SINK`], [`ENCLOSURE`]), the trunk tests solve a
 //! coarse, short version and the heavy tests hold the published numbers.
 //! `tools/cooling/make.py` opens the samples, solves them and renders the gallery's pictures.
 
 use fieldcraft_geometry::Shape;
 use serde_json::{Value, json};
 
-/// The geometry: a SolidCraft recipe in the corpus.
+/// The geometry: SolidCraft recipes, the sink's and the enclosure's in the corpus.
 pub(super) const HEAT_SINK_DESIGN: &str = include_str!("../../../../tests/corpus/cooling-heat-sink/recipe.json");
+pub(super) const ENCLOSURE_DESIGN: &str = include_str!("../../../../tests/corpus/cooling-enclosure/recipe.json");
 
 /// How a case is solved.
 #[derive(Clone, Copy, Debug)]
@@ -41,6 +43,12 @@ const SINK_DUCT: ([f64; 3], [f64; 3]) = ([-30.0, -2.0, 0.0], [90.0, 42.0, 30.0])
 /// Fixed length: the wake behind the sink keeps shedding (the velocity never settles to the steady
 /// rule's tolerance), while the heat holds within about 1 % from 2 s on.
 const HEAT_SINK: Run = Run { spacing: 1.0, time_step: Some(0.00025), end_time: 3.0, frames: 30, steady: false };
+
+/// Enclosure: chip and wall temperatures (°C).
+const CHIP_TEMPERATURE: f64 = 40.0;
+const ENCLOSURE_WALLS: f64 = 25.0;
+/// To steady state (about 18 s of flow): the chip's heat and the walls' then agree.
+const ENCLOSURE: Run = Run { spacing: 1.0, time_step: Some(0.0002), end_time: 40.0, frames: 40, steady: true };
 
 /// The material every case's air is made of.
 fn air() -> Value {
@@ -109,6 +117,32 @@ fn heat_sink_with(bodies: &[Shape], run: &Run) -> Value {
     )
 }
 
+pub(super) fn enclosure(bodies: &[Shape]) -> Value {
+    enclosure_with(bodies, &ENCLOSURE)
+}
+
+/// Natural convection: a chip held at [`CHIP_TEMPERATURE`] on a vertical PCB in a sealed
+/// 60 × 40 × 60 mm box whose walls are held at [`ENCLOSURE_WALLS`]; buoyancy drives the plume.
+/// The buoyant start-up needs a small fixed time step. Convection only, no radiation.
+fn enclosure_with(bodies: &[Shape], run: &Run) -> Value {
+    let sides = ["x_min", "x_max", "y_min", "y_max", "z_min", "z_max"];
+    let walls: serde_json::Map<String, Value> = sides.iter().map(|f| (f.to_string(), json!({"type": "wall"}))).collect();
+    let held_walls: serde_json::Map<String, Value> =
+        sides.iter().map(|f| (f.to_string(), json!({"type": "temperature", "value": ENCLOSURE_WALLS}))).collect();
+    script(
+        "Box",
+        json!({
+            "material": "Air", "min": [0, 0, 0], "max": [60, 40, 60], "spacing": run.spacing,
+            "faces": walls, "obstacles": ["PCB", "Chip"], "initial_velocity": [0, 0, 0],
+            "thermal": {"initial_temperature": ENCLOSURE_WALLS, "gravity": GRAVITY, "expansion": AIR_EXPANSION,
+                "faces": held_walls, "surfaces": held(bodies, "Chip", CHIP_TEMPERATURE)}
+        }),
+        "Natural",
+        run,
+        faces(bodies, "Chip"),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -162,9 +196,11 @@ mod tests {
 
     #[test]
     fn the_cooling_samples_open_ready_to_solve() {
-        let mut s = Session::default();
-        s.execute("file.sample", &json!({"name": "cooling-heat-sink"})).unwrap();
-        assert_ready(&mut s);
+        for name in ["cooling-heat-sink", "cooling-enclosure"] {
+            let mut s = Session::default();
+            s.execute("file.sample", &json!({"name": name})).unwrap();
+            assert_ready(&mut s);
+        }
     }
 
     /// The published cells, 100 steps (25 ms): the start-up's thin thermal layers on the fins
@@ -175,6 +211,15 @@ mod tests {
         let (q, r) = solve(&mut s, "HeatSink");
         assert!(near(q, 6.276, 0.05), "{q} W: {r}");
         air_between(&r, SINK_INLET, SINK_TEMPERATURE, 5.0);
+    }
+
+    /// 2 mm cells, a quarter second: the chip starts its plume, giving the air 69 mW.
+    #[test]
+    fn a_short_enclosure_run_takes_heat_from_the_chip() {
+        let mut s = open(ENCLOSURE_DESIGN, |b| enclosure_with(b, &short(2.0, 0.0008, 0.25)));
+        let (q, r) = solve(&mut s, "Chip");
+        assert!(near(q, 0.06915, 0.05), "{q} W: {r}");
+        air_between(&r, ENCLOSURE_WALLS, CHIP_TEMPERATURE, 0.5);
     }
 
     /// The published heat sink (docs/examples.md): 1.93 W at 3 s, a sink-to-inlet resistance of
@@ -190,5 +235,21 @@ mod tests {
         let limit = AIR_RHO_CP * SINK_SPEED * (max[1] - min[1]) * (max[2] - min[2]) * (SINK_TEMPERATURE - SINK_INLET) / 1000.0;
         assert!(near(q / limit, 0.484, 0.03), "ε {}: {r}", q / limit);
         air_between(&r, SINK_INLET, SINK_TEMPERATURE + 0.6, 5.0);
+    }
+
+    /// The enclosure to steady state on 2 mm cells: the chip's heat is what the walls take, and
+    /// it is within 3 % of the published 1 mm figure (62.7 mW, h ≈ 7.9 W/m²K). The published run
+    /// itself (90,000 steps on 144,000 cells) is too long for the heavy job on a CPU.
+    #[test]
+    #[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+    fn the_enclosure_settles_to_its_published_heat() {
+        let run = Run { spacing: 2.0, time_step: Some(0.0008), frames: 2, ..ENCLOSURE };
+        let mut s = open(ENCLOSURE_DESIGN, |b| enclosure_with(b, &run));
+        let (q, r) = solve(&mut s, "Chip");
+        assert_eq!(r["stop"]["reason"], "steady", "{r}");
+        let walls = r["heat"].as_array().unwrap().iter().filter(|h| h["body"].is_null()).map(|h| h["final"].as_f64().unwrap()).sum::<f64>() / 1000.0;
+        assert!(near(walls, q, 0.002), "walls {walls} W, chip {q} W");
+        assert!(near(q, 0.06189, 0.01) && near(q, 0.0627, 0.03), "{q} W: {r}");
+        air_between(&r, ENCLOSURE_WALLS, CHIP_TEMPERATURE, 0.5);
     }
 }

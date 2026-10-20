@@ -153,6 +153,15 @@ def heat_sink(report, cold, hot):
             **exchanger(q, 100.0, 44.0 * 30.0, cold, hot), **common(report)}
 
 
+def enclosure(report, cold, hot):
+    """Natural convection: a chip on a PCB in a sealed box with held walls."""
+    wetted = 528.0  # the chip's faces but the one on the board, mm^2
+    q = wall_heat_w(report, "Chip")
+    walls = -wall_heat_w(report, None)  # the box's walls take it back
+    return {"heat_shed_W": round(q, 4), "chip_to_walls_K_per_W": round((hot - cold) / q, 1),
+            "h_W_per_m2K": round(q / (wetted * 1e-6) / (hot - cold), 2), "walls_take_W": round(walls, 4), **common(report)}
+
+
 CASES = {
     "heat-sink": {
         "sample": "cooling-heat-sink", "numbers": heat_sink, "out": "cooling-heat-sink", "clip": False,
@@ -160,6 +169,14 @@ CASES = {
         "render": {"slice": {"axis": "y", "position": 20}, "streamlines": {"count": 24},
                    "camera": {"yaw": -40.0, "pitch": 22.0, "target": {"center_of": "bbox"}, "fit": True},
                    "caption": "heat sink · forced air 0.1 m/s, buoyancy on"},
+    },
+    "enclosure": {
+        "sample": "cooling-enclosure", "numbers": enclosure, "out": "cooling-enclosure", "clip": False,
+        "temperatures": [25.0, 40.0],
+        "render": {"slice": {"axis": "x", "position": 35},
+                   "streamlines": {"count": 14, "max_steps": 1400, "line": {"from": [35, 24, 30], "to": [35, 38, 30]}},
+                   "camera": {"yaw": -90.0, "pitch": 6.0, "target": {"center_of": "bbox"}, "fit": True},
+                   "caption": "sealed enclosure · natural convection"},
     },
 }
 
