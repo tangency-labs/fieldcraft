@@ -27,6 +27,12 @@ pub struct ControlRequest {
 }
 
 impl ControlRequest {
+    /// A request and the receiver of its reply, which the control server's thread waits on.
+    #[allow(
+        clippy::disallowed_types,
+        clippy::disallowed_methods,
+        reason = "the reply's receiver goes to the control server's thread, not the window"
+    )]
     pub fn new(method: impl Into<String>, params: Value) -> (Self, std::sync::mpsc::Receiver<Value>) {
         let (tx, rx) = std::sync::mpsc::channel();
         (Self { method: method.into(), params, reply: tx }, rx)

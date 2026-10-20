@@ -17,9 +17,17 @@ disallowed-methods = [
     { path = "fieldcraft_render::DisplayMesh::from_model", reason = "drawing a large model takes long: let the job that brings it build it (`Prebuilt`)" },
     { path = "fieldcraft_render::DisplayMesh::from_model_hiding", reason = "drawing a large model takes long: let the job that brings it build it (`Prebuilt`)" },
     { path = "std::thread::sleep", reason = "the window thread never sleeps" },
+    { path = "std::sync::mpsc::channel", reason = "the window receives on an `inbox::Inbox` (`inbox::channel`), which can only be polled" },
+    { path = "std::sync::mpsc::sync_channel", reason = "the window receives on an `inbox::Inbox` (`inbox::channel`), which can only be polled" },
     { path = "std::sync::mpsc::Receiver::recv", reason = "the window thread never blocks on a channel: `try_recv` each frame" },
     { path = "std::sync::mpsc::Receiver::recv_timeout", reason = "the window thread never blocks on a channel: `try_recv` each frame" },
     { path = "std::sync::mpsc::Receiver::iter", reason = "the window thread never blocks on a channel: `try_recv` each frame" },
     { path = "std::thread::JoinHandle::join", reason = "the window thread never waits for a thread" },
     { path = "std::thread::ScopedJoinHandle::join", reason = "the window thread never waits for a thread" },
+]
+
+# A `Receiver` blocks in ways a method list cannot name (`for _ in &rx`, `rx.into_iter()`): the
+# window holds an `inbox::Inbox` instead, which has no blocking receive and no `IntoIterator`.
+disallowed-types = [
+    { path = "std::sync::mpsc::Receiver", reason = "the window receives on an `inbox::Inbox`, which can only be polled (a `Receiver` can be iterated, which blocks)" },
 ]

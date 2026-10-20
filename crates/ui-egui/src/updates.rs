@@ -10,7 +10,6 @@
 //! model does; the swap happens after the window has closed.
 
 use std::path::Path;
-use std::sync::mpsc::Receiver;
 
 use egui::RichText;
 use fieldcraft_update::{Check, Finish, Release, Staged};
@@ -52,7 +51,7 @@ pub struct UpdateHost {
     pub automatic: bool,
     /// Start a job; its events come back on `events`.
     pub start: Box<dyn Fn(Job)>,
-    pub events: Receiver<Event>,
+    pub events: crate::inbox::Inbox<Event>,
     /// Seconds since the Unix epoch.
     pub now: Box<dyn Fn() -> u64>,
     /// Open a downloaded package with the system's installer.
@@ -433,7 +432,7 @@ mod tests {
             unsupported: None,
             automatic,
             start: Box::new(move |job| j.borrow_mut().push(job)),
-            events: rx,
+            events: rx.into(),
             now: Box::new(move || now),
             open_file: Box::new(|_| Ok(())),
         };

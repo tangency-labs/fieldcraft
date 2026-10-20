@@ -24,7 +24,7 @@
 #![forbid(unsafe_code)]
 // Slow work stays off the window thread (clippy.toml's `disallowed-methods`, #552); tests drive the
 // session and wait for jobs directly.
-#![cfg_attr(test, allow(clippy::disallowed_methods))]
+#![cfg_attr(test, allow(clippy::disallowed_methods, clippy::disallowed_types))]
 
 pub mod appbar;
 pub mod browser;
@@ -41,6 +41,7 @@ pub mod frame;
 pub mod framing;
 pub mod gpu;
 pub mod icons;
+pub mod inbox;
 pub mod menu;
 pub mod navigation;
 pub mod node_move;
@@ -62,7 +63,7 @@ pub mod viewport;
 
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::mpsc::Sender;
 
 use fieldcraft_engine::catalogue::{self, Tab, Workspace};
 use fieldcraft_engine::{EngineError, Session};
@@ -444,7 +445,7 @@ pub struct ModelApp {
     /// Files dropped on the window by the control channel (`ui.drop`): the next frame takes them
     /// with the window system's drops.
     pub synthetic_drops: Vec<String>,
-    control_rx: Option<Receiver<ControlRequest>>,
+    control_rx: Option<inbox::Inbox<ControlRequest>>,
     shots: Vec<Shot>,
     shot_token: u64,
     /// The offscreen context `ui.capture` draws the window with (made on first use).
@@ -614,8 +615,8 @@ impl ModelApp {
     }
 
     /// Serve control-channel requests (see [`control`]).
-    pub fn with_control(mut self, rx: Receiver<ControlRequest>) -> Self {
-        self.control_rx = Some(rx);
+    pub fn with_control(mut self, rx: impl Into<inbox::Inbox<ControlRequest>>) -> Self {
+        self.control_rx = Some(rx.into());
         self
     }
 

@@ -15,13 +15,14 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::mpsc::{Receiver, Sender, TryRecvError};
+use std::sync::mpsc::{Sender, TryRecvError};
 
 use fieldcraft_model::progress::Progress;
 
 use fieldcraft_engine::Session;
 use serde_json::{Value, json};
 
+use crate::inbox::Inbox;
 use crate::{ModelApp, Prebuilt};
 
 /// A file type a picker offers: a name and its extensions (without the dot).
@@ -303,7 +304,7 @@ pub struct Loading {
     /// The command form that started it: closed when it succeeds, showing the error when not.
     form: Option<&'static str>,
     /// The finished session copy and the command's reply.
-    rx: Receiver<Finished>,
+    rx: Inbox<Finished>,
     /// The work, while it waits to run on the window thread (the web, which has no threads).
     pending: Option<Work>,
     /// Whether the window has drawn the job's progress: on the web the work runs (and the page
@@ -518,8 +519,8 @@ fn spawn(
     params: Value,
     progress: Arc<Progress>,
     drawn: Option<Arc<fieldcraft_geometry::Design>>,
-) -> (Receiver<Finished>, Option<Work>) {
-    let (tx, rx) = std::sync::mpsc::channel();
+) -> (Inbox<Finished>, Option<Work>) {
+    let (tx, rx) = crate::inbox::channel();
     let work = start(
         format!("fieldcraft {command}"),
         Box::new(move || {

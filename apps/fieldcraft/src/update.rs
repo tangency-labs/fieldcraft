@@ -49,7 +49,7 @@ pub fn host(ctx: egui::Context, automation: bool) -> UpdateHost {
             log::warn!("updates: no thread: {e}");
         }
     };
-    UpdateHost { unsupported, automatic, start: Box::new(start), events, now: Box::new(now), open_file: Box::new(open_file) }
+    UpdateHost { unsupported, automatic, start: Box::new(start), events: events.into(), now: Box::new(now), open_file: Box::new(open_file) }
 }
 
 /// Download, verify and stage `release`, reporting each whole percent.
