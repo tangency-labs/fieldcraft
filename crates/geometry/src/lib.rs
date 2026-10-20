@@ -220,16 +220,18 @@ impl Shape {
             Ok((0..self.body.face_count())
                 .map(|f| {
                     solidcraft_kernel::face_surface(&self.body, f).map(|s| match s {
-                        solidcraft_kernel::FaceSurface::Plane { normal, point } => FaceSurface::Plane { normal: xyz(normal), point: xyz(point) },
+                        solidcraft_kernel::FaceSurface::Plane { normal, point } => {
+                            FaceSurface::Plane { normal: xyz(normal.vec()), point: xyz(point) }
+                        }
                         solidcraft_kernel::FaceSurface::Cylinder { origin, axis, radius } => {
-                            FaceSurface::Cylinder { origin: xyz(origin), axis: xyz(axis), radius }
+                            FaceSurface::Cylinder { origin: xyz(origin), axis: xyz(axis.vec()), radius }
                         }
                         solidcraft_kernel::FaceSurface::Cone { apex, axis, half_angle } => {
-                            FaceSurface::Cone { apex: xyz(apex), axis: xyz(axis), half_angle }
+                            FaceSurface::Cone { apex: xyz(apex), axis: xyz(axis.vec()), half_angle }
                         }
                         solidcraft_kernel::FaceSurface::Sphere { center, radius } => FaceSurface::Sphere { center: xyz(center), radius },
                         solidcraft_kernel::FaceSurface::Torus { center, axis, major, minor } => {
-                            FaceSurface::Torus { center: xyz(center), axis: xyz(axis), major, minor }
+                            FaceSurface::Torus { center: xyz(center), axis: xyz(axis.vec()), major, minor }
                         }
                     })
                 })

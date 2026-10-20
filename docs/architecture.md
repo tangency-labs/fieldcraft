@@ -52,7 +52,7 @@ Rules beyond the layer order:
 
 `solidcraft-*` come from https://github.com/tangency-labs/solidcraft (formerly
 bherbruck/solidcraft, which redirects there), pinned in the workspace `Cargo.toml` to the commit
-of a SolidCraft release tag (now v0.16.2). SolidCraft's `[patch.crates-io]` (its fixed truck
+of a SolidCraft release tag (now v0.18.1). SolidCraft's `[patch.crates-io]` (its fixed truck
 crates) does not reach dependents, so the workspace repeats it from the same rev; bump both
 together, and keep the list in step with SolidCraft's (v0.16 added `truck-geometry`). The same
 goes for SolidCraft's patched `egui-wgpu` (MSAA clamped to what the device supports, 1x on
@@ -62,7 +62,8 @@ The pin decides which designs FieldCraft opens: SolidCraft's reader migrates eve
 format and refuses a newer one, and SolidCraft releases often raise the format. A design newer
 than the pin reads (`fieldcraft_geometry::DESIGN_FORMAT`) fails with "this design was saved by a
 newer SolidCraft (format N); this FieldCraft reads up to M. Update FieldCraft to open it" (#605:
-FieldCraft 0.7.0 read up to format 21, SolidCraft 0.16.2 saves 27).
+FieldCraft 0.7.0 read up to format 21, SolidCraft 0.16.2 saves 27; #655: a FieldCraft on 0.16.2
+reads up to 27, SolidCraft 0.17 and 0.18 save 28).
 
 A newer pin can also name the same geometry otherwise: SolidCraft 0.16 names the pieces of a
 split face from their history (`F9:face:4` became `F9:section`), so a model saved before names
