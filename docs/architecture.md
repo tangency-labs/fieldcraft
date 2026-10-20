@@ -27,13 +27,13 @@ crates in strictly lower layers.
 | L1 | `fieldcraft-render` | Display data without a GPU dependency: the visible faces, element edges and nodes of a model, the orbit camera, a CPU rasterizer for headless snapshots, geometry surfaces with their face boundaries, deformed shapes and banded contour plots of nodal results, slices, surface values and streamlines of flow fields on grids of cells, picking. | started |
 | L2 | `fieldcraft-solver` | Implicit solver: assembly from the resolved model, boundary conditions, sparse direct solution, linear static and modal analysis, stresses and reactions. | started |
 | L2 | `fieldcraft-explicit` | Explicit dynamics: central-difference time integration with lumped mass, one-point hex8 with hourglass control, nodal-pressure tet4, bulk viscosity, rigid walls, large deformation with objective rates, plasticity, damage and erosion, energy account, histories and field frames. | started |
-| L2 | `fieldcraft-lbm` | Lattice Boltzmann flow solver on the CPU: D3Q19 two-relaxation-time scheme, bounce-back and slip walls, Zou–He inlets and outlets, obstacles voxelised from the face-tagged surface with exact predicates, momentum-exchange forces per face; a D3Q7 temperature lattice carried by the flow (held temperatures, heat fluxes, adiabatic faces, Boussinesq buoyancy, the heat into every face). Uses `mesh` for the predicates and the boundary surface. | started |
+| L2 | `fieldcraft-lbm` | Lattice Boltzmann flow solver on the CPU: D3Q19 two-relaxation-time or recursive regularized scheme, bounce-back and slip walls, Zou–He inlets and outlets, obstacles voxelised from the face-tagged surface with exact predicates, momentum-exchange forces per face; a D3Q7 temperature lattice carried by the flow (held temperatures, heat fluxes, adiabatic faces, Boussinesq buoyancy, the heat into every face). Uses `mesh` for the predicates and the boundary surface. | started |
 | L3 | `fieldcraft-fsi` | Fluid–structure coupling between the L2 solvers (later). | planned |
 | L4 | `fieldcraft-doc` | The document: geometry, mesh, model, results, history. | planned |
 | L5 | `fieldcraft-io` | `.fieldcraft` files (docs/formats/fieldcraft.md): text model definition, binary mesh, geometry references with content hashes, the journal; atomic saves; autosave storage for crash recovery; read and write roots that confine an automation client's file access (`roots`). Bytes in, bytes out; the file system only in `fs`, `recovery` and `roots` (in the browser, files kept in memory: `memory`). Result files later. | started |
 | L6 | `fieldcraft-engine` | Commands (`CommandSpec`), `Session::execute` with rollback and the panic guard, scripts; every file a command names checked against the session's roots (`Session::file_access`); headless pictures of the session (`view`: model, geometry, deformed shape and contours on the CPU rasterizer). | started |
 | L7 | `fieldcraft-gpu` | The viewport's GPU pipelines (lit faces, wide lines, MSAA, depth) without a window toolkit, the adapter policy (`FIELDCRAFT_GPU`: hardware GPU, software GPU, CPU rasterizer) and offscreen pictures (`fieldcraft-cli snapshot`). The window draws through the same pipelines. | started |
-| L7 | `fieldcraft-lbm-gpu` | The lattice Boltzmann solver's GPU backend: the CPU scheme's step (TRT collision with Guo forcing, the per-link wall rules, Zou–He boundaries, momentum exchange, and the temperature lattice with its wall conditions, buoyancy and heat exchange) as wgpu compute shaders, driven through `lbm`'s `Backend` trait from the flow the CPU prepared; single precision, one population buffer streamed in place (the AA pattern, `docs/lbm-gpu-performance.md`), deterministic per device, checked against the CPU within its tests' tolerances; opt-in per solve (`solve.fluid` with `backend: "gpu"`). Opens its device with `gpu`'s adapter policy. | started |
+| L7 | `fieldcraft-lbm-gpu` | The lattice Boltzmann solver's GPU backend: the CPU scheme's step (TRT or regularized collision with Guo forcing, the per-link wall rules, Zou–He boundaries, momentum exchange, and the temperature lattice with its wall conditions, buoyancy and heat exchange) as wgpu compute shaders, driven through `lbm`'s `Backend` trait from the flow the CPU prepared; single precision, one population buffer streamed in place (the AA pattern, `docs/lbm-gpu-performance.md`), deterministic per device, checked against the CPU within its tests' tolerances; opt-in per solve (`solve.fluid` with `backend: "gpu"`). Opens its device with `gpu`'s adapter policy. | started |
 | L7 | `fieldcraft-mesh-gpu` | Projection smoothing's GPU device: the coloured Winslow sweeps' interior nodes (Winslow's update or the neighbour mean, the guarded step on the scaled Jacobian and edge ratio around the node) as a wgpu compute shader, driven colour by colour through `mesh`'s sweep device while the host moves the boundary nodes on the geometry; single precision about the mesh's centre, deterministic per device, the same verdicts as the CPU's coloured sweeps with a smallest scaled Jacobian within 0.02 of theirs; opt-in per projection (`mesh.hex.project` with `backend: "gpu"`). Opens its device with `gpu`'s adapter policy. | started |
 | L7 | `fieldcraft-ui-egui`, `fieldcraft-mcp` | Desktop UI in the Craft family's layout (title bar with quick actions, workspace ribbon from the catalogue, browser, viewport with navigation bar and orientation gizmo, context panel, command search and command line, journal timeline; native file pickers as host services, background opening and solving; results display with legend and probe; offscreen capture of the whole window) and control channel requests (docs/control-protocol.md); MCP server over stdio (docs/mcp.md): tools over engine commands, a headless session or the running app through its control channel, read and write roots. | ui, mcp started |
 | testkit | `fieldcraft-testkit` | Test tooling, a dev-dependency only: the meshing test corpus (`tests/corpus/*/recipe.json`, analytic shapes) and its runner (`cargo xtask corpus`). | started |
@@ -321,8 +321,8 @@ module docs and in `docs/solvers/literature.md` (Part I).
    velocity; body acceleration; optional `thermal` settings: the initial temperature, a thermal
    condition per box face and per named obstacle face — held temperature, heat flux or
    adiabatic — and gravity with the expansion coefficient for buoyancy) and a fluid step (end
-   time or steps, optional time step, frames, the TRT parameter Λ). Deck writers refuse fluid
-   steps.
+   time or steps, optional time step, frames, the collision operator, the TRT parameter Λ).
+   Deck writers refuse fluid steps.
 2. **Setup.** Lattice units from the spacing, the time step and the density. Without a given
    time step the solver keeps the characteristic lattice velocity at 0.05 and τ ≤ 1. A lattice
    Mach number above 0.3, τ below 0.505 or a lattice acceleration above 0.01 is refused with the
@@ -334,7 +334,8 @@ module docs and in `docs/solvers/literature.md` (Part I).
    prepares its `BoundarySurface`; cells whose centres have a positive winding number are solid,
    decided with exact `orient2d`/`orient3d` and one symbolic perturbation, so faces through cell
    centres and lines through edges are classified consistently.
-4. **Stepping.** TRT collision with Guo forcing in place; pull streaming as one shifted copy per
+4. **Stepping.** TRT collision (or, per step, the recursive regularized collision that stays
+   stable as τ approaches ½, `docs/lbm-collision.md`) with Guo forcing in place; pull streaming as one shifted copy per
    direction with per-link rules for the cells next to walls and box faces; Zou–He on inlet and
    outlet layers. Wall links give the momentum exchanged with every box face and B-rep face
    (the face of the triangle nearest the link). A non-positive density or a lattice speed above
@@ -349,6 +350,10 @@ module docs and in `docs/solvers/literature.md` (Part I).
    precision), force and heat histories per wall and the fluid mass, in model units, stored
    per step like the implicit results.
 
+The regularized collision has its own analytic and benchmark checks
+(`crates/lbm/tests/regularized.rs`, and both collisions in the porous, fan, natural convection,
+lid-driven cavity and Schäfer–Turek cases; `docs/lbm-collision.md`).
+
 Verification (`crates/lbm/tests/verification.rs`, analytic): plane Poiseuille exact to round-off
 with Λ = 3/16 and second order with Λ = 1/4; Couette exact with the wall shear μU/H; Taylor–Green
 decay second order; Poiseuille in a staircase pipe; Stokes drag of a simple cubic sphere array
@@ -358,7 +363,7 @@ linear conduction between held plates to round-off; a flux wall against q H / k 
 heat balance; an inlet temperature carried through a plug flow; a periodic blob that keeps its
 total and returns after one lap; (ignored, minutes) the de Vahl Davis cavity at Ra 10³ and 10⁴
 against the published Nusselt numbers (both within 0.1 %). `crates/lbm/tests/benchmark.rs` (ignored, published
-reference values): Schäfer–Turek 2D-1.
+reference values): Schäfer–Turek 2D-1 and 2D-2, the lid-driven cavity at Re 100 (Ghia et al. 1982).
 
 ## Commands
 

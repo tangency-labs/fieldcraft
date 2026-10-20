@@ -529,10 +529,11 @@ shock capturing belongs to Eulerian finite volume (E1); not needed for the Lagra
 - **Complexity.** Moderate–high (careful transcription of the transforms; test each against the moment definitions).
 - **Code.** VirtualFluids and lbmpy implement it: both GPL-3.0, FORBIDDEN. Implement from the paper.
 
-**C2.4 Regularised and recursive-regularised collision.** **Verdict: build on (alternative to cumulant; compare).**
+**C2.4 Regularised and recursive-regularised collision.** **Verdict: built (recursive regularised on D3Q19, `collision: "regularized"`, #557; `docs/lbm-collision.md`).**
 - **Citations.**
   - J. Latt, B. Chopard. *Lattice Boltzmann method with regularized pre-collision distribution functions.* Math. Comput. Simul. 72(2–6):165–168, 2006. DOI [10.1016/j.matcom.2006.05.017](https://doi.org/10.1016/j.matcom.2006.05.017).
   - O. Malaspinas. *Increasing stability and accuracy of the lattice Boltzmann scheme: recursivity and regularization.* arXiv:1505.06900, 2015. https://arxiv.org/abs/1505.06900 (200).
+    (A preprint, not on Crossref: the implementation cites Coreixas et al. 2017 for the recursive form.)
   - C. Coreixas, G. Wissocq, G. Puigt, J.-F. Boussuge, P. Sagaut. *Recursive regularization step for high-order lattice Boltzmann methods.* PRE 96:033306, 2017. DOI [10.1103/PhysRevE.96.033306](https://doi.org/10.1103/PhysRevE.96.033306).
   - C. Coreixas, B. Chopard, J. Latt. *Comprehensive comparison of collision models in the lattice Boltzmann framework: Theory and investigations.* PRE 100:033305, 2019. DOI [10.1103/PhysRevE.100.033305](https://doi.org/10.1103/PhysRevE.100.033305).
 - **Method.** Before collision, project the non-equilibrium part onto its second-order Hermite component (regularised),
