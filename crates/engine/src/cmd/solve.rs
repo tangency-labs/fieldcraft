@@ -112,7 +112,7 @@ pub const FLUID: CommandSpec = CommandSpec {
 pub const PROBE: CommandSpec = CommandSpec {
     id: "solve.probe",
     label: "Probe Results",
-    params: r#"{"step": "Load", "nodes": [1, 2] (or "set": "fillet", a set's nodes), "mode": 1, "frame": 0} — the stored result at nodes (with `max_von_mises`, the largest among them, for static steps): displacement, rotation, reaction, reaction moment, stress, principal stresses (the values, largest first, without their directions) and von Mises (static, with `elements` each element's results: solid, 2D and truss nodal stresses (and, in a nonlinear step, the equivalent plastic strain at the integration points of a plastic element), shell section forces (N, M, Q per length in the element's axes) and bottom, middle and top stresses, beam end forces (N, V_y, V_z, T, M_y, M_z in its axes)), the shape of mode `mode` with its rotations (frequency, from 1), or displacement and velocity in field frame `frame` (explicit, from 0; the last by default) at `nodes` (or at the nodes nearest to points: "at": [[x, y, z], ...], lowest label on a tie, each entry then giving its `xyz` and `distance`) and, with `elements` (explicit), each element's stress, von Mises stress, strain, equivalent plastic strain, damage, temperature and whether it has eroded; a coupled reference point's label gives its six displacements (translations, rotations) and reactions (forces, moments). Fluid steps: {"step": "Flow", "points": [[x, y, z]], "frame": 10 (default the last)} gives velocity, pressure and (with heat) temperature in the cells at the points; {"step": "Flow", "forces": ["x_min", "F2:top", "Body1/F2:top"]} gives those walls' force histories and {"step": "Flow", "heat": ["y_min"]} the heat into them over time (power, positive into the wall)"#,
+    params: r#"{"step": "Load", "nodes": [1, 2] (or "set": "fillet", a set's nodes), "mode": 1, "frame": 0} — the stored result at nodes (with `max_von_mises`, the largest among them, for static steps): displacement, rotation, reaction, reaction moment, stress, principal stresses (the values, largest first, without their directions) and von Mises (static, with `elements` each element's results: solid, 2D and truss nodal stresses (and, in a nonlinear step, the equivalent plastic strain at the integration points of a plastic element), shell section forces (N, M, Q per length in the element's axes) and bottom, middle and top stresses, beam end forces (N, V_y, V_z, T, M_y, M_z in its axes)), the shape of mode `mode` with its rotations (frequency, from 1), or displacement and velocity in field frame `frame` (explicit, from 0; the last by default) at `nodes` (or at the nodes nearest to points: "at": [[x, y, z], ...], lowest label on a tie, each entry then giving its `xyz` and `distance`) and, with `elements` (explicit), each element's stress, von Mises stress, strain, equivalent plastic strain, damage, temperature and whether it has eroded; a coupled reference point's label gives its six displacements (translations, rotations) and reactions (forces, moments). Fluid steps: {"step": "Flow", "points": [[x, y, z]], "frame": 10 (default the last)} gives velocity, pressure and (with heat) temperature in the cells at the points; {"step": "Flow", "forces": ["x_min", "F2:top", "Body1/F2:top"]} gives those walls' force histories and {"step": "Flow", "heat": ["y_min"]} the heat into them over time (power, positive into the wall); {"step": "Flow", "line": {"from": [x, y, z], "to": [x, y, z], "count": 65 (default one point per cell spacing), "field": "velocity_x|velocity_y|velocity_z|speed|pressure|temperature|wall_heat_flux", "face": "x_min" (wall_heat_flux: the box wall the line lies on)}, "frame": 10} gives the field at `count` points evenly along the line (`xyz`; trilinear between the cell centres, null outside the fluid; within half a cell of a box face the nearest cell centre's value, so a temperature line run onto a held wall reads the first cell, not the wall) and its `max` and `min` with their `xyz`, located between the samples by the parabola through the extreme sample and its neighbours; `wall_heat_flux` is the heat per area into a box wall (positive into the wall): at a held temperature from the second-order one-sided difference through the wall and the two cell layers beside it, at a flux face its flux, at an adiabatic face zero"#,
     form: Some(super::forms::SOLVE_PROBE),
     kind: CommandKind::Model,
     requires: &[Requirement::Result],
@@ -704,7 +704,7 @@ fn steady_summary(s: &fieldcraft_lbm::SteadyReport, stats: &fieldcraft_lbm::Flui
     })
 }
 
-fn probe_fluid(r: &FluidResult, p: &Value) -> Result<Value> {
+fn probe_fluid(model: &fieldcraft_model::Model, r: &FluidResult, p: &Value) -> Result<Value> {
     if let Some(names) = opt::<Vec<String>>(p, "forces")? {
         if names.len() > MAX_PROBE_FORCES {
             return Err(EngineError::Params(format!("`forces` lists at most {MAX_PROBE_FORCES} walls")));
@@ -740,13 +740,16 @@ fn probe_fluid(r: &FluidResult, p: &Value) -> Result<Value> {
             .collect::<Result<_>>()?;
         return Ok(json!({"step": r.step, "times": r.history_times, "heat": out}));
     }
-    let pts = points(p, "points", MAX_PROBE)?;
     let frame = match opt::<usize>(p, "frame")? {
         Some(k) if k < r.frames.len() => k,
         Some(_) => return Err(EngineError::Params(format!("`frame` must be from 0 to {}", r.frames.len().saturating_sub(1)))),
         None => r.frames.len().saturating_sub(1),
     };
     let time = r.frames.get(frame).map(|f| f.time);
+    if let Some(line) = p.get("line") {
+        return probe_line(model, r, frame, time, line);
+    }
+    let pts = points(p, "points", MAX_PROBE)?;
     let out: Vec<Value> = pts
         .iter()
         .map(|&pt| match r.probe(frame, pt) {
@@ -763,6 +766,39 @@ fn probe_fluid(r: &FluidResult, p: &Value) -> Result<Value> {
     Ok(json!({"step": r.step, "frame": frame, "time": time, "points": out}))
 }
 
+/// A fluid step's field along a line (`flow::line`): `{"line": {"from", "to", "count", "field",
+/// "face"}}`.
+fn probe_line(model: &fieldcraft_model::Model, r: &FluidResult, frame: usize, time: Option<f64>, line: &Value) -> Result<Value> {
+    use crate::flow::line::{self, LineField};
+    let ends = |key: &str| -> Result<[f64; 3]> {
+        line.get(key).and_then(super::xyz_value).ok_or_else(|| EngineError::invalid("line", format!("needs `{key}`: [x, y, z]")))
+    };
+    let (from, to) = (ends("from")?, ends("to")?);
+    let count = match opt::<u64>(line, "count")? {
+        // One point per cell spacing along the line, both ends included; a line too long for
+        // that (or not a finite length) gets a count `line::points` refuses.
+        None => {
+            let n = (fieldcraft_render::Vec3::from(from).dist(fieldcraft_render::Vec3::from(to)) / r.grid.spacing).round() + 1.0;
+            if n.is_finite() && n <= line::MAX_POINTS as f64 { n as usize } else { usize::MAX }
+        }
+        Some(n) => usize::try_from(n).unwrap_or(usize::MAX),
+    };
+    let points = line::points(from, to, count)?;
+    let field: LineField = opt(line, "field")?.ok_or_else(|| EngineError::param("field", ProblemKind::Required))?;
+    let profile = match field {
+        LineField::WallHeatFlux => {
+            let face = opt(line, "face")?.ok_or_else(|| EngineError::param("face", ProblemKind::Required))?;
+            line::wall_heat_flux(r, frame, &line::Wall::of(model, r, face)?, points)?
+        }
+        _ => line::profile(r, frame, field, points)?,
+    };
+    let key = field.key();
+    let extreme = |e: Option<line::Extreme>| e.map_or(Value::Null, |e| json!({key: e.value, "xyz": e.point}));
+    Ok(json!({"step": r.step, "frame": frame, "time": time, "line": {
+        "field": line.get("field"), "xyz": profile.points, key: profile.values, "max": extreme(profile.max), "min": extreme(profile.min),
+    }}))
+}
+
 pub(crate) fn probe(s: &mut Session, p: &Value) -> Result<Value> {
     let step = opt::<String>(p, "step")?.ok_or_else(|| EngineError::param("step", ProblemKind::Required))?;
     let result = s.result(&step).ok_or_else(|| {
@@ -773,7 +809,7 @@ pub(crate) fn probe(s: &mut Session, p: &Value) -> Result<Value> {
         })
     })?;
     if let StepResult::Fluid(r) = result.as_ref() {
-        let mut out = probe_fluid(r, p)?;
+        let mut out = probe_fluid(&s.model, r, p)?;
         let display = s.units().clone();
         show_probe(&mut out, result, &display);
         return Ok(out);
@@ -802,7 +838,7 @@ pub(crate) fn probe(s: &mut Session, p: &Value) -> Result<Value> {
             probe_frame(r, &step, &nodes, &elements, p)?
         }
         StepResult::Implicit(r) => probe_implicit(r, &step, &nodes, p)?,
-        StepResult::Fluid(r) => probe_fluid(r, p)?,
+        StepResult::Fluid(r) => probe_fluid(&s.model, r, p)?,
     };
     // The largest von Mises stress among the probed nodes (static results).
     let peak = out.get("nodes").and_then(Value::as_array).and_then(|entries| {
@@ -1412,6 +1448,39 @@ pub(crate) mod tests {
         assert_eq!(h["heat"].as_array().unwrap().len(), 2);
         assert_eq!(h["times"].as_array().unwrap().len(), h["heat"][0]["power"].as_array().unwrap().len());
         assert!(s.execute("solve.probe", &json!({"step": "Shear", "heat": ["nope"]})).is_err());
+        // Along a line: the linear temperature and shear profiles, and the heat into each wall
+        // from the temperature beside it, which for a linear profile is the wall's heat per area.
+        let line = |field: &str, face: Option<&str>, from: [f64; 3], to: [f64; 3], count: u32| {
+            let mut p = json!({"step": "Shear", "line": {"from": from, "to": to, "count": count, "field": field}});
+            if let Some(f) = face {
+                p["line"]["face"] = json!(f);
+            }
+            s.clone().execute("solve.probe", &p)
+        };
+        let t = line("temperature", None, [0.0625, 0.0625, 0.0625], [0.0625, 0.9375, 0.0625], 8).unwrap();
+        assert!((t["line"]["max"]["temperature"].as_f64().unwrap() - 0.9375).abs() < 1e-6, "{t}");
+        assert_eq!(t["line"]["max"]["xyz"], json!([0.0625, 0.9375, 0.0625]), "{t}");
+        assert_eq!(t["line"]["temperature"].as_array().unwrap().len(), 8);
+        let u = line("velocity_x", None, [0.0625, 0.0625, 0.0625], [0.0625, 0.9375, 0.0625], 8).unwrap();
+        assert!((u["line"]["min"]["velocity"].as_f64().unwrap() - 0.1 * 0.0625).abs() < 1e-4, "{u}");
+        let area = 0.125 * 0.125;
+        for (face, y) in [("y_min", 0.0), ("y_max", 1.0)] {
+            let q = line("wall_heat_flux", Some(face), [0.0625, y, 0.0625], [0.0625, y, 0.0625], 1).unwrap();
+            let wall = heat.iter().find(|h| h["name"] == face).unwrap();
+            let expected = wall["mean"].as_f64().unwrap() / area;
+            let got = q["line"]["heat_flux"][0].as_f64().unwrap();
+            assert!((got / expected - 1.0).abs() < 1e-5, "{face}: {got} vs {expected}");
+        }
+        assert!(line("wall_heat_flux", Some("x_min"), [0.0, 0.5, 0.0625], [0.0, 0.5, 0.0625], 1).is_err(), "a periodic face is no wall");
+        assert!(line("wall_heat_flux", Some("y_min"), [0.0625, 0.1, 0.0625], [0.0625, 0.1, 0.0625], 1).is_err(), "off the wall");
+        assert!(line("wall_heat_flux", None, [0.0625, 0.0, 0.0625], [0.0625, 0.0, 0.0625], 1).is_err(), "no face");
+        assert!(line("vorticity", None, [0.0625, 0.0, 0.0625], [0.0625, 1.0, 0.0625], 2).is_err());
+        assert!(line("speed", None, [0.0625, 0.0, 0.0625], [0.0625, 1.0, 0.0625], 0).is_err());
+        // Hostile ends without a count: refused with the points' range, never an overflow.
+        for to in [[1e300, 1e300, 1e300], [f64::MAX, 0.0, 0.0]] {
+            let e = s.clone().execute("solve.probe", &json!({"step": "Shear", "line": {"from": [0, 0, 0], "to": to, "field": "speed"}}));
+            assert!(e.as_ref().is_err_and(|e| e.to_string().contains("1 to 10000 points")), "{e:?}");
+        }
         // A steady monitor's history is in the display units: the mean of the linear profile
         // from 0 to 1 °C is ½ °C (not 273.65 K), its heat in mW.
         let steady = json!({"tolerance": 1e-3, "monitors": [{"type": "mean_temperature"}, {"type": "heat", "faces": ["y_min"]}]});

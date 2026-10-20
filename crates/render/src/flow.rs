@@ -263,8 +263,14 @@ pub fn sample(grid: &CellGrid, values: &[f64], p: Vec3) -> f64 {
     if grid.cell_count() != Some(values.len()) {
         return f64::NAN;
     }
+    sample_with(grid, |c| values.get(c).copied(), p)
+}
+
+/// [`sample`] reading each cell's value through `value` (`None` or not finite where there is
+/// none), so a caller samples a few points without building a value for every cell.
+pub fn sample_with(grid: &CellGrid, value: impl Fn(usize) -> Option<f64>, p: Vec3) -> f64 {
     let Some(st) = grid.stencil(p, 1.0) else { return f64::NAN };
-    let at = |ijk: [usize; 3]| values.get(grid.index(ijk)).copied().filter(|x| x.is_finite());
+    let at = |ijk: [usize; 3]| value(grid.index(ijk)).filter(|x| x.is_finite());
     let (mut sum, mut weight) = (0.0, 0.0);
     for (ijk, w) in corners(&st) {
         if let Some(x) = at(ijk).filter(|_| w > 0.0) {

@@ -21,6 +21,7 @@ use serde_json::{Value, json};
 use crate::results::{Field, Kind, Pick, ResultsView, magnitude};
 use crate::{EngineError, Result, StepResult};
 
+pub mod line;
 pub mod wall;
 
 /// Streamlines traced when no count is given, and the steps (half a cell each) each may take.

@@ -595,10 +595,9 @@ const FACE_CONDITION: &[Variant] = &[
     variant("periodic", "Periodic", &[]),
 ];
 
-const BOX_FACE: Field =
-    choice("", "Box face", &[("x_min", "X min"), ("x_max", "X max"), ("y_min", "Y min"), ("y_max", "Y max"), ("z_min", "Z min"), ("z_max", "Z max")])
-        .help("A face of the domain's box, at the smallest or largest X, Y or Z.")
-        .req();
+const BOX_FACES: &[(&str, &str)] =
+    &[("x_min", "X min"), ("x_max", "X max"), ("y_min", "Y min"), ("y_max", "Y max"), ("z_min", "Z min"), ("z_max", "Z max")];
+const BOX_FACE: Field = choice("", "Box face", BOX_FACES).help("A face of the domain's box, at the smallest or largest X, Y or Z.").req();
 const OBSTACLE_FACE_FIELDS: &[Field] = &[
     reference("body", "Body", C::Body).help("An obstacle body of the design.").req(),
     text("face", "Face").help("A persistent face name of the body (e.g. F3); it also selects the face's split pieces.").req(),
@@ -2174,6 +2173,33 @@ pub const SOLVE_PROBE: &[Field] = &[
     points("points", "Fluid points", D::Length, 10_000).help("Points in the fluid to read."),
     json("forces", "Fluid walls").help("Walls whose fluid forces to sum, as JSON.").hint("[\"x_min\", \"F2:top\"]"),
     json("heat", "Fluid walls (heat)").help("Walls whose heat histories to read, as JSON.").hint("[\"y_min\", \"F2:top\"]"),
+    group(
+        "line",
+        "Fluid line",
+        &[
+            xyz("from", "From", D::Length).help("The line's first end."),
+            xyz("to", "To", D::Length).help("The line's last end."),
+            int("count", "Count", 1, crate::flow::line::MAX_POINTS as i64)
+                .help("Points evenly along the line, both ends included.")
+                .hint("one per cell spacing"),
+            choice(
+                "field",
+                "Field",
+                &[
+                    ("velocity_x", "Velocity X"),
+                    ("velocity_y", "Velocity Y"),
+                    ("velocity_z", "Velocity Z"),
+                    ("speed", "Speed"),
+                    ("pressure", "Pressure"),
+                    ("temperature", "Temperature"),
+                    ("wall_heat_flux", "Wall heat flux (into a box wall)"),
+                ],
+            )
+            .help("The field to read along the line."),
+            choice("face", "Wall", BOX_FACES).help("The box wall a wall-heat-flux line lies on."),
+        ],
+    )
+    .help("Read a fluid field along a line, with its largest and smallest value and where they are."),
 ];
 
 // ---- Results ----
