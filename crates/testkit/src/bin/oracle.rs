@@ -1,4 +1,4 @@
-//! `oracle [--case NAME]... [--bless NAME|all]... [--quick] [--no-write]`: see
+//! `oracle [--case NAME]... [--bless NAME|all]... [--quick] [--nightly] [--no-write]`: see
 //! [`fieldcraft_testkit::oracle`]; run it as `cargo xtask oracle`.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
@@ -7,7 +7,7 @@ use std::process::ExitCode;
 
 use fieldcraft_testkit::oracle::{Options, run};
 
-const USAGE: &str = "usage: oracle [--case NAME]... [--bless NAME|all]... [--quick] [--no-write]";
+const USAGE: &str = "usage: oracle [--case NAME]... [--bless NAME|all]... [--quick] [--nightly] [--no-write]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -20,6 +20,10 @@ fn main() -> ExitCode {
             "--bless" => value(&mut it).map(|v| options.bless.push(v)),
             "--quick" => {
                 options.quick = true;
+                Ok(())
+            }
+            "--nightly" => {
+                options.nightly = true;
                 Ok(())
             }
             "--no-write" => {

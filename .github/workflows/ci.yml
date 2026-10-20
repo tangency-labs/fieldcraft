@@ -190,8 +190,10 @@ jobs:
   oracle:
     # Verification and validation (docs/verification.md): every case against its reference and
     # its fixture, and docs/oracle.md must be the table the cases produce. Cases marked `slow`
-    # run here too while the whole set stays within a few minutes; `--quick` skips them. It runs
-    # when the change reaches the solvers or the oracle's package.
+    # run here too while the whole set stays within a few minutes; `--quick` skips them. Cases
+    # marked `nightly` (minutes each) run only in the nightly and manual runs (`--nightly`); on
+    # other runs their fixtures stand in for them, and the page shows the fixtures either way. It
+    # runs when the change reaches the solvers or the oracle's package.
     name: cargo xtask oracle
     needs: plan
     if: needs.plan.outputs.solver == 'true' || needs.plan.outputs.everything == 'true'
@@ -204,7 +206,7 @@ jobs:
         with:
           shared-key: oracle
           save-if: ${{ github.ref == 'refs/heads/develop' }}
-      - run: cargo xtask oracle
+      - run: cargo xtask oracle ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '--nightly' || '' }}
       - name: docs/oracle.md is current
         run: git diff --exit-code docs/oracle.md
 
@@ -222,7 +224,7 @@ jobs:
         with:
           shared-key: oracle-macos
           save-if: ${{ github.ref == 'refs/heads/develop' }}
-      - run: cargo xtask oracle
+      - run: cargo xtask oracle ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '--nightly' || '' }}
       - name: docs/oracle.md is current
         run: git diff --exit-code docs/oracle.md
 

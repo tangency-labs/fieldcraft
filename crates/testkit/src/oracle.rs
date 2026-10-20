@@ -12,6 +12,11 @@
 //! - `fixture.json`: our accepted values, written by `--bless` once the case passes;
 //! - `README.md`: the problem in our own words.
 //!
+//! A case marked `nightly` (too long for every change) runs only with `--nightly` (the scheduled,
+//! manual and release runs) or when named with `--case` or `--bless`; otherwise it is checked by
+//! its fixture alone. docs/oracle.md always shows a nightly case's fixture, so the page reads the
+//! same whether or not the run included it.
+//!
 //! [`run`] (the `oracle` binary, `cargo xtask oracle`) runs the cases, prints and checks the
 //! results and writes `docs/oracle.md` after a full run.
 
@@ -39,8 +44,10 @@ pub struct Options {
     pub cases: Vec<String>,
     /// Write `fixture.json` for these cases when they pass (`all` for every passing case).
     pub bless: Vec<String>,
-    /// Skip cases marked `slow`.
+    /// Skip cases marked `slow` (and `nightly`).
     pub quick: bool,
+    /// Run the cases marked `nightly` too.
+    pub nightly: bool,
     /// Write docs/oracle.md (only after a run of every case).
     pub write: bool,
 }
@@ -108,6 +115,8 @@ pub struct Expected {
     pub source: String,
     pub pending: Option<String>,
     pub slow: bool,
+    /// Runs only nightly (`--nightly`); the page shows its fixture.
+    pub nightly: bool,
     pub quantities: Vec<Quantity>,
 }
 
@@ -194,6 +203,7 @@ impl Expected {
             source: text(v, "source")?,
             pending,
             slow: v.get("slow").and_then(Value::as_bool).unwrap_or(false),
+            nightly: v.get("nightly").and_then(Value::as_bool).unwrap_or(false),
             quantities,
         })
     }
@@ -303,6 +313,8 @@ pub enum Verdict {
     /// Could not be measured.
     Error(String),
     Pending,
+    /// Not run here (a nightly case) and not kept in its fixture.
+    Nightly,
 }
 
 /// The fixture check of one quantity.
@@ -316,6 +328,8 @@ pub enum FixtureCheck {
     /// No fixture is kept (pending, failing or known-failing quantity).
     NotKept,
     Blessed,
+    /// A nightly case's fixture, shown without running the case.
+    Nightly,
 }
 
 /// One row of the report.
@@ -381,18 +395,32 @@ pub fn run(root: &Path, options: &Options) -> Result<(), String> {
     }
     let selected: Vec<&PathBuf> = all.iter().filter(|d| options.cases.is_empty() || options.cases.contains(&name_of(d))).collect();
     let mut rows = Vec::new();
+    // What docs/oracle.md shows: every row as run, but a nightly case's from its fixture.
+    let mut page_rows = Vec::new();
+    let mut rows_of_skipped = Vec::new();
     let mut cases: Vec<(String, Expected)> = Vec::new();
     let mut problems = Vec::new();
     let mut skipped = Vec::new();
     for dir in selected {
         let case = name_of(dir);
         let expected = Expected::parse(&read_json(&dir.join("expected.json"))?).map_err(|e| format!("{case}/expected.json: {e}"))?;
-        if expected.slow && options.quick {
+        if (expected.slow || expected.nightly) && options.quick {
             skipped.push(case);
             continue;
         }
         let fixture_path = dir.join("fixture.json");
         let fixture = read_fixture(&fixture_path)?;
+        let named = options.cases.contains(&case) || options.bless.contains(&case);
+        let nightly = expected.nightly && expected.pending.is_none();
+        if nightly && !(options.nightly || named) {
+            eprintln!("oracle: {case} runs nightly (`--nightly`); checked by its fixture");
+            let rows = fixture_rows(&case, &expected, fixture.as_ref());
+            problems.extend(nightly_problems(&case, &rows));
+            page_rows.extend(rows.iter().cloned());
+            rows_of_skipped.extend(rows);
+            cases.push((case, expected));
+            continue;
+        }
         let mut case_rows: Vec<Row> = if expected.pending.is_some() {
             let row =
                 |q: &Quantity| Row { case: case.clone(), quantity: q.clone(), ours: None, verdict: Verdict::Pending, fixture: FixtureCheck::NotKept };
@@ -453,19 +481,62 @@ pub fn run(root: &Path, options: &Options) -> Result<(), String> {
                 _ => {}
             }
         }
+        // A nightly case's page shows its fixture (as blessed by this run, if it was).
+        if nightly {
+            page_rows.extend(fixture_rows(&case, &expected, read_fixture(&fixture_path)?.as_ref()));
+        } else {
+            page_rows.extend(case_rows.iter().cloned());
+        }
         rows.extend(case_rows);
         cases.push((case, expected));
     }
     print_summary(&rows);
+    print_summary(&rows_of_skipped);
     if options.write && options.cases.is_empty() && !options.quick {
         let path = root.join("docs").join("oracle.md");
-        std::fs::write(&path, report(&cases, &rows)).map_err(|e| format!("{}: {e}", path.display()))?;
+        std::fs::write(&path, report(&cases, &page_rows)).map_err(|e| format!("{}: {e}", path.display()))?;
         eprintln!("oracle: wrote docs/oracle.md");
     }
     if !skipped.is_empty() {
         eprintln!("oracle: skipped slow cases: {}", skipped.join(", "));
     }
     if problems.is_empty() { Ok(()) } else { Err(format!("{} problem(s):\n  {}", problems.len(), problems.join("\n  "))) }
+}
+
+/// What fails a nightly case that was not run: a fixture that no longer meets its reference (an
+/// edited expected.json), and a quantity that should be frozen but has no fixture (a case added
+/// without being blessed), as for any other case.
+fn nightly_problems(case: &str, rows: &[Row]) -> Vec<String> {
+    rows.iter()
+        .filter_map(|r| {
+            let id = &r.quantity.id;
+            match (&r.verdict, &r.fixture) {
+                (Verdict::Fail, _) => Some(format!("{case}/{id}: its fixture misses the reference; run it (`cargo xtask oracle --case {case}`)")),
+                (_, FixtureCheck::Missing) => Some(format!("{case}/{id}: no fixture; bless the case (`cargo xtask oracle --bless {case}`)")),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+/// A nightly case's rows from its fixture: a frozen quantity judged by its fixture value, a known
+/// failure as known, a frozen quantity without a fixture as missing, anything else as nightly
+/// only.
+fn fixture_rows(case: &str, expected: &Expected, fixture: Option<&BTreeMap<String, Frozen>>) -> Vec<Row> {
+    expected
+        .quantities
+        .iter()
+        .map(|q| {
+            let frozen = fixture.and_then(|f| f.get(&q.id)).filter(|_| q.frozen);
+            let (ours, verdict, check) = match (frozen, &q.known_failure) {
+                (Some(f), _) => (Some(f.value), judge(q, &Ok(f.value), Some(f)).0, FixtureCheck::Nightly),
+                (None, Some(_)) => (None, Verdict::Known, FixtureCheck::NotKept),
+                (None, None) if q.frozen => (None, Verdict::Nightly, FixtureCheck::Missing),
+                (None, None) => (None, Verdict::Nightly, FixtureCheck::NotKept),
+            };
+            Row { case: case.to_string(), quantity: q.clone(), ours, verdict, fixture: check }
+        })
+        .collect()
 }
 
 fn print_summary(rows: &[Row]) {
@@ -617,6 +688,7 @@ fn verdict_text(v: &Verdict) -> &'static str {
         Verdict::Fixed => "**passes: remove known_failure**",
         Verdict::Error(_) => "**ERROR**",
         Verdict::Pending => "pending",
+        Verdict::Nightly => "nightly",
     }
 }
 
@@ -627,6 +699,7 @@ fn fixture_text(f: &FixtureCheck) -> &'static str {
         FixtureCheck::Missing => "**missing**",
         FixtureCheck::NotKept => "—",
         FixtureCheck::Blessed => "blessed",
+        FixtureCheck::Nightly => "nightly",
     }
 }
 
@@ -710,6 +783,9 @@ benchmark, {} experiment; {} pending cases wait for capabilities still being bui
     md += "## Sources and tolerances\n\n";
     for (case, e) in &active {
         let _ = write!(md, "- **[{case}](../tests/oracle/{case}/)** ({}): {}. Source: {}.", e.kind, cell(&e.title), cell(&e.source));
+        if e.nightly {
+            md += " Runs nightly (`--nightly`); the table shows its fixture.";
+        }
         let reasons: Vec<String> = e.quantities.iter().map(|q| format!("{}: {}", q.id, cell(&q.reason))).collect();
         let _ = writeln!(md, " Tolerances — {}", reasons.join("; "));
     }
@@ -763,6 +839,57 @@ mod tests {
         let old = Frozen { value: 213.3, band: 2e-7 };
         assert_eq!(judge(&q, &Ok(212.4), Some(&old)), (Verdict::Pass, FixtureCheck::NotKept));
         assert_eq!(judge(&q, &Ok(200.0), Some(&old)).0, Verdict::Fail, "the tolerance still gates it");
+    }
+
+    /// A nightly case not run here is judged by its fixture: frozen values pass as they did, a
+    /// known failure stays known, and a fixture that misses an edited reference fails.
+    #[test]
+    fn nightly_cases_show_their_fixtures() {
+        let t = Tolerance { relative: 0.01, absolute: 0.0 };
+        let expected = Expected {
+            title: "t".into(),
+            kind: "benchmark".into(),
+            source: "s".into(),
+            pending: None,
+            slow: false,
+            nightly: true,
+            quantities: vec![
+                Quantity { id: "a".into(), ..quantity(2.0, t, None) },
+                Quantity { id: "b".into(), ..quantity(2.0, t, Some("why")) },
+                Quantity { id: "c".into(), ..quantity(3.0, t, None) },
+            ],
+        };
+        let fixture: BTreeMap<String, Frozen> =
+            [("a".to_string(), Frozen { value: 2.01, band: 1e-9 }), ("c".to_string(), Frozen { value: 2.0, band: 1e-9 })].into_iter().collect();
+        let rows = fixture_rows("n", &expected, Some(&fixture));
+        let got: Vec<(Option<f64>, Verdict, FixtureCheck)> = rows.into_iter().map(|r| (r.ours, r.verdict, r.fixture)).collect();
+        assert_eq!(
+            got,
+            vec![
+                (Some(2.01), Verdict::Pass, FixtureCheck::Nightly),
+                (None, Verdict::Known, FixtureCheck::NotKept),
+                (Some(2.0), Verdict::Fail, FixtureCheck::Nightly),
+            ]
+        );
+        assert_eq!(nightly_problems("n", &fixture_rows("n", &expected, Some(&fixture))).len(), 1, "c's fixture misses its reference");
+        // Never blessed: every frozen quantity is missing and fails, as for a case run here; the
+        // known failure and an unfrozen quantity do not.
+        let mut unblessed = expected.clone();
+        unblessed.quantities.push(Quantity { id: "d".into(), frozen: false, ..quantity(1.0, t, None) });
+        let none = fixture_rows("n", &unblessed, None);
+        let checks: Vec<(Verdict, FixtureCheck)> = none.iter().map(|r| (r.verdict.clone(), r.fixture.clone())).collect();
+        assert_eq!(
+            checks,
+            vec![
+                (Verdict::Nightly, FixtureCheck::Missing),
+                (Verdict::Known, FixtureCheck::NotKept),
+                (Verdict::Nightly, FixtureCheck::Missing),
+                (Verdict::Nightly, FixtureCheck::NotKept),
+            ]
+        );
+        let problems = nightly_problems("n", &none);
+        assert_eq!(problems.len(), 2, "{problems:?}");
+        assert!(problems.iter().all(|p| p.contains("no fixture; bless")), "{problems:?}");
     }
 
     #[test]

@@ -37,7 +37,8 @@ case through the command engine; the results are in [oracle.md](oracle.md).
 cargo xtask oracle                      # every case; writes docs/oracle.md
 cargo xtask oracle --case nafems-le1    # one case (repeatable); docs untouched
 cargo xtask oracle --bless nafems-le1   # freeze a passing case's results (or --bless all)
-cargo xtask oracle --quick              # skip cases marked "slow"
+cargo xtask oracle --quick              # skip cases marked "slow" (and "nightly")
+cargo xtask oracle --nightly            # also run the cases marked "nightly"
 ```
 
 - `recipe.json` is a script `fieldcraft-cli run` also accepts: a JSON array of
@@ -52,7 +53,7 @@ cargo xtask oracle --quick              # skip cases marked "slow"
   {"title": "…", "kind": "theory|benchmark|experiment",
    "source": "document, section/table/figure, page",
    "status": "active|pending", "requires": "the capability a pending case waits for",
-   "slow": false,
+   "slow": false, "nightly": false,
    "quantities": [{"id": "syy_D", "quantity": "σ_yy at D (2, 0)",
      "measure": {"command": "solve.probe", "params": {"step": "Load", "at": [[2, 0, 0]]}, "pointer": "/nodes/0/stress/1"},
      "value": 92.7, "tolerance": {"relative": 0.01}, "reason": "why this tolerance",
@@ -62,6 +63,11 @@ cargo xtask oracle --quick              # skip cases marked "slow"
   command run after the recipe (`"command"`, `"params"`); an optional `"scale"` multiplies it, and
   an optional `"over"` (a measure of its own) divides it by another number of the same run, for
   ratios such as the stress in one element over the stress in another.
+  A case too long for every change (minutes) is marked `"nightly": true`: it runs in the nightly,
+  manual and release runs (`--nightly`), or when named with `--case` or `--bless`; any other run
+  checks it by its fixture (a fixture that misses an edited reference fails), and docs/oracle.md
+  always shows its fixture, so the page is the same either way. `"slow"` cases run on every
+  change and only `--quick` skips them.
   A tolerance is `relative` (of the reference), `absolute`, both, or `"exact": true`. A pending
   case cites its reference values (or `null` until transcribed) and has no recipe yet.
 - `fixture.json` holds each passing quantity's accepted `value` and its `band`

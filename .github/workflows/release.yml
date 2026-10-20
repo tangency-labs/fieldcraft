@@ -140,7 +140,7 @@ jobs:
         with:
           shared-key: ${{ matrix.cache }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo xtask oracle
+      - run: cargo xtask oracle --nightly
       - name: docs/oracle.md is current
         run: git diff --exit-code docs/oracle.md
 

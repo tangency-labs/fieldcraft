@@ -44,11 +44,12 @@ commands:
                   mesh every corpus part and sample by following the meshing skill
                   (skills/fieldcraft-meshing) and write docs/meshing/skill-results.md and each
                   part's section picture (docs/meshing/skill/*.png; release build)
-  oracle [--case NAME]... [--bless NAME|all]... [--quick] [--no-write]
+  oracle [--case NAME]... [--bless NAME|all]... [--quick] [--nightly] [--no-write]
                   run the verification and validation cases (tests/oracle, docs/verification.md)
                   against their references and fixtures; write docs/oracle.md after a full run;
                   --bless freezes a passing case's results in its fixture.json; --quick skips
-                  cases marked slow (release build)
+                  cases marked slow; --nightly also runs the cases marked nightly, which are
+                  otherwise checked by their fixtures (release build)
   affected --base REV [--head REV] [--github-output]
                   the workspace crates changed between REV and HEAD-REV (the working tree) and every crate that depends on them,
                   and the flags CI plans its jobs with: everything (manifest, lock file,
