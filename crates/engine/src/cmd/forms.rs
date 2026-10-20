@@ -967,6 +967,9 @@ const PROCEDURE: Field = variants(
                     .help("The lattice time step; chosen for a Mach number of 0.087 when empty.")
                     .hint("chosen for Mach 0.087"),
                 int("frames", "Frames", 1, 100_000).help("How many result frames to keep.").def("10"),
+                choice("collision", "Collision", &[("trt", "Two relaxation times"), ("regularized", "Regularized")])
+                    .help("The lattice Boltzmann collision. Regularized stays stable with τ close to ½ (fast flows on coarse grids, sharp corners), at a little more cost per step.")
+                    .def("\"trt\""),
                 positive("magic", "TRT Λ", D::None).help("The two-relaxation-time magic parameter; 0.1875 is usual.").hint("0.1875"),
                 group(
                     "steady",

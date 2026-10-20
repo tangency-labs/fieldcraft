@@ -638,6 +638,7 @@ fn fluid_summary(r: &FluidResult, display: &DisplaySystem) -> Value {
         "tau": r.stats.tau_plus,
         "tau_minus": r.stats.tau_minus,
         "magic": r.stats.magic,
+        "collision": r.stats.collision.name(),
         "velocity_scale": r.stats.velocity,
         "lattice_velocity": r.stats.lattice_velocity,
         "mach": r.stats.mach,
@@ -1334,6 +1335,24 @@ pub(crate) mod tests {
         let bottom = r["forces"].as_array().unwrap().iter().find(|f| f["name"] == "y_min").unwrap();
         let expected = 0.1 * 0.1 / 1.0 * 0.125 * 0.125;
         assert!((bottom["mean"][0].as_f64().unwrap() / expected - 1.0).abs() < 1e-3, "{bottom}");
+        assert_eq!(r["collision"], "trt", "{r}");
+        // The regularised collision gives the same linear flow and wall shear, and says so.
+        s.execute(
+            "model.step.edit",
+            &json!({"name": "Shear", "procedure": {"type": "fluid", "domain": "Gap", "end_time": 50, "frames": 4, "collision": "regularized"}}),
+        )
+        .unwrap();
+        let rr = s.execute("solve.fluid", &json!({})).unwrap();
+        assert_eq!(rr["collision"], "regularized", "{rr}");
+        let bottom = rr["forces"].as_array().unwrap().iter().find(|f| f["name"] == "y_min").unwrap();
+        assert!((bottom["mean"][0].as_f64().unwrap() / expected - 1.0).abs() < 1e-3, "{bottom}");
+        assert!(
+            s.execute(
+                "model.step.edit",
+                &json!({"name": "Shear", "procedure": {"type": "fluid", "domain": "Gap", "end_time": 50, "collision": "bgk"}})
+            )
+            .is_err()
+        );
 
         let probe = s.execute("solve.probe", &json!({"step": "Shear", "points": [[0.06, 0.5625, 0.06], [5, 5, 5]]})).unwrap();
         let u = probe["points"][0]["velocity"][0].as_f64().unwrap();
