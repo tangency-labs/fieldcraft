@@ -239,6 +239,7 @@ fn sphere_drag(r: f64, l: usize, steps: u64) -> (f64, f64) {
             time_step: Some(1.0),
             frames: 1,
             magic: None,
+            collision: None,
             steady: None,
         },
     );
@@ -295,6 +296,7 @@ fn channel_with_a_parabolic_inlet_and_a_pressure_outlet_develops_poiseuille_flow
         time_step: Some(dt),
         frames: 4,
         magic: None,
+        collision: None,
         steady: None,
     };
     let m = model(1.0, nu, d, procedure);
@@ -381,6 +383,7 @@ fn results_are_bit_for_bit_reproducible() {
             time_step: None,
             frames: 3,
             magic: None,
+            collision: None,
             steady: None,
         },
     );

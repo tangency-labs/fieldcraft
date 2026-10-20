@@ -823,10 +823,28 @@ mod tests {
         assert!(matches!(m.remove_material("Water"), Err(Error::InUse(_))));
 
         // A step refers to the domain, which then cannot be deleted.
-        let fluid =
-            Procedure::Fluid { domain: "Flow".into(), end_time: Some(1.0), steps: None, time_step: None, frames: 4, magic: None, steady: None };
+        let fluid = Procedure::Fluid {
+            domain: "Flow".into(),
+            end_time: Some(1.0),
+            steps: None,
+            time_step: None,
+            frames: 4,
+            magic: None,
+            collision: None,
+            steady: None,
+        };
         m.add_step(Step::new("Run", fluid.clone()), None).unwrap();
         assert!(matches!(m.remove_fluid_domain("Flow"), Err(Error::InUse(_))));
+        // The collision operator: named in lower case, left out when not given, nothing else.
+        let regularized: Procedure =
+            serde_json::from_value(serde_json::json!({"type": "fluid", "domain": "Flow", "end_time": 1.0, "collision": "regularized"})).unwrap();
+        assert!(matches!(regularized, Procedure::Fluid { collision: Some(crate::Collision::Regularized), .. }));
+        assert!(!serde_json::to_string(&fluid).unwrap().contains("collision"));
+        assert!(
+            serde_json::from_value::<Procedure>(serde_json::json!({"type": "fluid", "domain": "Flow", "end_time": 1.0, "collision": "cumulant"}))
+                .is_err()
+        );
+        assert_eq!(serde_json::from_str::<Procedure>(&serde_json::to_string(&regularized).unwrap()).unwrap(), regularized);
         // The JSON form reads back to the same model, through the same checks.
         let text = serde_json::to_string(&m).unwrap();
         assert_eq!(serde_json::from_str::<Model>(&text).unwrap(), m);
@@ -836,14 +854,86 @@ mod tests {
         listed.output.insert(crate::OutputVariable::Stress);
         assert!(m.add_step(listed, None).is_err());
         for bad in [
-            Procedure::Fluid { domain: "Nope".into(), end_time: Some(1.0), steps: None, time_step: None, frames: 4, magic: None, steady: None },
-            Procedure::Fluid { domain: "Flow".into(), end_time: Some(1.0), steps: Some(5), time_step: None, frames: 4, magic: None, steady: None },
-            Procedure::Fluid { domain: "Flow".into(), end_time: None, steps: None, time_step: None, frames: 4, magic: None, steady: None },
-            Procedure::Fluid { domain: "Flow".into(), end_time: Some(-1.0), steps: None, time_step: None, frames: 4, magic: None, steady: None },
-            Procedure::Fluid { domain: "Flow".into(), end_time: None, steps: Some(0), time_step: None, frames: 4, magic: None, steady: None },
-            Procedure::Fluid { domain: "Flow".into(), end_time: Some(1.0), steps: None, time_step: Some(0.0), frames: 4, magic: None, steady: None },
-            Procedure::Fluid { domain: "Flow".into(), end_time: Some(1.0), steps: None, time_step: None, frames: 0, magic: None, steady: None },
-            Procedure::Fluid { domain: "Flow".into(), end_time: Some(1.0), steps: None, time_step: None, frames: 4, magic: Some(0.0), steady: None },
+            Procedure::Fluid {
+                domain: "Nope".into(),
+                end_time: Some(1.0),
+                steps: None,
+                time_step: None,
+                frames: 4,
+                magic: None,
+                collision: None,
+                steady: None,
+            },
+            Procedure::Fluid {
+                domain: "Flow".into(),
+                end_time: Some(1.0),
+                steps: Some(5),
+                time_step: None,
+                frames: 4,
+                magic: None,
+                collision: None,
+                steady: None,
+            },
+            Procedure::Fluid {
+                domain: "Flow".into(),
+                end_time: None,
+                steps: None,
+                time_step: None,
+                frames: 4,
+                magic: None,
+                collision: None,
+                steady: None,
+            },
+            Procedure::Fluid {
+                domain: "Flow".into(),
+                end_time: Some(-1.0),
+                steps: None,
+                time_step: None,
+                frames: 4,
+                magic: None,
+                collision: None,
+                steady: None,
+            },
+            Procedure::Fluid {
+                domain: "Flow".into(),
+                end_time: None,
+                steps: Some(0),
+                time_step: None,
+                frames: 4,
+                magic: None,
+                collision: None,
+                steady: None,
+            },
+            Procedure::Fluid {
+                domain: "Flow".into(),
+                end_time: Some(1.0),
+                steps: None,
+                time_step: Some(0.0),
+                frames: 4,
+                magic: None,
+                collision: None,
+                steady: None,
+            },
+            Procedure::Fluid {
+                domain: "Flow".into(),
+                end_time: Some(1.0),
+                steps: None,
+                time_step: None,
+                frames: 0,
+                magic: None,
+                collision: None,
+                steady: None,
+            },
+            Procedure::Fluid {
+                domain: "Flow".into(),
+                end_time: Some(1.0),
+                steps: None,
+                time_step: None,
+                frames: 4,
+                magic: Some(0.0),
+                collision: None,
+                steady: None,
+            },
             Procedure::Fluid {
                 domain: "Flow".into(),
                 end_time: Some(1.0),
@@ -851,6 +941,7 @@ mod tests {
                 time_step: None,
                 frames: 4,
                 magic: Some(f64::NAN),
+                collision: None,
                 steady: None,
             },
         ] {
@@ -864,6 +955,7 @@ mod tests {
             time_step: None,
             frames: 4,
             magic: None,
+            collision: None,
             steady: Some(st),
         };
         let rule = crate::Steady { monitors: vec![], tolerance: 1e-3, window: None, min_time: None, divergence: None };

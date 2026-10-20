@@ -26,7 +26,16 @@ fn schafer_turek_2d1(dx: f64, time_step: Option<f64>) -> (f64, f64, f64) {
     dom.faces.z_max = FaceCondition::Periodic {};
     dom.obstacles = vec!["Cylinder".into()];
     let cyl = obstacle("Cylinder", cylinder([0.2, 0.2], d / 2.0, -0.1, 0.1, 1024), &["side", "bottom", "top"]);
-    let procedure = Procedure::Fluid { domain: "Flow".into(), end_time: Some(10.0), steps: None, time_step, frames: 1, magic: None, steady: None };
+    let procedure = Procedure::Fluid {
+        domain: "Flow".into(),
+        end_time: Some(10.0),
+        steps: None,
+        time_step,
+        frames: 1,
+        magic: None,
+        collision: None,
+        steady: None,
+    };
     let m = model(1.0, nu, dom, procedure);
     let r = solve_fluid(&m, None, std::slice::from_ref(&cyl), &Limits::default()).unwrap();
     let side = r.forces.iter().find(|f| f.name == "side").unwrap();

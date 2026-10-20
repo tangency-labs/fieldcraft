@@ -436,6 +436,7 @@ mod tests {
             time_step: Some(1.0),
             frames: 1,
             magic: None,
+            collision: None,
             steady: Some(rule),
         };
         m.add_step(Step::new("Run", p), None).unwrap();

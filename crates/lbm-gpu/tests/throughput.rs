@@ -40,6 +40,7 @@ fn cell_updates_per_second() {
                 time_step: Some(1.0),
                 frames: 1,
                 magic: None,
+                collision: None,
                 steady: None,
             },
         );

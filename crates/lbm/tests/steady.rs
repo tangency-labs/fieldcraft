@@ -15,7 +15,16 @@ fn rule(tolerance: f64) -> Steady {
 }
 
 fn fluid(end_time: f64, time_step: f64, steady: Option<Steady>) -> Procedure {
-    Procedure::Fluid { domain: "Flow".into(), end_time: Some(end_time), steps: None, time_step: Some(time_step), frames: 4, magic: None, steady }
+    Procedure::Fluid {
+        domain: "Flow".into(),
+        end_time: Some(end_time),
+        steps: None,
+        time_step: Some(time_step),
+        frames: 4,
+        magic: None,
+        collision: None,
+        steady,
+    }
 }
 
 fn solve(m: &Model) -> Result<FluidResult, Error> {
@@ -153,7 +162,16 @@ fn an_unstable_flow_stops_as_diverged() {
             1.0,
             0.01,
             d.clone(),
-            Procedure::Fluid { domain: "Flow".into(), end_time: None, steps: Some(200), time_step: Some(dt), frames: 20, magic: None, steady },
+            Procedure::Fluid {
+                domain: "Flow".into(),
+                end_time: None,
+                steps: Some(200),
+                time_step: Some(dt),
+                frames: 20,
+                magic: None,
+                collision: None,
+                steady,
+            },
         )
     };
     assert!(matches!(solve(&unstable(None)), Err(Error::Unstable(_))), "without a rule it is an error");

@@ -69,7 +69,8 @@ pub enum Procedure {
     /// velocity) to `end_time`, or for `steps` time steps of `time_step` (exactly one of the two
     /// lengths). The solver picks the time step when `time_step` is left out. `frames` velocity
     /// and pressure fields are written, evenly spaced, after the initial one; forces on every
-    /// wall are recorded throughout. `magic` is the lattice Boltzmann two-relaxation-time
+    /// wall are recorded throughout. `collision` picks the lattice Boltzmann collision operator
+    /// ([`Collision`], two relaxation times by default); `magic` is the two-relaxation-time
     /// parameter Λ (default 3/16, which puts bounce-back walls exactly halfway between cells).
     /// With `steady`, the run stops on its own once the flow stops changing ([`Steady`]); its
     /// length is then the most it may run.
@@ -85,6 +86,8 @@ pub enum Procedure {
         frames: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         magic: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        collision: Option<Collision>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         steady: Option<Steady>,
     },
@@ -103,6 +106,30 @@ pub enum Procedure {
     /// materials and follower pressure. Loads and prescribed displacements are the step's load
     /// factor times their values: a ramp from 0 to 1, or the step's load path.
     NonlinearStatic(NonlinearStatic),
+}
+
+/// The collision operator of a lattice Boltzmann fluid step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Collision {
+    /// Two relaxation times: the symmetric and antisymmetric parts of each pair of opposite
+    /// populations relax separately (the default).
+    #[default]
+    Trt,
+    /// Recursive regularised: before relaxing, the non-equilibrium part is rebuilt from the
+    /// momentum flux alone (and the third-order moments it implies), which removes the
+    /// non-hydrodynamic modes that make the two-relaxation-time scheme unstable as τ approaches ½.
+    Regularized,
+}
+
+impl Collision {
+    /// `trt` or `regularized`, as written in the model.
+    pub fn name(self) -> &'static str {
+        match self {
+            Collision::Trt => "trt",
+            Collision::Regularized => "regularized",
+        }
+    }
 }
 
 /// Most quantities a steady-state rule monitors besides the residual.

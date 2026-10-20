@@ -29,7 +29,16 @@ pub fn domain(min: [f64; 3], max: [f64; 3], spacing: f64) -> FluidDomain {
 
 /// A fluid step `Run` over `end_time` with a given time step.
 pub fn step(end_time: f64, time_step: f64, magic: Option<f64>) -> Procedure {
-    Procedure::Fluid { domain: "Flow".into(), end_time: Some(end_time), steps: None, time_step: Some(time_step), frames: 2, magic, steady: None }
+    Procedure::Fluid {
+        domain: "Flow".into(),
+        end_time: Some(end_time),
+        steps: None,
+        time_step: Some(time_step),
+        frames: 2,
+        magic,
+        collision: None,
+        steady: None,
+    }
 }
 
 /// A model with fluid `Fluid` (density ρ, kinematic viscosity ν), domain `Flow` and step `Run`.
