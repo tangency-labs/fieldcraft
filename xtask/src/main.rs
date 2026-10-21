@@ -43,8 +43,8 @@ commands:
                   tests, and the benchmarks) and the doc tests alongside: the CI heavy job
   corpus [--part NAME]... [--bless NAME|all]... [--jobs N] [--no-write]
                   build every meshing test corpus part (tests/corpus, analytic shapes), tessellate
-                  and mesh it, check each part against its fixture.json, and write the results
-                  to docs/meshing/corpus.md (release build);
+                  and mesh it, check every tet mesh's validity and each part against its
+                  fixture.json, and write the results to docs/meshing/corpus.md (release build);
                   --bless rewrites the named parts' fixtures (docs/meshing/corpus.md says when);
                   --jobs N meshes N parts at once (the table's times are then not a part's alone);
                   --part NAME --design PATH writes that part's .solidcraft design instead

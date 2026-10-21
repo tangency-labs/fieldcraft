@@ -1,6 +1,7 @@
 //! The corpus runner behind `cargo xtask corpus`: build every part of the meshing test corpus
-//! ([`crate::corpus`]), tessellate it, run each [`Stage`] on it, compare each part with its
-//! fixture ([`crate::fixture`]) and write the results table to docs/meshing/corpus.md.
+//! ([`crate::corpus`]), tessellate it, run each [`Stage`] on it, check every tet mesh it makes
+//! against the validity invariants ([`crate::validity`]), compare each part with its fixture
+//! ([`crate::fixture`]) and write the results table to docs/meshing/corpus.md.
 //!
 //! The table is a fixed part columns block (bodies, faces, the boundary surface and the time to
 //! build it) followed by one column group per stage. A mesher joins the corpus by implementing
@@ -15,6 +16,7 @@ use std::time::Instant;
 
 use crate::corpus::{self, CATEGORIES, Part};
 use crate::fixture::{self, Fixture, Metric, Results};
+use crate::validity;
 use fieldcraft_geometry::{Design, FaceSurface, Measure, SurfaceMesh};
 use fieldcraft_mesh::cdt::{CdtOptions, tetrahedralize};
 use fieldcraft_mesh::hex::{Cell, HexOptions, Surface, hex_mesh, hex_mesh_cells};
@@ -58,11 +60,13 @@ pub struct Outcome {
     pub status: String,
     /// The deterministic measures frozen in the fixture (never times).
     pub values: Vec<(&'static str, Metric)>,
+    /// The validity of the tet meshes the stage made.
+    pub validity: Option<validity::Report>,
 }
 
 impl Outcome {
     fn ok(cells: Vec<String>, values: Vec<(&'static str, Metric)>) -> Outcome {
-        Outcome { cells, status: "ok".into(), values }
+        Outcome { cells, status: "ok".into(), values, validity: None }
     }
 
     /// The mesher refused the part (an expected limit of the method, not a broken stage): the
@@ -72,7 +76,7 @@ impl Outcome {
         let mut cells = vec![format!("no: {body}: {reason}")];
         cells.resize(width.saturating_sub(1), String::new());
         cells.push(format!("{:.0}", elapsed_ms(start)));
-        Outcome { cells, status: format!("no: {}", kind_of(e)), values: Vec::new() }
+        Outcome { cells, status: format!("no: {}", kind_of(e)), values: Vec::new(), validity: None }
     }
 }
 
@@ -235,7 +239,8 @@ pub fn tet_surface(mesh: &SurfaceMesh) -> fieldcraft_mesh::Result<(BoundarySurfa
 
 /// The quality stage (`fieldcraft_mesh::tet`) on each body's CDT, with the default options: the
 /// mesh's tetrahedra, its extreme dihedral angles, the slivers (a dihedral angle below 10° or
-/// above 170°) of the CDT and of the result, and the validity gate.
+/// above 170°) of the CDT and of the result, the validity gate, and the mesh validity invariants
+/// checked on the test side ([`validity`]).
 struct TetQualityStage;
 
 impl Stage for TetQualityStage {
@@ -244,17 +249,20 @@ impl Stage for TetQualityStage {
     }
 
     fn headers(&self) -> &'static [&'static str] {
-        &["quality tets", "min dihedral °", "max dihedral °", "min radius ratio", "slivers CDT → mesh", "quality gate", "quality ms"]
+        &["quality tets", "min dihedral °", "max dihedral °", "min radius ratio", "slivers CDT → mesh", "quality gate", "mesh validity", "quality ms"]
     }
 
     fn run(&self, l: &Loaded) -> Result<Outcome, Failure> {
         let start = Instant::now();
         let (mut tets, mut lo, mut hi, mut rr, mut before, mut after) = (0, 180.0_f64, 0.0_f64, 1.0_f64, 0, 0);
+        let mut checked = validity::Report::default();
         for (body, mesh) in l.design.bodies.iter().zip(&l.surfaces) {
             let (s, soup) = tet_surface(mesh).map_err(|e| Failure::mesh(&body.name, &e))?;
             let m = tetrahedralize(&s, &CdtOptions::default()).map_err(|e| Failure::mesh(&body.name, &e))?;
             let q = quality_mesh(&s, &m, soup.analytic(&fieldcraft_engine::analytic_surfaces(body)), &QualityOptions::default())
                 .map_err(|e| Failure::mesh(&body.name, &e))?;
+            let solids = s.shells().iter().filter(|sh| !sh.void).count();
+            checked.absorb(&body.name, validity::check(&q.points, &q.elements, &q.boundary, solids));
             let r = &q.report;
             tets += r.output.tets;
             lo = lo.min(r.output.min_dihedral);
@@ -264,7 +272,8 @@ impl Stage for TetQualityStage {
             after += r.output.slivers;
         }
         let ms = elapsed_ms(start);
-        Ok(Outcome::ok(
+        let valid = if checked.is_valid() { "ok".to_string() } else { format!("**{} violations**", checked.total()) };
+        let mut outcome = Outcome::ok(
             vec![
                 tets.to_string(),
                 format!("{lo:.1}"),
@@ -272,6 +281,7 @@ impl Stage for TetQualityStage {
                 format!("{rr:.3}"),
                 format!("{before} → {after}"),
                 "pass".into(),
+                valid,
                 format!("{ms:.0}"),
             ],
             vec![
@@ -282,7 +292,9 @@ impl Stage for TetQualityStage {
                 ("slivers_cdt", Metric::Count(before)),
                 ("slivers", Metric::Count(after)),
             ],
-        ))
+        );
+        outcome.validity = Some(checked);
+        Ok(outcome)
     }
 }
 
@@ -354,7 +366,12 @@ impl Stage for StructuredHex {
                 format!("error: {e}")
             }
         };
-        Ok(Outcome { cells: vec![methods.join(", "), elements.to_string(), format!("{sj8:.3}"), sj20, format!("{ms:.0}")], status, values })
+        Ok(Outcome {
+            cells: vec![methods.join(", "), elements.to_string(), format!("{sj8:.3}"), sj20, format!("{ms:.0}")],
+            status,
+            values,
+            validity: None,
+        })
     }
 }
 
@@ -403,7 +420,7 @@ fn blocks(l: &Loaded, size: &UniformSize, linear: &HexOptions, quadratic: &HexOp
         sj20,
         format!("{:.0}", elapsed_ms(start)),
     ];
-    Ok(Outcome { cells, status, values })
+    Ok(Outcome { cells, status, values, validity: None })
 }
 
 /// The geometry's analytic face surface in the mesher's terms.
@@ -503,10 +520,11 @@ fn error_cells(e: &str, width: usize) -> impl Iterator<Item = String> {
     std::iter::once(format!("error: {e}")).chain(std::iter::repeat_n(String::new(), width.saturating_sub(1)))
 }
 
-/// One part's run: its table row and what its fixture freezes.
+/// One part's run: its table row, what its fixture freezes, and the validity of its tet meshes.
 pub struct PartRun {
     pub row: Vec<String>,
     pub results: Results,
+    pub validity: validity::Report,
 }
 
 /// The part columns of the table, before the stages'.
@@ -518,6 +536,7 @@ const BUILD: &str = "build";
 fn run_part(part: &Part, stages: &[Box<dyn Stage>]) -> PartRun {
     let mut row = vec![part.name.clone(), part.categories.join(", ")];
     let mut results = Results::default();
+    let mut checked = validity::Report::default();
     let width: usize = PART_COLUMNS.len() + stages.iter().map(|s| s.headers().len()).sum::<usize>();
     let (l, ms) = match load(part) {
         Ok(loaded) => loaded,
@@ -525,7 +544,7 @@ fn run_part(part: &Part, stages: &[Box<dyn Stage>]) -> PartRun {
             results.stages.insert(BUILD.into(), format!("error: {}", f.kind));
             results.stages.extend(stages.iter().map(|s| (s.name().to_string(), "not run".to_string())));
             row.extend(error_cells(&f.message, width - row.len()));
-            return PartRun { row, results };
+            return PartRun { row, results, validity: checked };
         }
     };
     let faces: usize = l.measures.iter().map(|m| m.faces).sum();
@@ -541,6 +560,9 @@ fn run_part(part: &Part, stages: &[Box<dyn Stage>]) -> PartRun {
             Ok(o) if o.cells.len() == width => {
                 results.stages.insert(s.name().into(), o.status);
                 results.values.extend(o.values.into_iter().map(|(k, m)| (format!("{}.{k}", s.name()), m)));
+                if let Some(v) = o.validity {
+                    checked.absorb(s.name(), v);
+                }
                 row.extend(o.cells);
             }
             Ok(o) => {
@@ -554,7 +576,7 @@ fn run_part(part: &Part, stages: &[Box<dyn Stage>]) -> PartRun {
             }
         }
     }
-    PartRun { row, results }
+    PartRun { row, results, validity: checked }
 }
 
 /// Options of one corpus run.
@@ -599,9 +621,10 @@ fn run_parts(parts: &[Part], jobs: usize) -> Vec<PartRun> {
 }
 
 /// Run the corpus under the workspace `root`: print the table, check every part against its
-/// fixture (or rewrite the fixtures named by `bless`); with `write` (and every part) write
-/// [`FILE`]. Fails when a part's results moved from its fixture, a part has no fixture, or a
-/// fixture names no part.
+/// fixture (or rewrite the fixtures named by `bless`) and check every tet mesh's validity; with
+/// `write` (and every part) write [`FILE`]. Fails when a part's results moved from its fixture,
+/// a part has no fixture, a fixture names no part, or a tet mesh breaks a validity invariant (a
+/// blessed fixture never hides that).
 pub fn run(root: &Path, options: &Options) -> Result<(), String> {
     let corpus_dir = root.join("tests").join("corpus");
     let mut parts = corpus::read_recipes(&corpus_dir).map_err(|e| e.to_string())?;
@@ -658,6 +681,9 @@ pub fn run(root: &Path, options: &Options) -> Result<(), String> {
                     problems.extend(moved.into_iter().map(|p| format!("{}: {p}{hint}", part.name)));
                 }
             }
+        }
+        if !run.validity.is_valid() {
+            problems.push(format!("{}: invalid tet mesh: {}", part.name, run.validity.summary()));
         }
         rows.push(run.row);
     }
