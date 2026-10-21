@@ -81,7 +81,7 @@ const _: () = assert!(DESIGN_FORMAT >= 28);
 /// The hollow box with a post as each release saved it: one body, `Case`, of 15 faces.
 #[test]
 fn reads_every_release_s_designs() {
-    for release in ["0.16.2", "0.17.0", "0.18.1"] {
+    for release in ["0.16.2", "0.17.0", "0.18.1", "0.18.2"] {
         let path = designs().join(format!("solidcraft-{release}/hollow-box-post.solidcraft"));
         let design = open(&path);
         let [body] = design.bodies.as_slice() else { panic!("{release}: {:?}", summary(&design)) };
