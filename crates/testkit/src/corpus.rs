@@ -9,6 +9,9 @@
 //! - **Analytic shapes** ([`Analytic`]): sphere, torus, cylinder, thick-walled pipe and a plate
 //!   with a hole, built in code with their exact volume, the classic solver verification
 //!   geometries.
+//!
+//! Every part's accepted mesher results are frozen in `tests/corpus/<name>/fixture.json`
+//! ([`crate::fixture`]); an analytic shape's directory holds only that file.
 
 use std::path::{Path, PathBuf};
 

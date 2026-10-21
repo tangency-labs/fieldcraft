@@ -250,8 +250,13 @@ fn read_fixture(path: &Path) -> Result<Option<BTreeMap<String, Frozen>>, String>
     if !path.is_file() {
         return Ok(None);
     }
-    let v = read_json(path)?;
-    let values = v.get("values").and_then(Value::as_object).ok_or_else(|| format!("{}: no `values`", path.display()))?;
+    fixture_values(&read_json(path)?).map(Some).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// A fixture's `values`: each quantity's frozen `value` and its `band` (the corpus's fixtures
+/// share the format, [`crate::fixture`]).
+pub(crate) fn fixture_values(v: &Value) -> Result<BTreeMap<String, Frozen>, String> {
+    let values = v.get("values").and_then(Value::as_object).ok_or("no `values`")?;
     values
         .iter()
         .map(|(k, f)| {
@@ -259,11 +264,10 @@ fn read_fixture(path: &Path) -> Result<Option<BTreeMap<String, Frozen>>, String>
             let band = f.get("band").and_then(Value::as_f64).filter(|b| *b >= 0.0);
             match (value, band) {
                 (Some(value), Some(band)) => Ok((k.clone(), Frozen { value, band })),
-                _ => Err(format!("{}: `{k}` needs a `value` and a `band` ≥ 0", path.display())),
+                _ => Err(format!("`{k}` needs a `value` and a `band` ≥ 0")),
             }
         })
-        .collect::<Result<_, _>>()
-        .map(Some)
+        .collect()
 }
 
 /// Run a case's recipe and measure its quantities, in order. A failing command fails every

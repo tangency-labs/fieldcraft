@@ -1,18 +1,20 @@
-//! The corpus runner behind `cargo xtask corpus [--part NAME] [--no-write]`: build every part of
-//! the meshing test corpus ([`crate::corpus`]), tessellate it, run each [`Stage`] on it and write
-//! the results table to docs/meshing/corpus.md.
+//! The corpus runner behind `cargo xtask corpus`: build every part of the meshing test corpus
+//! ([`crate::corpus`]), tessellate it, run each [`Stage`] on it, compare each part with its
+//! fixture ([`crate::fixture`]) and write the results table to docs/meshing/corpus.md.
 //!
 //! The table is a fixed part columns block (bodies, faces, the boundary surface and the time to
 //! build it) followed by one column group per stage. A mesher joins the corpus by implementing
 //! [`Stage`] over a [`Loaded`] part (its tessellated boundary surfaces are ready in
-//! `Loaded::surfaces`) and adding itself to [`stages`]. A stage that fails on a part shows the
-//! error in its first column; the run goes on.
+//! `Loaded::surfaces`), naming the measures it freezes, and adding itself to [`stages`]. A stage
+//! that fails on a part shows the error in its first column, and its fixture keeps the error's
+//! kind; the run goes on.
 
 use std::fmt::Write as _;
 use std::path::Path;
 use std::time::Instant;
 
 use crate::corpus::{self, CATEGORIES, Part};
+use crate::fixture::{self, Fixture, Metric, Results};
 use fieldcraft_geometry::{Design, FaceSurface, Measure, SurfaceMesh};
 use fieldcraft_mesh::cdt::{CdtOptions, tetrahedralize};
 use fieldcraft_mesh::hex::{Cell, HexOptions, Surface, hex_mesh, hex_mesh_cells};
@@ -46,11 +48,66 @@ pub struct Loaded<'a> {
     pub diagonal: f64,
 }
 
+/// What a stage gives for a part.
+#[derive(Debug, Clone, Default)]
+pub struct Outcome {
+    /// One table cell per header.
+    pub cells: Vec<String>,
+    /// The outcome frozen in the part's fixture: `ok`, `ok: <method>`, or `no: <kind>` when the
+    /// mesher refused the part.
+    pub status: String,
+    /// The deterministic measures frozen in the fixture (never times).
+    pub values: Vec<(&'static str, Metric)>,
+}
+
+impl Outcome {
+    fn ok(cells: Vec<String>, values: Vec<(&'static str, Metric)>) -> Outcome {
+        Outcome { cells, status: "ok".into(), values }
+    }
+
+    /// The mesher refused the part (an expected limit of the method, not a broken stage): the
+    /// reason in the first cell, the time in the last.
+    fn refused(body: &str, e: &fieldcraft_mesh::Error, width: usize, start: Instant) -> Outcome {
+        let reason: String = e.to_string().chars().take(REASON_CHARS).collect();
+        let mut cells = vec![format!("no: {body}: {reason}")];
+        cells.resize(width.saturating_sub(1), String::new());
+        cells.push(format!("{:.0}", elapsed_ms(start)));
+        Outcome { cells, status: format!("no: {}", kind_of(e)), values: Vec::new() }
+    }
+}
+
+/// A stage that failed on a part: the error's kind (frozen) and its message (shown).
+#[derive(Debug, Clone)]
+pub struct Failure {
+    pub kind: String,
+    pub message: String,
+}
+
+impl Failure {
+    fn new(kind: &str, message: String) -> Failure {
+        Failure { kind: kind.into(), message }
+    }
+
+    fn mesh(body: &str, e: &fieldcraft_mesh::Error) -> Failure {
+        Failure { kind: kind_of(e), message: format!("{body}: {e}") }
+    }
+
+    fn geometry(body: &str, e: &fieldcraft_geometry::Error) -> Failure {
+        Failure::new("geometry", format!("{body}: {e}"))
+    }
+}
+
+/// A mesher error's kind, as its message starts ("limit reached", "not supported yet", …).
+fn kind_of(e: &fieldcraft_mesh::Error) -> String {
+    e.kind().map_or_else(|| "model error".to_string(), |k| k.to_string())
+}
+
 /// A column group of the results table: a mesher, a check.
 pub trait Stage {
+    /// The stage's key in the fixture.
+    fn name(&self) -> &'static str;
     fn headers(&self) -> &'static [&'static str];
-    /// One cell per header.
-    fn run(&self, part: &Loaded) -> Result<Vec<String>, String>;
+    fn run(&self, part: &Loaded) -> Result<Outcome, Failure>;
 }
 
 /// The stages, in column order. Meshers add theirs here.
@@ -63,15 +120,26 @@ fn stages() -> Vec<Box<dyn Stage>> {
 struct SurfaceVolume;
 
 impl Stage for SurfaceVolume {
+    fn name(&self) -> &'static str {
+        "surface"
+    }
+
     fn headers(&self) -> &'static [&'static str] {
         &["enclosed mm³", "SolidCraft mm³", "rel. diff", "exact mm³"]
     }
 
-    fn run(&self, l: &Loaded) -> Result<Vec<String>, String> {
+    fn run(&self, l: &Loaded) -> Result<Outcome, Failure> {
         let enclosed: f64 = l.surfaces.iter().map(SurfaceMesh::enclosed_volume).sum();
         let measured: f64 = l.measures.iter().map(|m| m.volume).sum();
         let rel = if measured.abs() > 0.0 { (enclosed - measured) / measured } else { f64::NAN };
-        Ok(vec![format!("{enclosed:.1}"), format!("{measured:.1}"), format!("{rel:.1e}"), l.part.volume.map_or("–".into(), |v| format!("{v:.1}"))])
+        let mut values = vec![("enclosed_mm3", Metric::Real(enclosed)), ("solidcraft_mm3", Metric::Real(measured))];
+        if let Some(exact) = l.part.volume {
+            values.push(("enclosed_vs_exact", Metric::Relative((enclosed - exact) / exact)));
+        }
+        Ok(Outcome::ok(
+            vec![format!("{enclosed:.1}"), format!("{measured:.1}"), format!("{rel:.1e}"), l.part.volume.map_or("–".into(), |v| format!("{v:.1}"))],
+            values,
+        ))
     }
 }
 
@@ -81,22 +149,36 @@ impl Stage for SurfaceVolume {
 struct BoundaryCheck;
 
 impl Stage for BoundaryCheck {
+    fn name(&self) -> &'static str {
+        "boundary"
+    }
+
     fn headers(&self) -> &'static [&'static str] {
         &["boundary", "genus", "feature edges", "check ms"]
     }
 
-    fn run(&self, l: &Loaded) -> Result<Vec<String>, String> {
+    fn run(&self, l: &Loaded) -> Result<Outcome, Failure> {
         let start = Instant::now();
-        let (mut vertices, mut genus, mut features) = (0, Vec::new(), 0);
+        let (mut vertices, mut genus, mut features, mut total_genus, mut shells) = (0, Vec::new(), 0, 0, 0);
         for (body, mesh) in l.design.bodies.iter().zip(&l.surfaces) {
             let options = SurfaceOptions { weld_distance: mesh.weld_distance, ..SurfaceOptions::default() };
-            let s = BoundarySurface::new(&mesh.positions, &mesh.triangles, &mesh.tri_face, &options).map_err(|e| format!("{}: {e}", body.name))?;
+            let s = BoundarySurface::new(&mesh.positions, &mesh.triangles, &mesh.tri_face, &options).map_err(|e| Failure::mesh(&body.name, &e))?;
             vertices += s.points().len();
             genus.extend(s.shells().iter().map(|sh| if sh.void { format!("{} (void)", sh.genus) } else { sh.genus.to_string() }));
+            total_genus += s.shells().iter().map(|sh| sh.genus as usize).sum::<usize>();
+            shells += s.shells().len();
             features += s.feature_edges().len();
         }
         let ms = elapsed_ms(start);
-        Ok(vec![format!("ok, {vertices} vertices"), genus.join(", "), features.to_string(), format!("{ms:.1}")])
+        Ok(Outcome::ok(
+            vec![format!("ok, {vertices} vertices"), genus.join(", "), features.to_string(), format!("{ms:.1}")],
+            vec![
+                ("vertices", Metric::Count(vertices)),
+                ("shells", Metric::Count(shells)),
+                ("genus", Metric::Count(total_genus)),
+                ("feature_edges", Metric::Count(features)),
+            ],
+        ))
     }
 }
 
@@ -106,19 +188,24 @@ impl Stage for BoundaryCheck {
 struct TetCdt;
 
 impl Stage for TetCdt {
+    fn name(&self) -> &'static str {
+        "cdt"
+    }
+
     fn headers(&self) -> &'static [&'static str] {
         &["CDT tets", "Steiner", "cavities", "tet gate", "CDT ms"]
     }
 
-    fn run(&self, l: &Loaded) -> Result<Vec<String>, String> {
+    fn run(&self, l: &Loaded) -> Result<Outcome, Failure> {
         let start = Instant::now();
         let (mut tets, mut steiner, mut cavities, mut inadmissible) = (0, 0, 0, 0);
         for (body, mesh) in l.design.bodies.iter().zip(&l.surfaces) {
-            let (s, _) = tet_surface(mesh).map_err(|e| format!("{}: {e}", body.name))?;
-            let m = tetrahedralize(&s, &CdtOptions::default()).map_err(|e| format!("{}: {e}", body.name))?;
-            let report = m.gate(s.volume()).map_err(|e| format!("{}: rounded mesh: {e}", body.name))?;
+            let (s, _) = tet_surface(mesh).map_err(|e| Failure::mesh(&body.name, &e))?;
+            let m = tetrahedralize(&s, &CdtOptions::default()).map_err(|e| Failure::mesh(&body.name, &e))?;
+            let report = m.gate(s.volume()).map_err(|e| Failure::mesh(&format!("{}: rounded mesh", body.name), &e))?;
             if !report.volume_matches() {
-                return Err(format!("{}: rounded mesh: {:?}", body.name, report.into_result().err()));
+                let message = format!("{}: rounded mesh: volume {} against the boundary's {}", body.name, report.volume, s.volume());
+                return Err(Failure::new("meshing failed", message));
             }
             inadmissible += report.invalid.len() + report.undetermined.len();
             tets += m.tets.len();
@@ -127,7 +214,15 @@ impl Stage for TetCdt {
         }
         let ms = elapsed_ms(start);
         let gate = if inadmissible == 0 { "pass".to_string() } else { format!("{inadmissible} flat") };
-        Ok(vec![tets.to_string(), steiner.to_string(), cavities.to_string(), gate, format!("{ms:.0}")])
+        Ok(Outcome::ok(
+            vec![tets.to_string(), steiner.to_string(), cavities.to_string(), gate, format!("{ms:.0}")],
+            vec![
+                ("tets", Metric::Count(tets)),
+                ("steiner", Metric::Count(steiner)),
+                ("cavities", Metric::Count(cavities)),
+                ("flat", Metric::Count(inadmissible)),
+            ],
+        ))
     }
 }
 
@@ -144,18 +239,22 @@ pub fn tet_surface(mesh: &SurfaceMesh) -> fieldcraft_mesh::Result<(BoundarySurfa
 struct TetQualityStage;
 
 impl Stage for TetQualityStage {
+    fn name(&self) -> &'static str {
+        "quality"
+    }
+
     fn headers(&self) -> &'static [&'static str] {
         &["quality tets", "min dihedral °", "max dihedral °", "min radius ratio", "slivers CDT → mesh", "quality gate", "quality ms"]
     }
 
-    fn run(&self, l: &Loaded) -> Result<Vec<String>, String> {
+    fn run(&self, l: &Loaded) -> Result<Outcome, Failure> {
         let start = Instant::now();
         let (mut tets, mut lo, mut hi, mut rr, mut before, mut after) = (0, 180.0_f64, 0.0_f64, 1.0_f64, 0, 0);
         for (body, mesh) in l.design.bodies.iter().zip(&l.surfaces) {
-            let (s, soup) = tet_surface(mesh).map_err(|e| format!("{}: {e}", body.name))?;
-            let m = tetrahedralize(&s, &CdtOptions::default()).map_err(|e| format!("{}: {e}", body.name))?;
+            let (s, soup) = tet_surface(mesh).map_err(|e| Failure::mesh(&body.name, &e))?;
+            let m = tetrahedralize(&s, &CdtOptions::default()).map_err(|e| Failure::mesh(&body.name, &e))?;
             let q = quality_mesh(&s, &m, soup.analytic(&fieldcraft_engine::analytic_surfaces(body)), &QualityOptions::default())
-                .map_err(|e| format!("{}: {e}", body.name))?;
+                .map_err(|e| Failure::mesh(&body.name, &e))?;
             let r = &q.report;
             tets += r.output.tets;
             lo = lo.min(r.output.min_dihedral);
@@ -165,15 +264,25 @@ impl Stage for TetQualityStage {
             after += r.output.slivers;
         }
         let ms = elapsed_ms(start);
-        Ok(vec![
-            tets.to_string(),
-            format!("{lo:.1}"),
-            format!("{hi:.1}"),
-            format!("{rr:.3}"),
-            format!("{before} → {after}"),
-            "pass".into(),
-            format!("{ms:.0}"),
-        ])
+        Ok(Outcome::ok(
+            vec![
+                tets.to_string(),
+                format!("{lo:.1}"),
+                format!("{hi:.1}"),
+                format!("{rr:.3}"),
+                format!("{before} → {after}"),
+                "pass".into(),
+                format!("{ms:.0}"),
+            ],
+            vec![
+                ("tets", Metric::Count(tets)),
+                ("min_dihedral_deg", Metric::Real(lo)),
+                ("max_dihedral_deg", Metric::Real(hi)),
+                ("min_radius_ratio", Metric::Real(rr)),
+                ("slivers_cdt", Metric::Count(before)),
+                ("slivers", Metric::Count(after)),
+            ],
+        ))
     }
 }
 
@@ -189,28 +298,30 @@ const REASON_CHARS: usize = 240;
 struct StructuredHex;
 
 impl Stage for StructuredHex {
+    fn name(&self) -> &'static str {
+        "hex"
+    }
+
     fn headers(&self) -> &'static [&'static str] {
         &["hex", "hex elements", "hex8 min SJ", "hex20 min SJ", "hex ms"]
     }
 
-    fn run(&self, l: &Loaded) -> Result<Vec<String>, String> {
+    fn run(&self, l: &Loaded) -> Result<Outcome, Failure> {
         let start = Instant::now();
+        let width = self.headers().len();
         let size = UniformSize(HEX_RELATIVE_SIZE * l.diagonal);
         let linear = HexOptions { chordal_tolerance: l.tolerance, ..HexOptions::default() };
         let quadratic = HexOptions { quadratic: true, ..linear.clone() };
         if l.part.categories.iter().any(|c| c == "partitioned") {
-            return blocks(l, &size, &linear, &quadratic).map(|mut cells| {
-                cells.push(format!("{:.0}", elapsed_ms(start)));
-                cells
-            });
+            return blocks(l, &size, &linear, &quadratic, width, start);
         }
         let (mut methods, mut elements, mut sj8, mut sj20) = (Vec::new(), 0usize, f64::INFINITY, Ok(f64::INFINITY));
         for (body, mesh) in l.design.bodies.iter().zip(&l.surfaces) {
             let surface_options = SurfaceOptions { weld_distance: mesh.weld_distance, ..SurfaceOptions::default() };
             let s = BoundarySurface::new(&mesh.positions, &mesh.triangles, &mesh.tri_face, &surface_options)
-                .map_err(|e| format!("{}: {e}", body.name))?;
+                .map_err(|e| Failure::mesh(&body.name, &e))?;
             let faces: Vec<Option<Surface>> =
-                body.face_surfaces().map_err(|e| format!("{}: {e}", body.name))?.into_iter().map(|f| f.map(analytic)).collect();
+                body.face_surfaces().map_err(|e| Failure::geometry(&body.name, &e))?.into_iter().map(|f| f.map(analytic)).collect();
             let m_method = match hex_mesh(&s, &faces, &size, &linear) {
                 Ok(m) => {
                     methods.push(m.report.method.name());
@@ -218,59 +329,81 @@ impl Stage for StructuredHex {
                     sj8 = sj8.min(m.report.min_scaled_jacobian);
                     m.report.method
                 }
-                Err(e) => {
-                    let reason: String = e.to_string().chars().take(REASON_CHARS).collect();
-                    let ms = elapsed_ms(start);
-                    return Ok(vec![format!("no: {}: {reason}", body.name), String::new(), String::new(), String::new(), format!("{ms:.0}")]);
-                }
+                Err(e) => return Ok(Outcome::refused(&body.name, &e, width, start)),
             };
             // The hex20 run goes straight to the method that meshed the body.
             let quadratic = HexOptions { method: m_method, ..quadratic.clone() };
             sj20 = match (sj20, hex_mesh(&s, &faces, &size, &quadratic)) {
                 (Ok(a), Ok(m)) => Ok(a.min(m.report.min_scaled_jacobian)),
                 (Err(e), _) => Err(e),
-                (_, Err(e)) => Err(format!("{}: {}", body.name, e.to_string().chars().take(REASON_CHARS).collect::<String>())),
+                (_, Err(e)) => Err((kind_of(&e), format!("{}: {}", body.name, e.to_string().chars().take(REASON_CHARS).collect::<String>()))),
             };
         }
         methods.sort_unstable();
         methods.dedup();
         let ms = elapsed_ms(start);
-        let sj20 = sj20.map_or_else(|e| format!("error: {e}"), |v| format!("{v:.3}"));
-        Ok(vec![methods.join(", "), elements.to_string(), format!("{sj8:.3}"), sj20, format!("{ms:.0}")])
+        let mut status = format!("ok: {}", methods.join(", "));
+        let mut values = vec![("elements", Metric::Count(elements)), ("hex8_min_sj", Metric::Real(sj8))];
+        let sj20 = match sj20 {
+            Ok(v) => {
+                values.push(("hex20_min_sj", Metric::Real(v)));
+                format!("{v:.3}")
+            }
+            Err((kind, e)) => {
+                let _ = write!(status, "; hex20 error: {kind}");
+                format!("error: {e}")
+            }
+        };
+        Ok(Outcome { cells: vec![methods.join(", "), elements.to_string(), format!("{sj8:.3}"), sj20, format!("{ms:.0}")], status, values })
     }
 }
 
 /// The bodies of a partitioned part as the cells of one conforming mesh: method, elements and
 /// the hex8 and hex20 smallest scaled Jacobians.
-fn blocks(l: &Loaded, size: &UniformSize, linear: &HexOptions, quadratic: &HexOptions) -> Result<Vec<String>, String> {
+fn blocks(l: &Loaded, size: &UniformSize, linear: &HexOptions, quadratic: &HexOptions, width: usize, start: Instant) -> Result<Outcome, Failure> {
     let mut surfaces = Vec::with_capacity(l.surfaces.len());
     let mut faces: Vec<Vec<Option<Surface>>> = Vec::with_capacity(l.surfaces.len());
     for (body, mesh) in l.design.bodies.iter().zip(&l.surfaces) {
         let options = SurfaceOptions { weld_distance: mesh.weld_distance, ..SurfaceOptions::default() };
-        surfaces.push(BoundarySurface::new(&mesh.positions, &mesh.triangles, &mesh.tri_face, &options).map_err(|e| format!("{}: {e}", body.name))?);
-        faces.push(body.face_surfaces().map_err(|e| format!("{}: {e}", body.name))?.into_iter().map(|f| f.map(analytic)).collect());
+        surfaces.push(BoundarySurface::new(&mesh.positions, &mesh.triangles, &mesh.tri_face, &options).map_err(|e| Failure::mesh(&body.name, &e))?);
+        faces.push(body.face_surfaces().map_err(|e| Failure::geometry(&body.name, &e))?.into_iter().map(|f| f.map(analytic)).collect());
     }
     let cells: Vec<Cell> =
         l.design.bodies.iter().zip(&surfaces).zip(&faces).map(|((b, surface), faces)| Cell { name: &b.name, surface, faces }).collect();
     let m = match hex_mesh_cells(&cells, size, linear) {
         Ok(m) => m,
         Err(e) => {
-            return Ok(vec![
-                format!("no: {}", e.to_string().chars().take(REASON_CHARS).collect::<String>()),
-                String::new(),
-                String::new(),
-                String::new(),
-            ]);
+            let mut refused = Outcome::refused("blocks", &e, width, start);
+            if let Some(first) = refused.cells.first_mut() {
+                *first = format!("no: {}", e.to_string().chars().take(REASON_CHARS).collect::<String>());
+            }
+            return Ok(refused);
         }
     };
-    let sj20 =
-        hex_mesh_cells(&cells, size, quadratic).map_or_else(|e| format!("error: {e}"), |q| format!("{:.3}", q.mesh.report.min_scaled_jacobian));
-    Ok(vec![
+    let mut status = format!("ok: blocks ({} cells)", cells.len());
+    let mut values = vec![
+        ("elements", Metric::Count(m.mesh.element_count())),
+        ("interfaces", Metric::Count(m.interfaces)),
+        ("hex8_min_sj", Metric::Real(m.mesh.report.min_scaled_jacobian)),
+    ];
+    let sj20 = match hex_mesh_cells(&cells, size, quadratic) {
+        Ok(q) => {
+            values.push(("hex20_min_sj", Metric::Real(q.mesh.report.min_scaled_jacobian)));
+            format!("{:.3}", q.mesh.report.min_scaled_jacobian)
+        }
+        Err(e) => {
+            let _ = write!(status, "; hex20 error: {}", kind_of(&e));
+            format!("error: {e}")
+        }
+    };
+    let cells = vec![
         format!("blocks ({} cells, {} shared faces)", cells.len(), m.interfaces),
         m.mesh.element_count().to_string(),
         format!("{:.3}", m.mesh.report.min_scaled_jacobian),
         sj20,
-    ])
+        format!("{:.0}", elapsed_ms(start)),
+    ];
+    Ok(Outcome { cells, status, values })
 }
 
 /// The geometry's analytic face surface in the mesher's terms.
@@ -296,24 +429,24 @@ const OCTREE_MAX_ELEMENTS: usize = 500_000;
 struct OctreeHex;
 
 impl Stage for OctreeHex {
+    fn name(&self) -> &'static str {
+        "octree"
+    }
+
     fn headers(&self) -> &'static [&'static str] {
         &["octree hexes", "min SJ", "mean SJ", "hex vol. diff", "octree ms"]
     }
 
-    fn run(&self, l: &Loaded) -> Result<Vec<String>, String> {
+    fn run(&self, l: &Loaded) -> Result<Outcome, Failure> {
         let start = Instant::now();
         let (mut hexes, mut min_sj, mut sum_sj, mut volume) = (0usize, f64::INFINITY, 0.0, 0.0);
         for (body, mesh) in l.design.bodies.iter().zip(&l.surfaces) {
             let options = SurfaceOptions { weld_distance: mesh.weld_distance, ..SurfaceOptions::default() };
-            let s = BoundarySurface::new(&mesh.positions, &mesh.triangles, &mesh.tri_face, &options).map_err(|e| format!("{}: {e}", body.name))?;
+            let s = BoundarySurface::new(&mesh.positions, &mesh.triangles, &mesh.tri_face, &options).map_err(|e| Failure::mesh(&body.name, &e))?;
             let options = OctreeOptions { max_elements: OCTREE_MAX_ELEMENTS, ..OctreeOptions::default() };
             let m = match octree_hex_mesh(&s, &UniformSize(HEX_RELATIVE_SIZE * l.diagonal), &options) {
                 Ok(m) => m,
-                Err(e) => {
-                    let reason: String = e.to_string().chars().take(REASON_CHARS).collect();
-                    let ms = elapsed_ms(start);
-                    return Ok(vec![format!("no: {}: {reason}", body.name), String::new(), String::new(), String::new(), format!("{ms:.0}")]);
-                }
+                Err(e) => return Ok(Outcome::refused(&body.name, &e, self.headers().len(), start)),
             };
             hexes += m.hexes.len();
             min_sj = min_sj.min(m.report.min_scaled_jacobian);
@@ -322,18 +455,31 @@ impl Stage for OctreeHex {
         }
         let measured: f64 = l.measures.iter().map(|m| m.volume).sum();
         let rel = if measured.abs() > 0.0 { (volume - measured) / measured } else { f64::NAN };
+        let mean = sum_sj / hexes.max(1) as f64;
         let ms = elapsed_ms(start);
-        Ok(vec![hexes.to_string(), format!("{min_sj:.3}"), format!("{:.3}", sum_sj / hexes.max(1) as f64), format!("{rel:.1e}"), format!("{ms:.0}")])
+        Ok(Outcome::ok(
+            vec![hexes.to_string(), format!("{min_sj:.3}"), format!("{mean:.3}"), format!("{rel:.1e}"), format!("{ms:.0}")],
+            vec![
+                ("hexes", Metric::Count(hexes)),
+                ("min_sj", Metric::Real(min_sj)),
+                ("mean_sj", Metric::Real(mean)),
+                ("volume_mm3", Metric::Real(volume)),
+            ],
+        ))
     }
 }
 
-fn load(part: &Part) -> Result<(Loaded<'_>, f64), String> {
+fn load(part: &Part) -> Result<(Loaded<'_>, f64), Failure> {
     let start = Instant::now();
-    let design = corpus::load(part).map_err(|e| e.to_string())?;
+    let design = corpus::load(part).map_err(|e| Failure::new("geometry", e.to_string()))?;
     if let Some(e) = design.errors.first() {
-        return Err(format!("feature {} failed: {}", e.feature, e.message));
+        return Err(Failure::new("feature failed", format!("feature {} failed: {}", e.feature, e.message)));
     }
-    let measures = design.bodies.iter().map(|b| b.measure().map_err(|e| format!("measure {}: {e}", b.name))).collect::<Result<Vec<_>, _>>()?;
+    let measures = design
+        .bodies
+        .iter()
+        .map(|b| b.measure().map_err(|e| Failure::geometry(&format!("measure {}", b.name), &e)))
+        .collect::<Result<Vec<_>, _>>()?;
     let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
     for m in &measures {
         for i in 0..3 {
@@ -343,8 +489,11 @@ fn load(part: &Part) -> Result<(Loaded<'_>, f64), String> {
     }
     let diagonal = (0..3).map(|i| (hi[i] - lo[i]).powi(2)).sum::<f64>().sqrt();
     let tolerance = RELATIVE_TOLERANCE * if diagonal.is_finite() && diagonal > 0.0 { diagonal } else { 1.0 };
-    let surfaces =
-        design.bodies.iter().map(|b| b.tessellate(tolerance).map_err(|e| format!("tessellate {}: {e}", b.name))).collect::<Result<Vec<_>, _>>()?;
+    let surfaces = design
+        .bodies
+        .iter()
+        .map(|b| b.tessellate(tolerance).map_err(|e| Failure::geometry(&format!("tessellate {}", b.name), &e)))
+        .collect::<Result<Vec<_>, _>>()?;
     let ms = elapsed_ms(start);
     Ok((Loaded { part, design, measures, surfaces, tolerance, diagonal }, ms))
 }
@@ -354,67 +503,189 @@ fn error_cells(e: &str, width: usize) -> impl Iterator<Item = String> {
     std::iter::once(format!("error: {e}")).chain(std::iter::repeat_n(String::new(), width.saturating_sub(1)))
 }
 
-/// Run the corpus; with `write` (and every part) write [`FILE`] under the workspace `root`.
-pub fn run(root: &Path, only: Option<&str>, write: bool) -> Result<(), String> {
-    let mut parts = corpus::parts().map_err(|e| e.to_string())?;
-    if let Some(name) = only {
-        parts.retain(|p| p.name == name);
-        if parts.is_empty() {
-            return Err(format!("no corpus part named `{name}`"));
+/// One part's run: its table row and what its fixture freezes.
+pub struct PartRun {
+    pub row: Vec<String>,
+    pub results: Results,
+}
+
+/// The part columns of the table, before the stages'.
+const PART_COLUMNS: &[&str] = &["part", "categories", "bodies", "faces", "triangles", "tol. mm", "build ms"];
+/// The fixture's key for building and tessellating the part.
+const BUILD: &str = "build";
+
+/// Build, tessellate and mesh one part through every stage.
+fn run_part(part: &Part, stages: &[Box<dyn Stage>]) -> PartRun {
+    let mut row = vec![part.name.clone(), part.categories.join(", ")];
+    let mut results = Results::default();
+    let width: usize = PART_COLUMNS.len() + stages.iter().map(|s| s.headers().len()).sum::<usize>();
+    let (l, ms) = match load(part) {
+        Ok(loaded) => loaded,
+        Err(f) => {
+            results.stages.insert(BUILD.into(), format!("error: {}", f.kind));
+            results.stages.extend(stages.iter().map(|s| (s.name().to_string(), "not run".to_string())));
+            row.extend(error_cells(&f.message, width - row.len()));
+            return PartRun { row, results };
+        }
+    };
+    let faces: usize = l.measures.iter().map(|m| m.faces).sum();
+    let triangles: usize = l.surfaces.iter().map(|s| s.triangles.len()).sum();
+    results.stages.insert(BUILD.into(), "ok".into());
+    for (k, n) in [("bodies", l.design.bodies.len()), ("faces", faces), ("triangles", triangles)] {
+        results.values.insert(format!("{BUILD}.{k}"), Metric::Count(n));
+    }
+    row.extend([l.design.bodies.len().to_string(), faces.to_string(), triangles.to_string(), format!("{:.3}", l.tolerance), format!("{ms:.0}")]);
+    for s in stages {
+        let width = s.headers().len();
+        match s.run(&l) {
+            Ok(o) if o.cells.len() == width => {
+                results.stages.insert(s.name().into(), o.status);
+                results.values.extend(o.values.into_iter().map(|(k, m)| (format!("{}.{k}", s.name()), m)));
+                row.extend(o.cells);
+            }
+            Ok(o) => {
+                let e = format!("stage gave {} cells for {width} columns", o.cells.len());
+                results.stages.insert(s.name().into(), format!("error: {e}"));
+                row.extend(error_cells(&e, width));
+            }
+            Err(f) => {
+                results.stages.insert(s.name().into(), format!("error: {}", f.kind));
+                row.extend(error_cells(&f.message, width));
+            }
         }
     }
-    let stages = stages();
-    const PART_COLUMNS: &[&str] = &["part", "categories", "bodies", "faces", "triangles", "tol. mm", "build ms"];
+    PartRun { row, results }
+}
+
+/// Options of one corpus run.
+#[derive(Debug, Clone, Default)]
+pub struct Options {
+    /// Run only these parts (all when empty).
+    pub parts: Vec<String>,
+    /// Rewrite the fixtures of these parts (`all` for every part run).
+    pub bless: Vec<String>,
+    /// Write [`FILE`] (only after a run of every part).
+    pub write: bool,
+    /// Parts meshed at once (the meshers are mostly sequential); 0 or 1 runs them one after
+    /// another, which keeps the table's times those of a part alone.
+    pub jobs: usize,
+}
+
+/// Run every part through the stages, `jobs` parts at a time, the results in the parts' order.
+/// Each worker thread has its own stages; a part's results do not depend on which thread ran it.
+fn run_parts(parts: &[Part], jobs: usize) -> Vec<PartRun> {
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let done: std::sync::Mutex<Vec<(usize, PartRun)>> = std::sync::Mutex::new(Vec::with_capacity(parts.len()));
+    std::thread::scope(|scope| {
+        for _ in 0..jobs.clamp(1, parts.len().max(1)) {
+            scope.spawn(|| {
+                let stages = stages();
+                loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(part) = parts.get(i) else { break };
+                    let start = Instant::now();
+                    let run = run_part(part, &stages);
+                    eprintln!("corpus: {} ({:.1} s)", part.name, start.elapsed().as_secs_f64());
+                    if let Ok(mut d) = done.lock() {
+                        d.push((i, run));
+                    }
+                }
+            });
+        }
+    });
+    let mut done = done.into_inner().unwrap_or_default();
+    done.sort_by_key(|(i, _)| *i);
+    done.into_iter().map(|(_, run)| run).collect()
+}
+
+/// Run the corpus under the workspace `root`: print the table, check every part against its
+/// fixture (or rewrite the fixtures named by `bless`); with `write` (and every part) write
+/// [`FILE`]. Fails when a part's results moved from its fixture, a part has no fixture, or a
+/// fixture names no part.
+pub fn run(root: &Path, options: &Options) -> Result<(), String> {
+    let corpus_dir = root.join("tests").join("corpus");
+    let mut parts = corpus::read_recipes(&corpus_dir).map_err(|e| e.to_string())?;
+    parts.extend(corpus::analytic_parts());
+    for want in options.parts.iter().chain(options.bless.iter().filter(|b| *b != "all")) {
+        if !parts.iter().any(|p| p.name == *want) {
+            return Err(format!("no corpus part named `{want}`"));
+        }
+    }
+    let every = options.parts.is_empty();
+    if !every {
+        parts.retain(|p| options.parts.contains(&p.name));
+    }
     let mut header = PART_COLUMNS.to_vec();
-    for s in &stages {
+    for s in &stages() {
         header.extend_from_slice(s.headers());
     }
+    let runs = run_parts(&parts, options.jobs);
+    if runs.len() != parts.len() {
+        return Err(format!("corpus: {} of {} parts ran", runs.len(), parts.len()));
+    }
     let mut rows: Vec<Vec<String>> = Vec::new();
-    let mut failures = 0;
-    for part in &parts {
-        eprintln!("corpus: {}", part.name);
-        let mut row = vec![part.name.clone(), part.categories.join(", ")];
-        match load(part) {
-            Err(e) => {
-                failures += 1;
-                row.extend(error_cells(&e, header.len() - row.len()));
-            }
-            Ok((l, ms)) => {
-                let faces: usize = l.measures.iter().map(|m| m.faces).sum();
-                let triangles: usize = l.surfaces.iter().map(|s| s.triangles.len()).sum();
-                row.extend([
-                    l.design.bodies.len().to_string(),
-                    faces.to_string(),
-                    triangles.to_string(),
-                    format!("{:.3}", l.tolerance),
-                    format!("{ms:.0}"),
-                ]);
-                for s in &stages {
-                    let width = s.headers().len();
-                    match s.run(&l) {
-                        Ok(cells) if cells.len() == width => row.extend(cells),
-                        Ok(cells) => {
-                            failures += 1;
-                            row.extend(error_cells(&format!("stage gave {} cells for {width} columns", cells.len()), width));
-                        }
-                        Err(e) => {
-                            failures += 1;
-                            row.extend(error_cells(&e, width));
-                        }
+    let mut problems = Vec::new();
+    let platform = fixture::platform();
+    for (part, run) in parts.iter().zip(runs) {
+        let path = fixture::path(&corpus_dir, &part.name);
+        let old = fixture::read(&path)?;
+        if options.bless.iter().any(|b| *b == part.name || b == "all") {
+            match Fixture::bless(old.as_ref(), &run.results, &platform) {
+                None => eprintln!("corpus: {}: unchanged on {platform}", part.name),
+                Some(new) => {
+                    if let Some(dir) = path.parent() {
+                        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
                     }
+                    std::fs::write(&path, fixture::render(&new)?).map_err(|e| format!("{}: {e}", path.display()))?;
+                    let dropped: Vec<&String> = old.iter().flat_map(|o| o.platforms.keys()).filter(|p| !new.platforms.contains_key(*p)).collect();
+                    let dropped =
+                        if dropped.is_empty() { String::new() } else { format!("; the results of {dropped:?} are stale now: bless it there too") };
+                    eprintln!("corpus: {}: blessed on {platform}{dropped}", part.name);
+                }
+            }
+        } else {
+            match old {
+                None => problems.push(format!("{}: no fixture; bless the part (`cargo xtask corpus --bless {}`)", part.name, part.name)),
+                Some(f) => {
+                    let moved = fixture::compare(&run.results, &f.expected(&platform));
+                    // A fixture without this platform's results may differ by platform alone.
+                    let hint = if !moved.is_empty() && !f.platforms.contains_key(&platform) {
+                        let on: Vec<&String> = f.platforms.keys().collect();
+                        format!(" (blessed on {on:?} only: if {platform} differs by platform alone, bless it here to record that)")
+                    } else {
+                        String::new()
+                    };
+                    problems.extend(moved.into_iter().map(|p| format!("{}: {p}{hint}", part.name)));
                 }
             }
         }
-        rows.push(row);
+        rows.push(run.row);
+    }
+    if every {
+        problems.extend(stale_fixtures(&corpus_dir, &parts)?);
     }
     let table = markdown_table(&header, &rows);
     println!("{table}");
-    if write && only.is_none() {
+    if options.write && every {
         let path = root.join(FILE);
         std::fs::write(&path, document(&table, &parts)).map_err(|e| format!("{}: {e}", path.display()))?;
         println!("corpus: wrote {FILE}");
     }
-    if failures > 0 { Err(format!("corpus: {failures} part(s) or stage(s) failed")) } else { Ok(()) }
+    if problems.is_empty() { Ok(()) } else { Err(format!("corpus: {} problem(s):\n  {}", problems.len(), problems.join("\n  "))) }
+}
+
+/// Fixtures under `dir` whose part is gone.
+fn stale_fixtures(dir: &Path, parts: &[Part]) -> Result<Vec<String>, String> {
+    let rd = std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let mut stale: Vec<String> = rd
+        .flatten()
+        .filter(|e| e.path().join("fixture.json").is_file())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|name| !parts.iter().any(|p| p.name == *name))
+        .map(|name| format!("{name}: a fixture for no corpus part; remove tests/corpus/{name}/fixture.json"))
+        .collect();
+    stale.sort();
+    Ok(stale)
 }
 
 fn markdown_table(header: &[&str], rows: &[Vec<String>]) -> String {
@@ -461,7 +732,7 @@ mod tests {
         for (name, genus) in expected {
             let part = parts.iter().find(|p| p.name == name).unwrap();
             let (loaded, _) = load(part).unwrap();
-            let cells = BoundaryCheck.run(&loaded).unwrap();
+            let cells = BoundaryCheck.run(&loaded).unwrap().cells;
             assert_eq!(cells[1], genus, "{name}: {cells:?}");
         }
     }
@@ -472,7 +743,7 @@ mod tests {
         let part = corpus::read_recipe(&corpus::corpus_dir().join("filleted-bracket-blocks")).unwrap();
         let (loaded, _) = load(&part).unwrap();
         assert_eq!(loaded.design.bodies.len(), 30);
-        let cells = StructuredHex.run(&loaded).unwrap();
+        let cells = StructuredHex.run(&loaded).unwrap().cells;
         assert!(cells[0].starts_with("blocks (30 cells"), "{cells:?}");
         assert!(cells[2].parse::<f64>().unwrap() > 0.5, "{cells:?}");
     }
@@ -487,7 +758,7 @@ mod tests {
         assert_eq!(parts.len(), 3);
         for part in &parts {
             let (loaded, _) = load(part).unwrap();
-            let cells = TetCdt.run(&loaded).unwrap_or_else(|e| panic!("{}: {e}", part.name));
+            let cells = TetCdt.run(&loaded).unwrap_or_else(|e| panic!("{}: {}", part.name, e.message)).cells;
             assert_eq!(cells[3], "pass", "{}: {cells:?}", part.name);
             assert!(cells[0].parse::<usize>().unwrap() > 0);
         }
