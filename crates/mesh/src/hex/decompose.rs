@@ -964,7 +964,12 @@ fn o_grid(loops: &[Poly], s: &Settings, budget: &mut usize) -> Vec<Vec<Q>> {
     for dirs in [[[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0], [0.0, -1.0]], [[s2, s2], [-s2, s2], [-s2, -s2], [s2, -s2]]] {
         let mut cuts = Vec::new();
         for d in dirs {
-            let Some((_, start)) = cast(std::slice::from_ref(hole), None, c, d, 0.0, 0.0) else { continue };
+            // Where the ray leaves the hole, snapped to a hole point within the merge tolerance. A
+            // ray along a symmetric hole's axis passes through a point of its arc, exactly or
+            // within a few ulps as the platform's `sin`/`cos` or the tessellation round it; the
+            // start must be that point either way, not a point beside it on an edge (which no
+            // cut may pass that close to), or the O-grid hangs on the last bits (#556).
+            let Some((_, start)) = cast(std::slice::from_ref(hole), None, c, d, s.tol, 0.0) else { continue };
             let start = match start {
                 End::Point(_, i) => End::Point(1, i),
                 End::Edge(_, k, x) => End::Edge(1, k, x),
@@ -1265,18 +1270,25 @@ mod tests {
         worst
     }
 
+    fn l_shape() -> Profile {
+        vec![polygon(&[[0.0, 0.0], [40.0, 0.0], [40.0, 15.0], [15.0, 15.0], [15.0, 40.0], [0.0, 40.0]])]
+    }
+
     #[test]
     fn an_l_shape_is_cut_at_its_concave_corner() {
-        let profile = vec![polygon(&[[0.0, 0.0], [40.0, 0.0], [40.0, 15.0], [15.0, 15.0], [15.0, 40.0], [0.0, 40.0]])];
+        let profile = l_shape();
         let m = mesh_profile(&profile, &[], 2.5);
         assert_eq!(m.cuts, 1);
         assert!(check(&m, &profile, 0.99) > 0.99);
     }
 
+    fn plate_with_a_hole() -> Profile {
+        vec![polygon(&[[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]]), circle([30.0, 20.0], 8.0, false)]
+    }
+
     #[test]
     fn a_plate_with_a_hole_gets_an_o_grid() {
-        let mut profile = vec![polygon(&[[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]])];
-        profile.push(circle([30.0, 20.0], 8.0, false));
+        let profile = plate_with_a_hole();
         let m = mesh_profile(&profile, &[], 2.5);
         assert_eq!(m.cuts, 4);
         // The O-grid's lines split the plate's corners (atan(20 / 30) = 34° of 90°).
@@ -1289,6 +1301,13 @@ mod tests {
     /// ends off the opening's lines (cuts of the cells around), which the strips take in.
     #[test]
     fn a_ring_round_a_square_opening_continues_the_opening_sides() {
+        let profile = square_ring();
+        let m = mesh_profile(&profile, &[], 3.0);
+        assert_eq!(m.cuts, 8);
+        assert!(check(&m, &profile, 0.99) > 0.99);
+    }
+
+    fn square_ring() -> Profile {
         let (x0, x1, y0, y1) = (29.94, 49.77, -49.0, -29.0);
         let outer = vec![
             line([x0, y0], [39.85, y0]),
@@ -1301,22 +1320,24 @@ mod tests {
             line([x0, -39.0], [x0, y0]),
         ];
         let hole = polygon(&[[31.5, -30.5], [48.5, -30.5], [48.5, -47.5], [31.5, -47.5]]);
-        let profile = vec![outer, hole];
-        let m = mesh_profile(&profile, &[], 3.0);
-        assert_eq!(m.cuts, 8);
-        assert!(check(&m, &profile, 0.99) > 0.99);
+        vec![outer, hole]
     }
 
-    #[test]
-    fn a_plate_with_a_slot_gets_an_o_grid() {
+    /// A plate with an obround slot: two R6 ends at x = 30 and 50 (clockwise).
+    fn slot_plate() -> Profile {
         let mut profile = vec![polygon(&[[0.0, 0.0], [80.0, 0.0], [80.0, 40.0], [0.0, 40.0]])];
-        // An obround slot: two R6 ends at x = 30 and 50 (clockwise).
         profile.push(vec![
             arc([30.0, 20.0], 6.0, 270.0, 90.0),
             line([30.0, 26.0], [50.0, 26.0]),
             arc([50.0, 20.0], 6.0, 90.0, -90.0),
             line([50.0, 14.0], [30.0, 14.0]),
         ]);
+        profile
+    }
+
+    #[test]
+    fn a_plate_with_a_slot_gets_an_o_grid() {
+        let profile = slot_plate();
         let m = mesh_profile(&profile, &[], 2.5);
         check(&m, &profile, 0.5);
         // The intended O-grid on every platform (#556): Windows' last-bit-different arcs used to
@@ -1325,12 +1346,80 @@ mod tests {
         assert_eq!(m.section.quads.iter().map(Vec::len).sum::<usize>(), 848);
     }
 
+    /// What a blocking comes to: its region and quadrilateral counts, its nodes rounded to 1e-6
+    /// (sorted) and its smallest corner scaled Jacobian.
+    fn blocking(m: &Meshed) -> (usize, usize, Vec<(i64, i64)>, f64) {
+        let s = &m.section;
+        let mut nodes: Vec<(i64, i64)> = s.nodes.iter().map(|p| ((p[0] * 1e6).round() as i64, (p[1] * 1e6).round() as i64)).collect();
+        nodes.sort_unstable();
+        let mut worst = f64::INFINITY;
+        for q in s.quads.iter().flatten() {
+            let c = q.map(|v| s.nodes[v as usize]);
+            for i in 0..4 {
+                worst = worst.min(planar_corner(&c, i).1.unwrap());
+            }
+        }
+        (s.schemes.len(), s.quads.iter().map(Vec::len).sum(), nodes, worst)
+    }
+
+    /// `p` with each coordinate moved by 1 to 4 ulps up or down, as a hash of its bits and `seed`
+    /// picks: what another platform's `sin`/`cos` or another tessellation of the same geometry
+    /// gives. The same point always moves the same way, so the curves keep their shared ends.
+    fn nudge_point(p: Q, seed: u64) -> Q {
+        let mut h = seed.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        p.map(|v| {
+            // splitmix64 of the coordinate's bits and the running state.
+            h = h.wrapping_add(v.to_bits()).wrapping_add(0x9e37_79b9_7f4a_7c15);
+            let mut z = h;
+            z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+            z ^= z >> 31;
+            let steps = 1 + (z % 4) as i64;
+            super::super::tie::nudge(v, if (z >> 2) & 1 == 1 { steps } else { -steps })
+        })
+    }
+
+    /// `profile` and its extra curves with every point nudged ([`nudge_point`]).
+    fn nudged(profile: &Profile, extra: &[Vec<Q>], seed: u64) -> (Profile, Vec<Vec<Q>>) {
+        let curve = |c: &Vec<Q>| c.iter().map(|&p| nudge_point(p, seed)).collect::<Vec<Q>>();
+        (profile.iter().map(|lp| lp.iter().map(curve).collect()).collect(), extra.iter().map(curve).collect())
+    }
+
+    /// The seeds of `seeds` whose nudged profile blocks differently from the exact one: the
+    /// region and quadrilateral counts, the nodes to 1e-6 and the worst corner (to 1e-9).
+    fn unstable_seeds(profile: &Profile, extra: &[Vec<Q>], h: f64, seeds: std::ops::Range<u64>) -> Vec<(u64, usize, usize, f64)> {
+        let reference = blocking(&mesh_profile(profile, extra, h));
+        seeds
+            .filter_map(|seed| {
+                let (p, e) = nudged(profile, extra, seed);
+                let got = blocking(&mesh_profile(&p, &e, h));
+                let same = got.0 == reference.0 && got.1 == reference.1 && got.2 == reference.2 && (got.3 - reference.3).abs() <= 1e-9;
+                (!same).then_some((seed, got.0, got.1, got.3))
+            })
+            .collect()
+    }
+
+    /// The slot's blocking does not hang on the last bits of its points (#556): seeded
+    /// perturbations of 1 to 4 ulps give the same regions, quadrilaterals and nodes. On develop
+    /// before this fix 63 of 64 gave 7 regions and 696 quads (worst corner 0.618) instead of
+    /// 9, 848 and 0.707.
     #[test]
-    fn a_plate_with_several_holes_is_split_between_them() {
+    fn the_slot_blocking_does_not_depend_on_the_last_bits_of_its_points() {
+        let unstable = unstable_seeds(&slot_plate(), &[], 2.5, 0..8);
+        assert!(unstable.is_empty(), "{} of 8 perturbations change the blocking: {unstable:?}", unstable.len());
+    }
+
+    fn several_holes() -> Profile {
         let mut profile = vec![polygon(&[[0.0, 0.0], [90.0, 0.0], [90.0, 40.0], [0.0, 40.0]])];
         for x in [20.0, 45.0, 70.0] {
             profile.push(circle([x, 20.0], 6.0, false));
         }
+        profile
+    }
+
+    #[test]
+    fn a_plate_with_several_holes_is_split_between_them() {
+        let profile = several_holes();
         let m = mesh_profile(&profile, &[], 2.0);
         check(&m, &profile, 0.5);
     }
@@ -1398,10 +1487,14 @@ mod tests {
         let _ = worst;
     }
 
+    fn t_shape() -> Profile {
+        vec![polygon(&[[0.0, 0.0], [60.0, 0.0], [60.0, 10.0], [35.0, 10.0], [35.0, 40.0], [25.0, 40.0], [25.0, 10.0], [0.0, 10.0]])]
+    }
+
     /// One cut joining the T's two concave corners leaves two rectangles.
     #[test]
     fn a_t_shape_is_cut_between_its_concave_corners() {
-        let profile = vec![polygon(&[[0.0, 0.0], [60.0, 0.0], [60.0, 10.0], [35.0, 10.0], [35.0, 40.0], [25.0, 40.0], [25.0, 10.0], [0.0, 10.0]])];
+        let profile = t_shape();
         let m = mesh_profile(&profile, &[], 2.0);
         assert_eq!(m.cuts, 1);
         check(&m, &profile, 0.99);
