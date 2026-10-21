@@ -131,6 +131,7 @@ fn form(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
     // While a job runs (this form's mesher, a solve) OK waits for it.
     let running = app.busy().map(str::to_string);
     let relax_note = app.relax_note().or_else(|| app.node_move_note());
+    let fluid_note = app.fluid_note();
     let units = app.session.units().clone();
     let session = &app.session;
     // The set Use selection will make on OK is offered with the others.
@@ -267,6 +268,12 @@ fn form(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
     }
     if let Some(note) = &relax_note {
         ui.label(RichText::new(note).small().color(t.text));
+    }
+    if let Some((note, problem)) = &fluid_note {
+        ui.label(RichText::new(note).small().color(t.text));
+        if let Some(problem) = problem {
+            ui.label(RichText::new(problem).small().color(t.error));
+        }
     }
     ui.collapsing(RichText::new("What it takes").size(12.0).color(t.text_dim), |ui| {
         ui.label(RichText::new(spec.params).small().color(t.text_dim));

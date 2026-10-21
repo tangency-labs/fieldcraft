@@ -359,6 +359,9 @@ type DatumPreview = (Option<(u64, &'static str, String)>, Option<fieldcraft_mode
 type MergePreview = (Option<(u64, String)>, Arc<Vec<u32>>);
 /// The open Relax Nodes form's preview, by model revision and form text.
 type RelaxPreview = (Option<(u64, String)>, Option<Arc<fieldcraft_engine::cmd::RelaxPreview>>);
+/// The open Solve Fluid form's memory estimate in a line and why the run would be refused (or
+/// why there is no estimate), by model revision and form text.
+type FluidNote = (Option<(u64, String)>, Option<(String, Option<String>)>);
 
 /// A screenshot asked for over the control channel.
 struct Shot {
@@ -382,6 +385,7 @@ pub struct ModelApp {
     preview: std::cell::RefCell<DatumPreview>,
     merge_preview: std::cell::RefCell<MergePreview>,
     relax_preview: std::cell::RefCell<RelaxPreview>,
+    fluid_note: std::cell::RefCell<FluidNote>,
     /// The open Move Nodes form's move, worked out for the view ([`node_move`]).
     node_move: std::cell::RefCell<node_move::Cache>,
     /// The Move Nodes drag in progress.
@@ -540,6 +544,7 @@ impl ModelApp {
             preview: Default::default(),
             merge_preview: Default::default(),
             relax_preview: Default::default(),
+            fluid_note: Default::default(),
             node_move: Default::default(),
             node_drag: None,
             forms_opened: 0,
@@ -1318,6 +1323,25 @@ impl ModelApp {
         if cache.0.as_ref() != Some(&key) {
             let preview = serde_json::from_str::<Value>(&d.text).ok().and_then(|p| fieldcraft_engine::cmd::relax_preview(&self.session, &p));
             *cache = (Some(key), preview.map(Arc::new));
+        }
+        cache.1.clone()
+    }
+
+    /// The open Solve Fluid form's memory estimate in a line, and why the run would be refused
+    /// before it starts (or why there is no estimate), worked out once per form text and model
+    /// revision.
+    pub fn fluid_note(&self) -> Option<(String, Option<String>)> {
+        let d = self.dialog.as_ref().filter(|d| d.command == "solve.fluid")?;
+        let mut cache = self.fluid_note.borrow_mut();
+        if !cache.0.as_ref().is_some_and(|(revision, text)| *revision == self.revision && *text == d.text) {
+            let note = match serde_json::from_str::<Value>(&d.text)
+                .map_err(|e| e.to_string())
+                .and_then(|p| fieldcraft_engine::cmd::fluid_estimate(&self.session, &p).map_err(|e| e.to_string()))
+            {
+                Ok(e) => (e.summary(), e.problem),
+                Err(e) => ("Memory: no estimate".into(), Some(e)),
+            };
+            *cache = (Some((self.revision, d.text.clone())), Some(note));
         }
         cache.1.clone()
     }
@@ -2726,6 +2750,46 @@ mod tests {
         assert_eq!(app.session.model.nodes().len(), 12);
         app.run("mesh.check.duplicates", json!({})).unwrap();
         assert!(app.pick.selection.is_empty());
+    }
+
+    /// #650: the Solve Fluid form shows the run's memory against this machine's bound before
+    /// OK, takes caps raised above their defaults, and says what to change when a cap is short.
+    #[test]
+    fn the_solve_fluid_form_estimates_the_memory_and_takes_raised_caps() {
+        let mut app = ModelApp::new(Session::default());
+        app.session.limits.memory = 32_000_000_000;
+        for (id, p) in [
+            ("model.material.create", json!({"name": "Oil", "density": 1e-9, "fluid": {"type": "newtonian", "viscosity": 1e-9}})),
+            ("model.fluid_domain.create", json!({"name": "Box", "material": "Oil", "min": [0, 0, 0], "max": [40, 10, 10], "spacing": 1})),
+            ("model.step.create", json!({"name": "Flow", "procedure": {"type": "fluid", "domain": "Box", "end_time": 1, "frames": 24}})),
+        ] {
+            app.run(id, p).unwrap();
+        }
+        assert!(app.fluid_note().is_none(), "no form open");
+        app.start("solve.fluid").unwrap();
+        let (note, problem) = app.fluid_note().unwrap();
+        assert!(note.starts_with("Memory: 25 frames × 4,000 cells: 2 MB of frames"), "{note}");
+        assert!(note.contains("Runs with raised caps may take up to 32.0 GB on this machine"), "{note}");
+        assert!(problem.is_none(), "{problem:?}");
+        let fields = fieldcraft_engine::find_command("solve.fluid").and_then(|c| c.form).unwrap();
+        let set = |app: &mut ModelApp, p: Value| {
+            if let Some(d) = app.dialog.as_mut() {
+                d.text = p.to_string();
+            }
+        };
+        // A raised frame cap is a valid entry and leaves the run within the bound.
+        let raised = json!({"max_frame_bytes": 8_000_000_000u64, "max_cells": 20_000_000});
+        assert!(crate::form::messages(fields, raised.as_object().unwrap()).is_empty());
+        set(&mut app, raised);
+        assert_eq!(app.fluid_note().unwrap().1, None);
+        // A short cap: the note says how many frames fit and what to raise the cap to.
+        set(&mut app, json!({"max_frame_bytes": 1_000_000}));
+        let problem = app.fluid_note().unwrap().1.unwrap();
+        assert!(problem.contains("15 frames fit: set the step's `frames` to at most 14, or raise `max_frame_bytes` to 1600000"), "{problem}");
+        // Above what this machine allows.
+        set(&mut app, json!({"max_frame_bytes": 40_000_000_000u64}));
+        let problem = app.fluid_note().unwrap().1.unwrap();
+        assert!(problem.contains("this machine allows"), "{problem}");
     }
 
     /// Relax Nodes: a click places the sphere, Alt + scroll sizes it, the form previews the moved
