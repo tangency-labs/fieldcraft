@@ -716,6 +716,54 @@ fn a_composite_wall_with_power_matches_the_cpu() {
     }
 }
 
+/// A powered die and its lid across y, joined by a thermal contact, the fluid at rest on both
+/// sides and the plates held at 0 and 1: the contact's lower face conductance, which the GPU
+/// reads with the others, against the CPU part way to steady state, with the profile's jump
+/// across the contact already clear (Apple M4 Max: temperature 4.8e-6, heat 4.9e-6).
+#[test]
+fn a_thermal_contact_matches_the_cpu() {
+    for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+        let (n, alpha) = (16usize, 0.05);
+        let dx = 1.0 / n as f64;
+        let mut d = domain([0.0; 3], [dx, 1.0, dx], dx);
+        for f in [BoxFace::XMin, BoxFace::XMax, BoxFace::ZMin, BoxFace::ZMax] {
+            *d.faces.get_mut(f) = PERIODIC;
+        }
+        d.obstacles = vec!["Die".into(), "Lid".into()];
+        let mut t = FluidThermal { initial_temperature: kelvin(0.5), ..FluidThermal::default() };
+        t.faces.y_min = ThermalCondition::Temperature { value: kelvin(0.0) };
+        t.faces.y_max = ThermalCondition::Temperature { value: kelvin(1.0) };
+        t.solids =
+            vec![conducting("Die", 0.5 * dx * dx), fieldcraft_model::ConductingSolid { body: "Lid".into(), material: "Other".into(), power: 0.0 }];
+        t.contacts = vec![fieldcraft_model::ThermalContact {
+            bodies: ["Die".into(), "Lid".into()],
+            resistance: Some(1.25),
+            thickness: None,
+            conductivity: None,
+        }];
+        d.thermal = Some(t);
+        let dt = dx * dx / (8.0 * alpha);
+        let mut m = Model::default();
+        m.add_material("Fluid", hot_fluid(1.0, 0.1, alpha)).unwrap();
+        add_solid_material(&mut m, "Solid", 1.0, [4.0 * alpha; 3], 1.0);
+        add_solid_material(&mut m, "Other", 1.0, [10.0 * alpha; 3], 1.0);
+        m.add_fluid_domain("Flow", d).unwrap();
+        m.add_step(Step::new("Run", step(0.5 / alpha, dt, None)), None).unwrap();
+        let obstacles = [
+            obstacle("Die", cuboid([-1.0, 0.25, -1.0], [2.0, 0.5, 2.0]), &CUBOID_FACES),
+            obstacle("Lid", cuboid([-1.0, 0.5, -1.0], [2.0, 0.75, 2.0]), &CUBOID_FACES),
+        ];
+        let (setup, cpu) = prepare(&m, &obstacles);
+        let Some((mut cpu, mut gpu)) = both(&setup, cpu, streaming) else { continue };
+        let (dt, dh) = heat_difference(&mut cpu, &mut gpu);
+        // the jump across the contact (cells 7 and 8 sit on either side of y = 0.5)
+        let jump = cpu.temperature(8).unwrap() - cpu.temperature(7).unwrap();
+        println!("thermal contact ({streaming:?}): GPU vs CPU: temperature {dt:.2e} heat {dh:.2e}; jump across the contact {jump:.4}");
+        assert!(jump.abs() > 1e-2, "{jump}");
+        assert!(dt < 2e-5 && dh < 2e-5, "{dt} {dh}");
+    }
+}
+
 /// A powered block conducting in a channel flow (parabolic inlet, outlet): the interface links
 /// under advection, against the CPU in velocity, temperature and every face's heat. lavapipe:
 /// temperature 2.5–2.7e-6, heat 3.2–3.3e-6, velocity 1.6–2.0e-6.
