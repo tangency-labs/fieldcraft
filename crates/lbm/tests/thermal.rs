@@ -368,3 +368,68 @@ fn local_wall_heat_flux_does_not_depend_on_the_thermal_relaxation_time() {
     assert!(fixed.iter().all(|d| *d < 3e-3), "{fixed:?}");
     assert!(single.iter().all(|d| *d > 2e-2), "{single:?}");
 }
+
+/// The wall-flux study behind `fieldcraft_lbm::setup::THERMAL_MAGIC` (#629): the local wall heat
+/// flux of the de Vahl Davis cavity (de Vahl Davis 1983, Table V) against the thermal relaxation
+/// time with a single relaxation time (Λ_T = (τ_T − ½)², the scheme before #629), with fixed
+/// values of Λ_T and with the scheme as shipped (`thermal_magic`), at Ra = 10³ on 32 and 64 cells
+/// and at Ra = 10⁵ on 64. Each row gives the errors of the mean Nusselt number and of the largest
+/// and smallest local ones, read as the probe reads them and from the lattice's own link heat.
+/// The table and the choice are in `docs/lbm-collision.md`.
+#[test]
+#[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+fn local_wall_heat_flux_with_two_relaxation_times() {
+    let bgk = |tau: f64| (tau - 0.5) * (tau - 0.5);
+    let shipped = fieldcraft_lbm::setup::thermal_magic;
+    let fixed: [(&str, f64); 4] = [("1/24", 1.0 / 24.0), ("1/12", 1.0 / 12.0), ("1/6", 1.0 / 6.0), ("1/4", 0.25)];
+    let all = [Some(0.6), Some(0.8), Some(1.0), Some(1.5), None];
+    println!("| Ra | cells | Λ_T | τ_T | Nu | Nu_max | Nu_min | Nu_max (links) | Nu_min (links) |");
+    println!("|---|---|---|---|---|---|---|---|---|");
+    // (Ra, cells, the single relaxation time's and the shipped scheme's τ_T, the fixed Λ_T's,
+    // reference Nu, Nu_max, Nu_min)
+    let plan: [(f64, usize, &[Option<f64>], &[Option<f64>], [f64; 3]); 3] = [
+        (1e3, 32, &all, &[Some(0.6), Some(1.5)], [1.118, 1.505, 0.692]),
+        (1e3, 64, &[Some(0.8), Some(1.5)], &[Some(1.5)], [1.118, 1.505, 0.692]),
+        (1e5, 64, &[Some(0.8)], &[Some(0.8)], [4.519, 7.717, 0.729]),
+    ];
+    // the largest change of each error over the relaxation times
+    let spread = |errors: &[[f64; 5]]| errors.iter().fold([0.0f64; 5], |d, e| std::array::from_fn(|k| d[k].max((e[k] - errors[0][k]).abs())));
+    let mut spreads = Vec::new();
+    for (ra, n, taus, fixed_taus, reference) in plan {
+        let row = |label: &str, tau: Option<f64>, magic: &dyn Fn(f64) -> f64| {
+            let (tau, nu_mean, [probe, link]) = cavity_wall_flux(ra, n, tau, magic);
+            let values = [nu_mean, extreme(&probe, 1.0), extreme(&probe, -1.0), extreme(&link, 1.0), extreme(&link, -1.0)];
+            let refs = [reference[0], reference[1], reference[2], reference[1], reference[2]];
+            let e: [f64; 5] = std::array::from_fn(|k| 100.0 * (values[k] / refs[k] - 1.0));
+            let cells: Vec<String> = e.iter().map(|e| format!("{e:+.2} %")).collect();
+            println!("| {ra:.0e} | {n}² | {label} | {tau:.3} | {} |", cells.join(" | "));
+            // the links' heat sums to the wall's
+            let link_mean = link.iter().sum::<f64>() / n as f64;
+            assert!((link_mean / nu_mean - 1.0).abs() < 1e-9, "{link_mean} vs {nu_mean}");
+            e
+        };
+        let single: Vec<[f64; 5]> = taus.iter().map(|&tau| row("(τ_T − ½)²", tau, &bgk)).collect();
+        for &(label, magic) in &fixed {
+            for &tau in fixed_taus {
+                row(label, tau, &|_| magic);
+            }
+        }
+        // the shipped scheme over the τ_T at which Λ_T is fixed (from 0.79)
+        let ours: Vec<[f64; 5]> = taus.iter().filter(|t| t.is_none_or(|t| t > 0.79)).map(|&tau| row("shipped", tau, &shipped)).collect();
+        if ours.len() > 1 {
+            spreads.push((ra, n, spread(&ours), spread(&single)));
+        }
+    }
+    for (ra, n, ours, single) in spreads {
+        println!(
+            "Ra {ra:.0e}, {n} cells: change over τ_T of each error (percentage points), shipped {ours:.2?}, single relaxation time {single:.2?}"
+        );
+        // With Λ_T fixed the wall closure does not depend on τ_T. What is left is the linear
+        // equilibrium's numerical diffusion along the flow, 4 u² of the diffusivity in lattice
+        // units (`a_drifting_sine_decays_at_the_diffusivity`), which grows with the time step:
+        // 0.33 % at the fastest flow at τ_T = 1.5 on 32 cells.
+        assert!(ours.iter().all(|d| *d < 0.25), "Ra {ra:.0e}, {n} cells: {ours:?}");
+        let largest = |d: &[f64; 5]| d.iter().skip(1).copied().fold(0.0, f64::max);
+        assert!(largest(&single) > 10.0 * largest(&ours), "Ra {ra:.0e}, {n} cells: {single:?} vs {ours:?}");
+    }
+}

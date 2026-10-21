@@ -91,6 +91,94 @@ collisions and both streaming layouts, Apple M4 Max, Metal): regularised velocit
 5e-7–7.4e-6 of the largest speed, densities within 2.6e-7, wall shear within 1.9e-5 of itself,
 heats within 2.1e-6, mass drift 0: inside the backend's stated tolerances (2e-5, 1e-6, 5e-5, 1e-4).
 
+## The thermal lattice (#629)
+
+With heat, the D3Q7 temperature lattice (`flow.rs`, `lbm.wgsl`) collides with two relaxation
+times too, whatever `collision` the flow uses: each axis pair's antisymmetric part, which
+carries the heat flux, relaxes with `τ_T = 4 α + ½` (that sets the diffusivity), the symmetric
+part and the rest population with `τ_T⁺ = ½ + Λ_T / (τ_T − ½)`. With `Λ_T` fixed a steady
+temperature field does not depend on `τ_T` (d'Humières & Ginzburg 2009), and neither do the
+walls: the anti-bounce-back of a held temperature, the bounce-back of an adiabatic wall or a flux,
+and the interface links of conducting solids keep their rules, and the conjugate links still give
+the solid exactly the heat the fluid loses (`conjugate.rs`). Before, the lattice had a single
+relaxation time, `Λ_T = (τ_T − ½)²`, so the walls moved with the time step: on the automatic time
+step's τ_T ≈ 1.44 the de Vahl Davis cavity's largest local Nusselt number was 7.5 % high and its
+smallest 11.8 % low on 32 cells.
+
+**Λ_T = 1/12** (`setup::THERMAL_MAGIC`). For a conducting field along a flat held wall (a harmonic
+temperature, `T = Re e^{i k y − k x}`, solved to steady state on the lattice in a standalone
+calculation of the scheme), the heat each wall link takes is fourth-order accurate at 1/12 —
+8.1e-4, 5.0e-5 and 3.2e-6 of the flux on 8, 16 and 32 cells per wavelength — and second order at
+every other value (6.4e-3 on 16 cells at 1/24 and 1/8, 1.3e-2 at 1/6, 2.5e-2 at 1/4); with a flow
+along the wall the optimum moves to smaller values (1/24 at a cell Péclet number of 0.3). In
+the cavity the wall-flux error grows with Λ_T, and 1/12 puts it within 0.2 % of the reference on
+64 cells:
+
+| Ra | cells | Λ_T | τ_T | Nu | Nu_max | Nu_min | Nu_max (links) | Nu_min (links) |
+|---|---|---|---|---|---|---|---|---|
+| 10³ | 32² | (τ_T − ½)², before | 0.6 | +0.02 % | −0.19 % | +0.71 % | +0.45 % | +0.28 % |
+| 10³ | 32² | (τ_T − ½)², before | 0.8 | +0.01 % | +0.46 % | −0.40 % | +0.24 % | −0.39 % |
+| 10³ | 32² | (τ_T − ½)², before | 1.0 | −0.00 % | +1.78 % | −2.66 % | +1.12 % | −2.26 % |
+| 10³ | 32² | (τ_T − ½)², before | 1.5 | −0.07 % | +8.63 % | −13.51 % | +4.61 % | −9.66 % |
+| 10³ | 32² | (τ_T − ½)², before | 1.439 (automatic) | −0.06 % | +7.54 % | −11.79 % | +4.15 % | −8.61 % |
+| 10³ | 32² | 1/24 | 0.6 / 1.5 | +0.02 / −0.07 % | +0.06 / +0.23 % | +0.28 / +0.26 % | +0.35 / +0.52 % | +0.12 / +0.08 % |
+| 10³ | 32² | 1/12 | 0.6 / 1.5 | +0.02 / −0.07 % | +0.40 / +0.56 % | −0.31 / −0.32 % | +0.24 / +0.41 % | −0.31 / −0.32 % |
+| 10³ | 32² | 1/8 | 0.6 / 1.5 | +0.02 / −0.07 % | +0.73 / +0.89 % | −0.89 / −0.90 % | +0.34 / +0.55 % | −0.81 / −0.82 % |
+| 10³ | 32² | 1/6 | 0.6 / 1.5 | +0.02 / −0.07 % | +1.06 / +1.22 % | −1.48 / −1.49 % | +0.59 / +0.80 % | −1.30 / −1.31 % |
+| 10³ | 32² | 3/16 | 0.6 / 1.5 | +0.02 / −0.07 % | +1.24 / +1.39 % | −1.77 / −1.78 % | | |
+| 10³ | 32² | 1/4 | 0.6 / 1.5 | +0.02 / −0.07 % | +1.74 / +1.88 % | −2.66 / −2.67 % | +1.07 / +1.28 % | −2.26 / −2.27 % |
+| 10³ | 32² | shipped | 0.8 | +0.01 % | +0.41 % | −0.31 % | +0.26 % | −0.31 % |
+| 10³ | 32² | shipped | 1.0 | −0.00 % | +0.44 % | −0.31 % | +0.28 % | −0.31 % |
+| 10³ | 32² | shipped | 1.5 | −0.07 % | +0.56 % | −0.32 % | +0.41 % | −0.32 % |
+| 10³ | 32² | shipped | 1.439 (automatic) | −0.06 % | +0.54 % | −0.31 % | +0.39 % | −0.32 % |
+| 10³ | 64² | (τ_T − ½)², before | 0.8 | −0.01 % | +0.17 % | −0.17 % | +0.13 % | −0.18 % |
+| 10³ | 64² | (τ_T − ½)², before | 1.5 | −0.03 % | +2.09 % | −3.42 % | +1.62 % | −3.28 % |
+| 10³ | 64² | 1/24 | 1.5 | −0.03 % | +0.11 % | −0.01 % | +0.20 % | −0.01 % |
+| 10³ | 64² | 1/12 | 1.5 | −0.03 % | +0.19 % | −0.15 % | +0.17 % | −0.16 % |
+| 10³ | 64² | 1/6 | 1.5 | −0.03 % | +0.37 % | −0.44 % | +0.12 % | −0.45 % |
+| 10³ | 64² | 1/4 | 1.5 | −0.03 % | +0.54 % | −0.73 % | +0.27 % | −0.75 % |
+| 10³ | 64² | shipped | 0.8 | −0.01 % | +0.16 % | −0.15 % | +0.13 % | −0.16 % |
+| 10⁵ | 64² | (τ_T − ½)², before | 0.8 | +0.16 % | +2.26 % | −11.06 % | +0.87 % | −10.96 % |
+| 10⁵ | 64² | 1/24 | 0.8 | +0.16 % | +0.45 % | −4.03 % | +1.26 % | −6.66 % |
+| 10⁵ | 64² | 1/12 (shipped) | 0.8 | +0.16 % | +2.01 % | −10.09 % | +0.92 % | −10.12 % |
+| 10⁵ | 64² | 1/6 | 0.8 | +0.16 % | +5.22 % | −22.19 % | +0.27 % | −20.53 % |
+| 10⁵ | 64² | 1/4 | 0.8 | +0.16 % | +8.48 % | −34.22 % | −0.35 % | −30.76 % |
+
+Errors against de Vahl Davis (1983): Nu 1.118, Nu_max 1.505, Nu_min 0.692 at Ra 10³; 4.519,
+7.717, 0.729 at 10⁵. Nu_max and Nu_min as `solve.probe` reads them (the one-sided difference
+through the wall, the extreme on the parabola through three samples; Nu_min at the top cell's
+centre, half a cell below the corner where the reference is) and from each wall link's own heat.
+Run to 1.5 H²/α with `cargo test --release -p fieldcraft-lbm --test thermal -- --ignored
+local_wall_heat_flux_with_two_relaxation_times --nocapture` (the 1/8 and 3/16 rows from the same
+harness with those values). At a fixed Λ_T the rows move with τ_T by at most 0.16 points on 32
+cells and 0.04 on 64 (the single relaxation time: 14 and 3.4): that remainder is the linear
+equilibrium's numerical diffusion along the flow, 4 u² of the diffusivity in lattice units, which
+grows with the time step's lattice speed (0.03 at τ_T 1.5 on 32 cells). At Ra 10⁵ on 64 cells the
+top corner is under-resolved and smaller Λ_T reads closer there; 1/12 is the value that is exact
+for conduction and keeps the stability of the single relaxation time (below), and the cavity
+cases of the oracle, run at τ_T 0.62–0.8, stay within their tolerances.
+
+**Below τ_T = 0.79** (`setup::thermal_magic`) the lattice keeps the single relaxation time
+(`Λ_T = (τ_T − ½)²`, which is smaller there). A fixed Λ_T makes `τ_T⁺` grow without bound as
+`τ_T → ½` (a fluid of high Prandtl number, such as water, on a fine grid), and a von Neumann
+analysis of the D3Q7 lattice with its linear equilibrium finds that unstable from lattice speeds
+of 0.02–0.03 at τ_T 0.505–0.51 for any Λ_T below 1/4, where the single relaxation time holds 0.25.
+With `τ_T⁺ ≤ τ_T` the largest stable lattice speed is at least 0.25 at every τ_T, as with the
+single relaxation time (0.25 at 0.505, 0.36 at 0.7, 0.44 at 0.8, 0.46–0.47 from 1 to 3, against
+0.25, 0.36, 0.45 and 0.50–0.54), well above the characteristic lattice speeds a run is allowed
+(Mach 0.3, 0.17). The single relaxation time's wall error grows
+with its Λ_T, so below 0.79 it is smaller than at 1/12.
+
+**What it costs.** A transient Fourier mode at rest decays 0.105 (k Δx)² faster than α k² (4.0e-3
+on 32 cells per wavelength; the single relaxation time had −8e-4 at τ_T = 1 and −1.5e-2 at 1.5),
+and the conjugate array of insulating cylinders on 16, 32 and 64 cells (`conjugate.rs`), a
+first-order staircase interface, reads −5.7, −3.0 and −1.2 % against −3.9, −2.2 and −0.85 % at
+the single relaxation time's τ_T = 1 (Λ_T = 1/4) and −12.4 and −4.7 % at τ_T = 0.6 (Λ_T = 0.01):
+its error now does not depend on the time step.
+
+**CPU and GPU.** The shader collides the same way (`collide_thermal`, the symmetric rate in
+`therm.w`).
+
 ## Stability
 
 **The issue's measurement** (#557): the flow-past sample (the bracket in a 240 × 120 × 100 mm box,
@@ -175,5 +263,13 @@ repeatable); the GPU figures are the range of three runs of
 - U. Ghia, K. N. Ghia, C. T. Shin, *High-Re solutions for incompressible flow using the
   Navier–Stokes equations and a multigrid method*, J. Comput. Phys. 48 (1982) 387–411,
   doi:10.1016/0021-9991(82)90058-4.
+- D. d'Humières, I. Ginzburg, *Viscosity independent numerical errors for Lattice Boltzmann
+  models: From recurrence equations to "magic" collision numbers*, Comput. Math. Appl. 58 (2009)
+  823–840, doi:10.1016/j.camwa.2009.02.008.
+- I. Ginzburg, *Equilibrium-type and link-type lattice Boltzmann models for generic advection and
+  anisotropic-dispersion equation*, Adv. Water Resour. 28 (2005) 1171–1195,
+  doi:10.1016/j.advwatres.2005.03.004.
+- G. de Vahl Davis, *Natural convection of air in a square cavity: a bench mark numerical
+  solution*, Int. J. Numer. Methods Fluids 3 (1983) 249–264, doi:10.1002/fld.1650030305.
 
 All confirmed on Crossref. No code of any lattice Boltzmann package was read.
