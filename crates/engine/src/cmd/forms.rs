@@ -2204,11 +2204,18 @@ pub const SOLVE_FLUID: &[Field] = &[
     choice("backend", "Backend", &[("cpu", "CPU"), ("gpu", "GPU")])
         .help("The CPU (double precision, the same result on every machine) or the GPU the build and FIELDCRAFT_GPU pick (single precision).")
         .def("\"cpu\""),
-    int("max_cells", "Max cells", 1, 16_000_000).help("Cap on the lattice cells."),
-    int("max_steps", "Max steps", 1, 10_000_000).help("Cap on the lattice time steps."),
-    positive("max_cell_updates", "Max cell updates", D::None).help("Cap on cells × steps."),
-    positive("max_frame_bytes", "Max frame bytes", D::None).help("Cap on the memory for result frames."),
+    int("max_cells", "Max cells", 1, fieldcraft_lbm::Limits::MAX_ADDRESSABLE_CELLS as i64)
+        .help("Cap on the lattice cells: 16M by default; may be raised up to what this machine's memory holds (the estimate below).")
+        .hint("16000000"),
+    int("max_steps", "Max steps", 1, 10_000_000).help("Cap on the lattice time steps.").hint("10000000"),
+    int("max_cell_updates", "Max cell updates", 1, i64::MAX)
+        .help("Cap on cells × steps: 1e12 by default; may be raised up to what this machine's memory holds.")
+        .hint("1000000000000"),
+    int("max_frame_bytes", "Max frame bytes", 1, i64::MAX)
+        .help("Cap on the memory for result frames (about 16 bytes per cell per frame, 20 with heat): 2 GB by default; may be raised up to this machine's bound (the estimate below).")
+        .hint("2000000000"),
     THREADS,
+    flag("estimate", "Estimate only").help("Return the run's memory estimate without solving."),
 ];
 pub const SOLVE_PROBE: &[Field] = &[
     SOLVED.req(),
@@ -2420,7 +2427,7 @@ mod tests {
                 continue; // they replace or write the session's model; their forms are paths and counts
             }
             for fill_refs in [false, true] {
-                let limits = crate::Limits { max_steiner: 10, max_tets: 100, max_hex_elements: 100, threads: 1 };
+                let limits = crate::Limits { max_steiner: 10, max_tets: 100, max_hex_elements: 100, threads: 1, memory: 0 };
                 let mut s = Session { limits, ..Session::default() };
                 crate::cmd::define::tests::defined_bar(&mut s);
                 s.execute("solve.run", &json!({})).unwrap();
@@ -2473,7 +2480,7 @@ mod tests {
                 }
             }
             for p in tries {
-                let limits = crate::Limits { max_steiner: 10, max_tets: 100, max_hex_elements: 100, threads: 1 };
+                let limits = crate::Limits { max_steiner: 10, max_tets: 100, max_hex_elements: 100, threads: 1, memory: 0 };
                 let mut s = Session { limits, ..Session::default() };
                 crate::cmd::define::tests::defined_bar(&mut s);
                 if let Err(EngineError::Param(e)) = s.execute(c.id, &p) {

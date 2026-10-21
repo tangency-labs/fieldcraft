@@ -15,9 +15,6 @@ pub const MAX_HISTORY: u64 = 10_000;
 /// A relative density variation above this at the end of a run is reported.
 pub const COMPRESSIBILITY_WARNING: f64 = 0.01;
 
-/// Bytes in a megabyte, for messages.
-const MEGABYTE: f64 = 1e6; // unit-factors: bytes of memory, not a physical quantity
-
 /// The velocity and pressure field at one time, per cell (index `i + nx (j + ny k)`; zero in
 /// solid cells). Stored in single precision: output for display and probing.
 #[derive(Debug, Clone, PartialEq)]
@@ -174,6 +171,7 @@ pub fn solve_fluid(model: &Model, step: Option<&str>, obstacles: &[Obstacle], li
 /// [`solve_fluid`] on the backend `choice` names (the registered device backend, or the CPU).
 pub fn solve_fluid_on(model: &Model, step: Option<&str>, obstacles: &[Obstacle], limits: &Limits, choice: Choice) -> Result<FluidResult> {
     let setup = Setup::new(model, step, obstacles, limits)?;
+    crate::memory::Memory::of(&setup, choice)?.check(limits)?;
     let flow = Flow::new(&setup, obstacles)?;
     let mut backend = crate::backend::backend(choice, flow, &setup)?;
     run(&setup, backend.as_mut(), limits)
@@ -225,15 +223,7 @@ pub fn run(setup: &Setup, flow: &mut dyn Backend, limits: &Limits) -> Result<Flu
     let n = setup.grid.len();
     let total = setup.steps;
     let frames = u64::from(setup.frames).min(total).max(1);
-    let frame_bytes = (frames + 1) as f64 * n as f64 * if setup.thermal.is_some() { 20.0 } else { 16.0 };
-    if !(frame_bytes <= limits.max_frame_bytes as f64) {
-        return Err(Error::Limit(format!(
-            "{} frames of {n} cells need {:.0} MB, above the cap of {:.0} MB; write fewer frames or raise `max_frame_bytes`",
-            frames + 1,
-            frame_bytes / MEGABYTE,
-            limits.max_frame_bytes as f64 / MEGABYTE
-        )));
-    }
+    crate::memory::Memory::of(setup, Choice::Cpu)?.check_frames(limits)?;
     let every = total.div_ceil(MAX_HISTORY).max(1);
     let fs = setup.force_scale();
     let hs = setup.thermal.as_ref().map_or(0.0, |t| t.heat_scale);

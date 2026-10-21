@@ -102,7 +102,7 @@ pub const HISTORY: CommandSpec = CommandSpec {
 pub const FLUID: CommandSpec = CommandSpec {
     id: "solve.fluid",
     label: "Solve Fluid Step",
-    params: r#"{"step": "Flow", "backend": "cpu", "max_cells": 16000000, "max_steps": 10000000, "max_cell_updates": 1e12, "max_frame_bytes": 2e9, "threads": 8} — runs a fluid step with the lattice Boltzmann solver (the only fluid step when `step` is left out): obstacles are triangulated from the open design or taken from imported surfaces; returns the time step, relaxation time, Mach number, mass, the largest speed of all frames (`max_speed`, at `max_speed_time`) and of the last frame (`final_max_speed`), over interior fluid cells (the open-boundary layers are excluded, convective outlets too, because a wake reaching a uniform pressure outlet distorts the last layer), the final force on every wall and, with heat, the thermal relaxation time, the fluid's temperature range and the heat into every wall, and per conducting solid (`solids`) its temperature range and mean, its power and the heat its faces give the fluid; with fans and porous zones, each one's volume flow and its pressure rise (a fan's operating point: `pressure_rise` from its curve, and `measured_pressure_rise`) or `pressure_drop`; the measured values are the static-pressure difference between the fluid cell layers just outside the zone, so they include the wall friction over its thickness plus one cell (final and mean over the last quarter of the run); `backend` is `cpu` (the default: double precision, the same result on every machine) or `gpu` (the step on the GPU `FIELDCRAFT_GPU` picks, single precision, within the backend's stated tolerance of the CPU; an error when the build has none); the caps may only be lowered; `threads` as for solve.static"#,
+    params: r#"{"step": "Flow", "backend": "cpu", "max_cells": 16000000, "max_steps": 10000000, "max_cell_updates": 1e12, "max_frame_bytes": 2e9, "threads": 8, "estimate": false} — runs a fluid step with the lattice Boltzmann solver (the only fluid step when `step` is left out): obstacles are triangulated from the open design or taken from imported surfaces; returns the time step, relaxation time, Mach number, mass, the largest speed of all frames (`max_speed`, at `max_speed_time`) and of the last frame (`final_max_speed`), over interior fluid cells (the open-boundary layers are excluded, convective outlets too, because a wake reaching a uniform pressure outlet distorts the last layer), the final force on every wall and, with heat, the thermal relaxation time, the fluid's temperature range and the heat into every wall, and per conducting solid (`solids`) its temperature range and mean, its power and the heat its faces give the fluid; with fans and porous zones, each one's volume flow and its pressure rise (a fan's operating point: `pressure_rise` from its curve, and `measured_pressure_rise`) or `pressure_drop`; the measured values are the static-pressure difference between the fluid cell layers just outside the zone, so they include the wall friction over its thickness plus one cell (final and mean over the last quarter of the run); `backend` is `cpu` (the default: double precision, the same result on every machine) or `gpu` (the step on the GPU `FIELDCRAFT_GPU` picks, single precision, within the backend's stated tolerance of the CPU; an error when the build has none); `max_steps` may only be lowered; `max_cells` (16000000 by default), `max_cell_updates` (1e12) and `max_frame_bytes` (2e9) may be raised up to what the machine's memory bound holds (half its physical memory), and a run with a raised `max_cells` or `max_frame_bytes` must fit in that bound; the reply's `memory` gives the run's estimate (`flow_bytes`, `frame_bytes` at about 16 bytes per cell per frame, 20 with heat, `total_bytes`) against `bound_bytes`, the `frames_that_fit` and each cap's `ceilings`, and on the GPU the population buffer against the device's limit per buffer; `"estimate": true` returns only that, without solving; a run over a cap is refused before it starts, saying what to change; `threads` as for solve.static"#,
     form: Some(super::forms::SOLVE_FLUID),
     kind: CommandKind::Model,
     requires: &[Requirement::FluidDomain, Requirement::Step],
@@ -131,13 +131,18 @@ const MAX_PROBE_FORCES: usize = 100;
 /// Most history samples one `solve.history` returns.
 const MAX_HISTORY_SAMPLES: usize = 10_000;
 
+/// A whole number given as an integer or as a number with no fraction (8e9); floats only up to
+/// 2⁵³, beyond which they are not exact.
+fn whole(v: &Value) -> Option<u64> {
+    v.as_u64().or_else(|| v.as_f64().filter(|x| x.fract() == 0.0 && (0.0..=9.007_199_254_740_992e15).contains(x)).map(|x| x as u64))
+}
+
 /// An optional cap that may only lower the default.
 fn cap<T: Copy + TryInto<u64> + TryFrom<u64> + std::fmt::Display>(p: &Value, key: &str, default: T) -> Result<T> {
     let most: u64 = default.try_into().unwrap_or(u64::MAX);
     match p.get(key) {
         None => Ok(default),
-        Some(v) => v
-            .as_u64()
+        Some(v) => whole(v)
             .filter(|n| (1..=most).contains(n))
             .and_then(|n| T::try_from(n).ok())
             .ok_or_else(|| EngineError::param(key, ProblemKind::NotAWholeNumber { min: 1, max: i64::try_from(most).unwrap_or(i64::MAX) })),
@@ -549,25 +554,141 @@ fn obstacles(s: &Session, domain: &FluidDomain) -> Result<Vec<Obstacle>> {
     Ok(out)
 }
 
-fn run_fluid(s: &mut Session, p: &Value) -> Result<Value> {
-    let defaults = fieldcraft_lbm::Limits::default();
-    let limits = fieldcraft_lbm::Limits {
-        max_cells: cap(p, "max_cells", defaults.max_cells)?,
-        max_steps: cap(p, "max_steps", defaults.max_steps)?,
-        max_cell_updates: cap(p, "max_cell_updates", defaults.max_cell_updates)?,
-        max_frame_bytes: cap(p, "max_frame_bytes", defaults.max_frame_bytes)?,
+/// A cap of a fluid solve that may be raised: its default when left out; when given, a whole
+/// number from 1 up to `ceiling`, what the session's memory bound (`bound`) holds.
+fn raisable(p: &Value, key: &str, default: u64, ceiling: u64, bound: u64) -> Result<u64> {
+    let Some(v) = p.get(key) else { return Ok(default) };
+    match whole(v) {
+        Some(n) if (1..=ceiling).contains(&n) => Ok(n),
+        Some(n) if n > ceiling => Err(EngineError::invalid(
+            key,
+            if bound == 0 {
+                format!("{n} is above the default {default}, and this machine's memory is unknown, so the cap cannot be raised")
+            } else {
+                format!(
+                    "{n} is above the {ceiling} this machine allows (its bound for a run is {}, half its memory): coarsen the spacing or write fewer frames",
+                    fieldcraft_lbm::memory::megabytes(bound)
+                )
+            },
+        )),
+        _ => Err(EngineError::param(key, ProblemKind::NotAWholeNumber { min: 1, max: i64::try_from(ceiling).unwrap_or(i64::MAX) })),
+    }
+}
+
+/// The caps and backend of a `solve.fluid` call: `max_steps` may only be lowered;
+/// `max_cells`, `max_cell_updates` and `max_frame_bytes` may be raised up to what the session's
+/// memory bound holds.
+fn fluid_limits(s: &Session, p: &Value) -> Result<(fieldcraft_lbm::Limits, fieldcraft_lbm::Choice)> {
+    use fieldcraft_lbm::Limits as L;
+    let bound = s.limits.memory;
+    let ceilings = L { max_memory: bound, ..L::default() };
+    let limits = L {
+        max_cells: raisable(p, "max_cells", L::MAX_CELLS, ceilings.max_cells_ceiling(), bound)?,
+        max_steps: cap(p, "max_steps", L::MAX_STEPS)?,
+        max_cell_updates: raisable(p, "max_cell_updates", L::MAX_CELL_UPDATES, ceilings.max_cell_updates_ceiling(), bound)?,
+        max_frame_bytes: raisable(p, "max_frame_bytes", L::MAX_FRAME_BYTES, ceilings.max_frame_ceiling(), bound)?,
+        max_memory: bound,
     };
-    let step = opt::<String>(p, "step")?;
     let backend = match opt::<String>(p, "backend")? {
         None => fieldcraft_lbm::Choice::Cpu,
         Some(b) => fieldcraft_lbm::Choice::parse(&b)
             .ok_or_else(|| EngineError::Params(format!("`backend` must be `cpu` or `gpu`, not `{}`", b.chars().take(40).collect::<String>())))?,
     };
+    Ok((limits, backend))
+}
+
+/// What a fluid solve would need in memory, from the model alone (no obstacle is
+/// triangulated), against its caps and the machine's bound: what `solve.fluid` reports and the
+/// Solve dialog shows before the run.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FluidEstimate {
+    pub memory: fieldcraft_lbm::Memory,
+    pub limits: fieldcraft_lbm::Limits,
+    /// The machine's physical memory, when known.
+    pub physical: Option<u64>,
+    /// Why the run would be refused before it starts (the cell, frame or memory caps), if it
+    /// would.
+    pub problem: Option<String>,
+}
+
+impl FluidEstimate {
+    pub fn to_json(&self) -> Value {
+        let m = &self.memory;
+        let l = &self.limits;
+        json!({
+            "backend": match m.backend { fieldcraft_lbm::Choice::Cpu => "cpu", fieldcraft_lbm::Choice::Device => "gpu" },
+            "cells": m.cells,
+            "frames": m.frames,
+            "flow_bytes": m.flow_bytes(),
+            "frame_bytes": m.frame_bytes,
+            "total_bytes": m.total(),
+            "bound_bytes": l.max_memory,
+            "physical_bytes": self.physical,
+            "raised": l.raised(),
+            "frames_that_fit": m.frames_that_fit(l),
+            "ceilings": {"max_cells": l.max_cells_ceiling(), "max_cell_updates": l.max_cell_updates_ceiling(), "max_frame_bytes": l.max_frame_ceiling()},
+            "gpu_buffer": m.device.map(|d| json!({"populations_bytes": d.populations, "limit_bytes": d.limit})),
+            "problem": self.problem,
+        })
+    }
+
+    /// The estimate in a line, for a form: what the run needs against what this machine allows.
+    pub fn summary(&self) -> String {
+        use fieldcraft_lbm::memory::megabytes;
+        let m = &self.memory;
+        let mut line = format!(
+            "Memory: {} frames × {} cells: {} of frames + {} of flow ≈ {}",
+            m.frames,
+            crate::thousands(usize::try_from(m.cells).unwrap_or(usize::MAX)),
+            megabytes(m.frame_bytes),
+            megabytes(m.flow_bytes()),
+            megabytes(m.total())
+        );
+        if let Some(d) = m.device {
+            line += &format!("; GPU buffer {}", megabytes(d.populations));
+            if let Some(limit) = d.limit {
+                line += &format!(" of {} allowed", megabytes(limit));
+            }
+        }
+        let bound = self.limits.max_memory;
+        if bound == 0 {
+            line += ". This machine's memory is unknown: the caps keep their defaults.";
+        } else {
+            line += &format!(". Runs with raised caps may take up to {} on this machine", megabytes(bound));
+            if let Some(physical) = self.physical {
+                line += &format!(" (it has {})", megabytes(physical));
+            }
+            line += ".";
+        }
+        line
+    }
+}
+
+/// The memory estimate of `solve.fluid` with parameters `p`, or why there is none (no fluid
+/// step, parameters out of range).
+pub fn fluid_estimate(s: &Session, p: &Value) -> Result<FluidEstimate> {
+    let (limits, backend) = fluid_limits(s, p)?;
+    let step = opt::<String>(p, "step")?;
+    let (_, domain) = fieldcraft_lbm::fluid_step(&s.model, step.as_deref())?;
+    let memory = fieldcraft_lbm::Memory::estimate(&s.model, step.as_deref(), backend)?;
+    let problem = limits.check_cells(domain.cells()?).and_then(|()| memory.check(&limits)).err().map(|e| e.to_string());
+    Ok(FluidEstimate { memory, limits, physical: crate::machine::physical_memory(), problem })
+}
+
+fn run_fluid(s: &mut Session, p: &Value) -> Result<Value> {
+    let estimate = fluid_estimate(s, p)?;
+    if opt::<bool>(p, "estimate")? == Some(true) {
+        return Ok(json!({"memory": estimate.to_json()}));
+    }
+    let limits = estimate.limits;
+    let backend = estimate.memory.backend;
+    let step = opt::<String>(p, "step")?;
     let (_, domain) = fieldcraft_lbm::fluid_step(&s.model, step.as_deref())?;
     let obstacles = obstacles(s, domain)?;
     let model = &s.model;
     let r = with_threads(threads(s, p)?, || fieldcraft_lbm::solve_fluid_on(model, step.as_deref(), &obstacles, &limits, backend))?;
-    let summary = fluid_summary(&r, s.units());
+    let mut summary = fluid_summary(&r, s.units());
+    summary["memory"] = estimate.to_json();
     s.store_result(StepResult::Fluid(r));
     Ok(summary)
 }
@@ -1866,6 +1987,54 @@ pub(crate) mod tests {
         assert_eq!(r["steps"], full["steps"]);
     }
 
+    /// #650: `max_cells`, `max_cell_updates` and `max_frame_bytes` may be raised above their
+    /// defaults up to what the session's memory bound holds; above it, or with no bound, they are
+    /// refused with what to change; the reply (and `estimate`) gives the run's memory.
+    #[test]
+    fn fluid_caps_raise_up_to_the_machine_bound_and_refusals_say_what_to_change() {
+        let mut s = Session::default();
+        s.limits.memory = 32_000_000_000;
+        couette(&mut s);
+        // Raised above the defaults, within the bound: the run solves and reports its memory.
+        let r = s.execute("solve.fluid", &json!({"max_frame_bytes": 8e9, "max_cells": 20_000_000, "max_cell_updates": 2e12})).unwrap();
+        let m = &r["memory"];
+        assert_eq!((m["cells"].as_u64(), m["frames"].as_u64(), m["raised"].as_bool()), (Some(8), Some(5), Some(true)), "{m}");
+        assert_eq!(m["frame_bytes"].as_u64(), Some(5 * 8 * 16), "{m}");
+        assert_eq!(m["bound_bytes"].as_u64(), Some(32_000_000_000), "{m}");
+        assert_eq!(m["ceilings"]["max_frame_bytes"].as_u64(), Some(32_000_000_000), "{m}");
+        // Up to the ceilings exactly.
+        let ceilings = m["ceilings"].clone();
+        for key in ["max_cells", "max_cell_updates", "max_frame_bytes"] {
+            let most = ceilings[key].as_u64().unwrap();
+            let r = s.execute("solve.fluid", &json!({key: most, "estimate": true}));
+            assert!(r.is_ok(), "{key} {most}: {r:?}");
+            let e = s.execute("solve.fluid", &json!({key: most + 1, "estimate": true})).unwrap_err().to_string();
+            assert!(e.contains("this machine allows") && e.contains("coarsen the spacing or write fewer frames"), "{key}: {e}");
+        }
+        // `estimate` alone solves nothing.
+        let solved = s.solved_steps().count();
+        let only = s.execute("solve.fluid", &json!({"estimate": true})).unwrap();
+        assert!(only.get("frames").is_none() && only["memory"]["total_bytes"].as_u64() > Some(0), "{only}");
+        assert_eq!(s.solved_steps().count(), solved);
+        // Over the default cap: the error says how many frames fit and what to raise it to.
+        let e = s.execute("solve.fluid", &json!({"max_frame_bytes": 300})).unwrap_err().to_string();
+        assert!(e.contains("2 frames fit: set the step's `frames` to at most 1"), "{e}");
+        assert!(e.contains("raise `max_frame_bytes` to 640 (this machine allows up to"), "{e}");
+        let e = s.execute("solve.fluid", &json!({"max_cells": 5})).unwrap_err().to_string();
+        assert!(e.contains("coarsen the spacing, or raise `max_cells` to 8"), "{e}");
+        // Where the machine's memory is unknown, the caps keep their defaults.
+        s.limits.memory = 0;
+        let e = s.execute("solve.fluid", &json!({"max_frame_bytes": 2_000_000_001u64})).unwrap_err().to_string();
+        assert!(e.contains("cannot be raised"), "{e}");
+        assert!(s.execute("solve.fluid", &json!({"max_frame_bytes": 2e9, "estimate": true})).is_ok());
+        // The estimate as the Solve dialog shows it.
+        s.limits.memory = 32_000_000_000;
+        let e = fluid_estimate(&s, &json!({"max_frame_bytes": 300})).unwrap();
+        assert!(e.summary().starts_with("Memory: 5 frames × 8 cells: 0 MB of frames"), "{}", e.summary());
+        assert!(e.summary().contains("Runs with raised caps may take up to 32.0 GB on this machine"), "{}", e.summary());
+        assert!(e.problem.as_deref().is_some_and(|p| p.contains("frames fit")), "{e:?}");
+    }
+
     #[test]
     fn solve_fluid_hostile_params_never_panic() {
         let mut s = Session::default();
@@ -1884,6 +2053,13 @@ pub(crate) mod tests {
             json!({"step": "Shear", "max_cell_updates": 0.5}),
             json!({"step": "Shear", "max_frame_bytes": 16}),
             json!({"step": "Shear", "max_frame_bytes": "lots"}),
+            json!({"step": "Shear", "max_frame_bytes": 1e300}),
+            json!({"step": "Shear", "max_frame_bytes": -2e9}),
+            json!({"step": "Shear", "max_frame_bytes": 2.5e9 + 0.5}),
+            json!({"step": "Shear", "max_frame_bytes": u64::MAX}),
+            json!({"step": "Shear", "max_cells": f64::MAX}),
+            json!({"step": "Shear", "max_cell_updates": u64::MAX}),
+            json!({"step": "Shear", "estimate": "yes"}),
             json!({"step": "Shear", "points": [[1e308, -1e308, 0]]}),
             json!({"step": "Shear", "points": [[f64::MAX, 0, 0]], "frame": 1e300}),
             json!({"step": "Shear", "points": [[0, 0, 0]], "frame": 99}),

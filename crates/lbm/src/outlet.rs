@@ -140,6 +140,11 @@ pub struct Outlets {
 }
 
 impl Outlets {
+    /// The bytes its arrays hold.
+    pub fn heap_bytes(&self) -> u64 {
+        (self.state.capacity() * size_of::<CellState>() + self.actions.capacity() * size_of::<Action>()) as u64
+    }
+
     /// The state of the convective cells among `open` from the populations `pop`.
     /// Empty without convective cells.
     pub fn new(open: &[OpenCell], pop: &impl Populations) -> Outlets {

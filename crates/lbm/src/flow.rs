@@ -688,6 +688,10 @@ impl Flow {
                 )
             }
         };
+        // The links and open cells grew by pushes: their spare capacity (up to as much again)
+        // goes back before the steps.
+        links.shrink_to_fit();
+        open.shrink_to_fit();
         let mut flow = Flow {
             grid,
             n,
@@ -863,6 +867,28 @@ impl Flow {
                 }
             }
         }
+    }
+
+    /// The bytes its per-cell, link and open-cell arrays hold (their capacities): what
+    /// [`crate::Memory`] estimates, measured.
+    pub fn heap_bytes(&self) -> u64 {
+        fn bytes<T>(v: &Vec<T>) -> u64 {
+            (v.capacity() * size_of::<T>()) as u64
+        }
+        let mut total = bytes(&self.f)
+            + bytes(&self.g)
+            + bytes(&self.fluid)
+            + bytes(&self.links)
+            + bytes(&self.open)
+            + bytes(&self.cell_force)
+            + bytes(&self.cell_u)
+            + bytes(&self.zone_of)
+            + self.zone_cells.iter().map(bytes).sum::<u64>()
+            + self.outlets.heap_bytes();
+        if let Some(t) = &self.thermal {
+            total += bytes(&t.g) + bytes(&t.g2) + bytes(&t.temperature) + bytes(&t.open);
+        }
+        total
     }
 
     pub fn grid(&self) -> &Grid {

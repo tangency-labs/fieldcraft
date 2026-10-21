@@ -39,6 +39,9 @@ serde_json = { version = "1", features = ["float_roundtrip"] }
 log = "0.4"
 # std::time::Instant on the web too (already in the tree through egui).
 web-time = "1.1"
+# The machine's physical memory, which bounds how far a fluid solve's memory caps may be raised
+# (docs/adr/0001-libraries.md). Memory only; the desktop and CLI builds, not the browser.
+sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 
 # xtask: reading Rust sources as syntax trees (`cargo xtask unit-factors`)
 syn = { version = "2", default-features = false, features = ["full", "parsing", "visit"] }

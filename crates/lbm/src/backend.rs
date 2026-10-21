@@ -58,17 +58,32 @@ pub trait Backend {
 /// Makes a device backend from a prepared flow (its initial state included) and its setup.
 pub type BackendFactory = dyn Fn(&Flow, &Setup) -> Result<Box<dyn Backend>> + Send + Sync;
 
-static FACTORY: OnceLock<Box<BackendFactory>> = OnceLock::new();
+/// The most bytes one buffer may hold on the device the backend would use (`None` when there is
+/// no device or it cannot tell): what [`crate::Memory`] checks the population buffer against
+/// before a flow is prepared.
+pub type BufferLimit = dyn Fn() -> Option<u64> + Send + Sync;
 
-/// Register the process's device backend (an application does this once at start; a second
-/// registration is ignored).
-pub fn register_backend(factory: Box<BackendFactory>) {
-    let _ = FACTORY.set(factory);
+struct Registered {
+    make: Box<BackendFactory>,
+    buffer_limit: Box<BufferLimit>,
+}
+
+static FACTORY: OnceLock<Registered> = OnceLock::new();
+
+/// Register the process's device backend and its device's buffer limit (an application does
+/// this once at start; a second registration is ignored).
+pub fn register_backend(factory: Box<BackendFactory>, buffer_limit: Box<BufferLimit>) {
+    let _ = FACTORY.set(Registered { make: factory, buffer_limit });
 }
 
 /// The registered device backend's factory, if an application registered one.
 pub fn backend_factory() -> Option<&'static BackendFactory> {
-    FACTORY.get().map(|b| b.as_ref())
+    FACTORY.get().map(|b| b.make.as_ref())
+}
+
+/// The registered device's limit on one buffer, when there is one and it tells.
+pub fn device_buffer_limit() -> Option<u64> {
+    FACTORY.get().and_then(|b| (b.buffer_limit)())
 }
 
 /// Which backend a solve asks for.

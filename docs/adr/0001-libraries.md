@@ -61,6 +61,15 @@ parameter (`threads`, 1–256) whose default is `FIELDCRAFT_THREADS` or the avai
 this is wrong: rayon's pool is a process-wide resource and nested pools add latency; replacing it
 touches only `fieldcraft-parallel`.
 
+**Machine memory: sysinfo** (MIT), in `fieldcraft-engine` only, desktop and CLI builds (not the
+browser), with only its `system` feature, for the physical memory (*decided 2026-10-21, #650*). It
+bounds how far a fluid solve's memory caps may be raised: half the physical memory, or on Linux
+half the root cgroup's limit when that is lower (a container's). std has no such query; the
+alternatives were our own per-platform code (`/proc/meminfo` on Linux is plain Rust, but macOS and
+Windows need `sysctl` and `GlobalMemoryStatusEx` through FFI, which `unsafe_code = "forbid"`
+rules out) or a crate built on C code. Cost if this is wrong: the bound is a little off on some
+platform, and the remedy stays inside `fieldcraft_engine::machine`.
+
 **Allowed:** MIT, BSD-2/3, Apache-2.0, ISC, Zlib, Unicode, MPL-2.0 (as an unmodified dependency),
 CC0 and public domain.
 

@@ -436,6 +436,110 @@ fn a_wake_at_a_pressure_outlet_distorts_only_the_last_layer() {
     assert!(r.in_open_layer(r.grid.index([nx - 1, 0, 0])) && !r.in_open_layer(r.grid.index([nx - 2, 0, 0])));
 }
 
+/// #650: the memory a run is refused or admitted on is the memory it allocates: the arrays the
+/// CPU flow holds once it steps, one frame's fields and the frames, within 1% (measured +0.5%
+/// for the channel, +0.2% with heat and buoyancy, −0.1% with a sphere, whose links the
+/// estimate cannot know before voxelising). The frames and the fields are exact.
+#[test]
+fn the_memory_estimate_matches_what_a_run_allocates() {
+    use fieldcraft_lbm::{Backend, Choice, Memory};
+    let channel = |heat: bool, sphere: bool| {
+        let mut d = domain([0.0; 3], [3.0, 1.5, 1.5], 0.0625);
+        d.faces.x_min = FaceCondition::Velocity { velocity: [0.05, 0.0, 0.0], profile: Profile::Uniform };
+        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Convective };
+        let mut obstacles = Vec::new();
+        if sphere {
+            d.obstacles = vec!["Ball".into()];
+            obstacles.push(obstacle("Ball", common::sphere([1.0, 0.75, 0.75], 0.4, 3), &["surface"]));
+        }
+        let procedure = step(0.4, 0.01, None);
+        let m = if heat {
+            d.thermal = Some(fieldcraft_model::FluidThermal {
+                initial_temperature: kelvin(20.0),
+                gravity: [0.0, 0.0, -9.81],
+                expansion: Some(1e-3),
+                ..Default::default()
+            });
+            hot_model(1.0, 0.01, 0.01, d, procedure)
+        } else {
+            model(1.0, 0.01, d, procedure)
+        };
+        (m, obstacles)
+    };
+    for (heat, sphere) in [(false, false), (true, false), (false, true)] {
+        let (m, obstacles) = channel(heat, sphere);
+        let setup = Setup::new(&m, None, &obstacles, &Limits::default()).unwrap();
+        let memory = Memory::of(&setup, Choice::Cpu).unwrap();
+        // From the model alone (what a form shows) it is the same.
+        assert_eq!(Memory::estimate(&m, None, Choice::Cpu).unwrap(), memory);
+        let mut flow = fieldcraft_lbm::Flow::new(&setup, &obstacles).unwrap();
+        flow.advance(1).unwrap();
+        let n = setup.grid.len() as u64;
+        // The flow and the result's solid flags.
+        let held = flow.heap_bytes() + n;
+        let fields = flow.fields().unwrap();
+        let readback = (fields.density.capacity() * 8 + fields.velocity.capacity() * 24 + fields.temperature.capacity() * 8) as u64;
+        let r = solve_fluid(&m, None, &obstacles, &Limits::default()).unwrap();
+        let frames: u64 =
+            r.frames.iter().map(|f| (f.velocity.capacity() * 12 + f.pressure.capacity() * 4 + f.temperature.capacity() * 4) as u64).sum();
+        assert_eq!((memory.frames, memory.frame_bytes), (r.frames.len() as u64, frames), "heat {heat}");
+        assert_eq!(memory.readback, readback, "heat {heat}");
+        let measured = held + readback + frames;
+        let over = memory.total() as f64 / measured as f64 - 1.0;
+        assert!(memory.state >= held || sphere, "heat {heat}: {} below {held}", memory.state);
+        assert!(over.abs() < 0.01, "heat {heat} sphere {sphere}: estimate {} vs {measured} allocated ({over:+.3})", memory.total());
+    }
+}
+
+/// #650: the caps refuse with what to change: the frames that fit, the value to raise a cap
+/// to and how far this machine allows it, or coarsening when even the machine's bound is
+/// exceeded; a raised cap is checked against the bound before anything is allocated.
+#[test]
+fn caps_refuse_with_what_to_change_and_raised_caps_fit_the_machine() {
+    use fieldcraft_lbm::{Choice, Memory};
+    let mut d = domain([0.0; 3], [4.0, 1.0, 0.25], 0.25);
+    d.faces.x_min = FaceCondition::Velocity { velocity: [0.01, 0.0, 0.0], profile: Profile::Uniform };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+    let m = model(1.0, 0.1, d, step(0.1, 0.01, None));
+    let machine = Limits { max_memory: 64_000_000_000, ..Limits::default() };
+    let setup = Setup::new(&m, None, &[], &machine).unwrap();
+    let memory = Memory::of(&setup, Choice::Cpu).unwrap();
+    // 16 × 4 × 1 cells, 3 frames of 16 bytes per cell.
+    assert_eq!((memory.cells, memory.frames, memory.frame_bytes), (64, 3, 3 * 64 * 16));
+
+    let e = memory.check(&Limits { max_frame_bytes: 2100, ..machine }).unwrap_err().to_string();
+    assert!(e.contains("2 frames fit: set the step's `frames` to at most 1, or raise `max_frame_bytes` to 3072 (this machine allows up to"), "{e}");
+    let e = memory.check(&Limits { max_frame_bytes: 100, ..machine }).unwrap_err().to_string();
+    assert!(e.contains("not even two frames fit: coarsen the spacing"), "{e}");
+    // Without a bound (no machine known to the solver), no ceiling is named.
+    let e = memory.check(&Limits { max_frame_bytes: 2100, ..Limits::default() }).unwrap_err().to_string();
+    assert!(e.ends_with("or raise `max_frame_bytes` to 3072"), "{e}");
+
+    // The cells: raise to what is needed, or coarsen when the machine cannot hold them.
+    let e = Setup::new(&m, None, &[], &Limits { max_cells: 10, ..machine }).unwrap_err().to_string();
+    assert!(e.contains("coarsen the spacing, or raise `max_cells` to 64 (this machine allows up to"), "{e}");
+    let small = Limits { max_memory: 1_000_000_000, ..Limits::default() };
+    assert_eq!(small.max_cells_ceiling(), Limits::MAX_CELLS, "never below the default");
+    let e = small.check_cells([1000, 1000, 1000]).unwrap_err().to_string();
+    assert!(e.ends_with("coarsen the spacing"), "{e}");
+    assert!(machine.check_cells([1000, 400, 200]).unwrap_err().to_string().contains("raise `max_cells` to 80000000"));
+    assert!(machine.max_cells_ceiling() > 80_000_000);
+    let e = Setup::new(&m, None, &[], &Limits { max_cell_updates: 100, ..machine }).unwrap_err().to_string();
+    assert!(e.contains("coarsen the spacing or shorten the step, or raise `max_cell_updates` to 640"), "{e}");
+
+    // A raised cap admits the run while it fits the machine's bound, and refuses it, before
+    // anything is allocated, once it does not.
+    let raised = Limits { max_frame_bytes: Limits::MAX_FRAME_BYTES + 1, ..machine };
+    assert!(raised.raised() && memory.check(&raised).is_ok());
+    let tight = Limits { max_memory: memory.total() - 1, ..raised };
+    let e = memory.check(&tight).unwrap_err().to_string();
+    assert!(e.contains("above this machine's bound") && e.contains("frames fit: set the step's `frames` to at most"), "{e}");
+    let e = solve_fluid(&m, None, &[], &tight).unwrap_err().to_string();
+    assert!(e.contains("above this machine's bound"), "{e}");
+    // Within the default caps the bound does not apply: such runs solve as they always have.
+    assert!(memory.check(&Limits { max_memory: 1, ..Limits::default() }).is_ok());
+}
+
 #[test]
 fn stability_limits_are_enforced_with_clear_errors() {
     let channel = |u: f64, dt: f64, nu: f64| {

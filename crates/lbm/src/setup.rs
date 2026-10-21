@@ -369,14 +369,9 @@ impl Setup {
             cells[a] = usize::try_from(counts[a]).map_err(|_| Error::Limit("the grid is too large".into()))?;
             total = total.saturating_mul(counts[a]);
         }
-        if total > limits.max_cells {
-            return Err(Error::Limit(format!(
-                "the domain has {total} cells ({} × {} × {}), above the cap of {}; coarsen the spacing or raise `max_cells`",
-                cells[0], cells[1], cells[2], limits.max_cells
-            )));
-        }
+        limits.check_cells(counts)?;
         for face in BoxFace::ALL {
-            let open = matches!(domain.faces.get(face), FaceCondition::Velocity { .. } | FaceCondition::Pressure { .. });
+            let open = crate::memory::is_open(domain.faces.get(face));
             if open && cells[face.axis()] < 2 {
                 return Err(Error::Invalid(format!("box face {} is an inlet or outlet, so the box needs at least 2 cells across it", face.name())));
             }
@@ -450,8 +445,9 @@ impl Setup {
         let updates = (total as f64) * (n as f64);
         if !(updates <= limits.max_cell_updates as f64) {
             return Err(Error::Limit(format!(
-                "{total} cells for {n} time steps is {updates:e} cell updates, above the cap of {:e}; coarsen, shorten or raise `max_cell_updates`",
-                limits.max_cell_updates as f64
+                "{total} cells for {n} time steps is {updates:e} cell updates, above the cap of {:e}: coarsen the spacing or shorten the step{}",
+                limits.max_cell_updates as f64,
+                limits.raise("max_cell_updates", total.saturating_mul(n), limits.max_cell_updates_ceiling())
             )));
         }
 

@@ -19,6 +19,7 @@ pub mod cmd;
 pub mod crash;
 pub mod flow;
 pub mod logfile;
+pub mod machine;
 
 pub use cmd::analytic_surfaces;
 pub use cmd::replace::{MESHERS, Replacement, replacement, thousands};
@@ -255,6 +256,11 @@ pub struct Limits {
     /// `FIELDCRAFT_THREADS` or the available cores, 1 to [`fieldcraft_parallel::MAX_THREADS`].
     /// Results do not depend on it.
     pub threads: usize,
+    /// The memory in bytes a fluid solve may take once its caps (`max_cells`,
+    /// `max_cell_updates`, `max_frame_bytes`) are raised above their defaults, which also bounds
+    /// how far they may be raised: half the machine's physical memory ([`machine`]), 0 where it
+    /// is unknown.
+    pub memory: u64,
 }
 
 impl Default for Limits {
@@ -265,6 +271,7 @@ impl Default for Limits {
             max_tets: cdt.max_tets,
             max_hex_elements: cmd::octree::DEFAULT_MAX_ELEMENTS,
             threads: fieldcraft_parallel::default_threads(),
+            memory: machine::memory_bound(),
         }
     }
 }

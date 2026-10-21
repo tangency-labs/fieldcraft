@@ -28,6 +28,9 @@ log = { workspace = true }
 # app.update.check (docs/updates.md); the browser build has no update check.
 fieldcraft-update = { workspace = true }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+sysinfo = { workspace = true }
+
 [dev-dependencies]
 png = { workspace = true }
 zip = { workspace = true }

@@ -81,7 +81,27 @@ fn bytes_f32(v: &[f32]) -> Vec<u8> {
 /// Register this backend with `fieldcraft_lbm` (an application does this once at start), so
 /// `solve.fluid` with `backend: "gpu"` steps on the device `FIELDCRAFT_GPU` picks.
 pub fn register() {
-    fieldcraft_lbm::register_backend(Box::new(|flow, _setup| GpuFlow::from_env(flow).map(|g| Box::new(g) as Box<dyn Backend>)));
+    fieldcraft_lbm::register_backend(
+        Box::new(|flow, _setup| GpuFlow::from_env(flow).map(|g| Box::new(g) as Box<dyn Backend>)),
+        Box::new(buffer_limit),
+    );
+}
+
+/// The most bytes one storage buffer may hold under `limits`.
+fn buffer_cap(limits: &wgpu::Limits) -> u64 {
+    limits.max_storage_buffer_binding_size.min(limits.max_buffer_size)
+}
+
+/// The most bytes one storage buffer may hold on the adapter `FIELDCRAFT_GPU` picks (the
+/// device is requested with the adapter's own limits, see [`GpuFlow::with_options`]): asked once
+/// per process, since enumerating adapters is slow.
+fn buffer_limit() -> Option<u64> {
+    static LIMIT: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
+    *LIMIT.get_or_init(|| {
+        let policy = Policy::from_env().ok()?;
+        let (adapter, _) = select::adapter(policy).ok()??;
+        Some(buffer_cap(&adapter.limits()))
+    })
 }
 
 /// How the momentum populations stream (see `lbm.wgsl`).
@@ -302,12 +322,13 @@ impl GpuFlow {
         let n = flow.grid().len();
         let elem = 4u64;
         let pop_bytes = elem * (Q * n) as u64;
-        let cap = device.limits().max_storage_buffer_binding_size.min(device.limits().max_buffer_size);
+        let cap = buffer_cap(&device.limits());
         if pop_bytes > cap {
+            use fieldcraft_lbm::memory::megabytes;
             return Err(Error::Limit(format!(
-                "{n} cells need {} MB of populations per buffer; this GPU allows {} MB per buffer: coarsen the spacing",
-                pop_bytes >> 20,
-                cap >> 20
+                "{n} cells need {} of populations per buffer; this GPU allows {} per buffer: coarsen the spacing",
+                megabytes(pop_bytes),
+                megabytes(cap)
             )));
         }
 
