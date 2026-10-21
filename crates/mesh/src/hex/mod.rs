@@ -48,6 +48,7 @@ mod mapped;
 mod region;
 mod section;
 mod sweep;
+mod tie;
 
 #[cfg(test)]
 mod tests;

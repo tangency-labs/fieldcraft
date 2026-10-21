@@ -29,6 +29,19 @@ use crate::{Error, Result};
 /// The smallest division goal the error divides by.
 const MIN_GOAL: f64 = 1e-3; // unit-factors: a count of divisions
 
+/// Relative closeness at which two goals' costs, or a goal and a half-integer, are the same:
+/// goals are curve lengths over a size, which carry the last bits of the geometry (another
+/// platform's `sin`/`cos`, another tessellation), and the counts must not (#556).
+pub(crate) const GOAL_TIE: f64 = 1e-9; // unit-factors: a relative tolerance on division counts
+
+/// `g` rounded to the nearest count, a goal within [`GOAL_TIE`] of a half-integer rounding up as
+/// the half-integer itself does: a 25 mm side at size 2 is 13 divisions however its length's
+/// last bits round.
+fn round_goal(g: f64) -> f64 {
+    let f = g.floor();
+    if g - f >= 0.5 - GOAL_TIE * g.max(1.0) { f + 1.0 } else { f }
+}
+
 /// The constraint system.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Intervals {
@@ -115,7 +128,7 @@ impl Intervals {
             if g > MAX_COUNT as f64 {
                 return Err(Error::Limit(format!("a curve would get {g:.0} divisions; the limit is {MAX_COUNT}")));
             }
-            x.push((g.round() as usize).max(self.mins.get(i).copied().unwrap_or(1)));
+            x.push((round_goal(g) as usize).max(self.mins.get(i).copied().unwrap_or(1)));
         }
         let check = |v: &[usize]| v.iter().all(|&i| i < n);
         if !self.equal.iter().all(|(a, b)| check(a) && check(b))
@@ -232,14 +245,19 @@ impl Intervals {
                 }
             }
             let Some(cands) = raise else { return Ok(x) };
-            let pick = cands
-                .iter()
-                .copied()
-                .min_by(|&a, &b| {
-                    let key = |i: usize| (parity && coupled.get(i).copied().unwrap_or(false), step_cost(&x, i));
-                    let (ka, kb) = (key(a), key(b));
-                    ka.0.cmp(&kb.0).then(ka.1.total_cmp(&kb.1)).then(a.cmp(&b))
-                })
+            // The cheapest step, among the uncoupled curves first while a parity loop is being
+            // repaired. Costs equal but for the last bits of their goals (mirror curves) are
+            // equal, and the lowest curve is raised whichever way those bits round (#556).
+            let mut pool = cands;
+            pool.sort_unstable();
+            pool.dedup();
+            if parity && pool.iter().any(|&i| !coupled.get(i).copied().unwrap_or(false)) {
+                pool.retain(|&i| !coupled.get(i).copied().unwrap_or(false));
+            }
+            let costs: Vec<f64> = pool.iter().map(|&i| step_cost(&x, i)).collect();
+            let scale = costs.iter().fold(0.0_f64, |m, c| m.max(c.abs()));
+            let pick = super::tie::min(&costs, GOAL_TIE * scale)
+                .and_then(|k| pool.get(k).copied())
                 .ok_or_else(|| Error::Failed("interval assignment: empty constraint".into()))?;
             let v = x.get_mut(pick).ok_or_else(|| Error::Failed("interval index".into()))?;
             *v += 1;
@@ -256,6 +274,7 @@ impl Intervals {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hex::tie::nudge;
 
     #[test]
     fn rounds_goals_without_constraints() {
@@ -386,5 +405,35 @@ mod tests {
         let mut s = Intervals::default();
         s.var(1e30, 1);
         assert!(s.solve().is_err());
+    }
+
+    /// A goal on a half-integer rounds up however its last bits fall: a 25 mm side at size 2 is
+    /// 13 divisions, as 12.5 itself rounds (#556).
+    #[test]
+    fn a_half_integer_goal_rounds_the_same_whichever_way_it_rounds() {
+        for ulps in [-4, -1, 0, 1, 4] {
+            let g = nudge(12.5, ulps);
+            let ia = Intervals { goals: vec![g], mins: vec![1], ..Default::default() };
+            assert_eq!(ia.solve().unwrap(), vec![13], "{g:?}");
+        }
+        // Clearly off the half still rounds to the nearest.
+        assert_eq!(round_goal(12.49), 12.0);
+        assert_eq!(round_goal(12.51), 13.0);
+    }
+
+    /// Mirror curves whose goals differ in the last bits are raised in the same order (the
+    /// first), so the counts do not hang on those bits (#556).
+    #[test]
+    fn mirror_curves_are_raised_the_same_whichever_way_their_goals_round() {
+        for (da, db) in [(0, 0), (1, -1), (-1, 1), (3, -2), (-4, 4)] {
+            // Two curves of 4.2 against one side of 9: one of the two must be raised once.
+            let ia = Intervals {
+                goals: vec![nudge(4.2, da), nudge(4.2, db), 9.0],
+                mins: vec![1; 3],
+                equal: vec![(vec![0, 1], vec![2])],
+                ..Default::default()
+            };
+            assert_eq!(ia.solve().unwrap(), vec![5, 4, 9], "{da} {db}");
+        }
     }
 }
