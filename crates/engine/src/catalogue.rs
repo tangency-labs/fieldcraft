@@ -555,8 +555,8 @@ pub static CATALOGUE: &[Capability] = &[
         "Inlet & Outlet",
         Loads,
         "Flow",
-        "Velocity inlets, pressure outlets, walls, moving and slip walls, periodic faces; held temperatures, heat fluxes and adiabatic faces",
-        &["model.fluid_domain.thermal_boundary"],
+        "Velocity inlets, pressure outlets, walls, moving and slip walls, periodic faces; held temperatures, heat fluxes and adiabatic faces; conducting solids' temperature limits",
+        &["model.fluid_domain.thermal_boundary", "model.fluid_domain.limit"],
     ),
     // ---- Interactions ----
     ready_more(

@@ -109,7 +109,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Boundary Conditions | Boundary Condition — Fixed, displacement or symmetry condition on a set or reference point | ready | `model.boundary_condition.create`, `model.boundary_condition.edit`, `model.boundary_condition.delete`, `model.boundary_condition.symmetry` |
 | Loads | Load — Force, moment, pressure, traction, gravity or body force | ready | `model.load.create`, `model.load.edit`, `model.load.delete` |
 | Flow | Fluid Domain — The box of fluid cells, its fluid, and the obstacle bodies voxelised from their face-tagged surfaces | ready | `model.fluid_domain.create`, `model.fluid_domain.edit`, `model.fluid_domain.delete` |
-| Flow | Inlet & Outlet — Velocity inlets, pressure outlets, walls, moving and slip walls, periodic faces; held temperatures, heat fluxes and adiabatic faces | ready | `model.fluid_domain.boundary`, `model.fluid_domain.thermal_boundary` |
+| Flow | Inlet & Outlet — Velocity inlets, pressure outlets, walls, moving and slip walls, periodic faces; held temperatures, heat fluxes and adiabatic faces; conducting solids' temperature limits | ready | `model.fluid_domain.boundary`, `model.fluid_domain.thermal_boundary`, `model.fluid_domain.limit` |
 
 ## Interactions
 

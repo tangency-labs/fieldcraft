@@ -19,6 +19,7 @@ use serde_json::{Value, json};
 use crate::{EngineError, Result, Session, StepResult};
 
 /// Loads and reactions balance when they differ by less than this fraction of the largest.
+pub use fieldcraft_lbm::{ComponentCheck, FluidResult, Peak};
 pub use fieldcraft_solver::system::BALANCE_TOLERANCE;
 
 /// The largest deformation scale factor.

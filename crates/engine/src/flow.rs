@@ -681,6 +681,34 @@ pub(crate) mod tests {
         let [lo, mean, hi] = ["min", "mean", "max"].map(|k| t[k].as_f64().unwrap());
         assert!(20.0 <= lo && lo <= mean && mean <= hi && hi > 20.0, "{solid}");
         assert!(given > 0.0, "the heated plate warms the water: {solid}");
+        // no limit: a peak (this transient run's highest over its frames), no verdict
+        let peak = solid["peak"].as_f64().unwrap();
+        assert!(hi <= peak && solid["limit"].is_null() && solid["ok"].is_null() && r["components_ok"].is_null(), "{solid}");
+        // A limit typed in the display system (°C), stored in kelvin, replied in °C; passing and
+        // failing either side of the peak, the margin a temperature difference.
+        for (limit, ok) in [(peak + 1.0, true), (peak - 1.0, false)] {
+            s.execute("model.fluid_domain.edit", &domain(json!([{"body": "Body1", "material": "Alu", "power": 2e5, "limit": limit}]))).unwrap();
+            let stored = s.model.fluid_domain("Tank").and_then(|d| d.solids().next()).and_then(|c| c.limit).unwrap();
+            assert!((stored - (limit + 273.15)).abs() < 1e-9, "{stored}");
+            let r = s.execute("solve.fluid", &json!({})).unwrap();
+            let solid = &r["solids"][0];
+            assert!((solid["limit"].as_f64().unwrap() - limit).abs() < 1e-9, "{solid}");
+            assert!((solid["margin"].as_f64().unwrap() - (limit - solid["peak"].as_f64().unwrap())).abs() < 1e-9, "{solid}");
+            assert_eq!((&solid["ok"], &r["components_ok"]), (&json!(ok), &json!(ok)), "{r}");
+            assert_eq!((r["units"]["temperature"].as_str(), r["units"]["temperature_difference"].as_str()), (Some("°C"), Some("K")), "{r}");
+        }
+        // saved and read back: still kelvin (the file is SI)
+        let back = fieldcraft_io::read(&s.file_bytes(None).unwrap()).unwrap();
+        let kept = back.model.fluid_domain("Tank").and_then(|d| d.solids().next()).and_then(|c| c.limit).unwrap();
+        assert!((kept - (peak - 1.0 + 273.15)).abs() < 1e-9, "{kept}");
+        // the focused command sets and clears it; a body that is not a conducting solid has none
+        s.execute("model.fluid_domain.limit", &json!({"domain": "Tank", "body": "Body1", "limit": "90 °C"})).unwrap();
+        assert_eq!(s.model.fluid_domain("Tank").and_then(|d| d.solids().next()).and_then(|c| c.limit), Some(363.15));
+        s.execute("model.fluid_domain.limit", &json!({"domain": "Tank", "body": "Body1"})).unwrap();
+        assert_eq!(s.model.fluid_domain("Tank").and_then(|d| d.solids().next()).and_then(|c| c.limit), None);
+        let e = s.execute("model.fluid_domain.limit", &json!({"domain": "Tank", "body": "Body2", "limit": 90})).unwrap_err().to_string();
+        assert!(e.contains("`Body2` is not a conducting solid"), "{e}");
+        assert!(s.execute("model.fluid_domain.limit", &json!({"domain": "Tank", "body": "Body1", "limit": "-300 °C"})).is_err());
         // a thermal condition on a conducting face, a material that does not conduct, the GPU
         assert!(
             s.execute(

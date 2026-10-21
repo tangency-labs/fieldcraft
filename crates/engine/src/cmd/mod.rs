@@ -180,6 +180,7 @@ pub static ALL: &[CommandSpec] = &[
     define::FLUID_DOMAIN_DELETE,
     define::FLUID_BOUNDARY,
     define::FLUID_THERMAL_BOUNDARY,
+    define::FLUID_COMPONENT_LIMIT,
     define::STEP_CREATE,
     define::STEP_EDIT,
     define::STEP_DELETE,

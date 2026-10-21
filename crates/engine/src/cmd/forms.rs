@@ -681,6 +681,9 @@ const FLUID_THERMAL: Field = group(
                     .help("Its material: a density, a conductivity (isotropic, or per axis of the box) and a specific heat.")
                     .req(),
                 num("power", "Power", D::Power).help("The heat it generates, spread over its volume (a component's dissipation).").def("0"),
+                num("limit", "Temperature limit", D::Temperature)
+                    .help("The highest temperature it may reach (a junction or case limit); the solve reports its peak against it.")
+                    .hint("none"),
             ],
         )
         .help("Obstacles heat conducts through, exchanging heat with the fluid across their faces (conjugate heat transfer); their faces take no thermal condition."),
@@ -814,6 +817,14 @@ pub const FLUID_THERMAL_BOUNDARY: &[Field] = &[
         .req()
         .def("\"x_min\""),
     variants("condition", "Condition", THERMAL_CONDITION).help("The thermal condition on that boundary.").req().def(r#"{"type": "temperature"}"#),
+];
+
+pub const FLUID_COMPONENT_LIMIT: &[Field] = &[
+    reference("domain", "Domain", C::FluidDomain).help("The fluid domain whose conducting solid it is.").req(),
+    reference("body", "Body", C::Body).help("A conducting solid of the domain.").req(),
+    num("limit", "Temperature limit", D::Temperature)
+        .help("The highest temperature it may reach (a junction or case limit); empty for none.")
+        .hint("none"),
 ];
 
 const PROCEDURE: Field = variants(
