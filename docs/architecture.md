@@ -470,8 +470,12 @@ with a hole) are generated in code. `fieldcraft-testkit` runs a recipe in SolidC
 saves the design and opens it through `open_design`, the path a person's design takes, so no
 geometry is stored. `cargo xtask corpus` (a release build of the testkit's `corpus` binary)
 builds every part, tessellates it and runs each stage of `fieldcraft_testkit::runner`, writing
-docs/meshing/corpus.md. A mesher joins by implementing `runner::Stage` (its columns, and a run
-over the part's tessellated surfaces) and adding itself to `runner::stages()`.
+docs/meshing/corpus.md. A mesher joins by implementing `runner::Stage` (its columns, the measures
+it freezes, and a run over the part's tessellated surfaces) and adding itself to
+`runner::stages()`. Each part's outcomes and measures are frozen in
+`tests/corpus/<name>/fixture.json` (`fieldcraft_testkit::fixture`, the oracle's format), and every
+tet mesh is checked against validity invariants on the test side (`fieldcraft_testkit::validity`);
+the heavy test `corpus_matches_its_fixtures` makes the corpus a regression gate in CI.
 
 ## Verification oracle
 
