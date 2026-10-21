@@ -36,24 +36,28 @@ and his bench mark itself is extrapolated on a coarser 21 × 21 or 41 × 41 subs
 | Quantity | de Vahl Davis | 64 × 64 (this case) | 128 × 128 |
 |---|---|---|---|
 | Nu (mean, hot wall) | 2.243 | 2.2464 | 2.2452 |
-| Nu_max | 3.528 | 3.5459 | 3.5342 |
-| z of Nu_max | 0.143 | 0.14267 | 0.14393 |
-| Nu_min | 0.586 | 0.58086 | 0.58398 |
+| Nu_max | 3.528 | 3.5438 | 3.5342 |
+| z of Nu_max | 0.143 | 0.14293 | 0.14393 |
+| Nu_min | 0.586 | 0.58192 | 0.58398 |
 | z of Nu_min | 1 | 0.99219 | 0.99609 |
 | u_max on x = H/2 | 16.178 | 16.186 | 16.184 |
 | z of u_max | 0.823 | 0.82298 | 0.82316 |
-| w_max on z = H/2 | 19.617 | 19.629 | 19.627 |
+| w_max on z = H/2 | 19.617 | 19.63 | 19.627 |
 | x of w_max | 0.119 | 0.11945 | 0.11898 |
 
-The largest local Nusselt number passes with little margin: 0.51 % from the reference against a
+The largest local Nusselt number passes with little margin: 0.45 % from the reference against a
 tolerance of 0.55 % (the 128 × 128 grid gives 0.18 %). The tolerance is not widened for it.
 
-The thermal relaxation time matters for the wall profile: at Ra = 10³ on 32 × 32 cells the
-largest local Nusselt number is 1.635 (8.6 % high) at τ_T = 1.5, the automatic time step's, and
-1.512 (0.5 %) at τ_T = 0.8, while the mean Nusselt number and the velocities move by less than
-0.2 %. The default time step's error near the corners is a property of the thermal lattice
-(BGK D3Q7) followed up separately; these cases keep their own time step so the oracle checks the
-flow and heat transfer at the accuracy the lattice reaches when it is run that way.
+The thermal lattice's walls do not depend on the time step (#629): it has two relaxation times with
+a fixed Λ_T = 1/12 from τ_T = 0.79 (docs/lbm-collision.md). With the single relaxation time it had
+before, at Ra = 10³ on 32 × 32 cells the largest local Nusselt number was 1.635 (8.6 % high) at τ_T
+= 1.5 and 1.512 (0.5 %) at τ_T = 0.8; now it is 1.513 (+0.56 %) and 1.511 (+0.41 %), and the
+smallest 0.3 % low at both (`local_wall_heat_flux_with_two_relaxation_times` in
+`crates/lbm/tests/thermal.rs`). This case runs at τ_T = 0.8, where the lattice has Λ_T = 1/12; with
+the single relaxation time (Λ_T = 0.09 at this τ_T) its fixture was Nu_max 3.5459 (+0.51 %) and
+Nu_min 0.58086 (−0.88 %); now 3.5438 (+0.45 %) and 0.58192 (−0.70 %), the velocities within 2e-5
+relative. Both move toward the reference: the error grows with Λ_T, and 1/12 is a little smaller
+than 0.09.
 
 Reference: G. de Vahl Davis, *Natural convection of air in a square cavity: a bench mark numerical
 solution*, International Journal for Numerical Methods in Fluids 3 (1983) 249–264,

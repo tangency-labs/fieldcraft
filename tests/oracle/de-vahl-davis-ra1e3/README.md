@@ -36,21 +36,25 @@ and his bench mark itself is extrapolated on a coarser 21 × 21 or 41 × 41 subs
 | Quantity | de Vahl Davis | 64 × 64 (this case) | 32 × 32 |
 |---|---|---|---|
 | Nu (mean, hot wall) | 1.118 | 1.1179 | 1.1181 |
-| Nu_max | 1.505 | 1.5075 | 1.512 |
-| z of Nu_max | 0.092 | 0.087361 | 0.087632 |
-| Nu_min | 0.692 | 0.69082 | 0.68924 |
+| Nu_max | 1.505 | 1.5073 | 1.512 |
+| z of Nu_max | 0.092 | 0.087237 | 0.087632 |
+| Nu_min | 0.692 | 0.69098 | 0.68924 |
 | z of Nu_min | 1 | 0.99219 | 0.98438 |
 | u_max on x = H/2 | 3.649 | 3.6481 | 3.6448 |
 | z of u_max | 0.813 | 0.81313 | 0.8129 |
 | w_max on z = H/2 | 3.697 | 3.6957 | 3.6919 |
 | x of w_max | 0.178 | 0.17864 | 0.1794 |
 
-The thermal relaxation time matters for the wall profile: at Ra = 10³ on 32 × 32 cells the
-largest local Nusselt number is 1.635 (8.6 % high) at τ_T = 1.5, the automatic time step's, and
-1.512 (0.5 %) at τ_T = 0.8, while the mean Nusselt number and the velocities move by less than
-0.2 %. The default time step's error near the corners is a property of the thermal lattice
-(BGK D3Q7) followed up separately; these cases keep their own time step so the oracle checks the
-flow and heat transfer at the accuracy the lattice reaches when it is run that way.
+The thermal lattice's walls do not depend on the time step (#629): it has two relaxation times with
+a fixed Λ_T = 1/12 from τ_T = 0.79 (docs/lbm-collision.md). With the single relaxation time it had
+before, at Ra = 10³ on 32 × 32 cells the largest local Nusselt number was 1.635 (8.6 % high) at τ_T
+= 1.5 and 1.512 (0.5 %) at τ_T = 0.8; now it is 1.513 (+0.56 %) and 1.511 (+0.41 %), and the
+smallest 0.3 % low at both (`local_wall_heat_flux_with_two_relaxation_times` in
+`crates/lbm/tests/thermal.rs`). This case runs at τ_T = 0.8, where the lattice has Λ_T = 1/12; with
+the single relaxation time (Λ_T = 0.09 at this τ_T) its fixture was Nu_max 1.5075 (+0.17 %) and
+Nu_min 0.69082 (−0.17 %); now 1.5073 (+0.155 %) and 0.69098 (−0.147 %), the velocities within 3e-6
+relative. Both move toward the reference: the error grows with Λ_T, and 1/12 is a little smaller
+than 0.09.
 
 Reference: G. de Vahl Davis, *Natural convection of air in a square cavity: a bench mark numerical
 solution*, International Journal for Numerical Methods in Fluids 3 (1983) 249–264,

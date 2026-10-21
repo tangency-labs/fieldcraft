@@ -387,9 +387,10 @@ module docs and in `docs/solvers/literature.md` (Part I).
    in); a cell on the edge of two open faces belongs to one of them (velocity faces first).
    Wall links give the momentum exchanged with every box face and B-rep face (the face of the
    triangle nearest the link). A non-positive density or a lattice speed above
-   0.5 stops the run with an error. With heat, a D3Q7 BGK scalar lattice (weights ¼ and ⅛,
+   0.5 stops the run with an error. With heat, a D3Q7 scalar lattice (weights ¼ and ⅛,
    c_s² = ¼) steps after the flow on the same links: it is advected by the cell velocity and
-   diffuses with the scalar relaxation time; held temperatures are anti-bounce-back, adiabatic
+   diffuses with the antisymmetric relaxation time of its two-relaxation-time collision, whose
+   Λ_T is fixed so that its walls and steady temperatures do not depend on that time (#629); held temperatures are anti-bounce-back, adiabatic
    faces bounce-back, a flux is added to the bounced population; velocity inlets carry the
    held temperature in at the cell's velocity, pressure outlets copy their neighbour. The heat
    crossing every wall link is summed per face as the flow's force is. The temperature feeds

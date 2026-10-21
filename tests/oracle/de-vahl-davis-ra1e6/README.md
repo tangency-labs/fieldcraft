@@ -62,12 +62,14 @@ Fluids 20 (1991) 29–41, doi:10.1016/0045-7930(91)90025-d) is the spectral solu
 Hortmann's, and a mean Nusselt number of 8.8258 (0.007 % from it). De Vahl Davis stays the
 reference and the tolerance stays; the quantity is a known failure against it.
 
-The thermal relaxation time matters for the wall profile: at Ra = 10³ on 32 × 32 cells the
-largest local Nusselt number is 1.635 (8.6 % high) at τ_T = 1.5, the automatic time step's, and
-1.512 (0.5 %) at τ_T = 0.8, while the mean Nusselt number and the velocities move by less than
-0.2 %. The default time step's error near the corners is a property of the thermal lattice
-(BGK D3Q7) followed up separately; these cases keep their own time step so the oracle checks the
-flow and heat transfer at the accuracy the lattice reaches when it is run that way.
+The thermal lattice's walls do not depend on the time step (#629): it has two relaxation times with
+a fixed Λ_T = 1/12 from τ_T = 0.79 (docs/lbm-collision.md). With the single relaxation time it had
+before, at Ra = 10³ on 32 × 32 cells the largest local Nusselt number was 1.635 (8.6 % high) at τ_T
+= 1.5 and 1.512 (0.5 %) at τ_T = 0.8; now it is 1.513 (+0.56 %) and 1.511 (+0.41 %), and the
+smallest 0.3 % low at both (`local_wall_heat_flux_with_two_relaxation_times` in
+`crates/lbm/tests/thermal.rs`). This case runs at τ_T = 0.62, below 0.79, where the lattice keeps
+the single relaxation time (Λ_T = (τ_T − ½)², smaller than 1/12 there and as stable as before), so
+its results did not change.
 
 Reference: G. de Vahl Davis, *Natural convection of air in a square cavity: a bench mark numerical
 solution*, International Journal for Numerical Methods in Fluids 3 (1983) 249–264,

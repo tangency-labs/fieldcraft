@@ -675,9 +675,11 @@ D3Q19 f32 ≈ 80 B/cell (with flags): 10⁸ cells ≈ 8 GB. These numbers decide
 
 ### C9. Heat: the scalar lattice and conjugate heat transfer, as implemented
 
-- **Temperature lattice.** D3Q7 BGK passive scalar on the flow's links, equilibrium linear in u
+- **Temperature lattice.** D3Q7 passive scalar on the flow's links, equilibrium linear in u
   (T. Krüger et al., *The Lattice Boltzmann Method: Principles and Practice*, Springer 2017,
-  ch. 8); its velocity-dependent numerical diffusion −(τ_T − ½) u² (B. Chopard, J.-L. Falcone,
+  ch. 8), two relaxation times with Λ_T fixed (I. Ginzburg, Adv. Water Resour. 28:1171, 2005:
+  the antisymmetric rate sets the diffusivity, and with Λ_T fixed the steady solution and its
+  anti-bounce-back walls do not depend on it; #629); its velocity-dependent numerical diffusion −(τ_T − ½) u² (B. Chopard, J.-L. Falcone,
   J. Latt, Eur. Phys. J. Special Topics 171:245–249, 2009) bounds the lattice speed of a heat
   problem. Held temperatures by anti-bounce-back, fluxes added to the bounced population.
 - **Conduction in solids.** Cell-centred finite volumes on the lattice's cells with the
