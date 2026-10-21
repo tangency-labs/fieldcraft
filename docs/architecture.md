@@ -406,7 +406,9 @@ module docs and in `docs/solvers/literature.md` (Part I).
    GPU backend steps the conducting cells too (single precision, checked against the CPU).
 5. **Results.** Frames of velocity, gauge pressure and (with heat) temperature per cell (single
    precision), force and heat histories per wall and the fluid mass, in model units, stored
-   per step like the implicit results.
+   per step like the implicit results. Each conducting solid's peak temperature is read from
+   the frames (the last one when the run reached steady state, else the hottest of them) and
+   checked against its optional temperature limit (`FluidResult::components`).
 
 The regularized collision has its own analytic and benchmark checks
 (`crates/lbm/tests/regularized.rs`, and both collisions in the porous, fan, natural convection,
@@ -425,7 +427,7 @@ against the published Nusselt numbers (both within 0.1 %). `crates/lbm/tests/con
 heat-generating slab at second order with its whole power reaching the plates; a heated wall
 under a channel flow against the conduction profile; a heated block in a channel conserving
 heat every step to round-off; a slow solid scaled for steady state landing on a long run's
-temperatures; House, Beckermann and Smith's cavity with a centred conducting body (conduction
+temperatures; the heat-generating slab's peak passing and failing limits either side of it; House, Beckermann and Smith's cavity with a centred conducting body (conduction
 limit every run; Ra 10⁵, ignored: +0.5 % on 48 cells, converging at second order to −0.22 %
 extrapolated); Rayleigh's square array of cylinders against the Perrins series (conducting
 rods within 0.3 %, insulating ones a first-order staircase error, −0.85 % on 64 cells); a

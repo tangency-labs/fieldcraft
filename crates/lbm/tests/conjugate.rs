@@ -655,3 +655,56 @@ fn insulating_cylinders_converge_at_first_order() {
     assert!(errors[1] < 0.013, "{errors:?}");
     assert!(order.iter().all(|o| *o > 0.9), "{order:?}");
 }
+
+/// The heat-generating slab of [`a_heat_generating_slab_balances_and_converges`] (16 cells,
+/// plates at 0 °C), started at 10 °C everywhere, against temperature limits either side of its
+/// steady peak (7.625 °C at its centre). Run to steady state its peak is the steady value, the
+/// cell centres 1/32 off the centre 0.0078 lower and the scheme within 2 % of it; a short
+/// transient run reports the highest over its frames, at or above the 10 °C it starts at (its
+/// power heats it before the plates draw the heat out).
+#[test]
+fn a_heated_slab_passes_and_fails_limits_either_side_of_its_peak() {
+    use fieldcraft_lbm::{Limits, StopReason, solve_fluid};
+    let (n, alpha, ks) = (16usize, 0.05, 0.5);
+    let dx = 1.0 / n as f64;
+    let dt = dx * dx / (8.0 * alpha);
+    let exact = 7.625 - 8.0 / (2.0 * ks) * (0.5 * dx).powi(2);
+    let solve = |limit: f64, steady: bool| {
+        let mut d = slab_column(n, [0.0, 0.0], 2.0 * dx * dx);
+        let th = d.thermal.as_mut().unwrap();
+        th.initial_temperature = kelvin(10.0);
+        th.solids[0].limit = Some(kelvin(limit));
+        let mut procedure = step(if steady { 8.0 / alpha } else { 1.0 }, dt, None);
+        if let Procedure::Fluid { steady: rule, .. } = &mut procedure
+            && steady
+        {
+            *rule = Some(fieldcraft_model::Steady { monitors: vec![], tolerance: 1e-5, window: Some(2.0), min_time: None, divergence: None });
+        }
+        let m = cht_model([1.0, 0.1, alpha], (1.0, [ks; 3], 1.0), d, procedure);
+        solve_fluid(&m, None, &[slab_obstacle([0.375, 0.625])], &Limits::default()).unwrap()
+    };
+    for (limit, pass) in [(exact * 1.05, true), (exact * 0.95, false)] {
+        let r = solve(limit, true);
+        assert_eq!(r.steady.as_ref().map(|s| s.reason), Some(StopReason::Steady));
+        let c = &r.components()[0];
+        let peak = c.peak.unwrap();
+        assert!(peak.steady && peak.time == r.frames.last().unwrap().time, "{peak:?}");
+        let rise = peak.temperature - kelvin(0.0);
+        assert!((rise - exact).abs() < 0.02 * exact, "peak {rise} vs {exact}");
+        assert!((c.margin.unwrap() - (kelvin(limit) - peak.temperature)).abs() < 1e-9, "{c:?}");
+        assert_eq!((c.ok, r.components_ok()), (Some(pass), Some(pass)), "limit {limit}: {c:?}");
+    }
+    // transient: the hottest of the frames, above a limit the steady slab keeps under
+    let r = solve(exact * 1.05, false);
+    let c = &r.components()[0];
+    let peak = c.peak.unwrap();
+    let hottest = |f: &fieldcraft_lbm::Frame| r.solids[0].cells.iter().map(|k| f.temperature[*k as usize]).fold(f32::MIN, f32::max);
+    assert!(!peak.steady && r.frames.iter().all(|f| f64::from(hottest(f)) <= peak.temperature - kelvin(0.0) + 1e-9), "{peak:?}");
+    assert!(r.frames.iter().any(|f| f.time == peak.time) && peak.temperature >= kelvin(10.0), "{peak:?}");
+    assert_eq!((c.ok, r.components_ok()), (Some(false), Some(false)));
+    // without a limit: a peak, no verdict
+    let mut r = r;
+    r.solids[0].limit = None;
+    let c = &r.components()[0];
+    assert!(c.peak.is_some() && c.margin.is_none() && c.ok.is_none() && r.components_ok().is_none(), "{c:?}");
+}

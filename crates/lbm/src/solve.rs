@@ -79,6 +79,34 @@ pub struct SolidResult {
     pub power: f64,
     /// The factor its heat capacity was scaled by for a steady state (1 otherwise).
     pub capacity_scale: f64,
+    /// The highest temperature it may reach (kelvin), when the model gives one.
+    pub limit: Option<f64>,
+}
+
+/// A conducting solid's highest temperature: the steady value of a run that reached steady
+/// state (its last frame), else the highest over the run's frames.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Peak {
+    /// Kelvin.
+    pub temperature: f64,
+    /// The time of the frame it is from.
+    pub time: f64,
+    /// Whether it is the steady value.
+    pub steady: bool,
+}
+
+/// A conducting solid against its temperature limit.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ComponentCheck {
+    pub body: String,
+    /// None without heat or without a cell.
+    pub peak: Option<Peak>,
+    /// Kelvin.
+    pub limit: Option<f64>,
+    /// The limit less the peak (negative: over the limit), with both.
+    pub margin: Option<f64>,
+    /// Whether the peak stays at or under the limit, with both.
+    pub ok: Option<bool>,
 }
 
 /// Run statistics.
@@ -159,6 +187,48 @@ impl FluidResult {
     /// The temperature of every cell in `frame` (empty without heat).
     pub fn temperatures(&self, frame: &Frame) -> Vec<f64> {
         frame.temperature.iter().map(|t| fieldcraft_model::units::kelvin_from(f64::from(*t), self.temperature_reference)).collect()
+    }
+
+    /// The highest temperature of `solid`'s cells in `frame` (kelvin), when the frame has them.
+    fn hottest(&self, solid: &SolidResult, frame: &Frame) -> Option<f64> {
+        let top = solid.cells.iter().filter_map(|c| frame.temperature.get(*c as usize)).fold(f32::NEG_INFINITY, |a, t| a.max(*t));
+        top.is_finite().then(|| fieldcraft_model::units::kelvin_from(f64::from(top), self.temperature_reference))
+    }
+
+    /// `solid`'s peak temperature ([`Peak`]): from the frames already kept, so a transient peak
+    /// between two frames is not seen (more frames resolve it).
+    pub fn peak(&self, solid: &SolidResult) -> Option<Peak> {
+        if self.steady.as_ref().is_some_and(|s| s.reason == StopReason::Steady) {
+            let last = self.frames.last()?;
+            return self.hottest(solid, last).map(|temperature| Peak { temperature, time: last.time, steady: true });
+        }
+        self.frames
+            .iter()
+            .filter_map(|f| self.hottest(solid, f).map(|temperature| Peak { temperature, time: f.time, steady: false }))
+            .fold(None, |best: Option<Peak>, p| if best.is_some_and(|b| b.temperature >= p.temperature) { best } else { Some(p) })
+    }
+
+    /// Every conducting solid's peak against its limit, in the order of the model.
+    pub fn components(&self) -> Vec<ComponentCheck> {
+        self.solids
+            .iter()
+            .map(|s| {
+                let peak = self.peak(s);
+                let margin = peak.zip(s.limit).map(|(p, limit)| limit - p.temperature);
+                ComponentCheck { body: s.body.clone(), peak, limit: s.limit, margin, ok: margin.map(|m| m >= 0.0) }
+            })
+            .collect()
+    }
+
+    /// Whether every conducting solid with a limit stays under it: None when none has one, or
+    /// when one with a limit has no peak (no heat in the result).
+    pub fn components_ok(&self) -> Option<bool> {
+        let checks = self.components();
+        let limited: Vec<&ComponentCheck> = checks.iter().filter(|c| c.limit.is_some()).collect();
+        if limited.is_empty() {
+            return None;
+        }
+        limited.iter().map(|c| c.ok).try_fold(true, |all, ok| ok.map(|ok| all && ok))
     }
 }
 
@@ -358,6 +428,7 @@ pub fn run(setup: &Setup, flow: &mut dyn Backend, limits: &Limits) -> Result<Flu
             cells: flow.conducting().get(k).cloned().unwrap_or_default(),
             power: s.power * hs,
             capacity_scale: s.capacity_scale,
+            limit: s.limit,
         })
         .collect();
     Ok(FluidResult {

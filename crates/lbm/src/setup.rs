@@ -177,6 +177,8 @@ pub struct SolidSetup {
     pub capacity_scale: f64,
     /// Its power per step, `P Δt / ((ρ c)_f Δx³)`.
     pub power: f64,
+    /// The highest temperature it may reach (kelvin), from the model.
+    pub limit: Option<f64>,
 }
 
 /// A fluid step in lattice units.
@@ -322,7 +324,7 @@ fn solids(model: &Model, t: &fieldcraft_model::FluidThermal, obstacles: &[String
         if !(conductivity.iter().all(|k| *k > 0.0 && k.is_finite()) && capacity > 0.0 && capacity.is_finite() && power.is_finite()) {
             return Err(Error::Invalid(format!("conducting solid `{}`: its material does not fit this lattice", c.body)));
         }
-        out.push(SolidSetup { body: c.body.clone(), obstacle, conductivity, capacity, capacity_scale: 1.0, power });
+        out.push(SolidSetup { body: c.body.clone(), obstacle, conductivity, capacity, capacity_scale: 1.0, power, limit: c.limit });
     }
     Ok(out)
 }
