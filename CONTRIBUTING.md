@@ -114,14 +114,18 @@ outside hides. A picture is often the fastest way for someone else to see what y
 1. Branch from `develop` (the trunk; `main` holds released code only) and open the pull request
    against `develop`. Keep it to one topic.
 2. Before pushing: `cargo fmt --all`, and `cargo clippy -p <crate> --all-targets -- -D warnings`
-   and `cargo test -p <crate>` for the crates you touched. CI runs the full gate on your pull
-   request once the maintainer approves the run.
+   and `cargo test -p <crate>` for the crates you touched. CI runs the gate on your pull
+   request once the maintainer approves the run (a draft starts none): the crates your change
+   reaches, and the heavy tests and the oracle when it reaches the solvers.
 3. User-visible behaviour is a command (`crates/engine/src/cmd/`) with tests, including hostile
    parameters.
 4. Meshing and solver algorithms cite the paper they come from in the module docs.
 5. A change you can see (the view, meshes, panels, results, icons) shows a picture before and after
    in the pull request.
-6. Never contribute code, text or data from GPL-family projects or commercial CAE products
+6. CI has no hardware GPU: it runs the GPU suites on lavapipe (software Vulkan). A change to
+   `crates/gpu` or `crates/lbm-gpu` says in the pull request which real GPU it was run on
+   (for example an NVIDIA card on Linux, Apple Metal, DX12 on Windows), with the tests it ran.
+7. Never contribute code, text or data from GPL-family projects or commercial CAE products
    (see [docs/adr/0001-libraries.md](docs/adr/0001-libraries.md)).
 
 By contributing you agree your work is licensed under MIT OR Apache-2.0.

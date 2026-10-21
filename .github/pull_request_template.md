@@ -12,4 +12,5 @@ Closes #
 - [ ] The issue was assigned to me before I started (see CONTRIBUTING.md)
 - [ ] `cargo fmt --all`, `cargo clippy -p <crates I touched> --all-targets -- -D warnings` and their tests pass
 - [ ] Before/after pictures for any visible change
+- [ ] A change to `crates/gpu` or `crates/lbm-gpu`: the real GPU it ran on is named above
 - [ ] No code, text or data from GPL-family projects or commercial CAE products

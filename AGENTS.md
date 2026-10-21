@@ -120,28 +120,33 @@ People trust FieldCraft with their models; a crash loses their work. **This outr
      non-interactive). A regenerated page goes into the commit that changed what it lists.
   4. Branch from and rebase onto the latest `origin/develop`, the trunk (never merge `develop` into
      a branch), rerun the tests of
-     the touched crates, push, open the PR and merge it with a rebase merge, which keeps `develop`
+     the touched crates, push and open the PR (not a draft: a draft starts no CI run). CI runs
+     the gate on it, the heavy job included when the change reaches the solvers (step 5). Once
+     it is green, merge it with a rebase merge, which keeps `develop`
      linear and every commit bisectable. `develop` and `main` are protected (CODEOWNERS review, linear history,
      rebase merges only); the core team merges as the maintainer with
-     `gh pr merge <N> --rebase --admin --delete-branch`, run as its own command. Outside
+     `gh pr merge <N> -R tangency-labs/fieldcraft --rebase --admin --delete-branch`, run as its own command. Outside
      contributors' pull requests wait for the maintainer's review (CONTRIBUTING.md). Never squash.
      Then remove your worktree and delete your local branch.
   5. Never run the full gate locally: no `cargo xtask ci`, no `cargo clippy --workspace`, no
-     `cargo xtask wasm` or `oracle` unless step 2 calls for it. Never watch CI. GitHub CI runs,
-     per merge on `develop`, `cargo xtask ci --affected <last green commit>` (fmt, assets,
+     `cargo xtask wasm` or `oracle` unless step 2 calls for it. GitHub CI runs it, on every
+     pull request against its merge base (on Blacksmith, never the self-hosted runner) and
+     per merge on `develop` against the last green commit: `cargo xtask ci --affected <base>` (fmt, assets,
      layers and unit-factors on the whole tree; clippy and tests on the crates the change reaches; wasm when one
      of them builds for it), the oracle and heavy tests when the change reaches the solvers or
      the oracle, and the dependency licences and advisories; a change to Cargo.toml, Cargo.lock,
      xtask or the workflows, the nightly run and every release run all of it (docs/releasing.md,
      "What CI runs when"). `cargo xtask affected --base origin/develop` shows what your branch
-     reaches. The coordinator
-     watches it and sends a failure back to the change that caused it, which is fixed forward
-     at once.
+     reaches. Check the pull request's run before merging (`gh pr checks <N> -R
+     tangency-labs/fieldcraft --watch`); a red one is fixed on the branch. The coordinator
+     watches `develop` and sends a failure there back to the change that caused it, which is
+     fixed forward at once. CI has no hardware GPU (the GPU suites run on lavapipe): a change
+     to `crates/gpu` or `crates/lbm-gpu` says in its PR which real GPU it ran on.
 - **Keep the trunk gate fast** (under ~3 minutes on CI). A test that takes more than a few seconds
   (convergence studies, the whole corpus, cross-checks between solvers) is
   `#[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]`, with a fast representative
   test left in the trunk gate. The `heavy` CI job runs `cargo xtask test --heavy` (every ignored
-  test, benchmarks included, and the doc tests) on merges to `develop` that reach a crate with
+  test, benchmarks included, and the doc tests) on pull requests and merges to `develop` that reach a crate with
   heavy tests, nightly, before every release and on demand (`gh workflow run CI --ref <branch>`). Hostile-input tests run commands on sessions with small
   work caps (`Session::limits`) so refusals are instant; never lower the production caps for a
   test.

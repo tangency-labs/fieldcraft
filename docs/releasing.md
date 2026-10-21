@@ -173,7 +173,7 @@ the version instead.
 |---|---|
 | Push to `develop` | `plan` takes the newest `develop` commit whose CI run passed as the base and runs `cargo xtask affected --base <it>`. `cargo xtask ci --affected <base>`: fmt, assets, layers, unit-factors (always, whole tree), then clippy and the tests of the changed crates and every crate that depends on them, and the wasm check when one of them builds for wasm. `heavy` (`cargo xtask test --heavy`) and `oracle` run only when the change reaches the solvers or the oracle (`solver`), or everything. A newer push cancels the run before it; the next one tests everything since the last green run, so nothing is skipped. |
 | Change to `Cargo.toml`, `Cargo.lock`, the toolchain, `xtask/` or `.github/` | Everything: the full gate, heavy and oracle (`everything`). |
-| Pull request from a fork or Dependabot | The same plan against the pull request's merge base; never the heavy job. |
+| Pull request (ours, a fork's once the maintainer approves the run, or Dependabot's; not a draft) | The same plan against the pull request's merge base: the gate, and `heavy` and `oracle` when the change reaches the solvers or everything, on Blacksmith runners only (never the self-hosted runner). A new push cancels the pull request's previous run; the merge runs its own plan on `develop`. |
 | Nightly (03:23 UTC) and `gh workflow run CI --ref <branch>` | Everything: the full `cargo xtask ci`, heavy and oracle on Linux, the oracle with its `nightly` cases (manual runs add the macOS oracle). |
 | Weekly (Sunday) | The oracle on macOS. |
 | Daily (06:07 UTC) and `gh workflow run solidcraft-compat.yml` | `SolidCraft compatibility`: SolidCraft's latest release saves the design test recipes and `fieldcraft-geometry`'s design tests open them (docs/architecture.md, "SolidCraft pin"). |
@@ -184,6 +184,15 @@ commit needs: `cargo xtask affected --base <sha>^ --head <sha>`. A file outside 
 (`tests/oracle/…`, `assets/…`) belongs to the crates whose sources name its top-level directory;
 `solver` is set when the affected crates include the oracle's (`fieldcraft-testkit`) or one with
 `#[ignore]`d heavy tests.
+
+CI has no hardware GPU. `cargo xtask ci` runs the GPU suites (`fieldcraft-lbm-gpu`'s
+verification, `fieldcraft-mesh-gpu`'s agreement, the drawing tests) on lavapipe, Mesa's software
+Vulkan, with `FIELDCRAFT_GPU=software FIELDCRAFT_REQUIRE_GPU=1`, so a missing adapter fails
+instead of skipping (lavapipe's own crash, #638, showed up this way). The heavy job runs with
+`FIELDCRAFT_GPU=cpu` on Blacksmith: the GPU throughput benchmark needs a 131 MB buffer and
+lavapipe allows 128 MB. Bugs of real GPUs and their drivers (NVIDIA device loss #636, Windows
+DX12 #588, Metal) show up on none of these, so a change to `crates/gpu` or `crates/lbm-gpu` says
+in its pull request which real GPU it ran on (as #641 and #651 did).
 
 ## Verify and publish
 
