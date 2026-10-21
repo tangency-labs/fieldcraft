@@ -81,6 +81,7 @@ quantities! {
     ThermalConductivity = "thermal_conductivity", d(1, 1, -3, -1), "W/(m·K)";
     SpecificHeat = "specific_heat", d(2, 0, -2, -1), "J/(kg·K)";
     HeatTransferCoefficient = "heat_transfer_coefficient", d(0, 1, -3, -1), "W/(m²·K)";
+    ThermalContactResistance = "thermal_contact_resistance", d(0, -1, 3, 1), "m²·K/W";
     HeatFlux = "heat_flux", d(0, 1, -3, 0), "W/m²";
     HeatGeneration = "heat_generation", d(-1, 1, -3, 0), "W/m³";
 }

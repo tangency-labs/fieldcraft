@@ -72,7 +72,7 @@ pub use discrete::{Direction, Mass, PointMass, ResolvedDirection, ResolvedMass, 
 pub use fluid_zones::{Axis, Fan, FanDirection, PorousZone, Resistance};
 pub use fluids::{
     BoxFace, BoxFaces, BoxThermalFaces, ConductingSolid, FaceCondition, FluidBoundary, FluidDomain, FluidThermal, Outflow, Profile, SurfaceBoundary,
-    SurfaceCondition, SurfaceThermalBoundary, ThermalCondition,
+    SurfaceCondition, SurfaceThermalBoundary, ThermalCondition, ThermalContact,
 };
 pub use geometry::{BodyMesh, Classification, Entity, GeometryRef};
 pub use geometry_names::NameUse;

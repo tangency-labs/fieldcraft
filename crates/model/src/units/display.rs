@@ -80,6 +80,7 @@ const TABLE: &[Row] = {
         (Q::ThermalConductivity, ["W/(m·K)", "mW/(mm·K)", "kW/(mm·K)", "W/(mm·K)", "lbf/(s·°F)"]),
         (Q::SpecificHeat, ["J/(kg·K)", "mJ/(t·K)", "J/(kg·K)", "mJ/(g·K)", "in²/(s²·°F)"]),
         (Q::HeatTransferCoefficient, ["W/(m²·K)", "mW/(mm²·K)", "kW/(mm²·K)", "W/(mm²·K)", "lbf/(in·s·°F)"]),
+        (Q::ThermalContactResistance, ["m²·K/W", "mm²·K/mW", "mm²·K/kW", "mm²·K/W", "in·s·°F/lbf"]),
         (Q::HeatFlux, ["W/m²", "mW/mm²", "kW/mm²", "W/mm²", "lbf/(in·s)"]),
         (Q::HeatGeneration, ["W/m³", "mW/mm³", "kW/mm³", "W/mm³", "lbf/(in²·s)"]),
     ]
@@ -141,12 +142,13 @@ impl Default for DisplaySystem {
 }
 
 /// The quantities whose unit holds the temperature's step: they follow a temperature override.
-const PER_DEGREE: [Quantity; 5] = [
+const PER_DEGREE: [Quantity; 6] = [
     Quantity::TemperatureDifference,
     Quantity::ThermalExpansion,
     Quantity::ThermalConductivity,
     Quantity::SpecificHeat,
     Quantity::HeatTransferCoefficient,
+    Quantity::ThermalContactResistance,
 ];
 
 /// The degree of a temperature unit as the per-degree units write it: `K`, `°C` or `°F`

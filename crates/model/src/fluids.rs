@@ -367,6 +367,70 @@ pub struct ConductingSolid {
     pub power: f64,
 }
 
+/// A thin layer of thermal interface material between two touching conducting solids (a paste,
+/// a pad, a gap filler): not resolved in the lattice, it adds its resistance to every face
+/// between cells of the two bodies. Given either as a resistance per area or as the layer's
+/// thickness and conductivity (`R = t / k`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ThermalContact {
+    /// Two conducting solids of the domain.
+    pub bodies: [String; 2],
+    /// The resistance per area (K·m²/W).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resistance: Option<f64>,
+    /// The layer's thickness, with its `conductivity`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thickness: Option<f64>,
+    /// The layer's conductivity, with its `thickness`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conductivity: Option<f64>,
+}
+
+impl ThermalContact {
+    /// The resistance per area, from whichever form the contact is given in (zero when it is
+    /// given in neither: [`ThermalContact::validate`] refuses that).
+    pub fn resistance(&self) -> f64 {
+        match (self.resistance, self.thickness, self.conductivity) {
+            (Some(r), ..) => r,
+            (None, Some(t), Some(k)) => t / k,
+            _ => 0.0,
+        }
+    }
+
+    fn validate(&self) -> Result<()> {
+        match (self.resistance, self.thickness, self.conductivity) {
+            (Some(r), None, None) => {
+                positive("resistance", r)?;
+            }
+            (None, Some(t), Some(k)) => {
+                positive("thickness", t)?;
+                positive("conductivity", k)?;
+                positive("resistance (thickness over conductivity)", t / k)?;
+            }
+            _ => {
+                return Err(Error::Invalid(
+                    "give either a `resistance` per area or a layer's `thickness` and `conductivity`, not both or neither".into(),
+                ));
+            }
+        }
+        if self.bodies[0] == self.bodies[1] {
+            return Err(Error::Invalid(format!("a contact joins two bodies; `{}` is named twice", self.bodies[0])));
+        }
+        Ok(())
+    }
+
+    /// Whether it joins `a` and `b`, in either order.
+    pub fn joins(&self, a: &str, b: &str) -> bool {
+        let [x, y] = &self.bodies;
+        (x == a && y == b) || (x == b && y == a)
+    }
+
+    fn name(&self) -> String {
+        format!("{}–{}", self.bodies[0], self.bodies[1])
+    }
+}
+
 /// Heat in the fluid: a temperature field advected with the flow and diffused with the
 /// material's diffusivity k / (ρ c), its conditions on the boundaries, and buoyancy.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -389,6 +453,10 @@ pub struct FluidThermal {
     /// Obstacles that conduct heat; the others are walls with the conditions in `surfaces`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub solids: Vec<ConductingSolid>,
+    /// Thermal interface layers between touching conducting solids; touching solids not listed
+    /// are in perfect contact.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub contacts: Vec<ThermalContact>,
     /// The temperature (kelvin) the lattice-Boltzmann scheme's temperature lattice counts from:
     /// its walls are not invariant under a shift of the temperature scale, so this is part of
     /// the model, never of how it is shown. 0 °C, the scale the scheme was verified on; a model
@@ -411,6 +479,7 @@ impl Default for FluidThermal {
             faces: BoxThermalFaces::default(),
             surfaces: Vec::new(),
             solids: Vec::new(),
+            contacts: Vec::new(),
             temperature_zero: crate::units::CELSIUS_ZERO,
         }
     }
@@ -464,6 +533,24 @@ impl FluidThermal {
             }
             if self.solids.get(..i).is_some_and(|before| before.iter().any(|b| b.body == c.body)) {
                 return Err(Error::Invalid(format!("conducting solid `{}` is listed twice", c.body)));
+            }
+        }
+        if self.contacts.len() > MAX_SURFACE_CONDITIONS {
+            return Err(Error::Limit(format!("a fluid domain holds at most {MAX_SURFACE_CONDITIONS} thermal contacts")));
+        }
+        for (i, c) in self.contacts.iter().enumerate() {
+            c.validate().map_err(|e| context("thermal contact", &c.name(), e))?;
+            for body in &c.bodies {
+                if !self.solids.iter().any(|s| s.body == *body) {
+                    return Err(context(
+                        "thermal contact",
+                        &c.name(),
+                        Error::Invalid(format!("`{body}` is not a conducting solid of the domain (list it in `solids`)")),
+                    ));
+                }
+            }
+            if self.contacts.get(..i).is_some_and(|before| before.iter().any(|b| b.joins(&c.bodies[0], &c.bodies[1]))) {
+                return Err(context("thermal contact", &c.name(), Error::Invalid("the two bodies have a contact already".into())));
             }
         }
         Ok(())
@@ -934,6 +1021,71 @@ mod tests {
         let json = serde_json::to_string(m.fluid_domain("Flow").unwrap()).unwrap();
         assert_eq!(&serde_json::from_str::<FluidDomain>(&json).unwrap(), m.fluid_domain("Flow").unwrap());
         assert!(!serde_json::to_string(&FluidThermal::default()).unwrap().contains("solids"));
+    }
+
+    #[test]
+    fn thermal_contacts_join_two_conducting_solids_with_a_positive_resistance() {
+        let mut m = Model::default();
+        let mut hot = water();
+        hot.thermal = Some(crate::Thermal { conductivity: Some(Directional::Isotropic(0.6)), specific_heat: Some(4180.0), ..Default::default() });
+        m.add_material("Water", hot).unwrap();
+        let alu = Material {
+            density: Some(2700.0),
+            thermal: Some(crate::Thermal { conductivity: Some(Directional::Isotropic(237.0)), specific_heat: Some(900.0), ..Default::default() }),
+            ..Material::default()
+        };
+        m.add_material("Alu", alu).unwrap();
+        let paste = |r: Option<f64>, t: Option<f64>, k: Option<f64>| ThermalContact {
+            bodies: ["Die".into(), "Lid".into()],
+            resistance: r,
+            thickness: t,
+            conductivity: k,
+        };
+        let with = |f: &dyn Fn(&mut FluidThermal)| {
+            let mut d = channel();
+            d.obstacles = vec!["Die".into(), "Lid".into(), "Case".into()];
+            let mut t = FluidThermal {
+                solids: vec![
+                    ConductingSolid { body: "Die".into(), material: "Alu".into(), power: 1.0 },
+                    ConductingSolid { body: "Lid".into(), material: "Alu".into(), power: 0.0 },
+                ],
+                contacts: vec![paste(Some(1e-5), None, None)],
+                ..FluidThermal::default()
+            };
+            f(&mut t);
+            d.thermal = Some(t);
+            d
+        };
+        m.add_fluid_domain("Flow", with(&|_| {})).unwrap();
+        m.add_fluid_domain("Pad", with(&|t| t.contacts = vec![paste(None, Some(1e-4), Some(5.0))])).unwrap();
+        let pad = m.fluid_domain("Pad").unwrap().thermal.as_ref().unwrap().contacts[0].clone();
+        assert!((pad.resistance() - 2e-5).abs() < 1e-20);
+        for (why, d, says) in [
+            ("neither form", with(&|t| t.contacts = vec![paste(None, None, None)]), "either"),
+            ("both forms", with(&|t| t.contacts = vec![paste(Some(1.0), Some(1.0), Some(1.0))]), "either"),
+            ("a thickness alone", with(&|t| t.contacts = vec![paste(None, Some(1.0), None)]), "either"),
+            ("zero", with(&|t| t.contacts = vec![paste(Some(0.0), None, None)]), "positive"),
+            ("negative", with(&|t| t.contacts = vec![paste(Some(-1.0), None, None)]), "positive"),
+            ("not a number", with(&|t| t.contacts = vec![paste(Some(f64::NAN), None, None)]), "positive"),
+            ("infinite", with(&|t| t.contacts = vec![paste(None, Some(1.0), Some(f64::INFINITY))]), "positive"),
+            ("overflowing", with(&|t| t.contacts = vec![paste(None, Some(1e300), Some(1e-300))]), "positive"),
+            ("itself", with(&|t| t.contacts[0].bodies[1] = "Die".into()), "named twice"),
+            ("not conducting", with(&|t| t.contacts[0].bodies[1] = "Case".into()), "`Case` is not a conducting solid"),
+            (
+                "twice, either way round",
+                with(&|t| t.contacts.push(ThermalContact { bodies: ["Lid".into(), "Die".into()], ..paste(Some(1.0), None, None) })),
+                "already",
+            ),
+        ] {
+            let e = m.add_fluid_domain("Bad", d).err().map(|e| e.to_string()).unwrap_or_default();
+            assert!(e.contains("thermal contact `") && e.contains(says), "{why}: {e}");
+        }
+        // it round-trips in either form, and a domain without contacts writes none
+        for name in ["Flow", "Pad"] {
+            let json = serde_json::to_string(m.fluid_domain(name).unwrap()).unwrap();
+            assert_eq!(&serde_json::from_str::<FluidDomain>(&json).unwrap(), m.fluid_domain(name).unwrap());
+        }
+        assert!(!serde_json::to_string(&FluidThermal::default()).unwrap().contains("contacts"));
     }
 
     #[test]

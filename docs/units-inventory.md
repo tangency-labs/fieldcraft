@@ -30,7 +30,7 @@ Conversion goes at the command/file boundary; storage becomes SI.
 | `steps.rs` | frequency min/max_hz, buckle shift, end_time/increments/intervals, initial velocity, rigid wall point, hourglass/bulk viscosity coefs, heat theta/initial_temperature, imperfection scale, displacement control | frequency, time, velocity, length, temperature (coefs dimensionless) |
 | `contact.rs` | μ static/kinetic, penalty_scale; **decay (time per length)** | dimensionless; s/m |
 | `discrete.rs` | point mass, inertia, spring stiffness, dashpot coefficient | mass, mass·length², stiffness, damping |
-| `fluids.rs` | wall/inlet velocity, pressure, thermal temperature/flux, initial temperature, gravity, β, domain min/max/spacing/tolerance | velocity, pressure, temperature, heat flux, acceleration, expansion, length |
+| `fluids.rs` | wall/inlet velocity, pressure, thermal temperature/flux, initial temperature, gravity, β, domain min/max/spacing/tolerance, a conducting solid's power, a thermal contact's resistance or layer thickness and conductivity | velocity, pressure, temperature, heat flux, acceleration, expansion, length, power, thermal contact resistance, thermal conductivity |
 
 **Risky:** `units` missing in a file means `unspecified`, so a migration cannot know the system of
 old files without one; the step cache key includes `units`.

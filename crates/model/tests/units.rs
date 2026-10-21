@@ -52,6 +52,10 @@ fn hand_values() {
     // 10 W/(m²·K) = 0.01 mW/(mm²·K); 1 kW/m² = 1 mW/mm².
     assert!(close(shown(Q::HeatTransferCoefficient, 10.0, Preset::MmTonneS), 0.01));
     assert!(close(shown(Q::HeatFlux, 1000.0, Preset::MmTonneS), 1.0));
+    // A thermal paste's 1e-5 m²·K/W is 0.01 mm²·K/mW, 10 mm²·K/W; 50 µm of 5 W/(m·K) is the same.
+    assert!(close(shown(Q::ThermalContactResistance, 1e-5, Preset::MmTonneS), 0.01));
+    assert!(close(si(Q::ThermalContactResistance, "10 mm²·K/W"), 1e-5));
+    assert!(close(si(Q::Length, "50 um") / si(Q::ThermalConductivity, "5 W/(m·K)"), 1e-5));
     // Water viscosity 1e-3 Pa·s = 1e-9 MPa·s; 1 N·mm = 1e-3 N·m = 1 mJ.
     assert!(close(shown(Q::DynamicViscosity, 1e-3, Preset::MmTonneS), 1e-9));
     assert!(close(si(Q::Moment, "1 N·mm"), si(Q::Energy, "1 mJ")));
@@ -214,11 +218,18 @@ fn fahrenheit_is_exact_through_celsius() {
 fn a_temperature_override_carries_to_the_per_degree_units() {
     use Quantity as Q;
     let d = DisplaySystem::new(Preset::MmTonneS).with_override(Q::Temperature, "°F").unwrap();
-    let symbols: Vec<&str> = [Q::TemperatureDifference, Q::ThermalExpansion, Q::ThermalConductivity, Q::SpecificHeat, Q::HeatTransferCoefficient]
-        .iter()
-        .map(|q| d.symbol(*q))
-        .collect();
-    assert_eq!(symbols, ["°F", "°F⁻¹", "mW/(mm·°F)", "mJ/(t·°F)", "mW/(mm²·°F)"]);
+    let symbols: Vec<&str> = [
+        Q::TemperatureDifference,
+        Q::ThermalExpansion,
+        Q::ThermalConductivity,
+        Q::SpecificHeat,
+        Q::HeatTransferCoefficient,
+        Q::ThermalContactResistance,
+    ]
+    .iter()
+    .map(|q| d.symbol(*q))
+    .collect();
+    assert_eq!(symbols, ["°F", "°F⁻¹", "mW/(mm·°F)", "mJ/(t·°F)", "mW/(mm²·°F)", "mm²·°F/mW"]);
     // 1.8 °F of difference is 1 K; 1e-5 per K is 5.555…e-6 per °F.
     assert!((d.to_si(Q::TemperatureDifference, 1.8).unwrap() - 1.0).abs() < 1e-15);
     assert!((d.express(Q::ThermalExpansion, 1e-5).unwrap() - 1e-5 / 1.8).abs() < 1e-20);
