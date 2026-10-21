@@ -52,7 +52,7 @@ Rules beyond the layer order:
 
 `solidcraft-*` come from https://github.com/tangency-labs/solidcraft (formerly
 bherbruck/solidcraft, which redirects there), pinned in the workspace `Cargo.toml` to the commit
-of a SolidCraft release tag (now v0.18.1). SolidCraft's `[patch.crates-io]` (its fixed truck
+of a SolidCraft release tag (now v0.18.2). SolidCraft's `[patch.crates-io]` (its fixed truck
 crates) does not reach dependents, so the workspace repeats it from the same rev; bump both
 together, and keep the list in step with SolidCraft's (v0.16 added `truck-geometry`). The same
 goes for SolidCraft's patched `egui-wgpu` (MSAA clamped to what the device supports, 1x on
@@ -67,8 +67,8 @@ reads up to 27, SolidCraft 0.17 and 0.18 save 28).
 
 A newer pin can also name the same geometry otherwise: SolidCraft 0.16 names the pieces of a
 split face from their history (`F9:face:4` became `F9:section`), so a model saved before names
-faces, edges and vertices the design no longer has (0.17 and 0.18 renamed none of the corpus's
-and samples' faces, edges or vertices: #655). Opening a model or a design never lets that
+faces, edges and vertices the design no longer has (0.17, 0.18.1 and 0.18.2 renamed none of the
+corpus's and samples' faces, edges or vertices: #655). Opening a model or a design never lets that
 pass in silence (`crates/engine/src/cmd/names.rs`): a stale face the model's mesh lies on is
 found again where the mesh's facets tagged with it land on the new tessellation (all on one face
 whose area agrees, no other tag's mesh there), its edges and vertices through the faces they
