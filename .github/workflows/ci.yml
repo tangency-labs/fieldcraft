@@ -1,11 +1,11 @@
 name: CI
 
-# CI runs once per merge on `develop`, the trunk (AGENTS.md, "Workflow for every change"): the core
-# team's pull requests are checked locally on the crates they touch and merged; a red trunk is
-# fixed forward. `main` holds released code only (docs/releasing.md).
-# Pull requests from forks (outside contributors) run the full gate, once the maintainer approves
-# the run, so the review sees it; so do Dependabot's (.github/dependabot.yml), which nobody tests
-# locally. The heavy job stays off pull requests.
+# CI runs on every pull request before it merges and once per merge on `develop`, the trunk
+# (AGENTS.md, "Workflow for every change"); a red trunk is fixed forward. `main` holds released
+# code only (docs/releasing.md). Our own pull requests, those from forks (outside contributors,
+# once the maintainer approves the run) and Dependabot's (.github/dependabot.yml) run the same
+# plan; a draft starts no run. Pull request code runs on Blacksmith only, never on the
+# self-hosted runner, and its jobs use no secret but the read-only `GITHUB_TOKEN`.
 #
 # What runs when (docs/releasing.md, "What CI runs when"): the `plan` job picks a base, the last
 # `develop` commit whose CI run passed (a pull request: its merge base; nightly and manual runs:
@@ -14,10 +14,16 @@ name: CI
 # the change reaches the solvers, the oracle or everything (Cargo.toml/Cargo.lock/xtask/workflows).
 # Nightly and manual runs, and every release (release.yml), run all of it.
 #
+# GPU: the runners have none. `cargo xtask ci` draws and runs the GPU suites (lbm-gpu, mesh-gpu,
+# snapshots) on lavapipe, Mesa's software Vulkan, and fails instead of skipping without it; the
+# heavy job stays on the CPU on Blacksmith. Hardware GPUs (NVIDIA, DX12, Metal) are not covered:
+# a change to crates/gpu or crates/lbm-gpu states the real GPU it ran on (CONTRIBUTING.md).
+#
 # Runners: Linux jobs run on Blacksmith's Ubuntu 24.04 runners (blacksmith-<N>vcpu-ubuntu-2404),
 # which Blacksmith sponsors (it pays the CI minutes). Sized per job: 16 vCPU for `cargo xtask ci`
 # and the heavy tests, 8 for the oracle, 2 for the plan, bot tests and dependency checks. Pushes,
-# nightly and manual runs still go to `vars.SELF_HOSTED_RUNNER` when it is set; macOS and Windows
+# nightly and manual runs still go to `vars.SELF_HOSTED_RUNNER` when it is set; a pull request
+# always picks the Blacksmith label (every `runs-on` tests the event first). macOS and Windows
 # jobs stay on GitHub's runners. Fallback: change the `blacksmith-*` labels back to `ubuntu-24.04`.
 on:
   pull_request:
@@ -53,7 +59,9 @@ permissions:
 
 # A newer merge cancels the run still going for the one before it, so a burst of merges is tested
 # once, at the tip; nothing is missed, since the tip's run tests everything since the last green
-# run. Nightly and manual runs are grouped apart and never cancelled by a merge.
+# run. A new push to a pull request cancels that pull request's previous run; the merge then runs
+# its own plan on `develop` (its own group). Nightly and manual runs are grouped apart and never
+# cancelled by a merge.
 concurrency:
   group: ci-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: ${{ github.event_name == 'push' || github.event_name == 'pull_request' }}
@@ -64,7 +72,7 @@ env:
 jobs:
   plan:
     name: Plan (affected crates)
-    if: github.event.schedule != '41 4 * * 0' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]')))
+    if: github.event.schedule != '41 4 * * 0' && !github.event.pull_request.draft
     runs-on: ${{ github.event_name != 'pull_request' && vars.SELF_HOSTED_RUNNER || 'blacksmith-2vcpu-ubuntu-2404' }}
     timeout-minutes: 15
     permissions:
@@ -124,7 +132,7 @@ jobs:
 
   bots:
     name: Claim and triage bot tests
-    if: github.event.schedule != '41 4 * * 0' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]')))
+    if: github.event.schedule != '41 4 * * 0' && !github.event.pull_request.draft
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
     steps:
@@ -166,10 +174,10 @@ jobs:
 
   heavy:
     # The heavy verification and corpus tests (#[ignore]d) and the doc tests, when the change
-    # reaches them.
+    # reaches them: on pull requests too, so a failure on Linux shows before the merge (#658).
     name: cargo xtask test --heavy
     needs: plan
-    if: github.event_name != 'pull_request' && (needs.plan.outputs.solver == 'true' || needs.plan.outputs.everything == 'true')
+    if: needs.plan.outputs.solver == 'true' || needs.plan.outputs.everything == 'true'
     runs-on: ${{ github.event_name != 'pull_request' && vars.SELF_HOSTED_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 60
     steps:
@@ -184,8 +192,8 @@ jobs:
           # Blacksmith's image has a software Vulkan adapter that GitHub's ubuntu-24.04 lacks; the
           # GPU throughput benchmark needs more per buffer (131 MB) than it allows (128 MB), so the
           # heavy tests stay off the GPU there, as they were on GitHub's runners. The self-hosted
-          # runner keeps the default policy.
-          FIELDCRAFT_GPU: ${{ vars.SELF_HOSTED_RUNNER && 'auto' || 'cpu' }}
+          # runner (pushes, nightly and manual runs only) keeps the default policy.
+          FIELDCRAFT_GPU: ${{ github.event_name != 'pull_request' && vars.SELF_HOSTED_RUNNER && 'auto' || 'cpu' }}
 
   oracle:
     # Verification and validation (docs/verification.md): every case against its reference and
@@ -247,7 +255,7 @@ jobs:
 
   advisories:
     name: Dependency licences, advisories and sources
-    if: github.event.schedule != '41 4 * * 0' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]')))
+    if: github.event.schedule != '41 4 * * 0' && !github.event.pull_request.draft
     runs-on: ${{ github.event_name != 'pull_request' && vars.SELF_HOSTED_RUNNER || 'blacksmith-2vcpu-ubuntu-2404' }}
     timeout-minutes: 20
     steps:
