@@ -1,0 +1,177 @@
+{
+  "note": "The corpus part's accepted results, written by `cargo xtask corpus --bless` (docs/meshing/corpus.md). A stage whose outcome changes, or a value outside its band, fails the corpus run and CI's heavy job. `platforms` lists what each platform blessed measured differently.",
+  "platforms": {
+    "linux-x86_64": {
+      "stages": {},
+      "values": {
+        "cdt.flat": {
+          "band": 0,
+          "value": 7
+        },
+        "cdt.steiner": {
+          "band": 0,
+          "value": 488
+        },
+        "cdt.tets": {
+          "band": 0,
+          "value": 18626
+        },
+        "octree.mean_sj": {
+          "band": 8.822180856266834e-10,
+          "value": 0.8812180856266834
+        },
+        "octree.min_sj": {
+          "band": 4.614175055199153e-10,
+          "value": 0.4604175055199153
+        },
+        "octree.volume_mm3": {
+          "band": 0.00003743154228635714,
+          "value": 37431.54128635713
+        },
+        "quality.max_dihedral_deg": {
+          "band": 1.390580105453618e-7,
+          "value": 139.0570105453618
+        },
+        "quality.min_dihedral_deg": {
+          "band": 2.1880600703785198e-8,
+          "value": 21.879600703785194
+        },
+        "quality.min_radius_ratio": {
+          "band": 3.1802686897273965e-10,
+          "value": 0.31702686897273963
+        },
+        "quality.slivers_cdt": {
+          "band": 0,
+          "value": 13041
+        },
+        "quality.tets": {
+          "band": 0,
+          "value": 23000
+        }
+      }
+    },
+    "macos-aarch64": {
+      "stages": {},
+      "values": {}
+    }
+  },
+  "stages": {
+    "boundary": "ok",
+    "build": "ok",
+    "cdt": "ok",
+    "hex": "ok: revolve",
+    "octree": "ok",
+    "quality": "ok",
+    "surface": "ok"
+  },
+  "values": {
+    "boundary.feature_edges": {
+      "band": 0,
+      "value": 180
+    },
+    "boundary.genus": {
+      "band": 0,
+      "value": 1
+    },
+    "boundary.shells": {
+      "band": 0,
+      "value": 1
+    },
+    "boundary.vertices": {
+      "band": 0,
+      "value": 3615
+    },
+    "build.bodies": {
+      "band": 0,
+      "value": 1
+    },
+    "build.faces": {
+      "band": 0,
+      "value": 6
+    },
+    "build.triangles": {
+      "band": 0,
+      "value": 7230
+    },
+    "cdt.cavities": {
+      "band": 0,
+      "value": 0
+    },
+    "cdt.flat": {
+      "band": 0,
+      "value": 9
+    },
+    "cdt.steiner": {
+      "band": 0,
+      "value": 466
+    },
+    "cdt.tets": {
+      "band": 0,
+      "value": 18520
+    },
+    "hex.elements": {
+      "band": 0,
+      "value": 1080
+    },
+    "hex.hex20_min_sj": {
+      "band": 8.353144114960678e-10,
+      "value": 0.8343144114960678
+    },
+    "hex.hex8_min_sj": {
+      "band": 8.353144114960703e-10,
+      "value": 0.8343144114960702
+    },
+    "octree.hexes": {
+      "band": 0,
+      "value": 18814
+    },
+    "octree.mean_sj": {
+      "band": 8.821762952547399e-10,
+      "value": 0.8811762952547398
+    },
+    "octree.min_sj": {
+      "band": 4.6107867679525647e-10,
+      "value": 0.46007867679525644
+    },
+    "octree.volume_mm3": {
+      "band": 0.00003743134685548747,
+      "value": 37431.34585548747
+    },
+    "quality.max_dihedral_deg": {
+      "band": 1.3976098268146905e-7,
+      "value": 139.75998268146904
+    },
+    "quality.min_dihedral_deg": {
+      "band": 2.7071105553647153e-8,
+      "value": 27.07010555364715
+    },
+    "quality.min_radius_ratio": {
+      "band": 3.13669847438739e-10,
+      "value": 0.312669847438739
+    },
+    "quality.slivers": {
+      "band": 0,
+      "value": 0
+    },
+    "quality.slivers_cdt": {
+      "band": 0,
+      "value": 12985
+    },
+    "quality.tets": {
+      "band": 0,
+      "value": 24161
+    },
+    "surface.enclosed_mm3": {
+      "band": 0.0000376441213508809,
+      "value": 37644.1203508809
+    },
+    "surface.enclosed_vs_exact": {
+      "band": 1e-9,
+      "value": -0.006732596060971785
+    },
+    "surface.solidcraft_mm3": {
+      "band": 0.00003789373394212902,
+      "value": 37893.73294212901
+    }
+  }
+}

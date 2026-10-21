@@ -1,0 +1,132 @@
+{
+  "note": "The corpus part's accepted results, written by `cargo xtask corpus --bless` (docs/meshing/corpus.md). A stage whose outcome changes, or a value outside its band, fails the corpus run and CI's heavy job. `platforms` lists what each platform blessed measured differently.",
+  "platforms": {
+    "linux-x86_64": {
+      "stages": {},
+      "values": {}
+    },
+    "macos-aarch64": {
+      "stages": {},
+      "values": {}
+    }
+  },
+  "stages": {
+    "boundary": "ok",
+    "build": "ok",
+    "cdt": "ok",
+    "hex": "ok: extrude",
+    "octree": "ok",
+    "quality": "ok",
+    "surface": "ok"
+  },
+  "values": {
+    "boundary.feature_edges": {
+      "band": 0,
+      "value": 9
+    },
+    "boundary.genus": {
+      "band": 0,
+      "value": 0
+    },
+    "boundary.shells": {
+      "band": 0,
+      "value": 1
+    },
+    "boundary.vertices": {
+      "band": 0,
+      "value": 6
+    },
+    "build.bodies": {
+      "band": 0,
+      "value": 1
+    },
+    "build.faces": {
+      "band": 0,
+      "value": 5
+    },
+    "build.triangles": {
+      "band": 0,
+      "value": 8
+    },
+    "cdt.cavities": {
+      "band": 0,
+      "value": 0
+    },
+    "cdt.flat": {
+      "band": 0,
+      "value": 0
+    },
+    "cdt.steiner": {
+      "band": 0,
+      "value": 3
+    },
+    "cdt.tets": {
+      "band": 0,
+      "value": 11
+    },
+    "hex.elements": {
+      "band": 0,
+      "value": 1674
+    },
+    "hex.hex20_min_sj": {
+      "band": 1.496807373156425e-11,
+      "value": 0.01396807373156425
+    },
+    "hex.hex8_min_sj": {
+      "band": 1.496807373156425e-11,
+      "value": 0.01396807373156425
+    },
+    "octree.hexes": {
+      "band": 0,
+      "value": 84952
+    },
+    "octree.mean_sj": {
+      "band": 9.8087235696347e-10,
+      "value": 0.9798723569634697
+    },
+    "octree.min_sj": {
+      "band": 3.5499800485952726e-12,
+      "value": 0.002549980048595272
+    },
+    "octree.volume_mm3": {
+      "band": 3.0866518977723635e-6,
+      "value": 3086.6508977723634
+    },
+    "quality.max_dihedral_deg": {
+      "band": 1.7623439741905036e-7,
+      "value": 176.23339741905033
+    },
+    "quality.min_dihedral_deg": {
+      "band": 2.863405226111747e-9,
+      "value": 2.862405226111747
+    },
+    "quality.min_radius_ratio": {
+      "band": 6.467024834867988e-12,
+      "value": 0.005467024834867988
+    },
+    "quality.slivers": {
+      "band": 0,
+      "value": 157
+    },
+    "quality.slivers_cdt": {
+      "band": 0,
+      "value": 3
+    },
+    "quality.tets": {
+      "band": 0,
+      "value": 7463
+    },
+    "surface.enclosed_mm3": {
+      "band": 3.200001e-6,
+      "value": 3200.0
+    },
+    "surface.enclosed_vs_exact": {
+      "band": 1e-9,
+      "value": 0.0
+    },
+    "surface.solidcraft_mm3": {
+      "band": 3.200001e-6,
+      "value": 3200.0
+    }
+  }
+}

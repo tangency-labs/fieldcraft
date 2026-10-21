@@ -790,6 +790,20 @@ mod tests {
         }
     }
 
+    /// The corpus as a regression gate: every part's stages come out as its fixture froze them,
+    /// within the bands, and every tet mesh keeps the validity invariants. A failure names what
+    /// moved; docs/meshing/corpus.md says when a change is blessed (`cargo xtask corpus --bless`).
+    #[test]
+    #[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+    fn corpus_matches_its_fixtures() {
+        // A few parts at a time: the meshers are mostly sequential, and CI's heavy job runs the
+        // other heavy tests beside this one.
+        let jobs = std::thread::available_parallelism().map_or(1, |n| n.get()).min(4);
+        if let Err(e) = run(&corpus::workspace_root(), &Options { jobs, ..Options::default() }) {
+            panic!("{e}");
+        }
+    }
+
     /// The tet mesh of a SolidCraft part, as `mesh.tet.generate` makes it (tet10, default
     /// options): every coordinate's bits, the elements and the boundary faces with their faces' names.
     fn tet_fingerprint(part: &Part) -> Vec<u64> {
