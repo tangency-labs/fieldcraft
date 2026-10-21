@@ -50,6 +50,7 @@
 use super::arrangement::{Arrangement, Q};
 use super::interval::Intervals;
 use super::region::{self, Scheme};
+use super::tie;
 use crate::quad::QuadOptions;
 use crate::quality::planar_corner;
 use crate::size::SizeField;
@@ -320,13 +321,14 @@ fn cast(loops: &[Poly], from: Option<(usize, usize)>, o: Q, d: Q, snap: f64, min
     ))
 }
 
-/// The nearest curve end of loop `l` to `x` within `radius` (an alternative end for a cut).
-fn nearby_end(loops: &[Poly], l: usize, x: Q, radius: f64) -> Option<End> {
+/// The nearest curve end of loop `l` to `x` within `radius` (an alternative end for a cut). Two
+/// ends within `tol` of the same distance are equally near and the first is taken: which end of
+/// a symmetric pair is the alternative must not hang on the last bits of the points (#556).
+fn nearby_end(loops: &[Poly], l: usize, x: Q, radius: f64, tol: f64) -> Option<End> {
     let poly = loops.get(l)?;
-    (0..poly.len())
-        .filter(|&i| poly.is_end(i) && len(sub(poly.at(i), x)) <= radius)
-        .min_by(|&i, &j| len(sub(poly.at(i), x)).total_cmp(&len(sub(poly.at(j), x))))
-        .map(|i| End::Point(l, i))
+    let (ends, dists): (Vec<usize>, Vec<f64>) =
+        (0..poly.len()).filter(|&i| poly.is_end(i)).map(|i| (i, len(sub(poly.at(i), x)))).filter(|&(_, d)| d <= radius).unzip();
+    tie::min(&dists, tol).and_then(|k| ends.get(k)).map(|&i| End::Point(l, i))
 }
 
 /// Do the open segments `ab` and `cd` cross or touch?
@@ -671,6 +673,22 @@ impl Value {
     }
 }
 
+/// The position (1 for the first inner point) of the point where a curve has turned half its
+/// `total`, given the turns at its inner points in order. A symmetric curve with an even number
+/// of inner points turns exactly half at its middle point, which the last bits of its points
+/// would otherwise put either side (#556): within [`region::ANGLE_TOLERANCE`] of half counts as
+/// half.
+fn half_turn(turns: &[f64], total: f64) -> usize {
+    let mut acc = 0.0;
+    for (k, t) in turns.iter().enumerate() {
+        acc += t;
+        if acc.abs() >= 0.5 * total.abs() - region::ANGLE_TOLERANCE {
+            return k + 1;
+        }
+    }
+    1
+}
+
 /// The candidate cuts of a piece without holes (see the module docs).
 fn candidates(loops: &[Poly], s: &Settings) -> Vec<(End, End)> {
     let mut out: Vec<(End, End, f64)> = Vec::new();
@@ -707,15 +725,7 @@ fn candidates(loops: &[Poly], s: &Settings) -> Vec<(End, End)> {
         if total.abs() < ROUNDED {
             continue;
         }
-        let mut acc = 0.0;
-        let mut half = 1;
-        for (k, t) in turns.iter().enumerate() {
-            acc += t;
-            if acc.abs() >= 0.5 * total.abs() {
-                half = k + 1;
-                break;
-            }
-        }
+        let half = half_turn(&turns, total);
         for k in [0, half, m - 1] {
             let i = (st + k) % n;
             let (a, o, b) = (poly.at(i + n - 1), poly.at(i), poly.at(i + 1));
@@ -745,13 +755,14 @@ fn candidates(loops: &[Poly], s: &Settings) -> Vec<(End, End)> {
             }
         };
         push(end);
-        if let Some(alt) = nearby_end(loops, end.loop_index(), x, (0.75 * h).min(0.3 * t)) {
+        if let Some(alt) = nearby_end(loops, end.loop_index(), x, (0.75 * h).min(0.3 * t), s.tol) {
             push(alt);
         }
     }
-    out.sort_by(|x, y| x.2.total_cmp(&y.2));
-    out.truncate(MAX_CANDIDATES);
-    out.into_iter().map(|(a, b, _)| (a, b)).collect()
+    // Shortest first; mirror cuts, equal but for the last bits of their points, keep the rays'
+    // order whichever way those bits round (#556).
+    let lengths: Vec<f64> = out.iter().map(|c| c.2).collect();
+    tie::order(&lengths, s.tol).into_iter().take(MAX_CANDIDATES).filter_map(|k| out.get(k)).map(|&(a, b, _)| (a, b)).collect()
 }
 
 /// The best value reachable from a piece with at most `depth` more cuts, and the first cut.
@@ -1375,7 +1386,7 @@ mod tests {
             z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
             z ^= z >> 31;
             let steps = 1 + (z % 4) as i64;
-            super::super::tie::nudge(v, if (z >> 2) & 1 == 1 { steps } else { -steps })
+            tie::nudge(v, if (z >> 2) & 1 == 1 { steps } else { -steps })
         })
     }
 
@@ -1402,11 +1413,50 @@ mod tests {
     /// The slot's blocking does not hang on the last bits of its points (#556): seeded
     /// perturbations of 1 to 4 ulps give the same regions, quadrilaterals and nodes. On develop
     /// before this fix 63 of 64 gave 7 regions and 696 quads (worst corner 0.618) instead of
-    /// 9, 848 and 0.707.
+    /// 9, 848 and 0.707. The other profiles, with 64 seeds each, are the heavy test below.
     #[test]
     fn the_slot_blocking_does_not_depend_on_the_last_bits_of_its_points() {
         let unstable = unstable_seeds(&slot_plate(), &[], 2.5, 0..8);
         assert!(unstable.is_empty(), "{} of 8 perturbations change the blocking: {unstable:?}", unstable.len());
+    }
+
+    /// The middle of a symmetric curve with an even number of inner points (eight 5° turns, a
+    /// 45° arc) is its fourth point however its turns round (#556).
+    #[test]
+    fn the_half_turn_of_a_symmetric_curve_does_not_depend_on_its_last_bits() {
+        let turn = 5.0_f64.to_radians();
+        for ulps in [-4, -1, 0, 1, 4] {
+            // The first half nudged one way, the second the other.
+            let turns: Vec<f64> = (0..8).map(|i| tie::nudge(turn, if i < 4 { ulps } else { -ulps })).collect();
+            let total: f64 = turns.iter().sum();
+            assert_eq!(half_turn(&turns, total), 4, "{turns:?}");
+            let neg: Vec<f64> = turns.iter().map(|t| -t).collect();
+            assert_eq!(half_turn(&neg, -total), 4, "{neg:?}");
+        }
+    }
+
+    /// Every profile of these tests blocks the same under 64 seeded ulp perturbations (#556).
+    #[test]
+    #[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+    fn no_test_profile_blocking_depends_on_the_last_bits_of_its_points() {
+        let (crank, crank_extra) = crank_half();
+        let cases: Vec<(&str, Profile, Vec<Vec<Q>>, f64)> = vec![
+            ("l-shape", l_shape(), vec![], 2.5),
+            ("plate with a hole", plate_with_a_hole(), vec![], 2.5),
+            ("square ring", square_ring(), vec![], 3.0),
+            ("slot", slot_plate(), vec![], 2.5),
+            ("several holes", several_holes(), vec![], 2.0),
+            ("crank half", crank, crank_extra, 3.0),
+            ("t-shape", t_shape(), vec![], 2.0),
+        ];
+        let mut failed = Vec::new();
+        for (name, profile, extra, h) in &cases {
+            let unstable = unstable_seeds(profile, extra, *h, 0..64);
+            if !unstable.is_empty() {
+                failed.push(format!("{name}: {} of 64 {:?}", unstable.len(), &unstable[..unstable.len().min(4)]));
+            }
+        }
+        assert!(failed.is_empty(), "{failed:#?}");
     }
 
     fn several_holes() -> Profile {

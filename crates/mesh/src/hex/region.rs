@@ -53,7 +53,7 @@ const TRIANGLE_SWEEPS: usize = 20;
 /// points: those differ between platforms' `sin`/`cos` and between tessellations, and the
 /// scheme must not (#556). An angle within this of a threshold is taken as exactly on it, and
 /// on a threshold is smooth, neither a corner nor reflex: that keeps the slot's intended O-grid.
-const ANGLE_TOLERANCE: f64 = 1e-9; // unit-factors: an angle in radians
+pub(crate) const ANGLE_TOLERANCE: f64 = 1e-9; // unit-factors: an angle in radians
 
 /// A corner: an interior angle clearly below 135° (exactly 135° is not one).
 pub(crate) fn is_corner(angle: f64) -> bool {
