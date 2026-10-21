@@ -987,8 +987,9 @@ pub(crate) mod tests {
 
     /// #384: cuts stay on their plane (the kernel's own split put them 1.8 µm off it on the air
     /// of the enclosure, so the cut faces were not even recognized), and a plane along an
-    /// existing face or through a hole's axis is a warning naming the plane, the body and where,
-    /// or refused where the kernel could only cut it off the plane.
+    /// existing face is refused where the kernel could only cut it off the plane. A cell whose
+    /// boundary no mesher takes is a warning naming the partition and the cell; through a
+    /// standoff's hole that was SolidCraft 0.16's cut, and SolidCraft 0.18 cuts it cleanly (#655).
     #[test]
     fn cuts_stay_on_the_plane_and_risky_ones_are_named() {
         let (_dir, mut s) = pi5();
@@ -996,33 +997,38 @@ pub(crate) mod tests {
             s.execute("geometry.datum", &json!({"name": name, "by": {"type": "offset", "plane": "yz", "offset": x}})).unwrap();
             s.execute("geometry.partition", &json!({"name": format!("P{name}"), "datum": name, "bodies": ["Air"]})).unwrap()
         };
-        // Beside the board's mounting holes: clean cells, cut faces on the plane.
+        // Clean cells, every cut face on the plane.
+        let on_plane = |s: &Session, name: &str, x: f64| {
+            let design = s.design.clone().unwrap();
+            for cell in ["Air/a", "Air/b"] {
+                let shape = design.body(cell).unwrap();
+                let cut: Vec<f64> = shape
+                    .faces()
+                    .iter()
+                    .zip(shape.face_surfaces().unwrap())
+                    .filter(|(f, _)| f.name.starts_with(&format!("partition:P{name}:")))
+                    .filter_map(|(_, srf)| match srf {
+                        Some(fieldcraft_geometry::FaceSurface::Plane { point, .. }) => Some(point[0]),
+                        _ => None,
+                    })
+                    .collect();
+                assert!(!cut.is_empty() && cut.iter().all(|c| (c - x).abs() < 1e-9), "{name} {cell}: {cut:?}");
+            }
+        };
+        // Beside the board's mounting holes.
         let r = plane(&mut s, "X", 16.5);
         assert!(r.get("warnings").is_none(), "{r}");
-        let design = s.design.clone().unwrap();
-        for cell in ["Air/a", "Air/b"] {
-            let shape = design.body(cell).unwrap();
-            let cut: Vec<f64> = shape
-                .faces()
-                .iter()
-                .zip(shape.face_surfaces().unwrap())
-                .filter(|(f, _)| f.name.starts_with("partition:PX:"))
-                .filter_map(|(_, srf)| match srf {
-                    Some(fieldcraft_geometry::FaceSurface::Plane { point, .. }) => Some(point[0]),
-                    _ => None,
-                })
-                .collect();
-            assert!(!cut.is_empty() && cut.iter().all(|x| (x - 16.5).abs() < 1e-9), "{cell}: {cut:?}");
-        }
+        on_plane(&s, "X", 16.5);
         s.execute("edit.undo", &json!({})).unwrap();
         // Along the side of the heat sink's pedestal: the kernel only cuts with its box nudged
         // off the plane, so the cut is refused, saying why (#427).
         s.execute("geometry.datum", &json!({"name": "Side", "by": {"type": "offset", "plane": "yz", "offset": 34.0}})).unwrap();
         let e = s.execute("geometry.partition", &json!({"name": "PSide", "datum": "Side", "bodies": ["Air"]})).unwrap_err().to_string();
         assert!(e.contains("could not cut `Air`") && e.contains("only made off the plane"), "{e}");
-        // Through a standoff's hole: the cell whose boundary breaks at the hole's edge is named.
+        // Through a standoff's hole: SolidCraft 0.16 left a cell whose boundary broke at the
+        // hole's edge (the warning); SolidCraft 0.18's cells close there.
         let r = plane(&mut s, "Axis", 74.5);
-        let warnings = r["warnings"].to_string();
-        assert!(warnings.contains("partition `PAxis`: cell `Air/") && warnings.contains("boundary no mesher takes"), "{r}");
+        assert!(r.get("warnings").is_none(), "{r}");
+        on_plane(&s, "Axis", 74.5);
     }
 }

@@ -67,7 +67,8 @@ reads up to 27, SolidCraft 0.17 and 0.18 save 28).
 
 A newer pin can also name the same geometry otherwise: SolidCraft 0.16 names the pieces of a
 split face from their history (`F9:face:4` became `F9:section`), so a model saved before names
-faces, edges and vertices the design no longer has. Opening a model or a design never lets that
+faces, edges and vertices the design no longer has (0.17 and 0.18 renamed none of the corpus's
+and samples' faces, edges or vertices: #655). Opening a model or a design never lets that
 pass in silence (`crates/engine/src/cmd/names.rs`): a stale face the model's mesh lies on is
 found again where the mesh's facets tagged with it land on the new tessellation (all on one face
 whose area agrees, no other tag's mesh there), its edges and vertices through the faces they
