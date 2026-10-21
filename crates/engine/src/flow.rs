@@ -695,6 +695,25 @@ pub(crate) mod tests {
         // (this build registers no GPU backend; lbm-gpu's tests run the solids on the device)
         let e = s.execute("solve.fluid", &json!({"backend": "gpu"})).unwrap_err().to_string();
         assert!(e.contains("GPU") && e.contains("cpu"), "{e}");
+        // a thermal contact's resistance, or its layer, typed in the display system (mm-t-s:
+        // mm²·K/mW, mm, mW/(mm·K)) or with its unit, stored in SI: 1e-5 K·m²/W each time
+        let two = |contact: Value| {
+            let mut d = domain(json!([{"body": "Body1", "material": "Alu"}, {"body": "Lid", "material": "Alu"}]));
+            d["obstacles"] = json!(["Body1", "Lid"]);
+            d["thermal"]["contacts"] = json!([contact]);
+            d
+        };
+        for contact in [
+            json!({"bodies": ["Body1", "Lid"], "resistance": 0.01}),
+            json!({"bodies": ["Body1", "Lid"], "resistance": "10 mm²·K/W"}),
+            json!({"bodies": ["Lid", "Body1"], "thickness": 0.05, "conductivity": 5}),
+        ] {
+            s.execute("model.fluid_domain.edit", &two(contact.clone())).unwrap();
+            let r = s.model.fluid_domain("Tank").and_then(|d| d.thermal.as_ref()).and_then(|t| t.contacts.first()).map(|c| c.resistance());
+            assert!(r.is_some_and(|r| (r / 1e-5 - 1.0).abs() < 1e-12), "{contact}: {r:?}");
+        }
+        let e = s.execute("model.fluid_domain.edit", &two(json!({"bodies": ["Body1", "Lid"], "resistance": 0}))).unwrap_err().to_string();
+        assert!(e.contains("thermal contact `Body1–Lid`") && e.contains("positive"), "{e}");
     }
 
     /// A face held at a temperature is drawn at that temperature, and the legend reaches it,

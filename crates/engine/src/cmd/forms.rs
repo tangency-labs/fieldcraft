@@ -684,6 +684,18 @@ const FLUID_THERMAL: Field = group(
             ],
         )
         .help("Obstacles heat conducts through, exchanging heat with the fluid across their faces (conjugate heat transfer); their faces take no thermal condition."),
+        rows(
+            "contacts",
+            "Thermal contacts",
+            &[
+                references("bodies", "Bodies", C::Body).help("The two touching conducting solids.").req(),
+                positive("resistance", "Resistance", D::Of(fieldcraft_model::units::Quantity::ThermalContactResistance))
+                    .help("The interface layer's resistance per area (a paste's or pad's data sheet value); or give its thickness and conductivity."),
+                positive("thickness", "Layer thickness", D::Length).help("The interface layer's thickness, with its conductivity."),
+                positive("conductivity", "Layer conductivity", D::Conductivity).help("The interface layer's conductivity, with its thickness."),
+            ],
+        )
+        .help("Thermal pastes, pads and gap fillers between touching conducting solids, not resolved in the lattice: each adds its resistance to the faces between the two bodies. Solids not listed touch perfectly."),
     ],
 )
 .help("Heat carried by the flow: needs the material's conductivity and specific heat. Off for an isothermal flow.")
