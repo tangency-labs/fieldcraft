@@ -496,6 +496,57 @@ fn deleting_a_cap_never_leaves_a_neighbour_floating() {
     cx.validate().unwrap();
 }
 
+/// A vertex inserted on a curved boundary face whose removed faces would ring a kept one: the
+/// improvement's insertion on the rounded box's fillet in the tet10 run on Linux (SolidCraft
+/// 0.18.1's tessellation). Vertex 10 tops a tetrahedron with three boundary faces; two of them
+/// hold the new vertex in their circumcircle, the third does not, so the faces removed around it
+/// form an annulus. Fanned from the new vertex, the inner loop and the kept face would enclose a
+/// tetrahedron with four boundary faces, joined to the mesh by its vertices alone. The insertion
+/// is refused instead.
+#[test]
+fn a_boundary_insertion_never_rings_a_kept_face() {
+    let p: Vec<[f64; 3]> = vec![
+        [37.62925187046595, 27.000000045728676, 19.925947437850475],
+        [37.346388050558545, 26.568637357839815, 19.96821980678724],
+        [37.864854899432075, 26.37493832376346, 19.858206230145555],
+        [38.13849211461335, 26.78943127788964, 19.77164302800985],
+        [37.141787936642764, 26.70315679040015, 19.514142391752234],
+        [37.20584345508358, 26.832275662291323, 19.42626772210176],
+        [37.48739155401909, 26.567563748691178, 19.955283105884796],
+        [37.92769917669904, 26.41671699947128, 19.453486681697488],
+        [37.43800406478175, 26.208143082650103, 19.55074124168729],
+        [37.07336596672176, 26.83524701335969, 19.993268865411512],
+        [37.58907678923575, 26.604654649192828, 19.937498683663613],
+    ];
+    let tets = [[3, 8, 6, 9], [3, 9, 7, 8], [8, 7, 5, 9], [3, 9, 0, 7], [9, 5, 0, 7], [8, 5, 4, 9], [1, 0, 3, 9], [1, 3, 0, 2], [0, 1, 2, 10]];
+    // The faces on the fillet (tag 20); the others were shared with the rest of the mesh.
+    let fillet: [&[usize]; 9] = [&[1], &[], &[], &[], &[], &[], &[1, 2], &[0, 2], &[0, 1, 2]];
+    let key = |f: [u32; 3]| {
+        let mut f = f;
+        f.sort_unstable();
+        f
+    };
+    let mut boundary = Vec::new();
+    for (t, vs) in tets.iter().enumerate() {
+        for k in 0..4 {
+            let f = key(face_toward(*vs, k));
+            let shared = tets.iter().enumerate().any(|(u, ws)| u != t && (0..4).any(|j| key(face_toward(*ws, j)) == f));
+            if !shared {
+                boundary.push((t as u32, k, if fillet[t].contains(&k) { 20 } else { 0 }));
+            }
+        }
+    }
+    let on_fillet = [false, true, true, true, false, false, true, false, false, true, true];
+    let kinds: Vec<VertexKind> = on_fillet.iter().map(|&f| if f { VertexKind::Face(20) } else { VertexKind::Corner }).collect();
+    let mut cx = TetComplex::new(&p, kinds, &tets, &boundary, &[], 100, 100).unwrap();
+    // On the fillet face of tetrahedron 0, as far from the other vertices as the improvement asks.
+    let q = Point3::try_from([37.57631755601779, 26.730747346632697, 19.941167252265036]).unwrap();
+    insert_delaunay_apart(&mut cx, q, VertexKind::Face(20), Site::Face(0, 1), 4096, 0.06539086641130744).unwrap();
+    cx.validate().unwrap();
+    let floating: Vec<[u32; 4]> = cx.live_tets().filter(|(t, _)| cx.adj(*t).unwrap().iter().all(|&n| n == NONE)).map(|(_, vs)| vs).collect();
+    assert!(floating.is_empty(), "tetrahedra with every face on the boundary: {floating:?}");
+}
+
 /// The validity gate refuses a tetrahedron that shares no face with the rest of the mesh, even
 /// when the volume adds up: it says why instead of leaving the solver to find it singular.
 #[test]

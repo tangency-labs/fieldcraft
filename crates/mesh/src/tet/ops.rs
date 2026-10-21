@@ -546,6 +546,23 @@ fn plan_cavity(cx: &TetComplex, cavity: &[u32], p: &Point3, site: Site, root_fac
             Site::Edge(a, b) => Some(sorted2(a, b)),
             _ => None,
         };
+        // D must be a disk, its outline one loop. Grown face by face, it can close around a
+        // kept boundary face whose circumcircle misses p: the fan over that inner loop and the
+        // kept face would enclose tetrahedra joined to the mesh by vertices alone. D is
+        // connected by construction; with Euler characteristic 1 and every outline vertex on two
+        // outline edges, it is a disk.
+        let mut vertices: Vec<u32> = removed.iter().filter_map(|&i| bfaces.get(i)).flat_map(|g| g.0).collect();
+        vertices.sort_unstable();
+        vertices.dedup();
+        let euler = vertices.len() as i64 - count.len() as i64 + removed.len() as i64;
+        let mut degree: IdMap<u32, usize> = IdMap::default();
+        for c in count.values().filter(|c| c.2 == 1) {
+            *degree.entry(c.0.0).or_default() += 1;
+            *degree.entry(c.0.1).or_default() += 1;
+        }
+        if euler != 1 || degree.values().any(|&d| d != 2) {
+            return Ok(Plan::Fail);
+        }
         let mut edges: Vec<((u32, u32), u32)> = count.into_iter().filter(|(k, c)| c.2 == 1 && Some(*k) != split).map(|(_, c)| (c.0, c.1)).collect();
         edges.sort_unstable();
         new_boundary = edges;
