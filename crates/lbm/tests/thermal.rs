@@ -215,7 +215,10 @@ fn a_periodic_flow_conserves_and_carries_heat() {
 
 /// A sine of temperature in a periodic box drifting with a uniform flow: it keeps its shape,
 /// moves with the flow and decays as e^(−α k² t). At rest the decay converges to the
-/// diffusivity at second order. With the flow the D3Q7 lattice's linear equilibrium diffuses
+/// diffusivity at second order: with Λ_T = 1/12 at τ_T = 1 the lattice decays a mode 0.105 (k Δx)²
+/// faster than α k² (the exact amplification factor of the D3Q7 two-relaxation-time lattice:
+/// 4.0e-3 on 32 cells per wavelength, 1.0e-3 on 64; a single relaxation time at τ_T = 1 had
+/// −8e-4 and −2e-4, at τ_T = 1.5 −1.5e-2 and −3.8e-3). With the flow the D3Q7 lattice's linear equilibrium diffuses
 /// less along the flow by (τ_T − ½) u² in lattice units, 4 u² of the diffusivity (Chopard,
 /// Falcone and Latt, Eur. Phys. J. Special Topics 171 (2009) 245–249): the measured decay
 /// shows that deficit, which bounds the lattice speed a heat problem should run at.
@@ -268,16 +271,100 @@ fn a_drifting_sine_decays_at_the_diffusivity() {
         );
         // A Fourier mode of a linear scheme on a periodic grid stays one, to round-off.
         assert!(shape < 1e-9 * amplitude, "{n} cells at {lattice_u}: the sine lost its shape by {shape}");
-        assert!(lag < dx / 5.0, "{n} cells at {lattice_u}: drift {drift} vs {}", u0 * t);
+        // The lattice's own phase speed is 1.5e-3 and 3.7e-3 fast at lattice speeds 0.1 and 0.15
+        // (Λ_T = 1/12; the exact amplification factor), 0.10 and 0.24 cells over the run (a single
+        // relaxation time at these τ_T: −0.9e-3 and −2.4e-3).
+        assert!(lag < dx / 3.0, "{n} cells at {lattice_u}: drift {drift} vs {}", u0 * t);
         if lattice_u > 0.0 {
             let deficit = -4.0 * lattice_u * lattice_u;
             assert!((error - deficit).abs() < 0.01, "{n} cells at {lattice_u}: α error {error} vs the deficit {deficit}");
         } else {
-            assert!(error.abs() < 1e-3, "{n} cells at rest: α error {error}");
+            let kdx = k * dx;
+            assert!(error.abs() < 0.12 * kdx * kdx, "{n} cells at rest: α error {error} vs 0.105 (k Δx)² = {:.2e}", 0.105 * kdx * kdx);
             at_rest.push(error.abs());
         }
     }
     let order = orders(&at_rest, 2.0);
     println!("decay at rest converges at order {order:?}");
     assert!(order.iter().all(|o| *o > 1.8), "{order:?}");
+}
+
+/// The de Vahl Davis cavity at Rayleigh number `ra` on `n` cells, run to 1.5 H²/α (steady to
+/// well below the differences reported) at thermal relaxation time `tau` (`None`: the automatic
+/// time step) with the thermal lattice's parameter Λ_T `magic(τ_T)`. Returns τ_T, the mean
+/// Nusselt number of the hot wall (the heat its links take) and two profiles of the local one
+/// along the wall: as `solve.probe`'s `wall_heat_flux` reads it, from the held wall temperature
+/// and the two cell layers beside it, `(8 T_w − 9 T₁ + T₂) / (3 Δx)`, and the lattice's own heat
+/// through each wall link, `2 w T_w − 2 g` per step (`g` the population the wall sent back),
+/// which is what a conducting neighbour would receive.
+fn cavity_wall_flux(ra: f64, n: usize, tau: Option<f64>, magic: &dyn Fn(f64) -> f64) -> (f64, f64, [Vec<f64>; 2]) {
+    let (h, pr) = (1.0, 0.71);
+    let dx = h / n as f64;
+    let (alpha, nu) = (1.0, pr);
+    let mut d = domain([0.0; 3], [h, h, dx], dx);
+    d.faces.z_min = PERIODIC;
+    d.faces.z_max = PERIODIC;
+    let mut t =
+        FluidThermal { initial_temperature: kelvin(0.5), gravity: [0.0, -ra * nu * alpha, 0.0], expansion: Some(1.0), ..FluidThermal::default() };
+    t.faces.x_min = ThermalCondition::Temperature { value: kelvin(1.0) };
+    t.faces.x_max = ThermalCondition::Temperature { value: kelvin(0.0) };
+    d.thermal = Some(t);
+    let mut procedure = step(1.5 * h * h / alpha, 1.0, None);
+    if let fieldcraft_model::Procedure::Fluid { time_step, .. } = &mut procedure {
+        *time_step = tau.map(|tau| (tau - 0.5) * dx * dx / (4.0 * alpha));
+    }
+    let m = hot_model(1.0, nu, alpha, d, procedure);
+    let mut setup = fieldcraft_lbm::Setup::new(&m, None, &[], &Limits::default()).unwrap();
+    let ts = setup.thermal.as_mut().unwrap();
+    let tau = ts.tau;
+    ts.magic = magic(tau);
+    let mut flow = fieldcraft_lbm::Flow::new(&setup, &[]).unwrap();
+    let r = run(&setup, &mut flow, &Limits::default()).unwrap();
+    let hot = *r.heat.iter().find(|w| w.name == "x_min").unwrap().power.last().unwrap();
+    let nu_mean = -hot * h / (alpha * h * dx);
+    let grid = *flow.grid();
+    let temp = |i: usize, j: usize| flow.temperature(grid.index([i, j, 0])).unwrap();
+    let probe = (0..n).map(|j| (8.0 - 9.0 * temp(0, j) + temp(1, j)) / (3.0 * dx)).collect();
+    // the heat per step through the link along +x of the wall cell, over the lattice
+    // diffusivity: Nu = −heat / (α_lattice Δx) with H = ΔT = 1
+    let alpha_lattice = (tau - 0.5) / 4.0;
+    let link = (0..n).map(|j| -(2.0 * 0.125 - 2.0 * flow.thermal_population(1, grid.index([0, j, 0]))) / (alpha_lattice * dx)).collect();
+    (tau, nu_mean, [probe, link])
+}
+
+/// The extreme of a profile (largest for `sign` 1, smallest for −1) on the parabola through the
+/// extreme sample and its neighbours (`solve.probe`'s rule); at an end, the sample itself.
+fn extreme(local: &[f64], sign: f64) -> f64 {
+    let n = local.len();
+    let k = (0..n).max_by(|a, b| (sign * local[*a]).total_cmp(&(sign * local[*b]))).unwrap();
+    if k == 0 || k == n - 1 {
+        return local[k];
+    }
+    let (a, b, c) = (local[k - 1], local[k], local[k + 1]);
+    let curvature = a - 2.0 * b + c;
+    if sign * curvature >= 0.0 {
+        return b;
+    }
+    let d = (0.5 * (a - c) / curvature).clamp(-0.5, 0.5);
+    b - 0.25 * (a - c) * d
+}
+
+/// The local wall heat flux of the de Vahl Davis cavity (Ra = 10³, 24 cells) at τ_T 0.8 and 1.4
+/// (#629): with the thermal lattice's Λ_T fixed its largest and smallest values agree to the
+/// numerical diffusion of the faster lattice flow at τ_T 1.4, while a single relaxation time
+/// (Λ_T = (τ_T − ½)²) moves the wall and them by percents.
+#[test]
+fn local_wall_heat_flux_does_not_depend_on_the_thermal_relaxation_time() {
+    let bgk = |tau: f64| (tau - 0.5) * (tau - 0.5);
+    let change = |magic: &dyn Fn(f64) -> f64| {
+        let [(_, _, a), (_, _, b)] = [Some(0.8), Some(1.4)].map(|tau| cavity_wall_flux(1e3, 24, tau, magic));
+        [(&a[0], &b[0], 1.0), (&a[0], &b[0], -1.0), (&a[1], &b[1], 1.0), (&a[1], &b[1], -1.0)]
+            .map(|(x, y, sign)| (extreme(y, sign) / extreme(x, sign) - 1.0).abs())
+    };
+    let (fixed, single) = (change(&fieldcraft_lbm::setup::thermal_magic), change(&bgk));
+    println!(
+        "cavity, 24 cells: relative change of Nu_max, Nu_min (probe, links) from τ_T 0.8 to 1.4: Λ_T fixed {fixed:.5?}, single relaxation time {single:.5?}"
+    );
+    assert!(fixed.iter().all(|d| *d < 3e-3), "{fixed:?}");
+    assert!(single.iter().all(|d| *d > 2e-2), "{single:?}");
 }

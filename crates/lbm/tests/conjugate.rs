@@ -616,8 +616,10 @@ fn cylinder_array(n: usize, kappa: f64) -> (f64, f64) {
 }
 
 /// The array on 16 cells, every run: conducting rods (κ 10) within 1 % of the series, insulating
-/// ones (κ 0.1) within 5 %: for them the staircase is a first-order error (the heavy test follows
-/// it down). The series itself against its value at the round area fraction, and Keller's
+/// ones (κ 0.1) within 6 %: for them the staircase is a first-order error (the heavy test follows
+/// it down). Measured with the thermal lattice's Λ_T = 1/12: +0.55 % and −5.66 %. (With a single
+/// relaxation time these depended on τ_T: at this test's τ_T = 1, Λ_T = 1/4, +0.18 % and −3.85 %;
+/// at τ_T = 0.6, Λ_T = 0.01, +0.88 % and −12.4 %.) The series itself against its value at the round area fraction, and Keller's
 /// reciprocity (a square array's k(κ) k(1/κ) = 1).
 #[test]
 fn a_square_array_of_cylinders_conducts_as_rayleigh_s_series() {
@@ -627,16 +629,19 @@ fn a_square_array_of_cylinders_conducts_as_rayleigh_s_series() {
     let (k10, s10) = cylinder_array(16, 10.0);
     assert!((k10 / s10 - 1.0).abs() < 0.01, "{k10} vs {s10}");
     let (k01, s01) = cylinder_array(16, 0.1);
-    assert!((k01 / s01 - 1.0).abs() < 0.05, "{k01} vs {s01}");
+    assert!((k01 / s01 - 1.0).abs() < 0.06, "{k01} vs {s01}");
 }
 
-/// Insulating rods (κ 0.1) on 32 and 64 cells: −2.2 % and −0.85 % of the series, the staircase
-/// interface converging at first order or better; conducting rods (κ 10) within 0.5 %.
+/// Insulating rods (κ 0.1) on 32 and 64 cells: −2.99 % and −1.21 % of the series (Λ_T = 1/12),
+/// the staircase interface converging at first order or better; conducting rods (κ 10) on 32
+/// cells within 0.6 % (+0.54 %). With a single relaxation time at this test's τ_T = 1
+/// (Λ_T = 1/4) they were −2.2 %, −0.85 % and +0.31 %, at τ_T = 0.6 (Λ_T = 0.01) −4.7 % and +0.77 %
+/// on 32 cells.
 #[test]
 #[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
 fn insulating_cylinders_converge_at_first_order() {
     let (k10, s10) = cylinder_array(32, 10.0);
-    assert!((k10 / s10 - 1.0).abs() < 0.005, "{k10} vs {s10}");
+    assert!((k10 / s10 - 1.0).abs() < 0.006, "{k10} vs {s10}");
     let errors: Vec<f64> = [32, 64]
         .iter()
         .map(|n| {
@@ -646,6 +651,6 @@ fn insulating_cylinders_converge_at_first_order() {
         .collect();
     let order = orders(&errors, 2.0);
     println!("insulating cylinders: errors {errors:?}, orders {order:?}");
-    assert!(errors[1] < 0.01, "{errors:?}");
+    assert!(errors[1] < 0.013, "{errors:?}");
     assert!(order.iter().all(|o| *o > 0.9), "{order:?}");
 }

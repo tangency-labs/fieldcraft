@@ -21,7 +21,7 @@
 // With heat, a D3Q7 scalar lattice (the rest direction and the six axes of D3Q19, weights ¼ and
 // ⅛) rides on the flow in the buffers t and t2, stored as deviations from w_q T₀ (T₀ the initial
 // temperature) so that f32 keeps the digits of the differences: θ = T − T₀ = Σ t. It collides
-// (BGK) with the velocity the momentum collision left in `moments`, streams with the links' rules
+// (two relaxation times, as the CPU) with the velocity the momentum collision left in `moments`, streams with the links' rules
 // read through the group's thermal condition (anti-bounce-back for a held temperature, bounce-
 // back for an adiabatic face, a flux added to the bounced population), takes its inlet
 // temperatures and outlet neighbours, and gives each group the heat its links exchanged (in
@@ -68,7 +68,8 @@ struct Params {
     acc: vec4<f32>,
     // The buoyancy −β g in lattice units (xyz) and whether there is any (w).
     buoy: vec4<f32>,
-    // The scalar lattice: its relaxation rate (x), T₀ (y), whether there is heat (z).
+    // The scalar lattice: its antisymmetric relaxation rate 1/τ_T⁻ (x), T₀ (y), whether there
+    // is heat (z), its symmetric relaxation rate 1/τ_T⁺ (w).
     therm: vec4<f32>,
     // Current AA orientation (x: 0 normal, 1 opposite directions at upstream neighbours).
     phase: vec4<u32>,
@@ -731,8 +732,9 @@ fn link_forces(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id)
 
 // ---- The scalar lattice ----
 
-// BGK collision of the scalar lattice, in place in t, with the velocity of the momentum
-// collision.
+// Two-relaxation-time collision of the scalar lattice, in place in t, with the velocity of the
+// momentum collision: each axis pair's symmetric part relaxes with 1/τ_T⁺, its antisymmetric
+// part with 1/τ_T⁻, the rest population with 1/τ_T⁺ (fieldcraft_lbm::flow).
 @compute @workgroup_size(256)
 fn collide_thermal(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
     let cell = cell_of(lid, wg);
@@ -747,9 +749,19 @@ fn collide_thermal(@builtin(local_invocation_index) lid: u32, @builtin(workgroup
         theta = theta + v;
     }
     let u = moments[cell].xyz;
-    let omega = params.therm.x;
-    for (var q = 0u; q < QT; q = q + 1u) {
-        t[q * n + cell] = tq[q] - omega * (tq[q] - eq_t(q, theta, u));
+    let wm = params.therm.x;
+    let wp = params.therm.w;
+    t[cell] = tq[0] - wp * (tq[0] - eq_t(0u, theta, u));
+    // the pairs (1, 2), (3, 4), (5, 6)
+    for (var q = 1u; q < QT; q = q + 2u) {
+        let a = tq[q];
+        let b = tq[q + 1u];
+        let ea = eq_t(q, theta, u);
+        let eb = eq_t(q + 1u, theta, u);
+        let even = wp * 0.5 * (a + b - ea - eb);
+        let odd = wm * 0.5 * (a - b - ea + eb);
+        t[q * n + cell] = a - even - odd;
+        t[(q + 1u) * n + cell] = b - even + odd;
     }
 }
 

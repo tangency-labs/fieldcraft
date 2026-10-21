@@ -138,9 +138,12 @@ fn the_de_vahl_davis_cavity_stops_at_steady_state_with_the_long_run_s_heat() {
     assert!(run.stats.steps < fixed.stats.steps / 2, "{} of {}", run.stats.steps, fixed.stats.steps);
     assert!((q / q0 - 1.0).abs() < 1e-3, "{q} vs {q0}");
     assert!(velocity_difference(&run, &fixed) < 1e-2, "{}", velocity_difference(&run, &fixed));
-    // The mean temperature of the symmetric cavity stays at ½.
+    // The mean temperature of the symmetric cavity stays at ½, up to the lattice's own breaking
+    // of the symmetry T → 1 − T through its weakly compressible flow, which falls with the grid:
+    // 1.20e-3 low on these 16 cells, 3.8e-4 on 32 (the thermal lattice's Λ_T = 1/12; with a single
+    // relaxation time, at this τ_T 1.38, 4.5e-4 and 1.3e-4).
     let mean = report.samples.last().unwrap().values[4][0];
-    assert!((mean - kelvin(0.5)).abs() < 1e-3, "{mean}");
+    assert!((mean - kelvin(0.5)).abs() < 1.5e-3, "{mean}");
 }
 
 /// A periodic box under a body force with no walls accelerates without bound: the stability

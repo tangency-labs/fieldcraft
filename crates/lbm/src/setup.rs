@@ -54,6 +54,17 @@ pub const REGULARIZED_TAU_LIMIT: f64 = 0.508;
 /// The default two-relaxation-time parameter Λ: bounce-back walls exactly halfway between cells
 /// (Ginzburg, Verhaeghe & d'Humières 2008).
 pub const DEFAULT_MAGIC: f64 = 3.0 / 16.0;
+/// The thermal lattice's two-relaxation-time parameter `Λ_T = (τ_T⁺ − ½)(τ_T⁻ − ½)` (#629). With
+/// `Λ_T` fixed a steady temperature field, its anti-bounce-back walls included, does not depend
+/// on `τ_T`, so neither do the local wall heat fluxes. At 1/12 the heat an anti-bounce-back link
+/// takes from a conducting field is fourth-order accurate (a harmonic temperature along a flat
+/// held wall: 8.1e-4, 5.0e-5, 3.2e-6 of the flux on 8, 16, 32 cells per wavelength, against
+/// second order and 1.3e-2 on 16 cells at 1/6 or 2.5e-2 at 1/4), and the wall-flux study of the
+/// de Vahl Davis cavity in `tests/thermal.rs` (`local_wall_heat_flux_with_two_relaxation_times`,
+/// `docs/lbm-collision.md`) finds the cavity's local wall fluxes within 0.2 % of the reference
+/// on 64 cells at every `τ_T`. Below `τ_T = ½ + √Λ_T` (0.79) the scalar lattice keeps a single
+/// relaxation time ([`thermal_magic`]).
+pub const THERMAL_MAGIC: f64 = 1.0 / 12.0;
 /// A lattice Mach number above this (with its round-off) is warned about: the compressibility
 /// error, of order Ma², becomes visible.
 const MACH_WARNING: f64 = 0.1 + 1e-12; // unit-factors: a Mach number, with its round-off
@@ -95,8 +106,12 @@ pub struct ObstacleFaces {
 /// drive the heat.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ThermalSetup {
-    /// The scalar lattice's relaxation time: its diffusivity is `(τ_T − ½) / 4`.
+    /// The scalar lattice's antisymmetric relaxation time, which sets its diffusivity
+    /// `(τ_T − ½) / 4`.
     pub tau: f64,
+    /// Its two-relaxation-time parameter `Λ_T` ([`thermal_magic`]): the symmetric relaxation
+    /// time is `½ + Λ_T / (τ_T − ½)`.
+    pub magic: f64,
     /// The fluid's thermal diffusivity k / (ρ c), model units.
     pub diffusivity: f64,
     pub initial_temperature: f64,
@@ -125,6 +140,26 @@ pub struct ContactSetup {
     /// Its resistance across one cell face, `R (ρ c)_f Δx / Δt` (the inverse of a lattice
     /// conductance: a layer one cell thick of lattice conductivity k has 1 / k).
     pub resistance: f64,
+}
+
+impl ThermalSetup {
+    /// The symmetric relaxation time `τ_T⁺ = ½ + Λ_T / (τ_T − ½)`.
+    pub fn tau_plus(&self) -> f64 {
+        0.5 + self.magic / (self.tau - 0.5)
+    }
+}
+
+/// The thermal lattice's `Λ_T` at relaxation time `tau` (`τ_T⁻`, which sets the diffusivity):
+/// [`THERMAL_MAGIC`], or `(τ_T − ½)²`, a single relaxation time, when that is smaller. A fixed
+/// `Λ_T` makes the symmetric relaxation time `½ + Λ_T / (τ_T − ½)` grow without bound as `τ_T`
+/// approaches ½, and a von Neumann analysis of the D3Q7 lattice with its linear equilibrium
+/// finds such a slowly relaxing symmetric part unstable from lattice speeds of 0.02–0.03 at
+/// `τ_T` 0.505–0.51, where a single relaxation time holds 0.25. With `τ_T⁺` at most `τ_T` the
+/// lattice holds at least 0.25 at every `τ_T` (0.36 from `τ_T` 0.7), well above the characteristic speeds a run
+/// is allowed ([`MAX_MACH`]). The single relaxation time's wall error grows with its
+/// `Λ_T = (τ_T − ½)²`, so below the switch it is smaller than at [`THERMAL_MAGIC`].
+pub fn thermal_magic(tau: f64) -> f64 {
+    THERMAL_MAGIC.min((tau - 0.5) * (tau - 0.5))
 }
 
 /// An obstacle that conducts heat, in the fluid's lattice heat units (`crate::conduction`).
@@ -509,7 +544,7 @@ impl Setup {
                     )));
                 }
                 if tau > 2.0 {
-                    warnings.push(format!("the thermal relaxation time τ_T = {tau:.3} is large: heat diffuses fast on this grid and time step; a shorter time step is more accurate"));
+                    warnings.push(format!("the thermal relaxation time τ_T = {tau:.3} is large: heat diffuses fast on this grid and time step, so the transient is coarse in time (a steady state hardly depends on it); a shorter time step follows a transient more closely"));
                 }
                 let flux_scale = dt / (rho_c * h);
                 // The temperature the lattice counts from (the model's, never how it is shown).
@@ -535,6 +570,7 @@ impl Setup {
                 let beta = t.expansion.unwrap_or(0.0);
                 Some(ThermalSetup {
                     tau,
+                    magic: thermal_magic(tau),
                     diffusivity,
                     initial_temperature: kelvin_above(t.initial_temperature, zero),
                     zero,

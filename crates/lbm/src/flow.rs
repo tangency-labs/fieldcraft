@@ -54,9 +54,21 @@
 //! # Heat
 //! With thermal settings a second lattice carries the temperature: D3Q7 (the rest direction and
 //! the six axis directions, the first seven of D3Q19), weights ¼ and ⅛, `c_s² = ¼`, equilibrium
-//! `w_q T (1 + 4 c_q·u)` with the velocity the momentum lattice just collided to, BGK collision
-//! with `τ_T = 4 α + ½` (Krüger et al. 2017, ch. 8: the passive-scalar double-distribution
-//! model). Its streaming follows the momentum lattice's links: a wall held at a temperature is
+//! `w_q T (1 + 4 c_q·u)` with the velocity the momentum lattice just collided to (Krüger et al.
+//! 2017, ch. 8: the passive-scalar double-distribution model). Its collision has two relaxation
+//! times (I. Ginzburg, *Equilibrium-type and link-type lattice Boltzmann models for generic
+//! advection and anisotropic-dispersion equation*, Adv. Water Resour. 28:1171, 2005): the
+//! antisymmetric part of each axis pair, which carries the heat flux, relaxes with
+//! `τ_T = 4 α + ½` (that sets the diffusivity), the symmetric part and the rest population with
+//! `τ_T⁺ = ½ + Λ_T / (τ_T − ½)`. With `Λ_T` fixed ([`crate::setup::THERMAL_MAGIC`], 1/12) a
+//! steady temperature field, its walls included, does not depend on `τ_T`, so neither do the
+//! local wall heat fluxes (D. d'Humières, I. Ginzburg, *Viscosity independent numerical errors
+//! for Lattice Boltzmann models: From recurrence equations to "magic" collision numbers*, Comput.
+//! Math. Appl. 58:823, 2009); with a single relaxation time the anti-bounce-back wall moves with
+//! `Λ_T = (τ_T − ½)²`, and the automatic time step's τ_T ≈ 1.4 put the de Vahl Davis cavity's
+//! largest local Nusselt number 8 % high (#629). Below `τ_T = ½ + √Λ_T` (0.79) the lattice keeps a
+//! single relaxation time, which is as stable as it was there and whose wall error is smaller
+//! ([`crate::setup::thermal_magic`]). Its streaming follows the momentum lattice's links: a wall held at a temperature is
 //! anti-bounce-back (`g_q = −g*_q̄ + 2 w_q T_w`, which puts the temperature halfway between the
 //! cells), an adiabatic wall bounces back, a heat flux through a wall face adds the flux to the
 //! bounced population (one axis direction crosses each wall face, so the cell gains exactly that
@@ -216,7 +228,9 @@ pub struct ThermalState {
     g2: Vec<f64>,
     /// The temperature of every cell after the last step (the initial one in solid cells).
     temperature: Vec<f64>,
-    omega: f64,
+    /// The symmetric and antisymmetric relaxation rates `1/τ_T⁺` and `1/τ_T⁻`.
+    omega_plus: f64,
+    omega_minus: f64,
     initial: f64,
     /// `−β g` in lattice units; zero without buoyancy.
     buoyancy: [f64; 3],
@@ -238,9 +252,9 @@ pub struct ThermalState {
 }
 
 impl ThermalState {
-    /// The scalar relaxation rate 1 / τ_T.
-    pub fn omega(&self) -> f64 {
-        self.omega
+    /// The scalar lattice's symmetric and antisymmetric relaxation rates `1/τ_T⁺` and `1/τ_T⁻`.
+    pub fn omegas(&self) -> (f64, f64) {
+        (self.omega_plus, self.omega_minus)
     }
 
     /// The initial temperature (and the reference of the buoyancy).
@@ -671,7 +685,8 @@ impl Flow {
                     g: tg,
                     g2: tg2,
                     temperature: filled(n, ts.initial_temperature, "temperature")?,
-                    omega: 1.0 / ts.tau,
+                    omega_plus: 1.0 / ts.tau_plus(),
+                    omega_minus: 1.0 / ts.tau,
                     initial: ts.initial_temperature,
                     buoyancy: ts.buoyancy,
                     groups: group_conditions,
@@ -1049,15 +1064,16 @@ impl Flow {
         }
     }
 
-    /// BGK collision of the scalar lattice, in place, with the velocity of the momentum
-    /// collision.
+    /// Two-relaxation-time collision of the scalar lattice, in place, with the velocity of the
+    /// momentum collision: each axis pair's symmetric part relaxes with `1/τ_T⁺`, its
+    /// antisymmetric part (the heat flux) with `1/τ_T⁻`, the rest population with `1/τ_T⁺`.
     fn collide_thermal(&mut self) {
         let n = self.n;
         let s = self.stride;
         let fluid = &self.fluid;
         let cell_u = &self.cell_u;
         let Some(t) = &mut self.thermal else { return };
-        let omega = t.omega;
+        let (wp, wm) = (t.omega_plus, t.omega_minus);
         let mut blocks = cell_blocks(&mut t.g, s, n);
         parallel::for_each_mut(&mut blocks, |b, g| {
             let len = g.first().map_or(0, |d| d.len());
@@ -1071,9 +1087,21 @@ impl Flow {
                     temp += g.get(q).and_then(|d| d.get(i)).copied().unwrap_or(0.0);
                 }
                 let u = cell_u.get(cell).copied().unwrap_or([0.0; 3]);
-                for q in 0..QT {
+                if let Some(x) = g.get_mut(0).and_then(|d| d.get_mut(i)) {
+                    *x -= wp * (*x - equilibrium_t(0, temp, u));
+                }
+                // the pairs (1, 2), (3, 4), (5, 6)
+                for q in [1, 3, 5] {
+                    let (a, b) =
+                        (g.get(q).and_then(|d| d.get(i)).copied().unwrap_or(0.0), g.get(q + 1).and_then(|d| d.get(i)).copied().unwrap_or(0.0));
+                    let (ea, eb) = (equilibrium_t(q, temp, u), equilibrium_t(q + 1, temp, u));
+                    let even = wp * 0.5 * (a + b - ea - eb);
+                    let odd = wm * 0.5 * (a - b - ea + eb);
                     if let Some(x) = g.get_mut(q).and_then(|d| d.get_mut(i)) {
-                        *x -= omega * (*x - equilibrium_t(q, temp, u));
+                        *x = a - even - odd;
+                    }
+                    if let Some(x) = g.get_mut(q + 1).and_then(|d| d.get_mut(i)) {
+                        *x = b - even + odd;
                     }
                 }
             }

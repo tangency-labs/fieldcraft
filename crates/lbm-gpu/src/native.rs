@@ -457,10 +457,10 @@ impl GpuFlow {
             buoyancy[1] as f32,
             buoyancy[2] as f32,
             if buoyancy != [0.0; 3] { 1.0 } else { 0.0 },
-            thermal.map_or(0.0, |t| t.omega()) as f32,
+            thermal.map_or(0.0, |t| t.omegas().1) as f32,
             t0 as f32,
             if thermal.is_some() { 1.0 } else { 0.0 },
-            0.0,
+            thermal.map_or(0.0, |t| t.omegas().0) as f32,
         ] {
             params.extend_from_slice(&v.to_le_bytes());
         }
