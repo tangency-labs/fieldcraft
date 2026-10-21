@@ -692,6 +692,14 @@ D3Q19 f32 ≈ 80 B/cell (with flags): 10⁸ cells ≈ 8 GB. These numbers decide
   corner cell of aluminium in water breaks). Interface conditions for the thermal lattice equation, conjugate ones among them:
   L. Li, R. Mei, J. F. Klausner, *Boundary conditions for thermal lattice Boltzmann equation
   method*, J. Comput. Phys. 237:366–395, 2013.
+- **Thermal contacts.** A paste, pad or gap filler between two conducting solids is not
+  resolved: its resistance per area adds in series with the two half cells on every face
+  between the bodies' cells, `g = 1 / (1/(2 k_a) + 1/(2 k_b) + R (ρ c)_f Δx / Δt)` in lattice
+  units (the contact resistance of a composite wall's series circuit: F. P. Incropera,
+  D. P. DeWitt, T. L. Bergman, A. S. Lavine, *Fundamentals of Heat and Mass Transfer*, 7th ed.,
+  Wiley 2011, §3.1.4). Both cells see the same conductance, so heat is conserved, and a
+  resistance only lowers it, so the sub-cycling limit holds. Between a solid and the fluid
+  there is none yet.
 - **Limits.** Staircase interfaces (cell faces, not the true surface): curved interfaces lose
   accuracy, which cut cells with the flux on the true surface recover; a steady run scales the
   solids' heat capacity, so its transient is not physical.

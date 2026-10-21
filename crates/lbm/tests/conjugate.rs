@@ -91,6 +91,133 @@ fn a_composite_wall_conducts_in_series() {
     }
 }
 
+/// A column across y like [`slab_column`] with obstacles `Die` (material `Solid`) and `Lid`
+/// (material `Other`) conducting, joined by `contact`, the plates held at 0 and 1.
+fn contact_column(n: usize, power: f64, contact: fieldcraft_model::ThermalContact) -> FluidDomain {
+    let mut d = slab_column(n, [0.0, 1.0], power);
+    d.obstacles = vec!["Die".into(), "Lid".into()];
+    let th = d.thermal.as_mut().unwrap();
+    th.solids = vec![conducting("Die", power), fieldcraft_model::ConductingSolid { body: "Lid".into(), material: "Other".into(), power: 0.0 }];
+    th.contacts = vec![contact];
+    d
+}
+
+/// The [`contact_column`]'s model: fluid diffusivity `alpha`, `Die` of conductivity `k[0]`,
+/// `Lid` of `k[1]`, both of the fluid's heat capacity.
+fn contact_model(alpha: f64, k: [f64; 2], d: FluidDomain, procedure: Procedure) -> Model {
+    let mut m = Model::default();
+    m.add_material("Fluid", hot_fluid(1.0, 0.1, alpha)).unwrap();
+    add_solid_material(&mut m, "Solid", 1.0, [k[0]; 3], 1.0);
+    add_solid_material(&mut m, "Other", 1.0, [k[1]; 3], 1.0);
+    m.add_fluid_domain("Flow", d).unwrap();
+    m.add_step(fieldcraft_model::Step::new("Run", procedure), None).unwrap();
+    m
+}
+
+fn paste(resistance: Option<f64>, layer: Option<(f64, f64)>) -> fieldcraft_model::ThermalContact {
+    fieldcraft_model::ThermalContact {
+        bodies: ["Die".into(), "Lid".into()],
+        resistance,
+        thickness: layer.map(|l| l.0),
+        conductivity: layer.map(|l| l.1),
+    }
+}
+
+/// A two-layer wall (a die and its lid) with a thermal interface layer between them, between
+/// plates held at 0 and 1, with fluid layers outside or filling the box: the steady temperature
+/// is linear in each layer and jumps by `q R` across the contact, `q = ΔT / (Σ L / k + R)`
+/// (Incropera et al. 2011, §3.1.4). The face between the two bodies carries the series of the
+/// two half cells and the contact, so the discrete solution is exact: it matches to round-off,
+/// on two grids, with the resistance given as such or as a layer's thickness and conductivity
+/// (16 cells, R = 1.25: q = 0.076923, the drop 0.096154 = q R to 1e-14).
+#[test]
+fn a_contact_resistance_drops_the_temperature_by_q_r() {
+    let (alpha, kf) = (0.05, 0.05);
+    let k = [0.2, 0.5];
+    // (cells, Die, Lid, contact)
+    for (n, die, lid, contact) in [
+        (16, [0.25, 0.5], [0.5, 0.75], paste(Some(1.25), None)),
+        (16, [-1.0, 0.5], [0.5, 2.0], paste(None, Some((0.05, 0.1)))),
+        (32, [-1.0, 0.375], [0.375, 2.0], paste(Some(0.1), None)),
+    ] {
+        let r = contact.resistance();
+        let dx = 1.0 / n as f64;
+        let dt = 0.125 * dx * dx / alpha;
+        let m = contact_model(alpha, k, contact_column(n, 0.0, contact), step(12.0 / alpha, dt, None));
+        let obstacles = [
+            obstacle("Die", cuboid([-1.0, die[0], -1.0], [2.0, die[1], 2.0]), &CUBOID_FACES),
+            obstacle("Lid", cuboid([-1.0, lid[0], -1.0], [2.0, lid[1], 2.0]), &CUBOID_FACES),
+        ];
+        let (setup, mut flow) = prepare(&m, &obstacles);
+        run_all(&setup, &mut flow);
+        let (lo, hi) = (die[0].max(0.0), lid[1].min(1.0));
+        let layers = [(lo, kf), (die[1] - lo, k[0]), (hi - lid[0], k[1]), (1.0 - hi, kf)];
+        let q = 1.0 / (layers.iter().map(|(l, k)| l / k).sum::<f64>() + r);
+        // linear in every layer, the jump q R at the contact (y = die[1])
+        let exact = |y: f64| layered(y, 0.0, q, &layers) + if y > die[1] { q * r } else { 0.0 };
+        let mut err: f64 = 0.0;
+        for j in 0..n {
+            let y = (j as f64 + 0.5) * dx;
+            err = err.max((flow.temperature(j).unwrap() - exact(y)).abs());
+        }
+        // the drop across the contact: each side's profile extrapolated to the interface
+        let b = (die[1] / dx).round() as usize;
+        let a = b - 1;
+        let side_a = flow.temperature(a).unwrap() + q * 0.5 * dx / k[0];
+        let side_b = flow.temperature(b).unwrap() - q * 0.5 * dx / k[1];
+        let drop = side_b - side_a;
+        let hs = setup.thermal.as_ref().unwrap().heat_scale;
+        let (cold, hot) = (flow.heat()[BoxFace::YMin.index()] * hs, flow.heat()[BoxFace::YMax.index()] * hs);
+        println!(
+            "two-layer wall with a contact, {n} cells, Die {die:?}, Lid {lid:?}, R {r}: q {q:.6}, drop {drop:.9} vs q R {:.9}, max error {err:.2e}; plates {cold:.6e} {hot:.6e} (q A = {:.6e})",
+            q * r,
+            q * dx * dx
+        );
+        assert!(err < 1e-9, "{n} {die:?}: {err}");
+        assert!((drop - q * r).abs() < 1e-9, "{drop} vs {}", q * r);
+        assert!((cold - q * dx * dx).abs() < 1e-9 * q * dx * dx && (cold + hot).abs() < 1e-9 * cold, "{cold} {hot}");
+    }
+}
+
+/// The die powered, the contact between it and the lid, run from rest: every step the solids
+/// gain what the die generates less what the plates and the fluid take, to round-off; a contact
+/// between solids that do not touch is refused, naming it.
+#[test]
+fn heat_crosses_a_contact_conserved_and_a_contact_must_touch() {
+    let (n, alpha) = (16usize, 0.05);
+    let dx = 1.0 / n as f64;
+    let dt = 0.125 * dx * dx / alpha;
+    let power = 2.0 * dx * dx;
+    let m = contact_model(alpha, [0.2, 0.5], contact_column(n, power, paste(Some(0.5), None)), step(400.0 * dt, dt, None));
+    let obstacles = |gap: f64| {
+        [
+            obstacle("Die", cuboid([-1.0, 0.25, -1.0], [2.0, 0.5, 2.0]), &CUBOID_FACES),
+            obstacle("Lid", cuboid([-1.0, 0.5 + gap, -1.0], [2.0, 0.75, 2.0]), &CUBOID_FACES),
+        ]
+    };
+    let (setup, mut flow) = prepare(&m, &obstacles(0.0));
+    let content = |f: &Flow| f.thermal().unwrap().solid().unwrap().heat_content();
+    let into_solids = |f: &Flow| f.groups().iter().zip(f.heat()).filter(|(g, _)| g.body.is_some()).map(|(_, h)| h).sum::<f64>();
+    let lattice_power = setup.thermal.as_ref().unwrap().solids[0].power;
+    let mut worst: f64 = 0.0;
+    for _ in 0..setup.steps {
+        let before = content(&flow);
+        flow.step().unwrap();
+        worst = worst.max((content(&flow) - before - lattice_power - into_solids(&flow)).abs() / lattice_power);
+    }
+    let t = &flow.thermal().unwrap().solid().unwrap().temperature;
+    println!(
+        "powered die across a contact: {} steps, balance within {worst:.1e} of the power, solids {:.4}..{:.4}",
+        setup.steps,
+        t.iter().fold(f64::INFINITY, |a, b| a.min(*b)),
+        t.iter().fold(0.0, |a: f64, b| a.max(*b))
+    );
+    assert!(worst < 1e-9, "{worst}");
+    let setup = fieldcraft_lbm::Setup::new(&m, None, &obstacles(0.125), &fieldcraft_lbm::Limits::default()).unwrap();
+    let e = Flow::new(&setup, &obstacles(0.125)).err().map(|e| e.to_string()).unwrap_or_default();
+    assert!(e.contains("thermal contact `Die–Lid`") && e.contains("share no cell face"), "{e}");
+}
+
 /// A slab generating heat between two plates held at zero: every plate takes half the power,
 /// the fluid layers are linear and the slab parabolic. The cell-centred conduction holds the
 /// parabola exactly; the half cell at each interface assumes a linear profile, an error of

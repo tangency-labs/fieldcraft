@@ -12,6 +12,13 @@
 //!   heat a held or flux box face takes from the solid is counted as that face's heat.
 //!   Conductivities may differ per axis (a board's in-plane and through-thickness values):
 //!   the faces are axis-aligned, so each face uses its own axis's value.
+//! - **Thermal contacts:** a thin interface layer between two solids (a paste, a pad) is not
+//!   resolved: it adds its resistance per face `r` in series with the two half cells on every
+//!   face between cells of the two bodies, `g = 1 / (1/(2 k_a) + 1/(2 k_b) + r)` (Incropera et
+//!   al., *Fundamentals of Heat and Mass Transfer*, 7th ed., Wiley 2011, §3.1.4: the contact
+//!   resistance in a composite wall's series circuit). Both cells see the same `g`, so the
+//!   heat stays conserved, and a resistance only lowers a conductance, so the explicit limit
+//!   holds as without it.
 //! - **At the fluid:** each D3Q7 link from a fluid cell into a conducting cell is an
 //!   anti-bounce-back held at the interface temperature
 //!   `T_i = (k_s T_s + k_f T_f) / (k_s + k_f)`, the temperature halfway between the two cell
@@ -44,10 +51,12 @@
 //! Every cell gathers from its own faces in a fixed order and the interface links are visited in
 //! cell order, so the result does not depend on the number of threads.
 
+use std::collections::BTreeMap;
+
 use fieldcraft_model::{BoxFace, ThermalCondition};
 
 use crate::lattice::C;
-use crate::setup::SolidSetup;
+use crate::setup::{ContactSetup, SolidSetup};
 use crate::voxel::Grid;
 use crate::{Error, Result};
 
@@ -66,6 +75,11 @@ pub const STEADY_SUBSTEPS: f64 = 4.0;
 /// The conductance of two half cells of conductivities `a` and `b` in series (unit spacing).
 pub fn series(a: f64, b: f64) -> f64 {
     if a + b > 0.0 { 2.0 * a * b / (a + b) } else { 0.0 }
+}
+
+/// Conductance `g` in series with resistance `r` (a thermal contact on the face).
+pub fn with_resistance(g: f64, r: f64) -> f64 {
+    if g > 0.0 { 1.0 / (1.0 / g + r) } else { 0.0 }
 }
 
 /// The smallest heat capacity (fluid lattice units) a cell of a solid with lattice
@@ -159,13 +173,15 @@ pub struct Layout<'a> {
     pub walls: [Option<ThermalCondition>; 6],
     /// The fluid's lattice conductivity.
     pub kf: f64,
+    /// The thermal interface layers between solids.
+    pub contacts: &'a [ContactSetup],
 }
 
 impl SolidHeat {
     /// The conducting cells `cells` (grid indices, in order) of solids `kind` (indices into
     /// `solids`), their faces from `layout`, and the fluid links into them (`weight` filled in
-    /// here), all at temperature `initial`. Fails when a heat capacity is not a positive number
-    /// or the conduction would need more than [`MAX_SUBSTEPS`].
+    /// here), all at temperature `initial`. Fails when a heat capacity is not a positive number,
+    /// the conduction would need more than [`MAX_SUBSTEPS`], or a contact's solids share no face.
     pub fn build(
         layout: &Layout,
         solids: &[SolidSetup],
@@ -181,6 +197,14 @@ impl SolidHeat {
                 list.push(cell);
             }
         }
+        // Per pair of solids (both orders), its contact's index and resistance.
+        let mut contact: BTreeMap<(usize, usize), (usize, f64)> = BTreeMap::new();
+        for (i, c) in layout.contacts.iter().enumerate() {
+            let [a, b] = c.solids;
+            contact.insert((a, b), (i, c.resistance));
+            contact.insert((b, a), (i, c.resistance));
+        }
+        let mut contact_faces = vec![0usize; layout.contacts.len()];
         let g = layout.grid;
         let dims = g.cells.map(|d| d as i64);
         let mut cell_data = Vec::with_capacity(cells.len());
@@ -206,8 +230,16 @@ impl SolidHeat {
                 let at = g.index(nb.map(|v| v as usize));
                 // (a periodic image of the cell itself exchanges nothing)
                 if let Some(&other) = layout.conducting.get(at).filter(|o| **o != NONE && **o as usize != own) {
-                    let kb = kind.get(other as usize).map_or(0.0, |kb| k_of(*kb, axis));
-                    *slot = Face::Solid { other, g: series(ks, kb) };
+                    let other_kind = kind.get(other as usize).copied();
+                    let kb = other_kind.map_or(0.0, |kb| k_of(kb, axis));
+                    let mut conductance = series(ks, kb);
+                    if let Some(&(i, r)) = other_kind.and_then(|o| contact.get(&(k, o))) {
+                        conductance = with_resistance(conductance, r);
+                        if let Some(n) = contact_faces.get_mut(i) {
+                            *n += 1;
+                        }
+                    }
+                    *slot = Face::Solid { other, g: conductance };
                 }
             }
             let s = solids.get(k);
@@ -220,6 +252,14 @@ impl SolidHeat {
             i.weight = ks / (ks + layout.kf);
         }
 
+        if let Some((c, _)) = layout.contacts.iter().zip(&contact_faces).find(|(_, n)| **n == 0) {
+            let name = |i: usize| solids.get(i).map_or("?", |s| s.body.as_str());
+            return Err(Error::Invalid(format!(
+                "thermal contact `{}–{}`: the two solids share no cell face on this lattice (they do not touch, or a finer spacing resolves them)",
+                name(c.solids[0]),
+                name(c.solids[1])
+            )));
+        }
         let m = cells.len();
         let mut worst: f64 = 0.0;
         for c in &cell_data {

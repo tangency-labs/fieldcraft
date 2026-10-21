@@ -646,7 +646,7 @@ impl Flow {
                         let wall = wall_velocity(face).is_some() || is_slip(face);
                         wall.then(|| ts.faces.get(face.index()).copied().unwrap_or_default())
                     });
-                    let layout = Layout { grid: &grid, periodic, conducting: &conducting, walls, kf: ts.conductivity };
+                    let layout = Layout { grid: &grid, periodic, conducting: &conducting, walls, kf: ts.conductivity, contacts: &ts.contacts };
                     Some(SolidHeat::build(
                         &layout,
                         solids,

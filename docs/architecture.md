@@ -428,7 +428,8 @@ temperatures; House, Beckermann and Smith's cavity with a centred conducting bod
 limit every run; Ra 10⁵, ignored: +0.5 % on 48 cells, converging at second order to −0.22 %
 extrapolated); Rayleigh's square array of cylinders against the Perrins series (conducting
 rods within 0.3 %, insulating ones a first-order staircase error, −0.85 % on 64 cells); a
-low-capacity solid with strong links stable at τ_T = 0.52. `crates/lbm/tests/benchmark.rs` (ignored, published
+low-capacity solid with strong links stable at τ_T = 0.52; a two-layer wall with a thermal contact
+dropping q R across it to round-off, and the heat across a contact conserved every step. `crates/lbm/tests/benchmark.rs` (ignored, published
 reference values): Schäfer–Turek 2D-1 and 2D-2, the lid-driven cavity at Re 100 (Ghia et al. 1982).
 
 ## Commands

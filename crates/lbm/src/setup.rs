@@ -112,6 +112,19 @@ pub struct ThermalSetup {
     pub conductivity: f64,
     /// The obstacles that conduct heat.
     pub solids: Vec<SolidSetup>,
+    /// The thermal interface layers between them.
+    pub contacts: Vec<ContactSetup>,
+}
+
+/// A thermal interface layer between two conducting solids, in the fluid's lattice heat units
+/// (`crate::conduction`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ContactSetup {
+    /// The two solids (indices into [`ThermalSetup::solids`]).
+    pub solids: [usize; 2],
+    /// Its resistance across one cell face, `R (ρ c)_f Δx / Δt` (the inverse of a lattice
+    /// conductance: a layer one cell thick of lattice conductivity k has 1 / k).
+    pub resistance: f64,
 }
 
 /// An obstacle that conducts heat, in the fluid's lattice heat units (`crate::conduction`).
@@ -275,6 +288,29 @@ fn solids(model: &Model, t: &fieldcraft_model::FluidThermal, obstacles: &[String
             return Err(Error::Invalid(format!("conducting solid `{}`: its material does not fit this lattice", c.body)));
         }
         out.push(SolidSetup { body: c.body.clone(), obstacle, conductivity, capacity, capacity_scale: 1.0, power });
+    }
+    Ok(out)
+}
+
+/// The domain's thermal contacts in lattice units, between `solids` (built from the same
+/// settings, in their order).
+fn contacts(t: &fieldcraft_model::FluidThermal, rho_c: f64, dt: f64, h: f64) -> Result<Vec<ContactSetup>> {
+    let scale = rho_c * h / dt;
+    let mut out = Vec::with_capacity(t.contacts.len());
+    for c in &t.contacts {
+        let [a, b] = &c.bodies;
+        let index = |body: &str| {
+            t.solids
+                .iter()
+                .position(|s| s.body == body)
+                .ok_or_else(|| Error::NotFound(format!("thermal contact `{a}–{b}`: `{body}` is not a conducting solid of the domain")))
+        };
+        let solids = [index(a)?, index(b)?];
+        let resistance = c.resistance() * scale;
+        if !(resistance > 0.0 && resistance.is_finite()) {
+            return Err(Error::Invalid(format!("thermal contact `{a}–{b}`: its resistance does not fit this lattice")));
+        }
+        out.push(ContactSetup { solids, resistance });
     }
     Ok(out)
 }
@@ -507,6 +543,7 @@ impl Setup {
                     heat_scale: rho_c * h * h * h / dt,
                     conductivity: alpha,
                     solids: solids(model, t, &domain.obstacles, rho_c, dt, h)?,
+                    contacts: contacts(t, rho_c, dt, h)?,
                 })
             }
         };
