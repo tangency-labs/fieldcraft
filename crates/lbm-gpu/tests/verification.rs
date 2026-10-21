@@ -733,8 +733,10 @@ fn a_thermal_contact_matches_the_cpu() {
         let mut t = FluidThermal { initial_temperature: kelvin(0.5), ..FluidThermal::default() };
         t.faces.y_min = ThermalCondition::Temperature { value: kelvin(0.0) };
         t.faces.y_max = ThermalCondition::Temperature { value: kelvin(1.0) };
-        t.solids =
-            vec![conducting("Die", 0.5 * dx * dx), fieldcraft_model::ConductingSolid { body: "Lid".into(), material: "Other".into(), power: 0.0 }];
+        t.solids = vec![
+            conducting("Die", 0.5 * dx * dx),
+            fieldcraft_model::ConductingSolid { body: "Lid".into(), material: "Other".into(), power: 0.0, limit: None },
+        ];
         t.contacts = vec![fieldcraft_model::ThermalContact {
             bodies: ["Die".into(), "Lid".into()],
             resistance: Some(1.25),

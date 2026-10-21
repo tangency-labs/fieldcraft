@@ -365,6 +365,10 @@ pub struct ConductingSolid {
     /// The heat it generates (power), spread evenly over its volume; negative draws heat out.
     #[serde(default, skip_serializing_if = "crate::contact::is_zero")]
     pub power: f64,
+    /// The highest temperature the component may reach (kelvin; a junction or case limit): the
+    /// solve reports its peak against it. None for no limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<f64>,
 }
 
 /// A thin layer of thermal interface material between two touching conducting solids (a paste,
@@ -528,6 +532,16 @@ impl FluidThermal {
         }
         for (i, c) in self.solids.iter().enumerate() {
             finite("power", c.power).map_err(|e| context("conducting solid", &c.body, e))?;
+            if let Some(limit) = c.limit {
+                finite("temperature limit", limit).map_err(|e| context("conducting solid", &c.body, e))?;
+                if limit <= 0.0 {
+                    return Err(context(
+                        "conducting solid",
+                        &c.body,
+                        Error::Invalid(format!("the temperature limit {limit} K is not above absolute zero")),
+                    ));
+                }
+            }
             if !obstacles.contains(&c.body) {
                 return Err(Error::Invalid(format!("conducting solid `{}` is not an obstacle of the domain (list it in `obstacles`)", c.body)));
             }
@@ -826,6 +840,22 @@ impl Model {
         self.replace_fluid_domain(name, d)
     }
 
+    /// Set (or, with `None`, clear) the temperature limit of one of a domain's conducting solids.
+    pub fn set_component_limit(&mut self, name: &str, body: &str, limit: Option<f64>) -> Result<()> {
+        let mut d = self.fluid_domains.get(name).cloned().ok_or_else(|| Error::NotFound(format!("fluid domain `{name}`")))?;
+        let solid = d.thermal.as_mut().and_then(|t| t.solids.iter_mut().find(|c| c.body == body)).ok_or_else(|| {
+            context(
+                "fluid domain",
+                name,
+                Error::Invalid(format!(
+                    "`{body}` is not a conducting solid of the domain, so it has no temperature to limit (list it in the thermal settings' `solids`)"
+                )),
+            )
+        })?;
+        solid.limit = limit;
+        self.replace_fluid_domain(name, d)
+    }
+
     pub fn add_fluid_domain(&mut self, name: &str, domain: FluidDomain) -> Result<()> {
         self.check_fluid_domain(&domain).map_err(|e| context("fluid domain", name, e))?;
         insert_new(&mut self.fluid_domains, "fluid domain", name, domain)
@@ -981,8 +1011,8 @@ mod tests {
             d.thermal = Some(FluidThermal {
                 initial_temperature: 293.15,
                 solids: vec![
-                    ConductingSolid { body: "Sink".into(), material: "Alu".into(), power: 0.0 },
-                    ConductingSolid { body: "Pcb".into(), material: "Board".into(), power: 5.0 },
+                    ConductingSolid { body: "Sink".into(), material: "Alu".into(), power: 0.0, limit: None },
+                    ConductingSolid { body: "Pcb".into(), material: "Board".into(), power: 5.0, limit: Some(368.15) },
                 ],
                 ..FluidThermal::default()
             });
@@ -997,6 +1027,8 @@ mod tests {
             ("not an obstacle", with(&|d| d.obstacles.truncate(1))),
             ("listed twice", with(&|d| solids(d)[1].body = "Sink".into())),
             ("power not a number", with(&|d| solids(d)[0].power = f64::NAN)),
+            ("limit not a number", with(&|d| solids(d)[0].limit = Some(f64::INFINITY))),
+            ("limit at absolute zero", with(&|d| solids(d)[0].limit = Some(0.0))),
             ("no such material", with(&|d| solids(d)[0].material = "Nope".into())),
             ("no conductivity", with(&|d| solids(d)[0].material = "Steel".into())),
             (
@@ -1021,6 +1053,19 @@ mod tests {
         let json = serde_json::to_string(m.fluid_domain("Flow").unwrap()).unwrap();
         assert_eq!(&serde_json::from_str::<FluidDomain>(&json).unwrap(), m.fluid_domain("Flow").unwrap());
         assert!(!serde_json::to_string(&FluidThermal::default()).unwrap().contains("solids"));
+        // a solid without a limit writes none, and one written before limits reads as none
+        assert!(json.contains(r#""limit":368.15"#) && json.matches("limit").count() == 1, "{json}");
+        let old: ConductingSolid = serde_json::from_str(r#"{"body": "Sink", "material": "Aluminium"}"#).unwrap();
+        assert_eq!(old.limit, None);
+        // a limit set and cleared on a conducting solid; refused on a body that is not one
+        m.set_component_limit("Flow", "Sink", Some(358.15)).unwrap();
+        assert_eq!(m.fluid_domain("Flow").unwrap().solids().next().unwrap().limit, Some(358.15));
+        m.set_component_limit("Flow", "Sink", None).unwrap();
+        assert_eq!(m.fluid_domain("Flow").unwrap().solids().next().unwrap().limit, None);
+        let e = m.set_component_limit("Flow", "Nope", Some(358.15)).unwrap_err().to_string();
+        assert!(e.contains("`Nope` is not a conducting solid"), "{e}");
+        assert!(m.set_component_limit("Flow", "Sink", Some(-1.0)).is_err());
+        assert!(m.set_component_limit("Nope", "Sink", Some(358.15)).is_err());
     }
 
     #[test]
@@ -1046,8 +1091,8 @@ mod tests {
             d.obstacles = vec!["Die".into(), "Lid".into(), "Case".into()];
             let mut t = FluidThermal {
                 solids: vec![
-                    ConductingSolid { body: "Die".into(), material: "Alu".into(), power: 1.0 },
-                    ConductingSolid { body: "Lid".into(), material: "Alu".into(), power: 0.0 },
+                    ConductingSolid { body: "Die".into(), material: "Alu".into(), power: 1.0, limit: None },
+                    ConductingSolid { body: "Lid".into(), material: "Alu".into(), power: 0.0, limit: None },
                 ],
                 contacts: vec![paste(Some(1e-5), None, None)],
                 ..FluidThermal::default()

@@ -97,7 +97,8 @@ fn contact_column(n: usize, power: f64, contact: fieldcraft_model::ThermalContac
     let mut d = slab_column(n, [0.0, 1.0], power);
     d.obstacles = vec!["Die".into(), "Lid".into()];
     let th = d.thermal.as_mut().unwrap();
-    th.solids = vec![conducting("Die", power), fieldcraft_model::ConductingSolid { body: "Lid".into(), material: "Other".into(), power: 0.0 }];
+    th.solids =
+        vec![conducting("Die", power), fieldcraft_model::ConductingSolid { body: "Lid".into(), material: "Other".into(), power: 0.0, limit: None }];
     th.contacts = vec![contact];
     d
 }

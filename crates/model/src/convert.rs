@@ -273,8 +273,11 @@ impl Quantities for FluidDomain {
             for SurfaceThermalBoundary { face: _, condition } in surfaces {
                 thermal_condition(condition, f);
             }
-            for ConductingSolid { body: _, material: _, power } in solids {
+            for ConductingSolid { body: _, material: _, power, limit } in solids {
                 f(Q::Power, power);
+                if let Some(t) = limit {
+                    f(Q::Temperature, t);
+                }
             }
             for ThermalContact { bodies: _, resistance, thickness, conductivity } in contacts {
                 if let Some(r) = resistance {
