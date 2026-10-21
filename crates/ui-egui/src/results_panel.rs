@@ -6,7 +6,7 @@
 //! units ([`Plot::units`]): the result is stored in SI and converted here as it is shown.
 
 use egui::{Align2, Color32, FontId, Pos2, Rect, RichText, Stroke, pos2, vec2};
-use fieldcraft_engine::results::{Field, Kind, Quantity, shown as shown_in, true_scale, unit_of, with_unit as titled};
+use fieldcraft_engine::results::{ComponentCheck, Field, FluidResult, Kind, Quantity, shown as shown_in, true_scale, unit_of, with_unit as titled};
 use fieldcraft_explicit::{Energies, ExplicitResult};
 use serde_json::{Value, json};
 
@@ -394,6 +394,9 @@ pub fn controls(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) 
             }
         });
         ui.label(RichText::new(format!("t = {}", with_unit(number(at), unit_of(Quantity::Time, &plot.units).as_deref()))).color(t.text_dim));
+        if let Kind::Fluid(f) = plot.result.kind() {
+            component_limits(ui, f, &plot.units, t);
+        }
     } else if let Some((k, factor, n)) = plot.frame().filter(|_| matches!(plot.result.kind(), Kind::Static(_))) {
         // A nonlinear static step: its increments, the deformed shape following the slider.
         ui.separator();
@@ -953,6 +956,74 @@ fn heat_flows(ui: &mut egui::Ui, flows: &Value, units: &fieldcraft_model::Displa
     });
 }
 
+/// The conducting solids in the order the limits list shows them: those over their limit
+/// first, then those under it, each from the smallest margin up, then those without a limit.
+fn by_margin(checks: &[ComponentCheck]) -> Vec<&ComponentCheck> {
+    let mut rows: Vec<_> = checks.iter().collect();
+    rows.sort_by(|a, b| {
+        let rank = |c: &ComponentCheck| match c.ok {
+            Some(false) => 0,
+            Some(true) => 1,
+            None => 2,
+        };
+        rank(a).cmp(&rank(b)).then(a.margin.unwrap_or(f64::INFINITY).total_cmp(&b.margin.unwrap_or(f64::INFINITY)))
+    });
+    rows
+}
+
+/// A fluid step's conducting solids against their temperature limits: the verdict, then per
+/// solid its peak, limit and margin, those over their limit first and marked.
+fn component_limits(ui: &mut egui::Ui, f: &FluidResult, units: &fieldcraft_model::DisplaySystem, t: &Tokens) {
+    let checks = f.components();
+    if checks.iter().all(|c| c.peak.is_none()) {
+        return;
+    }
+    ui.separator();
+    let unit = unit_of(Quantity::Temperature, units);
+    ui.label(RichText::new(titled("Component temperatures", unit.as_deref())).color(t.text_dim));
+    let over = checks.iter().filter(|c| c.ok == Some(false)).count();
+    let limited = checks.iter().filter(|c| c.limit.is_some()).count();
+    match f.components_ok() {
+        Some(true) => {
+            ui.label(RichText::new(format!("✔ Every component stays under its limit ({limited} checked)")).color(t.ok));
+        }
+        Some(false) => {
+            ui.label(RichText::new(format!("⚠ {over} of {limited} components over their limit")).color(t.error));
+        }
+        None if limited == 0 => {
+            ui.label(RichText::new("No temperature limits: set one per conducting solid").small().color(t.text_dim));
+        }
+        None => {}
+    }
+    let temperature = |k: f64| number(shown_in(Quantity::Temperature, k, units));
+    egui::Grid::new("fc_results_components").num_columns(4).spacing(vec2(8.0, 2.0)).striped(true).show(ui, |ui| {
+        let difference = unit_of(Quantity::TemperatureDifference, units);
+        for h in ["", "Peak", "Limit", &titled("Margin", difference.as_deref())] {
+            ui.label(RichText::new(h).small().color(t.text_dim));
+        }
+        ui.end_row();
+        for c in by_margin(&checks) {
+            let (mark, colour) = match c.ok {
+                Some(false) => ("⚠ ", t.error),
+                Some(true) => ("✔ ", t.ok),
+                None => ("", t.text),
+            };
+            let tip = c.peak.map(|p| {
+                let at = with_unit(number(shown_in(Quantity::Time, p.time, units)), unit_of(Quantity::Time, units).as_deref());
+                if p.steady { format!("Steady value (t = {at})") } else { format!("Highest over the frames, at t = {at}") }
+            });
+            let name = ui.label(RichText::new(format!("{mark}{}", c.body)).color(colour));
+            if let Some(tip) = tip {
+                name.on_hover_text(tip);
+            }
+            ui.label(c.peak.map_or("—".into(), |p| temperature(p.temperature)));
+            ui.label(c.limit.map_or("—".into(), temperature));
+            ui.label(RichText::new(c.margin.map_or("—".into(), |m| number(shown_in(Quantity::TemperatureDifference, m, units)))).color(colour));
+            ui.end_row();
+        }
+    });
+}
+
 /// The reaction sums: per set and over the model, the force and the moment about the point, and
 /// the applied total beside the reacted one (they balance in equilibrium). Round-off below a
 /// billionth of the largest force (moment) is 0.
@@ -1027,6 +1098,22 @@ mod tests {
         assert!(frame_text(false, 64, 65, 16.0, Some("s")).starts_with(", frame 64 of 65: t = 16"));
         assert!(frame_text(false, 0, 65, 0.0, Some("s")).starts_with(", frame 0 of 65: t = "));
         assert!(frame_text(true, 4, 5, 1.0, None).starts_with(", increment 4 of 4: load factor "));
+    }
+
+    /// #672: the components over their limit come first, the worst on top, then those under it
+    /// from the smallest margin, then those without a limit.
+    #[test]
+    fn components_over_their_limit_are_listed_first() {
+        let check = |body: &str, margin: Option<f64>| ComponentCheck {
+            body: body.into(),
+            peak: Some(fieldcraft_engine::results::Peak { temperature: 350.0, time: 1.0, steady: true }),
+            limit: margin.map(|_| 360.0),
+            margin,
+            ok: margin.map(|m| m >= 0.0),
+        };
+        let checks = [check("Sink", None), check("Vrm", Some(12.0)), check("Die", Some(-3.0)), check("Ram", Some(2.0)), check("Gpu", Some(-8.0))];
+        let order: Vec<&str> = by_margin(&checks).iter().map(|c| c.body.as_str()).collect();
+        assert_eq!(order, ["Gpu", "Die", "Ram", "Vrm", "Sink"]);
     }
 
     #[test]
