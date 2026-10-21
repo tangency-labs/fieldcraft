@@ -76,3 +76,78 @@ fn cell_updates_per_second() {
         }
     }
 }
+
+/// The process's peak resident memory so far (Linux `VmHWM`), bytes; 0 elsewhere.
+fn peak_resident() -> u64 {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|s| s.lines().find(|l| l.starts_with("VmHWM:")).and_then(|l| l.split_whitespace().nth(1)).and_then(|v| v.parse::<u64>().ok()))
+        .map_or(0, |kb| kb * 1024)
+}
+
+/// Conjugate heat transfer, CPU against GPU: air past a powered conducting base with six
+/// conducting fin plates in a channel (`side` cells across, twice as long), heat on. Steady
+/// state does not matter here: a fixed number of steps of the full CHT step on each backend,
+/// and the host's peak memory around building the device flow. Set `FIELDCRAFT_CHT_SIDE`
+/// (default 64) for a bigger grid.
+#[test]
+#[ignore]
+fn conjugate_cell_updates_per_second() {
+    let side: usize = std::env::var("FIELDCRAFT_CHT_SIDE").ok().and_then(|v| v.parse().ok()).unwrap_or(64);
+    let (l, h) = (2.0 * side as f64, side as f64);
+    let mut d = domain([0.0; 3], [l, h, h], 1.0);
+    d.faces.x_min = FaceCondition::Velocity { velocity: [0.05, 0.0, 0.0], profile: fieldcraft_model::Profile::Uniform };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: fieldcraft_model::Outflow::Convective };
+    let mut solids = vec![conducting("Base", 1.0)];
+    let mut obstacles = vec![obstacle("Base", cuboid([0.3 * l, 0.25 * h, 0.0], [0.6 * l, 0.75 * h, 0.1 * h]), &CUBOID_FACES)];
+    for k in 0..6 {
+        let y = 0.28 * h + k as f64 * 0.08 * h;
+        let name = format!("Fin{k}");
+        obstacles.push(obstacle(&name, cuboid([0.3 * l, y, 0.1 * h], [0.6 * l, y + 0.03 * h, 0.6 * h]), &CUBOID_FACES));
+        solids.push(conducting(&name, 0.0));
+    }
+    d.obstacles = obstacles.iter().map(|o| o.body.clone()).collect();
+    d.thermal = Some(fieldcraft_model::FluidThermal { initial_temperature: kelvin(20.0), solids, ..Default::default() });
+    let steps = 100;
+    let procedure = fieldcraft_model::Procedure::Fluid {
+        domain: "Flow".into(),
+        end_time: None,
+        steps: Some(steps),
+        time_step: Some(1.0),
+        frames: 1,
+        magic: None,
+        collision: Some(fieldcraft_model::Collision::Regularized),
+        steady: None,
+    };
+    let m = cht_model([1.0, 0.02, 0.03], (2.0, [2.0; 3], 1.0), d, procedure);
+    let (_, mut cpu) = prepare(&m, &obstacles);
+    let cells = cpu.grid().len();
+    let conducting: usize = Backend::conducting(&cpu).iter().map(Vec::len).sum();
+    let before = peak_resident();
+    let policy = Policy::from_env().expect("FIELDCRAFT_GPU names a policy");
+    let Ok(mut gpu) = GpuFlow::new(&cpu, policy) else {
+        println!("skipping the conjugate case: no GPU or not enough memory");
+        return;
+    };
+    let after = peak_resident();
+    gpu.advance(1).unwrap();
+    let start = std::time::Instant::now();
+    gpu.advance(steps).unwrap();
+    let _ = gpu.heat().unwrap();
+    let g = start.elapsed().as_secs_f64();
+    let cpu_steps = (steps / 10).max(5);
+    let start = std::time::Instant::now();
+    cpu.advance(cpu_steps).unwrap();
+    let c = start.elapsed().as_secs_f64();
+    let rate = |steps: u64, s: f64| cells as f64 * steps as f64 / s / 1e6;
+    println!(
+        "conjugate, {cells} cells ({conducting} conducting) on {}: GPU {:.1} M cell updates/s, CPU {:.1} ({} threads): {:.1}x; host peak {:.0} B/cell before the device flow, +{:.0} B/cell building it",
+        gpu.adapter_name(),
+        rate(steps, g),
+        rate(cpu_steps, c),
+        std::thread::available_parallelism().map_or(1, |n| n.get()),
+        rate(steps, g) / rate(cpu_steps, c),
+        before as f64 / cells as f64,
+        after.saturating_sub(before) as f64 / cells as f64,
+    );
+}

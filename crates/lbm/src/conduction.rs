@@ -117,6 +117,8 @@ pub struct Interface {
     pub q: u8,
     pub solid: u32,
     pub group: u32,
+    /// The link's index among the flow's links (`Flow::links`).
+    pub link: u32,
     /// The series weight `k_s / (k_s + k_f)` of the interface temperature: the link's
     /// conductance is `2 k_f weight` (`series(k_s, k_f)`).
     pub weight: f64,

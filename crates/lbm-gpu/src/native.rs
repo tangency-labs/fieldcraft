@@ -13,6 +13,8 @@ use wgpu::util::DeviceExt;
 
 const SHADER: &str = include_str!("lbm.wgsl");
 const WG: u32 = 256;
+/// The widest row of workgroups. A dispatch wider than one row is exactly this wide ([`groups`]),
+/// so the shader flattens every dispatch's workgroups with this one row width.
 const MAX_GROUPS_X: u32 = 32768;
 const KIND_PULL: u32 = 0;
 const KIND_BOUNCE: u32 = 1;
@@ -56,7 +58,8 @@ fn reserved<T>(len: usize, what: &str) -> Result<Vec<T>> {
     Ok(v)
 }
 
-/// Workgroup counts (x, y) covering `count` items.
+/// Workgroup counts (x, y) covering `count` items: one row of up to [`MAX_GROUPS_X`], or rows of
+/// exactly that many.
 fn groups(count: usize) -> Result<(u32, u32)> {
     let total = u32::try_from(count.div_ceil(WG as usize).max(1)).map_err(|_| Error::Limit("too many cells for one dispatch".into()))?;
     let gx = total.min(MAX_GROUPS_X);
@@ -155,6 +158,97 @@ pub struct GpuFlow {
     /// Each group's share of the momentum from the populations' weights, which the kernel leaves
     /// out (`link_forces` sums the deviations): added to what it reads back.
     weight_forces: Vec<[f64; 3]>,
+    /// The conducting solids, when there are any.
+    solid: Option<Solids>,
+}
+
+/// The conducting solids on the device (see `lbm.wgsl`, "Conducting solids").
+struct Solids {
+    /// Their state (the temperatures first, as θ = T − T₀).
+    state: wgpu::Buffer,
+    /// Their cells (grid indices) and each solid's cells.
+    cells: Vec<u32>,
+    by_solid: Vec<Vec<u32>>,
+    substeps: u32,
+    cell_groups: (u32, u32),
+    link_groups: (u32, u32),
+}
+
+/// A conducting cell's face kinds, as `lbm.wgsl` names them.
+const FACE_NONE: u32 = 0;
+const FACE_SOLID: u32 = 1;
+const FACE_HELD: u32 = 2;
+const FACE_FLUX: u32 = 3;
+
+/// The conducting solids on the device: their data in the layouts `lbm.wgsl` reads ("Conducting
+/// solids"), its params, and what the host keeps of them.
+struct SolidUpload {
+    u: Vec<u32>,
+    f: Vec<f32>,
+    state: Vec<f32>,
+    params: [u32; 4],
+    cells: Vec<u32>,
+    by_solid: Vec<Vec<u32>>,
+    substeps: u32,
+}
+
+/// The conducting solids' data, temperatures as θ relative to `t0`.
+fn solid_data(solid: &fieldcraft_lbm::conduction::SolidHeat, t0: f64) -> Result<SolidUpload> {
+    use fieldcraft_lbm::conduction::Face;
+    let u = |v: usize| u32::try_from(v).map_err(|_| Error::Limit("too many conducting cells for the GPU".into()));
+    let m = solid.cells.len();
+    let k = solid.interface.len();
+    // The interface links ordered by conducting cell (stable: the CPU's order within a cell),
+    // and each cell's first one.
+    let mut links: Vec<&fieldcraft_lbm::conduction::Interface> = solid.interface.iter().collect();
+    links.sort_by_key(|l| l.solid);
+    let mut count = vec![0usize; m + 1];
+    for l in &links {
+        if let Some(c) = count.get_mut(l.solid as usize + 1) {
+            *c += 1;
+        }
+    }
+    let mut su = reserved(2 * m + 1 + 4 * k + 12 * m, "conducting cells")?;
+    su.extend_from_slice(&solid.cells);
+    let mut start = 0usize;
+    for c in &count[..m + 1] {
+        start += c;
+        su.push(u(start)?);
+    }
+    for l in &links {
+        su.extend_from_slice(&[l.cell, u32::from(l.q), l.solid, l.link]);
+    }
+    let mut sf = reserved(14 * m + k, "conducting cells")?;
+    sf.extend(solid.cell.iter().map(|c| c.capacity as f32));
+    sf.extend(solid.cell.iter().map(|c| c.source as f32));
+    for c in &solid.cell {
+        for face in &c.faces {
+            // A wall's `other` is its box face, where the heat it takes is counted.
+            let (kind, other, g, value) = match *face {
+                Face::None => (FACE_NONE, 0, 0.0, 0.0),
+                Face::Solid { other, g } => (FACE_SOLID, other, g, 0.0),
+                Face::Held { t, g, wall } => (FACE_HELD, u32::from(wall), g, t - t0),
+                Face::Flux { q, wall } => (FACE_FLUX, u32::from(wall), 0.0, q),
+            };
+            su.extend_from_slice(&[kind, other]);
+            sf.extend_from_slice(&[g as f32, value as f32]);
+        }
+    }
+    sf.extend(links.iter().map(|l| l.weight as f32));
+    let mut state = filled(11 * m + 3 * k, 0.0f32, "conducting state")?;
+    for (slot, temp) in state.iter_mut().zip(&solid.temperature) {
+        *slot = (temp - t0) as f32;
+    }
+    let substeps = solid.substeps.max(1);
+    Ok(SolidUpload {
+        u: su,
+        f: sf,
+        state,
+        params: [u(m)?, u(k)?, 0, (1.0 / substeps as f32).to_bits()],
+        cells: solid.cells.clone(),
+        by_solid: solid.by_solid.clone(),
+        substeps,
+    })
 }
 
 impl GpuFlow {
@@ -172,9 +266,6 @@ impl GpuFlow {
 
     /// [`GpuFlow::new`] with `options`.
     pub fn with_options(flow: &Flow, policy: Policy, options: Options) -> Result<GpuFlow> {
-        if flow.thermal().is_some_and(|t| t.solid().is_some()) {
-            return Err(Error::Invalid("the GPU backend does not conduct heat through solids yet: solve on the CPU (`backend: \"cpu\"`)".into()));
-        }
         if let Some(zone) = flow.zones().first() {
             return Err(Error::Invalid(format!(
                 "the GPU backend does not step fans or porous zones yet (`{}`): solve on the CPU (`backend: \"cpu\"`)",
@@ -220,31 +311,10 @@ impl GpuFlow {
             )));
         }
 
-        // The state and the flags.
-        // Populations as deviations from their weights (see lbm.wgsl); solid cells stay zero.
-        let mut f = filled(Q * n, 0.0f32, "populations")?;
-        for q in 0..Q {
-            let w = fieldcraft_lbm::lattice::W.get(q).copied().unwrap_or(0.0);
-            for cell in 0..n {
-                if let (Some(slot), true) = (f.get_mut(q * n + cell), flow.is_fluid(cell)) {
-                    *slot = (flow.population(q, cell) - w) as f32;
-                }
-            }
-        }
-        // The scalar populations as deviations from w_q T₀ (see lbm.wgsl).
+        // The state and the flags. The populations go up one direction at a time (below), so
+        // the host never holds a whole single-precision copy of them beside the flow's.
         let thermal = flow.thermal();
         let t0 = thermal.map_or(0.0, |t| t.initial());
-        let mut tpop = filled(if thermal.is_some() { QT * n } else { 0 }, 0.0f32, "temperature populations")?;
-        if thermal.is_some() {
-            for q in 0..QT {
-                let w = WT.get(q).copied().unwrap_or(0.0) * t0;
-                for cell in 0..n {
-                    if let (Some(slot), true) = (tpop.get_mut(q * n + cell), flow.is_fluid(cell)) {
-                        *slot = (flow.thermal_population(q, cell) - w) as f32;
-                    }
-                }
-            }
-        }
         let mut fluid = filled(n, false, "cell flags")?;
         let mut fluid_u32 = filled(n, 0u32, "cell flags")?;
         for cell in 0..n {
@@ -362,7 +432,7 @@ impl GpuFlow {
             u(flow.grid().cells[0])?,
             u(flow.grid().cells[1])?,
             u(flow.grid().cells[2])?,
-            cells.0,
+            MAX_GROUPS_X,
             u(links.len())?,
             u(open.len())?,
             u(group_count)?,
@@ -412,9 +482,12 @@ impl GpuFlow {
                 mapped_at_creation: false,
             })
         };
+        let solid = thermal.and_then(|t| t.solid()).map(|sh| solid_data(sh, t0)).transpose()?;
+        let solid_params = solid.as_ref().map_or([0; 4], |sd| sd.params);
         let params = [0u32, 1].map(|phase| {
             let mut bytes = params.clone();
             bytes.extend_from_slice(&bytes_u32(&[phase, 0, 0, 0]));
+            bytes.extend_from_slice(&bytes_u32(&solid_params));
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("lbm params"),
                 contents: &bytes,
@@ -423,7 +496,27 @@ impl GpuFlow {
         });
         let fluid_buf = storage("lbm fluid", &bytes_u32(&fluid_u32));
         // AA reuses binding g for boundary scratch only, never another full population field.
-        let pops = [storage("lbm f", &bytes_f32(&f)), empty("lbm g / AA boundary scratch", if aa { 4 * links.len() as u64 } else { pop_bytes })];
+        let pops = [empty("lbm f", pop_bytes), empty("lbm g / AA boundary scratch", if aa { 4 * links.len() as u64 } else { pop_bytes })];
+        // Populations as deviations (see lbm.wgsl), one direction at a time: `value(q, cell)` less
+        // `offset(q)`, zero in solid cells. Each direction's write is submitted and waited for
+        // before the next: a write's staging copy lives until its submission completes, so the
+        // directions would otherwise pile up into a whole copy of the populations.
+        let mut direction = filled(n, 0.0f32, "populations")?;
+        let mut upload = |buffer: &wgpu::Buffer, count: usize, offset: &dyn Fn(usize) -> f64, value: &dyn Fn(usize, usize) -> f64| -> Result<()> {
+            for q in 0..count {
+                let w = offset(q);
+                for (cell, slot) in direction.iter_mut().enumerate() {
+                    *slot = if flow.is_fluid(cell) { (value(q, cell) - w) as f32 } else { 0.0 };
+                }
+                queue.write_buffer(buffer, 4 * (q * n) as u64, &bytes_f32(&direction));
+                queue.submit([]);
+                device
+                    .poll(wgpu::PollType::Wait { submission_index: None, timeout: Some(DEVICE_TIMEOUT) })
+                    .map_err(|e| gpu_error(format!("the device did not answer within {} s: {e}", DEVICE_TIMEOUT.as_secs())))?;
+            }
+            Ok(())
+        };
+        upload(&pops[0], Q, &|q| fieldcraft_lbm::lattice::W.get(q).copied().unwrap_or(0.0), &|q, cell| flow.population(q, cell))?;
         let link_u = storage("lbm links", &bytes_u32(&link_u));
         let link_f = storage("lbm link du", &bytes_f32(&link_f));
         let open_u = storage("lbm open cells", &bytes_u32(&open_u));
@@ -438,12 +531,19 @@ impl GpuFlow {
         let partials = empty("lbm partials", 4 * partial_count as u64);
         let therm_bytes = elem * (QT * n) as u64;
         let therm = if thermal.is_some() {
-            [storage("lbm t", &bytes_f32(&tpop)), empty("lbm t2", therm_bytes)]
+            let tb = [empty("lbm t", therm_bytes), empty("lbm t2", therm_bytes)];
+            // The scalar populations as deviations from w_q T₀ (see lbm.wgsl).
+            upload(&tb[0], QT, &|q| WT.get(q).copied().unwrap_or(0.0) * t0, &|q, cell| flow.thermal_population(q, cell))?;
+            tb
         } else {
             [empty("lbm t", 16), empty("lbm t2", 16)]
         };
         let group_t = storage("lbm thermal conditions", &bytes_f32(&group_t));
         let open_t = storage("lbm open temperatures", &bytes_f32(&open_t));
+        let (solid_u, solid_f, solid_s) = solid.as_ref().map_or((&[][..], &[][..], &[][..]), |sd| (&sd.u[..], &sd.f[..], &sd.state[..]));
+        let solid_u_buf = storage("lbm solid data", &bytes_u32(solid_u));
+        let solid_f_buf = storage("lbm solid values", &bytes_f32(solid_f));
+        let solid_s_buf = storage("lbm solid state", &bytes_f32(solid_s));
 
         let module = device
             .create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("fieldcraft lbm"), source: wgpu::ShaderSource::Wgsl(SHADER.into()) });
@@ -478,6 +578,9 @@ impl GpuFlow {
                 entry(17, write),
                 entry(18, read),
                 entry(19, read),
+                entry(20, read),
+                entry(21, read),
+                entry(22, write),
             ],
         });
         let bind = [0usize, 1].map(|k| {
@@ -505,6 +608,9 @@ impl GpuFlow {
                     wgpu::BindGroupEntry { binding: 17, resource: therm[1 - k].as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 18, resource: group_t.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 19, resource: open_t.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 20, resource: solid_u_buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 21, resource: solid_f_buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 22, resource: solid_s_buf.as_entire_binding() },
                 ],
             })
         });
@@ -532,6 +638,13 @@ impl GpuFlow {
             "stream_links_thermal",
             "open_thermal",
             "thermal_check",
+            "solid_ab",
+            "solid_sub0",
+            "solid_sub1",
+            "solid_copy",
+            "solid_scatter",
+            "solid_contrib",
+            "solid_wall_heat",
         ] {
             let p = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(name),
@@ -589,6 +702,17 @@ impl GpuFlow {
             steps_done: 0,
             exchange_cache: Some(vec![[0.0; 4]; group_count]),
             weight_forces,
+            solid: match solid {
+                Some(sd) => Some(Solids {
+                    state: solid_s_buf,
+                    cell_groups: groups(sd.cells.len())?,
+                    link_groups: groups(sd.params[1] as usize)?,
+                    cells: sd.cells,
+                    by_solid: sd.by_solid,
+                    substeps: sd.substeps,
+                }),
+                None => None,
+            },
         })
     }
 
@@ -730,10 +854,17 @@ impl GpuFlow {
 }
 
 impl GpuFlow {
+    /// The most dispatches one time step takes (the flow's, the scalar lattice's and the
+    /// solids' with their sub-steps).
+    fn dispatches_per_step(&self) -> usize {
+        let solid = self.solid.as_ref().map_or(0, |sd| 3 + sd.substeps as usize);
+        9 + solid
+    }
+
     /// One submission of `steps` (≤ MAX_CHUNK) time steps, then the stability check.
     fn advance_chunk(&mut self, steps: u64) -> Result<()> {
         self.queue.write_buffer(&self.stats, 0, &bytes_u32(&[0, 0, 0, 0]));
-        let mut commands = Vec::with_capacity(8 * MAX_CHUNK as usize + 3);
+        let mut commands = Vec::with_capacity(self.dispatches_per_step() * steps as usize + 6);
         for step in 0..steps {
             commands.push((self.current, "collide", self.cells));
             if !self.aa {
@@ -759,6 +890,18 @@ impl GpuFlow {
                 if self.link_count > 0 {
                     commands.push((self.current, "stream_links_thermal", self.links_groups));
                 }
+                if let Some(sd) = &self.solid {
+                    commands.push((self.current, "solid_ab", sd.cell_groups));
+                    for k in 0..sd.substeps {
+                        commands.push((self.current, if k % 2 == 0 { "solid_sub0" } else { "solid_sub1" }, sd.cell_groups));
+                    }
+                    if sd.substeps % 2 == 1 {
+                        commands.push((self.current, "solid_copy", sd.cell_groups));
+                    }
+                    commands.push((self.current, "solid_scatter", sd.link_groups));
+                }
+                // After the interface, as on the CPU: an inlet holds its temperature on its
+                // links into a solid too, and an outlet copies its neighbour's final populations.
                 if self.open_count > 0 {
                     commands.push((self.current, "open_thermal", self.open_groups));
                 }
@@ -766,10 +909,16 @@ impl GpuFlow {
             self.current ^= 1;
         }
         // The momentum (and heat) exchange of the last step, from its post-collision
-        // populations.
-        if self.link_count > 0 && self.group_count > 0 {
+        // populations; with solids also without fluid links, for their heat into box faces.
+        if (self.link_count > 0 || self.solid.is_some()) && self.group_count > 0 {
             commands.push((self.current ^ 1, "link_forces", self.links_groups));
+            if let Some(sd) = &self.solid {
+                commands.push((self.current ^ 1, "solid_contrib", sd.link_groups));
+            }
             commands.push((self.current ^ 1, "group_forces", self.force_groups));
+            if self.solid.is_some() {
+                commands.push((self.current ^ 1, "solid_wall_heat", (6, 1)));
+            }
         }
         if self.thermal.is_some() {
             commands.push((self.current, "thermal_check", self.cells));
@@ -805,9 +954,15 @@ impl Backend for GpuFlow {
     fn advance(&mut self, steps: u64) -> Result<()> {
         // Submissions of at most MAX_CHUNK steps: the stability check runs after each, so a
         // run that blows up is caught within that many steps whatever the caller asks for.
+        // With timestamps every dispatch takes two queries of one query set.
+        let most = if self.kernel_times.is_some() {
+            ((u64::from(wgpu::QUERY_SET_MAX_QUERIES) / 2).saturating_sub(6) / self.dispatches_per_step() as u64).clamp(1, MAX_CHUNK)
+        } else {
+            MAX_CHUNK
+        };
         let mut left = steps;
         while left > 0 {
-            let chunk = left.min(MAX_CHUNK);
+            let chunk = left.min(most);
             self.advance_chunk(chunk)?;
             left -= chunk;
         }
@@ -829,9 +984,19 @@ impl Backend for GpuFlow {
             None => Vec::new(),
             Some(therm) => {
                 let t = self.read_f32(therm.get(self.current).ok_or_else(|| Error::Invalid("GPU: no thermal buffer".into()))?, QT * self.n)?;
-                (0..self.n)
+                let mut temperature: Vec<f64> = (0..self.n)
                     .map(|cell| self.initial_temperature + (0..QT).map(|q| t.get(q * self.n + cell).copied().map_or(0.0, f64::from)).sum::<f64>())
-                    .collect()
+                    .collect();
+                // The conducting cells' own temperatures.
+                if let Some(sd) = &self.solid {
+                    let theta = self.read_f32(&sd.state, sd.cells.len())?;
+                    for (cell, th) in sd.cells.iter().zip(theta) {
+                        if let Some(slot) = temperature.get_mut(*cell as usize) {
+                            *slot = self.initial_temperature + f64::from(th);
+                        }
+                    }
+                }
+                temperature
             }
         };
         Ok(Fields { density, velocity, temperature })
@@ -873,6 +1038,24 @@ impl Backend for GpuFlow {
     }
 
     fn conducting(&self) -> &[Vec<u32>] {
-        &[]
+        self.solid.as_ref().map_or(&[], |s| &s.by_solid)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The shader flattens every dispatch with one row width: a dispatch of several rows must be
+    /// exactly [`MAX_GROUPS_X`] wide, whatever the cell count (a link dispatch wider than the
+    /// cells' row once overlapped itself and skipped links), and cover its items.
+    #[test]
+    fn every_dispatch_of_several_rows_is_max_groups_x_wide() {
+        let row = (MAX_GROUPS_X * WG) as usize;
+        for count in [0, 1, 255, 256, 257, row - 1, row, row + 1, 3 * row - 7, 5_120_000, 15_360_000, 190_000_000] {
+            let (gx, gy) = groups(count).unwrap();
+            assert!(gy == 1 || gx == MAX_GROUPS_X, "{count}: {gx} × {gy}");
+            assert!((gx * gy * WG) as usize >= count, "{count}: {gx} × {gy}");
+        }
     }
 }

@@ -102,7 +102,7 @@ pub const HISTORY: CommandSpec = CommandSpec {
 pub const FLUID: CommandSpec = CommandSpec {
     id: "solve.fluid",
     label: "Solve Fluid Step",
-    params: r#"{"step": "Flow", "backend": "cpu", "max_cells": 16000000, "max_steps": 10000000, "max_cell_updates": 1e12, "max_frame_bytes": 2e9, "threads": 8} — runs a fluid step with the lattice Boltzmann solver (the only fluid step when `step` is left out): obstacles are triangulated from the open design or taken from imported surfaces; returns the time step, relaxation time, Mach number, mass, the largest speed of all frames (`max_speed`, at `max_speed_time`) and of the last frame (`final_max_speed`), over interior fluid cells (the open-boundary layers are excluded, convective outlets too, because a wake reaching a uniform pressure outlet distorts the last layer), the final force on every wall and, with heat, the thermal relaxation time, the fluid's temperature range and the heat into every wall, and per conducting solid (`solids`) its temperature range and mean, its power and the heat its faces give the fluid; with fans and porous zones, each one's volume flow and its pressure rise (a fan's operating point: `pressure_rise` from its curve, and `measured_pressure_rise`) or `pressure_drop`; the measured values are the static-pressure difference between the fluid cell layers just outside the zone, so they include the wall friction over its thickness plus one cell (final and mean over the last quarter of the run); `backend` is `cpu` (the default: double precision, the same result on every machine) or `gpu` (the step on the GPU `FIELDCRAFT_GPU` picks, single precision, within the backend's stated tolerance of the CPU; an error when the build has none); the caps may only be lowered; `threads` as for solve.static"#,
+    params: r#"{"step": "Flow", "backend": "cpu", "max_cells": 16000000, "max_steps": 10000000, "max_cell_updates": 1e12, "max_frame_bytes": 2e9, "threads": 8} (the caps for `backend: "gpu"`: 200000000 cells, 1e14 cell updates, 8e9 frame bytes) — runs a fluid step with the lattice Boltzmann solver (the only fluid step when `step` is left out): obstacles are triangulated from the open design or taken from imported surfaces; returns the time step, relaxation time, Mach number, mass, the largest speed of all frames (`max_speed`, at `max_speed_time`) and of the last frame (`final_max_speed`), over interior fluid cells (the open-boundary layers are excluded, convective outlets too, because a wake reaching a uniform pressure outlet distorts the last layer), the final force on every wall and, with heat, the thermal relaxation time, the fluid's temperature range and the heat into every wall, and per conducting solid (`solids`) its temperature range and mean, its power and the heat its faces give the fluid; with fans and porous zones, each one's volume flow and its pressure rise (a fan's operating point: `pressure_rise` from its curve, and `measured_pressure_rise`) or `pressure_drop`; the measured values are the static-pressure difference between the fluid cell layers just outside the zone, so they include the wall friction over its thickness plus one cell (final and mean over the last quarter of the run); `backend` is `cpu` (the default: double precision, the same result on every machine) or `gpu` (the step on the GPU `FIELDCRAFT_GPU` picks, single precision, within the backend's stated tolerance of the CPU; an error when the build has none); the caps may only be lowered; `threads` as for solve.static"#,
     form: Some(super::forms::SOLVE_FLUID),
     kind: CommandKind::Model,
     requires: &[Requirement::FluidDomain, Requirement::Step],
@@ -550,7 +550,12 @@ fn obstacles(s: &Session, domain: &FluidDomain) -> Result<Vec<Obstacle>> {
 }
 
 fn run_fluid(s: &mut Session, p: &Value) -> Result<Value> {
-    let defaults = fieldcraft_lbm::Limits::default();
+    let backend = match opt::<String>(p, "backend")? {
+        None => fieldcraft_lbm::Choice::Cpu,
+        Some(b) => fieldcraft_lbm::Choice::parse(&b)
+            .ok_or_else(|| EngineError::Params(format!("`backend` must be `cpu` or `gpu`, not `{}`", b.chars().take(40).collect::<String>())))?,
+    };
+    let defaults = fieldcraft_lbm::Limits::for_backend(backend);
     let limits = fieldcraft_lbm::Limits {
         max_cells: cap(p, "max_cells", defaults.max_cells)?,
         max_steps: cap(p, "max_steps", defaults.max_steps)?,
@@ -558,11 +563,6 @@ fn run_fluid(s: &mut Session, p: &Value) -> Result<Value> {
         max_frame_bytes: cap(p, "max_frame_bytes", defaults.max_frame_bytes)?,
     };
     let step = opt::<String>(p, "step")?;
-    let backend = match opt::<String>(p, "backend")? {
-        None => fieldcraft_lbm::Choice::Cpu,
-        Some(b) => fieldcraft_lbm::Choice::parse(&b)
-            .ok_or_else(|| EngineError::Params(format!("`backend` must be `cpu` or `gpu`, not `{}`", b.chars().take(40).collect::<String>())))?,
-    };
     let (_, domain) = fieldcraft_lbm::fluid_step(&s.model, step.as_deref())?;
     let obstacles = obstacles(s, domain)?;
     let model = &s.model;
@@ -1903,6 +1903,8 @@ pub(crate) mod tests {
             json!({"step": "Shear", "backend": 7}),
             // no device backend is registered in this test binary: an error, not a panic
             json!({"step": "Shear", "backend": "gpu"}),
+            json!({"step": "Shear", "backend": "gpu", "max_cells": 1e300}),
+            json!({"step": "Shear", "backend": "gpu", "max_cell_updates": 1e15}),
         ];
         for id in ["solve.fluid", "solve.probe", "solve.static", "solve.frequency"] {
             for p in &hostile {
@@ -1915,6 +1917,23 @@ pub(crate) mod tests {
                 }
             }
         }
+    }
+
+    /// The GPU's caps reach further than the CPU's (its populations are single precision and the
+    /// device checks its own buffers): 20 million cells are refused as a CPU cap and accepted as
+    /// a GPU one, and neither may be raised past its backend's default.
+    #[test]
+    fn the_gpu_backend_takes_larger_caps_than_the_cpu() {
+        let mut s = Session::default();
+        couette(&mut s);
+        let cpu = s.execute("solve.fluid", &json!({"step": "Shear", "max_cells": 20_000_000})).unwrap_err().to_string();
+        assert!(cpu.contains("max_cells"), "{cpu}");
+        // (no device backend is registered in this test binary, so the GPU run itself fails later)
+        let gpu = s.execute("solve.fluid", &json!({"step": "Shear", "backend": "gpu", "max_cells": 20_000_000})).unwrap_err().to_string();
+        assert!(!gpu.contains("max_cells"), "{gpu}");
+        let over = json!({"step": "Shear", "backend": "gpu", "max_cells": fieldcraft_lbm::Limits::GPU_MAX_CELLS + 1});
+        let over = s.execute("solve.fluid", &over).unwrap_err().to_string();
+        assert!(over.contains("max_cells"), "{over}");
     }
 
     /// A cantilever twisted and bent through a coupled reference point in a nonlinear step,

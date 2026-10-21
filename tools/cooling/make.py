@@ -44,6 +44,14 @@ POWER = {"W": 1.0, "mW": 1e-3, "kW": 1e3}
 # The AIO's half shroud at its 0.6 mm cells, mm: keep in step with cooling::aio_shroud.
 AIO_SPACING = 0.6
 AIO_SHROUD = ([-100.0, 70.0, 4.8], [15.2, 150.4, 123.0])
+# The graphics card (crates/engine/src/sample/gpu_card.rs, tools/cooling/gpu_card_recipe.py): the
+# intake's speed (mm/s) and radius (mm), the powers (W), and where the sections go (mm).
+CARD_INTAKE_SPEED = 2500.0
+CARD_INTAKE_R = 30.0
+CARD_POWER = {"Die": 275.0, "Memory": 20.0, "VRM": 25.0}
+CARD_INTAKE_C = 38.0
+CARD_MID_Y = 55.5            # the die's, the base's and the middle heat pipe's centre line
+CARD_FIN_Z = (9.0, 36.0)     # the fins' height over the base
 
 
 def ffmpeg(*args):
@@ -175,6 +183,25 @@ def aio(report, cold, hot):
             "airflow_limit_W": round(2 * half["airflow_limit_W"], 2), "effectiveness": half["effectiveness"], **common(report)}
 
 
+def gpu_card(report, cold, hot):
+    """The card: every solid's temperatures and the heat it gives the air, the airflow the
+    intake sets, the die-to-intake resistance, and a hand check of the air's rise."""
+    unit = report.get("units", {}).get("power")
+    if unit not in POWER:
+        raise SystemExit(f"unexpected heat unit {unit!r}")
+    solids = {}
+    for sr in report.get("solids", []):
+        t = sr.get("temperature", {})
+        solids[sr["body"]] = {"max_C": round(t.get("max", float("nan")), 1), "mean_C": round(t.get("mean", float("nan")), 1),
+                              "heat_to_air_W": round((sr.get("heat_to_fluid", {}).get("final") or 0.0) * POWER[unit], 1)}
+    power = sum(CARD_POWER.values())
+    flow = CARD_INTAKE_SPEED * 3.141592653589793 * CARD_INTAKE_R ** 2  # mm^3/s
+    die = solids.get("Die", {}).get("max_C", float("nan"))
+    return {"solids": solids, "power_W": power, "airflow_l_per_s": round(flow / 1e6, 2), "airflow_cfm": round(flow / 1e6 * 2.11888, 1),
+            "die_to_intake_K_per_W": round((die - CARD_INTAKE_C) / power, 3),
+            "hand_check_air_rise_K": round(power * 1000.0 / (RHO_CP * flow), 1), **common(report)}
+
+
 CASES = {
     "heat-sink": {
         "sample": "cooling-heat-sink", "numbers": heat_sink, "out": "cooling-heat-sink", "clip": False,
@@ -200,6 +227,22 @@ CASES = {
         "render": {"surface": False, "slice": {"axis": "x", "position": round(AIO_SHROUD[1][0] - AIO_SPACING / 2, 4)},
                    "camera": {"yaw": -70.0, "pitch": 18.0, "fit": True},
                    "caption": "AIO radiator · fan air through the channels (cutaway)"},
+    },
+    "gpu-card": {
+        # The steady field only (one frame): the clips move the section or the camera through it.
+        "sample": "cooling-gpu-card", "numbers": gpu_card, "out": "cooling-gpu-card", "clip": False,
+        "temperatures": [CARD_INTAKE_C, 95.0], "hide": ["Shroud"],
+        "render": {"slice": {"axis": "z", "position": 22.0}, "streamlines": {"count": 40},
+                   "camera": {"yaw": -38.0, "pitch": 30.0, "target": {"center_of": "bbox"}, "fit": True},
+                   "caption": "graphics card · 320 W, blower air at 38 °C"},
+        "sweeps": [
+            {"out": "cooling-gpu-card-fins", "caption": "air through the fins · horizontal section",
+             "slice": {"axis": "z"}, "positions": [CARD_FIN_Z[0] + (CARD_FIN_Z[1] - CARD_FIN_Z[0]) * k / 47 for k in range(48)],
+             "streamlines": {"count": 40}, "camera": [{"yaw": -38.0, "pitch": 30.0, "target": {"center_of": "bbox"}, "fit": True}]},
+            {"out": "cooling-gpu-card-section", "caption": "die, base, heat pipe and fins · vertical section",
+             "slice": {"axis": "y", "position": CARD_MID_Y}, "positions": None,
+             "camera": [{"yaw": -60.0 + 40.0 * k / 47, "pitch": 12.0, "target": {"center_of": "bbox"}, "fit": True} for k in range(48)]},
+        ],
     },
 }
 
@@ -296,6 +339,35 @@ def render_clip(mcp, report, render, font, frames_dir, mp4):
     return mp4
 
 
+def render_sweep(mcp, render, sweep, font, frames_dir, mp4):
+    """A clip of the steady field: the section moving through `positions`, or the camera along
+    its path, one picture per step, held at the end."""
+    frames_dir.mkdir(parents=True, exist_ok=True)
+    mcp.execute("results.streamlines", {"show": False})
+    if sweep.get("streamlines"):
+        mcp.execute("results.streamlines", dict({"show": True}, **sweep["streamlines"]))
+    positions = sweep["positions"] or [sweep["slice"]["position"]]
+    n = max(len(positions), len(sweep["camera"]))
+    bar = frames_dir / "bar.png"
+    bar.write_bytes(legend_bar(font, sweep["caption"], *render["clamp"], "°C", ""))
+    seq = frames_dir / "seq"
+    (seq / "caps").mkdir(parents=True, exist_ok=True)
+    count = 0
+    for k in range(n):
+        mcp.execute("results.slice", {"field": render["field"], **sweep["slice"], "position": positions[min(k, len(positions) - 1)]})
+        shot = frames_dir / f"f{k:04d}.png"
+        mcp.screenshot(shot, sweep["camera"][min(k, len(sweep["camera"]) - 1)])
+        for _ in range(FPS if k == n - 1 else 1):
+            os.link(shot, seq / f"{count:05d}.png")
+            os.link(bar, seq / "caps" / f"{count:05d}.png")
+            count += 1
+    mp4.parent.mkdir(parents=True, exist_ok=True)
+    ffmpeg("-framerate", FPS, "-i", seq / "%05d.png", "-framerate", FPS, "-i", seq / "caps" / "%05d.png",
+           "-filter_complex", BAR_UNDER, "-c:v", "libx264", "-preset", "veryslow", "-crf", "26", "-pix_fmt", "yuv420p",
+           "-movflags", "+faststart", mp4)
+    log(f"wrote clip {mp4} ({count} frames)")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("case", choices=sorted(CASES), help="which example to run")
@@ -335,10 +407,14 @@ def main():
         print(json.dumps(case["numbers"](report, *case["temperatures"]), indent=2), flush=True)
         if not args.no_render:
             render = {"field": "temperature", "clamp": case["temperatures"], **case["render"]}
+            if case.get("hide"):
+                mcp.execute("view.hide", {"items": [{"kind": "body", "name": b} for b in case["hide"]]})
             thumb = ROOT / "crates" / "ui-egui" / "thumbnails" / f"{case['sample']}.png" if args.thumbnail else None
             render_still(mcp, render, font, work, args.out / f"{case['out']}.png", thumb)
             if case["clip"] and not args.no_clip:
                 render_clip(mcp, report, render, font, args.frames_dir or work / "frames", args.out / f"{case['out']}.mp4")
+            for sweep in case.get("sweeps", []) if not args.no_clip else []:
+                render_sweep(mcp, render, sweep, font, (args.frames_dir or work / "frames") / sweep["out"], args.out / f"{sweep['out']}.mp4")
     finally:
         mcp.close()
         shutil.rmtree(work, ignore_errors=True)

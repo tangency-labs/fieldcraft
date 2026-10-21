@@ -20,6 +20,7 @@ use fieldcraft_model::units::{DisplaySystem, Preset, Quantity, Typed};
 use serde_json::{Value, json};
 
 mod cooling;
+mod gpu_card;
 mod heated_flow;
 
 /// A sample the app offers (Help › Samples, the empty viewport, `file.sample`, `--sample NAME`).
@@ -127,6 +128,14 @@ pub const SAMPLES: &[Sample] = &[
         design: Some(cooling::AIO_HALF_DESIGN),
         prepare: None,
         script: cooling::aio,
+    },
+    Sample {
+        name: "cooling-gpu-card",
+        label: "Graphics Card Cooling",
+        about: "A blower-cooled two-slot graphics card: 275 W conducting from the die through a copper base, heat pipes and fins into the air, with memory and VRMs (conjugate heat transfer; hours on a CPU)",
+        design: Some(gpu_card::DESIGN),
+        prepare: None,
+        script: gpu_card::card,
     },
     Sample {
         name: "heated-bracket",

@@ -309,3 +309,21 @@ pub fn add_solid_material(m: &mut Model, name: &str, density: f64, k: [f64; 3], 
     )
     .unwrap();
 }
+
+/// A model with fluid `Fluid` (`[density, kinematic viscosity, diffusivity]`, see [`hot_fluid`]),
+/// conducting material `Solid` (density, conductivity per axis, specific heat), domain `Flow`
+/// and step `Run`.
+pub fn cht_model(fluid: [f64; 3], solid: (f64, [f64; 3], f64), domain: FluidDomain, procedure: Procedure) -> Model {
+    let [rho, nu, alpha] = fluid;
+    let mut m = Model::default();
+    m.add_material("Fluid", hot_fluid(rho, nu, alpha)).unwrap();
+    add_solid_material(&mut m, "Solid", solid.0, solid.1, solid.2);
+    m.add_fluid_domain("Flow", domain).unwrap();
+    m.add_step(Step::new("Run", procedure), None).unwrap();
+    m
+}
+
+/// Obstacle `body` conducting in material `Solid` with `power`.
+pub fn conducting(body: &str, power: f64) -> fieldcraft_model::ConductingSolid {
+    fieldcraft_model::ConductingSolid { body: body.into(), material: "Solid".into(), power }
+}

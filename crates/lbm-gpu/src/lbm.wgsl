@@ -26,6 +26,13 @@
 // back for an adiabatic face, a flux added to the bounced population), takes its inlet
 // temperatures and outlet neighbours, and gives each group the heat its links exchanged (in
 // contrib.w and forces.w). The temperature feeds back as the buoyant acceleration −β g θ.
+//
+// Conducting solids (fieldcraft_lbm::conduction) step as the CPU's SolidHeat does, in f32 with
+// temperatures as θ = T − T₀: `solid_ab` sums each conducting cell's fluid links (their heat is
+// a − b θ_s), the sub-steps alternate between the two halves of the temperatures (`solid_sub0`,
+// `solid_sub1`; a sub-step needs the whole previous one, so each is its own dispatch) with the
+// links implicit and the faces explicit, and `solid_scatter` sets each link's population at the
+// solid's mean temperature over the step, so the heat the fluid loses is what the solid gains.
 
 override AA_MODE: bool = true;
 // The recursive regularised collision instead of the two-relaxation-time one
@@ -48,6 +55,7 @@ struct Params {
     nx: u32,
     ny: u32,
     nz: u32,
+    // The row width of every dispatch wider than one row (MAX_GROUPS_X in native.rs).
     groups_x: u32,
     links: u32,
     open: u32,
@@ -64,6 +72,9 @@ struct Params {
     therm: vec4<f32>,
     // Current AA orientation (x: 0 normal, 1 opposite directions at upstream neighbours).
     phase: vec4<u32>,
+    // Conducting solids: cells m (x), interface links k (y), padding (z), and 1 / sub-steps (w,
+    // as f32 bits).
+    solid: vec4<u32>,
 };
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -101,6 +112,13 @@ struct Params {
 @group(0) @binding(18) var<storage, read> group_t: array<vec4<f32>>;
 // Per open cell: whether it holds a temperature (x) and that temperature − T₀ (y).
 @group(0) @binding(19) var<storage, read> open_t: array<vec4<f32>>;
+// Conducting solids, m cells and k interface links, in three buffers whose layouts the `s_*`
+// functions below name: u32 data (cells, each cell's first link, the links, the faces), f32
+// values (capacities, sources, the faces' conductances and values, the links' weights) and the
+// state (θ, the links' sums, the mean θ, the heat into each box face, the links' terms).
+@group(0) @binding(20) var<storage, read> solid_u: array<u32>;
+@group(0) @binding(21) var<storage, read> solid_f: array<f32>;
+@group(0) @binding(22) var<storage, read_write> solid_s: array<f32>;
 
 var<workgroup> red: array<vec4<f32>, 256>;
 // The largest squared speed of a workgroup's cells (collide): one atomic per workgroup, not
@@ -880,4 +898,161 @@ fn mass(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: ve
         workgroupBarrier();
     }
     if lid == 0u { partials[group] = red[0].x; }
+}
+
+// ---- Conducting solids ----
+
+const FACE_NONE: u32 = 0u;
+const FACE_SOLID: u32 = 1u;
+const FACE_HELD: u32 = 2u;
+const FACE_FLUX: u32 = 3u;
+
+fn s_m() -> u32 { return params.solid.x; }
+fn s_k() -> u32 { return params.solid.y; }
+fn s_share() -> f32 { return bitcast<f32>(params.solid.w); }
+
+// solid_u: the cells' grid indices [0, m), each cell's first link [m, 2m + 1), the links ordered
+// by cell, four each (fluid cell, q, conducting cell, link index), then per cell its six faces
+// (+x, −x, +y, −y, +z, −z), two each: the kind and the other cell (a wall's: its box face).
+fn s_first(c: u32) -> u32 { return solid_u[s_m() + c]; }
+fn s_link(i: u32) -> vec4<u32> {
+    let o = 2u * s_m() + 1u + 4u * i;
+    return vec4<u32>(solid_u[o], solid_u[o + 1u], solid_u[o + 2u], solid_u[o + 3u]);
+}
+fn s_face(c: u32, k: u32) -> vec2<u32> {
+    let o = 2u * s_m() + 1u + 4u * s_k() + 12u * c + 2u * k;
+    return vec2<u32>(solid_u[o], solid_u[o + 1u]);
+}
+// solid_f: capacity [0, m), source per step [m, 2m), per cell its faces' (g, value) [2m, 14m),
+// the links' weights k_s / (k_s + k_f) [14m, 14m + k).
+fn s_capacity(c: u32) -> f32 { return solid_f[c]; }
+fn s_source(c: u32) -> f32 { return solid_f[s_m() + c]; }
+fn s_face_value(c: u32, k: u32) -> vec2<f32> {
+    let o = 2u * s_m() + 12u * c + 2u * k;
+    return vec2<f32>(solid_f[o], solid_f[o + 1u]);
+}
+fn s_weight(i: u32) -> f32 { return solid_f[14u * s_m() + i]; }
+// solid_s: θ in two halves [0, 2m), the links' sums a [2m, 3m) and b [3m, 4m), the mean θ over
+// the step [4m, 5m), the heat into box face f per cell [5m + 6c + f], then per link its heat
+// [11m, 11m + k), its population leaving the fluid and its a [11m + k, 11m + 3k).
+fn s_theta(half: u32, c: u32) -> u32 { return half * s_m() + c; }
+fn s_a(c: u32) -> u32 { return 2u * s_m() + c; }
+fn s_b(c: u32) -> u32 { return 3u * s_m() + c; }
+fn s_mean(c: u32) -> u32 { return 4u * s_m() + c; }
+fn s_wall(c: u32, f: u32) -> u32 { return 5u * s_m() + 6u * c + f; }
+fn s_heat(i: u32) -> u32 { return 11u * s_m() + i; }
+fn s_out(i: u32) -> u32 { return 11u * s_m() + s_k() + 2u * i; }
+
+// Per conducting cell: the sums a and b of its fluid links (a link's heat is
+// `2 out − 2 w (1 − weight) θ_f − 2 w weight θ_s`, kept per link for `solid_scatter`), and the
+// step's accumulators zeroed.
+@compute @workgroup_size(256)
+fn solid_ab(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
+    let c = cell_of(lid, wg);
+    if c >= s_m() { return; }
+    var a = 0.0;
+    var b = 0.0;
+    for (var i = s_first(c); i < s_first(c + 1u); i = i + 1u) {
+        let l = s_link(i);
+        let out = t[opp(l.y) * params.n + l.x];
+        let w2 = 2.0 * wt_of(l.y);
+        let weight = s_weight(i);
+        let ai = 2.0 * out - w2 * (1.0 - weight) * theta_of(l.x);
+        solid_s[s_out(i)] = out;
+        solid_s[s_out(i) + 1u] = ai;
+        a = a + ai;
+        b = b + w2 * weight;
+    }
+    solid_s[s_a(c)] = a;
+    solid_s[s_b(c)] = b;
+    solid_s[s_mean(c)] = 0.0;
+    for (var f = 0u; f < 6u; f = f + 1u) { solid_s[s_wall(c, f)] = 0.0; }
+}
+
+// One sub-step from half `src` into half `dst`: C (θ' − θ) = share (a + source + Σ faces − b θ'),
+// the faces explicit at θ; a wall's heat goes to its box face.
+fn solid_sub(c: u32, src: u32, dst: u32) {
+    let share = s_share();
+    let theta = solid_s[s_theta(src, c)];
+    let cap = s_capacity(c);
+    var heat = solid_s[s_a(c)] + s_source(c);
+    for (var k = 0u; k < 6u; k = k + 1u) {
+        let face = s_face(c, k);
+        let gv = s_face_value(c, k);
+        var into = 0.0;
+        if face.x == FACE_SOLID {
+            heat = heat + gv.x * (solid_s[s_theta(src, face.y)] - theta);
+        } else if face.x == FACE_HELD {
+            into = gv.x * (gv.y - theta);
+        } else if face.x == FACE_FLUX {
+            into = gv.y;
+        }
+        if face.x == FACE_HELD || face.x == FACE_FLUX {
+            solid_s[s_wall(c, face.y)] = solid_s[s_wall(c, face.y)] - into * share;
+            heat = heat + into;
+        }
+    }
+    let next = (theta + heat * share / cap) / (1.0 + solid_s[s_b(c)] * share / cap);
+    solid_s[s_theta(dst, c)] = next;
+    solid_s[s_mean(c)] = solid_s[s_mean(c)] + next * share;
+    if next != next || abs(next) > 1e30 { atomicStore(&stats[2], 1u); }
+}
+
+@compute @workgroup_size(256)
+fn solid_sub0(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
+    let c = cell_of(lid, wg);
+    if c >= s_m() { return; }
+    solid_sub(c, 0u, 1u);
+}
+
+@compute @workgroup_size(256)
+fn solid_sub1(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
+    let c = cell_of(lid, wg);
+    if c >= s_m() { return; }
+    solid_sub(c, 1u, 0u);
+}
+
+// After an odd number of sub-steps: the temperatures back into the first half.
+@compute @workgroup_size(256)
+fn solid_copy(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
+    let c = cell_of(lid, wg);
+    if c >= s_m() { return; }
+    solid_s[s_theta(0u, c)] = solid_s[s_theta(1u, c)];
+}
+
+// Per interface link: its population at the solid's mean temperature, and the heat it took.
+@compute @workgroup_size(256)
+fn solid_scatter(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
+    let i = cell_of(lid, wg);
+    if i >= s_k() { return; }
+    let l = s_link(i);
+    let heat = solid_s[s_out(i) + 1u] - 2.0 * wt_of(l.y) * s_weight(i) * solid_s[s_mean(l.z)];
+    t2[l.y * params.n + l.x] = solid_s[s_out(i)] - heat;
+    solid_s[s_heat(i)] = heat;
+}
+
+// The last step's link heats into their groups' exchange (after `link_forces`).
+@compute @workgroup_size(256)
+fn solid_contrib(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
+    let i = cell_of(lid, wg);
+    if i >= s_k() { return; }
+    let l = s_link(i).w;
+    contrib[l] = vec4<f32>(contrib[l].xyz, solid_s[s_heat(i)]);
+}
+
+// One workgroup per box face (groups 0..6): the heat the solids gave it, added to its exchange
+// (after `group_forces`).
+@compute @workgroup_size(256)
+fn solid_wall_heat(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
+    let face = wg.x;
+    if face >= 6u { return; }
+    var s = 0.0;
+    for (var c = lid; c < s_m(); c = c + WG) { s = s + solid_s[s_wall(c, face)]; }
+    red[lid] = vec4<f32>(s, 0.0, 0.0, 0.0);
+    workgroupBarrier();
+    for (var k = 128u; k > 0u; k = k >> 1u) {
+        if lid < k { red[lid] = red[lid] + red[lid + k]; }
+        workgroupBarrier();
+    }
+    if lid == 0u && face < params.groups { forces[face] = forces[face] + vec4<f32>(0.0, 0.0, 0.0, red[0].x); }
 }

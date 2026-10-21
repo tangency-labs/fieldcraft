@@ -651,7 +651,8 @@ pub(crate) mod tests {
 
     /// The plate conducts heat and generates power in the tank's flow, through commands: the solve
     /// reports its temperatures, power and the heat its faces give the water; its faces take no
-    /// thermal condition, its material must conduct, and the GPU refuses it for now.
+    /// thermal condition, its material must conduct, and a build without a GPU backend refuses
+    /// `backend: "gpu"`.
     #[test]
     fn a_conducting_plate_reports_its_temperatures_and_heat() {
         let mut s = plate_in_a_tank();
@@ -691,7 +692,7 @@ pub(crate) mod tests {
         assert!(s.execute("model.fluid_domain.edit", &domain(json!([{"body": "Body1", "material": "Steel"}]))).is_err());
         assert!(s.execute("model.fluid_domain.edit", &domain(json!([{"body": "Nope", "material": "Alu"}]))).is_err());
         assert!(s.execute("model.fluid_domain.edit", &domain(json!([{"body": "Body1", "material": "Alu", "power": "nan"}]))).is_err());
-        // (this build registers no GPU backend: lbm-gpu's tests check its own refusal by name)
+        // (this build registers no GPU backend; lbm-gpu's tests run the solids on the device)
         let e = s.execute("solve.fluid", &json!({"backend": "gpu"})).unwrap_err().to_string();
         assert!(e.contains("GPU") && e.contains("cpu"), "{e}");
     }

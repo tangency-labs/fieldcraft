@@ -680,22 +680,152 @@ fn fans_and_porous_zones_are_refused_clearly() {
     assert!(e.as_deref().is_some_and(|e| e.contains("Vent") && e.contains("cpu")), "{e:?}");
 }
 
-/// Conducting solids run on the CPU only for now: the backend says so before it looks for a
-/// device.
+// ---- Conducting solids ----
+
+/// A column across y with a powered conducting slab against the cold plate and another against
+/// the hot side's flux, the fluid at rest between them: the solid–solid faces, a held and a flux
+/// box face on the solids, the power and the interface links, against the CPU part way to steady
+/// state (both solids sub-step: the slab's conductivity is 4 times the fluid's). lavapipe:
+/// temperature 2.7e-6 of the range, heat 2.7e-6 of the largest.
 #[test]
-fn conducting_solids_are_refused_clearly() {
-    let mut d = domain([0.0; 3], [1.0; 3], 0.125);
-    d.obstacles = vec!["Block".into()];
-    d.thermal = Some(fieldcraft_model::FluidThermal {
-        solids: vec![fieldcraft_model::ConductingSolid { body: "Block".into(), material: "Solid".into(), power: 1.0 }],
-        ..Default::default()
-    });
-    let mut m = Model::default();
-    m.add_material("Fluid", hot_fluid(1.0, 0.1, 0.1)).unwrap();
-    add_solid_material(&mut m, "Solid", 1.0, [1.0; 3], 1.0);
-    m.add_fluid_domain("Flow", d).unwrap();
-    m.add_step(Step::new("Run", step(1.0, 0.01, None)), None).unwrap();
-    let (_, flow) = prepare(&m, &[obstacle("Block", cuboid([0.25; 3], [0.75; 3]), &CUBOID_FACES)]);
-    let e = GpuFlow::with_options(&flow, Policy::from_env().expect("FIELDCRAFT_GPU names a policy"), Options::default()).err().map(|e| e.to_string());
-    assert!(e.as_deref().is_some_and(|e| e.contains("conduct heat through solids") && e.contains("cpu")), "{e:?}");
+fn a_composite_wall_with_power_matches_the_cpu() {
+    for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+        let (n, alpha) = (16usize, 0.05);
+        let dx = 1.0 / n as f64;
+        let mut d = domain([0.0; 3], [dx, 1.0, dx], dx);
+        for f in [BoxFace::XMin, BoxFace::XMax, BoxFace::ZMin, BoxFace::ZMax] {
+            *d.faces.get_mut(f) = PERIODIC;
+        }
+        d.obstacles = vec!["Low".into(), "Mid".into()];
+        let mut t = FluidThermal { initial_temperature: kelvin(0.5), ..FluidThermal::default() };
+        t.faces.y_min = ThermalCondition::Temperature { value: kelvin(0.0) };
+        t.faces.y_max = ThermalCondition::Flux { value: 0.02 };
+        t.solids = vec![conducting("Low", 0.0), conducting("Mid", 0.5 * dx * dx)];
+        d.thermal = Some(t);
+        let dt = dx * dx / (8.0 * alpha);
+        let m = cht_model([1.0, 0.1, alpha], (1.0, [4.0 * alpha; 3], 1.0), d, step(0.5 / alpha, dt, None));
+        let obstacles = [
+            obstacle("Low", cuboid([-1.0, -1.0, -1.0], [2.0, 0.25, 2.0]), &CUBOID_FACES),
+            obstacle("Mid", cuboid([-1.0, 0.5, -1.0], [2.0, 2.0, 2.0]), &CUBOID_FACES),
+        ];
+        let (setup, cpu) = prepare(&m, &obstacles);
+        let Some((mut cpu, mut gpu)) = both(&setup, cpu, streaming) else { continue };
+        let (dt, dh) = heat_difference(&mut cpu, &mut gpu);
+        println!("composite wall with power ({streaming:?}): GPU vs CPU: temperature {dt:.2e} heat {dh:.2e}");
+        assert!(dt < 2e-5 && dh < 2e-5, "{dt} {dh}");
+    }
+}
+
+/// A powered block conducting in a channel flow (parabolic inlet, outlet): the interface links
+/// under advection, against the CPU in velocity, temperature and every face's heat. lavapipe:
+/// temperature 2.5–2.7e-6, heat 3.2–3.3e-6, velocity 1.6–2.0e-6.
+#[test]
+fn a_heated_block_in_a_channel_matches_the_cpu() {
+    for (collision, streaming) in cases() {
+        let (n, nu, alpha) = (8usize, 0.02, 0.02);
+        let dx = 1.0 / n as f64;
+        let mut d = domain([0.0; 3], [3.0, 1.0, dx], dx);
+        d.faces.x_min = FaceCondition::Velocity { velocity: [0.05, 0.0, 0.0], profile: Profile::Parabolic };
+        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+        d.faces.z_min = PERIODIC;
+        d.faces.z_max = PERIODIC;
+        d.obstacles = vec!["Block".into()];
+        let mut t = FluidThermal { initial_temperature: kelvin(1.0), ..FluidThermal::default() };
+        t.faces.x_min = ThermalCondition::Temperature { value: kelvin(1.0) };
+        t.solids = vec![conducting("Block", 0.01)];
+        d.thermal = Some(t);
+        let dt = 0.25 * dx * dx / nu;
+        let m = cht_model([1.0, nu, alpha], (2.0, [0.5; 3], 1.0), d, collide(40.0, dt, None, collision));
+        let block = [obstacle("Block", cuboid([0.75, 0.375, -1.0], [1.25, 0.625, 1.0]), &CUBOID_FACES)];
+        let (setup, cpu) = prepare(&m, &block);
+        let Some((mut cpu, mut gpu)) = both(&setup, cpu, streaming) else { continue };
+        let (du, drho) = field_difference(&mut cpu, &mut gpu);
+        let (dt, dh) = heat_difference(&mut cpu, &mut gpu);
+        println!("{collision:?} heated block in a channel: GPU vs CPU: velocity {du:.2e} density {drho:.2e} temperature {dt:.2e} heat {dh:.2e}");
+        // (the regularised collision round the block: density 1.4e-6 on lavapipe)
+        assert!(du < 2e-5 && drho < 2e-6, "{du} {drho}");
+        assert!(dt < 2e-5 && dh < 2e-5, "{dt} {dh}");
+    }
+}
+
+/// A powered plate along the whole channel floor, through the inlet and the outlet: the open
+/// faces' cells above it have links into it, so the inlet must hold its temperature on them and
+/// the outlet copy its neighbour's populations after the interface, as on the CPU.
+#[test]
+fn a_conductor_through_the_inlet_and_the_outlet_matches_the_cpu() {
+    let (n, nu, alpha) = (8usize, 0.02, 0.02);
+    let dx = 1.0 / n as f64;
+    let mut d = domain([0.0; 3], [2.0, 1.0, dx], dx);
+    d.faces.x_min = FaceCondition::Velocity { velocity: [0.05, 0.0, 0.0], profile: Profile::Uniform };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+    d.faces.z_min = PERIODIC;
+    d.faces.z_max = PERIODIC;
+    d.obstacles = vec!["Plate".into()];
+    let mut t = FluidThermal { initial_temperature: kelvin(1.0), ..FluidThermal::default() };
+    t.faces.x_min = ThermalCondition::Temperature { value: kelvin(1.0) };
+    t.solids = vec![conducting("Plate", 0.02)];
+    d.thermal = Some(t);
+    let dt = 0.25 * dx * dx / nu;
+    let m = cht_model([1.0, nu, alpha], (2.0, [0.5; 3], 1.0), d, step(20.0, dt, None));
+    let plate = [obstacle("Plate", cuboid([-1.0, -1.0, -1.0], [3.0, 0.25, 1.0]), &CUBOID_FACES)];
+    let (setup, cpu) = prepare(&m, &plate);
+    let Some((mut cpu, mut gpu)) = both(&setup, cpu, Streaming::InPlace) else { return };
+    let (dt, dh) = heat_difference(&mut cpu, &mut gpu);
+    println!("plate through the open faces: GPU vs CPU: temperature {dt:.2e} heat {dh:.2e}");
+    assert!(dt < 2e-5 && dh < 2e-5, "{dt} {dh}");
+}
+
+/// A powered conductor filling the whole box, a held and a flux face on it: no fluid and so no
+/// fluid links, and the box faces' heat still comes from the solid as on the CPU.
+#[test]
+fn a_conductor_filling_the_box_reports_its_box_face_heat() {
+    let n = 8usize;
+    let dx = 1.0 / n as f64;
+    let mut d = domain([0.0; 3], [dx, 1.0, dx], dx);
+    for f in [BoxFace::XMin, BoxFace::XMax, BoxFace::ZMin, BoxFace::ZMax] {
+        *d.faces.get_mut(f) = PERIODIC;
+    }
+    d.obstacles = vec!["Fill".into()];
+    let mut t = FluidThermal { initial_temperature: kelvin(0.5), ..FluidThermal::default() };
+    t.faces.y_min = ThermalCondition::Temperature { value: kelvin(0.0) };
+    t.faces.y_max = ThermalCondition::Flux { value: 0.02 };
+    t.solids = vec![conducting("Fill", 0.5 * dx * dx)];
+    d.thermal = Some(t);
+    let dt = dx * dx / 0.4;
+    let m = cht_model([1.0, 0.1, 0.05], (1.0, [0.2; 3], 1.0), d, step(0.5, dt, None));
+    let fill = [obstacle("Fill", cuboid([-1.0; 3], [2.0; 3]), &CUBOID_FACES)];
+    let (setup, cpu) = prepare(&m, &fill);
+    let Some((mut cpu, mut gpu)) = both(&setup, cpu, Streaming::InPlace) else { return };
+    let (dt, dh) = heat_difference(&mut cpu, &mut gpu);
+    println!("conductor filling the box: GPU vs CPU: temperature {dt:.2e} heat {dh:.2e}");
+    assert!(dt < 2e-5 && dh < 2e-5, "{dt} {dh}");
+}
+
+/// A heated cube of small heat capacity with strong links (τ_T 0.52, conducting 8 times the
+/// fluid, 0.03 of its heat capacity): the implicit links on the GPU stay stable and agree with
+/// the CPU (lavapipe: temperature 2.9e-6, heat 5.3e-6).
+#[test]
+fn a_low_capacity_solid_matches_the_cpu() {
+    let (n, alpha) = (12usize, 1.0);
+    let dx = 1.0 / n as f64;
+    let mut d = domain([0.0; 3], [1.0; 3], dx);
+    d.obstacles = vec!["Cube".into()];
+    let mut t = FluidThermal::default();
+    for f in BoxFace::ALL {
+        *t.faces.get_mut(f) = ThermalCondition::Temperature { value: kelvin(0.0) };
+    }
+    t.solids = vec![conducting("Cube", 1.0)];
+    d.thermal = Some(t);
+    let dt = 0.005 * dx * dx / alpha;
+    let m = cht_model([1.0, alpha, alpha], (0.03, [8.0 * alpha; 3], 1.0), d, step(300.0 * dt, dt, None));
+    let cube = [obstacle("Cube", cuboid([0.25; 3], [0.75; 3]), &CUBOID_FACES)];
+    let (setup, cpu) = prepare(&m, &cube);
+    let Some((mut cpu, mut gpu)) = both(&setup, cpu, Streaming::InPlace) else { return };
+    let (dt, dh) = heat_difference(&mut cpu, &mut gpu);
+    println!(
+        "low-capacity cube: GPU vs CPU: temperature {dt:.2e} heat {dh:.2e}; conducting {:?}",
+        gpu.conducting().iter().map(Vec::len).collect::<Vec<_>>()
+    );
+    assert_eq!(gpu.conducting(), cpu.conducting());
+    assert!(dt < 2e-5 && dh < 5e-5, "{dt} {dh}");
 }

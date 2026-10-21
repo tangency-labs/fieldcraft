@@ -478,7 +478,7 @@ impl Flow {
                             (false, _) => {
                                 let rule = obstacle_link(cell, from, q);
                                 if let (true, Some(solid), Rule::Bounce { group, .. }) = (q < QT, conducting_at(from as usize), rule) {
-                                    interface.push(Interface { cell: cell as u32, q: q as u8, solid, group, weight: 0.0 });
+                                    interface.push(Interface { cell: cell as u32, q: q as u8, solid, group, link: links.len() as u32, weight: 0.0 });
                                 }
                                 rule
                             }
@@ -599,7 +599,9 @@ impl Flow {
 
         // The initial state: equilibrium at density 1 and the initial velocity.
         let mut f = filled(q_n, 0.0, "populations")?;
-        let g = filled(q_n, 0.0, "populations")?;
+        // The streaming targets are allocated on the first CPU step: a flow handed to a device
+        // backend never needs them, and they are half the CPU state.
+        let g = Vec::new();
         for cell in 0..n {
             for q in 0..Q {
                 f[q * stride + cell] = if fluid[cell] { equilibrium(q, 1.0, setup.initial_velocity) } else { 0.0 };
@@ -629,7 +631,7 @@ impl Flow {
                     .collect();
                 let t_n = stride.checked_mul(QT).ok_or_else(|| Error::Limit("the grid is too large".into()))?;
                 let mut tg = filled(t_n, 0.0, "temperature populations")?;
-                let tg2 = filled(t_n, 0.0, "temperature populations")?;
+                let tg2 = Vec::new();
                 for cell in 0..n {
                     if fluid[cell] {
                         for q in 0..QT {
@@ -989,6 +991,7 @@ impl Flow {
     /// One time step. Fails with [`Error::Unstable`] when a density stops being a positive
     /// number or a lattice speed exceeds [`MAX_LATTICE_SPEED`].
     pub fn step(&mut self) -> Result<()> {
+        self.targets()?;
         self.refresh_buoyancy();
         self.refresh_fans();
         let max_u2 = self.collide();
@@ -1017,6 +1020,19 @@ impl Flow {
             }
         }
         self.steps_done += 1;
+        Ok(())
+    }
+
+    /// The streaming targets (the second arrays of populations), allocated before the first step.
+    fn targets(&mut self) -> Result<()> {
+        if self.g.len() < self.f.len() {
+            self.g = filled(self.f.len(), 0.0, "populations")?;
+        }
+        if let Some(t) = &mut self.thermal
+            && t.g2.len() < t.g.len()
+        {
+            t.g2 = filled(t.g.len(), 0.0, "temperature populations")?;
+        }
         Ok(())
     }
 

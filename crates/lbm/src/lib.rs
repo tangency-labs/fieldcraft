@@ -110,6 +110,28 @@ impl Limits {
     pub const MAX_STEPS: u64 = 10_000_000;
     pub const MAX_CELL_UPDATES: u64 = 1_000_000_000_000;
     pub const MAX_FRAME_BYTES: u64 = 2_000_000_000;
+
+    /// A device backend's caps. The device keeps the populations in single precision and checks
+    /// its own buffer limits; the host still builds the CPU flow first (about 440 bytes per cell
+    /// at its peak while the device's is made), so 200 million cells take about 88 GB, which a
+    /// 128 GB unified-memory machine holds. Steady runs at that size take some 10⁵ steps, and a
+    /// frame of every cell about 20 bytes per cell.
+    pub const GPU_MAX_CELLS: u64 = 200_000_000;
+    pub const GPU_MAX_CELL_UPDATES: u64 = 100_000_000_000_000;
+    pub const GPU_MAX_FRAME_BYTES: u64 = 8_000_000_000;
+
+    /// The default caps for a solve on `choice`.
+    pub fn for_backend(choice: Choice) -> Limits {
+        match choice {
+            Choice::Cpu => Limits::default(),
+            Choice::Device => Limits {
+                max_cells: Limits::GPU_MAX_CELLS,
+                max_cell_updates: Limits::GPU_MAX_CELL_UPDATES,
+                max_frame_bytes: Limits::GPU_MAX_FRAME_BYTES,
+                ..Limits::default()
+            },
+        }
+    }
 }
 
 impl Default for Limits {

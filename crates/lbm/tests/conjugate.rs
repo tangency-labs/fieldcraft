@@ -5,24 +5,9 @@ mod common;
 
 use common::*;
 use fieldcraft_lbm::Flow;
-use fieldcraft_model::{
-    BoxFace, ConductingSolid, FaceCondition, FluidDomain, FluidThermal, Model, Outflow, Procedure, Profile, Step, ThermalCondition,
-};
+use fieldcraft_model::{BoxFace, FaceCondition, FluidDomain, FluidThermal, Model, Outflow, Procedure, Profile, ThermalCondition};
 
 const PERIODIC: FaceCondition = FaceCondition::Periodic {};
-
-/// A model with fluid `Fluid` (density ρ, kinematic viscosity ν, diffusivity α: conductivity
-/// ρ α, unit specific heat), conducting material `Solid` (density ρ_s, conductivity k_s per axis,
-/// specific heat c_s), domain `Flow` and step `Run`.
-fn cht_model(fluid: [f64; 3], solid: (f64, [f64; 3], f64), domain: FluidDomain, procedure: Procedure) -> Model {
-    let [rho, nu, alpha] = fluid;
-    let mut m = Model::default();
-    m.add_material("Fluid", hot_fluid(rho, nu, alpha)).unwrap();
-    add_solid_material(&mut m, "Solid", solid.0, solid.1, solid.2);
-    m.add_fluid_domain("Flow", domain).unwrap();
-    m.add_step(Step::new("Run", procedure), None).unwrap();
-    m
-}
 
 /// A column of `n` cells across y ∈ [0, 1], periodic in x and z, the faces at y = 0 and 1 held
 /// at `t[0]` and `t[1]`, obstacle `Slab` conducting with `power`.
@@ -37,7 +22,7 @@ fn slab_column(n: usize, t: [f64; 2], power: f64) -> FluidDomain {
     let mut th = FluidThermal::default();
     th.faces.y_min = ThermalCondition::Temperature { value: kelvin(t[0]) };
     th.faces.y_max = ThermalCondition::Temperature { value: kelvin(t[1]) };
-    th.solids = vec![ConductingSolid { body: "Slab".into(), material: "Solid".into(), power }];
+    th.solids = vec![conducting("Slab", power)];
     d.thermal = Some(th);
     d
 }
@@ -214,7 +199,7 @@ fn a_low_capacity_solid_with_strong_links_stays_stable() {
         for face in BoxFace::ALL {
             *th.faces.get_mut(face) = ThermalCondition::Temperature { value: kelvin(0.0) };
         }
-        th.solids = vec![ConductingSolid { body: "Cube".into(), material: "Solid".into(), power: 1.0 }];
+        th.solids = vec![conducting("Cube", 1.0)];
         d.thermal = Some(th);
         let rule = steady.then(|| fieldcraft_model::Steady { monitors: vec![], tolerance: 1e-9, window: None, min_time: None, divergence: None });
         let procedure = Procedure::Fluid {
@@ -290,7 +275,7 @@ fn a_heated_block_in_a_flow_conserves_heat() {
     d.obstacles = vec!["Block".into()];
     let mut th = FluidThermal { initial_temperature: kelvin(1.0), ..FluidThermal::default() };
     th.faces.x_min = ThermalCondition::Temperature { value: kelvin(1.0) };
-    th.solids = vec![ConductingSolid { body: "Block".into(), material: "Solid".into(), power: 0.01 }];
+    th.solids = vec![conducting("Block", 0.01)];
     d.thermal = Some(th);
     let dt = 0.25 * dx * dx / nu;
     let m = cht_model([1.0, nu, alpha], (2.0, [0.5; 3], 1.0), d, step(400.0, dt, None));
@@ -330,7 +315,7 @@ fn heated_block(capacity: f64, end_time: f64, steady: Option<fieldcraft_model::S
     d.obstacles = vec!["Block".into()];
     let mut th = FluidThermal { initial_temperature: kelvin(1.0), ..FluidThermal::default() };
     th.faces.x_min = ThermalCondition::Temperature { value: kelvin(1.0) };
-    th.solids = vec![ConductingSolid { body: "Block".into(), material: "Solid".into(), power: 0.01 }];
+    th.solids = vec![conducting("Block", 0.01)];
     d.thermal = Some(th);
     let dt = 0.25 * dx * dx / nu;
     let procedure = Procedure::Fluid {
@@ -398,7 +383,7 @@ fn conjugate_cavity(ra: f64, kappa: f64, n: usize, u_max: f64, diffusive_times: 
     let mut t = FluidThermal { initial_temperature: kelvin(0.5), gravity: [0.0, -g_beta, 0.0], expansion: Some(1.0), ..FluidThermal::default() };
     t.faces.x_min = ThermalCondition::Temperature { value: kelvin(1.0) };
     t.faces.x_max = ThermalCondition::Temperature { value: kelvin(0.0) };
-    t.solids = vec![ConductingSolid { body: "Body".into(), material: "Solid".into(), power: 0.0 }];
+    t.solids = vec![conducting("Body", 0.0)];
     d.thermal = Some(t);
     let dt = (0.05 * dx / (u_max * alpha / h)).min(dx * dx / (4.0 * alpha));
     let m = cht_model([1.0, nu, alpha], (1.0, [kappa * alpha; 3], 1.0), d, step(diffusive_times * h * h / alpha, dt, None));
@@ -480,7 +465,7 @@ fn cylinder_array(n: usize, kappa: f64) -> (f64, f64) {
     let mut th = FluidThermal::default();
     th.faces.x_min = ThermalCondition::Temperature { value: kelvin(1.0) };
     th.faces.x_max = ThermalCondition::Temperature { value: kelvin(0.0) };
-    th.solids = vec![ConductingSolid { body: "Rod".into(), material: "Solid".into(), power: 0.0 }];
+    th.solids = vec![conducting("Rod", 0.0)];
     d.thermal = Some(th);
     // τ_T = 1; the rods' heat capacity at most the fluid's (a larger one only slows the settling:
     // the steady state does not depend on it), and no less than κ times it, so they diffuse at
