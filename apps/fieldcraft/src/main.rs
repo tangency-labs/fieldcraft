@@ -263,6 +263,8 @@ fn main() -> eframe::Result {
     // The lattice Boltzmann GPU backend, for `solve.fluid` with `backend: "gpu"`.
     fieldcraft_lbm_gpu::register();
     fieldcraft_mesh_gpu::register();
+    // Pictures commands draw themselves (results.export.animation), with the viewport's pipeline.
+    fieldcraft_ui_egui::register_picture_drawer();
     let args = match parse_args(std::env::args().skip(1), std::env::var("FIELDCRAFT_CONTROL_PORT").ok()) {
         Ok(Some(a)) => a,
         Ok(None) => return Ok(()),

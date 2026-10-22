@@ -37,6 +37,7 @@ pub(crate) mod octree;
 pub(crate) mod plan;
 mod project;
 pub(crate) mod relax;
+mod render;
 pub mod replace;
 mod results;
 pub(crate) mod seeds;
@@ -224,6 +225,9 @@ pub static ALL: &[CommandSpec] = &[
     results::REACTIONS,
     results::EXPORT_CSV,
     results::EXPORT_VTU,
+    render::SAVE,
+    render::DELETE,
+    render::EXPORT,
     results::CLEAR,
     xy::XY,
     diagnostics::CRASH_REPORTS,

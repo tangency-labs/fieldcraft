@@ -699,7 +699,14 @@ pub static CATALOGUE: &[Capability] = &[
         "A fluid step's velocity, pressure or temperature on slices and obstacles, speed or temperature along streamlines, and signed wall heat per area",
         &["results.slice", "results.surface"],
     ),
-    ready("results.export.vtu", "Export VTU", Results, "Files", "Write a solved step as VTK unstructured grids for ParaView"),
+    ready_more(
+        "results.export.vtu",
+        "Export VTU",
+        Results,
+        "Files",
+        "Write a solved step as VTK unstructured grids for ParaView",
+        &["results.export.animation", "results.render.save", "results.render.delete"],
+    ),
     soon("results.read", "Read Results", Results, "Files", "M9", "Read results in public formats"),
     soon("results.convergence", "Convergence", Results, "Files", "M9", "Mesh convergence studies"),
     // ---- Tools ----

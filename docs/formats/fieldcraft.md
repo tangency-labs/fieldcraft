@@ -71,6 +71,27 @@ picture) at the camera; what no longer applies (a field the step has not) comes 
 warning. At most 1000 views, names 1 to 64 characters; `current` names one of them. The view
 state is outside the definition: it is not in `model.json` and not in a result's definition hash.
 
+`view` keeps the renders too (`results.render.save`): how a saved view becomes a clip.
+
+```json
+"renders": [{"name": "Airflow clip", "view": "Cutaway", "step": "Flow", "frames": "all",
+             "fps": 12, "hold": {"each": 2, "last": 16}, "size": [1280, 720],
+             "caption": "AIO radiator · fan air through the channels", "legend": true,
+             "time_label": true, "format": "png-sequence"}]
+```
+
+`view` names a saved view; `step` the step whose frames play (the view's when left out); `frames`
+is `"all"` or `[from, to]` (from 0, inclusive); each picture shows for `hold.each` frames of the
+clip and the last for `hold.last`, at `fps` (1 to 120); `size` is the picture in pixels (16 to
+4096 a side), with a caption bar under it when there is a `caption`, a `legend` or a
+`time_label`. Left out, a field takes these defaults: all frames, 12 fps, holds of 1, 1280 × 720,
+legend and time label on. `results.export.animation {"render", "path"}` draws it offscreen, picture
+by picture, with the host's GPU pipeline (the CPU rasterizer without one), and writes the pictures
+beside `path` as `<stem>_00000.png`, `<stem>_00001.png`, … (each repeated for its hold); the only
+`format` is `png-sequence`: FieldCraft bundles no video encoder, and the reply's `ffmpeg` is the
+command line that encodes the sequence as `path` (an `.mp4` or `.gif`). At most 1000 renders, each
+starting from a saved view (a view a render uses is not deleted).
+
 ## `mesh.bin`
 
 Little-endian:

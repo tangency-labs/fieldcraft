@@ -66,6 +66,8 @@ fn main() -> ExitCode {
     // The lattice Boltzmann GPU backend, for `solve.fluid` with `backend: "gpu"` (scripts and MCP).
     fieldcraft_lbm_gpu::register();
     fieldcraft_mesh_gpu::register();
+    // Pictures commands draw themselves (results.export.animation), with the viewport's pipeline.
+    fieldcraft_mcp::register_drawer();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("commands") if args.get(1).map(String::as_str) == Some("--json") => {

@@ -31,6 +31,14 @@ fn draw(f: &fieldcraft_engine::view::Framed, w: u32, h: u32) -> Result<(Vec<u8>,
     Ok((png, Renderer::Cpu { why: None }))
 }
 
+/// Register the engine's picture drawer ([`fieldcraft_engine::view::register_drawer`]): the
+/// viewport's GPU pipeline on the process's shared device under `FIELDCRAFT_GPU`, as MCP pictures
+/// are drawn, for the pictures commands draw themselves (`results.export.animation`).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn register_drawer() {
+    fieldcraft_engine::view::register_drawer(Box::new(|f, w, h| fieldcraft_gpu::capture::rgba_shared(&f.scene, &[&f.symbols], &f.cam, w, h)));
+}
+
 /// What drew a picture and what it shows, as JSON: `renderer` (`kind` hardware, software or cpu;
 /// the adapter, or why the CPU drew it), `results` (step, scale, contour), `undrawn_bodies` and
 /// `sampled_symbols`. The MCP `screenshot` reply and `fieldcraft-cli snapshot` print it.
@@ -145,7 +153,7 @@ impl Backend for Headless {
         if self.session.camera_requests() != self.camera_seen {
             self.camera_seen = self.session.camera_requests();
             if let Some(a) = &self.session.camera {
-                self.view = Aim { target: Some(a.target.clone().unwrap_or(Target::MODEL)), ..a.clone() };
+                self.view = a.targeted();
             }
         }
         if let Some(v) = &r.view {

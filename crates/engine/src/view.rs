@@ -667,6 +667,11 @@ impl Aim {
         Aim { at, target: None, fit: false, fov: None }
     }
 
+    /// The same, aimed at [`Target::MODEL`] unless it names a target: as a picture of its own is.
+    pub fn targeted(&self) -> Aim {
+        Aim { target: Some(self.target.clone().unwrap_or(Target::MODEL)), ..self.clone() }
+    }
+
     /// The JSON form [`camera`] reads.
     pub fn json(&self) -> Value {
         let mut v = serde_json::json!({"yaw": self.at.yaw, "pitch": self.at.pitch});
@@ -973,6 +978,32 @@ pub fn camera_shown(cam: &Camera, s: &Session) -> Value {
         o.insert("target".into(), serde_json::json!({"x": length(cam.target.x), "y": length(cam.target.y), "z": length(cam.target.z)}));
     }
     v
+}
+
+/// What draws a framed picture into RGBA pixels, `w` × `h`: the pixels and what drew them (a GPU
+/// adapter, or the CPU rasterizer and why).
+pub type Drawer = dyn Fn(&Framed, u32, u32) -> std::result::Result<(Vec<u8>, String), String> + Send + Sync;
+
+static DRAWER: std::sync::OnceLock<Box<Drawer>> = std::sync::OnceLock::new();
+
+/// Register the process's picture drawer (an application does this once at start, with the
+/// viewport's GPU pipeline; a second registration is ignored). Without one the CPU rasterizer
+/// draws.
+pub fn register_drawer(drawer: Box<Drawer>) {
+    let _ = DRAWER.set(drawer);
+}
+
+/// `f` drawn into `w` × `h` RGBA pixels by the registered drawer, else the CPU rasterizer; with
+/// what drew it.
+pub fn draw_rgba(f: &Framed, w: u32, h: u32) -> Result<(Vec<u8>, String)> {
+    match DRAWER.get() {
+        Some(draw) => draw(f, w, h).map_err(|e| EngineError::Params(format!("render: {e}"))),
+        None => {
+            let c = fieldcraft_render::render_layers(&f.scene, &[&f.symbols], &f.cam, w as usize, h as usize)
+                .map_err(|e| EngineError::Params(format!("render: {e}")))?;
+            Ok((c.rgba, "cpu".into()))
+        }
+    }
 }
 
 /// A PNG of the session seen from `at`, `w` × `h` pixels ([`frame`]), drawn on the CPU.

@@ -1965,6 +1965,38 @@ pub const VIEW_SAVE: &[Field] = &[
     flag("results", "Results display").help("Keep what the results display shows with the camera.").def("true"),
 ];
 pub const VIEW_NAME: &[Field] = &[text("name", "View").help("The saved view.").req()];
+pub const RENDER_SAVE: &[Field] = &[
+    text("name", "Name").help("The render's name; a render of that name is replaced.").req(),
+    text("view", "View").help("The saved view the clip shows (view.save keeps one).").req(),
+    text("step", "Step").help("The step whose frames it plays.").hint("the view's step"),
+    json("frames", "Frames").help("\"all\", or [from, to]: the frames drawn, from 0, inclusive.").hint("\"all\""),
+    int("fps", "Frames per second", 1, 120).help("The clip's frame rate.").def("12"),
+    group(
+        "hold",
+        "Hold",
+        &[
+            int("each", "Each picture", 1, 10_000).help("Clip frames each picture shows.").def("1"),
+            int("last", "Last picture", 1, 10_000).help("Clip frames the last picture shows: the settled state held.").def("1"),
+        ],
+    )
+    .help("How long each picture shows, in frames of the clip."),
+    tuple("size", "Size", &["Width", "Height"], 2, true)
+        .help("The picture's width and height in pixels, 16 to 4096; the caption bar adds its height under it.")
+        .hint("[1280, 720]"),
+    text("caption", "Caption").help("A line of text under the picture."),
+    flag("legend", "Legend").help("The contour legend under the picture.").def("true"),
+    flag("time_label", "Time").help("The frame's time under the picture.").def("true"),
+    choice("format", "Format", &[("png-sequence", "PNG sequence (encode with ffmpeg)")])
+        .help("Numbered PNG pictures and the ffmpeg command line that makes a video of them; FieldCraft bundles no video encoder.")
+        .def("\"png-sequence\""),
+];
+pub const RENDER_NAME: &[Field] = &[text("name", "Render").help("The saved render.").req()];
+pub const EXPORT_ANIMATION: &[Field] = &[
+    text("render", "Render").help("The saved render to draw (results.render.save keeps one).").req(),
+    path("path", "File", true)
+        .help("The clip to make: the pictures go beside it (clip_00000.png, …), with the ffmpeg command line that encodes them as it.")
+        .req(),
+];
 pub const VIEW_ITEMS: &[Field] = &[rows(
     "items",
     "Items",
@@ -2553,6 +2585,7 @@ mod tests {
         "FIELDCRAFT_CRASH_TEST",
         "no relaxation field",
         "no saved view",
+        "no render",
     ];
 
     /// Fill top-level required names (a fresh one) and references (the first existing item).

@@ -441,7 +441,7 @@ fn results_round_trip_and_hostile_results_are_refused() {
     assert!(read(&unknown).unwrap_err().to_string().contains("unexpected part"));
 }
 
-/// Saved views and the current one round trip in the manifest's `view`, in the commands'
+/// Saved views, the current one and renders round trip in the manifest's `view`, in the commands'
 /// parameter shapes, outside the model part; references and names are checked.
 #[test]
 fn saved_views_round_trip_and_are_checked() {
@@ -457,9 +457,18 @@ fn saved_views_round_trip_and_are_checked() {
         results: Some(ResultsSetup { step: "Flow".into(), contour, slice, frame: Some(10), ..ResultsSetup::default() }),
     }];
     f.view.current = Some("Cutaway".into());
+    f.view.renders = vec![fieldcraft_io::views::Render {
+        name: "Airflow clip".into(),
+        view: "Cutaway".into(),
+        caption: Some("AIO radiator".into()),
+        ..Default::default()
+    }];
     let bytes = bytes_of(&f);
     let back = read(&bytes).unwrap();
     assert_eq!(back.view, f.view);
+    let manifest: Value = serde_json::from_slice(&parts(&bytes)[0].1).unwrap();
+    assert_eq!(manifest["view"]["renders"][0]["fps"], 12);
+    assert_eq!(manifest["view"]["renders"][0]["frames"], "all");
     let manifest: Value = serde_json::from_slice(&parts(&bytes)[0].1).unwrap();
     assert_eq!(manifest["view"]["current"], "Cutaway");
     assert_eq!(manifest["view"]["views"][0]["units"], "mm-t-s-N-MPa");
@@ -472,6 +481,9 @@ fn saved_views_round_trip_and_are_checked() {
         ("a view with a bad step", "views", json!([{"name": "V", "units": "mm-t-s-N-MPa", "results": {"step": ""}}])),
         ("a view without units", "views", json!([{"name": "V"}])),
         ("two views of one name", "views", json!([{"name": "V", "units": "mm-t-s-N-MPa"}, {"name": "V", "units": "mm-t-s-N-MPa"}])),
+        ("a render of a view not saved", "renders", json!([{"name": "R", "view": "Nope"}])),
+        ("a render at 0 fps", "renders", json!([{"name": "R", "view": "Cutaway", "fps": 0}])),
+        ("a render as mp4", "renders", json!([{"name": "R", "view": "Cutaway", "format": "mp4"}])),
     ] {
         let b = with_manifest(&bytes, |m| m["view"][key] = value.clone());
         assert!(read(&b).is_err(), "{what}");

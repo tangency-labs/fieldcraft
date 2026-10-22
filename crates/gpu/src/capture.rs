@@ -230,24 +230,44 @@ pub fn png(
     w: u32,
     h: u32,
 ) -> Result<(Vec<u8>, Renderer)> {
+    let (px, renderer) = rgba(capturer, policy, scene, layers, cam, w, h)?;
+    let png = fieldcraft_render::png(w as usize, h as usize, &px).ok_or_else(|| GpuError::Failed("the picture could not be encoded".into()))?;
+    Ok((png, renderer))
+}
+
+/// [`png`]'s picture as RGBA pixels, for a caller that draws over it (a clip's caption bar).
+pub fn rgba(
+    capturer: &Result<Option<Capturer>>,
+    policy: Policy,
+    scene: &Scene,
+    layers: &[&Scene],
+    cam: &Camera,
+    w: u32,
+    h: u32,
+) -> Result<(Vec<u8>, Renderer)> {
     let gpu = match capturer {
         Ok(Some(c)) => c.rgba(scene, layers, cam, w, h).map(|px| Some((px, c))),
         Ok(None) => Ok(None),
         Err(e) => Err(e.clone()),
     };
     let why = match gpu {
-        Ok(Some((px, c))) => {
-            let png =
-                fieldcraft_render::png(w as usize, h as usize, &px).ok_or_else(|| GpuError::Failed("the picture could not be encoded".into()))?;
-            return Ok((png, Renderer::Gpu { adapter: c.adapter.clone(), tier: c.tier, samples: c.samples() }));
-        }
+        Ok(Some((px, c))) => return Ok((px, Renderer::Gpu { adapter: c.adapter.clone(), tier: c.tier, samples: c.samples() })),
         Ok(None) => (policy == Policy::Auto).then(|| "no GPU adapter".to_string()),
         Err(e @ GpuError::Size(_)) => return Err(e),
         Err(e) if policy == Policy::Auto => Some(e.to_string()),
         Err(e) => return Err(e),
     };
-    let png = fieldcraft_render::render_layers_png(scene, layers, cam, w as usize, h as usize).map_err(|e| GpuError::Size(e.to_string()))?;
-    Ok((png, Renderer::Cpu { why }))
+    let c = fieldcraft_render::render_layers(scene, layers, cam, w as usize, h as usize).map_err(|e| GpuError::Size(e.to_string()))?;
+    Ok((c.rgba, Renderer::Cpu { why }))
+}
+
+/// [`rgba`] on the process's [`shared`] capturer under the `FIELDCRAFT_GPU` policy, with what drew
+/// it as JSON text: what a host registers as the engine's picture drawer
+/// (`fieldcraft_engine::view::register_drawer`).
+pub fn rgba_shared(scene: &Scene, layers: &[&Scene], cam: &Camera, w: u32, h: u32) -> std::result::Result<(Vec<u8>, String), String> {
+    let policy = Policy::from_env().map_err(|e| e.to_string())?;
+    let (px, r) = rgba(shared(), policy, scene, layers, cam, w, h).map_err(|e| e.to_string())?;
+    Ok((px, r.report().to_string()))
 }
 
 /// A picture from [`Capturer::offscreen`]'s pixels of `scene` and `layers`: laid over the

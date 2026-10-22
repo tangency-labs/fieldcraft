@@ -161,7 +161,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Plots | Cut — Section cuts through the model | coming soon (M9) |  |
 | Plots | Display Group — Show and hide parts of the model | coming soon (M9) |  |
 | Plots | Streamlines — A fluid step's velocity, pressure or temperature on slices and obstacles, speed or temperature along streamlines, and signed wall heat per area | ready | `results.streamlines`, `results.slice`, `results.surface` |
-| Files | Export VTU — Write a solved step as VTK unstructured grids for ParaView | ready | `results.export.vtu` |
+| Files | Export VTU — Write a solved step as VTK unstructured grids for ParaView | ready | `results.export.vtu`, `results.export.animation`, `results.render.save`, `results.render.delete` |
 | Files | Read Results — Read results in public formats | coming soon (M9) |  |
 | Files | Convergence — Mesh convergence studies | coming soon (M9) |  |
 

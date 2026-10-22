@@ -21,6 +21,8 @@ mod backend;
 mod server;
 pub mod tools;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use backend::register_drawer;
 pub use backend::{Backend, Headless, Picture, PictureRequest, Remote, picture_report};
 pub use server::{MAX_BATCH_MESSAGES, MAX_LINE, PROTOCOL_VERSION, SUPPORTED_VERSIONS, Server};
 

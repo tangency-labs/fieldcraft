@@ -533,6 +533,14 @@ pub struct ModelApp {
     search: Option<(String, std::sync::Arc<Vec<palette::Hit>>)>,
 }
 
+/// Register the engine's picture drawer ([`fieldcraft_engine::view::register_drawer`]) for the
+/// pictures commands draw themselves (`results.export.animation`): the viewport's GPU pipeline on
+/// the process's shared headless device under `FIELDCRAFT_GPU`, the CPU rasterizer without one.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn register_picture_drawer() {
+    fieldcraft_engine::view::register_drawer(Box::new(|f, w, h| fieldcraft_gpu::capture::rgba_shared(&f.scene, &[&f.symbols], &f.cam, w, h)));
+}
+
 impl ModelApp {
     pub fn new(mut session: Session) -> ModelApp {
         // The window's own model: its commands count as clicks unless said otherwise.

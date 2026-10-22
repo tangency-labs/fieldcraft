@@ -40,7 +40,7 @@ pub const RESTORE: CommandSpec = CommandSpec {
 pub const DELETE: CommandSpec = CommandSpec {
     id: "view.delete",
     label: "Delete Saved View",
-    params: r#"{"name": "Cutaway"} — deletes a saved view (refused while a render starts from it)"#,
+    params: r#"{"name": "Cutaway"} — deletes a saved view (refused while a render starts from it, results.render.delete)"#,
     form: Some(super::forms::VIEW_NAME),
     kind: CommandKind::Session,
     requires: &[],
@@ -86,7 +86,7 @@ fn setup_commands(r: &ResultsSetup) -> Vec<(&'static str, Value)> {
 
 /// Run command `id` with `params` whose bare numbers are in `units`, as a script with that
 /// header would (the results commands are session commands: nothing is journalled).
-fn run_in(s: &mut Session, id: &str, params: &Value, units: &DisplaySystem) -> Result<Value> {
+pub(crate) fn run_in(s: &mut Session, id: &str, params: &Value, units: &DisplaySystem) -> Result<Value> {
     let spec = crate::find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.into()))?;
     let pinned = s.pinned_input.replace(units.clone());
     let result = (|| {
@@ -251,6 +251,9 @@ fn restore(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn delete(s: &mut Session, p: &Value) -> Result<Value> {
     let name = super::name(p)?.to_string();
+    if let Some(r) = s.view.renders.iter().find(|r| r.view == name) {
+        return Err(EngineError::Params(format!("render `{}` starts from view `{name}`: delete it first (results.render.delete)", r.name)));
+    }
     let before = s.view.views.len();
     s.view.views.retain(|v| v.name != name);
     if s.view.views.len() == before {
@@ -266,11 +269,11 @@ fn delete(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn list(s: &mut Session, _: &Value) -> Result<Value> {
-    Ok(json!({"views": s.view.views, "current": s.view.current}))
+    Ok(json!({"views": s.view.views, "current": s.view.current, "renders": s.view.renders}))
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use serde_json::json;
 
     use super::*;
@@ -284,7 +287,7 @@ mod tests {
 
     /// The heated Couette gap solved and shown as a cutaway: temperature clamped, a slice normal
     /// to z, frame 2, a few streamlines.
-    fn cutaway() -> Session {
+    pub(crate) fn cutaway() -> Session {
         let mut s = Session::default();
         crate::cmd::solve::tests::heated_couette(&mut s);
         s.execute("solve.fluid", &json!({})).unwrap();

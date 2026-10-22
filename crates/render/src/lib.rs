@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 mod camera;
+pub mod caption;
 pub mod contour;
 mod display;
 pub mod flow;

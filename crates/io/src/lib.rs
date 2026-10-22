@@ -235,8 +235,8 @@ pub struct Item {
 }
 
 /// View state saved with a model (not part of its definition, nor of a result's definition
-/// hash): the items the viewport hides and the saved result views ([`views::SavedView`]) with
-/// the one shown.
+/// hash): the items the viewport hides, the saved result views ([`views::SavedView`]) with the
+/// one shown, and the renders that turn a view into a clip ([`views::Render`]).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct View {
@@ -247,11 +247,13 @@ pub struct View {
     /// The saved view shown: restored when the model opens.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub renders: Vec<views::Render>,
 }
 
 impl View {
     pub fn is_empty(&self) -> bool {
-        self.hidden.is_empty() && self.views.is_empty() && self.current.is_none()
+        self.hidden.is_empty() && self.views.is_empty() && self.current.is_none() && self.renders.is_empty()
     }
 
     pub fn is_hidden(&self, kind: ItemKind, name: &str) -> bool {
@@ -263,6 +265,11 @@ impl View {
         self.views.iter().find(|v| v.name == name)
     }
 
+    /// The render named `name`.
+    pub fn render(&self, name: &str) -> Option<&views::Render> {
+        self.renders.iter().find(|r| r.name == name)
+    }
+
     pub fn check(&self) -> Result<()> {
         if self.hidden.len() > MAX_HIDDEN {
             return Err(Error::Limit(format!("a view hides at most {MAX_HIDDEN} items")));
@@ -270,7 +277,7 @@ impl View {
         if self.hidden.iter().any(|i| i.name.is_empty() || i.name.len() > MAX_HIDDEN_NAME) {
             return invalid(format!("{MANIFEST}: a hidden item's name is 1 to {MAX_HIDDEN_NAME} bytes"));
         }
-        views::check(&self.views, self.current.as_deref()).map_err(|e| match e {
+        views::check(&self.views, self.current.as_deref(), &self.renders).map_err(|e| match e {
             Error::Invalid(m) => Error::Invalid(format!("{MANIFEST}: {m}")),
             e => e,
         })
