@@ -241,6 +241,28 @@ fn screenshot_takes_a_camera_orientation() {
     }
 }
 
+/// `view.save` keeps the camera of the last picture; `view.restore` aims the next one with it.
+#[test]
+fn a_saved_view_keeps_and_restores_the_picture_camera() {
+    let mut s = server();
+    ok(&mut s, "execute", json!({"command": "file.sample", "params": {"name": "cantilever"}}));
+    // The camera a picture was drawn with (radians).
+    let picture = |s: &mut Server, args: Value| {
+        let r = send(s, json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "screenshot", "arguments": args}}));
+        let content = r["result"]["content"].as_array().cloned().unwrap_or_default();
+        let info: Value = serde_json::from_str(content[1]["text"].as_str().unwrap()).unwrap();
+        (info["camera"]["yaw"].as_f64().unwrap(), info["camera"]["pitch"].as_f64().unwrap())
+    };
+    let turned = picture(&mut s, json!({"camera": {"yaw": 30, "pitch": 20}, "width": 64, "height": 48}));
+    let saved = ok(&mut s, "execute", json!({"command": "view.save", "params": {"name": "Side"}}));
+    assert!((saved["view"]["camera"]["yaw"].as_f64().unwrap() - 30.0).abs() < 1e-9, "{saved}");
+    let iso = picture(&mut s, json!({"view": "iso", "width": 64, "height": 48}));
+    assert!((iso.0 - turned.0).abs() > 0.1);
+    ok(&mut s, "execute", json!({"command": "view.restore", "params": {"name": "Side"}}));
+    let back = picture(&mut s, json!({"width": 64, "height": 48}));
+    assert!((back.0 - turned.0).abs() < 1e-9 && (back.1 - turned.1).abs() < 1e-9, "{back:?} {turned:?}");
+}
+
 /// `probe {at}` reads a structural result at the nodes nearest to points (#105); hostile points
 /// are refused without a panic.
 #[test]

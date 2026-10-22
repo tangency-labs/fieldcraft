@@ -112,6 +112,8 @@ pub struct Headless {
     /// distance); a camera given aims at its target ([`fieldcraft_engine::view::frame_at`]).
     pub view: Aim,
     roots: Roots,
+    /// The session's camera requests seen (a saved view shown aims the next picture).
+    camera_seen: u64,
 }
 
 impl Default for Headless {
@@ -125,7 +127,7 @@ impl Headless {
     pub fn new(roots: Roots) -> Self {
         let mut session = Session::default();
         session.file_access = roots.clone();
-        Headless { session, view: Aim::new(Orientation::of(StandardView::Iso)), roots }
+        Headless { session, view: Aim::new(Orientation::of(StandardView::Iso)), roots, camera_seen: 0 }
     }
 }
 
@@ -139,6 +141,13 @@ impl Backend for Headless {
     }
 
     fn picture(&mut self, r: &PictureRequest) -> Result<Picture, String> {
+        // A saved view shown since the last picture aims this one (`view.restore`, a model opened).
+        if self.session.camera_requests() != self.camera_seen {
+            self.camera_seen = self.session.camera_requests();
+            if let Some(a) = &self.session.camera {
+                self.view = Aim { target: Some(a.target.clone().unwrap_or(Target::MODEL)), ..a.clone() };
+            }
+        }
         if let Some(v) = &r.view {
             self.view = Aim::new(Orientation::of(standard_view(v)?));
         }
@@ -154,6 +163,8 @@ impl Backend for Headless {
             fieldcraft_engine::view::frame(&self.session, &self.view.at, w as usize, h as usize, &Palette::LIGHT, r.section)
         };
         let (png, renderer) = draw(&f, w, h)?;
+        // The camera drawn with is the session's, what `view.save` keeps.
+        self.session.camera = Some(fieldcraft_engine::view::aim_of(&f.cam, &self.session));
         let mut info = picture_report(&renderer, &f.shown);
         if let Some(o) = info.as_object_mut() {
             o.insert("source".into(), "model".into());

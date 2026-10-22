@@ -458,10 +458,45 @@ pub fn controls(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) 
     if let Some(p) = xy_export {
         app.export_csv_with("results.xy", p);
     }
+    ui.separator();
+    let save_view = views_row(app, ui, &mut run);
     for (id, params) in run {
         // The reaction sums land in `app.reactions` (ModelApp::run_form).
         let _ = app.run(id, params);
     }
+    if save_view {
+        // The form starts with a free name and the viewport's camera.
+        let taken: Vec<&str> = app.session.view.views.iter().map(|v| v.name.as_str()).collect();
+        let name = (1..).map(|i| format!("View {i}")).find(|n| !taken.contains(&n.as_str())).unwrap_or_default();
+        let camera = fieldcraft_engine::view::aim_of(&app.cam, &app.session).json();
+        app.open_form("view.save", json!({"name": name, "camera": camera}));
+    }
+}
+
+/// The saved views: a list that shows one (`view.restore`) and Save View… (`view.save`'s
+/// form, the viewport's camera filled in); whether Save View… was clicked.
+fn views_row(app: &ModelApp, ui: &mut egui::Ui, run: &mut Vec<(&'static str, Value)>) -> bool {
+    let views = &app.session.view.views;
+    let current = app.session.view.current.as_deref();
+    let mut save = false;
+    ui.horizontal(|ui| {
+        ui.label("Views");
+        let shown = current.unwrap_or(if views.is_empty() { "None saved" } else { "Choose…" });
+        ui.add_enabled_ui(!views.is_empty(), |ui| {
+            egui::ComboBox::from_id_salt("fc_results_views").selected_text(shown).width(COMBO_WIDTH).truncate().show_ui(ui, |ui| {
+                for v in views {
+                    if ui.selectable_label(current == Some(v.name.as_str()), &v.name).on_hover_text("Show this view (view.restore)").clicked() {
+                        run.push(("view.restore", json!({"name": v.name})));
+                    }
+                }
+            });
+        });
+        save = ui
+            .button("Save View…")
+            .on_hover_text("Keep the camera and this results display as a named view, saved with the model (view.save)")
+            .clicked();
+    });
+    save
 }
 
 /// The deformation rows of the results grid: Deformed (with its scale) and Animate.

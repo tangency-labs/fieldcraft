@@ -426,6 +426,8 @@ pub struct ModelApp {
     results_shown: bool,
     /// The framing the viewport does when it next draws ([`framing::Reframe`]).
     reframe: Option<framing::Reframe>,
+    /// The session's camera requests seen ([`Session::camera_requests`]: a saved view shown).
+    camera_seen: u64,
     /// The open document ([`Session::opened`]) the view was framed for.
     framed_document: Option<u64>,
     /// Tessellated design bodies with their names, kept while the same design is open.
@@ -566,6 +568,7 @@ impl ModelApp {
             features_open: Default::default(),
             results_shown: false,
             reframe: None,
+            camera_seen: 0,
             framed_document: None,
             bodies: (None, Vec::new()),
             prebuilt: None,
@@ -2120,6 +2123,20 @@ impl ModelApp {
         Ok(())
     }
 
+    /// Aim at the camera a saved view asks for (`view.restore`, a model opened showing one), once
+    /// per request; then keep the session's camera the viewport's, so `view.save` keeps it.
+    fn follow_camera(&mut self) {
+        if self.session.camera_requests() != self.camera_seen {
+            self.camera_seen = self.session.camera_requests();
+            if let Some(aim) = self.session.camera.clone()
+                && let Err(e) = self.aim_camera(&aim)
+            {
+                self.set_status(format!("Saved view: {e}"), true);
+            }
+        }
+        self.session.camera = Some(fieldcraft_engine::view::aim_of(&self.cam, &self.session));
+    }
+
     /// Do the framing asked for ([`framing::Reframe`]) once there is something to frame; the
     /// viewport calls it when it knows its size and its overlays, before drawing.
     pub(crate) fn apply_reframe(&mut self) {
@@ -2150,6 +2167,7 @@ impl ModelApp {
         if self.poll_loading() {
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
+        self.follow_camera();
         self.dropped_files(ctx);
         self.poll_updates(ctx);
         self.shortcuts(ctx);
@@ -2619,6 +2637,27 @@ mod tests {
         assert!(app.status.as_ref().is_some_and(|s| s.error && s.text.starts_with("Add Node:")), "{err}");
         app.run("model.info", json!({})).unwrap();
         assert!(app.status.as_ref().is_some_and(|s| s.text.starts_with("Model Info: 1 node, 0 elements")), "{:?}", app.status);
+    }
+
+    /// Save View keeps the viewport's camera; showing the view turns the viewport back to it.
+    #[test]
+    fn a_saved_view_turns_the_viewport_back() {
+        let mut app = ModelApp::new(Session::default());
+        app.run("file.sample", json!({"name": "cantilever"})).unwrap();
+        app.run("solve.run", json!({})).unwrap();
+        app.cam.yaw = 0.5;
+        app.cam.pitch = 0.25;
+        app.follow_camera();
+        app.run("view.save", json!({"name": "Side"})).unwrap();
+        assert!((app.session.view.views[0].camera.as_ref().unwrap()["yaw"].as_f64().unwrap() - 0.5f64.to_degrees()).abs() < 1e-9);
+        app.cam.yaw = -1.0;
+        app.run("view.restore", json!({"name": "Side"})).unwrap();
+        app.follow_camera();
+        assert!((app.cam.yaw - 0.5).abs() < 1e-9 && (app.cam.pitch - 0.25).abs() < 1e-9, "{:?}", app.cam);
+        // Once per request: a later turn stays.
+        app.cam.yaw = 1.0;
+        app.follow_camera();
+        assert_eq!(app.cam.yaw, 1.0);
     }
 
     /// Status lines say what changed, in words, whatever started the command (#333), and the

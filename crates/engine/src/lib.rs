@@ -370,6 +370,15 @@ pub struct Session {
     pub view: fieldcraft_io::View,
     /// The view as last saved (or opened): a change to it is unsaved too.
     saved_view: fieldcraft_io::View,
+    /// A saved view waiting for its step's result to be shown (`view.restore` or opening a
+    /// file before the step is solved).
+    pending_view: Option<String>,
+    /// The camera pictures are aimed with, in the display units: the one last aimed by a host
+    /// (the app's viewport, an MCP picture; what `view.save` keeps), or asked for by a saved
+    /// view ([`Session::request_camera`]). Session state, like the results view.
+    pub camera: Option<view::Aim>,
+    /// Counts the cameras asked for, so a host aims its own once per request.
+    camera_requests: u64,
     /// This is the app's own model: its top-level commands go into the crash journal
     /// ([`crash`]), so an unclean exit can be replayed. Off for scratch sessions and tests.
     pub crash_journal: bool,
@@ -737,8 +746,9 @@ impl Session {
             Some(f) => self.result_inputs.insert(step.clone(), f),
             None => self.result_inputs.remove(&step),
         };
-        self.results.insert(step, (self.revision, Arc::new(result)));
+        self.results.insert(step.clone(), (self.revision, Arc::new(result)));
         self.results_stored = self.results_stored.wrapping_add(1);
+        cmd::views::show_pending(self, &step);
     }
 
     /// Keep a result read from a file, solved from the definition `definition`: current when that
@@ -785,6 +795,18 @@ impl Session {
             Some(p) => Ok(p.to_string()),
             None => Err(EngineError::Params(format!("`{path}` resolves to a path that is not valid UTF-8"))),
         }
+    }
+
+    /// Ask the hosts to aim their camera as `aim` says (a saved view shown): it becomes the
+    /// session's camera and [`Session::camera_requests`] counts one more.
+    pub fn request_camera(&mut self, aim: view::Aim) {
+        self.camera = Some(aim);
+        self.camera_requests = self.camera_requests.wrapping_add(1);
+    }
+
+    /// How many cameras were asked for: a host that saw fewer aims at [`Session::camera`].
+    pub fn camera_requests(&self) -> u64 {
+        self.camera_requests
     }
 
     /// The current state is what `path` now holds.

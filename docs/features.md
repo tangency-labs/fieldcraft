@@ -175,7 +175,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | File | Save — Save the model to its .fieldcraft file | ready | `file.save` |
 | File | Save As — Save the model to a new .fieldcraft file | ready | `file.save_as` |
 | File | Recover — Open a model autosaved by an app that crashed or closed with unsaved changes | ready | `file.recover`, `file.recovery.list`, `file.recovery.discard` |
-| View | Show All — Show every item hidden in the viewport (hide, show and isolate items from the browser) | ready | `view.show_all`, (`view.hide`), (`view.show`), (`view.isolate`) |
+| View | Show All — Show every item hidden in the viewport (hide, show and isolate items from the browser) | ready | `view.show_all`, (`view.hide`), (`view.show`), (`view.isolate`), (`view.save`), (`view.restore`), (`view.delete`), (`view.list`) |
 | History | Undo — Undo the last command that changed the model | ready | `edit.undo` |
 | History | Redo — Redo the command undone last | ready | `edit.redo` |
 | Help | Report a Bug — Draft a GitHub bug report with the version, the OS and the last error; you review it, and nothing is sent until you submit it | ready | `diagnostics.bug_report`, `diagnostics.crash_reports`, `diagnostics.crash_report`, `diagnostics.crash_reports.delete`, `diagnostics.crash_test`, `app.update.check` |

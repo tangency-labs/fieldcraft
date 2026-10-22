@@ -38,6 +38,7 @@ pub mod recovery;
 pub mod results;
 pub mod roots;
 pub mod stl;
+pub mod views;
 pub mod vtk;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -233,31 +234,46 @@ pub struct Item {
     pub name: String,
 }
 
-/// View state saved with a model (not part of its definition): the items the viewport hides.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// View state saved with a model (not part of its definition, nor of a result's definition
+/// hash): the items the viewport hides and the saved result views ([`views::SavedView`]) with
+/// the one shown.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct View {
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub hidden: BTreeSet<Item>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub views: Vec<views::SavedView>,
+    /// The saved view shown: restored when the model opens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current: Option<String>,
 }
 
 impl View {
     pub fn is_empty(&self) -> bool {
-        self.hidden.is_empty()
+        self.hidden.is_empty() && self.views.is_empty() && self.current.is_none()
     }
 
     pub fn is_hidden(&self, kind: ItemKind, name: &str) -> bool {
         self.hidden.contains(&Item { kind, name: name.to_string() })
     }
 
-    fn check(&self) -> Result<()> {
+    /// The saved view named `name`.
+    pub fn saved(&self, name: &str) -> Option<&views::SavedView> {
+        self.views.iter().find(|v| v.name == name)
+    }
+
+    pub fn check(&self) -> Result<()> {
         if self.hidden.len() > MAX_HIDDEN {
             return Err(Error::Limit(format!("a view hides at most {MAX_HIDDEN} items")));
         }
         if self.hidden.iter().any(|i| i.name.is_empty() || i.name.len() > MAX_HIDDEN_NAME) {
             return invalid(format!("{MANIFEST}: a hidden item's name is 1 to {MAX_HIDDEN_NAME} bytes"));
         }
-        Ok(())
+        views::check(&self.views, self.current.as_deref()).map_err(|e| match e {
+            Error::Invalid(m) => Error::Invalid(format!("{MANIFEST}: {m}")),
+            e => e,
+        })
     }
 }
 

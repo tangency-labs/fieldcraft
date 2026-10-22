@@ -36,7 +36,10 @@ fn sample() -> ModelFile {
     };
     let journal =
         vec![("mesh.node.add".to_string(), json!({"label": 1, "xyz": [0, 0, 0]})), ("model.units".to_string(), json!({"system": "mm-t-s-N-MPa"}))];
-    let view = View { hidden: [Item { kind: ItemKind::Datum, name: "Sym".into() }, Item { kind: ItemKind::Body, name: "Body1".into() }].into() };
+    let view = View {
+        hidden: [Item { kind: ItemKind::Datum, name: "Sym".into() }, Item { kind: ItemKind::Body, name: "Body1".into() }].into(),
+        ..View::default()
+    };
     ModelFile { model: m, geometry, journal, journal_header: Default::default(), view, ..ModelFile::default() }
 }
 
@@ -436,4 +439,41 @@ fn results_round_trip_and_hostile_results_are_refused() {
     assert!(read(&package(&ps)).is_err());
     let unknown = with_manifest(&bytes, |m| m["parts"]["notes.txt"] = json!({"bytes": 1, "sha256": "0".repeat(64)}));
     assert!(read(&unknown).unwrap_err().to_string().contains("unexpected part"));
+}
+
+/// Saved views and the current one round trip in the manifest's `view`, in the commands'
+/// parameter shapes, outside the model part; references and names are checked.
+#[test]
+fn saved_views_round_trip_and_are_checked() {
+    use fieldcraft_io::views::{ResultsSetup, SavedView};
+    let mut f = sample();
+    let camera = json!({"yaw": -70, "pitch": 18, "fit": true}).as_object().cloned();
+    let contour = json!({"field": "temperature", "range": {"min": 25, "max": 45}}).as_object().cloned();
+    let slice = json!({"axis": "x", "position": 14.9}).as_object().cloned();
+    f.view.views = vec![SavedView {
+        name: "Cutaway".into(),
+        units: DisplaySystem::default(),
+        camera,
+        results: Some(ResultsSetup { step: "Flow".into(), contour, slice, frame: Some(10), ..ResultsSetup::default() }),
+    }];
+    f.view.current = Some("Cutaway".into());
+    let bytes = bytes_of(&f);
+    let back = read(&bytes).unwrap();
+    assert_eq!(back.view, f.view);
+    let manifest: Value = serde_json::from_slice(&parts(&bytes)[0].1).unwrap();
+    assert_eq!(manifest["view"]["current"], "Cutaway");
+    assert_eq!(manifest["view"]["views"][0]["units"], "mm-t-s-N-MPa");
+    assert_eq!(manifest["view"]["views"][0]["results"]["contour"]["range"]["max"], 45);
+    // The model part does not change with the view: it is outside the definition.
+    assert_eq!(parts(&bytes)[1].1, parts(&bytes_of(&sample()))[1].1);
+    for (what, key, value) in [
+        ("a current view not saved", "current", json!("Nope")),
+        ("an unknown key in a view", "views", json!([{"name": "V", "units": "mm-t-s-N-MPa", "zoom": 2}])),
+        ("a view with a bad step", "views", json!([{"name": "V", "units": "mm-t-s-N-MPa", "results": {"step": ""}}])),
+        ("a view without units", "views", json!([{"name": "V"}])),
+        ("two views of one name", "views", json!([{"name": "V", "units": "mm-t-s-N-MPa"}, {"name": "V", "units": "mm-t-s-N-MPa"}])),
+    ] {
+        let b = with_manifest(&bytes, |m| m["view"][key] = value.clone());
+        assert!(read(&b).is_err(), "{what}");
+    }
 }

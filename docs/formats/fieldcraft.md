@@ -45,6 +45,32 @@ reference, so saving again does not lose it.
 `view.isolate`), as `{"hidden": [{"kind": "datum", "name": "Sym"}, …]}` with `kind` one of
 `body`, `surface`, `datum`, `boundary_condition`, `load`, `reference_point`, `coupling`.
 
+`view` also keeps the saved result views (`view.save`) and the one shown when the model was saved,
+which opening it shows again (once its step has a result, from `results.bin` or a solve):
+
+```json
+"view": {
+  "views": [{"name": "Cutaway", "units": "mm-t-s-N-MPa",
+             "camera": {"yaw": -70, "pitch": 18, "fit": true},
+             "results": {"step": "Flow", "frame": 10,
+                         "contour": {"field": "temperature", "bands": 12, "range": {"min": 25, "max": 45}},
+                         "slice": {"axis": "x", "position": 14.9},
+                         "surface": {"show": false},
+                         "streamlines": {"show": true, "count": 64, "max_steps": 4000}}}],
+  "current": "Cutaway"
+}
+```
+
+Each part is the parameters of the command that sets it: `camera` is `ui.camera`'s (and the MCP
+`screenshot` tool's), `deformed`, `contour`, `slice`, `surface` and `streamlines` are those
+`results.*` commands' (without `step`), `mode` and `frame` the number `results.modes` and
+`results.frame` take. `units` names the system their bare numbers are in, as a journal's header
+does: they are read in it whatever the model is shown in. Showing a view (`view.restore`, or
+opening the file) runs those commands in turn and aims the app's viewport (or the next MCP
+picture) at the camera; what no longer applies (a field the step has not) comes back as a
+warning. At most 1000 views, names 1 to 64 characters; `current` names one of them. The view
+state is outside the definition: it is not in `model.json` and not in a result's definition hash.
+
 ## `mesh.bin`
 
 Little-endian:

@@ -1957,6 +1957,14 @@ pub const DATUM_POINT: &[Field] = &[
     .req()
     .def(r#"{"type": "coordinates"}"#),
 ];
+pub const VIEW_SAVE: &[Field] = &[
+    text("name", "Name").help("The view's name; a view of that name is replaced.").req(),
+    json("camera", "Camera")
+        .help("ui.camera's parameters: yaw and pitch in degrees, distance and target in the display units; the camera last aimed when empty.")
+        .hint(r#"{"yaw": -70, "pitch": 18, "fit": true}"#),
+    flag("results", "Results display").help("Keep what the results display shows with the camera.").def("true"),
+];
+pub const VIEW_NAME: &[Field] = &[text("name", "View").help("The saved view.").req()];
 pub const VIEW_ITEMS: &[Field] = &[rows(
     "items",
     "Items",
@@ -2544,6 +2552,7 @@ mod tests {
         "no crash report",
         "FIELDCRAFT_CRASH_TEST",
         "no relaxation field",
+        "no saved view",
     ];
 
     /// Fill top-level required names (a fresh one) and references (the first existing item).

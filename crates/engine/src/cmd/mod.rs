@@ -47,6 +47,7 @@ mod symmetry;
 mod tags;
 pub mod update;
 pub(crate) mod view;
+pub(crate) mod views;
 mod virtual_faces;
 pub mod xy;
 
@@ -79,6 +80,10 @@ pub static ALL: &[CommandSpec] = &[
     view::SHOW,
     view::ISOLATE,
     view::SHOW_ALL,
+    views::SAVE,
+    views::RESTORE,
+    views::DELETE,
+    views::LIST,
     datum::PARTITION,
     datum::DATUM_SUPPRESS,
     datum::PARTITION_SUPPRESS,

@@ -944,6 +944,25 @@ fn aim_si(s: &Session, aim: &Aim) -> Aim {
     Aim { at: orientation_si(s, &aim.at), target, ..aim.clone() }
 }
 
+/// The camera `cam` as an [`Aim`] in the session's display units: what `view.save` keeps of a
+/// host's camera (the app's viewport, an MCP picture), looking at its own target from its own
+/// distance.
+pub fn aim_of(cam: &Camera, s: &Session) -> Aim {
+    let length = |m: f64| s.units().express(fieldcraft_model::units::Quantity::Length, m).unwrap_or(f64::NAN);
+    let at = Orientation {
+        yaw: cam.yaw.to_degrees(),
+        pitch: cam.pitch.to_degrees(),
+        distance: Some(length(cam.distance)).filter(|d| d.is_finite() && *d > 0.0),
+    };
+    let target = Vec3::new(length(cam.target.x), length(cam.target.y), length(cam.target.z));
+    Aim {
+        at,
+        target: target.is_finite().then_some(Target::Point(target)),
+        fit: false,
+        fov: Some(cam.fov.to_degrees()).filter(|f| f.is_finite() && *f > 0.0),
+    }
+}
+
 /// The camera `cam` as agents read it: its fields, with the distance and the target in the
 /// session's display units (the camera itself works in metres).
 pub fn camera_shown(cam: &Camera, s: &Session) -> Value {

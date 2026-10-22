@@ -32,7 +32,7 @@ pub const NEW: CommandSpec = CommandSpec {
 pub const OPEN: CommandSpec = CommandSpec {
     id: "file.open",
     label: "Open Model",
-    params: r#"{"path": "bracket.fieldcraft"} — opens the model, its mesh and its journal, and opens its design and imported meshes again from their files (one that is missing or changed is listed in `warnings`; the model still opens) and its saved results (`results` lists each step's, `stale` when it was solved from another definition than the model's: kept and shown as stale, with a warning each); unsaved changes of the current model are discarded and the undo history starts empty. A file of an older format is migrated as it is read (`migrated_from` in the reply; what migrating changed in what it means, such as a mesh of the design in a model of metres, leads `warnings`) and nothing is written; a later format is refused. Names the design no longer has (a SolidCraft that names a face otherwise): a face the mesh lies on is found again by where the mesh is, its edges and vertices through their faces, and every definition follows (`renamed`, and a warning each; the model is then changed, to save); what is not found again is listed in `warnings`, to pick again, and in `stale` (as geometry.open's: `mesh_bodies`, `sets`, `seeds` and `references` [{owner, reference, why}]); `mismatched` lists mesh faces that lie on another face of the design than their name's (a name SolidCraft now gives another face)"#,
+    params: r#"{"path": "bracket.fieldcraft"} — opens the model, its mesh and its journal, and opens its design and imported meshes again from their files (one that is missing or changed is listed in `warnings`; the model still opens), shows the saved view it was saved showing (`view`: its name, the camera the hosts aim at, `pending` until its step is solved) and its saved results (`results` lists each step's, `stale` when it was solved from another definition than the model's: kept and shown as stale, with a warning each); unsaved changes of the current model are discarded and the undo history starts empty. A file of an older format is migrated as it is read (`migrated_from` in the reply; what migrating changed in what it means, such as a mesh of the design in a model of metres, leads `warnings`) and nothing is written; a later format is refused. Names the design no longer has (a SolidCraft that names a face otherwise): a face the mesh lies on is found again by where the mesh is, its edges and vertices through their faces, and every definition follows (`renamed`, and a warning each; the model is then changed, to save); what is not found again is listed in `warnings`, to pick again, and in `stale` (as geometry.open's: `mesh_bodies`, `sets`, `seeds` and `references` [{owner, reference, why}]); `mismatched` lists mesh faces that lie on another face of the design than their name's (a name SolidCraft now gives another face)"#,
     form: Some(super::forms::FILE_OPEN),
     kind: CommandKind::Session,
     requires: &[],
@@ -323,6 +323,8 @@ impl Session {
         opened.crash_journal = self.crash_journal;
         opened.origin = self.origin;
         opened.default_units = self.default_units.clone();
+        // The hosts count camera requests across documents.
+        opened.camera_requests = self.camera_requests;
         opened.clear_history();
         opened.mark_opened();
         *self = opened;
@@ -367,7 +369,23 @@ fn load(s: &mut Session, bytes: &[u8], path: Option<String>, saved: bool) -> Res
         opened.revision = next_revision();
     }
     s.replace_with(opened);
+    // The view the file was saved showing comes back (once its step is solved, when it is not).
+    let mut warnings = warnings;
+    let shown = match s.view.current.clone() {
+        Some(name) => match super::views::show(s, &name) {
+            Ok(r) => {
+                warnings.extend(r["warnings"].as_array().into_iter().flatten().filter_map(|w| w.as_str().map(str::to_string)));
+                json!({"name": name, "pending": r["pending"], "camera": r["camera"]})
+            }
+            Err(e) => {
+                warnings.push(e.to_string());
+                Value::Null
+            }
+        },
+        None => Value::Null,
+    };
     let mut reply = summary(s, &warnings);
+    reply["view"] = shown;
     reply["stale"] = super::geometry::opened_stale(s, &names);
     let names = names.json();
     reply["renamed"] = names["renamed"].clone();
