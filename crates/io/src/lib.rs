@@ -1,7 +1,7 @@
 //! FieldCraft's files.
 //!
 //! A `.fieldcraft` file ([`write`], [`read`]; docs/formats/fieldcraft.md) is a ZIP package of four
-//! parts, stored uncompressed so each can be read with any unzip tool:
+//! parts and the optional ones, stored uncompressed so each can be read with any unzip tool:
 //!
 //! - `fieldcraft.json`: the manifest. The format tag (`fieldcraft/3`), the program that wrote
 //!   it, the geometry the model is built on (the SolidCraft design and the imported 3MF meshes,
@@ -14,6 +14,8 @@
 //!   form ([`mesh`]).
 //! - `journal.json`: the commands that built the model, one per line, as typed: a script that
 //!   replays, headed by the unit system its bare numbers are in ([`JournalHeader`]).
+//! - `results.bin` (optional): every solved step's result with the hash of the definition it was
+//!   solved from ([`results`]), so a model opens with its results.
 //!
 //! Files of every earlier format are read: their parts are brought to the current format by the
 //! migration chain ([`migrate`]) before they are deserialised; a file of a later format is refused
@@ -27,11 +29,13 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+pub mod codec;
 pub mod fs;
 pub mod memory;
 pub mod mesh;
 pub mod migrate;
 pub mod recovery;
+pub mod results;
 pub mod roots;
 pub mod stl;
 pub mod vtk;
@@ -282,6 +286,11 @@ pub struct ModelFile {
     /// What migrating an older file changed in what it means (empty for a current file, and
     /// never written): the reader's note to the user.
     pub notes: Vec<String>,
+    /// The solved results the file keeps (`results.bin`), in step name order.
+    pub results: Vec<results::Stored>,
+    /// Why the file's results were left unread (they are of another results encoding): the
+    /// reader's note to the user.
+    pub results_note: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -294,6 +303,14 @@ struct Manifest {
     #[serde(default, skip_serializing_if = "View::is_empty")]
     view: View,
     parts: BTreeMap<String, Part>,
+}
+
+/// What a file holds besides the model, its geometry references, journal and view: written only
+/// when there is some.
+#[derive(Debug, Clone, Default)]
+pub struct Extras<'a> {
+    /// Solved results to keep (`results.bin`), by step name.
+    pub results: Vec<(&'a str, results::StoredRef<'a>)>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -362,6 +379,18 @@ fn journal_text(header: &JournalHeader, journal: &[JournalEntry]) -> Result<Vec<
 /// `journal` (whose numbers `header` describes), shown with `view`. The same arguments always
 /// give the same bytes.
 pub fn write(model: &Model, geometry: &Geometry, journal: &[JournalEntry], header: &JournalHeader, view: &View) -> Result<Vec<u8>> {
+    write_with(model, geometry, journal, header, view, &Extras::default())
+}
+
+/// [`write`], with what `extras` adds.
+pub fn write_with(
+    model: &Model,
+    geometry: &Geometry,
+    journal: &[JournalEntry],
+    header: &JournalHeader,
+    view: &View,
+    extras: &Extras,
+) -> Result<Vec<u8>> {
     if geometry.meshes.len() > MAX_MESH_SOURCES {
         return Err(Error::Limit(format!("a model refers to at most {MAX_MESH_SOURCES} imported meshes")));
     }
@@ -370,21 +399,28 @@ pub fn write(model: &Model, geometry: &Geometry, journal: &[JournalEntry], heade
     model_json.push(b'\n');
     let mesh = mesh::encode(model)?;
     let journal = journal_text(header, journal)?;
-    let parts = [(MODEL, model_json), (MESH, mesh), (JOURNAL, journal)];
+    let mut parts: Vec<(String, std::borrow::Cow<'_, [u8]>)> =
+        vec![(MODEL.into(), model_json.into()), (MESH.into(), mesh.into()), (JOURNAL.into(), journal.into())];
+    if !extras.results.is_empty() {
+        parts.push((results::PART.into(), results::encode(&extras.results)?.into()));
+    }
     let manifest = Manifest {
         format: FORMAT.into(),
         generator: format!("FieldCraft {}", env!("CARGO_PKG_VERSION")),
         geometry: geometry.clone(),
         view: view.clone(),
-        parts: parts.iter().map(|(name, bytes)| (name.to_string(), Part { bytes: bytes.len() as u64, sha256: sha256_hex(bytes) })).collect(),
+        parts: parts.iter().map(|(name, bytes)| (name.clone(), Part { bytes: bytes.len() as u64, sha256: sha256_hex(bytes) })).collect(),
     };
     let mut manifest_json = serde_json::to_vec_pretty(&manifest).map_err(|e| json_error(MANIFEST, e))?;
     manifest_json.push(b'\n');
 
     let total: usize = parts.iter().map(|(_, b)| b.len()).sum::<usize>() + manifest_json.len();
+    if total as u64 > MAX_FILE_BYTES {
+        return Err(Error::Limit(format!("the file would be {} MB (at most {} MB): save without the results", total >> 20, MAX_FILE_BYTES >> 20)));
+    }
     let mut zip = zip::ZipWriter::new(Cursor::new(Vec::with_capacity(total.saturating_add(1024))));
     let zip_error = |e: zip::result::ZipError| Error::Io(format!("cannot build the package: {e}"));
-    for (name, bytes) in std::iter::once((MANIFEST, &manifest_json)).chain(parts.iter().map(|(n, b)| (*n, b))) {
+    for (name, bytes) in std::iter::once((MANIFEST, manifest_json.as_slice())).chain(parts.iter().map(|(n, b)| (n.as_str(), b.as_ref()))) {
         // Fixed time and permissions: the bytes depend on the model only.
         let options = zip::write::SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Stored)
@@ -435,23 +471,31 @@ pub fn read_versioned(bytes: &[u8]) -> Result<(ModelFile, u32)> {
     let manifest: Value = serde_json::from_slice(&manifest_bytes).map_err(|e| json_error(MANIFEST, e))?;
     let format = migrate::version(&manifest)?;
 
-    let names = [MANIFEST, MODEL, MESH, JOURNAL];
-    let mut seen = Vec::with_capacity(zip.len());
-    for name in zip.file_names() {
-        let name = name.map_err(|e| Error::Invalid(format!("not a FieldCraft file: {e}")))?;
-        if !names.contains(&name.as_ref()) {
-            return invalid(format!("unexpected part `{}`", name.chars().take(80).collect::<String>()));
-        }
-        if seen.contains(&name) {
-            return invalid(format!("part `{name}` appears twice"));
-        }
-        seen.push(name);
-    }
     // The package (its parts' sizes and hashes) is checked as it is on disk, before migration.
     let listed: BTreeMap<String, Part> =
         serde_json::from_value(manifest.get("parts").cloned().unwrap_or(Value::Null)).map_err(|e| json_error(MANIFEST, e))?;
-    if listed.len() != 3 {
-        return invalid(format!("`{MANIFEST}` must list exactly the parts {MODEL}, {MESH} and {JOURNAL}"));
+    let required = [MODEL, MESH, JOURNAL];
+    if required.iter().any(|n| !listed.contains_key(*n)) {
+        return invalid(format!("`{MANIFEST}` must list the parts {MODEL}, {MESH} and {JOURNAL}"));
+    }
+    // Format 3 may also hold results, listed.
+    let optional = |name: &str| format == FORMAT_VERSION && name == results::PART;
+    if let Some(extra) = listed.keys().find(|n| !required.contains(&n.as_str()) && !optional(n)) {
+        return invalid(if format == FORMAT_VERSION {
+            format!("`{MANIFEST}` lists an unexpected part `{}`", extra.chars().filter(|c| !c.is_control()).take(80).collect::<String>())
+        } else {
+            format!("`{MANIFEST}` must list exactly the parts {MODEL}, {MESH} and {JOURNAL}")
+        });
+    }
+    let mut seen = BTreeSet::new();
+    for name in zip.file_names() {
+        let name = name.map_err(|e| Error::Invalid(format!("not a FieldCraft file: {e}")))?;
+        if name != MANIFEST && !listed.contains_key(name.as_ref()) {
+            return invalid(format!("unexpected part `{}`", name.chars().filter(|c| !c.is_control()).take(80).collect::<String>()));
+        }
+        if !seen.insert(name.to_string()) {
+            return invalid(format!("part `{name}` appears twice"));
+        }
     }
     let mut part = |name: &str, cap: u64| -> Result<Vec<u8>> {
         let entry = listed.get(name).ok_or_else(|| Error::Invalid(format!("`{MANIFEST}` does not list `{name}`")))?;
@@ -461,6 +505,7 @@ pub fn read_versioned(bytes: &[u8]) -> Result<(ModelFile, u32)> {
         }
         Ok(data)
     };
+    let results_bytes = if listed.contains_key(results::PART) { Some(part(results::PART, results::MAX_BYTES)?) } else { None };
     let model_json = part(MODEL, MAX_TEXT_PART_BYTES)?;
     let mesh = part(MESH, mesh::MAX_BYTES)?;
     let journal_json = part(JOURNAL, MAX_TEXT_PART_BYTES)?;
@@ -497,6 +542,17 @@ pub fn read_versioned(bytes: &[u8]) -> Result<(ModelFile, u32)> {
         return Err(Error::Limit(format!("a model refers to at most {MAX_MESH_SOURCES} imported meshes")));
     }
     manifest.view.check()?;
+    let (results, results_note) = match results_bytes.as_deref().map(results::decode).transpose()? {
+        None => (Vec::new(), None),
+        Some(results::Decoded::Results(r)) => (r, None),
+        Some(results::Decoded::OtherVersion(magic)) => (
+            Vec::new(),
+            Some(format!(
+                "the file's results were saved in another results encoding ({magic}; this version reads {}): it opens without them, solve again",
+                String::from_utf8_lossy(results::MAGIC)
+            )),
+        ),
+    };
     if !model.nodes().is_empty() || !model.elements().is_empty() || !model.classification().entities().is_empty() {
         return invalid(format!("`{MODEL}` holds mesh data; the mesh belongs in `{MESH}`"));
     }
@@ -504,7 +560,7 @@ pub fn read_versioned(bytes: &[u8]) -> Result<(ModelFile, u32)> {
     drop(mesh_bin);
     let journal_header = JournalHeader { units: journal.units, model_units: journal.model_units };
     let journal = read_journal(journal.commands)?;
-    Ok((ModelFile { model, geometry: manifest.geometry, journal, journal_header, view: manifest.view, notes }, format))
+    Ok((ModelFile { model, geometry: manifest.geometry, journal, journal_header, view: manifest.view, notes, results, results_note }, format))
 }
 
 /// The format version of the `.fieldcraft` file `reader` holds, from its manifest alone (nothing

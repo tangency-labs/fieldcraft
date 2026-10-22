@@ -10,4 +10,5 @@ workspace = true
 
 [dependencies]
 fieldcraft-model = { workspace = true }
+serde = { workspace = true }
 thiserror = { workspace = true }

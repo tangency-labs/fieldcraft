@@ -1,14 +1,14 @@
 # The `.fieldcraft` file (format `fieldcraft/3`)
 
-A `.fieldcraft` file holds one model: its definition, its mesh, the geometry it is built on and
-the commands that built it. It is written and read by `fieldcraft-io` (`write`, `read`; bytes in,
+A `.fieldcraft` file holds one model: its definition, its mesh, the geometry it is built on, the
+commands that built it and, unless a save leaves them out, its solved results. It is written and read by `fieldcraft-io` (`write`, `read`; bytes in,
 bytes out, so the browser build uses the same code) and by the commands `file.save`,
 `file.save_as` and `file.open`.
 
 ## Package
 
-The file is a ZIP package with exactly four parts, in this order, all stored uncompressed (so any
-unzip tool reads them: `unzip -p bracket.fieldcraft model.json`):
+The file is a ZIP package of four parts, then the optional ones, in this order, all stored
+uncompressed (so any unzip tool reads them: `unzip -p bracket.fieldcraft model.json`):
 
 | Part | Content |
 |---|---|
@@ -16,6 +16,7 @@ unzip tool reads them: `unzip -p bracket.fieldcraft model.json`):
 | `model.json` | The model definition, every quantity in SI (docs/units.md): its display units (`display_units`, left out when the model has none of its own), sets, materials, sections, reference points, couplings, boundary conditions, loads, steps, datum planes, axes and points, and the partitions that cut the geometry (in order; applied again when the design is opened). Pretty-printed JSON with a fixed key order (maps sorted by name), so a change shows as a line diff. Its form is the model's own JSON form, which commands take as parameters. |
 | `mesh.bin` | Nodes, elements and geometry tags, binary (below). |
 | `journal.json` | The commands that built the model, `{"units": system, "commands": [{"command": id, "params": {...}}, ...]}`, one command per line, as they were typed: `units` names the display system their bare numbers are in (a number typed in another system carries its unit, `{"value", "unit"}`); a migrated journal also names `model_units`, the system its model-level numbers were in. It is a script `fieldcraft-cli run` replays (a plain list of commands is a script in the session's units). |
+| `results.bin` | Optional: every solved step's latest result, with the hash of the definition it was solved from (below). `file.save` writes it unless given `results: false`. |
 
 The same model gives the same bytes on every platform: entry times are fixed (1980-01-01),
 permissions are fixed, and every map is written in sorted order. To diff two versions with git,
@@ -64,20 +65,65 @@ Element kind codes: 1 rod2, 2 beam2, 3 tri3, 4 tri6, 5 quad4, 6 quad8, 7 tet4, 8
 10 hex8, 11 hex20, 12 rod3, 13 pyramid5. Node order is the model's (Abaqus/VTK). A tag indexes the entity list, which
 lists each geometry entity once. Coordinates keep every bit (signed zero included).
 
+## `results.bin`
+
+The results part keeps what each solved step's solver reported, so a model opens showing its
+results without solving again (`results.contour`, `results.frame`, `results.slice`,
+`results.streamlines`, `solve.probe` and the rest work at once). Little-endian:
+
+```
+"MCRSLT01"                     magic (the results encoding's version is 01)
+u32 steps
+steps × { u64 length, step name (UTF-8),
+          32 bytes: SHA-256 of the definition it was solved from,
+          u8 kind (0 static, 1 frequency, 2 heat transfer, 3 explicit dynamic, 4 fluid),
+          u64 length, the result }                                     names ascending
+```
+
+The result is the solver's own, every number in SI and every bit kept: a static step's
+displacements, rotations, reactions, nodal, element and integration point stresses, shell and
+beam forces, reference points, contacts, and a nonlinear step's increments with a frame per
+converged increment; a frequency or buckling step's modes; a heat transfer step's temperature
+frames, fluxes and heat flows; an explicit step's field frames, histories, energies, contacts and
+eroded elements; a fluid step's lattice (origin, spacing and cells), its cell fields per frame
+(velocity, pressure, temperature), wall forces, heat and fan and porous zone histories, run
+statistics and steady-state monitors. It is written in a compact binary encoding
+(`fieldcraft_io::codec`): fixed-width numbers, a `u64` count before a list or text, one byte before
+an optional value and before each field of a structure, a `u32` before a variant. The encoding
+follows the order of the solvers' result types, so it has a version of its own in the magic: a
+change to those types is a new version. A file whose results are of another version opens without
+them, with a warning to solve again: results are what solving gives again, the definition is not.
+
+The definition hash is the SHA-256 of what solving the step reads (the mesh, the definitions the
+step uses and the step itself, as their JSON) and of the hashes of the geometry files the model is
+built on. On opening, a result whose hash is the model's is current; any other is kept and shown
+as stale, with a warning (`file.open`'s `results` lists each step with `stale`), and an edit that
+brings the model back to its definition makes it current again. Editing the model marks results
+stale as it does in a session. A solve is an unsaved change, since the file keeps results;
+autosaves, crash reports and bug reports keep none.
+
 ## Reading a file safely
 
 Every file is treated as hostile:
 
 - The file is at most 8 GiB; the manifest, definition and journal parts at most 256 MiB each. No
   allocation is larger than the input.
-- Only the four parts, each once. The ZIP CRC and the manifest's size and SHA-256 are checked for
-  every part.
+- Only the parts the manifest lists, each once: the four, and `results.bin` when it is listed
+  (format 3; older formats list exactly the four). The ZIP CRC and the manifest's size and
+  SHA-256 are checked for every part.
 - The `format` is read first, before anything else in the file: a later `fieldcraft/N` is refused
   as a version error naming the program that wrote it, any value that is not `fieldcraft/<N>` as
   not a FieldCraft file. Unknown fields are errors (after migration).
 - `mesh.bin`: counts are capped (50 million nodes and elements, one million entities) and checked
   against the bytes present before anything is read; labels must ascend; unknown kinds and
   trailing bytes are refused.
+- `results.bin`: at most 10 000 steps; every length and count is checked against the bytes left
+  before anything is read for it (each element takes at least one byte, so nothing is allocated
+  beyond a small multiple of the part); unknown kinds, malformed values and trailing bytes are
+  refused; every result is checked before it is used: its step name, ascending node and element
+  labels, per node, element and cell arrays the lengths of what they follow, a fluid grid of 1 to
+  2³² − 1 cells with a finite origin and a positive spacing. A file is at most 8 GiB in all; a save
+  that would write more is refused, naming `results: false`.
 - The model is rebuilt through the same checked methods commands use: names, references,
   finite coordinates within ±1e9, element connectivity, tag dimensions. A file cannot hold what
   commands would refuse.
@@ -93,7 +139,12 @@ format.
 |---|---|---|
 | `fieldcraft/1` | FieldCraft 0.4.0 to 0.7.0 | the first format |
 | `fieldcraft/2` | FieldCraft after 0.7.0 | versioning and migration; the parts hold the same as format 1 |
-| `fieldcraft/3` | FieldCraft after 0.7.0 | SI storage (#579): `model.json` in SI with `display_units` in place of `units`, `mesh.bin` `MCMESH02` (coordinates in metres), the journal with a header naming its units. Step 2 → 3 scales by the file's declared `units` (`unspecified` as mm-t-s-N-MPa) with its own frozen field map and MCMESH01 codec; the journal's numbers are kept as typed. |
+| `fieldcraft/3` | FieldCraft after 0.7.0 | SI storage (#579): `model.json` in SI with `display_units` in place of `units`, `mesh.bin` `MCMESH02` (coordinates in metres), the journal with a header naming its units. Step 2 → 3 scales by the file's declared `units` (`unspecified` as mm-t-s-N-MPa) with its own frozen field map and MCMESH01 codec; the journal's numbers are kept as typed. Before its first release it also gained optional parts, each absent in a file without it (so every format 3 file written before them reads as it did): `results.bin` (#644). |
+
+Format 3 was not yet written by a release when its optional parts were added, and every addition
+is optional (absent means what a file without it always meant), so they are part of format 3
+rather than a format 4 with a step that would only change the tag: no released FieldCraft reads
+format 3, and every format 3 file opens unchanged.
 
 FieldCraft reads every format up to its own. A file of a later one is refused, before anything
 else in it is read, with a message naming what wrote it: "this model was made by FieldCraft

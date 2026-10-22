@@ -207,7 +207,7 @@ impl Formulation {
 }
 
 /// Strain, stress and position at one integration point.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PointStress {
     pub xyz: [f64; 3],
     pub strain: [f64; 6],

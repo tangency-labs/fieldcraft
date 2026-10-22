@@ -172,6 +172,27 @@ impl StepResult {
             StepResult::Fluid(_) => &[],
         }
     }
+
+    /// The result as a file keeps it.
+    pub fn as_stored(&self) -> fieldcraft_io::results::SolvedRef<'_> {
+        use fieldcraft_io::results::SolvedRef;
+        match self {
+            StepResult::Implicit(r) => SolvedRef::Implicit(r),
+            StepResult::Explicit(r) => SolvedRef::Explicit(r),
+            StepResult::Fluid(r) => SolvedRef::Fluid(r),
+        }
+    }
+}
+
+impl From<fieldcraft_io::results::Solved> for StepResult {
+    fn from(r: fieldcraft_io::results::Solved) -> Self {
+        use fieldcraft_io::results::Solved;
+        match r {
+            Solved::Implicit(r) => StepResult::Implicit(r),
+            Solved::Explicit(r) => StepResult::Explicit(r),
+            Solved::Fluid(r) => StepResult::Fluid(r),
+        }
+    }
 }
 
 /// What a command works on, which decides how [`Session::execute`] records it.
@@ -326,9 +347,14 @@ pub struct Session {
     /// The latest result of each solved step, by step name, with the revision it was solved at;
     /// [`Session::result`] hands out only those that describe the current state.
     results: BTreeMap<String, (u64, Arc<StepResult>)>,
-    /// What each solved step read ([`results::inputs_fingerprint`]): an edit that leaves it the
-    /// same keeps the step's result current.
-    result_inputs: BTreeMap<String, u64>,
+    /// The definition each solved step was solved from ([`fieldcraft_io::results::definition_hash`]): an edit
+    /// that leaves it the same keeps the step's result current. Files keep it with the result.
+    result_inputs: BTreeMap<String, [u8; 32]>,
+    /// Counts the results stored (a solve, or a file opened): a result solved since the last save
+    /// is unsaved too, since files keep results.
+    results_stored: u64,
+    /// [`Session::results_stored`] as last saved (or opened).
+    saved_results: u64,
     /// What the results display shows (`results.*`); `None` shows the model.
     pub results_view: Option<results::ResultsView>,
     /// The default work caps of commands; a file replacing the session keeps them.
@@ -681,7 +707,7 @@ impl Session {
     /// Whether the session has changes its file does not hold. Undoing back to the saved state
     /// makes it clean again.
     pub fn is_dirty(&self) -> bool {
-        self.saved_revision.unwrap_or(0) != self.revision || self.view != self.saved_view
+        self.saved_revision.unwrap_or(0) != self.revision || self.view != self.saved_view || self.results_stored != self.saved_results
     }
 
     /// The stored result of a step, if it was solved in the current state (an edit makes it stale;
@@ -707,11 +733,36 @@ impl Session {
             Some(_) => {}
         }
         let step = result.step().to_string();
-        match results::inputs_fingerprint(&self.model, &step) {
+        match fieldcraft_io::results::definition_hash(&self.model, &step, &self.sources) {
             Some(f) => self.result_inputs.insert(step.clone(), f),
             None => self.result_inputs.remove(&step),
         };
         self.results.insert(step, (self.revision, Arc::new(result)));
+        self.results_stored = self.results_stored.wrapping_add(1);
+    }
+
+    /// Keep a result read from a file, solved from the definition `definition`: current when that
+    /// is the model's, else stale (kept, and current again should an edit bring the model back to
+    /// it). Opening is not solving: nothing is unsaved.
+    pub(crate) fn keep_stored_result(&mut self, result: StepResult, definition: [u8; 32]) -> bool {
+        let step = result.step().to_string();
+        let current = fieldcraft_io::results::definition_hash(&self.model, &step, &self.sources) == Some(definition);
+        let revision = if current { self.revision } else { next_revision() };
+        self.result_inputs.insert(step.clone(), definition);
+        self.results.insert(step, (revision, Arc::new(result)));
+        current
+    }
+
+    /// Every step's latest result with the definition it was solved from, as files keep them (a
+    /// result whose step is gone is kept with a definition no model has).
+    pub(crate) fn stored_results(&self) -> Vec<(&str, fieldcraft_io::results::StoredRef<'_>)> {
+        self.results
+            .iter()
+            .map(|(step, (_, r))| {
+                let definition = self.result_inputs.get(step).copied().unwrap_or([0; 32]);
+                (step.as_str(), fieldcraft_io::results::StoredRef { definition, result: r.as_stored() })
+            })
+            .collect()
     }
 
     /// After the state changed (an edit, undo or redo): a result whose step reads what it read
@@ -721,7 +772,7 @@ impl Session {
         let revision = self.revision;
         for (step, (solved, _)) in self.results.iter_mut().filter(|(_, (r, _))| *r != revision) {
             let read = self.result_inputs.get(step).copied();
-            if read.is_some() && read == results::inputs_fingerprint(&self.model, step) {
+            if read.is_some() && read == fieldcraft_io::results::definition_hash(&self.model, step, &self.sources) {
                 *solved = revision;
             }
         }
@@ -743,6 +794,7 @@ impl Session {
         self.migration_notes.clear();
         self.saved_revision = Some(self.revision);
         self.saved_view = self.view.clone();
+        self.saved_results = self.results_stored;
     }
 }
 

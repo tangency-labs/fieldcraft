@@ -37,7 +37,7 @@ fn sample() -> ModelFile {
     let journal =
         vec![("mesh.node.add".to_string(), json!({"label": 1, "xyz": [0, 0, 0]})), ("model.units".to_string(), json!({"system": "mm-t-s-N-MPa"}))];
     let view = View { hidden: [Item { kind: ItemKind::Datum, name: "Sym".into() }, Item { kind: ItemKind::Body, name: "Body1".into() }].into() };
-    ModelFile { model: m, geometry, journal, journal_header: Default::default(), view, notes: Vec::new() }
+    ModelFile { model: m, geometry, journal, journal_header: Default::default(), view, ..ModelFile::default() }
 }
 
 fn bytes_of(f: &ModelFile) -> Vec<u8> {
@@ -316,4 +316,124 @@ fn the_view_state_round_trips_and_is_checked() {
     let plain = write(&f.model, &f.geometry, &f.journal, &f.journal_header, &empty).unwrap();
     let manifest: Value = serde_json::from_slice(&parts(&plain)[0].1).unwrap();
     assert!(manifest.get("view").is_none(), "an empty view writes nothing: {manifest}");
+}
+
+/// A small heat transfer result of step `Heat` on nodes 1 to 3.
+fn heat_result() -> fieldcraft_solver::HeatResult {
+    fieldcraft_solver::HeatResult {
+        step: "Heat".into(),
+        nodes: vec![1, 2, 3],
+        times: vec![0.0, 0.5],
+        frames: vec![vec![293.15; 3], vec![300.0, 310.0, f64::NAN]],
+        flux: vec![[1.0, 0.0, -0.0]; 3],
+        elements: Vec::new(),
+        reaction: vec![0.0, -2.5, 0.0],
+        loads: vec![fieldcraft_solver::heat::LoadFlow { name: "Film".into(), kind: "convection".into(), heat: 1.5 }],
+        applied_total: 1.5,
+        reaction_total: -2.5,
+        stats: Default::default(),
+        warnings: vec!["a note".into()],
+    }
+}
+
+fn with_results(f: &ModelFile, results: &[(&str, fieldcraft_io::results::StoredRef<'_>)]) -> Vec<u8> {
+    let extras = fieldcraft_io::Extras { results: results.to_vec() };
+    fieldcraft_io::write_with(&f.model, &f.geometry, &f.journal, &f.journal_header, &f.view, &extras).unwrap()
+}
+
+/// The results part: kept bit for bit with its definition hash, listed in the manifest, checked
+/// as hostile input; one of another results encoding leaves the file openable without it.
+#[test]
+fn results_round_trip_and_hostile_results_are_refused() {
+    use fieldcraft_io::results::{self, Solved, SolvedRef, StoredRef};
+    let f = sample();
+    let heat = fieldcraft_solver::StepResult::Heat(heat_result());
+    let hash = [7u8; 32];
+    let bytes = with_results(&f, &[("Heat", StoredRef { definition: hash, result: SolvedRef::Implicit(&heat) })]);
+    let back = read(&bytes).unwrap();
+    assert_eq!(back.results.len(), 1);
+    assert_eq!(back.results[0].definition, hash);
+    let Solved::Implicit(fieldcraft_solver::StepResult::Heat(h)) = &back.results[0].result else { panic!() };
+    assert!(h.frames[1][2].is_nan() && h.flux[0][2].to_bits() == (-0.0f64).to_bits(), "every bit kept");
+    assert_eq!(h.loads, heat_result().loads);
+    assert_eq!((h.nodes.clone(), h.times.clone(), h.warnings.clone()), (vec![1, 2, 3], vec![0.0, 0.5], vec!["a note".to_string()]));
+    let names: Vec<String> = parts(&bytes).into_iter().map(|(n, _)| n).collect();
+    assert_eq!(names, ["fieldcraft.json", "model.json", "mesh.bin", "journal.json", "results.bin"]);
+    let manifest: Value = serde_json::from_slice(&parts(&bytes)[0].1).unwrap();
+    let rb = parts(&bytes)[4].1.clone();
+    assert_eq!(manifest["parts"]["results.bin"], json!({"bytes": rb.len(), "sha256": fieldcraft_io::sha256_hex(&rb)}));
+    assert_eq!(&rb[..8], results::MAGIC);
+    // The same results, the same bytes.
+    let again: Vec<(&str, StoredRef<'_>)> =
+        back.results.iter().map(|s| (s.result.step(), StoredRef { definition: s.definition, result: s.result.as_ref() })).collect();
+    assert_eq!(with_results(&back, &again), bytes);
+    // Without results the part is not written.
+    assert_eq!(parts(&bytes_of(&f)).len(), 4);
+
+    // Hostile results parts (their manifest entries fixed, so the part's own checks run).
+    let refused = |b: Vec<u8>, what: &str| {
+        let e = read(&with_part(&bytes, "results.bin", b)).unwrap_err();
+        assert!(matches!(e, Error::Invalid(_) | Error::Limit(_)), "{what}: {e}");
+        e.to_string()
+    };
+    for cut in (0..rb.len()).step_by(5) {
+        refused(rb[..cut].to_vec(), &format!("cut at {cut}"));
+    }
+    let mut trailing = rb.clone();
+    trailing.push(0);
+    assert!(refused(trailing, "trailing").contains("trailing"));
+    let mut many = rb.clone();
+    many[8..12].copy_from_slice(&(results::MAX_STEPS as u32 + 1).to_le_bytes());
+    assert!(matches!(read(&with_part(&bytes, "results.bin", many)), Err(Error::Limit(_))));
+    let mut long_name = rb.clone();
+    long_name[12..20].copy_from_slice(&u64::MAX.to_le_bytes());
+    refused(long_name, "a name longer than the part");
+    let kind_at = 12 + 8 + 4 + 32;
+    let mut kind = rb.clone();
+    kind[kind_at] = 9;
+    assert!(refused(kind, "kind").contains("unknown kind"));
+    let mut wrong_kind = rb.clone();
+    wrong_kind[kind_at] = 4;
+    assert!(refused(wrong_kind, "a heat result read as a fluid one").contains("damaged"));
+    let mut payload_len = rb.clone();
+    payload_len[kind_at + 1..kind_at + 9].copy_from_slice(&(1u64 << 40).to_le_bytes());
+    refused(payload_len, "a payload longer than the part");
+    let mut name = rb.clone();
+    name[20] = b'1';
+    refused(name, "a step name commands refuse");
+    // A result that names another step, and one whose nodes do not ascend.
+    let other = fieldcraft_solver::StepResult::Heat(fieldcraft_solver::HeatResult { step: "Other".into(), ..heat_result() });
+    let wrong = results::encode(&[("Other", StoredRef { definition: hash, result: SolvedRef::Implicit(&other) })]).unwrap();
+    let mut renamed = wrong.clone();
+    renamed[20..25].copy_from_slice(b"Otxer");
+    assert!(refused(renamed, "renamed").contains("step `Other`'s"));
+    let unsorted = fieldcraft_solver::StepResult::Heat(fieldcraft_solver::HeatResult { nodes: vec![3, 2, 1], ..heat_result() });
+    let b = results::encode(&[("Heat", StoredRef { definition: hash, result: SolvedRef::Implicit(&unsorted) })]).unwrap();
+    assert!(refused(b, "unsorted").contains("do not ascend"));
+    let short = fieldcraft_solver::StepResult::Heat(fieldcraft_solver::HeatResult { frames: vec![vec![1.0; 3], vec![1.0; 2]], ..heat_result() });
+    let b = results::encode(&[("Heat", StoredRef { definition: hash, result: SolvedRef::Implicit(&short) })]).unwrap();
+    assert!(refused(b, "a frame too short").contains("2 values for 3"));
+    assert!(results::encode(&[("Heat", StoredRef { definition: hash, result: SolvedRef::Implicit(&other) })]).is_err(), "listed under another name");
+    let twice = [("Heat", StoredRef { definition: hash, result: SolvedRef::Implicit(&heat) }); 2];
+    assert!(results::encode(&twice).is_err());
+
+    // Another results encoding: the model opens without them, saying why.
+    let mut later = rb.clone();
+    later[6..8].copy_from_slice(b"99");
+    let f2 = read(&with_part(&bytes, "results.bin", later)).unwrap();
+    assert!(f2.results.is_empty());
+    assert!(f2.results_note.as_deref().is_some_and(|n| n.contains("MCRSLT99") && n.contains("solve again")), "{:?}", f2.results_note);
+    let mut magic = rb.clone();
+    magic[0] = b'X';
+    refused(magic, "not a results part");
+
+    // The part must be listed, and listed parts must be there; older formats hold none.
+    let mut ps = parts(&bytes_of(&f));
+    ps.push(("results.bin".into(), rb.clone()));
+    assert!(read(&package(&ps)).unwrap_err().to_string().contains("unexpected part"));
+    let mut ps = parts(&bytes);
+    ps.pop();
+    assert!(read(&package(&ps)).is_err());
+    let unknown = with_manifest(&bytes, |m| m["parts"]["notes.txt"] = json!({"bytes": 1, "sha256": "0".repeat(64)}));
+    assert!(read(&unknown).unwrap_err().to_string().contains("unexpected part"));
 }

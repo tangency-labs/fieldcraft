@@ -134,7 +134,7 @@ impl ShellSection {
 }
 
 /// Section forces and stresses of a shell element, per node in the element's node order.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ShellStress {
     /// The element's local axes: e₁, e₂ in its plane, e₃ its normal (the right-hand normal of
     /// the node order).

@@ -37,7 +37,7 @@ use crate::{Error, Result};
 
 /// A uniform grid of cubic cells: cell `(i, j, k)` has its centre at
 /// `origin + (i + ½, j + ½, k + ½) · spacing` and index `i + nx (j + ny k)`.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Grid {
     pub origin: [f64; 3],
     pub spacing: f64,

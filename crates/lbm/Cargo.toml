@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 fieldcraft-model = { workspace = true }
+serde = { workspace = true }
 fieldcraft-mesh = { workspace = true }
 fieldcraft-parallel = { workspace = true }
 thiserror = { workspace = true }

@@ -42,7 +42,7 @@ use crate::system::Mesh;
 use crate::{Error, Limits, Result};
 
 /// What a buckling eigenproblem found besides its modes.
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, serde::Deserialize)]
 pub struct Buckling {
     /// Converged negative load factors (the load reversed buckles at |λ|), nearest to zero
     /// first; found without a shift only.

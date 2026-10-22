@@ -8,7 +8,7 @@ use crate::elements::Failure;
 /// The energy account at one time (Belytschko, Liu, Moran, Elkhodary 2014, §6.2.3). The works of
 /// the internal and external forces are integrated with the trapezoidal rule over each
 /// increment's displacement; the constraints' with their impulses (see [`crate::integrate`]).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, serde::Deserialize)]
 pub struct Energies {
     /// ½ vᵀ M v.
     pub kinetic: f64,
@@ -57,7 +57,7 @@ impl Energies {
 }
 
 /// The fields at one time. Vectors that the step's output does not request are empty.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Frame {
     pub time: f64,
     /// Per node in [`ExplicitResult::nodes`] order.
@@ -79,7 +79,7 @@ pub struct Frame {
 }
 
 /// An element removed from the analysis.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, serde::Deserialize)]
 pub struct ErodedElement {
     pub label: u32,
     pub time: f64,
@@ -89,7 +89,7 @@ pub struct ErodedElement {
 }
 
 /// Quantities sampled through the run.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct History {
     pub time: Vec<f64>,
     /// The time increment taken at each sample.
@@ -109,7 +109,7 @@ pub struct History {
 }
 
 /// What mass scaling added to a run.
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, serde::Deserialize)]
 pub struct MassScalingSummary {
     pub target_increment: f64,
     /// Elements whose density was raised.
@@ -122,7 +122,7 @@ pub struct MassScalingSummary {
 }
 
 /// What a contact did over the run.
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, serde::Deserialize)]
 pub struct ContactSummary {
     pub name: String,
     /// Nodes moved onto the other surface before the analysis.
@@ -140,7 +140,7 @@ pub struct ContactSummary {
 }
 
 /// An element that limits the stable time increment.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, serde::Deserialize)]
 pub struct ControllingElement {
     pub label: u32,
     /// Its critical increment at rest (no bulk viscosity), before the scale factor.
@@ -148,7 +148,7 @@ pub struct ControllingElement {
 }
 
 /// The result of an explicit dynamic step.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ExplicitResult {
     pub step: String,
     /// Node labels with degrees of freedom, sorted.

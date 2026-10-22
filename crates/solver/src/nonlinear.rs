@@ -140,7 +140,7 @@ use crate::system::{Mesh, add_element_thermal_loads, loads, temperature_loads, t
 use crate::{Error, Limits, Result};
 
 /// One Newton iteration of an increment.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, serde::Deserialize)]
 pub struct Iteration {
     /// Largest residual force over the force scale, or largest residual moment over the moment
     /// scale, whichever is larger.
@@ -154,10 +154,10 @@ pub struct Iteration {
     pub line_search: f64,
     /// Negative eigenvalues of the tangent the correction was solved with (an indefinite
     /// tangent is factored by LDLᵀ, [`crate::ldlt`]).
-    #[serde(skip_serializing_if = "is_zero")]
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub negative_pivots: usize,
     /// Contact: the augmentation it belongs to (0: the increment's first solution).
-    #[serde(skip_serializing_if = "is_zero")]
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub augmentation: usize,
 }
 
@@ -166,7 +166,7 @@ fn is_zero(n: &usize) -> bool {
 }
 
 /// One increment (converged, or cut back).
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, serde::Deserialize)]
 pub struct Increment {
     /// From 1, attempts included.
     pub number: usize,
@@ -181,15 +181,15 @@ pub struct Increment {
     pub cutback: Option<String>,
     /// Negative eigenvalues of the tangent at the converged state (arc-length steps, which
     /// factor it for the next predictor).
-    #[serde(skip_serializing_if = "is_zero")]
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub negative_pivots: usize,
     /// Contact: the times the increment was solved again with updated multipliers.
-    #[serde(skip_serializing_if = "is_zero")]
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub augmentations: usize,
 }
 
 /// Where the tangent's inertia changes along an arc-length path.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CriticalKind {
     /// The load factor turns (snap-through).
@@ -200,7 +200,7 @@ pub enum CriticalKind {
 
 /// A critical point of an arc-length path: the tangent's count of negative eigenvalues changes
 /// between two converged states.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, serde::Deserialize)]
 pub struct CriticalPoint {
     pub kind: CriticalKind,
     /// The increment whose converged state has the new count.
@@ -214,7 +214,7 @@ pub struct CriticalPoint {
 }
 
 /// The displacements and reactions at the end of a converged increment.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Frame {
     pub load_factor: f64,
     /// Per node, in [`StaticResult::nodes`] order.
@@ -233,7 +233,7 @@ impl Frame {
 }
 
 /// The increments of a nonlinear static step and the displacements after each converged one.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub struct History {
     pub increments: Vec<Increment>,
     /// The undeformed state (load factor 0), then one per converged increment while they fit

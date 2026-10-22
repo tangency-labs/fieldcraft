@@ -17,7 +17,7 @@ pub const COMPRESSIBILITY_WARNING: f64 = 0.01;
 
 /// The velocity and pressure field at one time, per cell (index `i + nx (j + ny k)`; zero in
 /// solid cells). Stored in single precision: output for display and probing.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Frame {
     pub time: f64,
     pub step: u64,
@@ -33,7 +33,7 @@ pub struct Frame {
 }
 
 /// The heat the fluid gives one wall over time (power; positive into the wall).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct HeatHistory {
     pub name: String,
     pub body: Option<String>,
@@ -42,7 +42,7 @@ pub struct HeatHistory {
 }
 
 /// A fan's or porous zone's flow and pressure over time (model units).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ZoneHistory {
     pub name: String,
     /// Whether it is a fan (else a porous zone: a vent, grille, filter or plate).
@@ -59,7 +59,7 @@ pub struct ZoneHistory {
 }
 
 /// The force the fluid exerts on one wall over time.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ForceHistory {
     /// `x_min` … for box faces, the face's persistent name for obstacle faces.
     pub name: String,
@@ -70,7 +70,7 @@ pub struct ForceHistory {
 }
 
 /// An obstacle that conducts heat: its cells, its power and how its heat capacity was scaled.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SolidResult {
     pub body: String,
     /// Its cells (grid indices), in cell order.
@@ -110,7 +110,7 @@ pub struct ComponentCheck {
 }
 
 /// Run statistics.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct FluidStats {
     pub cells: usize,
     pub fluid_cells: usize,
@@ -134,7 +134,7 @@ pub struct FluidStats {
 }
 
 /// The result of a fluid step.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct FluidResult {
     pub step: String,
     pub grid: Grid,

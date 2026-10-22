@@ -24,7 +24,7 @@ use crate::system::{
 use crate::{Error, Limits, Result};
 
 /// Size and effort of a solution.
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, serde::Deserialize)]
 pub struct Stats {
     /// Degrees of freedom: those of the mesh nodes (3 per solid node) and 6 per coupled
     /// reference point.
@@ -38,7 +38,7 @@ pub struct Stats {
 }
 
 /// Section forces and surface stresses of one shell element.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ShellResult {
     pub label: u32,
     pub kind: ElementKind,
@@ -46,7 +46,7 @@ pub struct ShellResult {
 }
 
 /// End section forces of one beam element.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BeamResult {
     pub label: u32,
     pub kind: ElementKind,
@@ -54,7 +54,7 @@ pub struct BeamResult {
 }
 
 /// Stresses of one element.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ElementStress {
     pub label: u32,
     pub kind: ElementKind,
@@ -69,7 +69,7 @@ pub struct ElementStress {
 
 /// The motion and reaction of a coupled reference point: translations along X, Y, Z, then
 /// rotations about them (reactions: forces, then moments). Directions no coupling ties are zero.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PointResult {
     pub name: String,
     pub label: u32,
@@ -78,7 +78,7 @@ pub struct PointResult {
 }
 
 /// The result of a static step.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct StaticResult {
     pub step: String,
     /// Node labels with degrees of freedom, sorted; the per-node vectors follow this order.
@@ -118,7 +118,7 @@ pub struct StaticResult {
 }
 
 /// One natural mode.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Mode {
     /// λ = ω², in (rad per time unit)².
     pub eigenvalue: f64,
@@ -138,7 +138,7 @@ pub struct Mode {
 }
 
 /// The result of a frequency step.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct FrequencyResult {
     pub step: String,
     pub nodes: Vec<u32>,
@@ -708,7 +708,7 @@ pub enum Location {
 }
 
 /// The result of one step, as a session keeps it.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 // One per solved step; boxing the larger variant would buy nothing.
 #[allow(clippy::large_enum_variant)]
 pub enum StepResult {

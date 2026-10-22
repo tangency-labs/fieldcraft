@@ -2075,8 +2075,12 @@ pub const GEOMETRY_CHECK: &[Field] = &[
 pub const TESSELLATE: &[Field] = &[reference("body", "Body", C::Body).help("The body to tessellate.").req(), TOLERANCE];
 pub const IMPORT_MESH: &[Field] = &[path("path", "3MF file", false).help("A 3MF surface mesh with named faces.").req()];
 pub const FILE_OPEN: &[Field] = &[path("path", "Model", false).help("The FieldCraft model file to open.").req()];
-pub const FILE_SAVE: &[Field] = &[path("path", "File", true).help("Where to save; the model's own file when empty.").hint("the model's file")];
-pub const FILE_SAVE_AS: &[Field] = &[path("path", "File", true).help("The file to save to.").req()];
+const SAVE_RESULTS: Field = flag("results", "Keep results")
+    .help("Keep every solved step's results in the file, so it opens showing them without solving again; off for a smaller file.")
+    .def("true");
+pub const FILE_SAVE: &[Field] =
+    &[path("path", "File", true).help("Where to save; the model's own file when empty.").hint("the model's file"), SAVE_RESULTS];
+pub const FILE_SAVE_AS: &[Field] = &[path("path", "File", true).help("The file to save to.").req(), SAVE_RESULTS];
 pub const RECOVERY_LIST: &[Field] =
     &[path("dir", "Folder", false).help("The recovery folder; the default one when empty.").hint("the recovery folder")];
 pub const CRASH_REPORTS: &[Field] = &[

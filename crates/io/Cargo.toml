@@ -10,6 +10,10 @@ workspace = true
 
 [dependencies]
 fieldcraft-model = { workspace = true }
+# The solvers' result types, kept in `results.bin`.
+fieldcraft-solver = { workspace = true }
+fieldcraft-explicit = { workspace = true }
+fieldcraft-lbm = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

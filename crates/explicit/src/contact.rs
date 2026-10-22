@@ -180,7 +180,7 @@ pub struct Interface {
 }
 
 /// A node moved onto a face before the analysis.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, serde::Deserialize)]
 pub struct Adjustment {
     pub node: u32,
     pub element: u32,

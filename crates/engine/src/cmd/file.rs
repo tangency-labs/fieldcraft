@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 
 use fieldcraft_io::roots::{Access, Roots};
 
-use super::{file_param, req};
+use super::{file_param, opt, req};
 use crate::{CommandKind, CommandSpec, EngineError, Result, Session, next_revision};
 
 pub const NEW: CommandSpec = CommandSpec {
@@ -32,7 +32,7 @@ pub const NEW: CommandSpec = CommandSpec {
 pub const OPEN: CommandSpec = CommandSpec {
     id: "file.open",
     label: "Open Model",
-    params: r#"{"path": "bracket.fieldcraft"} — opens the model, its mesh and its journal, and opens its design and imported meshes again from their files (one that is missing or changed is listed in `warnings`; the model still opens); unsaved changes of the current model are discarded and the undo history starts empty. A file of an older format is migrated as it is read (`migrated_from` in the reply; what migrating changed in what it means, such as a mesh of the design in a model of metres, leads `warnings`) and nothing is written; a later format is refused. Names the design no longer has (a SolidCraft that names a face otherwise): a face the mesh lies on is found again by where the mesh is, its edges and vertices through their faces, and every definition follows (`renamed`, and a warning each; the model is then changed, to save); what is not found again is listed in `warnings`, to pick again, and in `stale` (as geometry.open's: `mesh_bodies`, `sets`, `seeds` and `references` [{owner, reference, why}]); `mismatched` lists mesh faces that lie on another face of the design than their name's (a name SolidCraft now gives another face)"#,
+    params: r#"{"path": "bracket.fieldcraft"} — opens the model, its mesh and its journal, and opens its design and imported meshes again from their files (one that is missing or changed is listed in `warnings`; the model still opens) and its saved results (`results` lists each step's, `stale` when it was solved from another definition than the model's: kept and shown as stale, with a warning each); unsaved changes of the current model are discarded and the undo history starts empty. A file of an older format is migrated as it is read (`migrated_from` in the reply; what migrating changed in what it means, such as a mesh of the design in a model of metres, leads `warnings`) and nothing is written; a later format is refused. Names the design no longer has (a SolidCraft that names a face otherwise): a face the mesh lies on is found again by where the mesh is, its edges and vertices through their faces, and every definition follows (`renamed`, and a warning each; the model is then changed, to save); what is not found again is listed in `warnings`, to pick again, and in `stale` (as geometry.open's: `mesh_bodies`, `sets`, `seeds` and `references` [{owner, reference, why}]); `mismatched` lists mesh faces that lie on another face of the design than their name's (a name SolidCraft now gives another face)"#,
     form: Some(super::forms::FILE_OPEN),
     kind: CommandKind::Session,
     requires: &[],
@@ -42,7 +42,7 @@ pub const OPEN: CommandSpec = CommandSpec {
 pub const SAVE: CommandSpec = CommandSpec {
     id: "file.save",
     label: "Save Model",
-    params: r#"{"path"?: "bracket.fieldcraft"} — saves to `path`, else to the file the model was opened from or last saved to; written atomically, the previous version kept as `<file>.bak`. A file there that is not a model of the current format (one this model was migrated from, a later or damaged one, any other file) is first copied to `<stem>.v<N>.fieldcraft` (`<stem>.backup.<ext>` when it is not a model), never replaced later (`backup` in the reply)"#,
+    params: r#"{"path"?: "bracket.fieldcraft", "results"?: true} — saves to `path`, else to the file the model was opened from or last saved to; written atomically, the previous version kept as `<file>.bak`. The file keeps every solved step's latest result with the definition it was solved from (`results: false` leaves them out: a smaller file, and one that diffs by its text parts); the reply's `contents` says what the file holds. A file there that is not a model of the current format (one this model was migrated from, a later or damaged one, any other file) is first copied to `<stem>.v<N>.fieldcraft` (`<stem>.backup.<ext>` when it is not a model), never replaced later (`backup` in the reply)"#,
     form: Some(super::forms::FILE_SAVE),
     kind: CommandKind::Session,
     requires: &[],
@@ -52,7 +52,7 @@ pub const SAVE: CommandSpec = CommandSpec {
 pub const SAVE_AS: CommandSpec = CommandSpec {
     id: "file.save_as",
     label: "Save Model As",
-    params: r#"{"path": "bracket.fieldcraft"} — saves to a new file, which becomes the model's file (a file there that is not a model of the current format is first copied, as file.save does)"#,
+    params: r#"{"path": "bracket.fieldcraft", "results"?: true} — saves to a new file, which becomes the model's file (`results` and a file there that is not a model of the current format as file.save)"#,
     form: Some(super::forms::FILE_SAVE_AS),
     kind: CommandKind::Session,
     requires: &[],
@@ -125,6 +125,7 @@ fn open_sample(s: &mut Session, p: &Value) -> Result<Value> {
     // A sample just opened has nothing to save: it opens again the same way.
     opened.saved_revision = Some(opened.revision);
     opened.saved_view = opened.view.clone();
+    opened.saved_results = opened.results_stored;
     opened.sample = Some(sample.label);
     s.replace_with(opened);
     let mut reply = summary(s, &[]);
@@ -208,16 +209,30 @@ pub(crate) fn frame_geometry(model: &fieldcraft_model::Model) -> std::result::Re
     model.converted(&|q, v| mm.express(q, v).ok()).map_err(|e| e.to_string())
 }
 
+/// What a saved file keeps besides the model, its mesh, journal and view.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Keep {
+    /// The solved results (`results.bin`).
+    pub results: bool,
+}
+
 impl Session {
-    /// The bytes of the `.fieldcraft` file holding this session, with geometry paths inside
+    /// The bytes of the `.fieldcraft` file holding this session's model, mesh, journal and view
+    /// (no results: what autosaves, crash and bug reports keep), with geometry paths inside
     /// `base` (the folder the file goes to) stored relative to it.
     pub fn file_bytes(&self, base: Option<&Path>) -> Result<Vec<u8>> {
+        self.file_bytes_with(base, Keep::default())
+    }
+
+    /// [`Session::file_bytes`], keeping what `keep` says.
+    pub fn file_bytes_with(&self, base: Option<&Path>, keep: Keep) -> Result<Vec<u8>> {
         let stored = |s: &SourceFile| s.with_path(stored_path(s.path(), base));
         let geometry = Geometry {
             design: self.sources.design.as_ref().map(stored).transpose()?,
             meshes: self.sources.meshes.iter().map(stored).collect::<fieldcraft_io::Result<_>>()?,
         };
-        Ok(fieldcraft_io::write(&self.model, &geometry, &self.journal, &self.journal_header, &self.view)?)
+        let extras = fieldcraft_io::Extras { results: if keep.results { self.stored_results() } else { Vec::new() } };
+        Ok(fieldcraft_io::write_with(&self.model, &geometry, &self.journal, &self.journal_header, &self.view, &extras)?)
     }
 
     /// A session holding what a file holds, its geometry opened again from the paths it names
@@ -286,6 +301,16 @@ impl Session {
         };
         let (_, failed) = super::stitch::restitch_surfaces(&mut session.surfaces, &framed);
         warnings.extend(failed.into_iter().map(|(n, why)| format!("stitch `{n}`: {why}")));
+        // The results come back current when the model is still the one they were solved from.
+        warnings.extend(file.results_note);
+        for stored in file.results {
+            let step = stored.result.step().to_string();
+            if !session.keep_stored_result(stored.result.into(), stored.definition) {
+                warnings.push(format!(
+                    "the results of step `{step}` were solved from another definition than the model's: they are kept, shown as stale; solve again to bring them up to date"
+                ));
+            }
+        }
         (session, warnings, names)
     }
 
@@ -312,6 +337,7 @@ fn summary(s: &Session, warnings: &[String]) -> Value {
         "journal": s.journal.len(),
         "design": s.design.as_ref().map(|d| d.name.clone()),
         "surfaces": s.surfaces.len(),
+        "results": s.result_steps().map(|(step, current)| json!({"step": step, "stale": !current})).collect::<Vec<_>>(),
         "migrated_from": s.migrated_from,
         "warnings": warnings,
     })
@@ -355,16 +381,37 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
     load(s, &bytes, Some(path.clone()), true).map_err(|e| EngineError::Params(format!("{path}: {e}")))
 }
 
-/// Save to `path` (as given by the caller).
-fn save_to(s: &mut Session, path: &str) -> Result<Value> {
+/// What a save keeps, from its parameters: `results` (by default every step's latest result).
+fn keep(p: &Value) -> Result<Keep> {
+    Ok(Keep { results: opt::<bool>(p, "results")?.unwrap_or(true) })
+}
+
+/// What a file of `s` saved with `keep` holds, in words: what a person sending it shares.
+fn contents(s: &Session, keep: Keep) -> Vec<String> {
+    let mut out = vec!["the model definition, its mesh and the commands that built it".to_string()];
+    let steps: Vec<&str> = s.result_steps().map(|(n, _)| n).collect();
+    if keep.results && !steps.is_empty() {
+        let count = if steps.len() == 1 { "1 step".to_string() } else { format!("{} steps", steps.len()) };
+        out.push(format!("the results of {count} ({})", steps.join(", ")));
+    }
+    let named: Vec<&str> = s.sources.design.iter().chain(&s.sources.meshes).map(|f| f.path()).collect();
+    if !named.is_empty() {
+        out.push(format!("references to its geometry files, not the files: {}", named.join(", ")));
+    }
+    out
+}
+
+/// Save to `path` (as given by the caller), keeping what `keep` says.
+fn save_to(s: &mut Session, path: &str, keep: Keep) -> Result<Value> {
     let target = absolute(path);
     if std::fs::metadata(&target).is_ok_and(|m| !m.is_file()) {
         return Err(EngineError::Params(format!("`{target}` exists and is not a regular file")));
     }
-    let bytes = s.file_bytes(Path::new(&target).parent())?;
+    let bytes = s.file_bytes_with(Path::new(&target).parent(), keep)?;
     let kept = fieldcraft_io::fs::save_model(Path::new(&target), &bytes)?;
+    let holds = contents(s, keep);
     s.mark_saved(target.clone());
-    let mut reply = json!({"path": target, "bytes": bytes.len()});
+    let mut reply = json!({"path": target, "bytes": bytes.len(), "contents": holds});
     if let Some(kept) = kept {
         let name = |p: &Path| p.file_name().map_or_else(|| p.display().to_string(), |n| n.to_string_lossy().into_owned());
         reply["backup"] = json!(kept.to_string_lossy());
@@ -386,12 +433,12 @@ fn save(s: &mut Session, p: &Value) -> Result<Value> {
             s.checked_path(own, Access::Write)?
         }
     };
-    save_to(s, &path)
+    save_to(s, &path, keep(p)?)
 }
 
 fn save_as(s: &mut Session, p: &Value) -> Result<Value> {
     let path = file_param(s, p, "path", Access::Write)?;
-    save_to(s, &path)
+    save_to(s, &path, keep(p)?)
 }
 
 /// The recovery folder: `dir` (checked for `access`), else the default one (the app's own folder,
@@ -1027,5 +1074,190 @@ mod tests {
         }
         assert_eq!(std::fs::read_dir(&d).unwrap().count(), 1, "nothing written");
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// `bytes` with part `name` edited by `edit` and the manifest's size and hash following it.
+    fn with_part_edited(bytes: &[u8], name: &str, edit: impl FnOnce(&mut Vec<u8>)) -> Vec<u8> {
+        use std::io::{Read, Write};
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut parts: Vec<(String, Vec<u8>)> = (0..zip.len())
+            .map(|i| {
+                let mut f = zip.by_index(i).unwrap();
+                let mut b = Vec::new();
+                f.read_to_end(&mut b).unwrap();
+                (f.name().unwrap().to_string(), b)
+            })
+            .collect();
+        let part = parts.iter_mut().find(|(n, _)| n == name).unwrap();
+        edit(&mut part.1);
+        let entry = json!({"bytes": part.1.len(), "sha256": fieldcraft_io::sha256_hex(&part.1)});
+        let mut manifest: Value = serde_json::from_slice(&parts[0].1).unwrap();
+        manifest["parts"][name] = entry;
+        parts[0].1 = serde_json::to_vec(&manifest).unwrap();
+        let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        for (name, b) in &parts {
+            out.start_file(name, zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored)).unwrap();
+            out.write_all(b).unwrap();
+        }
+        out.finish().unwrap().into_inner()
+    }
+
+    /// Every bit of a step's result (Debug prints every float exactly).
+    fn bits(s: &Session, step: &str) -> String {
+        format!("{:?}", s.latest_result(step).map(|(r, _)| r))
+    }
+
+    /// Solved results are kept in the file (#644): a fresh session opens them current and shows
+    /// them without solving, bit for bit; an edit marks them stale and undo makes them current
+    /// again; a file saved with stale results opens them stale; `results: false` leaves them out.
+    #[test]
+    fn solved_results_reopen_without_solving() {
+        let d = dir("results");
+        let mut s = Session::default();
+        crate::cmd::solve::tests::cantilever(&mut s);
+        s.execute("solve.static", &json!({})).unwrap();
+        s.execute("solve.frequency", &json!({})).unwrap();
+        let path = d.join("beam.fieldcraft");
+        s.execute("file.save_as", &json!({"path": path, "results": false})).unwrap();
+        let lean = std::fs::read(&path).unwrap();
+        assert!(fieldcraft_io::read(&lean).unwrap().results.is_empty(), "`results: false` keeps none");
+        s.execute("solve.static", &json!({})).unwrap();
+        assert!(s.is_dirty(), "a solve is unsaved: files keep results");
+        let r = s.execute("file.save", &json!({})).unwrap();
+        assert!(r["contents"].to_string().contains("the results of 2 steps (Bend, Modes)"), "{r}");
+        assert!(!s.is_dirty());
+        assert!(std::fs::read(&path).unwrap().len() > lean.len());
+
+        let mut t = Session::default();
+        let r = t.execute("file.open", &json!({"path": path})).unwrap();
+        assert_eq!(r["results"], json!([{"step": "Bend", "stale": false}, {"step": "Modes", "stale": false}]), "{r}");
+        assert_eq!(r["warnings"], json!([]));
+        assert!(!t.is_dirty(), "opening is not solving");
+        for step in ["Bend", "Modes"] {
+            assert_eq!(bits(&t, step), bits(&s, step), "{step}");
+        }
+        // Shown without solving again.
+        let shown = t.execute("results.contour", &json!({"step": "Bend", "field": "von_mises"})).unwrap();
+        assert_eq!(shown, s.execute("results.contour", &json!({"step": "Bend", "field": "von_mises"})).unwrap());
+        assert_eq!(t.execute("results.modes", &json!({"step": "Modes", "mode": 2})).unwrap()["stale"], false);
+        assert!(t.execute("results.reactions", &json!({"step": "Bend"})).is_ok());
+        // An edit marks them stale; undo brings them back.
+        t.execute("model.material.edit", &json!({"name": "Mat", "elastic": {"type": "isotropic", "young": 2000, "poisson": 0}, "density": 1}))
+            .unwrap();
+        assert_eq!(t.result_steps().collect::<Vec<_>>(), vec![("Bend", false), ("Modes", false)]);
+        t.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(t.result_steps().collect::<Vec<_>>(), vec![("Bend", true), ("Modes", true)]);
+        // Saved with the model changed since: they open stale, kept and said so.
+        t.execute("edit.redo", &json!({})).unwrap();
+        t.execute("file.save", &json!({})).unwrap();
+        let mut u = Session::default();
+        let r = u.execute("file.open", &json!({"path": path})).unwrap();
+        assert_eq!(r["results"], json!([{"step": "Bend", "stale": true}, {"step": "Modes", "stale": true}]), "{r}");
+        assert!(r["warnings"].to_string().contains("results of step `Bend` were solved from another definition"), "{r}");
+        assert_eq!(bits(&u, "Bend"), bits(&s, "Bend"), "kept as they were");
+        assert_eq!(u.execute("results.contour", &json!({"step": "Bend", "field": "von_mises"})).unwrap()["stale"], true);
+        // Editing back to the definition they were solved from makes them current.
+        u.execute("model.material.edit", &json!({"name": "Mat", "elastic": {"type": "isotropic", "young": 1000, "poisson": 0}, "density": 1}))
+            .unwrap();
+        assert_eq!(u.result_steps().collect::<Vec<_>>(), vec![("Bend", true), ("Modes", true)]);
+        // Autosaves keep no results.
+        assert!(fieldcraft_io::read(&u.file_bytes(None).unwrap()).unwrap().results.is_empty());
+
+        // Results of another results encoding: the model opens without them, saying why.
+        let later = with_part_edited(&std::fs::read(&path).unwrap(), "results.bin", |b| b[6..8].copy_from_slice(b"77"));
+        let other = d.join("later.fieldcraft");
+        std::fs::write(&other, later).unwrap();
+        let mut v = Session::default();
+        let r = v.execute("file.open", &json!({"path": other})).unwrap();
+        assert_eq!(r["results"], json!([]));
+        assert!(r["warnings"][0].as_str().unwrap().contains("another results encoding (MCRSLT77"), "{r}");
+        assert_eq!(v.model, t.model);
+        // A damaged results part is a damaged file: refused, the session unchanged.
+        let damaged = with_part_edited(&std::fs::read(&path).unwrap(), "results.bin", |b| b.truncate(b.len() - 3));
+        std::fs::write(&other, damaged).unwrap();
+        let before = v.model.clone();
+        assert!(v.execute("file.open", &json!({"path": other})).unwrap_err().to_string().contains("results.bin"));
+        assert_eq!(v.model, before);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// A fluid step (cell fields, histories, heat) and an explicit step (frames, histories,
+    /// energies) reopen bit for bit, and their frames, slices and streamlines show without
+    /// solving again.
+    #[test]
+    fn fluid_and_explicit_results_reopen_bit_for_bit() {
+        let d = dir("results-kinds");
+        let mut fluid = Session::default();
+        crate::cmd::solve::tests::heated_couette(&mut fluid);
+        fluid.execute("solve.fluid", &json!({})).unwrap();
+        let mut explicit = Session::default();
+        crate::cmd::solve::tests::explicit_impact(&mut explicit);
+        explicit.execute("solve.explicit", &json!({"step": "Impact"})).unwrap();
+        for (s, step, name) in [(&mut fluid, "Shear", "couette"), (&mut explicit, "Impact", "impact")] {
+            let path = d.join(format!("{name}.fieldcraft"));
+            s.execute("file.save_as", &json!({"path": path})).unwrap();
+            // Shown in the same units (the explicit model is in SI).
+            let mut t = Session { default_units: s.default_units.clone(), ..Session::default() };
+            let r = t.execute("file.open", &json!({"path": path})).unwrap();
+            assert_eq!(r["results"], json!([{"step": step, "stale": false}]), "{r}");
+            assert_eq!(bits(&t, step), bits(s, step), "{step}");
+            let frame = json!({"step": step, "frame": 1});
+            assert_eq!(t.execute("results.frame", &frame).unwrap(), s.execute("results.frame", &frame).unwrap());
+        }
+        let mut t = Session::default();
+        t.execute("file.open", &json!({"path": d.join("couette.fieldcraft")})).unwrap();
+        for (id, p) in [
+            ("results.frame", json!({"step": "Shear", "frame": 1})),
+            ("results.slice", json!({"step": "Shear", "field": "temperature", "axis": "z"})),
+            ("results.streamlines", json!({"step": "Shear", "count": 4})),
+            ("solve.probe", json!({"step": "Shear", "points": [[0.06, 0.5, 0.06]]})),
+        ] {
+            assert_eq!(t.execute(id, &p).unwrap(), fluid.execute(id, &p).unwrap(), "{id}");
+        }
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// The results fixtures: files whose results.bin this version's encoding wrote, one per kind
+    /// of result (crates/engine/tests/results/).
+    fn results_fixtures() -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/results").join(String::from_utf8_lossy(fieldcraft_io::results::MAGIC).as_ref())
+    }
+
+    /// Writes the results fixtures: run once for each new results encoding (a new magic), then
+    /// the files are never edited.
+    #[test]
+    #[ignore = "writes the results fixtures for a new results encoding"]
+    fn write_the_results_fixtures() {
+        let d = results_fixtures();
+        std::fs::create_dir_all(&d).unwrap();
+        let mut implicit = Session::default();
+        crate::cmd::solve::tests::cantilever(&mut implicit);
+        implicit.execute("solve.run", &json!({})).unwrap();
+        let mut fluid = Session::default();
+        crate::cmd::solve::tests::heated_couette(&mut fluid);
+        fluid.execute("solve.fluid", &json!({})).unwrap();
+        let mut explicit = Session::default();
+        crate::cmd::solve::tests::explicit_impact(&mut explicit);
+        explicit.execute("solve.explicit", &json!({"step": "Impact"})).unwrap();
+        for (s, name) in [(&mut implicit, "cantilever"), (&mut fluid, "couette"), (&mut explicit, "impact")] {
+            s.execute("file.save_as", &json!({"path": d.join(format!("{name}.fieldcraft"))})).unwrap();
+        }
+    }
+
+    /// Results this encoding wrote are read by it: a change to the solvers' result types that
+    /// would misread them fails here, and is a new results encoding (a new magic, new fixtures).
+    #[test]
+    fn results_of_this_encoding_read_back() {
+        let d = results_fixtures();
+        for (name, steps) in [("cantilever", &["Bend", "Modes"][..]), ("couette", &["Shear"]), ("impact", &["Impact"])] {
+            let bytes = std::fs::read(d.join(format!("{name}.fieldcraft"))).unwrap();
+            let file = fieldcraft_io::read(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert!(file.results_note.is_none(), "{name}: {:?}", file.results_note);
+            let read: Vec<&str> = file.results.iter().map(|r| r.result.step()).collect();
+            assert_eq!(read, steps, "{name}");
+            let mut s = Session::default();
+            s.execute("file.open", &json!({"path": d.join(format!("{name}.fieldcraft"))})).unwrap();
+            assert_eq!(s.result_steps().count(), steps.len(), "{name}");
+        }
     }
 }

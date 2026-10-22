@@ -23,7 +23,7 @@ use crate::setup::Setup;
 use crate::{Error, Result};
 
 /// Why a run to steady state stopped.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum StopReason {
     /// Every monitored quantity stopped changing.
     Steady,
@@ -87,7 +87,7 @@ impl SteadySetup {
 }
 
 /// One sample of every monitored quantity.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct MonitorSample {
     pub step: u64,
     pub time: f64,
@@ -99,7 +99,7 @@ pub struct MonitorSample {
 }
 
 /// How a run to steady state went.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SteadyReport {
     pub reason: StopReason,
     pub tolerance: f64,

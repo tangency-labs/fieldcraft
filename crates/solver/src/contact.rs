@@ -202,7 +202,7 @@ impl Committed {
 }
 
 /// Whether a secondary node presses on the main surface (and with friction, sticks or slips).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
     Open,
@@ -260,7 +260,7 @@ impl State {
 }
 
 /// A contact's result at the end of a step, per secondary node.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, serde::Deserialize)]
 pub struct ContactResult {
     pub name: String,
     /// The secondary surface's node labels, sorted.
@@ -272,9 +272,9 @@ pub struct ContactResult {
     pub multiplier: Vec<f64>,
     /// Friction: the shear traction (the tangential contact force over the area, on the node)
     /// and the slip over the last increment, per node; empty without friction.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shear: Vec<Vec3>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub slip: Vec<Vec3>,
     /// The normalised gap ĝ (negative: penetration), `None` where no main face is over the node.
     pub gap: Vec<Option<f64>>,

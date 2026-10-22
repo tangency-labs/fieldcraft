@@ -149,7 +149,7 @@ impl BeamSection {
 }
 
 /// The section forces at the two ends of a beam: N, V_y, V_z, T, M_y, M_z in its local axes.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BeamForces {
     pub axes: Axes,
     pub ends: [[f64; 6]; 2],

@@ -119,7 +119,7 @@ impl HeatMesh {
 }
 
 /// The heat flux in one element.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ElementFlux {
     pub label: u32,
     pub kind: ElementKind,
@@ -127,17 +127,17 @@ pub struct ElementFlux {
 }
 
 /// The heat flow through one heat load.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct LoadFlow {
     pub name: String,
     /// `surface_flux`, `convection` or `heat_source`.
-    pub kind: &'static str,
+    pub kind: String,
     /// Heat per time into the body (negative: out of it).
     pub heat: f64,
 }
 
 /// The result of a heat transfer step.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct HeatResult {
     pub step: String,
     /// Node labels with a temperature, sorted; per-node vectors follow this order.
@@ -281,7 +281,7 @@ fn load_flows(model: &Model, resolved: &Resolved, mesh: &HeatMesh, step: &Step, 
             }
             _ => continue,
         }
-        out.push(LoadFlow { name: name.clone(), kind: load.kind(), heat });
+        out.push(LoadFlow { name: name.clone(), kind: load.kind().to_string(), heat });
     }
     Ok(out)
 }

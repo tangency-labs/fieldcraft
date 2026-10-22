@@ -678,27 +678,6 @@ pub fn range(labels: &[u32], values: &[f64]) -> Option<((u32, f64), (u32, f64))>
     out
 }
 
-/// A fingerprint of what solving step `step` of `model` reads ([`Model::step_inputs`]), or
-/// `None` when there is no such step.
-pub(crate) fn inputs_fingerprint(model: &Model, step: &str) -> Option<u64> {
-    use std::hash::Hasher;
-    /// Hashes what is written to it.
-    struct HashWriter(std::hash::DefaultHasher);
-    impl std::io::Write for HashWriter {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.0.write(buf);
-            Ok(buf.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-    let inputs = model.step_inputs(step)?;
-    let mut h = HashWriter(std::hash::DefaultHasher::new());
-    serde_json::to_writer(&mut h, &inputs).ok()?;
-    Some(h.0.finish())
-}
-
 /// The principal values of a stress (xx, yy, zz, xy, xz, yz), largest first.
 pub fn principal(t: &[f64; 6]) -> [f64; 3] {
     fieldcraft_fem::principal(t)

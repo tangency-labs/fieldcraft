@@ -1648,7 +1648,7 @@ pub(crate) mod tests {
 
     /// The Couette gap with heat: the sliding top wall held at 1, the bottom at 0, the fluid's
     /// diffusivity k / (ρ c) = 0.1.
-    fn heated_couette(s: &mut Session) {
+    pub(crate) fn heated_couette(s: &mut Session) {
         couette(s);
         heat_the_couette(s);
     }
@@ -2363,7 +2363,7 @@ pub(crate) mod tests {
     }
 
     /// A small impact model through commands: a hex8 bar moving onto a rigid wall.
-    fn explicit_impact(s: &mut Session) {
+    pub(crate) fn explicit_impact(s: &mut Session) {
         explicit_cantilever(s, 4.0, [8, 1]);
         let step = json!({
             "type": "explicit_dynamic", "end_time": 0.2, "history_interval": 0.002, "output_interval": 0.05, "history_nodes": "tip",
