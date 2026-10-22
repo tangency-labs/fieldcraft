@@ -75,7 +75,10 @@
 //! heat), an inlet holds its temperature (equilibrium at the cell's velocity) and an outlet takes
 //! its neighbour's. Buoyancy is the Boussinesq force per mass `−β (T − T₀) g`, added to the body
 //! force of every cell (Guo forcing as for the constant acceleration). The heat each wall face
-//! receives is summed over its links like the momentum exchange.
+//! receives is summed over its links like the momentum exchange, leaving out the links into
+//! inlet and outlet cells: the open boundary sets all of their populations after streaming, so
+//! that heat never stays in the fluid (counted, a held wall meeting a held inlet reported twice
+//! its heat in a heated channel, #675).
 //!
 //! Obstacles that conduct heat carry their own temperature, conducted on their cells and coupled
 //! to this lattice through their faces (conjugate heat transfer, [`crate::conduction`]).
@@ -239,6 +242,9 @@ pub struct ThermalState {
     /// Per open cell: the temperature it holds (an inlet), or `None` to take its neighbour's
     /// (an outlet).
     open: Vec<Option<f64>>,
+    /// The open cells, sorted: the open boundary sets every scalar population of each after
+    /// streaming, so a wall link into one gives no heat that stays in the fluid.
+    reset: Vec<u32>,
     /// The heat each group received in the last step (lattice units: temperature times cell
     /// faces per step).
     heat: Vec<f64>,
@@ -280,6 +286,13 @@ impl ThermalState {
     /// The conducting obstacles' cells and state, when there are any.
     pub fn solid(&self) -> Option<&SolidHeat> {
         self.solid.as_ref()
+    }
+
+    /// Whether the open boundary sets every scalar population of `cell` after streaming (an
+    /// inlet holds its temperature, an outlet copies its neighbour): a wall link into it then
+    /// gives the fluid no heat, and the wall heat leaves it out (#675).
+    pub fn resets(&self, cell: u32) -> bool {
+        self.reset.binary_search(&cell).is_ok()
     }
 }
 
@@ -643,6 +656,8 @@ impl Flow {
                         }
                     })
                     .collect();
+                let mut reset: Vec<u32> = open.iter().map(|oc| oc.cell).collect();
+                reset.sort_unstable();
                 let t_n = stride.checked_mul(QT).ok_or_else(|| Error::Limit("the grid is too large".into()))?;
                 let mut tg = filled(t_n, 0.0, "temperature populations")?;
                 let tg2 = Vec::new();
@@ -691,6 +706,7 @@ impl Flow {
                     buoyancy: ts.buoyancy,
                     groups: group_conditions,
                     open: open_t,
+                    reset,
                     heat: vec![0.0; groups.len()],
                     solid,
                     conjugate,
@@ -901,7 +917,7 @@ impl Flow {
             + self.zone_cells.iter().map(bytes).sum::<u64>()
             + self.outlets.heap_bytes();
         if let Some(t) = &self.thermal {
-            total += bytes(&t.g) + bytes(&t.g2) + bytes(&t.temperature) + bytes(&t.open);
+            total += bytes(&t.g) + bytes(&t.g2) + bytes(&t.temperature) + bytes(&t.open) + bytes(&t.reset);
         }
         total
     }
@@ -1177,6 +1193,7 @@ impl Flow {
             if let (Rule::Bounce { group, .. } | Rule::Reflect { group, .. }, Some(back)) =
                 (link.rule, thermal_rule(g, s, groups, cell, q, link.rule))
                 && !t.conjugate.get(group as usize).copied().unwrap_or(false)
+                && !t.resets(link.cell)
             {
                 let out = g.get(opposite(q) * s + cell).copied().unwrap_or(0.0);
                 if let Some(h) = t.heat.get_mut(group as usize) {

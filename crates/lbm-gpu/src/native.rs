@@ -20,6 +20,8 @@ const KIND_PULL: u32 = 0;
 const KIND_BOUNCE: u32 = 1;
 const KIND_REFLECT: u32 = 2;
 const KIND_OPEN: u32 = 3;
+/// Marks a link into a cell whose scalar populations the open boundary sets (see lbm.wgsl).
+const RESET: u32 = 1 << 24;
 /// Floats per open cell in the outlet buffer (see lbm.wgsl).
 const OUTLET: usize = 16;
 /// The scalar lattice's directions (the first seven of D3Q19) and weights.
@@ -375,7 +377,8 @@ impl GpuFlow {
                     }
                 }
             }
-            link_u.extend_from_slice(&[u32::from(link.q) | (kind << 8) | (q2 << 16), from, group, link.cell]);
+            let reset = if thermal.is_some_and(|t| t.resets(link.cell)) { RESET } else { 0 };
+            link_u.extend_from_slice(&[u32::from(link.q) | (kind << 8) | (q2 << 16) | reset, from, group, link.cell]);
             link_f.push(du as f32);
         }
         by_group.sort();

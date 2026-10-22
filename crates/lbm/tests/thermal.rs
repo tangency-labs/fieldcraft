@@ -14,7 +14,7 @@ const PERIODIC: FaceCondition = FaceCondition::Periodic {};
 /// temperature is linear, and anti-bounce-back puts the walls exactly halfway between cells.
 #[test]
 fn conduction_between_plates_is_linear() {
-    for n in [8usize, 16] {
+    for n in [8usize, 16, 32] {
         let (h, alpha) = (1.0, 0.05);
         let dx = h / n as f64;
         let mut d = domain([0.0; 3], [dx, h, dx], dx);
@@ -113,6 +113,82 @@ fn the_flow_carries_the_inlet_temperature() {
     assert!(lo > 1.0 - 1e-3 && hi < 1.0 + 1e-3, "{lo}..{hi}");
     let f = flow.fields().unwrap();
     assert_eq!(f.temperature.len(), grid.len());
+}
+
+/// A heated parallel-plate channel (the Graetz problem, Pe 200): a developed parabolic flow
+/// enters at T_in = 0 between plates held at T_w = 1 that start at the inlet. The open boundary
+/// sets every scalar population of the inlet and outlet layers after streaming, so the heat a
+/// wall link gives a cell there never stays in the fluid; counted, a held wall meeting a held
+/// inlet reported several times its heat (#675). The monitor must report exactly what the inner
+/// layers received, which in the steady state they pass on: out toward the outlet as the flow's
+/// enthalpy ρ c_p Q (T_bulk − T_in), and (a tenth of it at Pe 200, from the corners where the hot
+/// walls meet the cold inlet) by conduction back into the inlet layer.
+#[test]
+fn wall_heat_from_plates_that_start_at_the_inlet_is_what_the_fluid_keeps() {
+    for n in [8usize, 16] {
+        let (h, l, umax, peclet) = (1.0, 4.0, 0.1, 200.0);
+        let dx = h / n as f64;
+        let alpha = 2.0 / 3.0 * umax * h / peclet;
+        let mut d = domain([0.0; 3], [l, h, dx], dx);
+        d.faces.x_min = FaceCondition::Velocity { velocity: [umax, 0.0, 0.0], profile: fieldcraft_model::Profile::Parabolic };
+        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+        d.faces.z_min = PERIODIC;
+        d.faces.z_max = PERIODIC;
+        let mut t = FluidThermal { initial_temperature: kelvin(0.0), ..FluidThermal::default() };
+        t.faces.x_min = ThermalCondition::Temperature { value: kelvin(0.0) };
+        t.faces.y_min = ThermalCondition::Temperature { value: kelvin(1.0) };
+        t.faces.y_max = ThermalCondition::Temperature { value: kelvin(1.0) };
+        d.thermal = Some(t);
+        let lattice_u = 0.05;
+        // three flow-through times
+        let m = hot_model(1.0, 0.05, alpha, d, step(3.0 * l / (2.0 / 3.0 * umax), lattice_u * dx / umax, None));
+        let (setup, mut flow) = prepare(&m, &[]);
+        let grid = *flow.grid();
+        flow.set_equilibrium(|c| {
+            let s = (grid.coords(c)[1] as f64 + 0.5) / n as f64;
+            (1.0, [lattice_u * 4.0 * s * (1.0 - s), 0.0, 0.0])
+        });
+        run_all(&setup, &mut flow);
+        // Lattice units: temperature times cell faces per step; the lattice runs in degrees
+        // Celsius (T_w = 1, T_in = 0). The heat each wall face received is what it took.
+        let heat = flow.heat();
+        let wall = |name: &str| flow.groups().iter().position(|g| g.name == name).and_then(|k| heat.get(k).copied()).unwrap();
+        let reported = -(wall("y_min") + wall("y_max"));
+        // The heat the walls gave layer i in the last step, from its streamed populations: a
+        // held wall's link brings back g = −g* + 2 w T_w for the g* that left, so the fluid
+        // gained g − g* = 2 g − 2 w T_w (w = ⅛) through each.
+        let layer = |i: usize| -> f64 {
+            let from_wall = |j: usize, q: usize| 2.0 * flow.thermal_population(q, grid.index([i, j, 0])) - 0.25;
+            from_wall(0, 3) + from_wall(n - 1, 4)
+        };
+        let last = grid.cells[0] - 2;
+        let inner: f64 = (1..=last).map(layer).sum();
+        // What streamed across the face between layers i and i + 1: +x into i + 1 minus −x into i
+        // (inside: the open boundary overwrites what streamed into the open layers).
+        let across = |i: usize| -> f64 {
+            (0..n).map(|j| flow.thermal_population(1, grid.index([i + 1, j, 0])) - flow.thermal_population(2, grid.index([i, j, 0]))).sum()
+        };
+        // Steady: what the walls give layers 2..last is what crosses out of them.
+        let kept: f64 = (2..last).map(layer).sum();
+        let passed = across(last - 1) - across(1);
+        // The enthalpy the flow carries toward the outlet, ρ c_p Q (T_bulk − T_in).
+        let enthalpy: f64 = (0..n)
+            .map(|j| {
+                let c = grid.index([last - 1, j, 0]);
+                flow.moments(c).unwrap().1[0] * flow.temperature(c).unwrap()
+            })
+            .sum();
+        println!(
+            "heated channel, {n} cells across: reported wall heat {reported:.6e}, given to the inner layers {inner:.6e}; \
+             layers 2..: given {kept:.6e}, passed on {passed:.6e}; out {:.6e}, enthalpy rise {enthalpy:.6e}; reported / enthalpy {:.4}",
+            across(last - 1),
+            reported / enthalpy
+        );
+        assert!((reported / inner - 1.0).abs() < 1e-9, "{n}: the monitor reports {reported}, the inner layers got {inner}");
+        // (three flow-through times leave 2e-3 of transient; twelve 1e-4)
+        assert!((kept / passed - 1.0).abs() < 5e-3, "{n}: {kept} given, {passed} passed on");
+        assert!((across(last - 1) / enthalpy - 1.0).abs() < 0.02, "{n}: {} out vs {enthalpy}", across(last - 1));
+    }
 }
 
 /// Natural convection in a square cavity (de Vahl Davis, Int. J. Numer. Meth. Fluids 3 (1983)

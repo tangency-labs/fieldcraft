@@ -49,6 +49,10 @@ const KIND_PULL: u32 = 0u;
 const KIND_BOUNCE: u32 = 1u;
 const KIND_REFLECT: u32 = 2u;
 const KIND_OPEN: u32 = 3u;
+// Set in a link's first word when its cell is an inlet or outlet cell, whose scalar populations
+// the open boundary sets after streaming: the heat the link gives never stays in the fluid, and
+// the wall heat leaves it out (fieldcraft_lbm::flow::ThermalState::resets).
+const RESET: u32 = 0x1000000u;
 
 struct Params {
     n: u32,
@@ -82,7 +86,7 @@ struct Params {
 @group(0) @binding(1) var<storage, read> fluid: array<u32>;
 @group(0) @binding(2) var<storage, read_write> f: array<f32>;
 @group(0) @binding(3) var<storage, read_write> g: array<f32>;
-// Per link: (q | kind << 8 | q2 << 16, from, group, 0) and the moving-wall term.
+// Per link: (q | kind << 8 | q2 << 16 | RESET, from, group, cell) and the moving-wall term.
 @group(0) @binding(5) var<storage, read> link_u: array<vec4<u32>>;
 // Per convective outlet cell (fieldcraft_lbm::outlet), OUTLET floats at its slot: its five unknown
 // populations after the last step (h, 0..5) and its convection speed (5), kept between steps;
@@ -724,7 +728,7 @@ fn link_forces(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id)
     if !AA_MODE { v = momentum_exchange(l, lu, q, kind, q2); }
     var heat = 0.0;
     // The heat the link gave its wall: what left the fluid minus what came back.
-    if has_heat() && q < QT && (kind == KIND_BOUNCE || kind == KIND_REFLECT) {
+    if has_heat() && q < QT && (kind == KIND_BOUNCE || kind == KIND_REFLECT) && (lu.x & RESET) == 0u {
         heat = t[opp(q) * n + cell] - thermal_rule(lu, q, kind, cell);
     }
     contrib[l] = vec4<f32>(v, heat);

@@ -465,6 +465,38 @@ fn a_heated_channel_matches_the_cpu() {
     }
 }
 
+/// Plates held at 1 that start at a held inlet carrying 0 (the Graetz channel of `fieldcraft-lbm`'s
+/// thermal tests): the wall links into the inlet and outlet cells give heat the open boundary
+/// resets, which neither backend counts (#675), so the GPU's wall heat is the CPU's.
+#[test]
+fn wall_heat_at_a_held_inlet_matches_the_cpu() {
+    for (collision, streaming) in cases() {
+        let (h, l, umax, n) = (1.0, 4.0, 0.1, 8usize);
+        let dx = h / n as f64;
+        let alpha = 2.0 / 3.0 * umax * h / 200.0;
+        let mut d = domain([0.0; 3], [l, h, dx], dx);
+        d.faces.x_min = FaceCondition::Velocity { velocity: [umax, 0.0, 0.0], profile: Profile::Parabolic };
+        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+        d.faces.z_min = PERIODIC;
+        d.faces.z_max = PERIODIC;
+        let mut t = FluidThermal { initial_temperature: kelvin(0.0), ..FluidThermal::default() };
+        t.faces.x_min = ThermalCondition::Temperature { value: kelvin(0.0) };
+        t.faces.y_min = ThermalCondition::Temperature { value: kelvin(1.0) };
+        t.faces.y_max = ThermalCondition::Temperature { value: kelvin(1.0) };
+        d.thermal = Some(t);
+        let m = hot_model(1.0, 0.05, alpha, d, collide(l / umax, 0.05 * dx / umax, None, collision));
+        let (setup, cpu) = prepare(&m, &[]);
+        let Some((mut cpu, mut gpu)) = both(&setup, cpu, streaming) else { continue };
+        let (dt, dh) = heat_difference(&mut cpu, &mut gpu);
+        let (hc, hg) = (cpu.heat().to_vec(), gpu.heat().unwrap());
+        let walls =
+            |heat: &[f64]| ["y_min", "y_max"].map(|w| cpu.groups().iter().position(|g| g.name == w).map_or(0.0, |k| heat[k])).iter().sum::<f64>();
+        let (hc, hg) = (walls(&hc), walls(&hg));
+        println!("{collision:?} {streaming:?} held walls at a held inlet: wall heat CPU {hc:.6e} GPU {hg:.6e}; temperature {dt:.2e} heat {dh:.2e}");
+        assert!(dt < 2e-5 && dh < 1e-4, "{dt} {dh}");
+    }
+}
+
 /// A differentially heated cavity with buoyancy (the de Vahl Davis geometry at Ra 10³ on 16
 /// cells, over the first diffusive time): the temperature drives the flow on both backends
 /// alike.
