@@ -89,6 +89,16 @@ pub const EXPLICIT: CommandSpec = CommandSpec {
     run: run_explicit,
 };
 
+pub const SETTINGS: CommandSpec = CommandSpec {
+    id: "solve.settings",
+    label: "Run Settings",
+    params: r#"{"step": "Flow", "backend": "gpu" | "cpu" | "none", "fallback"?: "cpu" | "none"} — the backend a fluid step prefers to be solved on, saved with the model (outside the definition: the step and its results are unchanged), and the one it falls back on where this machine has none (`cpu` by default for a GPU preference; `none` refuses instead); `backend: "none"` forgets the preference. solve.fluid (and solve.run) without a `backend` of its own then uses it: on a machine with no suitable GPU it falls back with a `notice`. A machine overrides every preference with FIELDCRAFT_SOLVE_BACKEND=cpu|gpu. With no step, lists every step's settings"#,
+    form: Some(super::forms::SOLVE_SETTINGS),
+    kind: CommandKind::Session,
+    requires: &[],
+    run: settings,
+};
+
 pub const HISTORY: CommandSpec = CommandSpec {
     id: "solve.history",
     label: "Result Histories",
@@ -102,7 +112,7 @@ pub const HISTORY: CommandSpec = CommandSpec {
 pub const FLUID: CommandSpec = CommandSpec {
     id: "solve.fluid",
     label: "Solve Fluid Step",
-    params: r#"{"step": "Flow", "backend": "cpu", "max_cells": 16000000, "max_steps": 10000000, "max_cell_updates": 1e12, "max_frame_bytes": 2e9, "threads": 8, "estimate": false} — runs a fluid step with the lattice Boltzmann solver (the only fluid step when `step` is left out): obstacles are triangulated from the open design or taken from imported surfaces; returns the time step, relaxation time, Mach number, mass, the largest speed of all frames (`max_speed`, at `max_speed_time`) and of the last frame (`final_max_speed`), over interior fluid cells (the open-boundary layers are excluded, convective outlets too, because a wake reaching a uniform pressure outlet distorts the last layer), the final force on every wall and, with heat, the thermal relaxation time, the fluid's temperature range and the heat into every wall, and per conducting solid (`solids`) its temperature range and mean, its power, the heat its faces give the fluid, its `peak` temperature (at `peak_time`: the steady value when the run reached steady state, else the highest over the frames), its `limit`, the `margin` (limit less peak; negative over it) and `ok`, and over them `components_ok` (null when no solid has a limit); with fans and porous zones, each one's volume flow and its pressure rise (a fan's operating point: `pressure_rise` from its curve, and `measured_pressure_rise`) or `pressure_drop`; the measured values are the static-pressure difference between the fluid cell layers just outside the zone, so they include the wall friction over its thickness plus one cell (final and mean over the last quarter of the run); `backend` is `cpu` (the default: double precision, the same result on every machine) or `gpu` (the step on the GPU `FIELDCRAFT_GPU` picks, single precision, within the backend's stated tolerance of the CPU; an error when the build has none); `max_steps` may only be lowered; `max_cells` (16000000 by default), `max_cell_updates` (1e12) and `max_frame_bytes` (2e9) may be raised up to what the machine's memory bound holds (half its physical memory), and a run with a raised `max_cells` or `max_frame_bytes` must fit in that bound; the reply's `memory` gives the run's estimate (`flow_bytes`, `frame_bytes` at about 16 bytes per cell per frame, 20 with heat, `total_bytes`) against `bound_bytes`, the `frames_that_fit` and each cap's `ceilings`, and on the GPU the population buffer against the device's limit per buffer; `"estimate": true` returns only that, without solving; a run over a cap is refused before it starts, saying what to change; `threads` as for solve.static"#,
+    params: r#"{"step": "Flow", "backend": "cpu", "max_cells": 16000000, "max_steps": 10000000, "max_cell_updates": 1e12, "max_frame_bytes": 2e9, "threads": 8, "estimate": false} — runs a fluid step with the lattice Boltzmann solver (the only fluid step when `step` is left out): obstacles are triangulated from the open design or taken from imported surfaces; returns the time step, relaxation time, Mach number, mass, the largest speed of all frames (`max_speed`, at `max_speed_time`) and of the last frame (`final_max_speed`), over interior fluid cells (the open-boundary layers are excluded, convective outlets too, because a wake reaching a uniform pressure outlet distorts the last layer), the final force on every wall and, with heat, the thermal relaxation time, the fluid's temperature range and the heat into every wall, and per conducting solid (`solids`) its temperature range and mean, its power, the heat its faces give the fluid, its `peak` temperature (at `peak_time`: the steady value when the run reached steady state, else the highest over the frames), its `limit`, the `margin` (limit less peak; negative over it) and `ok`, and over them `components_ok` (null when no solid has a limit); with fans and porous zones, each one's volume flow and its pressure rise (a fan's operating point: `pressure_rise` from its curve, and `measured_pressure_rise`) or `pressure_drop`; the measured values are the static-pressure difference between the fluid cell layers just outside the zone, so they include the wall friction over its thickness plus one cell (final and mean over the last quarter of the run); `backend` is `cpu` (the default: double precision, the same result on every machine) or `gpu` (the step on the GPU `FIELDCRAFT_GPU` picks, single precision, within the backend's stated tolerance of the CPU; an error when the build has none); left out, it is FIELDCRAFT_SOLVE_BACKEND's when that is set, else the step's saved preference (solve.settings), which on a machine with no suitable GPU falls back as it says, with a `notice` (the reply's `backend_choice` says what chose it), else the CPU; `max_steps` may only be lowered; `max_cells` (16000000 by default), `max_cell_updates` (1e12) and `max_frame_bytes` (2e9) may be raised up to what the machine's memory bound holds (half its physical memory), and a run with a raised `max_cells` or `max_frame_bytes` must fit in that bound; the reply's `memory` gives the run's estimate (`flow_bytes`, `frame_bytes` at about 16 bytes per cell per frame, 20 with heat, `total_bytes`) against `bound_bytes`, the `frames_that_fit` and each cap's `ceilings`, and on the GPU the population buffer against the device's limit per buffer; `"estimate": true` returns only that, without solving; a run over a cap is refused before it starts, saying what to change; `threads` as for solve.static"#,
     form: Some(super::forms::SOLVE_FLUID),
     kind: CommandKind::Model,
     requires: &[Requirement::FluidDomain, Requirement::Step],
@@ -578,7 +588,7 @@ fn raisable(p: &Value, key: &str, default: u64, ceiling: u64, bound: u64) -> Res
 /// The caps and backend of a `solve.fluid` call: `max_steps` may only be lowered;
 /// `max_cells`, `max_cell_updates` and `max_frame_bytes` may be raised up to what the session's
 /// memory bound holds.
-fn fluid_limits(s: &Session, p: &Value) -> Result<(fieldcraft_lbm::Limits, fieldcraft_lbm::Choice)> {
+fn fluid_limits(s: &Session, p: &Value) -> Result<(fieldcraft_lbm::Limits, BackendChoice)> {
     use fieldcraft_lbm::Limits as L;
     let bound = s.limits.memory;
     let ceilings = L { max_memory: bound, ..L::default() };
@@ -589,12 +599,120 @@ fn fluid_limits(s: &Session, p: &Value) -> Result<(fieldcraft_lbm::Limits, field
         max_frame_bytes: raisable(p, "max_frame_bytes", L::MAX_FRAME_BYTES, ceilings.max_frame_ceiling(), bound)?,
         max_memory: bound,
     };
-    let backend = match opt::<String>(p, "backend")? {
-        None => fieldcraft_lbm::Choice::Cpu,
-        Some(b) => fieldcraft_lbm::Choice::parse(&b)
-            .ok_or_else(|| EngineError::Params(format!("`backend` must be `cpu` or `gpu`, not `{}`", b.chars().take(40).collect::<String>())))?,
+    Ok((limits, backend_choice(s, p, machine_backend().as_deref(), fieldcraft_lbm::device_available())?))
+}
+
+/// The machine's override of every step's preferred backend (`FIELDCRAFT_SOLVE_BACKEND`).
+fn machine_backend() -> Option<String> {
+    std::env::var("FIELDCRAFT_SOLVE_BACKEND").ok().filter(|v| !v.trim().is_empty())
+}
+
+/// The backend a fluid solve runs on, and why.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BackendChoice {
+    pub choice: fieldcraft_lbm::Choice,
+    pub by: ChosenBy,
+    /// Said when the step's preference could not be followed here.
+    pub notice: Option<String>,
+}
+
+/// What chose a fluid solve's backend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChosenBy {
+    /// The call's own `backend`.
+    Parameter,
+    /// The machine's override, FIELDCRAFT_SOLVE_BACKEND.
+    Machine,
+    /// The step's saved preference (solve.settings).
+    Step,
+    Default,
+}
+
+impl ChosenBy {
+    pub fn id(self) -> &'static str {
+        match self {
+            ChosenBy::Parameter => "parameter",
+            ChosenBy::Machine => "machine",
+            ChosenBy::Step => "step",
+            ChosenBy::Default => "default",
+        }
+    }
+}
+
+impl BackendChoice {
+    pub fn to_json(&self) -> Value {
+        json!({"backend": choice_id(self.choice), "by": self.by.id(), "notice": self.notice})
+    }
+}
+
+fn choice_id(c: fieldcraft_lbm::Choice) -> &'static str {
+    match c {
+        fieldcraft_lbm::Choice::Cpu => "cpu",
+        fieldcraft_lbm::Choice::Device => "gpu",
+    }
+}
+
+/// The backend of a `solve.fluid` call `p`: its own `backend`, else the machine's override
+/// (`machine`), else the step's saved preference, falling back as it says when `device` says this
+/// machine has no GPU to solve on, else the CPU.
+pub fn backend_choice(s: &Session, p: &Value, machine: Option<&str>, device: std::result::Result<(), String>) -> Result<BackendChoice> {
+    use fieldcraft_lbm::Choice;
+    let parse = |b: &str, what: &str| {
+        Choice::parse(b.trim())
+            .ok_or_else(|| EngineError::Params(format!("{what} must be `cpu` or `gpu`, not `{}`", b.chars().take(40).collect::<String>())))
     };
-    Ok((limits, backend))
+    if let Some(b) = opt::<String>(p, "backend")? {
+        return Ok(BackendChoice { choice: parse(&b, "`backend`")?, by: ChosenBy::Parameter, notice: None });
+    }
+    if let Some(m) = machine {
+        return Ok(BackendChoice { choice: parse(m, "FIELDCRAFT_SOLVE_BACKEND")?, by: ChosenBy::Machine, notice: None });
+    }
+    let step = opt::<String>(p, "step")?;
+    let name = fieldcraft_lbm::fluid_step(&s.model, step.as_deref()).ok().map(|(st, _)| st.name.clone());
+    let Some((name, pref)) = name.and_then(|n| s.run.get(&n).copied().map(|r| (n, r))) else {
+        return Ok(BackendChoice { choice: Choice::Cpu, by: ChosenBy::Default, notice: None });
+    };
+    match (pref.backend, device) {
+        (fieldcraft_io::Backend::Cpu, _) => Ok(BackendChoice { choice: Choice::Cpu, by: ChosenBy::Step, notice: None }),
+        (fieldcraft_io::Backend::Gpu, Ok(())) => Ok(BackendChoice { choice: Choice::Device, by: ChosenBy::Step, notice: None }),
+        (fieldcraft_io::Backend::Gpu, Err(why)) => match pref.fallback {
+            Some(fieldcraft_io::Backend::Cpu) => Ok(BackendChoice {
+                choice: Choice::Cpu,
+                by: ChosenBy::Step,
+                notice: Some(format!(
+                    "step `{name}` prefers the GPU, but {why}: it is solved on the CPU instead (slower; the same result as any CPU)"
+                )),
+            }),
+            _ => Err(EngineError::Params(format!(
+                "step `{name}` is to be solved on the GPU with no fallback, but {why} (solve.settings, or `backend: \"cpu\"`)"
+            ))),
+        },
+    }
+}
+
+/// `solve.settings`: set or forget a fluid step's preferred backend, or list them all.
+fn settings(s: &mut Session, p: &Value) -> Result<Value> {
+    let listed = |s: &Session| json!({"run": s.run});
+    let Some(step) = opt::<String>(p, "step")? else { return Ok(listed(s)) };
+    let st =
+        s.model.step(&step).ok_or_else(|| EngineError::Params(format!("step `{}` does not exist", step.chars().take(80).collect::<String>())))?;
+    if !matches!(st.procedure, fieldcraft_model::Procedure::Fluid { .. }) {
+        return Err(EngineError::invalid("step", format!("step `{step}` is a {} step: only fluid steps choose a backend", st.procedure.name())));
+    }
+    let backend: String = req(p, "backend")?;
+    if backend == "none" {
+        s.run.remove(&step);
+        return Ok(listed(s));
+    }
+    let backend = fieldcraft_io::Backend::parse(&backend).ok_or_else(|| EngineError::invalid("backend", "must be gpu, cpu or none"))?;
+    let fallback = match opt::<String>(p, "fallback")?.as_deref() {
+        None if backend == fieldcraft_io::Backend::Gpu => Some(fieldcraft_io::Backend::Cpu),
+        None | Some("none") => None,
+        Some("cpu") if backend == fieldcraft_io::Backend::Gpu => Some(fieldcraft_io::Backend::Cpu),
+        Some(_) => return Err(EngineError::invalid("fallback", "must be cpu (for a GPU preference) or none")),
+    };
+    s.run.insert(step, fieldcraft_io::RunSettings { backend, fallback });
+    Ok(listed(s))
 }
 
 /// What a fluid solve would need in memory, from the model alone (no obstacle is
@@ -609,6 +727,8 @@ pub struct FluidEstimate {
     /// Why the run would be refused before it starts (the cell, frame or memory caps), if it
     /// would.
     pub problem: Option<String>,
+    /// The backend it would run on, and why (a step's preference, a fallback).
+    pub backend: BackendChoice,
 }
 
 impl FluidEstimate {
@@ -636,7 +756,15 @@ impl FluidEstimate {
     pub fn summary(&self) -> String {
         use fieldcraft_lbm::memory::megabytes;
         let m = &self.memory;
-        let mut line = format!(
+        let mut line = match (&self.backend.notice, self.backend.by) {
+            (Some(n), _) => format!("{n}. "),
+            (None, ChosenBy::Step) => format!("Backend: {}, the step's preference (solve.settings). ", choice_id(self.backend.choice).to_uppercase()),
+            (None, ChosenBy::Machine) => {
+                format!("Backend: {}, this machine's (FIELDCRAFT_SOLVE_BACKEND). ", choice_id(self.backend.choice).to_uppercase())
+            }
+            _ => String::new(),
+        };
+        line += &format!(
             "Memory: {} frames × {} cells: {} of frames + {} of flow ≈ {}",
             m.frames,
             crate::thousands(usize::try_from(m.cells).unwrap_or(usize::MAX)),
@@ -667,12 +795,13 @@ impl FluidEstimate {
 /// The memory estimate of `solve.fluid` with parameters `p`, or why there is none (no fluid
 /// step, parameters out of range).
 pub fn fluid_estimate(s: &Session, p: &Value) -> Result<FluidEstimate> {
-    let (limits, backend) = fluid_limits(s, p)?;
+    let (limits, chosen) = fluid_limits(s, p)?;
+    let backend = chosen.choice;
     let step = opt::<String>(p, "step")?;
     let (_, domain) = fieldcraft_lbm::fluid_step(&s.model, step.as_deref())?;
     let memory = fieldcraft_lbm::Memory::estimate(&s.model, step.as_deref(), backend)?;
     let problem = limits.check_cells(domain.cells()?).and_then(|()| memory.check(&limits)).err().map(|e| e.to_string());
-    Ok(FluidEstimate { memory, limits, physical: crate::machine::physical_memory(), problem })
+    Ok(FluidEstimate { memory, limits, physical: crate::machine::physical_memory(), problem, backend: chosen })
 }
 
 fn run_fluid(s: &mut Session, p: &Value) -> Result<Value> {
@@ -682,6 +811,7 @@ fn run_fluid(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let limits = estimate.limits;
     let backend = estimate.memory.backend;
+    let chosen = estimate.backend.clone();
     let step = opt::<String>(p, "step")?;
     let (_, domain) = fieldcraft_lbm::fluid_step(&s.model, step.as_deref())?;
     let obstacles = obstacles(s, domain)?;
@@ -689,6 +819,10 @@ fn run_fluid(s: &mut Session, p: &Value) -> Result<Value> {
     let r = with_threads(threads(s, p)?, || fieldcraft_lbm::solve_fluid_on(model, step.as_deref(), &obstacles, &limits, backend))?;
     let mut summary = fluid_summary(&r, s.units());
     summary["memory"] = estimate.to_json();
+    summary["backend_choice"] = chosen.to_json();
+    if let Some(n) = &chosen.notice {
+        summary["notice"] = json!(n);
+    }
     s.store_result(StepResult::Fluid(r));
     Ok(summary)
 }
@@ -1517,6 +1651,79 @@ pub(crate) mod tests {
                 }
             }
         }
+    }
+
+    /// #648: a fluid step's preferred backend is saved with the model, outside its definition;
+    /// solving without a backend of its own follows it, falls back with a notice on a machine with
+    /// no suitable GPU (this test binary registers none), and the machine overrides it.
+    #[test]
+    fn a_step_prefers_a_backend_and_falls_back_with_a_notice() {
+        let mut s = Session::default();
+        couette(&mut s);
+        let (journal, revision) = (s.journal.len(), s.revision());
+        let r = s.execute("solve.settings", &json!({"step": "Shear", "backend": "gpu"})).unwrap();
+        assert_eq!(r["run"], json!({"Shear": {"backend": "gpu", "fallback": "cpu"}}));
+        assert_eq!((s.journal.len(), s.revision()), (journal, revision), "not an edit");
+        assert!(s.is_dirty(), "saved with the model");
+        let r = s.execute("solve.fluid", &json!({})).unwrap();
+        assert_eq!(r["backend_choice"]["backend"], "cpu", "{}", r["backend_choice"]);
+        assert_eq!(r["backend_choice"]["by"], "step");
+        assert!(
+            r["notice"].as_str().unwrap().contains("step `Shear` prefers the GPU, but this build has no GPU backend: it is solved on the CPU"),
+            "{r}"
+        );
+        let fell_back = format!("{:?}", s.result("Shear"));
+        s.execute("solve.fluid", &json!({"backend": "cpu"})).unwrap();
+        assert_eq!(format!("{:?}", s.result("Shear")), fell_back, "the CPU's result");
+        // The Solve dialog says so before the run.
+        let note = fluid_estimate(&s, &json!({})).unwrap().summary();
+        assert!(note.starts_with("step `Shear` prefers the GPU"), "{note}");
+        // With a GPU here, or by the machine's word, or the call's own.
+        let pick = |s: &Session, p: Value, machine: Option<&str>, gpu: bool| {
+            backend_choice(s, &p, machine, if gpu { Ok(()) } else { Err("no GPU".into()) })
+                .map(|c| (choice_id(c.choice), c.by.id(), c.notice.is_some()))
+        };
+        assert_eq!(pick(&s, json!({}), None, true).unwrap(), ("gpu", "step", false));
+        assert_eq!(pick(&s, json!({}), Some("cpu"), true).unwrap(), ("cpu", "machine", false));
+        assert_eq!(pick(&s, json!({"backend": "gpu"}), Some("cpu"), false).unwrap(), ("gpu", "parameter", false));
+        assert!(pick(&s, json!({}), Some("tpu"), true).is_err());
+        // No fallback: refused where there is no GPU.
+        s.execute("solve.settings", &json!({"step": "Shear", "backend": "gpu", "fallback": "none"})).unwrap();
+        assert!(pick(&s, json!({}), None, false).unwrap_err().to_string().contains("with no fallback"));
+        assert!(s.execute("solve.fluid", &json!({})).unwrap_err().to_string().contains("with no fallback"));
+        // Saved and opened again; the definition and its results' hash are unchanged.
+        let d = std::env::temp_dir().join(format!("fieldcraft-run-settings-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let path = d.join("gap.fieldcraft");
+        s.execute("solve.settings", &json!({"step": "Shear", "backend": "gpu"})).unwrap();
+        s.execute("file.save_as", &json!({"path": path})).unwrap();
+        let mut t = Session::default();
+        let r = t.execute("file.open", &json!({"path": path})).unwrap();
+        assert_eq!(r["results"], json!([{"step": "Shear", "stale": false}]), "outside the definition: {r}");
+        assert_eq!(t.run, s.run);
+        assert_eq!(t.execute("solve.settings", &json!({})).unwrap()["run"]["Shear"]["backend"], "gpu");
+        t.execute("solve.settings", &json!({"step": "Shear", "backend": "none"})).unwrap();
+        assert!(t.run.is_empty() && t.is_dirty());
+        let _ = std::fs::remove_dir_all(&d);
+        // Only fluid steps choose a backend; hostile parameters change nothing.
+        let mut c = Session::default();
+        cantilever(&mut c);
+        for p in [
+            json!({"step": "Bend", "backend": "gpu"}),
+            json!({"step": "Nope", "backend": "gpu"}),
+            json!({"step": "Shear"}),
+            json!({"step": 7, "backend": "gpu"}),
+        ] {
+            assert!(c.execute("solve.settings", &p).is_err(), "{p}");
+        }
+        for p in [
+            json!({"step": "Shear", "backend": "tpu"}),
+            json!({"step": "Shear", "backend": "cpu", "fallback": "cpu"}),
+            json!({"step": "Shear", "backend": "gpu", "fallback": "gpu"}),
+        ] {
+            assert!(t.execute("solve.settings", &p).is_err(), "{p}");
+        }
+        assert!(t.run.is_empty());
     }
 
     /// Couette flow between y = 0 and y = 1 (eight cells), the top wall sliding at 0.1 along x,

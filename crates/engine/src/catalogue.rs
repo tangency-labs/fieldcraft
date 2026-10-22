@@ -657,12 +657,13 @@ pub static CATALOGUE: &[Capability] = &[
         "Transient dynamics of an explicit step by central differences (contact and erosion coming in M10)",
     ),
     soon("solve.blast", "Blast & Impact", Solve, "Explicit", "M14", "EOS-driven fluids with fluid–structure contact (ALE or SPH)"),
-    ready(
+    ready_more(
         "solve.fluid",
         "Lattice Boltzmann",
         Solve,
         "Fluids",
         "Lattice Boltzmann flow of a fluid step on the CPU or a GPU, with wall forces, and the heat it carries",
+        &["solve.settings"],
     ),
     soon("solve.fsi", "Fluid–Structure", Solve, "Fluids", "M13", "Coupled fluid and structure solve"),
     // ---- Results ----

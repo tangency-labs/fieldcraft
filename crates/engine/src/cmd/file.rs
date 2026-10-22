@@ -244,6 +244,8 @@ impl Session {
         let extras = fieldcraft_io::Extras {
             results: if keep.results { self.stored_results() } else { Vec::new() },
             embed: copies.iter().map(|(sha, b)| (sha.clone(), b.as_slice())).collect(),
+            // The settings of steps the model still has.
+            run: self.run.iter().filter(|(step, _)| self.model.step(step).is_some()).map(|(k, v)| (k.clone(), *v)).collect(),
         };
         Ok(fieldcraft_io::write_with(&self.model, &geometry, &self.journal, &self.journal_header, &self.view, &extras)?)
     }
@@ -347,6 +349,8 @@ impl Session {
             migration_notes: file.notes,
             embedded,
             pack_geometry: packed,
+            saved_run: file.run.clone(),
+            run: file.run,
             ..Session::default()
         };
         let (_, failed) = super::stitch::restitch_surfaces(&mut session.surfaces, &framed);

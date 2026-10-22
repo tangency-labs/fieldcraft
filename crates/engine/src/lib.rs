@@ -371,6 +371,12 @@ pub struct Session {
     /// Copies of the geometry files the model's file embeds, by content hash: opened where a file
     /// is missing, and embedded again when it saves packed.
     pub embedded: BTreeMap<String, Arc<Vec<u8>>>,
+    /// The steps' preferred run settings (`solve.settings`): saved with the model, outside its
+    /// definition, so neither journalled nor undone; the machine may override them
+    /// (`FIELDCRAFT_SOLVE_BACKEND`, or a solve's own `backend`).
+    pub run: fieldcraft_io::Run,
+    /// The run settings as last saved (or opened): a change to them is unsaved too.
+    saved_run: fieldcraft_io::Run,
     /// Whether saving embeds the geometry files (`file.save`'s `geometry`): a model opened from a
     /// packed file stays packed.
     pub pack_geometry: bool,
@@ -722,7 +728,10 @@ impl Session {
     /// Whether the session has changes its file does not hold. Undoing back to the saved state
     /// makes it clean again.
     pub fn is_dirty(&self) -> bool {
-        self.saved_revision.unwrap_or(0) != self.revision || self.view != self.saved_view || self.results_stored != self.saved_results
+        self.saved_revision.unwrap_or(0) != self.revision
+            || self.view != self.saved_view
+            || self.results_stored != self.saved_results
+            || self.run != self.saved_run
     }
 
     /// The stored result of a step, if it was solved in the current state (an edit makes it stale;
@@ -823,6 +832,7 @@ impl Session {
         self.saved_revision = Some(self.revision);
         self.saved_view = self.view.clone();
         self.saved_results = self.results_stored;
+        self.saved_run = self.run.clone();
     }
 }
 

@@ -12,7 +12,7 @@ uncompressed (so any unzip tool reads them: `unzip -p bracket.fieldcraft model.j
 
 | Part | Content |
 |---|---|
-| `fieldcraft.json` | Manifest: `format` (`"fieldcraft/3"`, [Versions](#versions-and-migration)), `generator` (`"FieldCraft 0.7.0"`), `geometry`, `view` (left out when empty), and `parts`: the byte size and SHA-256 of each other part. |
+| `fieldcraft.json` | Manifest: `format` (`"fieldcraft/3"`, [Versions](#versions-and-migration)), `generator` (`"FieldCraft 0.7.0"`), `geometry`, `view` (left out when empty), `run` (left out when empty), and `parts`: the byte size and SHA-256 of each other part. |
 | `model.json` | The model definition, every quantity in SI (docs/units.md): its display units (`display_units`, left out when the model has none of its own), sets, materials, sections, reference points, couplings, boundary conditions, loads, steps, datum planes, axes and points, and the partitions that cut the geometry (in order; applied again when the design is opened). Pretty-printed JSON with a fixed key order (maps sorted by name), so a change shows as a line diff. Its form is the model's own JSON form, which commands take as parameters. |
 | `mesh.bin` | Nodes, elements and geometry tags, binary (below). |
 | `journal.json` | The commands that built the model, `{"units": system, "commands": [{"command": id, "params": {...}}, ...]}`, one command per line, as they were typed: `units` names the display system their bare numbers are in (a number typed in another system carries its unit, `{"value", "unit"}`); a migrated journal also names `model_units`, the system its model-level numbers were in. It is a script `fieldcraft-cli run` replays (a plain list of commands is a script in the session's units). |
@@ -105,6 +105,20 @@ beside `path` as `<stem>_00000.png`, `<stem>_00001.png`, … (each repeated for 
 `format` is `png-sequence`: FieldCraft bundles no video encoder, and the reply's `ffmpeg` is the
 command line that encodes the sequence as `path` (an `.mp4` or `.gif`). At most 1000 renders, each
 starting from a saved view (a view a render uses is not deleted).
+
+`run` keeps each step's preferred run settings (`solve.settings`), a preference outside the
+definition (not in `model.json`, not in a result's definition hash):
+
+```json
+"run": {"Flow": {"backend": "gpu", "fallback": "cpu"}}
+```
+
+`backend` is `gpu` or `cpu`, `fallback` (`cpu`, or left out to refuse) what a GPU preference
+does on a machine with no suitable GPU: `solve.fluid` and `solve.run` without a `backend` of their
+own follow the preference, falling back with a `notice` in the reply (and the Solve dialog's
+note). A machine overrides every preference with `FIELDCRAFT_SOLVE_BACKEND=cpu|gpu`, a call with
+its own `backend`. Only fluid steps choose a backend today; settings of steps the model no longer
+has are not saved.
 
 ## `mesh.bin`
 
@@ -200,7 +214,7 @@ format.
 |---|---|---|
 | `fieldcraft/1` | FieldCraft 0.4.0 to 0.7.0 | the first format |
 | `fieldcraft/2` | FieldCraft after 0.7.0 | versioning and migration; the parts hold the same as format 1 |
-| `fieldcraft/3` | FieldCraft after 0.7.0 | SI storage (#579): `model.json` in SI with `display_units` in place of `units`, `mesh.bin` `MCMESH02` (coordinates in metres), the journal with a header naming its units. Step 2 → 3 scales by the file's declared `units` (`unspecified` as mm-t-s-N-MPa) with its own frozen field map and MCMESH01 codec; the journal's numbers are kept as typed. Before its first release it also gained optional parts and fields, each absent in a file without it (so every format 3 file written before them reads as it did): `results.bin` (#644), saved views (#645) and renders (#646) in `view`, embedded geometry parts (#647). |
+| `fieldcraft/3` | FieldCraft after 0.7.0 | SI storage (#579): `model.json` in SI with `display_units` in place of `units`, `mesh.bin` `MCMESH02` (coordinates in metres), the journal with a header naming its units. Step 2 → 3 scales by the file's declared `units` (`unspecified` as mm-t-s-N-MPa) with its own frozen field map and MCMESH01 codec; the journal's numbers are kept as typed. Before its first release it also gained optional parts and fields, each absent in a file without it (so every format 3 file written before them reads as it did): `results.bin` (#644), saved views (#645) and renders (#646) in `view`, embedded geometry parts (#647), and `run` in the manifest (#648). |
 
 Format 3 was not yet written by a release when its optional parts were added, and every addition
 is optional (absent means what a file without it always meant), so they are part of format 3

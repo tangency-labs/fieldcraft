@@ -1964,6 +1964,15 @@ pub const VIEW_SAVE: &[Field] = &[
         .hint(r#"{"yaw": -70, "pitch": 18, "fit": true}"#),
     flag("results", "Results display").help("Keep what the results display shows with the camera.").def("true"),
 ];
+pub const SOLVE_SETTINGS: &[Field] = &[
+    STEP,
+    choice("backend", "Backend", &[("gpu", "GPU"), ("cpu", "CPU"), ("none", "No preference")])
+        .help("The backend the step prefers to be solved on, saved with the model; this machine may override it.")
+        .req(),
+    choice("fallback", "Fallback", &[("cpu", "CPU"), ("none", "None (refuse)")])
+        .help("Where a GPU preference falls back on a machine with no suitable GPU.")
+        .hint("CPU"),
+];
 pub const VIEW_NAME: &[Field] = &[text("name", "View").help("The saved view.").req()];
 pub const RENDER_SAVE: &[Field] = &[
     text("name", "Name").help("The render's name; a render of that name is replaced.").req(),
@@ -2261,7 +2270,7 @@ pub const SOLVE_FLUID: &[Field] = &[
     STEP,
     choice("backend", "Backend", &[("cpu", "CPU"), ("gpu", "GPU")])
         .help("The CPU (double precision, the same result on every machine) or the GPU the build and FIELDCRAFT_GPU pick (single precision).")
-        .def("\"cpu\""),
+        .hint("the step's preference, else CPU"),
     int("max_cells", "Max cells", 1, fieldcraft_lbm::Limits::MAX_ADDRESSABLE_CELLS as i64)
         .help("Cap on the lattice cells: 16M by default; may be raised up to what this machine's memory holds (the estimate below).")
         .hint("16000000"),

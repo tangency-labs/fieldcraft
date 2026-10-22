@@ -86,6 +86,18 @@ pub fn device_buffer_limit() -> Option<u64> {
     FACTORY.get().and_then(|b| (b.buffer_limit)())
 }
 
+/// Whether this machine has a device backend to solve on: one registered, with a device the
+/// `FIELDCRAFT_GPU` policy picks; else why not.
+pub fn device_available() -> std::result::Result<(), String> {
+    if backend_factory().is_none() {
+        return Err("this build has no GPU backend".into());
+    }
+    match device_buffer_limit() {
+        Some(_) => Ok(()),
+        None => Err("no GPU the FIELDCRAFT_GPU policy accepts was found".into()),
+    }
+}
+
 /// Which backend a solve asks for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Choice {

@@ -212,6 +212,7 @@ pub static ALL: &[CommandSpec] = &[
     solve::HEAT,
     solve::EXPLICIT,
     solve::HISTORY,
+    solve::SETTINGS,
     solve::FLUID,
     solve::PROBE,
     results::DEFORMED,

@@ -559,3 +559,30 @@ fn embedded_geometry_round_trips_and_is_checked() {
     let old = with_manifest(&bytes, |m| m["format"] = json!("fieldcraft/2"));
     assert!(read(&old).is_err());
 }
+
+/// Preferred run settings round trip in the manifest, outside the model part, and are checked.
+#[test]
+fn run_settings_round_trip_and_are_checked() {
+    use fieldcraft_io::{Backend, RunSettings};
+    let f = sample();
+    let run: fieldcraft_io::Run = [("Flow".to_string(), RunSettings { backend: Backend::Gpu, fallback: Some(Backend::Cpu) })].into_iter().collect();
+    let extras = fieldcraft_io::Extras { run: run.clone(), ..Default::default() };
+    let bytes = fieldcraft_io::write_with(&f.model, &f.geometry, &f.journal, &f.journal_header, &f.view, &extras).unwrap();
+    assert_eq!(read(&bytes).unwrap().run, run);
+    let manifest: Value = serde_json::from_slice(&parts(&bytes)[0].1).unwrap();
+    assert_eq!(manifest["run"], json!({"Flow": {"backend": "gpu", "fallback": "cpu"}}));
+    assert_eq!(parts(&bytes)[1].1, parts(&bytes_of(&f))[1].1, "outside the definition");
+    for (what, run) in [
+        ("falling back on itself", json!({"Flow": {"backend": "gpu", "fallback": "gpu"}})),
+        ("an unknown backend", json!({"Flow": {"backend": "tpu"}})),
+        ("a bad step name", json!({"1 x": {"backend": "cpu"}})),
+        ("an unknown key", json!({"Flow": {"backend": "cpu", "threads": 4}})),
+    ] {
+        assert!(read(&with_manifest(&bytes, |m| m["run"] = run.clone())).is_err(), "{what}");
+    }
+    let bad = fieldcraft_io::Extras {
+        run: [("Flow".to_string(), RunSettings { backend: Backend::Cpu, fallback: Some(Backend::Cpu) })].into_iter().collect(),
+        ..Default::default()
+    };
+    assert!(fieldcraft_io::write_with(&f.model, &f.geometry, &f.journal, &f.journal_header, &f.view, &bad).is_err());
+}

@@ -6,7 +6,8 @@
 //! - `fieldcraft.json`: the manifest. The format tag (`fieldcraft/3`), the program that wrote
 //!   it, the geometry the model is built on (the SolidCraft design and the imported 3MF meshes,
 //!   each a path and the SHA-256 of its content, opened again when the model is), the view state
-//!   ([`View`]: what the viewport hides), and the size and SHA-256 of every other part.
+//!   ([`View`]: what the viewport hides, saved views and renders), the steps' preferred run
+//!   settings ([`RunSettings`]), and the size and SHA-256 of every other part.
 //! - `model.json`: the model definition (display system, sets, materials, sections, reference
 //!   points, couplings, boundary conditions, loads, steps) as pretty-printed JSON with a stable
 //!   key order, so two versions of a model diff line by line. Every number is SI.
@@ -354,6 +355,60 @@ impl View {
     }
 }
 
+/// Where a step prefers to be solved: a preference saved with the model (not part of its
+/// definition, nor of the step's result hash) that the machine may override.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Backend {
+    /// The CPU: double precision, the same result on every machine.
+    Cpu,
+    /// The GPU `FIELDCRAFT_GPU` picks.
+    Gpu,
+}
+
+impl Backend {
+    pub fn id(self) -> &'static str {
+        match self {
+            Backend::Cpu => "cpu",
+            Backend::Gpu => "gpu",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Backend> {
+        match s {
+            "cpu" => Some(Backend::Cpu),
+            "gpu" => Some(Backend::Gpu),
+            _ => None,
+        }
+    }
+}
+
+/// A step's preferred run settings: the backend, and the one to fall back on when this machine
+/// has no suitable one (none: refuse instead).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RunSettings {
+    pub backend: Backend,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<Backend>,
+}
+
+/// The run settings of a model, by step name.
+pub type Run = BTreeMap<String, RunSettings>;
+
+fn check_run(run: &Run) -> Result<()> {
+    if run.len() > results::MAX_STEPS {
+        return Err(Error::Limit(format!("{MANIFEST}: run settings for at most {} steps", results::MAX_STEPS)));
+    }
+    for (step, r) in run {
+        fieldcraft_model::check_name("step", step).map_err(|e| Error::Invalid(format!("{MANIFEST}: run: {e}")))?;
+        if r.fallback == Some(r.backend) {
+            return invalid(format!("{MANIFEST}: run: step `{step}` falls back on the backend it prefers"));
+        }
+    }
+    Ok(())
+}
+
 /// One journal entry: a command id and its parameters.
 pub type JournalEntry = (String, Value);
 
@@ -386,6 +441,8 @@ pub struct ModelFile {
     pub results_note: Option<String>,
     /// Copies of the geometry files the file embeds, by the SHA-256 of their content.
     pub embedded: BTreeMap<String, Vec<u8>>,
+    /// The steps' preferred run settings.
+    pub run: Run,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -397,6 +454,8 @@ struct Manifest {
     geometry: Geometry,
     #[serde(default, skip_serializing_if = "View::is_empty")]
     view: View,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    run: Run,
     parts: BTreeMap<String, Part>,
 }
 
@@ -409,6 +468,8 @@ pub struct Extras<'a> {
     /// Geometry files to embed, by the SHA-256 of their content: a geometry source whose hash is
     /// listed gets a part holding these bytes (they must be that content).
     pub embed: BTreeMap<String, &'a [u8]>,
+    /// The steps' preferred run settings.
+    pub run: Run,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -493,6 +554,7 @@ pub fn write_with(
         return Err(Error::Limit(format!("a model refers to at most {MAX_MESH_SOURCES} imported meshes")));
     }
     view.check()?;
+    check_run(&extras.run)?;
     let mut model_json = serde_json::to_vec_pretty(&model.without_mesh()).map_err(|e| json_error(MODEL, e))?;
     model_json.push(b'\n');
     let mesh = mesh::encode(model)?;
@@ -539,6 +601,7 @@ pub fn write_with(
         generator: format!("FieldCraft {}", env!("CARGO_PKG_VERSION")),
         geometry,
         view: view.clone(),
+        run: extras.run.clone(),
         parts: parts.iter().map(|(name, bytes)| (name.clone(), Part { bytes: bytes.len() as u64, sha256: sha256_hex(bytes) })).collect(),
     };
     let mut manifest_json = serde_json::to_vec_pretty(&manifest).map_err(|e| json_error(MANIFEST, e))?;
@@ -688,6 +751,7 @@ pub fn read_versioned(bytes: &[u8]) -> Result<(ModelFile, u32)> {
         return Err(Error::Limit(format!("a model refers to at most {MAX_MESH_SOURCES} imported meshes")));
     }
     manifest.view.check()?;
+    check_run(&manifest.run)?;
     // Every embedded part is a copy of a geometry file the manifest names, and every copy named
     // is there.
     let sources: Vec<&SourceFile> = manifest.geometry.design.iter().chain(&manifest.geometry.meshes).collect();
@@ -722,7 +786,18 @@ pub fn read_versioned(bytes: &[u8]) -> Result<(ModelFile, u32)> {
     let journal_header = JournalHeader { units: journal.units, model_units: journal.model_units };
     let journal = read_journal(journal.commands)?;
     Ok((
-        ModelFile { model, geometry: manifest.geometry, journal, journal_header, view: manifest.view, notes, results, results_note, embedded },
+        ModelFile {
+            model,
+            geometry: manifest.geometry,
+            journal,
+            journal_header,
+            view: manifest.view,
+            notes,
+            results,
+            results_note,
+            embedded,
+            run: manifest.run,
+        },
         format,
     ))
 }

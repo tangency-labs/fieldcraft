@@ -142,7 +142,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Implicit | Frequency — Natural frequencies and mode shapes of a frequency step | ready | `solve.frequency` |
 | Explicit | Explicit — Transient dynamics of an explicit step by central differences (contact and erosion coming in M10) | ready | `solve.explicit` |
 | Explicit | Blast & Impact — EOS-driven fluids with fluid–structure contact (ALE or SPH) | coming soon (M14) |  |
-| Fluids | Lattice Boltzmann — Lattice Boltzmann flow of a fluid step on the CPU or a GPU, with wall forces, and the heat it carries | ready | `solve.fluid` |
+| Fluids | Lattice Boltzmann — Lattice Boltzmann flow of a fluid step on the CPU or a GPU, with wall forces, and the heat it carries | ready | `solve.fluid`, `solve.settings` |
 | Fluids | Fluid–Structure — Coupled fluid and structure solve | coming soon (M13) |  |
 
 ## Results

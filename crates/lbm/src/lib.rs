@@ -67,7 +67,7 @@ pub mod solve;
 pub mod steady;
 pub mod voxel;
 
-pub use backend::{Backend, Choice, Fields, register_backend};
+pub use backend::{Backend, Choice, Fields, device_available, register_backend};
 pub use flow::{Flow, Group, Link, OpenCell, Rule, Target, ThermalState, ZoneSample};
 pub use memory::{DeviceBuffer, Memory};
 pub use setup::{ContactSetup, SolidSetup, ThermalSetup};
