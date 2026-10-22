@@ -151,3 +151,47 @@ fn conjugate_cell_updates_per_second() {
         after.saturating_sub(before) as f64 / cells as f64,
     );
 }
+
+/// The fixed cost of a GPU solve: three solves in a row of one step of a small heated channel
+/// with a conducting block (every kernel), each building its device flow from the start as
+/// `solve.fluid` does, timed from the build to the wall heat read back (#588).
+#[test]
+#[ignore]
+fn fixed_cost_per_solve() {
+    let (l, h) = (32.0, 16.0);
+    let mut d = domain([0.0; 3], [l, h, h], 1.0);
+    d.faces.x_min = FaceCondition::Velocity { velocity: [0.05, 0.0, 0.0], profile: fieldcraft_model::Profile::Uniform };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: fieldcraft_model::Outflow::Convective };
+    let obstacles = vec![obstacle("Block", cuboid([8.0, 4.0, 0.0], [16.0, 12.0, 4.0]), &CUBOID_FACES)];
+    d.obstacles = vec!["Block".into()];
+    d.thermal =
+        Some(fieldcraft_model::FluidThermal { initial_temperature: kelvin(20.0), solids: vec![conducting("Block", 1.0)], ..Default::default() });
+    let procedure = fieldcraft_model::Procedure::Fluid {
+        domain: "Flow".into(),
+        end_time: None,
+        steps: Some(1),
+        time_step: Some(1.0),
+        frames: 1,
+        magic: None,
+        collision: None,
+        steady: None,
+    };
+    let m = cht_model([1.0, 0.02, 0.03], (2.0, [2.0; 3], 1.0), d, procedure);
+    let (_, flow) = prepare(&m, &obstacles);
+    let policy = Policy::from_env().expect("FIELDCRAFT_GPU names a policy");
+    for solve in 1..=3 {
+        let start = std::time::Instant::now();
+        let Ok(mut gpu) = GpuFlow::new(&flow, policy) else {
+            println!("skipping: no GPU");
+            return;
+        };
+        gpu.advance(1).unwrap();
+        let _ = gpu.heat().unwrap();
+        println!(
+            "solve {solve} on {}: {:.3} s from the build to the first step's heat (pipelines {:.3} s)",
+            gpu.adapter_name(),
+            start.elapsed().as_secs_f64(),
+            gpu.pipeline_seconds()
+        );
+    }
+}

@@ -1,7 +1,8 @@
 //! The device backend (native targets).
 
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use fieldcraft_gpu::select::{self, Policy};
 use fieldcraft_lbm::backend::{Backend, Fields};
@@ -142,11 +143,13 @@ pub struct GpuFlow {
     queue: wgpu::Queue,
     /// With [`Options::profile`]: the GPU time of each kernel so far.
     kernel_times: Option<std::cell::RefCell<std::collections::BTreeMap<&'static str, KernelTime>>>,
-    /// How long compiling the kernels took.
+    /// How long compiling the kernels took for this flow (zero when the process had compiled
+    /// them on this device before).
     pipeline_seconds: f64,
     aa: bool,
     adapter: String,
-    kernels: Kernels,
+    /// The kernels, shared with every flow on this device that uses the same variant.
+    kernels: Arc<Kernels>,
     /// Each kernel's two bind groups: AB swaps populations; AA keeps one population buffer and
     /// changes its orientation. Both modes swap the separate scalar lattice buffers.
     bind: HashMap<&'static str, [wgpu::BindGroup; 2]>,
@@ -425,6 +428,81 @@ fn compile(device: &wgpu::Device, variant: Variant) -> Result<Kernels> {
     Ok(kernels)
 }
 
+/// A device opened for fluid solves, kept for the process with the kernels compiled on it, so a
+/// solve after the first compiles nothing (#588: DX12 keeps its compiled shaders per device, and
+/// recompiling them with FXC took 9 s per solve). Pipelines cannot outlive their device, so the
+/// device is what is kept; wgpu's pipeline cache, which could keep them across runs, is unsafe
+/// to create (and a stub on DX12).
+struct Shared {
+    /// The adapter and the features the device was opened with.
+    key: String,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    /// Set by the device-lost callback: the next solve opens a new device.
+    lost: Arc<AtomicBool>,
+    kernels: Mutex<Vec<(Variant, Arc<Kernels>)>>,
+}
+
+/// The devices kept so far (one per adapter and feature set).
+static DEVICES: Mutex<Vec<Arc<Shared>>> = Mutex::new(Vec::new());
+
+/// The kept device for `adapter` with `features`, or a new one, opened with the adapter's buffer
+/// sizes and `storage_buffers` per compute stage.
+fn shared_device(adapter: &wgpu::Adapter, features: wgpu::Features, storage_buffers: u32) -> Result<Arc<Shared>> {
+    let info = adapter.get_info();
+    let key = format!("{:?} {} {:04x}:{:04x} {:?} {} {features:?}", info.backend, info.name, info.vendor, info.device, info.device_type, info.driver);
+    let mut devices = DEVICES.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    devices.retain(|d| !d.lost.load(Ordering::Acquire));
+    if let Some(d) = devices.iter().find(|d| d.key == key) {
+        return Ok(d.clone());
+    }
+    let have = adapter.limits();
+    let mut limits = wgpu::Limits::default().using_resolution(have.clone());
+    limits.max_buffer_size = have.max_buffer_size;
+    limits.max_storage_buffer_binding_size = have.max_storage_buffer_binding_size;
+    // Exactly what the busiest kernel binds, so every device (the CI's lavapipe too) proves the
+    // kernels fit an adapter that allows no more.
+    limits.max_storage_buffers_per_shader_stage = storage_buffers;
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("fieldcraft lbm"),
+        required_features: features,
+        required_limits: limits,
+        ..Default::default()
+    }))
+    .map_err(gpu_error)?;
+    let lost = Arc::new(AtomicBool::new(false));
+    let flag = lost.clone();
+    device.set_device_lost_callback(move |reason, message| {
+        log::warn!("the fluid solver's GPU device was lost ({reason:?}): {message}");
+        flag.store(true, Ordering::Release);
+    });
+    let shared = Arc::new(Shared { key, device, queue, lost, kernels: Mutex::new(Vec::new()) });
+    devices.push(shared.clone());
+    Ok(shared)
+}
+
+impl Shared {
+    /// The kernels of `variant`, compiled on the first solve that needs them; and how long that
+    /// took (zero when they were compiled before).
+    fn kernels(&self, variant: Variant) -> Result<(Arc<Kernels>, f64)> {
+        let mut built = self.kernels.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((_, k)) = built.iter().find(|(v, _)| *v == variant) {
+            return Ok((k.clone(), 0.0));
+        }
+        fieldcraft_model::progress::stage("Compiling the GPU kernels", None, "");
+        let start = std::time::Instant::now();
+        let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let kernels = compile(&self.device, variant)?;
+        // Kept only when they compiled.
+        if let Some(e) = pollster::block_on(scope.pop()) {
+            return Err(gpu_error(e));
+        }
+        let kernels = Arc::new(kernels);
+        built.push((variant, kernels.clone()));
+        Ok((kernels, start.elapsed().as_secs_f64()))
+    }
+}
+
 impl GpuFlow {
     /// `flow` on the device `FIELDCRAFT_GPU` picks.
     pub fn from_env(flow: &Flow) -> Result<GpuFlow> {
@@ -457,20 +535,8 @@ impl GpuFlow {
         }
         let storage_buffers = reflection()?.storage_buffers;
         check_storage_buffers(info.backend, adapter.limits().max_storage_buffers_per_shader_stage, storage_buffers)?;
-        let have = adapter.limits();
-        let mut limits = wgpu::Limits::default().using_resolution(have.clone());
-        limits.max_buffer_size = have.max_buffer_size;
-        limits.max_storage_buffer_binding_size = have.max_storage_buffer_binding_size;
-        // Exactly what the busiest kernel binds, so every device (the CI's lavapipe too) proves the
-        // kernels fit an adapter that allows no more.
-        limits.max_storage_buffers_per_shader_stage = storage_buffers;
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("fieldcraft lbm"),
-            required_features: features,
-            required_limits: limits,
-            ..Default::default()
-        }))
-        .map_err(gpu_error)?;
+        let shared = shared_device(&adapter, features, storage_buffers)?;
+        let (device, queue) = (&shared.device, &shared.queue);
         let adapter_name = format!("{}{}", info.name, if tier == select::Tier::Software { " (software)" } else { "" });
 
         let aa = match options.streaming {
@@ -725,9 +791,7 @@ impl GpuFlow {
         let solid_f_buf = storage("lbm solid values", &bytes_f32(solid_f));
         let solid_s_buf = storage("lbm solid state", &bytes_f32(solid_s));
 
-        let pipeline_start = std::time::Instant::now();
-        let kernels = compile(&device, Variant { aa, regularized })?;
-        let pipeline_seconds = pipeline_start.elapsed().as_secs_f64();
+        let (kernels, pipeline_seconds) = shared.kernels(Variant { aa, regularized })?;
         // Every binding's buffer in bind group k (the two differ in the phase and the A–B swap).
         let resource = |binding: u32, k: usize| -> Option<&wgpu::Buffer> {
             Some(match binding {
@@ -779,8 +843,8 @@ impl GpuFlow {
             }
         }
         Ok(GpuFlow {
-            device,
-            queue,
+            device: device.clone(),
+            queue: queue.clone(),
             kernel_times: profile.then(Default::default),
             pipeline_seconds,
             aa,
@@ -835,7 +899,8 @@ impl GpuFlow {
         self.aa
     }
 
-    /// How long compiling the kernels took, in seconds.
+    /// How long compiling the kernels took for this flow, in seconds: zero when this process had
+    /// compiled them on this device before.
     pub fn pipeline_seconds(&self) -> f64 {
         self.pipeline_seconds
     }

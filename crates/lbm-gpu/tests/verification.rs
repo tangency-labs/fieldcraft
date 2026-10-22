@@ -497,6 +497,28 @@ fn wall_heat_at_a_held_inlet_matches_the_cpu() {
     }
 }
 
+/// A second solve on the same device compiles nothing: the kernels stay with the device for the
+/// process (#588: DX12 recompiled them for 9 s on every solve).
+#[test]
+fn a_second_solve_reuses_the_compiled_kernels() {
+    let mut d = domain([0.0; 3], [1.0, 1.0, 0.125], 0.125);
+    d.faces.z_min = PERIODIC;
+    d.faces.z_max = PERIODIC;
+    let m = model(1.0, 0.1, d, step(1.0, 0.01, None));
+    let (_, flow) = prepare(&m, &[]);
+    let Some(first) = gpu(&flow, Streaming::InPlace) else { return };
+    let compiled = first.pipeline_seconds();
+    drop(first);
+    let Some(mut second) = gpu(&flow, Streaming::InPlace) else { return };
+    println!(
+        "kernels: {compiled:.3} s for the first solve (zero if an earlier test compiled them), {:.3} s for the second",
+        second.pipeline_seconds()
+    );
+    assert_eq!(second.pipeline_seconds(), 0.0);
+    second.advance(3).unwrap();
+    assert!(second.mass().unwrap().is_finite());
+}
+
 /// A differentially heated cavity with buoyancy (the de Vahl Davis geometry at Ra 10³ on 16
 /// cells, over the first diffusive time): the temperature drives the flow on both backends
 /// alike.
