@@ -142,7 +142,12 @@ impl Memory {
         let boundary: u64 = face_cells
             .iter()
             .zip(s.open_faces)
-            .map(|(c, open)| c.saturating_mul(FACE_LINKS * size_of::<Link>() as u64 + if open { size_of::<OpenCell>() as u64 } else { 0 }))
+            .map(|(c, open)| {
+                c.saturating_mul(
+                    FACE_LINKS * size_of::<Link>() as u64
+                        + if open { (size_of::<OpenCell>() + size_of::<[f64; crate::lattice::Q]>()) as u64 } else { 0 },
+                )
+            })
             .fold(0, u64::saturating_add);
         let mut flow = POPULATIONS + FLAGS;
         let mut targets = POPULATIONS;

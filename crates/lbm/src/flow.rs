@@ -340,23 +340,36 @@ pub struct Flow {
     fan_rise: Vec<f64>,
     /// What the convective outlet cells keep between steps.
     outlets: Outlets,
+    /// Cells per parallel block ([`block_cells`]).
+    block: usize,
+    /// Each open cell's populations after its boundary, in the step (kept for its capacity).
+    open_scratch: Vec<[f64; Q]>,
 }
 
 const NONE: u32 = u32::MAX;
 
-/// Cells per parallel block of the collision and the streaming. The blocks are fixed, every
+/// Cells per parallel block of the collision and the streaming: about a 256th of the grid, so a
+/// machine with many threads still has several blocks per thread (4096-cell blocks left 45 for
+/// the 184 000 cells of the `flow-past` sample, #643), but at least 512 and at most 4096 cells,
+/// and a multiple of 64 so blocks start on cache lines. It depends on the grid alone, and every
 /// cell's update reads and writes only its own populations (collision) or writes only its own
-/// (streaming), so the result does not depend on the number of threads.
-const CELLS: usize = 4096;
+/// (streaming), with no sum across cells, so the result does not depend on the number of threads
+/// (the largest speed, the one value taken across blocks, is a maximum).
+fn block_cells(n: usize) -> usize {
+    (n / 256).clamp(512, 4096) / 64 * 64
+}
+
+/// Open cells per parallel block of the open boundaries.
+const OPEN_BLOCK: usize = 256;
 
 /// The first `n` populations of each direction of an array with direction stride `stride`, cut
-/// into blocks of [`CELLS`] cells: block b holds the Q directions' slices of cells
-/// b·CELLS.. .
-fn cell_blocks(data: &mut [f64], stride: usize, n: usize) -> Vec<Vec<&mut [f64]>> {
-    let mut blocks: Vec<Vec<&mut [f64]>> = (0..n.div_ceil(CELLS)).map(|_| Vec::with_capacity(Q)).collect();
+/// into blocks of `block` cells: block b holds the Q directions' slices of cells b·block.. .
+fn cell_blocks(data: &mut [f64], stride: usize, n: usize, block: usize) -> Vec<Vec<&mut [f64]>> {
+    let block = block.max(1);
+    let mut blocks: Vec<Vec<&mut [f64]>> = (0..n.div_ceil(block)).map(|_| Vec::with_capacity(Q)).collect();
     for direction in data.chunks_mut(stride.max(1)).take(Q) {
-        for (block, cells) in blocks.iter_mut().zip(direction.get_mut(..n).unwrap_or_default().chunks_mut(CELLS)) {
-            block.push(cells);
+        for (b, cells) in blocks.iter_mut().zip(direction.get_mut(..n).unwrap_or_default().chunks_mut(block)) {
+            b.push(cells);
         }
     }
     blocks
@@ -751,6 +764,8 @@ impl Flow {
             zone_of,
             actions,
             outlets: Outlets::default(),
+            block: block_cells(n),
+            open_scratch: Vec::new(),
         };
         flow.outlets = Outlets::new(&flow.open, &View { flow: &flow, f: &flow.f });
         Ok(flow)
@@ -914,6 +929,7 @@ impl Flow {
             + bytes(&self.cell_force)
             + bytes(&self.cell_u)
             + bytes(&self.zone_of)
+            + bytes(&self.open_scratch)
             + self.zone_cells.iter().map(bytes).sum::<u64>()
             + self.outlets.heap_bytes();
         if let Some(t) = &self.thermal {
@@ -1110,17 +1126,18 @@ impl Flow {
     /// momentum collision: each axis pair's symmetric part relaxes with `1/τ_T⁺`, its
     /// antisymmetric part (the heat flux) with `1/τ_T⁻`, the rest population with `1/τ_T⁺`.
     fn collide_thermal(&mut self) {
+        let block = self.block;
         let n = self.n;
         let s = self.stride;
         let fluid = &self.fluid;
         let cell_u = &self.cell_u;
         let Some(t) = &mut self.thermal else { return };
         let (wp, wm) = (t.omega_plus, t.omega_minus);
-        let mut blocks = cell_blocks(&mut t.g, s, n);
+        let mut blocks = cell_blocks(&mut t.g, s, n, block);
         parallel::for_each_mut(&mut blocks, |b, g| {
             let len = g.first().map_or(0, |d| d.len());
             for i in 0..len {
-                let cell = b * CELLS + i;
+                let cell = b * block + i;
                 if !fluid.get(cell).copied().unwrap_or(false) {
                     continue;
                 }
@@ -1153,14 +1170,15 @@ impl Flow {
     /// Pull streaming of the scalar lattice into `g2` with the wall rules of the links (the
     /// first seven directions), then the heat received per group.
     fn stream_thermal(&mut self) {
+        let block = self.block;
         let n = self.n;
         let s = self.stride;
         let (links, offset) = (&self.links, &self.offset);
         let Some(t) = &mut self.thermal else { return };
         let (g, groups) = (&t.g, &t.groups);
-        let mut blocks = cell_blocks(&mut t.g2, s, n);
+        let mut blocks = cell_blocks(&mut t.g2, s, n, block);
         parallel::for_each_mut(&mut blocks, |b, out| {
-            let start = b * CELLS;
+            let start = b * block;
             for (q, dst) in out.iter_mut().enumerate().take(QT) {
                 let off = offset.get(q).copied().unwrap_or(0);
                 let src = g.get(q * s..q * s + n).unwrap_or_default();
@@ -1173,7 +1191,7 @@ impl Flow {
                 }
             }
             let first = links.partition_point(|l| (l.cell as usize) < start);
-            for link in links.get(first..).unwrap_or_default().iter().take_while(|l| (l.cell as usize) < start + CELLS) {
+            for link in links.get(first..).unwrap_or_default().iter().take_while(|l| (l.cell as usize) < start + block) {
                 let (cell, q) = (link.cell as usize, link.q as usize);
                 if q >= QT {
                     continue;
@@ -1309,9 +1327,10 @@ impl Flow {
     }
 
     /// The collision with Guo forcing (two relaxation times, or recursive regularised), in place,
-    /// by blocks of [`CELLS`] cells in parallel. Returns the largest squared lattice speed, or
+    /// by blocks of [`block_cells`] cells in parallel. Returns the largest squared lattice speed, or
     /// NaN when a density is not positive.
     fn collide(&mut self) -> f64 {
+        let block = self.block;
         let n = self.n;
         let regularized = self.collision == Collision::Regularized;
         let (wp, wm) = (self.omega_plus, self.omega_minus);
@@ -1321,24 +1340,27 @@ impl Flow {
         let forced = constant != [0.0; 3] || !cell_force.is_empty() || !self.zone_of.is_empty();
         let fluid = &self.fluid;
         let (zone_of, actions) = (&self.zone_of, &self.actions);
-        let mut blocks = cell_blocks(&mut self.f, self.stride, n);
+        let mut blocks = cell_blocks(&mut self.f, self.stride, n, block);
         let mut maxima = vec![0.0f64; blocks.len()];
         // with heat, each block's velocities go to its slice of cell_u (empty otherwise)
-        let mut u_blocks: Vec<&mut [[f64; 3]]> = self.cell_u.chunks_mut(CELLS).collect();
+        let mut u_blocks: Vec<&mut [[f64; 3]]> = self.cell_u.chunks_mut(block).collect();
         let mut work: Vec<(&mut Vec<&mut [f64]>, &mut f64, Option<&mut [[f64; 3]]>)> = Vec::with_capacity(blocks.len());
         let mut u_iter = u_blocks.drain(..);
         for (f, m) in blocks.iter_mut().zip(maxima.iter_mut()) {
             work.push((f, m, u_iter.next()));
         }
-        parallel::for_each_mut(&mut work, |b, (f, max_u2, u_out)| {
+        parallel::for_each_mut(&mut work, |b, (f, block_max, u_out)| {
             let mut fq = [0.0; Q];
             let mut post = [0.0; Q];
+            // The block's largest speed, kept here and stored once: the blocks' maxima share
+            // cache lines, so a store per cell bounced those lines between the threads (#643).
+            let mut max_u2 = 0.0f64;
             let len = f.first().map_or(0, |d| d.len());
             for i in 0..len {
-                if !fluid.get(b * CELLS + i).copied().unwrap_or(false) {
+                if !fluid.get(b * block + i).copied().unwrap_or(false) {
                     continue;
                 }
-                let a = cell_force.get(b * CELLS + i).copied().unwrap_or(constant);
+                let a = cell_force.get(b * block + i).copied().unwrap_or(constant);
                 let (mut rho, mut j) = (0.0, [0.0; 3]);
                 for q in 0..Q {
                     let v = f.get(q).and_then(|d| d.get(i)).copied().unwrap_or(0.0);
@@ -1350,13 +1372,13 @@ impl Flow {
                     j[2] += v * f64::from(cq[2]);
                 }
                 if !(rho > 0.0 && rho.is_finite()) {
-                    **max_u2 = f64::NAN;
+                    **block_max = f64::NAN;
                     return;
                 }
-                let zone = zone_of.get(b * CELLS + i).and_then(|z| actions.get(*z as usize));
+                let zone = zone_of.get(b * block + i).and_then(|z| actions.get(*z as usize));
                 let (u, force) = velocity_force(rho, j, a, zone);
                 let uu = u[0] * u[0] + u[1] * u[1] + u[2] * u[2];
-                **max_u2 = max_u2.max(uu);
+                max_u2 = max_u2.max(uu);
                 if let Some(slot) = u_out.as_mut().and_then(|u| u.get_mut(i)) {
                     *slot = u;
                 }
@@ -1402,20 +1424,22 @@ impl Flow {
                     put(o, fq[o] - relax_plus + relax_minus + s_plus - s_minus);
                 }
             }
+            **block_max = max_u2;
         });
         // The largest speed of all blocks (a maximum does not depend on the order), or NaN.
         if maxima.iter().any(|m| m.is_nan()) { f64::NAN } else { maxima.iter().fold(0.0, |m, x| m.max(*x)) }
     }
 
-    /// Pull streaming into `g`, with the wall rules (blocks of [`CELLS`] destination cells in
+    /// Pull streaming into `g`, with the wall rules (blocks of [`block_cells`] destination cells in
     /// parallel), then the momentum exchange (in link order).
     fn stream(&mut self) {
+        let block = self.block;
         let n = self.n;
         let s = self.stride;
         let (f, links, offset) = (&self.f, &self.links, &self.offset);
-        let mut blocks = cell_blocks(&mut self.g, s, n);
+        let mut blocks = cell_blocks(&mut self.g, s, n, block);
         parallel::for_each_mut(&mut blocks, |b, g| {
-            let start = b * CELLS;
+            let start = b * block;
             // Every direction as one shifted copy: right for cells whose neighbours are all fluid
             // cells in the box; the others are overwritten by their rules below.
             for (q, dst) in g.iter_mut().enumerate() {
@@ -1430,7 +1454,7 @@ impl Flow {
                 }
             }
             let first = links.partition_point(|l| (l.cell as usize) < start);
-            for link in links.get(first..).unwrap_or_default().iter().take_while(|l| (l.cell as usize) < start + CELLS) {
+            for link in links.get(first..).unwrap_or_default().iter().take_while(|l| (l.cell as usize) < start + block) {
                 let (cell, q) = (link.cell as usize, link.q as usize);
                 let v = match link.rule {
                     Rule::Pull { from } => f.get(q * s + from as usize).copied(),
@@ -1476,40 +1500,62 @@ impl Flow {
 
     /// Zou–He velocity and pressure boundaries on the streamed populations, and convective
     /// outlets ([`crate::outlet`]), whose convected populations are all taken from the streamed
-    /// populations before any open cell is changed.
+    /// populations before any open cell is changed. Each open cell's boundary reads only its own
+    /// populations, so the cells are worked out in parallel (blocks of [`OPEN_BLOCK`]) and
+    /// stored afterwards in cell order: done one after another they were a tenth of a step on
+    /// one thread, which capped the speed-up of many (#643).
     fn open_boundaries(&mut self) {
         let s = self.stride;
         let regularized = self.collision == Collision::Regularized;
         let mut outlets = std::mem::take(&mut self.outlets);
         let [nx, ny, _] = self.grid.cells;
         outlets.convect(&self.open, &View { flow: self, f: &self.g }, [1, nx, nx * ny]);
-        for (k, oc) in self.open.iter().enumerate() {
+        let mut done = std::mem::take(&mut self.open_scratch);
+        done.clear();
+        done.resize(self.open.len(), [0.0; Q]);
+        {
+            let (flow, outlets) = (&*self, &outlets);
+            parallel::chunks_mut(&mut done, OPEN_BLOCK, |b, chunk| {
+                for (i, p) in chunk.iter_mut().enumerate() {
+                    let k = b * OPEN_BLOCK + i;
+                    let Some(oc) = flow.open.get(k) else { continue };
+                    let cell = oc.cell as usize;
+                    for (q, x) in p.iter_mut().enumerate() {
+                        *x = flow.g.get(q * s + cell).copied().unwrap_or(0.0);
+                    }
+                    let a_half = flow.force_at(cell).map(|v| 0.5 * v);
+                    let (axis, sign) = (oc.axis, oc.inward);
+                    // The cell's populations alone: direction stride 1, cell 0.
+                    match (oc.target, outlets.action(k)) {
+                        (Target::Convective(_), Action::Convect { unknowns, shift }) => {
+                            for (q, v) in crate::outlet::unknowns(axis, sign).into_iter().zip(unknowns) {
+                                if let Some(x) = p.get_mut(q) {
+                                    *x = v;
+                                }
+                            }
+                            for (x, w) in p.iter_mut().zip(W) {
+                                *x += w * shift;
+                            }
+                        }
+                        (Target::Convective(rho), Action::Hold) => zou_he(p, 1, 0, axis, sign, a_half, crate::outlet::backflow(rho), regularized),
+                        (target, _) => zou_he(p, 1, 0, axis, sign, a_half, target, regularized),
+                    }
+                }
+            });
+        }
+        for (k, p) in done.iter().enumerate() {
+            let Some(oc) = self.open.get(k).copied() else { continue };
             let cell = oc.cell as usize;
-            let a_half = self.force_at(cell).map(|v| 0.5 * v);
-            let (axis, sign) = (oc.axis, oc.inward);
-            match (oc.target, outlets.action(k)) {
-                (Target::Convective(_), Action::Convect { unknowns, shift }) => {
-                    let mut convected = [None; Q];
-                    for (q, v) in crate::outlet::unknowns(axis, sign).into_iter().zip(unknowns) {
-                        if let Some(slot) = convected.get_mut(q) {
-                            *slot = Some(v);
-                        }
-                    }
-                    for (q, v) in convected.into_iter().enumerate() {
-                        if let Some(x) = self.g.get_mut(q * s + cell) {
-                            *x = v.unwrap_or(*x) + W[q] * shift;
-                        }
-                    }
+            for (q, v) in p.iter().enumerate() {
+                if let Some(x) = self.g.get_mut(q * s + cell) {
+                    *x = *v;
                 }
-                (Target::Convective(rho), Action::Hold) => {
-                    zou_he(&mut self.g, s, cell, axis, sign, a_half, crate::outlet::backflow(rho), regularized)
-                }
-                (target, _) => zou_he(&mut self.g, s, cell, axis, sign, a_half, target, regularized),
             }
             if matches!(oc.target, Target::Convective(_)) {
-                outlets.record(k, oc, a_half, |q| self.g.get(q * s + cell).copied().unwrap_or(0.0));
+                outlets.record(k, &oc, self.force_at(cell).map(|v| 0.5 * v), |q| p.get(q).copied().unwrap_or(0.0));
             }
         }
+        self.open_scratch = done;
         self.outlets = outlets;
     }
 }
