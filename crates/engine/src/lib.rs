@@ -368,6 +368,12 @@ pub struct Session {
     /// What the viewport hides (`view.*`): saved with the model, but no edit of it, so it is
     /// neither journalled nor undone, and it leaves results current.
     pub view: fieldcraft_io::View,
+    /// Copies of the geometry files the model's file embeds, by content hash: opened where a file
+    /// is missing, and embedded again when it saves packed.
+    pub embedded: BTreeMap<String, Arc<Vec<u8>>>,
+    /// Whether saving embeds the geometry files (`file.save`'s `geometry`): a model opened from a
+    /// packed file stays packed.
+    pub pack_geometry: bool,
     /// The view as last saved (or opened): a change to it is unsaved too.
     saved_view: fieldcraft_io::View,
     /// A saved view waiting for its step's result to be shown (`view.restore` or opening a

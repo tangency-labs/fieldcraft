@@ -16,6 +16,7 @@ uncompressed (so any unzip tool reads them: `unzip -p bracket.fieldcraft model.j
 | `model.json` | The model definition, every quantity in SI (docs/units.md): its display units (`display_units`, left out when the model has none of its own), sets, materials, sections, reference points, couplings, boundary conditions, loads, steps, datum planes, axes and points, and the partitions that cut the geometry (in order; applied again when the design is opened). Pretty-printed JSON with a fixed key order (maps sorted by name), so a change shows as a line diff. Its form is the model's own JSON form, which commands take as parameters. |
 | `mesh.bin` | Nodes, elements and geometry tags, binary (below). |
 | `journal.json` | The commands that built the model, `{"units": system, "commands": [{"command": id, "params": {...}}, ...]}`, one command per line, as they were typed: `units` names the display system their bare numbers are in (a number typed in another system carries its unit, `{"value", "unit"}`); a migrated journal also names `model_units`, the system its model-level numbers were in. It is a script `fieldcraft-cli run` replays (a plain list of commands is a script in the session's units). |
+| `geometry/<file>` | Optional: a copy of a geometry file the model is built on, when the file was saved with its geometry embedded (below). |
 | `results.bin` | Optional: every solved step's latest result, with the hash of the definition it was solved from (below). `file.save` writes it unless given `results: false`. |
 
 The same model gives the same bytes on every platform: entry times are fixed (1980-01-01),
@@ -40,6 +41,19 @@ Opening the model opens each file again: a missing, unreadable or changed file (
 is reported as a warning and the model still opens; sets bind to geometry names, so a remesh
 brings the mesh in line with a changed design. A geometry file that could not be opened keeps its
 reference, so saving again does not lose it.
+
+A file can also carry a copy of each geometry file (`file.save`/`file.save_as` with
+`"geometry": "embed"`, File › Save With Geometry Embedded): each is a part
+`geometry/<file name>` and its reference names it, `{"path": "plate.solidcraft", "sha256": "…",
+"embedded": "geometry/plate.solidcraft"}`. The reference stays the source: the copy is opened only
+when the file it names cannot be read (missing, unreadable or outside the folders an automation
+client may read), with a warning saying so; a file that changed is still opened from its path, as
+without a copy. A model opened from such a file is saved with its geometry embedded again unless a
+save says `"geometry": "refer"`. References are the default: a packed file holds the design and
+meshes themselves, so whoever gets it gets the geometry too (`file.save`'s reply lists what a file
+holds in `contents`). A content shared by several references is one part; the copies are checked
+like every part, must be the content their reference's SHA-256 names, and each part must be the
+copy of a reference (no other part is accepted); a part is at most 512 MiB.
 
 `view` is view state, not part of the definition: the items the viewport hides (`view.hide`,
 `view.isolate`), as `{"hidden": [{"kind": "datum", "name": "Sym"}, …]}` with `kind` one of
@@ -155,8 +169,8 @@ Every file is treated as hostile:
 
 - The file is at most 8 GiB; the manifest, definition and journal parts at most 256 MiB each. No
   allocation is larger than the input.
-- Only the parts the manifest lists, each once: the four, and `results.bin` when it is listed
-  (format 3; older formats list exactly the four). The ZIP CRC and the manifest's size and
+- Only the parts the manifest lists, each once: the four, and `results.bin` and `geometry/<file>`
+  parts when they are listed (format 3; older formats list exactly the four). The ZIP CRC and the manifest's size and
   SHA-256 are checked for every part.
 - The `format` is read first, before anything else in the file: a later `fieldcraft/N` is refused
   as a version error naming the program that wrote it, any value that is not `fieldcraft/<N>` as
@@ -186,7 +200,7 @@ format.
 |---|---|---|
 | `fieldcraft/1` | FieldCraft 0.4.0 to 0.7.0 | the first format |
 | `fieldcraft/2` | FieldCraft after 0.7.0 | versioning and migration; the parts hold the same as format 1 |
-| `fieldcraft/3` | FieldCraft after 0.7.0 | SI storage (#579): `model.json` in SI with `display_units` in place of `units`, `mesh.bin` `MCMESH02` (coordinates in metres), the journal with a header naming its units. Step 2 → 3 scales by the file's declared `units` (`unspecified` as mm-t-s-N-MPa) with its own frozen field map and MCMESH01 codec; the journal's numbers are kept as typed. Before its first release it also gained optional parts, each absent in a file without it (so every format 3 file written before them reads as it did): `results.bin` (#644). |
+| `fieldcraft/3` | FieldCraft after 0.7.0 | SI storage (#579): `model.json` in SI with `display_units` in place of `units`, `mesh.bin` `MCMESH02` (coordinates in metres), the journal with a header naming its units. Step 2 → 3 scales by the file's declared `units` (`unspecified` as mm-t-s-N-MPa) with its own frozen field map and MCMESH01 codec; the journal's numbers are kept as typed. Before its first release it also gained optional parts and fields, each absent in a file without it (so every format 3 file written before them reads as it did): `results.bin` (#644), saved views (#645) and renders (#646) in `view`, embedded geometry parts (#647). |
 
 Format 3 was not yet written by a release when its optional parts were added, and every addition
 is optional (absent means what a file without it always meant), so they are part of format 3

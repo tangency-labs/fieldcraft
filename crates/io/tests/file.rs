@@ -340,7 +340,7 @@ fn heat_result() -> fieldcraft_solver::HeatResult {
 }
 
 fn with_results(f: &ModelFile, results: &[(&str, fieldcraft_io::results::StoredRef<'_>)]) -> Vec<u8> {
-    let extras = fieldcraft_io::Extras { results: results.to_vec() };
+    let extras = fieldcraft_io::Extras { results: results.to_vec(), ..Default::default() };
     fieldcraft_io::write_with(&f.model, &f.geometry, &f.journal, &f.journal_header, &f.view, &extras).unwrap()
 }
 
@@ -488,4 +488,74 @@ fn saved_views_round_trip_and_are_checked() {
         let b = with_manifest(&bytes, |m| m["view"][key] = value.clone());
         assert!(read(&b).is_err(), "{what}");
     }
+}
+
+/// Geometry files embedded as parts: listed with their hashes, referenced from `geometry`, each
+/// once; a copy no file names, a name the manifest does not list or bytes that are not the file
+/// are refused.
+#[test]
+fn embedded_geometry_round_trips_and_is_checked() {
+    let mut f = sample();
+    let design = b"design bytes".to_vec();
+    let mesh_file = b"3mf bytes".to_vec();
+    // The same mesh imported twice is embedded once.
+    f.geometry.meshes.push(SourceFile::of("/other/tet.3mf", &mesh_file).unwrap());
+    let embed = [(fieldcraft_io::sha256_hex(&design), design.as_slice()), (fieldcraft_io::sha256_hex(&mesh_file), mesh_file.as_slice())]
+        .into_iter()
+        .collect();
+    let extras = fieldcraft_io::Extras { embed, ..Default::default() };
+    let bytes = fieldcraft_io::write_with(&f.model, &f.geometry, &f.journal, &f.journal_header, &f.view, &extras).unwrap();
+    let names: Vec<String> = parts(&bytes).into_iter().map(|(n, _)| n).collect();
+    assert_eq!(names, ["fieldcraft.json", "model.json", "mesh.bin", "journal.json", "geometry/plate.solidcraft", "geometry/tet.3mf"]);
+    let back = read(&bytes).unwrap();
+    assert_eq!(back.geometry.design.as_ref().unwrap().embedded(), Some("geometry/plate.solidcraft"));
+    assert_eq!(back.geometry.design.as_ref().unwrap().path(), "parts/plate.solidcraft", "the reference stays");
+    assert!(back.geometry.meshes.iter().all(|m| m.embedded() == Some("geometry/tet.3mf")));
+    assert_eq!(back.embedded.get(&fieldcraft_io::sha256_hex(&design)), Some(&design));
+    assert_eq!(back.embedded.len(), 2);
+    // Without embedding, the references only.
+    assert!(read(&bytes_of(&back)).unwrap().geometry.design.unwrap().embedded().is_none());
+
+    // Two files of one name get two parts.
+    let mut g = sample();
+    g.geometry.meshes = vec![SourceFile::of("a/plate.solidcraft", b"other").unwrap()];
+    let embed = [(fieldcraft_io::sha256_hex(&design), design.as_slice()), (fieldcraft_io::sha256_hex(b"other"), &b"other"[..])].into_iter().collect();
+    let b = fieldcraft_io::write_with(
+        &g.model,
+        &g.geometry,
+        &g.journal,
+        &g.journal_header,
+        &g.view,
+        &fieldcraft_io::Extras { embed, ..Default::default() },
+    )
+    .unwrap();
+    let names: Vec<String> = parts(&b).into_iter().map(|(n, _)| n).collect();
+    assert!(names.contains(&"geometry/plate.solidcraft".to_string()) && names.contains(&"geometry/plate-2.solidcraft".to_string()), "{names:?}");
+    // Bytes that are not the file's content are not embedded.
+    let wrong = [(fieldcraft_io::sha256_hex(&design), &b"tampered"[..])].into_iter().collect();
+    assert!(
+        fieldcraft_io::write_with(
+            &g.model,
+            &g.geometry,
+            &g.journal,
+            &g.journal_header,
+            &g.view,
+            &fieldcraft_io::Extras { embed: wrong, ..Default::default() }
+        )
+        .is_err()
+    );
+
+    let refused = |b: Vec<u8>, what: &str| assert!(matches!(read(&b), Err(Error::Invalid(_))), "{what}");
+    // A copy no file names.
+    refused(with_manifest(&bytes, |m| m["geometry"]["design"].as_object_mut().unwrap().remove("embedded").map(|_| ()).unwrap()), "orphan");
+    // A name that is not listed, or not a geometry part.
+    refused(with_manifest(&bytes, |m| m["geometry"]["design"]["embedded"] = json!("geometry/other.solidcraft")), "unlisted");
+    for bad in ["geometry/../x", "geometry/", "geometry/.hidden", "model.json", "geometry/a/b", "geometry/sp ace"] {
+        refused(with_manifest(&bytes, |m| m["geometry"]["design"]["embedded"] = json!(bad)), bad);
+    }
+    // A part whose bytes are not the file named.
+    refused(with_part(&bytes, "geometry/plate.solidcraft", b"not the design".to_vec()), "other bytes");
+    // An embedded part in a file of an older format.
+    let old = with_manifest(&bytes, |m| m["format"] = json!("fieldcraft/2"));
+    assert!(read(&old).is_err());
 }

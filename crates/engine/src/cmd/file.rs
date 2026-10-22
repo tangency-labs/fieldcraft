@@ -6,6 +6,7 @@
 //! or changed since the save does not stop the model from opening: it is reported in the result's
 //! `warnings` (sets follow geometry names, so a remesh brings a changed design's mesh up to date).
 
+use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
@@ -42,7 +43,7 @@ pub const OPEN: CommandSpec = CommandSpec {
 pub const SAVE: CommandSpec = CommandSpec {
     id: "file.save",
     label: "Save Model",
-    params: r#"{"path"?: "bracket.fieldcraft", "results"?: true} — saves to `path`, else to the file the model was opened from or last saved to; written atomically, the previous version kept as `<file>.bak`. The file keeps every solved step's latest result with the definition it was solved from (`results: false` leaves them out: a smaller file, and one that diffs by its text parts); the reply's `contents` says what the file holds. A file there that is not a model of the current format (one this model was migrated from, a later or damaged one, any other file) is first copied to `<stem>.v<N>.fieldcraft` (`<stem>.backup.<ext>` when it is not a model), never replaced later (`backup` in the reply)"#,
+    params: r#"{"path"?: "bracket.fieldcraft", "results"?: true, "geometry"?: "refer" | "embed"} — saves to `path`, else to the file the model was opened from or last saved to; written atomically, the previous version kept as `<file>.bak`. The file keeps every solved step's latest result with the definition it was solved from (`results: false` leaves them out: a smaller file, and one that diffs by its text parts). `"geometry": "embed"` also keeps a copy of the design and imported meshes inside the file (`geometry/<file>`, opened when a referenced file is missing: whoever gets the file gets the geometry too), `"refer"` only the references (the default, unless the model's file embeds them); the reply's `contents` says what the file holds. A file there that is not a model of the current format (one this model was migrated from, a later or damaged one, any other file) is first copied to `<stem>.v<N>.fieldcraft` (`<stem>.backup.<ext>` when it is not a model), never replaced later (`backup` in the reply)"#,
     form: Some(super::forms::FILE_SAVE),
     kind: CommandKind::Session,
     requires: &[],
@@ -52,7 +53,7 @@ pub const SAVE: CommandSpec = CommandSpec {
 pub const SAVE_AS: CommandSpec = CommandSpec {
     id: "file.save_as",
     label: "Save Model As",
-    params: r#"{"path": "bracket.fieldcraft", "results"?: true} — saves to a new file, which becomes the model's file (`results` and a file there that is not a model of the current format as file.save)"#,
+    params: r#"{"path": "bracket.fieldcraft", "results"?: true, "geometry"?: "refer" | "embed"} — saves to a new file, which becomes the model's file (`results`, `geometry` and a file there that is not a model of the current format as file.save)"#,
     form: Some(super::forms::FILE_SAVE_AS),
     kind: CommandKind::Session,
     requires: &[],
@@ -163,28 +164,34 @@ fn resolved_path(path: &str, base: Option<&Path>) -> String {
 
 /// Open one geometry file again: what it gives, and the source as now read (or as stored, with
 /// its path resolved, when it could not be). A file outside the read root of `roots` is not
-/// opened.
+/// opened. When the file cannot be read and the model embeds a copy of it (`embedded`), the copy
+/// is opened instead, with a warning saying so.
 fn reopen<T>(
     what: &str,
     stored: &SourceFile,
     base: Option<&Path>,
     roots: &Roots,
     max: u64,
-    open: impl FnOnce(&[u8]) -> fieldcraft_geometry::Result<T>,
+    open: impl Fn(&[u8]) -> fieldcraft_geometry::Result<T>,
+    embedded: Option<&[u8]>,
     warnings: &mut Vec<String>,
 ) -> (Option<T>, SourceFile) {
     let path = resolved_path(stored.path(), base);
     let kept = stored.with_path(path.clone()).unwrap_or_else(|_| stored.clone());
-    let checked = match roots.check(Path::new(&path), Access::Read) {
-        Ok(p) => p.to_string_lossy().into_owned(),
-        Err(e) => {
-            warnings.push(format!("{what} `{path}` was not opened ({e}); the model opens without it"));
-            return (None, kept);
+    let read = roots.check(Path::new(&path), Access::Read).map_err(EngineError::from).and_then(|checked| read_file(&checked.to_string_lossy(), max));
+    let bytes = match (read, embedded) {
+        (Ok(b), _) => b,
+        (Err(e), Some(copy)) => {
+            warnings.push(format!("{what} `{path}` was not opened ({e}); the copy embedded in the model was opened instead"));
+            return match open(copy) {
+                Ok(v) => (Some(v), kept),
+                Err(e) => {
+                    warnings.push(format!("the embedded copy of {what} `{path}` could not be opened ({e}); the model opens without it"));
+                    (None, kept)
+                }
+            };
         }
-    };
-    let bytes = match read_file(&checked, max) {
-        Ok(b) => b,
-        Err(e) => {
+        (Err(e), None) => {
             warnings.push(format!("{what} `{path}` was not opened ({e}); the model opens without it"));
             return (None, kept);
         }
@@ -214,6 +221,8 @@ pub(crate) fn frame_geometry(model: &fieldcraft_model::Model) -> std::result::Re
 pub struct Keep {
     /// The solved results (`results.bin`).
     pub results: bool,
+    /// Copies of the geometry files (`geometry/…`), besides the references to them.
+    pub geometry: bool,
 }
 
 impl Session {
@@ -231,8 +240,42 @@ impl Session {
             design: self.sources.design.as_ref().map(stored).transpose()?,
             meshes: self.sources.meshes.iter().map(stored).collect::<fieldcraft_io::Result<_>>()?,
         };
-        let extras = fieldcraft_io::Extras { results: if keep.results { self.stored_results() } else { Vec::new() } };
+        let copies = if keep.geometry { self.geometry_copies()? } else { Vec::new() };
+        let extras = fieldcraft_io::Extras {
+            results: if keep.results { self.stored_results() } else { Vec::new() },
+            embed: copies.iter().map(|(sha, b)| (sha.clone(), b.as_slice())).collect(),
+        };
         Ok(fieldcraft_io::write_with(&self.model, &geometry, &self.journal, &self.journal_header, &self.view, &extras)?)
+    }
+
+    /// The bytes of every geometry file the model is built on, by content hash, to embed: the
+    /// copy the model was opened with, else the file read again (it must still be what was
+    /// opened).
+    fn geometry_copies(&self) -> Result<Vec<(String, Arc<Vec<u8>>)>> {
+        let mut out: Vec<(String, Arc<Vec<u8>>)> = Vec::new();
+        for source in self.sources.design.iter().chain(&self.sources.meshes) {
+            let sha = source.sha256().to_string();
+            if out.iter().any(|(s, _)| *s == sha) {
+                continue;
+            }
+            let bytes = match self.embedded.get(&sha) {
+                Some(b) => b.clone(),
+                None => {
+                    let path = self.checked_path(source.path(), Access::Read)?;
+                    let bytes = read_file(&path, fieldcraft_io::MAX_GEOMETRY_PART_BYTES)
+                        .map_err(|e| EngineError::Params(format!("cannot embed `{}`: {e}", source.path())))?;
+                    if fieldcraft_io::sha256_hex(&bytes) != sha {
+                        return Err(EngineError::Params(format!(
+                            "cannot embed `{}`: it changed since the model opened it (open the geometry again, then save)",
+                            source.path()
+                        )));
+                    }
+                    Arc::new(bytes)
+                }
+            };
+            out.push((sha, bytes));
+        }
+        Ok(out)
     }
 
     /// A session holding what a file holds, its geometry opened again from the paths it names
@@ -253,10 +296,14 @@ impl Session {
         };
         let mut sources = Geometry::default();
         let mut design: Option<Arc<Design>> = None;
+        // A packed file's copies of its geometry files, used where a file is missing.
+        let embedded: BTreeMap<String, Arc<Vec<u8>>> = file.embedded.into_iter().map(|(sha, b)| (sha, Arc::new(b))).collect();
+        let copy = |stored: &SourceFile| stored.embedded().and_then(|_| embedded.get(stored.sha256())).map(|b| b.as_slice());
+        let packed = file.geometry.design.iter().chain(&file.geometry.meshes).any(|s| s.embedded().is_some());
         let mut model = file.model;
         let mut names = super::names::Report::default();
         if let Some(stored) = &file.geometry.design {
-            let (opened, source) = reopen("design", stored, base, roots, MAX_DESIGN_BYTES as u64, open_design, &mut warnings);
+            let (opened, source) = reopen("design", stored, base, roots, MAX_DESIGN_BYTES as u64, open_design, copy(stored), &mut warnings);
             design = opened.and_then(|d| {
                 match super::datum::partitioned(&d, &framed).and_then(|cut| super::names::reconcile(&mut model, Some(&mut framed), &d, cut)) {
                     Ok((cut, report)) => {
@@ -278,13 +325,14 @@ impl Session {
                 );
             }
             warnings.extend(names.warnings());
-            sources.design = Some(source);
+            sources.design = Some(source.without_embedded());
         }
         let mut surfaces = Vec::new();
         for stored in &file.geometry.meshes {
-            let (opened, source) = reopen("mesh", stored, base, roots, tagged_mesh::MAX_FILE_BYTES as u64, tagged_mesh::read_3mf, &mut warnings);
+            let (opened, source) =
+                reopen("mesh", stored, base, roots, tagged_mesh::MAX_FILE_BYTES as u64, tagged_mesh::read_3mf, copy(stored), &mut warnings);
             surfaces.extend(opened.into_iter().flatten().map(Arc::new));
-            sources.meshes.push(source);
+            sources.meshes.push(source.without_embedded());
         }
         let mut session = Session {
             model,
@@ -297,6 +345,8 @@ impl Session {
             saved_view: file.view.clone(),
             view: file.view,
             migration_notes: file.notes,
+            embedded,
+            pack_geometry: packed,
             ..Session::default()
         };
         let (_, failed) = super::stitch::restitch_surfaces(&mut session.surfaces, &framed);
@@ -399,9 +449,21 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
     load(s, &bytes, Some(path.clone()), true).map_err(|e| EngineError::Params(format!("{path}: {e}")))
 }
 
-/// What a save keeps, from its parameters: `results` (by default every step's latest result).
-fn keep(p: &Value) -> Result<Keep> {
-    Ok(Keep { results: opt::<bool>(p, "results")?.unwrap_or(true) })
+/// What a save of `s` keeps, from its parameters: `results` (by default every step's latest
+/// result) and `geometry` (`embed` or `refer`; by default as the model's file was).
+fn keep(s: &Session, p: &Value) -> Result<Keep> {
+    let geometry = match opt::<String>(p, "geometry")?.as_deref() {
+        None => s.pack_geometry,
+        Some("embed") => true,
+        Some("refer") => false,
+        Some(other) => {
+            return Err(EngineError::invalid(
+                "geometry",
+                format!("must be `embed` or `refer`, not `{}`", other.chars().take(40).collect::<String>()),
+            ));
+        }
+    };
+    Ok(Keep { results: opt::<bool>(p, "results")?.unwrap_or(true), geometry })
 }
 
 /// What a file of `s` saved with `keep` holds, in words: what a person sending it shares.
@@ -413,7 +475,12 @@ fn contents(s: &Session, keep: Keep) -> Vec<String> {
         out.push(format!("the results of {count} ({})", steps.join(", ")));
     }
     let named: Vec<&str> = s.sources.design.iter().chain(&s.sources.meshes).map(|f| f.path()).collect();
-    if !named.is_empty() {
+    if !named.is_empty() && keep.geometry {
+        out.push(format!(
+            "a copy of its geometry files ({}): whoever gets the file gets the design and meshes too",
+            named.iter().map(|p| file_name(p)).collect::<Vec<_>>().join(", ")
+        ));
+    } else if !named.is_empty() {
         out.push(format!("references to its geometry files, not the files: {}", named.join(", ")));
     }
     out
@@ -429,6 +496,7 @@ fn save_to(s: &mut Session, path: &str, keep: Keep) -> Result<Value> {
     let kept = fieldcraft_io::fs::save_model(Path::new(&target), &bytes)?;
     let holds = contents(s, keep);
     s.mark_saved(target.clone());
+    s.pack_geometry = keep.geometry;
     let mut reply = json!({"path": target, "bytes": bytes.len(), "contents": holds});
     if let Some(kept) = kept {
         let name = |p: &Path| p.file_name().map_or_else(|| p.display().to_string(), |n| n.to_string_lossy().into_owned());
@@ -451,12 +519,19 @@ fn save(s: &mut Session, p: &Value) -> Result<Value> {
             s.checked_path(own, Access::Write)?
         }
     };
-    save_to(s, &path, keep(p)?)
+    let keep = keep(s, p)?;
+    save_to(s, &path, keep)
 }
 
 fn save_as(s: &mut Session, p: &Value) -> Result<Value> {
     let path = file_param(s, p, "path", Access::Write)?;
-    save_to(s, &path, keep(p)?)
+    let keep = keep(s, p)?;
+    save_to(s, &path, keep)
+}
+
+/// The last part of `path`.
+fn file_name(path: &str) -> &str {
+    path.rsplit(['/', '\\']).next().unwrap_or(path)
 }
 
 /// The recovery folder: `dir` (checked for `access`), else the default one (the app's own folder,
@@ -1277,5 +1352,59 @@ mod tests {
             s.execute("file.open", &json!({"path": d.join(format!("{name}.fieldcraft"))})).unwrap();
             assert_eq!(s.result_steps().count(), steps.len(), "{name}");
         }
+    }
+
+    /// #647: a model saved with its geometry embedded opens on a machine with nothing else, with
+    /// its design, and stays packed; references stay the default, and an embedded copy is used
+    /// only where the file a reference names is missing.
+    #[test]
+    fn a_packed_model_opens_with_its_geometry_and_nothing_else() {
+        let d = dir("packed");
+        let design = d.join("plate.solidcraft");
+        std::fs::write(&design, plate_design(&Plate::default()).unwrap()).unwrap();
+        let mut s = Session::default();
+        s.execute("geometry.open", &json!({"path": design})).unwrap();
+        defined(&mut s);
+        let referring = d.join("refer.fieldcraft");
+        let r = s.execute("file.save_as", &json!({"path": referring})).unwrap();
+        assert!(r["contents"].to_string().contains("references to its geometry files, not the files"), "{r}");
+        assert!(fieldcraft_io::read(&std::fs::read(&referring).unwrap()).unwrap().embedded.is_empty(), "references by default");
+        let packed = d.join("packed.fieldcraft");
+        let r = s.execute("file.save_as", &json!({"path": packed, "geometry": "embed"})).unwrap();
+        assert!(r["contents"].to_string().contains("a copy of its geometry files (plate.solidcraft): whoever gets the file gets the design"), "{r}");
+        let file = fieldcraft_io::read(&std::fs::read(&packed).unwrap()).unwrap();
+        assert_eq!(file.geometry.design.as_ref().and_then(|g| g.embedded()), Some("geometry/plate.solidcraft"));
+
+        // With the design next to it, the design file is opened, not the copy.
+        let mut t = Session::default();
+        let r = t.execute("file.open", &json!({"path": packed})).unwrap();
+        assert_eq!(r["warnings"], json!([]), "{r}");
+        assert!(t.pack_geometry && t.design.is_some());
+
+        // Alone in another folder: the copy, said so.
+        let elsewhere = d.join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        let alone = elsewhere.join("packed.fieldcraft");
+        std::fs::copy(&packed, &alone).unwrap();
+        std::fs::remove_file(&design).unwrap();
+        let mut u = Session::default();
+        let r = u.execute("file.open", &json!({"path": alone})).unwrap();
+        assert!(r["warnings"][0].as_str().unwrap().contains("the copy embedded in the model was opened instead"), "{r}");
+        assert_eq!(u.design.as_ref().map(|d| d.bodies.len()), s.design.as_ref().map(|d| d.bodies.len()));
+        assert_eq!(u.model, s.model);
+        // Saved again it stays packed, from the copy (the design file is gone).
+        u.execute("file.save", &json!({})).unwrap();
+        let again = fieldcraft_io::read(&std::fs::read(&alone).unwrap()).unwrap();
+        assert_eq!(again.embedded, file.embedded);
+        // Saved referring, the copy goes; without the design file it then opens without it.
+        u.execute("file.save", &json!({"geometry": "refer"})).unwrap();
+        let mut v = Session::default();
+        let r = v.execute("file.open", &json!({"path": alone})).unwrap();
+        assert!(v.design.is_none() && r["warnings"][0].as_str().unwrap().contains("the model opens without it"), "{r}");
+        // Nothing to embed from: the design is gone and the session has no copy.
+        let e = v.execute("file.save", &json!({"geometry": "embed"})).unwrap_err().to_string();
+        assert!(e.contains("cannot embed"), "{e}");
+        assert!(v.execute("file.save", &json!({"geometry": "zip"})).is_err());
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

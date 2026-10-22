@@ -911,13 +911,25 @@ impl ModelApp {
 
     /// File > Save As: pick a new file for the model. Without a picker the command's form opens.
     pub fn save_as(&mut self) -> bool {
+        self.save_as_with(json!({}))
+    }
+
+    /// File > Save With Geometry Embedded: Save As, keeping a copy of the design and meshes in
+    /// the file (`file.save_as`'s `geometry: "embed"`).
+    pub fn save_packed(&mut self) -> bool {
+        self.save_as_with(json!({"geometry": "embed"}))
+    }
+
+    /// Save As with `params` besides the path.
+    fn save_as_with(&mut self, params: Value) -> bool {
         let Some(pick) = self.services.pick_save.as_ref() else {
-            self.open_form("file.save_as", json!({}));
+            self.open_form("file.save_as", params);
             return false;
         };
         let Some(path) = pick(&format!("{}.fieldcraft", self.model_name()), &[MODEL]) else { return false };
-        let path = with_extension(path, "fieldcraft");
-        let saved = self.run("file.save_as", json!({"path": path})).is_ok();
+        let mut params = params;
+        params["path"] = json!(with_extension(path, "fieldcraft"));
+        let saved = self.run("file.save_as", params).is_ok();
         self.saved_to_recent(saved)
     }
 
@@ -1349,6 +1361,21 @@ pub fn file_menu(app: &mut ModelApp, ui: &mut egui::Ui) {
             app.save_as();
         }));
     }
+    let packed = crate::frame::menu_row(
+        ui,
+        &t,
+        "Save With Geometry Embedded…",
+        None,
+        app.session.design.is_some() || !app.session.surfaces.is_empty(),
+    )
+    .on_hover_text(
+        "Save As, with a copy of the design and imported meshes inside the file, so it opens anywhere: whoever you send it to gets your geometry too",
+    );
+    if packed.clicked() {
+        act = Some(Box::new(|app| {
+            app.save_packed();
+        }));
+    }
     ui.separator();
     crate::frame::menu_heading(ui, &t, "WRITE DECK");
     for c in fieldcraft_engine::catalogue::CATALOGUE.iter().filter(|c| c.panel == "Decks") {
@@ -1412,6 +1439,29 @@ mod tests {
         assert_eq!((&again.prefs().units, again.session.units()), (&si, &si));
         std::fs::write(&file, b"{nope").unwrap();
         assert_eq!(Prefs::load(Some(&store)), Prefs::default());
+    }
+
+    /// Save With Geometry Embedded saves through the picker with `geometry: "embed"`, the file then
+    /// holding a copy of the design; without a picker the form opens with it chosen.
+    #[test]
+    fn save_with_geometry_embedded_packs_the_design() {
+        let dir = temp("packed");
+        let design = dir.join("plate.solidcraft");
+        std::fs::write(&design, fieldcraft_geometry::sample::plate_design(&fieldcraft_geometry::sample::Plate::default()).unwrap()).unwrap();
+        let mut app = ModelApp::new(Session::default());
+        app.run("geometry.open", json!({"path": design})).unwrap();
+        app.save_packed();
+        let d = app.dialog.as_ref().unwrap();
+        assert_eq!((d.command, serde_json::from_str::<Value>(&d.text).unwrap()["geometry"].as_str()), ("file.save_as", Some("embed")));
+        let target = dir.join("packed.fieldcraft").to_string_lossy().into_owned();
+        let answer = target.clone();
+        let mut app =
+            app.with_services(Services { pick_save: Some(Box::new(move |_: &str, _: &[Filter]| Some(answer.clone()))), ..Default::default() });
+        assert!(app.save_packed());
+        let mut opened = Session::default();
+        opened.execute("file.open", &json!({"path": target})).unwrap();
+        assert!(opened.pack_geometry && opened.embedded.len() == 1, "the file holds a copy of the design");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A picker that answers `path` and records the filters it was offered.

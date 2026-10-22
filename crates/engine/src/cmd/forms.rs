@@ -2118,9 +2118,12 @@ pub const FILE_OPEN: &[Field] = &[path("path", "Model", false).help("The FieldCr
 const SAVE_RESULTS: Field = flag("results", "Keep results")
     .help("Keep every solved step's results in the file, so it opens showing them without solving again; off for a smaller file.")
     .def("true");
+const SAVE_GEOMETRY: Field = choice("geometry", "Geometry", &[("refer", "Refer to the files"), ("embed", "Embed a copy")])
+    .help("Refer to the design and meshes by path, or embed a copy of them in the file so it opens anywhere: whoever gets the file then gets your geometry too.")
+    .hint("as the model's file");
 pub const FILE_SAVE: &[Field] =
-    &[path("path", "File", true).help("Where to save; the model's own file when empty.").hint("the model's file"), SAVE_RESULTS];
-pub const FILE_SAVE_AS: &[Field] = &[path("path", "File", true).help("The file to save to.").req(), SAVE_RESULTS];
+    &[path("path", "File", true).help("Where to save; the model's own file when empty.").hint("the model's file"), SAVE_RESULTS, SAVE_GEOMETRY];
+pub const FILE_SAVE_AS: &[Field] = &[path("path", "File", true).help("The file to save to.").req(), SAVE_RESULTS, SAVE_GEOMETRY];
 pub const RECOVERY_LIST: &[Field] =
     &[path("dir", "Folder", false).help("The recovery folder; the default one when empty.").hint("the recovery folder")];
 pub const CRASH_REPORTS: &[Field] = &[

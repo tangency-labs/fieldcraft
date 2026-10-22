@@ -16,6 +16,8 @@
 //!   replays, headed by the unit system its bare numbers are in ([`JournalHeader`]).
 //! - `results.bin` (optional): every solved step's result with the hash of the definition it was
 //!   solved from ([`results`]), so a model opens with its results.
+//! - `geometry/<file>` (optional): copies of the geometry files, when the file embeds them
+//!   ([`Extras::embed`]); opened when the file a reference names is missing.
 //!
 //! Files of every earlier format are read: their parts are brought to the current format by the
 //! migration chain ([`migrate`]) before they are deserialised; a file of a later format is refused
@@ -80,6 +82,15 @@ const MODEL: &str = "model.json";
 const MESH: &str = "mesh.bin";
 const JOURNAL: &str = "journal.json";
 
+/// The folder of embedded geometry parts (`geometry/plate.solidcraft`).
+pub const GEOMETRY_FOLDER: &str = "geometry/";
+
+/// Largest embedded geometry part: the largest geometry file FieldCraft opens.
+pub const MAX_GEOMETRY_PART_BYTES: u64 = 512 << 20;
+
+/// Longest file name of an embedded geometry part.
+const MAX_PART_NAME: usize = 128;
+
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum Error {
     /// Not a `.fieldcraft` file, or a damaged or invalid one.
@@ -117,7 +128,8 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// A file the model is built on: its path and the SHA-256 of the content that was opened.
+/// A file the model is built on: its path and the SHA-256 of the content that was opened, and
+/// the package part holding a copy of it when the file embeds it (`geometry/plate.solidcraft`).
 ///
 /// A relative path is relative to the folder of the `.fieldcraft` file that refers to it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -125,6 +137,7 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 pub struct SourceFile {
     path: String,
     sha256: String,
+    embedded: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -132,19 +145,66 @@ pub struct SourceFile {
 struct SourceFileRepr {
     path: String,
     sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    embedded: Option<String>,
 }
 
 impl TryFrom<SourceFileRepr> for SourceFile {
     type Error = Error;
     fn try_from(r: SourceFileRepr) -> Result<SourceFile> {
-        SourceFile::new(r.path, r.sha256)
+        let s = SourceFile::new(r.path, r.sha256)?;
+        if let Some(part) = &r.embedded {
+            check_geometry_part(part)?;
+        }
+        Ok(SourceFile { embedded: r.embedded, ..s })
     }
 }
 
 impl From<SourceFile> for SourceFileRepr {
     fn from(s: SourceFile) -> Self {
-        SourceFileRepr { path: s.path, sha256: s.sha256 }
+        SourceFileRepr { path: s.path, sha256: s.sha256, embedded: s.embedded }
     }
+}
+
+/// Whether `part` names an embedded geometry part: `geometry/` and a file name of 1 to
+/// [`MAX_PART_NAME`] letters, digits, `.`, `_` and `-`, not starting with a `.`.
+fn check_geometry_part(part: &str) -> Result<()> {
+    let ok = part.strip_prefix(GEOMETRY_FOLDER).is_some_and(|name| {
+        !name.is_empty()
+            && name.len() <= MAX_PART_NAME
+            && !name.starts_with('.')
+            && name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+    });
+    if ok {
+        Ok(())
+    } else {
+        invalid(format!(
+            "`{}` is not an embedded geometry part (`{GEOMETRY_FOLDER}<file name>`)",
+            part.chars().filter(|c| !c.is_control()).take(80).collect::<String>()
+        ))
+    }
+}
+
+/// The part name a copy of the file at `path` is embedded under: its file name, with what a part
+/// name does not take replaced, not one of `taken`.
+fn geometry_part_name(path: &str, taken: &BTreeSet<String>) -> String {
+    let file = path.rsplit(['/', '\\']).next().unwrap_or_default();
+    let mut clean: String = file.chars().map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') { c } else { '_' }).collect();
+    clean = clean.trim_start_matches('.').chars().take(MAX_PART_NAME - 8).collect();
+    if clean.is_empty() {
+        clean = "geometry".into();
+    }
+    let (stem, ext) = match clean.rfind('.') {
+        Some(i) if i > 0 => (clean[..i].to_string(), clean[i..].to_string()),
+        _ => (clean.clone(), String::new()),
+    };
+    let mut name = format!("{GEOMETRY_FOLDER}{clean}");
+    let mut n = 2;
+    while taken.contains(&name) {
+        name = format!("{GEOMETRY_FOLDER}{stem}-{n}{ext}");
+        n += 1;
+    }
+    name
 }
 
 impl SourceFile {
@@ -158,7 +218,7 @@ impl SourceFile {
         if sha256.len() != 64 || !sha256.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
             return invalid(format!("`{}` is not a SHA-256 (64 lower-case hexadecimal digits)", sha256.chars().take(80).collect::<String>()));
         }
-        Ok(SourceFile { path, sha256 })
+        Ok(SourceFile { path, sha256, embedded: None })
     }
 
     /// The file `path`, with the hash of `bytes` (what was read from it).
@@ -174,9 +234,19 @@ impl SourceFile {
         &self.sha256
     }
 
-    /// The same content at another path.
+    /// The same content at another path (an embedded copy stays).
     pub fn with_path(&self, path: impl Into<String>) -> Result<SourceFile> {
-        SourceFile::new(path, self.sha256.clone())
+        Ok(SourceFile { embedded: self.embedded.clone(), ..SourceFile::new(path, self.sha256.clone())? })
+    }
+
+    /// The package part holding a copy of the file, when the file it was read from embeds it.
+    pub fn embedded(&self) -> Option<&str> {
+        self.embedded.as_deref()
+    }
+
+    /// The same, with no embedded copy named.
+    pub fn without_embedded(&self) -> SourceFile {
+        SourceFile { embedded: None, ..self.clone() }
     }
 }
 
@@ -314,6 +384,8 @@ pub struct ModelFile {
     /// Why the file's results were left unread (they are of another results encoding): the
     /// reader's note to the user.
     pub results_note: Option<String>,
+    /// Copies of the geometry files the file embeds, by the SHA-256 of their content.
+    pub embedded: BTreeMap<String, Vec<u8>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -334,6 +406,9 @@ struct Manifest {
 pub struct Extras<'a> {
     /// Solved results to keep (`results.bin`), by step name.
     pub results: Vec<(&'a str, results::StoredRef<'a>)>,
+    /// Geometry files to embed, by the SHA-256 of their content: a geometry source whose hash is
+    /// listed gets a part holding these bytes (they must be that content).
+    pub embed: BTreeMap<String, &'a [u8]>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -427,10 +502,42 @@ pub fn write_with(
     if !extras.results.is_empty() {
         parts.push((results::PART.into(), results::encode(&extras.results)?.into()));
     }
+    // Each embedded file once, by its content, under a name from its path.
+    let mut geometry = geometry.clone();
+    let mut by_hash: BTreeMap<String, String> = BTreeMap::new();
+    let mut taken = BTreeSet::new();
+    for source in geometry.design.iter_mut().chain(geometry.meshes.iter_mut()) {
+        let Some(bytes) = extras.embed.get(source.sha256()) else {
+            *source = source.without_embedded();
+            continue;
+        };
+        if sha256_hex(bytes) != source.sha256() {
+            return invalid(format!("the copy of `{}` to embed is not the content that was opened", source.path()));
+        }
+        if bytes.len() as u64 > MAX_GEOMETRY_PART_BYTES {
+            return Err(Error::Limit(format!(
+                "`{}` is {} MB: at most {} MB is embedded",
+                source.path(),
+                bytes.len() >> 20,
+                MAX_GEOMETRY_PART_BYTES >> 20
+            )));
+        }
+        let name = match by_hash.get(source.sha256()) {
+            Some(n) => n.clone(),
+            None => {
+                let n = geometry_part_name(source.path(), &taken);
+                taken.insert(n.clone());
+                by_hash.insert(source.sha256().to_string(), n.clone());
+                parts.push((n.clone(), std::borrow::Cow::Borrowed(*bytes)));
+                n
+            }
+        };
+        source.embedded = Some(name);
+    }
     let manifest = Manifest {
         format: FORMAT.into(),
         generator: format!("FieldCraft {}", env!("CARGO_PKG_VERSION")),
-        geometry: geometry.clone(),
+        geometry,
         view: view.clone(),
         parts: parts.iter().map(|(name, bytes)| (name.clone(), Part { bytes: bytes.len() as u64, sha256: sha256_hex(bytes) })).collect(),
     };
@@ -439,7 +546,11 @@ pub fn write_with(
 
     let total: usize = parts.iter().map(|(_, b)| b.len()).sum::<usize>() + manifest_json.len();
     if total as u64 > MAX_FILE_BYTES {
-        return Err(Error::Limit(format!("the file would be {} MB (at most {} MB): save without the results", total >> 20, MAX_FILE_BYTES >> 20)));
+        return Err(Error::Limit(format!(
+            "the file would be {} MB (at most {} MB): save without the results or the embedded geometry",
+            total >> 20,
+            MAX_FILE_BYTES >> 20
+        )));
     }
     let mut zip = zip::ZipWriter::new(Cursor::new(Vec::with_capacity(total.saturating_add(1024))));
     let zip_error = |e: zip::result::ZipError| Error::Io(format!("cannot build the package: {e}"));
@@ -501,14 +612,17 @@ pub fn read_versioned(bytes: &[u8]) -> Result<(ModelFile, u32)> {
     if required.iter().any(|n| !listed.contains_key(*n)) {
         return invalid(format!("`{MANIFEST}` must list the parts {MODEL}, {MESH} and {JOURNAL}"));
     }
-    // Format 3 may also hold results, listed.
-    let optional = |name: &str| format == FORMAT_VERSION && name == results::PART;
+    // Format 3 may also hold results and embedded geometry, each listed.
+    let optional = |name: &str| format == FORMAT_VERSION && (name == results::PART || check_geometry_part(name).is_ok());
     if let Some(extra) = listed.keys().find(|n| !required.contains(&n.as_str()) && !optional(n)) {
         return invalid(if format == FORMAT_VERSION {
             format!("`{MANIFEST}` lists an unexpected part `{}`", extra.chars().filter(|c| !c.is_control()).take(80).collect::<String>())
         } else {
             format!("`{MANIFEST}` must list exactly the parts {MODEL}, {MESH} and {JOURNAL}")
         });
+    }
+    if listed.len() > 4 + 1 + MAX_MESH_SOURCES {
+        return Err(Error::Limit(format!("`{MANIFEST}` lists {} parts", listed.len())));
     }
     let mut seen = BTreeSet::new();
     for name in zip.file_names() {
@@ -528,7 +642,16 @@ pub fn read_versioned(bytes: &[u8]) -> Result<(ModelFile, u32)> {
         }
         Ok(data)
     };
-    let results_bytes = if listed.contains_key(results::PART) { Some(part(results::PART, results::MAX_BYTES)?) } else { None };
+    // The optional parts first: a missing one is named before the larger ones are read.
+    let mut embedded = BTreeMap::new();
+    let mut embedded_parts = BTreeMap::new();
+    for (name, entry) in listed.iter().filter(|(n, _)| n.starts_with(GEOMETRY_FOLDER)) {
+        let data = part(name, MAX_GEOMETRY_PART_BYTES)?;
+        embedded_parts.insert(name.clone(), entry.sha256.clone());
+        embedded.insert(entry.sha256.clone(), data);
+    }
+    // Decoded at once, so the part's bytes are not kept beside the results.
+    let decoded = if listed.contains_key(results::PART) { Some(results::decode(&part(results::PART, results::MAX_BYTES)?)?) } else { None };
     let model_json = part(MODEL, MAX_TEXT_PART_BYTES)?;
     let mesh = part(MESH, mesh::MAX_BYTES)?;
     let journal_json = part(JOURNAL, MAX_TEXT_PART_BYTES)?;
@@ -565,7 +688,22 @@ pub fn read_versioned(bytes: &[u8]) -> Result<(ModelFile, u32)> {
         return Err(Error::Limit(format!("a model refers to at most {MAX_MESH_SOURCES} imported meshes")));
     }
     manifest.view.check()?;
-    let (results, results_note) = match results_bytes.as_deref().map(results::decode).transpose()? {
+    // Every embedded part is a copy of a geometry file the manifest names, and every copy named
+    // is there.
+    let sources: Vec<&SourceFile> = manifest.geometry.design.iter().chain(&manifest.geometry.meshes).collect();
+    for s in &sources {
+        if let Some(name) = s.embedded() {
+            match embedded_parts.get(name) {
+                Some(sha) if sha == s.sha256() => {}
+                Some(_) => return invalid(format!("part `{name}` is not the content of `{}`", s.path())),
+                None => return invalid(format!("`{MANIFEST}` names an embedded copy `{name}` of `{}` that it does not list", s.path())),
+            }
+        }
+    }
+    if let Some(orphan) = embedded_parts.keys().find(|n| !sources.iter().any(|s| s.embedded() == Some(n.as_str()))) {
+        return invalid(format!("part `{orphan}` is a copy of no geometry file the model names"));
+    }
+    let (results, results_note) = match decoded {
         None => (Vec::new(), None),
         Some(results::Decoded::Results(r)) => (r, None),
         Some(results::Decoded::OtherVersion(magic)) => (
@@ -583,7 +721,10 @@ pub fn read_versioned(bytes: &[u8]) -> Result<(ModelFile, u32)> {
     drop(mesh_bin);
     let journal_header = JournalHeader { units: journal.units, model_units: journal.model_units };
     let journal = read_journal(journal.commands)?;
-    Ok((ModelFile { model, geometry: manifest.geometry, journal, journal_header, view: manifest.view, notes, results, results_note }, format))
+    Ok((
+        ModelFile { model, geometry: manifest.geometry, journal, journal_header, view: manifest.view, notes, results, results_note, embedded },
+        format,
+    ))
 }
 
 /// The format version of the `.fieldcraft` file `reader` holds, from its manifest alone (nothing
