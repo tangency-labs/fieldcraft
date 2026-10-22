@@ -1,6 +1,7 @@
 //! The device backend (native targets).
 
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use fieldcraft_gpu::select::{self, Policy};
 use fieldcraft_lbm::backend::{Backend, Fields};
@@ -141,14 +142,14 @@ pub struct GpuFlow {
     queue: wgpu::Queue,
     /// With [`Options::profile`]: the GPU time of each kernel so far.
     kernel_times: Option<std::cell::RefCell<std::collections::BTreeMap<&'static str, KernelTime>>>,
-    /// How long creating the compute pipelines (compiling the shader) took.
+    /// How long compiling the kernels took.
     pipeline_seconds: f64,
     aa: bool,
     adapter: String,
-    pipelines: HashMap<&'static str, wgpu::ComputePipeline>,
-    /// AB swaps populations; AA keeps one population buffer and changes its orientation.
-    /// Both modes swap the separate scalar lattice buffers.
-    bind: [wgpu::BindGroup; 2],
+    kernels: Kernels,
+    /// Each kernel's two bind groups: AB swaps populations; AA keeps one population buffer and
+    /// changes its orientation. Both modes swap the separate scalar lattice buffers.
+    bind: HashMap<&'static str, [wgpu::BindGroup; 2]>,
     /// Which bind group's `f` holds the state.
     current: usize,
     n: usize,
@@ -273,6 +274,157 @@ fn solid_data(solid: &fieldcraft_lbm::conduction::SolidHeat, t0: f64) -> Result<
     })
 }
 
+/// The entry points of `lbm.wgsl` a flow dispatches.
+const KERNELS: [&str; 23] = [
+    "collide",
+    "stream",
+    "stream_links",
+    "stream_links_exchange",
+    "scatter_links",
+    "outlet_convect",
+    "open_boundaries",
+    "link_forces",
+    "group_forces",
+    "cell_moments",
+    "mass",
+    "collide_thermal",
+    "stream_thermal",
+    "stream_links_thermal",
+    "open_thermal",
+    "thermal_check",
+    "solid_ab",
+    "solid_sub0",
+    "solid_sub1",
+    "solid_copy",
+    "solid_scatter",
+    "solid_contrib",
+    "solid_wall_heat",
+];
+
+/// The bindings each kernel uses, read from the shader (naga's analysis of which globals an entry
+/// point reaches): each kernel gets a bind group of only those. One layout of all 23 buffers
+/// needs 22 storage buffers per compute stage, more than GL's 16 (#640); the busiest kernel
+/// needs 7, within WebGPU's default of 8.
+struct Reflection {
+    kernels: Vec<(&'static str, Vec<(u32, wgpu::BufferBindingType)>)>,
+    /// The most storage buffers one kernel binds.
+    storage_buffers: u32,
+}
+
+fn reflection() -> Result<&'static Reflection> {
+    static REFLECTION: OnceLock<std::result::Result<Reflection, String>> = OnceLock::new();
+    REFLECTION.get_or_init(reflect).as_ref().map_err(|e| gpu_error(format!("the fluid shader does not parse: {e}")))
+}
+
+fn reflect() -> std::result::Result<Reflection, String> {
+    use wgpu::naga;
+    let module = naga::front::wgsl::parse_str(SHADER).map_err(|e| e.emit_to_string(SHADER))?;
+    let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
+        .validate(&module)
+        .map_err(|e| e.emit_to_string(SHADER))?;
+    let mut kernels = Vec::with_capacity(KERNELS.len());
+    for name in KERNELS {
+        let index = module.entry_points.iter().position(|e| e.name == name).ok_or_else(|| format!("no entry point {name}"))?;
+        let uses = info.get_entry_point(index);
+        let mut bindings = Vec::new();
+        for (handle, var) in module.global_variables.iter() {
+            let (Some(binding), false) = (&var.binding, uses[handle].is_empty()) else { continue };
+            let ty = match var.space {
+                naga::AddressSpace::Uniform => wgpu::BufferBindingType::Uniform,
+                naga::AddressSpace::Storage { access } => {
+                    wgpu::BufferBindingType::Storage { read_only: !access.contains(naga::StorageAccess::STORE) }
+                }
+                _ => return Err(format!("{name}: binding {} is not a buffer", binding.binding)),
+            };
+            if binding.group != 0 {
+                return Err(format!("{name}: binding {} is not in group 0", binding.binding));
+            }
+            bindings.push((binding.binding, ty));
+        }
+        bindings.sort_by_key(|(b, _)| *b);
+        kernels.push((name, bindings));
+    }
+    let storage = |b: &[(u32, wgpu::BufferBindingType)]| b.iter().filter(|(_, t)| matches!(t, wgpu::BufferBindingType::Storage { .. })).count();
+    let storage_buffers = kernels.iter().map(|(_, b)| storage(b)).max().unwrap_or(0) as u32;
+    Ok(Reflection { kernels, storage_buffers })
+}
+
+/// Refuse an adapter that allows fewer storage buffers per compute stage than a kernel binds,
+/// before anything is built, with what to do instead.
+fn check_storage_buffers(backend: wgpu::Backend, have: u32, need: u32) -> Result<()> {
+    if have >= need {
+        return Ok(());
+    }
+    let backend = match backend {
+        wgpu::Backend::Gl => "OpenGL",
+        wgpu::Backend::Vulkan => "Vulkan",
+        wgpu::Backend::Metal => "Metal",
+        wgpu::Backend::Dx12 => "DX12",
+        wgpu::Backend::BrowserWebGpu => "WebGPU",
+        wgpu::Backend::Noop => "no-op",
+    };
+    Err(Error::Invalid(format!(
+        "this GPU's {backend} backend allows {have} storage buffers per compute stage and the fluid solver needs {need}: solve with `backend: \"cpu\"`, or use a Vulkan, Metal or DX12 adapter (`WGPU_BACKEND`)"
+    )))
+}
+
+/// The override constants a flow's kernels are compiled with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Variant {
+    aa: bool,
+    regularized: bool,
+}
+
+/// A compiled kernel: its pipeline, its bind group's layout and the bindings in it.
+struct Kernel {
+    pipeline: wgpu::ComputePipeline,
+    layout: wgpu::BindGroupLayout,
+    bindings: Vec<u32>,
+}
+
+type Kernels = HashMap<&'static str, Kernel>;
+
+/// The kernels of `variant` on `device`, each with the layout of the bindings it uses.
+fn compile(device: &wgpu::Device, variant: Variant) -> Result<Kernels> {
+    let module =
+        device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("fieldcraft lbm"), source: wgpu::ShaderSource::Wgsl(SHADER.into()) });
+    let mut kernels = HashMap::with_capacity(KERNELS.len());
+    for (name, bindings) in &reflection()?.kernels {
+        let entries: Vec<wgpu::BindGroupLayoutEntry> = bindings
+            .iter()
+            .map(|&(binding, ty)| wgpu::BindGroupLayoutEntry {
+                binding,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer { ty, has_dynamic_offset: false, min_binding_size: None },
+                count: None,
+            })
+            .collect();
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some(name), entries: &entries });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some(name),
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
+        });
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some(name),
+            layout: Some(&pipeline_layout),
+            module: &module,
+            entry_point: Some(name),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &[
+                    ("AA_MODE", if variant.aa { 1.0 } else { 0.0 }),
+                    ("REGULARIZED", if variant.regularized { 1.0 } else { 0.0 }),
+                    ("MAX_SPEED", MAX_LATTICE_SPEED),
+                ],
+                ..Default::default()
+            },
+            cache: None,
+        });
+        kernels.insert(*name, Kernel { pipeline, layout, bindings: bindings.iter().map(|(b, _)| *b).collect() });
+    }
+    Ok(kernels)
+}
+
 impl GpuFlow {
     /// `flow` on the device `FIELDCRAFT_GPU` picks.
     pub fn from_env(flow: &Flow) -> Result<GpuFlow> {
@@ -303,11 +455,15 @@ impl GpuFlow {
         if !adapter.features().contains(features) {
             return Err(gpu_error("profiling needs timestamp queries, which this adapter does not offer"));
         }
+        let storage_buffers = reflection()?.storage_buffers;
+        check_storage_buffers(info.backend, adapter.limits().max_storage_buffers_per_shader_stage, storage_buffers)?;
         let have = adapter.limits();
         let mut limits = wgpu::Limits::default().using_resolution(have.clone());
         limits.max_buffer_size = have.max_buffer_size;
         limits.max_storage_buffer_binding_size = have.max_storage_buffer_binding_size;
-        limits.max_storage_buffers_per_shader_stage = have.max_storage_buffers_per_shader_stage.max(limits.max_storage_buffers_per_shader_stage);
+        // Exactly what the busiest kernel binds, so every device (the CI's lavapipe too) proves the
+        // kernels fit an adapter that allows no more.
+        limits.max_storage_buffers_per_shader_stage = storage_buffers;
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("fieldcraft lbm"),
             required_features: features,
@@ -569,130 +725,59 @@ impl GpuFlow {
         let solid_f_buf = storage("lbm solid values", &bytes_f32(solid_f));
         let solid_s_buf = storage("lbm solid state", &bytes_f32(solid_s));
 
-        let module = device
-            .create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("fieldcraft lbm"), source: wgpu::ShaderSource::Wgsl(SHADER.into()) });
-        let entry = |binding: u32, ty: wgpu::BufferBindingType| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer { ty, has_dynamic_offset: false, min_binding_size: None },
-            count: None,
-        };
-        let read = wgpu::BufferBindingType::Storage { read_only: true };
-        let write = wgpu::BufferBindingType::Storage { read_only: false };
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("fieldcraft lbm"),
-            entries: &[
-                entry(0, wgpu::BufferBindingType::Uniform),
-                entry(1, read),
-                entry(2, write),
-                entry(3, write),
-                entry(4, write),
-                entry(5, read),
-                entry(6, read),
-                entry(7, read),
-                entry(8, read),
-                entry(9, write),
-                entry(10, write),
-                entry(11, write),
-                entry(12, read),
-                entry(13, read),
-                entry(14, write),
-                entry(15, write),
-                entry(16, write),
-                entry(17, write),
-                entry(18, read),
-                entry(19, read),
-                entry(20, read),
-                entry(21, read),
-                entry(22, write),
-            ],
-        });
-        let bind = [0usize, 1].map(|k| {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("fieldcraft lbm"),
-                layout: &layout,
-                entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: params[k].as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: fluid_buf.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 2, resource: pops[if aa { 0 } else { k }].as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 3, resource: pops[if aa { 1 } else { 1 - k }].as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 4, resource: outlet.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 5, resource: link_u.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 6, resource: link_f.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 7, resource: open_u.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 8, resource: open_f.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 9, resource: moments.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 10, resource: stats.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 11, resource: contrib.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 12, resource: by_group.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 13, resource: group_start.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 14, resource: forces.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 15, resource: partials.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 16, resource: therm[k].as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 17, resource: therm[1 - k].as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 18, resource: group_t.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 19, resource: open_t.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 20, resource: solid_u_buf.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 21, resource: solid_f_buf.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 22, resource: solid_s_buf.as_entire_binding() },
-                ],
-            })
-        });
-        let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("fieldcraft lbm"),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
-        });
-        let mut pipelines = HashMap::new();
         let pipeline_start = std::time::Instant::now();
-        for name in [
-            "collide",
-            "stream",
-            "stream_links",
-            "stream_links_exchange",
-            "scatter_links",
-            "outlet_convect",
-            "open_boundaries",
-            "link_forces",
-            "group_forces",
-            "cell_moments",
-            "mass",
-            "collide_thermal",
-            "stream_thermal",
-            "stream_links_thermal",
-            "open_thermal",
-            "thermal_check",
-            "solid_ab",
-            "solid_sub0",
-            "solid_sub1",
-            "solid_copy",
-            "solid_scatter",
-            "solid_contrib",
-            "solid_wall_heat",
-        ] {
-            let p = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(name),
-                layout: Some(&pl),
-                module: &module,
-                entry_point: Some(name),
-                compilation_options: wgpu::PipelineCompilationOptions {
-                    constants: &[
-                        ("AA_MODE", if aa { 1.0 } else { 0.0 }),
-                        ("REGULARIZED", if regularized { 1.0 } else { 0.0 }),
-                        ("MAX_SPEED", MAX_LATTICE_SPEED),
-                    ],
-                    ..Default::default()
-                },
-                cache: None,
-            });
-            pipelines.insert(name, p);
+        let kernels = compile(&device, Variant { aa, regularized })?;
+        let pipeline_seconds = pipeline_start.elapsed().as_secs_f64();
+        // Every binding's buffer in bind group k (the two differ in the phase and the A–B swap).
+        let resource = |binding: u32, k: usize| -> Option<&wgpu::Buffer> {
+            Some(match binding {
+                0 => &params[k],
+                1 => &fluid_buf,
+                2 => &pops[if aa { 0 } else { k }],
+                3 => &pops[if aa { 1 } else { 1 - k }],
+                4 => &outlet,
+                5 => &link_u,
+                6 => &link_f,
+                7 => &open_u,
+                8 => &open_f,
+                9 => &moments,
+                10 => &stats,
+                11 => &contrib,
+                12 => &by_group,
+                13 => &group_start,
+                14 => &forces,
+                15 => &partials,
+                16 => &therm[k],
+                17 => &therm[1 - k],
+                18 => &group_t,
+                19 => &open_t,
+                20 => &solid_u_buf,
+                21 => &solid_f_buf,
+                22 => &solid_s_buf,
+                _ => return None,
+            })
+        };
+        let mut bind = HashMap::with_capacity(kernels.len());
+        for (name, kernel) in kernels.iter() {
+            let group = |k: usize| -> Result<wgpu::BindGroup> {
+                let entries = kernel
+                    .bindings
+                    .iter()
+                    .map(|&b| {
+                        resource(b, k)
+                            .map(|buffer| wgpu::BindGroupEntry { binding: b, resource: buffer.as_entire_binding() })
+                            .ok_or_else(|| gpu_error(format!("{name}: no buffer for binding {b}")))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some(name), layout: &kernel.layout, entries: &entries }))
+            };
+            bind.insert(*name, [group(0)?, group(1)?]);
         }
         for scope in scopes.into_iter().rev() {
             if let Some(e) = pollster::block_on(scope.pop()) {
                 return Err(gpu_error(e));
             }
         }
-        let pipeline_seconds = pipeline_start.elapsed().as_secs_f64();
         Ok(GpuFlow {
             device,
             queue,
@@ -700,7 +785,7 @@ impl GpuFlow {
             pipeline_seconds,
             aa,
             adapter: adapter_name,
-            pipelines,
+            kernels,
             bind,
             current: 0,
             n,
@@ -750,7 +835,7 @@ impl GpuFlow {
         self.aa
     }
 
-    /// How long creating the compute pipelines took, in seconds.
+    /// How long compiling the kernels took, in seconds.
     pub fn pipeline_seconds(&self) -> f64 {
         self.pipeline_seconds
     }
@@ -760,13 +845,11 @@ impl GpuFlow {
         self.kernel_times.as_ref().map(|t| t.borrow().clone())
     }
 
-    fn pipeline(&self, name: &str) -> Result<&wgpu::ComputePipeline> {
-        self.pipelines.get(name).ok_or_else(|| Error::Invalid(format!("GPU: no kernel {name}")))
-    }
-
     fn dispatch(&self, pass: &mut wgpu::ComputePass<'_>, bind: usize, name: &str, (gx, gy): (u32, u32)) -> Result<()> {
-        pass.set_bind_group(0, self.bind.get(bind).ok_or_else(|| Error::Invalid("GPU: no bind group".into()))?, &[]);
-        pass.set_pipeline(self.pipeline(name)?);
+        let kernel = self.kernels.get(name).ok_or_else(|| Error::Invalid(format!("GPU: no kernel {name}")))?;
+        let group = self.bind.get(name).and_then(|b| b.get(bind)).ok_or_else(|| Error::Invalid(format!("GPU: no bind group for {name}")))?;
+        pass.set_bind_group(0, group, &[]);
+        pass.set_pipeline(&kernel.pipeline);
         pass.dispatch_workgroups(gx, gy, 1);
         Ok(())
     }
@@ -1069,6 +1152,28 @@ impl Backend for GpuFlow {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #640: each kernel binds only the buffers it uses, so the solver fits GL's 16 storage
+    /// buffers per compute stage, and WebGPU's default of 8.
+    #[test]
+    fn every_kernel_binds_at_most_eight_storage_buffers() {
+        let r = reflection().unwrap();
+        assert_eq!(r.kernels.len(), KERNELS.len());
+        assert!(r.kernels.iter().all(|(_, b)| !b.is_empty()));
+        println!("the busiest kernel binds {} storage buffers", r.storage_buffers);
+        assert!((1..=8).contains(&r.storage_buffers), "{}", r.storage_buffers);
+    }
+
+    /// An adapter that allows fewer is refused before anything is built, saying what to do.
+    #[test]
+    fn an_adapter_with_too_few_storage_buffers_is_refused_clearly() {
+        assert!(check_storage_buffers(wgpu::Backend::Gl, 16, 7).is_ok());
+        let e = check_storage_buffers(wgpu::Backend::Gl, 4, 7).unwrap_err().to_string();
+        println!("{e}");
+        for part in ["OpenGL backend allows 4 storage buffers", "needs 7", "backend: \"cpu\"", "WGPU_BACKEND"] {
+            assert!(e.contains(part), "{e}");
+        }
+    }
 
     /// The shader flattens every dispatch with one row width: a dispatch of several rows must be
     /// exactly [`MAX_GROUPS_X`] wide, whatever the cell count (a link dispatch wider than the

@@ -82,6 +82,9 @@ struct Params {
     solid: vec4<u32>,
 };
 
+// Each kernel's bind group holds only the bindings it reaches (native.rs reads them from this
+// shader), so no kernel binds more storage buffers than WebGPU's default of 8 per stage; all of
+// them in one layout would need 22, more than GL allows (16, #640).
 @group(0) @binding(0) var<uniform> params: Params;
 @group(0) @binding(1) var<storage, read> fluid: array<u32>;
 @group(0) @binding(2) var<storage, read_write> f: array<f32>;
