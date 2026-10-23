@@ -738,18 +738,128 @@ fn fans_and_porous_zones_are_refused_clearly() {
     assert!(e.as_deref().is_some_and(|e| e.contains("Vent") && e.contains("cpu")), "{e:?}");
 }
 
-/// The Smagorinsky eddy viscosity runs on the CPU only for now: the backend says so before it
-/// looks for a device.
-#[test]
-fn turbulence_is_refused_clearly() {
-    let mut p = step(10.0, 1.0, None);
+// ---- Smagorinsky's eddy viscosity (#665) ----
+
+/// `p` with Smagorinsky's model, constant `c` and turbulent Prandtl number 0.9.
+fn smagorinsky(mut p: Procedure, c: f64) -> Procedure {
     if let Procedure::Fluid { turbulence, .. } = &mut p {
-        *turbulence = Some(fieldcraft_model::Turbulence::Smagorinsky { constant: 0.17, prandtl: 0.9 });
+        *turbulence = Some(fieldcraft_model::Turbulence::Smagorinsky { constant: c, prandtl: 0.9 });
     }
-    let m = model(1.0, 0.1, domain([0.0; 3], [4.0, 2.0, 2.0], 1.0), p);
-    let (_, flow) = prepare(&m, &[]);
-    let e = GpuFlow::with_options(&flow, Policy::from_env().expect("FIELDCRAFT_GPU names a policy"), Options::default()).err().map(|e| e.to_string());
-    assert!(e.as_deref().is_some_and(|e| e.contains("turbulence") && e.contains("cpu")), "{e:?}");
+    p
+}
+
+/// Couette flow with the eddy viscosity a few per cent of the fluid's (`fieldcraft-lbm`'s
+/// turbulence tests): the fields, the wall shear and the reply's largest eddy viscosity ratio
+/// agree with the CPU.
+///
+/// This thin fluid (τ = 0.55, 80 000 steps) keeps fewer single-precision digits than the
+/// suite's other cases with or without the model. Measured on an RTX 4070 Laptop GPU, GPU
+/// against CPU, model off / on: velocity 5.1e-6 / 5.3e-6 (TRT) and 4.2e-5 / 2.3e-5
+/// (regularised), wall shear 2.6e-5 / 2.1e-5 and 9.6e-5 / 5.7e-5. So the tolerances here are
+/// the model-off ones of this case, with a margin: velocity 1e-4, shear 2e-4.
+#[test]
+fn couette_flow_with_smagorinsky_matches_the_cpu() {
+    for (collision, streaming) in cases() {
+        let (h, nu, rho, u_wall, n, c) = (1.0, 1e-3, 2.0, 0.1, 16usize, 0.4);
+        let dx = h / n as f64;
+        let mut d = domain([0.0; 3], [dx, h, dx], dx);
+        for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+            *f = PERIODIC;
+        }
+        d.faces.y_max = FaceCondition::MovingWall { velocity: [u_wall, 0.0, 0.0] };
+        let m = model(rho, nu, d, smagorinsky(collide(5.0 * h * h / nu, dx, None, collision), c));
+        let (setup, flow) = prepare(&m, &[]);
+        let Some((mut cpu, mut gpu)) = both(&setup, flow, streaming) else { continue };
+        let (du, drho) = field_difference(&mut cpu, &mut gpu);
+        let (fc, fg) = (Backend::forces(&mut cpu).unwrap(), gpu.forces().unwrap());
+        let bottom = BoxFace::ALL.iter().position(|f| f.name() == "y_min").unwrap();
+        let shear = (fc[bottom][0] - fg[bottom][0]).abs() / fc[bottom][0].abs();
+        let (rc, rg) = (Backend::eddy_viscosity_ratio(&cpu), gpu.eddy_viscosity_ratio());
+        println!(
+            "{collision:?} Smagorinsky Couette, GPU vs CPU: velocity {du:.2e}, density {drho:.2e}, wall shear {shear:.2e}; ν_t/ν CPU {rc:.6} GPU {rg:.6}"
+        );
+        assert!(rc > 0.05, "the eddy viscosity shows: {rc}");
+        assert!(du < 1e-4 && drho < 1e-6, "{du} {drho}");
+        assert!(shear < 2e-4, "{shear}");
+        // The GPU's ratio is the chunk's largest, the CPU's the last step's: at steady state the
+        // same, to the f32 cancellation in 1/ω − 1/ω₀ (1.4e-4 of itself measured, regularised).
+        assert!((rg - rc).abs() < 5e-4 * rc, "{rg} vs {rc}");
+    }
+}
+
+/// Plane Poiseuille driven by a body force with the model on (the forced path, and Λ kept by
+/// the two relaxation times).
+#[test]
+fn forced_poiseuille_with_smagorinsky_matches_the_cpu() {
+    for (collision, streaming) in cases() {
+        let (h, nu, umax, n) = (1.0, 1.0 / 6.0, 0.1, 16usize);
+        let dx = h / n as f64;
+        let mut d = domain([0.0; 3], [dx, h, dx], dx);
+        for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+            *f = PERIODIC;
+        }
+        d.acceleration = [8.0 * nu * umax / (h * h), 0.0, 0.0];
+        let m = model(1.0, nu, d, smagorinsky(collide(4.0 * h * h / nu, dx * dx, Some(3.0 / 16.0), collision), 0.4));
+        let (setup, flow) = prepare(&m, &[]);
+        let Some((mut cpu, mut gpu)) = both(&setup, flow, streaming) else { continue };
+        let (du, drho) = field_difference(&mut cpu, &mut gpu);
+        println!("{collision:?} Smagorinsky Poiseuille, GPU vs CPU: velocity {du:.2e}, density {drho:.2e}");
+        assert!(Backend::eddy_viscosity_ratio(&cpu) > 0.0);
+        assert!(du < 2e-5 && drho < 1e-6, "{du} {drho}");
+    }
+}
+
+/// Heated Couette flow with the model on: the turbulent diffusivity ν_t / Pr_t reaches the
+/// scalar lattice through `moments`' w, so the temperature and the wall heat agree with the CPU.
+/// The thin fluid of the Couette case above, 96 000 steps; measured model off / on: temperature
+/// 1.2e-4 / 8.7e-5 of the range, wall heat 1.3e-4 / 1.1e-4 of the largest (TRT); the
+/// tolerances are the model-off ones with a margin.
+#[test]
+fn heated_couette_flow_with_smagorinsky_matches_the_cpu() {
+    for (collision, streaming) in cases() {
+        let (h, nu, alpha, rho, u_wall, n, c) = (1.0, 1e-3, 1e-3, 2.0, 0.1, 16usize, 0.4);
+        let dx = h / n as f64;
+        let mut d = domain([0.0; 3], [dx, h, dx], dx);
+        for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+            *f = PERIODIC;
+        }
+        d.faces.y_max = FaceCondition::MovingWall { velocity: [u_wall, 0.0, 0.0] };
+        let mut t = FluidThermal::default();
+        t.faces.y_min = ThermalCondition::Flux { value: 0.3 };
+        t.faces.y_max = ThermalCondition::Temperature { value: kelvin(1.0) };
+        d.thermal = Some(t);
+        let m = hot_model(rho, nu, alpha, d, smagorinsky(collide(6.0 * h * h / alpha, dx, None, collision), c));
+        let (setup, cpu) = prepare(&m, &[]);
+        let Some((mut cpu, mut gpu)) = both(&setup, cpu, streaming) else { continue };
+        let (du, drho) = field_difference(&mut cpu, &mut gpu);
+        let (dt, dh) = heat_difference(&mut cpu, &mut gpu);
+        println!("{collision:?} Smagorinsky heated Couette, GPU vs CPU: velocity {du:.2e} density {drho:.2e} temperature {dt:.2e} heat {dh:.2e}");
+        assert!(du < 1e-4 && drho < 1e-6, "{du} {drho}");
+        assert!(dt < 3e-4 && dh < 3e-4, "{dt} {dh}");
+    }
+}
+
+/// An unsteady case the lattice cannot hold without the closure (`fieldcraft-lbm`'s 48² cavity at
+/// Re 5000, cell Reynolds number 104): over its first 1000 steps the GPU follows the CPU.
+#[test]
+fn a_cavity_held_by_the_closure_follows_the_cpu() {
+    for (collision, streaming) in cases() {
+        let (l, re, steps) = (48.0, 5000.0, 1000.0);
+        let mut d = domain([0.0; 3], [l, l, 1.0], 1.0);
+        d.faces.y_max = FaceCondition::MovingWall { velocity: [0.1, 0.0, 0.0] };
+        d.faces.z_min = PERIODIC;
+        d.faces.z_max = PERIODIC;
+        let m = model(1.0, 0.1 * l / re, d, smagorinsky(collide(steps, 1.0, None, collision), 0.17));
+        let (setup, flow) = prepare(&m, &[]);
+        let Some((mut cpu, mut gpu)) = both(&setup, flow, streaming) else { continue };
+        let (du, drho) = field_difference(&mut cpu, &mut gpu);
+        println!(
+            "{collision:?} Smagorinsky cavity Re {re}, {steps} steps, GPU vs CPU: velocity {du:.2e}, density {drho:.2e}, ν_t/ν CPU {:.3} GPU {:.3}",
+            Backend::eddy_viscosity_ratio(&cpu),
+            gpu.eddy_viscosity_ratio()
+        );
+        assert!(du < 1e-4 && drho < 1e-5, "{du} {drho}");
+    }
 }
 
 // ---- Conducting solids ----

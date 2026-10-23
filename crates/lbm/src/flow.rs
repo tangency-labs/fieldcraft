@@ -1011,6 +1011,11 @@ impl Flow {
         self.smagorinsky
     }
 
+    /// The turbulent Prandtl number of Smagorinsky's model (its turbulent diffusivity ν_t / Pr_t).
+    pub fn turbulent_prandtl(&self) -> f64 {
+        self.turbulent_prandtl
+    }
+
     /// The largest eddy viscosity over the fluid's own viscosity in the last step (0 without a
     /// turbulence model).
     pub fn eddy_viscosity_ratio(&self) -> f64 {

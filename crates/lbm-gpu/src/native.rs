@@ -178,6 +178,10 @@ pub struct GpuFlow {
     groups: Vec<Group>,
     empty_obstacles: Vec<String>,
     steps_done: u64,
+    /// With Smagorinsky's model: the fluid's own viscosity (lattice units), and the largest eddy
+    /// viscosity of the last chunk over it.
+    nu0: f64,
+    eddy_ratio: f64,
     /// The momentum (xyz) and heat (w) each group received in the last step, once read back
     /// (zero before the first step).
     exchange_cache: Option<Vec<[f64; 4]>>,
@@ -376,6 +380,7 @@ fn check_storage_buffers(backend: wgpu::Backend, have: u32, need: u32) -> Result
 struct Variant {
     aa: bool,
     regularized: bool,
+    smagorinsky: bool,
 }
 
 /// A compiled kernel: its pipeline, its bind group's layout and the bindings in it.
@@ -417,6 +422,7 @@ fn compile(device: &wgpu::Device, variant: Variant) -> Result<Kernels> {
                 constants: &[
                     ("AA_MODE", if variant.aa { 1.0 } else { 0.0 }),
                     ("REGULARIZED", if variant.regularized { 1.0 } else { 0.0 }),
+                    ("SMAGORINSKY", if variant.smagorinsky { 1.0 } else { 0.0 }),
                     ("MAX_SPEED", MAX_LATTICE_SPEED),
                 ],
                 ..Default::default()
@@ -518,9 +524,6 @@ impl GpuFlow {
 
     /// [`GpuFlow::new`] with `options`.
     pub fn with_options(flow: &Flow, policy: Policy, options: Options) -> Result<GpuFlow> {
-        if flow.smagorinsky() > 0.0 {
-            return Err(Error::Invalid("the GPU backend does not model turbulence (`turbulence`) yet: solve on the CPU (`backend: \"cpu\"`)".into()));
-        }
         if let Some(zone) = flow.zones().first() {
             return Err(Error::Invalid(format!(
                 "the GPU backend does not step fans or porous zones yet (`{}`): solve on the CPU (`backend: \"cpu\"`)",
@@ -733,10 +736,20 @@ impl GpuFlow {
         };
         let solid = thermal.and_then(|t| t.solid()).map(|sh| solid_data(sh, t0)).transpose()?;
         let solid_params = solid.as_ref().map_or([0; 4], |sd| sd.params);
+        // Smagorinsky's model (lbm.wgsl's `smag`): C², 1 / Pr_t, Λ.
+        let c = flow.smagorinsky();
+        let prandtl = flow.turbulent_prandtl();
+        let smag = [
+            (c * c) as f32,
+            if c > 0.0 && thermal.is_some() && prandtl > 0.0 { (1.0 / prandtl) as f32 } else { 0.0 },
+            ((1.0 / omega_plus - 0.5) * (1.0 / omega_minus - 0.5)) as f32,
+            0.0,
+        ];
         let params = [0u32, 1].map(|phase| {
             let mut bytes = params.clone();
             bytes.extend_from_slice(&bytes_u32(&[phase, 0, 0, 0]));
             bytes.extend_from_slice(&bytes_u32(&solid_params));
+            bytes.extend_from_slice(&bytes_f32(&smag));
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("lbm params"),
                 contents: &bytes,
@@ -794,7 +807,7 @@ impl GpuFlow {
         let solid_f_buf = storage("lbm solid values", &bytes_f32(solid_f));
         let solid_s_buf = storage("lbm solid state", &bytes_f32(solid_s));
 
-        let (kernels, pipeline_seconds) = shared.kernels(Variant { aa, regularized })?;
+        let (kernels, pipeline_seconds) = shared.kernels(Variant { aa, regularized, smagorinsky: flow.smagorinsky() > 0.0 })?;
         // Every binding's buffer in bind group k (the two differ in the phase and the A–B swap).
         let resource = |binding: u32, k: usize| -> Option<&wgpu::Buffer> {
             Some(match binding {
@@ -876,6 +889,8 @@ impl GpuFlow {
             groups: flow.groups().to_vec(),
             empty_obstacles: flow.empty_obstacles().to_vec(),
             steps_done: 0,
+            nu0: (1.0 / omega_plus - 0.5) / 3.0,
+            eddy_ratio: 0.0,
             exchange_cache: Some(vec![[0.0; 4]; group_count]),
             weight_forces,
             solid: match solid {
@@ -1117,11 +1132,19 @@ impl GpuFlow {
                 self.steps_done
             )));
         }
+        // The chunk's largest eddy viscosity (the CPU reports its last step's).
+        if self.nu0 > 0.0 {
+            self.eddy_ratio = f64::from(f32::from_bits(word(3))) / self.nu0;
+        }
         Ok(())
     }
 }
 
 impl Backend for GpuFlow {
+    fn eddy_viscosity_ratio(&self) -> f64 {
+        self.eddy_ratio
+    }
+
     fn name(&self) -> String {
         format!("gpu: {}, {} streaming", self.adapter, if self.aa { "in-place" } else { "two-buffer" })
     }

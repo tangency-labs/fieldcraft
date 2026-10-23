@@ -33,11 +33,23 @@
 // `solid_sub1`; a sub-step needs the whole previous one, so each is its own dispatch) with the
 // links implicit and the faces explicit, and `solid_scatter` sets each link's population at the
 // solid's mean temperature over the step, so the heat the fluid loses is what the solid gains.
+//
+// Smagorinsky's eddy viscosity (fieldcraft_lbm::turbulence) sets each cell's own relaxation rate
+// from its non-equilibrium flux, τ = ½(τ₀ + √(τ₀² + 18√2 C² |P| / ρ)): in the regularised
+// collision the rate the flux relaxes with, in the two-relaxation-time one τ⁺ (τ⁻ follows,
+// keeping Λ). It is local, so it needs no neighbour and no buffer. With heat the scalar lattice
+// needs the cell's ν_t too: the momentum collision leaves it in `moments`' w (the density there
+// is only read after `cell_moments` has rewritten it), so it costs no memory and no binding.
+// The chunk's largest ν_t goes to stats[3].
 
 override AA_MODE: bool = true;
 // The recursive regularised collision instead of the two-relaxation-time one
 // (fieldcraft_lbm::regularized).
 override REGULARIZED: bool = false;
+// Smagorinsky's eddy viscosity (its constant is in `params.smag`). An override rather than a
+// uniform test: with it off the kernels compile to what they were without the model, so their
+// results stay bit-for-bit (a branch on a uniform changed the driver's roundings of the rest).
+override SMAGORINSKY: bool = false;
 // The largest lattice speed (fieldcraft_lbm::setup::MAX_LATTICE_SPEED): the cap of a convective
 // outlet's convection speed.
 override MAX_SPEED: f32 = 0.5;
@@ -80,6 +92,8 @@ struct Params {
     // Conducting solids: cells m (x), interface links k (y), padding (z), and 1 / sub-steps (w,
     // as f32 bits).
     solid: vec4<u32>,
+    // Smagorinsky's model: C² (x; 0 without it), 1 / Pr_t (y), the two relaxation times' Λ (z).
+    smag: vec4<f32>,
 };
 
 // Each kernel's bind group holds only the bindings it reaches (native.rs reads them from this
@@ -102,7 +116,8 @@ struct Params {
 @group(0) @binding(8) var<storage, read> open_f: array<vec4<f32>>;
 // Per cell: velocity (with the half force) and density, from the moments kernel.
 @group(0) @binding(9) var<storage, read_write> moments: array<vec4<f32>>;
-// [0]: the largest squared lattice speed of the chunk (as f32 bits); [1]: a density was not positive.
+// [0]: the largest squared lattice speed of the chunk (as f32 bits); [1]: a density was not positive;
+// [2]: a temperature was not a number; [3]: the chunk's largest eddy viscosity (f32 bits).
 @group(0) @binding(10) var<storage, read_write> stats: array<atomic<u32>>;
 // Per link, the momentum it transferred to its group in the last step.
 @group(0) @binding(11) var<storage, read_write> contrib: array<vec4<f32>>;
@@ -132,6 +147,8 @@ var<workgroup> red: array<vec4<f32>, 256>;
 // The largest squared speed of a workgroup's cells (collide): one atomic per workgroup, not
 // per cell, which serialise on a single address.
 var<workgroup> speed: array<f32, 256>;
+// The largest eddy viscosity of a workgroup's cells, likewise.
+var<workgroup> eddy: array<f32, 256>;
 
 fn c_of(q: u32) -> vec3<i32> {
     switch q {
@@ -272,15 +289,71 @@ fn aa_coords(cell: u32) -> vec3<i32> {
 fn collide(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
     let cell = cell_of(lid, wg);
     speed[lid] = 0.0;
+    eddy[lid] = 0.0;
     if cell < params.n && is_fluid(cell) {
         collide_cell(cell, lid);
     }
     workgroupBarrier();
     for (var k = 128u; k > 0u; k = k >> 1u) {
-        if lid < k { speed[lid] = max(speed[lid], speed[lid + k]); }
+        if lid < k {
+            speed[lid] = max(speed[lid], speed[lid + k]);
+            eddy[lid] = max(eddy[lid], eddy[lid + k]);
+        }
         workgroupBarrier();
     }
-    if lid == 0u { atomicMax(&stats[0], bitcast<u32>(speed[0])); }
+    if lid == 0u {
+        atomicMax(&stats[0], bitcast<u32>(speed[0]));
+        if turbulent() { atomicMax(&stats[3], bitcast<u32>(eddy[0])); }
+    }
+}
+
+fn turbulent() -> bool {
+    return SMAGORINSKY;
+}
+
+// The non-equilibrium flux P = Σ c c h − δρ c_s² I − ρ u u + ½ (u F + F u): its diagonal (xx, yy,
+// zz) and off-diagonal (xy, xz, yz) parts.
+struct Flux {
+    d: vec3<f32>,
+    o: vec3<f32>,
+};
+
+fn flux(fq: ptr<function, array<f32, 19>>, drho: f32, rho: f32, u: vec3<f32>, force: vec3<f32>, forced: bool) -> Flux {
+    // (Opposite directions share c c, so by pairs.)
+    var d = vec3<f32>(0.0);
+    var o = vec3<f32>(0.0);
+    for (var q = 1u; q < Q; q = q + 2u) {
+        let c = vec3<f32>(c_of(q));
+        let v = (*fq)[q] + (*fq)[q + 1u];
+        d = d + c * c * v;
+        o = o + vec3<f32>(c.x * c.y, c.x * c.z, c.y * c.z) * v;
+    }
+    let cs2 = 1.0 / 3.0;
+    var pd = d - vec3<f32>(drho * cs2) - rho * u * u;
+    var po = o - rho * vec3<f32>(u.x * u.y, u.x * u.z, u.y * u.z);
+    if forced {
+        pd = pd + u * force;
+        po = po + 0.5 * vec3<f32>(u.x * force.y + force.x * u.y, u.x * force.z + force.x * u.z, u.y * force.z + force.y * u.z);
+    }
+    return Flux(pd, po);
+}
+
+// A cell's relaxation rate under Smagorinsky's model (fieldcraft_lbm::turbulence::omega): never
+// faster than the fluid's `omega0`, and `omega0` where the flux is not a usable number.
+fn smagorinsky_omega(p: Flux, rho: f32, omega0: f32) -> f32 {
+    let tau0 = 1.0 / omega0;
+    let pp = dot(p.d, p.d) + 2.0 * dot(p.o, p.o);
+    let tau = 0.5 * (tau0 + sqrt(tau0 * tau0 + 18.0 * 1.4142135 * params.smag.x * sqrt(pp) / rho));
+    if tau >= tau0 && tau < 1e30 { return 1.0 / tau; }
+    return omega0;
+}
+
+// The eddy viscosity of a cell relaxing at `w` (c_s² = ⅓), kept for the reply and, with heat, for
+// the scalar lattice.
+fn record_eddy(cell: u32, lid: u32, w: f32, u: vec3<f32>) {
+    let nu_t = max((1.0 / w - 1.0 / params.omega_plus) / 3.0, 0.0);
+    eddy[lid] = nu_t;
+    if has_heat() { moments[cell] = vec4<f32>(u, nu_t); }
 }
 
 fn collide_cell(cell: u32, lid: u32) {
@@ -311,7 +384,11 @@ fn collide_cell(cell: u32, lid: u32) {
     let uf = dot(u, force);
     let forced = forced();
     if REGULARIZED {
-        collide_regularized(cell, xyz, &fq, drho, rho, u, force, forced);
+        collide_regularized(cell, lid, xyz, &fq, drho, rho, u, force, forced);
+        return;
+    }
+    if turbulent() {
+        collide_trt_smagorinsky(cell, lid, xyz, &fq, drho, rho, u, force, forced);
         return;
     }
     let wp = params.omega_plus;
@@ -346,32 +423,60 @@ fn collide_cell(cell: u32, lid: u32) {
     }
 }
 
+// The two-relaxation-time collision with each cell's own rates under Smagorinsky's model: τ⁺
+// from the eddy viscosity, τ⁻ following it so that Λ stays the fluid's.
+fn collide_trt_smagorinsky(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function, array<f32, 19>>, drho: f32, rho: f32, u: vec3<f32>, force: vec3<f32>, forced: bool) {
+    let wp = smagorinsky_omega(flux(fq, drho, rho, u, force, forced), rho, params.omega_plus);
+    record_eddy(cell, lid, wp, u);
+    let wm = 1.0 / (0.5 + params.smag.z / (1.0 / wp - 0.5));
+    let sp = 1.0 - 0.5 * wp;
+    let sm = 1.0 - 0.5 * wm;
+    let uu = dot(u, u);
+    let uf = dot(u, force);
+    let eq0 = w_of(0u) * (drho - 1.5 * rho * uu);
+    var out0 = (*fq)[0] - wp * ((*fq)[0] - eq0);
+    if forced { out0 = out0 + sp * w_of(0u) * (-3.0 * uf); }
+    f[post_index(0u, cell, xyz)] = out0;
+    for (var q = 1u; q < Q; q = q + 2u) {
+        let o = q + 1u;
+        let cv = vec3<f32>(c_of(q));
+        let cu = dot(cv, u);
+        let w = w_of(q);
+        let eq_plus = w * (drho + rho * (4.5 * cu * cu - 1.5 * uu));
+        let eq_minus = w * rho * 3.0 * cu;
+        let plus = 0.5 * ((*fq)[q] + (*fq)[o]);
+        let minus = 0.5 * ((*fq)[q] - (*fq)[o]);
+        let relax_plus = wp * (plus - eq_plus);
+        let relax_minus = wm * (minus - eq_minus);
+        var s_plus = 0.0;
+        var s_minus = 0.0;
+        if forced {
+            let cf = dot(cv, force);
+            s_plus = sp * w * (9.0 * cu * cf - 3.0 * uf);
+            s_minus = sm * w * 3.0 * cf;
+        }
+        f[post_index(q, cell, xyz)] = (*fq)[q] - relax_plus - relax_minus + s_plus + s_minus;
+        f[post_index(o, cell, xyz)] = (*fq)[o] - relax_plus + relax_minus + s_plus - s_minus;
+    }
+}
+
 // The recursive regularised collision with Guo forcing (fieldcraft_lbm::regularized, whose notes
 // derive it): every population rebuilt from ρ, u, the non-equilibrium flux
 // P = Π − ρ (c_s² I + u u) + ½ (u F + F u) and the third-order moments D3Q19 holds (equilibrium
 // ρ u_a u_b u_c, non-equilibrium u_a P_bc + u_b P_ac + u_c P_ab, as the orthogonal sums and
 // differences of each pair), then f* = f^eq + (1 − ω) f^(1)[P] + ½ F_q. In deviations from the
 // weights, Π − ρ c_s² I = Σ c c h − δρ c_s² I.
-fn collide_regularized(cell: u32, xyz: vec3<i32>, fq: ptr<function, array<f32, 19>>, drho: f32, rho: f32, u: vec3<f32>, force: vec3<f32>, forced: bool) {
-    // Σ c c h: the diagonal (xx, yy, zz) and the off-diagonal (xy, xz, yz).
-    // (Opposite directions share c c, so by pairs.)
-    var d = vec3<f32>(0.0);
-    var o = vec3<f32>(0.0);
-    for (var q = 1u; q < Q; q = q + 2u) {
-        let c = vec3<f32>(c_of(q));
-        let v = (*fq)[q] + (*fq)[q + 1u];
-        d = d + c * c * v;
-        o = o + vec3<f32>(c.x * c.y, c.x * c.z, c.y * c.z) * v;
-    }
-    let cs2 = 1.0 / 3.0;
-    var pd = d - vec3<f32>(drho * cs2) - rho * u * u;
-    var po = o - rho * vec3<f32>(u.x * u.y, u.x * u.z, u.y * u.z);
-    if forced {
-        pd = pd + u * force;
-        po = po + 0.5 * vec3<f32>(u.x * force.y + force.x * u.y, u.x * force.z + force.x * u.z, u.y * force.z + force.y * u.z);
-    }
+fn collide_regularized(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function, array<f32, 19>>, drho: f32, rho: f32, u: vec3<f32>, force: vec3<f32>, forced: bool) {
+    let p = flux(fq, drho, rho, u, force, forced);
+    let pd = p.d;
+    let po = p.o;
     let trace = pd.x + pd.y + pd.z;
-    let relax = 1.0 - params.omega_plus;
+    var omega = params.omega_plus;
+    if turbulent() {
+        omega = smagorinsky_omega(p, rho, omega);
+        record_eddy(cell, lid, omega, u);
+    }
+    let relax = 1.0 - omega;
     // Third-order coefficients (equilibrium plus (1 − ω) times the recursive part).
     let xyy = rho * u.x * u.y * u.y + relax * (2.0 * u.y * po.x + u.x * pd.y);
     let xzz = rho * u.x * u.z * u.z + relax * (2.0 * u.z * po.y + u.x * pd.z);
@@ -756,8 +861,21 @@ fn collide_thermal(@builtin(local_invocation_index) lid: u32, @builtin(workgroup
         theta = theta + v;
     }
     let u = moments[cell].xyz;
-    let wm = params.therm.x;
-    let wp = params.therm.w;
+    var wm = params.therm.x;
+    var wp = params.therm.w;
+    // With Smagorinsky's model the turbulent diffusivity ν_t / Pr_t raises τ_T by 4 ν_t / Pr_t
+    // (fieldcraft_lbm::flow::collide_thermal): a single rate stays single, two keep their Λ.
+    let nu_t = moments[cell].w;
+    if turbulent() && nu_t > 0.0 && params.smag.y > 0.0 {
+        let tau = 1.0 / wm + 4.0 * nu_t * params.smag.y;
+        if abs(wp - wm) <= 1.1920929e-7 * abs(wm) {
+            wp = 1.0 / tau;
+        } else {
+            let magic = (1.0 / wp - 0.5) * (1.0 / wm - 0.5);
+            wp = 1.0 / (0.5 + magic / (tau - 0.5));
+        }
+        wm = 1.0 / tau;
+    }
     t[cell] = tq[0] - wp * (tq[0] - eq_t(0u, theta, u));
     // the pairs (1, 2), (3, 4), (5, 6)
     for (var q = 1u; q < QT; q = q + 2u) {

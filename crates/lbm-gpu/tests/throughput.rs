@@ -198,3 +198,66 @@ fn fixed_cost_per_solve() {
         );
     }
 }
+
+/// What Smagorinsky's model costs on the GPU (#665): a periodic 128³ box stirred by a body force,
+/// both collisions, with the model off and on, without and with heat, streaming as `Auto` picks;
+/// the best of three runs of 1000 steps.
+#[test]
+#[ignore]
+fn smagorinsky_cost() {
+    let l = 128usize;
+    for collision in COLLISIONS {
+        for heat in [false, true] {
+            let mut rates = Vec::new();
+            for turbulence in [None, Some(fieldcraft_model::Turbulence::Smagorinsky { constant: 0.17, prandtl: 0.9 })] {
+                let side = l as f64;
+                let mut d = domain([0.0; 3], [side; 3], 1.0);
+                for f in BoxFace::ALL {
+                    *d.faces.get_mut(f) = FaceCondition::Periodic {};
+                }
+                d.acceleration = [1e-6, 0.0, 0.0];
+                let steps = 1000;
+                let p = fieldcraft_model::Procedure::Fluid {
+                    domain: "Flow".into(),
+                    end_time: None,
+                    steps: Some(steps),
+                    time_step: Some(1.0),
+                    frames: 1,
+                    magic: None,
+                    collision: Some(collision),
+                    turbulence,
+                    steady: None,
+                };
+                let m = if heat {
+                    d.thermal = Some(fieldcraft_model::FluidThermal { initial_temperature: kelvin(20.0), ..Default::default() });
+                    hot_model(1.0, 1.0 / 6.0, 1.0 / 6.0, d, p)
+                } else {
+                    model(1.0, 1.0 / 6.0, d, p)
+                };
+                let (_, flow) = prepare(&m, &[]);
+                let Ok(mut gpu) = GpuFlow::new(&flow, Policy::from_env().expect("FIELDCRAFT_GPU names a policy")) else {
+                    println!("skipping: no GPU");
+                    return;
+                };
+                gpu.advance(1).unwrap();
+                // The best of three runs: a laptop's clocks wander.
+                let mut rate: f64 = 0.0;
+                for _ in 0..3 {
+                    let start = std::time::Instant::now();
+                    gpu.advance(steps).unwrap();
+                    let _ = gpu.mass().unwrap();
+                    rate = rate.max((gpu.fluid_cells() as f64 * steps as f64) / start.elapsed().as_secs_f64() / 1e6);
+                }
+                println!(
+                    "{l}³ {collision:?}, heat {}, model {}: {rate:.1} M cell updates/s on {} ({})",
+                    if heat { "on" } else { "off" },
+                    if turbulence.is_some() { "on" } else { "off" },
+                    gpu.adapter_name(),
+                    if gpu.streams_in_place() { "in place" } else { "two buffers" }
+                );
+                rates.push(rate);
+            }
+            println!("  the model costs {:+.1}%", 100.0 * (rates[0] / rates[1] - 1.0));
+        }
+    }
+}
