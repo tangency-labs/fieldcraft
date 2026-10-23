@@ -232,3 +232,68 @@ fn monitors_the_flow_cannot_measure_are_refused() {
     assert!((last.values[1][0] / expected - 1.0).abs() < 1e-2, "{last:?}");
     assert!((last.values[1][0] + last.values[2][0]).abs() < 1e-12, "{last:?}");
 }
+
+/// Vortex shedding behind a cylinder: Schäfer–Turek's 2D-2 channel at Re = 100 (as in
+/// `benchmark.rs`) with 10 cells across the cylinder, cut 7.5 diameters behind it with a
+/// convective outlet (`outlets.rs`: the uniform one diverges once the vortices reach it), run for
+/// `end_time` with the cylinder's force monitored, averaging from `start` when given.
+fn shedding(end_time: f64, tolerance: f64, start: Option<f64>) -> FluidResult {
+    let (h, l, d, um, nu, cells) = (0.41, 1.0, 0.1, 1.5, 1e-3, 10.0);
+    let dx = d / cells;
+    let mut dom = domain([0.0; 3], [l, h, dx], dx);
+    dom.faces.x_min = FaceCondition::Velocity { velocity: [um, 0.0, 0.0], profile: fieldcraft_model::Profile::Parabolic };
+    dom.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: fieldcraft_model::Outflow::Convective };
+    dom.faces.z_min = PERIODIC;
+    dom.faces.z_max = PERIODIC;
+    dom.initial_velocity = [2.0 / 3.0 * um, 0.0, 0.0];
+    dom.obstacles = vec!["Cylinder".into()];
+    let cyl = obstacle("Cylinder", cylinder([0.2, 0.2], d / 2.0, -0.1, 0.1, 1024), &["side", "bottom", "top"]);
+    let side = FluidBoundary::Surface(fieldcraft_model::GeometryRef::face("Cylinder", "side").unwrap());
+    let mut r = rule(tolerance);
+    r.monitors = vec![FlowMonitor::Force { faces: vec![side] }];
+    r.window = Some(1.0);
+    r.averaging = start.map(|start| fieldcraft_model::Averaging { start });
+    let mut p = fluid(end_time, 0.05 * dx / um, Some(r));
+    if let Procedure::Fluid { frames, .. } = &mut p {
+        *frames = 1;
+    }
+    solve_fluid(&model(1.0, nu, dom, p), None, std::slice::from_ref(&cyl), &Limits::default()).unwrap()
+}
+
+/// #664 on a physically fluctuating flow: periodic vortex shedding never stops changing (the
+/// lift swings through zero every period), so the rule on the instantaneous force runs to the
+/// end, while the rule on the running mean, after the start-up is discarded, stops as steady with
+/// the long run's mean drag within its tolerance, and reports the lift's fluctuation.
+#[test]
+#[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+fn vortex_shedding_stops_on_its_running_mean_with_the_long_run_s_mean_drag() {
+    let (tolerance, start, end) = (1e-2, 4.0, 16.0);
+    // The long run: the rule without averaging never fires.
+    let long = shedding(end, tolerance, None);
+    let report = long.steady.as_ref().unwrap();
+    assert_eq!(report.reason, StopReason::MaxTime, "{:?}", report.message);
+    let force = &long.forces.iter().find(|f| f.name == "side").unwrap().force;
+    let after: Vec<&[f64; 3]> = long.history_times.iter().zip(force).filter(|(t, _)| **t >= start).map(|(_, f)| f).collect();
+    let mean = |a: usize| after.iter().map(|f| f[a]).sum::<f64>() / after.len() as f64;
+    let (drag, lift) = (mean(0), mean(1));
+    let lift_rms = (after.iter().map(|f| (f[1] - lift).powi(2)).sum::<f64>() / after.len() as f64).sqrt();
+    // It sheds: the lift swings by a sizeable fraction of the drag.
+    assert!(lift_rms > 0.1 * drag, "lift rms {lift_rms:.3e} of drag {drag:.3e}");
+
+    let run = shedding(end, tolerance, Some(start));
+    let report = run.steady.as_ref().unwrap();
+    let time = run.stats.end_time;
+    assert_eq!(report.reason, StopReason::Steady, "{:?}", report.message);
+    assert!(time > start + 2.0 && time < end - 1.0, "stopped at {time}");
+    let a = report.averages.get(1).expect("the force's statistics");
+    assert_eq!(a.from, start);
+    let (mean_drag, rms_lift) = (a.mean[0], a.rms[1]);
+    println!(
+        "shedding, tolerance {tolerance}: stopped at t = {time:.2} of {end}; mean drag {mean_drag:.5e} vs the long run's {drag:.5e} ({:+.2e}), lift rms {rms_lift:.3e} vs {lift_rms:.3e}",
+        mean_drag / drag - 1.0
+    );
+    assert!((mean_drag / drag - 1.0).abs() < tolerance, "mean drag {mean_drag} vs the long run's {drag}");
+    // The fluctuation the mean hides, as the long run has it.
+    assert!((rms_lift / lift_rms - 1.0).abs() < 0.1, "lift rms {rms_lift} vs {lift_rms}");
+    assert!(a.min[1] < 0.0 && a.max[1] > 0.0, "the lift swings through zero: {a:?}");
+}

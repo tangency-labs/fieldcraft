@@ -142,3 +142,19 @@ What it does not establish yet:
 - **One realisation per grid.** The means carry the sampling scatter of a single 15 δ/u_τ
   average (about 1 % at 12 cells per δ, from the two platforms above); no confidence interval is
   stated.
+
+### What #664's acceptance still lacks
+
+- **Developing pipe flow against Shah & London (1978)**: not built.
+- **The graphics-card cooling case (#642) to statistically steady state**: not run.
+- **The stop rule on a turbulent flow.** It is shown on a physically fluctuating laminar one:
+  vortex shedding behind the Schäfer–Turek cylinder at Re 100
+  (`vortex_shedding_stops_on_its_running_mean_with_the_long_run_s_mean_drag` in
+  `crates/lbm/tests/steady.rs`, heavy job). The rule on the instantaneous force runs all 16 s;
+  on the running mean from 4 s it stops at 9 s with the mean drag 0.24 % from the long run's
+  (tolerance 1 %) and the lift's RMS 0.8 % from it. A turbulent case (the channel, or #642's
+  card) stopping on its running mean is not run.
+
+Done for #664: the averaged statistics in the solve reply (`stop.averages`), the stop rule above,
+model-off results unchanged, and Poiseuille and Taylor–Green converging like Δ² with the model on
+(`crates/lbm/tests/turbulence.rs`).
