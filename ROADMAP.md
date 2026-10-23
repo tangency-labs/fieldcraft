@@ -1,5 +1,16 @@
 # Roadmap
 
+## 0.7.5 electronics cooling: in progress
+
+The release acceptance is tracked in [#697](https://github.com/tangency-labs/Fieldcraft/issues/697).
+The [two-fluid exchanger contract](docs/solvers/heat-exchanger.md) specifies the minimum coupled
+case and its reference checks (#700); the existing AIO sample is air-side only. Open-face
+[transport diagnostics](docs/port-transport.md) now report directional flow, mixed temperature,
+static pressure and sensible heat in the Results panel and command replies, from saved frames
+and solve-time properties. These supply part of the exchanger's reporting; shared-wall two-fluid
+coupling, a complete energy budget and release validation remain open. Each feature PR includes
+an in-app demonstration video (#701).
+
 FieldCraft's goal is CAE modeling on par with Abaqus/CAE, Nastran pre-processors and LS-PrePost,
 with hexahedral meshing as the centre of gravity, plus its own linear solver. Abaqus/CAE is the
 reference for scope (its documentation is excellent and its solver strong); its application is

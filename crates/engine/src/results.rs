@@ -733,6 +733,9 @@ impl Session {
             }
             Kind::Fluid(f) => {
                 out["frames"] = f.frames.iter().map(|f| time(f.time)).collect();
+                if let Ok(frame) = crate::flow::frame_index(f, v.pick()) {
+                    out["ports"] = fluid_ports(f, frame, display);
+                }
                 if let Value::Object(flow) = crate::flow::report(v, f, display) {
                     for (k, x) in flow {
                         out[k.as_str()] = x;
@@ -789,6 +792,55 @@ impl Session {
     pub fn result_steps(&self) -> impl Iterator<Item = (&str, bool)> {
         self.results.iter().map(|(name, (revision, _))| (name.as_str(), *revision == self.revision))
     }
+}
+
+/// Open-face transport, already converted to display units. Both the solve reply and current
+/// results view use this, so a reopened result and a selected earlier frame report the same
+/// values. No complete energy-balance verdict is inferred from advective transport alone.
+pub fn fluid_ports(r: &FluidResult, frame: usize, display: &DisplaySystem) -> Value {
+    let ports = match r.ports(frame) {
+        Ok(ports) => ports,
+        Err(e) => return json!({"error": e.to_string()}),
+    };
+    let value = |q, v| shown(q, v, display);
+    let stream = |s: &fieldcraft_lbm::Stream| {
+        json!({
+            "volume_flow": value(Quantity::VolumeFlow, s.volume_flow),
+            "mass_flow": s.mass_flow.map(|v| value(Quantity::MassFlow, v)),
+            "temperature": s.temperature.map(|v| value(Quantity::Temperature, v)),
+            "pressure": s.pressure.map(|v| value(Quantity::Pressure, v)),
+            "sensible_heat": s.sensible_heat.map(|v| value(Quantity::Power, v)),
+        })
+    };
+    let faces: Vec<Value> = ports
+        .iter()
+        .map(|p| {
+            json!({
+                "face": p.face.name(), "area": value(Quantity::Area, p.area),
+                "inflow": stream(&p.inflow), "outflow": stream(&p.outflow),
+            })
+        })
+        .collect();
+    let net_volume: f64 = ports.iter().map(|p| p.outflow.volume_flow - p.inflow.volume_flow).sum();
+    let net_mass = r.port_properties.map(|p| p.density * net_volume);
+    let net_heat = ports.iter().try_fold(0.0, |sum, p| Some(sum + p.outflow.sensible_heat? - p.inflow.sensible_heat?));
+    let units: serde_json::Map<String, Value> =
+        [Quantity::Area, Quantity::VolumeFlow, Quantity::MassFlow, Quantity::Temperature, Quantity::Pressure, Quantity::Power]
+            .into_iter()
+            .map(|q| (q.name().into(), json!(unit_of(q, display))))
+            .collect();
+    json!({
+        "faces": faces,
+        "net_volume_flow": value(Quantity::VolumeFlow, net_volume),
+        "net_mass_flow": net_mass.map(|v| value(Quantity::MassFlow, v)),
+        "net_sensible_heat": if ports.is_empty() { None } else { net_heat.map(|v| value(Quantity::Power, v)) },
+        "positive": "outward",
+        "units": units,
+        "temperature_reference": value(Quantity::Temperature, r.temperature_reference),
+        "mass_convention": "reference density (incompressible)",
+        "heat_convention": "advective sensible heat relative to temperature_reference; excludes port conduction, storage, wall heat and sources",
+        "source": "saved boundary-layer cell fields; separate inflow and outflow, flow-weighted temperature and static gauge pressure",
+    })
 }
 
 /// The heat balance of a heat transfer result: each heat load's flow into the body (`loads`:

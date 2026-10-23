@@ -1314,6 +1314,53 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
+    /// Port metadata survives save/open and a material edit cannot change a saved run's mass
+    /// flow. Legacy kind-4 fixtures are still exercised by results_of_this_encoding_read_back.
+    #[test]
+    fn port_transport_reopens_with_its_solve_time_properties_and_display_units() {
+        let d = dir("port-transport");
+        let path = d.join("ports.fieldcraft");
+        let mut s = Session::default();
+        crate::cmd::solve::tests::heated_couette(&mut s);
+        let mut flow = crate::flow::tests::channel();
+        flow.step = "Shear".into();
+        flow.open_faces[0] = true;
+        flow.open_faces[1] = true;
+        flow.port_properties = Some(fieldcraft_lbm::PortProperties { density: 2.0, specific_heat: Some(5.0) });
+        flow.temperature_reference = 273.15;
+        for frame in &mut flow.frames {
+            frame.temperature = vec![25.0; frame.velocity.len()];
+        }
+        s.store_result(crate::StepResult::Fluid(flow));
+        let params = json!({"step": "Shear", "frame": 1});
+        let before = s.execute("results.frame", &params).unwrap()["ports"].clone();
+        assert_eq!(before["units"]["temperature"], "°C");
+        assert_eq!(before["faces"][1]["outflow"]["temperature"], 25.0);
+        assert!(before["faces"][1]["outflow"]["mass_flow"].as_f64().unwrap() > 0.0);
+        s.execute("file.save_as", &json!({"path": path})).unwrap();
+        let mut reopened = Session::default();
+        reopened.execute("file.open", &json!({"path": path})).unwrap();
+        assert_eq!(reopened.execute("results.frame", &params).unwrap()["ports"], before);
+        assert_eq!(bits(&reopened, "Shear"), bits(&s, "Shear"));
+        reopened
+            .execute(
+                "model.material.edit",
+                &json!({"name": "Oil", "density": 100.0,
+            "fluid": {"type": "newtonian", "viscosity": 0.1}, "thermal": {"conductivity": 0.1, "specific_heat": 1.0}}),
+            )
+            .unwrap();
+        let stale = reopened.execute("results.frame", &params).unwrap();
+        assert_eq!(stale["stale"], true);
+        assert_eq!(stale["ports"], before);
+        reopened.execute("model.units", &json!({"system": "m-kg-s-N-Pa"})).unwrap();
+        let si = reopened.execute("results.frame", &params).unwrap();
+        assert_eq!(si["ports"]["units"]["temperature"], "K");
+        assert_eq!(si["ports"]["faces"][1]["outflow"]["temperature"], 298.15);
+        let early = reopened.execute("results.frame", &json!({"step": "Shear", "frame": 0})).unwrap();
+        assert_ne!(early["ports"], si["ports"]);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     /// The results fixtures: files whose results.bin this version's encoding wrote, one per kind
     /// of result (crates/engine/tests/results/).
     fn results_fixtures() -> std::path::PathBuf {

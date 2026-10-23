@@ -396,6 +396,7 @@ pub fn controls(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) 
         ui.label(RichText::new(format!("t = {}", with_unit(number(at), unit_of(Quantity::Time, &plot.units).as_deref()))).color(t.text_dim));
         if let Kind::Fluid(f) = plot.result.kind() {
             component_limits(ui, f, &plot.units, t);
+            port_transport(ui, f, plot.pick, &plot.units, t);
         }
     } else if let Some((k, factor, n)) = plot.frame().filter(|_| matches!(plot.result.kind(), Kind::Static(_))) {
         // A nonlinear static step: its increments, the deformed shape following the slider.
@@ -993,6 +994,47 @@ fn heat_flows(ui: &mut egui::Ui, flows: &Value, units: &fieldcraft_model::Displa
 
 /// The conducting solids in the order the limits list shows them: those over their limit
 /// first, then those under it, each from the smallest margin up, then those without a limit.
+fn port_transport(ui: &mut egui::Ui, f: &FluidResult, pick: fieldcraft_engine::results::Pick, units: &fieldcraft_model::DisplaySystem, t: &Tokens) {
+    let Ok(frame) = fieldcraft_engine::flow::frame_index(f, pick) else { return };
+    if !f.open_faces.contains(&true) {
+        return;
+    }
+    ui.collapsing("Inlets and outlets", |ui| {
+        let report = fieldcraft_engine::results::fluid_ports(f, frame, units);
+        let Some(faces) = report["faces"].as_array() else {
+            ui.label(RichText::new(report["error"].as_str().unwrap_or("Port fields unavailable")).color(t.error));
+            return;
+        };
+        ui.label(RichText::new("From the displayed frame").small().color(t.text_dim));
+        let format = |v: &Value, quantity: &str| {
+            v.as_f64().map(|v| with_unit(number(v), report["units"][quantity].as_str())).unwrap_or_else(|| "—".into())
+        };
+        for face in faces {
+            ui.label(RichText::new(face["face"].as_str().unwrap_or("?")).strong());
+            egui::Grid::new(("fc_port", face["face"].as_str().unwrap_or("?"))).num_columns(3).spacing(vec2(8.0, 2.0)).show(ui, |ui| {
+                ui.label(""); ui.label("In"); ui.label("Out"); ui.end_row();
+                for (label, key, quantity) in [
+                    ("Volume flow", "volume_flow", "volume_flow"),
+                    ("Mass flow", "mass_flow", "mass_flow"),
+                    ("Mixed temperature", "temperature", "temperature"),
+                    ("Static pressure", "pressure", "pressure"),
+                    ("Sensible heat", "sensible_heat", "power"),
+                ] {
+                    ui.label(titled(label, report["units"][quantity].as_str()));
+                    let amount = |v: &Value| v.as_f64().map(number).unwrap_or_else(|| "—".into());
+                    ui.label(amount(&face["inflow"][key]));
+                    ui.label(amount(&face["outflow"][key]));
+                    ui.end_row();
+                }
+            });
+        }
+        ui.label(format!("Net mass out: {}", format(&report["net_mass_flow"], "mass_flow")));
+        ui.label(format!("Net heat out: {}", format(&report["net_sensible_heat"], "power")));
+        ui.label(RichText::new("Mass uses reference density. Heat is advective transport, relative to the reference below; wall heat, conduction and storage are separate.").small().color(t.text_dim));
+        ui.label(format!("Reference: {}", format(&report["temperature_reference"], "temperature")));
+    });
+}
+
 fn by_margin(checks: &[ComponentCheck]) -> Vec<&ComponentCheck> {
     let mut rows: Vec<_> = checks.iter().collect();
     rows.sort_by(|a, b| {

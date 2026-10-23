@@ -136,6 +136,10 @@ pub struct FluidStats {
 /// The result of a fluid step.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct FluidResult {
+    /// Material properties when solved, for open-face transport. Absent in older packages.
+    // Kept by the versioned fluid-results envelope, not the original kind-4 encoding.
+    #[serde(skip)]
+    pub port_properties: Option<crate::PortProperties>,
     pub step: String,
     pub grid: Grid,
     /// Per cell: not fluid (inside an obstacle).
@@ -432,6 +436,10 @@ pub fn run(setup: &Setup, flow: &mut dyn Backend, limits: &Limits) -> Result<Flu
         })
         .collect();
     Ok(FluidResult {
+        port_properties: Some(crate::PortProperties {
+            density: setup.density,
+            specific_heat: setup.thermal.as_ref().map(|t| t.heat_scale * setup.time_step / (setup.density * setup.grid.spacing.powi(3))),
+        }),
         step: setup.step.clone(),
         grid: setup.grid,
         solid,

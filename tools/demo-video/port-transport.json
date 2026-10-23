@@ -1,0 +1,12 @@
+[
+  {"command":"file.sample","params":{"name":"heated-flow"}},
+  {"command":"geometry.open","params":{"path":"port-transport-bracket.solidcraft","model":"keep"}},
+  {"command":"model.units","params":{"system":"mm-t-s-N-MPa","overrides":{"mass_flow":"mg/s","pressure":"Pa"}}},
+  {"command":"model.step.edit","params":{"name":"HeatedFlow","procedure":{"type":"fluid","domain":"WarmAir","time_step":0.025,"end_time":45,"frames":12}}},
+  {"command":"solve.fluid","params":{"backend":"cpu","threads":4}},
+  {"command":"results.slice","params":{"field":"temperature","axis":"y"}},
+  {"command":"results.contour","params":{"field":"temperature","range":{"min":20,"max":80}}},
+  {"command":"results.surface","params":{"show":true}},
+  {"command":"results.streamlines","params":{"show":true}},
+  {"command":"results.frame","params":{"frame":12}}
+]

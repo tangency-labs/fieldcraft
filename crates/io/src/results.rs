@@ -9,7 +9,8 @@
 //! u32 steps
 //! steps × { u64 length, step name (UTF-8),
 //!           32 bytes: SHA-256 of the definition it was solved from ([`definition_hash`]),
-//!           u8 kind (0 static, 1 frequency, 2 heat transfer, 3 explicit dynamic, 4 fluid),
+//!           u8 kind (0 static, 1 frequency, 2 heat transfer, 3 explicit dynamic,
+//!                    4 legacy fluid, 5 fluid with port properties),
 //!           u64 length, the result in the [`crate::codec`] encoding }   names ascending
 //! ```
 //!
@@ -25,6 +26,8 @@
 //! encoding's version changes with any change to them ([`MAGIC`]). A file whose results are of
 //! another version opens without them ([`Decoded::OtherVersion`]): results are what solving
 //! gives again, unlike the definition.
+//! Kind 5 adds an envelope around the unchanged kind-4 fluid payload. New kinds do not alter
+//! existing payloads; older readers refuse an unknown kind and keep the model definition.
 //!
 //! Reading treats the part as hostile, as `mesh.bin`: the number of steps is capped, every length
 //! is checked against the bytes present before anything is read for it, nothing may be left
@@ -70,6 +73,20 @@ pub enum SolvedRef<'a> {
     Fluid(&'a FluidResult),
 }
 
+// Keep the original kind-4 field order intact. Kind 5 adds immutable solve-time properties
+// outside that payload, so old packages still open and stale results never use edited materials.
+#[derive(serde::Serialize)]
+struct FluidPortsRef<'a> {
+    flow: &'a FluidResult,
+    properties: Option<fieldcraft_lbm::PortProperties>,
+}
+
+#[derive(serde::Deserialize)]
+struct FluidPorts {
+    flow: FluidResult,
+    properties: Option<fieldcraft_lbm::PortProperties>,
+}
+
 impl Solved {
     pub fn as_ref(&self) -> SolvedRef<'_> {
         match self {
@@ -100,7 +117,7 @@ impl<'a> SolvedRef<'a> {
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Frequency(_)) => 1,
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Heat(_)) => 2,
             SolvedRef::Explicit(_) => 3,
-            SolvedRef::Fluid(_) => 4,
+            SolvedRef::Fluid(_) => 5,
         }
     }
 
@@ -110,7 +127,7 @@ impl<'a> SolvedRef<'a> {
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Frequency(r)) => codec::encode_into(r, out),
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Heat(r)) => codec::encode_into(r, out),
             SolvedRef::Explicit(r) => codec::encode_into(r, out),
-            SolvedRef::Fluid(r) => codec::encode_into(r, out),
+            SolvedRef::Fluid(r) => codec::encode_into(&FluidPortsRef { flow: r, properties: r.port_properties }, out),
         }
     }
 }
@@ -265,6 +282,11 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded> {
             2 => Solved::Implicit(fieldcraft_solver::StepResult::Heat(codec::decode(payload).map_err(damaged)?)),
             3 => Solved::Explicit(codec::decode(payload).map_err(damaged)?),
             4 => Solved::Fluid(codec::decode(payload).map_err(damaged)?),
+            5 => {
+                let mut stored: FluidPorts = codec::decode(payload).map_err(damaged)?;
+                stored.flow.port_properties = stored.properties;
+                Solved::Fluid(stored.flow)
+            }
             k => return invalid(format!("{PART}: step `{name}` has a result of unknown kind {k}")),
         };
         if result.step() != name {
@@ -391,6 +413,11 @@ pub fn check(r: &Solved) -> std::result::Result<(), String> {
 }
 
 fn check_fluid(f: &FluidResult) -> std::result::Result<(), String> {
+    if f.port_properties
+        .is_some_and(|p| !(p.density > 0.0 && p.density.is_finite()) || p.specific_heat.is_some_and(|cp| !(cp > 0.0 && cp.is_finite())))
+    {
+        return Err("its port properties need a finite positive density and specific heat".into());
+    }
     let g = &f.grid;
     if !(g.spacing.is_finite() && g.spacing > 0.0) || g.origin.iter().any(|x| !x.is_finite()) {
         return Err("its grid has no finite origin and positive spacing".into());

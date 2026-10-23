@@ -614,6 +614,7 @@ pub(crate) mod tests {
             tau_thermal: None,
         };
         FluidResult {
+            port_properties: None,
             step: "Flow".into(),
             grid,
             solid,

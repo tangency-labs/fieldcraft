@@ -1,5 +1,10 @@
 # Demo video
 
+The inlet/outlet feature clip for 0.7.5 is documented in
+[docs/port-transport-video.md](../../docs/port-transport-video.md). Its original geometry and
+normal engine commands are `port-transport-bracket.json` and `port-transport.json`; the clip
+records the complete app window, including the new Results table and save/reopen.
+
 `make.py` regenerates the README's demo, `docs/media/ibeam-analysis.mp4` and
 `docs/media/ibeam-analysis.gif`: an agent analyses an I-beam cantilever over MCP while the
 FieldCraft desktop app shows each step.

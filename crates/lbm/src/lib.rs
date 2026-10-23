@@ -61,6 +61,7 @@ pub mod flow;
 pub mod lattice;
 pub mod memory;
 pub mod outlet;
+pub mod ports;
 pub mod regularized;
 pub mod setup;
 pub mod solve;
@@ -70,6 +71,7 @@ pub mod voxel;
 pub use backend::{Backend, Choice, Fields, device_available, register_backend};
 pub use flow::{Flow, Group, Link, OpenCell, Rule, Target, ThermalState, ZoneSample};
 pub use memory::{DeviceBuffer, Memory};
+pub use ports::{Port, PortProperties, Stream};
 pub use setup::{ContactSetup, SolidSetup, ThermalSetup};
 pub use setup::{Obstacle, Setup, ZoneKind, ZoneSetup, fluid_step};
 pub use solve::{

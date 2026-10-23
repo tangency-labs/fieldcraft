@@ -1,0 +1,357 @@
+{
+  "backend": "cpu",
+  "backend_choice": {
+    "backend": "cpu",
+    "by": "parameter",
+    "notice": null
+  },
+  "cells": 5824,
+  "collision": "trt",
+  "components_ok": null,
+  "end_time": 45.0,
+  "final_max_speed": 0.002281506323584318,
+  "fluid_cells": 5504,
+  "forces": [
+    {
+      "body": null,
+      "final": [
+        2.8200732193578507e-08,
+        -0.00014390630189359138,
+        1.7335777796018783e-06
+      ],
+      "mean": [
+        2.847308108600827e-08,
+        -0.00014388243148579817,
+        1.7332817379024303e-06
+      ],
+      "name": "y_min"
+    },
+    {
+      "body": null,
+      "final": [
+        2.820073219357621e-08,
+        0.0001439063018935914,
+        1.733577779601878e-06
+      ],
+      "mean": [
+        2.847308108600835e-08,
+        0.0001438824314857982,
+        1.73328173790243e-06
+      ],
+      "name": "y_max"
+    },
+    {
+      "body": null,
+      "final": [
+        1.6814982066284457e-08,
+        -2.4147350785597154e-22,
+        -0.00012804755608966013
+      ],
+      "mean": [
+        1.6885253327787533e-08,
+        -3.441691376337988e-24,
+        -0.0001280267210936613
+      ],
+      "name": "z_min"
+    },
+    {
+      "body": null,
+      "final": [
+        4.1704636554134054e-08,
+        0.0,
+        0.00016298395290707655
+      ],
+      "mean": [
+        4.165224647893871e-08,
+        0.0,
+        0.00016295651210960758
+      ],
+      "name": "z_max"
+    },
+    {
+      "body": "Bracket",
+      "final": [
+        -1.308003994335949e-07,
+        1.4803880173685511e-05,
+        -7.995914018562108e-07
+      ],
+      "mean": [
+        -1.3077389627109297e-07,
+        1.480068256724811e-05,
+        -7.994373693846627e-07
+      ],
+      "name": "F2:start"
+    },
+    {
+      "body": "Bracket",
+      "final": [
+        3.103402407424129e-05,
+        -4.0044672260837854e-07,
+        -4.6450477650132865e-07
+      ],
+      "mean": [
+        3.102516579565883e-05,
+        -4.0033632695508964e-07,
+        -4.643638001310449e-07
+      ],
+      "name": "F2:side:l6"
+    },
+    {
+      "body": "Bracket",
+      "final": [
+        -4.6501610399856065e-07,
+        -6.665162963662383e-08,
+        -5.7340424979149844e-06
+      ],
+      "mean": [
+        -4.648951502029847e-07,
+        -6.663394009138986e-08,
+        -5.732581051620617e-06
+      ],
+      "name": "F2:side:l5"
+    },
+    {
+      "body": "Bracket",
+      "final": [
+        -2.193355990617644e-05,
+        -4.664298152830683e-07,
+        3.448506545520702e-10
+      ],
+      "mean": [
+        -2.192807322177296e-05,
+        -4.663099141201324e-07,
+        3.2578457338506163e-10
+      ],
+      "name": "F2:side:l4"
+    },
+    {
+      "body": "Bracket",
+      "final": [
+        -5.321673399832063e-07,
+        -6.00131317780339e-07,
+        -2.873698305118077e-05
+      ],
+      "mean": [
+        -5.320066426560267e-07,
+        -6.000318333276001e-07,
+        -2.873222183876163e-05
+      ],
+      "name": "F2:side:l3"
+    },
+    {
+      "body": "Bracket",
+      "final": [
+        -5.3343265249622845e-06,
+        -1.9984014443252817e-22,
+        1.1235689369243351e-11
+      ],
+      "mean": [
+        -5.332891388048184e-06,
+        -7.031412489292656e-25,
+        5.632307240684972e-12
+      ],
+      "name": "F2:side:l2"
+    },
+    {
+      "body": "Bracket",
+      "final": [
+        1.8374335505052157e-09,
+        -1.3203565948067694e-05,
+        -1.3280845443924822e-07
+      ],
+      "mean": [
+        1.8364692875911894e-09,
+        -1.3200733774360257e-05,
+        -1.3277159596567305e-07
+      ],
+      "name": "F2:top"
+    },
+    {
+      "body": "Bracket",
+      "final": [
+        -2.600381765053609e-06,
+        -6.665474030940939e-08,
+        -2.5336440512997285e-06
+      ],
+      "mean": [
+        -2.5996904657674715e-06,
+        -6.663677839364099e-08,
+        -2.5330748813774372e-06
+      ],
+      "name": "F3:blend:F2:side:l3|F2:side:l4"
+    }
+  ],
+  "frames": [
+    0.0,
+    3.75,
+    7.5,
+    11.25,
+    15.0,
+    18.75,
+    22.5,
+    26.25,
+    30.0,
+    33.75,
+    37.5,
+    41.25,
+    45.0
+  ],
+  "heat": [
+    {
+      "body": "Bracket",
+      "final": -67.881855607941,
+      "mean": -69.96283130396142,
+      "name": "F2:start"
+    },
+    {
+      "body": "Bracket",
+      "final": -197.35447992488244,
+      "mean": -197.97017140859532,
+      "name": "F2:side:l6"
+    },
+    {
+      "body": "Bracket",
+      "final": -51.45318091012975,
+      "mean": -51.981596268009085,
+      "name": "F2:side:l5"
+    },
+    {
+      "body": "Bracket",
+      "final": -50.97108182146633,
+      "mean": -53.619343129770016,
+      "name": "F2:side:l4"
+    },
+    {
+      "body": "Bracket",
+      "final": -48.21821850176179,
+      "mean": -54.04899809031086,
+      "name": "F2:side:l3"
+    },
+    {
+      "body": "Bracket",
+      "final": -21.75596716536497,
+      "mean": -25.104111264976574,
+      "name": "F2:side:l2"
+    },
+    {
+      "body": "Bracket",
+      "final": -67.88185560794253,
+      "mean": -69.96283130396141,
+      "name": "F2:top"
+    },
+    {
+      "body": "Bracket",
+      "final": -2.6935162517209443,
+      "mean": -2.9447721739760344,
+      "name": "F3:blend:F2:side:l3|F2:side:l4"
+    }
+  ],
+  "lattice_velocity": 0.005,
+  "mach": 0.008660254037844387,
+  "magic": 0.1875,
+  "mass": {
+    "first": 8.25600000001069e-07,
+    "last": 8.258421696022886e-07,
+    "relative_change": 0.0002933255828721805
+  },
+  "max_speed": 2.4566765455501556,
+  "max_speed_time": 7.5,
+  "memory": {
+    "backend": "cpu",
+    "bound_bytes": 33884680192,
+    "ceilings": {
+      "max_cell_updates": 2016945240000000,
+      "max_cells": 201694524,
+      "max_frame_bytes": 33884680192
+    },
+    "cells": 5824,
+    "flow_bytes": 2989888,
+    "frame_bytes": 1514240,
+    "frames": 13,
+    "frames_that_fit": 17170,
+    "gpu_buffer": null,
+    "physical_bytes": 67769360384,
+    "problem": null,
+    "raised": false,
+    "total_bytes": 4737088
+  },
+  "ports": {
+    "faces": [
+      {
+        "area": 5599.99999999998,
+        "face": "x_min",
+        "inflow": {
+          "mass_flow": 6.72000031918289,
+          "pressure": 1.3616601969650711e-05,
+          "sensible_heat": 135.07200641557637,
+          "temperature": 20.000000000000057,
+          "volume_flow": 5600.000265985742
+        },
+        "outflow": {
+          "mass_flow": 0.0,
+          "pressure": null,
+          "sensible_heat": 0.0,
+          "temperature": null,
+          "volume_flow": 0.0
+        }
+      },
+      {
+        "area": 5599.99999999998,
+        "face": "x_max",
+        "inflow": {
+          "mass_flow": 0.0,
+          "pressure": null,
+          "sensible_heat": 0.0,
+          "temperature": null,
+          "volume_flow": 0.0
+        },
+        "outflow": {
+          "mass_flow": 6.357656744003177,
+          "pressure": -2.717311440353716e-19,
+          "sensible_heat": 304.031873852354,
+          "temperature": 47.58345561049333,
+          "volume_flow": 5298.047286669314
+        }
+      }
+    ],
+    "heat_convention": "advective sensible heat relative to temperature_reference; excludes port conduction, storage, wall heat and sources",
+    "mass_convention": "reference density (incompressible)",
+    "net_mass_flow": -0.3623435751797129,
+    "net_sensible_heat": 168.95986743677759,
+    "net_volume_flow": -301.9529793164274,
+    "positive": "outward",
+    "source": "saved boundary-layer cell fields; separate inflow and outflow, flow-weighted temperature and static gauge pressure",
+    "temperature_reference": 0.0,
+    "units": {
+      "area": "mm\u00b2",
+      "mass_flow": "mg/s",
+      "power": "mW",
+      "pressure": "Pa",
+      "temperature": "\u00b0C",
+      "volume_flow": "mm\u00b3/s"
+    }
+  },
+  "solids": [],
+  "step": "HeatedFlow",
+  "steps": 1800,
+  "stop": null,
+  "tau": 0.545,
+  "tau_minus": 4.666666666666663,
+  "tau_thermal": 0.5862354892205639,
+  "temperature": {
+    "max": 79.81089782714844,
+    "min": 20.0
+  },
+  "time_step": 0.025,
+  "units": {
+    "force": "N",
+    "mass": "t",
+    "power": "mW",
+    "temperature": "\u00b0C",
+    "time": "s",
+    "velocity": "mm/s"
+  },
+  "velocity_scale": 1.0,
+  "warnings": [],
+  "zones": []
+}

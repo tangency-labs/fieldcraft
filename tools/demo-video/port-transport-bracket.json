@@ -1,0 +1,9 @@
+{
+  "commands": [
+    {"command":"sketch.create","params":{"plane":"XZ","name":"Profile"}},
+    {"command":"sketch.line","params":{"points":[[0,0],[60,0],[60,-8],[8,-8],[8,-50],[0,-50]],"closed":true}},
+    {"command":"sketch.finish","params":{}},
+    {"command":"solid.extrude","params":{"distance":40,"body_name":"Bracket"}},
+    {"command":"solid.fillet","params":{"edges":[[8,20,8]],"radius":6}}
+  ]
+}
