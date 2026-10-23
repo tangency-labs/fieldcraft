@@ -13,6 +13,65 @@ use fieldcraft_lbm::backend::Backend;
 use fieldcraft_lbm_gpu::{GpuFlow, Options, Streaming};
 use fieldcraft_model::{BoxFace, FaceCondition};
 
+/// Real-device cost of zone momentum forcing and of the optional diagnostic readback. Fan
+/// feedback itself stays on the device; only this explicit zones() call reads its sample.
+#[test]
+#[ignore = "a real-device throughput measurement"]
+fn zone_throughput_and_diagnostic_cost() {
+    use fieldcraft_model::{Axis, Fan, FanDirection, PorousZone, Resistance};
+    for kind in ["none", "porous", "fan + porous"] {
+        let mut d = domain([0.0; 3], [64.0; 3], 1.0);
+        for face in BoxFace::ALL {
+            *d.faces.get_mut(face) = FaceCondition::Periodic {};
+        }
+        d.acceleration = [1e-6, 0.0, 0.0];
+        if kind != "none" {
+            d.porous = vec![PorousZone {
+                name: "Vent".into(),
+                min: [30.0, 0.0, 0.0],
+                max: [34.0, 64.0, 64.0],
+                axis: Axis::X,
+                resistance: Resistance::DarcyForchheimer { permeability: 5.0, inertial: 2.0 },
+            }];
+        }
+        if kind == "fan + porous" {
+            d.fans = vec![Fan {
+                name: "Fan".into(),
+                min: [5.0, 0.0, 0.0],
+                max: [7.0, 64.0, 64.0],
+                direction: FanDirection::XPlus,
+                curve: vec![[0.0, 0.002], [100.0, 0.0]],
+                relaxation: Some(0.01),
+            }];
+        }
+        let m = model(1.0, 0.1, d, step(232.0, 1.0, None));
+        let (_, flow) = prepare(&m, &[]);
+        let policy = Policy::from_env().expect("FIELDCRAFT_GPU names a policy");
+        let Ok(mut device) = GpuFlow::with_options(&flow, policy, Options { streaming: Streaming::InPlace, profile: false }) else {
+            println!("skipping {kind}: no GPU or not enough memory");
+            return;
+        };
+        device.advance(32).unwrap();
+        let start = std::time::Instant::now();
+        device.advance(200).unwrap();
+        let seconds = start.elapsed().as_secs_f64();
+        let start = std::time::Instant::now();
+        for _ in 0..10 {
+            let _ = device.zones().unwrap();
+        }
+        let sample_ms = start.elapsed().as_secs_f64() * 100.0;
+        println!(
+            "{kind}: {}: {} cells, {:.2} M updates/s, {:.4} s/200 steps; zone diagnostic {:.3} ms/query; {} bytes/query",
+            device.adapter_name(),
+            device.fluid_cells(),
+            device.fluid_cells() as f64 * 200.0 / seconds / 1e6,
+            seconds,
+            sample_ms,
+            flow.zones().len() * 16
+        );
+    }
+}
+
 #[test]
 #[ignore]
 fn cell_updates_per_second() {

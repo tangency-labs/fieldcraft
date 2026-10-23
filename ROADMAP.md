@@ -9,6 +9,13 @@ The capability checklist is [docs/parity.md](docs/parity.md). Beyond the pre-pro
 linear solver come our own explicit, CFD (lattice Boltzmann) and fluid–structure solvers (M10–M14;
 methods and papers in [docs/solvers/literature.md](docs/solvers/literature.md)).
 
+Toward 0.7.5 electronics cooling: GPU fan curves and porous resistance (#698) now use
+the CPU forcing convention, with feedback every lattice step, pressure/flow histories,
+both collision schemes and both streaming layouts. Verified against closed forms and
+the CPU, including a powered conducting solid with buoyancy, on an RTX 4090. The
+[in-app cooling video and inputs](docs/gpu-fan-porous-video.md) demonstrate the path.
+The coupled two-fluid heat exchanger (#700) remains separate release work.
+
 Order (revised 2026-10-13): one end-to-end slice first — *SolidCraft part → named faces → sets →
 mesh → material and section → BCs and loads → static and frequency steps → Abaqus, Nastran and
 LS-DYNA decks and our own solve → contour plot* — on tet meshes, so every hex mesher lands in a

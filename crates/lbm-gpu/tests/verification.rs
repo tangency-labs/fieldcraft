@@ -12,6 +12,8 @@
 
 #[path = "../../lbm/tests/common/mod.rs"]
 mod common;
+#[path = "verification/zones.rs"]
+mod zones;
 
 use std::ops::{Deref, DerefMut};
 use std::sync::{Mutex, MutexGuard};
@@ -715,23 +717,23 @@ fn odd_even_and_chunk_readbacks_match_the_cpu_around_an_obstacle() {
     }
 }
 
-/// Fans and porous zones run on the CPU only for now: the backend refuses them by name, before it
-/// looks for a device.
+/// A valid double-precision zone outside the GPU's numeric range is refused by name before
+/// looking for an adapter.
 #[test]
-fn fans_and_porous_zones_are_refused_clearly() {
+fn zones_outside_gpu_precision_are_refused_clearly() {
     let mut d = domain([0.0; 3], [10.0, 2.0, 2.0], 1.0);
     d.porous = vec![fieldcraft_model::PorousZone {
         name: "Vent".into(),
         min: [4.0, 0.0, 0.0],
         max: [6.0, 2.0, 2.0],
         axis: fieldcraft_model::Axis::X,
-        resistance: fieldcraft_model::Resistance::LossCoefficient { coefficient: 1.0 },
+        resistance: fieldcraft_model::Resistance::DarcyForchheimer { permeability: 1e-45, inertial: 1.0 },
     }];
     let m = model(1.0, 0.1, d, step(10.0, 1.0, None));
     let (_, flow) = prepare(&m, &[]);
     let _turn = turn();
     let e = GpuFlow::with_options(&flow, Policy::from_env().expect("FIELDCRAFT_GPU names a policy"), Options::default()).err().map(|e| e.to_string());
-    assert!(e.as_deref().is_some_and(|e| e.contains("Vent") && e.contains("cpu")), "{e:?}");
+    assert!(e.as_deref().is_some_and(|e| e.contains("Vent") && e.contains("single precision")), "{e:?}");
 }
 
 // ---- Conducting solids ----

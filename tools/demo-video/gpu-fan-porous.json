@@ -1,0 +1,20 @@
+[
+  {"command":"file.sample","params":{"name":"heated-flow"}},
+  {"command":"model.units","params":{"system":"mm-t-s-N-MPa","overrides":{"pressure":"Pa"}}},
+  {"command":"model.material.create","params":{"name":"Aluminium","density":"2700 kg/m³","thermal":{"conductivity":"200 W/(m K)","specific_heat":"900 J/(kg K)"}}},
+  {"command":"model.fluid_domain.edit","params":{
+    "name":"WarmAir","material":"Air","min":[-30,-20,0],"max":[100,60,70],"spacing":5,
+    "faces":{"x_min":{"type":"pressure","pressure":0},"x_max":{"type":"pressure","pressure":0},"y_min":{"type":"slip"},"y_max":{"type":"slip"},"z_min":{"type":"wall"},"z_max":{"type":"slip"}},
+    "obstacles":["Bracket"],
+    "porous":[{"name":"Outlet vent","min":[85,-20,0],"max":[95,60,70],"axis":"x","resistance":{"type":"loss_coefficient","coefficient":3}}],
+    "fans":[{"name":"Cooling fan","min":[-20,-20,0],"max":[-10,60,70],"direction":"+x","curve":[[0,"0.0001 Pa"],["0.00005 m³/s",0]],"relaxation":0.01}],
+    "thermal":{"initial_temperature":20,"faces":{"x_min":{"type":"temperature","value":20}},"solids":[{"body":"Bracket","material":"Aluminium","power":"80 W","limit":80}]}
+  }},
+  {"command":"model.step.edit","params":{"name":"HeatedFlow","procedure":{"type":"fluid","domain":"WarmAir","time_step":0.01,"end_time":30,"frames":10,"collision":"regularized"}}},
+  {"command":"solve.fluid","params":{"backend":"gpu"}},
+  {"command":"results.slice","params":{"field":"temperature","axis":"y"}},
+  {"command":"results.contour","params":{"field":"temperature","range":{"min":20,"max":50}}},
+  {"command":"results.surface","params":{"show":true}},
+  {"command":"results.streamlines","params":{"show":true}},
+  {"command":"results.frame","params":{"frame":10}}
+]

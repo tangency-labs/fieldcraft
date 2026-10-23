@@ -170,6 +170,8 @@ pub struct GpuFlow {
     forces: wgpu::Buffer,
     partials: wgpu::Buffer,
     partial_count: usize,
+    zone_count: usize,
+    fans: bool,
     /// The scalar populations remain A–B with heat; and T₀ they are shifted by.
     thermal: Option<[wgpu::Buffer; 2]>,
     initial_temperature: f64,
@@ -278,7 +280,9 @@ fn solid_data(solid: &fieldcraft_lbm::conduction::SolidHeat, t0: f64) -> Result<
 }
 
 /// The entry points of `lbm.wgsl` a flow dispatches.
-const KERNELS: [&str; 23] = [
+const KERNELS: [&str; 25] = [
+    "refresh_fans",
+    "zone_samples",
     "collide",
     "stream",
     "stream_links",
@@ -518,12 +522,13 @@ impl GpuFlow {
 
     /// [`GpuFlow::new`] with `options`.
     pub fn with_options(flow: &Flow, policy: Policy, options: Options) -> Result<GpuFlow> {
-        if let Some(zone) = flow.zones().first() {
-            return Err(Error::Invalid(format!(
-                "the GPU backend does not step fans or porous zones yet (`{}`): solve on the CPU (`backend: \"cpu\"`)",
-                zone.name
-            )));
+        // Validate zone values before opening a device or doing device work.
+        let n = flow.grid().len();
+        let mut fluid_u32 = filled(n, 0u32, "cell flags")?;
+        for (cell, flag) in fluid_u32.iter_mut().enumerate() {
+            *flag = u32::from(flow.is_fluid(cell));
         }
+        crate::zones::append(flow, &mut fluid_u32)?;
         let Some((adapter, tier)) = select::adapter(policy).map_err(gpu_error)? else {
             return Err(Error::Invalid(format!("{}=cpu: no GPU device; solve with `backend: \"cpu\"`", select::ENV)));
         };
@@ -543,7 +548,6 @@ impl GpuFlow {
             Streaming::Auto | Streaming::InPlace => true,
             Streaming::TwoBuffers => false,
         };
-        let n = flow.grid().len();
         let elem = 4u64;
         let pop_bytes = elem * (Q * n) as u64;
         let cap = buffer_cap(&device.limits());
@@ -556,16 +560,19 @@ impl GpuFlow {
             )));
         }
 
+        let flag_bytes = (fluid_u32.len() as u64).checked_mul(4).ok_or_else(|| Error::Limit("too much GPU zone data".into()))?;
+        if flag_bytes > cap {
+            return Err(Error::Limit(format!("GPU cell flags and fan/porous data need {flag_bytes} bytes; this device allows {cap} per buffer")));
+        }
+
         // The state and the flags. The populations go up one direction at a time (below), so
         // the host never holds a whole single-precision copy of them beside the flow's.
         let thermal = flow.thermal();
         let t0 = thermal.map_or(0.0, |t| t.initial());
         let mut fluid = filled(n, false, "cell flags")?;
-        let mut fluid_u32 = filled(n, 0u32, "cell flags")?;
         for cell in 0..n {
-            if let (Some(b), Some(u)) = (fluid.get_mut(cell), fluid_u32.get_mut(cell)) {
+            if let Some(b) = fluid.get_mut(cell) {
                 *b = flow.is_fluid(cell);
-                *u = u32::from(*b);
             }
         }
 
@@ -732,7 +739,7 @@ impl GpuFlow {
         let solid_params = solid.as_ref().map_or([0; 4], |sd| sd.params);
         let params = [0u32, 1].map(|phase| {
             let mut bytes = params.clone();
-            bytes.extend_from_slice(&bytes_u32(&[phase, 0, 0, 0]));
+            bytes.extend_from_slice(&bytes_u32(&[phase, flow.zones().len() as u32, 0, 0]));
             bytes.extend_from_slice(&bytes_u32(&solid_params));
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("lbm params"),
@@ -774,7 +781,7 @@ impl GpuFlow {
         let by_group = storage("lbm links by group", &bytes_u32(&by_group));
         let group_start = storage("lbm group start", &bytes_u32(&group_start));
         let forces = empty("lbm forces", 16 * group_count as u64);
-        let partials = empty("lbm partials", 4 * partial_count as u64);
+        let partials = empty("lbm partials / zone samples", 4 * partial_count.max(4 * flow.zones().len()) as u64);
         let therm_bytes = elem * (QT * n) as u64;
         let therm = if thermal.is_some() {
             let tb = [empty("lbm t", therm_bytes), empty("lbm t2", therm_bytes)];
@@ -866,6 +873,8 @@ impl GpuFlow {
             forces,
             partials,
             partial_count,
+            zone_count: flow.zones().len(),
+            fans: flow.zones().iter().any(|z| z.is_fan()),
             thermal: thermal.map(|_| therm),
             initial_temperature: t0,
             fluid_cells: flow.fluid_cells(),
@@ -1030,7 +1039,7 @@ impl GpuFlow {
     /// solids' with their sub-steps).
     fn dispatches_per_step(&self) -> usize {
         let solid = self.solid.as_ref().map_or(0, |sd| 3 + sd.substeps as usize);
-        9 + solid
+        9 + solid + usize::from(self.fans)
     }
 
     /// One submission of `steps` (≤ MAX_CHUNK) time steps, then the stability check.
@@ -1038,6 +1047,9 @@ impl GpuFlow {
         self.queue.write_buffer(&self.stats, 0, &bytes_u32(&[0, 0, 0, 0]));
         let mut commands = Vec::with_capacity(self.dispatches_per_step() * steps as usize + 6);
         for step in 0..steps {
+            if self.fans {
+                commands.push((self.current, "refresh_fans", (self.zone_count as u32, 1)));
+            }
             commands.push((self.current, "collide", self.cells));
             if !self.aa {
                 commands.push((self.current, "stream", self.cells));
@@ -1191,6 +1203,21 @@ impl Backend for GpuFlow {
 
     fn forces(&mut self) -> Result<Vec<[f64; 3]>> {
         Ok(self.exchange()?.iter().map(|g| [g[0], g[1], g[2]]).collect())
+    }
+
+    fn zones(&mut self) -> Result<Vec<fieldcraft_lbm::ZoneSample>> {
+        if self.zone_count == 0 {
+            return Ok(Vec::new());
+        }
+        self.compute_moments()?;
+        self.submit("lbm zone samples", &[(self.current, "zone_samples", (self.zone_count as u32, 1))])?;
+        let samples = self.read_f32(&self.partials, 4 * self.zone_count)?;
+        Ok(samples
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|v| fieldcraft_lbm::ZoneSample { flow: f64::from(v[0]), pressure: f64::from(v[1]), fan_rise: f64::from(v[2]) })
+            .collect())
     }
 
     fn groups(&self) -> &[Group] {

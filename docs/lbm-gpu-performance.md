@@ -47,3 +47,47 @@ and prints how long creating the pipelines took (on Metal this reads near zero: 
 compiles lazily or from its cache, so the cost lands in the first dispatches instead). With `FIELDCRAFT_LBM_GPU_PROFILE=1` it also prints
 each kernel's GPU time (`Options::profile`, timestamp queries; the throughput is then not
 representative, as every dispatch gets its own pass).
+
+## Fans and porous resistance
+
+`solve.fluid {"backend":"gpu"}` accepts the existing fan curves, Darcy–Forchheimer
+and loss-coefficient boxes. It preserves the CPU's ownership of overlapping zones,
+direction conventions, curve endpoint clamping, and under-relaxation per **lattice
+step**. Before each collision, a workgroup per fan reduces its owned cells' flow
+using the current populations and previous fan action, then updates the rise. There
+is no host readback in that feedback loop. This runs in AA and A–B, with TRT and
+regularized collision, including buoyancy and conducting solids.
+
+The porous velocity solves the implicit half-force quadratic as on the CPU, after
+Guo and Zhao, *Lattice Boltzmann model for incompressible flows through porous media*,
+PRE 66:036304 (2002), [DOI](https://doi.org/10.1103/PhysRevE.66.036304). The root is
+scaled before squaring, so a representable strong Darcy term does not overflow its
+single-precision square. Tests include a Darcy coefficient of 10²⁴.
+
+The flags buffer holds ownership followed by 64 bytes per zone and 8 per curve
+point, including mutable fan rise. No storage binding is added; reflection tests
+still bound every kernel to at most seven storage buffers. Uniform phase data holds
+the zone count. The existing partial-sum buffer is reused for requested zone
+diagnostics (16 bytes read per zone); pressure uses density deviations directly
+to retain small differences. Histories never change subsequent fan feedback.
+The memory planner accounts for the metadata, staging and diagnostic readback.
+Unrepresentable coefficients and curves whose flow points collapse in f32 are
+refused by zone name before selecting a device; buffer caps are checked before
+upload. Unzoned collision expressions and memory estimates stay the same.
+
+Measured on 2026-10-23, RTX 4090 / Vulkan, Ryzen 9 7950X, 64³ periodic cells,
+TRT / AA, 32 warm-up then 200 timed steps, the normal optimized development profile:
+
+| zones | million cell updates/s | seconds / 200 steps | requested zone report, ms | bytes read / report |
+|---|---:|---:|---:|---:|
+| none | 4601.76 | 0.0114 | 0.000 | 0 |
+| porous | 2678.59 | 0.0196 | 0.800 | 16 |
+| fan + porous | 661.44 | 0.0793 | 0.702 | 32 |
+
+Reports average ten queries and include the moments pass, reduction and readback.
+Timings are one run, not a portable performance guarantee; fan reductions have a
+visible cost even without host feedback. Small thermal models can favor the CPU.
+Reproduce with `cargo test -p fieldcraft-lbm-gpu --test throughput
+zone_throughput_and_diagnostic_cost -- --ignored --nocapture` and
+`FIELDCRAFT_GPU=hardware`. The [cooling demonstration](gpu-fan-porous-video.md)
+includes real app captures and CPU/GPU reports.

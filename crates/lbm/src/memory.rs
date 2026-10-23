@@ -56,6 +56,9 @@ const DEVICE_STAGING: u64 = 1 + 4 + F32;
 /// Per cell of the GPU backend's population buffer (one buffer, single precision).
 pub const DEVICE_POPULATIONS: u64 = Q as u64 * F32;
 
+/// Words in a GPU fan/porous header, appended to its flags buffer (lbm-gpu/zones.rs).
+pub const DEVICE_ZONE_WORDS: usize = 16;
+
 /// The fewest bytes a cell takes on the host (a GPU run of a flow without heat while it is
 /// prepared): what bounds the cells a machine's memory can hold.
 pub const MIN_BYTES_PER_CELL: u64 = POPULATIONS + FLAGS + DEVICE_STAGING;
@@ -95,6 +98,8 @@ struct Shape {
     heat: bool,
     buoyancy: bool,
     zones: bool,
+    zone_data: u64,
+    zone_count: u64,
     conducting: bool,
     open_faces: [bool; 6],
 }
@@ -110,6 +115,10 @@ impl Shape {
             // The setup's buoyancy is −β g: nonzero with both.
             buoyancy: thermal.is_some_and(|t| t.gravity != [0.0; 3] && t.expansion.is_some_and(|b| b != 0.0)),
             zones: !domain.fans.is_empty() || !domain.porous.is_empty(),
+            zone_count: (domain.fans.len() + domain.porous.len()) as u64,
+            zone_data: ((domain.fans.len() + domain.porous.len()) as u64 * DEVICE_ZONE_WORDS as u64
+                + domain.fans.iter().map(|f| 2 * f.curve.len() as u64).sum::<u64>())
+                * F32,
             conducting: thermal.is_some_and(|t| !t.solids.is_empty()),
             open_faces: fieldcraft_model::BoxFace::ALL.map(|f| is_open(domain.faces.get(f))),
         })
@@ -159,7 +168,8 @@ impl Memory {
             flow += BUOYANCY;
         }
         if s.zones {
-            flow += INDEX;
+            // Both ownership per cell and the zones' lists of owned fluid cells.
+            flow += 2 * INDEX;
         }
         if s.conducting {
             flow += INDEX;
@@ -174,9 +184,10 @@ impl Memory {
             }
             // The device backend copies the flow up, and the flow is dropped before the steps.
             Choice::Device => (
-                prepared.saturating_add(per_cell(DEVICE_STAGING)),
-                per_cell(2 * RESULT),
-                per_cell(READBACK + DEVICE_READBACK + if s.heat { READBACK_HEAT + DEVICE_READBACK_HEAT } else { 0 }),
+                prepared.saturating_add(per_cell(DEVICE_STAGING)).saturating_add(s.zone_data.saturating_mul(3)),
+                per_cell(2 * RESULT).saturating_add(s.zone_data),
+                per_cell(READBACK + DEVICE_READBACK + if s.heat { READBACK_HEAT + DEVICE_READBACK_HEAT } else { 0 })
+                    .saturating_add(s.zone_count.saturating_mul(4 * F32)),
             ),
         };
         let device = (backend == Choice::Device)
