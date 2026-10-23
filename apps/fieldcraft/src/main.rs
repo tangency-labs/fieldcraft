@@ -53,30 +53,69 @@ const MIN_WINDOW_SIZE: egui::Vec2 = egui::vec2(960.0, 600.0);
 /// reports the monitor's size but not its work area (points).
 const WORK_AREA_RESERVE: f32 = 80.0;
 
+/// The part of a monitor of `monitor` points a window may take: the monitor less the reserve.
+fn room(monitor: egui::Vec2) -> egui::Vec2 {
+    monitor - egui::Vec2::splat(WORK_AREA_RESERVE)
+}
+
 /// Where the first window goes on a monitor of `monitor` points when the default size does not fit
 /// in its work area (#601): as large as the monitor leaves after the reserve (never below the
 /// minimum), centred across the monitor and at its top, so the system's cascade cannot push its
 /// bottom under the taskbar. `None` when the default fits or the monitor's size is unknown. The
-/// position is the monitor's own (winit gives no monitor origin): the primary monitor's, where a
-/// first window opens.
+/// position is from the monitor's own top-left (winit gives no monitor origin), so it is used only
+/// on the monitor at the desktop's origin ([`at_origin_monitor`]).
 fn fitted_window(monitor: egui::Vec2) -> Option<egui::Rect> {
     if !(monitor.is_finite() && monitor.min_elem() > 0.0) {
         return None;
     }
-    let room = monitor - egui::Vec2::splat(WORK_AREA_RESERVE);
-    let size = WINDOW_SIZE.min(room).max(MIN_WINDOW_SIZE);
+    let size = WINDOW_SIZE.min(room(monitor)).max(MIN_WINDOW_SIZE);
     let at = egui::pos2(((monitor.x - size.x) * 0.5).max(0.0), 0.0);
     (size != WINDOW_SIZE).then(|| egui::Rect::from_min_size(at, size))
 }
 
+/// Whether the window whose outer rectangle is `outer` opened on the monitor at the desktop's
+/// origin (its top-left lies within `[0, monitor)`): only there are positions from the monitor's
+/// top-left also desktop positions.
+fn at_origin_monitor(outer: egui::Rect, monitor: egui::Vec2) -> bool {
+    let at = outer.min;
+    at.x >= 0.0 && at.y >= 0.0 && at.x < monitor.x && at.y < monitor.y
+}
+
+/// Where a window whose outer rectangle `outer` fits the monitor's room (the monitor less the
+/// reserve) goes when the system placed it reaching past that room (#632: Windows cascades each new
+/// window by some 38 pixels, and at 125 % a few cascades put the bottom of a 1400 × 900 window under
+/// the taskbar): moved up and left just enough. `None` when it already lies within the room.
+fn pulled_into_room(outer: egui::Rect, monitor: egui::Vec2) -> Option<egui::Pos2> {
+    let at = outer.min.min((room(monitor) - outer.size()).max(egui::Vec2::ZERO).to_pos2());
+    (at != outer.min).then_some(at)
+}
+
 /// On a monitor too small for the default size, the first window starts maximized (the system
-/// knows the work area exactly), restoring to a size and place that fit.
+/// knows the work area exactly), restoring to a size that fits; on the monitor at the desktop's
+/// origin also to a place that fits, elsewhere the system places it. A window of the default size
+/// that the system placed past the room on that monitor is moved inside it.
 fn fit_first_window(ctx: &egui::Context) {
-    let Some(fit) = ctx.input(|i| i.viewport().monitor_size).and_then(fitted_window) else { return };
-    log::info!("window: {} × {} points do not fit the monitor; maximized, restoring to {fit:?}", WINDOW_SIZE.x, WINDOW_SIZE.y);
-    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(fit.min));
-    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(fit.size()));
-    ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+    let (monitor, outer) = ctx.input(|i| (i.viewport().monitor_size, i.viewport().outer_rect));
+    let Some(monitor) = monitor else { return };
+    // Where the window is, when positions from its monitor's top-left are desktop positions (an
+    // unknown position, e.g. on Wayland, counts as elsewhere).
+    let placed = outer.filter(|r| at_origin_monitor(*r, monitor));
+    match fitted_window(monitor) {
+        Some(fit) => {
+            log::info!("window: {} × {} points do not fit the monitor; maximized, restoring to {fit:?}", WINDOW_SIZE.x, WINDOW_SIZE.y);
+            if placed.is_some() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(fit.min));
+            }
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(fit.size()));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+        }
+        None => {
+            if let Some(at) = placed.and_then(|r| pulled_into_room(r, monitor)) {
+                log::info!("window: placed past the monitor's work area; moved to {at:?}");
+                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(at));
+            }
+        }
+    }
 }
 
 struct App {
@@ -397,6 +436,28 @@ mod tests {
         assert_eq!(fit(1440.0, 1100.0), Some((40.0, 0.0, 1360.0, 900.0)));
         // Never below the minimum size.
         assert_eq!(fit(800.0, 600.0), Some((0.0, 0.0, 960.0, 600.0)));
+        // The position is used only on the monitor at the desktop's origin: the #601 window
+        // cascaded to (202, 202) there, not one opened on a second monitor.
+        let monitor = egui::vec2(2293.0, 960.0);
+        let outer = |x, y| egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(1400.0, 900.0));
+        assert!(at_origin_monitor(outer(202.0, 202.0), monitor));
+        assert!(!at_origin_monitor(outer(2400.0, 100.0), monitor));
+        assert!(!at_origin_monitor(outer(-1500.0, 100.0), monitor));
+    }
+
+    /// A window of the default size that the system cascaded past the room is pulled back inside
+    /// it, just enough; one inside the room stays (#632).
+    #[test]
+    fn a_cascaded_first_window_is_pulled_into_the_work_area() {
+        // 3440 × 1440 at 125 %: 2752 × 1152 points, the room 2672 × 1072.
+        let monitor = egui::vec2(2752.0, 1152.0);
+        let at = |x, y| pulled_into_room(egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(1400.0, 900.0)), monitor);
+        // Cascaded to (320, 320) px = (256, 256) pt: its bottom (1156) was past the work area.
+        assert_eq!(at(256.0, 256.0), Some(egui::pos2(256.0, 172.0)));
+        // At (25.6, 25.6) pt (a first cascade) it fits and stays.
+        assert_eq!(at(25.6, 25.6), None);
+        // Past the right edge too: pulled left as well.
+        assert_eq!(at(1500.0, 300.0), Some(egui::pos2(1272.0, 172.0)));
     }
 
     fn parse(a: &[&str], env: Option<&str>) -> Result<Option<Args>, String> {
