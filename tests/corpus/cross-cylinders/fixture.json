@@ -1,0 +1,53 @@
+{
+  "note": "The corpus part's accepted results, written by `cargo xtask corpus --bless` (docs/meshing/corpus.md). A stage whose outcome changes, or a value outside its band, fails the corpus run and CI's heavy job. `platforms` lists what each platform blessed measured differently.",
+  "platforms": {
+    "linux-x86_64": {
+      "stages": {},
+      "values": {
+        "build.triangles": {
+          "band": 0,
+          "value": 1559
+        }
+      }
+    },
+    "macos-aarch64": {
+      "stages": {},
+      "values": {}
+    }
+  },
+  "stages": {
+    "boundary": "error: invalid boundary surface",
+    "build": "ok",
+    "cdt": "error: invalid boundary surface",
+    "hex": "error: invalid boundary surface",
+    "octree": "error: invalid boundary surface",
+    "quality": "error: invalid boundary surface",
+    "surface": "ok"
+  },
+  "values": {
+    "build.bodies": {
+      "band": 0,
+      "value": 1
+    },
+    "build.faces": {
+      "band": 0,
+      "value": 10
+    },
+    "build.triangles": {
+      "band": 0,
+      "value": 1558
+    },
+    "surface.enclosed_mm3": {
+      "band": 0.000032131677830467734,
+      "value": 32131.676830467728
+    },
+    "surface.enclosed_vs_exact": {
+      "band": 1e-9,
+      "value": -0.007233000110284451
+    },
+    "surface.solidcraft_mm3": {
+      "band": 0.000032364932470375834,
+      "value": 32364.93147037583
+    }
+  }
+}

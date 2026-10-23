@@ -1,0 +1,116 @@
+{
+  "note": "The corpus part's accepted results, written by `cargo xtask corpus --bless` (docs/meshing/corpus.md). A stage whose outcome changes, or a value outside its band, fails the corpus run and CI's heavy job. `platforms` lists what each platform blessed measured differently.",
+  "platforms": {
+    "linux-x86_64": {
+      "stages": {},
+      "values": {}
+    },
+    "macos-aarch64": {
+      "stages": {},
+      "values": {}
+    }
+  },
+  "stages": {
+    "boundary": "ok",
+    "build": "ok",
+    "cdt": "ok",
+    "hex": "ok: extrude",
+    "octree": "no: limit reached",
+    "quality": "ok",
+    "surface": "ok"
+  },
+  "values": {
+    "boundary.feature_edges": {
+      "band": 0,
+      "value": 1549
+    },
+    "boundary.genus": {
+      "band": 0,
+      "value": 16
+    },
+    "boundary.shells": {
+      "band": 0,
+      "value": 1
+    },
+    "boundary.vertices": {
+      "band": 0,
+      "value": 1992
+    },
+    "build.bodies": {
+      "band": 0,
+      "value": 1
+    },
+    "build.faces": {
+      "band": 0,
+      "value": 38
+    },
+    "build.triangles": {
+      "band": 0,
+      "value": 4044
+    },
+    "cdt.cavities": {
+      "band": 0,
+      "value": 0
+    },
+    "cdt.flat": {
+      "band": 0,
+      "value": 11
+    },
+    "cdt.steiner": {
+      "band": 0,
+      "value": 30769
+    },
+    "cdt.tets": {
+      "band": 0,
+      "value": 98647
+    },
+    "hex.elements": {
+      "band": 0,
+      "value": 4165
+    },
+    "hex.hex20_min_sj": {
+      "band": 3.798729465027704e-10,
+      "value": 0.37887294650277037
+    },
+    "hex.hex8_min_sj": {
+      "band": 3.798729465027754e-10,
+      "value": 0.37887294650277537
+    },
+    "quality.max_dihedral_deg": {
+      "band": 1.6045208622079699e-7,
+      "value": 160.45108622079698
+    },
+    "quality.min_dihedral_deg": {
+      "band": 1.5391836730840224e-8,
+      "value": 15.390836730840222
+    },
+    "quality.min_radius_ratio": {
+      "band": 8.254506475222497e-11,
+      "value": 0.08154506475222496
+    },
+    "quality.slivers": {
+      "band": 0,
+      "value": 0
+    },
+    "quality.slivers_cdt": {
+      "band": 0,
+      "value": 67065
+    },
+    "quality.tets": {
+      "band": 0,
+      "value": 903617
+    },
+    "surface.enclosed_mm3": {
+      "band": 0.00004991936100033778,
+      "value": 49919.36000033777
+    },
+    "surface.enclosed_vs_exact": {
+      "band": 1e-9,
+      "value": 0.00019711405594617938
+    },
+    "surface.solidcraft_mm3": {
+      "band": 0.00004990958321710182,
+      "value": 49909.582217101815
+    }
+  }
+}

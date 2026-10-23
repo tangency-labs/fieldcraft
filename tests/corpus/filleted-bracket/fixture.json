@@ -1,0 +1,149 @@
+{
+  "note": "The corpus part's accepted results, written by `cargo xtask corpus --bless` (docs/meshing/corpus.md). A stage whose outcome changes, or a value outside its band, fails the corpus run and CI's heavy job. `platforms` lists what each platform blessed measured differently.",
+  "platforms": {
+    "linux-x86_64": {
+      "stages": {},
+      "values": {
+        "cdt.steiner": {
+          "band": 0,
+          "value": 1346
+        },
+        "cdt.tets": {
+          "band": 0,
+          "value": 4617
+        },
+        "quality.max_dihedral_deg": {
+          "band": 1.3974863609263623e-7,
+          "value": 139.7476360926362
+        },
+        "quality.min_dihedral_deg": {
+          "band": 3.245559211316185e-8,
+          "value": 32.454592113161844
+        },
+        "quality.min_radius_ratio": {
+          "band": 3.3881207381733137e-10,
+          "value": 0.33781207381733136
+        },
+        "quality.slivers_cdt": {
+          "band": 0,
+          "value": 1708
+        },
+        "quality.tets": {
+          "band": 0,
+          "value": 15072
+        }
+      }
+    },
+    "macos-aarch64": {
+      "stages": {},
+      "values": {}
+    }
+  },
+  "stages": {
+    "boundary": "ok",
+    "build": "ok",
+    "cdt": "ok",
+    "hex": "no: not supported yet",
+    "octree": "ok",
+    "quality": "ok",
+    "surface": "ok"
+  },
+  "values": {
+    "boundary.feature_edges": {
+      "band": 0,
+      "value": 135
+    },
+    "boundary.genus": {
+      "band": 0,
+      "value": 2
+    },
+    "boundary.shells": {
+      "band": 0,
+      "value": 1
+    },
+    "boundary.vertices": {
+      "band": 0,
+      "value": 270
+    },
+    "build.bodies": {
+      "band": 0,
+      "value": 1
+    },
+    "build.faces": {
+      "band": 0,
+      "value": 13
+    },
+    "build.triangles": {
+      "band": 0,
+      "value": 544
+    },
+    "cdt.cavities": {
+      "band": 0,
+      "value": 0
+    },
+    "cdt.flat": {
+      "band": 0,
+      "value": 0
+    },
+    "cdt.steiner": {
+      "band": 0,
+      "value": 1275
+    },
+    "cdt.tets": {
+      "band": 0,
+      "value": 4395
+    },
+    "octree.hexes": {
+      "band": 0,
+      "value": 30676
+    },
+    "octree.mean_sj": {
+      "band": 9.640023220663348e-10,
+      "value": 0.9630023220663346
+    },
+    "octree.min_sj": {
+      "band": 3.057444592174003e-10,
+      "value": 0.3047444592174003
+    },
+    "octree.volume_mm3": {
+      "band": 0.00003217155100447083,
+      "value": 32171.550004470824
+    },
+    "quality.max_dihedral_deg": {
+      "band": 1.3730108895416014e-7,
+      "value": 137.30008895416012
+    },
+    "quality.min_dihedral_deg": {
+      "band": 3.3620109372993146e-8,
+      "value": 33.619109372993144
+    },
+    "quality.min_radius_ratio": {
+      "band": 3.2761656488351043e-10,
+      "value": 0.32661656488351043
+    },
+    "quality.slivers": {
+      "band": 0,
+      "value": 0
+    },
+    "quality.slivers_cdt": {
+      "band": 0,
+      "value": 1642
+    },
+    "quality.tets": {
+      "band": 0,
+      "value": 15781
+    },
+    "surface.enclosed_mm3": {
+      "band": 0.0000321622583372736,
+      "value": 32162.257337273597
+    },
+    "surface.enclosed_vs_exact": {
+      "band": 1e-9,
+      "value": 0.0005437403167207573
+    },
+    "surface.solidcraft_mm3": {
+      "band": 0.00003214502780423466,
+      "value": 32145.026804234654
+    }
+  }
+}

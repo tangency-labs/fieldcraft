@@ -97,3 +97,13 @@ Every capability that lands brings its oracle cases in the same pull request:
    fixture and the regenerated docs/oracle.md.
 4. A case that misses its reference stays honest: keep the tolerance its reason supports and add
    `known_failure` with what is missing. Never widen a tolerance to make a case pass.
+
+## The meshing corpus
+
+The meshers have a regression gate of the same kind: every part of the meshing test corpus
+(`tests/corpus`, docs/meshing/corpus.md) has a `fixture.json` with each stage's outcome and its
+deterministic measures, in the oracle's format, and every tet mesh the corpus makes is checked
+against validity invariants that do not depend on the mesher's own gate. `cargo xtask corpus` and
+the heavy test `corpus_matches_its_fixtures` (CI's heavy job) fail when a part moves from its
+fixture or a mesh breaks an invariant; `cargo xtask corpus --bless <part>` rewrites a fixture.
+docs/meshing/corpus.md gives the bands and the rules for blessing.

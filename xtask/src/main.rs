@@ -36,9 +36,12 @@ commands:
                   build the tests with the ci profile, then run every test binary at once;
                   --heavy runs only the ignored tests instead (heavy verification and corpus
                   tests, and the benchmarks) and the doc tests alongside: the CI heavy job
-  corpus [--part NAME] [--no-write]
+  corpus [--part NAME]... [--bless NAME|all]... [--jobs N] [--no-write]
                   build every meshing test corpus part (tests/corpus, analytic shapes), tessellate
-                  and mesh it, and write the results to docs/meshing/corpus.md (release build);
+                  and mesh it, check every tet mesh's validity and each part against its
+                  fixture.json, and write the results to docs/meshing/corpus.md (release build);
+                  --bless rewrites the named parts' fixtures (docs/meshing/corpus.md says when);
+                  --jobs N meshes N parts at once (the table's times are then not a part's alone);
                   --part NAME --design PATH writes that part's .solidcraft design instead
   skill-results [--part NAME] [--no-write]
                   mesh every corpus part and sample by following the meshing skill
