@@ -312,6 +312,15 @@ pub struct Flow {
     omega_plus: f64,
     omega_minus: f64,
     collision: Collision,
+    /// Smagorinsky's constant (0: no eddy viscosity) and the turbulent Prandtl number that
+    /// turns its eddy viscosity into the temperature lattice's turbulent diffusivity.
+    smagorinsky: f64,
+    turbulent_prandtl: f64,
+    /// With heat and an eddy viscosity: each fluid cell's eddy viscosity of the last collision
+    /// (lattice units), for the temperature lattice (empty otherwise).
+    cell_nu_t: Vec<f64>,
+    /// The largest eddy viscosity over the fluid's own of the last collision (0 without one).
+    eddy_ratio: f64,
     acceleration: [f64; 3],
     /// The momentum transferred to each group in the last step (lattice units).
     forces: Vec<[f64; 3]>,
@@ -748,6 +757,10 @@ impl Flow {
             omega_plus: 1.0 / setup.tau_plus,
             omega_minus: 1.0 / setup.tau_minus,
             collision: setup.collision,
+            smagorinsky: setup.smagorinsky,
+            turbulent_prandtl: setup.turbulent_prandtl,
+            cell_nu_t: if setup.smagorinsky > 0.0 && setup.thermal.is_some() { filled(n, 0.0, "eddy viscosities")? } else { Vec::new() },
+            eddy_ratio: 0.0,
             acceleration: setup.acceleration,
             forces: vec![[0.0; 3]; groups.len()],
             groups,
@@ -993,6 +1006,22 @@ impl Flow {
         self.collision
     }
 
+    /// Smagorinsky's constant of the eddy viscosity (0: none).
+    pub fn smagorinsky(&self) -> f64 {
+        self.smagorinsky
+    }
+
+    /// The turbulent Prandtl number of Smagorinsky's model (its turbulent diffusivity ν_t / Pr_t).
+    pub fn turbulent_prandtl(&self) -> f64 {
+        self.turbulent_prandtl
+    }
+
+    /// The largest eddy viscosity over the fluid's own viscosity in the last step (0 without a
+    /// turbulence model).
+    pub fn eddy_viscosity_ratio(&self) -> f64 {
+        self.eddy_ratio
+    }
+
     /// The body acceleration in lattice units.
     pub fn acceleration(&self) -> [f64; 3] {
         self.acceleration
@@ -1131,6 +1160,9 @@ impl Flow {
         let s = self.stride;
         let fluid = &self.fluid;
         let cell_u = &self.cell_u;
+        // With an eddy viscosity, each cell's turbulent diffusivity α_t = ν_t / Pr_t adds to
+        // τ_T = 4 α + ½ (the scalar lattice's c_s² = 1/4).
+        let (cell_nu_t, prandtl) = (&self.cell_nu_t, self.turbulent_prandtl);
         let Some(t) = &mut self.thermal else { return };
         let (wp, wm) = (t.omega_plus, t.omega_minus);
         let mut blocks = cell_blocks(&mut t.g, s, n, block);
@@ -1146,6 +1178,20 @@ impl Flow {
                     temp += g.get(q).and_then(|d| d.get(i)).copied().unwrap_or(0.0);
                 }
                 let u = cell_u.get(cell).copied().unwrap_or([0.0; 3]);
+                // The cell's turbulent diffusivity α_t = ν_t / Pr_t raises τ_T by 4 α_t; τ_T⁺
+                // follows with Λ_T kept, and a single relaxation time stays single.
+                let (wp, wm) = match cell_nu_t.get(cell) {
+                    Some(nu_t) if *nu_t > 0.0 && prandtl > 0.0 => {
+                        let tau = 1.0 / wm + 4.0 * nu_t / prandtl;
+                        if (wp - wm).abs() <= f64::EPSILON * wm.abs() {
+                            (1.0 / tau, 1.0 / tau)
+                        } else {
+                            let magic = (1.0 / wp - 0.5) * (1.0 / wm - 0.5);
+                            (1.0 / (0.5 + magic / (tau - 0.5)), 1.0 / tau)
+                        }
+                    }
+                    _ => (wp, wm),
+                };
                 if let Some(x) = g.get_mut(0).and_then(|d| d.get_mut(i)) {
                     *x -= wp * (*x - equilibrium_t(0, temp, u));
                 }
@@ -1335,6 +1381,9 @@ impl Flow {
         let regularized = self.collision == Collision::Regularized;
         let (wp, wm) = (self.omega_plus, self.omega_minus);
         let (sp, sm) = (1.0 - 0.5 * wp, 1.0 - 0.5 * wm);
+        let smagorinsky = self.smagorinsky;
+        // Λ, which the two relaxation times keep when the eddy viscosity changes τ⁺.
+        let magic = (1.0 / wp - 0.5) * (1.0 / wm - 0.5);
         let constant = self.acceleration;
         let cell_force = &self.cell_force;
         let forced = constant != [0.0; 3] || !cell_force.is_empty() || !self.zone_of.is_empty();
@@ -1342,14 +1391,20 @@ impl Flow {
         let (zone_of, actions) = (&self.zone_of, &self.actions);
         let mut blocks = cell_blocks(&mut self.f, self.stride, n, block);
         let mut maxima = vec![0.0f64; blocks.len()];
-        // with heat, each block's velocities go to its slice of cell_u (empty otherwise)
+        // The largest eddy viscosity per block (lattice units).
+        let mut eddies = vec![0.0f64; blocks.len()];
+        // with heat, each block's velocities go to its slice of cell_u (empty otherwise), and
+        // with an eddy viscosity too, its eddy viscosities to its slice of cell_nu_t
         let mut u_blocks: Vec<&mut [[f64; 3]]> = self.cell_u.chunks_mut(block).collect();
-        let mut work: Vec<(&mut Vec<&mut [f64]>, &mut f64, Option<&mut [[f64; 3]]>)> = Vec::with_capacity(blocks.len());
+        let mut nu_blocks: Vec<&mut [f64]> = self.cell_nu_t.chunks_mut(block).collect();
+        type Work<'a, 'b> = (&'a mut Vec<&'b mut [f64]>, &'a mut f64, Option<&'a mut [[f64; 3]]>, Option<&'a mut [f64]>, &'a mut f64);
+        let mut work: Vec<Work> = Vec::with_capacity(blocks.len());
         let mut u_iter = u_blocks.drain(..);
-        for (f, m) in blocks.iter_mut().zip(maxima.iter_mut()) {
-            work.push((f, m, u_iter.next()));
+        let mut nu_iter = nu_blocks.drain(..);
+        for ((f, m), e) in blocks.iter_mut().zip(maxima.iter_mut()).zip(eddies.iter_mut()) {
+            work.push((f, m, u_iter.next(), nu_iter.next(), e));
         }
-        parallel::for_each_mut(&mut work, |b, (f, block_max, u_out)| {
+        parallel::for_each_mut(&mut work, |b, (f, block_max, u_out, nu_out, max_nu)| {
             let mut fq = [0.0; Q];
             let mut post = [0.0; Q];
             // The block's largest speed, kept here and stored once: the blocks' maxima share
@@ -1388,13 +1443,34 @@ impl Flow {
                         *x = v;
                     }
                 };
+                // The cell's eddy viscosity, from the rate it relaxes with (c_s² = 1/3).
+                let mut eddy = |w: f64| {
+                    let nu_t = ((1.0 / w - 1.0 / wp) / 3.0).max(0.0);
+                    **max_nu = max_nu.max(nu_t);
+                    if let Some(slot) = nu_out.as_mut().and_then(|v| v.get_mut(i)) {
+                        *slot = nu_t;
+                    }
+                };
                 if regularized {
-                    crate::regularized::collide(&fq, rho, u, force, wp, forced, &mut post);
+                    let w = crate::regularized::collide(&fq, rho, u, force, wp, smagorinsky, forced, &mut post);
+                    if smagorinsky > 0.0 {
+                        eddy(w);
+                    }
                     for (q, v) in post.iter().enumerate() {
                         put(q, *v);
                     }
                     continue;
                 }
+                // The cell's own rates where the eddy viscosity raises τ⁺ (τ⁻ follows, keeping Λ).
+                let (wp, wm, sp, sm) = if smagorinsky > 0.0 {
+                    let p = crate::turbulence::flux(&fq, rho, u, force, forced);
+                    let wp = crate::turbulence::omega(&p, rho, wp, smagorinsky);
+                    eddy(wp);
+                    let wm = 1.0 / (0.5 + magic / (1.0 / wp - 0.5));
+                    (wp, wm, 1.0 - 0.5 * wp, 1.0 - 0.5 * wm)
+                } else {
+                    (wp, wm, sp, sm)
+                };
                 // Rest population: symmetric only.
                 let eq0 = W[0] * rho * (1.0 - 1.5 * uu);
                 let mut out0 = fq[0] - wp * (fq[0] - eq0);
@@ -1426,6 +1502,9 @@ impl Flow {
             }
             **block_max = max_u2;
         });
+        // The largest eddy viscosity over the fluid's own (a maximum: no order dependence).
+        let nu0 = (1.0 / wp - 0.5) / 3.0;
+        self.eddy_ratio = if smagorinsky > 0.0 && nu0 > 0.0 { eddies.iter().fold(0.0f64, |m, x| m.max(*x)) / nu0 } else { 0.0 };
         // The largest speed of all blocks (a maximum does not depend on the order), or NaN.
         if maxima.iter().any(|m| m.is_nan()) { f64::NAN } else { maxima.iter().fold(0.0, |m, x| m.max(*x)) }
     }
@@ -1730,6 +1809,10 @@ impl crate::backend::Backend for Flow {
 
     fn is_fluid(&self, cell: usize) -> bool {
         Flow::is_fluid(self, cell)
+    }
+
+    fn eddy_viscosity_ratio(&self) -> f64 {
+        Flow::eddy_viscosity_ratio(self)
     }
 
     fn empty_obstacles(&self) -> &[String] {

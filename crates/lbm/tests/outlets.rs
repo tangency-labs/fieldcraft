@@ -30,6 +30,7 @@ fn fluid_with(end_time: f64, time_step: f64, frames: u32, collision: Option<Coll
         magic: None,
         steady: None,
         collision,
+        turbulence: None,
     }
 }
 

@@ -45,6 +45,11 @@ pub trait Backend {
     fn zones(&mut self) -> Result<Vec<crate::flow::ZoneSample>> {
         Ok(Vec::new())
     }
+    /// The largest eddy viscosity over the fluid's own viscosity in the last step. A backend
+    /// without a turbulence model refuses a flow with one when it is made, so the default is 0.
+    fn eddy_viscosity_ratio(&self) -> f64 {
+        0.0
+    }
     fn groups(&self) -> &[Group];
     fn fluid_cells(&self) -> usize;
     fn is_fluid(&self, cell: usize) -> bool;

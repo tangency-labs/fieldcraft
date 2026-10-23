@@ -35,6 +35,7 @@ fn cell_updates_per_second() {
                 frames: 1,
                 magic: None,
                 collision: Some(collision),
+                turbulence: None,
                 steady: None,
             },
         );
@@ -76,6 +77,7 @@ fn scaling_over_threads() {
             magic: None,
             collision: None,
             steady: None,
+            turbulence: None,
         },
     );
     let available = fieldcraft_parallel::available();

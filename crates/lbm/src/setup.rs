@@ -29,7 +29,7 @@ use fieldcraft_mesh::surface::BoundarySurface;
 use fieldcraft_model::fluid_zones::DEFAULT_FAN_RELAXATION;
 use fieldcraft_model::units::kelvin_above;
 use fieldcraft_model::{
-    BoxFace, Collision, Directional, FaceCondition, FluidDomain, Model, Procedure, Resistance, SurfaceCondition, ThermalCondition,
+    BoxFace, Collision, Directional, FaceCondition, FluidDomain, Model, Procedure, Resistance, SurfaceCondition, ThermalCondition, Turbulence,
 };
 
 use crate::voxel::Grid;
@@ -43,6 +43,10 @@ pub const AUTO_TAU_MAX: f64 = 1.0;
 pub const MAX_MACH: f64 = 0.3;
 /// The smallest symmetric relaxation time τ⁺.
 pub const MIN_TAU: f64 = 0.505;
+/// The smallest τ⁺ of the fluid itself with a turbulence model: the eddy viscosity raises each
+/// sheared cell's own relaxation time above it, which is what lets a coarse grid hold a fast
+/// flow (a cell Reynolds number of 90 is τ⁺ ≈ 0.503 at lattice speed 0.1).
+pub const MIN_TAU_TURBULENT: f64 = 0.5001;
 /// The largest lattice acceleration `a Δt² / Δx`.
 pub const MAX_LATTICE_ACCELERATION: f64 = 0.01;
 /// A lattice speed above this during a run means it went unstable (Mach 0.87).
@@ -51,6 +55,13 @@ pub const MAX_LATTICE_SPEED: f64 = 0.5;
 /// it ran at τ⁺ 0.508 and went unstable at 0.5075, the reflecting inlet and outlet failing
 /// (`docs/lbm-collision.md`).
 pub const REGULARIZED_TAU_LIMIT: f64 = 0.508;
+
+/// The largest Smagorinsky constant a step takes: well past the 0.1 to 0.2 in use, where the
+/// eddy viscosity would swamp the flow.
+pub const MAX_SMAGORINSKY: f64 = 0.5;
+
+/// The range of turbulent Prandtl numbers a step takes (0.85 to 0.9 is usual for air and water).
+pub const TURBULENT_PRANDTL: std::ops::RangeInclusive<f64> = 0.1..=10.0;
 /// The default two-relaxation-time parameter Λ: bounce-back walls exactly halfway between cells
 /// (Ginzburg, Verhaeghe & d'Humières 2008).
 pub const DEFAULT_MAGIC: f64 = 3.0 / 16.0;
@@ -199,6 +210,10 @@ pub struct Setup {
     pub magic: f64,
     /// The collision operator.
     pub collision: Collision,
+    /// Smagorinsky's constant C of the subgrid eddy viscosity (C Δx)² |S| (0: none), and the
+    /// turbulent Prandtl number Pr_t of its heat diffusivity ν_t / Pr_t.
+    pub smagorinsky: f64,
+    pub turbulent_prandtl: f64,
     /// The characteristic velocity in model and lattice units, and its lattice Mach number.
     pub velocity: f64,
     pub lattice_velocity: f64,
@@ -386,8 +401,26 @@ impl Setup {
         // The model checked the domain and its material when they were defined.
         let (s, domain) = fluid_step(model, step)?;
         let domain = domain.clone();
-        let Procedure::Fluid { end_time, steps, time_step, frames, magic, collision, steady, .. } = &s.procedure else {
+        let Procedure::Fluid { end_time, steps, time_step, frames, magic, collision, turbulence, steady, .. } = &s.procedure else {
             return Err(Error::Invalid(format!("step `{}` is not a fluid step", s.name)));
+        };
+        let (smagorinsky, turbulent_prandtl) = match turbulence {
+            None => (0.0, 0.9),
+            Some(Turbulence::Smagorinsky { constant, prandtl }) => {
+                if !(constant.is_finite() && *constant > 0.0 && *constant <= MAX_SMAGORINSKY) {
+                    return Err(Error::Invalid(format!(
+                        "the Smagorinsky constant is {constant}: give one above 0 and at most {MAX_SMAGORINSKY} (0.1 to 0.2 is usual)"
+                    )));
+                }
+                if !(prandtl.is_finite() && TURBULENT_PRANDTL.contains(prandtl)) {
+                    return Err(Error::Invalid(format!(
+                        "the turbulent Prandtl number is {prandtl}: give one from {} to {} (0.85 to 0.9 is usual)",
+                        TURBULENT_PRANDTL.start(),
+                        TURBULENT_PRANDTL.end()
+                    )));
+                }
+                (*constant, *prandtl)
+            }
         };
         let material = model.material(&domain.material);
         let (Some(density), Some(fluid)) = (material.and_then(|m| m.density), material.and_then(|m| m.fluid)) else {
@@ -498,9 +531,11 @@ impl Setup {
                 "the lattice Mach number is {mach:.3} (velocity {u_char} with time step {dt} and spacing {h}), above {MAX_MACH}: lower the time step"
             )));
         }
-        if !(tau_plus >= MIN_TAU) {
+        let min_tau = if smagorinsky > 0.0 { MIN_TAU_TURBULENT } else { MIN_TAU };
+        if !(tau_plus >= min_tau) {
+            let model = if smagorinsky > 0.0 { "" } else { ", or add a turbulence model (`turbulence`)" };
             return Err(Error::Invalid(format!(
-                "the relaxation time τ = {tau_plus:.5} is below {MIN_TAU}: the grid cannot resolve viscosity {viscosity} at this time step (cell Reynolds number {:.1}); refine the spacing or raise the time step",
+                "the relaxation time τ = {tau_plus:.5} is below {min_tau}: the grid cannot resolve viscosity {viscosity} at this time step (cell Reynolds number {:.1}); refine the spacing or raise the time step{model}",
                 if nu > 0.0 { lattice_velocity / nu } else { f64::INFINITY }
             )));
         }
@@ -678,6 +713,8 @@ impl Setup {
             tau_minus,
             magic,
             collision,
+            smagorinsky,
+            turbulent_prandtl,
             velocity: u_char,
             lattice_velocity,
             mach,

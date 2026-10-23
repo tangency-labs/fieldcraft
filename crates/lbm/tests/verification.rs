@@ -240,6 +240,7 @@ fn sphere_drag(r: f64, l: usize, steps: u64) -> (f64, f64) {
             frames: 1,
             magic: None,
             collision: None,
+            turbulence: None,
             steady: None,
         },
     );
@@ -297,6 +298,7 @@ fn channel_with_a_parabolic_inlet_and_a_pressure_outlet_develops_poiseuille_flow
         frames: 4,
         magic: None,
         collision: None,
+        turbulence: None,
         steady: None,
     };
     let m = model(1.0, nu, d, procedure);
@@ -351,6 +353,7 @@ fn pressure_driven_poiseuille_holds_its_end_pressures() {
         magic: None,
         steady: None,
         collision: None,
+        turbulence: None,
     };
     let r = solve_fluid(&model(1.0, nu, d, procedure), Some("Run"), &[], &Limits::default()).unwrap();
     let last = r.frames.last().unwrap();
@@ -389,6 +392,7 @@ fn a_short_channel_at_re_100_survives_backflow_at_the_outlet() {
         magic: None,
         steady: None,
         collision: None,
+        turbulence: None,
     };
     let r = solve_fluid(&model(1.0, nu, dom, procedure), None, std::slice::from_ref(&cyl), &Limits::default()).unwrap();
     let [nx, ny, _] = r.grid.cells;
@@ -424,6 +428,7 @@ fn a_wake_at_a_pressure_outlet_distorts_only_the_last_layer() {
         magic: None,
         steady: None,
         collision: None,
+        turbulence: None,
     };
     let r = solve_fluid(&model(1.0, nu, dom, procedure), None, std::slice::from_ref(&cyl), &Limits::default()).unwrap();
     let last = r.frames.last().unwrap();
@@ -597,6 +602,7 @@ fn results_are_bit_for_bit_reproducible() {
             frames: 3,
             magic: None,
             collision: None,
+            turbulence: None,
             steady: None,
         },
     );

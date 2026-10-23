@@ -27,6 +27,7 @@ fn steps(steps: u64, collision: Collision) -> Procedure {
         frames: 1,
         magic: None,
         collision: Some(collision),
+        turbulence: None,
         steady: None,
     }
 }
@@ -200,6 +201,7 @@ fn ball_channel(collision: Collision) -> (fieldcraft_model::Model, fieldcraft_lb
         frames: 2,
         magic: None,
         collision: Some(collision),
+        turbulence: None,
         steady: None,
     };
     (model(1.0, 0.01, d, p), ball)
@@ -272,6 +274,7 @@ fn cylinder_failure(cells: f64, re: f64, steps_run: u64, collision: Collision) -
         frames: 1,
         magic: None,
         collision: Some(collision),
+        turbulence: None,
         steady: None,
     };
     let m = model(1.0, d / re, dom, p);
@@ -318,6 +321,7 @@ fn channel(n: usize, collision: Collision) -> (f64, f64, f64, f64) {
         frames: 4,
         magic: None,
         collision: Some(collision),
+        turbulence: None,
         steady: None,
     };
     let r = solve_fluid(&model(1.0, nu, d, p), None, &[], &Limits::default()).unwrap();

@@ -34,6 +34,7 @@ fn schafer_turek_2d1(dx: f64, time_step: Option<f64>, collision: Collision) -> (
         frames: 1,
         magic: None,
         collision: Some(collision),
+        turbulence: None,
         steady: None,
     };
     let m = model(1.0, nu, dom, procedure);
@@ -108,6 +109,7 @@ fn schafer_turek_2d2(cells: f64, lattice: f64, end_time: f64, window: f64, colli
         frames: 1,
         magic: None,
         collision: Some(collision),
+        turbulence: None,
         steady: None,
     };
     let m = model(1.0, nu, dom, procedure);
@@ -174,6 +176,7 @@ fn lid_driven_cavity_re100(n: usize, collision: Collision) -> (f64, f64) {
         frames: 1,
         magic: None,
         collision: Some(collision),
+        turbulence: None,
         steady: None,
     };
     let r = solve_fluid(&model(1.0, 0.01, d, procedure), None, &[], &Limits::default()).unwrap();

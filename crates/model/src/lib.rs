@@ -89,9 +89,9 @@ pub use seeds::{Bias, BiasToward, Divisions, Seed, SeedConstraint};
 pub use sets::Set;
 pub use sizes::{SizeControl, SizeRegion};
 pub use steps::{
-    ArcConstraint, ArcLength, BulkViscosity, Collision, DisplacementLimit, ExplicitDynamic, FlowMonitor, Hourglass, HourglassKind, Imperfection,
-    InitialVelocity, MAX_LOAD_PATH_POINTS, MAX_NONLINEAR_INCREMENTS, MAX_NONLINEAR_ITERATIONS, MassScaling, NonlinearStatic, OutputVariable,
-    Procedure, RigidWall, Steady, Step, StepInputs, StressRate, Tolerances, Transient,
+    ArcConstraint, ArcLength, Averaging, BulkViscosity, Collision, DisplacementLimit, ExplicitDynamic, FlowMonitor, Hourglass, HourglassKind,
+    Imperfection, InitialVelocity, MAX_LOAD_PATH_POINTS, MAX_NONLINEAR_INCREMENTS, MAX_NONLINEAR_ITERATIONS, MassScaling, NonlinearStatic,
+    OutputVariable, Procedure, RigidWall, Steady, Step, StepInputs, StressRate, Tolerances, Transient, Turbulence,
 };
 pub use tie::Tie;
 pub use units::DisplaySystem;

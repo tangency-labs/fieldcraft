@@ -1185,6 +1185,7 @@ mod tests {
             frames: 4,
             magic: None,
             collision: None,
+            turbulence: None,
             steady: None,
         };
         m.add_step(Step::new("Run", fluid.clone()), None).unwrap();
@@ -1216,6 +1217,7 @@ mod tests {
                 frames: 4,
                 magic: None,
                 collision: None,
+                turbulence: None,
                 steady: None,
             },
             Procedure::Fluid {
@@ -1226,6 +1228,7 @@ mod tests {
                 frames: 4,
                 magic: None,
                 collision: None,
+                turbulence: None,
                 steady: None,
             },
             Procedure::Fluid {
@@ -1236,6 +1239,7 @@ mod tests {
                 frames: 4,
                 magic: None,
                 collision: None,
+                turbulence: None,
                 steady: None,
             },
             Procedure::Fluid {
@@ -1246,6 +1250,7 @@ mod tests {
                 frames: 4,
                 magic: None,
                 collision: None,
+                turbulence: None,
                 steady: None,
             },
             Procedure::Fluid {
@@ -1256,6 +1261,7 @@ mod tests {
                 frames: 4,
                 magic: None,
                 collision: None,
+                turbulence: None,
                 steady: None,
             },
             Procedure::Fluid {
@@ -1266,6 +1272,7 @@ mod tests {
                 frames: 4,
                 magic: None,
                 collision: None,
+                turbulence: None,
                 steady: None,
             },
             Procedure::Fluid {
@@ -1276,6 +1283,7 @@ mod tests {
                 frames: 0,
                 magic: None,
                 collision: None,
+                turbulence: None,
                 steady: None,
             },
             Procedure::Fluid {
@@ -1286,6 +1294,7 @@ mod tests {
                 frames: 4,
                 magic: Some(0.0),
                 collision: None,
+                turbulence: None,
                 steady: None,
             },
             Procedure::Fluid {
@@ -1296,6 +1305,7 @@ mod tests {
                 frames: 4,
                 magic: Some(f64::NAN),
                 collision: None,
+                turbulence: None,
                 steady: None,
             },
         ] {
@@ -1310,9 +1320,10 @@ mod tests {
             frames: 4,
             magic: None,
             collision: None,
+            turbulence: None,
             steady: Some(st),
         };
-        let rule = crate::Steady { monitors: vec![], tolerance: 1e-3, window: None, min_time: None, divergence: None };
+        let rule = crate::Steady { monitors: vec![], tolerance: 1e-3, window: None, min_time: None, divergence: None, averaging: None };
         let monitored = crate::Steady {
             monitors: vec![
                 crate::FlowMonitor::MassFlow { face: BoxFace::XMax },
@@ -1326,6 +1337,7 @@ mod tests {
             window: Some(0.1),
             min_time: Some(0.2),
             divergence: Some(0.5),
+            averaging: None,
         };
         m.add_step(Step::new("Steady", steady(monitored)), None).unwrap();
         // The rule and its monitors read back from JSON to the same model.

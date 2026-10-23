@@ -73,7 +73,8 @@ pub enum Procedure {
     /// ([`Collision`], two relaxation times by default); `magic` is the two-relaxation-time
     /// parameter Λ (default 3/16, which puts bounce-back walls exactly halfway between cells).
     /// With `steady`, the run stops on its own once the flow stops changing ([`Steady`]); its
-    /// length is then the most it may run.
+    /// length is then the most it may run. `turbulence` adds a subgrid eddy viscosity
+    /// ([`Turbulence`]; none by default).
     Fluid {
         domain: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -88,6 +89,8 @@ pub enum Procedure {
         magic: Option<f64>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         collision: Option<Collision>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turbulence: Option<Turbulence>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         steady: Option<Steady>,
     },
@@ -132,6 +135,25 @@ impl Collision {
     }
 }
 
+/// A fluid step's turbulence model.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Turbulence {
+    /// Smagorinsky's subgrid eddy viscosity ν_t = (C Δx)² |S|, with `constant` C (0.1 to 0.2 is
+    /// usual; 0.17 is Lilly's for isotropic turbulence) and |S| = √(2 S:S) the local strain
+    /// rate. With heat, the turbulent diffusivity α_t = ν_t / Pr_t adds to the fluid's, with
+    /// `prandtl` the turbulent Prandtl number Pr_t (0.85 to 0.9 is usual; default 0.9).
+    Smagorinsky {
+        constant: f64,
+        #[serde(default = "default_turbulent_prandtl")]
+        prandtl: f64,
+    },
+}
+
+fn default_turbulent_prandtl() -> f64 {
+    0.9
+}
+
 /// Most quantities a steady-state rule monitors besides the residual.
 pub const MAX_FLOW_MONITORS: usize = 100;
 
@@ -154,6 +176,13 @@ fn default_steady_tolerance() -> f64 {
 /// run stops as steady after two consecutive full windows, ending at or after `min_time`, with
 /// every relative change below `tolerance`; when `divergence` is given, a relative change above
 /// it after `min_time` stops the run as diverged. Otherwise it runs the step's full length.
+///
+/// A turbulent flow never stops fluctuating, so its fields never settle within a tolerance. With
+/// `averaging`, each quantity's running mean from `averaging.start` on is what must settle
+/// instead: its spread over a window, relative to the largest mean it has had, below `tolerance`
+/// for two consecutive windows that both begin at or after the start. The report then gives each
+/// quantity's mean, its fluctuation (the root mean square about the mean) and its extremes over
+/// the averaging period.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Steady {
@@ -168,6 +197,17 @@ pub struct Steady {
     pub min_time: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub divergence: Option<f64>,
+    /// Stop on running means instead of the instantaneous values (a turbulent flow).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub averaging: Option<Averaging>,
+}
+
+/// How a statistically steady run averages ([`Steady::averaging`]).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Averaging {
+    /// Flow time discarded as start-up before the running means begin.
+    pub start: f64,
 }
 
 impl Steady {
@@ -187,6 +227,11 @@ impl Steady {
             && !(d > self.tolerance && d.is_finite())
         {
             return Err(Error::Invalid(format!("the divergence limit is a relative change above the tolerance, got {d}")));
+        }
+        if let Some(a) = self.averaging
+            && !(a.start >= 0.0 && a.start.is_finite())
+        {
+            return Err(Error::Invalid(format!("the averaging start is a flow time, not negative, got {}", a.start)));
         }
         if self.monitors.len() > MAX_FLOW_MONITORS {
             return Err(Error::Invalid(format!("a steady-state rule monitors at most {MAX_FLOW_MONITORS} quantities, got {}", self.monitors.len())));

@@ -15,6 +15,13 @@
 //! `min_time`, in which every relative spread is below the tolerance; as diverged when one
 //! exceeds the divergence limit after `min_time`, is not a finite number, or the backend reports
 //! the flow unstable. A last window cut short by the end of the step takes no decision.
+//!
+//! With averaging ([`fieldcraft_model::Averaging`]), for a turbulent flow that never stops
+//! fluctuating, the decision is taken on each quantity's running mean of its reported value (the
+//! root mean square speed for the velocity field) from the averaging start on: its relative
+//! spread over a window counts only for a window that begins at or after the start, so the
+//! start-up never enters a decision. The report adds each quantity's mean, its fluctuation (the
+//! root mean square about the mean) and its extremes over the samples averaged.
 
 use fieldcraft_model::{BoxFace, FlowMonitor, FluidBoundary, GeometryRef, Steady};
 
@@ -59,6 +66,8 @@ pub struct SteadySetup {
     pub sample: u64,
     /// The first step a decision may be taken at.
     pub min_steps: u64,
+    /// With averaging: the first step whose sample enters the running means.
+    pub average_from: Option<u64>,
 }
 
 impl SteadySetup {
@@ -82,7 +91,8 @@ impl SteadySetup {
         let sample = (window / SUB_SAMPLES).max(1);
         let window = sample * (window / sample);
         let min_steps = rule.min_time.map_or(0, |t| ((t / dt).ceil().max(0.0) as u64).min(steps));
-        Ok(SteadySetup { rule: rule.clone(), window, sample, min_steps })
+        let average_from = rule.averaging.map(|a| ((a.start / dt).ceil().max(0.0) as u64).min(steps));
+        Ok(SteadySetup { rule: rule.clone(), window, sample, min_steps, average_from })
     }
 }
 
@@ -110,6 +120,23 @@ pub struct SteadyReport {
     pub samples: Vec<MonitorSample>,
     /// Why it diverged.
     pub message: Option<String>,
+    /// With averaging: each quantity's statistics over the samples averaged (in the order of
+    /// `quantities`; empty when no sample was averaged).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub averages: Vec<Average>,
+}
+
+/// A quantity's statistics over the samples a statistically steady run averaged.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Average {
+    /// The flow time the averaging began at.
+    pub from: f64,
+    pub samples: u64,
+    /// Componentwise, in model units: the mean, the root mean square about it, and the extremes.
+    pub mean: Vec<f64>,
+    pub rms: Vec<f64>,
+    pub min: Vec<f64>,
+    pub max: Vec<f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -129,6 +156,13 @@ struct Quantity {
     low: Vec<f64>,
     high: Vec<f64>,
     peak: f64,
+    /// With averaging: the running sums of the reported value and its square, its extremes, and
+    /// the samples averaged.
+    sum: Vec<f64>,
+    squares: Vec<f64>,
+    least: Vec<f64>,
+    most: Vec<f64>,
+    count: u64,
 }
 
 /// The monitor of a run: its quantities and their history.
@@ -196,7 +230,20 @@ impl Monitor {
             kinds.push(kind);
         }
         Ok(Some(Monitor {
-            quantities: kinds.into_iter().map(|kind| Quantity { kind, low: Vec::new(), high: Vec::new(), peak: 0.0 }).collect(),
+            quantities: kinds
+                .into_iter()
+                .map(|kind| Quantity {
+                    kind,
+                    low: Vec::new(),
+                    high: Vec::new(),
+                    peak: 0.0,
+                    sum: Vec::new(),
+                    squares: Vec::new(),
+                    least: Vec::new(),
+                    most: Vec::new(),
+                    count: 0,
+                })
+                .collect(),
             report: SteadyReport {
                 reason: StopReason::MaxTime,
                 tolerance: steady.rule.tolerance,
@@ -204,6 +251,7 @@ impl Monitor {
                 quantities: labels,
                 samples: Vec::new(),
                 message: None,
+                averages: Vec::new(),
             },
             setup: steady.clone(),
             steady_windows: 0,
@@ -284,7 +332,41 @@ impl Monitor {
                     (vec![p], vec![p])
                 }
             };
-            q.peak = q.peak.max(norm(&state));
+            // With averaging, what must settle is the running mean of the reported value, over
+            // windows that begin at or after the averaging start.
+            let (state, counts) = match self.setup.average_from {
+                Some(from) if k >= from => {
+                    if q.count == 0 {
+                        q.sum = vec![0.0; value.len()];
+                        q.squares = vec![0.0; value.len()];
+                        q.least.clone_from(&value);
+                        q.most.clone_from(&value);
+                    }
+                    for (i, x) in value.iter().enumerate() {
+                        if let (Some(s), Some(s2), Some(lo), Some(hi)) =
+                            (q.sum.get_mut(i), q.squares.get_mut(i), q.least.get_mut(i), q.most.get_mut(i))
+                        {
+                            *s += x;
+                            *s2 += x * x;
+                            *lo = lo.min(*x);
+                            *hi = hi.max(*x);
+                        }
+                    }
+                    q.count += 1;
+                    let n = q.count as f64;
+                    let mean: Vec<f64> = q.sum.iter().map(|s| s / n).collect();
+                    let started = k.saturating_sub(self.setup.window) >= from;
+                    // An instantaneous value that is not a number still ends the run.
+                    let mean = if value.iter().any(|x| !x.is_finite()) { vec![f64::NAN; mean.len()] } else { mean };
+                    (mean, started)
+                }
+                // Before the start only a value that is not a number counts (it ends the run).
+                Some(_) => (state, false),
+                None => (state, true),
+            };
+            if counts || self.setup.average_from.is_none() {
+                q.peak = q.peak.max(norm(&state));
+            }
             if q.low.len() != state.len() {
                 q.low.clone_from(&state);
                 q.high.clone_from(&state);
@@ -297,7 +379,8 @@ impl Monitor {
                     *hi = f64::INFINITY;
                 }
             }
-            let change = (end && k > 0).then(|| {
+            let blown = q.high.contains(&f64::INFINITY);
+            let change = (end && k > 0 && (counts || blown)).then(|| {
                 let spread = q.low.iter().zip(&q.high).map(|(a, b)| (b - a) * (b - a)).sum::<f64>().sqrt();
                 if q.peak > 0.0 && q.peak.is_finite() {
                     spread / q.peak
@@ -354,7 +437,21 @@ impl Monitor {
         self.report.message = Some(message);
     }
 
-    pub fn report(self) -> SteadyReport {
+    pub fn report(mut self) -> SteadyReport {
+        if let Some(from) = self.setup.average_from {
+            let start = self.setup.rule.averaging.map_or(from as f64, |a| a.start);
+            self.report.averages = self
+                .quantities
+                .iter()
+                .filter(|q| q.count > 0)
+                .map(|q| {
+                    let n = q.count as f64;
+                    let mean: Vec<f64> = q.sum.iter().map(|s| s / n).collect();
+                    let rms = q.squares.iter().zip(&mean).map(|(s2, m)| (s2 / n - m * m).max(0.0).sqrt()).collect();
+                    Average { from: start, samples: q.count, mean, rms, min: q.least.clone(), max: q.most.clone() }
+                })
+                .collect();
+        }
         self.report
     }
 }
@@ -433,7 +530,7 @@ mod tests {
             fans: vec![],
         };
         m.add_fluid_domain("Flow", domain).unwrap();
-        let rule = Steady { monitors: vec![], tolerance: 1e-3, window: Some(50.0), min_time: None, divergence: None };
+        let rule = Steady { monitors: vec![], tolerance: 1e-3, window: Some(50.0), min_time: None, divergence: None, averaging: None };
         let p = Procedure::Fluid {
             domain: "Flow".into(),
             end_time: None,
@@ -442,6 +539,7 @@ mod tests {
             frames: 1,
             magic: None,
             collision: None,
+            turbulence: None,
             steady: Some(rule),
         };
         m.add_step(Step::new("Run", p), None).unwrap();
@@ -481,5 +579,44 @@ mod tests {
         let rule = s.steady.as_ref().unwrap().rule.clone();
         s.steady = Some(SteadySetup::new(&Steady { window: Some(1500.0), ..rule }, 2000, 1.0).unwrap());
         assert_eq!(stop_with(s, |_| 0.05), (StopReason::MaxTime, 2000));
+    }
+    fn averaged(start: f64, tolerance: f64) -> Setup {
+        let mut s = setup();
+        let rule = s.steady.as_ref().unwrap().rule.clone();
+        let rule = Steady { averaging: Some(fieldcraft_model::Averaging { start }), tolerance, ..rule };
+        s.steady = Some(SteadySetup::new(&rule, 2000, 1.0).unwrap());
+        s
+    }
+
+    #[test]
+    fn a_fluctuating_flow_stops_once_its_running_mean_settles() {
+        use std::f64::consts::PI;
+        // A start-up far from the mean, then a fluctuation that never dies out.
+        let u: fn(u64) -> f64 = |k| if k < 200 { 0.5 } else { 0.05 + 0.02 * (2.0 * PI * k as f64 / 48.0).sin() };
+        let s = averaged(200.0, 1e-2);
+        assert_eq!(s.steady.as_ref().unwrap().average_from, Some(200));
+        let mut b = Scripted { k: 0, cells: s.grid.len(), u };
+        let r = run(&s, &mut b, &Limits::default()).unwrap();
+        let report = r.steady.unwrap();
+        assert_eq!(report.reason, StopReason::Steady, "{:?}", report.message);
+        assert!((300..2000).contains(&r.stats.steps), "{}", r.stats.steps);
+        // The statistics leave the start-up out.
+        let a = report.averages.first().expect("the velocity's average");
+        assert_eq!(a.from, 200.0);
+        // In model units: a lattice speed of 1 is a cell per time step.
+        let v = s.grid.spacing / s.time_step;
+        assert!((a.mean[0] - 0.05 * v).abs() < 0.05 * v * 1e-2, "{:?}", a.mean);
+        assert!((a.rms[0] - 0.02 * v / 2f64.sqrt()).abs() < 1e-3 * v, "{:?}", a.rms);
+        assert!(a.min[0] >= 0.03 * v - 1e-9 && a.max[0] <= 0.07 * v + 1e-9, "{a:?}");
+        // Without averaging the fluctuation alone never stops.
+        assert_eq!(stop(|k| 0.05 + 0.02 * (2.0 * PI * k as f64 / 48.0).sin()).0, StopReason::MaxTime);
+    }
+
+    #[test]
+    fn a_flow_that_blows_up_before_the_averaging_start_still_diverges() {
+        let s = averaged(1000.0, 1e-2);
+        let (reason, steps) = stop_with(s, |k| if k < 300 { 0.05 } else { f64::NAN });
+        assert_eq!(reason, StopReason::Diverged);
+        assert!(steps < 1000, "{steps}");
     }
 }

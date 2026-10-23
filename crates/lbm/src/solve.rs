@@ -131,6 +131,8 @@ pub struct FluidStats {
     pub backend: String,
     /// The scalar lattice's relaxation time, with heat.
     pub tau_thermal: Option<f64>,
+    /// With a turbulence model: the largest eddy viscosity over the fluid's own in the last step.
+    pub eddy_viscosity_ratio: Option<f64>,
 }
 
 /// The result of a fluid step.
@@ -457,6 +459,7 @@ pub fn run(setup: &Setup, flow: &mut dyn Backend, limits: &Limits) -> Result<Flu
             cell_updates: (flow.fluid_cells() as u64).saturating_mul(k),
             backend: flow.name(),
             tau_thermal: setup.thermal.as_ref().map(|t| t.tau),
+            eddy_viscosity_ratio: (setup.smagorinsky > 0.0).then(|| flow.eddy_viscosity_ratio()),
         },
         warnings,
         steady,

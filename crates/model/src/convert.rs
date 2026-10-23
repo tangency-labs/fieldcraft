@@ -356,13 +356,16 @@ impl Quantities for Step {
                     f(Q::Time, target_increment);
                 }
             }
-            Procedure::Fluid { domain: _, end_time, steps: _, time_step, frames: _, magic: _, collision: _, steady } => {
+            Procedure::Fluid { domain: _, end_time, steps: _, time_step, frames: _, magic: _, collision: _, turbulence: _, steady } => {
                 for v in [end_time, time_step].into_iter().flatten() {
                     f(Q::Time, v);
                 }
-                if let Some(Steady { monitors: _, tolerance: _, window, min_time, divergence: _ }) = steady {
+                if let Some(Steady { monitors: _, tolerance: _, window, min_time, divergence: _, averaging }) = steady {
                     for v in [window, min_time].into_iter().flatten() {
                         f(Q::Time, v);
+                    }
+                    if let Some(a) = averaging {
+                        f(Q::Time, &mut a.start);
                     }
                 }
             }

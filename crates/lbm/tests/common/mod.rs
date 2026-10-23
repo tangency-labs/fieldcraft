@@ -42,6 +42,7 @@ pub fn collide(end_time: f64, time_step: f64, magic: Option<f64>, collision: Col
         frames: 2,
         magic,
         collision: Some(collision),
+        turbulence: None,
         steady: None,
     }
 }

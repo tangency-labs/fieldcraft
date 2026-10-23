@@ -329,7 +329,14 @@ fn a_low_capacity_solid_with_strong_links_stays_stable() {
         }
         th.solids = vec![conducting("Cube", 1.0)];
         d.thermal = Some(th);
-        let rule = steady.then(|| fieldcraft_model::Steady { monitors: vec![], tolerance: 1e-9, window: None, min_time: None, divergence: None });
+        let rule = steady.then(|| fieldcraft_model::Steady {
+            monitors: vec![],
+            tolerance: 1e-9,
+            window: None,
+            min_time: None,
+            divergence: None,
+            averaging: None,
+        });
         let procedure = Procedure::Fluid {
             domain: "Flow".into(),
             end_time: Some(steps as f64 * dt),
@@ -338,6 +345,7 @@ fn a_low_capacity_solid_with_strong_links_stays_stable() {
             frames: 1,
             magic: None,
             collision: None,
+            turbulence: None,
             steady: rule,
         };
         let m = cht_model([1.0, alpha, alpha], (capacity, [8.0 * alpha; 3], 1.0), d, procedure);
@@ -454,6 +462,7 @@ fn heated_block(capacity: f64, end_time: f64, steady: Option<fieldcraft_model::S
         frames: 2,
         magic: None,
         collision: None,
+        turbulence: None,
         steady,
     };
     let m = cht_model([1.0, nu, alpha], (capacity, [0.5; 3], 1.0), d, procedure);
@@ -467,7 +476,7 @@ fn heated_block(capacity: f64, end_time: f64, steady: Option<fieldcraft_model::S
 #[test]
 fn a_steady_run_scales_a_slow_solid_and_lands_on_the_same_temperatures() {
     use fieldcraft_lbm::{Limits, StopReason, solve_fluid};
-    let rule = fieldcraft_model::Steady { monitors: vec![], tolerance: 1e-4, window: Some(25.0), min_time: None, divergence: None };
+    let rule = fieldcraft_model::Steady { monitors: vec![], tolerance: 1e-4, window: Some(25.0), min_time: None, divergence: None, averaging: None };
     let (slow, obstacles) = heated_block(2000.0, 20000.0, Some(rule));
     let setup = fieldcraft_lbm::Setup::new(&slow, None, &obstacles, &Limits::default()).unwrap();
     let solid = &setup.thermal.as_ref().unwrap().solids[0];
@@ -678,7 +687,14 @@ fn a_heated_slab_passes_and_fails_limits_either_side_of_its_peak() {
         if let Procedure::Fluid { steady: rule, .. } = &mut procedure
             && steady
         {
-            *rule = Some(fieldcraft_model::Steady { monitors: vec![], tolerance: 1e-5, window: Some(2.0), min_time: None, divergence: None });
+            *rule = Some(fieldcraft_model::Steady {
+                monitors: vec![],
+                tolerance: 1e-5,
+                window: Some(2.0),
+                min_time: None,
+                divergence: None,
+                averaging: None,
+            });
         }
         let m = cht_model([1.0, 0.1, alpha], (1.0, [ks; 3], 1.0), d, procedure);
         solve_fluid(&m, None, &[slab_obstacle([0.375, 0.625])], &Limits::default()).unwrap()

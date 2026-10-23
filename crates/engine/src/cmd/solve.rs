@@ -946,6 +946,7 @@ fn fluid_summary(r: &FluidResult, display: &DisplaySystem) -> Value {
         "tau_minus": r.stats.tau_minus,
         "magic": r.stats.magic,
         "collision": r.stats.collision.name(),
+        "eddy_viscosity_ratio": r.stats.eddy_viscosity_ratio,
         "velocity_scale": r.stats.velocity,
         "lattice_velocity": r.stats.lattice_velocity,
         "mach": r.stats.mach,

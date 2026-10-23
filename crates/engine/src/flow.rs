@@ -612,6 +612,7 @@ pub(crate) mod tests {
             cell_updates: 0,
             backend: "cpu".into(),
             tau_thermal: None,
+            eddy_viscosity_ratio: None,
         };
         FluidResult {
             step: "Flow".into(),

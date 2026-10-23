@@ -65,6 +65,7 @@ pub mod regularized;
 pub mod setup;
 pub mod solve;
 pub mod steady;
+pub mod turbulence;
 pub mod voxel;
 
 pub use backend::{Backend, Choice, Fields, device_available, register_backend};

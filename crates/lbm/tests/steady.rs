@@ -11,7 +11,7 @@ use fieldcraft_model::{BoxFace, FaceCondition, FlowMonitor, FluidBoundary, Fluid
 const PERIODIC: FaceCondition = FaceCondition::Periodic {};
 
 fn rule(tolerance: f64) -> Steady {
-    Steady { monitors: vec![], tolerance, window: None, min_time: None, divergence: None }
+    Steady { monitors: vec![], tolerance, window: None, min_time: None, divergence: None, averaging: None }
 }
 
 fn fluid(end_time: f64, time_step: f64, steady: Option<Steady>) -> Procedure {
@@ -23,6 +23,7 @@ fn fluid(end_time: f64, time_step: f64, steady: Option<Steady>) -> Procedure {
         frames: 4,
         magic: None,
         collision: None,
+        turbulence: None,
         steady,
     }
 }
@@ -173,6 +174,7 @@ fn an_unstable_flow_stops_as_diverged() {
                 frames: 20,
                 magic: None,
                 collision: None,
+                turbulence: None,
                 steady,
             },
         )
