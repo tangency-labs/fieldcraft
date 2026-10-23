@@ -323,11 +323,52 @@ fn channel(n: usize, c: f64, discard: f64, average: f64) -> (f64, f64) {
     (ub, uc)
 }
 
-/// The #664 oracle: Moser, Kim & Mansour (1999) at Re_τ = 178 give U_b/u_τ ≈ 15.7 (Re_b = 5600 on
-/// 2δ) and a centreline U_c/u_τ ≈ 18.3. Reported on four grids so the grid dependence shows; a
-/// flow that went laminar would accelerate towards U_b/u_τ = Re_τ/3 = 60. Slow (1.8 h on 32
-/// threads): `cargo test --release -p fieldcraft-lbm --test turbulence -- --ignored --nocapture
-/// channel`.
+/// Moser, Kim & Mansour (1999) at Re_τ = 178: U_b/u_τ ≈ 15.7 (Re_b = 5600 on 2δ), centreline
+/// U_c/u_τ ≈ 18.3, C_f = 2 / (U_b/u_τ)² ≈ 8.18e-3.
+const MKM_BULK: f64 = 15.7;
+const MKM_CENTRE: f64 = 18.3;
+
+/// The protocol of the channel runs: 10 δ/u_τ of start-up discarded, 15 averaged.
+const DISCARD: f64 = 10.0;
+const AVERAGE: f64 = 15.0;
+
+/// The environment variable that runs the full four-grid channel study.
+const STUDY: &str = "FIELDCRAFT_CHANNEL_STUDY";
+
+fn report_channel(n: usize, c: f64, ub: f64, uc: f64) {
+    println!(
+        "channel Re_τ 180, C = {c}, {n} cells per δ (y⁺ {:.1} per cell): U_b/u_τ {ub:.2} (MKM {MKM_BULK}, {:+.1}%), U_c/u_τ {uc:.2} (MKM {MKM_CENTRE}, {:+.1}%), C_f {:.3e} (MKM 8.18e-3)",
+        180.0 / n as f64,
+        100.0 * (ub / MKM_BULK - 1.0),
+        100.0 * (uc / MKM_CENTRE - 1.0),
+        2.0 / (ub * ub)
+    );
+}
+
+/// The coarsest grid of the channel study below (12 cells per δ, y⁺ 15 per cell), its full
+/// protocol: still turbulent after the start-up, with the study's recorded means within their
+/// sampling scatter. The flow is chaotic, so any last-bit difference (the system maths
+/// library's sines of the start-up field may differ between platforms) grows into a different
+/// realisation, and a mean over 15 δ/u_τ moves with it: 9.95 and 13.07 recorded on Windows
+/// x86_64, 9.90 and 12.95 on macOS aarch64 (−0.5 %, −0.9 %; the cause is not isolated). The band of 3 % is three times that scatter and a fifth of
+/// the change to the next grid (+16 %), so a change to the closure or the collision still
+/// fails it. Its 3.2 × 10⁹ cell updates take a minute or two, inside the CI heavy job.
+#[test]
+#[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+fn a_coarse_channel_at_re_tau_180_stays_turbulent_with_the_study_s_means() {
+    let (n, c) = (12, 0.1);
+    let (ub, uc) = channel(n, c, DISCARD, AVERAGE);
+    report_channel(n, c, ub, uc);
+    // Laminar would accelerate towards Re_τ/3 = 60.
+    assert!(ub > 5.0 && ub < 30.0, "turbulent, not laminar: U_b/u_τ {ub}");
+    assert!((ub / 9.95 - 1.0).abs() < 0.03 && (uc / 13.07 - 1.0).abs() < 0.03, "the study's 12-cell means moved: U_b/u_τ {ub:.4}, U_c/u_τ {uc:.4}");
+}
+
+/// The #664 oracle against Moser, Kim & Mansour, on four grids so the grid dependence shows.
+/// Hours long (1.8 h on 32 threads), so it runs only when asked:
+/// `FIELDCRAFT_CHANNEL_STUDY=1 cargo test --release -p fieldcraft-lbm --test turbulence -- --ignored --nocapture study`.
+/// The bounded regression above checks its coarsest grid on every heavy run; the recorded
+/// results and what they leave open are in docs/verification.md ("Long studies").
 ///
 /// Measured (C = 0.1, regularised collision, 10 δ/u_τ discarded and 15 averaged):
 ///
@@ -344,23 +385,21 @@ fn channel(n: usize, c: f64, discard: f64, average: f64) -> (f64, f64) {
 /// wall model, is the next step. On the finest grid the bulk speed was still falling slowly at
 /// the end of the averaging, so its mean is an upper bound of this run's.
 #[test]
-#[ignore]
-fn a_channel_at_re_tau_180_has_the_bulk_and_centreline_speeds_of_moser_kim_and_mansour() {
+#[ignore = "hours: set FIELDCRAFT_CHANNEL_STUDY=1 (docs/verification.md, \"Long studies\")"]
+fn study_a_channel_at_re_tau_180_against_moser_kim_and_mansour_on_four_grids() {
+    if std::env::var_os(STUDY).is_none_or(|v| v != "1") {
+        println!("the four-grid channel study runs only with {STUDY}=1 (hours long): skipped");
+        return;
+    }
     let c = 0.1;
     let mut ubs = Vec::new();
     for n in [12, 18, 24, 32] {
-        let (ub, uc) = channel(n, c, 10.0, 15.0);
+        let (ub, uc) = channel(n, c, DISCARD, AVERAGE);
         ubs.push(ub);
-        println!(
-            "channel Re_τ 180, C = {c}, {n} cells per δ (y⁺ {:.1} per cell): U_b/u_τ {ub:.2} (MKM 15.7, {:+.1}%), U_c/u_τ {uc:.2} (MKM 18.3, {:+.1}%), C_f {:.3e} (MKM 8.18e-3)",
-            180.0 / n as f64,
-            100.0 * (ub / 15.7 - 1.0),
-            100.0 * (uc / 18.3 - 1.0),
-            2.0 / (ub * ub)
-        );
+        report_channel(n, c, ub, uc);
         assert!(ub > 5.0 && ub < 30.0, "{n}: turbulent, not laminar: U_b/u_τ {ub}");
     }
     // Closer to MKM on every finer grid, and within 15 % on the finest.
     assert!(ubs.windows(2).all(|w| w[1] > w[0]), "{ubs:?}");
-    assert!((ubs[ubs.len() - 1] / 15.7 - 1.0).abs() < 0.15, "{ubs:?}");
+    assert!((ubs[ubs.len() - 1] / MKM_BULK - 1.0).abs() < 0.15, "{ubs:?}");
 }

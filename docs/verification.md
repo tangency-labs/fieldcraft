@@ -97,3 +97,48 @@ Every capability that lands brings its oracle cases in the same pull request:
    fixture and the regenerated docs/oracle.md.
 4. A case that misses its reference stays honest: keep the tolerance its reason supports and add
    `known_failure` with what is missing. Never widen a tolerance to make a case pass.
+
+## Long studies
+
+Some studies take hours and run in no CI job; the heavy job (`cargo xtask test --heavy`, 60
+minutes) runs a bounded regression of each instead, and each study is run by hand when the
+physics under it changes. The study's test stays `#[ignore]`d and returns at once unless its
+environment variable is set, so `--heavy` passes over it.
+
+### Re_τ 180 channel against Moser, Kim & Mansour (#663, #664)
+
+Smagorinsky's model (C = 0.1, regularised collision), the channel 2πδ × 2δ × πδ driven by
+u_τ²/δ, 10 δ/u_τ of start-up discarded and 15 averaged. Reference: R. D. Moser, J. Kim,
+N. N. Mansour, *Direct numerical simulation of turbulent channel flow up to Re_τ = 590*, Phys.
+Fluids 11:943–945, 1999 (Re_τ = 178): U_b/u_τ ≈ 15.7, U_c/u_τ ≈ 18.3, C_f ≈ 8.18 × 10⁻³.
+
+```
+FIELDCRAFT_CHANNEL_STUDY=1 cargo test --release -p fieldcraft-lbm --test turbulence -- --ignored --nocapture study
+```
+
+About 1.8 h on 32 threads. Recorded on Windows x86_64 (PR #668):
+
+| cells per δ | y⁺ per cell | U_b/u_τ | U_c/u_τ | C_f |
+|---|---|---|---|---|
+| 12 | 15.0 | 9.95 (−36.6 %) | 13.07 (−28.6 %) | 2.02e-2 |
+| 18 | 10.0 | 11.55 (−26.4 %) | 14.42 (−21.2 %) | 1.50e-2 |
+| 24 | 7.5 | 12.81 (−18.4 %) | 15.60 (−14.8 %) | 1.22e-2 |
+| 32 | 5.6 | 14.17 (−9.8 %) | 17.00 (−7.1 %) | 9.96e-3 |
+
+The heavy job runs the 12-cell grid alone with the same protocol
+(`a_coarse_channel_at_re_tau_180_stays_turbulent_with_the_study_s_means`, about a minute and a
+half on 14 cores): turbulent, and within 3 % of the 12-cell means above. The flow is chaotic, so
+its means move with the platform (9.90 and 12.95 on macOS aarch64); the band is three times that
+scatter.
+
+What it does not establish yet:
+- **No converged reference.** The bulk speed approaches MKM's monotonically as the first cell
+  moves into the viscous sublayer, but no grid is within its tolerance of it: without wall
+  damping the eddy viscosity is too large in the first cells off the wall, so the friction is too
+  high. Van Driest damping or a wall model is the next step (literature C5.1, "Limits").
+- **The finest grid had not settled.** At 32 cells per δ the bulk speed was still falling slowly
+  at the end of the averaging, so its mean is an upper bound of that run's, and the observed
+  trend is not a convergence order.
+- **One realisation per grid.** The means carry the sampling scatter of a single 15 δ/u_τ
+  average (about 1 % at 12 cells per δ, from the two platforms above); no confidence interval is
+  stated.
