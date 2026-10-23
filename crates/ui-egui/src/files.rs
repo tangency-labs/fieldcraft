@@ -565,17 +565,8 @@ impl ModelApp {
         }
         // A fresh session is the app's own model too (its commands go into the crash journal),
         // with the same work caps and file access, as the engine keeps them when a command
-        // replaces the session.
-        let base = if fresh(command) {
-            let mut s = Session::default();
-            s.crash_journal = self.session.crash_journal;
-            s.origin = self.session.origin;
-            s.limits = self.session.limits;
-            s.file_access = self.session.file_access.clone();
-            s
-        } else {
-            self.session.clone()
-        };
+        // replaces the session, and the window's count of camera requests.
+        let base = if fresh(command) { self.session.empty_like() } else { self.session.clone() };
         let progress = Progress::new();
         let (rx, pending) = spawn(base, command, params, progress.clone(), self.bodies.0.clone());
         self.set_status(format!("{title}…"), false);

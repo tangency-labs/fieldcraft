@@ -819,6 +819,21 @@ impl Session {
         self.camera_requests = self.camera_requests.wrapping_add(1);
     }
 
+    /// An empty session to open a whole model into off the host's thread: this one's work caps,
+    /// file access, crash journal, command origin and display units, and its count of camera
+    /// requests, so a view the opened model shows is a request the host has not seen yet.
+    pub fn empty_like(&self) -> Session {
+        Session {
+            limits: self.limits,
+            file_access: self.file_access.clone(),
+            crash_journal: self.crash_journal,
+            origin: self.origin,
+            default_units: self.default_units.clone(),
+            camera_requests: self.camera_requests,
+            ..Session::default()
+        }
+    }
+
     /// How many cameras were asked for: a host that saw fewer aims at [`Session::camera`].
     pub fn camera_requests(&self) -> u64 {
         self.camera_requests

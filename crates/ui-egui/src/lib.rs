@@ -2175,6 +2175,9 @@ impl ModelApp {
         if self.poll_loading() {
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
+        // A new document's home framing first, so the saved view it opens showing turns the
+        // camera after it (and drops that framing) rather than being framed over.
+        self.frame_new_document();
         self.follow_camera();
         self.dropped_files(ctx);
         self.poll_updates(ctx);
@@ -2189,7 +2192,6 @@ impl ModelApp {
             self.ui.select_tab(Tab::Results);
             self.reframe = framing::Reframe::merge(self.reframe, framing::Reframe::IfOffscreen);
         }
-        self.frame_new_document();
         self.results_shown = shown;
         self.check_selection();
         self.follow_form_filter();
@@ -2666,6 +2668,34 @@ mod tests {
         app.cam.yaw = 1.0;
         app.follow_camera();
         assert_eq!(app.cam.yaw, 1.0);
+    }
+
+    /// A model saved showing a view opens with that view's camera, not the home view (#646).
+    #[test]
+    fn a_model_opens_with_the_camera_of_the_view_it_was_saved_showing() {
+        let dir = std::env::temp_dir().join(format!("fieldcraft-ui-view-open-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("side.fieldcraft").to_string_lossy().into_owned();
+        let ctx = egui::Context::default();
+        let mut app = ModelApp::new(Session::default());
+        app.run("file.sample", json!({"name": "cantilever"})).unwrap();
+        app.run("solve.run", json!({})).unwrap();
+        app.run("view.save", json!({"name": "Side", "camera": {"yaw": -60, "pitch": 25}})).unwrap();
+        app.run("file.save_as", json!({"path": path})).unwrap();
+        // Opened as the window opens files: in the background, from an empty session.
+        for _ in 0..2 {
+            app.run("file.new", json!({})).unwrap();
+            draw(&mut app, &ctx, 1280.0, 800.0);
+            app.start_job("file.open", json!({"path": path})).unwrap();
+            while app.loading.is_some() {
+                draw(&mut app, &ctx, 1280.0, 800.0);
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            draw(&mut app, &ctx, 1280.0, 800.0);
+            assert!((app.cam.yaw - (-60f64).to_radians()).abs() < 1e-9 && (app.cam.pitch - 25f64.to_radians()).abs() < 1e-9, "{:?}", app.cam);
+        }
+        assert!((app.cam.yaw - (-60f64).to_radians()).abs() < 1e-9 && (app.cam.pitch - 25f64.to_radians()).abs() < 1e-9, "{:?}", app.cam);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Status lines say what changed, in words, whatever started the command (#333), and the
