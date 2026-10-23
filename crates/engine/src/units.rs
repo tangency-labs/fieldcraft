@@ -531,6 +531,7 @@ pub const REPLIES: &[(&str, &[(&str, Dim)])] = &[
             ("/stop/time", Dim::Time),
             ("/stop/window", Dim::Time),
             ("/stop/history/*/time", Dim::Time),
+            ("/stop/averages/*/from", Dim::Time),
             ("/mass/first", Dim::Of(Quantity::Mass)),
             ("/mass/last", Dim::Of(Quantity::Mass)),
         ],

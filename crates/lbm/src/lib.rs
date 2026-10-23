@@ -76,7 +76,7 @@ pub use setup::{Obstacle, Setup, ZoneKind, ZoneSetup, fluid_step};
 pub use solve::{
     ComponentCheck, FluidResult, FluidStats, ForceHistory, Frame, HeatHistory, Peak, SolidResult, ZoneHistory, run, solve_fluid, solve_fluid_on,
 };
-pub use steady::{MonitorSample, SteadyReport, SteadySetup, StopReason};
+pub use steady::{Average, MonitorSample, SteadyReport, SteadySetup, StopReason};
 pub use voxel::Grid;
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]

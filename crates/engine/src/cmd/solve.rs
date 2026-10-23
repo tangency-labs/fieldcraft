@@ -112,7 +112,7 @@ pub const HISTORY: CommandSpec = CommandSpec {
 pub const FLUID: CommandSpec = CommandSpec {
     id: "solve.fluid",
     label: "Solve Fluid Step",
-    params: r#"{"step": "Flow", "backend": "cpu", "max_cells": 16000000, "max_steps": 10000000, "max_cell_updates": 1e12, "max_frame_bytes": 2e9, "threads": 8, "estimate": false} — runs a fluid step with the lattice Boltzmann solver (the only fluid step when `step` is left out): obstacles are triangulated from the open design or taken from imported surfaces; returns the time step, relaxation time, Mach number, mass, the largest speed of all frames (`max_speed`, at `max_speed_time`) and of the last frame (`final_max_speed`), over interior fluid cells (the open-boundary layers are excluded, convective outlets too, because a wake reaching a uniform pressure outlet distorts the last layer), the final force on every wall and, with heat, the thermal relaxation time, the fluid's temperature range and the heat into every wall, and per conducting solid (`solids`) its temperature range and mean, its power, the heat its faces give the fluid, its `peak` temperature (at `peak_time`: the steady value when the run reached steady state, else the highest over the frames), its `limit`, the `margin` (limit less peak; negative over it) and `ok`, and over them `components_ok` (null when no solid has a limit); with fans and porous zones, each one's volume flow and its pressure rise (a fan's operating point: `pressure_rise` from its curve, and `measured_pressure_rise`) or `pressure_drop`; the measured values are the static-pressure difference between the fluid cell layers just outside the zone, so they include the wall friction over its thickness plus one cell (final and mean over the last quarter of the run); `backend` is `cpu` (the default: double precision, the same result on every machine) or `gpu` (the step on the GPU `FIELDCRAFT_GPU` picks, single precision, within the backend's stated tolerance of the CPU; an error when the build has none); left out, it is FIELDCRAFT_SOLVE_BACKEND's when that is set, else the step's saved preference (solve.settings), which on a machine with no suitable GPU falls back as it says, with a `notice` (the reply's `backend_choice` says what chose it), else the CPU; `max_steps` may only be lowered; `max_cells` (16000000 by default), `max_cell_updates` (1e12) and `max_frame_bytes` (2e9) may be raised up to what the machine's memory bound holds (half its physical memory), and a run with a raised `max_cells` or `max_frame_bytes` must fit in that bound; the reply's `memory` gives the run's estimate (`flow_bytes`, `frame_bytes` at about 16 bytes per cell per frame, 20 with heat, `total_bytes`) against `bound_bytes`, the `frames_that_fit` and each cap's `ceilings`, and on the GPU the population buffer against the device's limit per buffer; `"estimate": true` returns only that, without solving; a run over a cap is refused before it starts, saying what to change; `threads` as for solve.static"#,
+    params: r#"{"step": "Flow", "backend": "cpu", "max_cells": 16000000, "max_steps": 10000000, "max_cell_updates": 1e12, "max_frame_bytes": 2e9, "threads": 8, "estimate": false} — runs a fluid step with the lattice Boltzmann solver (the only fluid step when `step` is left out): obstacles are triangulated from the open design or taken from imported surfaces; returns the time step, relaxation time, Mach number, mass, the largest speed of all frames (`max_speed`, at `max_speed_time`) and of the last frame (`final_max_speed`), over interior fluid cells (the open-boundary layers are excluded, convective outlets too, because a wake reaching a uniform pressure outlet distorts the last layer), the final force on every wall and, with heat, the thermal relaxation time, the fluid's temperature range and the heat into every wall, and per conducting solid (`solids`) its temperature range and mean, its power, the heat its faces give the fluid, its `peak` temperature (at `peak_time`: the steady value when the run reached steady state, else the highest over the frames), its `limit`, the `margin` (limit less peak; negative over it) and `ok`, and over them `components_ok` (null when no solid has a limit); with fans and porous zones, each one's volume flow and its pressure rise (a fan's operating point: `pressure_rise` from its curve, and `measured_pressure_rise`) or `pressure_drop`; the measured values are the static-pressure difference between the fluid cell layers just outside the zone, so they include the wall friction over its thickness plus one cell (final and mean over the last quarter of the run); with a steady rule, `stop`: why and when the run stopped, its monitors' history (in the display units, `units`) and, with averaging, `averages`: per quantity its mean, its root mean square about the mean (`rms`, a difference: a temperature's in `rms_unit`, without the scale's offset) and its extremes over the samples averaged from `from` on; `backend` is `cpu` (the default: double precision, the same result on every machine) or `gpu` (the step on the GPU `FIELDCRAFT_GPU` picks, single precision, within the backend's stated tolerance of the CPU; an error when the build has none); left out, it is FIELDCRAFT_SOLVE_BACKEND's when that is set, else the step's saved preference (solve.settings), which on a machine with no suitable GPU falls back as it says, with a `notice` (the reply's `backend_choice` says what chose it), else the CPU; `max_steps` may only be lowered; `max_cells` (16000000 by default), `max_cell_updates` (1e12) and `max_frame_bytes` (2e9) may be raised up to what the machine's memory bound holds (half its physical memory), and a run with a raised `max_cells` or `max_frame_bytes` must fit in that bound; the reply's `memory` gives the run's estimate (`flow_bytes`, `frame_bytes` at about 16 bytes per cell per frame, 20 with heat, `total_bytes`) against `bound_bytes`, the `frames_that_fit` and each cap's `ceilings`, and on the GPU the population buffer against the device's limit per buffer; `"estimate": true` returns only that, without solving; a run over a cap is refused before it starts, saying what to change; `threads` as for solve.static"#,
     form: Some(super::forms::SOLVE_FLUID),
     kind: CommandKind::Model,
     requires: &[Requirement::FluidDomain, Requirement::Step],
@@ -983,16 +983,27 @@ fn monitor_quantity(name: &str) -> Option<Quantity> {
     })
 }
 
-/// Why a run to steady state stopped, when, and its monitor history, in `display`.
+/// The quantity of a spread of `q`'s values (a root mean square about their mean): a difference,
+/// which for a temperature takes no offset of its scale.
+fn spread_quantity(q: Quantity) -> Quantity {
+    match q {
+        Quantity::Temperature => Quantity::TemperatureDifference,
+        q => q,
+    }
+}
+
+/// Why a run to steady state stopped, when, its monitor history and, with averaging, each
+/// quantity's statistics, in `display`.
 fn steady_summary(s: &fieldcraft_lbm::SteadyReport, stats: &fieldcraft_lbm::FluidStats, display: &DisplaySystem) -> Value {
     let quantities: Vec<Option<Quantity>> = s.quantities.iter().map(|q| monitor_quantity(q)).collect();
-    let value = |k: usize, v: &Vec<f64>| {
-        let shown: Vec<f64> = match quantities.get(k).copied().flatten() {
+    let in_display = |q: Option<Quantity>, v: &[f64]| {
+        let shown: Vec<f64> = match q {
             Some(q) => v.iter().map(|x| crate::results::shown(q, *x, display)).collect(),
-            None => v.clone(),
+            None => v.to_vec(),
         };
         if let [x] = shown.as_slice() { json!(x) } else { json!(shown) }
     };
+    let value = |k: usize, v: &Vec<f64>| in_display(quantities.get(k).copied().flatten(), v);
     let history: Vec<Value> = s
         .samples
         .iter()
@@ -1004,6 +1015,26 @@ fn steady_summary(s: &fieldcraft_lbm::SteadyReport, stats: &fieldcraft_lbm::Flui
         .collect();
     let units: serde_json::Map<String, Value> =
         s.quantities.iter().zip(&quantities).filter_map(|(n, q)| Some((n.clone(), json!(crate::results::unit_of((*q)?, display)?)))).collect();
+    // In the order of `quantities`; the mean and extremes in the quantity's unit, the root mean
+    // square in its difference's (`rms_unit`: a mean temperature's in K or °F, never shifted).
+    let averages: Vec<Value> = s
+        .averages
+        .iter()
+        .zip(s.quantities.iter().zip(&quantities))
+        .map(|(a, (name, q))| {
+            let spread = q.map(spread_quantity);
+            // (The start converts with the reply, `units::REPLIES`.)
+            let mut v = json!({"quantity": name, "from": a.from, "samples": a.samples,
+                "mean": in_display(*q, &a.mean), "rms": in_display(spread, &a.rms), "min": in_display(*q, &a.min), "max": in_display(*q, &a.max)});
+            if let Some(unit) = q.and_then(|q| crate::results::unit_of(q, display)) {
+                v["unit"] = json!(unit);
+            }
+            if let Some(unit) = spread.and_then(|q| crate::results::unit_of(q, display)) {
+                v["rms_unit"] = json!(unit);
+            }
+            v
+        })
+        .collect();
     json!({
         "reason": s.reason.name(),
         "steps": stats.steps,
@@ -1014,6 +1045,7 @@ fn steady_summary(s: &fieldcraft_lbm::SteadyReport, stats: &fieldcraft_lbm::Flui
         "message": s.message,
         "history": history,
         "units": units,
+        "averages": averages,
     })
 }
 
@@ -1948,6 +1980,22 @@ pub(crate) mod tests {
         assert!((mean - 0.5).abs() < 1e-3, "{stop}");
         assert!((last["values"][3].as_f64().unwrap() / expected - 1.0).abs() < 1e-2, "{stop}");
         assert_eq!((stop["units"]["mean_temperature"].as_str(), stop["units"]["heat y_min"].as_str()), (Some("°C"), Some("mW")), "{stop}");
+        // With averaging (#664) the reply gives each quantity's statistics over the samples
+        // averaged, in the display units: the mean temperature's mean in °C, its fluctuation (a
+        // difference) in K, and nothing of the start-up.
+        let averaged = json!({"tolerance": 1e-3, "monitors": [{"type": "mean_temperature"}], "averaging": {"start": 25}});
+        t.execute("model.step.create", &json!({"name": "Mean", "procedure": {"type": "fluid", "domain": "Gap", "end_time": 50, "steady": averaged}}))
+            .unwrap();
+        let stop = t.execute("solve.fluid", &json!({"step": "Mean"})).unwrap()["stop"].clone();
+        let averages = stop["averages"].as_array().unwrap();
+        assert_eq!(averages.len(), stop["quantities"].as_array().unwrap().len(), "{stop}");
+        let mean_t = averages.iter().find(|a| a["quantity"] == "mean_temperature").unwrap();
+        assert_eq!((mean_t["unit"].as_str(), mean_t["rms_unit"].as_str()), (Some("°C"), Some("K")), "{mean_t}");
+        assert_eq!(mean_t["from"], json!(25.0), "{mean_t}");
+        assert!(mean_t["samples"].as_u64().unwrap() > 1, "{mean_t}");
+        let [mean, rms, lo, hi] = ["mean", "rms", "min", "max"].map(|k| mean_t[k].as_f64().unwrap());
+        // (A settled flow: the extremes are the mean to rounding.)
+        assert!((mean - 0.5).abs() < 1e-3 && rms < 1e-3 && lo <= mean + 1e-9 && mean <= hi + 1e-9, "{mean_t}");
 
         // The thermal boundary needs the domain's heat settings; the material must keep its
         // heat properties while a domain carries heat.
@@ -1988,6 +2036,76 @@ pub(crate) mod tests {
             let r = t.execute("solve.fluid", &json!({}));
             assert!(r.is_err(), "{at}: {r:?}");
         }
+    }
+
+    /// #664: the averaged statistics of a steady report convert with their quantity: a mean
+    /// temperature's mean and extremes are absolute temperatures (with the scale's offset), its
+    /// root mean square a difference (without), the temperature residual a difference throughout,
+    /// and each one comes back to SI exactly through the unit the reply names.
+    #[test]
+    fn averaged_monitor_statistics_convert_as_their_quantities() {
+        use fieldcraft_lbm::{Average, SteadyReport, StopReason};
+        use fieldcraft_model::units::{Preset, Quantity as Q};
+        let average =
+            |mean: f64, rms: f64| Average { from: 2.0, samples: 40, mean: vec![mean], rms: vec![rms], min: vec![mean - rms], max: vec![mean + rms] };
+        let report = SteadyReport {
+            reason: StopReason::Steady,
+            tolerance: 1e-3,
+            window: 1.0,
+            quantities: vec!["velocity".into(), "temperature".into(), "mean_temperature".into(), "heat y_min".into()],
+            samples: vec![],
+            message: None,
+            // SI: 0.25 m/s ± 0.01, a residual of 5 K ± 0.5, 300 K ± 2 and 1.5 W ± 0.1.
+            averages: vec![average(0.25, 0.01), average(5.0, 0.5), average(300.0, 2.0), average(1.5, 0.1)],
+        };
+        let stats = fieldcraft_lbm::FluidStats {
+            cells: 1,
+            fluid_cells: 1,
+            steps: 1,
+            time_step: 1.0,
+            end_time: 1.0,
+            tau_plus: 0.6,
+            tau_minus: 0.6,
+            magic: 0.25,
+            collision: fieldcraft_model::Collision::Trt,
+            velocity: 1.0,
+            lattice_velocity: 0.1,
+            mach: 0.17,
+            cell_updates: 1,
+            backend: "cpu".into(),
+            tau_thermal: None,
+            eddy_viscosity_ratio: None,
+        };
+        // Per preset: the mean temperature's mean and rms, and the residual's mean, as shown.
+        for (preset, mean_t, rms_t, residual, units) in [
+            (Preset::MKgS, 300.0, 2.0, 5.0, ("K", "K")),
+            (Preset::MmTonneS, 26.85, 2.0, 5.0, ("°C", "K")),
+            (Preset::InLbfS, 80.33, 3.6, 9.0, ("°F", "°F")),
+        ] {
+            let display = DisplaySystem::new(preset);
+            let stop = steady_summary(&report, &stats, &display);
+            let a = |k: usize| stop["averages"][k].clone();
+            let close = |v: &Value, x: f64| (v.as_f64().unwrap() - x).abs() < 1e-9 * x.abs().max(1.0);
+            assert!(close(&a(2)["mean"], mean_t) && close(&a(2)["rms"], rms_t), "{preset:?}: {}", a(2));
+            assert_eq!((a(2)["unit"].as_str(), a(2)["rms_unit"].as_str()), (Some(units.0), Some(units.1)), "{preset:?}");
+            assert!(close(&a(1)["mean"], residual) && a(1)["unit"] == a(1)["rms_unit"], "{preset:?}: {}", a(1));
+            // Back to SI through the named units: absolute for the mean and extremes, a
+            // difference for the root mean square.
+            let back = |v: &Value, q: Q| display.to_si(q, v.as_f64().unwrap()).unwrap();
+            for (k, q, si) in [(0, Q::Velocity, 0.25), (1, Q::TemperatureDifference, 5.0), (2, Q::Temperature, 300.0), (3, Q::Power, 1.5)] {
+                let rms = report.averages[k].rms[0];
+                let spread = if q == Q::Temperature { Q::TemperatureDifference } else { q };
+                assert!((back(&a(k)["mean"], q) - si).abs() < 1e-9 * si, "{preset:?} {k}: {}", a(k));
+                assert!((back(&a(k)["min"], q) - (si - rms)).abs() < 1e-9 * si, "{preset:?} {k}: {}", a(k));
+                assert!((back(&a(k)["max"], q) - (si + rms)).abs() < 1e-9 * si, "{preset:?} {k}: {}", a(k));
+                assert!((back(&a(k)["rms"], spread) - rms).abs() < 1e-9 * rms, "{preset:?} {k}: {}", a(k));
+                assert_eq!(a(k)["quantity"], json!(report.quantities[k]));
+                assert_eq!((a(k)["from"].as_f64(), a(k)["samples"].as_u64()), (Some(2.0), Some(40)));
+            }
+        }
+        // Without averaging there is nothing to report.
+        let plain = SteadyReport { averages: vec![], ..report };
+        assert_eq!(steady_summary(&plain, &stats, &DisplaySystem::default())["averages"], json!([]));
     }
 
     #[test]
