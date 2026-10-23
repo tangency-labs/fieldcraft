@@ -5,7 +5,7 @@
 //! Little-endian:
 //!
 //! ```text
-//! "MCRSLT01"                     magic, 8 bytes (the results encoding's version is 01)
+//! "MCRSLT02"                     magic, 8 bytes (the results encoding's version is 02)
 //! u32 steps
 //! steps × { u64 length, step name (UTF-8),
 //!           32 bytes: SHA-256 of the definition it was solved from ([`definition_hash`]),
@@ -39,7 +39,7 @@ use sha2::{Digest, Sha256};
 use crate::{Error, Geometry, MAX_FILE_BYTES, Result, codec, invalid};
 
 /// The magic bytes the part starts with (the `01` is the results encoding's version).
-pub const MAGIC: &[u8; 8] = b"MCRSLT01";
+pub const MAGIC: &[u8; 8] = b"MCRSLT02";
 
 /// The part's name.
 pub const PART: &str = "results.bin";
