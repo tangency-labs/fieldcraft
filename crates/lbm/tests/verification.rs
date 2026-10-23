@@ -444,11 +444,15 @@ fn a_wake_at_a_pressure_outlet_distorts_only_the_last_layer() {
 /// #650: the memory a run is refused or admitted on is the memory it allocates: the arrays the
 /// CPU flow holds once it steps, one frame's fields and the frames, within 1% (measured +0.5%
 /// for the channel, +0.2% with heat and buoyancy, −0.1% with a sphere, whose links the
-/// estimate cannot know before voxelising). The frames and the fields are exact.
+/// estimate cannot know before voxelising). The frames and the fields are exact. A turbulence
+/// model with heat adds each cell's eddy viscosity (8 bytes), on the CPU and while a flow is
+/// prepared for the GPU; without heat it adds nothing, and with the model off the estimate is
+/// what it always was.
 #[test]
 fn the_memory_estimate_matches_what_a_run_allocates() {
     use fieldcraft_lbm::{Backend, Choice, Memory};
-    let channel = |heat: bool, sphere: bool| {
+    use fieldcraft_model::Procedure;
+    let channel = |heat: bool, sphere: bool, turbulence: bool| {
         let mut d = domain([0.0; 3], [3.0, 1.5, 1.5], 0.0625);
         d.faces.x_min = FaceCondition::Velocity { velocity: [0.05, 0.0, 0.0], profile: Profile::Uniform };
         d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Convective };
@@ -457,7 +461,10 @@ fn the_memory_estimate_matches_what_a_run_allocates() {
             d.obstacles = vec!["Ball".into()];
             obstacles.push(obstacle("Ball", common::sphere([1.0, 0.75, 0.75], 0.4, 3), &["surface"]));
         }
-        let procedure = step(0.4, 0.01, None);
+        let mut procedure = step(0.4, 0.01, None);
+        if let (Procedure::Fluid { turbulence: t, .. }, true) = (&mut procedure, turbulence) {
+            *t = Some(fieldcraft_model::Turbulence::Smagorinsky { constant: 0.1, prandtl: 0.9 });
+        }
         let m = if heat {
             d.thermal = Some(fieldcraft_model::FluidThermal {
                 initial_temperature: kelvin(20.0),
@@ -471,8 +478,8 @@ fn the_memory_estimate_matches_what_a_run_allocates() {
         };
         (m, obstacles)
     };
-    for (heat, sphere) in [(false, false), (true, false), (false, true)] {
-        let (m, obstacles) = channel(heat, sphere);
+    for (heat, sphere, turbulence) in [(false, false, false), (true, false, false), (false, true, false), (true, false, true), (false, false, true)] {
+        let (m, obstacles) = channel(heat, sphere, turbulence);
         let setup = Setup::new(&m, None, &obstacles, &Limits::default()).unwrap();
         let memory = Memory::of(&setup, Choice::Cpu).unwrap();
         // From the model alone (what a form shows) it is the same.
@@ -493,6 +500,22 @@ fn the_memory_estimate_matches_what_a_run_allocates() {
         let over = memory.total() as f64 / measured as f64 - 1.0;
         assert!(memory.state >= held || sphere, "heat {heat}: {} below {held}", memory.state);
         assert!(over.abs() < 0.01, "heat {heat} sphere {sphere}: estimate {} vs {measured} allocated ({over:+.3})", memory.total());
+    }
+    // The model's own share, on both backends: the eddy viscosities only with heat.
+    for heat in [false, true] {
+        let (off, _) = channel(heat, false, false);
+        let (on, _) = channel(heat, false, true);
+        let n = Setup::new(&off, None, &[], &Limits::default()).unwrap().grid.len() as u64;
+        let eddy = if heat { 8 * n } else { 0 };
+        let [cpu_off, cpu_on, gpu_off, gpu_on] = [(&off, Choice::Cpu), (&on, Choice::Cpu), (&off, Choice::Device), (&on, Choice::Device)]
+            .map(|(m, c)| Memory::estimate(m, None, c).unwrap());
+        assert_eq!((cpu_on.setup - cpu_off.setup, cpu_on.state - cpu_off.state), (eddy, eddy), "heat {heat}");
+        assert_eq!(cpu_on.total() - cpu_off.total(), eddy, "heat {heat}");
+        // The GPU backend's flow is prepared on the host and dropped before the steps.
+        assert_eq!((gpu_on.setup - gpu_off.setup, gpu_on.state, gpu_on.device), (eddy, gpu_off.state, gpu_off.device), "heat {heat}");
+        // Model off: the estimate before the model, to the byte (the 48 × 24 × 24 channel).
+        let frozen = if heat { [14_201_856, 14_201_856, 1_658_880, 1_105_920] } else { [9_556_992, 9_556_992, 1_327_104, 884_736] };
+        assert_eq!([cpu_off.setup, cpu_off.state, cpu_off.frame_bytes, cpu_off.readback], frozen, "heat {heat}");
     }
 }
 

@@ -941,6 +941,7 @@ impl Flow {
             + bytes(&self.open)
             + bytes(&self.cell_force)
             + bytes(&self.cell_u)
+            + bytes(&self.cell_nu_t)
             + bytes(&self.zone_of)
             + bytes(&self.open_scratch)
             + self.zone_cells.iter().map(bytes).sum::<u64>()
