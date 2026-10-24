@@ -120,8 +120,8 @@ pub const PENALTY_FACTOR: f64 = 10.0;
 pub const GAP_TOLERANCE: f64 = 1e-5;
 
 /// Once an increment's active set has chattered, a node open by less than this fraction of its
-/// element's thickness keeps its penalty in the tangent for the rest of the step (its
-/// pressure, and so the residual, is still zero): a node that touches with no pressure, the edge
+/// element's thickness keeps its penalty in the tangent through that increment's retries and
+/// augmentations (its pressure, and so the residual, is still zero): a node that touches with no pressure, the edge
 /// of a contact that lifts, otherwise flips between open and closed from one Newton iteration to
 /// the next, each state's correction pushing it into the other, and a smaller increment does not
 /// help under proportional loading.
@@ -135,7 +135,7 @@ pub const MAX_AUGMENTATIONS: usize = 25;
 const ROUND_OFF: f64 = 1e-9; // unit-factors: relative to the model's extent
 
 /// An increment is cut back when the active set alternates between two states this many times
-/// (and the step takes [`ENGAGED_BAND`] from then on).
+/// (and its retries/augmentations take [`ENGAGED_BAND`] until the increment is accepted).
 pub const CHATTER_LIMIT: usize = 3;
 
 /// Most faces over the contacts of a model.

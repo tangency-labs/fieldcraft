@@ -139,6 +139,9 @@ use crate::sparse::{Csr, NodeGraph, add_block, add_entry};
 use crate::system::{Mesh, add_element_thermal_loads, loads, temperature_loads, translation_block, translations};
 use crate::{Error, Limits, Result};
 
+#[cfg(test)]
+mod band_tests;
+
 /// One Newton iteration of an increment.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, serde::Deserialize)]
 pub struct Iteration {
@@ -645,7 +648,7 @@ struct Run<'a> {
     /// The displacements of the last converged increment (all degrees of freedom).
     reference: Vec<f64>,
     /// The band of the engaged contact nodes ([`contact::ENGAGED_BAND`] once an increment's
-    /// active set has chattered, for the rest of the step; else 0).
+    /// active set has chattered, through that increment's retries and augmentations; else 0).
     band: f64,
     augmentations: usize,
     /// The augmentation being solved in the current increment.
@@ -665,6 +668,23 @@ struct Converged {
 }
 
 impl Run<'_> {
+    /// Commit a fully converged load-control increment, after its contact augmentations.
+    fn commit_increment(&mut self, q: &[f64], lambda: f64, evaluation: &Evaluation) {
+        self.committed.clone_from(&evaluation.history);
+        for (l, s) in self.contact.iter_mut().zip(&evaluation.contact) {
+            l.commit(s);
+        }
+        self.reference = self.problem.red.expand_scaled(q, lambda);
+        let (external, external_moment) = norm_inf_split(&evaluation.external, &self.rotation);
+        let (internal, internal_moment) = norm_inf_split(&evaluation.internal, &self.rotation);
+        self.converged_scale = self.converged_scale.max(external).max(internal);
+        self.converged_moment = self.converged_moment.max(external_moment).max(internal_moment);
+        // A near-open node has no force but keeps a penalty tangent while the band is active.
+        // That temporary anti-chatter aid must not poison a later increment's predictor/Newton
+        // tangent. Only clear it after this increment and every augmentation have committed.
+        self.band = 0.0;
+    }
+
     /// The residual over the free equations, T_fᵀ (f_ext − f_int), and the force scale.
     ///
     /// With contact a trial state can be far from equilibrium (a body pressed deep into another
@@ -905,7 +925,8 @@ impl Run<'_> {
                 if sets.0 == Some(set) && set != sets.1 {
                     flips += 1;
                     if flips >= contact::CHATTER_LIMIT {
-                        // From now on the nodes about to touch stay in the tangent.
+                        // Through this increment's retries/augmentations the nodes about to
+                        // touch stay in the tangent; the accepted commit clears the band.
                         self.band = contact::ENGAGED_BAND;
                         return Err(Failure::Cutback("the contact status alternates between two states (chattering)".into()));
                     }
@@ -1433,15 +1454,7 @@ fn solve_on(model: &Model, step: &str, limits: &Limits, notes: Vec<String>) -> R
                     (t, lambda) = (target, target_lambda);
                     q = c.q;
                     keep_frame(&mut history, lambda, &red.expand_scaled(&q, lambda), Some(&c.evaluation), &mut warnings);
-                    run.committed.clone_from(&c.evaluation.history);
-                    for (l, s) in run.contact.iter_mut().zip(&c.evaluation.contact) {
-                        l.commit(s);
-                    }
-                    run.reference = red.expand_scaled(&q, lambda);
-                    let (external, external_moment) = norm_inf_split(&c.evaluation.external, &run.rotation);
-                    let (internal, internal_moment) = norm_inf_split(&c.evaluation.internal, &run.rotation);
-                    run.converged_scale = run.converged_scale.max(external).max(internal);
-                    run.converged_moment = run.converged_moment.max(external_moment).max(internal_moment);
+                    run.commit_increment(&q, lambda, &c.evaluation);
                     last = Some(c.evaluation);
                     fast = if count <= FAST_ITERATIONS { fast + 1 } else { 0 };
                     if fast >= 2 {
