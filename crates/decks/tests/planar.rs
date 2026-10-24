@@ -59,6 +59,21 @@ fn unsupported(r: Result<String, Error>) -> String {
 }
 
 #[test]
+fn production_reader_retains_planar_sections_and_edge_surfaces() {
+    use fieldcraft_model::units::Preset;
+    for kind in [SectionKind::PlaneStress { thickness: 2.0 }, SectionKind::PlaneStrain { thickness: 2.0 }, SectionKind::Axisymmetric {}] {
+        for integration in [Integration::Full, Integration::Reduced] {
+            let m = plate(kind, ElementKind::Quad4, Formulation { integration, ..Formulation::default() });
+            let written = abaqus::write(&m).unwrap();
+            let read = fieldcraft_decks::abaqus::read_in(&written, Preset::MmTonneS).unwrap();
+            assert_eq!(read.model.nodes(), common::si(&m).nodes());
+            assert_eq!(read.model.set("right").unwrap().edges, m.set("right").unwrap().edges);
+            assert!(read.model.sections().values().any(|s| common::si(&m).sections().values().any(|other| other == s)));
+        }
+    }
+}
+
+#[test]
 fn abaqus_writes_plane_and_axisymmetric_elements() {
     let full = Formulation::default();
     let im = Formulation { incompatible_modes: true, ..Formulation::default() };

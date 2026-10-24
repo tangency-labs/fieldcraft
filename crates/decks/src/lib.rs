@@ -33,6 +33,9 @@ pub enum Error {
     Model(#[from] fieldcraft_model::Error),
     #[error("limit reached: {0}")]
     Limit(String),
+    /// Invalid or unsupported input data, at its original one-based physical line.
+    #[error("Abaqus input line {line}: {message}")]
+    Parse { line: usize, message: String },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

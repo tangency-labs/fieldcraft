@@ -246,6 +246,76 @@ fn the_written_mesh_and_sets_read_back() {
     }
 }
 
+#[test]
+fn production_reader_preserves_supported_written_model_data() {
+    use fieldcraft_model::units::Preset;
+    let mut models = vec![cantilever(), plate(), frequency()];
+    models.extend(
+        [
+            ElementKind::Tet4,
+            ElementKind::Tet10,
+            ElementKind::Wedge6,
+            ElementKind::Hex8,
+            ElementKind::Hex20,
+            ElementKind::Tri3,
+            ElementKind::Quad4,
+            ElementKind::Quad8,
+        ]
+        .map(one_element),
+    );
+    let model_data = |text: &str| {
+        let mut out = Vec::new();
+        let mut included = false;
+        for line in text.lines().filter(|line| !line.starts_with("**")) {
+            if line.starts_with("*STEP") {
+                break;
+            }
+            if line.starts_with('*') {
+                included = [
+                    "*NODE",
+                    "*ELEMENT",
+                    "*NSET",
+                    "*ELSET",
+                    "*SURFACE, TYPE=ELEMENT",
+                    "*MATERIAL",
+                    "*ELASTIC",
+                    "*DENSITY",
+                    "*SOLID SECTION",
+                    "*SHELL SECTION",
+                    "*BEAM SECTION",
+                ]
+                .iter()
+                .any(|prefix| line == *prefix || line.starts_with(&format!("{prefix},")));
+                // An explicit reference node is an ordinary input NODE; its separate block can merge.
+                if line == "*NODE" {
+                    continue;
+                }
+            }
+            if included {
+                out.push(line.to_string());
+            }
+        }
+        out
+    };
+    for original in models {
+        let written = abaqus::write(&original).unwrap();
+        let mut imported = fieldcraft_decks::abaqus::read_in(&written, Preset::MmTonneS).unwrap();
+        let si = common::si(&original);
+        let mut expected_nodes = si.nodes().clone();
+        expected_nodes.extend(si.reference_points().values().map(|p| (p.label, fieldcraft_model::Node { xyz: p.xyz })));
+        assert_eq!(&expected_nodes, imported.model.nodes());
+        assert_eq!(si.elements(), imported.model.elements());
+        assert_eq!(si.materials(), imported.model.materials());
+        for section in si.sections().values() {
+            assert!(imported.model.sections().values().any(|other| other == section));
+        }
+        // History is deliberately unread; add a new ordinary step for the writer's model check.
+        imported.model.add_step(Step::new("Imported", Procedure::Static {}), None).unwrap();
+        let rewritten = fieldcraft_decks::abaqus::write(&imported.model, Preset::MmTonneS).unwrap();
+        assert_eq!(model_data(&written), model_data(&rewritten));
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // Node order: the element Jacobian of the written connectivity, in Abaqus's own conventions
 
