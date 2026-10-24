@@ -38,6 +38,14 @@ pre-release `0.2.0-rc.1` is versioned `0.2.0~rc.1` inside the packages so it sor
 the tar.gz, runs lintian, and installs the packages in Ubuntu 22.04 and Fedora containers to run
 `fieldcraft-cli --version`.
 
+Native rendering and GPU solvers require a Vulkan loader and a compatible Vulkan driver. D3D/DX12,
+Metal and native OpenGL are unsupported; no DXC DLL is needed. Linux packages require the Vulkan
+loader, not an EGL alternative. On macOS this requires a separately installed Vulkan portability
+implementation such as MoltenVK; the package does not bundle one. A stock macOS installation
+without Vulkan cannot open the desktop viewport; CLI CPU solves and CPU snapshots remain usable.
+A release must verify its intended macOS Vulkan setup before claiming desktop support there.
+Browser rendering remains WebGPU with WebGL2 fallback.
+
 ## Signing
 
 **macOS.** When the repository has the secrets below, the app, the dmg and the CLI are signed
@@ -190,8 +198,8 @@ verification, `fieldcraft-mesh-gpu`'s agreement, the drawing tests) on lavapipe,
 Vulkan, with `FIELDCRAFT_GPU=software FIELDCRAFT_REQUIRE_GPU=1`, so a missing adapter fails
 instead of skipping (lavapipe's own crash, #638, showed up this way). The heavy job runs with
 `FIELDCRAFT_GPU=cpu` on Blacksmith: the GPU throughput benchmark needs a 131 MB buffer and
-lavapipe allows 128 MB. Bugs of real GPUs and their drivers (NVIDIA device loss #636, Windows
-DX12 #588, Metal) show up on none of these, so a change to `crates/gpu` or `crates/lbm-gpu` says
+lavapipe allows 128 MB. Bugs of real Vulkan GPUs and their drivers (such as NVIDIA device loss
+#636) show up on none of these, so a change to `crates/gpu` or `crates/lbm-gpu` says
 in its pull request which real GPU it ran on (as #641 and #651 did).
 
 ## Verify and publish

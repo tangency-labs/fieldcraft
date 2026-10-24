@@ -16,7 +16,7 @@ name: CI
 #
 # GPU: the runners have none. `cargo xtask ci` draws and runs the GPU suites (lbm-gpu, mesh-gpu,
 # snapshots) on lavapipe, Mesa's software Vulkan, and fails instead of skipping without it; the
-# heavy job stays on the CPU on Blacksmith. Hardware GPUs (NVIDIA, DX12, Metal) are not covered:
+# heavy job stays on the CPU on Blacksmith. Hardware Vulkan GPUs (NVIDIA, AMD, Intel) are not covered:
 # a change to crates/gpu or crates/lbm-gpu states the real GPU it ran on (CONTRIBUTING.md).
 #
 # Runners: Linux jobs run on Blacksmith's Ubuntu 24.04 runners (blacksmith-<N>vcpu-ubuntu-2404),

@@ -48,6 +48,20 @@ Rules beyond the layer order:
   scripts (`script_design`, through `solidcraft-engine`) for the test corpus; the library opens
   designs without it.
 
+### Native GPU backend
+
+The desktop viewport, offscreen rendering, fluid GPU solver and mesh GPU device use Vulkan only.
+Their shared adapter policy ranks hardware Vulkan devices ahead of software Vulkan (lavapipe or
+SwiftShader). Strict `FIELDCRAFT_GPU=hardware`/`software` requests fail when their tier is missing;
+headless `auto` may fall back to the CPU rasterizer, and `cpu` uses it directly. `WGPU_BACKEND`
+can narrow the backend set to Vulkan but cannot enable another native API; an override excluding
+Vulkan returns an actionable error. Vulkan instances and solver devices/pipelines remain reused.
+The desktop viewport also requires Vulkan, independently of the headless picture policy.
+
+Native wgpu and egui-wgpu defaults are disabled to avoid re-enabling unsupported backends through
+feature unification. Browser-only dependencies explicitly enable WebGPU/WebGL and wasm JS handle
+support. No browser GPU solver is added. See [releasing.md](releasing.md) for platform requirements.
+
 ### SolidCraft pin
 
 `solidcraft-*` come from https://github.com/tangency-labs/solidcraft (formerly
@@ -55,8 +69,8 @@ bherbruck/solidcraft, which redirects there), pinned in the workspace `Cargo.tom
 of a SolidCraft release tag (now v0.18.2). SolidCraft's `[patch.crates-io]` (its fixed truck
 crates) does not reach dependents, so the workspace repeats it from the same rev; bump both
 together, and keep the list in step with SolidCraft's (v0.16 added `truck-geometry`). The same
-goes for SolidCraft's patched `egui-wgpu` (MSAA clamped to what the device supports, 1x on
-OpenGL adapters, so the desktop app's 4x never fails pipeline validation at start).
+goes for SolidCraft's patched `egui-wgpu` (MSAA clamped to what the device supports, so the
+desktop app's 4x never fails pipeline validation at start).
 
 The pin decides which designs FieldCraft opens: SolidCraft's reader migrates every older design
 format and refuses a newer one, and SolidCraft releases often raise the format. A design newer

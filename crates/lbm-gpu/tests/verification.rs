@@ -499,7 +499,7 @@ fn wall_heat_at_a_held_inlet_matches_the_cpu() {
 }
 
 /// A second solve on the same device compiles nothing: the kernels stay with the device for the
-/// process (#588: DX12 recompiled them for 9 s on every solve).
+/// process (#588: repeated solves must not rebuild the pipelines).
 #[test]
 fn a_second_solve_reuses_the_compiled_kernels() {
     let mut d = domain([0.0; 3], [1.0, 1.0, 0.125], 0.125);

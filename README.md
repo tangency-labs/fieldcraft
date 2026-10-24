@@ -40,6 +40,10 @@ theory with shear 0.177 mm).
 - **Command line:** `fieldcraft-cli` ships in every package; AI agents connect to it over MCP
   ([docs/mcp.md](docs/mcp.md)).
 
+Native graphics and GPU solvers require Vulkan and an installed Vulkan driver. On macOS a
+separate Vulkan portability implementation (such as MoltenVK) is required; it is not bundled.
+CPU CLI solves and CPU snapshots do not need a GPU. The browser uses WebGPU/WebGL2.
+
 Every release lists its checksums in `SHA256SUMS.txt`. Building from source is in
 [CONTRIBUTING.md](CONTRIBUTING.md#get-it-running-about-10-minutes-on-a-fast-machine).
 

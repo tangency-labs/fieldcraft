@@ -87,7 +87,8 @@ cylinders as a few percent more drag on coarse grids. Use it where the two-relax
 scheme does not run, not in place of it.
 
 **CPU and GPU** (`cargo test -p fieldcraft-lbm-gpu --test verification`, every case with both
-collisions and both streaming layouts, Apple M4 Max, Metal): regularised velocity fields within
+collisions and both streaming layouts, Apple M4 Max, Metal; historical verification before
+native GPU support became Vulkan-only): regularised velocity fields within
 5e-7–7.4e-6 of the largest speed, densities within 2.6e-7, wall shear within 1.9e-5 of itself,
 heats within 2.1e-6, mass drift 0: inside the backend's stated tolerances (2e-5, 1e-6, 5e-5, 1e-4).
 

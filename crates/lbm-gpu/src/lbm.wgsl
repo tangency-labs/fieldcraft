@@ -666,8 +666,7 @@ fn zou_he(o: u32, kind: u32, cell: u32, axis: u32, sign: f32, xyz: vec3<i32>, ap
     } else {
         rho = ot.x;
         let un = ((rho - 1.0) - (tangential + 2.0 * outgoing)) / rho;
-        // Not `bare[axis] = …`: DX12's shader compiler (FXC) refuses a write through a
-        // dynamic index into a local vector (X3500).
+        // Set the normal component while retaining the tangential half-force correction.
         bare = select(-a_half, vec3<f32>(sign * un), vec3<u32>(0u, 1u, 2u) == vec3<u32>(axis));
     }
     // With the regularised collision a density target holds the equilibrium of its density and

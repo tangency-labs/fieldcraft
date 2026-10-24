@@ -12,7 +12,9 @@ needed most, and how to claim work. The rules every change follows, by a person 
 
 ## Get it running (about 10 minutes on a fast machine)
 
-You need stable Rust 1.95 or newer.
+You need stable Rust 1.95 or newer. Native graphics and GPU solvers require Vulkan and a
+compatible driver; no DXC setup is needed. See [platform requirements](docs/releasing.md),
+including the separate Vulkan portability installation required on macOS.
 
 ```sh
 git clone https://github.com/tangency-labs/fieldcraft && cd fieldcraft
@@ -124,7 +126,7 @@ outside hides. A picture is often the fastest way for someone else to see what y
    in the pull request.
 6. CI has no hardware GPU: it runs the GPU suites on lavapipe (software Vulkan). A change to
    `crates/gpu` or `crates/lbm-gpu` says in the pull request which real GPU it was run on
-   (for example an NVIDIA card on Linux, Apple Metal, DX12 on Windows), with the tests it ran.
+   (Vulkan, for example an NVIDIA or AMD card on Linux or Windows), with the tests it ran.
 7. Never contribute code, text or data from GPL-family projects or commercial CAE products
    (see [docs/adr/0001-libraries.md](docs/adr/0001-libraries.md)).
 

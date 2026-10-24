@@ -17,5 +17,9 @@ serde_json = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 pollster = { workspace = true }
-# Native backends, so the CLI and the tests open a device without a window.
-wgpu = { workspace = true, features = ["metal", "vulkan", "dx12", "gles"] }
+# Vulkan is the only native backend, including the desktop viewport and compute solvers.
+wgpu = { workspace = true, features = ["vulkan"] }
+
+# wgpu requires a separate opt-in for Vulkan portability implementations on Apple platforms.
+[target.'cfg(all(not(target_arch = "wasm32"), target_vendor = "apple"))'.dependencies]
+wgpu = { workspace = true, features = ["vulkan-portability"] }

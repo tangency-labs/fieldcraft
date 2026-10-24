@@ -1,26 +1,19 @@
 //! Which adapter draws a headless picture. `FIELDCRAFT_GPU` chooses the policy:
 //!
-//! - `auto` (the default) walks a hardware GPU, then a software adapter (lavapipe, llvmpipe,
-//!   WARP, SwiftShader), then the CPU rasterizer;
-//! - `hardware` and `software` are strict: an error when there is no such adapter;
+//! - `auto` (the default) walks a hardware Vulkan GPU, then a software Vulkan adapter
+//!   (lavapipe or SwiftShader), then the CPU rasterizer;
+//! - `hardware` and `software` are strict: an error when there is no such Vulkan adapter;
 //! - `cpu` forces the CPU rasterizer.
 //!
-//! Backends are Metal on macOS, DX12 and Vulkan on Windows, Vulkan and GL elsewhere;
-//! `WGPU_BACKEND` narrows them (`WGPU_BACKEND=gl` forces GL). Where both Vulkan and GL are on
-//! offer, Vulkan is asked first and GL is brought up only when Vulkan has no adapter of the tier
-//! the policy wants: NVIDIA's EGL torn down beside a working Vulkan device in the same process
-//! deadlocked its driver on a GB10 (#614). Each backend set has one `wgpu::Instance` for the
-//! whole process: NVIDIA's driver stops showing the GPU to new instances once 25 of them have
-//! opened a device, even after they are gone (#636), so a long session would lose the GPU at
-//! its 26th solve. A discrete GPU outranks an integrated one, then a virtual one, then any
-//! other; a CPU device is the software tier.
+//! Vulkan is the only native GPU backend. `WGPU_BACKEND` may narrow this choice but cannot
+//! enable another backend. A discrete GPU outranks an integrated one, then a virtual one,
+//! then any other; a CPU device is the software tier.
 //!
-//! wgpu's backend options follow its environment variables: on DX12, `WGPU_DX12_COMPILER`
-//! (`fxc` or `dxc`; unset, DXC when `dxcompiler.dll` is on the DLL search path, else FXC, see
-//! #561). `staticdxc` is refused: it needs wgpu's `static-dxc` feature, which FieldCraft does not
-//! build, and wgpu would panic on it.
+//! One Vulkan instance serves the whole process: NVIDIA's driver stops showing the GPU to
+//! new instances once 25 have opened a device (#636). The instance and the solvers' shared
+//! devices keep repeated solves from recreating the driver resources.
 
-use std::sync::Mutex;
+use std::sync::OnceLock;
 
 use crate::{GpuError, Result};
 
@@ -86,26 +79,28 @@ pub fn pick(types: &[wgpu::DeviceType], policy: Policy) -> Result<Option<usize>>
     match policy {
         Policy::Cpu => Ok(None),
         Policy::Auto => Ok(best(Tier::Hardware).or_else(|| best(Tier::Software))),
-        Policy::Hardware => best(Tier::Hardware).map(Some).ok_or_else(|| GpuError::NoAdapter(format!("{ENV}=hardware: no hardware GPU adapter"))),
+        Policy::Hardware => {
+            best(Tier::Hardware).map(Some).ok_or_else(|| GpuError::NoAdapter(format!("{ENV}=hardware: no hardware Vulkan GPU adapter")))
+        }
         Policy::Software => best(Tier::Software)
             .map(Some)
-            .ok_or_else(|| GpuError::NoAdapter(format!("{ENV}=software: no software GPU adapter (lavapipe, llvmpipe, WARP)"))),
+            .ok_or_else(|| GpuError::NoAdapter(format!("{ENV}=software: no software Vulkan GPU adapter (install lavapipe or SwiftShader)"))),
     }
 }
 
-/// The backends tried on this platform, narrowed by `WGPU_BACKEND`.
-pub fn backends() -> wgpu::Backends {
-    let platform = if cfg!(target_os = "macos") || cfg!(target_os = "ios") {
-        wgpu::Backends::METAL
-    } else if cfg!(windows) {
-        wgpu::Backends::DX12 | wgpu::Backends::VULKAN
-    } else {
-        wgpu::Backends::VULKAN | wgpu::Backends::GL
-    };
-    match wgpu::Backends::from_env() {
-        Some(env) => platform & env,
-        None => platform,
+/// Vulkan, unless `WGPU_BACKEND` explicitly excludes it. No override enables another backend.
+pub fn backends() -> Result<wgpu::Backends> {
+    supported_backends(wgpu::Backends::from_env())
+}
+
+fn supported_backends(requested: Option<wgpu::Backends>) -> Result<wgpu::Backends> {
+    let enabled = requested.unwrap_or(wgpu::Backends::VULKAN) & wgpu::Backends::VULKAN;
+    if enabled.is_empty() {
+        return Err(GpuError::NoAdapter(
+            "native GPU support requires Vulkan: unset WGPU_BACKEND or set WGPU_BACKEND=vulkan, and install a Vulkan driver".into(),
+        ));
     }
+    Ok(enabled)
 }
 
 /// The adapter `policy` picks on this machine and its tier; `Ok(None)` for the CPU rasterizer.
@@ -113,64 +108,28 @@ pub fn adapter(policy: Policy) -> Result<Option<(wgpu::Adapter, Tier)>> {
     if policy == Policy::Cpu {
         return Ok(None);
     }
-    let all = backends();
-    let first = if all.contains(wgpu::Backends::VULKAN | wgpu::Backends::GL) { wgpu::Backends::VULKAN } else { all };
-    let mut adapters = enumerate(first)?;
-    if first != all && !settled(&device_types(&adapters), policy) {
-        adapters.extend(enumerate(all - first)?);
-    }
+    let mut adapters = enumerate(backends()?);
     let types = device_types(&adapters);
     let Some(i) = pick(&types, policy)? else { return Ok(None) };
     let tier = types.get(i).map_or(Tier::Hardware, |t| rank(*t).0);
     Ok((i < adapters.len()).then(|| (adapters.swap_remove(i), tier)))
 }
 
-/// The adapters of `backends`.
-fn enumerate(backends: wgpu::Backends) -> Result<Vec<wgpu::Adapter>> {
-    let instance = instance(backends)?;
-    Ok(pollster::block_on(instance.enumerate_adapters(backends)))
+/// The Vulkan adapters. Never initialize an unsupported backend as a fallback.
+fn enumerate(backends: wgpu::Backends) -> Vec<wgpu::Adapter> {
+    pollster::block_on(instance().enumerate_adapters(backends))
 }
 
-/// The instances made so far, by backend set and backend options (`Dx12Compiler` has no
-/// equality, so the options are compared by their debug form).
-static INSTANCES: Mutex<Vec<(wgpu::Backends, String, wgpu::Instance)>> = Mutex::new(Vec::new());
+static INSTANCE: OnceLock<wgpu::Instance> = OnceLock::new();
 
-/// The process's instance of `backends` with the backend options the environment asks for: the
-/// one made at its first use, so the driver sees one instance per backend set however many
-/// devices are opened (#636).
-fn instance(backends: wgpu::Backends) -> Result<wgpu::Instance> {
-    let options = backend_options(wgpu::BackendOptions::from_env_or_default())?;
-    let key = format!("{options:?}");
-    let mut made = INSTANCES.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some((_, _, instance)) = made.iter().find(|(b, k, _)| *b == backends && *k == key) {
-        return Ok(instance.clone());
-    }
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends,
-        backend_options: options,
-        ..wgpu::InstanceDescriptor::new_without_display_handle()
-    });
-    made.push((backends, key, instance.clone()));
-    Ok(instance)
+fn instance() -> &'static wgpu::Instance {
+    INSTANCE.get_or_init(|| {
+        wgpu::Instance::new(wgpu::InstanceDescriptor { backends: wgpu::Backends::VULKAN, ..wgpu::InstanceDescriptor::new_without_display_handle() })
+    })
 }
 
 fn device_types(adapters: &[wgpu::Adapter]) -> Vec<wgpu::DeviceType> {
     adapters.iter().map(|a| a.get_info().device_type).collect()
-}
-
-/// Whether adapters of `types` already hold one of the tier `policy` wants, so the other
-/// backends need not be brought up.
-fn settled(types: &[wgpu::DeviceType], policy: Policy) -> bool {
-    let want = if policy == Policy::Software { Tier::Software } else { Tier::Hardware };
-    types.iter().any(|t| rank(*t).0 == want)
-}
-
-/// `options`, unless they ask for a DX12 compiler this build does not have.
-fn backend_options(options: wgpu::BackendOptions) -> Result<wgpu::BackendOptions> {
-    if matches!(options.dx12.shader_compiler, wgpu::Dx12Compiler::StaticDxc) {
-        return Err(GpuError::Device("WGPU_DX12_COMPILER=staticdxc is not built in: use dxc with dxcompiler.dll, or fxc".into()));
-    }
-    Ok(options)
 }
 
 #[cfg(test)]
@@ -180,15 +139,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_dx12_compiler_that_is_not_built_in_is_refused() {
-        let with = |shader_compiler| {
-            let mut o = wgpu::BackendOptions::default();
-            o.dx12.shader_compiler = shader_compiler;
-            backend_options(o)
-        };
-        assert!(with(wgpu::Dx12Compiler::Fxc).is_ok());
-        assert!(with(wgpu::Dx12Compiler::Auto).is_ok());
-        assert!(with(wgpu::Dx12Compiler::StaticDxc).is_err());
+    fn only_vulkan_is_compiled_as_a_native_backend() {
+        assert_eq!(wgpu::Instance::enabled_backend_features(), wgpu::Backends::VULKAN);
+    }
+
+    #[test]
+    fn backend_overrides_can_never_enable_other_native_backends() {
+        use wgpu::Backends as B;
+        for requested in [None, Some(B::VULKAN), Some(B::all()), Some(B::DX12 | B::VULKAN)] {
+            assert_eq!(supported_backends(requested).unwrap(), B::VULKAN);
+        }
+        for requested in [B::empty(), B::DX12, B::METAL, B::GL, B::BROWSER_WEBGPU, B::NOOP] {
+            let error = supported_backends(Some(requested)).unwrap_err().to_string();
+            assert!(error.contains("Vulkan"));
+            assert!(error.contains("WGPU_BACKEND=vulkan"));
+        }
     }
 
     #[test]
@@ -206,28 +171,10 @@ mod tests {
         assert!(pick(&[], Policy::Hardware).is_err());
     }
 
-    /// #614: GL is brought up only when Vulkan has no adapter of the tier the policy wants.
+    /// #636: repeated requests reuse the same instance without a new driver context.
     #[test]
-    fn vulkan_settles_when_it_has_the_wanted_tier() {
-        assert!(settled(&[Cpu, IntegratedGpu], Policy::Auto));
-        assert!(settled(&[DiscreteGpu], Policy::Hardware));
-        assert!(settled(&[Cpu], Policy::Software));
-        // Only a software adapter: auto still asks GL for a hardware one, as before.
-        assert!(!settled(&[Cpu], Policy::Auto));
-        assert!(!settled(&[DiscreteGpu], Policy::Software));
-        assert!(!settled(&[], Policy::Hardware));
-    }
-
-    /// #636: one instance per backend set for the process, however often adapters are asked for.
-    #[test]
-    fn a_backend_set_keeps_one_instance() {
-        let count = |b: wgpu::Backends| INSTANCES.lock().unwrap().iter().filter(|(k, _, _)| *k == b).count();
-        let b = wgpu::Backends::NOOP;
-        for _ in 0..3 {
-            let _ = instance(b).unwrap();
-            let _ = enumerate(b).unwrap();
-        }
-        assert_eq!(count(b), 1);
+    fn vulkan_keeps_one_instance() {
+        assert!(std::ptr::eq(instance(), instance()));
     }
 
     #[test]

@@ -285,7 +285,7 @@ fn main() -> eframe::Result {
     native_crash::install();
     eframe::egui_wgpu::set_startup_hook(startup_step);
     crash::phase("window");
-    let options = eframe::NativeOptions {
+    let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("FieldCraft")
             .with_app_id(APP_ID)
@@ -303,6 +303,11 @@ fn main() -> eframe::Result {
         multisampling: MSAA,
         ..Default::default()
     };
+    // Match headless rendering and compute: environment overrides cannot enable another API.
+    if let eframe::egui_wgpu::WgpuSetup::CreateNew(create) = &mut options.wgpu_options.wgpu_setup {
+        create.instance_descriptor.backends = fieldcraft_gpu::select::backends().map_err(|e| eframe::Error::AppCreation(Box::new(e)))?;
+        create.instance_descriptor.backend_options = Default::default();
+    }
     eframe::run_native(
         "FieldCraft",
         options,
