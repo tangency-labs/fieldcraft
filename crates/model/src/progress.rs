@@ -17,7 +17,7 @@
 //! discards what it was building, so a cancelled command changes nothing.
 
 use std::cell::RefCell;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
@@ -46,6 +46,30 @@ pub struct StepAt {
     pub name: String,
     pub index: usize,
     pub count: usize,
+}
+
+/// Platform-neutral metadata observed while preparing a solver backend. None means that
+/// setup has not observed the value; the report never opens a device to fill missing data.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct BackendDiagnostic {
+    pub phase: String,
+    pub backend: Option<String>,
+    pub adapter: Option<String>,
+    pub driver: Option<String>,
+    pub driver_info: Option<String>,
+    pub adapter_limits: Option<BackendLimits>,
+    pub device_limits: Option<BackendLimits>,
+    pub devices_opened: Option<u64>,
+    pub instances_opened: Option<u64>,
+    pub counter_scope: String,
+}
+
+/// The limits relevant to compute-buffer and device-allocation failures.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct BackendLimits {
+    pub max_storage_buffers_per_shader_stage: u32,
+    pub max_buffer_size: u64,
+    pub max_storage_buffer_binding_size: u64,
 }
 
 impl State {
@@ -84,6 +108,8 @@ fn number(x: f64) -> String {
 pub struct Progress {
     state: Mutex<State>,
     cancelled: AtomicBool,
+    backend: Mutex<Option<BackendDiagnostic>>,
+    observations: AtomicU64,
 }
 
 impl Progress {
@@ -94,6 +120,30 @@ impl Progress {
     /// The state now (the default if a reporter panicked while holding it).
     pub fn snapshot(&self) -> State {
         self.state.lock().map(|s| s.clone()).unwrap_or_default()
+    }
+
+    /// Reports observed, even when two reports have identical final values.
+    pub fn observations(&self) -> u64 {
+        self.observations.load(Ordering::Relaxed)
+    }
+
+    /// A new command keeps the host's cancellation token but no previous progress/device.
+    pub fn begin_command(&self) {
+        self.update(|s| *s = State::default());
+        self.set_backend_diagnostic(None);
+    }
+
+    /// This reporter's backend context, independent of every other command's reporter.
+    pub fn backend_diagnostic(&self) -> Option<BackendDiagnostic> {
+        self.backend.lock().ok().and_then(|v| v.clone())
+    }
+
+    /// Replace setup metadata, or clear it at the beginning of another solve. This does not
+    /// reset cancellation or progress and never runs in an iteration/cell loop.
+    pub fn set_backend_diagnostic(&self, value: Option<BackendDiagnostic>) {
+        if let Ok(mut context) = self.backend.lock() {
+            *context = value;
+        }
     }
 
     /// Ask the command to stop at its next check ([`check`]); from any thread.
@@ -115,6 +165,7 @@ impl Progress {
     fn update(&self, f: impl FnOnce(&mut State)) {
         if let Ok(mut s) = self.state.lock() {
             f(&mut s);
+            self.observations.fetch_add(1, Ordering::Relaxed);
         }
     }
 }
@@ -149,9 +200,15 @@ fn with(f: impl FnOnce(&Progress)) {
     }
 }
 
+/// Record backend setup on this command's reporter, including on a cached-device reuse.
+pub fn backend_diagnostic(context: BackendDiagnostic) {
+    with(|p| p.set_backend_diagnostic(Some(context)));
+}
+
 /// Step `index` (from 1) of `count`, named `name`, starts.
 pub fn step(name: &str, index: usize, count: usize) {
     with(|p| {
+        p.set_backend_diagnostic(None);
         p.update(|s| {
             *s = State { step: Some(StepAt { name: name.to_string(), index, count }), ..State::default() };
         })
@@ -183,6 +240,48 @@ pub fn check() -> crate::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn backend_context_stays_with_its_reporter_when_commands_overlap() {
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let reporters = [Progress::new(), Progress::new()];
+        std::thread::scope(|scope| {
+            for (index, reporter) in reporters.iter().enumerate() {
+                let barrier = barrier.clone();
+                scope.spawn(move || {
+                    scoped(Some(reporter.clone()), || {
+                        backend_diagnostic(BackendDiagnostic { adapter: Some(format!("adapter {index}")), ..Default::default() });
+                        barrier.wait();
+                        assert_eq!(reporter.backend_diagnostic().unwrap().adapter, Some(format!("adapter {index}")));
+                    })
+                });
+            }
+        });
+        reporters[0].cancel();
+        scoped(Some(reporters[0].clone()), || step("CPU after GPU", 2, 2));
+        assert!(reporters[0].is_cancelled());
+        assert!(reporters[0].backend_diagnostic().is_none());
+        assert_eq!(reporters[1].backend_diagnostic().unwrap().adapter.as_deref(), Some("adapter 1"));
+    }
+
+    #[test]
+    fn identical_final_progress_still_counts_as_new_observations() {
+        let p = Progress::new();
+        scoped(Some(p.clone()), || {
+            stage("Iteration", Some(10.0), "increments");
+            count(3.0);
+            let before = p.observations();
+            let state = p.snapshot();
+            stage("Iteration", Some(10.0), "increments");
+            count(3.0);
+            assert_eq!(p.snapshot(), state);
+            assert!(p.observations() > before);
+        });
+        p.cancel();
+        p.begin_command();
+        assert!(p.is_cancelled());
+        assert_eq!(p.snapshot(), State::default());
+    }
 
     #[test]
     fn reports_reach_the_installed_progress_only() {

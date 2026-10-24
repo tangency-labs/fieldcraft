@@ -13,7 +13,7 @@ use crate::{CommandKind, CommandSpec, EngineError, Result, Session, bug_report, 
 pub const CRASH_REPORTS: CommandSpec = CommandSpec {
     id: "diagnostics.crash_reports",
     label: "Crash Reports",
-    params: r#"{"limit"?: 20, "dir"?: "…"} — the crash reports the desktop app wrote on this computer, newest first: id, kind (command_panic, recovered_panic, panic, unclean_exit), time, message, command, count, version, path and whether it can be replayed (default folder: FIELDCRAFT_CRASH_DIR, a temporary folder in runs driven by automation, else the per-user data folder)"#,
+    params: r#"{"limit"?: 20, "dir"?: "…"} — local crash reports and ordinary solver diagnostics, newest first: id, kind (command_panic, recovered_panic, panic, unclean_exit, solver_error), time, message, command, count, version, path and whether it can be replayed (default folder: FIELDCRAFT_CRASH_DIR, a temporary folder in runs driven by automation, else the per-user data folder). Solver diagnostics contain no copied model or replay and do not announce an application crash"#,
     form: Some(super::forms::CRASH_REPORTS),
     kind: CommandKind::Session,
     requires: &[],
@@ -23,7 +23,7 @@ pub const CRASH_REPORTS: CommandSpec = CommandSpec {
 pub const CRASH_REPORT: CommandSpec = CommandSpec {
     id: "diagnostics.crash_report",
     label: "Crash Report",
-    params: r#"{"id": "20261014-101500-…", "dir"?: "…"} — one crash report: what happened, where, the backtrace, the command and recent commands, and the paths of its model, replay and log files"#,
+    params: r#"{"id": "20261014-101500-…", "dir"?: "…"} — one local report: a crash's backtrace, command, recent commands and attachment paths, or a solver diagnostic's error, command parameters, model size, observed progress and backend context; unavailable fields remain null"#,
     form: Some(super::forms::CRASH_REPORT),
     kind: CommandKind::Session,
     requires: &[],

@@ -133,7 +133,9 @@ impl Default for Headless {
 impl Headless {
     /// An empty session whose commands read and write files only as `roots` allow.
     pub fn new(roots: Roots) -> Self {
+        fieldcraft_io::recovery::use_automation_dir();
         let mut session = Session::default();
+        session.solver_diagnostics = true;
         session.file_access = roots.clone();
         Headless { session, view: Aim::new(Orientation::of(StandardView::Iso)), roots, camera_seen: 0 }
     }

@@ -1,7 +1,7 @@
 //! The device backend (native targets).
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use fieldcraft_gpu::select::{self, Policy};
@@ -31,7 +31,31 @@ const QT: usize = 7;
 const WT: [f64; QT] = [0.25, 0.125, 0.125, 0.125, 0.125, 0.125, 0.125];
 
 fn gpu_error(e: impl std::fmt::Display) -> Error {
+    update_diagnostic_phase(None);
     Error::Invalid(format!("GPU: {e}"))
+}
+
+fn diagnostic_limits(limits: &wgpu::Limits) -> fieldcraft_model::progress::BackendLimits {
+    fieldcraft_model::progress::BackendLimits {
+        max_storage_buffers_per_shader_stage: limits.max_storage_buffers_per_shader_stage,
+        max_buffer_size: limits.max_buffer_size,
+        max_storage_buffer_binding_size: limits.max_storage_buffer_binding_size,
+    }
+}
+
+/// Setup/failure boundaries only. A reporter belongs to one command, so concurrent solves
+/// cannot overwrite one another's adapter details. Process counter scopes stay explicit.
+fn update_diagnostic_phase(phase: Option<&str>) {
+    if let Some(progress) = fieldcraft_model::progress::current()
+        && let Some(mut context) = progress.backend_diagnostic()
+    {
+        if let Some(phase) = phase {
+            context.phase = phase.to_string();
+        }
+        context.devices_opened = Some(DEVICES_OPENED.load(Ordering::Relaxed));
+        context.instances_opened = Some(select::instances_opened());
+        progress.set_backend_diagnostic(Some(context));
+    }
 }
 
 /// Steps per submission: the stability check and a cancel take effect between submissions.
@@ -445,16 +469,18 @@ struct Shared {
 
 /// The devices kept so far (one per adapter and feature set).
 static DEVICES: Mutex<Vec<Arc<Shared>>> = Mutex::new(Vec::new());
+/// Successful LBM compute-device creations, including devices subsequently lost/retired.
+static DEVICES_OPENED: AtomicU64 = AtomicU64::new(0);
 
 /// The kept device for `adapter` with `features`, or a new one, opened with the adapter's buffer
 /// sizes and `storage_buffers` per compute stage.
-fn shared_device(adapter: &wgpu::Adapter, features: wgpu::Features, storage_buffers: u32) -> Result<Arc<Shared>> {
+fn shared_device(adapter: &wgpu::Adapter, features: wgpu::Features, storage_buffers: u32) -> Result<(Arc<Shared>, bool)> {
     let info = adapter.get_info();
     let key = format!("{:?} {} {:04x}:{:04x} {:?} {} {features:?}", info.backend, info.name, info.vendor, info.device, info.device_type, info.driver);
     let mut devices = DEVICES.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     devices.retain(|d| !d.lost.load(Ordering::Acquire));
     if let Some(d) = devices.iter().find(|d| d.key == key) {
-        return Ok(d.clone());
+        return Ok((d.clone(), false));
     }
     let have = adapter.limits();
     let mut limits = wgpu::Limits::default().using_resolution(have.clone());
@@ -463,6 +489,7 @@ fn shared_device(adapter: &wgpu::Adapter, features: wgpu::Features, storage_buff
     // Exactly what the busiest kernel binds, so every device (the CI's lavapipe too) proves the
     // kernels fit an adapter that allows no more.
     limits.max_storage_buffers_per_shader_stage = storage_buffers;
+    update_diagnostic_phase(Some("device_requested"));
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("fieldcraft lbm"),
         required_features: features,
@@ -470,6 +497,7 @@ fn shared_device(adapter: &wgpu::Adapter, features: wgpu::Features, storage_buff
         ..Default::default()
     }))
     .map_err(gpu_error)?;
+    DEVICES_OPENED.fetch_add(1, Ordering::Relaxed);
     let lost = Arc::new(AtomicBool::new(false));
     let flag = lost.clone();
     device.set_device_lost_callback(move |reason, message| {
@@ -478,7 +506,7 @@ fn shared_device(adapter: &wgpu::Adapter, features: wgpu::Features, storage_buff
     });
     let shared = Arc::new(Shared { key, device, queue, lost, kernels: Mutex::new(Vec::new()) });
     devices.push(shared.clone());
-    Ok(shared)
+    Ok((shared, true))
 }
 
 impl Shared {
@@ -518,6 +546,13 @@ impl GpuFlow {
 
     /// [`GpuFlow::new`] with `options`.
     pub fn with_options(flow: &Flow, policy: Policy, options: Options) -> Result<GpuFlow> {
+        fieldcraft_model::progress::backend_diagnostic(fieldcraft_model::progress::BackendDiagnostic {
+            phase: "selecting_adapter".into(),
+            devices_opened: Some(DEVICES_OPENED.load(Ordering::Relaxed)),
+            instances_opened: Some(select::instances_opened()),
+            counter_scope: "devices: successful LBM compute creations, including retired devices; viewport, meshing and external/driver devices are not counted. instances: gpu::select creations; external viewport and driver-internal instances are not counted.".into(),
+            ..Default::default()
+        });
         if let Some(zone) = flow.zones().first() {
             return Err(Error::Invalid(format!(
                 "the GPU backend does not step fans or porous zones yet (`{}`): solve on the CPU (`backend: \"cpu\"`)",
@@ -528,6 +563,18 @@ impl GpuFlow {
             return Err(Error::Invalid(format!("{}=cpu: no GPU device; solve with `backend: \"cpu\"`", select::ENV)));
         };
         let info = adapter.get_info();
+        if let Some(progress) = fieldcraft_model::progress::current()
+            && let Some(mut context) = progress.backend_diagnostic()
+        {
+            context.phase = "adapter_selected".into();
+            context.backend = Some(format!("{:?}", info.backend));
+            context.adapter = Some(info.name.clone());
+            context.driver = Some(info.driver.clone());
+            context.driver_info = Some(info.driver_info.clone());
+            context.adapter_limits = Some(diagnostic_limits(&adapter.limits()));
+            context.instances_opened = Some(select::instances_opened());
+            progress.set_backend_diagnostic(Some(context));
+        }
         let profile = options.profile;
         let features = if profile { wgpu::Features::TIMESTAMP_QUERY } else { wgpu::Features::empty() };
         if !adapter.features().contains(features) {
@@ -535,8 +582,16 @@ impl GpuFlow {
         }
         let storage_buffers = reflection()?.storage_buffers;
         check_storage_buffers(info.backend, adapter.limits().max_storage_buffers_per_shader_stage, storage_buffers)?;
-        let shared = shared_device(&adapter, features, storage_buffers)?;
+        let (shared, created) = shared_device(&adapter, features, storage_buffers)?;
         let (device, queue) = (&shared.device, &shared.queue);
+        if let Some(progress) = fieldcraft_model::progress::current()
+            && let Some(mut context) = progress.backend_diagnostic()
+        {
+            context.phase = if created { "device_created" } else { "device_reused" }.into();
+            context.device_limits = Some(diagnostic_limits(&device.limits()));
+            progress.set_backend_diagnostic(Some(context));
+        }
+        update_diagnostic_phase(None);
         let adapter_name = format!("{}{}", info.name, if tier == select::Tier::Software { " (software)" } else { "" });
 
         let aa = match options.streaming {

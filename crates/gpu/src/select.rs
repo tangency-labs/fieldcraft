@@ -135,6 +135,12 @@ fn enumerate(backends: wgpu::Backends) -> Result<Vec<wgpu::Adapter>> {
 /// equality, so the options are compared by their debug form).
 static INSTANCES: Mutex<Vec<(wgpu::Backends, String, wgpu::Instance)>> = Mutex::new(Vec::new());
 
+/// Instances actually created by this module in the process. Clones/reuses do not count as
+/// new instances; external viewport and driver-internal instances are outside this scope.
+pub fn instances_opened() -> u64 {
+    INSTANCES.lock().unwrap_or_else(|e| e.into_inner()).len() as u64
+}
+
 /// The process's instance of `backends` with the backend options the environment asks for: the
 /// one made at its first use, so the driver sees one instance per backend set however many
 /// devices are opened (#636).

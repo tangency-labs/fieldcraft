@@ -227,10 +227,20 @@ fn run_all(s: &mut Session, _: &Value) -> Result<Value> {
     for (index, (name, procedure, solve, id)) in steps.into_iter().enumerate() {
         fieldcraft_model::progress::step(&name, index + 1, count);
         fieldcraft_model::progress::check()?;
-        let mut summary =
-            solve(s, &json!({"step": name})).map_err(|e| if e.is_cancelled() { e } else { EngineError::Params(format!("step `{name}`: {e}")) })?;
+        let params = json!({"step": name});
+        let progress = fieldcraft_model::progress::current();
+        let before = progress.as_ref().map_or(0, |p| p.observations());
+        let outcome = solve(s, &params);
         let display = s.units().clone();
-        crate::units::convert_reply(id, &mut summary, crate::units::si(), &display)?;
+        let outcome = outcome.and_then(|mut summary| {
+            crate::units::convert_reply(id, &mut summary, crate::units::si(), &display)?;
+            Ok(summary)
+        });
+        let outcome = match progress {
+            Some(p) => crate::solver_diagnostic::finish(s, id, &params, &p, before, Some("solve.run"), outcome),
+            None => outcome,
+        };
+        let summary = outcome.map_err(|e| EngineError::context(format!("step `{name}`"), e))?;
         done.push(json!({"step": name, "procedure": procedure, "summary": summary}));
     }
     Ok(json!({"steps": done}))

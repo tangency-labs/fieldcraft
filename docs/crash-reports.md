@@ -37,6 +37,64 @@ temporary folder instead, so test runs never reach your folders. `FIELDCRAFT_CRA
 crash folder, `FIELDCRAFT_RECOVERY_DIR` the recovery folder. The browser build keeps no crash
 folder and logs to the browser console.
 
+## Ordinary solver diagnostics
+
+A returned solver error for a work/memory cap, failed convergence, instability or backend
+failure writes a small local record with `kind: "solver_error"` and
+`format: "fieldcraft-diagnostic/1"`. A configured steady solve that reaches its cap without
+settling is recorded too; reaching the requested end of a physical transient is success.
+Malformed command parameters and deliberate cancellation do not create solver records.
+Warning-only truncated arc-length paths currently return a successful summary and do not
+create these records; they remain a separate diagnostic coverage gap.
+
+These records use the crash folder and its retention limits, but are not crash reports: no
+model, replay, log or backtrace is copied, and they never produce a startup "app crashed"
+question. Help › Crash Reports and `diagnostics.crash_reports` list them; a single record can
+be read with `diagnostics.crash_report`. Nothing is uploaded or attached publicly.
+
+A record names the command and parameters, model size, and the progress actually observed.
+Backend setup can carry the selected adapter, driver, relevant adapter/device limits and
+scoped process counters. Selection, a device request, device creation and cached-device reuse
+are distinct phases. Refusal before allocation does not invent a device, time or increment;
+unobserved data and unavailable checkpoint paths remain null. Counter scopes identify the
+managed contexts counted and external/driver-internal contexts that are not counted.
+Successful CPU fluid summaries identify their backend. A CPU fluid failure has no backend
+identity observation today, so its actual backend remains null even if progress was reported;
+the requested choice alone is not evidence that allocation or execution started.
+
+Parameters are limited to 16 KiB, setup context to 64 KiB, with an explanation when omitted.
+Home paths are redacted as values before JSON serialization. Repeats update one record;
+at most five new solver records are written per process, independently of the crash-report
+budget. The shared folder keeps at most 20 reports, 100 MB and 90 days. Failure to persist a
+diagnostic never replaces the original solve result or error.
+
+### Persistent reports on headless workers
+
+CLI scripts and headless MCP sessions use the temporary automation folder. In containers or
+cloud workers, set `FIELDCRAFT_CRASH_DIR` to a persistent mounted folder **before starting the
+process**, then retain that folder as a job artifact. For example, in PowerShell:
+
+```powershell
+$env:FIELDCRAFT_CRASH_DIR = 'C:/work/fieldcraft-reports'
+fieldcraft-cli run model.json
+```
+
+Every written solver diagnostic prints its actual path on stderr. A command failure carries
+the same path in its error text, including the MCP reply; a returned stopped result adds
+`diagnostic_report`. Workers can collect the record without searching a throwaway filesystem.
+When MCP write roots are confined, the report directory must be inside the granted write
+root (and the read root to list/read it). An inaccessible or unwritable directory leaves the
+original solve outcome unchanged. Keep `FIELDCRAFT_CRASH_DIR` set when subsequently using
+`fieldcraft-cli crashes` to inspect those records.
+
+Embedded `Session`s default to no automatic persistence; a host may set
+`Session::solver_diagnostics` or supply an explicit `FIELDCRAFT_CRASH_DIR`. The desktop's
+installed reporter also enables it. Native compute reporting supports CPU and Vulkan; historical
+GL, Metal and DX12 failures do not advertise those native backends as supported. The browser
+still has no native report folder: shared progress/context types compile there, but filesystem
+persistence and native adapter counters are unavailable. Existing browser renderer/bug-report
+details remain separate from the solver's observed backend context.
+
 ## The log file
 
 `logs/fieldcraft.log`: one line per record, `time LEVEL [pid] target: message`. Past 2 MB it

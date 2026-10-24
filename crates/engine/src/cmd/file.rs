@@ -375,6 +375,7 @@ impl Session {
         opened.limits = self.limits;
         opened.file_access = std::mem::take(&mut self.file_access);
         opened.crash_journal = self.crash_journal;
+        opened.solver_diagnostics = self.solver_diagnostics;
         opened.origin = self.origin;
         opened.default_units = self.default_units.clone();
         // The hosts count camera requests across documents.

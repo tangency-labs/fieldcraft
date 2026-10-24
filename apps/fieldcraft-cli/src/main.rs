@@ -49,9 +49,9 @@ usage:
       --automation-write-root DIR      files may be written only inside DIR (with either root,
                                        the access a root left out is not granted)
   fieldcraft-cli crashes [list|show <id>|replay <id>|dir|clear [<id>]]
-                                       the crash reports the desktop app wrote on this
-                                       computer (docs/crash-reports.md): list them (--json),
-                                       show one, replay one (does the crash happen again?),
+                                       local crash reports and solver diagnostics
+                                       (docs/crash-reports.md): list them (--json), show one,
+                                       replay a crash (does it happen again?),
                                        print their folder, delete them
   fieldcraft-cli update --check        is a newer FieldCraft published? (app.update.check; JSON)
   fieldcraft-cli update --install      download the latest release, verify its signature and
@@ -164,6 +164,7 @@ pub fn picture_report(r: &fieldcraft_gpu::Renderer, shown: &fieldcraft_engine::v
 
 /// The session after running the script at `path`.
 fn session_of(path: &str) -> Result<Session, String> {
+    fieldcraft_io::recovery::use_automation_dir();
     let size = std::fs::metadata(path).map_err(|e| format!("{path}: {e}"))?.len();
     if size > MAX_SCRIPT_BYTES {
         return Err(format!("{path}: larger than {} MB", MAX_SCRIPT_BYTES / (1024 * 1024)));
@@ -171,6 +172,7 @@ fn session_of(path: &str) -> Result<Session, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
     let script: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("{path}: {e}"))?;
     let mut session = Session::default();
+    session.solver_diagnostics = true;
     session.run_script(&script).map_err(|e| e.to_string())?;
     Ok(session)
 }

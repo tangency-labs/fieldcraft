@@ -123,7 +123,7 @@ impl ModelApp {
 
     /// The host found these crash reports at startup: ask about the real crashes.
     pub fn announce_crashes(&mut self, fresh: &[Summary]) {
-        let crashes: Vec<Summary> = fresh.iter().filter(|r| r.kind != "recovered_panic").cloned().collect();
+        let crashes: Vec<Summary> = fresh.iter().filter(|r| !matches!(r.kind.as_str(), "recovered_panic" | "solver_error")).cloned().collect();
         if crashes.is_empty() {
             return;
         }
@@ -230,6 +230,7 @@ fn kind_label(kind: &str) -> &'static str {
     match kind {
         "unclean_exit" => "FieldCraft closed unexpectedly",
         "command_panic" => "A command hit an internal error",
+        "solver_error" => "A solve stopped",
         _ => "FieldCraft hit an internal error",
     }
 }
@@ -486,6 +487,9 @@ mod tests {
         };
         app.announce_crashes(std::slice::from_ref(&quiet));
         assert_eq!(app.prompt, None, "recovered panics do not interrupt");
+        let solver = Summary { kind: "solver_error".into(), ..quiet.clone() };
+        app.announce_crashes(&[solver]);
+        assert_eq!(app.prompt, None, "ordinary solver records do not announce an application crash");
         let crashed = Summary { kind: "unclean_exit".into(), message: "FieldCraft ended without a clean exit".into(), ..quiet };
         app.announce_crashes(std::slice::from_ref(&crashed));
         assert!(matches!(&app.prompt, Some(Prompt::Crashed(r)) if r.len() == 1));

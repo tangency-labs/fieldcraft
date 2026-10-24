@@ -506,10 +506,25 @@ fn a_second_solve_reuses_the_compiled_kernels() {
     d.faces.z_max = PERIODIC;
     let m = model(1.0, 0.1, d, step(1.0, 0.01, None));
     let (_, flow) = prepare(&m, &[]);
-    let Some(first) = gpu(&flow, Streaming::InPlace) else { return };
+    let first_reporter = fieldcraft_model::progress::Progress::new();
+    let Some(first) = fieldcraft_model::progress::scoped(Some(first_reporter.clone()), || gpu(&flow, Streaming::InPlace)) else { return };
+    let first_context = first_reporter.backend_diagnostic().unwrap();
+    assert!(matches!(first_context.phase.as_str(), "device_created" | "device_reused"));
+    assert!(first_context.adapter.as_ref().is_some_and(|s| !s.is_empty()));
+    assert!(first_context.device_limits.is_some());
     let compiled = first.pipeline_seconds();
     drop(first);
-    let Some(mut second) = gpu(&flow, Streaming::InPlace) else { return };
+    let second_reporter = fieldcraft_model::progress::Progress::new();
+    assert!(second_reporter.backend_diagnostic().is_none());
+    let Some(mut second) = fieldcraft_model::progress::scoped(Some(second_reporter.clone()), || gpu(&flow, Streaming::InPlace)) else { return };
+    let second_context = second_reporter.backend_diagnostic().unwrap();
+    assert_eq!(second_context.phase, "device_reused");
+    assert_eq!(second_context.adapter, first_context.adapter);
+    assert_eq!(second_context.backend, first_context.backend);
+    assert_eq!(second_context.device_limits, first_context.device_limits);
+    assert!(second_context.devices_opened.unwrap() >= first_context.devices_opened.unwrap());
+    assert!(second_context.instances_opened.unwrap() > 0);
+    assert!(second_context.counter_scope.contains("not counted"));
     println!(
         "kernels: {compiled:.3} s for the first solve (zero if an earlier test compiled them), {:.3} s for the second",
         second.pipeline_seconds()

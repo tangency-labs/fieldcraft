@@ -12,9 +12,12 @@
 //!   or a copy taken when the model was opened) and the commands run since, ending with the one
 //!   in flight, plus the app's last control request and the dead run's lines of the log file
 //!   ([`crate::logfile`]).
-//! - **Cost**: nothing until [`install`] is called (tests, the CLI and the web build never do);
-//!   after that, two small unbuffered appends per top-level command of the app's own model
-//!   ([`Session::crash_journal`]), and work only when something panics.
+//! - **Solver errors**: an opted-in host writes a small local diagnostic at a failed solve's
+//!   boundary, without copying the model or presenting a startup crash prompt.
+//! - **Cost**: the crash journal does nothing until [`install`] is called; after that, two
+//!   small unbuffered appends per top-level command of the app's own model
+//!   ([`Session::crash_journal`]). Reports are assembled only after a panic, recovered crash,
+//!   or an opted-in solver error, never during solver iterations.
 //! - **Bounded**: the same crash (its signature: place + message, digits ignored) is counted, not
 //!   written again; at most [`MAX_NEW_PER_SESSION`] new reports per run, [`MAX_REPORTS`]
 //!   reports, [`MAX_TOTAL_BYTES`] on disk, nothing older than [`MAX_AGE_DAYS`] days.
@@ -98,7 +101,7 @@ impl Build {
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct Summary {
     pub id: String,
-    /// `command_panic`, `panic`, `recovered_panic` or `unclean_exit`.
+    /// `command_panic`, `panic`, `recovered_panic`, `unclean_exit` or `solver_error`.
     pub kind: String,
     /// When it first happened (UTC).
     pub time: String,
@@ -156,6 +159,73 @@ pub fn default_dir() -> Option<PathBuf> {
         return Some(PathBuf::from(d));
     }
     fieldcraft_io::recovery::data_dir().map(|d| d.join("crashes"))
+}
+
+/// A small local diagnostic for an ordinary solver failure, without a model, replay,
+/// backtrace or startup crash announcement. Parameters and context are bounded independently;
+/// repeated failures update one record. Failure to persist never changes the solver outcome.
+pub(crate) fn solver_error(dir: &Path, command: &str, params: &Value, context: &Value, error: &str) -> Option<PathBuf> {
+    static WRITING: Mutex<()> = Mutex::new(());
+    static WRITTEN: AtomicUsize = AtomicUsize::new(0);
+    let _writing = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+    let t = now();
+    prune(dir, t);
+    // A different step/request/backend is not a repeat of the same failed solve. Keep exact
+    // parameters in the location key: crash signatures otherwise intentionally ignore digits.
+    let key_params = bounded_json(params, MAX_PARAMS_BYTES).unwrap_or_else(|| "<oversized>".into());
+    let key_backend = json!([
+        context.pointer("/backend/actual"),
+        context.pointer("/backend/observed_context/backend"),
+        context.pointer("/backend/observed_context/adapter")
+    ]);
+    let sig = signature(&format!("solver_error:{command}:{key_params}:{key_backend}"), error);
+    let previous = list(dir).into_iter().find(|s| s.kind == "solver_error" && sig_of(&s.id) == Some(sig));
+    if previous.is_none() && WRITTEN.load(Ordering::Relaxed) >= MAX_NEW_PER_SESSION {
+        return None;
+    }
+    let id = previous.as_ref().map(|s| s.id.clone()).unwrap_or_else(|| format!("{}-{sig:016x}", stamp(t)));
+    let folder = dir.join(&id);
+    let bounded = |v: &Value, limit| bounded_json(v, limit).and_then(|s| serde_json::from_str::<Value>(&s).ok());
+    let parameters = bounded(params, MAX_PARAMS_BYTES);
+    let solve = bounded(context, 64 << 10);
+    let environment = STATE
+        .get()
+        .and_then(|s| s.journal.lock().ok().and_then(|j| j.environment.clone()))
+        .and_then(|line| serde_json::from_str::<Value>(&line).ok())
+        .and_then(|v| v.get("environment").cloned());
+    let mut report = json!({
+        "format": "fieldcraft-diagnostic/1",
+        "id": id,
+        "kind": "solver_error",
+        "message": limited(error, MAX_MESSAGE),
+        "command": {"command": limited(command, 128), "params": parameters, "params_omitted": parameters.is_none().then_some("parameters exceed the 16 KiB record bound")},
+        "solve": solve,
+        "solve_omitted": solve.is_none().then_some("context exceeds the 64 KiB record bound"),
+        "app": {"version": Build::current().version_line()},
+        "system": {"os": std::env::consts::OS, "arch": std::env::consts::ARCH, "environment": environment},
+        "first_seen": previous.as_ref().map(|s| s.time.clone()).unwrap_or_else(|| utc(t)),
+        "last_seen": utc(t),
+        "count": previous.as_ref().map_or(1, |s| s.count.saturating_add(1)),
+    });
+    // Redact values, never serialized JSON: a Windows home path must not damage its escapes.
+    fn redact(v: &mut Value) {
+        match v {
+            Value::String(s) => *s = without_home(s),
+            Value::Array(a) => a.iter_mut().for_each(redact),
+            Value::Object(o) => o.values_mut().for_each(redact),
+            _ => {}
+        }
+    }
+    redact(&mut report);
+    let bytes = serde_json::to_vec_pretty(&report).ok()?;
+    fs::create_dir_all(&folder).ok()?;
+    let path = folder.join("report.json");
+    fieldcraft_io::fs::write_atomic(&path, &bytes, false).ok()?;
+    if previous.is_none() {
+        WRITTEN.fetch_add(1, Ordering::Relaxed);
+    }
+    prune(dir, t);
+    Some(path)
 }
 
 fn now() -> u64 {
@@ -337,7 +407,7 @@ pub fn install(dir: PathBuf, build: Build) -> Vec<Summary> {
         let _ = f.take(64 << 10).read_to_string(&mut seen);
     }
     let all = list(&dir);
-    let fresh: Vec<Summary> = all.iter().filter(|s| !seen.lines().any(|l| l == s.id)).cloned().collect();
+    let fresh: Vec<Summary> = all.iter().filter(|s| s.kind != "solver_error" && !seen.lines().any(|l| l == s.id)).cloned().collect();
     let _ = fs::write(&seen_file, all.iter().map(|s| s.id.as_str()).collect::<Vec<_>>().join("\n"));
     let known = all.into_iter().filter_map(|s| sig_of(&s.id).map(|sig| (sig, (0, s.id)))).collect();
     let journal = Journal::open(&dir, &build, started);
