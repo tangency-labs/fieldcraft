@@ -1,0 +1,189 @@
+[
+  {
+    "command": "model.units",
+    "params": {
+      "system": "m-kg-s-N-Pa"
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 1,
+      "xyz": [
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 2,
+      "xyz": [
+        0.3,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 1,
+      "kind": "rod2",
+      "nodes": [
+        1,
+        2
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "Rod",
+      "elements": [
+        1
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "Root",
+      "nodes": [
+        1
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "Tip",
+      "nodes": [
+        2
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "AllNodes",
+      "nodes": [
+        1,
+        2
+      ]
+    }
+  },
+  {
+    "command": "model.material.create",
+    "params": {
+      "name": "AssumedElastic",
+      "elastic": {
+        "type": "isotropic",
+        "young": 70000000000.0,
+        "poisson": 0.3
+      }
+    }
+  },
+  {
+    "command": "model.section.create",
+    "params": {
+      "name": "Axial",
+      "set": "Rod",
+      "material": "AssumedElastic",
+      "kind": {
+        "type": "rod",
+        "area": 0.0001
+      }
+    }
+  },
+  {
+    "command": "model.boundary_condition.create",
+    "params": {
+      "name": "AxialSupport",
+      "type": "displacement",
+      "target": {
+        "set": "Root"
+      },
+      "values": [
+        0,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    }
+  },
+  {
+    "command": "model.boundary_condition.create",
+    "params": {
+      "name": "NoTransverseMotion",
+      "type": "displacement",
+      "target": {
+        "set": "AllNodes"
+      },
+      "values": [
+        null,
+        0,
+        0,
+        null,
+        null,
+        null
+      ]
+    }
+  },
+  {
+    "command": "model.load.create",
+    "params": {
+      "name": "Pull",
+      "type": "force",
+      "target": {
+        "set": "Tip"
+      },
+      "vector": [
+        1000,
+        0,
+        0
+      ],
+      "distribution": "total"
+    }
+  },
+  {
+    "command": "model.step.create",
+    "params": {
+      "name": "Axial",
+      "procedure": {
+        "type": "static"
+      },
+      "boundary_conditions": [
+        "AxialSupport",
+        "NoTransverseMotion"
+      ],
+      "loads": [
+        "Pull"
+      ]
+    }
+  },
+  {
+    "command": "model.check",
+    "params": {}
+  },
+  {
+    "command": "solve.static",
+    "params": {
+      "step": "Axial"
+    }
+  },
+  {
+    "command": "solve.probe",
+    "params": {
+      "step": "Axial",
+      "nodes": [
+        1,
+        2
+      ]
+    }
+  }
+]
