@@ -178,6 +178,40 @@ pub struct Layout<'a> {
 }
 
 impl SolidHeat {
+    pub(crate) fn heap_bytes(&self) -> u64 {
+        fn bytes<T>(v: &Vec<T>) -> u64 {
+            v.capacity() as u64 * size_of::<T>() as u64
+        }
+        bytes(&self.cells)
+            + bytes(&self.by_solid)
+            + self.by_solid.iter().map(bytes).sum::<u64>()
+            + bytes(&self.cell)
+            + bytes(&self.interface)
+            + bytes(&self.link_a)
+            + bytes(&self.link_b)
+            + bytes(&self.effective)
+            + bytes(&self.temperature)
+            + bytes(&self.next)
+    }
+
+    pub(crate) fn checkpoint(&mut self, a: &mut dyn crate::checkpoint::Archive) -> Result<()> {
+        use crate::checkpoint::{doubles, f64, fixed};
+        fixed(a, self.substeps as u64)?;
+        for c in &self.cells {
+            fixed(a, *c as u64)?;
+        }
+        let n = self.cells.len();
+        doubles(a, &mut self.temperature, n)?;
+        doubles(a, &mut self.next, n)?;
+        doubles(a, &mut self.effective, n)?;
+        doubles(a, &mut self.link_a, n)?;
+        doubles(a, &mut self.link_b, n)?;
+        for v in &mut self.wall_heat {
+            f64(a, v)?;
+        }
+        Ok(())
+    }
+
     /// The conducting cells `cells` (grid indices, in order) of solids `kind` (indices into
     /// `solids`), their faces from `layout`, and the fluid links into them (`weight` filled in
     /// here), all at temperature `initial`. Fails when a heat capacity is not a positive number,

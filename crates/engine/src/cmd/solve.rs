@@ -112,7 +112,7 @@ pub const HISTORY: CommandSpec = CommandSpec {
 pub const FLUID: CommandSpec = CommandSpec {
     id: "solve.fluid",
     label: "Solve Fluid Step",
-    params: r#"{"step": "Flow", "backend": "cpu", "max_cells": 16000000, "max_steps": 10000000, "max_cell_updates": 1e12, "max_frame_bytes": 2e9, "threads": 8, "estimate": false} — runs a fluid step with the lattice Boltzmann solver (the only fluid step when `step` is left out): obstacles are triangulated from the open design or taken from imported surfaces; returns the time step, relaxation time, Mach number, mass, the largest speed of all frames (`max_speed`, at `max_speed_time`) and of the last frame (`final_max_speed`), over interior fluid cells (the open-boundary layers are excluded, convective outlets too, because a wake reaching a uniform pressure outlet distorts the last layer), the final force on every wall and, with heat, the thermal relaxation time, the fluid's temperature range and the heat into every wall, and per conducting solid (`solids`) its temperature range and mean, its power, the heat its faces give the fluid, its `peak` temperature (at `peak_time`: the steady value when the run reached steady state, else the highest over the frames), its `limit`, the `margin` (limit less peak; negative over it) and `ok`, and over them `components_ok` (null when no solid has a limit); with fans and porous zones, each one's volume flow and its pressure rise (a fan's operating point: `pressure_rise` from its curve, and `measured_pressure_rise`) or `pressure_drop`; the measured values are the static-pressure difference between the fluid cell layers just outside the zone, so they include the wall friction over its thickness plus one cell (final and mean over the last quarter of the run); `backend` is `cpu` (the default: double precision, the same result on every machine) or `gpu` (the step on the GPU `FIELDCRAFT_GPU` picks, single precision, within the backend's stated tolerance of the CPU; an error when the build has none); left out, it is FIELDCRAFT_SOLVE_BACKEND's when that is set, else the step's saved preference (solve.settings), which on a machine with no suitable GPU falls back as it says, with a `notice` (the reply's `backend_choice` says what chose it), else the CPU; `max_steps` may only be lowered; `max_cells` (16000000 by default), `max_cell_updates` (1e12) and `max_frame_bytes` (2e9) may be raised up to what the machine's memory bound holds (half its physical memory), and a run with a raised `max_cells` or `max_frame_bytes` must fit in that bound; the reply's `memory` gives the run's estimate (`flow_bytes`, `frame_bytes` at about 16 bytes per cell per frame, 20 with heat, `total_bytes`) against `bound_bytes`, the `frames_that_fit` and each cap's `ceilings`, and on the GPU the population buffer against the device's limit per buffer; `"estimate": true` returns only that, without solving; a run over a cap is refused before it starts, saying what to change; `threads` as for solve.static"#,
+    params: r#"{"step": "Flow", "backend": "cpu", "max_cells": 16000000, "max_steps": 10000000, "max_cell_updates": 1e12, "max_frame_bytes": 2e9, "threads": 8, "estimate": false} — runs a fluid step with the lattice Boltzmann solver (the only fluid step when `step` is left out): obstacles are triangulated from the open design or taken from imported surfaces; returns the time step, relaxation time, Mach number, mass, the largest speed of all frames (`max_speed`, at `max_speed_time`) and of the last frame (`final_max_speed`), over interior fluid cells (the open-boundary layers are excluded, convective outlets too, because a wake reaching a uniform pressure outlet distorts the last layer), the final force on every wall and, with heat, the thermal relaxation time, the fluid's temperature range and the heat into every wall, and per conducting solid (`solids`) its temperature range and mean, its power, the heat its faces give the fluid, its `peak` temperature (at `peak_time`: the steady value when the run reached steady state, else the highest over the frames), its `limit`, the `margin` (limit less peak; negative over it) and `ok`, and over them `components_ok` (null when no solid has a limit); with fans and porous zones, each one's volume flow and its pressure rise (a fan's operating point: `pressure_rise` from its curve, and `measured_pressure_rise`) or `pressure_drop`; the measured values are the static-pressure difference between the fluid cell layers just outside the zone, so they include the wall friction over its thickness plus one cell (final and mean over the last quarter of the run); `backend` is `cpu` (the default: double precision, the same result on every machine) or `gpu` (the step on the GPU `FIELDCRAFT_GPU` picks, single precision, within the backend's stated tolerance of the CPU; an error when the build has none); left out, it is FIELDCRAFT_SOLVE_BACKEND's when that is set, else the step's saved preference (solve.settings), which on a machine with no suitable GPU falls back as it says, with a `notice` (the reply's `backend_choice` says what chose it), else the CPU; `max_steps` may only be lowered; `max_cells` (16000000 by default), `max_cell_updates` (1e12) and `max_frame_bytes` (2e9) may be raised up to what the machine's memory bound holds (half its physical memory), and a run with a raised `max_cells` or `max_frame_bytes` must fit in that bound; the reply's `memory` gives the run's estimate (`flow_bytes`, `frame_bytes` at about 16 bytes per cell per frame, 20 with heat, `total_bytes`) against `bound_bytes`, the `frames_that_fit` and each cap's `ceilings`, and on the GPU the population buffer against the device's limit per buffer; `"estimate": true` returns only that, without solving; a run over a cap is refused before it starts, saying what to change; `checkpoint` is an explicit native CPU restart path; `checkpoint_every` saves every N steps (default 64) and at a sound final stop, and `resume: true` restores it with matching model, triangulated geometry, solver settings and thread count; checkpoints are kept after success/cancellation, use atomic replacement and report last_checkpoint/resumed_from; GPU/browser/other solvers and automatic discovery are not supported yet; `threads` as for solve.static"#,
     form: Some(super::forms::SOLVE_FLUID),
     kind: CommandKind::Model,
     requires: &[Requirement::FluidDomain, Requirement::Step],
@@ -806,20 +806,74 @@ pub fn fluid_estimate(s: &Session, p: &Value) -> Result<FluidEstimate> {
 
 fn run_fluid(s: &mut Session, p: &Value) -> Result<Value> {
     let estimate = fluid_estimate(s, p)?;
+    let checkpoint_path = opt::<String>(p, "checkpoint")?;
+    if checkpoint_path.as_ref().is_some_and(|p| p.trim().is_empty()) {
+        return Err(EngineError::Params("checkpoint must name a nonempty native restart file".into()));
+    }
+    let resume = opt::<bool>(p, "resume")?.unwrap_or(false);
+    let checkpoint_every = match p.get("checkpoint_every") {
+        Some(v) => whole(v)
+            .filter(|n| *n > 0 && *n <= fieldcraft_lbm::Limits::MAX_STEPS)
+            .ok_or_else(|| EngineError::Params("checkpoint_every must be a whole step count from 1 to 10000000".into()))?,
+        None => 64,
+    };
+    if checkpoint_path.is_none() && (resume || p.get("checkpoint_every").is_some()) {
+        return Err(EngineError::Params("resume and checkpoint_every require an explicit checkpoint path".into()));
+    }
+    if checkpoint_path.is_some() && estimate.memory.backend != fieldcraft_lbm::Choice::Cpu {
+        return Err(EngineError::Params("checkpoint/resume currently supports CPU fluid solves only; choose backend: cpu explicitly".into()));
+    }
     if opt::<bool>(p, "estimate")? == Some(true) {
-        return Ok(json!({"memory": estimate.to_json()}));
+        let mut reply = json!({"memory": estimate.to_json()});
+        if checkpoint_path.is_some() {
+            reply["checkpoint_estimate"] = json!(
+                "The final checkpoint run also checks restored flow, retained histories, monitor windows and a 64 KiB streaming buffer against the memory bound after preparing topology; this frame estimate excludes those extra histories/windows."
+            );
+        }
+        return Ok(reply);
     }
     let limits = estimate.limits;
     let backend = estimate.memory.backend;
     let chosen = estimate.backend.clone();
     let step = opt::<String>(p, "step")?;
-    let (_, domain) = fieldcraft_lbm::fluid_step(&s.model, step.as_deref())?;
+    let (selected_step, domain) = fieldcraft_lbm::fluid_step(&s.model, step.as_deref())?;
+    let selected_step = selected_step.name.clone();
     let obstacles = obstacles(s, domain)?;
+    let thread_count = threads(s, p)?;
+    let mut checkpoint = if let Some(path) = checkpoint_path {
+        use fieldcraft_io::roots::Access;
+        let path = s.checked_path(&path, Access::Write)?;
+        if resume || fieldcraft_io::fs::is_file(std::path::Path::new(&path)) {
+            s.checked_path(&path, Access::Read)?;
+        }
+        let definition = fieldcraft_io::results::definition_hash(&s.model, &selected_step, &s.sources)
+            .ok_or_else(|| EngineError::Params("checkpoint step inputs are unavailable".into()))?;
+        let settings = serde_json::to_vec(&json!({"backend":"cpu","threads":thread_count,"max_cells":limits.max_cells,
+            "max_steps":limits.max_steps,"max_cell_updates":limits.max_cell_updates,"max_frame_bytes":limits.max_frame_bytes}))
+        .map_err(|e| EngineError::Params(e.to_string()))?;
+        let identity = fieldcraft_io::checkpoint::identity(definition, &settings, &obstacles);
+        Some(fieldcraft_io::checkpoint::CpuCheckpoint::new(path.into(), identity, checkpoint_every, resume, limits.max_memory)?)
+    } else {
+        None
+    };
     let model = &s.model;
-    let r = with_threads(threads(s, p)?, || fieldcraft_lbm::solve_fluid_on(model, step.as_deref(), &obstacles, &limits, backend))?;
+    let r = with_threads(thread_count, || match checkpoint.as_mut() {
+        Some(store) => fieldcraft_lbm::solve::solve_fluid_checkpointed(model, step.as_deref(), &obstacles, &limits, store),
+        None => fieldcraft_lbm::solve_fluid_on(model, step.as_deref(), &obstacles, &limits, backend),
+    })
+    .map_err(|e| match checkpoint.as_ref().filter(|c| c.last_step.is_some()) {
+        Some(c) => EngineError::context(format!("last atomic CPU checkpoint: {} at step {}", c.path().display(), c.last_step.unwrap_or(0)), e),
+        None => EngineError::from(e),
+    })?;
     let mut summary = fluid_summary(&r, s.units());
     summary["memory"] = estimate.to_json();
     summary["backend_choice"] = chosen.to_json();
+    if let Some(c) = checkpoint {
+        summary["checkpoint_every"] = json!(checkpoint_every);
+        summary["last_checkpoint"] = json!({"path":c.path(),"step":c.last_step,"kept":true});
+        summary["resumed_from"] = json!(c.resumed_from);
+        summary["checkpoint_solver_bytes"] = json!(c.checked_solver_bytes);
+    }
     if let Some(n) = &chosen.notice {
         summary["notice"] = json!(n);
     }
@@ -1740,6 +1794,51 @@ pub(crate) mod tests {
         s.run_script(&script).unwrap();
     }
 
+    #[test]
+    fn cpu_checkpoints_report_the_actual_path_and_refuse_changed_inputs_and_roots() {
+        let dir = std::env::temp_dir().join(format!("fieldcraft-cpu-checkpoint-command-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("couette.restart");
+        // Clear only this test's exact previous output, if an earlier test process stopped.
+        let _ = std::fs::remove_file(&path);
+        let mut s = Session::default();
+        couette(&mut s);
+        let normal = s.execute("solve.fluid", &json!({"backend":"cpu","threads":3})).unwrap();
+        let base = s.clone();
+        let request = json!({"backend":"cpu","threads":3,"checkpoint":path,"checkpoint_every":113});
+        let saved = s.execute("solve.fluid", &request).unwrap();
+        assert_eq!(saved["checkpoint_every"], 113);
+        assert!(saved["last_checkpoint"]["path"].as_str().unwrap().ends_with("couette.restart"));
+        assert!(path.is_file());
+        assert!(saved["checkpoint_solver_bytes"].as_u64() > saved["memory"]["total_bytes"].as_u64());
+        let mut resume = request.clone();
+        resume["resume"] = json!(true);
+        resume["checkpoint_every"] = json!(127);
+        let mut fresh = base.clone();
+        let resumed = fresh.execute("solve.fluid", &resume).unwrap();
+        assert_eq!(resumed["resumed_from"], saved["last_checkpoint"]["step"]);
+        let mut comparable = resumed.clone();
+        for key in ["checkpoint_every", "last_checkpoint", "resumed_from", "checkpoint_solver_bytes"] {
+            comparable.as_object_mut().unwrap().remove(key);
+        }
+        assert_eq!(comparable, normal, "all ordinary result quantities preserved");
+        resume["threads"] = json!(2);
+        assert!(base.clone().execute("solve.fluid", &resume).unwrap_err().to_string().contains("differ"));
+        resume["threads"] = json!(3);
+        let mut changed = base.clone();
+        changed
+            .execute("model.fluid_domain.boundary", &json!({"domain":"Gap","at":"y_max","condition":{"type":"moving_wall","velocity":[0.11,0,0]}}))
+            .unwrap();
+        assert!(changed.execute("solve.fluid", &resume).unwrap_err().to_string().contains("differ"));
+        let mut confined = base;
+        confined.file_access = fieldcraft_io::roots::Roots::new(Some(&dir), Some(&dir)).unwrap();
+        resume["checkpoint"] = json!(dir.parent().unwrap().join("outside-checkpoint-root.restart"));
+        assert!(confined.execute("solve.fluid", &resume).unwrap_err().to_string().contains("outside"));
+        assert!(!dir.parent().unwrap().join("outside-checkpoint-root.restart").exists());
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_dir(dir).unwrap();
+    }
+
     /// #590: `max_speed` is the largest speed of all frames (the start-up may pass the final
     /// state), with its time; `final_max_speed` the last frame's.
     #[test]
@@ -2259,6 +2358,13 @@ pub(crate) mod tests {
         couette(&mut s);
         s.execute("solve.fluid", &json!({"step": "Shear"})).unwrap();
         let hostile = [
+            json!({"checkpoint_every":0}),
+            json!({"checkpoint_every":1e300}),
+            json!({"resume":true}),
+            json!({"checkpoint":""}),
+            json!({"checkpoint":3}),
+            json!({"checkpoint":"flow.restart","resume":"yes"}),
+            json!({"checkpoint":"flow.restart","backend":"gpu"}),
             json!(null),
             json!({"step": 7}),
             json!({"step": "Nope"}),

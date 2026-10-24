@@ -140,6 +140,22 @@ pub struct Outlets {
 }
 
 impl Outlets {
+    pub(crate) fn checkpoint(&mut self, a: &mut dyn crate::checkpoint::Archive) -> crate::Result<()> {
+        use crate::checkpoint::{f64, fixed};
+        fixed(a, self.state.len() as u64)?;
+        for s in &mut self.state {
+            for v in &mut s.unknowns {
+                f64(a, v)?;
+            }
+            f64(a, &mut s.speed)?;
+            if !(0.0..=MAX_LATTICE_SPEED).contains(&s.speed) {
+                return Err(crate::Error::Invalid("checkpoint outlet speed is outside the existing scheme's bound".into()));
+            }
+        }
+        // Actions are recomputed by convect before the next boundary; only CellState persists.
+        Ok(())
+    }
+
     /// The bytes its arrays hold.
     pub fn heap_bytes(&self) -> u64 {
         (self.state.capacity() * size_of::<CellState>() + self.actions.capacity() * size_of::<Action>()) as u64

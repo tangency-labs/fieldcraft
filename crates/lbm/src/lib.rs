@@ -56,6 +56,7 @@
 #![allow(clippy::needless_range_loop)]
 
 pub mod backend;
+pub mod checkpoint;
 pub mod conduction;
 pub mod flow;
 pub mod lattice;

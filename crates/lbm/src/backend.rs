@@ -24,6 +24,11 @@ pub struct Fields {
 
 /// A stepper of one prepared flow.
 pub trait Backend {
+    /// CPU restart state; device backends deliberately do not support this format.
+    #[doc(hidden)]
+    fn checkpoint(&mut self, _archive: &mut dyn crate::checkpoint::Archive) -> Result<()> {
+        Err(Error::Invalid("checkpoint/resume currently supports only CPU fluid solves".into()))
+    }
     /// What steps the flow, for reports: `cpu`, `gpu: <adapter>`.
     fn name(&self) -> String;
     /// Advance `steps` time steps. Fails with [`Error::Unstable`] when a density stops being a

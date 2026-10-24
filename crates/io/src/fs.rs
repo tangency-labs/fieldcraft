@@ -84,6 +84,15 @@ mod browser {
     use crate::Result;
     use crate::memory::MemoryFs;
 
+    /// Streaming restart files require a persistent native filesystem in this first slice.
+    pub fn read_stream<T>(_path: &Path, _max: u64, _read: impl FnOnce(&mut dyn std::io::Read) -> Result<T>) -> Result<T> {
+        Err(crate::Error::Refused("streaming CPU checkpoints currently require the native filesystem".into()))
+    }
+
+    pub fn write_output_stream<T>(_path: &Path, _write: impl FnOnce(&mut dyn std::io::Write) -> Result<T>) -> Result<T> {
+        Err(crate::Error::Refused("streaming CPU checkpoints currently require the native filesystem".into()))
+    }
+
     thread_local! {
         // The browser runs the app on one thread.
         static FILES: RefCell<MemoryFs> = RefCell::new(MemoryFs::default());
@@ -161,6 +170,52 @@ mod disk {
 
     fn io_error(path: &Path, e: std::io::Error) -> Error {
         Error::Io(format!("{}: {e}", path.display()))
+    }
+
+    /// A capped streaming input, avoiding a whole-file allocation. The caller checks its schema,
+    /// payload lengths and end marker; metadata is checked before any payload is read.
+    pub fn read_stream<T>(path: &Path, max: u64, read: impl FnOnce(&mut dyn Read) -> Result<T>) -> Result<T> {
+        // Opening a FIFO can block before an opened-file metadata check on Unix.
+        let before = fs::metadata(path).map_err(|e| io_error(path, e))?;
+        if !before.is_file() || before.len() > max {
+            return Err(Error::Limit(format!("{} is not a regular file of at most {max} bytes", path.display())));
+        }
+        let file = fs::File::open(path).map_err(|e| io_error(path, e))?;
+        let meta = file.metadata().map_err(|e| io_error(path, e))?;
+        if !meta.is_file() || meta.len() > max {
+            return Err(Error::Limit(format!("{} is not a regular file of at most {max} bytes", path.display())));
+        }
+        read(&mut std::io::BufReader::with_capacity(64 * 1024, file.take(max)))
+    }
+
+    /// Write a non-model output using a bounded streaming writer. A failed callback, flush or
+    /// rename leaves the previous target intact and removes only this write's temporary file.
+    pub fn write_output_stream<T>(path: &Path, write: impl FnOnce(&mut dyn Write) -> Result<T>) -> Result<T> {
+        if fs::metadata(path).is_ok_and(|m| !m.is_file()) {
+            return Err(Error::Refused(format!("{} is not a regular output file", path.display())));
+        }
+        if let Some(kind) = super::protected_kind(path) {
+            return Err(Error::Refused(format!("{} is a {kind}; checkpoint output never replaces one", path.display())));
+        }
+        let tmp = temp_beside(path, "new");
+        let result = (|| {
+            let mut file = OpenOptions::new().write(true).create_new(true).open(&tmp).map_err(|e| io_error(&tmp, e))?;
+            let value = {
+                let mut buffered = std::io::BufWriter::with_capacity(64 * 1024, &mut file);
+                let value = write(&mut buffered)?;
+                buffered.flush().map_err(|e| io_error(&tmp, e))?;
+                value
+            };
+            file.sync_all().map_err(|e| io_error(&tmp, e))?;
+            drop(file);
+            fs::rename(&tmp, path).map_err(|e| io_error(path, e))?;
+            sync_dir(path);
+            Ok(value)
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&tmp);
+        }
+        result
     }
 
     fn temp_beside(path: &Path, tag: &str) -> PathBuf {

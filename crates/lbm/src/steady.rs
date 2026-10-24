@@ -87,7 +87,7 @@ impl SteadySetup {
 }
 
 /// One sample of every monitored quantity.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct MonitorSample {
     pub step: u64,
     pub time: f64,
@@ -172,6 +172,61 @@ fn norm(v: &[f64]) -> f64 {
 }
 
 impl Monitor {
+    pub(crate) fn checkpoint(&mut self, a: &mut dyn crate::checkpoint::Archive, setup: &Setup, step: u64, finished: bool) -> Result<()> {
+        use crate::checkpoint::{boolean, count, doubles, f64, fixed, resize, u64};
+        fixed(a, self.setup.window)?;
+        fixed(a, self.setup.sample)?;
+        fixed(a, self.setup.min_steps)?;
+        let mut windows = self.steady_windows as u64;
+        u64(a, &mut windows)?;
+        self.steady_windows = u32::try_from(windows)
+            .ok()
+            .filter(|w| u64::from(*w) <= step / self.setup.window)
+            .ok_or_else(|| Error::Invalid("checkpoint steady window count is invalid".into()))?;
+        if finished && (self.steady_windows < STEADY_WINDOWS || step < self.setup.min_steps || !step.is_multiple_of(self.setup.window)) {
+            return Err(Error::Invalid("checkpoint steady stop does not meet its saved window/minimum bounds".into()));
+        }
+        fixed(a, self.quantities.len() as u64)?;
+        for q in &mut self.quantities {
+            let n = q.low.len();
+            doubles(a, &mut q.low, n)?;
+            doubles(a, &mut q.high, n)?;
+            f64(a, &mut q.peak)?;
+        }
+        let samples = count(a, self.report.samples.len(), (setup.steps / self.setup.window + 1) as usize)?;
+        if samples != (step / self.setup.window + 1) as usize {
+            return Err(Error::Invalid("checkpoint monitor history differs from its step".into()));
+        }
+        resize(&mut self.report.samples, samples)?;
+        for (i, sample) in self.report.samples.iter_mut().enumerate() {
+            let k = i as u64 * self.setup.window;
+            fixed(a, k)?;
+            sample.step = k;
+            fixed(a, (k as f64 * setup.time_step).to_bits())?;
+            sample.time = k as f64 * setup.time_step;
+            fixed(a, self.quantities.len() as u64)?;
+            resize(&mut sample.values, self.quantities.len())?;
+            resize(&mut sample.changes, self.quantities.len())?;
+            for ((q, value), change) in self.quantities.iter().zip(&mut sample.values).zip(&mut sample.changes) {
+                doubles(a, value, if matches!(q.kind, Kind::Force(_)) { 3 } else { 1 })?;
+                let mut present = change.is_some();
+                boolean(a, &mut present)?;
+                if present != (k > 0) {
+                    return Err(Error::Invalid("checkpoint monitor change is missing".into()));
+                }
+                if present {
+                    let mut v = change.unwrap_or(0.0);
+                    f64(a, &mut v)?;
+                    *change = Some(v);
+                } else {
+                    *change = None;
+                }
+            }
+        }
+        self.report.reason = if finished { StopReason::Steady } else { StopReason::MaxTime };
+        Ok(())
+    }
+
     /// The monitor of `setup`'s rule on `flow`, its faces resolved; `None` without a rule.
     pub fn new(setup: &Setup, flow: &dyn Backend) -> Result<Option<Monitor>> {
         let Some(steady) = &setup.steady else { return Ok(None) };

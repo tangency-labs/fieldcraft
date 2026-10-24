@@ -17,7 +17,7 @@ pub const COMPRESSIBILITY_WARNING: f64 = 0.01;
 
 /// The velocity and pressure field at one time, per cell (index `i + nx (j + ny k)`; zero in
 /// solid cells). Stored in single precision: output for display and probing.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Frame {
     pub time: f64,
     pub step: u64,
@@ -247,6 +247,54 @@ pub fn solve_fluid_on(model: &Model, step: Option<&str>, obstacles: &[Obstacle],
     run(&setup, backend.as_mut(), limits)
 }
 
+/// An explicit CPU checkpoint/resume run. The store checks model/settings identity and owns
+/// atomic persistence; GPU state is deliberately not interchangeable with CPU populations.
+pub fn solve_fluid_checkpointed(
+    model: &Model,
+    step: Option<&str>,
+    obstacles: &[Obstacle],
+    limits: &Limits,
+    store: &mut dyn crate::checkpoint::Store,
+) -> Result<FluidResult> {
+    let setup = Setup::new(model, step, obstacles, limits)?;
+    let memory = crate::memory::Memory::of(&setup, Choice::Cpu)?;
+    memory.check(limits)?;
+    if memory.total().saturating_add(64 * 1024) > limits.max_memory {
+        return Err(Error::Limit("CPU checkpoint run plus streaming buffer exceeds the memory bound".into()));
+    }
+    let mut flow = Flow::new(&setup, obstacles)?;
+    // A restart fills one rebuilt flow in place, never keeps a second snapshot or file buffer.
+    // Include retained histories and monitor windows, which the ordinary frame estimate omits.
+    let groups = flow.groups().len() as u64;
+    let histories = MAX_HISTORY
+        .saturating_add(1)
+        .saturating_mul(8 + groups.saturating_mul(if setup.thermal.is_some() { 32 } else { 24 }) + (setup.zones.len() as u64).saturating_mul(24));
+    let monitoring = setup.steady.as_ref().map_or(0, |s| {
+        let q = 1 + u64::from(setup.thermal.is_some()) + s.rule.monitors.len() as u64;
+        // Retained low/high fields plus the live sample's fluid indices/current quantity
+        // (32 bytes/cell); Fields is already in readback. Reports allow doubled Vec capacity.
+        (setup.grid.len() as u64)
+            .saturating_mul(if setup.thermal.is_some() { 96 } else { 80 })
+            .saturating_add((setup.steps / s.window + 1).saturating_mul(q.saturating_mul(80).saturating_add(64)).saturating_mul(2))
+    });
+    let needed = flow
+        .checkpoint_heap_bytes()?
+        .max(memory.state)
+        .saturating_add(memory.frame_bytes)
+        .saturating_add(memory.readback)
+        .saturating_add(histories.saturating_mul(2))
+        .saturating_add(monitoring)
+        .saturating_add(64 * 1024);
+    if needed > limits.max_memory {
+        return Err(Error::Limit(format!(
+            "CPU checkpoint run needs up to {needed} bytes including restored flow, histories, monitor windows and streaming buffer; memory bound is {}",
+            limits.max_memory
+        )));
+    }
+    store.checked_memory(needed);
+    run_checkpointed(&setup, &mut flow, limits, Some(store))
+}
+
 fn frame(setup: &Setup, flow: &mut dyn Backend, step: u64) -> Result<Frame> {
     let n = setup.grid.len();
     let mut velocity = Vec::new();
@@ -290,6 +338,19 @@ fn frame(setup: &Setup, flow: &mut dyn Backend, step: u64) -> Result<Frame> {
 /// (an unstable flow then ends the run with the frames saved so far instead of an error); a
 /// frame is added at the stop when the flow is still sound.
 pub fn run(setup: &Setup, flow: &mut dyn Backend, limits: &Limits) -> Result<FluidResult> {
+    run_checkpointed(setup, flow, limits, None)
+}
+
+fn run_checkpointed(
+    setup: &Setup,
+    flow: &mut dyn Backend,
+    limits: &Limits,
+    mut store: Option<&mut dyn crate::checkpoint::Store>,
+) -> Result<FluidResult> {
+    let checkpoint_every = store.as_ref().map_or(0, |s| s.every());
+    if store.is_some() && (checkpoint_every == 0 || flow.name() != "cpu") {
+        return Err(Error::Invalid("checkpointing needs a positive step interval and the CPU backend".into()));
+    }
     let n = setup.grid.len();
     let total = setup.steps;
     let frames = u64::from(setup.frames).min(total).max(1);
@@ -318,10 +379,36 @@ pub fn run(setup: &Setup, flow: &mut dyn Backend, limits: &Limits) -> Result<Flu
     }
     let mut sound = true;
     let mut k = 0u64;
-    while k < total {
+    let mut finished = false;
+    if let Some(s) = store.as_mut() {
+        s.load(&mut |reader| {
+            let a = &mut crate::checkpoint::Reader(reader);
+            crate::checkpoint::RunState {
+                k: &mut k,
+                next_frame: &mut next_frame,
+                finished: &mut finished,
+                frames: &mut out_frames,
+                times: &mut history_times,
+                forces: &mut forces,
+                heats: &mut heats,
+                zones: &mut zones,
+                monitor: &mut monitor,
+            }
+            .archive(a, setup)?;
+            flow.checkpoint(a)?;
+            if flow.steps_done() != k {
+                return Err(Error::Invalid("checkpoint population and history steps differ".into()));
+            }
+            Ok(k)
+        })?;
+    }
+    while k < total && !finished {
         fieldcraft_model::progress::check()?;
         // Up to the next event: a history sample, a frame, a progress count.
         let mut next = total.min(k + 64 - k % 64);
+        if let Some(period) = k.checked_div(checkpoint_every) {
+            next = next.min((period + 1).saturating_mul(checkpoint_every));
+        }
         next = next.min((k / every + 1) * every);
         if next_frame <= frames {
             next = next.min(frame_step(next_frame).max(k + 1));
@@ -332,6 +419,11 @@ pub fn run(setup: &Setup, flow: &mut dyn Backend, limits: &Limits) -> Result<Flu
         match (flow.advance(next - k), monitor.as_mut()) {
             (Ok(()), _) => {}
             (Err(Error::Unstable(e)), Some(m)) => {
+                if store.is_some() {
+                    // An added save boundary may lie inside the chunk the ordinary loop
+                    // would have attempted. Preserve its last completed reporting event.
+                    k = (k / 64 * 64).max(k / every * every).max(frame_step(next_frame.saturating_sub(1))).max(k / m.setup.sample * m.setup.sample);
+                }
                 m.unstable(e);
                 sound = false;
                 break;
@@ -374,7 +466,28 @@ pub fn run(setup: &Setup, flow: &mut dyn Backend, limits: &Limits) -> Result<Flu
             if sound && out_frames.last().is_some_and(|f| f.step != k) {
                 out_frames.push(frame(setup, flow, k)?);
             }
-            break;
+            finished = true;
+        }
+        if sound
+            && let Some(s) = store.as_mut()
+            && (k.is_multiple_of(checkpoint_every) || k == total || finished)
+        {
+            s.save(k, &mut |writer| {
+                let a = &mut crate::checkpoint::Writer(writer);
+                crate::checkpoint::RunState {
+                    k: &mut k,
+                    next_frame: &mut next_frame,
+                    finished: &mut finished,
+                    frames: &mut out_frames,
+                    times: &mut history_times,
+                    forces: &mut forces,
+                    heats: &mut heats,
+                    zones: &mut zones,
+                    monitor: &mut monitor,
+                }
+                .archive(a, setup)?;
+                flow.checkpoint(a)
+            })?;
         }
     }
 

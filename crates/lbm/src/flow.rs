@@ -938,6 +938,23 @@ impl Flow {
         total
     }
 
+    pub(crate) fn checkpoint_heap_bytes(&mut self) -> Result<u64> {
+        self.targets()?;
+        let mut bytes = self.heap_bytes();
+        bytes = bytes.saturating_add(
+            (self.forces.capacity() * size_of::<[f64; 3]>()
+                + self.actions.capacity() * size_of::<ZoneAction>()
+                + self.fan_rise.capacity() * size_of::<f64>()) as u64,
+        );
+        if let Some(t) = &self.thermal {
+            bytes = bytes.saturating_add((t.heat.capacity() * size_of::<f64>()) as u64);
+            if let Some(s) = &t.solid {
+                bytes = bytes.saturating_add(s.heap_bytes());
+            }
+        }
+        Ok(bytes)
+    }
+
     pub fn grid(&self) -> &Grid {
         &self.grid
     }
@@ -1675,6 +1692,82 @@ fn thermal_rule(g: &[f64], s: usize, groups: &[ThermalCondition], cell: usize, q
 }
 
 impl crate::backend::Backend for Flow {
+    fn checkpoint(&mut self, a: &mut dyn crate::checkpoint::Archive) -> Result<()> {
+        use crate::checkpoint::{boolean, doubles, f64, fixed, u64, vectors};
+        // Streaming targets are allocated once, not cloned into a separate snapshot.
+        self.targets()?;
+        fixed(a, self.n as u64)?;
+        fixed(a, self.stride as u64)?;
+        for v in self.grid.cells {
+            fixed(a, v as u64)?;
+        }
+        for v in self.grid.origin.into_iter().chain([self.grid.spacing, self.omega_plus, self.omega_minus]).chain(self.acceleration) {
+            fixed(a, v.to_bits())?;
+        }
+        for v in &self.fluid {
+            fixed(a, u64::from(*v))?;
+        }
+        fixed(a, self.links.len() as u64)?;
+        for l in &self.links {
+            fixed(a, l.cell as u64)?;
+            fixed(a, l.q as u64)?;
+            match l.rule {
+                Rule::Pull { from } => {
+                    fixed(a, 0)?;
+                    fixed(a, from as u64)?;
+                }
+                Rule::Bounce { group, du } => {
+                    fixed(a, 1)?;
+                    fixed(a, group as u64)?;
+                    fixed(a, du.to_bits())?;
+                }
+                Rule::Reflect { from, q, group } => {
+                    fixed(a, 2)?;
+                    fixed(a, from as u64)?;
+                    fixed(a, q as u64)?;
+                    fixed(a, group as u64)?;
+                }
+                Rule::Open => fixed(a, 3)?,
+            }
+        }
+        u64(a, &mut self.steps_done)?;
+        let n = self.f.len();
+        doubles(a, &mut self.f, n)?;
+        doubles(a, &mut self.g, n)?;
+        vectors(a, &mut self.forces, self.groups.len())?;
+        let nf = self.cell_force.len();
+        vectors(a, &mut self.cell_force, nf)?;
+        let nu = self.cell_u.len();
+        vectors(a, &mut self.cell_u, nu)?;
+        doubles(a, &mut self.fan_rise, self.zones.len())?;
+        for action in &mut self.actions {
+            for v in &mut action.push {
+                f64(a, v)?;
+            }
+            f64(a, &mut action.alpha)?;
+            f64(a, &mut action.beta)?;
+        }
+        self.outlets.checkpoint(a)?;
+        fixed(a, u64::from(self.thermal.is_some()))?;
+        if let Some(t) = &mut self.thermal {
+            let nt = t.g.len();
+            doubles(a, &mut t.g, nt)?;
+            doubles(a, &mut t.g2, nt)?;
+            doubles(a, &mut t.temperature, self.n)?;
+            doubles(a, &mut t.heat, self.groups.len())?;
+            boolean(a, &mut t.solid_finite)?;
+            if !t.solid_finite {
+                return Err(Error::Invalid("cannot resume a checkpoint with unstable solid temperatures".into()));
+            }
+            fixed(a, u64::from(t.solid.is_some()))?;
+            if let Some(s) = &mut t.solid {
+                s.checkpoint(a)?;
+            }
+        }
+        // Scratch open populations are overwritten before use; their capacity is not state.
+        Ok(())
+    }
+
     fn name(&self) -> String {
         "cpu".into()
     }
