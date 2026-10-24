@@ -2,6 +2,8 @@
 //! running a flow to a time.
 #![allow(dead_code)]
 
+pub mod curved_cht;
+
 use std::collections::BTreeMap;
 
 use fieldcraft_lbm::{Flow, Limits, Obstacle, Setup};
