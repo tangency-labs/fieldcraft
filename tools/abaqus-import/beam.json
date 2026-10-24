@@ -1,0 +1,250 @@
+[
+  {
+    "command": "file.new",
+    "params": {}
+  },
+  {
+    "command": "model.units",
+    "params": {
+      "system": "mm-t-s-N-MPa"
+    }
+  },
+  {
+    "command": "mesh.block",
+    "params": {
+      "body": "Beam",
+      "kind": "hex8",
+      "corners": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          80,
+          0,
+          0
+        ],
+        [
+          80,
+          10,
+          0
+        ],
+        [
+          0,
+          10,
+          0
+        ],
+        [
+          0,
+          0,
+          10
+        ],
+        [
+          80,
+          0,
+          10
+        ],
+        [
+          80,
+          10,
+          10
+        ],
+        [
+          0,
+          10,
+          10
+        ]
+      ],
+      "divisions": [
+        8,
+        2,
+        2
+      ],
+      "faces": {
+        "6": "root",
+        "4": "tip"
+      }
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "all",
+      "geometry": [
+        {
+          "body": "Beam"
+        }
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "root",
+      "geometry": [
+        {
+          "body": "Beam",
+          "face": "root"
+        }
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "tip",
+      "geometry": [
+        {
+          "body": "Beam",
+          "face": "tip"
+        }
+      ]
+    }
+  },
+  {
+    "command": "model.material.create",
+    "params": {
+      "name": "Steel",
+      "elastic": {
+        "type": "isotropic",
+        "young": "210 GPa",
+        "poisson": 0.3
+      },
+      "density": "7850 kg/m^3"
+    }
+  },
+  {
+    "command": "model.section.create",
+    "params": {
+      "name": "BeamSection",
+      "set": "all",
+      "material": "Steel",
+      "kind": {
+        "type": "solid"
+      },
+      "formulation": {
+        "incompatible_modes": true
+      }
+    }
+  },
+  {
+    "command": "model.boundary_condition.create",
+    "params": {
+      "name": "Clamp",
+      "type": "fixed",
+      "target": {
+        "set": "root"
+      }
+    }
+  },
+  {
+    "command": "model.load.create",
+    "params": {
+      "name": "TipForce",
+      "type": "force",
+      "target": {
+        "set": "tip"
+      },
+      "vector": [
+        "0 N",
+        "0 N",
+        "-100 N"
+      ]
+    }
+  },
+  {
+    "command": "model.step.create",
+    "params": {
+      "name": "Bend",
+      "procedure": {
+        "type": "static"
+      },
+      "boundary_conditions": [
+        "Clamp"
+      ],
+      "loads": [
+        "TipForce"
+      ]
+    }
+  },
+  {
+    "command": "solve.static",
+    "params": {
+      "step": "Bend"
+    }
+  },
+  {
+    "command": "deck.write",
+    "params": {
+      "format": "abaqus",
+      "path": "abaqus-beam.inp",
+      "units": "mm-t-s-N-MPa"
+    }
+  },
+  {
+    "command": "deck.read",
+    "params": {
+      "format": "abaqus",
+      "path": "abaqus-beam.inp",
+      "units": "mm-t-s-N-MPa"
+    }
+  },
+  {
+    "command": "model.boundary_condition.create",
+    "params": {
+      "name": "Clamp",
+      "type": "fixed",
+      "target": {
+        "set": "root"
+      }
+    }
+  },
+  {
+    "command": "model.load.create",
+    "params": {
+      "name": "TipForce",
+      "type": "force",
+      "target": {
+        "set": "tip"
+      },
+      "vector": [
+        "0 N",
+        "0 N",
+        "-100 N"
+      ]
+    }
+  },
+  {
+    "command": "model.step.create",
+    "params": {
+      "name": "Bend",
+      "procedure": {
+        "type": "static"
+      },
+      "boundary_conditions": [
+        "Clamp"
+      ],
+      "loads": [
+        "TipForce"
+      ]
+    }
+  },
+  {
+    "command": "model.check",
+    "params": {}
+  },
+  {
+    "command": "solve.static",
+    "params": {
+      "step": "Bend"
+    }
+  },
+  {
+    "command": "file.save_as",
+    "params": {
+      "path": "abaqus-imported.fieldcraft",
+      "results": true
+    }
+  }
+]

@@ -288,6 +288,7 @@ pub fn handle(app: &mut ModelApp, ctx: &egui::Context, req: &ControlRequest) -> 
             "prompt": app.prompt.as_ref().map(|p| match p {
                 crate::files::Prompt::Unsaved(next) => json!({"unsaved": match next {
                     crate::files::Replace::File(p) => p.clone(),
+                    crate::files::Replace::Deck(p) => p.get("path").and_then(Value::as_str).unwrap_or("Abaqus deck").to_string(),
                     crate::files::Replace::Sample(n) => format!("sample {n}"),
                     crate::files::Replace::Update => "update".to_string(),
                     crate::files::Replace::New => "new".to_string(),
