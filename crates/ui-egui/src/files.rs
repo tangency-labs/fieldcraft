@@ -137,11 +137,12 @@ fn opens(command: &str) -> bool {
 /// Whether `command` replaces the whole model: its job starts from an empty session rather than
 /// a copy of the window's (copying a large model would stall the window).
 fn fresh(command: &str) -> bool {
-    matches!(command, "file.open" | "file.recover" | "file.sample")
+    matches!(command, "file.open" | "file.recover" | "file.sample" | "deck.read")
 }
 
 /// Commands a form runs in the background: they can take a while on a large part.
 pub const BACKGROUND: &[&str] = &[
+    "deck.read",
     "mesh.tet.generate",
     "mesh.hex.generate",
     "mesh.hex.sweep",
@@ -394,6 +395,8 @@ pub struct Opened {
 pub enum Replace {
     /// A `.fieldcraft` file.
     File(String),
+    /// An Abaqus model-data import with its explicit input-unit choice.
+    Deck(Value),
     /// A sample (`file.sample`).
     Sample(&'static str),
     /// Restarting to finish installing an update ([`crate::updates`]).
@@ -406,6 +409,7 @@ impl Replace {
     fn name(&self) -> String {
         match self {
             Replace::File(p) => file_name(p),
+            Replace::Deck(p) => p.get("path").and_then(Value::as_str).map(file_name).unwrap_or_else(|| "an Abaqus deck".into()),
             Replace::Sample(n) => fieldcraft_engine::sample::find(n).map_or_else(|| (*n).to_string(), |s| format!("the {} sample", s.label)),
             Replace::Update => "the update".into(),
             Replace::New => "a new model".into(),
@@ -559,13 +563,14 @@ impl ModelApp {
     /// Run `command` in the background; the session it ran on replaces this one when it
     /// succeeds. A command that brings a whole model (`fresh`: opening a model, recovering one)
     /// starts from an empty session, the others from a copy of this one. One at a time.
-    fn begin_job(&mut self, command: &'static str, params: Value, title: String, done: String, recent: Option<String>) -> bool {
+    fn begin_job(&mut self, command: &'static str, mut params: Value, title: String, done: String, recent: Option<String>) -> bool {
         if self.ensure_idle().is_err() {
             return false;
         }
         // A fresh session is the app's own model too (its commands go into the crash journal),
         // with the same work caps and file access, as the engine keeps them when a command
         // replaces the session, and the window's count of camera requests.
+        self.freeze_deck_units(command, &mut params);
         let base = if fresh(command) { self.session.empty_like() } else { self.session.clone() };
         let progress = Progress::new();
         let (rx, pending) = spawn(base, command, params, progress.clone(), self.bodies.0.clone());
@@ -575,12 +580,17 @@ impl ModelApp {
         true
     }
 
-    /// The form's OK: run its command, in the background for the meshers ([`BACKGROUND`]) so the
-    /// window keeps drawing (with Cancel) while a large part meshes; the form closes when the
+    /// The form's OK: run its command, in the background for meshers and deck imports
+    /// ([`BACKGROUND`]) so the window keeps drawing with Cancel; the form closes when the
     /// command succeeds and shows the error when it fails.
     /// A mesher that would replace a body's mesh asks first ([`Prompt::ReplaceMesh`]).
     pub fn submit_dialog(&mut self) {
-        let Ok((command, params)) = self.dialog_params() else { return };
+        let Ok((command, mut params)) = self.dialog_params() else { return };
+        if command == "deck.read" && self.has_unsaved_work() {
+            self.freeze_deck_units(command, &mut params);
+            self.prompt = Some(Prompt::Unsaved(Replace::Deck(params)));
+            return;
+        }
         if let Some(r) = fieldcraft_engine::replacement(&self.session, command, &params) {
             self.prompt = Some(Prompt::ReplaceMesh(r));
             return;
@@ -607,6 +617,21 @@ impl ModelApp {
             return;
         }
         let Ok((command, params)) = self.dialog_params() else { return };
+        self.submit_background(command, params);
+    }
+
+    /// Preserve the input preset before a fresh job drops the current model. Display overrides
+    /// are intentionally ignored: an Abaqus deck needs one consistent unit system.
+    fn freeze_deck_units(&self, command: &str, params: &mut Value) {
+        if command == "deck.read"
+            && params.get("units").is_none_or(Value::is_null)
+            && let Some(object) = params.as_object_mut()
+        {
+            object.insert("units".into(), json!(self.session.units().preset().label()));
+        }
+    }
+
+    fn submit_background(&mut self, command: &'static str, params: Value) {
         let label = crate::command_label(command).to_string();
         if self.begin_job(command, params, label.clone(), format!("{label} done"), None)
             && let Some(l) = self.loading.as_mut()
@@ -627,9 +652,10 @@ impl ModelApp {
         }
     }
 
-    /// Whether replacing the model would lose work: unsaved changes made by commands.
+    /// Whether replacing the model would lose work: edits, or a still-unsaved imported deck
+    /// whose history was intentionally cleared. A different document cannot inherit the marker.
     pub(crate) fn has_unsaved_work(&self) -> bool {
-        self.session.is_dirty() && !self.session.journal.is_empty()
+        self.session.is_dirty() && (!self.session.journal.is_empty() || self.imported_document == Some(self.session.opened()))
     }
 
     /// Open a file the user chose (picked, dropped or from the recent list) by its type. A model
@@ -833,6 +859,16 @@ impl ModelApp {
         }
         let warnings: Vec<&str> = o.reply.get("warnings").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).collect();
         let mut done = o.done;
+        if o.command == "deck.read" {
+            self.imported_document = Some(self.session.opened());
+            done = format!("Read Abaqus Deck: {} unread keywords (details in the panel)", o.reply["unknown_count"]);
+            self.reply = Some(crate::reply::Reply {
+                command: o.command.into(),
+                label: crate::command_label(o.command).into(),
+                params: json!({"format":o.reply["format"], "path":o.reply["path"], "units":o.reply["units"]}),
+                value: o.reply.clone(),
+            });
+        }
         if o.command == "file.sample" && !self.session.model.steps().is_empty() {
             done.push_str(" — Solve shows its results");
         }
@@ -1006,6 +1042,7 @@ impl ModelApp {
                     self.load(kind, path);
                 }
             }
+            Replace::Deck(params) => self.submit_background("deck.read", params),
             Replace::Sample(name) => self.load_sample(name),
             Replace::New => self.load_new(),
             Replace::Update => self.close_to_update(),
@@ -1368,8 +1405,13 @@ pub fn file_menu(app: &mut ModelApp, ui: &mut egui::Ui) {
         }));
     }
     ui.separator();
+    if row(ui, "Read Abaqus Deck…", None) {
+        act = Some(Box::new(|app| {
+            let _ = app.start("deck.read");
+        }));
+    }
     crate::frame::menu_heading(ui, &t, "WRITE DECK");
-    for c in fieldcraft_engine::catalogue::CATALOGUE.iter().filter(|c| c.panel == "Decks") {
+    for c in fieldcraft_engine::catalogue::CATALOGUE.iter().filter(|c| c.panel == "Decks" && c.id != "deck.read") {
         let format = c.preset().get("format").and_then(Value::as_str).map(str::to_string);
         let soon = c.milestone().map(|m| format!("soon · {m}"));
         let enabled = format.is_some() && soon.is_none();
@@ -1461,6 +1503,115 @@ mod tests {
             offered.borrow_mut().push(f.to_vec());
             path.clone()
         })
+    }
+
+    /// Original, dimensionless model data; no commercial deck or history is reused.
+    fn input_deck(dir: &Path) -> String {
+        let path = dir.join("original.inp");
+        std::fs::write(&path, "*NODE\n1,1,0,0\n2,2,0,0\n3,1,1,0\n4,1,0,1\n*ELEMENT,TYPE=C3D4,ELSET=Solid\n10,1,2,3,4\n*MATERIAL,NAME=Steel\n*ELASTIC\n1000,0.3\n*SOLID SECTION,ELSET=Solid,MATERIAL=Steel\n*STEP\n*STATIC\n*END STEP\n").unwrap();
+        path.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn deck_form_confirms_replacement_and_keeps_the_import_report() {
+        let dir = temp("deck-form");
+        let path = input_deck(&dir);
+        let mut app = ModelApp::new(Session::default());
+        app.run("mesh.node.add", json!({"label":99,"xyz":[0,0,0]})).unwrap();
+        app.open_form("deck.read", json!({"format":"abaqus","path":path,"units":"mm-t-s-N-MPa"}));
+        app.submit_dialog();
+        assert!(matches!(app.prompt, Some(Prompt::Unsaved(Replace::Deck(_)))));
+        assert!(app.loading.is_none());
+        app.answer_unsaved(Answer::Cancel);
+        assert!(app.session.model.node(99).is_some() && app.dialog.is_some());
+        app.submit_dialog();
+        app.answer_unsaved(Answer::Discard);
+        assert!(app.loading.is_some());
+        app.wait_loaded();
+        assert!(app.session.model.node(99).is_none());
+        assert_eq!(app.session.model.elements().len(), 1);
+        assert!(app.session.is_dirty() && app.session.path.is_none() && app.dialog.is_none());
+        let reply = app.reply.as_ref().unwrap();
+        assert_eq!(reply.command, "deck.read");
+        assert_eq!(reply.value["history_imported"], false);
+        assert_eq!(
+            reply.value["unknown"],
+            json!([
+                {"keyword":"STEP","line":12}, {"keyword":"STATIC","line":13}, {"keyword":"ENDSTEP","line":14}
+            ])
+        );
+        assert!(app.status.as_ref().unwrap().text.contains("3 unread keywords"));
+        assert!(app.session.journal.is_empty());
+        app.new_model();
+        assert_eq!(app.prompt, Some(Prompt::Unsaved(Replace::New)), "an untouched import is still unsaved work");
+        app.answer_unsaved(Answer::Cancel);
+        assert_eq!(app.session.model.elements().len(), 1);
+    }
+
+    #[test]
+    fn fresh_deck_jobs_freeze_the_input_preset_without_prompting_programmatic_calls() {
+        let dir = temp("deck-units");
+        let path = input_deck(&dir);
+        let mut app = ModelApp::new(Session::default());
+        app.run("model.units", json!({"system":"in-lbf-s-psi","overrides":{"length":"mm"}})).unwrap();
+        app.run("mesh.node.add", json!({"label":99,"xyz":[0,0,0]})).unwrap();
+        app.start_job("deck.read", json!({"format":"abaqus","path":path,"units":null})).unwrap();
+        assert!(app.prompt.is_none());
+        app.wait_loaded();
+        let inch = fieldcraft_model::units::Quantity::Length.parse("1 in", &fieldcraft_model::DisplaySystem::default()).unwrap();
+        assert_eq!(app.session.model.node(1).unwrap().xyz, [inch, 0., 0.]);
+        assert!(app.session.model.node(99).is_none());
+        assert_eq!(app.reply.as_ref().unwrap().value["units"], "in-lbf-s-psi");
+    }
+
+    #[test]
+    fn deck_import_protection_survives_failed_or_cancelled_jobs_and_stops_after_saving() {
+        let dir = temp("deck-marker");
+        let path = input_deck(&dir);
+        let mut app = ModelApp::new(Session::default());
+        app.start_job("deck.read", json!({"format":"abaqus","path":path})).unwrap();
+        app.wait_loaded();
+        let imported = app.session.opened();
+        assert_eq!(app.imported_document, Some(imported));
+        assert!(app.has_unsaved_work());
+        app.start_job("deck.read", json!({"format":"abaqus","path":dir.join("missing.inp")})).unwrap();
+        app.wait_loaded();
+        assert_eq!(app.session.opened(), imported);
+        assert!(app.has_unsaved_work());
+        app.start_job("deck.read", json!({"format":"abaqus","path":path})).unwrap();
+        app.cancel_loading();
+        assert_eq!(app.session.opened(), imported);
+        assert!(app.has_unsaved_work());
+        app.new_model();
+        assert_eq!(app.prompt, Some(Prompt::Unsaved(Replace::New)));
+        app.answer_unsaved(Answer::Cancel);
+        app.run("file.save_as", json!({"path":dir.join("imported.fieldcraft")})).unwrap();
+        assert!(!app.has_unsaved_work());
+        app.new_model();
+        assert!(app.prompt.is_none() && app.session.model.nodes().is_empty());
+        assert_ne!(app.session.opened(), imported);
+        assert!(!app.has_unsaved_work());
+    }
+
+    #[test]
+    fn failed_deck_job_keeps_the_model_and_the_form_for_correction() {
+        let dir = temp("deck-failure");
+        let path = dir.join("broken.inp");
+        std::fs::write(&path, "*NODE\n1,0,0,0\n*ELEMENT,TYPE=C3D4\n10,1,2,3,4\n").unwrap();
+        let mut app = ModelApp::new(Session::default());
+        app.run("mesh.node.add", json!({"label":99,"xyz":[0,0,0]})).unwrap();
+        let before = app.session.model.clone();
+        let undo = app.session.undo_depth();
+        app.open_form("deck.read", json!({"format":"abaqus","path":path}));
+        app.submit_dialog();
+        app.answer_unsaved(Answer::Discard);
+        app.wait_loaded();
+        assert_eq!(app.session.model, before);
+        assert_eq!(app.session.undo_depth(), undo);
+        assert!(app.session.is_dirty() && app.status.as_ref().unwrap().error);
+        assert!(app.dialog.as_ref().unwrap().error.is_some());
+        app.run("edit.undo", json!({})).unwrap();
+        assert!(app.session.model.node(99).is_none());
     }
 
     #[test]

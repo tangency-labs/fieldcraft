@@ -492,6 +492,8 @@ pub struct ModelApp {
     pub last_error: Option<String>,
     /// A design opened over a model of another part, waiting for [`files::Prompt::Design`]'s answer.
     pub held: Option<files::Opened>,
+    /// An imported deck's document identity: unsaved model data has no command history.
+    imported_document: Option<u64>,
     /// The window draws its own title bar and caption buttons (Windows, Linux).
     pub custom_titlebar: bool,
     /// The title bar runs under the macOS traffic lights.
@@ -610,6 +612,7 @@ impl ModelApp {
             report: None,
             last_error: None,
             held: None,
+            imported_document: None,
             custom_titlebar: false,
             integrated_titlebar: false,
             palette_text: String::new(),
@@ -731,11 +734,14 @@ impl ModelApp {
         {
             self.select_duplicates(v);
         }
+        if r.is_ok() && id == "deck.read" {
+            self.imported_document = Some(self.session.opened());
+        }
         if r.is_ok() && (changed || display) {
             self.follow_stage(id);
         }
         match &r {
-            Ok(v) if v.is_null() || changed || display => self.set_status(reply::done(id, label, &params, v), false),
+            Ok(v) if v.is_null() || (changed && id != "deck.read") || display => self.set_status(reply::done(id, label, &params, v), false),
             // A reply reads as one line; the whole of a rich one shows in the context panel (the
             // reaction sums have their own place in the results panel).
             Ok(v) => {

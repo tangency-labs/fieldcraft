@@ -2214,6 +2214,24 @@ pub const DECK: &[Field] = &[
     .hint("the display system's"),
 ];
 
+pub const DECK_READ: &[Field] = &[
+    choice("format", "Format", &[("abaqus", "Abaqus input (.inp)")]).help("The model-data input format to read.").req().def("\"abaqus\""),
+    path("path", "Input deck", false).help("Flat Abaqus model data; replaces the current model only after a successful read.").req(),
+    choice(
+        "units",
+        "Input units",
+        &[
+            ("mm-t-s-N-MPa", "mm, t, s, N, MPa"),
+            ("m-kg-s-N-Pa", "m, kg, s, N, Pa"),
+            ("mm-kg-ms-kN-GPa", "mm, kg, ms, kN, GPa"),
+            ("mm-g-ms-N-MPa", "mm, g, ms, N, MPa"),
+            ("in-lbf-s-psi", "in, lbf·s²/in, s, lbf, psi"),
+        ],
+    )
+    .help("A deck has no intrinsic units. Choose its consistent preset; default is the current display preset, ignoring overrides.")
+    .hint("current display preset"),
+];
+
 pub const EXPORT_STL: &[Field] = &[
     path("path", "File", true).help("Where to write the STL file.").req(),
     reference("set", "Set", C::Set).help("Write only this set's element faces; the whole outer surface when empty.").hint("the outer surface"),

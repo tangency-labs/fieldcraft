@@ -98,6 +98,7 @@ impl EngineError {
         matches!(
             self,
             EngineError::Model(Cancelled)
+                | EngineError::Deck(fieldcraft_decks::Error::Model(Cancelled))
                 | EngineError::Geometry(fieldcraft_geometry::Error::Model(Cancelled))
                 | EngineError::Mesh(fieldcraft_mesh::Error::Model(Cancelled))
                 | EngineError::Solver(fieldcraft_solver::Error::Model(Cancelled))
@@ -707,8 +708,8 @@ impl Session {
         result
     }
 
-    /// Identifies the open document: it changes when `file.open`, `file.recover` or `file.sample`
-    /// replaces the session and when `geometry.open` opens another design file or starts a new
+    /// Identifies the open document: it changes when `file.open`, `file.recover`, `file.sample`
+    /// or `deck.read` replaces the session and when `geometry.open` opens another design file or starts a new
     /// model with one; an edit, a solve, undo, redo or opening the same design again after an
     /// edit keep it. A view frames the model again when it changes.
     pub fn opened(&self) -> u64 {
@@ -918,6 +919,8 @@ mod tests {
             json!({"format": "abaqus"}),
             json!({"format": "abaqus", "path": ""}),
             json!({"format": "abaqus", "path": "/"}),
+            json!({"format": "abaqus", "path": "/dev/zero"}),
+            json!({"format": "abaqus", "path": "/no/such/part.inp", "units": "guess"}),
             json!({"format": "abaqus", "path": "/no/such/dir/part.inp"}),
             json!({"format": "abaqus", "path": format!("/no/such/{}", "x".repeat(100_000))}),
             json!({"format": "abaqus", "path": 7}),

@@ -284,6 +284,13 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
     ui.add_space(4.0);
     let units = Some(app.session.units());
     match reply.command.as_str() {
+        "deck.read" => {
+            ui.label(
+                RichText::new("Model data only. Analysis history was not imported; review unread keywords and warnings before solving.")
+                    .color(t.text_dim),
+            );
+            value(ui, t, egui::Id::new("fc_deck_read"), &reply.value, 0);
+        }
         "model.check" => diagnostics(app, ui, t, &reply.value, &mut acts),
         c if SOLVES.contains(&c) => solve_summary(ui, t, &reply.value, units),
         "model.activity" => activity(ui, t, &reply.value),
@@ -304,6 +311,10 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
                 let _ = app.start(id);
             }
             Act::Tab(tab) => app.ui.select_tab(tab),
+            Act::Rerun if reply.command == "deck.read" => {
+                app.open_form("deck.read", reply.params.clone());
+                app.submit_dialog();
+            }
             Act::Rerun => {
                 let _ = app.run(&reply.command, reply.params.clone());
             }

@@ -156,6 +156,9 @@ use fieldcraft_model::units::Preset;
 
 use crate::{Error, Result, unsupported};
 
+pub mod read;
+pub use read::{Read, Unknown, read, read_in};
+
 const FORMAT: &str = "Abaqus";
 
 /// The plastic strain a bilinear isotropic hardening line is written out to (1000%).
