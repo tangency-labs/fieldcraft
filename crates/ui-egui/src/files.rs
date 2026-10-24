@@ -13,9 +13,12 @@
 //! SolidCraft's `crates/ui-egui/src/file_load.rs` and `documents.rs` (MIT OR Apache-2.0), see
 //! ATTRIBUTION.md.
 
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::mpsc::{Sender, TryRecvError};
+use std::task::{Context, Poll, Waker};
 
 use fieldcraft_model::progress::Progress;
 
@@ -37,6 +40,14 @@ pub struct Filter {
 pub type PickOpen = Box<dyn Fn(&[Filter]) -> Option<String>>;
 /// The host picks where to save, starting from a file name; `None` when the user cancelled.
 pub type PickSave = Box<dyn Fn(&str, &[Filter]) -> Option<String>>;
+/// An owned request for a host's asynchronous file chooser.
+#[derive(Debug, PartialEq, Eq)]
+pub enum FilePicker {
+    Open { filters: Vec<Filter> },
+    Save { name: String, filters: Vec<Filter> },
+}
+/// Hosts return promptly; the future is polled on the UI thread without waiting.
+pub type PickFile = Box<dyn Fn(FilePicker) -> Pin<Box<dyn Future<Output = Option<String>>>>>;
 /// The host opens a web link in the user's browser.
 pub type OpenUrl = Box<dyn Fn(&str) -> Result<(), String>>;
 
@@ -44,6 +55,8 @@ pub type OpenUrl = Box<dyn Fn(&str) -> Result<(), String>>;
 /// desktop app installs them; tests answer the pickers with closures.
 #[derive(Default)]
 pub struct Services {
+    /// Preferred over the synchronous services (which remain useful for the browser and tests).
+    pub pick_file: Option<PickFile>,
     pub pick_open: Option<PickOpen>,
     pub pick_save: Option<PickSave>,
     /// The recent-files list's file (JSON); `None` keeps the list for this run only.
@@ -54,6 +67,19 @@ pub struct Services {
     /// Opens a link in the browser (Help › Report a Bug); without it, egui's own
     /// `open_url` (the browser build opens the link itself).
     pub open_url: Option<OpenUrl>,
+}
+
+enum PickerAction {
+    Open,
+    Save { params: Value, next: Option<Replace> },
+    Export { command: String, params: Value, extension: &'static str, alternatives: &'static [&'static str] },
+}
+
+pub(crate) struct PendingPicker {
+    future: Pin<Box<dyn Future<Output = Option<String>>>>,
+    action: PickerAction,
+    revision: (u64, u64, Option<String>),
+    document: u64,
 }
 
 const MODEL: Filter = Filter { name: "FieldCraft model", extensions: &["fieldcraft"] };
@@ -538,6 +564,98 @@ fn spawn(
 }
 
 impl ModelApp {
+    fn has_open_picker(&self) -> bool {
+        self.services.pick_file.is_some() || self.services.pick_open.is_some()
+    }
+
+    fn has_save_picker(&self) -> bool {
+        self.services.pick_file.is_some() || self.services.pick_save.is_some()
+    }
+
+    /// Only user actions call this. A pending chooser never blocks commands or the event loop.
+    fn pick_file(&mut self, request: FilePicker, action: PickerAction) -> bool {
+        if self.picker.is_some() {
+            self.set_status("Finish or cancel the open file chooser first", false);
+            return false;
+        }
+        if self.ensure_idle().is_err() {
+            return false;
+        }
+        if let Some(pick) = &self.services.pick_file {
+            self.picker = Some(PendingPicker {
+                future: pick(request),
+                action,
+                revision: (self.revision, self.session.revision(), self.session.path.clone()),
+                document: self.session.opened(),
+            });
+            return false;
+        }
+        let path = match request {
+            FilePicker::Open { filters } => self.services.pick_open.as_ref().and_then(|p| p(&filters)),
+            FilePicker::Save { name, filters } => self.services.pick_save.as_ref().and_then(|p| p(&name, &filters)),
+        };
+        path.is_some_and(|path| self.picked_file(action, path))
+    }
+
+    /// Poll only while a chooser is pending. No receive, wait or nested event loop runs here.
+    pub(crate) fn poll_picker(&mut self) -> bool {
+        let Some(mut pending) = self.picker.take() else { return false };
+        match pending.future.as_mut().poll(&mut Context::from_waker(Waker::noop())) {
+            Poll::Pending => {
+                self.picker = Some(pending);
+                true
+            }
+            Poll::Ready(None) => false,
+            Poll::Ready(Some(path)) => {
+                // A control command, drop, new/open, save elsewhere or completed background job
+                // may have changed what this choice was for while the native chooser was open.
+                if self.loading.is_some()
+                    || pending.document != self.session.opened()
+                    || pending.revision != (self.revision, self.session.revision(), self.session.path.clone())
+                {
+                    self.set_status("The model changed while the file chooser was open; choose the file again", true);
+                } else {
+                    self.picked_file(pending.action, path);
+                }
+                false
+            }
+        }
+    }
+
+    fn picked_file(&mut self, action: PickerAction, path: String) -> bool {
+        match action {
+            PickerAction::Open => {
+                self.open_path(&path);
+                false
+            }
+            PickerAction::Save { mut params, next } => {
+                params["path"] = json!(with_extension(path, "fieldcraft"));
+                let saved = self.run("file.save_as", params).is_ok();
+                self.saved_to_recent(saved);
+                if saved && let Some(next) = next {
+                    self.replace_after_save(next);
+                }
+                saved
+            }
+            PickerAction::Export { command, mut params, extension, alternatives } => {
+                let path = if alternatives
+                    .iter()
+                    .any(|e| Path::new(&path).extension().and_then(|x| x.to_str()).is_some_and(|x| x.eq_ignore_ascii_case(e)))
+                {
+                    path
+                } else {
+                    with_extension(path, extension)
+                };
+                params["path"] = json!(path);
+                let written = self.run(&command, params).is_ok();
+                if written && command != "deck.write" {
+                    self.set_status(format!("Wrote {}", file_name(&path)), false);
+                }
+                written
+            }
+        }
+    }
+
     /// The model's name: its file's stem, the sample it was opened as, or "Untitled".
     pub fn model_name(&self) -> String {
         model_name(&self.session)
@@ -618,13 +736,11 @@ impl ModelApp {
     /// File > Open: pick a model, design or tagged mesh and open it. `None` asks for any of them.
     /// Without a picker service the command's form opens instead.
     pub fn open_dialog(&mut self, kind: Option<Kind>) {
-        let Some(pick) = self.services.pick_open.as_ref() else {
+        if !self.has_open_picker() {
             self.open_form(kind.unwrap_or(Kind::Model).command(), json!({}));
             return;
-        };
-        if let Some(path) = pick(kind.map_or(OPEN_FILTERS, Kind::filters)) {
-            self.open_path(&path);
         }
+        self.pick_file(FilePicker::Open { filters: kind.map_or(OPEN_FILTERS, Kind::filters).to_vec() }, PickerAction::Open);
     }
 
     /// Whether replacing the model would lose work: unsaved changes made by commands.
@@ -913,15 +1029,18 @@ impl ModelApp {
 
     /// Save As with `params` besides the path.
     fn save_as_with(&mut self, params: Value) -> bool {
-        let Some(pick) = self.services.pick_save.as_ref() else {
+        self.save_as_then(params, None)
+    }
+
+    fn save_as_then(&mut self, params: Value, next: Option<Replace>) -> bool {
+        if !self.has_save_picker() {
             self.open_form("file.save_as", params);
             return false;
-        };
-        let Some(path) = pick(&format!("{}.fieldcraft", self.model_name()), &[MODEL]) else { return false };
-        let mut params = params;
-        params["path"] = json!(with_extension(path, "fieldcraft"));
-        let saved = self.run("file.save_as", params).is_ok();
-        self.saved_to_recent(saved)
+        }
+        self.pick_file(
+            FilePicker::Save { name: format!("{}.fieldcraft", self.model_name()), filters: vec![MODEL] },
+            PickerAction::Save { params, next },
+        )
     }
 
     /// Write Deck: pick where to write the model as a `format` deck. Without a picker the
@@ -931,10 +1050,10 @@ impl ModelApp {
             self.set_status(format!("no {format} deck writer yet"), true);
             return;
         };
-        let Some(pick) = self.services.pick_save.as_ref() else {
+        if !self.has_save_picker() {
             self.open_form("deck.write", json!({"format": format}));
             return;
-        };
+        }
         let exts: &'static [&'static str] = match f.extension {
             "inp" => &["inp"],
             "bdf" => &["bdf", "dat", "nas"],
@@ -942,13 +1061,10 @@ impl ModelApp {
             _ => &[],
         };
         let filter = Filter { name: "Solver deck", extensions: exts };
-        let Some(path) = pick(&format!("{}.{}", self.model_name(), f.extension), &[filter]) else { return };
-        let path = if exts.iter().any(|e| Path::new(&path).extension().and_then(|x| x.to_str()).is_some_and(|x| x.eq_ignore_ascii_case(e))) {
-            path
-        } else {
-            with_extension(path, f.extension)
-        };
-        let _ = self.run("deck.write", json!({"format": format, "path": path}));
+        self.pick_file(
+            FilePicker::Save { name: format!("{}.{}", self.model_name(), f.extension), filters: vec![filter] },
+            PickerAction::Export { command: "deck.write".into(), params: json!({"format": format}), extension: f.extension, alternatives: exts },
+        );
     }
 
     /// Results › Export CSV… (`results.export.csv` with `params`, its `what` and `step` among
@@ -961,24 +1077,17 @@ impl ModelApp {
     /// [`Self::export_csv`] through `command`, which takes a `path` (results.export.csv,
     /// results.xy).
     pub fn export_csv_with(&mut self, command: &str, params: Value) {
-        let Some(pick) = self.services.pick_save.as_ref() else {
+        if !self.has_save_picker() {
             self.open_form(command, params);
             return;
-        };
+        }
         let part = |k: &str| params.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
         let what = if command == "results.xy" { "xy".to_string() } else { part("what") };
         let name = format!("{}-{}-{what}.csv", self.model_name(), part("step"));
-        let Some(path) = pick(&name, &[Filter { name: "CSV", extensions: &["csv"] }]) else { return };
-        let path = if Path::new(&path).extension().and_then(|x| x.to_str()).is_some_and(|x| x.eq_ignore_ascii_case("csv")) {
-            path
-        } else {
-            with_extension(path, "csv")
-        };
-        let mut params = params;
-        params["path"] = json!(path);
-        if self.run(command, params).is_ok() {
-            self.set_status(format!("Wrote {}", file_name(&path)), false);
-        }
+        self.pick_file(
+            FilePicker::Save { name, filters: vec![Filter { name: "CSV", extensions: &["csv"] }] },
+            PickerAction::Export { command: command.into(), params, extension: "csv", alternatives: &["csv"] },
+        );
     }
 
     /// The autosaved models that can be recovered (`file.recovery.list`), newest first.
@@ -992,6 +1101,10 @@ impl ModelApp {
     pub fn answer_unsaved(&mut self, answer: Answer) {
         let Some(Prompt::Unsaved(next)) = self.prompt.clone() else { return };
         self.prompt = None;
+        if answer == Answer::Save && self.session.path.is_none() {
+            self.save_as_then(json!({}), Some(next));
+            return;
+        }
         let go = match answer {
             Answer::Save => self.save(),
             Answer::Discard => true,
@@ -1000,6 +1113,10 @@ impl ModelApp {
         if !go {
             return;
         }
+        self.replace_after_save(next);
+    }
+
+    fn replace_after_save(&mut self, next: Replace) {
         match next {
             Replace::File(path) => {
                 if let Some(kind) = Kind::of(&path) {
@@ -1017,7 +1134,7 @@ impl ModelApp {
     /// `false` for every other command, and for picker entries without pickers (their form
     /// opens instead).
     pub(crate) fn file_action(&mut self, command: &str, preset: &Value, pickers: bool) -> bool {
-        let can_save = pickers && self.services.pick_save.is_some();
+        let can_save = pickers && self.has_save_picker();
         match command {
             "file.save" if self.session.path.is_some() || can_save => {
                 self.save();
@@ -1037,7 +1154,7 @@ impl ModelApp {
                 None => return false,
             },
             other => match kind_of_command(other) {
-                Some(kind) if pickers && self.services.pick_open.is_some() => self.open_dialog(Some(kind)),
+                Some(kind) if pickers && self.has_open_picker() => self.open_dialog(Some(kind)),
                 _ => return false,
             },
         }
@@ -1405,6 +1522,258 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[derive(Default)]
+    struct Chooser {
+        answer: RefCell<Option<Option<String>>>,
+        requests: RefCell<Vec<FilePicker>>,
+    }
+
+    fn deferred(app: &mut ModelApp) -> Rc<Chooser> {
+        let chooser = Rc::new(Chooser::default());
+        let host = chooser.clone();
+        app.services.pick_file = Some(Box::new(move |request| {
+            host.requests.borrow_mut().push(request);
+            let host = host.clone();
+            Box::pin(std::future::poll_fn(move |_| match host.answer.borrow_mut().take() {
+                Some(answer) => Poll::Ready(answer),
+                None => Poll::Pending,
+            }))
+        }));
+        chooser
+    }
+
+    #[test]
+    fn a_pending_chooser_keeps_frames_running_and_only_opens_once() {
+        let mut app = ModelApp::new(Session::default());
+        let chooser = deferred(&mut app);
+        app.open_dialog(None);
+        app.save_as();
+        app.open_dialog(Some(Kind::Design));
+        assert_eq!(chooser.requests.borrow().len(), 1);
+        assert_eq!(chooser.requests.borrow()[0], FilePicker::Open { filters: OPEN_FILTERS.to_vec() });
+        let ctx = egui::Context::default();
+        for _ in 0..8 {
+            let mut output = ctx.run_ui(Default::default(), |ui| app.logic(ui.ctx()));
+            output.textures_delta.clear();
+            assert!(app.picker.is_some() && app.loading.is_none());
+        }
+        *chooser.answer.borrow_mut() = Some(None);
+        assert!(!app.poll_picker());
+        assert!(app.picker.is_none() && app.session.path.is_none());
+        app.save_as();
+        assert_eq!(chooser.requests.borrow().len(), 2, "cancelling releases the chooser guard");
+    }
+
+    #[test]
+    fn a_chooser_started_by_layout_schedules_its_first_poll_without_more_input() {
+        let mut app = ModelApp::new(Session::default());
+        let _chooser = deferred(&mut app);
+        let ctx = egui::Context::default();
+        let screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0)));
+        // Settle fonts/layout/animations so an initial-frame repaint cannot hide the bug.
+        for frame in 0..10 {
+            let input = egui::RawInput { time: Some(f64::from(frame)), screen_rect, ..Default::default() };
+            let mut output = ctx.run_ui(input, |ui| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            });
+            output.textures_delta.clear();
+        }
+        let input = egui::RawInput { time: Some(10.0), screen_rect, ..Default::default() };
+        let mut output = ctx.run_ui(input, |ui| {
+            app.logic(ui.ctx());
+            // A menu/button action arrives during layout, after logic has already polled.
+            app.open_dialog(None);
+            app.ui(ui);
+        });
+        let repaint = output.viewport_output.get(&egui::ViewportId::ROOT).map(|v| v.repaint_delay);
+        output.textures_delta.clear();
+        assert!(app.picker.is_some());
+        assert!(repaint.is_some_and(|delay| delay <= std::time::Duration::from_millis(50)));
+    }
+
+    #[test]
+    fn asynchronous_save_then_open_and_import_use_the_existing_paths() {
+        let dir = temp("async-save-open");
+        let path = dir.join("kept.fieldcraft").to_string_lossy().into_owned();
+        let mut app = ModelApp::new(Session::default());
+        app.run("mesh.node.add", json!({"label": 1, "xyz": [0, 0, 0]})).unwrap();
+        let chooser = deferred(&mut app);
+        assert!(!app.save_packed(), "a pending save has not saved yet");
+        assert!(!Path::new(&path).exists());
+        *chooser.answer.borrow_mut() = Some(Some(path.clone()));
+        assert!(!app.poll_picker());
+        assert_eq!(app.session.path.as_deref(), Some(path.as_str()));
+        assert!(app.session.pack_geometry && !app.session.is_dirty());
+        assert_eq!(app.recent.paths.as_slice(), std::slice::from_ref(&path));
+        app.run("file.new", json!({})).unwrap();
+        app.open_dialog(Some(Kind::Model));
+        *chooser.answer.borrow_mut() = Some(Some(path));
+        app.poll_picker();
+        app.wait_loaded();
+        assert!(app.session.model.node(1).is_some());
+        app.open_dialog(Some(Kind::Mesh));
+        assert_eq!(chooser.requests.borrow().last(), Some(&FilePicker::Open { filters: Kind::Mesh.filters().to_vec() }));
+        // A bad import is still handled by the normal error path without replacing the model.
+        *chooser.answer.borrow_mut() = Some(Some(dir.join("missing.3mf").to_string_lossy().into_owned()));
+        app.poll_picker();
+        app.wait_loaded();
+        assert!(app.session.model.node(1).is_some());
+        assert!(app.status.as_ref().is_some_and(|s| s.error));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn chooser_results_for_a_changed_or_replaced_model_are_discarded() {
+        let dir = temp("async-stale");
+        for command in ["mesh.node.add", "file.new"] {
+            let target = dir.join(format!("{command}.fieldcraft"));
+            let mut app = ModelApp::new(Session::default());
+            let chooser = deferred(&mut app);
+            app.save_as();
+            let params = if command == "file.new" { json!({}) } else { json!({"label": 42, "xyz": [0, 0, 0]}) };
+            app.run(command, params).unwrap();
+            *chooser.answer.borrow_mut() = Some(Some(target.to_string_lossy().into_owned()));
+            app.poll_picker();
+            assert!(!target.exists());
+            assert!(app.session.path.is_none());
+            assert!(app.status.as_ref().is_some_and(|s| s.error && s.text.contains("model changed")));
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_chooser_cannot_apply_a_selection_while_a_background_job_runs() {
+        let dir = temp("async-background");
+        let target = dir.join("stale.fieldcraft");
+        let mut app = ModelApp::new(Session::default());
+        let chooser = deferred(&mut app);
+        app.save_as();
+        app.start_job("file.new", json!({})).unwrap();
+        *chooser.answer.borrow_mut() = Some(Some(target.to_string_lossy().into_owned()));
+        app.poll_picker();
+        assert!(!target.exists() && app.session.path.is_none());
+        app.wait_loaded();
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn save_before_replacing_waits_for_success_and_never_replaces_after_cancel_or_failure() {
+        let dir = temp("async-before-new");
+        for outcome in ["success", "cancel", "failure"] {
+            let mut app = ModelApp::new(Session::default());
+            app.run("mesh.node.add", json!({"label": 1, "xyz": [0, 0, 0]})).unwrap();
+            let chooser = deferred(&mut app);
+            app.new_model();
+            app.answer_unsaved(Answer::Save);
+            assert!(app.session.model.node(1).is_some() && app.picker.is_some());
+            let answer = match outcome {
+                "cancel" => None,
+                "failure" => {
+                    let blocker = dir.join("not-a-directory");
+                    std::fs::write(&blocker, "blocked").unwrap();
+                    Some(blocker.join("model.fieldcraft").to_string_lossy().into_owned())
+                }
+                _ => Some(dir.join("kept.fieldcraft").to_string_lossy().into_owned()),
+            };
+            *chooser.answer.borrow_mut() = Some(answer);
+            app.poll_picker();
+            assert_eq!(app.session.model.node(1).is_some(), outcome != "success", "{outcome}");
+            assert!(app.picker.is_none());
+        }
+        let mut kept = Session::default();
+        kept.execute("file.open", &json!({"path": dir.join("kept.fieldcraft")})).unwrap();
+        assert!(kept.model.node(1).is_some(), "replacement only follows a real save");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn asynchronous_deck_and_csv_exports_keep_names_parameters_and_extensions() {
+        let dir = temp("async-exports");
+        let mut app = ModelApp::new(Session::default());
+        app.open_sample("cantilever");
+        app.wait_loaded();
+        app.run("solve.static", json!({})).unwrap();
+        let chooser = deferred(&mut app);
+        app.write_deck("abaqus");
+        let deck = dir.join("beam.inp");
+        *chooser.answer.borrow_mut() = Some(Some(dir.join("beam").to_string_lossy().into_owned()));
+        app.poll_picker();
+        assert!(std::fs::read_to_string(deck).unwrap().to_ascii_uppercase().contains("*NODE"));
+        assert_eq!(
+            chooser.requests.borrow()[0],
+            FilePicker::Save { name: "Cantilever (sample).inp".into(), filters: vec![Filter { name: "Solver deck", extensions: &["inp"] }] }
+        );
+        app.export_csv(json!({"what": "reactions", "step": "Load"}));
+        let csv = dir.join("reactions.CSV");
+        *chooser.answer.borrow_mut() = Some(Some(csv.to_string_lossy().into_owned()));
+        app.poll_picker();
+        let text = std::fs::read_to_string(csv).unwrap();
+        assert!(text.starts_with("set,nodes,fx [N]") && text.contains("\r\ntotal,"));
+        assert_eq!(
+            chooser.requests.borrow()[1],
+            FilePicker::Save { name: "Cantilever (sample)-Load-reactions.csv".into(), filters: vec![Filter { name: "CSV", extensions: &["csv"] }] }
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn save_before_opening_keeps_both_models_and_rejects_old_choices_after_open() {
+        let dir = temp("async-before-open");
+        let other = dir.join("other.fieldcraft");
+        let kept = dir.join("kept.fieldcraft");
+        let mut saved = Session::default();
+        saved.execute("mesh.node.add", &json!({"label": 2, "xyz": [0, 0, 0]})).unwrap();
+        saved.execute("file.save_as", &json!({"path": other})).unwrap();
+        let mut app = ModelApp::new(Session::default());
+        app.run("mesh.node.add", json!({"label": 1, "xyz": [0, 0, 0]})).unwrap();
+        let chooser = deferred(&mut app);
+        app.open_path(&other.to_string_lossy());
+        app.answer_unsaved(Answer::Save);
+        *chooser.answer.borrow_mut() = Some(Some(kept.to_string_lossy().into_owned()));
+        app.poll_picker();
+        app.wait_loaded();
+        assert!(app.session.model.node(2).is_some() && app.session.model.node(1).is_none());
+        saved.execute("file.open", &json!({"path": kept})).unwrap();
+        assert!(saved.model.node(1).is_some());
+
+        app.save_as();
+        app.run("file.open", json!({"path": kept})).unwrap();
+        let stale = dir.join("stale.fieldcraft");
+        *chooser.answer.borrow_mut() = Some(Some(stale.to_string_lossy().into_owned()));
+        app.poll_picker();
+        assert!(!stale.exists() && app.session.model.node(1).is_some());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn save_before_update_only_closes_after_a_completed_save() {
+        let dir = temp("async-before-update");
+        let ctx = egui::Context::default();
+        for cancelled in [true, false] {
+            let (_tx, events) = crate::inbox::channel();
+            let mut app = ModelApp::new(Session::default()).with_updates(crate::updates::UpdateHost {
+                unsupported: None,
+                automatic: false,
+                start: Box::new(|_| {}),
+                events,
+                now: Box::new(|| 0),
+                open_file: Box::new(|_| Ok(())),
+            });
+            app.run("mesh.node.add", json!({"label": 1, "xyz": [0, 0, 0]})).unwrap();
+            let chooser = deferred(&mut app);
+            app.answer_update(true);
+            app.answer_unsaved(Answer::Save);
+            app.poll_updates(&ctx);
+            assert!(!app.quit_requested);
+            *chooser.answer.borrow_mut() = Some((!cancelled).then(|| dir.join("kept.fieldcraft").to_string_lossy().into_owned()));
+            app.poll_picker();
+            app.poll_updates(&ctx);
+            assert_eq!(app.quit_requested, !cancelled);
+        }
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// The navigation preset and the wheel's direction are remembered in the preferences file;
@@ -1908,6 +2277,7 @@ mod tests {
         let mut app = ModelApp::new(Session::default());
         app.services.pick_open = Some(Box::new(|_: &[Filter]| -> Option<String> { panic!("a picker opened") }));
         app.services.pick_save = Some(Box::new(|_: &str, _: &[Filter]| -> Option<String> { panic!("a picker opened") }));
+        app.services.pick_file = Some(Box::new(|_| panic!("an asynchronous picker opened")));
         app.start_programmatic("file.open").unwrap();
         assert_eq!(app.dialog.as_ref().map(|d| d.command), Some("file.open"));
         // A deck needs a model to write.
@@ -1917,5 +2287,11 @@ mod tests {
         // In-window choices are not pickers: they behave as a click.
         app.start_programmatic("file.sample").unwrap();
         assert_eq!(app.prompt, Some(Prompt::Samples));
+        // Explicit paths retain the ordinary command result contract and never ask the host.
+        let dir = temp("programmatic-save");
+        let path = dir.join("model.fieldcraft");
+        app.run("file.save_as", json!({"path": path})).unwrap();
+        assert!(path.exists() && app.picker.is_none());
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

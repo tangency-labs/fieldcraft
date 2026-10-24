@@ -20,7 +20,7 @@ mod usage;
 
 use fieldcraft_engine::autosave::{self, Autosaver};
 use fieldcraft_engine::{Session, crash, logfile};
-use fieldcraft_ui_egui::{Filter, ModelApp, Services};
+use fieldcraft_ui_egui::{FilePicker, ModelApp, Services};
 
 const USAGE: &str =
     "usage: fieldcraft [--sample [NAME]] [--control PORT] [FILE…]  (NAME: a sample, docs/examples.md; FILE: .fieldcraft, .solidcraft or .3mf)";
@@ -150,17 +150,27 @@ impl eframe::App for App {
 
 /// Native file pickers and the recent-files file, for the UI.
 fn services() -> Services {
-    let dialog = |filters: &[Filter]| filters.iter().fold(rfd::FileDialog::new(), |d, f| d.add_filter(f.name, f.extensions));
     Services {
-        pick_open: Some(Box::new(move |filters: &[Filter]| dialog(filters).pick_file().map(|p| p.to_string_lossy().to_string()))),
-        pick_save: Some(Box::new(move |name: &str, filters: &[Filter]| {
-            dialog(filters).set_file_name(name).save_file().map(|p| p.to_string_lossy().to_string())
+        pick_file: Some(Box::new(|request| {
+            Box::pin(async move {
+                let (filters, name) = match request {
+                    FilePicker::Open { filters } => (filters, None),
+                    FilePicker::Save { filters, name } => (filters, Some(name)),
+                };
+                let dialog = filters.iter().fold(rfd::AsyncFileDialog::new(), |d, f| d.add_filter(f.name, f.extensions));
+                let file = match name {
+                    Some(name) => dialog.set_file_name(name).save_file().await,
+                    None => dialog.pick_file().await,
+                };
+                file.map(|f| f.path().to_string_lossy().into_owned())
+            })
         })),
         // Beside the recovery folder in the per-user data folder.
         recent_path: fieldcraft_io::recovery::default_dir().and_then(|d| d.parent().map(|p| p.join("recent.json"))),
         prefs: fieldcraft_io::recovery::default_dir()
             .and_then(|d| d.parent().map(|p| fieldcraft_ui_egui::files::PrefsStore::file(p.join("prefs.json")))),
         open_url: Some(Box::new(open_url)),
+        ..Default::default()
     }
 }
 
