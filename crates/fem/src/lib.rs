@@ -70,6 +70,7 @@ pub mod frame;
 pub mod heat;
 pub mod hybrid;
 pub mod jet;
+pub mod locate;
 pub mod material;
 pub mod mortar;
 pub mod plane;

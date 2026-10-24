@@ -6,7 +6,7 @@ Every entry is a toolbar button. **Ready** entries run their command; **coming s
 shown greyed with the roadmap milestone that brings them (ROADMAP.md). Scripts, the command line,
 the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 
-86 ready, 36 coming soon.
+87 ready, 35 coming soon.
 
 ## Geometry
 
@@ -157,7 +157,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Query | Reactions — Reaction force and moment sums per set | ready | `results.reactions`, `results.export.csv` |
 | Query | Free Body — Free-body forces across a cut | coming soon (M9) |  |
 | Plots | XY Plot — Plot a quantity against the load factor, time or mode | ready | `results.xy` |
-| Plots | Path Plot — Plot a quantity along a path | coming soon (M9) |  |
+| Plots | Path Plot — Interpolate a solid nodal field along a reference-coordinate path, with CSV export | ready | `results.path` |
 | Plots | Cut — Section cuts through the model | coming soon (M9) |  |
 | Plots | Display Group — Show and hide parts of the model | coming soon (M9) |  |
 | Plots | Streamlines — A fluid step's velocity, pressure or temperature on slices and obstacles, speed or temperature along streamlines, and signed wall heat per area | ready | `results.streamlines`, `results.slice`, `results.surface` |

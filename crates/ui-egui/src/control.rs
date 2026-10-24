@@ -170,6 +170,44 @@ fn select(app: &mut ModelApp, p: &Value) -> Result<Value, String> {
     Ok(selection_json(app))
 }
 
+/// The path editor's real surface-pick action, also reached from viewport pointer clicks.
+/// This changes only the local draft; sampling/export still runs the typed results.path.
+fn path_action(app: &mut ModelApp, p: &Value) -> Result<Value, String> {
+    let object = p.as_object().ok_or("ui.path parameters must be an object")?;
+    if object.keys().any(|k| !["picking", "clear", "at"].contains(&k.as_str())) {
+        return Err("ui.path takes picking, clear and at".into());
+    }
+    let flag = |key: &str| p.get(key).map(|v| v.as_bool().ok_or_else(|| format!("{key} must be true or false"))).transpose();
+    let picking = flag("picking")?;
+    let clear = flag("clear")?.unwrap_or(false);
+    let at = p.get("at").map(|v| points::<2>(v, "at", "a point [x,y]")).transpose()?;
+    if at.is_some() && app.viewport.rect.is_none() {
+        return Err("the viewport has not been drawn yet".into());
+    }
+    if app.busy().is_some() {
+        return Err("wait for the current job or cancel it before editing the path".into());
+    }
+    if app.path_editor.is_none() {
+        app.open_path_plot();
+    }
+    let editor = app.path_editor.as_mut().ok_or("a current solid result is needed for a path")?;
+    if at.is_some() && !picking.unwrap_or(editor.picking) {
+        return Err("enable picking before adding a surface point".into());
+    }
+    if let Some(picking) = picking {
+        editor.picking = picking;
+    }
+    if clear {
+        editor.points.clear();
+    }
+    let before = editor.points.len();
+    if let Some([x, y]) = at {
+        app.path_pick_at(egui::pos2(x, y));
+    }
+    let editor = app.path_editor.as_ref().ok_or("path editor closed")?;
+    Ok(json!({"params":editor.params(&app.session)?,"picking":editor.picking,"points":editor.points.len(),"added":editor.points.len()>before}))
+}
+
 /// The privacy choices, for `ui.inspect` and `ui.prompt`.
 fn privacy_json(app: &ModelApp) -> Value {
     let p = app.prefs();
@@ -270,8 +308,10 @@ pub fn handle(app: &mut ModelApp, ctx: &egui::Context, req: &ControlRequest) -> 
             "updates": app.update_json(),
             "recent": app.recent.paths,
             "version": crate::VERSION,
+            "path_plot":app.path_editor.as_ref().map(|e|json!({"params":e.params(&app.session).ok(),"picking":e.picking,"selected":e.selected})),
         })),
         "ui.toolbar" => ok(crate::toolbar::describe(app)),
+        "ui.path" => wrap(path_action(app, p)),
         "ui.settings" => {
             app.open_settings();
             ok(privacy_json(app))
@@ -777,6 +817,29 @@ mod tests {
         assert_eq!(call(&mut app, "no.method", json!({}))["ok"], false);
     }
 
+    #[test]
+    fn path_editor_control_validates_before_mutating_and_guards_pending_jobs() {
+        let mut session = Session::default();
+        session.run_script(&fieldcraft_engine::sample::cantilever()).unwrap();
+        session.execute("solve.static", &json!({"step":"Load"})).unwrap();
+        let mut app = ModelApp::new(session);
+        for params in [json!([]), json!({"other":1}), json!({"picking":1}), json!({"clear":null}), json!({"at":[1]})] {
+            assert_eq!(call(&mut app, "ui.path", params)["ok"], false);
+            assert!(app.path_editor.is_none());
+        }
+        assert_eq!(call(&mut app, "ui.path", json!({"picking":true,"at":[1,2]}))["ok"], false);
+        assert!(app.path_editor.is_none());
+        assert_eq!(call(&mut app, "ui.path", json!({"picking":true}))["ok"], true);
+        app.path_editor.as_mut().unwrap().points = vec![[0.02, 0.005, 0.02], [0.08, 0.005, 0.02]];
+        app.sample_path().unwrap();
+        assert_eq!(call(&mut app, "ui.path", json!({"clear":true,"picking":false}))["ok"], false);
+        assert_eq!(app.path_editor.as_ref().unwrap().points.len(), 2);
+        assert!(app.path_editor.as_ref().unwrap().picking);
+        app.wait_loaded();
+        assert_eq!(call(&mut app, "ui.path", json!({"clear":true,"picking":false}))["result"]["points"], 0);
+        assert!(!app.path_editor.as_ref().unwrap().picking);
+    }
+
     /// One frame of the whole window (1400 × 900 points), with the control channel's synthetic
     /// input, as the desktop app runs it.
     fn frame(app: &mut ModelApp, ctx: &egui::Context) {
@@ -1104,6 +1167,7 @@ mod tests {
             "ui.prompt",
             "ui.item",
             "ui.select",
+            "ui.path",
             "ui.selection",
             "ui.fullscreen",
             "ui.drop",

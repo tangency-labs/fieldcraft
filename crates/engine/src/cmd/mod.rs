@@ -34,6 +34,7 @@ pub(crate) mod names;
 pub(crate) mod node_move;
 pub(crate) mod nodes;
 pub(crate) mod octree;
+mod path;
 pub(crate) mod plan;
 mod project;
 pub(crate) mod relax;
@@ -231,6 +232,7 @@ pub static ALL: &[CommandSpec] = &[
     render::EXPORT,
     results::CLEAR,
     xy::XY,
+    path::PATH,
     diagnostics::CRASH_REPORTS,
     diagnostics::CRASH_REPORT,
     diagnostics::CRASH_REPORTS_DELETE,

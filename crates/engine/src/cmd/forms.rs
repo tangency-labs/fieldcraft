@@ -2451,6 +2451,15 @@ pub const RESULTS_XY: &[Field] = &[
     int("every", "Keep one in", 1, 1_000_000_000).help("Keep one point in this many; by default enough to fit 100000 points."),
     path("path", "CSV file", true).help("Also write the series as a two-column CSV."),
 ];
+pub const RESULTS_PATH: &[Field] = &[
+    SOLVED,
+    text("field", "Nodal field").req().help("A results.contour field id, such as stress_xx or temperature.").def("\"displacement\""),
+    points("points", "Polyline points", D::Length, 1000).req().help("Two or more points in undeformed reference coordinates."),
+    int("samples", "Samples", 2, 10_000).help("Equally spaced arc-length stations along the complete polyline, including both ends.").def("101"),
+    int("frame", "Frame", 0, 1_000_000_000).help("A stored field frame; empty means final state."),
+    int("mode", "Mode", 1, 1_000_000).help("Frequency results only; empty means mode 1."),
+    path("path", "CSV file", true).help("Optional distance,x,y,z,value CSV in display units; gaps have empty values."),
+];
 pub const EXPORT_VTU: &[Field] = &[
     path("path", "File", true).help("A .vtu file for one state, or a .pvd collection for every frame or mode.").req(),
     SOLVED,

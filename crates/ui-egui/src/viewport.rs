@@ -55,7 +55,8 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui) {
         // With Relax Nodes open a plain click on the mesh places its sphere (#398); Shift or
         // Ctrl picks faces to relax (#471), and so does every click once the form lists faces.
         let plain = mode(ui.input(|i| i.modifiers)) == Mode::Replace;
-        let placed = app.relaxing() && plain && !app.relax_by_faces() && app.surface_point(at).is_some_and(|p| app.relax_place(p));
+        let placed =
+            app.path_pick_at(at) || app.relaxing() && plain && !app.relax_by_faces() && app.surface_point(at).is_some_and(|p| app.relax_place(p));
         if !placed {
             let _ = app.select_at(at, mode(ui.input(|i| i.modifiers)));
             probe_at(app, at, rect);
@@ -86,6 +87,7 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui) {
         selection_bar(app, ui, rect, &t);
     }
     crate::results_panel::show(app, ui, rect, &t);
+    crate::path_panel::overlay(app, &painter, rect, &t);
     axis_view(app, ui, rect, &t);
     nav_bar(app, ui, rect, &t);
 }

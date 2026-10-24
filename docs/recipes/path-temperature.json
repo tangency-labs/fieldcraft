@@ -1,0 +1,15 @@
+[
+  {"command":"model.units","params":{"system":"mm-t-s-N-MPa","temperature":"°C"}},
+  {"command":"mesh.block","params":{"body":"Conductor","kind":"hex8","corners":[[0,0,0],[20,0,0],[20,30,0],[0,30,0],[0,0,120],[20,0,120],[20,30,120],[0,30,120]],"divisions":[2,2,12],"faces":{"1":"cold","2":"hot"}}},
+  {"command":"model.set.create","params":{"name":"all","geometry":[{"body":"Conductor"}]}},
+  {"command":"model.set.create","params":{"name":"cold","geometry":[{"body":"Conductor","face":"cold"}]}},
+  {"command":"model.set.create","params":{"name":"hot","geometry":[{"body":"Conductor","face":"hot"}]}},
+  {"command":"model.material.create","params":{"name":"Assumed_conductor","thermal":{"conductivity":"15 W/(m*K)"}}},
+  {"command":"model.section.create","params":{"name":"Conductor","set":"all","material":"Assumed_conductor","kind":{"type":"solid"}}},
+  {"command":"model.boundary_condition.create","params":{"name":"Cold","type":"temperature","target":{"set":"cold"},"value":"20 °C"}},
+  {"command":"model.boundary_condition.create","params":{"name":"Hot","type":"temperature","target":{"set":"hot"},"value":"30 °C"}},
+  {"command":"model.step.create","params":{"name":"Conduction","procedure":{"type":"heat_transfer"},"boundary_conditions":["Cold","Hot"]}},
+  {"command":"solve.heat","params":{"step":"Conduction"}},
+  {"command":"results.contour","params":{"step":"Conduction","field":"temperature"}},
+  {"command":"results.path","params":{"step":"Conduction","field":"temperature","points":[[10,15,0],[10,15,120]],"samples":121}}
+]

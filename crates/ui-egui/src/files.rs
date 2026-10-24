@@ -153,6 +153,7 @@ pub const BACKGROUND: &[&str] = &[
     "mesh.plan.apply",
     "mesh.cells",
     "geometry.partition",
+    "results.path",
 ];
 
 /// Most entries the recent-files list keeps, and the longest path it keeps.
@@ -825,6 +826,9 @@ impl ModelApp {
         off_thread("fieldcraft drop".into(), move || drop(old));
         self.model_changed();
         self.prebuilt = Some(*o.prebuilt);
+        if o.command == "results.path" {
+            self.restore_path_plot();
+        }
         if let Some(p) = &o.recent {
             self.recent.add(p);
         }
@@ -966,7 +970,11 @@ impl ModelApp {
             return;
         };
         let part = |k: &str| params.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
-        let what = if command == "results.xy" { "xy".to_string() } else { part("what") };
+        let what = match command {
+            "results.xy" => "xy".to_string(),
+            "results.path" => "path".to_string(),
+            _ => part("what"),
+        };
         let name = format!("{}-{}-{what}.csv", self.model_name(), part("step"));
         let Some(path) = pick(&name, &[Filter { name: "CSV", extensions: &["csv"] }]) else { return };
         let path = if Path::new(&path).extension().and_then(|x| x.to_str()).is_some_and(|x| x.eq_ignore_ascii_case("csv")) {
@@ -976,6 +984,12 @@ impl ModelApp {
         };
         let mut params = params;
         params["path"] = json!(path);
+        if is_long(command) {
+            if let Err(e) = self.start_job(command, params) {
+                self.set_status(e, true);
+            }
+            return;
+        }
         if self.run(command, params).is_ok() {
             self.set_status(format!("Wrote {}", file_name(&path)), false);
         }
@@ -1032,6 +1046,7 @@ impl ModelApp {
             "diagnostics.crash_reports" | "diagnostics.crash_report" | "diagnostics.crash_reports.delete" => self.open_crash_reports(),
             "solve.run" => self.solve_all(),
             "results.xy" => self.open_xy(),
+            "results.path" => self.open_path_plot(),
             "deck.write" if can_save => match preset.get("format").and_then(Value::as_str) {
                 Some(f) => self.write_deck(f),
                 None => return false,

@@ -46,6 +46,7 @@ pub mod menu;
 pub mod navigation;
 pub mod node_move;
 pub mod palette;
+pub mod path_panel;
 pub mod privacy;
 pub mod reply;
 pub mod report;
@@ -418,6 +419,8 @@ pub struct ModelApp {
     pub reactions: Option<Value>,
     /// The XY plot, while it is open in the results panel.
     pub xy: Option<XyPlot>,
+    /// Reference-coordinate path editor; numerical samples remain engine session state.
+    pub path_editor: Option<path_panel::Editor>,
     /// The last command reply with more to it than its status line, shown in the context panel.
     pub reply: Option<reply::Reply>,
     /// The Feature Graph rows opened to their details: (body, feature id).
@@ -572,6 +575,7 @@ impl ModelApp {
             shown_units: String::new(),
             reactions: None,
             xy: None,
+            path_editor: None,
             reply: None,
             features_open: Default::default(),
             results_shown: false,
@@ -724,6 +728,9 @@ impl ModelApp {
                 xy.y = Some(template);
                 xy.x = params.get("x").filter(|x| x.is_object()).cloned();
             }
+        }
+        if id == "results.path" && r.is_ok() {
+            self.restore_path_plot();
         }
         // What the duplicate check found is selected, so the viewport shows it (#234).
         if id == "mesh.check.duplicates"
@@ -2106,6 +2113,7 @@ impl ModelApp {
             self.probe = None;
             self.reactions = None;
             self.xy = None;
+            self.path_editor = None;
             self.reframe = framing::Reframe::merge(self.reframe, framing::Reframe::Home);
         }
     }

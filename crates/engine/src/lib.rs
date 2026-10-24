@@ -28,6 +28,7 @@ pub use cmd::update::enable_checks as enable_update_checks;
 pub use fieldcraft_io::fs::write_output;
 pub use fieldcraft_io::{Item as ViewItem, ItemKind};
 pub mod history;
+pub mod path;
 pub mod progress;
 pub mod requirement;
 pub mod results;
@@ -404,6 +405,10 @@ pub struct Session {
     /// The streamlines last traced for a fluid step's display ([`flow::TraceCache`]): the
     /// `results.streamlines` reply and the plot share them. Not an edit either.
     pub traced: flow::TraceCache,
+    /// Conservative solid-element search index for the latest path query; shared by snapshots.
+    pub path_index: path::Cache,
+    /// Last successful path query, in SI reference coordinates. Never journalled or saved.
+    pub path_plot: Option<Arc<path::Plot>>,
 }
 
 impl Session {

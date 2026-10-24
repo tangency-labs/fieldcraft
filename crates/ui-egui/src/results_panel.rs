@@ -448,6 +448,10 @@ pub fn controls(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) 
         ui.separator();
         xy_export = xy_section(app, plot, ui, t, &mut run);
     }
+    if app.path_editor.is_some() {
+        ui.separator();
+        crate::path_panel::controls(app, plot, ui, t);
+    }
     ui.separator();
     if let Some(p) = probed(app, plot, ui, t) {
         export = Some(p);

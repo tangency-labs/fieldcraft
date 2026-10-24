@@ -1,0 +1,366 @@
+[
+  {
+    "command": "model.units",
+    "params": {
+      "system": "mm-t-s-N-MPa"
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 1,
+      "xyz": [
+        -10,
+        -13.0,
+        -10
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 2,
+      "xyz": [
+        10,
+        -7.0,
+        -10
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 3,
+      "xyz": [
+        10,
+        13.0,
+        -10
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 4,
+      "xyz": [
+        -10,
+        7.0,
+        -10
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 5,
+      "xyz": [
+        -10,
+        -13.0,
+        10
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 6,
+      "xyz": [
+        10,
+        -7.0,
+        10
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 7,
+      "xyz": [
+        10,
+        13.0,
+        10
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 8,
+      "xyz": [
+        -10,
+        7.0,
+        10
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 9,
+      "xyz": [
+        0.0,
+        -14.0,
+        -10.0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 10,
+      "xyz": [
+        10.0,
+        3.0,
+        -10.0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 11,
+      "xyz": [
+        0.0,
+        6.0,
+        -10.0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 12,
+      "xyz": [
+        -10.0,
+        -3.0,
+        -10.0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 13,
+      "xyz": [
+        0.0,
+        -14.0,
+        10.0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 14,
+      "xyz": [
+        10.0,
+        3.0,
+        10.0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 15,
+      "xyz": [
+        0.0,
+        6.0,
+        10.0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 16,
+      "xyz": [
+        -10.0,
+        -3.0,
+        10.0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 17,
+      "xyz": [
+        -10.0,
+        -13.0,
+        0.0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 18,
+      "xyz": [
+        10.0,
+        -7.0,
+        0.0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 19,
+      "xyz": [
+        10.0,
+        13.0,
+        0.0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 20,
+      "xyz": [
+        -10.0,
+        7.0,
+        0.0
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 1,
+      "kind": "hex20",
+      "nodes": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "all",
+      "elements": [
+        1
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "root",
+      "nodes": [
+        1,
+        4,
+        5,
+        8,
+        12,
+        16,
+        17,
+        20
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "tip",
+      "nodes": [
+        2,
+        3,
+        6,
+        7,
+        10,
+        14,
+        18,
+        19
+      ]
+    }
+  },
+  {
+    "command": "model.material.create",
+    "params": {
+      "name": "M",
+      "elastic": {
+        "type": "isotropic",
+        "young": 200000,
+        "poisson": 0.3
+      }
+    }
+  },
+  {
+    "command": "model.section.create",
+    "params": {
+      "name": "S",
+      "set": "all",
+      "material": "M",
+      "kind": {
+        "type": "solid"
+      }
+    }
+  },
+  {
+    "command": "model.boundary_condition.create",
+    "params": {
+      "name": "Clamp",
+      "type": "fixed",
+      "target": {
+        "set": "root"
+      }
+    }
+  },
+  {
+    "command": "model.load.create",
+    "params": {
+      "name": "Force",
+      "type": "force",
+      "target": {
+        "set": "tip"
+      },
+      "vector": [
+        0,
+        0,
+        -100
+      ]
+    }
+  },
+  {
+    "command": "model.step.create",
+    "params": {
+      "name": "Load",
+      "procedure": {
+        "type": "static"
+      },
+      "boundary_conditions": [
+        "Clamp"
+      ],
+      "loads": [
+        "Force"
+      ]
+    }
+  },
+  {
+    "command": "solve.static",
+    "params": {
+      "step": "Load"
+    }
+  }
+]
