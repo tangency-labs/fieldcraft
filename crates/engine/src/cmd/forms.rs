@@ -30,6 +30,13 @@ macro_rules! existing {
 
 pub const SET_DELETE: &[Field] = existing!("Set", C::Set);
 pub const MATERIAL_DELETE: &[Field] = existing!("Material", C::Material);
+pub const MATERIAL_LIBRARY_LIST: &[Field] =
+    &[choice("family", "Family", fieldcraft_model::library::FAMILIES).help("Optional family filter; empty lists all nine cited entries.")];
+pub const MATERIAL_LIBRARY: &[Field] = &[
+    choice("entry", "Library entry", fieldcraft_model::library::CHOICES).req().help("Cited constant isotropic properties, with product/temper/temperature limits in the report. Missing data stays absent; strengths never enable plasticity or damage."),
+    text("name", "Material name").hint("entry id").help("Optional unique name; empty uses the stable library entry id."),
+    num("reference_temperature", "Stress-free temperature", D::Temperature).hint("20 degC").help("Your modelling choice: temperature of zero thermal strain. Defaults to 20 degrees Celsius, regardless of display units."),
+];
 pub const SECTION_DELETE: &[Field] = existing!("Section", C::Section);
 pub const REFERENCE_POINT_DELETE: &[Field] = existing!("Reference point", C::ReferencePoint);
 pub const COUPLING_DELETE: &[Field] = existing!("Coupling", C::Coupling);

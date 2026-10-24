@@ -1,0 +1,192 @@
+[
+  {
+    "command": "model.units",
+    "params": {
+      "system": "m-kg-s-N-Pa"
+    }
+  },
+  {
+    "command": "mesh.block",
+    "params": {
+      "body": "Conductor",
+      "kind": "hex8",
+      "corners": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          0.02,
+          0,
+          0
+        ],
+        [
+          0.02,
+          0.03,
+          0
+        ],
+        [
+          0,
+          0.03,
+          0
+        ],
+        [
+          0,
+          0,
+          0.12
+        ],
+        [
+          0.02,
+          0,
+          0.12
+        ],
+        [
+          0.02,
+          0.03,
+          0.12
+        ],
+        [
+          0,
+          0.03,
+          0.12
+        ]
+      ],
+      "divisions": [
+        2,
+        3,
+        6
+      ],
+      "faces": {
+        "1": "cold",
+        "2": "hot"
+      }
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "Solid",
+      "geometry": [
+        {
+          "body": "Conductor"
+        }
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "Cold",
+      "geometry": [
+        {
+          "body": "Conductor",
+          "face": "cold"
+        }
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "Hot",
+      "geometry": [
+        {
+          "body": "Conductor",
+          "face": "hot"
+        }
+      ]
+    }
+  },
+  {
+    "command": "model.material.library",
+    "params": {
+      "entry": "EN10088-14301",
+      "name": "Stainless304"
+    }
+  },
+  {
+    "command": "model.section.create",
+    "params": {
+      "name": "Conduction",
+      "set": "Solid",
+      "material": "Stainless304",
+      "kind": {
+        "type": "solid"
+      }
+    }
+  },
+  {
+    "command": "model.boundary_condition.create",
+    "params": {
+      "name": "Cold",
+      "type": "temperature",
+      "target": {
+        "set": "Cold"
+      },
+      "value": 293.15
+    }
+  },
+  {
+    "command": "model.boundary_condition.create",
+    "params": {
+      "name": "Hot",
+      "type": "temperature",
+      "target": {
+        "set": "Hot"
+      },
+      "value": 303.15
+    }
+  },
+  {
+    "command": "model.step.create",
+    "params": {
+      "name": "Heat",
+      "procedure": {
+        "type": "heat_transfer"
+      },
+      "boundary_conditions": [
+        "Cold",
+        "Hot"
+      ],
+      "loads": []
+    }
+  },
+  {
+    "command": "model.check",
+    "params": {}
+  },
+  {
+    "command": "solve.heat",
+    "params": {
+      "step": "Heat"
+    }
+  },
+  {
+    "command": "solve.probe",
+    "params": {
+      "step": "Heat",
+      "at": [
+        [
+          0.01,
+          0.01,
+          0.06
+        ]
+      ]
+    }
+  },
+  {
+    "command": "solve.probe",
+    "params": {
+      "step": "Heat",
+      "set": "Cold"
+    }
+  },
+  {
+    "command": "solve.probe",
+    "params": {
+      "step": "Heat",
+      "set": "Hot"
+    }
+  }
+]

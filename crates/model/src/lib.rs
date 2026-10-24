@@ -42,6 +42,7 @@ pub mod fluid_zones;
 pub mod fluids;
 pub mod geometry;
 pub mod geometry_names;
+pub mod library;
 pub mod loads;
 pub mod materials;
 mod mesh;

@@ -896,6 +896,11 @@ mod tests {
     #[test]
     fn hostile_params_never_panic() {
         let hostile = [
+            json!({"entry": null}),
+            json!({"entry": 7}),
+            json!({"entry": "x".repeat(100_000)}),
+            json!({"entry": "EN10025-S355", "name": "invalid name"}),
+            json!({"family": {"steel": true}}),
             json!(null),
             json!([]),
             json!("x"),

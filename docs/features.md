@@ -72,7 +72,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 
 | Panel | Capability | Status | Command |
 |---|---|---|---|
-| Materials | Material — Elastic (isotropic, orthotropic) material with density; neo-Hookean hyperelasticity for nonlinear steps | ready | `model.material.create`, `model.material.edit`, `model.material.delete` |
+| Materials | Material — Elastic (isotropic, orthotropic) material with density; neo-Hookean hyperelasticity for nonlinear steps | ready | `model.material.create`, `model.material.edit`, `model.material.delete`, `model.material.library`, `model.material.library.list` |
 | Materials | Plasticity — Von Mises plasticity: bilinear, hardening table or Johnson–Cook | ready | `model.material.plasticity` |
 | Materials | Hyperelastic — Hyperelastic material models | coming soon (M8) |  |
 | Materials | Damage — Johnson–Cook damage and element erosion | ready | `model.material.damage` |

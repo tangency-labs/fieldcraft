@@ -475,7 +475,7 @@ pub static CATALOGUE: &[Capability] = &[
         Properties,
         "Materials",
         "Elastic (isotropic, orthotropic) material with density; neo-Hookean hyperelasticity for nonlinear steps",
-        &["model.material.edit", "model.material.delete"],
+        &["model.material.edit", "model.material.delete", "model.material.library", "model.material.library.list"],
     ),
     ready("model.material.plasticity", "Plasticity", Properties, "Materials", "Von Mises plasticity: bilinear, hardening table or Johnson–Cook"),
     soon("model.material.hyperelastic", "Hyperelastic", Properties, "Materials", "M8", "Hyperelastic material models"),

@@ -1,0 +1,812 @@
+[
+  {
+    "id": "EN10025-S235",
+    "name": "Structural steel S235",
+    "family": "steel",
+    "designation": {
+      "standard": "EN 10025-2 (as listed in EN 1993-1-1:2005)",
+      "grade": "S235",
+      "condition": "Hot-rolled product; nominal thickness at most 40 mm; normal-temperature design constants."
+    },
+    "properties": {
+      "young": {
+        "value": 210000000000.0,
+        "unit": "Pa",
+        "basis": "design",
+        "source": {
+          "document": "EN 1993-1-1",
+          "edition": "2005, including AC2 correction shown in the source",
+          "location": "3.2.6(1)",
+          "page": "28",
+          "url": "https://www.gfos.unios.hr/download/en-1993-1-1-2005.pdf"
+        },
+        "applicability": "Elastic design constant at normal temperature."
+      },
+      "poisson": {
+        "value": 0.3,
+        "unit": "1",
+        "basis": "design",
+        "source": {
+          "document": "EN 1993-1-1",
+          "edition": "2005, including AC2 correction shown in the source",
+          "location": "3.2.6(1)",
+          "page": "28",
+          "url": "https://www.gfos.unios.hr/download/en-1993-1-1-2005.pdf"
+        },
+        "applicability": "Elastic design constant at normal temperature."
+      },
+      "expansion": {
+        "value": 1.2e-05,
+        "unit": "K\u207b\u00b9",
+        "basis": "design",
+        "source": {
+          "document": "EN 1993-1-1",
+          "edition": "2005, including AC2 correction shown in the source",
+          "location": "3.2.6(1)",
+          "page": "28",
+          "url": "https://www.gfos.unios.hr/download/en-1993-1-1-2005.pdf"
+        },
+        "applicability": "Constant prescribed for temperatures at or below 100 deg C; not a thermal-strain curve."
+      },
+      "density": {
+        "value": 7850,
+        "unit": "kg/m\u00b3",
+        "basis": "design",
+        "source": {
+          "document": "EN 1993-1-2",
+          "edition": "2005",
+          "location": "3.2.2(1)",
+          "page": "20",
+          "url": "https://www.phd.eng.br/wp-content/uploads/2015/12/en.1993.1.2.2005.pdf"
+        },
+        "applicability": "Nominal unit mass of carbon steel; the source treats it as independent of temperature."
+      },
+      "yield": {
+        "value": 235000000.0,
+        "unit": "Pa",
+        "basis": "design",
+        "source": {
+          "document": "EN 1993-1-1",
+          "edition": "2005, including AC2 correction shown in the source",
+          "location": "Table 3.1, EN 10025-2 row, t <= 40 mm",
+          "page": "26",
+          "url": "https://www.gfos.unios.hr/download/en-1993-1-1-2005.pdf"
+        },
+        "applicability": "Nominal strength for this grade/thickness; informational only, not a selected safety factor, plastic law or failure criterion."
+      },
+      "tensile": {
+        "value": 360000000.0,
+        "unit": "Pa",
+        "basis": "design",
+        "source": {
+          "document": "EN 1993-1-1",
+          "edition": "2005, including AC2 correction shown in the source",
+          "location": "Table 3.1, EN 10025-2 row, t <= 40 mm",
+          "page": "26",
+          "url": "https://www.gfos.unios.hr/download/en-1993-1-1-2005.pdf"
+        },
+        "applicability": "Nominal strength for this grade/thickness; informational only, not a selected safety factor, plastic law or failure criterion."
+      }
+    }
+  },
+  {
+    "id": "EN10025-S355",
+    "name": "Structural steel S355",
+    "family": "steel",
+    "designation": {
+      "standard": "EN 10025-2 (as listed in EN 1993-1-1:2005)",
+      "grade": "S355",
+      "condition": "Hot-rolled product; nominal thickness at most 40 mm; normal-temperature design constants."
+    },
+    "properties": {
+      "young": {
+        "value": 210000000000.0,
+        "unit": "Pa",
+        "basis": "design",
+        "source": {
+          "document": "EN 1993-1-1",
+          "edition": "2005, including AC2 correction shown in the source",
+          "location": "3.2.6(1)",
+          "page": "28",
+          "url": "https://www.gfos.unios.hr/download/en-1993-1-1-2005.pdf"
+        },
+        "applicability": "Elastic design constant at normal temperature."
+      },
+      "poisson": {
+        "value": 0.3,
+        "unit": "1",
+        "basis": "design",
+        "source": {
+          "document": "EN 1993-1-1",
+          "edition": "2005, including AC2 correction shown in the source",
+          "location": "3.2.6(1)",
+          "page": "28",
+          "url": "https://www.gfos.unios.hr/download/en-1993-1-1-2005.pdf"
+        },
+        "applicability": "Elastic design constant at normal temperature."
+      },
+      "expansion": {
+        "value": 1.2e-05,
+        "unit": "K\u207b\u00b9",
+        "basis": "design",
+        "source": {
+          "document": "EN 1993-1-1",
+          "edition": "2005, including AC2 correction shown in the source",
+          "location": "3.2.6(1)",
+          "page": "28",
+          "url": "https://www.gfos.unios.hr/download/en-1993-1-1-2005.pdf"
+        },
+        "applicability": "Constant prescribed for temperatures at or below 100 deg C; not a thermal-strain curve."
+      },
+      "density": {
+        "value": 7850,
+        "unit": "kg/m\u00b3",
+        "basis": "design",
+        "source": {
+          "document": "EN 1993-1-2",
+          "edition": "2005",
+          "location": "3.2.2(1)",
+          "page": "20",
+          "url": "https://www.phd.eng.br/wp-content/uploads/2015/12/en.1993.1.2.2005.pdf"
+        },
+        "applicability": "Nominal unit mass of carbon steel; the source treats it as independent of temperature."
+      },
+      "yield": {
+        "value": 355000000.0,
+        "unit": "Pa",
+        "basis": "design",
+        "source": {
+          "document": "EN 1993-1-1",
+          "edition": "2005, including AC2 correction shown in the source",
+          "location": "Table 3.1, EN 10025-2 row, t <= 40 mm",
+          "page": "26",
+          "url": "https://www.gfos.unios.hr/download/en-1993-1-1-2005.pdf"
+        },
+        "applicability": "Nominal strength for this grade/thickness; informational only, not a selected safety factor, plastic law or failure criterion."
+      },
+      "tensile": {
+        "value": 490000000.0,
+        "unit": "Pa",
+        "basis": "design",
+        "source": {
+          "document": "EN 1993-1-1",
+          "edition": "2005, including AC2 correction shown in the source",
+          "location": "Table 3.1, EN 10025-2 row, t <= 40 mm",
+          "page": "26",
+          "url": "https://www.gfos.unios.hr/download/en-1993-1-1-2005.pdf"
+        },
+        "applicability": "Nominal strength for this grade/thickness; informational only, not a selected safety factor, plastic law or failure criterion."
+      }
+    }
+  },
+  {
+    "id": "EN10088-14301",
+    "name": "Stainless steel 1.4301 / 304",
+    "family": "stainless",
+    "designation": {
+      "standard": "EN 10088 (EN 1993-1-4:2006 Table 2.1)",
+      "grade": "1.4301",
+      "condition": "Hot-rolled plate, nominal thickness at most 75 mm; room-temperature constant isotropic approximation."
+    },
+    "properties": {
+      "young": {
+        "value": 200000000000.0,
+        "unit": "Pa",
+        "basis": "design",
+        "source": {
+          "document": "EN 1993-1-4",
+          "edition": "2006",
+          "location": "2.1.3(1)",
+          "page": "7",
+          "url": "https://library.um.edu.mo/dissertation/b21618768.pdf"
+        },
+        "applicability": "Normal-temperature elastic design constant for this austenitic grade."
+      },
+      "poisson": {
+        "value": 0.3,
+        "unit": "1",
+        "basis": "design",
+        "source": {
+          "document": "EN 1993-1-4",
+          "edition": "2006",
+          "location": "2.1.3(1)",
+          "page": "7",
+          "url": "https://library.um.edu.mo/dissertation/b21618768.pdf"
+        },
+        "applicability": "Normal-temperature elastic design constant for this austenitic grade."
+      },
+      "density": {
+        "value": 7900,
+        "unit": "kg/m\u00b3",
+        "basis": "typical",
+        "source": {
+          "document": "Outokumpu Core range datasheet",
+          "edition": "Public PDF asset revision 2025-11-17",
+          "location": "Table 7, 304/14301 row",
+          "page": "10",
+          "url": "https://www.outokumpu.com/-/media/files/products/core/outokumpu-core-range-datasheet.pdf?modified=20251117111909&revision=025e9931-a1d5-4c8f-8ff5-f881d38916da"
+        },
+        "applicability": "Room-temperature physical property; conductivity and heat capacity at 20 deg C."
+      },
+      "conductivity": {
+        "value": 15,
+        "unit": "W/(m\u00b7K)",
+        "basis": "typical",
+        "source": {
+          "document": "Outokumpu Core range datasheet",
+          "edition": "Public PDF asset revision 2025-11-17",
+          "location": "Table 7, 304/14301 row",
+          "page": "10",
+          "url": "https://www.outokumpu.com/-/media/files/products/core/outokumpu-core-range-datasheet.pdf?modified=20251117111909&revision=025e9931-a1d5-4c8f-8ff5-f881d38916da"
+        },
+        "applicability": "Room-temperature physical property; conductivity and heat capacity at 20 deg C."
+      },
+      "specific_heat": {
+        "value": 500,
+        "unit": "J/(kg\u00b7K)",
+        "basis": "typical",
+        "source": {
+          "document": "Outokumpu Core range datasheet",
+          "edition": "Public PDF asset revision 2025-11-17",
+          "location": "Table 7, 304/14301 row",
+          "page": "10",
+          "url": "https://www.outokumpu.com/-/media/files/products/core/outokumpu-core-range-datasheet.pdf?modified=20251117111909&revision=025e9931-a1d5-4c8f-8ff5-f881d38916da"
+        },
+        "applicability": "Room-temperature physical property; conductivity and heat capacity at 20 deg C."
+      },
+      "expansion": {
+        "value": 1.6e-05,
+        "unit": "K\u207b\u00b9",
+        "basis": "typical",
+        "source": {
+          "document": "Outokumpu Core range datasheet",
+          "edition": "Public PDF asset revision 2025-11-17",
+          "location": "Table 7, 304/14301 row",
+          "page": "10",
+          "url": "https://www.outokumpu.com/-/media/files/products/core/outokumpu-core-range-datasheet.pdf?modified=20251117111909&revision=025e9931-a1d5-4c8f-8ff5-f881d38916da"
+        },
+        "applicability": "Mean linear expansion over 20-100 deg C; applied as a constant, not an instantaneous temperature curve."
+      },
+      "yield": {
+        "value": 210000000.0,
+        "unit": "Pa",
+        "basis": "design",
+        "source": {
+          "document": "EN 1993-1-4",
+          "edition": "2006",
+          "location": "Table 2.1, hot-rolled plate, t <= 75 mm",
+          "page": "7",
+          "url": "https://library.um.edu.mo/dissertation/b21618768.pdf"
+        },
+        "applicability": "Nominal strength for this grade/product/thickness, informational only; no plasticity or damage is inferred."
+      },
+      "tensile": {
+        "value": 520000000.0,
+        "unit": "Pa",
+        "basis": "design",
+        "source": {
+          "document": "EN 1993-1-4",
+          "edition": "2006",
+          "location": "Table 2.1, hot-rolled plate, t <= 75 mm",
+          "page": "7",
+          "url": "https://library.um.edu.mo/dissertation/b21618768.pdf"
+        },
+        "applicability": "Nominal strength for this grade/product/thickness, informational only; no plasticity or damage is inferred."
+      }
+    }
+  },
+  {
+    "id": "EN10088-14401",
+    "name": "Stainless steel 1.4401 / 316",
+    "family": "stainless",
+    "designation": {
+      "standard": "EN 10088 (EN 1993-1-4:2006 Table 2.1)",
+      "grade": "1.4401",
+      "condition": "Hot-rolled plate, nominal thickness at most 75 mm; room-temperature constant isotropic approximation."
+    },
+    "properties": {
+      "young": {
+        "value": 200000000000.0,
+        "unit": "Pa",
+        "basis": "design",
+        "source": {
+          "document": "EN 1993-1-4",
+          "edition": "2006",
+          "location": "2.1.3(1)",
+          "page": "7",
+          "url": "https://library.um.edu.mo/dissertation/b21618768.pdf"
+        },
+        "applicability": "Normal-temperature elastic design constant for this austenitic grade."
+      },
+      "poisson": {
+        "value": 0.3,
+        "unit": "1",
+        "basis": "design",
+        "source": {
+          "document": "EN 1993-1-4",
+          "edition": "2006",
+          "location": "2.1.3(1)",
+          "page": "7",
+          "url": "https://library.um.edu.mo/dissertation/b21618768.pdf"
+        },
+        "applicability": "Normal-temperature elastic design constant for this austenitic grade."
+      },
+      "density": {
+        "value": 8000,
+        "unit": "kg/m\u00b3",
+        "basis": "typical",
+        "source": {
+          "document": "Outokumpu Supra range datasheet",
+          "edition": "Public PDF asset revision 2025-11-17",
+          "location": "Table 7, 316/14401 row",
+          "page": "8",
+          "url": "https://www.outokumpu.com/-/media/files/products/supra/outokumpu-supra-range-datasheet.pdf?modified=20251117111951&revision=7a909396-d1f3-4d36-9c1c-99606be41fd2"
+        },
+        "applicability": "Room-temperature physical property; conductivity and heat capacity at 20 deg C."
+      },
+      "conductivity": {
+        "value": 15,
+        "unit": "W/(m\u00b7K)",
+        "basis": "typical",
+        "source": {
+          "document": "Outokumpu Supra range datasheet",
+          "edition": "Public PDF asset revision 2025-11-17",
+          "location": "Table 7, 316/14401 row",
+          "page": "8",
+          "url": "https://www.outokumpu.com/-/media/files/products/supra/outokumpu-supra-range-datasheet.pdf?modified=20251117111951&revision=7a909396-d1f3-4d36-9c1c-99606be41fd2"
+        },
+        "applicability": "Room-temperature physical property; conductivity and heat capacity at 20 deg C."
+      },
+      "specific_heat": {
+        "value": 500,
+        "unit": "J/(kg\u00b7K)",
+        "basis": "typical",
+        "source": {
+          "document": "Outokumpu Supra range datasheet",
+          "edition": "Public PDF asset revision 2025-11-17",
+          "location": "Table 7, 316/14401 row",
+          "page": "8",
+          "url": "https://www.outokumpu.com/-/media/files/products/supra/outokumpu-supra-range-datasheet.pdf?modified=20251117111951&revision=7a909396-d1f3-4d36-9c1c-99606be41fd2"
+        },
+        "applicability": "Room-temperature physical property; conductivity and heat capacity at 20 deg C."
+      },
+      "expansion": {
+        "value": 1.6e-05,
+        "unit": "K\u207b\u00b9",
+        "basis": "typical",
+        "source": {
+          "document": "Outokumpu Supra range datasheet",
+          "edition": "Public PDF asset revision 2025-11-17",
+          "location": "Table 7, 316/14401 row",
+          "page": "8",
+          "url": "https://www.outokumpu.com/-/media/files/products/supra/outokumpu-supra-range-datasheet.pdf?modified=20251117111951&revision=7a909396-d1f3-4d36-9c1c-99606be41fd2"
+        },
+        "applicability": "Mean linear expansion over 20-100 deg C; applied as a constant, not an instantaneous temperature curve."
+      },
+      "yield": {
+        "value": 220000000.0,
+        "unit": "Pa",
+        "basis": "design",
+        "source": {
+          "document": "EN 1993-1-4",
+          "edition": "2006",
+          "location": "Table 2.1, hot-rolled plate, t <= 75 mm",
+          "page": "7",
+          "url": "https://library.um.edu.mo/dissertation/b21618768.pdf"
+        },
+        "applicability": "Nominal strength for this grade/product/thickness, informational only; no plasticity or damage is inferred."
+      },
+      "tensile": {
+        "value": 520000000.0,
+        "unit": "Pa",
+        "basis": "design",
+        "source": {
+          "document": "EN 1993-1-4",
+          "edition": "2006",
+          "location": "Table 2.1, hot-rolled plate, t <= 75 mm",
+          "page": "7",
+          "url": "https://library.um.edu.mo/dissertation/b21618768.pdf"
+        },
+        "applicability": "Nominal strength for this grade/product/thickness, informational only; no plasticity or damage is inferred."
+      }
+    }
+  },
+  {
+    "id": "AA6061-T6",
+    "name": "Aluminium 6061-T6",
+    "family": "aluminium",
+    "designation": {
+      "standard": "AA alloy and temper; NASA handbook designation",
+      "grade": "6061-T6",
+      "condition": "Wrought T6 alloy; room-temperature elastic/physical approximation. No product-specific strength limit is supplied."
+    },
+    "properties": {
+      "young": {
+        "value": 68947572931.68361,
+        "unit": "Pa",
+        "basis": "typical",
+        "source": {
+          "document": "NASA-CR-123772, Materials Data Handbook: Aluminum Alloy 6061",
+          "edition": "Second edition, May 1972",
+          "location": "7.222 (10,000 ksi typical tensile modulus)",
+          "page": "39",
+          "url": "https://ntrs.nasa.gov/api/citations/19720022808/downloads/19720022808.pdf"
+        },
+        "applicability": "Room-temperature tensile/isotropic approximation; original stress units converted through FieldCraft Quantity, without new conversion factors."
+      },
+      "poisson": {
+        "value": 0.33,
+        "unit": "1",
+        "basis": "typical",
+        "source": {
+          "document": "NASA-CR-123772, Materials Data Handbook: Aluminum Alloy 6061",
+          "edition": "Second edition, May 1972",
+          "location": "7.21",
+          "page": "39",
+          "url": "https://ntrs.nasa.gov/api/citations/19720022808/downloads/19720022808.pdf"
+        },
+        "applicability": "Room-temperature tensile/isotropic approximation; original stress units converted through FieldCraft Quantity, without new conversion factors."
+      },
+      "density": {
+        "value": 2700,
+        "unit": "kg/m\u00b3",
+        "basis": "typical",
+        "source": {
+          "document": "NASA-CR-123772, Materials Data Handbook: Aluminum Alloy 6061",
+          "edition": "Second edition, May 1972",
+          "location": "9.1",
+          "page": "75",
+          "url": "https://ntrs.nasa.gov/api/citations/19720022808/downloads/19720022808.pdf"
+        },
+        "applicability": "Specific gravity at 20 deg C, converted from the source metric g/cm^3 value."
+      },
+      "expansion": {
+        "value": 2.34e-05,
+        "unit": "K\u207b\u00b9",
+        "basis": "typical",
+        "source": {
+          "document": "NASA-CR-123772, Materials Data Handbook: Aluminum Alloy 6061",
+          "edition": "Second edition, May 1972",
+          "location": "9.22",
+          "page": "75",
+          "url": "https://ntrs.nasa.gov/api/citations/19720022808/downloads/19720022808.pdf"
+        },
+        "applicability": "Mean linear expansion over 20-100 deg C, applied as a constant. Conductivity/heat capacity remain unavailable here; their cited handbook values use different test temperatures."
+      }
+    }
+  },
+  {
+    "id": "AA6082-T6",
+    "name": "Aluminium 6082-T6",
+    "family": "aluminium",
+    "designation": {
+      "standard": "EN AW-6082 / AA 6082",
+      "grade": "6082-T6",
+      "condition": "T6 extruded product; strength row limited to source specimen cross-section 5-20 mm. Normal-temperature elastic constants."
+    },
+    "properties": {
+      "young": {
+        "value": 70000000000.0,
+        "unit": "Pa",
+        "basis": "design",
+        "source": {
+          "document": "EN 1999-1-1",
+          "edition": "2007+A1:2009",
+          "location": "3.2.5(1)",
+          "page": "37",
+          "url": "https://www.phd.eng.br/wp-content/uploads/2014/11/en.1999.1.1.2007.pdf"
+        },
+        "applicability": "Nominal constant for covered structural aluminium alloys; not a measured value for a particular production lot."
+      },
+      "poisson": {
+        "value": 0.3,
+        "unit": "1",
+        "basis": "design",
+        "source": {
+          "document": "EN 1999-1-1",
+          "edition": "2007+A1:2009",
+          "location": "3.2.5(1)",
+          "page": "37",
+          "url": "https://www.phd.eng.br/wp-content/uploads/2014/11/en.1999.1.1.2007.pdf"
+        },
+        "applicability": "Nominal constant for covered structural aluminium alloys; not a measured value for a particular production lot."
+      },
+      "density": {
+        "value": 2700,
+        "unit": "kg/m\u00b3",
+        "basis": "design",
+        "source": {
+          "document": "EN 1999-1-1",
+          "edition": "2007+A1:2009",
+          "location": "3.2.5(1)",
+          "page": "37",
+          "url": "https://www.phd.eng.br/wp-content/uploads/2014/11/en.1999.1.1.2007.pdf"
+        },
+        "applicability": "Nominal constant for covered structural aluminium alloys; not a measured value for a particular production lot."
+      },
+      "expansion": {
+        "value": 2.3e-05,
+        "unit": "K\u207b\u00b9",
+        "basis": "design",
+        "source": {
+          "document": "EN 1999-1-1",
+          "edition": "2007+A1:2009",
+          "location": "3.2.5(1)",
+          "page": "37",
+          "url": "https://www.phd.eng.br/wp-content/uploads/2014/11/en.1999.1.1.2007.pdf"
+        },
+        "applicability": "Nominal constant for covered structural aluminium alloys; not a measured value for a particular production lot."
+      },
+      "conductivity": {
+        "value": 172,
+        "unit": "W/(m\u00b7K)",
+        "basis": "typical",
+        "source": {
+          "document": "Hydro Alloy 6082, Extruded Mechanical and Physical Property Limits",
+          "edition": "Revision 2019/02 (3/2019)",
+          "location": "T6/T6511, 0.200-0.750 inch row",
+          "page": "2",
+          "url": "https://www.hydro.com/globalassets/01-products--services/extruded-profiles/americas/ena-resources/alloy-data-sheets/hydro_2019_data_sheet_6082_revise_1.pdf"
+        },
+        "applicability": "Thermal conductivity at 25 deg C. The source thickness is the cross-section from which the tensile specimen is taken."
+      },
+      "yield": {
+        "value": 260000000.0,
+        "unit": "Pa",
+        "basis": "minimum",
+        "source": {
+          "document": "Hydro Alloy 6082, Extruded Mechanical and Physical Property Limits",
+          "edition": "Revision 2019/02 (3/2019)",
+          "location": "T6/T6511, 0.200-0.750 inch row, footnotes 1-2",
+          "page": "2",
+          "url": "https://www.hydro.com/globalassets/01-products--services/extruded-profiles/americas/ena-resources/alloy-data-sheets/hydro_2019_data_sheet_6082_revise_1.pdf"
+        },
+        "applicability": "Published minimum for the specified product/temper/specimen thickness, informational only; no plasticity or design allowable is inferred."
+      },
+      "tensile": {
+        "value": 310000000.0,
+        "unit": "Pa",
+        "basis": "minimum",
+        "source": {
+          "document": "Hydro Alloy 6082, Extruded Mechanical and Physical Property Limits",
+          "edition": "Revision 2019/02 (3/2019)",
+          "location": "T6/T6511, 0.200-0.750 inch row, footnotes 1-2",
+          "page": "2",
+          "url": "https://www.hydro.com/globalassets/01-products--services/extruded-profiles/americas/ena-resources/alloy-data-sheets/hydro_2019_data_sheet_6082_revise_1.pdf"
+        },
+        "applicability": "Published minimum for the specified product/temper/specimen thickness, informational only; no plasticity or design allowable is inferred."
+      }
+    }
+  },
+  {
+    "id": "AA7075-T6",
+    "name": "Aluminium 7075-T6",
+    "family": "aluminium",
+    "designation": {
+      "standard": "AA alloy and temper; NASA handbook designation",
+      "grade": "7075-T6",
+      "condition": "Wrought T6 alloy; room-temperature elastic/physical approximation. No product-specific strength limit is supplied."
+    },
+    "properties": {
+      "young": {
+        "value": 71016000119.63412,
+        "unit": "Pa",
+        "basis": "design",
+        "source": {
+          "document": "NASA-CR-123773, Materials Data Handbook: Aluminum Alloy 7075",
+          "edition": "Second edition, April 1972",
+          "location": "7.221 (10,300 ksi design tensile modulus)",
+          "page": "45",
+          "url": "https://ntrs.nasa.gov/api/citations/19720022809/downloads/19720022809.pdf"
+        },
+        "applicability": "Room-temperature tensile/isotropic approximation; original stress units converted through FieldCraft Quantity, without new conversion factors."
+      },
+      "poisson": {
+        "value": 0.33,
+        "unit": "1",
+        "basis": "typical",
+        "source": {
+          "document": "NASA-CR-123773, Materials Data Handbook: Aluminum Alloy 7075",
+          "edition": "Second edition, April 1972",
+          "location": "7.21",
+          "page": "45",
+          "url": "https://ntrs.nasa.gov/api/citations/19720022809/downloads/19720022809.pdf"
+        },
+        "applicability": "Room-temperature tensile/isotropic approximation; original stress units converted through FieldCraft Quantity, without new conversion factors."
+      },
+      "density": {
+        "value": 2800,
+        "unit": "kg/m\u00b3",
+        "basis": "typical",
+        "source": {
+          "document": "NASA-CR-123773, Materials Data Handbook: Aluminum Alloy 7075",
+          "edition": "Second edition, April 1972",
+          "location": "9.11",
+          "page": "105",
+          "url": "https://ntrs.nasa.gov/api/citations/19720022809/downloads/19720022809.pdf"
+        },
+        "applicability": "Specific gravity at 20 deg C, converted from the source metric g/cm^3 value."
+      },
+      "expansion": {
+        "value": 2.36e-05,
+        "unit": "K\u207b\u00b9",
+        "basis": "typical",
+        "source": {
+          "document": "NASA-CR-123773, Materials Data Handbook: Aluminum Alloy 7075",
+          "edition": "Second edition, April 1972",
+          "location": "9.22",
+          "page": "105",
+          "url": "https://ntrs.nasa.gov/api/citations/19720022809/downloads/19720022809.pdf"
+        },
+        "applicability": "Mean linear expansion over 20-100 deg C, applied as a constant. Conductivity/heat capacity remain unavailable here; their cited handbook values use different test temperatures."
+      }
+    }
+  },
+  {
+    "id": "AA2024-T3",
+    "name": "Aluminium 2024-T3 bare sheet",
+    "family": "aluminium",
+    "designation": {
+      "standard": "AMS 4037 / AMS-QQ-A-250/4",
+      "grade": "2024-T3",
+      "condition": "Bare sheet 0.010-0.128 inch; room-temperature properties from the explicitly identified legacy handbook edition."
+    },
+    "properties": {
+      "young": {
+        "value": 72394951578.26778,
+        "unit": "Pa",
+        "basis": "design",
+        "source": {
+          "document": "MIL-HDBK-5H",
+          "edition": "1 December 1998, section reproduced in Change Notice 1 (1 October 2001)",
+          "location": "Table 3.2.3.0(b1), T3 bare sheet",
+          "page": "3-70",
+          "url": "https://studylib.net/doc/13861675/mil-hdbk-5h--change-notice-1-1-october-2001-3.2.3-2024"
+        },
+        "applicability": "Room-temperature bare-sheet value: 10,500 ksi tensile modulus, Poisson ratio 0.33, density 0.100 lb/in^3; stress and density converted through FieldCraft Quantity. Not relabelled as MIL-HDBK-5J data."
+      },
+      "poisson": {
+        "value": 0.33,
+        "unit": "1",
+        "basis": "typical",
+        "source": {
+          "document": "MIL-HDBK-5H",
+          "edition": "1 December 1998, section reproduced in Change Notice 1 (1 October 2001)",
+          "location": "Table 3.2.3.0(b1), T3 bare sheet",
+          "page": "3-70",
+          "url": "https://studylib.net/doc/13861675/mil-hdbk-5h--change-notice-1-1-october-2001-3.2.3-2024"
+        },
+        "applicability": "Room-temperature bare-sheet value: 10,500 ksi tensile modulus, Poisson ratio 0.33, density 0.100 lb/in^3; stress and density converted through FieldCraft Quantity. Not relabelled as MIL-HDBK-5J data."
+      },
+      "density": {
+        "value": 2767.9904710203127,
+        "unit": "kg/m\u00b3",
+        "basis": "typical",
+        "source": {
+          "document": "MIL-HDBK-5H",
+          "edition": "1 December 1998, section reproduced in Change Notice 1 (1 October 2001)",
+          "location": "Table 3.2.3.0(b1), T3 bare sheet",
+          "page": "3-70",
+          "url": "https://studylib.net/doc/13861675/mil-hdbk-5h--change-notice-1-1-october-2001-3.2.3-2024"
+        },
+        "applicability": "Room-temperature bare-sheet value: 10,500 ksi tensile modulus, Poisson ratio 0.33, density 0.100 lb/in^3; stress and density converted through FieldCraft Quantity. Not relabelled as MIL-HDBK-5J data."
+      }
+    }
+  },
+  {
+    "id": "Ti6Al4V-annealed",
+    "name": "Titanium Ti-6Al-4V annealed",
+    "family": "titanium",
+    "designation": {
+      "standard": "ASTM Grade 5, annealed; source-specific forms below",
+      "grade": "Ti-6Al-4V",
+      "condition": "Annealed sheet/plate; informational minimum strengths limited to 0.025-1.000 inch ASTM B265 material. Texture/heat treatment affect elasticity."
+    },
+    "properties": {
+      "young": {
+        "value": 110316116690.69377,
+        "unit": "Pa",
+        "basis": "design",
+        "source": {
+          "document": "NASA-CR-123775, Materials Data Handbook: Titanium 6Al-4V",
+          "edition": "Second edition, May 1972",
+          "location": "7.221 (16,000 ksi, all forms)",
+          "page": "39",
+          "url": "https://ntrs.nasa.gov/api/citations/19720022814/downloads/19720022814.pdf"
+        },
+        "applicability": "Room-temperature design tensile modulus; isotropic approximation, not a texture-dependent modulus tensor. Converted through FieldCraft Quantity."
+      },
+      "poisson": {
+        "value": 0.31,
+        "unit": "1",
+        "basis": "typical",
+        "source": {
+          "document": "TIMET, TIMETAL 6-4 / 6-4 ELI / 6-4-.1Ru",
+          "edition": "TMC-0150, copyright 2000",
+          "location": "Table 2, physical properties",
+          "page": "1",
+          "url": "https://www.timet.com/documents/datasheets/alpha-and-beta-alloys/timetal-6-4.pdf"
+        },
+        "applicability": "At 20 deg C; conductivity for mill-annealed material. No elevated-temperature curve is applied."
+      },
+      "density": {
+        "value": 4420,
+        "unit": "kg/m\u00b3",
+        "basis": "typical",
+        "source": {
+          "document": "TIMET, TIMETAL 6-4 / 6-4 ELI / 6-4-.1Ru",
+          "edition": "TMC-0150, copyright 2000",
+          "location": "Table 2, physical properties",
+          "page": "1",
+          "url": "https://www.timet.com/documents/datasheets/alpha-and-beta-alloys/timetal-6-4.pdf"
+        },
+        "applicability": "Density at 22 deg C; original 4.42 g/cm^3."
+      },
+      "conductivity": {
+        "value": 6.6,
+        "unit": "W/(m\u00b7K)",
+        "basis": "typical",
+        "source": {
+          "document": "TIMET, TIMETAL 6-4 / 6-4 ELI / 6-4-.1Ru",
+          "edition": "TMC-0150, copyright 2000",
+          "location": "Table 2, physical properties",
+          "page": "1",
+          "url": "https://www.timet.com/documents/datasheets/alpha-and-beta-alloys/timetal-6-4.pdf"
+        },
+        "applicability": "At 20 deg C; conductivity for mill-annealed material. No elevated-temperature curve is applied."
+      },
+      "specific_heat": {
+        "value": 580,
+        "unit": "J/(kg\u00b7K)",
+        "basis": "typical",
+        "source": {
+          "document": "TIMET, TIMETAL 6-4 / 6-4 ELI / 6-4-.1Ru",
+          "edition": "TMC-0150, copyright 2000",
+          "location": "Table 2, physical properties",
+          "page": "1",
+          "url": "https://www.timet.com/documents/datasheets/alpha-and-beta-alloys/timetal-6-4.pdf"
+        },
+        "applicability": "At 20 deg C; conductivity for mill-annealed material. No elevated-temperature curve is applied."
+      },
+      "expansion": {
+        "value": 9e-06,
+        "unit": "K\u207b\u00b9",
+        "basis": "typical",
+        "source": {
+          "document": "TIMET, TIMETAL 6-4 / 6-4 ELI / 6-4-.1Ru",
+          "edition": "TMC-0150, copyright 2000",
+          "location": "Table 2, physical properties",
+          "page": "1",
+          "url": "https://www.timet.com/documents/datasheets/alpha-and-beta-alloys/timetal-6-4.pdf"
+        },
+        "applicability": "Mean linear expansion over 0-100 deg C; not an instantaneous temperature curve."
+      },
+      "yield": {
+        "value": 828000000.0,
+        "unit": "Pa",
+        "basis": "minimum",
+        "source": {
+          "document": "TIMET, TIMETAL 6-4 / 6-4 ELI / 6-4-.1Ru",
+          "edition": "TMC-0150, copyright 2000",
+          "location": "Table 3, ASTM B265 annealed sheet/plate 0.025-1.000 inch, L and LT, footnote a",
+          "page": "2",
+          "url": "https://www.timet.com/documents/datasheets/alpha-and-beta-alloys/timetal-6-4.pdf"
+        },
+        "applicability": "Published minimum at 20 deg C for specified product/condition/direction; informational only, not automatic plasticity or failure criteria."
+      },
+      "tensile": {
+        "value": 895000000.0,
+        "unit": "Pa",
+        "basis": "minimum",
+        "source": {
+          "document": "TIMET, TIMETAL 6-4 / 6-4 ELI / 6-4-.1Ru",
+          "edition": "TMC-0150, copyright 2000",
+          "location": "Table 3, ASTM B265 annealed sheet/plate 0.025-1.000 inch, L and LT, footnote a",
+          "page": "2",
+          "url": "https://www.timet.com/documents/datasheets/alpha-and-beta-alloys/timetal-6-4.pdf"
+        },
+        "applicability": "Published minimum at 20 deg C for specified product/condition/direction; informational only, not automatic plasticity or failure criteria."
+      }
+    }
+  }
+]
