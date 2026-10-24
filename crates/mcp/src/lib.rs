@@ -1,7 +1,7 @@
 //! FieldCraft's MCP server (docs/mcp.md).
 //!
 //! JSON-RPC 2.0 over stdio, one message per line, implementing the Model Context Protocol's
-//! lifecycle, tools and resources. Every tool runs engine commands (the same ones the UI,
+//! lifecycle, tools, resources and prompts. Every tool runs engine commands (the same ones the UI,
 //! scripts, the CLI and the control channel run) and never opens a dialog. A tool call is served
 //! by a [`Backend`]: an in-process headless session ([`Headless`], pictures drawn with the CPU
 //! rasterizer) or a running app reached through its control channel ([`Remote`],
@@ -18,6 +18,7 @@
 #![forbid(unsafe_code)]
 
 mod backend;
+mod prompts;
 mod server;
 pub mod tools;
 
