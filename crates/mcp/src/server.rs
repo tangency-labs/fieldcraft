@@ -1,4 +1,4 @@
-//! JSON-RPC 2.0 framing and the MCP lifecycle, tools and resources methods.
+//! JSON-RPC 2.0 framing and the MCP lifecycle, tools, resources and prompts methods.
 
 use std::io::{BufRead, Write};
 
@@ -188,7 +188,7 @@ impl Server {
                 let version = if SUPPORTED_VERSIONS.contains(&asked) { asked } else { PROTOCOL_VERSION };
                 Ok(json!({
                     "protocolVersion": version,
-                    "capabilities": {"tools": {"listChanged": false}, "resources": {"listChanged": false}},
+                    "capabilities": {"tools": {"listChanged": false}, "resources": {"listChanged": false}, "prompts": {"listChanged": false}},
                     "serverInfo": {"name": "fieldcraft", "title": "FieldCraft", "version": env!("CARGO_PKG_VERSION")},
                     "instructions": format!("{INSTRUCTIONS} Backend: {}.", self.backend.describe()),
                 }))
@@ -204,14 +204,22 @@ impl Server {
                 check_arguments(name, &args).map_err(|e| (INVALID_PARAMS, e))?;
                 Ok(call_tool(self.backend.as_mut(), name, &args))
             }
-            "resources/list" => Ok(json!({"resources": [
-                {"uri": "fieldcraft://model", "name": "Model", "description": "model.info: node and element counts, units, definitions", "mimeType": "application/json"},
-                {"uri": "fieldcraft://commands", "name": "Command catalog", "description": "every command with its parameter docs", "mimeType": "application/json"},
-            ]})),
+            "resources/list" => {
+                let mut resources = vec![
+                    json!({"uri": "fieldcraft://model", "name": "Model", "description": "model.info: node and element counts, units, definitions", "mimeType": "application/json"}),
+                    json!({"uri": "fieldcraft://commands", "name": "Command catalog", "description": "every command with its parameter docs", "mimeType": "application/json"}),
+                ];
+                resources.extend(crate::prompts::resources());
+                Ok(json!({"resources": resources}))
+            }
             "resources/templates/list" => Ok(json!({"resourceTemplates": []})),
-            "prompts/list" => Ok(json!({"prompts": []})),
+            "prompts/list" => crate::prompts::list(params).map_err(|e| (INVALID_PARAMS, e)),
+            "prompts/get" => crate::prompts::get(params).map_err(|e| (INVALID_PARAMS, e)),
             "resources/read" => {
                 let uri = params.get("uri").and_then(Value::as_str).unwrap_or("");
+                if let Some(resource) = crate::prompts::read(uri) {
+                    return Ok(resource);
+                }
                 let v = match uri {
                     "fieldcraft://model" => self.backend.execute("model.info", json!({})),
                     "fieldcraft://commands" => self.backend.commands(),

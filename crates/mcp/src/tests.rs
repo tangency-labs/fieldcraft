@@ -360,3 +360,106 @@ fn base64_matches_the_rfc_vectors() {
         assert_eq!(base64(i.as_bytes()), o);
     }
 }
+
+#[test]
+fn every_bundled_skill_is_discoverable_and_returns_its_exact_source() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills");
+    let mut sources: Vec<_> =
+        std::fs::read_dir(root).unwrap().map(|entry| entry.unwrap().path()).filter(|path| path.join("SKILL.md").is_file()).collect();
+    sources.sort();
+    for version in crate::SUPPORTED_VERSIONS {
+        let mut s = server();
+        let init = send(&mut s, json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": version}}));
+        assert_eq!(init["result"]["protocolVersion"], *version);
+        assert_eq!(init["result"]["capabilities"]["prompts"], json!({"listChanged": false}));
+        assert!(s.handle_line(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#).is_none());
+        let before = send(&mut s, json!({"jsonrpc": "2.0", "id": 2, "method": "resources/read", "params": {"uri": "fieldcraft://model"}}));
+        let listed = send(&mut s, json!({"jsonrpc": "2.0", "id": 3, "method": "prompts/list"}));
+        let prompts = listed["result"]["prompts"].as_array().unwrap();
+        assert_eq!(prompts.len(), sources.len());
+        assert!(listed["result"].get("nextCursor").is_none());
+        for source in &sources {
+            let name = source.file_name().unwrap().to_str().unwrap();
+            let prompt = prompts.iter().find(|p| p["name"] == name).unwrap();
+            assert_eq!(prompt["name"], name);
+            assert!(!prompt["description"].as_str().unwrap().is_empty());
+            assert_eq!(prompt["arguments"], json!([]));
+            for params in [json!({"name": name}), json!({"name": name, "arguments": {}})] {
+                let reply = send(&mut s, json!({"jsonrpc": "2.0", "id": 4, "method": "prompts/get", "params": params}));
+                let content = &reply["result"]["messages"][0];
+                assert_eq!(content["role"], "user");
+                assert_eq!(content["content"]["type"], "text");
+                assert!(content["content"]["text"].as_str().unwrap().len() < 64 * 1024);
+                assert_eq!(content["content"]["text"], std::fs::read_to_string(source.join("SKILL.md")).unwrap());
+            }
+        }
+        let after = send(&mut s, json!({"jsonrpc": "2.0", "id": 2, "method": "resources/read", "params": {"uri": "fieldcraft://model"}}));
+        assert_eq!(before, after, "retrieving instructions must not execute the model");
+    }
+}
+
+#[test]
+fn modelling_references_are_exact_embedded_resources_and_a_fixed_read_allowlist() {
+    let mut s = server();
+    let prompt = send(&mut s, json!({"jsonrpc": "2.0", "id": 1, "method": "prompts/get", "params": {"name": "fieldcraft-modelling"}}));
+    let messages = prompt["result"]["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 4);
+    let resources = send(&mut s, json!({"jsonrpc": "2.0", "id": 2, "method": "resources/list"}));
+    let resources = resources["result"]["resources"].as_array().unwrap();
+    assert_eq!(resources.len(), 5, "two existing resources plus three fixed references");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/fieldcraft-modelling/references");
+    for (message, file) in messages.iter().skip(1).zip(["checks.md", "axial-rod.json", "steady-conductor.json"]) {
+        assert_eq!(message["role"], "user");
+        assert_eq!(message["content"]["type"], "resource");
+        let embedded = &message["content"]["resource"];
+        let uri = format!("fieldcraft://skills/fieldcraft-modelling/references/{file}");
+        assert_eq!(embedded["uri"], uri);
+        let source = std::fs::read_to_string(root.join(file)).unwrap();
+        assert!(source.len() < 64 * 1024, "keep the bundled prompt resources bounded and small");
+        assert_eq!(embedded["text"], source);
+        let listed = resources.iter().find(|resource| resource["uri"] == uri).unwrap();
+        assert_eq!(listed["mimeType"], embedded["mimeType"]);
+        let reply = send(&mut s, json!({"jsonrpc": "2.0", "id": 3, "method": "resources/read", "params": {"uri": uri}}));
+        assert_eq!(reply["result"]["contents"], json!([embedded]));
+    }
+    for uri in [
+        "fieldcraft://skills/fieldcraft-modelling/references/../../../../Cargo.toml",
+        "fieldcraft://skills/fieldcraft-modelling/references/%2e%2e/Cargo.toml",
+        "file:///etc/passwd",
+        "fieldcraft://skills/fieldcraft-modelling/references/not-bundled.json",
+    ] {
+        let reply = send(&mut s, json!({"jsonrpc": "2.0", "id": 4, "method": "resources/read", "params": {"uri": uri}}));
+        assert_eq!(reply["error"]["code"], -32002);
+    }
+}
+
+#[test]
+fn invalid_prompt_requests_are_bounded_protocol_errors_and_leave_the_server_usable() {
+    let mut s = server();
+    for params in [
+        json!(null),
+        json!([]),
+        json!({}),
+        json!({"name": 4}),
+        json!({"name": "../SKILL.md"}),
+        json!({"name": "nope"}),
+        json!({"name": "x".repeat(100_000)}),
+        json!({"name": "fieldcraft-modelling", "arguments": null}),
+        json!({"name": "fieldcraft-modelling", "arguments": []}),
+        json!({"name": "fieldcraft-modelling", "arguments": "text"}),
+        json!({"name": "fieldcraft-modelling", "arguments": {"path": "../Cargo.toml"}}),
+    ] {
+        let reply = send(&mut s, json!({"jsonrpc": "2.0", "id": 1, "method": "prompts/get", "params": params}));
+        assert_eq!(reply["error"]["code"], -32602, "{reply}");
+        assert!(reply["error"]["message"].as_str().unwrap().len() < 400);
+    }
+    for params in [json!([]), json!(false), json!({"cursor": "not-a-page"}), json!({"cursor": null})] {
+        let reply = send(&mut s, json!({"jsonrpc": "2.0", "id": 2, "method": "prompts/list", "params": params}));
+        assert_eq!(reply["error"]["code"], -32602);
+    }
+    assert_eq!(send(&mut s, json!({"jsonrpc": "2.0", "id": 3, "method": "ping"}))["result"], json!({}));
+    assert_eq!(
+        send(&mut s, json!({"jsonrpc": "2.0", "id": 4, "method": "prompts/list", "params": {}}))["result"]["prompts"].as_array().unwrap().len(),
+        2
+    );
+}

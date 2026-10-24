@@ -105,6 +105,43 @@ A path is checked, then opened: another program that swaps a link in between can
 race, so the roots keep an agent to the files it was given rather than guarding against other
 software on the computer.
 
+## Bundled skill prompts
+
+The server advertises `prompts: {"listChanged": false}`. A client can let the user choose
+`fieldcraft-meshing` or `fieldcraft-modelling` from `prompts/list`, then retrieve it with
+`prompts/get`. These names are stable and take no arguments. The complete small catalogue
+is returned in one page; there is no continuation cursor.
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"prompts/list"}
+{"jsonrpc":"2.0","id":2,"method":"prompts/get","params":{"name":"fieldcraft-modelling"}}
+```
+
+The first returned user message contains the exact corresponding `skills/<name>/SKILL.md`
+Markdown, including its frontmatter, embedded at compile time with `include_str!`. There is
+no separately maintained prompt copy. Retrieving a prompt does not run commands or change
+the model. Prompts are user-selected instructions, not automatic model actions.
+
+The modelling prompt's remaining messages are three embedded resources. Their URI suffixes
+map to its relative `references/` links:
+
+| Relative reference | Fixed MCP resource URI |
+|---|---|
+| `references/checks.md` | `fieldcraft://skills/fieldcraft-modelling/references/checks.md` |
+| `references/axial-rod.json` | `fieldcraft://skills/fieldcraft-modelling/references/axial-rod.json` |
+| `references/steady-conductor.json` | `fieldcraft://skills/fieldcraft-modelling/references/steady-conductor.json` |
+
+They also appear in `resources/list` and are readable with `resources/read`. These resources
+contain the exact bundled reference/recipe text; recipes are not executed on retrieval.
+Other repository documentation links still refer to the matching checkout. Both headless
+and connected-app servers return the same compiled skill/reference contents, even without
+a source checkout at runtime. Names and URIs are a fixed allowlist, with no arbitrary path
+lookup. Unknown prompt names, nonempty or malformed arguments, and continuation cursors
+return JSON-RPC invalid-params errors; unknown resource URIs retain resource-not-found errors.
+The existing model/command resources are unchanged.
+
+The wire format follows the [MCP prompt specification](https://modelcontextprotocol.io/specification/2025-06-18/server/prompts).
+
 ## Tools
 
 | Tool | Arguments | What it does |
