@@ -889,6 +889,8 @@ impl Session {
 
 #[cfg(test)]
 mod cancel_tests;
+#[cfg(test)]
+mod skill_tests;
 
 #[cfg(test)]
 mod tests {
