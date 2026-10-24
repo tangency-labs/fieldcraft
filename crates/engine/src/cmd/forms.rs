@@ -2123,6 +2123,14 @@ pub const GEOMETRY_CHECK: &[Field] = &[
 ];
 pub const TESSELLATE: &[Field] = &[reference("body", "Body", C::Body).help("The body to tessellate.").req(), TOLERANCE];
 pub const IMPORT_MESH: &[Field] = &[path("path", "3MF file", false).help("A 3MF surface mesh with named faces.").req()];
+pub const IMPORT_ORPHAN: &[Field] = &[
+    path("path", "MSH file", false)
+        .help("ASCII Gmsh MSH 4.1. Unitless coordinates use the current length unit. Replaces the mesh; remove existing mesh selections first, or import into a new model.")
+        .req(),
+    choice("unmatched", "Unmatched surfaces", &[("refuse", "Refuse"), ("shell", "Keep intentional shells")])
+        .help("Boundary surfaces select existing volume faces. Keep shells only for intentional surface elements that match no volume face.")
+        .def("\"refuse\""),
+];
 pub const FILE_OPEN: &[Field] = &[path("path", "Model", false).help("The FieldCraft model file to open.").req()];
 const SAVE_RESULTS: Field = flag("results", "Keep results")
     .help("Keep every solved step's results in the file, so it opens showing them without solving again; off for a smaller file.")
@@ -2494,7 +2502,16 @@ mod tests {
                 continue; // they replace or write the session's model; their forms are paths and counts
             }
             for fill_refs in [false, true] {
-                let limits = crate::Limits { max_steiner: 10, max_tets: 100, max_hex_elements: 100, threads: 1, memory: 0 };
+                let limits = crate::Limits {
+                    max_steiner: 10,
+                    max_tets: 100,
+                    max_hex_elements: 100,
+                    max_import_nodes: 10,
+                    max_import_elements: 100,
+                    max_import_members: 100,
+                    threads: 1,
+                    memory: 0,
+                };
                 let mut s = Session { limits, ..Session::default() };
                 crate::cmd::define::tests::defined_bar(&mut s);
                 s.execute("solve.run", &json!({})).unwrap();
@@ -2547,7 +2564,16 @@ mod tests {
                 }
             }
             for p in tries {
-                let limits = crate::Limits { max_steiner: 10, max_tets: 100, max_hex_elements: 100, threads: 1, memory: 0 };
+                let limits = crate::Limits {
+                    max_steiner: 10,
+                    max_tets: 100,
+                    max_hex_elements: 100,
+                    max_import_nodes: 10,
+                    max_import_elements: 100,
+                    max_import_members: 100,
+                    threads: 1,
+                    memory: 0,
+                };
                 let mut s = Session { limits, ..Session::default() };
                 crate::cmd::define::tests::defined_bar(&mut s);
                 if let Err(EngineError::Param(e)) = s.execute(c.id, &p) {

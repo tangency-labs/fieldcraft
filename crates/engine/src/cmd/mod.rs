@@ -34,6 +34,7 @@ pub(crate) mod names;
 pub(crate) mod node_move;
 pub(crate) mod nodes;
 pub(crate) mod octree;
+mod orphan;
 pub(crate) mod plan;
 mod project;
 pub(crate) mod relax;
@@ -100,6 +101,7 @@ pub static ALL: &[CommandSpec] = &[
     stitch::STITCH,
     stitch::STITCH_DELETE,
     mesh::NODE_ADD,
+    mesh::IMPORT_ORPHAN,
     mesh::NODE_REMOVE,
     mesh::ELEMENT_ADD,
     mesh::ELEMENT_REMOVE,

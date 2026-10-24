@@ -34,6 +34,7 @@
 
 pub mod codec;
 pub mod fs;
+pub mod gmsh;
 pub mod memory;
 pub mod mesh;
 pub mod migrate;

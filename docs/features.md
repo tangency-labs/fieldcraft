@@ -6,7 +6,7 @@ Every entry is a toolbar button. **Ready** entries run their command; **coming s
 shown greyed with the roadmap milestone that brings them (ROADMAP.md). Scripts, the command line,
 the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 
-86 ready, 36 coming soon.
+87 ready, 35 coming soon.
 
 ## Geometry
 
@@ -61,7 +61,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Edit | Mirror Mesh — Mirror a body's mesh across a plane, joined on the plane (mesh half a symmetric part) | ready | `mesh.mirror` |
 | Edit | Merge Nodes — Merge coincident nodes, keeping sets, loads and boundary conditions on the survivors; check for duplicates and cracks, renumber | ready | `mesh.node.merge`, `mesh.check.duplicates`, `mesh.renumber` |
 | Edit | Remesh Region — Remesh a region in place; split and collapse elements | coming soon (M6) |  |
-| Edit | Orphan Mesh — Import a mesh without geometry | coming soon (M6) |  |
+| Edit | Orphan Mesh — Import a mesh without geometry (Gmsh MSH 4.1) | ready | `mesh.import.orphan` |
 | Verify | Quality — Quality metrics and the certified validity check, failing elements listed | ready | `mesh.quality` |
 | Verify | Mark Bad Elements — Mark the elements below quality limits as a set, located and drawn in the marker colour | ready | `mesh.quality.mark` |
 | Verify | Verify Set — Quality and validity per set | coming soon (M2) |  |

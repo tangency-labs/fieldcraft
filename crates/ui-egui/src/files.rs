@@ -59,10 +59,11 @@ pub struct Services {
 const MODEL: Filter = Filter { name: "FieldCraft model", extensions: &["fieldcraft"] };
 const DESIGN: Filter = Filter { name: "SolidCraft design", extensions: &["solidcraft"] };
 const MESH: Filter = Filter { name: "Face-tagged mesh (3MF)", extensions: &["3mf", "3MF"] };
-const ANY: Filter = Filter { name: "Models, designs and tagged meshes", extensions: &["fieldcraft", "solidcraft", "3mf", "3MF"] };
+const ORPHAN: Filter = Filter { name: "Orphan mesh (Gmsh MSH 4.1)", extensions: &["msh", "MSH"] };
+const ANY: Filter = Filter { name: "Models, designs and meshes", extensions: &["fieldcraft", "solidcraft", "3mf", "3MF", "msh", "MSH"] };
 
 /// The Open picker's filters: everything FieldCraft opens, then each type.
-pub const OPEN_FILTERS: &[Filter] = &[ANY, MODEL, DESIGN, MESH];
+pub const OPEN_FILTERS: &[Filter] = &[ANY, MODEL, DESIGN, MESH, ORPHAN];
 
 /// What opening a file does with it, from its extension.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,6 +74,8 @@ pub enum Kind {
     Design,
     /// A `.3mf` face-tagged mesh is added as a surface (`geometry.import.mesh`).
     Mesh,
+    /// A `.msh` orphan mesh replaces the mesh (`mesh.import.orphan`).
+    Orphan,
 }
 
 impl Kind {
@@ -83,6 +86,7 @@ impl Kind {
             "fieldcraft" => Some(Kind::Model),
             "solidcraft" => Some(Kind::Design),
             "3mf" => Some(Kind::Mesh),
+            "msh" => Some(Kind::Orphan),
             _ => None,
         }
     }
@@ -92,6 +96,7 @@ impl Kind {
             Kind::Model => "file.open",
             Kind::Design => "geometry.open",
             Kind::Mesh => "geometry.import.mesh",
+            Kind::Orphan => "mesh.import.orphan",
         }
     }
 
@@ -101,6 +106,7 @@ impl Kind {
             Kind::Model => &[MODEL, ANY],
             Kind::Design => &[DESIGN, ANY],
             Kind::Mesh => &[MESH, ANY],
+            Kind::Orphan => &[ORPHAN, ANY],
         }
     }
 
@@ -108,14 +114,14 @@ impl Kind {
     fn verbs(self) -> (&'static str, &'static str) {
         match self {
             Kind::Model | Kind::Design => ("Opening", "Opened"),
-            Kind::Mesh => ("Importing", "Imported"),
+            Kind::Mesh | Kind::Orphan => ("Importing", "Imported"),
         }
     }
 }
 
 /// The file a command opens, if it is one the File menu handles with a picker.
 fn kind_of_command(command: &str) -> Option<Kind> {
-    [Kind::Model, Kind::Design, Kind::Mesh].into_iter().find(|k| k.command() == command)
+    [Kind::Model, Kind::Design, Kind::Mesh, Kind::Orphan].into_iter().find(|k| k.command() == command)
 }
 
 /// Whether `command` may run long: a solve, a mesher or an open (a sample meshes, a file can be
@@ -142,6 +148,7 @@ fn fresh(command: &str) -> bool {
 
 /// Commands a form runs in the background: they can take a while on a large part.
 pub const BACKGROUND: &[&str] = &[
+    "mesh.import.orphan",
     "mesh.tet.generate",
     "mesh.hex.generate",
     "mesh.hex.sweep",
@@ -636,7 +643,10 @@ impl ModelApp {
     /// replacing unsaved changes asks first.
     pub fn open_path(&mut self, path: &str) {
         let Some(kind) = Kind::of(path) else {
-            self.set_status(format!("{path}: FieldCraft opens .fieldcraft models, .solidcraft designs and .3mf tagged meshes"), true);
+            self.set_status(
+                format!("{path}: FieldCraft opens .fieldcraft models, .solidcraft designs, .3mf tagged meshes and .msh orphan meshes"),
+                true,
+            );
             return;
         };
         if kind == Kind::Model && self.has_unsaved_work() {
@@ -1094,7 +1104,7 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
         let fraction = app.loading.as_ref().and_then(|l| l.progress.snapshot().fraction());
         let text = match app.loading.as_ref() {
             Some(l) => l.line(),
-            None => "Drop to open: .fieldcraft models, .solidcraft designs, .3mf tagged meshes".into(),
+            None => "Drop to open: .fieldcraft models, .solidcraft designs, .3mf tagged meshes, .msh orphan meshes".into(),
         };
         let mut cancel = false;
         egui::Area::new(egui::Id::new("fc_loading")).order(egui::Order::Foreground).anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0)).show(
@@ -1468,10 +1478,43 @@ mod tests {
         assert_eq!(Kind::of("a/b.fieldcraft"), Some(Kind::Model));
         assert_eq!(Kind::of("B.SOLIDCRAFT"), Some(Kind::Design));
         assert_eq!(Kind::of("part.3MF").map(Kind::command), Some("geometry.import.mesh"));
+        assert_eq!(Kind::of("part.MSH").map(Kind::command), Some("mesh.import.orphan"));
+        assert!(is_long("mesh.import.orphan"));
         assert_eq!(Kind::of("part.step"), None);
         assert_eq!(Kind::of("noext"), None);
         assert_eq!(with_extension("a/b".into(), "fieldcraft"), "a/b.fieldcraft");
         assert_eq!(with_extension("a/b.FIELDCRAFT".into(), "fieldcraft"), "a/b.FIELDCRAFT");
+    }
+
+    #[test]
+    fn orphan_picker_imports_in_background_and_failed_replacement_keeps_the_model() {
+        let dir = temp("orphan");
+        let path = dir.join("input.msh").to_string_lossy().into_owned();
+        // Original one-tet ASCII fixture, written directly from the public format grammar.
+        std::fs::write(&path, "$MeshFormat\n4.1 0 8\n$EndMeshFormat\n$Nodes\n1 4 1 4\n3 1 0 4\n1\n2\n3\n4\n0 0 0\n1 0 0\n0 1 0\n0 0 1\n$EndNodes\n$Elements\n1 1 7 7\n3 1 4 1\n7 1 2 3 4\n$EndElements\n").unwrap();
+        let offered = Rc::new(RefCell::new(Vec::new()));
+        let mut app = ModelApp::new(Session::default());
+        app.services.pick_open = Some(answering(Some(path.clone()), offered.clone()));
+        app.start("mesh.import.orphan").unwrap();
+        assert!(app.dialog.is_none());
+        assert_eq!(offered.borrow()[0][0], ORPHAN);
+        assert_eq!(app.busy(), Some("Importing input.msh"));
+        app.wait_loaded();
+        assert_eq!(app.session.model.elements().len(), 1);
+        assert!(app.session.model.element(7).is_some());
+        app.run("edit.undo", serde_json::json!({})).unwrap();
+        assert!(app.session.model.nodes().is_empty(), "background import remains one undo step");
+        app.run("edit.redo", serde_json::json!({})).unwrap();
+        app.run("model.set.create", serde_json::json!({"name":"selection", "nodes":[1]})).unwrap();
+        let before = app.session.model.clone();
+        let journal = app.session.journal.clone();
+        app.open_path(&path);
+        app.wait_loaded();
+        assert_eq!(app.session.model, before);
+        assert_eq!(app.session.journal, journal);
+        assert!(app.status.as_ref().is_some_and(|s| s.error && s.text.contains("label-based set `selection`")));
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&dir);
     }
 
     /// Open (picker) → background open → the model, the recent list; Save As (picker) and Save.

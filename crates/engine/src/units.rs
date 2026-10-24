@@ -151,7 +151,7 @@ pub enum Frame {
 
 /// The frame of command `id`.
 pub fn frame(id: &str) -> Frame {
-    const INPUT: &[&str] = &["mesh.block", "mesh.export.stl"];
+    const INPUT: &[&str] = &["mesh.block", "mesh.export.stl", "mesh.import.orphan"];
     const SI_MESH: &[&str] = &[
         "mesh.node.add",
         "mesh.node.remove",

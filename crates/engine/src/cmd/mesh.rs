@@ -18,6 +18,16 @@ use super::{label, labels, listed, optional_number, points, xyz};
 use crate::requirement::Requirement;
 use crate::{CommandKind, CommandSpec, EngineError, Result, Session};
 
+pub const IMPORT_ORPHAN: CommandSpec = CommandSpec {
+    id: "mesh.import.orphan",
+    label: "Import Orphan Mesh",
+    params: r#"{"path": "part.msh", "unmatched": "refuse" | "shell" (default refuse)} — imports ASCII Gmsh MSH 4.1, preserving node/element tags; the file has no unit declaration, so its coordinates use the current input length unit (`coordinate_unit` in the reply). Replaces the whole mesh and its geometry tags while keeping geometry and model definitions; refuses existing geometry/label sets, node-specific step limits, reference-point label collisions and physical-set name collisions rather than silently retargeting them (import into a new model or remove those selections first). Physical volumes become element sets, surfaces matching volume faces become face sets (an internal surface selects both adjacent element faces), curves become edge sets and physical points become node sets. Surface-only meshes keep their surface elements. Unmatched volume-boundary surfaces refuse unless `unmatched: shell` explicitly keeps intentional shells; unmatched curves still refuse. Supports rod2/rod3, tri3/tri6, quad4/quad8, tet4/tet10, wedge6, hex8/hex20. Refuses binary, partitioned, unsupported types and invalid physical names. Replies nodes, elements by kind, sets with membership counts, skipped_sections, replaced mesh counts, and results made stale. One undo step"#,
+    form: Some(super::forms::IMPORT_ORPHAN),
+    kind: CommandKind::Model,
+    requires: &[],
+    run: super::orphan::import,
+};
+
 pub const NODE_ADD: CommandSpec = CommandSpec {
     id: "mesh.node.add",
     label: "Add Node",

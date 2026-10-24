@@ -456,7 +456,7 @@ pub static CATALOGUE: &[Capability] = &[
         &["mesh.check.duplicates", "mesh.renumber"],
     ),
     soon("mesh.region.remesh", "Remesh Region", Mesh, "Edit", "M6", "Remesh a region in place; split and collapse elements"),
-    soon("mesh.import.orphan", "Orphan Mesh", Mesh, "Edit", "M6", "Import a mesh without geometry"),
+    ready("mesh.import.orphan", "Orphan Mesh", Mesh, "Edit", "Import a mesh without geometry (Gmsh MSH 4.1)"),
     ready("mesh.quality", "Quality", Mesh, "Verify", "Quality metrics and the certified validity check, failing elements listed"),
     ready(
         "mesh.quality.mark",

@@ -267,6 +267,10 @@ pub(crate) fn next_revision() -> u64 {
 /// tests do, so hostile input is refused quickly).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
+    /// Orphan mesh import bounds, checked before input-sized allocation or physical-set expansion.
+    pub max_import_nodes: usize,
+    pub max_import_elements: usize,
+    pub max_import_members: usize,
     /// `mesh.tet.generate`'s `max_steiner`.
     pub max_steiner: usize,
     /// `mesh.tet.generate`'s `max_tets`.
@@ -288,6 +292,9 @@ impl Default for Limits {
     fn default() -> Self {
         let cdt = fieldcraft_mesh::cdt::CdtOptions::default();
         Limits {
+            max_import_nodes: fieldcraft_model::MAX_NODES,
+            max_import_elements: fieldcraft_model::MAX_ELEMENTS,
+            max_import_members: fieldcraft_model::MAX_ELEMENTS,
             max_steiner: cdt.max_steiner,
             max_tets: cdt.max_tets,
             max_hex_elements: cmd::octree::DEFAULT_MAX_ELEMENTS,
@@ -911,6 +918,7 @@ mod tests {
             json!({"label": 1, "kind": "tet4", "nodes": [1, 1, 1, 1]}),
             json!({"label": 1, "kind": "hex20", "nodes": vec![u32::MAX; 20]}),
             json!({"path": ""}),
+            json!({"path": 7}),
             json!({"path": "/"}),
             json!({"path": "/dev/zero"}),
             json!({"path": "/no/such/design.solidcraft"}),
@@ -1071,8 +1079,18 @@ mod tests {
         // need Steiner points all along them, an octree hex mesh is fitted and untangled) is
         // refused at once. The caps themselves are what
         // `tet_generate_honours_the_session_caps` checks.
-        let capped =
-            || Session { limits: Limits { max_steiner: 64, max_tets: 100_000, max_hex_elements: 500, ..Limits::default() }, ..Session::default() };
+        let capped = || Session {
+            limits: Limits {
+                max_steiner: 64,
+                max_tets: 100_000,
+                max_hex_elements: 500,
+                max_import_nodes: 64,
+                max_import_elements: 64,
+                max_import_members: 256,
+                ..Limits::default()
+            },
+            ..Session::default()
+        };
         for spec in commands() {
             for p in &hostile {
                 let mut s = capped();
