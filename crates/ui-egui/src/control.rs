@@ -236,6 +236,7 @@ pub fn handle(app: &mut ModelApp, ctx: &egui::Context, req: &ControlRequest) -> 
             "renderer": if app.viewport.gpu.is_some() { "gpu" } else { "cpu" },
             "gpu": app.gpu_info,
             "dialog": app.dialog.as_ref().map(|d| json!({"command": d.command, "text": d.text, "error": d.error})),
+            "file_picker": app.picker.is_some(),
             "status": app.status,
             "model": {"nodes": app.session.model.nodes().len(), "elements": app.session.model.elements().len()},
             "results": app.session.results_report(),
