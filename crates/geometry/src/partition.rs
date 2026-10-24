@@ -202,9 +202,42 @@ impl Design {
     }
 }
 
+/// A coordinate-axis half-space tool using the kernel's box primitive, as `solid.box` does.
+/// Its planar face construction differs from extruding along the cutting plane's normal.
+/// Only exact axis normals qualify: an almost-axis plane must keep its original orientation.
+fn axis_box(plane: &Plane, n: [f64; 3], bbox: &solidcraft_geom::Aabb3, positive: bool) -> solidcraft_kernel::Result<Option<solidcraft_kernel::Body>> {
+    let axis = match n {
+        [x, 0.0, 0.0] if x.abs() == 1.0 => 0,
+        [0.0, y, 0.0] if y.abs() == 1.0 => 1,
+        [0.0, 0.0, z] if z.abs() == 1.0 => 2,
+        _ => return Ok(None),
+    };
+    let p = crate::xyz(plane.origin);
+    let c = crate::xyz(bbox.center());
+    // Twice each bounding-box extent covers the body with half an extent of clearance on
+    // every side. A diagonal-sized cube can be needlessly large on the thinner axes, making
+    // the kernel's boolean require a tool nudge even for a well-positioned plane (#690).
+    let extent = crate::xyz(bbox.size()).map(|v| v.max(LINEAR_REACH));
+    let mut lo = std::array::from_fn(|i| c[i] - extent[i]);
+    let mut hi = std::array::from_fn(|i| c[i] + extent[i]);
+    if positive == (n[axis] > 0.0) {
+        lo[axis] = p[axis];
+    } else {
+        hi[axis] = p[axis];
+    }
+    match solidcraft_kernel::box_solid(vec3(lo), vec3(hi)) {
+        Ok(tool) => Ok(Some(tool)),
+        // The primitive has stricter size limits than a general extrusion. Keep the existing
+        // path for those tools, without enlarging either constructor's accepted domain.
+        Err(solidcraft_kernel::KernelError::Invalid(_)) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
 /// The parts of `body` on either side of `plane` (only the non-empty ones): its intersections
-/// with two boxes, one on each side, whose faces in the plane are squares as wide as the body's
-/// bounding-box diagonal and that reach that far from it. SolidCraft's `split_by_plane` uses boxes
+/// with two boxes, one on each side. Exact coordinate-axis planes use the body's individual
+/// bounding-box dimensions; other planes keep square extrusions sized by the diagonal.
+/// SolidCraft's `split_by_plane` uses boxes
 /// several times the body's size, and its boolean then puts the cut up to a few micrometres off
 /// the plane (1.8 µm on a 140 mm body), off the faces it should meet (#384); boxes of the body's own
 /// size keep the cut on the plane.
@@ -212,7 +245,7 @@ impl Design {
 /// A boolean the kernel could only make by moving one body against the other (its last-resort
 /// tool nudge, micrometres and microradians) is refused: the cut would lie off the plane, next to
 /// the face it was meant to run along, and leave a cell bounded by slivers no mesher takes (#427).
-fn halves(body: &Shape, plane: &Plane) -> solidcraft_kernel::Result<Vec<solidcraft_kernel::Body>> {
+fn halves(body: &Shape, plane: &Plane, n: [f64; 3]) -> solidcraft_kernel::Result<Vec<solidcraft_kernel::Body>> {
     let bbox = solidcraft_kernel::measure(&body.body)?.bbox;
     let reach = bbox.diagonal().max(LINEAR_REACH);
     let c = plane.to_local(bbox.center());
@@ -227,7 +260,13 @@ fn halves(body: &Shape, plane: &Plane) -> solidcraft_kernel::Result<Vec<solidcra
     };
     let mut out = Vec::with_capacity(2);
     for (lo, hi) in [(0.0, reach), (-reach, 0.0)] {
-        let Some(side) = solidcraft_kernel::extrude(plane, std::slice::from_ref(&square), lo, hi)?.pop() else { continue };
+        let side = match axis_box(plane, n, &bbox, lo == 0.0)? {
+            Some(tool) => tool,
+            None => {
+                let Some(tool) = solidcraft_kernel::extrude(plane, std::slice::from_ref(&square), lo, hi)?.pop() else { continue };
+                tool
+            }
+        };
         let (cut, report) =
             solidcraft_kernel::capture_boolean_diagnostics(|| solidcraft_kernel::boolean(&body.body, &side, solidcraft_kernel::BoolOp::Intersect));
         if let Some(moved) = report.warning() {
@@ -280,7 +319,7 @@ enum Split {
 
 /// Cut one body.
 fn split(body: &Shape, plane: &Plane, n: [f64; 3], cut: &Cut) -> Result<Split> {
-    let sides = match guard("partition", || halves(body, plane)) {
+    let sides = match guard("partition", || halves(body, plane, n)) {
         Ok(p) if p.len() >= 2 => p,
         Ok(_) => return Ok(Split::Misses),
         Err(e) => return Ok(Split::Failed(e.to_string())),
@@ -534,12 +573,155 @@ mod tests {
         open_design(&sample::plate_design(&Plate::default()).unwrap()).unwrap()
     }
 
+    fn box_design() -> Design {
+        let mut shape = crate::block([0.0; 3], [40.0, 30.0, 10.0]).unwrap();
+        shape.faces = (0..6).map(|i| Face { name: format!("box:{i}"), exact: true, members: Vec::new() }).collect();
+        let bodies = vec![shape];
+        Design {
+            name: "Box".into(),
+            source: std::sync::Arc::new(bodies.clone()),
+            opened: std::sync::Arc::new(bodies.clone()),
+            bodies,
+            errors: Vec::new(),
+            cuts: Vec::new(),
+            history: None,
+            defeat: None,
+        }
+    }
+
     fn cut(name: &str, point: [f64; 3], normal: [f64; 3]) -> Cut {
         Cut { name: name.into(), point, normal, bodies: Vec::new() }
     }
 
     fn names(b: &Shape) -> Vec<&str> {
         b.faces().iter().map(|f| f.name.as_str()).collect()
+    }
+
+    /// Coordinate-axis cuts retain the whole volume, paired faces on the requested plane,
+    /// and the negative/positive cell names for either direction of the normal.
+    #[test]
+    fn coordinate_axis_tools_preserve_both_sides_and_face_names() {
+        let d = box_design();
+        let whole = d.bodies[0].measure().unwrap().volume;
+        let original: Vec<&str> = names(&d.bodies[0]).into_iter().map(base_name).collect();
+        for axis in 0..3 {
+            for sign in [-1.0, 1.0] {
+                let normal = std::array::from_fn(|i| if i == axis { sign } else { 0.0 });
+                let at = [13.0, 11.0, 4.0];
+                let p = d.partitioned(&[cut("Axis", at, normal)]).unwrap();
+                assert!(p.errors.is_empty(), "axis {axis}, sign {sign}: {:?}", p.errors);
+                assert_eq!(p.bodies.len(), 2);
+                let volume: f64 = p.bodies.iter().map(|b| b.measure().unwrap().volume).sum();
+                assert!((volume - whole).abs() < 1e-6 * whole, "axis {axis}: {volume} vs {whole}");
+                for b in &p.bodies {
+                    let negative = dot(sub(b.measure().unwrap().centroid, at), normal) < 0.0;
+                    let side = if negative { "a" } else { "b" };
+                    assert!(b.name.ends_with(&format!("/{side}")), "{}", b.name);
+                    let mut cut_faces = 0;
+                    for (face, surface) in b.faces().iter().zip(b.face_surfaces().unwrap()) {
+                        if face.name.starts_with("partition:") {
+                            assert!(face.name.starts_with(&format!("partition:Axis:{side}")), "{}", face.name);
+                            let Some(FaceSurface::Plane { normal: outward, point }) = surface else { panic!("nonplanar cut face") };
+                            assert!((point[axis] - at[axis]).abs() < 1e-9, "{point:?}");
+                            assert!((dot(outward, normal) - if negative { 1.0 } else { -1.0 }).abs() < 1e-12);
+                            cut_faces += 1;
+                        } else {
+                            assert!(original.contains(&base_name(&face.name)), "{}", face.name);
+                        }
+                        assert!(face.exact, "{}", face.name);
+                    }
+                    assert!(cut_faces > 0);
+                    let mut all = names(b);
+                    all.sort_unstable();
+                    let before = all.len();
+                    all.dedup();
+                    assert_eq!(before, all.len());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn oblique_planes_keep_the_generic_tool_even_extremely_near_an_axis() {
+        let d = box_design();
+        let whole = d.bodies[0].measure().unwrap().volume;
+        for normal in [[1.0, 1.0, 0.25], [1.0, 1e-12, 0.0]] {
+            let cut = cut("Oblique", [13.0, 11.0, 4.0], normal);
+            let (plane, n) = plane_of(&cut).unwrap();
+            // In the second case n[0] rounds to exactly 1. Testing only that component would
+            // incorrectly move the plane; the other nonzero component must exclude the box.
+            assert!(n[1] != 0.0);
+            assert!(axis_box(&plane, n, &solidcraft_kernel::measure(&d.bodies[0].body).unwrap().bbox, true).unwrap().is_none());
+            let p = d.partitioned(&[cut]).unwrap();
+            assert!(p.errors.is_empty(), "{normal:?}: {:?}", p.errors);
+            assert_eq!(p.bodies.len(), 2);
+            let volume: f64 = p.bodies.iter().map(|b| b.measure().unwrap().volume).sum();
+            assert!((volume - whole).abs() < 1e-6 * whole, "{volume} vs {whole}");
+        }
+    }
+
+    /// The issue's original SolidCraft primitive recipe, including its revolved relief groove.
+    /// Building it and cutting all three planes belongs to the heavy CAD regression suite.
+    #[cfg(feature = "scripts")]
+    #[test]
+    #[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+    fn a_revolved_groove_partitions_on_parallel_and_perpendicular_planes() {
+        let recipe = r#"{"commands":[
+            {"command":"solid.box","params":{"length":60,"width":30,"height":60,"corner":[-30,0,-30],"body_name":"Block"}},
+            {"command":"solid.cylinder","params":{"diameter":30,"height":7.8,"base":[0,-0.01,0],"axis":[0,1,0],"operation":"cut","targets":["Block"]}},
+            {"command":"solid.cylinder","params":{"diameter":14,"height":32,"base":[0,-1,0],"axis":[0,1,0],"operation":"cut","targets":["Block"]}},
+            {"command":"sketch.create","params":{"plane":"XY","offset":"0"}},
+            {"command":"sketch.line","params":{"points":[[16,7.5],[14.5,7.5],[14.5,9]],"infer":false}},
+            {"command":"sketch.arc.three_point","params":{"start":[14.5,9],"end":[16,7.5],"through":[17.060660,10.060660]}},
+            {"command":"sketch.finish","params":{}},
+            {"command":"solid.revolve","params":{"axis":"y","angle":"360 deg","direction":"symmetric","operation":"cut","targets":["Block"]}}
+        ]}"#;
+        let original = open_design(&crate::script_design(recipe).unwrap()).unwrap();
+        assert!(original.errors.is_empty(), "{:?}", original.errors);
+        for (scale, shift) in [(1.0, [0.0; 3]), (2.0, [120.0, -70.0, 45.0])] {
+            let mut d = original.clone();
+            for body in &mut d.bodies {
+                body.body = solidcraft_kernel::transform_matrix(
+                    &body.body,
+                    [[scale, 0.0, 0.0, 0.0], [0.0, scale, 0.0, 0.0], [0.0, 0.0, scale, 0.0], [shift[0], shift[1], shift[2], 1.0]],
+                )
+                .unwrap();
+            }
+            d.source = std::sync::Arc::new(d.bodies.clone());
+            let original_bounds = original.bodies[0].measure().unwrap();
+            let placed_bounds = d.bodies[0].measure().unwrap();
+            for (axis, offset) in shift.iter().enumerate() {
+                assert!((placed_bounds.bbox_min[axis] - (original_bounds.bbox_min[axis] * scale + offset)).abs() < 1e-6);
+                assert!((placed_bounds.bbox_max[axis] - (original_bounds.bbox_max[axis] * scale + offset)).abs() < 1e-6);
+            }
+            // measure() uses adaptive tessellations, not exact integrals. The unchanged
+            // perpendicular control already differs from the whole by 2.04 ppm. A 10 ppm
+            // measurement bound tests coverage without demanding excessive tessellations;
+            // the exact box control above retains its stricter 1 ppm bound.
+            let volume = |body: &Shape| body.measure().unwrap().volume;
+            let whole = volume(&d.bodies[0]);
+            for (point, normal) in [([0.3, 0.0, 0.0], [1.0, 0.0, 0.0]), ([0.0, 0.0, -10.0], [0.0, 0.0, 1.0]), ([0.0, 20.0, 0.0], [0.0, 1.0, 0.0])] {
+                let point = std::array::from_fn(|i| point[i] * scale + shift[i]);
+                let p = d.partitioned(&[cut("Groove", point, normal)]).unwrap();
+                assert!(p.errors.is_empty(), "scale {scale}, {point:?}: {:?}", p.errors);
+                assert_eq!(p.bodies.len(), 2);
+                let total: f64 = p.bodies.iter().map(volume).sum();
+                assert!((total - whole).abs() < 1e-5 * whole, "scale {scale}, {point:?}: {total} vs {whole}");
+                for b in &p.bodies {
+                    assert!(b.body.validity().is_empty(), "{}: {:?}", b.name, b.body.validity());
+                    let mut found = false;
+                    for (face, surface) in b.faces().iter().zip(b.face_surfaces().unwrap()) {
+                        if face.name.starts_with("partition:Groove:") {
+                            let Some(FaceSurface::Plane { point: on, .. }) = surface else { panic!("nonplanar cut face") };
+                            assert!(dot(sub(on, point), normal).abs() < 1e-9, "{point:?}: {on:?}");
+                            assert!(face.exact);
+                            found = true;
+                        }
+                    }
+                    assert!(found, "{} has no cut face", b.name);
+                }
+            }
+        }
     }
 
     #[test]
