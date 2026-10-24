@@ -198,6 +198,7 @@ fn services(inbox: Inbox, ctx: egui::Context) -> Services {
         prefs: Some(crate::usage::prefs_store()),
         // egui opens links itself in the browser.
         open_url: None,
+        ..Default::default()
     }
 }
 
