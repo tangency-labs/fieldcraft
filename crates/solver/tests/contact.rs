@@ -137,6 +137,42 @@ fn near(a: f64, b: f64) -> bool {
     (a - b).abs() < 1e-9
 }
 
+/// A flat contact whose secondary surface also contains the cube's uncontacted sides. Those
+/// sides must not tilt the normal used to report the pressure carried by the bottom face.
+#[test]
+fn uncontacted_corner_faces_do_not_tilt_reported_pressure() {
+    let mut b = Blocks::default();
+    let low = b.block(ElementKind::Hex8, [1, 1, 1], |p| p);
+    let upper = b.block(ElementKind::Hex8, [1, 1, 1], |p| [p[0], p[1], p[2] + 1.0]);
+    b.define(1000.0, 0.0, NonlinearStatic { nonlinear_geometry: false, initial_increment: 1.0, ..NonlinearStatic::default() });
+    b.face_set("main", &low, |p| near(p[2], 1.0));
+    b.face_set("secondary", &upper, |_| true);
+    b.pair("Interface", "main", "secondary");
+    for (name, nodes, values) in [
+        ("base", (1..=8).collect(), [Some(0.0), Some(0.0), Some(0.0), None, None, None]),
+        ("upper", (9..=16).collect(), [Some(0.0), Some(0.0), None, None, None, None]),
+        ("top", (13..=16).collect(), [None, None, Some(-0.01), None, None, None]),
+    ] {
+        b.model.add_set(name, Set { nodes, ..Set::default() }).unwrap();
+        b.model.add_boundary_condition(name, BoundaryCondition::Displacement { target: Target::Set(name.into()), values }).unwrap();
+        b.model.set_boundary_condition_active("Step", name, true).unwrap();
+    }
+    let r = solve_nonlinear(&b.model, Some("Step"), &Limits::default()).unwrap();
+    let contact = &r.contacts[0];
+    let normal = contact.force[2];
+    assert!(normal > 9.9 && normal <= 10.0, "physical compression force: {normal}");
+    for (label, pressure) in contact.nodes.iter().zip(&contact.pressure) {
+        if (9..=12).contains(label) {
+            // Uniform pressure on a unit-area interface equals its actual assembled force;
+            // this checks reporting independently of the unchanged augmentation stopping gap.
+            assert!((pressure - normal).abs() < 1e-9, "bottom node {label}: pressure {pressure}, physical force {normal}");
+        } else {
+            assert_eq!(*pressure, 0.0);
+        }
+    }
+    assert!((contact.normal_force - normal).abs() < 1e-10, "reported normal part must follow the contacted face");
+}
+
 fn report(r: &StaticResult) {
     let h = r.nonlinear.as_ref().unwrap();
     for inc in &h.increments {
@@ -919,11 +955,22 @@ fn a_plane_strain_ring_closes_on_itself_as_the_solid_ring_does() {
     // Each edge node closes where its face nodes do (two per edge node, at z = 0 and 0.2).
     assert_eq!(2 * c2.closed(), c3.closed());
     // The same motion: every node of the plane against the solid's node at z = 0.
+    let peak = c2.pressure.iter().copied().fold(0.0, f64::max);
+    assert!(peak > 0.0);
+    // Both independently solved models report the same contact, including where an end face
+    // meets an uncontacted outer or Z face. Compare fields, not a frozen value from either
+    // dimensional discretisation; their motions already agree to the tolerance below.
+    assert!((c2.normal_force - c3.normal_force).abs() < 1e-5 * c2.normal_force.abs());
+    let pressure =
+        |contact: &fieldcraft_solver::contact::ContactResult, node| contact.nodes.binary_search(&node).ok().map_or(0.0, |i| contact.pressure[i]);
     let mut checked = 0;
     for (l, x) in &b2.xyz {
         let Some((m, _)) = b3.xyz.iter().find(|(_, y)| (y[0] - x[0]).abs() < 1e-9 && (y[1] - x[1]).abs() < 1e-9 && y[2] == 0.0) else { continue };
         let (u, v) = (r2.displacement[r2.nodes.binary_search(l).unwrap()], r3.displacement[r3.nodes.binary_search(m).unwrap()]);
         assert!((u[0] - v[0]).abs() < 1e-5 && (u[1] - v[1]).abs() < 1e-5, "node {l}: {u:?} {v:?}");
+        for (solid, _) in b3.xyz.iter().filter(|(_, y)| (y[0] - x[0]).abs() < 1e-9 && (y[1] - x[1]).abs() < 1e-9) {
+            assert!((pressure(c2, *l) - pressure(c3, *solid)).abs() < 1e-5 * peak, "pressure at plane node {l}, solid node {solid}");
+        }
         checked += 1;
     }
     assert_eq!(checked, b2.xyz.len());

@@ -236,6 +236,10 @@ pub struct State {
     /// (its faces' area vectors summed).
     pub nodal_force: Vec<Vec3>,
     pub normal: Vec<Vec3>,
+    /// Reporting only: the unit normal of the overlapping face pairs, weighted by their
+    /// nodal mortar supports. Uncontacted faces do not contribute. The friction law keeps
+    /// its existing `normal`; changing a report must not change the assembled problem.
+    pub report_normal: Vec<Vec3>,
     /// Friction: the tangential traction on each secondary node (on it, against its slip), its
     /// slip over the increment (relative to the main surface, normalised like the gap) and
     /// whether it slips; empty without friction.
@@ -490,6 +494,34 @@ struct Found {
     main: usize,
     gap: [f64; 4],
     support: [f64; 4],
+    /// The secondary projection normal actually used by this overlap's integrals.
+    normal: Vec3,
+}
+
+/// A reporting direction from only the overlaps carrying a node's contact. Opposing supports
+/// can cancel; a zero sum has no direction, so it reports no normal component instead of
+/// inventing one. This does not participate in the contact or friction law.
+fn report_normals(pairs: &[Vec<Found>], corner_index: &[Vec<usize>], support: &[f64]) -> Vec<Vec3> {
+    let mut normals = vec![[0.0; 3]; support.len()];
+    for (found, corners) in pairs.iter().zip(corner_index) {
+        for pair in found {
+            for (a, i) in corners.iter().enumerate() {
+                let (Some(normal), Some(&total), Some(&area)) = (normals.get_mut(*i), support.get(*i), pair.support.get(a)) else { continue };
+                if total > 0.0 {
+                    // Scale before adding so large finite overlap areas cannot overflow
+                    // the normal's length. This is a direction, not another area measure.
+                    let weight = area / total;
+                    for (component, direction) in normal.iter_mut().zip(pair.normal) {
+                        *component += weight * direction;
+                    }
+                }
+            }
+        }
+    }
+    for normal in &mut normals {
+        *normal = unit(*normal).unwrap_or_default();
+    }
+    normals
 }
 
 /// The weighted gaps g̃_a of one face pair (corners `xs`, `xm`) over any scalar.
@@ -690,7 +722,7 @@ impl Interface {
                         }
                         dot(v, p.normal)
                     });
-                    Found { main: p.main, gap, support: p.support }
+                    Found { main: p.main, gap, support: p.support, normal: p.normal }
                 })
                 .collect()
         }))
@@ -745,9 +777,11 @@ impl Interface {
                 if dot(ns, *nm) >= -FACING * norm(ns) * norm(*nm) {
                     continue;
                 }
-                let (mut gap, mut support, mut deepest, mut any) = ([0.0; 4], [0.0; 4], f64::INFINITY, false);
+                let (mut gap, mut support, mut normal, mut deepest, mut any) = ([0.0; 4], [0.0; 4], [0.0; 3], f64::INFINITY, false);
                 overlap(self.extent, &xs, xm, |p| {
                     any = true;
+                    // The projection normal is constant over a face-pair overlap.
+                    normal = p.normal;
                     let g = p.gap();
                     deepest = deepest.min(g);
                     for a in 0..4 {
@@ -756,7 +790,7 @@ impl Interface {
                     }
                 });
                 if any && deepest >= -m.depth && gap.iter().chain(&support).all(|v| v.is_finite()) {
-                    found.push(Found { main: c, gap, support });
+                    found.push(Found { main: c, gap, support, normal });
                 }
             }
             keep(&xs, &main_x, found)
@@ -826,6 +860,7 @@ impl Interface {
         let multipliers = committed.multipliers.as_slice();
         let pairs = self.pairs(mesh, u)?;
         let (weighted, support, corner_index) = self.sums(&pairs);
+        let report_normal = report_normals(&pairs, &corner_index, &support);
         let n = self.nodes.len();
         let mut state = State {
             gap: vec![None; n],
@@ -833,6 +868,7 @@ impl Interface {
             support,
             nodal_force: vec![[0.0; 3]; n],
             normal: vec![[0.0; 3]; n],
+            report_normal,
             traction: Vec::new(),
             slip: Vec::new(),
             slipping: Vec::new(),
@@ -1149,14 +1185,14 @@ impl Interface {
         let penetration = state.gap.iter().zip(&status).filter(|(_, s)| s.is_closed()).filter_map(|(g, _)| *g).fold(0.0f64, |m, g| m.max(-g));
         // The force on the secondary nodes pushes them back along −n; its tangential part is the
         // friction's.
-        let normal: Vec<f64> = state.nodal_force.iter().zip(&state.normal).map(|(f, n)| -dot(*f, *n)).collect();
+        let normal: Vec<f64> = state.nodal_force.iter().zip(&state.report_normal).map(|(f, n)| -dot(*f, *n)).collect();
         let per_area = |v: f64, a: f64| if a > 0.0 { v / a } else { 0.0 };
         let pressure = normal.iter().zip(&state.support).map(|(f, a)| per_area(*f, *a)).collect();
         let shear = if self.friction.is_some() {
             state
                 .nodal_force
                 .iter()
-                .zip(&state.normal)
+                .zip(&state.report_normal)
                 .zip(&state.support)
                 .map(|((f, n), a)| {
                     let along = dot(*f, *n);
@@ -1197,3 +1233,6 @@ impl Interface {
         worst
     }
 }
+
+#[cfg(test)]
+mod report_tests;
