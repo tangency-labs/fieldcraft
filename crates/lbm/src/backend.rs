@@ -50,6 +50,11 @@ pub trait Backend {
     fn eddy_viscosity_ratio(&self) -> f64 {
         0.0
     }
+    /// With Van Driest's damping: the largest y⁺ of a wall cell's centre in the last step. A
+    /// backend without damping refuses a flow with it when it is made, so the default is none.
+    fn wall_y_plus(&self) -> Option<f64> {
+        None
+    }
     fn groups(&self) -> &[Group];
     fn fluid_cells(&self) -> usize;
     fn is_fluid(&self, cell: usize) -> bool;

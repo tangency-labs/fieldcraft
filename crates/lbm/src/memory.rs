@@ -38,6 +38,9 @@ const BUOYANCY: u64 = 3 * F64;
 /// Per cell with heat and a turbulence model: the eddy viscosity the temperature lattice's
 /// turbulent diffusivity comes from.
 const EDDY_VISCOSITY: u64 = F64;
+/// Per cell with Van Driest's damping: its wall distance and the index of its wall cell (the
+/// wall cells' own records are on the surface and not counted).
+const WALL_DISTANCE: u64 = F64 + 4;
 /// Per cell with fans or porous zones, and with conducting obstacles: an index.
 const INDEX: u64 = 4;
 /// Links per cell of a box face: the directions that cross it (5 of D3Q19).
@@ -98,8 +101,9 @@ struct Shape {
     frames: u64,
     heat: bool,
     buoyancy: bool,
-    /// A turbulence model (an eddy viscosity).
+    /// A turbulence model (an eddy viscosity), and its wall damping.
     turbulence: bool,
+    damping: bool,
     zones: bool,
     conducting: bool,
     open_faces: [bool; 6],
@@ -107,8 +111,8 @@ struct Shape {
 
 impl Shape {
     /// The shape of a run over `domain` keeping `frames` frames after the initial one, with or
-    /// without a turbulence model.
-    fn new(domain: &FluidDomain, frames: u64, turbulence: bool) -> Result<Shape> {
+    /// without a turbulence model and its wall damping.
+    fn new(domain: &FluidDomain, frames: u64, turbulence: bool, damping: bool) -> Result<Shape> {
         let thermal = domain.thermal.as_ref();
         Ok(Shape {
             cells: domain.cells()?,
@@ -117,6 +121,7 @@ impl Shape {
             // The setup's buoyancy is −β g: nonzero with both.
             buoyancy: thermal.is_some_and(|t| t.gravity != [0.0; 3] && t.expansion.is_some_and(|b| b != 0.0)),
             turbulence,
+            damping,
             zones: !domain.fans.is_empty() || !domain.porous.is_empty(),
             conducting: thermal.is_some_and(|t| !t.solids.is_empty()),
             open_faces: fieldcraft_model::BoxFace::ALL.map(|f| is_open(domain.faces.get(f))),
@@ -127,7 +132,7 @@ impl Shape {
 impl Memory {
     /// The memory of the run `setup` prepares on `backend`.
     pub fn of(setup: &Setup, backend: Choice) -> Result<Memory> {
-        let shape = Shape::new(&setup.domain, u64::from(setup.frames).min(setup.steps), setup.smagorinsky > 0.0)?;
+        let shape = Shape::new(&setup.domain, u64::from(setup.frames).min(setup.steps), setup.smagorinsky > 0.0, setup.van_driest.is_some())?;
         Ok(Memory::from_shape(&shape, backend))
     }
 
@@ -139,7 +144,8 @@ impl Memory {
         let Procedure::Fluid { frames, turbulence, .. } = &s.procedure else {
             return Err(Error::Invalid(format!("step `{}` is not a fluid step", s.name)));
         };
-        Ok(Memory::from_shape(&Shape::new(domain, u64::from(*frames), turbulence.is_some())?, backend))
+        let damping = matches!(turbulence, Some(fieldcraft_model::Turbulence::Smagorinsky { van_driest: Some(_), .. }));
+        Ok(Memory::from_shape(&Shape::new(domain, u64::from(*frames), turbulence.is_some(), damping)?, backend))
     }
 
     fn from_shape(s: &Shape, backend: Choice) -> Memory {
@@ -169,6 +175,9 @@ impl Memory {
         }
         if s.heat && s.turbulence {
             flow += EDDY_VISCOSITY;
+        }
+        if s.damping {
+            flow += WALL_DISTANCE;
         }
         if s.zones {
             flow += INDEX;

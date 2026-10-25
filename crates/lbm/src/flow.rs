@@ -101,6 +101,7 @@ use crate::lattice::{C, Q, W, c, equilibrium, moving_wall, opposite};
 use crate::outlet::{Action, Outlets, Populations};
 use crate::setup::{MAX_LATTICE_SPEED, Obstacle, Setup, ZoneKind, ZoneSetup};
 use crate::voxel::{Grid, TriangleTree, voxelise};
+use crate::wall::WallDamping;
 use crate::{Error, Result};
 
 /// Where a population of a cell next to a wall or box face comes from (every other population
@@ -321,6 +322,8 @@ pub struct Flow {
     cell_nu_t: Vec<f64>,
     /// The largest eddy viscosity over the fluid's own of the last collision (0 without one).
     eddy_ratio: f64,
+    /// With Van Driest's damping: the wall distances and friction velocities.
+    damping: Option<WallDamping>,
     acceleration: [f64; 3],
     /// The momentum transferred to each group in the last step (lattice units).
     forces: Vec<[f64; 3]>,
@@ -385,7 +388,7 @@ fn cell_blocks(data: &mut [f64], stride: usize, n: usize, block: usize) -> Vec<V
 }
 
 /// A vector allocated without aborting when memory runs out.
-fn filled<T: Clone>(len: usize, value: T, what: &str) -> Result<Vec<T>> {
+pub(crate) fn filled<T: Clone>(len: usize, value: T, what: &str) -> Result<Vec<T>> {
     let mut v = Vec::new();
     v.try_reserve_exact(len).map_err(|_| Error::Limit(format!("not enough memory for the {what} ({len} entries)")))?;
     v.resize(len, value);
@@ -417,6 +420,8 @@ impl Flow {
         // Force groups: the six box faces, then every face of every obstacle.
         let mut groups: Vec<Group> = BoxFace::ALL.iter().map(|f| Group { name: f.name().to_string(), body: None }).collect();
         let mut base = Vec::with_capacity(setup.obstacles.len());
+        // Each obstacle face group's wall velocity, for Van Driest's damping (lattice units).
+        let mut obstacle_walls: Vec<Option<[f64; 3]>> = Vec::new();
         for (k, faces) in setup.obstacles.iter().enumerate() {
             let o = obstacles.get(faces.index).ok_or_else(|| Error::NotFound(format!("obstacle {}", faces.index)))?;
             let mut inside = filled(n, false, "obstacle cells")?;
@@ -432,6 +437,7 @@ impl Flow {
             trees.push((TriangleTree::new(&o.surface), o.surface.tri_face()));
             base.push(groups.len() as u32);
             groups.extend(faces.names.iter().map(|name| Group { name: name.clone(), body: Some(o.body.clone()) }));
+            obstacle_walls.extend((0..faces.names.len()).map(|t| Some(setup.to_lattice(faces.velocities.get(t).copied().unwrap_or([0.0; 3])))));
         }
 
         // Conducting cells: per grid cell its index among them (empty without conducting solids),
@@ -744,6 +750,15 @@ impl Flow {
         // The links and open cells grew by pushes: their spare capacity (up to as much again)
         // goes back before the steps.
         links.shrink_to_fit();
+
+        // Van Driest's damping: each no-slip group's wall velocity, in group order.
+        let damping = match setup.van_driest {
+            Some(a_plus) => {
+                let walls: Vec<Option<[f64; 3]>> = BoxFace::ALL.iter().map(|f| wall_velocity(*f)).chain(obstacle_walls).collect();
+                Some(WallDamping::new(&grid, &fluid, &links, &walls, a_plus, (setup.tau_plus - 0.5) / 3.0)?)
+            }
+            None => None,
+        };
         open.shrink_to_fit();
         let mut flow = Flow {
             grid,
@@ -761,6 +776,7 @@ impl Flow {
             turbulent_prandtl: setup.turbulent_prandtl,
             cell_nu_t: if setup.smagorinsky > 0.0 && setup.thermal.is_some() { filled(n, 0.0, "eddy viscosities")? } else { Vec::new() },
             eddy_ratio: 0.0,
+            damping,
             acceleration: setup.acceleration,
             forces: vec![[0.0; 3]; groups.len()],
             groups,
@@ -1097,6 +1113,7 @@ impl Flow {
         self.targets()?;
         self.refresh_buoyancy();
         self.refresh_fans();
+        self.refresh_damping();
         let max_u2 = self.collide();
         if !(max_u2 <= MAX_LATTICE_SPEED * MAX_LATTICE_SPEED) {
             return Err(Error::Unstable(format!(
@@ -1373,6 +1390,30 @@ impl Flow {
         finite
     }
 
+    /// With Van Driest's damping: each wall cell's friction velocity from the flow before the
+    /// collision.
+    fn refresh_damping(&mut self) {
+        let Some(mut damping) = self.damping.take() else { return };
+        damping.refresh(|cell| self.moments(cell).map_or([0.0; 3], |m| m.1));
+        self.damping = Some(damping);
+    }
+
+    /// Whether Van Driest's damping scales the eddy viscosity near walls.
+    pub fn van_driest(&self) -> bool {
+        self.damping.is_some()
+    }
+
+    /// With Van Driest's damping: the largest y⁺ of a wall cell's centre in the last step.
+    pub fn wall_y_plus(&self) -> Option<f64> {
+        self.damping.as_ref().map(WallDamping::largest_wall_y_plus)
+    }
+
+    /// With Van Driest's damping: cell `cell`'s distance to its wall (lattice units), when a
+    /// wall reaches it.
+    pub fn wall_distance(&self, cell: usize) -> Option<f64> {
+        self.damping.as_ref().and_then(|d| d.distance(cell))
+    }
+
     /// The collision with Guo forcing (two relaxation times, or recursive regularised), in place,
     /// by blocks of [`block_cells`] cells in parallel. Returns the largest squared lattice speed, or
     /// NaN when a density is not positive.
@@ -1383,6 +1424,7 @@ impl Flow {
         let (wp, wm) = (self.omega_plus, self.omega_minus);
         let (sp, sm) = (1.0 - 0.5 * wp, 1.0 - 0.5 * wm);
         let smagorinsky = self.smagorinsky;
+        let damping = self.damping.as_ref();
         // Λ, which the two relaxation times keep when the eddy viscosity changes τ⁺.
         let magic = (1.0 / wp - 0.5) * (1.0 / wm - 0.5);
         let constant = self.acceleration;
@@ -1452,8 +1494,10 @@ impl Flow {
                         *slot = nu_t;
                     }
                 };
+                // Smagorinsky's constant of the cell, damped near walls.
+                let cell_c = damping.map_or(smagorinsky, |d| smagorinsky * d.factor(b * block + i));
                 if regularized {
-                    let w = crate::regularized::collide(&fq, rho, u, force, wp, smagorinsky, forced, &mut post);
+                    let w = crate::regularized::collide(&fq, rho, u, force, wp, cell_c, forced, &mut post);
                     if smagorinsky > 0.0 {
                         eddy(w);
                     }
@@ -1465,7 +1509,7 @@ impl Flow {
                 // The cell's own rates where the eddy viscosity raises τ⁺ (τ⁻ follows, keeping Λ).
                 let (wp, wm, sp, sm) = if smagorinsky > 0.0 {
                     let p = crate::turbulence::flux(&fq, rho, u, force, forced);
-                    let wp = crate::turbulence::omega(&p, rho, wp, smagorinsky);
+                    let wp = crate::turbulence::omega(&p, rho, wp, cell_c);
                     eddy(wp);
                     let wm = 1.0 / (0.5 + magic / (1.0 / wp - 0.5));
                     (wp, wm, 1.0 - 0.5 * wp, 1.0 - 0.5 * wm)
@@ -1814,6 +1858,10 @@ impl crate::backend::Backend for Flow {
 
     fn eddy_viscosity_ratio(&self) -> f64 {
         Flow::eddy_viscosity_ratio(self)
+    }
+
+    fn wall_y_plus(&self) -> Option<f64> {
+        Flow::wall_y_plus(self)
     }
 
     fn empty_obstacles(&self) -> &[String] {

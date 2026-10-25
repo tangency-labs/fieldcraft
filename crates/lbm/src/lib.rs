@@ -67,6 +67,7 @@ pub mod solve;
 pub mod steady;
 pub mod turbulence;
 pub mod voxel;
+pub mod wall;
 
 pub use backend::{Backend, Choice, Fields, device_available, register_backend};
 pub use flow::{Flow, Group, Link, OpenCell, Rule, Target, ThermalState, ZoneSample};

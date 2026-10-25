@@ -209,7 +209,7 @@ fn smagorinsky_cost() {
     for collision in COLLISIONS {
         for heat in [false, true] {
             let mut rates = Vec::new();
-            for turbulence in [None, Some(fieldcraft_model::Turbulence::Smagorinsky { constant: 0.17, prandtl: 0.9 })] {
+            for turbulence in [None, Some(fieldcraft_model::Turbulence::Smagorinsky { constant: 0.17, prandtl: 0.9, van_driest: None })] {
                 let side = l as f64;
                 let mut d = domain([0.0; 3], [side; 3], 1.0);
                 for f in BoxFace::ALL {

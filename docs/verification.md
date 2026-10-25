@@ -131,11 +131,30 @@ half on 14 cores): turbulent, and within 3 % of the 12-cell means above. The flo
 its means move with the platform (9.90 and 12.95 on macOS aarch64); the band is three times that
 scatter.
 
+**With Van Driest damping** (`van_driest`: 26, literature C5.3; probes, not validation). At
+Re_τ 180 a grid of N cells per δ has Δy⁺ = 180 / N, so none of these grids resolves the wall:
+damping is meant for a wall resolved down to y⁺ ≈ 1–2 at the first cell (about 90 cells per δ).
+The probes are short (5 δ/u_τ of start-up discarded, 1 averaged) and the bulk speed was still
+falling at their end. Recorded on Linux aarch64 (NVIDIA GB10, 20 cores, shared):
+
+| cells per δ | Δy⁺ | damped, short run: U_b/u_τ | U_c/u_τ | undamped, full protocol: U_b/u_τ |
+|---|---|---|---|---|
+| 12 | 15.0 | unstable at 2.2 δ/u_τ | — | 9.95 |
+| 18 | 10.0 | 12.42 (−20.9 %) | 15.63 (−14.6 %) | 11.55 |
+| 24 | 7.5 | 14.00 (−10.8 %) | 17.26 (−5.7 %) | 12.81 |
+
+All three are **not wall-resolving**. On the 12-cell grid the damping takes away the eddy
+viscosity that held τ₀ = 0.5013 stable at a wall the grid cannot resolve; the run now says so
+(the first cells' y⁺ in the instability's message, and a warning past y⁺ 5 when a run ends).
+A wall-resolving study in a minimal flow unit (πδ × 2δ × 0.3πδ at 90 cells per δ, 4.3 M cells,
+about 6 × 10¹⁰ cell updates per δ/u_τ) would take a day or more on the CPU and is not run.
+
 What it does not establish yet:
 - **No converged reference.** The bulk speed approaches MKM's monotonically as the first cell
   moves into the viscous sublayer, but no grid is within its tolerance of it: without wall
   damping the eddy viscosity is too large in the first cells off the wall, so the friction is too
-  high. Van Driest damping or a wall model is the next step (literature C5.1, "Limits").
+  high, and the grids above are too coarse for damping to model the wall. A wall model
+  (literature C5.2) or a wall-resolving grid is the next step.
 - **The finest grid had not settled.** At 32 cells per δ the bulk speed was still falling slowly
   at the end of the averaging, so its mean is an upper bound of that run's, and the observed
   trend is not a convergence order.

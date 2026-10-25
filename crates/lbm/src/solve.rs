@@ -338,6 +338,13 @@ pub fn run(setup: &Setup, flow: &mut dyn Backend, limits: &Limits) -> Result<Flu
                 sound = false;
                 break;
             }
+            // Damping takes the eddy viscosity away at a wall the grid may not resolve.
+            (Err(Error::Unstable(e)), None) => {
+                return Err(Error::Unstable(match flow.wall_y_plus().and_then(crate::wall::unresolved_wall) {
+                    Some(wall) => format!("{e}; {wall}"),
+                    None => e,
+                }));
+            }
             (Err(e), _) => return Err(e),
         }
         k = next;
@@ -410,6 +417,7 @@ pub fn run(setup: &Setup, flow: &mut dyn Backend, limits: &Limits) -> Result<Flu
             100.0 * spread
         ));
     }
+    warnings.extend(flow.wall_y_plus().and_then(crate::wall::unresolved_wall));
     for body in flow.empty_obstacles() {
         warnings.push(format!("obstacle `{body}` covers no cell centre: it is smaller than the spacing or outside the box"));
     }

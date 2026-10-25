@@ -16,7 +16,7 @@ const PERIODIC: FaceCondition = FaceCondition::Periodic {};
 fn turbulent(end_time: f64, time_step: f64, collision: fieldcraft_model::Collision, c: f64) -> Procedure {
     let mut p = collide(end_time, time_step, None, collision);
     if let Procedure::Fluid { turbulence, .. } = &mut p {
-        *turbulence = Some(Turbulence::Smagorinsky { constant: c, prandtl: 0.9 });
+        *turbulence = Some(Turbulence::Smagorinsky { constant: c, prandtl: 0.9, van_driest: None });
     }
     p
 }
@@ -82,6 +82,151 @@ fn a_smagorinsky_constant_out_of_range_is_refused() {
     assert_eq!((setup.smagorinsky, Flow::smagorinsky(&flow)), (0.0, 0.0));
 }
 
+/// [`turbulent`] with Van Driest's damping constant `a_plus`.
+fn damped(end_time: f64, time_step: f64, collision: Collision, c: f64, a_plus: f64) -> Procedure {
+    let mut p = turbulent(end_time, time_step, collision, c);
+    if let Procedure::Fluid { turbulence: Some(Turbulence::Smagorinsky { van_driest, .. }), .. } = &mut p {
+        *van_driest = Some(a_plus);
+    }
+    p
+}
+
+/// Couette flow (as above) at h⁺ = h u_τ / ν = 10, all of it inside the viscous sublayer: Van
+/// Driest's factor 1 − exp(−y⁺/A⁺) scales the length scale, so the largest eddy viscosity is the
+/// undamped (C Δx)² γ times the factor's square at the cell farthest from both walls (y⁺ ≈ 4.7,
+/// the factor 0.165). The friction velocity comes from Spalding's law at each wall cell, relative
+/// to its wall, so the moving wall is damped like the still one.
+#[test]
+fn van_driest_damping_scales_couette_flow_s_eddy_viscosity_by_the_wall_factor() {
+    let (h, nu, rho, u_wall, n, c, a_plus) = (1.0, 1e-3, 2.0, 0.1, 16, 0.4, 26.0);
+    let dx = h / n as f64;
+    for collision in COLLISIONS {
+        let mut d = domain([0.0; 3], [dx, h, dx], dx);
+        for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+            *f = PERIODIC;
+        }
+        d.faces.y_max = FaceCondition::MovingWall { velocity: [u_wall, 0.0, 0.0] };
+        let m = model(rho, nu, d, damped(5.0 * h * h / nu, dx, collision, c, a_plus));
+        let (setup, mut flow) = prepare(&m, &[]);
+        assert_eq!(setup.van_driest, Some(a_plus));
+        for j in 0..n {
+            let want = (j as f64 + 0.5).min(n as f64 - j as f64 - 0.5);
+            assert_eq!(flow.wall_distance(j), Some(want), "cell {j}");
+        }
+        run_all(&setup, &mut flow);
+        let gamma = u_wall / h;
+        let undamped = (c * dx) * (c * dx) * gamma / nu;
+        let u_tau = (nu * gamma).sqrt();
+        let y_far = (n / 2) as f64 - 0.5;
+        let factor = 1.0 - (-y_far * dx * u_tau / nu / a_plus).exp();
+        let want = undamped * factor * factor;
+        let ratio = flow.eddy_viscosity_ratio();
+        let g = |name: &str| flow.groups().iter().position(|g| g.name == name).unwrap();
+        let fs = setup.force_scale();
+        let (bottom, top) = (flow.forces()[g("y_min")][0] * fs, flow.forces()[g("y_max")][0] * fs);
+        let laminar = rho * nu * gamma * dx * dx;
+        println!(
+            "{} Couette with C = {c}, A⁺ = {a_plus}: largest ν_t/ν {ratio:.5} vs {want:.5} (undamped {undamped:.5}); wall shear {bottom:.6e} and {top:.6e} (laminar {laminar:.6e})",
+            collision.name()
+        );
+        // The two-relaxation-time cells next to the walls read a little more flux (see above).
+        let within = if collision == Collision::Regularized { 0.02 } else { 0.2 };
+        assert!((ratio - want).abs() < within * want, "{}: ν_t/ν {ratio} vs {want}", collision.name());
+        // The first cell's y⁺, half a cell off the wall: ½ Δx u_τ / ν, inside the sublayer.
+        let y1 = flow.wall_y_plus().unwrap();
+        assert!((y1 / (0.5 * dx * u_tau / nu) - 1.0).abs() < 0.01, "first-cell y⁺ {y1}");
+        // Damped to under a thirtieth, the wall shear is the laminar one to within the remainder.
+        assert!(((bottom - laminar) / laminar).abs() < 2e-3 && ((top + laminar) / laminar).abs() < 2e-3, "{bottom} {top}");
+    }
+}
+
+#[test]
+fn a_van_driest_constant_out_of_range_is_refused() {
+    for a in [0.0, -26.0, 0.5, 101.0, f64::NAN, f64::INFINITY] {
+        let m = model(1.0, 0.1, domain([0.0; 3], [4.0, 2.0, 2.0], 1.0), damped(10.0, 1.0, Collision::Trt, 0.1, a));
+        let r = Setup::new(&m, None, &[], &Limits::default());
+        assert!(matches!(r, Err(Error::Invalid(ref e)) if e.contains("Van Driest")), "A⁺ = {a}: {r:?}");
+    }
+    // Without damping there are no wall distances.
+    let m = model(1.0, 0.1, domain([0.0; 3], [4.0, 2.0, 2.0], 1.0), turbulent(10.0, 1.0, Collision::Trt, 0.1));
+    let (setup, flow) = prepare(&m, &[]);
+    assert_eq!((setup.van_driest, flow.wall_distance(0)), (None, None));
+}
+
+/// The damped closure on the cavity of [`cavity_failure`] (Re 5000, 300 steps): the same result
+/// bit for bit on one and on several threads (each wall cell's friction velocity is its own,
+/// and the wall distances are spread in cell order), and a different one from the undamped
+/// closure.
+#[test]
+fn damped_results_are_bit_for_bit_the_same_on_one_and_many_threads() {
+    let l = 48.0;
+    let mut d = domain([0.0; 3], [l, l, 1.0], 1.0);
+    d.faces.y_max = FaceCondition::MovingWall { velocity: [0.1, 0.0, 0.0] };
+    d.faces.z_min = PERIODIC;
+    d.faces.z_max = PERIODIC;
+    let m = model(1.0, 0.1 * l / 5000.0, d.clone(), damped(300.0, 1.0, Collision::Regularized, 0.17, 26.0));
+    let solve = |m: &fieldcraft_model::Model, threads: usize| {
+        fieldcraft_parallel::with_threads(threads, || fieldcraft_lbm::solve_fluid(m, None, &[], &Limits::default()).unwrap())
+    };
+    let one = solve(&m, 1);
+    assert_eq!(one, solve(&m, 7));
+    assert_eq!(one, solve(&m, 3));
+    let undamped = turbulent(300.0, 1.0, Collision::Regularized, 0.17);
+    assert_ne!(one.frames, solve(&model(1.0, 0.1 * l / 5000.0, d, undamped), 1).frames);
+}
+
+/// Damping on a grid that does not resolve the wall (Couette flow, 4 cells across, the first
+/// cell at y⁺ ≈ 12) is warned about; the same grid undamped, or a resolved one, is not.
+#[test]
+fn damping_on_a_wall_the_grid_does_not_resolve_is_warned_about() {
+    let solve = |n: usize, a_plus: Option<f64>| {
+        let (h, nu, u_wall) = (1.0, 1e-5, 0.1);
+        let dx = h / n as f64;
+        let mut d = domain([0.0; 3], [dx, h, dx], dx);
+        for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+            *f = PERIODIC;
+        }
+        d.faces.y_max = FaceCondition::MovingWall { velocity: [u_wall, 0.0, 0.0] };
+        let p = match a_plus {
+            Some(a) => damped(200.0 * dx, dx, Collision::Regularized, 0.1, a),
+            None => turbulent(200.0 * dx, dx, Collision::Regularized, 0.1),
+        };
+        fieldcraft_lbm::solve_fluid(&model(1.0, nu, d, p), None, &[], &Limits::default()).unwrap().warnings
+    };
+    let coarse = solve(4, Some(26.0));
+    println!("{coarse:?}");
+    assert!(coarse.iter().any(|w| w.contains("y⁺") && w.contains("does not resolve the wall")), "{coarse:?}");
+    assert!(!solve(4, None).iter().any(|w| w.contains("y⁺")));
+}
+
+/// The wall distance in a pipe of radius 1 (a tube obstacle, 8 cells per radius, staircase wall):
+/// every fluid cell's distance to its nearest wall point is R − r to within the staircase, the
+/// wall points lying halfway along the links that cross it.
+#[test]
+fn wall_distances_in_a_pipe_follow_its_radius() {
+    let (r, k) = (1.0, 8);
+    let dx = r / k as f64;
+    let half = r + 2.0 * dx;
+    let mut d = domain([0.0, -half, -half], [4.0 * dx, half, half], dx);
+    d.faces.x_min = PERIODIC;
+    d.faces.x_max = PERIODIC;
+    d.obstacles = vec!["Tube".into()];
+    let tube = obstacle("Tube", tube(-1.0, 4.0 * dx + 1.0, [0.0, 0.0], r, 3.0 * half, 512), &["inner", "outer", "start", "end"]);
+    let m = model(1.0, 0.1, d, damped(1.0, dx * dx, Collision::Regularized, 0.1, 26.0));
+    let (_, flow) = prepare(&m, std::slice::from_ref(&tube));
+    let grid = *flow.grid();
+    let (mut worst, mut cells) = (0.0f64, 0);
+    for cell in (0..grid.len()).filter(|c| flow.is_fluid(*c)) {
+        let [_, y, z] = grid.centre(cell);
+        let want = (r - (y * y + z * z).sqrt()) / dx;
+        let got = flow.wall_distance(cell).unwrap();
+        worst = worst.max((got - want).abs());
+        cells += 1;
+    }
+    println!("pipe, {k} cells per radius: {cells} fluid cells, wall distance within {worst:.3} cells of R − r");
+    assert!(cells > 0 && worst < 0.75, "{worst}");
+}
+
 /// Heated Couette flow: a flux q into the still wall and the moving wall held at a temperature.
 /// The shear and so the eddy viscosity are the same everywhere, so the turbulent diffusivity
 /// α_t = ν_t / Pr_t is too, and the steady drop over the gap is q h / (ρ c (α + α_t)).
@@ -101,7 +246,7 @@ fn heated_couette_flow_conducts_with_the_turbulent_diffusivity() {
         d.thermal = Some(t);
         let mut p = collide(6.0 * h * h / alpha, dx, None, collision);
         if let Procedure::Fluid { turbulence, .. } = &mut p {
-            *turbulence = Some(Turbulence::Smagorinsky { constant: c, prandtl });
+            *turbulence = Some(Turbulence::Smagorinsky { constant: c, prandtl, van_driest: None });
         }
         let m = hot_model(rho, nu, alpha, d, p);
         let setup = Setup::new(&m, None, &[], &Limits::default()).unwrap();
@@ -135,7 +280,7 @@ fn cavity_failure(re: f64, steps_run: u64, c: Option<f64>) -> Result<Option<u64>
     d.faces.z_max = PERIODIC;
     let mut p = collide(steps_run as f64, 1.0, None, Collision::Regularized);
     if let (Procedure::Fluid { turbulence, .. }, Some(c)) = (&mut p, c) {
-        *turbulence = Some(Turbulence::Smagorinsky { constant: c, prandtl: 0.9 });
+        *turbulence = Some(Turbulence::Smagorinsky { constant: c, prandtl: 0.9, van_driest: None });
     }
     let m = model(1.0, 0.1 * l / re, d, p);
     let setup = Setup::new(&m, None, &[], &Limits::default())?;
@@ -175,7 +320,7 @@ fn smagorinsky_poiseuille(n: usize, c: f64, collision: Collision) -> f64 {
     d.acceleration = [a, 0.0, 0.0];
     let mut p = collide(6.0 * h * h / nu, dx * dx, Some(3.0 / 16.0), collision);
     if let Procedure::Fluid { turbulence, .. } = &mut p {
-        *turbulence = Some(Turbulence::Smagorinsky { constant: c, prandtl: 0.9 });
+        *turbulence = Some(Turbulence::Smagorinsky { constant: c, prandtl: 0.9, van_driest: None });
     }
     let (setup, mut flow) = prepare(&model(1.0, nu, d, p), &[]);
     run_all(&setup, &mut flow);
@@ -220,7 +365,7 @@ fn smagorinsky_taylor_green(n: usize, c: f64) -> f64 {
     let half_life = std::f64::consts::LN_2 / (2.0 * nu);
     let mut p = collide(half_life, dt, None, Collision::Regularized);
     if let Procedure::Fluid { turbulence, .. } = &mut p {
-        *turbulence = Some(Turbulence::Smagorinsky { constant: c, prandtl: 0.9 });
+        *turbulence = Some(Turbulence::Smagorinsky { constant: c, prandtl: 0.9, van_driest: None });
     }
     let (setup, mut flow) = prepare(&model(1.0, nu, d, p), &[]);
     let grid = *flow.grid();
@@ -280,7 +425,7 @@ fn channel(n: usize, c: f64, discard: f64, average: f64) -> (f64, f64) {
     let dt = lattice_ub * dx / ub_guess;
     let mut p = collide(discard + average, dt, None, Collision::Regularized);
     if let Procedure::Fluid { turbulence, .. } = &mut p {
-        *turbulence = Some(Turbulence::Smagorinsky { constant: c, prandtl: 0.9 });
+        *turbulence = Some(Turbulence::Smagorinsky { constant: c, prandtl: 0.9, van_driest: None });
     }
     let (setup, mut flow) = prepare(&model(1.0, nu, d, p), &[]);
     let grid = *flow.grid();

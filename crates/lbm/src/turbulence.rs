@@ -16,8 +16,9 @@
 //! Built on the regularised collision's flux, as in O. Malaspinas, P. Sagaut, *Consistent subgrid
 //! scale modelling for lattice Boltzmann methods*, J. Fluid Mech. 700:514–542, 2012. With heat, the
 //! turbulent diffusivity α_t = ν_t / Pr_t (the Reynolds analogy; Pr_t 0.85 to 0.9 for air and
-//! water) adds to the scalar lattice's relaxation per cell: τ_T = 4 (α + α_t) + ½. No wall
-//! damping yet: Smagorinsky over-predicts the eddy viscosity in the first cells off a wall.
+//! water) adds to the scalar lattice's relaxation per cell: τ_T = 4 (α + α_t) + ½. Smagorinsky
+//! over-predicts the eddy viscosity in the first cells off a wall; Van Driest's damping
+//! ([`crate::wall`], opt-in) scales C there.
 //!
 //! No code of any lattice Boltzmann package was read; this is written from the papers.
 

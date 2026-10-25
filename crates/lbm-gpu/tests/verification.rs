@@ -743,7 +743,7 @@ fn fans_and_porous_zones_are_refused_clearly() {
 /// `p` with Smagorinsky's model, constant `c` and turbulent Prandtl number 0.9.
 fn smagorinsky(mut p: Procedure, c: f64) -> Procedure {
     if let Procedure::Fluid { turbulence, .. } = &mut p {
-        *turbulence = Some(fieldcraft_model::Turbulence::Smagorinsky { constant: c, prandtl: 0.9 });
+        *turbulence = Some(fieldcraft_model::Turbulence::Smagorinsky { constant: c, prandtl: 0.9, van_driest: None });
     }
     p
 }
@@ -781,8 +781,7 @@ fn couette_flow_with_smagorinsky_matches_the_cpu() {
         assert!(rc > 0.05, "the eddy viscosity shows: {rc}");
         assert!(du < 1e-4 && drho < 1e-6, "{du} {drho}");
         assert!(shear < 2e-4, "{shear}");
-        // The GPU's ratio is the chunk's largest, the CPU's the last step's: at steady state the
-        // same, to the f32 cancellation in 1/ω − 1/ω₀ (1.4e-4 of itself measured, regularised).
+        // Both backends report the last step's ratio: the same, to the f32 cancellation in 1/ω − 1/ω₀ (1.4e-4 of itself measured, regularised).
         assert!((rg - rc).abs() < 5e-4 * rc, "{rg} vs {rc}");
     }
 }
@@ -871,6 +870,20 @@ fn a_cavity_held_by_the_closure_follows_the_cpu() {
         let (ratio_cpu, ratio_gpu) = (Backend::eddy_viscosity_ratio(&cpu), gpu.eddy_viscosity_ratio());
         assert!((ratio_gpu - ratio_cpu).abs() < 1e-3 * ratio_cpu, "{ratio_cpu} {ratio_gpu}");
     }
+}
+
+/// Van Driest's damping has no GPU kernel yet: refused by name, so the refusal outlives the
+/// blanket one above once the eddy viscosity is ported (#692).
+#[test]
+fn van_driest_damping_is_refused_clearly() {
+    let mut p = step(10.0, 1.0, None);
+    if let Procedure::Fluid { turbulence, .. } = &mut p {
+        *turbulence = Some(fieldcraft_model::Turbulence::Smagorinsky { constant: 0.17, prandtl: 0.9, van_driest: Some(26.0) });
+    }
+    let m = model(1.0, 0.1, domain([0.0; 3], [4.0, 2.0, 2.0], 1.0), p);
+    let (_, flow) = prepare(&m, &[]);
+    let e = GpuFlow::with_options(&flow, Policy::from_env().expect("FIELDCRAFT_GPU names a policy"), Options::default()).err().map(|e| e.to_string());
+    assert!(e.as_deref().is_some_and(|e| e.contains("Van Driest") && e.contains("cpu")), "{e:?}");
 }
 
 // ---- Conducting solids ----

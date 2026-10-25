@@ -143,10 +143,14 @@ pub enum Turbulence {
     /// usual; 0.17 is Lilly's for isotropic turbulence) and |S| = √(2 S:S) the local strain
     /// rate. With heat, the turbulent diffusivity α_t = ν_t / Pr_t adds to the fluid's, with
     /// `prandtl` the turbulent Prandtl number Pr_t (0.85 to 0.9 is usual; default 0.9).
+    /// `van_driest` damps the length scale near walls, C Δx (1 − exp(−y⁺/A⁺)), with A⁺ its
+    /// value (26 is Van Driest's); none by default.
     Smagorinsky {
         constant: f64,
         #[serde(default = "default_turbulent_prandtl")]
         prandtl: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        van_driest: Option<f64>,
     },
 }
 

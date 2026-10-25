@@ -463,7 +463,7 @@ fn the_memory_estimate_matches_what_a_run_allocates() {
         }
         let mut procedure = step(0.4, 0.01, None);
         if let (Procedure::Fluid { turbulence: t, .. }, true) = (&mut procedure, turbulence) {
-            *t = Some(fieldcraft_model::Turbulence::Smagorinsky { constant: 0.1, prandtl: 0.9 });
+            *t = Some(fieldcraft_model::Turbulence::Smagorinsky { constant: 0.1, prandtl: 0.9, van_driest: None });
         }
         let m = if heat {
             d.thermal = Some(fieldcraft_model::FluidThermal {

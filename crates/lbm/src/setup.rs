@@ -62,6 +62,9 @@ pub const MAX_SMAGORINSKY: f64 = 0.5;
 
 /// The range of turbulent Prandtl numbers a step takes (0.85 to 0.9 is usual for air and water).
 pub const TURBULENT_PRANDTL: std::ops::RangeInclusive<f64> = 0.1..=10.0;
+/// The range of Van Driest's damping constant A⁺ a step takes (26 is Van Driest's; 25 to 30 is
+/// usual).
+pub const VAN_DRIEST: std::ops::RangeInclusive<f64> = 1.0..=100.0;
 /// The default two-relaxation-time parameter Λ: bounce-back walls exactly halfway between cells
 /// (Ginzburg, Verhaeghe & d'Humières 2008).
 pub const DEFAULT_MAGIC: f64 = 3.0 / 16.0;
@@ -214,6 +217,8 @@ pub struct Setup {
     /// turbulent Prandtl number Pr_t of its heat diffusivity ν_t / Pr_t.
     pub smagorinsky: f64,
     pub turbulent_prandtl: f64,
+    /// Van Driest's damping constant A⁺ of the length scale near walls (none: no damping).
+    pub van_driest: Option<f64>,
     /// The characteristic velocity in model and lattice units, and its lattice Mach number.
     pub velocity: f64,
     pub lattice_velocity: f64,
@@ -404,9 +409,9 @@ impl Setup {
         let Procedure::Fluid { end_time, steps, time_step, frames, magic, collision, turbulence, steady, .. } = &s.procedure else {
             return Err(Error::Invalid(format!("step `{}` is not a fluid step", s.name)));
         };
-        let (smagorinsky, turbulent_prandtl) = match turbulence {
-            None => (0.0, 0.9),
-            Some(Turbulence::Smagorinsky { constant, prandtl }) => {
+        let (smagorinsky, turbulent_prandtl, van_driest) = match turbulence {
+            None => (0.0, 0.9, None),
+            Some(Turbulence::Smagorinsky { constant, prandtl, van_driest }) => {
                 if !(constant.is_finite() && *constant > 0.0 && *constant <= MAX_SMAGORINSKY) {
                     return Err(Error::Invalid(format!(
                         "the Smagorinsky constant is {constant}: give one above 0 and at most {MAX_SMAGORINSKY} (0.1 to 0.2 is usual)"
@@ -419,7 +424,14 @@ impl Setup {
                         TURBULENT_PRANDTL.end()
                     )));
                 }
-                (*constant, *prandtl)
+                if let Some(a_plus) = van_driest.filter(|a| !(a.is_finite() && VAN_DRIEST.contains(a))) {
+                    return Err(Error::Invalid(format!(
+                        "Van Driest's damping constant A⁺ is {a_plus}: give one from {} to {} (26 is usual)",
+                        VAN_DRIEST.start(),
+                        VAN_DRIEST.end()
+                    )));
+                }
+                (*constant, *prandtl, *van_driest)
             }
         };
         let material = model.material(&domain.material);
@@ -714,6 +726,7 @@ impl Setup {
             magic,
             collision,
             smagorinsky,
+            van_driest,
             turbulent_prandtl,
             velocity: u_char,
             lattice_velocity,

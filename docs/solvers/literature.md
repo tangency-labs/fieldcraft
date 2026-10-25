@@ -616,11 +616,26 @@ JCP 232(1):100–117, 2013, DOI [10.1016/j.jcp.2012.07.023](https://doi.org/10.1
 - **As implemented** (`crates/lbm/src/turbulence.rs`, #663/#664): Hou et al.'s closed-form local τ from the
   non-equilibrium flux `P = Π^neq + ½(uF + Fu)` of Guo's forcing, in both the regularised and the two-relaxation-time
   collision (τ⁻ follows τ⁺, keeping Λ); with heat, the turbulent diffusivity `α_t = ν_t / Pr_t` adds to each cell's
-  τ_T. No wall damping yet. The GPU backend (`crates/lbm-gpu/src/lbm.wgsl`, #665) runs the same closed form in f32
+  τ_T. Opt-in Van Driest damping of the length scale near no-slip walls (C5.3; CPU only, the GPU refuses it). The GPU backend (`crates/lbm-gpu/src/lbm.wgsl`, #665) runs the same closed form in f32
   behind an override constant, so with the model off its kernels and results are bit-for-bit the earlier ones; the
   cell's ν_t reaches the scalar lattice through the moments buffer's spare component (no new buffer). Measured on an
   RTX 4070 Laptop GPU, 128³: within ±2.3 % of the model-off throughput with or without heat (the step is
   memory-bound).
+
+**C5.3 Van Driest 1956 wall damping, with Spalding's law of the wall for u_τ.** **Verdict: build on.**
+- E. R. Van Driest. *On turbulent flow near a wall.* J. Aeronaut. Sci. 23(11):1007–1011, 1956. DOI [10.2514/8.3713](https://doi.org/10.2514/8.3713).
+- D. B. Spalding. *A single formula for the "law of the wall".* J. Appl. Mech. 28(3):455–458, 1961. DOI [10.1115/1.3641728](https://doi.org/10.1115/1.3641728).
+- P. Moin, J. Kim. *Numerical investigation of turbulent channel flow.* JFM 118:341–377, 1982. DOI [10.1017/S0022112082001116](https://doi.org/10.1017/S0022112082001116) (Smagorinsky with Van Driest damping in a channel LES).
+- P.-E. Danielsson. *Euclidean distance mapping.* Comput. Graph. Image Process. 14(3):227–248, 1980. DOI [10.1016/0146-664X(80)90054-4](https://doi.org/10.1016/0146-664X(80)90054-4) (vector propagation of the nearest wall point).
+- **Method.** The mixing length `l = C Δ (1 − exp(−y⁺/A⁺))`, A⁺ = 26, so the eddy viscosity vanishes like y⁺² at the
+  wall instead of peaking there.
+- **As implemented** (`crates/lbm/src/wall.rs`, #664): opt-in (`van_driest`: A⁺). Each fluid cell with a no-slip
+  bounce-back link takes the wall point halfway along it; the other cells take the nearest wall point by vector
+  propagation over 26 neighbours (exact for plane walls). Before each collision each wall cell's u_τ is solved from
+  Spalding's law (κ = 0.4, B = 5.5) with its speed parallel to the wall, relative to the wall, and its distance; every
+  cell is damped with its wall point's u_τ.
+- **Limits.** One wall point per cell (the nearest), the spreading does not cross periodic faces, and on coarse grids
+  the first cell's u_τ is only as good as Spalding's law at its y⁺.
 
 **C5.2 Malaspinas & Sagaut 2012, 2014 — consistent SGS and wall models.** **Verdict: reference (wall model later).**
 - *Consistent subgrid scale modelling for lattice Boltzmann methods.* JFM 700:514–542, 2012. DOI [10.1017/jfm.2012.155](https://doi.org/10.1017/jfm.2012.155).
