@@ -1,5 +1,8 @@
 # GPU lattice Boltzmann: streaming layout and performance
 
+Native GPU execution requires Vulkan. The Metal measurements below are historical evidence
+for the streaming-layout decision, not a currently supported backend.
+
 The momentum populations stream in one of two layouts, chosen per flow with
 `fieldcraft_lbm_gpu::Options::streaming`:
 
@@ -43,7 +46,6 @@ cargo test --release -p fieldcraft-lbm-gpu --test throughput -- --ignored --noca
 ```
 
 runs each case in both layouts on the device `FIELDCRAFT_GPU` picks, marks the one `Auto` chooses
-and prints how long creating the pipelines took (on Metal this reads near zero: the driver
-compiles lazily or from its cache, so the cost lands in the first dispatches instead). With `FIELDCRAFT_LBM_GPU_PROFILE=1` it also prints
+and prints how long creating the pipelines took. With `FIELDCRAFT_LBM_GPU_PROFILE=1` it also prints
 each kernel's GPU time (`Options::profile`, timestamp queries; the throughput is then not
 representative, as every dispatch gets its own pass).

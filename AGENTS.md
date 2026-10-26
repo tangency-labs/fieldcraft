@@ -85,6 +85,10 @@ People trust FieldCraft with their models; a crash loses their work. **This outr
   L3 `fsi` (later) → L4 `doc` → L5 `io` → L6 `engine` → L7 `ui-egui`, `mcp` → apps. Nothing below
   L7 depends on egui/eframe/winit/wgpu/rfd. **Only
   `crates/geometry` may use `solidcraft-*`.**
+- **Native GPU support is Vulkan only** (owner decision, #712). Do not enable or restore native
+  D3D/DX12, Metal or OpenGL backends, DXC setup or egui-wgpu's default backend features.
+  Browser WebGPU/WebGL remains separate. Apple targets opt into wgpu Vulkan portability;
+  platform setup and its verification limits are in `docs/releasing.md`.
 - **Determinism.** The same input gives the same mesh, deck and CPU solver result, bit for bit, on
   every platform: no hash-order iteration into output, no thread-count-dependent results (threads
   go through `fieldcraft-parallel`: fixed blocks, sums in a fixed order, docs/adr/0001). GPU

@@ -62,7 +62,7 @@ resvg = { version = "0.48", default-features = false }
 # ui: the same egui/eframe/egui-wgpu line as SolidCraft
 egui = "0.36"
 eframe = { version = "0.36", default-features = false }
-egui-wgpu = "0.36"
+egui-wgpu = { version = "0.36", default-features = false }
 # the wgpu egui-wgpu uses, for the offscreen viewport (crates/gpu); backends come per target there
 wgpu = { version = "30", default-features = false, features = ["std", "wgsl"] }
 pollster = "1.0"

@@ -70,6 +70,13 @@ Windows need `sysctl` and `GlobalMemoryStatusEx` through FFI, which `unsafe_code
 rules out) or a crate built on C code. Cost if this is wrong: the bound is a little off on some
 platform, and the remedy stays inside `fieldcraft_engine::machine`.
 
+**Native GPU backend: Vulkan only** (owner decision 2026-10-24, #712). wgpu remains the
+permissively licensed Rust abstraction, with only Vulkan enabled on native targets. The desktop
+and offscreen viewports and both GPU solver devices share that support policy. egui-wgpu and
+eframe defaults are disabled so feature unification does not enable D3D/DX12, Metal or native GL.
+No DXC compiler is packaged or configured. Browser dependencies explicitly retain WebGPU/WebGL.
+macOS needs an independently installed Vulkan portability implementation; we do not bundle one.
+
 **Allowed:** MIT, BSD-2/3, Apache-2.0, ISC, Zlib, Unicode, MPL-2.0 (as an unmodified dependency),
 CC0 and public domain.
 

@@ -24,10 +24,11 @@ fieldcraft-engine = { workspace = true }
 fieldcraft-lbm-gpu = { workspace = true }
 fieldcraft-mesh-gpu = { workspace = true }
 fieldcraft-ui-egui = { workspace = true }
+fieldcraft-gpu = { workspace = true }
 fieldcraft-io = { workspace = true }
 fieldcraft-update = { workspace = true }
 rfd = { workspace = true }
-eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "wayland", "x11"] }
+eframe = { workspace = true, features = ["default_fonts", "wgpu_no_default_features", "accesskit", "wayland", "x11"] }
 egui = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
@@ -65,9 +66,9 @@ embed-resource = "3.0.12"
 # from the release binaries it has already built and stripped; it sets the version and the file
 # names. The file list matches the tar.gz's (package.sh's staged tree; the release workflow
 # compares them).
-# The binaries link only glibc and libgcc_s. Windowing (Wayland, X11, xkbcommon), the GPU (Vulkan
-# or EGL) and the file dialogs (the XDG desktop portal) are opened at run time, so they are no ELF
-# NEEDED entries and the tools cannot find them: they are listed here.
+# The binaries link only glibc and libgcc_s. Windowing (Wayland, X11, xkbcommon), Vulkan and
+# file dialogs (the XDG desktop portal) are opened at run time, so they have no ELF NEEDED
+# entries and the tools cannot find them: they are listed here.
 [package.metadata.deb]
 name = "fieldcraft"
 maintainer = "FieldCraft contributors <jyviko@users.noreply.github.com>"
@@ -80,8 +81,8 @@ meshes, materials, sections, boundary conditions, loads and steps. It writes \
 Abaqus input, Nastran bulk data and LS-DYNA keyword decks, and solves linear \
 static and modal problems with its own solver. Includes fieldcraft-cli, a \
 headless command runner and MCP server."""
-depends = "$auto, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libx11-6, libx11-xcb1, libxcb1, libxcursor1, libxi6, libvulkan1 | libegl1"
-recommends = "mesa-vulkan-drivers, libegl-mesa0, xdg-desktop-portal"
+depends = "$auto, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libx11-6, libx11-xcb1, libxcb1, libxcursor1, libxi6, libvulkan1"
+recommends = "mesa-vulkan-drivers, xdg-desktop-portal"
 assets = [
     ["target/release/fieldcraft", "usr/bin/", "755"],
     ["target/release/fieldcraft-cli", "usr/bin/", "755"],
@@ -135,7 +136,7 @@ require-sh = false
 "libxcb.so.1()(64bit)" = "*"
 "libXcursor.so.1()(64bit)" = "*"
 "libXi.so.6()(64bit)" = "*"
-"(libvulkan.so.1()(64bit) or libEGL.so.1()(64bit))" = ""
+"libvulkan.so.1()(64bit)" = "*"
 
 [package.metadata.generate-rpm.recommends]
 mesa-vulkan-drivers = "*"

@@ -374,16 +374,8 @@ fn check_storage_buffers(backend: wgpu::Backend, have: u32, need: u32) -> Result
     if have >= need {
         return Ok(());
     }
-    let backend = match backend {
-        wgpu::Backend::Gl => "OpenGL",
-        wgpu::Backend::Vulkan => "Vulkan",
-        wgpu::Backend::Metal => "Metal",
-        wgpu::Backend::Dx12 => "DX12",
-        wgpu::Backend::BrowserWebGpu => "WebGPU",
-        wgpu::Backend::Noop => "no-op",
-    };
     Err(Error::Invalid(format!(
-        "this GPU's {backend} backend allows {have} storage buffers per compute stage and the fluid solver needs {need}: solve with `backend: \"cpu\"`, or use a Vulkan, Metal or DX12 adapter (`WGPU_BACKEND`)"
+        "this GPU's {backend:?} backend allows {have} storage buffers per compute stage and the fluid solver needs {need}: solve with `backend: \"cpu\"`, or use a Vulkan adapter with enough storage buffers (`WGPU_BACKEND=vulkan`)"
     )))
 }
 
@@ -451,10 +443,9 @@ fn compile(device: &wgpu::Device, variant: Variant) -> Result<Kernels> {
 }
 
 /// A device opened for fluid solves, kept for the process with the kernels compiled on it, so a
-/// solve after the first compiles nothing (#588: DX12 keeps its compiled shaders per device, and
-/// recompiling them with FXC took 9 s per solve). Pipelines cannot outlive their device, so the
+/// solve after the first compiles nothing (#588). Pipelines cannot outlive their device, so the
 /// device is what is kept; wgpu's pipeline cache, which could keep them across runs, is unsafe
-/// to create (and a stub on DX12).
+/// to create.
 struct Shared {
     /// The adapter and the features the device was opened with.
     key: String,
@@ -1378,10 +1369,10 @@ mod tests {
     /// An adapter that allows fewer is refused before anything is built, saying what to do.
     #[test]
     fn an_adapter_with_too_few_storage_buffers_is_refused_clearly() {
-        assert!(check_storage_buffers(wgpu::Backend::Gl, 16, 7).is_ok());
-        let e = check_storage_buffers(wgpu::Backend::Gl, 4, 7).unwrap_err().to_string();
+        assert!(check_storage_buffers(wgpu::Backend::Vulkan, 16, 7).is_ok());
+        let e = check_storage_buffers(wgpu::Backend::Vulkan, 4, 7).unwrap_err().to_string();
         println!("{e}");
-        for part in ["OpenGL backend allows 4 storage buffers", "needs 7", "backend: \"cpu\"", "WGPU_BACKEND"] {
+        for part in ["Vulkan backend allows 4 storage buffers", "needs 7", "backend: \"cpu\"", "WGPU_BACKEND"] {
             assert!(e.contains(part), "{e}");
         }
     }

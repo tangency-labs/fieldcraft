@@ -28,3 +28,7 @@ web-time = { workspace = true }
 resvg = { workspace = true }
 png = { workspace = true }
 
+# Browser rendering retains WebGPU/WebGL and its single-threaded JS handles. Do not enable
+# egui-wgpu's defaults: they also enable all native wgpu backends.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+egui-wgpu = { workspace = true, features = ["fragile-send-sync-non-atomic-wasm"] }

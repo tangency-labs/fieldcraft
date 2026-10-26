@@ -22,8 +22,8 @@ serde_json = { workspace = true }
 log = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-# `wgpu` pulls egui-wgpu's defaults: WebGPU plus the WebGL2 fallback.
-eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit"] }
+# Browser backends are enabled explicitly, without native backend defaults.
+eframe = { workspace = true, features = ["default_fonts", "wgpu_no_default_features", "accesskit"] }
 # `file-handle-inner`: a picked file's size, checked before it is read.
 rfd = { workspace = true, features = ["file-handle-inner"] }
 wasm-bindgen = "0.2"
@@ -32,3 +32,7 @@ js-sys = "0.3"
 web-sys = { version = "0.3", features = ["Window", "Document", "Element", "HtmlElement", "HtmlCanvasElement", "HtmlAnchorElement", "Blob", "BlobPropertyBag", "Url", "Location", "DomTokenList", "CssStyleDeclaration", "Event", "EventTarget", "BeforeUnloadEvent", "Storage", "Crypto", "Headers", "Request", "RequestInit", "RequestCache", "Response"] }
 # Autosaves kept in the browser's local storage, which holds text.
 base64 = "0.23"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies.wgpu]
+workspace = true
+features = ["webgpu", "webgl"]

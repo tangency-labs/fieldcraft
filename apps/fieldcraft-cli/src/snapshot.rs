@@ -1,7 +1,7 @@
 //! `fieldcraft-cli snapshot`: a script in, a PNG out, with no window and no display. The picture
 //! is the viewport's: the engine's scene ([`fieldcraft_engine::view::frame`]) drawn with the
 //! window's GPU pipelines ([`fieldcraft_gpu::capture`]) on a hardware GPU or a software one
-//! (lavapipe, llvmpipe, WARP), and by the CPU rasterizer as the last tier (`FIELDCRAFT_GPU`,
+//! (Vulkan: lavapipe or SwiftShader), and by the CPU rasterizer as the last tier (`FIELDCRAFT_GPU`,
 //! [`fieldcraft_gpu::select`]).
 
 use fieldcraft_engine::view::{self, Aim, Palette, Section, Target};
