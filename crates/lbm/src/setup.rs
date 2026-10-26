@@ -30,6 +30,7 @@ use fieldcraft_model::fluid_zones::DEFAULT_FAN_RELAXATION;
 use fieldcraft_model::units::kelvin_above;
 use fieldcraft_model::{
     BoxFace, Collision, Directional, FaceCondition, FluidDomain, Model, Procedure, Resistance, SurfaceCondition, ThermalCondition, Turbulence,
+    WallModel,
 };
 
 use crate::voxel::Grid;
@@ -219,6 +220,8 @@ pub struct Setup {
     pub turbulent_prandtl: f64,
     /// Van Driest's damping constant A⁺ of the length scale near walls (none: no damping).
     pub van_driest: Option<f64>,
+    /// The wall model of the fluid cells next to no-slip walls (none: the bounce-back alone).
+    pub wall_model: Option<WallModel>,
     /// The characteristic velocity in model and lattice units, and its lattice Mach number.
     pub velocity: f64,
     pub lattice_velocity: f64,
@@ -409,9 +412,9 @@ impl Setup {
         let Procedure::Fluid { end_time, steps, time_step, frames, magic, collision, turbulence, steady, .. } = &s.procedure else {
             return Err(Error::Invalid(format!("step `{}` is not a fluid step", s.name)));
         };
-        let (smagorinsky, turbulent_prandtl, van_driest) = match turbulence {
-            None => (0.0, 0.9, None),
-            Some(Turbulence::Smagorinsky { constant, prandtl, van_driest }) => {
+        let (smagorinsky, turbulent_prandtl, van_driest, wall_model) = match turbulence {
+            None => (0.0, 0.9, None, None),
+            Some(Turbulence::Smagorinsky { constant, prandtl, van_driest, wall_model }) => {
                 if !(constant.is_finite() && *constant > 0.0 && *constant <= MAX_SMAGORINSKY) {
                     return Err(Error::Invalid(format!(
                         "the Smagorinsky constant is {constant}: give one above 0 and at most {MAX_SMAGORINSKY} (0.1 to 0.2 is usual)"
@@ -431,7 +434,7 @@ impl Setup {
                         VAN_DRIEST.end()
                     )));
                 }
-                (*constant, *prandtl, *van_driest)
+                (*constant, *prandtl, *van_driest, *wall_model)
             }
         };
         let material = model.material(&domain.material);
@@ -727,6 +730,7 @@ impl Setup {
             collision,
             smagorinsky,
             van_driest,
+            wall_model,
             turbulent_prandtl,
             velocity: u_char,
             lattice_velocity,

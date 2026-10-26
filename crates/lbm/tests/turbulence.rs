@@ -8,7 +8,7 @@ mod common;
 
 use common::*;
 use fieldcraft_lbm::{Error, Flow, Limits, Setup, run};
-use fieldcraft_model::{Collision, FaceCondition, FluidThermal, Procedure, ThermalCondition, Turbulence};
+use fieldcraft_model::{Collision, FaceCondition, FluidThermal, Procedure, ThermalCondition, Turbulence, WallModel};
 
 const PERIODIC: FaceCondition = FaceCondition::Periodic {};
 
@@ -16,7 +16,7 @@ const PERIODIC: FaceCondition = FaceCondition::Periodic {};
 fn turbulent(end_time: f64, time_step: f64, collision: fieldcraft_model::Collision, c: f64) -> Procedure {
     let mut p = collide(end_time, time_step, None, collision);
     if let Procedure::Fluid { turbulence, .. } = &mut p {
-        *turbulence = Some(Turbulence::Smagorinsky { constant: c, prandtl: 0.9, van_driest: None });
+        *turbulence = Some(Turbulence::Smagorinsky { constant: c, prandtl: 0.9, van_driest: None, wall_model: None });
     }
     p
 }
@@ -199,6 +199,132 @@ fn damping_on_a_wall_the_grid_does_not_resolve_is_warned_about() {
     assert!(!solve(4, None).iter().any(|w| w.contains("y⁺")));
 }
 
+/// [`turbulent`] with the Spalding wall model.
+fn wall_modelled(end_time: f64, time_step: f64, collision: Collision, c: f64) -> Procedure {
+    let mut p = turbulent(end_time, time_step, collision, c);
+    if let Procedure::Fluid { turbulence: Some(Turbulence::Smagorinsky { wall_model, .. }), .. } = &mut p {
+        *wall_model = Some(WallModel::Spalding);
+    }
+    p
+}
+
+/// Plane Couette flow (`n` cells, wall speed 0.1, h = 1) with Smagorinsky's constant `c` and the
+/// wall model on or off, started from the linear profile: the velocities (model units) after
+/// 2000 steps.
+fn couette_profile(n: usize, nu: f64, c: f64, modelled: bool, collision: Collision) -> Vec<f64> {
+    let (h, u_wall) = (1.0, 0.1);
+    let dx = h / n as f64;
+    let mut d = domain([0.0; 3], [dx, h, dx], dx);
+    for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+        *f = PERIODIC;
+    }
+    d.faces.y_max = FaceCondition::MovingWall { velocity: [u_wall, 0.0, 0.0] };
+    // From the linear profile, 2000 steps (the eddy viscosity's settling, not the start-up's).
+    let p = if modelled { wall_modelled(2000.0 * dx, dx, collision, c) } else { turbulent(2000.0 * dx, dx, collision, c) };
+    let (setup, mut flow) = prepare(&model(1.0, nu, d, p), &[]);
+    assert_eq!(flow.wall_model(), modelled);
+    let grid = *flow.grid();
+    let vs = setup.velocity_scale();
+    flow.set_equilibrium(|cell| (1.0, [u_wall * grid.centre(cell)[1] / h / vs, 0.0, 0.0]));
+    run_all(&setup, &mut flow);
+    (0..n).map(|j| flow.moments(j).unwrap().1[0] * setup.velocity_scale()).collect()
+}
+
+/// Coarse Couette flow (4 cells, ν = 1e-5, the first cells above the viscous sublayer) under
+/// the wall model, from the linear profile: each wall cell takes Spalding's velocity at its distance for
+/// the u_τ its second cell's speed gives (relative to its wall), and relaxes with the
+/// mixing-length eddy viscosity above the sublayer. (The wall stress itself is the resolved flux
+/// between the first two cells, which equals the law's ρ u_τ² only where the flow is in the log
+/// layer; the channel against Lee & Moser measures that.)
+#[test]
+fn the_wall_model_sets_the_law_s_velocity_from_the_second_cell() {
+    let (n, nu, c) = (4usize, 1e-5, 0.4);
+    let dx = 1.0 / n as f64;
+    for collision in COLLISIONS {
+        let (h, u_wall) = (1.0, 0.1);
+        let mut d = domain([0.0; 3], [dx, h, dx], dx);
+        for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+            *f = PERIODIC;
+        }
+        d.faces.y_max = FaceCondition::MovingWall { velocity: [u_wall, 0.0, 0.0] };
+        let (setup, mut flow) = prepare(&model(1.0, nu, d, wall_modelled(200.0 * dx, dx, collision, c)), &[]);
+        let grid = *flow.grid();
+        let vs = setup.velocity_scale();
+        flow.set_equilibrium(|cell| (1.0, [u_wall * grid.centre(cell)[1] / h / vs, 0.0, 0.0]));
+        for _ in 1..setup.steps {
+            flow.step().unwrap();
+        }
+        // The second cells' speeds the last step samples.
+        let before: Vec<f64> = (0..n).map(|j| flow.moments(j).unwrap().1[0]).collect();
+        flow.step().unwrap();
+        let walls = flow.walls().unwrap();
+        let lattice_nu = (setup.tau_plus - 0.5) / 3.0;
+        for (cell, second, wall_speed) in [(0usize, 1usize, 0.0), (n - 1, n - 2, u_wall)] {
+            let u2 = before[second] - wall_speed / vs;
+            let (u1, nu_t) = fieldcraft_lbm::wall::wall_law(u2.abs(), 0.5, 1.5, lattice_nu);
+            let (modelled, rate) = walls.modelled(cell).unwrap();
+            let want = wall_speed / vs + u1 * u2.signum();
+            let y_plus = 0.5 * fieldcraft_lbm::wall::friction_velocity(u2.abs(), 1.5, lattice_nu) / lattice_nu;
+            println!(
+                "{} Couette, wall cell {cell}: y⁺ {y_plus:.1}, modelled u {:.6e} vs the law's {want:.6e}, ν_t/ν {:.2}",
+                collision.name(),
+                modelled[0],
+                nu_t / lattice_nu
+            );
+            assert!(y_plus > 10.0, "above the sublayer: {y_plus}");
+            assert!((modelled[0] - want).abs() < 1e-6 * want.abs().max(wall_speed / vs), "{} vs {want}", modelled[0]);
+            assert!((rate - 1.0 / (3.0 * (lattice_nu + nu_t) + 0.5)).abs() < 1e-9 && nu_t > lattice_nu, "the mixing length shows");
+        }
+    }
+}
+
+/// Resolved laminar Couette flow (16 cells, ν = 1e-3, the first cell at y⁺ ≈ 0.3): the linear
+/// profile is the wall law's own in the sublayer, so the wall model leaves the flow as it was,
+/// to the size of the eddy viscosity it replaces in the wall cells.
+#[test]
+fn the_wall_model_leaves_resolved_laminar_couette_flow_as_it_was() {
+    let (n, nu, c) = (16usize, 1e-3, 0.1);
+    for collision in COLLISIONS {
+        let on = couette_profile(n, nu, c, true, collision);
+        let off = couette_profile(n, nu, c, false, collision);
+        let diff = on.iter().zip(&off).map(|(a, b)| (a - b).abs()).fold(0.0, f64::max) / 0.1;
+        println!("{} Couette, {n} cells, C = {c}: wall model on against off, largest difference {diff:.2e} of the wall speed", collision.name());
+        assert!(diff < 1e-3, "{}: {diff}", collision.name());
+    }
+}
+
+/// The wall model on the cavity of [`cavity_failure`] (Re 5000, 300 steps): the same result bit
+/// for bit on one and on several threads (each wall cell's sample is its own).
+#[test]
+fn wall_modelled_results_are_bit_for_bit_the_same_on_one_and_many_threads() {
+    let l = 48.0;
+    let mut d = domain([0.0; 3], [l, l, 1.0], 1.0);
+    d.faces.y_max = FaceCondition::MovingWall { velocity: [0.1, 0.0, 0.0] };
+    d.faces.z_min = PERIODIC;
+    d.faces.z_max = PERIODIC;
+    let m = model(1.0, 0.1 * l / 5000.0, d, wall_modelled(300.0, 1.0, Collision::Regularized, 0.17));
+    let solve =
+        |threads: usize| fieldcraft_parallel::with_threads(threads, || fieldcraft_lbm::solve_fluid(&m, None, &[], &Limits::default()).unwrap());
+    let one = solve(1);
+    assert_eq!(one, solve(7));
+    assert_eq!(one, solve(3));
+}
+
+/// A wall model the step does not know is refused when the model is read; no field reads as
+/// none, so existing models are unchanged.
+#[test]
+fn an_unknown_wall_model_is_refused_and_none_is_the_default() {
+    let read = |json: &str| serde_json::from_str::<Turbulence>(json);
+    assert!(read(r#"{"type": "smagorinsky", "constant": 0.1, "wall_model": "log"}"#).is_err());
+    assert!(read(r#"{"type": "smagorinsky", "constant": 0.1, "wall_model": 3}"#).is_err());
+    let none = read(r#"{"type": "smagorinsky", "constant": 0.1}"#).unwrap();
+    assert!(matches!(none, Turbulence::Smagorinsky { wall_model: None, .. }));
+    let spalding = read(r#"{"type": "smagorinsky", "constant": 0.1, "wall_model": "spalding"}"#).unwrap();
+    assert!(matches!(spalding, Turbulence::Smagorinsky { wall_model: Some(WallModel::Spalding), .. }));
+    // Written back without the field when there is none.
+    assert!(!serde_json::to_string(&none).unwrap().contains("wall_model"));
+}
+
 /// The wall distance in a pipe of radius 1 (a tube obstacle, 8 cells per radius, staircase wall):
 /// every fluid cell's distance to its nearest wall point is R − r to within the staircase, the
 /// wall points lying halfway along the links that cross it.
@@ -246,7 +372,7 @@ fn heated_couette_flow_conducts_with_the_turbulent_diffusivity() {
         d.thermal = Some(t);
         let mut p = collide(6.0 * h * h / alpha, dx, None, collision);
         if let Procedure::Fluid { turbulence, .. } = &mut p {
-            *turbulence = Some(Turbulence::Smagorinsky { constant: c, prandtl, van_driest: None });
+            *turbulence = Some(Turbulence::Smagorinsky { constant: c, prandtl, van_driest: None, wall_model: None });
         }
         let m = hot_model(rho, nu, alpha, d, p);
         let setup = Setup::new(&m, None, &[], &Limits::default()).unwrap();
@@ -280,7 +406,7 @@ fn cavity_failure(re: f64, steps_run: u64, c: Option<f64>) -> Result<Option<u64>
     d.faces.z_max = PERIODIC;
     let mut p = collide(steps_run as f64, 1.0, None, Collision::Regularized);
     if let (Procedure::Fluid { turbulence, .. }, Some(c)) = (&mut p, c) {
-        *turbulence = Some(Turbulence::Smagorinsky { constant: c, prandtl: 0.9, van_driest: None });
+        *turbulence = Some(Turbulence::Smagorinsky { constant: c, prandtl: 0.9, van_driest: None, wall_model: None });
     }
     let m = model(1.0, 0.1 * l / re, d, p);
     let setup = Setup::new(&m, None, &[], &Limits::default())?;
@@ -320,7 +446,7 @@ fn smagorinsky_poiseuille(n: usize, c: f64, collision: Collision) -> f64 {
     d.acceleration = [a, 0.0, 0.0];
     let mut p = collide(6.0 * h * h / nu, dx * dx, Some(3.0 / 16.0), collision);
     if let Procedure::Fluid { turbulence, .. } = &mut p {
-        *turbulence = Some(Turbulence::Smagorinsky { constant: c, prandtl: 0.9, van_driest: None });
+        *turbulence = Some(Turbulence::Smagorinsky { constant: c, prandtl: 0.9, van_driest: None, wall_model: None });
     }
     let (setup, mut flow) = prepare(&model(1.0, nu, d, p), &[]);
     run_all(&setup, &mut flow);
@@ -365,7 +491,7 @@ fn smagorinsky_taylor_green(n: usize, c: f64) -> f64 {
     let half_life = std::f64::consts::LN_2 / (2.0 * nu);
     let mut p = collide(half_life, dt, None, Collision::Regularized);
     if let Procedure::Fluid { turbulence, .. } = &mut p {
-        *turbulence = Some(Turbulence::Smagorinsky { constant: c, prandtl: 0.9, van_driest: None });
+        *turbulence = Some(Turbulence::Smagorinsky { constant: c, prandtl: 0.9, van_driest: None, wall_model: None });
     }
     let (setup, mut flow) = prepare(&model(1.0, nu, d, p), &[]);
     let grid = *flow.grid();
@@ -425,7 +551,7 @@ fn channel(n: usize, c: f64, discard: f64, average: f64) -> (f64, f64) {
     let dt = lattice_ub * dx / ub_guess;
     let mut p = collide(discard + average, dt, None, Collision::Regularized);
     if let Procedure::Fluid { turbulence, .. } = &mut p {
-        *turbulence = Some(Turbulence::Smagorinsky { constant: c, prandtl: 0.9, van_driest: None });
+        *turbulence = Some(Turbulence::Smagorinsky { constant: c, prandtl: 0.9, van_driest: None, wall_model: None });
     }
     let (setup, mut flow) = prepare(&model(1.0, nu, d, p), &[]);
     let grid = *flow.grid();

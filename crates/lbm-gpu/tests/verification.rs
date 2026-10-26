@@ -743,7 +743,7 @@ fn fans_and_porous_zones_are_refused_clearly() {
 /// `p` with Smagorinsky's model, constant `c` and turbulent Prandtl number 0.9.
 fn smagorinsky(mut p: Procedure, c: f64) -> Procedure {
     if let Procedure::Fluid { turbulence, .. } = &mut p {
-        *turbulence = Some(fieldcraft_model::Turbulence::Smagorinsky { constant: c, prandtl: 0.9, van_driest: None });
+        *turbulence = Some(fieldcraft_model::Turbulence::Smagorinsky { constant: c, prandtl: 0.9, van_driest: None, wall_model: None });
     }
     p
 }
@@ -878,12 +878,30 @@ fn a_cavity_held_by_the_closure_follows_the_cpu() {
 fn van_driest_damping_is_refused_clearly() {
     let mut p = step(10.0, 1.0, None);
     if let Procedure::Fluid { turbulence, .. } = &mut p {
-        *turbulence = Some(fieldcraft_model::Turbulence::Smagorinsky { constant: 0.17, prandtl: 0.9, van_driest: Some(26.0) });
+        *turbulence = Some(fieldcraft_model::Turbulence::Smagorinsky { constant: 0.17, prandtl: 0.9, van_driest: Some(26.0), wall_model: None });
     }
     let m = model(1.0, 0.1, domain([0.0; 3], [4.0, 2.0, 2.0], 1.0), p);
     let (_, flow) = prepare(&m, &[]);
     let e = GpuFlow::with_options(&flow, Policy::from_env().expect("FIELDCRAFT_GPU names a policy"), Options::default()).err().map(|e| e.to_string());
     assert!(e.as_deref().is_some_and(|e| e.contains("Van Driest") && e.contains("cpu")), "{e:?}");
+}
+
+/// The wall model has no GPU kernel yet: refused by name, before a device is looked for.
+#[test]
+fn the_wall_model_is_refused_clearly() {
+    let mut p = step(10.0, 1.0, None);
+    if let Procedure::Fluid { turbulence, .. } = &mut p {
+        *turbulence = Some(fieldcraft_model::Turbulence::Smagorinsky {
+            constant: 0.17,
+            prandtl: 0.9,
+            van_driest: None,
+            wall_model: Some(fieldcraft_model::WallModel::Spalding),
+        });
+    }
+    let m = model(1.0, 0.1, domain([0.0; 3], [4.0, 2.0, 2.0], 1.0), p);
+    let (_, flow) = prepare(&m, &[]);
+    let e = GpuFlow::with_options(&flow, Policy::from_env().expect("FIELDCRAFT_GPU names a policy"), Options::default()).err().map(|e| e.to_string());
+    assert!(e.as_deref().is_some_and(|e| e.contains("wall model") && e.contains("cpu")), "{e:?}");
 }
 
 // ---- Conducting solids ----

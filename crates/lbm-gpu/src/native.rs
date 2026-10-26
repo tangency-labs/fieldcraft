@@ -525,6 +525,9 @@ impl GpuFlow {
 
     /// [`GpuFlow::new`] with `options`.
     pub fn with_options(flow: &Flow, policy: Policy, options: Options) -> Result<GpuFlow> {
+        if flow.wall_model() {
+            return Err(Error::Invalid("the wall model (`wall_model`) is not on the GPU backend yet: solve on the CPU (`backend: \"cpu\"`)".into()));
+        }
         if flow.van_driest() {
             return Err(Error::Invalid(
                 "Van Driest damping (`van_driest`) is not on the GPU backend yet: solve on the CPU (`backend: \"cpu\"`)".into(),

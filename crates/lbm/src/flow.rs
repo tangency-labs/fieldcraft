@@ -101,7 +101,7 @@ use crate::lattice::{C, Q, W, c, equilibrium, moving_wall, opposite};
 use crate::outlet::{Action, Outlets, Populations};
 use crate::setup::{MAX_LATTICE_SPEED, Obstacle, Setup, ZoneKind, ZoneSetup};
 use crate::voxel::{Grid, TriangleTree, voxelise};
-use crate::wall::WallDamping;
+use crate::wall::Walls;
 use crate::{Error, Result};
 
 /// Where a population of a cell next to a wall or box face comes from (every other population
@@ -322,8 +322,11 @@ pub struct Flow {
     cell_nu_t: Vec<f64>,
     /// The largest eddy viscosity over the fluid's own of the last collision (0 without one).
     eddy_ratio: f64,
-    /// With Van Driest's damping: the wall distances and friction velocities.
-    damping: Option<WallDamping>,
+    /// With Van Driest's damping or the wall model: the wall cells (and with damping every
+    /// cell's wall distance and the friction velocities).
+    walls: Option<Walls>,
+    /// Whether the wall cells relax with the wall model's viscosity.
+    wall_model: bool,
     acceleration: [f64; 3],
     /// The momentum transferred to each group in the last step (lattice units).
     forces: Vec<[f64; 3]>,
@@ -751,13 +754,13 @@ impl Flow {
         // goes back before the steps.
         links.shrink_to_fit();
 
-        // Van Driest's damping: each no-slip group's wall velocity, in group order.
-        let damping = match setup.van_driest {
-            Some(a_plus) => {
-                let walls: Vec<Option<[f64; 3]>> = BoxFace::ALL.iter().map(|f| wall_velocity(*f)).chain(obstacle_walls).collect();
-                Some(WallDamping::new(&grid, &fluid, &links, &walls, a_plus, (setup.tau_plus - 0.5) / 3.0)?)
-            }
-            None => None,
+        // Van Driest's damping and the wall model: each no-slip group's wall velocity, in group
+        // order.
+        let walls = if setup.van_driest.is_some() || setup.wall_model.is_some() {
+            let groups: Vec<Option<[f64; 3]>> = BoxFace::ALL.iter().map(|f| wall_velocity(*f)).chain(obstacle_walls).collect();
+            Some(Walls::new(&grid, &fluid, &links, &groups, setup.van_driest, (setup.tau_plus - 0.5) / 3.0)?)
+        } else {
+            None
         };
         open.shrink_to_fit();
         let mut flow = Flow {
@@ -776,7 +779,8 @@ impl Flow {
             turbulent_prandtl: setup.turbulent_prandtl,
             cell_nu_t: if setup.smagorinsky > 0.0 && setup.thermal.is_some() { filled(n, 0.0, "eddy viscosities")? } else { Vec::new() },
             eddy_ratio: 0.0,
-            damping,
+            walls,
+            wall_model: setup.wall_model.is_some(),
             acceleration: setup.acceleration,
             forces: vec![[0.0; 3]; groups.len()],
             groups,
@@ -1114,6 +1118,7 @@ impl Flow {
         self.refresh_buoyancy();
         self.refresh_fans();
         self.refresh_damping();
+        self.sample_walls();
         let max_u2 = self.collide();
         if !(max_u2 <= MAX_LATTICE_SPEED * MAX_LATTICE_SPEED) {
             return Err(Error::Unstable(format!(
@@ -1392,26 +1397,50 @@ impl Flow {
 
     /// With Van Driest's damping: each wall cell's friction velocity from the flow before the
     /// collision.
+    /// With the wall model: each wall cell's modelled velocity and rate from its second cell's
+    /// velocity before the collision.
+    fn sample_walls(&mut self) {
+        if !self.wall_model {
+            return;
+        }
+        let Some(mut walls) = self.walls.take() else { return };
+        walls.sample(|cell| self.moments(cell).map_or([0.0; 3], |m| m.1));
+        self.walls = Some(walls);
+    }
+
     fn refresh_damping(&mut self) {
-        let Some(mut damping) = self.damping.take() else { return };
-        damping.refresh(|cell| self.moments(cell).map_or([0.0; 3], |m| m.1));
-        self.damping = Some(damping);
+        if !self.van_driest() {
+            return;
+        }
+        let Some(mut walls) = self.walls.take() else { return };
+        walls.refresh(|cell| self.moments(cell).map_or([0.0; 3], |m| m.1));
+        self.walls = Some(walls);
     }
 
     /// Whether Van Driest's damping scales the eddy viscosity near walls.
     pub fn van_driest(&self) -> bool {
-        self.damping.is_some()
+        self.walls.as_ref().is_some_and(Walls::damped)
+    }
+
+    /// Whether the wall cells relax with the wall model's viscosity.
+    pub fn wall_model(&self) -> bool {
+        self.wall_model
+    }
+
+    /// The wall cells, with Van Driest's damping or the wall model.
+    pub fn walls(&self) -> Option<&Walls> {
+        self.walls.as_ref()
     }
 
     /// With Van Driest's damping: the largest y⁺ of a wall cell's centre in the last step.
     pub fn wall_y_plus(&self) -> Option<f64> {
-        self.damping.as_ref().map(WallDamping::largest_wall_y_plus)
+        self.walls.as_ref().filter(|w| w.damped()).map(Walls::largest_wall_y_plus)
     }
 
-    /// With Van Driest's damping: cell `cell`'s distance to its wall (lattice units), when a
-    /// wall reaches it.
+    /// With Van Driest's damping or the wall model: cell `cell`'s distance to its wall (lattice
+    /// units), when a wall reaches it (without damping, the wall cells alone).
     pub fn wall_distance(&self, cell: usize) -> Option<f64> {
-        self.damping.as_ref().and_then(|d| d.distance(cell))
+        self.walls.as_ref().and_then(|d| d.distance(cell))
     }
 
     /// The collision with Guo forcing (two relaxation times, or recursive regularised), in place,
@@ -1424,7 +1453,8 @@ impl Flow {
         let (wp, wm) = (self.omega_plus, self.omega_minus);
         let (sp, sm) = (1.0 - 0.5 * wp, 1.0 - 0.5 * wm);
         let smagorinsky = self.smagorinsky;
-        let damping = self.damping.as_ref();
+        let walls = self.walls.as_ref();
+        let wall_model = self.wall_model;
         // Λ, which the two relaxation times keep when the eddy viscosity changes τ⁺.
         let magic = (1.0 / wp - 0.5) * (1.0 / wm - 0.5);
         let constant = self.acceleration;
@@ -1469,6 +1499,20 @@ impl Flow {
                     j[1] += v * f64::from(cq[1]);
                     j[2] += v * f64::from(cq[2]);
                 }
+                // A wall cell under the wall model: its populations rebuilt from the wall law,
+                // and the rate it relaxes with.
+                let wall_rate =
+                    if wall_model && rho > 0.0 && rho.is_finite() { walls.and_then(|w| w.reconstruct(b * block + i, &mut fq, a)) } else { None };
+                if wall_rate.is_some() {
+                    (rho, j) = (0.0, [0.0; 3]);
+                    for (q, v) in fq.iter().enumerate() {
+                        let cq = C[q];
+                        rho += v;
+                        j[0] += v * f64::from(cq[0]);
+                        j[1] += v * f64::from(cq[1]);
+                        j[2] += v * f64::from(cq[2]);
+                    }
+                }
                 if !(rho > 0.0 && rho.is_finite()) {
                     **block_max = f64::NAN;
                     return;
@@ -1495,9 +1539,11 @@ impl Flow {
                     }
                 };
                 // Smagorinsky's constant of the cell, damped near walls.
-                let cell_c = damping.map_or(smagorinsky, |d| smagorinsky * d.factor(b * block + i));
+                let cell_c = walls.map_or(smagorinsky, |d| smagorinsky * d.factor(b * block + i));
+                // A wall cell under the wall model relaxes with its viscosity instead.
                 if regularized {
-                    let w = crate::regularized::collide(&fq, rho, u, force, wp, cell_c, forced, &mut post);
+                    let (rate, c) = wall_rate.map_or((wp, cell_c), |w| (w, 0.0));
+                    let w = crate::regularized::collide(&fq, rho, u, force, rate, c, forced, &mut post);
                     if smagorinsky > 0.0 {
                         eddy(w);
                     }
@@ -1508,8 +1554,8 @@ impl Flow {
                 }
                 // The cell's own rates where the eddy viscosity raises τ⁺ (τ⁻ follows, keeping Λ).
                 let (wp, wm, sp, sm) = if smagorinsky > 0.0 {
-                    let p = crate::turbulence::flux(&fq, rho, u, force, forced);
-                    let wp = crate::turbulence::omega(&p, rho, wp, cell_c);
+                    let wp =
+                        wall_rate.unwrap_or_else(|| crate::turbulence::omega(&crate::turbulence::flux(&fq, rho, u, force, forced), rho, wp, cell_c));
                     eddy(wp);
                     let wm = 1.0 / (0.5 + magic / (1.0 / wp - 0.5));
                     (wp, wm, 1.0 - 0.5 * wp, 1.0 - 0.5 * wm)

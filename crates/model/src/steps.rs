@@ -144,14 +144,28 @@ pub enum Turbulence {
     /// rate. With heat, the turbulent diffusivity α_t = ν_t / Pr_t adds to the fluid's, with
     /// `prandtl` the turbulent Prandtl number Pr_t (0.85 to 0.9 is usual; default 0.9).
     /// `van_driest` damps the length scale near walls, C Δx (1 − exp(−y⁺/A⁺)), with A⁺ its
-    /// value (26 is Van Driest's); none by default.
+    /// value (26 is Van Driest's); none by default. `wall_model` gives the fluid cells next to
+    /// no-slip walls the wall stress of a law of the wall ([`WallModel`]), for grids whose first
+    /// cell lies above the viscous sublayer; none by default.
     Smagorinsky {
         constant: f64,
         #[serde(default = "default_turbulent_prandtl")]
         prandtl: f64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         van_driest: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        wall_model: Option<WallModel>,
     },
+}
+
+/// A wall model of a large-eddy simulation: the wall stress of a fluid cell next to a no-slip
+/// wall from its velocity parallel to the wall and its distance from it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WallModel {
+    /// Spalding's single formula for the law of the wall (the viscous sublayer, the buffer layer
+    /// and the log law, κ = 0.4, B = 5.5).
+    Spalding,
 }
 
 fn default_turbulent_prandtl() -> f64 {
