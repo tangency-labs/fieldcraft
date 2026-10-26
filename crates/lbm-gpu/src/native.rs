@@ -159,8 +159,10 @@ pub struct GpuFlow {
     cells: (u32, u32),
     link_count: usize,
     links_groups: (u32, u32),
-    /// The wall model's sample dispatch, when there are modelled wall cells.
+    /// The wall model's sample dispatch, when there are modelled wall cells, and its buffer.
     wall_groups: Option<(u32, u32)>,
+    walls: wgpu::Buffer,
+    wall_count: usize,
     open_count: usize,
     open_groups: (u32, u32),
     /// Whether a face is a convective outlet.
@@ -530,6 +532,12 @@ impl GpuFlow {
 
     /// [`GpuFlow::new`] with `options`.
     pub fn with_options(flow: &Flow, policy: Policy, options: Options) -> Result<GpuFlow> {
+        if flow.collision() == fieldcraft_model::Collision::Mrt {
+            return Err(Error::Invalid(
+                "the multiple-relaxation-time collision (`collision: \"mrt\"`) is not on the GPU backend yet: solve on the CPU (`backend: \"cpu\"`)"
+                    .into(),
+            ));
+        }
         if flow.van_driest() {
             return Err(Error::Invalid(
                 "Van Driest damping (`van_driest`) is not on the GPU backend yet: solve on the CPU (`backend: \"cpu\"`)".into(),
@@ -915,6 +923,8 @@ impl GpuFlow {
             link_count: links.len(),
             links_groups,
             wall_groups: if wall_count > 0 { Some(groups(wall_count)?) } else { None },
+            walls: walls_buf,
+            wall_count,
             open_count: open.len(),
             open_groups,
             convective,
@@ -1078,6 +1088,17 @@ impl GpuFlow {
             );
         }
         Ok(self.exchange_cache.as_deref().unwrap_or_default())
+    }
+
+    /// The wall model's last sample: each modelled wall cell's grid cell, its modelled velocity
+    /// and relaxation rate (lattice units), in the order of [`fieldcraft_lbm::wall::Walls::wall_cells`]
+    /// that have a second cell. Empty without the wall model.
+    pub fn wall_targets(&self) -> Result<Vec<([f64; 3], f64)>> {
+        if self.wall_count == 0 {
+            return Ok(Vec::new());
+        }
+        let rows = self.read_f32(&self.walls, 12 * self.wall_count)?;
+        Ok(rows.chunks_exact(12).map(|r| ([f64::from(r[8]), f64::from(r[9]), f64::from(r[10])], f64::from(r[11]))).collect())
     }
 
     /// The moments of the current state into the moments buffer.

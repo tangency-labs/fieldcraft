@@ -1450,6 +1450,7 @@ impl Flow {
         let block = self.block;
         let n = self.n;
         let regularized = self.collision == Collision::Regularized;
+        let mrt = self.collision == Collision::Mrt;
         let (wp, wm) = (self.omega_plus, self.omega_minus);
         let (sp, sm) = (1.0 - 0.5 * wp, 1.0 - 0.5 * wm);
         let smagorinsky = self.smagorinsky;
@@ -1547,6 +1548,22 @@ impl Flow {
                     if smagorinsky > 0.0 {
                         eddy(w);
                     }
+                    for (q, v) in post.iter().enumerate() {
+                        put(q, *v);
+                    }
+                    continue;
+                }
+                if mrt {
+                    // The stresses' rate: the wall model's, Smagorinsky's of the cell's flux, or the fluid's.
+                    let rate = match wall_rate {
+                        Some(w) => w,
+                        None if smagorinsky > 0.0 => crate::turbulence::omega(&crate::turbulence::flux(&fq, rho, u, force, forced), rho, wp, cell_c),
+                        None => wp,
+                    };
+                    if smagorinsky > 0.0 {
+                        eddy(rate);
+                    }
+                    crate::mrt::collide(&fq, rho, u, force, rate, forced, &mut post);
                     for (q, v) in post.iter().enumerate() {
                         put(q, *v);
                     }

@@ -123,6 +123,10 @@ pub enum Collision {
     /// momentum flux alone (and the third-order moments it implies), which removes the
     /// non-hydrodynamic modes that make the two-relaxation-time scheme unstable as τ approaches ½.
     Regularized,
+    /// Multiple relaxation times: the populations' 19 orthogonal moments each relax at their own
+    /// rate (d'Humières et al. 2002, with Malaspinas and Sagaut's rates for large-eddy
+    /// simulation).
+    Mrt,
 }
 
 impl Collision {
@@ -131,6 +135,7 @@ impl Collision {
         match self {
             Collision::Trt => "trt",
             Collision::Regularized => "regularized",
+            Collision::Mrt => "mrt",
         }
     }
 }

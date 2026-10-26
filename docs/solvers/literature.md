@@ -509,6 +509,12 @@ shock capturing belongs to Eulerian finite volume (E1); not needed for the Lagra
   free rates damp non-hydrodynamic modes, raising stability and fixing the wall location.
 - **Limits.** Still loses stability at very high Re; parameters need care.
 - **Complexity.** Low–moderate (a constant 19×19 transform).
+- **As implemented** (`crates/lbm/src/mrt.rs`, `collision: "mrt"`, #664): D3Q19, the 19 orthogonal moments built
+  from their integer polynomials in c (so independent of the direction order), the inverse as the transpose over the
+  squared norms; the single-relaxation-time-equivalent equilibria with j·j/ρ, and the rates Malaspinas & Sagaut
+  (C5.4) use: 1.19, 1.4 (energy square and quartic modes), 1.2 (energy flux), 1.98 (cubic modes), the viscous rate on
+  the five stresses, set per cell by Smagorinsky's model or the wall model; Guo's force as (I − S/2) of its moments.
+  Verified by Poiseuille and Taylor–Green (second order), Couette, and Smagorinsky Couette's closed form.
 
 **C2.2 Ginzburg, Verhaeghe, d'Humières 2008, TRT.** **Verdict: build on (default over BGK).**
 - **Citation.** Commun. Comput. Phys. 3(2):427–478, 2008. DOI [10.4208/cicp.2008.v3.p427](https://doi.org/10.4208/cicp.2008.v3.p427).

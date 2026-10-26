@@ -712,8 +712,8 @@ impl Setup {
                 "τ = {tau_plus:.4} is below {REGULARIZED_TAU_LIMIT}, where even the regularized collision went unstable on a coarse bluff-body grid: the inlet and outlet still reflect pressure waves there; a finer spacing is safer"
             ));
         }
-        if collision == Collision::Regularized && magic_given {
-            warnings.push("the two-relaxation-time parameter Λ (`magic`) has no effect with the regularized collision".into());
+        if collision != Collision::Trt && magic_given {
+            warnings.push(format!("the two-relaxation-time parameter Λ (`magic`) has no effect with the {} collision", collision.name()));
         }
 
         Ok(Setup {
