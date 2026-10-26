@@ -168,9 +168,9 @@ pub enum Turbulence {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WallModel {
-    /// Spalding's single formula for the law of the wall (the viscous sublayer, the buffer layer
-    /// and the log law, κ = 0.4, B = 5.5).
-    Spalding,
+    /// Malaspinas and Sagaut's lattice Boltzmann wall model with Musker's profile of the
+    /// boundary layer (the viscous sublayer, the buffer layer and the log law in one formula).
+    Musker,
 }
 
 fn default_turbulent_prandtl() -> f64 {

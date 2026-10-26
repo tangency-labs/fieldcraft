@@ -643,17 +643,16 @@ JCP 232(1):100–117, 2013, DOI [10.1016/j.jcp.2012.07.023](https://doi.org/10.1
 - **Limits.** One wall point per cell (the nearest), the spreading does not cross periodic faces, and on coarse grids
   the first cell's u_τ is only as good as Spalding's law at its y⁺.
 
-**C5.4 Wall model: Malaspinas & Sagaut 2014's first-node reconstruction, with Spalding's law.** **Verdict: build on.**
+**C5.4 Wall model: Malaspinas & Sagaut 2014's first-node reconstruction, with Musker's profile.** **Verdict: build on.**
 - O. Malaspinas, P. Sagaut. *Wall model for large-eddy simulation based on the lattice Boltzmann method.* J. Comput. Phys. 275:25–40, 2014. DOI [10.1016/j.jcp.2014.06.020](https://doi.org/10.1016/j.jcp.2014.06.020) (C5.2).
 - U. Piomelli, E. Balaras. *Wall-layer models for large-eddy simulations.* Annu. Rev. Fluid Mech. 34:349–374, 2002. DOI [10.1146/annurev.fluid.34.082901.144919](https://doi.org/10.1146/annurev.fluid.34.082901.144919).
 - S. Kawai, J. Larsson. *Wall-modeling in large eddy simulation: length scales, grid resolution, and accuracy.* Phys. Fluids 24:015105, 2012. DOI [10.1063/1.3678331](https://doi.org/10.1063/1.3678331) (where to sample the wall model's velocity).
-- D. B. Spalding 1961 (C5.3) for the profile.
-- **As implemented** (`crates/lbm/src/wall.rs`, `wall_model: "spalding"`, #664): before each collision the second
+- A. J. Musker. *Explicit expression for the smooth wall velocity distribution in a turbulent boundary layer.* AIAA J. 17(6):655–657, 1979. DOI [10.2514/3.61193](https://doi.org/10.2514/3.61193) (the profile, with the constants Malaspinas & Sagaut print).
+- **As implemented** (`crates/lbm/src/wall.rs`, `wall_model: "musker"`, #664): before each collision the second
   cell's velocity gives u_τ through the wall law; the first cell's velocity is set from the law, its density and
   regularised non-equilibrium stress come from its known populations (the unknown ones mirrored), all its populations
   are rebuilt, and it relaxes with ν plus a Van Driest mixing-length eddy viscosity (κ 0.384, A⁺ 26).
-- **Deviations from the paper.** Spalding's law instead of Musker's profile; the regularised or TRT collision instead
-  of MRT; moving walls taken relative to their velocity; the reported wall force is the bounce-back's momentum
+- **Deviations from the paper.** The regularised or TRT collision where MRT (C2.1) is not chosen; moving walls taken relative to their velocity; the reported wall force is the bounce-back's momentum
   exchange, not the modelled stress.
 - **Earlier attempt, withdrawn.** Imposing τ_w through the first cell's own viscosity (ν_w = u_τ² y / U) went
   unstable on every channel grid at Re_τ 550 and 1000: it replaced the eddy viscosity that held those cells stable.

@@ -934,7 +934,7 @@ fn wall_modelled(mut p: Procedure, c: f64) -> Procedure {
             constant: c,
             prandtl: 0.9,
             van_driest: None,
-            wall_model: Some(fieldcraft_model::WallModel::Spalding),
+            wall_model: Some(fieldcraft_model::WallModel::Musker),
         });
     }
     p

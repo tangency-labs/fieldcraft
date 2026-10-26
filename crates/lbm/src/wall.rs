@@ -36,7 +36,7 @@
 //! §4.2–4.3. Before each collision, for each wall cell x₁ with the wall half a link below it
 //! and the second cell x₂ one link further along the normal (distances y₁ and y₂ = 3 y₁):
 //! 1. the velocity at x₂, relative to the wall, gives the direction e parallel to the wall and
-//!    the speed U₂ there; u_τ solves U₂ = ũ(y₂; u_τ);
+//!    the speed U₂ there; u_τ solves U₂ = ũ(y₂; u_τ), ũ Musker's profile;
 //! 2. x₁'s velocity is set to ũ(y₁; u_τ) e (less half the body force, for the stored moments);
 //! 3. x₁'s density is the one its known populations give with that velocity (the Zou–He
 //!    relation, ρ = (ρ₀ + 2 ρ₊) / (1 + u·n_out)), and its non-equilibrium stress the one its
@@ -45,8 +45,7 @@
 //!    the regularised stress, and x₁ relaxes with ν + ν_t, ν_t the mixing length
 //!    (κ y₁ (1 − exp(−y₁⁺/A⁺)))² |∂ũ/∂y| at y₁ (κ = 0.384, A⁺ = 26), not Smagorinsky's.
 //!
-//! Where this differs from the paper: ũ is Spalding's law (the paper uses Musker's profile or
-//! the integrated boundary-layer equation, which it finds give the same results); the collision
+//! ũ is Musker's profile, as in the paper ([`musker`]). Where this differs from the paper: the collision
 //! is this solver's regularised or two-relaxation-time one (the paper's is multiple-relaxation-
 //! time); a moving wall is taken relative to its velocity (the paper's walls are still and
 //! flat); and the force reported on a modelled wall is still the bounce-back's momentum exchange,
@@ -335,51 +334,77 @@ fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
 
-/// The wall law of the wall model (Malaspinas and Sagaut, §4.2–4.3, with Spalding's law as the
-/// profile ũ): u_τ from the speed `speed` parallel to the wall at the second cell's distance
-/// `y2`, then the first cell's modelled speed ũ(y1) and its mixing-length eddy viscosity
+/// The wall law of the wall model (Malaspinas and Sagaut, §4.2–4.3, with Musker's profile ũ, their
+/// eq. 59): u_τ from the speed `speed` parallel to the wall at the second cell's distance `y2`,
+/// then the first cell's modelled speed ũ(y1) and its mixing-length eddy viscosity
 /// `ν_t = (κ y1 (1 − exp(−y1⁺/A⁺)))² |∂ũ/∂y|` (κ = 0.384, A⁺ = 26). Both 0 at rest.
 pub fn wall_law(speed: f64, y1: f64, y2: f64, nu: f64) -> (f64, f64) {
-    let ut = friction_velocity(speed, y2, nu);
+    let ut = musker_friction(speed, y2, nu);
     if !(ut > 0.0) {
         return (0.0, 0.0);
     }
     let y_plus = y1 * ut / nu;
-    let u_plus = spalding_inverse(y_plus);
-    let slope = spalding(u_plus, (-KAPPA * B).exp()).1;
-    let dudy = ut * ut / nu / slope;
+    let (u_plus, slope) = musker(y_plus);
+    let dudy = ut * ut / nu * slope;
     let l = MIXING_KAPPA * y1 * (1.0 - (-y_plus / MIXING_A_PLUS).exp());
     let nu_t = l * l * dudy.abs();
     if (ut * u_plus).is_finite() && nu_t.is_finite() { (ut * u_plus, nu_t) } else { (0.0, 0.0) }
 }
 
-/// Spalding's u⁺ at `y_plus`: the root of y⁺(u⁺) = y⁺, which rises with u⁺ and lies in
-/// [0, y⁺] (Newton steps guarded by bisection).
-fn spalding_inverse(y_plus: f64) -> f64 {
-    if !(y_plus > 0.0 && y_plus.is_finite()) {
+/// Musker's profile u⁺(y⁺) and its slope du⁺/dy⁺ (A. J. Musker, *Explicit expression for the
+/// smooth wall velocity distribution in a turbulent boundary layer*, AIAA J. 17(6):655–657, 1979,
+/// with the constants Malaspinas and Sagaut print in their eq. 59, 0.434 standing for 1/ln 10):
+/// u⁺ = 5.424 atan((2 y⁺ − 8.15) / 16.7) + 0.434 ln((y⁺ + 10.6)^9.6 / (y⁺² − 8.15 y⁺ + 86)²) − 3.50728.
+pub fn musker(y_plus: f64) -> (f64, f64) {
+    let (a, b) = (2.0 / 16.7, 8.15 / 16.7);
+    let t = a * y_plus - b;
+    let q = y_plus * y_plus - 8.15 * y_plus + 86.0;
+    let u = 5.424 * t.atan() + 0.434 * (9.6 * (y_plus + 10.6).ln() - 2.0 * q.ln()) - 3.507_279_019_362_648_4;
+    let du = 5.424 * a / (1.0 + t * t) + 0.434 * (9.6 / (y_plus + 10.6) - 2.0 * (2.0 * y_plus - 8.15) / q);
+    (u, du)
+}
+
+/// The friction velocity of a flow of speed `speed` parallel to a wall at distance `y` with
+/// kinematic viscosity `nu`, from Musker's profile: the root of u_τ u⁺(y u_τ / ν) = U, which rises
+/// with u_τ (Newton steps guarded by bisection; the bracket grows from the sublayer's √(ν U / y)
+/// until it holds the root). 0 at rest or with a number that is not usable.
+pub fn musker_friction(speed: f64, y: f64, nu: f64) -> f64 {
+    if !(speed > 0.0 && speed.is_finite() && y > 0.0 && y.is_finite() && nu > 0.0 && nu.is_finite()) {
         return 0.0;
     }
-    let e = (-KAPPA * B).exp();
-    let (mut lo, mut hi) = (0.0, y_plus);
-    let mut up = (y_plus.ln() / KAPPA + B).clamp(f64::MIN_POSITIVE, y_plus);
+    let g = |ut: f64| {
+        let (u, du) = musker(y * ut / nu);
+        (ut * u - speed, u + y * ut / nu * du)
+    };
+    let (mut lo, mut hi) = (0.0, (nu * speed / y).sqrt());
     for _ in 0..SPALDING_ITERATIONS {
-        let (yp, slope) = spalding(up, e);
-        let value = yp - y_plus;
+        if g(hi).0 > 0.0 {
+            break;
+        }
+        lo = hi;
+        hi *= 2.0;
+    }
+    if !(g(hi).0 > 0.0) {
+        return 0.0;
+    }
+    let mut ut = 0.5 * (lo + hi);
+    for _ in 0..SPALDING_ITERATIONS {
+        let (value, slope) = g(ut);
         if value == 0.0 {
             break;
         }
         if value > 0.0 {
-            hi = up;
+            hi = ut;
         } else {
-            lo = up;
+            lo = ut;
         }
         if hi - lo <= 1e-14 * hi {
             break;
         }
-        let newton = up - value / slope;
-        up = if newton.is_finite() && newton > lo && newton < hi { newton } else { 0.5 * (lo + hi) };
+        let newton = ut - value / slope;
+        ut = if newton.is_finite() && newton > lo && newton < hi { newton } else { 0.5 * (lo + hi) };
     }
-    up
+    ut
 }
 
 /// Every fluid cell's distance to the nearest of the wall points of `found`, spread outward over
@@ -518,27 +543,31 @@ mod tests {
         }
     }
 
-    /// The wall law in the viscous sublayer is linear (u₁ = u₂ y₁ / y₂, ν_t ≈ 0); above it the
-    /// first cell sits on Spalding's profile of the u_τ the second cell gives.
+    /// Musker's profile is the sublayer's u⁺ = y⁺ near the wall and the log law above; the wall
+    /// law's u_τ makes the second cell sit on it, and sets the first cell on it too.
     #[test]
-    fn the_wall_law_samples_the_second_cell_and_sets_the_first() {
-        let nu = 1e-3;
-        let (u1, nu_t) = wall_law(1e-4, 0.5, 1.5, nu);
-        // Linear to Spalding's quartic term (7e-6 here).
-        assert!((u1 / (1e-4 / 3.0) - 1.0).abs() < 1e-4 && nu_t < 1e-6 * nu, "{u1} {nu_t}");
-        let e = (-KAPPA * B).exp();
-        let ut = 0.05;
-        let (y1, y2) = (0.5, 1.5);
-        let u2 = ut * spalding_inverse(y2 * ut / nu);
+    fn the_wall_law_follows_musker_s_profile() {
+        let (u, du) = musker(0.5);
+        assert!((u - 0.5).abs() < 5e-3 && (du - 1.0).abs() < 2e-2, "sublayer: {u} {du}");
+        for y_plus in [300.0f64, 1000.0] {
+            let log_law = y_plus.ln() / 0.41 + 5.0;
+            assert!((musker(y_plus).0 / log_law - 1.0).abs() < 0.02, "log law at {y_plus}: {}", musker(y_plus).0);
+        }
+        // The slope against a central difference.
+        for y_plus in [1.0, 12.0, 80.0] {
+            let h = 1e-5;
+            let fd = (musker(y_plus + h).0 - musker(y_plus - h).0) / (2.0 * h);
+            assert!((musker(y_plus).1 / fd - 1.0).abs() < 1e-8, "{y_plus}");
+        }
+        let (nu, ut, y1, y2) = (1e-4, 0.05, 0.5, 1.5);
+        let u2 = ut * musker(y2 * ut / nu).0;
+        assert!((musker_friction(u2, y2, nu) / ut - 1.0).abs() < 1e-12);
         let (u1, nu_t) = wall_law(u2, y1, y2, nu);
-        let y1_plus = y1 * ut / nu;
-        assert!((spalding(u1 / ut, e).0 / y1_plus - 1.0).abs() < 1e-9, "u₁ on the profile");
-        assert!(nu_t > nu, "the mixing length shows at y⁺ {y1_plus}: {nu_t}");
+        assert!((u1 / (ut * musker(y1 * ut / nu).0) - 1.0).abs() < 1e-12);
+        assert!(nu_t > nu, "the mixing length shows at y⁺ {}", y1 * ut / nu);
         assert_eq!(wall_law(0.0, 0.5, 1.5, nu), (0.0, 0.0));
         assert_eq!(wall_law(f64::NAN, 0.5, 1.5, nu), (0.0, 0.0));
-        for y_plus in [0.1, 3.0, 30.0, 1e3, 1e5] {
-            assert!((spalding(spalding_inverse(y_plus), e).0 / y_plus - 1.0).abs() < 1e-12, "{y_plus}");
-        }
+        assert_eq!(musker_friction(1.0, 0.0, nu), 0.0);
     }
 
     /// A wall cell whose populations are already the equilibrium at the modelled velocity plus

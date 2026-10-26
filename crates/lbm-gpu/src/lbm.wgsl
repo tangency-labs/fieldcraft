@@ -44,7 +44,7 @@
 //
 // The wall model (fieldcraft_lbm::wall, Malaspinas & Sagaut 2014): before the collision
 // `wall_sample` reads each wall cell's second cell (one link further along the wall's normal),
-// takes u_τ from Spalding's law there and leaves the wall cell's modelled velocity and rate in
+// takes u_τ from Musker's profile there and leaves the wall cell's modelled velocity and rate in
 // `walls`; the collision then rebuilds the wall cell's populations from them (equilibrium at the
 // modelled velocity and the density of its known populations, plus the regularised stress of its
 // known populations, the unknown ones mirrored) and relaxes it at that rate. A wall cell's flag
@@ -368,59 +368,44 @@ fn smagorinsky_omega(p: Flux, rho: f32, omega0: f32) -> f32 {
     return omega0;
 }
 
-// Spalding's y⁺ at u⁺ (x) and its slope dy⁺/du⁺ (y) (fieldcraft_lbm::wall).
-fn spalding(up: f32) -> vec2<f32> {
-    let e = exp(-0.4 * 5.5);
-    let k = 0.4 * up;
-    let rest = exp(k) - 1.0 - k - 0.5 * k * k;
-    return vec2<f32>(up + e * (rest - k * k * k / 6.0), 1.0 + 0.4 * e * rest);
+// Musker's u⁺ at y⁺ (x) and its slope du⁺/dy⁺ (y) (fieldcraft_lbm::wall::musker).
+fn musker(yp: f32) -> vec2<f32> {
+    let a = 2.0 / 16.7;
+    let t = a * yp - 8.15 / 16.7;
+    let q = yp * yp - 8.15 * yp + 86.0;
+    let u = 5.424 * atan(t) + 0.434 * (9.6 * log(yp + 10.6) - 2.0 * log(q)) - 3.5072790;
+    let du = 5.424 * a / (1.0 + t * t) + 0.434 * (9.6 / (yp + 10.6) - 2.0 * (2.0 * yp - 8.15) / q);
+    return vec2<f32>(u, du);
 }
 
-// Spalding's friction velocity at speed `speed` and distance `y` (fieldcraft_lbm::wall::
-// friction_velocity): u⁺ y⁺(u⁺) = Re_y by Newton steps guarded by bisection; 0 at rest.
-fn spalding_friction(speed: f32, y: f32, nu: f32) -> f32 {
-    let re = speed * y / nu;
-    if !(re > 0.0) || re > 1e30 { return 0.0; }
+// The friction velocity from Musker's profile at speed `speed` and distance `y`
+// (fieldcraft_lbm::wall::musker_friction): u_τ u⁺(y u_τ / ν) = U by Newton steps guarded by
+// bisection, the bracket grown from the sublayer's √(ν U / y); 0 at rest.
+fn musker_friction(speed: f32, y: f32, nu: f32) -> f32 {
+    if !(speed > 0.0) || speed > 1e30 { return 0.0; }
     var lo = 0.0;
-    var hi = sqrt(re);
-    var up = clamp(log(re) / 0.4 + 5.5, 1e-30, hi);
-    var last = 1e38;
+    var hi = sqrt(nu * speed / y);
     for (var i = 0u; i < 60u; i = i + 1u) {
-        let s = spalding(up);
-        let value = up * s.x - re;
-        if value == 0.0 { break; }
-        if value > 0.0 { hi = up; } else { lo = up; }
-        if hi - lo <= 1e-6 * hi { break; }
-        let newton = up - value / (s.x + up * s.y);
-        let fast = newton > lo && newton < hi && abs(value) <= 0.5 * last;
-        last = abs(value);
-        if fast { up = newton; } else { up = 0.5 * (lo + hi); }
+        if hi * musker(y * hi / nu).x - speed > 0.0 { break; }
+        lo = hi;
+        hi = 2.0 * hi;
     }
-    if up > 0.0 { return speed / up; }
-    return 0.0;
-}
-
-// Spalding's u⁺ at y⁺ (fieldcraft_lbm::wall's inverse): the root in [0, y⁺].
-fn spalding_inverse(y_plus: f32) -> f32 {
-    if !(y_plus > 0.0) || y_plus > 1e30 { return 0.0; }
-    var lo = 0.0;
-    var hi = y_plus;
-    var up = clamp(log(y_plus) / 0.4 + 5.5, 1e-30, y_plus);
+    var ut = 0.5 * (lo + hi);
     for (var i = 0u; i < 60u; i = i + 1u) {
-        let s = spalding(up);
-        let value = s.x - y_plus;
+        let m = musker(y * ut / nu);
+        let value = ut * m.x - speed;
         if value == 0.0 { break; }
-        if value > 0.0 { hi = up; } else { lo = up; }
+        if value > 0.0 { hi = ut; } else { lo = ut; }
         if hi - lo <= 1e-6 * hi { break; }
-        let newton = up - value / s.y;
-        if newton > lo && newton < hi { up = newton; } else { up = 0.5 * (lo + hi); }
+        let newton = ut - value / (m.x + y * ut / nu * m.y);
+        if newton > lo && newton < hi { ut = newton; } else { ut = 0.5 * (lo + hi); }
     }
-    return up;
+    return ut;
 }
 
 // The wall model's sample (fieldcraft_lbm::wall::Walls::sample): wall cell k's second cell's
 // velocity before the collision gives u_τ, then the wall cell's modelled velocity ũ(y₁) along the
-// direction parallel to the wall and its rate 1 / (3 (ν + ν_t) + ½), ν_t the mixing length
+// direction parallel to the wall (ũ Musker's profile) and its rate 1 / (3 (ν + ν_t) + ½), ν_t the mixing length
 // (κ y₁ (1 − exp(−y₁⁺/A⁺)))² |∂ũ/∂y|, κ = 0.384, A⁺ = 26.
 @compute @workgroup_size(256)
 fn wall_sample(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
@@ -446,11 +431,12 @@ fn wall_sample(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id)
         let rel = u2 - b.xyz;
         let t = rel - dot(rel, a.xyz) * a.xyz;
         let speed = length(t);
-        let ut = spalding_friction(speed, 3.0 * a.w, nu);
+        let ut = musker_friction(speed, 3.0 * a.w, nu);
         if ut > 0.0 {
             let y_plus = a.w * ut / nu;
-            let up = spalding_inverse(y_plus);
-            let dudy = ut * ut / nu / spalding(up).y;
+            let m = musker(y_plus);
+            let up = m.x;
+            let dudy = ut * ut / nu * m.y;
             let l = 0.384 * a.w * (1.0 - exp(-y_plus / 26.0));
             let nu_t = l * l * abs(dudy);
             let u1 = ut * up;

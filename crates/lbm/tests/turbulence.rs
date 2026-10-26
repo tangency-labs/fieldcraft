@@ -203,7 +203,7 @@ fn damping_on_a_wall_the_grid_does_not_resolve_is_warned_about() {
 fn wall_modelled(end_time: f64, time_step: f64, collision: Collision, c: f64) -> Procedure {
     let mut p = turbulent(end_time, time_step, collision, c);
     if let Procedure::Fluid { turbulence: Some(Turbulence::Smagorinsky { wall_model, .. }), .. } = &mut p {
-        *wall_model = Some(WallModel::Spalding);
+        *wall_model = Some(WallModel::Musker);
     }
     p
 }
@@ -319,8 +319,8 @@ fn an_unknown_wall_model_is_refused_and_none_is_the_default() {
     assert!(read(r#"{"type": "smagorinsky", "constant": 0.1, "wall_model": 3}"#).is_err());
     let none = read(r#"{"type": "smagorinsky", "constant": 0.1}"#).unwrap();
     assert!(matches!(none, Turbulence::Smagorinsky { wall_model: None, .. }));
-    let spalding = read(r#"{"type": "smagorinsky", "constant": 0.1, "wall_model": "spalding"}"#).unwrap();
-    assert!(matches!(spalding, Turbulence::Smagorinsky { wall_model: Some(WallModel::Spalding), .. }));
+    let musker = read(r#"{"type": "smagorinsky", "constant": 0.1, "wall_model": "musker"}"#).unwrap();
+    assert!(matches!(musker, Turbulence::Smagorinsky { wall_model: Some(WallModel::Musker), .. }));
     // Written back without the field when there is none.
     assert!(!serde_json::to_string(&none).unwrap().contains("wall_model"));
 }
