@@ -1,0 +1,20 @@
+# The documentation site (https://tangency-labs.github.io/fieldcraft/), built by `cargo xtask book`
+# from this folder as it stands; the table of contents is SUMMARY.md. After SolidCraft's book
+# (MIT OR Apache-2.0; see ATTRIBUTION.md).
+[book]
+title = "FieldCraft"
+description = "Open-source finite element and lattice Boltzmann analysis in pure Rust: user guide, solver manual and developer guide."
+authors = ["FieldCraft contributors"]
+language = "en"
+src = "."
+
+[build]
+create-missing = false
+
+[output.html]
+git-repository-url = "https://github.com/tangency-labs/fieldcraft"
+edit-url-template = "https://github.com/tangency-labs/fieldcraft/edit/develop/docs/{path}"
+site-url = "/fieldcraft/"
+
+[output.html.search]
+enable = true

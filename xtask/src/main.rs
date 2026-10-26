@@ -8,6 +8,7 @@
 mod affected;
 mod app_icon;
 mod assets;
+mod book;
 mod icons;
 mod layers;
 mod licences;
@@ -30,6 +31,10 @@ commands:
   app-icon        draw the application icon family (assets/app-icon) with VectorCraft, then
                   write the iconset, icns, ico and Icon Composer document (macOS: sips,
                   iconutil, magick; actool for Assets.car when available)
+  book [--no-build]
+                  build the documentation site (docs/book.toml, docs/SUMMARY.md) with mdbook
+                  into target/book; links that leave docs/ point at the repository on GitHub;
+                  --no-build stages target/book-src only
   licences        write THIRD-PARTY-LICENSES.txt (the licences of every shipped crate; the
                   release workflow runs it before packaging, the file is not committed)
   test [--heavy] [CARGO ARGS] [-- TEST ARGS]
@@ -74,6 +79,7 @@ fn main() -> ExitCode {
         Some("assets") => assets::run(&root()),
         Some("icons") => icons::run(&root(), &rest),
         Some("app-icon") => app_icon::run(&root()),
+        Some("book") => book::run(&root(), !rest.contains(&"--no-build")),
         Some("licences") => licences::run(&root()),
         Some("test") => {
             let (heavy, rest) = match rest.split_first() {

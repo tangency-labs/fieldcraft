@@ -5,7 +5,7 @@ page through eframe's web runner, drawing with WebGPU where the browser has it a
 otherwise. The engine, the meshers and the solvers are the same code, compiled to
 `wasm32-unknown-unknown`.
 
-Live: <https://tangency-labs.github.io/fieldcraft/>, deployed from each release (a push to `main`,
+Live: <https://tangency-labs.github.io/fieldcraft/app/>, deployed with the documentation site from each release (a push to `main`,
 `.github/workflows/pages.yml`).
 
 ## Run it locally

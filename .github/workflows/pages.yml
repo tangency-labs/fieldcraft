@@ -1,9 +1,11 @@
-# The web app (apps/fieldcraft-web, docs/web.md) on GitHub Pages: https://tangency-labs.github.io/fieldcraft/
-# After SolidCraft's pages.yml (MIT OR Apache-2.0; see ATTRIBUTION.md).
+# The documentation site on GitHub Pages: the book (docs/, `cargo xtask book`) at
+# https://tangency-labs.github.io/fieldcraft/ and the web app (apps/fieldcraft-web, docs/web.md) at
+# https://tangency-labs.github.io/fieldcraft/app/. After SolidCraft's pages.yml (MIT OR Apache-2.0;
+# see ATTRIBUTION.md).
 #
-# A push to `main` (a release; main holds released code only) builds the app with Trunk (release,
-# wasm-opt) and deploys it. A merge to `develop` that touches code builds it without deploying, so a
-# broken web build shows up before the release. A manual run builds the branch it runs on and
+# A push to `main` (a release; main holds released code only) builds the book and the app (Trunk,
+# release, wasm-opt) and deploys them. A merge to `develop` builds both without deploying, so a
+# broken book or web build shows up before the release. A manual run builds the branch it runs on and
 # deploys only from `main`. Needs Settings › Pages › Source = GitHub Actions, and `main` allowed
 # by the github-pages environment's deployment branches.
 name: Pages
@@ -11,11 +13,6 @@ name: Pages
 on:
   push:
     branches: [main, develop]
-    # As ci.yml: a merge that only touches prose builds nothing.
-    paths:
-      - '**'
-      - '!**/*.md'
-      - '!docs/**'
   workflow_dispatch:
 
 permissions:
@@ -30,6 +27,8 @@ env:
   CARGO_TERM_COLOR: always
   TRUNK_VERSION: v0.21.14
   TRUNK_SHA256: f2b4680cd239693a646a2795e4633c625328d7b2a044fbe749fa3a2fe9e7036b
+  MDBOOK_VERSION: v0.5.4
+  MDBOOK_SHA256: 3f28de05dafca9d0f2eab99c662116b0e37b89b1d96a08f8f430b9eeae958cd7
 
 jobs:
   build:
@@ -55,13 +54,20 @@ jobs:
           echo "${TRUNK_SHA256}  trunk.tar.gz" | sha256sum -c -
           tar -xzf trunk.tar.gz -C "$HOME/.local/bin"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Install mdBook
+        run: |
+          curl -sSfL -o mdbook.tar.gz "https://github.com/rust-lang/mdBook/releases/download/${MDBOOK_VERSION}/mdbook-${MDBOOK_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          echo "${MDBOOK_SHA256}  mdbook.tar.gz" | sha256sum -c -
+          tar -xzf mdbook.tar.gz -C "$HOME/.local/bin"
+      - name: Build the book
+        run: cargo xtask book
       - name: Build the web app
         working-directory: apps/fieldcraft-web
         env:
           # Usage analytics only in the deployed build (main), and only with the user's consent
           # (docs/privacy.md); develop builds get an empty key, which sends nothing.
           FIELDCRAFT_POSTHOG_KEY: ${{ github.ref == 'refs/heads/main' && secrets.POSTHOG_KEY || '' }}
-        run: trunk build --release --public-url /fieldcraft/
+        run: trunk build --release --public-url /fieldcraft/app/
       - name: Bundle size
         run: |
           {
@@ -72,10 +78,15 @@ jobs:
               echo "| $(basename "$f") | $(stat -c %s "$f") | $(gzip -9 -c "$f" | wc -c) |"
             done
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Assemble the site
+        run: |
+          mkdir -p site
+          cp -r target/book/. site/
+          cp -r dist/web site/app
       - if: github.ref == 'refs/heads/main'
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
-          path: dist/web
+          path: site
 
   deploy:
     if: github.ref == 'refs/heads/main'

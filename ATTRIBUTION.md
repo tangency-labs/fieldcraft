@@ -226,6 +226,7 @@ is committed and listed here with its exports.
 |---|---|---|
 | xtask/src/layers.rs | SolidCraft `xtask/src/layers.rs` (itself adapted from CADCraft's xtask) | MIT OR Apache-2.0 |
 | xtask/src/assets.rs, xtask/src/licences.rs, xtask/src/test.rs, xtask/src/main.rs | SolidCraft `xtask/src/` | MIT OR Apache-2.0 |
+| xtask/src/book.rs, docs/book.toml (the documentation site) | SolidCraft `xtask/src/book.rs`, `docs/book/book.toml` | MIT OR Apache-2.0 |
 | clippy.toml, rustfmt.toml | SolidCraft | MIT OR Apache-2.0 |
 | crates/geometry/src/tagged_mesh.rs (package and part reading, transforms, units, caps) | SolidCraft `crates/io/src/threemf.rs` | MIT OR Apache-2.0 |
 | crates/render/src/camera.rs, crates/render/src/raster.rs | SolidCraft `crates/render/src/camera.rs`, `raster.rs` | MIT OR Apache-2.0 |
