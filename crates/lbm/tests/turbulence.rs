@@ -293,6 +293,117 @@ fn the_wall_model_leaves_resolved_laminar_couette_flow_as_it_was() {
     }
 }
 
+/// The total momentum of the fluid's populations, Σ_cells Σ_q c_q f_q (lattice units). This is
+/// the stored momentum, without the half force of the velocity's definition: the collision adds
+/// ρ a to it whole, so the half force cancels in a difference between steps.
+fn population_momentum(flow: &Flow) -> [f64; 3] {
+    let mut p = [0.0; 3];
+    for cell in (0..flow.grid().len()).filter(|c| flow.is_fluid(*c)) {
+        for (q, cq) in fieldcraft_lbm::lattice::C.iter().enumerate() {
+            let f = flow.population(q, cell);
+            for a in 0..3 {
+                p[a] += f64::from(cq[a]) * f;
+            }
+        }
+    }
+    p
+}
+
+/// A coarse channel (walls at y = 0 and 2, periodic in x and z, 6 cells per half-height, first
+/// cell at y⁺ ≈ 15 at Re_τ 180) started from a perturbed blunt profile under the wall model,
+/// driven by a body force: every wall cell is rebuilt, with its u_τ moving.
+fn perturbed_wall_modelled_channel(collision: Collision, steps: f64) -> (Setup, Flow) {
+    use std::f64::consts::PI;
+    let (n, re_tau, ub) = (6usize, 180.0, 15.7);
+    let dx = 1.0 / n as f64;
+    let (lx, lz) = ((2.0 * PI * n as f64).round() * dx, (PI * n as f64).round() * dx);
+    let mut d = domain([0.0; 3], [lx, 2.0, lz], dx);
+    for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+        *f = PERIODIC;
+    }
+    d.acceleration = [1.0, 0.0, 0.0];
+    let dt = 0.1 * dx / ub;
+    let (setup, mut flow) = prepare(&model(1.0, 1.0 / re_tau, d, wall_modelled(steps * dt, dt, collision, 0.1)), &[]);
+    let grid = *flow.grid();
+    let to_lattice = 1.0 / setup.velocity_scale();
+    let (kx, kz) = (2.0 * PI / lx, 2.0 * PI / lz);
+    flow.set_equilibrium(|cell| {
+        let [x, y, z] = grid.centre(cell);
+        let eta = y - 1.0;
+        let wall = 1.0 - eta * eta;
+        let u = 1.15 * ub * (1.0 - eta.abs().powi(8)) + 2.0 * (2.0 * kz * z).sin() * (kx * x).cos() * wall;
+        let v = 1.5 * wall * (2.0 * kz * z).cos() * (3.0 * kx * x).sin();
+        let w = 1.5 * wall * eta * (kx * x).sin() * (kz * z).cos();
+        (1.0, [u * to_lattice, v * to_lattice, w * to_lattice])
+    });
+    (setup, flow)
+}
+
+/// The wall force on a modelled wall is the momentum the flow hands to it: the bounce-back's
+/// exchange on its links plus what the reconstruction takes from its wall cells. Interior
+/// streaming conserves momentum and the collision adds ρ a whole, so over each step
+/// P(t + 1) − P(t) = a M(t + 1) − Σ_walls F, M the mass after the reconstruction (streaming keeps
+/// it). Checked step by step from the start in a perturbed coarse channel, to round-off: the
+/// residual against the total momentum summed (about 900, the body force per step 0.06), where
+/// the same channel without the wall model closes to 7e-13 of it. Without the reconstruction's
+/// share the budget misses by several times the body force. The Zou–He density of the
+/// reconstruction does not conserve mass; its drift is printed.
+#[test]
+fn the_wall_force_closes_the_momentum_budget_of_a_wall_modelled_channel() {
+    for collision in [Collision::Trt, Collision::Regularized, Collision::Mrt] {
+        let (setup, mut flow) = perturbed_wall_modelled_channel(collision, 40.0);
+        assert!(flow.wall_model());
+        let a = flow.acceleration();
+        let (m0, mut p) = (flow.mass(), population_momentum(&flow));
+        let (mut worst, mut removed, mut body) = (0.0f64, 0.0f64, 0.0);
+        for _ in 0..setup.steps {
+            flow.step().unwrap();
+            let next = population_momentum(&flow);
+            let m = flow.mass();
+            let wall: [f64; 3] = [0, 1, 2].map(|k| flow.forces().iter().map(|f| f[k]).sum());
+            body = a[0] * m;
+            for k in 0..3 {
+                worst = worst.max((next[k] - p[k] - (a[k] * m - wall[k])).abs() / next[0].abs());
+            }
+            let rebuilt: f64 = flow.walls().unwrap().removed().map(|(_, j)| j[0]).sum();
+            removed = removed.max(rebuilt.abs() / wall[0].abs());
+            p = next;
+        }
+        let drift = flow.mass() / m0 - 1.0;
+        println!(
+            "{} wall-modelled channel, {} steps: momentum budget closes to {worst:.2e} of the momentum ({:.2e} of the body force); the reconstruction's share of the wall drag up to {removed:.2}; mass drift {drift:.2e}",
+            collision.name(),
+            setup.steps,
+            worst * p[0].abs() / body
+        );
+        assert!(worst < 1e-12, "{}: {worst}", collision.name());
+        assert!(removed > 0.01, "the reconstruction carries part of the drag: {removed}");
+    }
+}
+
+/// A laminar channel under the wall model (8 cells across, body force, periodic along it) run to
+/// steady state: the wall force on the two walls equals the body force on the fluid.
+#[test]
+fn a_steady_wall_modelled_channel_carries_its_body_force_on_its_walls() {
+    for collision in [Collision::Trt, Collision::Regularized, Collision::Mrt] {
+        let (n, h, nu) = (8usize, 1.0, 0.02);
+        let dx = h / n as f64;
+        let mut d = domain([0.0; 3], [dx, h, dx], dx);
+        for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+            *f = PERIODIC;
+        }
+        d.acceleration = [1e-3, 0.0, 0.0];
+        let dt = 0.25 * dx;
+        let (setup, mut flow) = prepare(&model(1.0, nu, d, wall_modelled(5.0 * h * h / nu, dt, collision, 0.1)), &[]);
+        run_all(&setup, &mut flow);
+        let g = |name: &str| flow.groups().iter().position(|g| g.name == name).unwrap();
+        let wall = flow.forces()[g("y_min")][0] + flow.forces()[g("y_max")][0];
+        let body = flow.acceleration()[0] * flow.mass();
+        println!("{} steady wall-modelled channel, {} steps: wall drag / body force {:.12}", collision.name(), setup.steps, wall / body);
+        assert!((wall / body - 1.0).abs() < 1e-9, "{}: {wall} vs {body}", collision.name());
+    }
+}
+
 /// The wall model on the cavity of [`cavity_failure`] (Re 5000, 300 steps): the same result bit
 /// for bit on one and on several threads (each wall cell's sample is its own).
 #[test]

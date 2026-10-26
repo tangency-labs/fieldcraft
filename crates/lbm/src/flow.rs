@@ -40,7 +40,8 @@
 //! - **Forces:** momentum exchange on every wall link (Ladd 1994; R. Mei, D. Yu, W. Shyy, L.-S.
 //!   Luo, *Force evaluation in the lattice Boltzmann method involving curved geometry*, PRE
 //!   65:041203, 2002): a population `f*` leaving a fluid cell toward the wall and the one `f'`
-//!   coming back transfer `c_out f* − c_in f'` to the wall.
+//!   coming back transfer `c_out f* − c_in f'` to the wall. Under the wall model a wall also
+//!   takes the momentum each reconstruction of its wall cells removes ([`crate::wall`]).
 //! - **Fans and porous zones:** a porous zone (a vent, grille, filter or perforated plate) adds
 //!   the Darcy–Forchheimer force per volume `−ρ (α u + β |u| u)` (α = ν/K, β = C₂/2) to its
 //!   cells through Guo's term; because it depends on the velocity it defines, the velocity comes
@@ -1471,14 +1472,18 @@ impl Flow {
         // with an eddy viscosity too, its eddy viscosities to its slice of cell_nu_t
         let mut u_blocks: Vec<&mut [[f64; 3]]> = self.cell_u.chunks_mut(block).collect();
         let mut nu_blocks: Vec<&mut [f64]> = self.cell_nu_t.chunks_mut(block).collect();
-        type Work<'a, 'b> = (&'a mut Vec<&'b mut [f64]>, &'a mut f64, Option<&'a mut [[f64; 3]]>, Option<&'a mut [f64]>, &'a mut f64);
+        // With the wall model, each block's rebuilt wall cells and the momentum their
+        // reconstruction took, in cell order.
+        let mut removed: Vec<Vec<(u32, [f64; 3])>> = vec![Vec::new(); blocks.len()];
+        type Work<'a, 'b> =
+            (&'a mut Vec<&'b mut [f64]>, &'a mut f64, Option<&'a mut [[f64; 3]]>, Option<&'a mut [f64]>, &'a mut f64, &'a mut Vec<(u32, [f64; 3])>);
         let mut work: Vec<Work> = Vec::with_capacity(blocks.len());
         let mut u_iter = u_blocks.drain(..);
         let mut nu_iter = nu_blocks.drain(..);
-        for ((f, m), e) in blocks.iter_mut().zip(maxima.iter_mut()).zip(eddies.iter_mut()) {
-            work.push((f, m, u_iter.next(), nu_iter.next(), e));
+        for (((f, m), e), r) in blocks.iter_mut().zip(maxima.iter_mut()).zip(eddies.iter_mut()).zip(removed.iter_mut()) {
+            work.push((f, m, u_iter.next(), nu_iter.next(), e, r));
         }
-        parallel::for_each_mut(&mut work, |b, (f, block_max, u_out, nu_out, max_nu)| {
+        parallel::for_each_mut(&mut work, |b, (f, block_max, u_out, nu_out, max_nu, removed)| {
             let mut fq = [0.0; Q];
             let mut post = [0.0; Q];
             // The block's largest speed, kept here and stored once: the blocks' maxima share
@@ -1505,6 +1510,7 @@ impl Flow {
                 let wall_rate =
                     if wall_model && rho > 0.0 && rho.is_finite() { walls.and_then(|w| w.reconstruct(b * block + i, &mut fq, a)) } else { None };
                 if wall_rate.is_some() {
+                    let before = j;
                     (rho, j) = (0.0, [0.0; 3]);
                     for (q, v) in fq.iter().enumerate() {
                         let cq = C[q];
@@ -1513,6 +1519,7 @@ impl Flow {
                         j[1] += v * f64::from(cq[1]);
                         j[2] += v * f64::from(cq[2]);
                     }
+                    removed.push(((b * block + i) as u32, [0, 1, 2].map(|k| before[k] - j[k])));
                 }
                 if !(rho > 0.0 && rho.is_finite()) {
                     **block_max = f64::NAN;
@@ -1610,6 +1617,10 @@ impl Flow {
             }
             **block_max = max_u2;
         });
+        drop(work);
+        if wall_model && let Some(walls) = &mut self.walls {
+            walls.set_removed(&removed.concat());
+        }
         // The largest eddy viscosity over the fluid's own (a maximum: no order dependence).
         let nu0 = (1.0 / wp - 0.5) / 3.0;
         self.eddy_ratio = if smagorinsky > 0.0 && nu0 > 0.0 { eddies.iter().fold(0.0f64, |m, x| m.max(*x)) / nu0 } else { 0.0 };
@@ -1681,6 +1692,19 @@ impl Flow {
                     }
                 }
                 Rule::Pull { .. } | Rule::Open => {}
+            }
+        }
+        // The wall model's share: the momentum each reconstruction took from its wall cell, in
+        // cell order.
+        if self.wall_model
+            && let Some(walls) = &self.walls
+        {
+            for (group, j) in walls.removed() {
+                if let Some(force) = self.forces.get_mut(group) {
+                    for a in 0..3 {
+                        force[a] += j[a];
+                    }
+                }
             }
         }
     }

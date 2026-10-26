@@ -45,12 +45,19 @@
 //!    the regularised stress, and x₁ relaxes with ν + ν_t, ν_t the mixing length
 //!    (κ y₁ (1 − exp(−y₁⁺/A⁺)))² |∂ũ/∂y| at y₁ (κ = 0.384, A⁺ = 26), not Smagorinsky's.
 //!
-//! ũ is Musker's profile, as in the paper ([`musker`]). Where this differs from the paper: the collision
-//! is this solver's regularised or two-relaxation-time one (the paper's is multiple-relaxation-
-//! time); a moving wall is taken relative to its velocity (the paper's walls are still and
-//! flat); and the force reported on a modelled wall is still the bounce-back's momentum exchange,
-//! which the reconstruction overwrites, not the modelled stress. A wall cell whose second cell is
-//! not fluid inside the box keeps the bounce-back alone.
+//! ũ is Musker's profile, as in the paper ([`musker`]). Where this differs from the paper: a
+//! moving wall is taken relative to its velocity (the paper's walls are still and flat). A wall
+//! cell whose second cell is not fluid inside the box keeps the bounce-back alone.
+//!
+//! **Wall force.** The force reported on a modelled wall is the momentum the flow hands to it,
+//! the drag the simulation carries, not the stress ρ u_τ² the law infers at x₂. It has two
+//! parts: the bounce-back's momentum exchange on the wall cell's links, taken from the
+//! populations after the rebuilt cell's collision, and the momentum the reconstruction itself
+//! takes from the cell, `Σ c f` streamed less `Σ c f` rebuilt. Interior streaming conserves
+//! momentum and the collision adds ρ a whole, so the walls' forces close the fluid's momentum
+//! budget each step, and at steady state they carry the body force. A wall cell with links into
+//! more than one force group (an edge or corner) puts all of its reconstruction's share into
+//! the group of its nearest link.
 //!
 //! No code of any lattice Boltzmann or LES package was read; this is written from the papers.
 
@@ -116,6 +123,12 @@ struct WallCell {
     distance: f64,
     /// The wall's velocity (lattice units).
     velocity: [f64; 3],
+    /// The force group of its nearest wall link, which takes the momentum its reconstruction
+    /// removes.
+    group: u32,
+    /// The momentum the wall model's reconstruction took from the cell in the last collision
+    /// (lattice units).
+    removed: [f64; 3],
     /// The friction velocity at the last refresh (lattice units; with damping).
     friction: f64,
     /// The wall model's second cell off the wall, one link further along the normal (`NONE`
@@ -167,18 +180,18 @@ impl Walls {
             let Some(cell) = links.first().map(|l| l.cell) else { continue };
             // The nearest wall point: the population of direction q arrives from −c_q, so the
             // wall is halfway there; an axis link first, then the lowest direction.
-            let mut best: Option<(f64, usize, [f64; 3])> = None;
+            let mut best: Option<(f64, usize, [f64; 3], u32)> = None;
             for l in links {
                 let Rule::Bounce { group, .. } = l.rule else { continue };
                 let Some(Some(velocity)) = walls.get(group as usize) else { continue };
                 let q = usize::from(l.q);
                 let cq = c(q);
                 let len = 0.5 * (cq[0] * cq[0] + cq[1] * cq[1] + cq[2] * cq[2]).sqrt();
-                if best.is_none_or(|(d, b, _)| len < d || (len == d && q < b)) {
-                    best = Some((len, q, *velocity));
+                if best.is_none_or(|(d, b, _, _)| len < d || (len == d && q < b)) {
+                    best = Some((len, q, *velocity, group));
                 }
             }
-            let Some((d, q, velocity)) = best else { continue };
+            let Some((d, q, velocity, group)) = best else { continue };
             let ijk = grid.coords(cell as usize);
             let centre = ijk.map(|v| v as f64);
             let normal = c(q).map(|v| v * 0.5 / d);
@@ -197,6 +210,8 @@ impl Walls {
                 normal,
                 distance: d,
                 velocity,
+                group,
+                removed: [0.0; 3],
                 friction: 0.0,
                 second: second.map_or(NONE, |s| s as u32),
                 boundary: velocity,
@@ -278,6 +293,25 @@ impl Walls {
     pub fn modelled(&self, cell: usize) -> Option<([f64; 3], f64)> {
         let w = self.walls.get(*self.wall_of.get(cell)? as usize).filter(|w| w.cell as usize == cell && w.second != NONE)?;
         Some((w.boundary, w.rate))
+    }
+
+    /// Record the momentum the reconstruction took from each wall cell in the last collision:
+    /// `removed` holds `(cell, j_before − j_after)` of the cells it rebuilt, in cell order; every
+    /// other wall cell took none.
+    pub fn set_removed(&mut self, removed: &[(u32, [f64; 3])]) {
+        let mut next = removed.iter().peekable();
+        for w in &mut self.walls {
+            w.removed = match next.next_if(|(cell, _)| *cell == w.cell) {
+                Some((_, j)) => *j,
+                None => [0.0; 3],
+            };
+        }
+    }
+
+    /// The momentum each wall cell's reconstruction took from the flow in the last collision,
+    /// with the force group it goes to, in cell order (none without the wall model).
+    pub fn removed(&self) -> impl Iterator<Item = (usize, [f64; 3])> + '_ {
+        self.walls.iter().map(|w| (w.group as usize, w.removed))
     }
 
     /// The wall model's reconstruction of wall cell `cell` (Malaspinas and Sagaut, eqs. 41–46 and

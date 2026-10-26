@@ -47,8 +47,10 @@
 // takes u_τ from Musker's profile there and leaves the wall cell's modelled velocity and rate in
 // `walls`; the collision then rebuilds the wall cell's populations from them (equilibrium at the
 // modelled velocity and the density of its known populations, plus the regularised stress of its
-// known populations, the unknown ones mirrored) and relaxes it at that rate. A wall cell's flag
-// word in `fluid` holds its row in `walls` (k + 1, past the fluid bit), so other cells cost nothing.
+// known populations, the unknown ones mirrored) and relaxes it at that rate, and records the
+// momentum the rebuild took, which `wall_forces` adds to the exchange of the cell's nearest wall
+// link. A wall cell's flag word in `fluid` holds its row in `walls` (k + 1, past the fluid bit),
+// so other cells cost nothing.
 
 override AA_MODE: bool = true;
 // The recursive regularised collision instead of the two-relaxation-time one
@@ -158,9 +160,11 @@ struct Params {
 @group(0) @binding(20) var<storage, read> solid_u: array<u32>;
 @group(0) @binding(21) var<storage, read> solid_f: array<f32>;
 @group(0) @binding(22) var<storage, read_write> solid_s: array<f32>;
-// The wall model's wall cells, three rows each: the unit normal into the fluid (xyz) and the
+// The wall model's wall cells, four rows each: the unit normal into the fluid (xyz) and the
 // distance to the wall (w); the wall's velocity (xyz) and the second cell's index (w, as bits);
-// the modelled velocity (xyz) and relaxation rate (w), written by `wall_sample`.
+// the modelled velocity (xyz) and relaxation rate (w), written by `wall_sample`; the momentum the
+// last collision's reconstruction took from the cell (xyz, written by `collide`) and the index of
+// the cell's nearest wall link (w, as bits), whose group takes it in `wall_forces`.
 @group(0) @binding(23) var<storage, read_write> walls: array<vec4<f32>>;
 
 var<workgroup> red: array<vec4<f32>, 256>;
@@ -411,8 +415,8 @@ fn musker_friction(speed: f32, y: f32, nu: f32) -> f32 {
 fn wall_sample(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
     let k = cell_of(lid, wg);
     if !WALL_MODEL || k >= params.wall.x { return; }
-    let a = walls[3u * k];
-    let b = walls[3u * k + 1u];
+    let a = walls[4u * k];
+    let b = walls[4u * k + 1u];
     let second = bitcast<u32>(b.w);
     var xyz = vec3<i32>(0);
     if AA_MODE && params.phase.x == 1u { xyz = coords(second); }
@@ -445,7 +449,7 @@ fn wall_sample(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id)
             }
         }
     }
-    walls[3u * k + 2u] = out;
+    walls[4u * k + 2u] = out;
 }
 
 // The wall model's reconstruction of `cell` (fieldcraft_lbm::wall::Walls::reconstruct), in the
@@ -453,8 +457,8 @@ fn wall_sample(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id)
 fn wall_rebuild(cell: u32, fq: ptr<function, array<f32, 19>>, acc: vec3<f32>) -> bool {
     let k = fluid[cell] >> 1u;
     if k == 0u { return false; }
-    let n = walls[3u * (k - 1u)].xyz;
-    let u = walls[3u * (k - 1u) + 2u].xyz - 0.5 * acc;
+    let n = walls[4u * (k - 1u)].xyz;
+    let u = walls[4u * (k - 1u) + 2u].xyz - 0.5 * acc;
     // ρ₀ + 2 ρ₊ over the known populations (c·n ≤ 0): Σ w over them is 1.
     var s = 0.0;
     for (var q = 0u; q < Q; q = q + 1u) {
@@ -490,7 +494,7 @@ fn wall_rebuild(cell: u32, fq: ptr<function, array<f32, 19>>, acc: vec3<f32>) ->
 fn wall_omega(cell: u32) -> f32 {
     let k = fluid[cell] >> 1u;
     if k == 0u { return -1.0; }
-    return walls[3u * (k - 1u) + 2u].w;
+    return walls[4u * (k - 1u) + 2u].w;
 }
 
 // The eddy viscosity of a cell relaxing at `w` (c_s² = ⅓), kept for the reply and, with heat, for
@@ -515,13 +519,21 @@ fn collide_cell(cell: u32, lid: u32) {
         drho = drho + v;
         j = j + vec3<f32>(c_of(q)) * v;
     }
-    if WALL_MODEL && wall_rebuild(cell, &fq, acc_of(cell)) {
-        drho = 0.0;
-        j = vec3<f32>(0.0);
-        for (var q = 0u; q < Q; q = q + 1u) {
-            drho = drho + fq[q];
-            j = j + vec3<f32>(c_of(q)) * fq[q];
+    if WALL_MODEL && (fluid[cell] >> 1u) > 0u {
+        // The momentum the reconstruction takes from the cell, which its wall receives.
+        let row = 4u * ((fluid[cell] >> 1u) - 1u) + 3u;
+        var removed = vec3<f32>(0.0);
+        if wall_rebuild(cell, &fq, acc_of(cell)) {
+            let before = j;
+            drho = 0.0;
+            j = vec3<f32>(0.0);
+            for (var q = 0u; q < Q; q = q + 1u) {
+                drho = drho + fq[q];
+                j = j + vec3<f32>(c_of(q)) * fq[q];
+            }
+            removed = before - j;
         }
+        walls[row] = vec4<f32>(removed, walls[row].w);
     }
     let rho = 1.0 + drho;
     if !(rho > 0.0) || rho != rho || abs(rho) > 1e30 {
@@ -1249,6 +1261,18 @@ fn thermal_check(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_i
     if !is_fluid(cell) { return; }
     let theta = theta_of(cell);
     if theta != theta || abs(theta) > 1e30 { atomicStore(&stats[2], 1u); }
+}
+
+// The wall model's share of the last step's exchange: each wall cell's reconstruction gave its
+// momentum to the wall of its nearest link (after `link_forces`; one link per wall cell).
+@compute @workgroup_size(256)
+fn wall_forces(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
+    let k = cell_of(lid, wg);
+    if !WALL_MODEL || k >= params.wall.x { return; }
+    let row = walls[4u * k + 3u];
+    let l = bitcast<u32>(row.w);
+    if l >= params.links { return; }
+    contrib[l] = vec4<f32>(contrib[l].xyz + row.xyz, contrib[l].w);
 }
 
 // One workgroup per group: the sum of its links' contributions.

@@ -980,8 +980,13 @@ fn couette_flow_with_the_wall_model_matches_the_cpu() {
 /// A coarse turbulent-like channel (walls at y = 0 and 2, periodic in x and z, 6 cells per
 /// half-height, first cell at y⁺ ≈ 15 at Re_τ 180) started from a perturbed blunt profile and run
 /// 150 steps under the wall model: a fully three-dimensional flow with every wall cell's u_τ
-/// moving, against the CPU before f32 round-off grows chaotically. Measured on the GB10 after
-/// 150 steps: velocity 2.3e-6 (TRT) and 3.0e-6 (regularised), wall drag 1.0e-5 and 9.2e-7.
+/// moving, against the CPU before f32 round-off grows chaotically. The wall drag is the
+/// bounce-back's exchange plus what the reconstruction takes, two parts about 450 times the body
+/// force in this start-up that nearly cancel (the net drag is 0.1 to 9 times the body force), so
+/// the states' f32 differences show in it magnified. Measured on the GB10 after 150 steps: velocity
+/// 2.1e-6 (TRT), 2.7e-6 (regularised) and 6.0e-7 (MRT); wall drag 2.8e-4, 3.2e-4 and 9.8e-6 of
+/// itself, about 5e-6 of either part. The steady channel below compares the drag to the force
+/// tests' tolerance.
 #[test]
 fn a_coarse_wall_modelled_channel_follows_the_cpu() {
     use std::f64::consts::PI;
@@ -1020,6 +1025,40 @@ fn a_coarse_wall_modelled_channel_follows_the_cpu() {
         );
         assert!(du < 1e-4 && drho < 1e-5, "{du} {drho}");
         assert!(drag < 1e-3, "{drag}");
+    }
+}
+
+/// A laminar channel under the wall model (8 cells across, body force, periodic along it) run to
+/// steady state on both: the wall drag, the bounce-back's exchange plus what the reconstruction
+/// takes, carries the body force on the GPU as on the CPU, within the force tests' 5e-5.
+#[test]
+fn a_steady_wall_modelled_channel_s_drag_matches_the_cpu() {
+    for (collision, streaming) in cases() {
+        let (n, h, nu) = (8usize, 1.0, 0.02);
+        let dx = h / n as f64;
+        let mut d = domain([0.0; 3], [dx, h, dx], dx);
+        for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+            *f = PERIODIC;
+        }
+        d.acceleration = [1e-3, 0.0, 0.0];
+        let dt = 0.25 * dx;
+        let m = model(1.0, nu, d, wall_modelled(collide(5.0 * h * h / nu, dt, None, collision), 0.1));
+        let (setup, flow) = prepare(&m, &[]);
+        assert!(flow.wall_model());
+        let Some((mut cpu, mut gpu)) = both(&setup, flow, streaming) else { continue };
+        // The reconstruction's density does not conserve mass: the body force on the final mass.
+        let body = cpu.acceleration()[0] * cpu.mass();
+        let (fc, fg) = (Backend::forces(&mut cpu).unwrap(), gpu.forces().unwrap());
+        let wall = |f: &[[f64; 3]]| f[BoxFace::YMin.index()][0] + f[BoxFace::YMax.index()][0];
+        let (dc, dg) = (wall(&fc), wall(&fg));
+        println!(
+            "{collision:?} steady wall-modelled channel ({streaming:?}): drag / body force CPU {:.9} GPU {:.9}, GPU vs CPU {:.2e}",
+            dc / body,
+            dg / body,
+            (dg - dc).abs() / dc.abs()
+        );
+        assert!((dc / body - 1.0).abs() < 1e-9, "{dc} vs {body}");
+        assert!((dg - dc).abs() <= 5e-5 * dc.abs(), "{dg} vs {dc}");
     }
 }
 

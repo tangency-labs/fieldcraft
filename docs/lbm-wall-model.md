@@ -89,6 +89,19 @@ own velocity. A wall cell whose x₂ is not a fluid cell inside the domain keeps
 transfers to the wall, the drag the simulation actually carries. It is not the stress the wall
 model infers at x₂. The two differ on coarse grids, as the validation below shows.
 
+The force has two parts:
+- the bounce-back's momentum exchange on the wall cell's links, after the rebuilt cell's
+  collision;
+- the momentum the reconstruction (step 5) takes from the cell: the momentum of its streamed
+  populations less that of its rebuilt ones.
+
+Together they close the fluid's momentum budget every step, so at steady state the walls carry
+the body force exactly. A wall cell on an edge or corner, with links into more than one wall,
+puts all of the reconstruction's share into the wall of its nearest link.
+
+The density the reconstruction sets (step 3) does not conserve mass exactly. In a coarse
+channel the total mass drifts by 1e-7 to 1e-5 over the first 40 steps.
+
 **Implementation.** `crates/lbm/src/wall.rs` and `crates/lbm/src/mrt.rs` (CPU, f64), and
 `crates/lbm-gpu/src/lbm.wgsl` (GPU, f32). Both are written from the papers.
 

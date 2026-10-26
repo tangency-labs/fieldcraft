@@ -26,6 +26,8 @@ const KIND_OPEN: u32 = 3;
 const RESET: u32 = 1 << 24;
 /// Floats per open cell in the outlet buffer (see lbm.wgsl).
 const OUTLET: usize = 16;
+/// The floats of one wall model wall cell in `walls`: four rows (lbm.wgsl).
+const WALL_ROW: usize = 16;
 /// The scalar lattice's directions (the first seven of D3Q19) and weights.
 const QT: usize = 7;
 const WT: [f64; QT] = [0.25, 0.125, 0.125, 0.125, 0.125, 0.125, 0.125];
@@ -288,7 +290,7 @@ fn solid_data(solid: &fieldcraft_lbm::conduction::SolidHeat, t0: f64) -> Result<
 }
 
 /// The entry points of `lbm.wgsl` a flow dispatches.
-const KERNELS: [&str; 26] = [
+const KERNELS: [&str; 27] = [
     "clear_eddy",
     "collide",
     "wall_sample",
@@ -299,6 +301,7 @@ const KERNELS: [&str; 26] = [
     "outlet_convect",
     "open_boundaries",
     "link_forces",
+    "wall_forces",
     "group_forces",
     "cell_moments",
     "mass",
@@ -592,14 +595,15 @@ impl GpuFlow {
                 *u = u32::from(*b);
             }
         }
-        // The wall model's wall cells with a second cell: three rows each in `walls`, and in each
+        // The wall model's wall cells with a second cell: four rows each in `walls`, and in each
         // one's flag word its row (k + 1) past the fluid bit.
         let mut wall_rows: Vec<f32> = Vec::new();
         let nu0 = (1.0 / flow.omegas().0 - 0.5) / 3.0;
         if let Some(walls) = flow.walls().filter(|_| flow.wall_model()) {
+            let links = flow.links();
             for (cell, link, distance, velocity, second) in walls.wall_cells() {
                 let Some(second) = second else { continue };
-                let row = u32::try_from(wall_rows.len() / 12 + 1)
+                let row = u32::try_from(wall_rows.len() / WALL_ROW + 1)
                     .ok()
                     .filter(|r| *r < 1 << 31)
                     .ok_or_else(|| Error::Limit("too many wall cells for the GPU's flags".into()))?;
@@ -615,9 +619,21 @@ impl GpuFlow {
                 wall_rows.push(f32::from_bits(second));
                 wall_rows.extend(velocity.map(|v| v as f32));
                 wall_rows.push((1.0 / (3.0 * nu0 + 0.5)) as f32);
+                // Its nearest wall link (the links are in cell order), which takes the momentum
+                // its reconstruction removes, as on the CPU.
+                let first = links.partition_point(|l| (l.cell as usize) < cell);
+                let nearest = links
+                    .get(first..)
+                    .unwrap_or_default()
+                    .iter()
+                    .take_while(|l| l.cell as usize == cell)
+                    .position(|l| usize::from(l.q) == link)
+                    .and_then(|i| u32::try_from(first + i).ok())
+                    .ok_or_else(|| Error::Invalid(format!("wall cell {cell} has no link in its wall's direction")))?;
+                wall_rows.extend([0.0, 0.0, 0.0, f32::from_bits(nearest)]);
             }
         }
-        let wall_count = wall_rows.len() / 12;
+        let wall_count = wall_rows.len() / WALL_ROW;
 
         // The links, by cell, and the ones with a force by group.
         let links = flow.links();
@@ -1102,8 +1118,8 @@ impl GpuFlow {
         if self.wall_count == 0 {
             return Ok(Vec::new());
         }
-        let rows = self.read_f32(&self.walls, 12 * self.wall_count)?;
-        Ok(rows.chunks_exact(12).map(|r| ([f64::from(r[8]), f64::from(r[9]), f64::from(r[10])], f64::from(r[11]))).collect())
+        let rows = self.read_f32(&self.walls, WALL_ROW * self.wall_count)?;
+        Ok(rows.as_chunks::<WALL_ROW>().0.iter().map(|r| ([f64::from(r[8]), f64::from(r[9]), f64::from(r[10])], f64::from(r[11]))).collect())
     }
 
     /// The moments of the current state into the moments buffer.
@@ -1177,6 +1193,9 @@ impl GpuFlow {
         // populations; with solids also without fluid links, for their heat into box faces.
         if (self.link_count > 0 || self.solid.is_some()) && self.group_count > 0 {
             commands.push((self.current ^ 1, "link_forces", self.links_groups));
+            if let Some(groups) = self.wall_groups {
+                commands.push((self.current ^ 1, "wall_forces", groups));
+            }
             if let Some(sd) = &self.solid {
                 commands.push((self.current ^ 1, "solid_contrib", sd.link_groups));
             }
