@@ -41,6 +41,14 @@
 // needs the cell's ν_t too: the momentum collision leaves it in `moments`' w (the density there
 // is only read after `cell_moments` has rewritten it), so it costs no memory and no binding.
 // The last step's largest ν_t goes to stats[3] (cleared by clear_eddy).
+//
+// The wall model (fieldcraft_lbm::wall, Malaspinas & Sagaut 2014): before the collision
+// `wall_sample` reads each wall cell's second cell (one link further along the wall's normal),
+// takes u_τ from Spalding's law there and leaves the wall cell's modelled velocity and rate in
+// `walls`; the collision then rebuilds the wall cell's populations from them (equilibrium at the
+// modelled velocity and the density of its known populations, plus the regularised stress of its
+// known populations, the unknown ones mirrored) and relaxes it at that rate. A wall cell's flag
+// word in `fluid` holds its row in `walls` (k + 1, past the fluid bit), so other cells cost nothing.
 
 override AA_MODE: bool = true;
 // The recursive regularised collision instead of the two-relaxation-time one
@@ -50,6 +58,8 @@ override REGULARIZED: bool = false;
 // uniform test: with it off the kernels compile to what they were without the model, so their
 // results stay bit-for-bit (a branch on a uniform changed the driver's roundings of the rest).
 override SMAGORINSKY: bool = false;
+// The wall model (with Smagorinsky's model); an override for the same reason.
+override WALL_MODEL: bool = false;
 // The largest lattice speed (fieldcraft_lbm::setup::MAX_LATTICE_SPEED): the cap of a convective
 // outlet's convection speed.
 override MAX_SPEED: f32 = 0.5;
@@ -92,8 +102,12 @@ struct Params {
     // Conducting solids: cells m (x), interface links k (y), padding (z), and 1 / sub-steps (w,
     // as f32 bits).
     solid: vec4<u32>,
-    // Smagorinsky's model: C² (x; 0 without it), 1 / Pr_t (y), the two relaxation times' Λ (z).
+    // Smagorinsky's model: C² (x; 0 without it), 1 / Pr_t (y), the two relaxation times' Λ (z),
+    // and the fluid's own viscosity (w), from the host's double precision: (1/ω − ½)/3 in f32
+    // keeps few digits with τ near ½.
     smag: vec4<f32>,
+    // The wall model: its wall cells (x).
+    wall: vec4<u32>,
 };
 
 // Each kernel's bind group holds only the bindings it reaches (native.rs reads them from this
@@ -142,6 +156,10 @@ struct Params {
 @group(0) @binding(20) var<storage, read> solid_u: array<u32>;
 @group(0) @binding(21) var<storage, read> solid_f: array<f32>;
 @group(0) @binding(22) var<storage, read_write> solid_s: array<f32>;
+// The wall model's wall cells, three rows each: the unit normal into the fluid (xyz) and the
+// distance to the wall (w); the wall's velocity (xyz) and the second cell's index (w, as bits);
+// the modelled velocity (xyz) and relaxation rate (w), written by `wall_sample`.
+@group(0) @binding(23) var<storage, read_write> walls: array<vec4<f32>>;
 
 var<workgroup> red: array<vec4<f32>, 256>;
 // The largest squared speed of a workgroup's cells (collide): one atomic per workgroup, not
@@ -348,6 +366,145 @@ fn smagorinsky_omega(p: Flux, rho: f32, omega0: f32) -> f32 {
     return omega0;
 }
 
+// Spalding's y⁺ at u⁺ (x) and its slope dy⁺/du⁺ (y) (fieldcraft_lbm::wall).
+fn spalding(up: f32) -> vec2<f32> {
+    let e = exp(-0.4 * 5.5);
+    let k = 0.4 * up;
+    let rest = exp(k) - 1.0 - k - 0.5 * k * k;
+    return vec2<f32>(up + e * (rest - k * k * k / 6.0), 1.0 + 0.4 * e * rest);
+}
+
+// Spalding's friction velocity at speed `speed` and distance `y` (fieldcraft_lbm::wall::
+// friction_velocity): u⁺ y⁺(u⁺) = Re_y by Newton steps guarded by bisection; 0 at rest.
+fn spalding_friction(speed: f32, y: f32, nu: f32) -> f32 {
+    let re = speed * y / nu;
+    if !(re > 0.0) || re > 1e30 { return 0.0; }
+    var lo = 0.0;
+    var hi = sqrt(re);
+    var up = clamp(log(re) / 0.4 + 5.5, 1e-30, hi);
+    var last = 1e38;
+    for (var i = 0u; i < 60u; i = i + 1u) {
+        let s = spalding(up);
+        let value = up * s.x - re;
+        if value == 0.0 { break; }
+        if value > 0.0 { hi = up; } else { lo = up; }
+        if hi - lo <= 1e-6 * hi { break; }
+        let newton = up - value / (s.x + up * s.y);
+        let fast = newton > lo && newton < hi && abs(value) <= 0.5 * last;
+        last = abs(value);
+        if fast { up = newton; } else { up = 0.5 * (lo + hi); }
+    }
+    if up > 0.0 { return speed / up; }
+    return 0.0;
+}
+
+// Spalding's u⁺ at y⁺ (fieldcraft_lbm::wall's inverse): the root in [0, y⁺].
+fn spalding_inverse(y_plus: f32) -> f32 {
+    if !(y_plus > 0.0) || y_plus > 1e30 { return 0.0; }
+    var lo = 0.0;
+    var hi = y_plus;
+    var up = clamp(log(y_plus) / 0.4 + 5.5, 1e-30, y_plus);
+    for (var i = 0u; i < 60u; i = i + 1u) {
+        let s = spalding(up);
+        let value = s.x - y_plus;
+        if value == 0.0 { break; }
+        if value > 0.0 { hi = up; } else { lo = up; }
+        if hi - lo <= 1e-6 * hi { break; }
+        let newton = up - value / s.y;
+        if newton > lo && newton < hi { up = newton; } else { up = 0.5 * (lo + hi); }
+    }
+    return up;
+}
+
+// The wall model's sample (fieldcraft_lbm::wall::Walls::sample): wall cell k's second cell's
+// velocity before the collision gives u_τ, then the wall cell's modelled velocity ũ(y₁) along the
+// direction parallel to the wall and its rate 1 / (3 (ν + ν_t) + ½), ν_t the mixing length
+// (κ y₁ (1 − exp(−y₁⁺/A⁺)))² |∂ũ/∂y|, κ = 0.384, A⁺ = 26.
+@compute @workgroup_size(256)
+fn wall_sample(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
+    let k = cell_of(lid, wg);
+    if !WALL_MODEL || k >= params.wall.x { return; }
+    let a = walls[3u * k];
+    let b = walls[3u * k + 1u];
+    let second = bitcast<u32>(b.w);
+    var xyz = vec3<i32>(0);
+    if AA_MODE && params.phase.x == 1u { xyz = coords(second); }
+    var drho = 0.0;
+    var j = vec3<f32>(0.0);
+    for (var q = 0u; q < Q; q = q + 1u) {
+        let v = population(q, second, xyz);
+        drho = drho + v;
+        j = j + vec3<f32>(c_of(q)) * v;
+    }
+    let rho = 1.0 + drho;
+    let nu = params.smag.w;
+    var out = vec4<f32>(b.xyz, 1.0 / (3.0 * nu + 0.5));
+    if rho > 0.0 && rho < 1e30 {
+        let u2 = (j + 0.5 * rho * acc_of(second)) / rho;
+        let rel = u2 - b.xyz;
+        let t = rel - dot(rel, a.xyz) * a.xyz;
+        let speed = length(t);
+        let ut = spalding_friction(speed, 3.0 * a.w, nu);
+        if ut > 0.0 {
+            let y_plus = a.w * ut / nu;
+            let up = spalding_inverse(y_plus);
+            let dudy = ut * ut / nu / spalding(up).y;
+            let l = 0.384 * a.w * (1.0 - exp(-y_plus / 26.0));
+            let nu_t = l * l * abs(dudy);
+            let u1 = ut * up;
+            if u1 < 1e30 && nu_t < 1e30 {
+                out = vec4<f32>(b.xyz + (u1 / speed) * t, 1.0 / (3.0 * (nu + nu_t) + 0.5));
+            }
+        }
+    }
+    walls[3u * k + 2u] = out;
+}
+
+// The wall model's reconstruction of `cell` (fieldcraft_lbm::wall::Walls::reconstruct), in the
+// populations' deviations from the weights: false when it is not a modelled wall cell.
+fn wall_rebuild(cell: u32, fq: ptr<function, array<f32, 19>>, acc: vec3<f32>) -> bool {
+    let k = fluid[cell] >> 1u;
+    if k == 0u { return false; }
+    let n = walls[3u * (k - 1u)].xyz;
+    let u = walls[3u * (k - 1u) + 2u].xyz - 0.5 * acc;
+    // ρ₀ + 2 ρ₊ over the known populations (c·n ≤ 0): Σ w over them is 1.
+    var s = 0.0;
+    for (var q = 0u; q < Q; q = q + 1u) {
+        let cn = dot(vec3<f32>(c_of(q)), n);
+        if cn == 0.0 { s = s + (*fq)[q]; } else if cn < 0.0 { s = s + 2.0 * (*fq)[q]; }
+    }
+    let rho = (1.0 + s) / (1.0 - dot(u, n));
+    if !(rho > 0.0) || rho > 1e30 { return false; }
+    let uu = dot(u, u);
+    var d = vec3<f32>(0.0);
+    var o = vec3<f32>(0.0);
+    for (var q = 0u; q < Q; q = q + 1u) {
+        var kq = q;
+        if dot(vec3<f32>(c_of(q)), n) > 0.0 { kq = opp(q); }
+        let ck = vec3<f32>(c_of(kq));
+        let cu = dot(ck, u);
+        let f1 = (*fq)[kq] - w_of(kq) * (rho - 1.0 + rho * (3.0 * cu + 4.5 * cu * cu - 1.5 * uu));
+        let c = vec3<f32>(c_of(q));
+        d = d + (c * c - vec3<f32>(1.0 / 3.0)) * f1;
+        o = o + vec3<f32>(c.x * c.y, c.x * c.z, c.y * c.z) * f1;
+    }
+    for (var q = 0u; q < Q; q = q + 1u) {
+        let c = vec3<f32>(c_of(q));
+        let cu = dot(c, u);
+        let qp = dot(c * c - vec3<f32>(1.0 / 3.0), d) + 2.0 * dot(vec3<f32>(c.x * c.y, c.x * c.z, c.y * c.z), o);
+        (*fq)[q] = w_of(q) * (rho - 1.0 + rho * (3.0 * cu + 4.5 * cu * cu - 1.5 * uu) + 4.5 * qp);
+    }
+    return true;
+}
+
+// The wall model's rate of `cell` from the last sample, or a negative number when it is not a
+// modelled wall cell.
+fn wall_omega(cell: u32) -> f32 {
+    let k = fluid[cell] >> 1u;
+    if k == 0u { return -1.0; }
+    return walls[3u * (k - 1u) + 2u].w;
+}
+
 // The eddy viscosity of a cell relaxing at `w` (c_s² = ⅓), kept for the reply and, with heat, for
 // the scalar lattice.
 fn record_eddy(cell: u32, lid: u32, w: f32, u: vec3<f32>) {
@@ -369,6 +526,14 @@ fn collide_cell(cell: u32, lid: u32) {
         fq[q] = v;
         drho = drho + v;
         j = j + vec3<f32>(c_of(q)) * v;
+    }
+    if WALL_MODEL && wall_rebuild(cell, &fq, acc_of(cell)) {
+        drho = 0.0;
+        j = vec3<f32>(0.0);
+        for (var q = 0u; q < Q; q = q + 1u) {
+            drho = drho + fq[q];
+            j = j + vec3<f32>(c_of(q)) * fq[q];
+        }
     }
     let rho = 1.0 + drho;
     if !(rho > 0.0) || rho != rho || abs(rho) > 1e30 {
@@ -426,7 +591,9 @@ fn collide_cell(cell: u32, lid: u32) {
 // The two-relaxation-time collision with each cell's own rates under Smagorinsky's model: τ⁺
 // from the eddy viscosity, τ⁻ following it so that Λ stays the fluid's.
 fn collide_trt_smagorinsky(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function, array<f32, 19>>, drho: f32, rho: f32, u: vec3<f32>, force: vec3<f32>, forced: bool) {
-    let wp = smagorinsky_omega(flux(fq, drho, rho, u, force, forced), rho, params.omega_plus);
+    var wp = -1.0;
+    if WALL_MODEL { wp = wall_omega(cell); }
+    if !(wp > 0.0) { wp = smagorinsky_omega(flux(fq, drho, rho, u, force, forced), rho, params.omega_plus); }
     record_eddy(cell, lid, wp, u);
     let wm = 1.0 / (0.5 + params.smag.z / (1.0 / wp - 0.5));
     let sp = 1.0 - 0.5 * wp;
@@ -473,7 +640,9 @@ fn collide_regularized(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function, ar
     let trace = pd.x + pd.y + pd.z;
     var omega = params.omega_plus;
     if turbulent() {
-        omega = smagorinsky_omega(p, rho, omega);
+        var wall = -1.0;
+        if WALL_MODEL { wall = wall_omega(cell); }
+        if wall > 0.0 { omega = wall; } else { omega = smagorinsky_omega(p, rho, omega); }
         record_eddy(cell, lid, omega, u);
     }
     let relax = 1.0 - omega;

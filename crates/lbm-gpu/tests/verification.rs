@@ -886,22 +886,95 @@ fn van_driest_damping_is_refused_clearly() {
     assert!(e.as_deref().is_some_and(|e| e.contains("Van Driest") && e.contains("cpu")), "{e:?}");
 }
 
-/// The wall model has no GPU kernel yet: refused by name, before a device is looked for.
-#[test]
-fn the_wall_model_is_refused_clearly() {
-    let mut p = step(10.0, 1.0, None);
+// ---- The wall model ----
+
+/// `p` with Smagorinsky's model, constant `c`, and the Spalding wall model.
+fn wall_modelled(mut p: Procedure, c: f64) -> Procedure {
     if let Procedure::Fluid { turbulence, .. } = &mut p {
         *turbulence = Some(fieldcraft_model::Turbulence::Smagorinsky {
-            constant: 0.17,
+            constant: c,
             prandtl: 0.9,
             van_driest: None,
             wall_model: Some(fieldcraft_model::WallModel::Spalding),
         });
     }
-    let m = model(1.0, 0.1, domain([0.0; 3], [4.0, 2.0, 2.0], 1.0), p);
-    let (_, flow) = prepare(&m, &[]);
-    let e = GpuFlow::with_options(&flow, Policy::from_env().expect("FIELDCRAFT_GPU names a policy"), Options::default()).err().map(|e| e.to_string());
-    assert!(e.as_deref().is_some_and(|e| e.contains("wall model") && e.contains("cpu")), "{e:?}");
+    p
+}
+
+/// Couette flow on 8 cells at ν = 5e-6 under the wall model (the first cells above the
+/// viscous sublayer), both walls sampled at their second cells and rebuilt, the moving one
+/// relative to its velocity, 16 000 steps into the start-up: the fields and the largest eddy
+/// viscosity ratio (the wall cells' mixing length) agree with the CPU. Measured on the GB10:
+/// velocity 1.8e-6 (TRT) and 3.1e-5 (regularised), ν_t/ν to 1e-5. The wall shear is not compared
+/// here: at ν = 5e-6 it is about 1e-6 of the wall's pressure force (lattice units), below what
+/// the f32 momentum exchange resolves; the channel below compares the wall drag.
+#[test]
+fn couette_flow_with_the_wall_model_matches_the_cpu() {
+    for (collision, streaming) in cases() {
+        let (h, nu, rho, u_wall, n, c) = (1.0, 5e-6, 1.2, 0.1, 8usize, 0.4);
+        let dx = h / n as f64;
+        let mut d = domain([0.0; 3], [dx, h, dx], dx);
+        for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+            *f = PERIODIC;
+        }
+        d.faces.y_max = FaceCondition::MovingWall { velocity: [u_wall, 0.0, 0.0] };
+        let m = model(rho, nu, d, wall_modelled(collide(16000.0 * dx, dx, None, collision), c));
+        let (setup, flow) = prepare(&m, &[]);
+        assert!(flow.wall_model());
+        let Some((mut cpu, mut gpu)) = both(&setup, flow, streaming) else { continue };
+        let (du, drho) = field_difference(&mut cpu, &mut gpu);
+        let (rc, rg) = (Backend::eddy_viscosity_ratio(&cpu), gpu.eddy_viscosity_ratio());
+        println!("{collision:?} wall-modelled Couette, GPU vs CPU: velocity {du:.2e}, density {drho:.2e}; ν_t/ν CPU {rc:.4} GPU {rg:.4}");
+        assert!(rc > 1.0, "the wall model's viscosity shows: {rc}");
+        assert!(du < 1e-4 && drho < 1e-6, "{du} {drho}");
+        assert!((rg - rc).abs() < 1e-3 * rc, "{rg} vs {rc}");
+    }
+}
+
+/// A coarse turbulent-like channel (walls at y = 0 and 2, periodic in x and z, 6 cells per
+/// half-height, first cell at y⁺ ≈ 15 at Re_τ 180) started from a perturbed blunt profile and run
+/// 150 steps under the wall model: a fully three-dimensional flow with every wall cell's u_τ
+/// moving, against the CPU before f32 round-off grows chaotically. Measured on the GB10 after
+/// 150 steps: velocity 2.3e-6 (TRT) and 3.0e-6 (regularised), wall drag 1.0e-5 and 9.2e-7.
+#[test]
+fn a_coarse_wall_modelled_channel_follows_the_cpu() {
+    use std::f64::consts::PI;
+    for (collision, streaming) in cases() {
+        let (n, re_tau, ub) = (6usize, 180.0, 15.7);
+        let dx = 1.0 / n as f64;
+        let (lx, lz) = ((2.0 * PI * n as f64).round() * dx, (PI * n as f64).round() * dx);
+        let mut d = domain([0.0; 3], [lx, 2.0, lz], dx);
+        for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+            *f = PERIODIC;
+        }
+        d.acceleration = [1.0, 0.0, 0.0];
+        let dt = 0.1 * dx / ub;
+        let m = model(1.0, 1.0 / re_tau, d, wall_modelled(collide(150.0 * dt, dt, None, collision), 0.1));
+        let (setup, mut flow) = prepare(&m, &[]);
+        let grid = *flow.grid();
+        let to_lattice = 1.0 / setup.velocity_scale();
+        let (kx, kz) = (2.0 * PI / lx, 2.0 * PI / lz);
+        flow.set_equilibrium(|cell| {
+            let [x, y, z] = grid.centre(cell);
+            let eta = y - 1.0;
+            let wall = 1.0 - eta * eta;
+            let u = 1.15 * ub * (1.0 - eta.abs().powi(8)) + 2.0 * (2.0 * kz * z).sin() * (kx * x).cos() * wall;
+            let v = 1.5 * wall * (2.0 * kz * z).cos() * (3.0 * kx * x).sin();
+            let w = 1.5 * wall * eta * (kx * x).sin() * (kz * z).cos();
+            (1.0, [u * to_lattice, v * to_lattice, w * to_lattice])
+        });
+        let Some((mut cpu, mut gpu)) = both(&setup, flow, streaming) else { continue };
+        let (du, drho) = field_difference(&mut cpu, &mut gpu);
+        let (fc, fg) = (Backend::forces(&mut cpu).unwrap(), gpu.forces().unwrap());
+        let wall = |f: &[[f64; 3]]| f[BoxFace::YMin.index()][0] + f[BoxFace::YMax.index()][0];
+        let drag = (wall(&fc) - wall(&fg)).abs() / wall(&fc).abs();
+        println!(
+            "{collision:?} wall-modelled channel, {} cells, 150 steps, GPU vs CPU: velocity {du:.2e}, density {drho:.2e}, wall drag {drag:.2e}",
+            grid.len()
+        );
+        assert!(du < 1e-4 && drho < 1e-5, "{du} {drho}");
+        assert!(drag < 1e-3, "{drag}");
+    }
 }
 
 // ---- Conducting solids ----

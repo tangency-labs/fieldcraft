@@ -159,6 +159,8 @@ pub struct GpuFlow {
     cells: (u32, u32),
     link_count: usize,
     links_groups: (u32, u32),
+    /// The wall model's sample dispatch, when there are modelled wall cells.
+    wall_groups: Option<(u32, u32)>,
     open_count: usize,
     open_groups: (u32, u32),
     /// Whether a face is a convective outlet.
@@ -282,9 +284,10 @@ fn solid_data(solid: &fieldcraft_lbm::conduction::SolidHeat, t0: f64) -> Result<
 }
 
 /// The entry points of `lbm.wgsl` a flow dispatches.
-const KERNELS: [&str; 24] = [
+const KERNELS: [&str; 25] = [
     "clear_eddy",
     "collide",
+    "wall_sample",
     "stream",
     "stream_links",
     "stream_links_exchange",
@@ -382,6 +385,7 @@ struct Variant {
     aa: bool,
     regularized: bool,
     smagorinsky: bool,
+    wall_model: bool,
 }
 
 /// A compiled kernel: its pipeline, its bind group's layout and the bindings in it.
@@ -424,6 +428,7 @@ fn compile(device: &wgpu::Device, variant: Variant) -> Result<Kernels> {
                     ("AA_MODE", if variant.aa { 1.0 } else { 0.0 }),
                     ("REGULARIZED", if variant.regularized { 1.0 } else { 0.0 }),
                     ("SMAGORINSKY", if variant.smagorinsky { 1.0 } else { 0.0 }),
+                    ("WALL_MODEL", if variant.wall_model { 1.0 } else { 0.0 }),
                     ("MAX_SPEED", MAX_LATTICE_SPEED),
                 ],
                 ..Default::default()
@@ -525,9 +530,6 @@ impl GpuFlow {
 
     /// [`GpuFlow::new`] with `options`.
     pub fn with_options(flow: &Flow, policy: Policy, options: Options) -> Result<GpuFlow> {
-        if flow.wall_model() {
-            return Err(Error::Invalid("the wall model (`wall_model`) is not on the GPU backend yet: solve on the CPU (`backend: \"cpu\"`)".into()));
-        }
         if flow.van_driest() {
             return Err(Error::Invalid(
                 "Van Driest damping (`van_driest`) is not on the GPU backend yet: solve on the CPU (`backend: \"cpu\"`)".into(),
@@ -583,6 +585,32 @@ impl GpuFlow {
                 *u = u32::from(*b);
             }
         }
+        // The wall model's wall cells with a second cell: three rows each in `walls`, and in each
+        // one's flag word its row (k + 1) past the fluid bit.
+        let mut wall_rows: Vec<f32> = Vec::new();
+        let nu0 = (1.0 / flow.omegas().0 - 0.5) / 3.0;
+        if let Some(walls) = flow.walls().filter(|_| flow.wall_model()) {
+            for (cell, link, distance, velocity, second) in walls.wall_cells() {
+                let Some(second) = second else { continue };
+                let row = u32::try_from(wall_rows.len() / 12 + 1)
+                    .ok()
+                    .filter(|r| *r < 1 << 31)
+                    .ok_or_else(|| Error::Limit("too many wall cells for the GPU's flags".into()))?;
+                let second = u32::try_from(second).map_err(|_| Error::Limit("too many cells for the GPU solver".into()))?;
+                if let Some(u) = fluid_u32.get_mut(cell) {
+                    *u = 1 | row << 1;
+                }
+                let c = fieldcraft_lbm::lattice::c(link);
+                let len = (c[0] * c[0] + c[1] * c[1] + c[2] * c[2]).sqrt();
+                wall_rows.extend(c.map(|v| (v / len) as f32));
+                wall_rows.push(distance as f32);
+                wall_rows.extend(velocity.map(|v| v as f32));
+                wall_rows.push(f32::from_bits(second));
+                wall_rows.extend(velocity.map(|v| v as f32));
+                wall_rows.push((1.0 / (3.0 * nu0 + 0.5)) as f32);
+            }
+        }
+        let wall_count = wall_rows.len() / 12;
 
         // The links, by cell, and the ones with a force by group.
         let links = flow.links();
@@ -745,20 +773,22 @@ impl GpuFlow {
         };
         let solid = thermal.and_then(|t| t.solid()).map(|sh| solid_data(sh, t0)).transpose()?;
         let solid_params = solid.as_ref().map_or([0; 4], |sd| sd.params);
-        // Smagorinsky's model (lbm.wgsl's `smag`): C², 1 / Pr_t, Λ.
+        // Smagorinsky's model (lbm.wgsl's `smag`): C², 1 / Pr_t, Λ, ν.
         let c = flow.smagorinsky();
         let prandtl = flow.turbulent_prandtl();
         let smag = [
             (c * c) as f32,
             if c > 0.0 && thermal.is_some() && prandtl > 0.0 { (1.0 / prandtl) as f32 } else { 0.0 },
             ((1.0 / omega_plus - 0.5) * (1.0 / omega_minus - 0.5)) as f32,
-            0.0,
+            ((1.0 / omega_plus - 0.5) / 3.0) as f32,
         ];
+        let wall_params = [u32::try_from(wall_count).map_err(|_| Error::Limit("too many wall cells for the GPU solver".into()))?, 0, 0, 0];
         let params = [0u32, 1].map(|phase| {
             let mut bytes = params.clone();
             bytes.extend_from_slice(&bytes_u32(&[phase, 0, 0, 0]));
             bytes.extend_from_slice(&bytes_u32(&solid_params));
             bytes.extend_from_slice(&bytes_f32(&smag));
+            bytes.extend_from_slice(&bytes_u32(&wall_params));
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("lbm params"),
                 contents: &bytes,
@@ -766,6 +796,7 @@ impl GpuFlow {
             })
         });
         let fluid_buf = storage("lbm fluid", &bytes_u32(&fluid_u32));
+        let walls_buf = storage("lbm walls", &bytes_f32(&wall_rows));
         // AA reuses binding g for boundary scratch only, never another full population field.
         let pops = [empty("lbm f", pop_bytes), empty("lbm g / AA boundary scratch", if aa { 4 * links.len() as u64 } else { pop_bytes })];
         // Populations as deviations (see lbm.wgsl), one direction at a time: `value(q, cell)` less
@@ -816,7 +847,8 @@ impl GpuFlow {
         let solid_f_buf = storage("lbm solid values", &bytes_f32(solid_f));
         let solid_s_buf = storage("lbm solid state", &bytes_f32(solid_s));
 
-        let (kernels, pipeline_seconds) = shared.kernels(Variant { aa, regularized, smagorinsky: flow.smagorinsky() > 0.0 })?;
+        let (kernels, pipeline_seconds) =
+            shared.kernels(Variant { aa, regularized, smagorinsky: flow.smagorinsky() > 0.0, wall_model: wall_count > 0 })?;
         // Every binding's buffer in bind group k (the two differ in the phase and the A–B swap).
         let resource = |binding: u32, k: usize| -> Option<&wgpu::Buffer> {
             Some(match binding {
@@ -843,6 +875,7 @@ impl GpuFlow {
                 20 => &solid_u_buf,
                 21 => &solid_f_buf,
                 22 => &solid_s_buf,
+                23 => &walls_buf,
                 _ => return None,
             })
         };
@@ -881,6 +914,7 @@ impl GpuFlow {
             cells,
             link_count: links.len(),
             links_groups,
+            wall_groups: if wall_count > 0 { Some(groups(wall_count)?) } else { None },
             open_count: open.len(),
             open_groups,
             convective,
@@ -1057,7 +1091,7 @@ impl GpuFlow {
     /// solids' with their sub-steps).
     fn dispatches_per_step(&self) -> usize {
         let solid = self.solid.as_ref().map_or(0, |sd| 3 + sd.substeps as usize);
-        9 + solid
+        10 + solid
     }
 
     /// One submission of `steps` (≤ MAX_CHUNK) time steps, then the stability check.
@@ -1067,6 +1101,9 @@ impl GpuFlow {
         for step in 0..steps {
             if step + 1 == steps {
                 commands.push((self.current, "clear_eddy", (1, 1)));
+            }
+            if let Some(groups) = self.wall_groups {
+                commands.push((self.current, "wall_sample", groups));
             }
             commands.push((self.current, "collide", self.cells));
             if !self.aa {
