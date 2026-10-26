@@ -54,6 +54,8 @@ override AA_MODE: bool = true;
 // The recursive regularised collision instead of the two-relaxation-time one
 // (fieldcraft_lbm::regularized).
 override REGULARIZED: bool = false;
+// The D3Q19 multiple-relaxation-time collision instead (fieldcraft_lbm::mrt).
+override MRT: bool = false;
 // Smagorinsky's eddy viscosity (its constant is in `params.smag`). An override rather than a
 // uniform test: with it off the kernels compile to what they were without the model, so their
 // results stay bit-for-bit (a branch on a uniform changed the driver's roundings of the rest).
@@ -552,6 +554,10 @@ fn collide_cell(cell: u32, lid: u32) {
         collide_regularized(cell, lid, xyz, &fq, drho, rho, u, force, forced);
         return;
     }
+    if MRT {
+        collide_mrt(cell, lid, xyz, &fq, drho, rho, u, force, forced);
+        return;
+    }
     if turbulent() {
         collide_trt_smagorinsky(cell, lid, xyz, &fq, drho, rho, u, force, forced);
         return;
@@ -624,6 +630,113 @@ fn collide_trt_smagorinsky(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function
         }
         f[post_index(q, cell, xyz)] = (*fq)[q] - relax_plus - relax_minus + s_plus + s_minus;
         f[post_index(o, cell, xyz)] = (*fq)[o] - relax_plus + relax_minus + s_plus - s_minus;
+    }
+}
+
+// Moment k's polynomial at direction q (fieldcraft_lbm::mrt: d'Humières et al. 2002's D3Q19
+// basis).
+fn mrt_row(k: u32, q: u32) -> f32 {
+    let c = c_of(q);
+    let x = c.x;
+    let y = c.y;
+    let z = c.z;
+    let c2 = x * x + y * y + z * z;
+    var v = 0;
+    switch k {
+        case 0u: { v = 1; }
+        case 1u: { v = 19 * c2 - 30; }
+        case 2u: { v = (21 * c2 * c2 - 53 * c2 + 24) / 2; }
+        case 3u: { v = x; }
+        case 4u: { v = (5 * c2 - 9) * x; }
+        case 5u: { v = y; }
+        case 6u: { v = (5 * c2 - 9) * y; }
+        case 7u: { v = z; }
+        case 8u: { v = (5 * c2 - 9) * z; }
+        case 9u: { v = 3 * x * x - c2; }
+        case 10u: { v = (3 * c2 - 5) * (3 * x * x - c2); }
+        case 11u: { v = y * y - z * z; }
+        case 12u: { v = (3 * c2 - 5) * (y * y - z * z); }
+        case 13u: { v = x * y; }
+        case 14u: { v = y * z; }
+        case 15u: { v = x * z; }
+        case 16u: { v = (y * y - z * z) * x; }
+        case 17u: { v = (z * z - x * x) * y; }
+        default: { v = (x * x - y * y) * z; }
+    }
+    return f32(v);
+}
+
+// The D3Q19 multiple-relaxation-time collision with Guo forcing (fieldcraft_lbm::mrt), in the
+// populations' deviations from the weights: the moments of the deviations relax towards the
+// equilibrium moments less those of the weights (ρ = 1 at rest: 1, −11 and 3 in the first three),
+// the stresses at the cell's own rate (Smagorinsky's model or the wall model) or the fluid's.
+fn collide_mrt(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function, array<f32, 19>>, drho: f32, rho: f32, u: vec3<f32>, force: vec3<f32>, forced: bool) {
+    var omega = params.omega_plus;
+    if turbulent() {
+        var wall = -1.0;
+        if WALL_MODEL { wall = wall_omega(cell); }
+        if wall > 0.0 { omega = wall; } else { omega = smagorinsky_omega(flux(fq, drho, rho, u, force, forced), rho, omega); }
+        record_eddy(cell, lid, omega, u);
+    }
+    let uu = dot(u, u);
+    let pxx = rho * (2.0 * u.x * u.x - u.y * u.y - u.z * u.z);
+    let pww = rho * (u.y * u.y - u.z * u.z);
+    var eq: array<f32, 19>;
+    eq[0] = drho;
+    eq[1] = -11.0 * drho + 19.0 * rho * uu;
+    eq[2] = 3.0 * drho - 5.5 * rho * uu;
+    eq[3] = rho * u.x;
+    eq[4] = -2.0 / 3.0 * rho * u.x;
+    eq[5] = rho * u.y;
+    eq[6] = -2.0 / 3.0 * rho * u.y;
+    eq[7] = rho * u.z;
+    eq[8] = -2.0 / 3.0 * rho * u.z;
+    eq[9] = pxx;
+    eq[10] = -0.5 * pxx;
+    eq[11] = pww;
+    eq[12] = -0.5 * pww;
+    eq[13] = rho * u.x * u.y;
+    eq[14] = rho * u.y * u.z;
+    eq[15] = rho * u.x * u.z;
+    eq[16] = 0.0;
+    eq[17] = 0.0;
+    eq[18] = 0.0;
+    var source: array<f32, 19>;
+    for (var q = 0u; q < Q; q = q + 1u) {
+        source[q] = 0.0;
+        if forced {
+            let c = vec3<f32>(c_of(q));
+            source[q] = w_of(q) * dot(3.0 * (c - u) + 9.0 * dot(c, u) * c, force);
+        }
+    }
+    var change: array<f32, 19>;
+    for (var k = 0u; k < Q; k = k + 1u) {
+        var m = 0.0;
+        var mf = 0.0;
+        var norm = 0.0;
+        for (var q = 0u; q < Q; q = q + 1u) {
+            let r = mrt_row(k, q);
+            m = m + r * (*fq)[q];
+            mf = mf + r * source[q];
+            norm = norm + r * r;
+        }
+        var s = 0.0;
+        switch k {
+            case 1u: { s = 1.19; }
+            case 2u, 10u, 12u: { s = 1.4; }
+            case 4u, 6u, 8u: { s = 1.2; }
+            case 9u, 11u, 13u, 14u, 15u: { s = omega; }
+            case 16u, 17u, 18u: { s = 1.98; }
+            default: { s = 0.0; }
+        }
+        change[k] = (-s * (m - eq[k]) + (1.0 - 0.5 * s) * mf) / norm;
+    }
+    for (var q = 0u; q < Q; q = q + 1u) {
+        var d = 0.0;
+        for (var k = 0u; k < Q; k = k + 1u) {
+            d = d + mrt_row(k, q) * change[k];
+        }
+        f[post_index(q, cell, xyz)] = (*fq)[q] + d;
     }
 }
 

@@ -75,9 +75,9 @@ fn gpu(flow: &Flow, streaming: Streaming) -> Option<Gpu> {
     }
 }
 
-/// Every collision with every layout.
+/// Every collision (the multiple-relaxation-time one too) with every layout.
 fn cases() -> impl Iterator<Item = (Collision, Streaming)> {
-    COLLISIONS.into_iter().flat_map(|c| [Streaming::InPlace, Streaming::TwoBuffers].map(move |s| (c, s)))
+    COLLISIONS.into_iter().chain([Collision::Mrt]).flat_map(|c| [Streaming::InPlace, Streaming::TwoBuffers].map(move |s| (c, s)))
 }
 
 /// Both backends through every step; the CPU's fields and the GPU's.
@@ -128,9 +128,14 @@ fn plane_poiseuille_matches_the_analytic_profile_and_the_cpu() {
         }
         let (du, drho) = field_difference(&mut cpu, &mut gpu);
         println!("{collision:?} Poiseuille on the GPU: max error {err:.2e} of the peak; CPU/GPU velocity {du:.2e}, density {drho:.2e}");
-        // Exact with Λ = 3/16; the regularised collision's wall is second-order accurate (its
-        // CPU test), 1.3e-3 of the peak on 16 cells.
-        assert!(err < if collision == Collision::Trt { 2e-5 } else { 2e-3 }, "{err}");
+        // Exact with Λ = 3/16; the regularised and multiple-relaxation-time collisions' walls are
+        // second-order accurate (their CPU tests), 1.3e-3 and 3.0e-3 of the peak on 16 cells.
+        let bound = match collision {
+            Collision::Trt => 2e-5,
+            Collision::Regularized => 2e-3,
+            Collision::Mrt => 4e-3,
+        };
+        assert!(err < bound, "{err}");
         assert!(du < 2e-5 && drho < 1e-6, "{du} {drho}");
     }
 }
@@ -216,8 +221,9 @@ fn taylor_green_decays_like_the_cpu_and_conserves_mass() {
         println!(
             "{collision:?} Taylor–Green on the GPU: amplitude error {err:.2e}; CPU/GPU velocity {du:.2e}, density {drho:.2e}; mass drift {drift:.2e}"
         );
-        // The amplitude error is the scheme's at 32 cells (the CPU test shows second order).
-        assert!(err < 5e-3, "{err}");
+        // The amplitude error is the scheme's at 32 cells (the CPU tests show second order; the
+        // multiple-relaxation-time collision's is 5.5e-3 there).
+        assert!(err < if collision == Collision::Mrt { 6e-3 } else { 5e-3 }, "{err}");
         assert!(du < 2e-5 && drho < 1e-6, "{du} {drho}");
         assert!(drift < 1e-6, "{drift}");
     }
@@ -926,7 +932,10 @@ fn couette_flow_with_the_wall_model_matches_the_cpu() {
         let (rc, rg) = (Backend::eddy_viscosity_ratio(&cpu), gpu.eddy_viscosity_ratio());
         println!("{collision:?} wall-modelled Couette, GPU vs CPU: velocity {du:.2e}, density {drho:.2e}; ν_t/ν CPU {rc:.4} GPU {rg:.4}");
         assert!(rc > 1.0, "the wall model's viscosity shows: {rc}");
-        assert!(du < 1e-4 && drho < 1e-6, "{du} {drho}");
+        // The multiple-relaxation-time collision's density keeps fewer f32 digits here (1.2e-5
+        // measured on the GB10; its velocity 6.3e-6).
+        let drho_max = if collision == Collision::Mrt { 3e-5 } else { 1e-6 };
+        assert!(du < 1e-4 && drho < drho_max, "{du} {drho}");
         assert!((rg - rc).abs() < 1e-3 * rc, "{rg} vs {rc}");
     }
 }

@@ -386,6 +386,7 @@ fn check_storage_buffers(backend: wgpu::Backend, have: u32, need: u32) -> Result
 struct Variant {
     aa: bool,
     regularized: bool,
+    mrt: bool,
     smagorinsky: bool,
     wall_model: bool,
 }
@@ -429,6 +430,7 @@ fn compile(device: &wgpu::Device, variant: Variant) -> Result<Kernels> {
                 constants: &[
                     ("AA_MODE", if variant.aa { 1.0 } else { 0.0 }),
                     ("REGULARIZED", if variant.regularized { 1.0 } else { 0.0 }),
+                    ("MRT", if variant.mrt { 1.0 } else { 0.0 }),
                     ("SMAGORINSKY", if variant.smagorinsky { 1.0 } else { 0.0 }),
                     ("WALL_MODEL", if variant.wall_model { 1.0 } else { 0.0 }),
                     ("MAX_SPEED", MAX_LATTICE_SPEED),
@@ -532,12 +534,6 @@ impl GpuFlow {
 
     /// [`GpuFlow::new`] with `options`.
     pub fn with_options(flow: &Flow, policy: Policy, options: Options) -> Result<GpuFlow> {
-        if flow.collision() == fieldcraft_model::Collision::Mrt {
-            return Err(Error::Invalid(
-                "the multiple-relaxation-time collision (`collision: \"mrt\"`) is not on the GPU backend yet: solve on the CPU (`backend: \"cpu\"`)"
-                    .into(),
-            ));
-        }
         if flow.van_driest() {
             return Err(Error::Invalid(
                 "Van Driest damping (`van_driest`) is not on the GPU backend yet: solve on the CPU (`backend: \"cpu\"`)".into(),
@@ -855,8 +851,13 @@ impl GpuFlow {
         let solid_f_buf = storage("lbm solid values", &bytes_f32(solid_f));
         let solid_s_buf = storage("lbm solid state", &bytes_f32(solid_s));
 
-        let (kernels, pipeline_seconds) =
-            shared.kernels(Variant { aa, regularized, smagorinsky: flow.smagorinsky() > 0.0, wall_model: wall_count > 0 })?;
+        let (kernels, pipeline_seconds) = shared.kernels(Variant {
+            aa,
+            regularized,
+            mrt: flow.collision() == fieldcraft_model::Collision::Mrt,
+            smagorinsky: flow.smagorinsky() > 0.0,
+            wall_model: wall_count > 0,
+        })?;
         // Every binding's buffer in bind group k (the two differ in the phase and the A–B swap).
         let resource = |binding: u32, k: usize| -> Option<&wgpu::Buffer> {
             Some(match binding {
