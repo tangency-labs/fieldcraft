@@ -1376,6 +1376,8 @@ struct ChannelResult {
     steps: u64,
     seconds: f64,
     stop: String,
+    /// The wall model's requested stress over the carried one (NaN where not measured).
+    requested: f64,
 }
 
 /// The wall-modelled channel at `lm`'s Re_τ on `n` cells per δ, on the GPU: 2πδ × 2δ × πδ,
@@ -1451,6 +1453,7 @@ fn wall_modelled_channel(lm: &LeeMoser, n: usize) -> Option<ChannelResult> {
                 steps: next,
                 seconds,
                 stop: format!("unstable before {:.2} δ/u_τ", next as f64 * dt),
+                requested: f64::NAN,
             });
         }
         k = next;
@@ -1487,7 +1490,7 @@ fn wall_modelled_channel(lm: &LeeMoser, n: usize) -> Option<ChannelResult> {
     for (y, u) in &half {
         println!("    y/δ {y:.4} y⁺ {:7.1}: U⁺ {u:7.3}, Lee & Moser {:7.3} ({:+.1} %)", y * lm.re_tau, lm.at(*y), 100.0 * (u / lm.at(*y) - 1.0));
     }
-    Some(ChannelResult { bulk, centre, log_error, first_error, cells: grid.len(), steps: k, seconds, stop })
+    Some(ChannelResult { bulk, centre, log_error, first_error, cells: grid.len(), steps: k, seconds, stop, requested: f64::NAN })
 }
 
 /// The environment variable that runs the wall-modelled channel study on the GPU.
@@ -1668,22 +1671,218 @@ fn diagnose_the_wall_model_in_the_channel() {
     }
 }
 
+/// Non-overlapping block means of a statistically steady signal sampled at a fixed interval: the
+/// mean over the completed blocks and its 95 % interval, 2 s / √B with s the block means' standard
+/// deviation and B their number, which holds while the blocks are longer than the signal's
+/// correlation time (the block means' lag-1 correlation, reported, stays small then). Each sample
+/// counts once, unlike a mean of running means, which weighs the early samples more and can make
+/// a drift look settled (bluecmd's review on #664).
+#[derive(Debug, Clone, Default)]
+struct Blocks {
+    len: usize,
+    sum: f64,
+    filled: usize,
+    means: Vec<f64>,
+}
+
+impl Blocks {
+    fn new(len: usize) -> Blocks {
+        Blocks { len: len.max(1), ..Blocks::default() }
+    }
+
+    fn push(&mut self, v: f64) {
+        self.sum += v;
+        self.filled += 1;
+        if self.filled == self.len {
+            self.means.push(self.sum / self.len as f64);
+            (self.sum, self.filled) = (0.0, 0);
+        }
+    }
+
+    /// The mean over the completed blocks (NaN before the first).
+    fn mean(&self) -> f64 {
+        self.means.iter().sum::<f64>() / self.means.len() as f64
+    }
+
+    /// The half-width of the mean's 95 % interval (infinite with fewer than two blocks).
+    fn half_width(&self) -> f64 {
+        let b = self.means.len();
+        if b < 2 {
+            return f64::INFINITY;
+        }
+        let m = self.mean();
+        let var = self.means.iter().map(|x| (x - m) * (x - m)).sum::<f64>() / (b - 1) as f64;
+        2.0 * (var / b as f64).sqrt()
+    }
+
+    /// The lag-1 correlation of the block means (0 with fewer than three blocks).
+    fn lag1(&self) -> f64 {
+        let b = self.means.len();
+        if b < 3 {
+            return 0.0;
+        }
+        let m = self.mean();
+        let var: f64 = self.means.iter().map(|x| (x - m) * (x - m)).sum();
+        let cov: f64 = self.means.windows(2).map(|w| (w[0] - m) * (w[1] - m)).sum();
+        if var > 0.0 { cov / var } else { 0.0 }
+    }
+}
+
+/// The block means of a known sequence: each sample once, the partial block left out, and the
+/// interval of independent blocks.
+#[test]
+fn block_means_count_each_sample_once() {
+    let mut b = Blocks::new(4);
+    for v in [1.0, 1.0, 1.0, 1.0, 3.0, 3.0, 3.0, 3.0, 100.0] {
+        b.push(v);
+    }
+    assert_eq!(b.means, vec![1.0, 3.0]);
+    assert_eq!(b.mean(), 2.0);
+    // s = √2, B = 2: 2 √2 / √2 = 2.
+    assert!((b.half_width() - 2.0).abs() < 1e-12);
+    assert_eq!(Blocks::new(4).half_width(), f64::INFINITY);
+    // A steady signal plus a slow drift: the mean of running means lags the plain mean.
+    let (mut blocks, mut running, mut sum) = (Blocks::new(10), 0.0, 0.0);
+    for k in 1..=200 {
+        let v = 1.0 + 1e-3 * k as f64;
+        blocks.push(v);
+        sum += v;
+        running += sum / k as f64;
+    }
+    let plain = sum / 200.0;
+    assert!((blocks.mean() - plain).abs() < 1e-12);
+    assert!(running / 200.0 < plain - 0.03, "the old statistic lags: {} vs {plain}", running / 200.0);
+    // Alternating block means are anti-correlated.
+    let mut alt = Blocks::new(1);
+    for k in 0..20 {
+        alt.push(if k % 2 == 0 { 1.0 } else { -1.0 });
+    }
+    assert!(alt.lag1() < -0.9);
+}
+
+/// A channel's stress budget and the wall model's requested stress, from the fields sampled
+/// (lattice units in, model units out: δ = 1, ρ = 1). Per wall-normal row: the mean u, v, uv and
+/// an estimate of the subgrid shear ν_t (∂u/∂y + ∂v/∂x) with Smagorinsky's ν_t = (C Δ)² |S| from
+/// the resolved strain by central differences (the solver takes |S| from the non-equilibrium
+/// moments instead, so this is an estimate); and the stress the wall model requests,
+/// u_τ² with u_τ from Musker's profile at each second cell's speed, as the model computes it.
+struct Budget {
+    /// Per row: Σu, Σv, Σuv, Σ subgrid shear.
+    rows: Vec<[f64; 4]>,
+    /// Σ requested u_τ² over the wall cells, and how many.
+    requested: f64,
+    walls: usize,
+    samples: usize,
+}
+
+impl Budget {
+    fn new(ny: usize) -> Budget {
+        Budget { rows: vec![[0.0; 4]; ny], requested: 0.0, walls: 0, samples: 0 }
+    }
+
+    /// Add one sample of `velocity` (lattice units) on `grid`, periodic in x and z, walls at
+    /// both y ends; `nu` the lattice viscosity, `c` Smagorinsky's constant.
+    fn sample(&mut self, grid: &fieldcraft_lbm::voxel::Grid, velocity: &[[f64; 3]], nu: f64, c: f64) {
+        let [nx, ny, nz] = grid.cells;
+        let at = |i: usize, j: usize, k: usize| velocity.get(grid.index([i % nx, j, k % nz])).copied().unwrap_or([0.0; 3]);
+        for k in 0..nz {
+            for i in 0..nx {
+                for j in 0..ny {
+                    let u = at(i, j, k);
+                    let row = &mut self.rows[j];
+                    row[0] += u[0];
+                    row[1] += u[1];
+                    row[2] += u[0] * u[1];
+                    if j == 0 || j + 1 == ny {
+                        continue;
+                    }
+                    // The velocity gradient by central differences (lattice spacing 1).
+                    let (xp, xm, yp, ym, zp, zm) =
+                        (at(i + 1, j, k), at(i + nx - 1, j, k), at(i, j + 1, k), at(i, j - 1, k), at(i, j, k + 1), at(i, j, k + nz - 1));
+                    let d = |a: [f64; 3], b: [f64; 3]| [0, 1, 2].map(|q| 0.5 * (a[q] - b[q]));
+                    let g = [d(xp, xm), d(yp, ym), d(zp, zm)]; // g[a][q] = ∂u_q/∂x_a
+                    let ss: f64 = (0..9)
+                        .map(|ab| {
+                            let sab = 0.5 * (g[ab / 3][ab % 3] + g[ab % 3][ab / 3]);
+                            sab * sab
+                        })
+                        .sum();
+                    let nu_t = c * c * (2.0 * ss).sqrt();
+                    row[3] += nu_t * (g[1][0] + g[0][1]);
+                }
+            }
+            // The requested stress on both walls: the second cell's speed parallel to the wall.
+            for i in 0..nx {
+                for (second, y1) in [(1usize, 0.5), (ny - 2, 0.5)] {
+                    let u = at(i, second, k);
+                    let speed = (u[0] * u[0] + u[2] * u[2]).sqrt();
+                    let ut = fieldcraft_lbm::wall::musker_friction(speed, 3.0 * y1, nu);
+                    self.requested += ut * ut;
+                    self.walls += 1;
+                }
+            }
+        }
+        self.samples += 1;
+    }
+
+    /// Print the budget's first rows off the walls (both halves folded) against the total the
+    /// channel carries, g (1 − y) with g the mean force, and the requested over the carried stress.
+    /// `vs` turns lattice speeds into model ones, `nu` is the lattice viscosity, `dx` the spacing.
+    fn report(&self, grid: &fieldcraft_lbm::voxel::Grid, vs: f64, nu: f64, dx: f64, g: f64, re_tau: f64) -> f64 {
+        let [nx, ny, nz] = grid.cells;
+        let per = (self.samples * nx * nz).max(1) as f64;
+        let mean = |j: usize, q: usize| self.rows[j][q] / per;
+        let requested = self.requested / self.walls.max(1) as f64 * vs * vs;
+        println!("  stress at the wall: requested by the model ⟨u_τ²⟩ {requested:.5}, carried (mean force) {g:.5}, ratio {:.4}", requested / g);
+        // Lattice stresses to model ones: a lattice stress (per unit density) times vs².
+        for j in 1..(ny / 2).min(8) {
+            let y = (j as f64 + 0.5) * dx;
+            let fold = |q: usize| 0.5 * (mean(j, q) + if q == 0 || q == 2 { mean(ny - 1 - j, q) } else { -mean(ny - 1 - j, q) });
+            let (u, v, uv) = (fold(0), fold(1), 0.5 * (mean(j, 2) - mean(ny - 1 - j, 2)));
+            let dudy = 0.5 * (0.5 * (mean(j + 1, 0) - mean(j - 1, 0)) + 0.5 * (mean(ny - 2 - j, 0) - mean(ny - j, 0)));
+            let viscous = nu * dudy * vs * vs;
+            let resolved = -(uv - u * v) * vs * vs;
+            let sgs = 0.5 * (mean(j, 3) - mean(ny - 1 - j, 3)) * vs * vs;
+            let total = g * (1.0 - y);
+            println!(
+                "    y⁺ {:6.1}: total {total:.4} = viscous {viscous:.4} + subgrid (estimate) {sgs:.4} + resolved {resolved:.4} + residual {:.4}",
+                y * re_tau,
+                total - viscous - sgs - resolved
+            );
+        }
+        requested / g
+    }
+}
+
+/// The bulk speed a channel study holds: Dean's correlation at the nominal Re_τ, as Malaspinas
+/// and Sagaut do (the paper reproduction), or Lee & Moser's, the DNS the acceptance judges against
+/// (the control: no difference of reference conditions inside the 5 %).
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Held {
+    Dean,
+    LeeMoser,
+}
+
 /// Malaspinas and Sagaut's channel set-up (J. Comput. Phys. 275:25–40, 2014, §5) at `lm`'s
 /// bulk Reynolds number on `n` cells per δ, on the GPU: 2πδ × 2δ × 2πδ, periodic, the D3Q19
 /// multiple-relaxation-time collision, Smagorinsky's model at C = 0.08 and the wall model; the
 /// flow rate held by the driving force g = u_τ²/δ + (U_m − ⟨u⟩) U_m / δ, updated every step (their
 /// eq. 67), U_m = Lee & Moser's bulk speed (δ = 1, the
 /// nominal u_τ = 1). u_τ and C_f come from the mean force (the walls carry it all: ρ u_τ² = ρ ḡ δ).
-/// The stop rule is the study's running-mean rule applied to the force (the flow rate is held):
-/// 10 δ/u_τ discarded, windows of 2 δ/u_τ, 2e-3, at most 60.
-fn paper_channel(lm: &LeeMoser, n: usize, c: f64, cpu: bool) -> Option<(ChannelResult, f64)> {
+/// The stop rule is on the force's block means ([`Blocks`]): 20 δ/u_τ discarded, blocks of 2 δ/u_τ,
+/// at least 50 δ/u_τ averaged, then stopped once the mean force's 95 % interval is within 1 % of it
+/// and the block means' lag-1 correlation is below 0.5; at most 150 δ/u_τ. `held` picks the bulk
+/// speed held ([`Held`]).
+fn paper_channel(lm: &LeeMoser, n: usize, c: f64, cpu: bool, held: Held) -> Option<(ChannelResult, f64)> {
     use std::f64::consts::PI;
-    // 20 δ/u_τ discarded and at least 50 averaged before the running-mean rule may stop the run
-    // (the paper does not state its averaging), at most 150.
-    let (start, min_average, window, end, tolerance) = (20.0, 50.0, 2.0, 150.0, 2e-3);
-    // The target bulk speed from Dean's correlation at the nominal Re_τ (their eq. 68), with
-    // δ = 1 and the nominal u_τ = 1: Re_m = 2 U_m / ν, ν = 1 / Re_τ.
-    let um = dean_bulk(lm.re_tau);
+    // The paper does not state its averaging.
+    let (start, min_average, block, end, tolerance) = (20.0, 50.0, 2.0, 150.0, 1e-2);
+    // The target bulk speed, with δ = 1 and the nominal u_τ = 1: from Dean's correlation at the
+    // nominal Re_τ (their eq. 68: Re_m = 2 U_m / ν, ν = 1 / Re_τ), or Lee & Moser's.
+    let um = match held {
+        Held::Dean => dean_bulk(lm.re_tau),
+        Held::LeeMoser => lm.bulk,
+    };
     let dx = 1.0 / n as f64;
     let (lx, lz) = ((2.0 * PI * n as f64).round() * dx, (2.0 * PI * n as f64).round() * dx);
     let mut d = domain([0.0; 3], [lx, 2.0, lz], dx);
@@ -1696,7 +1895,26 @@ fn paper_channel(lm: &LeeMoser, n: usize, c: f64, cpu: bool) -> Option<(ChannelR
     let m = model(1.0, 1.0 / lm.re_tau, d, p);
     // A long study: past the default work cap, which guards interactive runs.
     let limits = fieldcraft_lbm::Limits { max_cell_updates: 10_000_000_000_000, ..fieldcraft_lbm::Limits::default() };
-    let setup = Setup::new(&m, None, &[], &limits).unwrap();
+    let setup = match Setup::new(&m, None, &[], &limits) {
+        Ok(s) => s,
+        Err(e) => {
+            println!("  M&S set-up Re_τ {} {n}/δ: refused: {e}", lm.re_tau.round());
+            return Some((
+                ChannelResult {
+                    bulk: f64::NAN,
+                    centre: f64::NAN,
+                    log_error: f64::NAN,
+                    first_error: f64::NAN,
+                    cells: 0,
+                    steps: 0,
+                    seconds: 0.0,
+                    stop: format!("refused: {e}"),
+                    requested: f64::NAN,
+                },
+                f64::NAN,
+            ));
+        }
+    };
     let mut flow = Flow::new(&setup, &[]).unwrap();
     let grid = *flow.grid();
     let vs = setup.velocity_scale();
@@ -1719,12 +1937,15 @@ fn paper_channel(lm: &LeeMoser, n: usize, c: f64, cpu: bool) -> Option<(ChannelR
     };
     // The profile and the stop rule's samples every 0.05 δ/U_m; the force every step.
     let control = ((0.05 / dt) as u64).max(1);
-    let (from, per_window) = ((start / dt) as u64, (window / dt) as u64 / control);
-    let (mut g_step_sum, mut g_steps) = (0.0, 0usize);
+    let from = (start / dt) as u64;
+    // The force every step after the start-up, in blocks.
+    let mut forces = Blocks::new(((block / dt) as usize).max(1));
     let [nx, ny, nz] = grid.cells;
     let (mut profile, mut samples) = (vec![0.0; ny], 0usize);
-    let (mut g_sum, mut ub_sum, mut count) = (0.0, 0.0, 0usize);
-    let mut window_means: Vec<f64> = Vec::new();
+    let (mut ub_sum, mut count) = (0.0, 0usize);
+    let mut budget = Budget::new(ny);
+    let mut skipped = 0usize;
+    let lattice_nu = (setup.tau_plus - 0.5) / 3.0;
     let clock = std::time::Instant::now();
     let (mut k, mut g) = (0u64, 1.0);
     let mut stop = "the step's end".to_string();
@@ -1742,8 +1963,7 @@ fn paper_channel(lm: &LeeMoser, n: usize, c: f64, cpu: bool) -> Option<(ChannelR
             gpu.set_acceleration([g * lattice_acceleration, 0.0, 0.0]).unwrap();
             k += 1;
             if k >= from {
-                g_step_sum += g;
-                g_steps += 1;
+                forces.push(g);
             }
         }
         k -= step;
@@ -1759,33 +1979,38 @@ fn paper_channel(lm: &LeeMoser, n: usize, c: f64, cpu: bool) -> Option<(ChannelR
                     steps: k + step,
                     seconds: clock.elapsed().as_secs_f64(),
                     stop: "unstable".into(),
+                    requested: f64::NAN,
                 },
                 f64::NAN,
             ));
         }
         k += step;
-        let fields = gpu.fields().unwrap();
-        let mean = fields.velocity.iter().map(|u| u[0]).sum::<f64>() / grid.len() as f64 * vs;
+        // The bulk speed from the device's own sum, and the fields only when two reads agree:
+        // a read of the GPU's fields during a long run has come back corrupt (a few cells with
+        // impossible speeds) a few times in a thousand, while the device's sum stayed right
+        // (work item on solver-LES). The skipped samples are counted.
+        let mean = gpu.mean_velocity(0).unwrap() * vs;
+        let fields = (0..3).find_map(|_| {
+            let (a, b) = (gpu.fields().ok()?, gpu.fields().ok()?);
+            (a.velocity == b.velocity && a.velocity.iter().all(|u| u.iter().all(|v| v.abs() < 1.0))).then_some(a)
+        });
+        if fields.is_none() {
+            skipped += 1;
+        }
         if k >= from {
-            g_sum += g_step_sum / g_steps.max(1) as f64;
             ub_sum += mean;
             count += 1;
-            for (cell, u) in fields.velocity.iter().enumerate() {
-                profile[grid.coords(cell)[1]] += u[0] * vs;
-            }
-            samples += 1;
-            // The running mean of the force at each window's end; steady once it changed by
-            // less than the tolerance over two windows in a row.
-            if per_window > 0 && count % per_window as usize == 0 {
-                window_means.push(g_sum / count as f64);
-                let w = &window_means;
-                if w.len() >= 3 && k as f64 * dt >= start + min_average {
-                    let last = w[w.len() - 1];
-                    if (w[w.len() - 2] / last - 1.0).abs() < tolerance && (w[w.len() - 3] / last - 1.0).abs() < tolerance {
-                        stop = format!("steady at {:.1} δ/u_τ", k as f64 * dt);
-                        break;
-                    }
+            if let Some(fields) = &fields {
+                for (cell, u) in fields.velocity.iter().enumerate() {
+                    profile[grid.coords(cell)[1]] += u[0] * vs;
                 }
+                samples += 1;
+                budget.sample(&grid, &fields.velocity, lattice_nu, c);
+            }
+            // Steady once the mean force is known to the tolerance from uncorrelated blocks.
+            if k as f64 * dt >= start + min_average && forces.half_width() < tolerance * forces.mean() && forces.lag1() < 0.5 {
+                stop = format!("steady at {:.1} δ/u_τ", k as f64 * dt);
+                break;
             }
         }
         if k % (setup.steps / 20).max(1) < control {
@@ -1797,9 +2022,19 @@ fn paper_channel(lm: &LeeMoser, n: usize, c: f64, cpu: bool) -> Option<(ChannelR
             );
         }
     }
-    // The force averaged over every step after the start-up.
-    let g_mean = g_step_sum / g_steps.max(1) as f64;
+    // The force averaged over the completed blocks after the start-up, and its interval.
+    let g_mean = forces.mean();
     let ut = g_mean.sqrt();
+    println!(
+        "  force: {:.5} ± {:.5} (95 %, {} blocks of {block} δ/u_τ, lag-1 correlation {:.2}); C_f ± {:.2} %",
+        g_mean,
+        forces.half_width(),
+        forces.means.len(),
+        forces.lag1(),
+        100.0 * forces.half_width() / g_mean
+    );
+    let requested = budget.report(&grid, vs, lattice_nu, dx, g_mean, g_mean.sqrt() * lm.re_tau);
+    println!("  field samples: {samples} averaged, {skipped} skipped (two reads disagreed or a speed was impossible)");
     let ub = ub_sum / count.max(1) as f64 / ut;
     let mean: Vec<f64> = profile.iter().map(|s| s / (samples * nx * nz) as f64 / ut).collect();
     let half: Vec<(f64, f64)> = (0..ny / 2).map(|j| ((j as f64 + 0.5) * dx, 0.5 * (mean[j] + mean[ny - 1 - j]))).collect();
@@ -1817,6 +2052,7 @@ fn paper_channel(lm: &LeeMoser, n: usize, c: f64, cpu: bool) -> Option<(ChannelR
         steps: k,
         seconds: clock.elapsed().as_secs_f64(),
         stop,
+        requested,
     };
     Some((result, ut * lm.re_tau))
 }
@@ -1833,7 +2069,9 @@ fn dean_bulk(re_tau: f64) -> f64 {
 /// C_f against Dean's correlation is printed too, the paper's own comparison. Re_τ 550 (`550`)
 /// is run only when asked, outside the acceptance (the paper tests Re_τ ≥ 950). Set
 /// `FIELDCRAFT_PAPER_CHANNEL` to `1` (1000 and 2000), `1000`, `2000`, `550`, or `1000:10` for one
-/// grid.
+/// grid. The bulk speed held is Dean's, the paper's; `FIELDCRAFT_PAPER_CHANNEL_HELD=lm` holds Lee &
+/// Moser's instead, the control against the DNS the acceptance uses. Each grid reports its first
+/// cell's centre and the wall model's matching point (the second cell, 3 y₁) in wall units.
 #[test]
 #[ignore = "hours, GPU: set FIELDCRAFT_PAPER_CHANNEL=1 (docs/verification.md, \"Long studies\")"]
 fn study_malaspinas_and_sagaut_s_channel_against_lee_and_moser() {
@@ -1859,19 +2097,20 @@ fn study_malaspinas_and_sagaut_s_channel_against_lee_and_moser() {
         }
         // FIELDCRAFT_PAPER_CHANNEL_CPU=1 runs the grid on the CPU in double precision instead.
         let cpu = std::env::var_os("FIELDCRAFT_PAPER_CHANNEL_CPU").is_some();
-        let Some((r, re_tau)) = paper_channel(lm, n, c, cpu) else { return };
+        let held = if std::env::var("FIELDCRAFT_PAPER_CHANNEL_HELD").is_ok_and(|v| v == "lm") { Held::LeeMoser } else { Held::Dean };
+        let Some((r, re_tau)) = paper_channel(lm, n, c, cpu, held) else { return };
         let cf = 2.0 / (r.bulk * r.bulk);
         let cf_lm = 2.0 / (lm.bulk * lm.bulk);
         let cf_error = cf / cf_lm - 1.0;
-        // Dean's C_f at the run's bulk Reynolds number (held at Dean's for the nominal Re_τ):
-        // C_f = 0.073 Re_m^(−1/4).
-        let re_m = 2.0 * dean_bulk(lm.re_tau) * lm.re_tau;
-        let cf_dean = 0.073 * re_m.powf(-0.25);
+        // Dean's C_f at the bulk Reynolds number held (nominal u_τ = δ = 1): C_f = 0.073 Re_m^(−1/4).
+        let um = if held == Held::Dean { dean_bulk(lm.re_tau) } else { lm.bulk };
+        let cf_dean = 0.073 * (2.0 * um * lm.re_tau).powf(-0.25);
         println!(
-            "M&S set-up ({}), Lee & Moser Re_τ {name}, {n}/δ, C {c} (Δy⁺ {:.0}, first cell centre y⁺ {:.0}): measured Re_τ {re_tau:.0}, U_b⁺ {:.3} (LM {:.2}), C_f {cf:.4e} ({:+.1} % on LM, {:+.1} % on Dean), U_c⁺ {:.2} (LM {:.2}), log layer within {:.1} %; {} cells, {} steps, {:.0} s, {:.0} MLUPS; stopped: {}",
+            "M&S set-up ({}, {held:?} bulk held), Lee & Moser Re_τ {name}, {n}/δ, C {c} (Δy⁺ {:.0}, first cell centre y⁺ {:.0}, matching point y⁺ {:.0}): measured Re_τ {re_tau:.0}, U_b⁺ {:.3} (LM {:.2}), C_f {cf:.4e} ({:+.1} % on LM, {:+.1} % on Dean), U_c⁺ {:.2} (LM {:.2}), log layer within {:.1} %, requested / carried wall stress {:.3}; {} cells, {} steps, {:.0} s, {:.0} MLUPS; stopped: {}",
             if cpu { "CPU, f64" } else { "GPU, f32" },
             re_tau / n as f64,
             0.5 * re_tau / n as f64,
+            1.5 * re_tau / n as f64,
             r.bulk,
             lm.bulk,
             100.0 * cf_error,
@@ -1879,15 +2118,19 @@ fn study_malaspinas_and_sagaut_s_channel_against_lee_and_moser() {
             r.centre,
             lm.at(1.0),
             100.0 * r.log_error,
+            r.requested,
             r.cells,
             r.steps,
             r.seconds,
             r.cells as f64 * r.steps as f64 / r.seconds / 1e6,
             r.stop
         );
-        if counted && !(cf_error.abs() <= 0.05 && r.log_error <= 0.05) {
+        // Counted where the method is meant to work: the first cell's centre at y⁺ ≥ 30 for the
+        // nominal Re_τ (a grid the τ floor refuses is reported, not counted).
+        let in_range = 0.5 * lm.re_tau / n as f64 >= 30.0;
+        if counted && in_range && !r.stop.starts_with("refused") && !(cf_error.abs() <= 0.05 && r.log_error <= 0.05) {
             failed.push(format!("Re_τ {name} {n}/δ"));
         }
     }
-    assert!(failed.is_empty(), "outside the acceptance: {failed:?}");
+    assert!(failed.is_empty(), "outside the acceptance (first cell at y⁺ ≥ 30): {failed:?}");
 }
