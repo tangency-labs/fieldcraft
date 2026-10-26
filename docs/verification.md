@@ -162,6 +162,74 @@ What it does not establish yet:
   average (about 1 % at 12 cells per δ, from the two platforms above); no confidence interval is
   stated.
 
+### Wall-modelled channel against Lee & Moser and Dean (#664, #749)
+
+Malaspinas & Sagaut's wall model with Musker's profile and the multiple-relaxation-time collision
+(docs/lbm-wall-model.md), on the GPU in f32. Periodic channel, half-height δ, with the flow rate
+held at the bulk velocity of Dean's correlation by a body force updated every step; 20 δ/u_τ of
+start-up discarded and at least 50 averaged; Smagorinsky's C 0.08 at Re_τ 1000 and 0.1 at
+Re_τ 2000. References: M. Lee, R. D. Moser, *Direct numerical simulation of turbulent channel flow
+up to Re_τ ≈ 5200*, J. Fluid Mech. 774:395–415, 2015 (doi:10.1017/jfm.2015.268), and R. B. Dean's
+correlation (J. Fluids Eng. 100(2):215–223, 1978, doi:10.1115/1.3448633). Acceptance, fixed before
+the runs: C_f and the log layer's mean velocity within 5 % of Lee & Moser.
+
+```
+FIELDCRAFT_PAPER_CHANNEL=1 cargo test --release -p fieldcraft-lbm-gpu --test verification \
+  -- --ignored study_malaspinas_and_sagaut_s_channel_against_lee_and_moser --nocapture
+```
+
+Two minutes to an hour per grid. Recorded on Linux aarch64 (NVIDIA GB10), PR #749. C_f by the
+force balance is the drag the flow carries, which equals the body force at steady state and is
+what `solve.fluid` reports as the wall force; C_f by the wall model's u_τ is the one the model
+infers at the second cell, Malaspinas & Sagaut's measure. E is their profile error measure (their
+values with Musker's profile in brackets: Re_τ 950 and 2000).
+
+| Re_τ | cells per δ | first cell y⁺ | C_f, force balance: vs Lee & Moser / vs Dean | C_f, wall-model u_τ: vs Dean | E (paper) | log layer vs Lee & Moser |
+|---|---|---|---|---|---|---|
+| 1000 | 10 | 46 | −11.4 % / −14.5 % | +1.3 % | 2.65 (2.11) | 7.6 % |
+| 1000 | 20 | 23 | −8.9 % / −12.1 % | −0.9 % | 1.21 (1.07) | 6.7 % |
+| 1000 | 30 | 16 | −8.7 % / −11.9 % | +1.4 % | 0.99 (0.83) | 8.3 % |
+| 2000 | 10 | 100 | refused: τ 0.50007 is below the 0.5001 floor | — | — | — |
+| 2000 | 20 | 52 | +10.2 % / +8.9 % | −3.1 % | 1.01 (1.15) | 9.0 % |
+| 2000 | 30 | 33 | **−0.7 % / −1.8 %** | −1.8 % | 0.29 (0.88) | **3.3 %** |
+
+- **The implementation reproduces the paper.** C_f by the wall model's u_τ is within the paper's
+  0.3–4.2 % of Dean on every grid, and E is close to its values. A CPU run in f64 of Re_τ 1000 at
+  10 cells per δ gives −14.8 % against Dean, against the GPU's −14.5 %.
+- **The drag the flow carries meets the acceptance only at Re_τ 2000 with 30 cells per δ.** On
+  the other grids it is 9–15 % off, the log-layer mismatch of S. Kawai, J. Larsson, *Wall-modeling
+  in large eddy simulation: length scales, grid resolution, and accuracy*, Phys. Fluids 24:015105,
+  2012 (doi:10.1063/1.3678331). Recorded as it is, not counted as a pass (owner decision
+  2026-10-26); the next step is sampling the wall model's input several cells off the wall, as
+  Kawai & Larsson do, on the same grids.
+- At Re_τ 1000 the 20- and 30-cell grids put the first cell below y⁺ 30, outside the range the
+  method is meant for; they are listed for completeness.
+
+**Re_τ 550: out of range.** Re_τ 550 was in the original protocol, but its grids put the first cell
+centre at y⁺ 13–24, below the method's range. This was found after the runs, so it is recorded here
+as out of range, with its results, rather than counted. The protocol chose those grids by cell size
+(Δy⁺ 54, 39 and 30) where the method's range is for the first cell's centre, half a cell off the
+wall, at y⁺ 30 or more: that was our protocol's error, recognised on 2026-10-25 after the results
+below. Malaspinas & Sagaut validate only at Re_τ 950 and above, so 550 is outside the paper's
+tested range too; the y⁺ placement decides it. Owner decision 2026-10-26: keep its numbers, not in
+the acceptance.
+
+These runs used the study as it stood on 2026-10-25, before it followed the paper exactly:
+2πδ × 2δ × 2πδ, MRT, C 0.08, the wall model with **Spalding's** profile (not Musker's), the flow
+rate held at **Lee & Moser's** bulk velocity and updated every 0.05 δ/U_m (not every step), and the
+running-mean stop rule on the force. Recorded on Linux aarch64 (NVIDIA GB10), GPU, f32. The current
+study lists Re_τ 550 at 10, 14 and 18 cells per δ outside the acceptance (`FIELDCRAFT_PAPER_CHANNEL=550`);
+that version has not been run at 550. The C_f by the wall model's u_τ, E and C_f against Dean were
+not measured for these runs.
+
+| cells per δ | measured Re_τ | first cell y⁺ | U_b⁺ (Lee & Moser 18.40) | C_f, force balance vs Lee & Moser | log layer vs Lee & Moser | cells | GPU time |
+|---|---|---|---|---|---|---|---|
+| 10 | 470 | ≈ 23 | 21.30 | −25.3 % | 17.9 % | 79 k | 10 s |
+| 14 | 461 | ≈ 16 | 21.72 | −28.3 % | 23.2 % | 217 k | 37 s |
+| 18 | 475 | ≈ 13 | 21.08 | −23.8 % | 19.0 % | 460 k | 121 s |
+
+The first cell's y⁺ is the measured Re_τ × 0.5 / N.
+
 ### What #664's acceptance still lacks
 
 - **Developing pipe flow against Shah & London (1978)**: not built.

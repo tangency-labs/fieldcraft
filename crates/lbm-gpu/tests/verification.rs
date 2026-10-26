@@ -1222,3 +1222,624 @@ fn a_low_capacity_solid_matches_the_cpu() {
     assert_eq!(gpu.conducting(), cpu.conducting());
     assert!(dt < 2e-5 && dh < 5e-5, "{dt} {dh}");
 }
+
+// ---- The wall-modelled channel against Lee & Moser (#664) ----
+
+/// Lee & Moser's mean velocity U⁺ at y/δ (M. Lee, R. D. Moser, *Direct numerical simulation of
+/// turbulent channel flow up to Re_τ ≈ 5200*, J. Fluid Mech. 774:395–415, 2015,
+/// doi:10.1017/jfm.2015.268; sampled from the mean profiles of turbulence.oden.utexas.edu,
+/// `LM_Channel_0550_mean_prof.dat`, `LM_Channel_1000_mean_prof.dat` and
+/// `LM_Channel_2000_mean_prof.dat`), their Re_τ and bulk
+/// U_b⁺ = 1 / u_τ (the files' U_mean = 1).
+struct LeeMoser {
+    re_tau: f64,
+    bulk: f64,
+    profile: [(f64, f64); 16],
+}
+
+const LM_550: LeeMoser = LeeMoser {
+    re_tau: 543.496,
+    bulk: 1.0 / 5.43496e-2,
+    profile: [
+        (0.01, 5.203),
+        (0.02, 8.917),
+        (0.03, 11.062),
+        (0.05, 13.163),
+        (0.07, 14.178),
+        (0.1, 15.068),
+        (0.15, 16.015),
+        (0.2, 16.714),
+        (0.3, 17.781),
+        (0.4, 18.608),
+        (0.5, 19.288),
+        (0.6, 19.856),
+        (0.7, 20.326),
+        (0.8, 20.688),
+        (0.9, 20.919),
+        (1.0, 21.000),
+    ],
+};
+
+const LM_1000: LeeMoser = LeeMoser {
+    re_tau: 1000.512,
+    bulk: 1.0 / 5.00256e-2,
+    profile: [
+        (0.01, 8.437),
+        (0.02, 11.968),
+        (0.03, 13.455),
+        (0.05, 14.839),
+        (0.07, 15.624),
+        (0.1, 16.456),
+        (0.15, 17.450),
+        (0.2, 18.200),
+        (0.3, 19.320),
+        (0.4, 20.168),
+        (0.5, 20.858),
+        (0.6, 21.434),
+        (0.7, 21.909),
+        (0.8, 22.272),
+        (0.9, 22.509),
+        (1.0, 22.593),
+    ],
+};
+
+const LM_2000: LeeMoser = LeeMoser {
+    re_tau: 1994.756,
+    bulk: 1.0 / 4.58794e-2,
+    profile: [
+        (0.01, 11.924),
+        (0.02, 14.241),
+        (0.03, 15.233),
+        (0.05, 16.417),
+        (0.07, 17.228),
+        (0.1, 18.129),
+        (0.15, 19.195),
+        (0.2, 19.976),
+        (0.3, 21.121),
+        (0.4, 21.971),
+        (0.5, 22.659),
+        (0.6, 23.237),
+        (0.7, 23.716),
+        (0.8, 24.081),
+        (0.9, 24.315),
+        (1.0, 24.396),
+    ],
+};
+
+impl LeeMoser {
+    /// U⁺ at `y` (over δ, in (0, 1]), interpolated linearly in ln y.
+    fn at(&self, y: f64) -> f64 {
+        let p = &self.profile;
+        let i = p.windows(2).position(|w| y <= w[1].0).unwrap_or(p.len() - 2);
+        let ((y0, u0), (y1, u1)) = (p[i], p[i + 1]);
+        let t = ((y.max(y0)).ln() - y0.ln()) / (y1.ln() - y0.ln());
+        u0 + t.clamp(0.0, 1.0) * (u1 - u0)
+    }
+}
+
+/// One grid of the study: what it measured against Lee & Moser.
+struct ChannelResult {
+    bulk: f64,
+    centre: f64,
+    /// The largest relative error of U⁺ from the second cell to y/δ 0.3, and the first cell's.
+    log_error: f64,
+    first_error: f64,
+    cells: usize,
+    steps: u64,
+    seconds: f64,
+    stop: String,
+}
+
+/// The wall-modelled channel at `lm`'s Re_τ on `n` cells per δ, on the GPU: 2πδ × 2δ × πδ,
+/// periodic, driven by u_τ²/δ (δ = u_τ = 1), regularised collision, C = 0.1, the Spalding wall
+/// model; started from a blunt profile at the reference's bulk speed with streaks to trip it,
+/// run under the running-mean stop rule on the mass flow (10 δ/u_τ discarded, windows of
+/// 2 δ/u_τ, 2e-3, at most 60 δ/u_τ), the plane-averaged profile summed from the start-up on.
+fn wall_modelled_channel(lm: &LeeMoser, n: usize) -> Option<ChannelResult> {
+    use fieldcraft_lbm::steady::Monitor;
+    use std::f64::consts::PI;
+    let (start, window, end, tolerance) = (10.0, 2.0, 60.0, 2e-3);
+    let ub = lm.bulk;
+    let dx = 1.0 / n as f64;
+    let (lx, lz) = ((2.0 * PI * n as f64).round() * dx, (PI * n as f64).round() * dx);
+    let mut d = domain([0.0; 3], [lx, 2.0, lz], dx);
+    for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+        *f = PERIODIC;
+    }
+    d.acceleration = [1.0, 0.0, 0.0];
+    let dt = 0.1 * dx / ub;
+    // The protocol's collision is the regularised one; FIELDCRAFT_WALL_MODEL_COLLISION=trt runs
+    // the two-relaxation-time one instead, as a diagnostic.
+    let collision = match std::env::var("FIELDCRAFT_WALL_MODEL_COLLISION").as_deref() {
+        Ok("trt") => Collision::Trt,
+        Ok("mrt") => Collision::Mrt,
+        _ => Collision::Regularized,
+    };
+    let mut p = wall_modelled(collide(end, dt, None, collision), 0.1);
+    if let Procedure::Fluid { steady, .. } = &mut p {
+        *steady = Some(fieldcraft_model::Steady {
+            monitors: vec![fieldcraft_model::FlowMonitor::MassFlow { face: BoxFace::XMax }],
+            tolerance,
+            window: Some(window),
+            min_time: None,
+            divergence: None,
+            averaging: Some(fieldcraft_model::Averaging { start }),
+        });
+    }
+    let (setup, mut flow) = prepare(&model(1.0, 1.0 / lm.re_tau, d, p), &[]);
+    let grid = *flow.grid();
+    let vs = setup.velocity_scale();
+    let (kx, kz) = (2.0 * PI / lx, 2.0 * PI / lz);
+    flow.set_equilibrium(|cell| {
+        let [x, y, z] = grid.centre(cell);
+        let eta = y - 1.0;
+        let wall = 1.0 - eta * eta;
+        let u = 1.15 * ub * (1.0 - eta.abs().powi(8)) + 2.0 * (2.0 * kz * z).sin() * (kx * x).cos() * wall;
+        let v = 1.5 * wall * (2.0 * kz * z).cos() * (3.0 * kx * x).sin();
+        let w = 1.5 * wall * eta * (kx * x).sin() * (kz * z).cos();
+        (1.0, [u / vs, v / vs, w / vs])
+    });
+    let mut gpu = gpu(&flow, Streaming::InPlace)?;
+    let mut monitor = Monitor::new(&setup, &*gpu).unwrap().unwrap();
+    let ny = grid.cells[1];
+    let from = (start / dt).ceil() as u64;
+    let every = ((0.25 / dt) as u64).max(1);
+    let (mut profile, mut samples) = (vec![0.0; ny], 0usize);
+    let clock = std::time::Instant::now();
+    let mut k = 0u64;
+    let mut stop = "the step's end".to_string();
+    while k < setup.steps {
+        let mut next = setup.steps.min((k / every + 1) * every);
+        next = next.min((k / monitor.setup.sample + 1) * monitor.setup.sample);
+        if let Err(e) = gpu.advance(next - k) {
+            println!("  Re_τ {} {n}/δ: unstable before {:.2} δ/u_τ: {e}", lm.re_tau.round(), next as f64 * dt);
+            let seconds = clock.elapsed().as_secs_f64();
+            return Some(ChannelResult {
+                bulk: f64::NAN,
+                centre: f64::NAN,
+                log_error: f64::NAN,
+                first_error: f64::NAN,
+                cells: grid.len(),
+                steps: next,
+                seconds,
+                stop: format!("unstable before {:.2} δ/u_τ", next as f64 * dt),
+            });
+        }
+        k = next;
+        if k >= from && k.is_multiple_of(every) {
+            let fields = gpu.fields().unwrap();
+            for (cell, u) in fields.velocity.iter().enumerate() {
+                profile[grid.coords(cell)[1]] += u[0] * vs;
+            }
+            samples += 1;
+        }
+        if monitor.samples_at(k)
+            && let Some(reason) = monitor.sample(&setup, &mut *gpu, k).unwrap()
+        {
+            stop = format!("{} at {:.1} δ/u_τ", reason.name(), k as f64 * dt);
+            break;
+        }
+        if k % (setup.steps / 20).max(1) < every {
+            println!("  Re_τ {} {n}/δ: t = {:.1} δ/u_τ, {:.0} s", lm.re_tau.round(), k as f64 * dt, clock.elapsed().as_secs_f64());
+        }
+    }
+    let seconds = clock.elapsed().as_secs_f64();
+    let report = monitor.report();
+    let mass = report.averages.iter().zip(&report.quantities).find(|(_, q)| q.contains("mass")).map(|(a, _)| a.mean[0]);
+    let area = 2.0 * lz;
+    let bulk = mass.map_or(f64::NAN, |m| m.abs() / area);
+    let (nx, nz) = (grid.cells[0], grid.cells[2]);
+    let mean: Vec<f64> = profile.iter().map(|s| s / (samples * nx * nz) as f64).collect();
+    // Symmetric about the centre: both halves at each distance from the nearer wall.
+    let half: Vec<(f64, f64)> = (0..ny / 2).map(|j| ((j as f64 + 0.5) * dx, 0.5 * (mean[j] + mean[ny - 1 - j]))).collect();
+    let error = |(y, u): (f64, f64)| (u / lm.at(y) - 1.0).abs();
+    let first_error = half.first().map_or(f64::NAN, |c| error(*c));
+    let log_error = half.iter().skip(1).filter(|(y, _)| *y <= 0.3).map(|c| error(*c)).fold(0.0, f64::max);
+    let centre = half.last().map_or(f64::NAN, |c| c.1);
+    for (y, u) in &half {
+        println!("    y/δ {y:.4} y⁺ {:7.1}: U⁺ {u:7.3}, Lee & Moser {:7.3} ({:+.1} %)", y * lm.re_tau, lm.at(*y), 100.0 * (u / lm.at(*y) - 1.0));
+    }
+    Some(ChannelResult { bulk, centre, log_error, first_error, cells: grid.len(), steps: k, seconds, stop })
+}
+
+/// The environment variable that runs the wall-modelled channel study on the GPU.
+const WALL_MODEL_STUDY: &str = "FIELDCRAFT_WALL_MODEL_STUDY";
+
+/// The wall-modelled channel at Re_τ 550 (10, 14, 18 cells per δ) and 1000 (16, 24, 32), first
+/// cell sizes Δy⁺ 30 to 63, against Lee & Moser, on the GPU only (hours): docs/verification.md,
+/// "Long studies". Acceptance, set before the runs: C_f within 5 % on every grid and the log
+/// layer's mean velocity within 5 % (from the second cell to y/δ 0.3). Set
+/// `FIELDCRAFT_WALL_MODEL_STUDY` to `1` for every grid, or to `550` or `1000`, or to
+/// `1000:16` for one grid.
+#[test]
+#[ignore = "hours, GPU: set FIELDCRAFT_WALL_MODEL_STUDY=1 (docs/verification.md, \"Long studies\")"]
+fn study_a_wall_modelled_channel_against_lee_and_moser() {
+    let Some(which) = std::env::var_os(WALL_MODEL_STUDY).map(|v| v.to_string_lossy().into_owned()) else {
+        println!("the wall-modelled channel study runs only with {WALL_MODEL_STUDY} set (hours, GPU): skipped");
+        return;
+    };
+    let grids: [(&LeeMoser, &str, usize); 6] =
+        [(&LM_550, "550", 10), (&LM_550, "550", 14), (&LM_550, "550", 18), (&LM_1000, "1000", 16), (&LM_1000, "1000", 24), (&LM_1000, "1000", 32)];
+    let mut failed = Vec::new();
+    for (lm, name, n) in grids {
+        let chosen = which == "1" || which == name || which == format!("{name}:{n}");
+        if !chosen {
+            continue;
+        }
+        let Some(r) = wall_modelled_channel(lm, n) else { return };
+        let cf_error = (lm.bulk / r.bulk).powi(2) - 1.0;
+        let dy_plus = lm.re_tau / n as f64;
+        println!(
+            "wall-modelled channel Re_τ {name}, {n}/δ (Δy⁺ {dy_plus:.0}, first cell y⁺ {:.0}): U_b⁺ {:.3} (Lee & Moser {:.2}), C_f {:.4e} ({:+.1} %), U_c⁺ {:.2} (LM {:.2}), log layer within {:.1} %, first cell {:.1} %; {} cells, {} steps, {:.0} s, {:.0} MLUPS; stopped: {}",
+            dy_plus / 2.0,
+            r.bulk,
+            lm.bulk,
+            2.0 / (r.bulk * r.bulk),
+            100.0 * cf_error,
+            r.centre,
+            lm.at(1.0),
+            100.0 * r.log_error,
+            100.0 * r.first_error,
+            r.cells,
+            r.steps,
+            r.seconds,
+            r.cells as f64 * r.steps as f64 / r.seconds / 1e6,
+            r.stop
+        );
+        if !(cf_error.abs() <= 0.05 && r.log_error <= 0.05) {
+            failed.push(format!("Re_τ {name} {n}/δ"));
+        }
+    }
+    assert!(failed.is_empty(), "outside the acceptance: {failed:?}");
+}
+
+/// The wall model's own consistency in the turbulent channel (Re_τ 1000, 16 cells per δ, the
+/// study's set-up), on demand: after 20 δ/u_τ, 20 samples a quarter δ/u_τ apart of the plane
+/// averages at the second cells (U₂), the first cells as the fields read them after streaming
+/// (U₁), the u_τ and target the wall law gives from the second cells' velocities on the host, and
+/// the targets the GPU's `wall_sample` computed from the same state (read back one step later).
+#[test]
+#[ignore = "a diagnostic: set FIELDCRAFT_WALL_MODEL_DIAGNOSTIC=1"]
+fn diagnose_the_wall_model_in_the_channel() {
+    use std::f64::consts::PI;
+    if std::env::var_os("FIELDCRAFT_WALL_MODEL_DIAGNOSTIC").is_none() {
+        return;
+    }
+    let (lm, n) = (&LM_1000, 16usize);
+    let ub = lm.bulk;
+    let dx = 1.0 / n as f64;
+    let (lx, lz) = ((2.0 * PI * n as f64).round() * dx, (PI * n as f64).round() * dx);
+    let mut d = domain([0.0; 3], [lx, 2.0, lz], dx);
+    for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+        *f = PERIODIC;
+    }
+    d.acceleration = [1.0, 0.0, 0.0];
+    let dt = 0.1 * dx / ub;
+    let collision = match std::env::var("FIELDCRAFT_WALL_MODEL_DIAGNOSTIC").as_deref() {
+        Ok("trt") => Collision::Trt,
+        Ok("mrt") => Collision::Mrt,
+        _ => Collision::Regularized,
+    };
+    let p = wall_modelled(collide(30.0, dt, None, collision), 0.1);
+    let (setup, mut flow) = prepare(&model(1.0, 1.0 / lm.re_tau, d, p), &[]);
+    let grid = *flow.grid();
+    let vs = setup.velocity_scale();
+    let (kx, kz) = (2.0 * PI / lx, 2.0 * PI / lz);
+    println!("{collision:?}");
+    flow.set_equilibrium(|cell| {
+        let [x, y, z] = grid.centre(cell);
+        let eta = y - 1.0;
+        let wall = 1.0 - eta * eta;
+        let u = 1.15 * ub * (1.0 - eta.abs().powi(8)) + 2.0 * (2.0 * kz * z).sin() * (kx * x).cos() * wall;
+        let v = 1.5 * wall * (2.0 * kz * z).cos() * (3.0 * kx * x).sin();
+        let w = 1.5 * wall * eta * (kx * x).sin() * (kz * z).cos();
+        (1.0, [u / vs, v / vs, w / vs])
+    });
+    let walls: Vec<(usize, usize)> = flow.walls().unwrap().wall_cells().filter_map(|(cell, _, _, _, second)| second.map(|s| (cell, s))).collect();
+    let mut gpu = gpu(&flow, Streaming::InPlace).unwrap();
+    let nu = (setup.tau_plus - 0.5) / 3.0;
+    gpu.advance((20.0 / dt) as u64).unwrap();
+    let every = (0.25 / dt) as u64;
+    let [nx, ny, nz] = grid.cells;
+    let plane = |fields: &fieldcraft_lbm::backend::Fields, j: usize| {
+        let mut s = 0.0;
+        for k in 0..nz {
+            for i in 0..nx {
+                s += fields.velocity[grid.index([i, j, k])][0];
+            }
+        }
+        s * vs / (nx * nz) as f64
+    };
+    let mut sums = [0.0f64; 6];
+    let samples = 20;
+    // Per plane from the wall (both halves): Σ u, Σ v (towards the centre), Σ u v, Σ u², samples.
+    let half = ny / 2;
+    let mut stats = vec![[0.0f64; 4]; half];
+    let mut cells_per_plane = 0.0;
+    for _ in 0..samples {
+        gpu.advance(every - 1).unwrap();
+        let fields = gpu.fields().unwrap();
+        let (u2, u1) = (0.5 * (plane(&fields, 1) + plane(&fields, ny - 2)), 0.5 * (plane(&fields, 0) + plane(&fields, ny - 1)));
+        // The host's wall law at each wall cell from this state, averaged over the wall cells.
+        let (mut ut, mut target) = (0.0, 0.0);
+        for &(_, second) in &walls {
+            let u = fields.velocity[second];
+            let speed = (u[0] * u[0] + u[2] * u[2]).sqrt();
+            let (u1_law, _) = fieldcraft_lbm::wall::wall_law(speed, 0.5, 1.5, nu);
+            ut += fieldcraft_lbm::wall::friction_velocity(speed, 1.5, nu) * vs;
+            target += u1_law * if speed > 0.0 { u[0] / speed } else { 0.0 } * vs;
+        }
+        let m = walls.len() as f64;
+        for (j, st) in stats.iter_mut().enumerate() {
+            for (row, sign) in [(j, 1.0), (ny - 1 - j, -1.0)] {
+                for k in 0..nz {
+                    for i in 0..nx {
+                        let u = fields.velocity[grid.index([i, row, k])];
+                        let (a, b) = (u[0] * vs, sign * u[1] * vs);
+                        st[0] += a;
+                        st[1] += b;
+                        st[2] += a * b;
+                        st[3] += a * a;
+                    }
+                }
+            }
+        }
+        cells_per_plane += 2.0 * (nx * nz) as f64;
+        gpu.advance(1).unwrap();
+        let gpu_target = gpu.wall_targets().unwrap().iter().map(|t| t.0[0]).sum::<f64>() / m * vs;
+        let row = [u2, u1, ut / m, target / m, gpu_target, 0.0];
+        for (s, v) in sums.iter_mut().zip(row) {
+            *s += v;
+        }
+        println!(
+            "  U₂⁺ {:.3}  U₁⁺ (fields) {:.3}  u_τ (law, host) {:.3}  target U₁⁺ (host) {:.3}  target U₁⁺ (GPU) {:.3}",
+            row[0], row[1], row[2], row[3], row[4]
+        );
+    }
+    let s = samples as f64;
+    println!(
+        "mean over {samples}: U₂⁺ {:.3} (LM at y⁺ {:.0}: {:.3}), U₁⁺ (fields) {:.3}, u_τ (law) {:.3}, target U₁⁺ host {:.3} / GPU {:.3} (LM at y⁺ {:.0}: {:.3})",
+        sums[0] / s,
+        1.5 * dx * lm.re_tau,
+        lm.at(1.5 * dx),
+        sums[1] / s,
+        sums[2] / s,
+        sums[3] / s,
+        sums[4] / s,
+        0.5 * dx * lm.re_tau,
+        lm.at(0.5 * dx)
+    );
+    // The resolved shear stress −u'v' against the total the channel carries, 1 − y/δ (u_τ = 1):
+    // what the resolved motion leaves to the viscous and subgrid stresses.
+    for (j, st) in stats.iter().enumerate().take(6) {
+        let y = (j as f64 + 0.5) * dx;
+        let (mu, mv) = (st[0] / cells_per_plane, st[1] / cells_per_plane);
+        let uv = st[2] / cells_per_plane - mu * mv;
+        let urms = (st[3] / cells_per_plane - mu * mu).max(0.0).sqrt();
+        println!("    y⁺ {:6.1}: U⁺ {mu:7.3}, −u'v'⁺ {:.3} of the total {:.3}, u'⁺ rms {urms:.3}", y * lm.re_tau, -uv, 1.0 - y);
+    }
+}
+
+/// Malaspinas and Sagaut's channel set-up (J. Comput. Phys. 275:25–40, 2014, §5) at `lm`'s
+/// bulk Reynolds number on `n` cells per δ, on the GPU: 2πδ × 2δ × 2πδ, periodic, the D3Q19
+/// multiple-relaxation-time collision, Smagorinsky's model at C = 0.08 and the wall model; the
+/// flow rate held by the driving force g = u_τ²/δ + (U_m − ⟨u⟩) U_m / δ, updated every step (their
+/// eq. 67), U_m = Lee & Moser's bulk speed (δ = 1, the
+/// nominal u_τ = 1). u_τ and C_f come from the mean force (the walls carry it all: ρ u_τ² = ρ ḡ δ).
+/// The stop rule is the study's running-mean rule applied to the force (the flow rate is held):
+/// 10 δ/u_τ discarded, windows of 2 δ/u_τ, 2e-3, at most 60.
+fn paper_channel(lm: &LeeMoser, n: usize, c: f64, cpu: bool) -> Option<(ChannelResult, f64)> {
+    use std::f64::consts::PI;
+    // 20 δ/u_τ discarded and at least 50 averaged before the running-mean rule may stop the run
+    // (the paper does not state its averaging), at most 150.
+    let (start, min_average, window, end, tolerance) = (20.0, 50.0, 2.0, 150.0, 2e-3);
+    // The target bulk speed from Dean's correlation at the nominal Re_τ (their eq. 68), with
+    // δ = 1 and the nominal u_τ = 1: Re_m = 2 U_m / ν, ν = 1 / Re_τ.
+    let um = dean_bulk(lm.re_tau);
+    let dx = 1.0 / n as f64;
+    let (lx, lz) = ((2.0 * PI * n as f64).round() * dx, (2.0 * PI * n as f64).round() * dx);
+    let mut d = domain([0.0; 3], [lx, 2.0, lz], dx);
+    for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+        *f = PERIODIC;
+    }
+    d.acceleration = [1.0, 0.0, 0.0];
+    let dt = 0.1 * dx / um;
+    let p = wall_modelled(collide(end, dt, None, Collision::Mrt), c);
+    let m = model(1.0, 1.0 / lm.re_tau, d, p);
+    // A long study: past the default work cap, which guards interactive runs.
+    let limits = fieldcraft_lbm::Limits { max_cell_updates: 10_000_000_000_000, ..fieldcraft_lbm::Limits::default() };
+    let setup = Setup::new(&m, None, &[], &limits).unwrap();
+    let mut flow = Flow::new(&setup, &[]).unwrap();
+    let grid = *flow.grid();
+    let vs = setup.velocity_scale();
+    let lattice_acceleration = setup.acceleration[0];
+    let (kx, kz) = (2.0 * PI / lx, 2.0 * PI / lz);
+    flow.set_equilibrium(|cell| {
+        let [x, y, z] = grid.centre(cell);
+        let eta = y - 1.0;
+        let wall = 1.0 - eta * eta;
+        let u = 1.15 * um * (1.0 - eta.abs().powi(8)) + 2.0 * (2.0 * kz * z).sin() * (kx * x).cos() * wall;
+        let v = 1.5 * wall * (2.0 * kz * z).cos() * (3.0 * kx * x).sin();
+        let w = 1.5 * wall * eta * (kx * x).sin() * (kz * z).cos();
+        (1.0, [u / vs, v / vs, w / vs])
+    });
+    // On the GPU, or (`cpu`) on the CPU in double precision, the GPU's reference.
+    let mut device = if cpu { None } else { Some(gpu(&flow, Streaming::InPlace)?) };
+    let gpu: &mut dyn Backend = match device.as_mut() {
+        Some(g) => &mut **g,
+        None => &mut flow,
+    };
+    // The profile and the stop rule's samples every 0.05 δ/U_m; the force every step.
+    let control = ((0.05 / dt) as u64).max(1);
+    let (from, per_window) = ((start / dt) as u64, (window / dt) as u64 / control);
+    let (mut g_step_sum, mut g_steps) = (0.0, 0usize);
+    let [nx, ny, nz] = grid.cells;
+    let (mut profile, mut samples) = (vec![0.0; ny], 0usize);
+    let (mut g_sum, mut ub_sum, mut count) = (0.0, 0.0, 0usize);
+    let mut window_means: Vec<f64> = Vec::new();
+    let clock = std::time::Instant::now();
+    let (mut k, mut g) = (0u64, 1.0);
+    let mut stop = "the step's end".to_string();
+    while k < setup.steps {
+        let step = control.min(setup.steps - k);
+        let mut failed = None;
+        for _ in 0..step {
+            if let Err(e) = gpu.advance(1) {
+                failed = Some(e);
+                break;
+            }
+            // Their eq. 67 (δ = 1): the nominal u_τ² plus the flow-rate error times U_m / δ.
+            let mean = gpu.mean_velocity(0).unwrap() * vs;
+            g = 1.0 + (um - mean) * um;
+            gpu.set_acceleration([g * lattice_acceleration, 0.0, 0.0]).unwrap();
+            k += 1;
+            if k >= from {
+                g_step_sum += g;
+                g_steps += 1;
+            }
+        }
+        k -= step;
+        if let Some(e) = failed {
+            println!("  M&S set-up Re_τ {} {n}/δ: unstable before {:.2} δ/u_τ: {e}", lm.re_tau.round(), (k + step) as f64 * dt);
+            return Some((
+                ChannelResult {
+                    bulk: f64::NAN,
+                    centre: f64::NAN,
+                    log_error: f64::NAN,
+                    first_error: f64::NAN,
+                    cells: grid.len(),
+                    steps: k + step,
+                    seconds: clock.elapsed().as_secs_f64(),
+                    stop: "unstable".into(),
+                },
+                f64::NAN,
+            ));
+        }
+        k += step;
+        let fields = gpu.fields().unwrap();
+        let mean = fields.velocity.iter().map(|u| u[0]).sum::<f64>() / grid.len() as f64 * vs;
+        if k >= from {
+            g_sum += g_step_sum / g_steps.max(1) as f64;
+            ub_sum += mean;
+            count += 1;
+            for (cell, u) in fields.velocity.iter().enumerate() {
+                profile[grid.coords(cell)[1]] += u[0] * vs;
+            }
+            samples += 1;
+            // The running mean of the force at each window's end; steady once it changed by
+            // less than the tolerance over two windows in a row.
+            if per_window > 0 && count % per_window as usize == 0 {
+                window_means.push(g_sum / count as f64);
+                let w = &window_means;
+                if w.len() >= 3 && k as f64 * dt >= start + min_average {
+                    let last = w[w.len() - 1];
+                    if (w[w.len() - 2] / last - 1.0).abs() < tolerance && (w[w.len() - 3] / last - 1.0).abs() < tolerance {
+                        stop = format!("steady at {:.1} δ/u_τ", k as f64 * dt);
+                        break;
+                    }
+                }
+            }
+        }
+        if k % (setup.steps / 20).max(1) < control {
+            println!(
+                "  M&S set-up Re_τ {} {n}/δ: t = {:.1}, U_b {mean:.3}, g {g:.4}, {:.0} s",
+                lm.re_tau.round(),
+                k as f64 * dt,
+                clock.elapsed().as_secs_f64()
+            );
+        }
+    }
+    // The force averaged over every step after the start-up.
+    let g_mean = g_step_sum / g_steps.max(1) as f64;
+    let ut = g_mean.sqrt();
+    let ub = ub_sum / count.max(1) as f64 / ut;
+    let mean: Vec<f64> = profile.iter().map(|s| s / (samples * nx * nz) as f64 / ut).collect();
+    let half: Vec<(f64, f64)> = (0..ny / 2).map(|j| ((j as f64 + 0.5) * dx, 0.5 * (mean[j] + mean[ny - 1 - j]))).collect();
+    let error = |(y, u): (f64, f64)| (u / lm.at(y) - 1.0).abs();
+    let log_error = half.iter().skip(1).filter(|(y, _)| *y <= 0.3).map(|c| error(*c)).fold(0.0, f64::max);
+    for (y, u) in &half {
+        println!("    y/δ {y:.4} y⁺ {:7.1}: U⁺ {u:7.3}, Lee & Moser {:7.3} ({:+.1} %)", y * ut * lm.re_tau, lm.at(*y), 100.0 * (u / lm.at(*y) - 1.0));
+    }
+    let result = ChannelResult {
+        bulk: ub,
+        centre: half.last().map_or(f64::NAN, |c| c.1),
+        log_error,
+        first_error: half.first().map_or(f64::NAN, |c| error(*c)),
+        cells: grid.len(),
+        steps: k,
+        seconds: clock.elapsed().as_secs_f64(),
+        stop,
+    };
+    Some((result, ut * lm.re_tau))
+}
+
+/// Dean's bulk speed U_m / u_τ at friction Reynolds number `re_tau` (Malaspinas and Sagaut's eq.
+/// 68: Re_m = (8 / 0.073)^(4/7) Re_τ^(8/7), Re_m = 2 U_m δ / ν).
+fn dean_bulk(re_tau: f64) -> f64 {
+    (8.0f64 / 0.073).powf(4.0 / 7.0) * re_tau.powf(8.0 / 7.0) / (2.0 * re_tau)
+}
+
+/// Malaspinas and Sagaut's set-up (see [`paper_channel`]) on their grids, 10, 20 and 30 cells per
+/// δ, at Re_τ 1000 (their 950; Lee & Moser's nearest, C = 0.08 as theirs) and 2000 (C = 0.1 as
+/// theirs), with the study's acceptance against Lee & Moser (C_f and the log layer within 5 %);
+/// C_f against Dean's correlation is printed too, the paper's own comparison. Re_τ 550 (`550`)
+/// is run only when asked, outside the acceptance (the paper tests Re_τ ≥ 950). Set
+/// `FIELDCRAFT_PAPER_CHANNEL` to `1` (1000 and 2000), `1000`, `2000`, `550`, or `1000:10` for one
+/// grid.
+#[test]
+#[ignore = "hours, GPU: set FIELDCRAFT_PAPER_CHANNEL=1 (docs/verification.md, \"Long studies\")"]
+fn study_malaspinas_and_sagaut_s_channel_against_lee_and_moser() {
+    let Some(which) = std::env::var_os("FIELDCRAFT_PAPER_CHANNEL").map(|v| v.to_string_lossy().into_owned()) else {
+        println!("the paper's channel set-up runs only with FIELDCRAFT_PAPER_CHANNEL set (hours, GPU): skipped");
+        return;
+    };
+    let grids: [(&LeeMoser, &str, usize, f64, bool); 9] = [
+        (&LM_1000, "1000", 10, 0.08, true),
+        (&LM_1000, "1000", 20, 0.08, true),
+        (&LM_1000, "1000", 30, 0.08, true),
+        (&LM_2000, "2000", 10, 0.1, true),
+        (&LM_2000, "2000", 20, 0.1, true),
+        (&LM_2000, "2000", 30, 0.1, true),
+        (&LM_550, "550", 10, 0.08, false),
+        (&LM_550, "550", 14, 0.08, false),
+        (&LM_550, "550", 18, 0.08, false),
+    ];
+    let mut failed = Vec::new();
+    for (lm, name, n, c, counted) in grids {
+        if !((which == "1" && counted) || which == name || which == format!("{name}:{n}")) {
+            continue;
+        }
+        // FIELDCRAFT_PAPER_CHANNEL_CPU=1 runs the grid on the CPU in double precision instead.
+        let cpu = std::env::var_os("FIELDCRAFT_PAPER_CHANNEL_CPU").is_some();
+        let Some((r, re_tau)) = paper_channel(lm, n, c, cpu) else { return };
+        let cf = 2.0 / (r.bulk * r.bulk);
+        let cf_lm = 2.0 / (lm.bulk * lm.bulk);
+        let cf_error = cf / cf_lm - 1.0;
+        // Dean's C_f at the run's bulk Reynolds number (held at Dean's for the nominal Re_τ):
+        // C_f = 0.073 Re_m^(−1/4).
+        let re_m = 2.0 * dean_bulk(lm.re_tau) * lm.re_tau;
+        let cf_dean = 0.073 * re_m.powf(-0.25);
+        println!(
+            "M&S set-up ({}), Lee & Moser Re_τ {name}, {n}/δ, C {c} (Δy⁺ {:.0}, first cell centre y⁺ {:.0}): measured Re_τ {re_tau:.0}, U_b⁺ {:.3} (LM {:.2}), C_f {cf:.4e} ({:+.1} % on LM, {:+.1} % on Dean), U_c⁺ {:.2} (LM {:.2}), log layer within {:.1} %; {} cells, {} steps, {:.0} s, {:.0} MLUPS; stopped: {}",
+            if cpu { "CPU, f64" } else { "GPU, f32" },
+            re_tau / n as f64,
+            0.5 * re_tau / n as f64,
+            r.bulk,
+            lm.bulk,
+            100.0 * cf_error,
+            100.0 * (cf / cf_dean - 1.0),
+            r.centre,
+            lm.at(1.0),
+            100.0 * r.log_error,
+            r.cells,
+            r.steps,
+            r.seconds,
+            r.cells as f64 * r.steps as f64 / r.seconds / 1e6,
+            r.stop
+        );
+        if counted && !(cf_error.abs() <= 0.05 && r.log_error <= 0.05) {
+            failed.push(format!("Re_τ {name} {n}/δ"));
+        }
+    }
+    assert!(failed.is_empty(), "outside the acceptance: {failed:?}");
+}
