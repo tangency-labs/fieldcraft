@@ -44,7 +44,7 @@ web-time = "1.1"
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 
 # xtask: reading Rust sources as syntax trees (`cargo xtask unit-factors`)
-syn = { version = "2", default-features = false, features = ["full", "parsing", "visit"] }
+syn = { version = "3", default-features = false, features = ["full", "parsing", "visit"] }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
 
 # 3MF packages (docs/formats/tagged-mesh.md). The same zip line as SolidCraft, so one is built.
