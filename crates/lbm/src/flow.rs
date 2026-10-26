@@ -1866,6 +1866,17 @@ impl crate::backend::Backend for Flow {
         "cpu".into()
     }
 
+    fn set_acceleration(&mut self, a: [f64; 3]) -> Result<()> {
+        if !a.iter().all(|v| v.is_finite()) {
+            return Err(Error::Invalid(format!("the body acceleration {a:?} is not a number")));
+        }
+        if !self.cell_force.is_empty() {
+            return Err(Error::Invalid("the body acceleration cannot change under buoyancy, which sets each cell's force".into()));
+        }
+        self.acceleration = a;
+        Ok(())
+    }
+
     fn advance(&mut self, steps: u64) -> Result<()> {
         for _ in 0..steps {
             self.step()?;

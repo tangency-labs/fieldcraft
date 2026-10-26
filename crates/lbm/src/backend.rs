@@ -50,6 +50,12 @@ pub trait Backend {
     fn eddy_viscosity_ratio(&self) -> f64 {
         0.0
     }
+    /// Set the body acceleration (lattice units) for the steps that follow: a flow held at a
+    /// constant flow rate adjusts its driving force as it runs.
+    fn set_acceleration(&mut self, a: [f64; 3]) -> Result<()> {
+        let _ = a;
+        Err(Error::Invalid(format!("{} cannot change its body acceleration while it runs", self.name())))
+    }
     /// With Van Driest's damping: the largest y⁺ of a wall cell's centre in the last step. A
     /// backend without damping refuses a flow with it when it is made, so the default is none.
     fn wall_y_plus(&self) -> Option<f64> {

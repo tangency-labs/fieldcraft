@@ -163,6 +163,8 @@ pub struct GpuFlow {
     wall_groups: Option<(u32, u32)>,
     walls: wgpu::Buffer,
     wall_count: usize,
+    /// The uniforms of the two phases (the body acceleration can change between steps).
+    params: [wgpu::Buffer; 2],
     open_count: usize,
     open_groups: (u32, u32),
     /// Whether a face is a convective outlet.
@@ -796,7 +798,7 @@ impl GpuFlow {
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("lbm params"),
                 contents: &bytes,
-                usage: wgpu::BufferUsages::UNIFORM,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             })
         });
         let fluid_buf = storage("lbm fluid", &bytes_u32(&fluid_u32));
@@ -926,6 +928,7 @@ impl GpuFlow {
             wall_groups: if wall_count > 0 { Some(groups(wall_count)?) } else { None },
             walls: walls_buf,
             wall_count,
+            params,
             open_count: open.len(),
             open_groups,
             convective,
@@ -1214,6 +1217,18 @@ impl GpuFlow {
 impl Backend for GpuFlow {
     fn eddy_viscosity_ratio(&self) -> f64 {
         self.eddy_ratio
+    }
+
+    fn set_acceleration(&mut self, a: [f64; 3]) -> Result<()> {
+        if !a.iter().all(|v| v.is_finite()) {
+            return Err(Error::Invalid(format!("the body acceleration {a:?} is not a number")));
+        }
+        // `acc` follows the eight counts and the four rates: 48 bytes in.
+        let acc = [a[0] as f32, a[1] as f32, a[2] as f32, if a != [0.0; 3] { 1.0 } else { 0.0 }];
+        for p in &self.params {
+            self.queue.write_buffer(p, 48, &bytes_f32(&acc));
+        }
+        Ok(())
     }
 
     fn name(&self) -> String {

@@ -892,6 +892,39 @@ fn van_driest_damping_is_refused_clearly() {
     assert!(e.as_deref().is_some_and(|e| e.contains("Van Driest") && e.contains("cpu")), "{e:?}");
 }
 
+/// A body force changed while the flow runs (`Backend::set_acceleration`, for a flow held at a
+/// constant flow rate): plane Poiseuille flow driven by a for half its steps and 2a for the rest
+/// on both backends, which agree.
+#[test]
+fn a_body_force_changed_mid_run_matches_the_cpu() {
+    for (collision, streaming) in cases() {
+        let (h, nu, umax, n) = (1.0, 1.0 / 6.0, 0.05, 16usize);
+        let dx = h / n as f64;
+        let mut d = domain([0.0; 3], [dx, h, dx], dx);
+        for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+            *f = PERIODIC;
+        }
+        d.acceleration = [8.0 * nu * umax / (h * h), 0.0, 0.0];
+        let m = model(1.0, nu, d, collide(2.0 * h * h / nu, dx * dx, None, collision));
+        let (setup, mut cpu) = prepare(&m, &[]);
+        let Some(mut gpu) = gpu(&cpu, streaming) else { continue };
+        let half = setup.steps / 2;
+        let doubled = setup.acceleration.map(|v| 2.0 * v);
+        cpu.advance(half).unwrap();
+        gpu.advance(half).unwrap();
+        Backend::set_acceleration(&mut cpu, doubled).unwrap();
+        gpu.set_acceleration(doubled).unwrap();
+        cpu.advance(setup.steps - half).unwrap();
+        gpu.advance(setup.steps - half).unwrap();
+        let (du, drho) = field_difference(&mut cpu, &mut gpu);
+        let peak = gpu.fields().unwrap().velocity.iter().map(|u| u[0]).fold(0.0, f64::max) * setup.velocity_scale();
+        println!("{collision:?} force doubled mid-run: peak {peak:.4} (from {umax}), GPU vs CPU velocity {du:.2e}, density {drho:.2e}");
+        assert!(peak > 1.5 * umax, "the doubled force shows: {peak}");
+        assert!(du < 2e-5 && drho < 1e-6, "{du} {drho}");
+        assert!(gpu.set_acceleration([f64::NAN, 0.0, 0.0]).is_err());
+    }
+}
+
 // ---- The wall model ----
 
 /// `p` with Smagorinsky's model, constant `c`, and the Spalding wall model.
