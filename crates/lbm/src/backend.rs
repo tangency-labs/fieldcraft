@@ -50,6 +50,12 @@ pub trait Backend {
     fn eddy_viscosity_ratio(&self) -> f64 {
         0.0
     }
+    /// The mean over the fluid cells of the velocity along `axis` (0, 1, 2; lattice units, with
+    /// the half force): what a flow held at a constant flow rate controls.
+    fn mean_velocity(&mut self, axis: usize) -> Result<f64> {
+        let _ = axis;
+        Err(Error::Invalid(format!("{} does not report its mean velocity", self.name())))
+    }
     /// Set the body acceleration (lattice units) for the steps that follow: a flow held at a
     /// constant flow rate adjusts its driving force as it runs.
     fn set_acceleration(&mut self, a: [f64; 3]) -> Result<()> {

@@ -108,7 +108,7 @@ struct Params {
     // and the fluid's own viscosity (w), from the host's double precision: (1/ω − ½)/3 in f32
     // keeps few digits with τ near ½.
     smag: vec4<f32>,
-    // The wall model: its wall cells (x).
+    // The wall model: its wall cells (x); the axis `mean_velocity` sums (y).
     wall: vec4<u32>,
 };
 
@@ -1302,6 +1302,25 @@ fn mass(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: ve
     var v = 0.0;
     if cell < params.n && is_fluid(cell) {
         v = moments[cell].w;
+    }
+    red[lid] = vec4<f32>(v, 0.0, 0.0, 0.0);
+    workgroupBarrier();
+    for (var k = 128u; k > 0u; k = k >> 1u) {
+        if lid < k { red[lid] = red[lid] + red[lid + k]; }
+        workgroupBarrier();
+    }
+    if lid == 0u { partials[group] = red[0].x; }
+}
+
+// Per workgroup, the sum of its fluid cells' velocities along axis `params.wall.y` (from
+// `cell_moments`), for the mean velocity of a flow held at a constant flow rate.
+@compute @workgroup_size(256)
+fn mean_velocity(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
+    let group = wg.y * params.groups_x + wg.x;
+    let cell = group * WG + lid;
+    var v = 0.0;
+    if cell < params.n && is_fluid(cell) {
+        v = moments[cell][min(params.wall.y, 2u)];
     }
     red[lid] = vec4<f32>(v, 0.0, 0.0, 0.0);
     workgroupBarrier();

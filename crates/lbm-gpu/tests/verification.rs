@@ -894,7 +894,7 @@ fn van_driest_damping_is_refused_clearly() {
 
 /// A body force changed while the flow runs (`Backend::set_acceleration`, for a flow held at a
 /// constant flow rate): plane Poiseuille flow driven by a for half its steps and 2a for the rest
-/// on both backends, which agree.
+/// on both backends, which agree, as do their mean velocities (`Backend::mean_velocity`).
 #[test]
 fn a_body_force_changed_mid_run_matches_the_cpu() {
     for (collision, streaming) in cases() {
@@ -921,6 +921,10 @@ fn a_body_force_changed_mid_run_matches_the_cpu() {
         println!("{collision:?} force doubled mid-run: peak {peak:.4} (from {umax}), GPU vs CPU velocity {du:.2e}, density {drho:.2e}");
         assert!(peak > 1.5 * umax, "the doubled force shows: {peak}");
         assert!(du < 2e-5 && drho < 1e-6, "{du} {drho}");
+        // The mean velocity a constant flow rate controls, on both backends.
+        let (mc, mg) = (Backend::mean_velocity(&mut cpu, 0).unwrap(), gpu.mean_velocity(0).unwrap());
+        assert!((mg / mc - 1.0).abs() < 3e-5 && mc > 0.0, "{mg} vs {mc}");
+        assert!(gpu.mean_velocity(1).unwrap().abs() < 1e-6 * mc && gpu.mean_velocity(3).is_err());
         assert!(gpu.set_acceleration([f64::NAN, 0.0, 0.0]).is_err());
     }
 }

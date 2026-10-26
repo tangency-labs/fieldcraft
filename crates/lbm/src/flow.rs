@@ -1866,6 +1866,15 @@ impl crate::backend::Backend for Flow {
         "cpu".into()
     }
 
+    fn mean_velocity(&mut self, axis: usize) -> Result<f64> {
+        if axis > 2 {
+            return Err(Error::Invalid(format!("axis {axis} is not x, y or z")));
+        }
+        // In cell order, so the sum is the same on every thread count.
+        let sum: f64 = (0..self.n).filter_map(|c| self.moments(c)).map(|(_, u)| u.get(axis).copied().unwrap_or(0.0)).sum();
+        Ok(sum / self.fluid_cells.max(1) as f64)
+    }
+
     fn set_acceleration(&mut self, a: [f64; 3]) -> Result<()> {
         if !a.iter().all(|v| v.is_finite()) {
             return Err(Error::Invalid(format!("the body acceleration {a:?} is not a number")));

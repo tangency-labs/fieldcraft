@@ -288,7 +288,7 @@ fn solid_data(solid: &fieldcraft_lbm::conduction::SolidHeat, t0: f64) -> Result<
 }
 
 /// The entry points of `lbm.wgsl` a flow dispatches.
-const KERNELS: [&str; 25] = [
+const KERNELS: [&str; 26] = [
     "clear_eddy",
     "collide",
     "wall_sample",
@@ -302,6 +302,7 @@ const KERNELS: [&str; 25] = [
     "group_forces",
     "cell_moments",
     "mass",
+    "mean_velocity",
     "collide_thermal",
     "stream_thermal",
     "stream_links_thermal",
@@ -1303,6 +1304,20 @@ impl Backend for GpuFlow {
 
     fn forces(&mut self) -> Result<Vec<[f64; 3]>> {
         Ok(self.exchange()?.iter().map(|g| [g[0], g[1], g[2]]).collect())
+    }
+
+    fn mean_velocity(&mut self, axis: usize) -> Result<f64> {
+        let axis = u32::try_from(axis).ok().filter(|a| *a < 3).ok_or_else(|| Error::Invalid(format!("axis {axis} is not x, y or z")))?;
+        // `wall.y` follows the eight counts, the five vectors before `smag` and `smag` itself and
+        // the wall cells' count: 148 bytes in.
+        for p in &self.params {
+            self.queue.write_buffer(p, 148, &bytes_u32(&[axis]));
+        }
+        self.compute_moments()?;
+        self.submit("lbm mean velocity", &[(self.current, "mean_velocity", self.cells)])?;
+        let partials = self.read_f32(&self.partials, self.partial_count)?;
+        // Summed in a fixed order on the host, so the result is deterministic on this device.
+        Ok(partials.iter().map(|v| f64::from(*v)).sum::<f64>() / self.fluid_cells.max(1) as f64)
     }
 
     fn groups(&self) -> &[Group] {
