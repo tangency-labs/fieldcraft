@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="560" height="340" viewBox="0 0 560 340">
+  <title>Untitled-1</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M0 0 L560 0 L560 340 L0 340 Z" fill="#ffffff"/>
+    <path d="M70 88.2 L540 88.2 L540 158.5 L70 158.5 Z" fill="#e8eef7"/>
+    <path d="M70 290 L540 290" fill="none" stroke="#d0d0d0" stroke-width="0.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 40 293.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">−20</tspan></text>
+    <path d="M70 248.3 L540 248.3" fill="none" stroke="#d0d0d0" stroke-width="0.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 40 251.8)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">−15</tspan></text>
+    <path d="M70 206.7 L540 206.7" fill="none" stroke="#d0d0d0" stroke-width="0.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 40 210.2)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">−10</tspan></text>
+    <path d="M70 165 L540 165" fill="none" stroke="#d0d0d0" stroke-width="0.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 44 168.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">−5</tspan></text>
+    <path d="M70 123.3 L540 123.3" fill="none" stroke="#555555" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 50 126.8)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">0</tspan></text>
+    <path d="M70 81.7 L540 81.7" fill="none" stroke="#d0d0d0" stroke-width="0.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 44 85.2)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">+5</tspan></text>
+    <path d="M70 40 L540 40" fill="none" stroke="#d0d0d0" stroke-width="0.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 40 43.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">+10</tspan></text>
+    <path d="M70 40 L70 290" fill="none" stroke="#555555" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 14 24)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="11" fill="#222222"><tspan x="0" y="0">Skin friction at Reτ 950, error against Dean&apos;s correlation (%)</tspan></text>
+    <path d="M110.3 106.8 L144.3 106.8 L144.3 123.3 L110.3 123.3 Z" fill="#2a6fdb"/>
+    <text transform="matrix(1 0 0 1 112.3 101.75)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">+2.0</tspan></text>
+    <path d="M152.3 123.3 L186.3 123.3 L186.3 260.4 L152.3 260.4 Z" fill="#d1495b"/>
+    <text transform="matrix(1 0 0 1 154.3 272.4)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">−16.5</tspan></text>
+    <text transform="matrix(1 0 0 1 130.3 308)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">N = 10</tspan></text>
+    <path d="M267 115.5 L301 115.5 L301 123.3 L267 123.3 Z" fill="#2a6fdb"/>
+    <text transform="matrix(1 0 0 1 269 110.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">+0.9</tspan></text>
+    <path d="M309 123.3 L343 123.3 L343 242.5 L309 242.5 Z" fill="#d1495b"/>
+    <text transform="matrix(1 0 0 1 311 254.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">−14.3</tspan></text>
+    <text transform="matrix(1 0 0 1 287 308)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">N = 20</tspan></text>
+    <path d="M423.7 94.5 L457.7 94.5 L457.7 123.3 L423.7 123.3 Z" fill="#2a6fdb"/>
+    <text transform="matrix(1 0 0 1 425.7 89.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">+3.5</tspan></text>
+    <path d="M465.7 123.3 L499.7 123.3 L499.7 242.5 L465.7 242.5 Z" fill="#d1495b"/>
+    <text transform="matrix(1 0 0 1 467.7 254.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">−14.3</tspan></text>
+    <text transform="matrix(1 0 0 1 443.7 308)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">N = 30</tspan></text>
+    <path d="M80 314 L90 314 L90 324 L80 324 Z" fill="#2a6fdb"/>
+    <text transform="matrix(1 0 0 1 94 323)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">from the wall model&apos;s uτ (the paper&apos;s measure)</tspan></text>
+    <path d="M300 314 L310 314 L310 324 L300 324 Z" fill="#d1495b"/>
+    <text transform="matrix(1 0 0 1 314 323)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">from the drag the flow carries</tspan></text>
+    <path d="M450 314 L460 314 L460 324 L450 324 Z" fill="#e8eef7" stroke="#9fb3d1" stroke-width="0.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 464 323)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">paper&apos;s ±4.2 %</tspan></text>
+  </g>
+</svg>

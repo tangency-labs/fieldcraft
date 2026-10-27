@@ -162,6 +162,24 @@ What it does not establish yet:
   average (about 1 % at 12 cells per δ, from the two platforms above); no confidence interval is
   stated.
 
+### Wall-modelled LES, method one, reproduced at Re_τ 950
+
+Malaspinas & Sagaut's channel run exactly as their paper sets it up (Re_τ 950, Re_m 37 042, N 10,
+20 and 30, Smagorinsky C 0.08, MRT, their forcing), against the paper's own measures and Hoyas &
+Jiménez's DNS. Set-up, the readings where the paper is silent, and figures:
+[the wall-model page](lbm-wall-model.md#reproduction-of-the-paper-at-re_τ-950). Recorded on Linux
+aarch64 (NVIDIA GB10), GPU, f32. Pass criteria fixed before the runs: E within 15 % of the paper's
+Table 1 and C_f by the model's u_τ within its 4.22 % of Dean.
+
+| N | E (paper) | C_f by the model's u_τ vs Dean | C_f by the carried drag vs Dean |
+|---|---|---|---|
+| 10 | 2.04 (2.11) | +2.0 % | −16.5 % |
+| 20 | 1.04 (1.07) | +0.9 % | −14.3 % |
+| 30 | 0.89 (0.83) | +3.5 % | −14.3 % |
+
+**Passes** on the paper's measures. The drag the flow carries is 14–16 % low on every grid, a
+property of the published method that its C_f (from the model's u_τ) does not show.
+
 ### Wall-modelled channel against Lee & Moser and Dean (#664, #749)
 
 Malaspinas & Sagaut's wall model with Musker's profile and the multiple-relaxation-time collision
@@ -193,8 +211,9 @@ values with Musker's profile in brackets: Re_τ 950 and 2000).
 | 2000 | 20 | 52 | +10.2 % / +8.9 % | −3.1 % | 1.01 (1.15) | 9.0 % |
 | 2000 | 30 | 33 | **−0.7 % / −1.8 %** | −1.8 % | 0.29 (0.88) | **3.3 %** |
 
-- **The implementation reproduces the paper.** C_f by the wall model's u_τ is within the paper's
-  0.3–4.2 % of Dean on every grid, and E is close to its values. A CPU run in f64 of Re_τ 1000 at
+- **C_f by the wall model's u_τ** is within the paper's 0.3–4.2 % of Dean on every grid. The E
+  values here took x₁'s velocity before its rebuild and are superseded by the Re_τ 950
+  reproduction above. A CPU run in f64 of Re_τ 1000 at
   10 cells per δ gives −14.8 % against Dean, against the GPU's −14.5 %.
 - **The drag the flow carries meets the acceptance only at Re_τ 2000 with 30 cells per δ.** On
   the other grids it is 9–15 % off, the log-layer mismatch of S. Kawai, J. Larsson, *Wall-modeling

@@ -5,9 +5,14 @@ next to a no-slip wall is rebuilt from a law of the wall, so a grid whose first 
 layer still carries the wall's shear stress. Without a wall model such a grid has too little
 resolution for the bounce-back wall to carry it.
 
-The method is the lattice Boltzmann wall model of Malaspinas & Sagaut (2014) with Musker's
-boundary-layer profile. It runs with the multiple-relaxation-time collision, on the CPU and the
-GPU.
+The wall treatments are numbered in the order they are verified. Each one is first reproduced
+against its paper's own case, then documented here with its measurements.
+
+| Method | Wall treatment | Status |
+|---|---|---|
+| One | Malaspinas & Sagaut (2014): the first cell rebuilt from Musker's profile | Reproduces the paper at Re_τ 950. The drag the flow carries is 14–16 % below Dean's correlation. |
+
+Method one runs with the multiple-relaxation-time collision, on the CPU and the GPU.
 
 ## Synopsis
 
@@ -47,7 +52,9 @@ a lower τ is refused with the value it needs.
 y⁺ = y u_τ / ν, where y is the distance of the cell centre from the wall, half a cell for a plane
 wall on the grid.
 
-## Method
+## Method one: Malaspinas & Sagaut (2014)
+
+![The wall cell x₁ is rebuilt each step from Musker's profile, with u_τ taken from the speed at x₂](media/lbm-wall-model/method-one.svg)
 
 Before each collision, for every wall cell x₁ (a fluid cell with a no-slip bounce-back link) and the
 cell x₂ one link further along the wall normal:
@@ -112,74 +119,111 @@ channel the total mass drifts by 1e-7 to 1e-5 over the first 40 steps.
 **Implementation.** `crates/lbm/src/wall.rs` and `crates/lbm/src/mrt.rs` (CPU, f64), and
 `crates/lbm-gpu/src/lbm.wgsl` (GPU, f32). Both are written from the papers.
 
-## Validation
+## Verification of method one
 
-**Case.** Periodic turbulent channel flow between two plane walls, half-height δ. The flow rate is
-held constant by a body force updated every step, targeting the bulk velocity of Dean's
-correlation, as in Malaspinas & Sagaut (2014).
+### Reproduction of the paper at Re_τ 950
 
-| Item | Setting |
+Method one was run exactly as Malaspinas & Sagaut set up their channel (§5 of the paper), and
+compared on the paper's own measures.
+
+| Item | Setting (as printed in the paper) |
 |---|---|
-| Reynolds number | Re_τ 1000 and 2000 |
-| Grid | N = 10, 20 and 30 cells per δ |
-| Smagorinsky C | 0.08 at Re_τ 1000, 0.1 at Re_τ 2000 |
+| Case | Periodic channel, half-height δ, domain 2πδ × 2δ × 2πδ (rounded to whole cells) |
+| Reynolds number | Re_τ 950; bulk Re_m 37 042 from Dean's correlation |
+| Grids | N = 10, 20 and 30 cells per δ (first cell at y⁺ 47.5, 23.8 and 15.8) |
+| Model | Smagorinsky C 0.08, D3Q19 MRT, Musker's profile |
+| Forcing | Body force updated every step to hold the bulk velocity (their eq. 67); u_m = 0.1 in lattice units |
+| Reference | Hoyas & Jiménez's DNS mean profile (the `Re950.prof` file, Re_τ 934), as in the paper |
 | Precision | f32 on the GPU (NVIDIA GB10) |
-| Start-up discarded | 20 δ/u_τ |
-| Statistics averaged | ≥ 50 δ/u_τ |
+| Averaging | From 20 δ/u_τ, at least 50 δ/u_τ, until the wall force's 95 % half-width is below 1 % |
 
-**References.**
-- Lee & Moser (2015) DNS, for the mean profile and the skin friction C_f.
-- Dean's correlation, for C_f at the run's bulk Reynolds number.
+**Pass criteria**, fixed before the runs: C_f by the wall model's u_τ within the paper's 4.22 % of
+Dean, and the profile error E within 15 % of the paper's Table 1 on every grid.
 
-**Acceptance**, fixed before the runs: C_f and the log-layer velocity within 5 % of Lee & Moser.
+| N | E | E, paper | C_f by the model's u_τ vs Dean | C_f by the carried drag vs Dean | model u_τ / carried u_τ |
+|---|---|---|---|---|---|
+| 10 | 2.04 | 2.11 (−3.3 %) | +2.0 % | −16.5 % | 1.105 |
+| 20 | 1.04 | 1.07 (−2.5 %) | +0.9 % | −14.3 % | 1.085 |
+| 30 | 0.89 | 0.83 (+7.7 %) | +3.5 % | −14.3 % | 1.099 |
 
-**Two measures of C_f.**
-- **Force balance:** the drag the flow carries, which equals the body force at steady state. Users
-  get this one.
-- **Wall-model u_τ:** the friction velocity the wall model infers at x₂. Malaspinas & Sagaut's
-  results are reproduced with this measure.
+**The reproduction passes:** E within 8 % of the paper on every grid, and C_f by the model's u_τ
+within its 4.22 %.
 
-| Re_τ | N | first cell y⁺ | C_f, force balance: vs Lee & Moser / vs Dean | C_f, wall-model u_τ: vs Dean | profile error E | log layer vs Lee & Moser |
-|---|---|---|---|---|---|---|
-| 1000 | 10 | 46 | −11.4 % / −14.5 % | +1.3 % | 2.65 | 7.6 % |
-| 1000 | 20 | 23 | −8.9 % / −12.1 % | −0.9 % | 1.21 | 6.7 % |
-| 1000 | 30 | 16 | −8.7 % / −11.9 % | +1.4 % | 0.99 | 8.3 % |
-| 2000 | 10 | 100 | refused: needs τ = 0.50007 | — | — | — |
-| 2000 | 20 | 52 | +10.2 % / +8.9 % | −3.1 % | 1.01 | 9.0 % |
-| 2000 | 30 | 33 | **−0.7 % / −1.8 %** | −1.8 % | 0.29 | **3.3 %** |
+![C_f against Dean's correlation, by the wall model's u_τ and by the drag the flow carries](media/lbm-wall-model/cf-950.svg)
 
-E is the profile error measure defined by Malaspinas & Sagaut (2014). Their values with Musker's
-profile are 2.11, 1.07 and 0.83 at Re_τ 950, and 1.15 and 0.88 at Re_τ 2000, for N = 10, 20 and 30.
-At Re_τ 1000 the 20- and 30-cell grids put the first cell below y⁺ 30, outside the range the method
-is meant for. They're listed for completeness.
+![Mean velocity against Hoyas & Jiménez's DNS on the three grids](media/lbm-wall-model/profiles-950.svg)
 
-A run of Re_τ 1000 at N = 10 on the CPU in f64 gives a force-balance C_f of −14.8 % against Dean,
-against the GPU's −14.5 %.
+**Readings where the paper is silent.** The paper doesn't state these; each was chosen as below,
+and only this combination matches its Table 1 on all three grids.
 
-**Results.**
-- **The implementation reproduces Malaspinas & Sagaut (2014).** C_f by the wall model's u_τ is
-  within the paper's 0.3–4.2 % of Dean on every grid, and E is close to the paper's values.
-- **The drag the flow carries meets the acceptance at Re_τ 2000, N = 30.** There the second cell
-  sits at y⁺ ≈ 100, well inside the log layer, and the inferred and carried u_τ agree.
-- **On coarser grids the drag is off by 9–15 %,** with a sign that depends on Re_τ and N. The
-  velocity the LES gives at x₂ is under-resolved, so the stress the model infers differs from the
-  one the flow carries, the log-layer mismatch described by Kawai & Larsson (2012).
+| Question | Reading used | The other readings |
+|---|---|---|
+| Which u_τ scales U⁺ and y⁺ in E | The carried u_τ (from the force balance), the DNS convention | The model's u_τ gives E 2–5 × below the paper's |
+| Which points E sums over | Every cell centre of the whole channel, M = 2N | The half channel gives E √2 higher (+37 to +52 %) |
+| x₁'s velocity | The velocity the wall model imposes on it | — |
+| Which u_τ the paper's C_f (their eq. 70) uses | The wall model's | The carried drag is reported beside it |
 
-**Reproduce.**
+E is the paper's eq. 69: 100/M times the root of the summed squared relative errors of U⁺ against
+the DNS.
+
+### The drag the flow carries
+
+The paper reports C_f from the friction velocity the wall model infers at x₂. The flow carries less:
+the body force that holds the bulk velocity, which equals the drag on the walls at steady state,
+gives a C_f 14–16 % below Dean's correlation on every grid. The model's u_τ is 8.5–10.5 % above the
+carried one.
+
+This is a property of the method, not of our implementation. Method one imposes a velocity on x₁,
+not a stress on the wall. The stress the flow then carries comes from the rebuilt populations and
+the bounce-back on x₁'s wall links, and nothing makes it equal ρ u_τ². In the velocity profile the
+gap shows as the whole curve lying about 1–2 U⁺ above the DNS once it is scaled by the carried u_τ.
+
+What users get: `solve.fluid` reports the carried drag, so expect skin friction and pressure drop
+about 15 % low with method one on these grids.
+
+### Reported velocity of the wall cells
+
+Method one rebuilds x₁ at the start of each step. Before this change the velocity field the solver
+reported came from x₁'s populations as streamed, before the rebuild: 0.72–0.79 of the velocity the
+wall model imposes in this channel. The reported field now gives each rebuilt cell the velocity its
+last reconstruction imposed, on the CPU and the GPU (see *Reported velocity at x₁* above). The
+reported density stays the populations' sum, and the flow itself is unchanged.
+
+### Earlier study against Lee & Moser (#749)
+
+Before the reproduction, method one ran at Re_τ 1000 and 2000 against Lee & Moser's DNS
+(Lee & Moser 2015), with the bulk held at Dean's correlation, Smagorinsky's C 0.08 at Re_τ 1000 and
+0.1 at Re_τ 2000, and the same averaging. Its E values used x₁'s pre-rebuild velocity (above), so
+they are not comparable with the paper's; its C_f values are unaffected.
+
+| Re_τ | N | first cell y⁺ | C_f, carried drag: vs Lee & Moser / vs Dean | C_f, wall-model u_τ: vs Dean |
+|---|---|---|---|---|
+| 1000 | 10 | 46 | −11.4 % / −14.5 % | +1.3 % |
+| 1000 | 20 | 23 | −8.9 % / −12.1 % | −0.9 % |
+| 1000 | 30 | 16 | −8.7 % / −11.9 % | +1.4 % |
+| 2000 | 10 | 100 | refused: needs τ = 0.50007 | — |
+| 2000 | 20 | 52 | +10.2 % / +8.9 % | −3.1 % |
+| 2000 | 30 | 33 | −0.7 % / −1.8 % | −1.8 % |
+
+At Re_τ 1000 the 20- and 30-cell grids put the first cell below y⁺ 30, outside the method's range.
+Re_τ 2000 at N = 30 is the one grid where the carried drag lands within 5 %; across the rest it is
+9–15 % off, with a sign that depends on Re_τ and N.
+
+### Reproduce
 
 ```sh
-FIELDCRAFT_PAPER_CHANNEL=1 cargo test --release -p fieldcraft-lbm-gpu --test verification \
+FIELDCRAFT_PAPER_CHANNEL=950 cargo test --release -p fieldcraft-lbm-gpu --test verification \
   -- --ignored study_malaspinas_and_sagaut_s_channel_against_lee_and_moser --nocapture
 ```
 
-`FIELDCRAFT_PAPER_CHANNEL=2000:30` runs one grid. Add `FIELDCRAFT_PAPER_CHANNEL_CPU=1` to run it on
-the CPU in f64. The runs take 2 minutes to an hour each on a GB10.
+`FIELDCRAFT_PAPER_CHANNEL=950:20` runs one grid; `1` runs the earlier Re_τ 1000 and 2000 study.
+The runs take 2 minutes (N = 10) to an hour (N = 30) each on a GB10.
 
 ## Limitations
 
-- **Drag accuracy depends on the grid.** Expect skin friction and pressure drop within 5 % only
-  near the validated set-up, with about 30 cells per δ and the second cell well inside the log
-  layer. Plan for ±15 % on coarser grids.
+- **The drag is off by 9–16 %.** Method one carries 14–16 % less wall drag than Dean's correlation
+  at Re_τ 950 on 10 to 30 cells per δ. At Re_τ 1000 and 2000 it is 9–15 % off either way, except
+  at Re_τ 2000 with 30 cells per δ (within 2 %). Plan skin friction and pressure drop with that margin.
 - **Equilibrium boundary layers.** The profile assumes an attached, equilibrium boundary layer.
   Separation, reattachment and strong pressure gradients are not validated.
 - **Smooth walls only.** No roughness.
@@ -202,6 +246,14 @@ the CPU in f64. The runs take 2 minutes to an hour each on a GB10.
 - M. Lee, R. D. Moser. *Direct numerical simulation of turbulent channel flow up to Re_τ ≈ 5200.*
   J. Fluid Mech. 774:395–415, 2015.
   doi:[10.1017/jfm.2015.268](https://doi.org/10.1017/jfm.2015.268)
+- S. Hoyas, J. Jiménez. *Reynolds number effects on the Reynolds-stress budgets in turbulent
+  channels.* Phys. Fluids 20:101511, 2008.
+  doi:[10.1063/1.3005862](https://doi.org/10.1063/1.3005862). Mean profiles from
+  [torroja.dmt.upm.es](https://torroja.dmt.upm.es/ftp/channels/data/statistics/).
+- J. C. del Álamo, J. Jiménez. *Spectra of the very large anisotropic scales in turbulent
+  channels.* Phys. Fluids 15:L41–L44, 2003.
+  doi:[10.1063/1.1570830](https://doi.org/10.1063/1.1570830). The Re_τ 934 simulation behind
+  `Re950.prof`.
 - R. B. Dean. *Reynolds number dependence of skin friction and other bulk flow variables in
   two-dimensional rectangular duct flow.* J. Fluids Eng. 100(2):215–223, 1978.
   doi:[10.1115/1.3448633](https://doi.org/10.1115/1.3448633)
@@ -213,4 +265,4 @@ the CPU in f64. The runs take 2 minutes to an hour each on a GB10.
   doi:[10.1146/annurev.fluid.34.082901.144919](https://doi.org/10.1146/annurev.fluid.34.082901.144919)
 
 See also [the collision operators](manual/fluid/collision.md), [verification and validation](verification.md)
-and [the solver literature](solvers/literature.md), entries C5.1–C5.4.
+and [the solver literature](solvers/literature.md), entries C5.1–C5.5.

@@ -654,8 +654,31 @@ JCP 232(1):100–117, 2013, DOI [10.1016/j.jcp.2012.07.023](https://doi.org/10.1
   are rebuilt, and it relaxes with ν plus a Van Driest mixing-length eddy viscosity (κ 0.384, A⁺ 26).
 - **Deviations from the paper.** The regularised or TRT collision where MRT (C2.1) is not chosen; moving walls taken relative to their velocity; the reported wall force is the bounce-back's momentum
   exchange, not the modelled stress.
+- **Verified as method one (2026-10-27).** The paper's Re_τ 950 channel reproduces its Table 1 E within 8 % and
+  its C_f by the model's u_τ within 4.22 % of Dean, but the drag the flow carries is 14–16 % below Dean
+  (docs/lbm-wall-model.md). The paper reports C_f from the model's u_τ, which does not show this.
 - **Earlier attempt, withdrawn.** Imposing τ_w through the first cell's own viscosity (ν_w = u_τ² y / U) went
   unstable on every channel grid at Re_τ 550 and 1000: it replaced the eddy viscosity that held those cells stable.
+
+**C5.5 Wall-modelled LES since 2012: imposing the stress, and the eddy viscosity below the matching height (survey 2026-10-27).** **Verdict: reference.**
+- **Why.** Method one (C5.4) imposes a velocity on the first cell and carries 14–16 % too little drag. Imposing the
+  stress closes that gap by construction, but in our runs the first two or three cells then come out slow and the
+  skin friction moves with the matching height. The papers below are what the field does about each part.
+- **Stress imposition in LBM.**
+  - H. Asmuth, C. F. Janßen, H. Olivares-Espinosa, S. Ivanell. *Wall-modeled lattice Boltzmann large-eddy simulation of neutral atmospheric boundary layers.* Phys. Fluids 33:105111, 2021. DOI [10.1063/5.0065701](https://doi.org/10.1063/5.0065701). A slip bounce-back that carries the modelled stress; the first node's velocity is under-predicted at every resolution, and an SGS model whose ν_t vanishes at the wall gives large near-wall gradients, possibly reversed wall velocities.
+  - Y. Kuwata, K. Suga. *Wall-modeled large eddy simulation of turbulent heat transfer by the lattice Boltzmann method.* J. Comput. Phys. 433:110186, 2021. DOI [10.1016/j.jcp.2021.110186](https://doi.org/10.1016/j.jcp.2021.110186). Specular reflection with a body force carrying the wall stress.
+  - M. Han, R. Ooka, H. Kikumoto. *A wall function approach in lattice Boltzmann method: algorithm and validation using turbulent channel flow.* Fluid Dyn. Res. 53:045506, 2021. DOI [10.1088/1873-7005/ac1782](https://doi.org/10.1088/1873-7005/ac1782).
+  - None of these reports the carried skin friction within 5 % on 20–30 cells per δ.
+- **Velocity imposition in LBM.** A. Pasquali, M. Geier, M. Krafczyk, *Near-wall treatment for the simulation of turbulent flow by the cumulant lattice Boltzmann method*, Comput. Math. Appl. 79:195–212, 2020, DOI [10.1016/j.camwa.2017.11.022](https://doi.org/10.1016/j.camwa.2017.11.022), and M. Haussmann et al., Comput. Math. Appl. 78:3285–3302, 2019, DOI [10.1016/j.camwa.2019.04.033](https://doi.org/10.1016/j.camwa.2019.04.033), drive the channel with the model's u_τ and normalise by it. Neither reports the carried drag beside it.
+- **Removing the log-layer mismatch (finite volume).**
+  - Kawai & Larsson 2012 (C5.4): sample the wall model at the third cell or above, and converge by refining at fixed h/δ.
+  - X. I. A. Yang, G. I. Park, P. Moin. *Log-layer mismatch and modeling of the fluctuating wall stress in wall-modeled large-eddy simulations.* Phys. Rev. Fluids 2:104601, 2017. DOI [10.1103/PhysRevFluids.2.104601](https://doi.org/10.1103/PhysRevFluids.2.104601). A time filter on the wall model's input.
+  - H. J. Bae, A. Lozano-Durán, S. T. Bose, P. Moin. *Dynamic slip wall model for large-eddy simulation.* J. Fluid Mech. 859:400–432, 2019. DOI [10.1017/jfm.2018.838](https://doi.org/10.1017/jfm.2018.838). The SGS eddy viscosity kept non-zero at the wall.
+  - R. DeLeon, I. Senocak. *The role of bulk eddy-viscosity variation on the log-layer mismatch observed in wall-modeled large-eddy simulations.* arXiv:[1712.08035](https://arxiv.org/abs/1712.08035), 2017. A near-wall mixing length with the bulk held: C_f error from 14.1 % to 2.5 % at Re_τ 2000.
+  - H.-C. Liu, C.-X. Xu, W.-X. Huang. *A total-shear-stress-conserved wall model for large-eddy simulation of high-Reynolds number wall turbulence.* arXiv:[2411.12402](https://arxiv.org/abs/2411.12402), 2024 (preprint). The eddy viscosity in the first cells set from the total-stress balance; wall stress within 4 % of DNS for Re_τ 550–4200.
+  - S. T. Bose, G. I. Park. *Wall-modeled large-eddy simulation for complex turbulent flows.* Annu. Rev. Fluid Mech. 50:535–561, 2018. DOI [10.1146/annurev-fluid-122316-045241](https://doi.org/10.1146/annurev-fluid-122316-045241). Review.
+- **Common thread.** Every approach that reaches the 5 % class gives the cells between the wall and the matching
+  height a modelled stress that carries what the resolved field cannot.
 
 **C5.2 Malaspinas & Sagaut 2012, 2014 — consistent SGS and wall models.** **Verdict: reference (wall model later).**
 - *Consistent subgrid scale modelling for lattice Boltzmann methods.* JFM 700:514–542, 2012. DOI [10.1017/jfm.2012.155](https://doi.org/10.1017/jfm.2012.155).
