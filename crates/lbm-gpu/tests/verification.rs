@@ -1365,6 +1365,93 @@ impl LeeMoser {
     }
 }
 
+/// Lee & Moser interpolated to Malaspinas and Sagaut's Re_τ 950: linearly in Re_τ between the
+/// 550 and 1000 channels, point by point in y/δ and for the bulk speed; shown beside their own
+/// reference ([`HJ_950`]).
+fn lm_950() -> LeeMoser {
+    let w = (950.0 - LM_550.re_tau) / (LM_1000.re_tau - LM_550.re_tau);
+    let mut profile = LM_1000.profile;
+    for (p, (a, b)) in profile.iter_mut().zip(LM_550.profile.iter().zip(&LM_1000.profile)) {
+        p.1 = a.1 + w * (b.1 - a.1);
+    }
+    LeeMoser { re_tau: 950.0, bulk: LM_550.bulk + w * (LM_1000.bulk - LM_550.bulk), profile }
+}
+
+/// The mean profile Malaspinas and Sagaut compare with at Re_τ 950: Hoyas and Jiménez's
+/// statistics (S. Hoyas, J. Jiménez, *Reynolds number effects on the Reynolds-stress budgets in
+/// turbulent channels*, Phys. Fluids 20:101511, 2008, doi:10.1063/1.3005862) of del Álamo and
+/// Jiménez's channel at Re_τ 934 (J. C. del Álamo, J. Jiménez, *Spectra of the very large
+/// anisotropic scales in turbulent channels*, Phys. Fluids 15:L41–L44, 2003,
+/// doi:10.1063/1.1570830), from the file `Re950.prof` of the Torroja DNS database
+/// (https://torroja.dmt.upm.es/channels/data/): (y/δ, U⁺) at every row from y/δ 0.01 to the
+/// centre. Re_τ 934 against the nominal 950 is the paper's own mismatch, kept.
+#[rustfmt::skip]
+const HJ_950: [(f64, f64); 175] = [
+    (0.010823, 8.4979), (0.012057, 9.1019), (0.013357, 9.6639), (0.014722, 10.1824),
+    (0.016154, 10.6580), (0.017651, 11.0922), (0.019215, 11.4877), (0.020844, 11.8476),
+    (0.022538, 12.1752), (0.024298, 12.4737), (0.026123, 12.7462), (0.028013, 12.9956),
+    (0.029969, 13.2245), (0.031989, 13.4353), (0.034074, 13.6302), (0.036224, 13.8112),
+    (0.038438, 13.9799), (0.040717, 14.1379), (0.043060, 14.2866), (0.045467, 14.4270),
+    (0.047937, 14.5604), (0.050472, 14.6874), (0.053070, 14.8090), (0.055731, 14.9258),
+    (0.058456, 15.0385), (0.061244, 15.1474), (0.064094, 15.2530), (0.067007, 15.3557),
+    (0.069983, 15.4558), (0.073021, 15.5536), (0.076120, 15.6492), (0.079282, 15.7429),
+    (0.082505, 15.8349), (0.085790, 15.9253), (0.089136, 16.0142), (0.092543, 16.1016),
+    (0.096011, 16.1878), (0.099539, 16.2727), (0.103127, 16.3565), (0.106776, 16.4392),
+    (0.110484, 16.5209), (0.114252, 16.6016), (0.118079, 16.6812), (0.121965, 16.7599),
+    (0.125910, 16.8377), (0.129913, 16.9146), (0.133975, 16.9906), (0.138094, 17.0659),
+    (0.142271, 17.1404), (0.146506, 17.2141), (0.150798, 17.2871), (0.155146, 17.3593),
+    (0.159552, 17.4309), (0.164013, 17.5017), (0.168530, 17.5719), (0.173103, 17.6414),
+    (0.177732, 17.7103), (0.182415, 17.7786), (0.187153, 17.8463), (0.191946, 17.9133),
+    (0.196792, 17.9797), (0.201693, 18.0455), (0.206647, 18.1108), (0.211654, 18.1754),
+    (0.216713, 18.2396), (0.221825, 18.3033), (0.226990, 18.3665), (0.232206, 18.4292),
+    (0.237473, 18.4914), (0.242791, 18.5531), (0.248160, 18.6143), (0.253580, 18.6750),
+    (0.259049, 18.7352), (0.264568, 18.7949), (0.270136, 18.8541), (0.275753, 18.9128),
+    (0.281418, 18.9711), (0.287132, 19.0289), (0.292893, 19.0864), (0.298702, 19.1434),
+    (0.304557, 19.2001), (0.310460, 19.2563), (0.316408, 19.3122), (0.322402, 19.3676),
+    (0.328441, 19.4226), (0.334525, 19.4772), (0.340654, 19.5312), (0.346827, 19.5848),
+    (0.353044, 19.6378), (0.359304, 19.6905), (0.365607, 19.7427), (0.371952, 19.7945),
+    (0.378339, 19.8460), (0.384768, 19.8970), (0.391239, 19.9478), (0.397750, 19.9981),
+    (0.404301, 20.0480), (0.410892, 20.0975), (0.417522, 20.1466), (0.424192, 20.1954),
+    (0.430900, 20.2437), (0.437646, 20.2917), (0.444430, 20.3393), (0.451251, 20.3866),
+    (0.458108, 20.4335), (0.465002, 20.4800), (0.471932, 20.5261), (0.478897, 20.5718),
+    (0.485897, 20.6171), (0.492932, 20.6620), (0.500000, 20.7066), (0.507102, 20.7507),
+    (0.514237, 20.7945), (0.521404, 20.8379), (0.528603, 20.8809), (0.535834, 20.9236),
+    (0.543096, 20.9659), (0.550389, 21.0078), (0.557711, 21.0494), (0.565064, 21.0907),
+    (0.572445, 21.1317), (0.579855, 21.1723), (0.587293, 21.2125), (0.594759, 21.2523),
+    (0.602252, 21.2918), (0.609771, 21.3309), (0.617317, 21.3695), (0.624888, 21.4077),
+    (0.632484, 21.4454), (0.640105, 21.4826), (0.647750, 21.5194), (0.655419, 21.5557),
+    (0.663110, 21.5916), (0.670824, 21.6269), (0.678561, 21.6617), (0.686318, 21.6960),
+    (0.694097, 21.7299), (0.701896, 21.7632), (0.709715, 21.7959), (0.717554, 21.8281),
+    (0.725411, 21.8596), (0.733287, 21.8904), (0.741181, 21.9206), (0.749092, 21.9501),
+    (0.757020, 21.9790), (0.764964, 22.0072), (0.772924, 22.0347), (0.780899, 22.0614),
+    (0.788888, 22.0875), (0.796892, 22.1128), (0.804910, 22.1373), (0.812940, 22.1610),
+    (0.820983, 22.1839), (0.829038, 22.2060), (0.837105, 22.2273), (0.845182, 22.2476),
+    (0.853270, 22.2671), (0.861367, 22.2856), (0.869474, 22.3032), (0.877589, 22.3199),
+    (0.885713, 22.3356), (0.893844, 22.3503), (0.901983, 22.3640), (0.910128, 22.3767),
+    (0.918279, 22.3884), (0.926436, 22.3990), (0.934597, 22.4085), (0.942763, 22.4169),
+    (0.950932, 22.4243), (0.959105, 22.4305), (0.967281, 22.4356), (0.975459, 22.4396),
+    (0.983638, 22.4424), (0.991819, 22.4441), (1.000000, 22.4447),
+];
+
+/// The bulk U⁺ of [`HJ_950`]'s file, by the trapezoid rule over its rows: its C_f = 2 / U_b⁺².
+const HJ_950_BULK: f64 = 19.827;
+
+/// [`HJ_950`] at `y` (δ = 1), linear between its rows, held beyond its ends.
+fn hj_950(y: f64) -> f64 {
+    let i = HJ_950.partition_point(|p| p.0 < y).clamp(1, HJ_950.len() - 1);
+    let ((y0, u0), (y1, u1)) = (HJ_950[i - 1], HJ_950[i]);
+    u0 + (u1 - u0) * ((y - y0) / (y1 - y0)).clamp(0.0, 1.0)
+}
+
+/// Malaspinas and Sagaut's average error of the mean profile (their eq. 69), in per cent:
+/// E = 100 / M · √(Σ (ũ⁺ − ũ⁺_ref)² / ũ⁺_ref²). The paper does not say which points it sums or
+/// which u_τ scales ũ⁺; the reading that reproduces its Table 1 is taken: `half` is the profile
+/// folded about the centreline, scaled by the carried u_τ, counted on both halves (M = 2N).
+fn profile_error(half: &[(f64, f64)], reference: impl Fn(f64) -> f64) -> f64 {
+    let m = 2.0 * half.len().max(1) as f64;
+    100.0 / m * (2.0 * half.iter().map(|&(y, u)| ((u - reference(y)) / reference(y)).powi(2)).sum::<f64>()).sqrt()
+}
+
 /// One grid of the study: what it measured against Lee & Moser.
 struct ChannelResult {
     bulk: f64,
@@ -1378,6 +1465,10 @@ struct ChannelResult {
     stop: String,
     /// The wall model's requested stress over the carried one (NaN where not measured).
     requested: f64,
+    /// C_f from the wall model's time-averaged u_τ, 2 (⟨u_τ⟩ / U_b)², and Malaspinas and
+    /// Sagaut's profile error E (NaN where not measured).
+    cf_model: f64,
+    e_paper: f64,
 }
 
 /// The wall-modelled channel at `lm`'s Re_τ on `n` cells per δ, on the GPU: 2πδ × 2δ × πδ,
@@ -1454,6 +1545,8 @@ fn wall_modelled_channel(lm: &LeeMoser, n: usize) -> Option<ChannelResult> {
                 seconds,
                 stop: format!("unstable before {:.2} δ/u_τ", next as f64 * dt),
                 requested: f64::NAN,
+                cf_model: f64::NAN,
+                e_paper: f64::NAN,
             });
         }
         k = next;
@@ -1490,7 +1583,19 @@ fn wall_modelled_channel(lm: &LeeMoser, n: usize) -> Option<ChannelResult> {
     for (y, u) in &half {
         println!("    y/δ {y:.4} y⁺ {:7.1}: U⁺ {u:7.3}, Lee & Moser {:7.3} ({:+.1} %)", y * lm.re_tau, lm.at(*y), 100.0 * (u / lm.at(*y) - 1.0));
     }
-    Some(ChannelResult { bulk, centre, log_error, first_error, cells: grid.len(), steps: k, seconds, stop, requested: f64::NAN })
+    Some(ChannelResult {
+        bulk,
+        centre,
+        log_error,
+        first_error,
+        cells: grid.len(),
+        steps: k,
+        seconds,
+        stop,
+        requested: f64::NAN,
+        cf_model: f64::NAN,
+        e_paper: f64::NAN,
+    })
 }
 
 /// The environment variable that runs the wall-modelled channel study on the GPU.
@@ -1769,15 +1874,16 @@ fn block_means_count_each_sample_once() {
 struct Budget {
     /// Per row: Σu, Σv, Σuv, Σ subgrid shear.
     rows: Vec<[f64; 4]>,
-    /// Σ requested u_τ² over the wall cells, and how many.
+    /// Σ requested u_τ² and Σ u_τ over the wall cells, and how many.
     requested: f64,
+    friction: f64,
     walls: usize,
     samples: usize,
 }
 
 impl Budget {
     fn new(ny: usize) -> Budget {
-        Budget { rows: vec![[0.0; 4]; ny], requested: 0.0, walls: 0, samples: 0 }
+        Budget { rows: vec![[0.0; 4]; ny], requested: 0.0, friction: 0.0, walls: 0, samples: 0 }
     }
 
     /// Add one sample of `velocity` (lattice units) on `grid`, periodic in x and z, walls at
@@ -1818,6 +1924,7 @@ impl Budget {
                     let speed = (u[0] * u[0] + u[2] * u[2]).sqrt();
                     let ut = fieldcraft_lbm::wall::musker_friction(speed, 3.0 * y1, nu);
                     self.requested += ut * ut;
+                    self.friction += ut;
                     self.walls += 1;
                 }
             }
@@ -1910,6 +2017,8 @@ fn paper_channel(lm: &LeeMoser, n: usize, c: f64, cpu: bool, held: Held) -> Opti
                     seconds: 0.0,
                     stop: format!("refused: {e}"),
                     requested: f64::NAN,
+                    cf_model: f64::NAN,
+                    e_paper: f64::NAN,
                 },
                 f64::NAN,
             ));
@@ -1980,6 +2089,8 @@ fn paper_channel(lm: &LeeMoser, n: usize, c: f64, cpu: bool, held: Held) -> Opti
                     seconds: clock.elapsed().as_secs_f64(),
                     stop: "unstable".into(),
                     requested: f64::NAN,
+                    cf_model: f64::NAN,
+                    e_paper: f64::NAN,
                 },
                 f64::NAN,
             ));
@@ -2043,6 +2154,28 @@ fn paper_channel(lm: &LeeMoser, n: usize, c: f64, cpu: bool, held: Held) -> Opti
     for (y, u) in &half {
         println!("    y/δ {y:.4} y⁺ {:7.1}: U⁺ {u:7.3}, Lee & Moser {:7.3} ({:+.1} %)", y * ut * lm.re_tau, lm.at(*y), 100.0 * (u / lm.at(*y) - 1.0));
     }
+    // Malaspinas and Sagaut's comparison (their eqs. 69 and 70): C_f = 2 u_τ² / U_b², with u_τ the
+    // wall model's own time average (the second cell's reading, both walls) or the carried force's,
+    // against Dean's correlation at the held Re_m and the DNS's bulk C_f; E against the DNS (Hoyas
+    // and Jiménez at Re_τ 950, else Lee & Moser) and Lee & Moser.
+    let ub_phys = ub_sum / count.max(1) as f64;
+    let ut_model = budget.friction / budget.walls.max(1) as f64 * vs;
+    let cf_model = 2.0 * (ut_model / ub_phys).powi(2);
+    let cf_force = 2.0 * g_mean / (ub_phys * ub_phys);
+    let cf_dean = 0.073 * (2.0 * ub_phys * lm.re_tau).powf(-0.25);
+    let hoyas = lm.re_tau == 950.0;
+    let cf_dns = 2.0 / if hoyas { HJ_950_BULK } else { lm.bulk }.powi(2);
+    let e_lm = profile_error(&half, |y| lm.at(y));
+    let e_paper = if hoyas { profile_error(&half, hj_950) } else { e_lm };
+    println!(
+        "  M&S comparison: ⟨u_τ⟩ model {ut_model:.4}, carried {ut:.4} (gap {:+.2} %); C_f model {cf_model:.5} ({:+.2} % of Dean {cf_dean:.5}, {:+.2} % of the DNS {cf_dns:.5}), carried {cf_force:.5} ({:+.2} %, {:+.2} %); E {e_paper:.2} % against {} ({e_lm:.2} % against Lee & Moser)",
+        100.0 * (ut_model / ut - 1.0),
+        100.0 * (cf_model / cf_dean - 1.0),
+        100.0 * (cf_model / cf_dns - 1.0),
+        100.0 * (cf_force / cf_dean - 1.0),
+        100.0 * (cf_force / cf_dns - 1.0),
+        if hoyas { "Hoyas & Jiménez" } else { "Lee & Moser" }
+    );
     let result = ChannelResult {
         bulk: ub,
         centre: half.last().map_or(f64::NAN, |c| c.1),
@@ -2053,6 +2186,8 @@ fn paper_channel(lm: &LeeMoser, n: usize, c: f64, cpu: bool, held: Held) -> Opti
         seconds: clock.elapsed().as_secs_f64(),
         stop,
         requested,
+        cf_model,
+        e_paper,
     };
     Some((result, ut * lm.re_tau))
 }
@@ -2069,8 +2204,14 @@ fn dean_bulk(re_tau: f64) -> f64 {
 /// C_f against Dean's correlation is printed too, the paper's own comparison. Re_τ 550 (`550`)
 /// is run only when asked, outside the acceptance (the paper tests Re_τ ≥ 950). Set
 /// `FIELDCRAFT_PAPER_CHANNEL` to `1` (1000 and 2000), `1000`, `2000`, `550`, or `1000:10` for one
-/// grid. The bulk speed held is Dean's, the paper's; `FIELDCRAFT_PAPER_CHANNEL_HELD=lm` holds Lee &
-/// Moser's instead, the control against the DNS the acceptance uses. Each grid reports its first
+/// grid. `950` (or `950:10`) reproduces the paper itself at its Re_τ 950: E (their eq. 69, read as
+/// [`profile_error`] does) against Hoyas and Jiménez ([`HJ_950`]) within 15 % of their Table 1
+/// (2.11, 1.07 and 0.83 on 10, 20 and 30 cells), and C_f from the wall model's u_τ (their eq. 70)
+/// within the 4.22 % of Dean's correlation they report; measured on the GB10: E 2.04, 1.04 and
+/// 0.89, C_f +2.0, +0.9 and +3.5 %, while the carried drag's C_f is 14 to 16 % below Dean's (the
+/// wall model's u_τ is 8.5 to 10.5 % above the carried one). The bulk speed held is Dean's, the
+/// paper's; `FIELDCRAFT_PAPER_CHANNEL_HELD=lm` holds Lee & Moser's instead, the control against
+/// the DNS the acceptance uses. Each grid reports its first
 /// cell's centre and the wall model's matching point (the second cell, 3 y₁) in wall units.
 #[test]
 #[ignore = "hours, GPU: set FIELDCRAFT_PAPER_CHANNEL=1 (docs/verification.md, \"Long studies\")"]
@@ -2079,7 +2220,11 @@ fn study_malaspinas_and_sagaut_s_channel_against_lee_and_moser() {
         println!("the paper's channel set-up runs only with FIELDCRAFT_PAPER_CHANNEL set (hours, GPU): skipped");
         return;
     };
-    let grids: [(&LeeMoser, &str, usize, f64, bool); 9] = [
+    let lm950 = lm_950();
+    let grids: [(&LeeMoser, &str, usize, f64, bool); 12] = [
+        (&lm950, "950", 10, 0.08, false),
+        (&lm950, "950", 20, 0.08, false),
+        (&lm950, "950", 30, 0.08, false),
         (&LM_1000, "1000", 10, 0.08, true),
         (&LM_1000, "1000", 20, 0.08, true),
         (&LM_1000, "1000", 30, 0.08, true),
@@ -2125,6 +2270,22 @@ fn study_malaspinas_and_sagaut_s_channel_against_lee_and_moser() {
             r.cells as f64 * r.steps as f64 / r.seconds / 1e6,
             r.stop
         );
+        println!("M&S eqs. 69/70, Re_τ {name} {n}/δ: C_f by the model's ⟨u_τ⟩ {:.4e}, E {:.2} %", r.cf_model, r.e_paper);
+        // The reproduction of the paper's own results at Re_τ 950 (Dean's bulk held, as theirs).
+        if name == "950" && held == Held::Dean {
+            let table = match n {
+                10 => 2.11,
+                20 => 1.07,
+                _ => 0.83,
+            };
+            if !((r.e_paper / table - 1.0).abs() <= 0.15 && (r.cf_model / cf_dean - 1.0).abs() <= 0.0422) {
+                failed.push(format!(
+                    "Re_τ 950 {n}/δ against the paper: E {:.2} (theirs {table}), C_f {:+.1} % of Dean",
+                    r.e_paper,
+                    100.0 * (r.cf_model / cf_dean - 1.0)
+                ));
+            }
+        }
         // Counted where the method is meant to work: the first cell's centre at y⁺ ≥ 30 for the
         // nominal Re_τ (a grid the τ floor refuses is reported, not counted).
         let in_range = 0.5 * lm.re_tau / n as f64 >= 30.0;
@@ -2132,5 +2293,5 @@ fn study_malaspinas_and_sagaut_s_channel_against_lee_and_moser() {
             failed.push(format!("Re_τ {name} {n}/δ"));
         }
     }
-    assert!(failed.is_empty(), "outside the acceptance (first cell at y⁺ ≥ 30): {failed:?}");
+    assert!(failed.is_empty(), "outside the acceptance (first cell at y⁺ ≥ 30, or the paper's own at Re_τ 950): {failed:?}");
 }
