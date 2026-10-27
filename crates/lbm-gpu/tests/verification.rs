@@ -984,9 +984,9 @@ fn couette_flow_with_the_wall_model_matches_the_cpu() {
 /// bounce-back's exchange plus what the reconstruction takes, two parts about 450 times the body
 /// force in this start-up that nearly cancel (the net drag is 0.1 to 9 times the body force), so
 /// the states' f32 differences show in it magnified. Measured on the GB10 after 150 steps: velocity
-/// 2.1e-6 (TRT), 2.7e-6 (regularised) and 6.0e-7 (MRT); wall drag 2.8e-4, 3.2e-4 and 9.8e-6 of
-/// itself, about 5e-6 of either part. The steady channel below compares the drag to the force
-/// tests' tolerance.
+/// 2.3e-6 (TRT), 2.7e-6 (regularised) and 1.0e-6 (MRT), the wall cells at their imposed velocity
+/// within as much; wall drag 2.8e-4, 3.2e-4 and 9.8e-6 of itself, about 5e-6 of either part. The
+/// steady channel below compares the drag to the force tests' tolerance.
 #[test]
 fn a_coarse_wall_modelled_channel_follows_the_cpu() {
     use std::f64::consts::PI;
@@ -1016,11 +1016,20 @@ fn a_coarse_wall_modelled_channel_follows_the_cpu() {
         });
         let Some((mut cpu, mut gpu)) = both(&setup, flow, streaming) else { continue };
         let (du, drho) = field_difference(&mut cpu, &mut gpu);
+        // The GPU's fields report each modelled wall cell at the velocity its reconstruction
+        // imposes, as the CPU's do (not the streamed state the next reconstruction overwrites).
+        let fields = gpu.fields().unwrap();
+        let walls = cpu.walls().unwrap();
+        let scale = fields.velocity.iter().map(|v| v[0].abs()).fold(0.0, f64::max);
+        let modelled: Vec<[f64; 3]> =
+            (0..grid.len()).filter_map(|c| walls.modelled(c).map(|(u, _)| [0, 1, 2].map(|k| fields.velocity[c][k] - u[k]))).collect();
+        let imposed = modelled.iter().flatten().map(|d| d.abs()).fold(0.0, f64::max) / scale;
+        assert!(!modelled.is_empty() && imposed < 1e-4, "GPU wall cells vs the imposed velocity: {imposed}");
         let (fc, fg) = (Backend::forces(&mut cpu).unwrap(), gpu.forces().unwrap());
         let wall = |f: &[[f64; 3]]| f[BoxFace::YMin.index()][0] + f[BoxFace::YMax.index()][0];
         let drag = (wall(&fc) - wall(&fg)).abs() / wall(&fc).abs();
         println!(
-            "{collision:?} wall-modelled channel, {} cells, 150 steps, GPU vs CPU: velocity {du:.2e}, density {drho:.2e}, wall drag {drag:.2e}",
+            "{collision:?} wall-modelled channel, {} cells, 150 steps, GPU vs CPU: velocity {du:.2e}, density {drho:.2e}, wall drag {drag:.2e}; wall cells vs the imposed velocity {imposed:.2e}",
             grid.len()
         );
         assert!(du < 1e-4 && drho < 1e-5, "{du} {drho}");

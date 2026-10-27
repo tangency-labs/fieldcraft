@@ -1925,10 +1925,14 @@ impl crate::backend::Backend for Flow {
         let n = self.n;
         let mut density = filled(n, 0.0, "density field")?;
         let mut velocity = filled(n, [0.0; 3], "velocity field")?;
+        // A cell the wall model rebuilds reports the velocity its reconstruction imposes: its
+        // populations between steps are the streamed state the next reconstruction overwrites.
+        let modelled =
+            |cell: usize| self.walls.as_ref().filter(|_| self.wall_model && self.steps_done > 0).and_then(|w| w.modelled(cell)).map(|m| m.0);
         for cell in 0..n {
             if let (Some((rho, u)), Some(d), Some(v)) = (self.moments(cell), density.get_mut(cell), velocity.get_mut(cell)) {
                 *d = rho;
-                *v = u;
+                *v = modelled(cell).unwrap_or(u);
             }
         }
         let temperature = self.thermal.as_ref().map(|t| t.temperature.clone()).unwrap_or_default();

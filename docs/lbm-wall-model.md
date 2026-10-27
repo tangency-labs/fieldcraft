@@ -99,6 +99,13 @@ Together they close the fluid's momentum budget every step, so at steady state t
 the body force exactly. A wall cell on an edge or corner, with links into more than one wall,
 puts all of the reconstruction's share into the wall of its nearest link.
 
+**Reported velocity at x₁.** The velocity field that `solve.fluid` reports gives each modelled
+wall cell the velocity its reconstruction imposed in the last step, ũ(y₁; u_τ) e (step 2). The
+cell's populations between steps are the streamed state that the next reconstruction overwrites;
+in a channel their velocity is a quarter below ũ. The density reported is that of those
+populations, so the reported mass stays the populations' sum. Before the first step nothing is
+imposed yet, and x₁ reports its initial state.
+
 The density the reconstruction sets (step 3) does not conserve mass exactly. In a coarse
 channel the total mass drifts by 1e-7 to 1e-5 over the first 40 steps.
 

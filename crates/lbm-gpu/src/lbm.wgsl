@@ -1318,6 +1318,19 @@ fn cell_moments(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id
     moments[cell] = vec4<f32>(u, rho);
 }
 
+// The wall model's cells as `fields` reports them: the velocity the last reconstruction imposed
+// (fieldcraft_lbm::wall::Walls::modelled), over `cell_moments`' streamed state, which the next
+// reconstruction overwrites. Dispatched only when the fields are read, after `cell_moments` and
+// after the first step, so `mean_velocity` and the forcing see the populations as before.
+@compute @workgroup_size(256)
+fn wall_moments(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
+    let cell = cell_of(lid, wg);
+    if !WALL_MODEL || cell >= params.n || !is_fluid(cell) { return; }
+    let k = fluid[cell] >> 1u;
+    if k == 0u { return; }
+    moments[cell] = vec4<f32>(walls[4u * (k - 1u) + 2u].xyz, moments[cell].w);
+}
+
 // Per workgroup, the sum of its cells' densities (the mass, since every cell has unit volume).
 @compute @workgroup_size(256)
 fn mass(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {

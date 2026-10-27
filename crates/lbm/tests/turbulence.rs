@@ -381,6 +381,36 @@ fn the_wall_force_closes_the_momentum_budget_of_a_wall_modelled_channel() {
     }
 }
 
+/// The fields report a modelled wall cell at the velocity its reconstruction imposes, not the
+/// streamed populations the next reconstruction overwrites (in the channel those are about a
+/// quarter slower); every other cell keeps its moments, and before the first step nothing is
+/// imposed yet.
+#[test]
+fn the_fields_report_a_modelled_wall_cell_at_its_imposed_velocity() {
+    use fieldcraft_lbm::backend::Backend;
+    let (_, mut flow) = perturbed_wall_modelled_channel(Collision::Mrt, 10.0);
+    let before = flow.fields().unwrap();
+    assert!((0..flow.grid().len()).all(|c| flow.moments(c).is_none_or(|m| m.1 == before.velocity[c])));
+    for _ in 0..10 {
+        flow.step().unwrap();
+    }
+    let fields = flow.fields().unwrap();
+    let (mut modelled, mut differ) = (0, 0);
+    for cell in 0..flow.grid().len() {
+        let Some((rho, u)) = flow.moments(cell) else { continue };
+        assert_eq!(fields.density[cell], rho);
+        match flow.walls().unwrap().modelled(cell) {
+            Some((imposed, _)) => {
+                assert_eq!(fields.velocity[cell], imposed);
+                modelled += 1;
+                differ += usize::from(imposed != u);
+            }
+            None => assert_eq!(fields.velocity[cell], u),
+        }
+    }
+    assert!(modelled > 0 && differ == modelled, "{differ} of {modelled} wall cells differ from their streamed state");
+}
+
 /// A laminar channel under the wall model (8 cells across, body force, periodic along it) run to
 /// steady state: the wall force on the two walls equals the body force on the fluid.
 #[test]

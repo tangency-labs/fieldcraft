@@ -290,7 +290,7 @@ fn solid_data(solid: &fieldcraft_lbm::conduction::SolidHeat, t0: f64) -> Result<
 }
 
 /// The entry points of `lbm.wgsl` a flow dispatches.
-const KERNELS: [&str; 27] = [
+const KERNELS: [&str; 28] = [
     "clear_eddy",
     "collide",
     "wall_sample",
@@ -304,6 +304,7 @@ const KERNELS: [&str; 27] = [
     "wall_forces",
     "group_forces",
     "cell_moments",
+    "wall_moments",
     "mass",
     "mean_velocity",
     "collide_thermal",
@@ -1279,6 +1280,10 @@ impl Backend for GpuFlow {
 
     fn fields(&mut self) -> Result<Fields> {
         self.compute_moments()?;
+        // The wall model's cells at the velocity their reconstruction imposes (as the CPU's).
+        if self.wall_count > 0 && self.steps_done > 0 {
+            self.submit("lbm wall moments", &[(self.current, "wall_moments", self.cells)])?;
+        }
         let m = self.read_f32(&self.moments, 4 * self.n)?;
         let density = m.as_chunks::<4>().0.iter().map(|v| f64::from(v[3])).collect();
         let velocity = m.as_chunks::<4>().0.iter().map(|v| [f64::from(v[0]), f64::from(v[1]), f64::from(v[2])]).collect();
