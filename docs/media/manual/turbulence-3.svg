@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="620" height="380" viewBox="0 0 620 380">
+  <title>turbulence-3</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M0 0 L620 0 L620 380 L0 380 Z" fill="#ffffff"/>
+    <path d="M116 330 L116 22 M248 330 L248 22 M380 330 L380 22 M556 330 L556 22 M72 330 L600 330 M72 295.78 L600 295.78 M72 261.56 L600 261.56 M72 227.33 L600 227.33 M72 193.11 L600 193.11 M72 158.89 L600 158.89 M72 124.67 L600 124.67 M72 90.44 L600 90.44 M72 56.22 L600 56.22 M72 22 L600 22" fill="none" stroke="#e3e3e3" stroke-width="0.5" stroke-miterlimit="10"/>
+    <path d="M72 22 L72 330 L600 330" fill="none" stroke="#555555" stroke-miterlimit="10"/>
+    <path d="M116 330 L116 334 M248 330 L248 334 M380 330 L380 334 M556 330 L556 334 M72 330 L68 330 M72 295.78 L68 295.78 M72 261.56 L68 261.56 M72 227.33 L68 227.33 M72 193.11 L68 193.11 M72 158.89 L68 158.89 M72 124.67 L68 124.67 M72 90.44 L68 90.44 M72 56.22 L68 56.22 M72 22 L68 22" fill="none" stroke="#555555" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 110.6 346)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">12</tspan></text>
+    <text transform="matrix(1 0 0 1 242.6 346)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">18</tspan></text>
+    <text transform="matrix(1 0 0 1 374.6 346)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">24</tspan></text>
+    <text transform="matrix(1 0 0 1 550.6 346)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">32</tspan></text>
+    <text transform="matrix(1 0 0 1 58.6 333.2)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">8</tspan></text>
+    <text transform="matrix(1 0 0 1 58.6 298.98)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">9</tspan></text>
+    <text transform="matrix(1 0 0 1 53.2 264.76)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">10</tspan></text>
+    <text transform="matrix(1 0 0 1 53.2 230.53)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">11</tspan></text>
+    <text transform="matrix(1 0 0 1 53.2 196.31)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">12</tspan></text>
+    <text transform="matrix(1 0 0 1 53.2 162.09)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">13</tspan></text>
+    <text transform="matrix(1 0 0 1 53.2 127.87)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">14</tspan></text>
+    <text transform="matrix(1 0 0 1 53.2 93.64)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">15</tspan></text>
+    <text transform="matrix(1 0 0 1 53.2 59.42)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">16</tspan></text>
+    <text transform="matrix(1 0 0 1 53.2 25.2)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">17</tspan></text>
+    <text transform="matrix(1 0 0 1 312.3 366)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">cells per δ</tspan></text>
+    <text transform="matrix(0 -1 1 0 29.87 192.544)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">Ub / uτ</tspan></text>
+    <path d="M72 66.49 L600 66.49" fill="none" stroke="#888888" stroke-miterlimit="10" stroke-dasharray="5 3"/>
+    <text transform="matrix(1 0 0 1 80 60.49)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">Moser, Kim &amp; Mansour 1999 (Reτ 178)</tspan></text>
+    <path d="M116 263.27 L248 208.51 L380 165.39 L556 118.85" fill="none" stroke="#2a6fdb" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M248 178.74 L380 124.67" fill="none" stroke="#2a9d55" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M112 263.27 C112 265.479 113.791 267.27 116 267.27 C118.209 267.27 120 265.479 120 263.27 C120 261.061 118.209 259.27 116 259.27 C113.791 259.27 112 261.061 112 263.27 Z M244 208.51 C244 210.719 245.791 212.51 248 212.51 C250.209 212.51 252 210.719 252 208.51 C252 206.301 250.209 204.51 248 204.51 C245.791 204.51 244 206.301 244 208.51 Z M376 165.39 C376 167.599 377.791 169.39 380 169.39 C382.209 169.39 384 167.599 384 165.39 C384 163.181 382.209 161.39 380 161.39 C377.791 161.39 376 163.181 376 165.39 Z M552 118.85 C552 121.059 553.791 122.85 556 122.85 C558.209 122.85 560 121.059 560 118.85 C560 116.641 558.209 114.85 556 114.85 C553.791 114.85 552 116.641 552 118.85 Z" fill="#2a6fdb" stroke="#2a6fdb" stroke-miterlimit="10"/>
+    <path d="M244 174.74 L252 174.74 L252 182.74 L244 182.74 Z M376 120.67 L384 120.67 L384 128.67 L376 128.67 Z" fill="#ffffff" stroke="#2a9d55" stroke-width="1.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 124 275.27)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#2a6fdb"><tspan x="0" y="0">9.95</tspan></text>
+    <text transform="matrix(1 0 0 1 256 220.51)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#2a6fdb"><tspan x="0" y="0">11.55</tspan></text>
+    <text transform="matrix(1 0 0 1 388 177.39)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#2a6fdb"><tspan x="0" y="0">12.81</tspan></text>
+    <text transform="matrix(1 0 0 1 564 130.85)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#2a6fdb"><tspan x="0" y="0">14.17</tspan></text>
+    <text transform="matrix(1 0 0 1 217.39 171.74)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#2a9d55"><tspan x="0" y="0">12.42</tspan></text>
+    <text transform="matrix(1 0 0 1 349.39 117.67)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#2a9d55"><tspan x="0" y="0">14.00</tspan></text>
+    <text transform="matrix(1 0 0 1 106 181.13)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#2a9d55"><tspan x="0" y="0">Van Driest at 12 cells:</tspan></text>
+    <text transform="matrix(1 0 0 1 106 192.13)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#2a9d55"><tspan x="0" y="0">unstable at 2.2 δ/uτ</tspan></text>
+    <path d="M298.6 283.8 L322.6 283.8" fill="none" stroke="#2a6fdb" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M306.6 283.8 C306.6 286.009 308.391 287.8 310.6 287.8 C312.809 287.8 314.6 286.009 314.6 283.8 C314.6 281.591 312.809 279.8 310.6 279.8 C308.391 279.8 306.6 281.591 306.6 283.8 Z" fill="#2a6fdb" stroke="#2a6fdb" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 330.6 287)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">Smagorinsky C = 0.1, undamped, 15 δ/uτ averaged</tspan></text>
+    <path d="M298.6 301.8 L322.6 301.8" fill="none" stroke="#2a9d55" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M306.6 297.8 L314.6 297.8 L314.6 305.8 L306.6 305.8 Z" fill="#ffffff" stroke="#2a9d55" stroke-width="1.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 330.6 305)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">with Van Driest, short probe (not validation)</tspan></text>
+  </g>
+</svg>

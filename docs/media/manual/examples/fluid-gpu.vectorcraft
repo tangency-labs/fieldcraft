@@ -1,0 +1,4335 @@
+{
+  "format": "vectorcraft",
+  "version": 4,
+  "generator": "VectorCraft 0.9.0",
+  "document": {
+    "version": 1,
+    "title": "fluid-gpu",
+    "units": "Points",
+    "color_mode": "Rgb",
+    "artboards": [
+      {
+        "id": 1,
+        "name": "Artboard 1",
+        "rect": {
+          "x0": 0.0,
+          "y0": 0.0,
+          "x1": 920.0,
+          "y1": 500.0
+        },
+        "show_center_mark": false,
+        "show_cross_hairs": false
+      }
+    ],
+    "layers": [
+      {
+        "id": 1,
+        "name": "Layer 1",
+        "kind": {
+          "type": "layer",
+          "color": {
+            "Preset": 0
+          },
+          "template": false,
+          "printable": true,
+          "children": [
+            {
+              "id": 2,
+              "appearance": {
+                "items": [
+                  {
+                    "kind": "fill",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 1.0,
+                        "g": 1.0,
+                        "b": 1.0
+                      }
+                    }
+                  },
+                  {
+                    "kind": "stroke",
+                    "paint": {
+                      "type": "none"
+                    },
+                    "width": 1.0
+                  }
+                ]
+              },
+              "kind": {
+                "type": "path",
+                "path": {
+                  "subpaths": [
+                    {
+                      "anchors": [
+                        {
+                          "p": [
+                            0.0,
+                            0.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            920.0,
+                            0.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            920.0,
+                            500.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            0.0,
+                            500.0
+                          ]
+                        }
+                      ],
+                      "closed": true
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": 3,
+              "appearance": {
+                "items": [
+                  {
+                    "kind": "fill",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 1.0,
+                        "g": 1.0,
+                        "b": 1.0
+                      }
+                    }
+                  },
+                  {
+                    "kind": "stroke",
+                    "paint": {
+                      "type": "none"
+                    },
+                    "width": 1.0
+                  }
+                ]
+              },
+              "kind": {
+                "type": "path",
+                "path": {
+                  "subpaths": [
+                    {
+                      "anchors": [
+                        {
+                          "p": [
+                            0.0,
+                            0.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            920.0,
+                            0.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            920.0,
+                            500.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            0.0,
+                            500.0
+                          ]
+                        }
+                      ],
+                      "closed": true
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": 4,
+              "name": "fluid-gpu.png",
+              "kind": {
+                "type": "image",
+                "key": "img4cfbe7db6b74f2c1",
+                "width": 1600,
+                "height": 1000,
+                "xf": [
+                  0.5,
+                  0.0,
+                  0.0,
+                  0.5,
+                  0.0,
+                  0.0
+                ]
+              }
+            },
+            {
+              "id": 5,
+              "appearance": {
+                "items": [
+                  {
+                    "kind": "fill",
+                    "paint": {
+                      "type": "none"
+                    }
+                  },
+                  {
+                    "kind": "stroke",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 0.2,
+                        "g": 0.2,
+                        "b": 0.2
+                      }
+                    },
+                    "width": 0.8,
+                    "arrow_align": "Tip"
+                  }
+                ]
+              },
+              "kind": {
+                "type": "path",
+                "path": {
+                  "subpaths": [
+                    {
+                      "anchors": [
+                        {
+                          "p": [
+                            50.0,
+                            250.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            60.0,
+                            44.0
+                          ]
+                        }
+                      ],
+                      "closed": false
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": 6,
+              "appearance": {
+                "items": [
+                  {
+                    "kind": "fill",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 1.0,
+                        "g": 1.0,
+                        "b": 1.0
+                      }
+                    }
+                  },
+                  {
+                    "kind": "stroke",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 0.2,
+                        "g": 0.2,
+                        "b": 0.2
+                      }
+                    },
+                    "width": 1.0,
+                    "arrow_align": "Tip"
+                  }
+                ]
+              },
+              "kind": {
+                "type": "path",
+                "path": {
+                  "subpaths": [
+                    {
+                      "anchors": [
+                        {
+                          "p": [
+                            47.4,
+                            250.0
+                          ],
+                          "in": [
+                            47.4,
+                            248.56405965043993
+                          ],
+                          "out": [
+                            47.4,
+                            251.43594034956007
+                          ],
+                          "kind": "Smooth"
+                        },
+                        {
+                          "p": [
+                            50.0,
+                            252.6
+                          ],
+                          "in": [
+                            48.56405965043994,
+                            252.6
+                          ],
+                          "out": [
+                            51.43594034956006,
+                            252.6
+                          ],
+                          "kind": "Smooth"
+                        },
+                        {
+                          "p": [
+                            52.6,
+                            250.0
+                          ],
+                          "in": [
+                            52.6,
+                            251.43594034956007
+                          ],
+                          "out": [
+                            52.6,
+                            248.56405965043993
+                          ],
+                          "kind": "Smooth"
+                        },
+                        {
+                          "p": [
+                            50.0,
+                            247.4
+                          ],
+                          "in": [
+                            51.43594034956006,
+                            247.4
+                          ],
+                          "out": [
+                            48.56405965043994,
+                            247.4
+                          ],
+                          "kind": "Smooth"
+                        }
+                      ],
+                      "closed": true
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": 7,
+              "appearance": {
+                "items": [
+                  {
+                    "kind": "fill",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 1.0,
+                        "g": 1.0,
+                        "b": 1.0
+                      }
+                    }
+                  },
+                  {
+                    "kind": "stroke",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 0.73333335,
+                        "g": 0.73333335,
+                        "b": 0.73333335
+                      }
+                    },
+                    "width": 0.6,
+                    "arrow_align": "Tip"
+                  }
+                ]
+              },
+              "kind": {
+                "type": "path",
+                "path": {
+                  "subpaths": [
+                    {
+                      "anchors": [
+                        {
+                          "p": [
+                            60.0,
+                            28.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            131.63,
+                            28.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            131.63,
+                            44.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            60.0,
+                            44.0
+                          ]
+                        }
+                      ],
+                      "closed": true
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": 8,
+              "kind": {
+                "type": "text",
+                "kind": {
+                  "kind": "point"
+                },
+                "xf": [
+                  1.0,
+                  0.0,
+                  0.0,
+                  1.0,
+                  64.0,
+                  39.0
+                ],
+                "runs": [
+                  {
+                    "text": "inlet: 25 mm/s",
+                    "style": {
+                      "font_family": "Inter",
+                      "font_style": "Regular",
+                      "size": 9.0,
+                      "tracking": 0.0,
+                      "baseline_shift": 0.0,
+                      "h_scale": 100.0,
+                      "v_scale": 100.0,
+                      "rotation": 0.0,
+                      "fill": {
+                        "type": "solid",
+                        "color": {
+                          "model": "rgb",
+                          "r": 0.13333334,
+                          "g": 0.13333334,
+                          "b": 0.13333334
+                        }
+                      },
+                      "stroke": {
+                        "type": "none"
+                      },
+                      "stroke_width": 0.0,
+                      "underline": false,
+                      "strikethrough": false,
+                      "all_caps": false
+                    }
+                  }
+                ],
+                "para": {
+                  "justify": "Left",
+                  "justify_auto": true,
+                  "left_indent": 0.0,
+                  "right_indent": 0.0,
+                  "first_line_indent": 0.0,
+                  "space_before": 0.0,
+                  "space_after": 0.0,
+                  "hyphenate": false,
+                  "mojikumi": "lineEndHalf",
+                  "burasagari": "standard"
+                }
+              }
+            },
+            {
+              "id": 9,
+              "appearance": {
+                "items": [
+                  {
+                    "kind": "fill",
+                    "paint": {
+                      "type": "none"
+                    }
+                  },
+                  {
+                    "kind": "stroke",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 0.2,
+                        "g": 0.2,
+                        "b": 0.2
+                      }
+                    },
+                    "width": 0.8,
+                    "arrow_align": "Tip"
+                  }
+                ]
+              },
+              "kind": {
+                "type": "path",
+                "path": {
+                  "subpaths": [
+                    {
+                      "anchors": [
+                        {
+                          "p": [
+                            270.0,
+                            205.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            300.0,
+                            44.0
+                          ]
+                        }
+                      ],
+                      "closed": false
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": 10,
+              "appearance": {
+                "items": [
+                  {
+                    "kind": "fill",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 1.0,
+                        "g": 1.0,
+                        "b": 1.0
+                      }
+                    }
+                  },
+                  {
+                    "kind": "stroke",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 0.2,
+                        "g": 0.2,
+                        "b": 0.2
+                      }
+                    },
+                    "width": 1.0,
+                    "arrow_align": "Tip"
+                  }
+                ]
+              },
+              "kind": {
+                "type": "path",
+                "path": {
+                  "subpaths": [
+                    {
+                      "anchors": [
+                        {
+                          "p": [
+                            267.4,
+                            205.0
+                          ],
+                          "in": [
+                            267.3999999035763,
+                            203.5640595822581
+                          ],
+                          "out": [
+                            267.3999999035763,
+                            206.4359404177419
+                          ],
+                          "kind": "Smooth"
+                        },
+                        {
+                          "p": [
+                            270.0,
+                            207.60000017459055
+                          ],
+                          "in": [
+                            268.5640595822581,
+                            207.60000017459055
+                          ],
+                          "out": [
+                            271.4359404177419,
+                            207.60000017459055
+                          ],
+                          "kind": "Smooth"
+                        },
+                        {
+                          "p": [
+                            272.6,
+                            205.0
+                          ],
+                          "in": [
+                            272.6000000964237,
+                            206.4359404177419
+                          ],
+                          "out": [
+                            272.6000000964237,
+                            203.5640595822581
+                          ],
+                          "kind": "Smooth"
+                        },
+                        {
+                          "p": [
+                            270.0,
+                            202.39999982540945
+                          ],
+                          "in": [
+                            271.4359404177419,
+                            202.39999982540945
+                          ],
+                          "out": [
+                            268.5640595822581,
+                            202.39999982540945
+                          ],
+                          "kind": "Smooth"
+                        }
+                      ],
+                      "closed": true
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": 11,
+              "appearance": {
+                "items": [
+                  {
+                    "kind": "fill",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 1.0,
+                        "g": 1.0,
+                        "b": 1.0
+                      }
+                    }
+                  },
+                  {
+                    "kind": "stroke",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 0.73333335,
+                        "g": 0.73333335,
+                        "b": 0.73333335
+                      }
+                    },
+                    "width": 0.6,
+                    "arrow_align": "Tip"
+                  }
+                ]
+              },
+              "kind": {
+                "type": "path",
+                "path": {
+                  "subpaths": [
+                    {
+                      "anchors": [
+                        {
+                          "p": [
+                            300.0,
+                            28.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            418.85,
+                            28.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            418.85,
+                            44.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            300.0,
+                            44.0
+                          ]
+                        }
+                      ],
+                      "closed": true
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": 12,
+              "kind": {
+                "type": "text",
+                "kind": {
+                  "kind": "point"
+                },
+                "xf": [
+                  1.0,
+                  0.0,
+                  0.0,
+                  1.0,
+                  304.0,
+                  39.0
+                ],
+                "runs": [
+                  {
+                    "text": "fast flow over the upright",
+                    "style": {
+                      "font_family": "Inter",
+                      "font_style": "Regular",
+                      "size": 9.0,
+                      "tracking": 0.0,
+                      "baseline_shift": 0.0,
+                      "h_scale": 100.0,
+                      "v_scale": 100.0,
+                      "rotation": 0.0,
+                      "fill": {
+                        "type": "solid",
+                        "color": {
+                          "model": "rgb",
+                          "r": 0.13333334,
+                          "g": 0.13333334,
+                          "b": 0.13333334
+                        }
+                      },
+                      "stroke": {
+                        "type": "none"
+                      },
+                      "stroke_width": 0.0,
+                      "underline": false,
+                      "strikethrough": false,
+                      "all_caps": false
+                    }
+                  }
+                ],
+                "para": {
+                  "justify": "Left",
+                  "justify_auto": true,
+                  "left_indent": 0.0,
+                  "right_indent": 0.0,
+                  "first_line_indent": 0.0,
+                  "space_before": 0.0,
+                  "space_after": 0.0,
+                  "hyphenate": false,
+                  "mojikumi": "lineEndHalf",
+                  "burasagari": "standard"
+                }
+              }
+            },
+            {
+              "id": 13,
+              "appearance": {
+                "items": [
+                  {
+                    "kind": "fill",
+                    "paint": {
+                      "type": "none"
+                    }
+                  },
+                  {
+                    "kind": "stroke",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 0.2,
+                        "g": 0.2,
+                        "b": 0.2
+                      }
+                    },
+                    "width": 0.8,
+                    "arrow_align": "Tip"
+                  }
+                ]
+              },
+              "kind": {
+                "type": "path",
+                "path": {
+                  "subpaths": [
+                    {
+                      "anchors": [
+                        {
+                          "p": [
+                            235.0,
+                            260.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            200.0,
+                            438.0
+                          ]
+                        }
+                      ],
+                      "closed": false
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": 14,
+              "appearance": {
+                "items": [
+                  {
+                    "kind": "fill",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 1.0,
+                        "g": 1.0,
+                        "b": 1.0
+                      }
+                    }
+                  },
+                  {
+                    "kind": "stroke",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 0.2,
+                        "g": 0.2,
+                        "b": 0.2
+                      }
+                    },
+                    "width": 1.0,
+                    "arrow_align": "Tip"
+                  }
+                ]
+              },
+              "kind": {
+                "type": "path",
+                "path": {
+                  "subpaths": [
+                    {
+                      "anchors": [
+                        {
+                          "p": [
+                            232.4,
+                            260.0
+                          ],
+                          "in": [
+                            232.3999999035763,
+                            258.56405958225804
+                          ],
+                          "out": [
+                            232.3999999035763,
+                            261.43594041774196
+                          ],
+                          "kind": "Smooth"
+                        },
+                        {
+                          "p": [
+                            235.0,
+                            262.6000001745906
+                          ],
+                          "in": [
+                            233.5640595822581,
+                            262.6000001745906
+                          ],
+                          "out": [
+                            236.4359404177419,
+                            262.6000001745906
+                          ],
+                          "kind": "Smooth"
+                        },
+                        {
+                          "p": [
+                            237.6,
+                            260.0
+                          ],
+                          "in": [
+                            237.6000000964237,
+                            261.43594041774196
+                          ],
+                          "out": [
+                            237.6000000964237,
+                            258.56405958225804
+                          ],
+                          "kind": "Smooth"
+                        },
+                        {
+                          "p": [
+                            235.0,
+                            257.3999998254094
+                          ],
+                          "in": [
+                            236.4359404177419,
+                            257.3999998254094
+                          ],
+                          "out": [
+                            233.5640595822581,
+                            257.3999998254094
+                          ],
+                          "kind": "Smooth"
+                        }
+                      ],
+                      "closed": true
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": 15,
+              "appearance": {
+                "items": [
+                  {
+                    "kind": "fill",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 1.0,
+                        "g": 1.0,
+                        "b": 1.0
+                      }
+                    }
+                  },
+                  {
+                    "kind": "stroke",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 0.73333335,
+                        "g": 0.73333335,
+                        "b": 0.73333335
+                      }
+                    },
+                    "width": 0.6,
+                    "arrow_align": "Tip"
+                  }
+                ]
+              },
+              "kind": {
+                "type": "path",
+                "path": {
+                  "subpaths": [
+                    {
+                      "anchors": [
+                        {
+                          "p": [
+                            161.66,
+                            438.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            200.0,
+                            438.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            200.0,
+                            454.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            161.66,
+                            454.0
+                          ]
+                        }
+                      ],
+                      "closed": true
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": 16,
+              "kind": {
+                "type": "text",
+                "kind": {
+                  "kind": "point"
+                },
+                "xf": [
+                  1.0,
+                  0.0,
+                  0.0,
+                  1.0,
+                  165.66,
+                  449.0
+                ],
+                "runs": [
+                  {
+                    "text": "upright",
+                    "style": {
+                      "font_family": "Inter",
+                      "font_style": "Regular",
+                      "size": 9.0,
+                      "tracking": 0.0,
+                      "baseline_shift": 0.0,
+                      "h_scale": 100.0,
+                      "v_scale": 100.0,
+                      "rotation": 0.0,
+                      "fill": {
+                        "type": "solid",
+                        "color": {
+                          "model": "rgb",
+                          "r": 0.13333334,
+                          "g": 0.13333334,
+                          "b": 0.13333334
+                        }
+                      },
+                      "stroke": {
+                        "type": "none"
+                      },
+                      "stroke_width": 0.0,
+                      "underline": false,
+                      "strikethrough": false,
+                      "all_caps": false
+                    }
+                  }
+                ],
+                "para": {
+                  "justify": "Left",
+                  "justify_auto": true,
+                  "left_indent": 0.0,
+                  "right_indent": 0.0,
+                  "first_line_indent": 0.0,
+                  "space_before": 0.0,
+                  "space_after": 0.0,
+                  "hyphenate": false,
+                  "mojikumi": "lineEndHalf",
+                  "burasagari": "standard"
+                }
+              }
+            },
+            {
+              "id": 17,
+              "appearance": {
+                "items": [
+                  {
+                    "kind": "fill",
+                    "paint": {
+                      "type": "none"
+                    }
+                  },
+                  {
+                    "kind": "stroke",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 0.2,
+                        "g": 0.2,
+                        "b": 0.2
+                      }
+                    },
+                    "width": 0.8,
+                    "arrow_align": "Tip"
+                  }
+                ]
+              },
+              "kind": {
+                "type": "path",
+                "path": {
+                  "subpaths": [
+                    {
+                      "anchors": [
+                        {
+                          "p": [
+                            340.0,
+                            320.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            420.0,
+                            438.0
+                          ]
+                        }
+                      ],
+                      "closed": false
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": 18,
+              "appearance": {
+                "items": [
+                  {
+                    "kind": "fill",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 1.0,
+                        "g": 1.0,
+                        "b": 1.0
+                      }
+                    }
+                  },
+                  {
+                    "kind": "stroke",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 0.2,
+                        "g": 0.2,
+                        "b": 0.2
+                      }
+                    },
+                    "width": 1.0,
+                    "arrow_align": "Tip"
+                  }
+                ]
+              },
+              "kind": {
+                "type": "path",
+                "path": {
+                  "subpaths": [
+                    {
+                      "anchors": [
+                        {
+                          "p": [
+                            337.4,
+                            320.0
+                          ],
+                          "in": [
+                            337.3999999035763,
+                            318.56405958225804
+                          ],
+                          "out": [
+                            337.3999999035763,
+                            321.43594041774196
+                          ],
+                          "kind": "Smooth"
+                        },
+                        {
+                          "p": [
+                            340.0,
+                            322.6000001745906
+                          ],
+                          "in": [
+                            338.5640595822581,
+                            322.6000001745906
+                          ],
+                          "out": [
+                            341.4359404177419,
+                            322.6000001745906
+                          ],
+                          "kind": "Smooth"
+                        },
+                        {
+                          "p": [
+                            342.6,
+                            320.0
+                          ],
+                          "in": [
+                            342.6000000964237,
+                            321.43594041774196
+                          ],
+                          "out": [
+                            342.6000000964237,
+                            318.56405958225804
+                          ],
+                          "kind": "Smooth"
+                        },
+                        {
+                          "p": [
+                            340.0,
+                            317.3999998254094
+                          ],
+                          "in": [
+                            341.4359404177419,
+                            317.3999998254094
+                          ],
+                          "out": [
+                            338.5640595822581,
+                            317.3999998254094
+                          ],
+                          "kind": "Smooth"
+                        }
+                      ],
+                      "closed": true
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": 19,
+              "appearance": {
+                "items": [
+                  {
+                    "kind": "fill",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 1.0,
+                        "g": 1.0,
+                        "b": 1.0
+                      }
+                    }
+                  },
+                  {
+                    "kind": "stroke",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 0.73333335,
+                        "g": 0.73333335,
+                        "b": 0.73333335
+                      }
+                    },
+                    "width": 0.6,
+                    "arrow_align": "Tip"
+                  }
+                ]
+              },
+              "kind": {
+                "type": "path",
+                "path": {
+                  "subpaths": [
+                    {
+                      "anchors": [
+                        {
+                          "p": [
+                            420.0,
+                            438.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            509.09000000000003,
+                            438.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            509.09000000000003,
+                            454.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            420.0,
+                            454.0
+                          ]
+                        }
+                      ],
+                      "closed": true
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": 20,
+              "kind": {
+                "type": "text",
+                "kind": {
+                  "kind": "point"
+                },
+                "xf": [
+                  1.0,
+                  0.0,
+                  0.0,
+                  1.0,
+                  424.0,
+                  449.0
+                ],
+                "runs": [
+                  {
+                    "text": "recirculating wake",
+                    "style": {
+                      "font_family": "Inter",
+                      "font_style": "Regular",
+                      "size": 9.0,
+                      "tracking": 0.0,
+                      "baseline_shift": 0.0,
+                      "h_scale": 100.0,
+                      "v_scale": 100.0,
+                      "rotation": 0.0,
+                      "fill": {
+                        "type": "solid",
+                        "color": {
+                          "model": "rgb",
+                          "r": 0.13333334,
+                          "g": 0.13333334,
+                          "b": 0.13333334
+                        }
+                      },
+                      "stroke": {
+                        "type": "none"
+                      },
+                      "stroke_width": 0.0,
+                      "underline": false,
+                      "strikethrough": false,
+                      "all_caps": false
+                    }
+                  }
+                ],
+                "para": {
+                  "justify": "Left",
+                  "justify_auto": true,
+                  "left_indent": 0.0,
+                  "right_indent": 0.0,
+                  "first_line_indent": 0.0,
+                  "space_before": 0.0,
+                  "space_after": 0.0,
+                  "hyphenate": false,
+                  "mojikumi": "lineEndHalf",
+                  "burasagari": "standard"
+                }
+              }
+            },
+            {
+              "id": 21,
+              "appearance": {
+                "items": [
+                  {
+                    "kind": "fill",
+                    "paint": {
+                      "type": "none"
+                    }
+                  },
+                  {
+                    "kind": "stroke",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 0.2,
+                        "g": 0.2,
+                        "b": 0.2
+                      }
+                    },
+                    "width": 0.8,
+                    "arrow_align": "Tip"
+                  }
+                ]
+              },
+              "kind": {
+                "type": "path",
+                "path": {
+                  "subpaths": [
+                    {
+                      "anchors": [
+                        {
+                          "p": [
+                            750.0,
+                            250.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            740.0,
+                            44.0
+                          ]
+                        }
+                      ],
+                      "closed": false
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": 22,
+              "appearance": {
+                "items": [
+                  {
+                    "kind": "fill",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 1.0,
+                        "g": 1.0,
+                        "b": 1.0
+                      }
+                    }
+                  },
+                  {
+                    "kind": "stroke",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 0.2,
+                        "g": 0.2,
+                        "b": 0.2
+                      }
+                    },
+                    "width": 1.0,
+                    "arrow_align": "Tip"
+                  }
+                ]
+              },
+              "kind": {
+                "type": "path",
+                "path": {
+                  "subpaths": [
+                    {
+                      "anchors": [
+                        {
+                          "p": [
+                            747.4,
+                            250.0
+                          ],
+                          "in": [
+                            747.4,
+                            248.56405965043993
+                          ],
+                          "out": [
+                            747.4,
+                            251.43594034956007
+                          ],
+                          "kind": "Smooth"
+                        },
+                        {
+                          "p": [
+                            750.0,
+                            252.60000000000002
+                          ],
+                          "in": [
+                            748.56405965044,
+                            252.60000000000002
+                          ],
+                          "out": [
+                            751.43594034956,
+                            252.60000000000002
+                          ],
+                          "kind": "Smooth"
+                        },
+                        {
+                          "p": [
+                            752.6,
+                            250.0
+                          ],
+                          "in": [
+                            752.6,
+                            251.43594034956007
+                          ],
+                          "out": [
+                            752.6,
+                            248.56405965043993
+                          ],
+                          "kind": "Smooth"
+                        },
+                        {
+                          "p": [
+                            750.0,
+                            247.39999999999998
+                          ],
+                          "in": [
+                            751.43594034956,
+                            247.39999999999998
+                          ],
+                          "out": [
+                            748.56405965044,
+                            247.39999999999998
+                          ],
+                          "kind": "Smooth"
+                        }
+                      ],
+                      "closed": true
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": 23,
+              "appearance": {
+                "items": [
+                  {
+                    "kind": "fill",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 1.0,
+                        "g": 1.0,
+                        "b": 1.0
+                      }
+                    }
+                  },
+                  {
+                    "kind": "stroke",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 0.73333335,
+                        "g": 0.73333335,
+                        "b": 0.73333335
+                      }
+                    },
+                    "width": 0.6,
+                    "arrow_align": "Tip"
+                  }
+                ]
+              },
+              "kind": {
+                "type": "path",
+                "path": {
+                  "subpaths": [
+                    {
+                      "anchors": [
+                        {
+                          "p": [
+                            679.72,
+                            28.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            740.0,
+                            28.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            740.0,
+                            44.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            679.72,
+                            44.0
+                          ]
+                        }
+                      ],
+                      "closed": true
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": 24,
+              "kind": {
+                "type": "text",
+                "kind": {
+                  "kind": "point"
+                },
+                "xf": [
+                  1.0,
+                  0.0,
+                  0.0,
+                  1.0,
+                  683.72,
+                  39.0
+                ],
+                "runs": [
+                  {
+                    "text": "outlet: p = 0",
+                    "style": {
+                      "font_family": "Inter",
+                      "font_style": "Regular",
+                      "size": 9.0,
+                      "tracking": 0.0,
+                      "baseline_shift": 0.0,
+                      "h_scale": 100.0,
+                      "v_scale": 100.0,
+                      "rotation": 0.0,
+                      "fill": {
+                        "type": "solid",
+                        "color": {
+                          "model": "rgb",
+                          "r": 0.13333334,
+                          "g": 0.13333334,
+                          "b": 0.13333334
+                        }
+                      },
+                      "stroke": {
+                        "type": "none"
+                      },
+                      "stroke_width": 0.0,
+                      "underline": false,
+                      "strikethrough": false,
+                      "all_caps": false
+                    }
+                  }
+                ],
+                "para": {
+                  "justify": "Left",
+                  "justify_auto": true,
+                  "left_indent": 0.0,
+                  "right_indent": 0.0,
+                  "first_line_indent": 0.0,
+                  "space_before": 0.0,
+                  "space_after": 0.0,
+                  "hyphenate": false,
+                  "mojikumi": "lineEndHalf",
+                  "burasagari": "standard"
+                }
+              }
+            },
+            {
+              "id": 25,
+              "kind": {
+                "type": "text",
+                "kind": {
+                  "kind": "point"
+                },
+                "xf": [
+                  1.0,
+                  0.0,
+                  0.0,
+                  1.0,
+                  20.0,
+                  486.0
+                ],
+                "runs": [
+                  {
+                    "text": "flow-past on the GPU (Apple M4 Max, Metal, f32): slice y = 20 mm, flow left to right",
+                    "style": {
+                      "font_family": "Inter",
+                      "font_style": "Regular",
+                      "size": 9.0,
+                      "tracking": 0.0,
+                      "baseline_shift": 0.0,
+                      "h_scale": 100.0,
+                      "v_scale": 100.0,
+                      "rotation": 0.0,
+                      "fill": {
+                        "type": "solid",
+                        "color": {
+                          "model": "rgb",
+                          "r": 0.33333334,
+                          "g": 0.33333334,
+                          "b": 0.33333334
+                        }
+                      },
+                      "stroke": {
+                        "type": "none"
+                      },
+                      "stroke_width": 0.0,
+                      "underline": false,
+                      "strikethrough": false,
+                      "all_caps": false
+                    }
+                  }
+                ],
+                "para": {
+                  "justify": "Left",
+                  "justify_auto": true,
+                  "left_indent": 0.0,
+                  "right_indent": 0.0,
+                  "first_line_indent": 0.0,
+                  "space_before": 0.0,
+                  "space_after": 0.0,
+                  "hyphenate": false,
+                  "mojikumi": "lineEndHalf",
+                  "burasagari": "standard"
+                }
+              }
+            },
+            {
+              "id": 26,
+              "appearance": {
+                "items": [
+                  {
+                    "kind": "fill",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 0.17254902,
+                        "g": 0.3764706,
+                        "b": 0.8509804
+                      }
+                    }
+                  },
+                  {
+                    "kind": "stroke",
+                    "paint": {
+                      "type": "none"
+                    },
+                    "width": 0.6
+                  }
+                ]
+              },
+              "kind": {
+                "type": "path",
+                "path": {
+                  "subpaths": [
+                    {
+                      "anchors": [
+                        {
+                          "p": [
+                            818.0,
+                            390.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            832.0,
+                            390.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            832.0,
+                            420.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            818.0,
+                            420.0
+                          ]
+                        }
+                      ],
+                      "closed": true
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": 27,
+              "appearance": {
+                "items": [
+                  {
+                    "kind": "fill",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 0.1764706,
+                        "g": 0.5176471,
+                        "b": 0.8627451
+                      }
+                    }
+                  },
+                  {
+                    "kind": "stroke",
+                    "paint": {
+                      "type": "none"
+                    },
+                    "width": 0.6
+                  }
+                ]
+              },
+              "kind": {
+                "type": "path",
+                "path": {
+                  "subpaths": [
+                    {
+                      "anchors": [
+                        {
+                          "p": [
+                            818.0,
+                            360.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            832.0,
+                            360.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            832.0,
+                            390.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            818.0,
+                            390.0
+                          ]
+                        }
+                      ],
+                      "closed": true
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": 28,
+              "appearance": {
+                "items": [
+                  {
+                    "kind": "fill",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 0.18039216,
+                        "g": 0.6509804,
+                        "b": 0.8745098
+                      }
+                    }
+                  },
+                  {
+                    "kind": "stroke",
+                    "paint": {
+                      "type": "none"
+                    },
+                    "width": 0.6
+                  }
+                ]
+              },
+              "kind": {
+                "type": "path",
+                "path": {
+                  "subpaths": [
+                    {
+                      "anchors": [
+                        {
+                          "p": [
+                            818.0,
+                            330.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            832.0,
+                            330.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            832.0,
+                            360.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            818.0,
+                            360.0
+                          ]
+                        }
+                      ],
+                      "closed": true
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": 29,
+              "appearance": {
+                "items": [
+                  {
+                    "kind": "fill",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 0.19215687,
+                        "g": 0.73333335,
+                        "b": 0.79607844
+                      }
+                    }
+                  },
+                  {
+                    "kind": "stroke",
+                    "paint": {
+                      "type": "none"
+                    },
+                    "width": 0.6
+                  }
+                ]
+              },
+              "kind": {
+                "type": "path",
+                "path": {
+                  "subpaths": [
+                    {
+                      "anchors": [
+                        {
+                          "p": [
+                            818.0,
+                            300.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            832.0,
+                            300.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            832.0,
+                            330.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            818.0,
+                            330.0
+                          ]
+                        }
+                      ],
+                      "closed": true
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": 30,
+              "appearance": {
+                "items": [
+                  {
+                    "kind": "fill",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 0.21176471,
+                        "g": 0.7529412,
+                        "b": 0.63529414
+                      }
+                    }
+                  },
+                  {
+                    "kind": "stroke",
+                    "paint": {
+                      "type": "none"
+                    },
+                    "width": 0.6
+                  }
+                ]
+              },
+              "kind": {
+                "type": "path",
+                "path": {
+                  "subpaths": [
+                    {
+                      "anchors": [
+                        {
+                          "p": [
+                            818.0,
+                            270.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            832.0,
+                            270.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            832.0,
+                            300.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            818.0,
+                            300.0
+                          ]
+                        }
+                      ],
+                      "closed": true
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": 31,
+              "appearance": {
+                "items": [
+                  {
+                    "kind": "fill",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 0.22745098,
+                        "g": 0.77254903,
+                        "b": 0.4745098
+                      }
+                    }
+                  },
+                  {
+                    "kind": "stroke",
+                    "paint": {
+                      "type": "none"
+                    },
+                    "width": 0.6
+                  }
+                ]
+              },
+              "kind": {
+                "type": "path",
+                "path": {
+                  "subpaths": [
+                    {
+                      "anchors": [
+                        {
+                          "p": [
+                            818.0,
+                            240.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            832.0,
+                            240.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            832.0,
+                            270.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            818.0,
+                            270.0
+                          ]
+                        }
+                      ],
+                      "closed": true
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": 32,
+              "appearance": {
+                "items": [
+                  {
+                    "kind": "fill",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 0.3529412,
+                        "g": 0.7921569,
+                        "b": 0.3647059
+                      }
+                    }
+                  },
+                  {
+                    "kind": "stroke",
+                    "paint": {
+                      "type": "none"
+                    },
+                    "width": 0.6
+                  }
+                ]
+              },
+              "kind": {
+                "type": "path",
+                "path": {
+                  "subpaths": [
+                    {
+                      "anchors": [
+                        {
+                          "p": [
+                            818.0,
+                            210.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            832.0,
+                            210.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            832.0,
+                            240.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            818.0,
+                            240.0
+                          ]
+                        }
+                      ],
+                      "closed": true
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": 33,
+              "appearance": {
+                "items": [
+                  {
+                    "kind": "fill",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 0.5882353,
+                        "g": 0.8039216,
+                        "b": 0.3137255
+                      }
+                    }
+                  },
+                  {
+                    "kind": "stroke",
+                    "paint": {
+                      "type": "none"
+                    },
+                    "width": 0.6
+                  }
+                ]
+              },
+              "kind": {
+                "type": "path",
+                "path": {
+                  "subpaths": [
+                    {
+                      "anchors": [
+                        {
+                          "p": [
+                            818.0,
+                            180.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            832.0,
+                            180.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            832.0,
+                            210.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            818.0,
+                            210.0
+                          ]
+                        }
+                      ],
+                      "closed": true
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": 34,
+              "appearance": {
+                "items": [
+                  {
+                    "kind": "fill",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 0.8235294,
+                        "g": 0.8156863,
+                        "b": 0.2627451
+                      }
+                    }
+                  },
+                  {
+                    "kind": "stroke",
+                    "paint": {
+                      "type": "none"
+                    },
+                    "width": 0.6
+                  }
+                ]
+              },
+              "kind": {
+                "type": "path",
+                "path": {
+                  "subpaths": [
+                    {
+                      "anchors": [
+                        {
+                          "p": [
+                            818.0,
+                            150.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            832.0,
+                            150.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            832.0,
+                            180.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            818.0,
+                            180.0
+                          ]
+                        }
+                      ],
+                      "closed": true
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": 35,
+              "appearance": {
+                "items": [
+                  {
+                    "kind": "fill",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 0.92941177,
+                        "g": 0.7294118,
+                        "b": 0.22745098
+                      }
+                    }
+                  },
+                  {
+                    "kind": "stroke",
+                    "paint": {
+                      "type": "none"
+                    },
+                    "width": 0.6
+                  }
+                ]
+              },
+              "kind": {
+                "type": "path",
+                "path": {
+                  "subpaths": [
+                    {
+                      "anchors": [
+                        {
+                          "p": [
+                            818.0,
+                            120.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            832.0,
+                            120.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            832.0,
+                            150.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            818.0,
+                            150.0
+                          ]
+                        }
+                      ],
+                      "closed": true
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": 36,
+              "appearance": {
+                "items": [
+                  {
+                    "kind": "fill",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 0.9098039,
+                        "g": 0.5372549,
+                        "b": 0.20784314
+                      }
+                    }
+                  },
+                  {
+                    "kind": "stroke",
+                    "paint": {
+                      "type": "none"
+                    },
+                    "width": 0.6
+                  }
+                ]
+              },
+              "kind": {
+                "type": "path",
+                "path": {
+                  "subpaths": [
+                    {
+                      "anchors": [
+                        {
+                          "p": [
+                            818.0,
+                            90.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            832.0,
+                            90.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            832.0,
+                            120.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            818.0,
+                            120.0
+                          ]
+                        }
+                      ],
+                      "closed": true
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": 37,
+              "appearance": {
+                "items": [
+                  {
+                    "kind": "fill",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 0.8901961,
+                        "g": 0.34509805,
+                        "b": 0.1882353
+                      }
+                    }
+                  },
+                  {
+                    "kind": "stroke",
+                    "paint": {
+                      "type": "none"
+                    },
+                    "width": 0.6
+                  }
+                ]
+              },
+              "kind": {
+                "type": "path",
+                "path": {
+                  "subpaths": [
+                    {
+                      "anchors": [
+                        {
+                          "p": [
+                            818.0,
+                            60.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            832.0,
+                            60.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            832.0,
+                            90.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            818.0,
+                            90.0
+                          ]
+                        }
+                      ],
+                      "closed": true
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": 38,
+              "appearance": {
+                "items": [
+                  {
+                    "kind": "fill",
+                    "paint": {
+                      "type": "none"
+                    }
+                  },
+                  {
+                    "kind": "stroke",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 0.33333334,
+                        "g": 0.33333334,
+                        "b": 0.33333334
+                      }
+                    },
+                    "width": 0.6,
+                    "arrow_align": "Tip"
+                  }
+                ]
+              },
+              "kind": {
+                "type": "path",
+                "path": {
+                  "subpaths": [
+                    {
+                      "anchors": [
+                        {
+                          "p": [
+                            818.0,
+                            60.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            832.0,
+                            60.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            832.0,
+                            420.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            818.0,
+                            420.0
+                          ]
+                        }
+                      ],
+                      "closed": true
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": 39,
+              "appearance": {
+                "items": [
+                  {
+                    "kind": "fill",
+                    "paint": {
+                      "type": "none"
+                    }
+                  },
+                  {
+                    "kind": "stroke",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 0.33333334,
+                        "g": 0.33333334,
+                        "b": 0.33333334
+                      }
+                    },
+                    "width": 0.6,
+                    "arrow_align": "Tip"
+                  }
+                ]
+              },
+              "kind": {
+                "type": "path",
+                "path": {
+                  "subpaths": [
+                    {
+                      "anchors": [
+                        {
+                          "p": [
+                            832.0,
+                            420.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            836.0,
+                            420.0
+                          ]
+                        }
+                      ],
+                      "closed": false
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": 40,
+              "kind": {
+                "type": "text",
+                "kind": {
+                  "kind": "point"
+                },
+                "xf": [
+                  1.0,
+                  0.0,
+                  0.0,
+                  1.0,
+                  839.0,
+                  423.2
+                ],
+                "runs": [
+                  {
+                    "text": "0.0",
+                    "style": {
+                      "font_family": "Inter",
+                      "font_style": "Regular",
+                      "size": 8.5,
+                      "tracking": 0.0,
+                      "baseline_shift": 0.0,
+                      "h_scale": 100.0,
+                      "v_scale": 100.0,
+                      "rotation": 0.0,
+                      "fill": {
+                        "type": "solid",
+                        "color": {
+                          "model": "rgb",
+                          "r": 0.33333334,
+                          "g": 0.33333334,
+                          "b": 0.33333334
+                        }
+                      },
+                      "stroke": {
+                        "type": "none"
+                      },
+                      "stroke_width": 0.0,
+                      "underline": false,
+                      "strikethrough": false,
+                      "all_caps": false
+                    }
+                  }
+                ],
+                "para": {
+                  "justify": "Left",
+                  "justify_auto": true,
+                  "left_indent": 0.0,
+                  "right_indent": 0.0,
+                  "first_line_indent": 0.0,
+                  "space_before": 0.0,
+                  "space_after": 0.0,
+                  "hyphenate": false,
+                  "mojikumi": "lineEndHalf",
+                  "burasagari": "standard"
+                }
+              }
+            },
+            {
+              "id": 41,
+              "appearance": {
+                "items": [
+                  {
+                    "kind": "fill",
+                    "paint": {
+                      "type": "none"
+                    }
+                  },
+                  {
+                    "kind": "stroke",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 0.33333334,
+                        "g": 0.33333334,
+                        "b": 0.33333334
+                      }
+                    },
+                    "width": 0.6,
+                    "arrow_align": "Tip"
+                  }
+                ]
+              },
+              "kind": {
+                "type": "path",
+                "path": {
+                  "subpaths": [
+                    {
+                      "anchors": [
+                        {
+                          "p": [
+                            832.0,
+                            330.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            836.0,
+                            330.0
+                          ]
+                        }
+                      ],
+                      "closed": false
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": 42,
+              "kind": {
+                "type": "text",
+                "kind": {
+                  "kind": "point"
+                },
+                "xf": [
+                  1.0,
+                  0.0,
+                  0.0,
+                  1.0,
+                  839.0,
+                  333.2
+                ],
+                "runs": [
+                  {
+                    "text": "9.9",
+                    "style": {
+                      "font_family": "Inter",
+                      "font_style": "Regular",
+                      "size": 8.5,
+                      "tracking": 0.0,
+                      "baseline_shift": 0.0,
+                      "h_scale": 100.0,
+                      "v_scale": 100.0,
+                      "rotation": 0.0,
+                      "fill": {
+                        "type": "solid",
+                        "color": {
+                          "model": "rgb",
+                          "r": 0.33333334,
+                          "g": 0.33333334,
+                          "b": 0.33333334
+                        }
+                      },
+                      "stroke": {
+                        "type": "none"
+                      },
+                      "stroke_width": 0.0,
+                      "underline": false,
+                      "strikethrough": false,
+                      "all_caps": false
+                    }
+                  }
+                ],
+                "para": {
+                  "justify": "Left",
+                  "justify_auto": true,
+                  "left_indent": 0.0,
+                  "right_indent": 0.0,
+                  "first_line_indent": 0.0,
+                  "space_before": 0.0,
+                  "space_after": 0.0,
+                  "hyphenate": false,
+                  "mojikumi": "lineEndHalf",
+                  "burasagari": "standard"
+                }
+              }
+            },
+            {
+              "id": 43,
+              "appearance": {
+                "items": [
+                  {
+                    "kind": "fill",
+                    "paint": {
+                      "type": "none"
+                    }
+                  },
+                  {
+                    "kind": "stroke",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 0.33333334,
+                        "g": 0.33333334,
+                        "b": 0.33333334
+                      }
+                    },
+                    "width": 0.6,
+                    "arrow_align": "Tip"
+                  }
+                ]
+              },
+              "kind": {
+                "type": "path",
+                "path": {
+                  "subpaths": [
+                    {
+                      "anchors": [
+                        {
+                          "p": [
+                            832.0,
+                            240.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            836.0,
+                            240.0
+                          ]
+                        }
+                      ],
+                      "closed": false
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": 44,
+              "kind": {
+                "type": "text",
+                "kind": {
+                  "kind": "point"
+                },
+                "xf": [
+                  1.0,
+                  0.0,
+                  0.0,
+                  1.0,
+                  839.0,
+                  243.2
+                ],
+                "runs": [
+                  {
+                    "text": "19.7",
+                    "style": {
+                      "font_family": "Inter",
+                      "font_style": "Regular",
+                      "size": 8.5,
+                      "tracking": 0.0,
+                      "baseline_shift": 0.0,
+                      "h_scale": 100.0,
+                      "v_scale": 100.0,
+                      "rotation": 0.0,
+                      "fill": {
+                        "type": "solid",
+                        "color": {
+                          "model": "rgb",
+                          "r": 0.33333334,
+                          "g": 0.33333334,
+                          "b": 0.33333334
+                        }
+                      },
+                      "stroke": {
+                        "type": "none"
+                      },
+                      "stroke_width": 0.0,
+                      "underline": false,
+                      "strikethrough": false,
+                      "all_caps": false
+                    }
+                  }
+                ],
+                "para": {
+                  "justify": "Left",
+                  "justify_auto": true,
+                  "left_indent": 0.0,
+                  "right_indent": 0.0,
+                  "first_line_indent": 0.0,
+                  "space_before": 0.0,
+                  "space_after": 0.0,
+                  "hyphenate": false,
+                  "mojikumi": "lineEndHalf",
+                  "burasagari": "standard"
+                }
+              }
+            },
+            {
+              "id": 45,
+              "appearance": {
+                "items": [
+                  {
+                    "kind": "fill",
+                    "paint": {
+                      "type": "none"
+                    }
+                  },
+                  {
+                    "kind": "stroke",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 0.33333334,
+                        "g": 0.33333334,
+                        "b": 0.33333334
+                      }
+                    },
+                    "width": 0.6,
+                    "arrow_align": "Tip"
+                  }
+                ]
+              },
+              "kind": {
+                "type": "path",
+                "path": {
+                  "subpaths": [
+                    {
+                      "anchors": [
+                        {
+                          "p": [
+                            832.0,
+                            150.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            836.0,
+                            150.0
+                          ]
+                        }
+                      ],
+                      "closed": false
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": 46,
+              "kind": {
+                "type": "text",
+                "kind": {
+                  "kind": "point"
+                },
+                "xf": [
+                  1.0,
+                  0.0,
+                  0.0,
+                  1.0,
+                  839.0,
+                  153.2
+                ],
+                "runs": [
+                  {
+                    "text": "29.5",
+                    "style": {
+                      "font_family": "Inter",
+                      "font_style": "Regular",
+                      "size": 8.5,
+                      "tracking": 0.0,
+                      "baseline_shift": 0.0,
+                      "h_scale": 100.0,
+                      "v_scale": 100.0,
+                      "rotation": 0.0,
+                      "fill": {
+                        "type": "solid",
+                        "color": {
+                          "model": "rgb",
+                          "r": 0.33333334,
+                          "g": 0.33333334,
+                          "b": 0.33333334
+                        }
+                      },
+                      "stroke": {
+                        "type": "none"
+                      },
+                      "stroke_width": 0.0,
+                      "underline": false,
+                      "strikethrough": false,
+                      "all_caps": false
+                    }
+                  }
+                ],
+                "para": {
+                  "justify": "Left",
+                  "justify_auto": true,
+                  "left_indent": 0.0,
+                  "right_indent": 0.0,
+                  "first_line_indent": 0.0,
+                  "space_before": 0.0,
+                  "space_after": 0.0,
+                  "hyphenate": false,
+                  "mojikumi": "lineEndHalf",
+                  "burasagari": "standard"
+                }
+              }
+            },
+            {
+              "id": 47,
+              "appearance": {
+                "items": [
+                  {
+                    "kind": "fill",
+                    "paint": {
+                      "type": "none"
+                    }
+                  },
+                  {
+                    "kind": "stroke",
+                    "paint": {
+                      "type": "solid",
+                      "color": {
+                        "model": "rgb",
+                        "r": 0.33333334,
+                        "g": 0.33333334,
+                        "b": 0.33333334
+                      }
+                    },
+                    "width": 0.6,
+                    "arrow_align": "Tip"
+                  }
+                ]
+              },
+              "kind": {
+                "type": "path",
+                "path": {
+                  "subpaths": [
+                    {
+                      "anchors": [
+                        {
+                          "p": [
+                            832.0,
+                            60.0
+                          ]
+                        },
+                        {
+                          "p": [
+                            836.0,
+                            60.0
+                          ]
+                        }
+                      ],
+                      "closed": false
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": 48,
+              "kind": {
+                "type": "text",
+                "kind": {
+                  "kind": "point"
+                },
+                "xf": [
+                  1.0,
+                  0.0,
+                  0.0,
+                  1.0,
+                  839.0,
+                  63.2
+                ],
+                "runs": [
+                  {
+                    "text": "39.3",
+                    "style": {
+                      "font_family": "Inter",
+                      "font_style": "Regular",
+                      "size": 8.5,
+                      "tracking": 0.0,
+                      "baseline_shift": 0.0,
+                      "h_scale": 100.0,
+                      "v_scale": 100.0,
+                      "rotation": 0.0,
+                      "fill": {
+                        "type": "solid",
+                        "color": {
+                          "model": "rgb",
+                          "r": 0.33333334,
+                          "g": 0.33333334,
+                          "b": 0.33333334
+                        }
+                      },
+                      "stroke": {
+                        "type": "none"
+                      },
+                      "stroke_width": 0.0,
+                      "underline": false,
+                      "strikethrough": false,
+                      "all_caps": false
+                    }
+                  }
+                ],
+                "para": {
+                  "justify": "Left",
+                  "justify_auto": true,
+                  "left_indent": 0.0,
+                  "right_indent": 0.0,
+                  "first_line_indent": 0.0,
+                  "space_before": 0.0,
+                  "space_after": 0.0,
+                  "hyphenate": false,
+                  "mojikumi": "lineEndHalf",
+                  "burasagari": "standard"
+                }
+              }
+            },
+            {
+              "id": 49,
+              "kind": {
+                "type": "text",
+                "kind": {
+                  "kind": "point"
+                },
+                "xf": [
+                  1.0,
+                  0.0,
+                  0.0,
+                  1.0,
+                  812.0,
+                  30.0
+                ],
+                "runs": [
+                  {
+                    "text": "velocity",
+                    "style": {
+                      "font_family": "Inter",
+                      "font_style": "Regular",
+                      "size": 9.0,
+                      "tracking": 0.0,
+                      "baseline_shift": 0.0,
+                      "h_scale": 100.0,
+                      "v_scale": 100.0,
+                      "rotation": 0.0,
+                      "fill": {
+                        "type": "solid",
+                        "color": {
+                          "model": "rgb",
+                          "r": 0.13333334,
+                          "g": 0.13333334,
+                          "b": 0.13333334
+                        }
+                      },
+                      "stroke": {
+                        "type": "none"
+                      },
+                      "stroke_width": 0.0,
+                      "underline": false,
+                      "strikethrough": false,
+                      "all_caps": false
+                    }
+                  }
+                ],
+                "para": {
+                  "justify": "Left",
+                  "justify_auto": true,
+                  "left_indent": 0.0,
+                  "right_indent": 0.0,
+                  "first_line_indent": 0.0,
+                  "space_before": 0.0,
+                  "space_after": 0.0,
+                  "hyphenate": false,
+                  "mojikumi": "lineEndHalf",
+                  "burasagari": "standard"
+                }
+              }
+            },
+            {
+              "id": 50,
+              "kind": {
+                "type": "text",
+                "kind": {
+                  "kind": "point"
+                },
+                "xf": [
+                  1.0,
+                  0.0,
+                  0.0,
+                  1.0,
+                  812.0,
+                  42.0
+                ],
+                "runs": [
+                  {
+                    "text": "magnitude",
+                    "style": {
+                      "font_family": "Inter",
+                      "font_style": "Regular",
+                      "size": 9.0,
+                      "tracking": 0.0,
+                      "baseline_shift": 0.0,
+                      "h_scale": 100.0,
+                      "v_scale": 100.0,
+                      "rotation": 0.0,
+                      "fill": {
+                        "type": "solid",
+                        "color": {
+                          "model": "rgb",
+                          "r": 0.13333334,
+                          "g": 0.13333334,
+                          "b": 0.13333334
+                        }
+                      },
+                      "stroke": {
+                        "type": "none"
+                      },
+                      "stroke_width": 0.0,
+                      "underline": false,
+                      "strikethrough": false,
+                      "all_caps": false
+                    }
+                  }
+                ],
+                "para": {
+                  "justify": "Left",
+                  "justify_auto": true,
+                  "left_indent": 0.0,
+                  "right_indent": 0.0,
+                  "first_line_indent": 0.0,
+                  "space_before": 0.0,
+                  "space_after": 0.0,
+                  "hyphenate": false,
+                  "mojikumi": "lineEndHalf",
+                  "burasagari": "standard"
+                }
+              }
+            },
+            {
+              "id": 51,
+              "kind": {
+                "type": "text",
+                "kind": {
+                  "kind": "point"
+                },
+                "xf": [
+                  1.0,
+                  0.0,
+                  0.0,
+                  1.0,
+                  812.0,
+                  54.0
+                ],
+                "runs": [
+                  {
+                    "text": "mm/s",
+                    "style": {
+                      "font_family": "Inter",
+                      "font_style": "Regular",
+                      "size": 8.5,
+                      "tracking": 0.0,
+                      "baseline_shift": 0.0,
+                      "h_scale": 100.0,
+                      "v_scale": 100.0,
+                      "rotation": 0.0,
+                      "fill": {
+                        "type": "solid",
+                        "color": {
+                          "model": "rgb",
+                          "r": 0.33333334,
+                          "g": 0.33333334,
+                          "b": 0.33333334
+                        }
+                      },
+                      "stroke": {
+                        "type": "none"
+                      },
+                      "stroke_width": 0.0,
+                      "underline": false,
+                      "strikethrough": false,
+                      "all_caps": false
+                    }
+                  }
+                ],
+                "para": {
+                  "justify": "Left",
+                  "justify_auto": true,
+                  "left_indent": 0.0,
+                  "right_indent": 0.0,
+                  "first_line_indent": 0.0,
+                  "space_before": 0.0,
+                  "space_after": 0.0,
+                  "hyphenate": false,
+                  "mojikumi": "lineEndHalf",
+                  "burasagari": "standard"
+                }
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "swatches": [
+      {
+        "name": "[None]",
+        "paint": {
+          "type": "none"
+        },
+        "global": false,
+        "spot": false
+      },
+      {
+        "name": "White",
+        "paint": {
+          "type": "solid",
+          "color": {
+            "model": "rgb",
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0
+          }
+        },
+        "global": false,
+        "spot": false
+      },
+      {
+        "name": "Black",
+        "paint": {
+          "type": "solid",
+          "color": {
+            "model": "rgb",
+            "r": 0.0,
+            "g": 0.0,
+            "b": 0.0
+          }
+        },
+        "global": false,
+        "spot": false
+      },
+      {
+        "name": "Red",
+        "paint": {
+          "type": "solid",
+          "color": {
+            "model": "rgb",
+            "r": 0.92941177,
+            "g": 0.10980392,
+            "b": 0.14117648
+          }
+        },
+        "global": false,
+        "spot": false
+      },
+      {
+        "name": "Orange Red",
+        "paint": {
+          "type": "solid",
+          "color": {
+            "model": "rgb",
+            "r": 0.94509804,
+            "g": 0.3529412,
+            "b": 0.14117648
+          }
+        },
+        "global": false,
+        "spot": false
+      },
+      {
+        "name": "Orange",
+        "paint": {
+          "type": "solid",
+          "color": {
+            "model": "rgb",
+            "r": 0.96862745,
+            "g": 0.5764706,
+            "b": 0.11764706
+          }
+        },
+        "global": false,
+        "spot": false
+      },
+      {
+        "name": "Amber",
+        "paint": {
+          "type": "solid",
+          "color": {
+            "model": "rgb",
+            "r": 0.9843137,
+            "g": 0.6901961,
+            "b": 0.23137255
+          }
+        },
+        "global": false,
+        "spot": false
+      },
+      {
+        "name": "Yellow",
+        "paint": {
+          "type": "solid",
+          "color": {
+            "model": "rgb",
+            "r": 0.9882353,
+            "g": 0.93333334,
+            "b": 0.12941177
+          }
+        },
+        "global": false,
+        "spot": false
+      },
+      {
+        "name": "Yellow Green",
+        "paint": {
+          "type": "solid",
+          "color": {
+            "model": "rgb",
+            "r": 0.8509804,
+            "g": 0.8784314,
+            "b": 0.12941177
+          }
+        },
+        "global": false,
+        "spot": false
+      },
+      {
+        "name": "Lime",
+        "paint": {
+          "type": "solid",
+          "color": {
+            "model": "rgb",
+            "r": 0.54901963,
+            "g": 0.7764706,
+            "b": 0.24705882
+          }
+        },
+        "global": false,
+        "spot": false
+      },
+      {
+        "name": "Green",
+        "paint": {
+          "type": "solid",
+          "color": {
+            "model": "rgb",
+            "r": 0.22352941,
+            "g": 0.70980394,
+            "b": 0.2901961
+          }
+        },
+        "global": false,
+        "spot": false
+      },
+      {
+        "name": "Emerald",
+        "paint": {
+          "type": "solid",
+          "color": {
+            "model": "rgb",
+            "r": 0.0,
+            "g": 0.57254905,
+            "b": 0.27058825
+          }
+        },
+        "global": false,
+        "spot": false
+      },
+      {
+        "name": "Teal",
+        "paint": {
+          "type": "solid",
+          "color": {
+            "model": "rgb",
+            "r": 0.0,
+            "g": 0.40784314,
+            "b": 0.21568628
+          }
+        },
+        "global": false,
+        "spot": false
+      },
+      {
+        "name": "Aqua",
+        "paint": {
+          "type": "solid",
+          "color": {
+            "model": "rgb",
+            "r": 0.13333334,
+            "g": 0.70980394,
+            "b": 0.4509804
+          }
+        },
+        "global": false,
+        "spot": false
+      },
+      {
+        "name": "Cyan Green",
+        "paint": {
+          "type": "solid",
+          "color": {
+            "model": "rgb",
+            "r": 0.0,
+            "g": 0.6627451,
+            "b": 0.6156863
+          }
+        },
+        "global": false,
+        "spot": false
+      },
+      {
+        "name": "Cyan",
+        "paint": {
+          "type": "solid",
+          "color": {
+            "model": "rgb",
+            "r": 0.16078432,
+            "g": 0.67058825,
+            "b": 0.8862745
+          }
+        },
+        "global": false,
+        "spot": false
+      },
+      {
+        "name": "Azure",
+        "paint": {
+          "type": "solid",
+          "color": {
+            "model": "rgb",
+            "r": 0.0,
+            "g": 0.44313726,
+            "b": 0.7372549
+          }
+        },
+        "global": false,
+        "spot": false
+      },
+      {
+        "name": "Blue",
+        "paint": {
+          "type": "solid",
+          "color": {
+            "model": "rgb",
+            "r": 0.18039216,
+            "g": 0.19215687,
+            "b": 0.57254905
+          }
+        },
+        "global": false,
+        "spot": false
+      },
+      {
+        "name": "Indigo",
+        "paint": {
+          "type": "solid",
+          "color": {
+            "model": "rgb",
+            "r": 0.105882354,
+            "g": 0.078431375,
+            "b": 0.39215687
+          }
+        },
+        "global": false,
+        "spot": false
+      },
+      {
+        "name": "Violet",
+        "paint": {
+          "type": "solid",
+          "color": {
+            "model": "rgb",
+            "r": 0.4,
+            "g": 0.1764706,
+            "b": 0.5686275
+          }
+        },
+        "global": false,
+        "spot": false
+      },
+      {
+        "name": "Purple",
+        "paint": {
+          "type": "solid",
+          "color": {
+            "model": "rgb",
+            "r": 0.5764706,
+            "g": 0.15294118,
+            "b": 0.56078434
+          }
+        },
+        "global": false,
+        "spot": false
+      },
+      {
+        "name": "Magenta",
+        "paint": {
+          "type": "solid",
+          "color": {
+            "model": "rgb",
+            "r": 0.61960787,
+            "g": 0.0,
+            "b": 0.3647059
+          }
+        },
+        "global": false,
+        "spot": false
+      },
+      {
+        "name": "Rose",
+        "paint": {
+          "type": "solid",
+          "color": {
+            "model": "rgb",
+            "r": 0.83137256,
+            "g": 0.078431375,
+            "b": 0.3529412
+          }
+        },
+        "global": false,
+        "spot": false
+      },
+      {
+        "name": "Pink",
+        "paint": {
+          "type": "solid",
+          "color": {
+            "model": "rgb",
+            "r": 0.92941177,
+            "g": 0.11764706,
+            "b": 0.4745098
+          }
+        },
+        "global": false,
+        "spot": false
+      },
+      {
+        "name": "Brown",
+        "paint": {
+          "type": "solid",
+          "color": {
+            "model": "rgb",
+            "r": 0.78039217,
+            "g": 0.69803923,
+            "b": 0.6
+          }
+        },
+        "global": false,
+        "spot": false
+      },
+      {
+        "name": "Tan",
+        "paint": {
+          "type": "solid",
+          "color": {
+            "model": "rgb",
+            "r": 0.6,
+            "g": 0.5254902,
+            "b": 0.45882353
+          }
+        },
+        "global": false,
+        "spot": false
+      },
+      {
+        "name": "Coffee",
+        "paint": {
+          "type": "solid",
+          "color": {
+            "model": "rgb",
+            "r": 0.4509804,
+            "g": 0.3882353,
+            "b": 0.34117648
+          }
+        },
+        "global": false,
+        "spot": false
+      },
+      {
+        "name": "Chocolate",
+        "paint": {
+          "type": "solid",
+          "color": {
+            "model": "rgb",
+            "r": 0.3254902,
+            "g": 0.2784314,
+            "b": 0.25490198
+          }
+        },
+        "global": false,
+        "spot": false
+      },
+      {
+        "name": "Sand",
+        "paint": {
+          "type": "solid",
+          "color": {
+            "model": "rgb",
+            "r": 0.7764706,
+            "g": 0.6117647,
+            "b": 0.42745098
+          }
+        },
+        "global": false,
+        "spot": false
+      },
+      {
+        "name": "Copper",
+        "paint": {
+          "type": "solid",
+          "color": {
+            "model": "rgb",
+            "r": 0.6509804,
+            "g": 0.4862745,
+            "b": 0.32156864
+          }
+        },
+        "global": false,
+        "spot": false
+      },
+      {
+        "name": "Rust",
+        "paint": {
+          "type": "solid",
+          "color": {
+            "model": "rgb",
+            "r": 0.54901963,
+            "g": 0.38431373,
+            "b": 0.22352941
+          }
+        },
+        "global": false,
+        "spot": false
+      },
+      {
+        "name": "Walnut",
+        "paint": {
+          "type": "solid",
+          "color": {
+            "model": "rgb",
+            "r": 0.45882353,
+            "g": 0.29803923,
+            "b": 0.14117648
+          }
+        },
+        "global": false,
+        "spot": false
+      },
+      {
+        "name": "Espresso",
+        "paint": {
+          "type": "solid",
+          "color": {
+            "model": "rgb",
+            "r": 0.3764706,
+            "g": 0.21960784,
+            "b": 0.07450981
+          }
+        },
+        "global": false,
+        "spot": false
+      },
+      {
+        "name": "White, Black",
+        "paint": {
+          "type": "gradient",
+          "gradient": {
+            "kind": "Linear",
+            "stops": [
+              {
+                "offset": 0.0,
+                "color": {
+                  "model": "rgb",
+                  "r": 1.0,
+                  "g": 1.0,
+                  "b": 1.0
+                },
+                "opacity": 1.0,
+                "midpoint": 0.5
+              },
+              {
+                "offset": 1.0,
+                "color": {
+                  "model": "rgb",
+                  "r": 0.0,
+                  "g": 0.0,
+                  "b": 0.0
+                },
+                "opacity": 1.0,
+                "midpoint": 0.5
+              }
+            ]
+          },
+          "angle": 0.0
+        },
+        "global": false,
+        "spot": false
+      },
+      {
+        "name": "Radial White, Black",
+        "paint": {
+          "type": "gradient",
+          "gradient": {
+            "kind": "Radial",
+            "stops": [
+              {
+                "offset": 0.0,
+                "color": {
+                  "model": "rgb",
+                  "r": 1.0,
+                  "g": 1.0,
+                  "b": 1.0
+                },
+                "opacity": 1.0,
+                "midpoint": 0.5
+              },
+              {
+                "offset": 1.0,
+                "color": {
+                  "model": "rgb",
+                  "r": 0.0,
+                  "g": 0.0,
+                  "b": 0.0
+                },
+                "opacity": 1.0,
+                "midpoint": 0.5
+              }
+            ]
+          },
+          "angle": 0.0
+        },
+        "global": false,
+        "spot": false
+      },
+      {
+        "name": "Sunset",
+        "paint": {
+          "type": "gradient",
+          "gradient": {
+            "kind": "Linear",
+            "stops": [
+              {
+                "offset": 0.0,
+                "color": {
+                  "model": "rgb",
+                  "r": 0.9843137,
+                  "g": 0.6901961,
+                  "b": 0.23137255
+                },
+                "opacity": 1.0,
+                "midpoint": 0.5
+              },
+              {
+                "offset": 1.0,
+                "color": {
+                  "model": "rgb",
+                  "r": 0.83137256,
+                  "g": 0.078431375,
+                  "b": 0.3529412
+                },
+                "opacity": 1.0,
+                "midpoint": 0.5
+              }
+            ]
+          },
+          "angle": 0.0
+        },
+        "global": false,
+        "spot": false
+      },
+      {
+        "name": "Ocean",
+        "paint": {
+          "type": "gradient",
+          "gradient": {
+            "kind": "Linear",
+            "stops": [
+              {
+                "offset": 0.0,
+                "color": {
+                  "model": "rgb",
+                  "r": 0.16078432,
+                  "g": 0.67058825,
+                  "b": 0.8862745
+                },
+                "opacity": 1.0,
+                "midpoint": 0.5
+              },
+              {
+                "offset": 1.0,
+                "color": {
+                  "model": "rgb",
+                  "r": 0.18039216,
+                  "g": 0.19215687,
+                  "b": 0.57254905
+                },
+                "opacity": 1.0,
+                "midpoint": 0.5
+              }
+            ]
+          },
+          "angle": 0.0
+        },
+        "global": false,
+        "spot": false
+      }
+    ],
+    "swatch_groups": [
+      {
+        "name": "Grays",
+        "swatches": [
+          {
+            "name": "K=90",
+            "paint": {
+              "type": "solid",
+              "color": {
+                "model": "gray",
+                "k": 0.9
+              }
+            },
+            "global": false,
+            "spot": false
+          },
+          {
+            "name": "K=80",
+            "paint": {
+              "type": "solid",
+              "color": {
+                "model": "gray",
+                "k": 0.8
+              }
+            },
+            "global": false,
+            "spot": false
+          },
+          {
+            "name": "K=70",
+            "paint": {
+              "type": "solid",
+              "color": {
+                "model": "gray",
+                "k": 0.7
+              }
+            },
+            "global": false,
+            "spot": false
+          },
+          {
+            "name": "K=60",
+            "paint": {
+              "type": "solid",
+              "color": {
+                "model": "gray",
+                "k": 0.6
+              }
+            },
+            "global": false,
+            "spot": false
+          },
+          {
+            "name": "K=50",
+            "paint": {
+              "type": "solid",
+              "color": {
+                "model": "gray",
+                "k": 0.5
+              }
+            },
+            "global": false,
+            "spot": false
+          },
+          {
+            "name": "K=40",
+            "paint": {
+              "type": "solid",
+              "color": {
+                "model": "gray",
+                "k": 0.4
+              }
+            },
+            "global": false,
+            "spot": false
+          },
+          {
+            "name": "K=30",
+            "paint": {
+              "type": "solid",
+              "color": {
+                "model": "gray",
+                "k": 0.3
+              }
+            },
+            "global": false,
+            "spot": false
+          },
+          {
+            "name": "K=20",
+            "paint": {
+              "type": "solid",
+              "color": {
+                "model": "gray",
+                "k": 0.2
+              }
+            },
+            "global": false,
+            "spot": false
+          },
+          {
+            "name": "K=10",
+            "paint": {
+              "type": "solid",
+              "color": {
+                "model": "gray",
+                "k": 0.1
+              }
+            },
+            "global": false,
+            "spot": false
+          }
+        ]
+      },
+      {
+        "name": "Brights",
+        "swatches": [
+          {
+            "name": "Bright Red",
+            "paint": {
+              "type": "solid",
+              "color": {
+                "model": "rgb",
+                "r": 1.0,
+                "g": 0.11372549,
+                "b": 0.14509805
+              }
+            },
+            "global": false,
+            "spot": false
+          },
+          {
+            "name": "Bright Yellow",
+            "paint": {
+              "type": "solid",
+              "color": {
+                "model": "rgb",
+                "r": 1.0,
+                "g": 0.9019608,
+                "b": 0.0
+              }
+            },
+            "global": false,
+            "spot": false
+          },
+          {
+            "name": "Bright Green",
+            "paint": {
+              "type": "solid",
+              "color": {
+                "model": "rgb",
+                "r": 0.0,
+                "g": 0.9019608,
+                "b": 0.4627451
+              }
+            },
+            "global": false,
+            "spot": false
+          },
+          {
+            "name": "Bright Blue",
+            "paint": {
+              "type": "solid",
+              "color": {
+                "model": "rgb",
+                "r": 0.16078432,
+                "g": 0.4745098,
+                "b": 1.0
+              }
+            },
+            "global": false,
+            "spot": false
+          },
+          {
+            "name": "Bright Violet",
+            "paint": {
+              "type": "solid",
+              "color": {
+                "model": "rgb",
+                "r": 0.8352941,
+                "g": 0.0,
+                "b": 0.9764706
+              }
+            },
+            "global": false,
+            "spot": false
+          }
+        ]
+      }
+    ],
+    "graphic_styles": [
+      {
+        "name": "Default Graphic Style",
+        "appearance": {
+          "items": [
+            {
+              "kind": "fill",
+              "paint": {
+                "type": "solid",
+                "color": {
+                  "model": "rgb",
+                  "r": 1.0,
+                  "g": 1.0,
+                  "b": 1.0
+                }
+              }
+            },
+            {
+              "kind": "stroke",
+              "paint": {
+                "type": "solid",
+                "color": {
+                  "model": "rgb",
+                  "r": 0.0,
+                  "g": 0.0,
+                  "b": 0.0
+                }
+              },
+              "width": 1.0
+            }
+          ]
+        },
+        "id": 1,
+        "unit_box": true
+      },
+      {
+        "name": "Black Outline",
+        "appearance": {
+          "items": [
+            {
+              "kind": "fill",
+              "paint": {
+                "type": "none"
+              }
+            },
+            {
+              "kind": "stroke",
+              "paint": {
+                "type": "solid",
+                "color": {
+                  "model": "rgb",
+                  "r": 0.0,
+                  "g": 0.0,
+                  "b": 0.0
+                }
+              },
+              "width": 1.0
+            }
+          ]
+        },
+        "id": 2,
+        "unit_box": true
+      },
+      {
+        "name": "Heavy Ink",
+        "appearance": {
+          "items": [
+            {
+              "kind": "fill",
+              "paint": {
+                "type": "solid",
+                "color": {
+                  "model": "rgb",
+                  "r": 0.105882354,
+                  "g": 0.078431375,
+                  "b": 0.39215687
+                }
+              }
+            },
+            {
+              "kind": "stroke",
+              "paint": {
+                "type": "solid",
+                "color": {
+                  "model": "rgb",
+                  "r": 0.0,
+                  "g": 0.0,
+                  "b": 0.0
+                }
+              },
+              "width": 4.0
+            }
+          ]
+        },
+        "id": 3,
+        "unit_box": true
+      },
+      {
+        "name": "Sunshine",
+        "appearance": {
+          "items": [
+            {
+              "kind": "fill",
+              "paint": {
+                "type": "solid",
+                "color": {
+                  "model": "rgb",
+                  "r": 0.9843137,
+                  "g": 0.6901961,
+                  "b": 0.23137255
+                }
+              }
+            },
+            {
+              "kind": "stroke",
+              "paint": {
+                "type": "solid",
+                "color": {
+                  "model": "rgb",
+                  "r": 0.94509804,
+                  "g": 0.3529412,
+                  "b": 0.14117648
+                }
+              },
+              "width": 2.0
+            }
+          ]
+        },
+        "id": 4,
+        "unit_box": true
+      }
+    ],
+    "symbols": [],
+    "guides": [],
+    "grid": {
+      "spacing": 72.0,
+      "subdivisions": 8
+    },
+    "raster_effects_ppi": 72.0,
+    "images": {},
+    "next_id": 52,
+    "metadata": {
+      "author": "",
+      "authorTitle": "",
+      "description": "",
+      "keywords": [],
+      "rating": 0,
+      "copyrightStatus": "unknown",
+      "copyrightNotice": "",
+      "copyrightUrl": "",
+      "created": 1793146784,
+      "modified": null
+    }
+  },
+  "images": {
+    "img4cfbe7db6b74f2c1": {
+      "mime": "image/png",
+      "blob": [
+        0,
+        44931
+      ]
+    }
+  }
+}
+ VCBLOBS âPNG
+
+   IHDR  @  Ë   Ü{2É  ØJIDATxúÏ›Õn#iñ‡ ≈R˝i≤›F÷ ]å\åÌ≤/¬wbo}æ	Ø|^x1€Ò∆0–¿<§75Ä≥∆nWW)+´2%—¯(Ö2D… ﬂﬂÛ ÇHÍ/Dâdƒ˜∆9gı˝èÔ÷     @Añ±7      `l     †8     †8     †8     †8     †8     †8     †8     †8     †8     †8     †8     †8´uÏ-      ô
+     †8´F	     P      @q      @q      @qVç!      @aTÄ      ≈Ä      ≈Ä      ≈Ä      ≈Ä      ≈Ä      ≈Ä      ≈Ä      ≈Ä      ≈Ä      ≈Ä      ≈Ä      ≈Ä      ≈Ä      ≈Ä      ≈Ä      ≈Ä      ≈Ä      ≈Ä      ≈Ä      ≈Y≠co     ¿»TÄ      ≈Ä      ≈Ä      ≈Ä      ≈Y5¶†     ÖQ     G      G      G      G      G      G      G      G      G      G      g’4Îÿ€      0*      @q      @q      @q      @q      @q      @q      @q      @q      @qVÎÿ[      02      @q      @q      @q      @q      @q      @q      @qVÕ:ˆ&      åK     P     P     P     P     P     P     P     P     P     P     P     P     P     P     P     P     P     Pú’:ˆ      åL     PúU”®      ¢     (é      (é      (é      (é      (é      (é      (é      (é      (Œ™Y«ﬁ     Äq©      ä#      ä#      ä#      ä#      ä#      ä#      ä#      ä#      ä#      ä#      ä#      ä#      ä#      ä≥Z«ﬁ     Äë©      ä#      ä#      ä#      ä#      ä#      ä#      ä#      ä#      ä#      ä#      ä#      ä≥jöuÏm      ï
+     †8+      @iTÄ      ≈Ä      ≈Ä      ≈Ä      ≈Ä      ≈Ä      ≈Ä      ≈Ä      ≈Ä      ≈Ä      ≈Ä      ≈Y≠co     ¿»TÄ      ≈Ä      ≈Ä      ≈Ä      ≈Ä      ≈Ä      ≈Ä      ≈Ä      ≈Ä      ≈Ä      ≈Ä      ≈Ä      ≈Ä      ≈Ä      ≈Ä      ≈Ä      ≈Ä      ≈Y5Îÿõ      0.      @q      @q      @q      @q      @q      @qVM≥éΩ      £R     g•˛     (ç
+     †8     †8     †8     †8     †8     †8     †8     †8     †8     †8     †8     †8     †8     †8     †8     †8     †8     †8     †8     †8´f{      ∆•     (é      (é      (é      (é      (Œj{      F¶     (é      (Œ*ˆ‘ÓÕ€øçΩ	êïã€ÿõ@.ﬂﬂ≈ﬁò’˙≠¶® §cÒÂ"ˆ& 3≥?J…Vø˚7±7°jê»˛ÎÎˇ{ +∏∏éΩ	ÓÚ√]ÛõÔâΩ0õªÔÓöª7B? “±˙Ω•
+®ÕÌÎ[!≈˙ıøˇÎÿõP5-∞ `+   gÇ cqZ @≈÷◊⁄_  P&   sñ- ©—öÍcüòä
+ ÄJ9– E^ü Ä±¨öF€ ÄY` Â◊®≈óãÿõ #∞˛ì
+ Ë∏|Î˛†Ê  õìrÄ)ô P)õ §  `*@  *$¸   †t Ä
+	@ Hô◊) `Z`@«Âá;˜ @Ñ Pèu`J Ä
+È≠@Í,ä ÁÄ  T∆Ç 9X_Øco ê93@  *#  ^Ø Äs© ÄÊ  §EÂSÌLI @eÃˇ   †*@   Ä$	ÌÄs®  ®»›ww±7  iuLI  Ã  HãÖQ ‡Z` TƒêI r# N%  ®àE$ r„µ 8’™Yü¸µ  dƒ¸ ≤≠^|{+Ä)8©Çı˜®TÄ ¿ÉÀ˜∑Óäv˜∆ t Ú\ µH
+eÚÿ¶∂@ îOı 9ª}}€\º∫h_.bo
+ ≈˙{\*@ ‡¡Âg«Sn¯°˙Ä‹y-ÉB[‹LH  ¬
+o+`¡Äb^”æs¬
+îD,`j ÄP0· •ΩÆY0 ÜÄ  *ú%këÄ“˜°*∫Ä9@  TÄºøu?Ps? (ïVX ¿P –ã9;ÄíiÖ !  (åv ‘‡ˆµ
+^»ôvÄ9@ ®ﬁÂáªÍÔ °ı 5Ç  ˚@ ®û Ñ¢z¢øËP◊k_xÚ‚qÃE  P· 5R˘Ä sÄ PΩÀ˜˙GSFÎ+í ‘J ÙÄ Ÿx±∞HÕ4¥¿¢™? ®ôVXêóıµ÷u¿<   ôs÷+ ‹ø™ÜÑ<x¨sÄ Pµ´ünboú≈b x]Ñú?Ä9	@  2%¸  Øèê0' U3 ù\	? ¿Î$‰»¸`N ™f :9~ ¿awoÓ‹Mê  ¿ú  TÀ¸r$¸ Ä·ã¨·uH«›wÇI`^ ÄL? ‡8B ®õ ÄjôˇANÑ p!§√¸`n´¶Yœ˛C Êê· úÇ‹¸Ò¶πxu—,æ\∏;!Û?®ìı˜òTÄ P%Û?»Ö ºÆB	Ñ@ ÄD	? ¿Î+îB ƒ  †JÊê:· xùÖíòˇƒ  †JÊê≤ªÔÓú! s≤ÃKÉ ÄÍòˇAÍ·«›õªÿõ UÇ¿<Ñ@,+3Ë “ ¸ Ä8!»≈´ãfÒÂ¬›ÄP3ÎÔq≠¸ ®Õ’€±7û~ @<B &#âJ, ™bˆ©.∫h{ 	ºß%L¡æ.À*⁄OÄ §÷
+ j	  i-“._:_ J  †*óÔocolÑ–#úi
+ §E#?¶TV9•Ä™® !ïÉ@· §Çx≠Ä¸	@ ®∆’O7±7;Äå™5o˛x„Ïu8˜±tm4èX  3	gíö˜ y—ŒcˇàI @5Æﬁ~àΩ	T ∞s »õN#¸ b”Ä*hEÏaÁ˛  ˇ$¥ƒÚö√yº ±	@  &bÿ9 î'úÿ^„Å√Ãˇ b”»∆ã≈mÏM c⁄_1∑∞0“∂À   ¢%£àM @Ò¥øbn¬ (üˆ~ )– `D¬ ®+	-±ÄÁ @
+  O˚+fÌ	ÆÌ T∑»k8: §I @—¥øbŒ√Yn P/√— =fÄ  ú!ÑZ_  Åπ –ŸOæ^ª;ÄË  M˚+¶dﬁ lˇ‡°ÊÚ•¶ õ Äbi≈îUaqCÀ+ †OÿOoÀØñÇ™e_HÅ  ‡™> Ä¡˚™A  * ≈“˛ä±t K Ò@ (íˆWåIÀ+ ‡Zb@ ät˘˛6ˆ&P-Ø Ä—ˆ+¥ƒÄY-Á˝q 0ΩÀwõ78ó ò"	m5°d†©Ä P·c∞ÖÖâˆ,M Ä±˜5n˛xcë && †8Üü3F¯·¨5 `jõ.æs¬ L≈ ä¢˙Éshy ÃÕ\ òŒj=·7Äπ	@8ï àEBiTSCÁÒ‡ŒàJ E—˛äShy §Ç¨Ø◊Õ≈´ãÿõg[|πp/I0Äb\˝t{»åy @ä√—ÕÄq®  ™§Â ê*-± `+M» (ÖˆW=≥r”b‚≠N¨ @∫Ñ ‰ﬁ+ºŸÁC@b[√@	¥øbU @NÃ!gÀØñõY{ÄìÔb2»∆k√ Å”ÖÉØˆLJ Ä‹fñAnBR  †⁄_qhò®Ú{  Wˆg»ïàM @ˆ¥øb_À+gL •˚5NÍ ∑6X 1y {™?Ë£Â P"!9CàE @÷T∞Mã †tBr¢
+àI  CÀ+ †⁄|í @L ≤¶˝--Ø Ä⁄A»Ö*  Ÿ“˛ä@À+ †Ê˝ !9Xæ\™¢Ä ê-’hy ‘NB.TÅ 1@ »íÍ¥º ¯ÇÑC ıY B`n  À≥√{  Ó›Ωπ”ã‰iÖÃM @ñ¥ø™ªÂï ‡9Ì∞»¡≈´ãÿõ TD @v¥ø™ìñW  √B'ãêCZbLM @vT‘%¿ﬂ¸Ò∆Å< ¿Ì∞ e!¸!àô ¿‘VìˇÄë¸∞V&K”\~p0W[À+  «QBN3A¬õ˝~`* ≤" ©Á†=ﬁ Nﬂü“bà\Ñ$pÚ06-∞ »äˆWÂ3Ë `Ñ}*m∞»0Y˝~•-0*  d√Û:ù´˙  8ü}*r•ì
+ ≤q˘˛6ˆ&0·∫ `¸},»πD7‡\ +°◊=˚√¸è2iy 0πªxu°%p-∞ »Ç£<ù LºøuΩnöóÓeÚØ	o·ƒ)≥mÄc≠Cê√œÀly ¿¥˚\P
+AπÚLó
+ íg¯yYúπ 0obé%Ñ «Ä ê<√œÀa–9  0A0Ñ!Ë $ÕÛ≤Z^i√  0/3®!Y˝~eX:–K I3¸<Ê}   s!-¡–Ä ê4√œÛfﬁ  #	!Ä » ÕEÛ¢πçΩÃƒÛº´>¬¡ÜñW  q-ø“˝úzÉê>úîC†N `TZ^ §·‚’E≥¯r{3 *a‘m’¨co¿p?¨/ö∆˛{5¥ø èñW  i~¿˛0$P¬,¨øG•Ä$iï-Ø  “j{•Úéoïµæ^k„ÖÄ ê$’˘Pı êV¯±=ÿ	èõó˜óÖ!P …Q˝ëU  i~¿4a»Ê˝õ˚˜@^ @~3@ÄË: Hã&zlôYÄ êÌØ“¶Â @ZÑonH†:“%  )⁄_•M¯ êñ0Ï‹ÃàCÈÄ Y∂¡z±∏çΩLDıG∫n_ﬂnZ_ êVıêVéõ6o◊˜ÔÅxVM„A@T§…º Ät√èP§%<.7èÕáAÍë⁄YèI ∞ìñW  i2˜ÚD¬qñÍòá Ädhï· @öÑP@ª¨N≤yˇÊ˛=0. I–˛*-Ê}  §À–s(áŸ!0-êùöãÊEczi.ﬂ˚õ¶ Ù¶g‘ êû–B«–s®´UV†]úN dÁáıE”òÛWúÀ }c”Ú
+  Mma‡9TZÌµ5L=–2ÜÄ ùˆWÒiy ê‡ô‡WÌÆÄÁ"·à@Ä ù·ÁÒhy ê’¿1œÿO ‰Ÿãbh}èñW  È| c"Å*j' ≤A^,Õ.Å $· @¿ú°H;X›j!  *ÌØÊgﬁ @|Ç Ü∂2§;Cd}˝q∏:îfÂ_ÄXTÃO¯ ó‡HÆ:‰Â˝uÅ»4¨ø«•»“ÕEÛ¢—+wê˘ÑŸ~  á‡Hù@Ñ	@ àF˚´y?  ‚| %"muàŸ!‰F d;Ωπü·E¶Æ~∫âΩ	U0Ï  ¡Pbbê:πÄ @°Ñ  Û| 5RWB™ @æ dM˚´iv 0øÂWÀ«ÖAÄ⁄*C⁄Ò÷◊˜°§@ ¿Ï¥øöñ `^ÇÄáÁ√Ñººø¨+)Ä YWÅºX‹∆ﬁN†˙cÜù ÃKª+Ä˝aH;3Dã,bÄ 0+’”∞C	 0oË—^`?A1	@Äl˝–\4/  ¸  ò∏ø˝’}è{Å¿8AH†*Ñ9@Äº°;·*;⁄_çÀº ÄÒim0ùv`∫ˆXÃa’¨g˘9 †˝’»Ñ  „PÂ∑*$Ã¥oEVÖXèJêwTJ¯ p≥< “—∂T¬ÿ @ˆ!»ãÖ9 π–˛Í|Ì1·=  √µÛ;¬ s≥< “U“–t«ÓÒ	@ ò≈ÂáºwZRŸq
+ï  £  _!	œ„9üòÎvóD dÌ€ıeÛÕ‚]ÏÕ` »yÑ  √=  zNøxuëm5»Ì'1∆& `⁄_ù.◊= Ä9hmPæ€b©˛HÉ »öAËyP˝q∫úvÓ  Ê"Ù ®SAÇéì iÄ Ÿ3=}ê”?  >“⁄
+ÄÓlê‘gdjï ì”˛Íx¬ Äè°G[Ò Ax]X˝~ïÏ±sÿ.“  ≤˜Cs—ºh“N˝k¶˙„x©Ó¿ ÃAË@â-±àC î1ƒ	a…ÄG¯ ‘HË¿π-±Bí ‹ÌØ“! `RóÔUÁ˙ó¶≤≥ 0%CÃ˚uÂ‚’E«’⁄_•E Qbz∫TÄì¬N ¿TãRã´≈cËaû S	!»Õo¢ﬁ¡^Á“" `2¬èaÑ @	a -øZö	¬#PÑo◊óÕ7ãw±7É-ê√Ñ @Ó-¨∫◊ Öô ÎÎu¥.∫;§E ¿dÃˇÿO¯ §NU 9
+}8Êé·Ó˙. œ•ﬂJ∑q†ÊÄ§I»n¬  ı∞CU π
+Øa1ZaÖÍèÌ
+ÎÔq≠¸	 ò¬’Oqáé•L¯ ƒ¶Ö •ã—
+´ˇgâ@b“(Ü9 ‰@¯ ÃI+ j6w+¨€7q⁄n±õ (™È∏z˚!ˆ&$G¯ LIU ƒkÖu˜ùŸ)Ä ≈Ö /“ˆÿÃ˛xN¯ åIÿ iµ¬2¸<M F' y~»ú=GÄrha ÈÎ~N @QÃI√Â{U8›céR[“whg∏Ô„ÌD›èmJ∏ØñOÆ∑ãc ‰mÛú~ıÒy›Û; åÙ{µò4†~§K ¿ËTÄ‹~‘©›ÒÔ˚å1æˇÌ€˛ê±ªP÷˛ÃãØ.ÀæHÉ™ àÛ⁄;√œ”% äbz|W?›ƒﬁÑ$? ‘2∫«ˆ«bÈ€ÜvG<ºaà `^™: †lÜüßM « tb~î°⁄ !ÖÄ„\·wiÉê@0]UáˆU êé)_óU§M «ê∏Æﬁ~hj&¸»h]®Í(!Ï8¥É ¬Ô∫zew‡îê„…u≥ò  y·ızÏcΩ“èK‡à F"¸»∑¬£ñù÷vÅ.TÄX¨x˛¸ÿnl_ Ú¥¸jŸ‹æÓüßx™∂Í≥ñc 	@Ä"[`iÉGÕ√œÖÈ´1Ñ@ÌˆÖÇ ®Gx›!»›õz◊.j$ ä§Vµ ¬èÙÑÄ£€áµ¶¿#z µ∑§⁄æ –ŒA\_ﬂ∑?K®∞øy}„N‘™©k=  Fµô·Ïë§Bè⁄¬éma¶áE? wZR 9µ¬⁄´ÓC‘ËTÄ E“+éÀ˜3Ó@$b÷ù&û®µ•’æ≈BÕÅ‘	6 Äÿ∆û€·¥¥	@ ‡D¬è˘	=˙	?Äÿ @≠U °-6ÈÄ ≈2d~5Õ 	;8™Ê<∫◊˘H¯Li˚å∆0k√ú ÄèÓÆÎY…ë (ñ6XÛ∫˙©ûÅ_ÜûOG‡q¸∞Ω0ƒ‡‹äçgAá‚ @¡∆jÉæﬁâziÄ ¿Ñ„3º¸4¬†èVT  Û~§O M¨˘\Ω˝–îN¯1ûˆ,ôP*láÒx¬®œæä’  qÊÄ¥ÌöIó (ö6Xåe≥XˇF_œ1Ó«∞É(Ù8ù °Z  ûsO"q\õ g´a˛«πgÖ‘LË1û’´ï3Ω!Ç Ä<ú3D íP<m∞8ó„xBèÒ	? >¡ @YŒiÉ•˝U @m∞òV…Û?¬‹gu'¯òf¡5¥Ω“„¶e∆  CY'»á ®¶
+‰Î≈˚ÿõAf=FË1]Ë—^é{¸<π~µ{X∏« @›¬˛‡9m∞Hü ®ß
+ƒ‚$.?î9\¯qò‡cÌ¨¿û?.Ø1  ò»≈´ãÊÊè«Õ6ú‰c%€j	@¬€ãÖA÷&¸ÿMËqaµd  êKrÏ,êp€ÕÎ√¡âı˜∏TÄ ’0}%VÄ‹Ω)Ôw:á–„tZYQCò°≠  π;•¢C;’<@Äj®ahı˜ßg-_.˝+ë’–Ôﬁ€Õ† †ÀØñGWÅòí>PU Ï£ı’=¡«È§^°!–  ÄÒmÉE<†*™@ÿ∑Ë_{Î+¡«i¬ÇÚÚj©‚ÉY+5Ñ  0˛~˜±«|.q@ÄÍ®◊Â˚2À◊~>ŒfÓåz∆
+6Ñ  ê_,“& ™£
+Ñæ÷W5ûµ!¯¶]îUÌA0ÙˇF≈  ‰„ÿ„ΩªÎzO¶ÃÖ ®í*êÒ\~»˚≈æ∆πÇè·ÃÙ†è   (◊1m∞j<ô27†⁄*Œó{¯‘~>é€·’ﬁ™^ª’?  P>m∞ " ™Æ˘zÒ>ˆfd≠ÑÍè>é£Í£|*8  Ä}«C™@T‰A TÎ€ªÀÊÎH≠jh}%¯8é™è≤Áp®‚  ÄiΩˇdyˇ˛Ú‚ÒÚˆâìÌÌ˚ææ˝∫ˆk/ﬂﬂŒ~f8ÜÄîA TM»y⁄ùêï~>éßÍ#_B  àr5é˝9è_˚≈Û%Ï«pd+πz˚°√˙⁄lèR¨ö∆®ó*ê:[`ï⁄˙Jq<U˘t  ¿¸!«ìÎ'ÜSÿµM·˙oæˇÂÏÔ?§Ω’›ı–µÎÔ1© ™ß
+§.%∂æ|_@_^-µBJ|G˜6C« `›‡`h5G¬ˆ_˘…Ÿï CfÄÑ„À€∑˘v∆®Ö ®^®y±ºm^,ºhUQ˝QP¯!¯8LÖGZïOÆwÇ   çñU%∏~hôuN≤¸jŸ‹æﬁøN¥|πlnﬂXKJù ‡a»7ãwÓã¬ï‘˙*¸.v¥ûj‘√<èÓuÊoMÂ˛ Äy’t
+A¬‹“SOﬁ«6C™@Ü|q	@ ö¶˘a}±ySRÆRZ_Ö´õ◊7±7#πñV¬éiÔÁÕ{  ïê„8˙ıßÕ_˛”ªI´@¬	xé—”& x†
+§lπá⁄]}lg<∆e¿8  §°[µfYlﬂ∆Ò!»©C—áTÅ≠!ûï!Ù ˜TÅî+˜÷Wµ∑ª2«c‹˚rª]ï0	  ‚Wrto'ù°ËÉfÅÜ.âJ@á*êÚ‰‹˙™ˆ™¡«È˜€ÊΩê  ¢xjò…ëıPt˘Ä t®)OÆ·GÌU°’’Ú•≥üÜÜ·¨§Óu  `ûp„Ÿm™8ääN.´ıƒƒ@ ∂®)Gé≠ØjØ˙|Ï&Ï ws-¥±œSÆ√◊ûÚucã£}Øáﬂg◊ﬂ?Öﬂ ÜTolå<ÁÅ\˝tst%H89oﬂ…ïw◊ˆgR& Ë©	!»◊ã˜ÓõåÂÿ˙ÍÊıç‡Ag9tP>4rpo`ö˚'â˚ı°MDN∆R∂ø«ˆﬂb¨∞fÆÄI∏ë™Œmáe–yæÚ€≥ò¡∑wóÕ◊ê}Tè'T{Ñ£∫JÜ´Âc?’öu+;jø/J◊∑@π+êÿµûƒ‚8$hå«∆¡ q¨«_Ü”°}ø±´ó∆ﬁœ°”ÆÁ€1)˚≈0üÌÁ‚Óc˚Ÿ«Ï7±'	oßTÉêü<˜º f†
+$_9U‘6ÎCã´á!z ˘h˜}|◊m 9õ- ö‚9t_ËîX ujò“W¡tn034
+?Áúˆ‘aÁ…ˆ´»t8:˘HÎï ±*êÀ€Ê≈¢û≈ÈXÌ∆ñK¯Q[À´’´Uu˛Êv§√ŸÇ ‘÷>ÔÏ )B8tJÄíb{∫9∂{™ì-µÀú3Ö9A ' ÿ√@Ù›R=ª+á¡Áµ:!@?j~ﬂ–Œ™ΩLú>Œ}◊Ä¥ùÚ⁄]{{:`ºñX˘OÔ‹ùZ’±Ùp˙@Ù¶
+$©W‘“Ú™]¯-ØJ⁄ﬂMK´y™3  ¿T∆ûi’≤˛óx‡ÄøΩ˚º˘√≈µ˚)©WTî‹Ú™xtØóttocXu∆≥€Ug   	π˛ÚìÊ7ﬂˇ“˚±PÂ˚∫ˇd∆pé˜Iì ``ÚÕR)dÍRJlyUrÖáπ√BÌ¶  ÄíÑcú]U ·81ºı◊Ô˚Ò	@ m∞¬<êØÔ›_	K±˝Uâ-ØJfæŸQ≠∏™„–U  @MTÅîG 0–∑wóÕãÂ≠y ˜∆,i¯yi-ØBµ«ÚeûC•kú’±/‹l   Ï?é⁄∂Ô8≤ÜcÃ\	@ é™@æYhÖï¢î™?Jkyv‰B’Gé€˙¥∂ókiI%‹   òÊÑO≠ÆÚìﬂj@‰VXÊÅ§'•Íè‹[^Â<Ãº;ª#ßÌﬁE¿  êO,·Hö  G2$=©T‰~‰:Ãº§AÂèï™8   ≤ÜNö  'Œiñç°Ë	H•˙#«#ßaÊπWw9    ®	≥% ˘Ä ú®ˆ°Ë·lıÜ†ßP˝ë[¯ëÀLèCAC+	˜9Ù∫“˝˙Z_É   ÜHı aa».ÆcoFµR®˛»-¸≠Æñ/?œNyxyÍ°GvÑ3É∫◊â ¸–\ú¸µC?^¢SBî}_Û¢ˆ˝Ñ7  ‰ÿkóÂ’≤π}õœ˙@-  g2ΩﬁÍèõ◊7ŸîΩÜ0!Â9)á™:¶+˙>ß∆ "ñSÓÎ9ˇ>€A…Æ‡d_"l `¨6X)∑≤õ ‡La(ºY\©´˙#ß#≈™èî€[mŒÙyHÆ™c˜Çw`<ª]p¡»¶˙€[≈“Û±n¿‚5  Ìæ·∑ÎÀ«Àﬂ,ﬂEŸ_KÌÿñ{ÄÑ⁄oÔ™∫//ﬂﬂV[˝ëS¯ë⁄†Û6Heõjnc’]DfP£}A ©!ÀêjïÌJa
+ ¿q¬æZXái/˜uÍ¯z˘~≥ﬂuŒæVM«á%Ä å¯‚˚ı‚}5˜gÃË1´?r	?RjyïR{´èC¡Ü
+òÁÒwŒ„≠{†˛,T†  ïÈ´Ú8‰€ª˚Ä$a»Ê˝Hk6)€2ú `$·≈ı≈Úº≥H∑˙#Ñ!¸HYª;¯Ë∂∑Í^ü[iaá`ÍqNhylä˝ †î–„PÚmsπ	Cé	BvB«π€'G
+F“$ Q(≥¸√≈u˜ÈÆùÄ´?R?Bõ´ò;[±è‹áîo™5Ä±ûS˙Æü†O Ä9:lLUπ¬êcÇê]É–wÈFàK 0AnQÜî√èòmÆ⁄∂VÌÂπ‰V’!‹ jPû\÷∫ ÿ≥ˇ—û6WÀﬁn“ÓßSéáo_?ˇ¸påûÍB≠  #´eH8€>J»åÌØBµ…Ìõ4[öÖù™ÂÀeÒ≥<B¿—Vv§vÏ
+8ÃŸ juj€ê‡Dª. (À‘’«Œ
+	'≥nÔo¥«¢€Î⁄]ÂC 0’Ërº[)ä±=g˚´T√èπ´>Ê¨ÙHµ∫„1‘ÿ(.‰ ˇπˆòÁW°	 ‰'Ö–cópÃ∑]µ∫è9 yÄ LƒPÙÒ≠Ø◊’Ös6ÔŒÛòÚÁ•vtC38Ú∑}0Â¨q(”°âÁ ®+ÙË⁄lﬂb¯ê]m∞HÀ™1ì`2Ì<ê¶c,Xœ1H,Ö£≠Úh/óRÂ˛g¬écÃ∞£/ËH}'<ñæ˚Â«á*òcøÆ{{ﬂÛaÉcü«˚>ˇ/ûMV‚k‰öÏ
+/4Ä¥Êzú´›÷æ6X«xVb˝=*  +=ôk»\ÌØbÖ±Z[ÕUÂ1wËQ{–—˝]ª°≈æ˚`Æ˚'◊ø√±€=ÊÔ9‰ıc˚s∂√ñ_É ≈°˚ìÕuï& .ójècôí/¿¬ãˇ7ãwÓÎƒ€_Õ9c$÷@Û©ÉèCÀ€Î8Î^/5»Ë˚˝J˙ùiN˙˚ûÛ?–.–≠Z¶¿4ÅIﬂcK`@N°G{πƒıõ]m∞HﬂJ¿Ù¬@[	BöÌØbµæö+¸ò*¯ò;ËñQ∑◊K4r˚ù»ﬂπèßc·	Ù?˛éyÓzÃuá∂z¨0á´=é˝]˙°/ØñÕÌ€ÓÎ¥X1© òIâ!HX¯û£÷ï•ÜSsÕÚ»≠≤c;‹0LùZú†Ï;ÛΩúX»ÖÛs}Åâ  NUbË±må9 §C 0£“BêÀ˜ÛÑwo¶@n^ﬂ4s[ΩZM>Ô#c,sÑ)Ì∂ÙUm§¥ùPÀôÔ€ó&p¯±vÃ–wa	 5cµ1ük∂'√¨‡ ƒŸi¯zÒﬁ]üHÎ´©∆‹·G.¡G∑ùU
+;—›êC¿i:ˆ±y(0Q]˝è±sfó®.(GM°«…É–Øû∑¿⁄f˝=.  |{wŸ4ÀF2¿î·ƒ‹s?BË⁄^M~å|Lz§0Ø/‰∞3Â:50ñ¿xè≠C3Kë izwå®⁄#}Äà!»ãÂ≠ÉæàÌØÊ?BÂG™¡Gvå|t[ZÕ2:Äsû;ˆ=gÌZÃUUß?Æ=æÑ% ”zåK(í@DÌ<gæ≈©˛»πÍcå·Êm•G{9∑›Ôˇè?séüõã_:˜….?Ø?ù‰˚ıÈ≠ ?[¸2…˜Ö©s%0›„ks]e	¿ Bè√˜œˆkL8~˛Õ˜ªèC∫¬±˙‹Ì∂È' à,Á‰òˇSLµ≥0GÎ´)Çè6Ùh/«=Ê;j®Êÿ*l}ü˜ÛàÅƒ‹ŒŸˆ?7W'}›g=·»Æ¿d;d¨0WEâê∆y|Ì{úmÆKÄ =é∏Øöã«◊â}T{§O êÄ∞à¸Õ‚]ÏÕ®∆î·GzL|úzú[Â1ıèÇéÌÄ¢`<ˇXæ¡EŒ˙Ó˜]ã!!Àv†“í¥Aä ÖsáNI‡4«ÓWl?ﬁ6∑	KÄL•0ã1Gõ˚jÎ|◊1u_µ«ÚjŸ‹æÕÔD◊	@ yam+Ar^¸√€ÂáªlÊ‹ºæi¶f|å|§zLπ£‹~øÃ`Gº\¥Å∆”€5€˛˚˜˝?Ï
+RÖ'Ç∫¬Û‰©≥Ir¨2Öîo≠ÓcÎ…eè; 2ï”È[Y\iwï2@b;(_Î]?ô–˙j™∂ZcÑÌ◊ü|å1ƒ|s∞ˇP}1f æWäU€¡ÜPÉ‘¬ìæ‡§öÏ™6QiRß°Ì∂Të¿¯èª!èΩæÀõÎ*KÄëûè¶8ñ´Ÿ1˜cﬂÒª÷XÈÄ $‰€ªÀ¶Y6YÖ SÕ{Hy>¶h}5÷¨èãWß}ès*=∫s<∆⁄IN•≤c_’Üär÷˝ˇRm“&ª™K˙>FπÜ,äÙÖ$*H‡¸«^ﬂÂ]è¡Ó˚«€;}Ë=&Åˆ˘dÃc9∆ÑN  â…1…¡≠ØB`*?Œ˝ßV|ú|å±£;Ï¯h|¨ﬁn¿SÌc‚òÍín "(©œæêƒ¿vòÁ1ÿ}øOﬂcRPÂRÂëÓ Ù>*@“! HPN!»Ts@÷◊Îd´I∆
+?B±|πú%¯#Ùò;ÿ’¢J»ÛÖ%˚ÊóÙ%™I vlõ-’#ˇ19$,QQix‰3]ÿë6@¢r
+A¶0÷¨é~å›˙jå„ÿñWßcÏ0áØõ:hÉç?ﬂ˝≈„mBéq¨◊_Ï¸ÿbÒ”H?ÖÖ«Ëæ†d_Î-!IŸé© 	I˜:0Ìc≥˚˛‘6\Ø0ùˆ§µˆ20@¬jA∆¨ÿ;¸Û>é≠⁄8ßÂ’±¡«πs=¶<jjY’<¨?zıÓãÅﬂÎÈ◊•d±x7ÏÛñ=aÀûØŒ‘—zk;$QER˜l_8b°“KÃ+ÅÛgè¥ÌzÏÎÇéÒ∑O‰Ïªç˘	@ WkíbÎ´s√èc[^Ö‡„˙ã’§ï·Û<≥JdHUGNA«æb;¥H9úò√–ﬂ}˚˘hAKoò≤˘@ÁsT∑díôK¢Ç§ﬁW√Ÿ!Ô™í¿Ãj%Ï»w‡˘æ€…á  µÖ cÃˇªı’π·«–ñWõô*óÉÉèS*=⁄*è1è™:ûÎœÖô-«Ü){√°I÷!â
+í∫j≠’]òP=i2‡ùj˛«N0ÎﬁFZvÕ∑¸◊Àw£ÜÀ´es˚Vxõ  5Ö cîàﬁ]ﬂ%~Ñ–#Ñc∂∫:%¯ËÓ‡ù≥ûJe«v®±yß:Éë¬ì64òîQA¢≈V˘Ñ#PûS¬íÌÀõÎf1AG~´∂ÎA˜∂¡ﬂ£πx|.iÖìüµ¿∫“Ó*UÄå‘Çå~|w7ZüÕs¬è°-ØÜ∂∫
+B±˘?ò©⁄#V‡±´j£ˆñSÃ£˝?òÙÜ%ÌmZq%5¨ΩoP{w ªˆZuá#≤Cæ∫èÒc€qm_ﬁ\öTÔ…ˇîjé¨ú;”Ú«û∞cÛ}∂ö9Ùù∏ÿ◊ÒaËÏO¶% »L!H*VØV'Ì∞t>¥Í„ÿäèsBè9è«êc´-ïêÉ√í]Aâê$çp§ØΩñ ëÚ	G†^«Ü&œBíû9›ESÛÚ
+8∫∑iYïØøª˚¸Ïø_¯˙ﬂ…,ä# »4y±|⁄Ô:¶∞àˇõÔiRqn˚´\Ñ#ó‡„úˆV!hÁwLvÙÖj4$(í‰W9¢j§\¬`˚9aﬂı1îÕÌBîq˛>[°FﬂÁPé1g\R&@¶˛ˆÓÛÊõëtùj3∏˚ìÂ≥ò9:µÂ’êYCÇèc™=NŸ—A«T’mÿ±æ˝Ì√uÌ™`Ãê‰Y@¢’VR·àñZıÿé∆Ï{ﬁÿw˝˚éˇn∑ˆ9Â{„îﬂ≥/ˆ}›¥˛Ò»—ˇˇ˛øiÅï@∆¬B˘7`•àŸ#s™cH—ÜC™=é	=∫-≠∆<jùÕÒ‰˜~r˚·ﬂ˚nk8˚‘ñ›K{¥ãÈØ˚:Ú
+H¸]”l©’ù=B9cÊzÆ9ÂcPö±√è1ÑµÅ±Êë2@∆¬n[	RJ¨1vñWÀÊˆÌÌ,·«æAÁcU|úzåQÂëkE«Æ∞b˚wÿ&r˘˝π0∏˚X€aI_–“˝ãÓÈ$·ÔcP{ZU#!	#uÿé|Ω¸àÖaÏ)T˜@ÈÛ>v	ﬂw˚µ∏Ô∂°]0BèO êπv=ˆPÙú€`ç~Ã|åUÂ±	™:R∂Éç∞ç›#≈m.Eﬂ}{l–“$›‡Dh2Ôﬂ–¸ï#ÛjüØµ”R1Ræ]gØ∂-Ì{· µ«∆!¸Äc@ J9p^6ÒCêÀã≥ê1*@é9√";?ÂååæcËpÛ|ÏZÏ8¶⁄£≠Ù8%ÙH•∫£jtaFy⁄øÈê‡§åÙ&*L¶˘˚≠qˇ«õ3Ú´Âıc(h•U∂v_‡–º¡ 5ò´Â’èÕ≈≥y9?Ù‹÷∑˛±∏“+E´F[2Ä"§ÇZ¯OÕÿ·«ü~˝È†ñeÁÏÃùzÃvlá•∑úb|›ˇçCÅ…æ ı„¸-ˆÕQ52Ø?ﬂ]ıVã*FÍ≤o{˜ΩpÄÃ9Ô#ºæ˛nkô`Ûöª8m˝#¥Ë∂˛ó
+ÄÇ§Ç‰`3¥¸´ãì¬è0Ï|˚ÎB’«ı´ì⁄]©¯8v¶«ú≠¨⁄∞„6≥9!‘UYÍ$ë™FÑQ—Zii£U'U# î‰ÿyò±ô˜ë&@abÜ cTÄ¨ØßmÅ>*?Nql¯1V14Ù≥¬£Øä√ºr˛ááTílá$*HNøøUç§€FK0RØ}U#›¡Æ™F HA)Û>Ñ"Ò≠t¿(OÏ‰ú9 cÃ ;¸_⁄^?8ﬂWæ{JËqn‡°äˆá$€m∂¥ÿ71g$Ω˘"fã‘E0@Õ-Ø∂Ì:ÅÒú@≠ø«•†P⁄a=Z^mœÌ‹.Î’Ûùùæ„P±Ôñz¥Ω›ß=ÁÅ<◊≤j«˝tÛI3á≈Í√,?ái€l©9ˇ˛U1íÊ|°H›# ƒxÌ…©Â’6’iÄ ÇºX>mk0µ¸Ê˚_öv<⁄jíS√èæaÁAvæ}∂«∑{ŒPŸ∑7§‚„‘ôπWvÏ!><Ω}}sxwfΩı5πY|Ú<(Y¨nv¡÷ÁZ‚Vèt+G¥’πbƒ}eË∫ÅÎu€ål∑”“JÄ\™>∂Ö◊πÌuîæ€Üäƒ' (‹ﬂﬁ}ﬁ|≥|7kíR˚´ÿ·G®¯8'¯ZÌ±˘‹á™éT¬ég∆C±X‰NÃ°Ô>⁄{øΩ;0Ô¢ê<Rû|LÖ T·H_[-·»xm¥Àˇ{÷ﬂç„Zh	E8é|Ω¸ÿñU0@)U}-¿ª'cí@ÊAŒÑ>ˆN¬©·Gﬂ∞Û{ÖÍñ°·«æ≥Wˆµª:6Ù’sÖOçü22÷Oû);¬ì!°â¿dú∂Z™FFE*ﬂTã§1W‰˛Úè3m)⁄µO§b†nªNåÌ«Ê¢y—§)√@ *
+A¬ŸwsF?u˙ò•°ß;ﬂ~Ñ èæ˚t{gm◊Ÿ+°‚„ÁıßΩ¡«)°«˝Âœß9:á
+éM⁄∞‰1(êåV5¢b‰¯˚R≠x∫ØyÌÂnµàPÑ!sFTå îgﬂ|ÃT˝ …ñ †"sF?uHÏﬁò°Ì’ˆ6Ïv¬è°¡«ÆVWCÉè1CèM¿ÒnÑ≈i!Shí«†d@@¢z‰¥`D(2~(¢}÷å’"°àaÎlå î+•Y˚^á~7`y‚˝Â≈I'2/@eÊå*&Œ©â—/3¸‹nª¨cZ^ıùΩrn1FË—Vs¨ü∑œ⁄WŸAäâÍëq™E..Óg`ò-rB(“”>K(2ˇ∞u°}# ˘ y÷G∞ŸÓ°»‚ ê‘¨ö∆PÄ⁄Ã1‰‘*êPÖq˚˙vˆ#¥æ:TıÒmœŒ⁄ˆŸ+ÁÁÜá(•zDÂ»aÌs…„˝¶}÷(°»Ú!Xj≠ü=1hù}# iÀ°Íc⁄®÷ﬂcRP©∞òˇÕ‚]rU 1⁄`
+?vU}lüΩÚ›Ìo˚Éèªﬂ6w[ãëßÑ!‡h√çgvPâøæ´r‰…pvmµéû+≤\>,Ó≥”ˆsπ@$Ó†u°c#Ìm ‘3Ë|*±[{Ûú †RÌãP	í‚,êπ⁄`Ì?Œ©˙ÿWÌ>Ñ‡„ò–C»Éë‡·q£bdx0“Ü±⁄g◊nE“E>[¸Ú8l∂©ò^Œ-Ø˙∂9«ﬂÉ{Ääµ¸SE?µ
+dÆ6X!¸hœŒÿ?ÜV}Ñ‡£m”1$¯z@Ç#™Eû–>k‹Pƒ,ë8°Hﬂ<ë˚À?ŒºEîå¥U#*F  >¶kÅELÄ m˘óÕd!»)U sîåÜêeW¯*cU}Ùµº⁄’ÍjH°“c†üwT˝‹süÓ˙‹sVŸÈˇ£ã]_˚Ÿ∏?á˝#Áµœ“:Î∏˚œ,ë∏∫'*¥óYgå`$¯zyø-jWZ~èS¬n-∞“# `≥∞ˇb9ÕôlÁÃô™V?ñ/Ôœ‘€∂]˘—›aÎ€â€nyµ´Í„P—Z>j{´v·˛ÁŒ¬˙\ÈáBáüÑÁs8cœf:Àﬁ0•RÑ'£#™EzÓ'≠≥Œ¢J$Ω!ÎN’7‘w{∆àj†t•9+!. Ì<ê)^ÃO©ô™÷v¯Òß_∫≥ÌUﬂN\_À´ªõØü|Œ››oüµêÈ´ˆzY0ˇ˘aa˝–Á~∂¯∏h˛Yœ◊oˇº≠EÙÓÇ˚ìÖ¸BãRtÓÎ¡a √ﬂÌI`"(9ªZd˘˘«JãœÔâ◊LÎ¨i™DÜ”G	D°ß“J®E-¡«>}'|Œ9◊î√  LÇú“sä≤—n¯Ï?˛Æß÷°ñW˚Çè¡°«√Çˆ˙˚a∆)~^WÅ∞ıπgW/G˚5†≠óêd∏ªN“#è°àπ"{[gmÊb,ÑF{ˇø⁄◊ÅH4B∆&Jz>«Ãê ≥Ö 1€`~¸∑€èg∂-ØﬁtÇçæñW77ˇ¸y¨á–csy_1uËSÖ$™Hvá"⁄g
+EÃ9?iÑIQCëœÔõOÔõœølﬁ√ÿ3F¥”RR⁄úè}~l.öÕ”uëzn#} f	Ab∂¡Í?⁄™îæ ècZ^ıÕ˘8¶⁄CËAQ!I∑≈⁄Ê∫Y$fäÏgñ»sD"≥
+ï°·MÎ,ÊG⁄·ÎÅ9#¿‘j
+>éı˛Ú‚y¨+-∞R" †WæY|Ïoük¨=∫·GbˆÖ›∫c[^
+>ÑîlWã5¡»Q°HÌÛD∂[	^¥≥0,Ïü#“DÃI¶J$¯’Ú«˘7à™ÜØwﬂFÄs’|Ñﬂ˘w[Kõ˚aq˛ZÛÄ –+º∞∑ï 1€`ÖÍçıı˙§VX!¸∏xuÒ$¸∏˛bı¯˚m<owÍ∂[^w[-Æ∂[^≠ﬂ}Òt¿ñıˇ~¯Ωµ∏¢F{Çëg-µ∫$ŸäT>OD 2Œ`uÅH¸*ë6à0ïv_∂o°R+-‡ÿÁìZÉè1L1”î”	@ ÿ)ÏÏ¸ÕÌ’hÌ∞NjÉ™7^ﬁ_æ˚Ó>DàÑ§/¸B∏”
+;v›0$¥ΩÍ
+ï›∞#T~~4f{¿q-µ∫#BÅ»¿@dπ|òâ¡qÅà öËÅH´ÂıÊΩY"L≈ v`ËsÖ‡É“@ 8(Ñ°œ◊g˜ !à∏z{⁄ôÃè≠¨"õ∂W_-üúu—?BÎ´÷v%»ê>Î€ãoá¨ø?ÆÍ™◊W1“E~]yï»C‡∫¸¸æBOÀ¨ﬂ>>7™~zÀ,C’„“6ãÉëÓ{Ì¥†\Bè›˜eÄ 0»&$X6gá !à∏|{t+¨°ÅH=∂ÀMCË“⁄û˚ŒnŸ'TtÖÍè'R˝åä|ˇnÒÎe’U"èœ=ëùC’€@ƒ¸êˇO[·~à,T÷D°JÑÿ¥”ÇÚ	>Nªœ»è Ä¡Bpby{v;¨?˝˙”M+¨1BêÆÓ∞Û]≠ØvÕ˝8µ˙#úyΩ¸‰cEÀ›/û|\ıLÁŸ„´≠àò“à⁄e˜¯˙ß]V≤U"⁄fãvZê7¡«∏˙Ü†õí G∑√˙√≈}üÍπÁÅú‘rÎå÷Wá™?Z;á´˛Ä∏≠≥*nõµ´]ñÅÍ€eµÅàÍê„€eôím≥»%Ÿ¬h©Û|P+ 'Ö a0zÃy CÏk}ıwù!Ëªò˝ÖµÕ™∏BDª¨~›™>’!√ôí_€¨_-å∫m04	¡H{p>°G<°
+§;´îx  mS=±æLjH_∏“-EÌÜˇ˝ø\7Øˇ˛œ;ø˛óı?mﬁØ◊ˇ‰ˆı˙Ø˛ÏÕ◊≠Ì!Œ#Y¸≥Ÿ,˛’øù‰{C—Tà<à´	ñf`d~HU"
+	G#p¯Ò4¥›3√ûü∂üw˙nkcØk0 —ÁÅ\˝t3J%H_±›˙*Ï˛œøømﬁ˛√ªÊ_˛’Æ¬6ÿπ¥”¯‰s∫üŒ2À°aÎÎ/ùq{˜ø^o./HÚÌˇo›,>ﬂ™2hˇ'BıAê˝|ˇn˝ÆΩ˛¥ÖSÏ˚Qaï√®É’+Dü|h´Ì≤:Åà0‰»ˇ'ÛC≤D>[¸“|zÊâ-{ﬁH{;‘ZÂ—^ûZ≠U‚ pf+¨s4B%Hx;5iCèæ·c€≠Ø⁄ÀøˇãÊ?¸ªO{ø¶ÎonÔv	;òá⁄i˝˘Ó/ˆÕŸ>Év€á’|¯œˇ©YÎbël‡—^n=ôGq‚˜Â˚Ñ÷O›E8rx∞z≈Å»Æ˘!ãœjj’C¬¸ãÂÚ'≥C“.+mÊàPb’H†≠•z§oqı±ñı˜∏TÄ pvÚıÚ˝ŸÌ∞éBvU{lÎÜa'1lÎˇIÃ∞ı›·
+âü™6&ju6iÎßmíaÅH•C’Uá<_–øÌWr‰ˇ”Vÿø|h5∂–j,	ÊàP
+Ÿ)ë–#]Ô//¥¿Jò Ä≥mBÜe3J≤Ñlœ|l∂k´Ì‘ÊL∞Ê∂˘ùÔµœêÚ·üÙº:oAçD´:r8¶H∫·HÌï#Ü™´È°:dºvY¬ê4iõEm·H˜Ω÷Z§0À£{ùyÖ„˝∞Ü‰o”s€Æ!Ë¸ˆÓÊIÆ,ΩÔ˚9∑≤Ä*∞c≤ç±…P∞MÕF+Ì¯à“÷Ko·ï¸;Ú Kˇ^9,Õ⁄.Ãù∂fƒQ0z¬¬–Í)40Bf£≤Ú:ûõ˜&neÂÀ}9/œ9Á˚aÄÖ Uâ¨DUÊ˘›Á˘È@  pÇº6èúMÉ	Aå¸0¶	Cé≠π:V“ÆÂI‚π˛è!ÜtÑ¿ÅíBèπ·¡»É˚¶ƒuY˝ÈVe1‚•;ÑÈuXõÖúuØÜî≤∏~Ïx§i»9‚!  ®ûπÜ8>>=§8öÓêuPé‡√Y0büW≈Nã\óU–˝¿™¨á(Rw‘“D‰≠-∑è&ÖµYWˆ”ÆP˝'≈e(Ø{§ˇVí‡ÿc©<¥\∏áaöœWOÔ≥A  6‚¢ }àò.>ÊêÈVdy@Ë·E}Ûye›ÉIëÇ&#éNáàP§~:È∫CöC}Û«"tá®F Çíùõ Ñ$eÈ≤Ji»„∫»ÁÍÎâO›YÅ•  âÇÙC$ÙËóú)ãÎ˛;D0≈ﬁ’Í·?∏Ÿõ)(ŸMá∫.Î–tàΩ.˚*˛.©œ[ó%ö˛•‰ä’ØÏèªi†sCí˝ˇ:tîçX∫Ä  íÎ~t¡«‘+lÜ¸πsøgPˇ«ÄÙÕÜß‰–yiÈ˙àd>›Ù&D
+ôå8¥.´¥0§?B≤≈™,áÅ”!Iˆàà ˜çô8ñ∑˙ü¶9 ∆Oz@  “7Ly“tÏ	Í©´z∫o∂©]ı„™dË∫´ﬂúAπÏÀ ‘o6Ñ ⁄VEï<“Ö!ÖA˝0Ñı-¬?eÍ∂˙ﬁ¡{Ü/´”ç]´‘Ihrˇ>‹7∆‹Ø¿±5Xıyÿõà∞@  p¡YˇøÁí'¨ÚC¬ìëπ” rø…Z≠s~µπ>zÀD∆v*„¸«?˜yÚy\’èœ˛ûz¿t ~ÇËû):1ÂÖ!˝5YÑ!á√:Cftá∞*+)Ùà ˛Ã=‹?Ù∫s»k—˝˛éΩè©Øï˜/0<ˆ~40èó<Ä Ä„}ü˝ˇˆ˝ÕRﬁˇcH∞ æVæKy 4»–æèc·áÑ?lælwPˇ÷dU‚›‰cBΩJ_ïı )("9ﬂB2Ò±≈™¨ÏzD~R}àz€Ä“z≠≈!1 Õ@ `¢π˝>tÅLYt”!áhH∆LÉ»‘«êi	?N√˘ºÓ_e4’îÈV7πEíË™¨“¬êwm$Áí√ê¶D˝÷îå0ƒ˝™¨¶D]æ∂∞*+ΩµY´ î°?∫˝|ì∞_∞K » ¯2rOe‘¨ÕÍ¶AN˛˙á¬è©¡ákÉJ–œ®ÎΩY´Ìa=ÔÍ¢DΩÖ ﬂ∆ˇ7Åë”!•Ö!]T`y˙.i	CÏıGS∫˝0DT‚;È1Ú÷ÚKΩXù	 @ÃƒG  ôCt°ÇL_hôôÍPŸπÑﬂıÑ¶xÔh∫√E 3dBDÉÌ≥Ùõ±…Azˇ`i(5yPû^hB_»gtÜ8Ói1í&&D  æ»πêÜJ1 L8`œEïÜ ƒ≈ÁF¶>∫ºá‘õÌD≈ˆ™¿9\Ña¶;Êê´¬8ÙıJèóˆ·Ñ“C
+	Ñ!ÖÑ@Çæê√XìÂw:ÑUYÈOà\ŸOÊq˚¸ó) Ä\HŸ}_ò‚”£ã+∞† 9‘Œe⁄cL“Ô—≤"ÀU¯!¡Gø¯‘'èè	˝Gﬂ’MmÏÀ2<}≤œ≠©ﬂÄdÜÙ‘KCËiÓ÷dÜxôiüS4”!¨  ÆX˝ ˛8Î êñÓ,·ø^ºô<Ì! ˚XÅ• Ù÷[u?/’°ﬁê~(¢eJdL¯15¯pÒ8p—ˇ!6õÅS"2µ¿»|rhÃ*¨<{3n⁄©Ò¨¨æ¬¬êì!nıüc∞*+ﬂ »”‘ÓPYô˝‘ËΩ`˜Ä (ZNΩABë*~"eÁ˚üØC·«‹âèâU˝ÿÑ∆à#¨¬ EV¡aH±}!¢Ìa*‰pBy˙Ã«´≤≤√⁄, »◊°sÑπk∞a
+$> ≈:têé”dÍ‚ΩΩhBê–Î±éÖUøª{Ò‡jÎÆ›Í”CJ–·´∞ÚWjBy˙∂<›^ﬁªXÜÙ¬êª∂„¢™>ÜÃ˝w∆™¨‚÷f—# iêê„ªôÁÕyÄ=ø:,åa«5Ä≤‰\jn"d{ /ÂÈ!˙B‰cJ`µÔP¯±Yˇ,H`¡ûeèUXE!)o2§æΩl~tS!Ç…êÌ¡˝›ù¸x—LÖ&CÊcUVS"Ùà ÄzáŒÜºˆüøÓäÛ˜òò P÷]π∑$uÅàÀ5Yá¬ècWl∏
+?\MwÈ 9w{Îz`ˇG´)zÜ;¨¬*aHÜ\mÉ¿Wd	¬êœ+≤C¸≠ ¢7§úµYÙà @⁄SC»»£€v ºeø(„˘¥f  ä¿∫´∞Å»kÛhàÙ√ê1¡B7aqhZÁ–Y{u*Lÿl∂´=öﬂ[ˇ&Wı≤6∂ê´∑C±/+SøŸlÊQúaH!ˇæ∫5Y•MÖ˙B#ÒÙx£7§òµY˚Å»ˆÁ?:ﬂ5 ò_r~Î‘”B  kL}ƒ%·EÜ∏"O^9÷˘—>Üz?`Ω’ê'<ÁûdôÓ†ˇCObﬁ’ü√Q§ÊÛ_h≤+O/‰Ô}/È¶BöŒê€ÿ7Ie"Ω!÷~å}≥íGoHÅ="Lâ @–íÛ)‰µˇ◊3ûSÇÄl—ıëßCk•d˙√Eë¶¸yfç5!ö«Ä<JZµCBö˚ÇıXüuﬂk)Owèﬁêrúö°\ tL} ]  ≤D¯ëßcObMÃ	?ÜLw8yıU÷.!HAá≤¡CêgLÉ`Ñï4“)>ÌTAHÔqAy∫WÙÜ<%Bπ: õ˙X’èYMò! YaÂUyéMƒ6§ }àÕf\	:aØ≈:Ñ6Û`=S!˜∞"ÀÛcèı"+WLâ ÄªïWÆ±+> YÖRvé<{2s¨˚c”rÂH,ıMmÏÀ≤"£ AOÒAH°ÖÈÇ“Ù”˙ô“RUﬂ{ˇúî^¢nËd)rJÑ@@…¥Ñü]òG∑ÙFj≥®cﬂ pÄïWeä’˝·d˝Us˚)AO+±p¨§}|î§Ù¬t¡T»iÚ˝π+NÑ!ûJ‘[U{?[Bßb◊fä (ÅñC|∫l_Ï·¸=.&@ $è£°¶?Ü¯`‹ ﬁPÑ5È˜C†Lªœ°´±JÔ	LÖå[ë%C<<YïU<∫D ‰.f¯!F>µwQ>6∆! ê4¬èrû‘ô˛sß?^;ÍÓ“"Wjû˛ı˝°«—ÙRîéÉ´±zèë"Éêˇ˛Ç©êqaAàß«!atâ\Ÿ)ˇêåP·á´àg¡ÄT~îcËÙáÜÚs`áıX80¬z,¶BÏzaÏbmÏıG˛çÏaEVÑ!8:%B¡:Ä¬√è!2NYÅ≈˘{\LÄ H·G9BNà◊õGNÆ È^HŒôÓ87!r˙»e|”ˇ8¢,=•!¶B‰Î‘UY˜A}{Ÿ¸0ÀkS]/çπº5vq˚f©û
+i Ω-ÅëÔ0d◊¬˝]<Vg–LKÁ«{saûV`•Ä @r? –]yr˙√’˙+ÍemlÅ´ILÉ,kzZ@OHØ4ùıXm"˜S!'/n`Eñ˝ÁXî®cËÍ¨üT∏≥ ~Ï.å¥áß@›“	©	Ä§~îz|ytÇ¬ÁÙ«PÁ&@çÕŒôÓ@‚Aà› + “±EOH˚ëıXª©Çê”+≤d"§™>“‚´≤0vJÑPÄOûc* … ¸(7Ù8ÁÿÙGΩæµVd»˙´ê6õô%Ë–KV˛\ı “ô
+Ao=÷Æ4Ω¿)Æ“◊c	J”Õ†ëww◊ªYÇÚÙp´≤öïd’GVe·B %L~ =  í@¯ëg16ÙêﬁåCÎØM‘À'Õ!RıÙΩ”ıW√˙?z_@É©úõ
+)5a=÷ˆŒ`*dT_à Ò¸Ô≥æ6ı›ÁIVVe·˙D ‰~;¯ÙËÇX Ä Pè#ø‡„ª©Î™¨ç:6˝—\A+oﬂ?}¯n§|ˆr|∞·RΩÒ\ÇﬁMÅxıt≤ò
+¡© ‰eU‰øÁ]Rpi¸˛TÎ±Üá!!·ßCC0•OD¸§˙CÛˆ ˛∏Î -·«
+œìF @59î÷∂ñ·&>ˆö˛8∂˙j¨°à<ÒÇMÖYë’≠FB±Í7õbßA!ÖﬁÇ d|_S!aÜ`*B ¬è9Á–ã Ä˙ÈË∞_Ï=‰ ,˘3≤j˚vﬁÁrT˘πLxå0t˝’PCJ–œMw»∫/‡srAq:ö ¨Ù ‡^GH¡˜=!√1¢´7ƒV€5e¿îP§_≤Œ§ê/O∆ÙÈ≤ù\Ü  Tá°◊¡m9πo«Àœ«}{Àv h%Øcﬂ¯Zë%ò)!H{?Ñ‹[˜h◊ck÷cù¡TàÇﬁJ‘·™OÑP»NÍ¡Ù" †´Ø¸ê'á¶RxÇqh˝’ÊHèF”Ò·i˙cX	˙£Ÿ”≥˚?ö"¯˙Û%‰•˝ºﬁõY €m0ÇºÇÙÓÇêÌ˝p{π˝ﬁGO» LÖƒEâ:|á"Çi ç ÄJø⁄Ã?¸Öæ‚0◊ÎØÖıí’Q(u2§v—í=BêΩ˚É dáûêqò
+âèUYÅi@øÇπ@Ú©Ωª˜ø±K Í–˚·NÍ¡«ÈÈèaÖËÆ◊_ùõ “ˇaLw¬4@π∫ﬁVeeç‰¿}B≤CO»º©ê¶≥¬~ú˜è≥VeâÍ‚{c¯\¿Û¥»O™?Ù~˛Å˚,á‡i! †.¸»∂è!†\Çè—ÂÁΩ}Ë1 œ]:∂ﬁòº*ã0$KMÃç1ˆyŸ•‡˚B~_ÏÍ8Ì5á˙Átœ1$©™è¶¢∏[≈E0M"ü>p¨ˇ∫©˚yÖ°‡Úﬂ[ögr!‰◊#ûjÀ»£€çœõÑ@ ®B¯1]IWQ/?ﬁ˝1≈∞˛è«N>ñãê›à¨HÙÜÏ–ëW"C∂˜!/†'d¯ø´˙⁄‹›]Ô¶BaH<¨ B¥ië°»ï˝q˜s √Œ+æ;rc ﬁõÛ‘‹_Å}@ ®¡Í´Ò∫uKπR~h˝’Q# œcn5”P“"DÚ≤¥ò
+πøÑ‹CO»x¨»“ÖUYàÅ¬u†å5Â6pÊÖ Ä
+¨æGû@»7ÂîûDLY}u,¸8∂˛™^/úNsÏ˚`∆ˇØ”C»U˛ÌA706©óÚ∂ÊéKÎ±Œ!Úò/|BÓ^O»Â≠±ã€ÿ7)	¨»“áUYàâ`(ÎBÕÁ
+ûN~zt¡
+,E@ ®¿Í´|Øûò2ıQﬂΩ8»Ø˝≥#'@|TÇ~∆©ø„Ë˜µ¨çe&"ª«+≥íFY˙ë §	¸X&(Lü¯oãYÍWe—ÇòFPöúœ+∆^@) –É @t¨æ ª,Ã’‘«Ó˜Fñ:J√’=Ÿ„Í}¯ò]©:S"I`‰L“UÑ”2+≤“È1Ú÷~å}”P0Ç‰$Á–˘  ´ØŒ+·	≈π©èæMƒ˛å)k≥¶Lw]ëÃ.Uoå	Dí@Y˙ë˚Ö ‰zB¶cEñÚﬁê”!H1Ÿ˛7Ïà´Ñ3äcÁOÌùÛ3¯G  *V_ù∆‘«p`w’*OÅæÁëÆî™tüófÚ°©á>ÇêáBf<ûXë•”!H1Ñ#à°‘–c*V`ÈB  íÚ!O0Xy’∑Ÿºà∫˛Í‹cvPˇáÚ)¿} rA¢Ω‰J
+¡	AéNÑ5Ë	qª"´™æü˘·”!»=ë©—ü$ŒΩ∂]’è€∑eÖÚ˜ÛoÂ–dt! Õ√®‡1Ú$„ª3]%Ù}¿ëïºÍ·ﬁÑí0§-Tg2Dè˙¶6ˆ%»— ‰][ñNro‚≤´ˆ¥◊t)å%!HÑ4˜%aà:Lá ÁïZÇµZÿWr‡Å¸Ä àÜıW«~úæz2∆˙´!KÚÑ—:@PB°˙É2uVe≈”ÑR¨ ;Ö ‰¯˜^ª^ªXÑL¿THòAé∆Æ’Lè‰•€^¿Z+øk∞›≤XÉ≈ˆ%' Ñ/?«aøÀ|*bÍ‰«—ıWÎKìí:¬z´zYÓe ò"a12~z∑ŸÆ≈í©:÷ÜmÔì€ÀÊáY^õÍzI2S!iOáX¶xPH8“I+∂“A‡ÁÔq1  ¬èú«MΩ¨ΩíCó1‰js9dΩé≥≤çÈ‡¸t»ÉuYÀˆﬂ-¸Y’¶˛ˆÆ˘ÿkÀ∫ß!˝ ¨≈zÄ¬t˜S!ÇY	Lá¥ü∑J>gäXV√!o›k÷S+∂Mç0M&‡ÿˇ<¡9xjË˙HÄ(XıPÓ£ßs√èŸÎØﬁ’ªC+_+∞ï†üQ◊†◊eµL¨À
+ÑHÿtcå}NÔ≈)¨≈:é ƒVd•ßˇ\∑	C$,e:⁄H:CÇí.$È∞zÎÎÕ.Ë»˘!uü]∞KâC8 Bc˝’CÚ‰ÂáÕ√—‚\Ã?fÖ3Éèq .}&\9è\∞.+(YC÷¨{bÖﬁÈ˚â¢Ù£B‹aEV&EÍ"¿Ÿ†‰– ≠C°…±pd?@9ˆ˚¥Ö]y·Fﬁôëêœòfèâ	 ¡1˝QN¯!¡E}˜bˆ°˛±?_/üx>\ÜvQß;(8F!Î≤˝!ÓÇå∏ØB!¬^≥»’THs∞Œ∫•¥ä‘˚Åü?`¥~(p( 8†Ïá(cÌá)á∂ ÏﬂÆCèpC/õ†Ä†ò˛(#¸p›ıql˝Ur°ùèÈ ß˚Cn‹°%#yÑ’≠≠ÏÆá$q˜¸H¬∫BDXó7'|òÚg	;Ú÷lãh7ˆü AL&p  é√%Áß¶&ÍıÒøŸaÔ¿ê’W.ØŸl¸Lâ‘7µ±/<+≤Ôπ†;ƒBê	˜A»Qª˛Æv*Ñ d>Vde∏.ãÈ PEŒæû˙íöXQ1 (÷_}>,œ%¸pµÊÍ¯˚?˛~Î€À„–Q Ú¡@dg+Ä∫C∫"ı•LàJdåföÜrÙ—BN£'ƒÔä,¡dH⁄”!" †€©ã&e
+‰—-È±Ä ÜıWü}y•S
+¡«πâàzÌ?¸p⁄’¶;º›üÙ{aàΩﬂD 2A»Ù §)ïÔ=ÒAàˇ0Ñ $M¨À ` ¡0˝ÒyıU Bb≥9ÒqNN∏˘¯ŸÖv°á=≥ü	CËÑ d‚4àp!GÑ¯¡ä¨|∞. ÙMz»Ø=µwAoÜ# Dv…ˆ~Ñ>∫#v˘˘C:@Œ›wß˙N ÑCËôÑ¥˜!Œ‹g!£ÇAOàü©êfΩí˝ËËΩ#4¶C @∑Oè.XÅ• Ä ò˛ÿJ6¸Pn>7¸ÿ®û8Xö+ª«≠L∆\≈æ@¬Ω!LÜú‘›?ˆ™⁄ñ–c\BptÖÈ˛Ùük±"+„È˘Sm˚`  Á≠N\‹xl“„Ωπ0O ZÄ @ ©Ææ⁄¨lÍ££aÚcÏ‘“©'ICÖæüD2J˝fcÏKBê—A»;	‹BNa=ñˇYrh^UÈ…m:§à0ı ¡H	:‚# uObIRõ˛ΩÚ™?˝qNΩ<±*™ΩR[€„V√z+)yæW¸`^"Ω:´Ìø≠ÊÁ¯¸ıÊ¶6ˆ%_o&!+k¨L–ı˙(Ç‰yﬂ››ınEñ†<=œuY" ÄRÄ ÓÉ! Im˙CÎ7ÎW¡?Æ¶ﬁÁ¡”@~‰ê˙ ‹+P¨ j∆‚∂˜á¯„≠jSØj÷b@‚}!y£? ¸cD PRê]z¯!wh¯q≤ˇ√¡Uÿc◊_π˙¸n6ÁßDÍ€K˘ˇ”> W®~±*Î	ÇöIL¬Z¨·B¸£/§¨˛Qµ@Ùá  RG ¿ª“W`…Ùáã~àÀŒ˚ÜÜıZ øá¸cÀœWıcìπ('Çá!•NÖÏ˙@0˝>§dR"Ïı∂ ~˙BXëï7
+’îL.r|l?ç;˜≤«ß@Œúb¿3 ﬁïÄ§"f¯!´Øwç4È=^Î!”gÓÉ≥· ùûŸ]"äÍizR^]!÷¥a´≈Mäv—AHòYÕ}^mﬂ"/™¿ÁÔOÕwGb@ xUz¯!”)îü«?∆Ù~‘Îﬂ∫(fﬂY≥íﬁÇÿ7(}*§wyX[§.rù°›Ò4à<Ü‰hüd¯ Ãv*Ñ ƒ˙B r¨?ƒÿ•±ñ…+ Ë˚ÙËÇ	ê»@ xï˝arbÜblÈ˘∂„àˆ1‰˙´° gß;Í'A¶_‰ Û{áØ T©wá⁄YÜ ¢;«Z¨ÒË		ˇ‹Œ⁄•©™èLÖ`ˇµÅÄ“ú∫¯WV`˝Q–[É}  PÙ«f˝≥·´ß||¸Õ»c9 $X~û§R÷Ó âØ  -i
+—ejA¬zà‹›ØÙÉåFé<«ºªì¨»*ÅÄRCêßñıXÄ ™ÙXZ…¥A}7¢wC¡Í´!ÍHá˚ÁJÓáLw˝\∞è–-” d˜wπ≤∆^[V8πºo	BF#	ãæê≤à »ÈåÎk*$á ÄW• öß?‰0~≥~˝6L	?vªºèôÄLY“…˛ ŸóßwíEVı6∞æ1∆>ß‘€%ÇêyAà†'ƒ?¬à (â¨¿B\ú§ @A4Ñb≠‡6∏Z5§ˇ√Dú¥9ÑBbœ⁄ı>∂∑ÊÁﬁtk»0÷^oèΩíÆê:ãïvª0ßCXëÂn"de∑_áË}uëEwDAÂÈ8’!b´∂\ [’èÕc˚i‘EæÔÕÖyjXÅ• oäËSHl˙CC¯1∂˜£SØœÄœ<å=≠¥ŸXìÂ†é…*ü^âı±nkFÃIwèÂ’˝ˇy¢dpËèªó6€YM¬°Ω≥Iõ¶{Epüéõ6mßBB¬ÈO_\|ﬂî®[˚1‡-Ä∫@§}K  ÕôÎ±T" ÄB‘É5ΩÁˇ˜ãC reHr8@ü7’·˚
+ıÓ}w° ©Âﬁd…ﬁ’ﬂ(cEñëiêº>ﬂ¶;æ?€Øî–èGOàû0§b†h" B;µÈÅ≤ÛÙÄ &ˆı±hú˛hV_9.ü¬uÈy*”JıêÈé3k≤ŒN¿åE˙+ÌÂ™iüÅ«˝€’Löﬁ—vGàî”íK“¸=∫I∏Bû1a3=!Òü? ô©™èÑ!8à¶Ü  ,X¢  ÓÍÉàAA≈‘’WC–Áj/?GY∂∑ü@§ ˝œu.aàµÑµŒQî>ˇπà]/å]¨Yèò\,rw'?^4S!Ç…úÍ!†Â"`Œﬂ„b “∫)ıÈü˝s'ïÜL¸úùÓ®üÃ_6÷Í·ä%$2ı·#Èöë◊Á9áıX|≠ÚFÇ÷bMºÔn/∑Ω\ÙÑ®)OÑ!8ˆ⁄ßÈì©>à @°@  sZ∫?fÒÿˇÒ¡\Ã*ºOUΩ¨∑á¸(#¯8{Pﬁ˛ùõ Ñ@$ªıXÌÁU§àµ Û˝ÀZ¨ŸË	âè0C.F™Ô>_êD `9CxjÓ∏B  ô˜ƒû˛òU|ﬁ™◊ßø]5WØ+]5d∫„‹Ñà\Ì_vqL[ÚæDË…ÍÛzp˙g©|˙á5XA∞k>ÇùaHs–m?∆æYH%ëüWÌ˙, òÄÇtù@  c±ß?\Ñ¢Y3q ƒ√ªπÂÁ!Øs!–$Ï÷œ£Á#‘ ,¶C2˝‹~ª¥Ná‘75eË°◊b	æ6NBa∫˝Á†Ñ!à‹Ω `VZ˚]1	 oÊv+§F„:§ò”Œ¬èÂô	äHW.˛|;öÓ8a¶>ÊOáÙ◊*—!í«∫,≠ù!ö'Tr^ã%AàL17´0ùûC0Å ‰Ö  2s˙C÷>π?|ÛΩ˛j®Õf@	∫E^UM·g≠íÑ"›ÑH{xäiA8àä~wXè•aÊ"¢∫hWe±f@œ{˙AT"  G~T6"s˙√e¯±ªÇ“q∫L(˝‘ËX•§4·&Dd]›!iá Wï©ﬂË
+A‰ˆÿÁÌj&¶¬ﬁ˜jæce†!˙Ü¿’k-zDÄr»Y¬◊ˆƒ&î¬Æ1L d∏#2ÊÙá¨æru†v˝UÎŒj”ı⁄”˙´Ç Öms8üˇﬂSewaHöÅ·üµΩ/˚d '“Ñ»°èK(˛'qÜûùC‡kJÑbu àkaX© ≥1˝·∂˜cLÒw”=ÿòÈÌ”%¨¡¢Ë<2¬êt
+e˙bŸÆ<S†ä4a≈›˛ÔsÇgË	—ã0NßDXõ”w{Ù◊t<u.  ‡¿™~lJü˛p~,ü+˛|Á:Ïíæî≥(@G.C≤`ü[Sø—˜*N¬ê¶∏õ$Ã˝M‚Î±Ù"Å+¨Õ“"Ø˝€O±o  ÄÃƒË˛p~Í˛àDSÿÂDÊk∞ò˛På0$ÌYœuñ•ÔBAÊ>'qäıX∫Ü¿Á⁄,zDÄt»§«S{7˙◊Ä‡#Å9rYàù⁄ÙáL0∏?w®_ıƒ…ä¨!´¿Ê(a“
+Cö’vJV,·ƒÁL—*¨æ]0≥¥∆^[ÇêP˜˚;¬'óXè•aBˆàª4÷~‰NÄ	@  £˛Ö€c≠◊Øúøœ¡”+£∂¸<)
+0ù·
+Ù<≥F˛Ø!aà\]µ´∞Ã ™úi¨⁄0Ì∆˚≤ v“MìÓﬂ+S8n1¢a|amw˚√±XÃÖyjéLÄú¯5ƒA ¿∆˝‚]∏-´Ø\<˝ëGüèA](sÂ∏+∑øO©aH7B¢ÛﬂÿUorGk“ÊR‡éAA¥ÛD⁄%o∆^s5∏FÑ!â) oA= `*◊´Ø∆vÑ>ı±ÍlajÁ÷`!ï DÜË˝’o6*ß Íem,Ò·Ôw˙Aº`=V∫aà®™v•‡S"@
+Ù=?.	  ºNÅî÷”êæâ¨¶?∞˘Zzjß§2tõ—ﬂG∫Bò
+QßY5•}¡ÑZèuykÏ‚÷„GÉã0DﬁÜ Ùî»Æ`ù.¿…∫s9Î˙˙»ÀÕÊåó¢™Ä @.¥§ö˛›ˇ´ì•^X’aER¬z¨t&vñ
+JÌc||BVvP3ë„=!i!A‘P§à4ˇA¡:ÄºÄ ÄÉb¨“»ÙáÎıWcª?öb[ÂÎØúLwÑËˇ»uE˚˛À@í¿ƒéÌMöôx°HfSn…jÀÈÈÒÉıXÈ!ÅÜ@DTÌö6`6°ËC ¿V`•7mêÃÙáxpÊo˝ï≤œYnk∞r˘{`ÇêdJ”ªP$t_H”utÏ[MN·o"Xãv*Ñ¬ÙÙ¬πBø™>“]"Ñ" RF ¿õ/Õ˜n@°∫$‰–>ˆÙG∑V%ÂÚsU˝ñ°€gUÏõÄXBíaüKRü<8x[LE	Aà¨«Jì<OºªìÑ!–3%B(üëãÇ°  ˙°˝ËÈ%≈g!¶;Íu‡o’Ï…G.BÙª≤∆>ØT¶Àm∞Wìc±˚Aﬁµ69^∞+è0DHâzsm€´Û%°à≠⁄5Z@VgJ–ë »@»UJ—ß?∫CÌ/
+ß;Àaág8P»ÚkF¸[]Z·´¨‰≤/	Ab#	É©ê¥ıüèÜ@U(“>6ÈAÈSÔÕÖy V5@ x√∏_@Å€•¸º§ÈüÎØƒf@oK∞=∑5X¿=!j_Öu_ˇÙ 	É©êÙÜ Ö>A(Çí4"º§VÉ ÄW%°O]ëî"”9îü´ß‡JÏ9Ëˇ¿I!˙(ZÖ’|˝Îz¶ò$”Ñ¨¨±2ô»Áƒ+¶BÚCD≈J"h/Ygù œ@  ”+l≤ù˛Xô$‘C¶;ŒLÓ‘Î”Y≠¡N!—E”*¨.àπëÈîj˚sﬁ„jÏõ≤z>ﬁ1íWBâ:RÈπW∞Nü]˙ÿ~:¯kN¨π ˝B‡‘Ä @‚Bı®ò˛»h˝ïvIØÅ·†#/tÑË ˝ı∑w€UA≤Ü4ì*◊L!D˝|¥=>!·0í_â∫2W’GJ‘°ø`ù>('!«◊âæd.ÕB«K π*aV	˝j¶?‰ØËPlÓ˙´≥”CÇ´˝;JGcjSÑ®`ˇ¨-¨◊¯5®ùB —ÑòwÌ⁄CÇoÔò
+…/È∞*⁄—'ÇJ“>≥-
+  º˙Ú»8 ¬ÆZ“f÷Ù«òC19D;¥SﬁÛ≠⁄C`k∞P"Çü£§d@“Ñ6àÜéêò
+…wUaíÔi˛ci¨˝ºJòcU?>∫ãã}”A ¿´.ÌF⁄6ZB·GÄıW.˙?4Hz‡Íæª“—Ç(°9©ﬂlöı]P“r≈4`(LÖ‰áﬁd≥>ãP
+º?—Ç∞@ xó˚,π`U?29s}X?u˝U®Ù9ÎØdµï´˚´^/‚N©MÅh\õÉt1_ª⁄®Î|PÑ»◊	jX√§ß#D÷bÑ≈TH~ËAÓ°à≠æètÀêZ	:“G ¿ª‹ê‹π.Yü≥˛jÃN¯zY«)?O`≤ctË$áH@…BÙ!ÌTà∂ DnO“ÇËB¯ú’]‰b◊ckcØYCìkoHsêÃö!§äP≤«=á~Õ$t-aŒ@ xó{»ï˝—¸`fò+ßjU”ò´˚'NÃΩ¬„PIﬂ¡ﬂ7dMVÃÙÓ6,kc9<∂Xã•*ê™øΩ”Ç\…‰ØtU!•«πÔo/∑œcñ◊¶∫^sykÏ‚6ŒçÅ∑UYÇﬁ§Ó–Î7:EÄºÄ é8Y’ÓÅ˜ΩIJŒLÈÂÁ©Ø¡|bD˚\_Qz”B)∫:!:÷cŸ&a*$7î®#G¨œÇlB—É @¨¡ „
+ØòÎØBuÖÃZÂp≤¶^«ü˛ËPÜ¿4H|2ù∂¥Í∫(E◊ã DŸTàô¨» 6¨ BÓÎ≥ò…ﬂ‹æ◊S+≤Ä æ∂üÃ{M´îó†Á uˇ«‰Èèﬁ>o≠ÂÁc÷_»” —ŸÁ÷‘ot î¢ÎGﬂÓ9aÜÑ‰âUY»ì"¯`.Ã”Ã◊æÁÄ @$ﬁirŸˇ1k¢a‰’Ωs
+–C¨ø,)ËˇHrV
+∑˘a$Óø˘+ÖS ≤öÎfª¶´AóíJ!∫Vd1RŒtà\5_UMU}˚fAã÷-è˘Ï»Ñ«◊'^Çæ' QÅ @09Ø¡∫≤üfèFfoŒÅ˛ÿïV¬B≠øJk∞Ä3òâFÂHk◊Qr≥}C ¢AàŒ©ä”Û> æªªæ∑*Kà WªMm h´è€ˇñü€ˆÁPÎ«˙—‰ÕÕ◊ËEG  òú◊`Â eˇ«¨ıWÆÏπ˛ Âd eò	Ô ™,D?à4aì!™ÑËAqzY(RGÈk≥D?aR$π^‰õ Ä˜˛èŸÂÁcêïÓıWÉﬂÁZŸ∑ËD÷`YÂ∑Ö`$Œ}~U›õZ”∂ÎPb!àF!zPú^Ve°T˚´≥DÚ@@¢√¬Ë~]  ≥XπÆ¡zú·
+,5S
+ÔjøÎ≤¨ø™7nÀ‚µb0” a›@”xë≥A” ÍÑËBqzŸ´≤∫ﬁêÊPòïA(ºKÑ’Y∫»◊Ÿﬁ€4ûöfKŸÂ• ÄdÉ
+OÎØBò≥˛J&e∆~6π‚@ò¡¨≈J,ÑU—±"´‹0§CoJ¥øvy7%B0Ë˝º‡èªib@Ú_9ΩEã @PπˆÄ\ŸÕ&ØmW˝s◊_5á£>^∂¸<√«s“k∞Æbﬂ ‡¶A04È˙A‰ÎôÊØ∑Íûì0µ£+≤ uhU”!(ΩOÑ	ë8>òÛ‘úô AT  Ç y¨ø#wæˇ8suŸòÚÛŒπâëz≠w˙C˝,YÅFÂ” ı€ç˙~ä‘ŸóUÛ=$ÖbÙC∫€›¸=A‘!—âYÂb:8¸⁄î@$9ﬂ˙˙ƒK‰˜ÜÛØÿ@ ó„àtÄ\EÍë+ù4Ø¡
+∫˛jB`≤™´*?«<ı™6÷(h ˘∫˝U{8?r¬3÷è%Ñ(ùG¢EVuΩl˛€^å}ì”!¿È@ƒV”◊9ïhÓ9 «G  8¶@0Tà√¡YÎØ&vÜú•πˇ#Ö5X@
+Xâ˛æN1ëØ∑Ó”9ë∆ÛïÆ'Ñœó⁄©sykÏ‚6ˆÕB@Lá J’Q Q‰8ÚìÍÉY9ÍÕ»≈¨˛è	”c∑ÊîüO]ï’W$≥V)!	{_':“‹ﬁ•5ˆ∫˝∫K7H:ÖÈ!*ßBÑÑ!LÖî©?Bë:JG©zLÄƒG  
+¶@‹±’«{≈g≈
+|=u˝ïÊueŸ`B©Ã_U¶ñ–ó /Ã˝ù‚4»™nV¸uöít◊U#I#±ÕD»ö0§P¨ î™€•±ñ5Ç“*´œ!‡–è @4πMÅƒÏ…±ˇcÙ˙+)øVæ˛j®z≠¸€3k∞ ∑Æ¨±_YzABë‡`iìú$¿ë áD?Ç›Í€ÀÊ}!`UpzBÑ˛§L˘	Äú1‚à›ñ;Ô©8˜>÷óA◊_MπÇc°t˝UÛB\9›k∞⁄1@jXâå}nM˝&› ‰ﬁj¨óUÏõÇBÙ£/}¨ é˜áXô
+©>2≤7"g\–â @TπMÅ–“3„øøÊcü	∏ŒdÍ˙+±ŸÃó då$å+ª˝ë»n5÷õ!HBB“@_˙Xïú_ïe´Ôπõ†Ä®ò—)zOÖÚ©zFà˝æuÖ5XÄ˜¬Ó˙ÌF˝◊√îÂ0≤AæΩ£$Â D–È¢}!ËcUpd:‰ÓE÷k≤Vı„£ ‚Éπ0O ZÄ à.ß)êSﬂ}—ZH6πˇc ˙´ +≥˙Î¡|Ü≥Váa{Æj#5«@ÍÏWΩ >Â2“üÑº° =5]ÁY”È"B‘¢/Á¶CƒE{ \ex åYìU⁄Tà¨¿˙öó†j-å…„	?Ä¥ß@^UüÃÎMÂ·°œ;ƒü≤˛*®·«f∆Í,çT˜Ä π`%ñWŸLÅB$‹±◊ñıƒÇê›TAàjÙÖ‡∫CÄ<ßB§Ctûºûo¶f¡›@À»kÛ(õ)ê’ÏoéqÕÓ©ò⁄ˇ—≠U©^Ü˚nÊ≥¸ºë@˙éˆ∞
+»!à?ôMÅ<Xç%Øn*Dp®ûzB“B_é°;x8íCrl‰îüi&ÖX ‘»e
+‰ ˛h~0_òí’Îâﬂ^V?`†É´9ÂÁ˝AYë˚^¯AÆ™m/ú≤/€Uc¶ÁÑtS!‚¶˝˚Úu;	ÙÑ§áæCw9i/ÀH*rë´Ñ ≤·˙Ä –’b/Œ&Á⁄≈ÈY:Ì•ò˚ædGÚ¨ıc$rXï€˙´{°’ï—%ë«0ö¨4˙S —˝MŸ$∞Ü—Å˙ÕÜâêƒÏû≠$e≠Y
+Ë¡îÈzCPäTªBdVåÛÃG @ï\
+—KÓô‹ˇ1ı–iÍ‘à∆ıWs¶g"ë+¶-+UÄ†(G˜D[ò`"§)ﬁÊkxzkÕË	Iª/D˛Ì]å{£†r:§_§.°àµ<NPXWH‚è˚Ê¬<5LÄhî÷)ÄÏÂRà˛ìÍÉYÂ∏Ó»ßâAF®˛èPÎØ¶NœD£ıjiVs!wrhΩ ¥ª"ÊÑÕÀ™ôê(EWòŒZ¨Ù–í&¬å}› aà`:πÎ.6l¬øÍc2S!HC∑v TMÅ∞7qyÇP¨ˇ≤]•¯sPø”wõ /ì t9∏A˛Ï‚Ûä®B4°_7ìBÍﬂ‹m?|ìC‰«›Ô_òz˘§˘
+C‰«ÌÌ7fΩ˛YÛ∫"˚◊0•ODIrw˚ÕÏã][’èO˛zÍÎ‹s∆ ïR_Ö%{!ÉÆ¡≤K’ù"CL⁄ªÖ˛úıWõ/hÉS  æBê¶ù«ºáNêÍsyx‰Ô J¨t—íŸd»Â≠±ã€ÿ7äã‘˚›!¨ÀB	Î±4LÑH“D @%ô ë)'Ë≈Æ¡ö∫¬IÒ·›‹+OÜÜIì˚S"´ojc_J}∞2¨¡B!A<!AäË	…#i¬DÎ≤PDOH≥#~Ç¥Ä PÎüTKÛww_òîß@BIπ(léPWÊ÷3&8Fç®ß÷ˇë@xîÇƒcrU`/»“{m∑≈¨YK=!˘Ö!îßcHw”!»æ'dÛDeOH Êé Ä˙‰WõtWaÖ\ÉcmU‘Ù@áÓu˝d÷˝:¥¸<y
+ß-§ƒ~•Î6>ÇxR`9˙nä†’t¢Ü‰Ñàg|oL9±Õz¨5aNb:π?ækô~
+ºk»ŸéÑ t⁄ÍC @µ‘Waï∏´^O¯÷≤2a˛Ã3¬è¢
+
+ÂÛ!ác ¢"ÒD^˘QËƒ[7qŸ!ûßﬂ“Ö!|.ìTﬂ^6?v}!ÚoÛ∫Ãip«trû
+ëx_€4ti/ ›ÖË©
+∫´“Ò¬ßyA‚„,kıÂÁ^¬#•áo°>£»}•Ù˛|á ⁄&≤r`üsü6A»;æÆÊÜ‘øπ„Ûô¡Tà¸∏˚˝S/ü4?Äa”!/Ãz˝ ‹ﬁ~”\¥%SÔ@™‰5˚‹ﬁNW>ò4/ﬁÕ  ‘ì	êW’'ÛzfïT≤k∞Ïˆ
+0BØ“⁄]ë8FÄÉÌπO¢äY% UòÒ†)ê{!»” π`=Vf+≤ì!òÒöÖ"u‰Pî>dd˙…:≠^Ágµ¯O'ˇ‹èı£ì∫ ˆíØπfF …LÅº∑IÆ¬*iVΩû0˝1Â )Å´Oß¨ø:;=£˝–ç@ﬂ$»ªzZ»å√˜ÈskÍ7 ø«(KgïRÚXèï¬L≈™,‰ÑHI˙˛ñå~»qÍÇO	F¨’±]ÓÄ H™˝ÔÓæà}3p îıW°∫<îØø A}S˚íÀ] UûYcME‚
+S áÀ“ªâêˆ1á¥1í¬LEë:R’MQ∫c´˙ÒŸ	ËC  π‰Wõ∞ÎôÊíoé¡÷`%®98Qÿ7z˝’†È≈aëZ⁄ßfÄ‰@z≈Í&Wò9]îŒz¨|0í¬Ã¡t∞]ÅuéÑ ≤ z,Á ízàO∆4ïxª8†V~®=e˝U¥~^ÆÊB£ƒ!¶@∆ıÑ¶Bí«TH~C0”!»ñLè¯8[Q˙RπLÄ HNä} •ÙÄúÌ∞H(¸ò≥˛j”€/Íu}òF√ôúπä}#Ä¯AﬁótÅåö
+ë5lÇê‰1í'¬¯ò©Q©a≥Gö⁄g¢ ê^í‚,ﬂ‰…fR¶¨t
+∞jÓ˙´S•j≥ﬁØ÷	Âk∫í∏ﬂÄê≈Ë⁄B ]Ÿœ”Ñ4?æΩ”;-àIaH˝õ;cﬁ’€»&ëwøaÍÂìÊ0~:‰ÖπΩ˝∆¨◊?k¶„•XHAø,}Í¨&ùãuK¡≥v …Æ¬í> ÷ìûcä]∞üe49l„¿ÿ±\ÖÔÜ‹èÑI£’o6ñÁÑÙ√dÉ0Æ¬êı˙Uà»k•“_/!)m+)Ä‰˚@RZÉ˝Ïru“ú	é±ÂÁ£˙SR8ƒWzkdÄ˚”œx‡Ç}Y1	2Âk≤LÉHÇÏ‹Bî>'¿4Ñ!pA^+1Õ|ms@\tÄ HVeí(EÔ÷`˘‹i´è¶æÀ¸∂Ô”3ûp5ìÊêZÁÌbyfõ^Ü›>Ãø/€æ¥™õïXÕ*1¶í≤≥˚⁄"Å´|ÔÂsú:C‡EÍH’™~‹úÔ√à>  íóR‚ù£È	qÂÉ∆nÜ9ÂÁ^‰ﬁW«‘7µ±/≠ )˚ïæ€D#í+õ‘◊µA&ì‡®)IÁÄ<ﬂ†Kæ∆ºìı{“A¥Eêgb/oç]¨çΩ˛˚f!ì"uyk-è'Ñ%[!N=ÓŒuÄt!àl-Å  ≤	Aﬁ€ıIª¨¡ZE:`œÇÁC∫πÂÁS◊_!¶@ÄÉ} ı['A&k¶gn⁄iÅkÈV·ê<G˝â≥&!Ù é\–”\‘”CLÛˆ6ˆMCbò‡ÄlH)˙ﬂ›}a4;5&ÈBrW«å4VF≠9ÎØÍıôÈÂ˜îÇ¶@Ä=r‡¸UeÍ∑¨orÇƒÕ¥@ãıXôá!›Tà …:’ıí0ì1Ç†d∆Ã≥ïÊ¬<5LÄhA  ª‰W›æ{@btàØ\¨ıWÊ‹˙+∏”¨·®9hî¢”‚0π™(˘v8BíØ›◊ù.!…{UV?ëêìUYòÄÈƒ6‰<G∂ì|≠Ôz¿bµó[ @d«¢ˆ=ã≤À'Ÿìä¥÷_’Î¸ÆGê’á-t Ìª+±·&Tíro∏B$ºF÷‰˚s˝õªÌÁöœwˆaà¸∏˚˝S/ü4?Ä9Ø√‰«ÌÌ7ÕT˛ú…|@‘õÛ_ìÜÙÄ@èO#‰F˚*,ﬂk∞\QÄ>EΩ‘˘]kÓìÏ≥ËJ„OR~{YÖúXﬂ‘€”è‰Jˆ%%ÛÆ0RTà`2§àu&C‡cUVU}œã‡ˆ˚iuø:Œ_~óú@´∞≤\É5vç”îrèáÍs÷_m\!rL÷Wº)Ì—ﬁSD%áå+Ì]±œ≠©ﬂí◊ka:„YcEVYC‡cUVä\\|ﬂÑ"…ıfBÂ°´˙q∑bã @÷´∞ˆSwMk∞V±˙&¥XÂ≥˛jŒƒÃÓÖ^‚«÷`Ÿóz¶@Ä√v•Ë	~›QGBV˘¡}ÈØ0ù0§ßóÖ0ÆıWÜ`Æ!+∞‰<J˚äˆRÄ »÷◊ˆìyØtïìO∂˙hÍªˇﬁèÜÏ¯Ù±˛*á‚¯ì¥¯1E‚S a√ê]˜
+ì!ŸbEVŸaàΩº5v±¶@N√¡™,Ù’ı¶Ö2B3ÄlI“˛™“9í(£í≤:ûÿÃô‡òS~>xmòˆ !·€.S  ≥ ªùA∞YÕèo€2m‰_úﬁ/OGˆ§;Ø+Pﬂ|x∫-Qœ˝¢"xEâ:¶≤“¸É—πë§D  ≤üa‰0åz=n®pt©∑ØïYs÷WÕ\ù5x˝U¬dñjÚ8‰¿8L:∫bÃûAx˜Çæ÷gÔ^¬Áª®0dÛ˛ià4aHŒ˝zé0;∂âh]…^"V`»û÷UXès,B˜ÈJ_˘˘£^ú)ÍK…ı¿ƒ^U\°B)∫ª0Èyµ-Fp›˝nÂ˙?&õ≤«ä¨r—ó∫Iy+ÂÈUıëıÇ»öl[m◊£ùÍ°=  ≤ßµ˝ ˛h~0_∏«vÈ˛}fjn˘˘¨ıW•H§gÉBt‡Ù*¨˙≠ÚiÆ<≥Õ<!H<Õ}ﬂıÑÑîÜ»5 üì¿_oàiﬁﬁrc4Yô|◊ÎŸ§7Ch;É*3Ì äO*BÅ‰){± ˙´tﬂre6pÓ»°ª≤Ôg%¢#§‡Yo∑?XëUVe¡5VeÂoHOË™~|ˆ˜ÇË@ †Z—szaëö$÷_MÈKQF}Há>‡(
+—›°Dií¯˜ZåºËÅæê¢5Ω!më:Ω!òã0§\≤i`Ä≤∫@ÏÖöû]ë»U≥é(Í˙I¥ıWc„ì?îId÷ÆÑÒ¿Ò)ê‘øi@à:˝µdÕz,¡ä¨"–ÇC´≤ÏıGÓ8Î©ŒÙH@/93∞vﬁ◊ÉÊ¬<5wŒn¶Y√ã Â–Zàé¥Ã]ï‚¥åã)˚R "(E£ƒ!9\_(©/L!≈ Å<Goûß∑°HuΩ§7≥{CCÚµ0"‡~›ºÊ¸=&&@ E[!˙ï˝4ËõfHs'#J∞Ÿ<	∂˛*â]5.˚¡ÌWRñöFh¡àSˆeeÍ7õ‰æ>ñÇ §lÑ!ÿMáÙ√˘⁄ÕtfÜ!®'D.û=3"k∞ÿÓ°Ä‚0¢ƒÑ{mUÙa)D;;f?îÇøØ3â¨¡∫Ç¸©é∞–Ç)«˜'!àz!xÜ0dJ_ïEÇ9XìïézÛƒÿô+Ã¥\|[: ≈ë	$Í*ÌıWı∫º’W©Æ¡z0	`ã)/!àîp˜{(†œÓÛsCOà)=y◊v˘»◊C¬Sz"D‡b2D»tù!iY’èœNÄÇƒG †HZ÷`=V∏˛ œÕîÓèï…GBeË;´öÿ√àtÇ$Ü4·◊v{ëFJﬂﬂ0ˇ˘Å<ß!”!p¸ZìŒ=Ül~êX–è @ë≤^É5ÛÔ5gΩ”(rHêÿzßπÂÁ£◊_e(≈)êÊq˙ÆÊ*O†#æœ™œka‡n÷∑L©&{ﬁ≤œYëTr“¨»LÜ´?b/oç]¨)R«htÜËÍHµgz@Œ˘`‚_|[: E“RÜ~e4?ò/LÍÇ≠vJ¯  bÀœsòiW^X√°∞#á{´ÙÇlÌ‰úUXik>›ö,¡ãCy:Ó=n/õ¨ Ç´Œ
+‘ı≤—#ˆπ@ ,Î)êúEúôµ˛j"•ÔÆ%9B<¿*,XÖï]≤[ëER¬ô±◊ÛÆ,GŸa}!»ô—ô	YÉuÆq-L~Á* ê‘H©§8r ·æ}nM˝¶.g˝UÜH™S ÇI†áUX^ƒ˙>œÎëCäFÇS”!¨ ¬úæ¶B¸™7Oå≠æüı>ö3'û⁄E≈
+, Ec
+!∞˛*ü)AÙ»UÌR∑¡´∞ÚD¬¿™,∏ú
+±v9ª≥„¨Í«LÄ(G  ëøQ˙∏BaéÕî?/W/Ö"S÷`ÕYUØ˘võ”à ‡´∞ä
+Cöæ¡ö¨‚0ÇC(Ráã◊¨Ñ!Ó
+ÈœëX–ç (¥œ?ü£πÎØöÒˆ)r\’SøŸ˚gÈÆ†#‚w3ÂåUXÂÿﬂ/È)Y?i&¡‰k+°XÒòÅ´0Ñæê_üÎ'L’$é  "˙aÛÖÛoÃ1ˇ|ÆáBì¶b\¨øZôÏ5!»Àˆ ◊Ç ÜUXÂŸü
+·ª\›cÅ0'¶CDuΩlﬁR¶éSËÒk≈àz  äˆ¡§{ı˘Aë¶?ÇØx
+ºkŒTÃ‰ÚÛR$æ
+kw≈Ê ˚U∫A •ûYcMıyB ≈h>Á¨«Ç ¡	¨À¬úæ¡d»êo ◊∆úÈUë5XèÌ'êJÄ @$?læÃÊæüº‚)ÛıWı˙“Õ*ÑÃ•\à~Ôp‚7w€$·0ÄBÙÅm~1AÇS_/n/∑ØÀò¡ Ñ!#æoû[m#§â ‰©Ω;˙kÔÎÃ¶ÕfFQwÛÁg®Á∏kN˘˘¨r¯wÌ”oV<‘Y¨˙®ﬂnå}∆⁄î≈>≥¶~[–◊¨ËA*d˚ò†8Ωxá¬ê´vR`]fÑ!LÖåﬂ±™3¢ÿÇó*Äü†Cﬁ>5üÓÇ%Ô€ïMÕœ	Ní&#í⁄LYı4w a≤ /ÓÊñü≥˛j‹°éΩ czÇ^'É∑Í—Çsì!"É	03i5cÜ‡ƒ∫,∫Cp}!”ä–œùÔp˛ ¿HM∞—7˙ˇªo˜>Æ=åºﬁË;TGò¢¨zÊa˝‰ÙòÎØˆÄ-?/h˝Uv´∞ZÑ (é‚Ø«Ÿ`é`MN=èl¬êÓk–¢LÁ0ÇúÄ ÉáWˆSêêcn0ÚÍb[∫Ù∫=\gR‰¥XS4πL‰æd÷˙´9JZµı‚õç±/´|ﬁµ: s¨¡
+t?ø¨L˝≠ŒÁ£–ÅÚtC∫Á$ÇÁ%ÿCô:Na*‰|∫Î\·êhËqé‹ˆF{°Oà0!¢ÉÏáÙQÃïî+Ô√ﬂïl¨øä$≥dw∞jwss‡Ä\±+lÚ¶º)ALü
+iV®]”Å˚aΩ!8˙ıÉ2uQÚT»ê"tπ–ıqwU@ÄVt§z	DdBD¬Çê∏|LÄ$7¡·Í∞L·⁄÷_ÕîQ)˙˛nnkòA∆~=ŒífÇ`N?ù!8Ù∏†7c¶C‰1s}¸jxî5RRÇ4Ä†h˝>èCèSaAHf˝S˚;z61&Hñ˘ZÉ5g˝UΩûÒÌµ‘ıWáJ—3XãÖú±+ B∏Ï°,ÙÜ`Ït»~ “ºΩÂ~,P)A»êNe” :Ä†8©Ø∂râ $Nàó˛”1&HúñyXª2w˝’ÓE¡î?À’”Ÿá Ç Äì‰yı˘0òÚ˝®˜¯a2ª«Ω!˙5ÑuY((ëOÌâç]Øÿ" A1>é#IøˇC√INkWÊL√ÃZ%êbBAÇ¨»◊b÷`ÖıÃ6_#	A‡e2§}å°l{Cx\‡ ‘QBÇÙÄ {√5ì1’]”c2"¥ﬂFJÁÿ|·¸}nf¨kä⁄‚hz√ı¨9˜«ÓIˇ´È4gπá ›·BÛwˇ=ë9B‹8‰k∆í˛∏EÇìΩ!î®c∆tÎ≤ 
+B¨]ö™˙òG"Á'&@\Ø:á; »°«º˚ÓÁvi~ππŒ>âQˇ√ÊKÁÔ≥ûπÆinﬂ≈¨ÖÊ¨ø™◊”W_›ª¬≈Ü çwmi∆Wdz(ˆñØa±¯Í√aó®ûø`¿tH?°L=orq·››ın*D§Ü‘õ'∆ûπÌ≤ã}@êÇ∑” øå5êÈÙáÑÆß?$¸ò;˝1Î¿Œ∫'•kWÊÑAfF˜ÂÁÁïÇ\ç%
+¯;#aÑÒ—Ç@C0jU÷ïüæ>‰Å@§<›kÌ.ëÈêSù⁄PÑû.$è–c…dKËÈπ
+@„Í´Ÿ˛s)Îªò[~û€4åF%Ö Ç©§Ä…%XÖÖÿaá›Ë0Ç	D “?áH©/Ñ"Ù4Ä Y˛Ô_˘ë„¨X”W_Ât‡{˝«‹i÷_çAÆ‰†•å§√T4"¸–%ˆ˜BîkÜ4è√r.T¿åÈ¡„'àîYú.R	Cê$ÈUı©Y—L	?Bá:~¯(√ä=˝·d˝ïÀ“oá·—¶aﬁqX5V˝fcÏÀÚB¡TTÖ &˘ä«*,h	Cn⁄ÉÓk÷ ·ƒtÎ>1ÅHy+≤B!rÅËπµ\µª/(BOí¬‘GXπıÄƒX}Â£˜CÀÙGΩV¯-dFHN”0•®ojc_ñÄÙ1Çhè=¬ΩXÖ≠kêd2Dp’?éMáP¶éD ô
+	Ñ¨◊?k:>ã◊≥ﬂEË˙(<ΩcÍ#º‹÷`≈Y}Â'¸à=˝—‹é9Öﬂôa˝UƒÉïn§p¶BLıx#¸POæ. ◊G&t†	ÍÙ8·9"ˆÚ÷ÿ≈⁄òÊÌ-˜i¬∫s_!àtz¨◊ØÓ}º≈â	è!EË–á Í1ıW.S ±V_˘‡"¸ò=˝·b˝ï≤›Á≥÷ÅÕôÜa˝’<re©‹áˆ~<r%%|ío¨ΩJ!4#¡†«	œi0ıkÃÌÂˆÇΩ6©Æó€_ IíØi9ôrpÆ]ŒÇ˛∏Ì3Å Pç©∏
+?X}Âx˙√’˙´+£¬Ï@h∆4ÂÁéJ—Ö´£WK»øø;T0√ªöØYâ°©Ö!ÙÜ`tô:œg0 Î≤Ú ÁõÕ≥X¸'o·«†	˘='ËC ïò˙–#á5X°√Ÿ˜®yı’¸Óèˆjö-”{;æø	‰ITîiÆ¢vÜd¬·Aã@É~§IªuX@
+Ë¡‘«
++@1w]ñ<éÆ9‘÷N
+ÈÎòÇt}S'<ÍÕcOL¢¨"¨_«i Pá©}R^É£˜„;!≈!.¬'wÿg÷‘o bB†2gèÁ¨ÚÛ’Ù?äáAM!uWT
+VãA~§M˛M?Ø>_e§:“©ÛΩ	á+¨À¬‹uYÇ˛ê§BYâu*®8◊˜ÅrÄ@¶>tnRkıï2˝s«•≥ˇ S ˆ⁄ﬁªÃÁDåL√Ã¡˙+O%ÀÌœppE%k≥@¯ëág∂YHÇ‘5èaVea»cÖ@é˚Cò—Çº2ã≈ÎA!»ò≥EË≤‰±˝4Ë„¡?®¿‘án©Æø ©˜√’Ù«¸Ó∑”^¶@Æﬁ's¶a(?˜{ÄˇfCbJÑΩ€y#¸»!r¬™,åD¶¢?D∑!!àãA«Æ…Ç.cÆ&¯yµLv¬†ÔMz»Ø6◊yÙ~‘OúÖsª?|¨øÚ22¢dÓ}‚|nFæΩ€Ü }{?x∫∑6´˘ÔﬁÔÂ˛◊oÔko›¥ÙÂGV-voöã‘YïÖ±˝!\ÿÅ©˝!Õ€[Óøà!à¨√™ˆz9‰<EÇè±+ØÁ¨»Ó_ ˚«˝€√sØò‹ˇàÖïWixaç‘‹iY}rj≈€‰áÑéˆS∫∫‚ÅGÂÁ3◊_’¯µôV˜^û›$áaëczüá{ÅIÛkáéﬂÁˇ∑˚ˇyÙs¬·w—ÏskÍ7ºGﬂìXïÖâœÀ)T«‹uY"·uÁ]2∑Ô„l˙›cO¨…z¯&ﬂ8¿
+,D¡ ´4§~ƒË¸¯››≥ÚP¥ÓrÌï≥„√S„ïÀπÅ”$Æ«`C¨ø≤?˝oM˝üÌÙÊÇPö™CÔﬂÂòÆûì¡…Éﬂk‚Ÿ ¸˜&§Ä/éª∑ ’Xïó˝!Là‡÷e≈%ØÔ7õ'Õ4»‹≤Ûs= Á»9= zÄ 8¬è4§~ƒò˙êodﬂy:<◊~»¥Cseã/˙0Êéµ2ìfi*AHa¡	ÄÉòA©˙´≤öÁÇUYò:!B Ç3D‚ï£á¯8ÙÄ§É ¡∞Ú*)Ö1¶>|≠ºõıœúÏõt~¯>Ïü≥™¥ıWÊßﬂlﬂ˛·?Û≈üœ∫%" ¶@Ä›sAÇπœÂª.4úA í«™~l€ONo¶YpBÖRv˝?ŒùÈgÂï√æ±v§Ñ?|¨‡ê‚KüWâ◊ÎER”.8|ËaW~(S ¿ôu¡t¶t°uÅè!L)To^œN?tG8Áz@‰i˜{›&∆ºcÂU:R	?r*:wΩÚ*πc‡Œ|mÊ¨s5ÌR˜cø¯WNﬁWÈáM¬Ä“–ú?Ãf:sC˚="<ÁƒπBı˝@§y{À˝¡‹ËA ØdÍC¶?†_*·GNEÁ¢¯£¥ıW¶RÏOøi~§i_ãµª‚ì¶ 
+¡0q:ÑÁ
+âbuLD⁄ã	D“[ìÂÎ	„Ä¿˙>“"ì⁄√è‹äŒ]˜}$9˘·sîÏﬂıd÷}„(¥∞Ò/ÕÊoˇ∆Xz@¸\≠w”r•ÄÃu+Z åÆ–Ö!Ù>`ä’17©Æ∑kÊYó•ªDŒïËâè Œ±Ú*-(¸rË∞{¢‹äŒ]˜}»˚ì—L'·«˙2\¯·9®AÓüí¶]J˜†ï´=dHææÌæﬁò‹˚∞ªpÇ@.ã’œA1∞?Ñ0$9áôê 8E¯ëÌ·G¨©_EÁ>V^I¯±v¶lﬁ?5A•∂|F˜áÀión= ·◊dÑ »é¨-˙^(µ$2I
+o="Ñl81¬™¨∞= ıÊâ±’˜G]Œó˛¯‚¯Ø#8CﬂGz4áπM}¯XyÂ<¸¯8¸hŸg÷‘oÎ$Vzùé†˛√ØÀKﬂÁ7õmi∫‡j< ô†0I*xÓÄ9è)¶D0uUEÍ”ˇ›9<√A< p6˘AŸyZ4áø⁄\Á5ıQ?1µ£U>√èÊIRâLÅÃ*?˜∞˛Jz@Íø˝cËâ†¡Ux R'´VXÖÑ)Rg:ßDv´≥x~ä˛E|ÙÜÃr™‰‹9EË:Ä`6÷^•~ÑÜí€$·GNSÆW^âÕÊE3ÜÈÚ`?Z¯—í'È˝ ŸÒPˆﬁ≠¡⁄¸√ø1’?˝üùøå<–ËäPπ≤@™XÖƒ	D∫Á›øC¿a7ç`uıÜP¢ÓŒπ¢tπËqµsò¿4ÑÈ—~» ´–·«ÔÓ^x_yïB¯°b≠ìè{é◊`©∏üLÅÈÅÇõ7S{∑º<Ñ^ ‡õ}…ÀC ⁄sàˆyD˝f≥}ëÛ≈AJ&—õo7¶˛Õ]Ûñ«‰ı≠¸∏˚˝ãÌEë37‰å5XÈcì~§EBè◊Å≈ã-:˜¥ÚÍŒı˚‘~$@€˙´eËoaÏü¸ïóèG;øYC  ¨¬t]¡O|?∆ö«ÎEÎOÜP¢~‡˛Ÿ<1’â¢s9ˇ±'ä“Â¸	qÄ`¬èt|‹ˇ¶#·GJ¡áXª.O__öÕ˚8ÖÁGüÄÀUHﬁØ+ız∆∑Kœì ]àLÅÇ(C˙˙´.F  ¿ÿuY<@»ÇuoE9X¢.Ø;ØèÁÓ‹y"˙Ä`4);e?qœ)ß1¯ê€Ú¡\ò◊õGŸL{¯>úØªZ_özyΩÔ„ûwµ∑ÈóÊ‹gæˇ~LÅ‰q’›ΩPd˜øπ_Â ìÇ[ :0ÇHèµ°HëMáîÜúÎ˘8ıÎ°«G Ç—·«œ´m˙ù¥π≠πÚ|∏^w•2¯ê'‘âÏ6ûµ˛*–ﬂè)êL_dˆ∞J@ÙI°LûØÓ÷g	.‡)f:§¥0DŒh'÷\ù[ÉÖ∏@0·án[	Ù|Ñò˙p<Ã∫ˇV&ô©˛‚_öÕ¯∑€ˇ¶§à+≤ÔÖ"Õ[¶E  (VˇpöuYË‡k;¶E≤WZ¬ö´¥Ä`0÷^È$”!WJÒ€∑â‡C…‘áºËZøÚßÈ˙H`Í£?Œ˙Û◊{Ÿø¯Fé√%±Ùç1_¸y∞èÖkj⁄◊jı~ ]ê÷eA—„ØA(RDísg»©5W$∫Ä`Y{% –A„¥á ¯(∏Á„»J´›8ÙU~ª=éﬁœú˚1¬	AÏ˛{≥˘ác™¸Ø	AJ÷˛[<µVÎ®˝>B  ÚZó≈zMƒ@(RÑnÉÇ]/≤õ
+9ªÎLO‚! ¡YÑz|‰1Ò·#¯à∂ÓJ÷Y5SáYS(8?E›˙∞™ø¸ks˜ø˝¶˛Ó∆~ÒØbﬂdÿG≤≥7EÚ`⁄d˜˚F|l&SÄxËˇ  û¯Í.Ä†√özEx<fµ"À4ooM∂‰Ïà D%úÙ™˙ƒ‰áüIËÒ√ÊØ˜∑œ‡Cﬁ˜z˝ Ì˚=ıëPÅy¥ÚÛ»·èÑ õø˝c˛·2ˆÇ¿ìΩØì¶MÑ"GÉß∑¡ÒD⁄ú˜GH ÅïYPÑ^ë|√—≠…“à4g 'nìúù\ÉµyblıΩÁ[â)@p2¸†˜#>:>∂”´˙qÚ¡«ùá˜Ω˘î‡„–˝Ω¨ãæäˆ^):!Rw&XÒº‰‰‹¥kŒ  {XôÖd¶îÈIw”B∑.´õâät5ö’]_N˚¯ÙÄËE ÇÉ?‚”6ı!∑„∑ÅoOà5W©2ı±yˇ‘Q»ƒGÎØéï¢◊ˇ˜ˇhÏWeÏü¸UÏõ ïiù^hr/0y`‚ †~eñ}Œä"(A∑H>"Bë"c÷â”í&<@¯ü¶©è¨ÉèÕ≥q‹√"¯≤Ó*ı–cÊÌNy˝’É‰ßﬂòZBê∑øÿ˛oÑ  F~Ωò‹ÙˆƒÜ @±ËÅjÑ"ŸÑ"µ˙Aˆ√èÊ„Æ/U≠Ê¬| ∏á#.MS”|‰°^/≤)ëïuXˆ/ˇ⁄‘ˇ·ﬂmWbÇ pu®@ ÿˇﬁ–È¬ÚÊÁtXA
+◊ì‘≠•™æ|uÚc˜gŒ\‰*€EÏ¬ˇ‘
+∆! ¡=t~ƒ£eÍ#◊‡√Áö´Ó˝3Òëè96Z¶?NÆƒz˚VbÜ»ˇFa; îÎÿ¯](¬!î†p=ç◊Á“Í29~»÷çS= ßä–°ÓM†‹©è¡áÑ)õ˚>¶^ç0äº YÈ=∞Or˝ïÚïa˚!A oaH?<á\ Ä˛˜	±ˇΩÇ)hB·∫:Õj™Â'Î∞Œùµúª RŒé °ÎD Ç´Ø¬ÍBÜÿ¡GzÙoìo9õ'=Ò—ÖÕ[›áıì≠Ê˝ÒY°”Ãè*π¯ãa6ˇ◊ø5ıo˛›Æ§˘5˙A xÿoØ*¶A¥Ú‹d¸º Äjtâ )tãD%Ø’ÁvÇΩ–ÙT»fÛƒT’˜«ˇ,"Í,œs¡Í´†ì›œc…u≈U °G®‡#ÈRÛ9/¢∆¸Ÿıº˚?ôiöwµ±?˘Á∆˛”nÍÔ∂ì ç?¸Gcæ¯scˇËõÊ- ∏ áÎˆeªÚz| H≠KÑâBhD(T^HrΩÑ»Î˝°<ûZÉ5©$ˇ£’‹ˇ`ıU˛+ÆJ=∂?'¯(9¯pR@>'ÄRV~~˙¿ksoÍC~H"H≥Àl˚’_Ì~ Ã˘∫„=#ìÔ7&> $ª6ãru§ÄPDÂ4»Ê˝SgÏîG"ßŸb(>wLBÜ˜Êb˚ñ–√ã‘CÔπv{xû˛^;W4xw?¸ËkBé?1FÆØk¬y˚ˆ˛[˚≈7€ﬂ‹õi¶E ‡å˙µΩ∑À˛Ùõìﬂ√ö?≥¨)∫F˝æC+
+søí∏ªz˜Ê>-Â¢ eñ´”%ÇƒzEÏ3zpÊº~∑ÎÖ±2rd]’Ó˜~x:æs‰ƒ,9/ZÏOyt∂æfñ2 Öc˙√çR◊[…îá5È—ºıJtá5Wâz±¸<•ıWtÕ[ô
+˘/øﬁÆ«jı{C∫i ¸5Êßﬂ˚óÌl*aÏ∂Ö∫ÉÌ_I|Ë}ÔÖ0™◊∞t@r (°vu§<?πÍÖzÌˇÜ#A≈Ì•π¯G':9ñO&]|:gt! )≈ÁyîòBèÇß=J\s•Q*ÎØ∫'œcH'àL|¸…ÁˇÈﬁSÔ^0 Átfj÷1πÛò£kX\á&ánSˇ‡£˝ıÊæ;ˆ˚†d«ææ”)Çúz~“G4^êâLxT_æü\zÓz÷¡DC R®ßˆé’Wâ˜yt?ŸÁ!|OzÑ(3Ôá€ü'Xj.>ÓﬂÁ¨ø:Oû(Àóeî•„;%¡G¿‰`h“§ª©çﬁ˚ ÍÈØRd}R{ø#π7	≤|rØdn¯1wÙ  )‘+˚)ˆMHJÏ‡#fâyn°áºˇÕf˚6’ièÊ†§yÀ…ÎØ  Ú}ÏM>k}Nú  "\Hµ?·G0Çë∑M1˙ÂmX∏ö¸ò≥klQ:¸! )tıïLÄ@w¡§G:+Æöè¡ö´§’ÎE˛ÎØZˆπ5ıõ¥n3   †j}VÅáÀHÙÒ[X "ÅÖπﬁÜ!A>k∞í∞ê˙RîÉﬁètÇè◊[Ö*2œ&Ù¨π
+≤˛jŒÁ0πÚÛûÙ   Œå ß@$”ëÆ›È˚õ∏kÔ=9ªMè	ê¬∞˙JgAËëVË—º•‘\èòÎØR]c‚∫   (’â`D05’+≥ˆØ˝Ê
+ôÒEŒ¶XÉ•HA~^-cﬂµbÚ±>òãÊmàèõ˚§«ˆÁL{`ºY£±´4Ôqy∆z   ¿£ˆê˘¡Ûn:Fê“„µeüUŸNç¯ÏÅ Ö†˜COË!Î≠∫üá
+=Bïò7o	=∆a≈U‘ıW›DO1ÎØ˙WÚ    –31"ËÅRª◊æÔ⁄0§† ‰‹J-z@Ù# ) Ω˜IÀÕu∂+Ær=D+Æ¡ás»Á|é+?øá1f    ÌuZΩˇÜÑLÌaBDê–˚g‚£[qız„?à»yΩUà–#X°yÏ‡C>ˆÕÅè]ˆ¨ıWâ≥œ´ŸÂÒ    ‚Ø'*˘5‚))ô≥´;€B< ô+µ˜£9$Ëˇw.ùx¨Í«Ì€|èêù¶Ù–cˇ˜y"≠Ì	Õªzﬁ˙´€B◊_uûYcü]l+yBÈ1
+   `û°ØÈöˇ&Å« D„ŸÅÇ5Xàã $c%ı~Ñ<∫˜¢œCBt¬£æ6ıÊIvÅG––#f1$ÙÛæ∫˜scå}YÈ∏íhf¯·‚„gC>üWÚd’ﬁ˚ª1   dÄŒí|OHwˆq‰ÃÉ5XÈ" …T	Ω1VZÖ<Çıx<B≠µ
+⁄È° Ùq˝f”¨Nä˙D¶	xüæ–¨˝‹6”!Ç@   »”ÿ…ëˆÜNÖÙ/v¿cg˜x\’¡Cî˙Ìf˚1Ø¶≠¡:5Ç∏@2$SπÜ°Bè–°÷Y	˘Ç‹çﬂÖ*cä1Â4Ù»e⁄c 	¨âÇ»ﬂ˜M¸#˘ıWS÷e   e8é
+Hvˇ;!	Ó?é:'OG^wá:{ê£y+¡ã92r{yr
+DŒª@t" …0¸»•˜#‰Z´~‡ë›:´ﬁæ¡–°>Ê.Ùhæ-=2Aö∞'∂ú÷_ç≈∫,    Cíˆı˝#ò}Ò·J˙+eu≥ı~Ù&Oö«÷`ùòŸlûò™˙ﬁÀmƒ< I9¸à—·¢∞<˜˛éÓc «í/Ù%Õö©Ób(Ì«
+=ÈqN≥Üji∑Ω !>ûL~(¯˚5˝q”!    &Æÿ$Ù8zÎi%÷ÅM≤›√~u|
+‰÷`ÈE íâT√èê=]áG.˝1¶;ˆèP3⁄Z´˛j´ˆÁπØ∑ötøΩÛ_écΩÿ!nÉVLá    {°ﬂÿ5[˚˝tí√˘J¨wı·œºÓüZÜéx@2ëZÁG».ü°G»˛é“èÊcØ/õ¿£˘y‡–£˘òÖtz8-GÆ»PSzæä}Bô:    ﬂk∂é&të‰ΩÎ´ O¯—ô∏ã)ù@2 ì2íﬂ¡áÔ’Vt‰æŒ*FGÙ)èÿEÊ	}ªê‚¶˜ƒsËìŒ˛ﬂ[÷å-#M›ú¡˙´Xó    F`¬∫≠º»ÁXŒn¶^|y.¸∞ã)ê¥Ä$.ï√W—Mxt?Ou¬#fYyÃÈéÊmå	ìÉûxAR˙{ó\~ÓÎ≤    hY∑u( Ÿ˝⁄ë˜…Í≠¯Î∞Æ&¨‚n.|∞abF:S ˙Ä$,Ö√G·s≠U®è“ß;ä<r=N)ÈÔäÒò   Àê>ícXªÕ©)ç£ÊÌı⁄LÅ‰É $QØ™O™√	=^o‹>ÇèÅGâ›*÷YÌΩˇéu[ä=2√˙´@ò   ê¡⁄-˙H¸ﬂ˜ß¶4ÊÑª˜äúu)Cèqá„@?¥ïû˚<|Üπ±ß;vÅG≥q/Ë˜x¥?èy;°G&XeÍ    rF˙°HÛﬂﬁ/´∑ÑˆO/ÜÖSŒàNtçlñ◊Ê‚˙„ÒèY?1÷ˇuÑC ím·áØW.ãÃ}OyÑ^g•-Ïh˛;r‡—îfw…LÑÄ¨À   ê”¥»ˆyµ˝…‘"‹BêØ⁄˚„êk–õÆëg«œ&)CO√Çe,ÈêïW¬è.îp|tÔ«’¥áœÚÚÅGÃ∞£˘∏ÎÀ∏›«¶<b÷[eèıWJ±.   @ÅÍõvù”a»…UXÔñûü‚†]…ÈU±ò ¡YÕ$Ü√âå˛˚ï¿£˚π÷)èÅGÃÓïÅá∆–C|îÅıWÈ`:   @ÈaHÅS!Wa≠Ñî°gaAÖêÅá´’V˝¿C∏=J<¢ñkÓÛÿGQ¶?≈t   Ä√S!ΩﬂMoI° ˛*¨›yíÁ≤ı!S úø«≈v$î¯Â∆›ºèµVﬁè∂¥ºî¿CÌîGˇõ¨∂iAQmèALGô:   Ä“¶Bñˆ~Ä—çªjÔ≤>˘∏È-Ia∫§T8>Sí3*˚’ë ‰Ãô⁄z˝ ŸÌ¿4 Íä…•3‰êßÊ˛ˇ.øOÇ!ÖˆµV]ÿj¬£ﬂﬂ±˝Ô∏ÅGW\Æ-P9Â±ß~≥Q}˚‡I˚Ñb]   ÄRä◊o‹Ñ*÷ËAö)êgï˚MgŒÉNï°#>êÉè.xpπæÍ‹«u=Â·:êÈéÌá<bØ≥Í¬éÊ”x$zÏ
+≥∫+'P÷_ÇuY    pVs>"S%/?ØöÚ‚ƒ ©hØ„'Æ¡B| ôê‡„ı∆m˘wà‡CèU˝∏}Î.Ù(1PπŒ*’–£ªΩ2ıÅrQ~^.¶C    ‡¯y…∑w˛Vbµ¢6!ÀƒdÍ«5WÌr÷`1¢HfSæ?ñòª‚ ÀîáÁïVªIí∂ª£˚y,j˚;R== ˙ò    ˇ+±ˆŒcöˆóÅêÊcoö◊G?Êå2tƒE í®¡áºÔÊ¢y;w C∏=BuxhòÏ∏∑ŒJ˚ÑGn¨⁄r¨˝ˇ=ÿsÔ±t(S   ÄÌÎf	§ }Ó¥∆°ı„Úö\.™–9“/›«<ı˚ŒMÅ,ü{˝—«Mƒ 	ÚπÓ™[iÂ¢¿‹e‡·{•ïÜ¿#ô©—•ÒÚç(≈C‚ﬁ’˝ˇ˙Ïï%¡y¨À   P8Y!>i%÷ôãQõ)ì+œ´∞ˆœ∂Nıèú9?⁄,ØÕà: â˘ÂÊ⁄À‘«‹>è..BüÅ«˛:+èå◊Yı1·Å±d˜'0Í1cõ«çÌûÙ∑_3\…    %ØƒqF”Ñ+æ˙@Lûú]Ωu¶†}Û·©©æ|ÔÚVb&êÑ¯Zwı€%.&=˙S.√-Ωª5VM!“"©	è§ß<:ò*dŸÚƒt   ÄÇ4a¬“˚‹>|M=„|∆W»¡ã’Œu}úXÉ’¸:ÖËÍÄlŒ‘«‹‡√«îGxƒZe’)Ü˝ﬁéîÉé}pAû‰ÙÔÒ0   †rÛ¶ﬁÆƒ∫j◊èœ}]Ì£§€r26p9êàÕ˚ßÊ‚}Ô‚V¬êBMù˙ê–C¬è)¡Gz∏ûÚàx$”ŸëÀ´s=‡ò¨2™ﬂf¯o*ßCÎ≤    ‰¿ıkß} áJ◊˚fî°Ô~ÖËjÄf ‘«‘i◊´≠bLxÏ÷WâT¶;Ó7Â;›±}+ﬂP2¸˚(r:dàt›!ÚıçØm    ‡t÷†pÊ\˙ôâ)DØ.oç]‹Œ∏•pÅ § Cß>∂è'Mz∏öÚvtAG7—°>‰Ì√ªÄ£˚ﬂr‘Mv¥?¬L≥±¶C(S    ß´∞N¨æ∂‘ÔŒO§»9£˝í $6ê…t«sÒ‡;7ı!Å«wm‡+Ùàx$vtÖ‰ΩˇŒÎ¨†ÑmCyrDAô:    Ã_Öunı’»ÆèAÖËÀÌEﬁàá $#sJÕw˜"¯¥G √W‡±[a•}}Uo•ì»rm’)¨¥Bjáœ›! 4 ‘   nÍ*¨±Ω$g?Œ¿UXàka8%óöOô˙®7/LΩy2)¥5ÂëZ–Q‘$Gáê9>õΩ’DLá  ‘   îf¿t∆‘’Wc?N≥
+K.ò<©†Û?Öò I\®©è©”æ¶<‘Æ∞:V@æˇk%†∑%`:öP¶   †£¶@∆¨æöqÍ∑cø™&Ω¯G í∞SSÇèÊœ‘◊f3qJ$â∞£§Ú°aœ≤¿©†èÈhCô:   Ä\ç(Dü~˛8S&RHÇd⁄„Wõi¡¬–©è±¡G∑⁄ Y‡—Æ≤ävõ‰(Ìpˇ–⁄™˛ˇ$nÛ˛Ô·>ÿîq[¿zlK˝á_˚≈7|   ¶›¡kÒ!ßô˘”Òz‡HdˇÏ≈øûÄ¸≥	K&?∆¨≠√’z+5”ÿ≤9˙_ˇóGÊﬂˇ˚ˇ◊‘Øˇ>ˆMÄ‚¸¸øyd˛ªˇ~\   p‘U†Û≠´søŒàFˆˇ˘˚ˇè”^        ê⁄Y        @v@        @v@        @vÄ        Ä‹0        ≤C         ≤C         ≤C         ≤C         ≤≥0uÏõ         ‡          ;          ;          ;          ;          ;          ;          ;          ;          ;          ;          ;          ;          ;          ;          ;          ;          ;          ;          ;          ;ã:ˆ-         på	        êùÖ1ÃÄ        Äº0        ≤C         ≤C         ≤C         ≤C         ≤C         ≤≥0uÏõ         ‡          ;          ;          ;          ;          ;          ;          ;          ;          ;          ;          ;          ;        ˛ˇˆÓÿ ÇòÔør≤D pH∏?‰      @é      ‰      @é      ‰Ï˘}     ¿c      @é      ‰      @é      ‰      @é      ‰      @é      ‰      @é      ‰      @ŒŒ˘}     ¿[      @Œé	     c     ‰      @é      ‰      @é      ‰      @é      ‰      @é      ‰      @é      ‰      @Œûﬂ      <f     ‰      @é      ‰      @é      ‰      @é      ‰      @é      ‰      @é      ‰      @é      ‰      @ŒŒ˘}     ¿[      @é      ‰      @é      ‰      @é      ‰      @é      ‰      @ŒŒúﬂ7      <e     ‰¨˝     Pc     ‰      @é      ‰      @é      ‰      @é      ‰      @é      ‰      @é      ‰      @é      ‰      @é      ‰      @é      ‰      @ŒŒ˘}     ¿[      @é      ‰      @é      ‰      @é      ‰      @Œûﬂ      <f     ‰      @é      ‰      @é      ‰      @é      ‰      @é      ‰ÏÃ˘}     ¿S      @é      ‰      @é      ‰      @é      ‰      @é      ‰      @é      ‰      @ŒŒ˘}     ¿[      @é      ‰      @é      ‰¨Ë     @ç     ê#Ä      9     ê#Ä      9     ê#Ä      9     ê#Ä      9     ê#Ä      9     ê#Ä      9     ê#Ä      9     ê#Ä      9     ê#Ä      9     ê#Ä      9;s~ﬂ      î     ê#Ä      9     ê≥^Ä      5      @Œûﬂ      <f     ‰      @é      ‰      @é      ‰      @é      ‰      @é      ‰      @é      ‰      ¿‘\ÃµÔ∆Fhè    IENDÆB`Ç

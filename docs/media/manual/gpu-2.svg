@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="650" height="330" viewBox="0 0 650 330">
+  <title>gpu-2</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M0 0 L650 0 L650 330 L0 330 Z" fill="#ffffff"/>
+    <path d="M170 22 L170 270 M277.5 22 L277.5 270 M385 22 L385 270 M492.5 22 L492.5 270 M600 22 L600 270" fill="none" stroke="#e3e3e3" stroke-width="0.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 58.32 46)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">RTX 4090, periodic 128³</tspan></text>
+    <path d="M170 30 L588.93 30 L588.93 42 L170 42 Z" fill="#2a6fdb"/>
+    <text transform="matrix(1 0 0 1 592.93 40)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#2a6fdb"><tspan x="0" y="0">3 897</tspan></text>
+    <path d="M170 44 L447.13 44 L447.13 56 L170 56 Z" fill="#9db8ea"/>
+    <text transform="matrix(1 0 0 1 451.13 54)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#555555"><tspan x="0" y="0">2 578</tspan></text>
+    <text transform="matrix(1 0 0 1 63 86)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">RTX 4090, sphere 128³</tspan></text>
+    <path d="M170 70 L553.99 70 L553.99 82 L170 82 Z" fill="#2a6fdb"/>
+    <text transform="matrix(1 0 0 1 557.99 80)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#2a6fdb"><tspan x="0" y="0">3 572</tspan></text>
+    <path d="M170 84 L432.41 84 L432.41 96 L170 96 Z" fill="#9db8ea"/>
+    <text transform="matrix(1 0 0 1 436.41 94)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#555555"><tspan x="0" y="0">2 441</tspan></text>
+    <text transform="matrix(1 0 0 1 101.43 126)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">GB10, periodic</tspan></text>
+    <path d="M170 110 L301.58 110 L301.58 122 L170 122 Z" fill="#2a6fdb"/>
+    <text transform="matrix(1 0 0 1 305.58 120)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#2a6fdb"><tspan x="0" y="0">1 224</tspan></text>
+    <path d="M170 124 L240.52 124 L240.52 136 L170 136 Z" fill="#9db8ea"/>
+    <text transform="matrix(1 0 0 1 244.52 134)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#555555"><tspan x="0" y="0">656</tspan></text>
+    <text transform="matrix(1 0 0 1 106.11 166)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">GB10, sphere</tspan></text>
+    <path d="M170 150 L293.19 150 L293.19 162 L170 162 Z" fill="#2a6fdb"/>
+    <text transform="matrix(1 0 0 1 297.19 160)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#2a6fdb"><tspan x="0" y="0">1 146</tspan></text>
+    <path d="M170 164 L237.72 164 L237.72 176 L170 176 Z" fill="#9db8ea"/>
+    <text transform="matrix(1 0 0 1 241.72 174)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#555555"><tspan x="0" y="0">630</tspan></text>
+    <text transform="matrix(1 0 0 1 91.17 206)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">M4 Max, periodic</tspan></text>
+    <path d="M170 190 L316.63 190 L316.63 202 L170 202 Z" fill="#2a6fdb"/>
+    <text transform="matrix(1 0 0 1 320.63 200)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#2a6fdb"><tspan x="0" y="0">1 364</tspan></text>
+    <path d="M170 204 L270.73 204 L270.73 216 L170 216 Z" fill="#9db8ea"/>
+    <text transform="matrix(1 0 0 1 274.73 214)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#555555"><tspan x="0" y="0">937</tspan></text>
+    <text transform="matrix(1 0 0 1 95.85 246)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">M4 Max, sphere</tspan></text>
+    <path d="M170 230 L305.02 230 L305.02 242 L170 242 Z" fill="#2a6fdb"/>
+    <text transform="matrix(1 0 0 1 309.02 240)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#2a6fdb"><tspan x="0" y="0">1 256</tspan></text>
+    <path d="M170 244 L263.74 244 L263.74 256 L170 256 Z" fill="#9db8ea"/>
+    <text transform="matrix(1 0 0 1 267.74 254)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#555555"><tspan x="0" y="0">872</tspan></text>
+    <path d="M170 22 L170 270 L600 270" fill="none" stroke="#555555" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 167.3 284)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">0</tspan></text>
+    <text transform="matrix(1 0 0 1 265.44 284)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">1 000</tspan></text>
+    <text transform="matrix(1 0 0 1 372.94 284)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">2 000</tspan></text>
+    <text transform="matrix(1 0 0 1 480.44 284)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">3 000</tspan></text>
+    <text transform="matrix(1 0 0 1 587.94 284)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">4 000</tspan></text>
+    <text transform="matrix(1 0 0 1 314.2 302)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">million cell updates per second</tspan></text>
+    <path d="M170 314 L180 314 L180 324 L170 324 Z" fill="#2a6fdb"/>
+    <text transform="matrix(1 0 0 1 184 323)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">in place</tspan></text>
+    <path d="M250 314 L260 314 L260 324 L250 324 Z" fill="#9db8ea"/>
+    <text transform="matrix(1 0 0 1 264 323)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">two buffers</tspan></text>
+    <text transform="matrix(1 0 0 1 423.37 323)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#555555"><tspan x="0" y="0">RTX 4090: first version of the in-place layout</tspan></text>
+  </g>
+</svg>

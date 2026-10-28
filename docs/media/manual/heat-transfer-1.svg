@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="620" height="420" viewBox="0 0 620 420">
+  <title>heat-transfer-1</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M0 0 L620 0 L620 420 L0 420 Z" fill="#ffffff"/>
+    <path d="M70 90 L220 90 L220 240 L70 240 Z" fill="#eef3fc" stroke="#2a6fdb" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M220 90 L370 90 L370 240 L220 240 Z" fill="#eceef1" stroke="#888888" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M220 240 L370 240 L370 390 L220 390 Z" fill="#cfd2d6" stroke="#888888" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M220 236 L370 236 L370 244 L220 244 Z" fill="#ffffff" stroke="#e07b28" stroke-width="0.8" stroke-miterlimit="10"/>
+    <path d="M220 244 L228 236 M226 244 L234 236 M232 244 L240 236 M238 244 L246 236 M244 244 L252 236 M250 244 L258 236 M256 244 L264 236 M262 244 L270 236 M268 244 L276 236 M274 244 L282 236 M280 244 L288 236 M286 244 L294 236 M292 244 L300 236 M298 244 L306 236 M304 244 L312 236 M310 244 L318 236 M316 244 L324 236 M322 244 L330 236 M328 244 L336 236 M334 244 L342 236 M340 244 L348 236 M346 244 L354 236 M352 244 L360 236 M358 244 L366 236 M364 244 L370 238" fill="none" stroke="#e07b28" stroke-width="0.7" stroke-miterlimit="10"/>
+    <path d="M220 90 L220 240" fill="none" stroke="#555555" stroke-width="1.5" stroke-miterlimit="10"/>
+    <path d="M370 240 L378 240 L378 390 L370 390 Z" fill="#555555"/>
+    <path d="M142 165 C142 166.657 143.343 168 145 168 C146.657 168 148 166.657 148 165 C148 163.343 146.657 162 145 162 C143.343 162 142 163.343 142 165 Z M292 165 C292 166.657 293.343 168 295 168 C296.657 168 298 166.657 298 165 C298 163.343 296.657 162 295 162 C293.343 162 292 163.343 292 165 Z M292 315 C292 316.657 293.343 318 295 318 C296.657 318 298 316.657 298 315 C298 313.343 296.657 312 295 312 C293.343 312 292 313.343 292 315 Z" fill="#222222"/>
+    <g>
+      <g>
+        <path d="M151 156.35 L212.996 156.35 L212.996 157.65 L151 157.65 Z" fill="#2a6fdb"/>
+        <path d="M217 157 L208.992 161.004 L208.992 152.996 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M217.456 173.463 C195.259 195.339 173.825 196.94 153.44 178.261 L154.319 177.302 C174.193 195.514 194.839 193.927 216.544 172.537 Z" fill="#2a6fdb"/>
+        <path d="M151 175 L159.541 177.684 L153.978 183.444 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <path d="M216.5 165 C216.5 166.933 218.067 168.5 220 168.5 C221.933 168.5 223.5 166.933 223.5 165 C223.5 163.067 221.933 161.5 220 161.5 C218.067 161.5 216.5 163.067 216.5 165 Z" fill="#d1495b"/>
+    <text transform="matrix(1 0 0 1 226 159)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#d1495b"><tspan x="0" y="0">Ti</tspan></text>
+    <g>
+      <g>
+        <path d="M175 220.75 L269.5 220.75 L269.5 223.25 L175 223.25 Z" fill="#d1495b"/>
+        <path d="M275 222 L264 227.5 L264 216.5 Z" fill="#d1495b"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 78 108)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#222222"><tspan x="0" y="0">fluid cell (Tf, kf)</tspan></text>
+    <text transform="matrix(1 0 0 1 228 108)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#222222"><tspan x="0" y="0">conducting cell (Ts, ks)</tspan></text>
+    <text transform="matrix(1 0 0 1 228 364)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">conducting cell,</tspan></text>
+    <text transform="matrix(1 0 0 1 228 377)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">another material</tspan></text>
+    <text transform="matrix(1 0 0 1 70 56)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a6fdb"><tspan x="0" y="0">anti-bounce-back at Ti = (ks Ts + kf Tf)/(ks + kf)</tspan></text>
+    <path d="M200 225 L160 262" fill="none" stroke="#888888" stroke-width="0.6" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 20 274)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#d1495b"><tspan x="0" y="0">heat the link takes from the fluid</tspan></text>
+    <text transform="matrix(1 0 0 1 20 287)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#d1495b"><tspan x="0" y="0">→ given to the solid cell (a − b Ts, implicit)</tspan></text>
+    <path d="M370 240 L384 240" fill="none" stroke="#888888" stroke-width="0.6" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 388 234)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">g = 1 / (1/(2ka) + 1/(2kb) + r)</tspan></text>
+    <text transform="matrix(1 0 0 1 388 248)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#e07b28"><tspan x="0" y="0">thermal contact r (optional)</tspan></text>
+    <text transform="matrix(1 0 0 1 386 318)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">held: 2k(Tw − T) / flux q</tspan></text>
+    <path d="M185 61 L185 153" fill="none" stroke="#888888" stroke-width="0.6" stroke-miterlimit="10"/>
+  </g>
+</svg>

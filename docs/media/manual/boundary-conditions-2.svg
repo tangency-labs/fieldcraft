@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="640" height="340" viewBox="0 0 640 340">
+  <title>boundary-conditions-2</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M0 0 L640 0 L640 340 L0 340 Z" fill="#ffffff"/>
+    <path d="M90 60 L260 60 L260 230 L90 230 Z" fill="#ffffff" stroke="#888888" stroke-miterlimit="10"/>
+    <path d="M90 46 L90 244" fill="none" stroke="#d1495b" stroke-width="3" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 53.21 141)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#d1495b"><tspan x="0" y="0">x_min,</tspan></text>
+    <text transform="matrix(1 0 0 1 63.19 154)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#d1495b"><tspan x="0" y="0">inlet</tspan></text>
+    <path d="M171 145 C171 147.209 172.791 149 175 149 C177.209 149 179 147.209 179 145 C179 142.791 177.209 141 175 141 C172.791 141 171 142.791 171 145 Z" fill="#222222"/>
+    <g>
+      <g>
+        <path d="M100.6 144.1 L164.94 144.1 L164.94 145.9 L100.6 145.9 Z" fill="#d1495b"/>
+        <path d="M168 145 L161.88 148.06 L161.88 141.94 Z" fill="#d1495b"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M121.754 196.974 L167.25 151.477 L168.523 152.75 L123.026 198.246 Z" fill="#d1495b"/>
+        <path d="M170.05 149.95 L167.886 156.441 L163.559 152.114 Z" fill="#d1495b"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M123.026 91.754 L168.523 137.25 L167.25 138.523 L121.754 93.026 Z" fill="#d1495b"/>
+        <path d="M170.05 140.05 L163.559 137.886 L167.886 133.559 Z" fill="#d1495b"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M174.5 145 L174.5 97.6 L175.5 97.6 L175.5 145 Z" fill="#2a6fdb"/>
+        <path d="M175 95.4 L177.2 99.8 L172.8 99.8 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M175.5 145 L175.5 192.4 L174.5 192.4 L174.5 145 Z" fill="#2a6fdb"/>
+        <path d="M175 194.6 L172.8 190.2 L177.2 190.2 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M168 137.5 L165 137.5 L165 136.5 L168 136.5 Z M163 137.5 L160 137.5 L160 136.5 L163 136.5 Z M158 137.5 L155 137.5 L155 136.5 L158 136.5 Z M153 137.5 L150 137.5 L150 136.5 L153 136.5 Z M148 137.5 L145 137.5 L145 136.5 L148 136.5 Z M143 137.5 L140 137.5 L140 136.5 L143 136.5 Z M138 137.5 L135 137.5 L135 136.5 L138 136.5 Z M133 137.5 L130.7 137.5 L130.7 136.5 L133 136.5 Z" fill="#2a6fdb"/>
+        <path d="M128.5 137 L132.9 134.8 L132.9 139.2 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M175.356 134.744 L173.235 132.622 L173.942 131.915 L176.064 134.036 Z M171.821 131.208 L169.7 129.087 L170.407 128.38 L172.528 130.501 Z M168.285 127.672 L166.164 125.551 L166.871 124.844 L168.992 126.965 Z M164.75 124.137 L162.629 122.016 L163.336 121.309 L165.457 123.43 Z M161.214 120.601 L159.093 118.48 L159.8 117.773 L161.921 119.894 Z M157.679 117.066 L155.557 114.945 L156.265 114.237 L158.386 116.359 Z M154.143 113.53 L152.022 111.409 L152.729 110.702 L154.85 112.823 Z M150.608 109.995 L148.982 108.369 L149.689 107.662 L151.315 109.288 Z" fill="#2a6fdb"/>
+        <path d="M147.78 106.46 L152.447 108.016 L149.336 111.127 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M164.744 144.644 L162.622 146.765 L161.915 146.058 L164.036 143.936 Z M161.208 148.179 L159.087 150.3 L158.38 149.593 L160.501 147.472 Z M157.672 151.715 L155.551 153.836 L154.844 153.129 L156.965 151.008 Z M154.137 155.25 L152.016 157.371 L151.309 156.664 L153.43 154.543 Z M150.601 158.786 L148.48 160.907 L147.773 160.2 L149.894 158.079 Z M147.066 162.321 L144.945 164.443 L144.237 163.735 L146.359 161.614 Z M143.53 165.857 L141.409 167.978 L140.702 167.271 L142.823 165.15 Z M139.995 169.392 L138.369 171.018 L137.662 170.311 L139.288 168.685 Z" fill="#2a6fdb"/>
+        <path d="M136.46 172.22 L138.016 167.553 L141.127 170.664 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 270 100)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#d1495b"><tspan x="0" y="0">unknown: 1 normal, 4 diagonals</tspan></text>
+    <text transform="matrix(1 0 0 1 270 114)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#555555"><tspan x="0" y="0">(c_x = +1; two of them along ±z, inset)</tspan></text>
+    <text transform="matrix(1 0 0 1 270 142)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#2a6fdb"><tspan x="0" y="0">T: tangential sum (c_x = 0)</tspan></text>
+    <text transform="matrix(1 0 0 1 270 156)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#2a6fdb"><tspan x="0" y="0">O: outgoing sum (c_x = −1, dashed)</tspan></text>
+    <g>
+      <g>
+        <path d="M110 251.6 L138.72 251.6 L138.72 252.4 L110 252.4 Z" fill="#555555"/>
+        <path d="M140 252 L137.44 253.28 L137.44 250.72 Z" fill="#555555"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 146 256)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#555555"><tspan x="0" y="0">x</tspan></text>
+    <g>
+      <g>
+        <path d="M109.6 252 L109.6 227.28 L110.4 227.28 L110.4 252 Z" fill="#555555"/>
+        <path d="M110 226 L111.28 228.56 L108.72 228.56 Z" fill="#555555"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 98.78 228)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#555555"><tspan x="0" y="0">y</tspan></text>
+    <path d="M270 180 L590 180 L590 228 L270 228 Z" fill="#f4f6f9" stroke="#bbbbbb" stroke-width="0.8" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 280 200)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#222222"><tspan x="0" y="0">velocity inlet:  ρ = (T + 2 O) / (1 − u_n)</tspan></text>
+    <text transform="matrix(1 0 0 1 280 217)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#222222"><tspan x="0" y="0">pressure face:  u_n = 1 − (T + 2 O) / ρ</tspan></text>
+    <path d="M560 285 L607.11 294.3" fill="none" stroke="#bbbbbb" stroke-width="0.8" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 611.11 292.3)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#555555"><tspan x="0" y="0">x</tspan></text>
+    <path d="M560 285 L583.8 270.9" fill="none" stroke="#bbbbbb" stroke-width="0.8" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 587.8 268.9)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#555555"><tspan x="0" y="0">y</tspan></text>
+    <path d="M560 285 L560 240.27" fill="none" stroke="#bbbbbb" stroke-width="0.8" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 564 238.27)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#555555"><tspan x="0" y="0">z</tspan></text>
+    <g>
+      <g>
+        <path d="M560.136 284.313 L587.103 289.635 L586.832 291.009 L559.864 285.687 Z" fill="#d1495b"/>
+        <path d="M589.44 290.81 L584.007 292.306 L584.983 287.362 Z" fill="#d1495b"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M559.936 284.303 L603.867 280.273 L603.994 281.667 L560.064 285.697 Z" fill="#d1495b"/>
+        <path d="M606.44 280.74 L601.651 283.71 L601.191 278.691 Z" fill="#d1495b"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M560.551 284.568 L571.438 298.474 L570.335 299.337 L559.449 285.432 Z" fill="#d1495b"/>
+        <path d="M572.44 300.89 L567.349 298.475 L571.317 295.368 Z" fill="#d1495b"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M559.535 284.477 L587.091 260.01 L588.02 261.057 L560.465 285.523 Z" fill="#d1495b"/>
+        <path d="M589.44 258.86 L587.344 264.091 L583.998 260.322 Z" fill="#d1495b"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M560.552 284.57 L588.443 320.342 L587.338 321.203 L559.448 285.43 Z" fill="#d1495b"/>
+        <path d="M589.44 322.76 L584.354 320.335 L588.328 317.236 Z" fill="#d1495b"/>
+      </g>
+    </g>
+    <path d="M557.5 285 C557.5 286.381 558.619 287.5 560 287.5 C561.381 287.5 562.5 286.381 562.5 285 C562.5 283.619 561.381 282.5 560 282.5 C558.619 282.5 557.5 283.619 557.5 285 Z" fill="#222222"/>
+    <text transform="matrix(1 0 0 1 430 277)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#555555"><tspan x="0" y="0">inset: the five</tspan></text>
+    <text transform="matrix(1 0 0 1 430 289)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#555555"><tspan x="0" y="0">c_x = +1 directions</tspan></text>
+  </g>
+</svg>

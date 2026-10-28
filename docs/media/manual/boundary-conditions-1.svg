@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="440" height="300" viewBox="0 0 440 300">
+  <title>boundary-conditions-1</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M0 0 L440 0 L440 300 L0 300 Z" fill="#ffffff"/>
+    <path d="M40 40 L220 40 L220 220 L40 220 Z" fill="#ffffff" stroke="#888888" stroke-miterlimit="10"/>
+    <path d="M220 40 L400 40 L400 220 L220 220 Z" fill="#eceef1" stroke="#888888" stroke-miterlimit="10"/>
+    <path d="M220 46 L226 40 M220 58 L238 40 M220 70 L250 40 M220 82 L262 40 M220 94 L274 40 M220 106 L286 40 M220 118 L298 40 M220 130 L310 40 M220 142 L322 40 M220 154 L334 40 M220 166 L346 40 M220 178 L358 40 M220 190 L370 40 M220 202 L382 40 M220 214 L394 40 M226 220 L400 46 M238 220 L400 58 M250 220 L400 70 M262 220 L400 82 M274 220 L400 94 M286 220 L400 106 M298 220 L400 118 M310 220 L400 130 M322 220 L400 142 M334 220 L400 154 M346 220 L400 166 M358 220 L400 178 M370 220 L400 190 M382 220 L400 202 M394 220 L400 214" fill="none" stroke="#bbbbbb" stroke-width="0.7" stroke-miterlimit="10"/>
+    <path d="M126 130 C126 132.209 127.791 134 130 134 C132.209 134 134 132.209 134 130 C134 127.791 132.209 126 130 126 C127.791 126 126 127.791 126 130 Z" fill="#222222"/>
+    <text transform="matrix(1 0 0 1 106.45 208)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">fluid cell x</tspan></text>
+    <path d="M276 194 L344 194 L344 214 L276 214 Z" fill="#ffffff"/>
+    <text transform="matrix(1 0 0 1 289.65 208)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#555555"><tspan x="0" y="0">solid cell</tspan></text>
+    <path d="M220 30 L220 230" fill="none" stroke="#555555" stroke-width="1.6" stroke-miterlimit="10" stroke-dasharray="6 4"/>
+    <text transform="matrix(1 0 0 1 188.6 24)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#555555"><tspan x="0" y="0">wall (halfway)</tspan></text>
+    <g>
+      <g>
+        <path d="M136 107.1 L213.76 107.1 L213.76 108.9 L136 108.9 Z" fill="#2a6fdb"/>
+        <path d="M217 108 L210.52 111.24 L210.52 104.76 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 50 98)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a6fdb"><tspan x="0" y="0">f*_q̄ (post-collision, leaving)</tspan></text>
+    <g>
+      <g>
+        <path d="M217 148.9 L141.24 148.9 L141.24 147.1 L217 147.1 Z" fill="#2a9d55"/>
+        <path d="M138 148 L144.48 144.76 L144.48 151.24 Z" fill="#2a9d55"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 48 168)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a9d55"><tspan x="0" y="0">f_q = f*_q̄ + 6 w_q ρ₀ c_q·u_w</tspan></text>
+    <g>
+      <g>
+        <path d="M229.25 170 L229.25 92.7 L230.75 92.7 L230.75 170 Z" fill="#e07b28"/>
+        <path d="M230 90 L232.7 95.4 L227.3 95.4 Z" fill="#e07b28"/>
+      </g>
+    </g>
+    <path d="M238 122 L342 122 L342 140 L238 140 Z" fill="#ffffff"/>
+    <text transform="matrix(1 0 0 1 242 135)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#e07b28"><tspan x="0" y="0">u_w (moving wall)</tspan></text>
+    <path d="M40 250 L400 250 L400 284 L40 284 Z" fill="#f4f6f9" stroke="#bbbbbb" stroke-width="0.8" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 73.52 271)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">force on the wall: F = −c_q (f*_q̄ + f_q), summed over the face&apos;s links</tspan></text>
+  </g>
+</svg>

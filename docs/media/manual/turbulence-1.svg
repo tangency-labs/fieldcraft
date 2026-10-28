@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="620" height="390" viewBox="0 0 620 390">
+  <title>turbulence-1</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M0 0 L620 0 L620 390 L0 390 Z" fill="#ffffff"/>
+    <path d="M40 260 L460 260 L460 330 L40 330 Z" fill="#ececec"/>
+    <path d="M40 270 L50 260 M40 282 L62 260 M40 294 L74 260 M40 306 L86 260 M40 318 L98 260 M40 330 L110 260 M52 330 L122 260 M64 330 L134 260 M76 330 L146 260 M88 330 L158 260 M100 330 L170 260 M112 330 L182 260 M124 330 L194 260 M136 330 L206 260 M148 330 L218 260 M160 330 L230 260 M172 330 L242 260 M184 330 L254 260 M196 330 L266 260 M208 330 L278 260 M220 330 L290 260 M232 330 L302 260 M244 330 L314 260 M256 330 L326 260 M268 330 L338 260 M280 330 L350 260 M292 330 L362 260 M304 330 L374 260 M316 330 L386 260 M328 330 L398 260 M340 330 L410 260 M352 330 L422 260 M364 330 L434 260 M376 330 L446 260 M388 330 L458 260 M400 330 L460 270 M412 330 L460 282 M424 330 L460 294 M436 330 L460 306 M448 330 L460 318" fill="none" stroke="#bbbbbb" stroke-width="0.6" stroke-miterlimit="10"/>
+    <path d="M40 190 L460 190 L460 260 L40 260 Z" fill="#eef3fc"/>
+    <path d="M110 120 L180 120 L180 190 L110 190 Z" fill="#fcf0e6"/>
+    <path d="M320 50 L390 50 L390 120 L320 120 Z" fill="#f4f6f9"/>
+    <path d="M40 50 L40 260 M110 50 L110 260 M180 50 L180 260 M250 50 L250 260 M320 50 L320 260 M390 50 L390 260 M460 50 L460 260 M40 50 L460 50 M40 120 L460 120 M40 190 L460 190" fill="none" stroke="#bbbbbb" stroke-width="0.8" stroke-miterlimit="10"/>
+    <path d="M40 190 L460 190 L460 260 L40 260 Z" fill="none" stroke="#2a6fdb" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M110 120 L180 120 L180 190 L110 190 Z" fill="none" stroke="#e07b28" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M320 50 L390 50 L390 120 L320 120 Z" fill="none" stroke="#888888" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M40 260 L460 260" fill="none" stroke="#555555" stroke-width="1.5" stroke-miterlimit="10"/>
+    <path d="M72.8 85 C72.8 86.215 73.785 87.2 75 87.2 C76.215 87.2 77.2 86.215 77.2 85 C77.2 83.785 76.215 82.8 75 82.8 C73.785 82.8 72.8 83.785 72.8 85 Z M72.8 155 C72.8 156.215 73.785 157.2 75 157.2 C76.215 157.2 77.2 156.215 77.2 155 C77.2 153.785 76.215 152.8 75 152.8 C73.785 152.8 72.8 153.785 72.8 155 Z M72.8 225 C72.8 226.215 73.785 227.2 75 227.2 C76.215 227.2 77.2 226.215 77.2 225 C77.2 223.785 76.215 222.8 75 222.8 C73.785 222.8 72.8 223.785 72.8 225 Z M142.8 85 C142.8 86.215 143.785 87.2 145 87.2 C146.215 87.2 147.2 86.215 147.2 85 C147.2 83.785 146.215 82.8 145 82.8 C143.785 82.8 142.8 83.785 142.8 85 Z M212.8 85 C212.8 86.215 213.785 87.2 215 87.2 C216.215 87.2 217.2 86.215 217.2 85 C217.2 83.785 216.215 82.8 215 82.8 C213.785 82.8 212.8 83.785 212.8 85 Z M212.8 155 C212.8 156.215 213.785 157.2 215 157.2 C216.215 157.2 217.2 156.215 217.2 155 C217.2 153.785 216.215 152.8 215 152.8 C213.785 152.8 212.8 153.785 212.8 155 Z M212.8 225 C212.8 226.215 213.785 227.2 215 227.2 C216.215 227.2 217.2 226.215 217.2 225 C217.2 223.785 216.215 222.8 215 222.8 C213.785 222.8 212.8 223.785 212.8 225 Z M282.8 85 C282.8 86.215 283.785 87.2 285 87.2 C286.215 87.2 287.2 86.215 287.2 85 C287.2 83.785 286.215 82.8 285 82.8 C283.785 82.8 282.8 83.785 282.8 85 Z M282.8 155 C282.8 156.215 283.785 157.2 285 157.2 C286.215 157.2 287.2 156.215 287.2 155 C287.2 153.785 286.215 152.8 285 152.8 C283.785 152.8 282.8 153.785 282.8 155 Z M282.8 225 C282.8 226.215 283.785 227.2 285 227.2 C286.215 227.2 287.2 226.215 287.2 225 C287.2 223.785 286.215 222.8 285 222.8 C283.785 222.8 282.8 223.785 282.8 225 Z M352.8 155 C352.8 156.215 353.785 157.2 355 157.2 C356.215 157.2 357.2 156.215 357.2 155 C357.2 153.785 356.215 152.8 355 152.8 C353.785 152.8 352.8 153.785 352.8 155 Z M352.8 225 C352.8 226.215 353.785 227.2 355 227.2 C356.215 227.2 357.2 226.215 357.2 225 C357.2 223.785 356.215 222.8 355 222.8 C353.785 222.8 352.8 223.785 352.8 225 Z M422.8 85 C422.8 86.215 423.785 87.2 425 87.2 C426.215 87.2 427.2 86.215 427.2 85 C427.2 83.785 426.215 82.8 425 82.8 C423.785 82.8 422.8 83.785 422.8 85 Z M422.8 155 C422.8 156.215 423.785 157.2 425 157.2 C426.215 157.2 427.2 156.215 427.2 155 C427.2 153.785 426.215 152.8 425 152.8 C423.785 152.8 422.8 153.785 422.8 155 Z M422.8 225 C422.8 226.215 423.785 227.2 425 227.2 C426.215 227.2 427.2 226.215 427.2 225 C427.2 223.785 426.215 222.8 425 222.8 C423.785 222.8 422.8 223.785 422.8 225 Z" fill="#888888"/>
+    <g>
+      <g>
+        <path d="M145.65 225 L145.65 290.84 L144.35 290.84 L144.35 225 Z" fill="#2a6fdb"/>
+        <path d="M145 295 L140.84 286.68 L149.16 286.68 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M130.4 260 L130.4 217.84 L131.6 217.84 L131.6 260 Z" fill="#222222"/>
+        <path d="M131 214 L134.84 221.68 L127.16 221.68 Z" fill="#222222"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 119 222)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">n</tspan></text>
+    <path d="M355 85 L355 260" fill="none" stroke="#888888" stroke-miterlimit="10" stroke-dasharray="4 3"/>
+    <path d="M141 256 L149 264 M141 264 L149 256 M351 256 L359 264 M351 264 L359 256" fill="none" stroke="#d1495b" stroke-width="1.5" stroke-miterlimit="10"/>
+    <path d="M141.5 225 C141.5 226.933 143.067 228.5 145 228.5 C146.933 228.5 148.5 226.933 148.5 225 C148.5 223.067 146.933 221.5 145 221.5 C143.067 221.5 141.5 223.067 141.5 225 Z" fill="#2a6fdb"/>
+    <path d="M141.5 155 C141.5 156.933 143.067 158.5 145 158.5 C146.933 158.5 148.5 156.933 148.5 155 C148.5 153.067 146.933 151.5 145 151.5 C143.067 151.5 141.5 153.067 141.5 155 Z" fill="#e07b28"/>
+    <path d="M351.5 85 C351.5 86.933 353.067 88.5 355 88.5 C356.933 88.5 358.5 86.933 358.5 85 C358.5 83.067 356.933 81.5 355 81.5 C353.067 81.5 351.5 83.067 351.5 85 Z" fill="#555555"/>
+    <g>
+      <g>
+        <path d="M99.6 256 L99.6 229 L100.4 229 L100.4 256 Z" fill="#555555"/>
+        <path d="M100 260 L96 252 L104 252 Z" fill="#555555"/>
+        <path d="M100 225 L104 233 L96 233 Z" fill="#555555"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 57.29 248)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">y₁ = ½ Δx</tspan></text>
+    <g>
+      <g>
+        <path d="M221.6 256 L221.6 159 L222.4 159 L222.4 256 Z" fill="#555555"/>
+        <path d="M222 260 L218 252 L226 252 Z" fill="#555555"/>
+        <path d="M222 155 L226 163 L218 163 Z" fill="#555555"/>
+      </g>
+    </g>
+    <path d="M151 155 L226 155" fill="none" stroke="#888888" stroke-width="0.5" stroke-miterlimit="10" stroke-dasharray="2 2"/>
+    <text transform="matrix(1 0 0 1 228 185)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">y₂ = 3 y₁</tspan></text>
+    <text transform="matrix(1 0 0 1 153 239)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a6fdb"><tspan x="0" y="0">wall cell x₁</tspan></text>
+    <text transform="matrix(1 0 0 1 153 147)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#e07b28"><tspan x="0" y="0">second cell x₂</tspan></text>
+    <path d="M153 268 L205 268 L205 282 L153 282 Z" fill="#ffffff"/>
+    <text transform="matrix(1 0 0 1 156 278.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#d1495b"><tspan x="0" y="0">wall point</tspan></text>
+    <path d="M412 306 L450 306 L450 320 L412 320 Z" fill="#ffffff"/>
+    <text transform="matrix(1 0 0 1 415 316.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#555555"><tspan x="0" y="0">solid</tspan></text>
+    <text transform="matrix(1 0 0 1 472 70)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">fluid</tspan></text>
+    <text transform="matrix(1 0 0 1 472 264)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">no-slip wall</tspan></text>
+    <text transform="matrix(1 0 0 1 40 356)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#2a6fdb"><tspan x="0" y="0">Van Driest: uτ from Spalding&apos;s law at x₁</tspan></text>
+    <text transform="matrix(1 0 0 1 40 373)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#e07b28"><tspan x="0" y="0">wall model: uτ from Musker&apos;s profile at x₂</tspan></text>
+    <text transform="matrix(1 0 0 1 320 43)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">interior cell</tspan></text>
+    <text transform="matrix(1 0 0 1 363 132)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#555555"><tspan x="0" y="0">nearest wall point,</tspan></text>
+    <text transform="matrix(1 0 0 1 363 143)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#555555"><tspan x="0" y="0">spread from neighbours</tspan></text>
+    <path d="M153 288 L227 288 L227 302 L153 302 Z" fill="#ffffff"/>
+    <text transform="matrix(1 0 0 1 156 298.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#2a6fdb"><tspan x="0" y="0">bounce-back link</tspan></text>
+  </g>
+</svg>

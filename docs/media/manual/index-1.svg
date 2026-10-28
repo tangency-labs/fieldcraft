@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="640" height="330" viewBox="0 0 640 330">
+  <title>index-1</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M0 0 L640 0 L640 330 L0 330 Z" fill="#ffffff"/>
+    <text transform="matrix(1 0 0 1 20 24)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="12" fill="#222222"><tspan x="0" y="0">FieldCraft&apos;s solvers: a step&apos;s procedure decides which one runs it</tspan></text>
+    <path d="M26 60 L164 60 C168 60 170 62 170 66 L170 254 C170 258 168 260 164 260 L26 260 C22 260 20 258 20 254 L20 66 C20 62 22 60 26 60 Z" fill="#f4f6f9" stroke="#8a97a8" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 32 82)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="11" fill="#222222"><tspan x="0" y="0">Model</tspan></text>
+    <text transform="matrix(1 0 0 1 32 104)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">geometry and mesh</tspan></text>
+    <text transform="matrix(1 0 0 1 32 122)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">materials, sections</tspan></text>
+    <text transform="matrix(1 0 0 1 32 140)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">loads and boundary</tspan></text>
+    <text transform="matrix(1 0 0 1 32 158)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">conditions</tspan></text>
+    <text transform="matrix(1 0 0 1 32 176)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">interactions</tspan></text>
+    <text transform="matrix(1 0 0 1 32 194)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">steps (procedure)</tspan></text>
+    <path d="M236 48 L434 48 C438 48 440 50 440 54 L440 192 C440 196 438 198 434 198 L236 198 C232 198 230 196 230 192 L230 54 C230 50 232 48 236 48 Z" fill="#eef3fc" stroke="#2a6fdb" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 242 68)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10.5" fill="#1d4fa0"><tspan x="0" y="0">Structural — finite elements</tspan></text>
+    <text transform="matrix(1 0 0 1 242 88)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#555555"><tspan x="0" y="0">crates/solver · CPU · f64</tspan></text>
+    <text transform="matrix(1 0 0 1 242 108)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">static, coupled temperature–</tspan></text>
+    <text transform="matrix(1 0 0 1 242 123)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">displacement, heat_transfer</tspan></text>
+    <text transform="matrix(1 0 0 1 242 138)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">frequency, buckle</tspan></text>
+    <text transform="matrix(1 0 0 1 242 153)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">nonlinear_static</tspan></text>
+    <text transform="matrix(1 0 0 1 242 176)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">crates/explicit · CPU · f64 · explicit_dynamic</tspan></text>
+    <path d="M236 214 L434 214 C438 214 440 216 440 220 L440 298 C440 302 438 304 434 304 L236 304 C232 304 230 302 230 298 L230 220 C230 216 232 214 236 214 Z" fill="#fdf0f2" stroke="#d1495b" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 242 234)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10.5" fill="#a3283b"><tspan x="0" y="0">Fluid — lattice Boltzmann</tspan></text>
+    <text transform="matrix(1 0 0 1 242 254)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#555555"><tspan x="0" y="0">crates/lbm · CPU · f64</tspan></text>
+    <text transform="matrix(1 0 0 1 242 270)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#555555"><tspan x="0" y="0">crates/lbm-gpu · GPU · f32</tspan></text>
+    <text transform="matrix(1 0 0 1 242 290)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">fluid</tspan></text>
+    <path d="M496 60 L614 60 C618 60 620 62 620 66 L620 254 C620 258 618 260 614 260 L496 260 C492 260 490 258 490 254 L490 66 C490 62 492 60 496 60 Z" fill="#f2f8f3" stroke="#2a9d55" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 502 82)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="11" fill="#1f7a42"><tspan x="0" y="0">Results</tspan></text>
+    <text transform="matrix(1 0 0 1 502 104)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">displacement, stress</tspan></text>
+    <text transform="matrix(1 0 0 1 502 122)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">reactions</tspan></text>
+    <text transform="matrix(1 0 0 1 502 140)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">modes, buckling loads</tspan></text>
+    <text transform="matrix(1 0 0 1 502 158)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">temperature</tspan></text>
+    <text transform="matrix(1 0 0 1 502 176)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">frames (explicit)</tspan></text>
+    <text transform="matrix(1 0 0 1 502 194)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">velocity, pressure,</tspan></text>
+    <text transform="matrix(1 0 0 1 502 212)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">wall forces and heat</tspan></text>
+    <g>
+      <g>
+        <path d="M170 129.4 L225.6 129.4 L225.6 130.6 L170 130.6 Z" fill="#2a6fdb"/>
+        <path d="M228 130 L223.2 132.4 L223.2 127.6 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M170 229.4 C199.403 229.4 200.337 256.741 225.639 258.327 L225.564 259.525 C199.629 257.899 198.815 230.6 170 230.6 Z" fill="#d1495b"/>
+        <path d="M228 259 L223.129 261.251 L223.276 256.454 Z" fill="#d1495b"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M440 122.4 L485.6 122.4 L485.6 123.6 L440 123.6 Z" fill="#2a6fdb"/>
+        <path d="M488 123 L483.2 125.4 L483.2 120.6 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M440 258.4 C463.676 258.4 464.498 222.209 485.531 219.552 L485.681 220.743 C465.464 223.296 464.501 259.6 440 259.6 Z" fill="#d1495b"/>
+        <path d="M488 220 L483.357 222.691 L483.061 217.9 Z" fill="#d1495b"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 20 322)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#555555"><tspan x="0" y="0">Decks (Abaqus, Nastran, LS-DYNA) are written from the same model by deck.write; they are not part of the solvers.</tspan></text>
+  </g>
+</svg>

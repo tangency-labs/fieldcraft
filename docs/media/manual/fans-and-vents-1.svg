@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="680" height="340" viewBox="0 0 680 340">
+  <title>fans-and-vents-1</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M0 0 L680 0 L680 340 L0 340 Z" fill="#ffffff"/>
+    <path d="M78 110 L102 110 L102 210 L78 210 Z" fill="#fcf0e6" stroke="#e07b28" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M86 110 L86 210 M94 110 L94 210" fill="none" stroke="#e07b28" stroke-width="0.4" stroke-miterlimit="10"/>
+    <path d="M180 110 L198 110 L198 210 L180 210 Z" fill="#f2f8f3" stroke="#2a9d55" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M180 112 L182 110 M180 120 L190 110 M180 128 L198 110 M180 136 L198 118 M180 144 L198 126 M180 152 L198 134 M180 160 L198 142 M180 168 L198 150 M180 176 L198 158 M180 184 L198 166 M180 192 L198 174 M180 200 L198 182 M180 208 L198 190 M186 210 L198 198 M194 210 L198 206" fill="none" stroke="#2a9d55" stroke-width="0.6" stroke-miterlimit="10"/>
+    <path d="M30 110 L310 110 M30 210 L310 210" fill="none" stroke="#555555" stroke-width="2" stroke-miterlimit="10"/>
+    <path d="M30 110 L30 210 M310 110 L310 210" fill="none" stroke="#888888" stroke-width="0.8" stroke-miterlimit="10" stroke-dasharray="3 3"/>
+    <path d="M23 152 L31 160 L23 168 M29 152 L37 160 L29 168 M303 152 L311 160 L303 168 M309 152 L317 160 L309 168" fill="none" stroke="#555555" stroke-width="1.2" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 14.57 226)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#555555"><tspan x="0" y="0">periodic</tspan></text>
+    <text transform="matrix(1 0 0 1 294.57 226)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#555555"><tspan x="0" y="0">periodic</tspan></text>
+    <path d="M72 110 L72 210 M108 110 L108 210 M174 110 L174 210 M204 110 L204 210" fill="none" stroke="#555555" stroke-width="0.8" stroke-miterlimit="10" stroke-dasharray="2 2"/>
+    <g>
+      <g>
+        <path d="M81 159.4 L95.992 159.4 L95.992 160.6 L81 160.6 Z" fill="#e07b28"/>
+        <path d="M100 160 L91.984 164.008 L91.984 155.992 Z" fill="#e07b28"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 84.83 150)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#e07b28"><tspan x="0" y="0">+x</tspan></text>
+    <g>
+      <g>
+        <path d="M122 159.35 L155.996 159.35 L155.996 160.65 L122 160.65 Z" fill="#2a6fdb"/>
+        <path d="M160 160 L151.992 164.004 L151.992 155.996 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 131.87 152)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a6fdb"><tspan x="0" y="0">flow</tspan></text>
+    <g>
+      <g>
+        <path d="M218 159.35 L280.996 159.35 L280.996 160.65 L218 160.65 Z" fill="#2a6fdb"/>
+        <path d="M285 160 L276.992 164.004 L276.992 155.996 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 64 100)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#e07b28"><tspan x="0" y="0">fan: push Δp/t</tspan></text>
+    <text transform="matrix(1 0 0 1 150 100)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a9d55"><tspan x="0" y="0">porous zone: −(μ/K)u − (ρC₂/2)|u|u</tspan></text>
+    <path d="M108 210 L132 242 M174 210 L150 242" fill="none" stroke="#888888" stroke-width="0.6" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 70 254)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#555555"><tspan x="0" y="0">measured pressure: fluid layers</tspan></text>
+    <text transform="matrix(1 0 0 1 70 265)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#555555"><tspan x="0" y="0">just outside the zone</tspan></text>
+    <path d="M400 280 L400 30 M452 280 L452 30 M504 280 L504 30 M556 280 L556 30 M608 280 L608 30 M660 280 L660 30 M400 280 L660 280 M400 223.18 L660 223.18 M400 166.36 L660 166.36 M400 109.55 L660 109.55 M400 52.73 L660 52.73" fill="none" stroke="#e3e3e3" stroke-width="0.5" stroke-miterlimit="10"/>
+    <path d="M400 30 L400 280 L660 280" fill="none" stroke="#555555" stroke-miterlimit="10"/>
+    <path d="M400 280 L400 284 M452 280 L452 284 M504 280 L504 284 M556 280 L556 284 M608 280 L608 284 M660 280 L660 284" fill="none" stroke="#555555" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 397.3 295)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">0</tspan></text>
+    <text transform="matrix(1 0 0 1 439.94 295)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">1 000</tspan></text>
+    <text transform="matrix(1 0 0 1 491.94 295)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">2 000</tspan></text>
+    <text transform="matrix(1 0 0 1 543.94 295)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">3 000</tspan></text>
+    <text transform="matrix(1 0 0 1 595.94 295)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">4 000</tspan></text>
+    <text transform="matrix(1 0 0 1 647.94 295)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">5 000</tspan></text>
+    <path d="M400 280 L396 280 M400 223.18 L396 223.18 M400 166.36 L396 166.36 M400 109.55 L396 109.55 M400 52.73 L396 52.73" fill="none" stroke="#555555" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 369.06 283.2)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">0.000</tspan></text>
+    <text transform="matrix(1 0 0 1 369.06 226.38)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">0.005</tspan></text>
+    <text transform="matrix(1 0 0 1 369.06 169.56)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">0.010</tspan></text>
+    <text transform="matrix(1 0 0 1 369.06 112.75)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">0.015</tspan></text>
+    <text transform="matrix(1 0 0 1 369.06 55.93)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">0.020</tspan></text>
+    <text transform="matrix(1 0 0 1 478.65 312)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#222222"><tspan x="0" y="0">volume flow Q (mm³/s)</tspan></text>
+    <text transform="matrix(0 -1 1 0 360.282 171.51)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#222222"><tspan x="0" y="0">Δp (Pa)</tspan></text>
+    <path d="M400 52.73 L660 280" fill="none" stroke="#e07b28" stroke-width="1.6" stroke-miterlimit="10"/>
+    <path d="M397 52.73 C397 54.387 398.343 55.73 400 55.73 C401.657 55.73 403 54.387 403 52.73 C403 51.073 401.657 49.73 400 49.73 C398.343 49.73 397 51.073 397 52.73 Z M657 280 C657 281.657 658.343 283 660 283 C661.657 283 663 281.657 663 280 C663 278.343 661.657 277 660 277 C658.343 277 657 278.343 657 280 Z" fill="#e07b28"/>
+    <path d="M400 280 L478 59.86" fill="none" stroke="#2a9d55" stroke-width="1.6" stroke-miterlimit="10"/>
+    <path d="M461.48 106.47 L461.48 280" fill="none" stroke="#bbbbbb" stroke-width="0.7" stroke-miterlimit="10" stroke-dasharray="3 2"/>
+    <path d="M456.985 106.473 C456.985 108.958 459 110.973 461.485 110.973 C463.97 110.973 465.985 108.958 465.985 106.473 C465.985 103.987 463.97 101.973 461.485 101.973 C459 101.973 456.985 103.987 456.985 106.473 Z" fill="#222222" stroke="#ffffff" stroke-width="1.2" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 469.48 98.47)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">operating point: 1 182 mm³/s, 0.0153 Pa</tspan></text>
+    <text transform="matrix(1 0 0 1 535.2 152.73)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#e07b28"><tspan x="0" y="0">fan curve: 0.02 Pa at 0,</tspan></text>
+    <text transform="matrix(1 0 0 1 535.2 163.73)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#e07b28"><tspan x="0" y="0">0 at 5 000 mm³/s (the example)</tspan></text>
+    <text transform="matrix(1 0 0 1 485.8 47.05)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#2a9d55"><tspan x="0" y="0">loop resistance (laminar walls</tspan></text>
+    <text transform="matrix(1 0 0 1 485.8 58.05)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#2a9d55"><tspan x="0" y="0">+ Darcy vent): linear in Q</tspan></text>
+  </g>
+</svg>

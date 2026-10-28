@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="680" height="280" viewBox="0 0 680 280">
+  <title>gpu-1</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M0 0 L680 0 L680 280 L0 280 Z" fill="#ffffff"/>
+    <text transform="matrix(1 0 0 1 145.31 24)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="11" fill="#222222"><tspan x="0" y="0">even step</tspan></text>
+    <path d="M20 60 L110 60 L110 130 L20 130 Z" fill="#ffffff" stroke="#888888" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 49.04 146)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#555555"><tspan x="0" y="0">x − c_q</tspan></text>
+    <path d="M32 72 L60 72 L60 94 L32 94 Z" fill="#ffffff" stroke="#bbbbbb" stroke-width="0.8" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 43.39 87)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#222222"><tspan x="0" y="0">q</tspan></text>
+    <path d="M72 72 L100 72 L100 94 L72 94 Z" fill="#ffffff" stroke="#bbbbbb" stroke-width="0.8" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 80.78 87)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#222222"><tspan x="0" y="0">q̄</tspan></text>
+    <path d="M125 60 L215 60 L215 130 L125 130 Z" fill="#f4f6f9" stroke="#888888" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 167.39 146)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#555555"><tspan x="0" y="0">x</tspan></text>
+    <path d="M137 72 L165 72 L165 94 L137 94 Z" fill="#ffffff" stroke="#bbbbbb" stroke-width="0.8" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 148.39 87)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#222222"><tspan x="0" y="0">q</tspan></text>
+    <path d="M177 72 L205 72 L205 94 L177 94 Z" fill="#ffffff" stroke="#bbbbbb" stroke-width="0.8" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 185.78 87)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#222222"><tspan x="0" y="0">q̄</tspan></text>
+    <path d="M230 60 L320 60 L320 130 L230 130 Z" fill="#ffffff" stroke="#888888" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 259.04 146)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#555555"><tspan x="0" y="0">x + c_q</tspan></text>
+    <path d="M242 72 L270 72 L270 94 L242 94 Z" fill="#ffffff" stroke="#bbbbbb" stroke-width="0.8" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 253.39 87)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#222222"><tspan x="0" y="0">q</tspan></text>
+    <path d="M282 72 L310 72 L310 94 L282 94 Z" fill="#ffffff" stroke="#bbbbbb" stroke-width="0.8" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 290.77 87)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#222222"><tspan x="0" y="0">q̄</tspan></text>
+    <path d="M135 166 L205 166 L205 194 L135 194 Z" fill="#fdf1e6" stroke="#e07b28" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 156.59 183.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">collide</tspan></text>
+    <g>
+      <g>
+        <path d="M151.75 96 C151.75 121.911 150.466 141.848 147.898 155.812 C145.282 170.03 141.335 178.122 135.909 180.212 L135.37 178.812 C140.182 176.959 143.918 169.155 146.422 155.54 C148.974 141.667 150.25 121.82 150.25 96 Z" fill="#2a6fdb"/>
+        <path d="M133 180 L137.819 176.363 L138.801 181.673 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M207 180.75 C201.293 180.75 197.145 173.867 194.397 160.072 C191.721 146.641 190.34 126.517 190.254 99.702 L191.754 99.698 C191.84 126.416 193.211 146.443 195.868 159.778 C198.454 172.759 202.231 179.25 207 179.25 Z" fill="#2a9d55"/>
+        <path d="M191 97 L193.709 102.396 L188.309 102.404 Z" fill="#2a9d55"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 118.84 218)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#222222"><tspan x="0" y="0">read (q, x), write (q̄, x)</tspan></text>
+    <text transform="matrix(1 0 0 1 488.33 24)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="11" fill="#222222"><tspan x="0" y="0">odd step</tspan></text>
+    <path d="M360 60 L450 60 L450 130 L360 130 Z" fill="#ffffff" stroke="#888888" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 389.04 146)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#555555"><tspan x="0" y="0">x − c_q</tspan></text>
+    <path d="M372 72 L400 72 L400 94 L372 94 Z" fill="#ffffff" stroke="#bbbbbb" stroke-width="0.8" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 383.39 87)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#222222"><tspan x="0" y="0">q</tspan></text>
+    <path d="M412 72 L440 72 L440 94 L412 94 Z" fill="#ffffff" stroke="#bbbbbb" stroke-width="0.8" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 420.77 87)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#222222"><tspan x="0" y="0">q̄</tspan></text>
+    <path d="M465 60 L555 60 L555 130 L465 130 Z" fill="#f4f6f9" stroke="#888888" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 507.39 146)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#555555"><tspan x="0" y="0">x</tspan></text>
+    <path d="M477 72 L505 72 L505 94 L477 94 Z" fill="#ffffff" stroke="#bbbbbb" stroke-width="0.8" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 488.39 87)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#222222"><tspan x="0" y="0">q</tspan></text>
+    <path d="M517 72 L545 72 L545 94 L517 94 Z" fill="#ffffff" stroke="#bbbbbb" stroke-width="0.8" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 525.77 87)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#222222"><tspan x="0" y="0">q̄</tspan></text>
+    <path d="M570 60 L660 60 L660 130 L570 130 Z" fill="#ffffff" stroke="#888888" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 599.04 146)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#555555"><tspan x="0" y="0">x + c_q</tspan></text>
+    <path d="M582 72 L610 72 L610 94 L582 94 Z" fill="#ffffff" stroke="#bbbbbb" stroke-width="0.8" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 593.39 87)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#222222"><tspan x="0" y="0">q</tspan></text>
+    <path d="M622 72 L650 72 L650 94 L622 94 Z" fill="#ffffff" stroke="#bbbbbb" stroke-width="0.8" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 630.77 87)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#222222"><tspan x="0" y="0">q̄</tspan></text>
+    <path d="M475 166 L545 166 L545 194 L475 194 Z" fill="#fdf1e6" stroke="#e07b28" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 496.59 183.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">collide</tspan></text>
+    <g>
+      <g>
+        <path d="M426.75 96 C426.75 149.944 441.269 177.621 470.341 179.18 L470.261 180.678 C440.275 179.069 425.25 150.808 425.25 96 Z" fill="#2a6fdb"/>
+        <path d="M473 180 L467.531 182.556 L467.673 177.158 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M547 179.25 C578.669 179.25 594.714 152.797 595.237 99.693 L596.737 99.707 C596.205 153.688 579.581 180.75 547 180.75 Z" fill="#2a9d55"/>
+        <path d="M596 97 L598.674 102.413 L593.274 102.387 Z" fill="#2a9d55"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 432.15 218)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#222222"><tspan x="0" y="0">read (q̄, x − c_q), write (q, x + c_q)</tspan></text>
+    <text transform="matrix(1 0 0 1 165.67 268)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#555555"><tspan x="0" y="0">one buffer, 152 bytes per cell update; a cell writes exactly the addresses it read</tspan></text>
+    <text transform="matrix(1 0 0 1 20 268)" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"></text>
+  </g>
+</svg>
