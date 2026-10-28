@@ -16,7 +16,10 @@
 //!   term, Krüger et al. 2017, ch. 10).
 //! - **Walls:** halfway bounce-back at every link from a fluid cell to a solid cell or across a
 //!   wall face of the box; moving walls add Ladd's term `6 w_q ρ₀ c_q·u_w` (Ladd 1994, JFM
-//!   271:285). Slip faces reflect populations specularly.
+//!   271:285). Slip faces reflect populations specularly. Under Han et al.'s on-node
+//!   wall-function bounce (`spalding_bounce`, [`crate::bounce`]) the outermost cell layer at a
+//!   wall face is the wall instead: those boundary nodes run their eq. 14 in place of the
+//!   collision and are not fluid cells.
 //! - **Inlets and outlets:** Zou & He 1997 (Phys. Fluids 9:1591) on the first layer of cells: the
 //!   unknown incoming populations are the opposite ones plus the equilibrium difference
 //!   (bounce-back of the non-equilibrium part), the density (velocity inlet) or the normal velocity
@@ -41,7 +44,8 @@
 //!   Luo, *Force evaluation in the lattice Boltzmann method involving curved geometry*, PRE
 //!   65:041203, 2002): a population `f*` leaving a fluid cell toward the wall and the one `f'`
 //!   coming back transfer `c_out f* − c_in f'` to the wall. Under the wall model a wall also
-//!   takes the momentum each reconstruction of its wall cells removes ([`crate::wall`]).
+//!   takes the momentum each reconstruction of its wall cells removes ([`crate::wall`]); under
+//!   the on-node bounce, the momentum its boundary nodes take from the fluid ([`crate::bounce`]).
 //! - **Fans and porous zones:** a porous zone (a vent, grille, filter or perforated plate) adds
 //!   the Darcy–Forchheimer force per volume `−ρ (α u + β |u| u)` (α = ν/K, β = C₂/2) to its
 //!   cells through Guo's term; because it depends on the velocity it defines, the velocity comes
@@ -97,6 +101,7 @@ use fieldcraft_model::{BoxFace, Collision, FaceCondition, Outflow, Profile, Ther
 
 use fieldcraft_parallel as parallel;
 
+use crate::bounce::{WallNode, WallNodes};
 use crate::conduction::{Interface, Layout, SolidHeat};
 use crate::lattice::{C, Q, W, c, equilibrium, moving_wall, opposite};
 use crate::outlet::{Action, Outlets, Populations};
@@ -402,6 +407,11 @@ pub struct Flow {
     wall_model: bool,
     /// Whether the wall-function bounce gives the walls their stress (`spalding_bounce_halfway`).
     wall_bounce: bool,
+    /// Han et al.'s on-node wall-function bounce (`spalding_bounce`): its boundary nodes.
+    nodes: Option<WallNodes>,
+    /// With it, the cells that collide: the fluid cells less the boundary nodes (empty
+    /// otherwise: every fluid cell collides).
+    bulk: Vec<bool>,
     acceleration: [f64; 3],
     /// The momentum transferred to each group in the last step (lattice units).
     forces: Vec<[f64; 3]>,
@@ -572,6 +582,70 @@ impl Flow {
                 face.name()
             )));
         }
+        // Han et al.'s on-node wall-function bounce: the outermost cell layer at each wall face
+        // is its boundary nodes ([`crate::bounce`]).
+        let on_node = setup.wall_model == Some(WallModel::SpaldingBounce);
+        let mut node_list: Vec<WallNode> = Vec::new();
+        let mut bulk = Vec::new();
+        if on_node {
+            let refuse = |what: String| {
+                Err(Error::Invalid(format!(
+                    "not supported yet: Han et al.'s on-node wall-function bounce (`spalding_bounce`) {what}; `spalding_bounce_halfway` may run there"
+                )))
+            };
+            if let Some(face) = BoxFace::ALL.iter().find(|f| matches!(domain.faces.get(**f), FaceCondition::MovingWall { .. })) {
+                return refuse(format!("on a moving wall (`{}`)", face.name()));
+            }
+            if let Some(o) = setup.obstacles.first() {
+                let body = obstacles.get(o.index).map_or("", |o| o.body.as_str());
+                return refuse(format!("at the walls of an obstacle (`{body}`): it runs at plane box faces only"));
+            }
+            if setup.thermal.is_some() {
+                return refuse("with heat".to_string());
+            }
+            for face in BoxFace::ALL.into_iter().filter(|f| wall_velocity(*f).is_some()) {
+                let a = face.axis();
+                if let Some(other) = BoxFace::ALL.into_iter().find(|f| f.axis() != a && !periodic[f.axis()]) {
+                    return refuse(format!(
+                        "where the wall `{}` meets the face `{}` that is not periodic (an edge): the box must be periodic along its walls",
+                        face.name(),
+                        other.name()
+                    ));
+                }
+                if grid.cells[a] < 3 {
+                    return refuse(format!("on a box {} cells across its wall `{}`: it needs at least 3", grid.cells[a], face.name()));
+                }
+                let (t1, t2) = ((a + 1) % 3, (a + 2) % 3);
+                let (layer, inward) = if face.is_max() { (grid.cells[a] - 1, -1i32) } else { (0, 1) };
+                for j in 0..grid.cells[t2] {
+                    for i in 0..grid.cells[t1] {
+                        let mut ijk = [0usize; 3];
+                        ijk[a] = layer;
+                        ijk[t1] = i;
+                        ijk[t2] = j;
+                        let cell = grid.index(ijk);
+                        ijk[a] = if inward > 0 { layer + 1 } else { layer - 1 };
+                        node_list.push(WallNode {
+                            cell: cell as u32,
+                            interior: grid.index(ijk) as u32,
+                            axis: a as u8,
+                            inward: inward as i8,
+                            group: face.index() as u32,
+                            stress: [0.0; 3],
+                            taken: [0.0; 3],
+                        });
+                    }
+                }
+            }
+            node_list.sort_by_key(|w| w.cell);
+            bulk = fluid.clone();
+            for w in &node_list {
+                if let Some(b) = bulk.get_mut(w.cell as usize) {
+                    *b = false;
+                }
+            }
+        }
+        let is_node = |cell: usize| bulk.get(cell).is_some_and(|b| !b) && fluid.get(cell).copied().unwrap_or(false);
         let dims = [nx as i64, ny as i64, nz as i64];
         let index = |p: [i64; 3]| grid.index([p[0] as usize, p[1] as usize, p[2] as usize]) as u32;
         let mut offset = [0isize; Q];
@@ -601,7 +675,9 @@ impl Flow {
             if !fluid[cell] {
                 continue;
             }
-            fluid_cells += 1;
+            if !is_node(cell) {
+                fluid_cells += 1;
+            }
             let ijk = grid.coords(cell);
             let p = [ijk[0] as i64, ijk[1] as i64, ijk[2] as i64];
             for q in 1..Q {
@@ -655,7 +731,11 @@ impl Flow {
                             }
                         };
                         if let Some(face) = crossed_faces().find(|f| wall_velocity(*f).is_some()) {
-                            if wall_bounce {
+                            if is_node(cell) {
+                                // From outside the box into a boundary node: not needed, eq. 14
+                                // overwrites it (a placeholder, no force).
+                                Rule::Open
+                            } else if wall_bounce {
                                 reflect(face)
                             } else {
                                 Rule::Bounce { group: face.index() as u32, du: moving_wall(q, wall_velocity(face).unwrap_or([0.0; 3])) }
@@ -728,7 +808,7 @@ impl Flow {
                 for j in zone.lo[1]..=zone.hi[1] {
                     for i in zone.lo[0]..=zone.hi[0] {
                         let cell = grid.index([i, j, k]);
-                        if fluid.get(cell).copied().unwrap_or(false) && zone_of.get(cell) == Some(&NONE) {
+                        if fluid.get(cell).copied().unwrap_or(false) && !is_node(cell) && zone_of.get(cell) == Some(&NONE) {
                             zone_of[cell] = z as u32;
                             cells.push(cell as u32);
                         }
@@ -857,9 +937,15 @@ impl Flow {
 
         // Van Driest's damping and the wall model: each no-slip group's wall velocity, in group
         // order.
-        let walls = if setup.van_driest.is_some() || setup.wall_model.is_some() {
+        let nu = (setup.tau_plus - 0.5) / 3.0;
+        let walls = if on_node {
+            // Van Driest's damping from the interior nodes next to the boundary nodes.
+            let cells: Vec<(u32, usize, i32, u32)> =
+                node_list.iter().map(|w| (w.interior, usize::from(w.axis), i32::from(w.inward), w.group)).collect();
+            setup.van_driest.map(|a| Walls::on_node(&grid, &bulk, &cells, Some(a), nu)).transpose()?
+        } else if setup.van_driest.is_some() || setup.wall_model.is_some() {
             let groups: Vec<Option<[f64; 3]>> = BoxFace::ALL.iter().map(|f| wall_velocity(*f)).chain(obstacle_walls).collect();
-            Some(Walls::new(&grid, &fluid, &links, &groups, setup.van_driest, (setup.tau_plus - 0.5) / 3.0)?)
+            Some(Walls::new(&grid, &fluid, &links, &groups, setup.van_driest, nu)?)
         } else {
             None
         };
@@ -884,6 +970,8 @@ impl Flow {
             walls,
             wall_model: setup.wall_model == Some(WallModel::Musker),
             wall_bounce: setup.wall_model == Some(WallModel::SpaldingBounceHalfway),
+            nodes: on_node.then(|| WallNodes::new(node_list, nu)),
+            bulk,
             acceleration: setup.acceleration,
             forces: vec![[0.0; 3]; groups.len()],
             groups,
@@ -1089,8 +1177,26 @@ impl Flow {
         self.fluid_cells
     }
 
+    /// Whether `cell` is a fluid cell (a boundary node of the on-node wall-function bounce is
+    /// not: it is the wall).
     pub fn is_fluid(&self, cell: usize) -> bool {
-        self.fluid.get(cell).copied().unwrap_or(false)
+        self.collides().get(cell).copied().unwrap_or(false)
+    }
+
+    /// The cells that collide: the fluid cells, less the boundary nodes of the on-node
+    /// wall-function bounce.
+    fn collides(&self) -> &[bool] {
+        if self.bulk.is_empty() { &self.fluid } else { &self.bulk }
+    }
+
+    /// Whether Han et al.'s on-node wall-function bounce runs (`spalding_bounce`).
+    pub fn on_node_bounce(&self) -> bool {
+        self.nodes.is_some()
+    }
+
+    /// The boundary nodes of the on-node wall-function bounce (`spalding_bounce`).
+    pub fn wall_nodes(&self) -> Option<&WallNodes> {
+        self.nodes.as_ref()
     }
 
     pub fn groups(&self) -> &[Group] {
@@ -1240,7 +1346,7 @@ impl Flow {
         let n = self.n;
         let s = self.stride;
         let mut m = 0.0;
-        for cell in (0..n).filter(|c| self.fluid[*c]) {
+        for cell in (0..n).filter(|c| self.is_fluid(*c)) {
             for q in 0..Q {
                 m += self.f[q * s + cell];
             }
@@ -1257,8 +1363,10 @@ impl Flow {
         self.refresh_damping();
         self.sample_walls();
         self.sample_stress();
+        self.sample_nodes();
         self.gradient_velocities();
         let max_u2 = self.collide();
+        self.collide_nodes();
         if !(max_u2 <= MAX_LATTICE_SPEED * MAX_LATTICE_SPEED) {
             return Err(Error::Unstable(format!(
                 "the flow went unstable at time step {}: the lattice speed reached {:.3} (limit {MAX_LATTICE_SPEED}) or a density stopped being a positive number; lower the time step, refine the spacing or check the boundary conditions",
@@ -1559,6 +1667,36 @@ impl Flow {
         self.walls = Some(walls);
     }
 
+    /// With the on-node wall-function bounce: each boundary node's stress from its interior node
+    /// before the collision.
+    fn sample_nodes(&mut self) {
+        let Some(mut nodes) = self.nodes.take() else { return };
+        nodes.sample(|cell| self.moments(cell));
+        self.nodes = Some(nodes);
+    }
+
+    /// With the on-node wall-function bounce, after the collision of the fluid cells: each
+    /// boundary node's eq. 14 in place of a collision ([`crate::bounce::on_node`]), one node after
+    /// another in cell order (a few per cent of the cells; each reads and writes only its own
+    /// populations).
+    fn collide_nodes(&mut self) {
+        let Some(nodes) = &mut self.nodes else { return };
+        let s = self.stride;
+        let mut fq = [0.0; Q];
+        for w in nodes.nodes_mut() {
+            let cell = w.cell as usize;
+            for (q, x) in fq.iter_mut().enumerate() {
+                *x = self.f.get(q * s + cell).copied().unwrap_or(0.0);
+            }
+            w.taken = crate::bounce::on_node(&mut fq, usize::from(w.axis), i32::from(w.inward), w.stress);
+            for (q, v) in fq.iter().enumerate() {
+                if let Some(x) = self.f.get_mut(q * s + cell) {
+                    *x = *v;
+                }
+            }
+        }
+    }
+
     /// With the wall-function bounce, after streaming: each wall cell's stress taken from its
     /// streamed populations ([`Walls::stresses`]) and given to its wall's force group, so the
     /// walls carry exactly the stress the law asks for.
@@ -1638,7 +1776,8 @@ impl Flow {
             return;
         }
         let (f, s, block) = (&self.f, self.stride, self.block);
-        let (fluid, cell_force, constant) = (&self.fluid, &self.cell_force, self.acceleration);
+        let fluid = if self.bulk.is_empty() { &self.fluid } else { &self.bulk };
+        let (cell_force, constant) = (&self.cell_force, self.acceleration);
         let (zone_of, actions) = (&self.zone_of, &self.actions);
         let walls = if self.wall_model { self.walls.as_ref() } else { None };
         parallel::chunks_mut(&mut self.gradient_u, block, |b, out| {
@@ -1692,7 +1831,8 @@ impl Flow {
         let constant = self.acceleration;
         let cell_force = &self.cell_force;
         let forced = constant != [0.0; 3] || !cell_force.is_empty() || !self.zone_of.is_empty();
-        let fluid = &self.fluid;
+        // The boundary nodes of the on-node wall-function bounce run eq. 14 instead.
+        let fluid = if self.bulk.is_empty() { &self.fluid } else { &self.bulk };
         let (zone_of, actions) = (&self.zone_of, &self.actions);
         let mut blocks = cell_blocks(&mut self.f, self.stride, n, block);
         let mut maxima = vec![0.0f64; blocks.len()];
@@ -1974,6 +2114,17 @@ impl Flow {
                     }
                 }
                 Rule::Pull { .. } | Rule::Open => {}
+            }
+        }
+        // The on-node wall-function bounce's share: the momentum each boundary node took from the
+        // fluid, in cell order.
+        if let Some(nodes) = &self.nodes {
+            for w in nodes.nodes() {
+                if let Some(force) = self.forces.get_mut(w.group as usize) {
+                    for a in 0..3 {
+                        force[a] += w.taken[a];
+                    }
+                }
             }
         }
         // The wall model's share: the momentum each reconstruction took from its wall cell, in

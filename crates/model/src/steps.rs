@@ -309,6 +309,15 @@ pub enum WallModel {
     /// Malaspinas and Sagaut's lattice Boltzmann wall model with Musker's profile of the
     /// boundary layer (the viscous sublayer, the buffer layer and the log law in one formula).
     Musker,
+    /// Han, Ooka and Kikumoto's wall-function bounce, on-node, as their eq. 14 states it: the
+    /// outermost cell layer at a plane no-slip box face at rest is the wall (boundary nodes, the
+    /// wall plane through their centres); instead of colliding, each bounces its populations
+    /// back and sends into the fluid the specular images of its incoming diagonals, less the
+    /// stress Spalding's law (κ 0.41, B 5.5) gives at the interior node one cell above it
+    /// (M. Han, R. Ooka, H. Kikumoto, *A wall function approach in lattice Boltzmann method:
+    /// algorithm and validation using turbulent channel flow*, Fluid Dyn. Res. 53:045506, 2021,
+    /// doi:10.1088/1873-7005/ac1782).
+    SpaldingBounce,
     /// Our halfway variant of a wall-function bounce, not Han, Ooka and Kikumoto's scheme: a
     /// plane no-slip box face at rest lies halfway along the links and reflects its populations
     /// specularly (no drag of its own), and after streaming each wall cell gives the face the

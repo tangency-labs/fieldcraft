@@ -610,6 +610,11 @@ impl GpuFlow {
                 zone.name
             )));
         }
+        if flow.on_node_bounce() {
+            return Err(Error::Invalid(
+                "not supported yet: Han et al.'s on-node wall-function bounce (`spalding_bounce`) on the GPU; `spalding_bounce_halfway` runs there, or solve on the CPU (`backend: \"cpu\"`)".into(),
+            ));
+        }
         let Some((adapter, tier)) = select::adapter(policy).map_err(gpu_error)? else {
             return Err(Error::Invalid(format!("{}=cpu: no GPU device; solve with `backend: \"cpu\"`", select::ENV)));
         };

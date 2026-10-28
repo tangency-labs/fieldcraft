@@ -43,7 +43,7 @@ Vreman's model takes the same fields but `van_driest`:
 | `turbulence.constant` | above 0, at most 0.5 | required | Smagorinsky's constant C. 0.1 to 0.2 is usual; 0.17 is Lilly's value for isotropic turbulence. For `vreman`, the Smagorinsky-equivalent C_s of Vreman's c = 2.5 C_s² (0.17 gives his c = 0.07; Jacob et al. 2018 use 0.18). |
 | `turbulence.prandtl` | 0.1 to 10 | 0.9 | Turbulent Prandtl number Pr_t of the turbulent heat diffusivity ν_t / Pr_t (with heat only). 0.85 to 0.9 is usual for air and water. |
 | `turbulence.van_driest` | 1 to 100 | none | Van Driest's A⁺: damps the length scale near no-slip walls. 26 is Van Driest's value. Smagorinsky's model only: Vreman's needs no damping, and the field is refused with it. |
-| `turbulence.wall_model` | `"musker"`, `"spalding_bounce_halfway"` | none | `"musker"` rebuilds each fluid cell next to a no-slip wall from Musker's profile, for a first cell above the viscous sublayer (y⁺ 30 to 100). `"spalding_bounce_halfway"` reflects the populations at plane no-slip box faces at rest and gives each wall the stress of Spalding's law at its wall cells' own velocity, exactly: a halfway variant of our own of Han, Ooka and Kikumoto's wall-function bounce (2021), whose scheme is on-node (a boundary node on the wall, the stress deposited into the interior neighbours); see docs/verification.md, method two. A moving wall is refused. |
+| `turbulence.wall_model` | `"musker"`, `"spalding_bounce"`, `"spalding_bounce_halfway"` | none | `"musker"` rebuilds each fluid cell next to a no-slip wall from Musker's profile, for a first cell above the viscous sublayer (y⁺ 30 to 100). `"spalding_bounce"` is Han, Ooka and Kikumoto's wall-function bounce as their eq. 14 states it (2021), on-node: the outermost cell layer at each plane no-slip box face is the wall (the wall plane through its centres, so a channel 2δ wide is 2δ + Δx high), bounces back and sends into the fluid the specular images of its incoming diagonals less the stress of Spalding's law at the interior node one cell above; CPU only, the box periodic along the walls, no obstacles, moving walls or heat. `"spalding_bounce_halfway"` is our halfway variant, not the paper's scheme: the wall half a cell outside the outermost cells, reflected specularly, and each wall cell's own Spalding stress (at half a cell) taken off its inward diagonals after streaming; a moving wall is refused. |
 | `collision` | `"trt"`, `"regularized"`, `"mrt"`, `"hrr"` | `"trt"` | Either model runs with every collision ([Collision operators](collision.md)); with `hrr` the finite-difference stress uses the cell's τ̄ with its eddy viscosity. |
 
 A value outside its range is refused when the step is set up, naming the range. With a
@@ -162,7 +162,23 @@ Each time step, before the collision:
 2. **Wall model** (`wall_model`). With `"musker"`, each wall cell whose second cell is fluid
    inside the box samples that cell's velocity and stores its modelled velocity and relaxation
    rate. A wall cell whose second cell is not fluid inside the box keeps the bounce-back alone.
-   With `"spalding_bounce_halfway"`, each wall cell on a plane wall (its centre half a cell from it)
+   With `"spalding_bounce"` (Han et al.'s eq. 14, `crates/lbm/src/bounce.rs`), each boundary
+   node (the outermost cell layer at a wall face; the wall passes through its centre) takes the
+   stress τ = ρ u_τ² along the velocity parallel to the wall of the interior node one cell above
+   it, u_τ the root of Spalding's law with κ 0.41 and B 5.5 at y = Δx, ρ that node's density.
+   The boundary nodes do not collide: after the fluid cells' collision each runs eq. 14 instead
+   (axis and wall-parallel populations bounced back; each diagonal into the fluid the specular
+   image of the one arriving from the fluid, ∓τ/2 along the wall; each diagonal into the wall
+   its opposite's value; the rest population kept). The streaming is unchanged; populations
+   that would arrive from outside the box are replaced by the images of those from the fluid
+   (they reach only the populations that leave the box), so each node keeps its mass. The
+   wall's force is the momentum the nodes take from the fluid: τ along the wall per node and
+   step, to round-off, and the bounce-back's 2 Σ f of the incoming populations along the
+   normal. The boundary nodes are no fluid cells: no eddy viscosity, no part in their
+   neighbours' finite-difference gradients (one-sided there), left out of the cell count, the
+   mass, the mean velocity and the fields. With damping, the interior nodes are the wall cells,
+   one cell from the wall.
+   With `"spalding_bounce_halfway"`, our variant, each wall cell on a plane wall (its centre half a cell from it)
    takes the stress τ = ρ u_τ² along its own velocity parallel to the wall, u_τ the root of
    Spalding's law with κ 0.41 and B 5.5 (Han, Ooka and Kikumoto's constants) at y = ½ Δx, solved
    as for damping. Its wall links reflect specularly instead of bouncing back (no tangential
@@ -295,6 +311,9 @@ is in [Wall-modelled large-eddy simulation](../../lbm-wall-model.md).
 | Couette at h⁺ = 10, A⁺ = 26 (damping) | wall distances exactly the half-cell offsets; largest ν_t/ν the undamped value times the factor squared at the farthest cell (y⁺ ≈ 4.7, factor 0.165) | within tolerance | ν_t/ν 2 % (regularised), 20 % (TRT); first-cell y⁺ 1 %; wall shear the laminar one within 0.2 % | `van_driest_damping_scales_couette_flow_s_eddy_viscosity_by_the_wall_factor` |
 | Pipe of radius 1, 8 cells per radius (wall distance) | R − r | within 0.75 cell (staircase) | 0.75 cell | `wall_distances_in_a_pipe_follow_its_radius` |
 | Couette, 4 cells, first cell at y⁺ ≈ 12, damped | the unresolved-wall warning | warned; undamped and resolved grids not | — | `damping_on_a_wall_the_grid_does_not_resolve_is_warned_about` |
+| Han et al.'s eq. 14 (`spalding_bounce`) on one node, the paper's numbering mapped by vector | every assignment of eq. 14a–c; the node's 19 populations, the incoming and outgoing ones; the momentum taken | exact; mass and momentum to round-off on every face | 1e-15 | `eq_14_assigns_every_population_of_a_node_on_the_floor`, `eq_14_conserves_mass_and_carries_the_stress_on_every_face` |
+| On-node bounce, perturbed coarse channel (13 cells across, walls through the outermost centres), 40 steps, TRT, regularised, MRT, HRR | the walls carry the sampled stresses along them; momentum budget with the populations in flight at the nodes; Spalding's law at one cell; the stress along the interior node's velocity; mass | to round-off | budget 2e-13, carried 7e-15, law 5e-14, direction 2e-17, mass 9e-14 | `the_on_node_bounce_gives_the_walls_exactly_the_law_s_stress` |
+| On-node bounce: grid relation, readback, damping distances, refusals (moving wall, edge with a non-periodic face, obstacle, box under 3 cells), 1, 3 and 7 threads | as stated | as stated | exact | `the_boundary_nodes_are_the_outermost_layers_and_not_fluid`, `damping_measures_the_distance_from_the_wall_through_the_nodes`, `the_on_node_bounce_refuses_what_it_does_not_support`, `on_node_results_are_bit_for_bit_the_same_on_one_and_many_threads` |
 | Wall-function bounce (`spalding_bounce_halfway`), perturbed coarse channel, 40 steps, every collision | the walls carry the sampled stress; momentum budget P(t + 1) − P(t) = a M − F; Spalding's law; mass | to round-off | 3e-15, 3e-14, 3e-14, 4e-14 | `the_wall_function_bounce_gives_the_walls_exactly_the_law_s_stress` |
 | Wall-function bounce on a moving wall | refused, naming the face | refused | — | `the_wall_function_bounce_refuses_a_moving_wall` |
 | Damped and wall-modelled cavity, 1, 3 and 7 threads | bit-for-bit equality | equal | exact | `damped_results_are_bit_for_bit_the_same_on_one_and_many_threads`, `wall_modelled_results_are_bit_for_bit_the_same_on_one_and_many_threads` |

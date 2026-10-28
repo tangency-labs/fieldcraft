@@ -111,13 +111,14 @@ whose forces are read back (a submission's last). The temperature lattice is two
 | Smagorinsky's model, the wall model (`wall_model: "musker"`), Van Driest damping (`van_driest`) | yes |
 | Steady-state rule and averaging | yes (decided on the host from read-back fields) |
 | Fans and porous zones | no: refused with the zone's name, solve on the CPU |
-| The wall-function bounce (`wall_model: "spalding_bounce_halfway"`) | yes |
+| The halfway wall-function bounce (`wall_model: "spalding_bounce_halfway"`) | yes |
+| Han et al.'s on-node wall-function bounce (`wall_model: "spalding_bounce"`) | no: refused by name, solve on the CPU |
 
 ## Algorithm
 
 1. **Preparation on the CPU** (`Flow::new`): voxelisation, links, open cells, conducting cells, the
    initial state. A flow handed to the GPU never allocates the CPU's streaming targets.
-2. **Refusals**: fans and porous zones; a policy that finds no device; an
+2. **Refusals**: fans and porous zones; Han et al.'s on-node wall-function bounce (`spalding_bounce`); a policy that finds no device; an
    adapter that allows fewer storage buffers per compute stage than the shader needs (the message
    names the graphics backend and suggests Vulkan, Metal or DX12, or the CPU).
 3. **Memory**: before preparation, the population buffer is checked against the device's limit per

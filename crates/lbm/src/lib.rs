@@ -11,6 +11,7 @@
 //!   walls (moving walls after Ladd), slip faces, Zou–He inlets and outlets, and the
 //!   momentum-exchange force on every wall; fans (a pressure–flow curve) and porous zones
 //!   (Darcy–Forchheimer resistance) as body forces.
+//! - [`bounce`]: Han, Ooka and Kikumoto's on-node wall-function bounce (their eq. 14).
 //! - [`outlet`]: convective pressure outlets, which carry a wake or vortices out of the box.
 //! - [`solve`]: the time loop, output frames and force histories in model units.
 //! - [`steady`]: the steady-state monitor and stop rule of a run.
@@ -56,6 +57,7 @@
 #![allow(clippy::needless_range_loop)]
 
 pub mod backend;
+pub mod bounce;
 pub mod conduction;
 pub mod flow;
 pub mod hrr;

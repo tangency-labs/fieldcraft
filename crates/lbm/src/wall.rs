@@ -80,8 +80,8 @@ const KAPPA: f64 = 0.4;
 const B: f64 = 5.5;
 
 /// Han, Ooka and Kikumoto's constants of Spalding's law in their wall-function bounce.
-const BOUNCE_KAPPA: f64 = 0.41;
-const BOUNCE_B: f64 = 5.5;
+pub(crate) const BOUNCE_KAPPA: f64 = 0.41;
+pub(crate) const BOUNCE_B: f64 = 5.5;
 
 /// The most times the spreading may lower each cell's distance on average before it is stopped.
 const MAX_UPDATES_PER_CELL: usize = 64;
@@ -224,6 +224,45 @@ impl Walls {
                 friction: 0.0,
                 second: second.map_or(NONE, |s| s as u32),
                 boundary: velocity,
+                rate: 1.0 / (3.0 * nu + 0.5),
+                stress: [0.0; 3],
+            });
+        }
+        let distance = if a_plus.is_some() { spread(grid, fluid, &found, &mut wall_of)? } else { Vec::new() };
+        Ok(Walls { a_plus, nu, walls: found, wall_of, distance })
+    }
+
+    /// The wall cells of Han et al.'s on-node wall-function bounce, for Van Driest's damping: the
+    /// interior nodes one cell off the boundary nodes, each with its wall point on its boundary
+    /// node's centre (distance 1) and the inward normal along `axis` (`inward` ±1), `nodes`
+    /// holding `(interior node, axis, inward, group)`; `fluid` the cells that collide (the
+    /// boundary nodes left out, so the distances do not spread through them).
+    pub fn on_node(grid: &Grid, fluid: &[bool], nodes: &[(u32, usize, i32, u32)], a_plus: Option<f64>, nu: f64) -> Result<Walls> {
+        let n = grid.len();
+        let mut found: Vec<WallCell> = Vec::new();
+        let mut wall_of = filled(n, NONE, "wall cells")?;
+        for &(cell, axis, inward, group) in nodes {
+            let mut dir = [0i32; 3];
+            if let Some(d) = dir.get_mut(axis) {
+                *d = inward.signum();
+            }
+            let Some(q) = (1..Q).find(|q| crate::lattice::C.get(*q) == Some(&dir)) else { continue };
+            let (Some(slot), true) = (wall_of.get_mut(cell as usize), fluid.get(cell as usize).copied().unwrap_or(false)) else { continue };
+            *slot = found.len() as u32;
+            let normal = c(q);
+            let centre = grid.coords(cell as usize).map(|v| v as f64);
+            found.push(WallCell {
+                cell,
+                link: q as u8,
+                point: [0, 1, 2].map(|a| centre[a] - normal[a]),
+                normal,
+                distance: 1.0,
+                velocity: [0.0; 3],
+                group,
+                removed: [0.0; 3],
+                friction: 0.0,
+                second: NONE,
+                boundary: [0.0; 3],
                 rate: 1.0 / (3.0 * nu + 0.5),
                 stress: [0.0; 3],
             });
@@ -564,7 +603,7 @@ pub fn friction_velocity(speed: f64, y: f64, nu: f64) -> f64 {
 }
 
 /// [`friction_velocity`] with Kármán's constant `kappa` and the intercept `b`.
-fn spalding_friction(speed: f64, y: f64, nu: f64, kappa: f64, b: f64) -> f64 {
+pub(crate) fn spalding_friction(speed: f64, y: f64, nu: f64, kappa: f64, b: f64) -> f64 {
     let re = speed * y / nu;
     if !(re.is_finite() && re > 0.0) {
         return 0.0;

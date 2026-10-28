@@ -1094,6 +1094,25 @@ fn a_coarse_channel_with_van_driest_damping_follows_the_cpu() {
     }
 }
 
+/// Han, Ooka and Kikumoto's on-node wall-function bounce (`spalding_bounce`, their eq. 14) runs on
+/// the CPU only: the GPU backend refuses it by name, with or without a device, and points to the
+/// halfway variant.
+#[test]
+fn the_gpu_refuses_the_on_node_wall_function_bounce() {
+    let onnode = |p: Procedure| {
+        let mut p = van_driest(p, 0.1, false);
+        if let Procedure::Fluid { turbulence: Some(fieldcraft_model::Turbulence::Smagorinsky { wall_model, .. }), .. } = &mut p {
+            *wall_model = Some(fieldcraft_model::WallModel::SpaldingBounce);
+        }
+        p
+    };
+    let (_, flow) = coarse_channel(onnode, Collision::Mrt);
+    assert!(flow.on_node_bounce());
+    let Err(e) = GpuFlow::with_options(&flow, Policy::from_env().unwrap(), Options::default()) else { panic!("the GPU ran the on-node bounce") };
+    let e = e.to_string();
+    assert!(e.contains("not supported yet") && e.contains("`spalding_bounce`") && e.contains("spalding_bounce_halfway"), "{e}");
+}
+
 /// Han, Ooka and Kikumoto's wall-function bounce (`spalding_bounce_halfway`) with Smagorinsky's model and
 /// Van Driest's damping, as their channel runs, in the coarse channel for 150 steps on both, every
 /// collision and both layouts: the fields within the wall-model test's tolerances, and the walls'
@@ -2926,19 +2945,37 @@ struct ChannelStats {
     spectrum_rows: Vec<usize>,
     spectra: Vec<Vec<f64>>,
     trig: Vec<(f64, f64)>,
+    /// The cell layers at each wall that are not fluid (1 under the on-node bounce, whose
+    /// boundary nodes are the wall, 0 otherwise), and the offset of the fluid rows' distance:
+    /// row j lies at (j + half) Δx from its wall.
+    wall_rows: usize,
+    half: f64,
 }
 
 impl ChannelStats {
-    fn new(grid: fieldcraft_lbm::voxel::Grid, vs: f64, re_tau: f64, nu: f64, turbulence: Turbulence, sigma: Option<HrrSigma>) -> ChannelStats {
+    /// The statistics of a channel 2δ wide whose walls are halfway outside the outermost cells
+    /// (`wall_rows` 0: 2N cells across) or through their centres (the on-node bounce,
+    /// `wall_rows` 1: 2N + 1 cells across, the outermost layers the boundary nodes).
+    fn new(
+        grid: fieldcraft_lbm::voxel::Grid,
+        vs: f64,
+        re_tau: f64,
+        nu: f64,
+        turbulence: Turbulence,
+        sigma: Option<HrrSigma>,
+        wall_rows: usize,
+    ) -> ChannelStats {
         use std::f64::consts::PI;
         let [nx, ny, _] = grid.cells;
-        let dx = 2.0 / ny as f64;
+        let (dx, half) = if wall_rows > 0 { (2.0 / (ny - 1) as f64, 0.0) } else { (2.0 / ny as f64, 0.5) };
+        // The fluid rows of the lower half: from the first off the wall to the centreline's.
+        let lower = wall_rows..ny / 2 + wall_rows;
         // The row nearest y⁺ 48 (both, when two are as near) and the centreline row.
-        let y_plus = |j: usize| (j as f64 + 0.5) * dx * re_tau;
-        let nearest = (0..ny / 2).map(|j| (y_plus(j) - 48.0).abs()).fold(f64::INFINITY, f64::min);
-        let mut spectrum_rows: Vec<usize> = (0..ny / 2).filter(|&j| (y_plus(j) - 48.0).abs() <= nearest + 1e-9).collect();
-        if !spectrum_rows.contains(&(ny / 2 - 1)) {
-            spectrum_rows.push(ny / 2 - 1);
+        let y_plus = |j: usize| (j as f64 + half) * dx * re_tau;
+        let nearest = lower.clone().map(|j| (y_plus(j) - 48.0).abs()).fold(f64::INFINITY, f64::min);
+        let mut spectrum_rows: Vec<usize> = lower.clone().filter(|&j| (y_plus(j) - 48.0).abs() <= nearest + 1e-9).collect();
+        if !spectrum_rows.contains(&(lower.end - 1)) {
+            spectrum_rows.push(lower.end - 1);
         }
         let trig = (0..nx).map(|q| (2.0 * PI * q as f64 / nx as f64).sin_cos()).collect();
         ChannelStats {
@@ -2955,6 +2992,8 @@ impl ChannelStats {
             spectra: vec![vec![0.0; nx / 2 + 1]; spectrum_rows.len()],
             spectrum_rows,
             trig,
+            wall_rows,
+            half,
         }
     }
 
@@ -2971,16 +3010,20 @@ impl ChannelStats {
             .map(|j| match self.turbulence {
                 Turbulence::Vreman { constant, .. } => vreman::model_constant(constant),
                 Turbulence::Smagorinsky { constant, van_driest, .. } => {
-                    let y_plus = (j as f64 + 0.5).min(ny as f64 - j as f64 - 0.5) * self.dx * self.re_tau;
+                    let y_plus = (j as f64 + self.half).min((ny - 1 - j) as f64 + self.half) * self.dx * self.re_tau;
                     (constant * van_driest.map_or(1.0, |a| 1.0 - (-y_plus / a).exp())).powi(2)
                 }
             })
             .collect();
+        let (first, last) = (self.wall_rows, ny - 1 - self.wall_rows);
         for (cell, &u) in velocity.iter().enumerate() {
             let [i, j, k] = grid.coords(cell);
+            if j < first || j > last {
+                continue;
+            }
             let nb: hrr::Neighbours = [
                 [Some(at((i + nx - 1) % nx, j, k)), Some(at((i + 1) % nx, j, k))],
-                [(j > 0).then(|| at(i, j - 1, k)), (j + 1 < ny).then(|| at(i, j + 1, k))],
+                [(j > first).then(|| at(i, j - 1, k)), (j < last).then(|| at(i, j + 1, k))],
                 [Some(at(i, j, (k + nz - 1) % nz)), Some(at(i, j, (k + 1) % nz))],
             ];
             let g = hrr::gradient(u, &nb);
@@ -3042,7 +3085,7 @@ impl ChannelStats {
         let [nx, ny, nz] = self.grid.cells;
         let per = (self.samples * nx * nz).max(1) as f64;
         let vs = self.vs;
-        let rows = (0..ny / 2)
+        let rows = (self.wall_rows..ny / 2 + self.wall_rows)
             .map(|j| {
                 let (b, t) = (self.rows[j], self.rows[ny - 1 - j]);
                 let mean = |r: &RowSums| r.u.map(|x| x / per);
@@ -3050,7 +3093,7 @@ impl ChannelStats {
                 let rms = |r: &RowSums, m: [f64; 3], a: usize| (r.uu[a] / per - m[a] * m[a]).max(0.0).sqrt() * vs;
                 let uv = |r: &RowSums, m: [f64; 3]| (r.uv / per - m[0] * m[1]) * vs * vs;
                 HanRow {
-                    y: (j as f64 + 0.5) * self.dx,
+                    y: (j as f64 + self.half) * self.dx,
                     u: 0.5 * (mb[0] + mt[0]) * vs,
                     rms: [0, 1, 2].map(|a| 0.5 * (rms(&b, mb, a) + rms(&t, mt, a))),
                     // The upper half's wall-normal velocity points the other way.
@@ -3069,7 +3112,11 @@ impl ChannelStats {
             .spectrum_rows
             .iter()
             .zip(&self.spectra)
-            .map(|(&row, e)| HanSpectrum { row, y_plus: (row as f64 + 0.5) * self.dx * self.re_tau, energy: e.iter().map(|x| x / lines).collect() })
+            .map(|(&row, e)| HanSpectrum {
+                row,
+                y_plus: (row as f64 + self.half) * self.dx * self.re_tau,
+                energy: e.iter().map(|x| x / lines).collect(),
+            })
             .collect();
         (rows, spectra)
     }
@@ -3134,6 +3181,27 @@ fn han_measures(profile: &[(f64, f64)], re_tau: f64) -> ([f64; 3], f64) {
     (eps, log.iter().sum::<f64>() / log.len() as f64)
 }
 
+/// Whether the study's wall-function bounce is Han et al.'s on-node eq. 14 (`spalding_bounce`,
+/// CPU only): `FIELDCRAFT_HAN_WALL=onnode`; otherwise our halfway variant
+/// (`spalding_bounce_halfway`, CPU or GPU).
+fn han_on_node() -> bool {
+    std::env::var("FIELDCRAFT_HAN_WALL").is_ok_and(|v| v == "onnode")
+}
+
+/// The subgrid model of a Han et al. run: `setup`'s, with the wall-function bounce of
+/// [`han_on_node`] when `wfb`.
+fn han_turbulence(setup: HanSetup, wfb: bool) -> Turbulence {
+    match setup.turbulence(wfb) {
+        Turbulence::Smagorinsky { constant, prandtl, van_driest, wall_model: Some(_) } if han_on_node() => {
+            Turbulence::Smagorinsky { constant, prandtl, van_driest, wall_model: Some(fieldcraft_model::WallModel::SpaldingBounce) }
+        }
+        Turbulence::Vreman { constant, prandtl, wall_model: Some(_) } if han_on_node() => {
+            Turbulence::Vreman { constant, prandtl, wall_model: Some(fieldcraft_model::WallModel::SpaldingBounce) }
+        }
+        t => t,
+    }
+}
+
 /// Han et al.'s channel (their §3): 2πD × 2D × πD on `case.n` cells per half-height D, periodic
 /// in x and z, driven by the constant pressure gradient of the nominal u_τ = 1 (δ = 1; the paper
 /// normalises by the nominal u_τ), with the wall-function bounce (`wfb`) or plain bounce-back. The
@@ -3152,8 +3220,13 @@ fn han_channel(case: &HanCase, setup_of: HanSetup, wfb: bool, cpu: bool, times: 
     let ((start, end), min_average, block, tolerance) = (times, 50.0, 2.0, 1e-2);
     let n = case.n;
     let dx = 1.0 / n as f64;
+    // Under the on-node bounce the walls pass through the outermost cells' centres: the box is
+    // 2δ + Δx high (2N + 1 cells) for 2δ between the walls; it runs on the CPU only.
+    let on_node = wfb && han_on_node();
+    let cpu = cpu || on_node;
+    let wall = if on_node { 0.5 * dx } else { 0.0 };
     let (lx, lz) = ((2.0 * PI * n as f64).round() * dx, (PI * n as f64).round() * dx);
-    let mut d = domain([0.0; 3], [lx, 2.0, lz], dx);
+    let mut d = domain([0.0; 3], [lx, 2.0 + 2.0 * wall, lz], dx);
     for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
         *f = PERIODIC;
     }
@@ -3168,7 +3241,7 @@ fn han_channel(case: &HanCase, setup_of: HanSetup, wfb: bool, cpu: bool, times: 
         case.mach
     };
     let dt = mach / 3f64.sqrt() * dx / uc;
-    let turbulence_of = setup_of.turbulence(wfb);
+    let turbulence_of = han_turbulence(setup_of, wfb);
     let mut p = collide(end, dt, None, setup_of.collision());
     if let Procedure::Fluid { turbulence, sigma, .. } = &mut p {
         *turbulence = Some(turbulence_of);
@@ -3196,8 +3269,8 @@ fn han_channel(case: &HanCase, setup_of: HanSetup, wfb: bool, cpu: bool, times: 
     let ub0 = 0.87 * uc;
     flow.set_equilibrium(|cell| {
         let [x, y, z] = grid.centre(cell);
-        let eta = y - 1.0;
-        let wall = 1.0 - eta * eta;
+        let eta = y - 1.0 - wall;
+        let wall = (1.0 - eta * eta).max(0.0);
         let u = 1.15 * ub0 * (1.0 - eta.abs().powi(8)) + 2.0 * (2.0 * kz * z).sin() * (kx * x).cos() * wall;
         let v = 1.5 * wall * (2.0 * kz * z).cos() * (3.0 * kx * x).sin();
         let w = 1.5 * wall * eta * (kx * x).sin() * (kz * z).cos();
@@ -3208,7 +3281,7 @@ fn han_channel(case: &HanCase, setup_of: HanSetup, wfb: bool, cpu: bool, times: 
     let from = (start / dt) as u64;
     let mut bulk = Blocks::new(((block / 0.05) as usize).max(1));
     let nu = (setup.tau_plus - 0.5) / 3.0;
-    let mut stats = ChannelStats::new(grid, vs, case.re_tau, nu, turbulence_of, setup_of.sigma());
+    let mut stats = ChannelStats::new(grid, vs, case.re_tau, nu, turbulence_of, setup_of.sigma(), usize::from(on_node));
     let (mut force_sum, mut body_sum) = (0.0, 0.0);
     let clock = std::time::Instant::now();
     let mut k = 0u64;
@@ -3296,7 +3369,10 @@ fn han_channel(case: &HanCase, setup_of: HanSetup, wfb: bool, cpu: bool, times: 
 /// `han-<setup>-<case>-<wall>.json` into `FIELDCRAFT_STUDY_RECORDS` (a directory) when set. Set
 /// `FIELDCRAFT_HAN` to a case (`A20`, `A40`, `B40`, `B80`), several separated by commas, or `1`
 /// for all; `_BB=0` skips the controls; `FIELDCRAFT_HAN_CPU=1` runs on the CPU in double
-/// precision; `FIELDCRAFT_HAN_START` and `FIELDCRAFT_HAN_END` (δ/u_τ, 20 and 150) shorten the
+/// precision; `FIELDCRAFT_HAN_WALL=onnode` runs the WFB cases with Han et al.'s on-node eq. 14
+/// (`spalding_bounce`, on the CPU, the box 2δ + Δx high so the walls through the outermost
+/// cells' centres stay 2δ apart; [`han_on_node`]) instead of our halfway variant;
+/// `FIELDCRAFT_HAN_START` and `FIELDCRAFT_HAN_END` (δ/u_τ, 20 and 150) shorten the
 /// discarded start and the run for a smoke test (a run shorter than the protocol is not a result).
 #[test]
 #[ignore = "hours, GPU: set FIELDCRAFT_HAN=A20,A40,B40 (docs/verification.md, \"Long studies\")"]
@@ -3346,7 +3422,7 @@ fn study_han_ooka_and_kikumoto_s_wall_function_bounce() {
                         continue;
                     }
                 };
-                han_report(case, setup, wfb, cpu, &r, records.as_deref(), commit.as_deref());
+                han_report(case, setup, wfb, cpu || (wfb && han_on_node()), &r, records.as_deref(), commit.as_deref());
                 // The paper's set-up is gated on both walls (as recorded); the hybrid ones on WFB.
                 let gated = setup.gated(wfb);
                 let eps_ok = (r.eps[2] / paper_eps[2] - 1.0).abs() <= 0.15;
@@ -3480,9 +3556,10 @@ fn han_report(case: &HanCase, setup: HanSetup, wfb: bool, cpu: bool, r: &HanResu
             })
         })
         .collect();
-    let turbulence = setup.turbulence(wfb);
+    let turbulence = han_turbulence(setup, wfb);
     let record = serde_json::json!({
-        "study": "han_ooka_kikumoto_2021", "setup": label, "case": case.name, "wall": kind, "re_tau": case.re_tau, "cells_per_delta": case.n,
+        "study": "han_ooka_kikumoto_2021", "setup": label, "case": case.name, "wall": kind,
+        "wall_form": if !wfb { "bounce-back" } else if han_on_node() { "on-node eq. 14 (spalding_bounce)" } else { "halfway (spalding_bounce_halfway)" }, "re_tau": case.re_tau, "cells_per_delta": case.n,
         "collision": format!("{:?}", setup.collision()), "sigma": setup.sigma().map(|s| format!("{s:?}")),
         "turbulence": serde_json::to_value(turbulence).ok(), "subgrid_applied": setup.subgrid_applied(), "nu_t_source": nu_t_source,
         "sigma_source": (!setup.subgrid_applied()).then_some("fieldcraft_lbm::hrr::dynamic_sigma on the readback velocity (no per-cell readback on the device)"),
@@ -3526,7 +3603,7 @@ fn han_s_channel_statistics_read_a_known_field() {
         })
         .collect();
     let vreman = Turbulence::Vreman { constant: 0.18, prandtl: 0.9, wall_model: None };
-    let mut stats = ChannelStats::new(grid, vs, re_tau, nu, vreman, Some(HrrSigma::Dynamic));
+    let mut stats = ChannelStats::new(grid, vs, re_tau, nu, vreman, Some(HrrSigma::Dynamic), 0);
     stats.add(&velocity);
     stats.add(&velocity);
     let (rows, spectra) = stats.finish();
@@ -3560,7 +3637,7 @@ fn han_s_channel_statistics_read_a_known_field() {
     }
     // Smagorinsky's estimate damps towards the wall and is positive in a shear.
     let smagorinsky = Turbulence::Smagorinsky { constant: 0.1, prandtl: 0.9, van_driest: Some(26.0), wall_model: None };
-    let mut stats = ChannelStats::new(grid, vs, re_tau, nu, smagorinsky, None);
+    let mut stats = ChannelStats::new(grid, vs, re_tau, nu, smagorinsky, None, 0);
     stats.add(&velocity);
     let (rows, _) = stats.finish();
     assert!(rows[0].nu_t > 0.0 && rows.iter().all(|r| r.sigma == (1.0, 1.0)));
