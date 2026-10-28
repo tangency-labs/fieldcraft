@@ -165,8 +165,8 @@ pub struct GpuFlow {
     wall_groups: Option<(u32, u32)>,
     /// Whether the wall rows are the wall-function bounce's (`bounce_sample`, `bounce_apply`).
     wall_bounce: bool,
-    /// Whether the collision takes the finite-difference velocity gradient (the hybrid collision):
-    /// `gradient_velocity` runs before it.
+    /// Whether the collision takes the finite-difference velocity gradient (the hybrid collision,
+    /// Vreman's model): `gradient_velocity` runs before it.
     gradients: bool,
     walls: wgpu::Buffer,
     wall_count: usize,
@@ -375,7 +375,7 @@ const KERNELS: [&str; 31] = [
 /// The bindings each kernel uses, read from the shader (naga's analysis of which globals an entry
 /// point reaches): each kernel gets a bind group of only those. One layout of all 26 buffers
 /// needs 25 storage buffers per compute stage, more than GL's 16 (#640); the busiest kernel
-/// (`collide`, with the gradient velocities of the hybrid collision) needs 8,
+/// (`collide`, with the gradient velocities of the hybrid collision and Vreman's model) needs 8,
 /// WebGPU's default.
 struct Reflection {
     kernels: Vec<(&'static str, Vec<(u32, wgpu::BufferBindingType)>)>,
@@ -450,8 +450,9 @@ struct Variant {
     wall_model: bool,
     van_driest: bool,
     wall_bounce: bool,
-    /// The hybrid collision.
+    /// The hybrid collision and Vreman's model.
     hrr: bool,
+    vreman: bool,
 }
 
 /// A compiled kernel: its pipeline, its bind group's layout and the bindings in it.
@@ -499,6 +500,7 @@ fn compile(device: &wgpu::Device, variant: Variant) -> Result<Kernels> {
                     ("VAN_DRIEST", if variant.van_driest { 1.0 } else { 0.0 }),
                     ("WALL_BOUNCE", if variant.wall_bounce { 1.0 } else { 0.0 }),
                     ("HRR", if variant.hrr { 1.0 } else { 0.0 }),
+                    ("VREMAN", if variant.vreman { 1.0 } else { 0.0 }),
                     ("MAX_SPEED", MAX_LATTICE_SPEED),
                 ],
                 ..Default::default()
@@ -603,11 +605,6 @@ impl GpuFlow {
         if flow.hybrid_sigma() == Some(fieldcraft_model::HrrSigma::Dynamic) {
             return Err(Error::Invalid(
                 "not supported yet: the hybrid collision's dynamic σ (`sigma: \"dynamic\"`) on the GPU; solve on the CPU (`backend: \"cpu\"`)".into(),
-            ));
-        }
-        if flow.vreman() > 0.0 {
-            return Err(Error::Invalid(
-                "not supported yet: Vreman's subgrid model (`vreman`) on the GPU; solve on the CPU (`backend: \"cpu\"`)".into(),
             ));
         }
         if let Some(zone) = flow.zones().first() {
@@ -871,7 +868,7 @@ impl GpuFlow {
         let prandtl = flow.turbulent_prandtl();
         let smag = [
             (c * c) as f32,
-            if c > 0.0 && thermal.is_some() && prandtl > 0.0 { (1.0 / prandtl) as f32 } else { 0.0 },
+            if flow.turbulent() && thermal.is_some() && prandtl > 0.0 { (1.0 / prandtl) as f32 } else { 0.0 },
             ((1.0 / omega_plus - 0.5) * (1.0 / omega_minus - 0.5)) as f32,
             ((1.0 / omega_plus - 0.5) / 3.0) as f32,
         ];
@@ -884,9 +881,9 @@ impl GpuFlow {
             u32::try_from(damping_count).map_err(|_| Error::Limit("too many wall cells for the GPU solver".into()))?,
             ((1.0 / a_plus) as f32).to_bits(),
         ];
-        // The hybrid collision's fixed σ (`les`), and the periodic axes. A fixed σ of 1 is the
-        // recursive regularised collision exactly: it compiles to those kernels (no blend, no
-        // velocity pass), so the GPU's `hrr` at
+        // The hybrid collision's fixed σ and Vreman's c (`les`), and the periodic axes.
+        // A fixed σ of 1 is the recursive regularised collision exactly: it compiles to those
+        // kernels (no blend, and no velocity pass without Vreman's model), so the GPU's `hrr` at
         // σ 1 is its `regularized` bit for bit (the hybrid kernels skip the blend there too, but
         // the driver rounds the rest differently: 1.5e-8 of 0.03 on the GB10).
         use fieldcraft_model::HrrSigma;
@@ -895,7 +892,7 @@ impl GpuFlow {
             Some(HrrSigma::Value(s)) => s,
             _ => 1.0,
         };
-        let les = [fixed_sigma as f32, 0.0, 0.0, 0.0];
+        let les = [fixed_sigma as f32, flow.vreman() as f32, 0.0, 0.0];
         let periodic = flow.periodic().map(u32::from);
         let params = [0u32, 1].map(|phase| {
             let mut bytes = params.clone();
@@ -944,9 +941,9 @@ impl GpuFlow {
         let open_f = storage("lbm open targets", &bytes_f32(&open_f));
         let outlet = storage("lbm outlet cells", &bytes_f32(&outlet));
         let moments = empty("lbm moments", 16 * n as u64);
-        // With the hybrid collision, every cell's velocity before the collision (three f32 per
-        // cell) for the finite-difference gradient.
-        let gradients = hybrid.is_some();
+        // With the hybrid collision or Vreman's model, every cell's velocity before the collision
+        // (three f32 per cell) for the finite-difference gradient.
+        let gradients = hybrid.is_some() || flow.vreman() > 0.0;
         let velocity = empty("lbm gradient velocities", if gradients { 12 * n as u64 } else { 16 });
         let stats = storage("lbm stats", &bytes_u32(&[0, 0, 0, 0]));
         let contrib = empty("lbm link forces", 16 * links.len() as u64);
@@ -979,6 +976,7 @@ impl GpuFlow {
             van_driest: damping_count > 0,
             wall_bounce: wall_count > 0 && flow.wall_bounce(),
             hrr: hybrid.is_some(),
+            vreman: flow.vreman() > 0.0,
         })?;
         // Every binding's buffer in bind group k (the two differ in the phase and the A–B swap).
         let resource = |binding: u32, k: usize| -> Option<&wgpu::Buffer> {

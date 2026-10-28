@@ -58,11 +58,13 @@
 // Smagorinsky constant by 1 − exp(−y u_τ / ν / A⁺), y its wall distance and u_τ its wall cell's,
 // both from `damping`. With the wall model too, its wall cells relax at its rate as before.
 //
-// The hybrid recursive regularised collision (fieldcraft_lbm::hrr, `HRR`) takes the finite-difference velocity gradient of each cell's six axis neighbours, which must all be at the
+// The hybrid recursive regularised collision (fieldcraft_lbm::hrr, `HRR`) and Vreman's subgrid
+// model (fieldcraft_lbm::vreman, `VREMAN`) take the finite-difference velocity gradient of each cell's six axis neighbours, which must all be at the
 // same time level: `gradient_velocity` runs before the collision (after the wall samples) and
 // leaves every cell's velocity, as the collision computes it, in `velocity` (three f32 per cell);
 // `collide` reads its neighbours' from there. The hybrid collision blends the regularised flux
-// with the strain rate's, σ P + (1 − σ)(−2 ρ c_s² S / ω). `collide` then binds 8 storage buffers, the most of any kernel. A fixed σ of 1 compiles to
+// with the strain rate's, σ P + (1 − σ)(−2 ρ c_s² S / ω); Vreman's ν_t is explicit, ω from
+// τ̄ = 3 (ν + ν_t) + ½ (every collision). `collide` then binds 8 storage buffers, the most of any kernel. A fixed σ of 1 compiles to
 // the regularised kernels (native.rs), so it is that collision bit for bit.
 
 override AA_MODE: bool = true;
@@ -84,6 +86,8 @@ override WALL_BOUNCE: bool = false;
 // The hybrid recursive regularised collision (fieldcraft_lbm::hrr, with REGULARIZED): its σ in
 // `params.les.x`; likewise.
 override HRR: bool = false;
+// Vreman's subgrid model (fieldcraft_lbm::vreman): its c = 2.5 C_s² in `params.les.y`; likewise.
+override VREMAN: bool = false;
 // The largest lattice speed (fieldcraft_lbm::setup::MAX_LATTICE_SPEED): the cap of a convective
 // outlet's convection speed.
 override MAX_SPEED: f32 = 0.5;
@@ -133,7 +137,7 @@ struct Params {
     // The wall model: its wall cells (x); the axis `mean_velocity` sums (y); Van Driest's
     // damping: its wall cells (z) and 1 / A⁺ (w, as f32 bits).
     wall: vec4<u32>,
-    // The hybrid collision's fixed σ (x).
+    // The hybrid collision's fixed σ (x) and Vreman's c = 2.5 C_s² (y).
     les: vec4<f32>,
     // Whether each axis is periodic (xyz: 1 or 0), for the finite-difference gradient's
     // neighbours.
@@ -198,7 +202,7 @@ struct Params {
 // d; per cell its wall distance and its wall cell (as bits, d or more where no wall reaches it),
 // 2 floats from 9 d.
 @group(0) @binding(24) var<storage, read_write> damping: array<f32>;
-// With the hybrid collision: every cell's velocity before the collision (with
+// With the hybrid collision or Vreman's model: every cell's velocity before the collision (with
 // the half force, after the wall model's reconstruction; 0 in solid cells), component-major
 // (velocity[a n + cell]), written by `gradient_velocity` for the finite-difference gradient the
 // collision takes of its neighbours (12 bytes per cell).
@@ -369,7 +373,7 @@ fn collide(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg:
 }
 
 fn turbulent() -> bool {
-    return SMAGORINSKY;
+    return SMAGORINSKY || VREMAN;
 }
 
 // The non-equilibrium flux P = Σ c c h − δρ c_s² I − ρ u u + ½ (u F + F u): its diagonal (xx, yy,
@@ -677,7 +681,7 @@ fn record_eddy(cell: u32, lid: u32, w: f32, u: vec3<f32>) {
     if has_heat() { moments[cell] = vec4<f32>(u, nu_t); }
 }
 
-// ---- The finite-difference velocity gradient (the hybrid collision) ----
+// ---- The finite-difference velocity gradient (the hybrid collision, Vreman's model) ----
 //
 // fieldcraft_lbm::hrr::gradient and ::laplacian on the GPU. `gradient_velocity` runs before the
 // collision and leaves every cell's velocity in `velocity`, so the collision reads its six axis
@@ -690,7 +694,7 @@ fn record_eddy(cell: u32, lid: u32, w: f32, u: vec3<f32>) {
 const NONE: u32 = 0xffffffffu;
 
 fn gradients() -> bool {
-    return HRR;
+    return HRR || VREMAN;
 }
 
 // Every cell's velocity before the collision, computed as `collide_cell` computes it (the wall
@@ -798,6 +802,26 @@ fn strain(g: Gradient) -> Flux {
     return Flux(vec3<f32>(g.x.x, g.y.y, g.z.z), 0.5 * vec3<f32>(g.x.y + g.y.x, g.x.z + g.z.x, g.y.z + g.z.y));
 }
 
+// Vreman's eddy viscosity (fieldcraft_lbm::vreman::eddy_viscosity), c √(B_β / α:α). B_β is the
+// sum of the squared 2 × 2 minors of α, and the minors of rows i and j are the components of
+// their cross product: never negative, and exactly 0 where α has one nonzero row or column. 0
+// where the gradient is zero or not a usable number.
+fn vreman_nu(g: Gradient) -> f32 {
+    let aa = gradient_norm2(g);
+    if !(aa > 0.0) || aa > 1e30 { return 0.0; }
+    let a = cross(g.x, g.y);
+    let b = cross(g.x, g.z);
+    let c = cross(g.y, g.z);
+    let nu = params.les.y * sqrt((dot(a, a) + dot(b, b) + dot(c, c)) / aa);
+    if nu > 0.0 && nu < 1e30 { return nu; }
+    return 0.0;
+}
+
+// The rate of an explicit eddy viscosity, τ̄ = 3 (ν + ν_t) + ½.
+fn explicit_omega(nu_t: f32) -> f32 {
+    return 1.0 / (1.0 / params.omega_plus + 3.0 * nu_t);
+}
+
 fn collide_cell(cell: u32, lid: u32) {
     let n = params.n;
     // Only the odd AA orientation addresses neighbours.
@@ -849,18 +873,27 @@ fn collide_cell(cell: u32, lid: u32) {
         return;
     }
     if MRT {
-        collide_mrt(cell, lid, xyz, &fq, drho, rho, u, force, forced);
+        collide_mrt(cell, lid, xyz, &fq, drho, rho, u, force, forced, g);
         return;
     }
     if turbulent() {
-        // The cell's own rate: the wall model's, or Smagorinsky's of its flux.
+        // The cell's own rate: the wall model's, Smagorinsky's of its flux, or Vreman's explicit
+        // one; with none (Vreman's ν_t = 0) the fluid's own rates below, exactly.
         var wp = -1.0;
         if WALL_MODEL { wp = wall_omega(cell); }
         if !(wp > 0.0) {
-            wp = smagorinsky_omega(flux(&fq, drho, rho, u, force, forced), rho, params.omega_plus, smagorinsky_c2(cell));
+            if SMAGORINSKY {
+                wp = smagorinsky_omega(flux(&fq, drho, rho, u, force, forced), rho, params.omega_plus, smagorinsky_c2(cell));
+            } else {
+                let nu_t = vreman_nu(g);
+                if nu_t > 0.0 { wp = explicit_omega(nu_t); }
+            }
         }
-        collide_trt_rate(cell, lid, xyz, &fq, drho, rho, u, force, forced, wp);
-        return;
+        if wp > 0.0 {
+            collide_trt_rate(cell, lid, xyz, &fq, drho, rho, u, force, forced, wp);
+            return;
+        }
+        record_eddy(cell, lid, params.omega_plus, u);
     }
     let wp = params.omega_plus;
     let wm = params.omega_minus;
@@ -967,12 +1000,19 @@ fn mrt_row(k: u32, q: u32) -> f32 {
 // populations' deviations from the weights: the moments of the deviations relax towards the
 // equilibrium moments less those of the weights (ρ = 1 at rest: 1, −11 and 3 in the first three),
 // the stresses at the cell's own rate (Smagorinsky's model or the wall model) or the fluid's.
-fn collide_mrt(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function, array<f32, 19>>, drho: f32, rho: f32, u: vec3<f32>, force: vec3<f32>, forced: bool) {
+fn collide_mrt(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function, array<f32, 19>>, drho: f32, rho: f32, u: vec3<f32>, force: vec3<f32>, forced: bool, g: Gradient) {
     var omega = params.omega_plus;
     if turbulent() {
         var wall = -1.0;
         if WALL_MODEL { wall = wall_omega(cell); }
-        if wall > 0.0 { omega = wall; } else { omega = smagorinsky_omega(flux(fq, drho, rho, u, force, forced), rho, omega, smagorinsky_c2(cell)); }
+        if wall > 0.0 {
+            omega = wall;
+        } else if SMAGORINSKY {
+            omega = smagorinsky_omega(flux(fq, drho, rho, u, force, forced), rho, omega, smagorinsky_c2(cell));
+        } else {
+            let nu_t = vreman_nu(g);
+            if nu_t > 0.0 { omega = explicit_omega(nu_t); }
+        }
         record_eddy(cell, lid, omega, u);
     }
     let uu = dot(u, u);
@@ -1055,7 +1095,14 @@ fn collide_regularized(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function, ar
     if turbulent() {
         var wall = -1.0;
         if WALL_MODEL { wall = wall_omega(cell); }
-        if wall > 0.0 { omega = wall; } else { omega = smagorinsky_omega(p, rho, omega, smagorinsky_c2(cell)); }
+        if wall > 0.0 {
+            omega = wall;
+        } else if SMAGORINSKY {
+            omega = smagorinsky_omega(p, rho, omega, smagorinsky_c2(cell));
+        } else {
+            let nu_t = vreman_nu(g);
+            if nu_t > 0.0 { omega = explicit_omega(nu_t); }
+        }
         record_eddy(cell, lid, omega, u);
     }
     if HRR && sigma != 1.0 {

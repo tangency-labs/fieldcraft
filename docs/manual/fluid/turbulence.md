@@ -11,7 +11,7 @@ wall cells can be rebuilt from a law of the wall for grids that do not resolve t
 |---|---|
 | **Commands** | `model.step.create` (`turbulence` of a `fluid` procedure), `solve.fluid` |
 | **Step procedure** | `"fluid"` with `"turbulence": {"type": "smagorinsky", …}` or `{"type": "vreman", …}` |
-| **Solver** | `crates/lbm` (CPU, f64); `crates/lbm-gpu` (GPU, f32) for Smagorinsky's model and the wall model (Vreman's model is CPU only for now) |
+| **Solver** | `crates/lbm` (CPU, f64); `crates/lbm-gpu` (GPU, f32) for both models, Van Driest's damping and the wall models |
 | **Method** | Smagorinsky 1963 with Hou et al.'s local relaxation time (1996); Vreman 2004; Van Driest damping (1956) with Spalding's law (1961); wall model of Malaspinas & Sagaut (2014) |
 | **Verified by** | `crates/lbm/tests/turbulence.rs`, `crates/lbm/tests/mrt.rs`, `crates/lbm/tests/vreman.rs`, `crates/lbm-gpu/tests/verification.rs`; Re_τ 180 channel study (docs/verification.md) |
 
@@ -44,7 +44,7 @@ Vreman's model takes the same fields but `van_driest`:
 | `turbulence.prandtl` | 0.1 to 10 | 0.9 | Turbulent Prandtl number Pr_t of the turbulent heat diffusivity ν_t / Pr_t (with heat only). 0.85 to 0.9 is usual for air and water. |
 | `turbulence.van_driest` | 1 to 100 | none | Van Driest's A⁺: damps the length scale near no-slip walls. 26 is Van Driest's value. Smagorinsky's model only: Vreman's needs no damping, and the field is refused with it. |
 | `turbulence.wall_model` | `"musker"`, `"spalding_bounce"` | none | `"musker"` rebuilds each fluid cell next to a no-slip wall from Musker's profile, for a first cell above the viscous sublayer (y⁺ 30 to 100). `"spalding_bounce"` reflects the populations at plane no-slip box faces at rest and gives each wall the stress of Spalding's law at its wall cells' own velocity, exactly (Han, Ooka and Kikumoto 2021); a moving wall is refused. |
-| `collision` | `"trt"`, `"regularized"`, `"mrt"`, `"hrr"` | `"trt"` | Either model runs with every collision ([Collision operators](collision.md)); with `hrr` the finite-difference stress uses the cell's τ̄ with its eddy viscosity (Vreman's model CPU only). |
+| `collision` | `"trt"`, `"regularized"`, `"mrt"`, `"hrr"` | `"trt"` | Either model runs with every collision ([Collision operators](collision.md)); with `hrr` the finite-difference stress uses the cell's τ̄ with its eddy viscosity. |
 
 A value outside its range is refused when the step is set up, naming the range. With a
 turbulence model the fluid's own symmetric relaxation time τ⁺ may go down to 0.5001
@@ -330,7 +330,12 @@ Van Driest damping in the same channel: the same tolerances, and the walls' drag
 the CPU's (measured: velocity up to 3.1e-6, drag up to 3.5e-6;
 `a_coarse_channel_with_the_wall_function_bounce_follows_the_cpu`). On the GPU the shift of the
 reflected populations is applied as link streaming writes them (`bounce_shift`), the stress
-sampled before the collision (`bounce_sample`).
+sampled before the collision (`bounce_sample`). Vreman's model with `trt`, `regularized`, `mrt`
+and `hrr`, in the coarse channel and in a periodic box with a ball (24³, ν 0.005, 200 steps), both
+layouts, from the same initial state: velocity within 1e-4 of the largest speed, density within
+1e-5, ν_t/ν within 1e-3 of the CPU's (measured on the GB10: velocity up to 6.9e-6, density up to
+6.3e-7, ν_t/ν up to 3.3e-5; `vreman_s_model_follows_the_cpu`); on the GPU its gradient comes from a
+velocity pass before the collision ([GPU backend](gpu.md)).
 
 **Benchmark: Re_τ 180 channel** (a long study, run by hand; docs/verification.md, "Long studies").
 C = 0.1, regularised collision, channel 2πδ × 2δ × πδ driven by u_τ²/δ, 10 δ/u_τ of start-up
@@ -362,7 +367,7 @@ docs/verification.md and summarised in [Wall-modelled large-eddy simulation](../
 ## Limitations
 
 - Smagorinsky's and Vreman's models, each with a constant; the filter width is the lattice
-  spacing. Vreman's model runs on the CPU only (the GPU refuses it), and has no Van Driest damping.
+  spacing. Vreman's model has no Van Driest damping.
 - The model adds viscosity wherever the flow shears, laminar flow included: a laminar answer is
   reached only as the grid is refined, the eddy viscosity falling like Δx².
 - Damping is meant for a wall resolved to y⁺ ≈ 1–2 at the first cell. Above y⁺ 5 the run warns,
@@ -390,7 +395,8 @@ docs/verification.md and summarised in [Wall-modelled large-eddy simulation](../
 - `crates/lbm/src/setup.rs`: `MAX_SMAGORINSKY`, `TURBULENT_PRANDTL`, `VAN_DRIEST`,
   `MIN_TAU_TURBULENT`, and the step's checks.
 - `crates/lbm-gpu/src/lbm.wgsl`: `smagorinsky_omega`, `collide_trt_rate`, `wall_omega`, behind the
-  override constants `SMAGORINSKY` and `WALL_MODEL`.
+  override constants `SMAGORINSKY` and `WALL_MODEL`; `gradient_velocity`, `fd_gradient`,
+  `vreman_nu`, `explicit_omega` behind `VREMAN`.
 - `crates/model/src/steps.rs`: `Turbulence`, `WallModel`.
 
 ## References

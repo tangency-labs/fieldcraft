@@ -1161,7 +1161,7 @@ fn a_steady_wall_modelled_channel_s_drag_matches_the_cpu() {
     }
 }
 
-// ---- The hybrid recursive regularised collision ----
+// ---- The hybrid recursive regularised collision and Vreman's model ----
 
 /// `p` with the hybrid collision's σ `sigma` and the subgrid model `turbulence`.
 fn les(sigma: Option<HrrSigma>, turbulence: Option<Turbulence>) -> impl Fn(Procedure) -> Procedure + Copy {
@@ -1174,6 +1174,7 @@ fn les(sigma: Option<HrrSigma>, turbulence: Option<Turbulence>) -> impl Fn(Proce
     }
 }
 
+const VREMAN: Turbulence = Turbulence::Vreman { constant: 0.18, prandtl: 0.9, wall_model: None };
 const SMAGORINSKY: Turbulence = Turbulence::Smagorinsky { constant: 0.1, prandtl: 0.9, van_driest: None, wall_model: None };
 
 /// A periodic box of 24³ cells with a ball of radius 6 at its centre (an obstacle: the gradient's
@@ -1270,33 +1271,25 @@ fn sigma_one_is_the_regularised_collision_on_the_gpu() {
     }
 }
 
+/// Vreman's model with every collision that takes it, in both cases and layouts, against the CPU.
+#[test]
+fn vreman_s_model_follows_the_cpu() {
+    for collision in [Collision::Trt, Collision::Regularized, Collision::Mrt] {
+        les_cases("Vreman 0.18", 180.0, les(None, Some(VREMAN)), collision);
+    }
+    les_cases("Vreman 0.18", 180.0, les(Some(HrrSigma::Value(0.9)), Some(VREMAN)), Collision::Hrr);
+}
+
 /// The hybrid collision's dynamic σ runs on the CPU only: the GPU refuses it before it looks for a
 /// device, with a message saying so.
 #[test]
 fn dynamic_sigma_is_refused_on_the_gpu() {
-    let p = les(Some(HrrSigma::Dynamic), Some(SMAGORINSKY))(collide(0.1, 0.01, None, Collision::Hrr));
+    let p = les(Some(HrrSigma::Dynamic), Some(VREMAN))(collide(0.1, 0.01, None, Collision::Hrr));
     let mut d = domain([0.0; 3], [1.0, 1.0, 0.25], 0.25);
     d.faces.y_max = FaceCondition::MovingWall { velocity: [0.01, 0.0, 0.0] };
     let (_, flow) = prepare(&model(1.0, 0.1, d, p), &[]);
     let e = GpuFlow::with_options(&flow, Policy::Auto, Options::default()).err().map(|e| e.to_string()).unwrap_or_default();
     assert!(e.contains("not supported yet") && e.contains("dynamic σ") && e.contains("GPU"), "{e}");
-}
-
-/// Vreman's subgrid model runs on the CPU only: the GPU refuses it before it looks for a device,
-/// with every collision it supports.
-#[test]
-fn vreman_s_model_is_refused_on_the_gpu() {
-    for collision in [Collision::Trt, Collision::Regularized, Collision::Mrt] {
-        let mut d = domain([0.0; 3], [1.0, 1.0, 0.25], 0.25);
-        d.faces.y_max = FaceCondition::MovingWall { velocity: [0.01, 0.0, 0.0] };
-        let mut p = collide(0.1, 0.01, None, collision);
-        if let Procedure::Fluid { turbulence, .. } = &mut p {
-            *turbulence = Some(fieldcraft_model::Turbulence::Vreman { constant: 0.18, prandtl: 0.9, wall_model: None });
-        }
-        let (_, flow) = prepare(&model(1.0, 0.1, d, p), &[]);
-        let e = GpuFlow::with_options(&flow, Policy::Auto, Options::default()).err().map(|e| e.to_string()).unwrap_or_default();
-        assert!(e.contains("not supported yet") && e.contains("Vreman") && e.contains("GPU"), "{collision:?}: {e}");
-    }
 }
 
 /// The hybrid collision (σ 0.9) with Smagorinsky's model and Van Driest's damping, and with the
@@ -1332,13 +1325,13 @@ fn the_hybrid_collision_with_wall_damping_and_the_wall_function_bounce_follows_t
     }
 }
 
-/// The same run twice on one device gives the same fields bit for bit (the hybrid collision in the
-/// box with a ball, and with Smagorinsky's model in the channel).
+/// The same run twice on one device gives the same fields bit for bit (the hybrid collision with
+/// Vreman's model in the box with a ball, and with Smagorinsky's in the channel).
 #[test]
 fn the_les_kernels_are_deterministic_on_their_device() {
     for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
         for (name, case) in [
-            ("hrr σ 0.9, box with a ball", ball_box(les(Some(HrrSigma::Value(0.9)), None), Collision::Hrr)),
+            ("hrr σ 0.9 + Vreman, box with a ball", ball_box(les(Some(HrrSigma::Value(0.9)), Some(VREMAN)), Collision::Hrr)),
             ("hrr σ 0.9 + Smagorinsky, channel", coarse_channel(les(Some(HrrSigma::Value(0.9)), Some(SMAGORINSKY)), Collision::Hrr)),
         ] {
             let (setup, flow) = case;
@@ -3014,7 +3007,7 @@ fn han_s_measures_read_spalding_s_profile_as_exact() {
 /// Mech. 130:411–452, 1983), stepped to `FIELDCRAFT_TGV_END` (20) with each variant in
 /// `FIELDCRAFT_TGV` (`mrt:0.1,regularized:0.1,hrr@0.97:0.1,hrr@0.99:v0.18`: collision, for
 /// `hrr` its σ after `@` (0.99 when left out, or `dynamic`), and the subgrid model's constant: Smagorinsky's C,
-/// or with a `v` before it Vreman's model with that Smagorinsky-equivalent C_s, CPU only), on
+/// or with a `v` before it Vreman's model with that Smagorinsky-equivalent C_s), on
 /// `FIELDCRAFT_TGV_N` cells per side (64) at lattice speed `FIELDCRAFT_TGV_SPEED` (0.05) and
 /// Reynolds number `FIELDCRAFT_TGV_RE` (1600; 12000 puts τ below the Han et al. channel's).
 /// Prints k(t) and −dk/dt (with dynamic σ on the CPU, its smallest and mean value in the step

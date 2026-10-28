@@ -103,7 +103,7 @@ whose forces are read back (a submission's last). The temperature lattice is two
 | Collisions `trt`, `regularized`, `mrt` | yes |
 | Collision `hrr` (hybrid recursive regularised), fixed σ | yes |
 | The hybrid collision's dynamic σ (`sigma: "dynamic"`) | no: refused, not supported yet (solve on the CPU) |
-| Vreman's subgrid model (`turbulence: {"type": "vreman"}`) | no: refused, not supported yet (solve on the CPU) |
+| Vreman's subgrid model (`turbulence: {"type": "vreman"}`), with every collision | yes |
 | Walls, moving walls, slip, periodic faces, obstacles, momentum exchange | yes |
 | Velocity inlets, uniform and convective pressure outlets, edges of open faces | yes |
 | Body acceleration, and changing it between steps | yes |
@@ -124,8 +124,8 @@ whose forces are read back (a submission's last). The temperature lattice is two
 3. **Memory**: before preparation, the population buffer is checked against the device's limit per
    storage buffer (asked once per process), and the run's estimate includes the GPU readback.
 4. **Device and kernels**: the device is requested with the adapter's own limits and shared; the
-   kernels are compiled once per device and variant (layout, collision, Smagorinsky, the hybrid
-   collision, wall model, Van Driest damping) and reused by the next
+   kernels are compiled once per device and variant (layout, collision, Smagorinsky, Vreman, the
+   hybrid collision, wall model, Van Driest damping) and reused by the next
    solve. A fixed σ of 1 compiles to the regularised kernels.
 5. **Stepping**: steps are submitted in chunks of at most 64; after each submission the host reads
    the stability statistics (largest speed, a non-positive or non-finite density), so the GPU may
@@ -264,9 +264,9 @@ On an Apple M4 Max (Metal), the regularised velocity fields are within 5e-7–7.
 speed, densities within 2.6e-7, wall shear within 1.9e-5 of itself, heats within 2.1e-6, mass drift
 0.
 
-### The hybrid collision
+### The hybrid collision and Vreman's model
 
-Its finite-difference gradient needs every neighbour's velocity at the same time level, so a
+Their finite-difference gradient needs every neighbour's velocity at the same time level, so a
 kernel (`gradient_velocity`) computes each cell's velocity before the collision exactly as the
 collision does (half force, the wall model's reconstruction) into a buffer of three f32 per cell
 (12 bytes, beside the population buffer's 76), and the collision reads its six axis neighbours'
@@ -276,7 +276,7 @@ periodic missing, centred differences, first-order one-sided ones or none as on 
 lattice directions with a condition on c_q, a loop shape the NVIDIA GB10's driver (580.159)
 miscompiles. With that buffer the collision binds 8 storage buffers, WebGPU's default per stage.
 
-Against the CPU (`the_hybrid_collision_follows_the_cpu`,
+Against the CPU (`the_hybrid_collision_follows_the_cpu`, `vreman_s_model_follows_the_cpu`,
 `the_hybrid_collision_with_wall_damping_and_the_wall_function_bounce_follows_the_cpu`):
 a forced channel (6 cells per half-height, perturbed, 150 steps; Re_τ 180 with a subgrid model,
 30 without) and a periodic box with a ball (24³, ν 0.005, from a field of lattice speed 0.03, 200
@@ -288,6 +288,7 @@ density 10⁻⁵, the largest ν_t/ν 10⁻³ of itself, wall drag 10⁻³. Meas
 |---|---|---|---|
 | `hrr` σ 0.9 | 7.9e-7 | 1.2e-7 | — |
 | `hrr` σ 0.9 + Smagorinsky 0.1 | 4.4e-6 | 1.4e-7 | 1.1e-4 |
+| Vreman 0.18 with `trt` / `regularized` / `mrt` / `hrr` | 3.0e-6 / 6.9e-6 / 3.8e-7 / 4.4e-6 | 6.3e-7 / 3.4e-7 / 7.4e-8 / 1.4e-7 | 3.1e-5 / 6.0e-6 / 3.3e-5 / 5.2e-6 |
 | `hrr` σ 0.9 + Smagorinsky with Van Driest / the wall-function bounce (channel) | 4.4e-6 / 2.2e-6 | 1.5e-7 / 1.2e-7 | 6.3e-6 / 1.6e-6 (drag 4.0e-6 / 2.5e-7) |
 
 σ 1 gives the regularised collision's fields bit for bit; two runs on one device give the same
@@ -351,7 +352,7 @@ operators](collision.md)).
 | File | Contents |
 |---|---|
 | `crates/lbm-gpu/src/native.rs` | `GpuFlow` (`with_options`, `advance`, readbacks), `Options`, `Streaming`, `register`, `buffer_limit`, `check_storage_buffers`, `MAX_CHUNK`, `DEVICE_TIMEOUT`. |
-| `crates/lbm-gpu/src/lbm.wgsl` | The kernels: collision (TRT, `collide_regularized` with the hybrid blend, `collide_mrt`), the velocity pass `gradient_velocity` and `fd_gradient`, AA and A–B streaming, links, open boundaries and convective outlets, momentum exchange, thermal lattice, conducting solids, wall model, Van Driest damping (`damping_refresh`). |
+| `crates/lbm-gpu/src/lbm.wgsl` | The kernels: collision (TRT, `collide_regularized` with the hybrid blend, `collide_mrt`; Vreman's `vreman_nu`), the velocity pass `gradient_velocity` and `fd_gradient`, AA and A–B streaming, links, open boundaries and convective outlets, momentum exchange, thermal lattice, conducting solids, wall model, Van Driest damping (`damping_refresh`). |
 | `crates/lbm-gpu/src/lib.rs` | The wasm stub (`register` does nothing). |
 | `crates/gpu/src/select.rs` | `Policy`, `pick`, `adapter`, `backends`, the process's wgpu instances. |
 | `crates/lbm/src/backend.rs` | `Backend`, `register_backend`, `device_available`, `Choice`. |
