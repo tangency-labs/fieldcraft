@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="560" height="350" viewBox="0 0 560 350">
+  <title>han-bulk</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M0 0 L560 0 L560 350 L0 350 Z" fill="#ffffff"/>
+    <path d="M60 285 L540 285" fill="none" stroke="#e0e0e0" stroke-width="0.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 46 288.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">0</tspan></text>
+    <path d="M60 238 L540 238" fill="none" stroke="#e0e0e0" stroke-width="0.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 46 241.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">5</tspan></text>
+    <path d="M60 191 L540 191" fill="none" stroke="#e0e0e0" stroke-width="0.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 40 194.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">10</tspan></text>
+    <path d="M60 144 L540 144" fill="none" stroke="#e0e0e0" stroke-width="0.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 40 147.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">15</tspan></text>
+    <path d="M60 97 L540 97" fill="none" stroke="#e0e0e0" stroke-width="0.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 40 100.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">20</tspan></text>
+    <path d="M60 50 L540 50" fill="none" stroke="#e0e0e0" stroke-width="0.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 40 53.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">25</tspan></text>
+    <text transform="matrix(1 0 0 1 57 299)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">0</tspan></text>
+    <text transform="matrix(1 0 0 1 123.7 299)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">5</tspan></text>
+    <text transform="matrix(1 0 0 1 187.3 299)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">10</tspan></text>
+    <text transform="matrix(1 0 0 1 254 299)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">15</tspan></text>
+    <text transform="matrix(1 0 0 1 320.7 299)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">20</tspan></text>
+    <text transform="matrix(1 0 0 1 387.3 299)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">25</tspan></text>
+    <text transform="matrix(1 0 0 1 454 299)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">30</tspan></text>
+    <text transform="matrix(1 0 0 1 520.7 299)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">35</tspan></text>
+    <path d="M60 50 L60 285 L540 285" fill="none" stroke="#555555" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 14 24)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="11" fill="#222222"><tspan x="0" y="0">Han et al.&apos;s channel at Reτ 640 (A20, bounce-back): bulk velocity Ub⁺ over time</tspan></text>
+    <text transform="matrix(1 0 0 1 260 315)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">t uτ / δ</tspan></text>
+    <text transform="matrix(1 0 0 1 14 44)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">Ub⁺</tspan></text>
+    <path d="M60 81 L540 81" fill="none" stroke="#777777" stroke-miterlimit="10" stroke-dasharray="5 3"/>
+    <text transform="matrix(1 0 0 1 390 76)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#777777"><tspan x="0" y="0">Hoyas &amp; Jiménez: 21.7</tspan></text>
+    <path d="M84 105.4 L106.7 115 L130.7 125.1 L153.3 136.5 L177.3 146.3 L200 155.6 L224 163.2 L246.7 169.3 L270.7 174 L293.3 178.3 L317.3 181.4 L340 184.2 L364 186.7 L386.7 189.3 L410.7 190.9 L433.3 192.6 L457.3 193.6 L480 195 L504 196 L526.7 196.5" fill="none" stroke="#d1495b" stroke-width="1.5" stroke-miterlimit="10"/>
+    <path d="M84 104.1 L106.7 108.1 L130.7 111.8 L153.3 115.9 L177.3 120.3 L200 125.7 L224 130.8 L246.7 136.8 L270.7 144.1 L293.3 151.4 L317.3 159.5 L340 166 L364 171.1 L386.7 175.9 L410.7 180.2 L433.3 183.4 L457.3 186.4 L480 189.4 L504 191.2 L526.7 193.2" fill="none" stroke="#e08e0b" stroke-width="1.5" stroke-miterlimit="10"/>
+    <path d="M84 101.3 L106.7 99.7 L130.7 98.1 L153.3 97.3 L177.3 96.5 L200 95.8 L224 95.5 L246.7 95.2 L270.7 94.9 L293.3 94.4 L317.3 93.6 L340 92.8 L364 92.9 L386.7 92.6 L410.7 92.3 L433.3 91.5 L457.3 90.9 L480 90.4 L504 90.3 L526.7 90.4" fill="none" stroke="#2a6fdb" stroke-width="1.5" stroke-miterlimit="10"/>
+    <path d="M60 330 L78 330" fill="none" stroke="#d1495b" stroke-width="2" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 82 334)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">MRT, Cs 0.1 (the paper&apos;s)</tspan></text>
+    <path d="M225 330 L243 330" fill="none" stroke="#e08e0b" stroke-width="2" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 247 334)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">MRT, Cs 0.1, optimised equilibria</tspan></text>
+    <path d="M390 330 L408 330" fill="none" stroke="#2a6fdb" stroke-width="2" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 412 334)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">MRT, Cs 0.2 (sensitivity only)</tspan></text>
+  </g>
+</svg>

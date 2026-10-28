@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="560" height="380" viewBox="0 0 560 380">
+  <title>han-budget</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M0 0 L560 0 L560 380 L0 380 Z" fill="#ffffff"/>
+    <path d="M60 285 L490 285" fill="none" stroke="#e0e0e0" stroke-width="0.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 30 288.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">−0.2</tspan></text>
+    <path d="M60 258.9 L490 258.9" fill="none" stroke="#999999" stroke-width="0.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 46.5 262.4)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">0</tspan></text>
+    <path d="M60 206.7 L490 206.7" fill="none" stroke="#e0e0e0" stroke-width="0.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 35.5 210.2)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">0.4</tspan></text>
+    <path d="M60 154.4 L490 154.4" fill="none" stroke="#e0e0e0" stroke-width="0.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 35.5 157.9)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">0.8</tspan></text>
+    <path d="M60 102.2 L490 102.2" fill="none" stroke="#e0e0e0" stroke-width="0.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 35.5 105.7)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">1.2</tspan></text>
+    <path d="M60 50 L490 50" fill="none" stroke="#e0e0e0" stroke-width="0.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 35.5 53.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">1.6</tspan></text>
+    <text transform="matrix(1 0 0 1 498 288.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#7b4fa0"><tspan x="0" y="0">0</tspan></text>
+    <text transform="matrix(1 0 0 1 498 229.8)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#7b4fa0"><tspan x="0" y="0">1</tspan></text>
+    <text transform="matrix(1 0 0 1 498 171)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#7b4fa0"><tspan x="0" y="0">2</tspan></text>
+    <text transform="matrix(1 0 0 1 498 112.2)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#7b4fa0"><tspan x="0" y="0">3</tspan></text>
+    <text transform="matrix(1 0 0 1 498 53.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#7b4fa0"><tspan x="0" y="0">4</tspan></text>
+    <text transform="matrix(1 0 0 1 57 299)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">0</tspan></text>
+    <text transform="matrix(1 0 0 1 137 299)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">0.2</tspan></text>
+    <text transform="matrix(1 0 0 1 223 299)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">0.4</tspan></text>
+    <text transform="matrix(1 0 0 1 309 299)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">0.6</tspan></text>
+    <text transform="matrix(1 0 0 1 395 299)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">0.8</tspan></text>
+    <text transform="matrix(1 0 0 1 487 299)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">1</tspan></text>
+    <path d="M60 50 L60 285 L490 285 L490 50" fill="none" stroke="#555555" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 14 22)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="11" fill="#222222"><tspan x="0" y="0">A20, bounce-back, MRT Cs 0.1: shear stress across the channel (in uτ²)</tspan></text>
+    <text transform="matrix(1 0 0 1 263 315)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">y / δ</tspan></text>
+    <text transform="matrix(1 0 0 1 14 42)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">stress</tspan></text>
+    <text transform="matrix(1 0 0 1 480 42)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#7b4fa0"><tspan x="0" y="0">νt / ν</tspan></text>
+    <path d="M60 128.3 L490 258.9" fill="none" stroke="#777777" stroke-miterlimit="10" stroke-dasharray="5 3"/>
+    <path d="M70.8 212.1 L92.2 60.3 L113.8 156 L135.2 149.1 L156.8 133.9 L178.2 152.1 L199.8 150.3 L221.2 160.1 L242.8 168.8 L264.2 175.7 L285.8 187.9 L307.2 193 L328.8 200.7 L350.2 210.7 L371.8 218.9 L393.2 225.1 L414.8 231.3 L436.2 238.5 L457.8 245 L479.2 254.1" fill="none" stroke="#2a6fdb" stroke-width="1.5" stroke-miterlimit="10"/>
+    <path d="M70.8 220 L92.2 250.3 L113.8 258.4 L135.2 256.9 L156.8 258.6 L178.2 258.8 L199.8 258.9 L221.2 259 L242.8 258.9 L264.2 258.9 L285.8 258.9 L307.2 258.8 L328.8 258.8 L350.2 258.8 L371.8 258.8 L393.2 258.8 L414.8 258.8 L436.2 258.8 L457.8 258.9 L479.2 258.9" fill="none" stroke="#e08e0b" stroke-width="1.5" stroke-miterlimit="10"/>
+    <path d="M70.8 147.5 L92.2 233.7 L113.8 257.3 L135.2 252.4 L156.8 257.8 L178.2 258.6 L199.8 258.9 L221.2 259.3 L242.8 259 L264.2 258.9 L285.8 258.8 L307.2 258.6 L328.8 258.5 L350.2 258.5 L371.8 258.5 L393.2 258.5 L414.8 258.5 L436.2 258.6 L457.8 258.8 L479.2 258.8" fill="none" stroke="#2a9d8f" stroke-width="1.5" stroke-miterlimit="10"/>
+    <path d="M70.8 116.4 L92.2 113.5 L113.8 107.6 L135.2 89.4 L156.8 81.1 L178.2 86.4 L199.8 80.5 L221.2 79.4 L242.8 83.5 L264.2 80 L285.8 84.7 L307.2 84.7 L328.8 86.4 L350.2 83.5 L371.8 86.4 L393.2 84.7 L414.8 85.8 L436.2 86.4 L457.8 85.2 L479.2 84.1" fill="none" stroke="#7b4fa0" stroke-width="1.2" stroke-miterlimit="10" stroke-dasharray="2 2"/>
+    <path d="M60 327 L76 327" fill="none" stroke="#777777" stroke-width="2" stroke-miterlimit="10" stroke-dasharray="5 3"/>
+    <text transform="matrix(1 0 0 1 80 331)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">total, 1 − y/δ</tspan></text>
+    <path d="M150 327 L166 327" fill="none" stroke="#2a6fdb" stroke-width="2" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 170 331)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">resolved −⟨u′v′⟩</tspan></text>
+    <path d="M265 327 L281 327" fill="none" stroke="#e08e0b" stroke-width="2" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 285 331)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">viscous</tspan></text>
+    <path d="M335 327 L351 327" fill="none" stroke="#2a9d8f" stroke-width="2" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 355 331)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">subgrid</tspan></text>
+    <path d="M410 327 L426 327" fill="none" stroke="#7b4fa0" stroke-width="2" stroke-miterlimit="10" stroke-dasharray="2 2"/>
+    <text transform="matrix(1 0 0 1 430 331)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">νt / ν (right axis)</tspan></text>
+    <text transform="matrix(1 0 0 1 60 354)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#555555"><tspan x="0" y="0">Averaged over 10–35 δ/uτ while the flow still slows, so the resolved stress exceeds the total near the wall.</tspan></text>
+    <text transform="matrix(1 0 0 1 60 366)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#555555"><tspan x="0" y="0">νt / ν from the snapshot at 35 δ/uτ, by finite differences of the mean strain.</tspan></text>
+  </g>
+</svg>

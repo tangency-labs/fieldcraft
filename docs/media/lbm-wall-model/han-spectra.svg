@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="560" height="385" viewBox="0 0 560 385">
+  <title>han-spectra</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M0 0 L560 0 L560 385 L0 385 Z" fill="#ffffff"/>
+    <path d="M449.6 50 L480.5 50 L480.5 285 L449.6 285 Z" fill="#f3e6ef"/>
+    <path d="M70 285 L540 285" fill="none" stroke="#e0e0e0" stroke-width="0.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 38 288.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">10⁻⁴</tspan></text>
+    <path d="M70 232.5 L540 232.5" fill="none" stroke="#e0e0e0" stroke-width="0.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 38 236)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">10⁻³</tspan></text>
+    <path d="M70 180 L540 180" fill="none" stroke="#e0e0e0" stroke-width="0.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 38 183.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">10⁻²</tspan></text>
+    <path d="M70 127.5 L540 127.5" fill="none" stroke="#e0e0e0" stroke-width="0.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 38 131)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">10⁻¹</tspan></text>
+    <path d="M70 75 L540 75" fill="none" stroke="#e0e0e0" stroke-width="0.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 56 78.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">1</tspan></text>
+    <path d="M70 50 L70 285" fill="none" stroke="#eeeeee" stroke-width="0.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 67 299)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">1</tspan></text>
+    <path d="M146.7 50 L146.7 285" fill="none" stroke="#eeeeee" stroke-width="0.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 143.7 299)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">2</tspan></text>
+    <path d="M248 50 L248 285" fill="none" stroke="#eeeeee" stroke-width="0.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 245 299)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">5</tspan></text>
+    <path d="M324.7 50 L324.7 285" fill="none" stroke="#eeeeee" stroke-width="0.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 318.7 299)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">10</tspan></text>
+    <path d="M401.4 50 L401.4 285" fill="none" stroke="#eeeeee" stroke-width="0.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 395.4 299)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">20</tspan></text>
+    <path d="M502.8 50 L502.8 285" fill="none" stroke="#eeeeee" stroke-width="0.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 496.8 299)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">50</tspan></text>
+    <path d="M528 50 L528 285" fill="none" stroke="#777777" stroke-miterlimit="10" stroke-dasharray="3 3"/>
+    <text transform="matrix(1 0 0 1 498 46)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#777777"><tspan x="0" y="0">cutoff</tspan></text>
+    <path d="M70 50 L70 285 L540 285" fill="none" stroke="#555555" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 14 22)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="11" fill="#222222"><tspan x="0" y="0">A20, bounce-back, MRT Cs 0.1: streamwise spectrum of u′ at 35 δ/uτ</tspan></text>
+    <text transform="matrix(1 0 0 1 285 315)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">kx δ</tspan></text>
+    <text transform="matrix(1 0 0 1 14 42)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">Euu (uτ²)</tspan></text>
+    <path d="M69.7 78.5 L146.3 93.2 L191.2 107.8 L223 101.2 L247.7 116.7 L267.9 118.9 L284.9 124.3 L299.7 117.5 L312.7 121.7 L324.4 120.4 L334.9 123.4 L344.6 113.8 L353.4 115.7 L361.6 112.3 L369.3 114.5 L376.4 116.3 L383.1 128.7 L389.4 115.7 L395.4 130.7 L401.1 123.4 L406.5 137.7 L411.6 127.5 L416.5 137.7 L421.2 139.6 L425.8 130.2 L430.1 133.5 L434.3 131 L438.3 124.5 L442.2 126 L445.9 124.3 L449.6 110.2 L453.1 100 L456.5 105.5 L459.8 94.3 L463 71.6 L466.1 71.3 L469.1 88.5 L472.1 86.9 L475 72.9 L477.8 97.9 L480.5 104.5 L483.2 115.6 L485.8 134.7 L488.3 164.2 L490.8 187.5 L493.2 184.8 L495.6 192.4 L497.9 211.6 L500.2 228.4 L502.4 223.3 L504.6 239.4 L506.8 235.4 L508.9 243 L511 250.7 L513 263.2 L515 266 L516.9 268.1 L518.9 263.2 L520.8 266 L522.6 269.2 L524.4 267 L526.2 264.1 L528 275.8" fill="none" stroke="#d1495b" stroke-width="1.5" stroke-miterlimit="10"/>
+    <path d="M69.7 85.5 L146.3 100 L191.2 102.3 L223 107.7 L247.7 112.4 L267.9 108.6 L284.9 105.8 L299.7 112.5 L312.7 115.3 L324.4 117.4 L334.9 114 L344.6 111.3 L353.4 119.5 L361.6 108 L369.3 112.7 L376.4 110.8 L383.1 111.8 L389.4 109.1 L395.4 112.8 L401.1 108.5 L406.5 107.3 L411.6 99.5 L416.5 113.4 L421.2 104.6 L425.8 118.3 L430.1 119.2 L434.3 114.4 L438.3 108.5 L442.2 100 L445.9 100.1 L449.6 98 L453.1 102.7 L456.5 98.7 L459.8 96.2 L463 96.7 L466.1 90.8 L469.1 99.4 L472.1 95.9 L475 90.4 L477.8 104.7 L480.5 104.7 L483.2 140.8 L485.8 144.7 L488.3 155 L490.8 163.1 L493.2 172.4 L495.6 182.2 L497.9 196.3 L500.2 204.6 L502.4 213.5 L504.6 223.3 L506.8 230.3 L508.9 240.3 L511 234.9 L513 243.4 L515 252.3 L516.9 254.6 L518.9 263.2 L520.8 270.4 L522.6 264.1 L524.4 272.9 L526.2 268.1 L528 282.8" fill="none" stroke="#2a6fdb" stroke-width="1.5" stroke-miterlimit="10"/>
+    <path d="M70 78.6 L528.3 236" fill="none" stroke="#777777" stroke-miterlimit="10" stroke-dasharray="5 3"/>
+    <text transform="matrix(1 0 0 1 300 149.6)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#777777"><tspan x="0" y="0">k^(−5/3)</tspan></text>
+    <text transform="matrix(1 0 0 1 451.6 279)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#8a3d6b"><tspan x="0" y="0">3–4 cells</tspan></text>
+    <path d="M70 329 L86 329" fill="none" stroke="#d1495b" stroke-width="2" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 90 333)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">y⁺ 48</tspan></text>
+    <path d="M150 329 L166 329" fill="none" stroke="#2a6fdb" stroke-width="2" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 170 333)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">centreline (y⁺ 624)</tspan></text>
+    <path d="M300 329 L316 329" fill="none" stroke="#777777" stroke-width="2" stroke-miterlimit="10" stroke-dasharray="5 3"/>
+    <text transform="matrix(1 0 0 1 320 333)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">k^(−5/3) through the largest scale</tspan></text>
+    <text transform="matrix(1 0 0 1 70 358)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#555555"><tspan x="0" y="0">One snapshot, averaged over z. The energy gathers in a band at kx δ ≈ 31–41, a wavelength of 3–4 cells,</tspan></text>
+    <text transform="matrix(1 0 0 1 70 370)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#555555"><tspan x="0" y="0">above the largest scale&apos;s at y⁺ 48, and falls by 10³ past it.</tspan></text>
+  </g>
+</svg>

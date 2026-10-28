@@ -507,7 +507,12 @@ shock capturing belongs to Eulerian finite volume (E1); not needed for the Lagra
 - **Citation.** D. d'Humières, I. Ginzburg, M. Krafczyk, P. Lallemand, L.-S. Luo. *Multiple-relaxation-time lattice Boltzmann models in three dimensions.* Phil. Trans. R. Soc. A 360(1792):437–451, 2002. DOI [10.1098/rsta.2001.0955](https://doi.org/10.1098/rsta.2001.0955).
 - **Method.** Collide in moment space with a separate relaxation rate per moment group (D3Q15/D3Q19 matrices given);
   free rates damp non-hydrodynamic modes, raising stability and fixing the wall location.
-- **Limits.** Still loses stability at very high Re; parameters need care.
+- **Limits.** Still loses stability at very high Re; parameters need care. In under-resolved turbulent channels it
+  reaches an unphysical state of spurious high-wavenumber oscillations without mesh convergence: P. Nathen,
+  D. Gaudlitz, M. J. Krause, N. A. Adams, *On the stability and accuracy of the BGK, MRT and RLB Boltzmann schemes for
+  the simulation of turbulent flows*, Commun. Comput. Phys. 23:846–876, 2018, DOI
+  [10.4208/cicp.OA-2016-0229](https://doi.org/10.4208/cicp.OA-2016-0229) (Re_τ 395 and 590, the same rates as ours). Our
+  Han et al. channel at C_s 0.1 shows the same signature (docs/verification.md, method two).
 - **Complexity.** Low–moderate (a constant 19×19 transform).
 - **As implemented** (`crates/lbm/src/mrt.rs`, `collision: "mrt"`, #664): D3Q19, the 19 orthogonal moments built
   from their integer polynomials in c (so independent of the direction order), the inverse as the transpose over the
@@ -667,7 +672,7 @@ JCP 232(1):100–117, 2013, DOI [10.1016/j.jcp.2012.07.023](https://doi.org/10.1
 - **Stress imposition in LBM.**
   - H. Asmuth, C. F. Janßen, H. Olivares-Espinosa, S. Ivanell. *Wall-modeled lattice Boltzmann large-eddy simulation of neutral atmospheric boundary layers.* Phys. Fluids 33:105111, 2021. DOI [10.1063/5.0065701](https://doi.org/10.1063/5.0065701). A slip bounce-back that carries the modelled stress; the first node's velocity is under-predicted at every resolution, and an SGS model whose ν_t vanishes at the wall gives large near-wall gradients, possibly reversed wall velocities.
   - Y. Kuwata, K. Suga. *Wall-modeled large eddy simulation of turbulent heat transfer by the lattice Boltzmann method.* J. Comput. Phys. 433:110186, 2021. DOI [10.1016/j.jcp.2021.110186](https://doi.org/10.1016/j.jcp.2021.110186). Specular reflection with a body force carrying the wall stress.
-  - M. Han, R. Ooka, H. Kikumoto. *A wall function approach in lattice Boltzmann method: algorithm and validation using turbulent channel flow.* Fluid Dyn. Res. 53:045506, 2021. DOI [10.1088/1873-7005/ac1782](https://doi.org/10.1088/1873-7005/ac1782).
+  - M. Han, R. Ooka, H. Kikumoto. *A wall function approach in lattice Boltzmann method: algorithm and validation using turbulent channel flow.* Fluid Dyn. Res. 53:045506, 2021. DOI [10.1088/1873-7005/ac1782](https://doi.org/10.1088/1873-7005/ac1782). A specular reflection whose diagonals carry Spalding's stress (`spalding_bounce`, method two); their channel is not reproduced with their MRT at C_s 0.1 (docs/verification.md).
   - None of these reports the carried skin friction within 5 % on 20–30 cells per δ.
 - **Velocity imposition in LBM.** A. Pasquali, M. Geier, M. Krafczyk, *Near-wall treatment for the simulation of turbulent flow by the cumulant lattice Boltzmann method*, Comput. Math. Appl. 79:195–212, 2020, DOI [10.1016/j.camwa.2017.11.022](https://doi.org/10.1016/j.camwa.2017.11.022), and M. Haussmann et al., Comput. Math. Appl. 78:3285–3302, 2019, DOI [10.1016/j.camwa.2019.04.033](https://doi.org/10.1016/j.camwa.2019.04.033), drive the channel with the model's u_τ and normalise by it. Neither reports the carried drag beside it.
 - **Removing the log-layer mismatch (finite volume).**
