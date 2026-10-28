@@ -1161,7 +1161,7 @@ fn a_steady_wall_modelled_channel_s_drag_matches_the_cpu() {
     }
 }
 
-// ---- The hybrid recursive regularised collision and Vreman's model ----
+// ---- The hybrid recursive regularised collision, Vreman's model and dynamic σ ----
 
 /// `p` with the hybrid collision's σ `sigma` and the subgrid model `turbulence`.
 fn les(sigma: Option<HrrSigma>, turbulence: Option<Turbulence>) -> impl Fn(Procedure) -> Procedure + Copy {
@@ -1280,16 +1280,12 @@ fn vreman_s_model_follows_the_cpu() {
     les_cases("Vreman 0.18", 180.0, les(Some(HrrSigma::Value(0.9)), Some(VREMAN)), Collision::Hrr);
 }
 
-/// The hybrid collision's dynamic σ runs on the CPU only: the GPU refuses it before it looks for a
-/// device, with a message saying so.
+/// The hybrid collision's dynamic σ, from Vreman's and from Smagorinsky's eddy viscosity, in both
+/// cases and layouts, against the CPU.
 #[test]
-fn dynamic_sigma_is_refused_on_the_gpu() {
-    let p = les(Some(HrrSigma::Dynamic), Some(VREMAN))(collide(0.1, 0.01, None, Collision::Hrr));
-    let mut d = domain([0.0; 3], [1.0, 1.0, 0.25], 0.25);
-    d.faces.y_max = FaceCondition::MovingWall { velocity: [0.01, 0.0, 0.0] };
-    let (_, flow) = prepare(&model(1.0, 0.1, d, p), &[]);
-    let e = GpuFlow::with_options(&flow, Policy::Auto, Options::default()).err().map(|e| e.to_string()).unwrap_or_default();
-    assert!(e.contains("not supported yet") && e.contains("dynamic σ") && e.contains("GPU"), "{e}");
+fn dynamic_sigma_follows_the_cpu() {
+    les_cases("dynamic σ, Vreman 0.18", 180.0, les(Some(HrrSigma::Dynamic), Some(VREMAN)), Collision::Hrr);
+    les_cases("dynamic σ, Smagorinsky 0.1", 180.0, les(Some(HrrSigma::Dynamic), Some(SMAGORINSKY)), Collision::Hrr);
 }
 
 /// The hybrid collision (σ 0.9) with Smagorinsky's model and Van Driest's damping, and with the
@@ -1325,13 +1321,13 @@ fn the_hybrid_collision_with_wall_damping_and_the_wall_function_bounce_follows_t
     }
 }
 
-/// The same run twice on one device gives the same fields bit for bit (the hybrid collision with
-/// Vreman's model in the box with a ball, and with Smagorinsky's in the channel).
+/// The same run twice on one device gives the same fields bit for bit (dynamic σ with Vreman's
+/// model in the box with a ball, and the hybrid collision with Smagorinsky's in the channel).
 #[test]
 fn the_les_kernels_are_deterministic_on_their_device() {
     for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
         for (name, case) in [
-            ("hrr σ 0.9 + Vreman, box with a ball", ball_box(les(Some(HrrSigma::Value(0.9)), Some(VREMAN)), Collision::Hrr)),
+            ("dynamic σ + Vreman, box with a ball", ball_box(les(Some(HrrSigma::Dynamic), Some(VREMAN)), Collision::Hrr)),
             ("hrr σ 0.9 + Smagorinsky, channel", coarse_channel(les(Some(HrrSigma::Value(0.9)), Some(SMAGORINSKY)), Collision::Hrr)),
         ] {
             let (setup, flow) = case;

@@ -58,13 +58,15 @@
 // Smagorinsky constant by 1 − exp(−y u_τ / ν / A⁺), y its wall distance and u_τ its wall cell's,
 // both from `damping`. With the wall model too, its wall cells relax at its rate as before.
 //
-// The hybrid recursive regularised collision (fieldcraft_lbm::hrr, `HRR`) and Vreman's subgrid
-// model (fieldcraft_lbm::vreman, `VREMAN`) take the finite-difference velocity gradient of each cell's six axis neighbours, which must all be at the
+// The hybrid recursive regularised collision (fieldcraft_lbm::hrr, `HRR`), Vreman's subgrid model
+// (fieldcraft_lbm::vreman, `VREMAN`) and the hybrid collision's dynamic σ (`DYNAMIC`) take the
+// finite-difference velocity gradient of each cell's six axis neighbours, which must all be at the
 // same time level: `gradient_velocity` runs before the collision (after the wall samples) and
 // leaves every cell's velocity, as the collision computes it, in `velocity` (three f32 per cell);
 // `collide` reads its neighbours' from there. The hybrid collision blends the regularised flux
 // with the strain rate's, σ P + (1 − σ)(−2 ρ c_s² S / ω); Vreman's ν_t is explicit, ω from
-// τ̄ = 3 (ν + ν_t) + ½ (every collision). `collide` then binds 8 storage buffers, the most of any kernel. A fixed σ of 1 compiles to
+// τ̄ = 3 (ν + ν_t) + ½ (every collision); with dynamic σ the model's ν_t sets σ and stays out of
+// ω. `collide` then binds 8 storage buffers, the most of any kernel. A fixed σ of 1 compiles to
 // the regularised kernels (native.rs), so it is that collision bit for bit.
 
 override AA_MODE: bool = true;
@@ -88,6 +90,8 @@ override WALL_BOUNCE: bool = false;
 override HRR: bool = false;
 // Vreman's subgrid model (fieldcraft_lbm::vreman): its c = 2.5 C_s² in `params.les.y`; likewise.
 override VREMAN: bool = false;
+// The hybrid collision's dynamic σ from the subgrid model's eddy viscosity (with HRR); likewise.
+override DYNAMIC: bool = false;
 // The largest lattice speed (fieldcraft_lbm::setup::MAX_LATTICE_SPEED): the cap of a convective
 // outlet's convection speed.
 override MAX_SPEED: f32 = 0.5;
@@ -137,7 +141,8 @@ struct Params {
     // The wall model: its wall cells (x); the axis `mean_velocity` sums (y); Van Driest's
     // damping: its wall cells (z) and 1 / A⁺ (w, as f32 bits).
     wall: vec4<u32>,
-    // The hybrid collision's fixed σ (x) and Vreman's c = 2.5 C_s² (y).
+    // The hybrid collision's fixed σ (x), Vreman's c = 2.5 C_s² (y) and dynamic σ's cap on the
+    // von Kármán length, the box's shortest extent in cells (z).
     les: vec4<f32>,
     // Whether each axis is periodic (xyz: 1 or 0), for the finite-difference gradient's
     // neighbours.
@@ -414,6 +419,30 @@ fn smagorinsky_omega(p: Flux, rho: f32, omega0: f32, c2: f32) -> f32 {
     return omega0;
 }
 
+// The eddy viscosity of `smagorinsky_omega`'s rate, (τ − τ₀)/3, written as
+// ½ X / (√(τ₀² + X) + τ₀) / 3 with X = 18√2 C² |P| / ρ: the difference 1/ω − 1/ω₀ of two nearly
+// equal numbers keeps few f32 digits where ν_t ≪ ν, and dynamic σ takes ν_t itself. 0 where |P|
+// is below `floor`, the rounding of the flux's sum (see `flux_floor`).
+fn smagorinsky_nu(p: Flux, rho: f32, omega0: f32, c2: f32, floor: f32) -> f32 {
+    let tau0 = 1.0 / omega0;
+    let pp = dot(p.d, p.d) + 2.0 * dot(p.o, p.o);
+    if !(pp > floor * floor) { return 0.0; }
+    let x = 18.0 * 1.4142135 * c2 * sqrt(pp) / rho;
+    let nu = 0.5 * x / (sqrt(tau0 * tau0 + x) + tau0) / 3.0;
+    if nu > 0.0 && nu < 1e30 { return nu; }
+    return 0.0;
+}
+
+// What |P| of a cell of density deviation `drho` and velocity `u` is not resolved in f32: each
+// population's deviation is rounded to about ε (|δρ| + ρ |u|) of itself, and the flux sums them
+// (16 ε of that). Below it the flux is the rounding of a state near equilibrium, not a strain;
+// dynamic σ multiplies ν_t by L_VK² (large where ∇²u is small), so it would take that noise for
+// an eddy viscosity (a channel started at equilibrium differed from the CPU by 6e-3 of its speed
+// after the first step).
+fn flux_floor(drho: f32, rho: f32, u: vec3<f32>) -> f32 {
+    return 16.0 * 1.1920929e-7 * (abs(drho) + rho * length(u));
+}
+
 // Smagorinsky's C² of `cell`: with Van Driest's damping, the constant times the cell's factor
 // 1 − exp(−y u_τ / ν / A⁺) squared (fieldcraft_lbm::wall::Walls::factor: 1 where no wall
 // reaches the cell, and once the exponent passes 40).
@@ -676,7 +705,12 @@ fn wall_omega(cell: u32) -> f32 {
 // The eddy viscosity of a cell relaxing at `w` (c_s² = ⅓), kept for the reply and, with heat, for
 // the scalar lattice.
 fn record_eddy(cell: u32, lid: u32, w: f32, u: vec3<f32>) {
-    let nu_t = max((1.0 / w - 1.0 / params.omega_plus) / 3.0, 0.0);
+    record_eddy_nu(cell, lid, max((1.0 / w - 1.0 / params.omega_plus) / 3.0, 0.0), u);
+}
+
+// A cell's eddy viscosity `nu_t` itself, recorded as `record_eddy` does (dynamic σ: the model's
+// ν_t sets σ and stays out of the rate).
+fn record_eddy_nu(cell: u32, lid: u32, nu_t: f32, u: vec3<f32>) {
     eddy[lid] = nu_t;
     if has_heat() { moments[cell] = vec4<f32>(u, nu_t); }
 }
@@ -820,6 +854,25 @@ fn vreman_nu(g: Gradient) -> f32 {
 // The rate of an explicit eddy viscosity, τ̄ = 3 (ν + ν_t) + ½.
 fn explicit_omega(nu_t: f32) -> f32 {
     return 1.0 / (1.0 / params.omega_plus + 3.0 * nu_t);
+}
+
+// The dynamic σ (fieldcraft_lbm::hrr::dynamic_sigma), 1 / (1 + 6 L² ν_t / ν) in [0, 1] with the
+// von Kármán length capped at the box's shortest extent in cells (`params.les.z`),
+// L² = min(|∇u|² / |∇²u|², L_max²): |∇²u| = 0 gives L = L_max without a division, no gradient
+// L = 0; 1 where ν_t is not above 0 or a number is not usable.
+fn dynamic_sigma(g: Gradient, nu_t: f32) -> f32 {
+    let nu = params.smag.w;
+    if !(nu_t > 0.0 && nu > 0.0) { return 1.0; }
+    let grad2 = gradient_norm2(g);
+    let lap2 = dot(g.lap, g.lap);
+    let l_max2 = params.les.z * params.les.z;
+    var l2 = 0.0;
+    if grad2 > 0.0 {
+        if grad2 < lap2 * l_max2 { l2 = grad2 / lap2; } else { l2 = l_max2; }
+    }
+    let s = 1.0 / (1.0 + 6.0 * l2 * nu_t / nu);
+    if s == s && abs(s) < 1e30 { return clamp(s, 0.0, 1.0); }
+    return 1.0;
 }
 
 fn collide_cell(cell: u32, lid: u32) {
@@ -1086,24 +1139,38 @@ fn collide_mrt(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function, array<f32,
 //
 // With HRR, the hybrid collision (fieldcraft_lbm::hrr): the flux the populations are rebuilt from
 // is the blend σ P + (1 − σ)(−2 ρ c_s² S / ω) with S the finite-difference strain rate of `g` and
-// ω the rate the cell relaxes with, skipped exactly where σ = 1.
+// ω the rate the cell relaxes with, skipped exactly where σ = 1. With DYNAMIC, σ per cell from
+// the subgrid model's ν_t (Smagorinsky's from its implicit rate, or Vreman's), which then stays
+// out of the rate; a wall cell under the wall model keeps σ = 1 and its own rate.
 fn collide_regularized(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function, array<f32, 19>>, drho: f32, rho: f32, u: vec3<f32>, force: vec3<f32>, forced: bool, g: Gradient) {
     var p = flux(fq, drho, rho, u, force, forced);
     var omega = params.omega_plus;
     var sigma = 1.0;
-    if HRR { sigma = params.les.x; }
+    if HRR && !DYNAMIC { sigma = params.les.x; }
     if turbulent() {
         var wall = -1.0;
         if WALL_MODEL { wall = wall_omega(cell); }
         if wall > 0.0 {
             omega = wall;
-        } else if SMAGORINSKY {
-            omega = smagorinsky_omega(p, rho, omega, smagorinsky_c2(cell));
+            record_eddy(cell, lid, omega, u);
+        } else if DYNAMIC {
+            var nu_t = 0.0;
+            if SMAGORINSKY {
+                nu_t = smagorinsky_nu(p, rho, omega, smagorinsky_c2(cell), flux_floor(drho, rho, u));
+            } else {
+                nu_t = vreman_nu(g);
+            }
+            record_eddy_nu(cell, lid, nu_t, u);
+            sigma = dynamic_sigma(g, nu_t);
         } else {
-            let nu_t = vreman_nu(g);
-            if nu_t > 0.0 { omega = explicit_omega(nu_t); }
+            if SMAGORINSKY {
+                omega = smagorinsky_omega(p, rho, omega, smagorinsky_c2(cell));
+            } else {
+                let nu_t = vreman_nu(g);
+                if nu_t > 0.0 { omega = explicit_omega(nu_t); }
+            }
+            record_eddy(cell, lid, omega, u);
         }
-        record_eddy(cell, lid, omega, u);
     }
     if HRR && sigma != 1.0 {
         let s = strain(g);

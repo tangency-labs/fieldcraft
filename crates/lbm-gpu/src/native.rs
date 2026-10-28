@@ -450,9 +450,10 @@ struct Variant {
     wall_model: bool,
     van_driest: bool,
     wall_bounce: bool,
-    /// The hybrid collision and Vreman's model.
+    /// The hybrid collision, Vreman's model, and the hybrid collision's dynamic σ.
     hrr: bool,
     vreman: bool,
+    dynamic: bool,
 }
 
 /// A compiled kernel: its pipeline, its bind group's layout and the bindings in it.
@@ -501,6 +502,7 @@ fn compile(device: &wgpu::Device, variant: Variant) -> Result<Kernels> {
                     ("WALL_BOUNCE", if variant.wall_bounce { 1.0 } else { 0.0 }),
                     ("HRR", if variant.hrr { 1.0 } else { 0.0 }),
                     ("VREMAN", if variant.vreman { 1.0 } else { 0.0 }),
+                    ("DYNAMIC", if variant.dynamic { 1.0 } else { 0.0 }),
                     ("MAX_SPEED", MAX_LATTICE_SPEED),
                 ],
                 ..Default::default()
@@ -602,11 +604,6 @@ impl GpuFlow {
 
     /// [`GpuFlow::new`] with `options`.
     pub fn with_options(flow: &Flow, policy: Policy, options: Options) -> Result<GpuFlow> {
-        if flow.hybrid_sigma() == Some(fieldcraft_model::HrrSigma::Dynamic) {
-            return Err(Error::Invalid(
-                "not supported yet: the hybrid collision's dynamic σ (`sigma: \"dynamic\"`) on the GPU; solve on the CPU (`backend: \"cpu\"`)".into(),
-            ));
-        }
         if let Some(zone) = flow.zones().first() {
             return Err(Error::Invalid(format!(
                 "the GPU backend does not step fans or porous zones yet (`{}`): solve on the CPU (`backend: \"cpu\"`)",
@@ -892,7 +889,9 @@ impl GpuFlow {
             Some(HrrSigma::Value(s)) => s,
             _ => 1.0,
         };
-        let les = [fixed_sigma as f32, flow.vreman() as f32, 0.0, 0.0];
+        // Dynamic σ's cap on the von Kármán length: the box's shortest extent in cells.
+        let l_max = flow.grid().cells.iter().copied().min().unwrap_or(1) as f32;
+        let les = [fixed_sigma as f32, flow.vreman() as f32, l_max, 0.0];
         let periodic = flow.periodic().map(u32::from);
         let params = [0u32, 1].map(|phase| {
             let mut bytes = params.clone();
@@ -977,6 +976,7 @@ impl GpuFlow {
             wall_bounce: wall_count > 0 && flow.wall_bounce(),
             hrr: hybrid.is_some(),
             vreman: flow.vreman() > 0.0,
+            dynamic: hybrid == Some(HrrSigma::Dynamic),
         })?;
         // Every binding's buffer in bind group k (the two differ in the phase and the A–B swap).
         let resource = |binding: u32, k: usize| -> Option<&wgpu::Buffer> {

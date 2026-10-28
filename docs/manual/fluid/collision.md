@@ -547,7 +547,7 @@ exact 1.547615e-2 (−4.2e-7; tolerance 1e-3: `a_shear_wave_decays_at_the_exact_
 | `crates/lbm/src/mrt.rs` | `M`, `NORM`, `RATES`, `equilibrium`, `collide`. |
 | `crates/lbm/src/turbulence.rs` | `flux`, `omega`: each cell's rate under Smagorinsky's model. |
 | `crates/lbm/src/setup.rs` | `DEFAULT_MAGIC`, `THERMAL_MAGIC`, `thermal_magic`, `REGULARIZED_TAU_LIMIT`, the warnings. |
-| `crates/lbm-gpu/src/lbm.wgsl` | `collide_regularized` (with `HRR` the blend), `collide_mrt` (override constants `REGULARIZED`, `MRT`), `gradient_velocity` and `fd_gradient` (the finite differences), `collide_thermal`. |
+| `crates/lbm-gpu/src/lbm.wgsl` | `collide_regularized` (with `HRR` the blend, `DYNAMIC` its σ), `collide_mrt` (override constants `REGULARIZED`, `MRT`), `gradient_velocity` and `fd_gradient` (the finite differences), `collide_thermal`. |
 
 ## References
 
