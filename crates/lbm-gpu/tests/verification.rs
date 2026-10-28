@@ -103,6 +103,17 @@ fn field_difference(cpu: &mut Flow, gpu: &mut GpuFlow) -> (f64, f64) {
     (du / scale, drho)
 }
 
+/// The hybrid recursive regularised collision runs on the CPU only: the GPU refuses it before it
+/// looks for a device, with a message saying so.
+#[test]
+fn the_hybrid_collision_is_refused_on_the_gpu() {
+    let mut d = domain([0.0; 3], [1.0, 1.0, 0.25], 0.25);
+    d.faces.y_max = FaceCondition::MovingWall { velocity: [0.01, 0.0, 0.0] };
+    let (_, flow) = prepare(&model(1.0, 0.1, d, collide(0.1, 0.01, None, Collision::Hrr)), &[]);
+    let e = GpuFlow::with_options(&flow, Policy::Auto, Options::default()).err().map(|e| e.to_string()).unwrap_or_default();
+    assert!(e.contains("not supported yet") && e.contains("`hrr`") && e.contains("GPU"), "{e}");
+}
+
 #[test]
 fn plane_poiseuille_matches_the_analytic_profile_and_the_cpu() {
     // Both collisions and both layouts (the default layout depends on the device, see `Streaming`).
@@ -2775,7 +2786,8 @@ fn han_s_measures_read_spalding_s_profile_as_exact() {
 /// (box 2πL, V₀ = L = 1, ν = 1 / Re), periodic, from the classical initial field with its pressure
 /// (M. E. Brachet, D. I. Meiron, S. A. Orszag, B. G. Nickel, R. H. Morf, U. Frisch, J. Fluid
 /// Mech. 130:411–452, 1983), stepped to `FIELDCRAFT_TGV_END` (20) with each variant in
-/// `FIELDCRAFT_TGV` (`mrt:0.1,regularized:0.1,mrt:0.2`: collision and Smagorinsky constant), on
+/// `FIELDCRAFT_TGV` (`mrt:0.1,regularized:0.1,hrr@0.97:0.1`: collision, for `hrr` its σ after
+/// `@` (0.99 when left out), and Smagorinsky constant), on
 /// `FIELDCRAFT_TGV_N` cells per side (64) at lattice speed `FIELDCRAFT_TGV_SPEED` (0.05) and
 /// Reynolds number `FIELDCRAFT_TGV_RE` (1600; 12000 puts τ below the Han et al. channel's).
 /// Prints k(t) and −dk/dt; at Re 1600 the spectral DNS peaks at about 0.0127 near t ≈ 9.
@@ -2796,9 +2808,14 @@ fn study_taylor_green_vortex_dissipation() {
     for variant in which.split(',') {
         let (name, c) = variant.split_once(':').unwrap_or((variant, "0.1"));
         let c: f64 = c.parse().unwrap();
+        let (name, sigma) = match name.split_once('@') {
+            Some((n, s)) => (n, Some(fieldcraft_model::HrrSigma::Value(s.parse().unwrap()))),
+            None => (name, None),
+        };
         let collision = match name {
             "regularized" => Collision::Regularized,
             "trt" => Collision::Trt,
+            "hrr" => Collision::Hrr,
             _ => Collision::Mrt,
         };
         let side = 2.0 * PI;
@@ -2809,8 +2826,9 @@ fn study_taylor_green_vortex_dissipation() {
             *f = PERIODIC;
         }
         let mut p = collide(end, dt, None, collision);
-        if let Procedure::Fluid { turbulence, .. } = &mut p {
+        if let Procedure::Fluid { turbulence, sigma: s, .. } = &mut p {
             *turbulence = Some(fieldcraft_model::Turbulence::Smagorinsky { constant: c, prandtl: 0.9, van_driest: None, wall_model: None });
+            *s = sigma;
         }
         let m = model(1.0, 1.0 / re, d, p);
         let limits = fieldcraft_lbm::Limits { max_cell_updates: 10_000_000_000_000, ..fieldcraft_lbm::Limits::default() };

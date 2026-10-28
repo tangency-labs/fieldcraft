@@ -101,6 +101,7 @@ whose forces are read back (a submission's last). The temperature lattice is two
 | Feature | GPU |
 |---|---|
 | Collisions `trt`, `regularized`, `mrt` | yes |
+| Collision `hrr` (hybrid recursive regularised) | no: refused, not supported yet (solve on the CPU) |
 | Walls, moving walls, slip, periodic faces, obstacles, momentum exchange | yes |
 | Velocity inlets, uniform and convective pressure outlets, edges of open faces | yes |
 | Body acceleration, and changing it between steps | yes |

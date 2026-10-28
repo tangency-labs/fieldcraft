@@ -29,8 +29,8 @@ use fieldcraft_mesh::surface::BoundarySurface;
 use fieldcraft_model::fluid_zones::DEFAULT_FAN_RELAXATION;
 use fieldcraft_model::units::kelvin_above;
 use fieldcraft_model::{
-    BoxFace, Collision, Directional, FaceCondition, FluidDomain, Model, Procedure, Resistance, SurfaceCondition, ThermalCondition, Turbulence,
-    WallModel,
+    BoxFace, Collision, Directional, FaceCondition, FluidDomain, HrrSigma, Model, Procedure, Resistance, SurfaceCondition, ThermalCondition,
+    Turbulence, WallModel,
 };
 
 use crate::voxel::Grid;
@@ -214,6 +214,9 @@ pub struct Setup {
     pub magic: f64,
     /// The collision operator.
     pub collision: Collision,
+    /// The hybrid collision's σ ([`crate::hrr`]; 0.99 unless the step gives one, unused with
+    /// another collision).
+    pub sigma: f64,
     /// Smagorinsky's constant C of the subgrid eddy viscosity (C Δx)² |S| (0: none), and the
     /// turbulent Prandtl number Pr_t of its heat diffusivity ν_t / Pr_t.
     pub smagorinsky: f64,
@@ -409,7 +412,7 @@ impl Setup {
         // The model checked the domain and its material when they were defined.
         let (s, domain) = fluid_step(model, step)?;
         let domain = domain.clone();
-        let Procedure::Fluid { end_time, steps, time_step, frames, magic, collision, turbulence, steady, .. } = &s.procedure else {
+        let Procedure::Fluid { end_time, steps, time_step, frames, magic, sigma, collision, turbulence, steady, .. } = &s.procedure else {
             return Err(Error::Invalid(format!("step `{}` is not a fluid step", s.name)));
         };
         let (smagorinsky, turbulent_prandtl, van_driest, wall_model) = match turbulence {
@@ -702,15 +705,20 @@ impl Setup {
             ));
         }
         let collision = collision.unwrap_or_default();
-        if collision == Collision::Hrr {
-            return Err(Error::Invalid("not supported yet: the hybrid recursive regularised collision (`hrr`)".into()));
+        // The model checked σ's range; the solver cannot take a dynamic one yet.
+        if collision == Collision::Hrr && *sigma == Some(HrrSigma::Dynamic) {
+            return Err(Error::Invalid("not supported yet: dynamic σ needs a subgrid model's eddy viscosity (it comes with Vreman's model)".into()));
+        }
+        let hybrid_sigma = HrrSigma::fixed(*sigma);
+        if collision != Collision::Hrr && sigma.is_some() {
+            warnings.push(format!("the hybrid collision's σ (`sigma`) has no effect with the {} collision", collision.name()));
         }
         if tau_plus < 0.51 && collision == Collision::Trt {
             warnings.push(format!(
                 "τ = {tau_plus:.4} is close to ½: under-resolved flows may go unstable; a finer spacing or the regularized collision (`collision: \"regularized\"`) is safer"
             ));
         }
-        if tau_plus < REGULARIZED_TAU_LIMIT && collision == Collision::Regularized {
+        if tau_plus < REGULARIZED_TAU_LIMIT && collision.is_regularized() {
             warnings.push(format!(
                 "τ = {tau_plus:.4} is below {REGULARIZED_TAU_LIMIT}, where even the regularized collision went unstable on a coarse bluff-body grid: the inlet and outlet still reflect pressure waves there; a finer spacing is safer"
             ));
@@ -731,6 +739,7 @@ impl Setup {
             tau_minus,
             magic,
             collision,
+            sigma: hybrid_sigma,
             smagorinsky,
             van_driest,
             wall_model,

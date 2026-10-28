@@ -2,18 +2,19 @@
 
 The collision relaxes each cell's populations towards equilibrium; it sets the viscosity, the
 position of bounce-back walls and how close to τ⁺ = ½ a grid can run. A fluid step chooses one of
-three operators on D3Q19: two relaxation times (the default), the recursive regularised collision
-for flows the default cannot hold on an affordable grid, and multiple relaxation times, the
-operator of the wall-modelled large-eddy simulation. The temperature lattice of a flow with heat
-always collides with two relaxation times.
+four operators on D3Q19: two relaxation times (the default), the recursive regularised collision
+for flows the default cannot hold on an affordable grid, multiple relaxation times, the
+operator of the wall-modelled large-eddy simulation, and the hybrid recursive regularised
+collision, which adds a hyperviscosity for large-eddy simulation (CPU only). The temperature
+lattice of a flow with heat always collides with two relaxation times.
 
 | | |
 |---|---|
-| **Commands** | `model.step.create` (procedure `fluid`: `collision`, `magic`), `solve.fluid` |
+| **Commands** | `model.step.create` (procedure `fluid`: `collision`, `magic`, `sigma`), `solve.fluid` |
 | **Step procedure** | `"fluid"` |
-| **Solver** | `crates/lbm` (CPU, f64); `crates/lbm-gpu` (f32), every operator |
-| **Method** | TRT (Ginzburg, Verhaeghe & d'Humières 2008); recursive regularised (Latt & Chopard 2006; Coreixas et al. 2017); MRT (d'Humières et al. 2002, rates of Malaspinas & Sagaut 2014) |
-| **Verified by** | `crates/lbm/tests/verification.rs`, `regularized.rs`, `mrt.rs`, `thermal.rs`; `crates/lbm-gpu/tests/verification.rs` (every operator, both layouts) |
+| **Solver** | `crates/lbm` (CPU, f64); `crates/lbm-gpu` (f32), every operator but `hrr` |
+| **Method** | TRT (Ginzburg, Verhaeghe & d'Humières 2008); recursive regularised (Latt & Chopard 2006; Coreixas et al. 2017); MRT (d'Humières et al. 2002, rates of Malaspinas & Sagaut 2014); hybrid recursive regularised (Jacob, Malaspinas & Sagaut 2018) |
+| **Verified by** | `crates/lbm/tests/verification.rs`, `regularized.rs`, `mrt.rs`, `hrr.rs`, `thermal.rs`; `crates/lbm-gpu/tests/verification.rs` (every operator, both layouts) |
 
 ## Synopsis
 
@@ -29,10 +30,12 @@ always collides with two relaxation times.
 | `collision` | `"trt"` | default | Two relaxation times. Most flows: bounce-back walls sit exactly halfway between cells, so it is the most accurate of the three on a given grid. |
 | | `"regularized"` | | Recursive regularised. Flows the two-relaxation-time scheme cannot hold on the grid you can afford: τ⁺ below about 0.52, fast inlets and fans, sharp corners. It costs 15–35 % more per step, its staircase walls are less accurate and its pressure outlets cost 3–8 % near the outlet (Theory). |
 | | `"mrt"` | | Multiple relaxation times. The collision the wall model is validated with ([Wall-modelled LES](../../lbm-wall-model.md)). |
-| `magic` | above 0, at most 1 | 3/16 | The two-relaxation-time parameter Λ. With `regularized` or `mrt` it has no effect, and the solve warns. |
+| | `"hrr"` | | Hybrid recursive regularised. The regularised collision with its stress blended with the one the finite-difference strain rate gives (`sigma`), which damps the shortest waves: for large-eddy simulation. CPU only for now. |
+| `magic` | above 0, at most 1 | 3/16 | The two-relaxation-time parameter Λ. With `regularized`, `mrt` or `hrr` it has no effect, and the solve warns. |
+| `sigma` | above 0, at most 1 | 0.99 | The hybrid collision's σ: its share of the populations' own stress. 1 is `regularized` exactly; lower adds more hyperviscosity. `"dynamic"` is not supported yet (it needs a subgrid model's eddy viscosity). With another collision it has no effect, and the solve warns. |
 
 The same choice runs on the CPU and on the GPU (`backend: "gpu"`), with buoyancy, heat and the
-turbulence model. `solve.fluid` reports it as `collision`, with `tau`, `tau_minus` and `magic`.
+turbulence model, except `hrr`, which the GPU refuses (not supported yet). `solve.fluid` reports it as `collision`, with `tau`, `tau_minus` and `magic`.
 
 Warnings: with two relaxation times below τ⁺ = 0.51 the solve warns and suggests the regularised
 collision; with the regularised collision it warns below τ⁺ = 0.508, its measured limit on the
@@ -103,6 +106,27 @@ our runs it failed where the recursive form ran (a 64² lid-driven cavity at Re 
 projected unstable at step 786, recursive 20 000 steps; a periodic shear layer at lattice speed
 0.2, τ⁺ = 0.505: projected unstable at step 603, recursive 5 000 steps), as Coreixas et al. (2017,
 2019) found.
+
+### Hybrid recursive regularised
+
+`crates/lbm/src/hrr.rs` has the details (J. Jacob, O. Malaspinas, P. Sagaut, J. Turbul.
+19:1051–1076, 2018, doi:10.1080/14685248.2018.1540879). The recursive regularised collision
+rebuilds the populations from the non-equilibrium flux `P`; the hybrid one rebuilds them from
+
+`P̃ = σ P + (1 − σ)(−2 ρ c_s² τ̄ S^FD)`,
+
+with `S^FD` the strain rate of second-order centred differences of the neighbouring cells'
+velocity (one-sided first-order differences where a neighbour is not a fluid cell, 0 where both
+are missing) and τ̄ = 1/ω the cell's own relaxation time (with Smagorinsky's eddy viscosity, or the
+wall model's rate, when they act). The third-order part is rebuilt recursively from `P̃`. The
+centred difference's error adds a hyperviscosity; to leading order in the paper's continuous
+analysis (their eq. 47) `ν_σ = (1 − σ)/(6σ) Δx² c_s² τ`, so a shear wave of wavenumber k decays at
+`ν k² [1 + ((1 − σ)/σ)(1 − sin(kΔx)/(kΔx))]`. The exact linear analysis of the discrete scheme
+(`tests/hrr.rs`) keeps `ν` exactly as k → 0 with τ̄ = 1/ω; its k⁴ term is not eq. 47's: the extra
+damping relative to `regularized` grows as τ̄ approaches ½ (about 7 times eq. 47's at τ̄ = 0.55,
+σ near 1), is about half of it at τ̄ = 0.8, vanishes at τ̄ = 1 (the collision then keeps no
+non-equilibrium part) and changes sign above. Resolved waves (k Δx = 2π/64) stay within 1 % of
+eq. 47 at τ̄ 0.55 and 0.8.
 
 ### Multiple relaxation times
 
@@ -200,7 +224,10 @@ Per fluid cell and time step (`Flow::collide`, blocks of cells in parallel):
 4. Track the cell's speed: the largest over the step is checked against the lattice-speed limit
    0.5 after the collision.
 5. Collide:
-   - `regularized`: rebuild and relax (`regularized::collide`), with Smagorinsky's rate per cell.
+   - `regularized`: rebuild and relax (`regularized::rebuild`), with Smagorinsky's rate per cell.
+   - `hrr`: as `regularized`, the flux blended with the finite-difference strain rate of the
+     neighbours' velocities first (`hrr::strain`, `regularized::rebuild`); those velocities come from a pass over every
+     fluid cell before the collision (`Flow::hybrid_velocities`, steps 1–3 through the same `cell_state`).
    - `mrt`: the stresses' rate (the wall model's, Smagorinsky's from the cell's flux, or 1/τ⁺);
      map, relax with forcing, map back (`mrt::collide`).
    - `trt`: per cell ω⁺ (Smagorinsky's from the flux when the model is on) and ω⁻ from Λ; the rest
@@ -210,7 +237,7 @@ Per fluid cell and time step (`Flow::collide`, blocks of cells in parallel):
 
 ## Output
 
-`solve.fluid` reports `collision` (`trt`, `regularized` or `mrt`), `tau` (τ⁺), `tau_minus` (τ⁻ of
+`solve.fluid` reports `collision` (`trt`, `regularized`, `mrt` or `hrr`), `tau` (τ⁺), `tau_minus` (τ⁻ of
 the two-relaxation-time scheme), `magic` (Λ), with heat `tau_thermal` (τ_T), and with a turbulence
 model `eddy_viscosity_ratio`.
 
@@ -316,6 +343,24 @@ The two-relaxation-time results did not change when the regularised collision wa
 
 The wall-modelled channel against Lee & Moser and Dean runs with this collision ([Verification and
 validation](../../verification.md), "Wall-modelled channel").
+
+### Hybrid recursive regularised
+
+`cargo test -p fieldcraft-lbm --test hrr -- --nocapture` (the full shear-wave sweep:
+`cargo test --release -p fieldcraft-lbm --test hrr -- --include-ignored --nocapture`), and the
+unit tests of `hrr.rs`:
+
+| Case | Reference | Measured | Tolerance | Test |
+|---|---|---|---|---|
+| σ = 1 | `regularized`, bit for bit | Every density, velocity and wall force equal after 200 steps of a forced channel with a ball, inlet, outlet and slip face, with and without Smagorinsky's model | exact | `sigma_one_is_the_regularised_collision_bit_for_bit` |
+| Plane Poiseuille, 8/16/32 cells, τ = 0.8, σ 0.99 | Parabola (theory) | 3.5e-3, 8.6e-4, 2.2e-4 (orders 2.000, 2.000) | finest < 2 × 10⁻³, |order − 2| < 0.2 | `poiseuille_flow_converges_to_the_parabola_like_dx_squared` |
+| Couette, 16 cells, σ 0.9 | Linear profile | 6e-14 of the wall speed | 2 × 10⁻³ | `couette_flow_is_linear` |
+| Couette with Smagorinsky's model, σ 0.9 | ν_t = (C Δx)² U/h, wall shear ρ (ν + ν_t) U/h | shear 3e-6, ν_t/ν 8e-4 relative | shear 2 × 10⁻³, ν_t/ν 2 × 10⁻² | `smagorinsky_couette_flow_takes_the_closed_form_eddy_viscosity` |
+| Taylor–Green, 16/32/64 cells, σ 0.99 | exp(−2νt) | 1.7e-2, 4.3e-3, 1.1e-3 (orders 2.009, 2.004) | finest < 2 × 10⁻³, order > 1.8 | `taylor_green_decays_at_the_viscous_rate_to_second_order` |
+| Shear wave, N = 64, 16, 8 cells (k Δx = 2π/N), τ̄ 0.8 and 0.55, σ 0.5, 0.9, 0.97, 0.985 | Exact rate −ln λ of the scheme's linear map (derived in the test) | Within 2.5e-7 relative (1e-11 for N ≥ 16) | 1 % | `shear_waves_decay_at_the_exact_rate_and_at_eq_47_when_resolved` (heavy; N = 16, τ̄ 0.8, σ 0.9 in the trunk gate) |
+| The same, N = 64 | Eq. 47 of Jacob et al. | Within 6.2e-3 (τ̄ 0.55, σ 0.5), 1e-3 or less otherwise | 1 % | the same |
+| Determinism | One thread against several | Bit for bit | exact | `results_are_bit_for_bit_the_same_on_one_and_many_threads` |
+| Refusals | σ 0, below 0, above 1, not finite: refused by name; `"dynamic"`: not supported yet | | | `bad_sigmas_are_refused_and_dynamic_is_not_supported_yet` |
 
 ### The thermal lattice
 

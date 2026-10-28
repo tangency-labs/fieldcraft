@@ -183,6 +183,76 @@ pub struct ZoneSample {
     pub fan_rise: f64,
 }
 
+/// A fluid cell's state before its collision ([`cell_state`]).
+struct CellState {
+    rho: f64,
+    /// The velocity with the half force, and the force per volume.
+    u: [f64; 3],
+    force: [f64; 3],
+    /// Under the wall model, a rebuilt wall cell's relaxation rate and the momentum the
+    /// rebuild took from it.
+    wall: Option<(f64, [f64; 3])>,
+}
+
+/// The density and momentum of populations `fq` (summed in direction order).
+#[inline(always)]
+fn density_momentum(fq: &[f64; Q]) -> (f64, [f64; 3]) {
+    let (mut rho, mut j) = (0.0, [0.0; 3]);
+    for (q, v) in fq.iter().enumerate() {
+        let cq = C[q];
+        rho += v;
+        j[0] += v * f64::from(cq[0]);
+        j[1] += v * f64::from(cq[1]);
+        j[2] += v * f64::from(cq[2]);
+    }
+    (rho, j)
+}
+
+/// The state cell `cell` collides from, its populations `fq` read: under the wall model (`walls`
+/// given only then) a wall cell's populations are first rebuilt from the wall law; then its
+/// velocity and force with body acceleration `a` and its zone's action. `None` when the density
+/// is not a positive number. The collision and the hybrid collision's velocity pass both call
+/// it, so their velocities are the same bit for bit.
+#[inline(always)]
+fn cell_state(fq: &mut [f64; Q], cell: usize, a: [f64; 3], walls: Option<&Walls>, zone: Option<&ZoneAction>) -> Option<CellState> {
+    let (mut rho, mut j) = density_momentum(fq);
+    let mut wall = None;
+    if rho > 0.0
+        && rho.is_finite()
+        && let Some(rate) = walls.and_then(|w| w.reconstruct(cell, fq, a))
+    {
+        let before = j;
+        (rho, j) = density_momentum(fq);
+        wall = Some((rate, [0, 1, 2].map(|k| before[k] - j[k])));
+    }
+    if !(rho > 0.0 && rho.is_finite()) {
+        return None;
+    }
+    let (u, force) = velocity_force(rho, j, a, zone);
+    Some(CellState { rho, u, force, wall })
+}
+
+/// The fluid cell next to the cell at `p` along `axis` (towards `+axis` with `up`): across a
+/// periodic face its periodic image, as streaming pulls; `None` when that cell is not a fluid
+/// cell or lies outside a face that is not periodic.
+#[inline(always)]
+fn neighbour(grid: &Grid, periodic: [bool; 3], fluid: &[bool], p: [usize; 3], axis: usize, up: bool) -> Option<usize> {
+    let n = *grid.cells.get(axis)?;
+    let i = *p.get(axis)?;
+    let periodic = periodic.get(axis).copied().unwrap_or(false);
+    let next = match (up, i) {
+        (true, i) if i + 1 < n => i + 1,
+        (true, _) if periodic => 0,
+        (false, 0) if periodic => n.checked_sub(1)?,
+        (false, 0) | (true, _) => return None,
+        (false, i) => i - 1,
+    };
+    let mut q = p;
+    *q.get_mut(axis)? = next;
+    let cell = grid.index(q);
+    fluid.get(cell).copied().unwrap_or(false).then_some(cell)
+}
+
 /// The velocity (with the half force) and the force per volume of a cell from its density `rho`
 /// and momentum `j`, with body acceleration `a` and its zone's action. Porous resistance depends
 /// on the velocity it defines, `u = (j + F/2)/ρ`; solving that quadratic exactly keeps strong
@@ -347,6 +417,12 @@ pub struct Flow {
     cell_force: Vec<[f64; 3]>,
     /// With heat: every cell's velocity from the last collision, for the scalar equilibrium.
     cell_u: Vec<[f64; 3]>,
+    /// The hybrid collision's σ, and with it every cell's velocity before the collision (for
+    /// the finite-difference strain rate; empty with another collision).
+    sigma: f64,
+    hybrid_u: Vec<[f64; 3]>,
+    /// Whether each axis is periodic (its faces' neighbours are the periodic images).
+    periodic: [bool; 3],
     /// The fans and porous zones (porous first), their fluid cells, and per cell its zone
     /// (`NONE` outside them; empty without zones).
     zones: Vec<ZoneSetup>,
@@ -811,6 +887,9 @@ impl Flow {
             thermal,
             cell_force,
             cell_u,
+            sigma: setup.sigma,
+            hybrid_u: if setup.collision == Collision::Hrr { filled(n, [0.0; 3], "cell velocities")? } else { Vec::new() },
+            periodic,
             fan_rise: vec![0.0; setup.zones.len()],
             zones: setup.zones.clone(),
             zone_cells,
@@ -1140,6 +1219,7 @@ impl Flow {
         self.refresh_damping();
         self.sample_walls();
         self.sample_stress();
+        self.hybrid_velocities();
         let max_u2 = self.collide();
         if !(max_u2 <= MAX_LATTICE_SPEED * MAX_LATTICE_SPEED) {
             return Err(Error::Unstable(format!(
@@ -1510,19 +1590,55 @@ impl Flow {
         self.walls.as_ref().and_then(|d| d.distance(cell))
     }
 
+    /// With the hybrid collision, before it: every fluid cell's velocity (with the half force),
+    /// computed exactly as the collision computes it (the wall model's reconstruction included),
+    /// into `hybrid_u`, by fixed blocks in parallel (each cell writes only its own slot), for the
+    /// finite-difference strain rate of its neighbours ([`crate::hrr`]). Solid cells and cells
+    /// whose density is not a positive number get 0 (the collision then stops the run).
+    fn hybrid_velocities(&mut self) {
+        if self.hybrid_u.is_empty() {
+            return;
+        }
+        let (f, s, block) = (&self.f, self.stride, self.block);
+        let (fluid, cell_force, constant) = (&self.fluid, &self.cell_force, self.acceleration);
+        let (zone_of, actions) = (&self.zone_of, &self.actions);
+        let walls = if self.wall_model { self.walls.as_ref() } else { None };
+        parallel::chunks_mut(&mut self.hybrid_u, block, |b, out| {
+            let mut fq = [0.0; Q];
+            for (i, slot) in out.iter_mut().enumerate() {
+                let cell = b * block + i;
+                *slot = [0.0; 3];
+                if !fluid.get(cell).copied().unwrap_or(false) {
+                    continue;
+                }
+                for (q, x) in fq.iter_mut().enumerate() {
+                    *x = f.get(q * s + cell).copied().unwrap_or(0.0);
+                }
+                let a = cell_force.get(cell).copied().unwrap_or(constant);
+                let zone = zone_of.get(cell).and_then(|z| actions.get(*z as usize));
+                if let Some(state) = cell_state(&mut fq, cell, a, walls, zone) {
+                    *slot = state.u;
+                }
+            }
+        });
+    }
+
     /// The collision with Guo forcing (two relaxation times, or recursive regularised), in place,
     /// by blocks of [`block_cells`] cells in parallel. Returns the largest squared lattice speed, or
     /// NaN when a density is not positive.
     fn collide(&mut self) -> f64 {
         let block = self.block;
         let n = self.n;
-        let regularized = self.collision == Collision::Regularized;
+        let hybrid = !self.hybrid_u.is_empty();
+        let regularized = self.collision.is_regularized();
         let mrt = self.collision == Collision::Mrt;
+        let (sigma, hybrid_u, grid, periodic) = (self.sigma, &self.hybrid_u, self.grid, self.periodic);
         let (wp, wm) = (self.omega_plus, self.omega_minus);
         let (sp, sm) = (1.0 - 0.5 * wp, 1.0 - 0.5 * wm);
         let smagorinsky = self.smagorinsky;
         let walls = self.walls.as_ref();
         let wall_model = self.wall_model;
+        let model_walls = walls.filter(|_| wall_model);
         // Λ, which the two relaxation times keep when the eddy viscosity changes τ⁺.
         let magic = (1.0 / wp - 0.5) * (1.0 / wm - 0.5);
         let constant = self.acceleration;
@@ -1560,39 +1676,20 @@ impl Flow {
                 if !fluid.get(b * block + i).copied().unwrap_or(false) {
                     continue;
                 }
+                for (q, x) in fq.iter_mut().enumerate() {
+                    *x = f.get(q).and_then(|d| d.get(i)).copied().unwrap_or(0.0);
+                }
                 let a = cell_force.get(b * block + i).copied().unwrap_or(constant);
-                let (mut rho, mut j) = (0.0, [0.0; 3]);
-                for q in 0..Q {
-                    let v = f.get(q).and_then(|d| d.get(i)).copied().unwrap_or(0.0);
-                    fq[q] = v;
-                    let cq = C[q];
-                    rho += v;
-                    j[0] += v * f64::from(cq[0]);
-                    j[1] += v * f64::from(cq[1]);
-                    j[2] += v * f64::from(cq[2]);
-                }
-                // A wall cell under the wall model: its populations rebuilt from the wall law,
-                // and the rate it relaxes with.
-                let wall_rate =
-                    if wall_model && rho > 0.0 && rho.is_finite() { walls.and_then(|w| w.reconstruct(b * block + i, &mut fq, a)) } else { None };
-                if wall_rate.is_some() {
-                    let before = j;
-                    (rho, j) = (0.0, [0.0; 3]);
-                    for (q, v) in fq.iter().enumerate() {
-                        let cq = C[q];
-                        rho += v;
-                        j[0] += v * f64::from(cq[0]);
-                        j[1] += v * f64::from(cq[1]);
-                        j[2] += v * f64::from(cq[2]);
-                    }
-                    removed.push(((b * block + i) as u32, [0, 1, 2].map(|k| before[k] - j[k])));
-                }
-                if !(rho > 0.0 && rho.is_finite()) {
+                let zone = zone_of.get(b * block + i).and_then(|z| actions.get(*z as usize));
+                let Some(CellState { rho, u, force, wall }) = cell_state(&mut fq, b * block + i, a, model_walls, zone) else {
                     **block_max = f64::NAN;
                     return;
-                }
-                let zone = zone_of.get(b * block + i).and_then(|z| actions.get(*z as usize));
-                let (u, force) = velocity_force(rho, j, a, zone);
+                };
+                // A wall cell under the wall model relaxes with its own rate.
+                let wall_rate = wall.map(|(rate, taken)| {
+                    removed.push(((b * block + i) as u32, taken));
+                    rate
+                });
                 let uu = u[0] * u[0] + u[1] * u[1] + u[2] * u[2];
                 max_u2 = max_u2.max(uu);
                 if let Some(slot) = u_out.as_mut().and_then(|u| u.get_mut(i)) {
@@ -1617,7 +1714,13 @@ impl Flow {
                 // A wall cell under the wall model relaxes with its viscosity instead.
                 if regularized {
                     let (rate, c) = wall_rate.map_or((wp, cell_c), |w| (w, 0.0));
-                    let w = crate::regularized::collide(&fq, rho, u, force, rate, c, forced, &mut post);
+                    // The hybrid collision's finite-difference strain rate, from the neighbours'
+                    // velocities of the pass before the collision.
+                    let strain = hybrid.then(|| {
+                        let p = grid.coords(b * block + i);
+                        crate::hrr::strain(u, |axis, up| neighbour(&grid, periodic, fluid, p, axis, up).and_then(|nb| hybrid_u.get(nb).copied()))
+                    });
+                    let w = crate::regularized::rebuild(&fq, rho, u, force, rate, c, forced, strain.as_ref().map(|s| (sigma, s)), &mut post);
                     if smagorinsky > 0.0 {
                         eddy(w);
                     }
@@ -1783,7 +1886,7 @@ impl Flow {
     /// one thread, which capped the speed-up of many (#643).
     fn open_boundaries(&mut self) {
         let s = self.stride;
-        let regularized = self.collision == Collision::Regularized;
+        let regularized = self.collision.is_regularized();
         let mut outlets = std::mem::take(&mut self.outlets);
         let [nx, ny, _] = self.grid.cells;
         outlets.convect(&self.open, &View { flow: self, f: &self.g }, [1, nx, nx * ny]);

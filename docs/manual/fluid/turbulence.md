@@ -37,7 +37,7 @@ wall cells can be rebuilt from a law of the wall for grids that do not resolve t
 | `turbulence.prandtl` | 0.1 to 10 | 0.9 | Turbulent Prandtl number Pr_t of the turbulent heat diffusivity ν_t / Pr_t (with heat only). 0.85 to 0.9 is usual for air and water. |
 | `turbulence.van_driest` | 1 to 100 | none | Van Driest's A⁺: damps the length scale near no-slip walls. 26 is Van Driest's value. |
 | `turbulence.wall_model` | `"musker"`, `"spalding_bounce"` | none | `"musker"` rebuilds each fluid cell next to a no-slip wall from Musker's profile, for a first cell above the viscous sublayer (y⁺ 30 to 100). `"spalding_bounce"` reflects the populations at plane no-slip box faces at rest and gives each wall the stress of Spalding's law at its wall cells' own velocity, exactly (Han, Ooka and Kikumoto 2021); a moving wall is refused. |
-| `collision` | `"trt"`, `"regularized"`, `"mrt"` | `"trt"` | The model runs with every collision ([Collision operators](collision.md)). |
+| `collision` | `"trt"`, `"regularized"`, `"mrt"`, `"hrr"` | `"trt"` | The model runs with every collision ([Collision operators](collision.md)); with `hrr` the finite-difference stress uses the cell's τ̄ with its eddy viscosity (CPU only). |
 
 A value outside its range is refused when the step is set up, naming the range. With a
 turbulence model the fluid's own symmetric relaxation time τ⁺ may go down to 0.5001

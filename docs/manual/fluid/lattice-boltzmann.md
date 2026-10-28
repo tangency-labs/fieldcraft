@@ -13,7 +13,7 @@ collision, Guo forcing, halfway bounce-back walls and Zou–He open boundaries.
 | **Step procedure** | `"fluid"` |
 | **Solver** | `crates/lbm` (CPU, f64, the reference); `crates/lbm-gpu` (wgpu, f32) |
 | **Method** | D3Q19 lattice Boltzmann (Qian, d'Humières & Lallemand 1992; Krüger et al. 2017) |
-| **Verified by** | `crates/lbm/tests/verification.rs`, `mrt.rs`, `regularized.rs`, `outlets.rs`, `steady.rs`, `thermal.rs`; `crates/lbm-gpu/tests/verification.rs`; oracle cases `de-vahl-davis-ra1e3` … `ra1e6`, `conjugate-cavity-centred-body` |
+| **Verified by** | `crates/lbm/tests/verification.rs`, `mrt.rs`, `regularized.rs`, `hrr.rs`, `outlets.rs`, `steady.rs`, `thermal.rs`; `crates/lbm-gpu/tests/verification.rs`; oracle cases `de-vahl-davis-ra1e3` … `ra1e6`, `conjugate-cavity-centred-body` |
 
 ## Synopsis
 
@@ -63,7 +63,8 @@ Numbers are in the model's display units, here SI (set by `model.units`), or car
 | `steps` | 1 to 10⁹ | — | The number of time steps. |
 | `time_step` | time | automatic | Δt. Left out, the solver chooses it (Theory, below). |
 | `frames` | 1 to 1000 | 10 | Output frames after the initial one, evenly spaced to the end. |
-| `collision` | `"trt"`, `"regularized"`, `"mrt"` | `"trt"` | The collision operator ([Collision operators](collision.md)). |
+| `collision` | `"trt"`, `"regularized"`, `"mrt"`, `"hrr"` | `"trt"` | The collision operator ([Collision operators](collision.md)). |
+| `sigma` | above 0, at most 1 | 0.99 | The hybrid collision's σ (`hrr` only; [Collision operators](collision.md)). |
 | `magic` | above 0, at most 1 | 3/16 | The two-relaxation-time parameter Λ. Warned about with any other collision. |
 | `turbulence` | `{"type": "smagorinsky", …}` | none | Smagorinsky's subgrid eddy viscosity, Van Driest damping and the wall model ([Turbulence](turbulence.md), [Wall-modelled LES](../../lbm-wall-model.md)). |
 | `steady` | `{…}` | none | Stop once the flow stops changing ([Steady state and averaging](steady-state-and-averaging.md)). |

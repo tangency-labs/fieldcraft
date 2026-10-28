@@ -1831,6 +1831,27 @@ pub(crate) mod tests {
             )
             .is_err()
         );
+        // So does the hybrid collision; σ out of (0, 1] is refused, "dynamic" is not supported yet.
+        let edit = |s: &mut Session, sigma: Value| {
+            s.execute(
+                "model.step.edit",
+                &json!({"name": "Shear", "procedure": {"type": "fluid", "domain": "Gap", "end_time": 50, "frames": 4, "collision": "hrr", "sigma": sigma}}),
+            )
+        };
+        edit(&mut s, json!(0.9)).unwrap();
+        let hrr = s.execute("solve.fluid", &json!({})).unwrap();
+        assert_eq!(hrr["collision"], "hrr", "{hrr}");
+        let bottom = hrr["forces"].as_array().unwrap().iter().find(|f| f["name"] == "y_min").unwrap();
+        assert!((bottom["mean"][0].as_f64().unwrap() / expected - 1.0).abs() < 1e-3, "{bottom}");
+        for bad in [json!(0), json!(1.5), json!(-1), json!("static"), json!([1])] {
+            let e = edit(&mut s, bad.clone()).unwrap_err().to_string();
+            assert!(e.contains("sigma") || e.contains("σ"), "{bad}: {e}");
+        }
+        edit(&mut s, json!("dynamic")).unwrap();
+        let e = s.execute("solve.fluid", &json!({})).unwrap_err().to_string();
+        assert!(e.contains("not supported yet") && e.contains("dynamic"), "{e}");
+        edit(&mut s, json!(0.9)).unwrap();
+        s.execute("solve.fluid", &json!({})).unwrap();
 
         let probe = s.execute("solve.probe", &json!({"step": "Shear", "points": [[0.06, 0.5625, 0.06], [5, 5, 5]]})).unwrap();
         let u = probe["points"][0]["velocity"][0].as_f64().unwrap();

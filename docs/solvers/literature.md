@@ -554,6 +554,26 @@ shock capturing belongs to Eulerian finite volume (E1); not needed for the Lagra
 - **Limits.** Regularised adds numerical dissipation; RR is near-cumulant in stability on D3Q19/27.
 - **Code.** STLBM (MIT) has BGK/TRT/regularised kernels: READ OK.
 
+**C2.4a Hybrid recursive regularised collision (HRR).** **Verdict: built on the CPU (`collision: "hrr"`, `sigma`; `crates/lbm/src/hrr.rs`, `docs/manual/fluid/collision.md`); the GPU refuses it for now.**
+- **Citations.**
+  - J. Jacob, O. Malaspinas, P. Sagaut. *A new hybrid recursive regularised Bhatnagar–Gross–Krook collision model for Lattice Boltzmann method-based large eddy simulation.* J. Turbul. 19:1051–1076, 2018. DOI [10.1080/14685248.2018.1540879](https://doi.org/10.1080/14685248.2018.1540879).
+  - Y. Feng, P. Boivin, J. Jacob, P. Sagaut. *Hybrid recursive regularized thermal lattice Boltzmann model for high subsonic compressible flows.* J. Comput. Phys. 394:82–99, 2019. DOI [10.1016/j.jcp.2019.05.031](https://doi.org/10.1016/j.jcp.2019.05.031) (the stencil variant).
+- **Method.** The recursive regularised collision (C2.4, their RR-BGK) with the second-order non-equilibrium flux
+  replaced by `P̃ = σ P + (1 − σ)(−2 ρ c_s² τ S^FD)` (their eq. 31), `S^FD` from second-order centred finite
+  differences of the velocity; the third-order part rebuilt recursively from `P̃`. The finite differences' error is a
+  bi-Laplacian hyperviscosity, to leading order `ν_σ = (1 − σ)/(6σ) Δx² c_s² τ` (eq. 47), which stabilises
+  under-resolved large-eddy simulation; σ may be set per cell from a subgrid model's dissipation (their eqs. 48–51,
+  "dynamic"). Feng et al. 2019 compute the gradients with an isotropic stencil weighted by the lattice weights.
+- **Limits.** Eq. 47 is the continuous model's: the exact linear analysis of the discrete scheme (ours, `tests/hrr.rs`)
+  gives a k⁴ damping that depends on τ̄ (larger than eq. 47's near τ̄ = ½, none at τ̄ = 1, negative above). The paper
+  states no wall treatment of `S^FD`; it uses one-sided first-order differences at grid-refinement interfaces.
+- **As implemented.** D3Q19 on the CPU, from the paper alone (no code read). τ is read as the cell's discrete τ̄ = 1/ω
+  (with Smagorinsky's eddy viscosity or the wall model's rate when they act), which keeps ν exactly as k → 0; the
+  centred stencil of the paper (Feng et al.'s isotropic one not implemented); one-sided first-order differences next
+  to any non-fluid neighbour or non-periodic face, 0 with neither neighbour; σ = 0.99 by default, σ = 1 is
+  `regularized` bit for bit; "dynamic" σ refused (it comes with Vreman's model). Verified against the exact decay of a
+  shear wave (within 1 %, measured within 1e-6) and eq. 47 at k Δx = 2π/64.
+
 **C2.5 Velocity sets.** D3Q19 for laminar and moderate Re (cheapest isotropic-enough set); D3Q27 for cumulant and
 wall-bounded turbulence. Kang & Hassan 2013 show D3Q19 artefacts in wall-bounded turbulence: S. K. Kang, Y. A. Hassan,
 JCP 232(1):100–117, 2013, DOI [10.1016/j.jcp.2012.07.023](https://doi.org/10.1016/j.jcp.2012.07.023). **Verdict: reference.**

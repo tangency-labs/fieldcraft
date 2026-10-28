@@ -592,6 +592,11 @@ impl GpuFlow {
 
     /// [`GpuFlow::new`] with `options`.
     pub fn with_options(flow: &Flow, policy: Policy, options: Options) -> Result<GpuFlow> {
+        if flow.collision() == fieldcraft_model::Collision::Hrr {
+            return Err(Error::Invalid(
+                "not supported yet: the hybrid recursive regularised collision (`hrr`) on the GPU; solve on the CPU (`backend: \"cpu\"`)".into(),
+            ));
+        }
         if let Some(zone) = flow.zones().first() {
             return Err(Error::Invalid(format!(
                 "the GPU backend does not step fans or porous zones yet (`{}`): solve on the CPU (`backend: \"cpu\"`)",
@@ -781,7 +786,7 @@ impl GpuFlow {
         }
 
         let (omega_plus, omega_minus) = flow.omegas();
-        let regularized = flow.collision() == fieldcraft_model::Collision::Regularized;
+        let regularized = flow.collision().is_regularized();
         let acc = flow.acceleration();
         let forced = acc != [0.0; 3];
         let cells = groups(n)?;

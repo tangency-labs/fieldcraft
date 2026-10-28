@@ -97,6 +97,27 @@ const NORM3: [f64; 2] = [13.5, 4.5];
 /// [`crate::turbulence::omega`] of its own flux instead. Returns the rate it relaxed with.
 #[inline(always)]
 pub fn collide(fq: &[f64; Q], rho: f64, u: [f64; 3], force: [f64; 3], omega: f64, smagorinsky: f64, forced: bool, out: &mut [f64; Q]) -> f64 {
+    rebuild(fq, rho, u, force, omega, smagorinsky, forced, None, out)
+}
+
+/// [`collide`], with the non-equilibrium flux the populations are rebuilt from optionally
+/// replaced: `hybrid` is `(σ, S)` of the hybrid collision ([`crate::hrr`]), which rebuilds from
+/// `σ P + (1 − σ)(−2 ρ c_s² S / ω)` with `S` the cell's finite-difference strain rate (xx, yy,
+/// zz, xy, xz, yz) and ω the rate the cell relaxes with. With σ = 1 the flux is `P` untouched,
+/// so the result is [`collide`]'s bit for bit.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn rebuild(
+    fq: &[f64; Q],
+    rho: f64,
+    u: [f64; 3],
+    force: [f64; 3],
+    omega: f64,
+    smagorinsky: f64,
+    forced: bool,
+    hybrid: Option<(f64, &[f64; 6])>,
+    out: &mut [f64; Q],
+) -> f64 {
     // The momentum flux Σ c c f: xx, yy, zz, xy, xz, yz (opposite directions share c c, so by
     // pairs).
     let mut pi = [0.0f64; 6];
@@ -120,6 +141,15 @@ pub fn collide(fq: &[f64; Q], rho: f64, u: [f64; 3], force: [f64; 3], omega: f64
         p[k] = pi[k] - rho * (iso + u[a] * u[b]) + if forced { 0.5 * (u[a] * force[b] + force[a] * u[b]) } else { 0.0 };
     }
     let omega = if smagorinsky > 0.0 { crate::turbulence::omega(&p, rho, omega, smagorinsky) } else { omega };
+    // The hybrid collision's blend, with τ̄ = 1/ω the cell's own relaxation time.
+    if let Some((sigma, strain)) = hybrid
+        && sigma != 1.0
+    {
+        let fd = -2.0 * cs2 * rho / omega;
+        for (pk, sk) in p.iter_mut().zip(strain) {
+            *pk = sigma * *pk + (1.0 - sigma) * fd * sk;
+        }
+    }
     let [pxx, pyy, pzz, pxy, pxz, pyz] = p;
     let trace = pxx + pyy + pzz;
     let relax = 1.0 - omega;

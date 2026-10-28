@@ -50,6 +50,36 @@ pub fn collide(end_time: f64, time_step: f64, magic: Option<f64>, collision: Col
     }
 }
 
+/// A channel 2 × 1 × 1 at spacing 0.05 with a parabolic inlet, a pressure outlet, a slip face, a
+/// ball (obstacle `Ball`, face `skin`) and a body force, run 0.5 s: every kind of neighbour a
+/// cell can have. `sigma` and `turbulence` as the fluid step takes them.
+pub fn ball_channel(
+    collision: Collision,
+    sigma: Option<fieldcraft_model::HrrSigma>,
+    turbulence: Option<fieldcraft_model::Turbulence>,
+) -> (Model, Obstacle) {
+    let mut d = domain([0.0; 3], [2.0, 1.0, 1.0], 0.05);
+    d.faces.x_min = fieldcraft_model::FaceCondition::Velocity { velocity: [0.1, 0.02, 0.0], profile: fieldcraft_model::Profile::Parabolic };
+    d.faces.x_max = fieldcraft_model::FaceCondition::Pressure { pressure: 0.0, outflow: fieldcraft_model::Outflow::Uniform };
+    d.faces.z_max = fieldcraft_model::FaceCondition::Slip {};
+    d.obstacles = vec!["Ball".into()];
+    d.acceleration = [0.0, 0.0, -0.01];
+    let ball = obstacle("Ball", sphere([0.7, 0.5, 0.45], 0.2, 3), &["skin"]);
+    let p = Procedure::Fluid {
+        domain: "Flow".into(),
+        end_time: Some(0.5),
+        steps: None,
+        time_step: None,
+        frames: 2,
+        magic: None,
+        sigma,
+        collision: Some(collision),
+        turbulence,
+        steady: None,
+    };
+    (model(1.0, 0.01, d, p), ball)
+}
+
 /// Both collision operators.
 pub const COLLISIONS: [Collision; 2] = [Collision::Trt, Collision::Regularized];
 

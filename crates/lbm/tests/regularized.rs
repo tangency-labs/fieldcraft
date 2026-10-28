@@ -184,34 +184,9 @@ fn bounce_back_walls_conserve_mass_and_balance_the_driving_force() {
     assert!((force - drive).abs() < 1e-3 * drive, "{force} vs {drive}");
 }
 
-/// A channel with a sphere, a parabolic inlet, a pressure outlet and a slip face, large enough
-/// for several parallel blocks.
-fn ball_channel(collision: Collision) -> (fieldcraft_model::Model, fieldcraft_lbm::Obstacle) {
-    let mut d = domain([0.0; 3], [2.0, 1.0, 1.0], 0.05);
-    d.faces.x_min = FaceCondition::Velocity { velocity: [0.1, 0.02, 0.0], profile: Profile::Parabolic };
-    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
-    d.faces.z_max = FaceCondition::Slip {};
-    d.obstacles = vec!["Ball".into()];
-    d.acceleration = [0.0, 0.0, -0.01];
-    let ball = obstacle("Ball", sphere([0.7, 0.5, 0.45], 0.2, 3), &["skin"]);
-    let p = Procedure::Fluid {
-        domain: "Flow".into(),
-        end_time: Some(0.5),
-        steps: None,
-        time_step: None,
-        frames: 2,
-        magic: None,
-        sigma: None,
-        collision: Some(collision),
-        turbulence: None,
-        steady: None,
-    };
-    (model(1.0, 0.01, d, p), ball)
-}
-
 #[test]
 fn results_are_bit_for_bit_the_same_on_one_and_many_threads() {
-    let (m, ball) = ball_channel(REGULARIZED);
+    let (m, ball) = ball_channel(REGULARIZED, None, None);
     let solve = |threads: usize| {
         fieldcraft_parallel::with_threads(threads, || solve_fluid(&m, None, std::slice::from_ref(&ball), &Limits::default()).unwrap())
     };
@@ -222,7 +197,7 @@ fn results_are_bit_for_bit_the_same_on_one_and_many_threads() {
     let skin = one.forces.iter().find(|f| f.name == "skin").unwrap();
     assert!(skin.force.last().unwrap()[0] > 0.0, "the flow drags the ball downstream");
     // The two collisions differ (the step really uses the one it names).
-    let (trt, _) = ball_channel(Collision::Trt);
+    let (trt, _) = ball_channel(Collision::Trt, None, None);
     assert_ne!(one.frames, solve_fluid(&trt, None, std::slice::from_ref(&ball), &Limits::default()).unwrap().frames);
 }
 
