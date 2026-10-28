@@ -323,7 +323,11 @@ the run above):
 | `hrr-dynamic` | hrr, dynamic σ | Vreman C_s 0.18, which only sets σ (their case 4) |
 | `hrr-smagorinsky` | hrr, σ 0.99 | Smagorinsky C_s 0.1, Van Driest A⁺ 26 (Han's model on the hybrid collision, an extra row) |
 
-WFB is the model's `wall_model: spalding_bounce_halfway`, BB no wall model. Gate (fixed in review):
+WFB is Han et al.'s on-node eq. 14 (`wall_model: spalding_bounce`, on the GPU as on the CPU; the
+box 2δ + Δx high, 2N + 1 cells, so the walls through the outermost cells' centres stay 2δ apart),
+BB no wall model. `FIELDCRAFT_HAN_WALL=halfway` runs the WFB cases with our halfway variant
+(`spalding_bounce_halfway`, the box 2δ high) instead, as the runs recorded above did; each record
+names its `wall_form`. Gate (fixed in review):
 ε_u⁺ over the whole channel and b within 15 % of Han et al.'s Tables 2 and 3, on the WFB runs;
 the BB runs are reported (`paper` keeps its gate on both walls).
 
@@ -356,7 +360,8 @@ window:
   pass is not credited to the subgrid model when the collision's filter did the work.
 
 `FIELDCRAFT_HAN_START` and `FIELDCRAFT_HAN_END` (δ/u_τ, default 20 and 150) shorten the discarded
-start and the run for a smoke test; a shortened run is not a result. Results: to be recorded here.
+start and the run for a smoke test; a shortened run is not a result. `FIELDCRAFT_HAN_CPU=1` runs on
+the CPU in double precision. Results: to be recorded here.
 
 ### Wall-modelled channel against Lee & Moser and Dean (#664, #749)
 
