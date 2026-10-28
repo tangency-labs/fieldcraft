@@ -267,3 +267,73 @@ fn smagorinsky_cost() {
         }
     }
 }
+
+/// What the hybrid collision, Vreman's model and dynamic σ cost on the GPU: the recursive
+/// regularised collision (`rr`), the hybrid one at σ 0.99 (`hrr`), with Vreman's model
+/// (`hrr+vreman`, C_s 0.18) and with dynamic σ from it (`hrr+dynamic`), on a periodic 128³ box
+/// and the box with a sphere of radius 32, in place and with two buffers. Each starts from a
+/// three-dimensional field of lattice speed 0.05 (so the gradient, the eddy viscosity and σ are
+/// not zero), warms up one step and times 500. `FIELDCRAFT_LES_VARIANT` runs one variant only,
+/// so the variants can be run alternately as separate processes (median of several).
+#[test]
+#[ignore]
+fn les_cost() {
+    use fieldcraft_model::{Collision, HrrSigma, Turbulence};
+    let vreman = Some(Turbulence::Vreman { constant: 0.18, prandtl: 0.9, wall_model: None });
+    let variants: [(&str, Collision, Option<HrrSigma>, Option<Turbulence>); 4] = [
+        ("rr", Collision::Regularized, None, None),
+        ("hrr", Collision::Hrr, Some(HrrSigma::Value(0.99)), None),
+        ("hrr+vreman", Collision::Hrr, Some(HrrSigma::Value(0.99)), vreman),
+        ("hrr+dynamic", Collision::Hrr, Some(HrrSigma::Dynamic), vreman),
+    ];
+    let only = std::env::var("FIELDCRAFT_LES_VARIANT").ok();
+    let l = 128usize;
+    for (case, radius) in [("periodic", 0.0), ("sphere", 32.0)] {
+        for &(name, collision, sigma, turbulence) in variants.iter().filter(|v| only.as_deref().is_none_or(|o| o == v.0)) {
+            let side = l as f64;
+            let mut d = domain([0.0; 3], [side; 3], 1.0);
+            for f in BoxFace::ALL {
+                *d.faces.get_mut(f) = FaceCondition::Periodic {};
+            }
+            d.acceleration = [1e-6, 0.0, 0.0];
+            let mut obstacles = Vec::new();
+            if radius > 0.0 {
+                d.obstacles = vec!["Ball".into()];
+                obstacles.push(obstacle("Ball", sphere([side / 2.0; 3], radius, 4), &["skin"]));
+            }
+            let steps = 500;
+            let p = fieldcraft_model::Procedure::Fluid {
+                domain: "Flow".into(),
+                end_time: None,
+                steps: Some(steps),
+                time_step: Some(1.0),
+                frames: 1,
+                magic: None,
+                sigma,
+                collision: Some(collision),
+                turbulence,
+                steady: None,
+            };
+            let (_, mut flow) = prepare(&model(1.0, 0.002, d, p), &obstacles);
+            let grid = *flow.grid();
+            let k = 2.0 * std::f64::consts::PI / side;
+            flow.set_equilibrium(|cell| {
+                let [x, y, z] = grid.centre(cell);
+                (1.0, [0.05 * (k * y).sin() * (k * z).cos(), 0.05 * (k * z).sin() * (k * x).cos(), 0.05 * (k * x).sin() * (k * y).cos()])
+            });
+            let policy = Policy::from_env().expect("FIELDCRAFT_GPU names a policy");
+            for (streaming, label) in [(Streaming::InPlace, "in place"), (Streaming::TwoBuffers, "two buffers")] {
+                let Ok(mut gpu) = GpuFlow::with_options(&flow, policy, Options { streaming, profile: false }) else {
+                    println!("skipping: no GPU");
+                    return;
+                };
+                gpu.advance(1).unwrap();
+                let start = std::time::Instant::now();
+                gpu.advance(steps).unwrap();
+                let _ = gpu.mass().unwrap();
+                let rate = (gpu.fluid_cells() as f64 * steps as f64) / start.elapsed().as_secs_f64() / 1e6;
+                println!("LES {case} {l}³ {name} {label}: {rate:.1} M cell updates/s on {}", gpu.adapter_name());
+            }
+        }
+    }
+}

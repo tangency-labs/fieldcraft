@@ -346,6 +346,21 @@ With the regularised collision, in place on the M4 Max: periodic 128³ 920–103
 for two relaxation times (−20 %), sphere 128³ 810–820 against 945–955 (−14 %) ([Collision
 operators](collision.md)).
 
+The hybrid collision and the subgrid models (`les_cost`: from a field of lattice speed 0.05, ν
+0.002, 500 steps; median of three runs, the variants run alternately as separate processes with
+`FIELDCRAFT_LES_VARIANT`), NVIDIA GB10, Vulkan, million cell updates per second:
+
+| case | layout | `regularized` | `hrr` σ 0.99 | `hrr` + Vreman | `hrr` dynamic σ (Vreman) |
+|---|---|---|---|---|---|
+| periodic 128³ | in place | 1207 | 777 (−36 %) | 773 | 772 |
+| periodic 128³ | two buffers | 636 | 490 (−23 %) | 492 | 493 |
+| sphere 128³ | in place | 1103 | 723 (−34 %) | 724 | 720 |
+| sphere 128³ | two buffers | 606 | 466 (−23 %) | 463 | 463 |
+
+The cost is the velocity pass's traffic: it reads every population once more (76 bytes per cell)
+and writes the velocity (12), against 152 bytes per in-place update, and the collision reads its
+neighbours' velocities; Vreman's model and dynamic σ add arithmetic only.
+
 ![Throughput of the two streaming layouts](../../media/manual/gpu-2.svg)
 
 ## Limitations
