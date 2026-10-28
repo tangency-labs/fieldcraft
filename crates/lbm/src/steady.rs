@@ -538,6 +538,7 @@ mod tests {
             time_step: Some(1.0),
             frames: 1,
             magic: None,
+            sigma: None,
             collision: None,
             turbulence: None,
             steady: Some(rule),

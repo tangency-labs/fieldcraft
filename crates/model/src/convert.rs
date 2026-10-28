@@ -356,7 +356,7 @@ impl Quantities for Step {
                     f(Q::Time, target_increment);
                 }
             }
-            Procedure::Fluid { domain: _, end_time, steps: _, time_step, frames: _, magic: _, collision: _, turbulence: _, steady } => {
+            Procedure::Fluid { domain: _, end_time, steps: _, time_step, frames: _, magic: _, sigma: _, collision: _, turbulence: _, steady } => {
                 for v in [end_time, time_step].into_iter().flatten() {
                     f(Q::Time, v);
                 }

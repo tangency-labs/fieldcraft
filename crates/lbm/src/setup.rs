@@ -702,6 +702,9 @@ impl Setup {
             ));
         }
         let collision = collision.unwrap_or_default();
+        if collision == Collision::Hrr {
+            return Err(Error::Invalid("not supported yet: the hybrid recursive regularised collision (`hrr`)".into()));
+        }
         if tau_plus < 0.51 && collision == Collision::Trt {
             warnings.push(format!(
                 "τ = {tau_plus:.4} is close to ½: under-resolved flows may go unstable; a finer spacing or the regularized collision (`collision: \"regularized\"`) is safer"

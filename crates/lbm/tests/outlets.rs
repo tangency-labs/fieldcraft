@@ -28,6 +28,7 @@ fn fluid_with(end_time: f64, time_step: f64, frames: u32, collision: Option<Coll
         time_step: Some(time_step),
         frames,
         magic: None,
+        sigma: None,
         steady: None,
         collision,
         turbulence: None,

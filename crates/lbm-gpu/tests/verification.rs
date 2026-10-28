@@ -134,6 +134,8 @@ fn plane_poiseuille_matches_the_analytic_profile_and_the_cpu() {
             Collision::Trt => 2e-5,
             Collision::Regularized => 2e-3,
             Collision::Mrt => 4e-3,
+            // Not among `cases()`: the GPU refuses the hybrid collision.
+            Collision::Hrr => continue,
         };
         assert!(err < bound, "{err}");
         assert!(du < 2e-5 && drho < 1e-6, "{du} {drho}");
@@ -253,6 +255,7 @@ fn flow_past_a_sphere_matches_the_cpu_fields_and_forces() {
                 time_step: Some(1.0),
                 frames: 1,
                 magic: None,
+                sigma: None,
                 collision: Some(collision),
                 turbulence: None,
                 steady: None,
@@ -576,6 +579,7 @@ fn runs_to_steady_state_stop_where_the_cpu_does() {
         time_step: Some(dt),
         frames: 2,
         magic: None,
+        sigma: None,
         collision: None,
         turbulence: None,
         steady,
@@ -683,6 +687,7 @@ fn odd_even_and_chunk_readbacks_match_the_cpu_with_heat_open_and_slip_faces() {
                 time_step: Some(1.0),
                 frames: 1,
                 magic: None,
+                sigma: None,
                 collision: Some(collision),
                 turbulence: None,
                 steady: None,
@@ -715,6 +720,7 @@ fn odd_even_and_chunk_readbacks_match_the_cpu_around_an_obstacle() {
                 time_step: Some(1.0),
                 frames: 1,
                 magic: None,
+                sigma: None,
                 collision: Some(collision),
                 turbulence: None,
                 steady: None,

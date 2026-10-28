@@ -1184,6 +1184,7 @@ mod tests {
             time_step: None,
             frames: 4,
             magic: None,
+            sigma: None,
             collision: None,
             turbulence: None,
             steady: None,
@@ -1200,6 +1201,50 @@ mod tests {
                 .is_err()
         );
         assert_eq!(serde_json::from_str::<Procedure>(&serde_json::to_string(&regularized).unwrap()).unwrap(), regularized);
+        // The hybrid collision and its σ: a number or "dynamic", written back the same way, and
+        // left out when not given.
+        let hrr = |sigma: serde_json::Value| {
+            serde_json::from_value::<Procedure>(
+                serde_json::json!({"type": "fluid", "domain": "Flow", "end_time": 1.0, "collision": "hrr", "sigma": sigma}),
+            )
+        };
+        let fixed = hrr(serde_json::json!(0.97)).unwrap();
+        assert!(matches!(fixed, Procedure::Fluid { collision: Some(crate::Collision::Hrr), sigma: Some(crate::HrrSigma::Value(0.97)), .. }));
+        assert!(serde_json::to_string(&fixed).unwrap().contains("\"sigma\":0.97"));
+        assert_eq!(serde_json::from_str::<Procedure>(&serde_json::to_string(&fixed).unwrap()).unwrap(), fixed);
+        let dynamic = hrr(serde_json::json!("dynamic")).unwrap();
+        assert!(matches!(dynamic, Procedure::Fluid { sigma: Some(crate::HrrSigma::Dynamic), .. }));
+        assert!(serde_json::to_string(&dynamic).unwrap().contains("\"sigma\":\"dynamic\""));
+        assert_eq!(serde_json::from_str::<Procedure>(&serde_json::to_string(&dynamic).unwrap()).unwrap(), dynamic);
+        assert!(dynamic.validate().is_ok(), "the model holds it; the solver says it is not supported yet");
+        assert!(hrr(serde_json::json!("static")).is_err());
+        assert!(hrr(serde_json::json!(true)).is_err());
+        assert!(!serde_json::to_string(&fluid).unwrap().contains("sigma"));
+        assert!(hrr(serde_json::json!(1.0)).unwrap().validate().is_ok());
+        for bad in [0.0, -0.1, 1.5, f64::INFINITY] {
+            let p = match fixed.clone() {
+                Procedure::Fluid { domain, end_time, steps, time_step, frames, magic, collision, turbulence, steady, .. } => Procedure::Fluid {
+                    domain,
+                    end_time,
+                    steps,
+                    time_step,
+                    frames,
+                    magic,
+                    sigma: Some(crate::HrrSigma::Value(bad)),
+                    collision,
+                    turbulence,
+                    steady,
+                },
+                other => other,
+            };
+            let e = p.validate().unwrap_err().to_string();
+            assert!(e.contains("σ"), "{bad}: {e}");
+            if bad == 0.0 {
+                assert!(e.contains("cannot be 0") && e.contains("diverges"), "{e}");
+            }
+        }
+        let nan = crate::HrrSigma::Value(f64::NAN).validate().unwrap_err().to_string();
+        assert!(nan.contains("above 0 and at most 1"), "{nan}");
         // The JSON form reads back to the same model, through the same checks.
         let text = serde_json::to_string(&m).unwrap();
         assert_eq!(serde_json::from_str::<Model>(&text).unwrap(), m);
@@ -1216,6 +1261,7 @@ mod tests {
                 time_step: None,
                 frames: 4,
                 magic: None,
+                sigma: None,
                 collision: None,
                 turbulence: None,
                 steady: None,
@@ -1227,6 +1273,7 @@ mod tests {
                 time_step: None,
                 frames: 4,
                 magic: None,
+                sigma: None,
                 collision: None,
                 turbulence: None,
                 steady: None,
@@ -1238,6 +1285,7 @@ mod tests {
                 time_step: None,
                 frames: 4,
                 magic: None,
+                sigma: None,
                 collision: None,
                 turbulence: None,
                 steady: None,
@@ -1249,6 +1297,7 @@ mod tests {
                 time_step: None,
                 frames: 4,
                 magic: None,
+                sigma: None,
                 collision: None,
                 turbulence: None,
                 steady: None,
@@ -1260,6 +1309,7 @@ mod tests {
                 time_step: None,
                 frames: 4,
                 magic: None,
+                sigma: None,
                 collision: None,
                 turbulence: None,
                 steady: None,
@@ -1271,6 +1321,7 @@ mod tests {
                 time_step: Some(0.0),
                 frames: 4,
                 magic: None,
+                sigma: None,
                 collision: None,
                 turbulence: None,
                 steady: None,
@@ -1282,6 +1333,7 @@ mod tests {
                 time_step: None,
                 frames: 0,
                 magic: None,
+                sigma: None,
                 collision: None,
                 turbulence: None,
                 steady: None,
@@ -1293,6 +1345,7 @@ mod tests {
                 time_step: None,
                 frames: 4,
                 magic: Some(0.0),
+                sigma: None,
                 collision: None,
                 turbulence: None,
                 steady: None,
@@ -1304,6 +1357,7 @@ mod tests {
                 time_step: None,
                 frames: 4,
                 magic: Some(f64::NAN),
+                sigma: None,
                 collision: None,
                 turbulence: None,
                 steady: None,
@@ -1319,6 +1373,7 @@ mod tests {
             time_step: None,
             frames: 4,
             magic: None,
+            sigma: None,
             collision: None,
             turbulence: None,
             steady: Some(st),

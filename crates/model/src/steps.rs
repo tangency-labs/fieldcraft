@@ -71,8 +71,9 @@ pub enum Procedure {
     /// and pressure fields are written, evenly spaced, after the initial one; forces on every
     /// wall are recorded throughout. `collision` picks the lattice Boltzmann collision operator
     /// ([`Collision`], two relaxation times by default); `magic` is the two-relaxation-time
-    /// parameter Λ (default 3/16, which puts bounce-back walls exactly halfway between cells).
-    /// With `steady`, the run stops on its own once the flow stops changing ([`Steady`]); its
+    /// parameter Λ (default 3/16, which puts bounce-back walls exactly halfway between cells);
+    /// `sigma` is the hybrid recursive regularised collision's σ ([`HrrSigma`], 0.99 by default,
+    /// used only with `collision: "hrr"`). With `steady`, the run stops on its own once the flow stops changing ([`Steady`]); its
     /// length is then the most it may run. `turbulence` adds a subgrid eddy viscosity
     /// ([`Turbulence`]; none by default).
     Fluid {
@@ -87,6 +88,8 @@ pub enum Procedure {
         frames: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         magic: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sigma: Option<HrrSigma>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         collision: Option<Collision>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -127,15 +130,95 @@ pub enum Collision {
     /// rate (d'Humières et al. 2002, with Malaspinas and Sagaut's rates for large-eddy
     /// simulation).
     Mrt,
+    /// Hybrid recursive regularised (Jacob, Malaspinas and Sagaut 2018): the recursive
+    /// regularised collision with its non-equilibrium momentum flux blended, with the weight
+    /// σ ([`HrrSigma`]), with the flux the strain rate of finite differences of the velocity
+    /// gives; 1 − σ adds a small hyperviscosity that damps the shortest waves.
+    Hrr,
 }
 
 impl Collision {
-    /// `trt` or `regularized`, as written in the model.
+    /// `trt`, `regularized`, `mrt` or `hrr`, as written in the model.
     pub fn name(self) -> &'static str {
         match self {
             Collision::Trt => "trt",
             Collision::Regularized => "regularized",
             Collision::Mrt => "mrt",
+            Collision::Hrr => "hrr",
+        }
+    }
+
+    /// Whether the collision rebuilds the populations from their moments (`regularized` and
+    /// `hrr`): open boundaries and stability limits treat the two alike.
+    pub fn is_regularized(self) -> bool {
+        matches!(self, Collision::Regularized | Collision::Hrr)
+    }
+}
+
+/// The hybrid recursive regularised collision's σ when none is given.
+pub const DEFAULT_HRR_SIGMA: f64 = 0.99;
+
+/// The weight σ of the hybrid recursive regularised collision ([`Collision::Hrr`]): the share
+/// of the populations' own non-equilibrium flux in the rebuilt one, the rest coming from the
+/// finite-difference strain rate. Written as a number (above 0, at most 1) or as `"dynamic"`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum HrrSigma {
+    /// A fixed σ, above 0 and at most 1 (1 is the recursive regularised collision).
+    Value(f64),
+    /// σ from the local eddy viscosity of a subgrid model (not supported yet).
+    Dynamic,
+}
+
+impl HrrSigma {
+    /// The word written for [`HrrSigma::Dynamic`].
+    pub const DYNAMIC: &'static str = "dynamic";
+
+    /// The fixed σ of `sigma`: its value, or [`DEFAULT_HRR_SIGMA`] when it is not given or
+    /// dynamic.
+    pub fn fixed(sigma: Option<HrrSigma>) -> f64 {
+        match sigma {
+            Some(HrrSigma::Value(v)) => v,
+            _ => DEFAULT_HRR_SIGMA,
+        }
+    }
+
+    /// Checks a fixed σ: finite, above 0, at most 1.
+    pub fn validate(self) -> Result<()> {
+        match self {
+            HrrSigma::Dynamic => Ok(()),
+            HrrSigma::Value(0.0) => Err(Error::Invalid(
+                "the hybrid collision's σ (`sigma`) cannot be 0: σ = 0 would drop the populations' stress entirely, and its hyperviscosity (1 − σ)/σ diverges"
+                    .into(),
+            )),
+            HrrSigma::Value(s) if s.is_finite() && s > 0.0 && s <= 1.0 => Ok(()),
+            HrrSigma::Value(s) => Err(Error::Invalid(format!("the hybrid collision's σ (`sigma`) must be above 0 and at most 1, got {s}"))),
+        }
+    }
+}
+
+impl Serialize for HrrSigma {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        match *self {
+            HrrSigma::Value(v) => s.serialize_f64(v),
+            HrrSigma::Dynamic => s.serialize_str(Self::DYNAMIC),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for HrrSigma {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Repr {
+            Value(f64),
+            Word(String),
+        }
+        match Repr::deserialize(d)? {
+            Repr::Value(v) => Ok(HrrSigma::Value(v)),
+            Repr::Word(w) if w == Self::DYNAMIC => Ok(HrrSigma::Dynamic),
+            Repr::Word(w) => {
+                Err(serde::de::Error::custom(format!("`sigma` is a number or \"dynamic\", got \"{}\"", w.chars().take(32).collect::<String>())))
+            }
         }
     }
 }
@@ -940,7 +1023,7 @@ impl Procedure {
         if let Procedure::NonlinearStatic(n) = self {
             return n.validate();
         }
-        if let Procedure::Fluid { end_time, steps, time_step, frames, magic, ref steady, .. } = *self {
+        if let Procedure::Fluid { end_time, steps, time_step, frames, magic, sigma, ref steady, .. } = *self {
             if let Some(st) = steady {
                 st.validate()?;
             }
@@ -962,6 +1045,9 @@ impl Procedure {
                 && !(m > 0.0 && m <= 1.0)
             {
                 return Err(Error::Invalid(format!("the two-relaxation-time parameter Λ must be above 0 and at most 1, got {m}")));
+            }
+            if let Some(s) = sigma {
+                s.validate()?;
             }
         }
         if let Procedure::HeatTransfer { transient: Some(t) } = self {
