@@ -1,18 +1,19 @@
 # Turbulence
 
 A fluid step can add a subgrid eddy viscosity to the lattice Boltzmann flow: a large-eddy
-simulation with Smagorinsky's model. The eddy viscosity of each cell follows from its own
-non-equilibrium momentum flux in closed form, with no finite differences, and raises that cell's
-relaxation time. Near no-slip walls the model can be damped with Van Driest's mixing length, or the
+simulation with Smagorinsky's model or Vreman's. Smagorinsky's eddy viscosity of each cell follows
+from its own non-equilibrium momentum flux in closed form, with no finite differences; Vreman's
+from the finite-difference velocity gradient of its neighbours, and it vanishes in laminar shear.
+Either raises that cell's relaxation time. Near no-slip walls the model can be damped with Van Driest's mixing length, or the
 wall cells can be rebuilt from a law of the wall for grids that do not resolve the wall.
 
 | | |
 |---|---|
 | **Commands** | `model.step.create` (`turbulence` of a `fluid` procedure), `solve.fluid` |
-| **Step procedure** | `"fluid"` with `"turbulence": {"type": "smagorinsky", …}` |
-| **Solver** | `crates/lbm` (CPU, f64); `crates/lbm-gpu` (GPU, f32) for the model and the wall model |
-| **Method** | Smagorinsky 1963 with Hou et al.'s local relaxation time (1996); Van Driest damping (1956) with Spalding's law (1961); wall model of Malaspinas & Sagaut (2014) |
-| **Verified by** | `crates/lbm/tests/turbulence.rs`, `crates/lbm/tests/mrt.rs`, `crates/lbm-gpu/tests/verification.rs`; Re_τ 180 channel study (docs/verification.md) |
+| **Step procedure** | `"fluid"` with `"turbulence": {"type": "smagorinsky", …}` or `{"type": "vreman", …}` |
+| **Solver** | `crates/lbm` (CPU, f64); `crates/lbm-gpu` (GPU, f32) for Smagorinsky's model and the wall model (Vreman's model is CPU only for now) |
+| **Method** | Smagorinsky 1963 with Hou et al.'s local relaxation time (1996); Vreman 2004; Van Driest damping (1956) with Spalding's law (1961); wall model of Malaspinas & Sagaut (2014) |
+| **Verified by** | `crates/lbm/tests/turbulence.rs`, `crates/lbm/tests/mrt.rs`, `crates/lbm/tests/vreman.rs`, `crates/lbm-gpu/tests/verification.rs`; Re_τ 180 channel study (docs/verification.md) |
 
 ## Synopsis
 
@@ -24,6 +25,12 @@ wall cells can be rebuilt from a law of the wall for grids that do not resolve t
 }}
 ```
 
+Vreman's model takes the same fields but `van_driest`:
+
+```json
+"turbulence": {"type": "vreman", "constant": 0.18}
+```
+
 `model.step.create` takes these fields; `solve.fluid` runs the step. The wall model replaces
 `van_driest` with `"wall_model": "musker"` and is used with `"collision": "mrt"`
 ([Wall-modelled large-eddy simulation](../../lbm-wall-model.md)).
@@ -32,12 +39,12 @@ wall cells can be rebuilt from a law of the wall for grids that do not resolve t
 
 | Field | Value | Default | Meaning |
 |---|---|---|---|
-| `turbulence.type` | `"smagorinsky"` | required | The only subgrid model. Without `turbulence` the step has no eddy viscosity. |
-| `turbulence.constant` | above 0, at most 0.5 | required | Smagorinsky's constant C. 0.1 to 0.2 is usual; 0.17 is Lilly's value for isotropic turbulence. |
+| `turbulence.type` | `"smagorinsky"`, `"vreman"` | required | The subgrid model. Without `turbulence` the step has no eddy viscosity. |
+| `turbulence.constant` | above 0, at most 0.5 | required | Smagorinsky's constant C. 0.1 to 0.2 is usual; 0.17 is Lilly's value for isotropic turbulence. For `vreman`, the Smagorinsky-equivalent C_s of Vreman's c = 2.5 C_s² (0.17 gives his c = 0.07; Jacob et al. 2018 use 0.18). |
 | `turbulence.prandtl` | 0.1 to 10 | 0.9 | Turbulent Prandtl number Pr_t of the turbulent heat diffusivity ν_t / Pr_t (with heat only). 0.85 to 0.9 is usual for air and water. |
-| `turbulence.van_driest` | 1 to 100 | none | Van Driest's A⁺: damps the length scale near no-slip walls. 26 is Van Driest's value. |
+| `turbulence.van_driest` | 1 to 100 | none | Van Driest's A⁺: damps the length scale near no-slip walls. 26 is Van Driest's value. Smagorinsky's model only: Vreman's needs no damping, and the field is refused with it. |
 | `turbulence.wall_model` | `"musker"`, `"spalding_bounce"` | none | `"musker"` rebuilds each fluid cell next to a no-slip wall from Musker's profile, for a first cell above the viscous sublayer (y⁺ 30 to 100). `"spalding_bounce"` reflects the populations at plane no-slip box faces at rest and gives each wall the stress of Spalding's law at its wall cells' own velocity, exactly (Han, Ooka and Kikumoto 2021); a moving wall is refused. |
-| `collision` | `"trt"`, `"regularized"`, `"mrt"`, `"hrr"` | `"trt"` | The model runs with every collision ([Collision operators](collision.md)); with `hrr` the finite-difference stress uses the cell's τ̄ with its eddy viscosity (CPU only). |
+| `collision` | `"trt"`, `"regularized"`, `"mrt"`, `"hrr"` | `"trt"` | Either model runs with every collision ([Collision operators](collision.md)); with `hrr` the finite-difference stress uses the cell's τ̄ with its eddy viscosity (CPU only). |
 
 A value outside its range is refused when the step is set up, naming the range. With a
 turbulence model the fluid's own symmetric relaxation time τ⁺ may go down to 0.5001
@@ -67,6 +74,27 @@ solves a quadratic (Hou et al. 1996), with |P| = √(P:P):
 
 so τ ≥ τ₀, with τ = τ₀ where the flow does not shear. The model is built on the regularised
 collision's flux (Malaspinas & Sagaut 2012).
+
+**Vreman's model.** A. W. Vreman (2004) builds the eddy viscosity from the velocity gradient
+α_ij = ∂_i u_j so that it vanishes for exactly the locally laminar flows whose theoretical subgrid
+dissipation is zero:
+
+```text
+ν_t = c √(B_β / (α_ij α_ij)),   β_ij = Δx² Σ_m α_mi α_mj,
+B_β = β₁₁β₂₂ − β₁₂² + β₁₁β₃₃ − β₁₃² + β₂₂β₃₃ − β₂₃²,   c = 2.5 C_s²
+```
+
+and ν_t = 0 where α = 0. B_β is the second invariant of the positive semidefinite β, a sum of
+squared 2 × 2 minors of α (computed that way, so never negative): ν_t is zero wherever the gradient
+has rank one, as in plane Couette and Poiseuille flow, any simple shear and at a no-slip wall in
+pure shear, so no wall damping is needed. A rigid rotation, u = Ω (−y, x, 0), is not in that set:
+ν_t = c Δx² |Ω| / √2. α comes from the same differences of the neighbours' velocities as the
+hybrid collision's strain rate (`hrr::gradient`): second-order centred, first-order one-sided next
+to a cell that is not fluid or a face that is not periodic, 0 with neither neighbour. The
+velocities come from a pass over every fluid cell before the collision, so the eddy viscosity is
+explicit (this step's neighbours), where Smagorinsky's is implicit in the cell's own flux. The
+cell relaxes with τ̄ = 3 (ν + ν_t) + ½, per collision as below; a modelled wall cell keeps the wall
+model's rate, and with heat α_t = ν_t / Pr_t as for Smagorinsky's.
 
 **Per collision.** With two relaxation times the symmetric rate takes the cell's τ and the
 antisymmetric one follows, keeping Λ = (τ⁺ − ½)(τ⁻ − ½). The regularised collision relaxes its
@@ -264,6 +292,22 @@ is in [Wall-modelled large-eddy simulation](../../lbm-wall-model.md).
 | Wall-function bounce on a moving wall | refused, naming the face | refused | — | `the_wall_function_bounce_refuses_a_moving_wall` |
 | Damped and wall-modelled cavity, 1, 3 and 7 threads | bit-for-bit equality | equal | exact | `damped_results_are_bit_for_bit_the_same_on_one_and_many_threads`, `wall_modelled_results_are_bit_for_bit_the_same_on_one_and_many_threads` |
 
+**Vreman's model** (`crates/lbm/src/vreman.rs` unit tests, `crates/lbm/tests/vreman.rs`; CPU,
+every run):
+
+| Case | Reference | Result | Tolerance | Test |
+|---|---|---|---|---|
+| Zero gradient; each single component ∂_i u_j; one row (eq. 14) and one column (eq. 15) of α | ν_t = 0 (Vreman §II) | 0 exactly | exact | `zero_and_rank_one_gradients_give_zero_exactly` |
+| General rank-one gradient a bᵀ | ν_t = 0 | below 1e-9 (round-off) | 1e-9 | the same |
+| Rigid rotation u = Ω (−y, x, 0) | ν_t = c Δx² \|Ω\| / √2 | within 1e-15 relative | 1e-15 | `a_rigid_rotation_has_c_omega_over_root_two` |
+| Axisymmetric strain s (x, y, −2z); plane strain s (x, −y, 0) | c √(3/2) \|s\|; c \|s\| / √2 | within 1e-15 relative | 1e-15 | `strains_have_their_closed_forms` |
+| Sum of squared minors against eq. 8, 200 random gradients | eq. 8 | within 1e-14 relative | 1e-14 | `the_minors_are_eq_8` |
+| Plane Couette and Poiseuille, 16 cells, C_s 0.18, `trt`, `regularized`, `mrt`, `hrr` | the run without a model | every density, velocity and wall force equal bit for bit; largest ν_t/ν exactly 0 | exact | `couette_and_poiseuille_flow_are_unchanged_by_the_model_bit_for_bit` |
+| Taylor–Green vortex 16³, Re 50, t 3.1, `trt` and `hrr` | positive ν_t, energy below the run without a model | ν_t/ν up to 0.35; k 0.0671 against 0.0729 (`trt`), 0.0637 against 0.0695 (`hrr`) | — | `the_taylor_green_vortex_takes_a_positive_eddy_viscosity_and_decays_faster` |
+| Ball channel, 1, 3 and 7 threads, `trt` and `hrr` | bit-for-bit equality | equal | exact | `results_are_bit_for_bit_the_same_on_one_and_many_threads` |
+| Every collision, the ball channel, 40 steps; Musker's wall model and the wall-function bounce, coarse channels | runs, the model acts | ν_t/ν about 0.004; finite | — | `every_collision_runs_with_the_model`, `the_wall_models_run_with_the_model` |
+| Constant 0, negative, above 0.5, not finite; Pr_t out of range; `van_driest` given | refused, naming the model | refused | — | `bad_constants_are_refused` |
+
 **GPU against CPU** (`crates/lbm-gpu/tests/verification.rs`, every collision and both streaming
 layouts): Couette with the model on, velocity within 1e-4, wall shear within 2e-4 and ν_t/ν within
 5e-4 of the CPU's (`couette_flow_with_smagorinsky_matches_the_cpu`); forced Poiseuille, velocity
@@ -310,8 +354,8 @@ docs/verification.md and summarised in [Wall-modelled large-eddy simulation](../
 
 ## Limitations
 
-- Smagorinsky's model with a constant C is the only subgrid model; the filter width is the lattice
-  spacing.
+- Smagorinsky's and Vreman's models, each with a constant; the filter width is the lattice
+  spacing. Vreman's model runs on the CPU only (the GPU refuses it), and has no Van Driest damping.
 - The model adds viscosity wherever the flow shears, laminar flow included: a laminar answer is
   reached only as the grid is refined, the eddy viscosity falling like Δx².
 - Damping is meant for a wall resolved to y⁺ ≈ 1–2 at the first cell. Above y⁺ 5 the run warns,
@@ -328,6 +372,8 @@ docs/verification.md and summarised in [Wall-modelled large-eddy simulation](../
 
 - `crates/lbm/src/turbulence.rs`: `flux` (the non-equilibrium flux P), `omega` (the cell's rate
   from Hou et al.'s closed form).
+- `crates/lbm/src/vreman.rs`: `eddy_viscosity` (Vreman's ν_t of a gradient), `model_constant`;
+  `crates/lbm/src/hrr.rs`: `gradient` (the finite differences).
 - `crates/lbm/src/wall.rs`: `Walls` (wall cells, wall distances, `refresh` of u_τ, `factor`,
   `sample` and `reconstruct` for the wall model), `friction_velocity` (Spalding), `musker`,
   `wall_law`, `unresolved_wall`.
@@ -342,6 +388,7 @@ docs/verification.md and summarised in [Wall-modelled large-eddy simulation](../
 
 ## References
 
+- A. W. Vreman. *An eddy-viscosity subgrid-scale model for turbulent shear flow: Algebraic theory and applications.* Phys. Fluids 16(10):3670–3681, 2004. doi:[10.1063/1.1785131](https://doi.org/10.1063/1.1785131)
 - J. Smagorinsky. *General circulation experiments with the primitive equations.* Mon. Weather Rev. 91(3):99–164, 1963. doi:[10.1175/1520-0493(1963)091<0099:GCEWTP>2.3.CO;2](https://doi.org/10.1175/1520-0493(1963)091%3C0099:GCEWTP%3E2.3.CO;2)
 - S. Hou, J. Sterling, S. Chen, G. D. Doolen. *A lattice Boltzmann subgrid model for high Reynolds number flows.* Fields Inst. Commun. 6:151–166, 1996. doi:[10.1090/fic/006/12](https://doi.org/10.1090/fic/006/12)
 - O. Malaspinas, P. Sagaut. *Consistent subgrid scale modelling for lattice Boltzmann methods.* J. Fluid Mech. 700:514–542, 2012. doi:[10.1017/jfm.2012.155](https://doi.org/10.1017/jfm.2012.155)

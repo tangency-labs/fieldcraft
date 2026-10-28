@@ -221,6 +221,9 @@ pub struct Setup {
     /// turbulent Prandtl number Pr_t of its heat diffusivity ν_t / Pr_t.
     pub smagorinsky: f64,
     pub turbulent_prandtl: f64,
+    /// Vreman's model constant c = 2.5 C_s² of its eddy viscosity ([`crate::vreman`]; 0: none).
+    /// At most one of `smagorinsky` and `vreman` is above 0.
+    pub vreman: f64,
     /// Van Driest's damping constant A⁺ of the length scale near walls (none: no damping).
     pub van_driest: Option<f64>,
     /// The wall model of the fluid cells next to no-slip walls (none: the bounce-back alone).
@@ -415,15 +418,23 @@ impl Setup {
         let Procedure::Fluid { end_time, steps, time_step, frames, magic, sigma, collision, turbulence, steady, .. } = &s.procedure else {
             return Err(Error::Invalid(format!("step `{}` is not a fluid step", s.name)));
         };
-        let (smagorinsky, turbulent_prandtl, van_driest, wall_model) = match turbulence {
-            None => (0.0, 0.9, None, None),
-            Some(Turbulence::Smagorinsky { constant, prandtl, van_driest, wall_model }) => {
-                if !(constant.is_finite() && *constant > 0.0 && *constant <= MAX_SMAGORINSKY) {
-                    return Err(Error::Invalid(format!(
-                        "the Smagorinsky constant is {constant}: give one above 0 and at most {MAX_SMAGORINSKY} (0.1 to 0.2 is usual)"
-                    )));
+        let (smagorinsky, vreman, turbulent_prandtl, van_driest, wall_model) = match turbulence {
+            None => (0.0, 0.0, 0.9, None, None),
+            Some(t) => {
+                let (constant, prandtl, van_driest) = (t.constant(), t.prandtl(), t.van_driest());
+                let (smagorinsky, vreman, what, usual) = match t {
+                    Turbulence::Smagorinsky { .. } => (constant, 0.0, "the Smagorinsky constant", "0.1 to 0.2"),
+                    Turbulence::Vreman { .. } => (
+                        0.0,
+                        crate::vreman::model_constant(constant),
+                        "the constant of Vreman's model (the Smagorinsky-equivalent C_s of c = 2.5 C_s²)",
+                        "0.17 to 0.18",
+                    ),
+                };
+                if !(constant.is_finite() && constant > 0.0 && constant <= MAX_SMAGORINSKY) {
+                    return Err(Error::Invalid(format!("{what} is {constant}: give one above 0 and at most {MAX_SMAGORINSKY} ({usual} is usual)")));
                 }
-                if !(prandtl.is_finite() && TURBULENT_PRANDTL.contains(prandtl)) {
+                if !(prandtl.is_finite() && TURBULENT_PRANDTL.contains(&prandtl)) {
                     return Err(Error::Invalid(format!(
                         "the turbulent Prandtl number is {prandtl}: give one from {} to {} (0.85 to 0.9 is usual)",
                         TURBULENT_PRANDTL.start(),
@@ -437,9 +448,8 @@ impl Setup {
                         VAN_DRIEST.end()
                     )));
                 }
-                (*constant, *prandtl, *van_driest, *wall_model)
+                (smagorinsky, vreman, prandtl, van_driest, t.wall_model())
             }
-            Some(Turbulence::Vreman { .. }) => return Err(Error::Invalid("not supported yet: Vreman's subgrid model (`vreman`)".into())),
         };
         let material = model.material(&domain.material);
         let (Some(density), Some(fluid)) = (material.and_then(|m| m.density), material.and_then(|m| m.fluid)) else {
@@ -550,9 +560,9 @@ impl Setup {
                 "the lattice Mach number is {mach:.3} (velocity {u_char} with time step {dt} and spacing {h}), above {MAX_MACH}: lower the time step"
             )));
         }
-        let min_tau = if smagorinsky > 0.0 { MIN_TAU_TURBULENT } else { MIN_TAU };
+        let min_tau = if turbulence.is_some() { MIN_TAU_TURBULENT } else { MIN_TAU };
         if !(tau_plus >= min_tau) {
-            let model = if smagorinsky > 0.0 { "" } else { ", or add a turbulence model (`turbulence`)" };
+            let model = if turbulence.is_some() { "" } else { ", or add a turbulence model (`turbulence`)" };
             return Err(Error::Invalid(format!(
                 "the relaxation time τ = {tau_plus:.5} is below {min_tau}: the grid cannot resolve viscosity {viscosity} at this time step (cell Reynolds number {:.1}); refine the spacing or raise the time step{model}",
                 if nu > 0.0 { lattice_velocity / nu } else { f64::INFINITY }
@@ -708,7 +718,7 @@ impl Setup {
         let collision = collision.unwrap_or_default();
         // The model checked σ's range; the solver cannot take a dynamic one yet.
         if collision == Collision::Hrr && *sigma == Some(HrrSigma::Dynamic) {
-            return Err(Error::Invalid("not supported yet: dynamic σ needs a subgrid model's eddy viscosity (it comes with Vreman's model)".into()));
+            return Err(Error::Invalid("not supported yet: dynamic σ (`sigma: \"dynamic\"`)".into()));
         }
         let hybrid_sigma = HrrSigma::fixed(*sigma);
         if collision != Collision::Hrr && sigma.is_some() {
@@ -742,6 +752,7 @@ impl Setup {
             collision,
             sigma: hybrid_sigma,
             smagorinsky,
+            vreman,
             van_driest,
             wall_model,
             turbulent_prandtl,
@@ -762,6 +773,11 @@ impl Setup {
     /// Model units per lattice unit of volume flow (cell volumes per step).
     pub fn volume_flow_scale(&self) -> f64 {
         self.grid.spacing.powi(3) / self.time_step
+    }
+
+    /// Whether a subgrid model (Smagorinsky's or Vreman's) gives the cells an eddy viscosity.
+    pub fn turbulent(&self) -> bool {
+        self.smagorinsky > 0.0 || self.vreman > 0.0
     }
 
     /// Model units per lattice unit of velocity, pressure and force.

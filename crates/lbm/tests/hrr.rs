@@ -256,7 +256,7 @@ fn bad_sigmas_are_refused_and_dynamic_is_not_supported_yet() {
     m.add_step(Step::new("Run", with(HrrSigma::Dynamic)), None).unwrap();
     let e = Setup::new(&m, None, &[], &Limits::default()).unwrap_err().to_string();
     println!("σ = dynamic: {e}");
-    assert!(e.contains("not supported yet") && e.contains("Vreman"), "{e}");
+    assert!(e.contains("not supported yet") && e.contains("dynamic"), "{e}");
     assert!(fieldcraft_lbm::solve_fluid(&m, None, &[], &Limits::default()).is_err());
     // The edges of the range are taken.
     for good in [1.0, 1e-3, 0.5] {

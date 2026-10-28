@@ -117,8 +117,8 @@ rebuilds the populations from the non-equilibrium flux `P`; the hybrid one rebui
 
 with `S^FD` the strain rate of second-order centred differences of the neighbouring cells'
 velocity (one-sided first-order differences where a neighbour is not a fluid cell, 0 where both
-are missing) and τ̄ = 1/ω the cell's own relaxation time (with Smagorinsky's eddy viscosity, or the
-wall model's rate, when they act). The third-order part is rebuilt recursively from `P̃`. The
+are missing) and τ̄ = 1/ω the cell's own relaxation time (with Smagorinsky's or Vreman's eddy
+viscosity, or the wall model's rate, when they act). The third-order part is rebuilt recursively from `P̃`. The
 centred difference's error adds a hyperviscosity; to leading order in the paper's continuous
 analysis (their eq. 47) `ν_σ = (1 − σ)/(6σ) Δx² c_s² τ`, so a shear wave of wavenumber k decays at
 `ν k² [1 + ((1 − σ)/σ)(1 − sin(kΔx)/(kΔx))]`. The exact linear analysis of the discrete scheme
@@ -224,13 +224,15 @@ Per fluid cell and time step (`Flow::collide`, blocks of cells in parallel):
 4. Track the cell's speed: the largest over the step is checked against the lattice-speed limit
    0.5 after the collision.
 5. Collide:
-   - `regularized`: rebuild and relax (`regularized::rebuild`), with Smagorinsky's rate per cell.
+   - `regularized`: rebuild and relax (`regularized::rebuild`), with Smagorinsky's or Vreman's rate per cell.
    - `hrr`: as `regularized`, the flux blended with the finite-difference strain rate of the
-     neighbours' velocities first (`hrr::strain`, `regularized::rebuild`); those velocities come from a pass over every
-     fluid cell before the collision (`Flow::hybrid_velocities`, steps 1–3 through the same `cell_state`).
-   - `mrt`: the stresses' rate (the wall model's, Smagorinsky's from the cell's flux, or 1/τ⁺);
+     neighbours' velocities first (`hrr::gradient`, `hrr::strain`, `regularized::rebuild`); those velocities come from a pass over every
+     fluid cell before the collision (`Flow::gradient_velocities`, steps 1–3 through the same `cell_state`).
+     The same pass runs with Vreman's model, whatever the collision: its eddy viscosity comes from
+     the same gradient (`vreman::eddy_viscosity`) and sets the cell's rate 1/(1/ω⁺ + 3 ν_t) below.
+   - `mrt`: the stresses' rate (the wall model's, Smagorinsky's from the cell's flux, Vreman's, or 1/τ⁺);
      map, relax with forcing, map back (`mrt::collide`).
-   - `trt`: per cell ω⁺ (Smagorinsky's from the flux when the model is on) and ω⁻ from Λ; the rest
+   - `trt`: per cell ω⁺ (Smagorinsky's from the flux, or Vreman's, when a model is on) and ω⁻ from Λ; the rest
      population, then each opposite pair with its symmetric and antisymmetric forcing.
 6. With heat, keep the cell's velocity for the temperature equilibrium and its eddy viscosity for
    the turbulent diffusivity; then collide the D3Q7 lattice with τ_T and τ_T⁺.

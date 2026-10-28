@@ -597,6 +597,11 @@ impl GpuFlow {
                 "not supported yet: the hybrid recursive regularised collision (`hrr`) on the GPU; solve on the CPU (`backend: \"cpu\"`)".into(),
             ));
         }
+        if flow.vreman() > 0.0 {
+            return Err(Error::Invalid(
+                "not supported yet: Vreman's subgrid model (`vreman`) on the GPU; solve on the CPU (`backend: \"cpu\"`)".into(),
+            ));
+        }
         if let Some(zone) = flow.zones().first() {
             return Err(Error::Invalid(format!(
                 "the GPU backend does not step fans or porous zones yet (`{}`): solve on the CPU (`backend: \"cpu\"`)",

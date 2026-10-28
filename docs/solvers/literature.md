@@ -653,6 +653,23 @@ JCP 232(1):100–117, 2013, DOI [10.1016/j.jcp.2012.07.023](https://doi.org/10.1
   RTX 4070 Laptop GPU, 128³: within ±2.3 % of the model-off throughput with or without heat (the step is
   memory-bound).
 
+**C5.1a Vreman 2004's eddy viscosity.** **Verdict: built on the CPU (`turbulence: {"type": "vreman"}`; `crates/lbm/src/vreman.rs`, `docs/manual/fluid/turbulence.md`); the GPU refuses it for now.**
+- A. W. Vreman. *An eddy-viscosity subgrid-scale model for turbulent shear flow: Algebraic theory and applications.* Phys. Fluids 16(10):3670–3681, 2004. DOI [10.1063/1.1785131](https://doi.org/10.1063/1.1785131) (read from the author's copy, vremanresearch.nl).
+- J. Jacob, O. Malaspinas, P. Sagaut, J. Turbul. 19:1051–1076, 2018 (C2.4a), §5: the model in a lattice Boltzmann
+  large-eddy simulation, Δ = Δx on cubic cells, c = 2.5 C_s² with C_s = 0.18, ν_t added to τ (their eq. 60).
+- **Method.** `ν_t = c √(B_β / α:α)` (eqs. 5–8), `α_ij = ∂_i u_j`, `β = Σ_m Δ_m² α_mi α_mj`, `B_β` the second invariant
+  of β, `c ≈ 2.5 C_s²` (C_s = 0.17 gives c = 0.07, §II). B_β vanishes for exactly the thirteen locally laminar flow
+  types (and their rotations of axes) whose theoretical subgrid dissipation is zero (§II, Appendix), so ν_t is zero
+  in laminar shear and at a no-slip wall without damping, and positive without clipping.
+- **As implemented.** From the paper alone (no code read). With Δ_m = Δx, B_β is computed as the sum of the squared
+  2 × 2 minors of α (Cauchy–Binet; the same as eq. 8, never negative, and exactly 0 for a gradient with one nonzero
+  row or column). α from the hybrid collision's finite differences (centred, one-sided next to a non-fluid cell or
+  a non-periodic face, 0 with neither neighbour), of velocities from a pass before the collision: explicit, unlike
+  Hou's implicit Smagorinsky. τ̄ = 3 (ν + ν_t) + ½ for every collision (TRT: τ⁻ follows keeping Λ; MRT: the five
+  stresses); wall-model cells keep the wall rate; α_t = ν_t / Pr_t with heat. The step gives C_s (`constant`).
+- **Note.** A rigid rotation has a rank-two gradient and gets ν_t = c Δx² |Ω| / √2: the paper's "rotations" are
+  rotations of the coordinate axes, under which the zero set is invariant, not rotational flows.
+
 **C5.3 Van Driest 1956 wall damping, with Spalding's law of the wall for u_τ.** **Verdict: build on.**
 - E. R. Van Driest. *On turbulent flow near a wall.* J. Aeronaut. Sci. 23(11):1007–1011, 1956. DOI [10.2514/8.3713](https://doi.org/10.2514/8.3713).
 - D. B. Spalding. *A single formula for the "law of the wall".* J. Appl. Mech. 28(3):455–458, 1961. DOI [10.1115/1.3641728](https://doi.org/10.1115/1.3641728).

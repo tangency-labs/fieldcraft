@@ -69,6 +69,7 @@ pub mod solve;
 pub mod steady;
 pub mod turbulence;
 pub mod voxel;
+pub mod vreman;
 pub mod wall;
 
 pub use backend::{Backend, Choice, Fields, device_available, register_backend};

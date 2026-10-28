@@ -467,7 +467,7 @@ pub fn run(setup: &Setup, flow: &mut dyn Backend, limits: &Limits) -> Result<Flu
             cell_updates: (flow.fluid_cells() as u64).saturating_mul(k),
             backend: flow.name(),
             tau_thermal: setup.thermal.as_ref().map(|t| t.tau),
-            eddy_viscosity_ratio: (setup.smagorinsky > 0.0).then(|| flow.eddy_viscosity_ratio()),
+            eddy_viscosity_ratio: setup.turbulent().then(|| flow.eddy_viscosity_ratio()),
         },
         warnings,
         steady,

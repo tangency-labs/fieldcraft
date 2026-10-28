@@ -141,7 +141,7 @@ impl Memory {
         let shape = Shape::new(
             &setup.domain,
             u64::from(setup.frames).min(setup.steps),
-            setup.smagorinsky > 0.0,
+            setup.turbulent(),
             setup.van_driest.is_some(),
             setup.wall_model.is_some(),
         )?;

@@ -66,7 +66,7 @@ Numbers are in the model's display units, here SI (set by `model.units`), or car
 | `collision` | `"trt"`, `"regularized"`, `"mrt"`, `"hrr"` | `"trt"` | The collision operator ([Collision operators](collision.md)). |
 | `sigma` | above 0, at most 1 | 0.99 | The hybrid collision's σ (`hrr` only; [Collision operators](collision.md)). |
 | `magic` | above 0, at most 1 | 3/16 | The two-relaxation-time parameter Λ. Warned about with any other collision. |
-| `turbulence` | `{"type": "smagorinsky", …}` | none | Smagorinsky's subgrid eddy viscosity, Van Driest damping and the wall model ([Turbulence](turbulence.md), [Wall-modelled LES](../../lbm-wall-model.md)). |
+| `turbulence` | `{"type": "smagorinsky", …}`, `{"type": "vreman", …}` | none | Smagorinsky's or Vreman's subgrid eddy viscosity, Van Driest damping (Smagorinsky's) and the wall model ([Turbulence](turbulence.md), [Wall-modelled LES](../../lbm-wall-model.md)). |
 | `steady` | `{…}` | none | Stop once the flow stops changing ([Steady state and averaging](steady-state-and-averaging.md)). |
 
 ### The solve (`solve.fluid`)

@@ -52,20 +52,35 @@
 //!
 //! No code of any lattice Boltzmann package was read; this is written from the papers.
 
-/// The strain rate of finite differences at a cell of velocity `u`: `neighbour(axis, up)` is
-/// the velocity of the fluid cell next to it along `axis` (towards `+axis` with `up`), `None`
-/// when that cell is not a fluid cell. Centred differences, one-sided where one neighbour is
-/// missing, 0 where both are. Returns `xx, yy, zz, xy, xz, yz` (lattice units).
+/// The velocities of a cell's six neighbours, `[axis][up]` (`up` towards `+axis`): `None` where
+/// that cell is not a fluid cell (or lies outside a face that is not periodic).
+pub type Neighbours = [[Option<[f64; 3]>; 2]; 3];
+
+/// The velocity gradient of finite differences at a cell of velocity `u` with neighbours `nb`:
+/// `g[a][b] = ∂_a u_b` (lattice units). Centred differences, first-order one-sided where one
+/// neighbour along an axis is missing, 0 where both are. Vreman's eddy viscosity
+/// ([`crate::vreman`]) uses the same gradient.
 #[inline(always)]
-pub fn strain(u: [f64; 3], neighbour: impl Fn(usize, bool) -> Option<[f64; 3]>) -> [f64; 6] {
-    // g[a][b] = ∂_a u_b
-    let g: [[f64; 3]; 3] = [0, 1, 2].map(|a| match (neighbour(a, false), neighbour(a, true)) {
+pub fn gradient(u: [f64; 3], nb: &Neighbours) -> [[f64; 3]; 3] {
+    nb.map(|[m, p]| match (m, p) {
         (Some(m), Some(p)) => [0, 1, 2].map(|b| 0.5 * (p[b] - m[b])),
         (Some(m), None) => [0, 1, 2].map(|b| u[b] - m[b]),
         (None, Some(p)) => [0, 1, 2].map(|b| p[b] - u[b]),
         (None, None) => [0.0; 3],
-    });
-    [g[0][0], g[1][1], g[2][2], 0.5 * (g[0][1] + g[1][0]), 0.5 * (g[0][2] + g[2][0]), 0.5 * (g[1][2] + g[2][1])]
+    })
+}
+
+/// The squared norm `α_ij α_ij` of gradient `g`.
+#[inline(always)]
+pub fn norm2(g: &[[f64; 3]; 3]) -> f64 {
+    g.iter().flatten().map(|x| x * x).sum()
+}
+
+/// The strain rate of gradient `g` ([`gradient`]): `xx, yy, zz, xy, xz, yz`.
+#[inline(always)]
+pub fn strain(g: &[[f64; 3]; 3]) -> [f64; 6] {
+    let [[xx, xy, xz], [yx, yy, yz], [zx, zy, zz]] = *g;
+    [xx, yy, zz, 0.5 * (xy + yx), 0.5 * (xz + zx), 0.5 * (yz + zy)]
 }
 
 #[cfg(test)]
@@ -151,6 +166,11 @@ mod tests {
         }
     }
 
+    /// The neighbours of `u` given by `at(axis, up)`.
+    fn neighbours(at: impl Fn(usize, bool) -> Option<[f64; 3]>) -> Neighbours {
+        [0, 1, 2].map(|a| [false, true].map(|up| at(a, up)))
+    }
+
     #[test]
     fn the_strain_rate_is_centred_one_sided_or_zero() {
         let u = [1.0, 2.0, 3.0];
@@ -163,14 +183,15 @@ mod tests {
                 _ => [u[0], u[1], u[2] + 0.5 * d],
             })
         };
-        let s = strain(u, full);
-        assert_eq!(s, [0.0, 0.0, 0.5, 1.5, 0.0, 0.0]);
+        let g = gradient(u, &neighbours(full));
+        assert_eq!(g, [[0.0, 2.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 0.5]]);
+        assert_eq!(strain(&g), [0.0, 0.0, 0.5, 1.5, 0.0, 0.0]);
         // The +y neighbour missing: the one-sided difference with −y gives the same here; both
         // y neighbours missing: ∂_y = 0.
-        let s = strain(u, |a, up| if a == 1 && up { None } else { full(a, up) });
+        let s = strain(&gradient(u, &neighbours(|a, up| if a == 1 && up { None } else { full(a, up) })));
         assert_eq!(s, [0.0, 0.0, 0.5, 1.5, 0.0, 0.0]);
-        let s = strain(u, |a, up| if a == 1 { None } else { full(a, up) });
+        let s = strain(&gradient(u, &neighbours(|a, up| if a == 1 { None } else { full(a, up) })));
         assert_eq!(s, [0.0, 0.0, 0.5, 1.0, 0.0, 0.0]);
-        assert_eq!(strain(u, |_, _| None), [0.0; 6]);
+        assert_eq!(strain(&gradient(u, &neighbours(|_, _| None))), [0.0; 6]);
     }
 }

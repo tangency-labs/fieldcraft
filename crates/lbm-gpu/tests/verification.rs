@@ -114,6 +114,23 @@ fn the_hybrid_collision_is_refused_on_the_gpu() {
     assert!(e.contains("not supported yet") && e.contains("`hrr`") && e.contains("GPU"), "{e}");
 }
 
+/// Vreman's subgrid model runs on the CPU only: the GPU refuses it before it looks for a device,
+/// with every collision it supports.
+#[test]
+fn vreman_s_model_is_refused_on_the_gpu() {
+    for collision in [Collision::Trt, Collision::Regularized, Collision::Mrt] {
+        let mut d = domain([0.0; 3], [1.0, 1.0, 0.25], 0.25);
+        d.faces.y_max = FaceCondition::MovingWall { velocity: [0.01, 0.0, 0.0] };
+        let mut p = collide(0.1, 0.01, None, collision);
+        if let Procedure::Fluid { turbulence, .. } = &mut p {
+            *turbulence = Some(fieldcraft_model::Turbulence::Vreman { constant: 0.18, prandtl: 0.9, wall_model: None });
+        }
+        let (_, flow) = prepare(&model(1.0, 0.1, d, p), &[]);
+        let e = GpuFlow::with_options(&flow, Policy::Auto, Options::default()).err().map(|e| e.to_string()).unwrap_or_default();
+        assert!(e.contains("not supported yet") && e.contains("Vreman") && e.contains("GPU"), "{collision:?}: {e}");
+    }
+}
+
 #[test]
 fn plane_poiseuille_matches_the_analytic_profile_and_the_cpu() {
     // Both collisions and both layouts (the default layout depends on the device, see `Streaming`).
@@ -2786,8 +2803,9 @@ fn han_s_measures_read_spalding_s_profile_as_exact() {
 /// (box 2πL, V₀ = L = 1, ν = 1 / Re), periodic, from the classical initial field with its pressure
 /// (M. E. Brachet, D. I. Meiron, S. A. Orszag, B. G. Nickel, R. H. Morf, U. Frisch, J. Fluid
 /// Mech. 130:411–452, 1983), stepped to `FIELDCRAFT_TGV_END` (20) with each variant in
-/// `FIELDCRAFT_TGV` (`mrt:0.1,regularized:0.1,hrr@0.97:0.1`: collision, for `hrr` its σ after
-/// `@` (0.99 when left out), and Smagorinsky constant), on
+/// `FIELDCRAFT_TGV` (`mrt:0.1,regularized:0.1,hrr@0.97:0.1,hrr@0.99:v0.18`: collision, for
+/// `hrr` its σ after `@` (0.99 when left out), and the subgrid model's constant: Smagorinsky's C,
+/// or with a `v` before it Vreman's model with that Smagorinsky-equivalent C_s, CPU only), on
 /// `FIELDCRAFT_TGV_N` cells per side (64) at lattice speed `FIELDCRAFT_TGV_SPEED` (0.05) and
 /// Reynolds number `FIELDCRAFT_TGV_RE` (1600; 12000 puts τ below the Han et al. channel's).
 /// Prints k(t) and −dk/dt; at Re 1600 the spectral DNS peaks at about 0.0127 near t ≈ 9.
@@ -2807,6 +2825,11 @@ fn study_taylor_green_vortex_dissipation() {
     let end: f64 = std::env::var("FIELDCRAFT_TGV_END").ok().and_then(|v| v.parse().ok()).unwrap_or(20.0);
     for variant in which.split(',') {
         let (name, c) = variant.split_once(':').unwrap_or((variant, "0.1"));
+        // A `v` before the constant: Vreman's model with that Smagorinsky-equivalent C_s.
+        let (vreman, c) = match c.strip_prefix('v') {
+            Some(c) => (true, c),
+            None => (false, c),
+        };
         let c: f64 = c.parse().unwrap();
         let (name, sigma) = match name.split_once('@') {
             Some((n, s)) => (n, Some(fieldcraft_model::HrrSigma::Value(s.parse().unwrap()))),
@@ -2827,7 +2850,11 @@ fn study_taylor_green_vortex_dissipation() {
         }
         let mut p = collide(end, dt, None, collision);
         if let Procedure::Fluid { turbulence, sigma: s, .. } = &mut p {
-            *turbulence = Some(fieldcraft_model::Turbulence::Smagorinsky { constant: c, prandtl: 0.9, van_driest: None, wall_model: None });
+            *turbulence = Some(if vreman {
+                fieldcraft_model::Turbulence::Vreman { constant: c, prandtl: 0.9, wall_model: None }
+            } else {
+                fieldcraft_model::Turbulence::Smagorinsky { constant: c, prandtl: 0.9, van_driest: None, wall_model: None }
+            });
             *s = sigma;
         }
         let m = model(1.0, 1.0 / re, d, p);
@@ -2859,7 +2886,7 @@ fn study_taylor_green_vortex_dissipation() {
         };
         let mut k = 0u64;
         let mut last = (0.0, energy(backend(&mut device, &mut flow)));
-        let mut peak = (0.0f64, 0.0f64);
+        let mut peak = (0.0f64, 0.0f64, 0.0f64);
         while k < setup.steps {
             let step = every.min(setup.steps - k);
             if let Err(e) = backend(&mut device, &mut flow).advance(step) {
@@ -2871,13 +2898,16 @@ fn study_taylor_green_vortex_dissipation() {
             let e = energy(backend(&mut device, &mut flow));
             let rate = -(e - last.1) / (t - last.0);
             if rate > peak.1 {
-                peak = (0.5 * (t + last.0), rate);
+                peak = (0.5 * (t + last.0), rate, backend(&mut device, &mut flow).eddy_viscosity_ratio());
             }
             if k % (4 * every) < every {
                 println!("    t {:5.2}: k {e:.5}, −dk/dt {rate:.5}", 0.5 * (t + last.0));
             }
             last = (t, e);
         }
-        println!("TGV {variant} Re {re}: peak −dk/dt {:.5} at t {:.2} (spectral DNS ≈ 0.0127 near t ≈ 9)", peak.1, peak.0);
+        println!(
+            "TGV {variant} Re {re}: peak −dk/dt {:.5} at t {:.2} (spectral DNS ≈ 0.0127 near t ≈ 9), largest ν_t/ν there {:.3}",
+            peak.1, peak.0, peak.2
+        );
     }
 }

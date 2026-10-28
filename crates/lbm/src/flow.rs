@@ -388,6 +388,8 @@ pub struct Flow {
     /// turns its eddy viscosity into the temperature lattice's turbulent diffusivity.
     smagorinsky: f64,
     turbulent_prandtl: f64,
+    /// Vreman's model constant c = 2.5 C_s² (0: not this model; [`crate::vreman`]).
+    vreman: f64,
     /// With heat and an eddy viscosity: each fluid cell's eddy viscosity of the last collision
     /// (lattice units), for the temperature lattice (empty otherwise).
     cell_nu_t: Vec<f64>,
@@ -417,10 +419,10 @@ pub struct Flow {
     cell_force: Vec<[f64; 3]>,
     /// With heat: every cell's velocity from the last collision, for the scalar equilibrium.
     cell_u: Vec<[f64; 3]>,
-    /// The hybrid collision's σ, and with it every cell's velocity before the collision (for
-    /// the finite-difference strain rate; empty with another collision).
+    /// The hybrid collision's σ, and with it or with Vreman's model every cell's velocity before
+    /// the collision (for the finite-difference gradient; empty otherwise).
     sigma: f64,
-    hybrid_u: Vec<[f64; 3]>,
+    gradient_u: Vec<[f64; 3]>,
     /// Whether each axis is periodic (its faces' neighbours are the periodic images).
     periodic: [bool; 3],
     /// The fans and porous zones (porous first), their fluid cells, and per cell its zone
@@ -872,7 +874,8 @@ impl Flow {
             collision: setup.collision,
             smagorinsky: setup.smagorinsky,
             turbulent_prandtl: setup.turbulent_prandtl,
-            cell_nu_t: if setup.smagorinsky > 0.0 && setup.thermal.is_some() { filled(n, 0.0, "eddy viscosities")? } else { Vec::new() },
+            vreman: setup.vreman,
+            cell_nu_t: if setup.turbulent() && setup.thermal.is_some() { filled(n, 0.0, "eddy viscosities")? } else { Vec::new() },
             eddy_ratio: 0.0,
             walls,
             wall_model: setup.wall_model == Some(WallModel::Musker),
@@ -888,7 +891,7 @@ impl Flow {
             cell_force,
             cell_u,
             sigma: setup.sigma,
-            hybrid_u: if setup.collision == Collision::Hrr { filled(n, [0.0; 3], "cell velocities")? } else { Vec::new() },
+            gradient_u: if setup.collision == Collision::Hrr || setup.vreman > 0.0 { filled(n, [0.0; 3], "cell velocities")? } else { Vec::new() },
             periodic,
             fan_rise: vec![0.0; setup.zones.len()],
             zones: setup.zones.clone(),
@@ -1131,6 +1134,16 @@ impl Flow {
         self.smagorinsky
     }
 
+    /// Vreman's model constant c = 2.5 C_s² (0: not this model).
+    pub fn vreman(&self) -> f64 {
+        self.vreman
+    }
+
+    /// Whether a subgrid model (Smagorinsky's or Vreman's) gives the cells an eddy viscosity.
+    pub fn turbulent(&self) -> bool {
+        self.smagorinsky > 0.0 || self.vreman > 0.0
+    }
+
     /// The turbulent Prandtl number of Smagorinsky's model (its turbulent diffusivity ν_t / Pr_t).
     pub fn turbulent_prandtl(&self) -> f64 {
         self.turbulent_prandtl
@@ -1219,7 +1232,7 @@ impl Flow {
         self.refresh_damping();
         self.sample_walls();
         self.sample_stress();
-        self.hybrid_velocities();
+        self.gradient_velocities();
         let max_u2 = self.collide();
         if !(max_u2 <= MAX_LATTICE_SPEED * MAX_LATTICE_SPEED) {
             return Err(Error::Unstable(format!(
@@ -1590,20 +1603,20 @@ impl Flow {
         self.walls.as_ref().and_then(|d| d.distance(cell))
     }
 
-    /// With the hybrid collision, before it: every fluid cell's velocity (with the half force),
+    /// With the hybrid collision or Vreman's model, before the collision: every fluid cell's velocity (with the half force),
     /// computed exactly as the collision computes it (the wall model's reconstruction included),
-    /// into `hybrid_u`, by fixed blocks in parallel (each cell writes only its own slot), for the
-    /// finite-difference strain rate of its neighbours ([`crate::hrr`]). Solid cells and cells
+    /// into `gradient_u`, by fixed blocks in parallel (each cell writes only its own slot), for the
+    /// finite-difference gradient of its neighbours ([`crate::hrr`], [`crate::vreman`]). Solid cells and cells
     /// whose density is not a positive number get 0 (the collision then stops the run).
-    fn hybrid_velocities(&mut self) {
-        if self.hybrid_u.is_empty() {
+    fn gradient_velocities(&mut self) {
+        if self.gradient_u.is_empty() {
             return;
         }
         let (f, s, block) = (&self.f, self.stride, self.block);
         let (fluid, cell_force, constant) = (&self.fluid, &self.cell_force, self.acceleration);
         let (zone_of, actions) = (&self.zone_of, &self.actions);
         let walls = if self.wall_model { self.walls.as_ref() } else { None };
-        parallel::chunks_mut(&mut self.hybrid_u, block, |b, out| {
+        parallel::chunks_mut(&mut self.gradient_u, block, |b, out| {
             let mut fq = [0.0; Q];
             for (i, slot) in out.iter_mut().enumerate() {
                 let cell = b * block + i;
@@ -1629,13 +1642,17 @@ impl Flow {
     fn collide(&mut self) -> f64 {
         let block = self.block;
         let n = self.n;
-        let hybrid = !self.hybrid_u.is_empty();
+        let hybrid = self.collision == Collision::Hrr;
+        // The neighbours' velocities of the pass before the collision, for the finite-difference
+        // gradient (the hybrid collision, Vreman's model).
+        let gradients = !self.gradient_u.is_empty();
         let regularized = self.collision.is_regularized();
         let mrt = self.collision == Collision::Mrt;
-        let (sigma, hybrid_u, grid, periodic) = (self.sigma, &self.hybrid_u, self.grid, self.periodic);
+        let (sigma, gradient_u, grid, periodic) = (self.sigma, &self.gradient_u, self.grid, self.periodic);
         let (wp, wm) = (self.omega_plus, self.omega_minus);
         let (sp, sm) = (1.0 - 0.5 * wp, 1.0 - 0.5 * wm);
-        let smagorinsky = self.smagorinsky;
+        let (smagorinsky, vreman) = (self.smagorinsky, self.vreman);
+        let turbulent = self.turbulent();
         let walls = self.walls.as_ref();
         let wall_model = self.wall_model;
         let model_walls = walls.filter(|_| wall_model);
@@ -1711,17 +1728,30 @@ impl Flow {
                 };
                 // Smagorinsky's constant of the cell, damped near walls.
                 let cell_c = walls.map_or(smagorinsky, |d| smagorinsky * d.factor(b * block + i));
+                // The finite-difference velocity gradient, from the neighbours' velocities of the
+                // pass before the collision.
+                let grad = gradients.then(|| {
+                    let p = grid.coords(b * block + i);
+                    let nb: crate::hrr::Neighbours = [0, 1, 2]
+                        .map(|axis| [false, true].map(|up| neighbour(&grid, periodic, fluid, p, axis, up).and_then(|c| gradient_u.get(c).copied())));
+                    crate::hrr::gradient(u, &nb)
+                });
+                // Vreman's explicit eddy viscosity (not at a wall cell under the wall model, which
+                // keeps its own rate), and the rate it gives, τ̄ = 3 (ν + ν_t) + ½; none where
+                // ν_t = 0, so the cell keeps the fluid's own rates bit for bit.
+                let nu_vreman = match &grad {
+                    Some(g) if vreman > 0.0 && wall_rate.is_none() => crate::vreman::eddy_viscosity(g, vreman),
+                    _ => 0.0,
+                };
+                let explicit = (nu_vreman > 0.0).then(|| 1.0 / (1.0 / wp + 3.0 * nu_vreman));
+                // Smagorinsky's implicit rate of the cell's own flux (Hou et al.).
+                let implicit = || crate::turbulence::omega(&crate::turbulence::flux(&fq, rho, u, force, forced), rho, wp, cell_c);
                 // A wall cell under the wall model relaxes with its viscosity instead.
                 if regularized {
-                    let (rate, c) = wall_rate.map_or((wp, cell_c), |w| (w, 0.0));
-                    // The hybrid collision's finite-difference strain rate, from the neighbours'
-                    // velocities of the pass before the collision.
-                    let strain = hybrid.then(|| {
-                        let p = grid.coords(b * block + i);
-                        crate::hrr::strain(u, |axis, up| neighbour(&grid, periodic, fluid, p, axis, up).and_then(|nb| hybrid_u.get(nb).copied()))
-                    });
+                    let (rate, c) = wall_rate.map_or((explicit.unwrap_or(wp), cell_c), |w| (w, 0.0));
+                    let strain = grad.as_ref().filter(|_| hybrid).map(crate::hrr::strain);
                     let w = crate::regularized::rebuild(&fq, rho, u, force, rate, c, forced, strain.as_ref().map(|s| (sigma, s)), &mut post);
-                    if smagorinsky > 0.0 {
+                    if turbulent {
                         eddy(w);
                     }
                     for (q, v) in post.iter().enumerate() {
@@ -1733,10 +1763,10 @@ impl Flow {
                     // The stresses' rate: the wall model's, Smagorinsky's of the cell's flux, or the fluid's.
                     let rate = match wall_rate {
                         Some(w) => w,
-                        None if smagorinsky > 0.0 => crate::turbulence::omega(&crate::turbulence::flux(&fq, rho, u, force, forced), rho, wp, cell_c),
-                        None => wp,
+                        None if smagorinsky > 0.0 => implicit(),
+                        None => explicit.unwrap_or(wp),
                     };
-                    if smagorinsky > 0.0 {
+                    if turbulent {
                         eddy(rate);
                     }
                     crate::mrt::collide(&fq, rho, u, force, rate, forced, &mut post);
@@ -1746,14 +1776,16 @@ impl Flow {
                     continue;
                 }
                 // The cell's own rates where the eddy viscosity raises τ⁺ (τ⁻ follows, keeping Λ).
-                let (wp, wm, sp, sm) = if smagorinsky > 0.0 {
-                    let wp =
-                        wall_rate.unwrap_or_else(|| crate::turbulence::omega(&crate::turbulence::flux(&fq, rho, u, force, forced), rho, wp, cell_c));
-                    eddy(wp);
-                    let wm = 1.0 / (0.5 + magic / (1.0 / wp - 0.5));
-                    (wp, wm, 1.0 - 0.5 * wp, 1.0 - 0.5 * wm)
-                } else {
-                    (wp, wm, sp, sm)
+                let cell_rate = wall_rate.or_else(|| (smagorinsky > 0.0).then(implicit)).or(explicit);
+                if turbulent {
+                    eddy(cell_rate.unwrap_or(wp));
+                }
+                let (wp, wm, sp, sm) = match cell_rate {
+                    Some(wp) => {
+                        let wm = 1.0 / (0.5 + magic / (1.0 / wp - 0.5));
+                        (wp, wm, 1.0 - 0.5 * wp, 1.0 - 0.5 * wm)
+                    }
+                    None => (wp, wm, sp, sm),
                 };
                 // Rest population: symmetric only.
                 let eq0 = W[0] * rho * (1.0 - 1.5 * uu);
@@ -1792,7 +1824,7 @@ impl Flow {
         }
         // The largest eddy viscosity over the fluid's own (a maximum: no order dependence).
         let nu0 = (1.0 / wp - 0.5) / 3.0;
-        self.eddy_ratio = if smagorinsky > 0.0 && nu0 > 0.0 { eddies.iter().fold(0.0f64, |m, x| m.max(*x)) / nu0 } else { 0.0 };
+        self.eddy_ratio = if turbulent && nu0 > 0.0 { eddies.iter().fold(0.0f64, |m, x| m.max(*x)) / nu0 } else { 0.0 };
         // The largest speed of all blocks (a maximum does not depend on the order), or NaN.
         if maxima.iter().any(|m| m.is_nan()) { f64::NAN } else { maxima.iter().fold(0.0, |m, x| m.max(*x)) }
     }
