@@ -2207,9 +2207,9 @@ fn dean_bulk(re_tau: f64) -> f64 {
 /// grid. `950` (or `950:10`) reproduces the paper itself at its Re_τ 950: E (their eq. 69, read as
 /// [`profile_error`] does) against Hoyas and Jiménez ([`HJ_950`]) within 15 % of their Table 1
 /// (2.11, 1.07 and 0.83 on 10, 20 and 30 cells), and C_f from the wall model's u_τ (their eq. 70)
-/// within the 4.22 % of Dean's correlation they report; measured on the GB10: E 2.04, 1.04 and
-/// 0.89, C_f +2.0, +0.9 and +3.5 %, while the carried drag's C_f is 14 to 16 % below Dean's (the
-/// wall model's u_τ is 8.5 to 10.5 % above the carried one). The bulk speed held is Dean's, the
+/// within the 4.22 % of Dean's correlation they report; measured on the GB10: E 2.08, 0.99 and
+/// 0.87, C_f +1.8, +0.8 and +3.5 %, while the carried drag's C_f is 14 to 17 % below Dean's (the
+/// wall model's u_τ is 8.1 to 10.6 % above the carried one). The bulk speed held is Dean's, the
 /// paper's; `FIELDCRAFT_PAPER_CHANNEL_HELD=lm` holds Lee & Moser's instead, the control against
 /// the DNS the acceptance uses. Each grid reports its first
 /// cell's centre and the wall model's matching point (the second cell, 3 y₁) in wall units.
