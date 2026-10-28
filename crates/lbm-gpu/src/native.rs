@@ -163,6 +163,8 @@ pub struct GpuFlow {
     links_groups: (u32, u32),
     /// The wall model's sample dispatch, when there are modelled wall cells, and its buffer.
     wall_groups: Option<(u32, u32)>,
+    /// Whether the wall rows are the wall-function bounce's (`bounce_sample`, `bounce_apply`).
+    wall_bounce: bool,
     walls: wgpu::Buffer,
     wall_count: usize,
     /// Van Driest's damping, when it has wall cells.
@@ -333,11 +335,12 @@ fn solid_data(solid: &fieldcraft_lbm::conduction::SolidHeat, t0: f64) -> Result<
 }
 
 /// The entry points of `lbm.wgsl` a flow dispatches.
-const KERNELS: [&str; 29] = [
+const KERNELS: [&str; 30] = [
     "clear_eddy",
     "collide",
     "wall_sample",
     "damping_refresh",
+    "bounce_sample",
     "stream",
     "stream_links",
     "stream_links_exchange",
@@ -441,6 +444,7 @@ struct Variant {
     smagorinsky: bool,
     wall_model: bool,
     van_driest: bool,
+    wall_bounce: bool,
 }
 
 /// A compiled kernel: its pipeline, its bind group's layout and the bindings in it.
@@ -486,6 +490,7 @@ fn compile(device: &wgpu::Device, variant: Variant) -> Result<Kernels> {
                     ("SMAGORINSKY", if variant.smagorinsky { 1.0 } else { 0.0 }),
                     ("WALL_MODEL", if variant.wall_model { 1.0 } else { 0.0 }),
                     ("VAN_DRIEST", if variant.van_driest { 1.0 } else { 0.0 }),
+                    ("WALL_BOUNCE", if variant.wall_bounce { 1.0 } else { 0.0 }),
                     ("MAX_SPEED", MAX_LATTICE_SPEED),
                 ],
                 ..Default::default()
@@ -587,11 +592,6 @@ impl GpuFlow {
 
     /// [`GpuFlow::new`] with `options`.
     pub fn with_options(flow: &Flow, policy: Policy, options: Options) -> Result<GpuFlow> {
-        if flow.wall_bounce() {
-            return Err(Error::Invalid(
-                "the wall model `spalding_bounce` is not on the GPU backend yet: solve on the CPU (`backend: \"cpu\"`)".into(),
-            ));
-        }
         if let Some(zone) = flow.zones().first() {
             return Err(Error::Invalid(format!(
                 "the GPU backend does not step fans or porous zones yet (`{}`): solve on the CPU (`backend: \"cpu\"`)",
@@ -646,9 +646,14 @@ impl GpuFlow {
         // one's flag word its row (k + 1) past the fluid bit.
         let mut wall_rows: Vec<f32> = Vec::new();
         let nu0 = (1.0 / flow.omegas().0 - 0.5) / 3.0;
-        if let Some(walls) = flow.walls().filter(|_| flow.wall_model()) {
+        // With the wall-function bounce instead, the wall cells on lattice planes (their distance
+        // half a cell), with the cell itself where the second cell goes; their flags let link
+        // streaming shift the populations reflected into them (`bounce_shift`).
+        let bounce = flow.wall_bounce();
+        if let Some(walls) = flow.walls().filter(|_| flow.wall_model() || bounce) {
             let links = flow.links();
             for (cell, link, distance, velocity, second) in walls.wall_cells() {
+                let second = if bounce { (distance == 0.5).then_some(cell) } else { second };
                 let Some(second) = second else { continue };
                 let row = u32::try_from(wall_rows.len() / WALL_ROW + 1)
                     .ok()
@@ -933,8 +938,9 @@ impl GpuFlow {
             regularized,
             mrt: flow.collision() == fieldcraft_model::Collision::Mrt,
             smagorinsky: flow.smagorinsky() > 0.0,
-            wall_model: wall_count > 0,
+            wall_model: wall_count > 0 && flow.wall_model(),
             van_driest: damping_count > 0,
+            wall_bounce: wall_count > 0 && flow.wall_bounce(),
         })?;
         // Every binding's buffer in bind group k (the two differ in the phase and the A–B swap).
         let resource = |binding: u32, k: usize| -> Option<&wgpu::Buffer> {
@@ -1003,6 +1009,7 @@ impl GpuFlow {
             link_count: links.len(),
             links_groups,
             wall_groups: if wall_count > 0 { Some(groups(wall_count)?) } else { None },
+            wall_bounce: bounce,
             walls: walls_buf,
             wall_count,
             damping: match damping {
@@ -1212,7 +1219,7 @@ impl GpuFlow {
                 commands.push((self.current, "damping_refresh", d.groups));
             }
             if let Some(groups) = self.wall_groups {
-                commands.push((self.current, "wall_sample", groups));
+                commands.push((self.current, if self.wall_bounce { "bounce_sample" } else { "wall_sample" }, groups));
             }
             commands.push((self.current, "collide", self.cells));
             if !self.aa {

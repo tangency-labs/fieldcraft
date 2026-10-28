@@ -1082,6 +1082,39 @@ fn a_coarse_channel_with_van_driest_damping_follows_the_cpu() {
     }
 }
 
+/// Han, Ooka and Kikumoto's wall-function bounce (`spalding_bounce`) with Smagorinsky's model and
+/// Van Driest's damping, as their channel runs, in the coarse channel for 150 steps on both, every
+/// collision and both layouts: the fields within the wall-model test's tolerances, and the walls'
+/// drag (their sampled stresses; the reflection carries none along the walls) within 1e-3 of the
+/// CPU's.
+#[test]
+fn a_coarse_channel_with_the_wall_function_bounce_follows_the_cpu() {
+    let bounce = |p: Procedure| {
+        let mut p = van_driest(p, 0.1, false);
+        if let Procedure::Fluid { turbulence: Some(fieldcraft_model::Turbulence::Smagorinsky { wall_model, .. }), .. } = &mut p {
+            *wall_model = Some(fieldcraft_model::WallModel::SpaldingBounce);
+        }
+        p
+    };
+    for (collision, streaming) in cases() {
+        let (setup, flow) = coarse_channel(bounce, collision);
+        assert!(flow.wall_bounce() && flow.van_driest());
+        let Some((mut cpu, mut gpu)) = both(&setup, flow, streaming) else { continue };
+        let (du, drho) = field_difference(&mut cpu, &mut gpu);
+        let (fc, fg) = (Backend::forces(&mut cpu).unwrap(), gpu.forces().unwrap());
+        let wall = |f: &[[f64; 3]]| f[BoxFace::YMin.index()][0] + f[BoxFace::YMax.index()][0];
+        let stress: f64 = cpu.walls().unwrap().stresses().map(|s| s.3[0]).sum();
+        let drag = (wall(&fc) - wall(&fg)).abs() / wall(&fc).abs();
+        println!(
+            "{collision:?} {streaming:?} channel with the wall-function bounce, 150 steps, GPU vs CPU: velocity {du:.2e}, density {drho:.2e}, wall drag {drag:.2e} (CPU drag over its sampled stress {:.15})",
+            wall(&fc) / stress
+        );
+        assert!((wall(&fc) / stress - 1.0).abs() < 1e-12, "the CPU's walls carry their stress");
+        assert!(du < 1e-4 && drho < 1e-5, "{du} {drho}");
+        assert!(drag < 1e-3, "{drag}");
+    }
+}
+
 /// A laminar channel under the wall model (8 cells across, body force, periodic along it) run to
 /// steady state on both: the wall drag, the bounce-back's exchange plus what the reconstruction
 /// takes, carries the body force on the GPU as on the CPU, within the force tests' 5e-5.

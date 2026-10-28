@@ -72,6 +72,8 @@ override SMAGORINSKY: bool = false;
 override WALL_MODEL: bool = false;
 // Van Driest's damping of Smagorinsky's constant near no-slip walls; likewise.
 override VAN_DRIEST: bool = false;
+// Han, Ooka and Kikumoto's wall-function bounce (`spalding_bounce`); likewise.
+override WALL_BOUNCE: bool = false;
 // The largest lattice speed (fieldcraft_lbm::setup::MAX_LATTICE_SPEED): the cap of a convective
 // outlet's convection speed.
 override MAX_SPEED: f32 = 0.5;
@@ -403,12 +405,13 @@ fn smagorinsky_c2(cell: u32) -> f32 {
     return params.smag.x * factor * factor;
 }
 
-// Spalding's y⁺(u⁺) (x) and its slope dy⁺/du⁺ (y), κ = 0.4, B = 5.5 (fieldcraft_lbm::wall::spalding).
-fn spalding(up: f32) -> vec2<f32> {
-    let e = exp(-0.4 * 5.5);
-    let k = 0.4 * up;
+// Spalding's y⁺(u⁺) (x) and its slope dy⁺/du⁺ (y) with Kármán's constant `kappa` and the
+// intercept `b` (fieldcraft_lbm::wall::spalding).
+fn spalding(up: f32, kappa: f32, b: f32) -> vec2<f32> {
+    let e = exp(-kappa * b);
+    let k = kappa * up;
     let rest = exp(k) - 1.0 - k - k * k / 2.0;
-    return vec2<f32>(up + e * (rest - k * k * k / 6.0), 1.0 + 0.4 * e * rest);
+    return vec2<f32>(up + e * (rest - k * k * k / 6.0), 1.0 + kappa * e * rest);
 }
 
 // The friction velocity from Spalding's law at speed `speed` and distance `y`
@@ -416,14 +419,19 @@ fn spalding(up: f32) -> vec2<f32> {
 // law, guarded by bisection below the sublayer's √(U y / ν); 0 at rest or with a number that is
 // not usable.
 fn spalding_friction(speed: f32, y: f32, nu: f32) -> f32 {
+    return spalding_root(speed, y, nu, 0.4, 5.5);
+}
+
+// [`spalding_friction`] with Kármán's constant `kappa` and the intercept `b`.
+fn spalding_root(speed: f32, y: f32, nu: f32, kappa: f32, b: f32) -> f32 {
     let re = speed * y / nu;
     if !(re > 0.0) || re > 1e30 { return 0.0; }
     var lo = 0.0;
     var hi = sqrt(re);
-    var up = clamp(log(re) / 0.4 + 5.5, 1e-30, hi);
+    var up = clamp(log(re) / kappa + b, 1e-30, hi);
     var last = 3.0e38;
     for (var i = 0u; i < 100u; i = i + 1u) {
-        let s = spalding(up);
+        let s = spalding(up, kappa, b);
         let value = up * s.x - re;
         if value == 0.0 { break; }
         if value > 0.0 { hi = up; } else { lo = up; }
@@ -436,6 +444,54 @@ fn spalding_friction(speed: f32, y: f32, nu: f32) -> f32 {
     }
     if up > 0.0 { return speed / up; }
     return 0.0;
+}
+
+// The wall-function bounce's shift of a population streamed in from the wall (fieldcraft_lbm::
+// flow::Flow::apply_stress): direction q into wall cell `cell` (flagged with its row) along its
+// normal plus one tangential axis a takes ½ τ_a c_a off, so the two such populations per axis take
+// the stress from the cell's momentum and nothing from its mass; 0 for any other population.
+fn bounce_shift(q: u32, cell: u32) -> f32 {
+    let k = fluid[cell] >> 1u;
+    if k == 0u { return 0.0; }
+    let d = c_of(q) - vec3<i32>(round(walls[4u * (k - 1u)].xyz));
+    if dot(d, d) != 1 { return 0.0; }
+    return 0.5 * dot(walls[4u * (k - 1u) + 2u].xyz, vec3<f32>(d));
+}
+
+// The wall-function bounce's sample before the collision (fieldcraft_lbm::wall::Walls::
+// sample_stress): wall cell k's stress ρ u_τ² along its own velocity parallel to its wall, u_τ
+// from Spalding's law with Han, Ooka and Kikumoto's constants (κ 0.41, B 5.5) at its distance;
+// into rows 2 and 3 (row 3 is what `wall_forces` gives the wall). Its rows: the unit normal into
+// the fluid and the distance; the wall's velocity and the cell (as bits).
+@compute @workgroup_size(256)
+fn bounce_sample(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
+    let k = cell_of(lid, wg);
+    if !WALL_BOUNCE || k >= params.wall.x { return; }
+    let a = walls[4u * k];
+    let b = walls[4u * k + 1u];
+    let cell = bitcast<u32>(b.w);
+    var xyz = vec3<i32>(0);
+    if AA_MODE && params.phase.x == 1u { xyz = coords(cell); }
+    var drho = 0.0;
+    var j = vec3<f32>(0.0);
+    for (var q = 0u; q < Q; q = q + 1u) {
+        let v = population(q, cell, xyz);
+        drho = drho + v;
+        j = j + vec3<f32>(c_of(q)) * v;
+    }
+    let rho = 1.0 + drho;
+    var stress = vec3<f32>(0.0);
+    if rho > 0.0 && rho < 1e30 {
+        let u = (j + 0.5 * rho * acc_of(cell)) / rho;
+        let rel = u - b.xyz;
+        let t = rel - dot(rel, a.xyz) * a.xyz;
+        let speed = length(t);
+        let ut = spalding_root(speed, a.w, params.smag.w, 0.41, 5.5);
+        let scale = rho * ut * ut / speed;
+        if speed > 0.0 && scale < 1e30 { stress = scale * t; }
+    }
+    walls[4u * k + 2u] = vec4<f32>(stress, 0.0);
+    walls[4u * k + 3u] = vec4<f32>(stress, walls[4u * k + 3u].w);
 }
 
 // Van Driest's refresh (fieldcraft_lbm::wall::Walls::refresh): wall cell k's friction velocity
@@ -951,6 +1007,7 @@ fn gather_link(l: u32, exchange: bool) {
     } else if kind == KIND_REFLECT {
         // The mirrored direction has the same weight, so h reflects like f.
         v = post(q2, lu.y);
+        if WALL_BOUNCE { v = v - bounce_shift(q, cell); }
     } else {
         v = post(opp(q), cell);
     }
@@ -1364,7 +1421,7 @@ fn thermal_check(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_i
 @compute @workgroup_size(256)
 fn wall_forces(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
     let k = cell_of(lid, wg);
-    if !WALL_MODEL || k >= params.wall.x { return; }
+    if !(WALL_MODEL || WALL_BOUNCE) || k >= params.wall.x { return; }
     let row = walls[4u * k + 3u];
     let l = bitcast<u32>(row.w);
     if l >= params.links { return; }

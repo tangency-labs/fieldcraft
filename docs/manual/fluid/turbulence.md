@@ -36,7 +36,7 @@ wall cells can be rebuilt from a law of the wall for grids that do not resolve t
 | `turbulence.constant` | above 0, at most 0.5 | required | Smagorinsky's constant C. 0.1 to 0.2 is usual; 0.17 is Lilly's value for isotropic turbulence. |
 | `turbulence.prandtl` | 0.1 to 10 | 0.9 | Turbulent Prandtl number Pr_t of the turbulent heat diffusivity ν_t / Pr_t (with heat only). 0.85 to 0.9 is usual for air and water. |
 | `turbulence.van_driest` | 1 to 100 | none | Van Driest's A⁺: damps the length scale near no-slip walls. 26 is Van Driest's value. |
-| `turbulence.wall_model` | `"musker"`, `"spalding_bounce"` | none | `"musker"` rebuilds each fluid cell next to a no-slip wall from Musker's profile, for a first cell above the viscous sublayer (y⁺ 30 to 100). `"spalding_bounce"` reflects the populations at plane no-slip box faces at rest and gives each wall the stress of Spalding's law at its wall cells' own velocity, exactly (Han, Ooka and Kikumoto 2021); CPU only, a moving wall is refused. |
+| `turbulence.wall_model` | `"musker"`, `"spalding_bounce"` | none | `"musker"` rebuilds each fluid cell next to a no-slip wall from Musker's profile, for a first cell above the viscous sublayer (y⁺ 30 to 100). `"spalding_bounce"` reflects the populations at plane no-slip box faces at rest and gives each wall the stress of Spalding's law at its wall cells' own velocity, exactly (Han, Ooka and Kikumoto 2021); a moving wall is refused. |
 | `collision` | `"trt"`, `"regularized"`, `"mrt"` | `"trt"` | The model runs with every collision ([Collision operators](collision.md)). |
 
 A value outside its range is refused when the step is set up, naming the range. With a
@@ -274,7 +274,12 @@ damping in a coarse three-dimensional channel (6 cells per half-height, perturbe
 bounce-back walls and under the wall model: velocity within 1e-4 of the largest speed, density
 within 1e-5, ν_t/ν and the wall cells' largest y⁺ within 1e-3 of the CPU's (measured on an NVIDIA
 GB10: velocity up to 5.6e-6, ν_t/ν up to 1.2e-4, y⁺ up to 6.3e-6;
-`a_coarse_channel_with_van_driest_damping_follows_the_cpu`).
+`a_coarse_channel_with_van_driest_damping_follows_the_cpu`). The wall-function bounce with
+Van Driest damping in the same channel: the same tolerances, and the walls' drag within 1e-3 of
+the CPU's (measured: velocity up to 3.1e-6, drag up to 3.5e-6;
+`a_coarse_channel_with_the_wall_function_bounce_follows_the_cpu`). On the GPU the shift of the
+reflected populations is applied as link streaming writes them (`bounce_shift`), the stress
+sampled before the collision (`bounce_sample`).
 
 **Benchmark: Re_τ 180 channel** (a long study, run by hand; docs/verification.md, "Long studies").
 C = 0.1, regularised collision, channel 2πδ × 2δ × πδ driven by u_τ²/δ, 10 δ/u_τ of start-up
