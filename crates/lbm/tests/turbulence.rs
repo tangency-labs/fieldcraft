@@ -313,6 +313,11 @@ fn population_momentum(flow: &Flow) -> [f64; 3] {
 /// cell at y⁺ ≈ 15 at Re_τ 180) started from a perturbed blunt profile under the wall model,
 /// driven by a body force: every wall cell is rebuilt, with its u_τ moving.
 fn perturbed_wall_modelled_channel(collision: Collision, steps: f64) -> (Setup, Flow) {
+    perturbed_channel(collision, steps, WallModel::Musker)
+}
+
+/// [`perturbed_wall_modelled_channel`] under the wall model `wall`.
+fn perturbed_channel(collision: Collision, steps: f64, wall: WallModel) -> (Setup, Flow) {
     use std::f64::consts::PI;
     let (n, re_tau, ub) = (6usize, 180.0, 15.7);
     let dx = 1.0 / n as f64;
@@ -323,7 +328,11 @@ fn perturbed_wall_modelled_channel(collision: Collision, steps: f64) -> (Setup, 
     }
     d.acceleration = [1.0, 0.0, 0.0];
     let dt = 0.1 * dx / ub;
-    let (setup, mut flow) = prepare(&model(1.0, 1.0 / re_tau, d, wall_modelled(steps * dt, dt, collision, 0.1)), &[]);
+    let mut p = wall_modelled(steps * dt, dt, collision, 0.1);
+    if let Procedure::Fluid { turbulence: Some(Turbulence::Smagorinsky { wall_model, .. }), .. } = &mut p {
+        *wall_model = Some(wall);
+    }
+    let (setup, mut flow) = prepare(&model(1.0, 1.0 / re_tau, d, p), &[]);
     let grid = *flow.grid();
     let to_lattice = 1.0 / setup.velocity_scale();
     let (kx, kz) = (2.0 * PI / lx, 2.0 * PI / lz);
@@ -409,6 +418,76 @@ fn the_fields_report_a_modelled_wall_cell_at_its_imposed_velocity() {
         }
     }
     assert!(modelled > 0 && differ == modelled, "{differ} of {modelled} wall cells differ from their streamed state");
+}
+
+/// Han, Ooka and Kikumoto's wall-function bounce (`spalding_bounce`) in the perturbed coarse
+/// channel, step by step from the start: the walls carry exactly the stresses the wall cells
+/// sampled (their specular reflection carries no tangential momentum), so the fluid's momentum
+/// budget P(t + 1) − P(t) = a M − F closes to round-off, and the shifts conserve mass; each
+/// stress is ρ u_τ² along the wall cell's own velocity parallel to the wall, with u_τ the root of
+/// Spalding's law (κ 0.41, B 5.5) at half a cell.
+#[test]
+fn the_wall_function_bounce_gives_the_walls_exactly_the_law_s_stress() {
+    for collision in [Collision::Trt, Collision::Regularized, Collision::Mrt] {
+        let (setup, mut flow) = perturbed_channel(collision, 40.0, WallModel::SpaldingBounce);
+        assert!(flow.wall_bounce() && !flow.wall_model());
+        let a = flow.acceleration();
+        let nu = (setup.tau_plus - 0.5) / 3.0;
+        let (m0, mut p) = (flow.mass(), population_momentum(&flow));
+        let (mut budget, mut carried, mut law, mut mass) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
+        for _ in 0..setup.steps {
+            let before: Vec<(f64, [f64; 3])> = (0..flow.grid().len()).map(|c| flow.moments(c).unwrap_or((0.0, [0.0; 3]))).collect();
+            flow.step().unwrap();
+            let next = population_momentum(&flow);
+            let m = flow.mass();
+            let walls = flow.walls().unwrap();
+            let wall: [f64; 3] = [0, 1, 2].map(|k| flow.forces().iter().map(|f| f[k]).sum());
+            let stress: [f64; 3] = [0, 1, 2].map(|k| walls.stresses().map(|s| s.3[k]).sum());
+            for k in 0..3 {
+                budget = budget.max((next[k] - p[k] - (a[k] * m - wall[k])).abs() / next[0].abs());
+            }
+            // Tangential: x and z; the normal force is the pressure on the walls, which cancels.
+            for k in [0, 2] {
+                carried = carried.max((wall[k] - stress[k]).abs() / stress[0].abs());
+            }
+            for (cell, normal, _, s) in walls.stresses() {
+                let (rho, u) = before[cell];
+                let un = u[0] * normal[0] + u[1] * normal[1] + u[2] * normal[2];
+                let speed = (0..3).map(|k| (u[k] - un * normal[k]).powi(2)).sum::<f64>().sqrt();
+                let ut = ((s[0] * s[0] + s[1] * s[1] + s[2] * s[2]).sqrt() / rho).sqrt();
+                let (up, yp) = (speed / ut, 0.5 * ut / nu);
+                let k = 0.41 * up;
+                let spalding = up + (-0.41f64 * 5.5).exp() * (k.exp() - 1.0 - k - k * k / 2.0 - k * k * k / 6.0);
+                law = law.max((spalding / yp - 1.0).abs());
+            }
+            mass = mass.max((m / m0 - 1.0).abs());
+            p = next;
+        }
+        println!(
+            "{} wall-function bounce, {} steps: momentum budget {budget:.1e} of the momentum, carried vs sampled stress {carried:.1e}, Spalding's law {law:.1e}, mass {mass:.1e}",
+            collision.name(),
+            setup.steps
+        );
+        assert!(budget < 1e-12 && carried < 1e-12 && law < 1e-10 && mass < 1e-13, "{budget} {carried} {law} {mass}");
+    }
+}
+
+/// The wall-function bounce reflects only at walls at rest: a moving wall is refused.
+#[test]
+fn the_wall_function_bounce_refuses_a_moving_wall() {
+    let dx = 0.125;
+    let mut d = domain([0.0; 3], [dx, 1.0, dx], dx);
+    for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+        *f = PERIODIC;
+    }
+    d.faces.y_max = FaceCondition::MovingWall { velocity: [0.1, 0.0, 0.0] };
+    let mut p = wall_modelled(10.0 * dx, dx, Collision::Mrt, 0.1);
+    if let Procedure::Fluid { turbulence: Some(Turbulence::Smagorinsky { wall_model, .. }), .. } = &mut p {
+        *wall_model = Some(WallModel::SpaldingBounce);
+    }
+    let setup = Setup::new(&model(1.0, 0.01, d, p), None, &[], &Limits::default()).unwrap();
+    let err = Flow::new(&setup, &[]).unwrap_err().to_string();
+    assert!(err.contains("spalding_bounce") && err.contains("y_max"), "{err}");
 }
 
 /// A laminar channel under the wall model (8 cells across, body force, periodic along it) run to

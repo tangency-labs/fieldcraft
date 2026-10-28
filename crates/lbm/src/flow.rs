@@ -93,7 +93,7 @@
 //! only its own populations; the wall forces are summed in link order. There are no parallel
 //! reductions, so the result is the same bit for bit on any number of threads and platform.
 
-use fieldcraft_model::{BoxFace, Collision, FaceCondition, Outflow, Profile, ThermalCondition};
+use fieldcraft_model::{BoxFace, Collision, FaceCondition, Outflow, Profile, ThermalCondition, WallModel};
 
 use fieldcraft_parallel as parallel;
 
@@ -328,6 +328,8 @@ pub struct Flow {
     walls: Option<Walls>,
     /// Whether the wall cells relax with the wall model's viscosity.
     wall_model: bool,
+    /// Whether the wall-function bounce gives the walls their stress (`spalding_bounce`).
+    wall_bounce: bool,
     acceleration: [f64; 3],
     /// The momentum transferred to each group in the last step (lattice units).
     forces: Vec<[f64; 3]>,
@@ -480,6 +482,14 @@ impl Flow {
             _ => None,
         };
         let is_slip = |face: BoxFace| matches!(domain.faces.get(face), FaceCondition::Slip {});
+        // The wall-function bounce reflects at its walls instead of bouncing back; only at rest.
+        let wall_bounce = setup.wall_model == Some(WallModel::SpaldingBounce);
+        if wall_bounce && let Some(face) = BoxFace::ALL.iter().find(|f| matches!(domain.faces.get(**f), FaceCondition::MovingWall { .. })) {
+            return Err(Error::Invalid(format!(
+                "not supported yet: the wall model `spalding_bounce` on a moving wall (`{}`); use `musker` or a wall at rest",
+                face.name()
+            )));
+        }
         let dims = [nx as i64, ny as i64, nz as i64];
         let index = |p: [i64; 3]| grid.index([p[0] as usize, p[1] as usize, p[2] as usize]) as u32;
         let mut offset = [0isize; Q];
@@ -544,10 +554,9 @@ impl Flow {
                         }
                     }
                     Some(_) => {
-                        if let Some(face) = crossed_faces().find(|f| wall_velocity(*f).is_some()) {
-                            Rule::Bounce { group: face.index() as u32, du: moving_wall(q, wall_velocity(face).unwrap_or([0.0; 3])) }
-                        } else if let Some(face) = crossed_faces().find(|f| is_slip(*f)) {
-                            // The mirror source: the same cell layer, the tangential components shifted.
+                        // The specular reflection at `face`: from the same cell layer, the
+                        // tangential components shifted; bounce-back at an edge or corner.
+                        let reflect = |face: BoxFace| {
                             let a = face.axis();
                             let mut m = s;
                             m[a] = p[a];
@@ -562,6 +571,15 @@ impl Flow {
                                 }
                                 _ => Rule::Bounce { group: face.index() as u32, du: 0.0 },
                             }
+                        };
+                        if let Some(face) = crossed_faces().find(|f| wall_velocity(*f).is_some()) {
+                            if wall_bounce {
+                                reflect(face)
+                            } else {
+                                Rule::Bounce { group: face.index() as u32, du: moving_wall(q, wall_velocity(face).unwrap_or([0.0; 3])) }
+                            }
+                        } else if let Some(face) = crossed_faces().find(|f| is_slip(*f)) {
+                            reflect(face)
                         } else {
                             Rule::Open
                         }
@@ -781,7 +799,8 @@ impl Flow {
             cell_nu_t: if setup.smagorinsky > 0.0 && setup.thermal.is_some() { filled(n, 0.0, "eddy viscosities")? } else { Vec::new() },
             eddy_ratio: 0.0,
             walls,
-            wall_model: setup.wall_model.is_some(),
+            wall_model: setup.wall_model == Some(WallModel::Musker),
+            wall_bounce: setup.wall_model == Some(WallModel::SpaldingBounce),
             acceleration: setup.acceleration,
             forces: vec![[0.0; 3]; groups.len()],
             groups,
@@ -1120,6 +1139,7 @@ impl Flow {
         self.refresh_fans();
         self.refresh_damping();
         self.sample_walls();
+        self.sample_stress();
         let max_u2 = self.collide();
         if !(max_u2 <= MAX_LATTICE_SPEED * MAX_LATTICE_SPEED) {
             return Err(Error::Unstable(format!(
@@ -1129,6 +1149,7 @@ impl Flow {
             )));
         }
         self.stream();
+        self.apply_stress();
         self.open_boundaries();
         std::mem::swap(&mut self.f, &mut self.g);
         if self.thermal.is_some() {
@@ -1409,6 +1430,46 @@ impl Flow {
         self.walls = Some(walls);
     }
 
+    /// With the wall-function bounce: each wall cell's stress from its own density and velocity
+    /// before the collision.
+    fn sample_stress(&mut self) {
+        if !self.wall_bounce {
+            return;
+        }
+        let Some(mut walls) = self.walls.take() else { return };
+        walls.sample_stress(|cell| self.moments(cell).unwrap_or((0.0, [0.0; 3])));
+        self.walls = Some(walls);
+    }
+
+    /// With the wall-function bounce, after streaming: each wall cell's stress taken from its
+    /// streamed populations ([`Walls::stresses`]) and given to its wall's force group, so the
+    /// walls carry exactly the stress the law asks for.
+    fn apply_stress(&mut self) {
+        if !self.wall_bounce {
+            return;
+        }
+        let Some(walls) = &self.walls else { return };
+        let s = self.stride;
+        for (cell, normal, group, stress) in walls.stresses() {
+            for (a, tau) in stress.iter().enumerate().filter(|(_, t)| **t != 0.0) {
+                // The two populations into the fluid diagonally along axis a: −τ/2 on the one
+                // along +a, +τ/2 on the one along −a.
+                for (sign, delta) in [(1.0, -0.5 * tau), (-1.0, 0.5 * tau)] {
+                    let mut dir = normal;
+                    dir[a] += sign;
+                    if let Some(x) = (0..Q).find(|q| c(*q) == dir).and_then(|q| self.g.get_mut(q * s + cell)) {
+                        *x += delta;
+                    }
+                }
+            }
+            if let Some(force) = self.forces.get_mut(group) {
+                for a in 0..3 {
+                    force[a] += stress[a];
+                }
+            }
+        }
+    }
+
     fn refresh_damping(&mut self) {
         if !self.van_driest() {
             return;
@@ -1426,6 +1487,11 @@ impl Flow {
     /// Whether the wall cells relax with the wall model's viscosity.
     pub fn wall_model(&self) -> bool {
         self.wall_model
+    }
+
+    /// Whether the wall-function bounce gives the walls their stress (`spalding_bounce`).
+    pub fn wall_bounce(&self) -> bool {
+        self.wall_bounce
     }
 
     /// The wall cells, with Van Driest's damping or the wall model.

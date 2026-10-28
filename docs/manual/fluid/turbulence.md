@@ -36,7 +36,7 @@ wall cells can be rebuilt from a law of the wall for grids that do not resolve t
 | `turbulence.constant` | above 0, at most 0.5 | required | Smagorinsky's constant C. 0.1 to 0.2 is usual; 0.17 is Lilly's value for isotropic turbulence. |
 | `turbulence.prandtl` | 0.1 to 10 | 0.9 | Turbulent Prandtl number Pr_t of the turbulent heat diffusivity ν_t / Pr_t (with heat only). 0.85 to 0.9 is usual for air and water. |
 | `turbulence.van_driest` | 1 to 100 | none | Van Driest's A⁺: damps the length scale near no-slip walls. 26 is Van Driest's value. CPU only. |
-| `turbulence.wall_model` | `"musker"` | none | Rebuilds each fluid cell next to a no-slip wall from Musker's profile, for a first cell above the viscous sublayer (y⁺ 30 to 100). |
+| `turbulence.wall_model` | `"musker"`, `"spalding_bounce"` | none | `"musker"` rebuilds each fluid cell next to a no-slip wall from Musker's profile, for a first cell above the viscous sublayer (y⁺ 30 to 100). `"spalding_bounce"` reflects the populations at plane no-slip box faces at rest and gives each wall the stress of Spalding's law at its wall cells' own velocity, exactly (Han, Ooka and Kikumoto 2021); CPU only, a moving wall is refused. |
 | `collision` | `"trt"`, `"regularized"`, `"mrt"` | `"trt"` | The model runs with every collision ([Collision operators](collision.md)). |
 
 A value outside its range is refused when the step is set up, naming the range. With a
@@ -124,9 +124,16 @@ Each time step, before the collision:
    at the log law, and refined by Newton steps guarded by bisection, at most 100
    (`SPALDING_ITERATIONS`). A speed or a Reynolds number that is not a positive finite number
    gives u_τ = 0.
-2. **Wall model** (`wall_model`). Each wall cell whose second cell is fluid inside the box samples
-   that cell's velocity and stores its modelled velocity and relaxation rate. A wall cell whose
-   second cell is not fluid inside the box keeps the bounce-back alone.
+2. **Wall model** (`wall_model`). With `"musker"`, each wall cell whose second cell is fluid
+   inside the box samples that cell's velocity and stores its modelled velocity and relaxation
+   rate. A wall cell whose second cell is not fluid inside the box keeps the bounce-back alone.
+   With `"spalding_bounce"`, each wall cell on a plane wall (its centre half a cell from it)
+   takes the stress τ = ρ u_τ² along its own velocity parallel to the wall, u_τ the root of
+   Spalding's law with κ 0.41 and B 5.5 (Han, Ooka and Kikumoto's constants) at y = ½ Δx, solved
+   as for damping. Its wall links reflect specularly instead of bouncing back (no tangential
+   momentum of their own; bounce-back at an edge or corner). After streaming, the two
+   populations that point into the fluid diagonally along each tangential axis are shifted by
+   ∓τ/2: the cell loses τ of momentum and no mass, and the wall's force takes τ.
 3. **Collision.** For each fluid cell: the flux P from its populations; the cell's constant C,
    scaled by `1 − exp(−y⁺/A⁺)` with damping (taken as 1 from y⁺/A⁺ = 40, where it rounds to 1);
    the cell's rate from the closed form above, or the fluid's own rate where the result is not a
@@ -253,6 +260,8 @@ is in [Wall-modelled large-eddy simulation](../../lbm-wall-model.md).
 | Couette at h⁺ = 10, A⁺ = 26 (damping) | wall distances exactly the half-cell offsets; largest ν_t/ν the undamped value times the factor squared at the farthest cell (y⁺ ≈ 4.7, factor 0.165) | within tolerance | ν_t/ν 2 % (regularised), 20 % (TRT); first-cell y⁺ 1 %; wall shear the laminar one within 0.2 % | `van_driest_damping_scales_couette_flow_s_eddy_viscosity_by_the_wall_factor` |
 | Pipe of radius 1, 8 cells per radius (wall distance) | R − r | within 0.75 cell (staircase) | 0.75 cell | `wall_distances_in_a_pipe_follow_its_radius` |
 | Couette, 4 cells, first cell at y⁺ ≈ 12, damped | the unresolved-wall warning | warned; undamped and resolved grids not | — | `damping_on_a_wall_the_grid_does_not_resolve_is_warned_about` |
+| Wall-function bounce (`spalding_bounce`), perturbed coarse channel, 40 steps, every collision | the walls carry the sampled stress; momentum budget P(t + 1) − P(t) = a M − F; Spalding's law; mass | to round-off | 3e-15, 3e-14, 3e-14, 4e-14 | `the_wall_function_bounce_gives_the_walls_exactly_the_law_s_stress` |
+| Wall-function bounce on a moving wall | refused, naming the face | refused | — | `the_wall_function_bounce_refuses_a_moving_wall` |
 | Damped and wall-modelled cavity, 1, 3 and 7 threads | bit-for-bit equality | equal | exact | `damped_results_are_bit_for_bit_the_same_on_one_and_many_threads`, `wall_modelled_results_are_bit_for_bit_the_same_on_one_and_many_threads` |
 
 **GPU against CPU** (`crates/lbm-gpu/tests/verification.rs`, every collision and both streaming
@@ -333,6 +342,7 @@ docs/verification.md and summarised in [Wall-modelled large-eddy simulation](../
 - D. B. Spalding. *A single formula for the "law of the wall".* J. Appl. Mech. 28(3):455–458, 1961. doi:[10.1115/1.3641728](https://doi.org/10.1115/1.3641728)
 - P. Moin, J. Kim. *Numerical investigation of turbulent channel flow.* J. Fluid Mech. 118:341–377, 1982. doi:[10.1017/S0022112082001116](https://doi.org/10.1017/S0022112082001116)
 - P.-E. Danielsson. *Euclidean distance mapping.* Comput. Graph. Image Process. 14(3):227–248, 1980. doi:[10.1016/0146-664X(80)90054-4](https://doi.org/10.1016/0146-664X(80)90054-4)
+- M. Han, R. Ooka, H. Kikumoto. *A wall function approach in lattice Boltzmann method: algorithm and validation using turbulent channel flow.* Fluid Dyn. Res. 53:045506, 2021. doi:[10.1088/1873-7005/ac1782](https://doi.org/10.1088/1873-7005/ac1782)
 - A. J. Musker. *Explicit expression for the smooth wall velocity distribution in a turbulent boundary layer.* AIAA J. 17(6):655–657, 1979. doi:[10.2514/3.61193](https://doi.org/10.2514/3.61193)
 - U. Piomelli, E. Balaras. *Wall-layer models for large-eddy simulations.* Annu. Rev. Fluid Mech. 34:349–374, 2002. doi:[10.1146/annurev.fluid.34.082901.144919](https://doi.org/10.1146/annurev.fluid.34.082901.144919)
 - R. D. Moser, J. Kim, N. N. Mansour. *Direct numerical simulation of turbulent channel flow up to Re_τ = 590.* Phys. Fluids 11:943–945, 1999.

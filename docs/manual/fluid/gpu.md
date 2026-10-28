@@ -110,6 +110,7 @@ whose forces are read back (a submission's last). The temperature lattice is two
 | Steady-state rule and averaging | yes (decided on the host from read-back fields) |
 | Van Driest damping (`van_driest`) | no: refused, solve on the CPU |
 | Fans and porous zones | no: refused with the zone's name, solve on the CPU |
+| The wall-function bounce (`wall_model: "spalding_bounce"`) | no: refused, solve on the CPU |
 
 ## Algorithm
 

@@ -546,6 +546,11 @@ impl GpuFlow {
                 "Van Driest damping (`van_driest`) is not on the GPU backend yet: solve on the CPU (`backend: \"cpu\"`)".into(),
             ));
         }
+        if flow.wall_bounce() {
+            return Err(Error::Invalid(
+                "the wall model `spalding_bounce` is not on the GPU backend yet: solve on the CPU (`backend: \"cpu\"`)".into(),
+            ));
+        }
         if let Some(zone) = flow.zones().first() {
             return Err(Error::Invalid(format!(
                 "the GPU backend does not step fans or porous zones yet (`{}`): solve on the CPU (`backend: \"cpu\"`)",

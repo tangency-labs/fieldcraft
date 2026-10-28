@@ -79,6 +79,10 @@ pub const RESOLVED_WALL_Y_PLUS: f64 = 5.0;
 const KAPPA: f64 = 0.4;
 const B: f64 = 5.5;
 
+/// Han, Ooka and Kikumoto's constants of Spalding's law in their wall-function bounce.
+const BOUNCE_KAPPA: f64 = 0.41;
+const BOUNCE_B: f64 = 5.5;
+
 /// The most times the spreading may lower each cell's distance on average before it is stopped.
 const MAX_UPDATES_PER_CELL: usize = 64;
 
@@ -137,6 +141,9 @@ struct WallCell {
     /// The wall model's velocity and relaxation rate of this cell, from the last sample.
     boundary: [f64; 3],
     rate: f64,
+    /// The wall-function bounce's stress on the wall from the last sample (lattice units, the
+    /// momentum the cell gives its wall each step), along the cell's velocity parallel to it.
+    stress: [f64; 3],
 }
 
 impl WallCell {
@@ -182,7 +189,9 @@ impl Walls {
             // wall is halfway there; an axis link first, then the lowest direction.
             let mut best: Option<(f64, usize, [f64; 3], u32)> = None;
             for l in links {
-                let Rule::Bounce { group, .. } = l.rule else { continue };
+                // A no-slip wall's links: bounce-back, or the specular reflection of the
+                // wall-function bounce.
+                let (Rule::Bounce { group, .. } | Rule::Reflect { group, .. }) = l.rule else { continue };
                 let Some(Some(velocity)) = walls.get(group as usize) else { continue };
                 let q = usize::from(l.q);
                 let cq = c(q);
@@ -216,6 +225,7 @@ impl Walls {
                 second: second.map_or(NONE, |s| s as u32),
                 boundary: velocity,
                 rate: 1.0 / (3.0 * nu + 0.5),
+                stress: [0.0; 3],
             });
         }
         let distance = if a_plus.is_some() { spread(grid, fluid, &found, &mut wall_of)? } else { Vec::new() };
@@ -286,6 +296,38 @@ impl Walls {
             w.boundary = [0, 1, 2].map(|a| w.velocity[a] + scale * t[a]);
             w.rate = 1.0 / (3.0 * (nu + nu_t) + 0.5);
         });
+    }
+
+    /// The wall-function bounce's sample before a collision (Han, Ooka and Kikumoto, their eqs.
+    /// 16–17): from `moments(cell)`, each wall cell's own density and velocity (lattice units,
+    /// with the half force), the stress ρ u_τ² along its velocity parallel to the wall, u_τ from
+    /// Spalding's law (κ 0.41, B 5.5) at its distance, in parallel: each wall cell's is its own.
+    /// Only a cell whose wall is a lattice plane (its distance half a cell) takes one.
+    pub fn sample_stress(&mut self, moments: impl Fn(usize) -> (f64, [f64; 3]) + Sync) {
+        let nu = self.nu;
+        parallel::for_each_mut(&mut self.walls, |_, w| {
+            w.stress = [0.0; 3];
+            if w.distance != 0.5 {
+                return;
+            }
+            let (rho, u) = moments(w.cell as usize);
+            let rel = [0, 1, 2].map(|a| u[a] - w.velocity[a]);
+            let un = dot(rel, w.normal);
+            let t = [0, 1, 2].map(|a| rel[a] - un * w.normal[a]);
+            let speed = dot(t, t).sqrt();
+            let ut = spalding_friction(speed, w.distance, nu, BOUNCE_KAPPA, BOUNCE_B);
+            let scale = rho * ut * ut / speed;
+            if speed > 0.0 && scale.is_finite() {
+                w.stress = t.map(|v| scale * v);
+            }
+        });
+    }
+
+    /// The wall cells' stresses from the last [`Walls::sample_stress`], those that have one, in
+    /// cell order: each one's cell, its unit normal into the fluid, its wall's force group and
+    /// its stress (the momentum it gives its wall each step, lattice units).
+    pub fn stresses(&self) -> impl Iterator<Item = (usize, [f64; 3], usize, [f64; 3])> + '_ {
+        self.walls.iter().filter(|w| w.stress != [0.0; 3]).map(|w| (w.cell as usize, w.normal, w.group as usize, w.stress))
     }
 
     /// The wall model's velocity and relaxation rate of wall cell `cell` from the last sample
@@ -495,28 +537,33 @@ pub fn unresolved_wall(y_plus: f64) -> Option<String> {
 }
 
 /// Spalding's `y⁺(u⁺)` and its slope `dy⁺/du⁺`, with `e = exp(−κB)`.
-fn spalding(u_plus: f64, e: f64) -> (f64, f64) {
-    let k = KAPPA * u_plus;
+fn spalding(u_plus: f64, e: f64, kappa: f64) -> (f64, f64) {
+    let k = kappa * u_plus;
     let rest = k.exp() - 1.0 - k - k * k / 2.0;
-    (u_plus + e * (rest - k * k * k / 6.0), 1.0 + KAPPA * e * rest)
+    (u_plus + e * (rest - k * k * k / 6.0), 1.0 + kappa * e * rest)
 }
 
 /// The friction velocity of a flow of speed `speed` parallel to a wall at distance `y` with
 /// kinematic viscosity `nu`, from Spalding's law: 0 at rest or with a number that is not usable.
 pub fn friction_velocity(speed: f64, y: f64, nu: f64) -> f64 {
+    spalding_friction(speed, y, nu, KAPPA, B)
+}
+
+/// [`friction_velocity`] with Kármán's constant `kappa` and the intercept `b`.
+fn spalding_friction(speed: f64, y: f64, nu: f64, kappa: f64, b: f64) -> f64 {
     let re = speed * y / nu;
     if !(re.is_finite() && re > 0.0) {
         return 0.0;
     }
     // u⁺ y⁺(u⁺) = Re_y rises with u⁺; the sublayer's root √Re_y bounds it from above.
-    let e = (-KAPPA * B).exp();
+    let e = (-kappa * b).exp();
     let (mut lo, mut hi) = (0.0, re.sqrt());
     // The log law at y⁺ = Re_y lies above the root and near it once Re_y is large; Newton walks
     // down an exponential only a step of 1/κ at a time, so it starts there.
-    let mut up = (re.ln() / KAPPA + B).clamp(f64::MIN_POSITIVE, hi);
+    let mut up = (re.ln() / kappa + b).clamp(f64::MIN_POSITIVE, hi);
     let mut last = f64::INFINITY;
     for _ in 0..SPALDING_ITERATIONS {
-        let (y_plus, slope) = spalding(up, e);
+        let (y_plus, slope) = spalding(up, e, kappa);
         let value = up * y_plus - re;
         if value == 0.0 {
             break;
@@ -550,7 +597,7 @@ mod tests {
         let nu = 1e-3;
         for u_plus in [0.5, 1.0, 2.0] {
             let ut = 0.05;
-            let y_plus = spalding(u_plus, (-KAPPA * B).exp()).0;
+            let y_plus = spalding(u_plus, (-KAPPA * B).exp(), KAPPA).0;
             assert!((y_plus / u_plus - 1.0).abs() < 2e-3, "the sublayer: {y_plus} at u⁺ {u_plus}");
             let got = friction_velocity(ut * u_plus, y_plus * nu / ut, nu);
             assert!((got / ut - 1.0).abs() < 1e-10, "u⁺ {u_plus}: {got}");
@@ -568,7 +615,7 @@ mod tests {
                 let (mut lo, mut hi) = (0.0, y_plus);
                 for _ in 0..200 {
                     let mid = 0.5 * (lo + hi);
-                    if spalding(mid, (-KAPPA * B).exp()).0 > y_plus { hi = mid } else { lo = mid }
+                    if spalding(mid, (-KAPPA * B).exp(), KAPPA).0 > y_plus { hi = mid } else { lo = mid }
                 }
                 0.5 * (lo + hi)
             };
