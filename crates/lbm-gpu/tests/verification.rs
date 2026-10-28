@@ -2295,3 +2295,394 @@ fn study_malaspinas_and_sagaut_s_channel_against_lee_and_moser() {
     }
     assert!(failed.is_empty(), "outside the acceptance (first cell at y⁺ ≥ 30, or the paper's own at Re_τ 950): {failed:?}");
 }
+
+/// One of Han, Ooka and Kikumoto's channel cases (Fluid Dyn. Res. 53:045506, 2021, §3, Table 1):
+/// Re_τ, cells per half-height, the paper's Mach number and its centreline Reynolds number U_c D / ν
+/// (which sets the lattice speed), and its results for the wall-function bounce (WFB) and the
+/// bounce-back (BB): the L2 error ε_u⁺ against Spalding's law in the buffer layer, the log layer
+/// and the whole channel (Table 2), and the log law's intercept b (Table 3).
+struct HanCase {
+    name: &'static str,
+    re_tau: f64,
+    n: usize,
+    mach: f64,
+    re_centre: f64,
+    /// Whether the case may run at the smallest Mach number that keeps τ at the floor when the
+    /// paper's falls under it (a labelled deviation; B40 only, by the owner's decision).
+    raise_to_floor: bool,
+    wfb: ([f64; 3], f64),
+    bb: ([f64; 3], f64),
+}
+
+const HAN_CASES: [HanCase; 4] = [
+    HanCase {
+        name: "A20",
+        raise_to_floor: false,
+        re_tau: 640.0,
+        n: 20,
+        mach: 0.060,
+        re_centre: 13800.0,
+        wfb: ([0.069, 0.055, 0.057], 6.4),
+        bb: ([0.183, 0.009, 0.056], 5.6),
+    },
+    HanCase {
+        name: "A40",
+        raise_to_floor: false,
+        re_tau: 640.0,
+        n: 40,
+        mach: 0.060,
+        re_centre: 13800.0,
+        wfb: ([0.071, 0.067, 0.067], 6.6),
+        bb: ([0.103, 0.039, 0.048], 6.2),
+    },
+    HanCase {
+        name: "B40",
+        raise_to_floor: true,
+        re_tau: 2003.0,
+        n: 40,
+        mach: 0.069,
+        re_centre: 48000.0,
+        wfb: ([0.049, 0.080, 0.079], 6.6),
+        bb: ([0.911, 0.420, 0.429], -0.1),
+    },
+    HanCase {
+        name: "B80",
+        raise_to_floor: false,
+        re_tau: 2003.0,
+        n: 80,
+        mach: 0.069,
+        re_centre: 48000.0,
+        wfb: ([0.057, 0.066, 0.065], 6.5),
+        bb: ([0.617, 0.224, 0.235], -4.1),
+    },
+];
+
+/// The bulk U⁺ of Hoyas and Jiménez's channel at Re_τ 2003 (`Re2000.prof` of the Torroja
+/// database, the trapezoid rule over its rows), the reference of Han et al. at that Re_τ.
+const HJ_2000_BULK: f64 = 21.748;
+
+/// Spalding's u⁺ at `y_plus` with Han et al.'s constants (κ 0.41, B 5.5): the root of their eq.
+/// 16 by bisection (y⁺(u⁺) rises with u⁺; u⁺ ≤ y⁺).
+fn spalding_u_plus(y_plus: f64) -> f64 {
+    let (kappa, b) = (0.41f64, 5.5f64);
+    let e = (-kappa * b).exp();
+    let y = |u: f64| {
+        let k = kappa * u;
+        u + e * (k.exp() - 1.0 - k - k * k / 2.0 - k * k * k / 6.0)
+    };
+    let (mut lo, mut hi) = (0.0, y_plus.max(0.0));
+    for _ in 0..200 {
+        let mid = 0.5 * (lo + hi);
+        if y(mid) > y_plus { hi = mid } else { lo = mid }
+    }
+    0.5 * (lo + hi)
+}
+
+/// What one Han et al. case measured.
+struct HanResult {
+    /// U⁺ at the half-channel's cell centres (y/δ, U⁺), folded about the centreline, by the
+    /// nominal u_τ = 1; u′rms⁺ likewise.
+    profile: Vec<(f64, f64)>,
+    rms: Vec<f64>,
+    bulk: f64,
+    /// ε_u⁺ in the buffer layer (y⁺ < 100), the log layer (y⁺ ≥ 100) and the whole channel, and b.
+    eps: [f64; 3],
+    b: f64,
+    /// The walls' mean force over the body force on the fluid (1 when the walls carry it).
+    carried: f64,
+    window: (f64, f64),
+    stop: String,
+    steps: u64,
+    seconds: f64,
+    /// The Mach number run and τ.
+    mach: f64,
+    tau: f64,
+}
+
+/// ε_u⁺ (Han et al.'s eq. 19, √(Σ (u⁺ − u⁺_S)² / Σ u⁺_S²) against Spalding's law u⁺_S) over the
+/// half-channel's cell centres (their u⁺ "at y⁺ = i", read as the grid points: interpolating
+/// between them would add an error of its own, 2 % in the buffer layer on Spalding's own profile
+/// at 40 cells), in the buffer layer (y⁺ < 100), the log layer (y⁺ ≥ 100) and the whole half
+/// channel; and b, the mean of U⁺ − ln(y⁺) / 0.41 over the cells with 100 ≤ y⁺ ≤ 0.3 Re_τ (the
+/// paper states neither the points of its sums nor the range of its fit: these are our readings).
+fn han_measures(profile: &[(f64, f64)], re_tau: f64) -> ([f64; 3], f64) {
+    let mut sums = [[0.0f64; 2]; 3];
+    for &(y, u) in profile {
+        let yp = y * re_tau;
+        let s = spalding_u_plus(yp);
+        for (k, inside) in [yp < 100.0, yp >= 100.0, true].into_iter().enumerate() {
+            if inside {
+                sums[k][0] += (u - s) * (u - s);
+                sums[k][1] += s * s;
+            }
+        }
+    }
+    let eps = sums.map(|[d, s]| (d / s).sqrt());
+    let log: Vec<f64> =
+        profile.iter().filter(|(y, _)| (100.0..=0.3 * re_tau).contains(&(y * re_tau))).map(|(y, u)| u - (y * re_tau).ln() / 0.41).collect();
+    (eps, log.iter().sum::<f64>() / log.len() as f64)
+}
+
+/// Han et al.'s channel (their §3): 2πD × 2D × πD on `case.n` cells per half-height D, periodic
+/// in x and z, D3Q19 MRT, Smagorinsky's model at C_s 0.1 with Van Driest's damping (A⁺ 26: the
+/// paper names the damping, not its constant), driven by the constant pressure gradient of the
+/// nominal u_τ = 1 (δ = 1; the paper normalises by the nominal u_τ), with the wall-function bounce
+/// (`wfb`) or plain bounce-back. The lattice speed is the paper's Mach number at the centreline
+/// speed its Re implies (U_c⁺ = Re / Re_τ). 20 δ/u_τ discarded, then U_b's block means of 2 δ/u_τ
+/// until their 95 % interval is under 1 % with a lag-1 correlation under 0.5 and at least 50 δ/u_τ
+/// averaged, at most 150. A case whose Mach number puts τ under the floor is refused, except B40
+/// (Re_τ 2003, 40 cells: τ 0.500099 at their Ma 0.069), which runs at the smallest Mach number
+/// that reaches the floor, 0.0693, a deviation printed and recorded with both Mach numbers.
+fn han_channel(case: &HanCase, wfb: bool, cpu: bool) -> Option<Result<HanResult, String>> {
+    use std::f64::consts::PI;
+    let (start, min_average, block, end, tolerance) = (20.0, 50.0, 2.0, 150.0, 1e-2);
+    let n = case.n;
+    let dx = 1.0 / n as f64;
+    let (lx, lz) = ((2.0 * PI * n as f64).round() * dx, (PI * n as f64).round() * dx);
+    let mut d = domain([0.0; 3], [lx, 2.0, lz], dx);
+    for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+        *f = PERIODIC;
+    }
+    d.acceleration = [1.0, 0.0, 0.0];
+    let uc = case.re_centre / case.re_tau;
+    // τ − ½ = 3 ν Δt / Δx² grows with the lattice speed: the Mach number that puts τ on the floor.
+    let floor = fieldcraft_lbm::setup::MIN_TAU_TURBULENT;
+    let tau_at = |mach: f64| 0.5 + 3.0 / case.re_tau * (mach / 3f64.sqrt() / uc) / dx;
+    let mach = if case.raise_to_floor && tau_at(case.mach) < floor {
+        case.mach * (floor - 0.5) / (tau_at(case.mach) - 0.5) * (1.0 + 1e-9)
+    } else {
+        case.mach
+    };
+    let dt = mach / 3f64.sqrt() * dx / uc;
+    let mut p = collide(end, dt, None, Collision::Mrt);
+    if let Procedure::Fluid { turbulence, .. } = &mut p {
+        *turbulence = Some(fieldcraft_model::Turbulence::Smagorinsky {
+            constant: 0.1,
+            prandtl: 0.9,
+            van_driest: Some(26.0),
+            wall_model: wfb.then_some(fieldcraft_model::WallModel::SpaldingBounce),
+        });
+    }
+    let m = model(1.0, 1.0 / case.re_tau, d, p);
+    let limits = fieldcraft_lbm::Limits { max_cell_updates: 10_000_000_000_000, ..fieldcraft_lbm::Limits::default() };
+    let setup = match Setup::new(&m, None, &[], &limits) {
+        Ok(s) => s,
+        Err(e) => return Some(Err(format!("refused: {e}"))),
+    };
+    println!(
+        "  Han {} ({}): τ {:.6}, Mach {mach:.5} at the centreline (theirs {}{})",
+        case.name,
+        if wfb { "WFB" } else { "BB" },
+        setup.tau_plus,
+        case.mach,
+        if mach != case.mach { "; raised to the τ floor, a deviation" } else { "" }
+    );
+    let mut flow = Flow::new(&setup, &[]).unwrap();
+    let grid = *flow.grid();
+    let vs = setup.velocity_scale();
+    let (kx, kz) = (2.0 * PI / lx, 2.0 * PI / lz);
+    let ub0 = 0.87 * uc;
+    flow.set_equilibrium(|cell| {
+        let [x, y, z] = grid.centre(cell);
+        let eta = y - 1.0;
+        let wall = 1.0 - eta * eta;
+        let u = 1.15 * ub0 * (1.0 - eta.abs().powi(8)) + 2.0 * (2.0 * kz * z).sin() * (kx * x).cos() * wall;
+        let v = 1.5 * wall * (2.0 * kz * z).cos() * (3.0 * kx * x).sin();
+        let w = 1.5 * wall * eta * (kx * x).sin() * (kz * z).cos();
+        (1.0, [u / vs, v / vs, w / vs])
+    });
+    let mut device = if cpu { None } else { Some(gpu(&flow, Streaming::InPlace)?) };
+    let control = ((0.05 / dt) as u64).max(1);
+    let from = (start / dt) as u64;
+    let mut bulk = Blocks::new(((block / 0.05) as usize).max(1));
+    let [nx, ny, nz] = grid.cells;
+    let (mut sum_u, mut sum_uu, mut samples) = (vec![0.0; ny], vec![0.0; ny], 0usize);
+    let (mut force_sum, mut body_sum) = (0.0, 0.0);
+    let clock = std::time::Instant::now();
+    let mut k = 0u64;
+    let mut stop = "the step's end".to_string();
+    let mut window = (f64::NAN, f64::NAN);
+    while k < setup.steps {
+        let step = control.min(setup.steps - k);
+        if let Err(e) = backend(&mut device, &mut flow).advance(step) {
+            return Some(Err(format!("unstable before {:.2} δ/u_τ: {e}", (k + step) as f64 * dt)));
+        }
+        k += step;
+        let b = backend(&mut device, &mut flow);
+        let mean = b.mean_velocity(0).unwrap() * vs;
+        if k >= from {
+            if window.0.is_nan() {
+                window.0 = k as f64 * dt;
+            }
+            bulk.push(mean);
+            // The walls' force against the body force on the fluid, this step.
+            let forces = b.forces().unwrap();
+            force_sum += forces.iter().map(|f| f[0]).sum::<f64>();
+            body_sum += setup.acceleration[0] * b.mass().unwrap();
+            let fields = (0..3).find_map(|_| {
+                let (a, c) = (b.fields().ok()?, b.fields().ok()?);
+                (a.velocity == c.velocity && a.velocity.iter().all(|u| u.iter().all(|v| v.abs() < 1.0))).then_some(a)
+            });
+            if let Some(fields) = fields {
+                for (cell, u) in fields.velocity.iter().enumerate() {
+                    let j = grid.coords(cell)[1];
+                    sum_u[j] += u[0] * vs;
+                    sum_uu[j] += (u[0] * vs).powi(2);
+                }
+                samples += 1;
+            }
+            if k as f64 * dt >= start + min_average && bulk.half_width() < tolerance * bulk.mean() && bulk.lag1() < 0.5 {
+                stop = format!("steady at {:.1} δ/u_τ", k as f64 * dt);
+                break;
+            }
+        }
+        if k % (setup.steps / 20).max(1) < control {
+            println!(
+                "  Han {} ({}): t = {:.1}, U_b⁺ {mean:.3}, {:.0} s",
+                case.name,
+                if wfb { "WFB" } else { "BB" },
+                k as f64 * dt,
+                clock.elapsed().as_secs_f64()
+            );
+        }
+    }
+    window.1 = k as f64 * dt;
+    let per = (samples * nx * nz).max(1) as f64;
+    let mean: Vec<f64> = sum_u.iter().map(|s| s / per).collect();
+    let rms: Vec<f64> = sum_uu.iter().zip(&mean).map(|(s, m)| (s / per - m * m).max(0.0).sqrt()).collect();
+    let profile: Vec<(f64, f64)> = (0..ny / 2).map(|j| ((j as f64 + 0.5) * dx, 0.5 * (mean[j] + mean[ny - 1 - j]))).collect();
+    let rms = (0..ny / 2).map(|j| 0.5 * (rms[j] + rms[ny - 1 - j])).collect();
+    let (eps, b) = han_measures(&profile, case.re_tau);
+    // Lattice momentum per step against the body force per step: the same scale.
+    let carried = force_sum / body_sum;
+    Some(Ok(HanResult {
+        profile,
+        rms,
+        bulk: bulk.mean(),
+        eps,
+        b,
+        carried,
+        window,
+        stop,
+        steps: k,
+        seconds: clock.elapsed().as_secs_f64(),
+        mach,
+        tau: setup.tau_plus,
+    }))
+}
+
+/// Method two, step 1: Han, Ooka and Kikumoto's channel reproduced (see [`han_channel`]), each
+/// case with the wall-function bounce and its bounce-back control. Passes where ε_u⁺ over the
+/// whole channel and b are within 15 % of the paper's (Tables 2 and 3), for both; C_f = 2 / U_b⁺²
+/// is reported against Dean's correlation and, at Re_τ 2003, Hoyas and Jiménez. Each run writes a
+/// JSON record into `FIELDCRAFT_STUDY_RECORDS` (a directory) when set. Set `FIELDCRAFT_HAN` to a
+/// case (`A20`, `A40`, `B40`, `B80`), several separated by commas, or `1` for all; `_BB=0` skips
+/// the controls; `FIELDCRAFT_HAN_CPU=1` runs on the CPU in double precision.
+#[test]
+#[ignore = "hours, GPU: set FIELDCRAFT_HAN=A20,A40,B40 (docs/verification.md, \"Long studies\")"]
+fn study_han_ooka_and_kikumoto_s_wall_function_bounce() {
+    let Ok(which) = std::env::var("FIELDCRAFT_HAN") else {
+        println!("Han et al.'s channel runs only with FIELDCRAFT_HAN set (hours, GPU): skipped");
+        return;
+    };
+    let cpu = std::env::var_os("FIELDCRAFT_HAN_CPU").is_some();
+    let controls = std::env::var("FIELDCRAFT_HAN_BB").map_or(true, |v| v != "0");
+    let records = std::env::var_os("FIELDCRAFT_STUDY_RECORDS").map(std::path::PathBuf::from);
+    let commit = std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+    let mut failed = Vec::new();
+    for case in HAN_CASES.iter().filter(|c| which == "1" || which.split(',').any(|w| w == c.name)) {
+        for wfb in [true, false].into_iter().filter(|w| *w || controls) {
+            let kind = if wfb { "WFB" } else { "BB" };
+            let (paper_eps, paper_b) = if wfb { case.wfb } else { case.bb };
+            let Some(result) = han_channel(case, wfb, cpu) else { return };
+            let r = match result {
+                Ok(r) => r,
+                Err(e) => {
+                    println!("Han {} {kind}: {e}", case.name);
+                    failed.push(format!("{} {kind}: {e}", case.name));
+                    continue;
+                }
+            };
+            let cf = 2.0 / (r.bulk * r.bulk);
+            let cf_dean = 0.073 * (2.0 * r.bulk * case.re_tau).powf(-0.25);
+            let cf_dns = (case.re_tau == 2003.0).then(|| 2.0 / (HJ_2000_BULK * HJ_2000_BULK));
+            let eps_ok = (r.eps[2] / paper_eps[2] - 1.0).abs() <= 0.15;
+            let b_ok = (r.b / paper_b - 1.0).abs() <= 0.15;
+            println!(
+                "Han {} {kind} ({}, Re_τ {}, {}/δ): ε_u⁺ buffer {:.3} (theirs {}), log {:.3} ({}), whole {:.3} ({}, {:+.0} %); b {:.2} ({}, {:+.0} %); U_b⁺ {:.3}, C_f {cf:.4e} ({:+.1} % on Dean{}); walls carry {:.4} of the body force; Mach {:.4} (theirs {}), τ {:.6}; averaged {:.0}–{:.0} δ/u_τ, {}; {} steps, {:.0} s",
+                case.name,
+                if cpu { "CPU, f64" } else { "GPU, f32" },
+                case.re_tau,
+                case.n,
+                r.eps[0],
+                paper_eps[0],
+                r.eps[1],
+                paper_eps[1],
+                r.eps[2],
+                paper_eps[2],
+                100.0 * (r.eps[2] / paper_eps[2] - 1.0),
+                r.b,
+                paper_b,
+                100.0 * (r.b / paper_b - 1.0),
+                r.bulk,
+                100.0 * (cf / cf_dean - 1.0),
+                cf_dns.map_or(String::new(), |d| format!(", {:+.1} % on Hoyas & Jiménez", 100.0 * (cf / d - 1.0))),
+                r.carried,
+                r.mach,
+                case.mach,
+                r.tau,
+                r.window.0,
+                r.window.1,
+                r.stop,
+                r.steps,
+                r.seconds
+            );
+            for ((y, u), rms) in r.profile.iter().zip(&r.rms) {
+                println!("    y/δ {y:.4} y⁺ {:7.1}: U⁺ {u:7.3}, Spalding {:7.3}, u′rms⁺ {rms:.3}", y * case.re_tau, spalding_u_plus(y * case.re_tau));
+            }
+            if let Some(dir) = &records {
+                let record = serde_json::json!({
+                    "study": "han_ooka_kikumoto_2021", "case": case.name, "wall": kind, "re_tau": case.re_tau, "cells_per_delta": case.n,
+                    "backend": if cpu { "cpu-f64" } else { "gpu-f32" }, "commit": commit,
+                    "profile": r.profile.iter().zip(&r.rms).map(|((y, u), rms)| serde_json::json!({"y": y, "y_plus": y * case.re_tau, "u_plus": u, "u_rms_plus": rms})).collect::<Vec<_>>(),
+                    "u_b_plus": r.bulk, "cf_carried": cf, "cf_dean": cf_dean, "cf_dns": cf_dns, "carried_over_body_force": r.carried,
+                    "eps": {"buffer": r.eps[0], "log": r.eps[1], "whole": r.eps[2]}, "eps_paper": paper_eps, "b": r.b, "b_paper": paper_b,
+                    "mach": r.mach, "mach_paper": case.mach, "tau": r.tau, "window": [r.window.0, r.window.1], "stop": r.stop, "steps": r.steps, "seconds": r.seconds,
+                });
+                let _ = std::fs::create_dir_all(dir);
+                let _ = std::fs::write(dir.join(format!("han-{}-{kind}.json", case.name)), serde_json::to_string_pretty(&record).unwrap_or_default());
+            }
+            if !(eps_ok && b_ok) {
+                failed.push(format!("{} {kind}: ε {:.3} (theirs {}), b {:.2} (theirs {})", case.name, r.eps[2], paper_eps[2], r.b, paper_b));
+            }
+        }
+    }
+    assert!(failed.is_empty(), "outside Han et al.'s results by more than 15 %: {failed:?}");
+}
+
+/// The stepper of a study: the GPU flow when there is one, else the CPU flow.
+fn backend<'a>(device: &'a mut Option<Gpu>, flow: &'a mut Flow) -> &'a mut dyn Backend {
+    match device.as_mut() {
+        Some(g) => &mut **g,
+        None => flow,
+    }
+}
+
+/// Han et al.'s measures on Spalding's own profile: ε_u⁺ vanishes, and b is 5.44 at Re_τ 2003 on
+/// 40 cells, Spalding's intercept 5.5 less its approach to the log law from below over 100 ≤ y⁺ ≤
+/// 600.
+#[test]
+fn han_s_measures_read_spalding_s_profile_as_exact() {
+    let re_tau = 2003.0;
+    let profile: Vec<(f64, f64)> = (0..40).map(|j| ((j as f64 + 0.5) / 40.0, spalding_u_plus((j as f64 + 0.5) / 40.0 * re_tau))).collect();
+    let (eps, b) = han_measures(&profile, re_tau);
+    assert!(eps.iter().all(|e| *e < 1e-12), "{eps:?}");
+    assert!((b - 5.44).abs() < 0.01, "{b}");
+    // The bisection inverts Spalding's y⁺(u⁺).
+    let u = spalding_u_plus(300.0);
+    assert!((u - (300f64.ln() / 0.41 + 5.5)).abs() < 0.06, "{u}");
+}
