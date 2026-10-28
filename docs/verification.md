@@ -173,11 +173,11 @@ Table 1 and C_f by the model's u_τ within its 4.22 % of Dean.
 
 | N | E (paper) | C_f by the model's u_τ vs Dean | C_f by the carried drag vs Dean |
 |---|---|---|---|
-| 10 | 2.04 (2.11) | +2.0 % | −16.5 % |
-| 20 | 1.04 (1.07) | +0.9 % | −14.3 % |
-| 30 | 0.89 (0.83) | +3.5 % | −14.3 % |
+| 10 | 2.08 (2.11) | +1.8 % | −16.8 % |
+| 20 | 0.99 (1.07) | +0.8 % | −13.7 % |
+| 30 | 0.87 (0.83) | +3.5 % | −14.1 % |
 
-**Passes** on the paper's measures. The drag the flow carries is 14–16 % low on every grid, a
+**Passes** on the paper's measures. The drag the flow carries is 14–17 % low on every grid, a
 property of the published method that its C_f (from the model's u_τ) does not show.
 
 ### Wall-modelled channel against Lee & Moser and Dean (#664, #749)

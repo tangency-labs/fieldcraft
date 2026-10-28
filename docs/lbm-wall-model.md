@@ -10,7 +10,7 @@ against its paper's own case, then documented here with its measurements.
 
 | Method | Wall treatment | Status |
 |---|---|---|
-| One | Malaspinas & Sagaut (2014): the first cell rebuilt from Musker's profile | Reproduces the paper at Re_τ 950. The drag the flow carries is 14–16 % below Dean's correlation. |
+| One | Malaspinas & Sagaut (2014): the first cell rebuilt from Musker's profile | Reproduces the paper at Re_τ 950. The drag the flow carries is 14–17 % below Dean's correlation. |
 
 Method one runs with the multiple-relaxation-time collision, on the CPU and the GPU.
 
@@ -142,9 +142,9 @@ Dean, and the profile error E within 15 % of the paper's Table 1 on every grid.
 
 | N | E | E, paper | C_f by the model's u_τ vs Dean | C_f by the carried drag vs Dean | model u_τ / carried u_τ |
 |---|---|---|---|---|---|
-| 10 | 2.04 | 2.11 (−3.3 %) | +2.0 % | −16.5 % | 1.105 |
-| 20 | 1.04 | 1.07 (−2.5 %) | +0.9 % | −14.3 % | 1.085 |
-| 30 | 0.89 | 0.83 (+7.7 %) | +3.5 % | −14.3 % | 1.099 |
+| 10 | 2.08 | 2.11 (−1.4 %) | +1.8 % | −16.8 % | 1.106 |
+| 20 | 0.99 | 1.07 (−7.5 %) | +0.8 % | −13.7 % | 1.081 |
+| 30 | 0.87 | 0.83 (+4.8 %) | +3.5 % | −14.1 % | 1.098 |
 
 **The reproduction passes:** E within 8 % of the paper on every grid, and C_f by the model's u_τ
 within its 4.22 %.
@@ -170,13 +170,13 @@ the DNS.
 
 The paper reports C_f from the friction velocity the wall model infers at x₂. The flow carries less:
 the body force that holds the bulk velocity, which equals the drag on the walls at steady state,
-gives a C_f 14–16 % below Dean's correlation on every grid. The model's u_τ is 8.5–10.5 % above the
+gives a C_f 14–17 % below Dean's correlation on every grid. The model's u_τ is 8–11 % above the
 carried one.
 
 This is a property of the method, not of our implementation. Method one imposes a velocity on x₁,
 not a stress on the wall. The stress the flow then carries comes from the rebuilt populations and
 the bounce-back on x₁'s wall links, and nothing makes it equal ρ u_τ². In the velocity profile the
-gap shows as the whole curve lying about 1–2 U⁺ above the DNS once it is scaled by the carried u_τ.
+gap shows as the whole curve lying about 1–2.5 U⁺ above the DNS once it is scaled by the carried u_τ.
 
 What users get: `solve.fluid` reports the carried drag, so expect skin friction and pressure drop
 about 15 % low with method one on these grids.
@@ -221,7 +221,7 @@ The runs take 2 minutes (N = 10) to an hour (N = 30) each on a GB10.
 
 ## Limitations
 
-- **The drag is off by 9–16 %.** Method one carries 14–16 % less wall drag than Dean's correlation
+- **The drag is off by 9–17 %.** Method one carries 14–17 % less wall drag than Dean's correlation
   at Re_τ 950 on 10 to 30 cells per δ. At Re_τ 1000 and 2000 it is 9–15 % off either way, except
   at Re_τ 2000 with 30 cells per δ (within 2 %). Plan skin friction and pressure drop with that margin.
 - **Equilibrium boundary layers.** The profile assumes an attached, equilibrium boundary layer.
