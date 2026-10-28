@@ -189,6 +189,23 @@ Mach numbers, with `spalding_bounce` (WFB) or plain bounce-back (BB). Pass crite
 the runs: ε_u⁺ over the whole channel and the log-law intercept b within 15 % of their Tables 2
 and 3, for both walls. Recorded on Linux aarch64 (NVIDIA GB10), GPU, f32 unless stated.
 
+**Correction: the WFB rows below did not run Han et al.'s scheme.** `spalding_bounce`, as used
+here, is a halfway variant of our own:
+- the wall lies halfway along the link, so the first fluid cell is at Δy/2;
+- each wall cell's Spalding stress is taken off that same cell's post-streaming inward diagonals.
+
+Han et al.'s eq. 14 is on-node:
+- a boundary node lies on the wall, so the first interior node is at Δy (their y⁺ 32 at A20 is Δx⁺);
+- the node's collision is replaced by bouncing back the axis populations and reflecting the
+  inward diagonals specularly, plus or minus (Δt/2Δy) τ_w, with τ_w from Spalding at the node above it;
+- so a node's stress is deposited into the interior neighbours at x ± 1.
+
+The BB rows, the MRT diagnosis (the pile-up band, the ruled-out causes, the Taylor–Green control
+and the cause) and the conclusion for MRT at C_s 0.1 are unaffected. The WFB rows record our
+variant, not a reproduction attempt of the paper's wall-function bounce. That reproduction (eq.
+14 as written, on MRT and on the hybrid recursive regularised collision) is the next step of
+method two.
+
 ```
 FIELDCRAFT_HAN=A20,A40 cargo test --release -p fieldcraft-lbm-gpu --test verification study_han -- --ignored --nocapture
 ```
