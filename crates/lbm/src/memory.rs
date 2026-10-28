@@ -4,13 +4,14 @@
 //!
 //! The figures follow the arrays the solver allocates, per cell: the momentum populations
 //! (19 doubles, and the same again for the streaming targets on the CPU), the cell flags, the
-//! temperature lattice with heat (and each cell's eddy viscosity with a turbulence model too), the
-//! output frames (single precision: velocity and pressure,
+//! temperature lattice with heat (and each cell's eddy viscosity with a turbulence model too), each
+//! cell's velocity for the finite-difference gradient with the hybrid collision or Vreman's model,
+//! the output frames (single precision: velocity and pressure,
 //! and temperature with heat) and one frame's fields while it is written. Links at the box faces
 //! are counted; links at obstacles depend on their surface and are not, so a run with obstacles
 //! takes a little more (the tests state the margin).
 
-use fieldcraft_model::{FaceCondition, FluidDomain, Model, Procedure};
+use fieldcraft_model::{Collision, FaceCondition, FluidDomain, Model, Procedure};
 
 use crate::backend::Choice;
 use crate::flow::{Link, OpenCell};
@@ -38,6 +39,10 @@ const BUOYANCY: u64 = 3 * F64;
 /// Per cell with heat and a turbulence model: the eddy viscosity the temperature lattice's
 /// turbulent diffusivity comes from.
 const EDDY_VISCOSITY: u64 = F64;
+/// Per cell with the hybrid collision or Vreman's model: its velocity before the collision, for
+/// the finite-difference gradient (on the GPU a device buffer of three f32, smaller than the
+/// population buffer, so the check of that buffer covers it).
+const GRADIENT_VELOCITY: u64 = 3 * F64;
 /// Per cell with Van Driest's damping: its wall distance and the index of its wall cell (the
 /// wall cells' own records are on the surface and not counted); with the wall model alone, the
 /// index only ([`INDEX`]).
@@ -108,6 +113,8 @@ struct Shape {
     /// A turbulence model (an eddy viscosity), its wall damping and its wall model.
     turbulence: bool,
     damping: bool,
+    /// The finite-difference velocity gradient (the hybrid collision, Vreman's model).
+    gradients: bool,
     wall_model: bool,
     zones: bool,
     conducting: bool,
@@ -117,7 +124,7 @@ struct Shape {
 impl Shape {
     /// The shape of a run over `domain` keeping `frames` frames after the initial one, with or
     /// without a turbulence model, its wall damping and its wall model.
-    fn new(domain: &FluidDomain, frames: u64, turbulence: bool, damping: bool, wall_model: bool) -> Result<Shape> {
+    fn new(domain: &FluidDomain, frames: u64, turbulence: bool, damping: bool, wall_model: bool, gradients: bool) -> Result<Shape> {
         let thermal = domain.thermal.as_ref();
         Ok(Shape {
             cells: domain.cells()?,
@@ -128,6 +135,7 @@ impl Shape {
             turbulence,
             damping,
             wall_model,
+            gradients,
             zones: !domain.fans.is_empty() || !domain.porous.is_empty(),
             conducting: thermal.is_some_and(|t| !t.solids.is_empty()),
             open_faces: fieldcraft_model::BoxFace::ALL.map(|f| is_open(domain.faces.get(f))),
@@ -144,6 +152,7 @@ impl Memory {
             setup.turbulent(),
             setup.van_driest.is_some(),
             setup.wall_model.is_some(),
+            setup.collision == Collision::Hrr || setup.vreman > 0.0,
         )?;
         Ok(Memory::from_shape(&shape, backend))
     }
@@ -153,11 +162,12 @@ impl Memory {
     /// but for a step with fewer time steps than frames.
     pub fn estimate(model: &Model, step: Option<&str>, backend: Choice) -> Result<Memory> {
         let (s, domain) = fluid_step(model, step)?;
-        let Procedure::Fluid { frames, turbulence, .. } = &s.procedure else {
+        let Procedure::Fluid { frames, turbulence, collision, .. } = &s.procedure else {
             return Err(Error::Invalid(format!("step `{}` is not a fluid step", s.name)));
         };
         let (damping, wall_model) = turbulence.map_or((false, false), |t| (t.van_driest().is_some(), t.wall_model().is_some()));
-        Ok(Memory::from_shape(&Shape::new(domain, u64::from(*frames), turbulence.is_some(), damping, wall_model)?, backend))
+        let gradients = *collision == Some(Collision::Hrr) || matches!(turbulence, Some(fieldcraft_model::Turbulence::Vreman { .. }));
+        Ok(Memory::from_shape(&Shape::new(domain, u64::from(*frames), turbulence.is_some(), damping, wall_model, gradients)?, backend))
     }
 
     fn from_shape(s: &Shape, backend: Choice) -> Memory {
@@ -196,6 +206,8 @@ impl Memory {
         if s.zones {
             flow += INDEX;
         }
+        // The CPU's gradient velocities are allocated with the flow (none on the host for the GPU).
+        let gradients = if s.gradients { GRADIENT_VELOCITY } else { 0 };
         if s.conducting {
             flow += INDEX;
         }
@@ -204,7 +216,7 @@ impl Memory {
             // The CPU flow allocates its streaming targets on the first step and keeps
             // everything to the end.
             Choice::Cpu => {
-                let state = prepared.saturating_add(per_cell(targets)).saturating_add(per_cell(RESULT));
+                let state = prepared.saturating_add(per_cell(targets + gradients)).saturating_add(per_cell(RESULT));
                 (state, state, per_cell(READBACK + if s.heat { READBACK_HEAT } else { 0 }))
             }
             // The device backend copies the flow up, and the flow is dropped before the steps.

@@ -452,7 +452,8 @@ fn a_wake_at_a_pressure_outlet_distorts_only_the_last_layer() {
 /// estimate cannot know before voxelising). The frames and the fields are exact. A turbulence
 /// model with heat adds each cell's eddy viscosity (8 bytes), on the CPU and while a flow is
 /// prepared for the GPU; without heat it adds nothing, and with the model off the estimate is
-/// what it always was.
+/// what it always was. The hybrid collision and Vreman's model add each cell's velocity (24
+/// bytes) on the CPU, as the flow allocates it, and nothing on the host for the GPU.
 #[test]
 fn the_memory_estimate_matches_what_a_run_allocates() {
     use fieldcraft_lbm::{Backend, Choice, Memory};
@@ -521,6 +522,45 @@ fn the_memory_estimate_matches_what_a_run_allocates() {
         // Model off: the estimate before the model, to the byte (the 48 × 24 × 24 channel).
         let frozen = if heat { [14_201_856, 14_201_856, 1_658_880, 1_105_920] } else { [9_556_992, 9_556_992, 1_327_104, 884_736] };
         assert_eq!([cpu_off.setup, cpu_off.state, cpu_off.frame_bytes, cpu_off.readback], frozen, "heat {heat}");
+    }
+    // The hybrid collision and Vreman's model hold each cell's velocity for the finite-difference
+    // gradient on the CPU (24 bytes, allocated as the estimate says); on the GPU that is a device
+    // buffer smaller than the populations', nothing on the host.
+    let with = |collision: fieldcraft_model::Collision, vreman: bool| {
+        let mut d = domain([0.0; 3], [3.0, 1.5, 1.5], 0.0625);
+        d.faces.x_min = FaceCondition::Velocity { velocity: [0.05, 0.0, 0.0], profile: Profile::Uniform };
+        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Convective };
+        let mut p = fieldcraft_model::Procedure::Fluid {
+            domain: "Flow".into(),
+            end_time: Some(0.4),
+            steps: None,
+            time_step: Some(0.01),
+            frames: 2,
+            magic: None,
+            sigma: None,
+            collision: Some(collision),
+            turbulence: None,
+            steady: None,
+        };
+        if let (fieldcraft_model::Procedure::Fluid { turbulence: t, .. }, true) = (&mut p, vreman) {
+            *t = Some(fieldcraft_model::Turbulence::Vreman { constant: 0.18, prandtl: 0.9, wall_model: None });
+        }
+        model(1.0, 0.01, d, p)
+    };
+    let n = Setup::new(&with(fieldcraft_model::Collision::Trt, false), None, &[], &Limits::default()).unwrap().grid.len() as u64;
+    let heap = |m: &fieldcraft_model::Model| {
+        let setup = Setup::new(m, None, &[], &Limits::default()).unwrap();
+        let mut flow = fieldcraft_lbm::Flow::new(&setup, &[]).unwrap();
+        flow.advance(1).unwrap();
+        flow.heap_bytes()
+    };
+    let trt = with(fieldcraft_model::Collision::Trt, false);
+    for m in [with(fieldcraft_model::Collision::Hrr, false), with(fieldcraft_model::Collision::Trt, true)] {
+        let [cpu, cpu_trt, gpu, gpu_trt] = [(&m, Choice::Cpu), (&trt, Choice::Cpu), (&m, Choice::Device), (&trt, Choice::Device)]
+            .map(|(m, c)| Memory::estimate(m, None, c).unwrap());
+        assert_eq!(cpu.state - cpu_trt.state, 24 * n);
+        assert_eq!((gpu.setup, gpu.state, gpu.device), (gpu_trt.setup, gpu_trt.state, gpu_trt.device));
+        assert_eq!(heap(&m) - heap(&trt), 24 * n);
     }
 }
 
