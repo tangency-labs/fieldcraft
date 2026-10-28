@@ -275,6 +275,40 @@ clean MRT result at C_s 0.1 is not explained by anything they publish (the 2021 
 wall-function bounce on the hybrid recursive regularised collision (Jacob, Malaspinas & Sagaut
 2018), as a labelled change of collision.
 
+### Wall-function bounce: the odd–even mode of the wall rows (stationary toy)
+
+The runs above used our halfway variant (`spalding_bounce_halfway`). In channels at τ̄ ≈ 0.50015
+it grew a streamwise odd–even (k_x = π) mode of u_x in its wall rows, about 3e-5 per step, until
+the run broke. Han et al.'s own scheme, on-node (`spalding_bounce`, their eq. 14,
+`crates/lbm/src/bounce.rs`), was then checked against the halfway one by a numerical linear
+analysis of that mode (`crates/lbm/tests/wall_stability.rs`).
+
+The set-up is a periodic box 16 × (2N + 1) × 2 cells on-node, 16 × 2N × 2 halfway, N = 4, with
+both walls under the wall model and no subgrid model. A body force holds the laminar base steady:
+g × (fluid rows) = 2 u_τ², with the first node's speed Spalding's at u_τ. The first node's u⁺ is
+aimed at 5 and 11, lowered until the centreline stays under lattice speed 0.1. A checkerboard of
+1e-6 in u_x is added to the first fluid row at each wall. The growth rate per step is the
+least-squares slope of ½ ln E of the mode's energy over the second half of 20 000 steps, or of the
+time before the mode fell to round-off.
+
+The growth rate per step is shown as the range over the regularised, hybrid (σ 0.99), MRT and TRT
+collisions and both aimed u⁺. The first node's u⁺ is in brackets.
+
+| τ̄ | on-node (eq. 14) | halfway |
+|---|---|---|
+| 0.50015 | −5.2e-5 to −1.9e-5 (5, 11) | +5.6e-5 to +1.4e-4 (5, 10.8) |
+| 0.5015 | −2.9e-4 to −8.8e-5 (5, 8.1) | +5.5e-4 to +7.1e-4 (4.8; MRT broke at step 18 368) |
+| 0.505 | −7.1e-4 to −3.3e-4 (5) | +1.8e-3 to +2.3e-3 (2.7; broke by step 7 500) |
+| 0.55 | −4.4e-3 to −2.6e-3 (1.6) | +2.1e-2 to +2.4e-2 (0.85; broke by step 640) |
+| 0.8 | −1.6e-2 to −1.5e-2 (0.65) | +0.13 (0.35; broke by step 107) |
+
+**Result:** Han et al.'s on-node form damps the mode with every collision and τ̄, down to
+0.50015. Our halfway variant amplifies it with every collision and τ̄, faster as τ̄ rises. At τ̄
+0.50015 its rate is of the order the channel showed.
+
+The trunk keeps one case: on-node, regularised, τ̄ 0.5015, u⁺ 5, rate ≤ 0 (−1.2e-4 over 4000
+steps). The sweep is a heavy test, `the_odd_even_mode_of_the_wall_rows_across_forms_collisions_and_tau`.
+
 ### Wall-function bounce, method two, on the hybrid collision (how to run)
 
 The same channel, cases and walls on the hybrid recursive regularised collision (J. Jacob,
