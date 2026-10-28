@@ -52,7 +52,7 @@ Rules beyond the layer order:
 
 `solidcraft-*` come from https://github.com/tangency-labs/solidcraft (formerly
 bherbruck/solidcraft, which redirects there), pinned in the workspace `Cargo.toml` to the commit
-of a SolidCraft release tag (now v0.18.2). SolidCraft's `[patch.crates-io]` (its fixed truck
+of a SolidCraft release tag (now v0.25.1). SolidCraft's `[patch.crates-io]` (its fixed truck
 crates) does not reach dependents, so the workspace repeats it from the same rev; bump both
 together, and keep the list in step with SolidCraft's (v0.16 added `truck-geometry`). The same
 goes for SolidCraft's patched `egui-wgpu` (MSAA clamped to what the device supports, 1x on

@@ -410,8 +410,9 @@ fn mesh_and_strong_relaxation_are_the_same_bits_everywhere() {
     // The meshers alone give what develop gave, stored in metres. A relaxation (guarded or
     // strong) starts from the millimetre image of the stored metres, which differs from the
     // millimetres develop kept by an ulp for 6–18% of computed coordinates, and amplifies that
-    // (on develop a 1-ulp nudge moves it as much): its bits differ from develop's.
-    assert_eq!(one, 0xecde_db9e_44da_ef8e, "fingerprint {one:#018x}");
+    // (on develop a 1-ulp nudge moves it as much): its bits differ from develop's. The plate's
+    // tessellation comes from SolidCraft, so a SolidCraft bump moves the fingerprint too (v0.25.1).
+    assert_eq!(one, 0x042c_c785_a236_378a, "fingerprint {one:#018x}");
 }
 
 /// A mesher's result depends on the stored model alone: relaxing, undoing and relaxing again

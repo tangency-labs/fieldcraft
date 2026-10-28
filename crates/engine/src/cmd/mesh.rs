@@ -1251,18 +1251,16 @@ mod tests {
         assert!(e.starts_with("body `Box"), "{e}");
     }
 
-    /// Persistent names grow with the design's split history: a tray floor split by joined ribs
+    /// Persistent names grow with the design's split history: a block's top split by joined ribs
     /// names every split, past the old 256-character cap. Such a design meshes, and a set on that
     /// face resolves by its full name, again after a remesh (#374).
     #[test]
     fn long_persistent_face_names_mesh_and_resolve() {
-        let mut commands = vec![
-            json!({"command": "solid.box", "params": {"length": 40, "width": 30, "height": 20, "corner": [0, 0, 0], "body_name": "Case"}}),
-            json!({"command": "solid.shell", "params": {"faces": [[20, 15, 20]], "thickness": 2, "direction": "inside", "body": "Case"}}),
-        ];
-        // Ribs across the floor split it into strips, each named by every split before it.
-        for x in (3..=36).step_by(3) {
-            commands.push(json!({"command": "solid.box", "params": {"length": 1, "width": 26, "height": 5, "corner": [x, 2, 2], "operation": "join", "targets": ["Case"]}}));
+        let mut commands =
+            vec![json!({"command": "solid.box", "params": {"length": 120, "width": 30, "height": 10, "corner": [0, 0, 0], "body_name": "Case"}})];
+        // Ribs across the top split it into strips, each named by every split.
+        for x in (3..=114).step_by(3) {
+            commands.push(json!({"command": "solid.box", "params": {"length": 1.5, "width": 30, "height": 2, "corner": [x, 0, 10], "operation": "join", "targets": ["Case"]}}));
         }
         let bytes = fieldcraft_geometry::script_design(&json!({"commands": commands}).to_string()).unwrap();
         let (_dir, path) = crate::tests::design_file(&bytes);

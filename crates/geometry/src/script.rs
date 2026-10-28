@@ -54,6 +54,7 @@ mod tests {
             {"command": "solid.box", "params": {"length": 10, "width": 4, "height": 2, "body_name": "B"}},
             {"command": "component.activate", "params": {"component": "root"}},
             {"command": "occurrence.copy", "params": {"component": "Block", "translate": [100, 0, 0]}},
+            {"command": "occurrence.ground", "params": {"occurrence": "Block:1", "grounded": false}},
             {"command": "occurrence.move", "params": {"occurrence": "Block:1", "axis": [0, 0, 1], "angle": "90 deg", "translate": [0, 50, 0]}}
         ]}"#;
         let design = open_design(&script_design(script).unwrap()).unwrap();
