@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="600" height="330" viewBox="0 0 600 330">
+  <title>linear-solvers-3</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M0 0 L600 0 L600 330 L0 330 Z" fill="#ffffff"/>
+    <path d="M50 40 L90 40 L90 280 L50 280 Z" fill="#eef3fc"/>
+    <path d="M50 40 L50 280 M90 40 L90 280 M130 40 L130 280 M170 40 L170 280 M210 40 L210 280 M250 40 L250 280 M290 40 L290 280 M50 40 L290 40 M50 80 L290 80 M50 120 L290 120 M50 160 L290 160 M50 200 L290 200 M50 240 L290 240 M50 280 L290 280" fill="none" stroke="#bbbbbb" stroke-width="0.8" stroke-miterlimit="10"/>
+    <path d="M53 43 L87 43 L87 77 L53 77 Z" fill="#dfe6f3"/>
+    <path d="M53 163 L87 163 L87 197 L53 197 Z" fill="#2a6fdb"/>
+    <path d="M173 43 L207 43 L207 77 L173 77 Z" fill="#2a6fdb"/>
+    <path d="M173 243 L207 243 L207 277 L173 277 Z" fill="#1d4fa0"/>
+    <path d="M253 163 L287 163 L287 197 L253 197 Z" fill="#1d4fa0"/>
+    <path d="M173 163 L207 163 L207 197 L173 197 Z" fill="#9db8ea"/>
+    <path d="M253 243 L287 243 L287 277 L253 277 Z" fill="#9db8ea"/>
+    <text transform="matrix(1 0 0 1 60.65 63.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">a_kk</tspan></text>
+    <text transform="matrix(1 0 0 1 66.36 183.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#ffffff"><tspan x="0" y="0">i₁</tspan></text>
+    <text transform="matrix(1 0 0 1 186.35 263.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#ffffff"><tspan x="0" y="0">i₂</tspan></text>
+    <g>
+      <g>
+        <path d="M70.8 80 L70.8 160 L69.2 160 L69.2 80 Z" fill="#e07b28"/>
+        <path d="M70 164 L66 156 L74 156 Z" fill="#e07b28"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M90 179.2 L170 179.2 L170 180.8 L90 180.8 Z" fill="#e07b28"/>
+        <path d="M174 180 L166 184 L166 176 Z" fill="#e07b28"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M190.8 200 L190.8 240 L189.2 240 L189.2 200 Z" fill="#e07b28"/>
+        <path d="M190 244 L186 236 L194 236 Z" fill="#e07b28"/>
+      </g>
+    </g>
+    <path d="M171 161 L209 161 L209 199 L171 199 Z" fill="none" stroke="#d1495b" stroke-width="2" stroke-miterlimit="10"/>
+    <path d="M251 161 L289 161 L289 199 L251 199 Z" fill="none" stroke="#d1495b" stroke-width="2" stroke-miterlimit="10"/>
+    <path d="M171 241 L209 241 L209 279 L171 279 Z" fill="none" stroke="#d1495b" stroke-width="2" stroke-miterlimit="10"/>
+    <path d="M251 241 L289 241 L289 279 L251 279 Z" fill="none" stroke="#d1495b" stroke-width="2" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 300 204)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#d1495b"><tspan x="0" y="0">2 × 2 pivot (i, r)</tspan></text>
+    <text transform="matrix(1 0 0 1 300 218)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#d1495b"><tspan x="0" y="0">ω_r = ω_i</tspan></text>
+    <text transform="matrix(1 0 0 1 67.39 32)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#555555"><tspan x="0" y="0">k</tspan></text>
+    <text transform="matrix(1 0 0 1 186.15 32)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#555555"><tspan x="0" y="0">i₁</tspan></text>
+    <text transform="matrix(1 0 0 1 266.15 32)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#555555"><tspan x="0" y="0">i₂</tspan></text>
+    <text transform="matrix(1 0 0 1 300 64)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">|a_kk| &lt; α ω_k</tspan></text>
+    <text transform="matrix(1 0 0 1 300 80)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">→ no 1 × 1 pivot at k: search</tspan></text>
+    <text transform="matrix(1 0 0 1 300 124)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#e07b28"><tspan x="0" y="0">follow each column&apos;s largest</tspan></text>
+    <text transform="matrix(1 0 0 1 300 137)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#e07b28"><tspan x="0" y="0">off-diagonal entry until a</tspan></text>
+    <text transform="matrix(1 0 0 1 300 150)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#e07b28"><tspan x="0" y="0">column&apos;s largest returns</tspan></text>
+    <text transform="matrix(1 0 0 1 50 306)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#222222"><tspan x="0" y="0">α = (1 + √17)/8 ≈ 0.640; at most 64 steps</tspan></text>
+  </g>
+</svg>

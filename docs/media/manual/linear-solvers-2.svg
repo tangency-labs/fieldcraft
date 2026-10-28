@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="640" height="330" viewBox="0 0 640 330">
+  <title>linear-solvers-2</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M0 0 L640 0 L640 330 L0 330 Z" fill="#ffffff"/>
+    <path d="M40 56 L55 56 L55 71 L40 71 Z M40 71 L55 71 L55 86 L40 86 Z M40 86 L55 86 L55 101 L40 101 Z M40 131 L55 131 L55 146 L40 146 Z M40 146 L55 146 L55 161 L40 161 Z M40 236 L55 236 L55 251 L40 251 Z M55 71 L70 71 L70 86 L55 86 Z M55 86 L70 86 L70 101 L55 101 Z M55 131 L70 131 L70 146 L55 146 Z M55 146 L70 146 L70 161 L55 161 Z M55 236 L70 236 L70 251 L55 251 Z M70 86 L85 86 L85 101 L70 101 Z M70 131 L85 131 L85 146 L70 146 Z M70 146 L85 146 L85 161 L70 161 Z M70 236 L85 236 L85 251 L70 251 Z" fill="#9db8ea" stroke="#ffffff" stroke-width="0.8" stroke-miterlimit="10"/>
+    <path d="M40 56 L85 101 L40 101 Z" fill="none" stroke="#2a6fdb" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M40 131 L85 131 L85 146 L40 146 Z" fill="none" stroke="#2a6fdb" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M40 146 L85 146 L85 161 L40 161 Z" fill="none" stroke="#2a6fdb" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M40 236 L85 236 L85 251 L40 251 Z" fill="none" stroke="#2a6fdb" stroke-width="1.2" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 56.74 48)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a6fdb"><tspan x="0" y="0">S1</tspan></text>
+    <path d="M85 101 L100 101 L100 116 L85 116 Z M85 116 L100 116 L100 131 L85 131 Z M85 146 L100 146 L100 161 L85 161 Z M85 161 L100 161 L100 176 L85 176 Z M85 251 L100 251 L100 266 L85 266 Z M100 116 L115 116 L115 131 L100 131 Z M100 146 L115 146 L115 161 L100 161 Z M100 161 L115 161 L115 176 L100 176 Z M100 251 L115 251 L115 266 L100 266 Z" fill="#9db8ea" stroke="#ffffff" stroke-width="0.8" stroke-miterlimit="10"/>
+    <path d="M85 101 L115 131 L85 131 Z" fill="none" stroke="#2a6fdb" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M85 146 L115 146 L115 161 L85 161 Z" fill="none" stroke="#2a6fdb" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M85 161 L115 161 L115 176 L85 176 Z" fill="none" stroke="#2a6fdb" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M85 251 L115 251 L115 266 L85 266 Z" fill="none" stroke="#2a6fdb" stroke-width="1.2" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 94.24 48)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a6fdb"><tspan x="0" y="0">S2</tspan></text>
+    <path d="M115 131 L130 131 L130 146 L115 146 Z M115 146 L130 146 L130 161 L115 161 Z M115 161 L130 161 L130 176 L115 176 Z M115 221 L130 221 L130 236 L115 236 Z M115 236 L130 236 L130 251 L115 251 Z M115 251 L130 251 L130 266 L115 266 Z M130 146 L145 146 L145 161 L130 161 Z M130 161 L145 161 L145 176 L130 176 Z M130 221 L145 221 L145 236 L130 236 Z M130 236 L145 236 L145 251 L130 251 Z M130 251 L145 251 L145 266 L130 266 Z M145 161 L160 161 L160 176 L145 176 Z M145 221 L160 221 L160 236 L145 236 Z M145 236 L160 236 L160 251 L145 251 Z M145 251 L160 251 L160 266 L145 266 Z" fill="#9db8ea" stroke="#ffffff" stroke-width="0.8" stroke-miterlimit="10"/>
+    <path d="M115 131 L160 176 L115 176 Z" fill="none" stroke="#2a6fdb" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M115 221 L160 221 L160 236 L115 236 Z" fill="none" stroke="#2a6fdb" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M115 236 L160 236 L160 251 L115 251 Z" fill="none" stroke="#2a6fdb" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M115 251 L160 251 L160 266 L115 266 Z" fill="none" stroke="#2a6fdb" stroke-width="1.2" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 131.74 48)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a6fdb"><tspan x="0" y="0">S3</tspan></text>
+    <path d="M160 176 L175 176 L175 191 L160 191 Z M160 191 L175 191 L175 206 L160 206 Z M160 206 L175 206 L175 221 L160 221 Z M160 221 L175 221 L175 236 L160 236 Z M160 236 L175 236 L175 251 L160 251 Z M160 251 L175 251 L175 266 L160 266 Z M175 191 L190 191 L190 206 L175 206 Z M175 206 L190 206 L190 221 L175 221 Z M175 221 L190 221 L190 236 L175 236 Z M175 236 L190 236 L190 251 L175 251 Z M175 251 L190 251 L190 266 L175 266 Z M190 206 L205 206 L205 221 L190 221 Z M190 221 L205 221 L205 236 L190 236 Z M190 236 L205 236 L205 251 L190 251 Z M190 251 L205 251 L205 266 L190 266 Z" fill="#a9d8b9" stroke="#ffffff" stroke-width="0.8" stroke-miterlimit="10"/>
+    <path d="M160 176 L205 221 L160 221 Z" fill="none" stroke="#2a9d55" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M160 221 L205 221 L205 236 L160 236 Z" fill="none" stroke="#2a9d55" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M160 236 L205 236 L205 251 L160 251 Z" fill="none" stroke="#2a9d55" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M160 251 L205 251 L205 266 L160 266 Z" fill="none" stroke="#2a9d55" stroke-width="1.2" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 176.74 48)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a9d55"><tspan x="0" y="0">S4</tspan></text>
+    <path d="M205 221 L220 221 L220 236 L205 236 Z M205 236 L220 236 L220 251 L205 251 Z M205 251 L220 251 L220 266 L205 266 Z M220 236 L235 236 L235 251 L220 251 Z M220 251 L235 251 L235 266 L220 266 Z M235 251 L250 251 L250 266 L235 266 Z" fill="#c9ccd3" stroke="#ffffff" stroke-width="0.8" stroke-miterlimit="10"/>
+    <path d="M205 221 L250 266 L205 266 Z" fill="none" stroke="#888888" stroke-width="1.2" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 221.74 48)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#888888"><tspan x="0" y="0">S5</tspan></text>
+    <path d="M40 56 L250 266 L40 266 Z" fill="none" stroke="#555555" stroke-width="0.8" stroke-miterlimit="10" stroke-dasharray="3 2"/>
+    <text transform="matrix(1 0 0 1 115.55 288)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">factor L (lower triangle)</tspan></text>
+    <path d="M325 118 L495 118 L495 268 L325 268 Z" fill="#eef3fc"/>
+    <path d="M505 118 L585 118 L585 188 L505 188 Z" fill="#f2f8f3"/>
+    <text transform="matrix(1 0 0 1 330 286)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a6fdb"><tspan x="0" y="0">thread 1</tspan></text>
+    <text transform="matrix(1 0 0 1 510 206)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a9d55"><tspan x="0" y="0">thread 2</tspan></text>
+    <path d="M470 70 L410 150" fill="none" stroke="#888888" stroke-miterlimit="10"/>
+    <path d="M470 70 L540 150" fill="none" stroke="#888888" stroke-miterlimit="10"/>
+    <path d="M410 150 L370 235" fill="none" stroke="#888888" stroke-miterlimit="10"/>
+    <path d="M410 150 L450 235" fill="none" stroke="#888888" stroke-miterlimit="10"/>
+    <path d="M454 70 C454 78.837 461.163 86 470 86 C478.837 86 486 78.837 486 70 C486 61.163 478.837 54 470 54 C461.163 54 454 61.163 454 70 Z" fill="#ffffff" stroke="#888888" stroke-width="1.4" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 463.92 73.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#222222"><tspan x="0" y="0">S5</tspan></text>
+    <path d="M394 150 C394 158.837 401.163 166 410 166 C418.837 166 426 158.837 426 150 C426 141.163 418.837 134 410 134 C401.163 134 394 141.163 394 150 Z" fill="#ffffff" stroke="#2a6fdb" stroke-width="1.4" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 403.92 153.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#222222"><tspan x="0" y="0">S3</tspan></text>
+    <path d="M524 150 C524 158.837 531.163 166 540 166 C548.837 166 556 158.837 556 150 C556 141.163 548.837 134 540 134 C531.163 134 524 141.163 524 150 Z" fill="#ffffff" stroke="#2a9d55" stroke-width="1.4" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 533.92 153.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#222222"><tspan x="0" y="0">S4</tspan></text>
+    <path d="M354 235 C354 243.837 361.163 251 370 251 C378.837 251 386 243.837 386 235 C386 226.163 378.837 219 370 219 C361.163 219 354 226.163 354 235 Z" fill="#ffffff" stroke="#2a6fdb" stroke-width="1.4" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 363.92 238.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#222222"><tspan x="0" y="0">S1</tspan></text>
+    <path d="M434 235 C434 243.837 441.163 251 450 251 C458.837 251 466 243.837 466 235 C466 226.163 458.837 219 450 219 C441.163 219 434 226.163 434 235 Z" fill="#ffffff" stroke="#2a6fdb" stroke-width="1.4" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 443.92 238.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#222222"><tspan x="0" y="0">S2</tspan></text>
+    <g>
+      <g>
+        <path d="M351.415 227.135 C343.636 193.423 355.901 168.08 388.139 151.263 L388.694 152.327 C356.94 168.891 344.928 193.686 352.585 226.865 Z" fill="#e07b28"/>
+        <path d="M392 150 L386.627 157.173 L383.038 150.005 Z" fill="#e07b28"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 300 300)" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"></text>
+    <text transform="matrix(1 0 0 1 305.56 166)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#e07b28"><tspan x="0" y="0">update</tspan></text>
+    <text transform="matrix(1 0 0 1 292.48 178)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#e07b28"><tspan x="0" y="0">L_K L_Kᵀ</tspan></text>
+    <text transform="matrix(1 0 0 1 281.68 190)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#e07b28"><tspan x="0" y="0">(left-looking)</tspan></text>
+    <text transform="matrix(1 0 0 1 414.15 40)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">supernodal elimination tree</tspan></text>
+  </g>
+</svg>

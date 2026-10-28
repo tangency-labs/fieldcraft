@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="640" height="330" viewBox="0 0 640 330">
+  <title>constraints-and-connectors-2</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M0 0 L640 0 L640 330 L0 330 Z" fill="#ffffff"/>
+    <path d="M40 170 L400 170 L400 260 L40 260 Z" fill="#f4f6f9" stroke="#888888" stroke-miterlimit="10"/>
+    <path d="M40 80 L400 80 L400 170 L40 170 Z" fill="#fdf1e6" stroke="#e07b28" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 48 250)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#555555"><tspan x="0" y="0">main block</tspan></text>
+    <text transform="matrix(1 0 0 1 48 94)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#e07b28"><tspan x="0" y="0">secondary block</tspan></text>
+    <path d="M160 170 L160 260 M280 170 L280 260" fill="none" stroke="#bbbbbb" stroke-width="0.8" stroke-miterlimit="10"/>
+    <path d="M60 170 L60 80 M124 170 L124 80 M188 170 L188 80 M252 170 L252 80 M316 170 L316 80 M380 170 L380 80" fill="none" stroke="#f2c49c" stroke-width="0.8" stroke-miterlimit="10"/>
+    <path d="M40 170 L400 170" fill="none" stroke="#222222" stroke-width="1.4" stroke-miterlimit="10"/>
+    <path d="M36 174 C36 176.209 37.791 178 40 178 C42.209 178 44 176.209 44 174 C44 171.791 42.209 170 40 170 C37.791 170 36 171.791 36 174 Z" fill="#888888"/>
+    <path d="M156 174 C156 176.209 157.791 178 160 178 C162.209 178 164 176.209 164 174 C164 171.791 162.209 170 160 170 C157.791 170 156 171.791 156 174 Z" fill="#888888"/>
+    <path d="M276 174 C276 176.209 277.791 178 280 178 C282.209 178 284 176.209 284 174 C284 171.791 282.209 170 280 170 C277.791 170 276 171.791 276 174 Z" fill="#888888"/>
+    <path d="M396 174 C396 176.209 397.791 178 400 178 C402.209 178 404 176.209 404 174 C404 171.791 402.209 170 400 170 C397.791 170 396 171.791 396 174 Z" fill="#888888"/>
+    <path d="M56 166 C56 168.209 57.791 170 60 170 C62.209 170 64 168.209 64 166 C64 163.791 62.209 162 60 162 C57.791 162 56 163.791 56 166 Z" fill="#e07b28"/>
+    <path d="M120 166 C120 168.209 121.791 170 124 170 C126.209 170 128 168.209 128 166 C128 163.791 126.209 162 124 162 C121.791 162 120 163.791 120 166 Z" fill="#e07b28"/>
+    <path d="M184 166 C184 168.209 185.791 170 188 170 C190.209 170 192 168.209 192 166 C192 163.791 190.209 162 188 162 C185.791 162 184 163.791 184 166 Z" fill="#e07b28"/>
+    <path d="M248 166 C248 168.209 249.791 170 252 170 C254.209 170 256 168.209 256 166 C256 163.791 254.209 162 252 162 C249.791 162 248 163.791 248 166 Z" fill="#e07b28"/>
+    <path d="M312 166 C312 168.209 313.791 170 316 170 C318.209 170 320 168.209 320 166 C320 163.791 318.209 162 316 162 C313.791 162 312 163.791 312 166 Z" fill="#e07b28"/>
+    <path d="M376 166 C376 168.209 377.791 170 380 170 C382.209 170 384 168.209 384 166 C384 163.791 382.209 162 380 162 C377.791 162 376 163.791 376 166 Z" fill="#e07b28"/>
+    <path d="M182 166 C182 169.314 184.686 172 188 172 C191.314 172 194 169.314 194 166 C194 162.686 191.314 160 188 160 C184.686 160 182 162.686 182 166 Z" fill="#e07b28" stroke="#222222" stroke-width="1.2" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 184.6 154)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">A</tspan></text>
+    <text transform="matrix(1 0 0 1 34.24 190)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">J1</tspan></text>
+    <text transform="matrix(1 0 0 1 154.24 190)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">J2</tspan></text>
+    <text transform="matrix(1 0 0 1 274.24 190)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">J3</tspan></text>
+    <text transform="matrix(1 0 0 1 394.24 190)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">J4</tspan></text>
+    <g>
+      <g>
+        <path d="M160.504 179.78 C164.924 189.882 168.868 194.721 172.088 194.26 C175.337 193.795 178.345 187.937 180.879 176.812 L181.952 177.056 C179.294 188.726 176.13 194.793 172.244 195.349 C168.332 195.909 164.156 190.871 159.496 180.22 Z" fill="#2a6fdb"/>
+        <path d="M181.84 175 L182.924 179.293 L179.057 178.443 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M280.314 180.451 C250.084 201.481 226.213 200.296 208.952 176.936 L209.836 176.282 C226.744 199.163 249.944 200.238 279.686 179.549 Z" fill="#2a6fdb"/>
+        <path d="M208.24 175 L212.157 177.064 L208.939 179.372 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 128.67 234)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#2a6fdb"><tspan x="0" y="0">w_AJ = M_AJ / Σ_K M_AK</tspan></text>
+    <path d="M440 80 L620 80 L620 200 L440 200 Z" fill="#ffffff" stroke="#bbbbbb" stroke-width="0.8" stroke-miterlimit="10"/>
+    <path d="M448 161.6 L612 161.6" fill="none" stroke="#555555" stroke-width="0.8" stroke-miterlimit="10"/>
+    <path d="M465 161.6 L530 106.6 L595 161.6" fill="none" stroke="#888888" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M465 179.6 L530 81.6 L595 179.6" fill="none" stroke="#e07b28" stroke-width="1.4" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 538 99.6)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">N_A</tspan></text>
+    <text transform="matrix(1 0 0 1 540 77.6)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#e07b28"><tspan x="0" y="0">ψ_A (dual)</tspan></text>
+    <text transform="matrix(1 0 0 1 465 191.6)" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8" fill="#222222"></text>
+    <text transform="matrix(1 0 0 1 465.87 216)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#555555"><tspan x="0" y="0">A&apos;s two faces; ψ_A dips negative</tspan></text>
+    <text transform="matrix(1 0 0 1 479.89 228)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#555555"><tspan x="0" y="0">at the neighbouring nodes</tspan></text>
+    <text transform="matrix(1 0 0 1 186.05 312)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">u_A = Σ_J w_AJ u_J   (and T_A = Σ_J w_AJ T_J in heat)</tspan></text>
+  </g>
+</svg>

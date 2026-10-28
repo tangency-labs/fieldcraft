@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="640" height="300" viewBox="0 0 640 300">
+  <title>frequency-2</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M0 0 L640 0 L640 300 L0 300 Z" fill="#ffffff"/>
+    <path d="M150 30 L150 260 M200 30 L200 260 M250 30 L250 260 M300 30 L300 260 M350 30 L350 260 M400 30 L400 260 M450 30 L450 260 M500 30 L500 260" fill="none" stroke="#e3e3e3" stroke-width="0.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 101.23 51)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">mode 1, 2</tspan></text>
+    <text transform="matrix(1 0 0 1 96.53 63)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#555555"><tspan x="0" y="0">1st bending</tspan></text>
+    <path d="M150 40 L160.48 40 L160.48 52 L150 52 Z" fill="#2a6fdb"/>
+    <path d="M150 54 L160.44 54 L160.44 66 L150 66 Z" fill="#c9ccd3"/>
+    <text transform="matrix(1 0 0 1 166.48 56)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#2a6fdb"><tspan x="0" y="0">209.5 Hz (+0.30 %)</tspan></text>
+    <text transform="matrix(1 0 0 1 101.23 95)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">mode 3, 4</tspan></text>
+    <text transform="matrix(1 0 0 1 94.91 107)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#555555"><tspan x="0" y="0">2nd bending</tspan></text>
+    <path d="M150 84 L214.92 84 L214.92 96 L150 96 Z" fill="#2a6fdb"/>
+    <path d="M150 98 L215.45 98 L215.45 110 L150 110 Z" fill="#c9ccd3"/>
+    <text transform="matrix(1 0 0 1 221.45 100)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#2a6fdb"><tspan x="0" y="0">1 298.3 Hz (-0.82 %)</tspan></text>
+    <text transform="matrix(1 0 0 1 101.23 139)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">mode 5, 6</tspan></text>
+    <text transform="matrix(1 0 0 1 96.53 151)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#555555"><tspan x="0" y="0">3rd bending</tspan></text>
+    <path d="M150 128 L328.65 128 L328.65 140 L150 140 Z" fill="#2a6fdb"/>
+    <path d="M150 142 L333.27 142 L333.27 154 L150 154 Z" fill="#c9ccd3"/>
+    <text transform="matrix(1 0 0 1 339.27 144)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#2a6fdb"><tspan x="0" y="0">3 572.9 Hz (-2.52 %)</tspan></text>
+    <text transform="matrix(1 0 0 1 111.49 183)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">mode 7</tspan></text>
+    <text transform="matrix(1 0 0 1 99.75 195)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#555555"><tspan x="0" y="0">1st torsion</tspan></text>
+    <path d="M150 172 L335.89 172 L335.89 184 L150 184 Z" fill="#2a6fdb"/>
+    <path d="M150 186 L334.14 186 L334.14 198 L150 198 Z" fill="#c9ccd3"/>
+    <text transform="matrix(1 0 0 1 341.89 188)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#2a6fdb"><tspan x="0" y="0">3 717.7 Hz (+0.95 %)</tspan></text>
+    <text transform="matrix(1 0 0 1 111.49 227)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">mode 8</tspan></text>
+    <text transform="matrix(1 0 0 1 108.34 239)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#555555"><tspan x="0" y="0">1st axial</tspan></text>
+    <path d="M150 216 L474.02 216 L474.02 228 L150 228 Z" fill="#2a6fdb"/>
+    <path d="M150 230 L473.26 230 L473.26 242 L150 242 Z" fill="#c9ccd3"/>
+    <text transform="matrix(1 0 0 1 480.02 232)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#2a6fdb"><tspan x="0" y="0">6 480.3 Hz (+0.23 %)</tspan></text>
+    <path d="M150 30 L150 260 L500 260" fill="none" stroke="#555555" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 147.3 275)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">0</tspan></text>
+    <text transform="matrix(1 0 0 1 187.94 275)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">1 000</tspan></text>
+    <text transform="matrix(1 0 0 1 237.94 275)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">2 000</tspan></text>
+    <text transform="matrix(1 0 0 1 287.94 275)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">3 000</tspan></text>
+    <text transform="matrix(1 0 0 1 337.94 275)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">4 000</tspan></text>
+    <text transform="matrix(1 0 0 1 387.94 275)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">5 000</tspan></text>
+    <text transform="matrix(1 0 0 1 437.94 275)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">6 000</tspan></text>
+    <text transform="matrix(1 0 0 1 487.94 275)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">7 000</tspan></text>
+    <text transform="matrix(1 0 0 1 291 293)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">frequency (Hz)</tspan></text>
+    <path d="M150 304 L160 304 L160 314 L150 314 Z" fill="#2a6fdb"/>
+    <text transform="matrix(1 0 0 1 164 313)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">FieldCraft (80 hex20, consistent mass)</tspan></text>
+    <path d="M380 304 L390 304 L390 314 L380 314 Z" fill="#c9ccd3"/>
+    <text transform="matrix(1 0 0 1 394 313)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">beam theory</tspan></text>
+  </g>
+</svg>

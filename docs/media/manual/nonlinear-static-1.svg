@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="560" height="330" viewBox="0 0 560 330">
+  <title>nonlinear-static-1</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M0 0 L560 0 L560 330 L0 330 Z" fill="#ffffff"/>
+    <path d="M70 280 L70 30 M182.5 280 L182.5 30 M295 280 L295 30 M407.5 280 L407.5 30 M520 280 L520 30 M70 241.54 L520 241.54 M70 193.46 L520 193.46 M70 145.38 L520 145.38 M70 97.31 L520 97.31 M70 49.23 L520 49.23" fill="none" stroke="#e3e3e3" stroke-width="0.5" stroke-miterlimit="10"/>
+    <path d="M70 30 L70 280 L520 280" fill="none" stroke="#555555" stroke-miterlimit="10"/>
+    <path d="M70 280 L70 284 M182.5 280 L182.5 284 M295 280 L295 284 M407.5 280 L407.5 284 M520 280 L520 284" fill="none" stroke="#555555" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 67.3 295)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">0</tspan></text>
+    <text transform="matrix(1 0 0 1 173.23 295)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">0.25</tspan></text>
+    <text transform="matrix(1 0 0 1 288.43 295)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">0.5</tspan></text>
+    <text transform="matrix(1 0 0 1 398.23 295)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">0.75</tspan></text>
+    <text transform="matrix(1 0 0 1 517.3 295)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">1</tspan></text>
+    <path d="M70 241.54 L66 241.54 M70 193.46 L66 193.46 M70 145.38 L66 145.38 M70 97.31 L66 97.31 M70 49.23 L66 49.23" fill="none" stroke="#555555" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 57.6 244.74)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">0</tspan></text>
+    <text transform="matrix(1 0 0 1 44.46 196.66)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">0.25</tspan></text>
+    <text transform="matrix(1 0 0 1 49.86 148.58)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">0.5</tspan></text>
+    <text transform="matrix(1 0 0 1 44.46 100.51)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">0.75</tspan></text>
+    <text transform="matrix(1 0 0 1 57.6 52.43)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">1</tspan></text>
+    <text transform="matrix(1 0 0 1 265.85 314)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">step fraction</tspan></text>
+    <text transform="matrix(0 -1 1 0 34.939 184.914)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">load factor λ</tspan></text>
+    <path d="M70 241.54 L520 49.23" fill="none" stroke="#888888" stroke-miterlimit="10" stroke-dasharray="5 3"/>
+    <text transform="matrix(1 0 0 1 427 107.54)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">no load path: λ = fraction</tspan></text>
+    <path d="M70 241.54 L295 49.23 L520 241.54" fill="none" stroke="#2a6fdb" stroke-width="1.8" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 363.49 230)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a6fdb"><tspan x="0" y="0">load_path [[0,0],[0.5,1],[1,0]]</tspan></text>
+    <path d="M112.4 203.077 C112.4 204.513 113.564 205.677 115 205.677 C116.436 205.677 117.6 204.513 117.6 203.077 C117.6 201.641 116.436 200.477 115 200.477 C113.564 200.477 112.4 201.641 112.4 203.077 Z" fill="#ffffff" stroke="#2a6fdb" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M179.9 145.385 C179.9 146.821 181.064 147.985 182.5 147.985 C183.936 147.985 185.1 146.821 185.1 145.385 C185.1 143.949 183.936 142.785 182.5 142.785 C181.064 142.785 179.9 143.949 179.9 145.385 Z" fill="#ffffff" stroke="#2a6fdb" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M247.4 87.692 C247.4 89.128 248.564 90.292 250 90.292 C251.436 90.292 252.6 89.128 252.6 87.692 C252.6 86.256 251.436 85.092 250 85.092 C248.564 85.092 247.4 86.256 247.4 87.692 Z" fill="#ffffff" stroke="#2a6fdb" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M359.9 106.923 C359.9 108.359 361.064 109.523 362.5 109.523 C363.936 109.523 365.1 108.359 365.1 106.923 C365.1 105.487 363.936 104.323 362.5 104.323 C361.064 104.323 359.9 105.487 359.9 106.923 Z" fill="#ffffff" stroke="#2a6fdb" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M427.4 164.615 C427.4 166.051 428.564 167.215 430 167.215 C431.436 167.215 432.6 166.051 432.6 164.615 C432.6 163.179 431.436 162.015 430 162.015 C428.564 162.015 427.4 163.179 427.4 164.615 Z" fill="#ffffff" stroke="#2a6fdb" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M66 241.538 C66 243.748 67.791 245.538 70 245.538 C72.209 245.538 74 243.748 74 241.538 C74 239.329 72.209 237.538 70 237.538 C67.791 237.538 66 239.329 66 241.538 Z" fill="#2a6fdb"/>
+    <path d="M291 49.231 C291 51.44 292.791 53.231 295 53.231 C297.209 53.231 299 51.44 299 49.231 C299 47.022 297.209 45.231 295 45.231 C292.791 45.231 291 47.022 291 49.231 Z" fill="#2a6fdb"/>
+    <path d="M516 241.538 C516 243.748 517.791 245.538 520 245.538 C522.209 245.538 524 243.748 524 241.538 C524 239.329 522.209 237.538 520 237.538 C517.791 237.538 516 239.329 516 241.538 Z" fill="#2a6fdb"/>
+    <text transform="matrix(1 0 0 1 223.27 37.23)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">increments end at every path point</tspan></text>
+    <text transform="matrix(1 0 0 1 190.5 159.38)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">increments</tspan></text>
+  </g>
+</svg>

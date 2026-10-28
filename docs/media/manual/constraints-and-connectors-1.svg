@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="660" height="320" viewBox="0 0 660 320">
+  <title>constraints-and-connectors-1</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M0 0 L660 0 L660 320 L0 320 Z" fill="#ffffff"/>
+    <path d="M20 100 L140 70 L140 220 L20 250 Z" fill="#f4f6f9" stroke="#bbbbbb" stroke-width="0.8" stroke-miterlimit="10"/>
+    <path d="M20 100 L140 70 L180 50 L60 80 Z" fill="#e9ecf1" stroke="#bbbbbb" stroke-width="0.8" stroke-miterlimit="10"/>
+    <path d="M131 70 L151 60 L171 50 M140 145 L160 135 L180 125 M149 220 L169 210 L189 200 M131 70 L140 145 L149 220 M151 60 L160 135 L169 210 M171 50 L180 125 L189 200" fill="none" stroke="#888888" stroke-miterlimit="10"/>
+    <path d="M290 125 L131 70" fill="none" stroke="#e07b28" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M290 125 L151 60" fill="none" stroke="#e07b28" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M290 125 L171 50" fill="none" stroke="#e07b28" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M290 125 L140 145" fill="none" stroke="#e07b28" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M290 125 L160 135" fill="none" stroke="#e07b28" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M290 125 L180 125" fill="none" stroke="#e07b28" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M290 125 L149 220" fill="none" stroke="#e07b28" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M290 125 L169 210" fill="none" stroke="#e07b28" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M290 125 L189 200" fill="none" stroke="#e07b28" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M128 70 C128 71.657 129.343 73 131 73 C132.657 73 134 71.657 134 70 C134 68.343 132.657 67 131 67 C129.343 67 128 68.343 128 70 Z" fill="#222222"/>
+    <path d="M148 60 C148 61.657 149.343 63 151 63 C152.657 63 154 61.657 154 60 C154 58.343 152.657 57 151 57 C149.343 57 148 58.343 148 60 Z" fill="#222222"/>
+    <path d="M168 50 C168 51.657 169.343 53 171 53 C172.657 53 174 51.657 174 50 C174 48.343 172.657 47 171 47 C169.343 47 168 48.343 168 50 Z" fill="#222222"/>
+    <path d="M137 145 C137 146.657 138.343 148 140 148 C141.657 148 143 146.657 143 145 C143 143.343 141.657 142 140 142 C138.343 142 137 143.343 137 145 Z" fill="#222222"/>
+    <path d="M157 135 C157 136.657 158.343 138 160 138 C161.657 138 163 136.657 163 135 C163 133.343 161.657 132 160 132 C158.343 132 157 133.343 157 135 Z" fill="#222222"/>
+    <path d="M177 125 C177 126.657 178.343 128 180 128 C181.657 128 183 126.657 183 125 C183 123.343 181.657 122 180 122 C178.343 122 177 123.343 177 125 Z" fill="#222222"/>
+    <path d="M146 220 C146 221.657 147.343 223 149 223 C150.657 223 152 221.657 152 220 C152 218.343 150.657 217 149 217 C147.343 217 146 218.343 146 220 Z" fill="#222222"/>
+    <path d="M166 210 C166 211.657 167.343 213 169 213 C170.657 213 172 211.657 172 210 C172 208.343 170.657 207 169 207 C167.343 207 166 208.343 166 210 Z" fill="#222222"/>
+    <path d="M186 200 C186 201.657 187.343 203 189 203 C190.657 203 192 201.657 192 200 C192 198.343 190.657 197 189 197 C187.343 197 186 198.343 186 200 Z" fill="#222222"/>
+    <path d="M284 125 C284 128.314 286.686 131 290 131 C293.314 131 296 128.314 296 125 C296 121.686 293.314 119 290 119 C286.686 119 284 121.686 284 125 Z" fill="#e07b28"/>
+    <text transform="matrix(1 0 0 1 283.2 97)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#e07b28"><tspan x="0" y="0">RP</tspan></text>
+    <g>
+      <g>
+        <path d="M274.771 111.051 C281.913 103.256 293.789 102.114 302.286 108.406 C310.782 114.698 313.154 126.391 307.78 135.496 C302.823 143.897 292.746 147.594 283.66 144.656 L284.06 143.419 C292.567 146.17 302.012 142.712 306.661 134.835 C311.696 126.303 309.473 115.346 301.512 109.451 C293.55 103.555 282.422 104.625 275.729 111.929 Z" fill="#d1495b"/>
+        <path d="M281.68 143.19 L286.89 142.706 L285.193 147.067 Z" fill="#d1495b"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 316 147)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#d1495b"><tspan x="0" y="0">M</tspan></text>
+    <path d="M350 100 L470 70 L470 220 L350 250 Z" fill="#f4f6f9" stroke="#bbbbbb" stroke-width="0.8" stroke-miterlimit="10"/>
+    <path d="M350 100 L470 70 L510 50 L390 80 Z" fill="#e9ecf1" stroke="#bbbbbb" stroke-width="0.8" stroke-miterlimit="10"/>
+    <path d="M466.4 70 L481 60 L506.4 50 M470 145 L496 135 L510 125 M473.6 220 L499 210 L513.6 200 M466.4 70 L470 145 L473.6 220 M481 60 L496 135 L499 210 M506.4 50 L510 125 L513.6 200" fill="none" stroke="#888888" stroke-miterlimit="10"/>
+    <path d="M620 125 L466.4 70" fill="none" stroke="#888888" stroke-width="0.8" stroke-miterlimit="10" stroke-dasharray="3 2"/>
+    <path d="M620 125 L481 60" fill="none" stroke="#888888" stroke-width="0.8" stroke-miterlimit="10" stroke-dasharray="3 2"/>
+    <path d="M620 125 L506.4 50" fill="none" stroke="#888888" stroke-width="0.8" stroke-miterlimit="10" stroke-dasharray="3 2"/>
+    <path d="M620 125 L470 145" fill="none" stroke="#888888" stroke-width="0.8" stroke-miterlimit="10" stroke-dasharray="3 2"/>
+    <path d="M620 125 L496 135" fill="none" stroke="#888888" stroke-width="0.8" stroke-miterlimit="10" stroke-dasharray="3 2"/>
+    <path d="M620 125 L510 125" fill="none" stroke="#888888" stroke-width="0.8" stroke-miterlimit="10" stroke-dasharray="3 2"/>
+    <path d="M620 125 L473.6 220" fill="none" stroke="#888888" stroke-width="0.8" stroke-miterlimit="10" stroke-dasharray="3 2"/>
+    <path d="M620 125 L499 210" fill="none" stroke="#888888" stroke-width="0.8" stroke-miterlimit="10" stroke-dasharray="3 2"/>
+    <path d="M620 125 L513.6 200" fill="none" stroke="#888888" stroke-width="0.8" stroke-miterlimit="10" stroke-dasharray="3 2"/>
+    <path d="M463.4 70 C463.4 71.657 464.743 73 466.4 73 C468.057 73 469.4 71.657 469.4 70 C469.4 68.343 468.057 67 466.4 67 C464.743 67 463.4 68.343 463.4 70 Z" fill="#222222"/>
+    <g>
+      <g>
+        <path d="M466.4 70.6 L446.32 70.6 L446.32 69.4 L466.4 69.4 Z" fill="#2a6fdb"/>
+        <path d="M444.4 70 L448.24 68.08 L448.24 71.92 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <path d="M478 60 C478 61.657 479.343 63 481 63 C482.657 63 484 61.657 484 60 C484 58.343 482.657 57 481 57 C479.343 57 478 58.343 478 60 Z" fill="#222222"/>
+    <g>
+      <g>
+        <path d="M481 60.6 L460.92 60.6 L460.92 59.4 L481 59.4 Z" fill="#2a6fdb"/>
+        <path d="M459 60 L462.84 58.08 L462.84 61.92 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <path d="M503.4 50 C503.4 51.657 504.743 53 506.4 53 C508.057 53 509.4 51.657 509.4 50 C509.4 48.343 508.057 47 506.4 47 C504.743 47 503.4 48.343 503.4 50 Z" fill="#222222"/>
+    <g>
+      <g>
+        <path d="M506.4 50.6 L486.32 50.6 L486.32 49.4 L506.4 49.4 Z" fill="#2a6fdb"/>
+        <path d="M484.4 50 L488.24 48.08 L488.24 51.92 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <path d="M467 145 C467 146.657 468.343 148 470 148 C471.657 148 473 146.657 473 145 C473 143.343 471.657 142 470 142 C468.343 142 467 143.343 467 145 Z" fill="#222222"/>
+    <path d="M493 135 C493 136.657 494.343 138 496 138 C497.657 138 499 136.657 499 135 C499 133.343 497.657 132 496 132 C494.343 132 493 133.343 493 135 Z" fill="#222222"/>
+    <path d="M507 125 C507 126.657 508.343 128 510 128 C511.657 128 513 126.657 513 125 C513 123.343 511.657 122 510 122 C508.343 122 507 123.343 507 125 Z" fill="#222222"/>
+    <path d="M470.6 220 C470.6 221.657 471.943 223 473.6 223 C475.257 223 476.6 221.657 476.6 220 C476.6 218.343 475.257 217 473.6 217 C471.943 217 470.6 218.343 470.6 220 Z" fill="#222222"/>
+    <g>
+      <g>
+        <path d="M473.6 219.4 L493.68 219.4 L493.68 220.6 L473.6 220.6 Z" fill="#2a6fdb"/>
+        <path d="M495.6 220 L491.76 221.92 L491.76 218.08 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <path d="M496 210 C496 211.657 497.343 213 499 213 C500.657 213 502 211.657 502 210 C502 208.343 500.657 207 499 207 C497.343 207 496 208.343 496 210 Z" fill="#222222"/>
+    <g>
+      <g>
+        <path d="M499 209.4 L519.08 209.4 L519.08 210.6 L499 210.6 Z" fill="#2a6fdb"/>
+        <path d="M521 210 L517.16 211.92 L517.16 208.08 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <path d="M510.6 200 C510.6 201.657 511.943 203 513.6 203 C515.257 203 516.6 201.657 516.6 200 C516.6 198.343 515.257 197 513.6 197 C511.943 197 510.6 198.343 510.6 200 Z" fill="#222222"/>
+    <g>
+      <g>
+        <path d="M513.6 199.4 L533.68 199.4 L533.68 200.6 L513.6 200.6 Z" fill="#2a6fdb"/>
+        <path d="M535.6 200 L531.76 201.92 L531.76 198.08 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <path d="M614 125 C614 128.314 616.686 131 620 131 C623.314 131 626 128.314 626 125 C626 121.686 623.314 119 620 119 C616.686 119 614 121.686 614 125 Z" fill="#e07b28"/>
+    <text transform="matrix(1 0 0 1 613.2 97)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#e07b28"><tspan x="0" y="0">RP</tspan></text>
+    <g>
+      <g>
+        <path d="M604.771 111.051 C611.913 103.256 623.789 102.114 632.286 108.406 C640.782 114.698 643.154 126.391 637.78 135.496 C632.823 143.897 622.746 147.594 613.66 144.656 L614.06 143.419 C622.567 146.17 632.012 142.712 636.661 134.835 C641.696 126.303 639.473 115.346 631.512 109.451 C623.55 103.555 612.422 104.625 605.729 111.929 Z" fill="#d1495b"/>
+        <path d="M611.68 143.19 L616.89 142.706 L615.193 147.067 Z" fill="#d1495b"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 646 147)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#d1495b"><tspan x="0" y="0">M</tspan></text>
+    <text transform="matrix(1 0 0 1 85.31 30)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="11" fill="#222222"><tspan x="0" y="0">kinematic</tspan></text>
+    <text transform="matrix(1 0 0 1 411.62 30)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="11" fill="#222222"><tspan x="0" y="0">distributing</tspan></text>
+    <text transform="matrix(1 0 0 1 20 280)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#222222"><tspan x="0" y="0">face moves rigidly with RP:</tspan></text>
+    <text transform="matrix(1 0 0 1 20 294)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#e07b28"><tspan x="0" y="0">u_s = u_r + θ_r × (x_s − x_r)</tspan></text>
+    <text transform="matrix(1 0 0 1 350 280)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#222222"><tspan x="0" y="0">RP follows the least-squares rigid fit;</tspan></text>
+    <text transform="matrix(1 0 0 1 350 294)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#2a6fdb"><tspan x="0" y="0">the face deforms freely (equal-weight nodal forces)</tspan></text>
+  </g>
+</svg>

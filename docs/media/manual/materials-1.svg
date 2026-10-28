@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="680" height="330" viewBox="0 0 680 330">
+  <title>materials-1</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M0 0 L680 0 L680 330 L0 330 Z" fill="#ffffff"/>
+    <path d="M60 30 L60 270 L300 270" fill="none" stroke="#555555" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 118.1 304)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">equivalent plastic strain εp</tspan></text>
+    <text transform="matrix(0 -1 1 0 24.106 184.081)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">yield stress σy</tspan></text>
+    <text transform="matrix(1 0 0 1 43.1 153)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">σy</tspan></text>
+    <path d="M60 150 L300 78" fill="none" stroke="#2a6fdb" stroke-width="1.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 219 114)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a6fdb"><tspan x="0" y="0">bilinear: σy + H εp</tspan></text>
+    <path d="M60 150 L108 108 L168 84 L228 72 L300 72" fill="none" stroke="#e07b28" stroke-width="1.5" stroke-miterlimit="10"/>
+    <path d="M57 147 L63 147 L63 153 L57 153 Z" fill="#ffffff" stroke="#e07b28" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M105 105 L111 105 L111 111 L105 111 Z" fill="#ffffff" stroke="#e07b28" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M165 81 L171 81 L171 87 L165 87 Z" fill="#ffffff" stroke="#e07b28" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M225 69 L231 69 L231 75 L225 75 Z" fill="#ffffff" stroke="#e07b28" stroke-width="1.2" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 228 64)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#e07b28"><tspan x="0" y="0">table</tspan></text>
+    <path d="M60 150 L61.2 132.15 L62.4 127.25 L63.6 123.79 L64.8 121.01 L66 118.65 L67.2 116.59 L68.4 114.74 L69.6 113.05 L70.8 111.49 L72 110.05 L73.2 108.69 L74.4 107.41 L75.6 106.21 L76.8 105.05 L78 103.96 L79.2 102.9 L80.4 101.89 L81.6 100.92 L82.8 99.98 L84 99.08 L85.2 98.2 L86.4 97.35 L87.6 96.53 L88.8 95.72 L90 94.94 L91.2 94.18 L92.4 93.44 L93.6 92.71 L94.8 92.01 L96 91.31 L97.2 90.64 L98.4 89.97 L99.6 89.32 L100.8 88.69 L102 88.06 L103.2 87.45 L104.4 86.84 L105.6 86.25 L106.8 85.67 L108 85.1 L109.2 84.53 L110.4 83.98 L111.6 83.43 L112.8 82.9 L114 82.37 L115.2 81.84 L116.4 81.33 L117.6 80.82 L118.8 80.32 L120 79.82 L121.2 79.34 L122.4 78.85 L123.6 78.38 L124.8 77.91 L126 77.44 L127.2 76.99 L128.4 76.53 L129.6 76.08 L130.8 75.64 L132 75.2 L133.2 74.77 L134.4 74.34 L135.6 73.91 L136.8 73.49 L138 73.08 L139.2 72.66 L140.4 72.26 L141.6 71.85 L142.8 71.45 L144 71.05 L145.2 70.66 L146.4 70.27 L147.6 69.89 L148.8 69.5 L150 69.12 L151.2 68.75 L152.4 68.38 L153.6 68.01 L154.8 67.64 L156 67.28 L157.2 66.92 L158.4 66.56 L159.6 66.2 L160.8 65.85 L162 65.5 L163.2 65.16 L164.4 64.81 L165.6 64.47 L166.8 64.13 L168 63.8 L169.2 63.46 L170.4 63.13 L171.6 62.8 L172.8 62.47 L174 62.15 L175.2 61.83 L176.4 61.51 L177.6 61.19 L178.8 60.87 L180 60.56 L181.2 60.25 L182.4 59.94 L183.6 59.63 L184.8 59.32 L186 59.02 L187.2 58.71 L188.4 58.41 L189.6 58.12 L190.8 57.82 L192 57.52 L193.2 57.23 L194.4 56.94 L195.6 56.65 L196.8 56.36 L198 56.07 L199.2 55.79 L200.4 55.5 L201.6 55.22 L202.8 54.94 L204 54.66 L205.2 54.39 L206.4 54.11 L207.6 53.84 L208.8 53.56 L210 53.29 L211.2 53.02 L212.4 52.75 L213.6 52.49 L214.8 52.22 L216 51.96 L217.2 51.69 L218.4 51.43 L219.6 51.17 L220.8 50.91 L222 50.65 L223.2 50.39 L224.4 50.14 L225.6 49.88 L226.8 49.63 L228 49.38 L229.2 49.13 L230.4 48.88 L231.6 48.63 L232.8 48.38 L234 48.14 L235.2 47.89 L236.4 47.65 L237.6 47.4 L238.8 47.16 L240 46.92 L241.2 46.68 L242.4 46.44 L243.6 46.2 L244.8 45.97 L246 45.73 L247.2 45.49 L248.4 45.26 L249.6 45.03 L250.8 44.8 L252 44.56 L253.2 44.33 L254.4 44.11 L255.6 43.88 L256.8 43.65 L258 43.42 L259.2 43.2 L260.4 42.97 L261.6 42.75 L262.8 42.53 L264 42.3 L265.2 42.08 L266.4 41.86 L267.6 41.64 L268.8 41.42 L270 41.21 L271.2 40.99 L272.4 40.77 L273.6 40.56 L274.8 40.34 L276 40.13 L277.2 39.91 L278.4 39.7 L279.6 39.49 L280.8 39.28 L282 39.07 L283.2 38.86 L284.4 38.65 L285.6 38.44 L286.8 38.23 L288 38.03 L289.2 37.82 L290.4 37.62 L291.6 37.41 L292.8 37.21 L294 37.01 L295.2 36.8 L296.4 36.6 L297.6 36.4 L298.8 36.2 L300 36" fill="none" stroke="#2a9d55" stroke-width="1.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 160.8 36)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a9d55"><tspan x="0" y="0">Johnson–Cook: A + B εpⁿ</tspan></text>
+    <g>
+      <g>
+        <path d="M400 154.5 L658.4 154.5 L658.4 155.5 L400 155.5 Z" fill="#555555"/>
+        <path d="M660 155 L656.8 156.6 L656.8 153.4 Z" fill="#555555"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M479.5 280 L479.5 31.6 L480.5 31.6 L480.5 280 Z" fill="#555555"/>
+        <path d="M480 30 L481.6 33.2 L478.4 33.2 Z" fill="#555555"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 625.4 183)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">strain ε</tspan></text>
+    <text transform="matrix(1 0 0 1 486 36)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">stress σ</tspan></text>
+    <path d="M480 155 L530 92.5 L630 61.25 L530 186.25 L430 217.5" fill="none" stroke="#2a6fdb" stroke-width="1.6" stroke-miterlimit="10"/>
+    <path d="M530 186.25 L480 248.75 L430 264.38" fill="none" stroke="#2a6fdb" stroke-width="1.4" stroke-miterlimit="10" stroke-dasharray="5 3"/>
+    <path d="M627 61.25 C627 62.907 628.343 64.25 630 64.25 C631.657 64.25 633 62.907 633 61.25 C633 59.593 631.657 58.25 630 58.25 C628.343 58.25 627 59.593 627 61.25 Z" fill="#2a6fdb"/>
+    <text transform="matrix(1 0 0 1 636 55.25)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a6fdb"><tspan x="0" y="0">σmax</tspan></text>
+    <text transform="matrix(1 0 0 1 508.7 86.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">+σy</tspan></text>
+    <path d="M527 186.25 C527 187.907 528.343 189.25 530 189.25 C531.657 189.25 533 187.907 533 186.25 C533 184.593 531.657 183.25 530 183.25 C528.343 183.25 527 184.593 527 186.25 Z" fill="#2a6fdb"/>
+    <path d="M477 248.75 C477 250.407 478.343 251.75 480 251.75 C481.657 251.75 483 250.407 483 248.75 C483 247.093 481.657 245.75 480 245.75 C478.343 245.75 477 247.093 477 248.75 Z" fill="#ffffff" stroke="#2a6fdb" stroke-width="1.2" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 538 198.25)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a6fdb"><tspan x="0" y="0">kinematic: σmax − 2σy</tspan></text>
+    <text transform="matrix(1 0 0 1 488 262.75)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a6fdb"><tspan x="0" y="0">isotropic: −σmax</tspan></text>
+    <text transform="matrix(1 0 0 1 591 125.75)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">slope E</tspan></text>
+  </g>
+</svg>

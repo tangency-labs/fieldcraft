@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="660" height="305" viewBox="0 0 660 305">
+  <title>explicit-dynamics-1</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M0 0 L660 0 L660 305 L0 305 Z" fill="#ffffff"/>
+    <g>
+      <g>
+        <path d="M40 69.5 L628.4 69.5 L628.4 70.5 L40 70.5 Z" fill="#555555"/>
+        <path d="M630 70 L626.8 71.6 L626.8 68.4 Z" fill="#555555"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 626.4 86)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">t</tspan></text>
+    <path d="M110 65 L110 75" fill="none" stroke="#555555" stroke-width="1.2" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 99.95 114)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">tⁿ⁻¹</tspan></text>
+    <path d="M330 65 L330 75" fill="none" stroke="#555555" stroke-width="1.2" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 325.45 114)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">tⁿ</tspan></text>
+    <path d="M550 65 L550 75" fill="none" stroke="#555555" stroke-width="1.2" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 539.95 114)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">tⁿ⁺¹</tspan></text>
+    <path d="M106.8 70 C106.8 71.767 108.233 73.2 110 73.2 C111.767 73.2 113.2 71.767 113.2 70 C113.2 68.233 111.767 66.8 110 66.8 C108.233 66.8 106.8 68.233 106.8 70 Z" fill="#222222"/>
+    <text transform="matrix(1 0 0 1 99 90)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#555555"><tspan x="0" y="0">uⁿ⁻¹</tspan></text>
+    <path d="M326.8 70 C326.8 71.767 328.233 73.2 330 73.2 C331.767 73.2 333.2 71.767 333.2 70 C333.2 68.233 331.767 66.8 330 66.8 C328.233 66.8 326.8 68.233 326.8 70 Z" fill="#222222"/>
+    <text transform="matrix(1 0 0 1 324.5 90)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#555555"><tspan x="0" y="0">uⁿ</tspan></text>
+    <path d="M546.8 70 C546.8 71.767 548.233 73.2 550 73.2 C551.767 73.2 553.2 71.767 553.2 70 C553.2 68.233 551.767 66.8 550 66.8 C548.233 66.8 546.8 68.233 546.8 70 Z" fill="#222222"/>
+    <text transform="matrix(1 0 0 1 539 90)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#555555"><tspan x="0" y="0">uⁿ⁺¹</tspan></text>
+    <path d="M216 66 L224 66 L224 74 L216 74 Z" fill="#e07b28"/>
+    <text transform="matrix(1 0 0 1 209 58)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#e07b28"><tspan x="0" y="0">vⁿ⁻½</tspan></text>
+    <path d="M436 66 L444 66 L444 74 L436 74 Z" fill="#e07b28"/>
+    <text transform="matrix(1 0 0 1 429 58)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#e07b28"><tspan x="0" y="0">vⁿ⁺½</tspan></text>
+    <path d="M113 41 L113 36 L327 36 L327 41" fill="none" stroke="#888888" stroke-width="0.8" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 207.84 31)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#555555"><tspan x="0" y="0">Δtⁿ⁻½</tspan></text>
+    <path d="M333 41 L333 36 L547 36 L547 41" fill="none" stroke="#888888" stroke-width="0.8" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 427.84 31)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#555555"><tspan x="0" y="0">Δtⁿ⁺½</tspan></text>
+    <path d="M220 128 L220 133 L440 133 L440 128" fill="none" stroke="#2a6fdb" stroke-width="0.8" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 280.36 147)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#2a6fdb"><tspan x="0" y="0">Δtⁿ = ½ (Δtⁿ⁻½ + Δtⁿ⁺½)</tspan></text>
+    <path d="M20 180 L170 180 L170 250 L20 250 Z" fill="#f4f6f9" stroke="#888888" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 44.17 218.01)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.6" fill="#222222"><tspan x="0" y="0">1  uⁿ = uⁿ⁻¹ + Δtⁿ⁻½ vⁿ⁻½</tspan></text>
+    <path d="M180 180 L330 180 L330 250 L180 250 Z" fill="#f4f6f9" stroke="#888888" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 215.22 206.51)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.6" fill="#222222"><tspan x="0" y="0">2  internal forces fⁿ;</tspan></text>
+    <text transform="matrix(1 0 0 1 230.36 218.01)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.6" fill="#222222"><tspan x="0" y="0">next Δtⁿ⁺½ =</tspan></text>
+    <text transform="matrix(1 0 0 1 217.89 229.51)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.6" fill="#222222"><tspan x="0" y="0">scale · min_e Δt_e</tspan></text>
+    <path d="M340 180 L520 180 L520 250 L340 250 Z" fill="#fdf1e6" stroke="#e07b28" stroke-width="1.2" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 389.28 200.76)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.6" fill="#222222"><tspan x="0" y="0">3  contact forces cⁿ;</tspan></text>
+    <text transform="matrix(1 0 0 1 352.17 212.26)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.6" fill="#222222"><tspan x="0" y="0">vⁿ⁺½ = vⁿ⁻½ + Δtⁿ M⁻¹(f_ext + cⁿ − fⁿ);</tspan></text>
+    <text transform="matrix(1 0 0 1 365.11 223.76)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.6" fill="#222222"><tspan x="0" y="0">rigid walls, prescribed velocities,</tspan></text>
+    <text transform="matrix(1 0 0 1 379.52 235.26)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.6" fill="#222222"><tspan x="0" y="0">inclined symmetry planes</tspan></text>
+    <path d="M530 180 L645 180 L645 250 L530 250 Z" fill="#f4f6f9" stroke="#888888" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 552.24 212.26)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.6" fill="#222222"><tspan x="0" y="0">4  energies by the</tspan></text>
+    <text transform="matrix(1 0 0 1 557.01 223.76)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.6" fill="#222222"><tspan x="0" y="0">trapezoidal rule</tspan></text>
+    <g>
+      <g>
+        <path d="M171 214.5 L174 214.5 L174 215.5 L171 215.5 Z" fill="#555555"/>
+        <path d="M178 215 L170 219 L170 211 Z" fill="#555555"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M331 214.5 L334 214.5 L334 215.5 L331 215.5 Z" fill="#555555"/>
+        <path d="M338 215 L330 219 L330 211 Z" fill="#555555"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M521 214.5 L524 214.5 L524 215.5 L521 215.5 Z" fill="#555555"/>
+        <path d="M528 215 L520 219 L520 211 Z" fill="#555555"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M588 250 L588 280 L588 280.5 L587.5 280.5 L95 280.5 L94.5 280.5 L94.5 280 L94.5 256 L95.5 256 L95.5 280 L95 280 L95 279.5 L587.5 279.5 L587.5 280 L587 280 L587 250 Z" fill="#555555"/>
+        <path d="M95 252 L99 260 L91 260 Z" fill="#555555"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 312.13 294)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">n → n + 1</tspan></text>
+  </g>
+</svg>

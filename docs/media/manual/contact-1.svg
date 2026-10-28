@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="660" height="350" viewBox="0 0 660 350">
+  <title>contact-1</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M0 0 L660 0 L660 350 L0 350 Z" fill="#ffffff"/>
+    <path d="M14.89 215.41 L195.46 257.5 L285.11 172.73 L104.54 130.64 Z" fill="#f4f6f9"/>
+    <path d="M14.89 215.41 L104.54 130.64 M75.08 229.44 L164.73 144.67 M135.27 243.47 L224.92 158.7 M195.46 257.5 L285.11 172.73 M14.89 215.41 L195.46 257.5 M44.77 187.15 L225.34 229.25 M74.66 158.9 L255.23 200.99 M104.54 130.64 L285.11 172.73" fill="none" stroke="#888888" stroke-miterlimit="10"/>
+    <path d="M16.3 167 L173.58 218.7 L283.7 144.86 L126.42 93.16 Z" fill="#fdf1e6"/>
+    <path d="M16.3 167 L126.42 93.16 M55.62 179.92 L165.74 106.08 M94.94 192.85 L205.06 119.01 M134.26 205.77 L244.38 131.94 M173.58 218.7 L283.7 144.86 M16.3 167 L173.58 218.7 M43.83 148.54 L201.11 200.24 M71.36 130.08 L228.64 181.78 M98.89 111.62 L256.17 163.32 M126.42 93.16 L283.7 144.86" fill="none" stroke="#e07b28" stroke-miterlimit="10"/>
+    <g>
+      <g>
+        <path d="M115.87 158.7 L115.87 112.48 L117.27 112.48 L117.27 158.7 Z" fill="#e07b28"/>
+        <path d="M116.57 109.96 L119.09 115 L114.05 115 Z" fill="#e07b28"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 121.57 111.96)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#e07b28"><tspan x="0" y="0">n</tspan></text>
+    <path d="M213.7 160.36 L213.7 198.51" fill="none" stroke="#888888" stroke-width="0.8" stroke-miterlimit="10" stroke-dasharray="3 2"/>
+    <path d="M123.25 185.65 L123.25 223.79" fill="none" stroke="#888888" stroke-width="0.8" stroke-miterlimit="10" stroke-dasharray="3 2"/>
+    <path d="M126.42 120.67 L126.42 158.81" fill="none" stroke="#888888" stroke-width="0.8" stroke-miterlimit="10" stroke-dasharray="3 2"/>
+    <text transform="matrix(1 0 0 1 183.51 221.99)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#e07b28"><tspan x="0" y="0">secondary surface</tspan></text>
+    <text transform="matrix(1 0 0 1 189.8 275.7)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#555555"><tspan x="0" y="0">main surface</tspan></text>
+    <path d="M570 205.71 L503.1 240 L485.99 240 L441.22 125.79 L566.88 90.53 L570 98.49 Z" fill="#fbe3cf"/>
+    <path d="M570 205.71 L485.99 240" fill="none" stroke="#e07b28" stroke-width="0.8" stroke-miterlimit="10"/>
+    <path d="M570 205.71 L441.22 125.79" fill="none" stroke="#e07b28" stroke-width="0.8" stroke-miterlimit="10"/>
+    <path d="M570 205.71 L566.88 90.53" fill="none" stroke="#e07b28" stroke-width="0.8" stroke-miterlimit="10"/>
+    <path d="M400 70 L570 70 L570 240 L400 240 Z" fill="none" stroke="#e07b28" stroke-width="1.6" stroke-miterlimit="10"/>
+    <path d="M605 187.78 L488.85 247.3 L441.22 125.79 L566.88 90.53 Z" fill="none" stroke="#888888" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M524.132 140.677 C524.132 141.726 524.983 142.577 526.032 142.577 C527.081 142.577 527.932 141.726 527.932 140.677 C527.932 139.628 527.081 138.777 526.032 138.777 C524.983 138.777 524.132 139.628 524.132 140.677 Z" fill="#222222"/>
+    <path d="M506.087 113.984 C506.087 115.033 506.937 115.884 507.987 115.884 C509.036 115.884 509.887 115.033 509.887 113.984 C509.887 112.935 509.036 112.084 507.987 112.084 C506.937 112.084 506.087 112.935 506.087 113.984 Z" fill="#222222"/>
+    <path d="M558.942 146.787 C558.942 147.836 559.793 148.687 560.842 148.687 C561.891 148.687 562.742 147.836 562.742 146.787 C562.742 145.737 561.891 144.887 560.842 144.887 C559.793 144.887 558.942 145.737 558.942 146.787 Z" fill="#222222"/>
+    <path d="M507.368 161.26 C507.368 162.31 508.218 163.16 509.268 163.16 C510.317 163.16 511.168 162.31 511.168 161.26 C511.168 160.211 510.317 159.36 509.268 159.36 C508.218 159.36 507.368 160.211 507.368 161.26 Z" fill="#222222"/>
+    <path d="M554.74 185.952 C554.74 187.001 555.591 187.852 556.64 187.852 C557.689 187.852 558.54 187.001 558.54 185.952 C558.54 184.903 557.689 184.052 556.64 184.052 C555.591 184.052 554.74 184.903 554.74 185.952 Z" fill="#222222"/>
+    <path d="M465.089 130.314 C465.089 131.363 465.94 132.214 466.989 132.214 C468.039 132.214 468.889 131.363 468.889 130.314 C468.889 129.265 468.039 128.414 466.989 128.414 C465.94 128.414 465.089 129.265 465.089 130.314 Z" fill="#222222"/>
+    <path d="M552.567 105.765 C552.567 106.814 553.418 107.665 554.467 107.665 C555.516 107.665 556.367 106.814 556.367 105.765 C556.367 104.715 555.516 103.865 554.467 103.865 C553.418 103.865 552.567 104.715 552.567 105.765 Z" fill="#222222"/>
+    <text transform="matrix(1 0 0 1 400 60)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#e07b28"><tspan x="0" y="0">secondary face (its plane)</tspan></text>
+    <text transform="matrix(1 0 0 1 538.76 322)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">main face, projected (grey)</tspan></text>
+    <text transform="matrix(1 0 0 1 404 292)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">overlap (Sutherland–Hodgman clip), fanned into triangles;</tspan></text>
+    <text transform="matrix(1 0 0 1 404 305)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">dots: Radon&apos;s 7-point rule</tspan></text>
+    <text transform="matrix(1 0 0 1 250.65 340)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">g̃_A = Σ ∫ Φ_A (x_m − x_s) · n dA</tspan></text>
+  </g>
+</svg>

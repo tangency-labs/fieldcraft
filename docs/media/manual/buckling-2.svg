@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="600" height="430" viewBox="0 0 600 430">
+  <title>buckling-2</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M0 0 L600 0 L600 430 L0 430 Z" fill="#ffffff"/>
+    <path d="M100 320 L166 320" fill="none" stroke="#555555" stroke-width="1.2" stroke-miterlimit="10"/>
+    <path d="M102 320 L95 329 M110 320 L103 329 M118 320 L111 329 M126 320 L119 329 M134 320 L127 329 M142 320 L135 329 M150 320 L143 329 M158 320 L151 329 M166 320 L159 329" fill="none" stroke="#555555" stroke-width="0.7" stroke-miterlimit="10"/>
+    <path d="M146 320 L160 310 L160 80 L146 90 Z" fill="#dfe3ea" stroke="#888888" stroke-width="0.8" stroke-miterlimit="10"/>
+    <path d="M120 90 L134 80 L160 80 L146 90 Z" fill="#eceff3" stroke="#888888" stroke-width="0.8" stroke-miterlimit="10"/>
+    <path d="M120 320 L146 320 L146 90 L120 90 Z" fill="#f4f6f9" stroke="#888888" stroke-width="0.8" stroke-miterlimit="10"/>
+    <path d="M120 297 L146 297 L160 287 M120 274 L146 274 L160 264 M120 251 L146 251 L160 241 M120 228 L146 228 L160 218 M120 205 L146 205 L160 195 M120 182 L146 182 L160 172 M120 159 L146 159 L160 149 M120 136 L146 136 L160 126 M120 113 L146 113 L160 103 M133 320 L133 90 L147 80" fill="none" stroke="#bbbbbb" stroke-width="0.5" stroke-miterlimit="10"/>
+    <g>
+      <g>
+        <path d="M123.5 60 L123.5 81.6 L122.5 81.6 L122.5 60 Z" fill="#d1495b"/>
+        <path d="M123 84 L120.6 79.2 L125.4 79.2 Z" fill="#d1495b"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M133.5 60 L133.5 81.6 L132.5 81.6 L132.5 60 Z" fill="#d1495b"/>
+        <path d="M133 84 L130.6 79.2 L135.4 79.2 Z" fill="#d1495b"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M143.5 60 L143.5 81.6 L142.5 81.6 L142.5 60 Z" fill="#d1495b"/>
+        <path d="M143 84 L140.6 79.2 L145.4 79.2 Z" fill="#d1495b"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 105.91 54)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#d1495b"><tspan x="0" y="0">unit pressure</tspan></text>
+    <path d="M133 320 L133.12 308.5 L133.49 297 L134.11 285.5 L134.96 274 L136.04 262.5 L137.36 251 L138.89 239.5 L140.64 228 L142.58 216.5 L144.72 205 L147.02 193.5 L149.49 182 L152.1 170.5 L154.84 159 L157.69 147.5 L160.64 136 L163.66 124.5 L166.74 113 L169.86 101.5 L173 90" fill="none" stroke="#2a6fdb" stroke-width="1.4" stroke-miterlimit="10" stroke-dasharray="5 3"/>
+    <text transform="matrix(1 0 0 1 101.8 344)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">clamped–free</tspan></text>
+    <text transform="matrix(1 0 0 1 93.98 358)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">effective length 20</tspan></text>
+    <text transform="matrix(1 0 0 1 186 100)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a6fdb"><tspan x="0" y="0">mode 1:</tspan></text>
+    <text transform="matrix(1 0 0 1 186 112)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a6fdb"><tspan x="0" y="0">quarter sine</tspan></text>
+    <path d="M386 320 L400 310 L400 80 L386 90 Z" fill="#dfe3ea" stroke="#888888" stroke-width="0.8" stroke-miterlimit="10"/>
+    <path d="M360 90 L374 80 L400 80 L386 90 Z" fill="#eceff3" stroke="#888888" stroke-width="0.8" stroke-miterlimit="10"/>
+    <path d="M360 320 L386 320 L386 90 L360 90 Z" fill="#f4f6f9" stroke="#888888" stroke-width="0.8" stroke-miterlimit="10"/>
+    <path d="M360 297 L386 297 L400 287 M360 274 L386 274 L400 264 M360 251 L386 251 L400 241 M360 228 L386 228 L400 218 M360 205 L386 205 L400 195 M360 182 L386 182 L400 172 M360 159 L386 159 L400 149 M360 136 L386 136 L400 126 M360 113 L386 113 L400 103 M373 320 L373 90 L387 80" fill="none" stroke="#bbbbbb" stroke-width="0.5" stroke-miterlimit="10"/>
+    <path d="M348 90 L414 90" fill="none" stroke="#888888" stroke-miterlimit="10" stroke-dasharray="5 3"/>
+    <text transform="matrix(1 0 0 1 420 86)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">symmetry plane:</tspan></text>
+    <text transform="matrix(1 0 0 1 420 98)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">midspan (z = 10)</tspan></text>
+    <path d="M360 326 C360 328.209 361.791 330 364 330 C366.209 330 368 328.209 368 326 C368 323.791 366.209 322 364 322 C361.791 322 360 323.791 360 326 Z" fill="#ffffff" stroke="#555555" stroke-width="0.9" stroke-miterlimit="10"/>
+    <path d="M378 326 C378 328.209 379.791 330 382 330 C384.209 330 386 328.209 386 326 C386 323.791 384.209 322 382 322 C379.791 322 378 323.791 378 326 Z" fill="#ffffff" stroke="#555555" stroke-width="0.9" stroke-miterlimit="10"/>
+    <path d="M354 331 L392 331" fill="none" stroke="#555555" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 305.72 324)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">held in x, y</tspan></text>
+    <g>
+      <g>
+        <path d="M362.5 364 L362.5 340.4 L363.5 340.4 L363.5 364 Z" fill="#d1495b"/>
+        <path d="M363 338 L365.4 342.8 L360.6 342.8 Z" fill="#d1495b"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M372.5 364 L372.5 340.4 L373.5 340.4 L373.5 364 Z" fill="#d1495b"/>
+        <path d="M373 338 L375.4 342.8 L370.6 342.8 Z" fill="#d1495b"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M382.5 364 L382.5 340.4 L383.5 340.4 L383.5 364 Z" fill="#d1495b"/>
+        <path d="M383 338 L385.4 342.8 L380.6 342.8 Z" fill="#d1495b"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 297.99 378)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#d1495b"><tspan x="0" y="0">unit pressure on the end face (z = 0)</tspan></text>
+    <path d="M373 320 L376.14 308.5 L379.26 297 L382.34 285.5 L385.36 274 L388.31 262.5 L391.16 251 L393.9 239.5 L396.51 228 L398.98 216.5 L401.28 205 L403.42 193.5 L405.36 182 L407.11 170.5 L408.64 159 L409.96 147.5 L411.04 136 L411.89 124.5 L412.51 113 L412.88 101.5 L413 90" fill="none" stroke="#2a6fdb" stroke-width="1.4" stroke-miterlimit="10" stroke-dasharray="5 3"/>
+    <text transform="matrix(1 0 0 1 430 205)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a6fdb"><tspan x="0" y="0">mode 1:</tspan></text>
+    <text transform="matrix(1 0 0 1 430 217)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a6fdb"><tspan x="0" y="0">half sine (half shown)</tspan></text>
+    <text transform="matrix(1 0 0 1 373 396)" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"></text>
+    <text transform="matrix(1 0 0 1 319.9 199)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">pinned</tspan></text>
+    <text transform="matrix(1 0 0 1 300.59 213)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">(half model)</tspan></text>
+    <text transform="matrix(1 0 0 1 271.97 227)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">effective length 20</tspan></text>
+    <text transform="matrix(1 0 0 1 172.37 24)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#222222"><tspan x="0" y="0">2 × 2 × 10 hex20, length 10, section 1 × 1, E = 1000, ν = 0</tspan></text>
+    <text transform="matrix(1 0 0 1 238.15 415)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">σ_cr = 2.04607 (Engesser)</tspan></text>
+  </g>
+</svg>

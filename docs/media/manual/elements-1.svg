@@ -1,0 +1,193 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="770" height="260" viewBox="0 0 770 260">
+  <title>elements-1</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M0 0 L770 0 L770 260 L0 260 Z" fill="#ffffff"/>
+    <path d="M70 160 L148.72 144.36" fill="none" stroke="#888888" stroke-width="0.8" stroke-miterlimit="10" stroke-dasharray="3 2.5"/>
+    <path d="M70 160 L113.63 188.21 M113.63 188.21 L148.72 144.36 M113.63 188.21 L70 75.98 M70 160 L70 75.98 M148.72 144.36 L70 75.98" fill="none" stroke="#222222" stroke-width="1.1" stroke-miterlimit="10"/>
+    <path d="M67 160 C67 161.657 68.343 163 70 163 C71.657 163 73 161.657 73 160 C73 158.343 71.657 157 70 157 C68.343 157 67 158.343 67 160 Z" fill="#222222"/>
+    <text transform="matrix(1 0 0 1 57.95 168.75)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">1</tspan></text>
+    <path d="M110.633 188.209 C110.633 189.866 111.976 191.209 113.633 191.209 C115.29 191.209 116.633 189.866 116.633 188.209 C116.633 186.552 115.29 185.209 113.633 185.209 C111.976 185.209 110.633 186.552 110.633 188.209 Z" fill="#222222"/>
+    <text transform="matrix(1 0 0 1 114.08 201.99)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">2</tspan></text>
+    <path d="M145.716 144.363 C145.716 146.02 147.059 147.363 148.716 147.363 C150.373 147.363 151.716 146.02 151.716 144.363 C151.716 142.707 150.373 141.363 148.716 141.363 C147.059 141.363 145.716 142.707 145.716 144.363 Z" fill="#222222"/>
+    <text transform="matrix(1 0 0 1 157.15 148.07)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">3</tspan></text>
+    <path d="M67 75.978 C67 77.635 68.343 78.978 70 78.978 C71.657 78.978 73 77.635 73 75.978 C73 74.321 71.657 72.978 70 72.978 C68.343 72.978 67 74.321 67 75.978 Z" fill="#222222"/>
+    <text transform="matrix(1 0 0 1 62.83 69.19)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">4</tspan></text>
+    <g>
+      <g>
+        <path d="M36.299 189.538 L51.436 199.323 L50.839 200.247 L35.701 190.462 Z" fill="#2a6fdb"/>
+        <path d="M52.8 200.86 L48.399 200.373 L50.549 197.047 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 57.88 208.74)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a6fdb"><tspan x="0" y="0">ξ</tspan></text>
+    <g>
+      <g>
+        <path d="M35.893 189.461 L53.571 185.947 L53.785 187.025 L36.107 190.539 Z" fill="#2a6fdb"/>
+        <path d="M55.62 186.1 L52.122 188.814 L51.35 184.93 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 61.97 187.35)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a6fdb"><tspan x="0" y="0">η</tspan></text>
+    <g>
+      <g>
+        <path d="M35.45 190 L35.45 171.98 L36.55 171.98 L36.55 190 Z" fill="#2a6fdb"/>
+        <path d="M36 170 L37.98 173.96 L34.02 173.96 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 33.52 164)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a6fdb"><tspan x="0" y="0">ζ</tspan></text>
+    <text transform="matrix(1 0 0 1 60.65 250)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">tet4</tspan></text>
+    <path d="M215 160 L293.72 144.36" fill="none" stroke="#888888" stroke-width="0.8" stroke-miterlimit="10" stroke-dasharray="3 2.5"/>
+    <path d="M215 160 L258.63 188.21 M258.63 188.21 L293.72 144.36 M258.63 188.21 L215 75.98 M215 160 L215 75.98 M293.72 144.36 L215 75.98" fill="none" stroke="#222222" stroke-width="1.1" stroke-miterlimit="10"/>
+    <path d="M212 160 C212 161.657 213.343 163 215 163 C216.657 163 218 161.657 218 160 C218 158.343 216.657 157 215 157 C213.343 157 212 158.343 212 160 Z" fill="#222222"/>
+    <text transform="matrix(1 0 0 1 202.95 168.75)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">1</tspan></text>
+    <path d="M255.633 188.209 C255.633 189.866 256.976 191.209 258.633 191.209 C260.29 191.209 261.633 189.866 261.633 188.209 C261.633 186.552 260.29 185.209 258.633 185.209 C256.976 185.209 255.633 186.552 255.633 188.209 Z" fill="#222222"/>
+    <text transform="matrix(1 0 0 1 259.08 201.99)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">2</tspan></text>
+    <path d="M290.716 144.363 C290.716 146.02 292.059 147.363 293.716 147.363 C295.373 147.363 296.716 146.02 296.716 144.363 C296.716 142.707 295.373 141.363 293.716 141.363 C292.059 141.363 290.716 142.707 290.716 144.363 Z" fill="#222222"/>
+    <text transform="matrix(1 0 0 1 302.15 148.07)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">3</tspan></text>
+    <path d="M212 75.978 C212 77.635 213.343 78.978 215 78.978 C216.657 78.978 218 77.635 218 75.978 C218 74.321 216.657 72.978 215 72.978 C213.343 72.978 212 74.321 212 75.978 Z" fill="#222222"/>
+    <text transform="matrix(1 0 0 1 207.83 69.19)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">4</tspan></text>
+    <path d="M233.816 174.105 C233.816 175.761 235.16 177.105 236.816 177.105 C238.473 177.105 239.816 175.761 239.816 174.105 C239.816 172.448 238.473 171.105 236.816 171.105 C235.16 171.105 233.816 172.448 233.816 174.105 Z" fill="#ffffff" stroke="#222222" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 231.51 187.91)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8" fill="#555555"><tspan x="0" y="0">5</tspan></text>
+    <path d="M273.174 166.286 C273.174 167.943 274.517 169.286 276.174 169.286 C277.831 169.286 279.174 167.943 279.174 166.286 C279.174 164.629 277.831 163.286 276.174 163.286 C274.517 163.286 273.174 164.629 273.174 166.286 Z" fill="#ffffff" stroke="#222222" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 282.41 176.3)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8" fill="#555555"><tspan x="0" y="0">6</tspan></text>
+    <path d="M251.358 152.182 C251.358 153.839 252.701 155.182 254.358 155.182 C256.015 155.182 257.358 153.839 257.358 152.182 C257.358 150.525 256.015 149.182 254.358 149.182 C252.701 149.182 251.358 150.525 251.358 152.182 Z" fill="#ffffff" stroke="#222222" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 259.19 163.67)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8" fill="#555555"><tspan x="0" y="0">7</tspan></text>
+    <path d="M212 117.989 C212 119.646 213.343 120.989 215 120.989 C216.657 120.989 218 119.646 218 117.989 C218 116.332 216.657 114.989 215 114.989 C213.343 114.989 212 116.332 212 117.989 Z" fill="#ffffff" stroke="#222222" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 203.97 114.37)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8" fill="#555555"><tspan x="0" y="0">8</tspan></text>
+    <path d="M233.816 132.093 C233.816 133.75 235.16 135.093 236.816 135.093 C238.473 135.093 239.816 133.75 239.816 132.093 C239.816 130.437 238.473 129.093 236.816 129.093 C235.16 129.093 233.816 130.437 233.816 132.093 Z" fill="#ffffff" stroke="#222222" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 227.18 127.01)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8" fill="#555555"><tspan x="0" y="0">9</tspan></text>
+    <path d="M251.358 110.171 C251.358 111.827 252.701 113.171 254.358 113.171 C256.015 113.171 257.358 111.827 257.358 110.171 C257.358 108.514 256.015 107.171 254.358 107.171 C252.701 107.171 251.358 108.514 251.358 110.171 Z" fill="#ffffff" stroke="#222222" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 252.47 102.76)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8" fill="#555555"><tspan x="0" y="0">10</tspan></text>
+    <g>
+      <g>
+        <path d="M181.299 189.538 L196.436 199.323 L195.839 200.247 L180.701 190.462 Z" fill="#2a6fdb"/>
+        <path d="M197.8 200.86 L193.399 200.373 L195.549 197.047 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 202.88 208.74)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a6fdb"><tspan x="0" y="0">ξ</tspan></text>
+    <g>
+      <g>
+        <path d="M180.893 189.461 L198.571 185.947 L198.785 187.025 L181.107 190.539 Z" fill="#2a6fdb"/>
+        <path d="M200.62 186.1 L197.122 188.814 L196.35 184.93 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 206.97 187.35)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a6fdb"><tspan x="0" y="0">η</tspan></text>
+    <g>
+      <g>
+        <path d="M180.45 190 L180.45 171.98 L181.55 171.98 L181.55 190 Z" fill="#2a6fdb"/>
+        <path d="M181 170 L182.98 173.96 L179.02 173.96 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 178.53 164)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a6fdb"><tspan x="0" y="0">ζ</tspan></text>
+    <text transform="matrix(1 0 0 1 202.65 250)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">tet10</tspan></text>
+    <path d="M390.91 202.43 L369.41 173.83 M345 192.5 L369.41 173.83 M369.41 173.83 L369.41 78.82" fill="none" stroke="#888888" stroke-width="0.8" stroke-miterlimit="10" stroke-dasharray="3 2.5"/>
+    <path d="M345 192.5 L390.91 202.43 M345 97.5 L390.91 107.43 M390.91 107.43 L369.41 78.82 M345 97.5 L369.41 78.82 M390.91 202.43 L390.91 107.43 M345 192.5 L345 97.5" fill="none" stroke="#222222" stroke-width="1.1" stroke-miterlimit="10"/>
+    <path d="M342 192.504 C342 194.161 343.343 195.504 345 195.504 C346.657 195.504 348 194.161 348 192.504 C348 190.848 346.657 189.504 345 189.504 C343.343 189.504 342 190.848 342 192.504 Z" fill="#222222"/>
+    <text transform="matrix(1 0 0 1 337.81 205.68)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">1</tspan></text>
+    <path d="M387.913 202.434 C387.913 204.091 389.256 205.434 390.913 205.434 C392.57 205.434 393.913 204.091 393.913 202.434 C393.913 200.777 392.57 199.434 390.913 199.434 C389.256 199.434 387.913 200.777 387.913 202.434 Z" fill="#222222"/>
+    <text transform="matrix(1 0 0 1 392.2 215.94)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">2</tspan></text>
+    <path d="M366.413 173.83 C366.413 175.487 367.756 176.83 369.413 176.83 C371.069 176.83 372.413 175.487 372.413 173.83 C372.413 172.173 371.069 170.83 369.413 170.83 C367.756 170.83 366.413 172.173 366.413 173.83 Z" fill="#222222"/>
+    <text transform="matrix(1 0 0 1 367.2 188.02)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">3</tspan></text>
+    <path d="M342 97.496 C342 99.152 343.343 100.496 345 100.496 C346.657 100.496 348 99.152 348 97.496 C348 95.839 346.657 94.496 345 94.496 C343.343 94.496 342 95.839 342 97.496 Z" fill="#222222"/>
+    <text transform="matrix(1 0 0 1 337.33 90.96)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">4</tspan></text>
+    <path d="M387.913 107.425 C387.913 109.082 389.256 110.425 390.913 110.425 C392.57 110.425 393.913 109.082 393.913 107.425 C393.913 105.768 392.57 104.425 390.913 104.425 C389.256 104.425 387.913 105.768 387.913 107.425 Z" fill="#222222"/>
+    <text transform="matrix(1 0 0 1 394.35 101.4)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">5</tspan></text>
+    <path d="M366.413 78.821 C366.413 80.478 367.756 81.821 369.413 81.821 C371.069 81.821 372.413 80.478 372.413 78.821 C372.413 77.164 371.069 75.821 369.413 75.821 C367.756 75.821 366.413 77.164 366.413 78.821 Z" fill="#222222"/>
+    <text transform="matrix(1 0 0 1 367.03 71.02)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">6</tspan></text>
+    <g>
+      <g>
+        <path d="M311.116 221.962 L328.731 225.774 L328.498 226.849 L310.884 223.038 Z" fill="#2a6fdb"/>
+        <path d="M330.55 226.73 L326.261 227.828 L327.098 223.957 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 336.87 231.63)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a6fdb"><tspan x="0" y="0">ξ</tspan></text>
+    <g>
+      <g>
+        <path d="M310.666 222.063 L324.983 211.116 L325.651 211.99 L311.334 222.937 Z" fill="#2a6fdb"/>
+        <path d="M326.89 210.35 L324.947 214.328 L322.542 211.182 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 331.56 207.88)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a6fdb"><tspan x="0" y="0">η</tspan></text>
+    <g>
+      <g>
+        <path d="M310.45 222.5 L310.45 204.48 L311.55 204.48 L311.55 222.5 Z" fill="#2a6fdb"/>
+        <path d="M311 202.5 L312.98 206.46 L309.02 206.46 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 308.52 196.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a6fdb"><tspan x="0" y="0">ζ</tspan></text>
+    <text transform="matrix(1 0 0 1 326.7 250)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">wedge6</tspan></text>
+    <path d="M554.1 143.27 L483.46 128 M445.9 156.73 L483.46 128 M483.46 128 L500 113.46" fill="none" stroke="#888888" stroke-width="0.8" stroke-miterlimit="10" stroke-dasharray="3 2.5"/>
+    <path d="M445.9 156.73 L516.54 172 M516.54 172 L554.1 143.27 M516.54 172 L500 113.46 M445.9 156.73 L500 113.46 M554.1 143.27 L500 113.46" fill="none" stroke="#222222" stroke-width="1.1" stroke-miterlimit="10"/>
+    <path d="M442.903 156.727 C442.903 158.384 444.246 159.727 445.903 159.727 C447.56 159.727 448.903 158.384 448.903 156.727 C448.903 155.07 447.56 153.727 445.903 153.727 C444.246 153.727 442.903 155.07 442.903 156.727 Z" fill="#222222"/>
+    <text transform="matrix(1 0 0 1 432.71 162.69)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">1</tspan></text>
+    <path d="M513.539 172.003 C513.539 173.66 514.882 175.003 516.539 175.003 C518.196 175.003 519.539 173.66 519.539 172.003 C519.539 170.346 518.196 169.003 516.539 169.003 C514.882 169.003 513.539 170.346 513.539 172.003 Z" fill="#222222"/>
+    <text transform="matrix(1 0 0 1 519.39 184.78)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">2</tspan></text>
+    <path d="M551.097 143.273 C551.097 144.93 552.44 146.273 554.097 146.273 C555.754 146.273 557.097 144.93 557.097 143.273 C557.097 141.616 555.754 140.273 554.097 140.273 C552.44 140.273 551.097 141.616 551.097 143.273 Z" fill="#222222"/>
+    <text transform="matrix(1 0 0 1 562.55 146.59)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">3</tspan></text>
+    <path d="M480.461 127.997 C480.461 129.654 481.804 130.997 483.461 130.997 C485.118 130.997 486.461 129.654 486.461 127.997 C486.461 126.34 485.118 124.997 483.461 124.997 C481.804 124.997 480.461 126.34 480.461 127.997 Z" fill="#222222"/>
+    <text transform="matrix(1 0 0 1 472.69 123.89)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">4</tspan></text>
+    <path d="M497 113.458 C497 115.115 498.343 116.458 500 116.458 C501.657 116.458 503 115.115 503 113.458 C503 111.801 501.657 110.458 500 110.458 C498.343 110.458 497 111.801 497 113.458 Z" fill="#222222"/>
+    <text transform="matrix(1 0 0 1 497.45 105.66)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">5</tspan></text>
+    <g>
+      <g>
+        <path d="M412.016 186.192 L429.631 190.004 L429.398 191.079 L411.784 187.268 Z" fill="#2a6fdb"/>
+        <path d="M431.45 190.96 L427.161 192.058 L427.998 188.187 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 437.77 195.86)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a6fdb"><tspan x="0" y="0">ξ</tspan></text>
+    <g>
+      <g>
+        <path d="M411.566 186.293 L425.883 175.346 L426.551 176.22 L412.234 187.167 Z" fill="#2a6fdb"/>
+        <path d="M427.79 174.58 L425.847 178.558 L423.442 175.412 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 432.46 172.11)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a6fdb"><tspan x="0" y="0">η</tspan></text>
+    <g>
+      <g>
+        <path d="M411.35 186.73 L411.35 168.71 L412.45 168.71 L412.45 186.73 Z" fill="#2a6fdb"/>
+        <path d="M411.9 166.73 L413.88 170.69 L409.92 170.69 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 409.43 160.73)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a6fdb"><tspan x="0" y="0">ζ</tspan></text>
+    <text transform="matrix(1 0 0 1 478.6 250)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">pyramid5</tspan></text>
+    <path d="M716.39 153.32 L649.29 138.81 M613.61 166.11 L649.29 138.81 M649.29 138.81 L649.29 69.38" fill="none" stroke="#888888" stroke-width="0.8" stroke-miterlimit="10" stroke-dasharray="3 2.5"/>
+    <path d="M613.61 166.11 L680.71 180.62 M680.71 180.62 L716.39 153.32 M613.61 96.68 L680.71 111.19 M680.71 111.19 L716.39 83.89 M716.39 83.89 L649.29 69.38 M613.61 96.68 L649.29 69.38 M680.71 180.62 L680.71 111.19 M613.61 166.11 L613.61 96.68 M716.39 153.32 L716.39 83.89" fill="none" stroke="#222222" stroke-width="1.1" stroke-miterlimit="10"/>
+    <path d="M610.608 166.105 C610.608 167.762 611.951 169.105 613.608 169.105 C615.265 169.105 616.608 167.762 616.608 166.105 C616.608 164.449 615.265 163.105 613.608 163.105 C611.951 163.105 610.608 164.449 610.608 166.105 Z" fill="#222222"/>
+    <text transform="matrix(1 0 0 1 602.47 176.18)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">1</tspan></text>
+    <path d="M677.712 180.618 C677.712 182.275 679.055 183.618 680.712 183.618 C682.369 183.618 683.712 182.275 683.712 180.618 C683.712 178.961 682.369 177.618 680.712 177.618 C679.055 177.618 677.712 178.961 677.712 180.618 Z" fill="#222222"/>
+    <text transform="matrix(1 0 0 1 681.15 194.4)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">2</tspan></text>
+    <path d="M713.392 153.324 C713.392 154.981 714.735 156.324 716.392 156.324 C718.049 156.324 719.392 154.981 719.392 153.324 C719.392 151.667 718.049 150.324 716.392 150.324 C714.735 150.324 713.392 151.667 713.392 153.324 Z" fill="#222222"/>
+    <text transform="matrix(1 0 0 1 723.48 161.83)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">3</tspan></text>
+    <path d="M646.288 138.812 C646.288 140.469 647.631 141.812 649.288 141.812 C650.945 141.812 652.288 140.469 652.288 138.812 C652.288 137.155 650.945 135.812 649.288 135.812 C647.631 135.812 646.288 137.155 646.288 138.812 Z" fill="#222222"/>
+    <text transform="matrix(1 0 0 1 638.48 149.27)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">4</tspan></text>
+    <path d="M610.608 96.676 C610.608 98.333 611.951 99.676 613.608 99.676 C615.265 99.676 616.608 98.333 616.608 96.676 C616.608 95.019 615.265 93.676 613.608 93.676 C611.951 93.676 610.608 95.019 610.608 96.676 Z" fill="#222222"/>
+    <text transform="matrix(1 0 0 1 601.42 94.57)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">5</tspan></text>
+    <path d="M677.712 111.188 C677.712 112.845 679.055 114.188 680.712 114.188 C682.369 114.188 683.712 112.845 683.712 111.188 C683.712 109.531 682.369 108.188 680.712 108.188 C679.055 108.188 677.712 109.531 677.712 111.188 Z" fill="#222222"/>
+    <text transform="matrix(1 0 0 1 686.42 107.13)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">6</tspan></text>
+    <path d="M713.392 83.895 C713.392 85.551 714.735 86.895 716.392 86.895 C718.049 86.895 719.392 85.551 719.392 83.895 C719.392 82.238 718.049 80.895 716.392 80.895 C714.735 80.895 713.392 82.238 713.392 83.895 Z" fill="#222222"/>
+    <text transform="matrix(1 0 0 1 722.43 80.22)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">7</tspan></text>
+    <path d="M646.288 69.382 C646.288 71.039 647.631 72.382 649.288 72.382 C650.945 72.382 652.288 71.039 652.288 69.382 C652.288 67.725 650.945 66.382 649.288 66.382 C647.631 66.382 646.288 67.725 646.288 69.382 Z" fill="#222222"/>
+    <text transform="matrix(1 0 0 1 643.75 62)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">8</tspan></text>
+    <g>
+      <g>
+        <path d="M579.726 195.572 L597.341 199.384 L597.108 200.459 L579.494 196.648 Z" fill="#2a6fdb"/>
+        <path d="M599.16 200.34 L594.871 201.438 L595.708 197.567 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 605.48 205.24)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a6fdb"><tspan x="0" y="0">ξ</tspan></text>
+    <g>
+      <g>
+        <path d="M579.276 195.673 L593.593 184.726 L594.261 185.6 L579.944 196.547 Z" fill="#2a6fdb"/>
+        <path d="M595.5 183.96 L593.557 187.938 L591.152 184.792 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 600.17 181.49)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a6fdb"><tspan x="0" y="0">η</tspan></text>
+    <g>
+      <g>
+        <path d="M579.06 196.11 L579.06 178.09 L580.16 178.09 L580.16 196.11 Z" fill="#2a6fdb"/>
+        <path d="M579.61 176.11 L581.59 180.07 L577.63 180.07 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 577.13 170.11)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a6fdb"><tspan x="0" y="0">ζ</tspan></text>
+    <text transform="matrix(1 0 0 1 653.75 250)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">hex8</tspan></text>
+  </g>
+</svg>

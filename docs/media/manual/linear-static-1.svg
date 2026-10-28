@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="680" height="310" viewBox="0 0 680 310">
+  <title>linear-static-1</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M0 0 L680 0 L680 310 L0 310 Z" fill="#ffffff"/>
+    <path d="M16 48 L148 48 L148 104 L16 104 Z" fill="#f4f6f9" stroke="#888888" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 50.05 79.15)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">1  Model + step</tspan></text>
+    <path d="M180 48 L312 48 L312 104 L180 104 Z" fill="#f4f6f9" stroke="#888888" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 218.32 73.08)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">2  Mesh::new</tspan></text>
+    <text transform="matrix(1 0 0 1 202.8 85.23)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">elements, DofLayout</tspan></text>
+    <path d="M344 22 L476 22 L476 72 L344 72 Z" fill="#eef3fc" stroke="#2a6fdb" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 381.65 38.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">3  Assemble K</tspan></text>
+    <text transform="matrix(1 0 0 1 375.32 49.98)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">on the node graph</tspan></text>
+    <text transform="matrix(1 0 0 1 386.45 61.45)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">(label order)</tspan></text>
+    <path d="M344 82 L476 82 L476 122 L344 122 Z" fill="#eef3fc" stroke="#2a6fdb" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 382.24 105.15)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">Load vector f</tspan></text>
+    <path d="M508 48 L664 48 L664 104 L508 104 Z" fill="#eef3fc" stroke="#2a6fdb" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 538.79 73.08)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">4  Constraint reduction</tspan></text>
+    <text transform="matrix(1 0 0 1 545.5 85.23)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">u = T_f q + T_p u_p</tspan></text>
+    <g>
+      <g>
+        <path d="M148 75.5 L174 75.5 L174 76.5 L148 76.5 Z" fill="#555555"/>
+        <path d="M178 76 L170 80 L170 72 Z" fill="#555555"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M311.765 65.559 L338.235 51.441 L338.706 52.324 L312.235 66.441 Z" fill="#555555"/>
+        <path d="M342 50 L336.824 57.294 L333.059 50.235 Z" fill="#555555"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M312.235 85.559 L338.706 99.676 L338.235 100.559 L311.765 86.441 Z" fill="#555555"/>
+        <path d="M342 102 L333.059 101.765 L336.824 94.706 Z" fill="#555555"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M476.268 46.578 L502.888 63.437 L502.353 64.282 L475.732 47.422 Z" fill="#555555"/>
+        <path d="M506 66 L497.101 65.099 L501.382 58.34 Z" fill="#555555"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M475.765 101.559 L502.235 87.441 L502.706 88.324 L476.235 102.441 Z" fill="#555555"/>
+        <path d="M506 86 L500.824 93.294 L497.059 86.235 Z" fill="#555555"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M586.5 104 L586.5 146 L586.5 146.5 L586 146.5 L82 146.5 L82 146 L82.5 146 L82.5 174 L81.5 174 L81.5 146 L81.5 145.5 L82 145.5 L586 145.5 L586 146 L585.5 146 L585.5 104 Z" fill="#555555"/>
+        <path d="M82 178 L78 170 L86 170 Z" fill="#555555"/>
+      </g>
+    </g>
+    <path d="M16 180 L148 180 L148 236 L16 236 Z" fill="#eef3fc" stroke="#2a6fdb" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 39.66 205.08)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">5  Nested dissection</tspan></text>
+    <text transform="matrix(1 0 0 1 71.33 217.23)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">order</tspan></text>
+    <path d="M180 180 L312 180 L312 236 L180 236 Z" fill="#eef3fc" stroke="#2a6fdb" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 197.26 205.08)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">6  Supernodal Cholesky</tspan></text>
+    <text transform="matrix(1 0 0 1 222.15 217.23)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">K_ff = L Lᵀ</tspan></text>
+    <path d="M344 180 L476 180 L476 236 L344 236 Z" fill="#eef3fc" stroke="#2a6fdb" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 388.22 205.08)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">7  Solve q,</tspan></text>
+    <text transform="matrix(1 0 0 1 391.42 217.23)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">expand u</tspan></text>
+    <g>
+      <g>
+        <path d="M148 207.5 L174 207.5 L174 208.5 L148 208.5 Z" fill="#555555"/>
+        <path d="M178 208 L170 212 L170 204 Z" fill="#555555"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M312 207.5 L338 207.5 L338 208.5 L312 208.5 Z" fill="#555555"/>
+        <path d="M342 208 L334 212 L334 204 Z" fill="#555555"/>
+      </g>
+    </g>
+    <path d="M508 160 L664 160 L664 200 L508 200 Z" fill="#f2f8f3" stroke="#2a9d55" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 566.45 177.24)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">Reactions</tspan></text>
+    <text transform="matrix(1 0 0 1 552.51 188.71)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">r = T_pᵀ (K u − f)</tspan></text>
+    <path d="M508 208 L664 208 L664 256 L508 256 Z" fill="#f2f8f3" stroke="#2a9d55" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 535.47 223.97)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">Integration-point stresses</tspan></text>
+    <text transform="matrix(1 0 0 1 545.33 234.97)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">→ nodal extrapolation</tspan></text>
+    <text transform="matrix(1 0 0 1 566.92 245.97)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">→ average</tspan></text>
+    <path d="M508 264 L664 264 L664 298 L508 298 Z" fill="#f2f8f3" stroke="#2a9d55" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 543.59 283.98)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#222222"><tspan x="0" y="0">Balance check Σf + Σr</tspan></text>
+    <g>
+      <g>
+        <path d="M475.659 207.634 L502.735 182.364 L503.417 183.095 L476.341 208.366 Z" fill="#555555"/>
+        <path d="M506 180 L502.881 188.383 L497.422 182.534 Z" fill="#555555"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M476.312 207.61 L503.189 229.111 L502.564 229.892 L475.688 208.39 Z" fill="#555555"/>
+        <path d="M506 232 L497.254 230.126 L502.252 223.879 Z" fill="#555555"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M476.462 207.81 L504.942 277.11 L504.017 277.49 L475.538 208.19 Z" fill="#555555"/>
+        <path d="M506 281 L499.259 275.121 L506.659 272.08 Z" fill="#555555"/>
+      </g>
+    </g>
+    <path d="M16 282 L28 282 L28 294 L16 294 Z" fill="#f4f6f9" stroke="#888888" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 34 292)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">model</tspan></text>
+    <path d="M100 282 L112 282 L112 294 L100 294 Z" fill="#eef3fc" stroke="#2a6fdb" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 118 292)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">solver</tspan></text>
+    <path d="M184 282 L196 282 L196 294 L184 294 Z" fill="#f2f8f3" stroke="#2a9d55" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 202 292)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">output</tspan></text>
+  </g>
+</svg>

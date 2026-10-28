@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="660" height="250" viewBox="0 0 660 250">
+  <title>structural-heat-transfer-2</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M0 0 L660 0 L660 250 L0 250 Z" fill="#ffffff"/>
+    <path d="M20 90 L250 90 L250 150 L20 150 Z" fill="#fdf1e6" stroke="#e07b28" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 92.3 116.75)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">Steady conduction</tspan></text>
+    <text transform="matrix(1 0 0 1 119.2 130.25)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">K T = f</tspan></text>
+    <path d="M370 90 L640 90 L640 150 L370 150 Z" fill="#eef3fc" stroke="#2a6fdb" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 464.75 116.75)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">Static equilibrium</tspan></text>
+    <text transform="matrix(1 0 0 1 430.55 130.25)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#222222"><tspan x="0" y="0">K u = f + ∫ Bᵀ D α (T − T_ref) dV</tspan></text>
+    <g>
+      <g>
+        <path d="M252 110.8 L362.64 110.8 L362.64 113.2 L252 113.2 Z" fill="#222222"/>
+        <path d="M366 112 L359.28 115.36 L359.28 108.64 Z" fill="#222222"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 276.64 104)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">T at every node</tspan></text>
+    <text transform="matrix(1 0 0 1 88.6 56)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">temperature BCs, flux,</tspan></text>
+    <text transform="matrix(1 0 0 1 93.51 68)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">convection, sources</tspan></text>
+    <g>
+      <g>
+        <path d="M135.5 74 L135.5 84 L134.5 84 L134.5 74 Z" fill="#888888"/>
+        <path d="M135 88 L131 80 L139 80 Z" fill="#888888"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 429.22 62)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">displacement BCs, mechanical loads</tspan></text>
+    <g>
+      <g>
+        <path d="M505.5 68 L505.5 84 L504.5 84 L504.5 68 Z" fill="#888888"/>
+        <path d="M505 88 L501 80 L509 80 Z" fill="#888888"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M505.6 152 L505.6 175.992 L504.4 175.992 L504.4 152 Z" fill="#2a9d55"/>
+        <path d="M505 180 L500.992 171.984 L509.008 171.984 Z" fill="#2a9d55"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 443.15 196)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#2a9d55"><tspan x="0" y="0">u, σ = D (ε − ε_th), reactions</tspan></text>
+    <g>
+      <g>
+        <path d="M370.329 140.376 C369.312 141.267 368.294 142.135 367.276 142.98 L366.637 142.211 C367.648 141.371 368.659 140.509 369.671 139.624 Z M364.941 144.88 C363.883 145.723 362.825 146.542 361.766 147.336 L361.166 146.537 C362.217 145.748 363.267 144.935 364.318 144.098 Z M359.338 149.117 C358.237 149.905 357.136 150.666 356.035 151.401 L355.479 150.57 C356.571 149.841 357.663 149.085 358.756 148.304 Z M353.508 153.042 C352.363 153.765 351.217 154.46 350.072 155.125 L349.57 154.261 C350.704 153.601 351.839 152.913 352.974 152.197 Z M347.445 156.603 C346.254 157.25 345.064 157.866 343.875 158.451 L343.433 157.553 C344.611 156.974 345.789 156.365 346.967 155.724 Z M341.147 159.738 C339.913 160.296 338.679 160.821 337.445 161.312 L337.075 160.383 C338.295 159.897 339.514 159.378 340.735 158.827 Z M334.622 162.379 C333.348 162.835 332.074 163.255 330.8 163.639 L330.511 162.682 C331.769 162.302 333.027 161.887 334.286 161.437 Z M327.893 164.455 C326.584 164.794 325.277 165.096 323.969 165.36 L323.771 164.38 C325.061 164.12 326.351 163.822 327.642 163.487 Z M320.997 165.896 C319.664 166.108 318.332 166.28 317.001 166.413 L316.902 165.418 C318.214 165.287 319.526 165.117 320.84 164.909 Z M313.989 166.646 C312.645 166.721 311.302 166.755 309.961 166.749 L309.965 165.749 C311.287 165.755 312.609 165.721 313.933 165.648 Z M306.94 166.669 C305.599 166.603 304.261 166.496 302.923 166.35 L303.032 165.356 C304.349 165.5 305.669 165.605 306.989 165.67 Z M299.927 165.955 C298.605 165.751 297.284 165.508 295.965 165.225 L296.175 164.248 C297.475 164.526 298.777 164.766 300.08 164.967 Z M293.025 164.53 C291.734 164.196 290.445 163.824 289.156 163.414 L289.46 162.461 C290.73 162.865 292.003 163.232 293.276 163.562 Z M286.298 162.442 C285.047 161.988 283.797 161.5 282.55 160.975 L282.937 160.053 C284.169 160.571 285.403 161.054 286.638 161.501 Z M279.789 159.755 C278.584 159.197 277.381 158.605 276.18 157.98 L276.641 157.093 C277.829 157.711 279.019 158.296 280.21 158.848 Z M273.527 156.544 C272.371 155.894 271.217 155.214 270.065 154.502 L270.59 153.651 C271.731 154.356 272.874 155.03 274.017 155.673 Z M267.523 152.88 C266.417 152.151 265.313 151.394 264.209 150.608 L264.79 149.794 C265.883 150.573 266.978 151.323 268.074 152.045 Z M261.779 148.828 C260.721 148.032 259.664 147.21 258.609 146.361 L259.236 145.582 C260.283 146.424 261.331 147.24 262.38 148.029 Z M256.285 144.446 C255.274 143.593 254.263 142.716 253.254 141.814 L253.921 141.068 C254.923 141.964 255.926 142.835 256.93 143.682 Z" fill="#888888"/>
+        <path d="M252 140 L255.874 141.091 L253.452 143.754 Z" fill="#888888"/>
+      </g>
+    </g>
+    <path d="M302 158 L314 170 M314 158 L302 170" fill="none" stroke="#d1495b" stroke-width="1.6" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 261.3 192)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#d1495b"><tspan x="0" y="0">no feedback (one-way)</tspan></text>
+  </g>
+</svg>
