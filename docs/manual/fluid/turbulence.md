@@ -98,7 +98,10 @@ model's rate, and with heat α_t = ν_t / Pr_t as for Smagorinsky's.
 
 **Dynamic σ.** With `collision: "hrr"` and `sigma: "dynamic"`, either model's ν_t sets the hybrid
 collision's σ per cell instead of entering τ ([Collision operators](collision.md), "Hybrid
-recursive regularised"); `eddy_viscosity_ratio` then reports the model's ν_t.
+recursive regularised"); `eddy_viscosity_ratio` then reports the model's ν_t. The von Kármán
+length `|∇u|/|∇²u|` that scales ν_t there is capped at the box's shortest extent in cells, our guard
+for near-uniform regions where `∇²u` vanishes (eq. 50 alone would give σ = 0 for any ν_t > 0); and
+Smagorinsky's ν_t is 0 below the flux's round-off (`crates/lbm/src/turbulence.rs`).
 
 **Per collision.** With two relaxation times the symmetric rate takes the cell's τ and the
 antisymmetric one follows, keeping Λ = (τ⁺ − ½)(τ⁻ − ½). The regularised collision relaxes its

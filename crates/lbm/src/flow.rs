@@ -1661,6 +1661,8 @@ impl Flow {
         let regularized = self.collision.is_regularized();
         let mrt = self.collision == Collision::Mrt;
         let (sigma, gradient_u, grid, periodic) = (self.sigma, &self.gradient_u, self.grid, self.periodic);
+        // Dynamic σ's cap on the von Kármán length: the box's shortest extent in cells.
+        let l_max = self.grid.cells.iter().copied().min().unwrap_or(1) as f64;
         let (wp, wm) = (self.omega_plus, self.omega_minus);
         let (sp, sm) = (1.0 - 0.5 * wp, 1.0 - 0.5 * wm);
         let (smagorinsky, vreman) = (self.smagorinsky, self.vreman);
@@ -1800,7 +1802,7 @@ impl Flow {
                                         nu_vreman
                                     };
                                     nu_model = Some(nu_t);
-                                    crate::hrr::dynamic_sigma(g, &crate::hrr::laplacian(u, nb), nu_t, nu0)
+                                    crate::hrr::dynamic_sigma(g, &crate::hrr::laplacian(u, nb), nu_t, nu0, l_max)
                                 }
                             };
                             sigma_stats[0] = sigma_stats[0].min(s);

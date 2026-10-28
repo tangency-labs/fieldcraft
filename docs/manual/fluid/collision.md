@@ -135,7 +135,14 @@ eq. 47's `ν_σ = (1 − σ)/(6σ) Δx² c_s² τ`, reading the continuous `c_s�
 
 `σ = 1 / (1 + 6 L_VK² ν_t / (Δx² ν))` (eq. 50),
 
-in [0, 1]: 1 where ν_t = 0 (then `regularized` bit for bit), 0 where `∇²u = 0` and ν_t > 0.
+in [0, 1]: 1 where ν_t = 0 (then `regularized` bit for bit). Eq. 50 alone gives 0 where `∇²u = 0`
+and ν_t > 0, however small: unbounded as `|∇²u| → 0`, a regime the paper's flows never reach but a
+near-uniform region does. As a guard (ours, not the paper's) `L_VK² = min(|∇u|²/|∇²u|², L_max²)`,
+L_max the box's shortest extent in cells (the smallest cell count along x, y, z, periodic or not),
+`∇²u = 0` giving `L_VK = L_max`. The cap bounds that amplification without removing it: a ν_t
+between the CPU's and the GPU's round-off floors can still move σ by `6 L_max² ν_t / ν` in a
+near-uniform region of a large box, where u is near-linear and σ barely matters; the GPU's
+agreement is checked on the tested cases, not proven in general.
 `|∇u|² = α_ij α_ij` from the same differences as `S^FD`; `∇²u_j` is the 7-point centred
 Laplacian of each component from the same neighbours, an axis whose either neighbour is missing
 contributing nothing. The subgrid viscosity is then not added to τ: the cell relaxes with the
@@ -384,7 +391,8 @@ unit tests of `hrr.rs`:
 | The same, N = 64 | Eq. 47 of Jacob et al. | Within 6.2e-3 (τ̄ 0.55, σ 0.5), 1e-3 or less otherwise | 1 % | the same |
 | Determinism | One thread against several | Bit for bit | exact | `results_are_bit_for_bit_the_same_on_one_and_many_threads` |
 | Refusals | σ 0, below 0, above 1, not finite: refused by name; `"dynamic"` without `turbulence`: refused, naming it | | | `bad_sigmas_are_refused_and_dynamic_needs_a_subgrid_model` |
-| Dynamic σ, closed form | u_x = sin(ky), k = 2π/16: σ = 1/(1 + 6 L_VK² ν_t/ν) with the discrete α_yx = cos(ky) sin k, ∇²u_x = 2 sin(ky)(cos k − 1); the limits ν_t = 0 → 1, ∇²u = 0 → 0 | within 1e-14 | 1e-14 | `hrr::tests::dynamic_sigma_matches_the_closed_form_of_a_sine` |
+| Dynamic σ, closed form | u_x = sin(ky), k = 2π/16: σ = 1/(1 + 6 L_VK² ν_t/ν) with the discrete α_yx = cos(ky) sin k, ∇²u_x = 2 sin(ky)(cos k − 1); the limits ν_t = 0 → 1, ∇²u = 0 → L_VK = L_max | within 1e-14 | 1e-14 | `hrr::tests::dynamic_sigma_matches_the_closed_form_of_a_sine` |
+| Dynamic σ, near-uniform forced start | 16³ at speed 0.05 with a 1e-6 perturbation, a body force, Smagorinsky's model, first step: σ ≥ 1/(1 + 6 L_max² ν_t/ν), L_max 16 | σ min 0.99999988 against the bound 0.99999988 (ν_t/ν 7.7e-11 from the force's flux); without the cap 2.6e-10 | exact bound | `a_near_uniform_forced_start_keeps_dynamic_sigma_above_the_cap_s_bound` (`tests/vreman.rs`) |
 | Dynamic σ with no eddy viscosity | Couette and Poiseuille with Vreman's model: σ = 1 everywhere, `regularized` bit for bit | equal; σ min and mean exactly 1 | exact | `dynamic_sigma_without_eddy_viscosity_is_the_regularised_collision_bit_for_bit` (`tests/vreman.rs`) |
 | Dynamic σ from an equilibrium start | Taylor–Green 16³ with Smagorinsky's model, first step: the flux is round-off only, so ν_t = 0 and σ = 1 | σ min and mean exactly 1, ν_t/ν 0 (1 − 1.7e-12 and 1.7e-14 without the floor) | exact | `an_equilibrium_start_gives_dynamic_sigma_one_exactly` (`tests/vreman.rs`) |
 | Dynamic σ, Taylor–Green 16³, Re 50 | σ in [0, 1], below 1 | Vreman's: σ min 0.030, mean 0.421; Smagorinsky's: 0.024, 0.443 | — | `dynamic_sigma_acts_in_the_taylor_green_vortex` |

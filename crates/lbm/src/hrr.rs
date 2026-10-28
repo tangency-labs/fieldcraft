@@ -58,10 +58,22 @@
 //!
 //! `σ = 1 / (1 + 6 L_VK² ν_t / (Δx² ν))`,
 //!
-//! computed as `|∇²u|² / (|∇²u|² + 6 |∇u|² ν_t / ν)` (Δx = 1), which lies in [0, 1] by
-//! construction: ν_t = 0 gives σ = 1 exactly (the regularised collision, bit for bit);
-//! `|∇²u| = 0` with ν_t > 0 gives σ = 0 (the finite-difference flux alone, which the blend
-//! allows; only a fixed σ = 0 is refused). The subgrid viscosity is then **not** added to τ (the
+//! which lies in [0, 1]: ν_t = 0 gives σ = 1 exactly (the regularised collision, bit for bit).
+//!
+//! **The cap on L_VK** (our guard, not the paper's). Eq. 50 is unbounded as `|∇²u| → 0` with a
+//! gradient, where it gives σ = 0 for any ν_t > 0, however small; the paper's flows never reach
+//! that regime, but a near-uniform region (a start from rest or from equilibrium, a nodal line of
+//! a vortex) does. So `L_VK² = min(|∇u|² / |∇²u|², L_max²)` with `L_max` the computational box's
+//! shortest extent in cells, the smallest of the grid's cell counts along x, y and z: the whole
+//! box whether or not an axis is periodic (a periodic axis's extent is its period, the longest
+//! wave it holds), since no resolved length exceeds it. It is computed so that `|∇²u| = 0` gives
+//! `L = L_max` (never a division by zero), and no gradient gives `L = 0`. The cap bounds the
+//! amplification, it does not remove it: on a large box with a near-uniform region, a ν_t below
+//! one backend's round-off floor and above the other's ([`crate::turbulence`], "Round-off") can
+//! still move σ through `6 L_max² ν_t / ν`, so the CPU's and the GPU's dynamic σ can differ there.
+//! Where u is near-linear the populations' flux and the finite-difference one agree, so σ barely
+//! matters there; the GPU's agreement with the CPU is checked on the tested cases, not proven in
+//! general. The subgrid viscosity is then **not** added to τ (the
 //! paper's case 4, implicit LES): the cell relaxes with the molecular τ̄, and the model only sets σ.
 //! Vreman's ν_t ([`crate::vreman`]) is the paper's; with Smagorinsky's model ν_t is Hou's, the
 //! `(1/ω − 1/ω₀)/3` the implicit rate [`crate::turbulence::omega`] would give the cell, computed
@@ -121,17 +133,27 @@ pub fn laplacian(u: [f64; 3], nb: &Neighbours) -> [f64; 3] {
 }
 
 /// The dynamic σ of a cell (Jacob et al. eqs. 48–50, see the module docs) with gradient `g`,
-/// Laplacian `lap`, subgrid eddy viscosity `nu_t` and molecular viscosity `nu` (lattice units):
-/// `|∇²u|² / (|∇²u|² + 6 |∇u|² ν_t / ν)`, in [0, 1]; exactly 1 where `nu_t` is not above 0, and 1
-/// where the result is not a number (no gradient and no Laplacian).
+/// Laplacian `lap`, subgrid eddy viscosity `nu_t`, molecular viscosity `nu` and the von Kármán
+/// length's cap `l_max` (lattice units): `1 / (1 + 6 L² ν_t / ν)` with
+/// `L² = min(|∇u|² / |∇²u|², l_max²)`, in [0, 1]. Written so that `|∇²u| = 0` gives `L = l_max`
+/// (never a division by zero); no gradient gives `L = 0`; exactly 1 where `nu_t` is not above 0,
+/// and 1 where a number is not usable.
 #[inline(always)]
-pub fn dynamic_sigma(g: &[[f64; 3]; 3], lap: &[f64; 3], nu_t: f64, nu: f64) -> f64 {
+pub fn dynamic_sigma(g: &[[f64; 3]; 3], lap: &[f64; 3], nu_t: f64, nu: f64, l_max: f64) -> f64 {
     if !(nu_t > 0.0 && nu > 0.0) {
         return 1.0;
     }
     let grad2 = norm2(g);
     let lap2: f64 = lap.iter().map(|x| x * x).sum();
-    let sigma = lap2 / (lap2 + 6.0 * grad2 * nu_t / nu);
+    let l_max2 = l_max * l_max;
+    let l2 = if !(grad2 > 0.0) {
+        0.0
+    } else if grad2 < lap2 * l_max2 {
+        grad2 / lap2
+    } else {
+        l_max2
+    };
+    let sigma = 1.0 / (1.0 + 6.0 * l2 * nu_t / nu);
     if sigma.is_finite() { sigma.clamp(0.0, 1.0) } else { 1.0 }
 }
 
@@ -269,18 +291,24 @@ mod tests {
             assert!((g[1][0] - alpha).abs() < 1e-15 && (lap[0] - lx).abs() < 1e-15, "{g:?} {lap:?}");
             let l2 = alpha * alpha / (lx * lx);
             let want = 1.0 / (1.0 + 6.0 * l2 * nu_t / nu);
-            let got = dynamic_sigma(&g, &lap, nu_t, nu);
+            let got = dynamic_sigma(&g, &lap, nu_t, nu, 1e6);
             assert!((got - want).abs() < 1e-14, "y {y}: {got} vs {want}");
             assert!((0.0..=1.0).contains(&got));
         }
-        // The limits: no eddy viscosity is σ = 1 exactly; no Laplacian with a gradient is 0;
-        // neither is 1; hostile numbers give 1.
+        // The limits: no eddy viscosity is σ = 1 exactly; no Laplacian with a gradient takes the
+        // cap, L = l_max (eq. 50 alone gives 0); a Laplacian small enough is capped too; neither
+        // is 1; hostile numbers give 1.
         let g = [[0.0, 0.0, 0.0], [0.2, 0.0, 0.0], [0.0; 3]];
-        assert_eq!(dynamic_sigma(&g, &[0.1, 0.0, 0.0], 0.0, 0.01), 1.0);
-        assert_eq!(dynamic_sigma(&g, &[0.0; 3], 0.003, 0.01), 0.0);
-        assert_eq!(dynamic_sigma(&[[0.0; 3]; 3], &[0.0; 3], 0.003, 0.01), 1.0);
-        assert_eq!(dynamic_sigma(&[[f64::NAN; 3]; 3], &[f64::NAN; 3], 0.003, 0.01), 1.0);
-        assert_eq!(dynamic_sigma(&g, &[0.1, 0.0, 0.0], f64::NAN, 0.01), 1.0);
+        let capped = 1.0 / (1.0 + 6.0 * 16.0 * 16.0 * 0.003 / 0.01);
+        assert_eq!(dynamic_sigma(&g, &[0.1, 0.0, 0.0], 0.0, 0.01, 16.0), 1.0);
+        assert_eq!(dynamic_sigma(&g, &[0.0; 3], 0.003, 0.01, 16.0), capped);
+        assert_eq!(dynamic_sigma(&g, &[1e-9, 0.0, 0.0], 0.003, 0.01, 16.0), capped);
+        let uncapped = 1.0 / (1.0 + 6.0 * 4.0 * 0.003 / 0.01);
+        assert!((dynamic_sigma(&g, &[0.1, 0.0, 0.0], 0.003, 0.01, 16.0) - uncapped).abs() < 1e-15);
+        assert_eq!(dynamic_sigma(&[[0.0; 3]; 3], &[0.0; 3], 0.003, 0.01, 16.0), 1.0);
+        assert_eq!(dynamic_sigma(&[[f64::NAN; 3]; 3], &[f64::NAN; 3], 0.003, 0.01, 16.0), 1.0);
+        assert_eq!(dynamic_sigma(&g, &[0.1, 0.0, 0.0], f64::NAN, 0.01, 16.0), 1.0);
+        assert_eq!(dynamic_sigma(&g, &[f64::NAN; 3], 0.003, 0.01, 16.0), capped);
         // The Laplacian of a quadratic is exact; an axis with a missing neighbour adds nothing.
         let quad = |x: f64, y: f64| [x * x + 3.0 * y * y, 0.0, 0.0];
         let nb = neighbours(|a, up| {

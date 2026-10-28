@@ -285,6 +285,36 @@ fn an_equilibrium_start_gives_dynamic_sigma_one_exactly() {
     assert_eq!(ratio, 0.0);
 }
 
+/// A near-uniform forced start: a periodic 16³ box at lattice speed 0.05 with a perturbation of 1e-6
+/// along y, a body force, Smagorinsky's model, dynamic σ, from equilibrium. The populations'
+/// equilibrium of the bare velocity leaves the flux F F / (4ρ), above the CPU's round-off, so ν_t
+/// is a tiny positive number in every cell, and at the perturbation's nodes ∇²u vanishes: eq. 50
+/// alone gives σ = 0 there. With the von Kármán length capped at the box (16 cells) every σ of
+/// the first step is at least 1 / (1 + 6 L_max² ν_t/ν) with the largest ν_t/ν.
+#[test]
+fn a_near_uniform_forced_start_keeps_dynamic_sigma_above_the_cap_s_bound() {
+    let n = 16usize;
+    let mut d = domain([0.0; 3], [n as f64; 3], 1.0);
+    for f in BoxFace::ALL {
+        *d.faces.get_mut(f) = PERIODIC;
+    }
+    d.acceleration = [1e-5, 0.0, 0.0];
+    let smagorinsky = Turbulence::Smagorinsky { constant: 0.17, prandtl: 0.9, van_driest: None, wall_model: None };
+    let p = dynamic(with(collide(1.0, 1.0, None, Collision::Hrr), Some(smagorinsky)));
+    let (setup, mut flow) = prepare(&model(1.0, 0.1 / 3.0, d, p), &[]);
+    assert_eq!(setup.steps, 1);
+    let grid = *flow.grid();
+    let k = 2.0 * std::f64::consts::PI / n as f64;
+    flow.set_equilibrium(|cell| (1.0, [0.05 + 1e-6 * (k * grid.coords(cell)[1] as f64).sin(), 0.0, 0.0]));
+    run_all(&setup, &mut flow);
+    let ratio = flow.eddy_viscosity_ratio();
+    let (min, mean) = flow.dynamic_sigma().unwrap();
+    let bound = 1.0 / (1.0 + 6.0 * (n * n) as f64 * ratio);
+    println!("near-uniform forced start, 16³: ν_t/ν up to {ratio:e}; σ min {min} (bound {bound}), mean {mean}");
+    assert!(ratio > 0.0, "the force's flux is above the round-off");
+    assert!(min >= bound && min < 1.0, "{min} vs {bound}");
+}
+
 /// Dynamic σ gives the same result bit for bit on one and on several threads (its σ statistics
 /// too: the blocks' sums are added in block order).
 #[test]
