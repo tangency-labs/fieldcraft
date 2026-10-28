@@ -571,7 +571,10 @@ shock capturing belongs to Eulerian finite volume (E1); not needed for the Lagra
   (with Smagorinsky's eddy viscosity or the wall model's rate when they act), which keeps ν exactly as k → 0; the
   centred stencil of the paper (Feng et al.'s isotropic one not implemented); one-sided first-order differences next
   to any non-fluid neighbour or non-periodic face, 0 with neither neighbour; σ = 0.99 by default, σ = 1 is
-  `regularized` bit for bit; "dynamic" σ refused (it comes with Vreman's model). Verified against the exact decay of a
+  `regularized` bit for bit. Dynamic σ (eqs. 48–50) with Vreman's (C5.1a) or Smagorinsky's ν_t (Hou's, from the implicit
+  rate): `σ = 1/(1 + 6 L_VK² ν_t/ν)`, the continuous `c_s² τ` of eq. 47 read as ν, `|∇²u|` from the 7-point Laplacian
+  (an axis with a missing neighbour contributes nothing), ν_t then not in τ (their case 4), σ = 1 at wall-model cells;
+  refused without a turbulence model. Verified against the exact decay of a
   shear wave (within 1 %, measured within 1e-6) and eq. 47 at k Δx = 2π/64.
 
 **C2.5 Velocity sets.** D3Q19 for laminar and moderate Re (cheapest isotropic-enough set); D3Q27 for cumulant and

@@ -2804,11 +2804,12 @@ fn han_s_measures_read_spalding_s_profile_as_exact() {
 /// (M. E. Brachet, D. I. Meiron, S. A. Orszag, B. G. Nickel, R. H. Morf, U. Frisch, J. Fluid
 /// Mech. 130:411–452, 1983), stepped to `FIELDCRAFT_TGV_END` (20) with each variant in
 /// `FIELDCRAFT_TGV` (`mrt:0.1,regularized:0.1,hrr@0.97:0.1,hrr@0.99:v0.18`: collision, for
-/// `hrr` its σ after `@` (0.99 when left out), and the subgrid model's constant: Smagorinsky's C,
+/// `hrr` its σ after `@` (0.99 when left out, or `dynamic`), and the subgrid model's constant: Smagorinsky's C,
 /// or with a `v` before it Vreman's model with that Smagorinsky-equivalent C_s, CPU only), on
 /// `FIELDCRAFT_TGV_N` cells per side (64) at lattice speed `FIELDCRAFT_TGV_SPEED` (0.05) and
 /// Reynolds number `FIELDCRAFT_TGV_RE` (1600; 12000 puts τ below the Han et al. channel's).
-/// Prints k(t) and −dk/dt; at Re 1600 the spectral DNS peaks at about 0.0127 near t ≈ 9.
+/// Prints k(t) and −dk/dt (with dynamic σ on the CPU, its smallest and mean value in the step
+/// printed); at Re 1600 the spectral DNS peaks at about 0.0127 near t ≈ 9.
 /// `FIELDCRAFT_TGV_CPU=1` runs on the CPU.
 #[test]
 #[ignore = "minutes, GPU: set FIELDCRAFT_TGV=mrt:0.1 (docs/verification.md, \"Long studies\")"]
@@ -2832,6 +2833,7 @@ fn study_taylor_green_vortex_dissipation() {
         };
         let c: f64 = c.parse().unwrap();
         let (name, sigma) = match name.split_once('@') {
+            Some((n, "dynamic")) => (n, Some(fieldcraft_model::HrrSigma::Dynamic)),
             Some((n, s)) => (n, Some(fieldcraft_model::HrrSigma::Value(s.parse().unwrap()))),
             None => (name, None),
         };
@@ -2901,7 +2903,8 @@ fn study_taylor_green_vortex_dissipation() {
                 peak = (0.5 * (t + last.0), rate, backend(&mut device, &mut flow).eddy_viscosity_ratio());
             }
             if k % (4 * every) < every {
-                println!("    t {:5.2}: k {e:.5}, −dk/dt {rate:.5}", 0.5 * (t + last.0));
+                let sigma = flow.dynamic_sigma().filter(|_| cpu).map_or(String::new(), |(min, mean)| format!(", σ min {min:.4} mean {mean:.4}"));
+                println!("    t {:5.2}: k {e:.5}, −dk/dt {rate:.5}{sigma}", 0.5 * (t + last.0));
             }
             last = (t, e);
         }

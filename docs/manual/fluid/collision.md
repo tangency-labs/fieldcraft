@@ -32,7 +32,7 @@ lattice of a flow with heat always collides with two relaxation times.
 | | `"mrt"` | | Multiple relaxation times. The collision the wall model is validated with ([Wall-modelled LES](../../lbm-wall-model.md)). |
 | | `"hrr"` | | Hybrid recursive regularised. The regularised collision with its stress blended with the one the finite-difference strain rate gives (`sigma`), which damps the shortest waves: for large-eddy simulation. CPU only for now. |
 | `magic` | above 0, at most 1 | 3/16 | The two-relaxation-time parameter Λ. With `regularized`, `mrt` or `hrr` it has no effect, and the solve warns. |
-| `sigma` | above 0, at most 1 | 0.99 | The hybrid collision's σ: its share of the populations' own stress. 1 is `regularized` exactly; lower adds more hyperviscosity. `"dynamic"` is not supported yet (it needs a subgrid model's eddy viscosity). With another collision it has no effect, and the solve warns. |
+| `sigma` | above 0, at most 1 | 0.99 | The hybrid collision's σ: its share of the populations' own stress. 1 is `regularized` exactly; lower adds more hyperviscosity. `"dynamic"`: σ per cell and step from the turbulence model's eddy viscosity, which then stays out of τ (needs `turbulence`; Theory). With another collision it has no effect, and the solve warns. |
 
 The same choice runs on the CPU and on the GPU (`backend: "gpu"`), with buoyancy, heat and the
 turbulence model, except `hrr`, which the GPU refuses (not supported yet). `solve.fluid` reports it as `collision`, with `tau`, `tau_minus` and `magic`.
@@ -127,6 +127,24 @@ damping relative to `regularized` grows as τ̄ approaches ½ (about 7 times eq.
 σ near 1), is about half of it at τ̄ = 0.8, vanishes at τ̄ = 1 (the collision then keeps no
 non-equilibrium part) and changes sign above. Resolved waves (k Δx = 2π/64) stay within 1 % of
 eq. 47 at τ̄ 0.55 and 0.8.
+
+**Dynamic σ** (`sigma: "dynamic"`, their §4). With a turbulence model's eddy viscosity ν_t, σ is
+set per cell and step so that the blend's hyperviscous dissipation `ν_σ |∇²u|²` equals the
+subgrid one `ν_t |∇u|²` (eq. 48): `ν_σ = L_VK² ν_t`, `L_VK = |∇u| / |∇²u|` (eq. 49), and with
+eq. 47's `ν_σ = (1 − σ)/(6σ) Δx² c_s² τ`, reading the continuous `c_s² τ` as the molecular ν,
+
+`σ = 1 / (1 + 6 L_VK² ν_t / (Δx² ν))` (eq. 50),
+
+in [0, 1]: 1 where ν_t = 0 (then `regularized` bit for bit), 0 where `∇²u = 0` and ν_t > 0.
+`|∇u|² = α_ij α_ij` from the same differences as `S^FD`; `∇²u_j` is the 7-point centred
+Laplacian of each component from the same neighbours, an axis whose either neighbour is missing
+contributing nothing. The subgrid viscosity is then not added to τ: the cell relaxes with the
+fluid's own τ̄ and the model only sets σ (the paper's implicit large-eddy simulation, case 4).
+ν_t is Vreman's (the paper's model), or with Smagorinsky's model Hou's, `(1/ω − 1/ω₀)/3` from
+the implicit rate. A wall cell under the wall model keeps σ = 1. `eddy_viscosity_ratio` reports
+the model's ν_t, and with heat α_t = ν_t / Pr_t still reaches the scalar lattice. Eq. 47 is the
+continuous model's estimate; near τ̄ = ½ the scheme's own hyperviscosity is several times larger
+(above), so there dynamic σ dissipates more than the subgrid model it matches.
 
 ### Multiple relaxation times
 
@@ -362,7 +380,11 @@ unit tests of `hrr.rs`:
 | Shear wave, N = 64, 16, 8 cells (k Δx = 2π/N), τ̄ 0.8 and 0.55, σ 0.5, 0.9, 0.97, 0.985 | Exact rate −ln λ of the scheme's linear map (derived in the test) | Within 2.5e-7 relative (1e-11 for N ≥ 16) | 1 % | `shear_waves_decay_at_the_exact_rate_and_at_eq_47_when_resolved` (heavy; N = 16, τ̄ 0.8, σ 0.9 in the trunk gate) |
 | The same, N = 64 | Eq. 47 of Jacob et al. | Within 6.2e-3 (τ̄ 0.55, σ 0.5), 1e-3 or less otherwise | 1 % | the same |
 | Determinism | One thread against several | Bit for bit | exact | `results_are_bit_for_bit_the_same_on_one_and_many_threads` |
-| Refusals | σ 0, below 0, above 1, not finite: refused by name; `"dynamic"`: not supported yet | | | `bad_sigmas_are_refused_and_dynamic_is_not_supported_yet` |
+| Refusals | σ 0, below 0, above 1, not finite: refused by name; `"dynamic"` without `turbulence`: refused, naming it | | | `bad_sigmas_are_refused_and_dynamic_needs_a_subgrid_model` |
+| Dynamic σ, closed form | u_x = sin(ky), k = 2π/16: σ = 1/(1 + 6 L_VK² ν_t/ν) with the discrete α_yx = cos(ky) sin k, ∇²u_x = 2 sin(ky)(cos k − 1); the limits ν_t = 0 → 1, ∇²u = 0 → 0 | within 1e-14 | 1e-14 | `hrr::tests::dynamic_sigma_matches_the_closed_form_of_a_sine` |
+| Dynamic σ with no eddy viscosity | Couette and Poiseuille with Vreman's model: σ = 1 everywhere, `regularized` bit for bit | equal; σ min and mean exactly 1 | exact | `dynamic_sigma_without_eddy_viscosity_is_the_regularised_collision_bit_for_bit` (`tests/vreman.rs`) |
+| Dynamic σ, Taylor–Green 16³, Re 50 | σ in [0, 1], below 1 | Vreman's: σ min 0.030, mean 0.421; Smagorinsky's: 0.024, 0.443 | — | `dynamic_sigma_acts_in_the_taylor_green_vortex` |
+| Dynamic σ, determinism | One thread against several, Vreman's and Smagorinsky's | Bit for bit, σ statistics too | exact | `dynamic_sigma_is_bit_for_bit_the_same_on_one_and_many_threads` |
 
 ### The thermal lattice
 

@@ -47,6 +47,31 @@
 //! `ν k² [1 + ((1 − σ)/σ)(1 − sin(k Δx)/(k Δx))]` for small k Δx: the shortest waves, which an
 //! under-resolved large-eddy simulation piles energy into, are damped, the resolved ones barely.
 //!
+//! **Dynamic σ** (`sigma: "dynamic"`, their §4, eqs. 48–50). With a subgrid model's eddy viscosity
+//! ν_t, σ is chosen per cell and step so that the blend's hyperviscous dissipation
+//! `ε_σ = ν_σ |∇²u|²` equals the subgrid one `ε_sgs = ν_t |∇u|²`: `ν_σ = L_VK² ν_t` with
+//! `L_VK = |∇u| / |∇²u|` (a von Kármán length), `|∇u|² = α_ij α_ij` from [`gradient`] and
+//! `|∇²u|² = Σ_j (∇²u_j)²` from [`laplacian`]. With `ν_σ = (1 − σ)/(6σ) Δx² c_s² τ` and the paper's
+//! continuous τ read as `c_s² τ = ν`, the molecular viscosity (the hyperviscosity the scheme's
+//! linear analysis shows, `ν (1 − σ)/σ (1 − sin(kΔx)/(kΔx)) ≈ ν (1 − σ)/(6σ) (kΔx)²`, carries
+//! ν, not ν + ν_t), so
+//!
+//! `σ = 1 / (1 + 6 L_VK² ν_t / (Δx² ν))`,
+//!
+//! computed as `|∇²u|² / (|∇²u|² + 6 |∇u|² ν_t / ν)` (Δx = 1), which lies in [0, 1] by
+//! construction: ν_t = 0 gives σ = 1 exactly (the regularised collision, bit for bit);
+//! `|∇²u| = 0` with ν_t > 0 gives σ = 0 (the finite-difference flux alone, which the blend
+//! allows; only a fixed σ = 0 is refused). The subgrid viscosity is then **not** added to τ (the
+//! paper's case 4, implicit LES): the cell relaxes with the molecular τ̄, and the model only sets σ.
+//! Vreman's ν_t ([`crate::vreman`]) is the paper's; with Smagorinsky's model ν_t is Hou's,
+//! `(1/ω − 1/ω₀)/3` from the implicit rate [`crate::turbulence::omega`] would give the cell. A
+//! wall cell under the wall model keeps σ = 1 (its rate is the wall model's).
+//!
+//! **Laplacian.** `∇²u_j` is the 7-point second-order centred Laplacian of each component from the
+//! same neighbours, `Σ_a (u(i + e_a) − 2 u(i) + u(i − e_a))`; along an axis where either neighbour
+//! is missing that axis's second difference is 0 (our choice, as one-sided first differences carry
+//! no second derivative).
+//!
 //! The velocities of the neighbours come from a pass over every fluid cell before the collision
 //! ([`crate::flow`]), by fixed blocks, so the result is the same on any number of threads.
 //!
@@ -74,6 +99,37 @@ pub fn gradient(u: [f64; 3], nb: &Neighbours) -> [[f64; 3]; 3] {
 #[inline(always)]
 pub fn norm2(g: &[[f64; 3]; 3]) -> f64 {
     g.iter().flatten().map(|x| x * x).sum()
+}
+
+/// The Laplacian of finite differences of each velocity component at a cell of velocity `u` with
+/// neighbours `nb`: along each axis with both neighbours `u(i+1) − 2 u(i) + u(i−1)`, nothing along
+/// an axis where either is missing.
+#[inline(always)]
+pub fn laplacian(u: [f64; 3], nb: &Neighbours) -> [f64; 3] {
+    let mut l = [0.0; 3];
+    for [m, p] in nb {
+        if let (Some(m), Some(p)) = (m, p) {
+            for (((lb, pb), mb), ub) in l.iter_mut().zip(p).zip(m).zip(u) {
+                *lb += pb - 2.0 * ub + mb;
+            }
+        }
+    }
+    l
+}
+
+/// The dynamic σ of a cell (Jacob et al. eqs. 48–50, see the module docs) with gradient `g`,
+/// Laplacian `lap`, subgrid eddy viscosity `nu_t` and molecular viscosity `nu` (lattice units):
+/// `|∇²u|² / (|∇²u|² + 6 |∇u|² ν_t / ν)`, in [0, 1]; exactly 1 where `nu_t` is not above 0, and 1
+/// where the result is not a number (no gradient and no Laplacian).
+#[inline(always)]
+pub fn dynamic_sigma(g: &[[f64; 3]; 3], lap: &[f64; 3], nu_t: f64, nu: f64) -> f64 {
+    if !(nu_t > 0.0 && nu > 0.0) {
+        return 1.0;
+    }
+    let grad2 = norm2(g);
+    let lap2: f64 = lap.iter().map(|x| x * x).sum();
+    let sigma = lap2 / (lap2 + 6.0 * grad2 * nu_t / nu);
+    if sigma.is_finite() { sigma.clamp(0.0, 1.0) } else { 1.0 }
 }
 
 /// The strain rate of gradient `g` ([`gradient`]): `xx, yy, zz, xy, xz, yz`.
@@ -193,5 +249,48 @@ mod tests {
         let s = strain(&gradient(u, &neighbours(|a, up| if a == 1 { None } else { full(a, up) })));
         assert_eq!(s, [0.0, 0.0, 0.5, 1.0, 0.0, 0.0]);
         assert_eq!(strain(&gradient(u, &neighbours(|_, _| None))), [0.0; 6]);
+    }
+
+    /// u_x = sin(k y) on the lattice: the centred differences give α_yx = cos(ky) sin k and
+    /// ∇²u_x = 2 sin(ky)(cos k − 1), so L_VK² = cos²(ky) sin²k / (4 sin²(ky)(1 − cos k)²) and
+    /// σ = 1 / (1 + 6 L_VK² ν_t / ν) (the continuous limit: L_VK = |cot(ky)| / k).
+    #[test]
+    fn dynamic_sigma_matches_the_closed_form_of_a_sine() {
+        let (k, nu, nu_t) = (2.0 * std::f64::consts::PI / 16.0, 0.01, 0.003);
+        for y in [0.3, 1.0, 2.5, 5.0] {
+            let at = |y: f64| [(k * y).sin(), 0.0, 0.0];
+            let u = at(y);
+            let nb = neighbours(|a, up| Some(if a == 1 { at(y + if up { 1.0 } else { -1.0 }) } else { u }));
+            let (g, lap) = (gradient(u, &nb), laplacian(u, &nb));
+            let (alpha, lx) = ((k * y).cos() * k.sin(), 2.0 * (k * y).sin() * (k.cos() - 1.0));
+            assert!((g[1][0] - alpha).abs() < 1e-15 && (lap[0] - lx).abs() < 1e-15, "{g:?} {lap:?}");
+            let l2 = alpha * alpha / (lx * lx);
+            let want = 1.0 / (1.0 + 6.0 * l2 * nu_t / nu);
+            let got = dynamic_sigma(&g, &lap, nu_t, nu);
+            assert!((got - want).abs() < 1e-14, "y {y}: {got} vs {want}");
+            assert!((0.0..=1.0).contains(&got));
+        }
+        // The limits: no eddy viscosity is σ = 1 exactly; no Laplacian with a gradient is 0;
+        // neither is 1; hostile numbers give 1.
+        let g = [[0.0, 0.0, 0.0], [0.2, 0.0, 0.0], [0.0; 3]];
+        assert_eq!(dynamic_sigma(&g, &[0.1, 0.0, 0.0], 0.0, 0.01), 1.0);
+        assert_eq!(dynamic_sigma(&g, &[0.0; 3], 0.003, 0.01), 0.0);
+        assert_eq!(dynamic_sigma(&[[0.0; 3]; 3], &[0.0; 3], 0.003, 0.01), 1.0);
+        assert_eq!(dynamic_sigma(&[[f64::NAN; 3]; 3], &[f64::NAN; 3], 0.003, 0.01), 1.0);
+        assert_eq!(dynamic_sigma(&g, &[0.1, 0.0, 0.0], f64::NAN, 0.01), 1.0);
+        // The Laplacian of a quadratic is exact; an axis with a missing neighbour adds nothing.
+        let quad = |x: f64, y: f64| [x * x + 3.0 * y * y, 0.0, 0.0];
+        let nb = neighbours(|a, up| {
+            let d = if up { 1.0 } else { -1.0 };
+            Some(match a {
+                0 => quad(1.0 + d, 2.0),
+                1 => quad(1.0, 2.0 + d),
+                _ => quad(1.0, 2.0),
+            })
+        });
+        assert_eq!(laplacian(quad(1.0, 2.0), &nb), [8.0, 0.0, 0.0]);
+        let mut half = nb;
+        half[1][1] = None;
+        assert_eq!(laplacian(quad(1.0, 2.0), &half), [2.0, 0.0, 0.0]);
     }
 }

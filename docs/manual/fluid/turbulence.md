@@ -96,6 +96,10 @@ explicit (this step's neighbours), where Smagorinsky's is implicit in the cell's
 cell relaxes with τ̄ = 3 (ν + ν_t) + ½, per collision as below; a modelled wall cell keeps the wall
 model's rate, and with heat α_t = ν_t / Pr_t as for Smagorinsky's.
 
+**Dynamic σ.** With `collision: "hrr"` and `sigma: "dynamic"`, either model's ν_t sets the hybrid
+collision's σ per cell instead of entering τ ([Collision operators](collision.md), "Hybrid
+recursive regularised"); `eddy_viscosity_ratio` then reports the model's ν_t.
+
 **Per collision.** With two relaxation times the symmetric rate takes the cell's τ and the
 antisymmetric one follows, keeping Λ = (τ⁺ − ½)(τ⁻ − ½). The regularised collision relaxes its
 rebuilt non-equilibrium part with the cell's τ. The multiple-relaxation-time collision replaces

@@ -217,6 +217,9 @@ pub struct Setup {
     /// The hybrid collision's σ ([`crate::hrr`]; 0.99 unless the step gives one, unused with
     /// another collision).
     pub sigma: f64,
+    /// Whether the hybrid collision's σ is dynamic: set per cell and step from the subgrid
+    /// model's eddy viscosity, which then does not enter the relaxation time ([`crate::hrr`]).
+    pub dynamic_sigma: bool,
     /// Smagorinsky's constant C of the subgrid eddy viscosity (C Δx)² |S| (0: none), and the
     /// turbulent Prandtl number Pr_t of its heat diffusivity ν_t / Pr_t.
     pub smagorinsky: f64,
@@ -716,9 +719,12 @@ impl Setup {
             ));
         }
         let collision = collision.unwrap_or_default();
-        // The model checked σ's range; the solver cannot take a dynamic one yet.
-        if collision == Collision::Hrr && *sigma == Some(HrrSigma::Dynamic) {
-            return Err(Error::Invalid("not supported yet: dynamic σ (`sigma: \"dynamic\"`)".into()));
+        // The model checked σ's range; a dynamic σ comes from a subgrid model's eddy viscosity.
+        let dynamic_sigma = collision == Collision::Hrr && *sigma == Some(HrrSigma::Dynamic);
+        if dynamic_sigma && turbulence.is_none() {
+            return Err(Error::Invalid(
+                "dynamic σ needs a subgrid model's eddy viscosity: add `turbulence` (Vreman's or Smagorinsky's model)".into(),
+            ));
         }
         let hybrid_sigma = HrrSigma::fixed(*sigma);
         if collision != Collision::Hrr && sigma.is_some() {
@@ -751,6 +757,7 @@ impl Setup {
             magic,
             collision,
             sigma: hybrid_sigma,
+            dynamic_sigma,
             smagorinsky,
             vreman,
             van_driest,

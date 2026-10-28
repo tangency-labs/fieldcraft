@@ -423,6 +423,10 @@ pub struct Flow {
     /// the collision (for the finite-difference gradient; empty otherwise).
     sigma: f64,
     gradient_u: Vec<[f64; 3]>,
+    /// Whether σ is dynamic (set per cell from the subgrid model, [`crate::hrr`]), and then its
+    /// smallest and mean value over the fluid cells in the last collision.
+    dynamic: bool,
+    sigma_stats: Option<(f64, f64)>,
     /// Whether each axis is periodic (its faces' neighbours are the periodic images).
     periodic: [bool; 3],
     /// The fans and porous zones (porous first), their fluid cells, and per cell its zone
@@ -891,6 +895,8 @@ impl Flow {
             cell_force,
             cell_u,
             sigma: setup.sigma,
+            dynamic: setup.dynamic_sigma,
+            sigma_stats: None,
             gradient_u: if setup.collision == Collision::Hrr || setup.vreman > 0.0 { filled(n, [0.0; 3], "cell velocities")? } else { Vec::new() },
             periodic,
             fan_rise: vec![0.0; setup.zones.len()],
@@ -1142,6 +1148,12 @@ impl Flow {
     /// Whether a subgrid model (Smagorinsky's or Vreman's) gives the cells an eddy viscosity.
     pub fn turbulent(&self) -> bool {
         self.smagorinsky > 0.0 || self.vreman > 0.0
+    }
+
+    /// With the hybrid collision's dynamic σ, its smallest and mean value over the fluid cells in
+    /// the last step (a diagnostic; `None` without dynamic σ or before the first step).
+    pub fn dynamic_sigma(&self) -> Option<(f64, f64)> {
+        self.sigma_stats
     }
 
     /// The turbulent Prandtl number of Smagorinsky's model (its turbulent diffusivity ν_t / Pr_t).
@@ -1653,6 +1665,10 @@ impl Flow {
         let (sp, sm) = (1.0 - 0.5 * wp, 1.0 - 0.5 * wm);
         let (smagorinsky, vreman) = (self.smagorinsky, self.vreman);
         let turbulent = self.turbulent();
+        // Dynamic σ (set only with the hybrid collision), and the fluid's own viscosity (lattice
+        // units) it compares the eddy viscosity with.
+        let dynamic = self.dynamic;
+        let nu0 = (1.0 / wp - 0.5) / 3.0;
         let walls = self.walls.as_ref();
         let wall_model = self.wall_model;
         let model_walls = walls.filter(|_| wall_model);
@@ -1674,15 +1690,24 @@ impl Flow {
         // With the wall model, each block's rebuilt wall cells and the momentum their
         // reconstruction took, in cell order.
         let mut removed: Vec<Vec<(u32, [f64; 3])>> = vec![Vec::new(); blocks.len()];
-        type Work<'a, 'b> =
-            (&'a mut Vec<&'b mut [f64]>, &'a mut f64, Option<&'a mut [[f64; 3]]>, Option<&'a mut [f64]>, &'a mut f64, &'a mut Vec<(u32, [f64; 3])>);
+        // With dynamic σ, each block's smallest σ, sum of σ and cell count.
+        let mut sigmas = vec![[f64::INFINITY, 0.0, 0.0]; blocks.len()];
+        type Work<'a, 'b> = (
+            &'a mut Vec<&'b mut [f64]>,
+            &'a mut f64,
+            Option<&'a mut [[f64; 3]]>,
+            Option<&'a mut [f64]>,
+            &'a mut f64,
+            &'a mut Vec<(u32, [f64; 3])>,
+            &'a mut [f64; 3],
+        );
         let mut work: Vec<Work> = Vec::with_capacity(blocks.len());
         let mut u_iter = u_blocks.drain(..);
         let mut nu_iter = nu_blocks.drain(..);
-        for (((f, m), e), r) in blocks.iter_mut().zip(maxima.iter_mut()).zip(eddies.iter_mut()).zip(removed.iter_mut()) {
-            work.push((f, m, u_iter.next(), nu_iter.next(), e, r));
+        for ((((f, m), e), r), sg) in blocks.iter_mut().zip(maxima.iter_mut()).zip(eddies.iter_mut()).zip(removed.iter_mut()).zip(sigmas.iter_mut()) {
+            work.push((f, m, u_iter.next(), nu_iter.next(), e, r, sg));
         }
-        parallel::for_each_mut(&mut work, |b, (f, block_max, u_out, nu_out, max_nu, removed)| {
+        parallel::for_each_mut(&mut work, |b, (f, block_max, u_out, nu_out, max_nu, removed, sigma_stats)| {
             let mut fq = [0.0; Q];
             let mut post = [0.0; Q];
             // The block's largest speed, kept here and stored once: the blocks' maxima share
@@ -1718,9 +1743,10 @@ impl Flow {
                         *x = v;
                     }
                 };
-                // The cell's eddy viscosity, from the rate it relaxes with (c_s² = 1/3).
-                let mut eddy = |w: f64| {
-                    let nu_t = ((1.0 / w - 1.0 / wp) / 3.0).max(0.0);
+                // The cell's eddy viscosity (from the rate it relaxes with, c_s² = 1/3, but with
+                // dynamic σ, where the model's does not enter the rate).
+                let from_rate = |w: f64| ((1.0 / w - 1.0 / wp) / 3.0).max(0.0);
+                let mut eddy = |nu_t: f64| {
                     **max_nu = max_nu.max(nu_t);
                     if let Some(slot) = nu_out.as_mut().and_then(|v| v.get_mut(i)) {
                         *slot = nu_t;
@@ -1730,12 +1756,13 @@ impl Flow {
                 let cell_c = walls.map_or(smagorinsky, |d| smagorinsky * d.factor(b * block + i));
                 // The finite-difference velocity gradient, from the neighbours' velocities of the
                 // pass before the collision.
-                let grad = gradients.then(|| {
+                let local = gradients.then(|| {
                     let p = grid.coords(b * block + i);
                     let nb: crate::hrr::Neighbours = [0, 1, 2]
                         .map(|axis| [false, true].map(|up| neighbour(&grid, periodic, fluid, p, axis, up).and_then(|c| gradient_u.get(c).copied())));
-                    crate::hrr::gradient(u, &nb)
+                    (crate::hrr::gradient(u, &nb), nb)
                 });
+                let grad = local.as_ref().map(|(g, _)| g);
                 // Vreman's explicit eddy viscosity (not at a wall cell under the wall model, which
                 // keeps its own rate), and the rate it gives, τ̄ = 3 (ν + ν_t) + ½; none where
                 // ν_t = 0, so the cell keeps the fluid's own rates bit for bit.
@@ -1748,11 +1775,39 @@ impl Flow {
                 let implicit = || crate::turbulence::omega(&crate::turbulence::flux(&fq, rho, u, force, forced), rho, wp, cell_c);
                 // A wall cell under the wall model relaxes with its viscosity instead.
                 if regularized {
-                    let (rate, c) = wall_rate.map_or((explicit.unwrap_or(wp), cell_c), |w| (w, 0.0));
-                    let strain = grad.as_ref().filter(|_| hybrid).map(crate::hrr::strain);
-                    let w = crate::regularized::rebuild(&fq, rho, u, force, rate, c, forced, strain.as_ref().map(|s| (sigma, s)), &mut post);
+                    // With dynamic σ the subgrid model sets σ and stays out of the rate: the
+                    // cell relaxes with the fluid's own (or the wall model's).
+                    let (rate, c) = match wall_rate {
+                        Some(w) => (w, 0.0),
+                        None if dynamic => (wp, 0.0),
+                        None => (explicit.unwrap_or(wp), cell_c),
+                    };
+                    // The hybrid collision's σ and finite-difference strain rate. Dynamic: σ from
+                    // the model's eddy viscosity (Vreman's, or Hou's implicit Smagorinsky one),
+                    // 1 at a wall cell under the wall model.
+                    let mut nu_model = None;
+                    let blend = local.as_ref().filter(|_| hybrid).map(|(g, nb)| {
+                        let cell_sigma = if dynamic {
+                            let s = match wall_rate {
+                                Some(_) => 1.0,
+                                None => {
+                                    let nu_t = if smagorinsky > 0.0 { from_rate(implicit()) } else { nu_vreman };
+                                    nu_model = Some(nu_t);
+                                    crate::hrr::dynamic_sigma(g, &crate::hrr::laplacian(u, nb), nu_t, nu0)
+                                }
+                            };
+                            sigma_stats[0] = sigma_stats[0].min(s);
+                            sigma_stats[1] += s;
+                            sigma_stats[2] += 1.0;
+                            s
+                        } else {
+                            sigma
+                        };
+                        (cell_sigma, crate::hrr::strain(g))
+                    });
+                    let w = crate::regularized::rebuild(&fq, rho, u, force, rate, c, forced, blend.as_ref().map(|(s, st)| (*s, st)), &mut post);
                     if turbulent {
-                        eddy(w);
+                        eddy(nu_model.unwrap_or_else(|| from_rate(w)));
                     }
                     for (q, v) in post.iter().enumerate() {
                         put(q, *v);
@@ -1767,7 +1822,7 @@ impl Flow {
                         None => explicit.unwrap_or(wp),
                     };
                     if turbulent {
-                        eddy(rate);
+                        eddy(from_rate(rate));
                     }
                     crate::mrt::collide(&fq, rho, u, force, rate, forced, &mut post);
                     for (q, v) in post.iter().enumerate() {
@@ -1778,7 +1833,7 @@ impl Flow {
                 // The cell's own rates where the eddy viscosity raises τ⁺ (τ⁻ follows, keeping Λ).
                 let cell_rate = wall_rate.or_else(|| (smagorinsky > 0.0).then(implicit)).or(explicit);
                 if turbulent {
-                    eddy(cell_rate.unwrap_or(wp));
+                    eddy(from_rate(cell_rate.unwrap_or(wp)));
                 }
                 let (wp, wm, sp, sm) = match cell_rate {
                     Some(wp) => {
@@ -1822,8 +1877,12 @@ impl Flow {
         if wall_model && let Some(walls) = &mut self.walls {
             walls.set_removed(&removed.concat());
         }
+        // With dynamic σ, its smallest and mean value (the blocks' sums added in block order).
+        self.sigma_stats = dynamic.then(|| {
+            let (min, sum, count) = sigmas.iter().fold((f64::INFINITY, 0.0, 0.0), |(m, s, c), x| (m.min(x[0]), s + x[1], c + x[2]));
+            (min, if count > 0.0 { sum / count } else { 1.0 })
+        });
         // The largest eddy viscosity over the fluid's own (a maximum: no order dependence).
-        let nu0 = (1.0 / wp - 0.5) / 3.0;
         self.eddy_ratio = if turbulent && nu0 > 0.0 { eddies.iter().fold(0.0f64, |m, x| m.max(*x)) / nu0 } else { 0.0 };
         // The largest speed of all blocks (a maximum does not depend on the order), or NaN.
         if maxima.iter().any(|m| m.is_nan()) { f64::NAN } else { maxima.iter().fold(0.0, |m, x| m.max(*x)) }

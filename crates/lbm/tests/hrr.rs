@@ -214,10 +214,10 @@ fn results_are_bit_for_bit_the_same_on_one_and_many_threads() {
 }
 
 /// σ out of (0, 1], or not a number, is refused by the model with a message that names σ; σ = 0
-/// by name. "dynamic" is held by the model and refused by the solver as not supported yet. σ with
+/// by name. "dynamic" without a subgrid model is refused by the solver, naming `turbulence`. σ with
 /// another collision is pointed out. Nothing panics.
 #[test]
-fn bad_sigmas_are_refused_and_dynamic_is_not_supported_yet() {
+fn bad_sigmas_are_refused_and_dynamic_needs_a_subgrid_model() {
     let d = || {
         let mut d = domain([0.0; 3], [1.0, 1.0, 0.25], 0.25);
         d.faces.y_max = FaceCondition::MovingWall { velocity: [0.01, 0.0, 0.0] };
@@ -256,7 +256,7 @@ fn bad_sigmas_are_refused_and_dynamic_is_not_supported_yet() {
     m.add_step(Step::new("Run", with(HrrSigma::Dynamic)), None).unwrap();
     let e = Setup::new(&m, None, &[], &Limits::default()).unwrap_err().to_string();
     println!("σ = dynamic: {e}");
-    assert!(e.contains("not supported yet") && e.contains("dynamic"), "{e}");
+    assert!(e.contains("dynamic σ needs a subgrid model") && e.contains("`turbulence`"), "{e}");
     assert!(fieldcraft_lbm::solve_fluid(&m, None, &[], &Limits::default()).is_err());
     // The edges of the range are taken.
     for good in [1.0, 1e-3, 0.5] {

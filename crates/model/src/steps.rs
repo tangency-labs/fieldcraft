@@ -165,7 +165,9 @@ pub const DEFAULT_HRR_SIGMA: f64 = 0.99;
 pub enum HrrSigma {
     /// A fixed σ, above 0 and at most 1 (1 is the recursive regularised collision).
     Value(f64),
-    /// σ from the local eddy viscosity of a subgrid model (not supported yet).
+    /// σ per cell and step from the local eddy viscosity of the step's subgrid model
+    /// ([`Turbulence`], which the solver requires with it), so that the blend's hyperviscous
+    /// dissipation equals the model's (Jacob et al. 2018, eqs. 48–50).
     Dynamic,
 }
 

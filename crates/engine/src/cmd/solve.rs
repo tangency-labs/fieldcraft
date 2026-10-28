@@ -1831,7 +1831,8 @@ pub(crate) mod tests {
             )
             .is_err()
         );
-        // So does the hybrid collision; σ out of (0, 1] is refused, "dynamic" is not supported yet.
+        // So does the hybrid collision; σ out of (0, 1] is refused, "dynamic" needs a subgrid
+        // model, and with Vreman's (zero in this laminar shear: σ = 1) gives the same shear.
         let edit = |s: &mut Session, sigma: Value| {
             s.execute(
                 "model.step.edit",
@@ -1849,7 +1850,17 @@ pub(crate) mod tests {
         }
         edit(&mut s, json!("dynamic")).unwrap();
         let e = s.execute("solve.fluid", &json!({})).unwrap_err().to_string();
-        assert!(e.contains("not supported yet") && e.contains("dynamic"), "{e}");
+        assert!(e.contains("dynamic σ") && e.contains("`turbulence`"), "{e}");
+        s.execute(
+            "model.step.edit",
+            &json!({"name": "Shear", "procedure": {"type": "fluid", "domain": "Gap", "end_time": 50, "frames": 4, "collision": "hrr", "sigma": "dynamic",
+                "turbulence": {"type": "vreman", "constant": 0.18}}}),
+        )
+        .unwrap();
+        let dynamic = s.execute("solve.fluid", &json!({})).unwrap();
+        let bottom = dynamic["forces"].as_array().unwrap().iter().find(|f| f["name"] == "y_min").unwrap();
+        assert!((bottom["mean"][0].as_f64().unwrap() / expected - 1.0).abs() < 1e-3, "{bottom}");
+        assert_eq!(dynamic["eddy_viscosity_ratio"], 0.0, "{dynamic}");
         edit(&mut s, json!(0.9)).unwrap();
         s.execute("solve.fluid", &json!({})).unwrap();
 
