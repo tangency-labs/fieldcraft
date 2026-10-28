@@ -20,6 +20,19 @@
 //! over-predicts the eddy viscosity in the first cells off a wall; Van Driest's damping
 //! ([`crate::wall`], opt-in) scales C there.
 //!
+//! **Round-off.** The hybrid collision's dynamic σ ([`crate::hrr`]) takes ν_t itself, not the
+//! rate, and multiplies it by `|∇u|² / |∇²u|²`, which is unbounded where ∇²u vanishes, so any
+//! ν_t > 0 there, rounding included, sends σ towards 0. [`eddy_viscosity`] gives ν_t without the
+//! cancellation of `(1/ω − 1/ω₀)/3`, and 0 where `|P|` is below the precision the flux is computed
+//! to, `k ε M` with ε the machine epsilon of the arithmetic and `M` the magnitude of what the flux
+//! sums: the 18 moving populations in pairs, then the isotropic and `ρ u u` parts subtracted, about
+//! a dozen roundings each of at most ε/2 of a partial sum no larger than `M`, so `|error| ≤ 6 ε M`;
+//! `k` = [`ROUND_OFF`] = 16 is that bound with a margin over the measured noise (a field at rest
+//! started from its equilibrium without a force gave `|P|` about 4 ε ρ on the CPU). The CPU sums the populations
+//! themselves, `M = ρ`; the GPU sums their deviations from the weights (`fieldcraft-lbm-gpu`), so
+//! there `M = |δρ| + ρ |u|` with f32's ε. Only dynamic σ uses it: elsewhere ν_t enters through the
+//! rate, where a round-off ν_t changes nothing (so every other result is unchanged bit for bit).
+//!
 //! No code of any lattice Boltzmann package was read; this is written from the papers.
 
 use crate::lattice::{C, CS2, Q};
@@ -50,6 +63,32 @@ pub fn flux(fq: &[f64; Q], rho: f64, u: [f64; 3], force: [f64; 3], forced: bool)
     p
 }
 
+/// The bound on the flux's round-off over its magnitude (see the module docs, "Round-off").
+pub const ROUND_OFF: f64 = 16.0;
+
+/// The precision the CPU computes a cell's flux to, from the populations themselves:
+/// `ROUND_OFF ε ρ` (f64).
+#[inline(always)]
+pub fn flux_round_off(rho: f64) -> f64 {
+    ROUND_OFF * f64::EPSILON * rho.abs()
+}
+
+/// Smagorinsky's eddy viscosity, the `(τ − τ₀)/3` of [`omega`]'s rate, written
+/// `½ X / (√(τ₀² + X) + τ₀) / 3` with `X = 18 √2 C² |P| / ρ` (no cancellation where ν_t ≪ ν): 0
+/// where `|P|` is not above `floor` (its round-off, [`flux_round_off`]) or the result is not a
+/// usable number.
+#[inline(always)]
+pub fn eddy_viscosity(p: &[f64; 6], rho: f64, omega0: f64, c: f64, floor: f64) -> f64 {
+    let tau0 = 1.0 / omega0;
+    let pp = p[0] * p[0] + p[1] * p[1] + p[2] * p[2] + 2.0 * (p[3] * p[3] + p[4] * p[4] + p[5] * p[5]);
+    if !(pp > floor * floor) {
+        return 0.0;
+    }
+    let x = 18.0 * std::f64::consts::SQRT_2 * c * c * pp.sqrt() / rho;
+    let nu = 0.5 * x / ((tau0 * tau0 + x).sqrt() + tau0) / 3.0;
+    if nu.is_finite() && nu > 0.0 { nu } else { 0.0 }
+}
+
 /// The relaxation rate of a cell with non-equilibrium flux `p` and density `rho`, where the
 /// fluid's own rate is `omega0` and Smagorinsky's constant is `c` (lattice units). Never faster
 /// than `omega0`, and `omega0` itself where the flux is not a usable number.
@@ -76,6 +115,24 @@ mod tests {
             let got = 1.0 / omega(&p, rho, 1.0 / tau0, c);
             assert!((got - tau).abs() < 1e-12 * tau, "τ₀ {tau0}: {got} vs {tau}");
         }
+    }
+
+    /// The cancellation-free eddy viscosity is the rate's `(1/ω − 1/ω₀)/3` (to that form's own
+    /// round-off), and 0 at or below its floor.
+    #[test]
+    fn the_eddy_viscosity_is_the_rate_s_and_zero_below_the_round_off() {
+        for (tau0, c, pxy) in [(0.51, 0.1, 1e-3), (0.8, 0.17, -5e-2), (1.2, 0.05, 1e-6)] {
+            let p = [0.0, 0.0, 0.0, pxy, 0.0, 0.0];
+            let from_rate = (1.0 / omega(&p, 1.1, 1.0 / tau0, c) - tau0) / 3.0;
+            let nu = eddy_viscosity(&p, 1.1, 1.0 / tau0, c, flux_round_off(1.1));
+            // The rate's form loses ε τ₀ to its cancellation; this one keeps ν_t's own digits.
+            assert!((nu - from_rate).abs() < 1e-15 * tau0 + 1e-12 * from_rate, "{nu} vs {from_rate}");
+        }
+        let floor = flux_round_off(1.0);
+        assert_eq!(floor, 16.0 * f64::EPSILON);
+        assert_eq!(eddy_viscosity(&[0.0, 0.0, 0.0, floor / 2f64.sqrt(), 0.0, 0.0], 1.0, 1.5, 0.1, floor), 0.0);
+        assert!(eddy_viscosity(&[0.0, 0.0, 0.0, 2.0 * floor, 0.0, 0.0], 1.0, 1.5, 0.1, floor) > 0.0);
+        assert_eq!(eddy_viscosity(&[f64::NAN; 6], 1.0, 1.5, 0.1, floor), 0.0);
     }
 
     #[test]

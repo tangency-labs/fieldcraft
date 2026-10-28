@@ -1791,7 +1791,14 @@ impl Flow {
                             let s = match wall_rate {
                                 Some(_) => 1.0,
                                 None => {
-                                    let nu_t = if smagorinsky > 0.0 { from_rate(implicit()) } else { nu_vreman };
+                                    // Smagorinsky's ν_t itself, 0 below the flux's round-off
+                                    // (crate::turbulence, "Round-off").
+                                    let nu_t = if smagorinsky > 0.0 {
+                                        let p = crate::turbulence::flux(&fq, rho, u, force, forced);
+                                        crate::turbulence::eddy_viscosity(&p, rho, wp, cell_c, crate::turbulence::flux_round_off(rho))
+                                    } else {
+                                        nu_vreman
+                                    };
                                     nu_model = Some(nu_t);
                                     crate::hrr::dynamic_sigma(g, &crate::hrr::laplacian(u, nb), nu_t, nu0)
                                 }

@@ -272,6 +272,19 @@ fn dynamic_sigma_acts_in_the_taylor_green_vortex() {
     }
 }
 
+/// From its equilibrium start the Taylor–Green vortex's flux is zero but for round-off, so
+/// Smagorinsky's ν_t is 0 and dynamic σ is 1 in every cell of the first step, exactly. Before the
+/// round-off floor ([`fieldcraft_lbm::turbulence::eddy_viscosity`]) the rounding gave ν_t > 0 where
+/// ∇²u vanishes, and σ went towards 0 there.
+#[test]
+fn an_equilibrium_start_gives_dynamic_sigma_one_exactly() {
+    let smagorinsky = Turbulence::Smagorinsky { constant: 0.17, prandtl: 0.9, van_driest: None, wall_model: None };
+    let (_, ratio, sigma) = taylor_green_with(dynamic, Collision::Hrr, Some(smagorinsky), 16, 1);
+    println!("dynamic σ, Taylor–Green 16³, first step from equilibrium: σ min and mean {sigma:?}, ν_t/ν {ratio:e}");
+    assert_eq!(sigma, Some((1.0, 1.0)));
+    assert_eq!(ratio, 0.0);
+}
+
 /// Dynamic σ gives the same result bit for bit on one and on several threads (its σ statistics
 /// too: the blocks' sums are added in block order).
 #[test]

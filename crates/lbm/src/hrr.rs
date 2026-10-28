@@ -63,8 +63,11 @@
 //! `|∇²u| = 0` with ν_t > 0 gives σ = 0 (the finite-difference flux alone, which the blend
 //! allows; only a fixed σ = 0 is refused). The subgrid viscosity is then **not** added to τ (the
 //! paper's case 4, implicit LES): the cell relaxes with the molecular τ̄, and the model only sets σ.
-//! Vreman's ν_t ([`crate::vreman`]) is the paper's; with Smagorinsky's model ν_t is Hou's,
-//! `(1/ω − 1/ω₀)/3` from the implicit rate [`crate::turbulence::omega`] would give the cell. A
+//! Vreman's ν_t ([`crate::vreman`]) is the paper's; with Smagorinsky's model ν_t is Hou's, the
+//! `(1/ω − 1/ω₀)/3` the implicit rate [`crate::turbulence::omega`] would give the cell, computed
+//! without that cancellation and 0 where the flux is below its round-off
+//! ([`crate::turbulence::eddy_viscosity`]): σ multiplies ν_t by `L_VK²`, unbounded where ∇²u
+//! vanishes, so a rounding ν_t would set σ there (towards 0). A
 //! wall cell under the wall model keeps σ = 1 (its rate is the wall model's).
 //!
 //! **Laplacian.** `∇²u_j` is the 7-point second-order centred Laplacian of each component from the

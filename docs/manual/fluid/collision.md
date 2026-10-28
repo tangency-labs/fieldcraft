@@ -141,7 +141,10 @@ Laplacian of each component from the same neighbours, an axis whose either neigh
 contributing nothing. The subgrid viscosity is then not added to τ: the cell relaxes with the
 fluid's own τ̄ and the model only sets σ (the paper's implicit large-eddy simulation, case 4).
 ν_t is Vreman's (the paper's model), or with Smagorinsky's model Hou's, `(1/ω − 1/ω₀)/3` from
-the implicit rate. A wall cell under the wall model keeps σ = 1. `eddy_viscosity_ratio` reports
+the implicit rate, computed without that difference's cancellation and 0 where the flux `|P|` is
+below its round-off, 16 ε ρ (`crates/lbm/src/turbulence.rs`): L_VK² is unbounded where `∇²u`
+vanishes, so a ν_t made of rounding would otherwise set σ there towards 0 (from an equilibrium
+start, σ is then 1 exactly in the first step). A wall cell under the wall model keeps σ = 1. `eddy_viscosity_ratio` reports
 the model's ν_t, and with heat α_t = ν_t / Pr_t still reaches the scalar lattice. Eq. 47 is the
 continuous model's estimate; near τ̄ = ½ the scheme's own hyperviscosity is several times larger
 (above), so there dynamic σ dissipates more than the subgrid model it matches.
@@ -383,6 +386,7 @@ unit tests of `hrr.rs`:
 | Refusals | σ 0, below 0, above 1, not finite: refused by name; `"dynamic"` without `turbulence`: refused, naming it | | | `bad_sigmas_are_refused_and_dynamic_needs_a_subgrid_model` |
 | Dynamic σ, closed form | u_x = sin(ky), k = 2π/16: σ = 1/(1 + 6 L_VK² ν_t/ν) with the discrete α_yx = cos(ky) sin k, ∇²u_x = 2 sin(ky)(cos k − 1); the limits ν_t = 0 → 1, ∇²u = 0 → 0 | within 1e-14 | 1e-14 | `hrr::tests::dynamic_sigma_matches_the_closed_form_of_a_sine` |
 | Dynamic σ with no eddy viscosity | Couette and Poiseuille with Vreman's model: σ = 1 everywhere, `regularized` bit for bit | equal; σ min and mean exactly 1 | exact | `dynamic_sigma_without_eddy_viscosity_is_the_regularised_collision_bit_for_bit` (`tests/vreman.rs`) |
+| Dynamic σ from an equilibrium start | Taylor–Green 16³ with Smagorinsky's model, first step: the flux is round-off only, so ν_t = 0 and σ = 1 | σ min and mean exactly 1, ν_t/ν 0 (1 − 1.7e-12 and 1.7e-14 without the floor) | exact | `an_equilibrium_start_gives_dynamic_sigma_one_exactly` (`tests/vreman.rs`) |
 | Dynamic σ, Taylor–Green 16³, Re 50 | σ in [0, 1], below 1 | Vreman's: σ min 0.030, mean 0.421; Smagorinsky's: 0.024, 0.443 | — | `dynamic_sigma_acts_in_the_taylor_green_vortex` |
 | Dynamic σ, determinism | One thread against several, Vreman's and Smagorinsky's | Bit for bit, σ statistics too | exact | `dynamic_sigma_is_bit_for_bit_the_same_on_one_and_many_threads` |
 
