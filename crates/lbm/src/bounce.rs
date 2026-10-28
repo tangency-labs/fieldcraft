@@ -53,7 +53,8 @@
 //!
 //! **Where it runs.** On plane box faces at rest with the box periodic along the wall (the
 //! paper's channel); obstacles, moving walls, a wall that meets another non-periodic face at an
-//! edge, and heat are refused ("not supported yet"). The GPU backend refuses it.
+//! edge, and heat are refused ("not supported yet"). The GPU backend runs the same scheme
+//! (`crates/lbm-gpu/src/lbm.wgsl`, `node_bounce`).
 //!
 //! No code of any lattice Boltzmann package was read; this is written from the paper.
 

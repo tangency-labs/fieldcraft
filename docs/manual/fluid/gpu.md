@@ -112,13 +112,13 @@ whose forces are read back (a submission's last). The temperature lattice is two
 | Steady-state rule and averaging | yes (decided on the host from read-back fields) |
 | Fans and porous zones | no: refused with the zone's name, solve on the CPU |
 | The halfway wall-function bounce (`wall_model: "spalding_bounce_halfway"`) | yes |
-| Han et al.'s on-node wall-function bounce (`wall_model: "spalding_bounce"`) | no: refused by name, solve on the CPU |
+| Han et al.'s on-node wall-function bounce (`wall_model: "spalding_bounce"`, their eq. 14) | yes |
 
 ## Algorithm
 
 1. **Preparation on the CPU** (`Flow::new`): voxelisation, links, open cells, conducting cells, the
    initial state. A flow handed to the GPU never allocates the CPU's streaming targets.
-2. **Refusals**: fans and porous zones; Han et al.'s on-node wall-function bounce (`spalding_bounce`); a policy that finds no device; an
+2. **Refusals**: fans and porous zones; a policy that finds no device; an
    adapter that allows fewer storage buffers per compute stage than the shader needs (the message
    names the graphics backend and suggests Vulkan, Metal or DX12, or the CPU).
 3. **Memory**: before preparation, the population buffer is checked against the device's limit per
@@ -301,6 +301,46 @@ density 10⁻⁵, the largest ν_t/ν 10⁻³ of itself, wall drag 10⁻³. Meas
 fields bit for bit (`the_les_kernels_are_deterministic_on_their_device`); the shear wave of the
 CPU's gate (N 16, τ̄ 0.8, σ 0.9) decays at the exact rate of the linear analysis within 4.2e-7
 (tolerance 10⁻³, `a_shear_wave_decays_at_the_exact_rate_on_the_gpu`).
+
+### Han et al.'s on-node wall-function bounce
+
+Han, Ooka and Kikumoto's eq. 14 (`wall_model: "spalding_bounce"`, `crates/lbm/src/bounce.rs`)
+runs on the GPU as on the CPU. The outermost cell layer at each wall face is boundary nodes: their
+flag word marks them as streaming but not fluid, so they stream like any cell and stay out of the
+collision, the finite-difference gradients, the moments, the mass and the mean velocity. Each
+step, before the collision, `bounce_sample` takes each node's stress ρ u_τ² from Spalding's law
+(κ 0.41, B 5.5) at its interior node one cell into the fluid (distance 1, the velocity with the
+half force); after the collision `node_bounce` runs eq. 14 on each node in place of a collision,
+reading and writing only the node's own populations (with the in-place layout's addressing of a
+collision), and records the momentum the node took from the fluid. `wall_forces` adds that to one
+of the node's links from outside the box (an open placeholder that exchanges nothing itself), so
+the node's box face receives it; the weights' share, −n/3 per node, is added on the host. Each of
+the six face orientations has its assignments written out (no loop over the lattice directions that
+tests c_q, which the GB10's driver miscompiles). `node_bounce` binds two storage buffers (the
+populations and the wall rows).
+
+Against the CPU from step 0, both layouts, regularised, `hrr` σ 0.99, `mrt` and `trt`, each with
+Smagorinsky 0.1 + Van Driest 26 and with Vreman 0.18
+(`the_on_node_wall_function_bounce_follows_the_cpu`: the CPU's perturbed coarse channel, 13 cells
+across, 150 steps; `the_on_node_wall_function_bounce_follows_the_cpu_in_han_s_a20_channel`, heavy:
+Han et al.'s A20 box, 126 × 41 × 63 cells, 300 steps). Tolerances: velocity 10⁻⁴ of the largest
+speed, density 10⁻⁵, the walls' drag 10⁻³ of the CPU's, the GPU walls' carried stress 10⁻³ of the
+stress the GPU sampled, and that sampled stress 10⁻³ of the CPU's. The largest over the cases:
+
+| Device, case | velocity | density | drag | carried vs sampled | sampled vs CPU |
+|---|---|---|---|---|---|
+| GB10, coarse channel | 4.1e-6 | 6.6e-7 | 9.5e-7 | 7.8e-7 | 8.7e-7 |
+| GB10, A20 | 1.3e-5 | 1.1e-7 | 8.9e-6 | 9.5e-7 | 8.5e-6 |
+| llvmpipe, coarse channel | 4.0e-6 | 6.5e-7 | 2.6e-6 | 7.3e-7 | 2.2e-6 |
+| llvmpipe, A20 | 1.1e-5 | 1.0e-7 | 7.1e-6 | 1.4e-6 | 7.4e-6 |
+
+Two runs on one device give the same fields and forces bit for bit
+(`the_on_node_wall_function_bounce_is_deterministic_on_its_device`). The CPU's stationary toy
+(the k_x = π mode of the wall rows, on-node, regularised, τ̄ 0.5015, u⁺ 5) damps on the GPU at
+the CPU's rate (`the_on_node_bounce_damps_the_odd_even_mode_of_its_wall_rows_on_the_gpu`: −1.195e-4
+per step on the GB10, −1.174e-4 on llvmpipe, −1.169e-4 on the CPU, tolerance 10 % and ≤ 0), seeded
+at 1e-3 of a lattice speed: at the CPU's 1e-6 single precision's rounding of the base holds the mode
+near 4e-6 and the rate measured is the rounding's.
 
 The Taylor–Green study (`study_taylor_green_vortex_dissipation`, 64³, lattice speed 0.05, to
 t = 20) on the GB10 gives the CPU's peak dissipation to the digits printed, at the same time:

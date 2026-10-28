@@ -26,6 +26,9 @@ const KIND_OPEN: u32 = 3;
 const RESET: u32 = 1 << 24;
 /// Floats per open cell in the outlet buffer (see lbm.wgsl).
 const OUTLET: usize = 16;
+/// The flag word of a boundary node of the on-node wall-function bounce: it streams, but it is not
+/// fluid (lbm.wgsl, `is_fluid`).
+const NODE: u32 = 2;
 /// The floats of one wall model wall cell in `walls`: four rows (lbm.wgsl).
 const WALL_ROW: usize = 16;
 /// The scalar lattice's directions (the first seven of D3Q19) and weights.
@@ -163,8 +166,10 @@ pub struct GpuFlow {
     links_groups: (u32, u32),
     /// The wall model's sample dispatch, when there are modelled wall cells, and its buffer.
     wall_groups: Option<(u32, u32)>,
-    /// Whether the wall rows are the wall-function bounce's (`bounce_sample`, `bounce_apply`).
+    /// Whether the wall rows are the halfway wall-function bounce's (`bounce_sample`).
     wall_bounce: bool,
+    /// Whether they are the on-node bounce's boundary nodes (`bounce_sample`, `node_bounce`).
+    on_node: bool,
     /// Whether the collision takes the finite-difference velocity gradient (the hybrid collision,
     /// Vreman's model): `gradient_velocity` runs before it.
     gradients: bool,
@@ -338,13 +343,14 @@ fn solid_data(solid: &fieldcraft_lbm::conduction::SolidHeat, t0: f64) -> Result<
 }
 
 /// The entry points of `lbm.wgsl` a flow dispatches.
-const KERNELS: [&str; 31] = [
+const KERNELS: [&str; 32] = [
     "clear_eddy",
     "gradient_velocity",
     "collide",
     "wall_sample",
     "damping_refresh",
     "bounce_sample",
+    "node_bounce",
     "stream",
     "stream_links",
     "stream_links_exchange",
@@ -450,6 +456,8 @@ struct Variant {
     wall_model: bool,
     van_driest: bool,
     wall_bounce: bool,
+    /// Han et al.'s on-node wall-function bounce (`node_bounce`).
+    on_node: bool,
     /// The hybrid collision, Vreman's model, and the hybrid collision's dynamic σ.
     hrr: bool,
     vreman: bool,
@@ -500,6 +508,7 @@ fn compile(device: &wgpu::Device, variant: Variant) -> Result<Kernels> {
                     ("WALL_MODEL", if variant.wall_model { 1.0 } else { 0.0 }),
                     ("VAN_DRIEST", if variant.van_driest { 1.0 } else { 0.0 }),
                     ("WALL_BOUNCE", if variant.wall_bounce { 1.0 } else { 0.0 }),
+                    ("ON_NODE", if variant.on_node { 1.0 } else { 0.0 }),
                     ("HRR", if variant.hrr { 1.0 } else { 0.0 }),
                     ("VREMAN", if variant.vreman { 1.0 } else { 0.0 }),
                     ("DYNAMIC", if variant.dynamic { 1.0 } else { 0.0 }),
@@ -610,11 +619,6 @@ impl GpuFlow {
                 zone.name
             )));
         }
-        if flow.on_node_bounce() {
-            return Err(Error::Invalid(
-                "not supported yet: Han et al.'s on-node wall-function bounce (`spalding_bounce`) on the GPU; `spalding_bounce_halfway` runs there, or solve on the CPU (`backend: \"cpu\"`)".into(),
-            ));
-        }
         let Some((adapter, tier)) = select::adapter(policy).map_err(gpu_error)? else {
             return Err(Error::Invalid(format!("{}=cpu: no GPU device; solve with `backend: \"cpu\"`", select::ENV)));
         };
@@ -702,6 +706,39 @@ impl GpuFlow {
                 wall_rows.extend([0.0, 0.0, 0.0, f32::from_bits(nearest)]);
             }
         }
+        // Han et al.'s on-node bounce instead: its boundary nodes in `walls` (lbm.wgsl,
+        // `node_bounce`), their flags NODE, and for each the link of its box face's group that
+        // carries what the node took from the fluid (its link from outside the box along the
+        // normal, an open placeholder with no exchange of its own).
+        let mut node_links: Vec<(u32, u32)> = Vec::new();
+        if let Some(nodes) = flow.wall_nodes() {
+            let links = flow.links();
+            for w in nodes.nodes() {
+                let (cell, axis) = (w.cell as usize, usize::from(w.axis).min(2));
+                let mut normal = [0i32; 3];
+                normal[axis] = i32::from(w.inward.signum());
+                let q = C.iter().position(|c| *c == normal).ok_or_else(|| Error::Invalid(format!("boundary node {cell} has no normal")))?;
+                if let Some(u) = fluid_u32.get_mut(cell) {
+                    *u = NODE;
+                }
+                let first = links.partition_point(|l| (l.cell as usize) < cell);
+                let link = links
+                    .get(first..)
+                    .unwrap_or_default()
+                    .iter()
+                    .take_while(|l| l.cell as usize == cell)
+                    .position(|l| usize::from(l.q) == q && matches!(l.rule, Rule::Open))
+                    .and_then(|i| u32::try_from(first + i).ok())
+                    .ok_or_else(|| Error::Invalid(format!("boundary node {cell} has no link from outside the box")))?;
+                wall_rows.extend(normal.map(|v| v as f32));
+                wall_rows.push(1.0);
+                wall_rows.extend([0.0, 0.0, 0.0, f32::from_bits(w.interior)]);
+                wall_rows.extend([0.0; 4]);
+                wall_rows.extend([0.0, 0.0, 0.0, f32::from_bits(link)]);
+                node_links.push((w.group, link));
+            }
+        }
+        let on_node = !node_links.is_empty();
         let wall_count = wall_rows.len() / WALL_ROW;
 
         // The links, by cell, and the ones with a force by group.
@@ -737,6 +774,15 @@ impl GpuFlow {
             let reset = if thermal.is_some_and(|t| t.resets(link.cell)) { RESET } else { 0 };
             link_u.extend_from_slice(&[u32::from(link.q) | (kind << 8) | (q2 << 16) | reset, from, group, link.cell]);
             link_f.push(du as f32);
+        }
+        // The boundary nodes' links: the weights' share of what a node takes is −⅓ n (the
+        // populations arriving from the fluid, −n/6, less those sent back, n/6).
+        for (&(group, l), w) in node_links.iter().zip(flow.wall_nodes().map_or(&[][..], |n| n.nodes())) {
+            by_group.push((group, l));
+            if let Some(g) = weight_forces.get_mut(group as usize) {
+                let axis = usize::from(w.axis).min(2);
+                g[axis] -= f64::from(w.inward.signum()) / 3.0;
+            }
         }
         by_group.sort();
         let mut group_start = filled(group_count + 1, 0u32, "force groups")?;
@@ -924,11 +970,13 @@ impl GpuFlow {
         // before the next: a write's staging copy lives until its submission completes, so the
         // directions would otherwise pile up into a whole copy of the populations.
         let mut direction = filled(n, 0.0f32, "populations")?;
+        // (The on-node bounce's boundary nodes hold populations too.)
+        let holds = |cell: usize| fluid_u32.get(cell).is_some_and(|u| *u != 0);
         let mut upload = |buffer: &wgpu::Buffer, count: usize, offset: &dyn Fn(usize) -> f64, value: &dyn Fn(usize, usize) -> f64| -> Result<()> {
             for q in 0..count {
                 let w = offset(q);
                 for (cell, slot) in direction.iter_mut().enumerate() {
-                    *slot = if flow.is_fluid(cell) { (value(q, cell) - w) as f32 } else { 0.0 };
+                    *slot = if holds(cell) { (value(q, cell) - w) as f32 } else { 0.0 };
                 }
                 queue.write_buffer(buffer, 4 * (q * n) as u64, &bytes_f32(&direction));
                 queue.submit([]);
@@ -979,6 +1027,7 @@ impl GpuFlow {
             wall_model: wall_count > 0 && flow.wall_model(),
             van_driest: damping_count > 0,
             wall_bounce: wall_count > 0 && flow.wall_bounce(),
+            on_node,
             hrr: hybrid.is_some(),
             vreman: flow.vreman() > 0.0,
             dynamic: hybrid == Some(HrrSigma::Dynamic),
@@ -1052,6 +1101,7 @@ impl GpuFlow {
             links_groups,
             wall_groups: if wall_count > 0 { Some(groups(wall_count)?) } else { None },
             wall_bounce: bounce,
+            on_node,
             gradients,
             walls: walls_buf,
             wall_count,
@@ -1247,7 +1297,7 @@ impl GpuFlow {
     /// solids' with their sub-steps).
     fn dispatches_per_step(&self) -> usize {
         let solid = self.solid.as_ref().map_or(0, |sd| 3 + sd.substeps as usize);
-        12 + solid
+        13 + solid
     }
 
     /// One submission of `steps` (≤ MAX_CHUNK) time steps, then the stability check.
@@ -1262,12 +1312,15 @@ impl GpuFlow {
                 commands.push((self.current, "damping_refresh", d.groups));
             }
             if let Some(groups) = self.wall_groups {
-                commands.push((self.current, if self.wall_bounce { "bounce_sample" } else { "wall_sample" }, groups));
+                commands.push((self.current, if self.wall_bounce || self.on_node { "bounce_sample" } else { "wall_sample" }, groups));
             }
             if self.gradients {
                 commands.push((self.current, "gradient_velocity", self.cells));
             }
             commands.push((self.current, "collide", self.cells));
+            if let Some(groups) = self.wall_groups.filter(|_| self.on_node) {
+                commands.push((self.current, "node_bounce", groups));
+            }
             if !self.aa {
                 commands.push((self.current, "stream", self.cells));
             }

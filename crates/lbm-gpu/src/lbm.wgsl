@@ -68,6 +68,15 @@
 // τ̄ = 3 (ν + ν_t) + ½ (every collision); with dynamic σ the model's ν_t sets σ and stays out of
 // ω. `collide` then binds 8 storage buffers, the most of any kernel. A fixed σ of 1 compiles to
 // the regularised kernels (native.rs), so it is that collision bit for bit.
+//
+// Han, Ooka and Kikumoto's on-node wall-function bounce (fieldcraft_lbm::bounce, `ON_NODE`): the
+// outermost cell layer at each wall face is boundary nodes, the wall through their centres. They
+// stream like fluid cells but do not collide and are left out of the gradients, moments, mass
+// and mean velocity (`is_fluid`). Before the collision `bounce_sample` takes each node's stress
+// from Spalding's law at its interior node (one cell into the fluid, distance 1); after it
+// `node_bounce` runs eq. 14 on each node in place of a collision, with the AA addressing of a
+// collision (each node reads and writes only its own populations), and records the momentum the
+// node took, which `wall_forces` gives the node's box face.
 
 override AA_MODE: bool = true;
 // The recursive regularised collision instead of the two-relaxation-time one
@@ -83,8 +92,11 @@ override SMAGORINSKY: bool = false;
 override WALL_MODEL: bool = false;
 // Van Driest's damping of Smagorinsky's constant near no-slip walls; likewise.
 override VAN_DRIEST: bool = false;
-// Han, Ooka and Kikumoto's wall-function bounce (`spalding_bounce_halfway`); likewise.
+// Our halfway variant of the wall-function bounce (`spalding_bounce_halfway`); likewise.
 override WALL_BOUNCE: bool = false;
+// Han, Ooka and Kikumoto's on-node wall-function bounce (`spalding_bounce`, their eq. 14);
+// likewise.
+override ON_NODE: bool = false;
 // The hybrid recursive regularised collision (fieldcraft_lbm::hrr, with REGULARIZED): its σ in
 // `params.les.x`; likewise.
 override HRR: bool = false;
@@ -295,7 +307,12 @@ fn cell_of(lid: u32, wg: vec3<u32>) -> u32 {
     return (wg.y * params.groups_x + wg.x) * WG + lid;
 }
 
+// Whether `cell` is a fluid cell, which collides. Under the on-node bounce a boundary node's flag
+// word is 2 (native.rs, NODE: the fluid bit clear): it streams, but it is the wall, not fluid
+// (see `node_bounce`). The wall model's and the halfway bounce's rows past the fluid bit never
+// meet it: the wall models exclude each other.
 fn is_fluid(cell: u32) -> bool {
+    if ON_NODE { return (fluid[cell] & 1u) != 0u; }
     return fluid[cell] != 0u;
 }
 
@@ -519,7 +536,7 @@ fn bounce_shift(q: u32, cell: u32) -> f32 {
 @compute @workgroup_size(256)
 fn bounce_sample(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
     let k = cell_of(lid, wg);
-    if !WALL_BOUNCE || k >= params.wall.x { return; }
+    if !(WALL_BOUNCE || ON_NODE) || k >= params.wall.x { return; }
     let a = walls[4u * k];
     let b = walls[4u * k + 1u];
     let cell = bitcast<u32>(b.w);
@@ -545,6 +562,146 @@ fn bounce_sample(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_i
     }
     walls[4u * k + 2u] = vec4<f32>(stress, 0.0);
     walls[4u * k + 3u] = vec4<f32>(stress, walls[4u * k + 3u].w);
+}
+
+// Han, Ooka and Kikumoto's on-node wall-function bounce (`spalding_bounce`, their eq. 14;
+// fieldcraft_lbm::bounce, whose notes state the scheme): boundary node k, after the collision of
+// the fluid cells, in place of its own collision. Its rows in `walls`: the unit normal into the
+// fluid and the distance 1; zero and its interior node (as bits), one cell into the fluid; the
+// stress `bounce_sample` took at the interior node (xyz); and the momentum the node took from the
+// fluid this step (xyz, written here) with the index of one of the node's links (w, as bits),
+// whose group (the node's box face) takes it in `wall_forces`. With n the inward normal and e1,
+// e2 the two axes along the wall, every population of the node is assigned explicitly (no loop
+// over the lattice directions that tests c_q: the NVIDIA GB10 driver, 580.159, miscompiles such
+// loops; see `fd_neighbour`): each axis and wall-parallel population bounced back, each diagonal
+// into the fluid n ± e the specular image −n ± e of the one arriving from the fluid less ½ τ·(±e),
+// each one into the wall its opposite's new value, the rest population kept. The populations
+// arriving from outside the box are never read (the CPU's free-slip ghost reaches nothing eq. 14
+// sends back). The node's flag is NODE, so it streams but does not collide.
+@compute @workgroup_size(256)
+fn node_bounce(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
+    let k = cell_of(lid, wg);
+    if !ON_NODE || k >= params.wall.x { return; }
+    let normal = walls[4u * k].xyz;
+    let interior = bitcast<u32>(walls[4u * k + 1u].w);
+    let stress = walls[4u * k + 2u].xyz;
+    let n = vec3<i32>(round(normal));
+    // The node, one cell from its interior node against the normal (inside the box).
+    let xyz = coords(interior) - n;
+    let cell = u32((xyz.z * i32(params.ny) + xyz.y) * i32(params.nx) + xyz.x);
+    var fq: array<f32, 19>;
+    for (var q = 0u; q < Q; q = q + 1u) {
+        fq[q] = population(q, cell, xyz);
+    }
+    // For the inward normal along +axis: the axis directions into (a_in) and out of (a_out) the
+    // fluid; the diagonals into the fluid along +e (dp) and −e (dm), and their images into the
+    // wall (mp = −n + e, mm = −n − e), for e1 (…1) and e2 (…2); the four wall-parallel pairs
+    // (q, q + 1).
+    var a_in = 1u;
+    var a_out = 2u;
+    var dp1 = 7u;
+    var dm1 = 9u;
+    var mp1 = 10u;
+    var mm1 = 8u;
+    var dp2 = 11u;
+    var dm2 = 13u;
+    var mp2 = 14u;
+    var mm2 = 12u;
+    var pa = 3u;
+    var pb = 5u;
+    var pc = 15u;
+    var pd = 17u;
+    var e1 = vec3<f32>(0.0, 1.0, 0.0);
+    var e2 = vec3<f32>(0.0, 0.0, 1.0);
+    if n.y != 0 {
+        // e1 = z, e2 = x.
+        a_in = 3u;
+        a_out = 4u;
+        dp1 = 15u;
+        dm1 = 17u;
+        mp1 = 18u;
+        mm1 = 16u;
+        dp2 = 7u;
+        dm2 = 10u;
+        mp2 = 9u;
+        mm2 = 8u;
+        pa = 5u;
+        pb = 1u;
+        pc = 11u;
+        pd = 13u;
+        e1 = vec3<f32>(0.0, 0.0, 1.0);
+        e2 = vec3<f32>(1.0, 0.0, 0.0);
+    } else if n.z != 0 {
+        // e1 = x, e2 = y.
+        a_in = 5u;
+        a_out = 6u;
+        dp1 = 11u;
+        dm1 = 14u;
+        mp1 = 13u;
+        mm1 = 12u;
+        dp2 = 15u;
+        dm2 = 18u;
+        mp2 = 17u;
+        mm2 = 16u;
+        pa = 1u;
+        pb = 3u;
+        pc = 7u;
+        pd = 9u;
+        e1 = vec3<f32>(1.0, 0.0, 0.0);
+        e2 = vec3<f32>(0.0, 1.0, 0.0);
+    }
+    if n.x + n.y + n.z < 0 {
+        // The inward normal along −axis: into the fluid and into the wall trade places.
+        let t0 = a_in;
+        a_in = a_out;
+        a_out = t0;
+        let t1 = dp1;
+        dp1 = mp1;
+        mp1 = t1;
+        let t2 = dm1;
+        dm1 = mm1;
+        mm1 = t2;
+        let t3 = dp2;
+        dp2 = mp2;
+        mp2 = t3;
+        let t4 = dm2;
+        dm2 = mm2;
+        mm2 = t4;
+    }
+    let s1 = dot(stress, e1);
+    let s2 = dot(stress, e2);
+    // Eq. 14: into the fluid.
+    let o_in = fq[a_out];
+    let o_p1 = fq[mp1] - 0.5 * s1;
+    let o_m1 = fq[mm1] + 0.5 * s1;
+    let o_p2 = fq[mp2] - 0.5 * s2;
+    let o_m2 = fq[mm2] + 0.5 * s2;
+    // The momentum the node takes from the fluid: what arrived from it less what goes back.
+    let nf = vec3<f32>(n);
+    var taken = -nf * fq[a_out] + (e1 - nf) * fq[mp1] - (nf + e1) * fq[mm1] + (e2 - nf) * fq[mp2] - (nf + e2) * fq[mm2];
+    taken = taken - (nf * o_in + (nf + e1) * o_p1 + (nf - e1) * o_m1 + (nf + e2) * o_p2 + (nf - e2) * o_m2);
+    f[post_index(0u, cell, xyz)] = fq[0];
+    f[post_index(a_in, cell, xyz)] = o_in;
+    f[post_index(dp1, cell, xyz)] = o_p1;
+    f[post_index(dm1, cell, xyz)] = o_m1;
+    f[post_index(dp2, cell, xyz)] = o_p2;
+    f[post_index(dm2, cell, xyz)] = o_m2;
+    // Into the wall: the opposite's value (it streams out of the box).
+    f[post_index(a_out, cell, xyz)] = o_in;
+    f[post_index(mm1, cell, xyz)] = o_p1;
+    f[post_index(mp1, cell, xyz)] = o_m1;
+    f[post_index(mm2, cell, xyz)] = o_p2;
+    f[post_index(mp2, cell, xyz)] = o_m2;
+    // Along the wall: bounced back.
+    f[post_index(pa, cell, xyz)] = fq[pa + 1u];
+    f[post_index(pa + 1u, cell, xyz)] = fq[pa];
+    f[post_index(pb, cell, xyz)] = fq[pb + 1u];
+    f[post_index(pb + 1u, cell, xyz)] = fq[pb];
+    f[post_index(pc, cell, xyz)] = fq[pc + 1u];
+    f[post_index(pc + 1u, cell, xyz)] = fq[pc];
+    f[post_index(pd, cell, xyz)] = fq[pd + 1u];
+    f[post_index(pd + 1u, cell, xyz)] = fq[pd];
+    walls[4u * k + 3u] = vec4<f32>(taken, walls[4u * k + 3u].w);
 }
 
 // Van Driest's refresh (fieldcraft_lbm::wall::Walls::refresh): wall cell k's friction velocity
@@ -1230,7 +1387,8 @@ fn collide_regularized(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function, ar
 fn stream(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
     let cell = cell_of(lid, wg);
     if cell >= params.n { return; }
-    if !is_fluid(cell) { return; }
+    // Fluid cells and the on-node bounce's boundary nodes.
+    if fluid[cell] == 0u { return; }
     let n = params.n;
     let nx = i32(params.nx);
     let ny = i32(params.ny);
@@ -1693,7 +1851,7 @@ fn thermal_check(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_i
 @compute @workgroup_size(256)
 fn wall_forces(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
     let k = cell_of(lid, wg);
-    if !(WALL_MODEL || WALL_BOUNCE) || k >= params.wall.x { return; }
+    if !(WALL_MODEL || WALL_BOUNCE || ON_NODE) || k >= params.wall.x { return; }
     let row = walls[4u * k + 3u];
     let l = bitcast<u32>(row.w);
     if l >= params.links { return; }

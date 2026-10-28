@@ -1094,23 +1094,270 @@ fn a_coarse_channel_with_van_driest_damping_follows_the_cpu() {
     }
 }
 
-/// Han, Ooka and Kikumoto's on-node wall-function bounce (`spalding_bounce`, their eq. 14) runs on
-/// the CPU only: the GPU backend refuses it by name, with or without a device, and points to the
-/// halfway variant.
+// ---- Han, Ooka and Kikumoto's on-node wall-function bounce (`spalding_bounce`, their eq. 14) ----
+
+/// The subgrid models the on-node bounce is checked with: Smagorinsky's (C_s 0.1) with Van
+/// Driest's damping (A⁺ 26), as the paper runs it, and Vreman's (C_s 0.18).
+fn on_node_turbulence(vreman: bool) -> Turbulence {
+    let wall_model = Some(fieldcraft_model::WallModel::SpaldingBounce);
+    if vreman {
+        Turbulence::Vreman { constant: 0.18, prandtl: 0.9, wall_model }
+    } else {
+        Turbulence::Smagorinsky { constant: 0.1, prandtl: 0.9, van_driest: Some(26.0), wall_model }
+    }
+}
+
+/// The collisions the on-node bounce is checked with, and their σ: regularised, hybrid at σ 0.99,
+/// MRT and TRT.
+const ON_NODE_COLLISIONS: [(Collision, Option<HrrSigma>); 4] =
+    [(Collision::Regularized, None), (Collision::Hrr, Some(HrrSigma::Value(0.99))), (Collision::Mrt, None), (Collision::Trt, None)];
+
+/// The CPU's coarse on-node channel (`crates/lbm/tests/wall_bounce.rs`): 6 cells per half-height,
+/// Re_τ 180, periodic in x and z, the box 2δ + Δx high (13 cells) so that the walls through the
+/// outermost cells' centres are 2δ apart, started from a perturbed blunt profile, driven by a body
+/// force, `steps` steps.
+fn on_node_channel(turbulence: Turbulence, collision: Collision, sigma: Option<HrrSigma>, steps: f64) -> (Setup, Flow) {
+    use std::f64::consts::PI;
+    let (n, re_tau, ub) = (6usize, 180.0, 15.7);
+    let dx = 1.0 / n as f64;
+    let (lx, lz) = ((2.0 * PI * n as f64).round() * dx, (PI * n as f64).round() * dx);
+    let mut d = domain([0.0; 3], [lx, 2.0 + dx, lz], dx);
+    for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+        *f = PERIODIC;
+    }
+    d.acceleration = [1.0, 0.0, 0.0];
+    let dt = 0.1 * dx / ub;
+    let p = les(sigma, Some(turbulence))(collide(steps * dt, dt, None, collision));
+    let (setup, mut flow) = prepare(&model(1.0, 1.0 / re_tau, d, p), &[]);
+    let grid = *flow.grid();
+    assert_eq!(grid.cells[1], 2 * n + 1);
+    let to_lattice = 1.0 / setup.velocity_scale();
+    let (kx, kz) = (2.0 * PI / lx, 2.0 * PI / lz);
+    flow.set_equilibrium(|cell| {
+        let [x, y, z] = grid.centre(cell);
+        let eta = y - 1.0 - 0.5 * dx;
+        let wall = (1.0 - eta * eta).max(0.0);
+        let u = 1.15 * ub * (1.0 - eta.abs().min(1.0).powi(8)) + 2.0 * (2.0 * kz * z).sin() * (kx * x).cos() * wall;
+        let v = 1.5 * wall * (2.0 * kz * z).cos() * (3.0 * kx * x).sin();
+        let w = 1.5 * wall * eta * (kx * x).sin() * (kz * z).cos();
+        (1.0, [u * to_lattice, v * to_lattice, w * to_lattice])
+    });
+    (setup, flow)
+}
+
+/// What one GPU-against-CPU run of the on-node bounce measured: the velocity (over the largest
+/// CPU speed) and density differences; the walls' drag (x, both walls) on the GPU against the
+/// CPU's; the GPU walls' carried stress against the stress the GPU sampled (x and z, over the x
+/// stress); and the GPU's sampled stress against the CPU's.
+struct OnNode {
+    du: f64,
+    drho: f64,
+    drag: f64,
+    carried: f64,
+    sampled: f64,
+}
+
+/// The stated tolerances of the on-node bounce on the GPU, those of the coarse wall-modelled
+/// channel: velocity within 1e-4 of the largest speed, density within 1e-5, the walls' drag within
+/// 1e-3 of the CPU's, the carried stress within 1e-3 of the sampled one (its own and the CPU's).
+fn check_on_node(what: &str, r: &OnNode) {
+    println!(
+        "{what}, GPU vs CPU: velocity {:.2e}, density {:.2e}, wall drag {:.2e}; GPU carried vs its sampled stress {:.2e}, GPU vs CPU sampled stress {:.2e}",
+        r.du, r.drho, r.drag, r.carried, r.sampled
+    );
+    assert!(r.du < 1e-4 && r.drho < 1e-5, "{what}: {} {}", r.du, r.drho);
+    assert!(r.drag < 1e-3 && r.carried < 1e-3 && r.sampled < 1e-3, "{what}: {} {} {}", r.drag, r.carried, r.sampled);
+}
+
+/// `steps` steps of `flow` on both from step 0, and what [`OnNode`] measures.
+fn on_node_difference(flow: Flow, steps: u64, streaming: Streaming) -> Option<OnNode> {
+    let mut cpu = flow;
+    assert!(cpu.on_node_bounce());
+    let mut gpu = gpu(&cpu, streaming)?;
+    cpu.advance(steps).unwrap();
+    gpu.advance(steps).unwrap();
+    let (du, drho) = field_difference(&mut cpu, &mut gpu);
+    let (fc, fg) = (Backend::forces(&mut cpu).unwrap(), gpu.forces().unwrap());
+    let walls = |f: &[[f64; 3]], k: usize| f[BoxFace::YMin.index()][k] + f[BoxFace::YMax.index()][k];
+    let drag = (walls(&fc, 0) - walls(&fg, 0)).abs() / walls(&fc, 0).abs();
+    // The GPU's sampled stresses (its wall rows) and the CPU's (its boundary nodes).
+    let rows = gpu.wall_targets().unwrap();
+    let sg = |k: usize| rows.iter().map(|r| r.0[k]).sum::<f64>();
+    let sc = |k: usize| cpu.wall_nodes().unwrap().nodes().iter().map(|w| w.stress[k]).sum::<f64>();
+    let carried = [0, 2].map(|k| (walls(&fg, k) - sg(k)).abs() / sg(0).abs()).into_iter().fold(0.0, f64::max);
+    let sampled = [0, 2].map(|k| (sg(k) - sc(k)).abs() / sc(0).abs()).into_iter().fold(0.0, f64::max);
+    Some(OnNode { du, drho, drag, carried, sampled })
+}
+
+/// Han, Ooka and Kikumoto's on-node bounce (their eq. 14) in the perturbed coarse channel, 150
+/// steps from the start (no warm-up), on the regularised, hybrid (σ 0.99), MRT and TRT
+/// collisions, with Smagorinsky's model and Van Driest's damping and with Vreman's, both layouts:
+/// the fields, the walls' drag and stresses at [`check_on_node`]'s tolerances.
 #[test]
-fn the_gpu_refuses_the_on_node_wall_function_bounce() {
-    let onnode = |p: Procedure| {
-        let mut p = van_driest(p, 0.1, false);
-        if let Procedure::Fluid { turbulence: Some(fieldcraft_model::Turbulence::Smagorinsky { wall_model, .. }), .. } = &mut p {
-            *wall_model = Some(fieldcraft_model::WallModel::SpaldingBounce);
+fn the_on_node_wall_function_bounce_follows_the_cpu() {
+    for vreman in [false, true] {
+        for (collision, sigma) in ON_NODE_COLLISIONS {
+            for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+                let (setup, flow) = on_node_channel(on_node_turbulence(vreman), collision, sigma, 150.0);
+                let Some(r) = on_node_difference(flow, setup.steps, streaming) else { return };
+                let model = if vreman { "Vreman" } else { "Smagorinsky + Van Driest" };
+                check_on_node(&format!("on-node bounce, {} + {model}, {streaming:?}, coarse channel, 150 steps", collision.name()), &r);
+            }
         }
-        p
-    };
-    let (_, flow) = coarse_channel(onnode, Collision::Mrt);
-    assert!(flow.on_node_bounce());
-    let Err(e) = GpuFlow::with_options(&flow, Policy::from_env().unwrap(), Options::default()) else { panic!("the GPU ran the on-node bounce") };
-    let e = e.to_string();
-    assert!(e.contains("not supported yet") && e.contains("`spalding_bounce`") && e.contains("spalding_bounce_halfway"), "{e}");
+    }
+}
+
+/// The same in Han et al.'s A20 channel (Re_τ 640, 20 cells per δ, 126 × 41 × 63 cells, their
+/// Mach number), 300 steps from its perturbed start, on every collision and both subgrid models,
+/// both layouts.
+#[test]
+#[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+fn the_on_node_wall_function_bounce_follows_the_cpu_in_han_s_a20_channel() {
+    let case = &HAN_CASES[0];
+    for vreman in [false, true] {
+        for (collision, sigma) in ON_NODE_COLLISIONS {
+            for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+                let HanFlow { flow, .. } = han_flow(case, collision, sigma, on_node_turbulence(vreman), true, 1.0).unwrap();
+                let Some(r) = on_node_difference(flow, 300, streaming) else { return };
+                let model = if vreman { "Vreman" } else { "Smagorinsky + Van Driest" };
+                check_on_node(&format!("on-node bounce, {} + {model}, {streaming:?}, Han A20, 300 steps", collision.name()), &r);
+            }
+        }
+    }
+}
+/// The on-node bounce twice on one device gives the same fields and wall forces bit for bit (the
+/// paper's MRT with Smagorinsky's model and Van Driest's damping, and the hybrid collision with
+/// Vreman's, in the coarse channel), both layouts.
+#[test]
+fn the_on_node_wall_function_bounce_is_deterministic_on_its_device() {
+    for (vreman, collision, sigma) in [(false, Collision::Mrt, None), (true, Collision::Hrr, Some(HrrSigma::Value(0.99)))] {
+        for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+            let (setup, flow) = on_node_channel(on_node_turbulence(vreman), collision, sigma, 150.0);
+            let run = || {
+                let mut g = gpu(&flow, streaming)?;
+                g.advance(setup.steps).unwrap();
+                let mut bits = field_bits(&g.fields().unwrap());
+                bits.extend(g.forces().unwrap().iter().flatten().map(|v| v.to_bits()));
+                Some(bits)
+            };
+            let (Some(a), Some(b)) = (run(), run()) else { return };
+            println!("on-node bounce, {}, {streaming:?}: two runs bit for bit: {}", collision.name(), a == b);
+            assert!(a == b);
+        }
+    }
+}
+
+/// Spalding's y⁺(u⁺) with Han et al.'s constants (κ 0.41, B 5.5).
+fn spalding_y_plus(up: f64) -> f64 {
+    let k = 0.41 * up;
+    up + (-0.41f64 * 5.5).exp() * (k.exp() - 1.0 - k - k * k / 2.0 - k * k * k / 6.0)
+}
+
+/// The k_x = π mode's energy `Σ_rows Σ_components |û|²`, `û = Σ_{x,z} (−1)^x u / (n_x n_z)`, over
+/// the rows `rows` of a velocity field on `grid`.
+fn odd_even_energy(grid: &fieldcraft_lbm::Grid, velocity: &[[f64; 3]], rows: std::ops::RangeInclusive<usize>) -> f64 {
+    let [nx, _, nz] = grid.cells;
+    let mut e = 0.0;
+    for j in rows {
+        let mut a = [0.0; 3];
+        for k in 0..nz {
+            for i in 0..nx {
+                let u = velocity[grid.index([i, j, k])];
+                let sign = if i % 2 == 0 { 1.0 } else { -1.0 };
+                for c in 0..3 {
+                    a[c] += sign * u[c];
+                }
+            }
+        }
+        e += a.iter().map(|x| (x / (nx * nz) as f64).powi(2)).sum::<f64>();
+    }
+    e
+}
+
+/// The least-squares slope per step of `y` over its second half.
+fn tail_slope(y: &[f64]) -> f64 {
+    let tail = &y[y.len() / 2..];
+    let n = tail.len() as f64;
+    let (mean_t, mean_y) = ((n - 1.0) / 2.0, tail.iter().sum::<f64>() / n);
+    let (mut sxy, mut sxx) = (0.0, 0.0);
+    for (t, v) in tail.iter().enumerate() {
+        sxy += (t as f64 - mean_t) * (v - mean_y);
+        sxx += (t as f64 - mean_t).powi(2);
+    }
+    sxy / sxx
+}
+
+/// The CPU's stationary k_x = π toy (`crates/lbm/tests/wall_stability.rs`, whose notes derive it)
+/// on the GPU for its trunk case: Han et al.'s on-node eq. 14 on the regularised collision at
+/// τ̄ 0.5015 with the first node at u⁺ 5, no subgrid model, in a periodic box 16 × 9 × 2 (N = 4),
+/// the laminar base held steady by the body force that balances both walls' Spalding stress. A
+/// checkerboard in x of u_x is seeded in the first fluid row at each wall, and the growth rate per
+/// step of its amplitude (the least-squares slope of ½ ln E over the second half of 4000 steps)
+/// must not be positive, as on the CPU, and must be the CPU's (run beside it) within 10 %. The
+/// seed is 1e-3 of a lattice speed (the base is about 0.03): with the CPU's 1e-6, or 1e-5, single
+/// precision's rounding of the base (ε |u| ≈ 2e-9 per step, against a decay of 1.2e-4 per step)
+/// holds the mode at about 4e-6 on the GB10 and on llvmpipe, so the rate measured is the
+/// rounding's. At 1e-3 the CPU's mode is linear (its energy is 10⁶ times that at 1e-6 to 4 digits).
+/// Measured on the GB10: −1.195e-4 per step on both layouts, the CPU −1.169e-4.
+#[test]
+fn the_on_node_bounce_damps_the_odd_even_mode_of_its_wall_rows_on_the_gpu() {
+    const N: usize = 4;
+    let (nx, nz) = (16usize, 2usize);
+    let (tau, steps, seed) = (0.5015, 4000u64, 1e-3);
+    let nu = (tau - 0.5) / 3.0;
+    let (ny, rows, d) = (2 * N + 1, 2 * N - 1, 1.0);
+    let h = N as f64;
+    let up = 5.0;
+    let ut = spalding_y_plus(up) * nu / d;
+    let g = 2.0 * ut * ut / rows as f64;
+    let u1 = ut * up;
+    let profile = |y: f64| u1 + g / (2.0 * nu) * ((h - d).powi(2) - (h - y).powi(2));
+    assert!(profile(h) <= 0.1, "the centreline under lattice speed 0.1");
+    for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+        let mut dom = domain([0.0; 3], [nx as f64, ny as f64, nz as f64], 1.0);
+        for f in [&mut dom.faces.x_min, &mut dom.faces.x_max, &mut dom.faces.z_min, &mut dom.faces.z_max] {
+            *f = PERIODIC;
+        }
+        dom.acceleration = [g, 0.0, 0.0];
+        let t =
+            Turbulence::Smagorinsky { constant: 0.1, prandtl: 0.9, van_driest: None, wall_model: Some(fieldcraft_model::WallModel::SpaldingBounce) };
+        let p = les(None, Some(t))(collide(steps as f64, 1.0, None, Collision::Regularized));
+        let mut setup = Setup::new(&model(1.0, nu, dom, p), None, &[], &fieldcraft_lbm::Limits::default()).unwrap();
+        assert!((setup.tau_plus - tau).abs() < 1e-12);
+        // The wall treatment alone: no subgrid model.
+        setup.smagorinsky = 0.0;
+        let mut flow = Flow::new(&setup, &[]).unwrap();
+        assert!(!flow.turbulent() && flow.on_node_bounce());
+        let grid = *flow.grid();
+        let (first, last) = (1, ny - 2);
+        flow.set_equilibrium(|cell| {
+            let [i, j, _] = grid.coords(cell);
+            let y = (j as f64).min(2.0 * h - j as f64);
+            let sign = if i % 2 == 0 { 1.0 } else { -1.0 };
+            let s = if j == first || j == last { seed * sign } else { 0.0 };
+            (1.0, [profile(y) + s, 0.0, 0.0])
+        });
+        let Some(mut gpu) = gpu(&flow, streaming) else { return };
+        let mut cpu = flow;
+        let (mut on_gpu, mut on_cpu) = (Vec::with_capacity(steps as usize), Vec::with_capacity(steps as usize));
+        for _ in 0..steps {
+            gpu.advance(1).unwrap();
+            cpu.advance(1).unwrap();
+            for (log_e, e) in [
+                (&mut on_gpu, odd_even_energy(&grid, &gpu.fields().unwrap().velocity, first..=last)),
+                (&mut on_cpu, odd_even_energy(&grid, &cpu.fields().unwrap().velocity, first..=last)),
+            ] {
+                assert!(e.is_finite() && e > 0.0, "{e}");
+                log_e.push(0.5 * e.ln());
+            }
+        }
+        let (rate, cpu_rate) = (tail_slope(&on_gpu), tail_slope(&on_cpu));
+        println!(
+            "on-node, regularised, τ̄ {tau}, u⁺ {up}, seed {seed:e}, {streaming:?}: growth {rate:+.4e} per step on the GPU, {cpu_rate:+.4e} on the CPU"
+        );
+        assert!(rate <= 0.0 && cpu_rate <= 0.0, "{rate} {cpu_rate}");
+        assert!((rate - cpu_rate).abs() <= 0.1 * cpu_rate.abs(), "{rate} vs {cpu_rate}");
+    }
 }
 
 /// Han, Ooka and Kikumoto's wall-function bounce (`spalding_bounce_halfway`) with Smagorinsky's model and
@@ -3202,28 +3449,30 @@ fn han_turbulence(setup: HanSetup, wfb: bool) -> Turbulence {
     }
 }
 
-/// Han et al.'s channel (their §3): 2πD × 2D × πD on `case.n` cells per half-height D, periodic
-/// in x and z, driven by the constant pressure gradient of the nominal u_τ = 1 (δ = 1; the paper
-/// normalises by the nominal u_τ), with the wall-function bounce (`wfb`) or plain bounce-back. The
-/// collision and subgrid model are `setup`'s ([`HanSetup`]); the paper's is D3Q19 MRT with
-/// Smagorinsky's model at C_s 0.1 and Van Driest's damping (A⁺ 26: the paper names the damping,
-/// not its constant). The lattice speed is the paper's Mach number at the centreline speed its Re
-/// implies (U_c⁺ = Re / Re_τ). `times.0` δ/u_τ (20) discarded, then U_b's block means of 2 δ/u_τ
-/// until their 95 % interval is under 1 % with a lag-1 correlation under 0.5 and at least 50 δ/u_τ
-/// averaged, at most `times.1` (150). Every 0.05 δ/u_τ in the window the velocity field is read
-/// back for the profile and [`ChannelStats`]. A case whose Mach number puts τ under the floor is
-/// refused, except B40 (Re_τ 2003, 40 cells: τ 0.500099 at their Ma 0.069), which runs at the
-/// smallest Mach number that reaches the floor, 0.0693, a deviation printed and recorded with
-/// both Mach numbers.
-fn han_channel(case: &HanCase, setup_of: HanSetup, wfb: bool, cpu: bool, times: (f64, f64)) -> Option<Result<HanResult, String>> {
+/// A Han et al. channel's flow, started (see [`han_channel`]).
+struct HanFlow {
+    setup: Setup,
+    flow: Flow,
+    /// The Mach number run, the time step (δ/u_τ) and the box's streamwise length (δ).
+    mach: f64,
+    dt: f64,
+    lx: f64,
+}
+
+/// [`han_channel`]'s box, set-up and perturbed start for `case` on `collision` (σ `sigma`) with
+/// `turbulence_of`, run to `end` δ/u_τ; with `on_node` the box is 2δ + Δx high, the walls through
+/// the outermost cells' centres (Han et al.'s on-node bounce).
+fn han_flow(
+    case: &HanCase,
+    collision: Collision,
+    sigma: Option<HrrSigma>,
+    turbulence_of: Turbulence,
+    on_node: bool,
+    end: f64,
+) -> Result<HanFlow, String> {
     use std::f64::consts::PI;
-    let ((start, end), min_average, block, tolerance) = (times, 50.0, 2.0, 1e-2);
     let n = case.n;
     let dx = 1.0 / n as f64;
-    // Under the on-node bounce the walls pass through the outermost cells' centres: the box is
-    // 2δ + Δx high (2N + 1 cells) for 2δ between the walls; it runs on the CPU only.
-    let on_node = wfb && han_on_node();
-    let cpu = cpu || on_node;
     let wall = if on_node { 0.5 * dx } else { 0.0 };
     let (lx, lz) = ((2.0 * PI * n as f64).round() * dx, (PI * n as f64).round() * dx);
     let mut d = domain([0.0; 3], [lx, 2.0 + 2.0 * wall, lz], dx);
@@ -3241,28 +3490,11 @@ fn han_channel(case: &HanCase, setup_of: HanSetup, wfb: bool, cpu: bool, times: 
         case.mach
     };
     let dt = mach / 3f64.sqrt() * dx / uc;
-    let turbulence_of = han_turbulence(setup_of, wfb);
-    let mut p = collide(end, dt, None, setup_of.collision());
-    if let Procedure::Fluid { turbulence, sigma, .. } = &mut p {
-        *turbulence = Some(turbulence_of);
-        *sigma = setup_of.sigma();
-    }
+    let p = les(sigma, Some(turbulence_of))(collide(end, dt, None, collision));
     let m = model(1.0, 1.0 / case.re_tau, d, p);
     let limits = fieldcraft_lbm::Limits { max_cell_updates: 10_000_000_000_000, ..fieldcraft_lbm::Limits::default() };
-    let setup = match Setup::new(&m, None, &[], &limits) {
-        Ok(s) => s,
-        Err(e) => return Some(Err(format!("refused: {e}"))),
-    };
-    let kind = if wfb { "WFB" } else { "BB" };
-    let label = setup_of.name();
-    println!(
-        "  Han {} {kind} [{label}]: τ {:.6}, Mach {mach:.5} at the centreline (theirs {}{})",
-        case.name,
-        setup.tau_plus,
-        case.mach,
-        if mach != case.mach { "; raised to the τ floor, a deviation" } else { "" }
-    );
-    let mut flow = Flow::new(&setup, &[]).unwrap();
+    let setup = Setup::new(&m, None, &[], &limits).map_err(|e| format!("refused: {e}"))?;
+    let mut flow = Flow::new(&setup, &[]).map_err(|e| format!("refused: {e}"))?;
     let grid = *flow.grid();
     let vs = setup.velocity_scale();
     let (kx, kz) = (2.0 * PI / lx, 2.0 * PI / lz);
@@ -3276,6 +3508,44 @@ fn han_channel(case: &HanCase, setup_of: HanSetup, wfb: bool, cpu: bool, times: 
         let w = 1.5 * wall * eta * (kx * x).sin() * (kz * z).cos();
         (1.0, [u / vs, v / vs, w / vs])
     });
+    Ok(HanFlow { setup, flow, mach, dt, lx })
+}
+
+/// Han et al.'s channel (their §3): 2πD × 2D × πD on `case.n` cells per half-height D, periodic
+/// in x and z, driven by the constant pressure gradient of the nominal u_τ = 1 (δ = 1; the paper
+/// normalises by the nominal u_τ), with the wall-function bounce (`wfb`) or plain bounce-back. The
+/// collision and subgrid model are `setup`'s ([`HanSetup`]); the paper's is D3Q19 MRT with
+/// Smagorinsky's model at C_s 0.1 and Van Driest's damping (A⁺ 26: the paper names the damping,
+/// not its constant). The lattice speed is the paper's Mach number at the centreline speed its Re
+/// implies (U_c⁺ = Re / Re_τ). `times.0` δ/u_τ (20) discarded, then U_b's block means of 2 δ/u_τ
+/// until their 95 % interval is under 1 % with a lag-1 correlation under 0.5 and at least 50 δ/u_τ
+/// averaged, at most `times.1` (150). Every 0.05 δ/u_τ in the window the velocity field is read
+/// back for the profile and [`ChannelStats`]. A case whose Mach number puts τ under the floor is
+/// refused, except B40 (Re_τ 2003, 40 cells: τ 0.500099 at their Ma 0.069), which runs at the
+/// smallest Mach number that reaches the floor, 0.0693, a deviation printed and recorded with
+/// both Mach numbers.
+fn han_channel(case: &HanCase, setup_of: HanSetup, wfb: bool, cpu: bool, times: (f64, f64)) -> Option<Result<HanResult, String>> {
+    let ((start, end), min_average, block, tolerance) = (times, 50.0, 2.0, 1e-2);
+    // Under the on-node bounce the walls pass through the outermost cells' centres: the box is
+    // 2δ + Δx high (2N + 1 cells) for 2δ between the walls; it runs on the CPU only.
+    let on_node = wfb && han_on_node();
+    let cpu = cpu || on_node;
+    let turbulence_of = han_turbulence(setup_of, wfb);
+    let HanFlow { setup, mut flow, mach, dt, lx } = match han_flow(case, setup_of.collision(), setup_of.sigma(), turbulence_of, on_node, end) {
+        Ok(h) => h,
+        Err(e) => return Some(Err(e)),
+    };
+    let kind = if wfb { "WFB" } else { "BB" };
+    let label = setup_of.name();
+    println!(
+        "  Han {} {kind} [{label}]: τ {:.6}, Mach {mach:.5} at the centreline (theirs {}{})",
+        case.name,
+        setup.tau_plus,
+        case.mach,
+        if mach != case.mach { "; raised to the τ floor, a deviation" } else { "" }
+    );
+    let grid = *flow.grid();
+    let vs = setup.velocity_scale();
     let mut device = if cpu { None } else { Some(gpu(&flow, Streaming::InPlace)?) };
     let control = ((0.05 / dt) as u64).max(1);
     let from = (start / dt) as u64;
