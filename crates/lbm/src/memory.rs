@@ -156,10 +156,7 @@ impl Memory {
         let Procedure::Fluid { frames, turbulence, .. } = &s.procedure else {
             return Err(Error::Invalid(format!("step `{}` is not a fluid step", s.name)));
         };
-        let (damping, wall_model) = match turbulence {
-            Some(fieldcraft_model::Turbulence::Smagorinsky { van_driest, wall_model, .. }) => (van_driest.is_some(), wall_model.is_some()),
-            None => (false, false),
-        };
+        let (damping, wall_model) = turbulence.map_or((false, false), |t| (t.van_driest().is_some(), t.wall_model().is_some()));
         Ok(Memory::from_shape(&Shape::new(domain, u64::from(*frames), turbulence.is_some(), damping, wall_model)?, backend))
     }
 

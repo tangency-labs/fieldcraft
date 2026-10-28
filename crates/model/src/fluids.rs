@@ -1245,6 +1245,26 @@ mod tests {
         }
         let nan = crate::HrrSigma::Value(f64::NAN).validate().unwrap_err().to_string();
         assert!(nan.contains("above 0 and at most 1"), "{nan}");
+        // Vreman's model: its constant, the default turbulent Prandtl number, a wall model, and
+        // written back the same way; a field it does not have (Van Driest's damping) is refused,
+        // and Smagorinsky's model still takes every field it has.
+        let turbulence = |t: serde_json::Value| serde_json::from_value::<crate::Turbulence>(t);
+        let vreman = turbulence(serde_json::json!({"type": "vreman", "constant": 0.18})).unwrap();
+        assert_eq!(vreman, crate::Turbulence::Vreman { constant: 0.18, prandtl: 0.9, wall_model: None });
+        assert_eq!((vreman.name(), vreman.constant(), vreman.prandtl(), vreman.van_driest(), vreman.wall_model()), ("vreman", 0.18, 0.9, None, None));
+        let walled = turbulence(serde_json::json!({"type": "vreman", "constant": 0.17, "prandtl": 0.85, "wall_model": "spalding_bounce"})).unwrap();
+        assert_eq!(walled.wall_model(), Some(crate::WallModel::SpaldingBounce));
+        assert_eq!(serde_json::from_str::<crate::Turbulence>(&serde_json::to_string(&walled).unwrap()).unwrap(), walled);
+        assert!(turbulence(serde_json::json!({"type": "vreman", "constant": 0.18, "van_driest": 26})).is_err());
+        assert!(turbulence(serde_json::json!({"type": "vreman"})).is_err(), "the constant is required");
+        let smagorinsky =
+            turbulence(serde_json::json!({"type": "smagorinsky", "constant": 0.1, "prandtl": 0.85, "van_driest": 26, "wall_model": "musker"}))
+                .unwrap();
+        assert_eq!(
+            (smagorinsky.name(), smagorinsky.van_driest(), smagorinsky.wall_model()),
+            ("smagorinsky", Some(26.0), Some(crate::WallModel::Musker))
+        );
+        assert!(turbulence(serde_json::json!({"type": "smagorinsky", "constant": 0.1, "damping": 26})).is_err());
         // The JSON form reads back to the same model, through the same checks.
         let text = serde_json::to_string(&m).unwrap();
         assert_eq!(serde_json::from_str::<Model>(&text).unwrap(), m);

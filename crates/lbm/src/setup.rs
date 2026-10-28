@@ -439,6 +439,7 @@ impl Setup {
                 }
                 (*constant, *prandtl, *van_driest, *wall_model)
             }
+            Some(Turbulence::Vreman { .. }) => return Err(Error::Invalid("not supported yet: Vreman's subgrid model (`vreman`)".into())),
         };
         let material = model.material(&domain.material);
         let (Some(density), Some(fluid)) = (material.and_then(|m| m.density), material.and_then(|m| m.fluid)) else {

@@ -223,9 +223,10 @@ impl<'de> Deserialize<'de> for HrrSigma {
     }
 }
 
-/// A fluid step's turbulence model.
+/// A fluid step's turbulence model. Unknown fields are refused (a `van_driest` given to
+/// Vreman's model, which has none, is an error rather than silently ignored).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Turbulence {
     /// Smagorinsky's subgrid eddy viscosity ν_t = (C Δx)² |S|, with `constant` C (0.1 to 0.2 is
     /// usual; 0.17 is Lilly's for isotropic turbulence) and |S| = √(2 S:S) the local strain
@@ -244,6 +245,58 @@ pub enum Turbulence {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         wall_model: Option<WallModel>,
     },
+    /// Vreman's subgrid eddy viscosity (A. W. Vreman, Phys. Fluids 16:3670, 2004,
+    /// doi:10.1063/1.1785131): ν_t = c √(B_β / α:α) from the velocity gradient α, with
+    /// c = 2.5 C_s² and `constant` the Smagorinsky-equivalent C_s (0.17 gives Vreman's c = 0.07;
+    /// Jacob et al. 2018 use 0.18). It vanishes wherever the gradient has rank one, as in laminar
+    /// shear and at a no-slip wall, so it needs no wall damping. `prandtl` and `wall_model` as for
+    /// Smagorinsky's model.
+    Vreman {
+        constant: f64,
+        #[serde(default = "default_turbulent_prandtl")]
+        prandtl: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        wall_model: Option<WallModel>,
+    },
+}
+
+impl Turbulence {
+    /// `smagorinsky` or `vreman`, as written in the model.
+    pub fn name(self) -> &'static str {
+        match self {
+            Turbulence::Smagorinsky { .. } => "smagorinsky",
+            Turbulence::Vreman { .. } => "vreman",
+        }
+    }
+
+    /// The model's constant (Smagorinsky's C, or Vreman's Smagorinsky-equivalent C_s).
+    pub fn constant(self) -> f64 {
+        match self {
+            Turbulence::Smagorinsky { constant, .. } | Turbulence::Vreman { constant, .. } => constant,
+        }
+    }
+
+    /// The turbulent Prandtl number of the heat diffusivity ν_t / Pr_t.
+    pub fn prandtl(self) -> f64 {
+        match self {
+            Turbulence::Smagorinsky { prandtl, .. } | Turbulence::Vreman { prandtl, .. } => prandtl,
+        }
+    }
+
+    /// Van Driest's damping constant A⁺ (Smagorinsky's model only).
+    pub fn van_driest(self) -> Option<f64> {
+        match self {
+            Turbulence::Smagorinsky { van_driest, .. } => van_driest,
+            Turbulence::Vreman { .. } => None,
+        }
+    }
+
+    /// The wall model of the fluid cells next to no-slip walls.
+    pub fn wall_model(self) -> Option<WallModel> {
+        match self {
+            Turbulence::Smagorinsky { wall_model, .. } | Turbulence::Vreman { wall_model, .. } => wall_model,
+        }
+    }
 }
 
 /// A wall model of a large-eddy simulation: the wall stress of a fluid cell next to a no-slip
