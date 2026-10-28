@@ -109,7 +109,7 @@ size, the load, the stiffness) so a model in metres converges as it did in milli
 camera's clipping and minimum sizes are relative or in metres (`render::MIN_SIZE`).
 
 Relative is not enough where two dimensions meet in one norm. A nonlinear step's convergence
-test measures each kind of freedom against its own scale (docs/fem.md, *Convergence norms*):
+test measures each kind of freedom against its own scale (docs/manual/structural/nonlinear-static.md, *Algorithm*):
 residual forces against the largest force, residual moments against the largest moment (at
 least the force scale times the model's size L), translations of a correction against the
 increment's translation, rotations in radians against the increment's rotation (at least the

@@ -7,7 +7,6 @@
 - [Examples](examples.md)
 - [AI agents (MCP)](mcp.md)
 - [Units](units.md)
-- [Element library](elements.md)
 - [Contact loading and unloading](recipes/contact-load-unload.md)
 - [FieldCraft in the browser](web.md)
 - [Updates](updates.md)
@@ -16,9 +15,30 @@
 
 # Solver manual
 
-- [FEM foundation](fem.md)
-- [Lattice Boltzmann collision](lbm-collision.md)
-- [GPU lattice Boltzmann](lbm-gpu-performance.md)
+- [Overview](manual/index.md)
+- [Structural]()
+  - [Linear static](manual/structural/linear-static.md)
+  - [Natural frequencies](manual/structural/frequency.md)
+  - [Linear buckling](manual/structural/buckling.md)
+  - [Heat transfer](manual/structural/heat-transfer.md)
+  - [Nonlinear static](manual/structural/nonlinear-static.md)
+  - [Explicit dynamics](manual/structural/explicit-dynamics.md)
+  - [Element library](manual/structural/elements.md)
+  - [Materials](manual/structural/materials.md)
+  - [Contact](manual/structural/contact.md)
+  - [Constraints and connectors](manual/structural/constraints-and-connectors.md)
+  - [Linear solvers](manual/structural/linear-solvers.md)
+- [Fluid]()
+  - [Lattice Boltzmann flow](manual/fluid/lattice-boltzmann.md)
+  - [Collision operators](manual/fluid/collision.md)
+  - [Boundary conditions](manual/fluid/boundary-conditions.md)
+  - [Turbulence](manual/fluid/turbulence.md)
+  - [Wall-modelled LES](lbm-wall-model.md)
+  - [Heat transfer](manual/fluid/heat-transfer.md)
+  - [Fans and vents](manual/fluid/fans-and-vents.md)
+  - [Steady state and averaging](manual/fluid/steady-state-and-averaging.md)
+  - [GPU backend](manual/fluid/gpu.md)
+  - [Fluid results](manual/fluid/fluid-results.md)
 
 # Verification
 

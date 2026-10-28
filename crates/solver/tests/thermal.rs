@@ -1,4 +1,4 @@
-//! Analytic verification of heat transfer and thermal stress (docs/fem.md, docs/elements.md):
+//! Analytic verification of heat transfer and thermal stress (docs/manual/structural/heat-transfer.md):
 //! steady conduction through a slab (prescribed temperatures, a heat source, convection),
 //! radial conduction through a thick cylinder, transient conduction into a semi-infinite solid
 //! (erfc), free and constrained thermal expansion, a bimetal strip (Timoshenko 1925) and the

@@ -48,7 +48,7 @@
 //! - [`dense`]: the small dense linear algebra inside an element.
 //!
 //! Conventions: element matrices are ordered node by node, each node's degrees of freedom in
-//! [`DofKind`] order (three translations for solids, six for shells and beams; docs/fem.md); stress
+//! [`DofKind`] order (three translations for solids, six for shells and beams; docs/manual/structural/elements.md); stress
 //! and strain 6-vectors in the order xx, yy, zz, xy, xz, yz with engineering shear strains.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]

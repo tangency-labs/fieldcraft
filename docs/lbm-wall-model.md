@@ -205,5 +205,5 @@ the CPU in f64. The runs take 2 minutes to an hour each on a GB10.
   34:349–374, 2002.
   doi:[10.1146/annurev.fluid.34.082901.144919](https://doi.org/10.1146/annurev.fluid.34.082901.144919)
 
-See also [the collision operators](lbm-collision.md), [verification and validation](verification.md)
+See also [the collision operators](manual/fluid/collision.md), [verification and validation](verification.md)
 and [the solver literature](solvers/literature.md), entries C5.1–C5.4.

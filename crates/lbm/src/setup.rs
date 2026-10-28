@@ -54,7 +54,7 @@ pub const MAX_LATTICE_ACCELERATION: f64 = 0.01;
 pub const MAX_LATTICE_SPEED: f64 = 0.5;
 /// Below this τ⁺ the regularized collision is warned about: on the flow-past sample's 2.5 mm grid
 /// it ran at τ⁺ 0.508 and went unstable at 0.5075, the reflecting inlet and outlet failing
-/// (`docs/lbm-collision.md`).
+/// (`docs/manual/fluid/collision.md`).
 pub const REGULARIZED_TAU_LIMIT: f64 = 0.508;
 
 /// The largest Smagorinsky constant a step takes: well past the 0.1 to 0.2 in use, where the
@@ -76,7 +76,7 @@ pub const DEFAULT_MAGIC: f64 = 3.0 / 16.0;
 /// held wall: 8.1e-4, 5.0e-5, 3.2e-6 of the flux on 8, 16, 32 cells per wavelength, against
 /// second order and 1.3e-2 on 16 cells at 1/6 or 2.5e-2 at 1/4), and the wall-flux study of the
 /// de Vahl Davis cavity in `tests/thermal.rs` (`local_wall_heat_flux_with_two_relaxation_times`,
-/// `docs/lbm-collision.md`) finds the cavity's local wall fluxes within 0.2 % of the reference
+/// `docs/manual/fluid/collision.md`) finds the cavity's local wall fluxes within 0.2 % of the reference
 /// on 64 cells at every `τ_T`. Below `τ_T = ½ + √Λ_T` (0.79) the scalar lattice keeps a single
 /// relaxation time ([`thermal_magic`]).
 pub const THERMAL_MAGIC: f64 = 1.0 / 12.0;

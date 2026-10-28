@@ -451,7 +451,7 @@ fn local_wall_heat_flux_does_not_depend_on_the_thermal_relaxation_time() {
 /// values of Λ_T and with the scheme as shipped (`thermal_magic`), at Ra = 10³ on 32 and 64 cells
 /// and at Ra = 10⁵ on 64. Each row gives the errors of the mean Nusselt number and of the largest
 /// and smallest local ones, read as the probe reads them and from the lattice's own link heat.
-/// The table and the choice are in `docs/lbm-collision.md`.
+/// The table and the choice are in `docs/manual/fluid/collision.md`.
 #[test]
 #[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
 fn local_wall_heat_flux_with_two_relaxation_times() {

@@ -535,7 +535,7 @@ shock capturing belongs to Eulerian finite volume (E1); not needed for the Lagra
 - **Complexity.** Moderate–high (careful transcription of the transforms; test each against the moment definitions).
 - **Code.** VirtualFluids and lbmpy implement it: both GPL-3.0, FORBIDDEN. Implement from the paper.
 
-**C2.4 Regularised and recursive-regularised collision.** **Verdict: built (recursive regularised on D3Q19, `collision: "regularized"`, #557; `docs/lbm-collision.md`).**
+**C2.4 Regularised and recursive-regularised collision.** **Verdict: built (recursive regularised on D3Q19, `collision: "regularized"`, #557; `docs/manual/fluid/collision.md`).**
 - **Citations.**
   - J. Latt, B. Chopard. *Lattice Boltzmann method with regularized pre-collision distribution functions.* Math. Comput. Simul. 72(2–6):165–168, 2006. DOI [10.1016/j.matcom.2006.05.017](https://doi.org/10.1016/j.matcom.2006.05.017).
   - O. Malaspinas. *Increasing stability and accuracy of the lattice Boltzmann scheme: recursivity and regularization.* arXiv:1505.06900, 2015. https://arxiv.org/abs/1505.06900 (200).
@@ -1358,7 +1358,7 @@ update are written from (cited again in the module docs):
 ## Part Q: Contact and friction (explicit), as implemented
 
 The papers and books `fieldcraft_fem::contact` and `fieldcraft_explicit::contact` are written
-from (cited again in the module docs); docs/fem.md describes the formulation.
+from (cited again in the module docs); docs/manual/structural/contact.md describes the formulation.
 
 - Closest point on a triangle by its Voronoi regions: C. Ericson, *Real-Time Collision
   Detection*, Morgan Kaufmann 2005, §5.1.5; on a bilinear quadrilateral by Newton's method on the
@@ -1398,7 +1398,7 @@ from (cited again in the module docs); docs/fem.md describes the formulation.
 ## Part R: Contact in nonlinear static steps (M7), as implemented
 
 The papers `fieldcraft_fem::mortar`, `fieldcraft_fem::dual` and `fieldcraft_solver::contact` are
-written from (cited again in the module docs); docs/fem.md describes the formulation.
+written from (cited again in the module docs); docs/manual/structural/contact.md describes the formulation.
 
 - Mortar contact, segment to segment, with nodal weighted gaps and the pressure interpolated by
   the non-mortar side's shape functions: M. A. Puso, T. A. Laursen, *A mortar segment-to-segment

@@ -33,7 +33,7 @@ crates in strictly lower layers.
 | L5 | `fieldcraft-io` | `.fieldcraft` files (docs/formats/fieldcraft.md): text model definition, binary mesh, geometry references with content hashes, the journal; atomic saves; autosave storage for crash recovery; read and write roots that confine an automation client's file access (`roots`). Bytes in, bytes out; the file system only in `fs`, `recovery` and `roots` (in the browser, files kept in memory: `memory`). Result files later. | started |
 | L6 | `fieldcraft-engine` | Commands (`CommandSpec`), `Session::execute` with rollback and the panic guard, scripts; every file a command names checked against the session's roots (`Session::file_access`); headless pictures of the session (`view`: model, geometry, deformed shape and contours on the CPU rasterizer). | started |
 | L7 | `fieldcraft-gpu` | The viewport's GPU pipelines (lit faces, wide lines, MSAA, depth) without a window toolkit, the adapter policy (`FIELDCRAFT_GPU`: hardware GPU, software GPU, CPU rasterizer) and offscreen pictures (`fieldcraft-cli snapshot`). The window draws through the same pipelines. | started |
-| L7 | `fieldcraft-lbm-gpu` | The lattice Boltzmann solver's GPU backend: the CPU scheme's step (TRT or regularized collision with Guo forcing, the per-link wall rules, Zou–He boundaries and convective outlets, momentum exchange, and the temperature lattice with its wall conditions, buoyancy and heat exchange, and the conducting solids with their implicit interface links) as wgpu compute shaders, driven through `lbm`'s `Backend` trait from the flow the CPU prepared; single precision, one population buffer streamed in place (the AA pattern, `docs/lbm-gpu-performance.md`), deterministic per device, checked against the CPU within its tests' tolerances; opt-in per solve (`solve.fluid` with `backend: "gpu"`). Opens its device with `gpu`'s adapter policy. | started |
+| L7 | `fieldcraft-lbm-gpu` | The lattice Boltzmann solver's GPU backend: the CPU scheme's step (TRT or regularized collision with Guo forcing, the per-link wall rules, Zou–He boundaries and convective outlets, momentum exchange, and the temperature lattice with its wall conditions, buoyancy and heat exchange, and the conducting solids with their implicit interface links) as wgpu compute shaders, driven through `lbm`'s `Backend` trait from the flow the CPU prepared; single precision, one population buffer streamed in place (the AA pattern, `docs/manual/fluid/gpu.md`), deterministic per device, checked against the CPU within its tests' tolerances; opt-in per solve (`solve.fluid` with `backend: "gpu"`). Opens its device with `gpu`'s adapter policy. | started |
 | L7 | `fieldcraft-mesh-gpu` | Projection smoothing's GPU device: the coloured Winslow sweeps' interior nodes (Winslow's update or the neighbour mean, the guarded step on the scaled Jacobian and edge ratio around the node) as a wgpu compute shader, driven colour by colour through `mesh`'s sweep device while the host moves the boundary nodes on the geometry; single precision about the mesh's centre, deterministic per device, the same verdicts as the CPU's coloured sweeps with a smallest scaled Jacobian within 0.02 of theirs; opt-in per projection (`mesh.hex.project` with `backend: "gpu"`). Opens its device with `gpu`'s adapter policy. | started |
 | L7 | `fieldcraft-ui-egui`, `fieldcraft-mcp` | Desktop UI in the Craft family's layout (title bar with quick actions, workspace ribbon from the catalogue, browser, viewport with navigation bar and orientation gizmo, context panel, command search and command line, journal timeline; native file pickers as host services, background opening and solving; results display with legend and probe; offscreen capture of the whole window) and control channel requests (docs/control-protocol.md); MCP server over stdio (docs/mcp.md): tools over engine commands, a headless session or the running app through its control channel, read and write roots. | ui, mcp started |
 | testkit | `fieldcraft-testkit` | Test tooling, a dev-dependency only: the meshing test corpus (`tests/corpus/*/recipe.json`, analytic shapes) and its runner (`cargo xtask corpus`). | started |
@@ -294,7 +294,7 @@ source, separate from the analytic gate): the Scordelis–Lo roof and the pinche
 `fieldcraft-explicit` integrates a model's `explicit_dynamic` steps in time (`solve.explicit`;
 `solve.history` and `solve.probe` read the stored histories and frames). Methods and papers are
 cited in the module docs and in docs/solvers/literature.md (Parts H and J). Both structural solvers
-number their degrees of freedom with `fieldcraft_fem::DofLayout` (docs/fem.md).
+number their degrees of freedom with `fieldcraft_fem::DofLayout` (docs/manual/structural/elements.md).
 
 1. **System.** `Model::resolve()`; hex8 sections with reduced integration become one-point
    uniform-strain hexahedra with Flanagan–Belytschko hourglass control, tet4 sections Bonet–Burton
@@ -337,7 +337,7 @@ number their degrees of freedom with `fieldcraft_fem::DofLayout` (docs/fem.md).
    friction by a return map at the secondary nodes; rigid walls take Coulomb impulses. The contact
    forces join the equations of motion beside the external ones, their work and the friction
    dissipation join the energy account, and each contact's peak force, first and last contact,
-   deepest penetration and friction are reported (docs/fem.md).
+   deepest penetration and friction are reported (docs/manual/structural/contact.md).
 
 Verification (`crates/explicit/tests/verification.rs` and `large_deformation.rs`, analytic
 only): stress waves in hex8 and tet4 bars (front at c·t, σ = ρ c v, work input), a bar striking a
@@ -380,7 +380,7 @@ module docs and in `docs/solvers/literature.md` (Part I).
    decided with exact `orient2d`/`orient3d` and one symbolic perturbation, so faces through cell
    centres and lines through edges are classified consistently.
 4. **Stepping.** TRT collision (or, per step, the recursive regularized collision that stays
-   stable as τ approaches ½, `docs/lbm-collision.md`) with Guo forcing in place; pull streaming as one shifted copy per
+   stable as τ approaches ½, `docs/manual/fluid/collision.md`) with Guo forcing in place; pull streaming as one shifted copy per
    direction with per-link rules for the cells next to walls and box faces; Zou–He on inlet and
    outlet layers, or on a convective outlet the unknown populations updated by a convective
    outflow condition and each cell held at the face's pressure (Zou–He where the flow comes back
@@ -412,7 +412,7 @@ module docs and in `docs/solvers/literature.md` (Part I).
 
 The regularized collision has its own analytic and benchmark checks
 (`crates/lbm/tests/regularized.rs`, and both collisions in the porous, fan, natural convection,
-lid-driven cavity and Schäfer–Turek cases; `docs/lbm-collision.md`).
+lid-driven cavity and Schäfer–Turek cases; `docs/manual/fluid/collision.md`).
 
 Verification (`crates/lbm/tests/verification.rs`, analytic): plane Poiseuille exact to round-off
 with Λ = 3/16 and second order with Λ = 1/4; Couette exact with the wall shear μU/H; Taylor–Green

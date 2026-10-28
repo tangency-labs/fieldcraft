@@ -49,7 +49,7 @@ The largest local Nusselt number passes with little margin: 0.45 % from the refe
 tolerance of 0.55 % (the 128 × 128 grid gives 0.18 %). The tolerance is not widened for it.
 
 The thermal lattice's walls do not depend on the time step (#629): it has two relaxation times with
-a fixed Λ_T = 1/12 from τ_T = 0.79 (docs/lbm-collision.md). With the single relaxation time it had
+a fixed Λ_T = 1/12 from τ_T = 0.79 (docs/manual/fluid/collision.md). With the single relaxation time it had
 before, at Ra = 10³ on 32 × 32 cells the largest local Nusselt number was 1.635 (8.6 % high) at τ_T
 = 1.5 and 1.512 (0.5 %) at τ_T = 0.8; now it is 1.513 (+0.56 %) and 1.511 (+0.41 %), and the
 smallest 0.3 % low at both (`local_wall_heat_flux_with_two_relaxation_times` in

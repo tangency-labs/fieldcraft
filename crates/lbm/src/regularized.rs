@@ -51,7 +51,7 @@
 //! supports and is the more stable of the two in the comparisons of Coreixas et al. (2017) and
 //! of C. Coreixas, B. Chopard, J. Latt, *Comprehensive comparison of collision models in the
 //! lattice Boltzmann framework*, Phys. Rev. E 100:033305, 2019, doi:10.1103/PhysRevE.100.033305,
-//! and in our own runs (`docs/lbm-collision.md`): with the projected form a lid-driven cavity at
+//! and in our own runs (`docs/manual/fluid/collision.md`): with the projected form a lid-driven cavity at
 //! τ⁺ = 0.51 and a shear layer at lattice speed 0.2 failed where the recursive one ran.
 //!
 //! No code of any lattice Boltzmann package was read; this is written from the papers.
