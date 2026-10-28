@@ -2764,3 +2764,96 @@ fn han_s_measures_read_spalding_s_profile_as_exact() {
     let u = spalding_u_plus(300.0);
     assert!((u - (300f64.ln() / 0.41 + 5.5)).abs() < 0.06, "{u}");
 }
+
+/// The collision's dissipation with Smagorinsky's model, without walls: the Taylor–Green vortex
+/// (box 2πL, V₀ = L = 1, ν = 1 / Re), periodic, from the classical initial field with its pressure
+/// (M. E. Brachet, D. I. Meiron, S. A. Orszag, B. G. Nickel, R. H. Morf, U. Frisch, J. Fluid
+/// Mech. 130:411–452, 1983), stepped to `FIELDCRAFT_TGV_END` (20) with each variant in
+/// `FIELDCRAFT_TGV` (`mrt:0.1,regularized:0.1,mrt:0.2`: collision and Smagorinsky constant), on
+/// `FIELDCRAFT_TGV_N` cells per side (64) at lattice speed `FIELDCRAFT_TGV_SPEED` (0.05) and
+/// Reynolds number `FIELDCRAFT_TGV_RE` (1600; 12000 puts τ below the Han et al. channel's).
+/// Prints k(t) and −dk/dt; at Re 1600 the spectral DNS peaks at about 0.0127 near t ≈ 9.
+/// `FIELDCRAFT_TGV_CPU=1` runs on the CPU.
+#[test]
+#[ignore = "minutes, GPU: set FIELDCRAFT_TGV=mrt:0.1 (docs/verification.md, \"Long studies\")"]
+fn study_taylor_green_vortex_dissipation() {
+    use std::f64::consts::PI;
+    let Ok(which) = std::env::var("FIELDCRAFT_TGV") else {
+        println!("the Taylor–Green study runs only with FIELDCRAFT_TGV set: skipped");
+        return;
+    };
+    let n: usize = std::env::var("FIELDCRAFT_TGV_N").ok().and_then(|v| v.parse().ok()).unwrap_or(64);
+    let speed: f64 = std::env::var("FIELDCRAFT_TGV_SPEED").ok().and_then(|v| v.parse().ok()).unwrap_or(0.05);
+    let cpu = std::env::var_os("FIELDCRAFT_TGV_CPU").is_some();
+    let re: f64 = std::env::var("FIELDCRAFT_TGV_RE").ok().and_then(|v| v.parse().ok()).unwrap_or(1600.0);
+    let end: f64 = std::env::var("FIELDCRAFT_TGV_END").ok().and_then(|v| v.parse().ok()).unwrap_or(20.0);
+    for variant in which.split(',') {
+        let (name, c) = variant.split_once(':').unwrap_or((variant, "0.1"));
+        let c: f64 = c.parse().unwrap();
+        let collision = match name {
+            "regularized" => Collision::Regularized,
+            "trt" => Collision::Trt,
+            _ => Collision::Mrt,
+        };
+        let side = 2.0 * PI;
+        let dx = side / n as f64;
+        let dt = speed * dx;
+        let mut d = domain([0.0; 3], [side; 3], dx);
+        for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.y_min, &mut d.faces.y_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+            *f = PERIODIC;
+        }
+        let mut p = collide(end, dt, None, collision);
+        if let Procedure::Fluid { turbulence, .. } = &mut p {
+            *turbulence = Some(fieldcraft_model::Turbulence::Smagorinsky { constant: c, prandtl: 0.9, van_driest: None, wall_model: None });
+        }
+        let m = model(1.0, 1.0 / re, d, p);
+        let limits = fieldcraft_lbm::Limits { max_cell_updates: 10_000_000_000_000, ..fieldcraft_lbm::Limits::default() };
+        let setup = match Setup::new(&m, None, &[], &limits) {
+            Ok(s) => s,
+            Err(e) => {
+                println!("TGV {variant}: refused: {e}");
+                continue;
+            }
+        };
+        let mut flow = Flow::new(&setup, &[]).unwrap();
+        let grid = *flow.grid();
+        let vs = setup.velocity_scale();
+        flow.set_equilibrium(|cell| {
+            let [x, y, z] = grid.centre(cell);
+            let u = x.sin() * y.cos() * z.cos();
+            let v = -x.cos() * y.sin() * z.cos();
+            // p − p₀ = (ρ₀V₀²/16)(cos 2x + cos 2y)(cos 2z + 2), as a lattice density (c_s² = ⅓).
+            let pressure = ((2.0 * x).cos() + (2.0 * y).cos()) * ((2.0 * z).cos() + 2.0) / 16.0;
+            (1.0 + 3.0 * pressure / (vs * vs), [u / vs, v / vs, 0.0])
+        });
+        let mut device = if cpu { None } else { Some(gpu(&flow, Streaming::InPlace).unwrap()) };
+        println!("TGV {variant} ({}, {n}³, lattice speed {speed}, Re {re}): τ {:.6}", if cpu { "CPU" } else { "GPU" }, setup.tau_plus);
+        let every = ((0.25 / dt).round() as u64).max(1);
+        let energy = |b: &mut dyn Backend| {
+            let f = b.fields().unwrap();
+            0.5 * f.velocity.iter().map(|u| (u[0] * u[0] + u[1] * u[1] + u[2] * u[2]) * vs * vs).sum::<f64>() / f.velocity.len() as f64
+        };
+        let mut k = 0u64;
+        let mut last = (0.0, energy(backend(&mut device, &mut flow)));
+        let mut peak = (0.0f64, 0.0f64);
+        while k < setup.steps {
+            let step = every.min(setup.steps - k);
+            if let Err(e) = backend(&mut device, &mut flow).advance(step) {
+                println!("TGV {variant}: unstable at t {:.2}: {e}", (k + step) as f64 * dt);
+                break;
+            }
+            k += step;
+            let t = k as f64 * dt;
+            let e = energy(backend(&mut device, &mut flow));
+            let rate = -(e - last.1) / (t - last.0);
+            if rate > peak.1 {
+                peak = (0.5 * (t + last.0), rate);
+            }
+            if k % (4 * every) < every {
+                println!("    t {:5.2}: k {e:.5}, −dk/dt {rate:.5}", 0.5 * (t + last.0));
+            }
+            last = (t, e);
+        }
+        println!("TGV {variant} Re {re}: peak −dk/dt {:.5} at t {:.2} (spectral DNS ≈ 0.0127 near t ≈ 9)", peak.1, peak.0);
+    }
+}
