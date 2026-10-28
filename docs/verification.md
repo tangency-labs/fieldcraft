@@ -185,12 +185,12 @@ property of the published method that its C_f (from the model's u_τ) does not s
 Han, Ooka & Kikumoto's channel (Fluid Dyn. Res. 53:045506, 2021) run as their paper sets it up:
 2πD × 2D × πD, periodic in x and z, MRT (d'Humières et al. 2002's rates), Smagorinsky C_s 0.1
 with Van Driest's damping (A⁺ 26), driven by the constant pressure gradient of u_τ = 1, their
-Mach numbers, with `spalding_bounce` (WFB) or plain bounce-back (BB). Pass criteria fixed before
+Mach numbers, with `spalding_bounce_halfway` (WFB) or plain bounce-back (BB). Pass criteria fixed before
 the runs: ε_u⁺ over the whole channel and the log-law intercept b within 15 % of their Tables 2
 and 3, for both walls. Recorded on Linux aarch64 (NVIDIA GB10), GPU, f32 unless stated.
 
-**Correction: the WFB rows below did not run Han et al.'s scheme.** `spalding_bounce`, as used
-here, is a halfway variant of our own:
+**Correction: the WFB rows below did not run Han et al.'s scheme.** The wall model these runs
+used (then named `spalding_bounce`, now `spalding_bounce_halfway`) is a halfway variant of our own:
 - the wall lies halfway along the link, so the first fluid cell is at Δy/2;
 - each wall cell's Spalding stress is taken off that same cell's post-streaming inward diagonals.
 
@@ -289,7 +289,7 @@ the run above):
 | `hrr-dynamic` | hrr, dynamic σ | Vreman C_s 0.18, which only sets σ (their case 4) |
 | `hrr-smagorinsky` | hrr, σ 0.99 | Smagorinsky C_s 0.1, Van Driest A⁺ 26 (Han's model on the hybrid collision, an extra row) |
 
-WFB is the model's `wall_model: spalding_bounce`, BB no wall model. Gate (fixed in review):
+WFB is the model's `wall_model: spalding_bounce_halfway`, BB no wall model. Gate (fixed in review):
 ε_u⁺ over the whole channel and b within 15 % of Han et al.'s Tables 2 and 3, on the WFB runs;
 the BB runs are reported (`paper` keeps its gate on both walls).
 

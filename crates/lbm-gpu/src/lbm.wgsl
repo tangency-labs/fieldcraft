@@ -83,7 +83,7 @@ override SMAGORINSKY: bool = false;
 override WALL_MODEL: bool = false;
 // Van Driest's damping of Smagorinsky's constant near no-slip walls; likewise.
 override VAN_DRIEST: bool = false;
-// Han, Ooka and Kikumoto's wall-function bounce (`spalding_bounce`); likewise.
+// Han, Ooka and Kikumoto's wall-function bounce (`spalding_bounce_halfway`); likewise.
 override WALL_BOUNCE: bool = false;
 // The hybrid recursive regularised collision (fieldcraft_lbm::hrr, with REGULARIZED): its σ in
 // `params.les.x`; likewise.

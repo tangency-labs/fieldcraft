@@ -400,7 +400,7 @@ pub struct Flow {
     walls: Option<Walls>,
     /// Whether the wall cells relax with the wall model's viscosity.
     wall_model: bool,
-    /// Whether the wall-function bounce gives the walls their stress (`spalding_bounce`).
+    /// Whether the wall-function bounce gives the walls their stress (`spalding_bounce_halfway`).
     wall_bounce: bool,
     acceleration: [f64; 3],
     /// The momentum transferred to each group in the last step (lattice units).
@@ -565,10 +565,10 @@ impl Flow {
         };
         let is_slip = |face: BoxFace| matches!(domain.faces.get(face), FaceCondition::Slip {});
         // The wall-function bounce reflects at its walls instead of bouncing back; only at rest.
-        let wall_bounce = setup.wall_model == Some(WallModel::SpaldingBounce);
+        let wall_bounce = setup.wall_model == Some(WallModel::SpaldingBounceHalfway);
         if wall_bounce && let Some(face) = BoxFace::ALL.iter().find(|f| matches!(domain.faces.get(**f), FaceCondition::MovingWall { .. })) {
             return Err(Error::Invalid(format!(
-                "not supported yet: the wall model `spalding_bounce` on a moving wall (`{}`); use `musker` or a wall at rest",
+                "not supported yet: the wall model `spalding_bounce_halfway` on a moving wall (`{}`); use `musker` or a wall at rest",
                 face.name()
             )));
         }
@@ -883,7 +883,7 @@ impl Flow {
             eddy_ratio: 0.0,
             walls,
             wall_model: setup.wall_model == Some(WallModel::Musker),
-            wall_bounce: setup.wall_model == Some(WallModel::SpaldingBounce),
+            wall_bounce: setup.wall_model == Some(WallModel::SpaldingBounceHalfway),
             acceleration: setup.acceleration,
             forces: vec![[0.0; 3]; groups.len()],
             groups,
@@ -1607,7 +1607,7 @@ impl Flow {
         self.wall_model
     }
 
-    /// Whether the wall-function bounce gives the walls their stress (`spalding_bounce`).
+    /// Whether the wall-function bounce gives the walls their stress (`spalding_bounce_halfway`).
     pub fn wall_bounce(&self) -> bool {
         self.wall_bounce
     }

@@ -420,7 +420,7 @@ fn the_fields_report_a_modelled_wall_cell_at_its_imposed_velocity() {
     assert!(modelled > 0 && differ == modelled, "{differ} of {modelled} wall cells differ from their streamed state");
 }
 
-/// Han, Ooka and Kikumoto's wall-function bounce (`spalding_bounce`) in the perturbed coarse
+/// Han, Ooka and Kikumoto's wall-function bounce (`spalding_bounce_halfway`) in the perturbed coarse
 /// channel, step by step from the start: the walls carry exactly the stresses the wall cells
 /// sampled (their specular reflection carries no tangential momentum), so the fluid's momentum
 /// budget P(t + 1) − P(t) = a M − F closes to round-off, and the shifts conserve mass; each
@@ -429,7 +429,7 @@ fn the_fields_report_a_modelled_wall_cell_at_its_imposed_velocity() {
 #[test]
 fn the_wall_function_bounce_gives_the_walls_exactly_the_law_s_stress() {
     for collision in [Collision::Trt, Collision::Regularized, Collision::Mrt] {
-        let (setup, mut flow) = perturbed_channel(collision, 40.0, WallModel::SpaldingBounce);
+        let (setup, mut flow) = perturbed_channel(collision, 40.0, WallModel::SpaldingBounceHalfway);
         assert!(flow.wall_bounce() && !flow.wall_model());
         let a = flow.acceleration();
         let nu = (setup.tau_plus - 0.5) / 3.0;
@@ -483,11 +483,11 @@ fn the_wall_function_bounce_refuses_a_moving_wall() {
     d.faces.y_max = FaceCondition::MovingWall { velocity: [0.1, 0.0, 0.0] };
     let mut p = wall_modelled(10.0 * dx, dx, Collision::Mrt, 0.1);
     if let Procedure::Fluid { turbulence: Some(Turbulence::Smagorinsky { wall_model, .. }), .. } = &mut p {
-        *wall_model = Some(WallModel::SpaldingBounce);
+        *wall_model = Some(WallModel::SpaldingBounceHalfway);
     }
     let setup = Setup::new(&model(1.0, 0.01, d, p), None, &[], &Limits::default()).unwrap();
     let err = Flow::new(&setup, &[]).unwrap_err().to_string();
-    assert!(err.contains("spalding_bounce") && err.contains("y_max"), "{err}");
+    assert!(err.contains("spalding_bounce_halfway") && err.contains("y_max"), "{err}");
 }
 
 /// A laminar channel under the wall model (8 cells across, body force, periodic along it) run to

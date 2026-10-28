@@ -1252,8 +1252,9 @@ mod tests {
         let vreman = turbulence(serde_json::json!({"type": "vreman", "constant": 0.18})).unwrap();
         assert_eq!(vreman, crate::Turbulence::Vreman { constant: 0.18, prandtl: 0.9, wall_model: None });
         assert_eq!((vreman.name(), vreman.constant(), vreman.prandtl(), vreman.van_driest(), vreman.wall_model()), ("vreman", 0.18, 0.9, None, None));
-        let walled = turbulence(serde_json::json!({"type": "vreman", "constant": 0.17, "prandtl": 0.85, "wall_model": "spalding_bounce"})).unwrap();
-        assert_eq!(walled.wall_model(), Some(crate::WallModel::SpaldingBounce));
+        let walled =
+            turbulence(serde_json::json!({"type": "vreman", "constant": 0.17, "prandtl": 0.85, "wall_model": "spalding_bounce_halfway"})).unwrap();
+        assert_eq!(walled.wall_model(), Some(crate::WallModel::SpaldingBounceHalfway));
         assert_eq!(serde_json::from_str::<crate::Turbulence>(&serde_json::to_string(&walled).unwrap()).unwrap(), walled);
         assert!(turbulence(serde_json::json!({"type": "vreman", "constant": 0.18, "van_driest": 26})).is_err());
         assert!(turbulence(serde_json::json!({"type": "vreman"})).is_err(), "the constant is required");

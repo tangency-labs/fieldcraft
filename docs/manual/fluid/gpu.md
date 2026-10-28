@@ -111,7 +111,7 @@ whose forces are read back (a submission's last). The temperature lattice is two
 | Smagorinsky's model, the wall model (`wall_model: "musker"`), Van Driest damping (`van_driest`) | yes |
 | Steady-state rule and averaging | yes (decided on the host from read-back fields) |
 | Fans and porous zones | no: refused with the zone's name, solve on the CPU |
-| The wall-function bounce (`wall_model: "spalding_bounce"`) | yes |
+| The wall-function bounce (`wall_model: "spalding_bounce_halfway"`) | yes |
 
 ## Algorithm
 

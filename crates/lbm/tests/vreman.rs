@@ -181,14 +181,14 @@ fn every_collision_runs_with_the_model() {
 fn the_wall_models_run_with_the_model() {
     let n = 4;
     let dx = 1.0 / n as f64;
-    for (couette, wall) in [(true, WallModel::Musker), (false, WallModel::SpaldingBounce)] {
+    for (couette, wall) in [(true, WallModel::Musker), (false, WallModel::SpaldingBounceHalfway)] {
         for collision in [Collision::Mrt, Collision::Regularized] {
             let t = Turbulence::Vreman { constant: 0.18, prandtl: 0.9, wall_model: Some(wall) };
             // The forced channel takes a shorter time step for its Mach number.
             let (dt, nu) = if couette { (dx, 1e-5) } else { (0.1 * dx, 1e-4) };
             let p = with(collide(300.0 * dt, dt, None, collision), Some(t));
             let (setup, mut flow) = prepare(&model(1.0, nu, channel(n, couette), p), &[]);
-            assert_eq!((flow.wall_model(), flow.wall_bounce()), (wall == WallModel::Musker, wall == WallModel::SpaldingBounce));
+            assert_eq!((flow.wall_model(), flow.wall_bounce()), (wall == WallModel::Musker, wall == WallModel::SpaldingBounceHalfway));
             run_all(&setup, &mut flow);
             let u: Vec<f64> = (0..n).map(|j| flow.moments(j).unwrap().1[0] * setup.velocity_scale()).collect();
             println!("Vreman with {wall:?} ({collision:?}): u_x {u:.4?}, largest ν_t/ν {:.3}", flow.eddy_viscosity_ratio());

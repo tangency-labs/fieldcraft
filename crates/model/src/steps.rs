@@ -309,13 +309,15 @@ pub enum WallModel {
     /// Malaspinas and Sagaut's lattice Boltzmann wall model with Musker's profile of the
     /// boundary layer (the viscous sublayer, the buffer layer and the log law in one formula).
     Musker,
-    /// Han, Ooka and Kikumoto's wall-function bounce: a plane no-slip box face at rest reflects
-    /// its populations specularly (no drag of its own) and its wall cells give the face the
-    /// stress Spalding's law takes from their own velocity, exactly (M. Han, R. Ooka,
-    /// H. Kikumoto, *A wall function approach in lattice Boltzmann method: algorithm and
-    /// validation using turbulent channel flow*, Fluid Dyn. Res. 53:045506, 2021,
-    /// doi:10.1088/1873-7005/ac1782).
-    SpaldingBounce,
+    /// Our halfway variant of a wall-function bounce, not Han, Ooka and Kikumoto's scheme: a
+    /// plane no-slip box face at rest lies halfway along the links and reflects its populations
+    /// specularly (no drag of its own), and after streaming each wall cell gives the face the
+    /// stress Spalding's law takes from its own velocity at half a cell, exactly, taken off its
+    /// two inward diagonal populations per tangential axis. The idea of carrying the stress on
+    /// those diagonals is from M. Han, R. Ooka, H. Kikumoto, *A wall function approach in
+    /// lattice Boltzmann method: algorithm and validation using turbulent channel flow*, Fluid
+    /// Dyn. Res. 53:045506, 2021 (doi:10.1088/1873-7005/ac1782), whose own scheme is on-node.
+    SpaldingBounceHalfway,
 }
 
 fn default_turbulent_prandtl() -> f64 {

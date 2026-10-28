@@ -1094,7 +1094,7 @@ fn a_coarse_channel_with_van_driest_damping_follows_the_cpu() {
     }
 }
 
-/// Han, Ooka and Kikumoto's wall-function bounce (`spalding_bounce`) with Smagorinsky's model and
+/// Han, Ooka and Kikumoto's wall-function bounce (`spalding_bounce_halfway`) with Smagorinsky's model and
 /// Van Driest's damping, as their channel runs, in the coarse channel for 150 steps on both, every
 /// collision and both layouts: the fields within the wall-model test's tolerances, and the walls'
 /// drag (their sampled stresses; the reflection carries none along the walls) within 1e-3 of the
@@ -1104,7 +1104,7 @@ fn a_coarse_channel_with_the_wall_function_bounce_follows_the_cpu() {
     let bounce = |p: Procedure| {
         let mut p = van_driest(p, 0.1, false);
         if let Procedure::Fluid { turbulence: Some(fieldcraft_model::Turbulence::Smagorinsky { wall_model, .. }), .. } = &mut p {
-            *wall_model = Some(fieldcraft_model::WallModel::SpaldingBounce);
+            *wall_model = Some(fieldcraft_model::WallModel::SpaldingBounceHalfway);
         }
         p
     };
@@ -1289,7 +1289,7 @@ fn dynamic_sigma_follows_the_cpu() {
 }
 
 /// The hybrid collision (σ 0.9) with Smagorinsky's model and Van Driest's damping, and with the
-/// wall-function bounce (`spalding_bounce`, damping too), in the coarse channel, both layouts:
+/// wall-function bounce (`spalding_bounce_halfway`, damping too), in the coarse channel, both layouts:
 /// the fields and ν_t/ν at [`check_les`]'s tolerances, the bounce's wall drag within 1e-3.
 #[test]
 fn the_hybrid_collision_with_wall_damping_and_the_wall_function_bounce_follows_the_cpu() {
@@ -1298,7 +1298,7 @@ fn the_hybrid_collision_with_wall_damping_and_the_wall_function_bounce_follows_t
             let mut p = van_driest(p, 0.1, false);
             if let Procedure::Fluid { sigma, turbulence: Some(Turbulence::Smagorinsky { wall_model, .. }), .. } = &mut p {
                 *sigma = Some(HrrSigma::Value(0.9));
-                *wall_model = bounce.then_some(fieldcraft_model::WallModel::SpaldingBounce);
+                *wall_model = bounce.then_some(fieldcraft_model::WallModel::SpaldingBounceHalfway);
             }
             p
         };
@@ -2784,7 +2784,7 @@ impl HanSetup {
 
     /// The subgrid model, with the wall-function bounce (`wfb`) as its wall model or none.
     fn turbulence(self, wfb: bool) -> Turbulence {
-        let wall_model = wfb.then_some(fieldcraft_model::WallModel::SpaldingBounce);
+        let wall_model = wfb.then_some(fieldcraft_model::WallModel::SpaldingBounceHalfway);
         match self {
             HanSetup::Paper | HanSetup::HrrSmagorinsky => Turbulence::Smagorinsky { constant: 0.1, prandtl: 0.9, van_driest: Some(26.0), wall_model },
             HanSetup::HrrVreman | HanSetup::HrrDynamic => Turbulence::Vreman { constant: 0.18, prandtl: 0.9, wall_model },
