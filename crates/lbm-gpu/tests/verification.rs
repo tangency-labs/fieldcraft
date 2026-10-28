@@ -22,8 +22,8 @@ use fieldcraft_lbm::backend::Backend;
 use fieldcraft_lbm::{Flow, Setup};
 use fieldcraft_lbm_gpu::{GpuFlow, Options, Streaming};
 use fieldcraft_model::{
-    BoxFace, Collision, Directional, FaceCondition, Fluid, FluidDomain, FluidThermal, Material, Model, Outflow, Procedure, Profile, Step, Thermal,
-    ThermalCondition,
+    BoxFace, Collision, Directional, FaceCondition, Fluid, FluidDomain, FluidThermal, HrrSigma, Material, Model, Outflow, Procedure, Profile, Step,
+    Thermal, ThermalCondition, Turbulence,
 };
 
 const PERIODIC: FaceCondition = FaceCondition::Periodic {};
@@ -101,34 +101,6 @@ fn field_difference(cpu: &mut Flow, gpu: &mut GpuFlow) -> (f64, f64) {
         .fold(0.0, f64::max);
     let drho = a.density.iter().zip(&b.density).map(|(x, y)| (x - y).abs()).fold(0.0, f64::max);
     (du / scale, drho)
-}
-
-/// The hybrid recursive regularised collision runs on the CPU only: the GPU refuses it before it
-/// looks for a device, with a message saying so.
-#[test]
-fn the_hybrid_collision_is_refused_on_the_gpu() {
-    let mut d = domain([0.0; 3], [1.0, 1.0, 0.25], 0.25);
-    d.faces.y_max = FaceCondition::MovingWall { velocity: [0.01, 0.0, 0.0] };
-    let (_, flow) = prepare(&model(1.0, 0.1, d, collide(0.1, 0.01, None, Collision::Hrr)), &[]);
-    let e = GpuFlow::with_options(&flow, Policy::Auto, Options::default()).err().map(|e| e.to_string()).unwrap_or_default();
-    assert!(e.contains("not supported yet") && e.contains("`hrr`") && e.contains("GPU"), "{e}");
-}
-
-/// Vreman's subgrid model runs on the CPU only: the GPU refuses it before it looks for a device,
-/// with every collision it supports.
-#[test]
-fn vreman_s_model_is_refused_on_the_gpu() {
-    for collision in [Collision::Trt, Collision::Regularized, Collision::Mrt] {
-        let mut d = domain([0.0; 3], [1.0, 1.0, 0.25], 0.25);
-        d.faces.y_max = FaceCondition::MovingWall { velocity: [0.01, 0.0, 0.0] };
-        let mut p = collide(0.1, 0.01, None, collision);
-        if let Procedure::Fluid { turbulence, .. } = &mut p {
-            *turbulence = Some(fieldcraft_model::Turbulence::Vreman { constant: 0.18, prandtl: 0.9, wall_model: None });
-        }
-        let (_, flow) = prepare(&model(1.0, 0.1, d, p), &[]);
-        let e = GpuFlow::with_options(&flow, Policy::Auto, Options::default()).err().map(|e| e.to_string()).unwrap_or_default();
-        assert!(e.contains("not supported yet") && e.contains("Vreman") && e.contains("GPU"), "{collision:?}: {e}");
-    }
 }
 
 #[test]
@@ -1039,8 +1011,14 @@ fn a_coarse_wall_modelled_channel_follows_the_cpu() {
 /// half-height, Re_τ 180), started from a perturbed blunt profile, 150 steps, with the
 /// turbulence `turbulence` sets.
 fn coarse_channel(turbulence: impl Fn(Procedure) -> Procedure, collision: Collision) -> (Setup, Flow) {
+    channel_at(180.0, turbulence, collision)
+}
+
+/// [`coarse_channel`] at friction Reynolds number `re_tau`, the bulk speed scaled with it (30 runs
+/// without a turbulence model: τ 0.52).
+fn channel_at(re_tau: f64, turbulence: impl Fn(Procedure) -> Procedure, collision: Collision) -> (Setup, Flow) {
     use std::f64::consts::PI;
-    let (n, re_tau, ub) = (6usize, 180.0, 15.7);
+    let (n, ub) = (6usize, 15.7 * re_tau / 180.0);
     let dx = 1.0 / n as f64;
     let (lx, lz) = ((2.0 * PI * n as f64).round() * dx, (PI * n as f64).round() * dx);
     let mut d = domain([0.0; 3], [lx, 2.0, lz], dx);
@@ -1180,6 +1158,237 @@ fn a_steady_wall_modelled_channel_s_drag_matches_the_cpu() {
         );
         assert!((dc / body - 1.0).abs() < 1e-9, "{dc} vs {body}");
         assert!((dg - dc).abs() <= 5e-5 * dc.abs(), "{dg} vs {dc}");
+    }
+}
+
+// ---- The hybrid recursive regularised collision ----
+
+/// `p` with the hybrid collision's σ `sigma` and the subgrid model `turbulence`.
+fn les(sigma: Option<HrrSigma>, turbulence: Option<Turbulence>) -> impl Fn(Procedure) -> Procedure + Copy {
+    move |mut p| {
+        if let Procedure::Fluid { sigma: s, turbulence: t, .. } = &mut p {
+            *s = sigma;
+            *t = turbulence;
+        }
+        p
+    }
+}
+
+const SMAGORINSKY: Turbulence = Turbulence::Smagorinsky { constant: 0.1, prandtl: 0.9, van_driest: None, wall_model: None };
+
+/// A periodic box of 24³ cells with a ball of radius 6 at its centre (an obstacle: the gradient's
+/// one-sided differences at its surface), a body force along x, ν 0.005 (τ 0.515), started from a
+/// three-dimensional field of lattice speed 0.03, 200 steps.
+fn ball_box(turbulence: impl Fn(Procedure) -> Procedure, collision: Collision) -> (Setup, Flow) {
+    use std::f64::consts::PI;
+    let l = 24usize;
+    let side = l as f64;
+    let mut d = domain([0.0; 3], [side; 3], 1.0);
+    for f in BoxFace::ALL {
+        *d.faces.get_mut(f) = PERIODIC;
+    }
+    d.acceleration = [1e-5, 0.0, 0.0];
+    d.obstacles = vec!["Ball".into()];
+    let ball = obstacle("Ball", sphere([side / 2.0; 3], 6.0, 3), &["skin"]);
+    let mut p = collide(200.0, 1.0, None, collision);
+    if let Procedure::Fluid { end_time, steps, frames, .. } = &mut p {
+        (*end_time, *steps, *frames) = (None, Some(200), 1);
+    }
+    let m = model(1.0, 0.005, d, turbulence(p));
+    let (setup, mut flow) = prepare(&m, std::slice::from_ref(&ball));
+    let grid = *flow.grid();
+    let k = 2.0 * PI / side;
+    flow.set_equilibrium(|cell| {
+        let [x, y, z] = grid.centre(cell);
+        (1.0, [0.03 * (k * y).sin() * (k * z).cos(), 0.03 * (k * z).sin() * (k * x).cos(), 0.03 * (k * x).sin() * (k * y).cos()])
+    });
+    (setup, flow)
+}
+
+/// The CPU and the GPU through `setup`'s steps from `flow`: the velocity (over the largest speed)
+/// and density differences, and the largest eddy viscosity ratio on each.
+fn les_difference(setup: &Setup, flow: Flow, streaming: Streaming) -> Option<(f64, f64, f64, f64)> {
+    let (mut cpu, mut gpu) = both(setup, flow, streaming)?;
+    let (du, drho) = field_difference(&mut cpu, &mut gpu);
+    Some((du, drho, Backend::eddy_viscosity_ratio(&cpu), gpu.eddy_viscosity_ratio()))
+}
+
+/// The stated tolerances of the LES cases below, those of the coarse wall-modelled channel:
+/// velocity within 1e-4 of the largest speed, density within 1e-5, the largest ν_t/ν within 1e-3
+/// of itself.
+fn check_les(what: &str, (du, drho, rc, rg): (f64, f64, f64, f64)) {
+    let dr = if rc > 0.0 { (rg - rc).abs() / rc } else { rg.abs() };
+    println!("{what}, GPU vs CPU: velocity {du:.2e}, density {drho:.2e}; ν_t/ν CPU {rc:.5} GPU {rg:.5} ({dr:.1e})");
+    assert!(du < 1e-4 && drho < 1e-5, "{what}: {du} {drho}");
+    assert!(dr < 1e-3, "{what}: ν_t/ν {rg} vs {rc}");
+}
+
+/// Every field's bits, velocity then density.
+fn field_bits(f: &fieldcraft_lbm::backend::Fields) -> Vec<u64> {
+    f.velocity.iter().flatten().chain(&f.density).map(|v| v.to_bits()).collect()
+}
+
+/// Both cases (the forced channel at friction Reynolds number `re_tau`, and the box with a ball)
+/// with `turbulence` and `collision`, both layouts, against the CPU.
+fn les_cases(name: &str, re_tau: f64, turbulence: impl Fn(Procedure) -> Procedure + Copy, collision: Collision) {
+    for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+        let (setup, flow) = channel_at(re_tau, turbulence, collision);
+        let Some(r) = les_difference(&setup, flow, streaming) else { return };
+        check_les(&format!("{name}, {collision:?}, {streaming:?}, channel at Re_τ {re_tau}, 150 steps"), r);
+        let (setup, flow) = ball_box(turbulence, collision);
+        let Some(r) = les_difference(&setup, flow, streaming) else { return };
+        check_les(&format!("{name}, {collision:?}, {streaming:?}, box with a ball, 200 steps"), r);
+    }
+}
+
+/// The hybrid collision (σ 0.9, alone and with Smagorinsky's model) in the coarse channel and the
+/// box with a ball, both layouts, against the CPU at [`check_les`]'s tolerances.
+#[test]
+fn the_hybrid_collision_follows_the_cpu() {
+    // Without a subgrid model the channel runs at Re_τ 30 (180 needs one).
+    les_cases("hrr σ 0.9", 30.0, les(Some(HrrSigma::Value(0.9)), None), Collision::Hrr);
+    les_cases("hrr σ 0.9 + Smagorinsky 0.1", 180.0, les(Some(HrrSigma::Value(0.9)), Some(SMAGORINSKY)), Collision::Hrr);
+}
+
+/// σ = 1 on the GPU is its recursive regularised collision bit for bit: a fixed σ of 1 compiles to
+/// the regularised kernels (with the hybrid kernels, which skip the blend there, the driver rounds
+/// the rest differently: 1.5e-8 of a lattice speed of 0.03 on the GB10).
+#[test]
+fn sigma_one_is_the_regularised_collision_on_the_gpu() {
+    for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+        let run = |collision: Collision, sigma: Option<HrrSigma>| {
+            let (setup, flow) = ball_box(les(sigma, None), collision);
+            let mut g = gpu(&flow, streaming)?;
+            g.advance(setup.steps).unwrap();
+            Some(g.fields().unwrap())
+        };
+        let Some(rr) = run(Collision::Regularized, None) else { return };
+        let Some(hrr) = run(Collision::Hrr, Some(HrrSigma::Value(1.0))) else { return };
+        let same = field_bits(&rr) == field_bits(&hrr);
+        println!("{streaming:?}: hrr σ 1 and regularized on the GPU bit for bit: {same}");
+        assert!(same);
+    }
+}
+
+/// The hybrid collision's dynamic σ runs on the CPU only: the GPU refuses it before it looks for a
+/// device, with a message saying so.
+#[test]
+fn dynamic_sigma_is_refused_on_the_gpu() {
+    let p = les(Some(HrrSigma::Dynamic), Some(SMAGORINSKY))(collide(0.1, 0.01, None, Collision::Hrr));
+    let mut d = domain([0.0; 3], [1.0, 1.0, 0.25], 0.25);
+    d.faces.y_max = FaceCondition::MovingWall { velocity: [0.01, 0.0, 0.0] };
+    let (_, flow) = prepare(&model(1.0, 0.1, d, p), &[]);
+    let e = GpuFlow::with_options(&flow, Policy::Auto, Options::default()).err().map(|e| e.to_string()).unwrap_or_default();
+    assert!(e.contains("not supported yet") && e.contains("dynamic σ") && e.contains("GPU"), "{e}");
+}
+
+/// Vreman's subgrid model runs on the CPU only: the GPU refuses it before it looks for a device,
+/// with every collision it supports.
+#[test]
+fn vreman_s_model_is_refused_on_the_gpu() {
+    for collision in [Collision::Trt, Collision::Regularized, Collision::Mrt] {
+        let mut d = domain([0.0; 3], [1.0, 1.0, 0.25], 0.25);
+        d.faces.y_max = FaceCondition::MovingWall { velocity: [0.01, 0.0, 0.0] };
+        let mut p = collide(0.1, 0.01, None, collision);
+        if let Procedure::Fluid { turbulence, .. } = &mut p {
+            *turbulence = Some(fieldcraft_model::Turbulence::Vreman { constant: 0.18, prandtl: 0.9, wall_model: None });
+        }
+        let (_, flow) = prepare(&model(1.0, 0.1, d, p), &[]);
+        let e = GpuFlow::with_options(&flow, Policy::Auto, Options::default()).err().map(|e| e.to_string()).unwrap_or_default();
+        assert!(e.contains("not supported yet") && e.contains("Vreman") && e.contains("GPU"), "{collision:?}: {e}");
+    }
+}
+
+/// The hybrid collision (σ 0.9) with Smagorinsky's model and Van Driest's damping, and with the
+/// wall-function bounce (`spalding_bounce`, damping too), in the coarse channel, both layouts:
+/// the fields and ν_t/ν at [`check_les`]'s tolerances, the bounce's wall drag within 1e-3.
+#[test]
+fn the_hybrid_collision_with_wall_damping_and_the_wall_function_bounce_follows_the_cpu() {
+    for bounce in [false, true] {
+        let turbulence = move |p: Procedure| {
+            let mut p = van_driest(p, 0.1, false);
+            if let Procedure::Fluid { sigma, turbulence: Some(Turbulence::Smagorinsky { wall_model, .. }), .. } = &mut p {
+                *sigma = Some(HrrSigma::Value(0.9));
+                *wall_model = bounce.then_some(fieldcraft_model::WallModel::SpaldingBounce);
+            }
+            p
+        };
+        for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+            let (setup, flow) = coarse_channel(turbulence, Collision::Hrr);
+            assert!(flow.van_driest() && flow.wall_bounce() == bounce);
+            let Some((mut cpu, mut gpu)) = both(&setup, flow, streaming) else { return };
+            let (du, drho) = field_difference(&mut cpu, &mut gpu);
+            let (rc, rg) = (Backend::eddy_viscosity_ratio(&cpu), gpu.eddy_viscosity_ratio());
+            let (fc, fg) = (Backend::forces(&mut cpu).unwrap(), gpu.forces().unwrap());
+            let wall = |f: &[[f64; 3]]| f[BoxFace::YMin.index()][0] + f[BoxFace::YMax.index()][0];
+            let drag = (wall(&fc) - wall(&fg)).abs() / wall(&fc).abs();
+            let what = if bounce { "the wall-function bounce" } else { "Van Driest's damping" };
+            check_les(&format!("hrr σ 0.9 + Smagorinsky with {what}, {streaming:?}, channel, 150 steps"), (du, drho, rc, rg));
+            println!("    wall drag {drag:.2e}");
+            if bounce {
+                assert!(drag < 1e-3, "{drag}");
+            }
+        }
+    }
+}
+
+/// The same run twice on one device gives the same fields bit for bit (the hybrid collision in the
+/// box with a ball, and with Smagorinsky's model in the channel).
+#[test]
+fn the_les_kernels_are_deterministic_on_their_device() {
+    for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+        for (name, case) in [
+            ("hrr σ 0.9, box with a ball", ball_box(les(Some(HrrSigma::Value(0.9)), None), Collision::Hrr)),
+            ("hrr σ 0.9 + Smagorinsky, channel", coarse_channel(les(Some(HrrSigma::Value(0.9)), Some(SMAGORINSKY)), Collision::Hrr)),
+        ] {
+            let (setup, flow) = case;
+            let run = || {
+                let mut g = gpu(&flow, streaming)?;
+                g.advance(setup.steps).unwrap();
+                Some(field_bits(&g.fields().unwrap()))
+            };
+            let (Some(a), Some(b)) = (run(), run()) else { return };
+            println!("{name}, {streaming:?}: two runs bit for bit: {}", a == b);
+            assert!(a == b, "{name}");
+        }
+    }
+}
+
+/// The CPU's shear-wave gate on the GPU (`crates/lbm/tests/hrr.rs`): N 16, τ̄ 0.8, σ 0.9, the wave
+/// u_x = 1e-4 sin(k y) in a periodic box of 2 × 16 × 2 cells decays at the exact rate of the
+/// linear analysis within 1e-3 (f32), both layouts (`exact_rate`, the 2 × 2 map of the momentum and
+/// the xy flux derived in `common`).
+#[test]
+fn a_shear_wave_decays_at_the_exact_rate_on_the_gpu() {
+    let (n, tau, sigma, amplitude) = (16usize, 0.8, 0.9, 1e-4);
+    assert!((exact_rate(std::f64::consts::PI / 4.0, 0.8, 0.5) / 6.4112e-2 - 1.0).abs() < 1e-4, "the CPU test's independent value");
+    for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+        let mut d = domain([0.0; 3], [2.0, n as f64, 2.0], 1.0);
+        for f in BoxFace::ALL {
+            *d.faces.get_mut(f) = PERIODIC;
+        }
+        let p = les(Some(HrrSigma::Value(sigma)), None)(collide(1.0, 1.0, None, Collision::Hrr));
+        let (setup, mut flow) = prepare(&model(1.0, (tau - 0.5) / 3.0, d, p), &[]);
+        assert!((setup.tau_plus - tau).abs() < 1e-12);
+        let k = 2.0 * std::f64::consts::PI / n as f64;
+        let grid = *flow.grid();
+        let mode = |cell: usize| (k * grid.coords(cell)[1] as f64).sin();
+        flow.set_equilibrium(|cell| (1.0, [amplitude * mode(cell), 0.0, 0.0]));
+        let Some(mut g) = gpu(&flow, streaming) else { return };
+        let measure = |g: &mut Gpu| {
+            let f = g.fields().unwrap();
+            let (num, den) = (0..grid.len()).fold((0.0, 0.0), |(a, b), cell| (a + f.velocity[cell][0] * mode(cell), b + mode(cell) * mode(cell)));
+            num / den
+        };
+        let exact = exact_rate(k, tau, sigma);
+        let (t0, t1) = (200u64, 200 + (2.0 / exact).round() as u64);
+        g.advance(t0).unwrap();
+        let a0 = measure(&mut g);
+        g.advance(t1 - t0).unwrap();
+        let a1 = measure(&mut g);
+        let measured = -(a1 / a0).ln() / (t1 - t0) as f64;
+        println!("{streaming:?} shear wave N {n}, τ̄ {tau}, σ {sigma}: measured {measured:.6e}, exact {exact:.6e} ({:+.2e})", measured / exact - 1.0);
+        assert!((measured / exact - 1.0).abs() < 1e-3, "{measured} vs {exact}");
     }
 }
 

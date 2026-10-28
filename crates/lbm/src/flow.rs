@@ -1157,6 +1157,18 @@ impl Flow {
         self.sigma_stats
     }
 
+    /// The hybrid collision's σ, fixed or dynamic (`None` with another collision; [`crate::hrr`]).
+    pub fn hybrid_sigma(&self) -> Option<fieldcraft_model::HrrSigma> {
+        use fieldcraft_model::HrrSigma;
+        (self.collision == Collision::Hrr).then_some(if self.dynamic { HrrSigma::Dynamic } else { HrrSigma::Value(self.sigma) })
+    }
+
+    /// Whether each axis is periodic: the finite-difference gradient's neighbours across its faces
+    /// are the periodic images ([`crate::hrr`]).
+    pub fn periodic(&self) -> [bool; 3] {
+        self.periodic
+    }
+
     /// The turbulent Prandtl number of Smagorinsky's model (its turbulent diffusivity ν_t / Pr_t).
     pub fn turbulent_prandtl(&self) -> f64 {
         self.turbulent_prandtl

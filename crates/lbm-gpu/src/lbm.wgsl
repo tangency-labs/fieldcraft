@@ -57,6 +57,13 @@
 // velocity parallel to its wall (relative to the wall's), and the collision scales each cell's
 // Smagorinsky constant by 1 − exp(−y u_τ / ν / A⁺), y its wall distance and u_τ its wall cell's,
 // both from `damping`. With the wall model too, its wall cells relax at its rate as before.
+//
+// The hybrid recursive regularised collision (fieldcraft_lbm::hrr, `HRR`) takes the finite-difference velocity gradient of each cell's six axis neighbours, which must all be at the
+// same time level: `gradient_velocity` runs before the collision (after the wall samples) and
+// leaves every cell's velocity, as the collision computes it, in `velocity` (three f32 per cell);
+// `collide` reads its neighbours' from there. The hybrid collision blends the regularised flux
+// with the strain rate's, σ P + (1 − σ)(−2 ρ c_s² S / ω). `collide` then binds 8 storage buffers, the most of any kernel. A fixed σ of 1 compiles to
+// the regularised kernels (native.rs), so it is that collision bit for bit.
 
 override AA_MODE: bool = true;
 // The recursive regularised collision instead of the two-relaxation-time one
@@ -74,6 +81,9 @@ override WALL_MODEL: bool = false;
 override VAN_DRIEST: bool = false;
 // Han, Ooka and Kikumoto's wall-function bounce (`spalding_bounce`); likewise.
 override WALL_BOUNCE: bool = false;
+// The hybrid recursive regularised collision (fieldcraft_lbm::hrr, with REGULARIZED): its σ in
+// `params.les.x`; likewise.
+override HRR: bool = false;
 // The largest lattice speed (fieldcraft_lbm::setup::MAX_LATTICE_SPEED): the cap of a convective
 // outlet's convection speed.
 override MAX_SPEED: f32 = 0.5;
@@ -123,6 +133,11 @@ struct Params {
     // The wall model: its wall cells (x); the axis `mean_velocity` sums (y); Van Driest's
     // damping: its wall cells (z) and 1 / A⁺ (w, as f32 bits).
     wall: vec4<u32>,
+    // The hybrid collision's fixed σ (x).
+    les: vec4<f32>,
+    // Whether each axis is periodic (xyz: 1 or 0), for the finite-difference gradient's
+    // neighbours.
+    periodic: vec4<u32>,
 };
 
 // Each kernel's bind group holds only the bindings it reaches (native.rs reads them from this
@@ -183,6 +198,11 @@ struct Params {
 // d; per cell its wall distance and its wall cell (as bits, d or more where no wall reaches it),
 // 2 floats from 9 d.
 @group(0) @binding(24) var<storage, read_write> damping: array<f32>;
+// With the hybrid collision: every cell's velocity before the collision (with
+// the half force, after the wall model's reconstruction; 0 in solid cells), component-major
+// (velocity[a n + cell]), written by `gradient_velocity` for the finite-difference gradient the
+// collision takes of its neighbours (12 bytes per cell).
+@group(0) @binding(25) var<storage, read_write> velocity: array<f32>;
 
 var<workgroup> red: array<vec4<f32>, 256>;
 // The largest squared speed of a workgroup's cells (collide): one atomic per workgroup, not
@@ -657,6 +677,127 @@ fn record_eddy(cell: u32, lid: u32, w: f32, u: vec3<f32>) {
     if has_heat() { moments[cell] = vec4<f32>(u, nu_t); }
 }
 
+// ---- The finite-difference velocity gradient (the hybrid collision) ----
+//
+// fieldcraft_lbm::hrr::gradient and ::laplacian on the GPU. `gradient_velocity` runs before the
+// collision and leaves every cell's velocity in `velocity`, so the collision reads its six axis
+// neighbours' velocities of the same time level. The neighbours are the explicit ±x, ±y, ±z cells
+// (no loop over the lattice directions: see the note at `fd_neighbour`), across a periodic face
+// the periodic image, as fieldcraft_lbm::flow::neighbour defines them; a solid cell or one beyond
+// a face that is not periodic is missing. Centred differences with both neighbours, first-order
+// one-sided with one, 0 with none; the Laplacian's second difference along an axis only with both.
+
+const NONE: u32 = 0xffffffffu;
+
+fn gradients() -> bool {
+    return HRR;
+}
+
+// Every cell's velocity before the collision, computed as `collide_cell` computes it (the wall
+// model's reconstruction included), into `velocity`; 0 in solid cells and where the density is
+// not a positive number (the collision then stops the run).
+@compute @workgroup_size(256)
+fn gradient_velocity(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
+    let cell = cell_of(lid, wg);
+    if !gradients() || cell >= params.n { return; }
+    var u = vec3<f32>(0.0);
+    if is_fluid(cell) {
+        var xyz = vec3<i32>(0);
+        if AA_MODE && params.phase.x == 1u { xyz = coords(cell); }
+        var fq: array<f32, 19>;
+        var drho = 0.0;
+        var j = vec3<f32>(0.0);
+        for (var q = 0u; q < Q; q = q + 1u) {
+            let v = population(q, cell, xyz);
+            fq[q] = v;
+            drho = drho + v;
+            j = j + vec3<f32>(c_of(q)) * v;
+        }
+        if WALL_MODEL && (fluid[cell] >> 1u) > 0u {
+            if wall_rebuild(cell, &fq, acc_of(cell)) {
+                drho = 0.0;
+                j = vec3<f32>(0.0);
+                for (var q = 0u; q < Q; q = q + 1u) {
+                    drho = drho + fq[q];
+                    j = j + vec3<f32>(c_of(q)) * fq[q];
+                }
+            }
+        }
+        let rho = 1.0 + drho;
+        if rho > 0.0 && rho == rho && abs(rho) <= 1e30 {
+            let force = rho * acc_of(cell);
+            u = (j + 0.5 * force) / rho;
+        }
+    }
+    let n = params.n;
+    velocity[cell] = u.x;
+    velocity[n + cell] = u.y;
+    velocity[2u * n + cell] = u.z;
+}
+
+fn velocity_of(cell: u32) -> vec3<f32> {
+    let n = params.n;
+    return vec3<f32>(velocity[cell], velocity[n + cell], velocity[2u * n + cell]);
+}
+
+// The fluid cell one unit step `d` along an axis from the cell at `p`, or NONE. Each caller
+// passes a constant axis vector: the NVIDIA GB10 driver (580.159) miscompiles some loops over the
+// lattice directions that test a condition on c_q, so the stencil has no such loop.
+fn fd_neighbour(p: vec3<i32>, d: vec3<i32>) -> u32 {
+    let size = vec3<i32>(i32(params.nx), i32(params.ny), i32(params.nz));
+    let periodic = params.periodic.xyz != vec3<u32>(0u);
+    let w = p + d;
+    if any(((w < vec3<i32>(0)) | (w >= size)) & !periodic) { return NONE; }
+    let cell = wrapped(w);
+    if !is_fluid(cell) { return NONE; }
+    return cell;
+}
+
+// The derivative of u along one axis (d) and its second difference (dd) from the neighbours below
+// (m) and above (p).
+struct FdAxis {
+    d: vec3<f32>,
+    dd: vec3<f32>,
+};
+
+fn fd_axis(u: vec3<f32>, m: u32, p: u32) -> FdAxis {
+    if m != NONE && p != NONE {
+        let um = velocity_of(m);
+        let up = velocity_of(p);
+        return FdAxis(0.5 * (up - um), up - 2.0 * u + um);
+    }
+    if m != NONE { return FdAxis(u - velocity_of(m), vec3<f32>(0.0)); }
+    if p != NONE { return FdAxis(velocity_of(p) - u, vec3<f32>(0.0)); }
+    return FdAxis(vec3<f32>(0.0), vec3<f32>(0.0));
+}
+
+// The velocity gradient by rows, x = ∂_x u, y = ∂_y u, z = ∂_z u (α_ij = ∂_i u_j), and the
+// Laplacian of each component.
+struct Gradient {
+    x: vec3<f32>,
+    y: vec3<f32>,
+    z: vec3<f32>,
+    lap: vec3<f32>,
+};
+
+fn fd_gradient(cell: u32) -> Gradient {
+    let p = coords(cell);
+    let u = velocity_of(cell);
+    let ax = fd_axis(u, fd_neighbour(p, vec3<i32>(-1, 0, 0)), fd_neighbour(p, vec3<i32>(1, 0, 0)));
+    let ay = fd_axis(u, fd_neighbour(p, vec3<i32>(0, -1, 0)), fd_neighbour(p, vec3<i32>(0, 1, 0)));
+    let az = fd_axis(u, fd_neighbour(p, vec3<i32>(0, 0, -1)), fd_neighbour(p, vec3<i32>(0, 0, 1)));
+    return Gradient(ax.d, ay.d, az.d, ax.dd + ay.dd + az.dd);
+}
+
+fn gradient_norm2(g: Gradient) -> f32 {
+    return dot(g.x, g.x) + dot(g.y, g.y) + dot(g.z, g.z);
+}
+
+// The strain rate ½ (∂_a u_b + ∂_b u_a) as a flux: xx, yy, zz and xy, xz, yz.
+fn strain(g: Gradient) -> Flux {
+    return Flux(vec3<f32>(g.x.x, g.y.y, g.z.z), 0.5 * vec3<f32>(g.x.y + g.y.x, g.x.z + g.z.x, g.y.z + g.z.y));
+}
+
 fn collide_cell(cell: u32, lid: u32) {
     let n = params.n;
     // Only the odd AA orientation addresses neighbours.
@@ -700,8 +841,11 @@ fn collide_cell(cell: u32, lid: u32) {
     if has_heat() { moments[cell] = vec4<f32>(u, rho); }
     let uf = dot(u, force);
     let forced = forced();
+    // The finite-difference gradient of the neighbours' velocities (zero without the models).
+    var g = Gradient(vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0));
+    if gradients() { g = fd_gradient(cell); }
     if REGULARIZED {
-        collide_regularized(cell, lid, xyz, &fq, drho, rho, u, force, forced);
+        collide_regularized(cell, lid, xyz, &fq, drho, rho, u, force, forced, g);
         return;
     }
     if MRT {
@@ -709,7 +853,13 @@ fn collide_cell(cell: u32, lid: u32) {
         return;
     }
     if turbulent() {
-        collide_trt_smagorinsky(cell, lid, xyz, &fq, drho, rho, u, force, forced);
+        // The cell's own rate: the wall model's, or Smagorinsky's of its flux.
+        var wp = -1.0;
+        if WALL_MODEL { wp = wall_omega(cell); }
+        if !(wp > 0.0) {
+            wp = smagorinsky_omega(flux(&fq, drho, rho, u, force, forced), rho, params.omega_plus, smagorinsky_c2(cell));
+        }
+        collide_trt_rate(cell, lid, xyz, &fq, drho, rho, u, force, forced, wp);
         return;
     }
     let wp = params.omega_plus;
@@ -744,12 +894,9 @@ fn collide_cell(cell: u32, lid: u32) {
     }
 }
 
-// The two-relaxation-time collision with each cell's own rates under Smagorinsky's model: τ⁺
-// from the eddy viscosity, τ⁻ following it so that Λ stays the fluid's.
-fn collide_trt_smagorinsky(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function, array<f32, 19>>, drho: f32, rho: f32, u: vec3<f32>, force: vec3<f32>, forced: bool) {
-    var wp = -1.0;
-    if WALL_MODEL { wp = wall_omega(cell); }
-    if !(wp > 0.0) { wp = smagorinsky_omega(flux(fq, drho, rho, u, force, forced), rho, params.omega_plus, smagorinsky_c2(cell)); }
+// The two-relaxation-time collision with the cell's own rate `wp` (a subgrid model's or the wall
+// model's): τ⁺ from it, τ⁻ following it so that Λ stays the fluid's.
+fn collide_trt_rate(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function, array<f32, 19>>, drho: f32, rho: f32, u: vec3<f32>, force: vec3<f32>, forced: bool, wp: f32) {
     record_eddy(cell, lid, wp, u);
     let wm = 1.0 / (0.5 + params.smag.z / (1.0 / wp - 0.5));
     let sp = 1.0 - 0.5 * wp;
@@ -896,18 +1043,29 @@ fn collide_mrt(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function, array<f32,
 // ρ u_a u_b u_c, non-equilibrium u_a P_bc + u_b P_ac + u_c P_ab, as the orthogonal sums and
 // differences of each pair), then f* = f^eq + (1 − ω) f^(1)[P] + ½ F_q. In deviations from the
 // weights, Π − ρ c_s² I = Σ c c h − δρ c_s² I.
-fn collide_regularized(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function, array<f32, 19>>, drho: f32, rho: f32, u: vec3<f32>, force: vec3<f32>, forced: bool) {
-    let p = flux(fq, drho, rho, u, force, forced);
-    let pd = p.d;
-    let po = p.o;
-    let trace = pd.x + pd.y + pd.z;
+//
+// With HRR, the hybrid collision (fieldcraft_lbm::hrr): the flux the populations are rebuilt from
+// is the blend σ P + (1 − σ)(−2 ρ c_s² S / ω) with S the finite-difference strain rate of `g` and
+// ω the rate the cell relaxes with, skipped exactly where σ = 1.
+fn collide_regularized(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function, array<f32, 19>>, drho: f32, rho: f32, u: vec3<f32>, force: vec3<f32>, forced: bool, g: Gradient) {
+    var p = flux(fq, drho, rho, u, force, forced);
     var omega = params.omega_plus;
+    var sigma = 1.0;
+    if HRR { sigma = params.les.x; }
     if turbulent() {
         var wall = -1.0;
         if WALL_MODEL { wall = wall_omega(cell); }
         if wall > 0.0 { omega = wall; } else { omega = smagorinsky_omega(p, rho, omega, smagorinsky_c2(cell)); }
         record_eddy(cell, lid, omega, u);
     }
+    if HRR && sigma != 1.0 {
+        let s = strain(g);
+        let fd = -2.0 * (1.0 / 3.0) * rho / omega;
+        p = Flux(sigma * p.d + (1.0 - sigma) * fd * s.d, sigma * p.o + (1.0 - sigma) * fd * s.o);
+    }
+    let pd = p.d;
+    let po = p.o;
+    let trace = pd.x + pd.y + pd.z;
     let relax = 1.0 - omega;
     // Third-order coefficients (equilibrium plus (1 − ω) times the recursive part).
     let xyy = rho * u.x * u.y * u.y + relax * (2.0 * u.y * po.x + u.x * pd.y);

@@ -361,3 +361,91 @@ pub fn cht_model(fluid: [f64; 3], solid: (f64, [f64; 3], f64), domain: FluidDoma
 pub fn conducting(body: &str, power: f64) -> fieldcraft_model::ConductingSolid {
     fieldcraft_model::ConductingSolid { body: body.into(), material: "Solid".into(), power, limit: None }
 }
+
+// ---- The hybrid collision's shear wave (crates/lbm/tests/hrr.rs, and the GPU's) ----
+
+/// A complex number, for the shear wave's 2 × 2 map.
+#[derive(Clone, Copy, Debug)]
+pub struct Cx(f64, f64);
+
+impl Cx {
+    fn add(self, o: Cx) -> Cx {
+        Cx(self.0 + o.0, self.1 + o.1)
+    }
+    fn sub(self, o: Cx) -> Cx {
+        Cx(self.0 - o.0, self.1 - o.1)
+    }
+    fn mul(self, o: Cx) -> Cx {
+        Cx(self.0 * o.0 - self.1 * o.1, self.0 * o.1 + self.1 * o.0)
+    }
+    fn scale(self, s: f64) -> Cx {
+        Cx(self.0 * s, self.1 * s)
+    }
+    fn abs(self) -> f64 {
+        self.0.hypot(self.1)
+    }
+    /// The principal square root.
+    fn sqrt(self) -> Cx {
+        let r = self.abs();
+        let re = (0.5 * (r + self.0)).max(0.0).sqrt();
+        let im = (0.5 * (r - self.0)).max(0.0).sqrt();
+        Cx(re, if self.1 < 0.0 { -im } else { im })
+    }
+}
+
+/// The eigenvalue of larger modulus of the complex matrix [[a, b], [c, d]].
+fn dominant_eigenvalue([a, b, c, d]: [Cx; 4]) -> Cx {
+    let half_trace = a.add(d).scale(0.5);
+    let det = a.mul(d).sub(b.mul(c));
+    let root = half_trace.mul(half_trace).sub(det).sqrt();
+    let (l1, l2) = (half_trace.add(root), half_trace.sub(root));
+    if l1.abs() >= l2.abs() { l1 } else { l2 }
+}
+
+/// The exact decay rate per step, −ln |λ|, of the shear wave `u_x ∝ sin(k y)` under the hybrid
+/// collision with relaxation time `tau` (τ̄ = 1/ω) and weight `sigma`, `k` in radians per cell.
+///
+/// The wave is a single Fourier mode e^{iky} of a periodic lattice with no density
+/// perturbation, so at linear order in its amplitude its state before a collision is two complex
+/// amplitudes: the momentum `J` (x component) and the non-equilibrium flux `Π = Π_xy`. Products of
+/// the velocity with the flux or with itself are second order, so the equilibrium's `ρ u u`, the
+/// third-order Hermite terms (`u P̃`) and Π_xx, Π_yy drop out. The collision rebuilds
+///
+/// `f*_q = w_q [ρ + 3 c_q·j + 9 (1 − ω) c_qx c_qy P̃]`
+///
+/// (the D3Q19 second-order Hermite term for xy: `1/(2 c_s⁴) · 2 · c_x c_y P_xy = 9 c_x c_y P_xy`),
+/// with `P̃ = σ Π + (1 − σ)(−2 c_s² τ̄ S^FD)` and `S^FD_xy = ½ ∂_y u_x` from centred differences:
+/// `∂_y e^{iky} = (e^{ik} − e^{−ik})/2 = i sin k`, so `S^FD_xy = ½ i sin k J` and
+///
+/// `P̃ = σ Π − (1 − σ)(i/(3ω)) sin k · J`.
+///
+/// Streaming is `f_q(y, t+1) = f*_q(y − c_qy)`, a factor `e^{−ik c_qy}` per direction. Taking
+/// the moments `J′ = Σ c_qx f_q` and `Π′ = Σ c_qx c_qy f_q` needs the D3Q19 directions with
+/// `c_x = ±1`: (±1, 0, 0) of weight 1/18 and (±1, 0, ±1) of weight 1/36, together `Σ w = 2/9`
+/// with `c_y = 0`; (±1, ±1, 0) of weight 1/36, `Σ w = 1/18` for each of `c_y = +1` and `−1`. So
+///
+/// - `Σ w c_x² e^{−ik c_y} = 2/9 + (1/18)(2 cos k) = (2 + cos k)/9`,
+/// - `Σ w c_x² c_y e^{−ik c_y} = (1/18)(e^{−ik} − e^{ik}) = −(i/9) sin k`,
+/// - `Σ w c_x² c_y² e^{−ik c_y} = (1/18)(2 cos k) = (1/9) cos k`,
+///
+/// and (the `ρ` term carries no x momentum or xy flux)
+///
+/// - `J′ = 3 J (2 + cos k)/9 + 9 (1 − ω) P̃ (−(i/9) sin k) = (2 + cos k)/3 · J − i (1 − ω) sin k · P̃`,
+/// - `Π′ = 3 J (−(i/9) sin k) + 9 (1 − ω) P̃ (1/9) cos k = −(i/3) sin k · J + (1 − ω) cos k · P̃`.
+///
+/// Substituting P̃ gives the 2 × 2 map of (J, Π); after the fast mode has died out the wave's
+/// amplitude is multiplied by its dominant eigenvalue λ every step. With σ = 1 this is the
+/// regularised collision's map.
+pub fn exact_rate(k: f64, tau: f64, sigma: f64) -> f64 {
+    let omega = 1.0 / tau;
+    let (s, c) = (k.sin(), k.cos());
+    // P̃ = σ Π + β J
+    let beta = Cx(0.0, -(1.0 - sigma) * s / (3.0 * omega));
+    let gamma = Cx(0.0, -(1.0 - omega) * s); // J′ += γ P̃
+    let delta = Cx((1.0 - omega) * c, 0.0); // Π′ += δ P̃
+    let a = Cx((2.0 + c) / 3.0, 0.0).add(gamma.mul(beta));
+    let b = gamma.scale(sigma);
+    let cc = Cx(0.0, -s / 3.0).add(delta.mul(beta));
+    let d = delta.scale(sigma);
+    -dominant_eigenvalue([a, b, cc, d]).abs().ln()
+}

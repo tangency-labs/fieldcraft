@@ -12,7 +12,7 @@ lattice of a flow with heat always collides with two relaxation times.
 |---|---|
 | **Commands** | `model.step.create` (procedure `fluid`: `collision`, `magic`, `sigma`), `solve.fluid` |
 | **Step procedure** | `"fluid"` |
-| **Solver** | `crates/lbm` (CPU, f64); `crates/lbm-gpu` (f32), every operator but `hrr` |
+| **Solver** | `crates/lbm` (CPU, f64); `crates/lbm-gpu` (f32), every operator |
 | **Method** | TRT (Ginzburg, Verhaeghe & d'Humières 2008); recursive regularised (Latt & Chopard 2006; Coreixas et al. 2017); MRT (d'Humières et al. 2002, rates of Malaspinas & Sagaut 2014); hybrid recursive regularised (Jacob, Malaspinas & Sagaut 2018) |
 | **Verified by** | `crates/lbm/tests/verification.rs`, `regularized.rs`, `mrt.rs`, `hrr.rs`, `thermal.rs`; `crates/lbm-gpu/tests/verification.rs` (every operator, both layouts) |
 
@@ -30,12 +30,12 @@ lattice of a flow with heat always collides with two relaxation times.
 | `collision` | `"trt"` | default | Two relaxation times. Most flows: bounce-back walls sit exactly halfway between cells, so it is the most accurate of the three on a given grid. |
 | | `"regularized"` | | Recursive regularised. Flows the two-relaxation-time scheme cannot hold on the grid you can afford: τ⁺ below about 0.52, fast inlets and fans, sharp corners. It costs 15–35 % more per step, its staircase walls are less accurate and its pressure outlets cost 3–8 % near the outlet (Theory). |
 | | `"mrt"` | | Multiple relaxation times. The collision the wall model is validated with ([Wall-modelled LES](../../lbm-wall-model.md)). |
-| | `"hrr"` | | Hybrid recursive regularised. The regularised collision with its stress blended with the one the finite-difference strain rate gives (`sigma`), which damps the shortest waves: for large-eddy simulation. CPU only for now. |
+| | `"hrr"` | | Hybrid recursive regularised. The regularised collision with its stress blended with the one the finite-difference strain rate gives (`sigma`), which damps the shortest waves: for large-eddy simulation. |
 | `magic` | above 0, at most 1 | 3/16 | The two-relaxation-time parameter Λ. With `regularized`, `mrt` or `hrr` it has no effect, and the solve warns. |
 | `sigma` | above 0, at most 1 | 0.99 | The hybrid collision's σ: its share of the populations' own stress. 1 is `regularized` exactly; lower adds more hyperviscosity. `"dynamic"`: σ per cell and step from the turbulence model's eddy viscosity, which then stays out of τ (needs `turbulence`; Theory). With another collision it has no effect, and the solve warns. |
 
 The same choice runs on the CPU and on the GPU (`backend: "gpu"`), with buoyancy, heat and the
-turbulence model, except `hrr`, which the GPU refuses (not supported yet). `solve.fluid` reports it as `collision`, with `tau`, `tau_minus` and `magic`.
+turbulence model ([GPU backend](gpu.md) for `hrr`'s finite-difference gradient there). `solve.fluid` reports it as `collision`, with `tau`, `tau_minus` and `magic`.
 
 Warnings: with two relaxation times below τ⁺ = 0.51 the solve warns and suggests the regularised
 collision; with the regularised collision it warns below τ⁺ = 0.508, its measured limit on the
@@ -515,6 +515,17 @@ of the largest speed, densities within 2.6e-7, wall shear within 1.9e-5 of itsel
 2.1e-6, mass drift 0: inside the backend's stated tolerances (2e-5, 1e-6, 5e-5, 1e-4; [GPU
 backend](gpu.md)).
 
+The hybrid collision on the GPU (NVIDIA GB10, Vulkan), against the CPU from the same initial state,
+both layouts: σ 0.9 in a forced channel (Re_τ 30, 6 cells per half-height, perturbed, 150 steps)
+and in a periodic box with a ball (24³, 200 steps), velocity within 7.9e-7 of the largest speed,
+density within 1.2e-7; with Smagorinsky's model (channel at Re_τ 180) 4.4e-6, 1.4e-7, ν_t/ν within
+1.1e-4 of itself; with Van Driest's damping and with the wall-function bounce 4.4e-6, wall drag
+4.0e-6 (tolerances 1e-4, 1e-5, 1e-3, drag 1e-3: `the_hybrid_collision_follows_the_cpu`,
+`the_hybrid_collision_with_wall_damping_and_the_wall_function_bounce_follows_the_cpu`). σ 1 is the
+GPU's regularised collision bit for bit (`sigma_one_is_the_regularised_collision_on_the_gpu`). The
+shear wave of the gate (N 16, τ̄ 0.8, σ 0.9) decays on the GPU at 1.547614e-2 per step against the
+exact 1.547615e-2 (−4.2e-7; tolerance 1e-3: `a_shear_wave_decays_at_the_exact_rate_on_the_gpu`).
+
 ## Limitations
 
 - D3Q19 only: no cumulant collision (it needs D3Q27).
@@ -536,7 +547,7 @@ backend](gpu.md)).
 | `crates/lbm/src/mrt.rs` | `M`, `NORM`, `RATES`, `equilibrium`, `collide`. |
 | `crates/lbm/src/turbulence.rs` | `flux`, `omega`: each cell's rate under Smagorinsky's model. |
 | `crates/lbm/src/setup.rs` | `DEFAULT_MAGIC`, `THERMAL_MAGIC`, `thermal_magic`, `REGULARIZED_TAU_LIMIT`, the warnings. |
-| `crates/lbm-gpu/src/lbm.wgsl` | `collide_regularized`, `collide_mrt` (override constants `REGULARIZED`, `MRT`), `collide_thermal`. |
+| `crates/lbm-gpu/src/lbm.wgsl` | `collide_regularized` (with `HRR` the blend), `collide_mrt` (override constants `REGULARIZED`, `MRT`), `gradient_velocity` and `fd_gradient` (the finite differences), `collide_thermal`. |
 
 ## References
 

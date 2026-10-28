@@ -165,6 +165,9 @@ pub struct GpuFlow {
     wall_groups: Option<(u32, u32)>,
     /// Whether the wall rows are the wall-function bounce's (`bounce_sample`, `bounce_apply`).
     wall_bounce: bool,
+    /// Whether the collision takes the finite-difference velocity gradient (the hybrid collision):
+    /// `gradient_velocity` runs before it.
+    gradients: bool,
     walls: wgpu::Buffer,
     wall_count: usize,
     /// Van Driest's damping, when it has wall cells.
@@ -335,8 +338,9 @@ fn solid_data(solid: &fieldcraft_lbm::conduction::SolidHeat, t0: f64) -> Result<
 }
 
 /// The entry points of `lbm.wgsl` a flow dispatches.
-const KERNELS: [&str; 30] = [
+const KERNELS: [&str; 31] = [
     "clear_eddy",
+    "gradient_velocity",
     "collide",
     "wall_sample",
     "damping_refresh",
@@ -369,9 +373,10 @@ const KERNELS: [&str; 30] = [
 ];
 
 /// The bindings each kernel uses, read from the shader (naga's analysis of which globals an entry
-/// point reaches): each kernel gets a bind group of only those. One layout of all 23 buffers
-/// needs 22 storage buffers per compute stage, more than GL's 16 (#640); the busiest kernel
-/// needs 7, within WebGPU's default of 8.
+/// point reaches): each kernel gets a bind group of only those. One layout of all 26 buffers
+/// needs 25 storage buffers per compute stage, more than GL's 16 (#640); the busiest kernel
+/// (`collide`, with the gradient velocities of the hybrid collision) needs 8,
+/// WebGPU's default.
 struct Reflection {
     kernels: Vec<(&'static str, Vec<(u32, wgpu::BufferBindingType)>)>,
     /// The most storage buffers one kernel binds.
@@ -445,6 +450,8 @@ struct Variant {
     wall_model: bool,
     van_driest: bool,
     wall_bounce: bool,
+    /// The hybrid collision.
+    hrr: bool,
 }
 
 /// A compiled kernel: its pipeline, its bind group's layout and the bindings in it.
@@ -491,6 +498,7 @@ fn compile(device: &wgpu::Device, variant: Variant) -> Result<Kernels> {
                     ("WALL_MODEL", if variant.wall_model { 1.0 } else { 0.0 }),
                     ("VAN_DRIEST", if variant.van_driest { 1.0 } else { 0.0 }),
                     ("WALL_BOUNCE", if variant.wall_bounce { 1.0 } else { 0.0 }),
+                    ("HRR", if variant.hrr { 1.0 } else { 0.0 }),
                     ("MAX_SPEED", MAX_LATTICE_SPEED),
                 ],
                 ..Default::default()
@@ -592,9 +600,9 @@ impl GpuFlow {
 
     /// [`GpuFlow::new`] with `options`.
     pub fn with_options(flow: &Flow, policy: Policy, options: Options) -> Result<GpuFlow> {
-        if flow.collision() == fieldcraft_model::Collision::Hrr {
+        if flow.hybrid_sigma() == Some(fieldcraft_model::HrrSigma::Dynamic) {
             return Err(Error::Invalid(
-                "not supported yet: the hybrid recursive regularised collision (`hrr`) on the GPU; solve on the CPU (`backend: \"cpu\"`)".into(),
+                "not supported yet: the hybrid collision's dynamic σ (`sigma: \"dynamic\"`) on the GPU; solve on the CPU (`backend: \"cpu\"`)".into(),
             ));
         }
         if flow.vreman() > 0.0 {
@@ -876,12 +884,27 @@ impl GpuFlow {
             u32::try_from(damping_count).map_err(|_| Error::Limit("too many wall cells for the GPU solver".into()))?,
             ((1.0 / a_plus) as f32).to_bits(),
         ];
+        // The hybrid collision's fixed σ (`les`), and the periodic axes. A fixed σ of 1 is the
+        // recursive regularised collision exactly: it compiles to those kernels (no blend, no
+        // velocity pass), so the GPU's `hrr` at
+        // σ 1 is its `regularized` bit for bit (the hybrid kernels skip the blend there too, but
+        // the driver rounds the rest differently: 1.5e-8 of 0.03 on the GB10).
+        use fieldcraft_model::HrrSigma;
+        let hybrid = flow.hybrid_sigma().filter(|s| *s != HrrSigma::Value(1.0));
+        let fixed_sigma = match hybrid {
+            Some(HrrSigma::Value(s)) => s,
+            _ => 1.0,
+        };
+        let les = [fixed_sigma as f32, 0.0, 0.0, 0.0];
+        let periodic = flow.periodic().map(u32::from);
         let params = [0u32, 1].map(|phase| {
             let mut bytes = params.clone();
             bytes.extend_from_slice(&bytes_u32(&[phase, 0, 0, 0]));
             bytes.extend_from_slice(&bytes_u32(&solid_params));
             bytes.extend_from_slice(&bytes_f32(&smag));
             bytes.extend_from_slice(&bytes_u32(&wall_params));
+            bytes.extend_from_slice(&bytes_f32(&les));
+            bytes.extend_from_slice(&bytes_u32(&[periodic[0], periodic[1], periodic[2], 0]));
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("lbm params"),
                 contents: &bytes,
@@ -921,6 +944,10 @@ impl GpuFlow {
         let open_f = storage("lbm open targets", &bytes_f32(&open_f));
         let outlet = storage("lbm outlet cells", &bytes_f32(&outlet));
         let moments = empty("lbm moments", 16 * n as u64);
+        // With the hybrid collision, every cell's velocity before the collision (three f32 per
+        // cell) for the finite-difference gradient.
+        let gradients = hybrid.is_some();
+        let velocity = empty("lbm gradient velocities", if gradients { 12 * n as u64 } else { 16 });
         let stats = storage("lbm stats", &bytes_u32(&[0, 0, 0, 0]));
         let contrib = empty("lbm link forces", 16 * links.len() as u64);
         let by_group = storage("lbm links by group", &bytes_u32(&by_group));
@@ -951,6 +978,7 @@ impl GpuFlow {
             wall_model: wall_count > 0 && flow.wall_model(),
             van_driest: damping_count > 0,
             wall_bounce: wall_count > 0 && flow.wall_bounce(),
+            hrr: hybrid.is_some(),
         })?;
         // Every binding's buffer in bind group k (the two differ in the phase and the A–B swap).
         let resource = |binding: u32, k: usize| -> Option<&wgpu::Buffer> {
@@ -980,6 +1008,7 @@ impl GpuFlow {
                 22 => &solid_s_buf,
                 23 => &walls_buf,
                 24 => &damping_buf,
+                25 => &velocity,
                 _ => return None,
             })
         };
@@ -1020,6 +1049,7 @@ impl GpuFlow {
             links_groups,
             wall_groups: if wall_count > 0 { Some(groups(wall_count)?) } else { None },
             wall_bounce: bounce,
+            gradients,
             walls: walls_buf,
             wall_count,
             damping: match damping {
@@ -1214,7 +1244,7 @@ impl GpuFlow {
     /// solids' with their sub-steps).
     fn dispatches_per_step(&self) -> usize {
         let solid = self.solid.as_ref().map_or(0, |sd| 3 + sd.substeps as usize);
-        11 + solid
+        12 + solid
     }
 
     /// One submission of `steps` (≤ MAX_CHUNK) time steps, then the stability check.
@@ -1230,6 +1260,9 @@ impl GpuFlow {
             }
             if let Some(groups) = self.wall_groups {
                 commands.push((self.current, if self.wall_bounce { "bounce_sample" } else { "wall_sample" }, groups));
+            }
+            if self.gradients {
+                commands.push((self.current, "gradient_velocity", self.cells));
             }
             commands.push((self.current, "collide", self.cells));
             if !self.aa {
