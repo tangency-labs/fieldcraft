@@ -174,28 +174,20 @@ var<workgroup> speed: array<f32, 256>;
 // The largest eddy viscosity of a workgroup's cells, likewise.
 var<workgroup> eddy: array<f32, 256>;
 
+// The D3Q19 directions (fieldcraft_lbm::lattice::C) as a constant table of vec4 (w unused).
+// NVIDIA's Vulkan driver (GB10, 580.159.03) miscompiles both a `switch`-returning function and a
+// dynamically indexed constant array of vec3<i32> inside a loop over the directions; it reads a
+// vec4 table right (tests/lattice_table.rs).
+const C: array<vec4<i32>, 19> = array<vec4<i32>, 19>(
+    vec4<i32>(0, 0, 0, 0),
+    vec4<i32>(1, 0, 0, 0), vec4<i32>(-1, 0, 0, 0), vec4<i32>(0, 1, 0, 0), vec4<i32>(0, -1, 0, 0), vec4<i32>(0, 0, 1, 0), vec4<i32>(0, 0, -1, 0),
+    vec4<i32>(1, 1, 0, 0), vec4<i32>(-1, -1, 0, 0), vec4<i32>(1, -1, 0, 0), vec4<i32>(-1, 1, 0, 0),
+    vec4<i32>(1, 0, 1, 0), vec4<i32>(-1, 0, -1, 0), vec4<i32>(1, 0, -1, 0), vec4<i32>(-1, 0, 1, 0),
+    vec4<i32>(0, 1, 1, 0), vec4<i32>(0, -1, -1, 0), vec4<i32>(0, 1, -1, 0), vec4<i32>(0, -1, 1, 0),
+);
+
 fn c_of(q: u32) -> vec3<i32> {
-    switch q {
-        case 0u: { return vec3<i32>(0, 0, 0); }
-        case 1u: { return vec3<i32>(1, 0, 0); }
-        case 2u: { return vec3<i32>(-1, 0, 0); }
-        case 3u: { return vec3<i32>(0, 1, 0); }
-        case 4u: { return vec3<i32>(0, -1, 0); }
-        case 5u: { return vec3<i32>(0, 0, 1); }
-        case 6u: { return vec3<i32>(0, 0, -1); }
-        case 7u: { return vec3<i32>(1, 1, 0); }
-        case 8u: { return vec3<i32>(-1, -1, 0); }
-        case 9u: { return vec3<i32>(1, -1, 0); }
-        case 10u: { return vec3<i32>(-1, 1, 0); }
-        case 11u: { return vec3<i32>(1, 0, 1); }
-        case 12u: { return vec3<i32>(-1, 0, -1); }
-        case 13u: { return vec3<i32>(1, 0, -1); }
-        case 14u: { return vec3<i32>(-1, 0, 1); }
-        case 15u: { return vec3<i32>(0, 1, 1); }
-        case 16u: { return vec3<i32>(0, -1, -1); }
-        case 17u: { return vec3<i32>(0, 1, -1); }
-        default: { return vec3<i32>(0, -1, 1); }
-    }
+    return C[q].xyz;
 }
 
 fn opp(q: u32) -> u32 {
