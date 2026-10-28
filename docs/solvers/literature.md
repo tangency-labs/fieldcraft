@@ -622,7 +622,7 @@ JCP 232(1):100–117, 2013, DOI [10.1016/j.jcp.2012.07.023](https://doi.org/10.1
 - **As implemented** (`crates/lbm/src/turbulence.rs`, #663/#664): Hou et al.'s closed-form local τ from the
   non-equilibrium flux `P = Π^neq + ½(uF + Fu)` of Guo's forcing, in both the regularised and the two-relaxation-time
   collision (τ⁻ follows τ⁺, keeping Λ); with heat, the turbulent diffusivity `α_t = ν_t / Pr_t` adds to each cell's
-  τ_T. Opt-in Van Driest damping of the length scale near no-slip walls (C5.3; CPU only, the GPU refuses it). The GPU backend (`crates/lbm-gpu/src/lbm.wgsl`, #665) runs the same closed form in f32
+  τ_T. Opt-in Van Driest damping of the length scale near no-slip walls (C5.3; on the GPU too: Spalding's u_τ per wall cell and the damped constant per cell in f32). The GPU backend (`crates/lbm-gpu/src/lbm.wgsl`, #665) runs the same closed form in f32
   behind an override constant, so with the model off its kernels and results are bit-for-bit the earlier ones; the
   cell's ν_t reaches the scalar lattice through the moments buffer's spare component (no new buffer). Measured on an
   RTX 4070 Laptop GPU, 128³: within ±2.3 % of the model-off throughput with or without heat (the step is

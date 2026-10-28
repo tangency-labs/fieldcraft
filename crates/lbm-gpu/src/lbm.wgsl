@@ -51,6 +51,12 @@
 // momentum the rebuild took, which `wall_forces` adds to the exchange of the cell's nearest wall
 // link. A wall cell's flag word in `fluid` holds its row in `walls` (k + 1, past the fluid bit),
 // so other cells cost nothing.
+//
+// Van Driest's damping (fieldcraft_lbm::wall, `VAN_DRIEST`): before the collision
+// `damping_refresh` takes each wall cell's friction velocity from Spalding's law at its own
+// velocity parallel to its wall (relative to the wall's), and the collision scales each cell's
+// Smagorinsky constant by 1 − exp(−y u_τ / ν / A⁺), y its wall distance and u_τ its wall cell's,
+// both from `damping`. With the wall model too, its wall cells relax at its rate as before.
 
 override AA_MODE: bool = true;
 // The recursive regularised collision instead of the two-relaxation-time one
@@ -64,6 +70,8 @@ override MRT: bool = false;
 override SMAGORINSKY: bool = false;
 // The wall model (with Smagorinsky's model); an override for the same reason.
 override WALL_MODEL: bool = false;
+// Van Driest's damping of Smagorinsky's constant near no-slip walls; likewise.
+override VAN_DRIEST: bool = false;
 // The largest lattice speed (fieldcraft_lbm::setup::MAX_LATTICE_SPEED): the cap of a convective
 // outlet's convection speed.
 override MAX_SPEED: f32 = 0.5;
@@ -110,7 +118,8 @@ struct Params {
     // and the fluid's own viscosity (w), from the host's double precision: (1/ω − ½)/3 in f32
     // keeps few digits with τ near ½.
     smag: vec4<f32>,
-    // The wall model: its wall cells (x); the axis `mean_velocity` sums (y).
+    // The wall model: its wall cells (x); the axis `mean_velocity` sums (y); Van Driest's
+    // damping: its wall cells (z) and 1 / A⁺ (w, as f32 bits).
     wall: vec4<u32>,
 };
 
@@ -166,6 +175,12 @@ struct Params {
 // last collision's reconstruction took from the cell (xyz, written by `collide`) and the index of
 // the cell's nearest wall link (w, as bits), whose group takes it in `wall_forces`.
 @group(0) @binding(23) var<storage, read_write> walls: array<vec4<f32>>;
+// Van Driest's damping, d its wall cells: per wall cell its friction velocity, written by
+// `damping_refresh`, from 0 (first, so the host reads them back alone); per wall cell its unit
+// normal into the fluid, its distance, its wall's velocity and its cell (as bits), 8 floats from
+// d; per cell its wall distance and its wall cell (as bits, d or more where no wall reaches it),
+// 2 floats from 9 d.
+@group(0) @binding(24) var<storage, read_write> damping: array<f32>;
 
 var<workgroup> red: array<vec4<f32>, 256>;
 // The largest squared speed of a workgroup's cells (collide): one atomic per workgroup, not
@@ -364,12 +379,93 @@ fn flux(fq: ptr<function, array<f32, 19>>, drho: f32, rho: f32, u: vec3<f32>, fo
 
 // A cell's relaxation rate under Smagorinsky's model (fieldcraft_lbm::turbulence::omega): never
 // faster than the fluid's `omega0`, and `omega0` where the flux is not a usable number.
-fn smagorinsky_omega(p: Flux, rho: f32, omega0: f32) -> f32 {
+// `c2` is the cell's C² (`smagorinsky_c2`).
+fn smagorinsky_omega(p: Flux, rho: f32, omega0: f32, c2: f32) -> f32 {
     let tau0 = 1.0 / omega0;
     let pp = dot(p.d, p.d) + 2.0 * dot(p.o, p.o);
-    let tau = 0.5 * (tau0 + sqrt(tau0 * tau0 + 18.0 * 1.4142135 * params.smag.x * sqrt(pp) / rho));
+    let tau = 0.5 * (tau0 + sqrt(tau0 * tau0 + 18.0 * 1.4142135 * c2 * sqrt(pp) / rho));
     if tau >= tau0 && tau < 1e30 { return 1.0 / tau; }
     return omega0;
+}
+
+// Smagorinsky's C² of `cell`: with Van Driest's damping, the constant times the cell's factor
+// 1 − exp(−y u_τ / ν / A⁺) squared (fieldcraft_lbm::wall::Walls::factor: 1 where no wall
+// reaches the cell, and once the exponent passes 40).
+fn smagorinsky_c2(cell: u32) -> f32 {
+    if !VAN_DRIEST { return params.smag.x; }
+    let d = params.wall.z;
+    let owner = bitcast<u32>(damping[9u * d + 2u * cell + 1u]);
+    if owner >= d { return params.smag.x; }
+    let ut = damping[owner];
+    let x = damping[9u * d + 2u * cell] * ut / params.smag.w * bitcast<f32>(params.wall.w);
+    var factor = 1.0;
+    if x == x && x < 40.0 { factor = 1.0 - exp(-x); }
+    return params.smag.x * factor * factor;
+}
+
+// Spalding's y⁺(u⁺) (x) and its slope dy⁺/du⁺ (y), κ = 0.4, B = 5.5 (fieldcraft_lbm::wall::spalding).
+fn spalding(up: f32) -> vec2<f32> {
+    let e = exp(-0.4 * 5.5);
+    let k = 0.4 * up;
+    let rest = exp(k) - 1.0 - k - k * k / 2.0;
+    return vec2<f32>(up + e * (rest - k * k * k / 6.0), 1.0 + 0.4 * e * rest);
+}
+
+// The friction velocity from Spalding's law at speed `speed` and distance `y`
+// (fieldcraft_lbm::wall::friction_velocity): u⁺ y⁺(u⁺) = U y / ν by Newton steps from the log
+// law, guarded by bisection below the sublayer's √(U y / ν); 0 at rest or with a number that is
+// not usable.
+fn spalding_friction(speed: f32, y: f32, nu: f32) -> f32 {
+    let re = speed * y / nu;
+    if !(re > 0.0) || re > 1e30 { return 0.0; }
+    var lo = 0.0;
+    var hi = sqrt(re);
+    var up = clamp(log(re) / 0.4 + 5.5, 1e-30, hi);
+    var last = 3.0e38;
+    for (var i = 0u; i < 100u; i = i + 1u) {
+        let s = spalding(up);
+        let value = up * s.x - re;
+        if value == 0.0 { break; }
+        if value > 0.0 { hi = up; } else { lo = up; }
+        if hi - lo <= 1e-6 * hi { break; }
+        // Newton while it lands inside the bracket and at least halves the residual.
+        let newton = up - value / (s.x + up * s.y);
+        let fast = newton > lo && newton < hi && abs(value) <= 0.5 * last;
+        last = abs(value);
+        if fast { up = newton; } else { up = 0.5 * (lo + hi); }
+    }
+    if up > 0.0 { return speed / up; }
+    return 0.0;
+}
+
+// Van Driest's refresh (fieldcraft_lbm::wall::Walls::refresh): wall cell k's friction velocity
+// from its own velocity before the collision.
+@compute @workgroup_size(256)
+fn damping_refresh(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
+    let k = cell_of(lid, wg);
+    let d = params.wall.z;
+    if !VAN_DRIEST || k >= d { return; }
+    let base = d + 8u * k;
+    let normal = vec3<f32>(damping[base], damping[base + 1u], damping[base + 2u]);
+    let y = damping[base + 3u];
+    let wall = vec3<f32>(damping[base + 4u], damping[base + 5u], damping[base + 6u]);
+    let cell = bitcast<u32>(damping[base + 7u]);
+    var xyz = vec3<i32>(0);
+    if AA_MODE && params.phase.x == 1u { xyz = coords(cell); }
+    var drho = 0.0;
+    var j = vec3<f32>(0.0);
+    for (var q = 0u; q < Q; q = q + 1u) {
+        let v = population(q, cell, xyz);
+        drho = drho + v;
+        j = j + vec3<f32>(c_of(q)) * v;
+    }
+    let rho = 1.0 + drho;
+    var ut = 0.0;
+    if rho > 0.0 && rho < 1e30 {
+        let rel = (j + 0.5 * rho * acc_of(cell)) / rho - wall;
+        ut = spalding_friction(length(rel - dot(rel, normal) * normal), y, params.smag.w);
+    }
+    damping[k] = ut;
 }
 
 // Musker's u⁺ at y⁺ (x) and its slope du⁺/dy⁺ (y) (fieldcraft_lbm::wall::musker).
@@ -597,7 +693,7 @@ fn collide_cell(cell: u32, lid: u32) {
 fn collide_trt_smagorinsky(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function, array<f32, 19>>, drho: f32, rho: f32, u: vec3<f32>, force: vec3<f32>, forced: bool) {
     var wp = -1.0;
     if WALL_MODEL { wp = wall_omega(cell); }
-    if !(wp > 0.0) { wp = smagorinsky_omega(flux(fq, drho, rho, u, force, forced), rho, params.omega_plus); }
+    if !(wp > 0.0) { wp = smagorinsky_omega(flux(fq, drho, rho, u, force, forced), rho, params.omega_plus, smagorinsky_c2(cell)); }
     record_eddy(cell, lid, wp, u);
     let wm = 1.0 / (0.5 + params.smag.z / (1.0 / wp - 0.5));
     let sp = 1.0 - 0.5 * wp;
@@ -673,7 +769,7 @@ fn collide_mrt(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function, array<f32,
     if turbulent() {
         var wall = -1.0;
         if WALL_MODEL { wall = wall_omega(cell); }
-        if wall > 0.0 { omega = wall; } else { omega = smagorinsky_omega(flux(fq, drho, rho, u, force, forced), rho, omega); }
+        if wall > 0.0 { omega = wall; } else { omega = smagorinsky_omega(flux(fq, drho, rho, u, force, forced), rho, omega, smagorinsky_c2(cell)); }
         record_eddy(cell, lid, omega, u);
     }
     let uu = dot(u, u);
@@ -753,7 +849,7 @@ fn collide_regularized(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function, ar
     if turbulent() {
         var wall = -1.0;
         if WALL_MODEL { wall = wall_omega(cell); }
-        if wall > 0.0 { omega = wall; } else { omega = smagorinsky_omega(p, rho, omega); }
+        if wall > 0.0 { omega = wall; } else { omega = smagorinsky_omega(p, rho, omega, smagorinsky_c2(cell)); }
         record_eddy(cell, lid, omega, u);
     }
     let relax = 1.0 - omega;

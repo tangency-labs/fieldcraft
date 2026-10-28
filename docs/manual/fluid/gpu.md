@@ -106,9 +106,8 @@ whose forces are read back (a submission's last). The temperature lattice is two
 | Body acceleration, and changing it between steps | yes |
 | Heat: the D3Q7 lattice, held temperatures, fluxes, buoyancy | yes |
 | Conducting solids, thermal contacts, solid power | yes |
-| Smagorinsky's model, the wall model (`wall_model: "musker"`) | yes |
+| Smagorinsky's model, the wall model (`wall_model: "musker"`), Van Driest damping (`van_driest`) | yes |
 | Steady-state rule and averaging | yes (decided on the host from read-back fields) |
-| Van Driest damping (`van_driest`) | no: refused, solve on the CPU |
 | Fans and porous zones | no: refused with the zone's name, solve on the CPU |
 | The wall-function bounce (`wall_model: "spalding_bounce"`) | no: refused, solve on the CPU |
 
@@ -116,14 +115,14 @@ whose forces are read back (a submission's last). The temperature lattice is two
 
 1. **Preparation on the CPU** (`Flow::new`): voxelisation, links, open cells, conducting cells, the
    initial state. A flow handed to the GPU never allocates the CPU's streaming targets.
-2. **Refusals**: Van Driest damping, fans and porous zones; a policy that finds no device; an
+2. **Refusals**: fans and porous zones; a policy that finds no device; an
    adapter that allows fewer storage buffers per compute stage than the shader needs (the message
    names the graphics backend and suggests Vulkan, Metal or DX12, or the CPU).
 3. **Memory**: before preparation, the population buffer is checked against the device's limit per
    storage buffer (asked once per process), and the run's estimate includes the GPU readback.
 4. **Device and kernels**: the device is requested with the adapter's own limits and shared; the
-   kernels are compiled once per device and variant (layout, collision, Smagorinsky, wall model)
-   and reused by the next solve.
+   kernels are compiled once per device and variant (layout, collision, Smagorinsky, wall model,
+   Van Driest damping) and reused by the next solve.
 5. **Stepping**: steps are submitted in chunks of at most 64; after each submission the host reads
    the stability statistics (largest speed, a non-positive or non-finite density), so the GPU may
    notice an instability only at the end of the chunk. The solve advances the backend only up to
@@ -261,8 +260,8 @@ On an Apple M4 Max (Metal), the regularised velocity fields are within 5e-7–7.
 speed, densities within 2.6e-7, wall shear within 1.9e-5 of itself, heats within 2.1e-6, mass drift
 0.
 
-Fans and porous zones (`fans_and_porous_zones_are_refused_clearly`) and Van Driest damping
-(`van_driest_damping_is_refused_clearly`) are refused with a message naming the CPU. Tests skip
+Fans and porous zones (`fans_and_porous_zones_are_refused_clearly`) are refused with a message
+naming the CPU. Tests skip
 without a GPU adapter unless `FIELDCRAFT_REQUIRE_GPU=1`, which makes a missing adapter a failure.
 CI has no hardware GPU and runs the suite on lavapipe.
 
@@ -303,7 +302,7 @@ operators](collision.md)).
 
 - Single precision: results agree with the CPU within the stated tolerances and
   are deterministic per device only.
-- Fans and porous zones, and Van Driest damping, run on the CPU only.
+- Fans and porous zones run on the CPU only.
 - An instability is noticed at the end of a chunk of up to 64 steps.
 - A run shorter than 10 000 steps advances one step per submission (its force history samples
   every step), far below the throughput of the Performance table.
@@ -317,7 +316,7 @@ operators](collision.md)).
 | File | Contents |
 |---|---|
 | `crates/lbm-gpu/src/native.rs` | `GpuFlow` (`with_options`, `advance`, readbacks), `Options`, `Streaming`, `register`, `buffer_limit`, `check_storage_buffers`, `MAX_CHUNK`, `DEVICE_TIMEOUT`. |
-| `crates/lbm-gpu/src/lbm.wgsl` | The kernels: collision (TRT, `collide_regularized`, `collide_mrt`), AA and A–B streaming, links, open boundaries and convective outlets, momentum exchange, thermal lattice, conducting solids, wall model. |
+| `crates/lbm-gpu/src/lbm.wgsl` | The kernels: collision (TRT, `collide_regularized`, `collide_mrt`), AA and A–B streaming, links, open boundaries and convective outlets, momentum exchange, thermal lattice, conducting solids, wall model, Van Driest damping (`damping_refresh`). |
 | `crates/lbm-gpu/src/lib.rs` | The wasm stub (`register` does nothing). |
 | `crates/gpu/src/select.rs` | `Policy`, `pick`, `adapter`, `backends`, the process's wgpu instances. |
 | `crates/lbm/src/backend.rs` | `Backend`, `register_backend`, `device_available`, `Choice`. |

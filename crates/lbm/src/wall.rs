@@ -244,6 +244,20 @@ impl Walls {
         self.a_plus.is_some()
     }
 
+    /// Van Driest's A⁺, with damping.
+    pub fn a_plus(&self) -> Option<f64> {
+        self.a_plus
+    }
+
+    /// The wall cell that gives cell `cell` its friction velocity, as its position in
+    /// [`Walls::wall_cells`], when a wall reaches it: every fluid cell's with damping, the wall
+    /// cells' alone without.
+    pub fn owner(&self, cell: usize) -> Option<usize> {
+        let w = *self.wall_of.get(cell)?;
+        let owner = self.walls.get(w as usize)?;
+        (!self.distance.is_empty() || owner.cell as usize == cell).then_some(w as usize)
+    }
+
     /// Cell `cell`'s distance to its wall (lattice units), when a wall reaches it: every fluid
     /// cell's with damping, the wall cells' alone without.
     pub fn distance(&self, cell: usize) -> Option<f64> {
@@ -725,7 +739,11 @@ mod tests {
             let [_, j, _] = grid.coords(cell);
             let want = (j as f64 + 0.5).min(8.0 - 0.5 - j as f64);
             assert!((w.distance(cell).unwrap() - want).abs() < 1e-12, "{cell}");
+            // Its friction velocity comes from the wall cell beside the nearer wall.
+            let owner = w.wall_cells().nth(w.owner(cell).unwrap()).unwrap().0;
+            assert_eq!(grid.coords(owner)[1], if j < 4 { 0 } else { 7 }, "{cell}");
         }
+        assert_eq!(w.a_plus(), Some(26.0));
         // At rest, full damping; away from the walls no damping once the flow moves.
         assert_eq!(w.factor(0), 0.0);
         let mut w = w;

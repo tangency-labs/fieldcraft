@@ -165,6 +165,8 @@ pub struct GpuFlow {
     wall_groups: Option<(u32, u32)>,
     walls: wgpu::Buffer,
     wall_count: usize,
+    /// Van Driest's damping, when it has wall cells.
+    damping: Option<Damping>,
     /// The uniforms of the two phases (the body acceleration can change between steps).
     params: [wgpu::Buffer; 2],
     open_count: usize,
@@ -198,6 +200,47 @@ pub struct GpuFlow {
     weight_forces: Vec<[f64; 3]>,
     /// The conducting solids, when there are any.
     solid: Option<Solids>,
+}
+
+/// Van Driest's damping on the device (see `lbm.wgsl`, `damping`).
+struct Damping {
+    /// The friction velocities first, then the wall cells' rows and the cells' distances.
+    buffer: wgpu::Buffer,
+    groups: (u32, u32),
+    /// The wall cells' distances to their walls, and the fluid's viscosity (lattice units), for
+    /// their y⁺.
+    distances: Vec<f64>,
+    nu: f64,
+}
+
+/// Van Driest's damping data in the layout of `lbm.wgsl`'s `damping`, and its wall cells'
+/// distances: none without damping or without wall cells.
+fn damping_data(flow: &Flow, n: usize) -> Result<Option<(Vec<f32>, Vec<f64>)>> {
+    let Some(walls) = flow.walls().filter(|w| w.damped()) else { return Ok(None) };
+    let distances: Vec<f64> = walls.wall_cells().map(|w| w.2).collect();
+    let d = distances.len();
+    if d == 0 {
+        return Ok(None);
+    }
+    let too_many = || Error::Limit("too many cells for the GPU's wall distances".into());
+    let len = n.checked_mul(2).and_then(|v| v.checked_add(9 * d)).filter(|v| u32::try_from(*v).is_ok()).ok_or_else(too_many)?;
+    let mut data = reserved(len, "wall distances")?;
+    data.resize(d, 0.0);
+    for (cell, link, distance, velocity, _) in walls.wall_cells() {
+        let c = fieldcraft_lbm::lattice::c(link);
+        let norm = (c[0] * c[0] + c[1] * c[1] + c[2] * c[2]).sqrt();
+        data.extend(c.map(|v| (v / norm) as f32));
+        data.push(distance as f32);
+        data.extend(velocity.map(|v| v as f32));
+        data.push(f32::from_bits(u32::try_from(cell).map_err(|_| too_many())?));
+    }
+    for cell in 0..n {
+        match (walls.distance(cell), walls.owner(cell).and_then(|o| u32::try_from(o).ok())) {
+            (Some(y), Some(owner)) => data.extend([y as f32, f32::from_bits(owner)]),
+            _ => data.extend([0.0, f32::from_bits(u32::MAX)]),
+        }
+    }
+    Ok(Some((data, distances)))
 }
 
 /// The conducting solids on the device (see `lbm.wgsl`, "Conducting solids").
@@ -290,10 +333,11 @@ fn solid_data(solid: &fieldcraft_lbm::conduction::SolidHeat, t0: f64) -> Result<
 }
 
 /// The entry points of `lbm.wgsl` a flow dispatches.
-const KERNELS: [&str; 28] = [
+const KERNELS: [&str; 29] = [
     "clear_eddy",
     "collide",
     "wall_sample",
+    "damping_refresh",
     "stream",
     "stream_links",
     "stream_links_exchange",
@@ -396,6 +440,7 @@ struct Variant {
     mrt: bool,
     smagorinsky: bool,
     wall_model: bool,
+    van_driest: bool,
 }
 
 /// A compiled kernel: its pipeline, its bind group's layout and the bindings in it.
@@ -440,6 +485,7 @@ fn compile(device: &wgpu::Device, variant: Variant) -> Result<Kernels> {
                     ("MRT", if variant.mrt { 1.0 } else { 0.0 }),
                     ("SMAGORINSKY", if variant.smagorinsky { 1.0 } else { 0.0 }),
                     ("WALL_MODEL", if variant.wall_model { 1.0 } else { 0.0 }),
+                    ("VAN_DRIEST", if variant.van_driest { 1.0 } else { 0.0 }),
                     ("MAX_SPEED", MAX_LATTICE_SPEED),
                 ],
                 ..Default::default()
@@ -541,11 +587,6 @@ impl GpuFlow {
 
     /// [`GpuFlow::new`] with `options`.
     pub fn with_options(flow: &Flow, policy: Policy, options: Options) -> Result<GpuFlow> {
-        if flow.van_driest() {
-            return Err(Error::Invalid(
-                "Van Driest damping (`van_driest`) is not on the GPU backend yet: solve on the CPU (`backend: \"cpu\"`)".into(),
-            ));
-        }
         if flow.wall_bounce() {
             return Err(Error::Invalid(
                 "the wall model `spalding_bounce` is not on the GPU backend yet: solve on the CPU (`backend: \"cpu\"`)".into(),
@@ -811,7 +852,15 @@ impl GpuFlow {
             ((1.0 / omega_plus - 0.5) * (1.0 / omega_minus - 0.5)) as f32,
             ((1.0 / omega_plus - 0.5) / 3.0) as f32,
         ];
-        let wall_params = [u32::try_from(wall_count).map_err(|_| Error::Limit("too many wall cells for the GPU solver".into()))?, 0, 0, 0];
+        let damping = damping_data(flow, n)?;
+        let damping_count = damping.as_ref().map_or(0, |(_, distances)| distances.len());
+        let a_plus = flow.walls().and_then(|w| w.a_plus()).unwrap_or(1.0);
+        let wall_params = [
+            u32::try_from(wall_count).map_err(|_| Error::Limit("too many wall cells for the GPU solver".into()))?,
+            0,
+            u32::try_from(damping_count).map_err(|_| Error::Limit("too many wall cells for the GPU solver".into()))?,
+            ((1.0 / a_plus) as f32).to_bits(),
+        ];
         let params = [0u32, 1].map(|phase| {
             let mut bytes = params.clone();
             bytes.extend_from_slice(&bytes_u32(&[phase, 0, 0, 0]));
@@ -826,6 +875,9 @@ impl GpuFlow {
         });
         let fluid_buf = storage("lbm fluid", &bytes_u32(&fluid_u32));
         let walls_buf = storage("lbm walls", &bytes_f32(&wall_rows));
+        let damping_buf = storage("lbm wall damping", &bytes_f32(damping.as_ref().map_or(&[][..], |(data, _)| &data[..])));
+        // Only the wall cells' distances stay on the host.
+        let damping = damping.map(|(_, distances)| distances);
         // AA reuses binding g for boundary scratch only, never another full population field.
         let pops = [empty("lbm f", pop_bytes), empty("lbm g / AA boundary scratch", if aa { 4 * links.len() as u64 } else { pop_bytes })];
         // Populations as deviations (see lbm.wgsl), one direction at a time: `value(q, cell)` less
@@ -882,6 +934,7 @@ impl GpuFlow {
             mrt: flow.collision() == fieldcraft_model::Collision::Mrt,
             smagorinsky: flow.smagorinsky() > 0.0,
             wall_model: wall_count > 0,
+            van_driest: damping_count > 0,
         })?;
         // Every binding's buffer in bind group k (the two differ in the phase and the A–B swap).
         let resource = |binding: u32, k: usize| -> Option<&wgpu::Buffer> {
@@ -910,6 +963,7 @@ impl GpuFlow {
                 21 => &solid_f_buf,
                 22 => &solid_s_buf,
                 23 => &walls_buf,
+                24 => &damping_buf,
                 _ => return None,
             })
         };
@@ -951,6 +1005,10 @@ impl GpuFlow {
             wall_groups: if wall_count > 0 { Some(groups(wall_count)?) } else { None },
             walls: walls_buf,
             wall_count,
+            damping: match damping {
+                Some(distances) => Some(Damping { buffer: damping_buf, groups: groups(distances.len())?, distances, nu: nu0 }),
+                None => None,
+            },
             params,
             open_count: open.len(),
             open_groups,
@@ -1139,7 +1197,7 @@ impl GpuFlow {
     /// solids' with their sub-steps).
     fn dispatches_per_step(&self) -> usize {
         let solid = self.solid.as_ref().map_or(0, |sd| 3 + sd.substeps as usize);
-        10 + solid
+        11 + solid
     }
 
     /// One submission of `steps` (≤ MAX_CHUNK) time steps, then the stability check.
@@ -1149,6 +1207,9 @@ impl GpuFlow {
         for step in 0..steps {
             if step + 1 == steps {
                 commands.push((self.current, "clear_eddy", (1, 1)));
+            }
+            if let Some(d) = &self.damping {
+                commands.push((self.current, "damping_refresh", d.groups));
             }
             if let Some(groups) = self.wall_groups {
                 commands.push((self.current, "wall_sample", groups));
@@ -1243,6 +1304,14 @@ impl GpuFlow {
 impl Backend for GpuFlow {
     fn eddy_viscosity_ratio(&self) -> f64 {
         self.eddy_ratio
+    }
+
+    fn wall_y_plus(&self) -> Option<f64> {
+        let d = self.damping.as_ref()?;
+        // The friction velocities lead the buffer; a device that does not answer reports none.
+        let ut = self.read_f32(&d.buffer, d.distances.len()).ok()?;
+        let y = d.distances.iter().zip(ut).map(|(y, ut)| y * f64::from(ut) / d.nu).fold(0.0f64, f64::max);
+        Some(if y.is_finite() { y } else { 0.0 })
     }
 
     fn set_acceleration(&mut self, a: [f64; 3]) -> Result<()> {

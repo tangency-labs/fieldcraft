@@ -61,6 +61,9 @@ const RESULT: u64 = 1;
 /// Per cell the GPU backend stages on the host while it uploads the flow: the flags twice and
 /// one direction of populations.
 const DEVICE_STAGING: u64 = 1 + 4 + F32;
+/// Per cell the GPU backend stages with Van Driest's damping: the wall distance and the wall
+/// cell's index in single precision, and their bytes as they go up.
+const DEVICE_DAMPING: u64 = 2 * 2 * F32;
 /// Per cell of the GPU backend's population buffer (one buffer, single precision).
 pub const DEVICE_POPULATIONS: u64 = Q as u64 * F32;
 
@@ -209,7 +212,7 @@ impl Memory {
             }
             // The device backend copies the flow up, and the flow is dropped before the steps.
             Choice::Device => (
-                prepared.saturating_add(per_cell(DEVICE_STAGING)),
+                prepared.saturating_add(per_cell(DEVICE_STAGING + if s.damping { DEVICE_DAMPING } else { 0 })),
                 per_cell(2 * RESULT),
                 per_cell(READBACK + DEVICE_READBACK + if s.heat { READBACK_HEAT + DEVICE_READBACK_HEAT } else { 0 }),
             ),

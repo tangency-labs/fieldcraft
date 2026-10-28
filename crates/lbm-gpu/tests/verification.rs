@@ -878,20 +878,6 @@ fn a_cavity_held_by_the_closure_follows_the_cpu() {
     }
 }
 
-/// Van Driest's damping has no GPU kernel yet: refused by name, so the refusal outlives the
-/// blanket one above once the eddy viscosity is ported (#692).
-#[test]
-fn van_driest_damping_is_refused_clearly() {
-    let mut p = step(10.0, 1.0, None);
-    if let Procedure::Fluid { turbulence, .. } = &mut p {
-        *turbulence = Some(fieldcraft_model::Turbulence::Smagorinsky { constant: 0.17, prandtl: 0.9, van_driest: Some(26.0), wall_model: None });
-    }
-    let m = model(1.0, 0.1, domain([0.0; 3], [4.0, 2.0, 2.0], 1.0), p);
-    let (_, flow) = prepare(&m, &[]);
-    let e = GpuFlow::with_options(&flow, Policy::from_env().expect("FIELDCRAFT_GPU names a policy"), Options::default()).err().map(|e| e.to_string());
-    assert!(e.as_deref().is_some_and(|e| e.contains("Van Driest") && e.contains("cpu")), "{e:?}");
-}
-
 /// A body force changed while the flow runs (`Backend::set_acceleration`, for a flow held at a
 /// constant flow rate): plane Poiseuille flow driven by a for half its steps and 2a for the rest
 /// on both backends, which agree, as do their mean velocities (`Backend::mean_velocity`).
@@ -989,31 +975,9 @@ fn couette_flow_with_the_wall_model_matches_the_cpu() {
 /// steady channel below compares the drag to the force tests' tolerance.
 #[test]
 fn a_coarse_wall_modelled_channel_follows_the_cpu() {
-    use std::f64::consts::PI;
     for (collision, streaming) in cases() {
-        let (n, re_tau, ub) = (6usize, 180.0, 15.7);
-        let dx = 1.0 / n as f64;
-        let (lx, lz) = ((2.0 * PI * n as f64).round() * dx, (PI * n as f64).round() * dx);
-        let mut d = domain([0.0; 3], [lx, 2.0, lz], dx);
-        for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
-            *f = PERIODIC;
-        }
-        d.acceleration = [1.0, 0.0, 0.0];
-        let dt = 0.1 * dx / ub;
-        let m = model(1.0, 1.0 / re_tau, d, wall_modelled(collide(150.0 * dt, dt, None, collision), 0.1));
-        let (setup, mut flow) = prepare(&m, &[]);
+        let (setup, flow) = coarse_channel(|p| wall_modelled(p, 0.1), collision);
         let grid = *flow.grid();
-        let to_lattice = 1.0 / setup.velocity_scale();
-        let (kx, kz) = (2.0 * PI / lx, 2.0 * PI / lz);
-        flow.set_equilibrium(|cell| {
-            let [x, y, z] = grid.centre(cell);
-            let eta = y - 1.0;
-            let wall = 1.0 - eta * eta;
-            let u = 1.15 * ub * (1.0 - eta.abs().powi(8)) + 2.0 * (2.0 * kz * z).sin() * (kx * x).cos() * wall;
-            let v = 1.5 * wall * (2.0 * kz * z).cos() * (3.0 * kx * x).sin();
-            let w = 1.5 * wall * eta * (kx * x).sin() * (kz * z).cos();
-            (1.0, [u * to_lattice, v * to_lattice, w * to_lattice])
-        });
         let Some((mut cpu, mut gpu)) = both(&setup, flow, streaming) else { continue };
         let (du, drho) = field_difference(&mut cpu, &mut gpu);
         // The GPU's fields report each modelled wall cell at the velocity its reconstruction
@@ -1034,6 +998,87 @@ fn a_coarse_wall_modelled_channel_follows_the_cpu() {
         );
         assert!(du < 1e-4 && drho < 1e-5, "{du} {drho}");
         assert!(drag < 1e-3, "{drag}");
+    }
+}
+
+/// The coarse channel above (walls at y = 0 and 2, periodic in x and z, 6 cells per
+/// half-height, Re_τ 180), started from a perturbed blunt profile, 150 steps, with the
+/// turbulence `turbulence` sets.
+fn coarse_channel(turbulence: impl Fn(Procedure) -> Procedure, collision: Collision) -> (Setup, Flow) {
+    use std::f64::consts::PI;
+    let (n, re_tau, ub) = (6usize, 180.0, 15.7);
+    let dx = 1.0 / n as f64;
+    let (lx, lz) = ((2.0 * PI * n as f64).round() * dx, (PI * n as f64).round() * dx);
+    let mut d = domain([0.0; 3], [lx, 2.0, lz], dx);
+    for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+        *f = PERIODIC;
+    }
+    d.acceleration = [1.0, 0.0, 0.0];
+    let dt = 0.1 * dx / ub;
+    let m = model(1.0, 1.0 / re_tau, d, turbulence(collide(150.0 * dt, dt, None, collision)));
+    let (setup, mut flow) = prepare(&m, &[]);
+    let grid = *flow.grid();
+    let to_lattice = 1.0 / setup.velocity_scale();
+    let (kx, kz) = (2.0 * PI / lx, 2.0 * PI / lz);
+    flow.set_equilibrium(|cell| {
+        let [x, y, z] = grid.centre(cell);
+        let eta = y - 1.0;
+        let wall = 1.0 - eta * eta;
+        let u = 1.15 * ub * (1.0 - eta.abs().powi(8)) + 2.0 * (2.0 * kz * z).sin() * (kx * x).cos() * wall;
+        let v = 1.5 * wall * (2.0 * kz * z).cos() * (3.0 * kx * x).sin();
+        let w = 1.5 * wall * eta * (kx * x).sin() * (kz * z).cos();
+        (1.0, [u * to_lattice, v * to_lattice, w * to_lattice])
+    });
+    (setup, flow)
+}
+
+// ---- Van Driest's damping ----
+
+/// `p` with Smagorinsky's model, constant `c`, Van Driest's damping at A⁺ 26 and, with
+/// `wall_model`, the wall model too.
+fn van_driest(mut p: Procedure, c: f64, wall_model: bool) -> Procedure {
+    if let Procedure::Fluid { turbulence, .. } = &mut p {
+        *turbulence = Some(fieldcraft_model::Turbulence::Smagorinsky {
+            constant: c,
+            prandtl: 0.9,
+            van_driest: Some(26.0),
+            wall_model: wall_model.then_some(fieldcraft_model::WallModel::Musker),
+        });
+    }
+    p
+}
+
+/// The coarse channel above with Van Driest's damping, on the bounce-back walls alone and under
+/// the wall model: every wall cell's u_τ from Spalding's law and every cell's damped constant
+/// change each step in a three-dimensional flow. Against the CPU after 150 steps, at the wall
+/// model's tolerances: the fields, the largest eddy viscosity ratio and the wall cells' largest
+/// y⁺ (`Backend::wall_y_plus`). Measured on the GB10, TRT / regularised / MRT: on the
+/// bounce-back walls, velocity 3.3e-6 / 5.6e-6 / 5.5e-7, density 5.3e-7 / 2.6e-7 / 7.1e-8, ν_t/ν
+/// 1.3e-5 / 1.4e-5 / 1.2e-4 of itself, y⁺ (11.8 to 12.6) 3.9e-6 / 6.3e-6 / 1.3e-6; under the wall
+/// model, velocity 2.1e-6 / 2.8e-6 / 9.8e-7, density 4.0e-7 / 2.0e-7 / 1.0e-7, ν_t/ν 1.1e-5 /
+/// 1.3e-5 / 2.3e-5, y⁺ (13.6 to 14.6) within 2e-7. With the damping left out of the GPU's
+/// collision the velocity differs by 0.12 of the largest speed.
+#[test]
+fn a_coarse_channel_with_van_driest_damping_follows_the_cpu() {
+    for wall_model in [false, true] {
+        for (collision, streaming) in cases() {
+            let (setup, flow) = coarse_channel(|p| van_driest(p, 0.1, wall_model), collision);
+            assert!(flow.van_driest() && flow.wall_model() == wall_model);
+            let Some((mut cpu, mut gpu)) = both(&setup, flow, streaming) else { continue };
+            let (du, drho) = field_difference(&mut cpu, &mut gpu);
+            let (rc, rg) = (Backend::eddy_viscosity_ratio(&cpu), gpu.eddy_viscosity_ratio());
+            let (yc, yg) = (Backend::wall_y_plus(&cpu).unwrap(), gpu.wall_y_plus().unwrap());
+            println!(
+                "{collision:?} {streaming:?} channel with Van Driest damping{}, 150 steps, GPU vs CPU: velocity {du:.2e}, density {drho:.2e}; ν_t/ν CPU {rc:.5} GPU {rg:.5} ({:.1e}); wall y⁺ CPU {yc:.5} GPU {yg:.5} ({:.1e})",
+                if wall_model { " and the wall model" } else { "" },
+                (rg - rc).abs() / rc,
+                (yg - yc).abs() / yc
+            );
+            assert!(rc > 0.0 && yc > 1.0, "the damping acts: ν_t/ν {rc}, y⁺ {yc}");
+            assert!(du < 1e-4 && drho < 1e-5, "{du} {drho}");
+            assert!((rg - rc).abs() < 1e-3 * rc, "{rg} vs {rc}");
+            assert!((yg - yc).abs() < 1e-3 * yc, "{yg} vs {yc}");
+        }
     }
 }
 
