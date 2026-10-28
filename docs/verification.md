@@ -361,7 +361,38 @@ window:
 
 `FIELDCRAFT_HAN_START` and `FIELDCRAFT_HAN_END` (δ/u_τ, default 20 and 150) shorten the discarded
 start and the run for a smoke test; a shortened run is not a result. `FIELDCRAFT_HAN_CPU=1` runs on
-the CPU in double precision. Results: to be recorded here.
+the CPU in double precision.
+
+**Results, A20** (GPU f32, NVIDIA GB10, Re_τ 640, averaged 20–150 δ/u_τ unless stated; WFB is
+eq. 14 on-node, BB does not depend on the wall form). Han et al.'s values in brackets:
+
+| set-up, wall | U_b⁺ | C_f vs Dean | ε whole (paper) | b (paper) | walls carry |
+|---|---|---|---|---|---|
+| `paper`, BB | 9.24 | +235 % | 0.511 (0.056) | −2.55 (5.6) | 1.01 |
+| `paper`, WFB eq. 14 | 14.44 | +53 % | 0.248 (0.057) | 1.92 (6.4) | 1.01 |
+| `hrr-vreman`, BB | 17.90 | +5.2 % | 0.153 (0.056) | 4.68 (5.6) | 1.00 |
+| `hrr-vreman`, WFB eq. 14 | 28.77 | −54 % | 0.535 (0.057) | 15.23 (6.4) | 0.99 |
+| `hrr-smagorinsky`, BB | 16.69 | +19 % | 0.171 (0.056) | 3.53 (5.6) | 1.01 |
+| `hrr-smagorinsky`, WFB eq. 14 | 27.94 | −52 % | 0.491 (0.057) | 14.30 (6.4) | 0.99 |
+| `hrr-dynamic`, BB | 6.23 | not stationary | | | 1.20 (20–70 δ/u_τ) |
+| `hrr-dynamic`, WFB eq. 14 | 28.94 | −55 % | 0.607 (0.057) | 9.04 (6.4) | 1.00 |
+
+Hoyas & Jiménez's U_b⁺ is about 21.7. The halfway variant (`FIELDCRAFT_HAN_WALL=halfway`) on
+the hybrid collision went unstable at 39 δ/u_τ (fixed σ) and 113 δ/u_τ (dynamic σ); on MRT it gave
+U_b⁺ 9.56, the WFB row of the first table. Every eq. 14 run held: no odd–even mode in the walls.
+
+**Where the dissipation sits.** With σ 0.99 the hybrid collision's own viscosity ν_s/ν at
+k_x Δx 1.5–2.1 is about 10–18 at y⁺ 48 and on the centreline (0.2–0.9 at σ = 1), against the
+subgrid ⟨ν_t⟩/ν of 0.2–1.4: the collision's filter, not Vreman or Smagorinsky, damps the band
+that MRT piled up. Dynamic σ drives σ to 0.006–0.007 with eq. 14 (ν_s/ν about 1 400–2 100 in the
+band) and 0.57–0.74 with BB.
+
+**Result: Han et al. not reproduced at A20, with their own eq. 14.** No set-up meets the gate
+(ε whole and b within 15 %) on any wall. MRT at C_s 0.1 carries too much drag (the pile-up band
+above), the hybrid collision with eq. 14 too little (C_f about half Dean's, b two to three times
+theirs); the paper's result lies between them. BB on the hybrid collision with Vreman's model
+comes nearest the DNS bulk (C_f +5 %) but is a no-slip run at y⁺ 32, not the paper's wall model,
+and its ε is three times theirs. A40 was not run.
 
 ### Wall-modelled channel against Lee & Moser and Dean (#664, #749)
 
