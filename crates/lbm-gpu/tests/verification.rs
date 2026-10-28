@@ -1321,6 +1321,30 @@ fn the_hybrid_collision_with_wall_damping_and_the_wall_function_bounce_follows_t
     }
 }
 
+/// Vreman's model under the wall-function bounce on the hybrid collision, at σ 0.99 and with
+/// dynamic σ (the Han et al. channel's `hrr-vreman` and `hrr-dynamic` set-ups), in the coarse
+/// channel, both layouts: the fields and ν_t/ν at [`check_les`]'s tolerances, the bounce's wall
+/// drag within 1e-3.
+#[test]
+fn vreman_s_model_with_the_wall_function_bounce_follows_the_cpu() {
+    for han in [HanSetup::HrrVreman, HanSetup::HrrDynamic] {
+        let (sigma, t) = (han.sigma(), han.turbulence(true));
+        for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+            let (setup, flow) = coarse_channel(les(sigma, Some(t)), han.collision());
+            assert!(flow.wall_bounce() && flow.vreman() > 0.0);
+            let Some((mut cpu, mut gpu)) = both(&setup, flow, streaming) else { return };
+            let (du, drho) = field_difference(&mut cpu, &mut gpu);
+            let (rc, rg) = (Backend::eddy_viscosity_ratio(&cpu), gpu.eddy_viscosity_ratio());
+            let (fc, fg) = (Backend::forces(&mut cpu).unwrap(), gpu.forces().unwrap());
+            let wall = |f: &[[f64; 3]]| f[BoxFace::YMin.index()][0] + f[BoxFace::YMax.index()][0];
+            let drag = (wall(&fc) - wall(&fg)).abs() / wall(&fc).abs();
+            check_les(&format!("{} with the wall-function bounce, {streaming:?}, channel, 150 steps", han.name()), (du, drho, rc, rg));
+            println!("    wall drag {drag:.2e}");
+            assert!(rc > 0.0 && drag < 1e-3, "{rc} {drag}");
+        }
+    }
+}
+
 /// The same run twice on one device gives the same fields bit for bit (dynamic σ with Vreman's
 /// model in the box with a ball, and the hybrid collision with Smagorinsky's in the channel).
 #[test]
@@ -2707,6 +2731,383 @@ struct HanResult {
     /// The Mach number run and τ.
     mach: f64,
     tau: f64,
+    /// The stress budget, eddy viscosity, dissipation and σ per row, and the spectra
+    /// ([`ChannelStats`]).
+    rows: Vec<HanRow>,
+    spectra: Vec<HanSpectrum>,
+    /// How many field snapshots the window averaged, and the streamwise cells and length.
+    snapshots: usize,
+    nx: usize,
+    lx: f64,
+}
+
+/// The configuration a Han et al. channel runs with (`FIELDCRAFT_HAN_SETUP`). The wall treatment
+/// (the wall-function bounce or bounce-back) is chosen per run on top of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HanSetup {
+    /// The paper's: MRT, Smagorinsky's model at C_s 0.1 with Van Driest's damping (A⁺ 26).
+    Paper,
+    /// J. Jacob, O. Malaspinas, P. Sagaut, J. Turbul. 19:1051, 2018, their explicit LES (case 3):
+    /// the hybrid recursive regularised collision at σ 0.99 with Vreman's model at C_s 0.18.
+    HrrVreman,
+    /// Their case 4: the hybrid collision's dynamic σ from Vreman's ν_t (C_s 0.18), which then
+    /// only sets σ (it stays out of τ).
+    HrrDynamic,
+    /// A labelled extra row: Han et al.'s subgrid model (Smagorinsky 0.1, Van Driest 26) on the
+    /// hybrid collision at σ 0.99.
+    HrrSmagorinsky,
+}
+
+const HAN_SETUPS: [HanSetup; 4] = [HanSetup::Paper, HanSetup::HrrVreman, HanSetup::HrrDynamic, HanSetup::HrrSmagorinsky];
+
+impl HanSetup {
+    fn name(self) -> &'static str {
+        match self {
+            HanSetup::Paper => "paper",
+            HanSetup::HrrVreman => "hrr-vreman",
+            HanSetup::HrrDynamic => "hrr-dynamic",
+            HanSetup::HrrSmagorinsky => "hrr-smagorinsky",
+        }
+    }
+
+    fn collision(self) -> Collision {
+        if self.sigma().is_some() { Collision::Hrr } else { Collision::Mrt }
+    }
+
+    fn sigma(self) -> Option<HrrSigma> {
+        match self {
+            HanSetup::Paper => None,
+            HanSetup::HrrDynamic => Some(HrrSigma::Dynamic),
+            HanSetup::HrrVreman | HanSetup::HrrSmagorinsky => Some(HrrSigma::Value(0.99)),
+        }
+    }
+
+    /// The subgrid model, with the wall-function bounce (`wfb`) as its wall model or none.
+    fn turbulence(self, wfb: bool) -> Turbulence {
+        let wall_model = wfb.then_some(fieldcraft_model::WallModel::SpaldingBounce);
+        match self {
+            HanSetup::Paper | HanSetup::HrrSmagorinsky => Turbulence::Smagorinsky { constant: 0.1, prandtl: 0.9, van_driest: Some(26.0), wall_model },
+            HanSetup::HrrVreman | HanSetup::HrrDynamic => Turbulence::Vreman { constant: 0.18, prandtl: 0.9, wall_model },
+        }
+    }
+
+    /// Whether the subgrid ν_t enters the cells' relaxation time (not with dynamic σ, where it
+    /// only sets σ).
+    fn subgrid_applied(self) -> bool {
+        self.sigma() != Some(HrrSigma::Dynamic)
+    }
+
+    /// Whether a run counts for the gate: the paper's set-up on both walls (as recorded), the
+    /// hybrid ones on the wall-function bounce only.
+    fn gated(self, wfb: bool) -> bool {
+        wfb || self == HanSetup::Paper
+    }
+
+    /// What the record says of ν_t's source, and the note printed with the rows.
+    fn nu_t_source(self) -> (&'static str, &'static str) {
+        match self.turbulence(false) {
+            Turbulence::Vreman { .. } => (
+                "vreman: fieldcraft_lbm::vreman::eddy_viscosity of fieldcraft_lbm::hrr::gradient on the readback velocity (the model's own formula)",
+                "",
+            ),
+            Turbulence::Smagorinsky { .. } => (
+                "smagorinsky: estimate (C D)^2 sqrt(2 S:S) of the finite-difference strain, D Van Driest's at the nominal y+ (the device's is Hou's, from the flux)",
+                " (ν_t a finite-difference estimate)",
+            ),
+        }
+    }
+}
+
+/// One row of a Han et al. channel, the two halves folded about the centreline (the wall-normal
+/// velocity and the shear stresses change sign across it), in wall units of the nominal u_τ = 1.
+struct HanRow {
+    y: f64,
+    u: f64,
+    /// u′, v′, w′ rms⁺ (each half's own about its mean, then averaged).
+    rms: [f64; 3],
+    /// −⟨u′v′⟩⁺, the viscous ⟨∂u⁺/∂y⁺⟩ and the subgrid ⟨2 ν_t S_xy⟩⁺ (from the finite-difference
+    /// gradient: [`ChannelStats`]).
+    resolved: f64,
+    viscous: f64,
+    subgrid: f64,
+    /// ⟨ν_t⟩/ν, the molecular ⟨2 ν S:S⟩⁺ and the subgrid ⟨2 ν_t S:S⟩⁺ (ε⁺ = ε ν / u_τ⁴).
+    nu_t: f64,
+    eps_molecular: f64,
+    eps_subgrid: f64,
+    /// The hybrid collision's σ: the row's mean and smallest (the fixed σ, or 1 without it).
+    sigma: (f64, f64),
+}
+
+impl HanRow {
+    /// The subgrid shear the budget counts (none where ν_t stays out of τ: `applied` false) and
+    /// what the total 1 − y/δ leaves after it, the resolved and the viscous stress.
+    fn closure(&self, applied: bool) -> (f64, f64) {
+        let subgrid = if applied { self.subgrid } else { 0.0 };
+        (subgrid, 1.0 - self.y - self.resolved - self.viscous - subgrid)
+    }
+}
+
+/// u′'s streamwise spectrum at one row (both halves), E_uu⁺ per discrete wavenumber
+/// k_x = 2π m / L_x, m = 0 … n_x / 2, one-sided so that Σ_m E = ⟨u′²⟩⁺ about the plane's mean.
+struct HanSpectrum {
+    row: usize,
+    y_plus: f64,
+    energy: Vec<f64>,
+}
+
+impl HanSpectrum {
+    /// The wavenumber index m ≥ 1 of the premultiplied spectrum's peak, k_x E_uu.
+    fn peak(&self) -> usize {
+        (1..self.energy.len()).fold(1, |best, m| if m as f64 * self.energy[m] > best as f64 * self.energy[best] { m } else { best })
+    }
+
+    /// The share of ⟨u′²⟩ (m ≥ 1) in the upper half of the wavenumbers, k_x Δx > π/2.
+    fn upper_share(&self, nx: usize) -> f64 {
+        let total: f64 = self.energy.iter().skip(1).sum();
+        let upper: f64 = self.energy.iter().enumerate().filter(|(m, _)| 4 * m > nx).map(|(_, e)| e).sum();
+        upper / total
+    }
+}
+
+/// Per-row sums of a channel's snapshots ([`ChannelStats`]).
+#[derive(Clone, Copy, Default)]
+struct RowSums {
+    u: [f64; 3],
+    uu: [f64; 3],
+    uv: f64,
+    nu_t: f64,
+    eps_molecular: f64,
+    eps_subgrid: f64,
+    viscous: f64,
+    subgrid: f64,
+    sigma: f64,
+    sigma_min: f64,
+}
+
+/// The statistics of a Han et al. channel over its averaging window, from field readbacks of the
+/// velocity (lattice units; δ = 1, u_τ = 1 nominal; periodic in x and z, walls at both y ends).
+///
+/// **Gradient.** The library's own finite differences, [`fieldcraft_lbm::hrr::gradient`]: centred,
+/// first-order one-sided at the wall rows (the wall's side is not a fluid cell), periodic images
+/// across x and z, the stencil the hybrid collision and Vreman's model use on the device.
+///
+/// **ν_t.** With Vreman's model, exactly the model's: [`fieldcraft_lbm::vreman::eddy_viscosity`] of
+/// that gradient with `c = 2.5 C_s²` ([`fieldcraft_lbm::vreman::model_constant`]), from the readback
+/// velocity (the device computes it in f32 from the same velocities). With Smagorinsky's model an
+/// **estimate**: the device takes Hou's ν_t from the cell's own non-equilibrium flux, which no
+/// readback carries, so here `(C D Δx)² √(2 S:S)` of the finite-difference strain, D Van Driest's
+/// `1 − e^{−y⁺/A⁺}` at the nominal y⁺ of the cell centre (the device damps with each wall cell's
+/// u_τ from Spalding's law).
+///
+/// **σ.** Fixed σ as given; dynamic σ by [`fieldcraft_lbm::hrr::dynamic_sigma`] of the same
+/// gradient, [`fieldcraft_lbm::hrr::laplacian`], Vreman's ν_t and the molecular ν, with the cap
+/// L_max the grid's smallest cell count (as [`fieldcraft_lbm::Flow`] does): the library's formula
+/// on the readback field, since the device keeps no per-cell σ.
+///
+/// **Units.** u⁺ = u v_s, ∂u⁺/∂y⁺ = g v_s / (Δx Re_τ) with g the lattice gradient; ε⁺ = 2 (ν_t/ν)
+/// S⁺:S⁺ and 2 S⁺:S⁺; the subgrid shear ⟨2 ν_t S_xy⟩⁺ = (ν_t/ν)(∂u⁺/∂y⁺ + ∂v⁺/∂x⁺).
+///
+/// **Spectra.** At each snapshot, for each line along x of the rows chosen (and their mirror
+/// rows), the discrete Fourier transform of u⁺ less the row's plane mean, |û_m|² / n_x² doubled for
+/// 0 < m < n_x/2; averaged over the lines (z and both halves) and the snapshots.
+struct ChannelStats {
+    grid: fieldcraft_lbm::voxel::Grid,
+    vs: f64,
+    re_tau: f64,
+    dx: f64,
+    /// The molecular lattice viscosity (τ − ½)/3 and dynamic σ's cap.
+    nu: f64,
+    l_max: f64,
+    turbulence: Turbulence,
+    sigma: Option<HrrSigma>,
+    rows: Vec<RowSums>,
+    samples: usize,
+    /// The rows (lower half) whose spectra are taken, their sums, and sin/cos of 2π q / n_x.
+    spectrum_rows: Vec<usize>,
+    spectra: Vec<Vec<f64>>,
+    trig: Vec<(f64, f64)>,
+}
+
+impl ChannelStats {
+    fn new(grid: fieldcraft_lbm::voxel::Grid, vs: f64, re_tau: f64, nu: f64, turbulence: Turbulence, sigma: Option<HrrSigma>) -> ChannelStats {
+        use std::f64::consts::PI;
+        let [nx, ny, _] = grid.cells;
+        let dx = 2.0 / ny as f64;
+        // The row nearest y⁺ 48 (both, when two are as near) and the centreline row.
+        let y_plus = |j: usize| (j as f64 + 0.5) * dx * re_tau;
+        let nearest = (0..ny / 2).map(|j| (y_plus(j) - 48.0).abs()).fold(f64::INFINITY, f64::min);
+        let mut spectrum_rows: Vec<usize> = (0..ny / 2).filter(|&j| (y_plus(j) - 48.0).abs() <= nearest + 1e-9).collect();
+        if !spectrum_rows.contains(&(ny / 2 - 1)) {
+            spectrum_rows.push(ny / 2 - 1);
+        }
+        let trig = (0..nx).map(|q| (2.0 * PI * q as f64 / nx as f64).sin_cos()).collect();
+        ChannelStats {
+            grid,
+            vs,
+            re_tau,
+            dx,
+            nu,
+            l_max: grid.cells.iter().copied().min().unwrap_or(1) as f64,
+            turbulence,
+            sigma,
+            rows: vec![RowSums { sigma_min: f64::INFINITY, ..RowSums::default() }; ny],
+            samples: 0,
+            spectra: vec![vec![0.0; nx / 2 + 1]; spectrum_rows.len()],
+            spectrum_rows,
+            trig,
+        }
+    }
+
+    /// Add one snapshot of `velocity` (lattice units, every cell in grid order).
+    fn add(&mut self, velocity: &[[f64; 3]]) {
+        use fieldcraft_lbm::{hrr, vreman};
+        let grid = self.grid;
+        let [nx, ny, nz] = grid.cells;
+        let at = |i: usize, j: usize, k: usize| velocity.get(grid.index([i, j, k])).copied().unwrap_or([0.0; 3]);
+        // Lattice gradients to wall units.
+        let to_plus = self.vs / (self.dx * self.re_tau);
+        // Per row: Vreman's c, or Smagorinsky's (C D)² with Van Driest's D at the row's nominal y⁺.
+        let constant: Vec<f64> = (0..ny)
+            .map(|j| match self.turbulence {
+                Turbulence::Vreman { constant, .. } => vreman::model_constant(constant),
+                Turbulence::Smagorinsky { constant, van_driest, .. } => {
+                    let y_plus = (j as f64 + 0.5).min(ny as f64 - j as f64 - 0.5) * self.dx * self.re_tau;
+                    (constant * van_driest.map_or(1.0, |a| 1.0 - (-y_plus / a).exp())).powi(2)
+                }
+            })
+            .collect();
+        for (cell, &u) in velocity.iter().enumerate() {
+            let [i, j, k] = grid.coords(cell);
+            let nb: hrr::Neighbours = [
+                [Some(at((i + nx - 1) % nx, j, k)), Some(at((i + 1) % nx, j, k))],
+                [(j > 0).then(|| at(i, j - 1, k)), (j + 1 < ny).then(|| at(i, j + 1, k))],
+                [Some(at(i, j, (k + nz - 1) % nz)), Some(at(i, j, (k + 1) % nz))],
+            ];
+            let g = hrr::gradient(u, &nb);
+            let s = hrr::strain(&g);
+            let ss = s[0] * s[0] + s[1] * s[1] + s[2] * s[2] + 2.0 * (s[3] * s[3] + s[4] * s[4] + s[5] * s[5]);
+            let c = constant.get(j).copied().unwrap_or(0.0);
+            let nu_t = match self.turbulence {
+                Turbulence::Vreman { .. } => vreman::eddy_viscosity(&g, c),
+                Turbulence::Smagorinsky { .. } => c * (2.0 * ss).sqrt(),
+            };
+            let ratio = nu_t / self.nu;
+            let sigma = match self.sigma {
+                Some(HrrSigma::Dynamic) => hrr::dynamic_sigma(&g, &hrr::laplacian(u, &nb), nu_t, self.nu, self.l_max),
+                Some(HrrSigma::Value(s)) => s,
+                None => 1.0,
+            };
+            let ss_plus = ss * to_plus * to_plus;
+            let Some(row) = self.rows.get_mut(j) else { continue };
+            for ((m, mm), x) in row.u.iter_mut().zip(&mut row.uu).zip(u) {
+                *m += x;
+                *mm += x * x;
+            }
+            row.uv += u[0] * u[1];
+            row.nu_t += ratio;
+            row.eps_molecular += 2.0 * ss_plus;
+            row.eps_subgrid += 2.0 * ratio * ss_plus;
+            row.viscous += g[1][0] * to_plus;
+            row.subgrid += ratio * (g[1][0] + g[0][1]) * to_plus;
+            row.sigma += sigma;
+            row.sigma_min = row.sigma_min.min(sigma);
+        }
+        // The spectra: a direct transform of each line (n_x is not a power of two).
+        let mut line = vec![0.0; nx];
+        for (spectrum, &j) in self.spectra.iter_mut().zip(&self.spectrum_rows) {
+            for row in [j, ny - 1 - j] {
+                let plane = (0..nz).flat_map(|k| (0..nx).map(move |i| (i, k))).map(|(i, k)| at(i, row, k)[0]).sum::<f64>() / (nx * nz) as f64;
+                for k in 0..nz {
+                    for (i, v) in line.iter_mut().enumerate() {
+                        *v = (at(i, row, k)[0] - plane) * self.vs;
+                    }
+                    for (m, e) in spectrum.iter_mut().enumerate() {
+                        let (mut re, mut im) = (0.0, 0.0);
+                        for (i, v) in line.iter().enumerate() {
+                            let (s, c) = self.trig[(m * i) % nx];
+                            re += v * c;
+                            im -= v * s;
+                        }
+                        let both = if m == 0 || 2 * m == nx { 1.0 } else { 2.0 };
+                        *e += both * (re * re + im * im) / (nx * nx) as f64;
+                    }
+                }
+            }
+        }
+        self.samples += 1;
+    }
+
+    /// The folded rows and the spectra.
+    fn finish(&self) -> (Vec<HanRow>, Vec<HanSpectrum>) {
+        let [nx, ny, nz] = self.grid.cells;
+        let per = (self.samples * nx * nz).max(1) as f64;
+        let vs = self.vs;
+        let rows = (0..ny / 2)
+            .map(|j| {
+                let (b, t) = (self.rows[j], self.rows[ny - 1 - j]);
+                let mean = |r: &RowSums| r.u.map(|x| x / per);
+                let (mb, mt) = (mean(&b), mean(&t));
+                let rms = |r: &RowSums, m: [f64; 3], a: usize| (r.uu[a] / per - m[a] * m[a]).max(0.0).sqrt() * vs;
+                let uv = |r: &RowSums, m: [f64; 3]| (r.uv / per - m[0] * m[1]) * vs * vs;
+                HanRow {
+                    y: (j as f64 + 0.5) * self.dx,
+                    u: 0.5 * (mb[0] + mt[0]) * vs,
+                    rms: [0, 1, 2].map(|a| 0.5 * (rms(&b, mb, a) + rms(&t, mt, a))),
+                    // The upper half's wall-normal velocity points the other way.
+                    resolved: 0.5 * (-uv(&b, mb) + uv(&t, mt)),
+                    viscous: 0.5 * (b.viscous - t.viscous) / per,
+                    subgrid: 0.5 * (b.subgrid - t.subgrid) / per,
+                    nu_t: 0.5 * (b.nu_t + t.nu_t) / per,
+                    eps_molecular: 0.5 * (b.eps_molecular + t.eps_molecular) / per,
+                    eps_subgrid: 0.5 * (b.eps_subgrid + t.eps_subgrid) / per,
+                    sigma: (0.5 * (b.sigma + t.sigma) / per, b.sigma_min.min(t.sigma_min)),
+                }
+            })
+            .collect();
+        let lines = (self.samples * 2 * nz).max(1) as f64;
+        let spectra = self
+            .spectrum_rows
+            .iter()
+            .zip(&self.spectra)
+            .map(|(&row, e)| HanSpectrum { row, y_plus: (row as f64 + 0.5) * self.dx * self.re_tau, energy: e.iter().map(|x| x / lines).collect() })
+            .collect();
+        (rows, spectra)
+    }
+}
+
+/// The hybrid collision's own viscosity beyond the one it is run with, at wavenumber `k` (radians
+/// per cell): `(r(k)/k² − (τ̄ − ½)/3) / ν`, with r the exact decay rate per step of a transverse
+/// shear wave under the collision at relaxation time `tau_bar` and weight `sigma`
+/// ([`common::exact_rate`], the 2 × 2 map of crates/lbm/tests/common/mod.rs, checked against the
+/// measured decay in crates/lbm/tests/hrr.rs) and ν the molecular lattice viscosity: the scheme's
+/// term beside the subgrid ⟨ν_t⟩/ν. σ = 1 gives the recursive regularised collision's own.
+fn scheme_viscosity(k: f64, tau_bar: f64, sigma: f64, nu: f64) -> f64 {
+    (exact_rate(k, tau_bar, sigma) / (k * k) - (tau_bar - 0.5) / 3.0) / nu
+}
+
+/// The wavenumbers k_x Δx of the band the MRT channel piled energy into (docs/verification.md,
+/// "Wall-function bounce, method two"), where the scheme's term is reported.
+const HAN_BAND: [f64; 3] = [1.5, 1.8, 2.1];
+
+/// The scheme's term at a spectrum's row ([`scheme_viscosity`]) for a hybrid-collision run: τ̄ is
+/// the row's ½ + 3 (ν + ⟨ν_t⟩) where the subgrid viscosity enters τ, else the molecular τ; σ the
+/// fixed one or the row's mean dynamic σ. Per wavenumber of [`HAN_BAND`] then the premultiplied
+/// peak's: (k Δx, ν_s/ν at the run's σ, ν_s/ν at σ = 1). `None` for the MRT (the map is the
+/// regularised family's).
+fn han_scheme(setup: HanSetup, row: &HanRow, peak_k: f64, nu: f64) -> Option<(f64, f64, Vec<[f64; 3]>)> {
+    let sigma = match setup.sigma()? {
+        HrrSigma::Value(s) => s,
+        HrrSigma::Dynamic => row.sigma.0,
+    };
+    let applied = if setup.subgrid_applied() { row.nu_t } else { 0.0 };
+    let tau_bar = 0.5 + 3.0 * nu * (1.0 + applied);
+    let at = HAN_BAND
+        .iter()
+        .copied()
+        .chain([peak_k])
+        .map(|k| [k, scheme_viscosity(k, tau_bar, sigma, nu), scheme_viscosity(k, tau_bar, 1.0, nu)])
+        .collect();
+    Some((tau_bar, sigma, at))
 }
 
 /// ε_u⁺ (Han et al.'s eq. 19, √(Σ (u⁺ − u⁺_S)² / Σ u⁺_S²) against Spalding's law u⁺_S) over the
@@ -2734,18 +3135,21 @@ fn han_measures(profile: &[(f64, f64)], re_tau: f64) -> ([f64; 3], f64) {
 }
 
 /// Han et al.'s channel (their §3): 2πD × 2D × πD on `case.n` cells per half-height D, periodic
-/// in x and z, D3Q19 MRT, Smagorinsky's model at C_s 0.1 with Van Driest's damping (A⁺ 26: the
-/// paper names the damping, not its constant), driven by the constant pressure gradient of the
-/// nominal u_τ = 1 (δ = 1; the paper normalises by the nominal u_τ), with the wall-function bounce
-/// (`wfb`) or plain bounce-back. The lattice speed is the paper's Mach number at the centreline
-/// speed its Re implies (U_c⁺ = Re / Re_τ). 20 δ/u_τ discarded, then U_b's block means of 2 δ/u_τ
+/// in x and z, driven by the constant pressure gradient of the nominal u_τ = 1 (δ = 1; the paper
+/// normalises by the nominal u_τ), with the wall-function bounce (`wfb`) or plain bounce-back. The
+/// collision and subgrid model are `setup`'s ([`HanSetup`]); the paper's is D3Q19 MRT with
+/// Smagorinsky's model at C_s 0.1 and Van Driest's damping (A⁺ 26: the paper names the damping,
+/// not its constant). The lattice speed is the paper's Mach number at the centreline speed its Re
+/// implies (U_c⁺ = Re / Re_τ). `times.0` δ/u_τ (20) discarded, then U_b's block means of 2 δ/u_τ
 /// until their 95 % interval is under 1 % with a lag-1 correlation under 0.5 and at least 50 δ/u_τ
-/// averaged, at most 150. A case whose Mach number puts τ under the floor is refused, except B40
-/// (Re_τ 2003, 40 cells: τ 0.500099 at their Ma 0.069), which runs at the smallest Mach number
-/// that reaches the floor, 0.0693, a deviation printed and recorded with both Mach numbers.
-fn han_channel(case: &HanCase, wfb: bool, cpu: bool) -> Option<Result<HanResult, String>> {
+/// averaged, at most `times.1` (150). Every 0.05 δ/u_τ in the window the velocity field is read
+/// back for the profile and [`ChannelStats`]. A case whose Mach number puts τ under the floor is
+/// refused, except B40 (Re_τ 2003, 40 cells: τ 0.500099 at their Ma 0.069), which runs at the
+/// smallest Mach number that reaches the floor, 0.0693, a deviation printed and recorded with
+/// both Mach numbers.
+fn han_channel(case: &HanCase, setup_of: HanSetup, wfb: bool, cpu: bool, times: (f64, f64)) -> Option<Result<HanResult, String>> {
     use std::f64::consts::PI;
-    let (start, min_average, block, end, tolerance) = (20.0, 50.0, 2.0, 150.0, 1e-2);
+    let ((start, end), min_average, block, tolerance) = (times, 50.0, 2.0, 1e-2);
     let n = case.n;
     let dx = 1.0 / n as f64;
     let (lx, lz) = ((2.0 * PI * n as f64).round() * dx, (PI * n as f64).round() * dx);
@@ -2764,14 +3168,11 @@ fn han_channel(case: &HanCase, wfb: bool, cpu: bool) -> Option<Result<HanResult,
         case.mach
     };
     let dt = mach / 3f64.sqrt() * dx / uc;
-    let mut p = collide(end, dt, None, Collision::Mrt);
-    if let Procedure::Fluid { turbulence, .. } = &mut p {
-        *turbulence = Some(fieldcraft_model::Turbulence::Smagorinsky {
-            constant: 0.1,
-            prandtl: 0.9,
-            van_driest: Some(26.0),
-            wall_model: wfb.then_some(fieldcraft_model::WallModel::SpaldingBounce),
-        });
+    let turbulence_of = setup_of.turbulence(wfb);
+    let mut p = collide(end, dt, None, setup_of.collision());
+    if let Procedure::Fluid { turbulence, sigma, .. } = &mut p {
+        *turbulence = Some(turbulence_of);
+        *sigma = setup_of.sigma();
     }
     let m = model(1.0, 1.0 / case.re_tau, d, p);
     let limits = fieldcraft_lbm::Limits { max_cell_updates: 10_000_000_000_000, ..fieldcraft_lbm::Limits::default() };
@@ -2779,10 +3180,11 @@ fn han_channel(case: &HanCase, wfb: bool, cpu: bool) -> Option<Result<HanResult,
         Ok(s) => s,
         Err(e) => return Some(Err(format!("refused: {e}"))),
     };
+    let kind = if wfb { "WFB" } else { "BB" };
+    let label = setup_of.name();
     println!(
-        "  Han {} ({}): τ {:.6}, Mach {mach:.5} at the centreline (theirs {}{})",
+        "  Han {} {kind} [{label}]: τ {:.6}, Mach {mach:.5} at the centreline (theirs {}{})",
         case.name,
-        if wfb { "WFB" } else { "BB" },
         setup.tau_plus,
         case.mach,
         if mach != case.mach { "; raised to the τ floor, a deviation" } else { "" }
@@ -2805,8 +3207,8 @@ fn han_channel(case: &HanCase, wfb: bool, cpu: bool) -> Option<Result<HanResult,
     let control = ((0.05 / dt) as u64).max(1);
     let from = (start / dt) as u64;
     let mut bulk = Blocks::new(((block / 0.05) as usize).max(1));
-    let [nx, ny, nz] = grid.cells;
-    let (mut sum_u, mut sum_uu, mut samples) = (vec![0.0; ny], vec![0.0; ny], 0usize);
+    let nu = (setup.tau_plus - 0.5) / 3.0;
+    let mut stats = ChannelStats::new(grid, vs, case.re_tau, nu, turbulence_of, setup_of.sigma());
     let (mut force_sum, mut body_sum) = (0.0, 0.0);
     let clock = std::time::Instant::now();
     let mut k = 0u64;
@@ -2834,12 +3236,7 @@ fn han_channel(case: &HanCase, wfb: bool, cpu: bool) -> Option<Result<HanResult,
                 (a.velocity == c.velocity && a.velocity.iter().all(|u| u.iter().all(|v| v.abs() < 1.0))).then_some(a)
             });
             if let Some(fields) = fields {
-                for (cell, u) in fields.velocity.iter().enumerate() {
-                    let j = grid.coords(cell)[1];
-                    sum_u[j] += u[0] * vs;
-                    sum_uu[j] += (u[0] * vs).powi(2);
-                }
-                samples += 1;
+                stats.add(&fields.velocity);
             }
             if k as f64 * dt >= start + min_average && bulk.half_width() < tolerance * bulk.mean() && bulk.lag1() < 0.5 {
                 stop = format!("steady at {:.1} δ/u_τ", k as f64 * dt);
@@ -2847,21 +3244,13 @@ fn han_channel(case: &HanCase, wfb: bool, cpu: bool) -> Option<Result<HanResult,
             }
         }
         if k % (setup.steps / 20).max(1) < control {
-            println!(
-                "  Han {} ({}): t = {:.1}, U_b⁺ {mean:.3}, {:.0} s",
-                case.name,
-                if wfb { "WFB" } else { "BB" },
-                k as f64 * dt,
-                clock.elapsed().as_secs_f64()
-            );
+            println!("  Han {} {kind} [{label}]: t = {:.1}, U_b⁺ {mean:.3}, {:.0} s", case.name, k as f64 * dt, clock.elapsed().as_secs_f64());
         }
     }
     window.1 = k as f64 * dt;
-    let per = (samples * nx * nz).max(1) as f64;
-    let mean: Vec<f64> = sum_u.iter().map(|s| s / per).collect();
-    let rms: Vec<f64> = sum_uu.iter().zip(&mean).map(|(s, m)| (s / per - m * m).max(0.0).sqrt()).collect();
-    let profile: Vec<(f64, f64)> = (0..ny / 2).map(|j| ((j as f64 + 0.5) * dx, 0.5 * (mean[j] + mean[ny - 1 - j]))).collect();
-    let rms = (0..ny / 2).map(|j| 0.5 * (rms[j] + rms[ny - 1 - j])).collect();
+    let (rows, spectra) = stats.finish();
+    let profile: Vec<(f64, f64)> = rows.iter().map(|r| (r.y, r.u)).collect();
+    let rms = rows.iter().map(|r| r.rms[0]).collect();
     let (eps, b) = han_measures(&profile, case.re_tau);
     // Lattice momentum per step against the body force per step: the same scale.
     let carried = force_sum / body_sum;
@@ -2878,16 +3267,37 @@ fn han_channel(case: &HanCase, wfb: bool, cpu: bool) -> Option<Result<HanResult,
         seconds: clock.elapsed().as_secs_f64(),
         mach,
         tau: setup.tau_plus,
+        rows,
+        spectra,
+        snapshots: stats.samples,
+        nx: grid.cells[0],
+        lx,
     }))
 }
 
-/// Method two, step 1: Han, Ooka and Kikumoto's channel reproduced (see [`han_channel`]), each
-/// case with the wall-function bounce and its bounce-back control. Passes where ε_u⁺ over the
-/// whole channel and b are within 15 % of the paper's (Tables 2 and 3), for both; C_f = 2 / U_b⁺²
-/// is reported against Dean's correlation and, at Re_τ 2003, Hoyas and Jiménez. Each run writes a
-/// JSON record into `FIELDCRAFT_STUDY_RECORDS` (a directory) when set. Set `FIELDCRAFT_HAN` to a
-/// case (`A20`, `A40`, `B40`, `B80`), several separated by commas, or `1` for all; `_BB=0` skips
-/// the controls; `FIELDCRAFT_HAN_CPU=1` runs on the CPU in double precision.
+/// Method two: Han, Ooka and Kikumoto's channel (see [`han_channel`]), each case with the
+/// wall-function bounce (WFB) and its bounce-back control (BB), on each configuration of
+/// `FIELDCRAFT_HAN_SETUP` ([`HanSetup`], comma-separated; `paper` when unset): `paper` (MRT,
+/// Smagorinsky 0.1, Van Driest 26), `hrr-vreman` (the hybrid collision at σ 0.99, Vreman 0.18:
+/// Jacob et al. 2018's case 3), `hrr-dynamic` (dynamic σ from Vreman 0.18: their case 4) and
+/// `hrr-smagorinsky` (σ 0.99 with the paper's subgrid model), or `all`. The gate is Han et al.'s:
+/// ε_u⁺ over the whole channel and b within 15 % of their Tables 2 and 3; on `paper` for both
+/// walls (as recorded), on the hybrid set-ups for the WFB runs, the BB runs reported. C_f =
+/// 2 / U_b⁺² is reported against Dean's correlation and, at Re_τ 2003, Hoyas and Jiménez.
+///
+/// Every run prints, and records, per row of the folded half channel U⁺, u′, v′, w′ rms⁺, the
+/// shear stress budget (−⟨u′v′⟩⁺, viscous, subgrid against the total 1 − y/δ), ⟨ν_t⟩/ν, the
+/// molecular and subgrid dissipation and, on the hybrid collision, σ's row mean and minimum
+/// ([`ChannelStats`]: which are exact and which estimates); u′'s streamwise spectrum at the rows
+/// nearest y⁺ 48 and the centreline, averaged over z and the window's snapshots; and on the hybrid
+/// collision the scheme's own viscosity at k_x Δx 1.5, 1.8, 2.1 and the spectrum's premultiplied
+/// peak ([`han_scheme`]), beside the subgrid ⟨ν_t⟩/ν, so a pass is not credited to the subgrid
+/// model when the collision's filter did the work. Each run writes a JSON record
+/// `han-<setup>-<case>-<wall>.json` into `FIELDCRAFT_STUDY_RECORDS` (a directory) when set. Set
+/// `FIELDCRAFT_HAN` to a case (`A20`, `A40`, `B40`, `B80`), several separated by commas, or `1`
+/// for all; `_BB=0` skips the controls; `FIELDCRAFT_HAN_CPU=1` runs on the CPU in double
+/// precision; `FIELDCRAFT_HAN_START` and `FIELDCRAFT_HAN_END` (δ/u_τ, 20 and 150) shorten the
+/// discarded start and the run for a smoke test (a run shorter than the protocol is not a result).
 #[test]
 #[ignore = "hours, GPU: set FIELDCRAFT_HAN=A20,A40,B40 (docs/verification.md, \"Long studies\")"]
 fn study_han_ooka_and_kikumoto_s_wall_function_bounce() {
@@ -2895,6 +3305,23 @@ fn study_han_ooka_and_kikumoto_s_wall_function_bounce() {
         println!("Han et al.'s channel runs only with FIELDCRAFT_HAN set (hours, GPU): skipped");
         return;
     };
+    let setups: Vec<HanSetup> = match std::env::var("FIELDCRAFT_HAN_SETUP").as_deref() {
+        Err(_) => vec![HanSetup::Paper],
+        Ok("all") => HAN_SETUPS.to_vec(),
+        Ok(list) => list
+            .split(',')
+            .map(|s| {
+                HAN_SETUPS
+                    .into_iter()
+                    .find(|h| h.name() == s.trim())
+                    .unwrap_or_else(|| panic!("FIELDCRAFT_HAN_SETUP: no set-up `{s}` ({} or all)", HAN_SETUPS.map(HanSetup::name).join(", ")))
+            })
+            .collect(),
+    };
+    let time = |var: &str, default: f64| {
+        std::env::var(var).ok().and_then(|v| v.parse::<f64>().ok()).filter(|t| t.is_finite() && *t >= 0.0).unwrap_or(default)
+    };
+    let times = (time("FIELDCRAFT_HAN_START", 20.0), time("FIELDCRAFT_HAN_END", 150.0));
     let cpu = std::env::var_os("FIELDCRAFT_HAN_CPU").is_some();
     let controls = std::env::var("FIELDCRAFT_HAN_BB").map_or(true, |v| v != "0");
     let records = std::env::var_os("FIELDCRAFT_STUDY_RECORDS").map(std::path::PathBuf::from);
@@ -2905,73 +3332,170 @@ fn study_han_ooka_and_kikumoto_s_wall_function_bounce() {
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
     let mut failed = Vec::new();
     for case in HAN_CASES.iter().filter(|c| which == "1" || which.split(',').any(|w| w == c.name)) {
-        for wfb in [true, false].into_iter().filter(|w| *w || controls) {
-            let kind = if wfb { "WFB" } else { "BB" };
-            let (paper_eps, paper_b) = if wfb { case.wfb } else { case.bb };
-            let Some(result) = han_channel(case, wfb, cpu) else { return };
-            let r = match result {
-                Ok(r) => r,
-                Err(e) => {
-                    println!("Han {} {kind}: {e}", case.name);
-                    failed.push(format!("{} {kind}: {e}", case.name));
-                    continue;
+        for &setup in &setups {
+            let label = setup.name();
+            for wfb in [true, false].into_iter().filter(|w| *w || controls) {
+                let kind = if wfb { "WFB" } else { "BB" };
+                let (paper_eps, paper_b) = if wfb { case.wfb } else { case.bb };
+                let Some(result) = han_channel(case, setup, wfb, cpu, times) else { return };
+                let r = match result {
+                    Ok(r) => r,
+                    Err(e) => {
+                        println!("Han {} {kind} [{label}]: {e}", case.name);
+                        failed.push(format!("{} {kind} [{label}]: {e}", case.name));
+                        continue;
+                    }
+                };
+                han_report(case, setup, wfb, cpu, &r, records.as_deref(), commit.as_deref());
+                // The paper's set-up is gated on both walls (as recorded); the hybrid ones on WFB.
+                let gated = setup.gated(wfb);
+                let eps_ok = (r.eps[2] / paper_eps[2] - 1.0).abs() <= 0.15;
+                let b_ok = (r.b / paper_b - 1.0).abs() <= 0.15;
+                if gated && !(eps_ok && b_ok) {
+                    failed.push(format!(
+                        "{} {kind} [{label}]: ε {:.3} (theirs {}), b {:.2} (theirs {})",
+                        case.name, r.eps[2], paper_eps[2], r.b, paper_b
+                    ));
                 }
-            };
-            let cf = 2.0 / (r.bulk * r.bulk);
-            let cf_dean = 0.073 * (2.0 * r.bulk * case.re_tau).powf(-0.25);
-            let cf_dns = (case.re_tau == 2003.0).then(|| 2.0 / (HJ_2000_BULK * HJ_2000_BULK));
-            let eps_ok = (r.eps[2] / paper_eps[2] - 1.0).abs() <= 0.15;
-            let b_ok = (r.b / paper_b - 1.0).abs() <= 0.15;
-            println!(
-                "Han {} {kind} ({}, Re_τ {}, {}/δ): ε_u⁺ buffer {:.3} (theirs {}), log {:.3} ({}), whole {:.3} ({}, {:+.0} %); b {:.2} ({}, {:+.0} %); U_b⁺ {:.3}, C_f {cf:.4e} ({:+.1} % on Dean{}); walls carry {:.4} of the body force; Mach {:.4} (theirs {}), τ {:.6}; averaged {:.0}–{:.0} δ/u_τ, {}; {} steps, {:.0} s",
-                case.name,
-                if cpu { "CPU, f64" } else { "GPU, f32" },
-                case.re_tau,
-                case.n,
-                r.eps[0],
-                paper_eps[0],
-                r.eps[1],
-                paper_eps[1],
-                r.eps[2],
-                paper_eps[2],
-                100.0 * (r.eps[2] / paper_eps[2] - 1.0),
-                r.b,
-                paper_b,
-                100.0 * (r.b / paper_b - 1.0),
-                r.bulk,
-                100.0 * (cf / cf_dean - 1.0),
-                cf_dns.map_or(String::new(), |d| format!(", {:+.1} % on Hoyas & Jiménez", 100.0 * (cf / d - 1.0))),
-                r.carried,
-                r.mach,
-                case.mach,
-                r.tau,
-                r.window.0,
-                r.window.1,
-                r.stop,
-                r.steps,
-                r.seconds
-            );
-            for ((y, u), rms) in r.profile.iter().zip(&r.rms) {
-                println!("    y/δ {y:.4} y⁺ {:7.1}: U⁺ {u:7.3}, Spalding {:7.3}, u′rms⁺ {rms:.3}", y * case.re_tau, spalding_u_plus(y * case.re_tau));
-            }
-            if let Some(dir) = &records {
-                let record = serde_json::json!({
-                    "study": "han_ooka_kikumoto_2021", "case": case.name, "wall": kind, "re_tau": case.re_tau, "cells_per_delta": case.n,
-                    "backend": if cpu { "cpu-f64" } else { "gpu-f32" }, "commit": commit,
-                    "profile": r.profile.iter().zip(&r.rms).map(|((y, u), rms)| serde_json::json!({"y": y, "y_plus": y * case.re_tau, "u_plus": u, "u_rms_plus": rms})).collect::<Vec<_>>(),
-                    "u_b_plus": r.bulk, "cf_carried": cf, "cf_dean": cf_dean, "cf_dns": cf_dns, "carried_over_body_force": r.carried,
-                    "eps": {"buffer": r.eps[0], "log": r.eps[1], "whole": r.eps[2]}, "eps_paper": paper_eps, "b": r.b, "b_paper": paper_b,
-                    "mach": r.mach, "mach_paper": case.mach, "tau": r.tau, "window": [r.window.0, r.window.1], "stop": r.stop, "steps": r.steps, "seconds": r.seconds,
-                });
-                let _ = std::fs::create_dir_all(dir);
-                let _ = std::fs::write(dir.join(format!("han-{}-{kind}.json", case.name)), serde_json::to_string_pretty(&record).unwrap_or_default());
-            }
-            if !(eps_ok && b_ok) {
-                failed.push(format!("{} {kind}: ε {:.3} (theirs {}), b {:.2} (theirs {})", case.name, r.eps[2], paper_eps[2], r.b, paper_b));
             }
         }
     }
     assert!(failed.is_empty(), "outside Han et al.'s results by more than 15 %: {failed:?}");
+}
+
+/// Print one Han et al. run and write its record (see [`study_han_ooka_and_kikumoto_s_wall_function_bounce`]).
+fn han_report(case: &HanCase, setup: HanSetup, wfb: bool, cpu: bool, r: &HanResult, records: Option<&std::path::Path>, commit: Option<&str>) {
+    let kind = if wfb { "WFB" } else { "BB" };
+    let label = setup.name();
+    let (paper_eps, paper_b) = if wfb { case.wfb } else { case.bb };
+    let cf = 2.0 / (r.bulk * r.bulk);
+    let cf_dean = 0.073 * (2.0 * r.bulk * case.re_tau).powf(-0.25);
+    let cf_dns = (case.re_tau == 2003.0).then(|| 2.0 / (HJ_2000_BULK * HJ_2000_BULK));
+    let nu = (r.tau - 0.5) / 3.0;
+    let hybrid = setup.sigma().is_some();
+    println!(
+        "Han {} {kind} [{label}] ({}, Re_τ {}, {}/δ): ε_u⁺ buffer {:.3} (theirs {}), log {:.3} ({}), whole {:.3} ({}, {:+.0} %); b {:.2} ({}, {:+.0} %); U_b⁺ {:.3}, C_f {cf:.4e} ({:+.1} % on Dean{}); walls carry {:.4} of the body force; Mach {:.4} (theirs {}), τ {:.6}; averaged {:.0}–{:.0} δ/u_τ ({} snapshots), {}; {} steps, {:.0} s",
+        case.name,
+        if cpu { "CPU, f64" } else { "GPU, f32" },
+        case.re_tau,
+        case.n,
+        r.eps[0],
+        paper_eps[0],
+        r.eps[1],
+        paper_eps[1],
+        r.eps[2],
+        paper_eps[2],
+        100.0 * (r.eps[2] / paper_eps[2] - 1.0),
+        r.b,
+        paper_b,
+        100.0 * (r.b / paper_b - 1.0),
+        r.bulk,
+        100.0 * (cf / cf_dean - 1.0),
+        cf_dns.map_or(String::new(), |d| format!(", {:+.1} % on Hoyas & Jiménez", 100.0 * (cf / d - 1.0))),
+        r.carried,
+        r.mach,
+        case.mach,
+        r.tau,
+        r.window.0,
+        r.window.1,
+        r.snapshots,
+        r.stop,
+        r.steps,
+        r.seconds
+    );
+    let (nu_t_source, estimate) = setup.nu_t_source();
+    let applied = if setup.subgrid_applied() { "" } else { " (ν_t sets σ only, not in τ)" };
+    println!("  Han {} {kind} [{label}] per row{estimate}{applied}: total 1 − y/δ = −⟨u′v′⟩⁺ + viscous + subgrid + residual", case.name);
+    for row in &r.rows {
+        let yp = row.y * case.re_tau;
+        let (subgrid, residual) = row.closure(setup.subgrid_applied());
+        let total = 1.0 - row.y;
+        let sigma = if hybrid { format!(", σ mean {:.4} min {:.4}", row.sigma.0, row.sigma.1) } else { String::new() };
+        println!(
+            "    y/δ {:.4} y⁺ {yp:7.1}: U⁺ {:7.3} (Spalding {:7.3}), rms⁺ u′ {:.3} v′ {:.3} w′ {:.3}; {total:.3} = {:.3} + {:.3} + {subgrid:.3} + {:.3}; ν_t/ν {:.3}; ε⁺ molecular {:.3e} subgrid {:.3e}{sigma}",
+            row.y,
+            row.u,
+            spalding_u_plus(yp),
+            row.rms[0],
+            row.rms[1],
+            row.rms[2],
+            row.resolved,
+            row.viscous,
+            residual,
+            row.nu_t,
+            row.eps_molecular,
+            row.eps_subgrid,
+        );
+    }
+    let k_delta = |m: usize| 2.0 * std::f64::consts::PI * m as f64 / r.lx;
+    let k_dx = |m: usize| 2.0 * std::f64::consts::PI * m as f64 / r.nx as f64;
+    let mut scheme_records = Vec::new();
+    for s in &r.spectra {
+        let peak = s.peak();
+        println!(
+            "  Han {} {kind} [{label}] E_uu⁺(k_x) at y⁺ {:.0} (row {}): premultiplied peak at k_x δ {:.1} (k_x Δx {:.2}), {:.0} % of ⟨u′²⟩ above k_x Δx π/2; k_x δ = {:.4} m: [{}]",
+            case.name,
+            s.y_plus,
+            s.row,
+            k_delta(peak),
+            k_dx(peak),
+            100.0 * s.upper_share(r.nx),
+            k_delta(1),
+            s.energy.iter().map(|e| format!("{e:.3e}")).collect::<Vec<_>>().join(", ")
+        );
+        let Some(row) = r.rows.get(s.row) else { continue };
+        if let Some((tau_bar, sigma, at)) = han_scheme(setup, row, k_dx(peak), nu) {
+            let list: Vec<String> = at.iter().map(|[k, v, v1]| format!("k_x Δx {k:.2}: {v:.3} (σ 1: {v1:.3})")).collect();
+            println!("    scheme's ν_s/ν at τ̄ {tau_bar:.6}, σ {sigma:.4}: {}; subgrid ⟨ν_t⟩/ν {:.3}{applied}", list.join(", "), row.nu_t);
+            scheme_records.push(serde_json::json!({
+                "row": s.row, "y_plus": s.y_plus, "tau_bar": tau_bar, "sigma": sigma, "nu_t_over_nu": row.nu_t, "subgrid_applied": setup.subgrid_applied(),
+                "at": at.iter().map(|[k, v, v1]| serde_json::json!({"k_x_dx": k, "nu_scheme_over_nu": v, "nu_scheme_over_nu_sigma_one": v1})).collect::<Vec<_>>(),
+            }));
+        }
+    }
+    let Some(dir) = records else { return };
+    let rows: Vec<_> = r
+        .rows
+        .iter()
+        .map(|row| {
+            let (_, residual) = row.closure(setup.subgrid_applied());
+            serde_json::json!({
+                "y": row.y, "y_plus": row.y * case.re_tau, "u_plus": row.u, "spalding": spalding_u_plus(row.y * case.re_tau),
+                "u_rms_plus": row.rms[0], "v_rms_plus": row.rms[1], "w_rms_plus": row.rms[2],
+                "resolved_shear": row.resolved, "viscous_shear": row.viscous, "subgrid_shear": row.subgrid, "total_shear": 1.0 - row.y,
+                "residual": residual,
+                "nu_t_over_nu": row.nu_t, "eps_molecular_plus": row.eps_molecular, "eps_subgrid_plus": row.eps_subgrid,
+                "sigma_mean": hybrid.then_some(row.sigma.0), "sigma_min": hybrid.then_some(row.sigma.1),
+            })
+        })
+        .collect();
+    let spectra: Vec<_> = r
+        .spectra
+        .iter()
+        .map(|s| {
+            serde_json::json!({
+                "row": s.row, "y_plus": s.y_plus, "k_x_delta": (0..s.energy.len()).map(k_delta).collect::<Vec<_>>(),
+                "k_x_dx": (0..s.energy.len()).map(k_dx).collect::<Vec<_>>(), "e_uu_plus": s.energy,
+                "premultiplied_peak_k_x_delta": k_delta(s.peak()), "upper_half_share": s.upper_share(r.nx),
+            })
+        })
+        .collect();
+    let turbulence = setup.turbulence(wfb);
+    let record = serde_json::json!({
+        "study": "han_ooka_kikumoto_2021", "setup": label, "case": case.name, "wall": kind, "re_tau": case.re_tau, "cells_per_delta": case.n,
+        "collision": format!("{:?}", setup.collision()), "sigma": setup.sigma().map(|s| format!("{s:?}")),
+        "turbulence": serde_json::to_value(turbulence).ok(), "subgrid_applied": setup.subgrid_applied(), "nu_t_source": nu_t_source,
+        "sigma_source": (!setup.subgrid_applied()).then_some("fieldcraft_lbm::hrr::dynamic_sigma on the readback velocity (no per-cell readback on the device)"),
+        "backend": if cpu { "cpu-f64" } else { "gpu-f32" }, "commit": commit,
+        "profile": r.profile.iter().zip(&r.rms).map(|((y, u), rms)| serde_json::json!({"y": y, "y_plus": y * case.re_tau, "u_plus": u, "u_rms_plus": rms})).collect::<Vec<_>>(),
+        "rows": rows, "spectra": spectra, "scheme": scheme_records, "snapshots": r.snapshots,
+        "u_b_plus": r.bulk, "cf_carried": cf, "cf_dean": cf_dean, "cf_dns": cf_dns, "carried_over_body_force": r.carried,
+        "eps": {"buffer": r.eps[0], "log": r.eps[1], "whole": r.eps[2]}, "eps_paper": paper_eps, "b": r.b, "b_paper": paper_b,
+        "gated": setup.gated(wfb),
+        "mach": r.mach, "mach_paper": case.mach, "tau": r.tau, "window": [r.window.0, r.window.1], "stop": r.stop, "steps": r.steps, "seconds": r.seconds,
+    });
+    let _ = std::fs::create_dir_all(dir);
+    let _ = std::fs::write(dir.join(format!("han-{label}-{}-{kind}.json", case.name)), serde_json::to_string_pretty(&record).unwrap_or_default());
 }
 
 /// The stepper of a study: the GPU flow when there is one, else the CPU flow.
@@ -2980,6 +3504,71 @@ fn backend<'a>(device: &'a mut Option<Gpu>, flow: &'a mut Flow) -> &'a mut dyn B
         Some(g) => &mut **g,
         None => flow,
     }
+}
+
+/// The Han et al. channel's statistics ([`ChannelStats`]) on a field they can be worked out for:
+/// u = U(y) + a sin(2π · 3 x / L_x) with U symmetric about the centreline, v = w = 0, two
+/// snapshots. u′'s spectrum holds a²/2 at m = 3 and nothing else; the row means and rms are
+/// the field's, the folded viscous stress the lower half's ∂U⁺/∂y⁺; −⟨u′v′⟩ vanishes; only u
+/// varies, so the gradient has rank one and Vreman's ν_t vanishes, and dynamic σ is 1.
+/// Smagorinsky's estimate is positive, and the scheme's term behaves as its map says.
+#[test]
+fn han_s_channel_statistics_read_a_known_field() {
+    use std::f64::consts::PI;
+    let (nx, ny, nz) = (12usize, 8usize, 3usize);
+    let grid = fieldcraft_lbm::voxel::Grid { origin: [0.0; 3], spacing: 0.25, cells: [nx, ny, nz] };
+    let (re_tau, vs, nu, a) = (100.0, 2.0, 1e-3, 0.01);
+    let profile = |j: usize| 0.05 * (j as f64 + 0.5) * (ny as f64 - j as f64 - 0.5);
+    let velocity: Vec<[f64; 3]> = (0..grid.len())
+        .map(|c| {
+            let [i, j, _] = grid.coords(c);
+            [profile(j) + a * (2.0 * PI * 3.0 * i as f64 / nx as f64).sin(), 0.0, 0.0]
+        })
+        .collect();
+    let vreman = Turbulence::Vreman { constant: 0.18, prandtl: 0.9, wall_model: None };
+    let mut stats = ChannelStats::new(grid, vs, re_tau, nu, vreman, Some(HrrSigma::Dynamic));
+    stats.add(&velocity);
+    stats.add(&velocity);
+    let (rows, spectra) = stats.finish();
+    assert_eq!(rows.len(), ny / 2);
+    // dx = 2 / ny = 0.25: y⁺ of rows 0 … 3 is 12.5, 37.5, 62.5, 87.5; 37.5 and 62.5 are both
+    // 10.5 and 14.5 from 48, so row 1, and the centreline row 3.
+    assert_eq!(spectra.iter().map(|s| s.row).collect::<Vec<_>>(), vec![1, 3]);
+    for s in &spectra {
+        assert_eq!(s.energy.len(), nx / 2 + 1);
+        let want = 0.5 * (a * vs) * (a * vs);
+        for (m, e) in s.energy.iter().enumerate() {
+            let expected = if m == 3 { want } else { 0.0 };
+            assert!((e - expected).abs() < 1e-12 * want, "m {m}: {e} vs {expected}");
+        }
+        assert_eq!(s.peak(), 3);
+        assert!(s.upper_share(nx) < 1e-9, "m = 3 is k Δx π/2 exactly, not above it");
+    }
+    for (j, row) in rows.iter().enumerate() {
+        assert!((row.u - profile(j) * vs).abs() < 1e-12, "{j}: {}", row.u);
+        assert!((row.rms[0] - a * vs / 2f64.sqrt()).abs() < 1e-12 && row.rms[1] == 0.0 && row.rms[2] == 0.0);
+        assert!(row.resolved.abs() < 1e-15);
+        // Only u varies: α has one nonzero column, so Vreman's ν_t is 0 and dynamic σ 1.
+        assert!(row.nu_t == 0.0 && row.eps_subgrid == 0.0 && row.subgrid == 0.0, "{j}: {}", row.nu_t);
+        assert_eq!(row.sigma, (1.0, 1.0));
+        // The viscous stress: the lower half's ∂U⁺/∂y⁺, the upper half's mirrored (centred
+        // differences, one-sided at the wall row).
+        let dudy = if j == 0 { profile(1) - profile(0) } else { 0.5 * (profile(j + 1) - profile(j - 1)) };
+        let to_plus = vs / (0.25 * re_tau);
+        assert!((row.viscous - dudy * to_plus).abs() < 1e-12, "{j}: {} vs {}", row.viscous, dudy * to_plus);
+        assert!(row.eps_molecular > 0.0);
+    }
+    // Smagorinsky's estimate damps towards the wall and is positive in a shear.
+    let smagorinsky = Turbulence::Smagorinsky { constant: 0.1, prandtl: 0.9, van_driest: Some(26.0), wall_model: None };
+    let mut stats = ChannelStats::new(grid, vs, re_tau, nu, smagorinsky, None);
+    stats.add(&velocity);
+    let (rows, _) = stats.finish();
+    assert!(rows[0].nu_t > 0.0 && rows.iter().all(|r| r.sigma == (1.0, 1.0)));
+    // The scheme's term: σ = 1 at small k is the regularised collision's own (near 0), σ < 1 adds.
+    let tau = 0.50015;
+    let nu = (tau - 0.5) / 3.0;
+    assert!(scheme_viscosity(0.05, tau, 1.0, nu).abs() < 1e-3);
+    assert!(scheme_viscosity(1.8, tau, 0.99, nu) > scheme_viscosity(1.8, tau, 1.0, nu));
 }
 
 /// Han et al.'s measures on Spalding's own profile: ε_u⁺ vanishes, and b is 5.44 at Re_τ 2003 on

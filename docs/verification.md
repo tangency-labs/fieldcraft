@@ -275,6 +275,55 @@ clean MRT result at C_s 0.1 is not explained by anything they publish (the 2021 
 wall-function bounce on the hybrid recursive regularised collision (Jacob, Malaspinas & Sagaut
 2018), as a labelled change of collision.
 
+### Wall-function bounce, method two, on the hybrid collision (how to run)
+
+The same channel, cases and walls on the hybrid recursive regularised collision (J. Jacob,
+O. Malaspinas, P. Sagaut, J. Turbul. 19:1051, 2018), a labelled change of collision.
+`FIELDCRAFT_HAN_SETUP` picks the configurations, comma-separated or `all` (`paper` when unset,
+the run above):
+
+| set-up | collision | subgrid model |
+|---|---|---|
+| `paper` | MRT | Smagorinsky C_s 0.1, Van Driest A⁺ 26 |
+| `hrr-vreman` | hrr, σ 0.99 | Vreman C_s 0.18 (Jacob et al.'s explicit LES, case 3) |
+| `hrr-dynamic` | hrr, dynamic σ | Vreman C_s 0.18, which only sets σ (their case 4) |
+| `hrr-smagorinsky` | hrr, σ 0.99 | Smagorinsky C_s 0.1, Van Driest A⁺ 26 (Han's model on the hybrid collision, an extra row) |
+
+WFB is the model's `wall_model: spalding_bounce`, BB no wall model. Gate (fixed in review):
+ε_u⁺ over the whole channel and b within 15 % of Han et al.'s Tables 2 and 3, on the WFB runs;
+the BB runs are reported (`paper` keeps its gate on both walls).
+
+```
+FIELDCRAFT_HAN=A20,A40 FIELDCRAFT_HAN_SETUP=hrr-vreman,hrr-dynamic,hrr-smagorinsky \
+FIELDCRAFT_STUDY_RECORDS=<dir> \
+  cargo test --release -p fieldcraft-lbm-gpu --test verification study_han -- --ignored --nocapture
+```
+
+Every run prints and records (`<dir>/han-<setup>-<case>-<wall>.json`), beside ε_u⁺, b, U_b⁺,
+C_f and the walls' share of the body force, from a velocity readback every 0.05 δ/u_τ of the
+window:
+
+- per row of the folded half channel: U⁺, u′, v′, w′ rms⁺, the shear budget −⟨u′v′⟩⁺ +
+  viscous + subgrid against the total 1 − y/δ, ⟨ν_t⟩/ν, the molecular ⟨2ν S:S⟩⁺ and subgrid
+  ⟨2ν_t S:S⟩⁺ dissipation, and with dynamic σ its row mean and minimum. Gradients are the
+  library's own finite differences (`fieldcraft_lbm::hrr::gradient`, the device's stencil).
+  Vreman's ν_t is the model's own formula (`fieldcraft_lbm::vreman::eddy_viscosity`) on the
+  readback; Smagorinsky's is an **estimate**, (C D Δx)² √(2 S:S) with Van Driest's D at the
+  nominal y⁺ (the device takes Hou's from each cell's flux, which no readback carries). Dynamic
+  σ is `fieldcraft_lbm::hrr::dynamic_sigma` on the readback (the device keeps no per-cell σ);
+  with it the subgrid terms are the model's, not applied to τ, and left out of the budget;
+- u′'s streamwise spectrum E_uu⁺(k_x) at the row nearest y⁺ 48 (both rows at a tie: y⁺ 40 and
+  56 at A40) and at the centreline, averaged over z, both halves and every snapshot, with the
+  premultiplied peak and the share above k_x Δx = π/2;
+- on the hybrid collision, the scheme's own viscosity ν_s/ν at k_x Δx 1.5, 1.8 and 2.1 (the
+  MRT run's band) and at the spectrum's premultiplied peak, at the row's τ̄ and σ and at σ = 1:
+  the exact decay of a transverse shear wave under the collision (the 2 × 2 map of
+  `crates/lbm/tests/common/mod.rs`, `exact_rate`) less ν̄ k², beside the subgrid ⟨ν_t⟩/ν, so a
+  pass is not credited to the subgrid model when the collision's filter did the work.
+
+`FIELDCRAFT_HAN_START` and `FIELDCRAFT_HAN_END` (δ/u_τ, default 20 and 150) shorten the discarded
+start and the run for a smoke test; a shortened run is not a result. Results: to be recorded here.
+
 ### Wall-modelled channel against Lee & Moser and Dean (#664, #749)
 
 Malaspinas & Sagaut's wall model with Musker's profile and the multiple-relaxation-time collision
