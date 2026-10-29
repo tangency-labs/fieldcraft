@@ -164,7 +164,7 @@ pub(crate) fn rebuild(doc: &Document) -> Result<Design> {
             Ok(names
                 .iter()
                 .enumerate()
-                .map(|(i, name)| Face { name: name.clone(), exact: naming::face_name_exact(b, i), members: Vec::new() })
+                .map(|(i, name)| Face { name: name.clone(), exact: naming::face_name_exact(b, i), members: Vec::new(), kept_surface: None })
                 .collect())
         })?;
         bodies.push(Shape { name: b.name.clone(), body: b.body.clone(), faces, face_map: Vec::new(), cuts: Vec::new() });
