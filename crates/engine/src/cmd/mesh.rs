@@ -225,9 +225,11 @@ pub(super) fn quality_options(p: &Value, max_tets: u64) -> Result<(QualityOption
 }
 
 /// The exact surfaces of a body's faces, for the quality stage's projections (none when the
-/// kernel cannot give them: the stage then keeps to the tessellation).
+/// kernel cannot give them: the stage then keeps to the tessellation). Projection keeps each
+/// face's own geometry ([`fieldcraft_geometry::Shape::projection_surfaces`]): an absorbed face's
+/// nodes snap to the pieces they lie on ([`pieces`]), not to the surface it was absorbed into.
 pub fn analytic_surfaces(shape: &fieldcraft_geometry::Shape) -> Vec<Option<AnalyticSurface>> {
-    shape.face_surfaces().unwrap_or_default().into_iter().map(|f| f.map(analytic_surface)).collect()
+    shape.projection_surfaces().unwrap_or_default().into_iter().map(|f| f.map(analytic_surface)).collect()
 }
 
 fn analytic_surface(f: fieldcraft_geometry::FaceSurface) -> AnalyticSurface {

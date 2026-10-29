@@ -553,7 +553,7 @@ pub(crate) fn mesh(ctxs: &[Ctx], prepared: &Prepared, refine: u32) -> Result<(Ra
             .and_then(|curve| {
                 curve.tags.iter().find_map(|&t| {
                     let (c, f) = prepared.face(ctxs, t)?;
-                    ctxs.get(c)?.brep.faces.get(f)?.surface
+                    ctxs.get(c)?.brep.faces.get(f)?.snap
                 })
             })
             .filter(|s| !matches!(s, Surface::Plane { .. }));

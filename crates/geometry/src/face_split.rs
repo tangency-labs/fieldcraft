@@ -104,9 +104,9 @@ impl Shape {
         let original = shape.faces.get(*a as usize).cloned().ok_or_else(|| Error::Invalid("no such face".into()))?;
         let members = if original.members.is_empty() { vec![original.name.clone()] } else { original.members.clone() };
         if let Some(f) = shape.faces.get_mut(*a as usize) {
-            *f = Face { name: an, exact: original.exact, members: members.clone() };
+            *f = Face { name: an, exact: original.exact, members: members.clone(), kept_surface: original.kept_surface };
         }
-        shape.faces.push(Face { name: bn, exact: original.exact, members });
+        shape.faces.push(Face { name: bn, exact: original.exact, members, kept_surface: original.kept_surface });
         shape.cuts.push(Cut { a: *a, b, point, normal: normal.map(|v| v / len) });
         // The plane must cross the face: both pieces have triangles.
         let mesh = shape.tessellate((self.size()? * EDGE_TOLERANCE).max(1e-4))?;

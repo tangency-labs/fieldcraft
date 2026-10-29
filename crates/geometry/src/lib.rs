@@ -84,7 +84,7 @@ pub struct Shape {
 }
 
 /// A B-rep face's persistent identity.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Face {
     /// Stable across rebuilds of the design: named after the feature and sketch curve that made
     /// the face (`F2:side:l4`, `F2:top`, …), not after its position in the body.
@@ -94,6 +94,11 @@ pub struct Face {
     pub exact: bool,
     /// A merged face's B-rep faces, by persistent name ([`virtual_faces`]); empty for a B-rep face.
     pub members: Vec<String>,
+    /// An absorbed face keeps the classification of the face it was absorbed into (#546): the
+    /// surface of the face a merge kept ([`Merge::into`]), however its other members lie. `None`
+    /// for a B-rep face or a merge that kept no face: the surface its members share decides, and
+    /// faces on different ones are free-form.
+    pub kept_surface: Option<FaceSurface>,
 }
 
 /// The analytic surface a B-rep face lies on, when it is one of the elementary kinds. Directions
@@ -206,10 +211,30 @@ impl Shape {
         }
     }
 
-    /// The analytic surface of each B-rep face, by face index (the [`SurfaceMesh::tri_face`]
-    /// tags): `None` for a free-form face. Meshers project nodes onto these surfaces. A merged
-    /// face has the surface its B-rep faces share, `None` when they lie on different ones.
+    /// The analytic surface each face belongs to, by face index (the [`SurfaceMesh::tri_face`]
+    /// tags): the classification the planners and the geometry inspection go by. A merged face
+    /// has the surface its B-rep faces share, `None` when they lie on different ones — except an
+    /// absorbed face, which keeps the surface of the face it was absorbed into (#546), however
+    /// its other members lie. What meshers project nodes onto is [`Shape::projection_surfaces`].
     pub fn face_surfaces(&self) -> Result<Vec<Option<FaceSurface>>> {
+        let brep = self.brep_face_surfaces()?;
+        let mut out = self.virtual_surfaces(brep)?;
+        for (v, face) in self.faces.iter().enumerate() {
+            if let Some(s) = face.kept_surface
+                && let Some(slot) = out.get_mut(v)
+            {
+                *slot = Some(s);
+            }
+        }
+        Ok(out)
+    }
+
+    /// The surfaces meshers project nodes onto, by face index: like [`Shape::face_surfaces`],
+    /// but a face keeps its own geometry — an absorbed face reports `None` (its nodes snap to
+    /// its triangles or, with [`Shape::tessellate_pieces`], to the surface of the piece each
+    /// triangle lies on), not the surface of the face it was absorbed into: nodes on the
+    /// absorbed piece do not lie on that one (PR #771).
+    pub fn projection_surfaces(&self) -> Result<Vec<Option<FaceSurface>>> {
         let brep = self.brep_face_surfaces()?;
         self.virtual_surfaces(brep)
     }

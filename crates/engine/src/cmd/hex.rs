@@ -68,12 +68,20 @@ fn diagonal(lo: [f64; 3], hi: [f64; 3]) -> f64 {
     (0..3).map(|i| (hi[i] - lo[i]).powi(2)).sum::<f64>().sqrt()
 }
 
+/// One body's hex-meshing input from its shape: the boundary tessellated within `tolerance`
+/// (defaulting to [`DEFAULT_RELATIVE_TOLERANCE`] of the bounding-box diagonal, refused below
+/// [`MIN_RELATIVE_TOLERANCE`]), each face's classification surface, and the B-rep pieces of
+/// its merged faces.
 pub(super) fn shape_input(shape: &Shape, tolerance: Option<f64>) -> Result<Input<'static>> {
     let diag = shape.size()?;
     let tol = tolerance.unwrap_or(DEFAULT_RELATIVE_TOLERANCE * diag);
     if tol < MIN_RELATIVE_TOLERANCE * diag {
         return Err(crate::units::below_diagonal("tolerance", MIN_RELATIVE_TOLERANCE, diag, &format!("body `{}`'s", shape.name)));
     }
+    // Classification surfaces ([`Shape::face_surfaces`]): the hex mesher's B-rep goes by them
+    // for its frames, roles and planar faces, so an absorbed face keeps the surface of the face
+    // it was absorbed into (#546). Projection needs no override of its own: the mesher snaps a
+    // face's nodes onto a claimed surface only where the face's own vertices lie on it.
     let surfaces = shape.face_surfaces()?.into_iter().map(|f| f.map(analytic)).collect();
     let face_names = shape.faces().iter().map(|f| f.name.clone()).collect();
     let (mesh, pieces) = shape.tessellate_pieces(tol)?;

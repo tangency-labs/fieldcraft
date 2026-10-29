@@ -279,9 +279,9 @@ const MAX_REFINE: u32 = 2;
 pub(crate) const RELATIVE_TOLERANCE: f64 = 1e-6; // unit-factors: relative to the diagonal
 
 /// Mesh the solid bounded by `surface` with hexahedra. `faces[tag]` is the analytic surface of
-/// B-rep face `tag` when known (exact node placement; free-form faces use the triangles);
-/// `field` sets the element size. A body no structured method fits is [`Error::Unsupported`]
-/// with the reasons.
+/// B-rep face `tag` when known (what the face classifies as; its nodes snap onto it where its
+/// own vertices lie on it, else to its triangles); `field` sets the element size. A body no
+/// structured method fits is [`Error::Unsupported`] with the reasons.
 pub fn hex_mesh(surface: &BoundarySurface, faces: &[Option<Surface>], field: &dyn SizeField, opts: &HexOptions) -> Result<HexMesh> {
     if !(opts.chordal_tolerance >= 0.0 && opts.chordal_tolerance.is_finite()) {
         return Err(Error::invalid(crate::message![
@@ -744,10 +744,12 @@ fn quad_shape(quadratic: bool, r: f64, s: f64) -> [[f64; 8]; 3] {
 /// Projection rounds for a point on several faces (alternating projections onto each).
 const PROJECTION_ROUNDS: usize = 24;
 
-/// The closest point to `p` on B-rep face index `f`: its analytic surface, or its triangles.
+/// The closest point to `p` on B-rep face index `f`: the surface its own vertices lie on, or its
+/// triangles. Not the claimed surface when the face is not on it (an absorbed face's kept
+/// surface is classification only, #546): its nodes snap to its own geometry.
 pub(crate) fn project_to_face(ctx: &Ctx, f: usize, p: P) -> Option<P> {
     let face = ctx.brep.faces.get(f)?;
-    if let Some(q) = face.surface.and_then(|s| s.project(p)) {
+    if let Some(q) = face.snap.and_then(|s| s.project(p)) {
         return Some(q);
     }
     let tag = face.id;

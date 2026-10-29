@@ -8,7 +8,11 @@
 //! edge they leave split in pieces along a neighbour is joined into one), and its surface is the
 //! one its B-rep faces share (none when they lie on different surfaces: the projection mesher and
 //! node relaxation then keep to each B-rep piece's own surface, [`Shape::tessellate_pieces`],
-//! the other meshers to the tessellation). The B-rep itself is unchanged.
+//! the other meshers to the tessellation) — except that an absorb keeps the surface of the face
+//! it was absorbed into, however the absorbed one lies (#546): the cleaning must not cost the
+//! neighbour its classification ([`Shape::face_surfaces`]; projection,
+//! [`Shape::projection_surfaces`], keeps each piece's own, PR #771). The B-rep itself is
+//! unchanged.
 //!
 //! Merges live in the FieldCraft model, by persistent face names, and are applied again after the
 //! partitions whenever the design is opened, so an edit of the design followed by a re-open
@@ -232,6 +236,13 @@ impl Shape {
             return Err(Error::Invalid("a merge needs two or more faces".into()));
         }
         self.connected(&members)?;
+        // An absorb keeps the face it is named after: its classification survives the merge
+        // (#546) even where the other members lie on different surfaces. A merge that keeps no
+        // face folds its members' surfaces as before.
+        let kept_surface = match members.iter().copied().find(|&m| self.faces.get(m as usize).is_some_and(|f| f.name == name)) {
+            Some(m) => self.face_surfaces()?.get(m as usize).copied().flatten(),
+            None => None,
+        };
         // The faces left, the merged one where its first face was; the old index → the new one.
         let mut kept: Vec<Face> = Vec::with_capacity(self.faces.len());
         let mut renumber = Vec::with_capacity(self.faces.len());
@@ -254,7 +265,7 @@ impl Shape {
                 None => {
                     merged = Some(index);
                     renumber.push(index);
-                    kept.push(Face { name: name.to_string(), exact: f.exact, members: members_of(f) });
+                    kept.push(Face { name: name.to_string(), exact: f.exact, members: members_of(f), kept_surface });
                 }
             }
         }
@@ -369,6 +380,9 @@ impl Shape {
                 };
             }
         }
+        // An absorbed face's kept surface is classification ([`Shape::face_surfaces`]) only:
+        // projection ([`Shape::projection_surfaces`]) keeps the fold's verdict, so the mesher
+        // snaps the face's nodes to its own geometry (PR #771).
         Ok(out.into_iter().map(Option::flatten).collect())
     }
 
@@ -633,5 +647,83 @@ mod tests {
         assert_eq!(b.faces().len(), 7);
         assert!(b.face_index(&hole[1]).is_some() && b.face_index(&hole[0]).is_none());
         assert!(b.absorbing_neighbour("nope").is_err());
+    }
+
+    /// An absorbed face keeps the classification of the face it was absorbed into (#546): the
+    /// hole's halves merged into the top plane leave one planar face, not a free-form one, so the
+    /// meshers keep the route they had before the absorb. A plain merge of the same faces stays
+    /// free-form: its faces lie on different surfaces and no face was kept.
+    #[test]
+    fn an_absorbed_face_keeps_the_surface_of_the_face_absorbed_into() {
+        let d = plate();
+        let body = d.bodies[0].name.clone();
+        let hole = halves(&d);
+        let top = d.bodies[0]
+            .face_surfaces()
+            .unwrap()
+            .iter()
+            .zip(&d.bodies[0].faces().iter().map(|f| f.name.clone()).collect::<Vec<_>>())
+            .find(|(s, _)| matches!(s, Some(FaceSurface::Plane { normal, .. }) if normal[2] > 0.5))
+            .map(|(_, n)| n.clone())
+            .unwrap();
+        // First absorb the hole's halves into one another (one cylindrical face), that face into
+        // the top plane: the chain ends planar.
+        let d = d
+            .merged(&[Merge { name: "Hole".into(), body: body.clone(), faces: hole, into: None }])
+            .unwrap()
+            .merged(&[Merge { name: "A".into(), body: body.clone(), faces: vec!["merge:Hole".into(), top.clone()], into: Some(top.clone()) }])
+            .unwrap();
+        assert!(d.errors.is_empty(), "{:?}", d.errors);
+        let b = &d.bodies[0];
+        let f = b.face_index(&top).unwrap();
+        assert!(matches!(b.face_surfaces().unwrap()[f as usize], Some(FaceSurface::Plane { .. })), "{:?}", b.face_surfaces().unwrap()[f as usize]);
+        // The same two merges without a face kept stay free-form: a plain merge of a cylinder and
+        // a plane lies on no one surface.
+        let plain = plate()
+            .merged(&[Merge { name: "Hole".into(), body: body.clone(), faces: halves(&plate()), into: None }])
+            .unwrap()
+            .merged(&[Merge { name: "A".into(), body, faces: vec!["merge:Hole".into(), top], into: None }])
+            .unwrap();
+        assert!(plain.errors.is_empty(), "{:?}", plain.errors);
+        let f = plain.bodies[0].face_index("merge:A").unwrap();
+        assert_eq!(plain.bodies[0].face_surfaces().unwrap()[f as usize], None);
+    }
+
+    /// Projection keeps the absorbed face's own geometry (PR #771): the face absorbed into the
+    /// top plane classifies as that plane, but reports no surface of its own — the mesher snaps
+    /// its nodes to its pieces (the cylinder half and the plane), not to the plane it was
+    /// absorbed into, which its nodes on the cylinder half do not lie on. Faces on one surface
+    /// report it to both.
+    #[test]
+    fn an_absorbed_face_projects_onto_its_own_geometry() {
+        let d = plate();
+        let body = d.bodies[0].name.clone();
+        let hole = halves(&d);
+        let top = d.bodies[0]
+            .face_surfaces()
+            .unwrap()
+            .iter()
+            .zip(&d.bodies[0].faces().iter().map(|f| f.name.clone()).collect::<Vec<_>>())
+            .find(|(s, _)| matches!(s, Some(FaceSurface::Plane { normal, .. }) if normal[2] > 0.5))
+            .map(|(_, n)| n.clone())
+            .unwrap();
+        let d = d
+            .merged(&[Merge { name: "Hole".into(), body: body.clone(), faces: hole, into: None }])
+            .unwrap()
+            .merged(&[Merge { name: "A".into(), body, faces: vec!["merge:Hole".into(), top.clone()], into: Some(top.clone()) }])
+            .unwrap();
+        let b = &d.bodies[0];
+        let f = b.face_index(&top).unwrap();
+        assert!(matches!(b.face_surfaces().unwrap()[f as usize], Some(FaceSurface::Plane { .. })));
+        assert_eq!(b.projection_surfaces().unwrap()[f as usize], None);
+        // A face that was not merged reports the same surface to both.
+        let bottom = b
+            .faces()
+            .iter()
+            .enumerate()
+            .find(|(i, _)| *i as u32 != f && matches!(b.face_surfaces().unwrap()[*i], Some(FaceSurface::Plane { normal, .. }) if normal[2] < -0.5))
+            .map(|(i, _)| i)
+            .unwrap();
+        assert_eq!(b.face_surfaces().unwrap()[bottom], b.projection_surfaces().unwrap()[bottom]);
     }
 }

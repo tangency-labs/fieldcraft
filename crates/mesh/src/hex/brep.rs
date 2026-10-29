@@ -37,6 +37,11 @@ pub(crate) struct Face {
     pub area: f64,
     /// Its analytic surface, when the geometry gave one.
     pub surface: Option<Surface>,
+    /// The surface its own vertices lie on: what nodes snap to (`project_to_face`). The claimed
+    /// [`Face::surface`] is classification — an absorbed face keeps the surface of the face it
+    /// was absorbed into (#546), which its vertices on the absorbed piece do not lie on — so it
+    /// snaps to its triangles instead.
+    pub snap: Option<Surface>,
     /// When the face is planar: a point and the outward unit normal.
     pub plane: Option<(P, P)>,
     /// Boundary loops: oriented edges `(edge, forward)` with the face on the left.
@@ -106,6 +111,11 @@ impl<'a> Brep<'a> {
         Self::build(surface, surfaces, Cow::Owned(tags), true)
     }
 
+    /// The topology of `surface` over the per-triangle face `tags`: a face per tag with its
+    /// claimed surface ([`Face::surface`], classification) and its vertex-verified snap target
+    /// ([`Face::snap`]), its plane, and the edges between the faces oriented as the
+    /// lower-indexed face traverses them. `composite` says the tags join smoothly meeting
+    /// faces into composite faces ([`Brep::composite`]).
     fn build(surface: &'a BoundarySurface, surfaces: &[Option<Surface>], tags: Cow<'a, [u32]>, composite: bool) -> Result<Self> {
         if tags.len() != surface.triangles().len() {
             return Err(Error::Failed("a face tag per triangle is needed".into()));
@@ -144,11 +154,15 @@ impl<'a> Brep<'a> {
             }
             verts.sort_unstable();
             verts.dedup();
-            let analytic =
-                if composite { composite_surface(surface, surfaces, tris, RELATIVE_ON_SURFACE * diagonal) } else { own_surface(surfaces, id) };
+            // What nodes snap to: the claimed surface only where the face's own vertices lie on
+            // it — the check a composite face's surface always passed. A claimed surface the
+            // face is not on (an absorbed face's kept surface, #546) is classification
+            // (`Face::surface`) only.
+            let snap = verified_surface(surface, surfaces, tris, RELATIVE_ON_SURFACE * diagonal);
+            let analytic = if composite { snap } else { own_surface(surfaces, id) };
             let normal = unit(nsum).unwrap_or([0.0; 3]);
             let plane = planarity(pts, &verts, normal, analytic, eps);
-            faces.push(Face { id, triangles: tris.clone(), vertices: verts, area, surface: analytic, plane, loops: Vec::new() });
+            faces.push(Face { id, triangles: tris.clone(), vertices: verts, area, surface: analytic, snap, plane, loops: Vec::new() });
         }
         let face_of = |t: u32| tags.get(t as usize).and_then(|f| index.get(f)).copied();
         // Oriented boundary segments: `from → to` with face `left` traversing it.
@@ -351,9 +365,9 @@ fn own_surface(surfaces: &[Option<Surface>], tag: u32) -> Option<Surface> {
     surfaces.get(tag as usize).copied().flatten().and_then(|s| s.checked())
 }
 
-/// The analytic surface of a composite face (its triangles `tris`): the first member's, when the
-/// vertices of every member lie on it within `tol`.
-fn composite_surface(surface: &BoundarySurface, surfaces: &[Option<Surface>], tris: &[u32], tol: f64) -> Option<Surface> {
+/// The analytic surface a face's triangles `tris` lie on: the claimed surface of the first
+/// member, when the vertices of every member lie on it within `tol`.
+fn verified_surface(surface: &BoundarySurface, surfaces: &[Option<Surface>], tris: &[u32], tol: f64) -> Option<Surface> {
     let tri_face = surface.tri_face();
     let first = tris.iter().filter_map(|&t| tri_face.get(t as usize)).min()?;
     let s = own_surface(surfaces, *first)?;
