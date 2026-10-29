@@ -341,7 +341,7 @@ fn split(body: &Shape, plane: &Plane, n: [f64; 3], cut: &Cut) -> Result<Split> {
         let mut shape = Shape { name: String::new(), body: part, faces: Vec::new(), face_map: Vec::new(), cuts: Vec::new() };
         let m = shape.measure()?;
         let negative = dot(sub(m.centroid, cut.point), n) < 0.0;
-        shape.faces = (0..m.faces).map(|_| Face { name: String::new(), exact: false, members: Vec::new() }).collect();
+        shape.faces = (0..m.faces).map(|_| Face { name: String::new(), exact: false, members: Vec::new(), kept_surface: None }).collect();
         cells.push((negative, m.centroid, shape));
     }
     cells.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| lexical(&a.1, &b.1)));
@@ -575,7 +575,7 @@ mod tests {
 
     fn box_design() -> Design {
         let mut shape = crate::block([0.0; 3], [40.0, 30.0, 10.0]).unwrap();
-        shape.faces = (0..6).map(|i| Face { name: format!("box:{i}"), exact: true, members: Vec::new() }).collect();
+        shape.faces = (0..6).map(|i| Face { name: format!("box:{i}"), exact: true, members: Vec::new(), kept_surface: None }).collect();
         let bodies = vec![shape];
         Design {
             name: "Box".into(),

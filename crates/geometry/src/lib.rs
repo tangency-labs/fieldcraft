@@ -84,7 +84,7 @@ pub struct Shape {
 }
 
 /// A B-rep face's persistent identity.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Face {
     /// Stable across rebuilds of the design: named after the feature and sketch curve that made
     /// the face (`F2:side:l4`, `F2:top`, …), not after its position in the body.
@@ -94,6 +94,11 @@ pub struct Face {
     pub exact: bool,
     /// A merged face's B-rep faces, by persistent name ([`virtual_faces`]); empty for a B-rep face.
     pub members: Vec<String>,
+    /// An absorbed face keeps the classification of the face it was absorbed into (#546): the
+    /// surface of the face a merge kept ([`Merge::into`]), however its other members lie. `None`
+    /// for a B-rep face or a merge that kept no face: the surface its members share decides, and
+    /// faces on different ones are free-form.
+    pub kept_surface: Option<FaceSurface>,
 }
 
 /// The analytic surface a B-rep face lies on, when it is one of the elementary kinds. Directions
