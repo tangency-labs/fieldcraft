@@ -2642,6 +2642,30 @@ mod acceptance {
         accept(&mut s, &r, 0.65, 10.0);
     }
 
+    /// The double 0.4 mm step's slivers merge into faces of other orientations (#546): before the
+    /// fix the merged faces classified free-form and the plan lost its cells layout and fell back
+    /// to sweep. An absorbed face keeps the classification of the face it was absorbed into, so
+    /// the plan keeps its layout and the hex route survives the clean-up.
+    #[test]
+    fn absorbed_step_slivers_keep_the_cells_plan_and_the_hex_route() {
+        let (_d, mut s) = open(json!([
+            {"command": "solid.box", "params": {"corner": [0, 0, 0], "length": 60, "width": 40, "height": 10, "body_name": "Steps"}},
+            {"command": "solid.box", "params": {"corner": [0, 0, 10], "length": 60, "width": 0.4, "height": 0.4, "operation": "join", "targets": ["Steps"]}},
+            {"command": "solid.box", "params": {"corner": [0, 0, 10], "length": 0.4, "width": 40, "height": 0.4, "operation": "join", "targets": ["Steps"]}}
+        ]));
+        let plan = s.execute("mesh.plan", &json!({"body": "Steps", "size": 2.0, "layers": 2})).unwrap();
+        assert_eq!(plan["mesher"], "cells", "{plan}");
+        let check = s.execute("geometry.check", &json!({"body": "Steps", "size": 2.0, "mark": true})).unwrap();
+        assert_eq!(check["counts"]["sliver_face"], 3, "{check}");
+        let absorbed = s.execute("geometry.face.absorb", &json!({"from_check": true})).unwrap();
+        assert_eq!(absorbed["absorbed"].as_array().map(Vec::len), Some(3), "{absorbed}");
+        let plan = s.execute("mesh.plan", &json!({"body": "Steps", "size": 2.0, "layers": 2})).unwrap();
+        assert_eq!(plan["mesher"], "cells", "{plan}");
+        let hex = s.execute("mesh.hex.generate", &json!({"body": "Steps", "size": 2.0})).unwrap();
+        let sj = hex.pointer("/bodies/0/quality/min_scaled_jacobian").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        assert!(sj >= 0.5, "{hex}");
+    }
+
     #[test]
     fn curved_bodies_mesh_within_a_percent_of_their_volume_at_the_plan_s_size() {
         // The plan's size keeps the chords of a torus (swept) and a cylinder (butterfly) within
