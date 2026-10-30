@@ -3396,8 +3396,8 @@ fn scheme_viscosity(k: f64, tau_bar: f64, sigma: f64, nu: f64) -> f64 {
     (exact_rate(k, tau_bar, sigma) / (k * k) - (tau_bar - 0.5) / 3.0) / nu
 }
 
-/// The wavenumbers k_x Δx of the band the MRT channel piled energy into (docs/verification.md,
-/// "Wall-function bounce, method two"), where the scheme's term is reported.
+/// The wavenumbers k_x Δx of the band the MRT channel piled energy into (docs/manual/fluid/les.md,
+/// "Han, Ooka & Kikumoto (2021)"), where the scheme's term is reported.
 const HAN_BAND: [f64; 3] = [1.5, 1.8, 2.1];
 
 /// The scheme's term at a spectrum's row ([`scheme_viscosity`]) for a hybrid-collision run: τ̄ is
@@ -3634,7 +3634,7 @@ fn han_channel(case: &HanCase, setup_of: HanSetup, wfb: bool, cpu: bool, times: 
     }))
 }
 
-/// Method two: Han, Ooka and Kikumoto's channel (see [`han_channel`]), each case with the
+/// Han, Ooka and Kikumoto's channel (see [`han_channel`]), each case with the
 /// wall-function bounce (WFB) and its bounce-back control (BB), on each configuration of
 /// `FIELDCRAFT_HAN_SETUP` ([`HanSetup`], comma-separated; `paper` when unset): `paper` (MRT,
 /// Smagorinsky 0.1, Van Driest 26), `hrr-vreman` (the hybrid collision at σ 0.99, Vreman 0.18:

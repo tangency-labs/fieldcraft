@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="600" height="330" viewBox="0 0 600 330">
+  <title>malaspinas-sagaut</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M0 0 L600 0 L600 330 L0 330 Z" fill="#ffffff"/>
+    <path d="M30 280 L560 280" fill="none" stroke="#222222" stroke-width="2.5" stroke-miterlimit="10"/>
+    <path d="M34 282 L24 294 M46 282 L36 294 M58 282 L48 294 M70 282 L60 294 M82 282 L72 294 M94 282 L84 294 M106 282 L96 294 M118 282 L108 294 M130 282 L120 294 M142 282 L132 294 M154 282 L144 294 M166 282 L156 294 M178 282 L168 294 M190 282 L180 294 M202 282 L192 294 M214 282 L204 294 M226 282 L216 294 M238 282 L228 294 M250 282 L240 294 M262 282 L252 294 M274 282 L264 294 M286 282 L276 294 M298 282 L288 294 M310 282 L300 294 M322 282 L312 294 M334 282 L324 294 M346 282 L336 294 M358 282 L348 294 M370 282 L360 294 M382 282 L372 294 M394 282 L384 294 M406 282 L396 294 M418 282 L408 294 M430 282 L420 294 M442 282 L432 294 M454 282 L444 294 M466 282 L456 294 M478 282 L468 294 M490 282 L480 294 M502 282 L492 294 M514 282 L504 294 M526 282 L516 294 M538 282 L528 294 M550 282 L540 294" fill="none" stroke="#777777" stroke-width="0.6" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 36 310)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">no-slip wall</tspan></text>
+    <path d="M60 280 L260 280" fill="none" stroke="#bbbbbb" stroke-width="0.6" stroke-miterlimit="10" stroke-dasharray="3 3"/>
+    <path d="M60 230 L260 230" fill="none" stroke="#bbbbbb" stroke-width="0.6" stroke-miterlimit="10" stroke-dasharray="3 3"/>
+    <path d="M60 180 L260 180" fill="none" stroke="#bbbbbb" stroke-width="0.6" stroke-miterlimit="10" stroke-dasharray="3 3"/>
+    <path d="M60 130 L260 130" fill="none" stroke="#bbbbbb" stroke-width="0.6" stroke-miterlimit="10" stroke-dasharray="3 3"/>
+    <path d="M153 255 C153 258.866 156.134 262 160 262 C163.866 262 167 258.866 167 255 C167 251.134 163.866 248 160 248 C156.134 248 153 251.134 153 255 Z" fill="#d1495b" stroke="#d1495b" stroke-width="1.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 172 259)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="11" fill="#d1495b"><tspan x="0" y="0">x₁</tspan></text>
+    <path d="M153 205 C153 208.866 156.134 212 160 212 C163.866 212 167 208.866 167 205 C167 201.134 163.866 198 160 198 C156.134 198 153 201.134 153 205 Z" fill="#2a6fdb" stroke="#2a6fdb" stroke-width="1.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 172 209)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="11" fill="#2a6fdb"><tspan x="0" y="0">x₂</tspan></text>
+    <path d="M153 155 C153 158.866 156.134 162 160 162 C163.866 162 167 158.866 167 155 C167 151.134 163.866 148 160 148 C156.134 148 153 151.134 153 155 Z" fill="#888888" stroke="#888888" stroke-width="1.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 172 159)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="11" fill="#888888"><tspan x="0" y="0">x₃</tspan></text>
+    <g>
+      <g>
+        <path d="M94.6 280 L94.6 256.6 L95.4 256.6 L95.4 280 Z" fill="#d1495b"/>
+        <path d="M95 255 L96.6 258.2 L93.4 258.2 Z" fill="#d1495b"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 70 271.5)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#d1495b"><tspan x="0" y="0">y₁</tspan></text>
+    <g>
+      <g>
+        <path d="M119.6 280 L119.6 206.6 L120.4 206.6 L120.4 280 Z" fill="#2a6fdb"/>
+        <path d="M120 205 L121.6 208.2 L118.4 208.2 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 98 225)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a6fdb"><tspan x="0" y="0">y₂ = 3y₁</tspan></text>
+    <text transform="matrix(1 0 0 1 70 118)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#777777"><tspan x="0" y="0">lattice cells (Δ)</tspan></text>
+    <text transform="matrix(1 0 0 1 70 134)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#777777"><tspan x="0" y="0">subgrid model above x₁</tspan></text>
+    <g>
+      <g>
+        <path d="M329.6 280 L329.6 61.6 L330.4 61.6 L330.4 280 Z" fill="#555555"/>
+        <path d="M330 60 L331.6 63.2 L328.4 63.2 Z" fill="#555555"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 324 52)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#555555"><tspan x="0" y="0">y</tspan></text>
+    <g>
+      <g>
+        <path d="M330 279.6 L578.4 279.6 L578.4 280.4 L330 280.4 Z" fill="#555555"/>
+        <path d="M580 280 L576.8 281.6 L576.8 278.4 Z" fill="#555555"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 568 274)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#555555"><tspan x="0" y="0">u</tspan></text>
+    <path d="M330 280 L330.6 280 L331.3 279.9 L332.1 279.9 L333 279.9 L334 279.8 L335.1 279.7 L336.3 279.7 L337.7 279.6 L339.3 279.5 L341 279.4 L343 279.3 L345.2 279.2 L347.7 279.1 L350.5 279 L353.6 278.8 L357.1 278.6 L361 278.4 L365.3 278.2 L370.1 278 L375.3 277.7 L380.9 277.4 L387 277 L393.3 276.6 L399.9 276.2 L406.6 275.6 L413.3 275.1 L419.7 274.4 L425.9 273.7 L431.8 272.9 L437.2 272 L442.2 271 L446.9 269.8 L451.3 268.6 L455.3 267.1 L459.2 265.5 L462.8 263.7 L466.2 261.6 L469.6 259.3 L472.8 256.7 L475.9 253.8 L478.9 250.5 L481.9 246.9 L484.9 242.7 L487.8 238.1 L490.7 232.9 L493.6 227 L496.5 220.5 L499.3 213.1 L502.2 204.8 L505 195.4 L507.9 184.9 L510.7 173.2 L513.5 159.9 L516.3 145.1 L519.2 128.3 L522 109.6 L524.8 88.5 L527.6 64.8" fill="none" stroke="#333333" stroke-width="1.8" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 460 92)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#333333"><tspan x="0" y="0">Musker&apos;s ũ(y; u_τ)</tspan></text>
+    <path d="M497.1 205 C497.1 207.761 499.339 210 502.1 210 C504.862 210 507.1 207.761 507.1 205 C507.1 202.239 504.862 200 502.1 200 C499.339 200 497.1 202.239 497.1 205 Z" fill="#2a6fdb" stroke="#2a6fdb" stroke-width="1.5" stroke-miterlimit="10"/>
+    <path d="M469.655 255 C469.655 257.761 471.894 260 474.655 260 C477.417 260 479.655 257.761 479.655 255 C479.655 252.239 477.417 250 474.655 250 C471.894 250 469.655 252.239 469.655 255 Z" fill="#d1495b" stroke="#d1495b" stroke-width="1.5" stroke-miterlimit="10"/>
+    <g>
+      <g>
+        <path d="M190 204.6 L194 204.6 L194 205.4 L190 205.4 Z M197 204.6 L201 204.6 L201 205.4 L197 205.4 Z M204 204.6 L208 204.6 L208 205.4 L204 205.4 Z M211 204.6 L215 204.6 L215 205.4 L211 205.4 Z M218 204.6 L222 204.6 L222 205.4 L218 205.4 Z M225 204.6 L229 204.6 L229 205.4 L225 205.4 Z M232 204.6 L236 204.6 L236 205.4 L232 205.4 Z M239 204.6 L243 204.6 L243 205.4 L239 205.4 Z M246 204.6 L250 204.6 L250 205.4 L246 205.4 Z M253 204.6 L257 204.6 L257 205.4 L253 205.4 Z M260 204.6 L264 204.6 L264 205.4 L260 205.4 Z M267 204.6 L271 204.6 L271 205.4 L267 205.4 Z M274 204.6 L278 204.6 L278 205.4 L274 205.4 Z M281 204.6 L285 204.6 L285 205.4 L281 205.4 Z M288 204.6 L292 204.6 L292 205.4 L288 205.4 Z M295 204.6 L299 204.6 L299 205.4 L295 205.4 Z M302 204.6 L306 204.6 L306 205.4 L302 205.4 Z M309 204.6 L313 204.6 L313 205.4 L309 205.4 Z M316 204.6 L320 204.6 L320 205.4 L316 205.4 Z M323 204.6 L327 204.6 L327 205.4 L323 205.4 Z M330 204.6 L334 204.6 L334 205.4 L330 205.4 Z M337 204.6 L341 204.6 L341 205.4 L337 205.4 Z M344 204.6 L348 204.6 L348 205.4 L344 205.4 Z M351 204.6 L355 204.6 L355 205.4 L351 205.4 Z M358 204.6 L362 204.6 L362 205.4 L358 205.4 Z M365 204.6 L369 204.6 L369 205.4 L365 205.4 Z M372 204.6 L376 204.6 L376 205.4 L372 205.4 Z M379 204.6 L383 204.6 L383 205.4 L379 205.4 Z M386 204.6 L390 204.6 L390 205.4 L386 205.4 Z M393 204.6 L397 204.6 L397 205.4 L393 205.4 Z M400 204.6 L404 204.6 L404 205.4 L400 205.4 Z M407 204.6 L411 204.6 L411 205.4 L407 205.4 Z M414 204.6 L418 204.6 L418 205.4 L414 205.4 Z M421 204.6 L425 204.6 L425 205.4 L421 205.4 Z M428 204.6 L432 204.6 L432 205.4 L428 205.4 Z M435 204.6 L439 204.6 L439 205.4 L435 205.4 Z M442 204.6 L446 204.6 L446 205.4 L442 205.4 Z M449 204.6 L453 204.6 L453 205.4 L449 205.4 Z M456 204.6 L460 204.6 L460 205.4 L456 205.4 Z M463 204.6 L467 204.6 L467 205.4 L463 205.4 Z M470 204.6 L474 204.6 L474 205.4 L470 205.4 Z M477 204.6 L481 204.6 L481 205.4 L477 205.4 Z M484 204.6 L488 204.6 L488 205.4 L484 205.4 Z M491 204.6 L492.5 204.6 L492.5 205.4 L491 205.4 Z" fill="#2a6fdb"/>
+        <path d="M494.1 205 L490.9 206.6 L490.9 203.4 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M466.655 255.4 L462.655 255.4 L462.655 254.6 L466.655 254.6 Z M459.655 255.4 L455.655 255.4 L455.655 254.6 L459.655 254.6 Z M452.655 255.4 L448.655 255.4 L448.655 254.6 L452.655 254.6 Z M445.655 255.4 L441.655 255.4 L441.655 254.6 L445.655 254.6 Z M438.655 255.4 L434.655 255.4 L434.655 254.6 L438.655 254.6 Z M431.655 255.4 L427.655 255.4 L427.655 254.6 L431.655 254.6 Z M424.655 255.4 L420.655 255.4 L420.655 254.6 L424.655 254.6 Z M417.655 255.4 L413.655 255.4 L413.655 254.6 L417.655 254.6 Z M410.655 255.4 L406.655 255.4 L406.655 254.6 L410.655 254.6 Z M403.655 255.4 L399.655 255.4 L399.655 254.6 L403.655 254.6 Z M396.655 255.4 L392.655 255.4 L392.655 254.6 L396.655 254.6 Z M389.655 255.4 L385.655 255.4 L385.655 254.6 L389.655 254.6 Z M382.655 255.4 L378.655 255.4 L378.655 254.6 L382.655 254.6 Z M375.655 255.4 L371.655 255.4 L371.655 254.6 L375.655 254.6 Z M368.655 255.4 L364.655 255.4 L364.655 254.6 L368.655 254.6 Z M361.655 255.4 L357.655 255.4 L357.655 254.6 L361.655 254.6 Z M354.655 255.4 L350.655 255.4 L350.655 254.6 L354.655 254.6 Z M347.655 255.4 L343.655 255.4 L343.655 254.6 L347.655 254.6 Z M340.655 255.4 L336.655 255.4 L336.655 254.6 L340.655 254.6 Z M333.655 255.4 L329.655 255.4 L329.655 254.6 L333.655 254.6 Z M326.655 255.4 L322.655 255.4 L322.655 254.6 L326.655 254.6 Z M319.655 255.4 L315.655 255.4 L315.655 254.6 L319.655 254.6 Z M312.655 255.4 L308.655 255.4 L308.655 254.6 L312.655 254.6 Z M305.655 255.4 L301.655 255.4 L301.655 254.6 L305.655 254.6 Z M298.655 255.4 L294.655 255.4 L294.655 254.6 L298.655 254.6 Z M291.655 255.4 L287.655 255.4 L287.655 254.6 L291.655 254.6 Z M284.655 255.4 L280.655 255.4 L280.655 254.6 L284.655 254.6 Z M277.655 255.4 L273.655 255.4 L273.655 254.6 L277.655 254.6 Z M270.655 255.4 L266.655 255.4 L266.655 254.6 L270.655 254.6 Z M263.655 255.4 L259.655 255.4 L259.655 254.6 L263.655 254.6 Z M256.655 255.4 L252.655 255.4 L252.655 254.6 L256.655 254.6 Z M249.655 255.4 L245.655 255.4 L245.655 254.6 L249.655 254.6 Z M242.655 255.4 L238.655 255.4 L238.655 254.6 L242.655 254.6 Z M235.655 255.4 L231.655 255.4 L231.655 254.6 L235.655 254.6 Z M228.655 255.4 L224.655 255.4 L224.655 254.6 L228.655 254.6 Z M221.655 255.4 L217.655 255.4 L217.655 254.6 L221.655 254.6 Z M214.655 255.4 L210.655 255.4 L210.655 254.6 L214.655 254.6 Z M207.655 255.4 L203.655 255.4 L203.655 254.6 L207.655 254.6 Z M200.655 255.4 L196.655 255.4 L196.655 254.6 L200.655 254.6 Z M193.655 255.4 L191.6 255.4 L191.6 254.6 L193.655 254.6 Z" fill="#d1495b"/>
+        <path d="M190 255 L193.2 253.4 L193.2 256.6 Z" fill="#d1495b"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 200 197)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a6fdb"><tspan x="0" y="0">1. U₂ at x₂ gives u_τ</tspan></text>
+    <text transform="matrix(1 0 0 1 200 247)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#d1495b"><tspan x="0" y="0">2. x₁ rebuilt at ũ(y₁)</tspan></text>
+    <text transform="matrix(1 0 0 1 30 22)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="12" fill="#222222"><tspan x="0" y="0">Malaspinas &amp; Sagaut (2014): the wall cell rebuilt each step</tspan></text>
+    <text transform="matrix(1 0 0 1 30 320)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#444444"><tspan x="0" y="0">3. x₁ relaxes with ν + ν_t, ν_t the profile&apos;s mixing length; its populations are the equilibrium plus the regularised stress.</tspan></text>
+  </g>
+</svg>

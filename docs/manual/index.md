@@ -28,7 +28,7 @@ The structural pages that apply to several procedures: [elements](structural/ele
 [constraints and connectors](structural/constraints-and-connectors.md) and
 [linear solvers](structural/linear-solvers.md). The fluid pages: [collision
 operators](fluid/collision.md), [boundary conditions](fluid/boundary-conditions.md),
-[turbulence](fluid/turbulence.md), [wall-modelled LES](../lbm-wall-model.md), [heat
+[turbulence](fluid/turbulence.md), [large-eddy simulation](fluid/les.md), [heat
 transfer](fluid/heat-transfer.md), [fans and vents](fluid/fans-and-vents.md), [steady state and
 averaging](fluid/steady-state-and-averaging.md), [the GPU backend](fluid/gpu.md) and [fluid
 results](fluid/fluid-results.md).

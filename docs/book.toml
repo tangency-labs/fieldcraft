@@ -18,3 +18,7 @@ site-url = "/fieldcraft/"
 
 [output.html.search]
 enable = true
+
+# Pages that moved: the old address forwards to the new one.
+[output.html.redirect]
+"/lbm-wall-model.html" = "manual/fluid/les.html"

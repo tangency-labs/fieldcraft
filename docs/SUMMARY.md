@@ -33,7 +33,7 @@
   - [Collision operators](manual/fluid/collision.md)
   - [Boundary conditions](manual/fluid/boundary-conditions.md)
   - [Turbulence](manual/fluid/turbulence.md)
-  - [Wall-modelled LES](lbm-wall-model.md)
+  - [Large-eddy simulation](manual/fluid/les.md)
   - [Heat transfer](manual/fluid/heat-transfer.md)
   - [Fans and vents](manual/fluid/fans-and-vents.md)
   - [Steady state and averaging](manual/fluid/steady-state-and-averaging.md)

@@ -33,7 +33,7 @@ Vreman's model takes the same fields but `van_driest`:
 
 `model.step.create` takes these fields; `solve.fluid` runs the step. The wall model replaces
 `van_driest` with `"wall_model": "musker"` and is used with `"collision": "mrt"`
-([Wall-modelled large-eddy simulation](../../lbm-wall-model.md)).
+([Large-eddy simulation](les.md)).
 
 ## Parameters
 
@@ -148,7 +148,7 @@ velocity at the second cell off the wall, solves Musker's profile for u_τ there
 population of the wall cell from the profile's velocity at the first cell, its density and its
 regularised stress; the cell relaxes with a mixing-length eddy viscosity (κ = 0.384, A⁺ = 26) in
 place of Smagorinsky's. The method, its parameters, its reported wall force and its validation are
-in [Wall-modelled large-eddy simulation](../../lbm-wall-model.md).
+in [Large-eddy simulation](les.md).
 
 ## Algorithm
 
@@ -295,7 +295,7 @@ variation (the weakly compressible error). With the regularised collision the sa
 and the model adds viscosity to the laminar wake, raising the drag by 1.0 % and 2.8 %: the eddy
 viscosity acts wherever the flow shears, laminar flow included. This grid does not resolve the
 wall (the floor's first cell is 1.25 mm off it), so no damping is used; a wall-modelled channel
-is in [Wall-modelled large-eddy simulation](../../lbm-wall-model.md).
+is in [Large-eddy simulation](les.md).
 
 ## Verification
 
@@ -385,7 +385,7 @@ and 14.00 at 24, and the 12-cell grid went unstable at 2.2 δ/u_τ: at Re_τ 180
 resolves the wall (Δy⁺ = 180 / N), and damping is meant for a first cell at y⁺ ≈ 1–2.
 
 **Wall model.** The wall-modelled channel against Lee & Moser (2015) and Dean (1978) is recorded in
-docs/verification.md and summarised in [Wall-modelled large-eddy simulation](../../lbm-wall-model.md).
+docs/verification.md and summarised in [Large-eddy simulation](les.md).
 
 ## Limitations
 

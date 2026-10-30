@@ -28,12 +28,12 @@
     <path d="M90 56 L112 56" fill="none" stroke="#222222" stroke-width="1.6" stroke-miterlimit="10"/>
     <text transform="matrix(1 0 0 1 118 59)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">Hoyas &amp; Jiménez DNS, Reτ 934</tspan></text>
     <path d="M97.8 72 C97.8 73.767 99.233 75.2 101 75.2 C102.767 75.2 104.2 73.767 104.2 72 C104.2 70.233 102.767 68.8 101 68.8 C99.233 68.8 97.8 70.233 97.8 72 Z" fill="#d1495b" stroke="#d1495b" stroke-width="0.5" stroke-miterlimit="10"/>
-    <text transform="matrix(1 0 0 1 118 75)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">method one, N = 10</tspan></text>
+    <text transform="matrix(1 0 0 1 118 75)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">Malaspinas &amp; Sagaut, N = 10</tspan></text>
     <path d="M97.8 88 C97.8 89.767 99.233 91.2 101 91.2 C102.767 91.2 104.2 89.767 104.2 88 C104.2 86.233 102.767 84.8 101 84.8 C99.233 84.8 97.8 86.233 97.8 88 Z" fill="#2a6fdb" stroke="#2a6fdb" stroke-width="0.5" stroke-miterlimit="10"/>
-    <text transform="matrix(1 0 0 1 118 91)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">method one, N = 20</tspan></text>
+    <text transform="matrix(1 0 0 1 118 91)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">Malaspinas &amp; Sagaut, N = 20</tspan></text>
     <path d="M97.8 104 C97.8 105.767 99.233 107.2 101 107.2 C102.767 107.2 104.2 105.767 104.2 104 C104.2 102.233 102.767 100.8 101 100.8 C99.233 100.8 97.8 102.233 97.8 104 Z" fill="#2a9d55" stroke="#2a9d55" stroke-width="0.5" stroke-miterlimit="10"/>
-    <text transform="matrix(1 0 0 1 118 107)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">method one, N = 30</tspan></text>
-    <text transform="matrix(1 0 0 1 14 22)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="11" fill="#222222"><tspan x="0" y="0">Mean velocity at Reτ 950: method one against the DNS (U⁺ scaled by the carried uτ)</tspan></text>
+    <text transform="matrix(1 0 0 1 118 107)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">Malaspinas &amp; Sagaut, N = 30</tspan></text>
+    <text transform="matrix(1 0 0 1 14 22)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="11" fill="#222222"><tspan x="0" y="0">Mean velocity at Reτ 950: Malaspinas &amp; Sagaut against the DNS (U⁺ scaled by the carried uτ)</tspan></text>
     <text transform="matrix(1 0 0 1 70 370)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#555555"><tspan x="0" y="0">A subset of each grid&apos;s cells; the first cell (leftmost point) as solve.fluid reports it, at its imposed velocity. NVIDIA GB10, f32.</tspan></text>
   </g>
 </svg>

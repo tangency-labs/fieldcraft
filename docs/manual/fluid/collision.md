@@ -29,7 +29,7 @@ lattice of a flow with heat always collides with two relaxation times.
 |---|---|---|---|
 | `collision` | `"trt"` | default | Two relaxation times. Most flows: bounce-back walls sit exactly halfway between cells, so it is the most accurate of the three on a given grid. |
 | | `"regularized"` | | Recursive regularised. Flows the two-relaxation-time scheme cannot hold on the grid you can afford: τ⁺ below about 0.52, fast inlets and fans, sharp corners. It costs 15–35 % more per step, its staircase walls are less accurate and its pressure outlets cost 3–8 % near the outlet (Theory). |
-| | `"mrt"` | | Multiple relaxation times. The collision the wall model is validated with ([Wall-modelled LES](../../lbm-wall-model.md)). |
+| | `"mrt"` | | Multiple relaxation times. The collision the wall model is validated with ([Large-eddy simulation](les.md)). |
 | | `"hrr"` | | Hybrid recursive regularised. The regularised collision with its stress blended with the one the finite-difference strain rate gives (`sigma`), which damps the shortest waves: for large-eddy simulation. |
 | `magic` | above 0, at most 1 | 3/16 | The two-relaxation-time parameter Λ. With `regularized`, `mrt` or `hrr` it has no effect, and the solve warns. |
 | `sigma` | above 0, at most 1 | 0.99 | The hybrid collision's σ: its share of the populations' own stress. 1 is `regularized` exactly; lower adds more hyperviscosity. `"dynamic"`: σ per cell and step from the turbulence model's eddy viscosity, which then stays out of τ (needs `turbulence`; Theory). With another collision it has no effect, and the solve warns. |
@@ -244,8 +244,8 @@ symmetric rate in `therm.w`).
 Per fluid cell and time step (`Flow::collide`, blocks of cells in parallel):
 
 1. Read the 19 populations; ρ = Σ f, j = Σ f c. Under the wall model, rebuild a wall cell's
-   populations from the wall law first and take its relaxation rate ([Wall-modelled
-   LES](../../lbm-wall-model.md)).
+   populations from the wall law first and take its relaxation rate ([Large-eddy
+   simulation](les.md)).
 2. Refuse a density that is not a positive finite number (the run stops as unstable).
 3. The velocity with the half force and the force per volume (body acceleration, buoyancy, zone);
    a porous zone's velocity from the exact root of its quadratic.

@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="600" height="330" viewBox="0 0 600 330">
+  <title>han-ooka-kikumoto</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M0 0 L600 0 L600 330 L0 330 Z" fill="#ffffff"/>
+    <path d="M30 262 L560 262" fill="none" stroke="#222222" stroke-width="2.5" stroke-miterlimit="10"/>
+    <path d="M34 264 L24 276 M46 264 L36 276 M58 264 L48 276 M70 264 L60 276 M82 264 L72 276 M94 264 L84 276 M106 264 L96 276 M118 264 L108 276 M130 264 L120 276 M142 264 L132 276 M154 264 L144 276 M166 264 L156 276 M178 264 L168 276 M190 264 L180 276 M202 264 L192 276 M214 264 L204 276 M226 264 L216 276 M238 264 L228 276 M250 264 L240 276 M262 264 L252 276 M274 264 L264 276 M286 264 L276 276 M298 264 L288 276 M310 264 L300 276 M322 264 L312 276 M334 264 L324 276 M346 264 L336 276 M358 264 L348 276 M370 264 L360 276 M382 264 L372 276 M394 264 L384 276 M406 264 L396 276 M418 264 L408 276 M430 264 L420 276 M442 264 L432 276 M454 264 L444 276 M466 264 L456 276 M478 264 L468 276 M490 264 L480 276 M502 264 L492 276 M514 264 L504 276 M526 264 L516 276 M538 264 L528 276 M550 264 L540 276" fill="none" stroke="#777777" stroke-width="0.6" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 36 292)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#555555"><tspan x="0" y="0">no-slip wall, through the boundary nodes&apos; centres</tspan></text>
+    <path d="M60 212 L260 212" fill="none" stroke="#bbbbbb" stroke-width="0.6" stroke-miterlimit="10" stroke-dasharray="3 3"/>
+    <path d="M60 162 L260 162" fill="none" stroke="#bbbbbb" stroke-width="0.6" stroke-miterlimit="10" stroke-dasharray="3 3"/>
+    <path d="M60 112 L260 112" fill="none" stroke="#bbbbbb" stroke-width="0.6" stroke-miterlimit="10" stroke-dasharray="3 3"/>
+    <path d="M107 262 C107 263.657 108.343 265 110 265 C111.657 265 113 263.657 113 262 C113 260.343 111.657 259 110 259 C108.343 259 107 260.343 107 262 Z" fill="#bbbbbb" stroke="#bbbbbb" stroke-width="1.5" stroke-miterlimit="10"/>
+    <path d="M107 212 C107 213.657 108.343 215 110 215 C111.657 215 113 213.657 113 212 C113 210.343 111.657 209 110 209 C108.343 209 107 210.343 107 212 Z" fill="#bbbbbb" stroke="#bbbbbb" stroke-width="1.5" stroke-miterlimit="10"/>
+    <path d="M107 162 C107 163.657 108.343 165 110 165 C111.657 165 113 163.657 113 162 C113 160.343 111.657 159 110 159 C108.343 159 107 160.343 107 162 Z" fill="#bbbbbb" stroke="#bbbbbb" stroke-width="1.5" stroke-miterlimit="10"/>
+    <path d="M107 112 C107 113.657 108.343 115 110 115 C111.657 115 113 113.657 113 112 C113 110.343 111.657 109 110 109 C108.343 109 107 110.343 107 112 Z" fill="#bbbbbb" stroke="#bbbbbb" stroke-width="1.5" stroke-miterlimit="10"/>
+    <path d="M207 262 C207 263.657 208.343 265 210 265 C211.657 265 213 263.657 213 262 C213 260.343 211.657 259 210 259 C208.343 259 207 260.343 207 262 Z" fill="#bbbbbb" stroke="#bbbbbb" stroke-width="1.5" stroke-miterlimit="10"/>
+    <path d="M207 212 C207 213.657 208.343 215 210 215 C211.657 215 213 213.657 213 212 C213 210.343 211.657 209 210 209 C208.343 209 207 210.343 207 212 Z" fill="#bbbbbb" stroke="#bbbbbb" stroke-width="1.5" stroke-miterlimit="10"/>
+    <path d="M207 162 C207 163.657 208.343 165 210 165 C211.657 165 213 163.657 213 162 C213 160.343 211.657 159 210 159 C208.343 159 207 160.343 207 162 Z" fill="#bbbbbb" stroke="#bbbbbb" stroke-width="1.5" stroke-miterlimit="10"/>
+    <path d="M207 112 C207 113.657 208.343 115 210 115 C211.657 115 213 113.657 213 112 C213 110.343 211.657 109 210 109 C208.343 109 207 110.343 207 112 Z" fill="#bbbbbb" stroke="#bbbbbb" stroke-width="1.5" stroke-miterlimit="10"/>
+    <path d="M157 162 C157 163.657 158.343 165 160 165 C161.657 165 163 163.657 163 162 C163 160.343 161.657 159 160 159 C158.343 159 157 160.343 157 162 Z" fill="#bbbbbb" stroke="#bbbbbb" stroke-width="1.5" stroke-miterlimit="10"/>
+    <path d="M157 112 C157 113.657 158.343 115 160 115 C161.657 115 163 113.657 163 112 C163 110.343 161.657 109 160 109 C158.343 109 157 110.343 157 112 Z" fill="#bbbbbb" stroke="#bbbbbb" stroke-width="1.5" stroke-miterlimit="10"/>
+    <g>
+      <g>
+        <path d="M116.424 217.576 L150.727 251.879 L149.879 252.727 L115.576 218.424 Z" fill="#2a6fdb"/>
+        <path d="M152 254 L146.909 252.303 L150.303 248.909 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <path d="M167.434 253.434 L201.172 219.697 L202.303 220.828 L168.566 254.566 Z" fill="#d1495b"/>
+        <path d="M204 218 L201.737 224.788 L197.212 220.263 Z" fill="#d1495b"/>
+      </g>
+    </g>
+    <path d="M153 255 L167 255 L167 269 L153 269 Z" fill="#ffffff" stroke="#d1495b" stroke-width="1.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 150 248)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="11" fill="#d1495b"><tspan x="0" y="0">b</tspan></text>
+    <path d="M153 212 C153 215.866 156.134 219 160 219 C163.866 219 167 215.866 167 212 C167 208.134 163.866 205 160 205 C156.134 205 153 208.134 153 212 Z" fill="#2a6fdb" stroke="#2a6fdb" stroke-width="1.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 172 206)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="11" fill="#2a6fdb"><tspan x="0" y="0">x₁</tspan></text>
+    <g>
+      <g>
+        <path d="M84.6 262 L84.6 213.6 L85.4 213.6 L85.4 262 Z" fill="#2a6fdb"/>
+        <path d="M85 212 L86.6 215.2 L83.4 215.2 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 66 241)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#2a6fdb"><tspan x="0" y="0">Δ</tspan></text>
+    <text transform="matrix(1 0 0 1 70 82)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#777777"><tspan x="0" y="0">lattice nodes (Δ)</tspan></text>
+    <text transform="matrix(1 0 0 1 70 98)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#777777"><tspan x="0" y="0">subgrid model from x₁ up</tspan></text>
+    <text transform="matrix(1 0 0 1 214 236)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#d1495b"><tspan x="0" y="0">2. image ∓ τ_w/2,</tspan></text>
+    <text transform="matrix(1 0 0 1 226 250)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#d1495b"><tspan x="0" y="0">τ_w = ρu_τ²</tspan></text>
+    <g>
+      <g>
+        <path d="M329.6 262 L329.6 61.6 L330.4 61.6 L330.4 262 Z" fill="#555555"/>
+        <path d="M330 60 L331.6 63.2 L328.4 63.2 Z" fill="#555555"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 324 52)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#555555"><tspan x="0" y="0">y</tspan></text>
+    <g>
+      <g>
+        <path d="M330 261.6 L578.4 261.6 L578.4 262.4 L330 262.4 Z" fill="#555555"/>
+        <path d="M580 262 L576.8 263.6 L576.8 260.4 Z" fill="#555555"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 568 256)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#555555"><tspan x="0" y="0">u</tspan></text>
+    <path d="M330 262 L331 261.8 L332 261.7 L333 261.5 L334 261.4 L335 261.2 L336 261.1 L337 260.9 L338 260.7 L339 260.6 L340 260.4 L341 260.3 L342 260.1 L343 260 L344 259.8 L345 259.7 L346 259.5 L347 259.3 L348 259.2 L349 259 L350 258.9 L351 258.7 L352 258.6 L353 258.4 L354 258.2 L355 258.1 L356 257.9 L357 257.8 L358 257.6 L359 257.5 L360 257.3 L361 257.1 L362 257 L363 256.8 L364 256.7 L365 256.5 L366 256.3 L367 256.2 L368 256 L369 255.8 L370 255.7 L371 255.5 L372 255.3 L373 255.2 L374 255 L375 254.8 L376 254.7 L377 254.5 L378 254.3 L379 254.2 L380 254 L381 253.8 L382 253.6 L383 253.5 L384 253.3 L385 253.1 L386 252.9 L387 252.7 L388 252.6 L389 252.4 L390 252.2 L391 252 L392 251.8 L393 251.6 L394 251.4 L395 251.2 L396 251 L397 250.8 L398 250.6 L399 250.3 L400 250.1 L401 249.9 L402 249.7 L403 249.4 L404 249.2 L405 249 L406 248.7 L407 248.5 L408 248.2 L409 248 L410 247.7 L411 247.4 L412 247.1 L413 246.9 L414 246.6 L415 246.3 L416 246 L417 245.6 L418 245.3 L419 245 L420 244.6 L421 244.3 L422 243.9 L423 243.5 L424 243.2 L425 242.8 L426 242.4 L427 241.9 L428 241.5 L429 241 L430 240.6 L431 240.1 L432 239.6 L433 239.1 L434 238.6 L435 238 L436 237.5 L437 236.9 L438 236.3 L439 235.6 L440 235 L441 234.3 L442 233.6 L443 232.9 L444 232.1 L445 231.4 L446 230.6 L447 229.7 L448 228.8 L449 227.9 L450 227 L451 226 L452 225 L453 224 L454 222.9 L455 221.7 L456 220.6 L457 219.3 L458 218.1 L459 216.7 L460 215.4 L461 213.9 L462 212.4 L463 210.9 L464 209.3 L465 207.6 L466 205.8 L467 204 L468 202.1 L469 200.2 L470 198.1 L471 196 L472 193.8 L473 191.5 L474 189.1 L475 186.5 L476 183.9 L477 181.2 L478 178.4 L479 175.4 L480 172.4 L481 169.2 L482 165.9 L483 162.4 L484 158.8 L485 155 L486 151.1 L487 147 L488 142.8 L489 138.4 L490 133.7 L491 128.9 L492 123.9 L493 118.7 L494 113.3 L495 107.6 L496 101.7 L497 95.6 L498 89.2 L499 82.5 L500 75.6" fill="none" stroke="#333333" stroke-width="1.8" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 350 80)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#333333"><tspan x="0" y="0">Spalding&apos;s law (κ 0.41, B 5.5)</tspan></text>
+    <path d="M457.285 212 C457.285 214.761 459.524 217 462.285 217 C465.047 217 467.285 214.761 467.285 212 C467.285 209.239 465.047 207 462.285 207 C459.524 207 457.285 209.239 457.285 212 Z" fill="#2a6fdb" stroke="#2a6fdb" stroke-width="1.5" stroke-miterlimit="10"/>
+    <g>
+      <g>
+        <path d="M190 211.6 L194 211.6 L194 212.4 L190 212.4 Z M197 211.6 L201 211.6 L201 212.4 L197 212.4 Z M204 211.6 L208 211.6 L208 212.4 L204 212.4 Z M211 211.6 L215 211.6 L215 212.4 L211 212.4 Z M218 211.6 L222 211.6 L222 212.4 L218 212.4 Z M225 211.6 L229 211.6 L229 212.4 L225 212.4 Z M232 211.6 L236 211.6 L236 212.4 L232 212.4 Z M239 211.6 L243 211.6 L243 212.4 L239 212.4 Z M246 211.6 L250 211.6 L250 212.4 L246 212.4 Z M253 211.6 L257 211.6 L257 212.4 L253 212.4 Z M260 211.6 L264 211.6 L264 212.4 L260 212.4 Z M267 211.6 L271 211.6 L271 212.4 L267 212.4 Z M274 211.6 L278 211.6 L278 212.4 L274 212.4 Z M281 211.6 L285 211.6 L285 212.4 L281 212.4 Z M288 211.6 L292 211.6 L292 212.4 L288 212.4 Z M295 211.6 L299 211.6 L299 212.4 L295 212.4 Z M302 211.6 L306 211.6 L306 212.4 L302 212.4 Z M309 211.6 L313 211.6 L313 212.4 L309 212.4 Z M316 211.6 L320 211.6 L320 212.4 L316 212.4 Z M323 211.6 L327 211.6 L327 212.4 L323 212.4 Z M330 211.6 L334 211.6 L334 212.4 L330 212.4 Z M337 211.6 L341 211.6 L341 212.4 L337 212.4 Z M344 211.6 L348 211.6 L348 212.4 L344 212.4 Z M351 211.6 L355 211.6 L355 212.4 L351 212.4 Z M358 211.6 L362 211.6 L362 212.4 L358 212.4 Z M365 211.6 L369 211.6 L369 212.4 L365 212.4 Z M372 211.6 L376 211.6 L376 212.4 L372 212.4 Z M379 211.6 L383 211.6 L383 212.4 L379 212.4 Z M386 211.6 L390 211.6 L390 212.4 L386 212.4 Z M393 211.6 L397 211.6 L397 212.4 L393 212.4 Z M400 211.6 L404 211.6 L404 212.4 L400 212.4 Z M407 211.6 L411 211.6 L411 212.4 L407 212.4 Z M414 211.6 L418 211.6 L418 212.4 L414 212.4 Z M421 211.6 L425 211.6 L425 212.4 L421 212.4 Z M428 211.6 L432 211.6 L432 212.4 L428 212.4 Z M435 211.6 L439 211.6 L439 212.4 L435 212.4 Z M442 211.6 L446 211.6 L446 212.4 L442 212.4 Z M449 211.6 L452.685 211.6 L452.685 212.4 L449 212.4 Z" fill="#2a6fdb"/>
+        <path d="M454.285 212 L451.085 213.6 L451.085 210.4 Z" fill="#2a6fdb"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 200 204)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a6fdb"><tspan x="0" y="0">1. U₁ at x₁ gives u_τ</tspan></text>
+    <text transform="matrix(1 0 0 1 30 22)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="12" fill="#222222"><tspan x="0" y="0">Han, Ooka &amp; Kikumoto (2021): the wall-function bounce (their eq. 14)</tspan></text>
+    <text transform="matrix(1 0 0 1 30 320)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="8.5" fill="#444444"><tspan x="0" y="0">3. b does not collide: axis populations bounce back, each diagonal into the fluid is the image of its incoming one, less τ_w/2.</tspan></text>
+  </g>
+</svg>

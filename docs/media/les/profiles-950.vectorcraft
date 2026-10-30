@@ -5367,7 +5367,7 @@
                 ],
                 "runs": [
                   {
-                    "text": "method one, N = 10",
+                    "text": "Malaspinas & Sagaut, N = 10",
                     "style": {
                       "font_family": "Inter",
                       "font_style": "Regular",
@@ -5531,7 +5531,7 @@
                 ],
                 "runs": [
                   {
-                    "text": "method one, N = 20",
+                    "text": "Malaspinas & Sagaut, N = 20",
                     "style": {
                       "font_family": "Inter",
                       "font_style": "Regular",
@@ -5695,7 +5695,7 @@
                 ],
                 "runs": [
                   {
-                    "text": "method one, N = 30",
+                    "text": "Malaspinas & Sagaut, N = 30",
                     "style": {
                       "font_family": "Inter",
                       "font_style": "Regular",
@@ -5755,7 +5755,7 @@
                 ],
                 "runs": [
                   {
-                    "text": "Mean velocity at Reτ 950: method one against the DNS (U⁺ scaled by the carried uτ)",
+                    "text": "Mean velocity at Reτ 950: Malaspinas & Sagaut against the DNS (U⁺ scaled by the carried uτ)",
                     "style": {
                       "font_family": "Inter",
                       "font_style": "Regular",
@@ -6804,7 +6804,7 @@
       "copyrightStatus": "unknown",
       "copyrightNotice": "",
       "copyrightUrl": "",
-      "created": 1793152148,
+      "created": 1793357170,
       "modified": null
     }
   },

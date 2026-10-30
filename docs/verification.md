@@ -162,14 +162,14 @@ What it does not establish yet:
   average (about 1 % at 12 cells per δ, from the two platforms above); no confidence interval is
   stated.
 
-### Wall-modelled LES, method one, reproduced at Re_τ 950
+### Wall-modelled LES: Malaspinas & Sagaut reproduced at Re_τ 950
 
 Malaspinas & Sagaut's channel run exactly as their paper sets it up (Re_τ 950, Re_m 37 042, N 10,
 20 and 30, Smagorinsky C 0.08, MRT, their forcing), against the paper's own measures and Hoyas &
 Jiménez's DNS. Set-up, the readings where the paper is silent, and figures:
-[the wall-model page](lbm-wall-model.md#reproduction-of-the-paper-at-re_τ-950). Recorded on Linux
-aarch64 (NVIDIA GB10), GPU, f32. Pass criteria fixed before the runs: E within 15 % of the paper's
-Table 1 and C_f by the model's u_τ within its 4.22 % of Dean.
+[Large-eddy simulation](manual/fluid/les.md). Recorded on Linux aarch64 (NVIDIA GB10), GPU, f32.
+Pass criteria fixed before the runs: E within 15 % of the paper's Table 1 and C_f by the model's
+u_τ within its 4.22 % of Dean.
 
 | N | E (paper) | C_f by the model's u_τ vs Dean | C_f by the carried drag vs Dean |
 |---|---|---|---|
@@ -180,224 +180,31 @@ Table 1 and C_f by the model's u_τ within its 4.22 % of Dean.
 **Passes** on the paper's measures. The drag the flow carries is 14–17 % low on every grid, a
 property of the published method that its C_f (from the model's u_τ) does not show.
 
-### Wall-function bounce, method two: Han et al. not reproduced at C_s 0.1
+### Wall-modelled LES: Han, Ooka & Kikumoto not reproduced at A20
 
-Han, Ooka & Kikumoto's channel (Fluid Dyn. Res. 53:045506, 2021) run as their paper sets it up:
-2πD × 2D × πD, periodic in x and z, MRT (d'Humières et al. 2002's rates), Smagorinsky C_s 0.1
-with Van Driest's damping (A⁺ 26), driven by the constant pressure gradient of u_τ = 1, their
-Mach numbers, with `spalding_bounce_halfway` (WFB) or plain bounce-back (BB). Pass criteria fixed before
-the runs: ε_u⁺ over the whole channel and the log-law intercept b within 15 % of their Tables 2
-and 3, for both walls. Recorded on Linux aarch64 (NVIDIA GB10), GPU, f32 unless stated.
+Han, Ooka & Kikumoto's channel (Fluid Dyn. Res. 53:045506, 2021) at A20 (Re_τ 640), with their
+wall-function bounce (eq. 14, on-node) and with plain bounce-back, on the paper's MRT collision
+at C_s 0.1 and on the hybrid recursive regularised collision. Gate fixed before the runs: ε_u⁺
+over the whole channel and the log-law intercept b within 15 % of their Tables 2 and 3. Recorded
+on Linux aarch64 (NVIDIA GB10), GPU, f32. Set-up, the flow's diagnosis (the MRT pile-up band,
+what was ruled out, the Taylor–Green control), the odd–even mode of the wall rows, figures and
+how to rerun: [Large-eddy simulation](manual/fluid/les.md).
 
-**Correction: the WFB rows below did not run Han et al.'s scheme.** The wall model these runs
-used (then named `spalding_bounce`, now `spalding_bounce_halfway`) is a halfway variant of our own:
-- the wall lies halfway along the link, so the first fluid cell is at Δy/2;
-- each wall cell's Spalding stress is taken off that same cell's post-streaming inward diagonals.
-
-Han et al.'s eq. 14 is on-node:
-- a boundary node lies on the wall, so the first interior node is at Δy (their y⁺ 32 at A20 is Δx⁺);
-- the node's collision is replaced by bouncing back the axis populations and reflecting the
-  inward diagonals specularly, plus or minus (Δt/2Δy) τ_w, with τ_w from Spalding at the node above it;
-- so a node's stress is deposited into the interior neighbours at x ± 1.
-
-The BB rows, the MRT diagnosis (the pile-up band, the ruled-out causes, the Taylor–Green control
-and the cause) and the conclusion for MRT at C_s 0.1 are unaffected. The WFB rows record our
-variant, not a reproduction attempt of the paper's wall-function bounce. That reproduction (eq.
-14 as written, on MRT and on the hybrid recursive regularised collision) is the next step of
-method two.
-
-```
-FIELDCRAFT_HAN=A20,A40 cargo test --release -p fieldcraft-lbm-gpu --test verification study_han -- --ignored --nocapture
-```
-
-| run | ε whole (paper) | b (paper) | U_b⁺ | C_f vs Dean | walls carry |
-|---|---|---|---|---|---|
-| A20 WFB | 0.499 (0.057) | −2.64 (6.4) | 9.56 | +215 % | 1.03 |
-| A20 WFB, CPU f64 | 0.500 (0.057) | −2.66 (6.4) | 9.54 | +217 % | 1.03 |
-| A20 BB | 0.511 (0.056) | −2.55 (5.6) | 9.24 | +235 % | 1.01 |
-| A40 WFB | unstable at 93 δ/u_τ (a local lattice speed of 0.647); U_b⁺ ≈ 6.9 throughout | | | | |
-| A40 BB | stopped at 52.5 δ/u_τ, U_b⁺ 7.88 and falling | | | | |
-
-Hoyas & Jiménez's U_b⁺ is about 21.7. **Not reproduced**, on both walls and both grids; the finer
-grid is worse. CPU and GPU agree, and the walls carry the body force, so neither the port nor
-the momentum budget is the cause.
-
-![U_b⁺ over time in A20 with bounce-back: MRT at C_s 0.1 falls from 19 to 9.4, more slowly with the optimised equilibria; C_s 0.2 levels off near 20.7, against Hoyas & Jiménez's 21.7](media/lbm-wall-model/han-bulk.svg)
-
-**What the flow does.** In A20 BB (snapshot at 35 δ/u_τ) the resolved stress −⟨u′v′⟩ carries
-the whole momentum flux and the eddy viscosity is small (⟨ν_t⟩/ν ≈ 3 across the channel, by the
-finite-difference strain); u′rms⁺ ≈ v′rms⁺ ≈ 5 from y⁺ 48 to the centreline (about 1 in the
-DNS core), with 35–55 % of u′'s streamwise spectrum in the upper half of the wavenumbers and no
-checkerboard; the mean profile is flat from y⁺ 48 to the centre. The streamwise spectrum is not
-a smooth pile-up at the grid cutoff but a distinct band at k_x δ ≈ 31–41 (a wavelength of 3–4
-cells): at y⁺ 48 it rises above the largest scale's energy, and it falls by 10³ past k_x δ ≈ 43
-(the cutoff is 63). That band mixes the channel into a plug, which raises the drag.
-
-![The shear stress across A20's channel: the resolved stress carries the flux, the viscous and subgrid parts vanish past y/δ 0.1, and ν_t/ν stays near 3](media/lbm-wall-model/han-budget.svg)
-
-![u′'s streamwise spectrum at y⁺ 48 and on the centreline: a band at k_x δ ≈ 31–41 above the k^(−5/3) guide, then a fall by 10³ before the cutoff](media/lbm-wall-model/han-spectra.svg)
-
-**Ruled out.** Hou et al.'s ν_t applies C² with Δ = Δx (the simple-shear test gives ν₀ + C²γ);
-Van Driest's y is measured from the wall point halfway along the link; the energy mode's rate is
-1.19, not near 2; forcing and units are covered by the MRT Poiseuille tests.
-
-**Short runs** (A20, 10–35 δ/u_τ averaged, diagnostic switches not merged):
-
-| A20, 10–35 δ/u_τ | U_b⁺ | ε whole | b | C_f vs Dean |
+| A20, wall-function bounce | U_b⁺ | C_f vs Dean | ε whole (paper) | b (paper) |
 |---|---|---|---|---|
-| BB, MRT, C_s 0.1, damped (the paper's) | 10.9 | 0.426 | −0.99 | +150 % |
-| BB, without damping | 6.8 | 0.637 | −5.19 | +466 % |
-| BB, C_s 0.05 | unstable | | | |
-| BB, regularised collision, C_s 0.1 | 8.6 | 0.537 | −4.69 | +280 % (checkerboard at y⁺ 16–80) |
-| BB, TRT, C_s 0.1 | unstable at 0.4 δ/u_τ | | | |
-| BB, MRT with d'Humières et al.'s optimised equilibria (w_ε 0, w_εj −475/63, w_xx 0) | 12.9 | 0.325 | 0.70 | +88 % (same state, reached later) |
-| BB, C_s 0.15 | 19.2 | 0.066 | 6.46 | −7 % (v′ > u′ in the core) |
-| BB, C_s 0.2 | 20.4 | 0.129 | 7.41 | −16 % |
-| WFB, C_s 0.2 | 15.0 | 0.207 | 1.36 | +44 % |
+| MRT, Smagorinsky C_s 0.1, Van Driest (the paper's) | 14.44 | +53 % | 0.248 (0.057) | 1.92 (6.4) |
+| hybrid σ 0.99, Vreman C_s 0.18 | 28.77 | −54 % | 0.535 (0.057) | 15.23 (6.4) |
+| hybrid σ 0.99, Smagorinsky C_s 0.1, Van Driest | 27.94 | −52 % | 0.491 (0.057) | 14.30 (6.4) |
+| hybrid, dynamic σ, Vreman C_s 0.18 | 28.94 | −55 % | 0.607 (0.057) | 9.04 (6.4) |
 
-The C_s rows are a sensitivity table, not a calibration: tuning the model's constant until the
-bulk fits is not a reproduction, and none of them passes on both measures.
+**Not reproduced**, on either collision. MRT at C_s 0.1 piles energy up at the grid scale and
+carries too much drag, the documented failure of this MRT in under-resolved channels (Nathen et
+al. 2018); the hybrid collision carries about half the right drag. A40 was not run.
 
-**Without walls the scheme dissipates as it should** (`study_taylor_green_vortex_dissipation`,
-64³, lattice speed 0.05): MRT with C_s 0.1 peaks at −dk/dt 0.0121 (t 8.4) at Re 1600 and 0.0122
-(t 8.1) at Re 12000 (τ 0.500127, below the channel's 0.50015), against the spectral DNS's 0.0127
-near t 9; the energy above k 16 at t 10 is 3.3 % and 7.6 %. The pile-up is driven at the walls.
-
-**Cause.** The documented failure of this MRT in under-resolved channels: P. Nathen, D. Gaudlitz,
-M. J. Krause, N. A. Adams, *On the stability and accuracy of the BGK, MRT and RLB Boltzmann
-schemes for the simulation of turbulent flows*, Commun. Comput. Phys. 23:846–876, 2018 (DOI
-[10.4208/cicp.OA-2016-0229](https://doi.org/10.4208/cicp.OA-2016-0229)), with the same rates, find an
-unphysical state in channels at Re_τ 395 and 590 (spurious oscillations in the bulk and, at the
-higher Re, near the wall, energy moving to high wavenumbers, no mesh convergence) where BGK is
-fine, and cite Gehrke, Janßen & Rung for the same with other boundary conditions. Han et al.'s
-clean MRT result at C_s 0.1 is not explained by anything they publish (the 2021 paper and their
-2019 LBM-LES paper, IJHMT 130:700, read). Proposed next (owner's decision): validate the
-wall-function bounce on the hybrid recursive regularised collision (Jacob, Malaspinas & Sagaut
-2018), as a labelled change of collision.
-
-### Wall-function bounce: the odd–even mode of the wall rows (stationary toy)
-
-The runs above used our halfway variant (`spalding_bounce_halfway`). In channels at τ̄ ≈ 0.50015
-it grew a streamwise odd–even (k_x = π) mode of u_x in its wall rows, about 3e-5 per step, until
-the run broke. Han et al.'s own scheme, on-node (`spalding_bounce`, their eq. 14,
-`crates/lbm/src/bounce.rs`), was then checked against the halfway one by a numerical linear
-analysis of that mode (`crates/lbm/tests/wall_stability.rs`).
-
-The set-up is a periodic box 16 × (2N + 1) × 2 cells on-node, 16 × 2N × 2 halfway, N = 4, with
-both walls under the wall model and no subgrid model. A body force holds the laminar base steady:
-g × (fluid rows) = 2 u_τ², with the first node's speed Spalding's at u_τ. The first node's u⁺ is
-aimed at 5 and 11, lowered until the centreline stays under lattice speed 0.1. A checkerboard of
-1e-6 in u_x is added to the first fluid row at each wall. The growth rate per step is the
-least-squares slope of ½ ln E of the mode's energy over the second half of 20 000 steps, or of the
-time before the mode fell to round-off.
-
-The growth rate per step is shown as the range over the regularised, hybrid (σ 0.99), MRT and TRT
-collisions and both aimed u⁺. The first node's u⁺ is in brackets.
-
-| τ̄ | on-node (eq. 14) | halfway |
-|---|---|---|
-| 0.50015 | −5.2e-5 to −1.9e-5 (5, 11) | +5.6e-5 to +1.4e-4 (5, 10.8) |
-| 0.5015 | −2.9e-4 to −8.8e-5 (5, 8.1) | +5.5e-4 to +7.1e-4 (4.8; MRT broke at step 18 368) |
-| 0.505 | −7.1e-4 to −3.3e-4 (5) | +1.8e-3 to +2.3e-3 (2.7; broke by step 7 500) |
-| 0.55 | −4.4e-3 to −2.6e-3 (1.6) | +2.1e-2 to +2.4e-2 (0.85; broke by step 640) |
-| 0.8 | −1.6e-2 to −1.5e-2 (0.65) | +0.13 (0.35; broke by step 107) |
-
-**Result:** Han et al.'s on-node form damps the mode with every collision and τ̄, down to
-0.50015. Our halfway variant amplifies it with every collision and τ̄, faster as τ̄ rises. At τ̄
-0.50015 its rate is of the order the channel showed.
-
-The trunk keeps one case: on-node, regularised, τ̄ 0.5015, u⁺ 5, rate ≤ 0 (−1.2e-4 over 4000
-steps). The sweep is a heavy test, `the_odd_even_mode_of_the_wall_rows_across_forms_collisions_and_tau`.
-
-### Wall-function bounce, method two, on the hybrid collision (how to run)
-
-The same channel, cases and walls on the hybrid recursive regularised collision (J. Jacob,
-O. Malaspinas, P. Sagaut, J. Turbul. 19:1051, 2018), a labelled change of collision.
-`FIELDCRAFT_HAN_SETUP` picks the configurations, comma-separated or `all` (`paper` when unset,
-the run above):
-
-| set-up | collision | subgrid model |
-|---|---|---|
-| `paper` | MRT | Smagorinsky C_s 0.1, Van Driest A⁺ 26 |
-| `hrr-vreman` | hrr, σ 0.99 | Vreman C_s 0.18 (Jacob et al.'s explicit LES, case 3) |
-| `hrr-dynamic` | hrr, dynamic σ | Vreman C_s 0.18, which only sets σ (their case 4) |
-| `hrr-smagorinsky` | hrr, σ 0.99 | Smagorinsky C_s 0.1, Van Driest A⁺ 26 (Han's model on the hybrid collision, an extra row) |
-
-WFB is Han et al.'s on-node eq. 14 (`wall_model: spalding_bounce`, on the GPU as on the CPU; the
-box 2δ + Δx high, 2N + 1 cells, so the walls through the outermost cells' centres stay 2δ apart),
-BB no wall model. `FIELDCRAFT_HAN_WALL=halfway` runs the WFB cases with our halfway variant
-(`spalding_bounce_halfway`, the box 2δ high) instead, as the runs recorded above did; each record
-names its `wall_form`. Gate (fixed in review):
-ε_u⁺ over the whole channel and b within 15 % of Han et al.'s Tables 2 and 3, on the WFB runs;
-the BB runs are reported (`paper` keeps its gate on both walls).
-
-```
-FIELDCRAFT_HAN=A20,A40 FIELDCRAFT_HAN_SETUP=hrr-vreman,hrr-dynamic,hrr-smagorinsky \
-FIELDCRAFT_STUDY_RECORDS=<dir> \
-  cargo test --release -p fieldcraft-lbm-gpu --test verification study_han -- --ignored --nocapture
-```
-
-Every run prints and records (`<dir>/han-<setup>-<case>-<wall>.json`), beside ε_u⁺, b, U_b⁺,
-C_f and the walls' share of the body force, from a velocity readback every 0.05 δ/u_τ of the
-window:
-
-- per row of the folded half channel: U⁺, u′, v′, w′ rms⁺, the shear budget −⟨u′v′⟩⁺ +
-  viscous + subgrid against the total 1 − y/δ, ⟨ν_t⟩/ν, the molecular ⟨2ν S:S⟩⁺ and subgrid
-  ⟨2ν_t S:S⟩⁺ dissipation, and with dynamic σ its row mean and minimum. Gradients are the
-  library's own finite differences (`fieldcraft_lbm::hrr::gradient`, the device's stencil).
-  Vreman's ν_t is the model's own formula (`fieldcraft_lbm::vreman::eddy_viscosity`) on the
-  readback; Smagorinsky's is an **estimate**, (C D Δx)² √(2 S:S) with Van Driest's D at the
-  nominal y⁺ (the device takes Hou's from each cell's flux, which no readback carries). Dynamic
-  σ is `fieldcraft_lbm::hrr::dynamic_sigma` on the readback (the device keeps no per-cell σ);
-  with it the subgrid terms are the model's, not applied to τ, and left out of the budget;
-- u′'s streamwise spectrum E_uu⁺(k_x) at the row nearest y⁺ 48 (both rows at a tie: y⁺ 40 and
-  56 at A40) and at the centreline, averaged over z, both halves and every snapshot, with the
-  premultiplied peak and the share above k_x Δx = π/2;
-- on the hybrid collision, the scheme's own viscosity ν_s/ν at k_x Δx 1.5, 1.8 and 2.1 (the
-  MRT run's band) and at the spectrum's premultiplied peak, at the row's τ̄ and σ and at σ = 1:
-  the exact decay of a transverse shear wave under the collision (the 2 × 2 map of
-  `crates/lbm/tests/common/mod.rs`, `exact_rate`) less ν̄ k², beside the subgrid ⟨ν_t⟩/ν, so a
-  pass is not credited to the subgrid model when the collision's filter did the work.
-
-`FIELDCRAFT_HAN_START` and `FIELDCRAFT_HAN_END` (δ/u_τ, default 20 and 150) shorten the discarded
-start and the run for a smoke test; a shortened run is not a result. `FIELDCRAFT_HAN_CPU=1` runs on
-the CPU in double precision.
-
-**Results, A20** (GPU f32, NVIDIA GB10, Re_τ 640, averaged 20–150 δ/u_τ unless stated; WFB is
-eq. 14 on-node, BB does not depend on the wall form). Han et al.'s values in brackets:
-
-| set-up, wall | U_b⁺ | C_f vs Dean | ε whole (paper) | b (paper) | walls carry |
-|---|---|---|---|---|---|
-| `paper`, BB | 9.24 | +235 % | 0.511 (0.056) | −2.55 (5.6) | 1.01 |
-| `paper`, WFB eq. 14 | 14.44 | +53 % | 0.248 (0.057) | 1.92 (6.4) | 1.01 |
-| `hrr-vreman`, BB | 17.90 | +5.2 % | 0.153 (0.056) | 4.68 (5.6) | 1.00 |
-| `hrr-vreman`, WFB eq. 14 | 28.77 | −54 % | 0.535 (0.057) | 15.23 (6.4) | 0.99 |
-| `hrr-smagorinsky`, BB | 16.69 | +19 % | 0.171 (0.056) | 3.53 (5.6) | 1.01 |
-| `hrr-smagorinsky`, WFB eq. 14 | 27.94 | −52 % | 0.491 (0.057) | 14.30 (6.4) | 0.99 |
-| `hrr-dynamic`, BB | 6.23 | not stationary | | | 1.20 (20–70 δ/u_τ) |
-| `hrr-dynamic`, WFB eq. 14 | 28.94 | −55 % | 0.607 (0.057) | 9.04 (6.4) | 1.00 |
-
-Hoyas & Jiménez's U_b⁺ is about 21.7. The halfway variant (`FIELDCRAFT_HAN_WALL=halfway`) on
-the hybrid collision went unstable at 39 δ/u_τ (fixed σ) and 113 δ/u_τ (dynamic σ); on MRT it gave
-U_b⁺ 9.56, the WFB row of the first table. Every eq. 14 run held: no odd–even mode in the walls.
-
-**Where the dissipation sits.** With σ 0.99 the hybrid collision's own viscosity ν_s/ν at
-k_x Δx 1.5–2.1 is about 10–18 at y⁺ 48 and on the centreline (0.2–0.9 at σ = 1), against the
-subgrid ⟨ν_t⟩/ν of 0.2–1.4: the collision's filter, not Vreman or Smagorinsky, damps the band
-that MRT piled up. Dynamic σ drives σ to 0.006–0.007 with eq. 14 (ν_s/ν about 1 400–2 100 in the
-band) and 0.57–0.74 with BB.
-
-**Result: Han et al. not reproduced at A20, with their own eq. 14.** No set-up meets the gate
-(ε whole and b within 15 %) on any wall. MRT at C_s 0.1 carries too much drag (the pile-up band
-above), the hybrid collision with eq. 14 too little (C_f about half Dean's, b two to three times
-theirs); the paper's result lies between them. BB on the hybrid collision with Vreman's model
-comes nearest the DNS bulk (C_f +5 %) but is a no-slip run at y⁺ 32, not the paper's wall model,
-and its ε is three times theirs. A40 was not run.
-
-### Wall-modelled channel against Lee & Moser and Dean (#664, #749)
+### Wall-modelled LES: Malaspinas & Sagaut against Lee & Moser and Dean (#664, #749)
 
 Malaspinas & Sagaut's wall model with Musker's profile and the multiple-relaxation-time collision
-(docs/lbm-wall-model.md), on the GPU in f32. Periodic channel, half-height δ, with the flow rate
+([Large-eddy simulation](manual/fluid/les.md)), on the GPU in f32. Periodic channel, half-height δ, with the flow rate
 held at the bulk velocity of Dean's correlation by a body force updated every step; 20 δ/u_τ of
 start-up discarded and at least 50 averaged; Smagorinsky's C 0.08 at Re_τ 1000 and 0.1 at
 Re_τ 2000. References: M. Lee, R. D. Moser, *Direct numerical simulation of turbulent channel flow

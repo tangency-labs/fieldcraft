@@ -512,7 +512,7 @@ shock capturing belongs to Eulerian finite volume (E1); not needed for the Lagra
   D. Gaudlitz, M. J. Krause, N. A. Adams, *On the stability and accuracy of the BGK, MRT and RLB Boltzmann schemes for
   the simulation of turbulent flows*, Commun. Comput. Phys. 23:846–876, 2018, DOI
   [10.4208/cicp.OA-2016-0229](https://doi.org/10.4208/cicp.OA-2016-0229) (Re_τ 395 and 590, the same rates as ours). Our
-  Han et al. channel at C_s 0.1 shows the same signature (docs/verification.md, method two).
+  Han et al. channel at C_s 0.1 shows the same signature (docs/manual/fluid/les.md, Han, Ooka & Kikumoto).
 - **Complexity.** Low–moderate (a constant 19×19 transform).
 - **As implemented** (`crates/lbm/src/mrt.rs`, `collision: "mrt"`, #664): D3Q19, the 19 orthogonal moments built
   from their integer polynomials in c (so independent of the direction order), the inverse as the transpose over the
@@ -699,14 +699,14 @@ JCP 232(1):100–117, 2013, DOI [10.1016/j.jcp.2012.07.023](https://doi.org/10.1
   are rebuilt, and it relaxes with ν plus a Van Driest mixing-length eddy viscosity (κ 0.384, A⁺ 26).
 - **Deviations from the paper.** The regularised or TRT collision where MRT (C2.1) is not chosen; moving walls taken relative to their velocity; the reported wall force is the bounce-back's momentum
   exchange, not the modelled stress.
-- **Verified as method one (2026-10-27).** The paper's Re_τ 950 channel reproduces its Table 1 E within 8 % and
+- **Reproduced (2026-10-27).** The paper's Re_τ 950 channel reproduces its Table 1 E within 8 % and
   its C_f by the model's u_τ within 4.22 % of Dean, but the drag the flow carries is 14–17 % below Dean
-  (docs/lbm-wall-model.md). The paper reports C_f from the model's u_τ, which does not show this.
+  (docs/manual/fluid/les.md). The paper reports C_f from the model's u_τ, which does not show this.
 - **Earlier attempt, withdrawn.** Imposing τ_w through the first cell's own viscosity (ν_w = u_τ² y / U) went
   unstable on every channel grid at Re_τ 550 and 1000: it replaced the eddy viscosity that held those cells stable.
 
 **C5.5 Wall-modelled LES since 2012: imposing the stress, and the eddy viscosity below the matching height (survey 2026-10-27).** **Verdict: reference.**
-- **Why.** Method one (C5.4) imposes a velocity on the first cell and carries 14–17 % too little drag. Imposing the
+- **Why.** Malaspinas & Sagaut (C5.4) impose a velocity on the first cell and carries 14–17 % too little drag. Imposing the
   stress closes that gap by construction, but in our runs the first two or three cells then come out slow and the
   skin friction moves with the matching height. The papers below are what the field does about each part.
 - **Stress imposition in LBM.**

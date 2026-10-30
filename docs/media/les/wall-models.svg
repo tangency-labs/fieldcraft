@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="600" height="320" viewBox="0 0 600 320">
+  <title>wall-models</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M0 0 L600 0 L600 320 L0 320 Z" fill="#ffffff"/>
+    <path d="M300 40 L300 300" fill="none" stroke="#dddddd" stroke-width="0.6" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 20 24)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="11.5" fill="#222222"><tspan x="0" y="0">Malaspinas &amp; Sagaut (2014)</tspan></text>
+    <text transform="matrix(1 0 0 1 20 40)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#555555"><tspan x="0" y="0">imposes a velocity on the first cell</tspan></text>
+    <path d="M20 230 L280 230" fill="none" stroke="#222222" stroke-width="2.5" stroke-miterlimit="10"/>
+    <path d="M24 232 L14 244 M36 232 L26 244 M48 232 L38 244 M60 232 L50 244 M72 232 L62 244 M84 232 L74 244 M96 232 L86 244 M108 232 L98 244 M120 232 L110 244 M132 232 L122 244 M144 232 L134 244 M156 232 L146 244 M168 232 L158 244 M180 232 L170 244 M192 232 L182 244 M204 232 L194 244 M216 232 L206 244 M228 232 L218 244 M240 232 L230 244 M252 232 L242 244 M264 232 L254 244 M276 232 L266 244" fill="none" stroke="#777777" stroke-width="0.6" stroke-miterlimit="10"/>
+    <path d="M40 230 L200 230" fill="none" stroke="#bbbbbb" stroke-width="0.6" stroke-miterlimit="10" stroke-dasharray="3 3"/>
+    <path d="M40 184 L200 184" fill="none" stroke="#bbbbbb" stroke-width="0.6" stroke-miterlimit="10" stroke-dasharray="3 3"/>
+    <path d="M40 138 L200 138" fill="none" stroke="#bbbbbb" stroke-width="0.6" stroke-miterlimit="10" stroke-dasharray="3 3"/>
+    <path d="M40 92 L200 92" fill="none" stroke="#bbbbbb" stroke-width="0.6" stroke-miterlimit="10" stroke-dasharray="3 3"/>
+    <path d="M113 207 C113 210.866 116.134 214 120 214 C123.866 214 127 210.866 127 207 C127 203.134 123.866 200 120 200 C116.134 200 113 203.134 113 207 Z" fill="#d1495b" stroke="#d1495b" stroke-width="1.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 132 211)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#d1495b"><tspan x="0" y="0">x₁ at Δ/2</tspan></text>
+    <path d="M113 161 C113 164.866 116.134 168 120 168 C123.866 168 127 164.866 127 161 C127 157.134 123.866 154 120 154 C116.134 154 113 157.134 113 161 Z" fill="#2a6fdb" stroke="#2a6fdb" stroke-width="1.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 132 165)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#2a6fdb"><tspan x="0" y="0">x₂ at 3Δ/2</tspan></text>
+    <path d="M117 115 C117 116.657 118.343 118 120 118 C121.657 118 123 116.657 123 115 C123 113.343 121.657 112 120 112 C118.343 112 117 113.343 117 115 Z" fill="#bbbbbb" stroke="#bbbbbb" stroke-width="1.5" stroke-miterlimit="10"/>
+    <g>
+      <g>
+        <path d="M100.223 169.557 C85.842 175.309 78.464 179.67 79.395 184.1 C80.36 188.69 89.922 194.015 108.987 201.564 L108.545 202.68 C88.876 194.892 79.311 189.535 78.221 184.346 C77.096 178.993 84.771 174.445 99.777 168.443 Z" fill="#222222"/>
+        <path d="M111 203 L105.655 203.478 L107.411 199.011 Z" fill="#222222"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 28 186)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">Musker</tspan></text>
+    <g>
+      <g>
+        <path d="M200 206.2 L258.8 206.2 L258.8 207.8 L200 207.8 Z" fill="#d1495b"/>
+        <path d="M262 207 L255.6 210.2 L255.6 203.8 Z" fill="#d1495b"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 206 199)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#d1495b"><tspan x="0" y="0">u = ũ(y₁)</tspan></text>
+    <text transform="matrix(1 0 0 1 20 260)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">Sampled: U at x₂.  Set: every population of x₁</tspan></text>
+    <text transform="matrix(1 0 0 1 20 274)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">(equilibrium at ũ(y₁) + regularised stress).</tspan></text>
+    <text transform="matrix(1 0 0 1 20 294)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">Wall drag: the model&apos;s u_τ is 8–11 % above the</tspan></text>
+    <text transform="matrix(1 0 0 1 20 308)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#d1495b"><tspan x="0" y="0">u_τ the flow carries (Re_τ 950).</tspan></text>
+    <text transform="matrix(1 0 0 1 320 24)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="11.5" fill="#222222"><tspan x="0" y="0">Han, Ooka &amp; Kikumoto (2021)</tspan></text>
+    <text transform="matrix(1 0 0 1 320 40)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9.5" fill="#555555"><tspan x="0" y="0">imposes a stress on the wall</tspan></text>
+    <path d="M320 230 L580 230" fill="none" stroke="#222222" stroke-width="2.5" stroke-miterlimit="10"/>
+    <path d="M324 232 L314 244 M336 232 L326 244 M348 232 L338 244 M360 232 L350 244 M372 232 L362 244 M384 232 L374 244 M396 232 L386 244 M408 232 L398 244 M420 232 L410 244 M432 232 L422 244 M444 232 L434 244 M456 232 L446 244 M468 232 L458 244 M480 232 L470 244 M492 232 L482 244 M504 232 L494 244 M516 232 L506 244 M528 232 L518 244 M540 232 L530 244 M552 232 L542 244 M564 232 L554 244 M576 232 L566 244" fill="none" stroke="#777777" stroke-width="0.6" stroke-miterlimit="10"/>
+    <path d="M340 184 L500 184" fill="none" stroke="#bbbbbb" stroke-width="0.6" stroke-miterlimit="10" stroke-dasharray="3 3"/>
+    <path d="M340 138 L500 138" fill="none" stroke="#bbbbbb" stroke-width="0.6" stroke-miterlimit="10" stroke-dasharray="3 3"/>
+    <path d="M340 92 L500 92" fill="none" stroke="#bbbbbb" stroke-width="0.6" stroke-miterlimit="10" stroke-dasharray="3 3"/>
+    <path d="M413 223 L427 223 L427 237 L413 237 Z" fill="#ffffff" stroke="#d1495b" stroke-width="1.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 400 218)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#d1495b"><tspan x="0" y="0">b</tspan></text>
+    <path d="M413 184 C413 187.866 416.134 191 420 191 C423.866 191 427 187.866 427 184 C427 180.134 423.866 177 420 177 C416.134 177 413 180.134 413 184 Z" fill="#2a6fdb" stroke="#2a6fdb" stroke-width="1.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 432 188)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10" fill="#2a6fdb"><tspan x="0" y="0">x₁ at Δ</tspan></text>
+    <path d="M417 138 C417 139.657 418.343 141 420 141 C421.657 141 423 139.657 423 138 C423 136.343 421.657 135 420 135 C418.343 135 417 136.343 417 138 Z" fill="#bbbbbb" stroke="#bbbbbb" stroke-width="1.5" stroke-miterlimit="10"/>
+    <path d="M417 92 C417 93.657 418.343 95 420 95 C421.657 95 423 93.657 423 92 C423 90.343 421.657 89 420 89 C418.343 89 417 90.343 417 92 Z" fill="#bbbbbb" stroke="#bbbbbb" stroke-width="1.5" stroke-miterlimit="10"/>
+    <g>
+      <g>
+        <path d="M412.146 192.582 C396.824 196.412 388.97 201.616 388.613 206.871 C388.257 212.111 395.359 217.823 409.907 222.693 L409.526 223.831 C394.372 218.758 387.011 212.735 387.416 206.789 C387.819 200.856 395.953 195.393 411.854 191.418 Z" fill="#222222"/>
+        <path d="M412 224 L406.694 224.807 L408.171 220.24 Z" fill="#222222"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 328 209)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#222222"><tspan x="0" y="0">Spalding</tspan></text>
+    <g>
+      <g>
+        <path d="M430 219.2 L488.8 219.2 L488.8 220.8 L430 220.8 Z" fill="#d1495b"/>
+        <path d="M492 220 L485.6 223.2 L485.6 216.8 Z" fill="#d1495b"/>
+      </g>
+    </g>
+    <text transform="matrix(1 0 0 1 434 212)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#d1495b"><tspan x="0" y="0">τ_w = ρu_τ²</tspan></text>
+    <text transform="matrix(1 0 0 1 320 260)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">Sampled: U at x₁.  Set: the diagonals b sends</tspan></text>
+    <text transform="matrix(1 0 0 1 320 274)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">into the fluid, less τ_w/2 each; b does not collide.</tspan></text>
+    <text transform="matrix(1 0 0 1 320 294)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#444444"><tspan x="0" y="0">Wall drag: exactly τ_w (to round-off),</tspan></text>
+    <text transform="matrix(1 0 0 1 320 308)" x="0" y="0" xml:space="preserve" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" fill="#2a6fdb"><tspan x="0" y="0">whatever the flow above does.</tspan></text>
+  </g>
+</svg>

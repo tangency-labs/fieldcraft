@@ -155,7 +155,7 @@ units and scaled by ρ₀ Δx⁴/Δt². They are the force of the fluid on the w
 shear. The pressure in them is absolute: each face's force carries the lattice's rest pressure
 c_s² ρ₀ (Δx/Δt)² over its area, which depends on Δt and cancels only in the sum over a body closed
 in that direction, while probes and slices report the gauge pressure. Under the wall model a wall also takes the momentum each reconstruction of its wall cells
-removes, so its force is the drag the flow carries ([Wall-modelled LES](../../lbm-wall-model.md)).
+removes, so its force is the drag the flow carries ([Large-eddy simulation](les.md)).
 
 ### Heat at the boundaries
 
