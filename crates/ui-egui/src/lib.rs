@@ -75,7 +75,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 pub use control::ControlRequest;
-pub use files::{Filter, Services};
+pub use files::{FilePicker, Filter, Services};
 pub use scene::Style;
 
 /// The viewport height symbols are sized for before the viewport is first drawn (points).
@@ -462,6 +462,7 @@ pub struct ModelApp {
     pub quit_requested: bool,
     /// Host services: native file pickers, the recent-files file.
     pub services: files::Services,
+    picker: Option<files::PendingPicker>,
     /// Recently opened and saved files.
     pub recent: files::Recent,
     /// The user's preferences as last saved.
@@ -595,6 +596,7 @@ impl ModelApp {
             now: 0.0,
             quit_requested: false,
             services: files::Services::default(),
+            picker: None,
             recent: files::Recent::default(),
             prefs: files::Prefs::default(),
             usage: None,
@@ -2175,6 +2177,9 @@ impl ModelApp {
         if self.poll_loading() {
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
+        if self.poll_picker() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        }
         // A new document's home framing first, so the saved view it opens showing turns the
         // camera after it (and drops that framing) rather than being framed over.
         self.frame_new_document();
@@ -2350,6 +2355,10 @@ impl ModelApp {
             titlebar::resize_zones(ui);
         }
         self.save_prefs();
+        // Buttons can start a chooser after this frame's logic; schedule its first poll too.
+        if self.picker.is_some() {
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
+        }
     }
 
     /// The setup progress ([`fieldcraft_engine::progress`]) the browser marks, worked out again
