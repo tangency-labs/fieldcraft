@@ -1,11 +1,11 @@
-//! Solver decks: the model written in a solver's input format.
+//! Solver decks: write model data, or read a flat Abaqus deck into a new session.
 
 use std::path::Path;
 
 use fieldcraft_io::roots::Access;
 use serde_json::{Value, json};
 
-use super::req;
+use super::{opt, req};
 use crate::requirement::Requirement;
 use crate::{CommandKind, CommandSpec, EngineError, Result, Session};
 
@@ -18,6 +18,61 @@ pub const WRITE: CommandSpec = CommandSpec {
     requires: &[Requirement::Analysable, Requirement::ElementMaterial, Requirement::ElementSection],
     run: write,
 };
+
+pub const READ: CommandSpec = CommandSpec {
+    id: "deck.read",
+    label: "Read Abaqus Deck",
+    params: r#"{"format":"abaqus","path":"part.inp","units"?:"mm-t-s-N-MPa|m-kg-s-N-Pa|mm-kg-ms-kN-GPa|mm-g-ms-N-MPa|in-lbf-s-psi"} — replaces the model with a flat Abaqus deck's mesh, sets, element surfaces, elastic/density materials and sections; input numbers use this consistent preset (default: the current display preset, ignoring overrides), then store SI; the reply states units, unread keywords with original lines (first 100 and total count), and warnings. No steps, loads, conditions or unknown text are retained; INCLUDE/parts/assemblies and unsupported physical variants are refused. Empty supported data is refused. Success clears old results/design/path/undo and is unsaved; errors leave the whole session intact."#,
+    form: Some(super::forms::DECK_READ),
+    kind: CommandKind::Session,
+    requires: &[],
+    run: read,
+};
+
+fn read(s: &mut Session, p: &Value) -> Result<Value> {
+    let format: &str = req(p, "format")?;
+    if format != "abaqus" {
+        return Err(EngineError::invalid("format", "only abaqus is supported by deck.read"));
+    }
+    let units = match opt::<String>(p, "units")? {
+        Some(label) => fieldcraft_model::units::Preset::from_label(&label)
+            .ok_or_else(|| EngineError::invalid("units", "choose a known consistent unit preset"))?,
+        None => s.units().preset(),
+    };
+    let path = super::file_param(s, p, "path", Access::Read)?;
+    let bytes = super::file::read_file(&path, fieldcraft_decks::abaqus::read::MAX_INPUT_BYTES as u64)?;
+    let text = std::str::from_utf8(&bytes).map_err(|_| EngineError::invalid("path", "the input deck is not UTF-8 text"))?;
+    let limits = fieldcraft_decks::abaqus::Limits {
+        nodes: s.limits.max_import_nodes,
+        elements: s.limits.max_import_elements,
+        members: s.limits.max_import_members,
+    };
+    let imported = fieldcraft_decks::abaqus::read_limited(text, units, limits)?;
+    let model = &imported.model;
+    if model.nodes().is_empty()
+        && model.elements().is_empty()
+        && model.sets().values().all(fieldcraft_model::Set::is_empty)
+        && model.materials().is_empty()
+        && model.sections().is_empty()
+    {
+        return Err(EngineError::invalid(
+            "path",
+            format!("the deck contains no supported model data ({} unread keywords); the current model is unchanged", imported.unknown_count),
+        ));
+    }
+    let mut kinds = std::collections::BTreeMap::<&str, usize>::new();
+    for element in model.elements().values() {
+        *kinds.entry(element.kind.name()).or_default() += 1;
+    }
+    let unknown: Vec<Value> = imported.unknown.iter().map(|u| json!({"keyword":u.keyword,"line":u.line})).collect();
+    let reply = json!({"format":"abaqus","path":path,"units":units.label(),"nodes":model.nodes().len(),"elements":kinds,
+        "sets":model.sets().len(),"materials":model.materials().len(),"sections":model.sections().len(),"unknown":unknown,
+        "unknown_count":imported.unknown_count,"warnings":imported.warnings,"history_imported":false});
+    // The new, unsaved document has no journal, but still needs its own dirty revision.
+    let opened = Session { model: imported.model, revision: crate::next_revision(), ..Session::default() };
+    s.replace_with(opened);
+    Ok(reply)
+}
 
 fn write(s: &mut Session, p: &Value) -> Result<Value> {
     let name: &str = req(p, "format")?;
@@ -115,3 +170,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+#[cfg(test)]
+#[path = "deck/read_tests.rs"]
+mod read_tests;

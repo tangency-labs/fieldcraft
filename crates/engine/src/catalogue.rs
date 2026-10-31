@@ -639,7 +639,13 @@ pub static CATALOGUE: &[Capability] = &[
     deck("deck.write.abaqus", "Abaqus Input", "abaqus", "Write an Abaqus input file (.inp)"),
     deck("deck.write.nastran", "Nastran Deck", "nastran", "Write Nastran bulk data (SOL 101, 103)"),
     deck("deck.write.lsdyna", "LS-DYNA Deck", "lsdyna", "Write an LS-DYNA keyword file"),
-    soon("deck.read", "Read Deck", Solve, "Decks", "M9", "Read a deck, keeping keywords FieldCraft does not know"),
+    ready(
+        "deck.read",
+        "Read Deck",
+        Solve,
+        "Decks",
+        "Read an Abaqus input deck's model data: mesh, sets, materials and sections; unread keywords are listed, not kept",
+    ),
     ready_more(
         "solve.static",
         "Static",

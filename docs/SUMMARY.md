@@ -7,6 +7,7 @@
 - [Examples](examples.md)
 - [AI agents (MCP)](mcp.md)
 - [Units](units.md)
+- [Read an Abaqus input deck](abaqus-import.md)
 - [Contact loading and unloading](recipes/contact-load-unload.md)
 - [Path plots](path-plots.md)
 - [FieldCraft in the browser](web.md)
