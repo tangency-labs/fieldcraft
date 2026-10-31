@@ -26,6 +26,7 @@
   - [Explicit dynamics](manual/structural/explicit-dynamics.md)
   - [Element library](manual/structural/elements.md)
   - [Materials](manual/structural/materials.md)
+    - [Cited material library](manual/structural/material-library.md)
   - [Contact](manual/structural/contact.md)
   - [Constraints and connectors](manual/structural/constraints-and-connectors.md)
   - [Linear solvers](manual/structural/linear-solvers.md)

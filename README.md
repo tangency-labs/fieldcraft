@@ -133,7 +133,7 @@ The documentation site is at
 
 - [Examples](docs/examples.md): the ready-to-solve samples and their checks
 - [Architecture](docs/architecture.md): crates, layers and the meshing pipeline
-- [Element library](docs/manual/structural/elements.md) and [verification and validation](docs/verification.md)
+- [Element library](docs/manual/structural/elements.md), [materials](docs/manual/structural/materials.md), the [cited material library](docs/manual/structural/material-library.md) and [verification and validation](docs/verification.md)
 - [Capability checklist](docs/parity.md) and [roadmap](ROADMAP.md)
 - [Libraries and licences](docs/adr/0001-libraries.md)
 - [AI agents (MCP)](docs/mcp.md): `claude mcp add fieldcraft -- /path/to/fieldcraft-cli mcp`

@@ -8,10 +8,12 @@ specific volume of a polymer against temperature and pressure (two-domain Tait P
 record serves every solver: each takes the parts it can use, warns about the parts it leaves out,
 and refuses by name what it cannot represent. The J2 return map is one implementation shared by
 the implicit and explicit solvers.
+Nine structural metals can be added from a small [cited library](material-library.md) of
+constant room-temperature properties, each value with its source.
 
 | | |
 |---|---|
-| **Commands** | `model.material.create`, `model.material.edit`, `model.material.plasticity`, `model.material.damage`, `model.material.pvt`, `model.material.specific_volume`, `model.material.delete` |
+| **Commands** | `model.material.create`, `model.material.edit`, `model.material.plasticity`, `model.material.damage`, `model.material.pvt`, `model.material.specific_volume`, `model.material.delete`; `model.material.library.list` and `model.material.library.add` for the [cited material library](material-library.md) |
 | **Step procedure** | all structural and heat transfer procedures; see [Procedures](#procedures) |
 | **Solver** | `crates/fem` material kernels, used by `crates/solver` (CPU, f64) and `crates/explicit` |
 | **Method** | orthotropic compliance (Jones 1999); radial return (Simo & Hughes 1998, §3.3); multiplicative finite-strain plasticity (Simo 1992); Lagrangian logarithmic kinematic plasticity (Miehe, Apel & Lambrecht 2002); Johnson–Cook flow and fracture (Johnson & Cook 1983, 1985); decoupled hyperelasticity (Holzapfel 2000, §6.6); two-domain Tait PVT (Chang et al. 1996; Willerer et al. 2024, eqs. 1–9) |
