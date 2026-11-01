@@ -4,7 +4,7 @@
 
 use std::sync::{Arc, Weak};
 
-use fieldcraft_fem::locate::{Bounds, Work, bounds, locate};
+use fieldcraft_fem::locate::{Bounds, Location, Work, bounds, locate};
 use fieldcraft_model::{ElementKind, Model};
 
 use crate::results::{Field, Pick};
@@ -292,6 +292,60 @@ impl Index {
         Ok(candidates)
     }
 
+    /// The lowest-labelled element containing `point`, its node count and the location in it.
+    fn find(&self, model: &Model, point: [f64; 3], work: &mut Work, visits: &mut usize) -> Result<Option<(u32, usize, Location)>> {
+        for label in self.candidates(point, visits)? {
+            fieldcraft_model::progress::check()?;
+            let (kind, xyz, len) = geometry(model, label)?;
+            if let Some(location) = locate(kind, xyz.get(..len).ok_or_else(|| error("invalid path node count"))?, point, work)
+                .map_err(|e| error(format!("element {label}: {e}")))?
+            {
+                return Ok(Some((label, len, location)));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Locate every point, under one work budget and one progress stage, and read a value off
+    /// each located element with `value(label, node count, location)`: `None` outside the solid
+    /// elements.
+    fn locate_all<T>(
+        &self,
+        model: &Model,
+        points: &[[f64; 3]],
+        mut value: impl FnMut(u32, usize, Location) -> Result<T>,
+    ) -> Result<Vec<Option<(u32, Location, T)>>> {
+        let mut work = Work::new(MAX_WORK);
+        let mut visits = 0;
+        let mut out = Vec::with_capacity(points.len());
+        fieldcraft_model::progress::stage("Sampling path", Some(points.len() as f64), "stations");
+        for (i, &point) in points.iter().enumerate() {
+            fieldcraft_model::progress::check()?;
+            if i.is_multiple_of(16) {
+                fieldcraft_model::progress::count(i as f64);
+            }
+            out.push(match self.find(model, point, &mut work, &mut visits)? {
+                Some((label, len, location)) => Some((label, location, value(label, len, location)?)),
+                None => None,
+            });
+        }
+        fieldcraft_model::progress::check()?;
+        fieldcraft_model::progress::count(points.len() as f64);
+        Ok(out)
+    }
+
+    /// A nodal scalar field (`values`, one per result node) at the nodes of element `label`,
+    /// interpolated at `location`; undefined where a contributing node has no value.
+    fn scalar(model: &Model, nodes: &[u32], values: &[f64], label: u32, len: usize, location: Location) -> Result<Option<f64>> {
+        let element = model.elements().get(&label).ok_or_else(|| error("path element missing"))?;
+        let mut nodal = [0.0; 27];
+        for (out, n) in nodal.iter_mut().zip(&element.nodes) {
+            *out = nodes.binary_search(n).ok().and_then(|k| values.get(k)).copied().unwrap_or(f64::NAN);
+        }
+        Ok(location.interpolate(nodal.get(..len).ok_or_else(|| error("invalid path field count"))?))
+    }
+
+    #[cfg(test)]
     fn station(
         &self,
         model: &Model,
@@ -301,25 +355,42 @@ impl Index {
         work: &mut Work,
         visits: &mut usize,
     ) -> Result<(Option<u32>, Option<f64>, Option<[f64; 3]>)> {
-        for label in self.candidates(point, visits)? {
-            fieldcraft_model::progress::check()?;
-            let (kind, xyz, len) = geometry(model, label)?;
-            if let Some(location) = locate(kind, xyz.get(..len).ok_or_else(|| error("invalid path node count"))?, point, work)
-                .map_err(|e| error(format!("element {label}: {e}")))?
-            {
-                let element = model.elements().get(&label).ok_or_else(|| error("path element missing"))?;
-                let mut nodal = [0.0; 27];
-                for (out, n) in nodal.iter_mut().zip(&element.nodes) {
-                    *out = nodes.binary_search(n).ok().and_then(|k| values.get(k)).copied().unwrap_or(f64::NAN);
+        let Some((label, len, location)) = self.find(model, point, work, visits)? else { return Ok((None, None, None)) };
+        Ok((Some(label), Self::scalar(model, nodes, values, label, len, location)?, Some(location.natural)))
+    }
+
+    /// The enclosure of every indexed solid element.
+    pub fn bounds(&self) -> Option<Bounds> {
+        self.branches.first().map(|b| b.bounds)
+    }
+
+    /// An element-wise tensor field interpolated at `points` with the containing element's shape
+    /// functions: `nodal` gives an element's tensors at its own nodes, in its node order (each
+    /// element's own extrapolated stresses, not the average over its neighbours, so a jump at a
+    /// material or thickness change is kept). The element and the tensor, or `None` outside the
+    /// solid elements or in an element `nodal` has no complete values for.
+    pub fn tensors<'a>(
+        &self,
+        model: &Model,
+        points: &[[f64; 3]],
+        nodal: impl Fn(u32) -> Option<&'a [[f64; 6]]>,
+    ) -> Result<Vec<Option<(u32, [f64; 6])>>> {
+        let located = self.locate_all(model, points, |label, len, location| {
+            let Some(values) = nodal(label).filter(|values| values.len() == len) else { return Ok(None) };
+            let mut component = [0.0; 27];
+            let mut tensor = [0.0; 6];
+            for (c, out) in tensor.iter_mut().enumerate() {
+                for (slot, t) in component.iter_mut().zip(values) {
+                    *slot = t[c];
                 }
-                return Ok((
-                    Some(label),
-                    location.interpolate(nodal.get(..len).ok_or_else(|| error("invalid path field count"))?),
-                    Some(location.natural),
-                ));
+                match location.interpolate(component.get(..len).ok_or_else(|| error("invalid path field count"))?) {
+                    Some(v) => *out = v,
+                    None => return Ok(None),
+                }
             }
-        }
-        Ok((None, None, None))
+            Ok(Some(tensor))
+        })?;
+        Ok(located.into_iter().map(|at| at.and_then(|(label, _, tensor)| tensor.map(|t| (label, t)))).collect())
     }
 
     pub fn sample(
@@ -349,21 +420,12 @@ impl Index {
             xyz,
             result: Arc::downgrade(result),
         };
-        let mut work = Work::new(MAX_WORK);
-        let mut visits = 0;
-        fieldcraft_model::progress::stage("Sampling path", Some(samples as f64), "stations");
-        for (i, &point) in plot.xyz.iter().enumerate() {
-            fieldcraft_model::progress::check()?;
-            if i.is_multiple_of(16) {
-                fieldcraft_model::progress::count(i as f64);
-            }
-            let (element, value, natural) = self.station(model, result.nodes(), values, point, &mut work, &mut visits)?;
-            plot.elements.push(element);
-            plot.values.push(value);
-            plot.natural.push(natural);
+        let nodes = result.nodes();
+        for at in self.locate_all(model, &plot.xyz, |label, len, location| Self::scalar(model, nodes, values, label, len, location))? {
+            plot.elements.push(at.as_ref().map(|(label, _, _)| *label));
+            plot.values.push(at.as_ref().and_then(|(_, _, value)| *value));
+            plot.natural.push(at.map(|(_, location, _)| location.natural));
         }
-        fieldcraft_model::progress::check()?;
-        fieldcraft_model::progress::count(samples as f64);
         Ok(plot)
     }
 }

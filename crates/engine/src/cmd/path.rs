@@ -100,11 +100,24 @@ fn pick(result: &StepResult, field: Field, p: &Value) -> Result<Pick> {
     Ok(pick)
 }
 
+/// The current (not stale) result of `step`.
+pub(super) fn current_result(s: &Session, step: &str) -> Result<Arc<StepResult>> {
+    s.result(step).cloned().ok_or_else(|| {
+        EngineError::invalid("step", format!("the result of step `{step}` is stale (the model changed since it was solved); solve it again"))
+    })
+}
+
+/// The path index of `step`'s current `result` (cached while the result and its definition last).
+pub(super) fn path_index(s: &mut Session, step: &str, result: &Arc<StepResult>) -> Result<Arc<crate::path::Index>> {
+    let definition =
+        s.result_inputs.get(step).copied().ok_or_else(|| EngineError::invalid("step", "result has no definition identity; solve the step again"))?;
+    s.path_index.index(&s.model, result, definition)
+}
+
 fn path(s: &mut Session, p: &Value) -> Result<Value> {
     fieldcraft_model::progress::check()?;
     let step = step_for(s, p, Want::Any)?;
-    let result =
-        s.result(&step).cloned().ok_or_else(|| EngineError::invalid("step", "result is stale; solve the step again before sampling a path"))?;
+    let result = current_result(s, &step)?;
     let field_id = p.get("field").filter(|v| !v.is_null()).ok_or_else(|| EngineError::param("field", crate::schema::ProblemKind::Required))?;
     let field = field_id.as_str().and_then(Field::parse).ok_or_else(|| EngineError::invalid("field", "use a supported nodal contour field id"))?;
     let pick = pick(&result, field, p)?;
@@ -119,9 +132,7 @@ fn path(s: &mut Session, p: &Value) -> Result<Value> {
     if path.as_ref().is_some_and(|p| p.ends_with(['/', '\\'])) {
         return Err(EngineError::invalid("path", "name a CSV file, not a directory path ending in a separator"));
     }
-    let definition =
-        s.result_inputs.get(&step).copied().ok_or_else(|| EngineError::invalid("step", "result has no definition identity; solve the step again"))?;
-    let index = s.path_index.index(&s.model, &result, definition)?;
+    let index = path_index(s, &step, &result)?;
     let values = field_values(&s.model, &result, field, pick)?;
     let plot = Arc::new(index.sample(&s.model, &result, field, pick, points, samples, &values)?);
     let shown = |q, v| s.units().express(q, v).map_err(|e| EngineError::Params(e.to_string()));

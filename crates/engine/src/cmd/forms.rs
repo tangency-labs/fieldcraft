@@ -2608,6 +2608,16 @@ pub const RESULTS_PATH: &[Field] = &[
     int("mode", "Mode", 1, 1_000_000).help("Frequency results only; empty means mode 1."),
     path("path", "CSV file", true).help("Optional distance,x,y,z,value CSV in display units; gaps have empty values."),
 ];
+pub const RESULTS_LINEARIZE: &[Field] = &[
+    SOLVED,
+    xyz("from", "From", D::Length)
+        .req()
+        .help("Start of the stress classification line, on one surface of the wall (undeformed reference coordinates)."),
+    xyz("to", "To", D::Length).req().help("End of the line, on the opposite surface of the wall."),
+    int("points", "Points", crate::linearise::MIN_POINTS as i64, crate::linearise::MAX_POINTS as i64)
+        .help("Odd number of equally spaced stations integrated with Simpson's rule.")
+        .def("41"),
+];
 pub const EXPORT_VTU: &[Field] = &[
     path("path", "File", true).help("A .vtu file for one state, or a .pvd collection for every frame or mode.").req(),
     SOLVED,
