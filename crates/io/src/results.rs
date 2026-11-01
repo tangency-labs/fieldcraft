@@ -5,7 +5,7 @@
 //! Little-endian:
 //!
 //! ```text
-//! "MCRSLT04"                     magic, 8 bytes (the results encoding's version is 04)
+//! "MCRSLT05"                     magic, 8 bytes (the results encoding's version is 05)
 //! u32 steps
 //! steps × { u64 length, step name (UTF-8),
 //!           32 bytes: SHA-256 of the definition it was solved from ([`definition_hash`]),
@@ -39,8 +39,8 @@ use sha2::{Digest, Sha256};
 
 use crate::{Error, Geometry, MAX_FILE_BYTES, Result, codec, invalid};
 
-/// The magic bytes the part starts with (the `04` is the results encoding's version).
-pub const MAGIC: &[u8; 8] = b"MCRSLT04";
+/// The magic bytes the part starts with (the `05` is the results encoding's version).
+pub const MAGIC: &[u8; 8] = b"MCRSLT05";
 
 /// The part's name.
 pub const PART: &str = "results.bin";
@@ -412,6 +412,7 @@ fn check_fluid(f: &FluidResult) -> std::result::Result<(), String> {
                 ("a frame's velocity", frame.velocity.len(), false),
                 ("a frame's pressure", frame.pressure.len(), false),
                 ("a frame's temperature", frame.temperature.len(), true),
+                ("a frame's fill level", frame.fill.len(), true),
             ],
         )?;
     }
@@ -424,6 +425,16 @@ fn check_fluid(f: &FluidResult) -> std::result::Result<(), String> {
         lengths(
             samples,
             &[("a zone's flow", z.flow.len(), false), ("a zone's pressure", z.pressure.len(), false), ("a fan's rise", z.fan_rise.len(), true)],
+        )?;
+    }
+    if let Some(s) = &f.surface {
+        lengths(
+            samples,
+            &[
+                ("the liquid's lower extent", s.min.len(), false),
+                ("the liquid's upper extent", s.max.len(), false),
+                ("the liquid's volume", s.volume.len(), false),
+            ],
         )?;
     }
     if f.solids.iter().any(|s| s.cells.iter().any(|c| *c as usize >= n)) {

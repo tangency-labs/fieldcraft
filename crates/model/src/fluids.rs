@@ -614,6 +614,64 @@ fn material_fits_fluid_domain(m: &Material, name: &str, d: &FluidDomain) -> Resu
     Ok(())
 }
 
+/// The most liquid regions a free surface lists.
+pub const MAX_LIQUID_REGIONS: usize = 1000;
+
+/// A box of the domain that holds liquid at the start of a free-surface flow.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LiquidRegion {
+    pub min: [f64; 3],
+    pub max: [f64; 3],
+}
+
+impl LiquidRegion {
+    pub fn validate(&self) -> Result<()> {
+        for a in 0..3 {
+            let (lo, hi) = (self.min.get(a).copied().unwrap_or(0.0), self.max.get(a).copied().unwrap_or(0.0));
+            finite("liquid region min", lo)?;
+            finite("liquid region max", hi)?;
+            if !(hi >= lo) {
+                return Err(Error::Invalid(format!(
+                    "liquid region: the {} range {lo}..{hi} is empty",
+                    ["x", "y", "z"].get(a).copied().unwrap_or("?")
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// A free surface: the fluid cells hold liquid where `liquid` says and gas elsewhere, and the
+/// liquid moves through the gas (a filling cavity, a collapsing column, a wave). The gas is at
+/// rest at the gauge pressure 0 and carries no momentum. Velocity inlets inject liquid.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FreeSurface {
+    /// The regions that hold liquid at the start (the cells whose centres they contain); the
+    /// rest of the box is gas. Empty when every drop comes in through an inlet.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub liquid: Vec<LiquidRegion>,
+}
+
+impl FreeSurface {
+    /// Check the regions; `inlet` says whether a velocity inlet injects liquid.
+    pub fn validate(&self, inlet: bool) -> Result<()> {
+        if self.liquid.len() > MAX_LIQUID_REGIONS {
+            return Err(Error::Limit(format!("a free surface lists at most {MAX_LIQUID_REGIONS} liquid regions")));
+        }
+        for (i, r) in self.liquid.iter().enumerate() {
+            r.validate().map_err(|e| context("liquid region", &i.to_string(), e))?;
+        }
+        if self.liquid.is_empty() && !inlet {
+            return Err(Error::Invalid(
+                "the free surface has no liquid: give `free_surface` a `liquid` region, or a velocity inlet on a box face".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Where a boundary condition goes: a face of the box, or a named face of an obstacle.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -659,6 +717,10 @@ pub struct FluidDomain {
     /// Fans: zones that raise the pressure by their pressure–flow curve.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fans: Vec<Fan>,
+    /// A free surface: liquid in part of the box, gas elsewhere ([`FreeSurface`]); `None` for a
+    /// box full of one fluid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub free_surface: Option<FreeSurface>,
 }
 
 fn is_zero(v: &[f64; 3]) -> bool {
@@ -758,6 +820,10 @@ impl FluidDomain {
             positive("tolerance", t)?;
         }
         crate::fluid_zones::validate_zones(&self.porous, &self.fans)?;
+        if let Some(fs) = &self.free_surface {
+            let inlet = BoxFace::ALL.iter().any(|f| matches!(self.faces.get(*f), FaceCondition::Velocity { .. }));
+            fs.validate(inlet).map_err(|e| context("free surface", "settings", e))?;
+        }
         Ok(())
     }
 
@@ -925,6 +991,7 @@ mod tests {
             thermal: None,
             porous: vec![],
             fans: vec![],
+            free_surface: None,
         }
     }
 

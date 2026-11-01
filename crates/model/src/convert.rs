@@ -281,6 +281,7 @@ impl Quantities for FluidDomain {
             thermal,
             porous,
             fans,
+            free_surface,
         } = self;
         each(min, Q::Length, f);
         each(max, Q::Length, f);
@@ -349,6 +350,12 @@ impl Quantities for FluidDomain {
             for [flow, rise] in curve {
                 f(Q::VolumeFlow, flow);
                 f(Q::Pressure, rise);
+            }
+        }
+        if let Some(FreeSurface { liquid }) = free_surface {
+            for LiquidRegion { min, max } in liquid {
+                each(min, Q::Length, f);
+                each(max, Q::Length, f);
             }
         }
     }

@@ -342,7 +342,7 @@ impl Monitor {
     /// Sample every quantity at step `k` (a sample point) and, at the end of a window, decide:
     /// `Some` reason to stop now.
     pub fn sample(&mut self, setup: &Setup, flow: &mut dyn Backend, k: u64) -> Result<Option<StopReason>> {
-        let Fields { density, velocity, temperature } = flow.fields()?;
+        let Fields { density, velocity, temperature, fill: _ } = flow.fields()?;
         let fluid: Vec<usize> = (0..setup.grid.len()).filter(|c| flow.is_fluid(*c)).collect();
         let n = fluid.len().max(1) as f64;
         let vs = setup.velocity_scale();
@@ -558,7 +558,12 @@ mod tests {
             self.k
         }
         fn fields(&mut self) -> Result<Fields> {
-            Ok(Fields { density: vec![1.0; self.cells], velocity: vec![[(self.u)(self.k), 0.0, 0.0]; self.cells], temperature: Vec::new() })
+            Ok(Fields {
+                density: vec![1.0; self.cells],
+                velocity: vec![[(self.u)(self.k), 0.0, 0.0]; self.cells],
+                temperature: Vec::new(),
+                fill: Vec::new(),
+            })
         }
         fn mass(&mut self) -> Result<f64> {
             Ok(self.cells as f64)
@@ -604,6 +609,7 @@ mod tests {
             thermal: None,
             porous: vec![],
             fans: vec![],
+            free_surface: None,
         };
         m.add_fluid_domain("Flow", domain).unwrap();
         let rule = Steady { monitors: vec![], tolerance: 1e-3, window: Some(50.0), min_time: None, divergence: None, averaging: None };

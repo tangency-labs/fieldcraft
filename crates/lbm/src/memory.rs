@@ -7,7 +7,8 @@
 //! temperature lattice with heat (and each cell's eddy viscosity with a turbulence model too), each
 //! cell's velocity for the finite-difference gradient with the hybrid collision or Vreman's model,
 //! the output frames (single precision: velocity and pressure,
-//! and temperature with heat) and one frame's fields while it is written. Links at the box faces
+//! and temperature with heat, and the fill level with a free surface), the free surface's cell
+//! kinds, masses and fill levels, and one frame's fields while it is written. Links at the box faces
 //! are counted; links at obstacles depend on their surface and are not, so a run with obstacles
 //! takes a little more (the tests state the margin).
 
@@ -49,6 +50,11 @@ const GRADIENT_VELOCITY: u64 = 3 * F64;
 const WALL_DISTANCE: u64 = F64 + 4;
 /// Per cell with fans or porous zones, and with conducting obstacles: an index.
 const INDEX: u64 = 4;
+/// Per cell with a free surface: its kind, its mass and fill level, whether it is populated,
+/// its conversion mark and its inlet mark; and in a frame and a readback, its fill level.
+const SURFACE: u64 = 1 + 2 * F64 + 3;
+const FRAME_FILL: u64 = F32;
+const READBACK_FILL: u64 = F64;
 /// Links per cell of a box face: the directions that cross it (5 of D3Q19).
 const FACE_LINKS: u64 = 5;
 /// Per cell of an output frame: velocity and pressure, and temperature with heat.
@@ -129,6 +135,7 @@ struct Shape {
     zone_count: u64,
     conducting: bool,
     open_faces: [bool; 6],
+    surface: bool,
 }
 
 impl Shape {
@@ -155,6 +162,7 @@ impl Shape {
                 * F32,
             conducting: thermal.is_some_and(|t| !t.solids.is_empty()),
             open_faces: fieldcraft_model::BoxFace::ALL.map(|f| is_open(domain.faces.get(f))),
+            surface: domain.free_surface.is_some(),
         })
     }
 }
@@ -228,6 +236,9 @@ impl Memory {
         if s.conducting {
             flow += INDEX;
         }
+        if s.surface {
+            flow += SURFACE;
+        }
         let prepared = per_cell(flow).saturating_add(boundary);
         let zone_cells = if s.zones { per_cell(DEVICE_ZONE_CELL) } else { 0 };
         let (setup, state, readback) = match backend {
@@ -235,7 +246,7 @@ impl Memory {
             // everything to the end.
             Choice::Cpu => {
                 let state = prepared.saturating_add(per_cell(targets + gradients)).saturating_add(per_cell(RESULT));
-                (state, state, per_cell(READBACK + if s.heat { READBACK_HEAT } else { 0 }))
+                (state, state, per_cell(READBACK + if s.heat { READBACK_HEAT } else { 0 } + if s.surface { READBACK_FILL } else { 0 }))
             }
             // The device backend copies the flow up, and the flow is dropped before the steps.
             Choice::Device => (
@@ -255,7 +266,7 @@ impl Memory {
             frames: s.frames,
             setup,
             state,
-            frame_bytes: per_cell(FRAME + if s.heat { FRAME_HEAT } else { 0 }).saturating_mul(s.frames),
+            frame_bytes: per_cell(FRAME + if s.heat { FRAME_HEAT } else { 0 } + if s.surface { FRAME_FILL } else { 0 }).saturating_mul(s.frames),
             readback,
             device,
         }

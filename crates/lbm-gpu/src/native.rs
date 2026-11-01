@@ -663,6 +663,9 @@ impl GpuFlow {
                     .into(),
             ));
         }
+        if flow.free_surface() {
+            return Err(Error::Invalid("a free surface is not on the GPU backend yet: solve on the CPU (`backend: \"cpu\"`)".into()));
+        }
         fieldcraft_model::progress::backend_diagnostic(fieldcraft_model::progress::BackendDiagnostic {
             phase: "selecting_adapter".into(),
             devices_opened: Some(DEVICES_OPENED.load(Ordering::Relaxed)),
@@ -1583,7 +1586,7 @@ impl Backend for GpuFlow {
                 temperature
             }
         };
-        Ok(Fields { density, velocity, temperature })
+        Ok(Fields { density, velocity, temperature, fill: Vec::new() })
     }
 
     fn heat(&mut self) -> Result<Vec<f64>> {

@@ -17,6 +17,8 @@
 //! - [`steady`]: the steady-state monitor and stop rule of a run.
 //! - [`rheology`]: shear-dependent viscosity (power law, Carreau–Yasuda, Cross, Cross-WLF), each
 //!   cell relaxing with the viscosity at its own shear rate.
+//! - [`surface`]: free-surface flow (volume of fluid with interface cells, Körner et al. 2005):
+//!   liquid filling, collapsing or sloshing through a gas, injected by velocity inlets.
 //!
 //! # Sources
 //! - T. Krüger, H. Kusumaatmaja, A. Kuzmin, O. Shardt, G. Silva, E. M. Viggen, *The Lattice
@@ -74,6 +76,7 @@ pub mod rheology;
 pub mod setup;
 pub mod solve;
 pub mod steady;
+pub mod surface;
 pub mod turbulence;
 pub mod voxel;
 pub mod vreman;
@@ -83,13 +86,14 @@ pub use backend::{Backend, Choice, Fields, device_available, register_backend};
 pub use flow::{Flow, Group, Link, OpenCell, Rule, Target, ThermalState, ZoneSample};
 pub use memory::{DeviceBuffer, Memory};
 pub use ports::{Port, PortProperties, Stream};
-pub use setup::{ContactSetup, PhaseSetup, SolidSetup, ThermalSetup};
+pub use setup::{ContactSetup, PhaseSetup, SolidSetup, SurfaceSetup, ThermalSetup};
 pub use setup::{Obstacle, Setup, ZoneKind, ZoneSetup, fluid_step};
 pub use solve::{
-    ComponentCheck, FluidResult, FluidStats, ForceHistory, Frame, HeatHistory, Peak, ShearDependentTau, SolidResult, ZoneHistory, run, solve_fluid,
-    solve_fluid_on,
+    ComponentCheck, FluidResult, FluidStats, ForceHistory, Frame, FreeSurfaceStats, HeatHistory, Peak, ShearDependentTau, SolidResult,
+    SurfaceHistory, ZoneHistory, run, solve_fluid, solve_fluid_on,
 };
 pub use steady::{Average, MonitorSample, SteadyReport, SteadySetup, StopReason};
+pub use surface::{Kind, Surface, SurfaceReport};
 pub use voxel::Grid;
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]

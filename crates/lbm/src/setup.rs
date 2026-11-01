@@ -211,6 +211,13 @@ pub struct SolidSetup {
     pub limit: Option<f64>,
 }
 
+/// A free surface in the grid's cells (`crate::surface`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SurfaceSetup {
+    /// The cells that hold liquid at the start: per region `lo..=hi` along each axis.
+    pub liquid: Vec<([usize; 3], [usize; 3])>,
+}
+
 /// A fluid step in lattice units.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Setup {
@@ -262,6 +269,8 @@ pub struct Setup {
     pub steady: Option<crate::steady::SteadySetup>,
     /// The domain's porous zones, then its fans, in lattice units.
     pub zones: Vec<ZoneSetup>,
+    /// The free surface's liquid regions, when the domain has one.
+    pub surface: Option<SurfaceSetup>,
     /// A shear-dependent fluid: each cell's own relaxation time (`crate::rheology`).
     pub rheology: Option<Rheology>,
     /// With one: τ⁺ at the flow's characteristic shear rate, before `tau_plus` holds it within
@@ -544,6 +553,33 @@ impl Setup {
                 )));
             }
         }
+        // A free surface runs with walls, slip faces, periodic faces and velocity inlets, on a
+        // Newtonian isothermal fluid without zones or a turbulence model; everything else is
+        // refused by name rather than run unverified.
+        if let Some(fs) = &domain.free_surface {
+            let refuse = |what: &str| Err(Error::Invalid(format!("not supported yet: {what} with a free surface (`free_surface`)")));
+            if let Some(face) = BoxFace::ALL.iter().find(|f| matches!(domain.faces.get(**f), FaceCondition::Pressure { .. })) {
+                return refuse(&format!("a pressure face (box face `{}`); use walls, slip faces and velocity inlets", face.name()));
+            }
+            if domain.thermal.is_some() {
+                return refuse("heat in the fluid (`thermal`)");
+            }
+            if turbulence.is_some() {
+                return refuse("a turbulence model (`turbulence`)");
+            }
+            if let Some(z) = domain.porous.first() {
+                return refuse(&format!("porous zones (`{}`)", z.name));
+            }
+            if let Some(f) = domain.fans.first() {
+                return refuse(&format!("fans (`{}`)", f.name));
+            }
+            if newtonian.is_none() {
+                return refuse(&format!("a {} viscosity", fluid.name()));
+            }
+            if fs.liquid.is_empty() && !BoxFace::ALL.iter().any(|f| matches!(domain.faces.get(*f), FaceCondition::Velocity { .. })) {
+                return Err(Error::Invalid("the free surface has no liquid: give it a `liquid` region or a velocity inlet".into()));
+            }
+        }
         // The temperature a shear-dependent viscosity is first taken at: the initial one.
         let initial_kelvin = domain.thermal.as_ref().map_or(0.0, |t| t.initial_temperature);
 
@@ -595,7 +631,11 @@ impl Setup {
         // are not periodic (a periodic axis has no walls across it; one cell thick in a 2D run).
         let gap = (0..3).filter(|&k| !domain.faces.periodic(k)).filter_map(|k| extents.get(k).copied()).fold(f64::INFINITY, f64::min);
         let gap = if gap.is_finite() { gap } else { small };
-        if a > 0.0 {
+        if a > 0.0 && domain.free_surface.is_some() {
+            // Liquid falls freely through the gas: the speed it gains over the box.
+            let large = extents.iter().copied().fold(0.0, f64::max);
+            u_char = u_char.max((2.0 * a * large).sqrt());
+        } else if a > 0.0 {
             let large = extents.iter().copied().fold(0.0, f64::max);
             let viscous = match newtonian {
                 Some(viscosity) => a * small * small / (8.0 * viscosity),
@@ -863,6 +903,22 @@ impl Setup {
             }
         }
         let zones = zones(&domain, &grid, viscosity, dt, density)?;
+        let surface = match &domain.free_surface {
+            None => None,
+            Some(fs) => {
+                let mut liquid = Vec::with_capacity(fs.liquid.len());
+                for (i, r) in fs.liquid.iter().enumerate() {
+                    let range = cell_range(&grid, r.min, r.max).ok_or_else(|| {
+                        Error::Invalid(format!(
+                            "liquid region {i} contains no cell centre: make it at least one spacing ({}) across and put it inside the box",
+                            grid.spacing
+                        ))
+                    })?;
+                    liquid.push(range);
+                }
+                Some(SurfaceSetup { liquid })
+            }
+        };
         if mach > MACH_WARNING {
             warnings.push(format!(
                 "lattice Mach number {mach:.3}: the compressibility error, of order Ma² ≈ {:.1}%, may be visible",
@@ -923,6 +979,7 @@ impl Setup {
             thermal,
             steady: steady.as_ref().map(|r| crate::steady::SteadySetup::new(r, n, dt)).transpose()?,
             zones,
+            surface,
             rheology,
             shear_dependent_tau,
             warnings,

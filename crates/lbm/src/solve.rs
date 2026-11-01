@@ -15,6 +15,10 @@ pub const MAX_HISTORY: u64 = 10_000;
 /// A relative density variation above this at the end of a run is reported.
 pub const COMPRESSIBILITY_WARNING: f64 = 0.01;
 
+/// A free surface's relative mass error above this at the end of a run is reported (the scheme
+/// conserves mass to round-off: a few 1e-13 over a long run).
+pub const MASS_ERROR_WARNING: f64 = 1.0e-9; // unit-factors: a relative mass error, not a conversion
+
 /// The velocity and pressure field at one time, per cell (index `i + nx (j + ny k)`; zero in
 /// solid cells). Stored in single precision: output for display and probing.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -28,7 +32,11 @@ pub struct Frame {
     /// [`crate::setup::ThermalSetup`]; [`FluidResult::temperatures`] gives kelvin), when the flow
     /// carries heat (empty otherwise).
     pub temperature: Vec<f32>,
-    /// The total fluid mass (density times volume).
+    /// The fill level of every cell, 1 liquid to 0 gas, when the flow has a free surface (empty
+    /// otherwise).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fill: Vec<f32>,
+    /// The total fluid mass (density times volume): with a free surface the liquid's.
     pub mass: f64,
 }
 
@@ -56,6 +64,18 @@ pub struct ZoneHistory {
     pub pressure: Vec<f64>,
     /// A fan's pressure rise from its curve at that time (empty for a porous zone).
     pub fan_rise: Vec<f64>,
+}
+
+/// The liquid's extent and volume over time, with a free surface (one entry per
+/// [`FluidResult::history_times`]).
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SurfaceHistory {
+    /// The lowest and highest cell-face coordinates along each axis of the cells at least half
+    /// full: the liquid's bounding box (the box's lower corner twice when no cell is half full).
+    pub min: Vec<[f64; 3]>,
+    pub max: Vec<[f64; 3]>,
+    /// The liquid's volume: the fill levels summed, times the cell volume.
+    pub volume: Vec<f64>,
 }
 
 /// The force the fluid exerts on one wall over time.
@@ -155,6 +175,30 @@ pub struct FluidStats {
     /// skips it (none when read back), so results saved before it read unchanged.
     #[serde(skip)]
     pub frozen: Option<f64>,
+    /// With a free surface: its mass balance and cell counts at the end, in model units of mass.
+    /// Reported by the solve, not saved, like `frozen`.
+    #[serde(skip)]
+    pub free_surface: Option<FreeSurfaceStats>,
+}
+
+/// How a free surface fared over the run (masses in model units).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FreeSurfaceStats {
+    pub initial_mass: f64,
+    pub mass: f64,
+    /// What the inlets injected over the run.
+    pub injected: f64,
+    /// `(mass − initial_mass − injected)` over the larger of the initial and injected mass: what
+    /// the scheme lost or made, round-off when all is well.
+    pub mass_error: f64,
+    /// The share of the fluid cells' volume that is liquid at the end.
+    pub fill: f64,
+    pub liquid_cells: usize,
+    pub interface_cells: usize,
+    pub gas_cells: usize,
+    /// Cells that filled and cells that emptied over the run.
+    pub filled: u64,
+    pub emptied: u64,
 }
 
 /// The result of a fluid step.
@@ -186,6 +230,9 @@ pub struct FluidResult {
     pub temperature_reference: f64,
     /// The obstacles that conduct heat.
     pub solids: Vec<SolidResult>,
+    /// The liquid's extent over time, with a free surface.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surface: Option<SurfaceHistory>,
 }
 
 impl FluidResult {
@@ -331,10 +378,15 @@ fn frame(setup: &Setup, flow: &mut dyn Backend, step: u64) -> Result<Frame> {
     velocity.try_reserve_exact(n).map_err(|_| Error::Limit("not enough memory for an output frame".into()))?;
     pressure.try_reserve_exact(n).map_err(|_| Error::Limit("not enough memory for an output frame".into()))?;
     let vs = setup.velocity_scale();
-    let Fields { density, velocity: u, temperature: t } = flow.fields()?;
+    let Fields { density, velocity: u, temperature: t, fill: e } = flow.fields()?;
     let mut temperature = Vec::new();
     if !t.is_empty() {
         temperature.try_reserve_exact(n).map_err(|_| Error::Limit("not enough memory for an output frame".into()))?;
+    }
+    let mut fill = Vec::new();
+    if !e.is_empty() {
+        fill.try_reserve_exact(n).map_err(|_| Error::Limit("not enough memory for an output frame".into()))?;
+        fill.extend(e.iter().map(|v| *v as f32));
     }
     for cell in 0..n {
         if flow.is_fluid(cell) {
@@ -357,7 +409,7 @@ fn frame(setup: &Setup, flow: &mut dyn Backend, step: u64) -> Result<Frame> {
         }
     }
     let mass = flow.mass()? * setup.density * setup.grid.spacing.powi(3);
-    Ok(Frame { time: step as f64 * setup.time_step, step, velocity, pressure, temperature, mass })
+    Ok(Frame { time: step as f64 * setup.time_step, step, velocity, pressure, temperature, fill, mass })
 }
 
 /// Run a prepared flow (fresh from [`Flow::new`], possibly with its own initial state, on any
@@ -398,6 +450,20 @@ fn run_checkpointed(
         .map(|z| ZoneHistory { name: z.name.clone(), fan: z.is_fan(), flow: Vec::new(), pressure: Vec::new(), fan_rise: Vec::new() })
         .collect();
     let (qs, ps) = (setup.volume_flow_scale(), setup.pressure_scale());
+    let mut surface: Option<SurfaceHistory> = setup.surface.as_ref().map(|_| SurfaceHistory::default());
+    let h = setup.grid.spacing;
+    let sample_surface = |history: &mut Option<SurfaceHistory>, flow: &dyn Backend| {
+        let (Some(history), Some((extent, cells))) = (history.as_mut(), flow.liquid_extent()) else { return };
+        let (lo, hi) = match extent {
+            Some((lo, hi)) => {
+                ([0, 1, 2].map(|a| setup.grid.origin[a] + lo[a] as f64 * h), [0, 1, 2].map(|a| setup.grid.origin[a] + (hi[a] + 1) as f64 * h))
+            }
+            None => (setup.grid.origin, setup.grid.origin),
+        };
+        history.min.push(lo);
+        history.max.push(hi);
+        history.volume.push(cells * h * h * h);
+    };
     let mut next_frame = 1u64;
     // Frame j (1..=frames) at step round(j · total / frames).
     let frame_step = |j: u64| (j * total + frames / 2) / frames;
@@ -424,6 +490,7 @@ fn run_checkpointed(
                 heats: &mut heats,
                 zones: &mut zones,
                 monitor: &mut monitor,
+                surface: &mut surface,
             }
             .archive(a, setup)?;
             flow.checkpoint(a)?;
@@ -495,6 +562,7 @@ fn run_checkpointed(
                     h.push(q * hs);
                 }
             }
+            sample_surface(&mut surface, &*flow);
         }
         while next_frame <= frames && k == frame_step(next_frame) {
             out_frames.push(frame(setup, flow, k)?);
@@ -527,6 +595,7 @@ fn run_checkpointed(
                     heats: &mut heats,
                     zones: &mut zones,
                     monitor: &mut monitor,
+                    surface: &mut surface,
                 }
                 .archive(a, setup)?;
                 flow.checkpoint(a)
@@ -575,6 +644,29 @@ fn run_checkpointed(
         warnings
             .push(format!("solved on {}: single precision, deterministic on this device, within the backend's tolerance of the CPU", flow.name()));
     }
+    // A free surface's mass balance: the scheme conserves mass to round-off, so a loss shows a
+    // fault.
+    let mass_scale = setup.density * setup.grid.spacing.powi(3);
+    let free_surface = flow.surface_report().map(|r| FreeSurfaceStats {
+        initial_mass: r.initial_mass * mass_scale,
+        mass: r.mass * mass_scale,
+        injected: r.injected * mass_scale,
+        mass_error: r.mass_error,
+        fill: r.fill,
+        liquid_cells: r.liquid_cells,
+        interface_cells: r.interface_cells,
+        gas_cells: r.gas_cells,
+        filled: r.filled,
+        emptied: r.emptied,
+    });
+    if let Some(fs) = &free_surface
+        && fs.mass_error.abs() > MASS_ERROR_WARNING
+    {
+        warnings.push(format!(
+            "the free surface lost or made {:.2e} of the liquid's mass (the balance of what it started with and what the inlets injected): the surface scheme broke down; refine the spacing or shorten the time step",
+            fs.mass_error
+        ));
+    }
     let solid: Vec<bool> = (0..n).map(|c| !flow.is_fluid(c)).collect();
     let open_faces = fieldcraft_model::BoxFace::ALL.map(|f| {
         matches!(setup.domain.faces.get(f), fieldcraft_model::FaceCondition::Velocity { .. } | fieldcraft_model::FaceCondition::Pressure { .. })
@@ -621,10 +713,12 @@ fn run_checkpointed(
             tau_thermal: setup.thermal.as_ref().map(|t| t.tau),
             eddy_viscosity_ratio: setup.turbulent().then(|| flow.eddy_viscosity_ratio()),
             frozen: flow.frozen(),
+            free_surface,
         },
         warnings,
         steady,
         temperature_reference: setup.thermal.as_ref().map_or(0.0, |t| t.zero),
         solids,
+        surface,
     })
 }

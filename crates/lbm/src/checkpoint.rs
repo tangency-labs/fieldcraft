@@ -154,11 +154,12 @@ pub(crate) struct RunState<'a> {
     pub heats: &'a mut Vec<Vec<f64>>,
     pub zones: &'a mut Vec<crate::solve::ZoneHistory>,
     pub monitor: &'a mut Option<crate::steady::Monitor>,
+    pub surface: &'a mut Option<crate::solve::SurfaceHistory>,
 }
 
 impl RunState<'_> {
     pub fn archive(&mut self, a: &mut dyn Archive, setup: &crate::Setup) -> Result<()> {
-        fixed(a, u64::from_le_bytes(*b"FCRST3\0\0"))?; // The layout tag: a change to the saved state changes it.
+        fixed(a, u64::from_le_bytes(*b"FCRST4\0\0"))?; // The layout tag: a change to the saved state changes it.
         u64(a, self.k)?;
         if *self.k == 0 || *self.k > setup.steps {
             return Err(Error::Invalid("checkpoint step is outside this run".into()));
@@ -208,6 +209,7 @@ impl RunState<'_> {
             }
             singles(a, &mut f.pressure, setup.grid.len())?;
             singles(a, &mut f.temperature, if setup.thermal.is_some() { setup.grid.len() } else { 0 })?;
+            singles(a, &mut f.fill, if setup.surface.is_some() { setup.grid.len() } else { 0 })?;
             f64(a, &mut f.mass)?;
         }
         let every = total.div_ceil(crate::solve::MAX_HISTORY).max(1);
@@ -232,6 +234,12 @@ impl RunState<'_> {
             doubles(a, &mut h.flow, samples)?;
             doubles(a, &mut h.pressure, samples)?;
             doubles(a, &mut h.fan_rise, if h.fan { samples } else { 0 })?;
+        }
+        fixed(a, u64::from(self.surface.is_some()))?;
+        if let Some(s) = self.surface.as_mut() {
+            vectors(a, &mut s.min, samples)?;
+            vectors(a, &mut s.max, samples)?;
+            doubles(a, &mut s.volume, samples)?;
         }
         fixed(a, u64::from(self.monitor.is_some()))?;
         if let Some(m) = self.monitor.as_mut() {
