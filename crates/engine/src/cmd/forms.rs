@@ -869,6 +869,19 @@ const FAN: &[Field] = &[
         .hint("0.01"),
 ];
 
+const LIQUID_REGION: &[Field] = &[
+    xyz("min", "Box min", D::Length).help("The region's corner with the smallest coordinates.").req(),
+    xyz("max", "Box max", D::Length).help("The region's corner with the largest coordinates; it holds the cells whose centres it contains.").req(),
+];
+
+const FREE_SURFACE: Field = group(
+    "free_surface",
+    "Free surface",
+    &[rows("liquid", "Liquid at the start", LIQUID_REGION)
+        .help("The regions that hold liquid at the start; the rest of the box is gas. Velocity inlets inject liquid, so a filling can start empty.")],
+)
+.help("Liquid in part of the box and gas elsewhere: the liquid moves through the gas (a filling cavity, a collapsing column, a wave). The gas is at rest at zero gauge pressure; surface tension is not modelled.");
+
 pub const FLUID_DOMAIN: &[Field] = &[
     NAME,
     reference("material", "Fluid", C::Material).help("The fluid material: needs a density and a viscosity.").req(),
@@ -910,6 +923,7 @@ pub const FLUID_DOMAIN: &[Field] = &[
     rows("porous", "Vents and filters", POROUS_ZONE)
         .help("Porous resistance zones: vents, grilles, filters and perforated plates without resolving every hole."),
     rows("fans", "Fans", FAN).help("Fans: zones that raise the pressure by their pressure–flow curve; the solve finds the operating point."),
+    FREE_SURFACE,
 ];
 
 pub const FLUID_BOUNDARY: &[Field] = &[
@@ -2462,6 +2476,7 @@ pub const SOLVE_PROBE: &[Field] = &[
                     ("speed", "Speed"),
                     ("pressure", "Pressure"),
                     ("temperature", "Temperature"),
+                    ("fill", "Fill level (free surface)"),
                     ("wall_heat_flux", "Wall heat flux (into a box wall)"),
                 ],
             )
@@ -2470,6 +2485,27 @@ pub const SOLVE_PROBE: &[Field] = &[
         ],
     )
     .help("Read a fluid field along a line, with its largest and smallest value and where they are."),
+    group(
+        "front",
+        "Liquid front",
+        &[
+            choice("axis", "Axis", AXIS).help("The axis the front moves along.").def("\"x\""),
+            choice("end", "End", &[("\"max\"", "Upper (max)"), ("\"min\"", "Lower (min)")])
+                .help("Which end of the liquid's extent: its highest or lowest cell face along the axis.")
+                .def("\"max\""),
+            points("at", "Arrival points", D::Length, 10_000).help("Points whose coordinate along the axis the front's arrival time is read at."),
+        ],
+    )
+    .help("A free surface's liquid front over time: its extent along an axis and when it reached given positions."),
+    group(
+        "depth",
+        "Liquid depth",
+        &[
+            choice("axis", "Axis", AXIS).help("The axis the depth is measured along.").def("\"z\""),
+            points("at", "Gauges", D::Length, 10_000).help("Points whose columns of cells along the axis are summed."),
+        ],
+    )
+    .help("A free surface's liquid depth in a frame: the fill levels summed along an axis through each point."),
 ];
 
 // ---- Results ----

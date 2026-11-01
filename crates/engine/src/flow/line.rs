@@ -38,6 +38,8 @@ pub enum LineField {
     Speed,
     Pressure,
     Temperature,
+    /// The fill level of a free surface: 1 liquid, 0 gas.
+    Fill,
     WallHeatFlux,
 }
 
@@ -48,6 +50,7 @@ impl LineField {
             LineField::VelocityX | LineField::VelocityY | LineField::VelocityZ | LineField::Speed => "velocity",
             LineField::Pressure => "pressure",
             LineField::Temperature => "temperature",
+            LineField::Fill => "fill",
             LineField::WallHeatFlux => "heat_flux",
         }
     }
@@ -140,6 +143,12 @@ pub fn profile(r: &FluidResult, frame_index: usize, field: LineField, points: Ve
         LineField::Temperature => {
             let t = temperatures(r, f)?;
             Box::new(move |c| t(c).filter(|_| fluid(c)))
+        }
+        LineField::Fill => {
+            if f.fill.is_empty() {
+                return Err(EngineError::Params(format!("step `{}` has no free surface: give its domain `free_surface` settings", r.step)));
+            }
+            Box::new(move |c| f.fill.get(c).filter(|_| fluid(c)).map(|e| f64::from(*e)))
         }
         LineField::WallHeatFlux => return Err(EngineError::Params("`wall_heat_flux` is read along its wall (`face`)".into())),
     };
