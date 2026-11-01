@@ -1,0 +1,226 @@
+{
+ "title": "Collapse of a liquid column (dam break): the surge front and the column's fall against Martin and Moyce",
+ "kind": "experiment",
+ "source": "J. C. Martin, W. J. Moyce, Part IV. An experimental study of the collapse of liquid columns on a rigid horizontal plane, Phil. Trans. R. Soc. A 244 (1952) 312–324: Table 2 (rectangular section, n² = 2, a = 2¼ in, the mean of nine records: the surge front Z = z/a against T = n t √(g/a)) and Table 6 (n² = 2, a = 2¼ in: the column's top H = h/(n² a) against τ = t √(g/a))",
+ "slow": true,
+ "quantities": [
+  {
+   "id": "front_1.44_to_3.00",
+   "quantity": "T(Z = 3.00) − T(Z = 1.44): the front's time from 1.44 a to 3.00 a in units of 1 / (n √(g/a))",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Run",
+     "front": {
+      "axis": "x",
+      "at": [
+       [
+        0.082296,
+        0,
+        0
+       ],
+       [
+        0.17145,
+        0,
+        0
+       ],
+       [
+        0.23488650000000003,
+        0,
+        0
+       ]
+      ]
+     }
+    },
+    "pointer": "/arrivals/1/time",
+    "scale": 18.5285478819624,
+    "plus": {
+     "command": "solve.probe",
+     "params": {
+      "step": "Run",
+      "front": {
+       "axis": "x",
+       "at": [
+        [
+         0.082296,
+         0,
+         0
+        ],
+        [
+         0.17145,
+         0,
+         0
+        ],
+        [
+         0.23488650000000003,
+         0,
+         0
+        ]
+       ]
+      }
+     },
+     "pointer": "/arrivals/0/time",
+     "scale": -18.5285478819624
+    }
+   },
+   "value": 1.3199999999999998,
+   "tolerance": {
+    "relative": 0.16
+   },
+   "reason": "the simulated liquid is 200 times more viscous than water (the lattice holds τ ≥ 0.505 on this grid; Reynolds number about 350 on the front speed and a), which slows the front along the no-slip floor: the refinement study (README) finds the interval 18.9 % long at 25 cells per a, 12.8 % at 50 (this case) and 9.9 % at 100, the viscosity halving with each refinement at fixed τ; the nine records spread ±0.14 in T at Z = 3 (±10 % of the interval)"
+  },
+  {
+   "id": "front_1.44_to_4.11",
+   "quantity": "T(Z = 4.11) − T(Z = 1.44)",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Run",
+     "front": {
+      "axis": "x",
+      "at": [
+       [
+        0.082296,
+        0,
+        0
+       ],
+       [
+        0.17145,
+        0,
+        0
+       ],
+       [
+        0.23488650000000003,
+        0,
+        0
+       ]
+      ]
+     }
+    },
+    "pointer": "/arrivals/2/time",
+    "scale": 18.5285478819624,
+    "plus": {
+     "command": "solve.probe",
+     "params": {
+      "step": "Run",
+      "front": {
+       "axis": "x",
+       "at": [
+        [
+         0.082296,
+         0,
+         0
+        ],
+        [
+         0.17145,
+         0,
+         0
+        ],
+        [
+         0.23488650000000003,
+         0,
+         0
+        ]
+       ]
+      }
+     },
+     "pointer": "/arrivals/0/time",
+     "scale": -18.5285478819624
+    }
+   },
+   "value": 2.14,
+   "tolerance": {
+    "relative": 0.14
+   },
+   "reason": "as the first interval: 16.2 % long at 25 cells per a, 10.2 % at 50 (this case), 6.9 % at 100; the records spread ±0.15 in T at Z = 4.11"
+  },
+  {
+   "id": "height_tau2",
+   "quantity": "H = h / (n² a) at the plane of symmetry at τ = 2 (frame 2), from the liquid depth in the first column of cells",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Run",
+     "frame": 2,
+     "depth": {
+      "axis": "z",
+      "at": [
+       [
+        0.0005715,
+        0.0005715,
+        0.0005715
+       ]
+      ]
+     }
+    },
+    "pointer": "/depths/0/depth",
+    "scale": 8.748906386701663
+   },
+   "value": 0.5,
+   "tolerance": {
+    "relative": 0.05
+   },
+   "reason": "Table 6's time origin is the release trigger and the motion began at or before τ = 0.16, which moves H(τ = 2) by up to 0.05; the refinement study finds 0.502 at 25, 50 (this case) and 100 cells per a"
+  },
+  {
+   "id": "height_drop_tau1_to_2",
+   "quantity": "H(τ = 1) − H(τ = 2): the column's fall between τ = 1 (frame 1) and τ = 2 (frame 2); Table 6 gives 0.806 at τ = 1 (between 0.83 at 0.93 and 0.78 at 1.08) and 0.50 at τ = 2",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Run",
+     "frame": 1,
+     "depth": {
+      "axis": "z",
+      "at": [
+       [
+        0.0005715,
+        0.0005715,
+        0.0005715
+       ]
+      ]
+     }
+    },
+    "pointer": "/depths/0/depth",
+    "scale": 8.748906386701663,
+    "plus": {
+     "command": "solve.probe",
+     "params": {
+      "step": "Run",
+      "frame": 2,
+      "depth": {
+       "axis": "z",
+       "at": [
+        [
+         0.0005715,
+         0.0005715,
+         0.0005715
+        ]
+       ]
+      }
+     },
+     "pointer": "/depths/0/depth",
+     "scale": -8.748906386701663
+    }
+   },
+   "value": 0.30600000000000005,
+   "tolerance": {
+    "relative": 0.05
+   },
+   "reason": "a difference of two heights, which the uncertain time origin hardly moves; H(τ = 1) is interpolated between two tabulated rows (±0.01); the refinement study finds 0.303, 0.302 (this case) and 0.303 at 25, 50 and 100 cells per a"
+  },
+  {
+   "id": "mass_error",
+   "quantity": "relative mass error (mass − initial)",
+   "measure": {
+    "from": "solve",
+    "pointer": "/free_surface/mass_error"
+   },
+   "value": 0.0,
+   "tolerance": {
+    "absolute": 1e-09
+   },
+   "reason": "the mass exchange and the conversions are exact; round-off over the run"
+  }
+ ]
+}

@@ -1,0 +1,75 @@
+{
+ "title": "A liquid column at rest under gravity: hydrostatic pressure and a surface that stays",
+ "kind": "theory",
+ "source": "Hydrostatics: p = ρ g (h − z) below a free surface at height h at the gauge pressure 0; the liquid holds still",
+ "quantities": [
+  {
+   "id": "p_bottom",
+   "quantity": "gauge pressure at the lowest cell centre, ρ g (h − Δx/2)",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Run",
+     "points": [
+      [
+       0.0125,
+       0.0125,
+       0.0125
+      ]
+     ]
+    },
+    "pointer": "/points/0/pressure"
+   },
+   "value": 4782.375,
+   "tolerance": {
+    "relative": 0.015
+   },
+   "reason": "the weakly compressible lattice's density grows by 0.6 % down the column, and the pressure in the cells against the surface is read a cell away from it (measured 0.67 % of ρ g h at worst over the column)"
+  },
+  {
+   "id": "height",
+   "quantity": "the liquid's upper extent at the end, h",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Run",
+     "front": {
+      "axis": "z"
+     }
+    },
+    "pointer": "/extent/3999"
+   },
+   "value": 0.5,
+   "tolerance": {
+    "absolute": 1e-09
+   },
+   "reason": "the top cell stays at least half full (the column stands 0.3 % lower by its compression), so the extent is the face above it exactly"
+  },
+  {
+   "id": "still",
+   "quantity": "the largest speed at the end (zero: the liquid holds still)",
+   "measure": {
+    "from": "solve",
+    "pointer": "/final_max_speed"
+   },
+   "value": 0.0,
+   "tolerance": {
+    "absolute": 0.005
+   },
+   "reason": "spurious currents at the interface cells: measured 8.5·10⁻⁴ m/s, 2.7·10⁻⁴ of the free-fall speed √(2 g h)"
+  },
+  {
+   "id": "mass_error",
+   "quantity": "relative mass error (mass − initial)",
+   "measure": {
+    "from": "solve",
+    "pointer": "/free_surface/mass_error"
+   },
+   "value": 0.0,
+   "tolerance": {
+    "absolute": 1e-10
+   },
+   "reason": "the mass exchange is exact; round-off over 4000 steps (measured 4·10⁻¹³)"
+  }
+ ]
+}

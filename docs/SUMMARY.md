@@ -40,6 +40,7 @@
   - [Large-eddy simulation](manual/fluid/les.md)
   - [Heat transfer](manual/fluid/heat-transfer.md)
   - [Fans and vents](manual/fluid/fans-and-vents.md)
+  - [Free surface](manual/fluid/free-surface.md)
   - [Steady state and averaging](manual/fluid/steady-state-and-averaging.md)
   - [GPU backend](manual/fluid/gpu.md)
   - [Fluid results](manual/fluid/fluid-results.md)
