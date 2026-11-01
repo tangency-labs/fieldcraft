@@ -1,0 +1,89 @@
+[
+ {
+  "command": "model.units",
+  "params": {
+   "system": "m-kg-s-N-Pa"
+  }
+ },
+ {
+  "command": "model.material.create",
+  "params": {
+   "name": "Liquid",
+   "density": 1000.0,
+   "fluid": {
+    "type": "newtonian",
+    "viscosity": 0.20963533009015914
+   }
+  }
+ },
+ {
+  "command": "model.fluid_domain.create",
+  "params": {
+   "name": "Tank",
+   "material": "Liquid",
+   "min": [
+    0,
+    0,
+    0
+   ],
+   "max": [
+    0.28575,
+    0.001143,
+    0.17145
+   ],
+   "spacing": 0.001143,
+   "acceleration": [
+    0,
+    0,
+    -9.81
+   ],
+   "faces": {
+    "x_min": {
+     "type": "slip"
+    },
+    "y_min": {
+     "type": "periodic"
+    },
+    "y_max": {
+     "type": "periodic"
+    }
+   },
+   "free_surface": {
+    "liquid": [
+     {
+      "min": [
+       0,
+       0,
+       0
+      ],
+      "max": [
+       0.05715,
+       0.001143,
+       0.1143
+      ]
+     }
+    ]
+   }
+  }
+ },
+ {
+  "command": "model.step.create",
+  "params": {
+   "name": "Run",
+   "procedure": {
+    "type": "fluid",
+    "domain": "Tank",
+    "end_time": 0.3053047807917719,
+    "time_step": 3.116003870717134e-05,
+    "frames": 4
+   }
+  }
+ },
+ {
+  "command": "solve.fluid",
+  "params": {
+   "step": "Run"
+  },
+  "id": "solve"
+ }
+]

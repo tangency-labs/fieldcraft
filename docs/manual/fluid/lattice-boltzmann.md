@@ -53,6 +53,7 @@ Numbers are in the model's display units, here SI (set by `model.units`), or car
 | `tolerance` | length | Δx/10 | The chordal tolerance obstacles are triangulated with. |
 | `thermal` | `{…}` | none (isothermal) | Heat in the fluid and conducting solids ([Heat transfer](heat-transfer.md)). |
 | `porous`, `fans` | `[{…}]` | none | Porous resistance zones and fans, at most 1000 together ([Fans and vents](fans-and-vents.md)). |
+| `free_surface` | `{"liquid": [{"min", "max"}, …]}` | none (a full box) | Liquid in the `liquid` regions and gas elsewhere; the liquid moves through the gas ([Free surface](free-surface.md)). |
 
 ### The fluid step (`model.step.create`, procedure `"fluid"`)
 

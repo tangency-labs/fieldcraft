@@ -1,0 +1,65 @@
+{
+ "title": "A plug of liquid filling a frictionless channel from a velocity inlet",
+ "kind": "theory",
+ "source": "Volume conservation: a channel of cross-section A fed at U holds the volume U t A plus the inlet cell's at time t, so the front is at x_f = U t + Δx; the extent of the cells at least half full reaches a cell face X when x_f = X − Δx/2",
+ "quantities": [
+  {
+   "id": "volume",
+   "quantity": "liquid volume at the end, (U t + Δx) Δx²",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Run",
+     "front": {
+      "axis": "x"
+     }
+    },
+    "pointer": "/volume/767"
+   },
+   "value": 0.00015029907226562502,
+   "tolerance": {
+    "relative": 0.005
+   },
+   "reason": "the weakly compressible lattice: the plug's density is below ρ₀ by order Ma² (0.75 % at lattice speed 0.05; measured 0.11 % more volume for its mass)"
+  },
+  {
+   "id": "arrival",
+   "quantity": "time the front reaches x = 0.5, (0.5 − 1.5 Δx) / U",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Run",
+     "front": {
+      "axis": "x",
+      "at": [
+       [
+        0.5,
+        0,
+        0
+       ]
+      ]
+     }
+    },
+    "pointer": "/arrivals/0/time"
+   },
+   "value": 9.53125,
+   "tolerance": {
+    "absolute": 0.05
+   },
+   "reason": "the history samples every time step (1/64 s) and the plug's volume runs 0.1 % ahead by the lattice's compressibility: measured two steps early"
+  },
+  {
+   "id": "mass_error",
+   "quantity": "relative mass error of the balance (mass − initial − injected)",
+   "measure": {
+    "from": "solve",
+    "pointer": "/free_surface/mass_error"
+   },
+   "value": 0.0,
+   "tolerance": {
+    "absolute": 1e-10
+   },
+   "reason": "the mass exchange and the inlet accounting are exact; round-off over 768 steps"
+  }
+ ]
+}

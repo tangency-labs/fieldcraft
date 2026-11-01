@@ -1,8 +1,9 @@
 # Fluid results
 
 A solved fluid step keeps, in the session, its output frames (velocity, gauge pressure and, with
-heat, temperature in every cell), the force on every wall and, with heat, the heat into every wall
-over time. The results commands probe them at points, along lines and on walls, and show them as a
+heat, temperature in every cell; with a free surface, each cell's fill level), the force on every
+wall and, with heat, the heat into every wall over time; with a free surface, the liquid's extent
+and volume over time ([Free surface](free-surface.md): `solve.probe` with `front` and `depth`). The results commands probe them at points, along lines and on walls, and show them as a
 coloured slice through the domain, as the obstacles coloured by the fluid beside them, and as
 streamlines traced through the velocity field.
 
