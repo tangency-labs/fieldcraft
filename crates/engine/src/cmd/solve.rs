@@ -112,7 +112,7 @@ pub const HISTORY: CommandSpec = CommandSpec {
 pub const FLUID: CommandSpec = CommandSpec {
     id: "solve.fluid",
     label: "Solve Fluid Step",
-    params: r#"{"step": "Flow", "backend": "cpu", "max_cells": 16000000, "max_steps": 10000000, "max_cell_updates": 1e12, "max_frame_bytes": 2e9, "threads": 8, "estimate": false} — runs a fluid step with the lattice Boltzmann solver (the only fluid step when `step` is left out): obstacles are triangulated from the open design or taken from imported surfaces; returns the time step, relaxation time, Mach number, mass, the largest speed of all frames (`max_speed`, at `max_speed_time`) and of the last frame (`final_max_speed`), over interior fluid cells (the open-boundary layers are excluded, convective outlets too, because a wake reaching a uniform pressure outlet distorts the last layer), the final force on every wall and, with heat, the thermal relaxation time, the fluid's temperature range and the heat into every wall, and per conducting solid (`solids`) its temperature range and mean, its power, the heat its faces give the fluid, its `peak` temperature (at `peak_time`: the steady value when the run reached steady state, else the highest over the frames), its `limit`, the `margin` (limit less peak; negative over it) and `ok`, and over them `components_ok` (null when no solid has a limit); `ports` reports each open box face's separate inflow and outflow: volume flow, reference-density mass flow, flow-weighted temperature and static gauge pressure, and advective sensible heat relative to its stated temperature reference (not a complete energy balance); the same ports follow the displayed frame in results.* replies and Results > Inlets and outlets; with fans and porous zones, each one's volume flow and its pressure rise (a fan's operating point: `pressure_rise` from its curve, and `measured_pressure_rise`) or `pressure_drop`; the measured values are the static-pressure difference between the fluid cell layers just outside the zone, so they include the wall friction over its thickness plus one cell (final and mean over the last quarter of the run); with a steady rule, `stop`: why and when the run stopped, its monitors' history (in the display units, `units`) and, with averaging, `averages`: per quantity its mean, its root mean square about the mean (`rms`, a difference: a temperature's in `rms_unit`, without the scale's offset) and its extremes over the samples averaged from `from` on; `backend` is `cpu` (the default: double precision, the same result on every machine) or `gpu` (the step on the GPU `FIELDCRAFT_GPU` picks, single precision, within the backend's stated tolerance of the CPU; an error when the build has none); left out, it is FIELDCRAFT_SOLVE_BACKEND's when that is set, else the step's saved preference (solve.settings), which on a machine with no suitable GPU falls back as it says, with a `notice` (the reply's `backend_choice` says what chose it), else the CPU; `max_steps` may only be lowered; `max_cells` (16000000 by default), `max_cell_updates` (1e12) and `max_frame_bytes` (2e9) may be raised up to what the machine's memory bound holds (half its physical memory), and a run with a raised `max_cells` or `max_frame_bytes` must fit in that bound; the reply's `memory` gives the run's estimate (`flow_bytes`, `frame_bytes` at about 16 bytes per cell per frame, 20 with heat, `total_bytes`) against `bound_bytes`, the `frames_that_fit` and each cap's `ceilings`, and on the GPU the population buffer against the device's limit per buffer; `"estimate": true` returns only that, without solving; a run over a cap is refused before it starts, saying what to change; `checkpoint` is an explicit native CPU restart path; `checkpoint_every` is required with a checkpoint path (including on resume) and saves every N steps and at a sound final stop; choose its interval for the run size and storage cost; `resume: true` restores it with matching model, triangulated geometry and solver settings; thread count and checkpoint cadence may change; checkpoints are kept after success/cancellation, use atomic replacement and report last_checkpoint/resumed_from; GPU/browser/other solvers and automatic discovery are not supported yet; `threads` as for solve.static"#,
+    params: r#"{"step": "Flow", "backend": "cpu", "max_cells": 16000000, "max_steps": 10000000, "max_cell_updates": 1e12, "max_frame_bytes": 2e9, "threads": 8, "estimate": false} — runs a fluid step with the lattice Boltzmann solver (the only fluid step when `step` is left out): obstacles are triangulated from the open design or taken from imported surfaces; returns the time step, relaxation time, Mach number, mass, the largest speed of all frames (`max_speed`, at `max_speed_time`) and of the last frame (`final_max_speed`), over interior fluid cells (the open-boundary layers are excluded, convective outlets too, because a wake reaching a uniform pressure outlet distorts the last layer), the final force on every wall and, with heat, the thermal relaxation time, the fluid's temperature range and the heat into every wall, and per conducting solid (`solids`) its temperature range and mean, its power, the heat its faces give the fluid, its `peak` temperature (at `peak_time`: the steady value when the run reached steady state, else the highest over the frames), its `limit`, the `margin` (limit less peak; negative over it) and `ok`, and over them `components_ok` (null when no solid has a limit); `ports` reports each open box face's separate inflow and outflow: volume flow, reference-density mass flow, flow-weighted temperature and static gauge pressure, and advective sensible heat relative to its stated temperature reference (not a complete energy balance); the same ports follow the displayed frame in results.* replies and Results > Inlets and outlets; with fans and porous zones, each one's volume flow and its pressure rise (a fan's operating point: `pressure_rise` from its curve, and `measured_pressure_rise`) or `pressure_drop`; the measured values are the static-pressure difference between the fluid cell layers just outside the zone, so they include the wall friction over its thickness plus one cell (final and mean over the last quarter of the run); with a free surface, `free_surface`: the liquid's `initial_mass`, its `mass` at the end, what the inlets `injected` and the `mass_error` of that balance (round-off when all is well), the `fill` share of the fluid cells that is liquid and the counts of liquid, interface and gas cells; with a steady rule, `stop`: why and when the run stopped, its monitors' history (in the display units, `units`) and, with averaging, `averages`: per quantity its mean, its root mean square about the mean (`rms`, a difference: a temperature's in `rms_unit`, without the scale's offset) and its extremes over the samples averaged from `from` on; `backend` is `cpu` (the default: double precision, the same result on every machine) or `gpu` (the step on the GPU `FIELDCRAFT_GPU` picks, single precision, within the backend's stated tolerance of the CPU; an error when the build has none); left out, it is FIELDCRAFT_SOLVE_BACKEND's when that is set, else the step's saved preference (solve.settings), which on a machine with no suitable GPU falls back as it says, with a `notice` (the reply's `backend_choice` says what chose it), else the CPU; `max_steps` may only be lowered; `max_cells` (16000000 by default), `max_cell_updates` (1e12) and `max_frame_bytes` (2e9) may be raised up to what the machine's memory bound holds (half its physical memory), and a run with a raised `max_cells` or `max_frame_bytes` must fit in that bound; the reply's `memory` gives the run's estimate (`flow_bytes`, `frame_bytes` at about 16 bytes per cell per frame, 20 with heat, `total_bytes`) against `bound_bytes`, the `frames_that_fit` and each cap's `ceilings`, and on the GPU the population buffer against the device's limit per buffer; `"estimate": true` returns only that, without solving; a run over a cap is refused before it starts, saying what to change; `checkpoint` is an explicit native CPU restart path; `checkpoint_every` is required with a checkpoint path (including on resume) and saves every N steps and at a sound final stop; choose its interval for the run size and storage cost; `resume: true` restores it with matching model, triangulated geometry and solver settings; thread count and checkpoint cadence may change; checkpoints are kept after success/cancellation, use atomic replacement and report last_checkpoint/resumed_from; GPU/browser/other solvers and automatic discovery are not supported yet; `threads` as for solve.static"#,
     form: Some(super::forms::SOLVE_FLUID),
     kind: CommandKind::Model,
     requires: &[Requirement::FluidDomain, Requirement::Step],
@@ -122,7 +122,7 @@ pub const FLUID: CommandSpec = CommandSpec {
 pub const PROBE: CommandSpec = CommandSpec {
     id: "solve.probe",
     label: "Probe Results",
-    params: r#"{"step": "Load", "nodes": [1, 2] (or "set": "fillet", a set's nodes), "mode": 1, "frame": 0} — the stored result at nodes (with `max_von_mises`, the largest among them, for static steps): displacement, rotation, reaction, reaction moment, stress, principal stresses (the values, largest first, without their directions) and von Mises (static, with `elements` each element's results: solid, 2D and truss nodal stresses (and, in a nonlinear step, the equivalent plastic strain at the integration points of a plastic element), shell section forces (N, M, Q per length in the element's axes) and bottom, middle and top stresses, beam end forces (N, V_y, V_z, T, M_y, M_z in its axes)), the shape of mode `mode` with its rotations (frequency, from 1), or displacement and velocity in field frame `frame` (explicit, from 0; the last by default) at `nodes` (or at the nodes nearest to points: "at": [[x, y, z], ...], lowest label on a tie, each entry then giving its `xyz` and `distance`) and, with `elements` (explicit), each element's stress, von Mises stress, strain, equivalent plastic strain, damage, temperature and whether it has eroded; a coupled reference point's label gives its six displacements (translations, rotations) and reactions (forces, moments). Fluid steps: {"step": "Flow", "points": [[x, y, z]], "frame": 10 (default the last)} gives velocity, pressure and (with heat) temperature in the cells at the points; {"step": "Flow", "forces": ["x_min", "F2:top", "Body1/F2:top"]} gives those walls' force histories and {"step": "Flow", "heat": ["y_min"]} the heat into them over time (power, positive into the wall); {"step": "Flow", "line": {"from": [x, y, z], "to": [x, y, z], "count": 65 (default one point per cell spacing), "field": "velocity_x|velocity_y|velocity_z|speed|pressure|temperature|wall_heat_flux", "face": "x_min" (wall_heat_flux: the box wall the line lies on)}, "frame": 10} gives the field at `count` points evenly along the line (`xyz`; trilinear between the cell centres, null outside the fluid; within half a cell of a box face the nearest cell centre's value, so a temperature line run onto a held wall reads the first cell, not the wall) and its `max` and `min` with their `xyz`, located between the samples by the parabola through the extreme sample and its neighbours; `wall_heat_flux` is the heat per area into a box wall (positive into the wall): at a held temperature from the second-order one-sided difference through the wall and the two cell layers beside it, at a flux face its flux, at an adiabatic face zero"#,
+    params: r#"{"step": "Load", "nodes": [1, 2] (or "set": "fillet", a set's nodes), "mode": 1, "frame": 0} — the stored result at nodes (with `max_von_mises`, the largest among them, for static steps): displacement, rotation, reaction, reaction moment, stress, principal stresses (the values, largest first, without their directions) and von Mises (static, with `elements` each element's results: solid, 2D and truss nodal stresses (and, in a nonlinear step, the equivalent plastic strain at the integration points of a plastic element), shell section forces (N, M, Q per length in the element's axes) and bottom, middle and top stresses, beam end forces (N, V_y, V_z, T, M_y, M_z in its axes)), the shape of mode `mode` with its rotations (frequency, from 1), or displacement and velocity in field frame `frame` (explicit, from 0; the last by default) at `nodes` (or at the nodes nearest to points: "at": [[x, y, z], ...], lowest label on a tie, each entry then giving its `xyz` and `distance`) and, with `elements` (explicit), each element's stress, von Mises stress, strain, equivalent plastic strain, damage, temperature and whether it has eroded; a coupled reference point's label gives its six displacements (translations, rotations) and reactions (forces, moments). Fluid steps: {"step": "Flow", "points": [[x, y, z]], "frame": 10 (default the last)} gives velocity, pressure and (with heat) temperature in the cells at the points; {"step": "Flow", "forces": ["x_min", "F2:top", "Body1/F2:top"]} gives those walls' force histories and {"step": "Flow", "heat": ["y_min"]} the heat into them over time (power, positive into the wall); {"step": "Flow", "line": {"from": [x, y, z], "to": [x, y, z], "count": 65 (default one point per cell spacing), "field": "velocity_x|velocity_y|velocity_z|speed|pressure|temperature|fill|wall_heat_flux", "face": "x_min" (wall_heat_flux: the box wall the line lies on)}, "frame": 10} gives the field at `count` points evenly along the line (`xyz`; trilinear between the cell centres, null outside the fluid; within half a cell of a box face the nearest cell centre's value, so a temperature line run onto a held wall reads the first cell, not the wall) and its `max` and `min` with their `xyz`, located between the samples by the parabola through the extreme sample and its neighbours; `wall_heat_flux` is the heat per area into a box wall (positive into the wall): at a held temperature from the second-order one-sided difference through the wall and the two cell layers beside it, at a flux face its flux, at an adiabatic face zero; `fill` is a free surface's fill level, 1 liquid to 0 gas; {"step": "Flow", "front": {"axis": "x", "end": "max", "at": [[x, y, z], …]}} gives a free surface's liquid front: the liquid's extent along the axis at every history time (the `max` (default) or `min` face of the cells at least half full) and its `volume`, and per point in `at` the time the extent first reached the point's coordinate along the axis, coming or going (`arrivals`; between two samples by linear interpolation; null when it never did); {"step": "Flow", "depth": {"axis": "z", "at": [[x, y, z], …]}, "frame": 10} gives, per point, the liquid in the column of cells through it along the axis in that frame (the fill levels summed times the spacing: a wave gauge's depth, a collapsing column's height at its wall)"#,
     form: Some(super::forms::SOLVE_PROBE),
     kind: CommandKind::Model,
     requires: &[Requirement::Result],
@@ -1026,6 +1026,18 @@ fn fluid_summary(r: &FluidResult, display: &DisplaySystem) -> Value {
         "tau_thermal": r.stats.tau_thermal,
         "temperature": temperature,
         "frozen": r.stats.frozen,
+        "free_surface": r.stats.free_surface.map(|fs| json!({
+            "initial_mass": fs.initial_mass,
+            "mass": fs.mass,
+            "injected": fs.injected,
+            "mass_error": fs.mass_error,
+            "fill": fs.fill,
+            "liquid_cells": fs.liquid_cells,
+            "interface_cells": fs.interface_cells,
+            "gas_cells": fs.gas_cells,
+            "filled": fs.filled,
+            "emptied": fs.emptied,
+        })),
         "heat": heat,
         "solids": solids,
         "components_ok": r.components_ok(),
@@ -1161,12 +1173,18 @@ fn probe_fluid(model: &fieldcraft_model::Model, r: &FluidResult, p: &Value) -> R
             .collect::<Result<_>>()?;
         return Ok(json!({"step": r.step, "times": r.history_times, "heat": out}));
     }
+    if let Some(front) = p.get("front") {
+        return probe_front(r, front);
+    }
     let frame = match opt::<usize>(p, "frame")? {
         Some(k) if k < r.frames.len() => k,
         Some(_) => return Err(EngineError::Params(format!("`frame` must be from 0 to {}", r.frames.len().saturating_sub(1)))),
         None => r.frames.len().saturating_sub(1),
     };
     let time = r.frames.get(frame).map(|f| f.time);
+    if let Some(depth) = p.get("depth") {
+        return probe_depth(r, frame, time, depth);
+    }
     if let Some(line) = p.get("line") {
         return probe_line(model, r, frame, time, line);
     }
@@ -1185,6 +1203,86 @@ fn probe_fluid(model: &fieldcraft_model::Model, r: &FluidResult, p: &Value) -> R
         })
         .collect();
     Ok(json!({"step": r.step, "frame": frame, "time": time, "points": out}))
+}
+
+/// A free surface's liquid depth in a frame: `{"depth": {"axis": "z", "at": [[x, y, z], …]}}`
+/// gives, per point, the liquid in the column of cells through it along the axis, the fill levels
+/// summed times the spacing (a wave gauge, the height of a collapsing column at its wall).
+fn probe_depth(r: &FluidResult, frame: usize, time: Option<f64>, depth: &Value) -> Result<Value> {
+    let f = r
+        .frames
+        .get(frame)
+        .filter(|f| !f.fill.is_empty())
+        .ok_or_else(|| EngineError::Params(format!("step `{}` has no free surface: give its domain `free_surface` settings", r.step)))?;
+    let axis = match opt::<String>(depth, "axis")?.as_deref() {
+        None | Some("z") => 2,
+        Some("x") => 0,
+        Some("y") => 1,
+        Some(other) => return Err(EngineError::invalid("axis", format!("`{other}` is not x, y or z"))),
+    };
+    let at = points(depth, "at", MAX_PROBE)?;
+    let h = r.grid.spacing;
+    let depths: Vec<Value> = at
+        .iter()
+        .map(|p| {
+            // the column through the point: its cell along the other two axes, every cell along this one
+            let Some(cell) = r.grid.cell_at(*p) else { return json!({"at": p, "depth": null}) };
+            let mut ijk = r.grid.coords(cell);
+            let sum: f64 = (0..r.grid.cells[axis])
+                .map(|k| {
+                    ijk[axis] = k;
+                    f.fill.get(r.grid.index(ijk)).map_or(0.0, |e| f64::from(*e))
+                })
+                .sum();
+            json!({"at": p, "depth": sum * h})
+        })
+        .collect();
+    let axis_name = ["x", "y", "z"].get(axis).copied().unwrap_or("z");
+    Ok(json!({"step": r.step, "frame": frame, "time": time, "axis": axis_name, "depths": depths}))
+}
+
+/// A free surface's liquid front over time: `{"front": {"axis": "x", "end": "max", "at": [[x, y,
+/// z], …]}}` gives the liquid's extent along the axis at every history time (the `max` or `min`
+/// face of the cells at least half full) and, per point, when the extent first reached the point's
+/// coordinate along the axis (between two samples by linear interpolation; null when it never did).
+fn probe_front(r: &FluidResult, front: &Value) -> Result<Value> {
+    let Some(history) = &r.surface else {
+        return Err(EngineError::Params(format!("step `{}` has no free surface: give its domain `free_surface` settings", r.step)));
+    };
+    let axis = match opt::<String>(front, "axis")?.as_deref() {
+        None | Some("x") => 0,
+        Some("y") => 1,
+        Some("z") => 2,
+        Some(other) => return Err(EngineError::invalid("axis", format!("`{other}` is not x, y or z"))),
+    };
+    let upper = match opt::<String>(front, "end")?.as_deref() {
+        None | Some("max") => true,
+        Some("min") => false,
+        Some(other) => return Err(EngineError::invalid("end", format!("`{other}` is not max or min"))),
+    };
+    let extent: Vec<f64> = (if upper { &history.max } else { &history.min }).iter().map(|e| e[axis]).collect();
+    let at = if front.get("at").is_some() { points(front, "at", MAX_PROBE)? } else { Vec::new() };
+    let arrivals: Vec<Value> = at
+        .iter()
+        .map(|p| {
+            let target = p[axis];
+            // The first sample at the coordinate, or the first pair of samples it lies between (a
+            // front coming or a top going).
+            let time = extent.iter().zip(&r.history_times).enumerate().find_map(|(i, (e, t))| {
+                if *e == target {
+                    return Some(*t);
+                }
+                let (e0, t0) = (extent.get(i.checked_sub(1)?).copied()?, r.history_times.get(i - 1).copied()?);
+                ((e0 - target) * (e - target) < 0.0).then(|| t0 + (t - t0) * (target - e0) / (e - e0))
+            });
+            json!({"at": p, "time": time})
+        })
+        .collect();
+    let axis_name = ["x", "y", "z"].get(axis).copied().unwrap_or("x");
+    let end = if upper { "max" } else { "min" };
+    Ok(
+        json!({"step": r.step, "axis": axis_name, "end": end, "times": r.history_times, "extent": extent, "volume": history.volume, "arrivals": arrivals}),
+    )
 }
 
 /// A fluid step's field along a line (`flow::line`): `{"line": {"from", "to", "count", "field",
@@ -1322,6 +1420,8 @@ fn probe_quantity(r: &StepResult, display: &fieldcraft_model::DisplaySystem, key
         "temperature" => Q::Temperature,
         "heat_flux" => Q::HeatFlux,
         "velocity" => Q::Velocity,
+        "extent" | "depth" => Q::Length,
+        "volume" => Q::Volume,
         "time" | "times" => Q::Time,
         "power" => Q::Power,
         _ => return None,
@@ -1847,6 +1947,68 @@ pub(crate) mod tests {
             {"command": "model.step.create", "params": {"name": "Shear", "procedure": {"type": "fluid", "domain": "Gap", "end_time": 50, "frames": 4}}},
         ]);
         s.run_script(&script).unwrap();
+    }
+
+    /// A channel filled by a velocity inlet behind a free surface: the solve reports the mass
+    /// balance, a line reads the fill level, and `front` gives the liquid's extent and when it
+    /// reached a point; hostile parameters are refused.
+    #[test]
+    fn a_free_surface_reports_its_fill_front_and_mass_balance() {
+        let periodic = json!({"type": "periodic"});
+        let dx = 1.0 / 16.0;
+        let script = json!([
+            {"command": "model.material.create", "params": {"name": "Oil", "density": 1.0, "fluid": {"type": "newtonian", "viscosity": 0.01}}},
+            {"command": "model.fluid_domain.create", "params": {"name": "Channel", "material": "Oil", "min": [0, 0, 0], "max": [1, dx, dx], "spacing": dx,
+                "faces": {"x_min": {"type": "velocity", "velocity": [0.05, 0, 0]}, "y_min": periodic, "y_max": periodic, "z_min": periodic, "z_max": periodic},
+                "free_surface": {"liquid": []}}},
+            {"command": "model.step.create", "params": {"name": "Fill", "procedure": {"type": "fluid", "domain": "Channel", "end_time": 8, "time_step": dx, "frames": 2}}},
+        ]);
+        let mut s = Session::default();
+        s.run_script(&script).unwrap();
+        let r = s.execute("solve.fluid", &json!({"step": "Fill"})).unwrap();
+        let fs = &r["free_surface"];
+        assert!(fs["mass_error"].as_f64().unwrap().abs() < 1e-10, "{fs}");
+        assert!(fs["injected"].as_f64().unwrap() > 0.0 && fs["liquid_cells"].as_u64().unwrap() > 1, "{fs}");
+        // The plug is at x = U t + Δx = 0.4625: full behind it, empty ahead.
+        let line = s
+            .execute("solve.probe", &json!({"step": "Fill", "line": {"from": [dx / 2.0, dx / 2.0, dx / 2.0], "to": [1.0 - dx / 2.0, dx / 2.0, dx / 2.0], "count": 16, "field": "fill"}}))
+            .unwrap();
+        let fill: Vec<f64> = line["line"]["fill"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+        assert_eq!(fill.len(), 16);
+        assert!(fill[1] > 0.99 && fill[14] < 0.01, "{fill:?}");
+        assert!((line["line"]["max"]["fill"].as_f64().unwrap() - 1.0).abs() < 1e-6, "{line}");
+        let front = s.execute("solve.probe", &json!({"step": "Fill", "front": {"axis": "x", "at": [[0.25, 0, 0], [0.9, 0, 0]]}})).unwrap();
+        assert_eq!(front["axis"], "x");
+        assert_eq!(front["times"].as_array().unwrap().len(), front["extent"].as_array().unwrap().len());
+        let t = front["arrivals"][0]["time"].as_f64().unwrap();
+        // the extent reaches 0.25 when the front is half a cell before it: (0.25 − 1.5 Δx) / U
+        assert!((t - (0.25 - 1.5 * dx) / 0.05).abs() < 2.0 * dx, "{front}");
+        assert!(front["arrivals"][1]["time"].is_null(), "never reached: {front}");
+        assert!(front["volume"].as_array().unwrap().last().unwrap().as_f64().unwrap() > 0.0);
+        // The depth along the channel's axis through a point: the plug's length, U t + Δx.
+        let depth =
+            s.execute("solve.probe", &json!({"step": "Fill", "depth": {"axis": "x", "at": [[0.5, dx / 2.0, dx / 2.0], [5.0, 0.0, 0.0]]}})).unwrap();
+        assert!((depth["depths"][0]["depth"].as_f64().unwrap() - (0.05 * 8.0 + dx)).abs() < 0.3 * dx, "{depth}");
+        assert!(depth["depths"][1]["depth"].is_null(), "outside the grid: {depth}");
+        assert!(s.execute("solve.probe", &json!({"step": "Fill", "depth": {"axis": "q", "at": [[0.5, 0.0, 0.0]]}})).is_err());
+        assert!(s.execute("solve.probe", &json!({"step": "Fill", "front": {"axis": "w"}})).is_err());
+        assert!(s.execute("solve.probe", &json!({"step": "Fill", "front": {"end": "middle"}})).is_err());
+        // Without a free surface neither the fill line nor the front exists.
+        let mut plain = Session::default();
+        couette(&mut plain);
+        plain.execute("solve.fluid", &json!({})).unwrap();
+        assert!(plain.execute("solve.probe", &json!({"step": "Shear", "front": {}})).is_err());
+        assert!(plain.execute("solve.probe", &json!({"step": "Shear", "depth": {"at": [[0.06, 0.5, 0.06]]}})).is_err());
+        assert!(
+            plain
+                .execute("solve.probe", &json!({"step": "Shear", "line": {"from": [0.06, 0.06, 0.06], "to": [0.06, 0.9, 0.06], "field": "fill"}}))
+                .is_err()
+        );
+        // A pressure face with a free surface is refused by name.
+        s.execute("model.fluid_domain.boundary", &json!({"domain": "Channel", "at": "x_max", "condition": {"type": "pressure", "pressure": 0}}))
+            .unwrap();
+        let e = s.execute("solve.fluid", &json!({"step": "Fill"})).unwrap_err().to_string();
+        assert!(e.contains("not supported yet") && e.contains("free surface"), "{e}");
     }
 
     #[test]
