@@ -13,13 +13,15 @@ use crate::flow::{Flow, Group};
 use crate::setup::Setup;
 use crate::{Error, Result};
 
-/// The density and velocity of every cell (lattice units; zero in solid cells), and the
-/// temperature (model units) when the flow carries heat (empty otherwise).
+/// The density and velocity of every cell (lattice units; zero in solid cells), the
+/// temperature (model units) when the flow carries heat (empty otherwise), and the fill level
+/// (1 liquid, 0 gas) when it has a free surface (empty otherwise).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Fields {
     pub density: Vec<f64>,
     pub velocity: Vec<[f64; 3]>,
     pub temperature: Vec<f64>,
+    pub fill: Vec<f64>,
 }
 
 /// A stepper of one prepared flow.
@@ -59,6 +61,16 @@ pub trait Backend {
     /// without melting and freezing refuses a flow with them when it is made, so the default is
     /// none.
     fn frozen(&self) -> Option<f64> {
+        None
+    }
+    /// With a free surface: its mass balance and cell counts now. A backend without free
+    /// surfaces refuses a flow with one when it is made, so the default is none.
+    fn surface_report(&self) -> Option<crate::surface::SurfaceReport> {
+        None
+    }
+    /// With a free surface: the liquid's extent now, the lowest and highest cell index along each
+    /// axis of the cells at least half full (none when no cell is), and its volume in cells.
+    fn liquid_extent(&self) -> Option<(Option<([usize; 3], [usize; 3])>, f64)> {
         None
     }
     /// The mean over the fluid cells of the velocity along `axis` (0, 1, 2; lattice units, with

@@ -392,3 +392,19 @@ fn a_freezing_channel_resumes_with_its_frozen_layer() {
     assert!(normal.stats.frozen.is_some_and(|f| f > 0.0), "part of the fluid freezes: {:?}", normal.stats.frozen);
     parity(&m, &[]);
 }
+
+#[test]
+fn a_collapsing_column_resumes_with_its_surface() {
+    let dx = 0.025;
+    let mut d = domain([0.0; 3], [0.4, dx, 0.3], dx);
+    d.faces.y_min = FaceCondition::Periodic {};
+    d.faces.y_max = FaceCondition::Periodic {};
+    d.acceleration = [0.0, 0.0, -9.81];
+    d.free_surface = Some(fieldcraft_model::FreeSurface { liquid: vec![fieldcraft_model::LiquidRegion { min: [0.0; 3], max: [0.15, dx, 0.2] }] });
+    let dt = 0.04 * dx / (2.0 * 9.81 * 0.2f64).sqrt();
+    let m = model(1.0, 0.02 * dx * dx / dt, d, step(60.0 * dt, dt, None));
+    let normal = solve_fluid(&m, None, &[], &Limits::default()).unwrap();
+    let fs = normal.stats.free_surface.unwrap();
+    assert!(fs.filled > 0 && fs.emptied > 0, "cells convert within the run: {fs:?}");
+    parity(&m, &[]);
+}

@@ -108,6 +108,12 @@
 //! Obstacles that conduct heat carry their own temperature, conducted on their cells and coupled
 //! to this lattice through their faces (conjugate heat transfer, [`crate::conduction`]).
 //!
+//! # Free surface
+//! With a free surface ([`crate::surface`]) the fluid cells are liquid, interface or gas; only the
+//! liquid and interface cells collide and stream, the interface cells exchange mass and rebuild
+//! the populations the gas does not give them after each streaming, and the cells convert as they
+//! fill and empty after each step. Velocity inlets inject liquid.
+//!
 //! # Layout and determinism
 //! Two arrays of populations, structure of arrays (`f[q n + cell]`), A–B pattern. Streaming
 //! pulls: every population of a cell comes from one source (a neighbour, a periodic image, the
@@ -127,6 +133,7 @@ use crate::lattice::{C, Q, W, c, equilibrium, moving_wall, opposite};
 use crate::outlet::{Action, Outlets, Populations};
 use crate::rheology::{Clamp, Clamps, Rheology};
 use crate::setup::{MAX_LATTICE_SPEED, Obstacle, PhaseSetup, Setup, ZoneKind, ZoneSetup};
+use crate::surface::{Kind, Surface, SurfaceReport};
 use crate::voxel::{Grid, TriangleTree, voxelise};
 use crate::wall::Walls;
 use crate::{Error, Result};
@@ -485,13 +492,13 @@ impl ThermalState {
 /// The flow state.
 #[derive(Debug, Clone)]
 pub struct Flow {
-    grid: Grid,
-    n: usize,
+    pub(crate) grid: Grid,
+    pub(crate) n: usize,
     /// The distance between two directions' arrays in `f` and `g` (at least `n`).
-    stride: usize,
+    pub(crate) stride: usize,
     fluid: Vec<bool>,
-    f: Vec<f64>,
-    g: Vec<f64>,
+    pub(crate) f: Vec<f64>,
+    pub(crate) g: Vec<f64>,
     /// The links that do not stream by the shifted copies, in cell order.
     links: Vec<Link>,
     open: Vec<OpenCell>,
@@ -552,7 +559,7 @@ pub struct Flow {
     dynamic: bool,
     sigma_stats: Option<(f64, f64)>,
     /// Whether each axis is periodic (its faces' neighbours are the periodic images).
-    periodic: [bool; 3],
+    pub(crate) periodic: [bool; 3],
     /// The fans and porous zones (porous first), their fluid cells, and per cell its zone
     /// (`NONE` outside them; empty without zones).
     zones: Vec<ZoneSetup>,
@@ -565,9 +572,11 @@ pub struct Flow {
     /// What the convective outlet cells keep between steps.
     outlets: Outlets,
     /// Cells per parallel block ([`block_cells`]).
-    block: usize,
+    pub(crate) block: usize,
     /// Each open cell's populations after its boundary, in the step (kept for its capacity).
     open_scratch: Vec<[f64; Q]>,
+    /// The free surface: which fluid cells hold liquid, with a free surface.
+    pub(crate) surface: Option<Surface>,
 }
 
 const NONE: u32 = u32::MAX;
@@ -586,9 +595,20 @@ fn block_cells(n: usize) -> usize {
 /// Open cells per parallel block of the open boundaries.
 const OPEN_BLOCK: usize = 256;
 
+/// The cells that collide: a free surface's liquid and interface cells, else the fluid cells
+/// less the boundary nodes of the on-node wall-function bounce (`bulk`, when it is set).
+/// Field-level borrows, for passes that hold other fields mutably.
+fn populated_mask<'a>(fluid: &'a [bool], bulk: &'a [bool], surface: Option<&'a Surface>) -> &'a [bool] {
+    match surface {
+        Some(s) => &s.active,
+        None if bulk.is_empty() => fluid,
+        None => bulk,
+    }
+}
+
 /// The first `n` populations of each direction of an array with direction stride `stride`, cut
 /// into blocks of `block` cells: block b holds the Q directions' slices of cells b·block.. .
-fn cell_blocks(data: &mut [f64], stride: usize, n: usize, block: usize) -> Vec<Vec<&mut [f64]>> {
+pub(crate) fn cell_blocks(data: &mut [f64], stride: usize, n: usize, block: usize) -> Vec<Vec<&mut [f64]>> {
     let block = block.max(1);
     let mut blocks: Vec<Vec<&mut [f64]>> = (0..n.div_ceil(block)).map(|_| Vec::with_capacity(Q)).collect();
     for direction in data.chunks_mut(stride.max(1)).take(Q) {
@@ -950,6 +970,20 @@ impl Flow {
             })
             .collect();
 
+        // The free surface: liquid in the setup's regions and the inlet cells, gas elsewhere.
+        let surface = match &setup.surface {
+            None => None,
+            Some(ss) => {
+                let inlets: Vec<u32> = open.iter().filter(|oc| matches!(oc.target, Target::Velocity(_))).map(|oc| oc.cell).collect();
+                let liquid = |cell: usize| {
+                    let p = grid.coords(cell);
+                    ss.liquid.iter().any(|(lo, hi)| (0..3).all(|a| p[a] >= lo[a] && p[a] <= hi[a]))
+                };
+                let reflect = BoxFace::ALL.map(|f| is_slip(f) && !periodic[f.axis()]);
+                Some(Surface::new(&grid, periodic, reflect, &fluid, &inlets, liquid)?)
+            }
+        };
+        let populated = |cell: usize| surface.as_ref().map_or(fluid[cell], |s| s.active[cell]);
         // The initial state: equilibrium at density 1 and the initial velocity.
         let mut f = filled(q_n, 0.0, "populations")?;
         // The streaming targets are allocated on the first CPU step: a flow handed to a device
@@ -957,7 +991,7 @@ impl Flow {
         let g = Vec::new();
         for cell in 0..n {
             for q in 0..Q {
-                f[q * stride + cell] = if fluid[cell] { equilibrium(q, 1.0, setup.initial_velocity) } else { 0.0 };
+                f[q * stride + cell] = if populated(cell) { equilibrium(q, 1.0, setup.initial_velocity) } else { 0.0 };
             }
         }
 
@@ -1126,14 +1160,42 @@ impl Flow {
             outlets: Outlets::default(),
             block: block_cells(n),
             open_scratch: Vec::new(),
+            surface,
         };
         flow.outlets = Outlets::new(&flow.open, &View { flow: &flow, f: &flow.f });
+        if let Some(s) = &mut flow.surface {
+            s.initial_mass = s.total_mass(&flow.f, flow.stride);
+        }
         Ok(flow)
     }
 
     /// What the convective outlet cells keep between steps.
     pub fn outlets(&self) -> &Outlets {
         &self.outlets
+    }
+
+    /// The free surface, when the flow has one.
+    pub fn surface(&self) -> Option<&Surface> {
+        self.surface.as_ref()
+    }
+
+    /// Whether the flow has a free surface.
+    pub fn free_surface(&self) -> bool {
+        self.surface.is_some()
+    }
+
+    /// With a free surface: how it fared so far ([`SurfaceReport`]).
+    pub fn surface_report(&self) -> Option<SurfaceReport> {
+        self.surface.as_ref().map(|s| s.report(&self.f, self.stride))
+    }
+
+    /// The cells that collide and stream now: with a free surface the liquid and interface
+    /// cells, else [`Flow::collides`].
+    fn populated(&self) -> &[bool] {
+        match &self.surface {
+            Some(s) => &s.active,
+            None => self.collides(),
+        }
     }
 
     /// The action of a cell's zone, if it is in one.
@@ -1317,6 +1379,9 @@ impl Flow {
             total += bytes(&t.g) + bytes(&t.g2) + bytes(&t.temperature) + bytes(&t.open) + bytes(&t.reset);
             total += t.phase.as_ref().map_or(0, |p| bytes(&p.liquid));
         }
+        if let Some(s) = &self.surface {
+            total += s.heap_bytes();
+        }
         total
     }
 
@@ -1479,8 +1544,12 @@ impl Flow {
     pub fn set_equilibrium(&mut self, state: impl Fn(usize) -> (f64, [f64; 3])) {
         let n = self.n;
         let s = self.stride;
+        // every fluid cell, the boundary nodes of the on-node bounce included; not a gas cell
+        let populated = |cell: usize| {
+            self.surface.as_ref().map_or(self.fluid.get(cell).copied().unwrap_or(false), |s| s.active.get(cell).copied().unwrap_or(false))
+        };
         for cell in 0..n {
-            if !self.fluid[cell] {
+            if !populated(cell) {
                 continue;
             }
             let (rho, u) = state(cell);
@@ -1502,7 +1571,7 @@ impl Flow {
 
     /// The density and velocity of a cell (lattice units), or `None` for a solid cell.
     pub fn moments(&self, cell: usize) -> Option<(f64, [f64; 3])> {
-        if !self.is_fluid(cell) {
+        if !self.populated().get(cell).copied().unwrap_or(false) {
             return None;
         }
         let s = self.stride;
@@ -1520,8 +1589,12 @@ impl Flow {
         Some((rho, u))
     }
 
-    /// The total mass of the fluid cells (lattice units: the sum of every population).
+    /// The total mass of the fluid cells (lattice units: the sum of every population; with a free
+    /// surface the liquid cells' densities, the interface cells' masses and the reservoir).
     pub fn mass(&self) -> f64 {
+        if let Some(surface) = &self.surface {
+            return surface.total_mass(&self.f, self.stride);
+        }
         let n = self.n;
         let s = self.stride;
         let mut m = 0.0;
@@ -1555,8 +1628,10 @@ impl Flow {
         }
         self.stream();
         self.apply_stress();
+        self.surface_stream();
         self.open_boundaries();
         std::mem::swap(&mut self.f, &mut self.g);
+        self.surface_convert();
         if self.thermal.is_some() {
             self.collide_thermal();
             self.stream_thermal();
@@ -1964,7 +2039,7 @@ impl Flow {
             return;
         }
         let (f, s, block) = (&self.f, self.stride, self.block);
-        let fluid = if self.bulk.is_empty() { &self.fluid } else { &self.bulk };
+        let fluid = populated_mask(&self.fluid, &self.bulk, self.surface.as_ref());
         let (cell_force, constant) = (&self.cell_force, self.acceleration);
         let (zone_of, actions) = (&self.zone_of, &self.actions);
         let walls = if self.wall_model { self.walls.as_ref() } else { None };
@@ -2028,8 +2103,9 @@ impl Flow {
         // the pass borrows other fields mutably)
         let liquid = self.thermal.as_ref().and_then(|t| t.phase.as_ref()).map(|p| &p.liquid[..]);
         let forced = constant != [0.0; 3] || !cell_force.is_empty() || !self.zone_of.is_empty() || liquid.is_some();
-        // The boundary nodes of the on-node wall-function bounce run eq. 14 instead.
-        let fluid = if self.bulk.is_empty() { &self.fluid } else { &self.bulk };
+        // The boundary nodes of the on-node wall-function bounce run eq. 14 instead; the gas
+        // cells of a free surface hold no populations.
+        let fluid = populated_mask(&self.fluid, &self.bulk, self.surface.as_ref());
         let (zone_of, actions) = (&self.zone_of, &self.actions);
         let mut blocks = cell_blocks(&mut self.f, self.stride, n, block);
         let mut maxima = vec![0.0f64; blocks.len()];
@@ -2431,11 +2507,15 @@ impl Flow {
                 }
             });
         }
+        // With a free surface: the mass the inlets inject, the incoming populations the boundary
+        // set less the outgoing ones its placeholders held (which left through the face).
+        let mut injected = 0.0;
         for (k, p) in done.iter().enumerate() {
             let Some(oc) = self.open.get(k).copied() else { continue };
             let cell = oc.cell as usize;
             for (q, v) in p.iter().enumerate() {
                 if let Some(x) = self.g.get_mut(q * s + cell) {
+                    injected += *v - *x;
                     *x = *v;
                 }
             }
@@ -2445,6 +2525,9 @@ impl Flow {
         }
         self.open_scratch = done;
         self.outlets = outlets;
+        if let Some(surface) = &mut self.surface {
+            surface.injected += injected;
+        }
     }
 }
 
@@ -2619,6 +2702,7 @@ impl crate::backend::Backend for Flow {
             block: _,
             // Overwritten before use; its capacity is not state.
             open_scratch: _,
+            surface,
         } = self;
         let n = *n;
         fixed(a, n as u64)?;
@@ -2723,6 +2807,10 @@ impl crate::backend::Backend for Flow {
             f64(a, &mut action.beta)?;
         }
         outlets.checkpoint(a)?;
+        fixed(a, u64::from(surface.is_some()))?;
+        if let Some(s) = surface {
+            s.checkpoint(a, n)?;
+        }
         fixed(a, u64::from(thermal.is_some()))?;
         if let Some(t) = thermal {
             let ThermalState {
@@ -2823,7 +2911,17 @@ impl crate::backend::Backend for Flow {
             }
         }
         let temperature = self.thermal.as_ref().map(|t| t.temperature.clone()).unwrap_or_default();
-        Ok(crate::backend::Fields { density, velocity, temperature })
+        let mut fill = Vec::new();
+        if let Some(s) = &self.surface {
+            // a gas cell is at the gas pressure
+            for (d, k) in density.iter_mut().zip(&s.kind) {
+                if *k == Kind::Gas {
+                    *d = crate::surface::GAS_DENSITY;
+                }
+            }
+            fill = s.fill.clone();
+        }
+        Ok(crate::backend::Fields { density, velocity, temperature, fill })
     }
 
     fn heat(&mut self) -> Result<Vec<f64>> {
@@ -2852,6 +2950,14 @@ impl crate::backend::Backend for Flow {
 
     fn is_fluid(&self, cell: usize) -> bool {
         Flow::is_fluid(self, cell)
+    }
+
+    fn surface_report(&self) -> Option<SurfaceReport> {
+        Flow::surface_report(self)
+    }
+
+    fn liquid_extent(&self) -> Option<(Option<([usize; 3], [usize; 3])>, f64)> {
+        self.surface.as_ref().map(|s| s.extent(&self.grid))
     }
 
     fn frozen(&self) -> Option<f64> {
