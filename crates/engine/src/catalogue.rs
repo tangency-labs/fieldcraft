@@ -701,6 +701,13 @@ pub static CATALOGUE: &[Capability] = &[
         &["solve.history"],
     ),
     ready_more("results.reactions", "Reactions", Results, "Query", "Reaction force and moment sums per set", &["results.export.csv"]),
+    ready(
+        "results.linearize",
+        "Linearize",
+        Results,
+        "Query",
+        "Membrane, bending and peak stresses along a path through a wall (ASME VIII-2 Annex 5-A)",
+    ),
     soon("results.free_body", "Free Body", Results, "Query", "M9", "Free-body forces across a cut"),
     ready("results.xy", "XY Plot", Results, "Plots", "Plot a quantity against the load factor, time or mode"),
     ready("results.path", "Path Plot", Results, "Plots", "Interpolate a solid nodal field along a reference-coordinate path, with CSV export"),

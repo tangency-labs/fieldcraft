@@ -10,6 +10,7 @@
 - [Read an Abaqus input deck](abaqus-import.md)
 - [Contact loading and unloading](recipes/contact-load-unload.md)
 - [Path plots](path-plots.md)
+- [Stress linearisation](stress-linearisation.md)
 - [FieldCraft in the browser](web.md)
 - [Updates](updates.md)
 - [Crash reports](crash-reports.md)

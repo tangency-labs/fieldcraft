@@ -576,6 +576,23 @@ pub const REPLIES: &[(&str, &[(&str, Dim)])] = &[
             ("/applied", Dim::Force),
         ],
     ),
+    (
+        "results.linearize",
+        &[
+            ("/from", Dim::Length),
+            ("/to", Dim::Length),
+            ("/length", Dim::Length),
+            ("/membrane", Dim::Stress),
+            ("/bending/*", Dim::Stress),
+            ("/peak/*", Dim::Stress),
+            ("/total/*", Dim::Stress),
+            ("/equivalent/membrane", Dim::Stress),
+            ("/equivalent/membrane_plus_bending/*", Dim::Stress),
+            ("/equivalent/total/*", Dim::Stress),
+            ("/samples/*/x", Dim::Length),
+            ("/samples/*/stress", Dim::Stress),
+        ],
+    ),
 ];
 
 /// The lengths of a mesh plan ([`fieldcraft_model::MeshPlan`]) as JSON: `mesh.plan`'s reply and

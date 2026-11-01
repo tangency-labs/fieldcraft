@@ -15,6 +15,7 @@ pub(crate) mod forms;
 mod geometry;
 mod hex;
 mod initial;
+mod linearize;
 pub(crate) mod mesh;
 
 pub use datum::edit_params as datum_edit_params;
@@ -245,6 +246,7 @@ pub static ALL: &[CommandSpec] = &[
     results::CLEAR,
     xy::XY,
     path::PATH,
+    linearize::LINEARIZE,
     diagnostics::CRASH_REPORTS,
     diagnostics::CRASH_REPORT,
     diagnostics::CRASH_REPORTS_DELETE,

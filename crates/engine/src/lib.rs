@@ -28,6 +28,7 @@ pub use cmd::update::enable_checks as enable_update_checks;
 pub use fieldcraft_io::fs::write_output;
 pub use fieldcraft_io::{Item as ViewItem, ItemKind};
 pub mod history;
+pub mod linearise;
 pub mod path;
 pub mod progress;
 pub mod requirement;
@@ -1000,6 +1001,16 @@ mod tests {
             json!({"points": [[1e308, -1e308, 0], [0, 0, 0]]}),
             json!({"points": [[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]]}),
             json!({"points": vec![[1, 1, 1]; 30_000]}),
+            // Stress classification lines.
+            json!({"step": "Bend", "from": [f64::NAN, 0, 0], "to": [1, 0, 0]}),
+            json!({"step": "Bend", "from": [1e308, 0, 0], "to": [-1e308, 0, 0]}),
+            json!({"step": "Bend", "from": [0, 0], "to": [1, 0, 0]}),
+            json!({"step": "Bend", "from": ["a", "b", "c"], "to": "there"}),
+            json!({"step": "Bend", "from": [0, 0, 0], "to": [0, 0, 0]}),
+            json!({"step": "Bend", "from": [0, 0.5, 0.5], "to": [10, 0.5, 0.5], "points": -1}),
+            json!({"step": "Bend", "from": [0, 0.5, 0.5], "to": [10, 0.5, 0.5], "points": 2}),
+            json!({"step": "Bend", "from": [0, 0.5, 0.5], "to": [10, 0.5, 0.5], "points": 1_000_000_000}),
+            json!({"step": "Bend", "from": [0, 0.5, 0.5], "to": [10, 0.5, 0.5], "points": 1.5}),
             json!({"surface": 0}),
             json!({"surface": -1}),
             json!({"surface": 1e300}),
