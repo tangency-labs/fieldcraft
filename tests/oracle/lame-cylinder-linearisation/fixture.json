@@ -1,0 +1,33 @@
+{
+  "note": "FieldCraft's accepted results for this case, written by `cargo xtask oracle --bless`. A result outside its band fails CI.",
+  "values": {
+    "axial_membrane": {
+      "band": 2.002242580148636e-8,
+      "value": 20.02242580148636
+    },
+    "hoop_bending_a": {
+      "band": 4.5657455081753396e-8,
+      "value": 45.65745508175339
+    },
+    "hoop_membrane": {
+      "band": 1.0022495918406149e-7,
+      "value": 100.22495918406148
+    },
+    "hoop_peak_a": {
+      "band": 2.1184411114622942e-8,
+      "value": 20.478804812465906
+    },
+    "hoop_peak_b": {
+      "band": 1.2148922218710462e-8,
+      "value": 12.13415087265241
+    },
+    "membrane_von_mises": {
+      "band": 1.1656178395835558e-7,
+      "value": 116.56178395835558
+    },
+    "radial_membrane": {
+      "band": 3.34835398457736e-8,
+      "value": -33.4835398457736
+    }
+  }
+}

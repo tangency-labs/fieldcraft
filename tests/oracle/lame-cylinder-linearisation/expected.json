@@ -1,0 +1,196 @@
+{
+ "title": "Thick-walled cylinder under internal pressure: stress linearisation through the wall (ASME VIII-2 Annex 5-A on Lamé's solution)",
+ "kind": "theory",
+ "source": "Lamé's solution (Timoshenko and Goodier, Theory of Elasticity, 3rd ed., McGraw-Hill 1970, §28) with A₀ = p a² / (b² − a²) = 33.333, B₀ = A₀ b² = 13 333.3, σ_θ = A₀ + B₀/r², σ_r = A₀ − B₀/r², σ_z = 2νA₀, integrated in closed form over the wall by the membrane and bending definitions of ASME BPVC Section VIII Division 2, Annex 5-A (5-A.4.1): hoop membrane p a/(b − a), hoop bending at the bore (6 B₀/t²)[c (1/a − 1/b) − ln(b/a)], c = (a + b)/2, peaks as total less membrane and bending, radial membrane −p a/(a + b)",
+ "quantities": [
+  {
+   "id": "hoop_membrane",
+   "quantity": "hoop membrane stress σᵐ_θ = p a / (b − a) along the radial line from the bore (10, 0, 0.5) to the outside (20, 0, 0.5)",
+   "measure": {
+    "command": "results.linearize",
+    "params": {
+     "step": "Pressure",
+     "from": [
+      10.0,
+      0,
+      0.5
+     ],
+     "to": [
+      20.0,
+      0,
+      0.5
+     ],
+     "points": 41
+    },
+    "pointer": "/membrane/1"
+   },
+   "value": 100.0,
+   "tolerance": {
+    "relative": 0.01
+   },
+   "reason": "8 × 16 hex20 mesh, each element's own extrapolated nodal stresses integrated with Simpson's rule on 41 points: the integrals are within 0.1% of the closed forms"
+  },
+  {
+   "id": "hoop_bending_a",
+   "quantity": "hoop bending stress at the bore, (6 B₀ / t²) [c (1/a − 1/b) − ln(b/a)] with c = (a + b)/2",
+   "measure": {
+    "command": "results.linearize",
+    "params": {
+     "step": "Pressure",
+     "from": [
+      10.0,
+      0,
+      0.5
+     ],
+     "to": [
+      20.0,
+      0,
+      0.5
+     ],
+     "points": 41
+    },
+    "pointer": "/bending/from/1"
+   },
+   "value": 45.482255552043775,
+   "tolerance": {
+    "relative": 0.01
+   },
+   "reason": "8 × 16 hex20 mesh, each element's own extrapolated nodal stresses integrated with Simpson's rule on 41 points: the integrals are within 0.1% of the closed forms"
+  },
+  {
+   "id": "hoop_peak_a",
+   "quantity": "hoop peak stress at the bore, σ_θ(a) − σᵐ_θ − σᵇ_θ",
+   "measure": {
+    "command": "results.linearize",
+    "params": {
+     "step": "Pressure",
+     "from": [
+      10.0,
+      0,
+      0.5
+     ],
+     "to": [
+      20.0,
+      0,
+      0.5
+     ],
+     "points": 41
+    },
+    "pointer": "/peak/from/1"
+   },
+   "value": 21.18441111462294,
+   "tolerance": {
+    "relative": 0.05
+   },
+   "reason": "the peak is the small difference of the surface stress and the membrane and bending parts, each 0.2 to 0.4% off on this 8 × 16 hex20 mesh (0.3, 0.23 and 0.18 in stress units): added up, 3.4% of the 21.2 peak at the bore; 16 radial divisions bring it under 1%"
+  },
+  {
+   "id": "hoop_peak_b",
+   "quantity": "hoop peak stress outside, σ_θ(b) − σᵐ_θ + σᵇ_θ",
+   "measure": {
+    "command": "results.linearize",
+    "params": {
+     "step": "Pressure",
+     "from": [
+      10.0,
+      0,
+      0.5
+     ],
+     "to": [
+      20.0,
+      0,
+      0.5
+     ],
+     "points": 41
+    },
+    "pointer": "/peak/to/1"
+   },
+   "value": 12.14892221871046,
+   "tolerance": {
+    "relative": 0.05
+   },
+   "reason": "the peak is the small difference of the surface stress and the membrane and bending parts, each 0.2 to 0.4% off on this 8 × 16 hex20 mesh (0.3, 0.23 and 0.18 in stress units): added up, 3.4% of the 21.2 peak at the bore; 16 radial divisions bring it under 1%"
+  },
+  {
+   "id": "radial_membrane",
+   "quantity": "radial membrane stress σᵐ_r = −p a / (a + b)",
+   "measure": {
+    "command": "results.linearize",
+    "params": {
+     "step": "Pressure",
+     "from": [
+      10.0,
+      0,
+      0.5
+     ],
+     "to": [
+      20.0,
+      0,
+      0.5
+     ],
+     "points": 41
+    },
+    "pointer": "/membrane/0"
+   },
+   "value": -33.333333333333336,
+   "tolerance": {
+    "relative": 0.01
+   },
+   "reason": "8 × 16 hex20 mesh, each element's own extrapolated nodal stresses integrated with Simpson's rule on 41 points: the integrals are within 0.1% of the closed forms"
+  },
+  {
+   "id": "axial_membrane",
+   "quantity": "axial membrane stress σᵐ_z = 2 ν A₀ (plane strain)",
+   "measure": {
+    "command": "results.linearize",
+    "params": {
+     "step": "Pressure",
+     "from": [
+      10.0,
+      0,
+      0.5
+     ],
+     "to": [
+      20.0,
+      0,
+      0.5
+     ],
+     "points": 41
+    },
+    "pointer": "/membrane/2"
+   },
+   "value": 20.0,
+   "tolerance": {
+    "relative": 0.01
+   },
+   "reason": "8 × 16 hex20 mesh, each element's own extrapolated nodal stresses integrated with Simpson's rule on 41 points: the integrals are within 0.1% of the closed forms"
+  },
+  {
+   "id": "membrane_von_mises",
+   "quantity": "von Mises stress of the membrane tensor (σᵐ_r, σᵐ_θ, σᵐ_z)",
+   "measure": {
+    "command": "results.linearize",
+    "params": {
+     "step": "Pressure",
+     "from": [
+      10.0,
+      0,
+      0.5
+     ],
+     "to": [
+      20.0,
+      0,
+      0.5
+     ],
+     "points": 41
+    },
+    "pointer": "/equivalent/membrane"
+   },
+   "value": 116.23730516108463,
+   "tolerance": {
+    "relative": 0.01
+   },
+   "reason": "8 × 16 hex20 mesh, each element's own extrapolated nodal stresses integrated with Simpson's rule on 41 points: the integrals are within 0.1% of the closed forms"
+  }
+ ]
+}
