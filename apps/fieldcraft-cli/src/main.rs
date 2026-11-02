@@ -13,6 +13,7 @@ mod crashes;
 mod snapshot;
 mod update;
 
+use std::io::{self, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -59,6 +60,35 @@ usage:
   fieldcraft-cli --version             print the version
 ";
 
+/// Why a subcommand failed.
+pub enum Error {
+    /// Writing its output to stdout failed. A reader that stopped early (`fieldcraft-cli
+    /// commands | head`) is not a failure: [`main`] ends quietly on [`io::ErrorKind::BrokenPipe`].
+    /// `?` on an [`io::Error`] lands here, so other I/O (reading a script, a crash folder) turns
+    /// its error into a [`Error::Message`] where it happens.
+    Output(io::Error),
+    /// Anything else, as the message `main` prints.
+    Message(String),
+}
+
+impl From<io::Error> for Error {
+    fn from(e: io::Error) -> Self {
+        Self::Output(e)
+    }
+}
+
+impl From<String> for Error {
+    fn from(message: String) -> Self {
+        Self::Message(message)
+    }
+}
+
+impl From<&str> for Error {
+    fn from(message: &str) -> Self {
+        Self::Message(message.to_string())
+    }
+}
+
 /// Largest script accepted (bytes).
 const MAX_SCRIPT_BYTES: u64 = 256 * 1024 * 1024;
 
@@ -69,43 +99,45 @@ fn main() -> ExitCode {
     // Pictures commands draw themselves (results.export.animation), with the viewport's pipeline.
     fieldcraft_mcp::register_drawer();
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let result = match args.first().map(String::as_str) {
-        Some("commands") if args.get(1).map(String::as_str) == Some("--json") => {
-            let all: Vec<_> = fieldcraft_engine::commands().iter().map(fieldcraft_engine::CommandSpec::listing).collect();
-            serde_json::to_string_pretty(&all).map(|text| println!("{text}")).map_err(|e| e.to_string())
-        }
-        Some("commands") => {
-            for c in fieldcraft_engine::commands() {
-                println!("{:<24} {:<18} {}", c.id, c.label, c.params);
-            }
-            Ok(())
-        }
-        Some("features") => {
-            print!("{}", fieldcraft_engine::catalogue::features_page());
-            Ok(())
-        }
-        Some("mcp") => mcp(args.get(1..).unwrap_or(&[])),
-        Some("crashes") => crashes::run(args.get(1..).unwrap_or(&[])),
-        Some("update") => update::run(args.get(1..).unwrap_or(&[])),
-        Some("snapshot") => snapshot::run(args.get(1..).unwrap_or(&[])),
-        Some("run") => args.get(1).ok_or_else(|| format!("run needs a script\n\n{USAGE}")).and_then(|p| run(p)),
-        Some("-V" | "--version") => {
-            println!("fieldcraft-cli {}", env!("CARGO_PKG_VERSION"));
-            Ok(())
-        }
-        Some("-h" | "--help" | "help") | None => {
-            print!("{USAGE}");
-            Ok(())
-        }
-        Some(other) => Err(format!("unknown command `{other}`\n\n{USAGE}")),
-    };
-    match result {
+    let mut out = io::stdout().lock();
+    match command(&args, &mut out).and_then(|()| Ok(out.flush()?)) {
         Ok(()) => ExitCode::SUCCESS,
-        Err(e) => {
+        // Whoever read the output has had enough: the output ends here, and that is no error.
+        Err(Error::Output(e)) if e.kind() == io::ErrorKind::BrokenPipe => ExitCode::SUCCESS,
+        Err(Error::Output(e)) => {
+            eprintln!("error: writing to stdout: {e}");
+            ExitCode::FAILURE
+        }
+        Err(Error::Message(e)) => {
             eprintln!("error: {e}");
             ExitCode::FAILURE
         }
     }
+}
+
+/// Run the subcommand `args` name, writing its output to `out`.
+fn command(args: &[String], out: &mut impl Write) -> Result<(), Error> {
+    match args.first().map(String::as_str) {
+        Some("commands") if args.get(1).map(String::as_str) == Some("--json") => {
+            let all: Vec<_> = fieldcraft_engine::commands().iter().map(fieldcraft_engine::CommandSpec::listing).collect();
+            writeln!(out, "{}", serde_json::to_string_pretty(&all).map_err(|e| e.to_string())?)?;
+        }
+        Some("commands") => {
+            for c in fieldcraft_engine::commands() {
+                writeln!(out, "{:<24} {:<18} {}", c.id, c.label, c.params)?;
+            }
+        }
+        Some("features") => write!(out, "{}", fieldcraft_engine::catalogue::features_page())?,
+        Some("mcp") => mcp(args.get(1..).unwrap_or(&[]), out)?,
+        Some("crashes") => crashes::run(args.get(1..).unwrap_or(&[]), out)?,
+        Some("update") => update::run(args.get(1..).unwrap_or(&[]), out)?,
+        Some("snapshot") => snapshot::run(args.get(1..).unwrap_or(&[]), out)?,
+        Some("run") => run(args.get(1).ok_or_else(|| format!("run needs a script\n\n{USAGE}"))?, out)?,
+        Some("-V" | "--version") => writeln!(out, "fieldcraft-cli {}", env!("CARGO_PKG_VERSION"))?,
+        Some("-h" | "--help" | "help") | None => write!(out, "{USAGE}")?,
+        Some(other) => return Err(format!("unknown command `{other}`\n\n{USAGE}").into()),
+    }
+    Ok(())
 }
 
 /// The `mcp` options: each given once, as `--flag value` or `--flag=value`.
@@ -148,13 +180,47 @@ fn mcp_options(args: &[String]) -> Result<fieldcraft_mcp::Options, String> {
     Ok(fieldcraft_mcp::Options { connect, roots, solver_diagnostics: fieldcraft_engine::crash::default_dir() })
 }
 
-fn mcp(args: &[String]) -> Result<(), String> {
+fn mcp(args: &[String], out: &mut impl Write) -> Result<(), Error> {
     let (backend, note) = fieldcraft_mcp::backend(mcp_options(args)?)?;
     if let Some(note) = note {
         eprintln!("fieldcraft-cli mcp: {note}");
     }
     let mut server = fieldcraft_mcp::Server::new(backend);
-    server.serve(std::io::stdin().lock(), std::io::stdout().lock()).map_err(|e| format!("mcp: {e}"))
+    // `serve` returns a failed read of stdin and a failed write of a reply alike, and it stops
+    // at the first one; only the writer knows which one it was.
+    let mut out = Noting { out, failed: false };
+    match server.serve(io::stdin().lock(), &mut out) {
+        Ok(()) => Ok(()),
+        Err(e) if out.failed => Err(Error::Output(e)),
+        Err(e) => Err(Error::Message(format!("mcp: {e}"))),
+    }
+}
+
+/// A writer that notes whether a write failed (an interrupted one is retried, not a failure).
+struct Noting<'a, W> {
+    out: &'a mut W,
+    failed: bool,
+}
+
+impl<W: Write> Noting<'_, W> {
+    fn note<T>(&mut self, result: io::Result<T>) -> io::Result<T> {
+        if let Err(e) = &result {
+            self.failed |= e.kind() != io::ErrorKind::Interrupted;
+        }
+        result
+    }
+}
+
+impl<W: Write> Write for Noting<'_, W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let result = self.out.write(buf);
+        self.note(result)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        let result = self.out.flush();
+        self.note(result)
+    }
 }
 
 /// The JSON report of a picture: what drew it and what it shows (the MCP `screenshot` reply's
@@ -182,10 +248,10 @@ fn session_of(path: &str) -> Result<Session, String> {
     Ok(session)
 }
 
-fn run(path: &str) -> Result<(), String> {
+fn run(path: &str, out: &mut impl Write) -> Result<(), Error> {
     let mut session = session_of(path)?;
     let info = session.execute("model.info", &json!({})).map_err(|e| e.to_string())?;
-    println!("{}", serde_json::to_string_pretty(&info).map_err(|e| e.to_string())?);
+    writeln!(out, "{}", serde_json::to_string_pretty(&info).map_err(|e| e.to_string())?)?;
     Ok(())
 }
 
@@ -195,6 +261,34 @@ mod tests {
 
     fn opts(args: &[&str]) -> Result<fieldcraft_mcp::Options, String> {
         mcp_options(&args.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+    }
+
+    /// A reader that goes away after the first line, counting the writes made to it.
+    struct ClosesAfterOneLine {
+        writes: usize,
+    }
+
+    impl Write for ClosesAfterOneLine {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.writes += 1;
+            if self.writes > 1 {
+                return Err(io::ErrorKind::BrokenPipe.into());
+            }
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn the_output_stops_at_the_first_failed_write() {
+        let mut out = ClosesAfterOneLine { writes: 0 };
+        let r = command(&["commands".to_string()], &mut out);
+        assert!(matches!(r, Err(Error::Output(ref e)) if e.kind() == io::ErrorKind::BrokenPipe));
+        // The first line, then the one that failed: nothing written after the reader is gone.
+        assert_eq!(out.writes, 2);
     }
 
     #[test]
