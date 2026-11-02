@@ -507,6 +507,79 @@ pub fn improve(cx: &mut TetComplex, ctx: &Context, o: &ImproveOptions) -> Result
     Ok(stats)
 }
 
+/// Most rounds of [`repair`].
+pub const REPAIR_ROUNDS: usize = 8;
+
+/// What [`repair`] did.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RepairStats {
+    pub smoothed: usize,
+    pub topological: usize,
+    pub inserted: usize,
+    /// Tetrahedra still below the floor when it stopped.
+    pub below: usize,
+}
+
+/// The schedule of [`improve`] confined to the tetrahedra below `floor`: smoothing their
+/// vertices, a topological pass over them, then insertion in them (the worst first, at most
+/// `budget` vertices), round after round while the worst of them rises, at most
+/// [`REPAIR_ROUNDS`] rounds. Used after a step that moved vertices without improving around
+/// them (the snap onto the exact geometry, #777), so it touches only what that step spoilt;
+/// every operation is monotone in the worst quality of what it changes, as in [`improve`].
+pub fn repair(cx: &mut TetComplex, ctx: &Context, floor: f64, budget: usize) -> Result<RepairStats> {
+    let mut stats = RepairStats::default();
+    let worst_of = |cx: &TetComplex, list: &[u32]| -> Result<f64> {
+        let mut q = f64::INFINITY;
+        for &t in list {
+            if cx.is_live(t) {
+                q = q.min(tet_quality(cx, cx.tet(t)?)?);
+            }
+        }
+        Ok(q)
+    };
+    let mut list = below(cx, floor)?;
+    let mut failed = 0;
+    for _ in 0..REPAIR_ROUNDS {
+        if list.is_empty() || failed >= 2 {
+            break;
+        }
+        fieldcraft_model::progress::check()?;
+        let before = worst_of(cx, &list)?;
+        let mut want: Vec<u32> = Vec::new();
+        for &t in &list {
+            if cx.is_live(t) {
+                want.extend(cx.tet(t)?);
+            }
+        }
+        want.sort_unstable();
+        want.dedup();
+        for v in want {
+            if smooth_vertex(cx, ctx, v)? {
+                stats.smoothed += 1;
+            }
+        }
+        let still = below(cx, floor)?;
+        stats.topological += topological_pass(cx, &still)?;
+        let mut scored: Vec<(f64, u32)> = Vec::new();
+        for t in below(cx, floor)? {
+            scored.push((tet_quality(cx, cx.tet(t)?)?, t));
+        }
+        scored.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        let worst: Vec<u32> = scored.iter().take(MAX_INSERTION_LIST).map(|s| s.1).collect();
+        if stats.inserted < budget {
+            stats.inserted += insertion_pass(cx, ctx, &worst, budget - stats.inserted, floor)?;
+        }
+        list = below(cx, floor)?;
+        if worst_of(cx, &list)? > before {
+            failed = 0;
+        } else {
+            failed += 1;
+        }
+    }
+    stats.below = list.len();
+    Ok(stats)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
