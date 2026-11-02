@@ -122,7 +122,7 @@ pub fn picture(o: &Options, policy: Policy) -> Result<(Vec<u8>, Renderer, view::
     Ok((png, renderer, f.shown))
 }
 
-pub fn run(args: &[String]) -> Result<(), String> {
+pub fn run(args: &[String], out: &mut impl std::io::Write) -> Result<(), crate::Error> {
     let o = options(args)?;
     let policy = Policy::from_env().map_err(|e| e.to_string())?;
     let (png, renderer, shown) = picture(&o, policy)?;
@@ -137,7 +137,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
             None => r.insert("view".into(), o.view.label().into()),
         };
     }
-    println!("{report}");
+    writeln!(out, "{report}")?;
     Ok(())
 }
 

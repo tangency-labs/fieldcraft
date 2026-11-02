@@ -3,34 +3,38 @@
 //! copy of the CLI's install, verified against the release key first. `FIELDCRAFT_UPDATE_HOST`
 //! points both at a local test server.
 
+use std::io::Write;
+
 use fieldcraft_engine::Session;
 use fieldcraft_update::install::{self, Finish};
 use fieldcraft_update::net::Client;
 use fieldcraft_update::stage::{self, Options};
 use serde_json::json;
 
+use crate::Error;
+
 pub const USAGE: &str = "usage: fieldcraft-cli update --check | --install";
 
-pub fn run(args: &[String]) -> Result<(), String> {
+pub fn run(args: &[String], out: &mut impl Write) -> Result<(), Error> {
     match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
-        ["--check"] => check(),
-        ["--install"] => install(),
+        ["--check"] => check(out),
+        ["--install"] => install(out),
         _ => Err(USAGE.into()),
     }
 }
 
-fn check() -> Result<(), String> {
+fn check(out: &mut impl Write) -> Result<(), Error> {
     fieldcraft_engine::enable_update_checks(true);
     let report = Session::default().execute("app.update.check", &json!({})).map_err(|e| e.to_string())?;
-    println!("{}", serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?);
+    writeln!(out, "{}", serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?)?;
     Ok(())
 }
 
-fn install() -> Result<(), String> {
+fn install(out: &mut impl Write) -> Result<(), Error> {
     let client = Client::from_env();
     let check = client.check().map_err(|e| e.to_string())?;
     if !check.newer() {
-        println!("FieldCraft {} is up to date (the latest release is {}).", check.current, check.latest.version);
+        writeln!(out, "FieldCraft {} is up to date (the latest release is {}).", check.current, check.latest.version)?;
         return Ok(());
     }
     let here = install::here();
@@ -46,10 +50,10 @@ fn install() -> Result<(), String> {
     match install::plan(&staged, false).map_err(|e| e.to_string())? {
         Finish::Swap(plan) => {
             stage::apply(&plan).map_err(|e| e.to_string())?;
-            println!("Installed FieldCraft {} ({}). A running FieldCraft app uses it from its next start.", staged.version, here.describe());
+            writeln!(out, "Installed FieldCraft {} ({}). A running FieldCraft app uses it from its next start.", staged.version, here.describe())?;
         }
         Finish::Package { file, command } => {
-            println!("Downloaded and verified {}.\nInstall it with the system's package manager:\n  {command}", file.display());
+            writeln!(out, "Downloaded and verified {}.\nInstall it with the system's package manager:\n  {command}", file.display())?;
         }
     }
     Ok(())
