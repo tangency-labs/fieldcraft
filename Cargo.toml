@@ -41,7 +41,7 @@ log = "0.4"
 web-time = "1.1"
 # The machine's physical memory, which bounds how far a fluid solve's memory caps may be raised
 # (docs/adr/0001-libraries.md). Memory only; the desktop and CLI builds, not the browser.
-sysinfo = { version = "0.39", default-features = false, features = ["system"] }
+sysinfo = { version = "0.40", default-features = false, features = ["system"] }
 
 # xtask: reading Rust sources as syntax trees (`cargo xtask unit-factors`)
 syn = { version = "3", default-features = false, features = ["full", "parsing", "visit"] }
