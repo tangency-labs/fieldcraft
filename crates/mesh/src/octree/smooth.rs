@@ -91,7 +91,14 @@ fn chi_d(d: f64, eps: f64) -> f64 {
 /// The corner Jacobian (columns) of corner `c` of `x` against an ideal cube of edge `s`.
 fn corner_jacobian(x: &[P; 8], c: usize, s: f64) -> [P; 3] {
     let (n, sg) = CORNER_FRAMES[c];
-    [0, 1, 2].map(|a| sub(x[n[a]], x[c]).map(|v| v * sg[a] / s))
+    let mut j = [[0.0; 3]; 3];
+    for (a, col) in j.iter_mut().enumerate() {
+        let d = sub(x[n[a]], x[c]);
+        for (v, e) in col.iter_mut().zip(d) {
+            *v = e * sg[a] / s;
+        }
+    }
+    j
 }
 
 /// The sample points of the energy: the eight corners and the centre. Column `a` of sample `s`'s
@@ -121,15 +128,19 @@ fn sample_weights(s: usize) -> [[f64; 8]; 3] {
 /// The Jacobian (columns) of sample `smp` of `x` against an ideal cube of edge `s`.
 fn sample_jacobian(x: &[P; 8], smp: usize, s: f64) -> [P; 3] {
     let w = sample_weights(smp);
-    [0, 1, 2].map(|a| {
-        let mut c = [0.0; 3];
-        for (k, p) in x.iter().enumerate() {
+    // Loops rather than array maps, which were not inlined in the smoother's loops.
+    let mut j = [[0.0; 3]; 3];
+    for (c, wa) in j.iter_mut().zip(&w) {
+        for (wk, p) in wa.iter().zip(x) {
             for r in 0..3 {
-                c[r] += w[a][k] * p[r];
+                c[r] += wk * p[r];
             }
         }
-        c.map(|v| v / s)
-    })
+        for v in c.iter_mut() {
+            *v /= s;
+        }
+    }
+    j
 }
 
 fn det3(j: &[P; 3]) -> f64 {
@@ -191,7 +202,11 @@ impl<'a> Optimizer<'a> {
 
     fn element(&self, e: u32) -> ([P; 8], f64) {
         let h = self.hexes.get(e as usize).copied().unwrap_or([0; 8]);
-        (h.map(|v| self.points.get(v as usize).copied().unwrap_or([0.0; 3])), self.size.get(e as usize).copied().unwrap_or(1.0))
+        let mut x = [[0.0; 3]; 8];
+        for (x, v) in x.iter_mut().zip(h) {
+            *x = self.points.get(v as usize).copied().unwrap_or([0.0; 3]);
+        }
+        (x, self.size.get(e as usize).copied().unwrap_or(1.0))
     }
 
     /// The smallest normalised corner determinant over the mesh, and the total energy.
@@ -584,6 +599,45 @@ fn solve3(h: [[f64; 3]; 3], b: P) -> Option<P> {
 mod tests {
     use super::*;
     use crate::octree::geom::tests::box_surface;
+
+    /// The corner and sample Jacobians as array maps worked them out: the reference the loops
+    /// reorganise, compared bit for bit on distorted hexahedra.
+    #[test]
+    fn jacobians_are_the_array_maps_bit_for_bit() {
+        let reference_sample = |x: &[P; 8], smp: usize, s: f64| -> [P; 3] {
+            let w = sample_weights(smp);
+            [0, 1, 2].map(|a| {
+                let mut c = [0.0; 3];
+                for (k, p) in x.iter().enumerate() {
+                    for r in 0..3 {
+                        c[r] += w[a][k] * p[r];
+                    }
+                }
+                c.map(|v| v / s)
+            })
+        };
+        let reference_corner = |x: &[P; 8], c: usize, s: f64| -> [P; 3] {
+            let (n, sg) = CORNER_FRAMES[c];
+            [0, 1, 2].map(|a| sub(x[n[a]], x[c]).map(|v| v * sg[a] / s))
+        };
+        let mut state = 5u64;
+        let mut random = move || {
+            state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+            (state >> 11) as f64 / (1u64 << 53) as f64 - 0.5
+        };
+        let bits = |j: [P; 3]| j.map(|c| c.map(f64::to_bits));
+        for _ in 0..100 {
+            let x: [P; 8] =
+                std::array::from_fn(|k| [(k & 1) as f64 + 0.3 * random(), ((k >> 1) & 1) as f64 + 0.3 * random(), (k >> 2) as f64 + 0.3 * random()]);
+            let s = 0.5 + random().abs();
+            for c in 0..SAMPLES {
+                assert_eq!(bits(sample_jacobian(&x, c, s)), bits(reference_sample(&x, c, s)));
+            }
+            for c in 0..8 {
+                assert_eq!(bits(corner_jacobian(&x, c, s)), bits(reference_corner(&x, c, s)));
+            }
+        }
+    }
 
     #[test]
     fn corner_frames_are_right_handed_on_the_unit_cube() {
