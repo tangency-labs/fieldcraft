@@ -227,7 +227,7 @@ pub(super) fn quality_options(p: &Value, max_tets: u64) -> Result<(QualityOption
 /// The exact surfaces of a body's faces, for the quality stage's projections (none when the
 /// kernel cannot give them: the stage then keeps to the tessellation). Projection keeps each
 /// face's own geometry ([`fieldcraft_geometry::Shape::projection_surfaces`]): an absorbed face's
-/// nodes snap to the pieces they lie on ([`pieces`]), not to the surface it was absorbed into.
+/// nodes snap to the pieces they lie on (`pieces`), not to the surface it was absorbed into.
 pub fn analytic_surfaces(shape: &fieldcraft_geometry::Shape) -> Vec<Option<AnalyticSurface>> {
     shape.projection_surfaces().unwrap_or_default().into_iter().map(|f| f.map(analytic_surface)).collect()
 }
@@ -255,6 +255,8 @@ pub(crate) fn pieces(shape: &fieldcraft_geometry::Shape, tri_piece: &[u32]) -> f
     fieldcraft_mesh::tet::geometry::Pieces { tri_piece: tri_piece.to_vec(), analytic }
 }
 
+/// A [`TetQuality`] as JSON: the `quality` object under each body of a `mesh.tet.generate`
+/// reply — the mesh's element count and quality metrics.
 pub(super) fn quality_json(q: &TetQuality) -> Value {
     json!({
         "tets": q.tets,
@@ -263,6 +265,7 @@ pub(super) fn quality_json(q: &TetQuality) -> Value {
         "min_radius_ratio": q.min_radius_ratio,
         "mean_radius_ratio": q.mean_radius_ratio,
         "min_scaled_jacobian": q.min_scaled_jacobian,
+        "mean_scaled_jacobian": q.mean_scaled_jacobian,
         "slivers": q.slivers,
         "inadmissible": q.inadmissible,
     })
