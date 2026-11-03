@@ -89,14 +89,23 @@ impl UniformStrain<8> {
     pub fn hourglass_vectors(&self, xyz: &[[f64; 3]; 8]) -> [[f64; 8]; 4] {
         let mut gamma = [[0.0; 8]; 4];
         for (alpha, g) in gamma.iter_mut().enumerate() {
-            let h: [f64; 8] = HEX_CORNERS.map(|c| match alpha {
-                0 => c[1] * c[2],
-                1 => c[0] * c[2],
-                2 => c[0] * c[1],
-                _ => c[0] * c[1] * c[2],
-            });
-            // (h · x_i) for each coordinate direction i.
-            let hx = [0, 1, 2].map(|i| h.iter().zip(xyz).map(|(hj, x)| hj * x[i]).sum::<f64>());
+            let mut h = [0.0f64; 8];
+            for (hk, c) in h.iter_mut().zip(&HEX_CORNERS) {
+                *hk = match alpha {
+                    0 => c[1] * c[2],
+                    1 => c[0] * c[2],
+                    2 => c[0] * c[1],
+                    _ => c[0] * c[1] * c[2],
+                };
+            }
+            // (h · x_i) for each coordinate direction i, from −0 as `Iterator::sum` starts (loops:
+            // the array maps were not inlined in the explicit solver's element loop).
+            let mut hx = [-0.0f64; 3];
+            for (hj, x) in h.iter().zip(xyz) {
+                for i in 0..3 {
+                    hx[i] += hj * x[i];
+                }
+            }
             for (k, gk) in g.iter_mut().enumerate() {
                 *gk = h[k] - (hx[0] * self.b[k][0] + hx[1] * self.b[k][1] + hx[2] * self.b[k][2]) / self.volume;
             }
@@ -137,6 +146,38 @@ const VOLUME_FORM: [(usize, usize, usize, f64); 24] = [
     (5, 6, 7, 1.0),
 ];
 
+/// The index of pair p < q among the 28 pairs of a hexahedron's corners taken in order (0 1, 0 2,
+/// …, 6 7), as [`Hex8::hex8_deformed`] lists their cross products.
+const fn pair_index(p: usize, q: usize) -> usize {
+    // pairs before p: 7 + 6 + … + (8 − p); then q − p − 1 within p's
+    p * (15 - p) / 2 + q - p - 1
+}
+
+/// 12 b_I of the volume form ([`VOLUME_FORM`]) term by term: for each corner I, its nine terms
+/// (a pair's index ([`pair_index`]) and the sign it is added with) in the order the form adds them,
+/// term (i, j, k, c) adding c x_j × x_k to b_i, c x_k × x_i to b_j and c x_i × x_j to b_k. x_k × x_i
+/// is −(x_i × x_k): the same two products subtracted the other way, equal but for a zero's sign,
+/// and a zero of either sign added to a sum that starts at +0 leaves it as it was, so this is the
+/// form's sum bit for bit.
+const B_TERMS: [[(usize, f64); 9]; 8] = b_terms();
+
+const fn b_terms() -> [[(usize, f64); 9]; 8] {
+    let mut out = [[(0, 0.0); 9]; 8];
+    let mut count = [0usize; 8];
+    let mut m = 0;
+    while m < VOLUME_FORM.len() {
+        let (i, j, k, c) = VOLUME_FORM[m];
+        out[i][count[i]] = (pair_index(j, k), c);
+        count[i] += 1;
+        out[j][count[j]] = (pair_index(i, k), -c);
+        count[j] += 1;
+        out[k][count[k]] = (pair_index(i, j), c);
+        count[k] += 1;
+        m += 1;
+    }
+    out
+}
+
 impl UniformStrain<8> {
     /// The integrated gradients and volume of a hexahedron in closed form: b_I = ∂V/∂x_I of the
     /// volume form ([`VOLUME_FORM`]; D. P. Flanagan, T. Belytschko 1981 give it written out),
@@ -145,17 +186,56 @@ impl UniformStrain<8> {
     /// positive. `nodal_volume` is left at the mean V/8: an explicit solver keeps the lumped
     /// masses of the undeformed element.
     pub fn hex8_deformed(xyz: &[[f64; 3]; 8]) -> Result<Hex8> {
-        let mut b = [[0.0f64; 3]; 8];
         let cross = |a: [f64; 3], b: [f64; 3]| [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-        for (i, j, k, c) in VOLUME_FORM {
-            let (xi, xj, xk) = (xyz[i], xyz[j], xyz[k]);
-            for (target, v) in [(i, cross(xj, xk)), (j, cross(xk, xi)), (k, cross(xi, xj))] {
+        // x_p × x_q of each pair p < q, worked out once: the 24 terms of the form take 72 cross
+        // products of these 28.
+        // Written out in [`pair_index`] order (a loop over a table zeroed the array first).
+        let x = |p: usize, q: usize| cross(xyz[p], xyz[q]);
+        let pair: [[f64; 3]; 28] = [
+            x(0, 1),
+            x(0, 2),
+            x(0, 3),
+            x(0, 4),
+            x(0, 5),
+            x(0, 6),
+            x(0, 7),
+            x(1, 2),
+            x(1, 3),
+            x(1, 4),
+            x(1, 5),
+            x(1, 6),
+            x(1, 7),
+            x(2, 3),
+            x(2, 4),
+            x(2, 5),
+            x(2, 6),
+            x(2, 7),
+            x(3, 4),
+            x(3, 5),
+            x(3, 6),
+            x(3, 7),
+            x(4, 5),
+            x(4, 6),
+            x(4, 7),
+            x(5, 6),
+            x(5, 7),
+            x(6, 7),
+        ];
+        // Each b_I summed on its own, its terms in the order the form adds them ([`B_TERMS`]),
+        // so the sums stay in registers and every b_I is the same bit for bit.
+        let mut b = [[0.0f64; 3]; 8];
+        for (bi, terms) in b.iter_mut().zip(&B_TERMS) {
+            let mut sum = [0.0f64; 3];
+            for &(k, s) in terms {
+                let v = pair[k];
                 for d in 0..3 {
-                    b[target][d] += c * v[d];
+                    sum[d] += s * v[d];
                 }
             }
+            for d in 0..3 {
+                bi[d] = sum[d] / 12.0;
+            }
         }
-        let b = b.map(|v| v.map(|c| c / 12.0));
         let volume: f64 = b.iter().zip(xyz).map(|(bi, x)| bi[0] * x[0] + bi[1] * x[1] + bi[2] * x[2]).sum::<f64>() / 3.0;
         if !(volume > 0.0 && volume.is_finite() && b.iter().flatten().all(|v| v.is_finite())) {
             return Err(degenerate("hex8"));
@@ -295,6 +375,44 @@ mod tests {
     }
 
     const TET: [[f64; 3]; 4] = [[0.1, 0.0, 0.2], [1.3, 0.1, 0.0], [0.2, 1.1, 0.1], [0.3, 0.2, 0.9]];
+
+    /// The volume form's b_I summed term by term as the form lists them, three cross products a
+    /// term: the reference [`Hex8::hex8_deformed`] reorganises.
+    fn form_gradients(xyz: &[[f64; 3]; 8]) -> [[f64; 3]; 8] {
+        let mut b = [[0.0f64; 3]; 8];
+        let cross = |a: [f64; 3], b: [f64; 3]| [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+        for (i, j, k, c) in VOLUME_FORM {
+            let (xi, xj, xk) = (xyz[i], xyz[j], xyz[k]);
+            for (target, v) in [(i, cross(xj, xk)), (j, cross(xk, xi)), (k, cross(xi, xj))] {
+                for d in 0..3 {
+                    b[target][d] += c * v[d];
+                }
+            }
+        }
+        b.map(|v| v.map(|c| c / 12.0))
+    }
+
+    /// The shared cross products and per-corner sums give the form's gradients bit for bit, on
+    /// distorted and random hexahedra and on axis-aligned ones, whose many equal products make
+    /// zeros of both signs.
+    #[test]
+    fn deformed_gradients_are_the_forms_bit_for_bit() {
+        let mut state = 7u64;
+        let mut random = move || {
+            state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let mut shapes = vec![distorted(), HEX_CORNERS, HEX_CORNERS.map(|c| c.map(|v| 2.0 * v - 1.0))];
+        for _ in 0..200 {
+            shapes.push(HEX_CORNERS.map(|c| c.map(|v| 3.0 * v + 0.2 * (random() - 0.5))));
+        }
+        for xyz in shapes {
+            let bits = |b: [[f64; 3]; 8]| b.map(|v| v.map(f64::to_bits));
+            assert_eq!(bits(Hex8::hex8_deformed(&xyz).unwrap().b), bits(form_gradients(&xyz)), "{xyz:?}");
+        }
+        let pairs: Vec<(usize, usize)> = (0..8).flat_map(|p| (p + 1..8).map(move |q| (p, q))).collect();
+        assert!(pairs.iter().enumerate().all(|(n, (p, q))| pair_index(*p, *q) == n));
+    }
 
     #[test]
     fn mean_strain_is_exact_for_linear_fields() {
