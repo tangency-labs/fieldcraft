@@ -75,6 +75,9 @@ enum PickerAction {
     Export { command: String, params: Value, extension: &'static str, alternatives: &'static [&'static str] },
 }
 
+/// The status when the native file chooser fails inside the host ([`ModelApp::poll_picker`]).
+const CHOOSER_FAILED: &str = "The file chooser could not open; try again";
+
 pub(crate) struct PendingPicker {
     future: Pin<Box<dyn Future<Output = Option<String>>>>,
     action: PickerAction,
@@ -616,8 +619,14 @@ impl ModelApp {
             return false;
         }
         if let Some(pick) = &self.services.pick_file {
+            // A host that builds its native chooser here, and panics doing it, is caught as in
+            // `poll_picker`.
+            let Ok(future) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| pick(request))) else {
+                self.set_status(CHOOSER_FAILED, true);
+                return false;
+            };
             self.picker = Some(PendingPicker {
-                future: pick(request),
+                future,
                 action,
                 revision: (self.revision, self.session.revision(), self.session.path.clone()),
                 document: self.session.opened(),
@@ -634,7 +643,17 @@ impl ModelApp {
     /// Poll only while a chooser is pending. No receive, wait or nested event loop runs here.
     pub(crate) fn poll_picker(&mut self) -> bool {
         let Some(mut pending) = self.picker.take() else { return false };
-        match pending.future.as_mut().poll(&mut Context::from_waker(Waker::noop())) {
+        // The native chooser runs in the host's code, outside any command's guard: AppKit can
+        // return no save panel, which its binding turns into a panic (#780). That panic is caught
+        // here and the chooser given up, so the window and the unsaved work stay; the crash hook
+        // still records it. The broken future is dropped under the same guard.
+        let polled = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| pending.future.as_mut().poll(&mut Context::from_waker(Waker::noop()))));
+        let Ok(polled) = polled else {
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || drop(pending)));
+            self.set_status(CHOOSER_FAILED, true);
+            return false;
+        };
+        match polled {
             Poll::Pending => {
                 self.picker = Some(pending);
                 true
@@ -1639,6 +1658,28 @@ mod tests {
             }))
         }));
         chooser
+    }
+
+    /// A native chooser that panics, when it is built or while it runs (AppKit returning no save
+    /// panel, #780), is given up with a status; the app keeps its model and can choose again.
+    #[test]
+    fn a_chooser_that_panics_is_given_up_without_taking_the_app_down() {
+        let mut app = ModelApp::new(Session::default());
+        app.services.pick_file =
+            Some(Box::new(|_| Box::pin(std::future::poll_fn(|_| -> Poll<Option<String>> { panic!("unexpected NULL from the save panel") }))));
+        app.save_as();
+        assert!(app.picker.is_some());
+        assert!(!app.poll_picker());
+        assert!(app.picker.is_none() && app.session.path.is_none());
+        assert!(app.status.as_ref().is_some_and(|s| s.error && s.text == CHOOSER_FAILED));
+        app.services.pick_file = Some(Box::new(|_| panic!("the panel could not be built")));
+        app.save_as();
+        assert!(app.picker.is_none());
+        assert!(app.status.as_ref().is_some_and(|s| s.error && s.text == CHOOSER_FAILED));
+        // A working chooser afterwards opens as usual.
+        let chooser = deferred(&mut app);
+        app.save_as();
+        assert_eq!(chooser.requests.borrow().len(), 1);
     }
 
     #[test]
