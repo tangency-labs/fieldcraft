@@ -107,30 +107,76 @@ fn corner_jacobian(x: &[P; 8], c: usize, s: f64) -> [P; 3] {
 /// ParaView and of Zhang et al.'s meshers does.
 const SAMPLES: usize = 9;
 
-fn sample_weights(s: usize) -> [[f64; 8]; 3] {
-    let mut w = [[0.0; 8]; 3];
-    if s < 8 {
+/// The weights `W[s]` of every sample, worked out once.
+const WEIGHTS: [[[f64; 8]; 3]; SAMPLES] = {
+    let mut w = [[[0.0; 8]; 3]; SAMPLES];
+    let mut s = 0;
+    while s < 8 {
         let (n, sg) = CORNER_FRAMES[s];
-        for a in 0..3 {
-            w[a][n[a]] += sg[a];
-            w[a][s] -= sg[a];
+        let mut a = 0;
+        while a < 3 {
+            w[s][a][n[a]] += sg[a];
+            w[s][a][s] -= sg[a];
+            a += 1;
         }
-    } else {
-        w = [
-            [-0.25, 0.25, 0.25, -0.25, -0.25, 0.25, 0.25, -0.25],
-            [-0.25, -0.25, 0.25, 0.25, -0.25, -0.25, 0.25, 0.25],
-            [-0.25, -0.25, -0.25, -0.25, 0.25, 0.25, 0.25, 0.25],
-        ];
+        s += 1;
     }
+    w[8] = [
+        [-0.25, 0.25, 0.25, -0.25, -0.25, 0.25, 0.25, -0.25],
+        [-0.25, -0.25, 0.25, 0.25, -0.25, -0.25, 0.25, 0.25],
+        [-0.25, -0.25, -0.25, -0.25, 0.25, 0.25, 0.25, 0.25],
+    ];
     w
+};
+
+/// The weights of sample `s` (the centre's past the corners).
+fn sample_weights(s: usize) -> &'static [[f64; 8]; 3] {
+    &WEIGHTS[s.min(SAMPLES - 1)]
 }
 
-/// The Jacobian (columns) of sample `smp` of `x` against an ideal cube of edge `s`.
-fn sample_jacobian(x: &[P; 8], smp: usize, s: f64) -> [P; 3] {
+/// Per corner sample and column, the two non-zero weights of `sample_weights` with their corners,
+/// in corner order: `(lo, w_lo, hi, w_hi)`.
+const CORNER_TERMS: [[(usize, f64, usize, f64); 3]; 8] = {
+    let mut t = [[(0, 0.0, 0, 0.0); 3]; 8];
+    let mut c = 0;
+    while c < 8 {
+        let (n, sg) = CORNER_FRAMES[c];
+        let mut a = 0;
+        while a < 3 {
+            t[c][a] = if n[a] < c { (n[a], sg[a], c, -sg[a]) } else { (c, -sg[a], n[a], sg[a]) };
+            a += 1;
+        }
+        c += 1;
+    }
+    t
+};
+
+/// Whether every coordinate of `x` is finite (without stopping early, which vectorises).
+fn all_finite(x: &[P; 8]) -> bool {
+    x.iter().flatten().fold(true, |ok, v| ok & v.is_finite())
+}
+
+/// The Jacobian (columns) of sample `smp` of `x` against an ideal cube of edge `s`; `finite` is
+/// `all_finite(x)`.
+fn sample_jacobian(x: &[P; 8], finite: bool, smp: usize, s: f64) -> [P; 3] {
+    // A corner sample weighs two corners per column. The other products are signed zeros when the
+    // coordinates are finite, and adding a zero leaves a sum that starts at +0 unchanged (such a
+    // sum is never −0), so the two products alone, in corner order, give the same bits.
+    if let Some(terms) = CORNER_TERMS.get(smp)
+        && finite
+    {
+        let mut j = [[0.0; 3]; 3];
+        for (c, &(lo, w_lo, hi, w_hi)) in j.iter_mut().zip(terms) {
+            for r in 0..3 {
+                c[r] = (0.0 + w_lo * x[lo][r] + w_hi * x[hi][r]) / s;
+            }
+        }
+        return j;
+    }
     let w = sample_weights(smp);
     // Loops rather than array maps, which were not inlined in the smoother's loops.
     let mut j = [[0.0; 3]; 3];
-    for (c, wa) in j.iter_mut().zip(&w) {
+    for (c, wa) in j.iter_mut().zip(w) {
         for (wk, p) in wa.iter().zip(x) {
             for r in 0..3 {
                 c[r] += wk * p[r];
@@ -214,8 +260,9 @@ impl<'a> Optimizer<'a> {
         let (mut m, mut total) = (f64::INFINITY, 0.0);
         for e in 0..self.hexes.len() as u32 {
             let (x, s) = self.element(e);
+            let finite = all_finite(&x);
             for c in 0..SAMPLES {
-                let j = sample_jacobian(&x, c, s);
+                let j = sample_jacobian(&x, finite, c, s);
                 m = m.min(det3(&j));
                 total += s * s * s * corner_energy(&j, self.eps);
             }
@@ -256,9 +303,10 @@ impl<'a> Optimizer<'a> {
         }
         for &(e, k) in self.around.get(v as usize).map_or(&[][..], |a| a.as_slice()) {
             let (x, s) = self.element(e);
+            let finite = all_finite(&x);
             let (n, _) = CORNER_FRAMES[k as usize];
             for c in [k as usize, n[0], n[1], n[2], 8] {
-                total += s * s * s * corner_energy(&sample_jacobian(&x, c, s), self.eps);
+                total += s * s * s * corner_energy(&sample_jacobian(&x, finite, c, s), self.eps);
             }
         }
         total
@@ -270,14 +318,17 @@ impl<'a> Optimizer<'a> {
         let mut h = [[0.0; 3]; 3];
         for &(e, k) in self.around.get(v as usize).map_or(&[][..], |a| a.as_slice()) {
             let (x, s) = self.element(e);
+            let finite = all_finite(&x);
             let k = k as usize;
             let w = s * s * s;
             let (nk, _) = CORNER_FRAMES[k];
             for c in [k, nk[0], nk[1], nk[2], 8] {
                 // ∂ column a / ∂ x_v = coef[a] I.
-                let wt = sample_weights(c);
-                let coef: [f64; 3] = [0, 1, 2].map(|a| wt[a][k] / s);
-                let j = sample_jacobian(&x, c, s);
+                let mut coef = [0.0; 3];
+                for (cf, wa) in coef.iter_mut().zip(sample_weights(c)) {
+                    *cf = wa[k] / s;
+                }
+                let j = sample_jacobian(&x, finite, c, s);
                 let d = det3(&j);
                 let ch = chi(d, self.eps);
                 let chd = chi_d(d, self.eps);
@@ -600,12 +651,33 @@ mod tests {
     use super::*;
     use crate::octree::geom::tests::box_surface;
 
-    /// The corner and sample Jacobians as array maps worked them out: the reference the loops
-    /// reorganise, compared bit for bit on distorted hexahedra.
+    /// The corner and sample Jacobians as array maps worked them out, with the weights built per
+    /// call: the reference the loops and the weight table reorganise, compared bit for bit on
+    /// distorted, exact and non-finite hexahedra.
     #[test]
     fn jacobians_are_the_array_maps_bit_for_bit() {
+        let reference_weights = |s: usize| -> [[f64; 8]; 3] {
+            let mut w = [[0.0; 8]; 3];
+            if s < 8 {
+                let (n, sg) = CORNER_FRAMES[s];
+                for a in 0..3 {
+                    w[a][n[a]] += sg[a];
+                    w[a][s] -= sg[a];
+                }
+            } else {
+                w = [
+                    [-0.25, 0.25, 0.25, -0.25, -0.25, 0.25, 0.25, -0.25],
+                    [-0.25, -0.25, 0.25, 0.25, -0.25, -0.25, 0.25, 0.25],
+                    [-0.25, -0.25, -0.25, -0.25, 0.25, 0.25, 0.25, 0.25],
+                ];
+            }
+            w
+        };
+        for smp in 0..SAMPLES {
+            assert_eq!(sample_weights(smp).map(|w| w.map(f64::to_bits)), reference_weights(smp).map(|w| w.map(f64::to_bits)));
+        }
         let reference_sample = |x: &[P; 8], smp: usize, s: f64| -> [P; 3] {
-            let w = sample_weights(smp);
+            let w = reference_weights(smp);
             [0, 1, 2].map(|a| {
                 let mut c = [0.0; 3];
                 for (k, p) in x.iter().enumerate() {
@@ -625,13 +697,26 @@ mod tests {
             state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
             (state >> 11) as f64 / (1u64 << 53) as f64 - 0.5
         };
-        let bits = |j: [P; 3]| j.map(|c| c.map(f64::to_bits));
-        for _ in 0..100 {
-            let x: [P; 8] =
-                std::array::from_fn(|k| [(k & 1) as f64 + 0.3 * random(), ((k >> 1) & 1) as f64 + 0.3 * random(), (k >> 2) as f64 + 0.3 * random()]);
+        // Bit for bit, a NaN as any NaN (Rust does not specify a NaN's bits).
+        let bits = |j: [P; 3]| j.map(|c| c.map(|v| if v.is_nan() { u64::MAX } else { v.to_bits() }));
+        let cube: [P; 8] = std::array::from_fn(|k| [(k & 1) as f64, ((k >> 1) & 1) as f64, (k >> 2) as f64]);
+        // Exact cubes (columns that cancel to zero), negative zeros, and non-finite coordinates.
+        let mut special = vec![cube, cube.map(|p| p.map(|v| -v)), cube.map(|p| p.map(|v| v - 1.0))];
+        for bad in [f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
+            for (k, r) in [(0, 0), (3, 1), (6, 2), (5, 0)] {
+                let mut x = cube;
+                x[k][r] = bad;
+                special.push(x);
+            }
+        }
+        for i in 0..100 + special.len() {
+            let x: [P; 8] = special.get(i).copied().unwrap_or_else(|| {
+                std::array::from_fn(|k| [(k & 1) as f64 + 0.3 * random(), ((k >> 1) & 1) as f64 + 0.3 * random(), (k >> 2) as f64 + 0.3 * random()])
+            });
             let s = 0.5 + random().abs();
             for c in 0..SAMPLES {
-                assert_eq!(bits(sample_jacobian(&x, c, s)), bits(reference_sample(&x, c, s)));
+                assert_eq!(bits(sample_jacobian(&x, all_finite(&x), c, s)), bits(reference_sample(&x, c, s)));
+                assert_eq!(bits(sample_jacobian(&x, false, c, s)), bits(reference_sample(&x, c, s)));
             }
             for c in 0..8 {
                 assert_eq!(bits(corner_jacobian(&x, c, s)), bits(reference_corner(&x, c, s)));
