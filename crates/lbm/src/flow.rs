@@ -258,6 +258,181 @@ fn cell_state(fq: &mut [f64; Q], cell: usize, a: [f64; 3], walls: Option<&Walls>
     Some(CellState { rho, u, force, wall })
 }
 
+/// The two-relaxation-time collision of one cell's populations `fq` into `out`, with density
+/// `rho`, velocity `u` and force per volume `force` from [`cell_state`] (Guo's forcing when
+/// `forced`), and the rates `[ω⁺, ω⁻, 1 − ω⁺/2, 1 − ω⁻/2]`: each pair of opposite directions'
+/// symmetric part relaxes with ω⁺, its antisymmetric part with ω⁻, the rest population with ω⁺.
+#[inline(always)]
+fn trt(fq: &[f64; Q], rho: f64, u: [f64; 3], force: [f64; 3], forced: bool, [wp, wm, sp, sm]: [f64; 4], out: &mut [f64; Q]) {
+    let uu = u[0] * u[0] + u[1] * u[1] + u[2] * u[2];
+    let uf = u[0] * force[0] + u[1] * force[1] + u[2] * force[2];
+    // Rest population: symmetric only.
+    let eq0 = W[0] * rho * (1.0 - 1.5 * uu);
+    let mut out0 = fq[0] - wp * (fq[0] - eq0);
+    if forced {
+        out0 += sp * W[0] * (-3.0 * uf);
+    }
+    out[0] = out0;
+    for q in (1..Q).step_by(2) {
+        let o = q + 1;
+        let cq = C[q];
+        let cv = [f64::from(cq[0]), f64::from(cq[1]), f64::from(cq[2])];
+        let cu = cv[0] * u[0] + cv[1] * u[1] + cv[2] * u[2];
+        let w = W[q];
+        let eq_plus = w * rho * (1.0 + 4.5 * cu * cu - 1.5 * uu);
+        let eq_minus = w * rho * 3.0 * cu;
+        let plus = 0.5 * (fq[q] + fq[o]);
+        let minus = 0.5 * (fq[q] - fq[o]);
+        let relax_plus = wp * (plus - eq_plus);
+        let relax_minus = wm * (minus - eq_minus);
+        let (mut s_plus, mut s_minus) = (0.0, 0.0);
+        if forced {
+            let cf = cv[0] * force[0] + cv[1] * force[1] + cv[2] * force[2];
+            s_plus = sp * w * (9.0 * cu * cf - 3.0 * uf);
+            s_minus = sm * w * 3.0 * cf;
+        }
+        out[q] = fq[q] - relax_plus - relax_minus + s_plus + s_minus;
+        out[o] = fq[o] - relax_plus + relax_minus + s_plus - s_minus;
+    }
+}
+
+/// Cells per chunk of [`collide_plain_trt`]: its working arrays (about 17 kB) stay in L1.
+const CHUNK: usize = 64;
+
+/// The two-relaxation-time collision of one block of cells (`f`: the block's slice of each
+/// direction) where no model changes a cell's state or rates: no wall model, zone, phase change,
+/// subgrid model or shear-dependent viscosity. Every fluid cell (`fluid(i)`, `i` from the
+/// block's start) goes through the operations of [`cell_state`] and [`trt`] in their order, so
+/// the populations are the same bit for bit as the general collision's; they are only arranged
+/// direction by direction over chunks of [`CHUNK`] cells, which the compiler vectorises. `accel`
+/// gives a cell's body acceleration, `u_out` (with heat) takes the fluid cells' velocities.
+/// Returns the block's largest u², or NaN at the first fluid cell whose density is not a positive
+/// number, the cells from it on left as they were (as the general collision leaves them).
+fn collide_plain_trt(
+    f: &mut [&mut [f64]],
+    fluid: impl Fn(usize) -> bool,
+    accel: impl Fn(usize) -> [f64; 3],
+    forced: bool,
+    [wp, wm, sp, sm]: [f64; 4],
+    mut u_out: Option<&mut [[f64; 3]]>,
+) -> f64 {
+    let len = f.first().map_or(0, |d| d.len());
+    let mut max_u2 = 0.0f64;
+    // The working arrays, made once (zeroing them for every chunk took about 4 % of the
+    // collision): each chunk overwrites them before it reads them, past `m` with values that are
+    // worked out and never stored.
+    let mut fq = [[0.0f64; CHUNK]; Q];
+    let mut is_fluid = [false; CHUNK];
+    let mut a = [[0.0; CHUNK]; 3];
+    let (mut rho, mut j) = ([0.0; CHUNK], [[0.0; CHUNK]; 3]);
+    let (mut u, mut force, mut uu, mut uf) = ([[0.0; CHUNK]; 3], [[0.0; CHUNK]; 3], [0.0; CHUNK], [0.0; CHUNK]);
+    let mut start = 0;
+    while start < len {
+        let m = CHUNK.min(len - start);
+        let cells = start..start + m;
+        // The chunk's populations (past `m`, the last chunk's: worked out and never stored).
+        for (x, d) in fq.iter_mut().zip(f.iter()) {
+            if let (Some(x), Some(d)) = (x.get_mut(..m), d.get(cells.clone())) {
+                x.copy_from_slice(d);
+            }
+        }
+        for (i, cell) in cells.clone().enumerate().take(CHUNK) {
+            is_fluid[i] = fluid(cell);
+            let ai = accel(cell);
+            for k in 0..3 {
+                a[k][i] = ai[k];
+            }
+        }
+        // Density and momentum, summed over the directions in order from 0.0
+        // ([`density_momentum`]): the first direction starts the sums.
+        for (q, x) in fq.iter().enumerate() {
+            let cq = C[q];
+            let cv = [f64::from(cq[0]), f64::from(cq[1]), f64::from(cq[2])];
+            if q == 0 {
+                for i in 0..CHUNK {
+                    let v = x[i];
+                    rho[i] = 0.0 + v;
+                    j[0][i] = 0.0 + v * cv[0];
+                    j[1][i] = 0.0 + v * cv[1];
+                    j[2][i] = 0.0 + v * cv[2];
+                }
+                continue;
+            }
+            for i in 0..CHUNK {
+                let v = x[i];
+                rho[i] += v;
+                j[0][i] += v * cv[0];
+                j[1][i] += v * cv[1];
+                j[2][i] += v * cv[2];
+            }
+        }
+        let end = (0..m).find(|&i| is_fluid[i] && !(rho[i] > 0.0 && rho[i].is_finite())).unwrap_or(m);
+        // Velocity and force ([`velocity_force`] without a zone).
+        for i in 0..CHUNK {
+            for k in 0..3 {
+                force[k][i] = rho[i] * a[k][i];
+                u[k][i] = (j[k][i] + 0.5 * force[k][i]) / rho[i];
+            }
+            uu[i] = u[0][i] * u[0][i] + u[1][i] * u[1][i] + u[2][i] * u[2][i];
+            uf[i] = u[0][i] * force[0][i] + u[1][i] * force[1][i] + u[2][i] * force[2][i];
+        }
+        for i in (0..end).filter(|&i| is_fluid[i]) {
+            max_u2 = max_u2.max(uu[i]);
+            if let Some(slot) = u_out.as_deref_mut().and_then(|o| o.get_mut(start + i)) {
+                *slot = [u[0][i], u[1][i], u[2][i]];
+            }
+        }
+        // [`trt`], direction pair by direction pair.
+        for i in 0..CHUNK {
+            let eq0 = W[0] * rho[i] * (1.0 - 1.5 * uu[i]);
+            let mut out0 = fq[0][i] - wp * (fq[0][i] - eq0);
+            if forced {
+                out0 += sp * W[0] * (-3.0 * uf[i]);
+            }
+            fq[0][i] = out0;
+        }
+        for q in (1..Q).step_by(2) {
+            let cq = C[q];
+            let cv = [f64::from(cq[0]), f64::from(cq[1]), f64::from(cq[2])];
+            let w = W[q];
+            let (low, high) = fq.split_at_mut(q + 1);
+            let (Some(xq), Some(xo)) = (low.last_mut(), high.first_mut()) else { continue };
+            for i in 0..CHUNK {
+                let cu = cv[0] * u[0][i] + cv[1] * u[1][i] + cv[2] * u[2][i];
+                let eq_plus = w * rho[i] * (1.0 + 4.5 * cu * cu - 1.5 * uu[i]);
+                let eq_minus = w * rho[i] * 3.0 * cu;
+                let plus = 0.5 * (xq[i] + xo[i]);
+                let minus = 0.5 * (xq[i] - xo[i]);
+                let relax_plus = wp * (plus - eq_plus);
+                let relax_minus = wm * (minus - eq_minus);
+                let (mut s_plus, mut s_minus) = (0.0, 0.0);
+                if forced {
+                    let cf = cv[0] * force[0][i] + cv[1] * force[1][i] + cv[2] * force[2][i];
+                    s_plus = sp * w * (9.0 * cu * cf - 3.0 * uf[i]);
+                    s_minus = sm * w * 3.0 * cf;
+                }
+                let (x, y) = (xq[i], xo[i]);
+                xq[i] = x - relax_plus - relax_minus + s_plus + s_minus;
+                xo[i] = y - relax_plus + relax_minus + s_plus - s_minus;
+            }
+        }
+        // Stored for the fluid cells before `end` only.
+        for (x, d) in fq.iter().zip(f.iter_mut()) {
+            if let Some(d) = d.get_mut(start..start + end) {
+                // A select rather than a conditional store, so it vectorises.
+                for ((d, v), keep) in d.iter_mut().zip(x).zip(&is_fluid) {
+                    *d = if *keep { *v } else { *d };
+                }
+            }
+        }
+        if end < m {
+            return f64::NAN;
+        }
+        start += m;
+    }
+    max_u2
+}
+
 /// The fluid cell next to the cell at `p` along `axis` (towards `+axis` with `up`): across a
 /// periodic face its periodic image, as streaming pulls; `None` when that cell is not a fluid
 /// cell or lies outside a face that is not periodic.
@@ -2076,7 +2251,16 @@ impl Flow {
         {
             work.push((f, m, u_iter.next(), nu_iter.next(), e, r, sg, c));
         }
+        // No model that changes a cell's state or rates: the plain two-relaxation-time collision,
+        // the same arithmetic vectorised over chunks of cells.
+        let plain = !regularized && !mrt && !turbulent && rheology.is_none() && model_walls.is_none() && zone_of.is_empty() && liquid.is_none();
         parallel::for_each_mut(&mut work, |b, (f, block_max, u_out, nu_out, max_nu, removed, sigma_stats, block_clamped)| {
+            if plain {
+                let at = |i: usize| cell_force.get(b * block + i).copied().unwrap_or(constant);
+                **block_max =
+                    collide_plain_trt(f, |i| fluid.get(b * block + i).copied().unwrap_or(false), at, forced, [wp, wm, sp, sm], u_out.as_deref_mut());
+                return;
+            }
             let mut fq = [0.0; Q];
             let mut post = [0.0; Q];
             // The block's largest speed, kept here and stored once: the blocks' maxima share
@@ -2109,7 +2293,6 @@ impl Flow {
                 if let Some(slot) = u_out.as_mut().and_then(|u| u.get_mut(i)) {
                     *slot = u;
                 }
-                let uf = u[0] * force[0] + u[1] * force[1] + u[2] * force[2];
                 let mut put = |q: usize, v: f64| {
                     if let Some(x) = f.get_mut(q).and_then(|d| d.get_mut(i)) {
                         *x = v;
@@ -2254,33 +2437,9 @@ impl Flow {
                     }
                     None => (wp, wm, sp, sm),
                 };
-                // Rest population: symmetric only.
-                let eq0 = W[0] * rho * (1.0 - 1.5 * uu);
-                let mut out0 = fq[0] - wp * (fq[0] - eq0);
-                if forced {
-                    out0 += sp * W[0] * (-3.0 * uf);
-                }
-                put(0, out0);
-                for q in (1..Q).step_by(2) {
-                    let o = q + 1;
-                    let cq = C[q];
-                    let cv = [f64::from(cq[0]), f64::from(cq[1]), f64::from(cq[2])];
-                    let cu = cv[0] * u[0] + cv[1] * u[1] + cv[2] * u[2];
-                    let w = W[q];
-                    let eq_plus = w * rho * (1.0 + 4.5 * cu * cu - 1.5 * uu);
-                    let eq_minus = w * rho * 3.0 * cu;
-                    let plus = 0.5 * (fq[q] + fq[o]);
-                    let minus = 0.5 * (fq[q] - fq[o]);
-                    let relax_plus = wp * (plus - eq_plus);
-                    let relax_minus = wm * (minus - eq_minus);
-                    let (mut s_plus, mut s_minus) = (0.0, 0.0);
-                    if forced {
-                        let cf = cv[0] * force[0] + cv[1] * force[1] + cv[2] * force[2];
-                        s_plus = sp * w * (9.0 * cu * cf - 3.0 * uf);
-                        s_minus = sm * w * 3.0 * cf;
-                    }
-                    put(q, fq[q] - relax_plus - relax_minus + s_plus + s_minus);
-                    put(o, fq[o] - relax_plus + relax_minus + s_plus - s_minus);
+                trt(&fq, rho, u, force, forced, [wp, wm, sp, sm], &mut post);
+                for (q, v) in post.iter().enumerate() {
+                    put(q, *v);
                 }
             }
             **block_max = max_u2;
@@ -2889,6 +3048,81 @@ impl crate::backend::Backend for Flow {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The general collision of a block, cell by cell, as `Flow::collide` runs it when no model
+    /// changes a cell's state or rates.
+    fn general_trt(f: &mut [Vec<f64>], fluid: &[bool], accel: &[[f64; 3]], forced: bool, rates: [f64; 4], u_out: &mut [[f64; 3]]) -> f64 {
+        let mut max_u2 = 0.0f64;
+        for i in 0..f[0].len() {
+            if !fluid[i] {
+                continue;
+            }
+            let mut fq = [0.0; Q];
+            for q in 0..Q {
+                fq[q] = f[q][i];
+            }
+            let Some(CellState { rho, u, force, .. }) = cell_state(&mut fq, i, accel[i], None, None) else {
+                return f64::NAN;
+            };
+            max_u2 = max_u2.max(u[0] * u[0] + u[1] * u[1] + u[2] * u[2]);
+            u_out[i] = u;
+            let mut post = [0.0; Q];
+            trt(&fq, rho, u, force, forced, rates, &mut post);
+            for q in 0..Q {
+                f[q][i] = post[q];
+            }
+        }
+        max_u2
+    }
+
+    /// The vectorised plain collision gives the general collision's populations, velocities and
+    /// largest speed bit for bit: blocks shorter and longer than a chunk, solid cells, forced or
+    /// not, and a block that stops at a cell whose density is not positive.
+    #[test]
+    fn plain_trt_matches_the_general_collision_bit_for_bit() {
+        let mut state = 0x9E37_79B9_7F4A_7C15u64;
+        let mut random = move || {
+            state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut z = state;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            ((z ^ (z >> 31)) >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let rates = [1.7, 1.2, 1.0 - 0.5 * 1.7, 1.0 - 0.5 * 1.2];
+        for len in [1, 5, CHUNK - 1, CHUNK, CHUNK + 1, 3 * CHUNK + 17] {
+            for forced in [false, true] {
+                for bad in [None, Some(len / 2)] {
+                    let mut pops: Vec<Vec<f64>> = (0..Q).map(|q| (0..len).map(|_| W[q] * (0.9 + 0.2 * random())).collect()).collect();
+                    let fluid: Vec<bool> = (0..len).map(|i| i % 7 != 3).collect();
+                    let accel: Vec<[f64; 3]> = (0..len)
+                        .map(|_| if forced { [1e-3 * (random() - 0.5), 1e-3 * (random() - 0.5), 1e-3 * (random() - 0.5)] } else { [0.0; 3] })
+                        .collect();
+                    // A solid cell with a negative density is skipped; a fluid one stops the block.
+                    for q in 0..Q {
+                        pops[q][3 % len] = -1.0;
+                        if let Some(b) = bad {
+                            pops[q][b] = -1.0;
+                        }
+                    }
+                    let mut expected = pops.clone();
+                    let mut expected_u = vec![[9.0; 3]; len];
+                    let expected_max = general_trt(&mut expected, &fluid, &accel, forced, rates, &mut expected_u);
+                    let mut got_u = vec![[9.0; 3]; len];
+                    let mut slices: Vec<&mut [f64]> = pops.iter_mut().map(|d| &mut d[..]).collect();
+                    let got_max = collide_plain_trt(&mut slices, |i| fluid[i], |i| accel[i], forced, rates, Some(&mut got_u));
+                    let what = format!("len {len}, forced {forced}, bad {bad:?}");
+                    assert_eq!(got_max.to_bits(), expected_max.to_bits(), "{what}: largest u²");
+                    for q in 0..Q {
+                        let (g, e): (Vec<u64>, Vec<u64>) =
+                            (pops[q].iter().map(|v| v.to_bits()).collect(), expected[q].iter().map(|v| v.to_bits()).collect());
+                        assert_eq!(g, e, "{what}: direction {q}");
+                    }
+                    let bits = |u: &[[f64; 3]]| u.iter().flat_map(|v| v.map(f64::to_bits)).collect::<Vec<u64>>();
+                    assert_eq!(bits(&got_u), bits(&expected_u), "{what}: velocities");
+                }
+            }
+        }
+    }
 
     /// The contiguous shifted copy writes exactly the cells, and the values, of a checked copy
     /// cell by cell, for blocks inside, across and beyond both ends of the source.
