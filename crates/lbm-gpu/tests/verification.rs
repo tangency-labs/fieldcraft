@@ -2478,6 +2478,14 @@ impl Blocks {
         let cov: f64 = self.means.windows(2).map(|w| (w[0] - m) * (w[1] - m)).sum();
         if var > 0.0 { cov / var } else { 0.0 }
     }
+
+    /// Whether the block means are close enough to independent for the interval: the lag-1
+    /// correlation within ±0.5. Both signs count: alternating blocks (a strongly negative
+    /// correlation) are as dependent as drifting ones and can show a tiny interval about a
+    /// biased mean (#795).
+    fn decorrelated(&self) -> bool {
+        self.lag1().abs() < 0.5
+    }
 }
 
 /// The block means of a known sequence: each sample once, the partial block left out, and the
@@ -2510,6 +2518,17 @@ fn block_means_count_each_sample_once() {
         alt.push(if k % 2 == 0 { 1.0 } else { -1.0 });
     }
     assert!(alt.lag1() < -0.9);
+    assert!(!alt.decorrelated());
+    // Blocks alternating by ±10⁻⁴ about 1 meet a 1 % interval easily, but are not independent,
+    // so the channel studies' stop rule does not take them for a converged mean (#795).
+    let mut tiny = Blocks::new(1);
+    for k in 0..20 {
+        tiny.push(if k % 2 == 0 { 1.0 + 1e-4 } else { 1.0 - 1e-4 });
+    }
+    assert!(tiny.half_width() < 0.01 * tiny.mean());
+    assert!(tiny.lag1() < -0.9 && !tiny.decorrelated());
+    // A drift is caught as before.
+    assert!(!blocks.decorrelated());
 }
 
 /// A channel's stress budget and the wall model's requested stress, from the fields sampled
@@ -2766,7 +2785,7 @@ fn paper_channel(lm: &LeeMoser, n: usize, c: f64, cpu: bool, held: Held) -> Opti
                 budget.sample(&grid, &fields.velocity, lattice_nu, c);
             }
             // Steady once the mean force is known to the tolerance from uncorrelated blocks.
-            if k as f64 * dt >= start + min_average && forces.half_width() < tolerance * forces.mean() && forces.lag1() < 0.5 {
+            if k as f64 * dt >= start + min_average && forces.half_width() < tolerance * forces.mean() && forces.decorrelated() {
                 stop = format!("steady at {:.1} δ/u_τ", k as f64 * dt);
                 break;
             }
@@ -3627,7 +3646,7 @@ fn han_channel(case: &HanCase, setup_of: HanSetup, wfb: bool, cpu: bool, times: 
             if let Some(fields) = fields {
                 stats.add(&fields.velocity);
             }
-            if k as f64 * dt >= start + min_average && bulk.half_width() < tolerance * bulk.mean() && bulk.lag1() < 0.5 {
+            if k as f64 * dt >= start + min_average && bulk.half_width() < tolerance * bulk.mean() && bulk.decorrelated() {
                 stop = format!("steady at {:.1} δ/u_τ", k as f64 * dt);
                 break;
             }
