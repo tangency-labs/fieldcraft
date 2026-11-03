@@ -69,6 +69,9 @@ const MAX_CHUNK: u64 = 64;
 /// How long one wait for the device may take before the solve gives up on it.
 const DEVICE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
+/// How long a readback waits for its mapping callback before it polls the device again.
+const CALLBACK_WAIT: std::time::Duration = std::time::Duration::from_millis(10);
+
 /// Seconds in a nanosecond: GPU timestamp periods are in nanoseconds (wgpu).
 const NANOSECOND: f64 = 1e-9; // unit-factors: wall-clock profiling time, not a model quantity
 
@@ -1324,18 +1327,29 @@ impl GpuFlow {
         });
         let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("lbm readback") });
         enc.copy_buffer_to_buffer(src, 0, &staging, 0, size);
-        self.queue.submit([enc.finish()]);
+        let copied = self.queue.submit([enc.finish()]);
         let slice = staging.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |r| {
             let _ = tx.send(r);
         });
-        // A bounded wait: a hung or lost device is an error, never a hang.
-        match self.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: Some(DEVICE_TIMEOUT) }) {
-            Ok(_) => {}
-            Err(e) => return Err(gpu_error(format!("the device did not answer within {} s: {e}", DEVICE_TIMEOUT.as_secs()))),
+        // A bounded wait: a hung or lost device is an error, never a hang. The device is shared by
+        // the solves of the process ([`DEVICES`]): another solve's poll can collect this mapping's
+        // callback and run it just after this poll returns (#800), so the callback is waited for
+        // too, polling again until it has run. Each poll waits for this copy's submission only, not
+        // for whatever another solve submitted since.
+        let deadline = std::time::Instant::now() + DEVICE_TIMEOUT;
+        loop {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if let Err(e) = self.device.poll(wgpu::PollType::Wait { submission_index: Some(copied.clone()), timeout: Some(left) }) {
+                return Err(gpu_error(format!("the device did not answer within {} s: {e}", DEVICE_TIMEOUT.as_secs())));
+            }
+            match rx.recv_timeout(CALLBACK_WAIT.min(left)) {
+                Ok(mapped) => break mapped.map_err(gpu_error)?,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) if std::time::Instant::now() < deadline => {}
+                Err(_) => return Err(gpu_error("the readback did not complete")),
+            }
         }
-        rx.try_recv().map_err(|_| gpu_error("the readback did not complete"))?.map_err(gpu_error)?;
         let bytes = slice.get_mapped_range().map_err(gpu_error)?.to_vec();
         staging.unmap();
         Ok(bytes)
