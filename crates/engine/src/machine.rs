@@ -12,10 +12,8 @@ pub fn physical_memory() -> Option<u64> {
     use sysinfo::{MemoryRefreshKind, RefreshKind, System};
     static MEMORY: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
     *MEMORY.get_or_init(|| {
-        if !sysinfo::IS_SUPPORTED_SYSTEM {
-            return None;
-        }
-        let system = System::new_with_specifics(RefreshKind::nothing().with_memory(MemoryRefreshKind::nothing().with_ram()));
+        // An unsupported system is an error since sysinfo 0.40 (it had `IS_SUPPORTED_SYSTEM`).
+        let system = System::new_with_specifics(RefreshKind::nothing().with_memory(MemoryRefreshKind::nothing().with_ram())).ok()?;
         let total = system.total_memory();
         let total = system.cgroup_limits().map_or(total, |c| if c.total_memory > 0 { total.min(c.total_memory) } else { total });
         (total > 0).then_some(total)
