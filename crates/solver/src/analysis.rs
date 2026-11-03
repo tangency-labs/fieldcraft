@@ -569,6 +569,9 @@ impl Operator for ShiftInvert<'_> {
     fn solve(&self, x: &mut [f64]) -> Result<()> {
         self.factor.solve(x)
     }
+    fn solve_many(&self, xs: &mut [Vec<f64>]) -> Result<()> {
+        self.factor.solve_many(&mut xs.iter_mut().map(Vec::as_mut_slice).collect::<Vec<_>>())
+    }
 }
 
 /// Block size of the Lanczos iteration: enough for the six rigid-body modes of a free body.
