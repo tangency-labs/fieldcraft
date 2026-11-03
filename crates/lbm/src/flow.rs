@@ -704,6 +704,9 @@ pub struct Flow {
     acceleration: [f64; 3],
     /// The momentum transferred to each group in the last step (lattice units).
     forces: Vec<[f64; 3]>,
+    /// The shares of a batch of links in their groups' momentum, worked out in parallel and summed
+    /// in link order ([`LINK_BATCH`] at most; kept for its capacity).
+    link_terms: Vec<[f64; 3]>,
     groups: Vec<Group>,
     /// Per direction, the index offset of the neighbour a population streams from.
     offset: [isize; Q],
@@ -760,6 +763,11 @@ fn block_cells(n: usize) -> usize {
 
 /// Open cells per parallel block of the open boundaries.
 const OPEN_BLOCK: usize = 256;
+
+/// Links per parallel task of the wall forces, and per batch of tasks: a batch's shares are held
+/// at once (at most 1.5 MB).
+const LINK_BLOCK: usize = 4096;
+pub(crate) const LINK_BATCH: usize = 16 * LINK_BLOCK;
 
 /// The first `n` populations of each direction of an array with direction stride `stride`, cut
 /// into blocks of `block` cells: block b holds the Q directions' slices of cells b·block.. .
@@ -1299,6 +1307,7 @@ impl Flow {
             clamps: Clamps::default(),
             acceleration: setup.acceleration,
             forces: vec![[0.0; 3]; groups.len()],
+            link_terms: Vec::new(),
             groups,
             offset,
             fluid_cells,
@@ -1505,6 +1514,7 @@ impl Flow {
             + bytes(&self.gradient_u)
             + bytes(&self.zone_of)
             + bytes(&self.open_scratch)
+            + bytes(&self.link_terms)
             + self.zone_cells.iter().map(bytes).sum::<u64>()
             + self.outlets.heap_bytes();
         if let Some(t) = &self.thermal {
@@ -1773,6 +1783,10 @@ impl Flow {
     fn targets(&mut self) -> Result<()> {
         if self.g.len() < self.f.len() {
             self.g = filled(self.f.len(), 0.0, "populations")?;
+        }
+        let batch = self.links.len().min(LINK_BATCH);
+        if self.link_terms.len() != batch {
+            self.link_terms = filled(batch, [0.0; 3], "wall link forces")?;
         }
         if let Some(t) = &mut self.thermal
             && t.g2.len() < t.g.len()
@@ -2512,32 +2526,51 @@ impl Flow {
                 }
             }
         });
+        // Each wall link's share of its group's momentum, in parallel by batches of links (one
+        // loop over the links did this on one thread, a fixed part of every step), each batch's
+        // shares then summed per group in link order, as that loop summed them.
         self.forces.fill([0.0; 3]);
-        for link in &self.links {
-            let (cell, q) = (link.cell as usize, link.q as usize);
-            let cq = c(q);
-            match link.rule {
-                Rule::Bounce { group, du } => {
-                    let out = self.f[opposite(q) * s + cell];
-                    let back = out + du;
-                    if let Some(force) = self.forces.get_mut(group as usize) {
-                        // c_out f* − c_in f' with c_out = −c_q.
-                        for a in 0..3 {
-                            force[a] -= cq[a] * (out + back);
+        let (f, forces) = (&self.f, &mut self.forces);
+        for batch in self.links.chunks(LINK_BATCH) {
+            let Some(terms) = self.link_terms.get_mut(..batch.len()) else { continue };
+            parallel::chunks_mut(terms, LINK_BLOCK, |k, terms| {
+                for (term, link) in terms.iter_mut().zip(batch.get(k * LINK_BLOCK..).unwrap_or_default()) {
+                    let (cell, q) = (link.cell as usize, link.q as usize);
+                    let cq = c(q);
+                    *term = match link.rule {
+                        // c_out f* − c_in f' with c_out = −c_q (subtracted below).
+                        Rule::Bounce { du, .. } => {
+                            let out = f.get(opposite(q) * s + cell).copied().unwrap_or(0.0);
+                            let back = out + du;
+                            [cq[0] * (out + back), cq[1] * (out + back), cq[2] * (out + back)]
+                        }
+                        Rule::Reflect { from, q: q2, .. } => {
+                            let out = f.get(q2 as usize * s + from as usize).copied().unwrap_or(0.0);
+                            let c2 = c(q2 as usize);
+                            [c2[0] * out - cq[0] * out, c2[1] * out - cq[1] * out, c2[2] * out - cq[2] * out]
+                        }
+                        Rule::Pull { .. } | Rule::Open => [0.0; 3],
+                    };
+                }
+            });
+            for (link, term) in batch.iter().zip(terms.iter()) {
+                match link.rule {
+                    Rule::Bounce { group, .. } => {
+                        if let Some(force) = forces.get_mut(group as usize) {
+                            for a in 0..3 {
+                                force[a] -= term[a];
+                            }
                         }
                     }
-                }
-                Rule::Reflect { from, q: q2, group } => {
-                    let q2 = q2 as usize;
-                    let out = self.f[q2 * s + from as usize];
-                    let c2 = c(q2);
-                    if let Some(force) = self.forces.get_mut(group as usize) {
-                        for a in 0..3 {
-                            force[a] += c2[a] * out - cq[a] * out;
+                    Rule::Reflect { group, .. } => {
+                        if let Some(force) = forces.get_mut(group as usize) {
+                            for a in 0..3 {
+                                force[a] += term[a];
+                            }
                         }
                     }
+                    Rule::Pull { .. } | Rule::Open => {}
                 }
-                Rule::Pull { .. } | Rule::Open => {}
             }
         }
         // The on-node wall-function bounce's share: the momentum each boundary node took from the
@@ -2776,6 +2809,8 @@ impl crate::backend::Backend for Flow {
             clamps,
             acceleration,
             forces,
+            // Overwritten before use; its capacity is not state.
+            link_terms: _,
             groups,
             offset: _,
             fluid_cells: _,
@@ -3089,6 +3124,85 @@ mod tests {
             }
         }
         max_u2
+    }
+
+    /// The wall forces summed in link order from the shares worked out in parallel, by batches,
+    /// are the serial loop's bit for bit: still walls and a moving wall (bounce-back with and
+    /// without the wall term) and slip walls (reflection), on a box with more links than a batch.
+    #[test]
+    fn wall_forces_are_the_serial_loops_bit_for_bit() {
+        use fieldcraft_model::{BoxFaces, Fluid, FluidDomain, Material, Model, Procedure, Step};
+        let faces = BoxFaces {
+            x_min: FaceCondition::Wall {},
+            x_max: FaceCondition::MovingWall { velocity: [0.0, 0.02, 0.01] },
+            y_min: FaceCondition::Slip {},
+            y_max: FaceCondition::Wall {},
+            z_min: FaceCondition::MovingWall { velocity: [0.03, 0.0, 0.0] },
+            z_max: FaceCondition::Slip {},
+        };
+        let domain = FluidDomain {
+            material: "Fluid".into(),
+            min: [0.0; 3],
+            max: [64.0, 64.0, 24.0],
+            spacing: 1.0,
+            faces,
+            obstacles: vec![],
+            surfaces: vec![],
+            initial_velocity: [0.01, -0.005, 0.0],
+            acceleration: [1e-5, 0.0, 2e-6],
+            tolerance: None,
+            thermal: None,
+            porous: vec![],
+            fans: vec![],
+        };
+        let mut m = Model::default();
+        m.add_material("Fluid", Material { density: Some(1.0), fluid: Some(Fluid::Newtonian { viscosity: 0.1 }), ..Material::default() }).unwrap();
+        m.add_fluid_domain("Flow", domain).unwrap();
+        let procedure = Procedure::Fluid {
+            domain: "Flow".into(),
+            end_time: None,
+            steps: Some(10),
+            time_step: Some(1.0),
+            frames: 1,
+            magic: None,
+            sigma: None,
+            collision: None,
+            turbulence: None,
+            steady: None,
+        };
+        m.add_step(Step::new("Run", procedure), None).unwrap();
+        let setup = Setup::new(&m, None, &[], &crate::Limits::default()).unwrap();
+        let mut flow = Flow::new(&setup, &[]).unwrap();
+        assert!(flow.links.len() > LINK_BATCH, "{} links", flow.links.len());
+        flow.step().unwrap();
+        // The loop the shares replaced, over the populations streaming reads.
+        let s = flow.stride;
+        let mut serial = vec![[0.0f64; 3]; flow.forces.len()];
+        for link in &flow.links {
+            let (cell, q) = (link.cell as usize, link.q as usize);
+            let cq = c(q);
+            match link.rule {
+                Rule::Bounce { group, du } => {
+                    let out = flow.f[opposite(q) * s + cell];
+                    let back = out + du;
+                    for a in 0..3 {
+                        serial[group as usize][a] -= cq[a] * (out + back);
+                    }
+                }
+                Rule::Reflect { from, q: q2, group } => {
+                    let out = flow.f[q2 as usize * s + from as usize];
+                    let c2 = c(q2 as usize);
+                    for a in 0..3 {
+                        serial[group as usize][a] += c2[a] * out - cq[a] * out;
+                    }
+                }
+                Rule::Pull { .. } | Rule::Open => {}
+            }
+        }
+        flow.stream();
+        let bits = |v: &[[f64; 3]]| v.iter().map(|f| f.map(f64::to_bits)).collect::<Vec<_>>();
+        assert!(serial.iter().flatten().any(|&x| x != 0.0));
+        assert_eq!(bits(&flow.forces), bits(&serial));
     }
 
     /// The vectorised plain collision gives the general collision's populations, velocities and

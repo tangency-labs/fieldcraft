@@ -520,7 +520,7 @@ fn the_memory_estimate_matches_what_a_run_allocates() {
         // The GPU backend's flow is prepared on the host and dropped before the steps.
         assert_eq!((gpu_on.setup - gpu_off.setup, gpu_on.state, gpu_on.device), (eddy, gpu_off.state, gpu_off.device), "heat {heat}");
         // Model off: the estimate before the model, to the byte (the 48 × 24 × 24 channel).
-        let frozen = if heat { [14_201_856, 14_201_856, 1_658_880, 1_105_920] } else { [9_556_992, 9_556_992, 1_327_104, 884_736] };
+        let frozen = if heat { [14_893_056, 14_893_056, 1_658_880, 1_105_920] } else { [10_248_192, 10_248_192, 1_327_104, 884_736] };
         assert_eq!([cpu_off.setup, cpu_off.state, cpu_off.frame_bytes, cpu_off.readback], frozen, "heat {heat}");
     }
     // The hybrid collision and Vreman's model hold each cell's velocity for the finite-difference
