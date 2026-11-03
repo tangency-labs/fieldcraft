@@ -1789,10 +1789,15 @@ impl Flow {
             return;
         }
         let (a, b, t0) = (self.acceleration, t.buoyancy, t.initial);
-        for (force, temp) in self.cell_force.iter_mut().zip(&t.temperature) {
-            let dt = temp - t0;
-            *force = [a[0] + b[0] * dt, a[1] + b[1] * dt, a[2] + b[2] * dt];
-        }
+        // Each cell's own value: blocks of cells in parallel (one after another this was a tenth
+        // of a heated step on one thread, and a fixed share on many).
+        let (temperature, block) = (&t.temperature, self.block);
+        parallel::chunks_mut(&mut self.cell_force, block, |k, forces| {
+            for (force, temp) in forces.iter_mut().zip(temperature.get(k * block..).unwrap_or_default()) {
+                let dt = temp - t0;
+                *force = [a[0] + b[0] * dt, a[1] + b[1] * dt, a[2] + b[2] * dt];
+            }
+        });
     }
 
     /// Two-relaxation-time collision of the scalar lattice, in place, with the velocity of the
@@ -1993,29 +1998,40 @@ impl Flow {
     /// The temperature (and with a phase change the liquid fraction) of every fluid cell from its
     /// populations; false when one is not finite.
     fn update_temperature(&mut self) -> bool {
-        let n = self.n;
-        let s = self.stride;
+        let (n, s, block) = (self.n, self.stride, self.block);
         let fluid = &self.fluid;
         let Some(t) = &mut self.thermal else { return true };
-        let mut finite = true;
-        for cell in 0..n {
-            if !fluid.get(cell).copied().unwrap_or(false) {
-                continue;
-            }
-            let mut e = 0.0;
-            for q in 0..QT {
-                e += t.g.get(q * s + cell).copied().unwrap_or(0.0);
-            }
-            finite &= e.is_finite();
-            let (temp, liquid) = t.phase.as_ref().map_or((e, 1.0), |p| p.rule.split(e));
-            if let Some(slot) = t.temperature.get_mut(cell) {
+        let g = &t.g;
+        // Each cell reads its own populations and writes its own temperature and liquid
+        // fraction: blocks of cells in parallel (one after another this was a fixed share of a
+        // heated step on many threads); whether all are finite does not depend on the order.
+        let (rule, liquid) = match &mut t.phase {
+            Some(p) => (Some(&p.rule), &mut p.liquid[..]),
+            None => (None, &mut [][..]),
+        };
+        let cells = n.min(t.temperature.len());
+        let temperature = t.temperature.get_mut(..cells).unwrap_or_default();
+        let liquid = liquid.chunks_mut(block).map(Some).chain(std::iter::repeat_with(|| None));
+        let mut work: Vec<(&mut [f64], Option<&mut [f64]>, bool)> = temperature.chunks_mut(block).zip(liquid).map(|(t, l)| (t, l, true)).collect();
+        parallel::for_each_mut(&mut work, |b, (temps, liquid, finite)| {
+            for (i, slot) in temps.iter_mut().enumerate() {
+                let cell = b * block + i;
+                if !fluid.get(cell).copied().unwrap_or(false) {
+                    continue;
+                }
+                let mut e = 0.0;
+                for q in 0..QT {
+                    e += g.get(q * s + cell).copied().unwrap_or(0.0);
+                }
+                *finite &= e.is_finite();
+                let (temp, fraction) = rule.map_or((e, 1.0), |r| r.split(e));
                 *slot = temp;
+                if let Some(x) = liquid.as_mut().and_then(|l| l.get_mut(i)) {
+                    *x = fraction;
+                }
             }
-            if let Some(slot) = t.phase.as_mut().and_then(|p| p.liquid.get_mut(cell)) {
-                *slot = liquid;
-            }
-        }
-        finite
+        });
+        work.iter().all(|w| w.2)
     }
 
     /// With Van Driest's damping: each wall cell's friction velocity from the flow before the
