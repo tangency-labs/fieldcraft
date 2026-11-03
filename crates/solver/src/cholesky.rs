@@ -47,6 +47,12 @@ pub const TILE: usize = 64;
 /// Columns per panel of a supernode's dense factorization.
 pub const PANEL: usize = 64;
 
+/// Rows of a micro-tile of [`products`] (a multiple dividing [`TILE`]).
+const MR: usize = 8;
+
+/// Columns of a micro-tile of [`products`]: MR × NR sums stay in registers.
+const NR: usize = 4;
+
 /// Dense work (multiply–adds) from which a kernel's tiles run in parallel.
 const PARALLEL_WORK: usize = 1 << 21;
 
@@ -371,29 +377,51 @@ pub(crate) fn products(l: &Panel, cols: std::ops::Range<usize>, p: usize, mu: us
             times_d(row, l, k0, pivots);
         }
     }
+    // Y by blocks of NR columns, k-major (zero past wu): what a micro-tile reads at each k.
+    let mut yp = vec![[0.0f64; NR]; wu.div_ceil(NR) * kw];
+    for (c, row) in yt.chunks(kw.max(1)).enumerate().take(wu) {
+        for (k, y) in row.iter().enumerate() {
+            if let Some(slot) = yp.get_mut((c / NR) * kw + k).and_then(|b| b.get_mut(c % NR)) {
+                *slot = *y;
+            }
+        }
+    }
     let tiles = mu.div_ceil(TILE);
     let tile = |t: usize| -> Vec<f64> {
         let i0 = t * TILE;
         let h = TILE.min(mu - i0);
-        // The tile's rows of every column, padded to TILE rows.
-        let mut x = vec![0.0; kw * TILE];
+        // The tile's rows of every column by blocks of MR rows, k-major, padded to TILE rows.
+        let mut xp = vec![[0.0f64; MR]; TILE / MR * kw];
         for k in 0..kw {
-            if let Some(dst) = x.get_mut(k * TILE..k * TILE + h) {
-                dst.copy_from_slice(l.column(k0 + k, p + i0, h));
+            for (i, x) in l.column(k0 + k, p + i0, h).iter().enumerate() {
+                if let Some(slot) = xp.get_mut((i / MR) * kw + k).and_then(|b| b.get_mut(i % MR)) {
+                    *slot = *x;
+                }
             }
         }
         let cols = wu.min(i0 + h);
         let mut out = vec![0.0; cols * TILE];
-        for c in 0..cols {
-            let mut acc = [0.0f64; TILE];
-            let ys = yt.get(c * kw..(c + 1) * kw).unwrap_or_default();
-            for (xs, b) in x.as_chunks::<TILE>().0.iter().zip(ys) {
-                for (a, xi) in acc.iter_mut().zip(xs) {
-                    *a += xi * b;
+        // Micro-tiles of MR rows and NR columns: each S(i, c) is summed in a register over k in
+        // order from 0, the same operations as one column at a time, with each X and Y value
+        // loaded once per micro-tile.
+        for (b, ys) in yp.chunks(kw.max(1)).enumerate().take(cols.div_ceil(NR)) {
+            for (r, xs) in xp.chunks(kw.max(1)).enumerate() {
+                let mut acc = [[0.0f64; MR]; NR];
+                for (x, y) in xs.iter().zip(ys) {
+                    for (a, yj) in acc.iter_mut().zip(y) {
+                        for (ai, xi) in a.iter_mut().zip(x) {
+                            *ai += xi * yj;
+                        }
+                    }
                 }
-            }
-            if let Some(dst) = out.get_mut(c * TILE..(c + 1) * TILE) {
-                dst.copy_from_slice(&acc);
+                for (j, a) in acc.iter().enumerate() {
+                    let c = b * NR + j;
+                    if c < cols
+                        && let Some(dst) = out.get_mut(c * TILE + r * MR..c * TILE + (r + 1) * MR)
+                    {
+                        dst.copy_from_slice(a);
+                    }
+                }
             }
         }
         out
@@ -1121,6 +1149,80 @@ impl Factor {
 mod tests {
     use super::*;
     use crate::sparse::Csr;
+
+    /// [`products`] one output column at a time, its sum over k in order: the reference the
+    /// micro-tiles reorganise.
+    fn products_by_columns(l: &Panel, cols: std::ops::Range<usize>, p: usize, mu: usize, wu: usize, pivots: Option<&[Pivot]>) -> Vec<Vec<f64>> {
+        let (k0, kw) = (cols.start, cols.len());
+        let mut yt = vec![0.0; wu * kw];
+        for k in 0..kw {
+            for (c, y) in l.column(k0 + k, p, wu).iter().enumerate() {
+                yt[c * kw + k] = *y;
+            }
+        }
+        if let Some(pivots) = pivots {
+            for row in yt.chunks_mut(kw.max(1)) {
+                times_d(row, l, k0, pivots);
+            }
+        }
+        (0..mu.div_ceil(TILE))
+            .map(|t| {
+                let i0 = t * TILE;
+                let h = TILE.min(mu - i0);
+                let mut x = vec![0.0; kw * TILE];
+                for k in 0..kw {
+                    x[k * TILE..k * TILE + h].copy_from_slice(l.column(k0 + k, p + i0, h));
+                }
+                let cols = wu.min(i0 + h);
+                let mut out = vec![0.0; cols * TILE];
+                for c in 0..cols {
+                    let mut acc = [0.0f64; TILE];
+                    for (xs, b) in x.as_chunks::<TILE>().0.iter().zip(&yt[c * kw..(c + 1) * kw]) {
+                        for (a, xi) in acc.iter_mut().zip(xs) {
+                            *a += xi * b;
+                        }
+                    }
+                    out[c * TILE..(c + 1) * TILE].copy_from_slice(&acc);
+                }
+                out
+            })
+            .collect()
+    }
+
+    /// The micro-tiled products equal the column-at-a-time ones bit for bit: panels narrower and
+    /// wider than a micro-tile, row counts across tile edges, with and without a block diagonal
+    /// of 1 × 1 and 2 × 2 pivots.
+    #[test]
+    fn micro_tiled_products_are_the_column_sums_bit_for_bit() {
+        let mut state = 11u64;
+        let mut random = move || {
+            state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+            (state >> 11) as f64 / (1u64 << 53) as f64 - 0.5
+        };
+        for (m, w, k0, kw, p, mu, wu) in
+            [(5, 3, 0, 3, 3, 2, 1), (40, 12, 0, 7, 7, 33, 5), (90, 20, 2, 9, 11, 79, 13), (200, 70, 0, 64, 64, 136, 6), (300, 90, 5, 30, 40, 260, 50)]
+        {
+            let data: Vec<f64> = (0..trapezoid(m, w)).map(|_| random()).collect();
+            let l = Panel { m, data: &data };
+            let pivots: Vec<Pivot> = (0..kw)
+                .map(|k| {
+                    [Pivot::One, Pivot::First, Pivot::Second][if k % 5 == 1 && k + 1 < kw {
+                        1
+                    } else if k % 5 == 2 {
+                        2
+                    } else {
+                        0
+                    }]
+                })
+                .collect();
+            for piv in [None, Some(&pivots[..])] {
+                let got = products(&l, k0..k0 + kw, p, mu, wu, piv);
+                let expected = products_by_columns(&l, k0..k0 + kw, p, mu, wu, piv);
+                let bits = |t: &Vec<Vec<f64>>| t.iter().map(|v| v.iter().map(|x| x.to_bits()).collect::<Vec<u64>>()).collect::<Vec<_>>();
+                assert_eq!(bits(&got), bits(&expected), "m {m}, cols {k0}..{}, p {p}, mu {mu}, wu {wu}, pivots {}", k0 + kw, piv.is_some());
+            }
+        }
+    }
 
     fn dense_to_csr(a: &[Vec<f64>]) -> Csr {
         let n = a.len();
