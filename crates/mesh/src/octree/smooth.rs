@@ -312,10 +312,18 @@ impl<'a> Optimizer<'a> {
         total
     }
 
-    /// The gradient and approximate Hessian of the local energy at vertex `v`.
-    fn derivatives(&self, v: u32) -> (P, [[f64; 3]; 3]) {
+    /// The gradient and approximate Hessian of the local energy at vertex `v`, and the energy
+    /// itself: [`Optimizer::local_energy`]'s sum, the same terms in the same order.
+    fn derivatives(&self, v: u32) -> (P, [[f64; 3]; 3], f64) {
         let mut g = [0.0; 3];
         let mut h = [[0.0; 3]; 3];
+        let mut energy = 0.0;
+        // The fitting term first, as `local_energy` adds it.
+        let p = self.points.get(v as usize).copied().unwrap_or([0.0; 3]);
+        let fit = if self.fit > 0.0 { self.target(v, p).map(|t| (t, self.fit_weight(v))) } else { None };
+        if let Some((t, w)) = fit {
+            energy += w * dist2(p, t);
+        }
         for &(e, k) in self.around.get(v as usize).map_or(&[][..], |a| a.as_slice()) {
             let (x, s) = self.element(e);
             let finite = all_finite(&x);
@@ -329,6 +337,7 @@ impl<'a> Optimizer<'a> {
                     *cf = wa[k] / s;
                 }
                 let j = sample_jacobian(&x, finite, c, s);
+                energy += w * corner_energy(&j, self.eps);
                 let d = det3(&j);
                 let ch = chi(d, self.eps);
                 let chd = chi_d(d, self.eps);
@@ -364,17 +373,13 @@ impl<'a> Optimizer<'a> {
                 }
             }
         }
-        if self.fit > 0.0 {
-            let p = self.points.get(v as usize).copied().unwrap_or([0.0; 3]);
-            if let Some(t) = self.target(v, p) {
-                let w = self.fit_weight(v);
-                for r in 0..3 {
-                    g[r] += 2.0 * w * (p[r] - t[r]);
-                    h[r][r] += 2.0 * w;
-                }
+        if let Some((t, w)) = fit {
+            for r in 0..3 {
+                g[r] += 2.0 * w * (p[r] - t[r]);
+                h[r][r] += 2.0 * w;
             }
         }
-        (g, h)
+        (g, h, energy)
     }
 
     /// Project a point onto vertex `v`'s constraint.
@@ -413,14 +418,15 @@ impl<'a> Optimizer<'a> {
         {
             return false;
         }
-        let (g, h) = self.derivatives(v);
+        // The energy before the step comes with the derivatives (one pass over the elements
+        // instead of two).
+        let (g, h, e0) = self.derivatives(v);
         let Some(step) = solve3(h, g.map(|x| -x)) else { return false };
         let step = if soft { step } else { self.restrict(v, step) };
         if !step.iter().all(|x| x.is_finite()) || norm(step) == 0.0 {
             return false;
         }
         let old = self.points.get(v as usize).copied().unwrap_or([0.0; 3]);
-        let e0 = self.local_energy(v);
         let mut tau = 1.0;
         for _ in 0..12 {
             let moved = [0, 1, 2].map(|k| old[k] + tau * step[k]);
@@ -782,8 +788,26 @@ mod tests {
             .collect();
         let mut o = Optimizer::new(&g, p, &h, &size, cons);
         assert!(o.measure().0 < 0.0);
+        // The energy `derivatives` sums is `local_energy`'s bit for bit, with and without the
+        // fitting term, tangled and untangled.
+        let energies_agree = |o: &mut Optimizer| {
+            for fit in [0.3, 0.0] {
+                o.fit = fit;
+                for v in 0..o.points.len() as u32 {
+                    assert_eq!(o.derivatives(v).2.to_bits(), o.local_energy(v).to_bits(), "vertex {v}, fit {fit}");
+                }
+            }
+        };
+        energies_agree(&mut o);
         let st = o.run(200, 1e-9);
         assert!(o.measure().0 > 0.9, "{st:?}");
         assert!(sub(o.points[centre], [1.0; 3]).iter().all(|c| c.abs() < 1e-3), "{:?}", o.points[centre]);
+        // Off the faces, so the fitting term counts.
+        for (i, q) in o.points.iter_mut().enumerate() {
+            for (r, x) in q.iter_mut().enumerate() {
+                *x += 0.01 * ((i * 7 + r * 3) % 5) as f64 - 0.02;
+            }
+        }
+        energies_agree(&mut o);
     }
 }
