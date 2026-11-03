@@ -235,13 +235,30 @@ pub(crate) fn assemble(mesh: &Mesh, graph: &NodeGraph, mass: Option<MassKind>) -
             }
         }
     }
-    for s in &mesh.structural {
-        let kernel = s.kernel()?;
-        let at = |err| Error::element(s.label, err);
-        add_block(&mut k, layout, &s.nodes, Structural::KINDS, &kernel.stiffness().map_err(at)?.data)?;
-        if let (Some(mm), Some(kind)) = (m.as_mut(), mass) {
-            let rho = s.density.ok_or_else(|| Error::Invalid(format!("element {} has no density", s.label)))?;
-            add_block(mm, layout, &s.nodes, Structural::KINDS, &kernel.mass(rho, kind).map_err(at)?.data)?;
+    // Beams and shells as the solids: their matrices in parallel, a round at a time, added in
+    // order, so the sums and the first error are those of a sequential loop.
+    for round in parallel::blocks(mesh.structural.len(), ROUND) {
+        let elements = mesh.structural.get(round).unwrap_or_default();
+        let matrices = parallel::map_grained(elements.len(), GRAIN, |i| -> Result<_> {
+            let Some(s) = elements.get(i) else { return Err(Error::Internal("element index".into())) };
+            let kernel = s.kernel()?;
+            let at = |err| Error::element(s.label, err);
+            let stiffness = kernel.stiffness().map_err(at)?.data;
+            let element_mass = match (m.is_some(), mass) {
+                (true, Some(kind)) => {
+                    let rho = s.density.ok_or_else(|| Error::Invalid(format!("element {} has no density", s.label)))?;
+                    Some(kernel.mass(rho, kind).map_err(at)?.data)
+                }
+                _ => None,
+            };
+            Ok((stiffness, element_mass))
+        });
+        for (s, computed) in elements.iter().zip(matrices) {
+            let (stiffness, element_mass) = computed?;
+            add_block(&mut k, layout, &s.nodes, Structural::KINDS, &stiffness)?;
+            if let (Some(mm), Some(data)) = (m.as_mut(), element_mass) {
+                add_block(mm, layout, &s.nodes, Structural::KINDS, &data)?;
+            }
         }
     }
     mesh.discrete.add_stiffness(&mut k)?;
