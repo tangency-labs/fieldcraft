@@ -86,13 +86,24 @@ pub type IdMap<K, V> = HashMap<K, V, BuildHasherDefault<IdHasher>>;
 /// every lookup reads.
 const SKIN_FACE_CELLS: i64 = 512;
 
+/// The finest skin index cell is the mesh size over this ([`Skin::cell`]).
+const SKIN_CELL_FINEST: f64 = 8.0;
+
 /// The boundary faces by place ([`TetComplex::index_skin`]): per cell of a uniform grid, the
 /// tetrahedra with a boundary face whose bounding box touches it. Entries are only added, where a
 /// face is made or moved and where a rollback restores one; a lookup reads the live mesh and
 /// passes over what is stale. Rebuilt when the entries have doubled since the last rebuild.
 #[derive(Debug, Clone, Default)]
 struct Skin {
+    /// The median of the boundary faces' largest box sides when it was last rebuilt, within the
+    /// mesh size and an eighth of it. A lookup reads every tetrahedron listed in the cells the
+    /// checked faces' boxes touch: cells far larger than the faces (near holes and fillets after
+    /// refinement) hold thousands where a few dozen faces matter, and cells far smaller list each
+    /// face many times. A face whose box touches a checked face's box shares a cell with it at any
+    /// cell size, so the cell sets only the work, never what a check finds.
     cell: f64,
+    /// The mesh size: the largest cell.
+    largest: f64,
     cells: IdMap<u64, Vec<u32>>,
     /// Tetrahedra with a face too large for [`SKIN_FACE_CELLS`].
     wide: Vec<u32>,
@@ -1225,18 +1236,32 @@ impl TetComplex {
 
     // ---- the skin index ----
 
-    /// Index the boundary faces by place, in cells of `cell` (the mesh size), so that every later
-    /// change and move keeps the skin from passing through itself (see the module docs). Every
-    /// tetrahedron must be positive by then: the check needs non-degenerate faces.
+    /// Index the boundary faces by place, in cells of at most `cell` (the mesh size), so that every
+    /// later change and move keeps the skin from passing through itself (see the module docs).
+    /// Every tetrahedron must be positive by then: the check needs non-degenerate faces.
     pub fn index_skin(&mut self, cell: f64) -> Result<()> {
-        self.skin = (cell > 0.0 && cell.is_finite()).then(|| Skin { cell, ..Skin::default() });
+        self.skin = (cell > 0.0 && cell.is_finite()).then(|| Skin { cell, largest: cell, ..Skin::default() });
         self.skin_rebuild()
     }
 
     fn skin_rebuild(&mut self) -> Result<()> {
-        let Some(skin) = self.skin.as_mut() else { return Ok(()) };
-        *skin = Skin { cell: skin.cell, ..Skin::default() };
+        let Some(largest) = self.skin.as_ref().map(|s| s.largest) else { return Ok(()) };
         let listed: Vec<u32> = self.live_tets().map(|(t, _)| t).filter(|&t| self.on_skin(t)).collect();
+        // The cell: the median boundary face's largest box side ([`Skin::cell`]).
+        let mut sides = Vec::new();
+        for &t in &listed {
+            let (vs, adj) = (self.tet(t)?, self.adj(t)?);
+            for k in (0..4).filter(|&k| adj[k] == NONE) {
+                let b = self.face_box(face_toward(vs, k), None)?;
+                sides.push((0..3).map(|i| b.hi[i] - b.lo[i]).fold(0.0, f64::max));
+            }
+        }
+        let mid = sides.len() / 2;
+        let median = if sides.is_empty() { largest } else { *sides.select_nth_unstable_by(mid, f64::total_cmp).1 };
+        let cell = if median.is_finite() { median.max(largest / SKIN_CELL_FINEST).min(largest) } else { largest };
+        if let Some(skin) = self.skin.as_mut() {
+            *skin = Skin { cell, largest, ..Skin::default() };
+        }
         for t in listed {
             self.skin_list(t)?;
         }

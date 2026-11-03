@@ -827,6 +827,77 @@ fn the_skin_never_passes_through_itself() {
     }
 }
 
+/// The skin index's cell sets only how much a check reads, never what it finds: the same moves on
+/// two blocks of cubes stacked with a narrow gap (a vertex of the lower block's top lifted into
+/// the upper block passes through its skin without inverting anything) pass or fail alike with
+/// one cell for everything, cells of the median boundary face, and cells so small that every face
+/// is read by every check.
+#[test]
+fn the_skin_index_cell_does_not_change_a_check() {
+    let (nx, nz) = (3, 2);
+    let mut p = Vec::new();
+    let mut raw = Vec::new();
+    for z0 in [0.0, 0.55] {
+        let base = p.len();
+        let id = |x: usize, y: usize, z: usize| (base + x + (nx + 1) * (y + (nx + 1) * z)) as u32;
+        for z in 0..=nz {
+            for y in 0..=nx {
+                for x in 0..=nx {
+                    p.push([x as f64 / nx as f64, y as f64 / nx as f64, z0 + 0.25 * z as f64]);
+                }
+            }
+        }
+        // Six tetrahedra round each cube's diagonal from its corner 0 to 7.
+        for z in 0..nz {
+            for y in 0..nx {
+                for x in 0..nx {
+                    let c = |i: usize| id(x + (i & 1), y + ((i >> 1) & 1), z + (i >> 2));
+                    for [a, b] in [[1, 3], [3, 2], [2, 6], [6, 4], [4, 5], [5, 1]] {
+                        raw.push([c(0), c(a), c(b), c(7)]);
+                    }
+                }
+            }
+        }
+    }
+    let tets: Vec<[u32; 4]> =
+        raw.iter().map(|t| if measure::volume6(&t.map(|v| p[v as usize])) > 0.0 { *t } else { [t[1], t[0], t[2], t[3]] }).collect();
+    let mut faces: std::collections::HashMap<[u32; 3], usize> = std::collections::HashMap::new();
+    for vs in &tets {
+        for k in 0..4 {
+            *faces.entry(sorted3(face_toward(*vs, k))).or_default() += 1;
+        }
+    }
+    let mut boundary = Vec::new();
+    for (t, vs) in tets.iter().enumerate() {
+        for k in 0..4 {
+            if faces.get(&sorted3(face_toward(*vs, k))) == Some(&1) {
+                boundary.push((t as u32, k, 0));
+            }
+        }
+    }
+    let plain = TetComplex::new(&p, vec![VertexKind::Corner; p.len()], &tets, &boundary, &[], 1000, 10_000).unwrap();
+    // The lower block's top vertices, lifted by 0.05 to 0.3: the higher ones pass into the upper
+    // block, and only the skin check stops them.
+    let top: Vec<u32> = (0..p.len() as u32).filter(|&v| p[v as usize][2] == 0.5).collect();
+    let mut runs = Vec::new();
+    for cell in [1e6, 1.0, 1e-6] {
+        let mut cx = plain.clone();
+        cx.index_skin(cell).unwrap();
+        let mut moved = Vec::new();
+        for (i, &v) in top.iter().enumerate() {
+            for lift in [0.05, 0.1, 0.2, 0.3] {
+                let at = cx.point(v).unwrap().coords();
+                let to = Point3::try_from([at[0] + 0.01 * i as f64, at[1], at[2] + lift]).unwrap();
+                moved.push(cx.clone().try_move(v, to).unwrap());
+            }
+        }
+        runs.push(moved);
+    }
+    assert!(runs[0].iter().any(|&m| m) && runs[0].iter().any(|&m| !m), "{:?}", runs[0]);
+    assert_eq!(runs[0], runs[1]);
+    assert_eq!(runs[0], runs[2]);
+}
+
 /// The fillet of a plate on a rib (our own recipe: a 60 × 30 × 6 mm plate on a 6 mm triangular
 /// rib, its top edges rounded at 2 mm, meshed at 3 mm), where vertex 1 has three boundary faces
 /// round it: (0, 1, 2), (0, 1, 5) and (1, 2, 5). Removing edge 0–1 ends in a 2-2 flip of the
