@@ -173,7 +173,14 @@ impl State {
 }
 
 pub(crate) fn gather<const N: usize>(x: &[f64], nodes: &[usize; N]) -> [[f64; 3]; N] {
-    nodes.map(|n| [0, 1, 2].map(|k| x.get(NODE_DOFS * n + k).copied().unwrap_or(0.0)))
+    // Loops rather than nested array maps, which were not inlined in the element loops.
+    let mut out = [[0.0; 3]; N];
+    for (o, n) in out.iter_mut().zip(nodes) {
+        for (k, c) in o.iter_mut().enumerate() {
+            *c = x.get(NODE_DOFS * n + k).copied().unwrap_or(0.0);
+        }
+    }
+    out
 }
 
 /// Add a node's vector into a per-degree-of-freedom vector.
@@ -240,12 +247,22 @@ struct Nodal<const N: usize> {
 
 impl<const N: usize> Nodal<N> {
     fn gather(sys: &System, nodes: &[usize; N], m: &Motion) -> Nodal<N> {
-        Nodal { x: nodes.map(|n| sys.xyz.get(n).copied().unwrap_or_default()), u: gather(m.u, nodes), du: gather(m.du, nodes), v: gather(m.v, nodes) }
+        let mut x = [[0.0; 3]; N];
+        for (x, n) in x.iter_mut().zip(nodes) {
+            *x = sys.xyz.get(*n).copied().unwrap_or_default();
+        }
+        Nodal { x, u: gather(m.u, nodes), du: gather(m.du, nodes), v: gather(m.v, nodes) }
     }
 
     /// The positions X + u − s·Δu.
     fn positions(&self, s: f64) -> [[f64; 3]; N] {
-        std::array::from_fn(|i| [0, 1, 2].map(|k| self.x[i][k] + self.u[i][k] - s * self.du[i][k]))
+        let mut p = [[0.0; 3]; N];
+        for (i, p) in p.iter_mut().enumerate() {
+            for (k, c) in p.iter_mut().enumerate() {
+                *c = self.x[i][k] + self.u[i][k] - s * self.du[i][k];
+            }
+        }
+        p
     }
 }
 
@@ -583,7 +600,13 @@ fn hexahedron(sys: &System, h: &crate::system::Hex, m: &Motion, es: &mut Element
     let mut f = [[0.0; 3]; 8];
     let modes = if sys.hourglass == HourglassKind::Viscous { &e.v } else { &e.du };
     for (k, g) in gamma.iter().enumerate() {
-        let rate: [f64; 3] = [0, 1, 2].map(|i| modes.iter().zip(g).map(|(x, gk)| x[i] * gk).sum());
+        // Σ_k x_k γ_k per direction, from −0 as `Iterator::sum` starts.
+        let mut rate = [-0.0f64; 3];
+        for (x, gk) in modes.iter().zip(g) {
+            for i in 0..3 {
+                rate[i] += x[i] * gk;
+            }
+        }
         // Viscous: Q = C q̇; stiffness: Q accumulates k Δq.
         let generalized = match (sys.hourglass, es.hourglass.get_mut(k)) {
             (HourglassKind::Stiffness, Some(qa)) => {
