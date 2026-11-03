@@ -610,14 +610,53 @@ impl<T: Scalar> Supernode<T> for Vec<T> {
     }
 }
 
-/// Shared triangular solve, with Cholesky's diagonal or LDLᵀ's unit L and block diagonal D.
+/// Shared triangular solve, with Cholesky's diagonal or LDLᵀ's unit L and block diagonal D: the
+/// group of one of [`solve_group`].
 pub(crate) fn solve_supernodes<T: Scalar, S: Supernode<T>>(n: usize, perm: &[usize], s: &Structure, blocks: &[S], b: &mut [T]) -> Result<()> {
     if b.len() != n {
         return Err(Error::Internal("right-hand side length".into()));
     }
-    let mut x: Vec<T> = perm.iter().map(|&j| b.get(j).copied().unwrap_or(T::ZERO)).collect();
-    let get = |v: &[T], i: usize| v.get(i).copied().unwrap_or(T::ZERO);
-    let mut scratch = Vec::new();
+    solve_group::<T, S, 1>(perm, s, blocks, &mut [b])
+}
+
+/// The most right-hand sides [`solve_supernodes_many`] solves together.
+const GROUP: usize = 6;
+
+/// [`solve_supernodes`] for several right-hand sides at once, the factor read once for a group
+/// of up to [`GROUP`] (a triangular solve is bound by reading the factor): every group is solved
+/// by [`solve_group`], whose operations on each right-hand side do not depend on the group size,
+/// so each is the same bit for bit as solved alone.
+pub(crate) fn solve_supernodes_many<T: Scalar, S: Supernode<T>>(
+    n: usize,
+    perm: &[usize],
+    s: &Structure,
+    blocks: &[S],
+    bs: &mut [&mut [T]],
+) -> Result<()> {
+    if bs.iter().any(|b| b.len() != n) {
+        return Err(Error::Internal("right-hand side length".into()));
+    }
+    for group in bs.chunks_mut(GROUP) {
+        match group.len() {
+            1 => solve_group::<T, S, 1>(perm, s, blocks, group)?,
+            2 => solve_group::<T, S, 2>(perm, s, blocks, group)?,
+            3 => solve_group::<T, S, 3>(perm, s, blocks, group)?,
+            4 => solve_group::<T, S, 4>(perm, s, blocks, group)?,
+            5 => solve_group::<T, S, 5>(perm, s, blocks, group)?,
+            _ => solve_group::<T, S, GROUP>(perm, s, blocks, group)?,
+        }
+    }
+    Ok(())
+}
+
+/// The supernodal triangular solve for `K` right-hand sides (`bs`, each of the factor's size),
+/// interleaved as `x[i][j]` for unknown i of right-hand side j so the factor is read once for
+/// them (`K` a const so the inner loops stay in registers). Each right-hand side goes through
+/// the same operations in the same order whatever `K`, so it is the same bit for bit in any
+/// group; [`solve_supernodes`] is the group of one.
+fn solve_group<T: Scalar, S: Supernode<T>, const K: usize>(perm: &[usize], s: &Structure, blocks: &[S], bs: &mut [&mut [T]]) -> Result<()> {
+    let mut x: Vec<[T; K]> = perm.iter().map(|&p| std::array::from_fn(|j| bs.get(j).and_then(|b| b.get(p)).copied().unwrap_or(T::ZERO))).collect();
+    let mut scratch: Vec<[T; K]> = Vec::new();
     // L z = P b, then D⁻¹, by supernodes; the supernode's own unknowns are left in pivot
     // order for the backward pass.
     for (k, blk) in blocks.iter().enumerate() {
@@ -629,26 +668,33 @@ pub(crate) fn solve_supernodes<T: Scalar, S: Supernode<T>>(n: usize, perm: &[usi
         let order = blk.order();
         scratch.clear();
         let y = if let Some(order) = order {
-            scratch.extend(order.iter().map(|&c| get(own, c)));
+            scratch.extend(order.iter().map(|&c| own.get(c).copied().unwrap_or([T::ZERO; K])));
             scratch.as_mut_slice()
         } else {
             &mut *own
         };
         for q in 0..w {
             let end = q + if pivots.and_then(|p| p.get(q)) == Some(&Pivot::First) { 2 } else { 1 };
-            let mut yq = get(y, q);
+            let mut yq = y.get(q).copied().unwrap_or([T::ZERO; K]);
             if pivots.is_none() {
-                yq /= t.data.get(offset(m, q)).copied().unwrap_or(T::ONE);
+                let d = t.data.get(offset(m, q)).copied().unwrap_or(T::ONE);
+                for v in &mut yq {
+                    *v /= d;
+                }
                 if let Some(v) = y.get_mut(q) {
                     *v = yq;
                 }
             }
             for (v, l) in y.get_mut(end..w).unwrap_or_default().iter_mut().zip(t.column(q, end, w - end)) {
-                *v -= *l * yq;
+                for j in 0..K {
+                    v[j] -= *l * yq[j];
+                }
             }
             for (&r, l) in rows.get(w..).unwrap_or_default().iter().zip(t.column(q, w, m - w)) {
                 if let Some(v) = tail.get_mut(r.wrapping_sub(f + w)) {
-                    *v -= *l * yq;
+                    for j in 0..K {
+                        v[j] -= *l * yq[j];
+                    }
                 }
             }
         }
@@ -658,17 +704,20 @@ pub(crate) fn solve_supernodes<T: Scalar, S: Supernode<T>>(n: usize, perm: &[usi
                 if pivots.and_then(|p| p.get(c)) == Some(&Pivot::First) {
                     let (d11, d21, d22) = (t.at(c, c), t.at(c + 1, c), t.at(c + 1, c + 1));
                     let det = d11 * d22 - d21 * d21;
-                    let (p, q) = (get(y, c), get(y, c + 1));
+                    let (p, q) = (y.get(c).copied().unwrap_or([T::ZERO; K]), y.get(c + 1).copied().unwrap_or([T::ZERO; K]));
                     if let Some(v) = y.get_mut(c) {
-                        *v = (d22 * p - d21 * q) / det;
+                        *v = std::array::from_fn(|j| (d22 * p[j] - d21 * q[j]) / det);
                     }
                     if let Some(v) = y.get_mut(c + 1) {
-                        *v = (d11 * q - d21 * p) / det;
+                        *v = std::array::from_fn(|j| (d11 * q[j] - d21 * p[j]) / det);
                     }
                     c += 2;
                 } else {
+                    let d = t.at(c, c);
                     if let Some(v) = y.get_mut(c) {
-                        *v /= t.at(c, c);
+                        for e in v.iter_mut() {
+                            *e /= d;
+                        }
                     }
                     c += 1;
                 }
@@ -700,15 +749,23 @@ pub(crate) fn solve_supernodes<T: Scalar, S: Supernode<T>>(n: usize, perm: &[usi
                 Some(Pivot::First) => (c + 1, c + 2),
                 _ => (c, c + 1),
             };
-            let mut sum = get(y, q);
+            let mut sum = y.get(q).copied().unwrap_or([T::ZERO; K]);
             for (v, l) in y.get(end..w).unwrap_or_default().iter().zip(t.column(q, end, w - end)) {
-                sum -= *l * *v;
+                for j in 0..K {
+                    sum[j] -= *l * v[j];
+                }
             }
             for (&r, l) in rows.get(w..).unwrap_or_default().iter().zip(t.column(q, w, m - w)) {
-                sum -= *l * get(tail, r.wrapping_sub(f + w));
+                let v = tail.get(r.wrapping_sub(f + w)).copied().unwrap_or([T::ZERO; K]);
+                for j in 0..K {
+                    sum[j] -= *l * v[j];
+                }
             }
             if pivots.is_none() {
-                sum /= t.data.get(offset(m, q)).copied().unwrap_or(T::ONE);
+                let d = t.data.get(offset(m, q)).copied().unwrap_or(T::ONE);
+                for e in &mut sum {
+                    *e /= d;
+                }
             }
             if let Some(v) = y.get_mut(q) {
                 *v = sum;
@@ -716,15 +773,17 @@ pub(crate) fn solve_supernodes<T: Scalar, S: Supernode<T>>(n: usize, perm: &[usi
         }
         if let Some(order) = order {
             for (pos, &c) in order.iter().enumerate() {
-                if let Some(v) = own.get_mut(c) {
-                    *v = get(&scratch, pos);
+                if let (Some(v), Some(src)) = (own.get_mut(c), scratch.get(pos)) {
+                    *v = *src;
                 }
             }
         }
     }
-    for (&j, v) in perm.iter().zip(&x) {
-        if let Some(t) = b.get_mut(j) {
-            *t = *v;
+    for (&p, v) in perm.iter().zip(&x) {
+        for (j, b) in bs.iter_mut().enumerate() {
+            if let (Some(t), Some(e)) = (b.get_mut(p), v.get(j)) {
+                *t = *e;
+            }
         }
     }
     Ok(())
@@ -1205,6 +1264,12 @@ impl Factor {
     pub fn solve(&self, b: &mut [f64]) -> Result<()> {
         solve_supernodes(self.n, &self.perm, &self.structure, &self.values, b)
     }
+
+    /// Solve A x = b in place for each of `bs`, reading the factor once: each the same bit for
+    /// bit as [`Factor::solve`].
+    pub fn solve_many(&self, bs: &mut [&mut [f64]]) -> Result<()> {
+        solve_supernodes_many(self.n, &self.perm, &self.structure, &self.values, bs)
+    }
 }
 
 #[cfg(test)]
@@ -1448,6 +1513,20 @@ mod tests {
         let widest = (0..supernodes).map(|s| one.structure.cols(s).len()).max().unwrap();
         assert!(widest > 2 * PANEL, "a supernode spans panels: {widest}");
         check_solve(&csr, &one, 1e-12);
+        // Several right-hand sides at once: each the same bit for bit as solved alone.
+        let rhs: Vec<Vec<f64>> = (0..5).map(|s| (0..n).map(|i| ((i * 7 + s * 13) as f64 * 0.11).sin()).collect()).collect();
+        let alone: Vec<Vec<f64>> = rhs
+            .iter()
+            .map(|b| {
+                let mut x = b.clone();
+                one.solve(&mut x).unwrap();
+                x
+            })
+            .collect();
+        let mut together = rhs.clone();
+        one.solve_many(&mut together.iter_mut().map(Vec::as_mut_slice).collect::<Vec<_>>()).unwrap();
+        let bits = |v: &[Vec<f64>]| v.iter().map(|x| x.iter().map(|y| y.to_bits()).collect::<Vec<_>>()).collect::<Vec<_>>();
+        assert_eq!(bits(&together), bits(&alone));
         for threads in [2, 7] {
             let other = parallel::with_threads(threads, || Factor::new(&upper, usize::MAX)).unwrap();
             assert!(one.values.iter().flatten().zip(other.values.iter().flatten()).all(|(a, b)| a.to_bits() == b.to_bits()), "{threads} threads");
