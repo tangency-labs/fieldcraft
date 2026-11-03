@@ -620,15 +620,17 @@ impl TetComplex {
         // Orient the first tetrahedron as (a, b, c, d) positive.
         let (c, d) = {
             let vs = self.tet(t0)?;
-            let others: Vec<u32> = vs.iter().copied().filter(|&v| v != a && v != b).collect();
-            let (&c, &d) = match (others.first(), others.get(1)) {
-                (Some(c), Some(d)) => (c, d),
-                _ => return Ok(None),
-            };
+            // The first two vertices that are not the edge's (no allocation: this runs for every
+            // edge the improvement looks at).
+            let mut others = vs.iter().copied().filter(|&v| v != a && v != b);
+            let (Some(c), Some(d)) = (others.next(), others.next()) else { return Ok(None) };
             if self.orient([a, b, c, d])? == Sign::Positive { (c, d) } else { (d, c) }
         };
-        let mut verts = vec![c, d];
-        let mut tets = vec![t0];
+        // Room for a typical ring, so it grows without reallocating.
+        let mut verts = Vec::with_capacity(RING_CAPACITY);
+        verts.extend([c, d]);
+        let mut tets = Vec::with_capacity(RING_CAPACITY);
+        tets.push(t0);
         let cap = self.max_tets.min(1 << 16);
         // Forward: across the face (a, b, v_{i+1}) opposite v_i.
         let mut closed = false;
@@ -1545,6 +1547,10 @@ enum Link {
     Old(u32, usize),
     Boundary(u32),
 }
+
+/// Tetrahedra an edge ring is allocated for at first ([`TetComplex::edge_ring_at`]): most rings
+/// of a quality mesh have four to seven.
+const RING_CAPACITY: usize = 8;
 
 /// The ring around an edge ([`TetComplex::edge_ring`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
