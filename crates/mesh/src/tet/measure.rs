@@ -87,18 +87,23 @@ pub fn quality(x: &[P; 4]) -> f64 {
     if v6 == 0.0 || !v6.is_finite() {
         return 0.0;
     }
-    let area2sq = [0, 1, 2, 3].map(|k| {
+    // Loops rather than array maps, which were not inlined in the meshing loops; the squared
+    // edge lengths serve the dihedral sines and the scaled Jacobian both.
+    let mut area2sq = [0.0; 4];
+    for (k, s) in area2sq.iter_mut().enumerate() {
         let a = face_cross(x, k);
-        dot(a, a)
-    });
+        *s = dot(a, a);
+    }
+    let mut len2 = [0.0; 6];
     let mut pick = if v6 > 0.0 { f64::INFINITY } else { 0.0 };
-    for (i, j, k, l) in EDGE_FACES {
+    for (l2, (i, j, k, l)) in len2.iter_mut().zip(EDGE_FACES) {
         let e = sub(x[i], x[j]);
-        let r = dot(e, e) / (area2sq[k] * area2sq[l]);
+        *l2 = dot(e, e);
+        let r = *l2 / (area2sq[k] * area2sq[l]);
         pick = if v6 > 0.0 { pick.min(r) } else { pick.max(r) };
     }
     let q = v6 * pick.sqrt();
-    let q = if v6 > 0.0 { q.min(JACOBIAN_WEIGHT * scaled_jacobian(x, v6)) } else { q };
+    let q = if v6 > 0.0 { q.min(JACOBIAN_WEIGHT * scaled_jacobian(&len2, v6)) } else { q };
     if q.is_finite() { q } else { 0.0 }
 }
 
@@ -108,23 +113,24 @@ pub fn quality(x: &[P; 4]) -> f64 {
 /// that limit (needles) and the dihedral sine everywhere else.
 pub const JACOBIAN_WEIGHT: f64 = 0.5 / 0.3;
 
-/// The corners of a tetrahedron and the other three corners of each.
-const CORNERS: [(usize, [usize; 3]); 4] = [(0, [1, 2, 3]), (1, [0, 2, 3]), (2, [0, 1, 3]), (3, [0, 1, 2])];
+/// The edges at each corner, as indices in [`EDGE_FACES`]: corner c's edges to the other three
+/// corners in increasing order.
+const CORNER_EDGES: [[usize; 3]; 4] = [[0, 1, 2], [0, 3, 4], [1, 3, 5], [2, 4, 5]];
 
-/// The squared product of the three edge lengths at each corner.
-fn corner_products(x: &[P; 4]) -> [f64; 4] {
-    CORNERS.map(|(c, o)| {
-        o.iter().fold(1.0, |m, &j| {
-            let e = sub(x[j], x[c]);
-            m * dot(e, e)
-        })
-    })
-}
-
-/// The scaled Jacobian at the worst corner of a tetrahedron with six times the volume `v6`
-/// (as [`crate::quality`] reports it).
-fn scaled_jacobian(x: &[P; 4], v6: f64) -> f64 {
-    let worst = corner_products(x).iter().fold(0.0_f64, |m, &p| m.max(p));
+/// The scaled Jacobian at the worst corner of a tetrahedron with six times the volume `v6` and
+/// squared edge lengths `len2` (in [`EDGE_FACES`] order), as [`crate::quality`] reports it: the
+/// largest product of a corner's three squared edge lengths. A length squared does not depend on
+/// the edge's direction (x_j − x_c is −(x_c − x_j), and the squares lose the sign), so each is the
+/// one taken from the corner.
+fn scaled_jacobian(len2: &[f64; 6], v6: f64) -> f64 {
+    let mut worst = 0.0_f64;
+    for edges in CORNER_EDGES {
+        let mut product = 1.0;
+        for e in edges {
+            product *= len2[e];
+        }
+        worst = worst.max(product);
+    }
     std::f64::consts::SQRT_2 * v6 / worst.sqrt()
 }
 
@@ -215,6 +221,58 @@ pub fn triangle_normal(a: P, b: P, c: P) -> P {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// [`quality`] as written before it shared the squared edge lengths: the reference its
+    /// loops reorganise.
+    fn quality_by_maps(x: &[P; 4]) -> f64 {
+        let v6 = volume6(x);
+        if v6 == 0.0 || !v6.is_finite() {
+            return 0.0;
+        }
+        let area2sq = [0, 1, 2, 3].map(|k| {
+            let a = face_cross(x, k);
+            dot(a, a)
+        });
+        let mut pick = if v6 > 0.0 { f64::INFINITY } else { 0.0 };
+        for (i, j, k, l) in EDGE_FACES {
+            let e = sub(x[i], x[j]);
+            let r = dot(e, e) / (area2sq[k] * area2sq[l]);
+            pick = if v6 > 0.0 { pick.min(r) } else { pick.max(r) };
+        }
+        let corners = [(0, [1, 2, 3]), (1, [0, 2, 3]), (2, [0, 1, 3]), (3, [0, 1, 2])].map(|(c, o): (usize, [usize; 3])| {
+            o.iter().fold(1.0, |m, &j| {
+                let e = sub(x[j], x[c]);
+                m * dot(e, e)
+            })
+        });
+        let jacobian = std::f64::consts::SQRT_2 * v6 / corners.iter().fold(0.0_f64, |m, &p| m.max(p)).sqrt();
+        let q = v6 * pick.sqrt();
+        let q = if v6 > 0.0 { q.min(JACOBIAN_WEIGHT * jacobian) } else { q };
+        if q.is_finite() { q } else { 0.0 }
+    }
+
+    /// The quality is the same bit for bit as before: random, inverted, flat, needle-like and
+    /// axis-aligned tetrahedra (whose equal coordinates make zero differences).
+    #[test]
+    fn quality_is_unchanged_bit_for_bit() {
+        let mut state = 3u64;
+        let mut random = move || {
+            state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+            (state >> 11) as f64 / (1u64 << 53) as f64 - 0.5
+        };
+        let mut tets: Vec<[P; 4]> = vec![
+            [[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            [[0.0; 3], [0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+            [[0.0; 3], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+            [[0.0; 3], [1e-9, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        ];
+        for _ in 0..500 {
+            tets.push([0, 1, 2, 3].map(|_| [random(), random(), random()]));
+        }
+        for x in tets {
+            assert_eq!(quality(&x).to_bits(), quality_by_maps(&x).to_bits(), "{x:?}");
+        }
+    }
 
     const REGULAR: [P; 4] = [[1.0, 1.0, 1.0], [1.0, -1.0, -1.0], [-1.0, 1.0, -1.0], [-1.0, -1.0, 1.0]];
 
