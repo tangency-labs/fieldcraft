@@ -3,7 +3,8 @@
 //! and laid over the viewport's background gradient. Every GPU call sits inside error scopes,
 //! so a device error (out of memory, validation) returns as an error, never a panic.
 
-use std::sync::{Arc, OnceLock};
+use std::cell::Cell;
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
 use fieldcraft_render::{Camera, Rgb, Scene};
 
@@ -31,6 +32,28 @@ pub struct Capturer {
     /// The adapter's name and tier, for reports.
     pub adapter: String,
     pub tier: Tier,
+    /// One picture at a time: the camera is a uniform of the shared pipelines, written before
+    /// the picture's submission, so a second picture's camera written in between drew the first
+    /// with it (#778). The process's capturer ([`shared`]) serves every session and request.
+    turn: Mutex<()>,
+}
+
+thread_local! {
+    /// The capturer (by address) whose turn this thread holds: a picture drawn from inside
+    /// another's `paint` on the same capturer does not wait for itself.
+    static HOLDING: Cell<usize> = const { Cell::new(0) };
+}
+
+/// A capturer's turn ([`Capturer::turn`]), given back when dropped.
+struct Turn<'a> {
+    _guard: MutexGuard<'a, ()>,
+    previous: usize,
+}
+
+impl Drop for Turn<'_> {
+    fn drop(&mut self) {
+        HOLDING.with(|h| h.set(self.previous));
+    }
 }
 
 /// The error a popped error scope caught: a native device answers once it has been polled.
@@ -81,7 +104,18 @@ impl Capturer {
             return Err(GpuError::Device(e.to_string()));
         }
         let info = adapter.get_info();
-        Ok(Capturer { device, queue, pipelines, target, adapter: format!("{} ({:?})", info.name, info.backend), tier })
+        Ok(Capturer { device, queue, pipelines, target, adapter: format!("{} ({:?})", info.name, info.backend), tier, turn: Mutex::new(()) })
+    }
+
+    /// This capturer's turn, waited for; `None` when this thread holds it already (a picture
+    /// drawn from inside another's `paint`).
+    fn turn(&self) -> Option<Turn<'_>> {
+        let me = std::ptr::from_ref(self) as usize;
+        if HOLDING.with(Cell::get) == me {
+            return None;
+        }
+        let guard = self.turn.lock().unwrap_or_else(PoisonError::into_inner);
+        Some(Turn { _guard: guard, previous: HOLDING.with(|h| h.replace(me)) })
     }
 
     /// The MSAA sample count pictures are drawn with.
@@ -120,6 +154,10 @@ impl Capturer {
         if w == 0 || h == 0 || w > max || h > max || u64::from(w) * u64::from(h) > MAX_PIXELS {
             return Err(GpuError::Size(format!("picture size {w} x {h} is out of range (1..={max} per side, at most {MAX_PIXELS} pixels)")));
         }
+        // Held until the picture is read back: its uploads, camera, pass and error scopes. A
+        // `paint` that draws another picture on this capturer does not wait for itself (but
+        // that picture's camera then replaces this one's, as before the turn).
+        let _turn = self.turn();
         let oom = self.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
         let validation = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let drawn = self.draw(w, h, paint);
@@ -353,6 +391,60 @@ mod tests {
         cam.set_view(fieldcraft_render::StandardView::Front);
         cam.fit_in(&Aabb3 { min: Vec3::new(-1.0, 0.0, -1.0), max: Vec3::new(1.0, 0.0, 1.0) }, 1.0, fieldcraft_render::FULL_VIEW);
         (scene, cam)
+    }
+
+    /// Pictures drawn at once on one capturer (the process's shared one serves every session and
+    /// MCP request) each keep their own camera: the camera is a uniform of the shared pipelines,
+    /// and a second picture's camera written before the first's submission drew the first with it
+    /// (#778: two pictures of one camera differed on lavapipe in CI).
+    #[test]
+    fn pictures_drawn_at_once_keep_their_own_cameras() {
+        let cap = match Capturer::open(Policy::from_env().unwrap()) {
+            Ok(Some(c)) => c,
+            Ok(None) if crate::select::gpu_required() => panic!("FIELDCRAFT_REQUIRE_GPU=1 but no GPU adapter"),
+            Err(e) if crate::select::gpu_required() => panic!("FIELDCRAFT_REQUIRE_GPU=1 but no GPU device: {e}"),
+            Ok(None) => return eprintln!("no GPU adapter: skipped"),
+            Err(e) => return eprintln!("no GPU device ({e}): skipped"),
+        };
+        let (scene, front) = triangle();
+        let mut turned = front;
+        turned.set_view(fieldcraft_render::StandardView::Iso);
+        turned.fit_in(&Aabb3 { min: Vec3::new(-1.0, 0.0, -1.0), max: Vec3::new(1.0, 0.0, 1.0) }, 1.0, fieldcraft_render::FULL_VIEW);
+        let cams = [front, turned];
+        let expected: Vec<Vec<u8>> = cams.iter().map(|c| cap.rgba(&scene, &[], c, 64, 48).unwrap()).collect();
+        assert_ne!(expected[0], expected[1]);
+        std::thread::scope(|scope| {
+            for t in 0..6 {
+                let (cap, scene, cams, expected) = (&cap, &scene, &cams, &expected);
+                scope.spawn(move || {
+                    for k in 0..30 {
+                        let which = (t + k) % 2;
+                        let px = cap.rgba(scene, &[], &cams[which], 64, 48).unwrap();
+                        assert!(px == expected[which], "thread {t}, picture {k}: drawn with another picture's camera");
+                    }
+                });
+            }
+        });
+    }
+
+    /// A picture drawn from inside another's `paint` on the same capturer returns: the thread
+    /// already holds the capturer's turn and does not wait for itself.
+    #[test]
+    fn a_picture_drawn_inside_another_does_not_wait_for_itself() {
+        let cap = match Capturer::open(Policy::from_env().unwrap()) {
+            Ok(Some(c)) => c,
+            Ok(None) if crate::select::gpu_required() => panic!("FIELDCRAFT_REQUIRE_GPU=1 but no GPU adapter"),
+            Err(e) if crate::select::gpu_required() => panic!("FIELDCRAFT_REQUIRE_GPU=1 but no GPU device: {e}"),
+            Ok(None) => return eprintln!("no GPU adapter: skipped"),
+            Err(e) => return eprintln!("no GPU device ({e}): skipped"),
+        };
+        let (scene, cam) = triangle();
+        let mut inner = None;
+        let outer = cap.offscreen(8, 8, |_| inner = Some(cap.rgba(&scene, &[], &cam, 16, 16)));
+        assert_eq!(outer.unwrap().len(), 8 * 8 * 4);
+        assert_eq!(inner.unwrap().unwrap().len(), 16 * 16 * 4);
+        // The turn is given back: another picture draws as usual.
+        assert_eq!(cap.rgba(&scene, &[], &cam, 16, 16).unwrap().len(), 16 * 16 * 4);
     }
 
     /// A picture on whatever adapter the machine has: the right size, the triangle's red and
