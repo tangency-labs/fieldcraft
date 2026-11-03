@@ -152,6 +152,9 @@ pub struct TetQuality {
     /// dihedral range does not bound it: a needle has every dihedral angle near 60° or 90° and a
     /// nearly flat corner (#547).
     pub min_scaled_jacobian: f64,
+    /// The mean, over the tetrahedra, of the scaled Jacobian at each one's worst corner (the
+    /// values [`Self::min_scaled_jacobian`] is the smallest of).
+    pub mean_scaled_jacobian: f64,
     /// Tetrahedra with a dihedral angle below 10° or above 170°.
     pub slivers: usize,
     /// Tetrahedra not admissible by FieldCraft's validity criterion.
@@ -162,7 +165,7 @@ pub struct TetQuality {
 /// reports ([`crate::quality::element_quality`]).
 pub fn tet_quality_stats(points: &[[f64; 3]], tets: &[[u32; 4]]) -> Result<TetQuality> {
     let mut s = TetQuality { min_dihedral: 180.0, min_radius_ratio: 1.0, min_scaled_jacobian: 1.0, ..TetQuality::default() };
-    let mut sum = 0.0;
+    let (mut sum, mut sum_sj) = (0.0, 0.0);
     for t in tets {
         let p = |v: u32| points.get(v as usize).copied().ok_or_else(|| Error::Failed("quality: vertex id".into()));
         let q = element_quality(ElementKind::Tet4, &[p(t[0])?, p(t[1])?, p(t[2])?, p(t[3])?])?;
@@ -173,6 +176,7 @@ pub fn tet_quality_stats(points: &[[f64; 3]], tets: &[[u32; 4]]) -> Result<TetQu
         s.min_radius_ratio = s.min_radius_ratio.min(rr);
         s.min_scaled_jacobian = s.min_scaled_jacobian.min(m(Metric::ScaledJacobian));
         sum += rr;
+        sum_sj += m(Metric::ScaledJacobian);
         s.slivers += usize::from(!(lo >= 10.0 && hi <= 170.0));
         s.inadmissible += usize::from(q.validity() != Some(Validity::Valid));
     }
@@ -183,6 +187,7 @@ pub fn tet_quality_stats(points: &[[f64; 3]], tets: &[[u32; 4]]) -> Result<TetQu
         s.min_scaled_jacobian = 0.0;
     } else {
         s.mean_radius_ratio = sum / tets.len() as f64;
+        s.mean_scaled_jacobian = sum_sj / tets.len() as f64;
     }
     Ok(s)
 }
