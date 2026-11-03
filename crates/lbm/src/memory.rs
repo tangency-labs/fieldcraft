@@ -154,6 +154,8 @@ struct Shape {
     characteristic_cells: u64,
     surface: bool,
     baffle_bytes: u64,
+    /// The momentum links at the thin walls, both sides.
+    baffle_links: u64,
 }
 
 impl Shape {
@@ -170,8 +172,19 @@ impl Shape {
         spalart_allmaras: bool,
     ) -> Result<Shape> {
         let thermal = domain.thermal.as_ref();
+        let cells = domain.cells()?;
+        // Each thin wall's momentum links (five per side of each of its faces) and name length.
+        let baffles: Vec<(u64, u64)> = domain
+            .baffles
+            .iter()
+            .map(|b| {
+                let a = b.axis.index();
+                let faces = cells[(a + 1) % 3].saturating_mul(cells[(a + 2) % 3]);
+                (faces.saturating_mul(2 * FACE_LINKS), b.name.len() as u64)
+            })
+            .collect();
         Ok(Shape {
-            cells: domain.cells()?,
+            cells,
             frames: frames.max(1) + 1,
             heat: thermal.is_some(),
             // The setup's buoyancy is −β g: nonzero with both.
@@ -201,22 +214,17 @@ impl Shape {
                     .fold(0, u64::saturating_add)
             },
             surface: domain.free_surface.is_some(),
-            baffle_bytes: {
-                let cells = domain.cells()?;
-                domain
-                    .baffles
-                    .iter()
-                    .map(|b| {
-                        let a = b.axis.index();
-                        // Five momentum links per side, plus group metadata and histories.
-                        let faces = cells[(a + 1) % 3].saturating_mul(cells[(a + 2) % 3]);
-                        faces
-                            .saturating_mul(2 * FACE_LINKS * size_of::<Link>() as u64)
-                            .saturating_add(1024 + 4 * b.name.len() as u64)
-                            .saturating_add((frames + 1).saturating_mul(8 * F64))
-                    })
-                    .fold(0, u64::saturating_add)
-            },
+            baffle_bytes: baffles
+                .iter()
+                .map(|(links, name)| {
+                    // The links, plus group metadata and histories.
+                    links
+                        .saturating_mul(size_of::<Link>() as u64)
+                        .saturating_add(1024 + 4 * name)
+                        .saturating_add((frames + 1).saturating_mul(8 * F64))
+                })
+                .fold(0, u64::saturating_add),
+            baffle_links: baffles.iter().map(|(links, _)| *links).fold(0, u64::saturating_add),
         })
     }
 }
@@ -283,6 +291,10 @@ impl Memory {
                 )
             })
             .fold(0, u64::saturating_add);
+        // The CPU flow's shares of a batch of those links and the thin walls' in their groups'
+        // forces, made on the first step.
+        let links = face_cells.iter().map(|c| c.saturating_mul(FACE_LINKS)).fold(s.baffle_links, u64::saturating_add);
+        let link_terms = links.min(crate::flow::LINK_BATCH as u64).saturating_mul(size_of::<[f64; 3]>() as u64);
         let mut flow = POPULATIONS + FLAGS;
         let mut targets = POPULATIONS;
         if s.heat {
@@ -332,7 +344,7 @@ impl Memory {
             // The CPU flow allocates its streaming targets on the first step and keeps
             // everything to the end.
             Choice::Cpu => {
-                let state = prepared.saturating_add(per_cell(targets + gradients)).saturating_add(per_cell(RESULT));
+                let state = prepared.saturating_add(per_cell(targets + gradients)).saturating_add(per_cell(RESULT)).saturating_add(link_terms);
                 (
                     state.max(prepared.saturating_add(transform)),
                     state,

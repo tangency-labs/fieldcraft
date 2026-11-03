@@ -525,9 +525,10 @@ fn the_memory_estimate_matches_what_a_run_allocates() {
         // The GPU backend's flow is prepared on the host and dropped before the steps.
         assert_eq!((gpu_on.setup - gpu_off.setup, gpu_on.state, gpu_on.device), (eddy, gpu_off.state, gpu_off.device), "heat {heat}");
         // Model off, to the byte (the 48 × 24 × 24 channel): state also reserves the
-        // maximum 14,448-byte validity sample payload independently of frame count, and setup
-        // 80 bytes per open row for TRT inlet stencils/scratch and the construction lookup (#820).
-        let frozen = if heat { [14_294_016, 14_308_464, 1_658_880, 1_105_920] } else { [9_649_152, 9_663_600, 1_327_104, 884_736] };
+        // maximum 14,448-byte validity sample payload independently of frame count, setup
+        // 80 bytes per open row for TRT inlet stencils/scratch and the construction lookup (#820),
+        // and the CPU flow's shares of its 28,800 wall links in their groups' forces (691,200 bytes).
+        let frozen = if heat { [14_985_216, 14_999_664, 1_658_880, 1_105_920] } else { [10_340_352, 10_354_800, 1_327_104, 884_736] };
         assert_eq!([cpu_off.setup, cpu_off.state, cpu_off.frame_bytes, cpu_off.readback], frozen, "heat {heat}");
     }
     // The hybrid collision and Vreman's model hold each cell's velocity for the finite-difference

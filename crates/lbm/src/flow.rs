@@ -870,6 +870,9 @@ pub struct Flow {
     acceleration: [f64; 3],
     /// The momentum transferred to each group in the last step (lattice units).
     forces: Vec<[f64; 3]>,
+    /// The shares of a batch of links in their groups' momentum, worked out in parallel and summed
+    /// in link order ([`LINK_BATCH`] at most; kept for its capacity).
+    link_terms: Vec<[f64; 3]>,
     groups: Vec<Group>,
     /// With interpolated walls: each group's wall velocity (lattice units), for the Galilean
     /// invariant momentum exchange, and how the obstacles' links bounce back (empty and `None`
@@ -970,6 +973,11 @@ fn populated_mask<'a>(fluid: &'a [bool], bulk: &'a [bool], surface: Option<&'a S
         None => bulk,
     }
 }
+
+/// Links per parallel task of the wall forces, and per batch of tasks: a batch's shares are held
+/// at once (at most 1.5 MB).
+const LINK_BLOCK: usize = 4096;
+pub(crate) const LINK_BATCH: usize = 16 * LINK_BLOCK;
 
 /// The first `n` populations of each direction of an array with direction stride `stride`, cut
 /// into blocks of `block` cells: block b holds the Q directions' slices of cells b·block.. .
@@ -1702,6 +1710,7 @@ impl Flow {
             clamps: Clamps::default(),
             acceleration: setup.acceleration,
             forces: vec![[0.0; 3]; groups.len()],
+            link_terms: Vec::new(),
             groups,
             wall_velocity: wall_velocities,
             wall_links,
@@ -1970,6 +1979,7 @@ impl Flow {
             + bytes(&self.baffles)
             + bytes(&self.interpolations)
             + bytes(&self.wall_velocity)
+            + bytes(&self.link_terms)
             + self.zone_cells.iter().map(bytes).sum::<u64>()
             + self.outlets.heap_bytes()
             + self.inlets.heap_bytes();
@@ -2346,6 +2356,10 @@ impl Flow {
     fn targets(&mut self) -> Result<()> {
         if self.g.len() < self.f.len() {
             self.g = filled(self.f.len(), 0.0, "populations")?;
+        }
+        let batch = self.links.len().min(LINK_BATCH);
+        if self.link_terms.len() != batch {
+            self.link_terms = filled(batch, [0.0; 3], "wall link forces")?;
         }
         if let Some(t) = &mut self.thermal
             && t.g2.len() < t.g.len()
@@ -3265,44 +3279,61 @@ impl Flow {
                 }
             }
         });
+        // Each wall link's share of its group's momentum, in parallel by batches of links (one
+        // loop over the links did this on one thread, a fixed part of every step), each batch's
+        // shares then summed per group in link order, as that loop summed them.
         self.forces.fill([0.0; 3]);
-        for link in &self.links {
-            let (cell, q) = (link.cell as usize, link.q as usize);
-            let cq = c(q);
-            match link.rule {
-                Rule::Bounce { group, du } => {
-                    let out = self.f[opposite(q) * s + cell];
-                    let back = out + du;
-                    if let Some(force) = self.forces.get_mut(group as usize) {
-                        // c_out f* − c_in f' with c_out = −c_q.
-                        for a in 0..3 {
-                            force[a] -= cq[a] * (out + back);
+        let (f, g, wall_velocity, forces) = (&self.f, &self.g, &self.wall_velocity, &mut self.forces);
+        for batch in self.links.chunks(LINK_BATCH) {
+            let Some(terms) = self.link_terms.get_mut(..batch.len()) else { continue };
+            parallel::chunks_mut(terms, LINK_BLOCK, |k, terms| {
+                for (term, link) in terms.iter_mut().zip(batch.get(k * LINK_BLOCK..).unwrap_or_default()) {
+                    let (cell, q) = (link.cell as usize, link.q as usize);
+                    let cq = c(q);
+                    *term = match link.rule {
+                        // c_out f* − c_in f' with c_out = −c_q (subtracted below).
+                        Rule::Bounce { du, .. } => {
+                            let out = f.get(opposite(q) * s + cell).copied().unwrap_or(0.0);
+                            let back = out + du;
+                            [cq[0] * (out + back), cq[1] * (out + back), cq[2] * (out + back)]
+                        }
+                        // (c_out − u_w) f* − (c_in − u_w) f' with c_out = −c_q (Wen et al. 2014),
+                        // subtracted below.
+                        Rule::Interpolated { group, .. } => {
+                            let out = f.get(opposite(q) * s + cell).copied().unwrap_or(0.0);
+                            // What the streaming just sent back (the same interpolation, not
+                            // recomputed).
+                            let back = g.get(q * s + cell).copied().unwrap_or(out);
+                            let uw = wall_velocity.get(group as usize).copied().unwrap_or([0.0; 3]);
+                            [0, 1, 2].map(|a| cq[a] * (out + back) + uw[a] * (out - back))
+                        }
+                        Rule::Reflect { from, q: q2, .. } => {
+                            let out = f.get(q2 as usize * s + from as usize).copied().unwrap_or(0.0);
+                            let c2 = c(q2 as usize);
+                            [c2[0] * out - cq[0] * out, c2[1] * out - cq[1] * out, c2[2] * out - cq[2] * out]
+                        }
+                        Rule::Pull { .. } | Rule::Open => [0.0; 3],
+                    };
+                }
+            });
+            for (link, term) in batch.iter().zip(terms.iter()) {
+                match link.rule {
+                    Rule::Bounce { group, .. } | Rule::Interpolated { group, .. } => {
+                        if let Some(force) = forces.get_mut(group as usize) {
+                            for a in 0..3 {
+                                force[a] -= term[a];
+                            }
                         }
                     }
-                }
-                Rule::Interpolated { group, .. } => {
-                    let out = self.f.get(opposite(q) * s + cell).copied().unwrap_or(0.0);
-                    // What the streaming just sent back (the same interpolation, not recomputed).
-                    let back = self.g.get(q * s + cell).copied().unwrap_or(out);
-                    let uw = self.wall_velocity.get(group as usize).copied().unwrap_or([0.0; 3]);
-                    if let Some(force) = self.forces.get_mut(group as usize) {
-                        // (c_out − u_w) f* − (c_in − u_w) f' with c_out = −c_q (Wen et al. 2014).
-                        for a in 0..3 {
-                            force[a] -= cq[a] * (out + back) + uw[a] * (out - back);
+                    Rule::Reflect { group, .. } => {
+                        if let Some(force) = forces.get_mut(group as usize) {
+                            for a in 0..3 {
+                                force[a] += term[a];
+                            }
                         }
                     }
+                    Rule::Pull { .. } | Rule::Open => {}
                 }
-                Rule::Reflect { from, q: q2, group } => {
-                    let q2 = q2 as usize;
-                    let out = self.f[q2 * s + from as usize];
-                    let c2 = c(q2);
-                    if let Some(force) = self.forces.get_mut(group as usize) {
-                        for a in 0..3 {
-                            force[a] += c2[a] * out - cq[a] * out;
-                        }
-                    }
-                }
-                Rule::Pull { .. } | Rule::Open => {}
             }
         }
         // The on-node wall-function bounce's share: the momentum each boundary node took from the
@@ -3612,6 +3643,8 @@ impl crate::backend::Backend for Flow {
             clamps,
             acceleration,
             forces,
+            // Overwritten before use; its capacity is not state.
+            link_terms: _,
             groups,
             // Fixed by the setup (the links carry their rules and are saved). The ramp's targets are
             // rewritten from `steps_done` at each step, so a resumed flow needs nothing saved for them.
@@ -4001,6 +4034,120 @@ mod tests {
             }
         }
         max_u2
+    }
+
+    /// The wall forces summed in link order from the shares worked out in parallel, by batches,
+    /// are the serial loop's bit for bit: still walls and a moving wall (bounce-back with and
+    /// without the wall term), slip walls (reflection) and a moving obstacle with interpolated
+    /// walls (Bouzidi's bounce-back), on a box with more links than a batch.
+    #[test]
+    fn wall_forces_are_the_serial_loops_bit_for_bit() {
+        use fieldcraft_mesh::surface::{BoundarySurface, SurfaceOptions};
+        use fieldcraft_model::{
+            BoxFaces, Fluid, FluidDomain, GeometryRef, Material, Model, Procedure, Step, SurfaceBoundary, SurfaceCondition, WallTreatment,
+        };
+        let faces = BoxFaces {
+            x_min: FaceCondition::Wall {},
+            x_max: FaceCondition::MovingWall { velocity: [0.0, 0.02, 0.01] },
+            y_min: FaceCondition::Slip {},
+            y_max: FaceCondition::Wall {},
+            z_min: FaceCondition::MovingWall { velocity: [0.03, 0.0, 0.0] },
+            z_max: FaceCondition::Slip {},
+        };
+        // A block whose sides cut the links at fractions other than a half, its top moving.
+        let (lo, hi) = ([20.3, 18.6, 5.3], [40.7, 44.2, 15.6]);
+        let corner = |i: usize| [0, 1, 2].map(|a| if i >> a & 1 == 0 { lo[a] } else { hi[a] });
+        let positions: Vec<[f64; 3]> = (0..8).map(corner).collect();
+        // Quads counter-clockwise seen from outside: x_min, x_max, y_min, y_max, z_min, z_max.
+        let quads = [[0, 4, 6, 2], [1, 3, 7, 5], [0, 1, 5, 4], [2, 6, 7, 3], [0, 2, 3, 1], [4, 5, 7, 6]];
+        let triangles: Vec<[u32; 3]> = quads.iter().flat_map(|q| [[q[0], q[1], q[2]], [q[0], q[2], q[3]]]).collect();
+        let tags: Vec<u32> = (0..6).flat_map(|k| [k; 2]).collect();
+        let block = crate::Obstacle {
+            body: "Block".into(),
+            surface: BoundarySurface::new(&positions, &triangles, &tags, &SurfaceOptions::default()).unwrap(),
+            faces: ["x_min", "x_max", "y_min", "y_max", "z_min", "z_max"].map(String::from).to_vec(),
+            exact: Vec::new(),
+        };
+        let domain = FluidDomain {
+            material: "Fluid".into(),
+            min: [0.0; 3],
+            max: [64.0, 64.0, 24.0],
+            spacing: 1.0,
+            faces,
+            obstacles: vec!["Block".into()],
+            surfaces: vec![SurfaceBoundary {
+                face: GeometryRef::face("Block", "z_max").unwrap(),
+                condition: SurfaceCondition::MovingWall { velocity: [0.02, -0.01, 0.0] },
+            }],
+            initial_velocity: [0.01, -0.005, 0.0],
+            acceleration: [1e-5, 0.0, 2e-6],
+            tolerance: None,
+            thermal: None,
+            porous: vec![],
+            fans: vec![],
+            baffles: vec![],
+            free_surface: None,
+        };
+        let mut m = Model::default();
+        m.add_material("Fluid", Material { density: Some(1.0), fluid: Some(Fluid::Newtonian { viscosity: 0.1 }), ..Material::default() }).unwrap();
+        m.add_fluid_domain("Flow", domain).unwrap();
+        let procedure = Procedure::Fluid {
+            domain: "Flow".into(),
+            end_time: None,
+            steps: Some(10),
+            time_step: Some(1.0),
+            frames: 1,
+            magic: None,
+            sigma: None,
+            collision: None,
+            turbulence: None,
+            steady: None,
+            walls: WallTreatment::Interpolated,
+        };
+        m.add_step(Step::new("Run", procedure), None).unwrap();
+        let obstacles = [block];
+        let setup = Setup::new(&m, None, &obstacles, &crate::Limits::default()).unwrap();
+        let mut flow = Flow::new(&setup, &obstacles).unwrap();
+        assert!(flow.links.len() > LINK_BATCH, "{} links", flow.links.len());
+        assert!(flow.wall_links.as_ref().is_some_and(|w| w.interpolated > 0), "{:?}", flow.wall_links);
+        assert!(flow.wall_velocity.iter().any(|u| *u != [0.0; 3]));
+        flow.step().unwrap();
+        flow.stream();
+        // The loop the shares replaced, over the populations streaming read and wrote.
+        let s = flow.stride;
+        let mut serial = vec![[0.0f64; 3]; flow.forces.len()];
+        for link in &flow.links {
+            let (cell, q) = (link.cell as usize, link.q as usize);
+            let cq = c(q);
+            match link.rule {
+                Rule::Bounce { group, du } => {
+                    let out = flow.f[opposite(q) * s + cell];
+                    let back = out + du;
+                    for a in 0..3 {
+                        serial[group as usize][a] -= cq[a] * (out + back);
+                    }
+                }
+                Rule::Interpolated { group, .. } => {
+                    let out = flow.f[opposite(q) * s + cell];
+                    let back = flow.g[q * s + cell];
+                    let uw = flow.wall_velocity[group as usize];
+                    for a in 0..3 {
+                        serial[group as usize][a] -= cq[a] * (out + back) + uw[a] * (out - back);
+                    }
+                }
+                Rule::Reflect { from, q: q2, group } => {
+                    let out = flow.f[q2 as usize * s + from as usize];
+                    let c2 = c(q2 as usize);
+                    for a in 0..3 {
+                        serial[group as usize][a] += c2[a] * out - cq[a] * out;
+                    }
+                }
+                Rule::Pull { .. } | Rule::Open => {}
+            }
+        }
+        let bits = |v: &[[f64; 3]]| v.iter().map(|f| f.map(f64::to_bits)).collect::<Vec<_>>();
+        assert!(serial.iter().flatten().any(|&x| x != 0.0));
+        assert_eq!(bits(&flow.forces), bits(&serial));
     }
 
     /// The vectorised plain collision gives the general collision's populations, velocities and
