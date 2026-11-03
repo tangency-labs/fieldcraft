@@ -539,12 +539,17 @@ fn run<T: Send>(
 
 /// Add an element's forces into the workspace and return its critical increment.
 fn add<const N: usize>(ws: &mut Workspace, nodes: &[usize; N], f: &Forces<N>) -> f64 {
+    add_into([&mut ws.stress_force, &mut ws.hourglass_force, &mut ws.viscous_force], nodes, f)
+}
+
+/// [`add`] into the stress, hourglass and viscous force vectors given apart from the workspace.
+fn add_into<const N: usize>([stress, hourglass, viscous]: [&mut [f64]; 3], nodes: &[usize; N], f: &Forces<N>) -> f64 {
     if let Some(h) = &f.hourglass {
-        scatter(&mut ws.hourglass_force, nodes, h);
+        scatter(hourglass, nodes, h);
     }
-    scatter(&mut ws.stress_force, nodes, &f.stress);
+    scatter(stress, nodes, &f.stress);
     if let Some(q) = &f.viscous {
-        scatter(&mut ws.viscous_force, nodes, q);
+        scatter(viscous, nodes, q);
     }
     f.critical
 }
@@ -649,7 +654,7 @@ fn tetrahedron_increment(sys: &System, t: &crate::system::Tet, m: &Motion, state
 fn tetrahedron(
     sys: &System,
     t: &crate::system::Tet,
-    inc: Option<TetIncrement>,
+    inc: Option<&TetIncrement>,
     theta: &[f64],
     ratio: &[f64],
     m: &Motion,
@@ -729,18 +734,31 @@ pub fn internal_forces(sys: &System, m: &Motion, state: &mut State, ws: &mut Wor
     )?;
     if !sys.tets.is_empty() {
         let tets = &sys.tets;
-        // Pass 1: each tetrahedron's increment, and each node's mean volumetric increment.
-        let increments = {
+        // Pass 1: each tetrahedron's increment, written into its slot by blocks in parallel (a
+        // vector of them per step, copied into the slots, cost a fifth of a tetrahedral step),
+        // the first error in tetrahedron order returned; then each node's mean volumetric
+        // increment.
+        {
             let st: &State = state;
-            fieldcraft_parallel::map_grained(tets.len(), BLOCK, |k| match tets.get(k) {
-                Some(t) => tetrahedron_increment(sys, t, m, st),
-                None => Ok(None),
-            })
-        };
+            let mut blocks: Vec<(&mut [Option<TetIncrement>], Option<Error>)> = ws.tet_increment.chunks_mut(BLOCK).map(|c| (c, None)).collect();
+            fieldcraft_parallel::for_each_mut(&mut blocks, |b, (slots, failed)| {
+                for (i, slot) in slots.iter_mut().enumerate() {
+                    match tets.get(b * BLOCK + i).map_or(Ok(None), |t| tetrahedron_increment(sys, t, m, st)) {
+                        Ok(inc) => *slot = inc,
+                        Err(e) => {
+                            *failed = Some(e);
+                            return;
+                        }
+                    }
+                }
+            });
+            if let Some(e) = blocks.into_iter().find_map(|(_, failed)| failed) {
+                return Err(e);
+            }
+        }
         ws.theta.fill(0.0);
         ws.tet_volume.fill(0.0);
-        for ((t, slot), inc) in tets.iter().zip(ws.tet_increment.iter_mut()).zip(increments) {
-            *slot = inc?;
+        for (t, slot) in tets.iter().zip(&ws.tet_increment) {
             let Some(inc) = slot else { continue };
             for node in t.nodes {
                 if let (Some(x), Some(w)) = (ws.theta.get_mut(node), ws.tet_volume.get_mut(node)) {
@@ -770,32 +788,30 @@ pub fn internal_forces(sys: &System, m: &Motion, state: &mut State, ws: &mut Wor
                 *x = if *w > 0.0 { *x / w } else { 1.0 };
             }
         }
-        // Pass 2: each tetrahedron's update.
+        // Pass 2: each tetrahedron's update, its forces added in tetrahedron order as they come
+        // (the workspace's fields borrowed apart, so no list of them is kept).
         let State { elements, eroded } = state;
-        let (theta, ratio, increments) = (&ws.theta, &ws.tet_ratio, &ws.tet_increment);
-        let mut forces: Vec<(usize, Forces<4>)> = Vec::new();
+        let Workspace { theta, tet_ratio, tet_increment, stress_force, hourglass_force, viscous_force, .. } = &mut *ws;
+        let (theta, ratio, increments) = (&*theta, &*tet_ratio, &*tet_increment);
         run(
             elements,
             tets.len(),
             |k| tets.get(k).map_or(usize::MAX, |t| t.index),
             |k, es| match tets.get(k) {
-                Some(t) => tetrahedron(sys, t, increments.get(k).copied().flatten(), theta, ratio, m, es),
+                Some(t) => tetrahedron(sys, t, increments.get(k).and_then(Option::as_ref), theta, ratio, m, es),
                 None => Ok(Outcome::Skipped),
             },
             |k, outcome| {
                 match (tets.get(k), outcome) {
                     (Some(t), Outcome::Eroded(failure)) => eroded.push((t.index, failure)),
-                    (Some(_), Outcome::Forces(f)) => forces.push((k, f)),
+                    (Some(t), Outcome::Forces(f)) => {
+                        critical = critical.min(add_into([&mut *stress_force, &mut *hourglass_force, &mut *viscous_force], &t.nodes, &f));
+                    }
                     _ => {}
                 }
                 Ok(())
             },
         )?;
-        for (k, f) in &forces {
-            if let Some(t) = tets.get(*k) {
-                critical = critical.min(add(ws, &t.nodes, f));
-            }
-        }
     }
     for r in &sys.rods {
         let (sigma, strain) = r.forces(&sys.xyz, m.u, sys.nonlinear, &mut ws.stress_force);
