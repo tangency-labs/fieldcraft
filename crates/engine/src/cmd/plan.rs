@@ -2666,6 +2666,38 @@ mod acceptance {
         assert!(sj >= 0.5, "{hex}");
     }
 
+    /// The absorbed step slivers keep their own tet projection (PR #771): the classification
+    /// clears the check and keeps the plan's route (the test above), and the tet mesher snaps
+    /// the absorbed face's nodes to the pieces they lie on — the quality stays at what the
+    /// unmerged step meshes, not the degradation of snapping those nodes onto the plane the
+    /// face was absorbed into.
+    #[test]
+    fn absorbed_step_slivers_keep_their_own_tet_projection() {
+        let (_d, mut s) = open(json!([
+            {"command": "solid.box", "params": {"corner": [0, 0, 0], "length": 60, "width": 40, "height": 10, "body_name": "Steps"}},
+            {"command": "solid.box", "params": {"corner": [0, 0, 10], "length": 60, "width": 0.4, "height": 0.4, "operation": "join", "targets": ["Steps"]}},
+            {"command": "solid.box", "params": {"corner": [0, 0, 10], "length": 0.4, "width": 40, "height": 0.4, "operation": "join", "targets": ["Steps"]}}
+        ]));
+        let check = s.execute("geometry.check", &json!({"body": "Steps", "size": 2.0, "mark": true})).unwrap();
+        assert_eq!(check["counts"]["sliver_face"], 3, "{check}");
+        let absorbed = s.execute("geometry.face.absorb", &json!({"from_check": true})).unwrap();
+        assert_eq!(absorbed["absorbed"].as_array().map(Vec::len), Some(3), "{absorbed}");
+        // The classification: what the check saw as slivers against another surface is now on
+        // the surface it was absorbed into, so the check is clear and the plan keeps the cells
+        // route (#546).
+        let check = s.execute("geometry.check", &json!({"body": "Steps", "size": 2.0})).unwrap();
+        assert_eq!(check["counts"]["sliver_face"], 0, "{check}");
+        let plan = s.execute("mesh.plan", &json!({"body": "Steps", "size": 2.0, "layers": 2})).unwrap();
+        assert_eq!(plan["mesher"], "cells", "{plan}");
+        // The projection: the tet mesher snaps every boundary node onto the geometry it lies
+        // on, and the quality stays at the unmerged step's (min SJ 0.33, worst dihedral 33°).
+        let tet = s.execute("mesh.tet.generate", &json!({"body": "Steps", "size": 2.0, "quality": true})).unwrap();
+        let q = &tet["bodies"][0]["quality"];
+        assert_eq!(q["unsnapped"], 0, "{q}");
+        assert!(q["mesh"]["min_scaled_jacobian"].as_f64().is_some_and(|sj| sj >= 0.25), "{q}");
+        assert!(q["mesh"]["min_dihedral"].as_f64().is_some_and(|d| d >= 25.0), "{q}");
+    }
+
     #[test]
     fn curved_bodies_mesh_within_a_percent_of_their_volume_at_the_plan_s_size() {
         // The plan's size keeps the chords of a torus (swept) and a cylinder (butterfly) within
