@@ -546,6 +546,42 @@ fn a_second_solve_reuses_the_compiled_kernels() {
     assert!(second.mass().unwrap().is_finite());
 }
 
+/// Solves running at once on the device the process shares read their results back: another
+/// solve's poll can collect a readback's mapping callback and run it just after this solve's
+/// poll returns, which failed as "the readback did not complete" (#800).
+#[test]
+fn concurrent_solves_on_the_shared_device_read_back() {
+    let mut d = domain([0.0; 3], [1.0, 1.0, 0.25], 0.0625);
+    d.faces.z_min = PERIODIC;
+    d.faces.z_max = PERIODIC;
+    let m = model(1.0, 0.1, d, step(1.0, 0.01, None));
+    let (_, flow) = prepare(&m, &[]);
+    let policy = Policy::from_env().expect("FIELDCRAFT_GPU names a policy");
+    // The other tests wait: these solves share the device only with each other.
+    let _turn = turn();
+    let solves: Vec<Option<std::result::Result<(), String>>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut g = match GpuFlow::with_options(&flow, policy, Options { streaming: Streaming::InPlace, profile: false }) {
+                        Ok(g) => g,
+                        Err(e) if !gpu_required() && e.to_string().contains("no GPU device") => return None,
+                        Err(e) => return Some(Err(e.to_string())),
+                    };
+                    Some((0..40).try_for_each(|_| {
+                        g.advance(2).map_err(|e| e.to_string())?;
+                        g.mass().map(|_| ()).map_err(|e| e.to_string())
+                    }))
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect()
+    });
+    for solve in solves.into_iter().flatten() {
+        solve.unwrap();
+    }
+}
+
 /// A differentially heated cavity with buoyancy (the de Vahl Davis geometry at Ra 10³ on 16
 /// cells, over the first diffusive time): the temperature drives the flow on both backends
 /// alike.
