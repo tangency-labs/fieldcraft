@@ -599,6 +599,25 @@ fn cell_blocks(data: &mut [f64], stride: usize, n: usize, block: usize) -> Vec<V
     blocks
 }
 
+/// The shifted copy of one direction of a streaming block: `dst[i] = src[start + i − off]` for
+/// every `i` whose source lies in `src`, the others left as they are. The cells with a source
+/// form one range, so it is one contiguous copy instead of a checked index per cell.
+fn shifted_copy(dst: &mut [f64], src: &[f64], start: usize, off: isize) {
+    let (Ok(start), Ok(len), Ok(n)) = (isize::try_from(start), isize::try_from(dst.len()), isize::try_from(src.len())) else {
+        return;
+    };
+    // 0 ≤ start + i − off < n  ⇔  off − start ≤ i < n + off − start
+    let lo = off.saturating_sub(start).clamp(0, len);
+    let hi = n.saturating_add(off).saturating_sub(start).clamp(lo, len);
+    let from = start.saturating_add(lo).saturating_sub(off);
+    let (Ok(lo), Ok(hi), Ok(from)) = (usize::try_from(lo), usize::try_from(hi), usize::try_from(from)) else {
+        return;
+    };
+    if let (Some(d), Some(s)) = (dst.get_mut(lo..hi), src.get(from..from + (hi - lo))) {
+        d.copy_from_slice(s);
+    }
+}
+
 /// A vector allocated without aborting when memory runs out.
 pub(crate) fn filled<T: Clone>(len: usize, value: T, what: &str) -> Result<Vec<T>> {
     let mut v = Vec::new();
@@ -1680,14 +1699,7 @@ impl Flow {
             let start = b * block;
             for (q, dst) in out.iter_mut().enumerate().take(QT) {
                 let off = offset.get(q).copied().unwrap_or(0);
-                let src = g.get(q * s..q * s + n).unwrap_or_default();
-                for (i, x) in dst.iter_mut().enumerate() {
-                    if let Some(from) = (start + i).checked_add_signed(-off)
-                        && let Some(v) = src.get(from)
-                    {
-                        *x = *v;
-                    }
-                }
+                shifted_copy(dst, g.get(q * s..q * s + n).unwrap_or_default(), start, off);
             }
             let first = links.partition_point(|l| (l.cell as usize) < start);
             for link in links.get(first..).unwrap_or_default().iter().take_while(|l| (l.cell as usize) < start + block) {
@@ -2308,14 +2320,7 @@ impl Flow {
             // cells in the box; the others are overwritten by their rules below.
             for (q, dst) in g.iter_mut().enumerate() {
                 let off = offset.get(q).copied().unwrap_or(0);
-                let src = f.get(q * s..q * s + n).unwrap_or_default();
-                for (i, x) in dst.iter_mut().enumerate() {
-                    if let Some(from) = (start + i).checked_add_signed(-off)
-                        && let Some(v) = src.get(from)
-                    {
-                        *x = *v;
-                    }
-                }
+                shifted_copy(dst, f.get(q * s..q * s + n).unwrap_or_default(), start, off);
             }
             let first = links.partition_point(|l| (l.cell as usize) < start);
             for link in links.get(first..).unwrap_or_default().iter().take_while(|l| (l.cell as usize) < start + block) {
@@ -2878,5 +2883,35 @@ impl crate::backend::Backend for Flow {
 
     fn conducting(&self) -> &[Vec<u32>] {
         self.thermal.as_ref().and_then(|t| t.solid.as_ref()).map_or(&[], |s| &s.by_solid)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The contiguous shifted copy writes exactly the cells, and the values, of a checked copy
+    /// cell by cell, for blocks inside, across and beyond both ends of the source.
+    #[test]
+    fn shifted_copy_matches_the_cell_by_cell_copy() {
+        let n = 37;
+        let src: Vec<f64> = (0..n).map(|i| i as f64 + 0.5).collect();
+        for start in [0, 1, 5, 30, 36, 40] {
+            for len in [0, 1, 7, 12] {
+                for off in [-50, -38, -37, -9, -1, 0, 1, 2, 9, 37, 38, 50] {
+                    let mut expected = vec![-1.0; len];
+                    for (i, x) in expected.iter_mut().enumerate() {
+                        if let Some(from) = (start + i).checked_add_signed(-off)
+                            && let Some(v) = src.get(from)
+                        {
+                            *x = *v;
+                        }
+                    }
+                    let mut got = vec![-1.0; len];
+                    shifted_copy(&mut got, &src, start, off);
+                    assert_eq!(got, expected, "start {start}, len {len}, off {off}");
+                }
+            }
+        }
     }
 }
