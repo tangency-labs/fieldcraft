@@ -785,7 +785,10 @@ fn smagorinsky(mut p: Procedure, c: f64) -> Procedure {
 /// suite's other cases with or without the model. Measured on an RTX 4070 Laptop GPU, GPU
 /// against CPU, model off / on: velocity 5.1e-6 / 5.3e-6 (TRT) and 4.2e-5 / 2.3e-5
 /// (regularised), wall shear 2.6e-5 / 2.1e-5 and 9.6e-5 / 5.7e-5. So the tolerances here are
-/// the model-off ones of this case, with a margin: velocity 1e-4, shear 2e-4.
+/// the model-off ones of this case, with a margin: velocity 1e-4, shear 2e-4. The density bound
+/// held on that card only: with the rest equilibrium's formula the TRT collision drained mass in
+/// f32 (2.2e-6 of it on Apple Metal, model off or on, #776); with the rest population closing the
+/// equilibria's sum it differs by 8e-12 there.
 #[test]
 fn couette_flow_with_smagorinsky_matches_the_cpu() {
     for (collision, streaming) in cases() {
