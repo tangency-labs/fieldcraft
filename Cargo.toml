@@ -57,7 +57,7 @@ sha2 = "0.11"
 # images (PNG snapshots and screenshots)
 png = "0.18"
 # SVG toolbar icons rasterised in the UI (no text, fonts or raster images in icons)
-resvg = { version = "0.48", default-features = false }
+resvg = { version = "0.49", default-features = false }
 
 # ui: the same egui/eframe/egui-wgpu line as SolidCraft
 egui = "0.36"
