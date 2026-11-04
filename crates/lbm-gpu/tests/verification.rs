@@ -12,6 +12,8 @@
 
 #[path = "../../lbm/tests/common/mod.rs"]
 mod common;
+#[path = "../../lbm/tests/support/wall_balance.rs"]
+mod wall_balance;
 #[path = "verification/zones.rs"]
 mod zones;
 
@@ -2762,6 +2764,8 @@ fn paper_channel(lm: &LeeMoser, n: usize, c: f64, cpu: bool, held: Held) -> Opti
     let (mut profile, mut samples) = (vec![0.0; ny], 0usize);
     let (mut ub_sum, mut count) = (0.0, 0usize);
     let mut budget = Budget::new(ny);
+    let mut applied_sum = 0.0;
+    let mut applied_samples = 0usize;
     let mut skipped = 0usize;
     let lattice_nu = (setup.tau_plus - 0.5) / 3.0;
     let clock = std::time::Instant::now();
@@ -2820,6 +2824,11 @@ fn paper_channel(lm: &LeeMoser, n: usize, c: f64, cpu: bool, held: Held) -> Opti
         if k >= from {
             ub_sum += mean;
             count += 1;
+            // Existing momentum exchange, including reconstruction, sampled at the field
+            // cadence. No replacement by the model's inferred stress.
+            let applied: f64 = gpu.forces().unwrap().iter().map(|f| f[0]).sum();
+            applied_sum += applied * setup.force_scale() / (2.0 * lx * lz);
+            applied_samples += 1;
             if let Some(fields) = &fields {
                 for (cell, u) in fields.velocity.iter().enumerate() {
                     profile[grid.coords(cell)[1]] += u[0] * vs;
@@ -2874,6 +2883,15 @@ fn paper_channel(lm: &LeeMoser, n: usize, c: f64, cpu: bool, held: Held) -> Opti
     let cf_dean = 0.073 * (2.0 * ub_phys * lm.re_tau).powf(-0.25);
     let hoyas = lm.re_tau == 950.0;
     let cf_dns = 2.0 / if hoyas { HJ_950_BULK } else { lm.bulk }.powi(2);
+    let applied = applied_sum / applied_samples.max(1) as f64;
+    println!(
+        "  wall stress: requested {:.5}, applied impulse/area {applied:.5} ({applied_samples} samples every {} steps), carried body-force inference {g_mean:.5}; request/applied {:.4}",
+        requested * g_mean,
+        control,
+        requested * g_mean / applied
+    );
+    let validation = wall_balance::validate_drag(requested * cf_force, cf_force, cf_dns, 0.05);
+    println!("  carried-drag and stress-gap validation: {validation:?}; Dean remains a separate comparison");
     let e_lm = profile_error(&half, |y| lm.at(y));
     let e_paper = if hoyas { profile_error(&half, hj_950) } else { e_lm };
     println!(
@@ -2980,6 +2998,13 @@ fn study_malaspinas_and_sagaut_s_channel_against_lee_and_moser() {
             r.stop
         );
         println!("M&S eqs. 69/70, Re_τ {name} {n}/δ: C_f by the model's ⟨u_τ⟩ {:.4e}, E {:.2} %", r.cf_model, r.e_paper);
+        let reference = if name == "950" { 2.0 / HJ_950_BULK.powi(2) } else { cf_lm };
+        let validation = wall_balance::validate_drag(r.requested * cf, cf, reference, 0.05);
+        // Report this additional diagnostic without failing the study until the #785 wall
+        // repair: the original N10 case is known to fail both checks. The frozen N10 test in
+        // wall_balance asserts both failures, so either starting to pass requires review.
+        // Keep the paper-reproduction and in-range DNS checks below as regression gates.
+        println!("Re_τ {name} {n}/δ: carried-drag/stress-gap diagnostic (report only pending #785): {validation:?}");
         // The reproduction of the paper's own results at Re_τ 950 (Dean's bulk held, as theirs).
         if name == "950" && held == Held::Dean {
             let table = match n {
@@ -4203,5 +4228,50 @@ fn uniform_pressure_outlet_acceptance_sweep() {
                 }
             }
         }
+    }
+}
+
+/// Independent closed-box population budget, retaining the Musker numerics and force definition.
+#[test]
+fn wall_measurement_closes_cpu_and_gpu_momentum_budgets() {
+    use wall_balance::{closed_step, musker_request, population_momentum};
+    for (collision, streaming) in cases() {
+        let (setup, mut cpu) = coarse_channel(|p| wall_modelled(p, 0.1), collision);
+        let Some(mut device) = gpu(&cpu, streaming) else { return };
+        let area = 2.0 * (setup.grid.cells[0] * setup.grid.cells[2]) as f64;
+        let acceleration = cpu.acceleration();
+        let mut previous = [population_momentum(&cpu), device.population_momentum().unwrap()];
+        let mut worst = [0.0_f64; 2];
+        for _ in 0..20 {
+            cpu.advance(1).unwrap();
+            device.advance(1).unwrap();
+            let now = [population_momentum(&cpu), device.population_momentum().unwrap()];
+            let impulses = [cpu.forces().to_vec(), device.forces().unwrap()];
+            let mass = [cpu.mass(), device.mass().unwrap()];
+            let targets = device.wall_targets().unwrap();
+            let walls: Vec<_> = cpu.walls().unwrap().wall_cells().filter(|w| w.4.is_some()).collect();
+            let mut requests = [[0.0; 3]; 2];
+            for (&(cell, q, distance, velocity, _), &(target, _)) in walls.iter().zip(&targets) {
+                assert_eq!(velocity, [0.0; 3]);
+                let normal = fieldcraft_lbm::lattice::C[q].map(|v| f64::from(v) * 0.5 / distance);
+                let cpu_target = cpu.walls().unwrap().modelled(cell).unwrap().0;
+                for (b, target) in [cpu_target, target].into_iter().enumerate() {
+                    let request = musker_request(target, normal, distance, (setup.tau_plus - 0.5) / 3.0).unwrap();
+                    for a in 0..3 {
+                        requests[b][a] += request[a] / area;
+                    }
+                }
+            }
+            for b in 0..2 {
+                let wall = [0, 1, 2].map(|a| impulses[b].iter().map(|f| f[a]).sum());
+                let body = acceleration.map(|a| a * mass[b]);
+                let tolerance = if b == 0 { 1e-12 } else { 1e-5 };
+                let report = closed_step(previous[b], now[b], body, wall, requests[b], area, mass[b], tolerance, f64::EPSILON).unwrap();
+                worst[b] = worst[b].max(report.momentum_residual.iter().map(|r| r.abs()).fold(0.0, f64::max) / report.momentum_scale);
+                assert!(report.budget_ok, "{collision:?} {streaming:?} backend {b}: {report:?}");
+            }
+            previous = now;
+        }
+        println!("{collision:?} {streaming:?} worst scaled momentum residual: CPU {}, GPU {}", worst[0], worst[1]);
     }
 }

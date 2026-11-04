@@ -240,6 +240,8 @@ pub struct GpuFlow {
     groups: Vec<Group>,
     empty_obstacles: Vec<String>,
     steps_done: u64,
+    // Last uploaded uniform acceleration, used only by the momentum diagnostic.
+    diagnostic_acceleration: [f64; 3],
     /// With Smagorinsky's model: the fluid's own viscosity (lattice units), and the largest eddy
     /// viscosity of the last chunk over it.
     nu0: f64,
@@ -1234,6 +1236,7 @@ impl GpuFlow {
             groups: flow.groups().to_vec(),
             empty_obstacles: flow.empty_obstacles().to_vec(),
             steps_done: 0,
+            diagnostic_acceleration: flow.acceleration().map(|a| f64::from(a as f32)),
             nu0: (1.0 / omega_plus - 0.5) / 3.0,
             eddy_ratio: 0.0,
             exchange_cache: Some(vec![[0.0; 4]; group_count]),
@@ -1404,6 +1407,28 @@ impl GpuFlow {
         Ok(rows.as_chunks::<WALL_ROW>().0.iter().map(|r| ([f64::from(r[8]), f64::from(r[9]), f64::from(r[10])], f64::from(r[11]))).collect())
     }
 
+    /// Stored population momentum before any wall-target substitution. Diagnostic only;
+    /// currently restricted to closed, unheated boxes without zones or on-node boundaries.
+    /// Uses the same current AA/AB orientation as the normal moments readback.
+    pub fn population_momentum(&self) -> Result<[f64; 3]> {
+        if self.thermal.is_some() || self.zones.zones != 0 || self.on_node || self.open_count != 0 {
+            return Err(Error::Invalid("population momentum diagnostic supports only closed, unheated boxes without zones or on-node walls".into()));
+        }
+        self.compute_moments()?;
+        let values = self.read_f32(&self.moments, 4 * self.n)?;
+        let mut momentum = [0.0; 3];
+        for (cell, row) in values.as_chunks::<4>().0.iter().enumerate() {
+            if self.fluid.get(cell).copied().unwrap_or(false) {
+                for (a, value) in momentum.iter_mut().enumerate() {
+                    *value += f64::from(row[3]) * (f64::from(row[a]) - 0.5 * self.diagnostic_acceleration[a]);
+                }
+            }
+        }
+        if !momentum.iter().all(|v| v.is_finite()) {
+            return Err(Error::Invalid("non-finite population momentum".into()));
+        }
+        Ok(momentum)
+    }
     /// The moments of the current state into the moments buffer.
     fn compute_moments(&self) -> Result<()> {
         self.submit("lbm moments", &[(self.current, "cell_moments", self.cells)])
@@ -1552,6 +1577,7 @@ impl Backend for GpuFlow {
         }
         // `acc` follows the eight counts and the four rates: 48 bytes in.
         let acc = [a[0] as f32, a[1] as f32, a[2] as f32, if a != [0.0; 3] { 1.0 } else { 0.0 }];
+        self.diagnostic_acceleration = a.map(|v| f64::from(v as f32));
         for p in &self.params {
             self.queue.write_buffer(p, 48, &bytes_f32(&acc));
         }
