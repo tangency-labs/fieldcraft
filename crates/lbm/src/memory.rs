@@ -139,6 +139,7 @@ struct Shape {
     zone_count: u64,
     conducting: bool,
     open_faces: [bool; 6],
+    inlets: bool,
     surface: bool,
     baffle_bytes: u64,
 }
@@ -146,7 +147,7 @@ struct Shape {
 impl Shape {
     /// The shape of a run over `domain` keeping `frames` frames after the initial one, with or
     /// without a turbulence model, its wall damping and its wall model.
-    fn new(domain: &FluidDomain, frames: u64, turbulence: bool, damping: bool, wall_model: bool, gradients: bool) -> Result<Shape> {
+    fn new(domain: &FluidDomain, frames: u64, turbulence: bool, damping: bool, wall_model: bool, gradients: bool, trt: bool) -> Result<Shape> {
         let thermal = domain.thermal.as_ref();
         Ok(Shape {
             cells: domain.cells()?,
@@ -167,6 +168,9 @@ impl Shape {
                 * F32,
             conducting: thermal.is_some_and(|t| !t.solids.is_empty()),
             open_faces: fieldcraft_model::BoxFace::ALL.map(|f| is_open(domain.faces.get(f))),
+            inlets: trt
+                && domain.free_surface.is_none()
+                && fieldcraft_model::BoxFace::ALL.iter().any(|face| matches!(domain.faces.get(*face), FaceCondition::Velocity { .. })),
             surface: domain.free_surface.is_some(),
             baffle_bytes: {
                 let cells = domain.cells()?;
@@ -198,6 +202,7 @@ impl Memory {
             setup.van_driest.is_some(),
             setup.wall_model.is_some(),
             setup.collision == Collision::Hrr || setup.vreman > 0.0,
+            setup.collision == Collision::Trt,
         )?;
         Ok(Memory::from_shape(&shape, backend))
     }
@@ -212,7 +217,18 @@ impl Memory {
         };
         let (damping, wall_model) = turbulence.map_or((false, false), |t| (t.van_driest().is_some(), t.wall_model().is_some()));
         let gradients = *collision == Some(Collision::Hrr) || matches!(turbulence, Some(fieldcraft_model::Turbulence::Vreman { .. }));
-        Ok(Memory::from_shape(&Shape::new(domain, u64::from(*frames), turbulence.is_some(), damping, wall_model, gradients)?, backend))
+        Ok(Memory::from_shape(
+            &Shape::new(
+                domain,
+                u64::from(*frames),
+                turbulence.is_some(),
+                damping,
+                wall_model,
+                gradients,
+                collision.unwrap_or_default() == Collision::Trt,
+            )?,
+            backend,
+        ))
     }
 
     fn from_shape(s: &Shape, backend: Choice) -> Memory {
@@ -227,7 +243,11 @@ impl Memory {
             .map(|(c, open)| {
                 c.saturating_mul(
                     FACE_LINKS * size_of::<Link>() as u64
-                        + if open { (size_of::<OpenCell>() + size_of::<[f64; crate::lattice::Q]>()) as u64 } else { 0 },
+                        + if open {
+                            (size_of::<OpenCell>() + size_of::<[f64; crate::lattice::Q]>()) as u64
+                                // Stencils, corrections/filter scratch and construction lookup.
+                                + if s.inlets { (size_of::<crate::inlet::Stencil>() + size_of::<[f64; 3]>() + size_of::<(u32, u32)>()) as u64 } else { 0 }
+                        } else { 0 },
                 )
             })
             .fold(0, u64::saturating_add);
@@ -263,13 +283,12 @@ impl Memory {
         let prepared = per_cell(flow).saturating_add(boundary).saturating_add(s.baffle_bytes);
         // Count every open face conservatively (edges may occur more than once). The pressure
         // rows and their upload bytes coexist on the host while the device buffers are created.
-        let outlet_staging = face_cells
-            .iter()
-            .zip(s.open_faces)
-            .filter(|(_, open)| *open)
-            .fold(0u64, |sum, (cells, _)| sum.saturating_add(*cells))
-            .saturating_mul(2 * DEVICE_OUTLET_WORDS as u64 * F32);
+        // With TRT inlet reconstruction, velocity cells take a row as well: counted here too.
+        let open_cells = face_cells.iter().zip(s.open_faces).filter(|(_, open)| *open).fold(0u64, |sum, (cells, _)| sum.saturating_add(*cells));
+        let outlet_staging = open_cells.saturating_mul(2 * DEVICE_OUTLET_WORDS as u64 * F32);
         let zone_cells = if s.zones { per_cell(DEVICE_ZONE_CELL) } else { 0 };
+        // The inlet stencils appended to the open-cell words, including upload copies.
+        let inlet_staging = if s.inlets { open_cells.saturating_mul(3 * size_of::<crate::inlet::Stencil>() as u64) } else { 0 };
         let (setup, state, readback) = match backend {
             // The CPU flow allocates its streaming targets on the first step and keeps
             // everything to the end.
@@ -282,6 +301,7 @@ impl Memory {
                 prepared
                     .saturating_add(outlet_staging)
                     .saturating_add(per_cell(DEVICE_STAGING + if s.damping { DEVICE_DAMPING } else { 0 }))
+                    .saturating_add(inlet_staging)
                     .saturating_add(s.zone_data.saturating_add(zone_cells).saturating_mul(3)),
                 per_cell(2 * RESULT).saturating_add(s.zone_data).saturating_add(zone_cells),
                 per_cell(READBACK + DEVICE_READBACK + if s.heat { READBACK_HEAT + DEVICE_READBACK_HEAT } else { 0 })
