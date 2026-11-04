@@ -724,7 +724,7 @@ impl Flow {
         if on_node {
             let refuse = |what: String| {
                 Err(Error::Invalid(format!(
-                    "not supported yet: Han et al.'s on-node wall-function bounce (`spalding_bounce`) {what}; `spalding_bounce_halfway` may run there"
+                    "not supported yet: Han et al.'s on-node wall-function bounce (`spalding_bounce`) {what}; choose another supported wall treatment"
                 )))
             };
             if let Some(face) = BoxFace::ALL.iter().find(|f| matches!(domain.faces.get(**f), FaceCondition::MovingWall { .. })) {

@@ -250,7 +250,9 @@ fn walled_fan_channel(wall: WallModel, collision: Collision) -> (Setup, Flow) {
     if let Procedure::Fluid { turbulence, .. } = &mut p {
         *turbulence = Some(Turbulence::Smagorinsky { constant: 0.1, prandtl: 0.9, van_driest: None, wall_model: Some(wall) });
     }
-    prepare(&model(1.0, 1.0 / 180.0, d, p), &[])
+    let m = model(1.0, 1.0 / 180.0, d, p);
+    // Historical parity diagnostic only; production setup refuses halfway (#794).
+    if wall == WallModel::SpaldingBounceHalfway { prepare_halfway_diagnostic(&m, &[]) } else { prepare(&m, &[]) }
 }
 
 /// Fans and porous zones share the flag buffer with the wall treatments' rows (zones.rs keeps

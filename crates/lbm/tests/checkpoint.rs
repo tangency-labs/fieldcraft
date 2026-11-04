@@ -314,7 +314,7 @@ fn wall_channel(collision: Collision, sigma: Option<HrrSigma>, turbulence: Turbu
 }
 
 /// #711's wall treatments and #696's collisions keep their per-step state across a restart: the
-/// wall model (Musker) with Van Driest's damping under MRT, the halfway wall-function bounce, the
+/// wall model (Musker) with Van Driest's damping under MRT, the
 /// on-node bounce under the hybrid collision with a dynamic σ, and Vreman's model with the wall
 /// model under the regularised collision. A resumed finished run reports the same wall y⁺.
 #[test]
@@ -322,7 +322,6 @@ fn wall_models_and_every_collision_resume_bit_for_bit() {
     let smagorinsky = |van_driest, wall_model| Turbulence::Smagorinsky { constant: 0.1, prandtl: 0.9, van_driest, wall_model };
     let cases = [
         (Collision::Mrt, None, smagorinsky(Some(26.0), Some(WallModel::Musker)), false),
-        (Collision::Trt, None, smagorinsky(None, Some(WallModel::SpaldingBounceHalfway)), false),
         (Collision::Hrr, Some(HrrSigma::Dynamic), smagorinsky(Some(26.0), Some(WallModel::SpaldingBounce)), true),
         (Collision::Regularized, None, Turbulence::Vreman { constant: 0.18, prandtl: 0.9, wall_model: Some(WallModel::Musker) }, false),
     ];

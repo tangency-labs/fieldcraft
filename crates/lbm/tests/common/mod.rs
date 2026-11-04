@@ -450,3 +450,28 @@ pub fn exact_rate(k: f64, tau: f64, sigma: f64) -> f64 {
     let d = delta.scale(sigma);
     -dominant_eigenvalue([a, b, cc, d]).abs().ln()
 }
+
+/// Historical halfway-wall evidence only. Production solves reject this model (#794).
+/// Build a supported SGS setup without a wall model, then explicitly restore the old test
+/// setting. This helper is never used by the normal `prepare` or any production entry point.
+#[allow(clippy::panic)] // A malformed test fixture, never a production setup path.
+pub fn halfway_diagnostic_setup(model: &Model, obstacles: &[Obstacle]) -> Setup {
+    use fieldcraft_model::{Turbulence, WallModel};
+    let mut m = model.clone();
+    let mut step = m.steps().first().unwrap().clone();
+    let Procedure::Fluid { turbulence: Some(t), .. } = &mut step.procedure else { panic!("expected a turbulent fluid diagnostic") };
+    let (Turbulence::Smagorinsky { wall_model, .. } | Turbulence::Vreman { wall_model, .. }) = t;
+    assert_eq!(*wall_model, Some(WallModel::SpaldingBounceHalfway));
+    *wall_model = None;
+    m.replace_step(step).unwrap();
+    let mut setup = Setup::new(&m, None, obstacles, &Limits::default()).unwrap();
+    setup.wall_model = Some(WallModel::SpaldingBounceHalfway);
+    setup
+}
+
+/// Construct the explicitly unsupported historical diagnostic, never a production solve.
+pub fn prepare_halfway_diagnostic(model: &Model, obstacles: &[Obstacle]) -> (Setup, Flow) {
+    let setup = halfway_diagnostic_setup(model, obstacles);
+    let flow = Flow::new(&setup, obstacles).unwrap();
+    (setup, flow)
+}

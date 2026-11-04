@@ -490,10 +490,15 @@ impl Setup {
     pub fn new(model: &Model, step: Option<&str>, obstacles: &[Obstacle], limits: &Limits) -> Result<Setup> {
         // The model checked the domain and its material when they were defined.
         let (s, domain) = fluid_step(model, step)?;
-        let domain = domain.clone();
         let Procedure::Fluid { end_time, steps, time_step, frames, magic, sigma, collision, turbulence, steady, .. } = &s.procedure else {
             return Err(Error::Invalid(format!("step `{}` is not a fluid step", s.name)));
         };
+        if turbulence.as_ref().is_some_and(|t| t.wall_model() == Some(WallModel::SpaldingBounceHalfway)) {
+            return Err(Error::Invalid(
+                "wall_model `spalding_bounce_halfway` is disabled because its wall-row checkerboard mode grows (#794); remove `wall_model` for resolved no-slip walls, or explicitly choose and validate another wall treatment. `spalding_bounce` uses a different, on-node wall location".into(),
+            ));
+        }
+        let domain = domain.clone();
         let (smagorinsky, vreman, turbulent_prandtl, van_driest, wall_model) = match turbulence {
             None => (0.0, 0.0, 0.9, None, None),
             Some(t) => {
