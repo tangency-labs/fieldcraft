@@ -202,6 +202,10 @@ impl Memory {
                 )
             })
             .fold(0, u64::saturating_add);
+        // The CPU flow's shares of a batch of those links in their groups' forces, made on the
+        // first step.
+        let links = face_cells.iter().map(|c| c.saturating_mul(FACE_LINKS)).fold(0, u64::saturating_add);
+        let link_terms = links.min(crate::flow::LINK_BATCH as u64).saturating_mul(size_of::<[f64; 3]>() as u64);
         let mut flow = POPULATIONS + FLAGS;
         let mut targets = POPULATIONS;
         if s.heat {
@@ -234,7 +238,7 @@ impl Memory {
             // The CPU flow allocates its streaming targets on the first step and keeps
             // everything to the end.
             Choice::Cpu => {
-                let state = prepared.saturating_add(per_cell(targets + gradients)).saturating_add(per_cell(RESULT));
+                let state = prepared.saturating_add(per_cell(targets + gradients)).saturating_add(per_cell(RESULT)).saturating_add(link_terms);
                 (state, state, per_cell(READBACK + if s.heat { READBACK_HEAT } else { 0 }))
             }
             // The device backend copies the flow up, and the flow is dropped before the steps.
