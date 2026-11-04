@@ -187,7 +187,8 @@ fn the_wall_models_run_with_the_model() {
             // The forced channel takes a shorter time step for its Mach number.
             let (dt, nu) = if couette { (dx, 1e-5) } else { (0.1 * dx, 1e-4) };
             let p = with(collide(300.0 * dt, dt, None, collision), Some(t));
-            let (setup, mut flow) = prepare(&model(1.0, nu, channel(n, couette), p), &[]);
+            let m = model(1.0, nu, channel(n, couette), p);
+            let (setup, mut flow) = if wall == WallModel::SpaldingBounceHalfway { prepare_halfway_diagnostic(&m, &[]) } else { prepare(&m, &[]) };
             assert_eq!((flow.wall_model(), flow.wall_bounce()), (wall == WallModel::Musker, wall == WallModel::SpaldingBounceHalfway));
             run_all(&setup, &mut flow);
             let u: Vec<f64> = (0..n).map(|j| flow.moments(j).unwrap().1[0] * setup.velocity_scale()).collect();

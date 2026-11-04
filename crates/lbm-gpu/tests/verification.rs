@@ -1096,8 +1096,12 @@ fn channel_at(re_tau: f64, turbulence: impl Fn(Procedure) -> Procedure, collisio
     }
     d.acceleration = [1.0, 0.0, 0.0];
     let dt = 0.1 * dx / ub;
-    let m = model(1.0, 1.0 / re_tau, d, turbulence(collide(150.0 * dt, dt, None, collision)));
-    let (setup, mut flow) = prepare(&m, &[]);
+    let p = turbulence(collide(150.0 * dt, dt, None, collision));
+    let legacy_halfway = matches!(&p, Procedure::Fluid { turbulence: Some(t), .. }
+        if t.wall_model() == Some(fieldcraft_model::WallModel::SpaldingBounceHalfway));
+    let m = model(1.0, 1.0 / re_tau, d, p);
+    // Historical parity diagnostic only; production setup refuses this wall model (#794).
+    let (setup, mut flow) = if legacy_halfway { prepare_halfway_diagnostic(&m, &[]) } else { prepare(&m, &[]) };
     let grid = *flow.grid();
     let to_lattice = 1.0 / setup.velocity_scale();
     let (kx, kz) = (2.0 * PI / lx, 2.0 * PI / lz);

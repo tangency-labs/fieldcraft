@@ -332,7 +332,8 @@ fn perturbed_channel(collision: Collision, steps: f64, wall: WallModel) -> (Setu
     if let Procedure::Fluid { turbulence: Some(Turbulence::Smagorinsky { wall_model, .. }), .. } = &mut p {
         *wall_model = Some(wall);
     }
-    let (setup, mut flow) = prepare(&model(1.0, 1.0 / re_tau, d, p), &[]);
+    let m = model(1.0, 1.0 / re_tau, d, p);
+    let (setup, mut flow) = if wall == WallModel::SpaldingBounceHalfway { prepare_halfway_diagnostic(&m, &[]) } else { prepare(&m, &[]) };
     let grid = *flow.grid();
     let to_lattice = 1.0 / setup.velocity_scale();
     let (kx, kz) = (2.0 * PI / lx, 2.0 * PI / lz);
@@ -485,7 +486,8 @@ fn the_wall_function_bounce_refuses_a_moving_wall() {
     if let Procedure::Fluid { turbulence: Some(Turbulence::Smagorinsky { wall_model, .. }), .. } = &mut p {
         *wall_model = Some(WallModel::SpaldingBounceHalfway);
     }
-    let setup = Setup::new(&model(1.0, 0.01, d, p), None, &[], &Limits::default()).unwrap();
+    // Retain the historical lower-level moving-wall refusal under an explicit test override.
+    let setup = halfway_diagnostic_setup(&model(1.0, 0.01, d, p), &[]);
     let err = Flow::new(&setup, &[]).unwrap_err().to_string();
     assert!(err.contains("spalding_bounce_halfway") && err.contains("y_max"), "{err}");
 }

@@ -57,7 +57,7 @@ Han, Ooka & Kikumoto's wall-function bounce, as their paper sets it up:
 | `turbulence.constant` | 0.08–0.1 | Smagorinsky's C. Malaspinas & Sagaut use 0.08, Han, Ooka & Kikumoto 0.1. |
 | `turbulence.wall_model` | `"musker"` | Malaspinas & Sagaut: rebuild the cells next to no-slip walls from Musker's profile. |
 | | `"spalding_bounce"` | Han, Ooka & Kikumoto's eq. 14, on-node: the outermost cell layer at each plane no-slip box face is the wall. The box is periodic along the walls; no obstacles, moving walls or heat. |
-| | `"spalding_bounce_halfway"` | Our halfway variant of the wall-function bounce, kept for the record below. It is not the paper's scheme and amplifies an odd–even mode of the wall rows; don't use it. |
+| | `"spalding_bounce_halfway"` | Historical halfway variant, retained when reading old files but refused at solve setup (#794): its wall-row checkerboard grows. Select a supported treatment explicitly; the on-node variant changes the wall location. |
 | | omitted | The bounce-back alone. |
 | `turbulence.van_driest` | 26 or omit | Van Driest's damping. Han, Ooka & Kikumoto use it with their wall model; Malaspinas & Sagaut's model replaces it, so don't combine the two. |
 | `collision` | `"mrt"`, `"hrr"` | Malaspinas & Sagaut is validated with `"mrt"` (d'Humières et al. 2002). The wall-function bounce was run with `"mrt"` and `"hrr"` ([Collision operators](collision.md)). |
@@ -290,8 +290,9 @@ step ([GPU backend](gpu.md)).
 **Our halfway variant** (`spalding_bounce_halfway`) was implemented first, from a halfway reading
 of the scheme: the wall half a cell outside the outermost cells, reflected specularly, and each
 wall cell's own Spalding stress at y = Δ/2 taken off its inward diagonals after streaming. It is
-not Han, Ooka & Kikumoto's scheme. It is kept only so the record below can be rerun, and its
-removal is pending.
+not Han, Ooka & Kikumoto's scheme. Production solves now refuse it before allocating solver
+state (#794). The historical numerical record remains below; the small diagnostic sweeps use
+an explicit test-only setup override.
 
 ### Verification: the paper's channel on MRT
 
@@ -380,6 +381,9 @@ hybrid (σ 0.99), MRT and TRT collisions and both aimed u⁺ (the first node's u
 **Eq. 14 damps the mode** with every collision and τ̄; the halfway variant amplifies it, faster
 as τ̄ rises. The trunk keeps one case (on-node, regularised, τ̄ 0.5015, u⁺ 5, rate ≤ 0); the sweep
 is the heavy test `the_odd_even_mode_of_the_wall_rows_across_forms_collisions_and_tau`.
+It uses an explicit test-only override for the disabled halfway model; it is not a supported
+solve path. Old model files still retain their exact wall selection and receive an actionable
+error at solve setup rather than silently moving the wall to an on-node position.
 
 ### Verification: the paper's channel on the hybrid collision
 
@@ -427,7 +431,9 @@ FIELDCRAFT_STUDY_RECORDS=<dir> \
 ```
 
 `FIELDCRAFT_HAN_SETUP` takes a comma-separated list or `all` (`paper` when unset).
-`FIELDCRAFT_HAN_WALL=halfway` runs the WFB cases with the halfway variant. `FIELDCRAFT_HAN_START`
+`FIELDCRAFT_HAN_WALL=halfway` now reports a setup refusal. The historical halfway
+mode sweep remains available only through an explicit test-only setup override; production
+solves have no bypass. `FIELDCRAFT_HAN_START`
 and `FIELDCRAFT_HAN_END` (δ/u_τ, default 20 and 150) shorten a smoke test, which is not a result;
 `FIELDCRAFT_HAN_CPU=1` runs on the CPU in f64. Every run records
 (`<dir>/han-<setup>-<case>-<wall>.json`), from a velocity readback every 0.05 δ/u_τ:

@@ -1,6 +1,7 @@
 //! The stationary toy: the numerical linear analysis of the streamwise odd-even (k_x = π) mode of
 //! the wall rows under the wall-function bounces, Han et al.'s on-node eq. 14
-//! (`spalding_bounce`) and our halfway variant (`spalding_bounce_halfway`).
+//! (`spalding_bounce`) and the historical halfway variant (`spalding_bounce_halfway`).
+//! The latter is refused in production; only this diagnostic explicitly overrides the setup.
 //!
 //! In channel runs at τ̄ ≈ 0.50015 the halfway form grew an x-checkerboard of u_x in its wall
 //! rows (about 3e-5 per step) until the run broke. Here a thin periodic box, 16 × (rows) × 2 cells
@@ -90,7 +91,12 @@ fn toy(wall: WallModel, collision: Collision, tau: f64, u_plus: f64, steps: u64)
             *sigma = Some(HrrSigma::Value(0.99));
         }
     }
-    let mut setup = Setup::new(&model(1.0, nu, dom, p), None, &[], &Limits::default()).unwrap();
+    let m = model(1.0, nu, dom, p);
+    let mut setup = if wall == WallModel::SpaldingBounceHalfway {
+        halfway_diagnostic_setup(&m, &[])
+    } else {
+        Setup::new(&m, None, &[], &Limits::default()).unwrap()
+    };
     assert!((setup.tau_plus - tau).abs() < 1e-12, "τ {}", setup.tau_plus);
     // The wall treatment alone: no subgrid model.
     setup.smagorinsky = 0.0;
@@ -184,6 +190,9 @@ fn the_odd_even_mode_of_the_wall_rows_across_forms_collisions_and_tau() {
             for tau in [0.50015, 0.5015, 0.505, 0.55, 0.8] {
                 for aim in [5.0, 11.0] {
                     let t = toy(wall, collision, tau, aim, steps);
+                    if wall == WallModel::SpaldingBounce {
+                        assert!(t.broke.is_none() && t.rate <= 0.0, "on-node control: {collision:?} tau={tau} aim={aim}: {t:?}");
+                    }
                     let growth = match (t.broke, t.decayed) {
                         (Some(k), _) => format!("{:+.3e} (broke at step {k})", t.rate),
                         (None, Some(k)) => format!("{:+.3e} (below 1e-14 at step {k})", t.rate),

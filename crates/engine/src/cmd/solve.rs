@@ -1949,6 +1949,32 @@ pub(crate) mod tests {
         s.run_script(&script).unwrap();
     }
 
+    #[test]
+    fn fluid_commands_refuse_the_disabled_halfway_wall_without_changing_the_model() {
+        use fieldcraft_model::{Procedure, Turbulence, WallModel};
+        let mut s = Session::default();
+        couette(&mut s);
+        let mut step = s.model.step("Shear").unwrap().clone();
+        if let Procedure::Fluid { turbulence, .. } = &mut step.procedure {
+            *turbulence =
+                Some(Turbulence::Smagorinsky { constant: 0.1, prandtl: 0.9, van_driest: None, wall_model: Some(WallModel::SpaldingBounceHalfway) });
+        }
+        s.model.replace_step(step).unwrap();
+        let before = s.model.clone();
+        for backend in ["cpu", "gpu"] {
+            let error = s.execute("solve.fluid", &json!({"backend": backend})).unwrap_err().to_string();
+            assert!(error.contains("spalding_bounce_halfway") && error.contains("disabled"), "{error}");
+            assert_eq!(s.model, before);
+            assert_eq!(s.solved_steps().count(), 0);
+        }
+        let path = std::env::temp_dir().join(format!("fieldcraft-refused-halfway-{}.restart", std::process::id()));
+        assert!(!path.exists());
+        let error = s.execute("solve.fluid", &json!({"backend": "cpu", "checkpoint": path, "checkpoint_every": 1})).unwrap_err().to_string();
+        assert!(error.contains("spalding_bounce_halfway") && error.contains("disabled"), "{error}");
+        assert!(!path.exists(), "refused solve must not create a checkpoint");
+        assert_eq!(s.model, before);
+    }
+
     /// A channel filled by a velocity inlet behind a free surface: the solve reports the mass
     /// balance, a line reads the fill level, and `front` gives the liquid's extent and when it
     /// reached a point; hostile parameters are refused.
