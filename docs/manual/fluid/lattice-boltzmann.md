@@ -5,7 +5,7 @@ less the cells inside obstacle bodies, and the force the fluid exerts on every w
 internal and external flows at low Mach number: channels and ducts, flow past parts, cavities,
 electronics cooling with heat, fans and vents. The method is the lattice Boltzmann equation on
 the D3Q19 velocity set with a two-relaxation-time, recursive regularised or multiple-relaxation-time
-collision, Guo forcing, halfway bounce-back walls and Zou–He open boundaries.
+collision, Guo forcing, halfway bounce-back walls, Zou–He velocity inlets and extrapolated pressure faces.
 
 | | |
 |---|---|

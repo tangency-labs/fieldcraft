@@ -57,8 +57,9 @@
 //! No code of any lattice Boltzmann package was read; this is written from the papers.
 //!
 //! # Open boundaries
-//! A pressure outlet under this collision holds the equilibrium of its density and normal
-//! velocity ([`crate::flow`]); velocity inlets keep Zou and He's rule.
+//! Uniform pressure outlets extrapolate the inner non-equilibrium stress ([`crate::outlet`]).
+//! Without an inner fluid cell, and on convective backflow, the local closure holds equilibrium.
+//! Velocity inlets keep Zou and He's rule.
 
 use crate::lattice::{C, Q, W};
 

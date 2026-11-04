@@ -4152,3 +4152,60 @@ fn study_taylor_green_vortex_dissipation() {
         );
     }
 }
+
+/// #819: constant flow solves the unforced equations, including the pressure boundary.
+/// Every axis/sign on the CPU; the GPU checks both streaming layouts and all collisions.
+fn uniform_pressure_departure(collision: Collision, streaming: Streaming, tau: f64, size: [usize; 3], steps: u64) -> Option<f64> {
+    let mut d = domain([0.0; 3], size.map(|n| n as f64), 1.0);
+    d.faces.x_min = FaceCondition::Velocity { velocity: [0.05, 0.0, 0.0], profile: Profile::Uniform };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+    d.faces.y_min = PERIODIC;
+    d.faces.y_max = PERIODIC;
+    d.faces.z_min = PERIODIC;
+    d.faces.z_max = PERIODIC;
+    d.initial_velocity = [0.05, 0.0, 0.0];
+    let mut p = collide(steps as f64, 1.0, None, collision);
+    if tau < 0.505
+        && let Procedure::Fluid { turbulence, .. } = &mut p
+    {
+        *turbulence = Some(Turbulence::Smagorinsky { constant: 0.1, prandtl: 0.9, van_driest: None, wall_model: None });
+    }
+    let (_, flow) = prepare(&model(1.0, (tau - 0.5) / 3.0, d, p), &[]);
+    let mut gpu = gpu(&flow, streaming)?;
+    let mut worst = 0.0f64;
+    // Read at regular intervals, so a transient failure cannot hide behind the final field.
+    for _ in 0..steps / 100 {
+        gpu.advance(100).unwrap();
+        let fields = gpu.fields().unwrap();
+        for (rho, u) in fields.density.iter().zip(&fields.velocity) {
+            worst = worst.max((rho - 1.0).abs()).max((u[0] - 0.05).abs()).max(u[1].abs()).max(u[2].abs());
+        }
+    }
+    println!("uniform pressure {collision:?} {streaming:?} tau={tau} size={size:?} steps={steps}: {worst:.4e}");
+    Some(worst)
+}
+
+#[test]
+fn uniform_pressure_outlet_does_not_amplify_roundoff() {
+    for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+        if let Some(worst) = uniform_pressure_departure(Collision::Trt, streaming, 0.518, [4, 1, 1], 2000) {
+            assert!(worst <= 1e-5, "{worst}");
+        }
+    }
+}
+
+#[test]
+#[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+fn uniform_pressure_outlet_acceptance_sweep() {
+    for collision in [Collision::Trt, Collision::Mrt, Collision::Regularized, Collision::Hrr] {
+        for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+            for tau in [0.5001, 0.505, 0.518, 0.55] {
+                for size in [[4, 1, 1], [16, 8, 2]] {
+                    if let Some(worst) = uniform_pressure_departure(collision, streaming, tau, size, 30_000) {
+                        assert!(worst <= 1e-5, "{worst}");
+                    }
+                }
+            }
+        }
+    }
+}

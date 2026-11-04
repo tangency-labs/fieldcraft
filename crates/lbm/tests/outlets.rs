@@ -427,17 +427,18 @@ fn schafer_turek_2d2_does_not_depend_on_the_outlet_distance() {
 
 /// Schäfer–Turek 2D-2 on a coarser grid: 10 cells across the cylinder (Δx = 0.01, Δt = 0.05 Δx /
 /// 1.5, τ = 0.51), 1024 facets, the outlet at l = 1, started at the mean inlet speed, 8 s. The
-/// uniform outlet diverges when the shed vortices reach it (measured: step 6699; at l = 2.2 step
-/// 21055; started from rest instead, steps 3889 and 5471), the convective one runs to the end and
-/// sheds at the benchmark's frequency.
+/// legacy local uniform outlet diverged when the shed vortices reached it (step 6699).
+/// Both outlets now complete 24000 steps after the pressure extrapolation repair (#819).
+/// The convective outlet also retains its benchmark frequency bound; survival alone does not
+/// establish the uniform outlet's wake accuracy.
 #[test]
 #[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
-fn a_coarse_cylinder_at_re_100_runs_with_a_convective_outlet_where_the_uniform_one_diverges() {
+fn a_coarse_cylinder_at_re_100_runs_with_uniform_and_convective_outlets() {
     let (um, dx, end) = (1.5, 0.01, 8.0);
     let run = |outflow| channel(1.0, dx, um, outflow, fluid(end, 0.05 * dx / um, 1), 1024, true);
     let uniform = run(Outflow::Uniform);
     println!("coarse 2D-2, uniform outlet: {:?}", uniform.as_ref().map(|r| r.stats.steps).map_err(|e| e.to_string()));
-    assert!(matches!(uniform, Err(fieldcraft_lbm::Error::Unstable(_))));
+    assert_eq!(uniform.unwrap().stats.steps, 24_000);
     let r = run(Outflow::Convective).unwrap();
     let side = r.forces.iter().find(|f| f.name == "side").unwrap();
     let from = r.history_times.iter().position(|t| *t >= 0.6 * end).unwrap();

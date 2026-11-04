@@ -643,6 +643,15 @@ JCP 232(1):100–117, 2013, DOI [10.1016/j.jcp.2012.07.023](https://doi.org/10.1
 - **Limits.** Defined for flat, axis-aligned boundaries; corners need special treatment; unstable at high Re outlets —
   use regularised or convective/sponge outlets there.
 
+**C3.3a Guo, Zheng & Shi 2002, non-equilibrium extrapolation.** **Verdict: build on (uniform-pressure outlets).**
+- **Citation.** Z. Guo, C. Zheng, B. Shi, *Non-equilibrium extrapolation method for velocity and pressure
+  boundary conditions in the lattice Boltzmann method*, Chinese Physics 11:366–374 (2002).
+  DOI [10.1088/1009-1963/11/4/310](https://doi.org/10.1088/1009-1963/11/4/310).
+- **Used as.** `crates/lbm/src/outlet.rs` and the GPU pressure-preparation pass extrapolate the inner
+  non-equilibrium populations and normal velocity while prescribing boundary density and zero
+  tangential velocity. Implementation is independent, from the published method; no solver code
+  was used. Constant-flow sweeps and the pressure-channel controls test the closure.
+
 **C3.4 Orlanski 1976, convective outflow condition.** **Verdict: build on (convective outlets, #599).**
 - **Citation.** I. Orlanski, *A simple boundary condition for unbounded hyperbolic flows*, J. Comput. Phys.
   21(3):251–269, 1976 (DOI not checked).

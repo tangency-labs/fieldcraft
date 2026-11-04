@@ -78,6 +78,10 @@ const DEVICE_DAMPING: u64 = 2 * 2 * F32;
 /// Per cell of the GPU backend's population buffer (one buffer, single precision).
 pub const DEVICE_POPULATIONS: u64 = Q as u64 * F32;
 
+/// Words per pressure cell staged by the GPU backend: 19 populations and a validity flag.
+/// Convective cells use the same row for their smaller history/scratch state.
+pub const DEVICE_OUTLET_WORDS: usize = 20;
+
 /// Words in a GPU fan/porous header, appended to its flags buffer (lbm-gpu/zones.rs).
 pub const DEVICE_ZONE_WORDS: usize = 20;
 /// Per cell with fans or porous zones, in the GPU flags buffer: its zone, and at most one entry
@@ -240,6 +244,14 @@ impl Memory {
             flow += SURFACE;
         }
         let prepared = per_cell(flow).saturating_add(boundary);
+        // Count every open face conservatively (edges may occur more than once). The pressure
+        // rows and their upload bytes coexist on the host while the device buffers are created.
+        let outlet_staging = face_cells
+            .iter()
+            .zip(s.open_faces)
+            .filter(|(_, open)| *open)
+            .fold(0u64, |sum, (cells, _)| sum.saturating_add(*cells))
+            .saturating_mul(2 * DEVICE_OUTLET_WORDS as u64 * F32);
         let zone_cells = if s.zones { per_cell(DEVICE_ZONE_CELL) } else { 0 };
         let (setup, state, readback) = match backend {
             // The CPU flow allocates its streaming targets on the first step and keeps
@@ -251,6 +263,7 @@ impl Memory {
             // The device backend copies the flow up, and the flow is dropped before the steps.
             Choice::Device => (
                 prepared
+                    .saturating_add(outlet_staging)
                     .saturating_add(per_cell(DEVICE_STAGING + if s.damping { DEVICE_DAMPING } else { 0 }))
                     .saturating_add(s.zone_data.saturating_add(zone_cells).saturating_mul(3)),
                 per_cell(2 * RESULT).saturating_add(s.zone_data).saturating_add(zone_cells),
