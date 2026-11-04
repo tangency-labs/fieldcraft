@@ -104,6 +104,8 @@ fn a_plug_fills_a_frictionless_channel_at_the_inlet_speed() {
     let dt = 0.05 * dx / u; // lattice speed 0.05
     let end = 0.6 / u; // the front at x = 0.6
     let m = model(1.0, 1e-3, d, step(end, dt, None));
+    let (_, flow) = prepare(&m, &[]);
+    assert!(flow.inlet_stencils().is_empty(), "a moving liquid/gas interface is not an inner-fluid stencil");
     let r = solve_fluid(&m, None, &[], &Limits::default()).unwrap();
     let fs = r.stats.free_surface.unwrap();
     println!("plug: {fs:?}");
