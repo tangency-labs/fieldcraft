@@ -103,7 +103,15 @@ jobs:
           shared-key: ci
           # Release runs are rare: only release-branch runs keep a cache, so dry runs don't evict CI's.
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      # As ci.yml's gate: the GPU suites run on lavapipe (software Vulkan). Without it they fall
+      # back to llvmpipe's OpenGL, whose EGL setup fails when tests run in parallel.
+      - name: Software GPU (lavapipe), so headless snapshots run the GPU pipeline
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends mesa-vulkan-drivers libvulkan1
       - run: cargo xtask ci
+        env:
+          # The drawing tests run on lavapipe and fail, instead of skipping, without it.
+          FIELDCRAFT_GPU: software
+          FIELDCRAFT_REQUIRE_GPU: "1"
 
   verify-heavy:
     name: Verify (cargo xtask test --heavy)
