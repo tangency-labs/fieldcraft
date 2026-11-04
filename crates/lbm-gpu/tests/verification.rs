@@ -21,6 +21,7 @@ use std::sync::{Mutex, MutexGuard};
 use common::*;
 use fieldcraft_gpu::select::{Policy, gpu_required};
 use fieldcraft_lbm::backend::Backend;
+use fieldcraft_lbm::statistics::Blocks;
 use fieldcraft_lbm::{Flow, Setup};
 use fieldcraft_lbm_gpu::{GpuFlow, Options, Streaming};
 use fieldcraft_model::{
@@ -2462,114 +2463,6 @@ fn diagnose_the_wall_model_in_the_channel() {
     }
 }
 
-/// Non-overlapping block means of a statistically steady signal sampled at a fixed interval: the
-/// mean over the completed blocks and its 95 % interval, 2 s / √B with s the block means' standard
-/// deviation and B their number, which holds while the blocks are longer than the signal's
-/// correlation time (the block means' lag-1 correlation, reported, stays small then). Each sample
-/// counts once, unlike a mean of running means, which weighs the early samples more and can make
-/// a drift look settled (bluecmd's review on #664).
-#[derive(Debug, Clone, Default)]
-struct Blocks {
-    len: usize,
-    sum: f64,
-    filled: usize,
-    means: Vec<f64>,
-}
-
-impl Blocks {
-    fn new(len: usize) -> Blocks {
-        Blocks { len: len.max(1), ..Blocks::default() }
-    }
-
-    fn push(&mut self, v: f64) {
-        self.sum += v;
-        self.filled += 1;
-        if self.filled == self.len {
-            self.means.push(self.sum / self.len as f64);
-            (self.sum, self.filled) = (0.0, 0);
-        }
-    }
-
-    /// The mean over the completed blocks (NaN before the first).
-    fn mean(&self) -> f64 {
-        self.means.iter().sum::<f64>() / self.means.len() as f64
-    }
-
-    /// The half-width of the mean's 95 % interval (infinite with fewer than two blocks).
-    fn half_width(&self) -> f64 {
-        let b = self.means.len();
-        if b < 2 {
-            return f64::INFINITY;
-        }
-        let m = self.mean();
-        let var = self.means.iter().map(|x| (x - m) * (x - m)).sum::<f64>() / (b - 1) as f64;
-        2.0 * (var / b as f64).sqrt()
-    }
-
-    /// The lag-1 correlation of the block means (0 with fewer than three blocks).
-    fn lag1(&self) -> f64 {
-        let b = self.means.len();
-        if b < 3 {
-            return 0.0;
-        }
-        let m = self.mean();
-        let var: f64 = self.means.iter().map(|x| (x - m) * (x - m)).sum();
-        let cov: f64 = self.means.windows(2).map(|w| (w[0] - m) * (w[1] - m)).sum();
-        if var > 0.0 { cov / var } else { 0.0 }
-    }
-
-    /// Whether the block means are close enough to independent for the interval: the lag-1
-    /// correlation within ±0.5. Both signs count: alternating blocks (a strongly negative
-    /// correlation) are as dependent as drifting ones and can show a tiny interval about a
-    /// biased mean (#795).
-    fn decorrelated(&self) -> bool {
-        self.lag1().abs() < 0.5
-    }
-}
-
-/// The block means of a known sequence: each sample once, the partial block left out, and the
-/// interval of independent blocks.
-#[test]
-fn block_means_count_each_sample_once() {
-    let mut b = Blocks::new(4);
-    for v in [1.0, 1.0, 1.0, 1.0, 3.0, 3.0, 3.0, 3.0, 100.0] {
-        b.push(v);
-    }
-    assert_eq!(b.means, vec![1.0, 3.0]);
-    assert_eq!(b.mean(), 2.0);
-    // s = √2, B = 2: 2 √2 / √2 = 2.
-    assert!((b.half_width() - 2.0).abs() < 1e-12);
-    assert_eq!(Blocks::new(4).half_width(), f64::INFINITY);
-    // A steady signal plus a slow drift: the mean of running means lags the plain mean.
-    let (mut blocks, mut running, mut sum) = (Blocks::new(10), 0.0, 0.0);
-    for k in 1..=200 {
-        let v = 1.0 + 1e-3 * k as f64;
-        blocks.push(v);
-        sum += v;
-        running += sum / k as f64;
-    }
-    let plain = sum / 200.0;
-    assert!((blocks.mean() - plain).abs() < 1e-12);
-    assert!(running / 200.0 < plain - 0.03, "the old statistic lags: {} vs {plain}", running / 200.0);
-    // Alternating block means are anti-correlated.
-    let mut alt = Blocks::new(1);
-    for k in 0..20 {
-        alt.push(if k % 2 == 0 { 1.0 } else { -1.0 });
-    }
-    assert!(alt.lag1() < -0.9);
-    assert!(!alt.decorrelated());
-    // Blocks alternating by ±10⁻⁴ about 1 meet a 1 % interval easily, but are not independent,
-    // so the channel studies' stop rule does not take them for a converged mean (#795).
-    let mut tiny = Blocks::new(1);
-    for k in 0..20 {
-        tiny.push(if k % 2 == 0 { 1.0 + 1e-4 } else { 1.0 - 1e-4 });
-    }
-    assert!(tiny.half_width() < 0.01 * tiny.mean());
-    assert!(tiny.lag1() < -0.9 && !tiny.decorrelated());
-    // A drift is caught as before.
-    assert!(!blocks.decorrelated());
-}
-
 /// A channel's stress budget and the wall model's requested stress, from the fields sampled
 /// (lattice units in, model units out: δ = 1, ρ = 1). Per wall-normal row: the mean u, v, uv and
 /// an estimate of the subgrid shear ν_t (∂u/∂y + ∂v/∂x) with Smagorinsky's ν_t = (C Δ)² |S| from
@@ -2682,13 +2575,13 @@ enum Held {
 /// eq. 67), U_m = Lee & Moser's bulk speed (δ = 1, the
 /// nominal u_τ = 1). u_τ and C_f come from the mean force (the walls carry it all: ρ u_τ² = ρ ḡ δ).
 /// The stop rule is on the force's block means ([`Blocks`]): 20 δ/u_τ discarded, blocks of 2 δ/u_τ,
-/// at least 50 δ/u_τ averaged, then stopped once the mean force's 95 % interval is within 1 % of it
-/// and the block means' lag-1 correlation is below 0.5; at most 150 δ/u_τ. `held` picks the bulk
+/// at least 50 δ/u_τ averaged, then the shared interval/drift/lag/block-length gates;
+/// at most 150 δ/u_τ, with a time cap reported as inconclusive. `held` picks the bulk
 /// speed held ([`Held`]).
 fn paper_channel(lm: &LeeMoser, n: usize, c: f64, cpu: bool, held: Held) -> Option<(ChannelResult, f64)> {
     use std::f64::consts::PI;
     // The paper does not state its averaging.
-    let (start, min_average, block, end, tolerance) = (20.0, 50.0, 2.0, 150.0, 1e-2);
+    let (start, min_average, block, end) = (20.0, 50.0, 2.0, 150.0);
     // The target bulk speed, with δ = 1 and the nominal u_τ = 1: from Dean's correlation at the
     // nominal Re_τ (their eq. 68: Re_m = 2 U_m / ν, ν = 1 / Re_τ), or Lee & Moser's.
     let um = match held {
@@ -2753,7 +2646,7 @@ fn paper_channel(lm: &LeeMoser, n: usize, c: f64, cpu: bool, held: Held) -> Opti
     let control = ((0.05 / dt) as u64).max(1);
     let from = (start / dt) as u64;
     // The force every step after the start-up, in blocks.
-    let mut forces = Blocks::new(((block / dt) as usize).max(1));
+    let mut forces = Blocks::new(((block / dt) as usize).max(1), 0).unwrap();
     let [nx, ny, nz] = grid.cells;
     let (mut profile, mut samples) = (vec![0.0; ny], 0usize);
     let (mut ub_sum, mut count) = (0.0, 0usize);
@@ -2777,7 +2670,7 @@ fn paper_channel(lm: &LeeMoser, n: usize, c: f64, cpu: bool, held: Held) -> Opti
             gpu.set_acceleration([g * lattice_acceleration, 0.0, 0.0]).unwrap();
             k += 1;
             if k >= from {
-                forces.push(g);
+                forces.push(g).unwrap();
             }
         }
         k -= step;
@@ -2824,8 +2717,8 @@ fn paper_channel(lm: &LeeMoser, n: usize, c: f64, cpu: bool, held: Held) -> Opti
                 budget.sample(&grid, &fields.velocity, lattice_nu, c);
             }
             // Steady once the mean force is known to the tolerance from uncorrelated blocks.
-            if k as f64 * dt >= start + min_average && forces.half_width() < tolerance * forces.mean() && forces.decorrelated() {
-                stop = format!("steady at {:.1} δ/u_τ", k as f64 * dt);
+            if k as f64 * dt >= start + min_average && forces.acceptance().accepted {
+                stop = format!("statistics accepted at {:.1} δ/u_τ", k as f64 * dt);
                 break;
             }
         }
@@ -2839,15 +2732,20 @@ fn paper_channel(lm: &LeeMoser, n: usize, c: f64, cpu: bool, held: Held) -> Opti
         }
     }
     // The force averaged over the completed blocks after the start-up, and its interval.
-    let g_mean = forces.mean();
+    let acceptance = forces.acceptance();
+    println!("  statistical acceptance: {acceptance:?}");
+    if !stop.starts_with("statistics accepted") {
+        stop = "inconclusive: time cap reached".into();
+    }
+    let g_mean = acceptance.mean.unwrap_or(f64::NAN);
     let ut = g_mean.sqrt();
     println!(
         "  force: {:.5} ± {:.5} (95 %, {} blocks of {block} δ/u_τ, lag-1 correlation {:.2}); C_f ± {:.2} %",
         g_mean,
-        forces.half_width(),
-        forces.means.len(),
-        forces.lag1(),
-        100.0 * forces.half_width() / g_mean
+        acceptance.half_width_95.unwrap_or(f64::INFINITY),
+        acceptance.analysed_blocks,
+        acceptance.correlations.first().copied().unwrap_or(f64::NAN),
+        100.0 * acceptance.relative_half_width.unwrap_or(f64::INFINITY)
     );
     let requested = budget.report(&grid, vs, lattice_nu, dx, g_mean, g_mean.sqrt() * lm.re_tau);
     println!("  field samples: {samples} averaged, {skipped} skipped (two reads disagreed or a speed was impossible)");
@@ -2949,6 +2847,9 @@ fn study_malaspinas_and_sagaut_s_channel_against_lee_and_moser() {
         let cpu = std::env::var_os("FIELDCRAFT_PAPER_CHANNEL_CPU").is_some();
         let held = if std::env::var("FIELDCRAFT_PAPER_CHANNEL_HELD").is_ok_and(|v| v == "lm") { Held::LeeMoser } else { Held::Dean };
         let Some((r, re_tau)) = paper_channel(lm, n, c, cpu, held) else { return };
+        if !r.stop.starts_with("refused") && !r.stop.starts_with("statistics accepted") {
+            failed.push(format!("Re_τ {name} {n}/δ: {}", r.stop));
+        }
         let cf = 2.0 / (r.bulk * r.bulk);
         let cf_lm = 2.0 / (lm.bulk * lm.bulk);
         let cf_error = cf / cf_lm - 1.0;
@@ -3085,6 +2986,7 @@ fn spalding_u_plus(y_plus: f64) -> f64 {
 
 /// What one Han et al. case measured.
 struct HanResult {
+    statistics: fieldcraft_lbm::statistics::Acceptance,
     /// U⁺ at the half-channel's cell centres (y/δ, U⁺), folded about the centreline, by the
     /// nominal u_τ = 1; u′rms⁺ likewise.
     profile: Vec<(f64, f64)>,
@@ -3630,7 +3532,7 @@ fn han_flow(
 /// smallest Mach number that reaches the floor, 0.0693, a deviation printed and recorded with
 /// both Mach numbers.
 fn han_channel(case: &HanCase, setup_of: HanSetup, wfb: bool, cpu: bool, times: (f64, f64)) -> Option<Result<HanResult, String>> {
-    let ((start, end), min_average, block, tolerance) = (times, 50.0, 2.0, 1e-2);
+    let ((start, end), min_average, block) = (times, 50.0, 2.0);
     // Under the on-node bounce the walls pass through the outermost cells' centres: the box is
     // 2δ + Δx high (2N + 1 cells) for 2δ between the walls.
     let on_node = wfb && han_on_node();
@@ -3653,7 +3555,7 @@ fn han_channel(case: &HanCase, setup_of: HanSetup, wfb: bool, cpu: bool, times: 
     let mut device = if cpu { None } else { Some(gpu(&flow, Streaming::InPlace)?) };
     let control = ((0.05 / dt) as u64).max(1);
     let from = (start / dt) as u64;
-    let mut bulk = Blocks::new(((block / 0.05) as usize).max(1));
+    let mut bulk = Blocks::new(((block / 0.05) as usize).max(1), 0).unwrap();
     let nu = (setup.tau_plus - 0.5) / 3.0;
     let mut stats = ChannelStats::new(grid, vs, case.re_tau, nu, turbulence_of, setup_of.sigma(), usize::from(on_node));
     let (mut force_sum, mut body_sum) = (0.0, 0.0);
@@ -3673,7 +3575,9 @@ fn han_channel(case: &HanCase, setup_of: HanSetup, wfb: bool, cpu: bool, times: 
             if window.0.is_nan() {
                 window.0 = k as f64 * dt;
             }
-            bulk.push(mean);
+            if step == control {
+                bulk.push(mean).unwrap();
+            }
             // The walls' force against the body force on the fluid, this step.
             let forces = b.forces().unwrap();
             force_sum += forces.iter().map(|f| f[0]).sum::<f64>();
@@ -3685,8 +3589,8 @@ fn han_channel(case: &HanCase, setup_of: HanSetup, wfb: bool, cpu: bool, times: 
             if let Some(fields) = fields {
                 stats.add(&fields.velocity);
             }
-            if k as f64 * dt >= start + min_average && bulk.half_width() < tolerance * bulk.mean() && bulk.decorrelated() {
-                stop = format!("steady at {:.1} δ/u_τ", k as f64 * dt);
+            if k as f64 * dt >= start + min_average && bulk.acceptance().accepted {
+                stop = format!("statistics accepted at {:.1} δ/u_τ", k as f64 * dt);
                 break;
             }
         }
@@ -3695,6 +3599,11 @@ fn han_channel(case: &HanCase, setup_of: HanSetup, wfb: bool, cpu: bool, times: 
         }
     }
     window.1 = k as f64 * dt;
+    let acceptance = bulk.acceptance();
+    println!("  statistical acceptance: {acceptance:?}");
+    if !stop.starts_with("statistics accepted") {
+        stop = "inconclusive: time cap reached".into();
+    }
     let (rows, spectra) = stats.finish();
     let profile: Vec<(f64, f64)> = rows.iter().map(|r| (r.y, r.u)).collect();
     let rms = rows.iter().map(|r| r.rms[0]).collect();
@@ -3704,7 +3613,8 @@ fn han_channel(case: &HanCase, setup_of: HanSetup, wfb: bool, cpu: bool, times: 
     Some(Ok(HanResult {
         profile,
         rms,
-        bulk: bulk.mean(),
+        bulk: acceptance.mean.unwrap_or(f64::NAN),
+        statistics: acceptance,
         eps,
         b,
         carried,
@@ -3801,16 +3711,16 @@ fn study_han_ooka_and_kikumoto_s_wall_function_bounce() {
                 let gated = setup.gated(wfb);
                 let eps_ok = (r.eps[2] / paper_eps[2] - 1.0).abs() <= 0.15;
                 let b_ok = (r.b / paper_b - 1.0).abs() <= 0.15;
-                if gated && !(eps_ok && b_ok) {
+                if gated && !(eps_ok && b_ok && r.stop.starts_with("statistics accepted")) {
                     failed.push(format!(
-                        "{} {kind} [{label}]: ε {:.3} (theirs {}), b {:.2} (theirs {})",
-                        case.name, r.eps[2], paper_eps[2], r.b, paper_b
+                        "{} {kind} [{label}]: {}; ε {:.3} (theirs {}), b {:.2} (theirs {})",
+                        case.name, r.stop, r.eps[2], paper_eps[2], r.b, paper_b
                     ));
                 }
             }
         }
     }
-    assert!(failed.is_empty(), "outside Han et al.'s results by more than 15 %: {failed:?}");
+    assert!(failed.is_empty(), "Han study statistical or reference gates failed: {failed:?}");
 }
 
 /// Print one Han et al. run and write its record (see [`study_han_ooka_and_kikumoto_s_wall_function_bounce`]).
@@ -3943,6 +3853,7 @@ fn han_report(case: &HanCase, setup: HanSetup, wfb: bool, cpu: bool, r: &HanResu
         "u_b_plus": r.bulk, "cf_carried": cf, "cf_dean": cf_dean, "cf_dns": cf_dns, "carried_over_body_force": r.carried,
         "eps": {"buffer": r.eps[0], "log": r.eps[1], "whole": r.eps[2]}, "eps_paper": paper_eps, "b": r.b, "b_paper": paper_b,
         "gated": setup.gated(wfb),
+        "statistics": r.statistics,
         "mach": r.mach, "mach_paper": case.mach, "tau": r.tau, "window": [r.window.0, r.window.1], "stop": r.stop, "steps": r.steps, "seconds": r.seconds,
     });
     let _ = std::fs::create_dir_all(dir);
