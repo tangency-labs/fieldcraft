@@ -1,10 +1,9 @@
 //! Convective pressure outlets: each outlet cell holds the face's pressure, and its velocity is
 //! carried out to it by the flow instead of following from a uniform-pressure balance.
 //!
-//! A Zou–He pressure outlet holds its cell at the face's density and sets the normal velocity
-//! from mass and normal momentum, with no tangential velocity. Where a wake that has not
-//! recovered reaches it, that balance puts a step into the velocity of the last layer (#590,
-//! #599). A convective outlet lets the wake leave.
+//! A uniform pressure face extrapolates its normal velocity and non-equilibrium populations
+//! from the inner cell ([`extrapolate_pressure`]), imposing density and zero tangential velocity.
+//! A convective outlet instead lets the wake's populations leave at the local flow speed.
 //!
 //! # The condition
 //! The populations entering the box from outside an outlet cell N (the unknown ones,
@@ -71,6 +70,31 @@ pub fn unknowns(axis: usize, inward: f64) -> [usize; UNKNOWN] {
     out
 }
 
+/// Pressure closure from the streamed inner cell: Guo, Zheng & Shi, *Non-equilibrium
+/// extrapolation method for velocity and pressure boundary conditions in the lattice Boltzmann
+/// method*, Chinese Physics 11:366–374 (2002), doi:10.1088/1009-1963/11/4/310.
+/// Keep its non-equilibrium populations (and therefore viscous stress), prescribe the density
+/// and zero physical tangential velocity, and extrapolate physical normal velocity. In contrast
+/// to a local Zou–He pressure balance, the outgoing normal stress is not fed back into the same
+/// cell's reconstructed normal velocity (#819). Force offsets are applied to the bare velocities
+/// used by the populations, as in the other open boundaries.
+pub(crate) fn extrapolate_pressure(f: [f64; Q], density: f64, axis: usize, inside_half: [f64; 3], boundary_half: [f64; 3]) -> [f64; Q] {
+    use crate::lattice::{c, equilibrium};
+    let rho: f64 = f.iter().sum();
+    let mut momentum = [0.0; 3];
+    for (q, value) in f.iter().enumerate() {
+        for (j, cq) in momentum.iter_mut().zip(c(q)) {
+            *j += value * cq;
+        }
+    }
+    let inside = momentum.map(|j| j / rho);
+    let mut boundary = boundary_half.map(|a| -a);
+    if let Some(u) = boundary.get_mut(axis) {
+        *u += inside.get(axis).copied().unwrap_or(0.0) + inside_half.get(axis).copied().unwrap_or(0.0);
+    }
+    std::array::from_fn(|q| equilibrium(q, density, boundary) + (f[q] - equilibrium(q, rho, inside)))
+}
+
 /// `(f_N + λ f_{N−1}) / (1 + λ)`.
 #[inline]
 fn convect(own: f64, inside: f64, speed: f64) -> f64 {
@@ -83,8 +107,8 @@ fn speed(outward: f64) -> f64 {
 }
 
 /// The closure of a convective outlet cell where the flow comes back in: the uniform pressure
-/// outlet's, so it does whatever a `Target::Density` face does. The one place that decides it
-/// (the GPU's `BACKFLOW_KIND` in lbm.wgsl is the same choice).
+/// outlet's legacy local Zou–He closure (equilibrium under RR/HRR). This fallback deliberately
+/// remains local; it does not extrapolate the inner flow. The GPU's `BACKFLOW_KIND` matches.
 pub fn backflow(density: f64) -> Target {
     Target::Density(density)
 }
@@ -234,6 +258,34 @@ fn state_of(oc: &OpenCell, half_force: [f64; 3], f: impl Fn(usize) -> f64) -> Ce
 mod tests {
     use super::*;
     use crate::lattice::{W, equilibrium};
+
+    #[test]
+    fn pressure_extrapolation_keeps_stress_and_sets_physical_moments() {
+        use crate::lattice::c;
+        let inside_half = [1e-4, -2e-4, 3e-4];
+        let boundary_half = [-2e-4, 1e-4, -1e-4];
+        let rho = 1.02;
+        let bare = [0.03, -0.02, 0.01];
+        // A shear-carrying, off-equilibrium state with zero residual mass and momentum.
+        let f = std::array::from_fn(|q| equilibrium(q, rho, bare) + 9.0 * W[q] * c(q)[0] * c(q)[1] * 0.001);
+        for axis in 0..3 {
+            let out = extrapolate_pressure(f, 0.98, axis, inside_half, boundary_half);
+            let density: f64 = out.iter().sum();
+            assert!((density - 0.98).abs() < 1e-14);
+            let mut expected = boundary_half.map(|a| -a);
+            expected[axis] += bare[axis] + inside_half[axis];
+            for a in 0..3 {
+                let j: f64 = out.iter().enumerate().map(|(q, f)| f * c(q)[a]).sum();
+                let u = j / density + boundary_half[a];
+                let want = if a == axis { bare[a] + inside_half[a] } else { 0.0 };
+                assert!((u - want).abs() < 1e-14, "axis {axis} velocity {a}: {u}");
+                for b in 0..3 {
+                    let stress = |p: [f64; Q], r, u| p.iter().enumerate().map(|(q, f)| (f - equilibrium(q, r, u)) * c(q)[a] * c(q)[b]).sum::<f64>();
+                    assert!((stress(out, 0.98, expected) - stress(f, rho, bare)).abs() < 1e-14);
+                }
+            }
+        }
+    }
 
     #[test]
     fn the_unknowns_enter_from_outside_and_the_blend_is_convex() {

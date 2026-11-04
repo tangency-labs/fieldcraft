@@ -2,7 +2,7 @@
 
 Each of the six faces of a fluid domain's box carries a condition: a no-slip wall, a moving or slip
 wall, a velocity inlet, a pressure outlet, or one of a periodic pair. Obstacle faces are no-slip
-walls, at rest or moving tangentially. Walls are halfway bounce-back, inlets and outlets Zou–He,
+walls, at rest or moving tangentially. Walls are halfway bounce-back, velocity inlets use Zou–He,
 with a convective outflow for outlets that a wake reaches, and the force the fluid exerts on every
 wall is measured by momentum exchange.
 
@@ -89,9 +89,9 @@ A link that leaves through a periodic face pulls from the periodic image on the 
 Periodic faces come in opposite pairs; a domain whose face is periodic and whose opposite face is
 not is refused.
 
-### Inlets and outlets: Zou–He
+### Velocity inlets and pressure faces
 
-On the first layer of cells of a velocity or pressure face, the five unknown populations (those
+On the first layer of a velocity inlet, the five unknown populations (those
 entering from outside: one along the normal, four diagonals) are set after streaming (Zou & He
 1997):
 
@@ -106,9 +106,16 @@ entering from outside: one along the normal, four diagonals) are set after strea
 4. The transverse momentum is corrected on the two diagonal unknowns of each tangential axis, as
    Hecht & Harting (2010) do for D3Q19.
 
-With the regularised collision a pressure outlet then holds the equilibrium of its density and
-that normal velocity (Krüger et al. 2017, ch. 5): the stability and accuracy trade-off is in
-[Collision operators](collision.md).
+A uniform pressure face uses non-equilibrium extrapolation (Guo, Zheng & Shi 2002):
+its density is prescribed, physical tangential velocity is zero, and normal velocity is taken
+from the fluid cell one layer inside. All populations are rebuilt as the boundary equilibrium
+plus that inner cell's non-equilibrium populations. This retains viscous stress and avoids
+feeding the local normal-stress mode back into the outlet velocity (#819). The inner cell is
+read after streaming, before any boundary writes, including at intersections of open faces.
+This closure is the same for TRT, MRT, RR and HRR.
+
+If the inner cell is solid, the local Zou–He pressure balance above remains the fallback;
+RR/HRR then hold its equilibrium. Convective backflow also retains that local fallback.
 
 A gauge pressure p becomes the lattice density 1 + p/(c_s² ρ₀ Δx²/Δt²).
 
@@ -139,8 +146,8 @@ everywhere else. Every population then gains w_q (ρ_out − ρ), which sets the
 face's without changing its momentum: the face holds its pressure cell by cell while the velocity,
 normal and tangential, comes from the flow.
 
-**Backflow guard.** A cell whose convected flow points into the box takes the uniform outlet's
-closure: Zou–He at the face's density, no tangential velocity, which stays stable with reversed
+**Backflow guard.** A cell whose convected flow points into the box takes the legacy local
+fallback: Zou–He at the face's density, no tangential velocity, which stays stable with reversed
 outlet cells. The rule changes only the outlet cells' streamed populations, so it does not depend
 on the collision operator.
 
@@ -180,7 +187,7 @@ goes on a wall only, never on an inlet, outlet or periodic face. Thermal conditi
    rules: `Bounce` takes f*_q̄ of the cell plus the moving-wall term, `Reflect` the mirrored
    population, `Open` a placeholder); sum the momentum exchange of every `Bounce` and `Reflect`
    link; then the open boundaries: the convective cells' actions from the streamed populations
-   (read before any open cell changes), then every open cell's Zou–He or convective update, in
+   (read before any open cell changes), then every open cell's velocity, extrapolated-pressure or convective update, in
    parallel, stored in cell order.
 
 ## Output
@@ -324,3 +331,5 @@ this resolution: c_D 3.4 % above).
 - Z. Yang. *Lattice Boltzmann outflow treatments: convective conditions and others.* Comput. Math. Appl. 65(2):160–171, 2013.
 - T. Krüger et al. *The Lattice Boltzmann Method: Principles and Practice.* Springer, 2017. doi:[10.1007/978-3-319-44649-3](https://doi.org/10.1007/978-3-319-44649-3)
 - M. Schäfer, S. Turek. *Benchmark computations of laminar flow around a cylinder.* NNFM 52:547–566, 1996. doi:[10.1007/978-3-322-89849-4_39](https://doi.org/10.1007/978-3-322-89849-4_39)
+
+- Z. Guo, C. Zheng, B. Shi. *Non-equilibrium extrapolation method for velocity and pressure boundary conditions in the lattice Boltzmann method.* Chinese Physics 11:366–374, 2002. doi:[10.1088/1009-1963/11/4/310](https://doi.org/10.1088/1009-1963/11/4/310)

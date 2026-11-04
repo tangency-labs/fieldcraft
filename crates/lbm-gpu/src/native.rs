@@ -25,7 +25,7 @@ const KIND_OPEN: u32 = 3;
 /// Marks a link into a cell whose scalar populations the open boundary sets (see lbm.wgsl).
 const RESET: u32 = 1 << 24;
 /// Floats per open cell in the outlet buffer (see lbm.wgsl).
-const OUTLET: usize = 16;
+const OUTLET: usize = fieldcraft_lbm::memory::DEVICE_OUTLET_WORDS;
 /// The flag word of a boundary node of the on-node wall-function bounce: it streams, but it is not
 /// fluid (lbm.wgsl, `is_fluid`).
 const NODE: u32 = 2;
@@ -34,6 +34,17 @@ const WALL_ROW: usize = 16;
 /// The scalar lattice's directions (the first seven of D3Q19) and weights.
 const QT: usize = 7;
 const WT: [f64; QT] = [0.25, 0.125, 0.125, 0.125, 0.125, 0.125, 0.125];
+
+/// Check before staging or creating the pressure buffer: in a two-cell-thick box it can be
+/// larger than the population buffer, whose device-limit check is therefore insufficient.
+fn outlet_words(cells: usize, cap: u64) -> Result<usize> {
+    let words = cells.checked_mul(OUTLET).ok_or_else(|| Error::Limit("too many GPU outlet cells".into()))?;
+    let bytes = (words as u64).saturating_mul(4);
+    if bytes > cap {
+        return Err(Error::Limit(format!("GPU pressure outlets need {bytes} bytes; this device allows {cap} per buffer")));
+    }
+    Ok(words)
+}
 
 fn gpu_error(e: impl std::fmt::Display) -> Error {
     update_diagnostic_phase(None);
@@ -208,8 +219,8 @@ pub struct GpuFlow {
     params: [wgpu::Buffer; 2],
     open_count: usize,
     open_groups: (u32, u32),
-    /// Whether a face is a convective outlet.
-    convective: bool,
+    /// Whether a pressure face needs the preparatory outlet pass.
+    prepare_outlets: bool,
     group_count: usize,
     force_groups: (u32, u32),
     stats: wgpu::Buffer,
@@ -895,13 +906,13 @@ impl GpuFlow {
             group_t.extend_from_slice(&[kind, value, 0.0, 0.0]);
         }
 
-        // The open cells, and what each convective outlet cell keeps between steps in its slot
-        // (`open_u.w`) of the outlet buffer: its unknown populations as deviations from their
-        // weights, and its convection speed (see lbm.wgsl).
+        // Pressure cells each have a slot in the outlet buffer: convective history and
+        // transient gathered populations for uniform-pressure extrapolation (see lbm.wgsl).
         let open = flow.open_cells();
         let mut open_u = reserved(4 * open.len(), "open cells")?;
         let mut open_f = reserved(4 * open.len(), "open cells")?;
-        let mut outlet = reserved(OUTLET * open.iter().filter(|oc| matches!(oc.target, Target::Convective(_))).count(), "outlet cells")?;
+        let outlet_words = outlet_words(open.iter().filter(|oc| !matches!(oc.target, Target::Velocity(_))).count(), cap)?;
+        let mut outlet = reserved(outlet_words, "outlet cells")?;
         let states = flow.outlets().states();
         for (k, oc) in open.iter().enumerate() {
             let (kind, target) = match oc.target {
@@ -918,9 +929,12 @@ impl GpuFlow {
                 outlet.extend(state.unknowns.iter().zip(dirs).map(|(v, q)| (v - W.get(q).copied().unwrap_or(0.0)) as f32));
                 outlet.push(state.speed as f32);
                 outlet.extend([0.0; OUTLET - UNKNOWN - 1]);
+            } else if matches!(oc.target, Target::Density(_)) {
+                // Transient pressure populations, gathered before any open cell is changed.
+                outlet.extend([0.0; OUTLET]);
             }
         }
-        let convective = !outlet.is_empty();
+        let prepare_outlets = !outlet.is_empty();
         let mut open_t = reserved(4 * open.len(), "open cell temperatures")?;
         for k in 0..open.len() {
             match thermal.and_then(|t| t.open().get(k)).copied().flatten() {
@@ -1203,7 +1217,7 @@ impl GpuFlow {
             params,
             open_count: open.len(),
             open_groups,
-            convective,
+            prepare_outlets,
             group_count,
             force_groups,
             stats,
@@ -1444,7 +1458,7 @@ impl GpuFlow {
                     commands.push((self.current, "scatter_links", self.links_groups));
                 }
             }
-            if self.convective {
+            if self.prepare_outlets {
                 commands.push((self.current, "outlet_convect", self.open_groups));
             }
             if self.open_count > 0 {
@@ -1676,6 +1690,13 @@ impl Backend for GpuFlow {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pressure_staging_refuses_oversized_buffers_before_allocation() {
+        assert_eq!(outlet_words(2, 160).unwrap(), 40);
+        assert!(outlet_words(2, 159).unwrap_err().to_string().contains("pressure outlets"));
+        assert!(outlet_words(usize::MAX, u64::MAX).is_err());
+    }
 
     /// #640: each kernel binds only the buffers it uses, so the solver fits GL's 16 storage
     /// buffers per compute stage, and WebGPU's default of 8.

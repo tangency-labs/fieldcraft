@@ -3,6 +3,7 @@
 #![allow(dead_code)]
 
 pub mod curved_cht;
+pub mod pressure_zone;
 
 use std::collections::BTreeMap;
 

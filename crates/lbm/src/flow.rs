@@ -27,16 +27,13 @@
 //!   corrected on the diagonal unknowns as M. Hecht and J. Harting do for D3Q19 (*Implementation
 //!   of on-site velocity boundary conditions for D3Q19 lattice Boltzmann simulations*, J. Stat.
 //!   Mech. 2010, P01018). The prescribed velocity is the one with the half force of Guo's scheme.
-//!   With the regularised collision a pressure outlet then holds the equilibrium of its density
-//!   and that normal velocity (the equilibrium scheme, Krüger et al. 2017, ch. 5), dropping the
-//!   non-equilibrium part the bounce-back gave it: rebuilt from that part, the outlet's momentum
-//!   flux feeds an oscillation that flips sign every step along the outlet and grows (measured in
-//!   a channel at τ⁺ = 0.52: unstable within 150 steps), which the slowly relaxing antisymmetric
-//!   part of the two-relaxation-time scheme damps. The cost is near the outlet: the viscous
-//!   stress is not imposed on the outlet layer, so a fully developed channel profile is 3–8 % off
-//!   in the cell next to the outlet, more as τ⁺ approaches ½ (3.2 % at τ⁺ = 0.6, 7–7.5 % at 0.52,
-//!   9.6 % in the outlet cell itself; the bounce-back outlet, where it stays stable, 0.4 %), and
-//!   unchanged at mid-channel. A convective outflow is the better outlet for this collision.
+//!   Uniform pressure faces instead extrapolate the inner cell's normal velocity and
+//!   non-equilibrium populations (Guo, Zheng & Shi 2002, doi:10.1088/1009-1963/11/4/310),
+//!   imposing density and zero tangential velocity without discarding viscous stress. The
+//!   local Zou–He pressure balance amplifies a longitudinal normal-stress mode even in a
+//!   uniform 4×1×1 stream (#819). Every pressure cell reads the pre-boundary streamed state,
+//!   including at intersecting open faces. Without a fluid cell immediately inside, the
+//!   legacy local closure is used: Zou–He for TRT/MRT, equilibrium for RR/HRR.
 //!   A convective outlet ([`crate::outlet`]) updates the unknown populations by a convective
 //!   outflow condition instead, holds each cell at the face's density, and falls back to Zou–He
 //!   where the flow comes back in. A cell on the edge of two open faces belongs to one of them.
@@ -2462,10 +2459,9 @@ impl Flow {
         }
     }
 
-    /// Zou–He velocity and pressure boundaries on the streamed populations, and convective
-    /// outlets ([`crate::outlet`]), whose convected populations are all taken from the streamed
-    /// populations before any open cell is changed. Each open cell's boundary reads only its own
-    /// populations, so the cells are worked out in parallel (blocks of [`OPEN_BLOCK`]) and
+    /// Zou–He velocity, extrapolated pressure and convective boundaries. Every inner-cell read
+    /// uses the streamed populations before any open cell is changed, so cells are worked out
+    /// in parallel (blocks of [`OPEN_BLOCK`]) and
     /// stored afterwards in cell order: done one after another they were a tenth of a step on
     /// one thread, which capped the speed-up of many (#643).
     fn open_boundaries(&mut self) {
@@ -2489,6 +2485,30 @@ impl Flow {
                     }
                     let a_half = flow.force_at(cell).map(|v| 0.5 * v);
                     let (axis, sign) = (oc.axis, oc.inward);
+                    // Guo, Zheng & Shi's non-equilibrium extrapolation. Read the streamed
+                    // inner cell before any open boundary is written, including at edges.
+                    if let Target::Density(rho) = oc.target {
+                        let step = [1, nx, nx * ny].get(axis).copied().unwrap_or(0);
+                        let inside = if sign > 0.0 { cell.checked_add(step) } else { cell.checked_sub(step) };
+                        if let Some(inner) = inside.filter(|&i| flow.is_fluid(i)) {
+                            let fi = std::array::from_fn(|q| flow.g.get(q * s + inner).copied().unwrap_or(0.0));
+                            let mut inner_half = flow.force_at(inner).map(|v| 0.5 * v);
+                            let action = cell_action(flow.action_at(inner), flow.liquid_fraction(inner));
+                            if action.is_some() {
+                                let inner_rho: f64 = fi.iter().sum();
+                                let mut j = [0.0; 3];
+                                for (q, f) in fi.iter().enumerate() {
+                                    for (ja, ca) in j.iter_mut().zip(c(q)) {
+                                        *ja += f * ca;
+                                    }
+                                }
+                                let (_, force) = velocity_force(inner_rho, j, flow.force_at(inner), action.as_ref());
+                                inner_half = force.map(|f| 0.5 * f / inner_rho);
+                            }
+                            *p = crate::outlet::extrapolate_pressure(fi, rho, axis, inner_half, a_half);
+                            continue;
+                        }
+                    }
                     // The cell's populations alone: direction stride 1, cell 0.
                     match (oc.target, outlets.action(k)) {
                         (Target::Convective(_), Action::Convect { unknowns, shift }) => {
@@ -2559,8 +2579,8 @@ impl Populations for View<'_> {
 /// is corrected on the diagonal unknowns (Hecht & Harting 2010). `a_half` is half the body
 /// acceleration. A convective outlet's cell takes the density, with no tangential velocity. With
 /// the regularised collision (`regularized`) a density target then holds the equilibrium of its
-/// density and that normal velocity (see the module notes): a pressure outlet, and a convective
-/// outlet's cell where the flow comes back in ([`crate::outlet::backflow`]).
+/// density and that normal velocity: the fallback when a pressure cell has no inner fluid cell,
+/// and a convective outlet's cell where the flow comes back in ([`crate::outlet::backflow`]).
 #[allow(clippy::too_many_arguments)]
 fn zou_he(g: &mut [f64], s: usize, cell: usize, axis: usize, sign: f64, a_half: [f64; 3], target: Target, regularized: bool) {
     let ci = |q: usize| f64::from(C[q][axis]);
@@ -2618,8 +2638,8 @@ fn zou_he(g: &mut [f64], s: usize, cell: usize, axis: usize, sign: f64, a_half: 
 }
 
 /// Set every streamed population of open cell `cell` to the equilibrium of `rho` and `bare` (the
-/// velocity without the half force): what an outflow cell holds under the regularised collision,
-/// whose rebuilt non-equilibrium part would otherwise grow there (see the module notes). `g` holds
+/// velocity without the half force): the regularised collision's legacy local pressure fallback
+/// (also used for convective backflow). `g` holds
 /// the populations with direction stride `s`.
 pub(crate) fn hold_equilibrium(g: &mut [f64], s: usize, cell: usize, rho: f64, bare: [f64; 3]) {
     for q in 0..Q {

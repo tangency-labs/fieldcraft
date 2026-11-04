@@ -28,7 +28,7 @@ lattice of a flow with heat always collides with two relaxation times.
 | Field | Value | Default | Meaning |
 |---|---|---|---|
 | `collision` | `"trt"` | default | Two relaxation times. Most flows: bounce-back walls sit exactly halfway between cells, so it is the most accurate of the three on a given grid. |
-| | `"regularized"` | | Recursive regularised. Flows the two-relaxation-time scheme cannot hold on the grid you can afford: τ⁺ below about 0.52, fast inlets and fans, sharp corners. It costs 15–35 % more per step, its staircase walls are less accurate and its pressure outlets cost 3–8 % near the outlet (Theory). |
+| | `"regularized"` | | Recursive regularised. Flows the two-relaxation-time scheme cannot hold on the grid you can afford: τ⁺ below about 0.52, fast inlets and fans, sharp corners. It costs 15–35 % more per step and its staircase walls are less accurate. Uniform pressure outlets extrapolate interior stress; their previous equilibrium closure caused 3–8 % error near the outlet (Theory). |
 | | `"mrt"` | | Multiple relaxation times. The collision the wall model is validated with ([Large-eddy simulation](les.md)). |
 | | `"hrr"` | | Hybrid recursive regularised. The regularised collision with its stress blended with the one the finite-difference strain rate gives (`sigma`), which damps the shortest waves: for large-eddy simulation. |
 | `magic` | above 0, at most 1 | 3/16 | The two-relaxation-time parameter Λ. With `regularized`, `mrt` or `hrr` it has no effect, and the solve warns. |
@@ -76,22 +76,12 @@ rises by its eddy viscosity and its τ⁻ follows, keeping Λ.
   f* = f^eq + (1 − ω) f⁽¹⁾[P] + ½ F_q, F_q = w_q [3 c·F + 9 (c·u)(c·F) − 3 u·F]. Mass is kept, the
   momentum gains exactly F, and fans, porous zones (Guo & Zhao's implicit velocity) and buoyancy
   enter through F and u.
-- Pressure outlets hold the equilibrium of the outlet density and the normal velocity Zou–He finds
-  (`hold_equilibrium` in `flow.rs`, and the same in the GPU shader). With the bounce-back
-  non-equilibrium part a regularised outlet layer grows an oscillation that flips sign every step
-  along the outlet (a 16-cell channel at τ⁺ = 0.52 and lattice speed 0.1 went unstable at step
-  301; `a_regularised_channel_with_a_pressure_outlet_stays_stable_at_tau_0_52` runs it 2000 steps),
-  which the two-relaxation-time scheme's slowly relaxing antisymmetric part damps. The equilibrium
-  outlet (Krüger et al. 2017, ch. 5) does not impose the viscous stress on its own layer, and that
-  costs accuracy near it, more as τ⁺ approaches ½: a fully developed channel profile is 3.2 % off
-  in the cell next to the outlet at τ⁺ = 0.6 and 7–7.5 % at 0.52 (9.6 % in the outlet cell itself),
-  against 0.4 % for the bounce-back outlet where that one stays stable (τ⁺ = 0.52, lattice speed
-  0.01). Mid-channel is unchanged. A wake leaving through the outlet is disturbed further in too:
-  the pressure-outlet guard of #598, `a_wake_at_a_pressure_outlet_distorts_only_the_last_layer` (run with two
-  relaxation times) measures 1.2 × 10⁻² interior departure under the regularised collision, beyond
-  its 9 × 10⁻³ limit. Keep uniform outlets well downstream of what you measure, or use the
-  convective outflow (`outflow: "convective"`), the better outlet for this collision ([Boundary
-  conditions](boundary-conditions.md)). Velocity inlets keep Zou–He.
+- Uniform pressure faces use the same non-equilibrium extrapolation for every collision:
+  prescribed density, zero tangential velocity, and normal velocity and non-equilibrium
+  populations from the inner cell. Unlike the former equilibrium-only RR/HRR outlet, this
+  retains the inner viscous stress. The local equilibrium closure remains the fallback when
+  there is no inner fluid cell and for convective backflow. Velocity inlets keep Zou–He.
+  See [Boundary conditions](boundary-conditions.md).
 - Collisions run by fixed blocks of cells: 1 and N threads give the same result bit for bit
   (`results_are_bit_for_bit_the_same_on_one_and_many_threads`).
 
@@ -194,8 +184,8 @@ other equilibria (the quartic modes at −½) correspond to. The equilibria use 
 ρ u u); d'Humières et al. use j·j/ρ₀.
 
 With halfway bounce-back the MRT wall lies half a cell out up to an error of order Δx² that depends
-on τ: the rates are fixed, and there is no Λ to put it exactly halfway. Its pressure outlets are
-Zou–He with the transverse correction, as for two relaxation times.
+on τ: the rates are fixed, and there is no Λ to put it exactly halfway. Its uniform pressure faces use
+non-equilibrium extrapolation, as for the other collisions.
 
 ![The three collision operators](../../media/manual/collision-1.svg)
 
@@ -529,8 +519,8 @@ exact 1.547615e-2 (−4.2e-7; tolerance 1e-3: `a_shear_wave_decays_at_the_exact_
 ## Limitations
 
 - D3Q19 only: no cumulant collision (it needs D3Q27).
-- The regularised collision's walls are less accurate than the two-relaxation-time scheme's, and
-  its uniform pressure outlets hold the equilibrium, 3–8 % off in the cell next to the outlet.
+- The regularised collision's walls are less accurate than the two-relaxation-time scheme's.
+  Its local fallback at blocked pressure faces and convective backflow still discards stress.
 - Below τ⁺ ≈ 0.508 even the regularised collision went unstable on a coarse bluff-body grid: the
   inlet and outlet reflect pressure waves. There are no absorbing layers.
 - MRT's rates are fixed (no Λ): its wall is second-order accurate with a τ-dependent constant.
