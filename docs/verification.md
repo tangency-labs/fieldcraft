@@ -192,6 +192,40 @@ u_τ within its 4.22 % of Dean.
 **Passes** on the paper's measures. The drag the flow carries is 14–17 % low on every grid, a
 property of the published method that its C_f (from the model's u_τ) does not show.
 
+### Requested, applied and carried wall stress
+
+The shared test support in `crates/lbm/tests/support/wall_balance.rs` separates
+requested Musker shear, applied momentum-exchange traction (including reconstruction
+impulse exactly once), and carried traction inferred from body impulse minus the
+change in **stored population momentum**, divided by the same wall area. Displayed
+wall-target velocities cannot replace stored momentum in this budget.
+
+For a closed, unheated box with uniform acceleration and no zones or on-node
+boundary nodes, the per-step identity is
+`P_after - P_before = body_impulse - wall_impulse`. The residual limit is
+`relative_tolerance * scale + 64 * f64::EPSILON * max(lattice_mass, 1)`, where
+`scale` is the maximum component magnitude of the two stored momenta and the
+body/wall impulses. Relative tolerances are `1e-12` on CPU and `1e-5` on GPU;
+the absolute floor covers the host sums on both backends, including rest.
+Tests cover both streaming layouts and odd/even GPU steps. Open boundaries need
+momentum fluxes and are outside this diagnostic's scope.
+
+Carried drag is compared independently with DNS at 5%; requested/carried stress
+has a proposed 1% agreement gate. The original Re_τ 950 N10 audit fails both:
+requested/carried ≈1.245, carried C_f 0.0043803 versus DNS 0.00509 (−16.75% versus
+Dean, reported separately). The fast frozen-data regression
+`measured_n10_discrepancy_remains_a_failed_validation` asserts both failures and
+fails if either starts passing; a changed validator must not silently accept
+this known discrepancy.
+
+Until the #785 wall repair, the long M&S study **reports** the additional
+carried-drag/stress-agreement result without adding it to its failure list, as
+requested in the #829 review. Its existing paper-reproduction and in-range DNS
+acceptance checks remain active. This keeps those regression checks usable without
+calling the known stress defect a validation pass. The frozen-data test checks
+classification, not a fresh flow result; after the repair, rerun the study and
+review its diagnostic gates before claiming physical validation.
+
 ### Wall-modelled LES: Han, Ooka & Kikumoto not reproduced at A20
 
 Han, Ooka & Kikumoto's channel (Fluid Dyn. Res. 53:045506, 2021) at A20 (Re_τ 640), with their

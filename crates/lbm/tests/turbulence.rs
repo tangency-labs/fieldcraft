@@ -5,6 +5,8 @@
 //! Each test prints its numbers (`cargo test -p fieldcraft-lbm --test turbulence -- --nocapture`).
 
 mod common;
+#[path = "support/wall_balance.rs"]
+mod wall_balance;
 
 use common::*;
 use fieldcraft_lbm::{Error, Flow, Limits, Setup, run};
@@ -367,9 +369,24 @@ fn the_wall_force_closes_the_momentum_budget_of_a_wall_modelled_channel() {
         let (mut worst, mut removed, mut body) = (0.0f64, 0.0f64, 0.0);
         for _ in 0..setup.steps {
             flow.step().unwrap();
-            let next = population_momentum(&flow);
+            let next = wall_balance::population_momentum(&flow);
             let m = flow.mass();
             let wall: [f64; 3] = [0, 1, 2].map(|k| flow.forces().iter().map(|f| f[k]).sum());
+            let requested = flow
+                .walls()
+                .unwrap()
+                .wall_cells()
+                .filter(|w| w.4.is_some())
+                .map(|(cell, q, distance, _, _)| {
+                    let target = flow.walls().unwrap().modelled(cell).unwrap().0;
+                    let normal = fieldcraft_lbm::lattice::C[q].map(|v| f64::from(v) * 0.5 / distance);
+                    wall_balance::musker_request(target, normal, distance, (setup.tau_plus - 0.5) / 3.0).unwrap()
+                })
+                .fold([0.0; 3], |sum, r| [0, 1, 2].map(|a| sum[a] + r[a]));
+            let area = 2.0 * (setup.grid.cells[0] * setup.grid.cells[2]) as f64;
+            let report =
+                wall_balance::closed_step(p, next, a.map(|a| a * m), wall, requested.map(|r| r / area), area, m, 1e-12, f64::EPSILON).unwrap();
+            assert!(report.budget_ok, "{}: {report:?}", collision.name());
             body = a[0] * m;
             for k in 0..3 {
                 worst = worst.max((next[k] - p[k] - (a[k] * m - wall[k])).abs() / next[0].abs());
