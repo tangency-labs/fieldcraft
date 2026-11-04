@@ -507,3 +507,19 @@ and `FIELDCRAFT_HAN_END` (δ/u_τ, default 20 and 150) shorten a smoke test, whi
 See also [Turbulence](turbulence.md), [Collision operators](collision.md),
 [Verification and validation](../../verification.md) and
 [the solver literature](../../solvers/literature.md), entries C5.1–C5.5.
+
+## Requested, applied and carried stress
+
+The channel studies distinguish the wall model's requested stress, the traction
+applied through momentum exchange, and the drag carried by the flow. The model's
+inferred stress is not a substitute for the reported wall force or an independent
+drag reference. Displayed wall velocities can contain reconstruction targets;
+they do not measure the momentum stored in the populations.
+
+The original Re_τ 950 N10 case still fails carried-drag validation: requested/
+carried stress is about 1.245, and carried C_f is 0.0043803 versus DNS 0.00509.
+Reproducing the paper's inferred C_f or profile measure does not establish accurate
+drag. The diagnostics do not repair the wall model, and completion of a study
+does not certify physical validation. See the
+[wall-stress verification contract](../../verification.md#requested-applied-and-carried-wall-stress)
+for test thresholds, scope and the known-failure regression.
