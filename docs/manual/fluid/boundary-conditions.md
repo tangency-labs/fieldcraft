@@ -2,8 +2,8 @@
 
 Each of the six faces of a fluid domain's box carries a condition: a no-slip wall, a moving or slip
 wall, a velocity inlet, a pressure outlet, or one of a periodic pair. Obstacle faces are no-slip
-walls, at rest or moving tangentially. Walls are halfway bounce-back, velocity inlets use Zou–He,
-with a convective outflow for outlets that a wake reaches, and the force the fluid exerts on every
+walls, at rest or moving tangentially. Walls are halfway bounce-back, velocity inlets use Zou–He
+(corrected under TRT), with a convective outflow for outlets that a wake reaches, and the force the fluid exerts on every
 wall is measured by momentum exchange.
 
 | | |
@@ -105,6 +105,37 @@ entering from outside: one along the normal, four diagonals) are set after strea
    non-equilibrium part): f_q = f_q̄ + 6 w_q ρ c_q·u.
 4. The transverse momentum is corrected on the two diagonal unknowns of each tangential axis, as
    Hecht & Harting (2010) do for D3Q19.
+
+For a TRT velocity inlet without a free surface and with two inner fluid cells, a correction removes the
+alternating inlet mode seen near τ = 1/2 (#820). The non-equilibrium stress trace is
+extrapolated as `2 trace(inner1) − trace(inner2)`. The five deviatoric stress components
+and the prescribed velocity are preserved. Density receives only the high-frequency part
+of the extrapolation residual:
+
+```text
+δρ = (I − S₁ S₂) [2ρ(inner1) − ρ(inner2) − ρ(Zou–He)]
+S = [−1, 4, 10, 4, −1] / 16 along each tangential axis
+δf_q = f_eq(q, δρ, u_bare) + (3/2) w_q (|c_q|² − 1) δtrace
+```
+
+The filter wraps periodic sides and reflects at wall sides; missing or differently owned
+open-face neighbours use the centre. Without two inner fluid cells, or at a velocity face
+pointing outward, the original reconstruction is retained. Free-surface flows also retain their original closure:
+a moving liquid/gas interface does not provide two fixed inner fluid samples. The correction reads a snapshot
+of streamed populations before any open face is changed. It changes neither the bulk TRT
+collision nor SGS viscosity, and the other collision operators retain their inlet closure.
+This combines non-equilibrium extrapolation (Guo, Zheng & Shi 2002,
+[doi:10.1088/1009-1963/11/4/310](https://doi.org/10.1088/1009-1963/11/4/310))
+with Shapiro's selective filter (1970,
+[doi:10.1029/RG008i002p00359](https://doi.org/10.1029/RG008i002p00359)); the particular
+trace/residual combination is FieldCraft's, not a scheme attributed to either paper.
+
+The 16³, U=0.05, τ=0.505 checkerboard reproduction that failed at step 2838 completes
+30,000 steps with density departure about 8e-9. Broadband disturbances and τ=0.518
+are also checked. This does **not** establish stability arbitrarily close to τ=1/2:
+at τ=0.5005 with Smagorinsky C=0.1, even the fully periodic control without an inlet
+amplifies a 1e-6 broadband seed (density reaches 1.1e-3). That separate bulk limitation
+remains; this inlet repair is not a validation of high-Reynolds-number LES or drag.
 
 A uniform pressure face uses non-equilibrium extrapolation (Guo, Zheng & Shi 2002):
 its density is prescribed, physical tangential velocity is zero, and normal velocity is taken

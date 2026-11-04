@@ -268,12 +268,17 @@ fn cylinder_failure(cells: f64, re: f64, steps_run: u64, collision: Collision) -
 #[test]
 #[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
 fn a_coarse_cylinder_wake_stays_stable_where_the_two_relaxation_time_scheme_fails() {
-    // Ten cells across the cylinder: Re 200 is τ⁺ = 0.510, cell Reynolds number 15 at the peak
-    // inlet speed; the inlet and outlet reflect the start-up's pressure waves.
+    // Ten cells across the cylinder: Re 250 is τ⁺ = 0.508, cell Reynolds number 19 at the peak
+    // inlet speed; the inlet and outlet reflect the start-up's pressure waves. The comparison ran
+    // at Re 200 until the extrapolated pressure outlet (#819) and the TRT inlet correction (#820)
+    // removed the boundary-driven failure there: the two-relaxation-time scheme failed at step
+    // 1322 before them and now survives Re 200 and 220. It still fails from Re 240 (step 2199)
+    // while the regularised collision survives up to Re 260, so the test moved to Re 250, inside
+    // that window, to keep comparing the collisions where only one of them is stable.
     let run = 6000;
-    let trt = cylinder_failure(10.0, 200.0, run, Collision::Trt);
-    let regularized = cylinder_failure(10.0, 200.0, run, REGULARIZED);
-    println!("cylinder, D = 10 cells, Re 200: two relaxation times fail at {trt:?}, regularized at {regularized:?} (of {run} steps)");
+    let trt = cylinder_failure(10.0, 250.0, run, Collision::Trt);
+    let regularized = cylinder_failure(10.0, 250.0, run, REGULARIZED);
+    println!("cylinder, D = 10 cells, Re 250: two relaxation times fail at {trt:?}, regularized at {regularized:?} (of {run} steps)");
     assert!(trt.is_some(), "the two-relaxation-time scheme fails here");
     assert_eq!(regularized, None);
 }

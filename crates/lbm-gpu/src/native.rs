@@ -221,6 +221,8 @@ pub struct GpuFlow {
     open_groups: (u32, u32),
     /// Whether a pressure face needs the preparatory outlet pass.
     prepare_outlets: bool,
+    /// TRT velocity-inlet reconstruction has staged residuals.
+    inlets: bool,
     group_count: usize,
     force_groups: (u32, u32),
     stats: wgpu::Buffer,
@@ -387,7 +389,7 @@ fn solid_data(solid: &fieldcraft_lbm::conduction::SolidHeat, t0: f64) -> Result<
 }
 
 /// The entry points of `lbm.wgsl` a flow dispatches.
-const KERNELS: [&str; 35] = [
+const KERNELS: [&str; 36] = [
     "clear_eddy",
     "gradient_velocity",
     "fan_partials",
@@ -403,6 +405,7 @@ const KERNELS: [&str; 35] = [
     "stream_links_exchange",
     "scatter_links",
     "outlet_convect",
+    "inlet_prepare",
     "open_boundaries",
     "link_forces",
     "wall_forces",
@@ -497,6 +500,7 @@ fn check_storage_buffers(backend: wgpu::Backend, have: u32, need: u32) -> Result
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Variant {
     aa: bool,
+    inlets: bool,
     regularized: bool,
     mrt: bool,
     smagorinsky: bool,
@@ -551,6 +555,7 @@ fn compile(device: &wgpu::Device, variant: Variant) -> Result<Kernels> {
             compilation_options: wgpu::PipelineCompilationOptions {
                 constants: &[
                     ("AA_MODE", if variant.aa { 1.0 } else { 0.0 }),
+                    ("INLETS", if variant.inlets { 1.0 } else { 0.0 }),
                     ("REGULARIZED", if variant.regularized { 1.0 } else { 0.0 }),
                     ("MRT", if variant.mrt { 1.0 } else { 0.0 }),
                     ("SMAGORINSKY", if variant.smagorinsky { 1.0 } else { 0.0 }),
@@ -917,11 +922,19 @@ impl GpuFlow {
         }
 
         // Pressure cells each have a slot in the outlet buffer: convective history and
-        // transient gathered populations for uniform-pressure extrapolation (see lbm.wgsl).
+        // transient gathered populations for uniform-pressure extrapolation; with TRT inlet
+        // reconstruction, velocity cells have one for their staged residuals (see lbm.wgsl).
         let open = flow.open_cells();
-        let mut open_u = reserved(4 * open.len(), "open cells")?;
+        let stencils = flow.inlet_stencils();
+        let inlets = !stencils.is_empty();
+        let pressure_count = open.iter().filter(|oc| !matches!(oc.target, Target::Velocity(_))).count();
+        let open_words = open.len().checked_mul(if inlets { 16 } else { 4 }).ok_or_else(|| Error::Limit("too many GPU open cells".into()))?;
+        if (open_words as u64).checked_mul(4).is_none_or(|bytes| bytes > cap) {
+            return Err(Error::Limit("GPU boundary data exceeds the device's buffer limit".into()));
+        }
+        let mut open_u = reserved(open_words, "open cells")?;
         let mut open_f = reserved(4 * open.len(), "open cells")?;
-        let outlet_words = outlet_words(open.iter().filter(|oc| !matches!(oc.target, Target::Velocity(_))).count(), cap)?;
+        let outlet_words = outlet_words(if inlets { open.len() } else { pressure_count }, cap)?;
         let mut outlet = reserved(outlet_words, "outlet cells")?;
         let states = flow.outlets().states();
         for (k, oc) in open.iter().enumerate() {
@@ -939,12 +952,19 @@ impl GpuFlow {
                 outlet.extend(state.unknowns.iter().zip(dirs).map(|(v, q)| (v - W.get(q).copied().unwrap_or(0.0)) as f32));
                 outlet.push(state.speed as f32);
                 outlet.extend([0.0; OUTLET - UNKNOWN - 1]);
-            } else if matches!(oc.target, Target::Density(_)) {
-                // Transient pressure populations, gathered before any open cell is changed.
+            } else if inlets || matches!(oc.target, Target::Density(_)) {
+                // Transient pressure populations or inlet residuals, gathered before any open
+                // cell is changed.
                 outlet.extend([0.0; OUTLET]);
             }
         }
-        let prepare_outlets = !outlet.is_empty();
+        // Headers precede all stencils; every open-cell kernel can still index its header.
+        for stencil in stencils {
+            open_u.extend(stencil.inner);
+            open_u.extend(stencil.neighbours[0]);
+            open_u.extend(stencil.neighbours[1]);
+        }
+        let prepare_outlets = pressure_count > 0;
         let mut open_t = reserved(4 * open.len(), "open cell temperatures")?;
         for k in 0..open.len() {
             match thermal.and_then(|t| t.open().get(k)).copied().flatten() {
@@ -1133,6 +1153,7 @@ impl GpuFlow {
 
         let (kernels, pipeline_seconds) = shared.kernels(Variant {
             aa,
+            inlets,
             regularized,
             mrt: flow.collision() == fieldcraft_model::Collision::Mrt,
             smagorinsky: flow.smagorinsky() > 0.0,
@@ -1228,6 +1249,7 @@ impl GpuFlow {
             open_count: open.len(),
             open_groups,
             prepare_outlets,
+            inlets,
             group_count,
             force_groups,
             stats,
@@ -1490,6 +1512,9 @@ impl GpuFlow {
                 if self.aa {
                     commands.push((self.current, "scatter_links", self.links_groups));
                 }
+            }
+            if self.inlets {
+                commands.push((self.current, "inlet_prepare", self.open_groups));
             }
             if self.prepare_outlets {
                 commands.push((self.current, "outlet_convect", self.open_groups));

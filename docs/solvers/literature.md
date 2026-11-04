@@ -651,6 +651,22 @@ JCP 232(1):100–117, 2013, DOI [10.1016/j.jcp.2012.07.023](https://doi.org/10.1
   non-equilibrium populations and normal velocity while prescribing boundary density and zero
   tangential velocity. Implementation is independent, from the published method; no solver code
   was used. Constant-flow sweeps and the pressure-channel controls test the closure.
+- **Also used as.** The TRT velocity-inlet correction (`crates/lbm/src/inlet.rs`, #820) takes the
+  equilibrium/non-equilibrium split from it, but extrapolates only the non-equilibrium stress trace
+  (`2 trace(inner1) − trace(inner2)`) and, through C3.3b, the high-frequency part of the density
+  residual; the five deviatoric stress components and the prescribed velocity stay Zou–He's. This
+  selective combination is our own, not the paper's closure.
+
+**C3.3b Shapiro 1970, selective smoothing filters.** **Verdict: build on (TRT inlet density residual, #820).**
+- **Citation.** R. Shapiro, *Smoothing, filtering, and boundary effects*, Reviews of Geophysics
+  8(2):359–387 (1970). DOI [10.1029/RG008i002p00359](https://doi.org/10.1029/RG008i002p00359).
+- **Method.** Repeated three-point smoothing combined into high-order filters whose response is one at
+  zero wavenumber and zero at the two-cell wave; the fourth-order one is `[−1, 4, 10, 4, −1]/16`.
+- **Used as.** `crates/lbm/src/inlet.rs` and the GPU `inlet_apply` (on residuals staged by `inlet_prepare`) apply `I − S₁S₂` (S along
+  each tangential axis, periodic sides wrapped, wall sides reflected) to the inlet's density
+  extrapolation residual only, so the alternating boundary mode is removed while the slowly varying
+  density, where extrapolating outright made long acoustic waves unstable, keeps Zou–He's value.
+  Never applied to the bulk flow or the imposed velocity.
 
 **C3.4 Orlanski 1976, convective outflow condition.** **Verdict: build on (convective outlets, #599).**
 - **Citation.** I. Orlanski, *A simple boundary condition for unbounded hyperbolic flows*, J. Comput. Phys.
@@ -1335,8 +1351,9 @@ lattice Boltzmann package's code was opened.
   lattice Boltzmann method involving curved geometry*, PRE 65:041203, 2002 (DOI not checked).
 - Inlets and outlets: Zou & He 1997 (C3.3), with the D3Q19 transverse-momentum correction of
   M. Hecht, J. Harting, *Implementation of on-site velocity boundary conditions for D3Q19
-  lattice Boltzmann simulations*, J. Stat. Mech. 2010, P01018 (DOI not checked); convective
-  outlets after Orlanski 1976 (C3.4).
+  lattice Boltzmann simulations*, J. Stat. Mech. 2010, P01018 (DOI not checked); the TRT
+  velocity-inlet correction after Guo, Zheng & Shi 2002 (C3.3a) and Shapiro 1970 (C3.3b);
+  convective outlets after Orlanski 1976 (C3.4).
 - Stability limits (Mach ≤ 0.3, τ⁺ ≥ 0.505, runtime speed ≤ 0.5): Sterling & Chen 1996 and
   Lallemand & Luo 2000 (C1.5) for the shrinking stable region as τ → ½.
 - Voxelisation: Shewchuk's exact `orient2d`/`orient3d` (`fieldcraft_mesh::predicates`) with a

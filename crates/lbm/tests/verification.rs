@@ -526,8 +526,9 @@ fn the_memory_estimate_matches_what_a_run_allocates() {
         // The GPU backend's flow is prepared on the host and dropped before the steps.
         assert_eq!((gpu_on.setup - gpu_off.setup, gpu_on.state, gpu_on.device), (eddy, gpu_off.state, gpu_off.device), "heat {heat}");
         // Model off, to the byte (the 48 × 24 × 24 channel): state also reserves the
-        // maximum 14,448-byte validity sample payload independently of frame count.
-        let frozen = if heat { [14_201_856, 14_216_304, 1_658_880, 1_105_920] } else { [9_556_992, 9_571_440, 1_327_104, 884_736] };
+        // maximum 14,448-byte validity sample payload independently of frame count, and setup
+        // 80 bytes per open row for TRT inlet stencils/scratch and the construction lookup (#820).
+        let frozen = if heat { [14_294_016, 14_308_464, 1_658_880, 1_105_920] } else { [9_649_152, 9_663_600, 1_327_104, 884_736] };
         assert_eq!([cpu_off.setup, cpu_off.state, cpu_off.frame_bytes, cpu_off.readback], frozen, "heat {heat}");
     }
     // The hybrid collision and Vreman's model hold each cell's velocity for the finite-difference
@@ -535,8 +536,9 @@ fn the_memory_estimate_matches_what_a_run_allocates() {
     // buffer smaller than the populations', nothing on the host.
     let with = |collision: fieldcraft_model::Collision, vreman: bool| {
         let mut d = domain([0.0; 3], [3.0, 1.5, 1.5], 0.0625);
-        d.faces.x_min = FaceCondition::Velocity { velocity: [0.05, 0.0, 0.0], profile: Profile::Uniform };
-        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Convective };
+        // Periodic x isolates gradient storage from the TRT-only inlet scratch.
+        d.faces.x_min = FaceCondition::Periodic {};
+        d.faces.x_max = FaceCondition::Periodic {};
         let mut p = fieldcraft_model::Procedure::Fluid {
             domain: "Flow".into(),
             end_time: Some(0.4),
