@@ -4152,3 +4152,54 @@ fn study_taylor_green_vortex_dissipation() {
         );
     }
 }
+
+/// #820: rotated inlet planes, both signs, and a thin tangential dimension. Odd/even chunks
+/// exercise both AA phases; the two-buffer backend uses the same staged reconstruction.
+#[test]
+fn inlet_reconstruction_matches_cpu_on_every_axis() {
+    for sides in ["slip", "periodic"] {
+        for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+            for axis in 0..3 {
+                for sign in [-1.0, 1.0] {
+                    let mut size = [8; 3];
+                    size[(axis + 2) % 3] = 1;
+                    let mut cpu = common::inlet::box_flow(Collision::Trt, 0.505, sides, 0.0, size, axis, sign);
+                    common::inlet::broadband(&mut cpu, axis, sign, 1e-6);
+                    let Some(mut gpu) = gpu(&cpu, streaming) else { return };
+                    for steps in [1, 2, 17, 40] {
+                        cpu.advance(steps).unwrap();
+                        gpu.advance(steps).unwrap();
+                        let (du, drho) = field_difference(&mut cpu, &mut gpu);
+                        println!("#820 {streaming:?} axis={axis} sign={sign} step={} du={du:.3e} drho={drho:.3e}", cpu.steps_done());
+                        assert!(du <= 2e-5 && drho <= 1e-6, "{du} {drho}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The original #820 failure plus broadband controls, without changing collision or viscosity.
+#[test]
+#[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+fn inlet_perturbations_decay_for_thirty_thousand_steps() {
+    for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+        for (tau, seed, random) in [(0.505, 1e-6, false), (0.505, -1e-6, false), (0.505, 1e-6, true), (0.518, 1e-6, true)] {
+            let mut cpu = common::inlet::box_flow(Collision::Trt, tau, "slip", seed, [16; 3], 0, 1.0);
+            if random {
+                common::inlet::broadband(&mut cpu, 0, 1.0, seed);
+            }
+            let Some(mut gpu) = gpu(&cpu, streaming) else { return };
+            let mut windows = [0.0f64; 6];
+            for step in 0..120 {
+                gpu.advance(250).unwrap();
+                windows[step / 20] = windows[step / 20].max(common::inlet::departures(&mut *gpu, 0, 1.0)[0]);
+            }
+            let peak = common::inlet::departures(&mut *gpu, 0, 1.0);
+            println!("#820 {streaming:?} tau={tau} seed={seed} random={random}: final={peak:?}, windows={windows:?}");
+            assert!(peak.into_iter().all(|v| v <= 1e-6), "{peak:?}");
+            // Single-precision roundoff sets the floor, as in the existing GPU uniform-flow tests.
+            assert!(windows[2..].windows(2).all(|w| w[1] <= w[0] + 1e-6), "{windows:?}");
+        }
+    }
+}
