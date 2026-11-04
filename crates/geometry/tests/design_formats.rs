@@ -1,8 +1,9 @@
 //! Every design SolidCraft saved for these tests opens (`tests/designs`): the format 21 designs
-//! and those of later SolidCraft releases, which SolidCraft's reader migrates. A copy of a recipe
-//! saved by a later release opens as the same bodies with the same face names as the format 21
-//! design of that recipe (#605: FieldCraft 0.7.0 refused SolidCraft 0.16.2's designs; #655: the
-//! 0.16.2 pin refused 0.17's and 0.18's).
+//! and those of later SolidCraft releases, which SolidCraft's reader migrates. A format 21 design
+//! re-saved by a later release (`resaved/`) opens with every face name on the same face, as a
+//! person's design does after they save it again; a recipe built afresh by a later release opens
+//! as the same bodies with the same face names (#605: FieldCraft 0.7.0 refused SolidCraft 0.16.2's
+//! designs; #655: the 0.16.2 pin refused 0.17's and 0.18's).
 
 use std::path::{Path, PathBuf};
 
@@ -55,33 +56,51 @@ fn every_saved_design_opens() {
     }
 }
 
+/// Face names sorted, for a recipe built afresh: SolidCraft 0.30 numbers the pieces of a split
+/// face in its kernel's order for features made in it (a migrated feature keeps the old order,
+/// `kernel_piece_order`), so a fresh build may give the same names to the pieces in another order.
+fn sorted(mut names: Vec<String>) -> Vec<String> {
+    names.sort_unstable();
+    names
+}
+
 #[test]
 fn a_later_release_saves_the_same_design() {
-    let mut compared = 0;
+    let (mut fresh, mut resaved) = (0, 0);
     for path in saved(&designs()).iter().filter(|p| p.parent() != Some(designs().as_path())) {
         let reference = designs().join(path.file_name().unwrap());
         if !reference.exists() {
             continue;
         }
+        let again = path.parent().and_then(Path::file_name).is_some_and(|d| d == "resaved");
         let (a, b) = (summary(&open(&reference)), summary(&open(path)));
         assert_eq!(a.len(), b.len(), "{}", path.display());
-        for ((name_a, volume_a, faces_a), (name_b, volume_b, faces_b)) in a.iter().zip(&b) {
+        for ((name_a, volume_a, faces_a), (name_b, volume_b, faces_b)) in a.into_iter().zip(b) {
             assert_eq!(name_a, name_b, "{}", path.display());
             assert!((volume_a - volume_b).abs() <= 1e-9 * volume_a, "{}: {name_a} {volume_a} vs {volume_b}", path.display());
-            assert_eq!(faces_a, faces_b, "{}: {name_a}", path.display());
+            if again {
+                // A re-saved design keeps each name on its face.
+                assert_eq!(faces_a, faces_b, "{}: {name_a}", path.display());
+            } else {
+                assert_eq!(sorted(faces_a), sorted(faces_b), "{}: {name_a}", path.display());
+            }
         }
-        compared += 1;
+        if again {
+            resaved += 1;
+        } else {
+            fresh += 1;
+        }
     }
-    assert!(compared >= 1, "no saved copy of a recipe");
+    assert!(fresh >= 1 && resaved >= 1, "saved copies: {fresh} fresh, {resaved} re-saved");
 }
 
-/// SolidCraft 0.17 and 0.18 save design format 28; this FieldCraft reads it.
-const _: () = assert!(DESIGN_FORMAT >= 28);
+/// SolidCraft 0.30 saves design format 48; this FieldCraft reads it.
+const _: () = assert!(DESIGN_FORMAT >= 48);
 
 /// The hollow box with a post as each release saved it: one body, `Case`, of 15 faces.
 #[test]
 fn reads_every_release_s_designs() {
-    for release in ["0.16.2", "0.17.0", "0.18.1", "0.18.2"] {
+    for release in ["0.16.2", "0.17.0", "0.18.1", "0.18.2", "0.30.1"] {
         let path = designs().join(format!("solidcraft-{release}/hollow-box-post.solidcraft"));
         let design = open(&path);
         let [body] = design.bodies.as_slice() else { panic!("{release}: {:?}", summary(&design)) };
