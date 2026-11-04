@@ -141,6 +141,9 @@ pub struct ShearDependentTau {
 /// Run statistics.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct FluidStats {
+    /// Sampled runtime diagnostics, not a validation certificate. Not encoded in legacy results.
+    #[serde(skip)]
+    pub validity: Option<Box<crate::validity::Report>>,
     pub cells: usize,
     pub fluid_cells: usize,
     pub steps: u64,
@@ -437,6 +440,9 @@ fn run_checkpointed(
     let frames = u64::from(setup.frames).min(total).max(1);
     crate::memory::Memory::of(setup, Choice::Cpu)?.check_frames(limits)?;
     let every = total.div_ceil(MAX_HISTORY).max(1);
+    let validity_every = total.div_ceil(crate::validity::MAX_INTERVALS).max(1);
+    let mut validity_samples = Vec::new();
+    crate::validity::capture(&mut validity_samples, flow, 0)?;
     let fs = setup.force_scale();
     let hs = setup.thermal.as_ref().map_or(0.0, |t| t.heat_scale);
 
@@ -491,6 +497,7 @@ fn run_checkpointed(
                 zones: &mut zones,
                 monitor: &mut monitor,
                 surface: &mut surface,
+                validity: &mut validity_samples,
             }
             .archive(a, setup)?;
             flow.checkpoint(a)?;
@@ -505,6 +512,7 @@ fn run_checkpointed(
         // Up to the next event: a history sample, a frame, a progress count.
         let mut next = total.min(k + 64 - k % 64);
         next = next.min((k / every + 1) * every);
+        next = next.min((k / validity_every + 1) * validity_every);
         if next_frame <= frames {
             next = next.min(frame_step(next_frame).max(k + 1));
         }
@@ -539,6 +547,9 @@ fn run_checkpointed(
         k = next;
         if k == reporting_event {
             last_event = k;
+        }
+        if k.is_multiple_of(validity_every) || k == total {
+            crate::validity::capture(&mut validity_samples, flow, k)?;
         }
         if k.is_multiple_of(64) || k == total {
             fieldcraft_model::progress::count(k as f64);
@@ -576,6 +587,9 @@ fn run_checkpointed(
             if sound && out_frames.last().is_some_and(|f| f.step != k) {
                 out_frames.push(frame(setup, flow, k)?);
             }
+            if sound {
+                crate::validity::capture(&mut validity_samples, flow, k)?;
+            }
             finished = true;
         }
         if sound
@@ -596,6 +610,7 @@ fn run_checkpointed(
                     zones: &mut zones,
                     monitor: &mut monitor,
                     surface: &mut surface,
+                    validity: &mut validity_samples,
                 }
                 .archive(a, setup)?;
                 flow.checkpoint(a)
@@ -683,6 +698,15 @@ fn run_checkpointed(
             limit: s.limit,
         })
         .collect();
+    let forces: Vec<_> =
+        flow.groups().iter().zip(forces).map(|(g, force)| ForceHistory { name: g.name.clone(), body: g.body.clone(), force }).collect();
+    let validity = crate::validity::Report::new(validity_samples, validity_every, every, &forces)?;
+    if validity.within_study_envelope == Some(false) {
+        warnings.push("sampled fields exceed the proposed low-Mach study envelope (density departure 0.02, local Mach 0.2); execution completion does not establish validity".into());
+    }
+    if validity.invalid_field_samples > 0 {
+        warnings.push("some sampled fields were unusable; the numerical validity envelope is unassessed (see the backend guard or steady monitor for divergence)".into());
+    }
     Ok(FluidResult {
         port_properties: Some(crate::PortProperties { density: setup.density, specific_heat: setup.thermal.as_ref().map(|t| t.specific_heat) }),
         step: setup.step.clone(),
@@ -691,10 +715,11 @@ fn run_checkpointed(
         open_faces,
         frames: out_frames,
         history_times,
-        forces: flow.groups().iter().zip(forces).map(|(g, force)| ForceHistory { name: g.name.clone(), body: g.body.clone(), force }).collect(),
+        forces,
         zones,
         heat: flow.groups().iter().zip(heats).map(|(g, power)| HeatHistory { name: g.name.clone(), body: g.body.clone(), power }).collect(),
         stats: FluidStats {
+            validity: Some(Box::new(validity)),
             cells: n,
             fluid_cells: flow.fluid_cells(),
             steps: k,
