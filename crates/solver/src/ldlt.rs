@@ -63,7 +63,7 @@ use serde::Serialize;
 use crate::Result;
 use crate::cholesky::{
     Context, Factor, FactorError, PANEL, PIVOT_TOLERANCE, Panel, Pivot, Structure, Supernode, Symbolic, UpperColumns, offset, products,
-    solve_supernodes, subtract, times_d,
+    solve_supernodes, solve_supernodes_many, subtract, times_d,
 };
 use crate::sparse::Csr;
 
@@ -418,6 +418,12 @@ impl LdltFactor {
     pub fn solve(&self, b: &mut [f64]) -> Result<()> {
         solve_supernodes(self.n, &self.perm, &self.structure, &self.blocks, b)
     }
+
+    /// Solve A x = b in place for each of `bs`, reading the factor once: each the same bit for
+    /// bit as [`Self::solve`].
+    pub fn solve_many(&self, bs: &mut [&mut [f64]]) -> Result<()> {
+        solve_supernodes_many(self.n, &self.perm, &self.structure, &self.blocks, bs)
+    }
 }
 
 /// Which factorization a symmetric solve uses.
@@ -482,6 +488,14 @@ impl Symmetric {
         match self {
             Symmetric::Cholesky(f) => f.solve(b),
             Symmetric::Indefinite(f) => f.solve(b),
+        }
+    }
+
+    /// [`Self::solve`] for each of `bs`, reading the factor once.
+    pub fn solve_many(&self, bs: &mut [&mut [f64]]) -> Result<()> {
+        match self {
+            Symmetric::Cholesky(f) => f.solve_many(bs),
+            Symmetric::Indefinite(f) => f.solve_many(bs),
         }
     }
 
@@ -708,6 +722,44 @@ mod tests {
         }
         let err = residual(&a, &|b: &mut [f64]| one.solve(b).unwrap(), 0.1);
         assert!(err < 1e-9, "{err}");
+    }
+
+    /// Several right-hand sides solved at once give each one's solve bit for bit, through pivoted
+    /// supernodes, local interchanges and 2 × 2 pivots, with LDLᵀ and Cholesky; a wrong length
+    /// is refused before any right-hand side is touched.
+    #[test]
+    fn several_right_hand_sides_solve_as_each_alone() {
+        let cases = [csr(&[vec![(0, 4.0)]]), shifted_grid([4, 3, 3], -0.5).0, shifted_grid([4, 3, 3], 2.7).0, shifted_grid([5, 4, 3], 7.1).0];
+        let bits = |v: &[Vec<f64>]| v.iter().map(|x| x.iter().map(|y| y.to_bits()).collect::<Vec<_>>()).collect::<Vec<_>>();
+        for (case, a) in cases.iter().enumerate() {
+            let upper = UpperColumns::from_symmetric(a);
+            let factors = [Symmetric::Indefinite(LdltFactor::new(&upper, usize::MAX).unwrap())]
+                .into_iter()
+                .chain(Factor::new(&upper, usize::MAX).ok().map(Symmetric::Cholesky));
+            for f in factors {
+                for k in [1, 2, 6] {
+                    let rhs: Vec<Vec<f64>> = (0..k).map(|s| (0..a.n).map(|i| ((i * 5 + s * 3) as f64 * 0.37).cos()).collect()).collect();
+                    let alone: Vec<Vec<f64>> = rhs
+                        .iter()
+                        .map(|b| {
+                            let mut x = b.clone();
+                            f.solve(&mut x).unwrap();
+                            x
+                        })
+                        .collect();
+                    let mut together = rhs.clone();
+                    f.solve_many(&mut together.iter_mut().map(Vec::as_mut_slice).collect::<Vec<_>>()).unwrap();
+                    assert_eq!(bits(&together), bits(&alone), "case {case}, {k} right-hand sides");
+                }
+                let mut good = vec![1.0; a.n];
+                let mut short = vec![0.25; a.n.saturating_sub(1)];
+                let before = (good.clone(), short.clone());
+                if a.n > 0 {
+                    assert!(matches!(f.solve_many(&mut [&mut good[..], &mut short[..]]), Err(Error::Internal(_))));
+                    assert_eq!((good, short), before);
+                }
+            }
+        }
     }
 
     #[test]
