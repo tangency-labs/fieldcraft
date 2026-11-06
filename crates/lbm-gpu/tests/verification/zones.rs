@@ -283,3 +283,26 @@ fn fans_and_porous_zones_with_every_wall_treatment_follow_the_cpu() {
         }
     }
 }
+
+/// The pressure face extrapolates physical velocity from a neighboring zone, not j/rho.
+#[test]
+fn pressure_outlet_includes_the_inner_zone_force() {
+    for (collision, streaming) in cases() {
+        for fan in [false, true] {
+            let (_, mut cpu) = common::pressure_zone::neighbor(collision, fan);
+            let Some(mut device) = gpu(&cpu, streaming) else { continue };
+            for steps in [1, 1, 7, 23, 68] {
+                cpu.advance(steps).unwrap();
+                device.advance(steps).unwrap();
+                let (du, drho) = field_difference(&mut cpu, &mut device);
+                assert!(du < 2e-5 && drho < 1e-6, "{collision:?} {streaming:?} fan={fan}: {du} {drho}");
+                let fields = device.fields().unwrap();
+                let inside = cpu.grid().index([6, 0, 0]);
+                let boundary = cpu.grid().index([7, 0, 0]);
+                let mismatch = (fields.velocity[inside][0] - fields.velocity[boundary][0]).abs();
+                println!("{collision:?} {streaming:?} fan={fan}: normal velocity mismatch {mismatch:.3e}");
+                assert!(mismatch < 1e-6, "{mismatch}");
+            }
+        }
+    }
+}

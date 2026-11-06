@@ -178,7 +178,7 @@ struct Params {
 @group(0) @binding(3) var<storage, read_write> g: array<f32>;
 // Per link: (q | kind << 8 | q2 << 16 | RESET, from, group, cell) and the moving-wall term.
 @group(0) @binding(5) var<storage, read> link_u: array<vec4<u32>>;
-// Per convective outlet cell (fieldcraft_lbm::outlet), OUTLET floats at its slot: its five unknown
+// Per pressure cell (fieldcraft_lbm::outlet), OUTLET floats at its slot: its five unknown
 // populations after the last step (h, 0..5) and its convection speed (5), kept between steps;
 // this step's convected unknowns (6..11), the density shift (11) and whether it convects (12),
 // from `outlet_convect` for `open_boundaries`.
@@ -1524,7 +1524,7 @@ fn scatter_links(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_i
 
 // Every streamed population of an open cell set to the equilibrium of `rho` and `bare` (the
 // velocity without the half force), as deviations from the weights: what an outflow cell holds
-// under the regularised collision (fieldcraft_lbm::flow::hold_equilibrium). Only where `apply`
+// in the regularised collision's local fallback (fieldcraft_lbm::flow::hold_equilibrium). Only where `apply`
 // (see OPEN_CELLS_WALK_TOGETHER).
 fn hold_equilibrium(cell: u32, xyz: vec3<i32>, rho: f32, bare: vec3<f32>, apply: bool) {
     let uu = dot(bare, bare);
@@ -1547,7 +1547,7 @@ fn hold_equilibrium(cell: u32, xyz: vec3<i32>, rho: f32, bare: vec3<f32>, apply:
 // cells whose flow came back in crashed every CI run on a software GPU (Ubuntu 24.04, Mesa
 // 25.2.8). Threads past the last open cell may return early: they are the last of their group.
 
-const OUTLET: u32 = 16u;
+const OUTLET: u32 = 20u;
 // The open-cell kind whose closure a convective outlet cell takes where the flow comes back in:
 // the uniform pressure outlet's (fieldcraft_lbm::outlet::backflow).
 const BACKFLOW_KIND: u32 = 1u;
@@ -1573,7 +1573,8 @@ fn outward(rho: f32, jn: f32, cell: u32, axis: u32, sign: f32) -> f32 {
     return -sign * (jn + 0.5 * rho * acc_of(cell)[axis]) / rho;
 }
 
-// The convective outlet (fieldcraft_lbm::outlet), first pass, one thread per open cell: the
+// Pressure preparation (fieldcraft_lbm::outlet), first pass, one thread per open cell:
+// uniform faces gather non-equilibrium extrapolation in slots 0..19; convective faces gather the
 // unknown populations convected from the cell's own after the last step and the streamed ones of
 // the cell inside, (own + λ inside) / (1 + λ); the density shift to the face's density, and
 // whether the flow leaves. Reads only populations, so every cell sees them before any open
@@ -1614,6 +1615,36 @@ fn outlet_convect(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_
         drho = drho + v;
         jn = jn + f32(c_of(q)[axis]) * v;
     }
+    // Uniform pressure: stage the whole reconstructed cell before any open cell changes.
+    // Reads of an inner cell that also belongs to another open face are consequently race-free.
+    // Slots 0..18 hold populations, 19 says whether an inner fluid cell exists.
+    let pressure = ou.z == 1u;
+    var inner_drho = 0.0;
+    var inner_j = vec3<f32>(0.0);
+    for (var q = 0u; q < Q; q = q + 1u) {
+        var h = 0.0;
+        if pressure && has_inside { h = streamed(q, inside, inside_xyz); }
+        inner_drho = inner_drho + h;
+        inner_j = inner_j + h * vec3<f32>(c_of(q));
+    }
+    let inner_rho = 1.0 + inner_drho;
+    let inner_u = inner_j / inner_rho;
+    let half = 0.5 * acc_of(cell);
+    var inner_half = vec3<f32>(0.0);
+    if pressure && has_inside {
+        inner_half = 0.5 * zone_motion(inside, inner_rho, inner_j).force / inner_rho;
+    }
+    let bare = select(-half, inner_u + inner_half - half, vec3<u32>(0u, 1u, 2u) == vec3<u32>(axis));
+    let target_rho = open_f[o].x;
+    for (var q = 0u; q < Q; q = q + 1u) {
+        let c = vec3<f32>(c_of(q));
+        let ci = dot(c, inner_u);
+        let cb = dot(c, bare);
+        let ei = w_of(q) * (inner_drho + inner_rho * (3.0 * ci + 4.5 * ci * ci - 1.5 * dot(inner_u, inner_u)));
+        let eb = w_of(q) * ((target_rho - 1.0) + target_rho * (3.0 * cb + 4.5 * cb * cb - 1.5 * dot(bare, bare)));
+        if pressure && has_inside { outlet[base + q] = eb + (streamed(q, inside, inside_xyz) - ei); }
+    }
+    if pressure { outlet[base + 19u] = select(0.0, 1.0, has_inside); }
     if convective {
         outlet[base + 11u] = (open_f[o].x - 1.0) - drho;
         outlet[base + 12u] = select(0.0, 1.0, outward(1.0 + drho, jn, cell, axis, sign) > 0.0);
@@ -1645,13 +1676,19 @@ fn open_boundaries(@builtin(local_invocation_index) lid: u32, @builtin(workgroup
         convects = outlet[base + 12u] > 0.5;
         shift = outlet[base + 11u];
     }
-    zou_he(o, select(ou.z, BACKFLOW_KIND, convective), cell, axis, sign, xyz, !convects);
+    var extrapolates = false;
+    if ou.z == 1u { extrapolates = outlet[base + 19u] > 0.5; }
+    zou_he(o, select(ou.z, BACKFLOW_KIND, convective), cell, axis, sign, xyz, !convects && !extrapolates);
     var k = 0u;
     var drho = 0.0;
     var jn = 0.0;
     for (var q = 0u; q < Q; q = q + 1u) {
         let unknown = is_unknown(q, axis, sign);
         var v = streamed(q, cell, xyz);
+        if extrapolates {
+            v = outlet[base + q];
+            store_streamed(q, cell, xyz, v);
+        }
         if convects {
             if unknown { v = outlet[base + 6u + k]; }
             v = v + w_of(q) * shift;
