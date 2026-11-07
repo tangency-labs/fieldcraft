@@ -1,0 +1,43 @@
+{
+ "title": "A conducting slab on a hot plate radiating through a transparent fluid to its surroundings (lattice conjugate heat transfer)",
+ "kind": "theory",
+ "source": "Steady one-dimensional conduction through series thermal resistances with a radiating surface between them: the top cell's balance (T₀ − T_c)/R₁ = (T_c − T₁)/R₂ + ε σ (T_c⁴ − T_sur⁴) (F. P. Incropera, D. P. DeWitt, Fundamentals of Heat and Mass Transfer, §3.1, the thermal circuit, and §1.3.1, the surface energy balance), with R₁ and R₂ the lattice's resistances from the hot plate to the slab's top cell and from it through the fluid to the cold plate; T_c solved by bisection to round-off",
+ "quantities": [
+  {
+   "id": "t_top_cell",
+   "quantity": "temperature of the slab's top cell (y = 0.21875)",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Run",
+     "points": [
+      [
+       0.03125,
+       0.21875,
+       0.03125
+      ]
+     ]
+    },
+    "pointer": "/points/0/temperature"
+   },
+   "value": 362.6096253815431,
+   "tolerance": {
+    "relative": 1e-08
+   },
+   "reason": "the lattice's discrete steady state is the series-resistance balance exactly (README), reached to round-off by the end of the run; 8 and 16 cells both match to 10⁻⁹ K"
+  },
+  {
+   "id": "radiated",
+   "quantity": "power the slab radiates, ε σ (T_c⁴ − T_sur⁴) over the column's cross-section Δx²",
+   "measure": {
+    "from": "solve",
+    "pointer": "/solids/0/radiated/final"
+   },
+   "value": 1.9742229761395849,
+   "tolerance": {
+    "relative": 1e-06
+   },
+   "reason": "the same balance; the radiated power is 52 % of what the hot plate supplies"
+  }
+ ]
+}

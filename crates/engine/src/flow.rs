@@ -762,6 +762,24 @@ pub(crate) mod tests {
         let e = s.execute("model.fluid_domain.limit", &json!({"domain": "Tank", "body": "Body2", "limit": 90})).unwrap_err().to_string();
         assert!(e.contains("`Body2` is not a conducting solid"), "{e}");
         assert!(s.execute("model.fluid_domain.limit", &json!({"domain": "Tank", "body": "Body1", "limit": "-300 °C"})).is_err());
+        // radiation to the room (#839): the ambient typed in °C, stored in kelvin; the solve
+        // reports what the plate radiates, power that does not reach the water
+        let glow = json!([{"body": "Body1", "material": "Alu", "power": 2e5, "radiation": {"emissivity": 0.9, "ambient": 20}}]);
+        s.execute("model.fluid_domain.edit", &domain(glow)).unwrap();
+        let rad = s.model.fluid_domain("Tank").and_then(|d| d.solids().next()).and_then(|c| c.radiation).unwrap();
+        assert!((rad.ambient - 293.15).abs() < 1e-9 && rad.emissivity == 0.9, "{rad:?}");
+        let r = s.execute("solve.fluid", &json!({})).unwrap();
+        let radiated = r["solids"][0]["radiated"]["final"].as_f64().unwrap();
+        assert!(radiated > 0.0 && radiated < 2e5, "the warm plate radiates part of its power: {}", r["solids"][0]);
+        for bad in [
+            json!({"emissivity": 0, "ambient": 20}),
+            json!({"emissivity": 1.2, "ambient": 20}),
+            json!({"emissivity": 0.5, "ambient": -300}),
+            json!({"emissivity": 0.5}),
+        ] {
+            let d = domain(json!([{"body": "Body1", "material": "Alu", "radiation": bad}]));
+            assert!(s.execute("model.fluid_domain.edit", &d).is_err(), "{bad}");
+        }
         // a thermal condition on a conducting face, a material that does not conduct, the GPU
         assert!(
             s.execute(

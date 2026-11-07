@@ -397,7 +397,7 @@ pub fn cht_model(fluid: [f64; 3], solid: (f64, [f64; 3], f64), domain: FluidDoma
 
 /// Obstacle `body` conducting in material `Solid` with `power`.
 pub fn conducting(body: &str, power: f64) -> fieldcraft_model::ConductingSolid {
-    fieldcraft_model::ConductingSolid { body: body.into(), material: "Solid".into(), power, limit: None }
+    fieldcraft_model::ConductingSolid { body: body.into(), material: "Solid".into(), power, limit: None, radiation: None }
 }
 
 // ---- The hybrid collision's shear wave (crates/lbm/tests/hrr.rs, and the GPU's) ----

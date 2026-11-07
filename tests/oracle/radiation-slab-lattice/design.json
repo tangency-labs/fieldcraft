@@ -1,0 +1,18 @@
+{
+ "commands": [
+  {
+   "command": "solid.box",
+   "params": {
+    "corner": [
+     -1000,
+     -1000,
+     -1000
+    ],
+    "length": 3000,
+    "width": 1250,
+    "height": 3000,
+    "body_name": "Slab"
+   }
+  }
+ ]
+}
