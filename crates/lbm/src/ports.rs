@@ -13,7 +13,7 @@
 
 use fieldcraft_model::BoxFace;
 
-use crate::{Error, FluidResult, Result};
+use crate::{Error, FluidResult, HeatHistory, Result};
 
 /// Properties at solve time, so mass and heat transport never depend on today's (possibly
 /// edited) material definition.
@@ -43,8 +43,22 @@ pub struct Port {
     pub face: BoxFace,
     /// Fluid area only, excluding obstacle cells, square metres.
     pub area: f64,
+    /// Area means over the fluid cells of the saved boundary layer, stagnant ones included;
+    /// None for a blocked face.
+    pub mean: Option<FaceMean>,
     pub inflow: Stream,
     pub outflow: Stream,
+}
+
+/// Area-weighted means over an open face's fluid cells: `Σ value Δx² / Σ Δx²`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FaceMean {
+    /// Gauge static pressure, pascals.
+    pub pressure: f64,
+    /// Kelvin; None without a thermal field.
+    pub temperature: Option<f64>,
+    /// Metres per second.
+    pub velocity: [f64; 3],
 }
 
 #[derive(Default)]
@@ -113,6 +127,7 @@ impl FluidResult {
             let sign = if face.is_max() { 1.0 } else { -1.0 };
             let (mut incoming, mut outgoing) = (Integral::default(), Integral::default());
             let mut area = 0.0;
+            let (mut pressure_sum, mut temperature_sum, mut velocity_sum) = (0.0, 0.0, [0.0; 3]);
             // Visit only the face, not the volume: this is also used by the results panel.
             let a = (axis + 1) % 3;
             let b = (axis + 2) % 3;
@@ -126,30 +141,43 @@ impl FluidResult {
                     if self.solid.get(c).copied().unwrap_or(true) {
                         continue;
                     }
-                    let velocity = f.velocity.get(c).and_then(|v| v.get(axis)).copied().map(f64::from);
+                    let velocity = f.velocity.get(c).copied().map(|v| v.map(f64::from));
                     let pressure = f.pressure.get(c).copied().map(f64::from);
                     let temperature = if thermal { f.temperature.get(c).copied().map(f64::from) } else { Some(0.0) };
                     let (Some(u), Some(p), Some(t)) = (velocity, pressure, temperature) else {
                         return Err(Error::Invalid("missing saved port cell".into()));
                     };
-                    if !(u.is_finite() && p.is_finite() && t.is_finite()) {
+                    if !(u.iter().all(|v| v.is_finite()) && p.is_finite() && t.is_finite()) {
                         return Err(Error::Invalid(format!("non-finite saved field on {}", face.name())));
                     }
                     area += cell_area;
-                    let q = sign * u * cell_area;
+                    pressure_sum += p * cell_area;
+                    temperature_sum += t * cell_area;
+                    for (sum, v) in velocity_sum.iter_mut().zip(u) {
+                        *sum += v * cell_area;
+                    }
+                    let q = sign * u[axis] * cell_area;
                     let integral = if q < 0.0 { &mut incoming } else { &mut outgoing };
                     integral.flow += q.abs();
                     integral.pressure += q.abs() * p;
                     integral.temperature += q.abs() * t;
                 }
             }
-            faces.push((face, area, incoming, outgoing));
+            let mean = (area > 0.0).then(|| FaceMean {
+                pressure: pressure_sum / area,
+                temperature: thermal.then(|| self.temperature_reference + temperature_sum / area),
+                velocity: velocity_sum.map(|v| v / area),
+            });
+            if mean.is_some_and(|m| m.temperature.into_iter().chain(m.velocity).chain([m.pressure]).any(|v| !v.is_finite())) {
+                return Err(Error::Invalid(format!("port average overflow on {}", face.name())));
+            }
+            faces.push((face, area, mean, incoming, outgoing));
         }
         // The mixed inflow temperature over every open face, above the reference.
-        let (q_in, t_in) = faces.iter().fold((0.0, 0.0), |(q, t), (_, _, i, _)| (q + i.flow, t + i.temperature));
+        let (q_in, t_in) = faces.iter().fold((0.0, 0.0), |(q, t), (_, _, _, i, _)| (q + i.flow, t + i.temperature));
         let inlet = (thermal && q_in > 0.0).then(|| t_in / q_in);
         let mut ports = Vec::with_capacity(faces.len());
-        for (face, area, incoming, outgoing) in faces {
+        for (face, area, mean, incoming, outgoing) in faces {
             let inflow = incoming.stream(self.port_properties, self.temperature_reference, thermal, inlet);
             let outflow = outgoing.stream(self.port_properties, self.temperature_reference, thermal, inlet);
             if ![area, inflow.volume_flow, outflow.volume_flow].iter().all(|v| v.is_finite())
@@ -159,8 +187,37 @@ impl FluidResult {
             {
                 return Err(Error::Invalid(format!("port integration overflow on {}", face.name())));
             }
-            ports.push(Port { face, area, inflow, outflow });
+            ports.push(Port { face, area, mean, inflow, outflow });
         }
         Ok(ports)
     }
+
+    /// The heat `wall` received (watts, positive into it) at `time`, linearly interpolated
+    /// between the recorded history samples; None outside them (frame zero predates the
+    /// history) or for a malformed history. Never extrapolated.
+    pub fn wall_power(&self, wall: &HeatHistory, time: f64) -> Option<f64> {
+        interpolate(&self.history_times, &wall.power, time)
+    }
+}
+
+/// `values` at `time`, linearly between the strictly increasing `times`; None outside them or
+/// for malformed input.
+fn interpolate(times: &[f64], values: &[f64], time: f64) -> Option<f64> {
+    if !time.is_finite()
+        || times.len() != values.len()
+        || times.is_empty()
+        || times.iter().chain(values).any(|v| !v.is_finite())
+        || times.windows(2).any(|p| p[0] >= p[1])
+    {
+        return None;
+    }
+    let k = times.partition_point(|t| *t < time);
+    if times.get(k) == Some(&time) {
+        return values.get(k).copied();
+    }
+    let lo = k.checked_sub(1)?;
+    let (a, b) = (*times.get(lo)?, *times.get(k)?);
+    let weight = (time - a) / (b - a);
+    let value = (1.0 - weight) * values.get(lo)? + weight * values.get(k)?;
+    value.is_finite().then_some(value)
 }
