@@ -44,6 +44,7 @@ pub mod fluid_zones;
 pub mod fluids;
 pub mod geometry;
 pub mod geometry_names;
+pub mod harmonic;
 pub mod initial;
 pub mod library;
 pub mod loads;
