@@ -2,7 +2,7 @@
 mod common;
 
 use common::*;
-use fieldcraft_lbm::{FluidResult, Limits, PortProperties, ports::inlet_temperature, run};
+use fieldcraft_lbm::{FluidResult, HeatHistory, Limits, PortProperties, ports::inlet_temperature, run};
 use fieldcraft_model::{FaceCondition, FluidThermal, Outflow, Profile, ThermalCondition};
 
 fn saved() -> FluidResult {
@@ -44,6 +44,10 @@ fn backflow_is_separate_and_temperatures_are_flow_weighted() {
     let ports = r.ports(r.frames.len() - 1).unwrap();
     let p = &ports[1];
     close(p.area, 3.0);
+    let mean = p.mean.unwrap();
+    close(mean.pressure, 22.0 / 3.0);
+    close(mean.temperature.unwrap(), 273.15 + 80.0 / 3.0);
+    close(mean.velocity[0], 2.0 / 3.0);
     close(p.outflow.volume_flow, 4.0);
     close(p.inflow.volume_flow, 2.0);
     close(p.outflow.mass_flow.unwrap(), 8.0);
@@ -90,6 +94,7 @@ fn absent_properties_are_not_invented_and_isothermal_results_do_not_invent_heat(
     r.port_properties = Some(PortProperties { density: 2.0, specific_heat: None });
     let p = &r.ports(r.frames.len() - 1).unwrap()[1];
     assert_eq!(p.outflow.temperature, None);
+    assert_eq!(p.mean.unwrap().temperature, None);
     assert_eq!(p.outflow.sensible_heat, None);
     close(p.outflow.mass_flow.unwrap(), 8.0);
 }
@@ -98,7 +103,7 @@ fn absent_properties_are_not_invented_and_isothermal_results_do_not_invent_heat(
 fn malformed_saved_fields_are_refused() {
     let r = saved();
     assert!(r.ports(usize::MAX).is_err());
-    for kind in 0..8 {
+    for kind in 0..9 {
         let mut bad = r.clone();
         match kind {
             0 => bad.grid.cells = [usize::MAX; 3],
@@ -110,10 +115,43 @@ fn malformed_saved_fields_are_refused() {
             4 => bad.frames.last_mut().unwrap().velocity[1][0] = f32::NAN,
             5 => bad.port_properties.as_mut().unwrap().density = -1.0,
             6 => bad.port_properties.as_mut().unwrap().specific_heat = Some(f64::NAN),
-            _ => bad.grid.spacing = f64::MAX,
+            7 => bad.grid.spacing = f64::MAX,
+            _ => bad.frames.last_mut().unwrap().velocity[1][1] = f32::NAN,
         }
         assert!(bad.ports(bad.frames.len() - 1).is_err(), "kind {kind}");
     }
+}
+
+#[test]
+fn stagnant_faces_have_area_means_but_blocked_faces_do_not() {
+    let mut r = saved();
+    let p = &r.ports(r.frames.len() - 1).unwrap()[0];
+    let mean = p.mean.unwrap();
+    close(mean.pressure, 10.0);
+    close(mean.temperature.unwrap(), 293.15);
+    assert_eq!(mean.velocity, [0.0; 3]);
+    assert_eq!(p.inflow.temperature, None);
+    r.solid.fill(true);
+    for p in r.ports(r.frames.len() - 1).unwrap() {
+        assert_eq!(p.area, 0.0);
+        assert_eq!(p.mean, None);
+    }
+}
+
+#[test]
+fn wall_power_interpolates_between_recorded_samples_without_extrapolating() {
+    let mut r = saved();
+    let at = |r: &FluidResult, power: &[f64], time| r.wall_power(&HeatHistory { name: "wall".into(), body: None, power: power.to_vec() }, time);
+    r.history_times = vec![1.0, 3.0];
+    assert_eq!(at(&r, &[-4.0, 8.0], 2.0), Some(2.0));
+    assert_eq!(at(&r, &[-4.0, 8.0], 1.0), Some(-4.0));
+    assert_eq!(at(&r, &[-4.0, 8.0], 0.0), None);
+    assert_eq!(at(&r, &[-4.0, 8.0], 4.0), None);
+    assert_eq!(at(&r, &[], 1.0), None);
+    r.history_times = vec![1.0, 1.0];
+    assert_eq!(at(&r, &[0.0, 1.0], 1.0), None);
+    r.history_times = vec![1.0];
+    assert_eq!(at(&r, &[f64::NAN], 1.0), None);
 }
 
 #[test]

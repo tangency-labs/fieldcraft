@@ -26,26 +26,6 @@ pub struct FaceHeat {
     pub index: u32,
 }
 
-fn interpolate(times: &[f64], values: &[f64], time: f64) -> Option<f64> {
-    if !time.is_finite()
-        || times.len() != values.len()
-        || times.is_empty()
-        || times.iter().chain(values).any(|v| !v.is_finite())
-        || times.windows(2).any(|p| p[0] >= p[1])
-    {
-        return None;
-    }
-    let k = times.partition_point(|t| *t < time);
-    if times.get(k) == Some(&time) {
-        return values.get(k).copied();
-    }
-    let lo = k.checked_sub(1)?;
-    let (a, b) = (*times.get(lo)?, *times.get(k)?);
-    let weight = (time - a) / (b - a);
-    let value = (1.0 - weight) * values.get(lo)? + weight * values.get(k)?;
-    value.is_finite().then_some(value)
-}
-
 /// All recorded obstacle faces, using their complete tessellated geometric area (not the
 /// visible triangle area or a lattice-link count). Missing geometry is an error, never zero.
 pub fn faces(s: &Session, r: &FluidResult, pick: Pick) -> Result<Vec<FaceHeat>> {
@@ -83,7 +63,7 @@ pub fn faces(s: &Session, r: &FluidResult, pick: Pick) -> Result<Vec<FaceHeat>> 
             .and_then(|a| crate::units::geometry().to_si(fieldcraft_model::units::Quantity::Area, a).ok())
             .filter(|a| a.is_finite() && *a > 0.0)
             .ok_or_else(|| EngineError::Params(format!("wall heat: face `{}` of `{name}` has no finite positive area", h.name)))?;
-        let power = interpolate(&r.history_times, &h.power, time);
+        let power = r.wall_power(h, time);
         let flux = power.map(|q| q / area).filter(|q| q.is_finite());
         output.push(FaceHeat { body: name.into(), face: h.name.clone(), index, area, power, flux });
     }
@@ -167,16 +147,5 @@ mod tests {
         assert!(report["wall_heat"]["faces"].as_array().unwrap().iter().all(|f| f["flux"].is_null()));
         assert!(session.execute("results.slice", &json!({"field": "wall_heat_flux"})).is_err());
         assert!(session.execute("results.streamlines", &json!({"field": "wall_heat_flux"})).is_err());
-    }
-
-    #[test]
-    fn histories_interpolate_without_fabricating_initial_heat() {
-        assert_eq!(interpolate(&[1.0, 3.0], &[-4.0, 8.0], 2.0), Some(2.0));
-        assert_eq!(interpolate(&[1.0, 3.0], &[-4.0, 8.0], 1.0), Some(-4.0));
-        assert_eq!(interpolate(&[1.0, 3.0], &[-4.0, 8.0], 0.0), None);
-        assert_eq!(interpolate(&[1.0, 3.0], &[-4.0, 8.0], 4.0), None);
-        assert_eq!(interpolate(&[1.0, 1.0], &[0.0, 1.0], 1.0), None);
-        assert_eq!(interpolate(&[1.0], &[f64::NAN], 1.0), None);
-        assert_eq!(interpolate(&[1.0], &[], 1.0), None);
     }
 }

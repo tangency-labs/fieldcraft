@@ -371,6 +371,11 @@ fn pressure_driven_poiseuille_holds_its_end_pressures() {
     println!("pressure-driven Poiseuille: profile error {err:.3e}, end pressures {:.5} / {:.5} of {dp:.5} / 0", p(0), p(nx - 1));
     assert!(err < 0.03, "{err}");
     assert!((p(0) / dp - 1.0).abs() < 1e-3 && (p(nx - 1) / dp).abs() < 1e-3, "{} {}", p(0), p(nx - 1));
+    // The derived face measurement uses every fluid cell, not a centreline probe.
+    let ports = r.ports(r.frames.len() - 1).unwrap();
+    let measured = ports[0].mean.unwrap().pressure - ports[1].mean.unwrap().pressure;
+    println!("area-mean pressure drop {measured:.8} vs Poiseuille {dp:.8}");
+    assert!((measured / dp - 1.0).abs() < 1e-3);
 }
 
 /// Schäfer–Turek's channel at Re = 100, cut 1 diameter behind the cylinder (l = 0.3): the
