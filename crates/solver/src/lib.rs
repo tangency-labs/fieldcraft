@@ -30,6 +30,7 @@
 pub mod analysis;
 pub mod buckle;
 pub mod cholesky;
+pub mod complex;
 pub mod constraints;
 pub mod contact;
 pub mod discrete;
