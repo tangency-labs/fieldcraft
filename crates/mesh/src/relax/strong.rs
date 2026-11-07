@@ -446,10 +446,10 @@ impl Checked {
 
 /// Sweeps of the bad nodes' own optimisation (their neighbours held).
 const TARGET_SWEEPS: usize = 5;
-/// Most Gauss–Seidel sweeps of the harmonic solve, and its tolerance (of the largest prescribed
-/// displacement).
+/// Most Gauss–Seidel sweeps of the harmonic solve, and its tolerance for a move (of the largest
+/// prescribed displacement).
 const HARMONIC_SWEEPS: usize = 2000;
-const HARMONIC_TOL: f64 = 1e-6; // unit-factors: relative to the largest prescribed displacement
+pub(super) const HARMONIC_TOL: f64 = 1e-6; // unit-factors: relative to the largest prescribed displacement
 /// Most rounds of [`morph`].
 pub const MAX_ROUNDS: usize = 200;
 
@@ -528,7 +528,10 @@ impl State<'_> {
         let centres: Vec<P> = start.values().copied().collect();
         let region = within(&points, &centres, reach);
         let free: Vec<u32> = region.iter().copied().filter(|&n| !bad.contains(&n) && movable(self, n)).collect();
-        let u = self.harmonic(&free, &targets)?;
+        // Solved to round-off: stopped at `HARMONIC_TOL`, a round-off change of the targets could
+        // decide whether the solve stopped a sweep earlier or later and move the morph by about
+        // that much (#612). A solve that reaches the sweep cap stops after a fixed count.
+        let u = self.harmonic(&free, &targets, ROUND_OFF)?;
         let touched: BTreeSet<usize> = u.keys().flat_map(|n| self.around.get(n).into_iter().flatten().copied()).collect();
         let was = self.certified(&touched);
         for t in [1.0, 0.5, 0.25, 0.125] {
@@ -586,8 +589,9 @@ impl State<'_> {
     }
 
     /// The harmonic extension over `free` of the displacements `fixed` (zero at every other
-    /// node): Gauss–Seidel on the graph Laplacian of the element edges.
-    pub(super) fn harmonic(&self, free: &[u32], fixed: &BTreeMap<u32, P>) -> Result<BTreeMap<u32, P>> {
+    /// node): Gauss–Seidel on the graph Laplacian of the element edges, until a sweep changes no
+    /// node by more than `tol` of the largest displacement or after [`HARMONIC_SWEEPS`].
+    pub(super) fn harmonic(&self, free: &[u32], fixed: &BTreeMap<u32, P>, tol: f64) -> Result<BTreeMap<u32, P>> {
         let mut u: BTreeMap<u32, P> = fixed.clone();
         for &n in free {
             u.insert(n, [0.0; 3]);
@@ -608,7 +612,7 @@ impl State<'_> {
                 let old = u.insert(n, v).unwrap_or([0.0; 3]);
                 change = change.max(dist(old, v));
             }
-            if change <= HARMONIC_TOL * scale_of {
+            if change <= tol * scale_of {
                 break;
             }
         }

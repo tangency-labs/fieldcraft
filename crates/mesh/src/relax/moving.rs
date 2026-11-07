@@ -219,7 +219,7 @@ pub fn move_weights(model: &Model, handles: &BTreeSet<u32>, influence: &Influenc
             let state = State::new(model, &movers, geometry, false)?;
             let free: Vec<u32> = near.keys().copied().filter(|n| !handles.contains(n) && state.freedom(*n) != Freedom::Fixed).collect();
             let fixed: BTreeMap<u32, P> = handles.iter().map(|&n| (n, [1.0, 0.0, 0.0])).collect();
-            let u = state.harmonic(&free, &fixed)?;
+            let u = state.harmonic(&free, &fixed, super::strong::HARMONIC_TOL)?;
             for n in free {
                 let w = u.get(&n).map_or(0.0, |v| v[0]).clamp(0.0, 1.0);
                 if w > MIN_WEIGHT {
