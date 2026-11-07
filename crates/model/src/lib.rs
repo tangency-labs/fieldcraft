@@ -35,6 +35,7 @@
 
 pub mod bcs;
 pub mod check;
+pub mod composite;
 pub mod constraints;
 pub mod contact;
 mod convert;
@@ -71,6 +72,7 @@ use serde::{Deserialize, Serialize};
 
 pub use bcs::{BoundaryCondition, Dofs, Symmetry, TEMPERATURE_DOF, Target};
 pub use check::{Diagnostic, Resolved, ResolvedSet, Severity};
+pub use composite::{Layup, MaterialOrientation, Ply, PlyStrength};
 pub use constraints::{Coupling, CouplingKind, ReferencePoint};
 pub use contact::{Contact, ContactSurfaces, Friction, InitialPenetration};
 pub use datums::{Datum, Partition};

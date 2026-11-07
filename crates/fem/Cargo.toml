@@ -12,3 +12,5 @@ workspace = true
 fieldcraft-model = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
+# As in mesh, pure-Rust trigonometry keeps new laminate directions independent of host libm.
+libm = "0.2"

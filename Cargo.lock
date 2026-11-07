@@ -1484,6 +1484,7 @@ name = "fieldcraft-fem"
 version = "0.7.5"
 dependencies = [
  "fieldcraft-model",
+ "libm",
  "serde",
  "thiserror 2.0.21",
 ]
