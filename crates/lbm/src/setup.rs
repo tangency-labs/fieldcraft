@@ -67,6 +67,9 @@ pub const TURBULENT_PRANDTL: std::ops::RangeInclusive<f64> = 0.1..=10.0;
 /// The range of Van Driest's damping constant A⁺ a step takes (26 is Van Driest's; 25 to 30 is
 /// usual).
 pub const VAN_DRIEST: std::ops::RangeInclusive<f64> = 1.0..=100.0;
+
+/// The range of the Spalart–Allmaras inflow ratio ν̃/ν.
+pub const SA_INFLOW_RATIO: std::ops::RangeInclusive<f64> = 0.0..=100.0;
 /// The default two-relaxation-time parameter Λ: bounce-back walls exactly halfway between cells
 /// (Ginzburg, Verhaeghe & d'Humières 2008).
 pub const DEFAULT_MAGIC: f64 = 3.0 / 16.0;
@@ -545,25 +548,38 @@ impl Setup {
         let (smagorinsky, vreman, turbulent_prandtl, van_driest, wall_model) = match turbulence {
             None => (0.0, 0.0, 0.9, None, None),
             Some(t) => {
-                let (constant, prandtl, van_driest) = (t.constant(), t.prandtl(), t.van_driest());
-                let (smagorinsky, vreman, what, usual) = match t {
-                    Turbulence::Smagorinsky { .. } => (constant, 0.0, "the Smagorinsky constant", "0.1 to 0.2"),
-                    Turbulence::Vreman { .. } => (
-                        0.0,
-                        crate::vreman::model_constant(constant),
-                        "the constant of Vreman's model (the Smagorinsky-equivalent C_s of c = 2.5 C_s²)",
-                        "0.17 to 0.18",
-                    ),
-                };
-                if !(constant.is_finite() && constant > 0.0 && constant <= MAX_SMAGORINSKY) {
-                    return Err(Error::Invalid(format!("{what} is {constant}: give one above 0 and at most {MAX_SMAGORINSKY} ({usual} is usual)")));
-                }
+                let (prandtl, van_driest) = (t.prandtl(), t.van_driest());
                 if !(prandtl.is_finite() && TURBULENT_PRANDTL.contains(&prandtl)) {
                     return Err(Error::Invalid(format!(
                         "the turbulent Prandtl number is {prandtl}: give one from {} to {} (0.85 to 0.9 is usual)",
                         TURBULENT_PRANDTL.start(),
                         TURBULENT_PRANDTL.end()
                     )));
+                }
+                let (smagorinsky, vreman, constant, what, usual) = match *t {
+                    Turbulence::Smagorinsky { constant, .. } => (constant, 0.0, constant, "the Smagorinsky constant", "0.1 to 0.2"),
+                    Turbulence::Vreman { constant, .. } => (
+                        0.0,
+                        crate::vreman::model_constant(constant),
+                        constant,
+                        "the constant of Vreman's model (the Smagorinsky-equivalent C_s of c = 2.5 C_s²)",
+                        "0.17 to 0.18",
+                    ),
+                    Turbulence::SpalartAllmaras { inflow_ratio, .. } => {
+                        if !(inflow_ratio.is_finite() && SA_INFLOW_RATIO.contains(&inflow_ratio)) {
+                            return Err(Error::Invalid(format!(
+                                "the Spalart–Allmaras inflow ratio ν̃/ν is {inflow_ratio}: give one from {} to {} (3 is usual)",
+                                SA_INFLOW_RATIO.start(),
+                                SA_INFLOW_RATIO.end()
+                            )));
+                        }
+                        return Err(Error::Invalid(
+                            "not supported yet: the Spalart–Allmaras model (`spalart_allmaras`) is not coupled to the flow solver yet; use `smagorinsky` or `vreman`".into(),
+                        ));
+                    }
+                };
+                if !(constant.is_finite() && constant > 0.0 && constant <= MAX_SMAGORINSKY) {
+                    return Err(Error::Invalid(format!("{what} is {constant}: give one above 0 and at most {MAX_SMAGORINSKY} ({usual} is usual)")));
                 }
                 if let Some(a_plus) = van_driest.filter(|a| !(a.is_finite() && VAN_DRIEST.contains(a))) {
                     return Err(Error::Invalid(format!(
