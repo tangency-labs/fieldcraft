@@ -5,9 +5,9 @@ use crate::schema::ProblemKind;
 use fieldcraft_explicit::{ExplicitResult, solve_explicit};
 use fieldcraft_lbm::{FluidResult, Obstacle};
 use fieldcraft_mesh::surface::{BoundarySurface, SurfaceOptions};
-use fieldcraft_model::DisplaySystem;
 use fieldcraft_model::FluidDomain;
 use fieldcraft_model::units::Quantity;
+use fieldcraft_model::{BoxFace, DisplaySystem};
 use fieldcraft_parallel as parallel;
 use fieldcraft_solver::{
     FrequencyOptions, Limits, Location, MassKind, StaticResult, StepResult as ImplicitResult, solve_buckle, solve_frequency, solve_heat,
@@ -850,6 +850,7 @@ fn run_fluid(s: &mut Session, p: &Value) -> Result<Value> {
     let chosen = estimate.backend.clone();
     let step = opt::<String>(p, "step")?;
     let (selected_step, domain) = fieldcraft_lbm::fluid_step(&s.model, step.as_deref())?;
+    let planes: Vec<BoxFace> = domain.symmetry_planes().collect();
     let selected_step = selected_step.name.clone();
     let obstacles = obstacles(s, domain)?;
     let thread_count = threads(s, p)?;
@@ -879,6 +880,9 @@ fn run_fluid(s: &mut Session, p: &Value) -> Result<Value> {
         None => EngineError::from(e),
     })?;
     let mut summary = fluid_summary(&r, s.units());
+    if let Some(whole) = whole_model(&summary, &planes) {
+        summary["whole_model"] = whole;
+    }
     summary["memory"] = estimate.to_json();
     summary["backend_choice"] = chosen.to_json();
     if let Some(c) = checkpoint {
@@ -892,6 +896,58 @@ fn run_fluid(s: &mut Session, p: &Value) -> Result<Value> {
     }
     s.store_result(StepResult::Fluid(r));
     Ok(summary)
+}
+
+/// The totals of the whole symmetric model a half (or quarter, or eighth) model with symmetry
+/// `planes` stands for, from its reply `summary`: every wall with its mirror images, so each
+/// force's component normal to a plane cancels and the others double per plane, as do the
+/// heats, the solids' powers and heats and the zones' flows. The planes' own faces are inside the
+/// whole model and are left out. `None` without a plane, or when both faces of an axis are
+/// planes (the model is then unbounded along it, and has no whole).
+fn whole_model(summary: &Value, planes: &[BoxFace]) -> Option<Value> {
+    if planes.is_empty() {
+        return None;
+    }
+    let mut axes = [false; 3];
+    for p in planes {
+        let slot = axes.get_mut(p.axis())?;
+        if *slot {
+            return None;
+        }
+        *slot = true;
+    }
+    let factor = f64::from(1u32 << planes.len());
+    let scale = |v: &Value| v.as_f64().map_or(Value::Null, |x| json!(x * factor));
+    // A force's components: the normal one cancels against each mirror image; the others add up
+    // over all of them (`factor` images in all).
+    let mirror = |v: &Value| match v.as_array() {
+        Some(c) => Value::Array(c.iter().zip(axes).map(|(x, normal)| if normal { json!(0.0) } else { scale(x) }).collect()),
+        None => Value::Null,
+    };
+    let history = |v: &Value, total: &dyn Fn(&Value) -> Value| json!({"final": total(&v["final"]), "mean": total(&v["mean"])});
+    let on_plane = |f: &Value| f["body"].is_null() && planes.iter().any(|p| f["name"] == p.name());
+    let list = |key: &str| summary[key].as_array().into_iter().flatten().filter(|f| !on_plane(f));
+    let wall = |f: &Value, total: &dyn Fn(&Value) -> Value| {
+        let mut w = history(f, total);
+        w["name"] = f["name"].clone();
+        w["body"] = f["body"].clone();
+        w
+    };
+    let forces: Vec<Value> = list("forces").map(|f| wall(f, &mirror)).collect();
+    let heat: Vec<Value> = list("heat").map(|h| wall(h, &scale)).collect();
+    let solids: Vec<Value> = list("solids")
+        .map(|c| json!({"body": c["body"], "power": scale(&c["power"]), "heat_to_fluid": history(&c["heat_to_fluid"], &scale)}))
+        .collect();
+    let zones: Vec<Value> = list("zones").map(|z| json!({"name": z["name"], "flow": history(&z["flow"], &scale)})).collect();
+    Some(json!({
+        "planes": planes.iter().map(|p| p.name()).collect::<Vec<_>>(),
+        "factor": factor,
+        "note": format!("totals of the whole symmetric model, {factor} times this one about its symmetry planes: forces, heat, solids' power and heat, zones' flow (a force's component normal to a plane cancels)"),
+        "forces": forces,
+        "heat": heat,
+        "solids": solids,
+        "zones": zones,
+    }))
 }
 
 /// The reply of a fluid solve, in SI but for the steady monitors' history, which is in `display`
@@ -2267,6 +2323,68 @@ pub(crate) mod tests {
         .unwrap();
         s.execute("model.fluid_domain.thermal_boundary", &json!({"domain": "Gap", "at": "y_max", "condition": {"type": "temperature", "value": 1}}))
             .unwrap();
+    }
+
+    /// The heated Couette gap as a half model about its z_min face, a symmetry plane: the reply
+    /// adds the whole model's totals, labelled, each wall's force doubled along the plane and
+    /// cancelled across it, its heat doubled, the plane's own face left out. A wall velocity
+    /// across the plane is warned about when it is set.
+    #[test]
+    fn a_half_model_reports_the_whole_models_totals() {
+        let mut s = Session::default();
+        heated_couette(&mut s);
+        s.execute(
+            "model.fluid_domain.edit",
+            &json!({"name": "Gap", "material": "Oil", "min": [0, 0, 0], "max": [0.125, 1, 0.125], "spacing": 0.125,
+            "faces": {"x_min": {"type": "periodic"}, "x_max": {"type": "periodic"}, "z_min": {"type": "symmetry"}, "z_max": {"type": "slip"},
+                "y_max": {"type": "moving_wall", "velocity": [0.1, 0, 0]}},
+            "thermal": {"initial_temperature": 0.5, "faces": {"y_min": {"type": "temperature", "value": 0}, "y_max": {"type": "temperature", "value": 1}}}}),
+        )
+        .unwrap();
+        let r = s.execute("solve.fluid", &json!({})).unwrap();
+        let whole = &r["whole_model"];
+        assert_eq!((&whole["planes"], &whole["factor"]), (&json!(["z_min"]), &json!(2.0)), "{r}");
+        assert!(whole["note"].as_str().unwrap().contains("whole symmetric model"), "{whole}");
+        let named = |list: &Value, name: &str| list.as_array().unwrap().iter().find(|f| f["name"] == name).cloned();
+        for wall in ["y_min", "y_max"] {
+            let (half, all) = (named(&r["forces"], wall).unwrap(), named(&whole["forces"], wall).unwrap());
+            for key in ["final", "mean"] {
+                let (h, w) = (&half[key], &all[key]);
+                assert_eq!((w[0].as_f64().unwrap(), w[1].as_f64().unwrap()), (2.0 * h[0].as_f64().unwrap(), 2.0 * h[1].as_f64().unwrap()), "{wall}");
+                assert_eq!(w[2], 0.0, "{wall}: across the plane the mirror images cancel");
+            }
+            let (half, all) = (named(&r["heat"], wall).unwrap(), named(&whole["heat"], wall).unwrap());
+            assert_eq!(all["mean"].as_f64().unwrap(), 2.0 * half["mean"].as_f64().unwrap(), "{wall}");
+        }
+        assert!(named(&whole["forces"], "z_min").is_none(), "the plane is inside the whole model");
+
+        let reply = s
+            .execute(
+                "model.fluid_domain.boundary",
+                &json!({"domain": "Gap", "at": "y_max", "condition": {"type": "moving_wall", "velocity": [0.1, 0, 0.01]}}),
+            )
+            .unwrap();
+        let warnings = reply["warnings"].as_array().unwrap();
+        assert!(warnings.len() == 1 && warnings[0].as_str().unwrap().contains("symmetry plane z_min: the wall velocity on y_max"), "{reply}");
+        let reply = s
+            .execute(
+                "model.fluid_domain.boundary",
+                &json!({"domain": "Gap", "at": "y_max", "condition": {"type": "moving_wall", "velocity": [0.1, 0, 0]}}),
+            )
+            .unwrap();
+        assert!(reply.get("warnings").is_none(), "{reply}");
+    }
+
+    /// No whole model without a plane, nor when both faces of an axis are planes (a strip with
+    /// no whole); a quarter model's factor is 4, and only the force along both planes is kept.
+    #[test]
+    fn the_whole_model_needs_planes_that_bound_it() {
+        let summary = json!({"forces": [{"name": "F1", "body": "Pin", "final": [1.0, 2.0, 3.0], "mean": [1.0, 2.0, 3.0]}], "heat": [], "solids": [], "zones": []});
+        assert!(whole_model(&summary, &[]).is_none());
+        assert!(whole_model(&summary, &[BoxFace::YMin, BoxFace::YMax]).is_none());
+        let quarter = whole_model(&summary, &[BoxFace::XMin, BoxFace::YMax]).unwrap();
+        assert_eq!(quarter["factor"], 4.0);
+        assert_eq!(quarter["forces"][0]["final"], json!([0.0, 0.0, 12.0]));
     }
 
     #[test]
