@@ -3537,21 +3537,14 @@ fn han_measures(profile: &[(f64, f64)], re_tau: f64) -> ([f64; 3], f64) {
     (eps, log.iter().sum::<f64>() / log.len() as f64)
 }
 
-/// Whether the study's wall-function bounce is Han et al.'s on-node eq. 14 (`spalding_bounce`,
-/// the default, CPU or GPU) or, with `FIELDCRAFT_HAN_WALL=halfway`, our halfway variant
-/// (`spalding_bounce_halfway`, CPU or GPU).
-fn han_on_node() -> bool {
-    std::env::var("FIELDCRAFT_HAN_WALL").map_or(true, |v| v != "halfway")
-}
-
-/// The subgrid model of a Han et al. run: `setup`'s, with the wall-function bounce of
-/// [`han_on_node`] when `wfb`.
+/// The subgrid model of a Han et al. run: `setup`'s, with Han et al.'s on-node
+/// wall-function bounce when `wfb`.
 fn han_turbulence(setup: HanSetup, wfb: bool) -> Turbulence {
     match setup.turbulence(wfb) {
-        Turbulence::Smagorinsky { constant, prandtl, van_driest, wall_model: Some(_) } if han_on_node() => {
+        Turbulence::Smagorinsky { constant, prandtl, van_driest, wall_model: Some(_) } => {
             Turbulence::Smagorinsky { constant, prandtl, van_driest, wall_model: Some(fieldcraft_model::WallModel::SpaldingBounce) }
         }
-        Turbulence::Vreman { constant, prandtl, wall_model: Some(_) } if han_on_node() => {
+        Turbulence::Vreman { constant, prandtl, wall_model: Some(_) } => {
             Turbulence::Vreman { constant, prandtl, wall_model: Some(fieldcraft_model::WallModel::SpaldingBounce) }
         }
         t => t,
@@ -3637,7 +3630,7 @@ fn han_channel(case: &HanCase, setup_of: HanSetup, wfb: bool, cpu: bool, times: 
     let ((start, end), min_average, block, tolerance) = (times, 50.0, 2.0, 1e-2);
     // Under the on-node bounce the walls pass through the outermost cells' centres: the box is
     // 2δ + Δx high (2N + 1 cells) for 2δ between the walls.
-    let on_node = wfb && han_on_node();
+    let on_node = wfb;
     let turbulence_of = han_turbulence(setup_of, wfb);
     let HanFlow { setup, mut flow, mach, dt, lx } = match han_flow(case, setup_of.collision(), setup_of.sigma(), turbulence_of, on_node, end) {
         Ok(h) => h,
@@ -3748,8 +3741,7 @@ fn han_channel(case: &HanCase, setup_of: HanSetup, wfb: bool, cpu: bool, times: 
 /// `FIELDCRAFT_HAN` to a case (`A20`, `A40`, `B40`, `B80`), several separated by commas, or `1`
 /// for all; `_BB=0` skips the controls; `FIELDCRAFT_HAN_CPU=1` runs on the CPU in double
 /// precision; the WFB cases run Han et al.'s on-node eq. 14 (`spalding_bounce`, the box 2δ + Δx
-/// high so the walls through the outermost cells' centres stay 2δ apart; [`han_on_node`]), or
-/// with `FIELDCRAFT_HAN_WALL=halfway` our halfway variant (`spalding_bounce_halfway`);
+/// high so the walls through the outermost cells' centres stay 2δ apart);
 /// `FIELDCRAFT_HAN_START` and `FIELDCRAFT_HAN_END` (δ/u_τ, 20 and 150) shorten the
 /// discarded start and the run for a smoke test (a run shorter than the protocol is not a result).
 #[test]
@@ -3937,7 +3929,7 @@ fn han_report(case: &HanCase, setup: HanSetup, wfb: bool, cpu: bool, r: &HanResu
     let turbulence = han_turbulence(setup, wfb);
     let record = serde_json::json!({
         "study": "han_ooka_kikumoto_2021", "setup": label, "case": case.name, "wall": kind,
-        "wall_form": if !wfb { "bounce-back" } else if han_on_node() { "on-node eq. 14 (spalding_bounce)" } else { "halfway (spalding_bounce_halfway)" }, "re_tau": case.re_tau, "cells_per_delta": case.n,
+        "wall_form": if wfb { "on-node eq. 14 (spalding_bounce)" } else { "bounce-back" }, "re_tau": case.re_tau, "cells_per_delta": case.n,
         "collision": format!("{:?}", setup.collision()), "sigma": setup.sigma().map(|s| format!("{s:?}")),
         "turbulence": serde_json::to_value(turbulence).ok(), "subgrid_applied": setup.subgrid_applied(), "nu_t_source": nu_t_source,
         "sigma_source": (!setup.subgrid_applied()).then_some("fieldcraft_lbm::hrr::dynamic_sigma on the readback velocity (no per-cell readback on the device)"),

@@ -57,7 +57,7 @@ Han, Ooka & Kikumoto's wall-function bounce, as their paper sets it up:
 | `turbulence.constant` | 0.08–0.1 | Smagorinsky's C. Malaspinas & Sagaut use 0.08, Han, Ooka & Kikumoto 0.1. |
 | `turbulence.wall_model` | `"musker"` | Malaspinas & Sagaut: rebuild the cells next to no-slip walls from Musker's profile. |
 | | `"spalding_bounce"` | Han, Ooka & Kikumoto's eq. 14, on-node: the outermost cell layer at each plane no-slip box face is the wall. The box is periodic along the walls; no obstacles, moving walls or heat. |
-| | `"spalding_bounce_halfway"` | Historical halfway variant, retained when reading old files but refused at solve setup (#794): its wall-row checkerboard grows. Select a supported treatment explicitly; the on-node variant changes the wall location. |
+| | `"spalding_bounce_halfway"` | Disabled because its wall-row checkerboard grows. Files preserve this selection when loaded, but solves refuse it at setup. Select a supported treatment explicitly; the on-node variant changes the wall location. |
 | | omitted | The bounce-back alone. |
 | `turbulence.van_driest` | 26 or omit | Van Driest's damping. Han, Ooka & Kikumoto use it with their wall model; Malaspinas & Sagaut's model replaces it, so don't combine the two. |
 | `collision` | `"mrt"`, `"hrr"` | Malaspinas & Sagaut is validated with `"mrt"` (d'Humières et al. 2002). The wall-function bounce was run with `"mrt"` and `"hrr"` ([Collision operators](collision.md)). |
@@ -287,12 +287,10 @@ velocity and the fields. With Van Driest's damping, x₁ is the wall cell. The G
 scheme (`node_bounce`), within 10⁻⁴ of the CPU's velocity and 10⁻³ of its wall drag from the first
 step ([GPU backend](gpu.md)).
 
-**Our halfway variant** (`spalding_bounce_halfway`) was implemented first, from a halfway reading
-of the scheme: the wall half a cell outside the outermost cells, reflected specularly, and each
-wall cell's own Spalding stress at y = Δ/2 taken off its inward diagonals after streaming. It is
-not Han, Ooka & Kikumoto's scheme. Production solves now refuse it before allocating solver
-state (#794). The historical numerical record remains below; the small diagnostic sweeps use
-an explicit test-only setup override.
+The `spalding_bounce_halfway` wall model is disabled because its wall-row checkerboard
+mode grows. Files preserve this selection when loaded, but solves refuse it at setup. Remove
+`wall_model` for resolved no-slip walls, or explicitly select and validate a supported treatment; the on-node variant changes the wall location. The disabled-model
+measurements below are diagnostic evidence, not a supported solve configuration.
 
 ### Verification: the paper's channel on MRT
 
@@ -431,9 +429,7 @@ FIELDCRAFT_STUDY_RECORDS=<dir> \
 ```
 
 `FIELDCRAFT_HAN_SETUP` takes a comma-separated list or `all` (`paper` when unset).
-`FIELDCRAFT_HAN_WALL=halfway` now reports a setup refusal. The historical halfway
-mode sweep remains available only through an explicit test-only setup override; production
-solves have no bypass. `FIELDCRAFT_HAN_START`
+WFB runs use the on-node `spalding_bounce` model. `FIELDCRAFT_HAN_START`
 and `FIELDCRAFT_HAN_END` (δ/u_τ, default 20 and 150) shorten a smoke test, which is not a result;
 `FIELDCRAFT_HAN_CPU=1` runs on the CPU in f64. Every run records
 (`<dir>/han-<setup>-<case>-<wall>.json`), from a velocity readback every 0.05 δ/u_τ:
