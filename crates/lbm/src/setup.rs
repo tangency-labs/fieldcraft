@@ -495,7 +495,7 @@ impl Setup {
         };
         if turbulence.as_ref().is_some_and(|t| t.wall_model() == Some(WallModel::SpaldingBounceHalfway)) {
             return Err(Error::Invalid(
-                "wall_model `spalding_bounce_halfway` is disabled because its wall-row checkerboard mode grows (#794); remove `wall_model` for resolved no-slip walls, or explicitly choose and validate another wall treatment. `spalding_bounce` uses a different, on-node wall location".into(),
+                "wall_model `spalding_bounce_halfway` is disabled because its wall-row checkerboard mode grows; remove `wall_model` for resolved no-slip walls, or explicitly choose and validate another wall treatment. `spalding_bounce` uses a different, on-node wall location".into(),
             ));
         }
         let domain = domain.clone();
