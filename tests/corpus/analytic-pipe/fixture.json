@@ -4,43 +4,6 @@
     "linux-x86_64": {
       "stages": {},
       "values": {}
-    },
-    "macos-aarch64": {
-      "stages": {},
-      "values": {
-        "cdt.flat": {
-          "band": 0,
-          "value": 0
-        },
-        "cdt.steiner": {
-          "band": 0,
-          "value": 1380
-        },
-        "cdt.tets": {
-          "band": 0,
-          "value": 6355
-        },
-        "quality.max_dihedral_deg": {
-          "band": 1.4338912082629414e-7,
-          "value": 143.38812082629414
-        },
-        "quality.min_dihedral_deg": {
-          "band": 3.173421557061041e-8,
-          "value": 31.733215570610408
-        },
-        "quality.min_radius_ratio": {
-          "band": 3.2548085191103326e-10,
-          "value": 0.32448085191103326
-        },
-        "quality.slivers_cdt": {
-          "band": 0,
-          "value": 1528
-        },
-        "quality.tets": {
-          "band": 0,
-          "value": 17785
-        }
-      }
     }
   },
   "stages": {
@@ -102,8 +65,8 @@
       "value": 1288
     },
     "hex.hex20_min_sj": {
-      "band": 9.986245428325178e-10,
-      "value": 0.9976245428325177
+      "band": 9.986245428325176e-10,
+      "value": 0.9976245428325176
     },
     "hex.hex8_min_sj": {
       "band": 9.986143135256341e-10,
@@ -114,16 +77,16 @@
       "value": 53680
     },
     "octree.mean_sj": {
-      "band": 9.453170820307812e-10,
-      "value": 0.944317082030781
+      "band": 9.457684948611343e-10,
+      "value": 0.9447684948611342
     },
     "octree.min_sj": {
-      "band": 5.208930913151737e-10,
-      "value": 0.5198930913151737
+      "band": 5.096925747074364e-10,
+      "value": 0.5086925747074363
     },
     "octree.volume_mm3": {
-      "band": 0.00009416464838462403,
-      "value": 94164.64738462403
+      "band": 0.00009416495107420096,
+      "value": 94164.95007420095
     },
     "quality.max_dihedral_deg": {
       "band": 1.3678643159787042e-7,
@@ -158,8 +121,8 @@
       "value": -0.0010283864340549895
     },
     "surface.solidcraft_mm3": {
-      "band": 0.00009423803407919589,
-      "value": 94238.03307919588
+      "band": 0.00009423803407919642,
+      "value": 94238.03307919641
     }
   }
 }

@@ -24,7 +24,11 @@
 //!    Elements are dropped until the core's boundary is a 2-manifold and every boundary vertex can
 //!    move outward (its quads' normals lie in one half-space: the buffer rule of H. Tong,
 //!    E. Halilaj, Y. J. Zhang, *HybridOctree_Hex*, arXiv 2401.05984, 2024); its components and
-//!    genus must match the part's shells.
+//!    genus must match the part's shells. The gap between the core and the boundary holds both
+//!    boundary layers, and on a planar face aligned with the grid it is the same all along the
+//!    face, anywhere from `core_offset` to `1 + core_offset` cells: where it is under half a
+//!    cell, the core's boundary vertices recede to half a cell (bounded steps that keep the core
+//!    valid, [`recede`]), so neither layer starts crushed.
 //! 5. **Feature map** ([`map`]): the part's patches, sharp curves and corners mapped onto the
 //!    core's boundary quads (X. Gao, H. Shen, D. Panozzo, *Feature preserving octree-based
 //!    hexahedral meshing*, CGF 38(5), 2019, §3.3), patches first.
@@ -45,7 +49,10 @@
 //!    2020); elements that are not are repaired locally first. A failure in 4–8 names where the
 //!    grid is too coarse; the leaves there are split once more and the mesh is rebuilt, at most
 //!    [`OctreeOptions::attempts`] times, and a rebuild may not grow the grid more than
-//!    [`RETRY_GROWTH`] times (Gao et al. 2019, §3.3).
+//!    [`RETRY_GROWTH`] times (Gao et al. 2019, §3.3). A valid mesh with elements under
+//!    [`RETRY_BELOW`] (a hole a couple of cells across whose rims the core stands more than a
+//!    cell from) is rebuilt the same way, and the rebuild is kept only while it raises the
+//!    smallest scaled Jacobian.
 //!
 //! # Why 3-refinement templates
 //! The dual schemes of M. Livesu, L. Pitzalis, G. Cherchi, *Optimal dual schemes for adaptive
@@ -157,9 +164,9 @@ impl Default for OctreeOptions {
 /// What [`octree_hex_mesh`] did.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OctreeReport {
-    /// Builds run (1 + rebuilds after a failure).
+    /// Builds run (1 + rebuilds after a failure or poor elements; the kept mesh may be an earlier one).
     pub attempts: usize,
-    /// Grid leaves of the last build.
+    /// Grid leaves of the build that made the mesh.
     pub grid_cells: usize,
     /// The root cells' edge and the deepest level of the grid (see [`octree_hex_mesh`]).
     pub root_size: f64,
@@ -167,7 +174,7 @@ pub struct OctreeReport {
     /// The thinnest wall and the narrowest patch the grid was chosen for (`∞` when none).
     pub thinnest_wall: f64,
     pub narrowest_patch: f64,
-    /// Grid leaves per level (root level first) of the last build: after the refinement
+    /// Grid leaves per level (root level first) of the build that made the mesh: after the refinement
     /// criteria (size, curvature, thickness, narrow patches and retry hints), and after balance
     /// and closure.
     pub refined_cells: Vec<usize>,
@@ -181,7 +188,7 @@ pub struct OctreeReport {
     pub corners: usize,
     pub curves: usize,
     pub patches: usize,
-    /// Optimiser sweeps of the last build.
+    /// Optimiser sweeps of the build that made the mesh.
     pub sweeps: usize,
     /// Smallest and mean corner scaled Jacobian.
     pub min_scaled_jacobian: f64,
@@ -224,6 +231,17 @@ const IMPROVE_BELOW: f64 = 0.3;
 /// `2 d tan(30°) ≈ 1.15 d`, so the cells that resolve the edge do not resolve its thickness; at
 /// blunter edges they do, and the edge is a feature, not a wall.
 const WALL_OPENING: f64 = 60.0;
+/// The core's boundary keeps at least this fraction of its cells from the boundary (see
+/// [`recede`]).
+const MIN_GAP: f64 = 0.5;
+/// A core vertex recedes by at most this fraction of its smallest cell.
+const MAX_RECEDE: f64 = 0.35;
+/// The corner scaled Jacobian a receding vertex's elements keep.
+const RECEDE_QUALITY: f64 = 0.5;
+/// A mesh with elements below this scaled Jacobian is rebuilt with the grid refined
+/// where they are under [`REFINE_BELOW`], and the better of the two kept.
+const RETRY_BELOW: f64 = 0.1;
+const REFINE_BELOW: f64 = 0.2;
 /// Closure rounds of the grid (each splits at least one leaf; the cell cap bounds them too).
 const CLOSURE_ROUNDS: usize = 1000;
 /// Rounds of the core clean-up (each drops at least one element).
@@ -236,7 +254,8 @@ struct Retry {
 }
 
 enum Attempt {
-    Done(Box<OctreeHexMesh>),
+    /// A mesh, and where its elements are poor (refining there may raise them).
+    Done(Box<OctreeHexMesh>, Vec<P>),
     Retry(Retry),
 }
 
@@ -251,6 +270,8 @@ pub fn octree_hex_mesh(surface: &BoundarySurface, field: &dyn SizeField, options
     let ctx = plan(&g, field, options, &thickness)?;
     let mut hints: Vec<P> = Vec::new();
     let mut retries: Vec<Message> = Vec::new();
+    // A valid mesh with poor elements, kept while a rebuild refined there is tried.
+    let mut best: Option<Box<OctreeHexMesh>> = None;
     for attempt in 0..options.attempts {
         fieldcraft_model::progress::check()?;
         let cap = if attempt == 0 {
@@ -266,10 +287,16 @@ pub fn octree_hex_mesh(surface: &BoundarySurface, field: &dyn SizeField, options
             other => other?,
         };
         match built {
-            Attempt::Done(mut m) => {
-                m.report.attempts = attempt + 1;
-                m.report.retries = retries;
-                return Ok(*m);
+            Attempt::Done(m, weak) => {
+                if let Some(b) = best.take_if(|b| b.report.min_scaled_jacobian >= m.report.min_scaled_jacobian) {
+                    return Ok(kept(b, attempt + 1, retries));
+                }
+                if weak.is_empty() || attempt + 1 == options.attempts {
+                    return Ok(kept(m, attempt + 1, retries));
+                }
+                retries.push(message![format!("{} elements have a scaled Jacobian under {REFINE_BELOW}", weak.len())]);
+                hints.extend(weak);
+                best = Some(m);
             }
             Attempt::Retry(r) => {
                 retries.push(r.why);
@@ -277,7 +304,18 @@ pub fn octree_hex_mesh(surface: &BoundarySurface, field: &dyn SizeField, options
             }
         }
     }
+    // Every build that did not return pushed one reason.
+    if let Some(b) = best {
+        return Ok(kept(b, retries.len(), retries));
+    }
     Err(Error::failed(message![format!("octree hex meshing failed after {} builds: ", retries.len())].then(Message::join(retries, "; "))))
+}
+
+/// The mesh returned after `builds` builds, with why the earlier ones were refined.
+fn kept(mut m: Box<OctreeHexMesh>, builds: usize, retries: Vec<Message>) -> OctreeHexMesh {
+    m.report.attempts = builds;
+    m.report.retries = retries;
+    *m
 }
 
 /// What the part's walls and narrow patches ask of the grid, measured before it is built.
@@ -524,6 +562,90 @@ fn triangle_thickness(g: &Geometry) -> Vec<f64> {
             }
         })
         .collect()
+}
+
+/// The outward normal at each vertex of the quads `q`: the sum of its quads' unit normals.
+fn vertex_normals(points: &[P], q: &[[u32; 4]]) -> BTreeMap<u32, P> {
+    let mut normal: BTreeMap<u32, P> = BTreeMap::new();
+    for f in q {
+        let p = f.map(|v| points.get(v as usize).copied().unwrap_or([0.0; 3]));
+        let n = cross(sub(p[2], p[0]), sub(p[3], p[1]));
+        let l = norm(n);
+        if l > 0.0 {
+            for &v in f {
+                let e = normal.entry(v).or_insert([0.0; 3]);
+                for k in 0..3 {
+                    e[k] += n[k] / l;
+                }
+            }
+        }
+    }
+    normal
+}
+
+/// Move the core's boundary vertices (of its boundary quads `q`) inward where the core is less
+/// than [`MIN_GAP`] of its cells from the boundary, updating their distances `dist`. The gap
+/// holds the padding and the pillow; on a planar face aligned with the grid it is the same all
+/// along the face, anywhere in `[core_offset, 1 + core_offset)` cells, and at the bottom of
+/// that range both layers start crushed. A vertex moves against its outward normal, by at most
+/// [`MAX_RECEDE`] of the smallest core cell around it, and only where that widens its gap, keeps
+/// it inside the part and keeps its elements' corner scaled Jacobian above [`RECEDE_QUALITY`]
+/// (or above what it was); otherwise it tries half the step, three times at most.
+fn recede(g: &Geometry, w: &mut Work, q: &[[u32; 4]], dist: &mut [f64]) {
+    let normal = vertex_normals(&w.points, q);
+    let mut cell = vec![f64::INFINITY; w.points.len()];
+    for (hx, &s) in w.hexes.iter().zip(&w.size) {
+        for &v in hx {
+            if let Some(c) = cell.get_mut(v as usize) {
+                *c = c.min(s);
+            }
+        }
+    }
+    // The vertices to move: their normal, gap and smallest cell.
+    let narrow: BTreeMap<u32, (P, f64, f64)> = normal
+        .into_iter()
+        .filter_map(|(v, n)| {
+            let (d, s) = (dist.get(v as usize).copied()?, cell.get(v as usize).copied()?);
+            (norm(n) > 0.0 && s.is_finite() && d < MIN_GAP * s).then_some((v, (n, d, s)))
+        })
+        .collect();
+    if narrow.is_empty() {
+        return;
+    }
+    let mut around: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
+    for (e, hx) in w.hexes.iter().enumerate() {
+        for &v in hx {
+            if narrow.contains_key(&v) {
+                around.entry(v).or_default().push(e as u32);
+            }
+        }
+    }
+    // The smallest corner scaled Jacobian of elements `es` with vertex `v` at `at`.
+    let quality = |points: &[P], es: &[u32], v: u32, at: P| {
+        es.iter()
+            .filter_map(|&e| w.hexes.get(e as usize))
+            .map(|hx| smooth::min_scaled_jacobian(&hx.map(|u| if u == v { at } else { points.get(u as usize).copied().unwrap_or([0.0; 3]) })))
+            .fold(f64::INFINITY, f64::min)
+    };
+    for (&v, &(n, d, s)) in &narrow {
+        let Some(&p) = w.points.get(v as usize) else { continue };
+        let es = around.get(&v).map_or(&[][..], |x| x.as_slice());
+        let inward = n.map(|x| -x / norm(n));
+        let before = quality(&w.points, es, v, p).min(RECEDE_QUALITY);
+        let mut step = (MIN_GAP * s - d).min(MAX_RECEDE * s);
+        for _ in 0..3 {
+            let to = [0, 1, 2].map(|k| p[k] + step * inward[k]);
+            let dt = g.nearest(to, |_| true).map_or(0.0, |x| x.2.sqrt());
+            if dt > d && quality(&w.points, es, v, to) >= before && g.inside(to) == Some(true) {
+                if let (Some(x), Some(y)) = (w.points.get_mut(v as usize), dist.get_mut(v as usize)) {
+                    *x = to;
+                    *y = dt;
+                }
+                break;
+            }
+            step *= 0.5;
+        }
+    }
 }
 
 fn centroid(points: &[P], hx: &[u32; 8]) -> P {
@@ -778,7 +900,7 @@ impl Context<'_> {
             lattice.points.iter().map(|q| from_frame(&self.frame, [0, 1, 2].map(|k| self.origin[k] + q[k] as f64 / span * self.h))).collect();
 
         // Core.
-        let dist: Vec<f64> = points.iter().map(|&p| g.nearest(p, |_| true).map_or(0.0, |x| x.2.sqrt())).collect();
+        let mut dist: Vec<f64> = points.iter().map(|&p| g.nearest(p, |_| true).map_or(0.0, |x| x.2.sqrt())).collect();
         let keep = self.core(&lattice, &points, &dist);
         let core: Vec<usize> = (0..lattice.hexes.len()).filter(|&i| keep[i]).collect();
         if core.is_empty() {
@@ -797,6 +919,7 @@ impl Context<'_> {
         if let Some(r) = check_topology(g, &q) {
             return Ok(Attempt::Retry(r));
         }
+        recede(g, &mut w, &q, &mut dist);
 
         // Feature map, padding and pillows.
         let fmap = {
@@ -880,20 +1003,7 @@ impl Context<'_> {
         let core_count = w.core_count;
         let copy = topo::pad(&mut w.points, &mut w.hexes, &q)?;
         w.role = vec![Constraint::Free; w.points.len()];
-        let mut normal: BTreeMap<u32, P> = BTreeMap::new();
-        for f in &q {
-            let p = f.map(|v| w.points[v as usize]);
-            let n = cross(sub(p[2], p[0]), sub(p[3], p[1]));
-            let l = norm(n);
-            if l > 0.0 {
-                for &v in f {
-                    let e = normal.entry(v).or_insert([0.0; 3]);
-                    for k in 0..3 {
-                        e[k] += n[k] / l;
-                    }
-                }
-            }
-        }
+        let normal = vertex_normals(&w.points, &q);
         for (&v, &c) in &copy {
             if let Some(r) = fmap.role.get(&v) {
                 w.role[c as usize] = *r;
@@ -948,6 +1058,7 @@ impl Context<'_> {
         let mut bad: Vec<P> = Vec::new();
         let mut checks = Vec::with_capacity(w.hexes.len());
         let (mut sj_min, mut sj_sum) = (f64::INFINITY, 0.0);
+        let mut poor: Vec<P> = Vec::new();
         for (e, hx) in w.hexes.iter().enumerate() {
             let q = element_quality(ElementKind::Hex8, &hx.map(|v| w.points[v as usize]))?;
             let check = q.jacobian.ok_or_else(|| Error::Failed("an element was not certified".into()))?;
@@ -957,6 +1068,9 @@ impl Context<'_> {
             let sj = q.get(Metric::ScaledJacobian).unwrap_or(-1.0);
             sj_min = sj_min.min(sj);
             sj_sum += sj;
+            if sj < REFINE_BELOW {
+                poor.push(centroid(&w.points, hx));
+            }
             checks.push((e as u32 + 1, check));
         }
         if !bad.is_empty() {
@@ -1026,7 +1140,9 @@ impl Context<'_> {
             boundary_distance,
             retries: Vec::new(),
         };
-        Ok(Attempt::Done(Box::new(OctreeHexMesh { nodes, hexes, boundary, report })))
+        // Refining where the elements are poor may raise them.
+        let weak = if sj_min < RETRY_BELOW { poor } else { Vec::new() };
+        Ok(Attempt::Done(Box::new(OctreeHexMesh { nodes, hexes, boundary, report }), weak))
     }
 }
 

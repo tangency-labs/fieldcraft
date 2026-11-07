@@ -3,27 +3,6 @@
   "platforms": {
     "linux-x86_64": {
       "stages": {},
-      "values": {
-        "quality.max_dihedral_deg": {
-          "band": 1.3819624000898204e-7,
-          "value": 138.19524000898204
-        },
-        "quality.min_dihedral_deg": {
-          "band": 3.54497698887947e-8,
-          "value": 35.4487698887947
-        },
-        "quality.min_radius_ratio": {
-          "band": 3.40113383945265e-10,
-          "value": 0.33911338394526497
-        },
-        "quality.tets": {
-          "band": 0,
-          "value": 11409
-        }
-      }
-    },
-    "macos-aarch64": {
-      "stages": {},
       "values": {}
     }
   },
@@ -86,28 +65,28 @@
       "value": 25194
     },
     "octree.mean_sj": {
-      "band": 9.46418899462328e-10,
-      "value": 0.9454188994623279
+      "band": 9.444962260683023e-10,
+      "value": 0.9434962260683022
     },
     "octree.min_sj": {
-      "band": 5.294026391553724e-11,
-      "value": 0.05194026391553723
+      "band": 9.847819619697489e-11,
+      "value": 0.09747819619697488
     },
     "octree.volume_mm3": {
-      "band": 0.00007254252941655561,
-      "value": 72542.52841655561
+      "band": 0.00007261429056250767,
+      "value": 72614.28956250766
     },
     "quality.max_dihedral_deg": {
-      "band": 1.3601789052369902e-7,
-      "value": 136.016890523699
+      "band": 1.3819624000898204e-7,
+      "value": 138.19524000898204
     },
     "quality.min_dihedral_deg": {
-      "band": 3.5206258432996904e-8,
-      "value": 35.2052584329969
+      "band": 3.54497698887947e-8,
+      "value": 35.4487698887947
     },
     "quality.min_radius_ratio": {
-      "band": 3.4771399291421145e-10,
-      "value": 0.34671399291421146
+      "band": 3.40113383945265e-10,
+      "value": 0.33911338394526497
     },
     "quality.slivers": {
       "band": 0,
@@ -119,7 +98,7 @@
     },
     "quality.tets": {
       "band": 0,
-      "value": 11497
+      "value": 11409
     },
     "surface.enclosed_mm3": {
       "band": 0.00006935339793129502,
@@ -130,8 +109,8 @@
       "value": -0.002248570319986694
     },
     "surface.solidcraft_mm3": {
-      "band": 0.00006950899372483045,
-      "value": 69508.99272483044
+      "band": 0.00006950899372483042,
+      "value": 69508.99272483042
     }
   }
 }

@@ -182,3 +182,70 @@ fn a_size_box_refines_the_grid_inside_it() {
     let e = octree_hex_mesh(&s, &deep, &shallow).unwrap_err().to_string();
     assert!(e.contains("max_depth"), "{e}");
 }
+
+/// The thinnest boundary element of `m` against its face on the boundary: the distance from the
+/// opposite face's centre to the boundary face's plane over the boundary face's mean edge.
+fn thinnest_layer(m: &OctreeHexMesh) -> f64 {
+    let mut thinnest = f64::INFINITY;
+    for b in &m.boundary {
+        let hx = m.hexes[b.element as usize];
+        let f = (b.face - 1) as usize;
+        let q = topo::FACES[f].map(|i| m.nodes[hx[i] as usize]);
+        let o = topo::FACES[[1, 0, 4, 5, 2, 3][f]].map(|i| m.nodes[hx[i] as usize]);
+        let n = cross(sub(q[2], q[0]), sub(q[3], q[1]));
+        let n = n.map(|x| x / norm(n));
+        let c = |p: [P; 4]| [0, 1, 2].map(|k| p.iter().map(|x| x[k]).sum::<f64>() / 4.0);
+        let height = dot(sub(c(o), c(q)), n).abs();
+        let edge = (0..4).map(|i| norm(sub(q[(i + 1) % 4], q[i]))).sum::<f64>() / 4.0;
+        thinnest = thinnest.min(height / edge);
+    }
+    thinnest
+}
+
+#[test]
+fn the_core_recedes_to_half_a_cell_from_the_boundary() {
+    // A block of 3 × 3 × 3 unit cells 0.3 of a cell inside a box on every side: the padding and
+    // the pillow would share a 0.3 gap. The faces recede to half a cell; edge and corner
+    // vertices move along their diagonal normals, by the same step, and the core's elements stay
+    // well shaped.
+    let s = box_surface([0.0; 3], [3.6; 3]);
+    let g = Geometry::new(&s, 30.0, 160.0).unwrap();
+    let (points, hexes) = topo::tests::block(3);
+    let points: Vec<P> = points.iter().map(|p| p.map(|x| x + 0.3)).collect();
+    let mut dist: Vec<f64> = points.iter().map(|&p| g.nearest(p, |_| true).unwrap().2.sqrt()).collect();
+    let mut w = Work { size: vec![1.0; hexes.len()], role: Vec::new(), core_count: hexes.len(), points, hexes };
+    let q: Vec<[u32; 4]> = topo::boundary(&w.hexes).iter().map(|x| x.1).collect();
+    let boundary: BTreeSet<u32> = q.iter().flatten().copied().collect();
+    assert!(boundary.iter().all(|&v| (dist[v as usize] - 0.3).abs() < 1e-12));
+    // Vertices inside a face: one coordinate on the core's boundary.
+    let faces: Vec<u32> = boundary
+        .iter()
+        .copied()
+        .filter(|&v| w.points[v as usize].iter().filter(|&&x| (x - 0.3).abs() < 1e-12 || (x - 3.3).abs() < 1e-12).count() == 1)
+        .collect();
+    recede(&g, &mut w, &q, &mut dist);
+    for &v in &boundary {
+        let d = g.nearest(w.points[v as usize], |_| true).unwrap().2.sqrt();
+        assert!((d - dist[v as usize]).abs() < 1e-12 && d > 0.4, "vertex {v} at {:?}: {d}", w.points[v as usize]);
+    }
+    assert_eq!(faces.len(), 24);
+    assert!(faces.iter().all(|&v| dist[v as usize] > 0.5 - 1e-9), "{dist:?}");
+    let worst = w.hexes.iter().map(|hx| smooth::min_scaled_jacobian(&hx.map(|v| w.points[v as usize]))).fold(f64::INFINITY, f64::min);
+    assert!(worst > 0.9, "{worst}");
+}
+
+#[test]
+#[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+fn boxes_whose_core_is_a_fraction_of_a_cell_from_a_face_keep_their_layers() {
+    // At a size of 2, a 7 or 7.5 high box leaves its core a fraction of a cell from its top and
+    // bottom faces. Without the core receding, the 7 box's boundary elements came out 0.012 of
+    // their width thick (scaled Jacobian 1e-4) and the 7.5 box failed after four builds.
+    for height in [7.0, 7.5] {
+        let s = box_surface([0.0; 3], [10.0, 8.0, height]);
+        let m = octree_hex_mesh(&s, &UniformSize(2.0), &OctreeOptions::default()).unwrap();
+        let r = &m.report;
+        assert!(thinnest_layer(&m) > 0.4, "{height}: {} {r:?}", thinnest_layer(&m));
+        assert!(r.min_scaled_jacobian > 0.3, "{height}: {r:?}");
+        assert!((r.volume - 80.0 * height).abs() < 1e-9 * 80.0 * height, "{height}: {r:?}");
+    }
+}
