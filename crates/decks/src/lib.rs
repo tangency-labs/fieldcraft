@@ -41,26 +41,6 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// Refuse data that these writers do not yet represent, rather than export a different
-/// material direction, omit layers or discard the user's failure strengths.
-pub(crate) fn refuse_composite_data(format: &'static str, model: &Model) -> Result<()> {
-    let mut items = BTreeSet::new();
-    for (name, section) in model.sections() {
-        if matches!(section.kind, fieldcraft_model::SectionKind::CompositeShell { .. }) {
-            items.insert(format!("composite shell section `{name}`"));
-        }
-        if section.orientation.is_some() {
-            items.insert(format!("material orientation of section `{name}`"));
-        }
-    }
-    for (name, material) in model.materials() {
-        if material.ply_strength.is_some() {
-            items.insert(format!("ply strengths of material `{name}`"));
-        }
-    }
-    unsupported(format, items)
-}
-
 /// A deck format.
 pub struct Format {
     /// The name commands use (`abaqus`, …).

@@ -8,8 +8,8 @@ an external solver result. All tests use original meshes and inputs, without com
 | Adapter | Elastic laminate and directions | First-ply strengths |
 | --- | --- | --- |
 | Abaqus write/read | Conventional shells, rectangular/cylindrical frames, orthotropic engineering constants | Explicitly refused; no damage law is inferred |
-| Nastran write | Composite sections and new directions currently refused | Refused |
-| LS-DYNA write | Composite sections and new directions currently refused | Refused |
+| Nastran write | PCOMP/MAT8, rectangular solid frames, explicit rectangular/cylindrical shell frames; one mid-ply sample | Refused |
+| LS-DYNA write | MAT_021/PART_COMPOSITE, rectangular solid frames, explicit shell frames; three Simpson points per ply | Refused |
 
 ## Abaqus
 
@@ -75,3 +75,11 @@ cargo test -p fieldcraft-decks
 The Nastran writer emits PCOMP plies in bottom-to-top order with `Z0 = -(0.5 + offset) h`, MAT8 engineering constants and explicit CQUAD/CTRIA material coordinate IDs. CORD2R preserves rectangular frames; a shell cylindrical frame is frozen at its element centre, matching the facet convention used by the kernel. Default orthotropic shell frames are also explicit. Solid rectangular directions use the PSOLID material coordinate system. The public source is the [MSC Nastran 2022.1 Quick Reference Guide](https://help-be.hexagonmi.com/bundle/MSC_Nastran_2022.1_Quick_Reference_Guide/raw/resource/enus/MSC_Nastran_2022.1_Quick_Reference_Guide.pdf), entries PCOMP, MAT8, CQUAD4, CORD2R and PSOLID.
 
 This writer supports the single mid-ply sampling request; it refuses additional through-ply sample counts, independent S23/Hashin strengths, nonlinear plies and spatial cylindrical solid directions instead of dropping them. PCOMP has no field for FieldCraft's extra sample count. It integrates the linear laminate stiffness; the internal one-sample request does not remove each ply's bending stiffness. These are writer/readback checks, not a commercial-solver execution certificate.
+
+## LS-DYNA
+
+The R14 writer uses plain MAT_021 (`MAT_ORTHOTROPIC_THERMAL`) with zero thermal expansion for oriented linear materials, and PART_COMPOSITE_LONG with IRPL=103 for laminates. MAT_002 does not accept a separate ply angle at each integration point; MAT_021 does. Each oriented section receives distinct material definitions, preserving shared input materials without changing the model or its load sets. AOPT=2 carries the explicit reference vector, with bottom-to-top ply angles in degrees, NLOC=2×offset and SHRF=5/6. Solid rectangular frames use both material vectors; cylindrical shell frames are frozen at each facet centre.
+
+This export currently requires three points per ply: LS-DYNA uses bottom/middle/top Simpson points, whereas FieldCraft additionally reports Gauss samples. Their positions must not be compared as identical. Simpson integrates each linear ply's zeroth, first and second stiffness moments exactly; default one-point integration would omit the ply's own t³/12 term. Unequal ply densities, other point counts, cylindrical solid frames, nonlinear oriented materials and the four simultaneous failure measures are named refusals. No averaging of I1/I2 is silently substituted. D3PLOT requests all ply stress points and material-axis output; its strain output remains the format's outermost-surface convention, not FieldCraft's per-ply strain collection.
+
+References: [R14 Volume I](https://ansyshelp.ansys.com/public/Views/Secured/Doc_Assets/Release/v242/LS-DYNA_Manual_Volume_I_R14.pdf), PART_COMPOSITE (35-19–35-30), SECTION_SHELL (39-59), DATABASE_EXTENT_BINARY (16-61–16-63); [R14 Volume II](https://ansyshelp.ansys.com/public/Views/Secured/Doc_Assets/Release/v242/LS-DYNA_Manual_Volume_II_R14.pdf), MAT_021 (2-227 onwards). Tests independently re-read generated cards across four unit systems and verify thickness moments, material/shear order, frame selection and explicit refusals. No commercial solver was run.

@@ -8,7 +8,9 @@
 //!   `*SECTION_BEAM` (rods as trusses) and the element formulation mapped from the section's
 //!   ([`elements`]); `*HOURGLASS` where a reduced-integration formulation needs it;
 //! - `*MAT_ELASTIC` for isotropic and `*MAT_ORTHOTROPIC_ELASTIC` (global material axes) for
-//!   orthotropic materials; von Mises plasticity as `*MAT_PLASTIC_KINEMATIC` (bilinear: the
+//!   un-oriented orthotropic solids; section frames and elastic laminates use MAT_021
+//!   with zero expansion and PART_COMPOSITE_LONG (IRPL=103), as described in
+//!   `docs/composite-decks.md`; von Mises plasticity as `*MAT_PLASTIC_KINEMATIC` (bilinear: the
 //!   tangent modulus E·H/(E + H) of the uniaxial curve, β = 1 isotropic or 0 kinematic, the
 //!   erosion plastic strain as its failure strain) or `*MAT_PIECEWISE_LINEAR_PLASTICITY` (a
 //!   hardening table as a `*DEFINE_CURVE` of yield stress against plastic strain, the erosion
@@ -72,6 +74,7 @@
 //! than 10 shell integration points.
 
 mod card;
+mod composite;
 mod elements;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -138,6 +141,7 @@ struct Plan<'a> {
     parts: Vec<Part<'a>>,
     /// Material name → MID, for the materials sections use.
     materials: BTreeMap<&'a str, u32>,
+    material_frames: BTreeMap<&'a str, [[f64; 3]; 3]>,
     hourglasses: BTreeMap<Hourglass, u32>,
     /// Set name → SID (node and segment sets have separate id spaces; both use this number).
     sets: BTreeMap<&'a str, u32>,
@@ -184,7 +188,15 @@ fn write_with(model: &Model, r: &Resolved, units: Preset) -> Result<Written> {
             what: format!("step `{}`: harmonic frequency response is not supported by this writer", step.name),
         });
     }
-    crate::refuse_composite_data(FORMAT, model)?;
+    composite::check(model)?;
+    if let Some(prepared) = composite::prepare(model, r)? {
+        let resolved = prepared.resolve()?;
+        return write_prepared(&prepared, &resolved, units);
+    }
+    write_prepared(model, r, units)
+}
+
+fn write_prepared(model: &Model, r: &Resolved, units: Preset) -> Result<Written> {
     let estimate = (model.nodes().len() + model.reference_points().len()) * 130 + model.elements().len() * 260;
     if estimate > MAX_DECK_BYTES {
         return Err(Error::Limit(format!("the deck would be about {estimate} bytes; at most {MAX_DECK_BYTES} are written")));
@@ -239,7 +251,7 @@ fn write_with(model: &Model, r: &Resolved, units: Preset) -> Result<Written> {
 }
 
 fn plan<'a>(model: &'a Model, r: &Resolved) -> Result<Plan<'a>> {
-    let used: BTreeSet<&str> = model.sections().values().map(|s| s.material.as_str()).collect();
+    let used: BTreeSet<&str> = model.sections().values().flat_map(Section::material_names).collect();
     let materials: BTreeMap<&str, u32> = used.into_iter().enumerate().map(|(i, m)| Ok((m, id(i)?))).collect::<Result<_>>()?;
     // Everything LS-DYNA cannot express, reported at once.
     let mut refused = crate::thermal_items(model);
@@ -279,7 +291,7 @@ fn plan<'a>(model: &'a Model, r: &Resolved) -> Result<Plan<'a>> {
                 section: sec,
                 kind,
                 elform: f.elform,
-                material: materials.get(sec.material.as_str()).copied().unwrap_or_default(),
+                material: sec.material_names().next().and_then(|n| materials.get(n)).copied().unwrap_or_default(),
                 hourglass,
                 elements: list,
             });
@@ -419,7 +431,18 @@ fn plan<'a>(model: &'a Model, r: &Resolved) -> Result<Plan<'a>> {
         }
     }
     crate::unsupported(FORMAT, refused)?;
-    Ok(Plan { parts, materials, hourglasses, sets, node_sets, segment_sets, uniform, gravity_parts, curves })
+    Ok(Plan {
+        parts,
+        materials,
+        material_frames: composite::frames(model)?,
+        hourglasses,
+        sets,
+        node_sets,
+        segment_sets,
+        uniform,
+        gravity_parts,
+        curves,
+    })
 }
 
 /// A 1-based id from a 0-based index.
@@ -482,6 +505,10 @@ fn materials(d: &mut Deck, model: &Model, plan: &Plan) -> Result<()> {
     for (name, &mid) in &plan.materials {
         let m = model.material(name).ok_or_else(|| broken(format!("material `{name}`")))?;
         let rho = m.density.unwrap_or_default();
+        if let Some(axes) = plan.material_frames.get(name) {
+            composite::material(d, name, mid, m, *axes)?;
+            continue;
+        }
         match m.elastic {
             Some(Elastic::Isotropic { young, poisson }) if m.plastic.is_some() => plastic_material(d, name, mid, rho, young, poisson, m, plan)?,
             Some(Elastic::Isotropic { young, poisson }) => {
@@ -564,7 +591,7 @@ fn plastic_material(d: &mut Deck, name: &str, mid: u32, rho: f64, young: f64, po
 fn parts(d: &mut Deck, plan: &Plan) -> Result<()> {
     for p in &plan.parts {
         match p.section.kind {
-            SectionKind::CompositeShell { .. } => return Err(broken(format!("section `{}`: composite shells are not written yet", p.name))),
+            SectionKind::CompositeShell { ref layup } => composite::part(d, p, layup, plan)?,
             SectionKind::Solid {} => {
                 d.line("*SECTION_SOLID");
                 d.header(&["secid", "elform"]);
@@ -612,6 +639,9 @@ fn parts(d: &mut Deck, plan: &Plan) -> Result<()> {
         m
     });
     for p in &plan.parts {
+        if matches!(p.section.kind, SectionKind::CompositeShell { .. }) {
+            continue;
+        }
         d.line("*PART");
         if several.get(p.name).copied().unwrap_or_default() > 1 {
             d.line(&format!("{} {}", p.name, p.kind.name()));
@@ -1057,10 +1087,28 @@ fn write_step(d: &mut Deck, model: &Model, r: &Resolved, plan: &Plan, step: &Ste
             d.header(&["dt"]);
             d.card([Field::from(1.0)]);
         }
-        if step.output.contains(&OutputVariable::Strain) {
+        let laminate_points = plan
+            .parts
+            .iter()
+            .filter_map(|p| match &p.section.kind {
+                SectionKind::CompositeShell { layup } => Some(layup.plies.len() * 3),
+                _ => None,
+            })
+            .max();
+        let strain = step.output.contains(&OutputVariable::Strain);
+        if strain || !plan.material_frames.is_empty() {
             d.line("*DATABASE_EXTENT_BINARY");
             d.header(&["neiph", "neips", "maxint", "strflg"]);
-            d.card([Field::Blank, Field::Blank, Field::Blank, Field::from(1)]);
+            let maxint = laminate_points
+                .map(u32::try_from)
+                .transpose()
+                .map_err(|_| Error::Limit("too many ply output points".into()))?
+                .map_or(Field::Blank, Field::from);
+            d.card([Field::Blank, Field::Blank, maxint, if strain { Field::from(1) } else { Field::Blank }]);
+            if !plan.material_frames.is_empty() {
+                d.header(&["cmpflg"]);
+                d.card([Field::from(1)]);
+            }
         }
     } else if !loads.is_empty() {
         d.comment("Loads have no effect on natural frequencies and are not written in this step.");

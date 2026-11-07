@@ -109,7 +109,6 @@ pub(crate) fn elform(kind: ElementKind, section: &SectionKind, f: Formulation, s
     let reduced = f.integration == Integration::Reduced;
     let no = |what: &str| Err(format!("section `{section_name}`: {what} {}", kind.name()));
     match section {
-        SectionKind::CompositeShell { .. } => no("composite shells are not written yet:"),
         SectionKind::Solid {} => {
             if f.hybrid {
                 return match kind {
@@ -134,7 +133,7 @@ pub(crate) fn elform(kind: ElementKind, section: &SectionKind, f: Formulation, s
                 _ => no("a solid section cannot hold"),
             }
         }
-        SectionKind::Shell { .. } => match kind {
+        SectionKind::Shell { .. } | SectionKind::CompositeShell { .. } => match kind {
             ElementKind::Quad4 if reduced => Ok(Elform { elform: 2, hourglass: Some(Hourglass::Shell) }),
             ElementKind::Quad4 => plain(16),
             ElementKind::Tri3 => plain(4),
