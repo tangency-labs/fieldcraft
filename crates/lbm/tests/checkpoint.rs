@@ -337,6 +337,19 @@ fn wall_models_and_every_collision_resume_bit_for_bit() {
     }
 }
 
+/// The Spalart–Allmaras model's ν̃ survives a restart bit for bit, in a wall-resolved channel
+/// under the two-relaxation-time and the hybrid collisions.
+#[test]
+fn spalart_allmaras_resumes_bit_for_bit() {
+    for collision in [Collision::Trt, Collision::Hrr] {
+        let turbulence = Turbulence::SpalartAllmaras { prandtl: 0.9, wall_model: None, inflow_ratio: 3.0 };
+        let m = resolved_channel(collision, turbulence);
+        let normal = solve_fluid(&m, None, &[], &Limits::default()).unwrap();
+        assert!(normal.stats.eddy_viscosity_ratio.unwrap() > 0.0, "{collision:?}: the model is active");
+        parity(&m, &[]);
+    }
+}
+
 /// A shear-thinning channel clamps its relaxation time in the middle, where it is at rest; the
 /// clamped share over the run in the warning counts the steps before the restart too.
 #[test]
