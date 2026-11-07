@@ -182,3 +182,185 @@ fn a_size_box_refines_the_grid_inside_it() {
     let e = octree_hex_mesh(&s, &deep, &shallow).unwrap_err().to_string();
     assert!(e.contains("max_depth"), "{e}");
 }
+
+/// The thinnest boundary element of `m` against its face on the boundary: the distance from the
+/// opposite face's centre to the boundary face's plane over the boundary face's mean edge.
+fn thinnest_layer(m: &OctreeHexMesh) -> f64 {
+    let mut thinnest = f64::INFINITY;
+    for b in &m.boundary {
+        let hx = m.hexes[b.element as usize];
+        let f = (b.face - 1) as usize;
+        let q = topo::FACES[f].map(|i| m.nodes[hx[i] as usize]);
+        let o = topo::FACES[[1, 0, 4, 5, 2, 3][f]].map(|i| m.nodes[hx[i] as usize]);
+        let n = cross(sub(q[2], q[0]), sub(q[3], q[1]));
+        let n = n.map(|x| x / norm(n));
+        let c = |p: [P; 4]| [0, 1, 2].map(|k| p.iter().map(|x| x[k]).sum::<f64>() / 4.0);
+        let height = dot(sub(c(o), c(q)), n).abs();
+        let edge = (0..4).map(|i| norm(sub(q[(i + 1) % 4], q[i]))).sum::<f64>() / 4.0;
+        thinnest = thinnest.min(height / edge);
+    }
+    thinnest
+}
+
+#[test]
+fn the_core_recedes_to_half_a_cell_from_the_boundary() {
+    // A block of 3 × 3 × 3 unit cells 0.3 of a cell inside a box on every side: the padding and
+    // the pillow would share a 0.3 gap. The faces recede to half a cell; edge and corner
+    // vertices move along their diagonal normals, by the same step, and the core's elements stay
+    // well shaped.
+    let s = box_surface([0.0; 3], [3.6; 3]);
+    let g = Geometry::new(&s, 30.0, 160.0).unwrap();
+    let (points, hexes) = topo::tests::block(3);
+    let points: Vec<P> = points.iter().map(|p| p.map(|x| x + 0.3)).collect();
+    let mut dist: Vec<f64> = points.iter().map(|&p| g.nearest(p, |_| true).unwrap().2.sqrt()).collect();
+    let mut w = Work { size: vec![1.0; hexes.len()], role: Vec::new(), core_count: hexes.len(), points, hexes };
+    let q: Vec<[u32; 4]> = topo::boundary(&w.hexes).iter().map(|x| x.1).collect();
+    let boundary: BTreeSet<u32> = q.iter().flatten().copied().collect();
+    assert!(boundary.iter().all(|&v| (dist[v as usize] - 0.3).abs() < 1e-12));
+    // Vertices inside a face: one coordinate on the core's boundary.
+    let faces: Vec<u32> = boundary
+        .iter()
+        .copied()
+        .filter(|&v| w.points[v as usize].iter().filter(|&&x| (x - 0.3).abs() < 1e-12 || (x - 3.3).abs() < 1e-12).count() == 1)
+        .collect();
+    recede(&g, &mut w, &q, &mut dist);
+    for &v in &boundary {
+        let d = g.nearest(w.points[v as usize], |_| true).unwrap().2.sqrt();
+        assert!((d - dist[v as usize]).abs() < 1e-12 && d > 0.4, "vertex {v} at {:?}: {d}", w.points[v as usize]);
+    }
+    assert_eq!(faces.len(), 24);
+    assert!(faces.iter().all(|&v| dist[v as usize] > 0.5 - 1e-9), "{dist:?}");
+    let worst = w.hexes.iter().map(|hx| smooth::min_scaled_jacobian(&hx.map(|v| w.points[v as usize]))).fold(f64::INFINITY, f64::min);
+    assert!(worst > 0.9, "{worst}");
+    // On a block, every boundary vertex can still be pushed outward.
+    let pts = &w.points;
+    assert!(topo::hidden_vertices(&w.hexes, &vec![true; w.hexes.len()], &|v| pts[v as usize], BUFFER_MARGIN).is_empty());
+}
+
+#[test]
+fn a_core_one_cell_thick_keeps_half_its_thickness() {
+    // A slab of 3 × 3 × 1 unit cells 0.3 inside a box, its elements sized 1.4 (as a transition
+    // element's edges are shorter than its cell): each face would recede 0.4, which leaves a
+    // slab 0.2 thick whose elements are still perfect boxes, so only the edge lengths stop it.
+    let s = box_surface([-0.3, -0.3, 0.7], [3.3, 3.3, 2.3]);
+    let g = Geometry::new(&s, 30.0, 160.0).unwrap();
+    let (points, hexes) = topo::tests::block(3);
+    let hexes: Vec<[u32; 8]> = hexes.into_iter().filter(|hx| hx.iter().all(|&v| (1.0..=2.0).contains(&points[v as usize][2]))).collect();
+    assert_eq!(hexes.len(), 9);
+    let mut dist: Vec<f64> = points.iter().map(|&p| g.nearest(p, |_| true).unwrap().2.sqrt()).collect();
+    let mut w = Work { size: vec![1.4; hexes.len()], role: Vec::new(), core_count: hexes.len(), points, hexes };
+    let q: Vec<[u32; 4]> = topo::boundary(&w.hexes).iter().map(|x| x.1).collect();
+    let start = w.points.clone();
+    recede(&g, &mut w, &q, &mut dist);
+    // The edges across the slab, as long as it is thick.
+    let across: Vec<f64> = w
+        .hexes
+        .iter()
+        .flat_map(|hx| crate::quality::jacobian::HEX_EDGES.iter().map(move |&(a, b)| (hx[a] as usize, hx[b] as usize)))
+        .filter(|&(a, b)| (start[a][2] - start[b][2]).abs() > 0.5)
+        .map(|(a, b)| norm(sub(w.points[a], w.points[b])))
+        .collect();
+    assert_eq!(across.len(), 9 * 4);
+    let thinnest = across.iter().copied().fold(f64::INFINITY, f64::min);
+    assert!((0.5 - 1e-9..0.7).contains(&thinnest), "{thinnest}");
+}
+
+/// A stand-in for a build's mesh: only its smallest scaled Jacobian matters to [`rebuilt`].
+fn mesh_with(min_scaled_jacobian: f64) -> Box<OctreeHexMesh> {
+    let report = OctreeReport {
+        attempts: 0,
+        grid_cells: 0,
+        root_size: 1.0,
+        levels: 0,
+        thinnest_wall: f64::INFINITY,
+        narrowest_patch: f64::INFINITY,
+        refined_cells: Vec::new(),
+        closed_cells: Vec::new(),
+        core_elements: 0,
+        layer_elements: 0,
+        frame: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        corners: 0,
+        curves: 0,
+        patches: 0,
+        sweeps: 0,
+        min_scaled_jacobian,
+        mean_scaled_jacobian: min_scaled_jacobian,
+        volume: 0.0,
+        surface_volume: 0.0,
+        boundary_distance: 0.0,
+        retries: Vec::new(),
+    };
+    Box::new(OctreeHexMesh { nodes: Vec::new(), hexes: Vec::new(), boundary: Vec::new(), report })
+}
+
+/// What [`rebuilt`] returns when its builds return `builds` in turn, with four attempts: the
+/// kept mesh's smallest scaled Jacobian, builds and reasons, or the error.
+fn rebuild_with(builds: Vec<Result<Attempt>>) -> std::result::Result<(f64, usize, Vec<String>), Error> {
+    let mut builds = std::collections::VecDeque::from(builds);
+    let mut build = |_: &[P], _: usize| builds.pop_front().unwrap_or_else(|| Err(Error::Failed("no more builds".into())));
+    let m = rebuilt(4, &|attempt| 10 * (attempt + 1), &mut build)?;
+    Ok((m.report.min_scaled_jacobian, m.report.attempts, m.report.retries.iter().map(|r| r.to_string()).collect()))
+}
+
+#[test]
+fn a_rebuild_is_kept_only_while_it_raises_the_worst_element() {
+    let done = |sj: f64| Ok(Attempt::Done(mesh_with(sj), Vec::new()));
+    let poor = |sj: f64| Ok(Attempt::Done(mesh_with(sj), vec![[0.0; 3]]));
+    let retry = || Ok(Attempt::Retry(Retry { at: vec![[0.0; 3]], why: message!["2 elements stay inverted"] }));
+    let failed = || Err(Error::Failed("the pad layer folds".into()));
+    let limit = || Err(Error::Limit("the grid needs 99 cells".into()));
+    let cancelled = || Err(Error::Model(fieldcraft_model::Error::Cancelled));
+
+    // A mesh without poor elements is returned at once.
+    assert_eq!(rebuild_with(vec![done(0.5)]).unwrap(), (0.5, 1, vec![]));
+    // A rebuild that raises the worst element is kept, one that does not returns the earlier mesh.
+    let (sj, builds, why) = rebuild_with(vec![poor(0.05), done(0.3)]).unwrap();
+    assert_eq!((sj, builds, why.len()), (0.3, 2, 1));
+    assert!(why[0].contains("1 elements have a scaled Jacobian under 0.2"), "{why:?}");
+    let (sj, builds, _) = rebuild_with(vec![poor(0.05), poor(0.04)]).unwrap();
+    assert_eq!((sj, builds), (0.05, 2));
+    // Rebuilds continue while each raises it, up to the last attempt, whose mesh is returned.
+    let (sj, builds, why) = rebuild_with(vec![poor(0.05), poor(0.06), poor(0.07), poor(0.08)]).unwrap();
+    assert_eq!((sj, builds, why.len()), (0.08, 4, 3));
+
+    // Once a valid mesh is in hand, a rebuild that fails keeps it and says why: over the grid
+    // cap, any other error, or after a failure it retried.
+    let (sj, builds, why) = rebuild_with(vec![poor(0.05), limit()]).unwrap();
+    assert_eq!((sj, builds), (0.05, 2));
+    assert!(why[1].contains("needs more than 20 grid cells") && why[1].contains("99 cells"), "{why:?}");
+    let (sj, builds, why) = rebuild_with(vec![poor(0.05), failed()]).unwrap();
+    assert_eq!((sj, builds), (0.05, 2));
+    assert!(why[1].contains("the rebuild failed") && why[1].contains("the pad layer folds"), "{why:?}");
+    let (sj, builds, why) = rebuild_with(vec![poor(0.05), retry(), failed()]).unwrap();
+    assert_eq!((sj, builds, why.len()), (0.05, 3, 3));
+    assert!(why[1].contains("inverted"), "{why:?}");
+    let (sj, builds, _) = rebuild_with(vec![poor(0.05), retry(), retry(), retry()]).unwrap();
+    assert_eq!((sj, builds), (0.05, 4));
+    // Cancellation is never swallowed.
+    assert!(matches!(rebuild_with(vec![poor(0.05), cancelled()]), Err(Error::Model(fieldcraft_model::Error::Cancelled))));
+
+    // Without a valid mesh: a failure propagates, a grid over its cap ends the retries, and
+    // retries that never mesh fail with every reason.
+    assert!(matches!(rebuild_with(vec![failed()]), Err(Error::Failed(_))));
+    assert!(matches!(rebuild_with(vec![retry(), failed()]), Err(Error::Failed(m)) if m == "the pad layer folds"));
+    let e = rebuild_with(vec![retry(), limit()]).unwrap_err().to_string();
+    assert!(e.contains("failed after 2 builds") && e.contains("needs more than 20 grid cells"), "{e}");
+    let e = rebuild_with(vec![retry(), retry(), retry(), retry()]).unwrap_err().to_string();
+    assert!(e.contains("failed after 4 builds") && e.matches("inverted").count() == 4, "{e}");
+}
+
+#[test]
+#[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+fn boxes_whose_core_is_a_fraction_of_a_cell_from_a_face_keep_their_layers() {
+    // At a size of 2, a 7 or 7.5 high box leaves its core a fraction of a cell from its top and
+    // bottom faces. Without the core receding, the 7 box's boundary elements came out 0.012 of
+    // their width thick (scaled Jacobian 1e-4) and the 7.5 box failed after four builds.
+    for height in [7.0, 7.5] {
+        let s = box_surface([0.0; 3], [10.0, 8.0, height]);
+        let m = octree_hex_mesh(&s, &UniformSize(2.0), &OctreeOptions::default()).unwrap();
+        let r = &m.report;
+        assert!(thinnest_layer(&m) > 0.4, "{height}: {} {r:?}", thinnest_layer(&m));
+        assert!(r.min_scaled_jacobian > 0.3, "{height}: {r:?}");
+        assert!((r.volume - 80.0 * height).abs() < 1e-9 * 80.0 * height, "{height}: {r:?}");
+    }
+}
