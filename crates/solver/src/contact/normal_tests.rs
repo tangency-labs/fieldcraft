@@ -13,7 +13,16 @@ fn cubes(finite: bool, friction: Friction) -> (Mesh, Interface) {
     model.add_set("all", Set { elements: vec![1, 2], ..Set::default() }).unwrap();
     model.add_material("Mat", Material { elastic: Some(Elastic::Isotropic { young: 1000., poisson: 0.0 }), ..Material::default() }).unwrap();
     model
-        .add_section("solid", Section { set: "all".into(), material: "Mat".into(), kind: SectionKind::Solid {}, formulation: Formulation::default() })
+        .add_section(
+            "solid",
+            Section {
+                orientation: None,
+                set: "all".into(),
+                material: "Mat".into(),
+                kind: SectionKind::Solid {},
+                formulation: Formulation::default(),
+            },
+        )
         .unwrap();
     let top = ElementKind::Hex8.faces().iter().position(|face| face.iter().all(|i| cube[*i][2] == 1.0)).unwrap();
     model.add_set("main", Set { faces: vec![ElementFace { element: 1, face: top as u8 + 1 }], ..Set::default() }).unwrap();

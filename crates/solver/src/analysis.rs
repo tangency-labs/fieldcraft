@@ -805,7 +805,13 @@ mod tests {
         model
             .add_section(
                 "solid",
-                Section { set: "all".into(), material: "Mat".into(), kind: SectionKind::Solid {}, formulation: Formulation::default() },
+                Section {
+                    orientation: None,
+                    set: "all".into(),
+                    material: "Mat".into(),
+                    kind: SectionKind::Solid {},
+                    formulation: Formulation::default(),
+                },
             )
             .unwrap();
         model.add_boundary_condition("fixed", BoundaryCondition::Fixed { target: Target::Set("base".into()) }).unwrap();

@@ -160,7 +160,10 @@ fn steps_and_elements_that_take_no_initial_fields_say_so() {
     assert!(r.warnings.iter().any(|w| w.contains("1 initial field values are at nodes the mesh does not have")), "{:?}", r.warnings);
     g.model.add_material("Steel", Material { elastic: Some(iso(E, NU)), density: Some(7800.0), ..Material::default() }).unwrap();
     g.model
-        .replace_section("solid", Section { set: "all".into(), material: "Steel".into(), kind: SectionKind::Solid {}, formulation: full() })
+        .replace_section(
+            "solid",
+            Section { orientation: None, set: "all".into(), material: "Steel".into(), kind: SectionKind::Solid {}, formulation: full() },
+        )
         .unwrap();
     g.model.add_step(Step::new("Modes", Procedure::Frequency { modes: 3, min_hz: None, max_hz: None }), None).unwrap();
     let modes = solve_frequency(&g.model, Some("Modes"), &Default::default(), &Limits::default()).unwrap();

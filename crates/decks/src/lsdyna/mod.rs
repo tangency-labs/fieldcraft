@@ -184,6 +184,7 @@ fn write_with(model: &Model, r: &Resolved, units: Preset) -> Result<Written> {
             what: format!("step `{}`: harmonic frequency response is not supported by this writer", step.name),
         });
     }
+    crate::refuse_composite_data(FORMAT, model)?;
     let estimate = (model.nodes().len() + model.reference_points().len()) * 130 + model.elements().len() * 260;
     if estimate > MAX_DECK_BYTES {
         return Err(Error::Limit(format!("the deck would be about {estimate} bytes; at most {MAX_DECK_BYTES} are written")));
@@ -563,6 +564,7 @@ fn plastic_material(d: &mut Deck, name: &str, mid: u32, rho: f64, young: f64, po
 fn parts(d: &mut Deck, plan: &Plan) -> Result<()> {
     for p in &plan.parts {
         match p.section.kind {
+            SectionKind::CompositeShell { .. } => return Err(broken(format!("section `{}`: composite shells are not written yet", p.name))),
             SectionKind::Solid {} => {
                 d.line("*SECTION_SOLID");
                 d.header(&["secid", "elform"]);

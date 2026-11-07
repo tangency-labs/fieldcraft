@@ -108,7 +108,9 @@ impl Mesh {
     fn section(&mut self, name: &str, elements: &[u32], material: &str) {
         self.model.add_set(name, Set { elements: elements.to_vec(), ..Set::default() }).unwrap();
         let formulation = Formulation { integration: Integration::Reduced, ..Formulation::default() };
-        self.model.add_section(name, Section { set: name.into(), material: material.into(), kind: SectionKind::Solid {}, formulation }).unwrap();
+        self.model
+            .add_section(name, Section { orientation: None, set: name.into(), material: material.into(), kind: SectionKind::Solid {}, formulation })
+            .unwrap();
     }
 
     fn face_set(&mut self, name: &str, faces: Vec<ElementFace>) {

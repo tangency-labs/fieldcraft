@@ -34,7 +34,13 @@ fn model(rod3: bool) -> Model {
     .unwrap();
     m.add_section(
         "bars",
-        Section { set: "bars".into(), material: "Steel".into(), kind: SectionKind::Rod { area: 20.0 }, formulation: Formulation::default() },
+        Section {
+            orientation: None,
+            set: "bars".into(),
+            material: "Steel".into(),
+            kind: SectionKind::Rod { area: 20.0 },
+            formulation: Formulation::default(),
+        },
     )
     .unwrap();
     m.add_reference_point("Hub", ReferencePoint { xyz: [2500.0, 0.0, 0.0], label: 0 }).unwrap();

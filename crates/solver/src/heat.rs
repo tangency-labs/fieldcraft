@@ -71,6 +71,9 @@ impl HeatMesh {
     pub fn new(model: &Model, resolved: &Resolved, max_dofs: usize) -> Result<HeatMesh> {
         let mut elements = Vec::new();
         for (name, section) in model.sections() {
+            if section.orientation.is_some() {
+                return Err(Error::NotSupported(format!("material orientation of section `{name}` in heat transfer")));
+            }
             if !matches!(section.kind, SectionKind::Solid {}) {
                 return Err(Error::NotSupported(format!(
                     "heat transfer in {} sections (section `{name}`); it has solid elements so far",

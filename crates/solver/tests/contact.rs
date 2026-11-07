@@ -175,7 +175,13 @@ impl Blocks {
         self.model
             .add_section(
                 "solid",
-                Section { set: "all".into(), material: "Mat".into(), kind: SectionKind::Solid {}, formulation: Formulation::default() },
+                Section {
+                    orientation: None,
+                    set: "all".into(),
+                    material: "Mat".into(),
+                    kind: SectionKind::Solid {},
+                    formulation: Formulation::default(),
+                },
             )
             .unwrap();
         self.model.add_step(Step::new("Step", Procedure::NonlinearStatic(settings)), None).unwrap();
@@ -784,7 +790,16 @@ fn tied(lower_kind: ElementKind, upper_kind: ElementKind, distorted: bool, proce
     b.model.add_set("all", Set { elements: all, ..Set::default() }).unwrap();
     b.model.add_material("Mat", Material { elastic: Some(Elastic::Isotropic { young: 1000.0, poisson: 0.3 }), ..Material::default() }).unwrap();
     b.model
-        .add_section("solid", Section { set: "all".into(), material: "Mat".into(), kind: SectionKind::Solid {}, formulation: Formulation::default() })
+        .add_section(
+            "solid",
+            Section {
+                orientation: None,
+                set: "all".into(),
+                material: "Mat".into(),
+                kind: SectionKind::Solid {},
+                formulation: Formulation::default(),
+            },
+        )
         .unwrap();
     b.model.add_step(Step::new("Step", procedure), None).unwrap();
     b.face_set("lower_top", &low, |x| near(x[2], 1.0));
@@ -887,7 +902,16 @@ fn tied_conductor(lower: ElementKind, lower_n: [usize; 3], graded: bool, upper: 
         };
         b.model.add_material(name, material).unwrap();
         b.model
-            .add_section(name, Section { set: name.into(), material: name.into(), kind: SectionKind::Solid {}, formulation: Formulation::default() })
+            .add_section(
+                name,
+                Section {
+                    orientation: None,
+                    set: name.into(),
+                    material: name.into(),
+                    kind: SectionKind::Solid {},
+                    formulation: Formulation::default(),
+                },
+            )
             .unwrap();
     }
     b.model.add_step(Step::new("Step", procedure), None).unwrap();
@@ -970,7 +994,16 @@ fn transient_heat_through_a_tie_is_the_single_body_s() {
     single.model.add_material("Mat", Material { density: Some(1.0), thermal: Some(thermal), ..Material::default() }).unwrap();
     single
         .model
-        .add_section("solid", Section { set: "all".into(), material: "Mat".into(), kind: SectionKind::Solid {}, formulation: Formulation::default() })
+        .add_section(
+            "solid",
+            Section {
+                orientation: None,
+                set: "all".into(),
+                material: "Mat".into(),
+                kind: SectionKind::Solid {},
+                formulation: Formulation::default(),
+            },
+        )
         .unwrap();
     single.model.add_step(Step::new("Step", tr.clone()), None).unwrap();
     hold_temperature(&mut single, "hot", 100.0, |x| near(x[2], 2.0));
@@ -1041,6 +1074,7 @@ fn c_ring(finite: bool, closing: f64) -> (Blocks, StaticResult) {
         .add_section(
             "solid",
             Section {
+                orientation: None,
                 set: "all".into(),
                 material: "Rubber".into(),
                 kind: SectionKind::Solid {},
@@ -1139,6 +1173,7 @@ fn a_rubber_bellows_folds_onto_itself() {
         .add_section(
             "solid",
             Section {
+                orientation: None,
                 set: "all".into(),
                 material: "Rubber".into(),
                 kind: SectionKind::Solid {},
@@ -1193,6 +1228,7 @@ fn planar_c_ring(closing: f64, threads: usize) -> (Blocks, StaticResult) {
     };
     b.model.add_material("Rubber", rubber).unwrap();
     let section = Section {
+        orientation: None,
         set: "all".into(),
         material: "Rubber".into(),
         kind: SectionKind::PlaneStrain { thickness: 0.2 },
@@ -1264,7 +1300,13 @@ fn what_2d_contact_refuses() {
     m.add_material("Mat", Material { elastic: Some(Elastic::Isotropic { young: 1.0, poisson: 0.3 }), ..Material::default() }).unwrap();
     m.add_section(
         "s",
-        Section { set: "all".into(), material: "Mat".into(), kind: SectionKind::PlaneStrain { thickness: 1.0 }, formulation: Formulation::default() },
+        Section {
+            orientation: None,
+            set: "all".into(),
+            material: "Mat".into(),
+            kind: SectionKind::PlaneStrain { thickness: 1.0 },
+            formulation: Formulation::default(),
+        },
     )
     .unwrap();
     m.add_step(Step::new("Step", Procedure::NonlinearStatic(NonlinearStatic::default())), None).unwrap();

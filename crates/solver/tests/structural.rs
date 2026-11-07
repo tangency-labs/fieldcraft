@@ -43,7 +43,9 @@ impl Build {
 
     fn section(&mut self, name: &str, elements: Vec<u32>, kind: SectionKind) {
         self.model.add_set(name, Set { elements, ..Set::default() }).unwrap();
-        self.model.add_section(name, Section { set: name.into(), material: "Mat".into(), kind, formulation: Formulation::default() }).unwrap();
+        self.model
+            .add_section(name, Section { orientation: None, set: name.into(), material: "Mat".into(), kind, formulation: Formulation::default() })
+            .unwrap();
     }
 
     fn nodes_where(&self, f: impl Fn([f64; 3]) -> bool) -> Vec<u32> {
@@ -554,6 +556,7 @@ fn structural_models_that_cannot_be_solved_are_errors() {
         .replace_section(
             "beam",
             Section {
+                orientation: None,
                 set: "beam".into(),
                 material: "Mat".into(),
                 kind: SectionKind::Beam { profile: BeamProfile::Circle { radius: 1.0 }, orientation: [2.0, 2.0, 1.0] },

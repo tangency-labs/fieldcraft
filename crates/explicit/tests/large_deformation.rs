@@ -74,7 +74,8 @@ fn define(m: &mut Model, kind: ElementKind, material: Material, step: ExplicitDy
     m.add_material("Mat", material).unwrap();
     let integration = if kind == ElementKind::Hex8 { Integration::Reduced } else { Integration::Full };
     let formulation = Formulation { integration, ..Formulation::default() };
-    m.add_section("solid", Section { set: "all".into(), material: "Mat".into(), kind: SectionKind::Solid {}, formulation }).unwrap();
+    m.add_section("solid", Section { orientation: None, set: "all".into(), material: "Mat".into(), kind: SectionKind::Solid {}, formulation })
+        .unwrap();
     m.add_step(Step::new("Dynamic", Procedure::ExplicitDynamic(step)), None).unwrap();
 }
 

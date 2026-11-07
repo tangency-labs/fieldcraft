@@ -191,6 +191,7 @@ pub fn write(model: &Model, units: Preset) -> Result<String> {
 /// [`write`] for a model already expressed in `units` ([`crate::express`]) and resolved.
 pub fn write_resolved(model: &Model, r: &Resolved, units: Preset) -> Result<String> {
     crate::refuse_fluid(FORMAT, model)?;
+    crate::refuse_composite_data(FORMAT, model)?;
     let by_type = elements_by_type(model, r)?;
     check_expressible(model)?;
     let discrete = discrete_groups(model, r)?;
@@ -984,6 +985,9 @@ impl Deck {
             self.comment(&format!("section {name}"));
             let (set, material) = (&s.set, &s.material);
             match s.kind {
+                SectionKind::CompositeShell { .. } => {
+                    return Err(Error::Unsupported { format: FORMAT, what: "composite shell sections are not written yet".into() });
+                }
                 SectionKind::Solid {} | SectionKind::Axisymmetric {} => {
                     self.line(&format!("*SOLID SECTION, ELSET={set}, MATERIAL={material}"));
                     self.line(",");

@@ -16,8 +16,11 @@ fn model() -> Model {
     m.add_set("all", Set { elements: vec![1], ..Set::default() }).unwrap();
     m.add_set("base", Set { nodes: vec![1, 2, 3], ..Set::default() }).unwrap();
     m.add_material("Steel", Material { elastic: Some(Elastic::Isotropic { young: 210_000.0, poisson: 0.3 }), ..Material::default() }).unwrap();
-    m.add_section("all", Section { set: "all".into(), material: "Steel".into(), kind: SectionKind::Solid {}, formulation: Default::default() })
-        .unwrap();
+    m.add_section(
+        "all",
+        Section { orientation: None, set: "all".into(), material: "Steel".into(), kind: SectionKind::Solid {}, formulation: Default::default() },
+    )
+    .unwrap();
     m.add_boundary_condition("fix", BoundaryCondition::Fixed { target: Target::Set("base".into()) }).unwrap();
     let mut step = Step::new("Release", Procedure::Static {});
     step.boundary_conditions.insert("fix".into());

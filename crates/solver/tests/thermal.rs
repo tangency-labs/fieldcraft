@@ -265,8 +265,18 @@ fn bimetal_strip_bends_as_timoshenko_says() {
             )
             .unwrap();
     }
-    g.model.add_section("low", Section { set: "bottom".into(), material: "Low".into(), kind: SectionKind::Solid {}, formulation: full() }).unwrap();
-    g.model.add_section("high", Section { set: "top".into(), material: "High".into(), kind: SectionKind::Solid {}, formulation: full() }).unwrap();
+    g.model
+        .add_section(
+            "low",
+            Section { orientation: None, set: "bottom".into(), material: "Low".into(), kind: SectionKind::Solid {}, formulation: full() },
+        )
+        .unwrap();
+    g.model
+        .add_section(
+            "high",
+            Section { orientation: None, set: "top".into(), material: "High".into(), kind: SectionKind::Solid {}, formulation: full() },
+        )
+        .unwrap();
     g.model.add_step(Step::new("Step", Procedure::Static {}), None).unwrap();
     g.fixed("root", |p| near(p[0], 0.0));
     g.node_set("everything", |_| true);
@@ -404,7 +414,11 @@ fn heated_rod(kind: ElementKind, len: f64, alpha: [f64; 3], dt: f64, held: bool)
     m.add_set("c", Set { nodes: vec![3], ..Set::default() }).unwrap();
     let thermal = Thermal { expansion: Some(Directional::Orthotropic(alpha)), reference_temperature: 0.0, ..Thermal::default() };
     m.add_material("Mat", Material { elastic: Some(iso(2e5, 0.3)), thermal: Some(thermal), ..Material::default() }).unwrap();
-    m.add_section("rod", Section { set: "rod".into(), material: "Mat".into(), kind: SectionKind::Rod { area: 4.0 }, formulation: full() }).unwrap();
+    m.add_section(
+        "rod",
+        Section { orientation: None, set: "rod".into(), material: "Mat".into(), kind: SectionKind::Rod { area: 4.0 }, formulation: full() },
+    )
+    .unwrap();
     let mut step = Step::new("Step", Procedure::Static {});
     let lateral = [None, Some(0.0), Some(0.0)];
     for (name, v) in [("a", [Some(0.0); 3]), ("b", if held { [Some(0.0); 3] } else { lateral }), ("c", lateral)] {
@@ -451,4 +465,20 @@ fn heat_factor_cap_reports_value_bytes_before_allocation() {
     assert!(e.contains("bytes of factor values alone") && e.contains("limit is 1 entries"), "{e}");
     assert_eq!(g.model, before);
     assert!(solve_heat(&g.model, None, &Limits::default()).is_ok());
+}
+
+#[test]
+fn heat_refuses_a_named_material_orientation_until_it_rotates_conductivity() {
+    let mut g = grid([1, 1, 1], ElementKind::Hex8, |p| p);
+    g.define(iso(70e9, 0.25), None, Formulation::default(), Procedure::HeatTransfer { transient: None });
+    thermal(&mut g, iso(70e9, 0.25), None, conductor(K));
+    let (name, mut section) = g.model.sections().iter().next().map(|(n, s)| (n.clone(), s.clone())).unwrap();
+    section.orientation = Some(SectionOrientation {
+        frame: MaterialOrientation::Rectangular { axis1: [1.0, 1.0, 0.0], axis2: [0.0, 0.0, 1.0] },
+        shell_reference_axis: 1,
+    });
+    g.model.replace_section(&name, section).unwrap();
+    let resolved = g.model.resolve().unwrap();
+    let error = fieldcraft_solver::heat::HeatMesh::new(&g.model, &resolved, 1000).unwrap_err().to_string();
+    assert!(error.contains(&name) && error.contains("material orientation") && error.contains("heat transfer"), "{error}");
 }

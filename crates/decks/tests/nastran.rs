@@ -153,8 +153,11 @@ fn bar(n: u32) -> Model {
     m.add_set("root", Set { faces: vec![ElementFace { element: 1, face: 6 }], ..Set::default() }).unwrap();
     m.add_set("end", Set { faces: vec![ElementFace { element: n, face: 4 }], ..Set::default() }).unwrap();
     m.add_material("Steel", steel()).unwrap();
-    m.add_section("bar", Section { set: "all".into(), material: "Steel".into(), kind: SectionKind::Solid {}, formulation: Formulation::default() })
-        .unwrap();
+    m.add_section(
+        "bar",
+        Section { orientation: None, set: "all".into(), material: "Steel".into(), kind: SectionKind::Solid {}, formulation: Formulation::default() },
+    )
+    .unwrap();
     m.add_boundary_condition("clamp", BoundaryCondition::Fixed { target: Target::Set("root".into()) }).unwrap();
     m
 }
@@ -194,7 +197,11 @@ fn plate() -> Model {
     )
     .unwrap();
     let shell = SectionKind::Shell { thickness: 2.0, offset: 0.0, points: 5 };
-    m.add_section("skin", Section { set: "all".into(), material: "Aluminium".into(), kind: shell, formulation: Formulation::default() }).unwrap();
+    m.add_section(
+        "skin",
+        Section { orientation: None, set: "all".into(), material: "Aluminium".into(), kind: shell, formulation: Formulation::default() },
+    )
+    .unwrap();
     m.add_boundary_condition("clamp", BoundaryCondition::Fixed { target: Target::Set("edge".into()) }).unwrap();
     m.add_load("press", Load::Pressure { set: "top".into(), magnitude: 0.01 }).unwrap();
     m.add_load("weight", Load::Gravity { acceleration: [0.0, 0.0, -9810.0], set: None }).unwrap();
@@ -242,8 +249,11 @@ fn one_element(kind: ElementKind) -> Model {
     m.add_set("all", Set { elements: vec![7], ..Set::default() }).unwrap();
     m.add_set("base", Set { faces: vec![ElementFace { element: 7, face: 1 }], ..Set::default() }).unwrap();
     m.add_material("Steel", steel()).unwrap();
-    m.add_section("s", Section { set: "all".into(), material: "Steel".into(), kind: SectionKind::Solid {}, formulation: Formulation::default() })
-        .unwrap();
+    m.add_section(
+        "s",
+        Section { orientation: None, set: "all".into(), material: "Steel".into(), kind: SectionKind::Solid {}, formulation: Formulation::default() },
+    )
+    .unwrap();
     m.add_boundary_condition("hold", BoundaryCondition::Fixed { target: Target::Set("base".into()) }).unwrap();
     m.add_load("push", Load::Pressure { set: "base".into(), magnitude: 1.0 }).unwrap();
     m.add_step(static_step("Load", &["hold"], &["push"]), None).unwrap();
@@ -526,7 +536,7 @@ fn beams_rods_orthotropy_couplings_and_prescribed_motion() {
     m.add_material("Carbon", ortho.clone()).unwrap();
     m.replace_section(
         "bar",
-        Section { set: "all".into(), material: "Carbon".into(), kind: SectionKind::Solid {}, formulation: Formulation::default() },
+        Section { orientation: None, set: "all".into(), material: "Carbon".into(), kind: SectionKind::Solid {}, formulation: Formulation::default() },
     )
     .unwrap();
     // A beam and a rod hanging off the tip, and a shell lying in z = 0 with the same material.
@@ -542,6 +552,7 @@ fn beams_rods_orthotropy_couplings_and_prescribed_motion() {
     m.add_section(
         "beam",
         Section {
+            orientation: None,
             set: "beam".into(),
             material: "Steel".into(),
             kind: SectionKind::Beam { profile: i, orientation: [0.0, 0.0, 1.0] },
@@ -551,12 +562,19 @@ fn beams_rods_orthotropy_couplings_and_prescribed_motion() {
     .unwrap();
     m.add_section(
         "rod",
-        Section { set: "rod".into(), material: "Steel".into(), kind: SectionKind::Rod { area: 3.5 }, formulation: Formulation::default() },
+        Section {
+            orientation: None,
+            set: "rod".into(),
+            material: "Steel".into(),
+            kind: SectionKind::Rod { area: 3.5 },
+            formulation: Formulation::default(),
+        },
     )
     .unwrap();
     m.add_section(
         "web",
         Section {
+            orientation: None,
             set: "web".into(),
             material: "Carbon".into(),
             kind: SectionKind::Shell { thickness: 1.0, offset: 0.5, points: 3 },
@@ -653,7 +671,8 @@ fn steps_are_chosen_and_mixed_solutions_are_refused() {
 
 #[test]
 fn what_nastran_cannot_express_is_named() {
-    let solid = |f: Formulation| Section { set: "all".into(), material: "Steel".into(), kind: SectionKind::Solid {}, formulation: f };
+    let solid =
+        |f: Formulation| Section { orientation: None, set: "all".into(), material: "Steel".into(), kind: SectionKind::Solid {}, formulation: f };
     let mut m = cantilever();
     m.replace_section("bar", solid(Formulation { hybrid: true, ..Formulation::default() })).unwrap();
     assert!(unsupported(&m).contains("hybrid"));
@@ -687,6 +706,7 @@ fn what_nastran_cannot_express_is_named() {
     m.replace_section(
         "skin",
         Section {
+            orientation: None,
             set: "all".into(),
             material: "Aluminium".into(),
             kind: SectionKind::Shell { thickness: 2.0, offset: 0.0, points: 1 },
@@ -701,7 +721,13 @@ fn what_nastran_cannot_express_is_named() {
     m.add_material("Fibre", Material { elastic: Some(ortho), density: Some(1.6e-9), ..Material::default() }).unwrap();
     m.add_section(
         "bars",
-        Section { set: "bars".into(), material: "Fibre".into(), kind: SectionKind::Rod { area: 1.0 }, formulation: Formulation::default() },
+        Section {
+            orientation: None,
+            set: "bars".into(),
+            material: "Fibre".into(),
+            kind: SectionKind::Rod { area: 1.0 },
+            formulation: Formulation::default(),
+        },
     )
     .unwrap();
     assert!(unsupported(&m).contains("beams or rods"));
@@ -729,7 +755,13 @@ fn conflicting_values_and_ids_at_the_top_of_the_range() {
     m.add_set("bar2", Set { elements: vec![99_999_999], ..Set::default() }).unwrap();
     m.add_section(
         "bar2",
-        Section { set: "bar2".into(), material: "Steel".into(), kind: SectionKind::Rod { area: 1.0 }, formulation: Formulation::default() },
+        Section {
+            orientation: None,
+            set: "bar2".into(),
+            material: "Steel".into(),
+            kind: SectionKind::Rod { area: 1.0 },
+            formulation: Formulation::default(),
+        },
     )
     .unwrap();
     let deck = nastran::write(&m).unwrap();

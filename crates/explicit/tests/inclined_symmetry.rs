@@ -76,7 +76,7 @@ fn bar(whole: [bool; 2], force: [f64; 3], turn: &[[f64; 3]; 3]) -> (Model, Expli
     m.add_material("Mat", Material { elastic: Some(Elastic::Isotropic { young: 1.0e4, poisson: 0.3 }), density: Some(1.0), ..Material::default() })
         .unwrap();
     let formulation = Formulation { integration: Integration::Reduced, ..Formulation::default() };
-    m.add_section("bar", Section { set: "all".into(), material: "Mat".into(), kind: SectionKind::Solid {}, formulation }).unwrap();
+    m.add_section("bar", Section { orientation: None, set: "all".into(), material: "Mat".into(), kind: SectionKind::Solid {}, formulation }).unwrap();
     let settings = ExplicitDynamic::new(0.2);
     let mut step = Step::new("Pull", Procedure::ExplicitDynamic(settings));
     m.add_boundary_condition("clamp", BoundaryCondition::Fixed { target: Target::Set("root".into()) }).unwrap();

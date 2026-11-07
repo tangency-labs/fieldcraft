@@ -13,8 +13,31 @@ use crate::{Error, Result, check_name, finite, positive};
 /// Bound storage and all through-thickness loops before allocating resolved plies.
 pub const MAX_PLIES: usize = 256;
 
-/// Material axes in global coordinates. The first axis is projected onto a shell's plane
-/// before applying a ply angle; solid elements use all three axes at the evaluation position.
+/// A section's material frame, including the axis projected into a shell's plane.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SectionOrientation {
+    pub frame: MaterialOrientation,
+    #[serde(default = "default_reference_axis")]
+    pub shell_reference_axis: u8,
+}
+
+fn default_reference_axis() -> u8 {
+    1
+}
+
+impl SectionOrientation {
+    pub fn validate(&self) -> Result<()> {
+        self.frame.validate()?;
+        if !(1..=3).contains(&self.shell_reference_axis) {
+            return Err(Error::Invalid("a shell reference axis must be 1, 2 or 3".into()));
+        }
+        Ok(())
+    }
+}
+
+/// Material axes in global coordinates. The section's selected reference axis is projected
+/// onto a shell's plane before applying a ply angle; solid elements use all three axes at the evaluation position.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum MaterialOrientation {

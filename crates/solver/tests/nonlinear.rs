@@ -277,7 +277,11 @@ fn plane_strain_and_axisymmetric_stretch() {
         m.add_set("all", Set { elements: all, ..Set::default() }).unwrap();
         let mat = Material { elastic: Some(iso(e, nu)), hyperelastic: Some(Hyperelastic::NeoHookean {}), ..Material::default() };
         m.add_material("Mat", mat).unwrap();
-        m.add_section("s", Section { set: "all".into(), material: "Mat".into(), kind: section, formulation: Formulation::default() }).unwrap();
+        m.add_section(
+            "s",
+            Section { orientation: None, set: "all".into(), material: "Mat".into(), kind: section.clone(), formulation: Formulation::default() },
+        )
+        .unwrap();
         let axisymmetric = matches!(section, SectionKind::Axisymmetric {});
         // Stretch along x (plane strain) or along the axis y (axisymmetric).
         let (pulled, axis) = if axisymmetric { (1, 1) } else { (0, 0) };

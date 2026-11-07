@@ -99,7 +99,7 @@ impl BeamProfile {
 }
 
 /// What a section describes.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SectionKind {
     /// Continuum solid elements.
@@ -114,6 +114,9 @@ pub enum SectionKind {
         #[serde(default = "default_shell_points")]
         points: u32,
     },
+    /// An ordered laminate, bottom to top along the element normal. Its materials belong
+    /// to the plies and its total thickness is derived from their thicknesses.
+    CompositeShell { layup: crate::Layup },
     /// Beam elements with a library profile. `orientation` is a vector giving the profile's
     /// local 1 direction (projected normal to each beam's axis); it must not be parallel to a
     /// beam.
@@ -174,7 +177,11 @@ impl SectionKind {
     pub fn dimension(&self) -> u8 {
         match self {
             SectionKind::Solid {} => 3,
-            SectionKind::Shell { .. } | SectionKind::PlaneStress { .. } | SectionKind::PlaneStrain { .. } | SectionKind::Axisymmetric {} => 2,
+            SectionKind::Shell { .. }
+            | SectionKind::CompositeShell { .. }
+            | SectionKind::PlaneStress { .. }
+            | SectionKind::PlaneStrain { .. }
+            | SectionKind::Axisymmetric {} => 2,
             SectionKind::Beam { .. } | SectionKind::Rod { .. } => 1,
         }
     }
@@ -199,11 +206,12 @@ impl SectionKind {
         }
     }
 
-    /// `solid`, `shell`, `beam`, `rod`, `plane_stress`, `plane_strain` or `axisymmetric`.
+    /// `solid`, `shell`, `composite_shell`, `beam`, `rod`, `plane_stress`, `plane_strain` or `axisymmetric`.
     pub fn name(&self) -> &'static str {
         match self {
             SectionKind::Solid {} => "solid",
             SectionKind::Shell { .. } => "shell",
+            SectionKind::CompositeShell { .. } => "composite_shell",
             SectionKind::Beam { .. } => "beam",
             SectionKind::Rod { .. } => "rod",
             SectionKind::PlaneStress { .. } => "plane_stress",
@@ -215,6 +223,7 @@ impl SectionKind {
     pub fn validate(&self) -> Result<()> {
         match self {
             SectionKind::Solid {} => {}
+            SectionKind::CompositeShell { layup } => layup.validate()?,
             SectionKind::Shell { thickness, offset, points } => {
                 positive("thickness", *thickness)?;
                 if !(finite("offset", *offset)?.abs() <= 0.5) {
@@ -296,8 +305,13 @@ impl Formulation {
 #[serde(deny_unknown_fields)]
 pub struct Section {
     pub set: String,
+    /// Required for a homogeneous section; omitted for a composite shell whose plies each
+    /// name their own material. A composite cannot also name a competing section material.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub material: String,
     pub kind: SectionKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orientation: Option<crate::SectionOrientation>,
     #[serde(default)]
     pub formulation: Formulation,
 }
@@ -305,7 +319,35 @@ pub struct Section {
 impl Section {
     pub fn validate(&self) -> Result<()> {
         self.kind.validate()?;
+        if matches!(self.kind, SectionKind::CompositeShell { .. }) {
+            if !self.material.is_empty() {
+                return Err(Error::Invalid("a composite shell names its materials in the plies; omit the section material".into()));
+            }
+        } else {
+            crate::check_name("material", &self.material)?;
+        }
+        if let Some(orientation) = self.orientation {
+            orientation.validate()?;
+            if !matches!(self.kind, SectionKind::Solid {} | SectionKind::Shell { .. } | SectionKind::CompositeShell { .. }) {
+                return Err(Error::Invalid(format!("a material orientation is supported on solid and shell sections, not {}", self.kind.name())));
+            }
+            if matches!(self.kind, SectionKind::Solid {}) && orientation.shell_reference_axis != 1 {
+                return Err(Error::Invalid("a solid section uses all material axes; shell_reference_axis must be 1".into()));
+            }
+        }
         self.formulation.validate_for(&self.kind)
+    }
+
+    /// Every material referenced by this section, in ply order for a composite shell.
+    pub fn material_names(&self) -> impl Iterator<Item = &str> {
+        let plies = match &self.kind {
+            SectionKind::CompositeShell { layup } => Some(layup.plies.as_slice()),
+            _ => None,
+        };
+        (!matches!(self.kind, SectionKind::CompositeShell { .. }))
+            .then_some(self.material.as_str())
+            .into_iter()
+            .chain(plies.into_iter().flatten().map(|p| p.material.as_str()))
     }
 }
 
@@ -321,7 +363,10 @@ impl Model {
     fn check_section(&self, name: &str, section: &Section) -> Result<()> {
         section.validate().map_err(|e| context("section", name, e))?;
         require(&self.sets, "set", &section.set).map_err(|e| context("section", name, e))?;
-        require(&self.materials, "material", &section.material).map_err(|e| context("section", name, e))
+        for material in section.material_names() {
+            require(&self.materials, "material", material).map_err(|e| context("section", name, e))?;
+        }
+        Ok(())
     }
 
     pub fn add_section(&mut self, name: &str, section: Section) -> Result<()> {

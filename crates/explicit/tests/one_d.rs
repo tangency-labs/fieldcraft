@@ -217,7 +217,13 @@ fn velocity_wave_in_a_truss_bar() {
             .unwrap();
         m.add_section(
             "bar",
-            Section { set: "bar".into(), material: "Mat".into(), kind: SectionKind::Rod { area }, formulation: Formulation::default() },
+            Section {
+                orientation: None,
+                set: "bar".into(),
+                material: "Mat".into(),
+                kind: SectionKind::Rod { area },
+                formulation: Formulation::default(),
+            },
         )
         .unwrap();
         let all: Vec<u32> = m.nodes().keys().copied().collect();
@@ -283,7 +289,13 @@ fn whirling_mass_on_a_corotational_rod() {
         .unwrap();
     m.add_section(
         "rod",
-        Section { set: "rod".into(), material: "Mat".into(), kind: SectionKind::Rod { area: 1.0 }, formulation: Formulation::default() },
+        Section {
+            orientation: None,
+            set: "rod".into(),
+            material: "Mat".into(),
+            kind: SectionKind::Rod { area: 1.0 },
+            formulation: Formulation::default(),
+        },
     )
     .unwrap();
     let pivot = set(&mut m, "pivot", &[1]);
@@ -330,7 +342,8 @@ fn mass_scaling_slows_the_waves_as_the_added_density_says() {
         m.add_material("Mat", Material { elastic: Some(Elastic::Isotropic { young: 1.0, poisson: 0.0 }), density: Some(1.0), ..Material::default() })
             .unwrap();
         let formulation = Formulation { integration: Integration::Reduced, ..Formulation::default() };
-        m.add_section("bar", Section { set: "all".into(), material: "Mat".into(), kind: SectionKind::Solid {}, formulation }).unwrap();
+        m.add_section("bar", Section { orientation: None, set: "all".into(), material: "Mat".into(), kind: SectionKind::Solid {}, formulation })
+            .unwrap();
         let mut step = ExplicitDynamic::new(10.0);
         step.initial_velocities = vec![InitialVelocity { set: "all".into(), velocity: [0.01, 0.0, 0.0] }];
         step.mass_scaling = scaled.map(|t| MassScaling { target_increment: t, set: None });

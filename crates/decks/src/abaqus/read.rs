@@ -725,7 +725,7 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
         let set = names.get(&section.set).ok_or_else(|| error(line, "missing section set spelling"))?;
         let name = format!("Section{}", model.sections().len() + 1);
         model
-            .add_section(&name, Section { set: set.clone(), material: material.clone(), kind, formulation: typ.formulation })
+            .add_section(&name, Section { orientation: None, set: set.clone(), material: material.clone(), kind, formulation: typ.formulation })
             .map_err(|e| error(line, e.to_string()))?;
     }
     let mut unassigned = 0usize;

@@ -84,7 +84,7 @@ impl Grid {
         self.model
             .add_material("Mat", Material { elastic: Some(Elastic::Isotropic { young, poisson: nu }), density, ..Material::default() })
             .unwrap();
-        self.model.add_section("plane", Section { set: "all".into(), material: "Mat".into(), kind, formulation }).unwrap();
+        self.model.add_section("plane", Section { orientation: None, set: "all".into(), material: "Mat".into(), kind, formulation }).unwrap();
         self.model.add_step(Step::new("Step", procedure), None).unwrap();
     }
 
@@ -186,7 +186,7 @@ fn patch_test_every_element_and_theory() {
                 // patch test holds only to the rule's accuracy.
                 straighten(&mut g.model);
             }
-            g.define(theory, young, nu, None, formulation, Procedure::Static {});
+            g.define(theory.clone(), young, nu, None, formulation, Procedure::Static {});
             let boundary = g.nodes_where(|p| near(p[0], 0.0) || near(p[0], 1.0) || near(p[1], 0.0) || near(p[1], 1.0));
             for (i, label) in boundary.into_iter().enumerate() {
                 let u = field(g.model.node(label).unwrap().xyz);
@@ -239,7 +239,7 @@ fn uniform_traction_is_exact() {
         for (kind, formulation, name) in variants() {
             // Axisymmetric: a tube r ∈ [1, 2], pulled along its axis (Y); plane: pulled along X.
             let mut g = grid([3, 2], kind, |p| [1.0 + p[0], 2.0 * p[1]]);
-            g.define(theory, young, nu, None, formulation, Procedure::Static {});
+            g.define(theory.clone(), young, nu, None, formulation, Procedure::Static {});
             if theory == AXI {
                 g.symmetry("bottom", Symmetry::Y, |p| near(p[1], 0.0));
                 g.edge_set("top", |p| near(p[1], 1.0));
@@ -515,7 +515,7 @@ fn masses_and_rigid_modes() {
     let rho = 2.0;
     for (theory, mass) in [(STRESS, rho * 2.0 * 0.5), (AXI, rho * 2.0 * PI * 1.5 * 2.0)] {
         let mut g = grid([4, 2], ElementKind::Quad8, |p| [1.0 + p[0], 2.0 * p[1]]);
-        g.define(theory, 1000.0, 0.3, Some(rho), full(), Procedure::Frequency { modes: 4, min_hz: None, max_hz: None });
+        g.define(theory.clone(), 1000.0, 0.3, Some(rho), full(), Procedure::Frequency { modes: 4, min_hz: None, max_hz: None });
         let f = solve_frequency(&g.model, None, &FrequencyOptions::default(), &Limits::default()).unwrap();
         eprintln!("{}: mass {} vs {mass}, frequencies {:?}", theory.name(), f.total_mass, f.modes.iter().map(|m| m.frequency).collect::<Vec<_>>());
         assert!((f.total_mass - mass).abs() < 1e-12 * mass);
@@ -592,7 +592,7 @@ fn thermal_expansion_in_every_theory() {
         for section in [SectionKind::PlaneStress { thickness: 0.5 }, SectionKind::PlaneStrain { thickness: 0.5 }, SectionKind::Axisymmetric {}] {
             let axisymmetric = matches!(section, SectionKind::Axisymmetric {});
             let mut g = grid([2, 2], kind, |p| [0.5 + 2.0 * p[0] + 0.2 * p[1], p[1]]);
-            g.define(section, e, nu, None, f, Procedure::Static {});
+            g.define(section.clone(), e, nu, None, f, Procedure::Static {});
             heat(&mut g, alpha, dt);
             g.symmetry("bottom", Symmetry::Y, |p| near(p[1], 0.0) && near(p[0], 0.0));
             if !axisymmetric {

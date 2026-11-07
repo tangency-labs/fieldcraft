@@ -61,8 +61,11 @@ fn cantilever() -> Model {
     let mut m = Model::default();
     cantilever_mesh(&mut m);
     m.add_material("Steel", steel()).unwrap();
-    m.add_section("beam", Section { set: "all".into(), material: "Steel".into(), kind: SectionKind::Solid {}, formulation: Formulation::default() })
-        .unwrap();
+    m.add_section(
+        "beam",
+        Section { orientation: None, set: "all".into(), material: "Steel".into(), kind: SectionKind::Solid {}, formulation: Formulation::default() },
+    )
+    .unwrap();
     m.add_load("tip_load", Load::Force { target: Target::Set("tip".into()), vector: [0.0, 0.0, -100.0], distribution: Distribution::Total }).unwrap();
     m.add_step(step("Bend", Procedure::Static {}, &["clamp"], &["tip_load"]), None).unwrap();
     m
@@ -76,7 +79,8 @@ fn cantilever_modes() -> Model {
     let ortho = Elastic::EngineeringConstants { young: [140000.0, 10000.0, 10000.0], poisson: [0.3, 0.3, 0.45], shear: [5000.0, 5000.0, 3500.0] };
     m.add_material("Ply", Material { elastic: Some(ortho), density: Some(1.6e-9), ..Material::default() }).unwrap();
     let f = Formulation { incompatible_modes: true, ..Formulation::default() };
-    m.add_section("beam", Section { set: "all".into(), material: "Ply".into(), kind: SectionKind::Solid {}, formulation: f }).unwrap();
+    m.add_section("beam", Section { orientation: None, set: "all".into(), material: "Ply".into(), kind: SectionKind::Solid {}, formulation: f })
+        .unwrap();
     m.add_reference_point("RP", ReferencePoint { xyz: [5.0, 0.5, 0.5], label: 0 }).unwrap();
     m.add_coupling("pad", Coupling { reference_point: "RP".into(), set: "tip".into(), kind: CouplingKind::Kinematic, dofs: Dofs::all() }).unwrap();
     m.add_load("twist", Load::Moment { target: Target::ReferencePoint("RP".into()), vector: [250.0, 0.0, 0.0], distribution: Distribution::Total })
@@ -109,6 +113,7 @@ fn plate() -> Model {
     m.add_section(
         "skin",
         Section {
+            orientation: None,
             set: "plate".into(),
             material: "Steel".into(),
             kind: SectionKind::Shell { thickness: 0.5, offset: 0.25, points: 5 },
@@ -163,7 +168,11 @@ fn solids() -> Model {
     for (e, name) in [(1, "tet4"), (2, "tet10"), (3, "wedge"), (4, "hex20")] {
         m.add_set(name, Set { elements: vec![e], ..Set::default() }).unwrap();
         let f = Formulation { hybrid: e == 1, ..Formulation::default() };
-        m.add_section(name, Section { set: name.into(), material: "Aluminium".into(), kind: SectionKind::Solid {}, formulation: f }).unwrap();
+        m.add_section(
+            name,
+            Section { orientation: None, set: name.into(), material: "Aluminium".into(), kind: SectionKind::Solid {}, formulation: f },
+        )
+        .unwrap();
     }
     m.add_set("base", Set { nodes: t.clone(), ..Set::default() }).unwrap();
     // Face 2 of the hex20 is its top (nodes 5-8 and their mid-sides).
@@ -429,7 +438,8 @@ fn written_coordinates(kind: ElementKind, xyz: &[[f64; 3]]) -> Vec<[f64; 3]> {
     m.add_set("fix", Set { nodes: vec![1], ..Set::default() }).unwrap();
     m.add_material("M", steel()).unwrap();
     let kind_of = if kind.dimension() == 3 { SectionKind::Solid {} } else { SectionKind::Shell { thickness: 1.0, offset: 0.0, points: 3 } };
-    m.add_section("s", Section { set: "all".into(), material: "M".into(), kind: kind_of, formulation: Formulation::default() }).unwrap();
+    m.add_section("s", Section { orientation: None, set: "all".into(), material: "M".into(), kind: kind_of, formulation: Formulation::default() })
+        .unwrap();
     m.add_boundary_condition("b", BoundaryCondition::Fixed { target: Target::Set("fix".into()) }).unwrap();
     m.add_step(step("S", Procedure::Frequency { modes: 1, min_hz: None, max_hz: None }, &["b"], &[]), None).unwrap();
     let deck = read(&lsdyna::write_si(&m).unwrap().text);
@@ -595,6 +605,7 @@ fn what_lsdyna_cannot_take_is_named() {
     m.replace_section(
         "beam",
         Section {
+            orientation: None,
             set: "all".into(),
             material: "Steel".into(),
             kind: SectionKind::Solid {},
@@ -625,6 +636,7 @@ fn what_lsdyna_cannot_take_is_named() {
     m.replace_section(
         "skin",
         Section {
+            orientation: None,
             set: "plate".into(),
             material: "Steel".into(),
             kind: SectionKind::Shell { thickness: 0.5, offset: 0.0, points: 11 },

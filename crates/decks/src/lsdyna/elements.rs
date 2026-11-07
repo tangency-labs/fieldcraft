@@ -109,6 +109,7 @@ pub(crate) fn elform(kind: ElementKind, section: &SectionKind, f: Formulation, s
     let reduced = f.integration == Integration::Reduced;
     let no = |what: &str| Err(format!("section `{section_name}`: {what} {}", kind.name()));
     match section {
+        SectionKind::CompositeShell { .. } => no("composite shells are not written yet:"),
         SectionKind::Solid {} => {
             if f.hybrid {
                 return match kind {

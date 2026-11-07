@@ -58,7 +58,8 @@ fn cantilever_mesh() -> Model {
     m.add_set("tip", faces(&[(4, 4)])).unwrap();
     m.add_material("Steel", steel()).unwrap();
     let formulation = Formulation { incompatible_modes: true, ..Formulation::default() };
-    m.add_section("beam", Section { set: "all".into(), material: "Steel".into(), kind: SectionKind::Solid {}, formulation }).unwrap();
+    m.add_section("beam", Section { orientation: None, set: "all".into(), material: "Steel".into(), kind: SectionKind::Solid {}, formulation })
+        .unwrap();
     m.add_boundary_condition("clamp", BoundaryCondition::Fixed { target: Target::Set("root".into()) }).unwrap();
     m
 }
@@ -96,7 +97,7 @@ fn plate() -> Model {
     m.add_material("Aluminium", aluminium).unwrap();
     let kind = SectionKind::Shell { thickness: 2.0, offset: 0.5, points: 5 };
     let formulation = Formulation { integration: Integration::Reduced, ..Formulation::default() };
-    m.add_section("plate", Section { set: "skin".into(), material: "Aluminium".into(), kind, formulation }).unwrap();
+    m.add_section("plate", Section { orientation: None, set: "skin".into(), material: "Aluminium".into(), kind, formulation }).unwrap();
     m.add_boundary_condition("clamp", BoundaryCondition::Fixed { target: Target::Set("edge".into()) }).unwrap();
     m.add_boundary_condition("sym", BoundaryCondition::Symmetry { target: Target::Set("mid".into()), plane: Symmetry::X }).unwrap();
     m.add_load("wind", Load::Pressure { set: "top".into(), magnitude: 0.01 }).unwrap();
@@ -478,7 +479,7 @@ fn one_element(kind: ElementKind) -> Model {
     } else {
         (SectionKind::Shell { thickness: 1.0, offset: 0.0, points: 5 }, Formulation { integration: Integration::Reduced, ..Formulation::default() })
     };
-    m.add_section("s", Section { set: "all".into(), material: "Steel".into(), kind: section, formulation }).unwrap();
+    m.add_section("s", Section { orientation: None, set: "all".into(), material: "Steel".into(), kind: section, formulation }).unwrap();
     m.add_boundary_condition("fix", BoundaryCondition::Fixed { target: Target::Set("base".into()) }).unwrap();
     m.add_step(step("Modes", Procedure::Frequency { modes: 1, min_hz: None, max_hz: None }, &["fix"], &[]), None).unwrap();
     m
@@ -600,8 +601,11 @@ fn largest_labels_longest_numbers_and_names_fit_a_line() {
         Material { elastic: Some(Elastic::Isotropic { young: ugly.abs(), poisson: 0.3 }), density: Some(1.0), ..Material::default() },
     )
     .unwrap();
-    m.add_section(&long, Section { set: long.clone(), material: long.clone(), kind: SectionKind::Solid {}, formulation: Formulation::default() })
-        .unwrap();
+    m.add_section(
+        &long,
+        Section { orientation: None, set: long.clone(), material: long.clone(), kind: SectionKind::Solid {}, formulation: Formulation::default() },
+    )
+    .unwrap();
     m.add_reference_point(&long, ReferencePoint { xyz: [ugly; 3], label: 0 }).unwrap();
     m.add_coupling(&long, Coupling { reference_point: long.clone(), set: long.clone(), kind: CouplingKind::Kinematic, dofs: Dofs::all() }).unwrap();
     m.add_boundary_condition(&long, BoundaryCondition::Fixed { target: Target::Set(long.clone()) }).unwrap();
@@ -684,7 +688,7 @@ fn unsupported(m: &Model) -> String {
 fn with_section(kind: ElementKind, section: SectionKind, integration: Integration) -> Model {
     let mut m = one_element(kind);
     let formulation = Formulation { integration, ..Formulation::default() };
-    m.replace_section("s", Section { set: "all".into(), material: "Steel".into(), kind: section, formulation }).unwrap();
+    m.replace_section("s", Section { orientation: None, set: "all".into(), material: "Steel".into(), kind: section, formulation }).unwrap();
     m
 }
 
@@ -698,11 +702,15 @@ fn what_abaqus_cannot_express_is_named() {
     tri6.set_element(1, ElementKind::Tri6, (1..=6).collect()).unwrap();
     tri6.add_set("all", elements([1])).unwrap();
     tri6.add_material("Steel", steel()).unwrap();
-    tri6.add_section("s", Section { set: "all".into(), material: "Steel".into(), kind: shell, formulation: Formulation::default() }).unwrap();
+    tri6.add_section(
+        "s",
+        Section { orientation: None, set: "all".into(), material: "Steel".into(), kind: shell.clone(), formulation: Formulation::default() },
+    )
+    .unwrap();
     tri6.add_step(step("Modes", Procedure::Frequency { modes: 1, min_hz: None, max_hz: None }, &[], &[]), None).unwrap();
     assert!(unsupported(&tri6).contains("tri6 shells"));
 
-    assert!(unsupported(&with_section(ElementKind::Quad8, shell, Integration::Full)).contains("full integration of quad8"));
+    assert!(unsupported(&with_section(ElementKind::Quad8, shell.clone(), Integration::Full)).contains("full integration of quad8"));
     assert!(unsupported(&with_section(ElementKind::Tet10, SectionKind::Solid {}, Integration::Reduced)).contains("reduced integration of tet10"));
     assert!(unsupported(&with_section(ElementKind::Wedge6, SectionKind::Solid {}, Integration::Reduced)).contains("wedge6"));
     // A linear tetrahedron integrates at one point either way.
@@ -750,9 +758,11 @@ fn orthotropic_solids_beams_and_rods_are_written() {
     f.add_material("Steel", steel()).unwrap();
     let i = BeamProfile::I { height: 100.0, width: 50.0, web: 5.0, flange: 8.0 };
     let beam = SectionKind::Beam { profile: i, orientation: [0.0, 1.0, 0.0] };
-    f.add_section("b", Section { set: "beam".into(), material: "Steel".into(), kind: beam, formulation: Formulation::default() }).unwrap();
+    f.add_section("b", Section { orientation: None, set: "beam".into(), material: "Steel".into(), kind: beam, formulation: Formulation::default() })
+        .unwrap();
     let rod = SectionKind::Rod { area: 50.0 };
-    f.add_section("r", Section { set: "rod".into(), material: "Steel".into(), kind: rod, formulation: Formulation::default() }).unwrap();
+    f.add_section("r", Section { orientation: None, set: "rod".into(), material: "Steel".into(), kind: rod, formulation: Formulation::default() })
+        .unwrap();
     f.add_boundary_condition("pin", BoundaryCondition::Fixed { target: Target::Set("base".into()) }).unwrap();
     f.add_step(step("Modes", Procedure::Frequency { modes: 3, min_hz: None, max_hz: Some(500.0) }, &["pin"], &[]), None).unwrap();
     let deck = abaqus::write(&f).unwrap();

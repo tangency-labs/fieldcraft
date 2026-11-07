@@ -84,6 +84,7 @@ pub fn write(model: &Model, units: Preset) -> Result<String> {
 /// [`write`] for a model already expressed in `units` ([`crate::express`]) and resolved.
 pub fn write_resolved(model: &Model, r: &Resolved, units: Preset) -> Result<String> {
     crate::refuse_fluid(FORMAT, model)?;
+    crate::refuse_composite_data(FORMAT, model)?;
     let mut deck = Deck::new(model, r, model.steps().iter().collect());
     deck.plan()?;
     deck.emit(units)
@@ -371,9 +372,11 @@ impl<'m> Deck<'m> {
             let u = uses.entry(s.material.as_str()).or_default();
             match s.kind {
                 SectionKind::Solid {} => u.solid = true,
-                SectionKind::Shell { .. } | SectionKind::PlaneStress { .. } | SectionKind::PlaneStrain { .. } | SectionKind::Axisymmetric {} => {
-                    u.shell = true
-                }
+                SectionKind::Shell { .. }
+                | SectionKind::CompositeShell { .. }
+                | SectionKind::PlaneStress { .. }
+                | SectionKind::PlaneStrain { .. }
+                | SectionKind::Axisymmetric {} => u.shell = true,
                 SectionKind::Beam { .. } | SectionKind::Rod { .. } => u.line = true,
             }
         }
@@ -437,6 +440,9 @@ impl<'m> Deck<'m> {
             let elements = r.sets.get(&sec.set).map(|s| s.elements.as_slice()).unwrap_or_default();
             let kind_of = |e: u32| model.element(e).map(|el| el.kind);
             match sec.kind {
+                SectionKind::CompositeShell { .. } => {
+                    self.problems.insert(format!("section `{sname}`: composite shells are not written yet"));
+                }
                 SectionKind::Solid {} => {
                     let Some(mid) = ids.isotropic.or(ids.solid) else { continue };
                     // One property per integration rule the section's element kinds need.

@@ -261,6 +261,9 @@ impl System {
         let mut materials: Vec<Material> = Vec::new();
         let mut chosen: Vec<(u32, ElementKind, Vec<u32>, usize, Option<f64>)> = Vec::new();
         for (name, section) in model.sections() {
+            if section.orientation.is_some() {
+                return Err(Error::NotSupported(format!("material orientation of section `{name}` in explicit dynamics")));
+            }
             let area = match section.kind {
                 SectionKind::Solid {} => None,
                 SectionKind::Rod { area } => Some(area),

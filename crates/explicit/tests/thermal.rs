@@ -72,7 +72,7 @@ fn bar(kind: ElementKind, clamped: bool, plastic: Option<Plastic>) -> Model {
     .unwrap();
     let integration = if kind == ElementKind::Hex8 { Integration::Reduced } else { Integration::Full };
     let formulation = Formulation { integration, ..Formulation::default() };
-    m.add_section("bar", Section { set: "all".into(), material: "Mat".into(), kind: SectionKind::Solid {}, formulation }).unwrap();
+    m.add_section("bar", Section { orientation: None, set: "all".into(), material: "Mat".into(), kind: SectionKind::Solid {}, formulation }).unwrap();
     let mut step = Step::new("Heat", Procedure::ExplicitDynamic(ExplicitDynamic::new(20.0)));
     let mut bcs = vec![("x0", Symmetry::X), ("y0", Symmetry::Y), ("z0", Symmetry::Z)];
     if clamped {

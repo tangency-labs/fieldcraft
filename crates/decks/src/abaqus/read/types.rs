@@ -77,8 +77,13 @@ impl Type {
                 hybrid,
             },
         };
-        let section =
-            fieldcraft_model::Section { set: "Set".into(), material: "Material".into(), kind: out.section(1.0), formulation: out.formulation };
+        let section = fieldcraft_model::Section {
+            orientation: None,
+            set: "Set".into(),
+            material: "Material".into(),
+            kind: out.section(1.0),
+            formulation: out.formulation,
+        };
         let written = super::super::element_type(kind, &section).map_err(|_| error(line, format!("unsupported element type `{name}`")))?;
         let written = if family == Family::PlanarRod { written.replacen("T3D", "T2D", 1) } else { written };
         if written != normalized {

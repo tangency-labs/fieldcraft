@@ -600,6 +600,9 @@ pub struct Material {
     pub damping: Option<crate::harmonic::Damping>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub elastic: Option<Elastic>,
+    /// Positive material-axis strength magnitudes for plane-stress first-ply failure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ply_strength: Option<crate::PlyStrength>,
     /// Large-strain behaviour in nonlinear steps, built on the isotropic elastic constants.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hyperelastic: Option<Hyperelastic>,
@@ -646,6 +649,12 @@ impl Material {
         }
         if let Some(e) = &self.elastic {
             e.validate()?;
+        }
+        if let Some(strength) = self.ply_strength {
+            strength.validate()?;
+            if self.elastic.is_none() {
+                return Err(Error::Invalid("ply strengths need elastic constants".into()));
+            }
         }
         if let Some(h) = &self.hyperelastic {
             if !matches!(self.elastic, Some(Elastic::Isotropic { .. })) {
@@ -715,7 +724,7 @@ impl Model {
 
     /// The hyperelastic materials some section uses, by name.
     pub fn hyperelastic_in_use(&self) -> std::collections::BTreeSet<&str> {
-        self.sections.values().map(|s| s.material.as_str()).filter(|m| self.material(m).is_some_and(|m| m.hyperelastic.is_some())).collect()
+        self.sections.values().flat_map(|s| s.material_names()).filter(|m| self.material(m).is_some_and(|m| m.hyperelastic.is_some())).collect()
     }
 
     pub fn add_material(&mut self, name: &str, material: Material) -> Result<()> {
@@ -731,7 +740,8 @@ impl Model {
 
     /// The definitions that refer to a material, as `kind \`name\`` strings.
     pub fn material_users(&self, name: &str) -> Vec<String> {
-        let mut users: Vec<String> = self.sections.iter().filter(|(_, s)| s.material == name).map(|(n, _)| format!("section `{n}`")).collect();
+        let mut users: Vec<String> =
+            self.sections.iter().filter(|(_, s)| s.material_names().any(|m| m == name)).map(|(n, _)| format!("section `{n}`")).collect();
         users.extend(self.fluid_domains_of_material(name).map(|n| format!("fluid domain `{n}`")));
         users
     }

@@ -55,6 +55,7 @@ impl Cylinder {
             .add_section(
                 "shell",
                 Section {
+                    orientation: None,
                     set: "shell".into(),
                     material: "Mat".into(),
                     kind: SectionKind::Shell { thickness, offset: 0.0, points: 5 },

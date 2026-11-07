@@ -84,7 +84,8 @@ impl Bar {
         .unwrap();
         let integration = if kind == ElementKind::Hex8 { Integration::Reduced } else { Integration::Full };
         let formulation = Formulation { integration, ..Formulation::default() };
-        m.add_section("bar", Section { set: "all".into(), material: "Mat".into(), kind: SectionKind::Solid {}, formulation }).unwrap();
+        m.add_section("bar", Section { orientation: None, set: "all".into(), material: "Mat".into(), kind: SectionKind::Solid {}, formulation })
+            .unwrap();
         m.add_step(Step::new("Dynamic", Procedure::ExplicitDynamic(step)), None).unwrap();
         Bar { model: m, kind, cells }
     }
@@ -331,7 +332,13 @@ fn caps_and_unsupported_models_are_errors() {
     full.model
         .replace_section(
             "bar",
-            Section { set: "all".into(), material: "Mat".into(), kind: SectionKind::Solid {}, formulation: Formulation::default() },
+            Section {
+                orientation: None,
+                set: "all".into(),
+                material: "Mat".into(),
+                kind: SectionKind::Solid {},
+                formulation: Formulation::default(),
+            },
         )
         .unwrap();
     assert!(solve_explicit(&full.model, None, &Limits::default()).unwrap_err().to_string().contains("not supported yet"));
@@ -354,4 +361,17 @@ fn caps_and_unsupported_models_are_errors() {
     behind.rigid_walls[0].point = [LENGTH - 1.0, 0.0, 0.0];
     wall.model.replace_step(Step::new("Dynamic", Procedure::ExplicitDynamic(behind))).unwrap();
     assert!(solve_explicit(&wall.model, None, &Limits::default()).unwrap_err().to_string().contains("behind"));
+}
+
+#[test]
+fn explicit_refuses_a_named_material_orientation_until_it_rotates_materials() {
+    let mut bar = Bar::new(ElementKind::Hex8, 1, ExplicitDynamic::new(0.001));
+    let mut section = bar.model.section("bar").unwrap().clone();
+    section.orientation = Some(SectionOrientation {
+        frame: MaterialOrientation::Rectangular { axis1: [1.0, 1.0, 0.0], axis2: [0.0, 0.0, 1.0] },
+        shell_reference_axis: 1,
+    });
+    bar.model.replace_section("bar", section).unwrap();
+    let error = solve_explicit(&bar.model, None, &Limits::default()).unwrap_err().to_string();
+    assert!(error.contains("section `bar`") && error.contains("material orientation") && error.contains("explicit dynamics"), "{error}");
 }

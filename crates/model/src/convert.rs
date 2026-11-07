@@ -21,9 +21,15 @@ fn each(values: &mut [f64], q: Q, f: &mut dyn FnMut(Q, &mut f64)) {
 
 impl Quantities for Material {
     fn quantities(&mut self, f: &mut dyn FnMut(Q, &mut f64)) {
-        let Material { damping, elastic, hyperelastic, density, fluid, plastic, damage, erosion, thermal, pvt, phase_change } = self;
+        let Material { damping, elastic, ply_strength, hyperelastic, density, fluid, plastic, damage, erosion, thermal, pvt, phase_change } = self;
         if let Some(d) = damping {
             d.quantities(f);
+        }
+        if let Some(PlyStrength { tension, compression, shear12, shear23, tsai_wu_interaction: _ }) = ply_strength {
+            each(tension, Q::Pressure, f);
+            each(compression, Q::Pressure, f);
+            f(Q::Pressure, shear12);
+            f(Q::Pressure, shear23);
         }
         match elastic {
             Some(Elastic::Isotropic { young, poisson: _ }) => f(Q::Pressure, young),
@@ -151,10 +157,22 @@ fn directional(d: &mut Option<Directional>, q: Q, f: &mut dyn FnMut(Q, &mut f64)
 
 impl Quantities for Section {
     fn quantities(&mut self, f: &mut dyn FnMut(Q, &mut f64)) {
-        let Section { set: _, material: _, kind, formulation: _ } = self;
+        let Section { set: _, material: _, kind, formulation: _, orientation } = self;
+        if let Some(SectionOrientation { frame, shell_reference_axis: _ }) = orientation {
+            match frame {
+                MaterialOrientation::Rectangular { axis1: _, axis2: _ } => {}
+                MaterialOrientation::Cylindrical { origin, axis: _ } => each(origin, Q::Length, f),
+            }
+        }
         match kind {
             SectionKind::Solid {} | SectionKind::Axisymmetric {} => {}
             SectionKind::Shell { thickness, offset: _, points: _ } => f(Q::Length, thickness),
+            SectionKind::CompositeShell { layup: Layup { plies, offset: _ } } => {
+                for Ply { material: _, thickness, angle, points: _ } in plies {
+                    f(Q::Length, thickness);
+                    f(Q::Angle, angle);
+                }
+            }
             SectionKind::Beam { profile, orientation: _ } => match profile {
                 BeamProfile::Rectangle { width, height } => {
                     f(Q::Length, width);

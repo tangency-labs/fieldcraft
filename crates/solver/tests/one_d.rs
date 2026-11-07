@@ -60,7 +60,13 @@ impl Build {
         self.m
             .add_section(
                 name,
-                Section { set: name.into(), material: name.into(), kind: SectionKind::Rod { area }, formulation: Formulation::default() },
+                Section {
+                    orientation: None,
+                    set: name.into(),
+                    material: name.into(),
+                    kind: SectionKind::Rod { area },
+                    formulation: Formulation::default(),
+                },
             )
             .unwrap();
     }
@@ -591,7 +597,13 @@ fn errors_name_the_problem() {
     .unwrap();
     b.m.add_section(
         "rod",
-        Section { set: "rod".into(), material: "Ortho".into(), kind: SectionKind::Rod { area: 1.0 }, formulation: Formulation::default() },
+        Section {
+            orientation: None,
+            set: "rod".into(),
+            material: "Ortho".into(),
+            kind: SectionKind::Rod { area: 1.0 },
+            formulation: Formulation::default(),
+        },
     )
     .unwrap();
     let e = solve_static(&b.m, None, &Limits::default()).unwrap_err().to_string();
@@ -616,6 +628,7 @@ fn plane_truss_stiffens_a_plane_stress_plate() {
         b.m.add_section(
             "plate",
             Section {
+                orientation: None,
                 set: "plate".into(),
                 material: "Plate".into(),
                 kind: SectionKind::PlaneStress { thickness: t },

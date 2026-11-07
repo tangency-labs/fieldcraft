@@ -275,9 +275,11 @@ impl Model {
             }
             let fits = |k: ElementKind| match sec.kind {
                 SectionKind::Solid {} => k.dimension() == 3,
-                SectionKind::Shell { .. } | SectionKind::PlaneStress { .. } | SectionKind::PlaneStrain { .. } | SectionKind::Axisymmetric {} => {
-                    k.dimension() == 2
-                }
+                SectionKind::Shell { .. }
+                | SectionKind::CompositeShell { .. }
+                | SectionKind::PlaneStress { .. }
+                | SectionKind::PlaneStrain { .. }
+                | SectionKind::Axisymmetric {} => k.dimension() == 2,
                 SectionKind::Beam { .. } => k == ElementKind::Beam2,
                 SectionKind::Rod { .. } => matches!(k, ElementKind::Rod2 | ElementKind::Rod3),
             };
@@ -328,8 +330,10 @@ impl Model {
             for (other, labels) in taken {
                 d.error(&subject, format!("elements {} are also in section `{other}`", first_labels(&labels)));
             }
-            if structural && self.materials.get(&sec.material).is_some_and(|m| m.elastic.is_none()) {
-                d.error(&subject, format!("material `{}` has no elastic constants", sec.material));
+            for material in sec.material_names() {
+                if structural && self.materials.get(material).is_some_and(|m| m.elastic.is_none()) {
+                    d.error(&subject, format!("material `{material}` has no elastic constants"));
+                }
             }
         }
         let unsectioned: Vec<u32> = self.elements.keys().filter(|e| !owner.contains_key(e)).copied().collect();
@@ -367,7 +371,7 @@ impl Model {
                 })
             });
         if let Some(why) = needs_mass {
-            let used: BTreeSet<&str> = self.sections.values().map(|s| s.material.as_str()).collect();
+            let used: BTreeSet<&str> = self.sections.values().flat_map(|s| s.material_names()).collect();
             for m in used {
                 if self.materials.get(m).is_some_and(|m| m.density.is_none()) {
                     d.error(format!("material `{m}`"), format!("has no density, and {why}"));
@@ -377,7 +381,7 @@ impl Model {
 
         // Heat transfer needs conductivities (and heat capacities when transient); thermal strain
         // needs expansion coefficients.
-        let used: BTreeSet<&str> = self.sections.values().map(|s| s.material.as_str()).collect();
+        let used: BTreeSet<&str> = self.sections.values().flat_map(|s| s.material_names()).collect();
         let thermal = |m: &str| self.materials.get(m).and_then(|m| m.thermal);
         for s in self.steps.iter().filter(|s| s.procedure.is_thermal()) {
             for &m in &used {

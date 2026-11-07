@@ -72,7 +72,8 @@ fn block(tet: bool, hyper: Hyperelastic, stretch: f64, end: f64, nonlinear: bool
     m.add_material("Rubber", Material { elastic: Some(elastic), density: Some(1.0), hyperelastic: Some(hyper), ..Material::default() }).unwrap();
     let integration = if tet { Integration::Full } else { Integration::Reduced };
     let formulation = Formulation { integration, ..Formulation::default() };
-    m.add_section("all", Section { set: "all".into(), material: "Rubber".into(), kind: SectionKind::Solid {}, formulation }).unwrap();
+    m.add_section("all", Section { orientation: None, set: "all".into(), material: "Rubber".into(), kind: SectionKind::Solid {}, formulation })
+        .unwrap();
     let held = |set: &str, k: usize, v: f64| {
         let mut values = [None; 6];
         values[k] = Some(v);

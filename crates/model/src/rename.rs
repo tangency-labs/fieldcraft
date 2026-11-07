@@ -193,6 +193,11 @@ impl Model {
             Kind::Material => {
                 for s in self.sections.values_mut() {
                     swap(&mut s.material, from, to);
+                    if let crate::SectionKind::CompositeShell { layup } = &mut s.kind {
+                        for ply in &mut layup.plies {
+                            swap(&mut ply.material, from, to);
+                        }
+                    }
                 }
                 for d in self.fluid_domains.values_mut() {
                     swap(&mut d.material, from, to);
@@ -298,8 +303,11 @@ mod tests {
             m.add_set(s, Set { nodes: vec![1], ..Set::default() }).unwrap();
         }
         m.add_material("m", Material { elastic: Some(crate::Elastic::Isotropic { young: 1.0, poisson: 0.3 }), ..Material::default() }).unwrap();
-        m.add_section("sec", Section { set: "s".into(), material: "m".into(), kind: crate::SectionKind::Solid {}, formulation: Default::default() })
-            .unwrap();
+        m.add_section(
+            "sec",
+            Section { orientation: None, set: "s".into(), material: "m".into(), kind: crate::SectionKind::Solid {}, formulation: Default::default() },
+        )
+        .unwrap();
         m.add_reference_point("rp", ReferencePoint { xyz: [0.0; 3], label: 0 }).unwrap();
         m.add_coupling("c", Coupling { reference_point: "rp".into(), set: "s".into(), kind: CouplingKind::Kinematic, dofs: Dofs::all() }).unwrap();
         m.add_tie("tie", Tie::new("s", "t")).unwrap();

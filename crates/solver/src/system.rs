@@ -494,6 +494,9 @@ impl Mesh {
             return Err(Error::NotSupported(format!("{what} in axisymmetric models")));
         }
         for (name, section) in model.sections() {
+            if section.orientation.is_some() {
+                return Err(Error::NotSupported(format!("material orientation of section `{name}` in the structural solver")));
+            }
             let theory = Theory::from_section(&section.kind);
             let rod = match section.kind {
                 SectionKind::Rod { area } => Some(area),
@@ -1172,7 +1175,7 @@ fn body(f: &mut [f64], mesh: &Mesh, e: &Elem, b: [f64; 3]) -> Result<()> {
 /// The linear solvers use the elastic constants alone: a warning for each material in use whose
 /// plasticity, damage or erosion they leave out.
 pub fn inelastic_warnings(model: &Model) -> Vec<String> {
-    let used: BTreeSet<&str> = model.sections().values().map(|s| s.material.as_str()).collect();
+    let used: BTreeSet<&str> = model.sections().values().flat_map(|s| s.material_names()).collect();
     used.into_iter()
         .filter(|name| model.material(name).is_some_and(|m| m.plastic.is_some() || m.damage.is_some() || m.erosion.is_some()))
         .map(|name| {

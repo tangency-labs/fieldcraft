@@ -39,7 +39,7 @@ fn plate(kind: SectionKind, element: ElementKind, formulation: Formulation) -> M
         Material { elastic: Some(Elastic::Isotropic { young: 210_000.0, poisson: 0.3 }), density: Some(7.85e-9), ..Material::default() },
     )
     .unwrap();
-    m.add_section("plate", Section { set: "all".into(), material: "Steel".into(), kind, formulation }).unwrap();
+    m.add_section("plate", Section { orientation: None, set: "all".into(), material: "Steel".into(), kind: kind.clone(), formulation }).unwrap();
     m.add_boundary_condition("hold", BoundaryCondition::Fixed { target: Target::Set("left".into()) }).unwrap();
     m.add_load("press", Load::Pressure { set: "right".into(), magnitude: 5.0 }).unwrap();
     let axis = if kind == (SectionKind::Axisymmetric {}) { [0.0, 1.0, 0.0] } else { [0.0, 0.0, 1.0] };
@@ -63,7 +63,7 @@ fn production_reader_retains_planar_sections_and_edge_surfaces() {
     use fieldcraft_model::units::Preset;
     for kind in [SectionKind::PlaneStress { thickness: 2.0 }, SectionKind::PlaneStrain { thickness: 2.0 }, SectionKind::Axisymmetric {}] {
         for integration in [Integration::Full, Integration::Reduced] {
-            let m = plate(kind, ElementKind::Quad4, Formulation { integration, ..Formulation::default() });
+            let m = plate(kind.clone(), ElementKind::Quad4, Formulation { integration, ..Formulation::default() });
             let written = abaqus::write(&m).unwrap();
             let read = fieldcraft_decks::abaqus::read_in(&written, Preset::MmTonneS).unwrap();
             assert_eq!(read.model.nodes(), common::si(&m).nodes());
@@ -84,7 +84,7 @@ fn abaqus_writes_plane_and_axisymmetric_elements() {
         (SectionKind::PlaneStrain { thickness: 1.0 }, red, "CPE4R"),
         (SectionKind::Axisymmetric {}, im, "CAX4I"),
     ] {
-        let deck = abaqus::write(&plate(kind, ElementKind::Quad4, f)).unwrap();
+        let deck = abaqus::write(&plate(kind.clone(), ElementKind::Quad4, f)).unwrap();
         assert!(deck.contains(&format!("*ELEMENT, TYPE={want}\n")), "{want}\n{deck}");
         // The right edge is surface S2 of element 2; the pressure is a surface load on it.
         assert!(deck.contains("*SURFACE, TYPE=ELEMENT, NAME=right\n2, S2\n"), "{deck}");

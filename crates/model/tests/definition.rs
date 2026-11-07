@@ -60,8 +60,11 @@ fn defined() -> Model {
         Material { elastic: Some(Elastic::Isotropic { young: 2.1e11, poisson: 0.3 }), density: Some(7850.0), ..Material::default() },
     )
     .unwrap();
-    m.add_section("bar", Section { set: "all".into(), material: "Steel".into(), kind: SectionKind::Solid {}, formulation: Formulation::default() })
-        .unwrap();
+    m.add_section(
+        "bar",
+        Section { orientation: None, set: "all".into(), material: "Steel".into(), kind: SectionKind::Solid {}, formulation: Formulation::default() },
+    )
+    .unwrap();
     m.add_reference_point("RP", ReferencePoint { xyz: [3.0, 0.5, 0.5], label: 0 }).unwrap();
     m.add_coupling("load-pad", Coupling { reference_point: "RP".into(), set: "end".into(), kind: CouplingKind::Distributing, dofs: Dofs::all() })
         .unwrap();
@@ -125,11 +128,15 @@ fn the_check_names_what_is_missing() {
     m.add_load("twist", Load::Moment { target: Target::Set("end".into()), vector: [1.0, 0.0, 0.0], distribution: Distribution::Total }).unwrap();
     m.add_material("Soft", Material { elastic: Some(Elastic::Isotropic { young: 2.1e17, poisson: 0.3 }), density: None, ..Material::default() })
         .unwrap();
-    m.add_section("again", Section { set: "side".into(), material: "Soft".into(), kind: SectionKind::Solid {}, formulation: Formulation::default() })
-        .unwrap();
+    m.add_section(
+        "again",
+        Section { orientation: None, set: "side".into(), material: "Soft".into(), kind: SectionKind::Solid {}, formulation: Formulation::default() },
+    )
+    .unwrap();
     m.add_section(
         "shell",
         Section {
+            orientation: None,
             set: "root".into(),
             material: "Steel".into(),
             kind: SectionKind::Shell { thickness: 1.0, offset: 0.0, points: 5 },
@@ -155,8 +162,11 @@ fn the_check_names_what_is_missing() {
 
     // Two sections over the same elements, and an element with none.
     let mut m = defined();
-    m.add_section("twice", Section { set: "all".into(), material: "Steel".into(), kind: SectionKind::Solid {}, formulation: Formulation::default() })
-        .unwrap();
+    m.add_section(
+        "twice",
+        Section { orientation: None, set: "all".into(), material: "Steel".into(), kind: SectionKind::Solid {}, formulation: Formulation::default() },
+    )
+    .unwrap();
     m.set_node(50, [9.0, 9.0, 9.0]).unwrap();
     m.set_node(51, [10.0, 9.0, 9.0]).unwrap();
     m.set_element(9, ElementKind::Rod2, vec![50, 51]).unwrap();
@@ -169,6 +179,7 @@ fn the_check_names_what_is_missing() {
     m.replace_section(
         "bar",
         Section {
+            orientation: None,
             set: "all".into(),
             material: "Steel".into(),
             kind: SectionKind::Solid {},
@@ -187,6 +198,7 @@ fn the_check_names_what_is_missing() {
     m.add_section(
         "beam",
         Section {
+            orientation: None,
             set: "beam".into(),
             material: "Steel".into(),
             kind: SectionKind::Beam { profile, orientation: [-3.0, 0.0, 0.0] },
@@ -201,6 +213,7 @@ fn the_check_names_what_is_missing() {
 fn definitions_refer_only_to_existing_items_and_cannot_be_deleted_while_used() {
     let mut m = defined();
     let section = |set: &str, material: &str| Section {
+        orientation: None,
         set: set.into(),
         material: material.into(),
         kind: SectionKind::Solid {},
@@ -334,8 +347,11 @@ fn a_total_force_on_a_face_is_the_same_on_every_mesh() {
         Material { elastic: Some(Elastic::Isotropic { young: 2.1e11, poisson: 0.3 }), density: Some(7850.0), ..Material::default() },
     )
     .unwrap();
-    m.add_section("block", Section { set: "all".into(), material: "Steel".into(), kind: SectionKind::Solid {}, formulation: Formulation::default() })
-        .unwrap();
+    m.add_section(
+        "block",
+        Section { orientation: None, set: "all".into(), material: "Steel".into(), kind: SectionKind::Solid {}, formulation: Formulation::default() },
+    )
+    .unwrap();
     let force = |distribution| Load::Force { target: Target::Set("end".into()), vector: [100.0, 0.0, -50.0], distribution };
     m.add_load("total", force(Distribution::Total)).unwrap();
     m.add_load("each", force(Distribution::PerNode)).unwrap();
@@ -427,7 +443,8 @@ fn plate(kind: SectionKind, x0: f64) -> Model {
         Material { elastic: Some(Elastic::Isotropic { young: 2.1e11, poisson: 0.3 }), density: Some(7850.0), ..Material::default() },
     )
     .unwrap();
-    m.add_section("plate", Section { set: "all".into(), material: "Steel".into(), kind, formulation: Formulation::default() }).unwrap();
+    m.add_section("plate", Section { orientation: None, set: "all".into(), material: "Steel".into(), kind, formulation: Formulation::default() })
+        .unwrap();
     m.add_boundary_condition("clamp", BoundaryCondition::Fixed { target: Target::Set("left".into()) }).unwrap();
     m.add_load("pull", Load::Traction { set: "right".into(), vector: [10.0, 0.0, 0.0] }).unwrap();
     m.add_load("total", Load::Force { target: Target::Set("right".into()), vector: [0.0, 6.0, 0.0], distribution: Distribution::Total }).unwrap();
@@ -473,6 +490,7 @@ fn two_dimensional_models_resolve_edges_and_check_their_rules() {
     m.replace_section(
         "plate",
         Section {
+            orientation: None,
             set: "all".into(),
             material: "Steel".into(),
             kind: SectionKind::PlaneStress { thickness: 1.0 },
@@ -486,8 +504,11 @@ fn two_dimensional_models_resolve_edges_and_check_their_rules() {
     }
     m.set_element(9, ElementKind::Tet4, vec![11, 12, 13, 14]).unwrap();
     m.add_set("tet", Set { elements: vec![9], ..Set::default() }).unwrap();
-    m.add_section("tet", Section { set: "tet".into(), material: "Steel".into(), kind: SectionKind::Solid {}, formulation: Formulation::default() })
-        .unwrap();
+    m.add_section(
+        "tet",
+        Section { orientation: None, set: "tet".into(), material: "Steel".into(), kind: SectionKind::Solid {}, formulation: Formulation::default() },
+    )
+    .unwrap();
     assert!(errors(&m).iter().any(|e| e.contains("cannot be mixed")), "{:#?}", errors(&m));
     // Pressure on an edge set of a 2D model is fine; on nothing it is an error.
     let mut m = plate(SectionKind::PlaneStress { thickness: 1.0 }, 0.0);

@@ -26,7 +26,13 @@ fn rod(material: Damping, step_damping: Damping, method: Method, prescribed: f64
     .unwrap();
     m.add_section(
         "bar",
-        Section { set: "all".into(), material: "bar".into(), kind: SectionKind::Rod { area: 1.0 }, formulation: Default::default() },
+        Section {
+            orientation: None,
+            set: "all".into(),
+            material: "bar".into(),
+            kind: SectionKind::Rod { area: 1.0 },
+            formulation: Default::default(),
+        },
     )
     .unwrap();
     m.add_boundary_condition(

@@ -31,7 +31,8 @@ fn plate(in_modes: bool) -> Model {
     .unwrap();
     m.add_set("all", Set { elements: vec![1, 2, 3, 4], ..Set::default() }).unwrap();
     let kind = SectionKind::Shell { thickness: 0.1, offset: 0.0, points: 5 };
-    m.add_section("plate", Section { set: "all".into(), material: "Steel".into(), kind, formulation: Formulation::default() }).unwrap();
+    m.add_section("plate", Section { orientation: None, set: "all".into(), material: "Steel".into(), kind, formulation: Formulation::default() })
+        .unwrap();
     m.add_set("edge", Set { nodes: vec![1, 4, 7], ..Set::default() }).unwrap();
     m.add_set("diagonal", Set { nodes: vec![1, 5, 9], ..Set::default() }).unwrap();
     let faces = (1..=4).map(|element| ElementFace { element, face: 1 }).collect();

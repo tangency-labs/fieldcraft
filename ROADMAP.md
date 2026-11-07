@@ -59,8 +59,10 @@ pressure) is a degree of freedom of the existing DOF framework, not a separate s
 The model has validated material-frame, ply-stack and strength types; the FEM kernels
 integrate laminate stiffness, shear and mass moments and recover material-axis ply fields
 and maximum-stress, Tsai–Hill, Tsai–Wu and plane-stress Hashin indices. Closed-form ABD,
-axis and failure-state tests pass. Model-section/command, shell/solid solver and deck
-integration, the laminate oracle and black-box comparisons remain in progress.
+axis and failure-state tests pass. Composite shell sections now carry their ply materials,
+section orientations and material strengths through JSON, reference checks and unit conversion.
+Unsupported solver and deck paths name and refuse these inputs. Command, shell/solid solver
+and deck integration, the laminate oracle and black-box comparisons remain in progress.
 
 ## 0.6.0: the UI/UX release
 

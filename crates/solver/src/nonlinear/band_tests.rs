@@ -24,7 +24,13 @@ fn blocks() -> Model {
     model
         .add_section(
             "Solid",
-            Section { set: "all".into(), material: "Elastic".into(), kind: SectionKind::Solid {}, formulation: Formulation::default() },
+            Section {
+                orientation: None,
+                set: "all".into(),
+                material: "Elastic".into(),
+                kind: SectionKind::Solid {},
+                formulation: Formulation::default(),
+            },
         )
         .unwrap();
     model

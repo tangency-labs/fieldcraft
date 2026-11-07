@@ -162,6 +162,7 @@ fn plate(n: usize, eighth: bool, procedure: Procedure) -> (Model, BTreeMap<u32, 
     m.add_section(
         "plate",
         Section {
+            orientation: None,
             set: "plate".into(),
             material: "Mat".into(),
             kind: SectionKind::Shell { thickness: t, offset: 0.0, points: 5 },
