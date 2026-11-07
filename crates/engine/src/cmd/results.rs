@@ -411,7 +411,7 @@ fn whole(p: &Value, key: &str, range: std::ops::RangeInclusive<u64>) -> Result<O
 }
 
 /// A fluid command's `frame`: from 0 to the last; `None` when left out.
-fn fluid_frame(f: &fieldcraft_lbm::FluidResult, p: &Value) -> Result<Option<usize>> {
+pub(super) fn fluid_frame(f: &fieldcraft_lbm::FluidResult, p: &Value) -> Result<Option<usize>> {
     let last = f.frames.len().saturating_sub(1) as u64;
     Ok(whole(p, "frame", 0..=last)?.and_then(|k| usize::try_from(k).ok()))
 }

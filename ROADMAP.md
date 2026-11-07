@@ -93,6 +93,12 @@ What landed for 0.6.0 (milestone 0.6.0 on GitHub):
 
 ## Next
 
+M12 derived exchanger results (#837), first slice: `results.fluid.measure` reads open-box-face
+area means, separate inflow/outflow mass and volume flow, mixed temperatures and advective heat,
+recorded wall heat rates and pressure differences from a saved frame, as a unit-labelled table
+and CSV. Arbitrary face sets, time-window averages, effectiveness/LMTD and the complete energy
+balance with sources and storage remain open.
+
 In progress, in this order of landing:
 
 1. Tet quality: sliver repair and Delaunay refinement to a size field, so curved and filleted parts
