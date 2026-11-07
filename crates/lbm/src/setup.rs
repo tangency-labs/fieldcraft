@@ -613,7 +613,7 @@ impl Setup {
             match *domain.faces.get(face) {
                 FaceCondition::MovingWall { velocity } | FaceCondition::Velocity { velocity, .. } => u_char = u_char.max(norm(velocity)),
                 FaceCondition::Pressure { pressure, .. } => pressures.push(pressure),
-                FaceCondition::Wall {} | FaceCondition::Slip {} | FaceCondition::Periodic {} => {}
+                FaceCondition::Wall {} | FaceCondition::Slip {} | FaceCondition::Symmetry {} | FaceCondition::Periodic {} => {}
             }
         }
         for sb in &domain.surfaces {
@@ -719,7 +719,8 @@ impl Setup {
                 "the lattice Mach number is {mach:.3} (velocity {u_char} with time step {dt} and spacing {h}), above {MAX_MACH}: lower the time step"
             )));
         }
-        let mut warnings = Vec::new();
+        // A half model whose inputs cross its symmetry plane solves something else than half.
+        let mut warnings = domain.symmetry_warnings();
         // A shear-dependent fluid in lattice units; its temperatures count from the scalar
         // lattice's zero.
         let rheology = newtonian.is_none().then(|| Rheology {

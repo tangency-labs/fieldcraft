@@ -1847,35 +1847,80 @@ fn a_thermal_contact_matches_the_cpu() {
     }
 }
 
+/// A channel 3 × `height` (8 cells per unit) with a parabolic inlet at 1 °C, an outlet, the roof
+/// `roof`, the floor `floor`, and a powered conducting block across y ∈ [0.375, 0.625], run part
+/// way to steady state on the CPU and the GPU (`None` without a GPU).
+fn heated_block_channel(
+    height: f64,
+    roof: FaceCondition,
+    floor: ThermalCondition,
+    power: f64,
+    collision: Collision,
+    streaming: Streaming,
+) -> Option<(Flow, Gpu)> {
+    let (n, nu, alpha) = (8usize, 0.02, 0.02);
+    let dx = 1.0 / n as f64;
+    let mut d = domain([0.0; 3], [3.0, height, dx], dx);
+    d.faces.x_min = FaceCondition::Velocity { velocity: [0.05, 0.0, 0.0], profile: Profile::Parabolic };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+    d.faces.y_max = roof;
+    d.faces.z_min = PERIODIC;
+    d.faces.z_max = PERIODIC;
+    d.obstacles = vec!["Block".into()];
+    let mut t = FluidThermal { initial_temperature: kelvin(1.0), ..FluidThermal::default() };
+    t.faces.x_min = ThermalCondition::Temperature { value: kelvin(1.0) };
+    t.faces.y_min = floor;
+    t.solids = vec![conducting("Block", power)];
+    d.thermal = Some(t);
+    let dt = 0.25 * dx * dx / nu;
+    let m = cht_model([1.0, nu, alpha], (2.0, [0.5; 3], 1.0), d, collide(40.0, dt, None, collision));
+    let block = [obstacle("Block", cuboid([0.75, 0.375, -1.0], [1.25, 0.625, 1.0]), &CUBOID_FACES)];
+    let (setup, cpu) = prepare(&m, &block);
+    both(&setup, cpu, streaming)
+}
+
 /// A powered block conducting in a channel flow (parabolic inlet, outlet): the interface links
 /// under advection, against the CPU in velocity, temperature and every face's heat. lavapipe:
 /// temperature 2.5–2.7e-6, heat 3.2–3.3e-6, velocity 1.6–2.0e-6.
 #[test]
 fn a_heated_block_in_a_channel_matches_the_cpu() {
     for (collision, streaming) in cases() {
-        let (n, nu, alpha) = (8usize, 0.02, 0.02);
-        let dx = 1.0 / n as f64;
-        let mut d = domain([0.0; 3], [3.0, 1.0, dx], dx);
-        d.faces.x_min = FaceCondition::Velocity { velocity: [0.05, 0.0, 0.0], profile: Profile::Parabolic };
-        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
-        d.faces.z_min = PERIODIC;
-        d.faces.z_max = PERIODIC;
-        d.obstacles = vec!["Block".into()];
-        let mut t = FluidThermal { initial_temperature: kelvin(1.0), ..FluidThermal::default() };
-        t.faces.x_min = ThermalCondition::Temperature { value: kelvin(1.0) };
-        t.solids = vec![conducting("Block", 0.01)];
-        d.thermal = Some(t);
-        let dt = 0.25 * dx * dx / nu;
-        let m = cht_model([1.0, nu, alpha], (2.0, [0.5; 3], 1.0), d, collide(40.0, dt, None, collision));
-        let block = [obstacle("Block", cuboid([0.75, 0.375, -1.0], [1.25, 0.625, 1.0]), &CUBOID_FACES)];
-        let (setup, cpu) = prepare(&m, &block);
-        let Some((mut cpu, mut gpu)) = both(&setup, cpu, streaming) else { continue };
+        let Some((mut cpu, mut gpu)) = heated_block_channel(1.0, FaceCondition::Wall {}, ThermalCondition::Adiabatic {}, 0.01, collision, streaming)
+        else {
+            continue;
+        };
         let (du, drho) = field_difference(&mut cpu, &mut gpu);
         let (dt, dh) = heat_difference(&mut cpu, &mut gpu);
         println!("{collision:?} heated block in a channel: GPU vs CPU: velocity {du:.2e} density {drho:.2e} temperature {dt:.2e} heat {dh:.2e}");
         // (the regularised collision round the block: density 1.4e-6 on lavapipe)
         assert!(du < 2e-5 && drho < 2e-6, "{du} {drho}");
         assert!(dt < 2e-5 && dh < 2e-5, "{dt} {dh}");
+    }
+}
+
+/// The lower half of [`heated_block_channel`] with its roof a symmetry plane through the block
+/// (crates/lbm/tests/symmetry.rs: the half is the whole's to round-off on the CPU): the plane's
+/// reflected links, the links reflected off the block's mirror image, the half parabola at the
+/// inlet and the solid cells facing their mirror image, all read from the CPU's setup, against
+/// the CPU in velocity, temperature, heat and force.
+#[test]
+fn a_half_channel_on_a_symmetry_plane_matches_the_cpu() {
+    for (collision, streaming) in cases() {
+        let floor = ThermalCondition::Temperature { value: kelvin(1.0) };
+        let Some((mut cpu, mut gpu)) = heated_block_channel(0.5, FaceCondition::Symmetry {}, floor, 0.005, collision, streaming) else {
+            continue;
+        };
+        let (du, drho) = field_difference(&mut cpu, &mut gpu);
+        let (dt, dh) = heat_difference(&mut cpu, &mut gpu);
+        let a = Backend::forces(&mut cpu).unwrap();
+        let b = gpu.forces().unwrap();
+        let scale = a.iter().flatten().map(|v| v.abs()).fold(0.0, f64::max).max(1e-30);
+        let df = a.iter().flatten().zip(b.iter().flatten()).map(|(a, b)| (a - b).abs()).fold(0.0, f64::max) / scale;
+        println!(
+            "{collision:?} half channel on a symmetry plane: GPU vs CPU: velocity {du:.2e} density {drho:.2e} temperature {dt:.2e} heat {dh:.2e} force {df:.2e}"
+        );
+        assert!(du < 2e-5 && drho < 2e-6, "{du} {drho}");
+        assert!(dt < 2e-5 && dh < 2e-5 && df < 5e-5, "{dt} {dh} {df}");
     }
 }
 
