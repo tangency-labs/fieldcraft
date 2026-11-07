@@ -454,3 +454,42 @@ fn relaxing_depends_on_the_stored_model_alone() {
     assert!(opened.model.nodes() == live.nodes(), "saved, opened and relaxed");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The issue's reproduction (#612): each sample's mesh, and the same mesh with every coordinate
+/// one representable value up, relaxed with the same command on the sample's geometry, end up
+/// round-off apart. Guarded relaxation over every node of each sample (one sweep: five take
+/// hours on the heated bracket), strong where it is stable; on the crank the strong morph still
+/// grows a 1-ulp difference round by round (to 0.8 mm after 20), which this does not check yet.
+#[test]
+#[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+fn relaxing_a_sample_is_stable_under_round_off() {
+    let cases = [
+        ("drop-test", "guarded", 1),
+        ("crank-arm", "guarded", 1),
+        ("ibeam", "guarded", 1),
+        ("heated-bracket", "guarded", 1),
+        ("rubber-seal", "guarded", 1),
+        ("drop-test", "strong", 20),
+        ("ibeam", "strong", 20),
+        ("rubber-seal", "strong", 20),
+    ];
+    for (name, mode, iterations) in cases {
+        let mut original = Session::default();
+        original.execute("file.sample", &json!({"name": name})).unwrap();
+        let copy =
+            || Session { model: original.model.clone(), design: original.design.clone(), surfaces: original.surfaces.clone(), ..Session::default() };
+        let (mut a, mut b) = (copy(), copy());
+        for (&n, p) in original.model.nodes() {
+            b.model.set_node(n, p.xyz.map(|x| if x == 0.0 { x } else { x.next_up() })).unwrap();
+        }
+        let nodes: Vec<u32> = original.model.nodes().keys().copied().collect();
+        let params = json!({"nodes": nodes, "mode": mode, "iterations": iterations});
+        let ra = a.execute("mesh.node.relax", &params).unwrap();
+        b.execute("mesh.node.relax", &params).unwrap();
+        let apart = |p: [f64; 3], q: [f64; 3]| (0..3).map(|k| (p[k] - q[k]).powi(2)).sum::<f64>().sqrt();
+        let d =
+            crate::units::to_geometry_length(a.model.nodes().iter().map(|(n, p)| apart(p.xyz, b.model.node(*n).unwrap().xyz)).fold(0.0, f64::max));
+        assert!(d < 1e-6, "{name} {mode}: a 1-ulp input change moved a node by {d:e} mm");
+        assert!(no_worse(&ra), "{name} {mode}: {ra}");
+    }
+}
