@@ -388,7 +388,7 @@ fn plan<'a>(model: &'a Model, r: &Resolved) -> Result<Plan<'a>> {
                     refused.insert(format!("load `{l}`: a body force per unit volume (LS-DYNA's body loads are accelerations; use gravity)"));
                 }
                 // In thermal_items.
-                Load::SurfaceFlux { .. } | Load::Convection { .. } | Load::HeatSource { .. } | Load::Temperature { .. } => {}
+                Load::SurfaceFlux { .. } | Load::Convection { .. } | Load::Radiation { .. } | Load::HeatSource { .. } | Load::Temperature { .. } => {}
             }
         }
     }
@@ -1075,7 +1075,7 @@ fn write_step(d: &mut Deck, model: &Model, r: &Resolved, plan: &Plan, step: &Ste
                 }
                 Load::BodyForce { .. } => return Err(broken(format!("load `{name}`: a body force"))),
                 Load::Centrifugal { .. } => return Err(broken(format!("load `{name}`: a centrifugal load"))),
-                Load::SurfaceFlux { .. } | Load::Convection { .. } | Load::HeatSource { .. } | Load::Temperature { .. } => {
+                Load::SurfaceFlux { .. } | Load::Convection { .. } | Load::Radiation { .. } | Load::HeatSource { .. } | Load::Temperature { .. } => {
                     return Err(broken(format!("load `{name}`: a {} load", load.kind())));
                 }
             }

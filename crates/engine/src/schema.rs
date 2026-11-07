@@ -58,6 +58,8 @@ pub enum Kind {
         dim: Dim,
         min: Option<f64>,
         max: Option<f64>,
+        /// `min` itself is refused: the number must be above it.
+        open: bool,
     },
     /// A whole number in `min..=max`.
     Integer {
@@ -544,13 +546,17 @@ impl Field {
 }
 
 pub const fn num(key: &'static str, label: &'static str, dim: Dim) -> Field {
-    field(key, label, Kind::Number { dim, min: None, max: None })
+    field(key, label, Kind::Number { dim, min: None, max: None, open: false })
 }
 pub const fn range(key: &'static str, label: &'static str, dim: Dim, min: f64, max: f64) -> Field {
-    field(key, label, Kind::Number { dim, min: Some(min), max: Some(max) })
+    field(key, label, Kind::Number { dim, min: Some(min), max: Some(max), open: false })
+}
+/// A number above `min` (not equal to it) and at most `max`.
+pub const fn above(key: &'static str, label: &'static str, dim: Dim, min: f64, max: f64) -> Field {
+    field(key, label, Kind::Number { dim, min: Some(min), max: Some(max), open: true })
 }
 pub const fn positive(key: &'static str, label: &'static str, dim: Dim) -> Field {
-    field(key, label, Kind::Number { dim, min: Some(0.0), max: None })
+    field(key, label, Kind::Number { dim, min: Some(0.0), max: None, open: false })
 }
 pub const fn int(key: &'static str, label: &'static str, min: i64, max: i64) -> Field {
     field(key, label, Kind::Integer { min, max })
@@ -785,6 +791,8 @@ pub enum ProblemKind {
     Below(f64),
     /// A number above the field's maximum.
     Above(f64),
+    /// A number not above the field's (excluded) minimum.
+    NotAbove(f64),
     /// Not a whole number in `min..=max`.
     NotAWholeNumber {
         min: i64,
@@ -860,6 +868,7 @@ impl Problem {
             ProblemKind::NotANumber => "a number".into(),
             ProblemKind::Below(lo) => format!("at least {lo}"),
             ProblemKind::Above(hi) => format!("at most {hi}"),
+            ProblemKind::NotAbove(lo) => format!("above {lo}"),
             ProblemKind::NotAWholeNumber { min, max } => format!("a whole number in {min}..={max}"),
             ProblemKind::NotText => "text".into(),
             ProblemKind::NotABool => "true or false".into(),
@@ -1097,8 +1106,9 @@ fn check(fields: &'static [Field], obj: &Map<String, Value>, prefix: &str, out: 
 /// What is wrong with `v` as the value of `f`; nested problems go to `out`.
 fn value_problem(f: &'static Field, v: &Value, path: &str, out: &mut Vec<Problem>, depth: usize) -> Option<ProblemKind> {
     match f.kind {
-        Kind::Number { min, max, .. } => match (v.as_f64().filter(|x| x.is_finite()), min, max) {
+        Kind::Number { min, max, open, .. } => match (v.as_f64().filter(|x| x.is_finite()), min, max) {
             (None, ..) => Some(ProblemKind::NotANumber),
+            (Some(x), Some(lo), _) if open && x <= lo => Some(ProblemKind::NotAbove(lo)),
             (Some(x), Some(lo), _) if x < lo => Some(ProblemKind::Below(lo)),
             (Some(x), _, Some(hi)) if x > hi => Some(ProblemKind::Above(hi)),
             _ => None,
@@ -1305,10 +1315,10 @@ fn variant_schemas(tag: &str, variants: &[Variant], depth: usize) -> Value {
 
 fn field_schema(f: &Field, depth: usize) -> Value {
     let mut s = match f.kind {
-        Kind::Number { dim, min, max } => {
+        Kind::Number { dim, min, max, open } => {
             let mut s = json!({"type": "number"});
             if let Some(lo) = min {
-                s["minimum"] = json!(lo);
+                s[if open { "exclusiveMinimum" } else { "minimum" }] = json!(lo);
             }
             if let Some(hi) = max {
                 s["maximum"] = json!(hi);

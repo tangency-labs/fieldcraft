@@ -3280,6 +3280,47 @@ pub(crate) mod tests {
         assert_eq!(s.results_report()["heat_flows"], *flows);
     }
 
+    /// Radiation to the room through the command: its heat is reported per load, the balance
+    /// closes, the ambient converts from the display's °C, and bad inputs are refused (#839).
+    #[test]
+    fn radiation_reports_its_heat_and_closes_the_balance() {
+        let mut s = Session::default();
+        cantilever(&mut s);
+        let script = json!([
+            {"command": "model.material.edit", "params": {"name": "Mat", "elastic": {"type": "isotropic", "young": 1000, "poisson": 0}, "density": 1, "thermal": {"conductivity": 2}}},
+            {"command": "model.boundary_condition.create", "params": {"name": "Heater", "type": "temperature", "target": {"set": "root"}, "value": 400}},
+            {"command": "model.set.create", "params": {"name": "skin", "faces": (1..=6).map(|f| json!({"element": 10, "face": f})).collect::<Vec<_>>()}},
+            {"command": "model.load.create", "params": {"name": "Air", "type": "convection", "set": "skin", "film": 0.5, "sink": 20}},
+            {"command": "model.load.create", "params": {"name": "Glow", "type": "radiation", "set": "skin", "emissivity": 0.9, "ambient": 20}},
+            {"command": "model.step.create", "params": {"name": "Therm", "procedure": {"type": "heat_transfer"}, "boundary_conditions": ["Heater"], "loads": ["Air", "Glow"]}},
+        ]);
+        s.run_script(&script).unwrap();
+        let Some(fieldcraft_model::Load::Radiation { ambient, .. }) = s.model.load("Glow") else { panic!("no radiation load") };
+        assert!((ambient - 293.15).abs() < 1e-9, "stored in kelvin: {ambient}");
+        let r = s.execute("solve.heat", &json!({"step": "Therm"})).unwrap();
+        let flows = &r["heat_flows"];
+        let load = |n: &str| flows["loads"].as_array().unwrap().iter().find(|l| l["name"] == n).unwrap().clone();
+        assert_eq!(load("Glow")["type"], "radiation");
+        let (glow, air, supplied) =
+            (load("Glow")["heat"].as_f64().unwrap(), load("Air")["heat"].as_f64().unwrap(), flows["reactions"].as_f64().unwrap());
+        assert!(glow < 0.0 && air < 0.0 && supplied > 0.0, "{flows}");
+        assert!((supplied + glow + air).abs() < 1e-6 * supplied, "{flows}");
+        assert!(flows["imbalance"].as_f64().unwrap().abs() < 1e-6 * supplied, "{flows}");
+        for bad in
+            [json!({"emissivity": 0}), json!({"emissivity": 1.5}), json!({"emissivity": "x"}), json!({"ambient": -300}), json!({"ambient": "-1 K"})]
+        {
+            let mut p = json!({"name": "Bad", "type": "radiation", "set": "skin", "emissivity": 0.5, "ambient": 20});
+            for (k, v) in bad.as_object().unwrap() {
+                p[k] = v.clone();
+            }
+            assert!(s.execute("model.load.create", &p).is_err(), "{p}");
+        }
+        // The form refuses an emissivity of 0 as the model does.
+        let e =
+            s.execute("model.load.create", &json!({"name": "Bad", "type": "radiation", "set": "skin", "emissivity": 0, "ambient": 20})).unwrap_err();
+        assert!(e.to_string().contains("above 0"), "{e}");
+    }
+
     #[test]
     fn transient_heat_probe_flux_follows_the_requested_frame() {
         // #822: the sample's node 160 heats gradually; each frame must agree with a

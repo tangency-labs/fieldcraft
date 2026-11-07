@@ -1,0 +1,14 @@
+[
+ {"command": "model.units", "params": {"system": "m-kg-s-N-Pa", "temperature": "K"}},
+ {"command": "mesh.block", "params": {"body": "Cube", "kind": "hex8", "corners": [[0, 0, 0], [0.01, 0, 0], [0.01, 0.01, 0], [0, 0.01, 0], [0, 0, 0.01], [0.01, 0, 0.01], [0.01, 0.01, 0.01], [0, 0.01, 0.01]], "divisions": [1, 1, 1], "faces": {"1": "f1", "2": "f2", "3": "f3", "4": "f4", "5": "f5", "6": "f6"}}},
+ {"command": "model.set.create", "params": {"name": "cube", "geometry": [{"body": "Cube"}]}},
+ {"command": "model.set.create", "params": {"name": "skin", "geometry": [{"body": "Cube", "face": "f1"}, {"body": "Cube", "face": "f2"}, {"body": "Cube", "face": "f3"}, {"body": "Cube", "face": "f4"}, {"body": "Cube", "face": "f5"}, {"body": "Cube", "face": "f6"}]}},
+ {"command": "model.material.create", "params": {"name": "Steel", "elastic": {"type": "isotropic", "young": 2e11, "poisson": 0.3}, "density": 7800.0, "thermal": {"conductivity": 15.0, "specific_heat": 460.0}}},
+ {"command": "model.section.create", "params": {"name": "cube", "set": "cube", "material": "Steel", "kind": {"type": "solid"}}},
+ {"command": "model.load.create", "params": {"name": "glow_room", "type": "radiation", "set": "skin", "emissivity": 0.7, "ambient": 300.0}},
+ {"command": "model.load.create", "params": {"name": "glow_space", "type": "radiation", "set": "skin", "emissivity": 0.7, "ambient": 0.0}},
+ {"command": "model.step.create", "params": {"name": "Room", "procedure": {"type": "heat_transfer", "transient": {"end_time": 600.0, "increment": 1.875, "theta": 0.5, "initial_temperature": 1000.0}}, "boundary_conditions": [], "loads": ["glow_room"]}},
+ {"command": "model.step.create", "params": {"name": "Space", "procedure": {"type": "heat_transfer", "transient": {"end_time": 600.0, "increment": 1.875, "theta": 0.5, "initial_temperature": 1000.0}}, "boundary_conditions": [], "loads": ["glow_space"]}},
+ {"command": "solve.heat", "params": {"step": "Room"}, "id": "room"},
+ {"command": "solve.heat", "params": {"step": "Space"}, "id": "space"}
+]

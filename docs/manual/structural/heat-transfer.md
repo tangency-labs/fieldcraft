@@ -1,8 +1,8 @@
 # Heat transfer and thermal stress
 
 `solve.heat` computes steady or transient heat conduction in solid elements: temperatures, heat
-flux and the heat flow at prescribed temperatures, under surface fluxes, convection and internal
-heat sources. A coupled temperature–displacement step solves the steady conduction and then the
+flux and the heat flow at prescribed temperatures, under surface fluxes, convection, radiation to
+the surroundings and internal heat sources. A coupled temperature–displacement step solves the steady conduction and then the
 static equilibrium of the thermal strains it causes; a static step can also take temperatures
 directly as loads. Conduction uses the Galerkin form with the solid elements' shape functions and
 the generalized trapezoidal method in time; thermal strain enters every solid, 2D and truss
@@ -13,8 +13,8 @@ element as an equivalent load.
 | **Commands** | `solve.heat` (heat transfer steps), `solve.static` (coupled steps and temperature loads), `solve.run`; `solve.probe`, `results.contour` (`temperature`), `results.frame`, `results.export.vtu` |
 | **Step procedure** | `{"type": "heat_transfer", "transient"}`; `{"type": "coupled_temperature_displacement"}`; temperature loads in `static`, `buckle`, `nonlinear_static` and `explicit_dynamic` steps |
 | **Solver** | `crates/solver` (CPU, f64), sparse Cholesky |
-| **Method** | Galerkin conduction (Zienkiewicz, Taylor & Zhu 2013, §3.2 and ch. 7; Hughes 2000, ch. 1, §8.1); generalized trapezoidal integration (Hughes 2000, §8.2) |
-| **Verified by** | `tie-heat-series`, `j2-heated-bar`, `nl-thermal-expansion`; `crates/solver/tests/thermal.rs`, `plane.rs` (thermal), `hybrid.rs` (thermal); `nafems-le11` pending |
+| **Method** | Galerkin conduction (Zienkiewicz, Taylor & Zhu 2013, §3.2 and ch. 7; Hughes 2000, ch. 1, §8.1); generalized trapezoidal integration (Hughes 2000, §8.2); radiation by Newton's method (Incropera et al. 2011, §1.2.3 and §12.6 for the gray surface to large surroundings) |
+| **Verified by** | `tie-heat-series`, `radiation-plate`, `radiation-lumped-cube`, `j2-heated-bar`, `nl-thermal-expansion`; `crates/solver/tests/thermal.rs`, `radiation.rs`, `plane.rs` (thermal), `hybrid.rs` (thermal); `nafems-le11` pending |
 
 ## Synopsis
 
@@ -61,6 +61,7 @@ step lists the thermal and the mechanical conditions together and is solved by `
 | boundary condition `temperature` | `target` (`{"set"}`), `value` | heat transfer and coupled steps: a prescribed temperature |
 | load `surface_flux` | `set` (faces), `flux` | heat per area into the faces (positive heats the body) |
 | load `convection` | `set` (faces), `film` h, `sink` T∞ | heat flux h (T∞ − T) into the faces |
+| load `radiation` | `set` (faces), `emissivity` ε (above 0, at most 1), `ambient` T_amb (absolute, ≥ 0 K) | heat flux ε σ (T⁴ − T_amb⁴) out of the faces, to the surroundings only |
 | load `heat_source` | `set` (elements), `power` | heat per volume |
 | load `temperature` | `target`, `value` | stress steps: a temperature field that strains the material |
 
@@ -98,6 +99,43 @@ increment on:
 ```
 
 The left-hand matrix is factored once for the step.
+
+**Radiation to the surroundings.** A radiation load makes a face lose, per node,
+
+```text
+r(T) = ∫ N ε σ (T⁴ − T_amb⁴) dA,   J(T) = ∂r/∂T = ∫ N Nᵀ 4 ε σ T³ dA
+```
+
+with T = Σ N T_j at the face's points (the consistent form of the film; a point below 0 K is
+taken as 0 K) and σ = 5.670374419 × 10⁻⁸ W/(m²·K⁴) (the model is SI, so it applies as it is). The
+temperatures are absolute: the model stores kelvin whatever the display shows. The surface is
+gray and sees only the surroundings, a large enclosure at T_amb: radiation between the model's
+own surfaces (view factors) is not modelled. The term is nonlinear, so each solve is Newton's
+method, K T + r(T) = f linearised about the last iterate Tᵏ:
+
+```text
+(K + J(Tᵏ)) Tᵏ⁺¹ = f − r(Tᵏ) + J(Tᵏ) Tᵏ
+```
+
+refactored each iteration until the heat out of balance, f − K T − r(T) in every free equation,
+is at most 10⁻¹⁰ of the largest net heat flow at a node (|f| + |K T| + |r|) plus that
+equation's round-off, 16 ε (|f| + |K| |T| + |r|) with ε the machine epsilon. The residual, unlike
+the change between two iterates, stays at round-off however badly the mesh conditions K, so a
+converged solution is never reported as not converging; the round-off allowance is per equation,
+so it is large only where large conductances meet, and the rest of the model is held to 10⁻¹⁰.
+Each solve
+takes at most 50 iterations (more is "did not converge", naming the increment), and at most
+`Limits::max_newton_iterations`: every increment has its own count, so a transient's work is
+bounded by its increments and a long one runs to its end. A steady solve starts from the lumped
+balance, the uniform T at which the radiating faces shed the heat supplied,
+(Σf / Σ εσA + mean T_amb⁴)^¼, or the highest prescribed temperature when that is higher: Newton
+then converges in a handful of iterations (q(T) is convex, so the iterates approach from above).
+When that start is 0 K (surroundings at 0 K, no heat supplied, no temperature held) every
+temperature would be 0 K, where radiation has no tangent: the solve is refused with that reason
+("add heat, hold a temperature or raise the ambient"). A transient increment weights
+the radiation by θ as it does K, (C + θΔt K) Tₙ₊₁ + θΔt r(Tₙ₊₁) = (C − (1 − θ)Δt K) Tₙ − (1 − θ)Δt
+r(Tₙ) + Δt f, from Tₙ, so Crank–Nicolson stays second order. Without a radiation load the solve
+is the linear one above, unchanged.
 
 **Constraints and reactions.** Prescribed temperatures and ties are eliminated by the
 transformation of the structural solver (`constraints::Reduction`), T = T_f q + T_p T̄. A tie makes
@@ -152,8 +190,9 @@ alike; isotropic expansion only ([Explicit dynamics](explicit-dynamics.md)).
 4. **Assemble** K (with films), C for a transient step (an element without density and specific
    heat is refused, naming it), f; in element label order.
 5. **Factor** the reduced K (steady) or C + θΔt K (transient) by Cholesky. A singular one is
-   reported as "the temperature is undetermined at node N: no temperature boundary condition or
-   convection reaches its part of the model".
+   reported as "the temperature is undetermined at node N: no temperature boundary condition,
+   convection or radiation reaches its part of the model". With radiation, each Newton iteration
+   factors K + J (steady) or C + θΔt (K + J) (transient) afresh.
 6. **Solve.** Steady: once. Transient: n increments, each a right-hand side and a back
    substitution; the progress counts increments and the run checks for cancellation between them.
    Frames: the initial one and, to keep at most 50 000 000 temperature values (frames × nodes),
@@ -175,7 +214,7 @@ A coupled step runs steps 2–6 (steady) inside `solve.static` and then the
 | `step`, `dofs`, `equations`, `factor_entries` | |
 | `frames`, `end_time` | the stored frames and the last time (0 for a steady step) |
 | `min_temperature`, `max_temperature` | `{node, value}` at the end of the step |
-| `heat_supplied` | fluxes, sources and convection at the end temperatures (Σ f − K T) |
+| `heat_supplied` | fluxes, sources, convection and radiation at the end temperatures (Σ f − K T − r) |
 | `heat_removed` | the total reaction heat flow; in a steady state it cancels `heat_supplied` |
 | `heat_flows` | `loads` (per heat load: `name`, `type`, `heat` into the body, negative out), `reactions`, `imbalance` |
 | `warnings` | |
@@ -265,6 +304,14 @@ clamps the legend at 100 MPa (deformation scale 173).
 | Confined heated hybrid block | theory: σ = −3KαΔT | 10⁻⁶ | exact | `heated_confined_block_carries_the_bulk_thermal_stress` |
 | Bar held at its ends heated past yield (nonlinear) | theory | < 10⁻⁴ % | 10⁻⁸ rel. | `j2-heated-bar` |
 | Free expansion and held block at a thermal stretch of 1.2 (nonlinear) | theory | < 10⁻⁴ % | 10⁻⁸ rel. | `nl-thermal-expansion` |
+| Plate heated on one face, radiating from the other to 293.15 K and to 0 K, every solid and formulation | theory: q = ε σ (T_L⁴ − T_amb⁴), T linear across | T < 10⁻⁹ relative; radiated heat and balance < 10⁻⁹ | exact | `plate_cooled_by_radiation_alone_balances_its_heat` |
+| The same plate cooled by convection (h 10, T∞ 295 K) and radiation (ε 0.9, 300 K) together | hand calculation: h (T_L − T∞) + ε σ (T_L⁴ − T_amb⁴) = q, radiation ~45 % of q | T < 10⁻⁹ relative; each load's heat < 10⁻⁸ | exact | `plate_with_convection_and_radiation_matches_the_hand_calculation` |
+| Lumped cube (one hex8) cooling by radiation alone from 1000 K to 300 K surroundings, 600 s | theory: t = (F(T₀) − F(T)) / b with F the integral of 1/(T⁴ − T_amb⁴); to 0 K, T₀ (1 + 3bT₀³t)^(−⅓) | T(600 s) = 440.53 K; θ = ½ with 80, 160, 320 increments: 0.053, 0.013, 0.0033 K (order 2.0); θ = 1 with 160, 320: 1.28, 0.64 K (order 1.0); to 0 K: 425.8595 against 425.8632 K (9·10⁻⁶) | 10⁻⁴ of T₀; order 1.8–2.2 (θ = ½), 0.8–1.2 (θ = 1) | `lumped_body_cools_by_radiation_as_the_closed_form` |
+| The plate's three cases in the oracle: to 293.15 K, to 0 K, with convection | theory: as above (Incropera & DeWitt, §1.3.1) | face temperatures and each load's heat < 10⁻⁴ % | 10⁻⁹ rel. (10⁻⁸ for the radiation–convection split) | `radiation-plate` |
+| The lumped cube in the oracle, θ = ½ with 320 increments, to 300 K and to 0 K | theory: the lumped closed forms (Incropera & DeWitt, §5.3) | 7.5·10⁻⁶ and 8.6·10⁻⁶ of T | 2·10⁻⁵ rel. | `radiation-lumped-cube` |
+| Radiation's Newton iterations | a cap per solve | `max_newton_iterations` 1 stops with "did not converge"; an increment of 10⁸ s from 1 K under 10⁴ K surroundings stops after 50 iterations, naming increment 1 | — | `radiation_newton_iterations_are_bounded`, `a_radiation_solve_stops_after_its_most_newton_iterations` |
+| A cap of 5 iterations with 200 increments; an hour at Δt 0.05 s (72 000 increments, heavy) | per-increment count; the lumped closed form | 200 increments finish within 10⁻⁴ of T₀; the hour finishes on the closed form | 10⁻⁶ of T₀ | `every_increment_has_its_own_newton_iterations`, `a_long_radiating_transient_finishes` |
+| Steady, surroundings at 0 K, no heat and no held temperature | refusal | "… raise the ambient", not a singular matrix | — | `a_steady_solve_with_nothing_above_0_k_is_refused` |
 | Refusals and caps | undetermined temperature, missing conductivity, missing specific heat, caps with the byte estimate | located errors | — | `heat_steps_refuse_what_they_cannot_solve`, `heat_factor_cap_reports_value_bytes_before_allocation` |
 | NAFEMS LE11, cylinder/taper/sphere under a temperature field | benchmark (target σ_zz = −105 MPa at A) | pending: no recipe yet | — | `nafems-le11` |
 
@@ -274,7 +321,9 @@ clamps the legend at 100 MPa (deformation scale 173).
   transfer and coupled steps.
 - Shells and beams take no thermal strain (a warning says so in static steps).
 - Coupled steps are steady and one way; transient coupled analysis is not implemented.
-- Properties are constant in temperature; no radiation; no contact conductance (ties are
+- Radiation goes to the surroundings only: faces do not exchange radiation with each other (no
+  view factors, no enclosures), surfaces are gray and the emissivity is constant.
+- Properties are constant in temperature; no contact conductance (ties are
   perfect conductors); conductivity along the global axes only.
 - Transient steps use fixed, equal increments (at most 100 000).
 - Ties in heat transfer take linear faces only (tet4, wedge6, hex8).

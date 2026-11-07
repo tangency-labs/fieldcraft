@@ -159,6 +159,34 @@ pub fn face_film(xyz: &[[f64; 3]], film: f64) -> Result<Matrix> {
     Ok(m)
 }
 
+/// Radiation from a face at nodal temperatures `t` (absolute, the face's node order) to an
+/// ambient at `ambient`, with `es` = ε σ: the heat each node loses, ∫ N ε σ (T⁴ − T_amb⁴) dA, and
+/// its tangent ∫ N Nᵀ 4 ε σ T³ dA, with T = Σ N T_j at the face's points (consistent, as the
+/// film's ∫ N Nᵀ). A point temperature below zero is taken as zero, so the tangent stays
+/// positive semi-definite while a Newton iterate passes through it.
+pub fn face_radiation(xyz: &[[f64; 3]], t: &[f64], es: f64, ambient: f64) -> Result<(Vec<f64>, Matrix)> {
+    if t.len() != xyz.len() {
+        return Err(Error::Invalid(format!("a face of {} nodes has {} temperatures", xyz.len(), t.len())));
+    }
+    let mut loss = vec![0.0; xyz.len()];
+    let mut m = Matrix::zeros(xyz.len());
+    let a4 = ambient.powi(4);
+    each_face_point(xyz, |n, w| {
+        let tp = n.iter().zip(t).map(|(n, t)| n * t).sum::<f64>().max(0.0);
+        let q = es * (tp.powi(4) - a4);
+        let h = 4.0 * es * tp.powi(3);
+        for (i, a) in n.iter().enumerate() {
+            if let Some(l) = loss.get_mut(i) {
+                *l += w * a * q;
+            }
+            for (j, b) in n.iter().enumerate() {
+                m.add(i, j, w * h * a * b);
+            }
+        }
+    })?;
+    Ok((loss, m))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,5 +257,39 @@ mod tests {
         assert!(face_weights(&quad[..2]).is_err());
         assert!(face_weights(&[[0.0; 3]; 4]).is_err());
         assert!(face_film(&[[f64::NAN, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], 1.0).is_err());
+    }
+
+    #[test]
+    fn face_radiation_integrates_the_quartic_and_its_tangent() {
+        // A uniform 400 on a 2 × 3 rectangle radiating to 300: loss ε σ (400⁴ − 300⁴) A, shared
+        // as the flux weights; the tangent is the film at h = 4 ε σ 400³.
+        let quad = [[0., 0., 0.], [2., 0., 0.], [2., 3., 0.], [0., 3., 0.]];
+        let es = 0.5;
+        let (loss, tangent) = face_radiation(&quad, &[400.0; 4], es, 300.0).unwrap();
+        let total = es * (400f64.powi(4) - 300f64.powi(4)) * 6.0;
+        assert!((loss.iter().sum::<f64>() - total).abs() < 1e-12 * total);
+        assert!(loss.iter().all(|l| (l - total / 4.0).abs() < 1e-12 * total));
+        let film = face_film(&quad, 4.0 * es * 400f64.powi(3)).unwrap();
+        for (a, b) in tangent.data.iter().zip(&film.data) {
+            assert!((a - b).abs() < 1e-12 * b.abs().max(1.0));
+        }
+        // The tangent is the derivative of the loss: a central difference on one node.
+        let t = [380.0, 410.0, 395.0, 420.0];
+        let (_, j) = face_radiation(&quad, &t, es, 300.0).unwrap();
+        let d = 1e-3;
+        let mut up = t;
+        up[2] += d;
+        let mut down = t;
+        down[2] -= d;
+        let (lu, _) = face_radiation(&quad, &up, es, 300.0).unwrap();
+        let (ld, _) = face_radiation(&quad, &down, es, 300.0).unwrap();
+        for i in 0..4 {
+            let fd = (lu[i] - ld[i]) / (2.0 * d);
+            assert!((fd - j.get(i, 2)).abs() < 1e-6 * j.get(i, 2).abs(), "{i}: {fd} vs {}", j.get(i, 2));
+        }
+        // Below zero the face neither radiates as T⁴ nor stiffens.
+        let (cold, j) = face_radiation(&quad, &[-50.0; 4], es, 0.0).unwrap();
+        assert!(cold.iter().all(|l| *l == 0.0) && j.data.iter().all(|v| *v == 0.0));
+        assert!(face_radiation(&quad, &[1.0; 3], es, 0.0).is_err());
     }
 }

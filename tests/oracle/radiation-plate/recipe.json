@@ -1,0 +1,21 @@
+[
+ {"command": "model.units", "params": {"system": "m-kg-s-N-Pa", "temperature": "K"}},
+ {"command": "mesh.block", "params": {"body": "Plate", "kind": "hex8", "corners": [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [0, 0, 0.02], [1, 0, 0.02], [1, 1, 0.02], [0, 1, 0.02]], "divisions": [1, 1, 4], "faces": {"1": "heated", "2": "cooled"}}},
+ {"command": "model.set.create", "params": {"name": "plate", "geometry": [{"body": "Plate"}]}},
+ {"command": "model.set.create", "params": {"name": "heated", "geometry": [{"body": "Plate", "face": "heated"}]}},
+ {"command": "model.set.create", "params": {"name": "cooled", "geometry": [{"body": "Plate", "face": "cooled"}]}},
+ {"command": "model.material.create", "params": {"name": "Steel", "elastic": {"type": "isotropic", "young": 2e11, "poisson": 0.3}, "thermal": {"conductivity": 15.0}}},
+ {"command": "model.section.create", "params": {"name": "plate", "set": "plate", "material": "Steel", "kind": {"type": "solid"}}},
+ {"command": "model.load.create", "params": {"name": "heater", "type": "surface_flux", "set": "heated", "flux": 2000.0}},
+ {"command": "model.load.create", "params": {"name": "heater_mixed", "type": "surface_flux", "set": "heated", "flux": 1500.0}},
+ {"command": "model.load.create", "params": {"name": "glow_room", "type": "radiation", "set": "cooled", "emissivity": 0.8, "ambient": 293.15}},
+ {"command": "model.load.create", "params": {"name": "glow_space", "type": "radiation", "set": "cooled", "emissivity": 0.8, "ambient": 0.0}},
+ {"command": "model.load.create", "params": {"name": "glow_mixed", "type": "radiation", "set": "cooled", "emissivity": 0.9, "ambient": 300.0}},
+ {"command": "model.load.create", "params": {"name": "air", "type": "convection", "set": "cooled", "film": 10.0, "sink": 295.0}},
+ {"command": "model.step.create", "params": {"name": "Room", "procedure": {"type": "heat_transfer"}, "boundary_conditions": [], "loads": ["heater", "glow_room"]}},
+ {"command": "model.step.create", "params": {"name": "Space", "procedure": {"type": "heat_transfer"}, "boundary_conditions": [], "loads": ["heater", "glow_space"]}},
+ {"command": "model.step.create", "params": {"name": "Mixed", "procedure": {"type": "heat_transfer"}, "boundary_conditions": [], "loads": ["heater_mixed", "glow_mixed", "air"]}},
+ {"command": "solve.heat", "params": {"step": "Room"}, "id": "room"},
+ {"command": "solve.heat", "params": {"step": "Space"}, "id": "space"},
+ {"command": "solve.heat", "params": {"step": "Mixed"}, "id": "mixed"}
+]
