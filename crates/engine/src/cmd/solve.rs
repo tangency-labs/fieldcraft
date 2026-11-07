@@ -122,7 +122,7 @@ pub const FLUID: CommandSpec = CommandSpec {
 pub const PROBE: CommandSpec = CommandSpec {
     id: "solve.probe",
     label: "Probe Results",
-    params: r#"{"step": "Load", "nodes": [1, 2] (or "set": "fillet", a set's nodes), "mode": 1, "frame": 0} — the stored result at nodes (with `max_von_mises`, the largest among them, for static steps): displacement, rotation, reaction, reaction moment, stress, principal stresses (the values, largest first, without their directions) and von Mises (static, with `elements` each element's results: solid, 2D and truss nodal stresses (and, in a nonlinear step, the equivalent plastic strain at the integration points of a plastic element), shell section forces (N, M, Q per length in the element's axes) and bottom, middle and top stresses, beam end forces (N, V_y, V_z, T, M_y, M_z in its axes)), the shape of mode `mode` with its rotations (frequency, from 1), or displacement and velocity in field frame `frame` (explicit, from 0; the last by default) at `nodes` (or at the nodes nearest to points: "at": [[x, y, z], ...], lowest label on a tie, each entry then giving its `xyz` and `distance`) and, with `elements` (explicit), each element's stress, von Mises stress, strain, equivalent plastic strain, damage, temperature and whether it has eroded; a coupled reference point's label gives its six displacements (translations, rotations) and reactions (forces, moments). Fluid steps: {"step": "Flow", "points": [[x, y, z]], "frame": 10 (default the last)} gives velocity, pressure and (with heat) temperature in the cells at the points; {"step": "Flow", "forces": ["x_min", "F2:top", "Body1/F2:top"]} gives those walls' force histories and {"step": "Flow", "heat": ["y_min"]} the heat into them over time (power, positive into the wall); {"step": "Flow", "line": {"from": [x, y, z], "to": [x, y, z], "count": 65 (default one point per cell spacing), "field": "velocity_x|velocity_y|velocity_z|speed|pressure|temperature|fill|wall_heat_flux", "face": "x_min" (wall_heat_flux: the box wall the line lies on)}, "frame": 10} gives the field at `count` points evenly along the line (`xyz`; trilinear between the cell centres, null outside the fluid; within half a cell of a box face the nearest cell centre's value, so a temperature line run onto a held wall reads the first cell, not the wall) and its `max` and `min` with their `xyz`, located between the samples by the parabola through the extreme sample and its neighbours; `wall_heat_flux` is the heat per area into a box wall (positive into the wall): at a held temperature from the second-order one-sided difference through the wall and the two cell layers beside it, at a flux face its flux, at an adiabatic face zero; `fill` is a free surface's fill level, 1 liquid to 0 gas; {"step": "Flow", "front": {"axis": "x", "end": "max", "at": [[x, y, z], …]}} gives a free surface's liquid front: the liquid's extent along the axis at every history time (the `max` (default) or `min` face of the cells at least half full) and its `volume`, and per point in `at` the time the extent first reached the point's coordinate along the axis, coming or going (`arrivals`; between two samples by linear interpolation; null when it never did); {"step": "Flow", "depth": {"axis": "z", "at": [[x, y, z], …]}, "frame": 10} gives, per point, the liquid in the column of cells through it along the axis in that frame (the fill levels summed times the spacing: a wave gauge's depth, a collapsing column's height at its wall)"#,
+    params: r#"{"step": "Load", "nodes": [1, 2] (or "set": "fillet", a set's nodes), "mode": 1, "frame": 0} — the stored result at nodes (with `max_von_mises`, the largest among them, for static steps): displacement, rotation, reaction, reaction moment, stress, principal stresses (the values, largest first, without their directions) and von Mises (static, with `elements` each element's results: solid, 2D and truss nodal stresses (and, in a nonlinear step, the equivalent plastic strain at the integration points of a plastic element), shell section forces (N, M, Q per length in the element's axes) and bottom, middle and top stresses, beam end forces (N, V_y, V_z, T, M_y, M_z in its axes)), the shape of mode `mode` with its rotations (frequency, from 1), or displacement and velocity in field frame `frame` (explicit, from 0; the last by default) at `nodes` (or at the nodes nearest to points: "at": [[x, y, z], ...], lowest label on a tie, each entry then giving its `xyz` and `distance`) and, with `elements` (explicit), each element's stress, von Mises stress, strain, equivalent plastic strain, damage, temperature and whether it has eroded; a coupled reference point's label gives its six displacements (translations, rotations) and reactions (forces, moments). Heat transfer steps: `frame` selects temperature and heat_flux together (from 0, the last by default); reaction is included only in the last frame, including the sole frame of a steady step. Fluid steps: {"step": "Flow", "points": [[x, y, z]], "frame": 10 (default the last)} gives velocity, pressure and (with heat) temperature in the cells at the points; {"step": "Flow", "forces": ["x_min", "F2:top", "Body1/F2:top"]} gives those walls' force histories and {"step": "Flow", "heat": ["y_min"]} the heat into them over time (power, positive into the wall); {"step": "Flow", "line": {"from": [x, y, z], "to": [x, y, z], "count": 65 (default one point per cell spacing), "field": "velocity_x|velocity_y|velocity_z|speed|pressure|temperature|fill|wall_heat_flux", "face": "x_min" (wall_heat_flux: the box wall the line lies on)}, "frame": 10} gives the field at `count` points evenly along the line (`xyz`; trilinear between the cell centres, null outside the fluid; within half a cell of a box face the nearest cell centre's value, so a temperature line run onto a held wall reads the first cell, not the wall) and its `max` and `min` with their `xyz`, located between the samples by the parabola through the extreme sample and its neighbours; `wall_heat_flux` is the heat per area into a box wall (positive into the wall): at a held temperature from the second-order one-sided difference through the wall and the two cell layers beside it, at a flux face its flux, at an adiabatic face zero; `fill` is a free surface's fill level, 1 liquid to 0 gas; {"step": "Flow", "front": {"axis": "x", "end": "max", "at": [[x, y, z], …]}} gives a free surface's liquid front: the liquid's extent along the axis at every history time (the `max` (default) or `min` face of the cells at least half full) and its `volume`, and per point in `at` the time the extent first reached the point's coordinate along the axis, coming or going (`arrivals`; between two samples by linear interpolation; null when it never did); {"step": "Flow", "depth": {"axis": "z", "at": [[x, y, z], …]}, "frame": 10} gives, per point, the liquid in the column of cells through it along the axis in that frame (the fill levels summed times the spacing: a wave gauge's depth, a collapsing column's height at its wall)"#,
     form: Some(super::forms::SOLVE_PROBE),
     kind: CommandKind::Model,
     requires: &[Requirement::Result],
@@ -1356,7 +1356,7 @@ pub(crate) fn probe(s: &mut Session, p: &Value) -> Result<Value> {
             let elements = if p.get("elements").is_some() { labels(p, "elements", MAX_PROBE)? } else { Vec::new() };
             probe_frame(r, &step, &nodes, &elements, p)?
         }
-        StepResult::Implicit(r) => probe_implicit(r, &step, &nodes, p)?,
+        StepResult::Implicit(r) => probe_implicit(&s.model, r, &step, &nodes, p)?,
         StepResult::Fluid(r) => probe_fluid(&s.model, r, p)?,
     };
     // The largest von Mises stress among the probed nodes (static results).
@@ -1453,7 +1453,7 @@ fn nearest_nodes(model: &fieldcraft_model::Model, with_result: &[u32], at: &[[f6
 }
 
 /// The result of an implicit step at nodes.
-fn probe_implicit(result: &ImplicitResult, step: &str, nodes: &[u32], p: &Value) -> Result<Value> {
+fn probe_implicit(model: &fieldcraft_model::Model, result: &ImplicitResult, step: &str, nodes: &[u32], p: &Value) -> Result<Value> {
     let elements = if p.get("elements").is_some() { labels(p, "elements", MAX_PROBE)? } else { Vec::new() };
     let locate = |label: u32| {
         result
@@ -1525,12 +1525,19 @@ fn probe_implicit(result: &ImplicitResult, step: &str, nodes: &[u32], p: &Value)
                 .collect::<Result<_>>()?
         }
         ImplicitResult::Heat(r) => {
-            let (time, t) = crate::results::heat_frame(r, crate::results::Pick { mode: 1, frame: opt::<usize>(p, "frame")? })?;
+            let frame = opt::<usize>(p, "frame")?.unwrap_or(r.frames.len().saturating_sub(1));
+            let (time, t) = crate::results::heat_frame(r, crate::results::Pick { mode: 1, frame: Some(frame) })?;
+            let flux = r.flux_at(model, frame)?;
             let out = nodes
                 .iter()
                 .map(|&l| {
                     let i = r.nodes.binary_search(&l).map_err(|_| EngineError::Params(format!("node {l} has no temperature (it belongs to no solid element)")))?;
-                    Ok(json!({"node": l, "temperature": t.get(i), "heat_flux": r.flux.get(i), "reaction": r.reaction.get(i)}))
+                    let mut value = json!({"node": l, "temperature": t.get(i), "heat_flux": flux.get(i)});
+                    // Only the last increment's temperature rate and reactions are retained.
+                    if frame + 1 == r.frames.len() {
+                        value["reaction"] = json!(r.reaction.get(i));
+                    }
+                    Ok(value)
                 })
                 .collect::<Result<Vec<Value>>>()?;
             return Ok(json!({"step": step, "time": time, "nodes": out}));
@@ -3259,6 +3266,47 @@ pub(crate) mod tests {
         assert!(out < 0.0 && supplied > 0.0, "{flows}");
         assert!(flows["imbalance"].as_f64().unwrap().abs() < 1e-6 * supplied, "{flows}");
         assert_eq!(s.results_report()["heat_flows"], *flows);
+    }
+
+    #[test]
+    fn transient_heat_probe_flux_follows_the_requested_frame() {
+        // #822: the sample's node 160 heats gradually; each frame must agree with a
+        // separate solve ending at that time, not reuse the ten-second flux.
+        let mut s = Session::default();
+        s.execute("file.sample", &json!({"name": "cantilever"})).unwrap();
+        s.run_script(&json!([
+            {"command": "model.material.edit", "params": {"name": "Steel", "elastic": {"type": "isotropic", "young": 210000, "poisson": 0.3}, "density": 7.85e-9, "thermal": {"conductivity": 50, "specific_heat": 5e8, "expansion": 1e-5}}},
+            {"command": "model.boundary_condition.create", "params": {"name": "cold", "type": "temperature", "target": {"set": "root"}, "value": 0}},
+            {"command": "model.boundary_condition.create", "params": {"name": "hot", "type": "temperature", "target": {"set": "tip"}, "value": 100}},
+            {"command": "model.step.create", "params": {"name": "Warm", "procedure": {"type": "heat_transfer", "transient": {"end_time": 10, "increment": 1, "initial_temperature": 0}}, "boundary_conditions": ["cold", "hot"]}}
+        ])).unwrap();
+        // Create the reference steps before solving so every result stays current.
+        for end in [1, 5] {
+            s.execute("model.step.create", &json!({"name": format!("Until{end}"), "procedure": {"type": "heat_transfer", "transient": {"end_time": end, "increment": 1, "initial_temperature": 0}}, "boundary_conditions": ["cold", "hot"]})).unwrap();
+        }
+        s.execute("solve.heat", &json!({"step": "Warm"})).unwrap();
+        let last = s.execute("solve.probe", &json!({"step": "Warm", "nodes": [160], "frame": 10})).unwrap();
+        let default = s.execute("solve.probe", &json!({"step": "Warm", "nodes": [160]})).unwrap();
+        assert_eq!(last, default);
+        assert!(last["nodes"][0]["reaction"].is_number());
+        for end in [1, 5] {
+            let step = format!("Until{end}");
+            s.execute("solve.heat", &json!({"step": step})).unwrap();
+            let expected = s.execute("solve.probe", &json!({"step": step, "nodes": [160]})).unwrap();
+            let actual = s.execute("solve.probe", &json!({"step": "Warm", "nodes": [160], "frame": end})).unwrap();
+            assert_eq!(actual["time"], expected["time"]);
+            assert_eq!(actual["nodes"][0]["temperature"], expected["nodes"][0]["temperature"]);
+            assert_eq!(actual["nodes"][0]["heat_flux"], expected["nodes"][0]["heat_flux"]);
+            assert_ne!(actual["nodes"][0]["heat_flux"], last["nodes"][0]["heat_flux"]);
+            assert!(actual["nodes"][0].get("reaction").is_none());
+        }
+        let initial = s.execute("solve.probe", &json!({"step": "Warm", "nodes": [160], "frame": 0})).unwrap();
+        assert_eq!(initial["time"], 0.0);
+        assert_eq!(initial["nodes"][0]["temperature"], 0.0);
+        for q in initial["nodes"][0]["heat_flux"].as_array().unwrap() {
+            assert!(q.as_f64().unwrap().abs() < 1e-9, "{initial}");
+        }
+        assert!(initial["nodes"][0].get("reaction").is_none());
     }
 
     #[test]
