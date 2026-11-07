@@ -247,6 +247,53 @@ fn laminate_plate_navier_frequencies_thin_and_thick() {
     }
 }
 
+/// Sharma, Mahapatra & Panda (2017), DOI 10.1590/1679-78253830, Tables 1/5:
+/// material M2 and the measured (not simulated) frequencies. No vendor model is used.
+#[test]
+fn carbon_epoxy_cantilever_matches_published_experiment() {
+    let measured = [62.5, 152.0, 378.0, 485.0, 561.0];
+    let mut previous = Vec::<f64>::new();
+    for n in [4, 8, 16] {
+        let mut p = Plate::new(
+            n,
+            n,
+            [0.15; 2],
+            0.00375,
+            &[PI / 4.0, -PI / 4.0, -PI / 4.0, PI / 4.0],
+            Procedure::Frequency { modes: 5, min_hz: None, max_hz: None },
+        );
+        p.model
+            .replace_material(
+                "ply",
+                Material {
+                    elastic: Some(Elastic::EngineeringConstants {
+                        young: [6.469e9, 5.626e9, 5.626e9],
+                        poisson: [0.3; 3],
+                        shear: [2.05e9, 2.05e9, 1.025e9],
+                    }),
+                    density: Some(1388.0),
+                    ..Material::default()
+                },
+            )
+            .unwrap();
+        p.hold("clamp", [Some(0.0); 6], |i, _| i == 0);
+        let result = solve_frequency(&p.model, None, &FrequencyOptions::default(), &Limits::default()).unwrap();
+        let actual: Vec<_> = result.modes.iter().map(|m| m.frequency).collect();
+        eprintln!("Sharma M2 experimental modes: mesh={n}, actual={actual:?}, measured={measured:?}");
+        assert_eq!(actual.len(), measured.len());
+        if n == 16 {
+            for ((f, reference), coarse) in actual.iter().zip(measured).zip(&previous) {
+                // Declared before the first solve: 15% physical validation band and
+                // 3% mesh convergence. The paper reports clamp variability but no
+                // confidence intervals; this is not a measurement-uncertainty claim.
+                assert!((f / reference - 1.0).abs() < 0.15);
+                assert!((coarse / f - 1.0).abs() < 0.03);
+            }
+        }
+        previous = actual;
+    }
+}
+
 #[test]
 fn laminate_flat_plate_buckling_and_thread_determinism() {
     let mut p = Plate::new(8, 8, [1.0; 2], 0.01, &[0.0, PI / 2.0, PI / 2.0, 0.0], Procedure::Buckle { modes: 3, shift: None });
