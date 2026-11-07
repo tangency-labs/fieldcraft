@@ -26,6 +26,10 @@ pub struct Fields {
 
 /// A stepper of one prepared flow.
 pub trait Backend {
+    /// Final baffle side diagnostics (SI); unsupported backends refuse sheets at setup.
+    fn baffles(&self) -> Vec<crate::baffle::BaffleResult> {
+        Vec::new()
+    }
     /// CPU restart state; device backends deliberately do not support this format.
     #[doc(hidden)]
     fn checkpoint(&mut self, _archive: &mut dyn crate::checkpoint::Archive) -> Result<()> {

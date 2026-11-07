@@ -17,10 +17,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::fluid_zones::{Fan, PorousZone};
 use crate::geometry::{Entity, GeometryRef};
-use crate::{Error, Material, Model, Result, context, finite, insert_new, not_in_use, positive, remove_existing, replace_existing, require};
+use crate::{
+    Error, Material, Model, Result, context, finite, insert_new, nonnegative, not_in_use, positive, remove_existing, replace_existing, require,
+};
 
 /// Most obstacle bodies in one domain.
 pub const MAX_OBSTACLES: usize = 1000;
+
+/// Most thin walls in one domain.
+pub const MAX_BAFFLES: usize = 64;
 
 /// Most surface conditions in one domain.
 pub const MAX_SURFACE_CONDITIONS: usize = 10_000;
@@ -435,6 +440,18 @@ impl ThermalContact {
     }
 }
 
+/// A full-span planar, no-slip sheet between fluid cells. Its position must lie on a
+/// lattice face. The sheet has no thermal storage or in-plane conduction.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ThinWall {
+    pub name: String,
+    pub axis: crate::Axis,
+    pub position: f64,
+    /// Conductance per area (W/(m² K)); zero is an insulating baffle.
+    pub conductance: f64,
+}
+
 /// Heat in the fluid: a temperature field advected with the flow and diffused with the
 /// material's diffusivity k / (ρ c), its conditions on the boundaries, and buoyancy.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -461,6 +478,9 @@ pub struct FluidThermal {
     /// are in perfect contact.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub contacts: Vec<ThermalContact>,
+    /// Internal planar sheets, without voxelised solid cells (CPU only).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub baffles: Vec<ThinWall>,
     /// The temperature (kelvin) the lattice-Boltzmann scheme's temperature lattice counts from:
     /// its walls are not invariant under a shift of the temperature scale, so this is part of
     /// the model, never of how it is shown. 0 °C, the scale the scheme was verified on; a model
@@ -484,6 +504,7 @@ impl Default for FluidThermal {
             surfaces: Vec::new(),
             solids: Vec::new(),
             contacts: Vec::new(),
+            baffles: Vec::new(),
             temperature_zero: crate::units::CELSIUS_ZERO,
         }
     }
@@ -735,6 +756,24 @@ fn vector(what: &str, v: [f64; 3]) -> Result<[f64; 3]> {
 }
 
 impl FluidDomain {
+    /// Whether thin walls divide the domain.
+    pub fn has_baffles(&self) -> bool {
+        self.thermal.as_ref().is_some_and(|t| !t.baffles.is_empty())
+    }
+
+    /// The lattice face `position` lies on along `axis`, counted in cells from `min`: an
+    /// interior face (1 to cells − 1), within a millionth of a spacing.
+    pub fn face_layer(&self, axis: crate::Axis, position: f64) -> Result<u64> {
+        let a = axis.index();
+        let n = self.cells()?.get(a).copied().unwrap_or(0);
+        let layer = (finite("the position", position)? - self.min.get(a).copied().unwrap_or(0.0)) / self.spacing;
+        let whole = layer.round();
+        if !(whole >= 1.0 && whole < n as f64 && (layer - whole).abs() <= WHOLE_CELLS_TOLERANCE) {
+            return Err(Error::Invalid("the position must lie on a lattice face inside the box".into()));
+        }
+        Ok(whole as u64)
+    }
+
     /// The number of cells along each axis, checked to be whole and within
     /// [`MAX_CELLS_PER_SIDE`].
     pub fn cells(&self) -> Result<[u64; 3]> {
@@ -795,6 +834,34 @@ impl FluidDomain {
         }
         if let Some(t) = &self.thermal {
             t.validate(&self.obstacles).map_err(|e| context("thermal", "settings", e))?;
+            if t.baffles.len() > MAX_BAFFLES {
+                return Err(Error::Limit(format!("a fluid domain holds at most {MAX_BAFFLES} baffles")));
+            }
+            let mut layers: Vec<(crate::Axis, u64)> = Vec::with_capacity(t.baffles.len());
+            for b in &t.baffles {
+                let check = || -> Result<(crate::Axis, u64)> {
+                    GeometryRef::body(b.name.as_str())?;
+                    nonnegative("its conductance", b.conductance)?;
+                    let layer = self.face_layer(b.axis, b.position)?;
+                    if self.faces.periodic(b.axis.index()) {
+                        return Err(Error::Invalid("periodic faces normal to a sheet are not supported yet".into()));
+                    }
+                    if t.baffles.iter().filter(|o| o.name == b.name).count() > 1 {
+                        return Err(Error::Invalid("the name is used twice".into()));
+                    }
+                    if layers.iter().any(|&(axis, l)| axis != b.axis || l == layer) {
+                        return Err(Error::Invalid("sheets in one domain must be parallel and on distinct faces".into()));
+                    }
+                    Ok((b.axis, layer))
+                };
+                let layer = check().map_err(|e| context("baffle", &b.name, e))?;
+                layers.push(layer);
+            }
+            if self.has_baffles()
+                && BoxFace::ALL.iter().any(|f| matches!(self.faces.get(*f), FaceCondition::Velocity { .. } | FaceCondition::Pressure { .. }))
+            {
+                return Err(Error::Invalid("baffles do not yet support inlet or outlet faces".into()));
+            }
         }
         if self.surfaces.len() > MAX_SURFACE_CONDITIONS {
             return Err(Error::Limit(format!("a fluid domain holds at most {MAX_SURFACE_CONDITIONS} surface conditions")));

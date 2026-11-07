@@ -61,6 +61,7 @@
 #![allow(clippy::needless_range_loop)]
 
 pub mod backend;
+pub mod baffle;
 pub mod bounce;
 pub mod checkpoint;
 pub mod conduction;

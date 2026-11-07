@@ -219,6 +219,13 @@ pub struct FluidResult {
     pub forces: Vec<ForceHistory>,
     /// The heat every wall receives, with heat (empty otherwise), the same walls and times.
     pub heat: Vec<HeatHistory>,
+    /// Final surface temperatures and heat flux on each side of every thin wall. Part of the
+    /// solve's reply, not of the saved results (each side's heat is, in `heat`): storing it is
+    /// the next results encoding's. Boxed to keep the result (and the results file's
+    /// `Solved` enum) its size.
+    #[serde(skip)]
+    #[allow(clippy::box_collection)]
+    pub baffles: Box<Vec<crate::baffle::BaffleResult>>,
     /// Every fan and porous zone, the same times.
     pub zones: Vec<ZoneHistory>,
     pub stats: FluidStats,
@@ -428,6 +435,9 @@ fn run_checkpointed(
     limits: &Limits,
     mut store: Option<&mut dyn crate::checkpoint::Store>,
 ) -> Result<FluidResult> {
+    if store.is_some() && setup.domain.has_baffles() {
+        return Err(Error::Invalid("baffles do not support checkpoint/resume yet".into()));
+    }
     let checkpoint_every = store.as_ref().map_or(0, |s| s.every());
     if store.is_some() && (checkpoint_every == 0 || flow.name() != "cpu") {
         return Err(Error::Invalid("checkpointing needs a positive step interval and the CPU backend".into()));
@@ -684,6 +694,7 @@ fn run_checkpointed(
         })
         .collect();
     Ok(FluidResult {
+        baffles: Box::new(flow.baffles()),
         port_properties: Some(crate::PortProperties { density: setup.density, specific_heat: setup.thermal.as_ref().map(|t| t.specific_heat) }),
         step: setup.step.clone(),
         grid: setup.grid,
