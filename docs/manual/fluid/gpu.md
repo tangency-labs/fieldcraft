@@ -103,7 +103,7 @@ whose forces are read back (a submission's last). The temperature lattice is two
 | Collisions `trt`, `regularized`, `mrt` | yes |
 | Collision `hrr` (hybrid recursive regularised), fixed and dynamic σ | yes |
 | Vreman's subgrid model (`turbulence: {"type": "vreman"}`), with every collision | yes |
-| Walls, moving walls, slip, periodic faces, obstacles, momentum exchange | yes |
+| Walls, moving walls, slip, symmetry planes, periodic faces, obstacles, momentum exchange | yes |
 | Velocity inlets, uniform and convective pressure outlets, edges of open faces | yes |
 | Body acceleration, and changing it between steps | yes |
 | Heat: the D3Q7 lattice, held temperatures, fluxes, buoyancy | yes |
