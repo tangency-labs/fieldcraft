@@ -62,13 +62,20 @@ to a direct solve. An undamped resonance or an unsupported singular system retur
 Near a lightly damped pole, refine the frequency list and compare the full complex response:
 small frequency or mesh errors can move the peak substantially.
 
-The matrix is complex **symmetric**, not Hermitian. The direct solver interleaves real and
-imaginary unknowns in the equivalent real symmetric indefinite system
-`[[A,-B],[-B,-A]] [Ur,Ui] = [Fr,-Fi]`. It uses the existing sparse ordering and supernodal
-LDLᵀ factorization, preserving paired columns for pivoting. A real-only operator takes the
-smaller real solve. Factor capacity is checked before allocation; doubling equations can
-increase fill substantially. Bounded iterative refinement checks the original complex
-equations, not just the transformed system.
+The matrix is complex **symmetric**, not Hermitian. The direct solver uses native
+complex supernodal LDLᵀ, reusing the existing sparse ordering and symbolic structure.
+Local rook pivoting compares complex moduli and chooses one- or two-column blocks;
+no positive-definiteness assumption is made near resonance. A real-only operator uses
+the existing real factor. The interleaved real symmetric formulation
+`[[A,-B],[-B,-A]] [Ur,Ui] = [Fr,-Fi]` remains a matrix-level verification path.
+
+A native complex factor stores two real slots per original entry, versus approximately
+four for the doubled real system. `max_factor_entries` counts 8-byte real slots, including
+both components of every complex value. It defaults to 400 million and can be explicitly
+raised to 4 billion for harmonic solves (32 GB of factor values alone). Indices, matrices
+and workspace are additional. The symbolic cap is checked before numeric allocation.
+Bounded iterative refinement checks the original complex equations. A failed local pivot
+is reported; no pivot is delayed into a later supernode.
 
 The modal method obtains real mass-normalized modes from the existing block Lanczos solver.
 It projects material damping in full: `Phiᵀ C Phi` and `Phiᵀ G Phi`. Step Rayleigh damping
@@ -77,6 +84,13 @@ and loss are diagonal in this basis. The additional modal viscous coefficient is
 damping retains the off-diagonal terms and solves the small complex system. Increasing the
 mode count is a necessary convergence check. A small projected residual alone does not
 certify the untruncated physical equations.
+
+Free-body mode extraction uses a spectral shift, which does not supply a physical
+static stiffness. A zero-frequency modal solve is refused if extraction required
+that shift; use the direct method to check the original system. For an undamped
+diagonal mode, a forcing frequency indistinguishable from its pole at the relative
+pivot tolerance is also refused. Finite neighboring frequencies and damped poles
+retain their specified values.
 
 ## Output
 
@@ -131,6 +145,7 @@ a commercial solver was run.
 ## References and implementation
 
 - J. K. Vandiver, MIT 2.003SC (2011), [lectures 24–25](https://ocw.mit.edu/courses/2-003sc-engineering-dynamics-fall-2011/resources/lecture-25-modal-analysis-response-to-ics-and-to-harmonic-forces/): harmonic forcing and modal response.
+- J. R. Bunch (1982), [Stable algorithms for solving symmetric and skew-symmetric systems](https://doi.org/10.1017/S0004972700005621), §4: complex symmetric diagonal pivoting. C. Ashcraft, R. G. Grimes and J. G. Lewis (1998), [Accurate symmetric indefinite linear equation solvers](https://doi.org/10.1137/S0895479896296921): bounded rook search.
 - D. Day and M. A. Heroux (2001), [Solving complex-valued linear systems via equivalent real formulations](https://doi.org/10.1137/S1064827500372262), SIAM J. Sci. Comput. 23(2), 480–498. The symmetric block identity above is derived directly from the real and imaginary equations.
 - R. R. Craig and A. J. Kurdila, *Fundamentals of Structural Dynamics*, 2nd ed., 2006: real-mode projection and nonproportional damping.
 - [Abaqus public damping reference](https://docs.software.vt.edu/abaqusv2026/English/SIMACAEMATRefMap/simamat-c-dampingopt.htm) and [steady-state keyword](https://docs.software.vt.edu/abaqusv2026/English/SIMACAEKEYRefMap/simakey-r-steadystatedynamics.htm): independent coefficient and export definitions.

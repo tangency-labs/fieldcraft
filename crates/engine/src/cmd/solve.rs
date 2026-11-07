@@ -42,8 +42,8 @@ pub const STATIC: CommandSpec = CommandSpec {
 pub const HARMONIC: CommandSpec = CommandSpec {
     id: "solve.harmonic",
     label: "Solve Harmonic Step",
-    params: r#"{"step": "Sweep", "max_factor_entries": 400000000, "threads": 6} — steady-state complex response with Re(U exp(iωt)), consistent mass and the step's frequencies, direct or modal method and additive damping. Stores each frequency's displacement and optional stress phasors. Reports full-equation residuals, projected residuals for modal response, and input/dissipated power; a small projected residual alone does not certify a truncated modal solution. Limits and threads as for solve.static. Use solve.probe to read frequency curves."#,
-    form: Some(super::forms::SOLVE_STATIC),
+    params: r#"{"step": "Sweep", "max_factor_entries": 400000000, "threads": 6} — steady-state complex response with Re(U exp(iωt)), consistent mass and the step's frequencies, direct or modal method and additive damping. Stores each frequency's displacement and optional stress phasors. Reports full-equation residuals, projected residuals for modal response, and input/dissipated power; a small projected residual alone does not certify a truncated modal solution. Limits and threads as for solve.static, except an explicit max_factor_entries can reach 4000000000 real 8-byte slots (two per complex entry; 32 GB of factor values alone). The default remains 400000000. Use solve.probe to read frequency curves."#,
+    form: Some(super::forms::SOLVE_HARMONIC),
     kind: CommandKind::Model,
     requires: &[Requirement::Analysable, Requirement::Step],
     run: run_harmonic,
@@ -141,6 +141,9 @@ pub const PROBE: CommandSpec = CommandSpec {
 
 /// Largest explicit factor cap accepted by solve commands; the default remains 400M entries.
 pub(super) const FACTOR_ENTRY_CEILING: usize = 2_000_000_000;
+/// Harmonic complex factors count both f64 components; only an explicit request
+/// may use this ceiling (32 GB of values, before indices and workspace).
+pub(super) const HARMONIC_FACTOR_ENTRY_CEILING: usize = 4_000_000_000;
 
 /// Most nodes one probe lists.
 const MAX_PROBE: usize = 10_000;
@@ -182,12 +185,16 @@ fn threads(s: &Session, p: &Value) -> Result<usize> {
 }
 
 fn limits(p: &Value) -> Result<Limits> {
+    limits_with_factor_ceiling(p, FACTOR_ENTRY_CEILING)
+}
+
+fn limits_with_factor_ceiling(p: &Value, factor_ceiling: usize) -> Result<Limits> {
     Ok(Limits {
         max_dofs: cap(p, "max_dofs", Limits::MAX_DOFS)?,
         max_factor_entries: if p.get("max_factor_entries").is_none() {
             Limits::MAX_FACTOR_ENTRIES
         } else {
-            cap(p, "max_factor_entries", FACTOR_ENTRY_CEILING)?
+            cap(p, "max_factor_entries", factor_ceiling)?
         },
         max_lanczos_vectors: cap(p, "max_iterations", Limits::MAX_LANCZOS_VECTORS)?,
         max_newton_iterations: cap(p, "max_newton_iterations", Limits::MAX_NEWTON_ITERATIONS)?,
@@ -377,7 +384,7 @@ fn run_heat(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn run_harmonic(s: &mut Session, p: &Value) -> Result<Value> {
-    let limits = limits(p)?;
+    let limits = limits_with_factor_ceiling(p, HARMONIC_FACTOR_ENTRY_CEILING)?;
     let step = opt::<String>(p, "step")?;
     let r = with_threads(threads(s, p)?, || fieldcraft_solver::solve_harmonic(&s.model, step.as_deref(), &limits))?;
     let summary = json!({"step": r.step, "stats": r.stats, "natural_frequencies": r.natural_frequencies,

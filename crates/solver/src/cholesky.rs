@@ -258,10 +258,10 @@ impl FactorError {
 /// One supernode's update to a later one: supernode `k`'s rows from position `p1` on reach the
 /// later one, whose columns they meet at positions `p1..p2`.
 #[derive(Debug, Clone, Copy)]
-struct Update {
-    k: usize,
-    p1: usize,
-    p2: usize,
+pub(crate) struct Update {
+    pub(crate) k: usize,
+    pub(crate) p1: usize,
+    pub(crate) p2: usize,
 }
 
 /// The supernodal structure (postorder numbering).
@@ -491,7 +491,7 @@ pub(crate) struct Lower {
 }
 
 impl Lower {
-    fn new(a: &UpperColumns, inverse: &[usize]) -> Lower {
+    pub(crate) fn new(a: &UpperColumns, inverse: &[usize]) -> Lower {
         let n = a.n;
         let new = |i: usize| inverse.get(i).copied().unwrap_or(0);
         let mut ptr = vec![0usize; n + 1];
@@ -544,7 +544,7 @@ impl Lower {
         Lower { ptr, idx, val, diag, scale }
     }
 
-    fn column(&self, j: usize) -> (&[usize], &[f64]) {
+    pub(crate) fn column(&self, j: usize) -> (&[usize], &[f64]) {
         let (a, b) = (self.ptr.get(j).copied().unwrap_or(0), self.ptr.get(j + 1).copied().unwrap_or(0));
         (self.idx.get(a..b).unwrap_or_default(), self.val.get(a..b).unwrap_or_default())
     }
@@ -555,7 +555,7 @@ impl Lower {
 pub(crate) struct Context<'a> {
     pub(crate) a: &'a Lower,
     pub(crate) s: &'a Structure,
-    updates: &'a [Vec<Update>],
+    pub(crate) updates: &'a [Vec<Update>],
 }
 
 /// What the numeric factorization of one kind keeps per supernode.
@@ -1036,7 +1036,7 @@ impl Symbolic {
     /// supernodes above them in order. A numeric failure is the first failing column in
     /// postorder (the one a pass in order would meet first, whichever thread meets it), named by
     /// its original column.
-    pub(crate) fn factor<T: Supernode>(
+    pub(crate) fn factor<T: Send + Sync>(
         &self,
         values: &mut [T],
         supernode: impl Fn(&Context, usize, &[T], usize, &mut T) -> std::result::Result<(), FactorError> + Sync,

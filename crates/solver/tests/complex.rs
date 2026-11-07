@@ -1,7 +1,7 @@
 //! Analytic checks for the complex symmetric direct kernel. These matrices are
 //! written here from oscillator equations; no external solver data is used.
 
-use fieldcraft_solver::complex::{Vector, residual, solve};
+use fieldcraft_solver::complex::{Vector, residual, solve, solve_equivalent};
 use fieldcraft_solver::sparse::Csr;
 use fieldcraft_solver::{Error, Limits};
 
@@ -25,7 +25,12 @@ fn oscillator_closed_form_across_resonance_and_at_zero() {
         close(out.displacement.amplitudes()[0], 1.0 / a.hypot(b), 2e-14);
         close(out.displacement.phases()[0], -b.atan2(a), 2e-14);
         assert!(out.residual.relative < 1e-14);
-        assert_eq!(out.factor_equations, if omega == 0.0 { 1 } else { 2 });
+        assert_eq!(out.factor_equations, 1);
+        let equivalent =
+            solve_equivalent(&dense(&[a], 1), &dense(&[b], 1), &Vector { real: vec![1.0], imaginary: vec![0.0] }, &Limits::default()).unwrap();
+        close(out.displacement.real[0], equivalent.displacement.real[0], 2e-14);
+        close(out.displacement.imaginary[0], equivalent.displacement.imaginary[0], 2e-14);
+        assert_eq!(equivalent.factor_equations, if omega == 0.0 { 1 } else { 2 });
         if omega == 2.0 {
             close(out.displacement.imaginary[0], -12.5, 2e-14);
         }
@@ -171,7 +176,7 @@ fn interleaving_preserves_sparse_pairs_and_thread_bit_identity() {
     }
     let b = Csr { val: a.idx.iter().map(|_| 0.2).collect(), ..a.clone() };
     let rhs = Vector { real: (0..n).map(|r| (r % 7) as f64).collect(), imaginary: vec![0.0; n] };
-    let run = || solve(&a, &b, &rhs, &Limits::default()).unwrap();
+    let run = || solve_equivalent(&a, &b, &rhs, &Limits::default()).unwrap();
     let reference = fieldcraft_parallel::with_threads(1, run);
     for threads in [2, 4, 6] {
         let actual = fieldcraft_parallel::with_threads(threads, run);
@@ -188,4 +193,85 @@ fn interleaving_preserves_sparse_pairs_and_thread_bit_identity() {
     }
     assert!(reference.factor_entries < n * 12);
     assert!(reference.residual.relative < 1e-13);
+}
+
+fn manufactured_force(a: &Csr, b: &Csr, u: &Vector) -> Vector {
+    let mut rhs = Vector::zeros(a.n);
+    for r in 0..a.n {
+        let (cols, ar) = a.row(r);
+        let (_, br) = b.row(r);
+        for ((&c, &x), &y) in cols.iter().zip(ar).zip(br) {
+            rhs.real[r] += x * u.real[c] - y * u.imaginary[c];
+            rhs.imaginary[r] += x * u.imaginary[c] + y * u.real[c];
+        }
+    }
+    rhs
+}
+
+#[test]
+fn native_complex_two_by_two_pivots_scale_without_squaring_large_entries() {
+    let exact = Vector { real: vec![2.0, 3.0], imaginary: vec![-1.0, 4.0] };
+    for scale in [1e-200, 1.0, 1e200] {
+        let a = dense(&[0.0, scale, scale, 0.0], 2);
+        let b = dense(&[0.0, 2.0 * scale, 2.0 * scale, 0.0], 2);
+        let rhs = manufactured_force(&a, &b, &exact);
+        let out = solve(&a, &b, &rhs, &Limits::default()).unwrap();
+        for (got, expected) in out.displacement.real.iter().chain(&out.displacement.imaginary).zip(exact.real.iter().chain(&exact.imaginary)) {
+            close(*got, *expected, 1e-13);
+        }
+        assert_eq!(out.factor_entries, 6); // three complex entries, each two f64 slots.
+        assert!(solve(&a, &b, &rhs, &Limits { max_factor_entries: 5, ..Limits::default() }).is_err());
+    }
+}
+
+#[test]
+fn native_panel_pivots_match_manufactured_solution_and_real_equivalent_at_all_thread_counts() {
+    // More than four panels, with small complex diagonals, forcing two-column
+    // rook pivots and parallel trailing updates. All entries are authored here.
+    let n = 272;
+    let mut av = vec![0.0; n * n];
+    let mut bv = vec![0.0; n * n];
+    for r in 0..n {
+        for c in 0..n {
+            av[r * n + c] = if r == c {
+                0.0
+            } else if r / 2 == c / 2 {
+                2.0
+            } else {
+                ((r + c) % 7) as f64 * 0.001
+            };
+            bv[r * n + c] = if r == c {
+                1e-5
+            } else if r / 2 == c / 2 {
+                0.3
+            } else {
+                ((r + c) % 5) as f64 * 0.0001
+            };
+        }
+    }
+    let (a, b) = (dense(&av, n), dense(&bv, n));
+    let exact = Vector { real: (0..n).map(|i| (i % 13) as f64 * 0.2).collect(), imaginary: (0..n).map(|i| (i % 11) as f64 * -0.1).collect() };
+    let rhs = manufactured_force(&a, &b, &exact);
+    let reference = fieldcraft_parallel::with_threads(1, || solve(&a, &b, &rhs, &Limits::default()).unwrap());
+    let equivalent = solve_equivalent(&a, &b, &rhs, &Limits::default()).unwrap();
+    assert_eq!(reference.factor_entries, n * (n + 1));
+    assert!(reference.factor_entries < equivalent.factor_entries);
+    for (actual, expected) in
+        reference.displacement.real.iter().chain(&reference.displacement.imaginary).zip(exact.real.iter().chain(&exact.imaginary))
+    {
+        close(*actual, *expected, 2e-12);
+    }
+    for (actual, expected) in reference
+        .displacement
+        .real
+        .iter()
+        .chain(&reference.displacement.imaginary)
+        .zip(equivalent.displacement.real.iter().chain(&equivalent.displacement.imaginary))
+    {
+        close(*actual, *expected, 2e-12);
+    }
+    for threads in [2, 4, 6] {
+        let out = fieldcraft_parallel::with_threads(threads, || solve(&a, &b, &rhs, &Limits::default()).unwrap());
+        assert_eq!(out, reference);
+    }
 }

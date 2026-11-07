@@ -2412,6 +2412,15 @@ const MAX_FACTOR: Field = int("max_factor_entries", "Max factor entries", 1, sup
 const THREADS: Field = int("threads", "Threads", 1, 256).help("Threads to use; the session's setting when empty.").hint("the session's");
 
 pub const SOLVE_STATIC: &[Field] = &[STEP, MAX_DOFS, MAX_FACTOR, THREADS];
+pub const SOLVE_HARMONIC: &[Field] = &[
+    STEP,
+    MAX_DOFS,
+    int("max_factor_entries", "Max factor entries", 1, super::solve::HARMONIC_FACTOR_ENTRY_CEILING as i64)
+        .help("Cap in 8-byte real slots, two per complex factor entry: 400M by default; explicitly raise up to 4B (32 GB of values). Indices, workspace and other solver storage are additional.")
+        .hint("400000000"),
+    int("max_iterations", "Max Lanczos vectors", 1, 3000).help("Cap on the Lanczos vectors for the modal method.").hint("3000"),
+    THREADS,
+];
 pub const SOLVE_NONLINEAR: &[Field] = &[
     STEP,
     MAX_DOFS,

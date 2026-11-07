@@ -1,26 +1,24 @@
-//! Complex symmetric linear systems, through an interleaved real symmetric equivalent.
+//! Complex symmetric linear systems, with native and real-equivalent direct factors.
 //!
-//! With the convention `Re(u exp(i ω t))`, harmonic equilibrium is
-//! `(A + i B) u = f`, where `A = K − ω² M`, `B = ω C + G`, and G is the
-//! structural loss stiffness. Transpose symmetry is required, **not** Hermitian symmetry.
-//! We solve `[[A, −B], [−B, −A]] [Re(u), Im(u)] = [Re(f), −Im(f)]`;
-//! each real/imaginary pair is consecutive. The complete 2 × 2 block pattern keeps
-//! the two columns in the same fundamental supernode, including at a resonance
-//! where A's diagonal vanishes and a 2 × 2 pivot is needed.
+//! With `Re(u exp(i ω t))`, equilibrium is `(A+iB)u=f`, where
+//! `A=K−ω²M`, `B=ωC+G`. Transpose symmetry is required, not Hermitian symmetry.
+//! [`solve`] uses native complex supernodal LDLᵀ with 1×1/2×2 rook pivots
+//! ([`native`], Bunch 1982 and Ashcraft et al. 1998). The existing Cholesky
+//! symbolic structure and deterministic subtree schedule are reused. It stores
+//! two real slots per original factor entry, compared with approximately four
+//! in the doubled real formulation. Both components count toward the cap.
 //!
-//! Reference: D. Day and M. A. Heroux, *Solving Complex-Valued Linear Systems via
-//! Equivalent Real Formulations*, SIAM J. Sci. Comput. 23(2):480–498 (2001),
-//! <https://doi.org/10.1137/S1064827500372262>. The row sign change above makes
-//! the interleaved real form symmetric; [`crate::ldlt`] supplies the published
-//! rook-pivoting algorithm and [`crate::cholesky`] its ordering and supernodes.
-//! No normal equations, artificial damping or frequency shifts are introduced.
+//! [`solve_equivalent`] retains `[[A,−B],[−B,−A]] [Ur,Ui]=[Fr,−Fi]`, with
+//! interleaved pairs, as a separate arithmetic check. Reference: Day and Heroux,
+//! *Solving Complex-Valued Linear Systems via Equivalent Real Formulations*,
+//! SIAM J. Sci. Comput. 23(2):480–498 (2001),
+//! <https://doi.org/10.1137/S1064827500372262>. [`crate::ldlt`] supplies its real
+//! pivoted factor. No normal equations, artificial damping or frequency shifts
+//! are introduced. For B=0, both paths use one n-dimensional real factor.
 //!
-//! This trades up to four real factor entries per original entry for reuse of
-//! the tested pivoted factorization. The symbolic cap is checked before numeric
-//! allocation. For B = 0, one n-dimensional real factor serves both right sides.
-//! Refinement and the final residual use the supplied matrices. A failed local
-//! pivot is a refusal, not proof of a physical resonance: sparse LDLᵀ does not
-//! delay pivots to a later supernode.
+//! Symbolic capacity is checked before numeric allocation. A failed local
+//! pivot is a refusal, not proof of physical resonance: neither factor delays
+//! pivots to a later supernode. Refinement checks the original complex equations.
 //!
 //! Iterative refinement uses the original complex residual, with compensated
 //! summation (N. J. Higham, *The Accuracy of Floating Point Summation*, SIAM J.
@@ -34,6 +32,8 @@ use crate::cholesky::{FactorError, UpperColumns};
 use crate::ldlt::{Kind, Symmetric};
 use crate::sparse::Csr;
 use crate::{Error, Limits, Result};
+
+mod native;
 
 /// Both parts of a phasor, in the same degree-of-freedom order.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -86,7 +86,7 @@ pub struct Solution {
     pub residual: Residual,
     /// Stored real entries in the numeric factor, excluding indices and workspace.
     pub factor_entries: usize,
-    /// n for real-only matrices, 2n for the symmetric equivalent.
+    /// n for real/native complex factors, 2n for the real symmetric equivalent.
     pub factor_equations: usize,
 }
 
@@ -181,9 +181,19 @@ fn factor_error(e: FactorError, interleaved: bool) -> Error {
     }
 }
 
-/// Solve (A + i B) u = f, with a bounded real factorization and at most three
+/// Solve (A + i B) u = f, with a bounded native factorization and at most three
 /// refinement steps. The caller supplies A and B at the requested frequency.
 pub fn solve(a: &Csr, b: &Csr, rhs: &Vector, limits: &Limits) -> Result<Solution> {
+    solve_using(a, b, rhs, limits, true)
+}
+
+/// The interleaved real equivalent, retained as an independent arithmetic path
+/// for checking the native complex factor. It uses the same real-entry cap.
+pub fn solve_equivalent(a: &Csr, b: &Csr, rhs: &Vector, limits: &Limits) -> Result<Solution> {
+    solve_using(a, b, rhs, limits, false)
+}
+
+fn solve_using(a: &Csr, b: &Csr, rhs: &Vector, limits: &Limits, native: bool) -> Result<Solution> {
     fieldcraft_model::progress::check()?;
     pair(a, b, limits)?;
     rhs.check(a.n)?;
@@ -197,6 +207,12 @@ pub fn solve(a: &Csr, b: &Csr, rhs: &Vector, limits: &Limits) -> Result<Solution
             f.solve(&mut r.real)?;
             f.solve(&mut r.imaginary)
         })?;
+        (u, f.entries(), a.n)
+    } else if native {
+        let f = native::Factor::new(a, b, limits.max_factor_entries).map_err(|e| factor_error(e, false))?;
+        let mut u = rhs.clone();
+        f.solve(&mut u)?;
+        let u = refine(a, b, rhs, u, |r| f.solve(r))?;
         (u, f.entries(), a.n)
     } else {
         let matrix = equivalent(a, b, limits)?;

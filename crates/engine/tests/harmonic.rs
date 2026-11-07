@@ -122,3 +122,17 @@ fn material_damping_units_and_unsupported_exports_do_not_drop_coefficients() {
         assert!((values[name] - expected).abs() < 1e-14, "{damping}");
     }
 }
+
+#[test]
+fn harmonic_complex_memory_cap_is_explicit_and_preserves_results_on_refusal() {
+    let mut s = oscillator();
+    let expected = s.execute("solve.harmonic", &json!({"step":"Sweep"})).unwrap();
+    let actual = s.execute("solve.harmonic", &json!({"step":"Sweep","max_factor_entries":3_200_000_000u64})).unwrap();
+    assert_eq!(expected, actual);
+    let count = s.solved_steps().count();
+    let error = s.execute("solve.harmonic", &json!({"step":"Sweep","max_factor_entries":4_000_000_001u64})).unwrap_err().to_string();
+    assert!(error.contains("max_factor_entries"), "{error}");
+    assert_eq!(s.solved_steps().count(), count);
+    let schema = fieldcraft_engine::schema::json_schema(fieldcraft_engine::find_command("solve.harmonic").unwrap().form.unwrap());
+    assert_eq!(schema["properties"]["max_factor_entries"]["maximum"], 4_000_000_000u64);
+}

@@ -1631,6 +1631,13 @@ API, Crossref, Open Library).
 
 ## Part T: Steady-state harmonic response (M16)
 
+- J. R. Bunch, *Stable algorithms for solving symmetric and skew-symmetric systems*,
+  Bull. Austral. Math. Soc. 26 (1982), 107–119, §4,
+  [doi:10.1017/S0004972700005621](https://doi.org/10.1017/S0004972700005621):
+  complex symmetric diagonal pivoting with 1×1/2×2 blocks. The native harmonic factor
+  specializes the existing supernodal LDLᵀ loops of Part P to complex arithmetic,
+  comparing moduli in the bounded rook search. It uses transpose products, not conjugates,
+  and shares the existing symbolic structure and deterministic task schedule.
 - J. K. Vandiver, MIT OpenCourseWare 2.003SC (2011), lectures 24–25,
   [modal response to harmonic forcing](https://ocw.mit.edu/courses/2-003sc-engineering-dynamics-fall-2011/resources/lecture-25-modal-analysis-response-to-ics-and-to-harmonic-forces/).
   Real modes are mass normalized; nonproportional viscous and structural loss matrices retain
