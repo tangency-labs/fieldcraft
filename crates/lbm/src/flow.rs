@@ -707,7 +707,9 @@ impl Flow {
             FaceCondition::Wall {} => Some([0.0; 3]),
             _ => None,
         };
-        let is_slip = |face: BoxFace| matches!(domain.faces.get(face), FaceCondition::Slip {});
+        // A symmetry plane is a slip face to the flow (and adiabatic: the model holds it so).
+        let is_slip = |face: BoxFace| domain.faces.get(face).is_slip();
+        let is_symmetry = |face: BoxFace| domain.faces.get(face).is_symmetry();
         // The wall-function bounce reflects at its walls instead of bouncing back; only at rest.
         let wall_bounce = setup.wall_model == Some(WallModel::SpaldingBounceHalfway);
         if wall_bounce && let Some(face) = BoxFace::ALL.iter().find(|f| matches!(domain.faces.get(**f), FaceCondition::MovingWall { .. })) {
@@ -847,7 +849,10 @@ impl Flow {
                     }
                     Some(_) => {
                         // The specular reflection at `face`: from the same cell layer, the
-                        // tangential components shifted; bounce-back at an edge or corner.
+                        // tangential components shifted; bounce-back at an edge or corner. A
+                        // symmetry plane mirrors the obstacles too: a population reflected from
+                        // an obstacle cell bounces back off the obstacle's mirror image, its
+                        // momentum the obstacle's.
                         let reflect = |face: BoxFace| {
                             let a = face.axis();
                             let mut m = s;
@@ -860,6 +865,9 @@ impl Flow {
                             match inside.then(|| index(m)) {
                                 Some(from) if single && fluid.get(from as usize).copied().unwrap_or(false) => {
                                     Rule::Reflect { from, q: q2 as u8, group: face.index() as u32 }
+                                }
+                                Some(from) if single && is_symmetry(face) && owner.get(from as usize).is_some_and(|k| *k != NONE) => {
+                                    obstacle_link(cell, from, q)
                                 }
                                 _ => Rule::Bounce { group: face.index() as u32, du: 0.0 },
                             }
@@ -915,6 +923,15 @@ impl Flow {
                             if profile == Profile::Parabolic {
                                 for t in [t1, t2].into_iter().filter(|t| !periodic[*t]) {
                                     let s = (ijk[t] as f64 + 0.5) / grid.cells[t] as f64;
+                                    // A symmetry plane at one end is the middle of the whole
+                                    // model's profile (the half of a channel); at both, the
+                                    // direction is unbounded, as a periodic one.
+                                    let s = match (is_symmetry(BoxFace::of(t, false)), is_symmetry(BoxFace::of(t, true))) {
+                                        (false, false) => s,
+                                        (false, true) => s / 2.0,
+                                        (true, false) => 0.5 + s / 2.0,
+                                        (true, true) => 0.5,
+                                    };
                                     scale *= 4.0 * s * (1.0 - s);
                                 }
                             }
@@ -1049,7 +1066,9 @@ impl Flow {
                         let wall = wall_velocity(face).is_some() || is_slip(face);
                         wall.then(|| ts.faces.get(face.index()).copied().unwrap_or_default())
                     });
-                    let layout = Layout { grid: &grid, periodic, conducting: &conducting, walls, kf: ts.conductivity, contacts: &ts.contacts };
+                    let mirrors = BoxFace::ALL.map(is_symmetry);
+                    let layout =
+                        Layout { grid: &grid, periodic, conducting: &conducting, walls, mirrors, kf: ts.conductivity, contacts: &ts.contacts };
                     Some(SolidHeat::build(
                         &layout,
                         solids,

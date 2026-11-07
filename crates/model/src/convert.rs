@@ -251,7 +251,7 @@ impl Quantities for Load {
 
 fn face_condition(c: &mut FaceCondition, f: &mut dyn FnMut(Q, &mut f64)) {
     match c {
-        FaceCondition::Wall {} | FaceCondition::Slip {} | FaceCondition::Periodic {} => {}
+        FaceCondition::Wall {} | FaceCondition::Slip {} | FaceCondition::Symmetry {} | FaceCondition::Periodic {} => {}
         FaceCondition::MovingWall { velocity } | FaceCondition::Velocity { velocity, profile: _ } => each(velocity, Q::Velocity, f),
         FaceCondition::Pressure { pressure, .. } => f(Q::Pressure, pressure),
     }

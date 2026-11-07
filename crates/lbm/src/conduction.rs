@@ -7,7 +7,8 @@
 //!   between two cells is `g (T_b − T_a)` with `g` the harmonic mean of their conductivities
 //!   along the face's axis (Patankar §4.2-4: the series resistance of the two half cells, which
 //!   keeps the flux continuous across a change of material), a held box face adds `2 k (T_w − T)`
-//!   (half a cell to the wall), a flux face its flux. Explicit in time, sub-cycled so that every
+//!   (half a cell to the wall), a flux face its flux; across a symmetry plane a cell faces its
+//!   own mirror image, so no heat crosses it. Explicit in time, sub-cycled so that every
 //!   cell's sum of conductances over its heat capacity stays below one (the explicit limit). The
 //!   heat a held or flux box face takes from the solid is counted as that face's heat.
 //!   Conductivities may differ per axis (a board's in-plane and through-thickness values):
@@ -171,6 +172,8 @@ pub struct Layout<'a> {
     pub conducting: &'a [u32],
     /// Each box face's thermal condition when it is a wall (`None`: open or periodic).
     pub walls: [Option<ThermalCondition>; 6],
+    /// The box faces that are symmetry planes: a solid cell on one faces its own mirror image.
+    pub mirrors: [bool; 6],
     /// The fluid's lattice conductivity.
     pub kf: f64,
     /// The thermal interface layers between solids.
@@ -253,6 +256,13 @@ impl SolidHeat {
                 if !layout.periodic[axis] && !(0..dims[axis]).contains(&nb[axis]) {
                     let face = BoxFace::of(axis, nb[axis] >= dims[axis]);
                     let wall = face.index() as u8;
+                    // Its mirror image is at its own temperature, so nothing crosses the plane;
+                    // the face still counts in the explicit limit, so the sub-steps (and the
+                    // transient) are the whole model's.
+                    if layout.mirrors.get(face.index()).copied().unwrap_or(false) {
+                        *slot = Face::Solid { other: own as u32, g: series(ks, ks) };
+                        continue;
+                    }
                     *slot = match layout.walls.get(face.index()).copied().flatten() {
                         Some(ThermalCondition::Temperature { value }) => Face::Held { t: value, g: 2.0 * ks, wall },
                         Some(ThermalCondition::Flux { value }) => Face::Flux { q: value, wall },

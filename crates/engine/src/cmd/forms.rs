@@ -693,6 +693,7 @@ const FACE_CONDITION: &[Variant] = &[
     variant("wall", "Wall", &[]),
     variant("moving_wall", "Moving wall", &[xyz("velocity", "Velocity", D::Velocity).help("The velocity of the moving wall.").req()]),
     variant("slip", "Slip", &[]),
+    variant("symmetry", "Symmetry plane", &[]),
     variant(
         "velocity",
         "Velocity inlet",
