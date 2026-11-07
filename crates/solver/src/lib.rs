@@ -99,7 +99,7 @@ pub struct Limits {
     /// Degrees of freedom of the mesh.
     pub max_dofs: usize,
     /// Factor storage in 8-byte real slots (two per native complex entry);
-    /// also bounds the Lanczos basis memory.
+    /// also bounds the Lanczos basis and stored laminate ply-field memory (each separately).
     pub max_factor_entries: usize,
     /// Lanczos vectors (iterations × block size).
     pub max_lanczos_vectors: usize,

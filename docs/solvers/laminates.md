@@ -1,8 +1,9 @@
 # Laminate kernels
 
 The constitutive and MITC kernels are implemented in `fem::laminate`, `fem::failure` and
-`fem::shell`. Integration with model sections, commands and solver decks is in progress;
-the tests below are kernel tests, not a completed command oracle or cross-program validation.
+`fem::shell`. Composite model sections feed linear static, frequency and flat-plate buckling
+analyses. Orthotropic single-layer shells use the same path. Commands and cross-program
+validation are tracked separately; kernel tests alone do not establish a completed oracle.
 
 ## Coordinates and thickness
 
@@ -13,6 +14,9 @@ axial about its specified axis. A shell projects an explicitly selected frame ax
 plane at the element centre, then rotates by the ply angle. Use the hoop or axial reference
 on a cylindrical surface; a radial reference parallel to its normal is an error. The frame is
 constant within each facet. Angles stored by the model and FEM kernels are radians.
+Without an explicit frame, Tri3 uses its first edge; Quad4 uses the line between the
+midpoints of opposite edges and the normal of its two diagonals. A deck writer must not
+replace this convention by a vendor's default global-axis projection.
 
 With total thickness h and fractional offset o, the laminate centre is e = −oh, and its
 bottom is z = e − h/2 relative to the nodal surface. The kinematics remain those of the existing
@@ -90,6 +94,22 @@ It is not a curved-shell or finite-rotation tangent and includes no follower-loa
 The solver must enforce a planar pre-buckling state before exposing this kernel. See
 [MIT 2.080J, Lecture 11, §§11.1–11.2](https://ocw.mit.edu/courses/2-080j-structural-mechanics-fall-2013/345c462fe40421ea0f795bd35d2e4af1_MIT2_080JF13_Lecture11.pdf)
 for the flat-plate stability equations (the lecture uses the opposite compression sign).
+
+The solver enforces that scope: shell reference surfaces must be coplanar, and the static
+preload must have neither normal slopes nor director tilt. Unsymmetric laminates are not
+silently treated as flat when their B coupling produces bending. Nonlinear shell rotations,
+curved-shell buckling, thermal laminate resultants and progressive damage remain outside
+this capability. Oriented solids support linear static/modal/buckling paths with material
+directions evaluated at each stiffness point; oriented thermal strain and nonlinear paths
+are explicitly refused (see `solid-material-axes.md`).
+
+`solver/tests/composite.rs` verifies the exact cylindrical pure-bending strip, density-weighted
+gravity reactions including I1, and the first three Navier FSDT frequencies with rotary
+inertia for h/L = 0.01 and 0.1. Refinement 4→8→16 reduces first-mode errors; at 16×16 all three
+frequencies must be within 5% and the first within 2%. The 8×8 flat-plate buckling result
+must be within 4% of thin CLT. Static, frequency and buckling outputs are compared bit for
+bit across 1, 2 and 7 threads. `Shell::ply_fields_at` evaluates the MITC strain directly at
+specified natural coordinates, allowing comparisons at identical recovery locations.
 
 The new calculations have fixed iteration and accumulation order. Thread-count and platform
 claims must be checked separately; these local tests alone are not a cross-platform bitwise

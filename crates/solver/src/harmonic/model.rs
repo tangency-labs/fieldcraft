@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use fieldcraft_fem::element::extrapolation;
 use fieldcraft_model::harmonic::{Damping, Method};
-use fieldcraft_model::{Model, OutputVariable, Procedure, Resolved, Step};
+use fieldcraft_model::{Model, OutputVariable, Procedure, Resolved, SectionKind, Step};
 use serde::{Deserialize, Serialize};
 
 use super::{Matrices, Modal};
@@ -92,7 +92,7 @@ fn damping_matrices(mesh: &Mesh, graph: &NodeGraph, materials: &BTreeMap<u32, Da
         let Some(d) = materials.get(&e.label) else { continue };
         let kernel = e.kernel()?;
         let at = |err| Error::element(e.label, err);
-        let stiffness = kernel.stiffness(&e.d).map_err(at)?.data;
+        let stiffness = e.stiffness()?.data;
         let kinds = kernel.dofs().node;
         if let Some(c) = &mut c {
             add_block(c, &mesh.layout, &e.nodes, kinds, &scaled(&stiffness, d.beta))?;
@@ -177,7 +177,7 @@ fn stresses(mesh: &Mesh, u: &[f64], displacement: &[[f64; 3]]) -> Result<Vec<[f6
         let kernel = e.kernel()?;
         let at = |err| Error::element(e.label, err);
         let ue: Vec<_> = e.nodes.iter().map(|n| displacement.get(*n).copied().unwrap_or_default()).collect();
-        let points = kernel.stresses_with(&e.d, &ue, None).map_err(at)?;
+        let points = e.stresses_from(&ue, None, None)?;
         let values = points.iter().map(|p| p.stress).collect::<Vec<_>>();
         let nodal = extrapolation(kernel.ty(), kernel.rule()).map_err(at)?.apply(&values);
         accumulate(&e.nodes, &nodal);
@@ -228,6 +228,17 @@ pub fn solve_harmonic(model: &Model, name: Option<&str>, limits: &Limits) -> Res
             )
         ) {
             return Err(Error::NotSupported(format!("harmonic thermal load `{name}`")));
+        }
+    }
+    // A laminate has no single section material. Until ply-weighted damping is
+    // assembled, refuse it explicitly instead of silently dropping ply damping.
+    for (name, section) in model.sections() {
+        if let SectionKind::CompositeShell { layup } = &section.kind {
+            for ply in &layup.plies {
+                if model.materials().get(&ply.material).and_then(|m| m.damping).is_some_and(|d| d != Damping::default()) {
+                    return Err(Error::NotSupported(format!("section `{name}`: harmonic per-ply material damping; use analysis-step damping")));
+                }
+            }
         }
     }
     let mesh = Mesh::new(model, &resolved, limits.max_dofs)?;

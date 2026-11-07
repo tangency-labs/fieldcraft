@@ -148,10 +148,15 @@ fn nafems_r0093_one_element_laminate_stress() {
         u[i] = value;
     }
     let fields = shell.stresses(&u).unwrap();
+    let centre = shell.ply_fields_at(&u, [0.0, 0.0]).unwrap();
+    assert!(shell.ply_fields_at(&u, [1.01, 0.0]).is_err());
+    assert!(shell.ply_fields_at(&u, [f64::NAN, 0.0]).is_err());
+    assert!(shell.ply_fields_at(&u[..23], [0.0, 0.0]).is_err());
     let expected = [[-5.128, 4.407, -1.663], [12.59, 1.983, 2.572], [8.520, 0.1256, -2.051], [9.357, -1.859, -0.5557]];
     for (ply, reference) in expected.iter().enumerate() {
         for (j, &component) in [0, 1, 3].iter().enumerate() {
             let actual = fields.plies.iter().map(|p| p[ply].middle.stress[component] / 1e6 / 4.0).sum::<f64>();
+            assert!((centre[ply].middle.stress[component] / 1e6 - actual).abs() < 1e-10);
             println!("NAFEMS R0093/1 ply={} component={component}, stress_MPa={actual:.9}, reference={}", ply + 1, reference[j]);
             assert!((actual - reference[j]).abs() <= 0.01 * reference[j].abs() + 0.0005, "ply {ply}: {actual} != {}", reference[j]);
         }

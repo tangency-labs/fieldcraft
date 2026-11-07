@@ -63,8 +63,13 @@ axis and failure-state tests pass. Composite shell sections now carry their ply 
 section orientations and material strengths through JSON, reference checks and unit conversion.
 Abaqus composite shells and rectangular/cylindrical orientations now round-trip, with
 explicit element frames for default laminate directions and named refusals for unsupported
-strength laws. Other unsupported solver/deck paths remain explicit. Command, shell/solid
-solver and other deck integration, the laminate oracle and black-box comparisons remain in progress.
+strength laws. Linear static and frequency analyses use the laminate stiffness and all
+three mass moments; flat-plate buckling enforces a planar pre-buckling state. Oriented
+solid stiffness and stresses evaluate rectangular or cylindrical axes at integration points.
+Theory tests cover pure bending, Navier static/frequency convergence, flat buckling,
+gravity and thread-count identity. The public NAFEMS R0093/1 stress benchmark passes.
+Other unsupported solver/deck paths remain explicit. Command and other deck integration,
+the laminate oracle and black-box qualification remain in progress.
 
 ## 0.6.0: the UI/UX release
 

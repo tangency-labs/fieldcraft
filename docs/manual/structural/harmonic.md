@@ -45,6 +45,11 @@ Material definitions accept the same `damping` object. Material and step coeffic
 is used, including point masses and rotary inertia. Material density is required where an
 element carries inertia. Dashpots add their assembled viscous matrix.
 
+Oriented solids use the same material-axis stiffness and stress recovery as static
+analysis, including material damping. Laminated shells support analysis-step damping;
+nonzero damping on individual ply materials is explicitly refused because ply-weighted
+damping assembly is not yet implemented.
+
 ## Equations and damping
 
 Physical quantities follow `u(t) = Re(U exp(i omega t))`, with `omega = 2 pi f`:

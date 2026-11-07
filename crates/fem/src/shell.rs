@@ -649,6 +649,27 @@ impl Shell {
         finite_vector(rotate_to_global(&self.local_mass(self.section.geometric_moments())?.mul_vec(&r), &self.axes), "body force")
     }
 
+    /// Material-axis fields at an explicitly chosen in-plane natural coordinate, without
+    /// nodal extrapolation or averaging across elements/layers. The full MITC operator is
+    /// evaluated there; the quadrilateral domain is [-1,1]², the triangle r,s≥0, r+s≤1.
+    pub fn ply_fields_at(&self, u: &[f64], natural: [f64; 2]) -> Result<Vec<PlyFields>> {
+        if u.len() != self.size() || u.iter().chain(&natural).any(|v| !v.is_finite()) {
+            return Err(Error::Invalid("ply recovery needs finite coordinates and all element displacements".into()));
+        }
+        let [r, s] = natural;
+        let inside = if self.kind == ElementKind::Tri3 { r >= 0.0 && s >= 0.0 && r + s <= 1.0 } else { r.abs() <= 1.0 && s.abs() <= 1.0 };
+        if !inside {
+            return Err(Error::Invalid("ply recovery coordinate lies outside the element".into()));
+        }
+        let Constitutive::Laminated(section) = &self.section else {
+            return Err(Error::Invalid("ply recovery requires a laminated or material-oriented shell".into()));
+        };
+        let ul = rotate_to_local(u, &self.axes);
+        let (b, _) = self.operator(&self.tying()?, r, s)?;
+        let strain = std::array::from_fn(|a| b[a].iter().zip(&ul).map(|(x, y)| x * y).sum());
+        section.recover(strain)
+    }
+
     /// Section forces and surface stresses for the element's nodal displacements and rotations
     /// (global, 6 per node).
     pub fn stresses(&self, u: &[f64]) -> Result<ShellStress> {

@@ -1132,6 +1132,9 @@ impl Run<'_> {
 /// Refuse what nonlinear steps cannot take yet, and warn about what they simplify.
 fn check_supported(model: &Model, mesh: &Mesh, step: &Step, settings: &NonlinearStatic, warnings: &mut Vec<String>) -> Result<()> {
     let at = |what: String| Error::NotSupported(format!("{what} in nonlinear steps (step `{}`)", step.name));
+    if let Some((name, _)) = model.sections().iter().find(|(_, s)| s.orientation.is_some()) {
+        return Err(at(format!("material orientation of section `{name}`")));
+    }
     if let Some(t) = mesh.trusses.first() {
         return Err(at(format!("trusses (element {})", t.label)));
     }

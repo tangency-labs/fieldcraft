@@ -197,7 +197,7 @@ pub(crate) fn assemble(mesh: &Mesh, graph: &NodeGraph, mass: Option<MassKind>) -
             let Some(e) = elements.get(i) else { return Err(Error::Internal("element index".into())) };
             let kernel = e.kernel()?;
             let at = |err| Error::element(e.label, err);
-            let stiffness = kernel.stiffness(&e.d).map_err(at)?.data;
+            let stiffness = e.stiffness()?.data;
             let element_mass = match mass {
                 None => None,
                 Some(kind) => {
@@ -406,6 +406,7 @@ pub fn solve_static(model: &Model, step: Option<&str>, limits: &Limits) -> Resul
 pub(crate) fn static_on(setup: &Setup<'_>, limits: &Limits) -> Result<StaticResult> {
     fieldcraft_model::progress::check()?;
     let (model, resolved, mesh, step) = (setup.model, setup.resolved, setup.mesh, setup.step);
+    bound_ply_results(mesh, limits)?;
     let mut warnings: Vec<String> = resolved.warnings.iter().map(ToString::to_string).chain(mesh.warnings.iter().cloned()).collect();
     warnings.extend(inelastic_warnings(model));
     // The temperature field: the coupled step's own heat solution, or the step's temperature
@@ -471,7 +472,7 @@ pub(crate) fn static_on(setup: &Setup<'_>, limits: &Limits) -> Result<StaticResu
         let ue: Vec<[f64; 3]> = e.nodes.iter().map(|n| displacement.get(*n).copied().unwrap_or_default()).collect();
         let thermal = field.as_deref().and_then(|t| e.thermal_strain(t, &initial.temperature));
         let sigma0 = e.initial_stress(&initial.stress);
-        let points = kernel.stresses_from(&e.d, &ue, thermal.as_ref(), sigma0.as_deref()).map_err(|err| Error::element(e.label, err))?;
+        let points = e.stresses_from(&ue, thermal.as_ref(), sigma0.as_deref())?;
         Ok((points, kernel.ty(), kernel.rule()))
     });
     for (e, computed) in mesh.elements.iter().zip(all_points) {
@@ -569,6 +570,29 @@ pub(crate) fn static_on(setup: &Setup<'_>, limits: &Limits) -> Result<StaticResu
         nonlinear: None,
         contacts: Vec::new(),
     })
+}
+
+/// A small shell mesh can have a much larger ply-field result than its sparse factor.
+/// Account for the stored nested vectors before assembling or recovering any fields.
+fn bound_ply_results(mesh: &Mesh, limits: &Limits) -> Result<()> {
+    use fieldcraft_fem::laminate::{PlyFields, PlyPoint};
+    let maximum = limits.max_factor_entries as u128 * std::mem::size_of::<f64>() as u128;
+    let mut bytes = 0u128;
+    for element in &mesh.structural {
+        let crate::system::Section::Laminated { plies, .. } = &element.section else { continue };
+        let per_node = std::mem::size_of::<Vec<PlyFields>>() as u128
+            + plies
+                .iter()
+                .map(|p| std::mem::size_of::<PlyFields>() as u128 + u128::from(p.points) * std::mem::size_of::<PlyPoint>() as u128)
+                .sum::<u128>();
+        bytes += element.nodes.len() as u128 * per_node;
+        if bytes > maximum {
+            return Err(Error::Limit(format!(
+                "laminate ply results need at least {bytes} bytes; the result budget is {maximum} bytes (max_factor_entries times sizeof(f64)); reduce the mesh, ply/sample count or raise the budget"
+            )));
+        }
+    }
+    Ok(())
 }
 
 struct ShiftInvert<'a> {

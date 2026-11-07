@@ -12,6 +12,7 @@ use fieldcraft_fem::constitutive::MaterialModel;
 use fieldcraft_fem::dense::Matrix;
 use fieldcraft_fem::element::{Formulation, Solid, ThermalStrain};
 use fieldcraft_fem::finite::{Kinematics, Temperature};
+use fieldcraft_fem::laminate::{Laminate, PlyProperties, resolve_plies};
 use fieldcraft_fem::plane::{Plane, Theory};
 use fieldcraft_fem::plasticity::J2;
 use fieldcraft_fem::shell::{Shell, ShellSection};
@@ -21,7 +22,10 @@ use fieldcraft_model::nodal::edge_pressure;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use fieldcraft_model::{Elastic, ElementKind, Hyperelastic, Integration, Load, Model, Resolved, SectionKind, Step, Target, centrifugal_acceleration};
+use fieldcraft_model::{
+    Elastic, ElementKind, Hyperelastic, Integration, Load, MaterialOrientation, Model, Resolved, SectionKind, SectionOrientation, Step, Target,
+    centrifugal_acceleration,
+};
 
 use crate::analysis::MassKind;
 use crate::{Error, Result};
@@ -36,6 +40,8 @@ pub struct Elem {
     pub xyz: Vec<[f64; 3]>,
     pub formulation: Formulation,
     pub d: Elasticity,
+    /// Linear solid material axes; cylindrical frames are evaluated at every stiffness point.
+    pub material_axes: Option<(Elastic, MaterialOrientation)>,
     pub density: Option<f64>,
     /// The 2D theory of an element of a 2D section; `None` for solids.
     pub theory: Option<Theory>,
@@ -217,6 +223,31 @@ impl Kernel<'_> {
 }
 
 impl Elem {
+    pub fn stiffness(&self) -> Result<Matrix> {
+        let k = self.kernel()?;
+        let result = match (k, self.material_axes) {
+            (Kernel::Solid(s), Some((elastic, orientation))) => s.stiffness_in_material_axes(&elastic, &orientation),
+            (_, None) => k.stiffness(&self.d),
+            _ => return Err(Error::NotSupported("material axes in 2D continuum elements".into())),
+        };
+        result.map_err(|e| Error::element(self.label, e))
+    }
+
+    pub fn stresses_from(&self, u: &[[f64; 3]], thermal: Option<&ThermalStrain>, initial: Option<&[[f64; 6]]>) -> Result<Vec<PointStress>> {
+        let k = self.kernel()?;
+        let result = match (k, self.material_axes) {
+            (Kernel::Solid(s), Some((elastic, orientation))) => {
+                if thermal.is_some() {
+                    return Err(Error::NotSupported(format!("thermal strain with material axes (element {})", self.label)));
+                }
+                s.stresses_in_material_axes(&elastic, &orientation, u, initial)
+            }
+            (_, None) => k.stresses_from(&self.d, u, thermal, initial),
+            _ => return Err(Error::NotSupported("material axes in 2D continuum elements".into())),
+        };
+        result.map_err(|e| Error::element(self.label, e))
+    }
+
     pub fn kernel(&self) -> Result<Kernel<'_>> {
         let k = match self.theory {
             None => Solid::new(self.kind, &self.xyz, self.formulation).map(Kernel::Solid),
@@ -288,6 +319,7 @@ struct SolidEntry {
     nodes: Vec<u32>,
     formulation: Formulation,
     d: Elasticity,
+    material_axes: Option<(Elastic, MaterialOrientation)>,
     density: Option<f64>,
     theory: Option<Theory>,
     dofs: ElementDofs,
@@ -297,9 +329,10 @@ struct SolidEntry {
 }
 
 /// What a shell or beam element is made of.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum Section {
     Shell(ShellSection),
+    Laminated { plies: Arc<[PlyProperties]>, offset: f64, orientation: Option<SectionOrientation> },
     Beam { section: BeamSection, orientation: [f64; 3] },
 }
 
@@ -327,9 +360,18 @@ impl Structural {
     pub const KINDS: DofSet = DofSet::STRUCTURAL;
 
     pub fn kernel(&self) -> Result<StructuralKernel> {
-        let k = match self.section {
-            Section::Shell(s) => Shell::new(self.kind, &self.xyz, s).map(StructuralKernel::Shell),
-            Section::Beam { section, orientation } => Beam::new(&self.xyz, orientation, section).map(StructuralKernel::Beam),
+        let k = match &self.section {
+            Section::Shell(s) => Shell::new(self.kind, &self.xyz, *s).map(StructuralKernel::Shell),
+            Section::Laminated { plies, offset, orientation } => Shell::laminated(
+                self.kind,
+                &self.xyz,
+                plies,
+                *offset,
+                orientation.as_ref().map(|o| &o.frame),
+                orientation.map_or(1, |o| o.shell_reference_axis),
+            )
+            .map(StructuralKernel::Shell),
+            Section::Beam { section, orientation } => Beam::new(&self.xyz, *orientation, *section).map(StructuralKernel::Beam),
         };
         k.map_err(|e| Error::element(self.label, e))
     }
@@ -346,9 +388,15 @@ impl StructuralKernel {
     /// The consistent or lumped mass over every element degree of freedom.
     pub fn mass(&self, density: f64, kind: MassKind) -> fieldcraft_fem::Result<Matrix> {
         Ok(match (self, kind) {
-            (StructuralKernel::Shell(s), MassKind::Consistent) => s.mass(density)?,
+            (StructuralKernel::Shell(s), MassKind::Consistent) => {
+                if s.is_laminated() {
+                    s.ply_mass()?
+                } else {
+                    s.mass(density)?
+                }
+            }
             (StructuralKernel::Shell(s), MassKind::Lumped) => {
-                let diagonal = s.lumped_mass(density)?;
+                let diagonal = if s.is_laminated() { s.ply_lumped_mass()? } else { s.lumped_mass(density)? };
                 let mut m = Matrix::zeros(diagonal.len());
                 for (i, v) in diagonal.iter().enumerate() {
                     m.add(i, i, *v);
@@ -365,6 +413,14 @@ impl StructuralKernel {
         match self {
             StructuralKernel::Shell(s) => s.body_force(b),
             StructuralKernel::Beam(beam) => Ok(beam.body_force(b)),
+        }
+    }
+
+    /// A laminate integrates each ply's inertia, including its first mass moment.
+    pub fn gravity(&self, density: f64, acceleration: [f64; 3]) -> fieldcraft_fem::Result<Vec<f64>> {
+        match self {
+            StructuralKernel::Shell(s) if s.is_laminated() => s.ply_gravity(acceleration),
+            _ => self.body_force(acceleration.map(|a| density * a)),
         }
     }
 }
@@ -494,15 +550,12 @@ impl Mesh {
             return Err(Error::NotSupported(format!("{what} in axisymmetric models")));
         }
         for (name, section) in model.sections() {
-            if section.orientation.is_some() {
-                return Err(Error::NotSupported(format!("material orientation of section `{name}` in the structural solver")));
-            }
             let theory = Theory::from_section(&section.kind);
             let rod = match section.kind {
                 SectionKind::Rod { area } => Some(area),
                 _ => None,
             };
-            let shell_or_beam = matches!(section.kind, SectionKind::Shell { .. } | SectionKind::Beam { .. });
+            let shell_or_beam = matches!(section.kind, SectionKind::Shell { .. } | SectionKind::CompositeShell { .. } | SectionKind::Beam { .. });
             if shell_or_beam && planar.is_some() {
                 return Err(Error::NotSupported(format!("{} sections in 2D models (section `{name}`)", section.kind.name())));
             }
@@ -515,6 +568,29 @@ impl Mesh {
             if theory.is_some() != planar.is_some() && rod.is_none() {
                 return Err(Error::NotSupported("2D and solid sections in one model".into()));
             }
+            let set = resolved.sets.get(&section.set).ok_or_else(|| Error::Invalid(format!("set `{}` is not resolved", section.set)))?;
+            if let SectionKind::CompositeShell { layup } = &section.kind {
+                let plies = resolve_plies(layup, model).map_err(|e| Error::Invalid(format!("section `{name}`: {e}")))?;
+                let laminate = Laminate::new(&plies, layup.offset).map_err(|e| Error::Invalid(format!("section `{name}`: {e}")))?;
+                // This average is only a presence/total-mass summary. Element mass and gravity
+                // use the individual ply densities and all three moments, never this average.
+                let density = if plies.iter().all(|p| p.density.is_some()) {
+                    Some(laminate.mass_moments().map_err(|e| Error::Invalid(format!("section `{name}`: {e}")))?[0] / laminate.thickness())
+                } else {
+                    None
+                };
+                let body = Section::Laminated { plies: plies.into(), offset: layup.offset, orientation: section.orientation };
+                if section.formulation.integration == Integration::Reduced {
+                    warnings.push(format!(
+                        "section `{name}`: shells are MITC elements with full integration; reduced integration is solved the same way"
+                    ));
+                }
+                for &label in &set.elements {
+                    let el = model.element(label).ok_or_else(|| Error::Invalid(format!("element {label} is missing")))?;
+                    structural.push((label, el.kind, el.nodes.clone(), density, body.clone()));
+                }
+                continue;
+            }
             let material = model
                 .material(&section.material)
                 .ok_or_else(|| Error::Invalid(format!("section `{name}`: material `{}` is missing", section.material)))?;
@@ -526,19 +602,34 @@ impl Mesh {
                     section.material
                 )));
             }
-            let set = resolved.sets.get(&section.set).ok_or_else(|| Error::Invalid(format!("set `{}` is not resolved", section.set)))?;
             let bad = |e: fieldcraft_fem::Error| match e {
                 fieldcraft_fem::Error::NotSupported(m) => Error::NotSupported(format!("section `{name}`: {m}")),
                 e => Error::Invalid(format!("section `{name}`, material `{}`: {e}", section.material)),
             };
             let shared = match &section.kind {
-                SectionKind::Shell { thickness, offset, .. } => {
+                SectionKind::Shell { thickness, offset, points } => {
                     if section.formulation.integration == Integration::Reduced {
                         warnings.push(format!(
                             "section `{name}`: shells are MITC elements with full integration; reduced integration is solved the same way"
                         ));
                     }
-                    Some(Section::Shell(ShellSection::new(*thickness, *offset, elastic).map_err(bad)?))
+                    Some(
+                        if section.orientation.is_some() || material.ply_strength.is_some() || matches!(elastic, Elastic::EngineeringConstants { .. })
+                        {
+                            let plies = vec![PlyProperties {
+                                elastic: *elastic,
+                                thickness: *thickness,
+                                angle: 0.0,
+                                points: *points,
+                                density: material.density,
+                                strength: material.ply_strength,
+                            }];
+                            Laminate::new(&plies, *offset).map_err(bad)?;
+                            Section::Laminated { plies: plies.into(), offset: *offset, orientation: section.orientation }
+                        } else {
+                            Section::Shell(ShellSection::new(*thickness, *offset, elastic).map_err(bad)?)
+                        },
+                    )
                 }
                 SectionKind::Beam { profile, orientation } => {
                     Some(Section::Beam { section: BeamSection::new(profile, elastic).map_err(bad)?, orientation: *orientation })
@@ -548,7 +639,7 @@ impl Mesh {
             if let Some(body) = shared {
                 for &label in &set.elements {
                     let el = model.element(label).ok_or_else(|| Error::Invalid(format!("element {label} is missing")))?;
-                    structural.push((label, el.kind, el.nodes.clone(), material.density, body));
+                    structural.push((label, el.kind, el.nodes.clone(), material.density, body.clone()));
                 }
                 continue;
             }
@@ -562,7 +653,20 @@ impl Mesh {
                 }
                 continue;
             }
-            let d = elasticity(elastic).map_err(|e| Error::Invalid(format!("material `{}`: {e}", section.material)))?;
+            let material_axes = section.orientation.map(|o| (*elastic, o.frame));
+            let d = match section.orientation.map(|o| o.frame) {
+                Some(frame @ MaterialOrientation::Rectangular { .. }) => {
+                    let axes = frame.axes_at([0.0; 3]).map_err(|e| Error::Invalid(format!("section `{name}`: {e}")))?;
+                    fieldcraft_fem::material::elasticity_in_axes(elastic, &axes)
+                }
+                _ => elasticity(elastic),
+            }
+            .map_err(|e| Error::Invalid(format!("material `{}`: {e}", section.material)))?;
+            if matches!(section.orientation.map(|o| o.frame), Some(MaterialOrientation::Cylindrical { .. }))
+                && (section.formulation.incompatible_modes || section.formulation.hybrid)
+            {
+                return Err(Error::NotSupported(format!("cylindrical material axes with incompatible or hybrid elements (section `{name}`)")));
+            }
             let plastic = match &material.plastic {
                 Some(p) => Some(Arc::new(
                     J2::from_model(elastic, Some(p), material.damage.as_ref())
@@ -584,6 +688,7 @@ impl Mesh {
                     nodes: el.nodes.clone(),
                     formulation,
                     d,
+                    material_axes,
                     density: material.density,
                     theory,
                     dofs,
@@ -666,6 +771,7 @@ impl Mesh {
                 xyz: exyz,
                 formulation: e.formulation,
                 d: e.d,
+                material_axes: e.material_axes,
                 density: e.density,
                 theory: e.theory,
                 expansion: e.expansion,
@@ -924,7 +1030,8 @@ pub fn loads(model: &Model, resolved: &Resolved, mesh: &Mesh, step: &Step, activ
                         continue;
                     }
                     let rho = e.density.ok_or_else(|| Error::Invalid(format!("load `{name}`: element {} has no density", e.label)))?;
-                    structural_body(&mut f, mesh, e, acceleration.map(|a| rho * a))?;
+                    let forces = e.kernel()?.gravity(rho, *acceleration).map_err(|err| Error::element(e.label, err))?;
+                    add_structural_forces(&mut f, mesh, e, &forces)?;
                 }
                 // Point masses take gravity on the whole model.
                 if set.is_none() {
@@ -990,9 +1097,13 @@ fn bar_body(f: &mut [f64], mesh: &Mesh, t: &Bar, b: [f64; 3]) -> Result<()> {
 /// Consistent forces and moments of a uniform force per volume on a shell or beam.
 fn structural_body(f: &mut [f64], mesh: &Mesh, e: &Structural, b: [f64; 3]) -> Result<()> {
     let forces = e.kernel()?.body_force(b).map_err(|err| Error::element(e.label, err))?;
+    add_structural_forces(f, mesh, e, &forces)
+}
+
+fn add_structural_forces(f: &mut [f64], mesh: &Mesh, e: &Structural, forces: &[f64]) -> Result<()> {
     let dofs =
         mesh.layout.element_dofs(&e.nodes, Structural::KINDS).ok_or_else(|| Error::Internal(format!("element {} degrees of freedom", e.label)))?;
-    for (d, v) in dofs.iter().zip(&forces) {
+    for (d, v) in dofs.iter().zip(forces) {
         if let Some(x) = f.get_mut(*d) {
             *x += v;
         }
@@ -1052,6 +1163,9 @@ pub fn add_element_thermal_loads(
 ) -> Result<()> {
     for (_, e) in mesh.elements.iter().enumerate().filter(|(i, _)| keep(*i)) {
         let Some(th) = e.thermal_strain(field, initial) else { continue };
+        if e.material_axes.is_some() {
+            return Err(Error::NotSupported(format!("thermal strain with material axes (element {})", e.label)));
+        }
         let forces = e.kernel()?.thermal_load(&e.d, &th).map_err(|err| Error::element(e.label, err))?;
         for (node, v) in e.nodes.iter().zip(forces) {
             add(f, &translations(mesh, *node)?, v);

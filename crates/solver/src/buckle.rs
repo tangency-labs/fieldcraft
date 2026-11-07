@@ -23,8 +23,11 @@
 //!   passes the first load factor and is factored by LDLᵀ ([`crate::ldlt`]), whose inertia counts
 //!   the load factors between 0 and σ (Sylvester's law), reported so none is missed silently.
 //!
-//! Modes are scaled to a largest component of 1 (positive). Solids and 2D elements only:
-//! trusses, shells and beams have no initial-stress stiffness yet and are refused by name.
+//! Modes are scaled to a largest component of 1 (positive). Shells use the small-slope flat
+//! plate initial-stress operator of [`fieldcraft_fem::shell::Shell::plate_geometric_stiffness`].
+//! Their reference surfaces must be coplanar and their preload must stay flat; curved shells,
+//! pre-buckling bending (including free extension–bending coupling), trusses and beams are
+//! refused. This is not a finite-rotation shell tangent or a follower-load analysis.
 
 use std::collections::BTreeMap;
 
@@ -38,7 +41,7 @@ use crate::analysis::{
 use crate::eigen::{Operator, Wanted, lanczos};
 use crate::ldlt::{Kind, Symmetric};
 use crate::sparse::{Csr, add_block};
-use crate::system::Mesh;
+use crate::system::{Mesh, Structural, StructuralKernel};
 use crate::{Error, Limits, Result};
 
 /// What a buckling eigenproblem found besides its modes.
@@ -123,12 +126,7 @@ pub fn solve_buckle(model: &Model, step: Option<&str>, limits: &Limits) -> Resul
             t.label
         )));
     }
-    if let Some(s) = mesh.structural.first() {
-        return Err(Error::NotSupported(format!(
-            "shells and beams in buckling steps (element {}): their initial-stress stiffness is not implemented",
-            s.label
-        )));
-    }
+    flat_shells(&mesh)?;
     // The preload: the step solved as a linear static step.
     let setup = Setup { model, resolved: &resolved, mesh: &mesh, step };
     let preload = static_on(&setup, limits)?;
@@ -152,6 +150,26 @@ pub fn solve_buckle(model: &Model, step: Option<&str>, limits: &Limits) -> Resul
     for (e, m) in mesh.elements.iter().zip(matrices) {
         let (kinds, data) = m?;
         add_block(&mut kg, &mesh.layout, &e.nodes, kinds, &data)?;
+    }
+    let matrices = fieldcraft_parallel::map_grained(mesh.structural.len(), crate::analysis::GRAIN, |i| -> Result<_> {
+        let e = mesh.structural.get(i).ok_or_else(|| Error::Internal("shell index".into()))?;
+        let StructuralKernel::Shell(shell) = e.kernel()? else {
+            return Err(Error::NotSupported(format!("beam {} in buckling", e.label)));
+        };
+        let u: Vec<[f64; 6]> = e
+            .nodes
+            .iter()
+            .map(|n| {
+                let u = preload.displacement.get(*n).copied().unwrap_or_default();
+                let r = preload.rotation.get(*n).copied().unwrap_or_default();
+                [u[0], u[1], u[2], r[0], r[1], r[2]]
+            })
+            .collect();
+        flat_preload(e, &shell, &u)?;
+        shell.plate_geometric_stiffness(u.as_flattened()).map_err(|err| Error::element(e.label, err))
+    });
+    for (e, m) in mesh.structural.iter().zip(matrices) {
+        add_block(&mut kg, &mesh.layout, &e.nodes, Structural::KINDS, &m?.data)?;
     }
     let [kff, gff] = red.reduce([&k, &kg])?;
     drop((k, kg));
@@ -209,4 +227,68 @@ pub fn solve_buckle(model: &Model, step: Option<&str>, limits: &Limits) -> Resul
         warnings,
         buckling: Some(buckling),
     })
+}
+
+// A geometric applicability tolerance, relative to the plate extent or preload motion.
+const FLAT_TOLERANCE: f64 = 1e-8;
+
+/// All shell reference surfaces lie in one plane. Opposite element normals are permitted:
+/// their layups and signed resultants have already been interpreted in their own frames.
+fn flat_shells(mesh: &Mesh) -> Result<()> {
+    let Some(first) = mesh.structural.first() else { return Ok(()) };
+    let StructuralKernel::Shell(first_shell) = first.kernel()? else {
+        return Err(Error::NotSupported(format!("beams in buckling steps (element {})", first.label)));
+    };
+    let origin = first.xyz.first().copied().ok_or_else(|| Error::Internal("shell origin".into()))?;
+    let normal = first_shell.axes()[2];
+    let extent = mesh.structural.iter().flat_map(|e| &e.xyz).map(|x| norm(sub(*x, origin))).fold(0.0, f64::max);
+    for e in &mesh.structural {
+        let StructuralKernel::Shell(shell) = e.kernel()? else {
+            return Err(Error::NotSupported(format!("beams in buckling steps (element {})", e.label)));
+        };
+        if (dot(normal, shell.axes()[2]).abs() - 1.0).abs() > FLAT_TOLERANCE
+            || e.xyz.iter().any(|x| dot(sub(*x, origin), normal).abs() > FLAT_TOLERANCE * extent)
+        {
+            return Err(Error::NotSupported(format!(
+                "curved or non-coplanar shells in buckling (element {}); only flat plates are supported",
+                e.label
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn flat_preload(e: &Structural, shell: &fieldcraft_fem::shell::Shell, u: &[[f64; 6]]) -> Result<()> {
+    let normal = shell.axes()[2];
+    let origin = e.xyz.first().copied().ok_or_else(|| Error::Internal("shell origin".into()))?;
+    let extent = e.xyz.iter().map(|x| norm(sub(*x, origin))).fold(0.0, f64::max);
+    let motion = u.iter().map(|v| norm([v[0], v[1], v[2]])).fold(0.0, f64::max);
+    let tolerance = FLAT_TOLERANCE * motion + 1024.0 * f64::EPSILON * extent;
+    // A flat membrane preload may translate normally, but cannot develop normal slopes or
+    // in-plane rotations of its director. In particular, do not drop B-induced pre-bending.
+    let w0 = u.first().map_or(0.0, |v| dot([v[0], v[1], v[2]], normal));
+    for v in u {
+        let r = [v[3], v[4], v[5]];
+        let rn = dot(r, normal);
+        let tilt = sub(r, normal.map(|n| n * rn));
+        if (dot([v[0], v[1], v[2]], normal) - w0).abs() > tolerance || norm(tilt) * extent > tolerance {
+            return Err(Error::NotSupported(format!(
+                "non-flat shell preload in element {} (including extension–bending coupling); flat-plate buckling needs a flat equilibrium state",
+                e.label
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
+    a.into_iter().zip(b).map(|(a, b)| a * b).sum()
+}
+
+fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [0, 1, 2].map(|i| a[i] - b[i])
+}
+
+fn norm(a: [f64; 3]) -> f64 {
+    a[0].hypot(a[1]).hypot(a[2])
 }
