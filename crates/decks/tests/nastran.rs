@@ -81,6 +81,100 @@ fn int(s: &str) -> u32 {
     s.parse().unwrap_or_else(|_| panic!("`{s}` is not an integer"))
 }
 
+fn laminate_model() -> Model {
+    use fieldcraft_model::{Layup, MaterialOrientation, Ply, SectionOrientation};
+    let mut model = Model::default();
+    for (i, p) in [[0., 0., 0.], [2., 1., 0.], [3., 3., 0.], [0., 2., 0.]].into_iter().enumerate() {
+        model.set_node(i as u32 + 1, p).unwrap();
+    }
+    model.set_element(1, ElementKind::Quad4, vec![1, 2, 3, 4]).unwrap();
+    model.add_set("plate", Set { elements: vec![1], nodes: vec![1, 2, 3, 4], ..Set::default() }).unwrap();
+    model
+        .add_material(
+            "ply",
+            Material {
+                elastic: Some(Elastic::EngineeringConstants { young: [120e9, 9e9, 7e9], poisson: [0.25, 0.2, 0.3], shear: [5e9, 4e9, 3e9] }),
+                density: Some(1600.),
+                ..Material::default()
+            },
+        )
+        .unwrap();
+    model
+        .add_section(
+            "laminate",
+            Section {
+                set: "plate".into(),
+                material: String::new(),
+                formulation: Formulation::default(),
+                kind: SectionKind::CompositeShell {
+                    layup: Layup {
+                        offset: 0.25,
+                        plies: vec![
+                            Ply { material: "ply".into(), thickness: 0.001, angle: std::f64::consts::FRAC_PI_6, points: 1 },
+                            Ply { material: "ply".into(), thickness: 0.002, angle: -std::f64::consts::FRAC_PI_4, points: 1 },
+                        ],
+                    },
+                },
+                orientation: Some(SectionOrientation {
+                    frame: MaterialOrientation::Rectangular { axis1: [0., 1., 0.], axis2: [-1., 0., 0.] },
+                    shell_reference_axis: 1,
+                }),
+            },
+        )
+        .unwrap();
+    model.add_step(Step::new("load", Procedure::Static {}), None).unwrap();
+    model
+}
+
+#[test]
+fn composite_pcomp_keeps_layer_order_offset_angles_and_material_frame() {
+    use fieldcraft_model::units::{DisplaySystem, Preset, Quantity as Q};
+    let model = laminate_model();
+    for units in [Preset::MKgS, Preset::MmTonneS, Preset::MmKgMs, Preset::InLbfS] {
+        let deck = fieldcraft_decks::nastran::write(&model, units).unwrap();
+        let r = read(&deck);
+        let p = r.cards("PCOMP").next().unwrap();
+        let d = DisplaySystem::new(units);
+        assert!((real(&p[1]) - d.express(Q::Length, -0.00225).unwrap()).abs() < 1e-12);
+        assert_eq!(p[8], p[12]);
+        assert!((real(&p[9]) - d.express(Q::Length, 0.001).unwrap()).abs() < 1e-12);
+        assert!((real(&p[13]) - d.express(Q::Length, 0.002).unwrap()).abs() < 1e-12);
+        assert!((real(&p[10]) - 30.).abs() < 1e-12);
+        assert!((real(&p[14]) + 45.).abs() < 1e-12);
+        assert_eq!((&p[11], &p[15]), (&"YES".to_string(), &"YES".to_string()));
+        let coordinate = r.cards("CORD2R").next().unwrap();
+        let quad = r.cards("CQUAD4").next().unwrap();
+        assert_eq!(quad[6], coordinate[0]);
+        let z = [real(&coordinate[5]), real(&coordinate[6]), real(&coordinate[7])];
+        let x = [real(&coordinate[8]), real(&coordinate[9]), real(&coordinate[10])];
+        assert_eq!(z, [0., 0., 1.]);
+        assert_eq!(x, [0., 1., 0.]);
+        let mat = r.cards("MAT8").next().unwrap();
+        assert!((real(&mat[4]) / d.express(Q::Pressure, 5e9).unwrap() - 1.).abs() < 1e-12);
+        assert!((real(&mat[5]) / d.express(Q::Pressure, 4e9).unwrap() - 1.).abs() < 1e-12);
+        assert!((real(&mat[6]) / d.express(Q::Pressure, 3e9).unwrap() - 1.).abs() < 1e-12);
+    }
+}
+
+#[test]
+fn composite_pcomp_refuses_sampling_loss_and_keeps_default_frame() {
+    use fieldcraft_model::units::Preset;
+    let mut model = laminate_model();
+    let mut section = model.section("laminate").unwrap().clone();
+    section.orientation = None;
+    model.replace_section("laminate", section.clone()).unwrap();
+    let r = read(&fieldcraft_decks::nastran::write(&model, Preset::MKgS).unwrap());
+    let frame = r.cards("CORD2R").next().unwrap();
+    // Quad4's own default x is (p1+p2)-(p0+p3) = (5,2,0), not global X or edge 1.
+    assert!((real(&frame[9]) / real(&frame[8]) - 0.4).abs() < 1e-12);
+    if let SectionKind::CompositeShell { layup } = &mut section.kind {
+        layup.plies[0].points = 3;
+    }
+    model.replace_section("laminate", section).unwrap();
+    let e = fieldcraft_decks::nastran::write(&model, Preset::MKgS).unwrap_err();
+    assert!(e.to_string().contains("sampling points"), "{e}");
+}
+
 impl Read {
     fn cards<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a Vec<String>> + 'a {
         self.cards.iter().filter(move |(n, _)| n == name).map(|(_, f)| f)
@@ -611,8 +705,9 @@ fn beams_rods_orthotropy_couplings_and_prescribed_motion() {
     assert_eq!(mat8[1..7].iter().map(|s| real(s)).collect::<Vec<_>>(), vec![140e3, 10e3, 0.3, 5e3, 4.5e3, 3.8e3]);
     // The shell's material axes are the basic ones, and its offset puts the mid-surface below the nodes.
     let tri = r.cards("CTRIA3").next().unwrap();
-    assert_eq!((int(&tri[5]), real(&tri[6])), (1, -0.5));
-    assert!(r.cards("CORD2R").next().is_some());
+    assert_eq!(real(&tri[6]), -0.5);
+    let frame = r.cards("CORD2R").find(|f| f[0] == tri[5]).unwrap();
+    assert_eq!(frame[8..11].iter().map(|s| real(s)).collect::<Vec<_>>(), vec![1., 0., 0.]);
 
     // The beam: its I section's flanges lie along the orientation (Nastran's element z axis).
     let pbeaml = r.cards("PBEAML").next().unwrap();
@@ -695,12 +790,15 @@ fn what_nastran_cannot_express_is_named() {
         assert!(what.contains(needle), "{needle}: {what}");
     }
 
-    // Orthotropic beams, tilted orthotropic shells, one-point shells.
+    // Tilted orthotropic shells now carry an explicit material frame; beams and one-point shells remain refused.
     let mut m = plate();
     let ortho = Elastic::EngineeringConstants { young: [140e3, 10e3, 10e3], poisson: [0.3, 0.3, 0.4], shear: [5e3, 5e3, 3.8e3] };
     m.replace_material("Aluminium", Material { elastic: Some(ortho), density: Some(1.6e-9), ..Material::default() }).unwrap();
     m.set_node(9, [10.0, 10.0, 0.5]).unwrap();
-    assert!(unsupported(&m).contains("planes of constant Z"));
+    let tilted = read(&nastran::write(&m).unwrap());
+    let last = tilted.cards("CQUAD4").find(|c| c[0] == "4").unwrap();
+    let frame = tilted.cards("CORD2R").find(|c| c[0] == last[6]).unwrap();
+    assert!(real(&frame[10]) > 0., "the material x direction follows the tilted shell");
     m.set_node(9, [10.0, 10.0, 0.0]).unwrap();
     nastran::write(&m).unwrap();
     m.replace_section(

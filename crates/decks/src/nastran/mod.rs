@@ -51,6 +51,7 @@
 //! The same model always gives the same bytes.
 
 mod card;
+mod composite;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -84,7 +85,11 @@ pub fn write(model: &Model, units: Preset) -> Result<String> {
 /// [`write`] for a model already expressed in `units` ([`crate::express`]) and resolved.
 pub fn write_resolved(model: &Model, r: &Resolved, units: Preset) -> Result<String> {
     crate::refuse_fluid(FORMAT, model)?;
-    crate::refuse_composite_data(FORMAT, model)?;
+    composite::check(model)?;
+    let prepared = crate::composite::explicit_shell_frames(model, r, FORMAT)?;
+    let model = prepared.as_ref().unwrap_or(model);
+    let prepared_resolved = prepared.as_ref().map(Model::resolve).transpose()?;
+    let r = prepared_resolved.as_ref().unwrap_or(r);
     let mut deck = Deck::new(model, r, model.steps().iter().collect());
     deck.plan()?;
     deck.emit(units)
@@ -217,12 +222,18 @@ struct MaterialUse {
 enum Property {
     Solid {
         mid: u32,
+        mcid: Option<u32>,
         rule: (Option<&'static str>, Option<&'static str>),
     },
     Shell {
         mid: u32,
         thickness: f64,
         offset: Option<f64>,
+        mcid: Option<u32>,
+    },
+    Composite {
+        z0: f64,
+        plies: Vec<(u32, f64, f64)>,
         mcid: Option<u32>,
     },
     Beam {
@@ -267,6 +278,8 @@ struct Deck<'m> {
     materials: BTreeMap<&'m str, MaterialIds>,
     /// The coordinate system tying shell material axes to the basic axes, when one is needed.
     material_csys: Option<u32>,
+    material_frames: Vec<(u32, fieldcraft_model::MaterialOrientation)>,
+    next_material_csys: u32,
     /// Properties in id order (id = position + 1), with their section's name.
     properties: Vec<(&'m str, Property)>,
     /// Element → property id.
@@ -330,6 +343,8 @@ impl<'m> Deck<'m> {
             next_sid: 1,
             materials: BTreeMap::new(),
             material_csys: None,
+            material_frames: Vec::new(),
+            next_material_csys: 2,
             properties: Vec::new(),
             element_pid: BTreeMap::new(),
             rigid: Vec::new(),
@@ -369,15 +384,17 @@ impl<'m> Deck<'m> {
         let model = self.model;
         let mut uses: BTreeMap<&str, MaterialUse> = BTreeMap::new();
         for s in model.sections().values() {
-            let u = uses.entry(s.material.as_str()).or_default();
-            match s.kind {
-                SectionKind::Solid {} => u.solid = true,
-                SectionKind::Shell { .. }
-                | SectionKind::CompositeShell { .. }
-                | SectionKind::PlaneStress { .. }
-                | SectionKind::PlaneStrain { .. }
-                | SectionKind::Axisymmetric {} => u.shell = true,
-                SectionKind::Beam { .. } | SectionKind::Rod { .. } => u.line = true,
+            for name in s.material_names() {
+                let u = uses.entry(name).or_default();
+                match s.kind {
+                    SectionKind::Solid {} => u.solid = true,
+                    SectionKind::Shell { .. }
+                    | SectionKind::CompositeShell { .. }
+                    | SectionKind::PlaneStress { .. }
+                    | SectionKind::PlaneStrain { .. }
+                    | SectionKind::Axisymmetric {} => u.shell = true,
+                    SectionKind::Beam { .. } | SectionKind::Rod { .. } => u.line = true,
+                }
             }
         }
         let mut next_mid = 1u32;
@@ -440,11 +457,32 @@ impl<'m> Deck<'m> {
             let elements = r.sets.get(&sec.set).map(|s| s.elements.as_slice()).unwrap_or_default();
             let kind_of = |e: u32| model.element(e).map(|el| el.kind);
             match sec.kind {
-                SectionKind::CompositeShell { .. } => {
-                    self.problems.insert(format!("section `{sname}`: composite shells are not written yet"));
+                SectionKind::CompositeShell { ref layup } => {
+                    if sec.formulation.integration == Integration::Reduced {
+                        self.problems
+                            .insert(format!("section `{sname}`: reduced integration of composite shells (not a separate Nastran formulation)"));
+                    }
+                    let mcid = self.orientation_csys(sec, true)?;
+                    let mut plies = Vec::with_capacity(layup.plies.len());
+                    for ply in &layup.plies {
+                        let ids = self.materials.get(ply.material.as_str()).copied().unwrap_or_default();
+                        let mid = ids.isotropic.or(ids.shell).ok_or_else(|| {
+                            Error::Model(fieldcraft_model::Error::Invalid(format!(
+                                "section `{sname}`: missing elastic ply material `{}`",
+                                ply.material
+                            )))
+                        })?;
+                        plies.push((mid, ply.thickness, composite::degrees(ply.angle)?));
+                    }
+                    self.add_property(
+                        sname,
+                        Property::Composite { z0: -(0.5 + layup.offset) * layup.thickness(), plies, mcid },
+                        elements.iter().copied(),
+                    )?;
                 }
                 SectionKind::Solid {} => {
                     let Some(mid) = ids.isotropic.or(ids.solid) else { continue };
+                    let mcid = self.orientation_csys(sec, false)?;
                     // One property per integration rule the section's element kinds need.
                     let kinds: BTreeSet<ElementKind> = elements.iter().filter_map(|e| kind_of(*e)).collect();
                     let mut rules = BTreeMap::new();
@@ -460,7 +498,7 @@ impl<'m> Deck<'m> {
                     }
                     for (rule, kinds) in rules {
                         let members = elements.iter().copied().filter(|e| kind_of(*e).is_some_and(|k| kinds.contains(&k)));
-                        self.add_property(sname, Property::Solid { mid, rule }, members)?;
+                        self.add_property(sname, Property::Solid { mid, mcid, rule }, members)?;
                     }
                 }
                 SectionKind::Shell { thickness, offset, points } => {
@@ -472,18 +510,8 @@ impl<'m> Deck<'m> {
                             "section `{sname}`: one integration point through the thickness (no bending stiffness; Nastran integrates a linear section exactly)"
                         ));
                     }
-                    let (mid, mcid) = match ids {
-                        MaterialIds { isotropic: Some(m), .. } => (m, None),
-                        MaterialIds { shell: Some(m), .. } => {
-                            if !elements.iter().all(|e| model.element(*e).is_some_and(|el| self.in_constant_z(&el.nodes, el.kind))) {
-                                self.problems.insert(format!(
-                                    "section `{sname}`: orthotropic shells that do not lie in planes of constant Z (the material axes are the global ones)"
-                                ));
-                            }
-                            (m, Some(*self.material_csys.get_or_insert(1)))
-                        }
-                        _ => continue,
-                    };
+                    let Some(mid) = ids.isotropic.or(ids.shell) else { continue };
+                    let mcid = self.orientation_csys(sec, true)?;
                     // The nodes lie on the reference surface; Nastran's offset runs from them to
                     // the mid-surface along the element normal.
                     let offset = (offset != 0.0).then_some(-offset * thickness);
@@ -524,12 +552,10 @@ impl<'m> Deck<'m> {
         Ok(())
     }
 
-    /// Whether a shell element's corners lie in a plane of constant Z.
-    fn in_constant_z(&self, nodes: &[u32], kind: ElementKind) -> bool {
-        let corners = nodes.get(..kind.corner_count()).unwrap_or_default();
-        let mut z = corners.iter().map(|n| self.model.node(*n).map(|n| n.xyz[2]));
-        let first = z.next().flatten();
-        first.is_some() && z.all(|v| v == first)
+    fn orientation_csys(&mut self, section: &fieldcraft_model::Section, shell: bool) -> Result<Option<u32>> {
+        let Some(orientation) = section.orientation else { return Ok(None) };
+        let frame = composite::frame(orientation, shell)?;
+        Ok(Some(intern(&mut self.material_frames, &mut self.next_material_csys, frame)?))
     }
 
     /// Rigid element ids and the degrees of freedom couplings make dependent.
@@ -813,6 +839,10 @@ impl<'m> Deck<'m> {
             Card::new("CORD2R").int(cid).blank().reals([0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0]).write(out)?;
         }
 
+        for (cid, frame) in &self.material_frames {
+            composite::coordinate_card(*cid, *frame)?.write(out)?;
+        }
+
         comment(out, "materials");
         for (name, ids) in &self.materials {
             let Some(m) = self.model.material(name) else { continue };
@@ -848,7 +878,16 @@ impl<'m> Deck<'m> {
         comment(out, "properties");
         for (pid, (section, p)) in (1u32..).zip(&self.properties) {
             let card = match p {
-                Property::Solid { mid, rule: (network, scheme) } => Card::new("PSOLID").int(pid).int(*mid).blank().opt(*network).blank().opt(*scheme),
+                Property::Solid { mid, mcid, rule: (network, scheme) } => {
+                    Card::new("PSOLID").int(pid).int(*mid).opt(*mcid).opt(*network).blank().opt(*scheme)
+                }
+                Property::Composite { z0, plies, .. } => {
+                    let mut card = Card::new("PCOMP").int(pid).real(*z0).end_line();
+                    for (mid, thickness, angle) in plies {
+                        card = card.int(*mid).real(*thickness).real(*angle).text("YES");
+                    }
+                    card
+                }
                 Property::Shell { mid, thickness, .. } => Card::new("PSHELL").int(pid).int(*mid).real(*thickness).int(*mid).blank().int(*mid),
                 Property::Beam { mid, profile, .. } => {
                     let (shape, dims) = beam_dimensions(*profile);
@@ -872,6 +911,8 @@ impl<'m> Deck<'m> {
                 Property::Shell { offset, mcid, .. } => card.opt(*mcid).opt(*offset),
                 Property::Membrane { mcid, .. } if el.kind == ElementKind::Quad8 => card.blank().blank().blank().blank().opt(*mcid),
                 Property::Membrane { mcid, .. } => card.opt(*mcid),
+                Property::Composite { mcid, .. } if el.kind == ElementKind::Quad8 => card.blank().blank().blank().blank().opt(*mcid),
+                Property::Composite { mcid, .. } => card.opt(*mcid),
                 Property::Solid { .. } | Property::Rod { .. } => card,
             };
             card.write(out)?;

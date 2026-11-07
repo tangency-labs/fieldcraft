@@ -69,3 +69,9 @@ cyclic/reversed node order and refusals with source lines. Run:
 ```text
 cargo test -p fieldcraft-decks
 ```
+
+## Nastran
+
+The Nastran writer emits PCOMP plies in bottom-to-top order with `Z0 = -(0.5 + offset) h`, MAT8 engineering constants and explicit CQUAD/CTRIA material coordinate IDs. CORD2R preserves rectangular frames; a shell cylindrical frame is frozen at its element centre, matching the facet convention used by the kernel. Default orthotropic shell frames are also explicit. Solid rectangular directions use the PSOLID material coordinate system. The public source is the [MSC Nastran 2022.1 Quick Reference Guide](https://help-be.hexagonmi.com/bundle/MSC_Nastran_2022.1_Quick_Reference_Guide/raw/resource/enus/MSC_Nastran_2022.1_Quick_Reference_Guide.pdf), entries PCOMP, MAT8, CQUAD4, CORD2R and PSOLID.
+
+This writer supports the single mid-ply sampling request; it refuses additional through-ply sample counts, independent S23/Hashin strengths, nonlinear plies and spatial cylindrical solid directions instead of dropping them. PCOMP has no field for FieldCraft's extra sample count. It integrates the linear laminate stiffness; the internal one-sample request does not remove each ply's bending stiffness. These are writer/readback checks, not a commercial-solver execution certificate.
