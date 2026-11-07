@@ -619,6 +619,7 @@ pub(crate) mod tests {
             free_surface: None,
         };
         FluidResult {
+            baffles: Box::default(),
             port_properties: None,
             step: "Flow".into(),
             grid,
@@ -794,6 +795,65 @@ pub(crate) mod tests {
         }
         let e = s.execute("model.fluid_domain.edit", &two(json!({"bodies": ["Body1", "Lid"], "resistance": 0}))).unwrap_err().to_string();
         assert!(e.contains("thermal contact `Body1–Lid`") && e.contains("positive"), "{e}");
+    }
+
+    /// A thin wall through commands: its position and conductance are typed in the display system
+    /// (mm-t-s) or with their unit and stored in SI, the solve reports each side's temperature and
+    /// heat flux in the display units (the side-to-side difference is the flux over the
+    /// conductance), and hostile sheets are refused with the model unchanged.
+    #[test]
+    fn a_thin_wall_reports_both_sides() {
+        let mut s = crate::Session::default();
+        let domain = |baffles: Value| {
+            json!({"name": "Box", "material": "Water", "min": [0, 0, 0], "max": [1, 10, 1], "spacing": 1,
+                "faces": {"x_min": {"type": "periodic"}, "x_max": {"type": "periodic"}, "z_min": {"type": "periodic"}, "z_max": {"type": "periodic"}},
+                "thermal": {"initial_temperature": 50, "faces": {"y_min": {"type": "temperature", "value": 80}, "y_max": {"type": "temperature", "value": 20}},
+                    "baffles": baffles}})
+        };
+        let script = json!([
+            {"command": "model.material.create", "params": {"name": "Water", "density": 1e-9, "fluid": {"type": "newtonian", "viscosity": 1e-9},
+                "thermal": {"conductivity": 0.6, "specific_heat": 4.2e9}}},
+            {"command": "model.fluid_domain.create", "params": domain(json!([{"name": "Sheet", "axis": "y", "position": 5, "conductance": "500 W/(m²·K)"}]))},
+            {"command": "model.step.create", "params": {"name": "Flow", "procedure": {"type": "fluid", "domain": "Box", "steps": 200, "frames": 2}}},
+        ]);
+        s.run_script(&script).unwrap();
+        let stored = s.model.fluid_domain("Box").and_then(|d| d.thermal.as_ref()).and_then(|t| t.baffles.first()).cloned().unwrap();
+        assert!((stored.position - 0.005).abs() < 1e-15 && (stored.conductance - 500.0).abs() < 1e-9, "{stored:?}");
+        let r = s.execute("solve.fluid", &json!({})).unwrap();
+        let b = &r["baffles"][0];
+        assert_eq!(b["name"], "Sheet", "{r}");
+        assert!((b["area"].as_f64().unwrap() - 1.0).abs() < 1e-12, "{b}");
+        let [low, high] = [0, 1].map(|i| b["temperature"][i].as_f64().unwrap());
+        let [into_low, into_high] = [0, 1].map(|i| b["heat_flux"][i].as_f64().unwrap());
+        assert!(20.0 < high && high < low && low < 80.0, "{b}");
+        // 500 W/(m²·K) is 0.5 mW/(mm²·K)
+        assert!(into_low > 0.0 && into_low == -into_high && (into_low / (0.5 * (low - high)) - 1.0).abs() < 1e-9, "{b}");
+        assert!(r["heat"].as_array().unwrap().iter().any(|h| h["name"] == "baffle/Sheet/low"), "{r}");
+        let e = s.execute("solve.fluid", &json!({"backend": "gpu"})).unwrap_err().to_string();
+        assert!(e.contains("GPU"), "{e}");
+        let before = s.model.clone();
+        let sheet = |position: Value, conductance: Value| json!({"name": "Sheet", "axis": "y", "position": position, "conductance": conductance});
+        let many: Vec<Value> = (0..65).map(|i| json!({"name": format!("S{i}"), "axis": "y", "position": 5, "conductance": 1})).collect();
+        for bad in [
+            json!([sheet(json!(5.5), json!(1))]),
+            json!([sheet(json!(0), json!(1))]),
+            json!([sheet(json!(10), json!(1))]),
+            json!([sheet(json!(1e300), json!(1))]),
+            json!([sheet(json!("nan"), json!(1))]),
+            json!([sheet(json!(5), json!(-1))]),
+            json!([sheet(json!(5), json!("inf"))]),
+            json!([sheet(json!(5), json!(1)), sheet(json!(6), json!(1))]),
+            json!([{"name": "A", "axis": "x", "position": 0.5, "conductance": 1}]),
+            json!([{"name": "Sheet", "axis": "w", "position": 5, "conductance": 1}]),
+            json!(many),
+        ] {
+            assert!(s.execute("model.fluid_domain.edit", &domain(bad.clone())).is_err(), "{bad}");
+            assert_eq!(s.model, before, "{bad}");
+        }
+        let mut open = domain(json!([sheet(json!(5), json!(1))]));
+        open["faces"]["y_min"] = json!({"type": "velocity", "velocity": [0, 1, 0]});
+        assert!(s.execute("model.fluid_domain.edit", &open).is_err());
+        assert_eq!(s.model, before);
     }
 
     /// A face held at a temperature is drawn at that temperature, and the legend reaches it,

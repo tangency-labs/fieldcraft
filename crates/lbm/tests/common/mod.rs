@@ -330,6 +330,41 @@ pub fn cuboid(lo: [f64; 3], hi: [f64; 3]) -> BoundarySurface {
 /// The face names of a [`cuboid`].
 pub const CUBOID_FACES: [&str; 6] = ["x_min", "x_max", "y_min", "y_max", "z_min", "z_max"];
 
+/// A column of `n` cells across y ∈ [0, 1], periodic in x and z, the faces at y = 0 and 1 held
+/// at `t[0]` and `t[1]`, obstacle `Slab` conducting with `power`.
+pub fn slab_column(n: usize, t: [f64; 2], power: f64) -> FluidDomain {
+    let dx = 1.0 / n as f64;
+    let mut d = domain([0.0; 3], [dx, 1.0, dx], dx);
+    for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+        *f = fieldcraft_model::FaceCondition::Periodic {};
+    }
+    d.obstacles = vec!["Slab".into()];
+    let mut th = fieldcraft_model::FluidThermal::default();
+    th.faces.y_min = fieldcraft_model::ThermalCondition::Temperature { value: kelvin(t[0]) };
+    th.faces.y_max = fieldcraft_model::ThermalCondition::Temperature { value: kelvin(t[1]) };
+    th.solids = vec![conducting("Slab", power)];
+    d.thermal = Some(th);
+    d
+}
+
+pub fn slab_obstacle(slab: [f64; 2]) -> fieldcraft_lbm::Obstacle {
+    obstacle("Slab", cuboid([-1.0, slab[0], -1.0], [2.0, slab[1], 2.0]), &CUBOID_FACES)
+}
+
+/// The steady temperature through layers `(thickness, conductivity)` from y = 0 at `t0`, with
+/// heat flux `q` in the −y direction (from the y = 1 side to the y = 0 side) and no sources.
+pub fn layered(y: f64, t0: f64, q: f64, layers: &[(f64, f64)]) -> f64 {
+    let (mut base, mut t) = (0.0, t0);
+    for &(thick, k) in layers {
+        if y <= base + thick {
+            return t + q * (y - base) / k;
+        }
+        t += q * thick / k;
+        base += thick;
+    }
+    t
+}
+
 /// Add a conducting material `name`: density ρ, conductivity k (per axis), specific heat c.
 pub fn add_solid_material(m: &mut Model, name: &str, density: f64, k: [f64; 3], c: f64) {
     let conductivity =

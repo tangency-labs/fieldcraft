@@ -136,6 +136,7 @@ struct Shape {
     conducting: bool,
     open_faces: [bool; 6],
     surface: bool,
+    baffle_bytes: u64,
 }
 
 impl Shape {
@@ -163,6 +164,22 @@ impl Shape {
             conducting: thermal.is_some_and(|t| !t.solids.is_empty()),
             open_faces: fieldcraft_model::BoxFace::ALL.map(|f| is_open(domain.faces.get(f))),
             surface: domain.free_surface.is_some(),
+            baffle_bytes: {
+                let cells = domain.cells()?;
+                thermal
+                    .into_iter()
+                    .flat_map(|t| &t.baffles)
+                    .map(|b| {
+                        let a = b.axis.index();
+                        // Five momentum links per side, plus group metadata and histories.
+                        let faces = cells[(a + 1) % 3].saturating_mul(cells[(a + 2) % 3]);
+                        faces
+                            .saturating_mul(2 * FACE_LINKS * size_of::<Link>() as u64)
+                            .saturating_add(1024 + 4 * b.name.len() as u64)
+                            .saturating_add((frames + 1).saturating_mul(8 * F64))
+                    })
+                    .fold(0, u64::saturating_add)
+            },
         })
     }
 }
@@ -239,7 +256,7 @@ impl Memory {
         if s.surface {
             flow += SURFACE;
         }
-        let prepared = per_cell(flow).saturating_add(boundary);
+        let prepared = per_cell(flow).saturating_add(boundary).saturating_add(s.baffle_bytes);
         let zone_cells = if s.zones { per_cell(DEVICE_ZONE_CELL) } else { 0 };
         let (setup, state, readback) = match backend {
             // The CPU flow allocates its streaming targets on the first step and keeps
