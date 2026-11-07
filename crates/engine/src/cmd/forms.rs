@@ -2911,6 +2911,7 @@ pub const INVERSE_JOINT: &[Field] = &[
     flag("uniform_material_scaling", "Exact homogeneous E/density reuse").def("false").help("Only homogeneous isotropic Young/density with zero imposed motion, no springs/point masses and mass-independent static loads; exact identities after actual FE baselines."),
     positive("regularization", "Regularization", D::None).def("0").help("Nonnegative normalized prior penalty; never supplies missing data rank and disables sampling covariance."),
     int("max_iterations", "Maximum iterations", 1, 64).def("32").help("Bounded optimizer iterations; the general evaluator recomputes model derivatives."),
+    int("max_lanczos_vectors", "Maximum Lanczos vectors", 1, 3000).hint("3000").help("Independent modal basis capacity; not the optimization iteration count."),
     SENSITIVITY_INCREMENT,
     MAX_DOFS,
     MAX_FACTOR,

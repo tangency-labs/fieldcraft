@@ -270,6 +270,17 @@ pub fn frequency_sensitivity(
     frequency_sensitivity_with_vectors(model, step, parameter, increment, options, false, limits)
 }
 
+/// The underlying iteration can return Ritz values when it reaches its cap.
+/// Derivatives and inverse fits must not treat those as converged eigenvalues.
+pub(super) fn require_uncapped_modes(result: &crate::FrequencyResult, limits: &Limits) -> Result<()> {
+    let equations = result.stats.equations;
+    let capacity = analysis::lanczos_basis(limits, equations);
+    if capacity < equations && result.stats.lanczos_vectors >= capacity {
+        return Err(Error::NotConverged("modal sensitivity/inverse baseline exhausted the Lanczos basis cap; increase max_lanczos_vectors or max_factor_entries; capped Ritz values are not a convergence certificate".into()));
+    }
+    Ok(())
+}
+
 /// Optionally add Nelson derivatives of unit-modal-mass mode shapes.
 pub fn frequency_sensitivity_with_vectors(
     model: &Model,
@@ -291,6 +302,7 @@ pub fn frequency_sensitivity_with_vectors(
         Procedure::Frequency { modes: modes.checked_add(1).ok_or_else(|| Error::Invalid("mode count overflow".into()))?, min_hz: None, max_hz: None };
     guard_model.replace_step(guard_step)?;
     let (result, mass) = analysis::frequency_with_mass(&guard_model, Some(&step.name), options, limits)?;
+    require_uncapped_modes(&result, limits)?;
     let requested = modes as usize;
     if result.modes.len() < requested || (result.modes.len() == requested && result.stats.equations > requested) {
         return Err(Error::NotConverged("modal sensitivity needs requested modes and an upper gap guard".into()));

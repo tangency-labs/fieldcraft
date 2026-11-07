@@ -1866,9 +1866,7 @@ fn run_inverse_frequency(s: &mut Session, p: &Value) -> Result<Value> {
         relative_increment: opt::<f64>(p, "relative_increment")?.unwrap_or(1e-5),
     };
     let step = opt::<String>(p, "step")?;
-    let mut limits = limits(p)?;
-    // The optimization iteration cap must not truncate each FE eigen solve.
-    limits.max_lanczos_vectors = cap(p, "max_lanczos_vectors", Limits::MAX_LANCZOS_VECTORS)?;
+    let limits = inverse_limits(p)?;
     let exact = opt::<bool>(p, "uniform_young_scaling")?.unwrap_or(false);
     let result = with_threads(threads(s, p)?, || {
         if exact {
@@ -1921,9 +1919,7 @@ fn run_inverse_harmonic(s: &mut Session, p: &Value) -> Result<Value> {
         relative_increment: opt::<f64>(p, "relative_increment")?.unwrap_or(1e-5),
     };
     let step = opt::<String>(p, "step")?;
-    let mut limits = limits(p)?;
-    // The optimization iteration cap must not truncate each FE eigen solve.
-    limits.max_lanczos_vectors = cap(p, "max_lanczos_vectors", Limits::MAX_LANCZOS_VECTORS)?;
+    let limits = inverse_limits(p)?;
     let result = with_threads(threads(s, p)?, || inverse_harmonic(&s.model, step.as_deref(), &parameter, &fit, observation, &limits))?;
     let mut out = serde_json::to_value(result).map_err(|e| EngineError::Params(e.to_string()))?;
     out["parameter_quantity"] = json!(q.name());
@@ -1934,12 +1930,19 @@ fn run_inverse_harmonic(s: &mut Session, p: &Value) -> Result<Value> {
 pub const INVERSE_JOINT: CommandSpec = CommandSpec {
     id: "solve.inverse.joint",
     label: "Fit a Parameter Vector",
-    params: r#"{"parameters":[{"parameter":{"type":"material","name":"Steel","constant":"young"},"lower_si":1e11,"upper_si":3e11,"scale_si":2.1e11},{"parameter":{"type":"material","name":"Steel","constant":"density"},"lower_si":7000,"upper_si":9000,"scale_si":7850}],"observations":[{"response":{"kind":"frequency","step":"Modes","mode":0},"value_si":100,"standard_deviation_si":0.1},{"response":{"kind":"static","step":"Load","node":1,"dof":3},"value_si":-1e-6,"standard_deviation_si":1e-9}]} — 2–3 unique bounded parameters with mixed static/simple-frequency/direct-complex observations. Explicit SI quantities only, including parameter scales, covariance and outputs; mode/frame indices zero-based. Data-only rank/condition check precedes optional regularization, refuses unidentifiable combinations. Returns local joint95% ellipsoid for known independent Gaussian errors and unregularized interior estimates. No mutation. Defaults max_iterations32, relative_increment1e-5, regularization0. uniform_material_scaling=true explicitly restricts [Young,density] to homogeneous material, zero support motion, no springs/point masses, mass-independent static loads and static/frequency observations, reusing exact identities after actual FE baselines."#,
+    params: r#"{"parameters":[{"parameter":{"type":"material","name":"Steel","constant":"young"},"lower_si":1e11,"upper_si":3e11,"scale_si":2.1e11},{"parameter":{"type":"material","name":"Steel","constant":"density"},"lower_si":7000,"upper_si":9000,"scale_si":7850}],"observations":[{"response":{"kind":"frequency","step":"Modes","mode":0},"value_si":100,"standard_deviation_si":0.1},{"response":{"kind":"static","step":"Load","node":1,"dof":3},"value_si":-1e-6,"standard_deviation_si":1e-9}]} — 2–3 unique bounded parameters with mixed static/simple-frequency/direct-complex observations. Explicit SI quantities only, including parameter scales, covariance and outputs; mode/frame indices zero-based. Data-only rank/condition check precedes optional regularization, refuses unidentifiable combinations. Returns local joint95% ellipsoid for known independent Gaussian errors and unregularized interior estimates. No mutation. Defaults max_iterations32, relative_increment1e-5, regularization0. max_lanczos_vectors (default3000) independently limits each modal basis; optimization iterations never change it. uniform_material_scaling=true explicitly restricts [Young,density] to homogeneous material, zero support motion, no springs/point masses, mass-independent static loads and static/frequency observations, reusing exact identities after actual FE baselines."#,
     form: Some(super::forms::INVERSE_JOINT),
     kind: CommandKind::Model,
     requires: &[Requirement::Step],
     run: run_inverse_joint,
 };
+// Optimization iterations and modal basis capacity are independent budgets.
+fn inverse_limits(p: &Value) -> Result<Limits> {
+    let mut limits = limits(p)?;
+    limits.max_lanczos_vectors = cap(p, "max_lanczos_vectors", Limits::MAX_LANCZOS_VECTORS)?;
+    Ok(limits)
+}
+
 fn run_inverse_joint(s: &mut Session, p: &Value) -> Result<Value> {
     use fieldcraft_solver::sensitivity::{JointFit, inverse_joint, inverse_joint_uniform_material};
     let fit = JointFit {
@@ -1949,9 +1952,7 @@ fn run_inverse_joint(s: &mut Session, p: &Value) -> Result<Value> {
         max_iterations: opt::<usize>(p, "max_iterations")?.unwrap_or(32),
         relative_increment: opt::<f64>(p, "relative_increment")?.unwrap_or(1e-5),
     };
-    let mut limits = limits(p)?;
-    // The joint optimizer iteration cap must not truncate each modal basis.
-    limits.max_lanczos_vectors = cap(p, "max_lanczos_vectors", Limits::MAX_LANCZOS_VECTORS)?;
+    let limits = inverse_limits(p)?;
     let reuse = opt::<bool>(p, "uniform_material_scaling")?.unwrap_or(false);
     let result = with_threads(threads(s, p)?, || {
         if reuse { inverse_joint_uniform_material(&s.model, &fit, &limits) } else { inverse_joint(&s.model, &fit, &limits) }
@@ -1961,6 +1962,16 @@ fn run_inverse_joint(s: &mut Session, p: &Value) -> Result<Value> {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    #[test]
+    fn inverse_iteration_budget_does_not_truncate_eigen_basis() {
+        for iterations in [2, 8, 32, 64] {
+            let limits = super::inverse_limits(&serde_json::json!({"max_iterations":iterations})).unwrap();
+            assert_eq!(limits.max_lanczos_vectors, fieldcraft_solver::Limits::MAX_LANCZOS_VECTORS);
+        }
+        let limits = super::inverse_limits(&serde_json::json!({"max_iterations":2,"max_lanczos_vectors":120})).unwrap();
+        assert_eq!(limits.max_lanczos_vectors, 120);
+    }
+
     /// `file.sample` opens the cantilever with nothing to save; `solve.run` solves both its steps
     /// in order and the results view comes up on the first.
     #[test]

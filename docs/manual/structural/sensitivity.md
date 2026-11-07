@@ -254,3 +254,9 @@ value on N nodes gives total parallel stiffness N*k; arbitrary weighted groups
 are not an additional parameter type. The weakest-direction refusal is in
 scaled parameter coordinates; multiply components by the supplied scales to
 interpret a physical parameter perturbation.
+
+For inverse commands, `max_iterations` limits optimization only; the independent
+`max_lanczos_vectors` option limits each modal basis (default 3000, also bounded
+by factor-memory capacity). Sensitivity and joint modal baselines that reach a
+truncated basis cap are refused rather than treating capped Ritz values as
+converged observations. Increase the modal budget, not the optimization count.

@@ -99,3 +99,76 @@ fn actual_beam_young_and_thickness_joint_fit() {
         assert!(mahal < r.joint_chi_square, "{mahal}");
     }
 }
+
+#[test]
+fn capped_ritz_values_are_not_used_as_sensitivity_or_joint_data() {
+    let m = strip();
+    let limits = Limits { max_lanczos_vectors: 6, ..Limits::default() };
+    let young = Parameter::Material { name: "Mat".into(), constant: MaterialConstant::Young };
+    let error = frequency_sensitivity(&m, Some("F"), &young, 0.1, &Default::default(), &limits).unwrap_err().to_string();
+    assert!(error.contains("Lanczos basis cap"), "{error}");
+    let fit = JointFit {
+        parameters: vec![
+            JointParameter { parameter: young, lower_si: 800.0, upper_si: 1200.0, scale_si: 1000.0 },
+            JointParameter {
+                parameter: Parameter::Material { name: "Mat".into(), constant: MaterialConstant::Density },
+                lower_si: 1.0,
+                upper_si: 3.0,
+                scale_si: 2.0,
+            },
+        ],
+        observations: vec![
+            JointObservation { response: JointResponse::Frequency { step: "F".into(), mode: 0 }, value_si: 1.0, standard_deviation_si: 0.01 },
+            JointObservation {
+                response: JointResponse::Static { step: "S".into(), node: 49, dof: 3 },
+                value_si: 0.001,
+                standard_deviation_si: 0.00001,
+            },
+        ],
+        regularization: 0.0,
+        max_iterations: 32,
+        relative_increment: 1e-4,
+    };
+    let error = inverse_joint_uniform_material(&m, &fit, &limits).unwrap_err().to_string();
+    assert!(error.contains("Lanczos basis cap"), "{error}");
+}
+
+#[test]
+fn composite_sections_refuse_uniform_single_material_scaling() {
+    let mut m = strip();
+    let mut section = m.section("strip").unwrap().clone();
+    section.material.clear();
+    section.kind = SectionKind::CompositeShell {
+        layup: Layup { offset: 0.0, plies: vec![Ply { material: "Mat".into(), thickness: 0.01, angle: 0.0, points: 3 }] },
+    };
+    m.replace_section("strip", section).unwrap();
+    let young = Parameter::Material { name: "Mat".into(), constant: MaterialConstant::Young };
+    let scalar = FrequencyFit {
+        lower: 800.0,
+        upper: 1200.0,
+        observed: vec![1.0],
+        standard_deviation: None,
+        regularization: 0.0,
+        max_iterations: 2,
+        relative_increment: 1e-4,
+    };
+    let err = inverse_frequency_uniform_young(&m, Some("F"), &young, &scalar, &Limits::default()).unwrap_err();
+    assert!(matches!(err, fieldcraft_solver::Error::NotSupported(_)));
+    let fit = JointFit {
+        parameters: vec![
+            JointParameter { parameter: young, lower_si: 800.0, upper_si: 1200.0, scale_si: 1000.0 },
+            JointParameter {
+                parameter: Parameter::Material { name: "Mat".into(), constant: MaterialConstant::Density },
+                lower_si: 1.0,
+                upper_si: 3.0,
+                scale_si: 2.0,
+            },
+        ],
+        observations: vec![],
+        regularization: 0.0,
+        max_iterations: 2,
+        relative_increment: 1e-4,
+    };
+    let err = inverse_joint_uniform_material(&m, &fit, &Limits::default()).unwrap_err();
+    assert!(matches!(err, fieldcraft_solver::Error::NotSupported(_)));
+}

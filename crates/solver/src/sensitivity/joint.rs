@@ -370,6 +370,7 @@ pub fn inverse_joint_uniform_material(model: &Model, fit: &JointFit, limits: &Li
     if fit.parameters[1].parameter != (Parameter::Material { name: name.clone(), constant: C::Density })
         || model.sections().is_empty()
         || model.sections().values().any(|s| s.material != *name)
+        || model.sections().values().any(|s| matches!(s.kind, fieldcraft_model::SectionKind::CompositeShell { .. }))
         || !matches!(model.material(name).and_then(|m| m.elastic.as_ref()), Some(Elastic::Isotropic { .. }))
         || !model.springs().is_empty()
         || !model.masses().is_empty()
@@ -423,6 +424,7 @@ pub fn inverse_joint_uniform_material(model: &Model, fit: &JointFit, limits: &Li
                     };
                     guarded.replace_step(selected)?;
                     let r = crate::solve_frequency(&guarded, Some(step), &Default::default(), limits)?;
+                    super::model::require_uncapped_modes(&r, limits)?;
                     let requested = modes as usize;
                     if r.modes.len() < requested || (r.modes.len() == requested && r.stats.equations > requested) {
                         return Err(Error::NotConverged("uniform joint baseline needs requested modes and an upper gap guard".into()));
