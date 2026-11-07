@@ -243,6 +243,7 @@ impl Quantities for Load {
                 f(Q::HeatTransferCoefficient, film);
                 f(Q::Temperature, sink);
             }
+            Load::Radiation { set: _, emissivity: _, ambient } => f(Q::Temperature, ambient),
             Load::HeatSource { set: _, power } => f(Q::HeatGeneration, power),
             Load::Temperature { target: _, value } => f(Q::Temperature, value),
         }

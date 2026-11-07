@@ -994,7 +994,12 @@ impl<'m> Deck<'m> {
                     let a = angular_velocity / (2.0 * std::f64::consts::PI);
                     entry(Card::new("RFORCE").int(*sid).blank().blank().real(a).reals(*axis), out, &mut first)?
                 }
-                Load::BodyForce { .. } | Load::SurfaceFlux { .. } | Load::Convection { .. } | Load::HeatSource { .. } | Load::Temperature { .. } => {}
+                Load::BodyForce { .. }
+                | Load::SurfaceFlux { .. }
+                | Load::Convection { .. }
+                | Load::Radiation { .. }
+                | Load::HeatSource { .. }
+                | Load::Temperature { .. } => {}
             }
         }
         for (sid, loads) in &self.combinations {

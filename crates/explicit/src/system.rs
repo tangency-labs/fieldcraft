@@ -709,7 +709,7 @@ impl System {
                 Load::Moment { .. } => {
                     return Err(Error::NotSupported(format!("moments (`{name}`): solid nodes have no rotations")));
                 }
-                Load::SurfaceFlux { .. } | Load::Convection { .. } | Load::HeatSource { .. } => {
+                Load::SurfaceFlux { .. } | Load::Convection { .. } | Load::Radiation { .. } | Load::HeatSource { .. } => {
                     return Err(Error::NotSupported(format!("{} loads (`{name}`) in explicit dynamics", load.kind())));
                 }
                 // Thermal strains, set by `temperatures`.

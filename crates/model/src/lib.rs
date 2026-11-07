@@ -82,7 +82,7 @@ pub use fluids::{
 pub use geometry::{BodyMesh, Classification, Entity, GeometryRef};
 pub use geometry_names::NameUse;
 pub use initial::InitialField;
-pub use loads::{Distribution, Load, centrifugal_acceleration};
+pub use loads::{Distribution, Load, STEFAN_BOLTZMANN, SurfaceRadiation, centrifugal_acceleration};
 pub use materials::{Damage, Directional, Elastic, Erosion, Fluid, Hardening, HardeningPoint, Hyperelastic, Material, PhaseChange, Plastic, Thermal};
 pub use mesh::{
     Element, ElementEdge, ElementFace, ElementKind, MIN_NORMALIZED_JACOBIAN, Node, admissible_jacobian, check_coordinates, normalized_jacobian,

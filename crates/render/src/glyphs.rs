@@ -266,6 +266,8 @@ enum Shape {
     Prescribed(Vec3),
     /// Convection to the surroundings: a wavy line off the face.
     Convection,
+    /// Radiation to the surroundings: three rays fanning out of the face.
+    Radiation,
     /// A heat flux into the face: an arrow onto it.
     HeatFlux,
     /// A pressure: onto the face (positive) or away from it.
@@ -635,8 +637,12 @@ impl Builder<'_> {
                 self.marks.push((owner, Mark::Spin { centre, axis, half_length: 0.5 * self.bounds.diagonal() }));
             }
             Load::Temperature { target, .. } => self.thermal(owner, target, Shape::Temperature),
-            Load::Convection { set, .. } | Load::SurfaceFlux { set, .. } => {
-                let shape = if matches!(load, Load::Convection { .. }) { Shape::Convection } else { Shape::HeatFlux };
+            Load::Convection { set, .. } | Load::Radiation { set, .. } | Load::SurfaceFlux { set, .. } => {
+                let shape = match load {
+                    Load::Convection { .. } => Shape::Convection,
+                    Load::Radiation { .. } => Shape::Radiation,
+                    _ => Shape::HeatFlux,
+                };
                 let (faces, total) = self.faces(set);
                 if faces.is_empty() {
                     self.thermal(owner, &Target::Set(set.clone()), Shape::Thermal);
@@ -797,7 +803,7 @@ impl Glyphs {
             }
             let color = match g.shape {
                 Shape::Constraint | Shape::Support(_) | Shape::Prescribed(_) => colors.constraint,
-                Shape::Thermal | Shape::Temperature | Shape::Convection | Shape::HeatFlux => colors.thermal,
+                Shape::Thermal | Shape::Temperature | Shape::Convection | Shape::Radiation | Shape::HeatFlux => colors.thermal,
                 Shape::Surface => colors.contact,
                 _ => colors.load,
             };
@@ -1154,7 +1160,7 @@ impl Draw<'_> {
                 self.line(p - e1 * (0.45 * u), p + e1 * (0.45 * u));
                 self.arrow(p, dir, len, head);
             }
-            Shape::Pressure { .. } | Shape::Traction(_) | Shape::Surface | Shape::Convection | Shape::HeatFlux => {}
+            Shape::Pressure { .. } | Shape::Traction(_) | Shape::Surface | Shape::Convection | Shape::Radiation | Shape::HeatFlux => {}
         }
     }
 
@@ -1189,6 +1195,14 @@ impl Draw<'_> {
                     self.line(at(k), at(k + 1));
                 }
                 self.head(at(steps), outward, head);
+            }
+            Shape::Radiation => {
+                // Rays leaving the face: one along the normal, two tilted off it.
+                let (e1, _) = perpendiculars(outward);
+                for tilt in [-0.5, 0.0, 0.5] {
+                    let dir = (outward + e1 * tilt).normalized().unwrap_or(outward);
+                    self.arrow(c + e1 * (0.3 * tilt * u), dir, 0.8 * len, 0.8 * head);
+                }
             }
             Shape::Surface => {
                 // A small square on the face, lifted off it a little.
