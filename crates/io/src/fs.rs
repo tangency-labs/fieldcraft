@@ -49,7 +49,7 @@ pub fn version_backup_paths(path: &Path, format: Option<u32>) -> impl Iterator<I
 
 /// What the existing file at `path` is when it is a FieldCraft model or a SolidCraft design,
 /// which no export, deck or picture may replace: by its extension (`.fieldcraft`,
-/// `.solidcraft`, any case) or by its content (a FieldCraft package with a format tag, a
+/// `.sc`, `.solidcraft`, any case) or by its content (a FieldCraft package with a format tag, a
 /// SolidCraft design's `"format": "solidcraft/…"`). `None` when there is no file or it is
 /// neither.
 pub fn protected_kind(path: &Path) -> Option<&'static str> {
@@ -63,7 +63,7 @@ pub fn protected_kind(path: &Path) -> Option<&'static str> {
     let head = read_prefix(path, 4096);
     let text = String::from_utf8_lossy(&head);
     let design = text.trim_start().starts_with('{') && text.contains("\"solidcraft/");
-    (ext.as_deref() == Some("solidcraft") || design).then_some("SolidCraft design")
+    (matches!(ext.as_deref(), Some("sc" | "solidcraft")) || design).then_some("SolidCraft design")
 }
 
 /// Write an export, a deck, a picture or any other output that is not the model's own file:
