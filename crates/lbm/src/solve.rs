@@ -101,6 +101,10 @@ pub struct SolidResult {
     pub capacity_scale: f64,
     /// The highest temperature it may reach (kelvin), when the model gives one.
     pub limit: Option<f64>,
+    /// The heat it radiates to the surroundings (power, positive leaving it), one value per
+    /// [`FluidResult::history_times`]; empty when it does not radiate.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub radiated: Vec<f64>,
 }
 
 /// A conducting solid's highest temperature: the steady value of a run that reached steady
@@ -444,6 +448,9 @@ fn run_checkpointed(
     let mut history_times = Vec::new();
     let mut forces: Vec<Vec<[f64; 3]>> = vec![Vec::new(); flow.groups().len()];
     let mut heats: Vec<Vec<f64>> = vec![Vec::new(); if setup.thermal.is_some() { flow.groups().len() } else { 0 }];
+    // Every solid's radiation, when one radiates.
+    let radiates = setup.thermal.as_ref().is_some_and(|t| t.solids.iter().any(|s| s.radiation.is_some()));
+    let mut radiated: Vec<Vec<f64>> = vec![Vec::new(); if radiates { setup.thermal.as_ref().map_or(0, |t| t.solids.len()) } else { 0 }];
     let mut zones: Vec<ZoneHistory> = setup
         .zones
         .iter()
@@ -488,6 +495,7 @@ fn run_checkpointed(
                 times: &mut history_times,
                 forces: &mut forces,
                 heats: &mut heats,
+                radiated: &mut radiated,
                 zones: &mut zones,
                 monitor: &mut monitor,
                 surface: &mut surface,
@@ -562,6 +570,11 @@ fn run_checkpointed(
                     h.push(q * hs);
                 }
             }
+            if !radiated.is_empty() {
+                for (h, q) in radiated.iter_mut().zip(flow.radiated()?) {
+                    h.push(q * hs);
+                }
+            }
             sample_surface(&mut surface, &*flow);
         }
         while next_frame <= frames && k == frame_step(next_frame) {
@@ -593,6 +606,7 @@ fn run_checkpointed(
                     times: &mut history_times,
                     forces: &mut forces,
                     heats: &mut heats,
+                    radiated: &mut radiated,
                     zones: &mut zones,
                     monitor: &mut monitor,
                     surface: &mut surface,
@@ -676,6 +690,7 @@ fn run_checkpointed(
         .iter()
         .flat_map(|t| t.solids.iter().enumerate())
         .map(|(k, s)| SolidResult {
+            radiated: if s.radiation.is_some() { radiated.get(k).cloned().unwrap_or_default() } else { Vec::new() },
             body: s.body.clone(),
             cells: flow.conducting().get(k).cloned().unwrap_or_default(),
             power: s.power * hs,

@@ -436,6 +436,8 @@ Metal, million cell updates per second (`zone_throughput_and_diagnostic_cost`):
   every step), far below the throughput of the Performance table.
 - A device must offer enough storage buffers per compute stage; GL adapters may not.
 - No device backend in the browser yet.
+- Radiation from conducting solids (#839), like melting and freezing, a free surface and a
+  shear-dependent viscosity, is refused by name: solve those on the CPU (`backend: "cpu"`).
 - The whole population state lives in one buffer, which must fit the device's limit per storage
   buffer.
 

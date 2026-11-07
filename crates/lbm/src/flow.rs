@@ -1049,7 +1049,8 @@ impl Flow {
                         let wall = wall_velocity(face).is_some() || is_slip(face);
                         wall.then(|| ts.faces.get(face.index()).copied().unwrap_or_default())
                     });
-                    let layout = Layout { grid: &grid, periodic, conducting: &conducting, walls, kf: ts.conductivity, contacts: &ts.contacts };
+                    let layout =
+                        Layout { grid: &grid, periodic, conducting: &conducting, walls, kf: ts.conductivity, contacts: &ts.contacts, zero: ts.zero };
                     Some(SolidHeat::build(
                         &layout,
                         solids,
@@ -1290,6 +1291,11 @@ impl Flow {
     /// The liquid fraction of a cell, or `None` without a phase change.
     pub fn liquid_fraction(&self, cell: usize) -> Option<f64> {
         self.phase().and_then(|p| p.liquid.get(cell).copied())
+    }
+
+    /// Whether a conducting solid radiates to its surroundings.
+    pub fn radiates(&self) -> bool {
+        self.thermal.as_ref().and_then(|t| t.solid.as_ref()).is_some_and(|s| !s.radiated.is_empty())
     }
 
     /// Whether the fluid melts and freezes.
@@ -2926,6 +2932,10 @@ impl crate::backend::Backend for Flow {
 
     fn heat(&mut self) -> Result<Vec<f64>> {
         Ok(Flow::heat(self).to_vec())
+    }
+
+    fn radiated(&mut self) -> Result<Vec<f64>> {
+        Ok(self.thermal.as_ref().and_then(|t| t.solid.as_ref()).map_or_else(Vec::new, |s| s.radiated.clone()))
     }
 
     fn zones(&mut self) -> Result<Vec<ZoneSample>> {

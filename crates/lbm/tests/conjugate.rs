@@ -97,8 +97,10 @@ fn contact_column(n: usize, power: f64, contact: fieldcraft_model::ThermalContac
     let mut d = slab_column(n, [0.0, 1.0], power);
     d.obstacles = vec!["Die".into(), "Lid".into()];
     let th = d.thermal.as_mut().unwrap();
-    th.solids =
-        vec![conducting("Die", power), fieldcraft_model::ConductingSolid { body: "Lid".into(), material: "Other".into(), power: 0.0, limit: None }];
+    th.solids = vec![
+        conducting("Die", power),
+        fieldcraft_model::ConductingSolid { body: "Lid".into(), material: "Other".into(), power: 0.0, limit: None, radiation: None },
+    ];
     th.contacts = vec![contact];
     d
 }
@@ -725,4 +727,51 @@ fn a_heated_slab_passes_and_fails_limits_either_side_of_its_peak() {
     r.solids[0].limit = None;
     let c = &r.components()[0];
     assert!(c.peak.is_some() && c.margin.is_none() && c.ok.is_none() && r.components_ok().is_none(), "{c:?}");
+}
+
+/// A slab on the hot plate (y = 0) radiating from its top face, through the fluid, to
+/// surroundings at the cold plate's temperature (#839). Steady, the top slab cell at T_c passes
+/// on what conduction brings it, `(T₀ − T_c) / R₁ = (T_c − T₁) / R₂ + ε σ (T_c⁴ − T_amb⁴)`, with
+/// the series resistances of the cells between it and each plate, `R₁ = (L_s − Δx/2) / k_s` and
+/// `R₂ = Δx/(2 k_s) + (1 − L_s) / k_f`, which the scheme reproduces exactly (as in
+/// [`a_composite_wall_conducts_in_series`]); the radiated heat closes the plates' balance.
+#[test]
+fn a_radiating_slab_balances_conduction_and_radiation() {
+    let (alpha, ks, eps) = (5.0, 20.0, 0.9);
+    let (t0, t1) = (kelvin(100.0), kelvin(20.0));
+    let sigma = eps * fieldcraft_model::STEFAN_BOLTZMANN;
+    for n in [8, 16] {
+        let dx = 1.0 / n as f64;
+        let dt = 0.125 * dx * dx / alpha;
+        let mut d = slab_column(n, [100.0, 20.0], 0.0);
+        d.thermal.as_mut().unwrap().solids[0].radiation = Some(fieldcraft_model::SurfaceRadiation { emissivity: eps, ambient: t1 });
+        let m = cht_model([1.0, 0.1, alpha], (1.0, [ks; 3], 1.0), d, step(8.0 / alpha, dt, None));
+        let obstacles = [slab_obstacle([-1.0, 0.25])];
+        let (setup, mut flow) = prepare(&m, &obstacles);
+        run_all(&setup, &mut flow);
+        let (r1, r2) = ((0.25 - dx / 2.0) / ks, dx / (2.0 * ks) + 0.75 / alpha);
+        let balance = |tc: f64| (tc - t1) / r2 + sigma * (tc.powi(4) - t1.powi(4)) - (t0 - tc) / r1;
+        let (mut lo, mut hi) = (t1, t0);
+        for _ in 0..200 {
+            let mid = 0.5 * (lo + hi);
+            if balance(mid) > 0.0 { hi = mid } else { lo = mid }
+        }
+        let tc = 0.5 * (lo + hi);
+        let ts = setup.thermal.as_ref().unwrap();
+        let top = flow.temperature(n / 4 - 1).unwrap() + ts.zero;
+        let radiated = sigma * (tc.powi(4) - t1.powi(4));
+        let hs = ts.heat_scale;
+        let heat = flow.heat();
+        let (hot, cold) = (heat[BoxFace::YMin.index()] * hs, heat[BoxFace::YMax.index()] * hs);
+        let glow = flow.thermal().unwrap().solid().unwrap().radiated[0] * hs;
+        println!(
+            "radiating slab, {n} cells: top cell {top:.9} K vs {tc:.9} K, radiated {glow:.6e} W vs {:.6e}, plates {hot:.6e} {cold:.6e}",
+            radiated * dx * dx
+        );
+        assert!((top - tc).abs() < 1e-6, "{n}: {top} vs {tc}");
+        assert!(radiated > 0.2 * (t0 - tc) / r1, "radiation carries a fair share");
+        assert!((glow - radiated * dx * dx).abs() < 1e-6 * glow, "{n}: {glow}");
+        // what the hot plate gives leaves through the cold plate and by radiation
+        assert!((hot + cold + glow).abs() < 1e-6 * glow, "{n}: {hot} {cold} {glow}");
+    }
 }

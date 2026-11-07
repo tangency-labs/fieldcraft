@@ -55,7 +55,7 @@ against its limit.
 | `expansion` | ≥ 0, per temperature | none | Volumetric expansion coefficient β; required with a gravity. |
 | `faces.<face>` | condition | adiabatic | The thermal condition of each box face. |
 | `surfaces` | `[{face, condition}]`, at most 10 000 | none | Conditions on named faces of non-conducting obstacles; their other faces are adiabatic. |
-| `solids` | `[{body, material, power, limit}]` | none | Obstacles that conduct heat. |
+| `solids` | `[{body, material, power, limit, radiation}]` | none | Obstacles that conduct heat. |
 | `contacts` | `[{bodies, resistance}]` or `[{bodies, thickness, conductivity}]`, at most 10 000 | none | Thermal interface layers between two touching conducting solids. |
 | `temperature_zero` | kelvin | 0 °C | The temperature the lattice counts from (see Theory); a model from before SI storage keeps the zero of the system it was typed in. |
 
@@ -75,6 +75,7 @@ against its limit.
 | `material` | material name | required | A density, a conductivity (isotropic, or `[kx, ky, kz]` along the box's axes) and a specific heat. |
 | `power` | power | 0 | Heat generated, spread evenly over its cells; negative draws heat out. A powered solid that covers no cell centre is refused. |
 | `limit` | temperature, above 0 K | none | The highest temperature it may reach (a junction or case limit); the solve reports its peak against it. |
+| `radiation` | `{emissivity, ambient}`: ε above 0 and at most 1, a temperature at or above 0 K | none | Radiation from its faces that touch the fluid to surroundings at `ambient` (the enclosure or room), through the fluid taken as transparent: ε σ (T⁴ − T_amb⁴) per area. Faces see only the surroundings (no view factors). CPU backend only: the GPU backend refuses it. |
 
 **Thermal contact** (`contacts`): `bodies`, two conducting solids that share at least one cell face;
 either `resistance` (per area, K·m²/W in SI) or `thickness` with `conductivity` (R = t / k), not
@@ -184,6 +185,21 @@ g = 1 / (1/(2 k_a) + 1/(2 k_b) + r),   r = R (ρ c)_f Δx / Δt
 (Incropera et al. 2011, §3.1.4). Both cells see the same g, so heat is conserved, and a resistance
 only lowers a conductance, so the sub-cycling limit holds as without it.
 
+**Radiation to the surroundings.** A solid with `radiation` loses, through each of its cells'
+faces shared with the fluid (one per fluid link into the cell), e (T⁴ − T_amb⁴) per step with
+e = ε σ Δt / ((ρ c)_f Δx) in lattice heat units, on the absolute temperature T = θ + T₀ (θ the
+lattice temperature, T₀ the kelvin it counts from). Inside each sub-step the loss is linearised
+about the cell's old temperature and taken point-implicitly with the fluid links,
+
+```text
+C (T' − T) = Δt' (H − b T' − q(T) − q'(T) (T' − T)),   q = n e (T⁴ − T_amb⁴), q' = 4 n e T³
+```
+
+(n the cell's fluid faces, H the rest of its heat), so it stays stable however strongly the solid
+radiates and the heat it loses is exactly what is counted as radiated. At a steady state T' = T
+and the loss is the exact quartic. The fluid neither absorbs nor emits: the radiated heat leaves
+the domain.
+
 **Units of the solid.** Heat is counted in the fluid's lattice heat, (ρ c)_f Δx³ per degree. A
 solid's lattice conductivity is k Δt / ((ρ c)_f Δx²), its capacity ρ c / (ρ c)_f and its power
 P Δt / ((ρ c)_f Δx³); a solid with the fluid's properties behaves exactly as the fluid at rest.
@@ -255,7 +271,7 @@ reported twice its heat, #675).
 | `tau_thermal` | The scalar lattice's τ_T. |
 | `temperature` | `min` and `max` of the fluid's temperature in the last frame. |
 | `heat` | Per wall with non-zero heat (box face or obstacle face, with its `body`): the power into it, `final` and `mean` over the last quarter of the history; positive into the wall. |
-| `solids` | Per conducting solid: `body`, `cells`, `power`, `heat_to_fluid` (`final`, `mean`: what its faces give the fluid), `temperature` (`min`, `max`, `mean` at the end), `capacity_scale` (when scaled), `peak` and `peak_time`, `limit`, `margin` (limit less peak; negative over it), `ok`. |
+| `solids` | Per conducting solid: `body`, `cells`, `power`, `heat_to_fluid` (`final`, `mean`: what its faces give the fluid), `radiated` (`final`, `mean`: the power it radiates to the surroundings, when it radiates), `temperature` (`min`, `max`, `mean` at the end), `capacity_scale` (when scaled), `peak` and `peak_time`, `limit`, `margin` (limit less peak; negative over it), `ok`. |
 | `components_ok` | Whether every solid with a limit stays at or under it; null when none has a limit. |
 | `frozen` | With a phase change: the share of the fluid frozen at the end, the mean over the fluid cells of 1 − f_l; null without. Reported by the solve, not saved with the results. |
 
@@ -395,6 +411,7 @@ heavy).
 | Conduction limit of the House et al. cavity | Nu 0.7069, 1, 1.4138 | 1.5 % | `a_conducting_body_in_a_cavity_without_flow_matches_house_et_al` |
 | Square array of cylinders, κ 10 and 0.1, 16 cells | Rayleigh's series (Perrins et al. 1979; Godin 2012) | 1 %; 6 % (measured +0.55 %, −5.66 %) | `a_square_array_of_cylinders_conducts_as_rayleigh_s_series` |
 | Insulating cylinders on 32 and 64 cells | the series | −2.99 %, −1.21 %: first order or better | `insulating_cylinders_converge_at_first_order` (heavy) |
+| Slab on the hot plate radiating through the fluid (ε 0.9, to the cold plate's 293.15 K), 8 and 16 cells | the top cell's balance (T₀ − T_c)/R₁ = (T_c − T₁)/R₂ + ε σ (T_c⁴ − T_amb⁴), exact on the lattice; measured: top cell 363.9536 K (8 cells), 362.6096 K (16) to < 10⁻⁹ K, radiation 53 % of the hot plate's heat, the plates and the radiation closing the balance to round-off | 10⁻⁶ K; 10⁻⁶ | `a_radiating_slab_balances_conduction_and_radiation` |
 | Slab against limits either side of its peak | peak 7.625 °C, pass and fail | 2 % | `a_heated_slab_passes_and_fails_limits_either_side_of_its_peak` |
 
 **Melting and freezing** (`crates/lbm/tests/solidification.rs`; CPU):
@@ -437,6 +454,10 @@ conductor filling the box and a low-capacity solid, temperature and heat within 
 - Solid–fluid interfaces are staircases of cell faces: curved interfaces lose accuracy, an
   error of first order for insulating inclusions.
 - There is no contact resistance between a solid and the fluid.
+- Radiation goes from conducting solids to the surroundings only: no exchange between surfaces
+  (no view factors), no radiation from non-conducting obstacles or box walls, a transparent
+  fluid, a gray surface with a constant emissivity; the solid radiates at its cell-centre
+  temperature, half a cell from the surface. The GPU backend refuses it (#839).
 - The fluid's conductivity is isotropic.
 - A steady run's transient is not physical when a solid's capacity is scaled.
 - The numerical diffusion along the flow, 4 u² of the diffusivity in lattice units, bounds the

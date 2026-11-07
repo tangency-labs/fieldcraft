@@ -669,6 +669,11 @@ impl GpuFlow {
         if flow.free_surface() {
             return Err(Error::Invalid("a free surface is not on the GPU backend yet: solve on the CPU (`backend: \"cpu\"`)".into()));
         }
+        if flow.radiates() {
+            return Err(Error::Invalid(
+                "radiation from conducting solids is not on the GPU backend yet: solve on the CPU (`backend: \"cpu\"`)".into(),
+            ));
+        }
         fieldcraft_model::progress::backend_diagnostic(fieldcraft_model::progress::BackendDiagnostic {
             phase: "selecting_adapter".into(),
             devices_opened: Some(DEVICES_OPENED.load(Ordering::Relaxed)),
