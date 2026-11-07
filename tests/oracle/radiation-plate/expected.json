@@ -1,0 +1,161 @@
+{
+ "title": "A plate cooled by radiation: alone to warm surroundings and to 0 K, and with convection",
+ "kind": "theory",
+ "source": "The steady energy balance of a surface that radiates to large surroundings, q = ε σ (T_s⁴ − T_sur⁴), with convection q = h (T_s − T∞) + ε σ (T_s⁴ − T_sur⁴), and one-dimensional conduction through the plate (F. P. Incropera, D. P. DeWitt, Fundamentals of Heat and Mass Transfer, §1.2.3 and §1.3.1, the surface energy balance). The temperature through the plate is linear, the exact discrete solution of every hex8 mesh; the face temperature is the balance's root (closed form without convection, bisection to round-off with it)",
+ "quantities": [
+  {
+   "id": "t_cooled_room",
+   "quantity": "T of the radiating face, surroundings at 293.15 K: (q/εσ + T_amb⁴)^¼",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Room",
+     "at": [
+      [
+       0.0,
+       0.0,
+       0.02
+      ]
+     ]
+    },
+    "pointer": "/nodes/0/temperature"
+   },
+   "value": 476.31787800158963,
+   "tolerance": {
+    "relative": 1e-09
+   },
+   "reason": "exact discrete solution: the temperature is linear through the plate, which every hex8 reproduces, and the radiating face's balance is solved to the Newton tolerance"
+  },
+  {
+   "id": "t_heated_room",
+   "quantity": "T of the heated face, surroundings at 293.15 K: T_L + q L / k",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Room",
+     "at": [
+      [
+       0.0,
+       0.0,
+       0.0
+      ]
+     ]
+    },
+    "pointer": "/nodes/0/temperature"
+   },
+   "value": 478.9845446682563,
+   "tolerance": {
+    "relative": 1e-09
+   },
+   "reason": "exact discrete solution: the temperature is linear through the plate, which every hex8 reproduces, and the radiating face's balance is solved to the Newton tolerance"
+  },
+  {
+   "id": "radiated_room",
+   "quantity": "heat the radiation takes out, surroundings at 293.15 K (all of q A = 2000 W)",
+   "measure": {
+    "from": "room",
+    "pointer": "/heat_flows/loads/0/heat"
+   },
+   "value": -2000.0,
+   "tolerance": {
+    "relative": 1e-09
+   },
+   "reason": "the steady energy balance: everything the heater supplies leaves by radiation"
+  },
+  {
+   "id": "t_cooled_space",
+   "quantity": "T of the radiating face, surroundings at 0 K: (q/εσ)^¼",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Space",
+     "at": [
+      [
+       0.0,
+       0.0,
+       0.02
+      ]
+     ]
+    },
+    "pointer": "/nodes/0/temperature"
+   },
+   "value": 458.2284693171542,
+   "tolerance": {
+    "relative": 1e-09
+   },
+   "reason": "exact discrete solution: the temperature is linear through the plate, which every hex8 reproduces, and the radiating face's balance is solved to the Newton tolerance"
+  },
+  {
+   "id": "t_heated_space",
+   "quantity": "T of the heated face, surroundings at 0 K",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Space",
+     "at": [
+      [
+       0.0,
+       0.0,
+       0.0
+      ]
+     ]
+    },
+    "pointer": "/nodes/0/temperature"
+   },
+   "value": 460.89513598382086,
+   "tolerance": {
+    "relative": 1e-09
+   },
+   "reason": "exact discrete solution: the temperature is linear through the plate, which every hex8 reproduces, and the radiating face's balance is solved to the Newton tolerance"
+  },
+  {
+   "id": "t_cooled_mixed",
+   "quantity": "T of the cooled face, convection (h 10, T∞ 295 K) and radiation (ε 0.9, T_amb 300 K): the root of h (T − T∞) + εσ (T⁴ − T_amb⁴) = q",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Mixed",
+     "at": [
+      [
+       0.0,
+       0.0,
+       0.02
+      ]
+     ]
+    },
+    "pointer": "/nodes/0/temperature"
+   },
+   "value": 379.9648640589128,
+   "tolerance": {
+    "relative": 1e-09
+   },
+   "reason": "exact discrete solution: the temperature is linear through the plate, which every hex8 reproduces, and the radiating face's balance is solved to the Newton tolerance"
+  },
+  {
+   "id": "radiated_mixed",
+   "quantity": "heat the radiation takes out with convection beside it, εσ (T_L⁴ − T_amb⁴) A",
+   "measure": {
+    "from": "mixed",
+    "pointer": "/heat_flows/loads/1/heat"
+   },
+   "value": -650.3513594108713,
+   "tolerance": {
+    "relative": 1e-08
+   },
+   "reason": "the cooled face's balance at the exact discrete temperature; the radiation's share of the 1500 W follows T⁴"
+  },
+  {
+   "id": "convected_mixed",
+   "quantity": "heat the convection takes out, h (T_L − T∞) A",
+   "measure": {
+    "from": "mixed",
+    "pointer": "/heat_flows/loads/0/heat"
+   },
+   "value": -849.6486405891287,
+   "tolerance": {
+    "relative": 1e-08
+   },
+   "reason": "the rest of the 1500 W: the face's energy balance closes"
+  }
+ ]
+}

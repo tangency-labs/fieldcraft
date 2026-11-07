@@ -930,7 +930,7 @@ pub fn loads(model: &Model, resolved: &Resolved, mesh: &Mesh, step: &Step, activ
             }
             // Heat loads act in heat transfer; temperature fields through their thermal strain
             // (add_thermal_loads).
-            Load::SurfaceFlux { .. } | Load::Convection { .. } | Load::HeatSource { .. } | Load::Temperature { .. } => {}
+            Load::SurfaceFlux { .. } | Load::Convection { .. } | Load::Radiation { .. } | Load::HeatSource { .. } | Load::Temperature { .. } => {}
             Load::BodyForce { set, vector } => {
                 for label in resolved.sets.get(set).map(|r| r.elements.as_slice()).unwrap_or_default() {
                     if let Some(t) = mesh.truss(*label) {

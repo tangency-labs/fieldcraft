@@ -99,7 +99,9 @@ pub struct Limits {
     pub max_factor_entries: usize,
     /// Lanczos vectors (iterations × block size).
     pub max_lanczos_vectors: usize,
-    /// Newton iterations of a nonlinear step, over all its increments.
+    /// Newton iterations of a nonlinear step, over all its increments; in heat transfer, of each
+    /// radiation solve (the steady one or one increment's, at most
+    /// [`heat::MAX_RADIATION_ITERATIONS`]).
     pub max_newton_iterations: usize,
 }
 

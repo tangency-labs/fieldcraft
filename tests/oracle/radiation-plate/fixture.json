@@ -1,0 +1,37 @@
+{
+  "note": "FieldCraft's accepted results for this case, written by `cargo xtask oracle --bless`. A result outside its band fails CI.",
+  "values": {
+    "convected_mixed": {
+      "band": 8.496486405894361e-7,
+      "value": -849.648640589436
+    },
+    "radiated_mixed": {
+      "band": 6.503513594112163e-7,
+      "value": -650.3513594112162
+    },
+    "radiated_room": {
+      "band": 2.0000000000006775e-6,
+      "value": -2000.0000000006773
+    },
+    "t_cooled_mixed": {
+      "band": 3.799648640590161e-7,
+      "value": 379.96486405901607
+    },
+    "t_cooled_room": {
+      "band": 4.763178780017087e-7,
+      "value": 476.31787800170866
+    },
+    "t_cooled_space": {
+      "band": 4.5822846931730336e-7,
+      "value": 458.22846931730334
+    },
+    "t_heated_room": {
+      "band": 4.789845446683765e-7,
+      "value": 478.9845446683765
+    },
+    "t_heated_space": {
+      "band": 4.6089513598397116e-7,
+      "value": 460.89513598397116
+    }
+  }
+}

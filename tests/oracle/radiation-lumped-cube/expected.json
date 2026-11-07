@@ -1,0 +1,53 @@
+{
+ "title": "A lumped body cooling by radiation alone: a cube from 1000 K to surroundings at 300 K and to 0 K",
+ "kind": "theory",
+ "source": "The lumped capacitance method with radiation alone, ρ c V dT/dt = −ε σ A (T⁴ − T_sur⁴), integrated in closed form: t = ρ c V / (4 ε σ A T_sur³) {ln|(T_sur + T)/(T_sur − T)| − ln|(T_sur + T₀)/(T_sur − T₀)| + 2 [atan(T/T_sur) − atan(T₀/T_sur)]}, and t = ρ c V / (3 ε σ A) (1/T³ − 1/T₀³) for surroundings at 0 K (F. P. Incropera, D. P. DeWitt, Fundamentals of Heat and Mass Transfer, §5.3, the general lumped capacitance analysis); T(t) solved by bisection to round-off. One hex8 keeps a uniform temperature (each node's capacity and radiating area are the same eighth), so the finite element model is the lumped body whatever its conductivity",
+ "quantities": [
+  {
+   "id": "t_room",
+   "quantity": "T at t = 600 s, surroundings at 300 K (Crank–Nicolson, 320 increments)",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Room",
+     "at": [
+      [
+       0.0,
+       0.0,
+       0.0
+      ]
+     ]
+    },
+    "pointer": "/nodes/0/temperature"
+   },
+   "value": 440.52674477193534,
+   "tolerance": {
+    "relative": 2e-05
+   },
+   "reason": "the time-stepping error, second order in Δt: 0.053, 0.0133 and 0.0033 K at 80, 160 and 320 increments (README); 0.0033 K is 7.5·10⁻⁶ of T, the tolerance leaves a margin"
+  },
+  {
+   "id": "t_space",
+   "quantity": "T at t = 600 s, surroundings at 0 K (Crank–Nicolson, 320 increments)",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Space",
+     "at": [
+      [
+       0.0,
+       0.0,
+       0.0
+      ]
+     ]
+    },
+    "pointer": "/nodes/0/temperature"
+   },
+   "value": 425.86319863886723,
+   "tolerance": {
+    "relative": 2e-05
+   },
+   "reason": "the time-stepping error at 320 increments, 0.0037 K or 8.6·10⁻⁶ of T, and a margin"
+  }
+ ]
+}
