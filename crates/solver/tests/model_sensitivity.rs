@@ -136,3 +136,58 @@ fn oriented_solid_sensitivity_recovers_global_stress() {
     }
     assert!(r.stress_derivative.iter().flatten().all(|v| v.abs() < 1e-9));
 }
+
+#[test]
+fn nelson_mass_normalization_derivatives_for_uniform_material_changes() {
+    use fieldcraft_solver::sensitivity::frequency_sensitivity_with_vectors;
+    let mut g = grid([3, 1, 1], ElementKind::Hex8, |p| [p[0] * 2.0, p[1] * 0.3, p[2] * 0.2]);
+    g.define(iso(1000.0, 0.25), Some(2.0), full(), Procedure::Frequency { modes: 3, min_hz: None, max_hz: None });
+    g.fixed("fixed", |p| near(p[0], 0.0));
+    for (parameter, h, factor) in
+        [(young(), 0.1, 0.0), (Parameter::Material { name: "Mat".into(), constant: MaterialConstant::Density }, 1e-3, -0.25)]
+    {
+        let result = frequency_sensitivity_with_vectors(&g.model, None, &parameter, h, &Default::default(), true, &Limits::default()).unwrap();
+        for mode in result.modes {
+            let v = mode.vector.unwrap();
+            let scale = v.shape_si.iter().flatten().map(|x| x.abs()).fold(0.0_f64, f64::max);
+            for (shape, derivative) in v.shape_si.iter().flatten().zip(v.derivative_si.iter().flatten()) {
+                assert!((derivative - factor * shape).abs() < 1e-7 * scale, "{derivative} {shape}");
+            }
+            assert!(v.equation_relative_residual < 1e-7);
+            assert!(v.normalization_derivative_residual.abs() < 1e-10);
+        }
+    }
+}
+
+#[test]
+fn exact_uniform_young_fit_agrees_with_recomputed_finite_elements() {
+    use fieldcraft_solver::sensitivity::{FrequencyFit, frequency_sensitivity, inverse_frequency, inverse_frequency_uniform_young};
+    let mut g = grid([3, 1, 1], ElementKind::Hex8, |p| [p[0] * 2.0, p[1] * 0.3, p[2] * 0.2]);
+    g.define(iso(1000.0, 0.25), Some(2.0), full(), Procedure::Frequency { modes: 3, min_hz: None, max_hz: None });
+    g.fixed("fixed", |p| near(p[0], 0.0));
+    let mut truth = g.model.clone();
+    young().set(&mut truth, 1100.0).unwrap();
+    let target = frequency_sensitivity(&truth, None, &young(), 0.01, &Default::default(), &Limits::default()).unwrap();
+    let fit = FrequencyFit {
+        lower: 800.0,
+        upper: 1300.0,
+        observed: target.modes.iter().map(|m| m.frequency).collect(),
+        standard_deviation: None,
+        regularization: 0.0,
+        max_iterations: 16,
+        relative_increment: 1e-4,
+    };
+    let fast = inverse_frequency_uniform_young(&g.model, None, &young(), &fit, &Limits::default()).unwrap();
+    let general = inverse_frequency(&g.model, None, &young(), &fit, &Limits::default()).unwrap();
+    assert!((fast.estimate / 1100.0 - 1.0).abs() < 1e-6);
+    assert!((fast.estimate / general.estimate - 1.0).abs() < 1e-7);
+    assert_eq!(fast.model_evaluations, 1);
+    assert!(fast.baseline.is_some());
+    assert_eq!(general.model_evaluations, general.evaluations);
+    let rho = Parameter::Material { name: "Mat".into(), constant: MaterialConstant::Density };
+    assert!(inverse_frequency_uniform_young(&g.model, None, &rho, &fit, &Limits::default()).is_err());
+    let mut material = g.model.material("Mat").unwrap().clone();
+    material.elastic = Some(fieldcraft_model::Elastic::EngineeringConstants { young: [1000.0, 900.0, 800.0], poisson: [0.2; 3], shear: [300.0; 3] });
+    g.model.replace_material("Mat", material).unwrap();
+    assert!(inverse_frequency_uniform_young(&g.model, None, &young(), &fit, &Limits::default()).is_err());
+}

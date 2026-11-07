@@ -632,6 +632,23 @@ pub(crate) const TOLERANCE: f64 = 1e-9; // unit-factors: a relative residual
 /// Solve a frequency step (the step named `step`, or the model's only frequency step): the
 /// lowest natural modes within the step's frequency range.
 pub fn solve_frequency(model: &Model, step: Option<&str>, options: &FrequencyOptions, limits: &Limits) -> Result<FrequencyResult> {
+    frequency_impl(model, step, options, limits, false).map(|(result, _)| result)
+}
+
+/// Reuse the actual physical mass operator for modal derivative contractions.
+/// Ordinary frequency solves still release it before factorization.
+pub(crate) fn frequency_with_mass(model: &Model, step: Option<&str>, options: &FrequencyOptions, limits: &Limits) -> Result<(FrequencyResult, Csr)> {
+    let (result, mass) = frequency_impl(model, step, options, limits, true)?;
+    Ok((result, mass.ok_or_else(|| Error::Internal("retained modal mass".into()))?))
+}
+
+fn frequency_impl(
+    model: &Model,
+    step: Option<&str>,
+    options: &FrequencyOptions,
+    limits: &Limits,
+    retain_mass: bool,
+) -> Result<(FrequencyResult, Option<Csr>)> {
     // A job cancelled before it starts stops here, before any setup work.
     fieldcraft_model::progress::check()?;
     let resolved: Resolved = model.resolve()?;
@@ -676,7 +693,8 @@ pub fn solve_frequency(model: &Model, step: Option<&str>, options: &FrequencyOpt
         return Err(Error::Invalid("every degree of freedom is held; there is nothing to vibrate".into()));
     }
     let [kff, mff] = red.reduce([&k, &m])?;
-    drop((k, m));
+    drop(k);
+    let retained_mass = if retain_mass { Some(m) } else { None };
     let shifted = |s: f64| -> Result<Factor> { factor_raw(&kff.add_scaled(-s, &mff)?, limits).map_err(|e| factor_error(e, &mesh, &red)) };
     let (shift, chol) = match options.shift {
         Some(s) => (s, shifted(s)?),
@@ -733,16 +751,19 @@ pub fn solve_frequency(model: &Model, step: Option<&str>, options: &FrequencyOpt
     if out.len() < wanted.count && max_hz.is_none() {
         warnings.push(format!("found {} of the {modes} modes asked for", out.len()));
     }
-    Ok(FrequencyResult {
-        step: step.name.clone(),
-        nodes: mesh.labels.clone(),
-        reference_points: mesh.points.iter().map(|p| (p.name.clone(), p.label)).collect(),
-        modes: out,
-        total_mass,
-        stats: Stats { dofs: mesh.dofs(), equations: neq, factor_entries: chol.entries(), lanczos_vectors: pairs.basis },
-        warnings,
-        buckling: None,
-    })
+    Ok((
+        FrequencyResult {
+            step: step.name.clone(),
+            nodes: mesh.labels.clone(),
+            reference_points: mesh.points.iter().map(|p| (p.name.clone(), p.label)).collect(),
+            modes: out,
+            total_mass,
+            stats: Stats { dofs: mesh.dofs(), equations: neq, factor_entries: chol.entries(), lanczos_vectors: pairs.basis },
+            warnings,
+            buckling: None,
+        },
+        retained_mass,
+    ))
 }
 
 /// Where a label's result is in a [`StepResult`].

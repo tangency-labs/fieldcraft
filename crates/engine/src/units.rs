@@ -782,7 +782,14 @@ fn rule_for(rules: &[(&'static str, Dim)], path: &[String]) -> Option<Dim> {
 /// Convert `reply` of command `id` from `from` (the command's frame) to `to` (the display
 /// system), and name the units it is in.
 pub fn convert_reply(id: &str, reply: &mut Value, from: &DisplaySystem, to: &DisplaySystem) -> Result<()> {
-    if matches!(id, "solve.sensitivity.static" | "solve.sensitivity.frequency" | "solve.inverse.frequency") {
+    if matches!(
+        id,
+        "solve.sensitivity.static"
+            | "solve.sensitivity.frequency"
+            | "solve.sensitivity.harmonic"
+            | "solve.inverse.frequency"
+            | "solve.inverse.harmonic"
+    ) {
         return sensitivity_reply(reply, from, to);
     }
     let rules: Vec<(&'static str, Dim)> =
@@ -989,8 +996,8 @@ fn sensitivity_reply(reply: &mut Value, from: &DisplaySystem, to: &DisplaySystem
         ("parameter_value", parameter, false),
         ("estimate", parameter, false),
         ("confidence_interval", parameter, false),
-        ("predicted", Quantity::Frequency, false),
-        ("residuals", Quantity::Frequency, false),
+        ("predicted", response, false),
+        ("residuals", response, false),
         ("increment", parameter, false),
         ("displacement", response, false),
         ("direct", response, true),
@@ -1023,6 +1030,37 @@ fn sensitivity_reply(reply: &mut Value, from: &DisplaySystem, to: &DisplaySystem
                 );
             }
         }
+    }
+    if let Some(Value::Array(frames)) = reply.get_mut("frames") {
+        for frame in frames {
+            for (key, q, derivative) in [
+                ("frequency", Quantity::Frequency, false),
+                ("displacement", response, false),
+                ("direct", response, true),
+                ("adjoint", response, true),
+                ("amplitude", response, false),
+                ("amplitude_derivative", response, true),
+            ] {
+                if let Some(v) = frame.get_mut(key) {
+                    scale(v, factor(q)? / if derivative { p } else { 1.0 })?;
+                }
+                units.insert(
+                    key.into(),
+                    json!(if derivative { format!("{}/({})", to.symbol(q), to.symbol(parameter)) } else { to.symbol(q).to_string() }),
+                );
+            }
+            // Harmonic phase follows the phasor convention: radians in every display system.
+            if let Some(v) = frame.get_mut("phase_derivative") {
+                scale(v, 1.0 / p)?;
+            }
+        }
+        units.insert("phase".into(), json!("rad"));
+        units.insert("phase_derivative".into(), json!(format!("rad/({})", to.symbol(parameter))));
+    }
+    if let Some(baseline) = reply.get_mut("baseline") {
+        baseline["parameter_quantity"] = json!(parameter.name());
+        baseline["response_quantity"] = json!("frequency");
+        sensitivity_reply(baseline, from, to)?;
     }
     reply["units"] = Value::Object(units);
     Ok(())

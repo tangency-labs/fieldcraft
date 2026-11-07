@@ -10,5 +10,12 @@ This verifies the command route and quotient units in SI. Solid stress,
 material constants and nonzero prescribed motion have solver integration tests;
 The bounded scalar frequency fit starts at k=4 N/m and recovers k=9 N/m
 from its synthetic exact frequency, with the required 1e-6 relative tolerance.
-None of this certifies clustered-mode derivatives, joint-parameter or harmonic
-inversion, or a large-model benchmark.
+None of this certifies clustered-mode derivatives, joint-parameter inversion,
+or a large-model benchmark.
+
+The direct harmonic check uses omega=2 rad/s and eta=1/2. At resonance,
+Z=2i and du/dk=1/4+i/8; magnitude and phase derivatives are -1/8 and 1/2.
+The complex-response inverse uses the zero-frequency response of k=8 N/m.
+Nelson's normalized scalar mode is constant for this fixed unit mass, so its
+stiffness derivative is zero. These additions cover harmonic inversion on
+this oscillator; they do not certify joint identification or large models.

@@ -674,15 +674,16 @@ pub static CATALOGUE: &[Capability] = &[
         "Sensitivity",
         Solve,
         "Design studies",
-        "Static displacement, work and continuum stress derivatives; simple-mode frequency derivatives in the drop-down",
-        &["solve.sensitivity.frequency"],
+        "Static displacement, work and continuum stress derivatives; simple-mode frequency and direct harmonic derivatives in the drop-down",
+        &["solve.sensitivity.frequency", "solve.sensitivity.harmonic"],
     ),
-    ready(
+    ready_more(
         "solve.inverse.frequency",
         "Fit Frequencies",
         Solve,
         "Design studies",
-        "Fit one material, thickness or spring parameter to simple natural frequencies within bounds",
+        "Fit one material, thickness or spring parameter to frequencies; complex harmonic observations in the drop-down",
+        &["solve.inverse.harmonic"],
     ),
     ready(
         "solve.explicit",

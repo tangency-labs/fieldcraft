@@ -2508,15 +2508,39 @@ pub const SENSITIVITY_STATIC: &[Field] = &[
     DESIGN_PARAMETER,
     int("node", "Observation node", 1, u32::MAX as i64).req().help("Label of the node whose displacement or rotation is observed."),
     int("dof", "Direction", 1, 6).def("1").help("1–3 are x/y/z translations; 4–6 are rotations."),
-    int("stress_element", "Continuum stress element", 1, u32::MAX as i64).help("Optional integration-point stress observation."),
+    int("stress_element", "Stress element", 1, u32::MAX as i64)
+        .help("Optional continuum/rod integration-point or shell bottom/middle/top node stress observation."),
     SENSITIVITY_INCREMENT,
     MAX_DOFS,
     MAX_FACTOR,
     THREADS,
 ];
-pub const SENSITIVITY_FREQUENCY: &[Field] = &[STEP, DESIGN_PARAMETER, SENSITIVITY_INCREMENT, MAX_DOFS, MAX_FACTOR, THREADS];
+pub const SENSITIVITY_HARMONIC: &[Field] = &[
+    STEP,
+    DESIGN_PARAMETER,
+    int("node", "Observation node", 1, u32::MAX as i64).req().help("Label of the node whose displacement or rotation is observed."),
+    int("dof", "Direction", 1, 6).def("1").help("1–3 are x/y/z translations; 4–6 are rotations."),
+    SENSITIVITY_INCREMENT,
+    MAX_DOFS,
+    MAX_FACTOR,
+    THREADS,
+];
+pub const SENSITIVITY_FREQUENCY: &[Field] = &[
+    STEP,
+    DESIGN_PARAMETER,
+    SENSITIVITY_INCREMENT,
+    flag("mode_shapes", "Mode shape derivatives")
+        .def("false")
+        .help("Compute mass-normalized Nelson vectors; vector arrays stay in SI and derivatives per SI parameter unit."),
+    MAX_DOFS,
+    MAX_FACTOR,
+    THREADS,
+];
 pub const INVERSE_FREQUENCY: &[Field] = &[
     STEP,
+    flag("uniform_young_scaling", "Reuse uniform Young scaling")
+        .def("false")
+        .help("Exact reuse after one FE derivative solve; refuses mixed sections, springs, initial fields and non-Young parameters."),
     DESIGN_PARAMETER,
     json("lower", "Lower bound").req().help("A number in the parameter display unit, or a quoted typed value such as \"100 GPa\"."),
     json("upper", "Upper bound").req().help("A number in the parameter display unit, or a quoted typed value such as \"300 GPa\"."),
@@ -2527,6 +2551,30 @@ pub const INVERSE_FREQUENCY: &[Field] = &[
         .help("Optional array in frequency units, one positive value per observation; enables the local interval when applicable."),
     positive("regularization", "Regularization", D::None).def("0").help("Nonnegative penalty on normalized distance from the starting parameter."),
     int("max_iterations", "Maximum iterations", 1, 64).def("16").help("Maximum optimization iterations; each trial recomputes finite element modes."),
+    int("max_lanczos_vectors", "Maximum Lanczos vectors", 1, 3000)
+        .hint("3000")
+        .help("Independent cap for each modal solve; not the optimization iteration count."),
+    SENSITIVITY_INCREMENT,
+    MAX_DOFS,
+    MAX_FACTOR,
+    THREADS,
+];
+pub const INVERSE_HARMONIC: &[Field] = &[
+    STEP,
+    int("node", "Observation node", 1, u32::MAX as i64).req().help("Physical node label for the complex observation."),
+    int("dof", "Direction", 1, 6).def("1").help("Translations 1–3, rotations 4–6."),
+    DESIGN_PARAMETER,
+    json("lower", "Lower bound").req().help("A number in the parameter display unit, or a quoted typed value such as \"100 GPa\"."),
+    json("upper", "Upper bound").req().help("A number in the parameter display unit, or a quoted typed value such as \"300 GPa\"."),
+    json("observed", "Complex observations")
+        .req()
+        .help("Flattened real/imaginary pairs in excitation-frequency order; display displacement or rotation units, typed units accepted."),
+    json("standard_deviation", "Known standard deviations")
+        .help("Optional known positive error per real/imaginary component in response units; enables the local interval when applicable."),
+    positive("regularization", "Regularization", D::None).def("0").help("Nonnegative penalty on normalized distance from the starting parameter."),
+    int("max_iterations", "Maximum iterations", 1, 64)
+        .def("16")
+        .help("Maximum optimization iterations; each trial recomputes direct harmonic response."),
     int("max_lanczos_vectors", "Maximum Lanczos vectors", 1, 3000)
         .hint("3000")
         .help("Independent cap for each modal solve; not the optimization iteration count."),

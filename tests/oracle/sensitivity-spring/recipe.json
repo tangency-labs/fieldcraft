@@ -130,7 +130,8 @@
       "parameter": {
         "type": "spring_stiffness",
         "name": "k"
-      }
+      },
+      "mode_shapes": true
     }
   },
   {
@@ -149,6 +150,82 @@
       ],
       "standard_deviation": [
         0.001
+      ]
+    }
+  },
+  {
+    "command": "model.step.create",
+    "params": {
+      "name": "H",
+      "procedure": {
+        "type": "harmonic",
+        "frequencies": [
+          0.3183098861837907
+        ],
+        "method": {
+          "type": "direct"
+        },
+        "damping": {
+          "loss_factor": 0.5
+        }
+      },
+      "boundary_conditions": [
+        "guide"
+      ],
+      "loads": [
+        "force"
+      ]
+    }
+  },
+  {
+    "command": "model.step.create",
+    "params": {
+      "name": "FitH",
+      "procedure": {
+        "type": "harmonic",
+        "frequencies": [
+          0.0
+        ],
+        "method": {
+          "type": "direct"
+        },
+        "damping": {}
+      },
+      "boundary_conditions": [
+        "guide"
+      ],
+      "loads": [
+        "force"
+      ]
+    }
+  },
+  {
+    "id": "harmonic",
+    "command": "solve.sensitivity.harmonic",
+    "params": {
+      "step": "H",
+      "parameter": {
+        "type": "spring_stiffness",
+        "name": "k"
+      },
+      "node": 1
+    }
+  },
+  {
+    "id": "harmonic_inverse",
+    "command": "solve.inverse.harmonic",
+    "params": {
+      "step": "FitH",
+      "parameter": {
+        "type": "spring_stiffness",
+        "name": "k"
+      },
+      "node": 1,
+      "lower": 1,
+      "upper": 16,
+      "observed": [
+        0.125,
+        0
       ]
     }
   }

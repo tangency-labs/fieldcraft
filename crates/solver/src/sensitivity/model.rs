@@ -17,7 +17,7 @@ pub struct StaticObservation {
     pub node: u32,
     /// 1..=6: translations then rotations.
     pub dof: u8,
-    /// Optional continuum element for integration-point stress derivatives.
+    /// Optional continuum/rod integration points or shell bottom/middle/top node stresses.
     pub stress_element: Option<u32>,
 }
 
@@ -33,6 +33,7 @@ pub struct StaticSensitivity {
     pub load_work: f64,
     pub load_work_derivative: f64,
     pub stress: Vec<[f64; 6]>,
+    pub stress_sampling: String,
     pub stress_derivative: Vec<[f64; 6]>,
     pub primal_relative_residual: f64,
     pub tangent_relative_residual: f64,
@@ -53,7 +54,7 @@ pub(super) fn perturb(model: &Model, parameter: &Parameter, h: f64) -> Result<(M
 fn dot(a: &[f64], b: &[f64]) -> f64 {
     a.iter().zip(b).map(|(x, y)| x * y).sum()
 }
-fn difference(a: &[f64], b: &[f64], h: f64) -> Result<Vec<f64>> {
+pub(super) fn difference(a: &[f64], b: &[f64], h: f64) -> Result<Vec<f64>> {
     if a.len() != b.len() {
         return Err(Error::Invalid("parameter changed equation layout".into()));
     }
@@ -63,7 +64,7 @@ fn difference(a: &[f64], b: &[f64], h: f64) -> Result<Vec<f64>> {
     }
     Ok(out)
 }
-fn matrix_difference(a: &Csr, b: &Csr, h: f64) -> Result<Csr> {
+pub(super) fn matrix_difference(a: &Csr, b: &Csr, h: f64) -> Result<Csr> {
     if a.n != b.n || a.ptr != b.ptr || a.idx != b.idx {
         return Err(Error::Invalid("parameter changed matrix pattern".into()));
     }
@@ -76,7 +77,7 @@ fn residual(k: &Csr, u: &[f64], rhs: &[f64]) -> f64 {
     let scale = rhs.iter().map(|x| x.abs()).fold(0.0_f64, f64::max);
     if scale > 0.0 { r / scale } else { r }
 }
-fn cold(setup: &Setup<'_>) -> Result<()> {
+pub(super) fn cold(setup: &Setup<'_>) -> Result<()> {
     if !setup.model.initial_fields().is_empty() || system::temperature_loads(setup.model, setup.resolved, setup.mesh, setup.step)?.is_some() {
         return Err(Error::NotSupported("thermal or initial fields in model sensitivities".into()));
     }
@@ -86,14 +87,29 @@ fn stress(mesh: &Mesh, full: &[f64], label: Option<u32>) -> Result<Vec<[f64; 6]>
     let Some(label) = label else {
         return Ok(Vec::new());
     };
-    let e = mesh.element(label).ok_or_else(|| Error::NotSupported("stress sensitivity currently requires a continuum element".into()))?;
     let (translation, _, _) = analysis::split(full, mesh);
-    let ue: Vec<_> = e.nodes.iter().map(|n| translation.get(*n).copied().unwrap_or_default()).collect();
-    Ok(e.stresses_from(&ue, None, None)?.iter().map(|p| p.stress).collect())
+    if let Some(e) = mesh.element(label) {
+        let ue: Vec<_> = e.nodes.iter().map(|n| translation.get(*n).copied().unwrap_or_default()).collect();
+        return Ok(e.stresses_from(&ue, None, None)?.iter().map(|p| p.stress).collect());
+    }
+    if let Some(e) = mesh.trusses.iter().find(|e| e.label == label) {
+        let ue: Vec<_> = e.nodes.iter().map(|n| translation.get(*n).copied().unwrap_or_default()).collect();
+        return Ok(e.truss()?.stresses_with(e.young, &ue, None).map_err(|err| Error::element(label, err))?.iter().map(|p| p.stress).collect());
+    }
+    if let Some(e) = mesh.structural.iter().find(|e| e.label == label) {
+        let dofs =
+            mesh.layout.element_dofs(&e.nodes, system::Structural::KINDS).ok_or_else(|| Error::Internal("stress sensitivity element dofs".into()))?;
+        let ue: Vec<_> = dofs.iter().map(|&d| full[d]).collect();
+        if let system::StructuralKernel::Shell(shell) = e.kernel()? {
+            let stress = shell.stresses(&ue).map_err(|err| Error::element(label, err))?;
+            return Ok(stress.bottom.into_iter().chain(stress.middle).chain(stress.top).collect());
+        }
+    }
+    Err(Error::NotSupported("stress sensitivity requires a continuum, rod or shell element; beam section stress is not implemented".into()))
 }
 
 /// A scalar displacement/rotation observation, its direct and adjoint derivative,
-/// external-load work and optional continuum integration-point stresses. The
+/// external-load work and optional continuum/rod/shell stress samples. The
 /// named parameter cannot change constraints or mesh topology. All values are SI.
 /// Assembly differences include density-dependent loads and prescribed-value
 /// elimination. The original stiffness is factored once for all three solves.
@@ -173,6 +189,12 @@ pub fn static_sensitivity(
         load_work_derivative: dot(&df, &u) + dot(&f, &du),
         stress: stress(&mesh, &u, observation.stress_element)?,
         stress_derivative: ds,
+        stress_sampling: match observation.stress_element {
+            None => "none",
+            Some(label) if mesh.structural.iter().any(|e| e.label == label) => "shell global tensor; bottom, middle, top, each in element-node order",
+            Some(_) => "global tensor at element integration points",
+        }
+        .into(),
         primal_relative_residual: residual(&kff, &q, &rhs),
         tangent_relative_residual: residual(&kff, &dq, &tangent),
         warnings,
@@ -196,6 +218,22 @@ pub fn static_sensitivity(
     Ok(out)
 }
 
+/// Mass-normalized vectors and derivatives, in the original SI equation basis.
+/// Translations/rotations have different dimensions; no display conversion is applied.
+#[derive(Debug, Clone, Serialize)]
+pub struct ModeShapeDerivative {
+    pub nodes: Vec<u32>,
+    pub shape_si: Vec<[f64; 3]>,
+    pub derivative_si: Vec<[f64; 3]>,
+    pub rotation_si: Vec<[f64; 3]>,
+    pub rotation_derivative_si: Vec<[f64; 3]>,
+    pub reference_points: Vec<(String, u32)>,
+    pub points_si: Vec<[f64; 6]>,
+    pub points_derivative_si: Vec<[f64; 6]>,
+    pub equation_relative_residual: f64,
+    pub normalization_derivative_residual: f64,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct FrequencyDerivative {
     pub frequency: f64,
@@ -203,6 +241,8 @@ pub struct FrequencyDerivative {
     pub frequency_derivative: f64,
     pub eigenvalue_derivative: f64,
     pub modal_mass: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vector: Option<ModeShapeDerivative>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -218,13 +258,26 @@ pub struct FrequencySensitivity {
 /// assembled FE operators. Fox and Kapoor (1968), AIAA J. 6:2426–2429,
 /// doi:10.2514/3.5008; summarized in NASA TM-86333. One extra mode checks
 /// the upper gap. Clustered/rigid modes and frequency windows are refused;
-/// this API does not compute Nelson eigenvector derivatives yet.
+/// use `frequency_sensitivity_with_vectors` for normalized Nelson vectors.
 pub fn frequency_sensitivity(
     model: &Model,
     step: Option<&str>,
     parameter: &Parameter,
     increment: f64,
     options: &crate::FrequencyOptions,
+    limits: &Limits,
+) -> Result<FrequencySensitivity> {
+    frequency_sensitivity_with_vectors(model, step, parameter, increment, options, false, limits)
+}
+
+/// Optionally add Nelson derivatives of unit-modal-mass mode shapes.
+pub fn frequency_sensitivity_with_vectors(
+    model: &Model,
+    step: Option<&str>,
+    parameter: &Parameter,
+    increment: f64,
+    options: &crate::FrequencyOptions,
+    vectors: bool,
     limits: &Limits,
 ) -> Result<FrequencySensitivity> {
     let (plus, minus) = perturb(model, parameter, increment)?;
@@ -237,7 +290,7 @@ pub fn frequency_sensitivity(
     guard_step.procedure =
         Procedure::Frequency { modes: modes.checked_add(1).ok_or_else(|| Error::Invalid("mode count overflow".into()))?, min_hz: None, max_hz: None };
     guard_model.replace_step(guard_step)?;
-    let result = crate::solve_frequency(&guard_model, Some(&step.name), options, limits)?;
+    let (result, mass) = analysis::frequency_with_mass(&guard_model, Some(&step.name), options, limits)?;
     let requested = modes as usize;
     if result.modes.len() < requested || (result.modes.len() == requested && result.stats.equations > requested) {
         return Err(Error::NotConverged("modal sensitivity needs requested modes and an upper gap guard".into()));
@@ -251,24 +304,46 @@ pub fn frequency_sensitivity(
     }
     let resolved = model.resolve()?;
     let mesh = Mesh::new(model, &resolved, limits.max_dofs)?;
-    let (graph, _) = analysis::pattern(&mesh);
-    let mass = analysis::assemble(&mesh, &graph, Some(options.mass))?.m.ok_or_else(|| Error::Internal("modal mass".into()))?;
+    let (graph, order) = analysis::pattern(&mesh);
+    let shape_system = if vectors {
+        let setup = Setup { model, resolved: &resolved, mesh: &mesh, step };
+        let mut warnings = Vec::new();
+        let red = analysis::reduction(&setup, false, &order, analysis::budget(limits, &mesh, &graph, 8), &mut warnings)?;
+        let k = analysis::assemble(&mesh, &graph, None)?.k;
+        let [mut kr, mut mr] = red.reduce([&k, &mass])?;
+        kr.mirror_lower();
+        mr.mirror_lower();
+        Some((red, kr, mr))
+    } else {
+        None
+    };
+    // Elastic constants and spring stiffness do not change mass. Density and
+    // shell thickness do; retain their full assembled mass derivatives.
+    let mass_changes = matches!(
+        parameter,
+        Parameter::Material { constant: fieldcraft_model::design::MaterialConstant::Density, .. } | Parameter::ShellThickness { .. }
+    );
     let assembled = |m: &Model| -> Result<_> {
         let resolved = m.resolve()?;
         let other = Mesh::new(m, &resolved, limits.max_dofs)?;
         if other.labels != mesh.labels || other.dofs() != mesh.dofs() {
             return Err(Error::Invalid("modal parameter changed mesh layout".into()));
         }
-        analysis::assemble(&other, &graph, Some(options.mass))
+        analysis::assemble(&other, &graph, mass_changes.then_some(options.mass))
     };
     let p = assembled(&plus)?;
     let m = assembled(&minus)?;
     let dk = matrix_difference(&p.k, &m.k, increment)?;
-    let dm = matrix_difference(
-        &p.m.ok_or_else(|| Error::Internal("perturbed mass".into()))?,
-        &m.m.ok_or_else(|| Error::Internal("perturbed mass".into()))?,
-        increment,
-    )?;
+    let dm = if mass_changes {
+        Some(matrix_difference(
+            &p.m.ok_or_else(|| Error::Internal("perturbed mass".into()))?,
+            &m.m.ok_or_else(|| Error::Internal("perturbed mass".into()))?,
+            increment,
+        )?)
+    } else {
+        None
+    };
+    drop((p.k, m.k));
     let mut out = Vec::new();
     for mode in result.modes.iter().take(requested) {
         if mode.eigenvalue <= 0.0 || mode.eigenvalue <= result.modes.last().map_or(0.0, |m| m.eigenvalue) * 1e-10 {
@@ -294,17 +369,51 @@ pub fn frequency_sensitivity(
         if !modal_mass.is_finite() || modal_mass <= 0.0 {
             return Err(Error::Invalid("nonpositive modal mass".into()));
         }
-        let dl = (quadratic(&dk) - mode.eigenvalue * quadratic(&dm)) / modal_mass;
+        let dl = (quadratic(&dk) - mode.eigenvalue * dm.as_ref().map_or(0.0, quadratic)) / modal_mass;
         let df = mode.frequency * dl / (2.0 * mode.eigenvalue);
         if !dl.is_finite() || !df.is_finite() {
             return Err(Error::Invalid("non-finite modal derivative".into()));
         }
+        let vector = if let Some((red, kr, mr)) = &shape_system {
+            let normalized: Vec<_> = phi.iter().map(|p| p / modal_mass.sqrt()).collect();
+            let q: Vec<_> = red.eq_dof.iter().map(|&i| normalized[i]).collect();
+            let [mut dkr] = red.reduce([&dk])?;
+            dkr.mirror_lower();
+            let dmr = dm
+                .as_ref()
+                .map(|m| -> Result<Csr> {
+                    let [mut m] = red.reduce([m])?;
+                    m.mirror_lower();
+                    Ok(m)
+                })
+                .transpose()?;
+            let (dq, equation_relative_residual, normalization_derivative_residual) =
+                super::nelson::derivative(super::nelson::Operators { k: kr, m: mr, dk: &dkr, dm: dmr.as_ref() }, &q, mode.eigenvalue, dl, limits)?;
+            let full = red.expand(&dq, false);
+            let (shape_si, rotation_si, points_si) = analysis::split(&normalized, &mesh);
+            let (derivative_si, rotation_derivative_si, points_derivative_si) = analysis::split(&full, &mesh);
+            Some(ModeShapeDerivative {
+                nodes: mesh.labels.clone(),
+                reference_points: result.reference_points.clone(),
+                shape_si,
+                rotation_si,
+                points_si,
+                derivative_si,
+                rotation_derivative_si,
+                points_derivative_si,
+                equation_relative_residual,
+                normalization_derivative_residual,
+            })
+        } else {
+            None
+        };
         out.push(FrequencyDerivative {
             frequency: mode.frequency,
             eigenvalue: mode.eigenvalue,
             frequency_derivative: df,
             eigenvalue_derivative: dl,
             modal_mass,
+            vector,
         });
     }
     Ok(FrequencySensitivity {

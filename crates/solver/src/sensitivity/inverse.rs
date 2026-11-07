@@ -38,6 +38,10 @@ pub struct FrequencyEstimate {
     pub objective: f64,
     pub iterations: usize,
     pub evaluations: usize,
+    pub model_evaluations: usize,
+    pub evaluation_method: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub baseline: Option<super::FrequencySensitivity>,
     pub at_bound: bool,
     /// Local linearized 95% normal interval, only for known standard
     /// deviations, no regularization, an interior estimate and nonzero slope.
@@ -59,12 +63,29 @@ struct Evaluation {
 /// recomputes actual FE modes and derivatives; there is no global E-scaling
 /// surrogate. Clustered modes are refused by the derivative evaluator.
 pub fn inverse_frequency(model: &Model, step: Option<&str>, parameter: &Parameter, fit: &FrequencyFit, limits: &Limits) -> Result<FrequencyEstimate> {
+    if fit.observed.iter().any(|y| *y <= 0.0) {
+        return Err(Error::Invalid("frequency observations must be positive".into()));
+    }
+    fit_scalar(model, parameter, fit, &fit.observed, "Simple ordered modes must retain their identity throughout the bounds.", |trial, increment| {
+        let response = frequency_sensitivity(trial, step, parameter, increment, &FrequencyOptions::default(), limits)?;
+        Ok(response.modes.iter().map(|m| (m.frequency, m.frequency_derivative)).collect())
+    })
+}
+
+pub(super) fn fit_scalar(
+    model: &Model,
+    parameter: &Parameter,
+    fit: &FrequencyFit,
+    relative_scales: &[f64],
+    condition: &str,
+    response: impl Fn(&Model, f64) -> Result<Vec<(f64, f64)>>,
+) -> Result<FrequencyEstimate> {
     let initial = parameter.value(model)?;
     if !fit.lower.is_finite() || !fit.upper.is_finite() || fit.lower >= fit.upper || initial < fit.lower || initial > fit.upper {
         return Err(Error::Invalid("frequency fit needs finite ordered bounds containing the initial parameter".into()));
     }
-    if fit.observed.is_empty() || fit.observed.len() > 256 || fit.observed.iter().any(|y| !y.is_finite() || *y <= 0.0) {
-        return Err(Error::Invalid("frequency fit needs 1..=256 positive finite observations".into()));
+    if fit.observed.is_empty() || fit.observed.len() > 256 || fit.observed.iter().any(|y| !y.is_finite()) {
+        return Err(Error::Invalid("frequency fit needs 1..=256 finite scalar observations".into()));
     }
     if !fit.regularization.is_finite()
         || fit.regularization < 0.0
@@ -75,7 +96,7 @@ pub fn inverse_frequency(model: &Model, step: Option<&str>, parameter: &Paramete
     {
         return Err(Error::Invalid("invalid frequency fit regularization, iteration cap or relative increment".into()));
     }
-    let sigma = fit.standard_deviation.as_ref().unwrap_or(&fit.observed);
+    let sigma = fit.standard_deviation.as_deref().unwrap_or(relative_scales);
     if sigma.len() != fit.observed.len() || sigma.iter().any(|s| !s.is_finite() || *s <= 0.0) {
         return Err(Error::Invalid("standard deviations must be positive finite and match observations".into()));
     }
@@ -88,23 +109,23 @@ pub fn inverse_frequency(model: &Model, step: Option<&str>, parameter: &Paramete
         let mut trial = model.clone();
         parameter.set(&mut trial, value)?;
         let increment = value.abs().max(scale * MIN_INCREMENT_SCALE) * fit.relative_increment;
-        let response = frequency_sensitivity(&trial, step, parameter, increment, &FrequencyOptions::default(), limits)?;
-        if response.modes.len() != fit.observed.len() {
-            return Err(Error::Invalid("observation count must equal the frequency step mode count".into()));
+        let values = response(&trial, increment)?;
+        if values.len() != fit.observed.len() {
+            return Err(Error::Invalid("observation count must equal prediction count".into()));
         }
         let mut cost = 0.0;
         let mut gradient = 0.0;
         let mut data_information = 0.0;
         let mut predicted = Vec::new();
         let mut residuals = Vec::new();
-        for ((mode, obs), s) in response.modes.iter().zip(&fit.observed).zip(sigma) {
-            let r = (mode.frequency - obs) / s;
-            let j = mode.frequency_derivative * scale / s;
+        for (((prediction, derivative), obs), s) in values.iter().zip(&fit.observed).zip(sigma) {
+            let r = (prediction - obs) / s;
+            let j = derivative * scale / s;
             cost += r * r;
             gradient += j * r;
             data_information += j * j;
-            predicted.push(mode.frequency);
-            residuals.push(mode.frequency - obs);
+            predicted.push(*prediction);
+            residuals.push(prediction - obs);
         }
         let prior = (value - initial) / scale;
         cost += fit.regularization * prior * prior;
@@ -135,7 +156,7 @@ pub fn inverse_frequency(model: &Model, step: Option<&str>, parameter: &Paramete
             } else {
                 None
             };
-            let mut warnings = vec!["One-parameter local fit; mode identity must remain simple and ordered throughout the supplied bounds.".into()];
+            let mut warnings = vec![format!("One-parameter local fit. {condition}")];
             if confidence_interval.is_none() {
                 warnings.push(
                     "No confidence interval: known observation standard deviations, an interior estimate and zero regularization are required."
@@ -152,6 +173,9 @@ pub fn inverse_frequency(model: &Model, step: Option<&str>, parameter: &Paramete
                 objective: current.cost,
                 iterations: iteration,
                 evaluations: iteration + 1,
+                model_evaluations: iteration + 1,
+                evaluation_method: "finite_element_each_evaluation".into(),
+                baseline: None,
                 at_bound,
                 confidence_interval,
                 warnings,
@@ -178,4 +202,59 @@ pub fn inverse_frequency(model: &Model, step: Option<&str>, parameter: &Paramete
         "frequency inverse reached {} iterations, objective {} at parameter {}",
         fit.max_iterations, current.cost, value
     )))
+}
+
+/// Opt-in exact reuse for K(E)=E/E₀ K(E₀), with constant mass. This is
+/// deliberately restricted to one isotropic material across every section,
+/// with no springs or initial fields. Mixed-material/support fits must use
+/// the general evaluator. One actual FE derivative solve supplies the basis.
+pub fn inverse_frequency_uniform_young(
+    model: &Model,
+    step: Option<&str>,
+    parameter: &Parameter,
+    fit: &FrequencyFit,
+    limits: &Limits,
+) -> Result<FrequencyEstimate> {
+    use fieldcraft_model::{Elastic, design::MaterialConstant};
+    let Parameter::Material { name, constant: MaterialConstant::Young } = parameter else {
+        return Err(Error::NotSupported("uniform Young scaling requires an isotropic Young parameter".into()));
+    };
+    if model.sections().is_empty()
+        || model.sections().values().any(|s| s.material != *name)
+        || !model.springs().is_empty()
+        || !model.initial_fields().is_empty()
+        || !matches!(model.material(name).and_then(|m| m.elastic.as_ref()), Some(Elastic::Isotropic { .. }))
+        || fit.lower <= 0.0
+        || fit.observed.iter().any(|y| *y <= 0.0)
+    {
+        return Err(Error::NotSupported(
+            "uniform Young scaling requires all sections in one isotropic material, no springs/initial fields and positive bounds/observations"
+                .into(),
+        ));
+    }
+    let initial = parameter.value(model)?;
+    let baseline = frequency_sensitivity(model, step, parameter, initial * fit.relative_increment, &FrequencyOptions::default(), limits)?;
+    let mut result = fit_scalar(
+        model,
+        parameter,
+        fit,
+        &fit.observed,
+        "Exact uniform-isotropic Young scaling after one actual FE sensitivity solve; no repeated eigen solves. The model topology, Poisson ratio and mass are fixed.",
+        |trial, _increment| {
+            let value = parameter.value(trial)?;
+            let ratio = (value / initial).sqrt();
+            Ok(baseline
+                .modes
+                .iter()
+                .map(|m| {
+                    let f = m.frequency * ratio;
+                    (f, f / (2.0 * value))
+                })
+                .collect())
+        },
+    )?;
+    result.model_evaluations = 1;
+    result.evaluation_method = "exact_uniform_young_scaling".into();
+    result.baseline = Some(baseline);
+    Ok(result)
 }

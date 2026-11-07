@@ -71,3 +71,21 @@ fn tangent_load_differentiates_both_operator_parts_and_force() {
         assert!((a - b).abs() < 2e-15, "{a} != {b}");
     }
 }
+
+#[test]
+fn reciprocal_transfer_derivatives_remain_complex_symmetric() {
+    let a = matrix(&[3.0, -1.0, -1.0, 2.0], 2);
+    let b = matrix(&[0.2, 0.03, 0.03, 0.4], 2);
+    let da = matrix(&[1.0, -0.4, -0.4, 0.7], 2);
+    let db = matrix(&[0.1, 0.02, 0.02, 0.0], 2);
+    let mut columns = Vec::new();
+    for j in 0..2 {
+        let mut force = Vector::zeros(2);
+        force.real[j] = 1.0;
+        let u = sensitivity::direct(&a, &b, &force, &Limits::default()).unwrap().displacement;
+        let tangent = sensitivity::tangent_load(&da, &db, &u, &Vector::zeros(2), &Limits::default()).unwrap();
+        columns.push(sensitivity::direct(&a, &b, &tangent, &Limits::default()).unwrap().displacement);
+    }
+    assert!((columns[0].real[1] - columns[1].real[0]).abs() < 1e-14);
+    assert!((columns[0].imaginary[1] - columns[1].imaginary[0]).abs() < 1e-14);
+}

@@ -207,6 +207,30 @@ fn stresses(mesh: &Mesh, u: &[f64], displacement: &[[f64; 3]]) -> Result<Vec<[f6
     Ok(sum)
 }
 
+/// Shared physical load assembly for primal and differentiated harmonic systems.
+pub(crate) fn load_vector(model: &Model, resolved: &Resolved, mesh: &Mesh, step: &Step, active: &[bool]) -> Result<Vector> {
+    let Procedure::Harmonic(h) = &step.procedure else {
+        return Err(Error::Internal("harmonic load step".into()));
+    };
+    let mut force = Vector::zeros(mesh.dofs());
+    for name in &step.loads {
+        let mut single = Step::new(step.name.clone(), step.procedure.clone());
+        single.loads.insert(name.clone());
+        let f = system::loads(model, resolved, mesh, &single, active)?;
+        let factor = h.load_factors.get(name).copied().unwrap_or_default();
+        let (re, im) = factor.components();
+        for ((r, i), value) in force.real.iter_mut().zip(&mut force.imaginary).zip(f) {
+            *r += re * value;
+            *i += im * value;
+        }
+    }
+    Ok(force)
+}
+
+pub(crate) fn damping_operators(model: &Model, resolved: &Resolved, mesh: &Mesh, graph: &NodeGraph) -> Result<(Option<Csr>, Option<Csr>)> {
+    damping_matrices(mesh, graph, &material_damping(model, resolved))
+}
+
 /// Solve a harmonic model step with consistent mass and the original boundary
 /// reduction. Existing spatial load definitions receive per-step phasor factors.
 pub fn solve_harmonic(model: &Model, name: Option<&str>, limits: &Limits) -> Result<HarmonicResult> {
@@ -283,18 +307,7 @@ pub fn solve_harmonic(model: &Model, name: Option<&str>, limits: &Limits) -> Res
     };
     let cr = reduce_optional(&c)?;
     let gr = reduce_optional(&g)?;
-    let mut force = Vector::zeros(mesh.dofs());
-    for name in &step.loads {
-        let mut single = Step::new(step.name.clone(), step.procedure.clone());
-        single.loads.insert(name.clone());
-        let f = system::loads(model, &resolved, &mesh, &single, &red.active)?;
-        let factor = h.load_factors.get(name).copied().unwrap_or_default();
-        let (re, im) = factor.components();
-        for ((r, i), value) in force.real.iter_mut().zip(&mut force.imaginary).zip(f) {
-            *r += re * value;
-            *i += im * value;
-        }
-    }
+    let force = load_vector(model, &resolved, &mesh, step, &red.active)?;
     let full = (red.largest_prescribed() != 0.0).then_some((k, m, c, g));
     let matrices = Matrices { stiffness: &kr, mass: &mr, viscous: cr.as_ref(), loss: gr.as_ref() };
     let reduced_force = Vector { real: red.restrict(&force.real), imaginary: red.restrict(&force.imaginary) };

@@ -107,3 +107,40 @@ fn optimizer_iteration_cap_does_not_limit_the_modal_basis() {
     let result = s.execute("solve.inverse.frequency", &p).unwrap();
     assert!((result["estimate"].as_f64().unwrap() - 4.0).abs() < 1e-8, "{result}");
 }
+
+#[test]
+fn harmonic_parameter_command_matches_oscillator_and_display_quotients() {
+    let mut s = oscillator();
+    s.execute("model.step.create", &json!({"name":"H", "procedure":{"type":"harmonic", "frequencies":[0.0], "method":{"type":"direct"}}, "boundary_conditions":["guide"],"loads":["force"]})).unwrap();
+    let p = json!({"step":"H","parameter":{"type":"spring_stiffness","name":"k"},"node":1});
+    let before = s.model.clone();
+    let a = s.execute("solve.sensitivity.harmonic", &p).unwrap();
+    assert!((a["frames"][0]["direct"][0].as_f64().unwrap() + 0.0625).abs() < 1e-9);
+    assert_eq!(s.model, before);
+    s.execute("model.units", &json!({"system":"mm-t-s-N-MPa"})).unwrap();
+    let a = s.execute("solve.sensitivity.harmonic", &p).unwrap();
+    assert!((a["frames"][0]["direct"][0].as_f64().unwrap() + 62500.0).abs() < 1e-4);
+    assert_eq!(a["units"]["direct"], "mm/(N/mm)");
+    assert_eq!(a["units"]["phase_derivative"], "rad/(N/mm)");
+}
+
+#[test]
+fn complex_inverse_command_uses_response_units_and_conditional_interval() {
+    let mut s = oscillator();
+    s.execute("model.step.create", &json!({"name":"H", "procedure":{"type":"harmonic", "frequencies":[0.0], "method":{"type":"direct"}}, "boundary_conditions":["guide"],"loads":["force"]})).unwrap();
+    s.execute("model.units", &json!({"system":"mm-t-s-N-MPa"})).unwrap();
+    let before = s.model.clone();
+    let p = json!({"step":"H","parameter":{"type":"spring_stiffness","name":"k"},"node":1,"lower":"1 N/m","upper":"16 N/m", "observed":["125 mm","0 mm"],"standard_deviation":["0.1 mm","0.1 mm"]});
+    let r = s.execute("solve.inverse.harmonic", &p).unwrap();
+    assert!((r["estimate"].as_f64().unwrap() / 0.008 - 1.0).abs() < 1e-6, "{r}");
+    assert!((r["predicted"][0].as_f64().unwrap() - 125.0).abs() < 1e-6);
+    assert_eq!(r["units"]["predicted"], "mm");
+    assert_eq!(s.model, before);
+}
+
+#[test]
+fn uniform_young_reuse_refuses_a_spring_parameter() {
+    let mut s = oscillator();
+    let r=s.execute("solve.inverse.frequency",&json!({"step":"Modes","parameter":{"type":"spring_stiffness","name":"k"},"lower":1,"upper":16,"observed":[0.5],"uniform_young_scaling":true}));
+    assert!(r.unwrap_err().to_string().contains("isotropic Young"));
+}

@@ -1,6 +1,26 @@
 {
   "note": "FieldCraft's accepted results for this case, written by `cargo xtask oracle --bless`. A result outside its band fails CI.",
   "values": {
+    "harmonic_amplitude": {
+      "band": 1.2500000000012502e-10,
+      "value": -0.125000000000125
+    },
+    "harmonic_imaginary": {
+      "band": 1.2500000000012502e-10,
+      "value": 0.125000000000125
+    },
+    "harmonic_inverse": {
+      "band": 8e-9,
+      "value": 7.999999996498743
+    },
+    "harmonic_phase": {
+      "band": 5.000000000005001e-10,
+      "value": 0.5000000000005
+    },
+    "harmonic_real": {
+      "band": 2.5000000000025003e-10,
+      "value": 0.25000000000025
+    },
     "inverse_parameter": {
       "band": 9.000000000000001e-9,
       "value": 8.999999999999986
@@ -16,6 +36,10 @@
     "modal_frequency": {
       "band": 3.978873577301363e-11,
       "value": 0.03978873577301363
+    },
+    "nelson_shape": {
+      "band": 1e-9,
+      "value": 0.0
     },
     "static_adjoint": {
       "band": 6.250000000006251e-11,

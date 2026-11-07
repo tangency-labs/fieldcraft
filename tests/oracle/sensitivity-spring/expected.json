@@ -1,7 +1,7 @@
 {
-  "title": "Spring stiffness: static direct/adjoint and modal sensitivity",
+  "title": "Spring sensitivity, Nelson normalization and frequency/complex-response inverse",
   "kind": "theory",
-  "source": "Independent differentiation of u=F/k, W=F\u00b2/k, lambda=k/m, f=sqrt(k/m)/(2 pi); direct/adjoint method: Adelman and Haftka, NASA TM-86333 (1984), equations (4)-(7).",
+  "source": "Independent differentiation of u=F/k, W=F\u00b2/k, lambda=k/m, f=sqrt(k/m)/(2 pi); direct/adjoint method: Adelman and Haftka, NASA TM-86333 (1984), equations (4)-(7). Harmonic Z=k-omega\u00b2 m+i eta k, u=F/Z, du/dk=-(1+i eta)F/Z\u00b2; at omega=2, k=4, m=1, eta=1/2 the derivative is 1/4+i/8. Nelson normalization gives zero vector derivative for fixed unit mass.",
   "quantities": [
     {
       "id": "static_direct",
@@ -80,6 +80,84 @@
         "relative": 1e-06
       },
       "reason": "Noiseless synthetic frequency from k=9 N/m, m=1 kg; user recovery criterion."
+    },
+    {
+      "id": "harmonic_real",
+      "quantity": "harmonic_real",
+      "measure": {
+        "from": "harmonic",
+        "pointer": "/frames/0/direct/0"
+      },
+      "value": 0.25,
+      "tolerance": {
+        "relative": 1e-06
+      },
+      "reason": "Exact scalar impedance or fixed-mass normalization; finite assembled differences and requested inverse tolerance."
+    },
+    {
+      "id": "harmonic_imaginary",
+      "quantity": "harmonic_imaginary",
+      "measure": {
+        "from": "harmonic",
+        "pointer": "/frames/0/adjoint/1"
+      },
+      "value": 0.125,
+      "tolerance": {
+        "relative": 1e-06
+      },
+      "reason": "Exact scalar impedance or fixed-mass normalization; finite assembled differences and requested inverse tolerance."
+    },
+    {
+      "id": "harmonic_amplitude",
+      "quantity": "harmonic_amplitude",
+      "measure": {
+        "from": "harmonic",
+        "pointer": "/frames/0/amplitude_derivative"
+      },
+      "value": -0.125,
+      "tolerance": {
+        "relative": 1e-06
+      },
+      "reason": "Exact scalar impedance or fixed-mass normalization; finite assembled differences and requested inverse tolerance."
+    },
+    {
+      "id": "harmonic_phase",
+      "quantity": "harmonic_phase",
+      "measure": {
+        "from": "harmonic",
+        "pointer": "/frames/0/phase_derivative"
+      },
+      "value": 0.5,
+      "tolerance": {
+        "relative": 1e-06
+      },
+      "reason": "Exact scalar impedance or fixed-mass normalization; finite assembled differences and requested inverse tolerance."
+    },
+    {
+      "id": "harmonic_inverse",
+      "quantity": "harmonic_inverse",
+      "measure": {
+        "from": "harmonic_inverse",
+        "pointer": "/estimate"
+      },
+      "value": 8.0,
+      "tolerance": {
+        "relative": 1e-06
+      },
+      "reason": "Exact scalar impedance or fixed-mass normalization; finite assembled differences and requested inverse tolerance."
+    },
+    {
+      "id": "nelson_shape",
+      "quantity": "nelson_shape",
+      "measure": {
+        "from": "modal",
+        "pointer": "/modes/0/vector/derivative_si/0/0"
+      },
+      "value": 0.0,
+      "tolerance": {
+        "absolute": 1e-09
+      },
+      "reason": "Exact scalar impedance or fixed-mass normalization; finite assembled differences and requested inverse tolerance."
     }
   ]
 }
