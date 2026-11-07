@@ -77,6 +77,7 @@ pub mod outlet;
 pub mod ports;
 pub mod regularized;
 pub mod rheology;
+pub mod sa;
 pub mod setup;
 pub mod solve;
 pub mod statistics;
