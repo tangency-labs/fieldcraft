@@ -422,7 +422,8 @@ fn mesh_and_strong_relaxation_are_the_same_bits_everywhere() {
     // millimetres develop kept by an ulp for 6–18% of computed coordinates, and amplifies that
     // (on develop a 1-ulp nudge moves it as much): its bits differ from develop's. The plate's
     // tessellation comes from SolidCraft, so a SolidCraft bump moves the fingerprint too (v0.25.1).
-    assert_eq!(one, 0xdf4b_c05a_c85d_d2cf, "fingerprint {one:#018x}");
+    // The strong morph's harmonic solve runs to round-off since #612, which moved it again.
+    assert_eq!(one, 0x40b0_172e_3035_0d09, "fingerprint {one:#018x}");
 }
 
 /// A mesher's result depends on the stored model alone: relaxing, undoing and relaxing again
