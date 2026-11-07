@@ -810,6 +810,18 @@ const FLUID_THERMAL: Field = group(
                 num("limit", "Temperature limit", D::Temperature)
                     .help("The highest temperature it may reach (a junction or case limit); the solve reports its peak against it.")
                     .hint("none"),
+                group(
+                    "radiation",
+                    "Radiation",
+                    &[
+                        EMISSIVITY,
+                        num("ambient", "Ambient temperature", D::Temperature)
+                            .help("The temperature of the surroundings its faces radiate to through the fluid (the enclosure or room walls).")
+                            .req(),
+                    ],
+                )
+                .help("Radiation from its faces that touch the fluid to the surroundings, ε σ (T⁴ − T_amb⁴); faces see only the surroundings, not each other. CPU backend only so far.")
+                .hint("none"),
             ],
         )
         .help("Obstacles heat conducts through, exchanging heat with the fluid across their faces (conjugate heat transfer); their faces take no thermal condition."),

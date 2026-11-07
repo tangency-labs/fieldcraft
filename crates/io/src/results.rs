@@ -421,6 +421,9 @@ fn check_fluid(f: &FluidResult) -> std::result::Result<(), String> {
     for (what, len) in histories {
         lengths(samples, &[(what, len, false)])?;
     }
+    for solid in &f.solids {
+        lengths(samples, &[("a solid's radiation history", solid.radiated.len(), true)])?;
+    }
     for z in &f.zones {
         lengths(
             samples,

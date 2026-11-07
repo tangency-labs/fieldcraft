@@ -153,6 +153,9 @@ pub(crate) struct RunState<'a> {
     pub times: &'a mut Vec<f64>,
     pub forces: &'a mut Vec<Vec<[f64; 3]>>,
     pub heats: &'a mut Vec<Vec<f64>>,
+    /// Every conducting solid's radiation history, when one radiates (none otherwise, so a run
+    /// without radiation writes what it always wrote).
+    pub radiated: &'a mut Vec<Vec<f64>>,
     pub zones: &'a mut Vec<crate::solve::ZoneHistory>,
     pub monitor: &'a mut Option<crate::steady::Monitor>,
     pub surface: &'a mut Option<crate::solve::SurfaceHistory>,
@@ -227,7 +230,7 @@ impl RunState<'_> {
             vectors(a, h, samples)?;
         }
         fixed(a, self.heats.len() as u64)?;
-        for h in self.heats.iter_mut() {
+        for h in self.heats.iter_mut().chain(self.radiated.iter_mut()) {
             doubles(a, h, samples)?;
         }
         fixed(a, self.zones.len() as u64)?;

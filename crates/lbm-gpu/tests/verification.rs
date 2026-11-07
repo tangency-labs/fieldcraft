@@ -1831,7 +1831,7 @@ fn a_thermal_contact_matches_the_cpu() {
         t.faces.y_max = ThermalCondition::Temperature { value: kelvin(1.0) };
         t.solids = vec![
             conducting("Die", 0.5 * dx * dx),
-            fieldcraft_model::ConductingSolid { body: "Lid".into(), material: "Other".into(), power: 0.0, limit: None },
+            fieldcraft_model::ConductingSolid { body: "Lid".into(), material: "Other".into(), power: 0.0, limit: None, radiation: None },
         ];
         t.contacts = vec![fieldcraft_model::ThermalContact {
             bodies: ["Die".into(), "Lid".into()],

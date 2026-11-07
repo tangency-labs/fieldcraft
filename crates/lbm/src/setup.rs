@@ -209,6 +209,19 @@ pub struct SolidSetup {
     pub power: f64,
     /// The highest temperature it may reach (kelvin), from the model.
     pub limit: Option<f64>,
+    /// Radiation from its faces that touch the fluid, when it radiates.
+    pub radiation: Option<RadiationSetup>,
+}
+
+/// A conducting solid's radiation to its surroundings, in the fluid's lattice heat units: each
+/// face it shares with the fluid loses `emit ((θ + zero)⁴ − ambient⁴)` per step, θ the cell's
+/// lattice temperature and `zero` the kelvin it counts from ([`ThermalSetup::zero`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RadiationSetup {
+    /// `ε σ Δt / ((ρ c)_f Δx)`: the heat per step one cell face loses per K⁴.
+    pub emit: f64,
+    /// The surroundings' temperature (kelvin).
+    pub ambient: f64,
 }
 
 /// A free surface in the grid's cells (`crate::surface`).
@@ -392,7 +405,17 @@ fn solids(model: &Model, t: &fieldcraft_model::FluidThermal, obstacles: &[String
         if !(conductivity.iter().all(|k| *k > 0.0 && k.is_finite()) && capacity > 0.0 && capacity.is_finite() && power.is_finite()) {
             return Err(Error::Invalid(format!("conducting solid `{}`: its material does not fit this lattice", c.body)));
         }
-        out.push(SolidSetup { body: c.body.clone(), obstacle, conductivity, capacity, capacity_scale: 1.0, power, limit: c.limit });
+        let radiation = c
+            .radiation
+            .map(|rad| {
+                let emit = rad.emissivity * fieldcraft_model::STEFAN_BOLTZMANN * dt / (rho_c * h);
+                if !(emit > 0.0 && emit.is_finite()) {
+                    return Err(Error::Invalid(format!("conducting solid `{}`: its radiation does not fit this lattice", c.body)));
+                }
+                Ok(RadiationSetup { emit, ambient: rad.ambient })
+            })
+            .transpose()?;
+        out.push(SolidSetup { body: c.body.clone(), obstacle, conductivity, capacity, capacity_scale: 1.0, power, limit: c.limit, radiation });
     }
     Ok(out)
 }

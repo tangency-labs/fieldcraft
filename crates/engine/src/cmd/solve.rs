@@ -989,6 +989,9 @@ fn fluid_summary(r: &FluidResult, display: &DisplaySystem) -> Value {
             if sr.capacity_scale != 1.0 {
                 v["capacity_scale"] = json!(sr.capacity_scale);
             }
+            if !sr.radiated.is_empty() {
+                v["radiated"] = json!({"final": sr.radiated.last(), "mean": tail_mean(&sr.radiated)});
+            }
             if let Some(p) = check.peak {
                 v["peak"] = json!(p.temperature);
                 v["peak_time"] = json!(p.time);

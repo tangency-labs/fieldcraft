@@ -1,0 +1,8 @@
+[
+ {"command": "model.units", "params": {"system": "m-kg-s-N-Pa", "temperature": "K"}},
+ {"command": "model.material.create", "params": {"name": "Gas", "density": 1.0, "fluid": {"type": "newtonian", "viscosity": 0.1}, "thermal": {"conductivity": 5.0, "specific_heat": 1.0}}},
+ {"command": "model.material.create", "params": {"name": "Plate", "density": 1.0, "thermal": {"conductivity": 20.0, "specific_heat": 1.0}}},
+ {"command": "model.fluid_domain.create", "params": {"name": "Column", "material": "Gas", "min": [0, 0, 0], "max": [0.0625, 1.0, 0.0625], "spacing": 0.0625, "obstacles": ["Slab"], "faces": {"x_min": {"type": "periodic"}, "x_max": {"type": "periodic"}, "z_min": {"type": "periodic"}, "z_max": {"type": "periodic"}}, "thermal": {"initial_temperature": 293.15, "faces": {"y_min": {"type": "temperature", "value": 373.15}, "y_max": {"type": "temperature", "value": 293.15}}, "solids": [{"body": "Slab", "material": "Plate", "radiation": {"emissivity": 0.9, "ambient": 293.15}}]}}},
+ {"command": "model.step.create", "params": {"name": "Run", "procedure": {"type": "fluid", "domain": "Column", "end_time": 1.6, "time_step": 9.765625e-05, "frames": 1}}},
+ {"command": "solve.fluid", "params": {"step": "Run"}, "id": "solve"}
+]

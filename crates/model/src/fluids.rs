@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::fluid_zones::{Fan, PorousZone};
 use crate::geometry::{Entity, GeometryRef};
+use crate::loads::SurfaceRadiation;
 use crate::{
     Error, Material, Model, Result, context, finite, insert_new, nonnegative, not_in_use, positive, remove_existing, replace_existing, require,
 };
@@ -374,6 +375,11 @@ pub struct ConductingSolid {
     /// solve reports its peak against it. None for no limit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<f64>,
+    /// Radiation from its faces that touch the fluid to surroundings at an ambient temperature,
+    /// through the fluid (taken as transparent). None: it loses heat only to the fluid and the
+    /// walls it touches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub radiation: Option<SurfaceRadiation>,
 }
 
 /// A thin layer of thermal interface material between two touching conducting solids (a paste,
@@ -558,6 +564,9 @@ impl FluidThermal {
                         Error::Invalid(format!("the temperature limit {limit} K is not above absolute zero")),
                     ));
                 }
+            }
+            if let Some(rad) = &c.radiation {
+                rad.validate().map_err(|e| context("conducting solid", &c.body, e))?;
             }
             if !obstacles.contains(&c.body) {
                 return Err(Error::Invalid(format!("conducting solid `{}` is not an obstacle of the domain (list it in `obstacles`)", c.body)));
@@ -1173,8 +1182,8 @@ mod tests {
             d.thermal = Some(FluidThermal {
                 initial_temperature: 293.15,
                 solids: vec![
-                    ConductingSolid { body: "Sink".into(), material: "Alu".into(), power: 0.0, limit: None },
-                    ConductingSolid { body: "Pcb".into(), material: "Board".into(), power: 5.0, limit: Some(368.15) },
+                    ConductingSolid { body: "Sink".into(), material: "Alu".into(), power: 0.0, limit: None, radiation: None },
+                    ConductingSolid { body: "Pcb".into(), material: "Board".into(), power: 5.0, limit: Some(368.15), radiation: None },
                 ],
                 ..FluidThermal::default()
             });
@@ -1253,8 +1262,8 @@ mod tests {
             d.obstacles = vec!["Die".into(), "Lid".into(), "Case".into()];
             let mut t = FluidThermal {
                 solids: vec![
-                    ConductingSolid { body: "Die".into(), material: "Alu".into(), power: 1.0, limit: None },
-                    ConductingSolid { body: "Lid".into(), material: "Alu".into(), power: 0.0, limit: None },
+                    ConductingSolid { body: "Die".into(), material: "Alu".into(), power: 1.0, limit: None, radiation: None },
+                    ConductingSolid { body: "Lid".into(), material: "Alu".into(), power: 0.0, limit: None, radiation: None },
                 ],
                 contacts: vec![paste(Some(1e-5), None, None)],
                 ..FluidThermal::default()
