@@ -78,6 +78,7 @@ pub mod solve;
 pub mod steady;
 pub mod surface;
 pub mod turbulence;
+pub mod validity;
 pub mod voxel;
 pub mod vreman;
 pub mod wall;

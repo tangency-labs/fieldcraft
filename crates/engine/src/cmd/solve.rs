@@ -112,7 +112,7 @@ pub const HISTORY: CommandSpec = CommandSpec {
 pub const FLUID: CommandSpec = CommandSpec {
     id: "solve.fluid",
     label: "Solve Fluid Step",
-    params: r#"{"step": "Flow", "backend": "cpu", "max_cells": 16000000, "max_steps": 10000000, "max_cell_updates": 1e12, "max_frame_bytes": 2e9, "threads": 8, "estimate": false} — runs a fluid step with the lattice Boltzmann solver (the only fluid step when `step` is left out): obstacles are triangulated from the open design or taken from imported surfaces; returns the time step, relaxation time, Mach number, mass, the largest speed of all frames (`max_speed`, at `max_speed_time`) and of the last frame (`final_max_speed`), over interior fluid cells (the open-boundary layers are excluded, convective outlets too, because a wake reaching a uniform pressure outlet distorts the last layer), the final force on every wall and, with heat, the thermal relaxation time, the fluid's temperature range and the heat into every wall, and per conducting solid (`solids`) its temperature range and mean, its power, the heat its faces give the fluid, its `peak` temperature (at `peak_time`: the steady value when the run reached steady state, else the highest over the frames), its `limit`, the `margin` (limit less peak; negative over it) and `ok`, and over them `components_ok` (null when no solid has a limit); `ports` reports each open box face's separate inflow and outflow: volume flow, reference-density mass flow, flow-weighted temperature and static gauge pressure, and advective sensible heat relative to its stated temperature reference (not a complete energy balance); the same ports follow the displayed frame in results.* replies and Results > Inlets and outlets; with fans and porous zones, each one's volume flow and its pressure rise (a fan's operating point: `pressure_rise` from its curve, and `measured_pressure_rise`) or `pressure_drop`; the measured values are the static-pressure difference between the fluid cell layers just outside the zone, so they include the wall friction over its thickness plus one cell (final and mean over the last quarter of the run); with a free surface, `free_surface`: the liquid's `initial_mass`, its `mass` at the end, what the inlets `injected` and the `mass_error` of that balance (round-off when all is well), the `fill` share of the fluid cells that is liquid and the counts of liquid, interface and gas cells; with a steady rule, `stop`: why and when the run stopped, its monitors' history (in the display units, `units`) and, with averaging, `averages`: per quantity its mean, its root mean square about the mean (`rms`, a difference: a temperature's in `rms_unit`, without the scale's offset) and its extremes over the samples averaged from `from` on; `backend` is `cpu` (the default: double precision, the same result on every machine) or `gpu` (the step on the GPU `FIELDCRAFT_GPU` picks, single precision, within the backend's stated tolerance of the CPU; an error when the build has none); left out, it is FIELDCRAFT_SOLVE_BACKEND's when that is set, else the step's saved preference (solve.settings), which on a machine with no suitable GPU falls back as it says, with a `notice` (the reply's `backend_choice` says what chose it), else the CPU; `max_steps` may only be lowered; `max_cells` (16000000 by default), `max_cell_updates` (1e12) and `max_frame_bytes` (2e9) may be raised up to what the machine's memory bound holds (half its physical memory), and a run with a raised `max_cells` or `max_frame_bytes` must fit in that bound; the reply's `memory` gives the run's estimate (`flow_bytes`, `frame_bytes` at about 16 bytes per cell per frame, 20 with heat, `total_bytes`) against `bound_bytes`, the `frames_that_fit` and each cap's `ceilings`, and on the GPU the population buffer against the device's limit per buffer; `"estimate": true` returns only that, without solving; a run over a cap is refused before it starts, saying what to change; `checkpoint` is an explicit native CPU restart path; `checkpoint_every` is required with a checkpoint path (including on resume) and saves every N steps and at a sound final stop; choose its interval for the run size and storage cost; `resume: true` restores it with matching model, triangulated geometry and solver settings; thread count and checkpoint cadence may change; checkpoints are kept after success/cancellation, use atomic replacement and report last_checkpoint/resumed_from; GPU/browser/other solvers and automatic discovery are not supported yet; `threads` as for solve.static"#,
+    params: r#"{"step": "Flow", "backend": "cpu", "max_cells": 16000000, "max_steps": 10000000, "max_cell_updates": 1e12, "max_frame_bytes": 2e9, "threads": 8, "estimate": false} — runs a fluid step with the lattice Boltzmann solver (the only fluid step when `step` is left out): obstacles are triangulated from the open design or taken from imported surfaces; returns `execution` (`completed` or `diverged`) and `validation` (`not_assessed`), the time step, relaxation time, Mach number, mass, `validity` (sampled density ratios and local Mach extrema including open layers, sampling cadence and caps, force peak/jump ratios; the proposed 0.02 density-departure and 0.2 Mach envelope is a study diagnostic, never validation; excursions between samples are unknown), the largest speed of all frames (`max_speed`, at `max_speed_time`) and of the last frame (`final_max_speed`), over interior fluid cells (the open-boundary layers are excluded, convective outlets too, because a wake reaching a uniform pressure outlet distorts the last layer), the final force on every wall and, with heat, the thermal relaxation time, the fluid's temperature range and the heat into every wall, and per conducting solid (`solids`) its temperature range and mean, its power, the heat its faces give the fluid, its `peak` temperature (at `peak_time`: the steady value when the run reached steady state, else the highest over the frames), its `limit`, the `margin` (limit less peak; negative over it) and `ok`, and over them `components_ok` (null when no solid has a limit); `ports` reports each open box face's separate inflow and outflow: volume flow, reference-density mass flow, flow-weighted temperature and static gauge pressure, and advective sensible heat relative to its stated temperature reference (not a complete energy balance); the same ports follow the displayed frame in results.* replies and Results > Inlets and outlets; with fans and porous zones, each one's volume flow and its pressure rise (a fan's operating point: `pressure_rise` from its curve, and `measured_pressure_rise`) or `pressure_drop`; the measured values are the static-pressure difference between the fluid cell layers just outside the zone, so they include the wall friction over its thickness plus one cell (final and mean over the last quarter of the run); with a free surface, `free_surface`: the liquid's `initial_mass`, its `mass` at the end, what the inlets `injected` and the `mass_error` of that balance (round-off when all is well), the `fill` share of the fluid cells that is liquid and the counts of liquid, interface and gas cells; with a steady rule, `stop`: why and when the run stopped, its monitors' history (in the display units, `units`) and, with averaging, `averages`: per quantity its mean, its root mean square about the mean (`rms`, a difference: a temperature's in `rms_unit`, without the scale's offset) and its extremes over the samples averaged from `from` on; `backend` is `cpu` (the default: double precision, the same result on every machine) or `gpu` (the step on the GPU `FIELDCRAFT_GPU` picks, single precision, within the backend's stated tolerance of the CPU; an error when the build has none); left out, it is FIELDCRAFT_SOLVE_BACKEND's when that is set, else the step's saved preference (solve.settings), which on a machine with no suitable GPU falls back as it says, with a `notice` (the reply's `backend_choice` says what chose it), else the CPU; `max_steps` may only be lowered; `max_cells` (16000000 by default), `max_cell_updates` (1e12) and `max_frame_bytes` (2e9) may be raised up to what the machine's memory bound holds (half its physical memory), and a run with a raised `max_cells` or `max_frame_bytes` must fit in that bound; the reply's `memory` gives the run's estimate (`flow_bytes`, `frame_bytes` at about 16 bytes per cell per frame, 20 with heat, `total_bytes`) against `bound_bytes`, the `frames_that_fit` and each cap's `ceilings`, and on the GPU the population buffer against the device's limit per buffer; `"estimate": true` returns only that, without solving; a run over a cap is refused before it starts, saying what to change; `checkpoint` is an explicit native CPU restart path; `checkpoint_every` is required with a checkpoint path (including on resume) and saves every N steps and at a sound final stop; choose its interval for the run size and storage cost; `resume: true` restores it with matching model, triangulated geometry and solver settings; thread count and checkpoint cadence may change; checkpoints are kept after success/cancellation, use atomic replacement and report last_checkpoint/resumed_from; GPU/browser/other solvers and automatic discovery are not supported yet; `threads` as for solve.static"#,
     form: Some(super::forms::SOLVE_FLUID),
     kind: CommandKind::Model,
     requires: &[Requirement::FluidDomain, Requirement::Step],
@@ -870,7 +870,7 @@ fn run_fluid(s: &mut Session, p: &Value) -> Result<Value> {
         None
     };
     let model = &s.model;
-    let r = with_threads(thread_count, || match checkpoint.as_mut() {
+    let mut r = with_threads(thread_count, || match checkpoint.as_mut() {
         Some(store) => fieldcraft_lbm::solve::solve_fluid_checkpointed(model, step.as_deref(), &obstacles, &limits, store),
         None => fieldcraft_lbm::solve_fluid_on(model, step.as_deref(), &obstacles, &limits, backend),
     })
@@ -890,6 +890,9 @@ fn run_fluid(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(n) = &chosen.notice {
         summary["notice"] = json!(n);
     }
+    // The bounded diagnostics belong to this command reply; the legacy results format
+    // does not encode them. Keep stored results identical before and after save/open.
+    r.stats.validity = None;
     s.store_result(StepResult::Fluid(r));
     Ok(summary)
 }
@@ -1004,6 +1007,8 @@ fn fluid_summary(r: &FluidResult, display: &DisplaySystem) -> Value {
     let mut v = json!({
         "step": r.step,
         "backend": r.stats.backend,
+        "execution": if r.steady.as_ref().is_some_and(|s| s.reason == fieldcraft_lbm::StopReason::Diverged) { "diverged" } else { "completed" },
+        "validation": "not_assessed",
         "cells": r.stats.cells,
         "fluid_cells": r.stats.fluid_cells,
         "steps": r.stats.steps,
@@ -1017,6 +1022,7 @@ fn fluid_summary(r: &FluidResult, display: &DisplaySystem) -> Value {
         "velocity_scale": r.stats.velocity,
         "lattice_velocity": r.stats.lattice_velocity,
         "mach": r.stats.mach,
+        "validity": r.stats.validity,
         "frames": r.frames.iter().map(|f| f.time).collect::<Vec<_>>(),
         "max_speed": max_speed,
         "max_speed_time": r.frames.get(peak_frame).map_or(0.0, |f| f.time),
@@ -2047,6 +2053,11 @@ pub(crate) mod tests {
         let mut s = Session::default();
         couette(&mut s);
         let normal = s.execute("solve.fluid", &json!({"backend":"cpu","threads":3})).unwrap();
+        assert_eq!(normal["execution"], "completed");
+        assert_eq!(normal["validation"], "not_assessed");
+        assert!(normal["validity"]["samples"].as_array().is_some_and(|s| !s.is_empty()));
+        assert_eq!(normal["validity"]["max_field_samples"], 258);
+        assert!(normal["validity"]["field_every_steps"].as_u64().is_some_and(|n| n > 0));
         let base = s.clone();
         let request = json!({"backend":"cpu","threads":3,"checkpoint":path,"checkpoint_every":113});
         for resume in [false, true] {
@@ -2416,6 +2427,7 @@ pub(crate) mod tests {
             averages: vec![average(0.25, 0.01), average(5.0, 0.5), average(300.0, 2.0), average(1.5, 0.1)],
         };
         let stats = fieldcraft_lbm::FluidStats {
+            validity: None,
             cells: 1,
             fluid_cells: 1,
             steps: 1,

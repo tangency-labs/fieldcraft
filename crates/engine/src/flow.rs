@@ -598,6 +598,7 @@ pub(crate) mod tests {
             Frame { time: 0.0, step: 0, velocity: vec![[0.0; 3]; n], pressure: vec![0.0; n], temperature: Vec::new(), fill: Vec::new(), mass: 1.0 };
         let last = Frame { time: 1.0, step: 10, velocity, pressure, temperature: Vec::new(), fill: Vec::new(), mass: 1.0 };
         let stats = FluidStats {
+            validity: None,
             cells: n,
             fluid_cells: n - 8,
             steps: 10,
