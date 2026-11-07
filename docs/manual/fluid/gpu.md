@@ -108,6 +108,7 @@ whose forces are read back (a submission's last). The temperature lattice is two
 | Body acceleration, and changing it between steps | yes |
 | Heat: the D3Q7 lattice, held temperatures, fluxes, buoyancy | yes |
 | Conducting solids, thermal contacts, solid power | yes |
+| Thin walls (`baffles`) | no: refused before a device is opened |
 | Smagorinsky's model, the wall model (`wall_model: "musker"`), Van Driest damping (`van_driest`) | yes |
 | Steady-state rule and averaging | yes (decided on the host from read-back fields) |
 | Fans and porous zones (curves, Darcy–Forchheimer, loss coefficients), with every collision and wall treatment | yes |

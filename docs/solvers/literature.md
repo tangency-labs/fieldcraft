@@ -851,6 +851,11 @@ D3Q19 f32 ≈ 80 B/cell (with flags): 10⁸ cells ≈ 8 GB. These numbers decide
   Wiley 2011, §3.1.4). Both cells see the same conductance, so heat is conserved, and a
   resistance only lowers it, so the sub-cycling limit holds. Between a solid and the fluid
   there is none yet.
+- **Thin walls.** A zero-thickness sheet on a lattice face: halfway bounce-back on each side for
+  the flow (C3.1), and on the scalar lattice an anti-bounce-back on each side whose two surface
+  temperatures obey Fourier's law through the sheet's conductance G (the same series circuit,
+  Incropera et al. §3.1): the two crossing populations exchange `H = (a − b) G / (G + 1/8)`,
+  conserved face by face and unconditionally stable (`fieldcraft_lbm::baffle`; #836).
 - **Limits.** Staircase interfaces (cell faces, not the true surface): curved interfaces lose
   accuracy, which cut cells with the flux on the true surface recover; a steady run scales the
   solids' heat capacity, so its transient is not physical.

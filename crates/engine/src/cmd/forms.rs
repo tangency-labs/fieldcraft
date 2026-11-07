@@ -799,6 +799,19 @@ const FLUID_THERMAL: Field = group(
         )
         .help("Obstacles heat conducts through, exchanging heat with the fluid across their faces (conjugate heat transfer); their faces take no thermal condition."),
         rows(
+            "baffles",
+            "Thin walls",
+            &[
+                text("name", "Name").help("Unique in the domain; its two sides report as baffle/<name>/low and /high.").req(),
+                choice("axis", "Normal axis", AXIS).help("The axis the sheet is normal to.").req(),
+                num("position", "Position", D::Length).help("Where the sheet crosses its axis: on a lattice face inside the box.").req(),
+                positive("conductance", "Conductance per area", D::FilmCoefficient)
+                    .help("The wall's conductivity over its thickness (or one over its resistance per area); zero insulates.")
+                    .req(),
+            ],
+        )
+        .help("Zero-thickness no-slip sheets across the whole box, conducting heat through their thickness; each side's temperature and heat flux are reported. For now: closed boxes, clear of obstacles, laminar, no phase change or free surface, CPU only."),
+        rows(
             "contacts",
             "Thermal contacts",
             &[
