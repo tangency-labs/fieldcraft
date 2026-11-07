@@ -78,6 +78,79 @@ fn finite_sliding_nodes_take_the_current_overlap_normal() {
 }
 
 #[test]
+fn normalization_counts_each_paired_face_once_and_excludes_unpaired_scales() {
+    for finite in [false, true] {
+        let (mesh, mut interface) = cubes(finite, Friction::NONE);
+        let zero = vec![0.0; mesh.dofs()];
+        let mut pairs = interface.pairs(&mesh, &zero).unwrap();
+        let (_, _, corners) = interface.sums(&pairs);
+        for (face, found) in interface.secondary.iter_mut().zip(&pairs) {
+            if found.is_empty() {
+                // An unrelated thin, stiff side must not set the contact's penalty or tolerance.
+                face.stiffness *= 100.0;
+                face.thickness *= 0.01;
+            }
+        }
+        let scales = interface.normalization(&pairs, &corners);
+        for (i, node) in interface.nodes.iter().enumerate() {
+            if mesh.labels[*node] <= 12 {
+                assert!((scales.area[i] - 0.25).abs() < 1e-12);
+                assert!((scales.penalty[i] - 15000.0).abs() < 1e-8);
+                assert!((scales.thickness[i] - 1.0).abs() < 1e-12);
+            } else {
+                assert_eq!(scales.area[i], 0.0);
+                assert_eq!(scales.penalty[i], 0.0);
+            }
+        }
+        // More main-face segments on the same secondary face must not multiply its area.
+        for (found, again) in pairs.iter_mut().zip(interface.pairs(&mesh, &zero).unwrap()) {
+            found.extend(again);
+        }
+        assert_eq!(interface.normalization(&pairs, &corners), scales);
+    }
+}
+
+#[test]
+fn finite_sliding_normalization_follows_later_contact_and_separation() {
+    let (mesh, interface) = cubes(true, Friction::coulomb(0.3));
+    let reference = vec![0.0; mesh.dofs()];
+    // The upper cube slid clear of the main face (no overlap, so no pair) or pressed onto it.
+    let moved = |side: f64, height| {
+        let mut u = reference.clone();
+        for (i, _) in mesh.xyz.iter().enumerate().filter(|(i, _)| mesh.labels[*i] >= 9) {
+            let dofs = translations(&mesh, i).unwrap();
+            (u[dofs[0]], u[dofs[2]]) = (side, height);
+        }
+        u
+    };
+    let mut committed = interface.committed();
+    for (side, height) in [(3.0, 0.0), (0.0, -0.02), (3.0, 0.0)] {
+        let u = moved(side, height);
+        let mut internal = reference.clone();
+        let mut blocks = Vec::new();
+        let state = interface.evaluate(&mesh, &u, &reference, &committed, 0.0, true, &mut internal, &mut blocks).unwrap();
+        assert!(internal.iter().all(|f| f.is_finite()));
+        assert!(blocks.iter().flat_map(|(_, data)| data).all(|v| v.is_finite()));
+        assert!(interface.augmentation_error(&committed.multipliers, &state).is_finite());
+        if side > 0.0 {
+            assert!(state.gap.iter().all(Option::is_none));
+            assert!(state.pressure.iter().all(|p| *p == 0.0));
+            assert!(state.slip.iter().flatten().all(|s| *s == 0.0));
+            assert!(blocks.is_empty());
+            if committed.multipliers.iter().any(|p| *p > 0.0) {
+                assert!(interface.augmentation_error(&committed.multipliers, &state) > GAP_TOLERANCE);
+            }
+        } else {
+            for g in state.gap.iter().flatten() {
+                assert!((g + 0.02).abs() < 1e-12);
+            }
+            assert!(state.pressure.iter().any(|p| *p > 0.0));
+            committed.multipliers.clone_from(&state.pressure);
+        }
+    }
+}
+
+#[test]
 fn supports_weight_the_normal_and_missing_or_cancelling_supports_have_no_direction() {
     for scale in [1e-200, 1.0, 1e200] {
         let found = |normal: Vec3, area: f64| {

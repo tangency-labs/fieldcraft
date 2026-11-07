@@ -194,8 +194,8 @@ fn near(a: f64, b: f64) -> bool {
 /// A flat contact whose secondary surface also contains the cube's uncontacted sides, of linear
 /// and quadratic faces, in small and finite sliding. Those sides must not tilt the normal of the
 /// nodes the bottom face carries: the normal force is the assembled force, every bottom node
-/// (corners included) carries pressure and the others none, and a hex8's pressure is the force
-/// over the unit area at every bottom node.
+/// (corners included) carries pressure and the others none, and each bottom node's pressure is the force
+/// over the unit area.
 #[test]
 fn uncontacted_corner_faces_do_not_tilt_reported_pressure() {
     for (kind, nonlinear_geometry) in [(ElementKind::Hex8, false), (ElementKind::Hex8, true), (ElementKind::Hex20, false), (ElementKind::Hex20, true)]
@@ -232,15 +232,27 @@ fn uncontacted_corner_faces_do_not_tilt_reported_pressure() {
         for (label, pressure) in contact.nodes.iter().zip(&contact.pressure) {
             if !bottom.contains(label) {
                 assert_eq!(*pressure, 0.0, "{case}: node {label}");
-            } else if kind == ElementKind::Hex8 {
-                // Uniform pressure on a unit-area interface equals its actual assembled force;
-                // this checks reporting independently of the augmentation's stopping gap.
-                assert!((pressure - normal).abs() < 1e-9 * normal, "{case}: bottom node {label}: pressure {pressure}, physical force {normal}");
             } else {
-                // A hex20's corner and mid-side nodes are penalised over their whole secondary
-                // area (side faces too), so they close to slightly different gaps (#775).
-                assert!((pressure - normal).abs() < 0.03 * normal, "{case}: bottom node {label}: pressure {pressure}, physical force {normal}");
+                // Uniform pressure on a unit-area interface equals its actual assembled force;
+                // this checks reporting independently of the augmentation's stopping gap. Under
+                // finite strain a hex20's corner and mid-side nodes differ by a few parts in 10⁷,
+                // as much with the bottom face alone (compared below).
+                let tolerance = if nonlinear_geometry { 1e-6 } else { 1e-9 };
+                assert!((pressure - normal).abs() < tolerance * normal, "{case}: bottom node {label}: pressure {pressure}, physical force {normal}");
             }
+        }
+        // Selecting only the bottom face must give the same solution, including the gap
+        // that controls augmentation and the pressure-field coefficients.
+        let faces = b.faces(&upper, |p| near(p[2], 1.0));
+        b.model.replace_set("secondary", Set { faces, ..Set::default() }).unwrap();
+        let only_bottom = solve_nonlinear(&b.model, Some("Step"), &Limits::default()).unwrap();
+        let other = &only_bottom.contacts[0];
+        assert!((other.force[2] - normal).abs() < 1e-9 * normal, "{case}: bottom-only force {} against {normal}", other.force[2]);
+        for (i, label) in contact.nodes.iter().enumerate().filter(|(_, l)| bottom.contains(l)) {
+            let j = other.nodes.iter().position(|l| l == label).unwrap();
+            assert!((contact.pressure[i] - other.pressure[j]).abs() < 1e-9 * normal, "{case}: pressure at {label}");
+            assert!((contact.multiplier[i] - other.multiplier[j]).abs() < 1e-9 * normal, "{case}: multiplier at {label}");
+            assert!((contact.gap[i].unwrap() - other.gap[j].unwrap()).abs() < 1e-12, "{case}: gap at {label}");
         }
     }
 }
