@@ -125,6 +125,17 @@ cargo run -p fieldcraft-cli -- mcp              # MCP server on stdio for AI age
 
 Rust 1.95 or later, with the `wasm32-unknown-unknown` target for `cargo xtask ci`.
 
+With Nix (`flake.nix`, Linux and macOS):
+
+```sh
+nix run github:tangency-labs/fieldcraft                         # the desktop app (package fieldcraft)
+nix run github:tangency-labs/fieldcraft#fieldcraft-cli -- mcp   # the CLI (package fieldcraft-cli)
+nix develop          # runtime libraries for `cargo run` (window, GPU, file dialogs); your own toolchain
+nix develop .#rust   # the same with nixpkgs' Rust, building into target/nix
+```
+
+On Linux the GPU drivers come from the system: `hardware.graphics.enable` on NixOS, nixGL elsewhere.
+
 ## Documentation
 
 The documentation site is at
