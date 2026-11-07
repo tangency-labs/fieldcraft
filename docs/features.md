@@ -6,7 +6,7 @@ Every entry is a toolbar button. **Ready** entries run their command; **coming s
 shown greyed with the roadmap milestone that brings them (ROADMAP.md). Scripts, the command line,
 the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 
-90 ready, 33 coming soon.
+91 ready, 33 coming soon.
 
 ## Geometry
 
@@ -155,6 +155,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Display | Animate — Animate the deformed shape, a mode or an explicit step's frames | ready | `results.animate`, `results.frame` |
 | Query | Probe — Displacement, rotation, reaction and stress at nodes, element section forces, a mode shape, or an explicit field frame (or click the model) | ready | `solve.probe`, `solve.history` |
 | Query | Reactions — Reaction force and moment sums per set | ready | `results.reactions`, `results.export.csv` |
+| Query | Fluid Measurements — Saved-frame face averages, flow, heat rates and pressure drop, with CSV | ready | `results.fluid.measure` |
 | Query | Linearize — Membrane, bending and peak stresses along a path through a wall (ASME VIII-2 Annex 5-A) | ready | `results.linearize` |
 | Query | Free Body — Free-body forces across a cut | coming soon (M9) |  |
 | Plots | XY Plot — Plot a quantity against the load factor, time or mode | ready | `results.xy` |

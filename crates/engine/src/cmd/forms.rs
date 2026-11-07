@@ -2594,6 +2594,12 @@ pub const FLOW_SURFACE: &[Field] = &[
     .hint("the field shown"),
     FLUID_FRAME,
 ];
+pub const FLUID_MEASURE: &[Field] = &[
+    SOLVED,
+    int("frame", "Frame", 0, 1_000_000_000).help("Saved frame to measure; defaults to the last frame."),
+    text("from", "Pressure from").help("Open box face (x_min, x_max, y_min, y_max, z_min, z_max); supply both faces for a pressure drop."),
+    text("to", "Pressure to").help("Open box face to subtract from the first face's area-mean static pressure."),
+];
 pub const STREAMLINES: &[Field] = &[
     SOLVED,
     choice("field", "Field", &[("velocity", "Velocity"), ("pressure", "Pressure (plain lines)"), ("temperature", "Temperature")])

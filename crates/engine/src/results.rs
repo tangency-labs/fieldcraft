@@ -846,8 +846,15 @@ pub fn fluid_ports(r: &FluidResult, frame: usize, display: &DisplaySystem) -> Va
     let faces: Vec<Value> = ports
         .iter()
         .map(|p| {
+            let mean = p.mean.map(|m| {
+                json!({
+                    "pressure": value(Quantity::Pressure, m.pressure),
+                    "temperature": m.temperature.map(|t| value(Quantity::Temperature, t)),
+                    "velocity": m.velocity.map(|v| value(Quantity::Velocity, v)),
+                })
+            });
             json!({
-                "face": p.face.name(), "area": value(Quantity::Area, p.area),
+                "face": p.face.name(), "area": value(Quantity::Area, p.area), "area_mean": mean,
                 "inflow": stream(&p.inflow), "outflow": stream(&p.outflow),
             })
         })
@@ -856,7 +863,7 @@ pub fn fluid_ports(r: &FluidResult, frame: usize, display: &DisplaySystem) -> Va
     let net_mass = r.port_properties.map(|p| p.density * net_volume);
     let net_heat = ports.iter().try_fold(0.0, |sum, p| Some(sum + p.outflow.sensible_heat? - p.inflow.sensible_heat?));
     let units: serde_json::Map<String, Value> =
-        [Quantity::Area, Quantity::VolumeFlow, Quantity::MassFlow, Quantity::Temperature, Quantity::Pressure, Quantity::Power]
+        [Quantity::Area, Quantity::VolumeFlow, Quantity::MassFlow, Quantity::Temperature, Quantity::Pressure, Quantity::Power, Quantity::Velocity]
             .into_iter()
             .map(|q| (q.name().into(), json!(unit_of(q, display))))
             .collect();
@@ -870,7 +877,7 @@ pub fn fluid_ports(r: &FluidResult, frame: usize, display: &DisplaySystem) -> Va
         "heat_reference": fieldcraft_lbm::ports::inlet_temperature(&ports).map(|t| value(Quantity::Temperature, t)),
         "mass_convention": "reference density (incompressible)",
         "heat_convention": "advective sensible heat relative to heat_reference, the mixed temperature of all the inflow; excludes port conduction, storage, wall heat and sources",
-        "source": "saved boundary-layer cell fields; separate inflow and outflow, flow-weighted temperature and static gauge pressure",
+        "source": "saved boundary-layer cell fields; separate inflow and outflow, flow-weighted temperature and static gauge pressure; area_mean over every fluid cell of the face, stagnant ones included (null for a blocked face)",
     })
 }
 

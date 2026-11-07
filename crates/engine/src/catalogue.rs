@@ -701,6 +701,7 @@ pub static CATALOGUE: &[Capability] = &[
         &["solve.history"],
     ),
     ready_more("results.reactions", "Reactions", Results, "Query", "Reaction force and moment sums per set", &["results.export.csv"]),
+    ready("results.fluid.measure", "Fluid Measurements", Results, "Query", "Saved-frame face averages, flow, heat rates and pressure drop, with CSV"),
     ready(
         "results.linearize",
         "Linearize",

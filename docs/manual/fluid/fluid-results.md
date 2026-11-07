@@ -9,7 +9,7 @@ streamlines traced through the velocity field.
 
 | | |
 |---|---|
-| **Commands** | `solve.fluid` (the reply), `solve.probe`, `results.slice`, `results.surface`, `results.streamlines`, `results.contour`, `results.frame`, `results.animate` |
+| **Commands** | `solve.fluid` (the reply), `solve.probe`, `results.fluid.measure`, `results.slice`, `results.surface`, `results.streamlines`, `results.contour`, `results.frame`, `results.animate` |
 | **Step procedure** | `"fluid"` |
 | **Solver** | `crates/lbm` (`solve.rs`: frames and histories); display in `crates/engine/src/flow.rs`, `crates/render/src/flow.rs` |
 | **Method** | Cell-centred fields; trilinear interpolation between cell centres; streamlines by the midpoint rule in half-cell steps |
@@ -74,6 +74,49 @@ Line fields: `velocity_x`, `velocity_y`, `velocity_z`, `speed`, `pressure`, `tem
 `wall_heat_flux` (with `face`, the box wall the line lies on).
 
 ## Theory
+
+### Cooling and exchanger measurements
+
+`results.fluid.measure {"step": "Run", "from": "x_min", "to": "x_max"}` reads the
+last saved frame; `frame` selects another by its zero-based index. It leaves the displayed
+frame and model unchanged. The command is available through command search and its form,
+the CLI, scripts and the control channel. Stale and free-surface results are refused.
+
+The reply's `rows` table identifies each measurement by `body` (null for a box face), `face`
+and `quantity`, with a `value` and display `unit`. `csv` contains the same table as RFC 4180
+text, including the step, frame, time and time unit on every row. It can be saved by a script
+without opening a dialog. These are measurements of one saved frame, not time averages or a
+validation verdict. Wall heat is linearly interpolated between recorded samples at that frame's
+time; there is no extrapolation. Missing heat, material properties or thermal fields give null
+values (empty CSV cells), not invented zeros.
+
+For each open box face (`x_min`, `x_max`, `y_min`, `y_max`, `z_min`, `z_max`):
+
+- `area` excludes obstacle cells. `area_mean_pressure`, `area_mean_temperature` and
+  `area_mean_velocity_x/y/z` include stagnant fluid cells. The mean is
+  `sum(value * cell_area) / sum(cell_area)`; blocked faces have no mean. The `ports` report
+  of `solve.fluid` and `results.frame` carries the same means per face as `area_mean`.
+- `inflow_volume_flow` and `outflow_volume_flow` integrate the normal velocity separately in each
+  direction. Each rate is nonnegative; opposing flow is never cancelled before averaging.
+  The corresponding `mass_flow` uses the reference density saved at solve time.
+- `inflow_mean_temperature` and `outflow_mean_temperature` weight temperature by mass flow
+  (equivalently volume flow for the constant reference density); zero flow has no mixed
+  temperature. `inflow_sensible_heat` and `outflow_sensible_heat` use `rho * cp * Q * (T - Tref)`.
+  The `heat_reference` row gives `Tref`, the mixed temperature of all incoming flow.
+  Without incoming flow, no sensible heat reference is inferred.
+
+With both `from` and `to`, `pressure_drop` is the first face's area-mean static gauge pressure
+minus the second's, also included in the table. Both must be open faces with fluid area.
+It measures boundary-layer cell fields, not an extrapolated wall value or total pressure.
+Every recorded thermal wall contributes a `wall_heat_rate`, positive into that wall, including
+named obstacle interfaces. This is the saved thermal exchange, separate from port advection.
+
+This first slice of #837 leaves arbitrary face sets/surfaces, port conduction, time-window
+averages, exchanger effectiveness and LMTD, and a complete energy balance with sources and
+storage for follow-up. The existing heated-block check verifies advective heat against the
+generated power within 2%; the pressure-driven Poiseuille check verifies the area-mean pressure
+drop within 0.1%. Synthetic fields check nonuniform weighting, backflow, blocked and stagnant
+faces; command tests check units, history interpolation, frame selection and CSV.
 
 ### Fields
 
