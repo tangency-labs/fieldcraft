@@ -12,6 +12,27 @@ use fieldcraft_lbm::{Flow, Limits, Obstacle, Setup};
 use fieldcraft_mesh::surface::{BoundarySurface, SurfaceOptions};
 use fieldcraft_model::{BoxFaces, Collision, Fluid, FluidDomain, Material, Model, Procedure, Step};
 
+/// A plane channel two high (walls on the y faces, half-height δ = 1), periodic in x and z (four
+/// cells each), driven by u_τ²/δ with u_τ = 1 at Re_τ 180 (ν = 1/180) with `collision` and
+/// `turbulence`, from a uniform 15.7 (Moser, Kim & Mansour's bulk speed) for 60 steps at lattice
+/// speed 0.1. Wall-resolved: Δy⁺ = 2, the first cell's centre at y⁺ 1, as a model with no wall law
+/// needs (τ⁺ ≈ 0.5096).
+pub fn resolved_channel(collision: Collision, turbulence: fieldcraft_model::Turbulence) -> Model {
+    let dx = 1.0 / 90.0;
+    let mut d = domain([0.0; 3], [4.0 * dx, 2.0, 4.0 * dx], dx);
+    for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+        *f = fieldcraft_model::FaceCondition::Periodic {};
+    }
+    d.acceleration = [1.0, 0.0, 0.0];
+    d.initial_velocity = [15.7, 0.0, 0.0];
+    let dt = 0.1 * dx / 15.7;
+    let mut p = collide(60.0 * dt, dt, None, collision);
+    if let Procedure::Fluid { turbulence: t, .. } = &mut p {
+        *t = Some(turbulence);
+    }
+    model(1.0, 1.0 / 180.0, d, p)
+}
+
 /// A domain over [min, max] with walls on every face.
 pub fn domain(min: [f64; 3], max: [f64; 3], spacing: f64) -> FluidDomain {
     FluidDomain {

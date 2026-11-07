@@ -1,5 +1,5 @@
 //! Every fluid cell's distance to the nearest no-slip wall, for turbulence models that read it
-//! (Spalart–Allmaras' destruction term and DDES' shielding).
+//! (Spalart–Allmaras' destruction term).
 //!
 //! **The wall** is where the solver puts it: a halfway bounce-back link puts it at the link's
 //! midpoint ([`WallSurface::from_links`]); Han, Ooka and Kikumoto's on-node wall-function bounce
