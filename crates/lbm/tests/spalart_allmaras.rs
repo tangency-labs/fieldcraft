@@ -32,12 +32,22 @@ fn state(flow: &Flow) -> Vec<Option<(u64, [u64; 3])>> {
 
 /// A plane Couette channel `n` cells across (y), one cell along the periodic x and z.
 fn couette(n: usize) -> fieldcraft_model::FluidDomain {
+    channel(n, true)
+}
+
+/// A plane channel `n` cells across (y), one cell along the periodic x and z: Couette (the top
+/// wall moving) or Poiseuille (driven by a body force, peak speed 0.1 at ν 0.05).
+fn channel(n: usize, couette: bool) -> fieldcraft_model::FluidDomain {
     let dx = 1.0 / n as f64;
     let mut d = domain([0.0; 3], [dx, 1.0, dx], dx);
     for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
         *f = FaceCondition::Periodic {};
     }
-    d.faces.y_max = FaceCondition::MovingWall { velocity: [0.1, 0.0, 0.0] };
+    if couette {
+        d.faces.y_max = FaceCondition::MovingWall { velocity: [0.1, 0.0, 0.0] };
+    } else {
+        d.acceleration = [8.0 * 0.05 * 0.1, 0.0, 0.0];
+    }
     d
 }
 
@@ -59,25 +69,28 @@ fn forced_channel(collision: Collision, turbulence: Turbulence, on_node: bool) -
 
 /// With ν̃ = 0 at the start and no inflow, every source of ν̃ is 0 (production and destruction are
 /// proportional to ν̃, diffusion and advection of a zero field vanish), so ν̃ stays exactly 0, ν_t
-/// is 0 and the cells keep the fluid's own rates: the laminar flow bit for bit, with the
-/// two-relaxation-time and hybrid collisions.
+/// is 0 and the cells keep the fluid's own rates: the laminar flow bit for bit, in plane Couette
+/// and body-force Poiseuille flow, with the two-relaxation-time and hybrid collisions.
 #[test]
 fn with_no_nu_tilde_the_flow_is_laminar_bit_for_bit() {
     let n = 16;
     let dx = 1.0 / n as f64;
-    for collision in [Collision::Trt, Collision::Hrr] {
-        let run = |t: Option<Turbulence>| {
-            let (setup, mut flow) = prepare(&model(1.0, 0.05, couette(n), with(collide(2.0, dx * dx, None, collision), t)), &[]);
-            run_all(&setup, &mut flow);
-            flow
-        };
-        let (plain, modelled) = (run(None), run(Some(sa(0.0, None))));
-        assert!(modelled.turbulent() && !plain.turbulent());
-        let field = modelled.spalart_allmaras().unwrap();
-        assert!(field.nu_tilde().iter().all(|v| v.to_bits() == 0), "ν̃ stays exactly 0");
-        assert_eq!(state(&plain), state(&modelled), "{collision:?}");
-        assert_eq!(modelled.eddy_viscosity_ratio(), 0.0);
-        println!("SA with ν̃ = 0 ({collision:?}): equal to the laminar flow bit for bit");
+    for couette in [true, false] {
+        for collision in [Collision::Trt, Collision::Hrr] {
+            let run = |t: Option<Turbulence>| {
+                let (setup, mut flow) = prepare(&model(1.0, 0.05, channel(n, couette), with(collide(2.0, dx * dx, None, collision), t)), &[]);
+                run_all(&setup, &mut flow);
+                flow
+            };
+            let (plain, modelled) = (run(None), run(Some(sa(0.0, None))));
+            assert!(modelled.turbulent() && !plain.turbulent());
+            let field = modelled.spalart_allmaras().unwrap();
+            assert!(field.nu_tilde().iter().all(|v| v.to_bits() == 0), "ν̃ stays exactly 0");
+            assert_eq!(state(&plain), state(&modelled), "{collision:?}, Couette {couette}");
+            assert_eq!(modelled.eddy_viscosity_ratio(), 0.0);
+            let flow = if couette { "Couette" } else { "Poiseuille" };
+            println!("SA with ν̃ = 0, {flow} ({collision:?}): equal to the laminar flow bit for bit");
+        }
     }
 }
 

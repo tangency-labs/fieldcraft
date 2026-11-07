@@ -1332,8 +1332,7 @@ impl Flow {
                     let no_slip: Vec<bool> = group_walls.iter().map(Option::is_some).collect();
                     crate::distance::WallSurface::from_links(&grid, &links, &no_slip)?
                 };
-                // The setup checked the grid against the run's caps and the memory estimate
-                // counts the distance's working memory, so its own caps are the solver's widest.
+                // Setup::new checks the run's Limits against the grid and the memory estimate (which counts the transform).
                 let caps = crate::Limits { max_cells: crate::Limits::MAX_ADDRESSABLE_CELLS, ..crate::Limits::default() };
                 let distance = crate::distance::WallDistance::new(&grid, mask, &surface, periodic, &caps)?;
                 let inflow = sa.inflow_ratio * nu;
