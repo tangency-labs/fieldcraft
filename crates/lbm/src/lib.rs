@@ -75,6 +75,7 @@ pub mod regularized;
 pub mod rheology;
 pub mod setup;
 pub mod solve;
+pub mod statistics;
 pub mod steady;
 pub mod surface;
 pub mod turbulence;

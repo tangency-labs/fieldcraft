@@ -511,3 +511,36 @@ and `FIELDCRAFT_HAN_END` (δ/u_τ, default 20 and 150) shorten a smoke test, whi
 See also [Turbulence](turbulence.md), [Collision operators](collision.md),
 [Verification and validation](../../verification.md) and
 [the solver literature](../../solvers/literature.md), entries C5.1–C5.5.
+
+## Statistical acceptance of study windows
+
+The M&S and Han studies use the shared `fieldcraft_lbm::statistics::Blocks`
+helper. Their explicit burn-in precedes equally spaced samples. Partial blocks
+are excluded. At least 20 complete blocks are required, with a 95% Student-t
+mean half-width below 1% of the absolute mean and half-window drift below 1%.
+Absolute block correlations at lags 1 through 5 must all be below 0.5. The same
+checks for correlation and mean half-width are applied after pairing adjacent
+blocks; changing the block length must change the half-width by less than 20%.
+Both lengths use the same largest even prefix of completed blocks (an unmatched
+last block and any partial block are reported separately).
+
+The report prints all criteria, including the selected block count and partial
+sample count. A zero mean cannot satisfy a relative mean-interval requirement.
+Reaching a time cap without passing reports **inconclusive**, never steady or
+validated. The block store is capped at 65,536 means (512 KiB of payload); a
+sample beyond the cap returns an error. Burn-in may also be specified directly
+in the helper as a number of samples.
+
+The mean interval uses the [NIST/SEMATECH Student-t definition](https://www.itl.nist.gov/div898/handbook/eda/section3/eda352.htm)
+and [0.975 critical values](https://www.itl.nist.gov/div898/handbook/eda/section3/eda3672.htm),
+rounded upward at the published precision. Degrees of freedom above 30 use 30,
+a conservative interval. The small-block tests include anticorrelation, lag-2
+dependence, drift, independent noise, and sensitivity to doubling the block length.
+The three archived cylinder windows from #796 remain rejected. These are
+FieldCraft-generated failure controls, not successful physical-validation fixtures.
+
+Sampling acceptance alone cannot establish correctness of drag, frequency,
+wall treatment or spatial resolution. Grid, domain, Mach and model sensitivity
+and agreement with independent references remain separate gates. The reported
+field profiles may include additional samples beyond the paired-block window;
+the acceptance report's mean refers only to that explicitly bounded window.
