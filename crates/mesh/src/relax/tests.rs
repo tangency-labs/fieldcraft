@@ -659,3 +659,33 @@ fn strong_relaxation_is_stable_under_round_off() {
         assert!(d < 1e-6, "n {n}: a 1-ulp input change moved a node by {d:e}");
     }
 }
+
+/// The strong mode's fast hex20 samples give the certified quality's scaled Jacobian (the
+/// smallest over the same samples) on curved, distorted elements (#612).
+#[test]
+fn hex20_samples_match_the_certified_scaled_jacobian() {
+    use crate::quality::jacobian::{HEX_CORNERS, HEX_EDGES};
+    for case in 0..20u32 {
+        // A unit cube, sheared and stretched, its corners and mid-side nodes nudged.
+        let t = f64::from(case);
+        let wobble = |k: usize, d: usize| 0.06 * ((t + 1.0) * (k as f64 + 1.3) * (d as f64 + 0.7)).sin();
+        let map = |p: P| [1.3 * p[0] + 0.2 * p[1], 0.9 * p[1] + 0.1 * t / 20.0 * p[2], 1.1 * p[2] + 0.15 * p[0]];
+        let mut x: Vec<P> = HEX_CORNERS
+            .iter()
+            .enumerate()
+            .map(|(k, c)| {
+                let p = map(c.map(|v| v as f64));
+                [p[0] + wobble(k, 0), p[1] + wobble(k, 1), p[2] + wobble(k, 2)]
+            })
+            .collect();
+        for (i, &(a, b)) in HEX_EDGES.iter().enumerate() {
+            let m = scale(add(x[a], x[b]), 0.5);
+            x.push([m[0] + 0.5 * wobble(8 + i, 0), m[1] + 0.5 * wobble(8 + i, 1), m[2] + 0.5 * wobble(8 + i, 2)]);
+        }
+        let certified = crate::quality::element_quality(ElementKind::Hex20, &x).unwrap().get(Metric::ScaledJacobian).unwrap();
+        let (centre, samples) = strong::hex20_scaled_jacobian(&x);
+        let fast = samples.iter().copied().fold(f64::INFINITY, f64::min);
+        assert!((fast - certified).abs() < 1e-12, "case {case}: {fast} against {certified}");
+        assert!(centre > 0.0);
+    }
+}

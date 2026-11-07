@@ -12,7 +12,7 @@
 //! B (2 − q)                        for an invalid element (B large),
 //! ```
 //!
-//! (on a linear hexahedron, phase 2's φ is the mean of φ over its nine Jacobian samples, smooth
+//! (on a hexahedron, linear or quadratic, φ is the mean of φ over its nine Jacobian samples, smooth
 //! where φ of the smallest has a kink),
 //! φ continuing as its tangent line below q = 0.3, so it rises steeply but stays finite as an
 //! element degenerates, while the invalid branch falls as an inverted element untangles and lies
@@ -161,21 +161,74 @@ fn hex8_scaled_jacobian(x: &[P]) -> (f64, [f64; 9]) {
                 *c = add(*c, scale(at(k), w));
             }
         }
-        let l = dot(col[0], col[0]).sqrt() * dot(col[1], col[1]).sqrt() * dot(col[2], col[2]).sqrt();
-        let det = dot(col[0], super::cross(col[1], col[2]));
-        *sample = if l > 0.0 && l.is_finite() { det / l } else { -1.0 };
-        centre = det;
+        (centre, *sample) = jacobian_sample(col);
     }
     (centre, samples)
 }
 
-/// An element's size for the size term: a linear hexahedron's Jacobian at its centre (its
-/// volume, near enough), else the size [`crate::quality::element_quality`] reports.
+/// A quadratic (20-node serendipity) hexahedron's scaled Jacobian at the same samples as
+/// [`hex8_scaled_jacobian`], from the shape functions' derivatives: the Jacobian at the centre and
+/// the scaled Jacobian of every sample.
+pub(super) fn hex20_scaled_jacobian(x: &[P]) -> (f64, [f64; 9]) {
+    use crate::quality::jacobian::{HEX_EDGES, hex_corner};
+    let at = |k: usize| x.get(k).copied().unwrap_or([0.0; 3]);
+    let corners: [P; 8] = std::array::from_fn(hex_corner);
+    let mut samples = [0.0; 9];
+    let mut centre = 0.0;
+    for (sample, u) in samples.iter_mut().zip(corners.iter().copied().chain(std::iter::once([0.0; 3]))) {
+        // ∂x/∂uᵈ: the shape functions' derivatives at `u` times the nodes.
+        let mut col = [[0.0; 3]; 3];
+        for (k, c) in corners.iter().enumerate() {
+            let f = [0, 1, 2].map(|e| 1.0 + u[e] * c[e]);
+            for (d, column) in col.iter_mut().enumerate() {
+                let (o1, o2) = ((d + 1) % 3, (d + 2) % 3);
+                let w = 0.125 * c[d] * f[o1] * f[o2] * (2.0 * u[d] * c[d] + u[o1] * c[o1] + u[o2] * c[o2] - 1.0);
+                *column = add(*column, scale(at(k), w));
+            }
+        }
+        for (i, &(a, b)) in HEX_EDGES.iter().enumerate() {
+            // A mid-side node's factor along each axis and its derivative: 1 − u² along its edge,
+            // 1 + u·r across it.
+            let (f, df): ([f64; 3], [f64; 3]) = {
+                let pair = [0, 1, 2].map(|e| {
+                    let r = 0.5 * (corners[a][e] + corners[b][e]);
+                    if r == 0.0 { (1.0 - u[e] * u[e], -2.0 * u[e]) } else { (1.0 + u[e] * r, r) }
+                });
+                (pair.map(|p| p.0), pair.map(|p| p.1))
+            };
+            for (d, column) in col.iter_mut().enumerate() {
+                *column = add(*column, scale(at(8 + i), 0.25 * df[d] * f[(d + 1) % 3] * f[(d + 2) % 3]));
+            }
+        }
+        (centre, *sample) = jacobian_sample(col);
+    }
+    (centre, samples)
+}
+
+/// A Jacobian sample from its columns: the determinant and the scaled Jacobian (−1 when a
+/// column is degenerate).
+fn jacobian_sample(col: [P; 3]) -> (f64, f64) {
+    let l = dot(col[0], col[0]).sqrt() * dot(col[1], col[1]).sqrt() * dot(col[2], col[2]).sqrt();
+    let det = dot(col[0], super::cross(col[1], col[2]));
+    (det, if l > 0.0 && l.is_finite() { det / l } else { -1.0 })
+}
+
+/// A hexahedron's Jacobian samples ([`hex8_scaled_jacobian`], [`hex20_scaled_jacobian`]); `None`
+/// for another kind.
+fn hex_scaled_jacobian(kind: fieldcraft_model::ElementKind, x: &[P]) -> Option<(f64, [f64; 9])> {
+    match kind {
+        fieldcraft_model::ElementKind::Hex8 => Some(hex8_scaled_jacobian(x)),
+        fieldcraft_model::ElementKind::Hex20 => Some(hex20_scaled_jacobian(x)),
+        _ => None,
+    }
+}
+
+/// An element's size for the size term: a hexahedron's Jacobian at its centre (its volume, near
+/// enough, up to a constant factor), else the size [`crate::quality::element_quality`] reports.
 pub(super) fn size(kind: fieldcraft_model::ElementKind, x: &[P]) -> f64 {
-    if kind == fieldcraft_model::ElementKind::Hex8 {
-        hex8_scaled_jacobian(x).0
-    } else {
-        crate::quality::element_quality(kind, x).map_or(0.0, |q| q.size)
+    match hex_scaled_jacobian(kind, x) {
+        Some((centre, _)) => centre,
+        None => crate::quality::element_quality(kind, x).map_or(0.0, |q| q.size),
     }
 }
 
@@ -183,12 +236,11 @@ pub(super) fn size(kind: fieldcraft_model::ElementKind, x: &[P]) -> f64 {
 /// for every kind.
 fn term_of(phase: Phase, e: &Elem, s: &State<'_>, certified: bool) -> (Objective, f64, bool) {
     let x = s.coords(e);
-    let hex = e.kind == fieldcraft_model::ElementKind::Hex8;
-    let (q, valid, v, shaped) = if !certified && hex {
+    let fast = if certified { None } else { hex_scaled_jacobian(e.kind, &x) };
+    let (q, valid, v, shaped) = if let Some((v, samples)) = fast {
         // The shape term of every sample, averaged: the smallest one's had a kink where the
         // worst sample changes, over which the difference gradient turned within the difference
         // step and a round-off change of the position turned the step with it (#612).
-        let (v, samples) = hex8_scaled_jacobian(&x);
         let q = samples.iter().copied().fold(f64::INFINITY, f64::min);
         (q, q > 0.0, v, samples.iter().map(|&c| shape(phase, c)).sum::<f64>() / samples.len() as f64)
     } else {
@@ -394,10 +446,10 @@ impl Checked {
 
 /// Sweeps of the bad nodes' own optimisation (their neighbours held).
 const TARGET_SWEEPS: usize = 5;
-/// Most Gauss–Seidel sweeps of the harmonic solve, and its tolerance (of the largest prescribed
-/// displacement).
+/// Most Gauss–Seidel sweeps of the harmonic solve, and its tolerance for a move (of the largest
+/// prescribed displacement).
 const HARMONIC_SWEEPS: usize = 2000;
-const HARMONIC_TOL: f64 = 1e-6; // unit-factors: relative to the largest prescribed displacement
+pub(super) const HARMONIC_TOL: f64 = 1e-6; // unit-factors: relative to the largest prescribed displacement
 /// Most rounds of [`morph`].
 pub const MAX_ROUNDS: usize = 200;
 
@@ -476,7 +528,10 @@ impl State<'_> {
         let centres: Vec<P> = start.values().copied().collect();
         let region = within(&points, &centres, reach);
         let free: Vec<u32> = region.iter().copied().filter(|&n| !bad.contains(&n) && movable(self, n)).collect();
-        let u = self.harmonic(&free, &targets)?;
+        // Solved to round-off: stopped at `HARMONIC_TOL`, a round-off change of the targets could
+        // decide whether the solve stopped a sweep earlier or later and move the morph by about
+        // that much (#612). A solve that reaches the sweep cap stops after a fixed count.
+        let u = self.harmonic(&free, &targets, ROUND_OFF)?;
         let touched: BTreeSet<usize> = u.keys().flat_map(|n| self.around.get(n).into_iter().flatten().copied()).collect();
         let was = self.certified(&touched);
         for t in [1.0, 0.5, 0.25, 0.125] {
@@ -534,8 +589,9 @@ impl State<'_> {
     }
 
     /// The harmonic extension over `free` of the displacements `fixed` (zero at every other
-    /// node): Gauss–Seidel on the graph Laplacian of the element edges.
-    pub(super) fn harmonic(&self, free: &[u32], fixed: &BTreeMap<u32, P>) -> Result<BTreeMap<u32, P>> {
+    /// node): Gauss–Seidel on the graph Laplacian of the element edges, until a sweep changes no
+    /// node by more than `tol` of the largest displacement or after [`HARMONIC_SWEEPS`].
+    pub(super) fn harmonic(&self, free: &[u32], fixed: &BTreeMap<u32, P>, tol: f64) -> Result<BTreeMap<u32, P>> {
         let mut u: BTreeMap<u32, P> = fixed.clone();
         for &n in free {
             u.insert(n, [0.0; 3]);
@@ -556,7 +612,7 @@ impl State<'_> {
                 let old = u.insert(n, v).unwrap_or([0.0; 3]);
                 change = change.max(dist(old, v));
             }
-            if change <= HARMONIC_TOL * scale_of {
+            if change <= tol * scale_of {
                 break;
             }
         }

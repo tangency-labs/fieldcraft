@@ -111,6 +111,11 @@ fn quadratic_control(a: [f64; 3], m: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     [2.0 * m[0] - 0.5 * (a[0] + b[0]), 2.0 * m[1] - 0.5 * (a[1] + b[1]), 2.0 * m[2] - 0.5 * (a[2] + b[2])]
 }
 
+/// Hexahedron corner `k` ([`HEX_CORNERS`]) in the reference cube `[-1, 1]³`.
+pub(crate) fn hex_corner(k: usize) -> [f64; 3] {
+    HEX_CORNERS.get(k).map_or([0.0; 3], |c| c.map(|v| 2.0 * v as f64 - 1.0))
+}
+
 /// The 20-node serendipity hexahedron's shape functions at reference point `x ∈ [-1, 1]³`.
 fn serendipity(x: [f64; 3], xyz: &[[f64; 3]]) -> [f64; 3] {
     let mut out = [0.0; 3];
@@ -121,7 +126,7 @@ fn serendipity(x: [f64; 3], xyz: &[[f64; 3]]) -> [f64; 3] {
             }
         }
     };
-    let corner = |k: usize| HEX_CORNERS.get(k).map(|c| c.map(|v| 2.0 * v as f64 - 1.0)).unwrap_or([0.0; 3]);
+    let corner = hex_corner;
     for k in 0..8 {
         let c = corner(k);
         let n = 0.125 * (1.0 + x[0] * c[0]) * (1.0 + x[1] * c[1]) * (1.0 + x[2] * c[2]) * (x[0] * c[0] + x[1] * c[1] + x[2] * c[2] - 2.0);
