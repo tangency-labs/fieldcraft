@@ -303,3 +303,25 @@ The first cell's y⁺ is the measured Re_τ × 0.5 / N.
 Done for #664: the averaged statistics in the solve reply (`stop.averages`), the stop rule above,
 model-off results unchanged, and Poiseuille and Taylor–Green converging like Δ² with the model on
 (`crates/lbm/tests/turbulence.rs`).
+
+## Retained known failures in the fusion integration
+
+The generated [oracle report](oracle.md) distinguishes reference passes from known failures; a successful oracle command does not make the latter validated. Original recipes, reference values, tolerances and fixtures remain unchanged.
+
+Five quantities, `peak_1` through `peak_5` in [harmonic-tip-mass-experiment](../tests/oracle/harmonic-tip-mass-experiment/), retain their experimental amplitude mismatch. The published excitation forcing-sign discrepancy is a hypothesis requiring reconciliation, not a corrected measurement, an exemption, or evidence that the experiment is wrong. The peak-frequency comparison is separate.
+
+The other nine inherited reference misses are listed separately:
+
+| Case | Quantity ID | Retained limitation |
+|---|---|---|
+| [de-vahl-davis-ra1e6](../tests/oracle/de-vahl-davis-ra1e6/) | `nu_max` | 2.7 % low on 128 cells; the reference is the outlier here: de Vahl Davis's 17.925 needed a special extrapolation (p. 255, Fig. 2), later solutions give 17.536 (Hortmann, Perić & Scheuerer 1990, as quoted by ERCOFTAC UFR 4-10), and our 256 × 256 run gives 17.546, 0.06 % from it |
+| [mh-curved-cantilever](../tests/oracle/mh-curved-cantilever/) | `in_plane` | 0.880 of the theory, grade C: straight-sided hex8 on six elements over 90° (MacNeal–Harder's HEXA(8): 0.880, Table 9 p. 15) |
+| [mh-curved-cantilever](../tests/oracle/mh-curved-cantilever/) | `out_of_plane` | 0.798 of the theory, grade D: out-of-plane bending with torsion on one element across (MacNeal–Harder's HEXA(8): 0.849) |
+| [mh-straight-cantilever](../tests/oracle/mh-straight-cantilever/) | `in_plane` | 0.978 of the theory, grade B: one hex8 with incompatible modes through the depth of the prescribed mesh (MacNeal–Harder's HEXA(8): 0.981, Table 8(a) p. 15); refined meshes converge (cantilever-hex8-incompatible) |
+| [mh-straight-cantilever](../tests/oracle/mh-straight-cantilever/) | `out_of_plane` | 0.973 of the theory, grade B, as for in-plane shear (MacNeal–Harder's HEXA(8): 0.981) |
+| [mh-straight-cantilever](../tests/oracle/mh-straight-cantilever/) | `twist` | 0.892 of the theory, grade C: one element across the section cannot represent the torsion warping (MacNeal–Harder's HEXA(8): 0.910, HEX20: 0.904) |
+| [nafems-le6](../tests/oracle/nafems-le6/) | `s1_E` | the target is a thin-plate value; at the specified 10 mm the transverse shear deformation the MITC4 shell keeps raises it to 0.8197 (+2.2%; converged about 0.821), as ESRD's converged thin-solid model does (quantity s1_E_solid), and thinner plates move towards 0.802 only slowly (about 0.809 at 1 mm, see README); FieldCraft has no thin-plate (Kirchhoff) element |
+| [nafems-le7](../tests/oracle/nafems-le7/) | `syy_D` | the target is the axisymmetric thin-shell solution and FieldCraft has no axisymmetric shell element; our axisymmetric solid model converges to 25.27 (−2.3%), the value ESRD reports for its converged axisymmetric solid (quantity syy_D_solid) |
+| [pure-bending-coupling](../tests/oracle/pure-bending-coupling/) | `rotation` | 1.2% high: the distributing coupling weights every node of the end face equally, corner and mid-side nodes of hex20 alike, which is not the consistent linear traction; the end face deforms locally and the fitted rotation includes it. Area-consistent weights would remove it |
+
+These records preserve unresolved model/reference applicability or formulation limits. They do not change the stated acceptance bands or turn the known failures into numerical passes.
