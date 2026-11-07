@@ -477,6 +477,7 @@ pub static CATALOGUE: &[Capability] = &[
         "Elastic (isotropic, orthotropic) material with density; neo-Hookean hyperelasticity for nonlinear steps; Tait PVT behaviour; latent heat for a fluid that melts and freezes",
         &[
             "model.material.edit",
+            "model.material.get",
             "model.material.delete",
             "model.material.pvt",
             "model.material.specific_volume",
@@ -502,11 +503,16 @@ pub static CATALOGUE: &[Capability] = &[
         "Section",
         Properties,
         "Sections",
-        "Solid, shell, beam, rod or 2D (plane stress, plane strain, axisymmetric) section assigned to a set, with its element formulation",
-        &["model.section.edit", "model.section.delete"],
+        "Solid, shell, composite shell, beam, rod or 2D section assigned to a set; material directions, ply strengths and ordered layups",
+        &["model.section.edit", "model.section.get", "model.section.delete"],
     ),
-    soon("model.section.composite", "Composite", Properties, "Sections", "M8", "Composite layups and continuum shells"),
-    soon("model.orientation", "Orientation", Properties, "Sections", "M8", "Material orientations"),
+    ready(
+        "model.section.properties",
+        "Laminate Properties",
+        Properties,
+        "Sections",
+        "ABD blocks, transverse shear and mass moments of a composite shell in its reference axes",
+    ),
     ready_more(
         "model.set.create",
         "Set",

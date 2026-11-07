@@ -11,6 +11,9 @@ the implicit and explicit solvers.
 Nine structural metals can be added from a small [cited library](material-library.md) of
 constant room-temperature properties, each value with its source.
 
+For orthotropic material directions, ordered shell plies and first-ply failure strengths,
+see [Composite shells and material directions](composites.md).
+
 | | |
 |---|---|
 | **Commands** | `model.material.create`, `model.material.edit`, `model.material.plasticity`, `model.material.damage`, `model.material.pvt`, `model.material.specific_volume`, `model.material.delete`; `model.material.library.list` and `model.material.library.add` for the [cited material library](material-library.md) |

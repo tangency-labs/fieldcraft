@@ -132,7 +132,7 @@ pub const FLUID: CommandSpec = CommandSpec {
 pub const PROBE: CommandSpec = CommandSpec {
     id: "solve.probe",
     label: "Probe Results",
-    params: r#"{"step": "Load", "nodes": [1, 2] (or "set": "fillet", a set's nodes), "mode": 1, "frame": 0} — the stored result at nodes (with `max_von_mises`, the largest among them, for static steps): displacement, rotation, reaction, reaction moment, stress, principal stresses (the values, largest first, without their directions) and von Mises (static, with `elements` each element's results: solid, 2D and truss nodal stresses (and, in a nonlinear step, the equivalent plastic strain at the integration points of a plastic element), shell section forces (N, M, Q per length in the element's axes) and bottom, middle and top stresses, beam end forces (N, V_y, V_z, T, M_y, M_z in its axes)), the shape of mode `mode` with its rotations (frequency, from 1), or displacement and velocity in field frame `frame` (explicit, from 0; the last by default) at `nodes` (or at the nodes nearest to points: "at": [[x, y, z], ...], lowest label on a tie, each entry then giving its `xyz` and `distance`) and, with `elements` (explicit), each element's stress, von Mises stress, strain, equivalent plastic strain, damage, temperature and whether it has eroded; a coupled reference point's label gives its six displacements (translations, rotations) and reactions (forces, moments). Fluid steps: {"step": "Flow", "points": [[x, y, z]], "frame": 10 (default the last)} gives velocity, pressure and (with heat) temperature in the cells at the points; {"step": "Flow", "forces": ["x_min", "F2:top", "Body1/F2:top"]} gives those walls' force histories and {"step": "Flow", "heat": ["y_min"]} the heat into them over time (power, positive into the wall); {"step": "Flow", "line": {"from": [x, y, z], "to": [x, y, z], "count": 65 (default one point per cell spacing), "field": "velocity_x|velocity_y|velocity_z|speed|pressure|temperature|fill|wall_heat_flux", "face": "x_min" (wall_heat_flux: the box wall the line lies on)}, "frame": 10} gives the field at `count` points evenly along the line (`xyz`; trilinear between the cell centres, null outside the fluid; within half a cell of a box face the nearest cell centre's value, so a temperature line run onto a held wall reads the first cell, not the wall) and its `max` and `min` with their `xyz`, located between the samples by the parabola through the extreme sample and its neighbours; `wall_heat_flux` is the heat per area into a box wall (positive into the wall): at a held temperature from the second-order one-sided difference through the wall and the two cell layers beside it, at a flux face its flux, at an adiabatic face zero; `fill` is a free surface's fill level, 1 liquid to 0 gas; {"step": "Flow", "front": {"axis": "x", "end": "max", "at": [[x, y, z], …]}} gives a free surface's liquid front: the liquid's extent along the axis at every history time (the `max` (default) or `min` face of the cells at least half full) and its `volume`, and per point in `at` the time the extent first reached the point's coordinate along the axis, coming or going (`arrivals`; between two samples by linear interpolation; null when it never did); {"step": "Flow", "depth": {"axis": "z", "at": [[x, y, z], …]}, "frame": 10} gives, per point, the liquid in the column of cells through it along the axis in that frame (the fill levels summed times the spacing: a wave gauge's depth, a collapsing column's height at its wall)"#,
+    params: r#"{"step": "Load", "nodes": [1, 2] (or "set": "fillet", a set's nodes), "mode": 1, "frame": 0} — the stored result at nodes (with `max_von_mises`, the largest among them, for static steps): displacement, rotation, reaction, reaction moment, stress, principal stresses (the values, largest first, without their directions) and von Mises (static, with `elements` each element's results: solid, 2D and truss nodal stresses (and, in a nonlinear step, the equivalent plastic strain at the integration points of a plastic element), shell section forces (N, M, Q per length in the element's axes) and bottom, middle and top global stresses; composite plies[node][ply] retain material-axis strain (engineering shears), stress and failure indices at bottom/middle/top and additional points, with z about the nodal surface and angle from the element axes; absent strengths give null failure, beam end forces (N, V_y, V_z, T, M_y, M_z in its axes)), the shape of mode `mode` with its rotations (frequency, from 1), or displacement and velocity in field frame `frame` (explicit, from 0; the last by default) at `nodes` (or at the nodes nearest to points: "at": [[x, y, z], ...], lowest label on a tie, each entry then giving its `xyz` and `distance`) and, with `elements` (explicit), each element's stress, von Mises stress, strain, equivalent plastic strain, damage, temperature and whether it has eroded; a coupled reference point's label gives its six displacements (translations, rotations) and reactions (forces, moments). Fluid steps: {"step": "Flow", "points": [[x, y, z]], "frame": 10 (default the last)} gives velocity, pressure and (with heat) temperature in the cells at the points; {"step": "Flow", "forces": ["x_min", "F2:top", "Body1/F2:top"]} gives those walls' force histories and {"step": "Flow", "heat": ["y_min"]} the heat into them over time (power, positive into the wall); {"step": "Flow", "line": {"from": [x, y, z], "to": [x, y, z], "count": 65 (default one point per cell spacing), "field": "velocity_x|velocity_y|velocity_z|speed|pressure|temperature|fill|wall_heat_flux", "face": "x_min" (wall_heat_flux: the box wall the line lies on)}, "frame": 10} gives the field at `count` points evenly along the line (`xyz`; trilinear between the cell centres, null outside the fluid; within half a cell of a box face the nearest cell centre's value, so a temperature line run onto a held wall reads the first cell, not the wall) and its `max` and `min` with their `xyz`, located between the samples by the parabola through the extreme sample and its neighbours; `wall_heat_flux` is the heat per area into a box wall (positive into the wall): at a held temperature from the second-order one-sided difference through the wall and the two cell layers beside it, at a flux face its flux, at an adiabatic face zero; `fill` is a free surface's fill level, 1 liquid to 0 gas; {"step": "Flow", "front": {"axis": "x", "end": "max", "at": [[x, y, z], …]}} gives a free surface's liquid front: the liquid's extent along the axis at every history time (the `max` (default) or `min` face of the cells at least half full) and its `volume`, and per point in `at` the time the extent first reached the point's coordinate along the axis, coming or going (`arrivals`; between two samples by linear interpolation; null when it never did); {"step": "Flow", "depth": {"axis": "z", "at": [[x, y, z], …]}, "frame": 10} gives, per point, the liquid in the column of cells through it along the axis in that frame (the fill levels summed times the spacing: a wave gauge's depth, a collapsing column's height at its wall)"#,
     form: Some(super::forms::SOLVE_PROBE),
     kind: CommandKind::Model,
     requires: &[Requirement::Result],
@@ -1430,8 +1430,8 @@ fn probe_quantity(r: &StepResult, display: &fieldcraft_model::DisplaySystem, key
         "shape" => return Some(Show::Factor(if index < 3 { translation } else { rotation })),
         "rotation" if matches!(r.kind(), crate::results::Kind::Frequency(_)) => return Some(Show::Factor(rotation)),
         "displacement" if len == 6 && index >= 3 => Q::Angle,
-        "displacement" | "xyz" | "distance" | "gap" | "slip" | "point" | "at" | "max_penetration" => Q::Length,
-        "rotation" => Q::Angle,
+        "displacement" | "xyz" | "distance" | "gap" | "slip" | "point" | "at" | "max_penetration" | "z" => Q::Length,
+        "rotation" | "angle" => Q::Angle,
         "reaction" if heat => Q::Power,
         "reaction" if len == 6 && index >= 3 => Q::Moment,
         "reaction" | "force" | "final" | "mean" if !heat => Q::Force,
@@ -1469,6 +1469,13 @@ fn probe_quantity(r: &StepResult, display: &fieldcraft_model::DisplaySystem, key
 fn show_probe(out: &mut Value, r: &StepResult, display: &fieldcraft_model::DisplaySystem) {
     let mut units = serde_json::Map::new();
     crate::units::show_by_key(out, display, &|key, len, index| probe_quantity(r, display, key, len, index), &mut units);
+    if units.contains_key("forces") {
+        // A shell resultant vector has two dimensions: bending moment per length is a
+        // force, whereas membrane and transverse resultants are force per length.
+        use fieldcraft_model::units::Quantity as Q;
+        let components: Vec<_> = (0..8).map(|i| display.symbol(if (3..6).contains(&i) { Q::Force } else { Q::ForcePerLength })).collect();
+        units.insert("forces".into(), json!(components));
+    }
     if let Some(o) = out.as_object_mut() {
         o.insert("units".into(), Value::Object(units));
     }
@@ -1658,9 +1665,11 @@ fn element_result(r: &StaticResult, label: u32) -> Option<Value> {
     }
     if let Some(e) = by_label(&r.shells, label, |e| e.label) {
         let s = &e.stress;
-        return Some(
-            json!({"element": label, "kind": e.kind.name(), "axes": s.axes, "forces": s.forces, "bottom": s.bottom, "middle": s.middle, "top": s.top}),
-        );
+        let mut out = json!({"element": label, "kind": e.kind.name(), "axes": s.axes, "forces": s.forces, "bottom": s.bottom, "middle": s.middle, "top": s.top});
+        if !s.plies.is_empty() {
+            out["plies"] = json!(s.plies);
+        }
+        return Some(out);
     }
     let e = by_label(&r.beams, label, |e| e.label)?;
     Some(json!({"element": label, "kind": e.kind.name(), "axes": e.forces.axes, "ends": e.forces.ends}))
@@ -3280,6 +3289,71 @@ pub(crate) mod tests {
         s.execute("model.spring.delete", &json!({"name": "c"})).unwrap();
         assert!(s.model.springs().len() == 1 && s.model.mass("m").is_some());
     }
+    #[test]
+    fn probe_keeps_ply_samples_and_dimensionless_failure_values() {
+        use fieldcraft_fem::failure::{FailureIndices, HashinIndices};
+        use fieldcraft_fem::laminate::{PlyFields, PlyPoint};
+        use fieldcraft_model::units::{DisplaySystem, Preset};
+        let failure = FailureIndices {
+            maximum_stress: 0.8,
+            tsai_hill: 0.7,
+            tsai_wu: -0.2,
+            hashin: HashinIndices {
+                fiber_tension: Some(0.64),
+                fiber_compression: None,
+                matrix_tension: None,
+                matrix_compression: Some(0.3),
+                maximum: 0.64,
+            },
+        };
+        let point =
+            PlyPoint { z: -0.001, strain: [0.01, -0.002, 0.0, 0.003, 0.004, 0.005], stress: [1e6, -2e6, 0.0, 3e6, 4e6, 5e6], failure: Some(failure) };
+        let layer = PlyFields {
+            angle: std::f64::consts::FRAC_PI_4,
+            bottom: point.clone(),
+            middle: point.clone(),
+            top: point.clone(),
+            points: vec![point.clone(), PlyPoint { failure: None, ..point.clone() }],
+        };
+        let mut r: StaticResult = serde_json::from_value(json!({
+            "step": "Probe", "nodes": [], "displacement": [], "rotation": [], "reaction": [], "reaction_moment": [],
+            "stress": [], "von_mises": [], "elements": [], "shells": [], "beams": [], "reference_points": [],
+            "applied_total": [0,0,0], "reaction_total": [0,0,0],
+            "stats": {"dofs": 0, "equations": 0, "factor_entries": 0, "lanczos_vectors": 0}, "warnings": [],
+            "temperature": null, "nonlinear": null, "contacts": [],
+        }))
+        .unwrap();
+        r.shells.push(fieldcraft_solver::analysis::ShellResult {
+            label: 1,
+            kind: fieldcraft_model::ElementKind::Quad4,
+            stress: fieldcraft_fem::shell::ShellStress {
+                axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                forces: vec![[1000.0; 8]; 4],
+                bottom: vec![point.stress; 4],
+                middle: vec![point.stress; 4],
+                top: vec![point.stress; 4],
+                plies: vec![vec![layer]; 4],
+            },
+        });
+        let mut out = json!({"elements": [element_result(&r, 1).unwrap()]});
+        let display = DisplaySystem::new(Preset::MmTonneS).with_override(fieldcraft_model::units::Quantity::Angle, "deg").unwrap();
+        let result = StepResult::Implicit(ImplicitResult::Static(r));
+        show_probe(&mut out, &result, &display);
+        let ply = &out["elements"][0]["plies"][0][0];
+        assert_eq!(ply["bottom"]["strain"], json!(point.strain));
+        assert_eq!(ply["bottom"]["stress"], json!([1.0, -2.0, 0.0, 3.0, 4.0, 5.0]));
+        assert_eq!(ply["bottom"]["failure"], json!(point.failure));
+        assert_eq!(ply["bottom"]["z"], -1.0);
+        assert!((ply["angle"].as_f64().unwrap() - 45.0).abs() < 1e-12);
+        assert_eq!(ply["points"].as_array().unwrap().len(), 2);
+        assert!(ply["points"][1]["failure"].is_null());
+        assert_eq!(out["elements"][0]["bottom"][0], json!([1.0, -2.0, 0.0, 3.0, 4.0, 5.0]));
+        assert_eq!(out["elements"][0]["forces"][0], json!([1.0, 1.0, 1.0, 1000.0, 1000.0, 1000.0, 1.0, 1.0]));
+        assert_eq!(out["units"]["z"], "mm");
+        assert_eq!(out["units"]["angle"], "deg");
+        assert_eq!(out["units"]["forces"], json!(["N/mm", "N/mm", "N/mm", "N", "N", "N", "N/mm", "N/mm"]));
+    }
+
     #[test]
     fn solve_and_probe_shells_and_beams() {
         // A cantilever strip of two quad4 shells clamped at x = 0, stiffened along its tip edge

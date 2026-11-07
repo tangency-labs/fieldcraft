@@ -25,7 +25,7 @@ A step's procedure decides which solver runs it. `solve.run` solves every step i
 | `fluid` | `solve.fluid` | Lattice Boltzmann, `crates/lbm`, `crates/lbm-gpu` | f64 on the CPU, f32 on the GPU | [Lattice Boltzmann flow](fluid/lattice-boltzmann.md) |
 
 The structural pages that apply to several procedures: [elements](structural/elements.md),
-[materials](structural/materials.md), [contact](structural/contact.md),
+[materials](structural/materials.md), [composites](structural/composites.md), [contact](structural/contact.md),
 [constraints and connectors](structural/constraints-and-connectors.md) and
 [linear solvers](structural/linear-solvers.md). The fluid pages: [collision
 operators](fluid/collision.md), [boundary conditions](fluid/boundary-conditions.md),

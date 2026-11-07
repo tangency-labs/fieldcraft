@@ -6,7 +6,7 @@ Every entry is a toolbar button. **Ready** entries run their command; **coming s
 shown greyed with the roadmap milestone that brings them (ROADMAP.md). Scripts, the command line,
 the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 
-90 ready, 33 coming soon.
+91 ready, 31 coming soon.
 
 ## Geometry
 
@@ -72,15 +72,14 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 
 | Panel | Capability | Status | Command |
 |---|---|---|---|
-| Materials | Material — Elastic (isotropic, orthotropic) material with density; neo-Hookean hyperelasticity for nonlinear steps; Tait PVT behaviour; latent heat for a fluid that melts and freezes | ready | `model.material.create`, `model.material.edit`, `model.material.delete`, `model.material.pvt`, `model.material.specific_volume`, `model.material.phase_change`, `model.material.library.add`, `model.material.library.list` |
+| Materials | Material — Elastic (isotropic, orthotropic) material with density; neo-Hookean hyperelasticity for nonlinear steps; Tait PVT behaviour; latent heat for a fluid that melts and freezes | ready | `model.material.create`, `model.material.edit`, `model.material.get`, `model.material.delete`, `model.material.pvt`, `model.material.specific_volume`, `model.material.phase_change`, `model.material.library.add`, `model.material.library.list` |
 | Materials | Plasticity — Von Mises plasticity: bilinear, hardening table or Johnson–Cook | ready | `model.material.plasticity` |
 | Materials | Hyperelastic — Hyperelastic material models | coming soon (M8) |  |
 | Materials | Damage — Johnson–Cook damage and element erosion | ready | `model.material.damage` |
 | Materials | Thermal — Conductivity, specific heat and expansion | coming soon (M8) |  |
 | Materials | Equation of State — Polynomial, ideal gas, Mie–Grüneisen, JWL and tabulated equations of state | coming soon (M11) |  |
-| Sections | Section — Solid, shell, beam, rod or 2D (plane stress, plane strain, axisymmetric) section assigned to a set, with its element formulation | ready | `model.section.create`, `model.section.edit`, `model.section.delete` |
-| Sections | Composite — Composite layups and continuum shells | coming soon (M8) |  |
-| Sections | Orientation — Material orientations | coming soon (M8) |  |
+| Sections | Section — Solid, shell, composite shell, beam, rod or 2D section assigned to a set; material directions, ply strengths and ordered layups | ready | `model.section.create`, `model.section.edit`, `model.section.get`, `model.section.delete` |
+| Sections | Laminate Properties — ABD blocks, transverse shear and mass moments of a composite shell in its reference axes | ready | `model.section.properties` |
 | Sets | Set — A set of nodes, elements and faces, or of named geometry that survives remeshing | ready | `model.set.create`, `model.set.edit`, `model.set.delete`, `model.set.resolve` |
 | Model | Units — The units the model is shown and typed in | ready | `model.units` |
 

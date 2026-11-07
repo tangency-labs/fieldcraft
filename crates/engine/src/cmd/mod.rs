@@ -2,6 +2,7 @@
 
 mod block;
 mod cells;
+mod composite;
 mod contact;
 pub(crate) mod datum;
 pub(crate) mod deck;
@@ -153,6 +154,7 @@ pub static ALL: &[CommandSpec] = &[
     define::SET_EDIT,
     define::SET_DELETE,
     define::MATERIAL_CREATE,
+    composite::MATERIAL_GET,
     define::MATERIAL_EDIT,
     define::MATERIAL_DELETE,
     define::MATERIAL_PLASTICITY,
@@ -161,6 +163,8 @@ pub static ALL: &[CommandSpec] = &[
     define::MATERIAL_SPECIFIC_VOLUME,
     define::MATERIAL_PHASE_CHANGE,
     define::SECTION_CREATE,
+    composite::SECTION_GET,
+    composite::SECTION_PROPERTIES,
     define::SECTION_EDIT,
     define::SECTION_DELETE,
     define::REFERENCE_POINT_CREATE,

@@ -282,6 +282,19 @@ pub const MATERIAL: &[Field] = &[
     NAME,
     ELASTIC,
     HARMONIC_DAMPING,
+    group(
+        "ply_strength",
+        "Ply strengths",
+        &[
+            vector("tension", "Tensile strengths", D::Stress, &["1", "2"]).help("Positive tensile strengths in the fibre and transverse material axes.").req(),
+            vector("compression", "Compressive strengths", D::Stress, &["1", "2"]).help("Positive magnitudes of the compressive strengths.").req(),
+            positive("shear12", "In-plane shear strength", D::Stress).help("Positive strength for shear in the material 1–2 plane.").req(),
+            positive("shear23", "Transverse shear strength", D::Stress).help("Independent strength used by the 2D Hashin matrix-compression criterion.").req(),
+            range("tsai_wu_interaction", "Tsai–Wu interaction", D::None, -1.0, 1.0)
+                .help("F12 / sqrt(F11 F22), strictly between -1 and 1. The default -0.5 is an assumption, not a biaxial measurement.")
+                .def("-0.5"),
+        ],
+    ).help("Optional plane-stress failure criteria; does not enable damage or change stiffness."),
     positive("density", "Density", D::Density)
         .help("Mass per volume; needed for dynamics, frequencies and gravity. Steel ≈ 7850 kg/m³, aluminium ≈ 2700 kg/m³."),
     PLASTIC,
@@ -419,12 +432,29 @@ const PROFILE: Field = variants(
 pub const SECTION: &[Field] = &[
     NAME,
     reference("set", "Region", C::Set).help("The set of elements the section applies to.").req(),
-    reference("material", "Material", C::Material).help("The material of the section.").req(),
+    reference("material", "Material", C::Material).help("Required for a homogeneous section. Omit for a composite shell: each ply names its material."),
     variants(
         "kind",
         "Kind",
         &[
             variant("solid", "Solid", &[]),
+            variant(
+                "composite_shell",
+                "Composite shell",
+                &[group(
+                    "layup",
+                    "Layup",
+                    &[
+                        rows("plies", "Plies", &[
+                            reference("material", "Material", C::Material).help("The homogeneous material of this ply.").req(),
+                            positive("thickness", "Thickness", D::Length).help("This ply's thickness, measured along the shell normal.").req(),
+                            num("angle", "Ply angle", D::Of(Quantity::Angle)).help("Right-handed about the shell normal, from the projected section reference axis; radians unless the display angle unit is changed.").def("0"),
+                            int("points", "Section points", 1, 15).help("Additional Gauss samples; bottom, middle and top are always recovered. Does not change elastic stiffness.").def("3"),
+                        ]).help("One to 256 plies, ordered from the negative to the positive shell normal.").req(),
+                        range("offset", "Offset", D::None, -0.5, 0.5).help("Reference surface offset divided by total thickness; centre z = -offset × thickness.").def("0"),
+                    ],
+                ).help("The ordered stack and its offset; total thickness is the sum of the ply thicknesses.").req()],
+            ),
             variant(
                 "shell",
                 "Shell",
@@ -469,6 +499,19 @@ pub const SECTION: &[Field] = &[
     .help("What the elements are: solids, shells, beams, rods or 2D elements.")
     .req()
     .def(r#"{"type": "solid"}"#),
+    group("orientation", "Material orientation", &[
+        variants("frame", "Frame", &[
+            variant("rectangular", "Rectangular", &[
+                xyz("axis1", "First direction", D::None).help("A nonzero first material direction in global axes.").req(),
+                xyz("axis2", "Reference direction in the 1–2 plane", D::None).help("A direction independent of axis1; its perpendicular component defines material axis 2.").req(),
+            ]),
+            variant("cylindrical", "Cylindrical", &[
+                xyz("origin", "Axis origin", D::Length).help("A point on the cylindrical frame's axis in global coordinates.").req(),
+                xyz("axis", "Axis direction", D::None).help("The nonzero cylindrical axis direction in global axes.").req(),
+            ]),
+        ]).help("Rectangular directions or a cylindrical frame with radial, hoop and axial axes.").req(),
+        int("shell_reference_axis", "Shell reference axis", 1, 3).help("Axis projected into the element plane before ply angles: cylindrical 1 radial, 2 hoop, 3 axial. Solids require 1.").def("1"),
+    ]).help("Material axes: cylindrical solids evaluate at each integration point; shells project at the facet centre. Omitted shells use their element axes."),
     group(
         "formulation",
         "Formulation",
@@ -2875,6 +2918,7 @@ mod tests {
         "no relaxation field",
         "no saved view",
         "no render",
+        "is not a composite shell",
     ];
 
     /// Fill top-level required names (a fresh one) and references (the first existing item).
