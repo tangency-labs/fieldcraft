@@ -12,9 +12,10 @@ workspace = true
 fieldcraft-model = { workspace = true }
 fieldcraft-fem = { workspace = true }
 fieldcraft-parallel = { workspace = true }
+# Use the mesh crate's pure-Rust math convention for the flat-shell geometry checks.
+libm = "0.2"
 thiserror = { workspace = true }
 serde = { workspace = true }
-libm = "0.2"
 
 [dev-dependencies]
 # The validity gate, to prove the solvers and the meshers share one criterion.

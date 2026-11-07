@@ -290,5 +290,5 @@ fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
 }
 
 fn norm(a: [f64; 3]) -> f64 {
-    a[0].hypot(a[1]).hypot(a[2])
+    libm::hypot(libm::hypot(a[0], a[1]), a[2])
 }

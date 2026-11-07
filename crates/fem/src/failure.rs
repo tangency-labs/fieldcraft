@@ -45,9 +45,10 @@ pub fn plane_stress_indices(stress: [f64; 3], strengths: &PlyStrength) -> Result
     let [xc, yc] = strengths.compression;
     let x = if s1 >= 0.0 { xt } else { xc };
     let y = if s2 >= 0.0 { yt } else { yc };
-    let shear = (tau / strengths.shear12).powi(2);
-    let maximum_stress = (s1 / x).abs().max((s2 / y).abs()).max((tau / strengths.shear12).abs());
-    let tsai_hill = (s1 / x).powi(2) - (s1 / x) * (s2 / x) + (s2 / y).powi(2) + shear;
+    let (r1, r2, rs) = (s1 / x, s2 / y, tau / strengths.shear12);
+    let shear = rs * rs;
+    let maximum_stress = r1.abs().max(r2.abs()).max(rs.abs());
+    let tsai_hill = r1 * r1 - r1 * (s2 / x) + r2 * r2 + shear;
     // Normalize before multiplying: products of dimensional strengths can overflow even
     // while the nondimensional index is representable.
     let a = s1 / xt.sqrt() / xc.sqrt();
@@ -59,9 +60,9 @@ pub fn plane_stress_indices(stress: [f64; 3], strengths: &PlyStrength) -> Result
         if s >= 0.0 { u + v * (u - 1.0) } else { -v + u * (1.0 + v) }
     };
     let tsai_wu = normal(s1, xt, xc) + normal(s2, yt, yc) + 2.0 * strengths.tsai_wu_interaction * a * b + shear;
-    let fiber = if s1 >= 0.0 { (s1 / xt).powi(2) + shear } else { (s1 / xc).powi(2) };
+    let fiber = if s1 >= 0.0 { r1 * r1 + shear } else { r1 * r1 };
     let matrix = if s2 >= 0.0 {
-        (s2 / yt).powi(2) + shear
+        r2 * r2 + shear
     } else {
         let r = s2 / yc;
         // σ²/(4S23²) + (Yc²/(4S23²) - 1) σ/Yc, factored at σ=-Yc.
