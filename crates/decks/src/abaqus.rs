@@ -162,6 +162,7 @@ use fieldcraft_model::units::Preset;
 
 use crate::{Error, Result, unsupported};
 
+mod composite;
 pub mod read;
 pub use read::{Limits, Read, Unknown, read, read_in, read_limited};
 
@@ -191,9 +192,12 @@ pub fn write(model: &Model, units: Preset) -> Result<String> {
 /// [`write`] for a model already expressed in `units` ([`crate::express`]) and resolved.
 pub fn write_resolved(model: &Model, r: &Resolved, units: Preset) -> Result<String> {
     crate::refuse_fluid(FORMAT, model)?;
-    crate::refuse_composite_data(FORMAT, model)?;
     let by_type = elements_by_type(model, r)?;
     check_expressible(model)?;
+    let prepared = crate::composite::explicit_shell_frames(model, r, FORMAT)?;
+    let model = prepared.as_ref().unwrap_or(model);
+    let prepared_resolved = prepared.as_ref().map(Model::resolve).transpose()?;
+    let r = prepared_resolved.as_ref().unwrap_or(r);
     let discrete = discrete_groups(model, r)?;
     let mut d = Deck::default();
     d.heading(units);
@@ -253,13 +257,15 @@ pub fn element_type(kind: ElementKind, section: &Section) -> std::result::Result
         (S::Solid {}, K::Pyramid5, ..) => "C3D5",
         (S::Solid {}, K::Hex8, r, _) => ["C3D8", "C3D8R"][usize::from(r)],
         (S::Solid {}, K::Hex20, r, _) => ["C3D20", "C3D20R"][usize::from(r)],
-        (S::Shell { .. }, K::Tri3, r, _) => ["S3", "S3R"][usize::from(r)],
-        (S::Shell { .. }, K::Quad4, r, _) => ["S4", "S4R"][usize::from(r)],
-        (S::Shell { .. }, K::Quad8, true, _) => "S8R",
-        (S::Shell { .. }, K::Quad8, false, _) => {
+        (S::Shell { .. } | S::CompositeShell { .. }, K::Tri3, r, _) => ["S3", "S3R"][usize::from(r)],
+        (S::Shell { .. } | S::CompositeShell { .. }, K::Quad4, r, _) => ["S4", "S4R"][usize::from(r)],
+        (S::Shell { .. } | S::CompositeShell { .. }, K::Quad8, true, _) => "S8R",
+        (S::Shell { .. } | S::CompositeShell { .. }, K::Quad8, false, _) => {
             return Err("full integration of quad8 shells (Abaqus's eight-node shell, S8R, uses reduced integration)".into());
         }
-        (S::Shell { .. }, K::Tri6, ..) => return Err("tri6 shells (Abaqus has no general-purpose six-node triangular shell)".into()),
+        (S::Shell { .. } | S::CompositeShell { .. }, K::Tri6, ..) => {
+            return Err("tri6 shells (Abaqus has no general-purpose six-node triangular shell)".into());
+        }
         (S::Beam { .. }, K::Beam2, ..) => "B31",
         (S::Rod { .. }, K::Rod2, ..) => "T3D2",
         (S::Rod { .. }, K::Rod3, ..) => "T3D3",
@@ -329,16 +335,7 @@ fn check_expressible(model: &Model) -> Result<()> {
             }
         }
     }
-    for (name, section) in model.sections() {
-        let ortho = matches!(model.material(&section.material).and_then(|m| m.elastic), Some(Elastic::EngineeringConstants { .. }));
-        if ortho && !section.kind.is_continuum() {
-            bad.insert(format!(
-                "section `{name}`: orthotropic material `{}` in a {} section (its material axes need an orientation, not supported yet)",
-                section.material,
-                section.kind.name()
-            ));
-        }
-    }
+    bad.extend(composite::unsupported_items(model));
     for step in model.steps().iter().filter(|s| matches!(s.procedure, Procedure::ExplicitDynamic(_))) {
         bad.insert(format!("step `{}`: explicit dynamic steps (not written to Abaqus input yet)", step.name));
     }
@@ -981,28 +978,38 @@ impl Deck {
             return Ok(());
         }
         self.comment("Sections");
-        for (name, s) in model.sections() {
+        for (index, (name, s)) in model.sections().iter().enumerate() {
             self.comment(&format!("section {name}"));
+            let orientation = composite::write_orientation(self, model, s, index)?;
             let (set, material) = (&s.set, &s.material);
             match s.kind {
-                SectionKind::CompositeShell { .. } => {
-                    return Err(Error::Unsupported { format: FORMAT, what: "composite shell sections are not written yet".into() });
+                SectionKind::CompositeShell { ref layup } => {
+                    self.line(&format!("*SHELL SECTION, ELSET={set}, COMPOSITE, OFFSET={}{orientation}", number(layup.offset)?));
+                    for ply in &layup.plies {
+                        self.line(&format!(
+                            "{}, {}, {}, {}",
+                            number(ply.thickness)?,
+                            ply.points,
+                            ply.material,
+                            number(composite::degrees(ply.angle)?)?
+                        ));
+                    }
                 }
                 SectionKind::Solid {} | SectionKind::Axisymmetric {} => {
-                    self.line(&format!("*SOLID SECTION, ELSET={set}, MATERIAL={material}"));
+                    self.line(&format!("*SOLID SECTION, ELSET={set}, MATERIAL={material}{orientation}"));
                     self.line(",");
                 }
                 SectionKind::PlaneStress { thickness } | SectionKind::PlaneStrain { thickness } => {
-                    self.line(&format!("*SOLID SECTION, ELSET={set}, MATERIAL={material}"));
+                    self.line(&format!("*SOLID SECTION, ELSET={set}, MATERIAL={material}{orientation}"));
                     self.numbers_line("", &[thickness])?;
                 }
                 SectionKind::Rod { area } => {
-                    self.line(&format!("*SOLID SECTION, ELSET={set}, MATERIAL={material}"));
+                    self.line(&format!("*SOLID SECTION, ELSET={set}, MATERIAL={material}{orientation}"));
                     self.numbers_line("", &[area])?;
                 }
                 SectionKind::Shell { thickness, offset, points } => {
                     let offset = if offset == 0.0 { String::new() } else { format!(", OFFSET={}", number(offset)?) };
-                    self.line(&format!("*SHELL SECTION, ELSET={set}, MATERIAL={material}{offset}"));
+                    self.line(&format!("*SHELL SECTION, ELSET={set}, MATERIAL={material}{offset}{orientation}"));
                     push_number(&mut self.out, thickness)?;
                     let _ = writeln!(self.out, ", {points}");
                 }

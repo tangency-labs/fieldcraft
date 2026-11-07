@@ -61,6 +61,9 @@ fn each_writer_refuses_the_named_data_instead_of_silently_dropping_it() {
         (strengths, "ply strengths of material `Carbon`"),
     ] {
         for format in FORMATS {
+            if format.name == "abaqus" && !named.starts_with("ply strengths") {
+                continue;
+            }
             match format.write(&model, Preset::MKgS) {
                 Err(Error::Unsupported { what, .. }) => assert!(what.contains(named), "{}: {what}", format.name),
                 other => panic!("{} must name unsupported data: {other:?}", format.name),

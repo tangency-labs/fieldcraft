@@ -61,8 +61,10 @@ integrate laminate stiffness, shear and mass moments and recover material-axis p
 and maximum-stress, Tsai–Hill, Tsai–Wu and plane-stress Hashin indices. Closed-form ABD,
 axis and failure-state tests pass. Composite shell sections now carry their ply materials,
 section orientations and material strengths through JSON, reference checks and unit conversion.
-Unsupported solver and deck paths name and refuse these inputs. Command, shell/solid solver
-and deck integration, the laminate oracle and black-box comparisons remain in progress.
+Abaqus composite shells and rectangular/cylindrical orientations now round-trip, with
+explicit element frames for default laminate directions and named refusals for unsupported
+strength laws. Other unsupported solver/deck paths remain explicit. Command, shell/solid
+solver and other deck integration, the laminate oracle and black-box comparisons remain in progress.
 
 ## 0.6.0: the UI/UX release
 

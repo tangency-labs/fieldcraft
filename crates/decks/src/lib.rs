@@ -14,6 +14,7 @@
 #![forbid(unsafe_code)]
 
 pub mod abaqus;
+mod composite;
 pub mod lsdyna;
 pub mod nastran;
 

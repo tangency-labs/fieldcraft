@@ -57,6 +57,8 @@ the current document; save existing work before running it in a session you are 
 - `SURFACE, TYPE=ELEMENT`: solid faces, shell sides and planar element edges, using an element
   label or element set.
 - `MATERIAL`, constant `ELASTIC` (isotropic or engineering constants) and constant `DENSITY`.
+- Constant rectangular/cylindrical `ORIENTATION` records and `SHELL SECTION, COMPOSITE`;
+  see [composite deck mappings and refusals](composite-decks.md).
 - `SOLID SECTION`, `SHELL SECTION` and the writer's `BEAM SECTION` profiles: rectangle, circle,
   pipe, centred symmetric I, and equal-thickness box. Thickness, rod area, shell offset/points
   and beam orientation are retained where representable.

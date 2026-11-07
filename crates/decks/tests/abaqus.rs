@@ -724,7 +724,7 @@ fn what_abaqus_cannot_express_is_named() {
     let mut ortho = plate();
     let carbon = Elastic::EngineeringConstants { young: [140e3, 10e3, 10e3], poisson: [0.3, 0.3, 0.4], shear: [5e3, 5e3, 3.8e3] };
     ortho.replace_material("Aluminium", Material { elastic: Some(carbon), density: Some(1.6e-9), ..Material::default() }).unwrap();
-    assert!(unsupported(&ortho).contains("orthotropic material `Aluminium` in a shell section"));
+    assert!(abaqus::write(&ortho).unwrap().contains("*ORIENTATION"));
 
     let mut loose = frequency();
     let dofs = Dofs::try_from(vec![1, 2, 4, 5, 6]).unwrap();

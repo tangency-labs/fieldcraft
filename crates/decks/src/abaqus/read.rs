@@ -10,6 +10,7 @@
 //! Recognized material behaviors keep the active material even when their data are reported
 //! unread. Other model options and unrecognized keywords end that context.
 
+mod composite;
 mod lex;
 mod types;
 
@@ -173,6 +174,7 @@ struct SectionRecord {
     keyword: String,
     params: BTreeMap<String, Option<String>>,
     values: Vec<f64>,
+    plies: Option<Vec<fieldcraft_model::Ply>>,
     line: usize,
 }
 
@@ -285,6 +287,8 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
     model.set_display_units(Some(units.clone()));
     let mut names = BTreeMap::new();
     let mut mat_names = BTreeMap::new();
+    let mut orientation_names = BTreeMap::new();
+    let mut orientations = BTreeMap::new();
     let mut materials: BTreeMap<String, (Material, usize)> = BTreeMap::new();
     let (mut nsets, mut elsets): (BTreeMap<String, RawSet>, BTreeMap<String, RawSet>) = (BTreeMap::new(), BTreeMap::new());
     let mut node_from_element_sets = Vec::new();
@@ -555,15 +559,34 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
                     });
                 }
             }
+            "ORIENTATION" => {
+                let name = named(block.required("NAME")?, line)?;
+                let canonical = name_entry(&mut orientation_names, &name, line)?;
+                if orientations.insert(canonical, composite::orientation(block, &units)?).is_some() {
+                    return Err(error(line, format!("duplicate orientation `{name}`")));
+                }
+            }
+            "FAILSTRESS" | "FAILSTRAIN" => {
+                return Err(error(line, format!("*{k} cannot retain all first-ply strengths (including independent S23); import refused")));
+            }
             "SOLIDSECTION" | "SHELLSECTION" | "BEAMSECTION" => {
                 block.only(match k {
-                    "SHELLSECTION" => &["ELSET", "MATERIAL", "OFFSET"],
+                    "SHELLSECTION" => &["ELSET", "MATERIAL", "OFFSET", "COMPOSITE", "ORIENTATION", "SECTIONINTEGRATION"],
                     "BEAMSECTION" => &["ELSET", "MATERIAL", "SECTION"],
-                    _ => &["ELSET", "MATERIAL"],
+                    _ => &["ELSET", "MATERIAL", "ORIENTATION"],
                 })?;
+                if block.value("SECTIONINTEGRATION").is_some_and(|v| canonical(v) != "SIMPSON") {
+                    return Err(error(line, "only Simpson section-point locations are retained; Gauss integration is not imported"));
+                }
                 let set = key(block.required("ELSET")?, line)?;
-                let material = key(block.required("MATERIAL")?, line)?;
-                sections.push(SectionRecord { set, material, keyword: k.to_string(), params: block.params.clone(), values: values(block)?, line });
+                let is_composite = block.params.contains_key("COMPOSITE");
+                if is_composite && block.params.contains_key("MATERIAL") {
+                    return Err(error(line, "COMPOSITE and MATERIAL are mutually exclusive"));
+                }
+                let material = if is_composite { String::new() } else { key(block.required("MATERIAL")?, line)? };
+                let plies = if is_composite { Some(composite::plies(block, &units)?) } else { None };
+                let values = if is_composite { Vec::new() } else { values(block)? };
+                sections.push(SectionRecord { set, material, keyword: k.to_string(), params: block.params.clone(), values, plies, line });
             }
             _ => {
                 unknown_count += 1;
@@ -717,15 +740,43 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
         if matches!(typ.family, Family::Stress | Family::Strain | Family::Axis) {
             has_planar = true;
         }
-        let kind = section_kind(&section, typ, &units)?;
-        let material = mat_names
-            .get(&section.material)
-            .filter(|name| model.material(name).is_some())
-            .ok_or_else(|| error(line, format!("section names missing material `{}`", section.material)))?;
+        let mut kind = section_kind(&section, typ, &units)?;
+        let material = if let SectionKind::CompositeShell { layup } = &mut kind {
+            for ply in &mut layup.plies {
+                ply.material =
+                    mat_names.get(&ply.material).cloned().ok_or_else(|| error(line, format!("ply names missing material `{}`", ply.material)))?;
+            }
+            String::new()
+        } else {
+            mat_names
+                .get(&section.material)
+                .filter(|name| model.material(name).is_some())
+                .cloned()
+                .ok_or_else(|| error(line, format!("section names missing material `{}`", section.material)))?
+        };
+        let orientation = section
+            .params
+            .get("ORIENTATION")
+            .and_then(|v| v.as_deref())
+            .map(|name| {
+                let key = key(name, line)?;
+                orientations
+                    .get(&key)
+                    .map(|o| o.section(typ.family == Family::Shell))
+                    .ok_or_else(|| error(line, format!("section names missing orientation `{name}`")))
+            })
+            .transpose()?;
+        if orientation.is_none()
+            && (matches!(kind, SectionKind::CompositeShell { .. })
+                || (typ.family == Family::Shell
+                    && matches!(model.material(&material).and_then(|m| m.elastic), Some(Elastic::EngineeringConstants { .. }))))
+        {
+            return Err(error(line, "composite or orthotropic shell requires explicit ORIENTATION; Abaqus default shell axes are not inferred"));
+        }
         let set = names.get(&section.set).ok_or_else(|| error(line, "missing section set spelling"))?;
         let name = format!("Section{}", model.sections().len() + 1);
         model
-            .add_section(&name, Section { orientation: None, set: set.clone(), material: material.clone(), kind, formulation: typ.formulation })
+            .add_section(&name, Section { orientation, set: set.clone(), material, kind, formulation: typ.formulation })
             .map_err(|e| error(line, e.to_string()))?;
     }
     let mut unassigned = 0usize;
@@ -800,6 +851,13 @@ fn section_kind(raw: &SectionRecord, typ: Type, units: &DisplaySystem) -> Result
         return Ok(SectionKind::Beam { profile, orientation });
     }
     if raw.keyword == "SHELLSECTION" {
+        if let Some(plies) = &raw.plies {
+            if typ.family != Family::Shell {
+                return Err(error(line, "composite shell requires shell elements"));
+            }
+            let offset = composite::offset(raw.params.get("OFFSET").and_then(|x| x.as_deref()), line)?;
+            return Ok(SectionKind::CompositeShell { layup: fieldcraft_model::Layup { plies: plies.clone(), offset } });
+        }
         if typ.family != Family::Shell || v.is_empty() || v.len() > 2 {
             return Err(error(line, "*SHELL SECTION needs shell elements, thickness and optional point count"));
         }
@@ -807,7 +865,7 @@ fn section_kind(raw: &SectionRecord, typ: Type, units: &DisplaySystem) -> Result
         if points.fract() != 0.0 || points < 1.0 || points > f64::from(fieldcraft_model::sections::MAX_SHELL_POINTS) {
             return Err(error(line, "invalid shell integration point count"));
         }
-        let offset = raw.params.get("OFFSET").and_then(|x| x.as_deref()).map(|x| number(x, line)).transpose()?.unwrap_or_default();
+        let offset = composite::offset(raw.params.get("OFFSET").and_then(|x| x.as_deref()), line)?;
         return Ok(SectionKind::Shell { thickness: len(v.first().copied().unwrap_or_default())?, offset, points: points as u32 });
     }
     if matches!(typ.family, Family::Beam | Family::Shell) {

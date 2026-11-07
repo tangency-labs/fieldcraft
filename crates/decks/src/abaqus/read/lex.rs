@@ -71,12 +71,13 @@ impl Block<'_> {
             return Err(error(self.line, format!("*{} parameter {key} is not supported; no data imported from this block", self.keyword)));
         }
         for (key, value) in &self.params {
-            let valid = if key == "GENERATE" { value.is_none() } else { value.as_ref().is_some_and(|s| !s.is_empty()) };
+            let valid =
+                if matches!(key.as_str(), "GENERATE" | "COMPOSITE") { value.is_none() } else { value.as_ref().is_some_and(|s| !s.is_empty()) };
             if !valid {
                 return Err(error(
                     self.line,
-                    if key == "GENERATE" {
-                        "GENERATE is a flag and does not take a value".to_string()
+                    if matches!(key.as_str(), "GENERATE" | "COMPOSITE") {
+                        format!("{key} is a flag and does not take a value")
                     } else {
                         format!("*{} needs {key}=value, not a bare parameter", self.keyword)
                     },
