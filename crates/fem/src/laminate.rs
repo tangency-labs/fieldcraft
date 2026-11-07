@@ -11,7 +11,7 @@
 //! existing shell's 5/6 correction in both directions; this equivalent-single-layer model
 //! does not recover equilibrated interlaminar stresses or a traction-free shear profile.
 
-use fieldcraft_model::{Elastic, PlyStrength};
+use fieldcraft_model::{Elastic, Layup, Model, PlyStrength};
 
 use crate::failure::{FailureIndices, plane_stress_indices};
 use crate::{Error, Result};
@@ -27,6 +27,29 @@ pub struct PlyProperties {
     pub points: u32,
     pub density: Option<f64>,
     pub strength: Option<PlyStrength>,
+}
+
+/// Resolve the materials of an ordered model layup without assigning an element frame.
+/// Angles remain relative to the section reference direction; [`crate::shell::Shell::laminated`]
+/// composes that direction with the element frame. No missing density or strength is invented.
+pub fn resolve_plies(layup: &Layup, model: &Model) -> Result<Vec<PlyProperties>> {
+    layup.validate().map_err(|e| Error::Invalid(e.to_string()))?;
+    layup
+        .plies
+        .iter()
+        .map(|ply| {
+            let material = model.material(&ply.material).ok_or_else(|| Error::Invalid(format!("ply material `{}` is missing", ply.material)))?;
+            let elastic = material.elastic.ok_or_else(|| Error::Invalid(format!("ply material `{}` has no elastic constants", ply.material)))?;
+            Ok(PlyProperties {
+                elastic,
+                thickness: ply.thickness,
+                angle: ply.angle,
+                points: ply.points,
+                density: material.density,
+                strength: material.ply_strength,
+            })
+        })
+        .collect()
 }
 
 /// One ply's in-plane constitutive relation in its own material axes.

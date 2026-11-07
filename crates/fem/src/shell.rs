@@ -266,6 +266,11 @@ pub struct Shell {
 }
 
 impl Shell {
+    /// Whether mass and gravity must use the individual ply densities.
+    pub fn is_laminated(&self) -> bool {
+        matches!(self.section, Constitutive::Laminated(_))
+    }
+
     pub fn new(kind: ElementKind, xyz: &[[f64; 3]], section: ShellSection) -> Result<Shell> {
         Self::with_section(kind, xyz, Constitutive::Homogeneous(section))
     }
