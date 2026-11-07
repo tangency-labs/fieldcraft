@@ -80,10 +80,19 @@ fn material_and_step_damping_phase_stress_and_prescribed_motion() {
 }
 
 #[test]
+fn residual_vectors_refuse_nonzero_prescribed_motion() {
+    let d = Damping { alpha: 0.02, beta: 0.005, loss_factor: 0.0 };
+    let method = Method::Modal { modes: 1, damping_ratios: vec![], residual_vectors: 1 };
+    let m = rod(d, Damping::default(), method, 0.1);
+    let error = solve_harmonic(&m, None, &Limits::default()).unwrap_err().to_string();
+    assert!(error.contains("residual vectors") && error.contains("prescribed motion"), "{error}");
+}
+
+#[test]
 fn zero_frequency_static_limit_and_full_modal_agreement() {
     let d = Damping { alpha: 0.02, beta: 0.005, loss_factor: 0.0 };
     let direct = rod(d, Damping::default(), Method::Direct, 0.0);
-    let modal = rod(d, Damping::default(), Method::Modal { modes: 1, damping_ratios: vec![] }, 0.0);
+    let modal = rod(d, Damping::default(), Method::Modal { modes: 1, damping_ratios: vec![], residual_vectors: 0 }, 0.0);
     let a = solve_harmonic(&direct, None, &Limits::default()).unwrap();
     let b = solve_harmonic(&modal, None, &Limits::default()).unwrap();
     for (a, b) in a.frames.iter().zip(&b.frames) {

@@ -2,12 +2,12 @@
   "note": "FieldCraft's accepted results for this case, written by `cargo xtask oracle --bless`. A result outside its band fails CI.",
   "values": {
     "Left_imaginary": {
-      "band": 3.7885259750090057e-10,
-      "value": -0.37884259750090055
+      "band": 3.788525975009005e-10,
+      "value": -0.37884259750090044
     },
     "Left_power_balance": {
       "band": 1e-11,
-      "value": -5.551115123125783e-17
+      "value": -1.1102230246251565e-16
     },
     "Left_real": {
       "band": 8.030611026186964e-10,
@@ -25,9 +25,25 @@
       "band": 8.030611026186964e-10,
       "value": -0.8030511026186964
     },
+    "Residual_full_equilibrium": {
+      "band": 1e-10,
+      "value": 5.721958498152797e-16
+    },
+    "Residual_imaginary": {
+      "band": 3.788525975009005e-10,
+      "value": -0.3788425975009
+    },
+    "Residual_power_balance": {
+      "band": 1e-11,
+      "value": -1.1102230246251565e-16
+    },
+    "Residual_real": {
+      "band": 8.030611026186964e-10,
+      "value": -0.803051102618696
+    },
     "Right_imaginary": {
       "band": 3.788525975009005e-10,
-      "value": -0.37884259750090044
+      "value": -0.3788425975009005
     },
     "Right_power_balance": {
       "band": 1e-11,

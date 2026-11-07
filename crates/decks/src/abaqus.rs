@@ -1457,7 +1457,13 @@ impl Deck {
                             what: format!("harmonic step `{}` with a nonlinear base state; FieldCraft starts from the undeformed state", step.name),
                         });
                     }
-                    if let Method::Modal { modes, .. } = h.method {
+                    if let Method::Modal { modes, residual_vectors, .. } = h.method {
+                        if residual_vectors > 0 {
+                            return Err(Error::Unsupported {
+                                format: FORMAT,
+                                what: format!("harmonic step `{}`: residual-vector cycles", step.name),
+                            });
+                        }
                         for name in &step.boundary_conditions {
                             if model.boundary_condition(name).is_some_and(|bc| !holds_at_zero(bc)) {
                                 return Err(Error::Unsupported {
@@ -1492,7 +1498,7 @@ impl Deck {
                         number(h.damping.beta)?,
                         number(h.damping.loss_factor)?
                     ));
-                    if let Method::Modal { modes, ref damping_ratios } = h.method
+                    if let Method::Modal { modes, ref damping_ratios, .. } = h.method
                         && !damping_ratios.is_empty()
                     {
                         self.line("*MODAL DAMPING, VISCOUS=FRACTION OF CRITICAL DAMPING, DEFINITION=MODE NUMBERS");

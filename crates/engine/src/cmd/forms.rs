@@ -1064,6 +1064,7 @@ const PROCEDURE: Field = variants(
                 variant("modal", "Modal", &[
                     int("modes", "Modes", 1, 10_000).help("How many mass-normalized real modes to retain in the response.").req(),
                     json("damping_ratios", "Modal damping ratios").help("Zero, one shared ratio, or one ratio per requested mode; additive to other damping."),
+                    int("residual_vectors", "Residual vector cycles", 0, 16).help("Optional static/Ritz load correction per quadrature; requires positive-definite stiffness and homogeneous supports. Default 0."),
                 ]),
             ]).help("Direct factors the physical dynamic stiffness; modal projects onto the requested real modes.").req(),
             HARMONIC_DAMPING,

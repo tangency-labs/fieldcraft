@@ -227,7 +227,7 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "solve",
             "Solve a step",
-            "Solve a step of the model and keep its result: static (linear static), frequency (modes), explicit \
+            "Solve a step of the model and keep its result: static (linear static), frequency (modes), harmonic (frequency response), explicit \
              (explicit dynamics), fluid (lattice Boltzmann), heat when available. `step` may be left out when the model \
              has one step of that kind; `options` takes the solver's caps and settings (list_commands). The results \
              display then shows the step (show_results changes it).",

@@ -143,6 +143,67 @@
         "absolute": 1e-11
       },
       "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Residual_real",
+      "quantity": "Residual_real",
+      "measure": {
+        "from": "ResidualProbe",
+        "pointer": "/nodes/0/samples/0/displacement_real/0"
+      },
+      "value": -0.8030511026186964,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Residual_imaginary",
+      "quantity": "Residual_imaginary",
+      "measure": {
+        "from": "ResidualProbe",
+        "pointer": "/nodes/0/samples/0/displacement_imaginary/0"
+      },
+      "value": -0.3788425975009005,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Residual_power_balance",
+      "quantity": "Residual_power_balance",
+      "measure": {
+        "from": "Residual",
+        "pointer": "/frequencies/0/input_power",
+        "plus": {
+          "from": "Residual",
+          "pointer": "/frequencies/0/dissipated_power",
+          "scale": -1
+        }
+      },
+      "value": 0,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Residual_full_equilibrium",
+      "quantity": "Residual full equation residual",
+      "measure": {
+        "from": "Residual",
+        "pointer": "/frequencies/0/relative_residual"
+      },
+      "value": 0,
+      "tolerance": {
+        "relative": 0,
+        "absolute": 1e-10
+      },
+      "reason": "Original two-DOF equilibrium; projected residual alone cannot certify the omitted response."
     }
   ]
 }

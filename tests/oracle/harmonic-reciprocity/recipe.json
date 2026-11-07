@@ -306,5 +306,53 @@
       ]
     },
     "id": "ModalProbe"
+  },
+  {
+    "command": "model.step.create",
+    "params": {
+      "name": "Residual",
+      "procedure": {
+        "type": "harmonic",
+        "frequencies": [
+          0.3
+        ],
+        "method": {
+          "type": "modal",
+          "modes": 1,
+          "residual_vectors": 1
+        },
+        "damping": {
+          "alpha": 0.1,
+          "beta": 0.01,
+          "loss_factor": 0.03
+        }
+      },
+      "boundary_conditions": [
+        "guide"
+      ],
+      "loads": [
+        "F1"
+      ],
+      "output": [
+        "displacement"
+      ]
+    }
+  },
+  {
+    "command": "solve.harmonic",
+    "params": {
+      "step": "Residual"
+    },
+    "id": "Residual"
+  },
+  {
+    "command": "solve.probe",
+    "params": {
+      "step": "Residual",
+      "nodes": [
+        2
+      ]
+    },
+    "id": "ResidualProbe"
   }
 ]

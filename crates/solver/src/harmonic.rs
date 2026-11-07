@@ -26,6 +26,7 @@ use crate::sparse::Csr;
 use crate::{Error, Limits, Result};
 
 mod model;
+mod residual;
 pub use model::{Frame, HarmonicResult, solve_harmonic};
 
 /// Reduced physical matrices in one equation order and on the same CSR pattern.
@@ -140,8 +141,8 @@ fn project(matrix: Option<&Csr>, modes: &[Vec<f64>], n: usize) -> Vec<f64> {
     out
 }
 
-/// A reusable modal basis and the full projections of material damping. No load
-/// or frequency is retained, so one extraction serves an entire sweep.
+/// A reusable modal basis and full damping projections. Optional residual vectors
+/// are tailored to a load, but no frequency is retained: one basis serves a sweep.
 pub struct Modal<'a> {
     eigenvalues: Vec<f64>,
     shapes: Vec<Vec<f64>>,
@@ -149,6 +150,8 @@ pub struct Modal<'a> {
     pub lanczos_vectors: usize,
     viscous: Vec<f64>,
     loss: Vec<f64>,
+    stiffness: Vec<f64>,
+    mass: Vec<f64>,
     n: usize,
     matrices: Matrices<'a>,
     unshifted_stiffness: bool,
@@ -160,7 +163,7 @@ pub struct ModalSolution {
     pub projected_residual: complex::Residual,
     pub full_relative_residual: f64,
     pub full_residual_norm: f64,
-    /// True only when the projected operator has no off-diagonal damping terms.
+    /// True only when the projected dynamic operator is diagonal.
     pub diagonal: bool,
 }
 
@@ -169,17 +172,35 @@ impl<'a> Modal<'a> {
         &self.eigenvalues
     }
     pub fn shapes(&self) -> &[Vec<f64>] {
-        &self.shapes
+        &self.shapes[..self.eigenvalues.len()]
+    }
+    pub fn residual_vectors(&self) -> usize {
+        self.shapes.len() - self.eigenvalues.len()
     }
 
     pub fn new(matrices: &Matrices<'a>, count: usize, limits: &Limits) -> Result<Self> {
+        Self::build(matrices, count, None, limits)
+    }
+
+    /// Add at most `cycles` static/Ritz vectors per load quadrature. The factor
+    /// used by Lanczos is reused before it is released. A singular unshifted K
+    /// is refused; the original modal method remains available for free bodies.
+    pub fn with_residual_vectors(matrices: &Matrices<'a>, count: usize, force: &Vector, cycles: usize, limits: &Limits) -> Result<Self> {
+        if cycles > 16 {
+            return Err(Error::Invalid("harmonic residual-vector cycles must be 0 to 16".into()));
+        }
+        Self::build(matrices, count, Some((force, cycles)), limits)
+    }
+
+    fn build(matrices: &Matrices<'a>, count: usize, residual: Option<(&Vector, usize)>, limits: &Limits) -> Result<Self> {
         matrices.validate(limits)?;
         let n = matrices.stiffness.n;
         if count == 0 || count > fieldcraft_model::steps::MAX_MODES as usize {
             return Err(Error::Invalid("harmonic mode count is outside the model limit".into()));
         }
         let count = count.min(n);
-        let entries = count.checked_mul(n).and_then(|x| count.checked_mul(count).and_then(|p| p.checked_mul(2)?.checked_add(x)));
+        let budget_count = (count + 2 * residual.map_or(0, |(_, cycles)| cycles)).min(n);
+        let entries = budget_count.checked_mul(n).and_then(|x| budget_count.checked_mul(budget_count).and_then(|p| p.checked_mul(4)?.checked_add(x)));
         if entries.is_none_or(|e| e > limits.max_factor_entries) {
             return Err(Error::Limit("harmonic modal basis and projected damping exceed the entry budget".into()));
         }
@@ -199,6 +220,9 @@ impl<'a> Modal<'a> {
             Err(e) => return Err(factor_error(e)),
         };
         let op = ShiftInvert { mass: m, factor: &factor };
+        if residual.is_some_and(|(_, cycles)| cycles > 0) && shift != 0.0 {
+            return Err(Error::NotSupported("harmonic residual vectors require positive-definite unshifted stiffness".into()));
+        }
         let wanted = Wanted { count, min: f64::NEG_INFINITY, max: f64::INFINITY };
         let pairs = eigen::lanczos(&op, shift, wanted, BLOCK, lanczos_basis(limits, n), TOLERANCE)?;
         if pairs.values.len() != count {
@@ -223,15 +247,35 @@ impl<'a> Modal<'a> {
                 }
             }
         }
-        let viscous = project(matrices.viscous, &pairs.vectors, n);
-        let loss = project(matrices.loss, &pairs.vectors, n);
+        let mut shapes = pairs.vectors;
+        if let Some((force, cycles)) = residual
+            && cycles > 0
+        {
+            residual::augment(matrices, &factor, &mut shapes, force, cycles)?;
+        }
+        let basis_count = shapes.len();
+        let (stiffness, mass) = if basis_count > count {
+            (project(Some(k), &shapes, n), project(Some(m), &shapes, n))
+        } else {
+            let mut stiffness = vec![0.0; count * count];
+            let mut mass = vec![0.0; count * count];
+            for (j, lambda) in pairs.values.iter().enumerate() {
+                stiffness[j * count + j] = *lambda;
+                mass[j * count + j] = 1.0;
+            }
+            (stiffness, mass)
+        };
+        let viscous = project(matrices.viscous, &shapes, n);
+        let loss = project(matrices.loss, &shapes, n);
         Ok(Self {
             eigenvalues: pairs.values,
-            shapes: pairs.vectors,
+            shapes,
             factor_entries: factor.entries(),
             lanczos_vectors: pairs.basis,
             viscous,
             loss,
+            stiffness,
+            mass,
             n,
             matrices: *matrices,
             unshifted_stiffness: shift == 0.0,
@@ -242,7 +286,8 @@ impl<'a> Modal<'a> {
         let matrices = &self.matrices;
         angular_frequency(omega)?;
         damping.validate()?;
-        let count = self.eigenvalues.len();
+        let count = self.shapes.len();
+        let mode_count = self.eigenvalues.len();
         if matrices.stiffness.n != self.n
             || force.real.len() != self.n
             || force.imaginary.len() != self.n
@@ -250,7 +295,7 @@ impl<'a> Modal<'a> {
         {
             return Err(Error::Invalid("harmonic force or matrices do not match the modal basis".into()));
         }
-        if ![0, 1, count].contains(&ratios.len()) || ratios.iter().any(|r| !r.is_finite() || *r < 0.0) {
+        if ![0, 1, mode_count].contains(&ratios.len()) || ratios.iter().any(|r| !r.is_finite() || *r < 0.0) {
             return Err(Error::Invalid("modal damping needs 0, 1 or one finite nonnegative ratio per extracted mode".into()));
         }
         if omega == 0.0 && !self.unshifted_stiffness {
@@ -259,20 +304,35 @@ impl<'a> Modal<'a> {
                     .into(),
             ));
         }
-        let mut a = vec![0.0; count * count];
+        let a: Vec<f64> = self.stiffness.iter().zip(&self.mass).map(|(k, m)| k - omega * omega * m).collect();
         let mut b: Vec<f64> = self.viscous.iter().zip(&self.loss).map(|(c, g)| omega * c + g).collect();
-        let mut modal_c = Vec::with_capacity(count);
+        if count > mode_count {
+            for ((value, k), m) in b.iter_mut().zip(&self.stiffness).zip(&self.mass) {
+                *value += omega * (damping.alpha * m + damping.beta * k) + damping.loss_factor * k;
+            }
+        }
+        let mut modal_c = Vec::with_capacity(mode_count);
         let mut rhs = Vector::zeros(count);
-        for (j, (lambda, phi)) in self.eigenvalues.iter().zip(&self.shapes).enumerate() {
+        for (j, lambda) in self.eigenvalues.iter().enumerate() {
             let ratio = ratios.get(if ratios.len() == 1 { 0 } else { j }).copied().unwrap_or(0.0);
             let c = 2.0 * ratio * lambda.max(0.0).sqrt();
             modal_c.push(c);
-            a[j * count + j] = lambda - omega * omega;
-            b[j * count + j] += omega * (damping.alpha + damping.beta * lambda + c) + damping.loss_factor * lambda;
+            if count == mode_count {
+                b[j * count + j] += omega * (damping.alpha + damping.beta * lambda + c) + damping.loss_factor * lambda;
+                continue;
+            }
+            // Vᵀ M Φ diag(2ζω_j) Φᵀ M V, including roundoff in M-orthogonality.
+            for row in 0..count {
+                for col in 0..count {
+                    b[row * count + col] += omega * c * self.mass[row * count + j] * self.mass[j * count + col];
+                }
+            }
+        }
+        for (j, phi) in self.shapes.iter().enumerate() {
             rhs.real[j] = dot(phi, &force.real);
             rhs.imaginary[j] = dot(phi, &force.imaginary);
         }
-        let diagonal = b.iter().enumerate().all(|(i, v)| i / count == i % count || *v == 0.0);
+        let diagonal = a.iter().zip(&b).enumerate().all(|(i, (a, b))| i / count == i % count || (*a == 0.0 && *b == 0.0));
         let a = dense(count, a);
         let b = dense(count, b);
         let q = if diagonal {
@@ -284,7 +344,7 @@ impl<'a> Modal<'a> {
                 if scale == 0.0 {
                     return Err(Error::Singular(format!("undamped harmonic resonance in mode {}", j + 1)));
                 }
-                let pole_scale = self.eigenvalues[j].abs().max(omega * omega);
+                let pole_scale = self.stiffness[j * count + j].abs().max(omega * omega * self.mass[j * count + j].abs());
                 if bi == 0.0 && ar.abs() <= PIVOT_TOLERANCE * pole_scale {
                     return Err(Error::NotConverged(format!(
                         "undamped forcing frequency is not numerically separated from mode {} within the relative pivot tolerance",
@@ -303,20 +363,28 @@ impl<'a> Modal<'a> {
         };
         let projected_residual = complex::residual(&a, &b, &rhs, &q, limits)?;
         let mut displacement = Vector::zeros(self.n);
-        // Additional modal damping force is iω M Φ diag(2ζω_j) q.
+        let mut coordinates = Vector::zeros(mode_count);
+        for j in 0..mode_count {
+            let row = &self.mass[j * count..(j + 1) * count];
+            coordinates.real[j] = dot(row, &q.real);
+            coordinates.imaginary[j] = dot(row, &q.imaginary);
+        }
+        // Additional modal damping force is iω M Φ diag(2ζω_j) Φᵀ M u.
         let mut damping_shape = Vector::zeros(self.n);
         for (j, phi) in self.shapes.iter().enumerate() {
             for (i, p) in phi.iter().enumerate() {
                 displacement.real[i] += p * q.real[j];
                 displacement.imaginary[i] += p * q.imaginary[j];
-                damping_shape.real[i] -= omega * p * modal_c[j] * q.imaginary[j];
-                damping_shape.imaginary[i] += omega * p * modal_c[j] * q.real[j];
+                if j < mode_count {
+                    damping_shape.real[i] -= omega * p * modal_c[j] * coordinates.imaginary[j];
+                    damping_shape.imaginary[i] += omega * p * modal_c[j] * coordinates.real[j];
+                }
             }
         }
         let (physical_a, physical_b) = matrices.dynamic(omega, damping, limits)?;
         let (full_relative_residual, full_residual_norm) =
             full_residual(&physical_a, &physical_b, matrices.mass, &displacement, force, &damping_shape)?;
-        Ok(ModalSolution { displacement, coordinates: q, projected_residual, full_relative_residual, full_residual_norm, diagonal })
+        Ok(ModalSolution { displacement, coordinates, projected_residual, full_relative_residual, full_residual_norm, diagonal })
     }
 }
 

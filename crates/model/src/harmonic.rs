@@ -120,12 +120,18 @@ pub enum Method {
         modes: u32,
         #[serde(default)]
         damping_ratios: Vec<f64>,
+        /// Static/Ritz correction cycles per load quadrature; zero keeps pure modal truncation.
+        #[serde(default)]
+        residual_vectors: u32,
     },
 }
 
 impl Method {
     pub fn validate(&self) -> Result<()> {
-        if let Self::Modal { modes, damping_ratios } = self {
+        if let Self::Modal { modes, damping_ratios, residual_vectors } = self {
+            if *residual_vectors > 16 {
+                return Err(Error::Invalid("harmonic residual-vector cycles must be 0 to 16".into()));
+            }
             if !(1..=crate::steps::MAX_MODES).contains(modes) {
                 return Err(Error::Invalid(format!("harmonic modal count must be 1 to {}", crate::steps::MAX_MODES)));
             }
@@ -229,9 +235,10 @@ mod tests {
             assert!(Damping { alpha: invalid, ..Damping::default() }.validate().is_err());
             assert!(Damping { beta: invalid, ..Damping::default() }.validate().is_err());
             assert!(Damping { loss_factor: invalid, ..Damping::default() }.validate().is_err());
-            assert!(Method::Modal { modes: 2, damping_ratios: vec![invalid] }.validate().is_err());
+            assert!(Method::Modal { modes: 2, damping_ratios: vec![invalid], residual_vectors: 0 }.validate().is_err());
         }
-        assert!(Method::Modal { modes: 3, damping_ratios: vec![0.1; 2] }.validate().is_err());
+        assert!(Method::Modal { modes: 3, damping_ratios: vec![0.1; 2], residual_vectors: 0 }.validate().is_err());
+        assert!(Method::Modal { modes: 3, damping_ratios: vec![], residual_vectors: 17 }.validate().is_err());
         assert!(LoadFactor { amplitude: -1.0, phase: 0.0 }.validate().is_err());
         assert!(LoadFactor { amplitude: 1.0, phase: f64::INFINITY }.validate().is_err());
     }

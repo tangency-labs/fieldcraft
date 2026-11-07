@@ -43,6 +43,8 @@ pub struct HarmonicResult {
     pub reference_points: Vec<(String, u32)>,
     pub frames: Vec<Frame>,
     pub natural_frequencies: Vec<f64>,
+    #[serde(default)]
+    pub residual_vectors: usize,
     pub stats: Stats,
     pub warnings: Vec<String>,
 }
@@ -287,7 +289,12 @@ pub fn solve_harmonic(model: &Model, name: Option<&str>, limits: &Limits) -> Res
     let reduced_force = Vector { real: red.restrict(&force.real), imaginary: red.restrict(&force.imaginary) };
     let modal = match h.method {
         Method::Direct => None,
-        Method::Modal { modes, .. } => Some(Modal::new(&matrices, modes as usize, limits)?),
+        Method::Modal { modes, residual_vectors, .. } => {
+            if residual_vectors > 0 && full.is_some() {
+                return Err(Error::NotSupported("harmonic residual vectors with nonzero prescribed motion".into()));
+            }
+            Some(Modal::with_residual_vectors(&matrices, modes as usize, &reduced_force, residual_vectors as usize, limits)?)
+        }
     };
     let mut frames = Vec::with_capacity(frequencies.len());
     let mut stats = Stats { dofs: mesh.dofs(), equations: red.neq(), factor_entries: 0, lanczos_vectors: 0 };
@@ -366,6 +373,7 @@ pub fn solve_harmonic(model: &Model, name: Option<&str>, limits: &Limits) -> Res
         reference_points: mesh.points.iter().map(|p| (p.name.clone(), p.label)).collect(),
         frames,
         natural_frequencies,
+        residual_vectors: modal.as_ref().map_or(0, Modal::residual_vectors),
         stats,
         warnings,
     })

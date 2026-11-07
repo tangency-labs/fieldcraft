@@ -63,9 +63,95 @@ fn truncated_modes_report_the_unprojected_residual() {
     let limits = Limits::default();
     let modal = Modal::new(&matrices, 1, &limits).unwrap();
     let force = Vector { real: vec![1.0, 0.0], imaginary: vec![0.0, 0.0] };
-    let out = modal.solve(0.5, Damping { alpha: 0.04, ..Damping::default() }, &[], &force, &limits).unwrap();
-    assert!(out.projected_residual.relative < 1e-13);
-    assert!((out.full_relative_residual - 0.5).abs() < 1e-12);
+    // The missing modal force is [1/2,-1/2], independent of frequency for
+    // proportional damping. This separates truncation from linear solve error.
+    for omega in [0.0, 0.5, 0.99, 1.01, 2.0] {
+        let out = modal.solve(omega, Damping { alpha: 0.04, beta: 0.01, loss_factor: 0.02 }, &[], &force, &limits).unwrap();
+        assert!(out.projected_residual.relative < 1e-13);
+        assert!((out.full_relative_residual - 0.5).abs() < 1e-12);
+    }
+}
+
+#[test]
+fn residual_vectors_recover_omitted_response_with_full_damping_projection() {
+    let k = dense(&[2.0, -1.0, -1.0, 2.0], 2);
+    let m = dense(&[2.0, 0.2, 0.2, 1.0], 2);
+    let c = dense(&[0.15, -0.02, -0.02, 0.06], 2);
+    let g = dense(&[0.03, 0.01, 0.01, 0.05], 2);
+    let matrices = Matrices { stiffness: &k, mass: &m, viscous: Some(&c), loss: Some(&g) };
+    let limits = Limits::default();
+    let force = Vector { real: vec![1.0, 0.0], imaginary: vec![0.0, 0.5] };
+    let run = || {
+        let modal = Modal::with_residual_vectors(&matrices, 1, &force, 1, &limits).unwrap();
+        assert_eq!(modal.eigenvalues().len(), 1, "Ritz vectors are not reported as natural modes");
+        assert_eq!(modal.residual_vectors(), 1);
+        let damping = Damping { alpha: 0.04, beta: 0.01, loss_factor: 0.02 };
+        let mut response = Vec::new();
+        for omega in [0.0, 0.5, 0.99, 1.01, 2.0] {
+            let full = matrices.direct(omega, damping, &force, &limits).unwrap();
+            let corrected = modal.solve(omega, damping, &[], &force, &limits).unwrap();
+            assert_close(&corrected.displacement, &full.displacement);
+            assert!(corrected.full_relative_residual < 1e-12);
+            // A modal ratio acts only on the retained physical mode, not the Ritz vector.
+            let ratio = 0.03;
+            let phi = &modal.shapes()[0];
+            let mut mphi = vec![0.0; 2];
+            m.mul(phi, &mut mphi);
+            let mut with_ratio = c.clone();
+            for i in 0..2 {
+                for j in 0..2 {
+                    with_ratio.val[i * 2 + j] += 2.0 * ratio * modal.eigenvalues()[0].sqrt() * mphi[i] * mphi[j];
+                }
+            }
+            let full = Matrices { viscous: Some(&with_ratio), ..matrices }.direct(omega, damping, &force, &limits).unwrap();
+            let corrected = modal.solve(omega, damping, &[ratio], &force, &limits).unwrap();
+            assert_close(&corrected.displacement, &full.displacement);
+            assert!(corrected.full_relative_residual < 1e-12);
+            response.extend(corrected.displacement.real.into_iter().chain(corrected.displacement.imaginary).map(f64::to_bits));
+        }
+        response
+    };
+    let reference = fieldcraft_parallel::with_threads(1, run);
+    for threads in [2, 4, 6] {
+        assert_eq!(reference, fieldcraft_parallel::with_threads(threads, run));
+    }
+}
+
+#[test]
+fn residual_krylov_chain_converges_toward_independent_oscillator_solutions() {
+    let n = 12;
+    let mut k = dense(&vec![0.0; n * n], n);
+    let mut m = k.clone();
+    for j in 0..n {
+        m.val[j * n + j] = 1.0 + j as f64 / 10.0;
+        k.val[j * n + j] = m.val[j * n + j] * (j + 1).pow(2) as f64;
+    }
+    let matrices = Matrices { stiffness: &k, mass: &m, viscous: None, loss: None };
+    let limits = Limits::default();
+    let force = Vector { real: vec![1.0; n], imaginary: vec![0.0; n] };
+    let damping = Damping { alpha: 0.01, beta: 0.02, loss_factor: 0.03 };
+    let plain = Modal::new(&matrices, 1, &limits).unwrap().solve(0.2, damping, &[], &force, &limits).unwrap();
+    assert!(plain.full_relative_residual > 0.9);
+    let corrected = Modal::with_residual_vectors(&matrices, 1, &force, 6, &limits).unwrap();
+    assert!(corrected.residual_vectors() <= 6);
+    assert!(1 + corrected.residual_vectors() < n, "test must retain actual truncation");
+    for omega in [0.0, 0.1, 0.2] {
+        let out = corrected.solve(omega, damping, &[], &force, &limits).unwrap();
+        assert!(out.full_relative_residual < 1e-8, "{}", out.full_relative_residual);
+        for j in 0..n {
+            let kj = k.val[j * n + j];
+            let mj = m.val[j * n + j];
+            let a = kj - omega * omega * mj;
+            let b = omega * (damping.alpha * mj + damping.beta * kj) + damping.loss_factor * kj;
+            let re = a / (a * a + b * b);
+            let im = -b / (a * a + b * b);
+            assert!((out.displacement.real[j] - re).abs() < 1e-10);
+            assert!((out.displacement.imaginary[j] - im).abs() < 1e-10);
+        }
+    }
+    let bad = Vector { real: vec![f64::NAN; n], imaginary: vec![0.0; n] };
+    assert!(Modal::with_residual_vectors(&matrices, 1, &bad, 1, &limits).is_err());
+    assert!(Modal::with_residual_vectors(&matrices, 1, &force, 17, &limits).is_err());
 }
 
 #[test]
@@ -100,6 +186,7 @@ fn free_body_zero_frequency_is_not_regularized_by_the_modal_extraction_shift() {
     let force = Vector { real: vec![1.0, 1.0], imaginary: vec![0.0, 0.0] };
     let modal = Modal::new(&matrices, 2, &limits).unwrap();
     assert!(matrices.direct(0.0, Damping::default(), &force, &limits).is_err());
+    assert!(Modal::with_residual_vectors(&matrices, 1, &force, 1, &limits).is_err());
     for damping in [Damping::default(), Damping { alpha: 0.1, beta: 0.02, loss_factor: 0.03 }] {
         assert!(modal.solve(0.0, damping, &[0.02], &force, &limits).is_err());
     }

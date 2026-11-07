@@ -36,6 +36,7 @@ and zero phase. Factors may only name loads active in the step.
 | `damping.beta` | Stiffness-proportional viscous coefficient, time. |
 | `damping.loss_factor` | Dimensionless structural loss factor, not a damping ratio. |
 | `damping_ratios` | Modal method only: empty, one ratio for every mode, or one per requested mode. |
+| `method.residual_vectors` | Optional 0–16 load-dependent static/Ritz cycles per real and imaginary load component; default 0. |
 | `load_factors` | Nonnegative dimensionless amplitude and phase in the display angle unit. Stored phases are radians. |
 | `threads` | A solve parameter, using the same deterministic CPU thread pool as the other solvers. |
 
@@ -84,6 +85,22 @@ and loss are diagonal in this basis. The additional modal viscous coefficient is
 damping retains the off-diagonal terms and solves the small complex system. Increasing the
 mode count is a necessary convergence check. A small projected residual alone does not
 certify the untruncated physical equations.
+
+For loads poorly represented by the retained modes, `residual_vectors` augments the basis
+with static load responses and successive `K⁻¹ M` responses, mass-orthogonalized against
+the retained basis. This follows Wilson, Yuan and Dickens (1982), DOI
+[10.1002/eqe.4290100606](https://doi.org/10.1002/eqe.4290100606), and the force-truncation
+construction in [SAND2025-03995, §2.22](https://www.sandia.gov/app/uploads/sites/315/2025/07/SD_Theory_5_24.pdf).
+The recurrence and mass orthogonalization are also described in
+[Abdallah (1990), §2.3, pp. 10–12](https://ntrs.nasa.gov/api/citations/19900013497/downloads/19900013497.pdf).
+It reuses the extraction's static factor. Positive-definite unshifted stiffness and
+homogeneous supports are required. Zero or dependent load vectors add no vectors.
+The augmented operators retain their full stiffness, mass and damping couplings;
+modal damping ratios still apply only to the requested physical modes. The reply reports
+the actual `residual_vectors` count separately from `natural_frequencies`.
+Increase the basis and check the full residual and response convergence; augmentation
+does not guarantee accuracy near an omitted resonance. Deck export refuses this option
+by name because an equivalent residual-vector construction is not implemented there.
 
 Free-body mode extraction uses a spectral shift, which does not supply a physical
 static stiffness. A zero-frequency modal solve is refused if extraction required

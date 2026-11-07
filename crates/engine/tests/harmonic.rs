@@ -80,6 +80,24 @@ fn hostile_harmonic_inputs_rollback_and_decks_name_limits() {
     let deck = fieldcraft_decks::abaqus::write(&s.model, fieldcraft_model::units::Preset::MKgS).unwrap();
     assert!(deck.contains("*STEADY STATE DYNAMICS, DIRECT"));
     assert!(deck.contains("*CLOAD, IMAGINARY, OP=NEW"));
+    s.execute(
+        "model.step.edit",
+        &json!({"name":"Sweep", "procedure":{"type":"harmonic", "frequencies":[0], "method":{"type":"modal","modes":1,"residual_vectors":1}}}),
+    )
+    .unwrap();
+    let result = s.execute("solve.harmonic", &json!({})).unwrap();
+    assert_eq!(result["residual_vectors"], 0, "a full basis needs no correction vector");
+    let error = fieldcraft_decks::abaqus::write(&s.model, fieldcraft_model::units::Preset::MKgS).unwrap_err().to_string();
+    assert!(error.contains("Sweep") && error.contains("residual-vector"), "{error}");
+    let before = s.model.clone();
+    assert!(
+        s.execute(
+            "model.step.edit",
+            &json!({"name":"Sweep", "procedure":{"type":"harmonic", "frequencies":[0], "method":{"type":"modal","modes":1,"residual_vectors":17}}})
+        )
+        .is_err()
+    );
+    assert_eq!(s.model, before);
 }
 
 #[test]
