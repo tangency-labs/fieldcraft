@@ -1,0 +1,311 @@
+[
+ {
+  "command": "model.units",
+  "params": {
+   "system": "m-kg-s-N-Pa"
+  }
+ },
+ {
+  "command": "mesh.node.add",
+  "params": {
+   "label": 1,
+   "xyz": [
+    0,
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "command": "mesh.node.add",
+  "params": {
+   "label": 2,
+   "xyz": [
+    0.01,
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "command": "mesh.node.add",
+  "params": {
+   "label": 3,
+   "xyz": [
+    0.01,
+    0.01,
+    0
+   ]
+  }
+ },
+ {
+  "command": "mesh.node.add",
+  "params": {
+   "label": 4,
+   "xyz": [
+    0,
+    0.01,
+    0
+   ]
+  }
+ },
+ {
+  "command": "mesh.element.add",
+  "params": {
+   "label": 1,
+   "kind": "quad4",
+   "nodes": [
+    1,
+    2,
+    3,
+    4
+   ]
+  }
+ },
+ {
+  "command": "model.set.create",
+  "params": {
+   "name": "plate",
+   "elements": [
+    1
+   ]
+  }
+ },
+ {
+  "command": "model.material.create",
+  "params": {
+   "name": "ply",
+   "elastic": {
+    "type": "engineering_constants",
+    "young": [
+     207000000000.0,
+     7600000000.0,
+     7600000000.0
+    ],
+    "poisson": [
+     0.3,
+     0.3,
+     0
+    ],
+    "shear": [
+     5000000000.0,
+     5000000000.0,
+     3800000000.0
+    ]
+   },
+   "density": 1500,
+   "ply_strength": {
+    "tension": [
+     500000000.0,
+     5000000.0
+    ],
+    "compression": [
+     350000000.0,
+     75000000.0
+    ],
+    "shear12": 35000000.0,
+    "shear23": 35000000.0,
+    "tsai_wu_interaction": -0.5
+   }
+  }
+ },
+ {
+  "command": "model.section.create",
+  "params": {
+   "name": "plate",
+   "set": "plate",
+   "kind": {
+    "type": "composite_shell",
+    "layup": {
+     "plies": [
+      {
+       "material": "ply",
+       "thickness": 5e-05,
+       "angle": 1.5707963267948966,
+       "points": 3
+      },
+      {
+       "material": "ply",
+       "thickness": 5e-05,
+       "angle": -0.7853981633974483,
+       "points": 3
+      },
+      {
+       "material": "ply",
+       "thickness": 5e-05,
+       "angle": 0.7853981633974483,
+       "points": 3
+      },
+      {
+       "material": "ply",
+       "thickness": 5e-05,
+       "angle": 0.0,
+       "points": 3
+      }
+     ],
+     "offset": 0
+    }
+   },
+   "orientation": {
+    "frame": {
+     "type": "rectangular",
+     "axis1": [
+      1,
+      0,
+      0
+     ],
+     "axis2": [
+      0,
+      1,
+      0
+     ]
+    },
+    "shell_reference_axis": 1
+   }
+  }
+ },
+ {
+  "command": "model.set.create",
+  "params": {
+   "name": "node1",
+   "nodes": [
+    1
+   ]
+  }
+ },
+ {
+  "command": "model.boundary_condition.create",
+  "params": {
+   "name": "node1",
+   "type": "displacement",
+   "target": {
+    "set": "node1"
+   },
+   "values": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "command": "model.set.create",
+  "params": {
+   "name": "drill",
+   "nodes": [
+    2,
+    3,
+    4
+   ]
+  }
+ },
+ {
+  "command": "model.boundary_condition.create",
+  "params": {
+   "name": "drill",
+   "type": "displacement",
+   "target": {
+    "set": "drill"
+   },
+   "values": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    0
+   ]
+  }
+ },
+ {
+  "command": "model.set.create",
+  "params": {
+   "name": "node4",
+   "nodes": [
+    4
+   ]
+  }
+ },
+ {
+  "command": "model.boundary_condition.create",
+  "params": {
+   "name": "node4",
+   "type": "displacement",
+   "target": {
+    "set": "node4"
+   },
+   "values": [
+    0,
+    null,
+    null,
+    null,
+    null,
+    null
+   ]
+  }
+ },
+ {
+  "command": "model.set.create",
+  "params": {
+   "name": "pull",
+   "nodes": [
+    2,
+    3
+   ]
+  }
+ },
+ {
+  "command": "model.load.create",
+  "params": {
+   "name": "pull",
+   "type": "force",
+   "target": {
+    "set": "pull"
+   },
+   "vector": [
+    7.5,
+    0,
+    0
+   ],
+   "distribution": "per_node"
+  }
+ },
+ {
+  "command": "model.step.create",
+  "params": {
+   "name": "Load",
+   "procedure": {
+    "type": "static"
+   },
+   "boundary_conditions": [
+    "node1",
+    "drill",
+    "node4"
+   ],
+   "loads": [
+    "pull"
+   ]
+  }
+ },
+ {
+  "command": "solve.static",
+  "params": {
+   "step": "Load",
+   "threads": 1
+  },
+  "id": "solve"
+ },
+ {
+  "command": "solve.probe",
+  "params": {
+   "step": "Load",
+   "elements": [
+    1
+   ]
+  },
+  "id": "fields"
+ }
+]

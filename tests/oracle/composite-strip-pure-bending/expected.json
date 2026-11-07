@@ -1,0 +1,310 @@
+{
+ "title": "Laminate cantilever strip in pure bending",
+ "kind": "theory",
+ "source": "A. T. Nettles, Basic Mechanics of Laminated Composite Plates, NASA RP-1351 (1994), §§II–IV, https://ntrs.nasa.gov/citations/19950009349; cylindrical pure-bending solution w=-Mx*x²/(2 D11); Tsai & Wu (1971), doi:10.1177/002199837100500106; Hashin (1980), doi:10.1115/1.3153664",
+ "quantities": [
+  {
+   "id": "tip_w",
+   "quantity": "tip centre transverse displacement (m)",
+   "measure": {
+    "from": "probe",
+    "pointer": "/nodes/0/displacement/2"
+   },
+   "value": -8.450704225352112e-06,
+   "tolerance": {
+    "absolute": 3.380281690140845e-14
+   },
+   "reason": "pure cylindrical bending is represented exactly; absolute bound is 2e-9 of curvature times the unit length squared, as in the solver regression"
+  },
+  {
+   "id": "ply1_axial",
+   "quantity": "material-axis axial ply-midplane stress (Pa)",
+   "measure": {
+    "from": "probe",
+    "pointer": "/elements/0/plies/0/0/middle/stress/0"
+   },
+   "value": -12676.05633802817,
+   "tolerance": {
+    "absolute": 0.000676056338028169
+   },
+   "reason": "sigma_xx=E_x*kappa*z; exact bending patch, with 2e-8 of E1*kappa*h to cover solve/recovery rounding"
+  },
+  {
+   "id": "ply2_axial",
+   "quantity": "material-axis axial ply-midplane stress (Pa)",
+   "measure": {
+    "from": "probe",
+    "pointer": "/elements/0/plies/0/1/middle/stress/1"
+   },
+   "value": -422.53521126760563,
+   "tolerance": {
+    "absolute": 0.000676056338028169
+   },
+   "reason": "sigma_xx=E_x*kappa*z; exact bending patch, with 2e-8 of E1*kappa*h to cover solve/recovery rounding"
+  },
+  {
+   "id": "ply3_axial",
+   "quantity": "material-axis axial ply-midplane stress (Pa)",
+   "measure": {
+    "from": "probe",
+    "pointer": "/elements/0/plies/0/2/middle/stress/1"
+   },
+   "value": 422.53521126760563,
+   "tolerance": {
+    "absolute": 0.000676056338028169
+   },
+   "reason": "sigma_xx=E_x*kappa*z; exact bending patch, with 2e-8 of E1*kappa*h to cover solve/recovery rounding"
+  },
+  {
+   "id": "ply4_axial",
+   "quantity": "material-axis axial ply-midplane stress (Pa)",
+   "measure": {
+    "from": "probe",
+    "pointer": "/elements/0/plies/0/3/middle/stress/0"
+   },
+   "value": 12676.05633802817,
+   "tolerance": {
+    "absolute": 0.000676056338028169
+   },
+   "reason": "sigma_xx=E_x*kappa*z; exact bending patch, with 2e-8 of E1*kappa*h to cover solve/recovery rounding"
+  },
+  {
+   "id": "ply1_maximum_stress",
+   "quantity": "ply 1 maximum_stress at the midplane (dimensionless)",
+   "measure": {
+    "from": "probe",
+    "pointer": "/elements/0/plies/0/0/middle/failure/maximum_stress"
+   },
+   "value": 3.621730382293762e-05,
+   "tolerance": {
+    "relative": 1e-07,
+    "absolute": 1e-12
+   },
+   "reason": "Closed-form pure-bending axial material stress inserted into the cited plane-stress polynomial, using exact rational arithmetic; no FE field or external solver is the reference. The absolute floor covers structural zeros and solve rounding."
+  },
+  {
+   "id": "ply1_tsai_hill",
+   "quantity": "ply 1 tsai_hill at the midplane (dimensionless)",
+   "measure": {
+    "from": "probe",
+    "pointer": "/elements/0/plies/0/0/middle/failure/tsai_hill"
+   },
+   "value": 1.3116930962029724e-09,
+   "tolerance": {
+    "relative": 1e-07,
+    "absolute": 1e-12
+   },
+   "reason": "Closed-form pure-bending axial material stress inserted into the cited plane-stress polynomial, using exact rational arithmetic; no FE field or external solver is the reference. The absolute floor covers structural zeros and solve rounding."
+  },
+  {
+   "id": "ply1_tsai_wu",
+   "quantity": "ply 1 tsai_wu at the midplane (dimensionless)",
+   "measure": {
+    "from": "probe",
+    "pointer": "/elements/0/plies/0/0/middle/failure/tsai_wu"
+   },
+   "value": 1.086610933204863e-05,
+   "tolerance": {
+    "relative": 1e-07,
+    "absolute": 1e-12
+   },
+   "reason": "Closed-form pure-bending axial material stress inserted into the cited plane-stress polynomial, using exact rational arithmetic; no FE field or external solver is the reference. The absolute floor covers structural zeros and solve rounding."
+  },
+  {
+   "id": "ply1_hashin_maximum",
+   "quantity": "ply 1 hashin/maximum at the midplane (dimensionless)",
+   "measure": {
+    "from": "probe",
+    "pointer": "/elements/0/plies/0/0/middle/failure/hashin/maximum"
+   },
+   "value": 1.3116930962029724e-09,
+   "tolerance": {
+    "relative": 1e-07,
+    "absolute": 1e-12
+   },
+   "reason": "Closed-form pure-bending axial material stress inserted into the cited plane-stress polynomial, using exact rational arithmetic; no FE field or external solver is the reference. The absolute floor covers structural zeros and solve rounding."
+  },
+  {
+   "id": "ply2_maximum_stress",
+   "quantity": "ply 2 maximum_stress at the midplane (dimensionless)",
+   "measure": {
+    "from": "probe",
+    "pointer": "/elements/0/plies/0/1/middle/failure/maximum_stress"
+   },
+   "value": 5.6338028169014084e-06,
+   "tolerance": {
+    "relative": 1e-07,
+    "absolute": 1e-12
+   },
+   "reason": "Closed-form pure-bending axial material stress inserted into the cited plane-stress polynomial, using exact rational arithmetic; no FE field or external solver is the reference. The absolute floor covers structural zeros and solve rounding."
+  },
+  {
+   "id": "ply2_tsai_hill",
+   "quantity": "ply 2 tsai_hill at the midplane (dimensionless)",
+   "measure": {
+    "from": "probe",
+    "pointer": "/elements/0/plies/0/1/middle/failure/tsai_hill"
+   },
+   "value": 3.173973417972624e-11,
+   "tolerance": {
+    "relative": 1e-07,
+    "absolute": 1e-12
+   },
+   "reason": "Closed-form pure-bending axial material stress inserted into the cited plane-stress polynomial, using exact rational arithmetic; no FE field or external solver is the reference. The absolute floor covers structural zeros and solve rounding."
+  },
+  {
+   "id": "ply2_tsai_wu",
+   "quantity": "ply 2 tsai_wu at the midplane (dimensionless)",
+   "measure": {
+    "from": "probe",
+    "pointer": "/elements/0/plies/0/1/middle/failure/tsai_wu"
+   },
+   "value": -7.887276334060702e-05,
+   "tolerance": {
+    "relative": 1e-07,
+    "absolute": 1e-12
+   },
+   "reason": "Closed-form pure-bending axial material stress inserted into the cited plane-stress polynomial, using exact rational arithmetic; no FE field or external solver is the reference. The absolute floor covers structural zeros and solve rounding."
+  },
+  {
+   "id": "ply2_hashin_maximum",
+   "quantity": "ply 2 hashin/maximum at the midplane (dimensionless)",
+   "measure": {
+    "from": "probe",
+    "pointer": "/elements/0/plies/0/1/middle/failure/hashin/maximum"
+   },
+   "value": 0.0,
+   "tolerance": {
+    "relative": 1e-07,
+    "absolute": 1e-12
+   },
+   "reason": "Closed-form pure-bending axial material stress inserted into the cited plane-stress polynomial, using exact rational arithmetic; no FE field or external solver is the reference. The absolute floor covers structural zeros and solve rounding."
+  },
+  {
+   "id": "ply2_hashin_matrix_compression",
+   "quantity": "ply 2 hashin/matrix_compression at the midplane (dimensionless)",
+   "measure": {
+    "from": "probe",
+    "pointer": "/elements/0/plies/0/1/middle/failure/hashin/matrix_compression"
+   },
+   "value": -8.335364298466857e-07,
+   "tolerance": {
+    "relative": 1e-07,
+    "absolute": 1e-12
+   },
+   "reason": "Closed-form pure-bending axial material stress inserted into the cited plane-stress polynomial, using exact rational arithmetic; no FE field or external solver is the reference. The absolute floor covers structural zeros and solve rounding."
+  },
+  {
+   "id": "ply3_maximum_stress",
+   "quantity": "ply 3 maximum_stress at the midplane (dimensionless)",
+   "measure": {
+    "from": "probe",
+    "pointer": "/elements/0/plies/0/2/middle/failure/maximum_stress"
+   },
+   "value": 8.450704225352113e-05,
+   "tolerance": {
+    "relative": 1e-07,
+    "absolute": 1e-12
+   },
+   "reason": "Closed-form pure-bending axial material stress inserted into the cited plane-stress polynomial, using exact rational arithmetic; no FE field or external solver is the reference. The absolute floor covers structural zeros and solve rounding."
+  },
+  {
+   "id": "ply3_tsai_hill",
+   "quantity": "ply 3 tsai_hill at the midplane (dimensionless)",
+   "measure": {
+    "from": "probe",
+    "pointer": "/elements/0/plies/0/2/middle/failure/tsai_hill"
+   },
+   "value": 7.141440190438405e-09,
+   "tolerance": {
+    "relative": 1e-07,
+    "absolute": 1e-12
+   },
+   "reason": "Closed-form pure-bending axial material stress inserted into the cited plane-stress polynomial, using exact rational arithmetic; no FE field or external solver is the reference. The absolute floor covers structural zeros and solve rounding."
+  },
+  {
+   "id": "ply3_tsai_wu",
+   "quantity": "ply 3 tsai_wu at the midplane (dimensionless)",
+   "measure": {
+    "from": "probe",
+    "pointer": "/elements/0/plies/0/2/middle/failure/tsai_wu"
+   },
+   "value": 7.887371553263241e-05,
+   "tolerance": {
+    "relative": 1e-07,
+    "absolute": 1e-12
+   },
+   "reason": "Closed-form pure-bending axial material stress inserted into the cited plane-stress polynomial, using exact rational arithmetic; no FE field or external solver is the reference. The absolute floor covers structural zeros and solve rounding."
+  },
+  {
+   "id": "ply3_hashin_maximum",
+   "quantity": "ply 3 hashin/maximum at the midplane (dimensionless)",
+   "measure": {
+    "from": "probe",
+    "pointer": "/elements/0/plies/0/2/middle/failure/hashin/maximum"
+   },
+   "value": 7.141440190438405e-09,
+   "tolerance": {
+    "relative": 1e-07,
+    "absolute": 1e-12
+   },
+   "reason": "Closed-form pure-bending axial material stress inserted into the cited plane-stress polynomial, using exact rational arithmetic; no FE field or external solver is the reference. The absolute floor covers structural zeros and solve rounding."
+  },
+  {
+   "id": "ply4_maximum_stress",
+   "quantity": "ply 4 maximum_stress at the midplane (dimensionless)",
+   "measure": {
+    "from": "probe",
+    "pointer": "/elements/0/plies/0/3/middle/failure/maximum_stress"
+   },
+   "value": 2.535211267605634e-05,
+   "tolerance": {
+    "relative": 1e-07,
+    "absolute": 1e-12
+   },
+   "reason": "Closed-form pure-bending axial material stress inserted into the cited plane-stress polynomial, using exact rational arithmetic; no FE field or external solver is the reference. The absolute floor covers structural zeros and solve rounding."
+  },
+  {
+   "id": "ply4_tsai_hill",
+   "quantity": "ply 4 tsai_hill at the midplane (dimensionless)",
+   "measure": {
+    "from": "probe",
+    "pointer": "/elements/0/plies/0/3/middle/failure/tsai_hill"
+   },
+   "value": 6.427296171394565e-10,
+   "tolerance": {
+    "relative": 1e-07,
+    "absolute": 1e-12
+   },
+   "reason": "Closed-form pure-bending axial material stress inserted into the cited plane-stress polynomial, using exact rational arithmetic; no FE field or external solver is the reference. The absolute floor covers structural zeros and solve rounding."
+  },
+  {
+   "id": "ply4_tsai_wu",
+   "quantity": "ply 4 tsai_wu at the midplane (dimensionless)",
+   "measure": {
+    "from": "probe",
+    "pointer": "/elements/0/plies/0/3/middle/failure/tsai_wu"
+   },
+   "value": -1.0864272961713946e-05,
+   "tolerance": {
+    "relative": 1e-07,
+    "absolute": 1e-12
+   },
+   "reason": "Closed-form pure-bending axial material stress inserted into the cited plane-stress polynomial, using exact rational arithmetic; no FE field or external solver is the reference. The absolute floor covers structural zeros and solve rounding."
+  },
+  {
+   "id": "ply4_hashin_maximum",
+   "quantity": "ply 4 hashin/maximum at the midplane (dimensionless)",
+   "measure": {
+    "from": "probe",
+    "pointer": "/elements/0/plies/0/3/middle/failure/hashin/maximum"
+   },
+   "value": 6.427296171394565e-10,
+   "tolerance": {
+    "relative": 1e-07,
+    "absolute": 1e-12
+   },
+   "reason": "Closed-form pure-bending axial material stress inserted into the cited plane-stress polynomial, using exact rational arithmetic; no FE field or external solver is the reference. The absolute floor covers structural zeros and solve rounding."
+  }
+ ]
+}

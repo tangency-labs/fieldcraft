@@ -1,0 +1,161 @@
+[
+ {
+  "command": "model.units",
+  "params": {
+   "system": "m-kg-s-N-Pa"
+  }
+ },
+ {
+  "command": "mesh.node.add",
+  "params": {
+   "label": 1,
+   "xyz": [
+    0.0,
+    0.0,
+    0
+   ]
+  }
+ },
+ {
+  "command": "mesh.node.add",
+  "params": {
+   "label": 2,
+   "xyz": [
+    1.0,
+    0.0,
+    0
+   ]
+  }
+ },
+ {
+  "command": "mesh.node.add",
+  "params": {
+   "label": 3,
+   "xyz": [
+    0.0,
+    1.0,
+    0
+   ]
+  }
+ },
+ {
+  "command": "mesh.node.add",
+  "params": {
+   "label": 4,
+   "xyz": [
+    1.0,
+    1.0,
+    0
+   ]
+  }
+ },
+ {
+  "command": "mesh.element.add",
+  "params": {
+   "label": 1,
+   "kind": "quad4",
+   "nodes": [
+    1,
+    2,
+    4,
+    3
+   ]
+  }
+ },
+ {
+  "command": "model.set.create",
+  "params": {
+   "name": "plate",
+   "elements": [
+    1
+   ]
+  }
+ },
+ {
+  "command": "model.material.create",
+  "params": {
+   "name": "ply",
+   "elastic": {
+    "type": "engineering_constants",
+    "young": [
+     100,
+     10,
+     10
+    ],
+    "poisson": [
+     0,
+     0,
+     0
+    ],
+    "shear": [
+     5,
+     4,
+     3
+    ]
+   },
+   "density": 2
+  }
+ },
+ {
+  "command": "model.section.create",
+  "params": {
+   "name": "plate",
+   "set": "plate",
+   "kind": {
+    "type": "composite_shell",
+    "layup": {
+     "plies": [
+      {
+       "material": "ply",
+       "thickness": 0.25,
+       "angle": 0.7853981633974483,
+       "points": 3
+      },
+      {
+       "material": "ply",
+       "thickness": 0.25,
+       "angle": -0.7853981633974483,
+       "points": 3
+      },
+      {
+       "material": "ply",
+       "thickness": 0.25,
+       "angle": -0.7853981633974483,
+       "points": 3
+      },
+      {
+       "material": "ply",
+       "thickness": 0.25,
+       "angle": 0.7853981633974483,
+       "points": 3
+      }
+     ],
+     "offset": 0
+    }
+   },
+   "orientation": {
+    "frame": {
+     "type": "rectangular",
+     "axis1": [
+      1,
+      0,
+      0
+     ],
+     "axis2": [
+      0,
+      1,
+      0
+     ]
+    },
+    "shell_reference_axis": 1
+   }
+  }
+ },
+ {
+  "command": "model.section.properties",
+  "params": {
+   "name": "plate"
+  },
+  "id": "properties"
+ }
+]

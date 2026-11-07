@@ -1,0 +1,367 @@
+{
+ "title": "NAFEMS R0093/1 laminate ply stress",
+ "kind": "benchmark",
+ "source": "NAFEMS R0093/1, P. Hopkins, Benchmarks for Membrane and Bending Analysis of Laminated Shells, Part 2: Strength Analysis (2005); public reproduction, Tables 1–3 and benchmark columns of Table 8: https://doc.comsol.com/6.3/doc/com.comsol.help.models.compmat.failure_prediction_in_a_laminated_composite_shell/failure_prediction_in_a_laminated_composite_shell.html",
+ "quantities": [
+  {
+   "id": "ply1_s11",
+   "quantity": "ply 1 material stress at element centre and ply midplane (Pa)",
+   "measure": {
+    "from": "fields",
+    "pointer": "/elements/0/plies/0/0/middle/stress/0",
+    "scale": 0.25,
+    "plus": {
+     "from": "fields",
+     "pointer": "/elements/0/plies/1/0/middle/stress/0",
+     "scale": 0.25,
+     "plus": {
+      "from": "fields",
+      "pointer": "/elements/0/plies/2/0/middle/stress/0",
+      "scale": 0.25,
+      "plus": {
+       "from": "fields",
+       "pointer": "/elements/0/plies/3/0/middle/stress/0",
+       "scale": 0.25
+      }
+     }
+    }
+   },
+   "value": -5128000.0,
+   "tolerance": {
+    "relative": 0.01,
+    "absolute": 500
+   },
+   "reason": "predeclared 1% component tolerance plus 0.0005 MPa published rounding; different linear shell formulations; centre recovered as mean of four extrapolated nodal fields"
+  },
+  {
+   "id": "ply1_s22",
+   "quantity": "ply 1 material stress at element centre and ply midplane (Pa)",
+   "measure": {
+    "from": "fields",
+    "pointer": "/elements/0/plies/0/0/middle/stress/1",
+    "scale": 0.25,
+    "plus": {
+     "from": "fields",
+     "pointer": "/elements/0/plies/1/0/middle/stress/1",
+     "scale": 0.25,
+     "plus": {
+      "from": "fields",
+      "pointer": "/elements/0/plies/2/0/middle/stress/1",
+      "scale": 0.25,
+      "plus": {
+       "from": "fields",
+       "pointer": "/elements/0/plies/3/0/middle/stress/1",
+       "scale": 0.25
+      }
+     }
+    }
+   },
+   "value": 4407000.0,
+   "tolerance": {
+    "relative": 0.01,
+    "absolute": 500
+   },
+   "reason": "predeclared 1% component tolerance plus 0.0005 MPa published rounding; different linear shell formulations; centre recovered as mean of four extrapolated nodal fields"
+  },
+  {
+   "id": "ply1_s12",
+   "quantity": "ply 1 material stress at element centre and ply midplane (Pa)",
+   "measure": {
+    "from": "fields",
+    "pointer": "/elements/0/plies/0/0/middle/stress/3",
+    "scale": 0.25,
+    "plus": {
+     "from": "fields",
+     "pointer": "/elements/0/plies/1/0/middle/stress/3",
+     "scale": 0.25,
+     "plus": {
+      "from": "fields",
+      "pointer": "/elements/0/plies/2/0/middle/stress/3",
+      "scale": 0.25,
+      "plus": {
+       "from": "fields",
+       "pointer": "/elements/0/plies/3/0/middle/stress/3",
+       "scale": 0.25
+      }
+     }
+    }
+   },
+   "value": -1663000.0,
+   "tolerance": {
+    "relative": 0.01,
+    "absolute": 500
+   },
+   "reason": "predeclared 1% component tolerance plus 0.0005 MPa published rounding; different linear shell formulations; centre recovered as mean of four extrapolated nodal fields"
+  },
+  {
+   "id": "ply2_s11",
+   "quantity": "ply 2 material stress at element centre and ply midplane (Pa)",
+   "measure": {
+    "from": "fields",
+    "pointer": "/elements/0/plies/0/1/middle/stress/0",
+    "scale": 0.25,
+    "plus": {
+     "from": "fields",
+     "pointer": "/elements/0/plies/1/1/middle/stress/0",
+     "scale": 0.25,
+     "plus": {
+      "from": "fields",
+      "pointer": "/elements/0/plies/2/1/middle/stress/0",
+      "scale": 0.25,
+      "plus": {
+       "from": "fields",
+       "pointer": "/elements/0/plies/3/1/middle/stress/0",
+       "scale": 0.25
+      }
+     }
+    }
+   },
+   "value": 12590000.0,
+   "tolerance": {
+    "relative": 0.01,
+    "absolute": 500
+   },
+   "reason": "predeclared 1% component tolerance plus 0.0005 MPa published rounding; different linear shell formulations; centre recovered as mean of four extrapolated nodal fields"
+  },
+  {
+   "id": "ply2_s22",
+   "quantity": "ply 2 material stress at element centre and ply midplane (Pa)",
+   "measure": {
+    "from": "fields",
+    "pointer": "/elements/0/plies/0/1/middle/stress/1",
+    "scale": 0.25,
+    "plus": {
+     "from": "fields",
+     "pointer": "/elements/0/plies/1/1/middle/stress/1",
+     "scale": 0.25,
+     "plus": {
+      "from": "fields",
+      "pointer": "/elements/0/plies/2/1/middle/stress/1",
+      "scale": 0.25,
+      "plus": {
+       "from": "fields",
+       "pointer": "/elements/0/plies/3/1/middle/stress/1",
+       "scale": 0.25
+      }
+     }
+    }
+   },
+   "value": 1983000.0,
+   "tolerance": {
+    "relative": 0.01,
+    "absolute": 500
+   },
+   "reason": "predeclared 1% component tolerance plus 0.0005 MPa published rounding; different linear shell formulations; centre recovered as mean of four extrapolated nodal fields"
+  },
+  {
+   "id": "ply2_s12",
+   "quantity": "ply 2 material stress at element centre and ply midplane (Pa)",
+   "measure": {
+    "from": "fields",
+    "pointer": "/elements/0/plies/0/1/middle/stress/3",
+    "scale": 0.25,
+    "plus": {
+     "from": "fields",
+     "pointer": "/elements/0/plies/1/1/middle/stress/3",
+     "scale": 0.25,
+     "plus": {
+      "from": "fields",
+      "pointer": "/elements/0/plies/2/1/middle/stress/3",
+      "scale": 0.25,
+      "plus": {
+       "from": "fields",
+       "pointer": "/elements/0/plies/3/1/middle/stress/3",
+       "scale": 0.25
+      }
+     }
+    }
+   },
+   "value": 2572000.0,
+   "tolerance": {
+    "relative": 0.01,
+    "absolute": 500
+   },
+   "reason": "predeclared 1% component tolerance plus 0.0005 MPa published rounding; different linear shell formulations; centre recovered as mean of four extrapolated nodal fields"
+  },
+  {
+   "id": "ply3_s11",
+   "quantity": "ply 3 material stress at element centre and ply midplane (Pa)",
+   "measure": {
+    "from": "fields",
+    "pointer": "/elements/0/plies/0/2/middle/stress/0",
+    "scale": 0.25,
+    "plus": {
+     "from": "fields",
+     "pointer": "/elements/0/plies/1/2/middle/stress/0",
+     "scale": 0.25,
+     "plus": {
+      "from": "fields",
+      "pointer": "/elements/0/plies/2/2/middle/stress/0",
+      "scale": 0.25,
+      "plus": {
+       "from": "fields",
+       "pointer": "/elements/0/plies/3/2/middle/stress/0",
+       "scale": 0.25
+      }
+     }
+    }
+   },
+   "value": 8520000.0,
+   "tolerance": {
+    "relative": 0.01,
+    "absolute": 500
+   },
+   "reason": "predeclared 1% component tolerance plus 0.0005 MPa published rounding; different linear shell formulations; centre recovered as mean of four extrapolated nodal fields"
+  },
+  {
+   "id": "ply3_s22",
+   "quantity": "ply 3 material stress at element centre and ply midplane (Pa)",
+   "measure": {
+    "from": "fields",
+    "pointer": "/elements/0/plies/0/2/middle/stress/1",
+    "scale": 0.25,
+    "plus": {
+     "from": "fields",
+     "pointer": "/elements/0/plies/1/2/middle/stress/1",
+     "scale": 0.25,
+     "plus": {
+      "from": "fields",
+      "pointer": "/elements/0/plies/2/2/middle/stress/1",
+      "scale": 0.25,
+      "plus": {
+       "from": "fields",
+       "pointer": "/elements/0/plies/3/2/middle/stress/1",
+       "scale": 0.25
+      }
+     }
+    }
+   },
+   "value": 125599.99999999999,
+   "tolerance": {
+    "relative": 0.01,
+    "absolute": 500
+   },
+   "reason": "predeclared 1% component tolerance plus 0.0005 MPa published rounding; different linear shell formulations; centre recovered as mean of four extrapolated nodal fields"
+  },
+  {
+   "id": "ply3_s12",
+   "quantity": "ply 3 material stress at element centre and ply midplane (Pa)",
+   "measure": {
+    "from": "fields",
+    "pointer": "/elements/0/plies/0/2/middle/stress/3",
+    "scale": 0.25,
+    "plus": {
+     "from": "fields",
+     "pointer": "/elements/0/plies/1/2/middle/stress/3",
+     "scale": 0.25,
+     "plus": {
+      "from": "fields",
+      "pointer": "/elements/0/plies/2/2/middle/stress/3",
+      "scale": 0.25,
+      "plus": {
+       "from": "fields",
+       "pointer": "/elements/0/plies/3/2/middle/stress/3",
+       "scale": 0.25
+      }
+     }
+    }
+   },
+   "value": -2051000.0000000002,
+   "tolerance": {
+    "relative": 0.01,
+    "absolute": 500
+   },
+   "reason": "predeclared 1% component tolerance plus 0.0005 MPa published rounding; different linear shell formulations; centre recovered as mean of four extrapolated nodal fields"
+  },
+  {
+   "id": "ply4_s11",
+   "quantity": "ply 4 material stress at element centre and ply midplane (Pa)",
+   "measure": {
+    "from": "fields",
+    "pointer": "/elements/0/plies/0/3/middle/stress/0",
+    "scale": 0.25,
+    "plus": {
+     "from": "fields",
+     "pointer": "/elements/0/plies/1/3/middle/stress/0",
+     "scale": 0.25,
+     "plus": {
+      "from": "fields",
+      "pointer": "/elements/0/plies/2/3/middle/stress/0",
+      "scale": 0.25,
+      "plus": {
+       "from": "fields",
+       "pointer": "/elements/0/plies/3/3/middle/stress/0",
+       "scale": 0.25
+      }
+     }
+    }
+   },
+   "value": 9357000.0,
+   "tolerance": {
+    "relative": 0.01,
+    "absolute": 500
+   },
+   "reason": "predeclared 1% component tolerance plus 0.0005 MPa published rounding; different linear shell formulations; centre recovered as mean of four extrapolated nodal fields"
+  },
+  {
+   "id": "ply4_s22",
+   "quantity": "ply 4 material stress at element centre and ply midplane (Pa)",
+   "measure": {
+    "from": "fields",
+    "pointer": "/elements/0/plies/0/3/middle/stress/1",
+    "scale": 0.25,
+    "plus": {
+     "from": "fields",
+     "pointer": "/elements/0/plies/1/3/middle/stress/1",
+     "scale": 0.25,
+     "plus": {
+      "from": "fields",
+      "pointer": "/elements/0/plies/2/3/middle/stress/1",
+      "scale": 0.25,
+      "plus": {
+       "from": "fields",
+       "pointer": "/elements/0/plies/3/3/middle/stress/1",
+       "scale": 0.25
+      }
+     }
+    }
+   },
+   "value": -1859000.0,
+   "tolerance": {
+    "relative": 0.01,
+    "absolute": 500
+   },
+   "reason": "predeclared 1% component tolerance plus 0.0005 MPa published rounding; different linear shell formulations; centre recovered as mean of four extrapolated nodal fields"
+  },
+  {
+   "id": "ply4_s12",
+   "quantity": "ply 4 material stress at element centre and ply midplane (Pa)",
+   "measure": {
+    "from": "fields",
+    "pointer": "/elements/0/plies/0/3/middle/stress/3",
+    "scale": 0.25,
+    "plus": {
+     "from": "fields",
+     "pointer": "/elements/0/plies/1/3/middle/stress/3",
+     "scale": 0.25,
+     "plus": {
+      "from": "fields",
+      "pointer": "/elements/0/plies/2/3/middle/stress/3",
+      "scale": 0.25,
+      "plus": {
+       "from": "fields",
+       "pointer": "/elements/0/plies/3/3/middle/stress/3",
+       "scale": 0.25
+      }
+     }
+    }
+   },
+   "value": -555700.0,
+   "tolerance": {
+    "relative": 0.01,
+    "absolute": 500
+   },
+   "reason": "predeclared 1% component tolerance plus 0.0005 MPa published rounding; different linear shell formulations; centre recovered as mean of four extrapolated nodal fields"
+  }
+ ]
+}

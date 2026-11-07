@@ -1,0 +1,7 @@
+# NAFEMS R0093/1 laminate ply stress
+
+This original one-element model follows the physical description in the [public benchmark reproduction](https://doc.comsol.com/6.3/doc/com.comsol.help.models.compmat.failure_prediction_in_a_laminated_composite_shell/failure_prediction_in_a_laminated_composite_shell.html), Tables 1–3 and the **benchmark** columns of Table 8. Four 0.05 mm plies form a 10 mm square, bottom-to-top [90/-45/45/0]. The recipe explicitly gives the directions, strengths, nodal constraints and two 7.5 N axial forces.
+
+The twelve references are material sigma11, sigma22, tau12 at each ply midplane. Each command measure averages all four extrapolated element-nodal values, yielding the element centre. It does not substitute a nodal peak or average across plies. Table 8 gives third-ply sigma22=0.1256 MPa; the earlier Table 4 rounds it to 0.125 MPa. The former is used explicitly. The fixed band is 1% plus 0.0005 MPa, matching the independently assembled FEM regression. This case checks ply stresses; it does not claim reserve-factor, interlaminar-shear or experimental validation.
+
+Run `cargo xtask oracle --case composite-nafems-r0093-1` and freeze only after the reference checks pass with `cargo xtask oracle --bless composite-nafems-r0093-1`. The command recipe uses SI display units explicitly. All geometry and commands are original; no commercial product or deck was used.

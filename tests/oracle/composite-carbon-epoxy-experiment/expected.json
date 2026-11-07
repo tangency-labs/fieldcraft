@@ -1,0 +1,72 @@
+{
+ "title": "Carbon/epoxy cantilever panel: measured frequencies",
+ "kind": "experiment",
+ "source": "Sharma, N., Mahapatra, T. R., Panda, S. K. (2017), Numerical Study of Vibro-Acoustic Responses of Un-Baffled Multi-Layered Composite Structure under Various End Conditions and Experimental Validation, Latin American Journal of Solids and Structures 14(8), Tables 1 and 5, material M2, measured column. DOI 10.1590/1679-78253830. https://www.scielo.br/j/lajss/a/YhrtLPCKsvBsjDmgXBzq9ZN/?lang=en",
+ "quantities": [
+  {
+   "id": "f1",
+   "quantity": "measured frequency 1 (Hz)",
+   "measure": {
+    "from": "modes",
+    "pointer": "/modes/0/frequency"
+   },
+   "value": 62.5,
+   "tolerance": {
+    "relative": 0.15
+   },
+   "reason": "Declared before the first FieldCraft solve: 15% physical validation band for the published properties and an ideal clamp; the paper notes clamp variability without uncertainty intervals. Separate 4/8/16 mesh check requires each 8-to-16 change below 3%. No material, density or effective span is fitted."
+  },
+  {
+   "id": "f2",
+   "quantity": "measured frequency 2 (Hz)",
+   "measure": {
+    "from": "modes",
+    "pointer": "/modes/1/frequency"
+   },
+   "value": 152,
+   "tolerance": {
+    "relative": 0.15
+   },
+   "reason": "Declared before the first FieldCraft solve: 15% physical validation band for the published properties and an ideal clamp; the paper notes clamp variability without uncertainty intervals. Separate 4/8/16 mesh check requires each 8-to-16 change below 3%. No material, density or effective span is fitted."
+  },
+  {
+   "id": "f3",
+   "quantity": "measured frequency 3 (Hz)",
+   "measure": {
+    "from": "modes",
+    "pointer": "/modes/2/frequency"
+   },
+   "value": 378,
+   "tolerance": {
+    "relative": 0.15
+   },
+   "reason": "Declared before the first FieldCraft solve: 15% physical validation band for the published properties and an ideal clamp; the paper notes clamp variability without uncertainty intervals. Separate 4/8/16 mesh check requires each 8-to-16 change below 3%. No material, density or effective span is fitted."
+  },
+  {
+   "id": "f4",
+   "quantity": "measured frequency 4 (Hz)",
+   "measure": {
+    "from": "modes",
+    "pointer": "/modes/3/frequency"
+   },
+   "value": 485,
+   "tolerance": {
+    "relative": 0.15
+   },
+   "reason": "Declared before the first FieldCraft solve: 15% physical validation band for the published properties and an ideal clamp; the paper notes clamp variability without uncertainty intervals. Separate 4/8/16 mesh check requires each 8-to-16 change below 3%. No material, density or effective span is fitted."
+  },
+  {
+   "id": "f5",
+   "quantity": "measured frequency 5 (Hz)",
+   "measure": {
+    "from": "modes",
+    "pointer": "/modes/4/frequency"
+   },
+   "value": 561,
+   "tolerance": {
+    "relative": 0.15
+   },
+   "reason": "Declared before the first FieldCraft solve: 15% physical validation band for the published properties and an ideal clamp; the paper notes clamp variability without uncertainty intervals. Separate 4/8/16 mesh check requires each 8-to-16 change below 3%. No material, density or effective span is fitted."
+  }
+ ]
+}

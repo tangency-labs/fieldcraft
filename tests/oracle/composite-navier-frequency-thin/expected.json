@@ -1,0 +1,46 @@
+{
+ "title": "Navier laminate frequencies: thin",
+ "kind": "theory",
+ "source": "C. W. Bert and C. C. Siu, NASA CR-112140 (1972), §§2.2–2.6 and 4.1, https://ntrs.nasa.gov/citations/19720022240; separated Navier amplitudes derived in README, with this case's fixed 5/6 shear factor; laminate moments: A. T. Nettles, Basic Mechanics of Laminated Composite Plates, NASA RP-1351 (1994), §§II–IV, https://ntrs.nasa.gov/citations/19950009349",
+ "quantities": [
+  {
+   "id": "f1",
+   "quantity": "flexural frequency 1, Navier (1,1) (Hz)",
+   "measure": {
+    "from": "modes",
+    "pointer": "/modes/0/frequency"
+   },
+   "value": 40.82260671417634,
+   "tolerance": {
+    "relative": 0.02
+   },
+   "reason": "predeclared 2% first-mode and 5% higher-mode mesh tolerance; 16 × 16 MITC4, consistent mass; the reference includes the same FSDT shear correction and rotary inertia, with convergence checked by 4/8/16 meshes in solver tests"
+  },
+  {
+   "id": "f2",
+   "quantity": "flexural frequency 2, Navier (1,2) (Hz)",
+   "measure": {
+    "from": "modes",
+    "pointer": "/modes/1/frequency"
+   },
+   "value": 80.72343659864754,
+   "tolerance": {
+    "relative": 0.05
+   },
+   "reason": "predeclared 2% first-mode and 5% higher-mode mesh tolerance; 16 × 16 MITC4, consistent mass; the reference includes the same FSDT shear correction and rotary inertia, with convergence checked by 4/8/16 meshes in solver tests"
+  },
+  {
+   "id": "f3",
+   "quantity": "flexural frequency 3, Navier (2,1) (Hz)",
+   "measure": {
+    "from": "modes",
+    "pointer": "/modes/2/frequency"
+   },
+   "value": 139.10179764346975,
+   "tolerance": {
+    "relative": 0.05
+   },
+   "reason": "predeclared 2% first-mode and 5% higher-mode mesh tolerance; 16 × 16 MITC4, consistent mass; the reference includes the same FSDT shear correction and rotary inertia, with convergence checked by 4/8/16 meshes in solver tests"
+  }
+ ]
+}

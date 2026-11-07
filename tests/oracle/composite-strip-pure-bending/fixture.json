@@ -1,0 +1,93 @@
+{
+  "note": "FieldCraft's accepted results for this case, written by `cargo xtask oracle --bless`. A result outside its band fails CI.",
+  "values": {
+    "ply1_axial": {
+      "band": 0.000013352112676056338,
+      "value": -12676.056338023562
+    },
+    "ply1_hashin_maximum": {
+      "band": 1.0013116930962031e-15,
+      "value": 1.3116930962020188e-9
+    },
+    "ply1_maximum_stress": {
+      "band": 3.7217303822937624e-14,
+      "value": 0.00003621730382292446
+    },
+    "ply1_tsai_hill": {
+      "band": 1.0013116930962031e-15,
+      "value": 1.3116930962020145e-9
+    },
+    "ply1_tsai_wu": {
+      "band": 1.1866109332048632e-14,
+      "value": 0.000010866109332036775
+    },
+    "ply2_axial": {
+      "band": 1.0985915492957747e-6,
+      "value": -422.53521126745204
+    },
+    "ply2_hashin_matrix_compression": {
+      "band": 1.8335364298466857e-15,
+      "value": -8.335364298463821e-7
+    },
+    "ply2_hashin_maximum": {
+      "band": 1e-12,
+      "value": 1.6277902337681434e-37
+    },
+    "ply2_maximum_stress": {
+      "band": 6.633802816901409e-15,
+      "value": 5.63380281689936e-6
+    },
+    "ply2_tsai_hill": {
+      "band": 1.0000317397341798e-15,
+      "value": 3.173973417970268e-11
+    },
+    "ply2_tsai_wu": {
+      "band": 7.987276334060702e-14,
+      "value": -0.00007887276334057822
+    },
+    "ply3_axial": {
+      "band": 1.0985915492957747e-6,
+      "value": 422.53521126745204
+    },
+    "ply3_hashin_maximum": {
+      "band": 1.0071414401904385e-15,
+      "value": 7.141440190433213e-9
+    },
+    "ply3_maximum_stress": {
+      "band": 8.550704225352112e-14,
+      "value": 0.0000845070422534904
+    },
+    "ply3_tsai_hill": {
+      "band": 1.0071414401904385e-15,
+      "value": 7.141440190433213e-9
+    },
+    "ply3_tsai_wu": {
+      "band": 7.987371553263242e-14,
+      "value": 0.00007887371553260362
+    },
+    "ply4_axial": {
+      "band": 0.000013352112676056338,
+      "value": 12676.056338023562
+    },
+    "ply4_hashin_maximum": {
+      "band": 1.0006427296171395e-15,
+      "value": 6.427296171389892e-10
+    },
+    "ply4_maximum_stress": {
+      "band": 2.635211267605634e-14,
+      "value": 0.000025352112676047123
+    },
+    "ply4_tsai_hill": {
+      "band": 1.0006427296171395e-15,
+      "value": 6.427296171389871e-10
+    },
+    "ply4_tsai_wu": {
+      "band": 1.1864272961713947e-14,
+      "value": -0.00001086427296170209
+    },
+    "tip_w": {
+      "band": 8.484507042253522e-15,
+      "value": -8.450704225308851e-6
+    }
+  }
+}

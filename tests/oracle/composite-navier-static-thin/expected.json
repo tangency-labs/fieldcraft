@@ -1,0 +1,33 @@
+{
+ "title": "Navier sinusoidal laminate plate: thin",
+ "kind": "theory",
+ "source": "C. W. Bert and C. C. Siu, NASA CR-112140 (1972), §§2.2–2.6 and 4.1, https://ntrs.nasa.gov/citations/19720022240; separated Navier amplitudes derived in README, with this case's fixed 5/6 shear factor; static separated solution and thickness moments derived in README",
+ "quantities": [
+  {
+   "id": "w_fsdt",
+   "quantity": "centre transverse displacement, FSDT (m)",
+   "measure": {
+    "from": "probe",
+    "pointer": "/nodes/0/displacement/2"
+   },
+   "value": 9.498338500230013e-07,
+   "tolerance": {
+    "relative": 0.03
+   },
+   "reason": "8 × 8 MITC4; predeclared 3% mesh band, with 4-to-8 refinement checked in the independent FEM test; consistent four-point-per-direction sinusoidal load integration"
+  },
+  {
+   "id": "w_clt",
+   "quantity": "centre transverse displacement, thin CLT limit (m)",
+   "measure": {
+    "from": "probe",
+    "pointer": "/nodes/0/displacement/2"
+   },
+   "value": 9.47629131201631e-07,
+   "tolerance": {
+    "relative": 0.03
+   },
+   "reason": "h/L=.01: FSDT differs from CLT by under 0.5%, inside the fixed 3% mesh band"
+  }
+ ]
+}

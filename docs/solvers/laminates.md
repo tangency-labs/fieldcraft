@@ -2,8 +2,9 @@
 
 The constitutive and MITC kernels are implemented in `fem::laminate`, `fem::failure` and
 `fem::shell`. Composite model sections feed linear static, frequency and flat-plate buckling
-analyses. Orthotropic single-layer shells use the same path. Commands and cross-program
-validation are tracked separately; kernel tests alone do not establish a completed oracle.
+analyses. Orthotropic single-layer shells use the same path. Material and section commands,
+`model.section.properties` and `solve.probe` expose the definitions and material-axis ply
+fields; see the [composite-shell guide](../manual/structural/composites.md).
 
 ## Coordinates and thickness
 
@@ -58,7 +59,9 @@ material-axis σ11, σ22, τ12, with failure at an index of 1:
   a stated modelling assumption. The polynomial is retained even when it is negative.
 - Hashin uses the 1980 plane-stress equations with α=1 and squared fibre compression;
   the inactive sign branches are absent. Matrix compression uses the separately supplied
-  S23. No unreported substitution of S12 is made.
+  S23. No unreported substitution of S12 is made. Each active polynomial is stored raw,
+  including a negative matrix-compression value possible at low compression; `maximum`
+  is the larger of the active fibre and matrix values.
 
 These are first-ply failure indicators, without degradation or progressive damage. Quadratic
 indices are neither square roots nor inverse reserve factors. References:
@@ -111,6 +114,24 @@ must be within 4% of thin CLT. Static, frequency and buckling outputs are compar
 bit across 1, 2 and 7 threads. `Shell::ply_fields_at` evaluates the MITC strain directly at
 specified natural coordinates, allowing comparisons at identical recovery locations.
 
-The new calculations have fixed iteration and accumulation order. Thread-count and platform
+The public experimental case uses the M2 carbon/epoxy cantilever in
+[Sharma, Mahapatra & Panda (2017), Tables 1 and 5](https://doi.org/10.1590/1679-78253830):
+150 × 150 × 3.75 mm, four equal [45/−45/−45/45] plies, one edge clamped. Its first five
+measured frequencies are 62.5, 152, 378, 485 and 561 Hz. Material constants and density
+come from Table 1, without fitting. The 16 × 16 model gives 56.109, 141.286, 343.791,
+445.931 and 510.382 Hz (maximum difference 10.23%); the 8 → 16 change is at most 2.73%.
+The case declares a 15% model-comparison band and a 3% refinement check before the first
+solve. The paper gives no measurement uncertainty interval or full mode shapes for MAC;
+this comparison does not establish a 15% accuracy bound for other laminates or validate
+failure prediction. The input and cited measurements are in
+`tests/oracle/composite-carbon-epoxy-experiment`.
+
+Stored static ply fields have an independent preflight cap of
+`Limits::max_factor_entries × sizeof(f64)` bytes, using their nested vector and sample
+sizes. This guards the product of mesh size, ply count and sample count before assembly;
+it is separate from the sparse-factor cap, not a total-process-memory estimate.
+
+The new calculations have fixed iteration and accumulation order and use the existing
+pure-Rust `libm` implementation for material-angle trigonometry. Thread-count and platform
 claims must be checked separately; these local tests alone are not a cross-platform bitwise
 determinism certificate.
