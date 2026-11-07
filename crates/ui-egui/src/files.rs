@@ -99,7 +99,7 @@ pub(crate) struct PendingPicker {
 }
 
 const MODEL: Filter = Filter { name: "FieldCraft model", extensions: &["fieldcraft"] };
-const DESIGN: Filter = Filter { name: "SolidCraft design", extensions: &["solidcraft"] };
+const DESIGN: Filter = Filter { name: "SolidCraft design", extensions: &["sc", "solidcraft"] };
 const MESH: Filter = Filter { name: "Face-tagged mesh (3MF)", extensions: &["3mf", "3MF"] };
 const ORPHAN: Filter = Filter { name: "Orphan mesh (Gmsh MSH 4.1)", extensions: &["msh", "MSH"] };
 /// The Delete confirmation's icon: the kit's bin, as its delete buttons draw.
@@ -107,7 +107,7 @@ pub(crate) const DELETE_ICON: &str = "delete";
 const SCRIPT: Filter = Filter { name: "FieldCraft script (JSON)", extensions: &["json", "JSON"] };
 /// Largest script File › Run Script… reads (bytes), as `fieldcraft-cli run`.
 const MAX_SCRIPT_BYTES: u64 = 256 * 1024 * 1024;
-const ANY: Filter = Filter { name: "Models, designs and meshes", extensions: &["fieldcraft", "solidcraft", "3mf", "3MF", "msh", "MSH"] };
+const ANY: Filter = Filter { name: "Models, designs and meshes", extensions: &["fieldcraft", "sc", "solidcraft", "3mf", "3MF", "msh", "MSH"] };
 
 /// The Open picker's filters: everything FieldCraft opens, then each type.
 pub const OPEN_FILTERS: &[Filter] = &[ANY, MODEL, DESIGN, MESH, ORPHAN];
@@ -117,7 +117,7 @@ pub const OPEN_FILTERS: &[Filter] = &[ANY, MODEL, DESIGN, MESH, ORPHAN];
 pub enum Kind {
     /// A `.fieldcraft` model replaces the session (`file.open`).
     Model,
-    /// A `.solidcraft` design becomes the geometry (`geometry.open`).
+    /// A `.sc` (or older `.solidcraft`) design becomes the geometry (`geometry.open`).
     Design,
     /// A `.3mf` face-tagged mesh is added as a surface (`geometry.import.mesh`).
     Mesh,
@@ -131,7 +131,7 @@ impl Kind {
         let ext = Path::new(path).extension()?.to_str()?.to_ascii_lowercase();
         match ext.as_str() {
             "fieldcraft" => Some(Kind::Model),
-            "solidcraft" => Some(Kind::Design),
+            "sc" | "solidcraft" => Some(Kind::Design),
             "3mf" => Some(Kind::Mesh),
             "msh" => Some(Kind::Orphan),
             _ => None,
@@ -2171,6 +2171,8 @@ pub(crate) mod tests {
     fn file_types_dispatch_to_their_command() {
         assert_eq!(Kind::of("a/b.fieldcraft"), Some(Kind::Model));
         assert_eq!(Kind::of("B.SOLIDCRAFT"), Some(Kind::Design));
+        assert_eq!(Kind::of("Bracket.sc"), Some(Kind::Design));
+        assert_eq!(Kind::of("BRACKET.SC").map(Kind::command), Some("geometry.open"));
         assert_eq!(Kind::of("part.3MF").map(Kind::command), Some("geometry.import.mesh"));
         assert_eq!(Kind::of("part.MSH").map(Kind::command), Some("mesh.import.orphan"));
         assert!(is_long("mesh.import.orphan"));
