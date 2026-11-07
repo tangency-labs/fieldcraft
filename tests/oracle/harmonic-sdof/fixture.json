@@ -1,0 +1,301 @@
+{
+  "note": "FieldCraft's accepted results for this case, written by `cargo xtask oracle --bless`. A result outside its band fails CI.",
+  "values": {
+    "Direct_0_amplitude": {
+      "band": 2.5001e-10,
+      "value": 0.25
+    },
+    "Direct_0_dissipated_power": {
+      "band": 1e-11,
+      "value": 0.0
+    },
+    "Direct_0_imaginary": {
+      "band": 1e-11,
+      "value": 0.0
+    },
+    "Direct_0_input_power": {
+      "band": 1e-11,
+      "value": 0.0
+    },
+    "Direct_0_phase": {
+      "band": 1e-11,
+      "value": 0.0
+    },
+    "Direct_0_real": {
+      "band": 2.5001e-10,
+      "value": 0.25
+    },
+    "Direct_1_amplitude": {
+      "band": 2.5001624890616017e-10,
+      "value": 0.2500062489061602
+    },
+    "Direct_1_dissipated_power": {
+      "band": 1.0125006248984258e-14,
+      "value": 1.2500624898425784e-7
+    },
+    "Direct_1_imaginary": {
+      "band": 3.500124979685157e-14,
+      "value": -0.00002500124979685157
+    },
+    "Direct_1_input_power": {
+      "band": 1.0125006248984258e-14,
+      "value": 1.2500624898425784e-7
+    },
+    "Direct_1_phase": {
+      "band": 1.1000249972914325e-13,
+      "value": -0.00010000249972914325
+    },
+    "Direct_1_real": {
+      "band": 2.5001624765606646e-10,
+      "value": 0.25000624765606644
+    },
+    "Direct_2_amplitude": {
+      "band": 8.905608714940146e-9,
+      "value": 8.905598714940144
+    },
+    "Direct_2_dissipated_power": {
+      "band": 6.2185240536767895e-9,
+      "value": 6.218514053676788
+    },
+    "Direct_2_imaginary": {
+      "band": 6.2813373269462515e-9,
+      "value": -6.281327326946251
+    },
+    "Direct_2_input_power": {
+      "band": 6.2185240536767895e-9,
+      "value": 6.218514053676788
+    },
+    "Direct_2_phase": {
+      "band": 7.828892770370709e-10,
+      "value": -0.7828792770370707
+    },
+    "Direct_2_real": {
+      "band": 6.3130612023348774e-9,
+      "value": 6.313051202334877
+    },
+    "Direct_3_amplitude": {
+      "band": 1.2500010000000001e-8,
+      "value": 12.5
+    },
+    "Direct_3_dissipated_power": {
+      "band": 1.2500010000000001e-8,
+      "value": 12.5
+    },
+    "Direct_3_imaginary": {
+      "band": 1.2500010000000001e-8,
+      "value": -12.5
+    },
+    "Direct_3_input_power": {
+      "band": 1.2500010000000001e-8,
+      "value": 12.5
+    },
+    "Direct_3_phase": {
+      "band": 1.5708063267948967e-9,
+      "value": -1.5707963267948966
+    },
+    "Direct_3_real": {
+      "band": 1e-11,
+      "value": 0.0
+    },
+    "Direct_4_amplitude": {
+      "band": 8.773019978465825e-9,
+      "value": 8.773009978465824
+    },
+    "Direct_4_dissipated_power": {
+      "band": 6.281027178745149e-9,
+      "value": 6.281017178745149
+    },
+    "Direct_4_imaginary": {
+      "band": 6.218838889846682e-9,
+      "value": -6.218828889846682
+    },
+    "Direct_4_input_power": {
+      "band": 6.281027178745149e-9,
+      "value": 6.281017178745149
+    },
+    "Direct_4_phase": {
+      "band": 2.3537231057070443e-9,
+      "value": -2.3537131057070444
+    },
+    "Direct_4_real": {
+      "band": 6.18805260821378e-9,
+      "value": -6.18804260821378
+    },
+    "Direct_5_amplitude": {
+      "band": 1.9995242487126212e-10,
+      "value": 0.1999424248712621
+    },
+    "Direct_5_dissipated_power": {
+      "band": 7.205855187412052e-12,
+      "value": 0.007195855187412051
+    },
+    "Direct_5_imaginary": {
+      "band": 4.807236791608035e-12,
+      "value": -0.004797236791608034
+    },
+    "Direct_5_input_power": {
+      "band": 7.205855187412052e-12,
+      "value": 0.007195855187412051
+    },
+    "Direct_5_phase": {
+      "band": 3.117607259997923e-9,
+      "value": -3.117597259997923
+    },
+    "Direct_5_real": {
+      "band": 1.9989486631700143e-10,
+      "value": -0.19988486631700142
+    },
+    "Modal_0_amplitude": {
+      "band": 2.5001e-10,
+      "value": 0.25
+    },
+    "Modal_0_dissipated_power": {
+      "band": 1e-11,
+      "value": 0.0
+    },
+    "Modal_0_imaginary": {
+      "band": 1e-11,
+      "value": 0.0
+    },
+    "Modal_0_input_power": {
+      "band": 1e-11,
+      "value": 0.0
+    },
+    "Modal_0_phase": {
+      "band": 1e-11,
+      "value": 0.0
+    },
+    "Modal_0_real": {
+      "band": 2.5001e-10,
+      "value": 0.25
+    },
+    "Modal_1_amplitude": {
+      "band": 2.5001624890616017e-10,
+      "value": 0.2500062489061602
+    },
+    "Modal_1_dissipated_power": {
+      "band": 1.0125006248984258e-14,
+      "value": 1.2500624898425784e-7
+    },
+    "Modal_1_imaginary": {
+      "band": 3.500124979685157e-14,
+      "value": -0.000025001249796851572
+    },
+    "Modal_1_input_power": {
+      "band": 1.0125006248984258e-14,
+      "value": 1.2500624898425787e-7
+    },
+    "Modal_1_phase": {
+      "band": 1.1000249972914326e-13,
+      "value": -0.00010000249972914326
+    },
+    "Modal_1_real": {
+      "band": 2.5001624765606646e-10,
+      "value": 0.25000624765606644
+    },
+    "Modal_2_amplitude": {
+      "band": 8.905608714940146e-9,
+      "value": 8.905598714940144
+    },
+    "Modal_2_dissipated_power": {
+      "band": 6.2185240536767895e-9,
+      "value": 6.218514053676788
+    },
+    "Modal_2_imaginary": {
+      "band": 6.2813373269462515e-9,
+      "value": -6.281327326946251
+    },
+    "Modal_2_input_power": {
+      "band": 6.2185240536767895e-9,
+      "value": 6.218514053676788
+    },
+    "Modal_2_phase": {
+      "band": 7.828892770370709e-10,
+      "value": -0.7828792770370707
+    },
+    "Modal_2_real": {
+      "band": 6.3130612023348774e-9,
+      "value": 6.313051202334877
+    },
+    "Modal_3_amplitude": {
+      "band": 1.2500010000000001e-8,
+      "value": 12.5
+    },
+    "Modal_3_dissipated_power": {
+      "band": 1.2500010000000001e-8,
+      "value": 12.5
+    },
+    "Modal_3_imaginary": {
+      "band": 1.2500010000000001e-8,
+      "value": -12.5
+    },
+    "Modal_3_input_power": {
+      "band": 1.2500010000000001e-8,
+      "value": 12.5
+    },
+    "Modal_3_phase": {
+      "band": 1.5708063267948967e-9,
+      "value": -1.5707963267948966
+    },
+    "Modal_3_real": {
+      "band": 1e-11,
+      "value": 0.0
+    },
+    "Modal_4_amplitude": {
+      "band": 8.773019978465825e-9,
+      "value": 8.773009978465824
+    },
+    "Modal_4_dissipated_power": {
+      "band": 6.281027178745149e-9,
+      "value": 6.281017178745149
+    },
+    "Modal_4_imaginary": {
+      "band": 6.218838889846682e-9,
+      "value": -6.218828889846682
+    },
+    "Modal_4_input_power": {
+      "band": 6.281027178745149e-9,
+      "value": 6.281017178745149
+    },
+    "Modal_4_phase": {
+      "band": 2.3537231057070443e-9,
+      "value": -2.3537131057070444
+    },
+    "Modal_4_real": {
+      "band": 6.18805260821378e-9,
+      "value": -6.18804260821378
+    },
+    "Modal_5_amplitude": {
+      "band": 1.9995242487126212e-10,
+      "value": 0.1999424248712621
+    },
+    "Modal_5_dissipated_power": {
+      "band": 7.2058551874120545e-12,
+      "value": 0.007195855187412054
+    },
+    "Modal_5_imaginary": {
+      "band": 4.8072367916080356e-12,
+      "value": -0.004797236791608035
+    },
+    "Modal_5_input_power": {
+      "band": 7.205855187412053e-12,
+      "value": 0.007195855187412052
+    },
+    "Modal_5_phase": {
+      "band": 3.117607259997923e-9,
+      "value": -3.117597259997923
+    },
+    "Modal_5_real": {
+      "band": 1.9989486631700146e-10,
+      "value": -0.19988486631700145
+    },
+    "zero_structural_imaginary": {
+      "band": 2.4762475247524755e-11,
+      "value": -0.024752475247524754
+    },
+    "zero_structural_real": {
+      "band": 2.475347524752475e-10,
+      "value": 0.24752475247524752
+    }
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "title": "NAFEMS 5H: deep simply supported beam under harmonic load",
+  "kind": "benchmark",
+  "source": "NAFEMS R0016 Test 5H, reference numbers published in Abaqus Benchmarks Guide: https://abaqus.uclouvain.be/English/SIMACAEBMKRefMap/simabmk-c-forcedvibrationtest5h.htm ; material/supports in Test 5; geometry independently corroborated by https://www.witpress.com/Secure/elibrary/papers/CMT96/CMT96024FU.pdf (1996), Fig. 3.",
+  "quantities": [
+    {
+      "id": "midspan_amplitude",
+      "quantity": "midspan_amplitude",
+      "measure": {
+        "from": "midspan",
+        "pointer": "/nodes/0/samples/0/displacement_amplitude/1"
+      },
+      "value": 0.01345,
+      "tolerance": {
+        "relative": 0.05,
+        "absolute": 0
+      },
+      "reason": "Published NAFEMS peak 13.45 mm at 42.65 Hz; 5% declared for a two-node shear-flexible beam, whose published B31 comparison differs about 4%."
+    },
+    {
+      "id": "first_frequency",
+      "quantity": "first_frequency",
+      "measure": {
+        "from": "response",
+        "pointer": "/natural_frequencies/0"
+      },
+      "value": 42.65,
+      "tolerance": {
+        "relative": 0.01,
+        "absolute": 0
+      },
+      "reason": "1% for the two-node beam discretization and its shear/rotary mass representation."
+    }
+  ]
+}

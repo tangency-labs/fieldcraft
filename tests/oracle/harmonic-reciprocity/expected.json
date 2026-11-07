@@ -1,0 +1,148 @@
+{
+  "title": "Complex reciprocity and full modal equivalence",
+  "kind": "theory",
+  "source": "Symmetric two-mass dynamic stiffness: H21=-Z12/(Z11^2-Z12^2). Maxwell-Betti reciprocity; MIT 2.003SC modal orthogonality.",
+  "quantities": [
+    {
+      "id": "Left_real",
+      "quantity": "Left_real",
+      "measure": {
+        "from": "LeftProbe",
+        "pointer": "/nodes/0/samples/0/displacement_real/0"
+      },
+      "value": -0.8030511026186964,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Left_imaginary",
+      "quantity": "Left_imaginary",
+      "measure": {
+        "from": "LeftProbe",
+        "pointer": "/nodes/0/samples/0/displacement_imaginary/0"
+      },
+      "value": -0.3788425975009005,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Left_power_balance",
+      "quantity": "Left_power_balance",
+      "measure": {
+        "from": "Left",
+        "pointer": "/frequencies/0/input_power",
+        "plus": {
+          "from": "Left",
+          "pointer": "/frequencies/0/dissipated_power",
+          "scale": -1
+        }
+      },
+      "value": 0,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Right_real",
+      "quantity": "Right_real",
+      "measure": {
+        "from": "RightProbe",
+        "pointer": "/nodes/0/samples/0/displacement_real/0"
+      },
+      "value": -0.8030511026186964,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Right_imaginary",
+      "quantity": "Right_imaginary",
+      "measure": {
+        "from": "RightProbe",
+        "pointer": "/nodes/0/samples/0/displacement_imaginary/0"
+      },
+      "value": -0.3788425975009005,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Right_power_balance",
+      "quantity": "Right_power_balance",
+      "measure": {
+        "from": "Right",
+        "pointer": "/frequencies/0/input_power",
+        "plus": {
+          "from": "Right",
+          "pointer": "/frequencies/0/dissipated_power",
+          "scale": -1
+        }
+      },
+      "value": 0,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_real",
+      "quantity": "Modal_real",
+      "measure": {
+        "from": "ModalProbe",
+        "pointer": "/nodes/0/samples/0/displacement_real/0"
+      },
+      "value": -0.8030511026186964,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_imaginary",
+      "quantity": "Modal_imaginary",
+      "measure": {
+        "from": "ModalProbe",
+        "pointer": "/nodes/0/samples/0/displacement_imaginary/0"
+      },
+      "value": -0.3788425975009005,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_power_balance",
+      "quantity": "Modal_power_balance",
+      "measure": {
+        "from": "Modal",
+        "pointer": "/frequencies/0/input_power",
+        "plus": {
+          "from": "Modal",
+          "pointer": "/frequencies/0/dissipated_power",
+          "scale": -1
+        }
+      },
+      "value": 0,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    }
+  ]
+}

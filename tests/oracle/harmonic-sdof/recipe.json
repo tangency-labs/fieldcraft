@@ -1,0 +1,244 @@
+[
+  {
+    "command": "model.units",
+    "params": {
+      "system": "m-kg-s-N-Pa"
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 1,
+      "xyz": [
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "n1",
+      "nodes": [
+        1
+      ]
+    }
+  },
+  {
+    "command": "model.mass.create",
+    "params": {
+      "name": "m1",
+      "target": {
+        "set": "n1"
+      },
+      "mass": 1
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "all",
+      "nodes": [
+        1
+      ]
+    }
+  },
+  {
+    "command": "model.boundary_condition.create",
+    "params": {
+      "name": "guide",
+      "type": "displacement",
+      "target": {
+        "set": "all"
+      },
+      "values": [
+        null,
+        0,
+        0,
+        null,
+        null,
+        null
+      ]
+    }
+  },
+  {
+    "command": "model.spring.create",
+    "params": {
+      "name": "k",
+      "type": "spring",
+      "first": {
+        "set": "n1"
+      },
+      "direction": {
+        "dof": 1
+      },
+      "stiffness": 4
+    }
+  },
+  {
+    "command": "model.spring.create",
+    "params": {
+      "name": "c",
+      "type": "dashpot",
+      "first": {
+        "set": "n1"
+      },
+      "direction": {
+        "dof": 1
+      },
+      "coefficient": 0.04
+    }
+  },
+  {
+    "command": "model.load.create",
+    "params": {
+      "name": "F",
+      "type": "force",
+      "target": {
+        "set": "n1"
+      },
+      "vector": [
+        1,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.step.create",
+    "params": {
+      "name": "Direct",
+      "procedure": {
+        "type": "harmonic",
+        "frequencies": [
+          0.0,
+          0.0015915494309189536,
+          0.31512678732195276,
+          0.3183098861837907,
+          0.3214929850456286,
+          0.477464829275686
+        ],
+        "method": {
+          "type": "direct"
+        }
+      },
+      "boundary_conditions": [
+        "guide"
+      ],
+      "loads": [
+        "F"
+      ],
+      "output": [
+        "displacement"
+      ]
+    }
+  },
+  {
+    "command": "solve.harmonic",
+    "params": {
+      "step": "Direct"
+    },
+    "id": "Direct"
+  },
+  {
+    "command": "solve.probe",
+    "params": {
+      "step": "Direct",
+      "nodes": [
+        1
+      ]
+    },
+    "id": "DirectProbe"
+  },
+  {
+    "command": "model.step.create",
+    "params": {
+      "name": "Modal",
+      "procedure": {
+        "type": "harmonic",
+        "frequencies": [
+          0.0,
+          0.0015915494309189536,
+          0.31512678732195276,
+          0.3183098861837907,
+          0.3214929850456286,
+          0.477464829275686
+        ],
+        "method": {
+          "type": "modal",
+          "modes": 1
+        }
+      },
+      "boundary_conditions": [
+        "guide"
+      ],
+      "loads": [
+        "F"
+      ],
+      "output": [
+        "displacement"
+      ]
+    }
+  },
+  {
+    "command": "solve.harmonic",
+    "params": {
+      "step": "Modal"
+    },
+    "id": "Modal"
+  },
+  {
+    "command": "solve.probe",
+    "params": {
+      "step": "Modal",
+      "nodes": [
+        1
+      ]
+    },
+    "id": "ModalProbe"
+  },
+  {
+    "command": "model.step.create",
+    "params": {
+      "name": "Loss",
+      "procedure": {
+        "type": "harmonic",
+        "frequencies": [
+          0
+        ],
+        "method": {
+          "type": "direct"
+        },
+        "damping": {
+          "loss_factor": 0.1
+        }
+      },
+      "boundary_conditions": [
+        "guide"
+      ],
+      "loads": [
+        "F"
+      ],
+      "output": [
+        "displacement"
+      ]
+    }
+  },
+  {
+    "command": "solve.harmonic",
+    "params": {
+      "step": "Loss"
+    }
+  },
+  {
+    "command": "solve.probe",
+    "params": {
+      "step": "Loss",
+      "nodes": [
+        1
+      ]
+    },
+    "id": "LossProbe"
+  }
+]

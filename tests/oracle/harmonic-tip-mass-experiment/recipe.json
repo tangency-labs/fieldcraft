@@ -1,0 +1,1187 @@
+[
+  {
+    "command": "model.units",
+    "params": {
+      "system": "m-kg-s-N-Pa"
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 1,
+      "xyz": [
+        0.0,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 2,
+      "xyz": [
+        0.00455,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 3,
+      "xyz": [
+        0.0091,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 4,
+      "xyz": [
+        0.01365,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 5,
+      "xyz": [
+        0.0182,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 6,
+      "xyz": [
+        0.02275,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 7,
+      "xyz": [
+        0.0273,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 8,
+      "xyz": [
+        0.03185,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 9,
+      "xyz": [
+        0.0364,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 10,
+      "xyz": [
+        0.039025000000000004,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 11,
+      "xyz": [
+        0.04165,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 12,
+      "xyz": [
+        0.044275,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 13,
+      "xyz": [
+        0.0469,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 14,
+      "xyz": [
+        0.049525,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 15,
+      "xyz": [
+        0.05215,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 16,
+      "xyz": [
+        0.054775000000000004,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 17,
+      "xyz": [
+        0.0574,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 18,
+      "xyz": [
+        0.060025,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 19,
+      "xyz": [
+        0.06265,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 20,
+      "xyz": [
+        0.065275,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 21,
+      "xyz": [
+        0.0679,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 22,
+      "xyz": [
+        0.070525,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 23,
+      "xyz": [
+        0.07314999999999999,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 24,
+      "xyz": [
+        0.075775,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 25,
+      "xyz": [
+        0.0784,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 26,
+      "xyz": [
+        0.081025,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 27,
+      "xyz": [
+        0.08365,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 28,
+      "xyz": [
+        0.086275,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 29,
+      "xyz": [
+        0.0889,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 30,
+      "xyz": [
+        0.091525,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 31,
+      "xyz": [
+        0.09415,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 32,
+      "xyz": [
+        0.096775,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 33,
+      "xyz": [
+        0.0994,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 34,
+      "xyz": [
+        0.102025,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 35,
+      "xyz": [
+        0.10464999999999999,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 36,
+      "xyz": [
+        0.107275,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 37,
+      "xyz": [
+        0.1099,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 38,
+      "xyz": [
+        0.112525,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 39,
+      "xyz": [
+        0.11515,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 40,
+      "xyz": [
+        0.11777499999999999,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 41,
+      "xyz": [
+        0.1204,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 1,
+      "kind": "beam2",
+      "nodes": [
+        1,
+        2
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 2,
+      "kind": "beam2",
+      "nodes": [
+        2,
+        3
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 3,
+      "kind": "beam2",
+      "nodes": [
+        3,
+        4
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 4,
+      "kind": "beam2",
+      "nodes": [
+        4,
+        5
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 5,
+      "kind": "beam2",
+      "nodes": [
+        5,
+        6
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 6,
+      "kind": "beam2",
+      "nodes": [
+        6,
+        7
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 7,
+      "kind": "beam2",
+      "nodes": [
+        7,
+        8
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 8,
+      "kind": "beam2",
+      "nodes": [
+        8,
+        9
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 9,
+      "kind": "beam2",
+      "nodes": [
+        9,
+        10
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 10,
+      "kind": "beam2",
+      "nodes": [
+        10,
+        11
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 11,
+      "kind": "beam2",
+      "nodes": [
+        11,
+        12
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 12,
+      "kind": "beam2",
+      "nodes": [
+        12,
+        13
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 13,
+      "kind": "beam2",
+      "nodes": [
+        13,
+        14
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 14,
+      "kind": "beam2",
+      "nodes": [
+        14,
+        15
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 15,
+      "kind": "beam2",
+      "nodes": [
+        15,
+        16
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 16,
+      "kind": "beam2",
+      "nodes": [
+        16,
+        17
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 17,
+      "kind": "beam2",
+      "nodes": [
+        17,
+        18
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 18,
+      "kind": "beam2",
+      "nodes": [
+        18,
+        19
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 19,
+      "kind": "beam2",
+      "nodes": [
+        19,
+        20
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 20,
+      "kind": "beam2",
+      "nodes": [
+        20,
+        21
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 21,
+      "kind": "beam2",
+      "nodes": [
+        21,
+        22
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 22,
+      "kind": "beam2",
+      "nodes": [
+        22,
+        23
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 23,
+      "kind": "beam2",
+      "nodes": [
+        23,
+        24
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 24,
+      "kind": "beam2",
+      "nodes": [
+        24,
+        25
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 25,
+      "kind": "beam2",
+      "nodes": [
+        25,
+        26
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 26,
+      "kind": "beam2",
+      "nodes": [
+        26,
+        27
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 27,
+      "kind": "beam2",
+      "nodes": [
+        27,
+        28
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 28,
+      "kind": "beam2",
+      "nodes": [
+        28,
+        29
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 29,
+      "kind": "beam2",
+      "nodes": [
+        29,
+        30
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 30,
+      "kind": "beam2",
+      "nodes": [
+        30,
+        31
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 31,
+      "kind": "beam2",
+      "nodes": [
+        31,
+        32
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 32,
+      "kind": "beam2",
+      "nodes": [
+        32,
+        33
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 33,
+      "kind": "beam2",
+      "nodes": [
+        33,
+        34
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 34,
+      "kind": "beam2",
+      "nodes": [
+        34,
+        35
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 35,
+      "kind": "beam2",
+      "nodes": [
+        35,
+        36
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 36,
+      "kind": "beam2",
+      "nodes": [
+        36,
+        37
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 37,
+      "kind": "beam2",
+      "nodes": [
+        37,
+        38
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 38,
+      "kind": "beam2",
+      "nodes": [
+        38,
+        39
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 39,
+      "kind": "beam2",
+      "nodes": [
+        39,
+        40
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 40,
+      "kind": "beam2",
+      "nodes": [
+        40,
+        41
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "all",
+      "nodes": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41
+      ],
+      "elements": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "root",
+      "nodes": [
+        1
+      ],
+      "elements": []
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "tip",
+      "nodes": [
+        41
+      ],
+      "elements": []
+    }
+  },
+  {
+    "command": "model.material.create",
+    "params": {
+      "name": "Aluminium",
+      "elastic": {
+        "type": "isotropic",
+        "young": 69000000000.0,
+        "poisson": 0.3
+      },
+      "density": 2630
+    }
+  },
+  {
+    "command": "model.section.create",
+    "params": {
+      "name": "Beam",
+      "set": "all",
+      "material": "Aluminium",
+      "kind": {
+        "type": "beam",
+        "profile": {
+          "type": "rectangle",
+          "width": 0.0102,
+          "height": 0.0049
+        },
+        "orientation": [
+          0,
+          1,
+          0
+        ]
+      }
+    }
+  },
+  {
+    "command": "model.reference_point.create",
+    "params": {
+      "name": "MassCentre",
+      "label": 100,
+      "xyz": [
+        0.12841,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.coupling.create",
+    "params": {
+      "name": "TipRigidOffset",
+      "reference_point": "MassCentre",
+      "set": "tip",
+      "kind": "kinematic"
+    }
+  },
+  {
+    "command": "model.mass.create",
+    "params": {
+      "name": "TipMass",
+      "target": {
+        "reference_point": "MassCentre"
+      },
+      "mass": 0.03383,
+      "inertia": [
+        0,
+        3.33e-06,
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.boundary_condition.create",
+    "params": {
+      "name": "Plane",
+      "type": "displacement",
+      "target": {
+        "set": "all"
+      },
+      "values": [
+        0,
+        0,
+        null,
+        0,
+        null,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.boundary_condition.create",
+    "params": {
+      "name": "PointPlane",
+      "type": "displacement",
+      "target": {
+        "reference_point": "MassCentre"
+      },
+      "values": [
+        0,
+        0,
+        null,
+        0,
+        null,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.boundary_condition.create",
+    "params": {
+      "name": "Base",
+      "type": "displacement",
+      "target": {
+        "set": "root"
+      },
+      "values": [
+        null,
+        null,
+        1e-05,
+        null,
+        0,
+        null
+      ]
+    }
+  },
+  {
+    "command": "model.step.create",
+    "params": {
+      "name": "BaseSweep",
+      "procedure": {
+        "type": "harmonic",
+        "frequencies": {
+          "start": 78,
+          "end": 85,
+          "count": 701
+        },
+        "method": {
+          "type": "modal",
+          "modes": 20
+        },
+        "damping": {
+          "beta": 9.800181224870403e-06
+        }
+      },
+      "boundary_conditions": [
+        "Plane",
+        "PointPlane",
+        "Base"
+      ],
+      "loads": [],
+      "output": [
+        "displacement"
+      ]
+    }
+  },
+  {
+    "command": "solve.harmonic",
+    "params": {
+      "step": "BaseSweep"
+    },
+    "id": "response"
+  },
+  {
+    "command": "solve.probe",
+    "params": {
+      "step": "BaseSweep",
+      "nodes": [
+        9,
+        17,
+        25,
+        33,
+        41
+      ]
+    },
+    "id": "measurements"
+  }
+]

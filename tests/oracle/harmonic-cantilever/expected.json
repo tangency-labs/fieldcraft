@@ -1,0 +1,287 @@
+{
+  "title": "Cantilever frequency response by analytical modal superposition",
+  "kind": "theory",
+  "source": "Timoshenko, Young & Weaver, Vibration Problems in Engineering (4th ed.), cantilever modes; Re(U exp(i omega t)), modal mass rho A L and squared tip shape 4. MIT OCW 2.003SC lectures 24-25.",
+  "quantities": [
+    {
+      "id": "Direct_0_amplitude",
+      "quantity": "Direct_0_amplitude",
+      "measure": {
+        "from": "DirectProbe",
+        "pointer": "/nodes/0/samples/0/displacement_amplitude/1"
+      },
+      "value": 32.0,
+      "tolerance": {
+        "relative": 0.025,
+        "absolute": 0.003
+      },
+      "reason": "L/h=20 Euler-Bernoulli reference neglects beam shear and rotary inertia; 2.5% plus 0.003 rad allows these effects away from poles."
+    },
+    {
+      "id": "Direct_0_phase",
+      "quantity": "Direct_0_phase",
+      "measure": {
+        "from": "DirectProbe",
+        "pointer": "/nodes/0/samples/0/displacement_phase/1"
+      },
+      "value": 0.0,
+      "tolerance": {
+        "relative": 0.025,
+        "absolute": 0.003
+      },
+      "reason": "L/h=20 Euler-Bernoulli reference neglects beam shear and rotary inertia; 2.5% plus 0.003 rad allows these effects away from poles."
+    },
+    {
+      "id": "Direct_1_amplitude",
+      "quantity": "Direct_1_amplitude",
+      "measure": {
+        "from": "DirectProbe",
+        "pointer": "/nodes/0/samples/1/displacement_amplitude/1"
+      },
+      "value": 42.25851075751286,
+      "tolerance": {
+        "relative": 0.025,
+        "absolute": 0.003
+      },
+      "reason": "L/h=20 Euler-Bernoulli reference neglects beam shear and rotary inertia; 2.5% plus 0.003 rad allows these effects away from poles."
+    },
+    {
+      "id": "Direct_1_phase",
+      "quantity": "Direct_1_phase",
+      "measure": {
+        "from": "DirectProbe",
+        "pointer": "/nodes/0/samples/1/displacement_phase/1"
+      },
+      "value": -0.0675606540176378,
+      "tolerance": {
+        "relative": 0.025,
+        "absolute": 0.003
+      },
+      "reason": "L/h=20 Euler-Bernoulli reference neglects beam shear and rotary inertia; 2.5% plus 0.003 rad allows these effects away from poles."
+    },
+    {
+      "id": "Direct_2_amplitude",
+      "quantity": "Direct_2_amplitude",
+      "measure": {
+        "from": "DirectProbe",
+        "pointer": "/nodes/0/samples/2/displacement_amplitude/1"
+      },
+      "value": 85.00762299205617,
+      "tolerance": {
+        "relative": 0.025,
+        "absolute": 0.003
+      },
+      "reason": "L/h=20 Euler-Bernoulli reference neglects beam shear and rotary inertia; 2.5% plus 0.003 rad allows these effects away from poles."
+    },
+    {
+      "id": "Direct_2_phase",
+      "quantity": "Direct_2_phase",
+      "measure": {
+        "from": "DirectProbe",
+        "pointer": "/nodes/0/samples/2/displacement_phase/1"
+      },
+      "value": -0.22405506199746986,
+      "tolerance": {
+        "relative": 0.025,
+        "absolute": 0.003
+      },
+      "reason": "L/h=20 Euler-Bernoulli reference neglects beam shear and rotary inertia; 2.5% plus 0.003 rad allows these effects away from poles."
+    },
+    {
+      "id": "Direct_3_amplitude",
+      "quantity": "Direct_3_amplitude",
+      "measure": {
+        "from": "DirectProbe",
+        "pointer": "/nodes/0/samples/3/displacement_amplitude/1"
+      },
+      "value": 67.00107450649884,
+      "tolerance": {
+        "relative": 0.025,
+        "absolute": 0.003
+      },
+      "reason": "L/h=20 Euler-Bernoulli reference neglects beam shear and rotary inertia; 2.5% plus 0.003 rad allows these effects away from poles."
+    },
+    {
+      "id": "Direct_3_phase",
+      "quantity": "Direct_3_phase",
+      "measure": {
+        "from": "DirectProbe",
+        "pointer": "/nodes/0/samples/3/displacement_phase/1"
+      },
+      "value": -2.8619037221681993,
+      "tolerance": {
+        "relative": 0.025,
+        "absolute": 0.003
+      },
+      "reason": "L/h=20 Euler-Bernoulli reference neglects beam shear and rotary inertia; 2.5% plus 0.003 rad allows these effects away from poles."
+    },
+    {
+      "id": "Direct_4_amplitude",
+      "quantity": "Direct_4_amplitude",
+      "measure": {
+        "from": "DirectProbe",
+        "pointer": "/nodes/0/samples/4/displacement_amplitude/1"
+      },
+      "value": 15.3679285812877,
+      "tolerance": {
+        "relative": 0.025,
+        "absolute": 0.003
+      },
+      "reason": "L/h=20 Euler-Bernoulli reference neglects beam shear and rotary inertia; 2.5% plus 0.003 rad allows these effects away from poles."
+    },
+    {
+      "id": "Direct_4_phase",
+      "quantity": "Direct_4_phase",
+      "measure": {
+        "from": "DirectProbe",
+        "pointer": "/nodes/0/samples/4/displacement_phase/1"
+      },
+      "value": -3.041788124591549,
+      "tolerance": {
+        "relative": 0.025,
+        "absolute": 0.003
+      },
+      "reason": "L/h=20 Euler-Bernoulli reference neglects beam shear and rotary inertia; 2.5% plus 0.003 rad allows these effects away from poles."
+    },
+    {
+      "id": "Modal_0_amplitude",
+      "quantity": "Modal_0_amplitude",
+      "measure": {
+        "from": "ModalProbe",
+        "pointer": "/nodes/0/samples/0/displacement_amplitude/1"
+      },
+      "value": 32.0,
+      "tolerance": {
+        "relative": 0.025,
+        "absolute": 0.003
+      },
+      "reason": "L/h=20 Euler-Bernoulli reference neglects beam shear and rotary inertia; 2.5% plus 0.003 rad allows these effects away from poles."
+    },
+    {
+      "id": "Modal_0_phase",
+      "quantity": "Modal_0_phase",
+      "measure": {
+        "from": "ModalProbe",
+        "pointer": "/nodes/0/samples/0/displacement_phase/1"
+      },
+      "value": 0.0,
+      "tolerance": {
+        "relative": 0.025,
+        "absolute": 0.003
+      },
+      "reason": "L/h=20 Euler-Bernoulli reference neglects beam shear and rotary inertia; 2.5% plus 0.003 rad allows these effects away from poles."
+    },
+    {
+      "id": "Modal_1_amplitude",
+      "quantity": "Modal_1_amplitude",
+      "measure": {
+        "from": "ModalProbe",
+        "pointer": "/nodes/0/samples/1/displacement_amplitude/1"
+      },
+      "value": 42.25851075751286,
+      "tolerance": {
+        "relative": 0.025,
+        "absolute": 0.003
+      },
+      "reason": "L/h=20 Euler-Bernoulli reference neglects beam shear and rotary inertia; 2.5% plus 0.003 rad allows these effects away from poles."
+    },
+    {
+      "id": "Modal_1_phase",
+      "quantity": "Modal_1_phase",
+      "measure": {
+        "from": "ModalProbe",
+        "pointer": "/nodes/0/samples/1/displacement_phase/1"
+      },
+      "value": -0.0675606540176378,
+      "tolerance": {
+        "relative": 0.025,
+        "absolute": 0.003
+      },
+      "reason": "L/h=20 Euler-Bernoulli reference neglects beam shear and rotary inertia; 2.5% plus 0.003 rad allows these effects away from poles."
+    },
+    {
+      "id": "Modal_2_amplitude",
+      "quantity": "Modal_2_amplitude",
+      "measure": {
+        "from": "ModalProbe",
+        "pointer": "/nodes/0/samples/2/displacement_amplitude/1"
+      },
+      "value": 85.00762299205617,
+      "tolerance": {
+        "relative": 0.025,
+        "absolute": 0.003
+      },
+      "reason": "L/h=20 Euler-Bernoulli reference neglects beam shear and rotary inertia; 2.5% plus 0.003 rad allows these effects away from poles."
+    },
+    {
+      "id": "Modal_2_phase",
+      "quantity": "Modal_2_phase",
+      "measure": {
+        "from": "ModalProbe",
+        "pointer": "/nodes/0/samples/2/displacement_phase/1"
+      },
+      "value": -0.22405506199746986,
+      "tolerance": {
+        "relative": 0.025,
+        "absolute": 0.003
+      },
+      "reason": "L/h=20 Euler-Bernoulli reference neglects beam shear and rotary inertia; 2.5% plus 0.003 rad allows these effects away from poles."
+    },
+    {
+      "id": "Modal_3_amplitude",
+      "quantity": "Modal_3_amplitude",
+      "measure": {
+        "from": "ModalProbe",
+        "pointer": "/nodes/0/samples/3/displacement_amplitude/1"
+      },
+      "value": 67.00107450649884,
+      "tolerance": {
+        "relative": 0.025,
+        "absolute": 0.003
+      },
+      "reason": "L/h=20 Euler-Bernoulli reference neglects beam shear and rotary inertia; 2.5% plus 0.003 rad allows these effects away from poles."
+    },
+    {
+      "id": "Modal_3_phase",
+      "quantity": "Modal_3_phase",
+      "measure": {
+        "from": "ModalProbe",
+        "pointer": "/nodes/0/samples/3/displacement_phase/1"
+      },
+      "value": -2.8619037221681993,
+      "tolerance": {
+        "relative": 0.025,
+        "absolute": 0.003
+      },
+      "reason": "L/h=20 Euler-Bernoulli reference neglects beam shear and rotary inertia; 2.5% plus 0.003 rad allows these effects away from poles."
+    },
+    {
+      "id": "Modal_4_amplitude",
+      "quantity": "Modal_4_amplitude",
+      "measure": {
+        "from": "ModalProbe",
+        "pointer": "/nodes/0/samples/4/displacement_amplitude/1"
+      },
+      "value": 15.3679285812877,
+      "tolerance": {
+        "relative": 0.025,
+        "absolute": 0.003
+      },
+      "reason": "L/h=20 Euler-Bernoulli reference neglects beam shear and rotary inertia; 2.5% plus 0.003 rad allows these effects away from poles."
+    },
+    {
+      "id": "Modal_4_phase",
+      "quantity": "Modal_4_phase",
+      "measure": {
+        "from": "ModalProbe",
+        "pointer": "/nodes/0/samples/4/displacement_phase/1"
+      },
+      "value": -3.041788124591549,
+      "tolerance": {
+        "relative": 0.025,
+        "absolute": 0.003
+      },
+      "reason": "L/h=20 Euler-Bernoulli reference neglects beam shear and rotary inertia; 2.5% plus 0.003 rad allows these effects away from poles."
+    }
+  ]
+}

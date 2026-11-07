@@ -1,0 +1,310 @@
+[
+  {
+    "command": "model.units",
+    "params": {
+      "system": "m-kg-s-N-Pa"
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 1,
+      "xyz": [
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "n1",
+      "nodes": [
+        1
+      ]
+    }
+  },
+  {
+    "command": "model.mass.create",
+    "params": {
+      "name": "m1",
+      "target": {
+        "set": "n1"
+      },
+      "mass": 1
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 2,
+      "xyz": [
+        1,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "n2",
+      "nodes": [
+        2
+      ]
+    }
+  },
+  {
+    "command": "model.mass.create",
+    "params": {
+      "name": "m2",
+      "target": {
+        "set": "n2"
+      },
+      "mass": 1
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "all",
+      "nodes": [
+        1,
+        2
+      ]
+    }
+  },
+  {
+    "command": "model.boundary_condition.create",
+    "params": {
+      "name": "guide",
+      "type": "displacement",
+      "target": {
+        "set": "all"
+      },
+      "values": [
+        null,
+        0,
+        0,
+        null,
+        null,
+        null
+      ]
+    }
+  },
+  {
+    "command": "model.spring.create",
+    "params": {
+      "name": "left",
+      "type": "spring",
+      "first": {
+        "set": "n1"
+      },
+      "direction": {
+        "dof": 1
+      },
+      "stiffness": 3
+    }
+  },
+  {
+    "command": "model.spring.create",
+    "params": {
+      "name": "right",
+      "type": "spring",
+      "first": {
+        "set": "n2"
+      },
+      "direction": {
+        "dof": 1
+      },
+      "stiffness": 3
+    }
+  },
+  {
+    "command": "model.spring.create",
+    "params": {
+      "name": "link",
+      "type": "spring",
+      "first": {
+        "set": "n1"
+      },
+      "direction": {
+        "dof": 1
+      },
+      "stiffness": 2,
+      "second": {
+        "set": "n2"
+      }
+    }
+  },
+  {
+    "command": "model.load.create",
+    "params": {
+      "name": "F1",
+      "type": "force",
+      "target": {
+        "set": "n1"
+      },
+      "vector": [
+        1,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.load.create",
+    "params": {
+      "name": "F2",
+      "type": "force",
+      "target": {
+        "set": "n2"
+      },
+      "vector": [
+        1,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.step.create",
+    "params": {
+      "name": "Left",
+      "procedure": {
+        "type": "harmonic",
+        "frequencies": [
+          0.3
+        ],
+        "method": {
+          "type": "direct"
+        },
+        "damping": {
+          "alpha": 0.1,
+          "beta": 0.01,
+          "loss_factor": 0.03
+        }
+      },
+      "boundary_conditions": [
+        "guide"
+      ],
+      "loads": [
+        "F1"
+      ],
+      "output": [
+        "displacement"
+      ]
+    }
+  },
+  {
+    "command": "solve.harmonic",
+    "params": {
+      "step": "Left"
+    },
+    "id": "Left"
+  },
+  {
+    "command": "solve.probe",
+    "params": {
+      "step": "Left",
+      "nodes": [
+        2
+      ]
+    },
+    "id": "LeftProbe"
+  },
+  {
+    "command": "model.step.create",
+    "params": {
+      "name": "Right",
+      "procedure": {
+        "type": "harmonic",
+        "frequencies": [
+          0.3
+        ],
+        "method": {
+          "type": "direct"
+        },
+        "damping": {
+          "alpha": 0.1,
+          "beta": 0.01,
+          "loss_factor": 0.03
+        }
+      },
+      "boundary_conditions": [
+        "guide"
+      ],
+      "loads": [
+        "F2"
+      ],
+      "output": [
+        "displacement"
+      ]
+    }
+  },
+  {
+    "command": "solve.harmonic",
+    "params": {
+      "step": "Right"
+    },
+    "id": "Right"
+  },
+  {
+    "command": "solve.probe",
+    "params": {
+      "step": "Right",
+      "nodes": [
+        1
+      ]
+    },
+    "id": "RightProbe"
+  },
+  {
+    "command": "model.step.create",
+    "params": {
+      "name": "Modal",
+      "procedure": {
+        "type": "harmonic",
+        "frequencies": [
+          0.3
+        ],
+        "method": {
+          "type": "modal",
+          "modes": 2
+        },
+        "damping": {
+          "alpha": 0.1,
+          "beta": 0.01,
+          "loss_factor": 0.03
+        }
+      },
+      "boundary_conditions": [
+        "guide"
+      ],
+      "loads": [
+        "F1"
+      ],
+      "output": [
+        "displacement"
+      ]
+    }
+  },
+  {
+    "command": "solve.harmonic",
+    "params": {
+      "step": "Modal"
+    },
+    "id": "Modal"
+  },
+  {
+    "command": "solve.probe",
+    "params": {
+      "step": "Modal",
+      "nodes": [
+        2
+      ]
+    },
+    "id": "ModalProbe"
+  }
+]

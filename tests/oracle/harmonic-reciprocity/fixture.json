@@ -1,0 +1,41 @@
+{
+  "note": "FieldCraft's accepted results for this case, written by `cargo xtask oracle --bless`. A result outside its band fails CI.",
+  "values": {
+    "Left_imaginary": {
+      "band": 3.7885259750090057e-10,
+      "value": -0.37884259750090055
+    },
+    "Left_power_balance": {
+      "band": 1e-11,
+      "value": -5.551115123125783e-17
+    },
+    "Left_real": {
+      "band": 8.030611026186964e-10,
+      "value": -0.8030511026186963
+    },
+    "Modal_imaginary": {
+      "band": 3.788525975009005e-10,
+      "value": -0.37884259750090044
+    },
+    "Modal_power_balance": {
+      "band": 1e-11,
+      "value": -1.6653345369377348e-16
+    },
+    "Modal_real": {
+      "band": 8.030611026186964e-10,
+      "value": -0.8030511026186964
+    },
+    "Right_imaginary": {
+      "band": 3.788525975009005e-10,
+      "value": -0.37884259750090044
+    },
+    "Right_power_balance": {
+      "band": 1e-11,
+      "value": 0.0
+    },
+    "Right_real": {
+      "band": 8.030611026186964e-10,
+      "value": -0.8030511026186962
+    }
+  }
+}

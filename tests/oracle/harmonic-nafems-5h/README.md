@@ -1,0 +1,3 @@
+# NAFEMS 5H
+
+This original 40-element beam recipe represents a 10 m simply supported span with a 2 m square section, E=200 GPa, nu=0.3 and rho=8000 kg/m3. It carries 1 MN/m transverse harmonic load; 16 modes use 2% damping. Supports restrain translations and torsion at A, and transverse translations at B. The published response is 13.45 mm at 42.65 Hz. The 5% displacement and 1% frequency tolerances are declared for two-node shear-flexible beams; published B31 displacement differs about 4%. Beam extreme-fibre stress (published 241.9 MPa) is not claimed here: the harmonic solver currently refuses beam stress recovery. No vendor input, code, text or figure was copied. The recipe and mesh are our own.

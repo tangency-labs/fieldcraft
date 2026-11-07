@@ -65,6 +65,12 @@ cargo xtask oracle --nightly            # also run the cases marked "nightly"
   nodes, each scaled by ½), and an optional `"over"` (a measure of its own) divides the result by
   another number of the same run, for ratios such as the stress in one element over the stress
   in another.
+  For a frequency sweep, `"pointer"` may select its sample array and
+  `"max_by":"/displacement_amplitude/2"` selects the first row attaining the largest
+  finite value at that relative pointer. `"value":"/frequency"` reads the frequency
+  from that same row; omitting `value` reads the peak amplitude. Every row must have a
+  finite selection value. This distinguishes a peak comparison from a response compared
+  at the reference's exact forcing frequency.
   A case too long for every change (minutes) is marked `"nightly": true`: it runs in the nightly,
   manual and release runs (`--nightly`), or when named with `--case` or `--bless`; any other run
   checks it by its fixture (a fixture that misses an edited reference fails), and docs/oracle.md

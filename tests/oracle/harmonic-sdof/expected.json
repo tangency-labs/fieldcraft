@@ -1,0 +1,1043 @@
+{
+  "title": "Damped oscillator: phasor, resonance, power and zero-frequency limits",
+  "kind": "theory",
+  "source": "MIT OpenCourseWare 2.003SC (2011), lectures 24-25; U=F/(k-m omega^2+i omega c); independent closed-form references.",
+  "quantities": [
+    {
+      "id": "Direct_0_real",
+      "quantity": "Direct_0_real",
+      "measure": {
+        "from": "DirectProbe",
+        "pointer": "/nodes/0/samples/0/displacement_real/0"
+      },
+      "value": 0.25,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Direct_0_imaginary",
+      "quantity": "Direct_0_imaginary",
+      "measure": {
+        "from": "DirectProbe",
+        "pointer": "/nodes/0/samples/0/displacement_imaginary/0"
+      },
+      "value": -0.0,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Direct_0_amplitude",
+      "quantity": "Direct_0_amplitude",
+      "measure": {
+        "from": "DirectProbe",
+        "pointer": "/nodes/0/samples/0/displacement_amplitude/0"
+      },
+      "value": 0.25,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Direct_0_phase",
+      "quantity": "Direct_0_phase",
+      "measure": {
+        "from": "DirectProbe",
+        "pointer": "/nodes/0/samples/0/displacement_phase/0"
+      },
+      "value": -0.0,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Direct_0_input_power",
+      "quantity": "Direct_0_input_power",
+      "measure": {
+        "from": "Direct",
+        "pointer": "/frequencies/0/input_power"
+      },
+      "value": 0.0,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Direct_0_dissipated_power",
+      "quantity": "Direct_0_dissipated_power",
+      "measure": {
+        "from": "Direct",
+        "pointer": "/frequencies/0/dissipated_power"
+      },
+      "value": 0.0,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Direct_1_real",
+      "quantity": "Direct_1_real",
+      "measure": {
+        "from": "DirectProbe",
+        "pointer": "/nodes/0/samples/1/displacement_real/0"
+      },
+      "value": 0.25000624765606644,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Direct_1_imaginary",
+      "quantity": "Direct_1_imaginary",
+      "measure": {
+        "from": "DirectProbe",
+        "pointer": "/nodes/0/samples/1/displacement_imaginary/0"
+      },
+      "value": -2.500124979685157e-05,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Direct_1_amplitude",
+      "quantity": "Direct_1_amplitude",
+      "measure": {
+        "from": "DirectProbe",
+        "pointer": "/nodes/0/samples/1/displacement_amplitude/0"
+      },
+      "value": 0.2500062489061602,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Direct_1_phase",
+      "quantity": "Direct_1_phase",
+      "measure": {
+        "from": "DirectProbe",
+        "pointer": "/nodes/0/samples/1/displacement_phase/0"
+      },
+      "value": -0.00010000249972914325,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Direct_1_input_power",
+      "quantity": "Direct_1_input_power",
+      "measure": {
+        "from": "Direct",
+        "pointer": "/frequencies/1/input_power"
+      },
+      "value": 1.2500624898425787e-07,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Direct_1_dissipated_power",
+      "quantity": "Direct_1_dissipated_power",
+      "measure": {
+        "from": "Direct",
+        "pointer": "/frequencies/1/dissipated_power"
+      },
+      "value": 1.2500624898425787e-07,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Direct_2_real",
+      "quantity": "Direct_2_real",
+      "measure": {
+        "from": "DirectProbe",
+        "pointer": "/nodes/0/samples/2/displacement_real/0"
+      },
+      "value": 6.3130512023348775,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Direct_2_imaginary",
+      "quantity": "Direct_2_imaginary",
+      "measure": {
+        "from": "DirectProbe",
+        "pointer": "/nodes/0/samples/2/displacement_imaginary/0"
+      },
+      "value": -6.2813273269462515,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Direct_2_amplitude",
+      "quantity": "Direct_2_amplitude",
+      "measure": {
+        "from": "DirectProbe",
+        "pointer": "/nodes/0/samples/2/displacement_amplitude/0"
+      },
+      "value": 8.905598714940146,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Direct_2_phase",
+      "quantity": "Direct_2_phase",
+      "measure": {
+        "from": "DirectProbe",
+        "pointer": "/nodes/0/samples/2/displacement_phase/0"
+      },
+      "value": -0.7828792770370708,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Direct_2_input_power",
+      "quantity": "Direct_2_input_power",
+      "measure": {
+        "from": "Direct",
+        "pointer": "/frequencies/2/input_power"
+      },
+      "value": 6.218514053676789,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Direct_2_dissipated_power",
+      "quantity": "Direct_2_dissipated_power",
+      "measure": {
+        "from": "Direct",
+        "pointer": "/frequencies/2/dissipated_power"
+      },
+      "value": 6.218514053676789,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Direct_3_real",
+      "quantity": "Direct_3_real",
+      "measure": {
+        "from": "DirectProbe",
+        "pointer": "/nodes/0/samples/3/displacement_real/0"
+      },
+      "value": 0.0,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Direct_3_imaginary",
+      "quantity": "Direct_3_imaginary",
+      "measure": {
+        "from": "DirectProbe",
+        "pointer": "/nodes/0/samples/3/displacement_imaginary/0"
+      },
+      "value": -12.5,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Direct_3_amplitude",
+      "quantity": "Direct_3_amplitude",
+      "measure": {
+        "from": "DirectProbe",
+        "pointer": "/nodes/0/samples/3/displacement_amplitude/0"
+      },
+      "value": 12.5,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Direct_3_phase",
+      "quantity": "Direct_3_phase",
+      "measure": {
+        "from": "DirectProbe",
+        "pointer": "/nodes/0/samples/3/displacement_phase/0"
+      },
+      "value": -1.5707963267948966,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Direct_3_input_power",
+      "quantity": "Direct_3_input_power",
+      "measure": {
+        "from": "Direct",
+        "pointer": "/frequencies/3/input_power"
+      },
+      "value": 12.5,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Direct_3_dissipated_power",
+      "quantity": "Direct_3_dissipated_power",
+      "measure": {
+        "from": "Direct",
+        "pointer": "/frequencies/3/dissipated_power"
+      },
+      "value": 12.5,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Direct_4_real",
+      "quantity": "Direct_4_real",
+      "measure": {
+        "from": "DirectProbe",
+        "pointer": "/nodes/0/samples/4/displacement_real/0"
+      },
+      "value": -6.18804260821378,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Direct_4_imaginary",
+      "quantity": "Direct_4_imaginary",
+      "measure": {
+        "from": "DirectProbe",
+        "pointer": "/nodes/0/samples/4/displacement_imaginary/0"
+      },
+      "value": -6.218828889846682,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Direct_4_amplitude",
+      "quantity": "Direct_4_amplitude",
+      "measure": {
+        "from": "DirectProbe",
+        "pointer": "/nodes/0/samples/4/displacement_amplitude/0"
+      },
+      "value": 8.773009978465824,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Direct_4_phase",
+      "quantity": "Direct_4_phase",
+      "measure": {
+        "from": "DirectProbe",
+        "pointer": "/nodes/0/samples/4/displacement_phase/0"
+      },
+      "value": -2.3537131057070444,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Direct_4_input_power",
+      "quantity": "Direct_4_input_power",
+      "measure": {
+        "from": "Direct",
+        "pointer": "/frequencies/4/input_power"
+      },
+      "value": 6.281017178745149,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Direct_4_dissipated_power",
+      "quantity": "Direct_4_dissipated_power",
+      "measure": {
+        "from": "Direct",
+        "pointer": "/frequencies/4/dissipated_power"
+      },
+      "value": 6.281017178745149,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Direct_5_real",
+      "quantity": "Direct_5_real",
+      "measure": {
+        "from": "DirectProbe",
+        "pointer": "/nodes/0/samples/5/displacement_real/0"
+      },
+      "value": -0.1998848663170014,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Direct_5_imaginary",
+      "quantity": "Direct_5_imaginary",
+      "measure": {
+        "from": "DirectProbe",
+        "pointer": "/nodes/0/samples/5/displacement_imaginary/0"
+      },
+      "value": -0.004797236791608033,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Direct_5_amplitude",
+      "quantity": "Direct_5_amplitude",
+      "measure": {
+        "from": "DirectProbe",
+        "pointer": "/nodes/0/samples/5/displacement_amplitude/0"
+      },
+      "value": 0.19994242487126207,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Direct_5_phase",
+      "quantity": "Direct_5_phase",
+      "measure": {
+        "from": "DirectProbe",
+        "pointer": "/nodes/0/samples/5/displacement_phase/0"
+      },
+      "value": -3.117597259997923,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Direct_5_input_power",
+      "quantity": "Direct_5_input_power",
+      "measure": {
+        "from": "Direct",
+        "pointer": "/frequencies/5/input_power"
+      },
+      "value": 0.00719585518741205,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Direct_5_dissipated_power",
+      "quantity": "Direct_5_dissipated_power",
+      "measure": {
+        "from": "Direct",
+        "pointer": "/frequencies/5/dissipated_power"
+      },
+      "value": 0.00719585518741205,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_0_real",
+      "quantity": "Modal_0_real",
+      "measure": {
+        "from": "ModalProbe",
+        "pointer": "/nodes/0/samples/0/displacement_real/0"
+      },
+      "value": 0.25,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_0_imaginary",
+      "quantity": "Modal_0_imaginary",
+      "measure": {
+        "from": "ModalProbe",
+        "pointer": "/nodes/0/samples/0/displacement_imaginary/0"
+      },
+      "value": -0.0,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_0_amplitude",
+      "quantity": "Modal_0_amplitude",
+      "measure": {
+        "from": "ModalProbe",
+        "pointer": "/nodes/0/samples/0/displacement_amplitude/0"
+      },
+      "value": 0.25,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_0_phase",
+      "quantity": "Modal_0_phase",
+      "measure": {
+        "from": "ModalProbe",
+        "pointer": "/nodes/0/samples/0/displacement_phase/0"
+      },
+      "value": -0.0,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_0_input_power",
+      "quantity": "Modal_0_input_power",
+      "measure": {
+        "from": "Modal",
+        "pointer": "/frequencies/0/input_power"
+      },
+      "value": 0.0,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_0_dissipated_power",
+      "quantity": "Modal_0_dissipated_power",
+      "measure": {
+        "from": "Modal",
+        "pointer": "/frequencies/0/dissipated_power"
+      },
+      "value": 0.0,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_1_real",
+      "quantity": "Modal_1_real",
+      "measure": {
+        "from": "ModalProbe",
+        "pointer": "/nodes/0/samples/1/displacement_real/0"
+      },
+      "value": 0.25000624765606644,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_1_imaginary",
+      "quantity": "Modal_1_imaginary",
+      "measure": {
+        "from": "ModalProbe",
+        "pointer": "/nodes/0/samples/1/displacement_imaginary/0"
+      },
+      "value": -2.500124979685157e-05,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_1_amplitude",
+      "quantity": "Modal_1_amplitude",
+      "measure": {
+        "from": "ModalProbe",
+        "pointer": "/nodes/0/samples/1/displacement_amplitude/0"
+      },
+      "value": 0.2500062489061602,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_1_phase",
+      "quantity": "Modal_1_phase",
+      "measure": {
+        "from": "ModalProbe",
+        "pointer": "/nodes/0/samples/1/displacement_phase/0"
+      },
+      "value": -0.00010000249972914325,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_1_input_power",
+      "quantity": "Modal_1_input_power",
+      "measure": {
+        "from": "Modal",
+        "pointer": "/frequencies/1/input_power"
+      },
+      "value": 1.2500624898425787e-07,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_1_dissipated_power",
+      "quantity": "Modal_1_dissipated_power",
+      "measure": {
+        "from": "Modal",
+        "pointer": "/frequencies/1/dissipated_power"
+      },
+      "value": 1.2500624898425787e-07,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_2_real",
+      "quantity": "Modal_2_real",
+      "measure": {
+        "from": "ModalProbe",
+        "pointer": "/nodes/0/samples/2/displacement_real/0"
+      },
+      "value": 6.3130512023348775,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_2_imaginary",
+      "quantity": "Modal_2_imaginary",
+      "measure": {
+        "from": "ModalProbe",
+        "pointer": "/nodes/0/samples/2/displacement_imaginary/0"
+      },
+      "value": -6.2813273269462515,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_2_amplitude",
+      "quantity": "Modal_2_amplitude",
+      "measure": {
+        "from": "ModalProbe",
+        "pointer": "/nodes/0/samples/2/displacement_amplitude/0"
+      },
+      "value": 8.905598714940146,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_2_phase",
+      "quantity": "Modal_2_phase",
+      "measure": {
+        "from": "ModalProbe",
+        "pointer": "/nodes/0/samples/2/displacement_phase/0"
+      },
+      "value": -0.7828792770370708,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_2_input_power",
+      "quantity": "Modal_2_input_power",
+      "measure": {
+        "from": "Modal",
+        "pointer": "/frequencies/2/input_power"
+      },
+      "value": 6.218514053676789,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_2_dissipated_power",
+      "quantity": "Modal_2_dissipated_power",
+      "measure": {
+        "from": "Modal",
+        "pointer": "/frequencies/2/dissipated_power"
+      },
+      "value": 6.218514053676789,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_3_real",
+      "quantity": "Modal_3_real",
+      "measure": {
+        "from": "ModalProbe",
+        "pointer": "/nodes/0/samples/3/displacement_real/0"
+      },
+      "value": 0.0,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_3_imaginary",
+      "quantity": "Modal_3_imaginary",
+      "measure": {
+        "from": "ModalProbe",
+        "pointer": "/nodes/0/samples/3/displacement_imaginary/0"
+      },
+      "value": -12.5,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_3_amplitude",
+      "quantity": "Modal_3_amplitude",
+      "measure": {
+        "from": "ModalProbe",
+        "pointer": "/nodes/0/samples/3/displacement_amplitude/0"
+      },
+      "value": 12.5,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_3_phase",
+      "quantity": "Modal_3_phase",
+      "measure": {
+        "from": "ModalProbe",
+        "pointer": "/nodes/0/samples/3/displacement_phase/0"
+      },
+      "value": -1.5707963267948966,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_3_input_power",
+      "quantity": "Modal_3_input_power",
+      "measure": {
+        "from": "Modal",
+        "pointer": "/frequencies/3/input_power"
+      },
+      "value": 12.5,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_3_dissipated_power",
+      "quantity": "Modal_3_dissipated_power",
+      "measure": {
+        "from": "Modal",
+        "pointer": "/frequencies/3/dissipated_power"
+      },
+      "value": 12.5,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_4_real",
+      "quantity": "Modal_4_real",
+      "measure": {
+        "from": "ModalProbe",
+        "pointer": "/nodes/0/samples/4/displacement_real/0"
+      },
+      "value": -6.18804260821378,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_4_imaginary",
+      "quantity": "Modal_4_imaginary",
+      "measure": {
+        "from": "ModalProbe",
+        "pointer": "/nodes/0/samples/4/displacement_imaginary/0"
+      },
+      "value": -6.218828889846682,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_4_amplitude",
+      "quantity": "Modal_4_amplitude",
+      "measure": {
+        "from": "ModalProbe",
+        "pointer": "/nodes/0/samples/4/displacement_amplitude/0"
+      },
+      "value": 8.773009978465824,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_4_phase",
+      "quantity": "Modal_4_phase",
+      "measure": {
+        "from": "ModalProbe",
+        "pointer": "/nodes/0/samples/4/displacement_phase/0"
+      },
+      "value": -2.3537131057070444,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_4_input_power",
+      "quantity": "Modal_4_input_power",
+      "measure": {
+        "from": "Modal",
+        "pointer": "/frequencies/4/input_power"
+      },
+      "value": 6.281017178745149,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_4_dissipated_power",
+      "quantity": "Modal_4_dissipated_power",
+      "measure": {
+        "from": "Modal",
+        "pointer": "/frequencies/4/dissipated_power"
+      },
+      "value": 6.281017178745149,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_5_real",
+      "quantity": "Modal_5_real",
+      "measure": {
+        "from": "ModalProbe",
+        "pointer": "/nodes/0/samples/5/displacement_real/0"
+      },
+      "value": -0.1998848663170014,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_5_imaginary",
+      "quantity": "Modal_5_imaginary",
+      "measure": {
+        "from": "ModalProbe",
+        "pointer": "/nodes/0/samples/5/displacement_imaginary/0"
+      },
+      "value": -0.004797236791608033,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_5_amplitude",
+      "quantity": "Modal_5_amplitude",
+      "measure": {
+        "from": "ModalProbe",
+        "pointer": "/nodes/0/samples/5/displacement_amplitude/0"
+      },
+      "value": 0.19994242487126207,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_5_phase",
+      "quantity": "Modal_5_phase",
+      "measure": {
+        "from": "ModalProbe",
+        "pointer": "/nodes/0/samples/5/displacement_phase/0"
+      },
+      "value": -3.117597259997923,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_5_input_power",
+      "quantity": "Modal_5_input_power",
+      "measure": {
+        "from": "Modal",
+        "pointer": "/frequencies/5/input_power"
+      },
+      "value": 0.00719585518741205,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "Modal_5_dissipated_power",
+      "quantity": "Modal_5_dissipated_power",
+      "measure": {
+        "from": "Modal",
+        "pointer": "/frequencies/5/dissipated_power"
+      },
+      "value": 0.00719585518741205,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "zero_structural_real",
+      "quantity": "zero_structural_real",
+      "measure": {
+        "from": "LossProbe",
+        "pointer": "/nodes/0/samples/0/displacement_real/0"
+      },
+      "value": 0.24752475247524752,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    },
+    {
+      "id": "zero_structural_imaginary",
+      "quantity": "zero_structural_imaginary",
+      "measure": {
+        "from": "LossProbe",
+        "pointer": "/nodes/0/samples/0/displacement_imaginary/0"
+      },
+      "value": -0.024752475247524754,
+      "tolerance": {
+        "relative": 1e-09,
+        "absolute": 1e-11
+      },
+      "reason": "Closed-form harmonic equilibrium; rounding allowance."
+    }
+  ]
+}

@@ -1,0 +1,98 @@
+{
+  "title": "Offset tip-mass beam under measured harmonic base displacement",
+  "kind": "experiment",
+  "source": "Wang Hongjin, Meng Qingfeng, Feng Wuwei (2014), Shock and Vibration 981053, Tables 2\u20133 and section 4.2; https://doi.org/10.1155/2014/981053 ; only published measurements/parameters, independently meshed.",
+  "slow": true,
+  "quantities": [
+    {
+      "id": "peak_1",
+      "quantity": "Absolute peak displacement at x=0.0364 m",
+      "measure": {
+        "from": "measurements",
+        "pointer": "/nodes/0/samples",
+        "max_by": "/displacement_amplitude/2"
+      },
+      "value": 0.00012770000000000001,
+      "tolerance": {
+        "relative": 0.05
+      },
+      "reason": "5% predeclared for measured peak response: sensor position, rounded geometry/inertia, shear/rotary inertia; no fit to these amplitudes.",
+      "known_failure": "Unresolved model-to-measurement amplitude mismatch (78\u201381% high), unchanged by 40\u219280 beam refinement and 20\u219240 modes. An independent Euler\u2013Bernoulli boundary-value calculation with the published mass, eccentricity, centroidal inertia and 0.01 mm base amplitude predicts a 1.89846 mm tip peak, close to the FEM 1.89934 mm but not the measured 1.0671 mm. The excitation relation in Eq. 43 needs reconciliation; no damping or input amplitude is fitted, and the original 5% tolerance is retained."
+    },
+    {
+      "id": "peak_2",
+      "quantity": "Absolute peak displacement at x=0.0574 m",
+      "measure": {
+        "from": "measurements",
+        "pointer": "/nodes/1/samples",
+        "max_by": "/displacement_amplitude/2"
+      },
+      "value": 0.0003001,
+      "tolerance": {
+        "relative": 0.05
+      },
+      "reason": "5% predeclared for measured peak response: sensor position, rounded geometry/inertia, shear/rotary inertia; no fit to these amplitudes.",
+      "known_failure": "Unresolved model-to-measurement amplitude mismatch (78\u201381% high), unchanged by 40\u219280 beam refinement and 20\u219240 modes. An independent Euler\u2013Bernoulli boundary-value calculation with the published mass, eccentricity, centroidal inertia and 0.01 mm base amplitude predicts a 1.89846 mm tip peak, close to the FEM 1.89934 mm but not the measured 1.0671 mm. The excitation relation in Eq. 43 needs reconciliation; no damping or input amplitude is fitted, and the original 5% tolerance is retained."
+    },
+    {
+      "id": "peak_3",
+      "quantity": "Absolute peak displacement at x=0.0784 m",
+      "measure": {
+        "from": "measurements",
+        "pointer": "/nodes/2/samples",
+        "max_by": "/displacement_amplitude/2"
+      },
+      "value": 0.0005246,
+      "tolerance": {
+        "relative": 0.05
+      },
+      "reason": "5% predeclared for measured peak response: sensor position, rounded geometry/inertia, shear/rotary inertia; no fit to these amplitudes.",
+      "known_failure": "Unresolved model-to-measurement amplitude mismatch (78\u201381% high), unchanged by 40\u219280 beam refinement and 20\u219240 modes. An independent Euler\u2013Bernoulli boundary-value calculation with the published mass, eccentricity, centroidal inertia and 0.01 mm base amplitude predicts a 1.89846 mm tip peak, close to the FEM 1.89934 mm but not the measured 1.0671 mm. The excitation relation in Eq. 43 needs reconciliation; no damping or input amplitude is fitted, and the original 5% tolerance is retained."
+    },
+    {
+      "id": "peak_4",
+      "quantity": "Absolute peak displacement at x=0.0994 m",
+      "measure": {
+        "from": "measurements",
+        "pointer": "/nodes/3/samples",
+        "max_by": "/displacement_amplitude/2"
+      },
+      "value": 0.0007855,
+      "tolerance": {
+        "relative": 0.05
+      },
+      "reason": "5% predeclared for measured peak response: sensor position, rounded geometry/inertia, shear/rotary inertia; no fit to these amplitudes.",
+      "known_failure": "Unresolved model-to-measurement amplitude mismatch (78\u201381% high), unchanged by 40\u219280 beam refinement and 20\u219240 modes. An independent Euler\u2013Bernoulli boundary-value calculation with the published mass, eccentricity, centroidal inertia and 0.01 mm base amplitude predicts a 1.89846 mm tip peak, close to the FEM 1.89934 mm but not the measured 1.0671 mm. The excitation relation in Eq. 43 needs reconciliation; no damping or input amplitude is fitted, and the original 5% tolerance is retained."
+    },
+    {
+      "id": "peak_5",
+      "quantity": "Absolute peak displacement at x=0.1204 m",
+      "measure": {
+        "from": "measurements",
+        "pointer": "/nodes/4/samples",
+        "max_by": "/displacement_amplitude/2"
+      },
+      "value": 0.0010670999999999999,
+      "tolerance": {
+        "relative": 0.05
+      },
+      "reason": "5% predeclared for measured peak response: sensor position, rounded geometry/inertia, shear/rotary inertia; no fit to these amplitudes.",
+      "known_failure": "Unresolved model-to-measurement amplitude mismatch (78\u201381% high), unchanged by 40\u219280 beam refinement and 20\u219240 modes. An independent Euler\u2013Bernoulli boundary-value calculation with the published mass, eccentricity, centroidal inertia and 0.01 mm base amplitude predicts a 1.89846 mm tip peak, close to the FEM 1.89934 mm but not the measured 1.0671 mm. The excitation relation in Eq. 43 needs reconciliation; no damping or input amplitude is fitted, and the original 5% tolerance is retained."
+    },
+    {
+      "id": "resonance",
+      "quantity": "Frequency of sampled tip response maximum",
+      "measure": {
+        "from": "measurements",
+        "pointer": "/nodes/4/samples",
+        "max_by": "/displacement_amplitude/2",
+        "value": "/frequency"
+      },
+      "value": 81.2,
+      "tolerance": {
+        "relative": 0.01
+      },
+      "reason": "1% predeclared for rounded experimental dimensions, stiffness and end-mass inertia; sweep spacing 0.01 Hz."
+    }
+  ]
+}

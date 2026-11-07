@@ -294,7 +294,10 @@ pub fn run_case(dir: &Path, expected: &Expected) -> Result<Vec<Result<f64, Strin
 /// Read one number: from a recipe step's output (`"from": id`) or a command run now
 /// (`"command"`, `"params"`), at a JSON pointer, times `scale`; with `"plus"` (a measure of its
 /// own), that measure's number added (the mean of two nodes); with `"over"`, the result divided
-/// by that measure's number.
+/// by that measure's number. For a sweep, `max_by` selects the first array row with
+/// the largest finite number at that relative pointer; `value` reads a number in
+/// the selected row (defaults to `max_by`). This keeps peak amplitude and peak
+/// frequency tied to the same sampled response without retuning the model.
 fn measure(session: &mut Session, outputs: &BTreeMap<String, Value>, m: &Value) -> Result<f64, String> {
     let pointer = m.get("pointer").and_then(Value::as_str).ok_or("no `pointer`")?;
     let fresh;
@@ -307,7 +310,22 @@ fn measure(session: &mut Session, outputs: &BTreeMap<String, Value>, m: &Value) 
         }
         _ => return Err("a measure gives either `from` (a recipe step id) or `command`".into()),
     };
-    let v = out.pointer(pointer).ok_or_else(|| format!("nothing at `{pointer}`"))?;
+    let mut v = out.pointer(pointer).ok_or_else(|| format!("nothing at `{pointer}`"))?;
+    if let Some(by) = m.get("max_by") {
+        let by = by.as_str().ok_or("`max_by` must be a relative JSON pointer")?;
+        let rows = v.as_array().ok_or("`max_by` needs an array at `pointer`")?;
+        let mut peak: Option<(&Value, f64)> = None;
+        for row in rows {
+            let number =
+                row.pointer(by).and_then(Value::as_f64).filter(|v| v.is_finite()).ok_or_else(|| format!("no finite peak measure at `{by}`"))?;
+            if peak.is_none_or(|(_, old)| number > old) {
+                peak = Some((row, number));
+            }
+        }
+        let row = peak.ok_or("`max_by` needs a nonempty array")?.0;
+        let value = m.get("value").and_then(Value::as_str).unwrap_or(by);
+        v = row.pointer(value).ok_or_else(|| format!("nothing at peak row `{value}`"))?;
+    }
     let x = v.as_f64().ok_or_else(|| format!("`{pointer}` is {v}, not a number"))?;
     let mut x = x * m.get("scale").and_then(Value::as_f64).unwrap_or(1.0);
     if let Some(plus) = m.get("plus") {
@@ -948,6 +966,22 @@ mod tests {
         assert!(m(json!({"from": "s", "pointer": "/a", "over": {"from": "s", "pointer": "/z"}})).is_err());
         assert!(m(json!({"from": "s", "pointer": "/a", "over": {"from": "s", "pointer": "/nope"}})).is_err());
         assert!(measure(&mut session, &outputs, &json!({"from": "t", "pointer": "/a"})).is_err());
+    }
+
+    #[test]
+    fn peak_measure_keeps_frequency_and_amplitude_in_the_same_first_maximum_row() {
+        let outputs = BTreeMap::from([(
+            "s".to_string(),
+            json!({"samples":[
+            {"f":1.0,"a":2.0},{"f":2.0,"a":5.0},{"f":3.0,"a":5.0}],"empty":[]}),
+        )]);
+        let m = |v: Value| measure(&mut Session::default(), &outputs, &v);
+        assert_eq!(m(json!({"from":"s","pointer":"/samples","max_by":"/a"})), Ok(5.0));
+        assert_eq!(m(json!({"from":"s","pointer":"/samples","max_by":"/a","value":"/f"})), Ok(2.0));
+        for pointer in ["/empty", "/samples/0"] {
+            assert!(m(json!({"from":"s","pointer":pointer,"max_by":"/a"})).is_err());
+        }
+        assert!(m(json!({"from":"s","pointer":"/samples","max_by":"/missing"})).is_err());
     }
 
     #[test]

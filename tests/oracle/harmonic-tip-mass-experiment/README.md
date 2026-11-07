@@ -1,0 +1,13 @@
+# Harmonic base-excitation experiment
+
+Original 40-beam recipe from Wang, Meng and Feng (2014), Tables 2–3. SI inputs: E=69 GPa, rho=2630 kg/m3, L=120.4 mm, section 10.2 by 4.9 mm; rigid tip mass 33.83 g, offset 8.01 mm and centroidal transverse inertia 3.33e-6 kg m2. The planar model retains Z translation and Y rotation; nu=0.3 is an explicit shear-model assumption, absent from the Euler–Bernoulli reference. A kinematic reference point implements the offset, without a fictitious stiff beam.
+
+Prescribed base displacement is 0.01 mm. Stiffness-proportional beta=2(0.0025)/(2 pi 81.2) uses the measured damping ratio. A 78–85 Hz sweep in 0.01 Hz increments compares measured peak magnitudes and the peak frequency separately, never an off-resonance point against a resonant amplitude. Twenty modes are retained; modal and mesh convergence must be checked before blessing. The first peak in a tie is selected. Tolerances are declared before running: 5% amplitudes, 1% frequency; missing fit stays a failure. No solver-generated or theoretical value substitutes for the experimental column. Only parameters and numerical references are transcribed; all model and prose are original.
+
+## Unresolved experimental amplitude comparison
+
+The 40-element response peaks near 81.43 Hz, inside the original 1% frequency band. All five amplitude comparisons fail their original 5% bands by approximately 78–81%; they remain explicit known failures. The 80-element/40-mode refinement gives a tip peak of 1.89934038 mm at 81.43 Hz. An independent Euler–Bernoulli boundary-value calculation, with the same mass properties and base amplitude, gives 1.89846418 mm near 81.480 Hz. Neither computed value is substituted for the measured 1.0671 mm.
+
+The diagnostic starts from tip kinetic energy `T = (M/2)(w_dot + r_c w_dot_prime)^2 + (J/2)w_dot_prime^2`. With `D=EI(1+i beta omega)`, the absolute-motion beam satisfies `D w'''' - rho A omega^2 w=0`, `w(0)=B`, `w'(0)=0`, `D w''(L)=omega^2[M r_c w(L)+(J+M r_c^2)w'(L)]`, and `D w'''(L)=-omega^2 M[w(L)+r_c w'(L)]`. Solving these four boundary conditions using the sinh/cosh/sin/cos basis is independent of the finite element implementation.
+
+The forcing signs in the article's Eq. 43 do not directly match those obtained from uniform base translation of this positive mass model. That observation is a hypothesis about the mismatch, not proof that the measurements are wrong. Applicability of the reported excitation amplitude remains unresolved. No material, mass, damping, excitation amplitude, reference value or acceptance band has been changed to fit the data. Experimental amplitude validation remains open.

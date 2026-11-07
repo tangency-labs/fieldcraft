@@ -1,0 +1,85 @@
+{
+  "note": "FieldCraft's accepted results for this case, written by `cargo xtask oracle --bless`. A result outside its band fails CI.",
+  "values": {
+    "Direct_0_amplitude": {
+      "band": 3.032048000000352e-6,
+      "value": 32.0480000003519
+    },
+    "Direct_0_phase": {
+      "band": 0.003,
+      "value": 0.0
+    },
+    "Direct_1_amplitude": {
+      "band": 3.042364059003205e-6,
+      "value": 42.364059003204794
+    },
+    "Direct_1_phase": {
+      "band": 3.000067837269772e-6,
+      "value": -0.0678372697720206
+    },
+    "Direct_2_amplitude": {
+      "band": 3.085578227861937e-6,
+      "value": 85.5782278619368
+    },
+    "Direct_2_phase": {
+      "band": 3.0002260085812344e-6,
+      "value": -0.22600858123423237
+    },
+    "Direct_3_amplitude": {
+      "band": 3.067001074506499e-6,
+      "value": 66.38883490240909
+    },
+    "Direct_3_phase": {
+      "band": 3.0028638225818324e-6,
+      "value": -2.8638225818323537
+    },
+    "Direct_4_amplitude": {
+      "band": 3.015367928581288e-6,
+      "value": 15.295567671729012
+    },
+    "Direct_4_phase": {
+      "band": 3.0030418564242374e-6,
+      "value": -3.0418564242373036
+    },
+    "Modal_0_amplitude": {
+      "band": 3.0320470894284995e-6,
+      "value": 32.047089428499554
+    },
+    "Modal_0_phase": {
+      "band": 0.003,
+      "value": 0.0
+    },
+    "Modal_1_amplitude": {
+      "band": 3.0423631504049714e-6,
+      "value": 42.36315040497131
+    },
+    "Modal_1_phase": {
+      "band": 3.00006783868375e-6,
+      "value": -0.0678386837496347
+    },
+    "Modal_2_amplitude": {
+      "band": 3.0855773398039522e-6,
+      "value": 85.57733980395209
+    },
+    "Modal_2_phase": {
+      "band": 3.000226010932339e-6,
+      "value": -0.22601093233907854
+    },
+    "Modal_3_amplitude": {
+      "band": 3.067001074506499e-6,
+      "value": 66.38970934834636
+    },
+    "Modal_3_phase": {
+      "band": 3.0028638264062645e-6,
+      "value": -2.863826406264236
+    },
+    "Modal_4_amplitude": {
+      "band": 3.015367928581288e-6,
+      "value": 15.296473068005083
+    },
+    "Modal_4_phase": {
+      "band": 3.003041862755337e-6,
+      "value": -3.0418627553367563
+    }
+  }
+}
