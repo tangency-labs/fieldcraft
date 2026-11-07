@@ -169,6 +169,26 @@ impl HeatResult {
     pub fn temperature(&self) -> &[f64] {
         self.frames.last().map(Vec::as_slice).unwrap_or_default()
     }
+
+    /// Nodal heat flux in `frame`, in the order of [`Self::nodes`].
+    ///
+    /// The model must be unchanged since the solve. Earlier frames recover −k∇T from
+    /// their temperatures with the same extrapolation and averaging as the final frame;
+    /// the final frame borrows the stored flux. No additional frame history is kept.
+    pub fn flux_at(&self, model: &Model, frame: usize) -> Result<std::borrow::Cow<'_, [[f64; 3]]>> {
+        let t = self.frames.get(frame).ok_or_else(|| Error::Invalid(format!("step `{}` has no frame {frame}", self.step)))?;
+        if frame + 1 == self.frames.len() {
+            return Ok(std::borrow::Cow::Borrowed(&self.flux));
+        }
+        if t.len() != self.nodes.len() || t.iter().any(|v| !v.is_finite()) {
+            return Err(Error::Invalid(format!("step `{}` frame {frame} has invalid temperatures", self.step)));
+        }
+        let mesh = HeatMesh::new(model, &model.resolve()?, self.nodes.len())?;
+        if mesh.labels != self.nodes {
+            return Err(Error::Invalid(format!("step `{}` temperatures do not match the conducting mesh", self.step)));
+        }
+        Ok(std::borrow::Cow::Owned(fluxes(&mesh, t)?.0))
+    }
 }
 
 /// The assembled heat system of a step: conductivity (with films), capacity when transient,
