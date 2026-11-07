@@ -1452,6 +1452,8 @@ mod tests {
             assert_eq!(serde_json::from_str::<crate::Turbulence>(&serde_json::to_string(&t).unwrap()).unwrap(), t);
         }
         assert!(turbulence(serde_json::json!({"type": "spalart_allmaras", "constant": 0.1})).is_err());
+        // Van Driest's damping is a subgrid model's: the Reynolds-averaged ν_t damps itself.
+        assert!(turbulence(serde_json::json!({"type": "spalart_allmaras", "van_driest": 26})).is_err());
         // The JSON form reads back to the same model, through the same checks.
         let text = serde_json::to_string(&m).unwrap();
         assert_eq!(serde_json::from_str::<Model>(&text).unwrap(), m);

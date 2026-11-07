@@ -150,6 +150,7 @@ use crate::conduction::{Interface, Layout, SolidHeat};
 use crate::lattice::{C, Q, W, c, equilibrium, moving_wall, opposite};
 use crate::outlet::{Action, Outlets, Populations};
 use crate::rheology::{Clamp, Clamps, Rheology};
+use crate::sa::{SaField, SaInput, Side};
 use crate::setup::{MAX_LATTICE_SPEED, Obstacle, PhaseSetup, Setup, ZoneKind, ZoneSetup};
 use crate::surface::{Kind, Surface, SurfaceReport};
 use crate::voxel::{Grid, TriangleTree, voxelise};
@@ -368,6 +369,24 @@ fn neighbour(grid: &Grid, periodic: [bool; 3], fluid: &[bool], p: [usize; 3], ax
     *q.get_mut(axis)? = next;
     let cell = grid.index(q);
     fluid.get(cell).copied().unwrap_or(false).then_some(cell)
+}
+
+/// The cell next to the cell at `p` along `axis` (towards `+axis` with `up`), fluid or not, across
+/// a periodic face its periodic image; `None` outside a face that is not periodic.
+fn across(grid: &Grid, periodic: [bool; 3], p: [usize; 3], axis: usize, up: bool) -> Option<usize> {
+    let n = *grid.cells.get(axis)?;
+    let i = *p.get(axis)?;
+    let periodic = periodic.get(axis).copied().unwrap_or(false);
+    let next = match (up, i) {
+        (true, i) if i + 1 < n => i + 1,
+        (true, _) if periodic => 0,
+        (false, 0) if periodic => n.checked_sub(1)?,
+        (false, 0) | (true, _) => return None,
+        (false, i) => i - 1,
+    };
+    let mut q = p;
+    *q.get_mut(axis)? = next;
+    Some(grid.index(q))
 }
 
 /// A cell's action: its zone's, with the resistance of its liquid fraction `liquid` (with a phase
@@ -600,6 +619,8 @@ pub struct Flow {
     cell_nu_t: Vec<f64>,
     /// The largest eddy viscosity over the fluid's own of the last collision (0 without one).
     eddy_ratio: f64,
+    /// The Spalart–Allmaras model: ν̃, each cell's wall distance and vorticity.
+    sa: Option<SaState>,
     /// With Van Driest's damping or the wall model: the wall cells (and with damping every
     /// cell's wall distance and the friction velocities).
     walls: Option<Walls>,
@@ -674,6 +695,16 @@ pub struct Flow {
 }
 
 const NONE: u32 = u32::MAX;
+
+/// The Spalart–Allmaras model's state in the flow ([`crate::sa`]): ν̃ on the cells that collide,
+/// each cell's distance to the nearest no-slip wall ([`crate::distance`]) and the vorticity of the
+/// step's velocities (rebuilt each step before ν̃ advances).
+#[derive(Debug, Clone)]
+struct SaState {
+    field: SaField,
+    distance: crate::distance::WallDistance,
+    vorticity: Vec<f64>,
+}
 
 /// Cells per parallel block of the collision and the streaming: about a 256th of the grid, so a
 /// machine with many threads still has several blocks per thread (4096-cell blocks left 45 for
@@ -1263,6 +1294,53 @@ impl Flow {
         } else {
             None
         };
+        let sa = match setup.spalart_allmaras {
+            None => None,
+            Some(sa) => {
+                // The cells that collide (the fluid less the on-node boundary nodes); a side to a
+                // boundary node is the on-node wall, one to a solid cell a halfway wall.
+                let mask: &[bool] = if bulk.is_empty() { &fluid } else { &bulk };
+                let face_side = |face: BoxFace| match domain.faces.get(face) {
+                    FaceCondition::Wall {} | FaceCondition::MovingWall { .. } => Side::Wall,
+                    FaceCondition::Velocity { .. } => Side::Inflow,
+                    _ => Side::Open,
+                };
+                let mut sides = filled(n, [Side::Open; 6], "Spalart–Allmaras faces")?;
+                for (cell, out) in sides.iter_mut().enumerate() {
+                    if !mask.get(cell).copied().unwrap_or(false) {
+                        continue;
+                    }
+                    let p = grid.coords(cell);
+                    for (k, side) in out.iter_mut().enumerate() {
+                        let (axis, up) = (k / 2, k % 2 == 1);
+                        *side = match neighbour(&grid, periodic, mask, p, axis, up) {
+                            Some(nb) => Side::Cell(nb as u32),
+                            // The cell across (a solid cell or a boundary node), or the box face.
+                            None => match across(&grid, periodic, p, axis, up) {
+                                Some(nb) if fluid.get(nb).copied().unwrap_or(false) => Side::Node,
+                                Some(_) => Side::Wall,
+                                None => face_side(BoxFace::of(axis, up)),
+                            },
+                        };
+                    }
+                }
+                let surface = if on_node {
+                    let cells: Vec<(u32, usize, i32, u32)> =
+                        node_list.iter().map(|w| (w.interior, usize::from(w.axis), i32::from(w.inward), w.group)).collect();
+                    crate::distance::WallSurface::from_nodes(&grid, &cells)?
+                } else {
+                    let no_slip: Vec<bool> = group_walls.iter().map(Option::is_some).collect();
+                    crate::distance::WallSurface::from_links(&grid, &links, &no_slip)?
+                };
+                // The setup checked the grid against the run's caps and the memory estimate
+                // counts the distance's working memory, so its own caps are the solver's widest.
+                let caps = crate::Limits { max_cells: crate::Limits::MAX_ADDRESSABLE_CELLS, ..crate::Limits::default() };
+                let distance = crate::distance::WallDistance::new(&grid, mask, &surface, periodic, &caps)?;
+                let inflow = sa.inflow_ratio * nu;
+                let field = SaField::new(sides, mask.to_vec(), inflow, inflow)?;
+                Some(SaState { field, distance, vorticity: filled(n, 0.0, "vorticities")? })
+            }
+        };
         open.shrink_to_fit();
         let mut flow = Flow {
             grid,
@@ -1281,6 +1359,7 @@ impl Flow {
             vreman: setup.vreman,
             cell_nu_t: if setup.turbulent() && setup.thermal.is_some() { filled(n, 0.0, "eddy viscosities")? } else { Vec::new() },
             eddy_ratio: 0.0,
+            sa,
             walls,
             wall_model: setup.wall_model == Some(WallModel::Musker),
             wall_bounce: setup.wall_model == Some(WallModel::SpaldingBounceHalfway),
@@ -1305,7 +1384,11 @@ impl Flow {
             sigma: setup.sigma,
             dynamic: setup.dynamic_sigma,
             sigma_stats: None,
-            gradient_u: if setup.collision == Collision::Hrr || setup.vreman > 0.0 { filled(n, [0.0; 3], "cell velocities")? } else { Vec::new() },
+            gradient_u: if setup.collision == Collision::Hrr || setup.vreman > 0.0 || setup.spalart_allmaras.is_some() {
+                filled(n, [0.0; 3], "cell velocities")?
+            } else {
+                Vec::new()
+            },
             periodic,
             fan_rise: vec![0.0; setup.zones.len()],
             zones: setup.zones.clone(),
@@ -1531,6 +1614,7 @@ impl Flow {
             + bytes(&self.cell_u)
             + bytes(&self.cell_nu_t)
             + bytes(&self.gradient_u)
+            + self.sa.as_ref().map_or(0, |s| s.field.heap_bytes() + bytes(&s.vorticity) + size_of_val(s.distance.as_slice()) as u64)
             + bytes(&self.zone_of)
             + bytes(&self.open_scratch)
             + bytes(&self.baffles)
@@ -1670,7 +1754,17 @@ impl Flow {
 
     /// Whether a subgrid model (Smagorinsky's or Vreman's) gives the cells an eddy viscosity.
     pub fn turbulent(&self) -> bool {
-        self.smagorinsky > 0.0 || self.vreman > 0.0
+        self.smagorinsky > 0.0 || self.vreman > 0.0 || self.sa.is_some()
+    }
+
+    /// The Spalart–Allmaras field, with that model.
+    pub fn spalart_allmaras(&self) -> Option<&SaField> {
+        self.sa.as_ref().map(|s| &s.field)
+    }
+
+    /// With the Spalart–Allmaras model, each cell's wall distance it reads (lattice units).
+    pub fn sa_wall_distance(&self) -> Option<&[f64]> {
+        self.sa.as_ref().map(|s| s.distance.as_slice())
     }
 
     /// With the hybrid collision's dynamic σ, its smallest and mean value over the fluid cells in
@@ -1800,6 +1894,7 @@ impl Flow {
         self.sample_stress();
         self.sample_nodes();
         self.gradient_velocities();
+        self.advance_sa()?;
         let max_u2 = self.collide();
         self.collide_nodes();
         if !(max_u2 <= MAX_LATTICE_SPEED * MAX_LATTICE_SPEED) {
@@ -2251,6 +2346,35 @@ impl Flow {
         });
     }
 
+    /// With the Spalart–Allmaras model: each cell's vorticity from the finite-difference gradient
+    /// of the velocities [`Flow::gradient_velocities`] gathered (as the hybrid collision's and
+    /// Vreman's), then one lattice step of ν̃ ([`SaField::advance`]), before the collision reads
+    /// its ν_t.
+    fn advance_sa(&mut self) -> Result<()> {
+        let Some(sa) = &mut self.sa else { return Ok(()) };
+        let (grid, periodic, block, steps) = (self.grid, self.periodic, self.block, self.steps_done);
+        let fluid = populated_mask(&self.fluid, &self.bulk, self.surface.as_ref());
+        let u = &self.gradient_u;
+        parallel::chunks_mut(&mut sa.vorticity, block, |b, out| {
+            for (i, w) in out.iter_mut().enumerate() {
+                let cell = b * block + i;
+                *w = 0.0;
+                let (true, Some(&uc)) = (fluid.get(cell).copied().unwrap_or(false), u.get(cell)) else { continue };
+                let p = grid.coords(cell);
+                let nb: crate::hrr::Neighbours =
+                    [0, 1, 2].map(|axis| [false, true].map(|up| neighbour(&grid, periodic, fluid, p, axis, up).and_then(|c| u.get(c).copied())));
+                *w = crate::sa::vorticity(&crate::hrr::gradient(uc, &nb));
+            }
+        });
+        let nu = (1.0 / self.omega_plus - 0.5) / 3.0;
+        let input = SaInput { u, vorticity: &sa.vorticity, length: sa.distance.as_slice(), nu, model: true, source: None, substeps: None };
+        sa.field.advance(&input).map_err(|e| match e {
+            Error::Unstable(m) => Error::Unstable(format!("{m} (at time step {})", steps + 1)),
+            other => other,
+        })?;
+        Ok(())
+    }
+
     /// The collision with Guo forcing (two relaxation times, or recursive regularised), in place,
     /// by blocks of [`block_cells`] cells in parallel. Returns the largest squared lattice speed, or
     /// NaN when a density is not positive.
@@ -2260,7 +2384,7 @@ impl Flow {
         let hybrid = self.collision == Collision::Hrr;
         // The neighbours' velocities of the pass before the collision, for the finite-difference
         // gradient (the hybrid collision, Vreman's model).
-        let gradients = !self.gradient_u.is_empty();
+        let gradients = !self.gradient_u.is_empty() && (hybrid || self.vreman > 0.0);
         let regularized = self.collision.is_regularized();
         let mrt = self.collision == Collision::Mrt;
         let (sigma, gradient_u, grid, periodic) = (self.sigma, &self.gradient_u, self.grid, self.periodic);
@@ -2269,6 +2393,7 @@ impl Flow {
         let (wp, wm) = (self.omega_plus, self.omega_minus);
         let (sp, sm) = (1.0 - 0.5 * wp, 1.0 - 0.5 * wm);
         let (smagorinsky, vreman) = (self.smagorinsky, self.vreman);
+        let sa = self.sa.as_ref().map(|s| &s.field);
         let turbulent = self.turbulent();
         // Dynamic σ (set only with the hybrid collision), and the fluid's own viscosity (lattice
         // units) it compares the eddy viscosity with.
@@ -2384,14 +2509,17 @@ impl Flow {
                     (crate::hrr::gradient(u, &nb), nb)
                 });
                 let grad = local.as_ref().map(|(g, _)| g);
-                // Vreman's explicit eddy viscosity (not at a wall cell under the wall model, which
-                // keeps its own rate), and the rate it gives, τ̄ = 3 (ν + ν_t) + ½; none where
-                // ν_t = 0, so the cell keeps the fluid's own rates bit for bit.
-                let nu_vreman = match &grad {
-                    Some(g) if vreman > 0.0 && wall_rate.is_none() => crate::vreman::eddy_viscosity(g, vreman),
+                // Vreman's or the Spalart–Allmaras explicit eddy viscosity (not at a wall cell under
+                // the wall model, which keeps its own rate: it replaces the model's, never adds),
+                // and the rate it gives, τ̄ = 3 (ν + ν_t) + ½; none where ν_t = 0, so the cell
+                // keeps the fluid's own rates bit for bit.
+                let nu_explicit = match (&grad, sa) {
+                    _ if wall_rate.is_some() => 0.0,
+                    (Some(g), _) if vreman > 0.0 => crate::vreman::eddy_viscosity(g, vreman),
+                    (_, Some(field)) => field.nu_t(b * block + i, nu0),
                     _ => 0.0,
                 };
-                let explicit = (nu_vreman > 0.0).then(|| 1.0 / (1.0 / wp + 3.0 * nu_vreman));
+                let explicit = (nu_explicit > 0.0).then(|| 1.0 / (1.0 / wp + 3.0 * nu_explicit));
                 // Smagorinsky's implicit rate of the cell's own flux (Hou et al.).
                 let flux = || crate::turbulence::flux(&fq, rho, u, force, forced);
                 let implicit = || crate::turbulence::omega(&flux(), rho, wp, cell_c);
@@ -2429,7 +2557,7 @@ impl Flow {
                                         let p = crate::turbulence::flux(&fq, rho, u, force, forced);
                                         crate::turbulence::eddy_viscosity(&p, rho, wp, cell_c, crate::turbulence::flux_round_off(rho))
                                     } else {
-                                        nu_vreman
+                                        nu_explicit
                                     };
                                     nu_model = Some(nu_t);
                                     crate::hrr::dynamic_sigma(g, &crate::hrr::laplacian(u, nb), nu_t, nu0, l_max)
@@ -2898,6 +3026,7 @@ impl crate::backend::Backend for Flow {
             vreman,
             cell_nu_t,
             eddy_ratio,
+            sa,
             walls,
             wall_model,
             wall_bounce,
@@ -3035,6 +3164,11 @@ impl crate::backend::Backend for Flow {
         fixed(a, u64::from(nodes.is_some()))?;
         if let Some(w) = nodes {
             w.checkpoint(a)?;
+        }
+        // ν̃; the wall distance is fixed by the setup and the vorticity rebuilt in each step.
+        fixed(a, u64::from(sa.is_some()))?;
+        if let Some(s) = sa {
+            s.field.archive(a)?;
         }
         vectors(a, forces, groups.len())?;
         let nf = cell_force.len();

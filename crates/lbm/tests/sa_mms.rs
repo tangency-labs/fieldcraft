@@ -222,7 +222,7 @@ fn run_box(m: &Manufactured, faces: [BoxFace; 6], speed: f64, n: usize) -> Error
                 m.source(x, z, t, speed) * dt
             })
             .collect();
-        let input = SaInput { u: &u, vorticity: &zeros, length: &zeros, nu: NU, model: false, source: Some(&source) };
+        let input = SaInput { u: &u, vorticity: &zeros, length: &zeros, nu: NU, model: false, source: Some(&source), substeps: None };
         field.advance(&input).unwrap();
     }
     let t = steps as f64 * dt;
