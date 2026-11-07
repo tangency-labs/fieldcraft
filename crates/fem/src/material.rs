@@ -18,6 +18,8 @@ use crate::{Error, Result};
 /// A 6 × 6 elasticity matrix, row-major.
 pub type Elasticity = [[f64; 6]; 6];
 
+const FRAME_ORTHOGONALITY: f64 = 1e-12; // unit-factors: dimensionless tolerance on unit-vector dot products
+
 /// Check isotropic constants: E > 0 and −1 < ν < 0.5.
 fn check_isotropic(young: f64, poisson: f64) -> Result<()> {
     if !(young > 0.0 && young.is_finite() && poisson > -1.0 && poisson < 0.5) {
@@ -82,6 +84,54 @@ pub fn elasticity(e: &Elastic) -> Result<Elasticity> {
         Elastic::Isotropic { young, poisson } => isotropic(young, poisson),
         Elastic::EngineeringConstants { young, poisson, shear } => orthotropic(young, poisson, shear),
     }
+}
+
+/// Linear elasticity in global axes from material axes stored as rows in global components.
+/// Rotate the strain tensor (engineering shear halved), apply the local constitutive law,
+/// then rotate the stress tensor back. This is the fourth-order tensor transformation of
+/// Jones (1999), §2.4, implemented on the six independent unit-strain states; stress and
+/// engineering strain intentionally do not share a Voigt transformation matrix.
+pub fn elasticity_in_axes(e: &Elastic, axes: &crate::frame::Axes) -> Result<Elasticity> {
+    e.validate().map_err(|err| Error::Invalid(err.to_string()))?;
+    for i in 0..3 {
+        for j in 0..3 {
+            let dot = crate::frame::dot(axes[i], axes[j]);
+            if !(dot.is_finite() && (dot - if i == j { 1.0 } else { 0.0 }).abs() < FRAME_ORTHOGONALITY) {
+                return Err(Error::Invalid("material axes must be a finite orthonormal frame".into()));
+            }
+        }
+    }
+    if crate::frame::dot(crate::frame::cross(axes[0], axes[1]), axes[2]) <= 0.0 {
+        return Err(Error::Invalid("material axes must be right handed".into()));
+    }
+    let local = elasticity(e)?;
+    let pairs = [(0, 0), (1, 1), (2, 2), (0, 1), (0, 2), (1, 2)];
+    let mut d = [[0.0; 6]; 6];
+    for (column, &(a, b)) in pairs.iter().enumerate() {
+        let mut tensor = [[0.0; 3]; 3];
+        for i in 0..3 {
+            for j in 0..3 {
+                tensor[i][j] = if a == b { axes[i][a] * axes[j][a] } else { 0.5 * (axes[i][a] * axes[j][b] + axes[i][b] * axes[j][a]) };
+            }
+        }
+        let strain = [tensor[0][0], tensor[1][1], tensor[2][2], 2.0 * tensor[0][1], 2.0 * tensor[0][2], 2.0 * tensor[1][2]];
+        let [xx, yy, zz, xy, xz, yz] = stress(&local, &strain);
+        let global = crate::frame::tensor_to_global(axes, [[xx, xy, xz], [xy, yy, yz], [xz, yz, zz]]);
+        for row in 0..6 {
+            d[row][column] = global[row];
+        }
+    }
+    for i in 0..6 {
+        for j in i + 1..6 {
+            let value = d[i][j] / 2.0 + d[j][i] / 2.0;
+            d[i][j] = value;
+            d[j][i] = value;
+        }
+    }
+    if d.iter().flatten().any(|v| !v.is_finite()) {
+        return Err(Error::Invalid("rotated solid elasticity is not finite".into()));
+    }
+    Ok(d)
 }
 
 /// The von Mises equivalent stress of a stress 6-vector.

@@ -265,6 +265,18 @@ impl Laminate {
             })
             .collect()
     }
+
+    /// One position in the laminate. At a shared interface this selects the lower ply;
+    /// [`Self::recover`] retains both one-sided values instead.
+    pub fn at(&self, strain: [f64; 8], z: f64) -> Result<(f64, PlyPoint)> {
+        check_strain(strain)?;
+        let ply = self
+            .plies
+            .iter()
+            .find(|p| z >= p.bottom && z <= p.top)
+            .ok_or_else(|| Error::Invalid("the requested position is outside the laminate".into()))?;
+        Ok((ply.input.angle, ply.at(strain, z)?))
+    }
 }
 
 fn positive_shear(shear: [[f64; 2]; 2]) -> bool {

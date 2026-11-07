@@ -57,11 +57,12 @@
 //!   the nodes (triangle, constant membrane and bending fields). Transverse shear stresses are
 //!   reported at the mid-surface as the peak of the parabolic distribution, 3/2 Q/t.
 
-use fieldcraft_model::{Elastic, ElementKind};
+use fieldcraft_model::{Elastic, ElementKind, MaterialOrientation};
 
 use crate::dense::Matrix;
 use crate::dof::{DofSet, ElementDofs};
 use crate::frame::{Axes, cross, dot, norm, rotate_matrix, rotate_to_global, rotate_to_local, sub, tensor_to_global, to_local, translation, unit};
+use crate::laminate::{Laminate, PlyFields, PlyPoint, PlyProperties};
 use crate::quadrature::Rule;
 use crate::{Error, Result};
 
@@ -74,6 +75,20 @@ pub const DRILLING: f64 = 1e-2;
 /// Degrees of freedom per shell node: translations along local (or global) x, y, z, then
 /// rotations about them.
 pub const NODE_DOFS: usize = 6;
+
+fn finite_matrix(matrix: Matrix, what: &str) -> Result<Matrix> {
+    if matrix.data.iter().any(|v| !v.is_finite()) {
+        return Err(Error::Invalid(format!("shell {what} is not finite")));
+    }
+    Ok(matrix)
+}
+
+fn finite_vector(vector: Vec<f64>, what: &str) -> Result<Vec<f64>> {
+    if vector.iter().any(|v| !v.is_finite()) {
+        return Err(Error::Invalid(format!("shell {what} is not finite")));
+    }
+    Ok(vector)
+}
 
 /// A shell section with an isotropic material.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -133,6 +148,52 @@ impl ShellSection {
     }
 }
 
+/// The existing homogeneous shell path is kept intact so existing isotropic models do not
+/// acquire changes in their integration or stress recovery when laminates are added.
+#[derive(Debug, Clone)]
+enum Constitutive {
+    Homogeneous(ShellSection),
+    Laminated(Box<Laminate>),
+}
+
+impl Constitutive {
+    fn abd(&self) -> [[f64; 6]; 6] {
+        match self {
+            Self::Homogeneous(s) => s.abd(),
+            Self::Laminated(s) => s.abd(),
+        }
+    }
+
+    fn drilling(&self) -> f64 {
+        match self {
+            Self::Homogeneous(s) => DRILLING * s.shear_modulus() * s.thickness,
+            Self::Laminated(s) => s.drilling(),
+        }
+    }
+
+    fn geometric_moments(&self) -> [f64; 3] {
+        match self {
+            Self::Homogeneous(s) => {
+                let (t, e) = (s.thickness, s.eccentricity);
+                [t, t * e, t * t * t / 12.0 + t * e * e]
+            }
+            Self::Laminated(s) => s.geometric_moments(),
+        }
+    }
+
+    fn homogeneous_mass(&self, density: f64) -> Result<[f64; 3]> {
+        if matches!(self, Self::Laminated(_)) {
+            return Err(Error::Invalid("a laminated shell uses its ply densities; use ply_mass or ply_lumped_mass".into()));
+        }
+        if !(density > 0.0 && density.is_finite()) {
+            return Err(Error::Invalid("shell density must be positive and finite".into()));
+        }
+        let Self::Homogeneous(s) = self else { return Err(Error::Invalid("expected a homogeneous shell".into())) };
+        let (t, e) = (s.thickness, s.eccentricity);
+        Ok([density * t, density * t * e, density * (t * t * t / 12.0 + t * e * e)])
+    }
+}
+
 /// Section forces and stresses of a shell element, per node in the element's node order.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ShellStress {
@@ -147,6 +208,10 @@ pub struct ShellStress {
     pub bottom: Vec<[f64; 6]>,
     pub middle: Vec<[f64; 6]>,
     pub top: Vec<[f64; 6]>,
+    /// Material-axis fields: element node order, then bottom-to-top ply order. Empty for a
+    /// homogeneous shell. Each ply keeps both sides of its interfaces and its section points.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plies: Vec<Vec<PlyFields>>,
 }
 
 /// The shape functions of the element's corners at (r, s) and their derivatives along r and s.
@@ -196,12 +261,51 @@ pub struct Shell {
     axes: Axes,
     /// The nodes in the element plane (local x, y).
     local: [[f64; 2]; 4],
-    section: ShellSection,
+    section: Constitutive,
     area: f64,
 }
 
 impl Shell {
     pub fn new(kind: ElementKind, xyz: &[[f64; 3]], section: ShellSection) -> Result<Shell> {
+        Self::with_section(kind, xyz, Constitutive::Homogeneous(section))
+    }
+
+    /// Build a laminated shell. Without an orientation, angles are measured from the
+    /// element's first local axis. With one, project the selected reference axis at the
+    /// element centre and then turn each ply by its angle. Cylindrical directions are
+    /// consequently facetwise constant, converging as the facets are refined.
+    pub fn laminated(
+        kind: ElementKind,
+        xyz: &[[f64; 3]],
+        plies: &[PlyProperties],
+        offset: f64,
+        orientation: Option<&MaterialOrientation>,
+        reference_axis: u8,
+    ) -> Result<Shell> {
+        let laminate = Laminate::new(plies, offset)?;
+        let mut shell = Self::with_section(kind, xyz, Constitutive::Laminated(Box::new(laminate)))?;
+        if let Some(orientation) = orientation {
+            let centre = std::array::from_fn(|i| xyz.iter().map(|p| p[i] / xyz.len() as f64).sum());
+            let material = orientation.shell_axes_at(centre, shell.axes[2], reference_axis).map_err(|e| Error::Invalid(e.to_string()))?;
+            let angle = libm::atan2(dot(material[0], shell.axes[1]), dot(material[0], shell.axes[0]));
+            let (s0, c0) = libm::sincos(angle);
+            let rotated: Vec<_> = plies
+                .iter()
+                .map(|p| {
+                    // Compose rotations before converting back to an angle. Adding a bounded
+                    // frame angle to a very large finite ply angle would lose the frame angle.
+                    let (s, c) = libm::sincos(p.angle);
+                    PlyProperties { angle: libm::atan2(s * c0 + c * s0, c * c0 - s * s0), ..*p }
+                })
+                .collect();
+            shell.section = Constitutive::Laminated(Box::new(Laminate::new(&rotated, offset)?));
+        } else if reference_axis != 1 {
+            return Err(Error::Invalid("a non-default shell reference axis needs a material orientation".into()));
+        }
+        Ok(shell)
+    }
+
+    fn with_section(kind: ElementKind, xyz: &[[f64; 3]], section: Constitutive) -> Result<Shell> {
         let nodes = match kind {
             ElementKind::Tri3 => 3,
             ElementKind::Quad4 => 4,
@@ -377,8 +481,7 @@ impl Shell {
     pub fn stiffness(&self) -> Result<Matrix> {
         let n = self.size();
         let abd = self.section.abd();
-        let ks = self.section.shear();
-        let drill = DRILLING * self.section.shear_modulus() * self.section.thickness;
+        let drill = self.section.drilling();
         let tying = self.tying()?;
         let mut k = Matrix::zeros(n);
         for p in self.rule().points() {
@@ -389,7 +492,13 @@ impl Shell {
             for i in 0..n {
                 for j in i..n {
                     let mut v: f64 = (0..6).map(|a| b[a][i] * cb[a][j]).sum();
-                    v += ks * (b[6][i] * b[6][j] + b[7][i] * b[7][j]);
+                    v += match &self.section {
+                        Constitutive::Homogeneous(s) => s.shear() * (b[6][i] * b[6][j] + b[7][i] * b[7][j]),
+                        Constitutive::Laminated(s) => {
+                            let ks = s.shear();
+                            b[6][i] * (ks[0][0] * b[6][j] + ks[0][1] * b[7][j]) + b[7][i] * (ks[1][0] * b[6][j] + ks[1][1] * b[7][j])
+                        }
+                    };
                     v += drill * b[8][i] * b[8][j];
                     if v != 0.0 {
                         k.add(i, j, w * v);
@@ -400,18 +509,71 @@ impl Shell {
                 }
             }
         }
-        Ok(rotate_matrix(&k, &self.axes))
+        finite_matrix(rotate_matrix(&k, &self.axes), "stiffness")
+    }
+
+    /// Initial-membrane-stress stiffness for small-slope buckling of a flat plate:
+    /// ∫[w,x w,y] N [δw,x δw,y]ᵀ dA (Bathe, *Finite Element Procedures*, 2014,
+    /// §6.8.2). Compression is negative. The preload's membrane forces are evaluated at
+    /// the same area quadrature points as stiffness, with the full laminate B coupling.
+    /// This plate tangent is not a finite-rotation or curved-shell geometric stiffness;
+    /// the caller must enforce that scope. Follower-load stiffness is not included.
+    pub fn plate_geometric_stiffness(&self, u: &[f64]) -> Result<Matrix> {
+        if u.len() != self.size() || u.iter().any(|v| !v.is_finite()) {
+            return Err(Error::Invalid("plate preload displacements must be finite and match its degrees of freedom".into()));
+        }
+        let ul = rotate_to_local(u, &self.axes);
+        let tying = self.tying()?;
+        let abd = self.section.abd();
+        let mut k = Matrix::zeros(self.size());
+        for p in self.rule().points() {
+            let (b, m) = self.operator(&tying, p.xi[0], p.xi[1])?;
+            let strain: [f64; 6] = std::array::from_fn(|i| b[i].iter().zip(&ul).map(|(b, u)| b * u).sum());
+            let n: [f64; 3] = std::array::from_fn(|i| abd[i].iter().zip(strain).map(|(c, e)| c * e).sum());
+            for i in 0..self.nodes {
+                for j in i..self.nodes {
+                    let a = m.dx[i];
+                    let b = m.dx[j];
+                    let value = (a[0] * (n[0] * b[0] + n[2] * b[1]) + a[1] * (n[2] * b[0] + n[1] * b[1])) * m.det * p.weight;
+                    k.add(6 * i + 2, 6 * j + 2, value);
+                    if i != j {
+                        k.add(6 * j + 2, 6 * i + 2, value);
+                    }
+                }
+            }
+        }
+        if k.data.iter().any(|v| !v.is_finite()) {
+            return Err(Error::Invalid("plate initial-stress stiffness is not finite".into()));
+        }
+        finite_matrix(rotate_matrix(&k, &self.axes), "plate initial-stress stiffness")
     }
 
     /// The consistent mass matrix in global axes, 6n × 6n.
     pub fn mass(&self, density: f64) -> Result<Matrix> {
-        Ok(rotate_matrix(&self.local_mass(density)?, &self.axes))
+        finite_matrix(rotate_matrix(&self.local_mass(self.section.homogeneous_mass(density)?)?, &self.axes), "mass")
+    }
+
+    /// Consistent mass using each ply's density, including I1 translation–rotation coupling.
+    pub fn ply_mass(&self) -> Result<Matrix> {
+        finite_matrix(rotate_matrix(&self.local_mass(self.ply_mass_moments()?)?, &self.axes), "ply mass")
+    }
+
+    fn ply_mass_moments(&self) -> Result<[f64; 3]> {
+        match &self.section {
+            Constitutive::Laminated(s) => s.mass_moments(),
+            _ => Err(Error::Invalid("this shell has no laminate densities".into())),
+        }
+    }
+
+    /// Load of an acceleration, using the laminate's full density moments.
+    pub fn ply_gravity(&self, acceleration: [f64; 3]) -> Result<Vec<f64>> {
+        let r = translation(to_local(&self.axes, acceleration), self.nodes);
+        finite_vector(rotate_to_global(&self.local_mass(self.ply_mass_moments()?)?.mul_vec(&r), &self.axes), "ply gravity")
     }
 
     /// The consistent mass matrix in the element's axes.
-    fn local_mass(&self, density: f64) -> Result<Matrix> {
-        let (t, e) = (self.section.thickness, self.section.eccentricity);
-        let (m0, m1, m2) = (density * t, density * t * e, density * (t * t * t / 12.0 + t * e * e));
+    fn local_mass(&self, moments: [f64; 3]) -> Result<Matrix> {
+        let [m0, m1, m2] = moments;
         let mut mm = Matrix::zeros(self.size());
         for p in self.rule().points() {
             let m = self.map(p.xi[0], p.xi[1])?;
@@ -435,12 +597,21 @@ impl Shell {
                 }
             }
         }
-        Ok(mm)
+        finite_matrix(mm, "local mass")
     }
 
     /// The lumped mass per degree of freedom (the same in local and global axes).
     pub fn lumped_mass(&self, density: f64) -> Result<Vec<f64>> {
-        let (t, e) = (self.section.thickness, self.section.eccentricity);
+        self.lumped_moments(self.section.homogeneous_mass(density)?)
+    }
+
+    /// Diagonal mass with correct total translational and rotary inertia. As with a
+    /// homogeneous offset shell, lumping omits the off-diagonal I1 coupling.
+    pub fn ply_lumped_mass(&self) -> Result<Vec<f64>> {
+        self.lumped_moments(self.ply_mass_moments()?)
+    }
+
+    fn lumped_moments(&self, moments: [f64; 3]) -> Result<Vec<f64>> {
         let mut diag = vec![0.0; self.size()];
         let mut sum = 0.0;
         for p in self.rule().points() {
@@ -455,7 +626,7 @@ impl Shell {
             return Err(Error::Degenerate("a shell element has no area".into()));
         }
         let scale = self.area / sum;
-        let (m0, m2) = (density * t, density * (t * t * t / 12.0 + t * e * e));
+        let [m0, _, m2] = moments;
         for i in 0..self.nodes {
             let a = diag[6 * i] * scale;
             for c in 0..3 {
@@ -463,20 +634,20 @@ impl Shell {
                 diag[6 * i + 3 + c] = m2 * a;
             }
         }
-        Ok(diag)
+        finite_vector(diag, "lumped mass")
     }
 
     /// Consistent nodal forces and moments (global) of a uniform force per volume b: the
     /// consistent mass of unit density times the uniform nodal translation b.
     pub fn body_force(&self, b: [f64; 3]) -> Result<Vec<f64>> {
         let r = translation(to_local(&self.axes, b), self.nodes);
-        Ok(rotate_to_global(&self.local_mass(1.0)?.mul_vec(&r), &self.axes))
+        finite_vector(rotate_to_global(&self.local_mass(self.section.geometric_moments())?.mul_vec(&r), &self.axes), "body force")
     }
 
     /// Section forces and surface stresses for the element's nodal displacements and rotations
     /// (global, 6 per node).
     pub fn stresses(&self, u: &[f64]) -> Result<ShellStress> {
-        if u.len() != self.size() {
+        if u.len() != self.size() || u.iter().any(|v| !v.is_finite()) {
             return Err(Error::Invalid(format!("{} values for a shell element with {} degrees of freedom", u.len(), self.size())));
         }
         let ul = rotate_to_local(u, &self.axes);
@@ -500,11 +671,15 @@ impl Shell {
                 })
                 .collect()
         };
-        let abd = self.section.abd();
-        let q = self.section.plane_stress();
-        let ks = self.section.shear();
-        let (t, e) = (self.section.thickness, self.section.eccentricity);
-        let mut out = ShellStress { axes: self.axes, forces: Vec::new(), bottom: Vec::new(), middle: Vec::new(), top: Vec::new() };
+        let section = match &self.section {
+            Constitutive::Homogeneous(s) => s,
+            Constitutive::Laminated(s) => return self.laminate_stresses(s, &nodal),
+        };
+        let abd = section.abd();
+        let q = section.plane_stress();
+        let ks = section.shear();
+        let (t, e) = (section.thickness, section.eccentricity);
+        let mut out = ShellStress { axes: self.axes, forces: Vec::new(), bottom: Vec::new(), middle: Vec::new(), top: Vec::new(), plies: Vec::new() };
         for g in &nodal {
             let mut f = [0.0; 8];
             for a in 0..6 {
@@ -524,6 +699,37 @@ impl Shell {
             out.top.push(at(e + t / 2.0, 0.0));
         }
         Ok(out)
+    }
+
+    fn laminate_stresses(&self, section: &Laminate, nodal: &[[f64; 8]]) -> Result<ShellStress> {
+        let mut out = ShellStress { axes: self.axes, forces: Vec::new(), bottom: Vec::new(), middle: Vec::new(), top: Vec::new(), plies: Vec::new() };
+        for g in nodal {
+            let plies = section.recover(*g)?;
+            let first = plies.first().ok_or_else(|| Error::Invalid("laminate has no bottom ply".into()))?;
+            let last = plies.last().ok_or_else(|| Error::Invalid("laminate has no top ply".into()))?;
+            out.forces.push(section.resultants(*g)?);
+            out.bottom.push(self.ply_stress_global(first.angle, &first.bottom)?);
+            out.top.push(self.ply_stress_global(last.angle, &last.top)?);
+            let (angle, middle) = section.at(*g, section.eccentricity())?;
+            out.middle.push(self.ply_stress_global(angle, &middle)?);
+            out.plies.push(plies);
+        }
+        Ok(out)
+    }
+
+    fn ply_stress_global(&self, angle: f64, point: &PlyPoint) -> Result<[f64; 6]> {
+        let (s, c) = libm::sincos(angle);
+        let axes = [
+            std::array::from_fn(|i| c * self.axes[0][i] + s * self.axes[1][i]),
+            std::array::from_fn(|i| -s * self.axes[0][i] + c * self.axes[1][i]),
+            self.axes[2],
+        ];
+        let [xx, yy, zz, xy, xz, yz] = point.stress;
+        let stress = tensor_to_global(&axes, [[xx, xy, xz], [xy, yy, yz], [xz, yz, zz]]);
+        if stress.iter().any(|v| !v.is_finite()) {
+            return Err(Error::Invalid("global ply stress is not finite".into()));
+        }
+        Ok(stress)
     }
 }
 
