@@ -1,0 +1,155 @@
+[
+  {
+    "command": "model.units",
+    "params": {
+      "system": "m-kg-s-N-Pa"
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 1,
+      "xyz": [
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "tip",
+      "nodes": [
+        1
+      ]
+    }
+  },
+  {
+    "command": "model.mass.create",
+    "params": {
+      "name": "m",
+      "target": {
+        "set": "tip"
+      },
+      "mass": 1
+    }
+  },
+  {
+    "command": "model.spring.create",
+    "params": {
+      "name": "k",
+      "type": "spring",
+      "first": {
+        "set": "tip"
+      },
+      "direction": {
+        "dof": 1
+      },
+      "stiffness": 4
+    }
+  },
+  {
+    "command": "model.boundary_condition.create",
+    "params": {
+      "name": "guide",
+      "type": "displacement",
+      "target": {
+        "set": "tip"
+      },
+      "values": [
+        null,
+        0,
+        0,
+        null,
+        null,
+        null
+      ]
+    }
+  },
+  {
+    "command": "model.load.create",
+    "params": {
+      "name": "force",
+      "type": "force",
+      "target": {
+        "set": "tip"
+      },
+      "vector": [
+        1,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.step.create",
+    "params": {
+      "name": "Load",
+      "procedure": {
+        "type": "static"
+      },
+      "boundary_conditions": [
+        "guide"
+      ],
+      "loads": [
+        "force"
+      ]
+    }
+  },
+  {
+    "command": "model.step.create",
+    "params": {
+      "name": "Modes",
+      "procedure": {
+        "type": "frequency",
+        "modes": 1
+      },
+      "boundary_conditions": [
+        "guide"
+      ]
+    }
+  },
+  {
+    "id": "static",
+    "command": "solve.sensitivity.static",
+    "params": {
+      "step": "Load",
+      "parameter": {
+        "type": "spring_stiffness",
+        "name": "k"
+      },
+      "node": 1
+    }
+  },
+  {
+    "id": "modal",
+    "command": "solve.sensitivity.frequency",
+    "params": {
+      "step": "Modes",
+      "parameter": {
+        "type": "spring_stiffness",
+        "name": "k"
+      }
+    }
+  },
+  {
+    "id": "inverse",
+    "command": "solve.inverse.frequency",
+    "params": {
+      "step": "Modes",
+      "parameter": {
+        "type": "spring_stiffness",
+        "name": "k"
+      },
+      "lower": 1,
+      "upper": 16,
+      "observed": [
+        0.477464829275686
+      ],
+      "standard_deviation": [
+        0.001
+      ]
+    }
+  }
+]

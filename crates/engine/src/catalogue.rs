@@ -669,6 +669,21 @@ pub static CATALOGUE: &[Capability] = &[
         &["solve.nonlinear", "solve.buckle", "solve.harmonic", "solve.heat"],
     ),
     ready("solve.frequency", "Frequency", Solve, "Implicit", "Natural frequencies and mode shapes of a frequency step"),
+    ready_more(
+        "solve.sensitivity.static",
+        "Sensitivity",
+        Solve,
+        "Design studies",
+        "Static displacement, work and continuum stress derivatives; simple-mode frequency derivatives in the drop-down",
+        &["solve.sensitivity.frequency"],
+    ),
+    ready(
+        "solve.inverse.frequency",
+        "Fit Frequencies",
+        Solve,
+        "Design studies",
+        "Fit one material, thickness or spring parameter to simple natural frequencies within bounds",
+    ),
     ready(
         "solve.explicit",
         "Explicit",

@@ -782,6 +782,9 @@ fn rule_for(rules: &[(&'static str, Dim)], path: &[String]) -> Option<Dim> {
 /// Convert `reply` of command `id` from `from` (the command's frame) to `to` (the display
 /// system), and name the units it is in.
 pub fn convert_reply(id: &str, reply: &mut Value, from: &DisplaySystem, to: &DisplaySystem) -> Result<()> {
+    if matches!(id, "solve.sensitivity.static" | "solve.sensitivity.frequency" | "solve.inverse.frequency") {
+        return sensitivity_reply(reply, from, to);
+    }
     let rules: Vec<(&'static str, Dim)> =
         REPLIES.iter().chain(GEOMETRY_REPLIES).filter(|(c, _)| *c == id).flat_map(|(_, rules)| rules.iter().copied()).collect();
     if rules.is_empty() {
@@ -958,6 +961,73 @@ pub fn show_by_key(v: &mut Value, display: &DisplaySystem, rule: &dyn Fn(&str, u
     walk_keys(v, display, rule, units, 0);
 }
 
+fn sensitivity_reply(reply: &mut Value, from: &DisplaySystem, to: &DisplaySystem) -> Result<()> {
+    let parse = |key: &str| -> Result<Quantity> {
+        serde_json::from_value(reply.get(key).cloned().unwrap_or(Value::Null)).map_err(|e| EngineError::Params(e.to_string()))
+    };
+    let parameter = parse("parameter_quantity")?;
+    let response = parse("response_quantity")?;
+    let factor = |q| -> Result<f64> { from.to_si(q, 1.0).and_then(|v| to.express(q, v)).map_err(|e| EngineError::Params(e.to_string())) };
+    let p = factor(parameter)?;
+    fn scale(value: &mut Value, factor: f64) -> Result<()> {
+        match value {
+            Value::Array(a) => {
+                for v in a {
+                    scale(v, factor)?;
+                }
+            }
+            Value::Number(n) => {
+                let v = n.as_f64().unwrap_or(f64::NAN) * factor;
+                *n = serde_json::Number::from_f64(v).ok_or_else(|| EngineError::Params("sensitivity display conversion overflow".into()))?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+    let mut units = Map::new();
+    for (key, q, derivative) in [
+        ("parameter_value", parameter, false),
+        ("estimate", parameter, false),
+        ("confidence_interval", parameter, false),
+        ("predicted", Quantity::Frequency, false),
+        ("residuals", Quantity::Frequency, false),
+        ("increment", parameter, false),
+        ("displacement", response, false),
+        ("direct", response, true),
+        ("adjoint", response, true),
+        ("load_work", Quantity::Energy, false),
+        ("load_work_derivative", Quantity::Energy, true),
+        ("stress", Quantity::Pressure, false),
+        ("stress_derivative", Quantity::Pressure, true),
+    ] {
+        if let Some(v) = reply.get_mut(key) {
+            scale(v, factor(q)? / if derivative { p } else { 1.0 })?;
+        }
+        let symbol = if derivative { format!("{}/({})", to.symbol(q), to.symbol(parameter)) } else { to.symbol(q).to_string() };
+        units.insert(key.into(), json!(symbol));
+    }
+    if let Some(Value::Array(modes)) = reply.get_mut("modes") {
+        for mode in modes {
+            for (key, q, derivative) in [
+                ("frequency", Quantity::Frequency, false),
+                ("eigenvalue", Quantity::Eigenvalue, false),
+                ("frequency_derivative", Quantity::Frequency, true),
+                ("eigenvalue_derivative", Quantity::Eigenvalue, true),
+            ] {
+                if let Some(v) = mode.get_mut(key) {
+                    scale(v, factor(q)? / if derivative { p } else { 1.0 })?;
+                }
+                units.insert(
+                    key.into(),
+                    json!(if derivative { format!("{}/({})", to.symbol(q), to.symbol(parameter)) } else { to.symbol(q).to_string() }),
+                );
+            }
+        }
+    }
+    reply["units"] = Value::Object(units);
+    Ok(())
+}
+
 #[cfg(test)]
 mod geometry_tests;
 
@@ -1081,3 +1151,6 @@ mod tests {
         assert_eq!(convert_params(FORM, &annotated, &DisplaySystem::default(), si()).unwrap(), convert_params(FORM, &p, &m, si()).unwrap());
     }
 }
+
+// Derivatives carry an output quantity divided by the selected parameter quantity.
+// Keep this dynamic boundary beside the ordinary reply conversion rules.

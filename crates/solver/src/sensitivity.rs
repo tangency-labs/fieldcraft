@@ -81,7 +81,7 @@ pub fn amplitude_phase(value: [f64; 2], derivative: [f64; 2]) -> Result<[f64; 2]
     if value.iter().chain(&derivative).any(|x| !x.is_finite()) {
         return Err(Error::Invalid("phasor and derivative must be finite".into()));
     }
-    let magnitude = value[0].hypot(value[1]);
+    let magnitude = libm::hypot(value[0], value[1]);
     if magnitude == 0.0 || !magnitude.is_finite() {
         return Err(Error::Invalid("amplitude/phase derivative requires a finite nonzero response".into()));
     }
@@ -93,3 +93,9 @@ pub fn amplitude_phase(value: [f64; 2], derivative: [f64; 2]) -> Result<[f64; 2]
     }
     Ok(out)
 }
+
+mod model;
+pub use model::{FrequencyDerivative, FrequencySensitivity, StaticObservation, StaticSensitivity, frequency_sensitivity, static_sensitivity};
+
+mod inverse;
+pub use inverse::{FrequencyEstimate, FrequencyFit, inverse_frequency};

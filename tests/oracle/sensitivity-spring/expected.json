@@ -1,0 +1,85 @@
+{
+  "title": "Spring stiffness: static direct/adjoint and modal sensitivity",
+  "kind": "theory",
+  "source": "Independent differentiation of u=F/k, W=F\u00b2/k, lambda=k/m, f=sqrt(k/m)/(2 pi); direct/adjoint method: Adelman and Haftka, NASA TM-86333 (1984), equations (4)-(7).",
+  "quantities": [
+    {
+      "id": "static_direct",
+      "quantity": "static_direct",
+      "measure": {
+        "from": "static",
+        "pointer": "/direct"
+      },
+      "value": -0.0625,
+      "tolerance": {
+        "relative": 1e-08
+      },
+      "reason": "Exact oscillator identities; allowance for central assembly differences with relative increment 1e-5."
+    },
+    {
+      "id": "static_adjoint",
+      "quantity": "static_adjoint",
+      "measure": {
+        "from": "static",
+        "pointer": "/adjoint"
+      },
+      "value": -0.0625,
+      "tolerance": {
+        "relative": 1e-08
+      },
+      "reason": "Exact oscillator identities; allowance for central assembly differences with relative increment 1e-5."
+    },
+    {
+      "id": "load_work",
+      "quantity": "load_work",
+      "measure": {
+        "from": "static",
+        "pointer": "/load_work_derivative"
+      },
+      "value": -0.0625,
+      "tolerance": {
+        "relative": 1e-08
+      },
+      "reason": "Exact oscillator identities; allowance for central assembly differences with relative increment 1e-5."
+    },
+    {
+      "id": "modal_frequency",
+      "quantity": "modal_frequency",
+      "measure": {
+        "from": "modal",
+        "pointer": "/modes/0/frequency_derivative"
+      },
+      "value": 0.039788735772973836,
+      "tolerance": {
+        "relative": 1e-08
+      },
+      "reason": "Exact oscillator identities; allowance for central assembly differences with relative increment 1e-5."
+    },
+    {
+      "id": "modal_eigenvalue",
+      "quantity": "modal_eigenvalue",
+      "measure": {
+        "from": "modal",
+        "pointer": "/modes/0/eigenvalue_derivative"
+      },
+      "value": 1.0,
+      "tolerance": {
+        "relative": 1e-08
+      },
+      "reason": "Exact oscillator identities; allowance for central assembly differences with relative increment 1e-5."
+    },
+    {
+      "id": "inverse_parameter",
+      "quantity": "recovered spring stiffness",
+      "measure": {
+        "from": "inverse",
+        "pointer": "/estimate"
+      },
+      "value": 9.0,
+      "tolerance": {
+        "relative": 1e-06
+      },
+      "reason": "Noiseless synthetic frequency from k=9 N/m, m=1 kg; user recovery criterion."
+    }
+  ]
+}

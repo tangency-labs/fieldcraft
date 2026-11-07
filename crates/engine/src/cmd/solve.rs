@@ -1721,6 +1721,115 @@ fn probe_frame(r: &ExplicitResult, step: &str, nodes: &[u32], elements: &[u32], 
     Ok(json!({"step": step, "frame": k, "time": f.time, "nodes": out, "elements": element_values}))
 }
 
+pub const SENSITIVITY_STATIC: CommandSpec = CommandSpec {
+    id: "solve.sensitivity.static",
+    label: "Static Sensitivity",
+    params: r#"{"step":"Load", "parameter":{"type":"material","name":"Steel","constant":"young"}, "node":1, "dof":1, "relative_increment":0.00001, "stress_element":1} — semi-analytical direct and adjoint derivative of one displacement (dof 1–3) or rotation (4–6), external-load work and optional continuum integration-point stresses. Parameter types: material (young, poisson, density, e1/e2/e3, nu12/nu13/nu23, g12/g13/g23), shell_thickness, spring_stiffness. The increment is relative to the parameter magnitude (unit scale 1 for a zero Poisson ratio). Returns values and derivatives in display units; no stored result or model mutation. Thermal/initial fields and non-static steps are refused. Sweep increments to check assembly differencing; threads and caps as solve.static."#,
+    form: Some(super::forms::SENSITIVITY_STATIC),
+    kind: CommandKind::Model,
+    requires: &[Requirement::Step],
+    run: run_sensitivity_static,
+};
+
+fn run_sensitivity_static(s: &mut Session, p: &Value) -> Result<Value> {
+    use fieldcraft_model::design::Parameter;
+    use fieldcraft_solver::sensitivity::{StaticObservation, static_sensitivity};
+    let parameter: Parameter = super::req(p, "parameter")?;
+    let node = super::req(p, "node")?;
+    let dof = opt::<u8>(p, "dof")?.unwrap_or(1);
+    let fraction = opt::<f64>(p, "relative_increment")?.unwrap_or(1e-5);
+    if !fraction.is_finite() || fraction <= 0.0 || fraction > 0.1 {
+        return Err(EngineError::Params("relative_increment must be in (0, 0.1]".into()));
+    }
+    let value = parameter.value(&s.model)?;
+    let scale = if value == 0.0 { 1.0 } else { value.abs() };
+    let quantity = parameter.quantity(&s.model)?;
+    let step = opt::<String>(p, "step")?;
+    let observation = StaticObservation { node, dof, stress_element: opt(p, "stress_element")? };
+    let limits = limits(p)?;
+    let result = with_threads(threads(s, p)?, || static_sensitivity(&s.model, step.as_deref(), &parameter, scale * fraction, observation, &limits))?;
+    let mut out = serde_json::to_value(result).map_err(|e| EngineError::Params(e.to_string()))?;
+    out["parameter_quantity"] = json!(quantity.name());
+    out["response_quantity"] = json!(if dof <= 3 { "length" } else { "angle" });
+    out["node"] = json!(node);
+    out["dof"] = json!(dof);
+    out["method"] = json!("semi_analytical");
+    Ok(out)
+}
+
+pub const SENSITIVITY_FREQUENCY: CommandSpec = CommandSpec {
+    id: "solve.sensitivity.frequency",
+    label: "Frequency Sensitivity",
+    params: r#"{"step":"Modes", "parameter":{"type":"material","name":"Steel","constant":"young"}, "relative_increment":0.00001} — simple-eigenvalue and frequency derivatives from assembled FE stiffness/mass differences and the actual mass-normalized modes. One extra mode guards the upper spectral gap; rigid/clustered modes and frequency windows are refused. Default consistent mass. Does not yet compute eigenvector derivatives. Parameter types, threads and caps as solve.sensitivity.static; derivatives in display output units per display parameter unit."#,
+    form: Some(super::forms::SENSITIVITY_FREQUENCY),
+    kind: CommandKind::Model,
+    requires: &[Requirement::Step],
+    run: run_sensitivity_frequency,
+};
+
+fn run_sensitivity_frequency(s: &mut Session, p: &Value) -> Result<Value> {
+    let parameter: fieldcraft_model::design::Parameter = req(p, "parameter")?;
+    let value = parameter.value(&s.model)?;
+    let fraction = opt::<f64>(p, "relative_increment")?.unwrap_or(1e-5);
+    if !fraction.is_finite() || fraction <= 0.0 || fraction > 0.1 {
+        return Err(EngineError::Params("relative_increment must be in (0, 0.1]".into()));
+    }
+    let increment = if value == 0.0 { fraction } else { value.abs() * fraction };
+    let step = opt::<String>(p, "step")?;
+    let limits = limits(p)?;
+    let result = with_threads(threads(s, p)?, || {
+        fieldcraft_solver::sensitivity::frequency_sensitivity(&s.model, step.as_deref(), &parameter, increment, &FrequencyOptions::default(), &limits)
+    })?;
+    let mut out = serde_json::to_value(result).map_err(|e| EngineError::Params(e.to_string()))?;
+    out["parameter_quantity"] = json!(parameter.quantity(&s.model)?.name());
+    out["response_quantity"] = json!("frequency");
+    out["method"] = json!("semi_analytical");
+    Ok(out)
+}
+
+pub const INVERSE_FREQUENCY: CommandSpec = CommandSpec {
+    id: "solve.inverse.frequency",
+    label: "Fit One Parameter to Frequencies",
+    params: r#"{"step":"Modes", "parameter":{"type":"material","name":"Steel","constant":"young"}, "lower":"100 GPa", "upper":"300 GPa", "observed":["10 Hz","30 Hz"], "standard_deviation":["0.1 Hz","0.1 Hz"], "regularization":0, "max_iterations":16, "relative_increment":0.00001} — bounded one-parameter Levenberg–Marquardt fit using actual FE simple-mode sensitivities. Bounds are in parameter display units, observations and optional known independent Gaussian standard deviations in frequency units (typed units accepted). The initial parameter is the current model value. Returns the estimate, predicted frequencies, residuals and a local 95% interval when known errors, no regularization and an interior estimate permit it; otherwise interval is null with a reason. No model mutation. No multi-parameter or harmonic inversion yet. Threads/caps as solve.static."#,
+    form: Some(super::forms::INVERSE_FREQUENCY),
+    kind: CommandKind::Model,
+    requires: &[Requirement::Step],
+    run: run_inverse_frequency,
+};
+
+fn run_inverse_frequency(s: &mut Session, p: &Value) -> Result<Value> {
+    use fieldcraft_model::units::ValueInput;
+    use fieldcraft_solver::sensitivity::{FrequencyFit, inverse_frequency};
+    let parameter: fieldcraft_model::design::Parameter = req(p, "parameter")?;
+    let q = parameter.quantity(&s.model)?;
+    let convert = |value: ValueInput, quantity| value.to_si(quantity, s.input_units()).map_err(|e| EngineError::Params(e.to_string()));
+    let lower = convert(req(p, "lower")?, q)?;
+    let upper = convert(req(p, "upper")?, q)?;
+    let observed: Vec<ValueInput> = req(p, "observed")?;
+    let observed = observed.into_iter().map(|v| convert(v, Quantity::Frequency)).collect::<Result<Vec<_>>>()?;
+    let standard_deviation = opt::<Vec<ValueInput>>(p, "standard_deviation")?
+        .map(|a| a.into_iter().map(|v| convert(v, Quantity::Frequency)).collect::<Result<Vec<_>>>())
+        .transpose()?;
+    let fit = FrequencyFit {
+        lower,
+        upper,
+        observed,
+        standard_deviation,
+        regularization: opt::<f64>(p, "regularization")?.unwrap_or(0.0),
+        max_iterations: opt::<usize>(p, "max_iterations")?.unwrap_or(16),
+        relative_increment: opt::<f64>(p, "relative_increment")?.unwrap_or(1e-5),
+    };
+    let step = opt::<String>(p, "step")?;
+    let mut limits = limits(p)?;
+    // The optimization iteration cap must not truncate each FE eigen solve.
+    limits.max_lanczos_vectors = cap(p, "max_lanczos_vectors", Limits::MAX_LANCZOS_VECTORS)?;
+    let result = with_threads(threads(s, p)?, || inverse_frequency(&s.model, step.as_deref(), &parameter, &fit, &limits))?;
+    let mut out = serde_json::to_value(result).map_err(|e| EngineError::Params(e.to_string()))?;
+    out["parameter_quantity"] = json!(q.name());
+    out["response_quantity"] = json!("frequency");
+    Ok(out)
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     /// `file.sample` opens the cantilever with nothing to save; `solve.run` solves both its steps

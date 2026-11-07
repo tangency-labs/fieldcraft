@@ -1,0 +1,317 @@
+//! Semi-analytical model sensitivities: central differences of assembled
+//! operators and loads, followed by a tangent/adjoint solve with the original
+//! factor. This is not a finite difference of independently solved responses.
+//! Adelman and Haftka, NASA TM-86333 (1984), static response section, equations
+//! (4)-(7) and calculation of stiffness derivatives. A step-size study remains
+//! necessary; the returned increment is in SI parameter units.
+use crate::analysis::{self, Setup};
+use crate::sparse::Csr;
+use crate::system::{self, Mesh};
+use crate::{Error, Limits, Result};
+use fieldcraft_fem::DofKind;
+use fieldcraft_model::{Model, Procedure, design::Parameter};
+use serde::Serialize;
+
+#[derive(Debug, Clone, Copy)]
+pub struct StaticObservation {
+    pub node: u32,
+    /// 1..=6: translations then rotations.
+    pub dof: u8,
+    /// Optional continuum element for integration-point stress derivatives.
+    pub stress_element: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StaticSensitivity {
+    pub parameter: Parameter,
+    pub parameter_value: f64,
+    pub increment: f64,
+    pub displacement: f64,
+    pub direct: f64,
+    pub adjoint: f64,
+    /// External-load work f^T u, not twice the strain energy when supports move.
+    pub load_work: f64,
+    pub load_work_derivative: f64,
+    pub stress: Vec<[f64; 6]>,
+    pub stress_derivative: Vec<[f64; 6]>,
+    pub primal_relative_residual: f64,
+    pub tangent_relative_residual: f64,
+    pub warnings: Vec<String>,
+}
+
+pub(super) fn perturb(model: &Model, parameter: &Parameter, h: f64) -> Result<(Model, Model)> {
+    let value = parameter.value(model)?;
+    if !h.is_finite() || h <= 0.0 || value + h == value || value - h == value {
+        return Err(Error::Invalid("sensitivity increment must be positive, finite and representable at the parameter value".into()));
+    }
+    let (mut plus, mut minus) = (model.clone(), model.clone());
+    parameter.set(&mut plus, value + h)?;
+    parameter.set(&mut minus, value - h)?;
+    Ok((plus, minus))
+}
+
+fn dot(a: &[f64], b: &[f64]) -> f64 {
+    a.iter().zip(b).map(|(x, y)| x * y).sum()
+}
+fn difference(a: &[f64], b: &[f64], h: f64) -> Result<Vec<f64>> {
+    if a.len() != b.len() {
+        return Err(Error::Invalid("parameter changed equation layout".into()));
+    }
+    let out: Vec<_> = a.iter().zip(b).map(|(x, y)| (x - y) / (2.0 * h)).collect();
+    if out.iter().any(|x| !x.is_finite()) {
+        return Err(Error::Invalid("non-finite assembled derivative".into()));
+    }
+    Ok(out)
+}
+fn matrix_difference(a: &Csr, b: &Csr, h: f64) -> Result<Csr> {
+    if a.n != b.n || a.ptr != b.ptr || a.idx != b.idx {
+        return Err(Error::Invalid("parameter changed matrix pattern".into()));
+    }
+    Ok(Csr { val: difference(&a.val, &b.val, h)?, ..a.clone() })
+}
+fn residual(k: &Csr, u: &[f64], rhs: &[f64]) -> f64 {
+    let mut ku = vec![0.0; k.n];
+    k.mul(u, &mut ku);
+    let r = ku.iter().zip(rhs).map(|(a, b)| (a - b).abs()).fold(0.0_f64, f64::max);
+    let scale = rhs.iter().map(|x| x.abs()).fold(0.0_f64, f64::max);
+    if scale > 0.0 { r / scale } else { r }
+}
+fn cold(setup: &Setup<'_>) -> Result<()> {
+    if !setup.model.initial_fields().is_empty() || system::temperature_loads(setup.model, setup.resolved, setup.mesh, setup.step)?.is_some() {
+        return Err(Error::NotSupported("thermal or initial fields in model sensitivities".into()));
+    }
+    system::refuse_contact(setup.model, "linear sensitivity")
+}
+fn stress(mesh: &Mesh, full: &[f64], label: Option<u32>) -> Result<Vec<[f64; 6]>> {
+    let Some(label) = label else {
+        return Ok(Vec::new());
+    };
+    let e = mesh.element(label).ok_or_else(|| Error::NotSupported("stress sensitivity currently requires a continuum element".into()))?;
+    let (translation, _, _) = analysis::split(full, mesh);
+    let ue: Vec<_> = e.nodes.iter().map(|n| translation.get(*n).copied().unwrap_or_default()).collect();
+    Ok(e.stresses_from(&ue, None, None)?.iter().map(|p| p.stress).collect())
+}
+
+/// A scalar displacement/rotation observation, its direct and adjoint derivative,
+/// external-load work and optional continuum integration-point stresses. The
+/// named parameter cannot change constraints or mesh topology. All values are SI.
+/// Assembly differences include density-dependent loads and prescribed-value
+/// elimination. The original stiffness is factored once for all three solves.
+pub fn static_sensitivity(
+    model: &Model,
+    step: Option<&str>,
+    parameter: &Parameter,
+    increment: f64,
+    observation: StaticObservation,
+    limits: &Limits,
+) -> Result<StaticSensitivity> {
+    let (plus, minus) = perturb(model, parameter, increment)?;
+    let resolved = model.resolve()?;
+    let step = model.select_step(step, |p| matches!(p, Procedure::Static {}), "linear static")?;
+    let mesh = Mesh::new(model, &resolved, limits.max_dofs)?;
+    let setup = Setup { model, resolved: &resolved, mesh: &mesh, step };
+    cold(&setup)?;
+    let kind = observation
+        .dof
+        .checked_sub(1)
+        .and_then(|i| DofKind::from_direction(i as usize))
+        .ok_or_else(|| Error::Invalid("sensitivity dof must be 1..=6".into()))?;
+    let node = mesh.node(observation.node).ok_or_else(|| Error::Invalid("sensitivity node does not exist".into()))?;
+    let dof = mesh.dof(node, kind)?;
+    let (graph, order) = analysis::pattern(&mesh);
+    let mut warnings: Vec<String> = resolved.warnings.iter().map(ToString::to_string).chain(mesh.warnings.iter().cloned()).collect();
+    warnings.extend(system::inelastic_warnings(model));
+    let red = analysis::reduction(&setup, true, &order, analysis::budget(limits, &mesh, &graph, 3), &mut warnings)?;
+    let k = analysis::assemble(&mesh, &graph, None)?.k;
+    let f = system::loads(model, &resolved, &mesh, step, &red.active)?;
+    let [kff] = red.reduce([&k])?;
+    let rhs = red.rhs(&f, &k);
+    let factor = analysis::factor_raw(&kff, limits).map_err(|e| analysis::factor_error(e, &mesh, &red))?;
+    let mut q = rhs.clone();
+    factor.solve(&mut q)?;
+    let u = red.expand(&q, true);
+    let assemble_perturbed = |m: &Model| -> Result<_> {
+        let r = m.resolve()?;
+        let s = m.step(&step.name).ok_or_else(|| Error::Internal("sensitivity step".into()))?;
+        let mesh = Mesh::new(m, &r, limits.max_dofs)?;
+        if mesh.labels != setup.mesh.labels || mesh.dofs() != setup.mesh.dofs() {
+            return Err(Error::Invalid("parameter changed mesh layout".into()));
+        }
+        let k = analysis::assemble(&mesh, &graph, None)?.k;
+        let f = system::loads(m, &r, &mesh, s, &red.active)?;
+        Ok((mesh, k, f))
+    };
+    let (mp, kp, fp) = assemble_perturbed(&plus)?;
+    let (mm, km, fm) = assemble_perturbed(&minus)?;
+    let dk = matrix_difference(&kp, &km, increment)?;
+    let df = difference(&fp, &fm, increment)?;
+    let drhs = difference(&red.rhs(&fp, &kp), &red.rhs(&fm, &km), increment)?;
+    let [dkff] = red.reduce([&dk])?;
+    let mut dku = vec![0.0; q.len()];
+    dkff.mul(&q, &mut dku);
+    let tangent: Vec<_> = drhs.iter().zip(dku).map(|(f, k)| f - k).collect();
+    let mut dq = tangent.clone();
+    factor.solve(&mut dq)?;
+    let du = red.expand(&dq, false);
+    let mut w = vec![0.0; mesh.dofs()];
+    *w.get_mut(dof).ok_or_else(|| Error::Internal("observation dof".into()))? = 1.0;
+    let mut adjoint = red.restrict(&w);
+    factor.solve(&mut adjoint)?;
+    let up: Vec<_> = u.iter().zip(&du).map(|(u, d)| u + increment * d).collect();
+    let um: Vec<_> = u.iter().zip(&du).map(|(u, d)| u - increment * d).collect();
+    let sp = stress(&mp, &up, observation.stress_element)?;
+    let sm = stress(&mm, &um, observation.stress_element)?;
+    let ds: Vec<[f64; 6]> = sp.iter().zip(&sm).map(|(p, m)| std::array::from_fn(|i| (p[i] - m[i]) / (2.0 * increment))).collect();
+    let out = StaticSensitivity {
+        parameter: parameter.clone(),
+        parameter_value: parameter.value(model)?,
+        increment,
+        displacement: u.get(dof).copied().ok_or_else(|| Error::Internal("observation".into()))?,
+        direct: du.get(dof).copied().ok_or_else(|| Error::Internal("observation derivative".into()))?,
+        adjoint: dot(&adjoint, &tangent),
+        load_work: dot(&f, &u),
+        load_work_derivative: dot(&df, &u) + dot(&f, &du),
+        stress: stress(&mesh, &u, observation.stress_element)?,
+        stress_derivative: ds,
+        primal_relative_residual: residual(&kff, &q, &rhs),
+        tangent_relative_residual: residual(&kff, &dq, &tangent),
+        warnings,
+    };
+    if [
+        out.displacement,
+        out.direct,
+        out.adjoint,
+        out.load_work,
+        out.load_work_derivative,
+        out.primal_relative_residual,
+        out.tangent_relative_residual,
+    ]
+    .iter()
+    .chain(out.stress.iter().flatten())
+    .chain(out.stress_derivative.iter().flatten())
+    .any(|x| !x.is_finite())
+    {
+        return Err(Error::Invalid("non-finite model sensitivity result".into()));
+    }
+    Ok(out)
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FrequencyDerivative {
+    pub frequency: f64,
+    pub eigenvalue: f64,
+    pub frequency_derivative: f64,
+    pub eigenvalue_derivative: f64,
+    pub modal_mass: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FrequencySensitivity {
+    pub parameter: Parameter,
+    pub parameter_value: f64,
+    pub increment: f64,
+    pub modes: Vec<FrequencyDerivative>,
+    pub warnings: Vec<String>,
+}
+
+/// Simple-eigenvalue derivatives φᵀ(K'−λM')φ/(φᵀMφ), from the actual
+/// assembled FE operators. Fox and Kapoor (1968), AIAA J. 6:2426–2429,
+/// doi:10.2514/3.5008; summarized in NASA TM-86333. One extra mode checks
+/// the upper gap. Clustered/rigid modes and frequency windows are refused;
+/// this API does not compute Nelson eigenvector derivatives yet.
+pub fn frequency_sensitivity(
+    model: &Model,
+    step: Option<&str>,
+    parameter: &Parameter,
+    increment: f64,
+    options: &crate::FrequencyOptions,
+    limits: &Limits,
+) -> Result<FrequencySensitivity> {
+    let (plus, minus) = perturb(model, parameter, increment)?;
+    let step = model.select_step(step, |p| matches!(p, Procedure::Frequency { .. }), "frequency")?;
+    let Procedure::Frequency { modes, min_hz: None, max_hz: None } = step.procedure else {
+        return Err(Error::NotSupported("frequency windows in modal sensitivity".into()));
+    };
+    let mut guard_model = model.clone();
+    let mut guard_step = step.clone();
+    guard_step.procedure =
+        Procedure::Frequency { modes: modes.checked_add(1).ok_or_else(|| Error::Invalid("mode count overflow".into()))?, min_hz: None, max_hz: None };
+    guard_model.replace_step(guard_step)?;
+    let result = crate::solve_frequency(&guard_model, Some(&step.name), options, limits)?;
+    let requested = modes as usize;
+    if result.modes.len() < requested || (result.modes.len() == requested && result.stats.equations > requested) {
+        return Err(Error::NotConverged("modal sensitivity needs requested modes and an upper gap guard".into()));
+    }
+    for pair in result.modes.windows(2) {
+        if let [a, b] = pair
+            && (a.eigenvalue - b.eigenvalue).abs() <= 1e-5 * a.eigenvalue.abs().max(b.eigenvalue.abs())
+        {
+            return Err(Error::NotSupported("clustered eigenvalues need subspace sensitivity; individual modal derivatives refused".into()));
+        }
+    }
+    let resolved = model.resolve()?;
+    let mesh = Mesh::new(model, &resolved, limits.max_dofs)?;
+    let (graph, _) = analysis::pattern(&mesh);
+    let mass = analysis::assemble(&mesh, &graph, Some(options.mass))?.m.ok_or_else(|| Error::Internal("modal mass".into()))?;
+    let assembled = |m: &Model| -> Result<_> {
+        let resolved = m.resolve()?;
+        let other = Mesh::new(m, &resolved, limits.max_dofs)?;
+        if other.labels != mesh.labels || other.dofs() != mesh.dofs() {
+            return Err(Error::Invalid("modal parameter changed mesh layout".into()));
+        }
+        analysis::assemble(&other, &graph, Some(options.mass))
+    };
+    let p = assembled(&plus)?;
+    let m = assembled(&minus)?;
+    let dk = matrix_difference(&p.k, &m.k, increment)?;
+    let dm = matrix_difference(
+        &p.m.ok_or_else(|| Error::Internal("perturbed mass".into()))?,
+        &m.m.ok_or_else(|| Error::Internal("perturbed mass".into()))?,
+        increment,
+    )?;
+    let mut out = Vec::new();
+    for mode in result.modes.iter().take(requested) {
+        if mode.eigenvalue <= 0.0 || mode.eigenvalue <= result.modes.last().map_or(0.0, |m| m.eigenvalue) * 1e-10 {
+            return Err(Error::NotSupported("rigid or near-zero eigenvalue sensitivity".into()));
+        }
+        let mut phi = Vec::with_capacity(mesh.dofs());
+        for dof in 0..mesh.dofs() {
+            let (slot, kind) = mesh.layout.locate(dof).ok_or_else(|| Error::Internal("mode dof layout".into()))?;
+            let d = kind.direction().ok_or_else(|| Error::NotSupported("nonstructural modal sensitivity".into()))?;
+            let value = if slot < mesh.labels.len() {
+                if d < 3 { mode.shape.get(slot).and_then(|u| u.get(d)) } else { mode.rotation.get(slot).and_then(|u| u.get(d - 3)) }
+            } else {
+                mode.point_shape.get(slot - mesh.labels.len()).and_then(|u| u.get(d))
+            };
+            phi.push(value.copied().ok_or_else(|| Error::Internal("modal shape layout".into()))?);
+        }
+        let quadratic = |a: &Csr| {
+            let mut y = vec![0.0; phi.len()];
+            a.mul(&phi, &mut y);
+            dot(&phi, &y)
+        };
+        let modal_mass = quadratic(&mass);
+        if !modal_mass.is_finite() || modal_mass <= 0.0 {
+            return Err(Error::Invalid("nonpositive modal mass".into()));
+        }
+        let dl = (quadratic(&dk) - mode.eigenvalue * quadratic(&dm)) / modal_mass;
+        let df = mode.frequency * dl / (2.0 * mode.eigenvalue);
+        if !dl.is_finite() || !df.is_finite() {
+            return Err(Error::Invalid("non-finite modal derivative".into()));
+        }
+        out.push(FrequencyDerivative {
+            frequency: mode.frequency,
+            eigenvalue: mode.eigenvalue,
+            frequency_derivative: df,
+            eigenvalue_derivative: dl,
+            modal_mass,
+        });
+    }
+    Ok(FrequencySensitivity {
+        parameter: parameter.clone(),
+        parameter_value: parameter.value(model)?,
+        increment,
+        modes: out,
+        warnings: result.warnings,
+    })
+}

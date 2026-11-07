@@ -1,0 +1,29 @@
+{
+  "note": "FieldCraft's accepted results for this case, written by `cargo xtask oracle --bless`. A result outside its band fails CI.",
+  "values": {
+    "inverse_parameter": {
+      "band": 9.000000000000001e-9,
+      "value": 8.999999999999986
+    },
+    "load_work": {
+      "band": 6.250000000006251e-11,
+      "value": -0.0625000000000625
+    },
+    "modal_eigenvalue": {
+      "band": 1.0000000000010001e-9,
+      "value": 1.000000000001
+    },
+    "modal_frequency": {
+      "band": 3.978873577301363e-11,
+      "value": 0.03978873577301363
+    },
+    "static_adjoint": {
+      "band": 6.250000000006251e-11,
+      "value": -0.0625000000000625
+    },
+    "static_direct": {
+      "band": 6.250000000006251e-11,
+      "value": -0.0625000000000625
+    }
+  }
+}

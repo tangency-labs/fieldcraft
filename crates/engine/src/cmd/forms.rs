@@ -2455,6 +2455,87 @@ const MAX_FACTOR: Field = int("max_factor_entries", "Max factor entries", 1, sup
     .hint("400000000");
 const THREADS: Field = int("threads", "Threads", 1, 256).help("Threads to use; the session's setting when empty.").hint("the session's");
 
+const DESIGN_PARAMETER: Field = variants(
+    "parameter",
+    "Design parameter",
+    &[
+        variant(
+            "material",
+            "Material constant",
+            &[
+                reference("name", "Material", C::Material).req().help("The existing material to differentiate."),
+                choice(
+                    "constant",
+                    "Constant",
+                    &[
+                        ("young", "Young modulus"),
+                        ("poisson", "Poisson ratio"),
+                        ("density", "Density"),
+                        ("e1", "E1"),
+                        ("e2", "E2"),
+                        ("e3", "E3"),
+                        ("nu12", "Nu12"),
+                        ("nu13", "Nu13"),
+                        ("nu23", "Nu23"),
+                        ("g12", "G12"),
+                        ("g13", "G13"),
+                        ("g23", "G23"),
+                    ],
+                )
+                .req()
+                .help("The elastic constant or density; it must match the material type."),
+            ],
+        ),
+        variant(
+            "shell_thickness",
+            "Shell thickness",
+            &[reference("name", "Section", C::Section).req().help("The existing homogeneous shell section.")],
+        ),
+        variant(
+            "spring_stiffness",
+            "Spring stiffness",
+            &[reference("name", "Spring", C::Spring).req().help("The existing elastic spring or compliant support.")],
+        ),
+    ],
+)
+.req()
+.help("One existing scalar property; the input model stays unchanged.");
+const SENSITIVITY_INCREMENT: Field = positive("relative_increment", "Relative increment", D::None)
+    .def("0.00001")
+    .help("Central assembly increment relative to the parameter magnitude, at most 0.1; at zero Poisson ratio the scale is one.");
+pub const SENSITIVITY_STATIC: &[Field] = &[
+    STEP,
+    DESIGN_PARAMETER,
+    int("node", "Observation node", 1, u32::MAX as i64).req().help("Label of the node whose displacement or rotation is observed."),
+    int("dof", "Direction", 1, 6).def("1").help("1–3 are x/y/z translations; 4–6 are rotations."),
+    int("stress_element", "Continuum stress element", 1, u32::MAX as i64).help("Optional integration-point stress observation."),
+    SENSITIVITY_INCREMENT,
+    MAX_DOFS,
+    MAX_FACTOR,
+    THREADS,
+];
+pub const SENSITIVITY_FREQUENCY: &[Field] = &[STEP, DESIGN_PARAMETER, SENSITIVITY_INCREMENT, MAX_DOFS, MAX_FACTOR, THREADS];
+pub const INVERSE_FREQUENCY: &[Field] = &[
+    STEP,
+    DESIGN_PARAMETER,
+    json("lower", "Lower bound").req().help("A number in the parameter display unit, or a quoted typed value such as \"100 GPa\"."),
+    json("upper", "Upper bound").req().help("A number in the parameter display unit, or a quoted typed value such as \"300 GPa\"."),
+    json("observed", "Observed frequencies")
+        .req()
+        .help("Array of up to 256 frequencies in mode order; numbers use display frequency units, typed strings are accepted."),
+    json("standard_deviation", "Known standard deviations")
+        .help("Optional array in frequency units, one positive value per observation; enables the local interval when applicable."),
+    positive("regularization", "Regularization", D::None).def("0").help("Nonnegative penalty on normalized distance from the starting parameter."),
+    int("max_iterations", "Maximum iterations", 1, 64).def("16").help("Maximum optimization iterations; each trial recomputes finite element modes."),
+    int("max_lanczos_vectors", "Maximum Lanczos vectors", 1, 3000)
+        .hint("3000")
+        .help("Independent cap for each modal solve; not the optimization iteration count."),
+    SENSITIVITY_INCREMENT,
+    MAX_DOFS,
+    MAX_FACTOR,
+    THREADS,
+];
+
 pub const SOLVE_STATIC: &[Field] = &[STEP, MAX_DOFS, MAX_FACTOR, THREADS];
 pub const SOLVE_HARMONIC: &[Field] = &[
     STEP,

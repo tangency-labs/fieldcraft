@@ -27,7 +27,8 @@ A step's procedure decides which solver runs it. `solve.run` solves every step i
 The structural pages that apply to several procedures: [elements](structural/elements.md),
 [materials](structural/materials.md), [composites](structural/composites.md), [contact](structural/contact.md),
 [constraints and connectors](structural/constraints-and-connectors.md) and
-[linear solvers](structural/linear-solvers.md). The fluid pages: [collision
+[linear solvers](structural/linear-solvers.md) and
+[model sensitivities](structural/sensitivity.md). The fluid pages: [collision
 operators](fluid/collision.md), [boundary conditions](fluid/boundary-conditions.md),
 [turbulence](fluid/turbulence.md), [large-eddy simulation](fluid/les.md), [heat
 transfer](fluid/heat-transfer.md), [fans and vents](fluid/fans-and-vents.md), [free

@@ -40,6 +40,7 @@ pub mod constraints;
 pub mod contact;
 mod convert;
 pub mod datums;
+pub mod design;
 pub mod discrete;
 pub mod fluid_zones;
 pub mod fluids;
