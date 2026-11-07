@@ -10,7 +10,32 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::bcs::Target;
-use crate::{Error, Model, Result, context, finite, insert_new, not_in_use, positive, remove_existing, replace_existing, require};
+use crate::{Error, Model, Result, context, finite, insert_new, nonnegative, not_in_use, positive, remove_existing, replace_existing, require};
+
+/// The Stefan–Boltzmann constant σ in W/(m²·K⁴) (CODATA 2018, exact since the SI redefinition
+/// of 2019): the model is stored in SI, so it applies as it is.
+pub const STEFAN_BOLTZMANN: f64 = 5.670_374_419e-8;
+
+/// Radiation from a surface to its surroundings: a heat flux ε σ (T⁴ − T_amb⁴) out of it
+/// ([`STEFAN_BOLTZMANN`]). The surface sees only the surroundings: radiation between
+/// surfaces (view factors) is not modelled.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SurfaceRadiation {
+    /// The surface's emissivity, above 0 and at most 1.
+    pub emissivity: f64,
+    /// The surroundings' temperature (kelvin, absolute).
+    pub ambient: f64,
+}
+
+impl SurfaceRadiation {
+    pub fn validate(&self) -> Result<()> {
+        if !(self.emissivity > 0.0 && self.emissivity <= 1.0) {
+            return Err(Error::Invalid(format!("an emissivity must be a number above 0 and at most 1, got {}", self.emissivity)));
+        }
+        nonnegative("ambient temperature (absolute)", self.ambient).map(|_| ())
+    }
+}
 
 /// How a force or moment on a set is shared among the set's nodes.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -75,6 +100,11 @@ pub enum Load {
     /// Convection from the set's element faces to a surrounding medium at `sink` temperature:
     /// heat flux h (T_sink − T) into the body, with film coefficient `film` (h).
     Convection { set: String, film: f64, sink: f64 },
+    /// Radiation from the set's element faces to surroundings at `ambient` (an absolute
+    /// temperature): heat flux ε σ (T⁴ − T_amb⁴) out of the body, with surface emissivity
+    /// `emissivity` (0 < ε ≤ 1) and σ [`STEFAN_BOLTZMANN`]. The faces see only the ambient:
+    /// radiation between surfaces (view factors) is not modelled.
+    Radiation { set: String, emissivity: f64, ambient: f64 },
     /// Heat generated per volume in the set's elements.
     HeatSource { set: String, power: f64 },
     /// A temperature field at the target's nodes in a stress step: it strains the material
@@ -107,15 +137,16 @@ impl Load {
             Load::Centrifugal { .. } => "centrifugal",
             Load::SurfaceFlux { .. } => "surface_flux",
             Load::Convection { .. } => "convection",
+            Load::Radiation { .. } => "radiation",
             Load::HeatSource { .. } => "heat_source",
             Load::Temperature { .. } => "temperature",
         }
     }
 
-    /// Whether it is a heat transfer load (flux, convection, heat source), active in heat
-    /// transfer and coupled temperature–displacement steps.
+    /// Whether it is a heat transfer load (flux, convection, radiation, heat source), active in
+    /// heat transfer and coupled temperature–displacement steps.
     pub fn is_thermal(&self) -> bool {
-        matches!(self, Load::SurfaceFlux { .. } | Load::Convection { .. } | Load::HeatSource { .. })
+        matches!(self, Load::SurfaceFlux { .. } | Load::Convection { .. } | Load::Radiation { .. } | Load::HeatSource { .. })
     }
 
     /// The set the load acts on, if any.
@@ -127,6 +158,7 @@ impl Load {
             | Load::Traction { set, .. }
             | Load::SurfaceFlux { set, .. }
             | Load::Convection { set, .. }
+            | Load::Radiation { set, .. }
             | Load::HeatSource { set, .. } => Some(set),
             Load::Gravity { set, .. } | Load::Centrifugal { set, .. } => set.as_deref(),
         }
@@ -174,6 +206,7 @@ impl Load {
                 finite("sink temperature", *sink)?;
                 return Ok(());
             }
+            Load::Radiation { emissivity, ambient, .. } => return SurfaceRadiation { emissivity: *emissivity, ambient: *ambient }.validate(),
             Load::Temperature { target, value } => {
                 finite("temperature", *value)?;
                 if let Target::ReferencePoint(r) = target {
@@ -251,5 +284,12 @@ mod tests {
         let l = Load::Convection { set: set(), film: 10.0, sink: 20.0 };
         assert!(l.is_thermal() && l.set() == Some("s") && l.kind() == "convection");
         assert!(!Load::Temperature { target: Target::Set(set()), value: 1.0 }.is_thermal());
+        let rad = |emissivity, ambient| Load::Radiation { set: set(), emissivity, ambient }.validate();
+        assert!(rad(0.8, 293.15).is_ok() && rad(1.0, 0.0).is_ok());
+        for (e, t) in [(0.0, 300.0), (1.5, 300.0), (f64::NAN, 300.0), (0.5, -1.0), (0.5, f64::INFINITY)] {
+            assert!(rad(e, t).is_err(), "{e} {t}");
+        }
+        let l = Load::Radiation { set: set(), emissivity: 0.9, ambient: 300.0 };
+        assert!(l.is_thermal() && l.set() == Some("s") && l.kind() == "radiation");
     }
 }

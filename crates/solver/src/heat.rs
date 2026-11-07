@@ -1,5 +1,5 @@
 //! Heat transfer: steady and transient conduction with prescribed temperatures, surface fluxes,
-//! convection and internal heat sources.
+//! convection, radiation to an ambient and internal heat sources.
 //!
 //! Every node of the solid elements carries one temperature ([`fieldcraft_fem::heat::HEAT_DOFS`]).
 //! The conductivity K (with the convection films) and capacity C are assembled on the node
@@ -15,15 +15,26 @@
 //!   (C + θΔt K) Tₙ₊₁ = (C − (1 − θ)Δt K) Tₙ + Δt f, from a uniform initial temperature, with
 //!   the prescribed temperatures held from the first increment on. The matrix is factored once.
 //!
+//! - **Radiation** to an ambient, a heat loss r(T) = ∫ N ε σ (T⁴ − T_amb⁴) dA from each node of
+//!   the faces, is nonlinear: each solve (the steady one, or each increment, with r weighted by
+//!   θ as K is) runs Newton's method on it, r(T) ≈ r(Tᵏ) + J (T − Tᵏ) with the tangent
+//!   J = ∫ N Nᵀ 4 ε σ T³ dA, refactoring K (+ C) + J each iteration, until no temperature moves by
+//!   more than [`RADIATION_TOLERANCE`] of the largest (at most [`MAX_RADIATION_ITERATIONS`] per
+//!   solve; the count over the step is bounded by [`Limits::max_newton_iterations`]). A steady
+//!   solve starts from the lumped balance: the uniform temperature at which the faces radiate
+//!   the heat supplied (or the highest prescribed temperature, if higher). Temperatures are
+//!   absolute (the model is in kelvin); faces see only the ambient, not each other. Without
+//!   radiation the solve is linear and factored once, as above.
+//!
 //! The heat flux −k∇T is reported at the integration points and averaged at the nodes; the heat
 //! flow at prescribed temperatures is the reaction K T − f (C Ṫ included in transient steps).
 
 use fieldcraft_fem::element::{Extrapolation, extrapolation};
 use fieldcraft_fem::frame::norm;
-use fieldcraft_fem::heat::{Conduction, PointFlux, face_film, face_weights};
+use fieldcraft_fem::heat::{Conduction, PointFlux, face_film, face_radiation, face_weights};
 use fieldcraft_fem::mortar::area_vector;
 use fieldcraft_fem::{DofKind, DofLayout, DofSet};
-use fieldcraft_model::{ElementKind, Load, Model, Procedure, Resolved, SectionKind, Step, TEMPERATURE_DOF};
+use fieldcraft_model::{ElementKind, Load, Model, Procedure, Resolved, STEFAN_BOLTZMANN, SectionKind, Step, TEMPERATURE_DOF};
 
 use crate::cholesky::{Factor, FactorError, UpperColumns};
 use crate::constraints::{Budget, Reduction, Row};
@@ -37,6 +48,13 @@ use crate::{Error, Limits, Result, Stats};
 /// Most temperature values a transient result keeps (frames × nodes); frames are thinned
 /// evenly to stay below it, the last increment always kept.
 pub const MAX_TEMPERATURE_VALUES: usize = 50_000_000;
+
+/// Most Newton iterations of one radiation solve (the steady solve or one increment).
+pub const MAX_RADIATION_ITERATIONS: usize = 50;
+
+/// A radiation solve has converged when no temperature moved by more than this share of the
+/// largest absolute temperature in the last iteration.
+pub const RADIATION_TOLERANCE: f64 = 1e-10;
 
 /// A solid element conducting heat.
 #[derive(Debug, Clone)]
@@ -130,7 +148,7 @@ pub struct ElementFlux {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct LoadFlow {
     pub name: String,
-    /// `surface_flux`, `convection` or `heat_source`.
+    /// `surface_flux`, `convection`, `radiation` or `heat_source`.
     pub kind: String,
     /// Heat per time into the body (negative: out of it).
     pub heat: f64,
@@ -154,9 +172,10 @@ pub struct HeatResult {
     /// (negative where it takes heat away; zero at free nodes).
     pub reaction: Vec<f64>,
     /// The heat each heat load carries into the body at the end of the step, in the step's
-    /// order (negative where it takes heat away, as a convection to a colder sink does).
+    /// order (negative where it takes heat away, as a convection to a colder sink or a
+    /// radiation to colder surroundings does).
     pub loads: Vec<LoadFlow>,
-    /// Heat supplied by fluxes, convection and sources (at the end temperatures), and the total
+    /// Heat supplied by fluxes, convection, radiation and sources (at the end temperatures), and the total
     /// reaction heat flow; in a steady state they cancel.
     pub applied_total: f64,
     pub reaction_total: f64,
@@ -172,11 +191,60 @@ impl HeatResult {
 }
 
 /// The assembled heat system of a step: conductivity (with films), capacity when transient,
-/// and the heat supplied.
+/// the heat supplied, and the faces that radiate.
 struct HeatSystem {
     k: Csr,
     c: Option<Csr>,
     f: Vec<f64>,
+    radiation: Vec<RadiatingFace>,
+}
+
+/// A face radiating to an ambient: its element, node indices and coordinates, ε σ, the
+/// ambient temperature and its area.
+struct RadiatingFace {
+    label: u32,
+    nodes: Vec<usize>,
+    xyz: Vec<[f64; 3]>,
+    es: f64,
+    ambient: f64,
+    area: f64,
+}
+
+/// The faces of heat load `name` when it is a radiation (none otherwise).
+fn radiating_faces(model: &Model, resolved: &Resolved, mesh: &HeatMesh, name: &str, load: &Load) -> Result<Vec<RadiatingFace>> {
+    let Load::Radiation { emissivity, ambient, .. } = load else { return Ok(Vec::new()) };
+    load_faces(model, resolved, mesh, name, load)?
+        .into_iter()
+        .map(|(label, nodes, xyz)| {
+            let area = face_weights(&xyz).map_err(|e| Error::element(label, e))?.iter().sum();
+            Ok(RadiatingFace { label, nodes, xyz, es: emissivity * STEFAN_BOLTZMANN, ambient: *ambient, area })
+        })
+        .collect()
+}
+
+/// The heat each node loses by radiation at temperatures `t`; with `tangent` = (M, s), also
+/// s J(T) added into M (the conduction's pattern) and J(T) T returned.
+fn radiate(faces: &[RadiatingFace], layout: &DofLayout, t: &[f64], mut tangent: Option<(&mut Csr, f64)>) -> Result<(Vec<f64>, Vec<f64>)> {
+    let mut loss = vec![0.0; t.len()];
+    let mut jt = vec![0.0; if tangent.is_some() { t.len() } else { 0 }];
+    for face in faces {
+        let te: Vec<f64> = face.nodes.iter().map(|n| t.get(*n).copied().unwrap_or(0.0)).collect();
+        let (l, mut m) = face_radiation(&face.xyz, &te, face.es, face.ambient).map_err(|e| Error::element(face.label, e))?;
+        let mt = m.mul_vec(&te);
+        for (k, n) in face.nodes.iter().enumerate() {
+            if let Some(x) = loss.get_mut(*n) {
+                *x += l.get(k).copied().unwrap_or(0.0);
+            }
+            if let Some(x) = jt.get_mut(*n) {
+                *x += mt.get(k).copied().unwrap_or(0.0);
+            }
+        }
+        if let Some((matrix, scale)) = tangent.as_mut() {
+            m.data.iter_mut().for_each(|v| *v *= *scale);
+            add_block(matrix, layout, &face.nodes, DofSet::TEMPERATURE, &m.data)?;
+        }
+    }
+    Ok((loss, jt))
 }
 
 fn assemble(model: &Model, resolved: &Resolved, mesh: &HeatMesh, graph: &NodeGraph, step: &Step, transient: bool) -> Result<HeatSystem> {
@@ -193,6 +261,7 @@ fn assemble(model: &Model, resolved: &Resolved, mesh: &HeatMesh, graph: &NodeGra
         }
     }
     let mut f = vec![0.0; layout.dofs()];
+    let mut radiation = Vec::new();
     let add = |f: &mut [f64], nodes: &[usize], v: &[f64]| {
         for (n, x) in nodes.iter().zip(v) {
             if let Some(y) = f.get_mut(*n) {
@@ -218,6 +287,7 @@ fn assemble(model: &Model, resolved: &Resolved, mesh: &HeatMesh, graph: &NodeGra
                     add(&mut f, &idx, &w.iter().map(|w| w * film * sink).collect::<Vec<_>>());
                 }
             }
+            Load::Radiation { .. } => radiation.extend(radiating_faces(model, resolved, mesh, name, load)?),
             Load::HeatSource { set, power } => {
                 for label in resolved.sets.get(set).map(|s| s.elements.as_slice()).unwrap_or_default() {
                     let e = mesh.element(*label).ok_or_else(|| Error::Invalid(format!("load `{name}`: element {label} is not a solid element")))?;
@@ -229,7 +299,7 @@ fn assemble(model: &Model, resolved: &Resolved, mesh: &HeatMesh, graph: &NodeGra
             _ => {}
         }
     }
-    Ok(HeatSystem { k, c, f })
+    Ok(HeatSystem { k, c, f, radiation })
 }
 
 /// The element faces of heat load `name`'s set: each face's element, node indices and
@@ -253,7 +323,8 @@ fn load_faces(model: &Model, resolved: &Resolved, mesh: &HeatMesh, name: &str, l
 }
 
 /// The heat each of the step's heat loads carries into the body at temperatures `t`: a flux
-/// ∫q dA, a source ∫Q dV, a convection h ∫(T∞ − T) dA (negative where it carries heat away).
+/// ∫q dA, a source ∫Q dV, a convection h ∫(T∞ − T) dA, a radiation ε σ ∫(T_amb⁴ − T⁴) dA
+/// (negative where it carries heat away).
 fn load_flows(model: &Model, resolved: &Resolved, mesh: &HeatMesh, step: &Step, t: &[f64]) -> Result<Vec<LoadFlow>> {
     let mut out = Vec::new();
     for name in &step.loads {
@@ -271,6 +342,10 @@ fn load_flows(model: &Model, resolved: &Resolved, mesh: &HeatMesh, step: &Step, 
                     let w = face_weights(&xyz).map_err(|e| Error::element(label, e))?;
                     heat += film * w.iter().zip(&idx).map(|(w, i)| w * (sink - t.get(*i).copied().unwrap_or(*sink))).sum::<f64>();
                 }
+            }
+            Load::Radiation { .. } => {
+                let faces = radiating_faces(model, resolved, mesh, name, load)?;
+                heat -= radiate(&faces, &mesh.layout, t, None)?.0.iter().sum::<f64>();
             }
             Load::HeatSource { set, power } => {
                 for label in resolved.sets.get(set).map(|s| s.elements.as_slice()).unwrap_or_default() {
@@ -311,7 +386,7 @@ fn factor(a: &Csr, limits: &Limits, mesh: &HeatMesh, eqs: &Reduction) -> Result<
             let node = eqs.eq_dof.get(column).and_then(|d| mesh.layout.locate(*d)).map(|(slot, _)| slot);
             let label = node.and_then(|n| mesh.labels.get(n)).copied().unwrap_or(0);
             Error::Singular(format!(
-                "the temperature is undetermined at node {label}: no temperature boundary condition or convection reaches its part of the model"
+                "the temperature is undetermined at node {label}: no temperature boundary condition, convection or radiation reaches its part of the model"
             ))
         }
     })
@@ -335,6 +410,8 @@ struct Solution {
     frames: Vec<Vec<f64>>,
     /// Ṫ over the last increment (zero when steady).
     rate: Vec<f64>,
+    /// The heat each node loses by radiation at the end temperatures (zero without radiation).
+    radiated: Vec<f64>,
     factor_entries: usize,
     warnings: Vec<String>,
 }
@@ -398,15 +475,15 @@ fn run(model: &Model, resolved: &Resolved, step: &Step, limits: &Limits) -> Resu
     let mut warnings = Vec::new();
     let rows = tie_rows(model, resolved, &mesh, &mut warnings)?;
     let fixed = prescribed(model, resolved, &mesh, step)?;
+    let held = fixed.iter().flatten().fold(0.0_f64, |m, v| m.max(*v));
     let order = fill_reducing_order(&mesh.xyz, &graph.adjacency);
     let budget = Budget { max_bytes: limits.max_factor_entries.saturating_mul(8), pattern_entries: graph.entries(&mesh.layout), matrices: 1 };
     let eqs = Reduction::new(&mesh.layout, std::iter::empty(), &order, &rows, |_| Ok(fixed), budget)?;
     if eqs.neq() == 0 {
         return Err(Error::Invalid("every temperature is prescribed; there is nothing to solve".into()));
     }
-    let HeatSystem { k, c, f } = assemble(model, resolved, &mesh, &graph, step, transient.is_some())?;
+    let HeatSystem { k, c, f, radiation } = assemble(model, resolved, &mesh, &graph, step, transient.is_some())?;
     let n = mesh.labels.len();
-    let mut q = Vec::with_capacity(eqs.neq());
     // The temperatures from the free ones q, checked finite.
     let expand = |q: &[f64]| -> Result<Vec<f64>> {
         let t = eqs.expand(q, true);
@@ -415,50 +492,142 @@ fn run(model: &Model, resolved: &Resolved, step: &Step, limits: &Limits) -> Resu
         }
         Ok(t)
     };
-    let (times, frames, rate, factor_entries) = match transient.zip(c.as_ref()) {
+    // Reduce, factor and solve M T = rhs (the prescribed values applied): one Newton iteration.
+    let solve_once = |m: &Csr, rhs: &[f64]| -> Result<(Vec<f64>, usize)> {
+        let [reduced] = eqs.reduce([m])?;
+        let chol = factor(&reduced, limits, &mesh, &eqs)?;
+        let mut q = eqs.rhs(rhs, m);
+        chol.solve(&mut q)?;
+        Ok((expand(&q)?, chol.entries()))
+    };
+    let mut budget = limits.max_newton_iterations;
+    let (times, frames, rate, radiated, factor_entries) = match transient.zip(c.as_ref()) {
         Some((tr, c)) => {
             let steps = tr.increments();
             let dt = tr.end_time / steps as f64;
             // (C + θΔt K) Tₙ₊₁ = (C − (1 − θ)Δt K) Tₙ + Δt f, the prescribed values held from the
-            // first increment on (their part moves to the right-hand side).
+            // first increment on (their part moves to the right-hand side); the radiation
+            // weighted alike, θ r(Tₙ₊₁) + (1 − θ) r(Tₙ). Without radiation the matrix is factored
+            // once.
             let a = c.add_scaled(tr.theta * dt, &k)?;
             let b = c.add_scaled(-(1.0 - tr.theta) * dt, &k)?;
-            let [reduced] = eqs.reduce([&a])?;
-            let chol = factor(&reduced, limits, &mesh, &eqs)?;
+            let linear = if radiation.is_empty() {
+                let [reduced] = eqs.reduce([&a])?;
+                Some(factor(&reduced, limits, &mesh, &eqs)?)
+            } else {
+                None
+            };
             let every = (steps.saturating_mul(n) / MAX_TEMPERATURE_VALUES.max(1)).saturating_add(1);
             let mut t = vec![tr.initial_temperature; n];
+            let mut radiated = radiate(&radiation, &mesh.layout, &t, None)?.0;
             let mut previous = t.clone();
             let (mut frames, mut times) = (vec![t.clone()], vec![0.0]);
             let mut rhs = vec![0.0; n];
+            let mut entries = linear.as_ref().map_or(0, Factor::entries);
             fieldcraft_model::progress::stage("Time increment", Some(steps as f64), "");
             for i in 1..=steps {
                 fieldcraft_model::progress::count((i - 1) as f64);
                 fieldcraft_model::progress::check()?;
                 b.mul(&t, &mut rhs);
-                for (r, fj) in rhs.iter_mut().zip(&f) {
-                    *r += dt * fj;
+                for ((r, fj), lost) in rhs.iter_mut().zip(&f).zip(&radiated) {
+                    *r += dt * fj - (1.0 - tr.theta) * dt * lost;
                 }
-                q.clear();
-                q.extend(eqs.rhs(&rhs, &a));
-                chol.solve(&mut q)?;
-                previous = std::mem::replace(&mut t, expand(&q)?);
+                let next = match &linear {
+                    Some(chol) => {
+                        let mut q = eqs.rhs(&rhs, &a);
+                        chol.solve(&mut q)?;
+                        expand(&q)?
+                    }
+                    None => {
+                        let (next, lost, e) =
+                            newton(&radiation, &mesh.layout, &a, tr.theta * dt, &rhs, &t, &mut budget, solve_once).map_err(|e| at_increment(e, i))?;
+                        (radiated, entries) = (lost, e);
+                        next
+                    }
+                };
+                previous = std::mem::replace(&mut t, next);
                 if i % every == 0 || i == steps {
                     frames.push(t.clone());
                     times.push(if i == steps { tr.end_time } else { i as f64 * dt });
                 }
             }
             let rate = t.iter().zip(&previous).map(|(a, b)| (a - b) / dt).collect();
-            (times, frames, rate, chol.entries())
+            (times, frames, rate, radiated, entries)
         }
-        None => {
+        None if radiation.is_empty() => {
             let [reduced] = eqs.reduce([&k])?;
             let chol = factor(&reduced, limits, &mesh, &eqs)?;
-            q.extend(eqs.rhs(&f, &k));
+            let mut q = eqs.rhs(&f, &k);
             chol.solve(&mut q)?;
-            (vec![0.0], vec![expand(&q)?], vec![0.0; n], chol.entries())
+            (vec![0.0], vec![expand(&q)?], vec![0.0; n], vec![0.0; n], chol.entries())
+        }
+        None => {
+            let start = vec![steady_start(&radiation, &f, held); n];
+            let (t, radiated, entries) = newton(&radiation, &mesh.layout, &k, 1.0, &f, &start, &mut budget, solve_once)?;
+            (vec![0.0], vec![t], vec![0.0; n], radiated, entries)
         }
     };
-    Ok(Solution { mesh, eqs, k, c, f, times, frames, rate, factor_entries, warnings })
+    Ok(Solution { mesh, eqs, k, c, f, times, frames, rate, radiated, factor_entries, warnings })
+}
+
+/// The increment an error of a transient step happened in, when it is a radiation solve that
+/// did not converge.
+fn at_increment(e: Error, i: usize) -> Error {
+    match e {
+        Error::NotConverged(what) => Error::NotConverged(format!("increment {i}: {what}")),
+        e => e,
+    }
+}
+
+/// Where a steady radiation solve starts: the uniform temperature at which the faces radiate
+/// the heat supplied, (Σf / Σ ε σ A + mean T_amb⁴)^¼, or the highest prescribed temperature
+/// when that is higher.
+fn steady_start(faces: &[RadiatingFace], f: &[f64], held: f64) -> f64 {
+    let es_area: f64 = faces.iter().map(|face| face.es * face.area).sum();
+    let ambient4: f64 = faces.iter().map(|face| face.es * face.area * face.ambient.powi(4)).sum();
+    let supplied = f.iter().sum::<f64>().max(0.0);
+    let lumped = if es_area > 0.0 { ((supplied + ambient4) / es_area).powf(0.25) } else { 0.0 };
+    if lumped.is_finite() { lumped.max(held) } else { held }
+}
+
+/// Newton's method for A T + s r(T) = g from `start`, r the radiation of `faces`:
+/// (A + s J(Tᵏ)) Tᵏ⁺¹ = g − s (r(Tᵏ) − J(Tᵏ) Tᵏ), each iteration solved by `solve` and counted
+/// against `budget`. Returns T, r(T) and the last factor's size.
+#[allow(clippy::too_many_arguments)]
+fn newton(
+    faces: &[RadiatingFace],
+    layout: &DofLayout,
+    a: &Csr,
+    scale: f64,
+    g: &[f64],
+    start: &[f64],
+    budget: &mut usize,
+    solve: impl Fn(&Csr, &[f64]) -> Result<(Vec<f64>, usize)>,
+) -> Result<(Vec<f64>, Vec<f64>, usize)> {
+    let mut t = start.to_vec();
+    let mut m = a.clone();
+    let mut change = f64::INFINITY;
+    for _ in 0..MAX_RADIATION_ITERATIONS {
+        if *budget == 0 {
+            return Err(Error::Limit("the step used up its Newton iterations (Limits::max_newton_iterations) on radiation".into()));
+        }
+        *budget -= 1;
+        fieldcraft_model::progress::check()?;
+        m.val.copy_from_slice(&a.val);
+        let (lost, jt) = radiate(faces, layout, &t, Some((&mut m, scale)))?;
+        let rhs: Vec<f64> = g.iter().zip(lost.iter().zip(&jt)).map(|(g, (r, jt))| g - scale * (r - jt)).collect();
+        let (next, entries) = solve(&m, &rhs)?;
+        change = next.iter().zip(&t).fold(0.0_f64, |c, (a, b)| c.max((a - b).abs()));
+        let largest = next.iter().fold(0.0_f64, |c, v| c.max(v.abs()));
+        t = next;
+        if change <= RADIATION_TOLERANCE * largest {
+            let (lost, _) = radiate(faces, layout, &t, None)?;
+            return Ok((t, lost, entries));
+        }
+    }
+    Err(Error::NotConverged(format!(
+        "the radiation did not settle in {MAX_RADIATION_ITERATIONS} Newton iterations (the last moved a temperature by {change:.3e})"
+    )))
 }
 
 /// The steady temperatures of a coupled temperature–displacement step, by node label (sorted).
@@ -486,21 +655,23 @@ pub fn solve_heat(model: &Model, step: Option<&str>, limits: &Limits) -> Result<
     let mut s = run(model, &resolved, step, limits)?;
     warnings.append(&mut s.warnings);
     let t = s.temperature();
-    // Reactions: the heat each prescribed node supplies, T_pᵀ (K T + C Ṫ − f) (a tied node held
-    // through its main nodes passes its share to them).
+    // Reactions: the heat each prescribed node supplies, T_pᵀ (K T + r + C Ṫ − f) (a tied node
+    // held through its main nodes passes its share to them).
     let kt = mul(&s.k, t);
+    // K T plus what radiates away.
+    let out: Vec<f64> = kt.iter().zip(&s.radiated).map(|(a, b)| a + b).collect();
     let ct = s.c.as_ref().map(|c| mul(c, &s.rate));
     let residual: Vec<f64> =
-        kt.iter().zip(&s.f).enumerate().map(|(i, (kt, f))| kt + ct.as_ref().and_then(|c| c.get(i)).copied().unwrap_or(0.0) - f).collect();
+        out.iter().zip(&s.f).enumerate().map(|(i, (o, f))| o + ct.as_ref().and_then(|c| c.get(i)).copied().unwrap_or(0.0) - f).collect();
     let reaction = s.eqs.reactions_of(&residual);
-    // Heat supplied: fluxes and sources, and convection at the end temperatures, Σ (f − K_film T)
-    // = Σ (f − K T) since conduction alone has zero row sums.
-    let applied_total: f64 = kt.iter().zip(&s.f).map(|(a, b)| b - a).sum();
+    // Heat supplied: fluxes and sources, and convection and radiation at the end temperatures,
+    // Σ (f − K_film T − r) = Σ (f − K T − r) since conduction alone has zero row sums.
+    let applied_total: f64 = out.iter().zip(&s.f).map(|(a, b)| b - a).sum();
     let reaction_total: f64 = reaction.iter().sum();
     let (flux, elements) = fluxes(&s.mesh, t)?;
     let loads = load_flows(model, &resolved, &s.mesh, step, t)?;
     // Measured against the gross heat flows, which cancel in the net sums.
-    let scale = reaction.iter().chain(&s.f).map(|v| v.abs()).sum::<f64>();
+    let scale = reaction.iter().chain(&s.f).chain(&s.radiated).map(|v| v.abs()).sum::<f64>();
     if s.c.is_none() && scale > 0.0 && (applied_total + reaction_total).abs() > crate::system::BALANCE_TOLERANCE * scale {
         warnings.push(format!("heat supplied and removed differ by {:.3e}", (applied_total + reaction_total).abs()));
     }

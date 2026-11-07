@@ -163,6 +163,7 @@ impl Model {
                         | L::BodyForce { set: s, .. }
                         | L::SurfaceFlux { set: s, .. }
                         | L::Convection { set: s, .. }
+                        | L::Radiation { set: s, .. }
                         | L::HeatSource { set: s, .. } => {
                             if set {
                                 swap(s, from, to);

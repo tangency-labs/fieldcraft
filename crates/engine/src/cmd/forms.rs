@@ -677,6 +677,17 @@ pub const LOAD: &[Field] = &[
                 ],
             ),
             variant(
+                "radiation",
+                "Radiation",
+                &[
+                    LOAD_SET,
+                    EMISSIVITY,
+                    num("ambient", "Ambient temperature", D::Temperature)
+                        .help("The temperature of the surroundings the faces radiate to (an absolute temperature: 0 K for deep space). Faces see only these surroundings, not each other.")
+                        .req(),
+                ],
+            ),
+            variant(
                 "heat_source",
                 "Heat source",
                 &[LOAD_SET, num("power", "Power per volume", D::HeatGeneration).help("Heat generated per unit volume.").req()],
@@ -688,6 +699,10 @@ pub const LOAD: &[Field] = &[
     .req()
     .def("\"force\""),
 ];
+
+const EMISSIVITY: Field = range("emissivity", "Emissivity", D::None, 0.0, 1.0)
+    .help("Surface emissivity, above 0 and at most 1. Polished aluminium ≈ 0.05, anodised or painted ≈ 0.8–0.95.")
+    .req();
 
 const FACE_CONDITION: &[Variant] = &[
     variant("wall", "Wall", &[]),
@@ -795,6 +810,18 @@ const FLUID_THERMAL: Field = group(
                 num("limit", "Temperature limit", D::Temperature)
                     .help("The highest temperature it may reach (a junction or case limit); the solve reports its peak against it.")
                     .hint("none"),
+                group(
+                    "radiation",
+                    "Radiation",
+                    &[
+                        EMISSIVITY,
+                        num("ambient", "Ambient temperature", D::Temperature)
+                            .help("The temperature of the surroundings its faces radiate to through the fluid (the enclosure or room walls).")
+                            .req(),
+                    ],
+                )
+                .help("Radiation from its faces that touch the fluid to the surroundings, ε σ (T⁴ − T_amb⁴); faces see only the surroundings, not each other. CPU backend only so far.")
+                .hint("none"),
             ],
         )
         .help("Obstacles heat conducts through, exchanging heat with the fluid across their faces (conjugate heat transfer); their faces take no thermal condition."),

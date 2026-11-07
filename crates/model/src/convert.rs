@@ -243,6 +243,7 @@ impl Quantities for Load {
                 f(Q::HeatTransferCoefficient, film);
                 f(Q::Temperature, sink);
             }
+            Load::Radiation { set: _, emissivity: _, ambient } => f(Q::Temperature, ambient),
             Load::HeatSource { set: _, power } => f(Q::HeatGeneration, power),
             Load::Temperature { target: _, value } => f(Q::Temperature, value),
         }
@@ -315,10 +316,13 @@ impl Quantities for FluidDomain {
             for SurfaceThermalBoundary { face: _, condition } in surfaces {
                 thermal_condition(condition, f);
             }
-            for ConductingSolid { body: _, material: _, power, limit } in solids {
+            for ConductingSolid { body: _, material: _, power, limit, radiation } in solids {
                 f(Q::Power, power);
                 if let Some(t) = limit {
                     f(Q::Temperature, t);
+                }
+                if let Some(SurfaceRadiation { emissivity: _, ambient }) = radiation {
+                    f(Q::Temperature, ambient);
                 }
             }
             for ThermalContact { bodies: _, resistance, thickness, conductivity } in contacts {

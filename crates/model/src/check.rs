@@ -569,9 +569,13 @@ impl Model {
                 Procedure::HeatTransfer { .. } | Procedure::CoupledTemperatureDisplacement {} => {
                     let bcs = s.boundary_conditions.iter().filter_map(|b| self.boundary_conditions.get(b));
                     let loads: Vec<&Load> = s.loads.iter().filter_map(|l| self.loads.get(l)).collect();
-                    let held = bcs.clone().any(BoundaryCondition::is_thermal) || loads.iter().any(|l| matches!(l, Load::Convection { .. }));
+                    let held = bcs.clone().any(BoundaryCondition::is_thermal)
+                        || loads.iter().any(|l| matches!(l, Load::Convection { .. } | Load::Radiation { .. }));
                     if !held && matches!(s.procedure, Procedure::HeatTransfer { transient: None } | Procedure::CoupledTemperatureDisplacement {}) {
-                        d.warning(&subject, "no temperature boundary condition or convection is active, so the temperature level is undetermined");
+                        d.warning(
+                            &subject,
+                            "no temperature boundary condition, convection or radiation is active, so the temperature level is undetermined",
+                        );
                     }
                 }
             }
@@ -843,7 +847,7 @@ impl Model {
             Load::Gravity { acceleration, .. } => acceleration[2] == 0.0,
             Load::Moment { .. } | Load::Pressure { .. } => true,
             // Scalars.
-            Load::SurfaceFlux { .. } | Load::Convection { .. } | Load::HeatSource { .. } | Load::Temperature { .. } => true,
+            Load::SurfaceFlux { .. } | Load::Convection { .. } | Load::Radiation { .. } | Load::HeatSource { .. } | Load::Temperature { .. } => true,
             Load::Centrifugal { point, axis, .. } => {
                 let ok = if extent == Some(Extent::Revolved) {
                     axis[0] == 0.0 && axis[2] == 0.0 && point[0] == 0.0 && point[2] == 0.0

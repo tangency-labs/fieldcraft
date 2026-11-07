@@ -35,6 +35,13 @@
 //!   conjugate interface among them: L. Li, R. Mei, J. F. Klausner, *Boundary conditions for
 //!   thermal lattice Boltzmann equation method*, J. Comput. Phys. 237:366, 2013.
 //! - **Heat sources:** a solid's power is spread evenly over its cells.
+//! - **Radiation to the surroundings:** a solid that radiates loses `ε σ (T⁴ − T_amb⁴)` per area
+//!   through each face it shares with the fluid (the fluid taken as transparent, the faces seeing
+//!   only the surroundings: no view factors), on the absolute temperature `T = θ + zero`. The
+//!   loss is linearised about the sub-step's old temperature and taken point-implicitly with the
+//!   links, `q(T') ≈ q(T) + 4 e T³ (T' − T)`, so it stays stable however strongly it radiates
+//!   (an explicit loss needs `4 e T³ < C`). Its heat is counted per solid
+//!   ([`SolidHeat::radiated`]).
 //! - **Steady state:** a step run to steady state scales each solid's heat capacity down to
 //!   [`smallest_capacity`] when that is smaller: the steady temperatures do not depend on it,
 //!   while a solid's own time constant (seconds to minutes for a heat sink, against
@@ -121,6 +128,13 @@ pub struct Cell {
     pub capacity: f64,
     pub source: f64,
     pub faces: [Face; 6],
+    /// Its radiation per step and K⁴: its faces shared with the fluid times the solid's
+    /// [`crate::setup::RadiationSetup::emit`] (0 when it does not radiate).
+    pub emit: f64,
+    /// The fourth power of the surroundings' temperature it radiates to (kelvin⁴).
+    pub ambient4: f64,
+    /// Its solid (the setup's index).
+    pub solid: u32,
 }
 
 /// A D3Q7 link from fluid cell `cell` (direction `q`, whose population comes from the solid)
@@ -158,6 +172,11 @@ pub struct SolidHeat {
     pub effective: Vec<f64>,
     /// The heat each box face took from the solids in the last step.
     pub wall_heat: [f64; 6],
+    /// The kelvin the lattice's temperature 0 stands for (radiation needs absolute temperatures).
+    pub zero: f64,
+    /// Per solid, the heat it radiated to the surroundings in the last step (empty when no solid
+    /// radiates).
+    pub radiated: Vec<f64>,
     /// Each conducting cell's temperature, and the sub-steps' second buffer.
     pub temperature: Vec<f64>,
     next: Vec<f64>,
@@ -175,6 +194,8 @@ pub struct Layout<'a> {
     pub kf: f64,
     /// The thermal interface layers between solids.
     pub contacts: &'a [ContactSetup],
+    /// The kelvin the lattice's temperature 0 stands for.
+    pub zero: f64,
 }
 
 impl SolidHeat {
@@ -192,6 +213,7 @@ impl SolidHeat {
             + bytes(&self.effective)
             + bytes(&self.temperature)
             + bytes(&self.next)
+            + bytes(&self.radiated)
     }
 
     pub(crate) fn checkpoint(&mut self, a: &mut dyn crate::checkpoint::Archive) -> Result<()> {
@@ -206,7 +228,7 @@ impl SolidHeat {
         doubles(a, &mut self.effective, n)?;
         doubles(a, &mut self.link_a, n)?;
         doubles(a, &mut self.link_b, n)?;
-        for v in &mut self.wall_heat {
+        for v in self.wall_heat.iter_mut().chain(&mut self.radiated) {
             f64(a, v)?;
         }
         Ok(())
@@ -242,6 +264,7 @@ impl SolidHeat {
         let g = layout.grid;
         let dims = g.cells.map(|d| d as i64);
         let mut cell_data = Vec::with_capacity(cells.len());
+        let mut emit_per_face = Vec::with_capacity(cells.len());
         for (own, (&cell, &k)) in cells.iter().zip(kind).enumerate() {
             let ijk = g.coords(cell as usize);
             let p = ijk.map(|v| v as i64);
@@ -278,8 +301,25 @@ impl SolidHeat {
             }
             let s = solids.get(k);
             let count = by_solid.get(k).map_or(1, |l| l.len().max(1)) as f64;
-            cell_data.push(Cell { capacity: s.map_or(1.0, |s| s.capacity), source: s.map_or(0.0, |s| s.power / count), faces });
+            let (emit, ambient4) = s.and_then(|s| s.radiation).map_or((0.0, 0.0), |r| (r.emit, r.ambient.powi(4)));
+            let cell = Cell {
+                capacity: s.map_or(1.0, |s| s.capacity),
+                source: s.map_or(0.0, |s| s.power / count),
+                faces,
+                emit: 0.0,
+                ambient4,
+                solid: k as u32,
+            };
+            cell_data.push(cell);
+            // (each fluid link into the cell, below, is one face it shares with the fluid)
+            emit_per_face.push(emit);
         }
+        for i in &interface {
+            if let (Some(c), Some(e)) = (cell_data.get_mut(i.solid as usize), emit_per_face.get(i.solid as usize)) {
+                c.emit += e;
+            }
+        }
+        let radiates = solids.iter().any(|s| s.radiation.is_some());
         for i in &mut interface {
             let axis = (i.q as usize).checked_sub(1).map_or(0, |d| d / 2);
             let ks = kind.get(i.solid as usize).map_or(0.0, |k| k_of(*k, axis));
@@ -311,6 +351,8 @@ impl SolidHeat {
             )));
         }
         Ok(SolidHeat {
+            zero: layout.zero,
+            radiated: vec![0.0; if radiates { solids.len() } else { 0 }],
             link_a: vec![0.0; m],
             link_b: vec![0.0; m],
             effective: vec![initial; m],
@@ -341,6 +383,7 @@ impl SolidHeat {
         let share = 1.0 / f64::from(self.substeps);
         self.effective.fill(0.0);
         self.wall_heat = [0.0; 6];
+        self.radiated.fill(0.0);
         let mut finite = true;
         for _ in 0..self.substeps {
             let old = &self.temperature;
@@ -367,8 +410,22 @@ impl SolidHeat {
                         }
                     };
                 }
-                // C (T' − T) = share (heat − b T')
-                *slot = (t + heat * share / c.capacity) / (1.0 + b * share / c.capacity);
+                if c.emit > 0.0 {
+                    // C (T' − T) = share (heat − b T' − q − q' (T' − T)), the radiation q
+                    // linearised about T (absolute, not below 0 K).
+                    let abs = (t + self.zero).max(0.0);
+                    let abs3 = abs * abs * abs;
+                    let q = c.emit * (abs3 * abs - c.ambient4);
+                    let dq = 4.0 * c.emit * abs3;
+                    *slot = (t + (heat - q + dq * t) * share / c.capacity) / (1.0 + (b + dq) * share / c.capacity);
+                    if let Some(r) = self.radiated.get_mut(c.solid as usize) {
+                        *r += (q + dq * (*slot - t)) * share;
+                    }
+                } else {
+                    // C (T' − T) = share (heat − b T'), kept apart from the radiating form for the
+                    // cells that do not radiate (most of them)
+                    *slot = (t + heat * share / c.capacity) / (1.0 + b * share / c.capacity);
+                }
                 *mean += *slot * share;
                 finite &= slot.is_finite();
             }
