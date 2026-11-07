@@ -1,39 +1,6 @@
 {
   "note": "The corpus part's accepted results, written by `cargo xtask corpus --bless` (docs/meshing/corpus.md). A stage whose outcome changes, or a value outside its band, fails the corpus run and CI's heavy job. `platforms` lists what each platform blessed measured differently.",
   "platforms": {
-    "linux-x86_64": {
-      "stages": {},
-      "values": {
-        "cdt.steiner": {
-          "band": 0,
-          "value": 193
-        },
-        "cdt.tets": {
-          "band": 0,
-          "value": 715
-        },
-        "quality.max_dihedral_deg": {
-          "band": 1.5540618260463492e-7,
-          "value": 155.40518260463492
-        },
-        "quality.min_dihedral_deg": {
-          "band": 1.7545456935119476e-8,
-          "value": 17.544456935119474
-        },
-        "quality.min_radius_ratio": {
-          "band": 1.3824903941085646e-10,
-          "value": 0.13724903941085645
-        },
-        "quality.slivers_cdt": {
-          "band": 0,
-          "value": 192
-        },
-        "quality.tets": {
-          "band": 0,
-          "value": 15075
-        }
-      }
-    },
     "macos-aarch64": {
       "stages": {},
       "values": {}
@@ -126,12 +93,12 @@
       "value": 135.84931949244012
     },
     "quality.min_dihedral_deg": {
-      "band": 2.1318850839295697e-8,
-      "value": 21.317850839295694
+      "band": 3.255288992372447e-8,
+      "value": 32.55188992372447
     },
     "quality.min_radius_ratio": {
-      "band": 2.826823433656012e-10,
-      "value": 0.28168234336560116
+      "band": 3.406130683990409e-10,
+      "value": 0.3396130683990409
     },
     "quality.slivers": {
       "band": 0,

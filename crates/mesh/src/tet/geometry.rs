@@ -263,6 +263,17 @@ impl AnalyticSurface {
 /// on the tube too (to rounding): the two do not touch there.
 fn tangent_contact(blend: &AnalyticSurface, other: &AnalyticSurface, p: P) -> Option<P> {
     let centre = blend.spine(p)?;
+    if let Some(spine) = other.spine(centre) {
+        // On another tube's spine its closest surface point is not unique.
+        // Coincident patches can fit axes/centre circles a few ulps apart;
+        // normalizing that cancellation would invent a contact meridian.
+        // Keep their topological seam's polyline instead. This is a rounding
+        // bound on the projection, independent of the mesh-size tolerance.
+        let roundoff = 64.0 * f64::EPSILON * (norm(centre) + norm(spine) + other.radius_at(centre));
+        if measure::dist(centre, spine) <= roundoff {
+            return None;
+        }
+    }
     let q = other.project(centre)?;
     let on = blend.project(q)?;
     (measure::dist(on, q) <= ROUND_OFF * (1.0 + norm(q))).then_some(q)
@@ -1066,6 +1077,37 @@ mod tests {
             let (s, c) = sin_cos(x);
             assert!((s - f64::sin(x)).abs() < 1e-15 && (c - f64::cos(x)).abs() < 1e-15, "{x}");
         }
+    }
+
+    #[test]
+    fn coincident_tubes_do_not_define_a_unique_tangent_contact() {
+        // Two patches of one tube share a seam chosen by topology, not by an
+        // intersection of their coincident untrimmed surfaces. Rounding their
+        // fitted centres must not manufacture a different contact meridian.
+        for size in [1e-6, 1.0, 1e6] {
+            // Exercise scale invariance over twelve orders of magnitude.
+            let a = AnalyticSurface::Cylinder { origin: [3.0 * size, 4.0 * size, 0.0], axis: [0.0, 0.0, 1.0], radius: 2.0 * size };
+            let b = AnalyticSurface::Cylinder {
+                origin: [(3.0 + 1e-14) * size, (4.0 - 1e-14) * size, 0.0],
+                axis: [0.0, 0.0, -1.0],
+                radius: (2.0 + 1e-15) * size,
+            };
+            let p = [5.0 * size, 4.0 * size, size];
+            assert!(tangent_contact(&a, &b, p).is_none(), "coincident cylinders at scale {size}");
+            assert!(tangent_contact(&b, &a, p).is_none());
+            let a = AnalyticSurface::Torus { center: [3.0 * size, 4.0 * size, 0.0], axis: [0.0, 0.0, 1.0], major: 5.0 * size, minor: size };
+            let b = AnalyticSurface::Torus {
+                center: [(3.0 + 1e-14) * size, (4.0 - 1e-14) * size, 0.0],
+                axis: [0.0, 0.0, -1.0],
+                major: 5.0 * size,
+                minor: size,
+            };
+            assert!(tangent_contact(&a, &b, [9.0 * size, 4.0 * size, 0.0]).is_none(), "coincident tori at scale {size}");
+        }
+        // A real tube/plane tangency still has a unique rolling-ball contact.
+        let cylinder = AnalyticSurface::Cylinder { origin: [0.0; 3], axis: [0.0, 0.0, 1.0], radius: 1.0 };
+        let plane = AnalyticSurface::Plane { normal: [1.0, 0.0, 0.0], point: [1.0, 0.0, 0.0] };
+        assert_eq!(tangent_contact(&cylinder, &plane, [1.1, 0.0, 3.0]), Some([1.0, 0.0, 3.0]));
     }
 
     #[test]

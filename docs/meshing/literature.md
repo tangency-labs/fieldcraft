@@ -345,6 +345,11 @@ Delaunay methods with Voronoi/ODT improvement, then (2) all-hex and hex-dominant
   (Beograd) (N.S.) 66(80):23–45, 1999), the boundary coned to one extra vertex as in the paper, so it never lays an edge
   or face onto one the mesh has.
 
+  Coincident analytic tube patches retain their tessellated seam. The rolling-ball contact
+  construction refuses a centre on the other tube's spine within floating-point roundoff:
+  its closest surface point is not unique, and normalizing the small difference would choose
+  an arbitrary meridian. The original mesh quality and geometric-distance gates still apply.
+
 **A3.2 Cheng, Dey, Shewchuk, *Delaunay Mesh Generation* (CRC, 2012).** **Verdict: reference (the textbook).**
 - **Links.** DOI [10.1201/b12987](https://doi.org/10.1201/b12987).
 - **Use.** The consolidated treatment of 3D refinement, small-angle handling and sliver theory. Buy it.
