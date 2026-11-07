@@ -311,6 +311,9 @@ pub struct ZoneSetup {
     pub hi: [usize; 3],
     /// The axis the flow goes through it along (its thickness and its reported flow).
     pub axis: usize,
+    /// Its share of one zone of the whole model: ½ per symmetry plane it reaches (it continues
+    /// across the plane as its mirror image), else 1. A fan's curve is read at its flow over this.
+    pub share: f64,
 }
 
 impl ZoneSetup {
@@ -341,6 +344,66 @@ fn cell_range(grid: &Grid, min: [f64; 3], max: [f64; 3]) -> Option<([usize; 3], 
     Some((lo, hi))
 }
 
+/// The symmetry planes a part of the model (a fan, porous zone or solid) is continued across:
+/// every plane but those of an axis whose two faces are both planes (an unbounded strip, which
+/// has no whole model).
+pub(crate) fn mirror_planes(domain: &FluidDomain) -> Vec<BoxFace> {
+    domain.symmetry_planes().filter(|p| !domain.faces.get(p.opposite()).is_symmetry()).collect()
+}
+
+/// Whether cell `ijk` lies in the layer of cells on box face `plane`.
+pub(crate) fn on_plane(grid: &Grid, plane: BoxFace, ijk: [usize; 3]) -> bool {
+    let a = plane.axis();
+    match (ijk.get(a), grid.cells.get(a)) {
+        (Some(i), Some(n)) => {
+            if plane.is_max() {
+                *i + 1 == *n
+            } else {
+                *i == 0
+            }
+        }
+        _ => false,
+    }
+}
+
+/// The obstacles a symmetry plane cuts off their middle, one message each: an obstacle that
+/// reaches past the plane is solved as its part in the box and that part's mirror image, which
+/// is not the obstacle unless its extent across the plane is symmetric about it. (Its bounding
+/// box is checked, which an asymmetric shape can pass; one that ends at the plane is the half
+/// of a body the half model is meant to solve and is not warned about.)
+fn obstacle_symmetry_warnings(domain: &FluidDomain, obstacles: &[Obstacle]) -> Vec<String> {
+    const SYMMETRIC: f64 = 1e-6; // unit-factors: relative to the spacing
+    let mut out = Vec::new();
+    for plane in domain.symmetry_planes() {
+        let a = plane.axis();
+        let at = if plane.is_max() { domain.max.get(a) } else { domain.min.get(a) }.copied().unwrap_or(0.0);
+        for o in obstacles.iter().filter(|o| domain.obstacles.contains(&o.body)) {
+            let along = o.surface.points().iter().filter_map(|p| p.get(a).copied());
+            let (lo, hi) = along.fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), x| (lo.min(x), hi.max(x)));
+            let tolerance = SYMMETRIC * domain.spacing;
+            if !(lo < at - tolerance && at + tolerance < hi) {
+                continue;
+            }
+            if ((at - lo) - (hi - at)).abs() > tolerance {
+                out.push(format!(
+                    "symmetry plane {}: it cuts obstacle `{}` off its middle ({lo} to {hi} about {at}), so the half model solves its part in the box and that part's mirror image, not the obstacle",
+                    plane.name(),
+                    o.body
+                ));
+            }
+        }
+    }
+    out
+}
+
+/// The share of a part of the model in the box when its cells span `lo..=hi`: a part that
+/// reaches a symmetry plane is half of one part of the whole model, continued across the plane
+/// as its mirror image, so ½ per plane it reaches; 1 for one clear of every plane (its mirror
+/// image is a second part).
+fn mirror_share(domain: &FluidDomain, grid: &Grid, lo: [usize; 3], hi: [usize; 3]) -> f64 {
+    mirror_planes(domain).iter().filter(|p| on_plane(grid, **p, if p.is_max() { hi } else { lo })).fold(1.0, |share, _| share * 0.5)
+}
+
 /// The domain's porous zones and fans in lattice units.
 fn zones(domain: &FluidDomain, grid: &Grid, viscosity: f64, dt: f64, density: f64) -> Result<Vec<ZoneSetup>> {
     let h = grid.spacing;
@@ -363,17 +426,21 @@ fn zones(domain: &FluidDomain, grid: &Grid, viscosity: f64, dt: f64, density: f6
         if !(alpha.is_finite() && beta.is_finite()) {
             return Err(Error::Invalid(format!("porous zone `{}`: its resistance is too large for this lattice", z.name)));
         }
-        out.push(ZoneSetup { name: z.name.clone(), kind: ZoneKind::Porous { alpha, beta }, lo, hi, axis });
+        let share = mirror_share(domain, grid, lo, hi);
+        out.push(ZoneSetup { name: z.name.clone(), kind: ZoneKind::Porous { alpha, beta }, lo, hi, axis, share });
     }
     for f in &domain.fans {
         let (lo, hi) = place("fan", &f.name, f.min, f.max)?;
         let (axis, sign) = f.direction.axis_sign();
-        let curve: Vec<[f64; 2]> = f.curve.iter().map(|p| [p[0] / volume_flow_scale, p[1] / pressure_scale]).collect();
+        // A fan that reaches a symmetry plane is part of one fan of the whole model, so its flow
+        // in the box is its share of the whole fan's: its curve is read at the whole fan's flow.
+        let share = mirror_share(domain, grid, lo, hi);
+        let curve: Vec<[f64; 2]> = f.curve.iter().map(|p| [share * p[0] / volume_flow_scale, p[1] / pressure_scale]).collect();
         if curve.iter().flatten().any(|v| !v.is_finite()) {
             return Err(Error::Invalid(format!("fan `{}`: its curve does not fit this lattice", f.name)));
         }
         let relaxation = f.relaxation.unwrap_or(DEFAULT_FAN_RELAXATION);
-        out.push(ZoneSetup { name: f.name.clone(), kind: ZoneKind::Fan { sign, curve, relaxation }, lo, hi, axis });
+        out.push(ZoneSetup { name: f.name.clone(), kind: ZoneKind::Fan { sign, curve, relaxation }, lo, hi, axis, share });
     }
     Ok(out)
 }
@@ -639,7 +706,7 @@ impl Setup {
             match *domain.faces.get(face) {
                 FaceCondition::MovingWall { velocity } | FaceCondition::Velocity { velocity, .. } => u_char = u_char.max(norm(velocity)),
                 FaceCondition::Pressure { pressure, .. } => pressures.push(pressure),
-                FaceCondition::Wall {} | FaceCondition::Slip {} | FaceCondition::Periodic {} => {}
+                FaceCondition::Wall {} | FaceCondition::Slip {} | FaceCondition::Symmetry {} | FaceCondition::Periodic {} => {}
             }
         }
         for sb in &domain.surfaces {
@@ -745,7 +812,9 @@ impl Setup {
                 "the lattice Mach number is {mach:.3} (velocity {u_char} with time step {dt} and spacing {h}), above {MAX_MACH}: lower the time step"
             )));
         }
-        let mut warnings = Vec::new();
+        // A half model whose inputs cross its symmetry plane solves something else than half.
+        let mut warnings = domain.symmetry_warnings();
+        warnings.extend(obstacle_symmetry_warnings(&domain, obstacles));
         // A shear-dependent fluid in lattice units; its temperatures count from the scalar
         // lattice's zero.
         let rheology = newtonian.is_none().then(|| Rheology {

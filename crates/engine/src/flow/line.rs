@@ -88,7 +88,10 @@ impl Wall {
     pub fn of(model: &Model, r: &FluidResult, face: BoxFace) -> Result<Wall> {
         let (_, domain) = fieldcraft_lbm::fluid_step(model, Some(&r.step))?;
         let thermal = domain.thermal.as_ref().ok_or_else(|| EngineError::Params("`wall_heat_flux` needs a fluid domain with heat".into()))?;
-        if !matches!(domain.faces.get(face), FaceCondition::Wall {} | FaceCondition::MovingWall { .. } | FaceCondition::Slip {}) {
+        if !matches!(
+            domain.faces.get(face),
+            FaceCondition::Wall {} | FaceCondition::MovingWall { .. } | FaceCondition::Slip {} | FaceCondition::Symmetry {}
+        ) {
             return Err(EngineError::Params(format!("box face {} is not a wall: `wall_heat_flux` is the heat into a wall", face.name())));
         }
         if r.grid.cells.get(face.axis()).is_none_or(|n| *n < 2) {

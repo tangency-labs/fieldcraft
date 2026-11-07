@@ -304,6 +304,8 @@ struct Solids {
     /// Their cells (grid indices) and each solid's cells.
     cells: Vec<u32>,
     by_solid: Vec<Vec<u32>>,
+    /// Each solid's share of its power generated in the box (the CPU's).
+    power_share: Vec<f64>,
     substeps: u32,
     cell_groups: (u32, u32),
     link_groups: (u32, u32),
@@ -324,6 +326,7 @@ struct SolidUpload {
     params: [u32; 4],
     cells: Vec<u32>,
     by_solid: Vec<Vec<u32>>,
+    power_share: Vec<f64>,
     substeps: u32,
 }
 
@@ -382,6 +385,7 @@ fn solid_data(solid: &fieldcraft_lbm::conduction::SolidHeat, t0: f64) -> Result<
         params: [u(m)?, u(k)?, 0, (1.0 / substeps as f32).to_bits()],
         cells: solid.cells.clone(),
         by_solid: solid.by_solid.clone(),
+        power_share: solid.power_share.clone(),
         substeps,
     })
 }
@@ -1256,6 +1260,7 @@ impl GpuFlow {
                     link_groups: groups(sd.params[1] as usize)?,
                     cells: sd.cells,
                     by_solid: sd.by_solid,
+                    power_share: sd.power_share,
                     substeps: sd.substeps,
                 }),
                 None => None,
@@ -1718,6 +1723,10 @@ impl Backend for GpuFlow {
 
     fn conducting(&self) -> &[Vec<u32>] {
         self.solid.as_ref().map_or(&[], |s| &s.by_solid)
+    }
+
+    fn power_share(&self) -> &[f64] {
+        self.solid.as_ref().map_or(&[], |s| &s.power_share)
     }
 }
 

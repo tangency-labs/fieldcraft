@@ -112,6 +112,9 @@ pub trait Backend {
     /// The cells of each obstacle that conducts heat (in the setup's order of solids), in cell
     /// order; a backend that does not conduct refuses such a flow when it is made and has none.
     fn conducting(&self) -> &[Vec<u32>];
+    /// Per conducting solid, the share of its power generated in the box (less than 1 when a
+    /// symmetry plane cuts it); empty without conducting solids.
+    fn power_share(&self) -> &[f64];
     /// Obstacles that cover no cell centre.
     fn empty_obstacles(&self) -> &[String];
 }

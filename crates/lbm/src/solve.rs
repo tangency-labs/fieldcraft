@@ -64,6 +64,20 @@ pub struct ZoneHistory {
     pub pressure: Vec<f64>,
     /// A fan's pressure rise from its curve at that time (empty for a porous zone).
     pub fan_rise: Vec<f64>,
+    /// Its share of one zone of the whole model: ½ per symmetry plane it reaches, else 1.
+    #[serde(default = "whole", skip_serializing_if = "is_whole")]
+    pub share: f64,
+}
+
+/// A share of one part of the whole model: 1 for a part clear of every symmetry plane (and in
+/// results saved before symmetry planes).
+fn whole() -> f64 {
+    1.0
+}
+
+/// Whether a saved part can omit its default share of one.
+fn is_whole(share: &f64) -> bool {
+    *share == 1.0
 }
 
 /// The liquid's extent and volume over time, with a free surface (one entry per
@@ -95,8 +109,12 @@ pub struct SolidResult {
     pub body: String,
     /// Its cells (grid indices), in cell order.
     pub cells: Vec<u32>,
-    /// The heat it generates (model units).
+    /// The heat it generates in the box (model units): its power times `power_share`.
     pub power: f64,
+    /// Its share of one body of the whole model, which its entered power is for: ½ per symmetry
+    /// plane it reaches (it continues across the plane as its mirror image), else 1.
+    #[serde(default = "whole", skip_serializing_if = "is_whole")]
+    pub power_share: f64,
     /// The factor its heat capacity was scaled by for a steady state (1 otherwise).
     pub capacity_scale: f64,
     /// The highest temperature it may reach (kelvin), when the model gives one.
@@ -470,7 +488,7 @@ fn run_checkpointed(
     let mut zones: Vec<ZoneHistory> = setup
         .zones
         .iter()
-        .map(|z| ZoneHistory { name: z.name.clone(), fan: z.is_fan(), flow: Vec::new(), pressure: Vec::new(), fan_rise: Vec::new() })
+        .map(|z| ZoneHistory { name: z.name.clone(), fan: z.is_fan(), flow: Vec::new(), pressure: Vec::new(), fan_rise: Vec::new(), share: z.share })
         .collect();
     let (qs, ps) = (setup.volume_flow_scale(), setup.pressure_scale());
     let mut surface: Option<SurfaceHistory> = setup.surface.as_ref().map(|_| SurfaceHistory::default());
@@ -712,7 +730,8 @@ fn run_checkpointed(
             radiated: if s.radiation.is_some() { radiated.get(k).cloned().unwrap_or_default() } else { Vec::new() },
             body: s.body.clone(),
             cells: flow.conducting().get(k).cloned().unwrap_or_default(),
-            power: s.power * hs,
+            power: s.power * hs * flow.power_share().get(k).copied().unwrap_or(1.0),
+            power_share: flow.power_share().get(k).copied().unwrap_or(1.0),
             capacity_scale: s.capacity_scale,
             limit: s.limit,
         })
