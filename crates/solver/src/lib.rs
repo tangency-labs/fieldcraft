@@ -40,6 +40,7 @@ pub mod heat;
 pub mod ldlt;
 pub mod nonlinear;
 pub mod ordering;
+pub mod sensitivity;
 pub mod sparse;
 pub mod system;
 pub mod tie;
