@@ -1337,3 +1337,15 @@ multi-sweeping.
 - The DualCube code repo: 404 at the name given in search results.
 - The HexMe workflow repo URL: not stated in the paper. `dds-hexmeshing` is a related LIHPC repo, not confirmed as the
   HexMe workflow.
+
+## Solver boundary reconstruction references (#820)
+
+- Guo, Z.-L., Zheng, C.-G., and Shi, B.-C. (2002), *Non-equilibrium extrapolation
+  method for velocity and pressure boundary conditions in the lattice Boltzmann method*,
+  Chinese Physics 11, 366–374. DOI: [10.1088/1009-1963/11/4/310](https://doi.org/10.1088/1009-1963/11/4/310).
+  Basis for splitting equilibrium and non-equilibrium boundary data; `crates/lbm/src/inlet.rs`
+  uses its own selective trace extrapolation, not the paper's full closure.
+- Shapiro, R. (1970), *Smoothing, filtering, and boundary effects*, Reviews of Geophysics
+  8, 359–387. DOI: [10.1029/RG008i002p00359](https://doi.org/10.1029/RG008i002p00359).
+  Selective fourth-order tangential filter, applied to the inlet density reconstruction
+  residual only. The combination with stress-trace extrapolation is our own.
