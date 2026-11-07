@@ -208,6 +208,12 @@ impl Model {
                         active.insert(to.to_string());
                     }
                     if kind == Kind::Load
+                        && let Procedure::Harmonic(h) = &mut step.procedure
+                        && let Some(factor) = h.load_factors.remove(from)
+                    {
+                        h.load_factors.insert(to.to_string(), factor);
+                    }
+                    if kind == Kind::Load
                         && let Procedure::NonlinearStatic(n) = &mut step.procedure
                         && let Some(path) = n.load_paths.remove(from)
                     {

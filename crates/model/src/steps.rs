@@ -47,6 +47,8 @@ fn default_frames() -> u32 {
 pub enum Procedure {
     /// Linear static equilibrium under the active loads and boundary conditions.
     Static {},
+    /// Steady-state response to harmonic loads, in the exp(iωt) convention.
+    Harmonic(crate::harmonic::Harmonic),
     /// Natural frequencies and mode shapes: the lowest `modes` modes, optionally only those
     /// between `min_hz` and `max_hz` (cycles per time unit of the unit system).
     Frequency {
@@ -1067,6 +1069,7 @@ impl Procedure {
     pub fn name(&self) -> &'static str {
         match self {
             Procedure::Static {} => "static",
+            Procedure::Harmonic(_) => "harmonic",
             Procedure::Frequency { .. } => "frequency",
             Procedure::Buckle { .. } => "buckle",
             Procedure::ExplicitDynamic(_) => "explicit_dynamic",
@@ -1111,6 +1114,9 @@ impl Procedure {
     }
 
     pub fn validate(&self) -> Result<()> {
+        if let Procedure::Harmonic(h) = self {
+            return h.validate();
+        }
         if let Procedure::ExplicitDynamic(e) = self {
             return e.validate();
         }
@@ -1178,7 +1184,7 @@ impl Procedure {
         match self {
             Procedure::Static {} | Procedure::NonlinearStatic(_) => OutputVariable::ALL.into_iter().collect(),
             Procedure::Frequency { .. } | Procedure::Buckle { .. } => [OutputVariable::Displacement].into_iter().collect(),
-            Procedure::ExplicitDynamic(_) => [OutputVariable::Displacement, OutputVariable::Stress].into_iter().collect(),
+            Procedure::ExplicitDynamic(_) | Procedure::Harmonic(_) => [OutputVariable::Displacement, OutputVariable::Stress].into_iter().collect(),
             // Velocity, pressure and wall forces, always.
             Procedure::Fluid { .. } => BTreeSet::new(),
             Procedure::HeatTransfer { .. } => [OutputVariable::Temperature, OutputVariable::HeatFlux].into_iter().collect(),
@@ -1369,6 +1375,11 @@ impl Model {
         for l in &step.loads {
             require(&self.loads, "load", l).map_err(|e| context("step", &step.name, e))?;
         }
+        if let Procedure::Harmonic(h) = &step.procedure
+            && let Some(name) = h.load_factors.keys().find(|name| !step.loads.contains(*name))
+        {
+            return Err(context("step", &step.name, Error::Invalid(format!("load `{name}` has a harmonic factor but the step does not list it"))));
+        }
         if let Procedure::NonlinearStatic(n) = &step.procedure
             && let Some(name) = n.load_paths.keys().find(|l| !step.loads.contains(*l))
         {
@@ -1424,6 +1435,9 @@ impl Model {
         // A load the step no longer lists takes its own load path with it.
         if !active && let Procedure::NonlinearStatic(n) = &mut step.procedure {
             n.load_paths.remove(name);
+        }
+        if !active && let Procedure::Harmonic(h) = &mut step.procedure {
+            h.load_factors.remove(name);
         }
         Ok(())
     }

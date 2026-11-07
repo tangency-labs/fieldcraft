@@ -773,6 +773,7 @@ fn export_vtu(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let states: Vec<State> = match r.kind() {
         Kind::Fluid(_) => return Err(EngineError::Params("fluid results are per cell; not supported yet".into())),
+        Kind::Harmonic(_) => return Err(EngineError::Params("harmonic VTU export is not supported yet; export probe curves as CSV".into())),
         Kind::Static(st) => match &st.nonlinear {
             Some(h) if !h.frames.is_empty() => frames(h.frames.len(), "frames")?,
             _ => vec![State::Final],
@@ -1157,7 +1158,24 @@ fn probe_table(r: &Value, position: &dyn Fn(u32) -> Option<[f64; 3]>, display: &
     let length = display.symbol(fieldcraft_model::units::Quantity::Length).to_string();
     let unit_of = |key: &str| r.get("units").and_then(|u| u.get(key)).and_then(Value::as_str).map(str::to_string);
     let nodes = r.get("nodes").and_then(Value::as_array).ok_or_else(|| EngineError::Params("the probe has no node results to export".into()))?;
-    let rows = nodes
+    let mut expanded = Vec::new();
+    for node in nodes {
+        if let Some(samples) = node.get("samples").and_then(Value::as_array) {
+            for sample in samples {
+                let mut value = sample.clone();
+                if let Some(o) = value.as_object_mut() {
+                    o.insert("node".into(), node.get("node").cloned().unwrap_or(Value::Null));
+                    if let Some(name) = node.get("reference_point") {
+                        o.insert("reference_point".into(), name.clone());
+                    }
+                }
+                expanded.push(value);
+            }
+        } else {
+            expanded.push(node.clone());
+        }
+    }
+    let rows = expanded
         .iter()
         .map(|e| {
             let label = e.get("node").and_then(Value::as_u64).and_then(|n| u32::try_from(n).ok());

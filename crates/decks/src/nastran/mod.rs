@@ -298,6 +298,9 @@ fn solution(steps: &[&Step]) -> std::result::Result<u32, String> {
         return Err(format!("step `{}`: nonlinear static steps (Nastran's SOL 400; this writer writes SOL 101 and 103 so far)", s.name));
     }
     let statics = steps.iter().find(|s| matches!(s.procedure, Procedure::Static {}));
+    if let Some(s) = steps.iter().find(|s| matches!(s.procedure, Procedure::Harmonic(_))) {
+        return Err(format!("step `{}`: harmonic response (SOL 108/111; this writer writes SOL 101 and 103 so far)", s.name));
+    }
     let modes = steps.iter().find(|s| matches!(s.procedure, Procedure::Frequency { .. }));
     match (statics, modes) {
         (Some(_), None) => Ok(101),
@@ -395,6 +398,9 @@ impl<'m> Deck<'m> {
             };
             let mut ids = ids;
             if let Some(m) = model.material(name) {
+                if m.damping.is_some_and(|d| d != fieldcraft_model::harmonic::Damping::default()) {
+                    self.problems.insert(format!("material `{name}`: Rayleigh or structural damping is not supported by this writer"));
+                }
                 match &m.plastic {
                     Some(Plastic::JohnsonCook { .. }) => {
                         self.problems

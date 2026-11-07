@@ -17,6 +17,7 @@ A step's procedure decides which solver runs it. `solve.run` solves every step i
 | `static` | `solve.static` | Sparse direct, `crates/solver` | f64, CPU | [Linear static](structural/linear-static.md) |
 | `coupled_temperature_displacement` | `solve.static` | Sparse direct, `crates/solver` | f64, CPU | [Heat transfer](structural/heat-transfer.md) |
 | `frequency` | `solve.frequency` | Eigenvalue solver, `crates/solver` | f64, CPU | [Natural frequencies](structural/frequency.md) |
+| `harmonic` | `solve.harmonic` | Complex direct or modal superposition, `crates/solver` | f64, CPU | [Harmonic response](structural/harmonic.md) |
 | `buckle` | `solve.buckle` | Eigenvalue solver, `crates/solver` | f64, CPU | [Linear buckling](structural/buckling.md) |
 | `heat_transfer` | `solve.heat` | Sparse direct, `crates/solver` | f64, CPU | [Heat transfer](structural/heat-transfer.md) |
 | `nonlinear_static` | `solve.nonlinear` | Newton iterations, `crates/solver` | f64, CPU | [Nonlinear static](structural/nonlinear-static.md) |

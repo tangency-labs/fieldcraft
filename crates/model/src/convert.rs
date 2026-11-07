@@ -21,7 +21,10 @@ fn each(values: &mut [f64], q: Q, f: &mut dyn FnMut(Q, &mut f64)) {
 
 impl Quantities for Material {
     fn quantities(&mut self, f: &mut dyn FnMut(Q, &mut f64)) {
-        let Material { elastic, hyperelastic, density, fluid, plastic, damage, erosion, thermal, pvt, phase_change } = self;
+        let Material { damping, elastic, hyperelastic, density, fluid, plastic, damage, erosion, thermal, pvt, phase_change } = self;
+        if let Some(d) = damping {
+            d.quantities(f);
+        }
         match elastic {
             Some(Elastic::Isotropic { young, poisson: _ }) => f(Q::Pressure, young),
             Some(Elastic::EngineeringConstants { young, poisson: _, shear }) => {
@@ -128,6 +131,13 @@ impl Quantities for Material {
             f(Q::Temperature, solidus);
             f(Q::Temperature, liquidus);
         }
+    }
+}
+
+impl Quantities for crate::harmonic::Damping {
+    fn quantities(&mut self, f: &mut dyn FnMut(Q, &mut f64)) {
+        f(Q::StrainRate, &mut self.alpha);
+        f(Q::Time, &mut self.beta);
     }
 }
 
@@ -366,6 +376,19 @@ impl Quantities for Step {
         let Step { name: _, procedure, output: _, boundary_conditions: _, loads: _ } = self;
         match procedure {
             Procedure::Static {} | Procedure::CoupledTemperatureDisplacement {} => {}
+            Procedure::Harmonic(h) => {
+                match &mut h.frequencies {
+                    crate::harmonic::Frequencies::List(values) => each(values, Q::Frequency, f),
+                    crate::harmonic::Frequencies::Range(r) => {
+                        f(Q::Frequency, &mut r.start);
+                        f(Q::Frequency, &mut r.end);
+                    }
+                }
+                h.damping.quantities(f);
+                for factor in h.load_factors.values_mut() {
+                    f(Q::Angle, &mut factor.phase);
+                }
+            }
             Procedure::Frequency { modes: _, min_hz, max_hz } => {
                 for v in [min_hz, max_hz].into_iter().flatten() {
                     f(Q::Frequency, v);

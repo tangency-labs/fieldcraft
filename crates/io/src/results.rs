@@ -9,7 +9,7 @@
 //! u32 steps
 //! steps × { u64 length, step name (UTF-8),
 //!           32 bytes: SHA-256 of the definition it was solved from ([`definition_hash`]),
-//!           u8 kind (0 static, 1 frequency, 2 heat transfer, 3 explicit dynamic, 4 fluid),
+//!           u8 kind (0 static, 1 frequency, 2 heat transfer, 3 explicit dynamic, 4 fluid, 5 harmonic),
 //!           u64 length, the result in the [`crate::codec`] encoding }   names ascending
 //! ```
 //!
@@ -57,7 +57,7 @@ pub const MAX_CELLS: usize = u32::MAX as usize;
 /// A step's result as a solver reported it.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Solved {
-    /// A static, frequency, buckling or heat transfer step.
+    /// A static, frequency, buckling, heat transfer or harmonic step.
     Implicit(fieldcraft_solver::StepResult),
     Explicit(ExplicitResult),
     Fluid(FluidResult),
@@ -100,6 +100,7 @@ impl<'a> SolvedRef<'a> {
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Static(_)) => 0,
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Frequency(_)) => 1,
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Heat(_)) => 2,
+            SolvedRef::Implicit(fieldcraft_solver::StepResult::Harmonic(_)) => 5,
             SolvedRef::Explicit(_) => 3,
             SolvedRef::Fluid(_) => 4,
         }
@@ -110,6 +111,7 @@ impl<'a> SolvedRef<'a> {
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Static(r)) => codec::encode_into(r, out),
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Frequency(r)) => codec::encode_into(r, out),
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Heat(r)) => codec::encode_into(r, out),
+            SolvedRef::Implicit(fieldcraft_solver::StepResult::Harmonic(r)) => codec::encode_into(r, out),
             SolvedRef::Explicit(r) => codec::encode_into(r, out),
             SolvedRef::Fluid(r) => codec::encode_into(r, out),
         }
@@ -266,6 +268,7 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded> {
             2 => Solved::Implicit(fieldcraft_solver::StepResult::Heat(codec::decode(payload).map_err(damaged)?)),
             3 => Solved::Explicit(codec::decode(payload).map_err(damaged)?),
             4 => Solved::Fluid(codec::decode(payload).map_err(damaged)?),
+            5 => Solved::Implicit(fieldcraft_solver::StepResult::Harmonic(codec::decode(payload).map_err(damaged)?)),
             k => return invalid(format!("{PART}: step `{name}` has a result of unknown kind {k}")),
         };
         if result.step() != name {
@@ -302,6 +305,57 @@ fn lengths(n: usize, lens: &[(&str, usize, bool)]) -> std::result::Result<(), St
 pub fn check(r: &Solved) -> std::result::Result<(), String> {
     use fieldcraft_solver::StepResult as S;
     match r {
+        Solved::Implicit(S::Harmonic(h)) => {
+            if h.natural_frequencies.iter().any(|f| !f.is_finite() || *f < 0.0) {
+                return Err("harmonic natural frequencies must be finite and nonnegative".into());
+            }
+            if !ascending(&h.nodes) || h.frames.is_empty() || h.frames.windows(2).any(|w| w[0].frequency >= w[1].frequency) {
+                return Err("harmonic nodes and frequencies must ascend and frames must not be empty".into());
+            }
+            for f in &h.frames {
+                lengths(
+                    h.nodes.len(),
+                    &[
+                        ("real displacement", f.real.len(), false),
+                        ("imaginary displacement", f.imaginary.len(), false),
+                        ("real rotation", f.rotation_real.len(), true),
+                        ("imaginary rotation", f.rotation_imaginary.len(), true),
+                    ],
+                )?;
+                lengths(
+                    h.reference_points.len(),
+                    &[
+                        ("real reference point motion", f.points_real.len(), false),
+                        ("imaginary reference point motion", f.points_imaginary.len(), false),
+                    ],
+                )?;
+                for stress in [&f.stress_real, &f.stress_imaginary].into_iter().flatten() {
+                    lengths(h.nodes.len(), &[("harmonic stress", stress.len(), false)])?;
+                }
+                if f.stress_real.is_some() != f.stress_imaginary.is_some()
+                    || !f.frequency.is_finite()
+                    || f.frequency < 0.0
+                    || !f.relative_residual.is_finite()
+                    || f.relative_residual < 0.0
+                    || !f.residual_norm_si.is_finite()
+                    || f.residual_norm_si < 0.0
+                    || f.projected_residual.is_some_and(|r| !r.is_finite() || r < 0.0)
+                    || !f.input_power.is_finite()
+                    || !f.dissipated_power.is_finite()
+                    || f.real.iter().chain(&f.imaginary).chain(&f.rotation_real).chain(&f.rotation_imaginary).flatten().any(|v| !v.is_finite())
+                    || f.points_real
+                        .iter()
+                        .chain(&f.points_imaginary)
+                        .chain(f.stress_real.iter().flatten())
+                        .chain(f.stress_imaginary.iter().flatten())
+                        .flatten()
+                        .any(|v| !v.is_finite())
+                {
+                    return Err("harmonic frame has inconsistent or non-finite values".into());
+                }
+            }
+            Ok(())
+        }
         Solved::Implicit(S::Static(s)) => {
             if !ascending(&s.nodes) {
                 return Err("its nodes do not ascend".into());

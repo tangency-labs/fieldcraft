@@ -3,6 +3,12 @@
 //! The deck is written from the public Abaqus keyword and element references, in our own words;
 //! nothing here comes from a deck produced by the product.
 //!
+//! Harmonic syntax follows the public Abaqus 2026 keyword references for
+//! STEADY STATE DYNAMICS, DAMPING, GLOBAL DAMPING, MODAL DAMPING and CLOAD/DLOAD/DSLOAD.
+//! Explicit single-frequency lines preserve the requested points. Modal steps
+//! get their own SIM/Lanczos extraction with full damping projection; nonzero
+//! prescribed motion in a modal export is refused (it requires base-motion data).
+//!
 //! # Layout
 //!
 //! The deck is *flat*: nodes, elements, sets, materials, sections and couplings sit at model level,
@@ -665,19 +671,39 @@ impl<'a> StepLoads<'a> {
     /// `everything` is every element and the section sets that hold them (gravity on the whole
     /// model).
     fn new(model: &'a Model, r: &'a Resolved, step: &'a Step, everything: &'a (Vec<&'a str>, Vec<u32>)) -> StepLoads<'a> {
+        Self::with_factors(model, r, step, everything, |_| 1.0)
+    }
+
+    fn with_factors(
+        model: &'a Model,
+        r: &'a Resolved,
+        step: &'a Step,
+        everything: &'a (Vec<&'a str>, Vec<u32>),
+        factor: impl Fn(&str) -> f64,
+    ) -> StepLoads<'a> {
         let axisymmetric = r.extent() == Some(fieldcraft_model::Extent::Revolved);
-        let mut s = StepLoads { concentrated: crate::concentrated_loads(model, r, &step.loads), axisymmetric, ..StepLoads::default() };
+        let mut s = StepLoads { axisymmetric, ..StepLoads::default() };
+        for name in &step.loads {
+            for (key, value) in crate::concentrated_loads(model, r, &BTreeSet::from([name.clone()])) {
+                *s.concentrated.entry(key).or_default() += factor(name) * value;
+            }
+        }
+        s.concentrated.retain(|_, v| *v != 0.0);
         let (mut gravity, mut body) = (Vec::new(), Vec::new());
         for name in &step.loads {
+            let factor = factor(name);
+            if factor == 0.0 {
+                continue;
+            }
             match model.load(name) {
-                Some(Load::Pressure { set, magnitude }) => *s.pressure.entry(set.as_str()).or_default() += magnitude,
-                Some(Load::Gravity { acceleration, set: Some(set) }) => gravity.push(ElementLoad::on_set(r, set, *acceleration)),
+                Some(Load::Pressure { set, magnitude }) => *s.pressure.entry(set.as_str()).or_default() += factor * magnitude,
+                Some(Load::Gravity { acceleration, set: Some(set) }) => gravity.push(ElementLoad::on_set(r, set, acceleration.map(|v| factor * v))),
                 Some(Load::Gravity { acceleration, set: None }) => {
-                    gravity.push(ElementLoad { elsets: everything.0.clone(), elements: &everything.1, vector: *acceleration })
+                    gravity.push(ElementLoad { elsets: everything.0.clone(), elements: &everything.1, vector: acceleration.map(|v| factor * v) })
                 }
-                Some(Load::BodyForce { set, vector }) => body.push(ElementLoad::on_set(r, set, *vector)),
+                Some(Load::BodyForce { set, vector }) => body.push(ElementLoad::on_set(r, set, vector.map(|v| factor * v))),
                 Some(Load::Centrifugal { angular_velocity, point, axis, set }) => {
-                    let w2 = angular_velocity * angular_velocity;
+                    let w2 = factor * angular_velocity * angular_velocity;
                     match set {
                         Some(set) => s.centrifugal.push((set, w2, *point, *axis)),
                         None => s.centrifugal.extend(everything.0.iter().map(|set| (*set, w2, *point, *axis))),
@@ -863,6 +889,11 @@ impl Deck {
         self.comment("Materials");
         for (name, m) in model.materials() {
             self.line(&format!("*MATERIAL, NAME={name}"));
+            if let Some(d) = m.damping
+                && d != fieldcraft_model::harmonic::Damping::default()
+            {
+                self.line(&format!("*DAMPING, ALPHA={}, BETA={}, STRUCTURAL={}", number(d.alpha)?, number(d.beta)?, number(d.loss_factor)?));
+            }
             match m.elastic {
                 Some(Elastic::Isotropic { young, poisson })
                     if has_nonlinear_step(model)
@@ -1224,17 +1255,21 @@ impl Deck {
     }
 
     fn step_loads(&mut self, loads: &StepLoads, before: Written) -> Result<()> {
-        if self.op_new("*CLOAD", !loads.concentrated.is_empty(), before.concentrated) {
+        self.component_loads(loads, before, "")
+    }
+
+    fn component_loads(&mut self, loads: &StepLoads, before: Written, component: &str) -> Result<()> {
+        if self.op_new(&format!("*CLOAD{component}"), !loads.concentrated.is_empty(), before.concentrated) {
             for ((node, dof), v) in &loads.concentrated {
                 self.numbers_line(&format!("{node}, {dof}"), &[*v])?;
             }
         }
-        if self.op_new("*DSLOAD", !loads.pressure.is_empty(), before.pressure) {
+        if self.op_new(&format!("*DSLOAD{component}"), !loads.pressure.is_empty(), before.pressure) {
             for (surface, p) in &loads.pressure {
                 self.numbers_line(&format!("{surface}, P"), &[*p])?;
             }
         }
-        if self.op_new("*DLOAD", !loads.element.is_empty() || !loads.centrifugal.is_empty(), before.element) {
+        if self.op_new(&format!("*DLOAD{component}"), !loads.element.is_empty() || !loads.centrifugal.is_empty(), before.element) {
             for (target, kind, v) in &loads.element {
                 let target = match target {
                     ElementTarget::Set(s) => s.to_string(),
@@ -1309,7 +1344,7 @@ impl Deck {
         let mut base_bcs = initial;
         let mut base_loads: BTreeSet<String> = BTreeSet::new();
         let mut written = Written::default();
-        for step in steps {
+        for (index, step) in steps.iter().enumerate() {
             self.comment(&format!("Step {}", step.name));
             match step.procedure {
                 Procedure::Fluid { .. } => return Err(crate::fluid_step(FORMAT, &step.name)),
@@ -1412,6 +1447,69 @@ impl Deck {
                     self.step_boundaries(model, r, &base_bcs, &step.boundary_conditions)?;
                     if !step.loads.is_empty() {
                         self.comment("loads have no effect on natural frequencies and are not written");
+                    }
+                }
+                Procedure::Harmonic(ref h) => {
+                    use fieldcraft_model::harmonic::Method;
+                    if has_nonlinear_step(model) {
+                        return Err(Error::Unsupported {
+                            format: FORMAT,
+                            what: format!("harmonic step `{}` with a nonlinear base state; FieldCraft starts from the undeformed state", step.name),
+                        });
+                    }
+                    if let Method::Modal { modes, .. } = h.method {
+                        for name in &step.boundary_conditions {
+                            if model.boundary_condition(name).is_some_and(|bc| !holds_at_zero(bc)) {
+                                return Err(Error::Unsupported {
+                                    format: FORMAT,
+                                    what: format!("harmonic modal step `{}`: nonzero boundary `{name}` requires base motion", step.name),
+                                });
+                            }
+                        }
+                        let name = format!("fieldcraft-harmonic-modes-{index}");
+                        if steps.iter().any(|s| s.name.eq_ignore_ascii_case(&name)) {
+                            return Err(Error::Unsupported {
+                                format: FORMAT,
+                                what: format!("generated harmonic extraction name `{name}` conflicts with a step"),
+                            });
+                        }
+                        self.line(&format!("*STEP, NAME={name}, PERTURBATION"));
+                        self.line("*FREQUENCY, EIGENSOLVER=LANCZOS, SIM, DAMPING PROJECTION=ON, NORMALIZATION=MASS");
+                        self.line(&modes.to_string());
+                        self.step_boundaries(model, r, &base_bcs, &step.boundary_conditions)?;
+                        self.line("*END STEP");
+                    }
+                    self.line(&format!("*STEP, NAME={}, PERTURBATION", step.name));
+                    let method = if matches!(h.method, Method::Direct) { "DIRECT" } else { "MODE BASED=CONVENTIONAL" };
+                    self.line(&format!("*STEADY STATE DYNAMICS, {method}, INTERVAL=RANGE, FREQUENCY SCALE=LINEAR"));
+                    for frequency in h.frequencies.points()? {
+                        self.numbers_line("", &[frequency, 0.0])?;
+                    }
+                    self.step_boundaries(model, r, &base_bcs, &step.boundary_conditions)?;
+                    self.line(&format!(
+                        "*GLOBAL DAMPING, ALPHA={}, BETA={}, STRUCTURAL={}",
+                        number(h.damping.alpha)?,
+                        number(h.damping.beta)?,
+                        number(h.damping.loss_factor)?
+                    ));
+                    if let Method::Modal { modes, ref damping_ratios } = h.method
+                        && !damping_ratios.is_empty()
+                    {
+                        self.line("*MODAL DAMPING, VISCOUS=FRACTION OF CRITICAL DAMPING, DEFINITION=MODE NUMBERS");
+                        if damping_ratios.len() == 1 {
+                            self.numbers_line(&format!("1, {modes}"), &damping_ratios[..1])?;
+                        } else {
+                            for (j, ratio) in damping_ratios.iter().enumerate() {
+                                self.numbers_line(&format!("{}, {}", j + 1, j + 1), &[*ratio])?;
+                            }
+                        }
+                    }
+                    for (imaginary, component) in [(false, ", REAL"), (true, ", IMAGINARY")] {
+                        let loads = StepLoads::with_factors(model, r, step, &everything, |name| {
+                            let (re, im) = h.load_factors.get(name).copied().unwrap_or_default().components();
+                            if imaginary { im } else { re }
+                        });
+                        self.component_loads(&loads, written, component)?;
                     }
                 }
                 Procedure::ExplicitDynamic(_) | Procedure::HeatTransfer { .. } | Procedure::CoupledTemperatureDisplacement {} => {

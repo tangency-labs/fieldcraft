@@ -1628,3 +1628,33 @@ API, Crossref, Open Library).
   through its depth bends stress-free to the curvature α dT₀/dz, a linear residual stress
   s (2z/H − 1) is released into the curvature 2 s/(E H), and a self-equilibrated residual stress
   held by the supports moves nothing.
+
+## Part T: Steady-state harmonic response (M16)
+
+- J. K. Vandiver, MIT OpenCourseWare 2.003SC (2011), lectures 24–25,
+  [modal response to harmonic forcing](https://ocw.mit.edu/courses/2-003sc-engineering-dynamics-fall-2011/resources/lecture-25-modal-analysis-response-to-ics-and-to-harmonic-forces/).
+  Real modes are mass normalized; nonproportional viscous and structural loss matrices retain
+  their full projection. Modal damping ratios add `2 zeta_j omega_j` to modal viscous damping.
+- R. R. Craig and A. J. Kurdila, *Fundamentals of Structural Dynamics*, 2nd ed. (2006):
+  modal superposition and nonproportional damping. Mode extraction reuses the existing
+  Ericsson–Ruhe / Grimes–Lewis–Simon implementation.
+- D. Day and M. A. Heroux, *Solving Complex-Valued Linear Systems via Equivalent Real
+  Formulations*, SIAM J. Sci. Comput. 23(2), 480–498 (2001),
+  [doi:10.1137/S1064827500372262](https://doi.org/10.1137/S1064827500372262).
+  Bibliographic reference for real equivalents; the implemented symmetric block identity is
+  independently derived from `(A+iB)(Ur+iUi)=Fr+iFi`. Interleaved pairs reuse the original
+  supernode structure and pivoted LDLᵀ algorithm of Part P. No conjugate transpose is used.
+- The public [Abaqus damping reference](https://docs.software.vt.edu/abaqusv2026/English/SIMACAEMATRefMap/simamat-c-dampingopt.htm)
+  supplies independent definitions of Rayleigh and constant structural loss. The latter
+  remains a stiffness term at zero frequency; static-limit tests explicitly set it to zero.
+
+Implementation: `crates/model/src/harmonic.rs`, `crates/solver/src/complex.rs` and
+`crates/solver/src/harmonic.rs`; model assembly/recovery in `harmonic/model.rs`.
+References, export boundaries and verification cases are in the
+[harmonic manual](../manual/structural/harmonic.md). No external solver source or deck was used.
+
+Harmonic residual refinement also uses compensated summation as analyzed by N. J. Higham,
+*The Accuracy of Floating Point Summation*, SIAM J. Sci. Comput. 14(4):783–799 (1993),
+[doi:10.1137/0914050](https://doi.org/10.1137/0914050). Corrections use the existing direct
+factor (Higham, *Accuracy and Stability of Numerical Algorithms*, 2nd ed., 2002, §12.2),
+with a fixed iteration cap and no change to the physical operator or equilibrium tolerance.

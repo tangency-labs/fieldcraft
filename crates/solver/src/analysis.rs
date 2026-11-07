@@ -175,7 +175,7 @@ pub struct FrequencyOptions {
 /// The assembled matrices and the model's mass.
 pub(crate) struct Assembled {
     pub(crate) k: Csr,
-    m: Option<Csr>,
+    pub(crate) m: Option<Csr>,
 }
 
 /// Elements whose matrices are computed together before they are added.
@@ -735,6 +735,7 @@ pub enum Location {
 pub enum StepResult {
     Static(StaticResult),
     Frequency(FrequencyResult),
+    Harmonic(crate::harmonic::HarmonicResult),
     Heat(crate::heat::HeatResult),
 }
 
@@ -743,6 +744,7 @@ impl StepResult {
         match self {
             StepResult::Static(r) => &r.step,
             StepResult::Frequency(r) => &r.step,
+            StepResult::Harmonic(r) => &r.step,
             StepResult::Heat(r) => &r.step,
         }
     }
@@ -751,6 +753,7 @@ impl StepResult {
         match self {
             StepResult::Static(r) => &r.nodes,
             StepResult::Frequency(r) => &r.nodes,
+            StepResult::Harmonic(r) => &r.nodes,
             StepResult::Heat(r) => &r.nodes,
         }
     }
@@ -764,6 +767,7 @@ impl StepResult {
         match self {
             StepResult::Static(r) => r.reference_points.iter().position(|p| p.label == label),
             StepResult::Frequency(r) => r.reference_points.iter().position(|p| p.1 == label),
+            StepResult::Harmonic(r) => r.reference_points.iter().position(|p| p.1 == label),
             StepResult::Heat(_) => None,
         }
         .map(Location::Point)

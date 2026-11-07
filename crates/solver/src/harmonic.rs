@@ -25,6 +25,9 @@ use crate::eigen::{self, Operator, Wanted};
 use crate::sparse::Csr;
 use crate::{Error, Limits, Result};
 
+mod model;
+pub use model::{Frame, HarmonicResult, solve_harmonic};
+
 /// Reduced physical matrices in one equation order and on the same CSR pattern.
 /// C and G contain material and discrete contributions only; global step damping
 /// is supplied at the frequency evaluation boundary.
@@ -156,6 +159,7 @@ pub struct ModalSolution {
     pub coordinates: Vector,
     pub projected_residual: complex::Residual,
     pub full_relative_residual: f64,
+    pub full_residual_norm: f64,
     /// True only when the projected operator has no off-diagonal damping terms.
     pub diagonal: bool,
 }
@@ -310,12 +314,13 @@ impl<'a> Modal<'a> {
             }
         }
         let (physical_a, physical_b) = matrices.dynamic(omega, damping, limits)?;
-        let full_relative_residual = full_residual(&physical_a, &physical_b, matrices.mass, &displacement, force, &damping_shape)?;
-        Ok(ModalSolution { displacement, coordinates: q, projected_residual, full_relative_residual, diagonal })
+        let (full_relative_residual, full_residual_norm) =
+            full_residual(&physical_a, &physical_b, matrices.mass, &displacement, force, &damping_shape)?;
+        Ok(ModalSolution { displacement, coordinates: q, projected_residual, full_relative_residual, full_residual_norm, diagonal })
     }
 }
 
-fn full_residual(a: &Csr, b: &Csr, mass: &Csr, u: &Vector, force: &Vector, damping_shape: &Vector) -> Result<f64> {
+fn full_residual(a: &Csr, b: &Csr, mass: &Csr, u: &Vector, force: &Vector, damping_shape: &Vector) -> Result<(f64, f64)> {
     let mut real = vec![0.0; a.n];
     let mut imaginary = vec![0.0; a.n];
     let mut scratch = vec![0.0; a.n];
@@ -339,6 +344,7 @@ fn full_residual(a: &Csr, b: &Csr, mass: &Csr, u: &Vector, force: &Vector, dampi
     }
     let mut residual = 0.0_f64;
     let mut norm = 0.0_f64;
+    let mut residual_norm = 0.0_f64;
     for i in 0..a.n {
         let r = (real[i] - force.real[i]).hypot(imaginary[i] - force.imaginary[i]);
         let f = force.real[i].hypot(force.imaginary[i]);
@@ -346,13 +352,14 @@ fn full_residual(a: &Csr, b: &Csr, mass: &Csr, u: &Vector, force: &Vector, dampi
             return Err(Error::Invalid("non-finite harmonic modal residual".into()));
         }
         residual = residual.max(r);
+        residual_norm = residual_norm.hypot(r);
         norm = norm.max(f);
     }
     if residual == 0.0 {
-        Ok(0.0)
-    } else if norm == 0.0 {
-        Err(Error::NotConverged("nonzero harmonic residual for zero force".into()))
+        Ok((0.0, 0.0))
+    } else if norm == 0.0 || !residual_norm.is_finite() || !(residual / norm).is_finite() {
+        Err(Error::NotConverged("nonzero harmonic residual for zero force or unrepresentable residual ratio".into()))
     } else {
-        Ok(residual / norm)
+        Ok((residual / norm, residual_norm))
     }
 }

@@ -178,6 +178,12 @@ fn control_units(units: Preset) -> [&'static str; 4] {
 
 fn write_with(model: &Model, r: &Resolved, units: Preset) -> Result<Written> {
     crate::refuse_fluid(FORMAT, model)?;
+    if let Some(step) = model.steps().iter().find(|s| matches!(s.procedure, Procedure::Harmonic(_))) {
+        return Err(Error::Unsupported {
+            format: FORMAT,
+            what: format!("step `{}`: harmonic frequency response is not supported by this writer", step.name),
+        });
+    }
     let estimate = (model.nodes().len() + model.reference_points().len()) * 130 + model.elements().len() * 260;
     if estimate > MAX_DECK_BYTES {
         return Err(Error::Limit(format!("the deck would be about {estimate} bytes; at most {MAX_DECK_BYTES} are written")));
@@ -394,6 +400,9 @@ fn plan<'a>(model: &'a Model, r: &Resolved) -> Result<Plan<'a>> {
     let mut curves = BTreeMap::new();
     for name in materials.keys() {
         let Some(m) = model.material(name) else { continue };
+        if m.damping.is_some_and(|d| d != fieldcraft_model::harmonic::Damping::default()) {
+            refused.insert(format!("material `{name}`: Rayleigh or structural damping is not supported by this writer"));
+        }
         if m.density.is_none() {
             refused.insert(format!("material `{name}` has no density, and LS-DYNA requires a mass density on every material"));
         }
@@ -948,7 +957,11 @@ fn write_step(d: &mut Deck, model: &Model, r: &Resolved, plan: &Plan, step: &Ste
                 d.card([Field::Blank, Field::Blank, Field::Blank, Field::Blank, Field::from(1)]);
             }
         }
-        Procedure::ExplicitDynamic(_) | Procedure::HeatTransfer { .. } | Procedure::CoupledTemperatureDisplacement {} | Procedure::Buckle { .. } => {
+        Procedure::Harmonic(_)
+        | Procedure::ExplicitDynamic(_)
+        | Procedure::HeatTransfer { .. }
+        | Procedure::CoupledTemperatureDisplacement {}
+        | Procedure::Buckle { .. } => {
             return Err(Error::Unsupported { format: FORMAT, what: format!("step `{}`: {} steps", step.name, step.procedure.name()) });
         }
     }

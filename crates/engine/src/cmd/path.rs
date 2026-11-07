@@ -93,6 +93,7 @@ fn pick(result: &StepResult, field: Field, p: &Value) -> Result<Pick> {
             }
         }
         Kind::Fluid(_) => return Err(EngineError::invalid("step", "path plots currently interpolate solid nodal fields; fluid fields are per cell")),
+        Kind::Harmonic(_) => return Err(EngineError::invalid("step", "harmonic phasors are available through solve.probe")),
     }
     if !Field::available(result).any(|f| f == field) {
         return Err(EngineError::invalid("field", "field is not available for this solved step"));

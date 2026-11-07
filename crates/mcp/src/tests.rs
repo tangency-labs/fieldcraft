@@ -280,6 +280,25 @@ fn probe_takes_points_at() {
 }
 
 #[test]
+fn harmonic_analysis_is_available_through_the_solve_tool() {
+    let mut s = server();
+    let tools = send(&mut s, json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}));
+    let solve = tools["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == "solve").unwrap();
+    assert!(solve["inputSchema"]["properties"]["analysis"]["enum"].as_array().unwrap().contains(&json!("harmonic")));
+    ok(&mut s, "execute", json!({"command":"file.sample","params":{"name":"cantilever"}}));
+    ok(
+        &mut s,
+        "execute",
+        json!({"command":"model.step.edit","params":{"name":"Load","procedure":{"type":"harmonic","frequencies":[0],"method":{"type":"direct"}}}}),
+    );
+    let solved = ok(&mut s, "solve", json!({"analysis":"harmonic","step":"Load"}));
+    assert_eq!(solved["frequencies"][0]["frequency"], 0.0);
+    assert!(solved["frequencies"][0]["relative_residual"].as_f64().unwrap() < 1e-8);
+    let probe = ok(&mut s, "probe", json!({"step":"Load","at":[[0,0,0]]}));
+    assert!(probe["nodes"][0]["samples"][0]["displacement_amplitude"].is_array());
+}
+
+#[test]
 fn a_batch_stops_at_the_first_error() {
     let mut s = server();
     let r = call(

@@ -220,6 +220,7 @@ fn values(r: &Implicit, stress: bool, frame: Option<usize>) -> Result<InitialFie
         }
         (_, Implicit::Heat(_)) => Err(wrong("a heat transfer step")),
         (_, Implicit::Frequency(_)) => Err(wrong("a frequency or buckling step")),
+        (_, Implicit::Harmonic(_)) => Err(wrong("a harmonic phasor step; initial fields require real static values")),
     }
 }
 

@@ -44,6 +44,7 @@ const ANALYSES: &[(&str, &str)] = &[
     ("static", "solve.static"),
     ("nonlinear", "solve.nonlinear"),
     ("frequency", "solve.frequency"),
+    ("harmonic", "solve.harmonic"),
     ("buckle", "solve.buckle"),
     ("explicit", "solve.explicit"),
     ("fluid", "solve.fluid"),

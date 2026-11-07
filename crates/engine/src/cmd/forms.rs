@@ -267,9 +267,21 @@ const PHASE_CHANGE: Field = group(
 )
 .help("Melting and freezing: the latent heat released between the liquidus and the solidus. Needs a specific heat.");
 
+const HARMONIC_DAMPING: Field = group(
+    "damping",
+    "Harmonic damping",
+    &[
+        num("alpha", "Rayleigh alpha", D::StrainRate).help("Mass-proportional viscous coefficient, nonnegative."),
+        num("beta", "Rayleigh beta", D::Time).help("Stiffness-proportional viscous coefficient, nonnegative."),
+        num("loss_factor", "Structural loss factor", D::None).help("Nonnegative imaginary stiffness multiplier; retained at zero frequency."),
+    ],
+)
+.help("Additive Rayleigh viscous damping and structural stiffness loss for harmonic response.");
+
 pub const MATERIAL: &[Field] = &[
     NAME,
     ELASTIC,
+    HARMONIC_DAMPING,
     positive("density", "Density", D::Density)
         .help("Mass per volume; needed for dynamics, frequencies and gravity. Steel ≈ 7850 kg/m³, aluminium ≈ 2700 kg/m³."),
     PLASTIC,
@@ -1043,6 +1055,21 @@ const PROCEDURE: Field = variants(
                 positive("max_hz", "Max frequency", D::Hertz).help("Highest frequency of interest."),
             ],
         ),
+        variant("harmonic", "Steady-state harmonic", &[
+            json("frequencies", "Frequencies")
+                .numbers(&[("/count", D::None), ("/logarithmic", D::None), ("/*", D::Hertz)])
+                .help("Ascending nonnegative frequency list, or {start, end, count, logarithmic}; range endpoints are included.").req(),
+            variants("method", "Method", &[
+                variant("direct", "Direct", &[]),
+                variant("modal", "Modal", &[
+                    int("modes", "Modes", 1, 10_000).help("How many mass-normalized real modes to retain in the response.").req(),
+                    json("damping_ratios", "Modal damping ratios").help("Zero, one shared ratio, or one ratio per requested mode; additive to other damping."),
+                ]),
+            ]).help("Direct factors the physical dynamic stiffness; modal projects onto the requested real modes.").req(),
+            HARMONIC_DAMPING,
+            json("load_factors", "Harmonic load factors").numbers(&[("/*/phase", D::Of(Quantity::Angle))])
+                .help("Active load names mapped to {amplitude, phase}; defaults are 1 and zero. Phasors use Re(U exp(i omega t))."),
+        ]),
         variant(
             "explicit_dynamic",
             "Dynamic, explicit",

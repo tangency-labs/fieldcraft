@@ -595,6 +595,9 @@ impl PhaseChange {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Material {
+    /// Linear viscous and structural loss contributions for harmonic steps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub damping: Option<crate::harmonic::Damping>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub elastic: Option<Elastic>,
     /// Large-strain behaviour in nonlinear steps, built on the isotropic elastic constants.
@@ -629,6 +632,9 @@ pub struct Material {
 
 impl Material {
     pub fn validate(&self) -> Result<()> {
+        if let Some(damping) = self.damping {
+            damping.validate()?;
+        }
         if self.elastic.is_none() && self.density.is_none() && self.fluid.is_none() && self.thermal.is_none() && self.pvt.is_none() {
             return Err(Error::Invalid("a material needs elastic constants, a density, fluid behaviour, thermal properties or PVT behaviour".into()));
         }

@@ -1,0 +1,140 @@
+# Steady-state harmonic response
+
+`solve.harmonic` solves a linear structure's response to sinusoidal loads at specified
+frequencies. Create a `harmonic` step, activate its loads and supports, then solve it by
+name. The command is available to scripts, the CLI and MCP; `solve.run` also dispatches it.
+
+## Parameters
+
+```json
+{
+  "name": "Sweep",
+  "procedure": {
+    "type": "harmonic",
+    "frequencies": {"start": "0 Hz", "end": "200 Hz", "count": 41},
+    "method": {"type": "direct"},
+    "damping": {"alpha": 0.2, "beta": 0.00001, "loss_factor": 0.01},
+    "load_factors": {"Force": {"amplitude": 1, "phase": "30 deg"}}
+  },
+  "boundary_conditions": ["Clamp"],
+  "loads": ["Force"],
+  "output": ["displacement", "stress"]
+}
+```
+
+Pass this object to `model.step.create`. Then call `solve.harmonic` with
+`{"step":"Sweep"}` and `solve.probe` with `{"step":"Sweep","nodes":[42]}`.
+Names must refer to definitions in the model. Each load keeps its existing spatial
+distribution; its factor multiplies that distribution. A missing factor means unit amplitude
+and zero phase. Factors may only name loads active in the step.
+
+| Parameter | Meaning |
+|---|---|
+| `frequencies` | An ascending list, or `{start,end,count,logarithmic}`; 1–10,000 finite nonnegative points. Logarithmic ranges require positive endpoints. Frequencies are in the display frequency unit. |
+| `method` | `{"type":"direct"}` or `{"type":"modal","modes":40,"damping_ratios":[0.02]}`. |
+| `damping.alpha` | Mass-proportional viscous coefficient, inverse time. |
+| `damping.beta` | Stiffness-proportional viscous coefficient, time. |
+| `damping.loss_factor` | Dimensionless structural loss factor, not a damping ratio. |
+| `damping_ratios` | Modal method only: empty, one ratio for every mode, or one per requested mode. |
+| `load_factors` | Nonnegative dimensionless amplitude and phase in the display angle unit. Stored phases are radians. |
+| `threads` | A solve parameter, using the same deterministic CPU thread pool as the other solvers. |
+
+Material definitions accept the same `damping` object. Material and step coefficients are
+**additive**. All coefficients and ratios must be finite and nonnegative. Consistent mass
+is used, including point masses and rotary inertia. Material density is required where an
+element carries inertia. Dashpots add their assembled viscous matrix.
+
+## Equations and damping
+
+Physical quantities follow `u(t) = Re(U exp(i omega t))`, with `omega = 2 pi f`:
+
+```text
+[K - omega² M + i (omega C + G)] U = F
+C = alpha_step M + beta_step K + sum(alpha_e M_e + beta_e K_e) + C_dashpot
+G = eta_step K + sum(eta_e K_e)
+F_load = amplitude (cos(phase) + i sin(phase)) F_spatial
+```
+
+`G` remains at zero frequency. Thus a constant structural loss gives complex compliance
+there. To test the static limit, set all loss factors to zero; viscous damping then vanishes
+as frequency tends to zero. No frequency offset, stiffness shift or damping floor is added
+to a direct solve. An undamped resonance or an unsupported singular system returns an error.
+Near a lightly damped pole, refine the frequency list and compare the full complex response:
+small frequency or mesh errors can move the peak substantially.
+
+The matrix is complex **symmetric**, not Hermitian. The direct solver interleaves real and
+imaginary unknowns in the equivalent real symmetric indefinite system
+`[[A,-B],[-B,-A]] [Ur,Ui] = [Fr,-Fi]`. It uses the existing sparse ordering and supernodal
+LDLᵀ factorization, preserving paired columns for pivoting. A real-only operator takes the
+smaller real solve. Factor capacity is checked before allocation; doubling equations can
+increase fill substantially. Bounded iterative refinement checks the original complex
+equations, not just the transformed system.
+
+The modal method obtains real mass-normalized modes from the existing block Lanczos solver.
+It projects material damping in full: `Phiᵀ C Phi` and `Phiᵀ G Phi`. Step Rayleigh damping
+and loss are diagonal in this basis. The additional modal viscous coefficient is
+`2 zeta_j omega_j`. Proportional damping uses scalar complex divisions; nonproportional
+damping retains the off-diagonal terms and solves the small complex system. Increasing the
+mode count is a necessary convergence check. A small projected residual alone does not
+certify the untruncated physical equations.
+
+## Output
+
+The solve summary gives natural frequencies for modal runs, matrix sizes, warnings and,
+per forcing frequency, `relative_residual`, `projected_residual` when applicable, input power
+and dissipated power. Residuals use the infinity norm of the full reduced equations divided
+by the force norm. With modal ratios, the full residual includes the reconstructed modal
+damping force. Direct residuals above `1e-8` are refused; modal truncation residuals are
+reported without concealing omitted response.
+
+`residual_norm_si` also reports the algebraic Euclidean norm of the same full residual,
+in the internal SI equation scaling. It is a numerical diagnostic and is not converted
+with display units: a model with both translations and rotations mixes force and moment
+equations. For a translational-only solid model, it is the force-imbalance norm in newtons.
+
+`solve.probe` returns each node's frequency `samples`: displacement, rotation when present,
+and requested stress components, each with `_real`, `_imaginary`, `_amplitude` and `_phase`.
+An optional zero-based `frame` selects one frequency. Component amplitudes are nonnegative;
+phase is `atan2(imaginary, real)`, with zero for exactly zero amplitude. These component
+amplitudes do not define a von Mises stress amplitude. Units convert at the command boundary,
+including phase, frequency and power. Probe CSV exports one row per node and frequency.
+Saved `.fieldcraft` results retain the SI phasors.
+
+For homogeneous supports the mean powers are
+`P_in = omega/2 Im(F dot conj(U))` and
+`P_loss = omega/2 U* (omega C + G) U`, including modal damping when requested.
+For nonzero real prescribed displacements the reported powers refer to the reduced effective
+force and response; they exclude a separate accounting of support work.
+
+## Scope and verification
+
+This is an undeformed linear elastic response: no preload stress stiffening, contact, thermal
+harmonic loads or nonlinear material evolution. Stress is elastic nodal stress for solids
+and rods, and the existing shell top-surface nodal recovery. Beam section stress, harmonic
+contours/animation and VTK export are currently refused by name; use displacement-only output
+for beams and probe/CSV for curves. Prescribed support displacements are real phasors; complex
+base motion is not a separate input type.
+
+The Abaqus writer emits direct or SIM modal steady-state steps, material/global damping,
+modal ratios and separate real/imaginary loads, from public keyword documentation. A modal
+step with nonzero prescribed motion, or a harmonic step sharing a nonlinear base state, is
+refused. Nastran and LS-DYNA harmonic procedures are refused with the step name; these writers
+do not silently export a static substitute.
+
+Verification recipes are `harmonic-sdof`, `harmonic-reciprocity`, `harmonic-cantilever` and
+`harmonic-nafems-5h`. Their source values and tolerances are declared in `expected.json`;
+execution and fixture status appear in [the oracle report](../../oracle.md). Unit and model
+tests also cover nonproportional projection, prescribed displacement, hostile input, the
+static limit and deterministic thread counts. Published reference values do not imply that
+a commercial solver was run.
+
+## References and implementation
+
+- J. K. Vandiver, MIT 2.003SC (2011), [lectures 24–25](https://ocw.mit.edu/courses/2-003sc-engineering-dynamics-fall-2011/resources/lecture-25-modal-analysis-response-to-ics-and-to-harmonic-forces/): harmonic forcing and modal response.
+- D. Day and M. A. Heroux (2001), [Solving complex-valued linear systems via equivalent real formulations](https://doi.org/10.1137/S1064827500372262), SIAM J. Sci. Comput. 23(2), 480–498. The symmetric block identity above is derived directly from the real and imaginary equations.
+- R. R. Craig and A. J. Kurdila, *Fundamentals of Structural Dynamics*, 2nd ed., 2006: real-mode projection and nonproportional damping.
+- [Abaqus public damping reference](https://docs.software.vt.edu/abaqusv2026/English/SIMACAEMATRefMap/simamat-c-dampingopt.htm) and [steady-state keyword](https://docs.software.vt.edu/abaqusv2026/English/SIMACAEKEYRefMap/simakey-r-steadystatedynamics.htm): independent coefficient and export definitions.
+
+The model contract is in `crates/model/src/harmonic.rs`; the matrix kernels in
+`crates/solver/src/{complex,harmonic}.rs`; model assembly and recovery in
+`crates/solver/src/harmonic/model.rs`; commands in `crates/engine/src/cmd/solve.rs`.

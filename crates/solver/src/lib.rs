@@ -49,6 +49,7 @@ pub use analysis::{
     solve_static,
 };
 pub use buckle::{Buckling, solve_buckle};
+pub use harmonic::{HarmonicResult, solve_harmonic};
 pub use heat::{HeatResult, solve_heat};
 pub use nonlinear::solve_nonlinear;
 

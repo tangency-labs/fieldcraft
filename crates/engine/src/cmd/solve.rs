@@ -39,6 +39,16 @@ pub const STATIC: CommandSpec = CommandSpec {
     run: run_static,
 };
 
+pub const HARMONIC: CommandSpec = CommandSpec {
+    id: "solve.harmonic",
+    label: "Solve Harmonic Step",
+    params: r#"{"step": "Sweep", "max_factor_entries": 400000000, "threads": 6} — steady-state complex response with Re(U exp(iωt)), consistent mass and the step's frequencies, direct or modal method and additive damping. Stores each frequency's displacement and optional stress phasors. Reports full-equation residuals, projected residuals for modal response, and input/dissipated power; a small projected residual alone does not certify a truncated modal solution. Limits and threads as for solve.static. Use solve.probe to read frequency curves."#,
+    form: Some(super::forms::SOLVE_STATIC),
+    kind: CommandKind::Model,
+    requires: &[Requirement::Analysable, Requirement::Step],
+    run: run_harmonic,
+};
+
 pub const NONLINEAR: CommandSpec = CommandSpec {
     id: "solve.nonlinear",
     label: "Solve Nonlinear Static Step",
@@ -211,6 +221,7 @@ fn run_all(s: &mut Session, _: &Value) -> Result<Value> {
                 Procedure::Static {} | Procedure::CoupledTemperatureDisplacement {} => (run_static, "solve.static"),
                 Procedure::HeatTransfer { .. } => (run_heat, "solve.heat"),
                 Procedure::Frequency { .. } => (run_frequency, "solve.frequency"),
+                Procedure::Harmonic(_) => (run_harmonic, "solve.harmonic"),
                 Procedure::Buckle { .. } => (run_buckle, "solve.buckle"),
                 Procedure::ExplicitDynamic(_) => (run_explicit, "solve.explicit"),
                 Procedure::Fluid { .. } => (run_fluid, "solve.fluid"),
@@ -362,6 +373,18 @@ fn run_heat(s: &mut Session, p: &Value) -> Result<Value> {
         "warnings": r.warnings,
     });
     s.store_result(StepResult::Implicit(ImplicitResult::Heat(r)));
+    Ok(summary)
+}
+
+fn run_harmonic(s: &mut Session, p: &Value) -> Result<Value> {
+    let limits = limits(p)?;
+    let step = opt::<String>(p, "step")?;
+    let r = with_threads(threads(s, p)?, || fieldcraft_solver::solve_harmonic(&s.model, step.as_deref(), &limits))?;
+    let summary = json!({"step": r.step, "stats": r.stats, "natural_frequencies": r.natural_frequencies,
+        "frequencies": r.frames.iter().map(|f| json!({"frequency": f.frequency, "relative_residual": f.relative_residual,
+            "residual_norm_si": f.residual_norm_si, "projected_residual": f.projected_residual, "input_power": f.input_power, "dissipated_power": f.dissipated_power})).collect::<Vec<_>>(),
+        "warnings": r.warnings});
+    s.store_result(StepResult::Implicit(ImplicitResult::Harmonic(r)));
     Ok(summary)
 }
 
@@ -1390,6 +1413,12 @@ fn probe_quantity(r: &StepResult, display: &fieldcraft_model::DisplaySystem, key
     let heat = matches!(r.kind(), crate::results::Kind::Heat(_));
     let (translation, rotation) = crate::results::mode_scale(r, display);
     let q = match key {
+        "frequency" => Q::Frequency,
+        "displacement_real" | "displacement_imaginary" | "displacement_amplitude" if len == 6 && index >= 3 => Q::Angle,
+        "displacement_real" | "displacement_imaginary" | "displacement_amplitude" => Q::Length,
+        "rotation_real" | "rotation_imaginary" | "rotation_amplitude" | "displacement_phase" | "rotation_phase" | "stress_phase" => Q::Angle,
+        "stress_real" | "stress_imaginary" | "stress_amplitude" => Q::Pressure,
+        "input_power" | "dissipated_power" => Q::Power,
         // A natural mode, mass-normalised: translations (and a reference point's rotations).
         "shape" => return Some(Show::Factor(if index < 3 { translation } else { rotation })),
         "rotation" if matches!(r.kind(), crate::results::Kind::Frequency(_)) => return Some(Show::Factor(rotation)),
@@ -1461,6 +1490,7 @@ fn probe_implicit(result: &ImplicitResult, step: &str, nodes: &[u32], p: &Value)
             .ok_or_else(|| EngineError::Params(format!("node {label} has no result (it belongs to no solved element or coupled reference point)")))
     };
     let out: Vec<Value> = match result {
+        ImplicitResult::Harmonic(r) => return probe_harmonic(r, nodes, p),
         ImplicitResult::Static(r) => nodes
             .iter()
             .map(|&l| {
@@ -1547,6 +1577,62 @@ fn probe_implicit(result: &ImplicitResult, step: &str, nodes: &[u32], p: &Value)
         response["elements"] = Value::Array(found);
     }
     Ok(response)
+}
+
+fn probe_harmonic(r: &fieldcraft_solver::HarmonicResult, nodes: &[u32], p: &Value) -> Result<Value> {
+    if p.get("elements").is_some() {
+        return Err(EngineError::Params("harmonic probes currently read nodal phasors; element section output is not available".into()));
+    }
+    let frame = opt::<usize>(p, "frame")?;
+    let selected: Vec<_> = if let Some(k) = frame {
+        vec![r.frames.get(k).ok_or_else(|| EngineError::Params(format!("harmonic frame {k} is outside 0..{}", r.frames.len())))?]
+    } else {
+        r.frames.iter().collect()
+    };
+    if nodes.len().checked_mul(selected.len()).is_none_or(|n| n > 100_000) {
+        return Err(EngineError::Params("harmonic probe exceeds 100000 node-frequency samples; select fewer nodes or a frame".into()));
+    }
+    let phasor = |out: &mut Value, prefix: &str, real: &[f64], imaginary: &[f64]| {
+        out[format!("{prefix}_real")] = json!(real);
+        out[format!("{prefix}_imaginary")] = json!(imaginary);
+        out[format!("{prefix}_amplitude")] = json!(real.iter().zip(imaginary).map(|(r, i)| r.hypot(*i)).collect::<Vec<_>>());
+        out[format!("{prefix}_phase")] =
+            json!(real.iter().zip(imaginary).map(|(r, i)| if *r == 0.0 && *i == 0.0 { 0.0 } else { i.atan2(*r) }).collect::<Vec<_>>());
+    };
+    let mut curves = Vec::new();
+    for &label in nodes {
+        let node = r.nodes.binary_search(&label).ok();
+        let point = r.reference_points.iter().position(|p| p.1 == label);
+        if node.is_none() && point.is_none() {
+            return Err(EngineError::Params(format!("node {label} has no harmonic result")));
+        }
+        let mut samples = Vec::new();
+        for f in &selected {
+            let mut value = json!({"frequency": f.frequency});
+            if let Some(k) = node {
+                if let (Some(re), Some(im)) = (f.real.get(k), f.imaginary.get(k)) {
+                    phasor(&mut value, "displacement", re, im);
+                }
+                if let (Some(re), Some(im)) = (f.rotation_real.get(k), f.rotation_imaginary.get(k)) {
+                    phasor(&mut value, "rotation", re, im);
+                }
+                if let (Some(re), Some(im)) = (f.stress_real.as_ref().and_then(|s| s.get(k)), f.stress_imaginary.as_ref().and_then(|s| s.get(k))) {
+                    phasor(&mut value, "stress", re, im);
+                }
+            } else if let Some(k) = point
+                && let (Some(re), Some(im)) = (f.points_real.get(k), f.points_imaginary.get(k))
+            {
+                phasor(&mut value, "displacement", re, im);
+            }
+            samples.push(value);
+        }
+        let mut curve = json!({"node": label, "samples": samples});
+        if let Some(point) = point.and_then(|k| r.reference_points.get(k)) {
+            curve["reference_point"] = json!(point.0);
+        }
+        curves.push(curve);
+    }
+    Ok(json!({"step": r.step, "nodes": curves, "phase_convention": "Re(U exp(i omega t)); phase of zero amplitude is 0"}))
 }
 
 /// The entry of a label-sorted result list.
