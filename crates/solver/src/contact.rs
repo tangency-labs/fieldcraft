@@ -17,7 +17,11 @@
 //! *On a patch test for contact problems in two dimensions*, 1991; T. W. McDevitt, T. A.
 //! Laursen, *A mortar-finite element formulation for frictional contact problems*, IJNME
 //! 48:1525–1547, 2000). A node's gap is normalised by its reference area A_A = ∫ Φ_A dA over its
-//! own faces: ĝ_A = g̃_A / A_A, a length (negative: penetration).
+//! own faces that have a main-face pair: ĝ_A = g̃_A / A_A, a length (negative: penetration).
+//! Each paired secondary face contributes its full reference area once, even if it overlaps
+//! several main faces. Unpaired faces contribute nothing. These reference contributions are
+//! constant within a fixed pairing, preserving the linearisation below; finite sliding selects
+//! the contributing faces anew at each evaluation, including faces that first pair later.
 //!
 //! **Enforcement: augmented Lagrangian** (J. C. Simo, T. A. Laursen, *An augmented Lagrangian
 //! treatment of contact problems involving friction*, Comput. Struct. 42(1):97–116, 1992;
@@ -38,7 +42,7 @@
 //! the thickness of the element under it and no open node keeps a multiplier
 //! ([`Interface::augmentation_error`]; at most [`MAX_AUGMENTATIONS`] times, then with a warning).
 //! The penalty per length is ε_A = s · 10 · 3Ḡ / h
-//! over the secondary faces at the node (Ḡ the mean shear modulus of the element under the face,
+//! over the paired secondary faces at the node (Ḡ the mean shear modulus of the element under the face,
 //! h its thickness V/A, s the contact's `penalty_scale`): about ten times the stiffness of the
 //! element under the node, stiff enough that a few augmentations reach the tolerance and soft
 //! enough to leave the tangent well conditioned (3Ḡ rather than the constrained modulus keeps it
@@ -195,13 +199,14 @@ pub struct Interface {
     pub name: String,
     secondary: Vec<Face>,
     main: Vec<Face>,
-    /// The secondary nodes (mesh slots), sorted, and per node: its reference area A_A, its
-    /// penalty ε_A, the thinnest element under it and the offset taken out of its weighted gap
-    /// (initial overclosure).
+    /// The secondary nodes (mesh slots), sorted.
     pub nodes: Vec<usize>,
-    area: Vec<f64>,
-    penalty: Vec<f64>,
-    thickness: Vec<f64>,
+    /// ∫ Φ_a over each whole secondary face in the reference configuration.
+    reference_area: Vec<[f64; FACE_NODES]>,
+    penalty_scale: f64,
+    /// The scales over every secondary face, used only to release multipliers at unpaired nodes.
+    all_faces: Normalization,
+    /// Offset taken out of the weighted gap (initial overclosure).
     offset: Vec<f64>,
     /// Small sliding (steps without nonlinear geometry): the face pairs and their integrals,
     /// fixed in the reference configuration; `None`: finite sliding, searched and integrated
@@ -260,6 +265,7 @@ impl ContactResult {
 /// One evaluation of a contact: per secondary node (in [`Interface::nodes`] order).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct State {
+    normalization: Normalization,
     /// ĝ_A, `None` where no main face lies over the node.
     pub gap: Vec<Option<f64>>,
     pub pressure: Vec<f64>,
@@ -277,6 +283,37 @@ pub struct State {
     pub traction: Vec<Vec3>,
     pub slip: Vec<Vec3>,
     pub slipping: Vec<bool>,
+}
+
+/// Reference scales summed over the secondary faces that currently have main-face pairs.
+#[derive(Debug, Clone, PartialEq, Default)]
+struct Normalization {
+    area: Vec<f64>,
+    penalty: Vec<f64>,
+    thickness: Vec<f64>,
+}
+
+impl Normalization {
+    /// The sums over the secondary faces given with their reference integrals and node indices.
+    fn over<'a>(n: usize, penalty_scale: f64, faces: impl Iterator<Item = (&'a Face, &'a [f64; FACE_NODES], &'a [usize])>) -> Normalization {
+        let mut out = Normalization { area: vec![0.0; n], penalty: vec![0.0; n], thickness: vec![f64::INFINITY; n] };
+        for (face, own, corners) in faces {
+            for (i, share) in corners.iter().zip(own) {
+                if let (Some(a), Some(e), Some(h)) = (out.area.get_mut(*i), out.penalty.get_mut(*i), out.thickness.get_mut(*i)) {
+                    *a += share;
+                    *e = e.max(penalty_scale * face.stiffness);
+                    *h = h.min(face.thickness);
+                }
+            }
+        }
+        out
+    }
+
+    /// Node `i`'s (A_A, ε_A, h_A), `None` where none of the faces summed is at it.
+    fn at(&self, i: usize) -> Option<(f64, f64, f64)> {
+        let a = *self.area.get(i)?;
+        (a > 0.0).then_some((a, *self.penalty.get(i)?, *self.thickness.get(i)?))
+    }
 }
 
 impl State {
@@ -864,7 +901,7 @@ impl Interface {
         let mut nodes: Vec<usize> = secondary.iter().flat_map(|f| f.nodes.iter().copied()).collect();
         nodes.sort_unstable();
         nodes.dedup();
-        let (mut area, mut penalty, mut thickness) = (vec![0.0; nodes.len()], vec![0.0f64; nodes.len()], vec![f64::INFINITY; nodes.len()]);
+        let mut reference_area = Vec::with_capacity(secondary.len());
         for f in &secondary {
             let x: Vec<Vec3> = f.nodes.iter().map(|n| mesh.xyz.get(*n).copied().unwrap_or_default()).collect();
             // ∫ Φ_a over the face itself (the face against its own mirror image).
@@ -874,22 +911,13 @@ impl Interface {
                     *o += p.weight * phi;
                 }
             });
-            for (n, share) in f.nodes.iter().zip(own) {
-                if let Ok(i) = nodes.binary_search(n) {
-                    if let Some(a) = area.get_mut(i) {
-                        *a += share;
-                    }
-                    if let Some(e) = penalty.get_mut(i) {
-                        *e = e.max(contact.penalty_scale * f.stiffness);
-                    }
-                    if let Some(h) = thickness.get_mut(i) {
-                        *h = h.min(f.thickness);
-                    }
-                }
-            }
+            reference_area.push(own);
         }
+        let corners: Vec<Vec<usize>> = secondary.iter().map(|f| f.nodes.iter().filter_map(|x| nodes.binary_search(x).ok()).collect()).collect();
+        let faces = secondary.iter().zip(&reference_area).zip(&corners).map(|((f, own), c)| (f, own, c.as_slice()));
+        let all_faces = Normalization::over(nodes.len(), contact.penalty_scale, faces);
         let label_of = |i: usize| nodes.get(i).and_then(|n| mesh.labels.get(*n)).copied().unwrap_or(0);
-        if let Some(i) = area.iter().position(|a| !(*a > 0.0 && a.is_finite())) {
+        if let Some(i) = all_faces.area.iter().position(|a| !(*a > 0.0 && a.is_finite())) {
             return Err(Error::Invalid(format!("contact `{name}`: the secondary faces at node {} have no area", label_of(i))));
         }
         let offset = vec![0.0; nodes.len()];
@@ -918,9 +946,9 @@ impl Interface {
             secondary,
             main,
             nodes,
-            area,
-            penalty,
-            thickness,
+            reference_area,
+            penalty_scale: contact.penalty_scale,
+            all_faces,
             offset,
             fixed: None,
             friction: (!contact.friction.is_frictionless()).then_some(contact.friction),
@@ -932,12 +960,14 @@ impl Interface {
     /// Adjust (offset) or refuse the nodes that start behind the main surface.
     fn overclosure(mut self, mesh: &Mesh, mode: InitialPenetration, warnings: &mut Vec<String>) -> Result<Interface> {
         let zero = vec![0.0; mesh.dofs()];
-        let (gaps, _) = self.gaps(mesh, &zero)?;
+        let pairs = self.pairs(mesh, &zero)?;
+        let (gaps, _, corner_index) = self.sums(&pairs);
+        let normalization = self.normalization(&pairs, &corner_index);
         // The model's extent (relative, so the test reads the same in any unit of length).
         let scale = mesh.xyz.iter().flatten().fold(0.0f64, |m, c| m.max(c.abs()));
         let (mut count, mut deepest) = (0usize, (0.0f64, 0u32));
         for (i, g) in gaps.iter().enumerate() {
-            let (Some(g), Some(a)) = (g, self.area.get(i)) else { continue };
+            let (Some(g), Some((a, _, _))) = (g, normalization.at(i)) else { continue };
             let depth = -g / a;
             // Coordinates are exact to a few units in the last place: a node a hair behind a
             // face it was meshed on is touching.
@@ -1074,12 +1104,12 @@ impl Interface {
         }))
     }
 
-    /// The weighted gaps g̃_A less the offsets (`None` where no main face lies over the node), and
-    /// the supports ∫ Φ_A, at displacements `u`.
-    fn gaps(&self, mesh: &Mesh, u: &[f64]) -> Result<(Vec<Option<f64>>, Vec<f64>)> {
-        let pairs = self.pairs(mesh, u)?;
-        let (gaps, support, _) = self.sums(&pairs);
-        Ok((gaps, support))
+    /// Each paired secondary face contributes once, independently of how many main faces
+    /// overlap it. Using its reference integral keeps these scales constant within a pairing.
+    fn normalization(&self, pairs: &[Vec<Found>], corner_index: &[Vec<usize>]) -> Normalization {
+        let faces = self.secondary.iter().zip(&self.reference_area).zip(corner_index).zip(pairs);
+        let paired = faces.filter(|(_, found)| !found.is_empty()).map(|(((f, own), c), _)| (f, own, c.as_slice()));
+        Normalization::over(self.nodes.len(), self.penalty_scale, paired)
     }
 
     /// Node sums of the pairs' integrals, in face order.
@@ -1140,6 +1170,7 @@ impl Interface {
         let normal = normals(&pairs, &corner_index, &support);
         let n = self.nodes.len();
         let mut state = State {
+            normalization: self.normalization(&pairs, &corner_index),
             gap: vec![None; n],
             pressure: vec![0.0; n],
             support,
@@ -1153,10 +1184,10 @@ impl Interface {
         // stays in the tangent.
         let mut engaged = vec![false; n];
         for i in 0..self.nodes.len() {
-            let (Some(Some(g)), Some(a), Some(e)) = (weighted.get(i), self.area.get(i), self.penalty.get(i)) else { continue };
+            let (Some(Some(g)), Some((a, e, h))) = (weighted.get(i), state.normalization.at(i)) else { continue };
             let gap = g / a;
             let lambda = multipliers.get(i).copied().unwrap_or(0.0);
-            if let (Some(slot), Some(p), Some(h)) = (state.gap.get_mut(i), state.pressure.get_mut(i), self.thickness.get(i)) {
+            if let (Some(slot), Some(p)) = (state.gap.get_mut(i), state.pressure.get_mut(i)) {
                 *slot = Some(gap);
                 *p = (lambda - e * gap).max(0.0);
                 engaged[i] = lambda - e * gap > -e * band * h;
@@ -1253,7 +1284,7 @@ impl Interface {
         }
         // (ε_A / A_A) ∂g̃_A ⊗ ∂g̃_A per closed node.
         for (i, gradient) in node_gradients {
-            let (Some(e), Some(a)) = (self.penalty.get(i), self.area.get(i)) else { continue };
+            let Some((a, e, _)) = state.normalization.at(i) else { continue };
             let c = e / a;
             let nodes: Vec<usize> = gradient.keys().copied().collect();
             let g: Vec<f64> = gradient.values().flatten().copied().collect();
@@ -1347,9 +1378,7 @@ impl Interface {
         // The return map, and per node the tangent's middle matrix.
         let mut middle: Vec<Option<[[f64; 3]; 3]>> = vec![None; n];
         for i in 0..n {
-            let (Some(&p), Some(&area), Some(&eps), Some(&normal)) =
-                (state.pressure.get(i), self.area.get(i), self.penalty.get(i), state.normal.get(i))
-            else {
+            let (Some(&p), Some((area, eps, _)), Some(&normal)) = (state.pressure.get(i), state.normalization.at(i), state.normal.get(i)) else {
                 continue;
             };
             if !(p > 0.0) {
@@ -1504,7 +1533,7 @@ impl Interface {
     pub fn augmentation_error(&self, multipliers: &[f64], state: &State) -> f64 {
         let mut worst = 0.0f64;
         for i in 0..self.nodes.len() {
-            let (Some(p), Some(e), Some(h)) = (state.pressure.get(i), self.penalty.get(i), self.thickness.get(i)) else { continue };
+            let (Some(p), Some((_, e, h))) = (state.pressure.get(i), state.normalization.at(i).or_else(|| self.all_faces.at(i))) else { continue };
             let lambda = multipliers.get(i).copied().unwrap_or(0.0);
             let gap = if *p > 0.0 { state.gap.get(i).copied().flatten().unwrap_or(0.0).abs() } else { lambda.max(0.0) / e };
             worst = worst.max(gap / h);
