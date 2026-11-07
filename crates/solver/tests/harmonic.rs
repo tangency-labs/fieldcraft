@@ -215,3 +215,23 @@ fn undamped_modal_poles_are_refused_without_shifting_nearby_frequencies() {
         assert!(reduced.full_relative_residual < 1e-8);
     }
 }
+
+#[test]
+fn reusable_modal_basis_retains_per_call_limits_and_dynamic_checks() {
+    let k = dense(&[4.0, 0.0, 0.0, 9.0], 2);
+    let m = dense(&[1.0, 0.0, 0.0, 1.0], 2);
+    let matrices = Matrices { stiffness: &k, mass: &m, viscous: None, loss: None };
+    let limits = Limits::default();
+    let modal = Modal::new(&matrices, 1, &limits).unwrap();
+    let force = Vector { real: vec![1.0, 0.0], imaginary: vec![0.0, 0.0] };
+    // The projected one-mode system fits; the two physical equations do not.
+    let reduced = Limits { max_dofs: 1, ..Limits::default() };
+    assert!(modal.solve(0.5, Damping::default(), &[], &force, &reduced).is_err());
+    assert!(modal.solve(f64::NAN, Damping::default(), &[], &force, &limits).is_err());
+    assert!(modal.solve(0.5, Damping { alpha: -1.0, ..Damping::default() }, &[], &force, &limits).is_err());
+    assert!(modal.solve(f64::MAX, Damping::default(), &[], &force, &limits).is_err());
+    let direct = matrices.direct(0.5, Damping::default(), &force, &limits).unwrap();
+    let reused = modal.solve(0.5, Damping::default(), &[], &force, &limits).unwrap();
+    assert_close(&reused.displacement, &direct.displacement);
+    assert!(reused.full_relative_residual < 1e-12);
+}

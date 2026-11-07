@@ -335,12 +335,12 @@ pub fn solve_harmonic(model: &Model, name: Option<&str>, limits: &Limits) -> Res
         } else {
             reduced_force.clone()
         };
-        let (q, relative_residual, residual_norm, projected_residual, modal_power) = if let Some(modal) = &modal {
+        let (q, relative_residual, residual_norm, projected_residual, modal_power, loss_operator) = if let Some(modal) = &modal {
             let Method::Modal { damping_ratios, .. } = &h.method else {
                 return Err(Error::Internal("harmonic modal method".into()));
             };
             let ratios = if damping_ratios.len() > 1 { damping_ratios.get(..modal.eigenvalues().len()).unwrap_or_default() } else { damping_ratios };
-            let out = modal.solve(omega, h.damping, ratios, &f, limits).map_err(|e| at_frequency(e, frequency))?;
+            let (out, loss) = modal.solve_with_operator(omega, h.damping, ratios, &f, limits).map_err(|e| at_frequency(e, frequency))?;
             let power = modal
                 .eigenvalues()
                 .iter()
@@ -352,16 +352,19 @@ pub fn solve_harmonic(model: &Model, name: Option<&str>, limits: &Limits) -> Res
                     omega * omega * ratio * lambda.max(0.0).sqrt() * square
                 })
                 .sum::<f64>();
-            (out.displacement, out.full_relative_residual, out.full_residual_norm, Some(out.projected_residual.relative), power)
+            (out.displacement, out.full_relative_residual, out.full_residual_norm, Some(out.projected_residual.relative), power, Some(loss))
         } else {
             let out = matrices.direct(omega, h.damping, &f, limits).map_err(|e| at_frequency(e, frequency))?;
             stats.factor_entries = stats.factor_entries.max(out.factor_entries);
-            (out.displacement, out.residual.relative, out.residual.norm, None, 0.0)
+            (out.displacement, out.residual.relative, out.residual.norm, None, 0.0, None)
         };
         let input_power = 0.5
             * omega
             * f.real.iter().zip(&f.imaginary).zip(q.real.iter().zip(&q.imaginary)).map(|((fr, fi), (ur, ui))| fi * ur - fr * ui).sum::<f64>();
-        let (_, b) = matrices.dynamic(omega, h.damping, limits)?;
+        let b = match loss_operator {
+            Some(b) => b,
+            None => matrices.dynamic(omega, h.damping, limits)?.1,
+        };
         let mut br = vec![0.0; b.n];
         let mut bi = vec![0.0; b.n];
         b.mul(&q.real, &mut br);

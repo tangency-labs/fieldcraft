@@ -56,6 +56,15 @@ impl Matrices<'_> {
     /// K − ω²M and ω(αM + βK + C) + ηK + G, with ω in radians/second.
     pub fn dynamic(&self, omega: f64, damping: Damping, limits: &Limits) -> Result<(Csr, Csr)> {
         self.validate(limits)?;
+        self.dynamic_validated(omega, damping, limits)
+    }
+
+    // Only called after full validation while these immutable matrix borrows remain live.
+    // Per-call limits and frequency-dependent overflow still need checking.
+    fn dynamic_validated(&self, omega: f64, damping: Damping, limits: &Limits) -> Result<(Csr, Csr)> {
+        if self.stiffness.n == 0 || self.stiffness.n > limits.max_dofs {
+            return Err(Error::Limit(format!("complex matrix has {} equations; allowed 1..={}", self.stiffness.n, limits.max_dofs)));
+        }
         damping.validate()?;
         angular_frequency(omega)?;
         let a = self.stiffness.add_scaled(-omega * omega, self.mass)?;
@@ -283,7 +292,18 @@ impl<'a> Modal<'a> {
         })
     }
 
+    // Construction validates all matrices, whose shared borrows prohibit mutation.
+    fn dynamic(&self, omega: f64, damping: Damping, limits: &Limits) -> Result<(Csr, Csr)> {
+        self.matrices.dynamic_validated(omega, damping, limits)
+    }
+
     pub fn solve(&self, omega: f64, damping: Damping, ratios: &[f64], force: &Vector, limits: &Limits) -> Result<ModalSolution> {
+        self.solve_with_operator(omega, damping, ratios, force, limits).map(|(solution, _)| solution)
+    }
+
+    // The model-level power audit uses the same physical loss operator as the
+    // full residual, avoiding a second construction without changing arithmetic.
+    fn solve_with_operator(&self, omega: f64, damping: Damping, ratios: &[f64], force: &Vector, limits: &Limits) -> Result<(ModalSolution, Csr)> {
         let matrices = &self.matrices;
         angular_frequency(omega)?;
         damping.validate()?;
@@ -382,10 +402,10 @@ impl<'a> Modal<'a> {
                 }
             }
         }
-        let (physical_a, physical_b) = matrices.dynamic(omega, damping, limits)?;
+        let (physical_a, physical_b) = self.dynamic(omega, damping, limits)?;
         let (full_relative_residual, full_residual_norm) =
             full_residual(&physical_a, &physical_b, matrices.mass, &displacement, force, &damping_shape)?;
-        Ok(ModalSolution { displacement, coordinates, projected_residual, full_relative_residual, full_residual_norm, diagonal })
+        Ok((ModalSolution { displacement, coordinates, projected_residual, full_relative_residual, full_residual_norm, diagonal }, physical_b))
     }
 }
 
