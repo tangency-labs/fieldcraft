@@ -166,6 +166,341 @@ pub fn vorticity(g: &[[f64; 3]; 3]) -> f64 {
     if w.is_finite() { w } else { 0.0 }
 }
 
+/// What lies across one face of a cell, for ν̃'s transport.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Side {
+    /// A fluid cell (its index).
+    Cell(u32),
+    /// A no-slip wall half a cell from the cell centre (halfway bounce-back): ν̃ = 0 there, no
+    /// flow through it.
+    Wall,
+    /// An inflow face half a cell away: ν̃ is the field's inflow value there.
+    Inflow,
+    /// An outflow, slip or far-field face: zero gradient of ν̃, no diffusion through it.
+    Open,
+}
+
+/// What a face of the box is, for [`SaField::boxed`].
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BoxFace {
+    Periodic,
+    Wall,
+    Inflow,
+    Open,
+}
+
+/// The six faces of a cell in the order −x, +x, −y, +y, −z, +z.
+const AXIS_OF_SIDE: [usize; 6] = [0, 0, 1, 1, 2, 2];
+const SIGN_OF_SIDE: [f64; 6] = [-1.0, 1.0, -1.0, 1.0, -1.0, 1.0];
+
+/// The most transport sub-steps one lattice step may take.
+pub const MAX_SUBSTEPS: u32 = 64;
+
+/// Cells per parallel block (fixed, so the result does not depend on the thread count).
+const BLOCK: usize = 4096;
+
+/// The inputs of one lattice step of ν̃ (every slice one entry per cell, lattice units).
+#[derive(Debug, Clone, Copy)]
+pub struct SaInput<'a> {
+    /// The cell velocities of the pass before the collision.
+    pub u: &'a [[f64; 3]],
+    /// The vorticity magnitude Ω of each cell.
+    pub vorticity: &'a [f64],
+    /// The length of the destruction term, lattice units: the wall distance d (RANS, from
+    /// [`WallDistance::as_slice`](crate::distance::WallDistance::as_slice)) or DDES's d̃.
+    pub length: &'a [f64],
+    /// The molecular kinematic viscosity.
+    pub nu: f64,
+    /// Whether the model's production and destruction act (off: pure transport, for verification).
+    pub model: bool,
+    /// An extra explicit source per cell (rate per lattice step), for manufactured solutions.
+    pub source: Option<&'a [f64]>,
+}
+
+/// What one lattice step of ν̃ did.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct SaStats {
+    pub substeps: u32,
+    /// The largest ν_t of a fluid cell (lattice units).
+    pub max_nu_t: f64,
+    /// The smallest ν̃ of a fluid cell.
+    pub min_nu_tilde: f64,
+    /// Fluid cells with ν̃ below 0 (SA-neg's branch).
+    pub negative_cells: usize,
+}
+
+/// The Spalart–Allmaras working variable ν̃ on the lattice's cells, and its transport.
+///
+/// **Scheme.** Per sub-step, explicit on the cell grid (Δx = 1): first-order upwind advection in
+/// flux form; conservative central diffusion `(1/σ) Σ_f η_f (ν̃_nb − ν̃_c)` with `η = ν + ν̃`
+/// (`ν + ν̃ f_n` below 0), the face value half a cell away at a wall or inflow face; the
+/// `c_b2 |∇ν̃|² / σ` term as a non-negative source; production and destruction point-implicitly
+/// ([`sources`]), so a positive ν̃ stays positive and a negative one decays towards 0.
+///
+/// Every neighbour's coefficient is non-negative, so with `Δt Σ coefficients ≤ 1` (the sub-step) a
+/// field that starts non-negative stays non-negative, and ν_t = max(0, ν̃ f_v1) always is. The
+/// sub-steps are at most [`MAX_SUBSTEPS`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct SaField {
+    nu_tilde: Vec<f64>,
+    sides: Vec<[Side; 6]>,
+    fluid: Vec<bool>,
+    inflow: f64,
+}
+
+impl SaField {
+    /// A field over cells with the given faces, every fluid cell at `initial`, `inflow` at inflow
+    /// faces. A side's cell must be a fluid cell of the field.
+    pub fn new(sides: Vec<[Side; 6]>, fluid: Vec<bool>, inflow: f64, initial: f64) -> crate::Result<Self> {
+        if sides.len() != fluid.len() {
+            return Err(crate::Error::Invalid(format!("Spalart–Allmaras: {} cells of faces for {} cells", sides.len(), fluid.len())));
+        }
+        if !(inflow.is_finite() && initial.is_finite()) {
+            return Err(crate::Error::Invalid(format!("Spalart–Allmaras: the inflow ν̃ {inflow} and initial ν̃ {initial} must be finite")));
+        }
+        for (c, s) in sides.iter().enumerate() {
+            for side in s {
+                if let Side::Cell(n) = *side
+                    && !fluid.get(n as usize).copied().unwrap_or(false)
+                {
+                    return Err(crate::Error::Invalid(format!("Spalart–Allmaras: cell {c} faces {n}, which is not a fluid cell")));
+                }
+            }
+        }
+        let nu_tilde = fluid.iter().map(|&f| if f { initial } else { 0.0 }).collect();
+        Ok(SaField { nu_tilde, sides, fluid, inflow })
+    }
+
+    /// A field on a box of `dims` cells (x fastest), `fluid` per cell, each box face of `faces`
+    /// (−x, +x, −y, +y, −z, +z; periodic in pairs). A face to a non-fluid cell is a wall.
+    #[doc(hidden)]
+    pub fn boxed(dims: [usize; 3], fluid: &[bool], faces: [BoxFace; 6], inflow: f64, initial: f64) -> crate::Result<Self> {
+        let n = dims[0].checked_mul(dims[1]).and_then(|v| v.checked_mul(dims[2]));
+        if n != Some(fluid.len()) || fluid.len() > u32::MAX as usize - 1 {
+            return Err(crate::Error::Invalid(format!("Spalart–Allmaras: a {dims:?} box for {} cells", fluid.len())));
+        }
+        for a in 0..3 {
+            if (faces[2 * a] == BoxFace::Periodic) != (faces[2 * a + 1] == BoxFace::Periodic) {
+                return Err(crate::Error::Invalid(format!("Spalart–Allmaras: box axis {a} periodic on one face only")));
+            }
+        }
+        let stride = [1, dims[0], dims[0] * dims[1]];
+        let mut sides = vec![[Side::Open; 6]; fluid.len()];
+        for (c, s) in sides.iter_mut().enumerate() {
+            let at = [c % dims[0], (c / dims[0]) % dims[1], c / (dims[0] * dims[1])];
+            for k in 0..6 {
+                let a = AXIS_OF_SIDE[k];
+                let up = k % 2 == 1;
+                let edge = if up { at[a] + 1 == dims[a] } else { at[a] == 0 };
+                let nb = if !edge {
+                    Some(if up { c + stride[a] } else { c - stride[a] })
+                } else if faces[k] == BoxFace::Periodic {
+                    Some(if up { c + stride[a] - dims[a] * stride[a] } else { c + (dims[a] - 1) * stride[a] })
+                } else {
+                    None
+                };
+                s[k] = match nb {
+                    Some(nb) if fluid.get(nb).copied().unwrap_or(false) => Side::Cell(nb as u32),
+                    Some(_) => Side::Wall,
+                    None => match faces[k] {
+                        BoxFace::Wall | BoxFace::Periodic => Side::Wall,
+                        BoxFace::Inflow => Side::Inflow,
+                        BoxFace::Open => Side::Open,
+                    },
+                };
+            }
+        }
+        SaField::new(sides, fluid.to_vec(), inflow, initial)
+    }
+
+    /// ν̃ per cell (lattice units; 0 in non-fluid cells).
+    pub fn nu_tilde(&self) -> &[f64] {
+        &self.nu_tilde
+    }
+
+    /// Set ν̃ per cell (a checkpoint, a test); refused unless one finite value per cell.
+    pub fn set_nu_tilde(&mut self, values: &[f64]) -> crate::Result<()> {
+        if values.len() != self.nu_tilde.len() || values.iter().any(|v| !v.is_finite()) {
+            return Err(crate::Error::Invalid("Spalart–Allmaras: ν̃ needs one finite value per cell".into()));
+        }
+        for ((out, &v), &f) in self.nu_tilde.iter_mut().zip(values).zip(&self.fluid) {
+            *out = if f { v } else { 0.0 };
+        }
+        Ok(())
+    }
+
+    /// The eddy viscosity ν_t = max(0, ν̃ f_v1) of `cell` (0 outside the field).
+    pub fn nu_t(&self, cell: usize, nu: f64) -> f64 {
+        nu_t(self.nu_tilde.get(cell).copied().unwrap_or(0.0), nu)
+    }
+
+    /// The transport rate of cell `c` (advection, diffusion, c_b2 term, extra source) and the sum
+    /// of its neighbours' coefficients (the bound on a monotone sub-step is its inverse).
+    fn rate(&self, c: usize, input: &SaInput) -> (f64, f64) {
+        let (Some(sides), Some(&v)) = (self.sides.get(c), self.nu_tilde.get(c)) else {
+            return (0.0, 0.0);
+        };
+        let nu = input.nu;
+        let uc = input.u.get(c).copied().unwrap_or([0.0; 3]);
+        let eta_c = diffusivity(v, nu);
+        let (mut rate, mut coef) = (0.0, 0.0);
+        let mut slopes = [[None::<f64>; 2]; 3];
+        for (k, side) in sides.iter().enumerate() {
+            let a = AXIS_OF_SIDE[k];
+            let sign = SIGN_OF_SIDE[k];
+            // Face value, outward normal velocity, diffusion weight and slope per half spacing.
+            let (face, un, d) = match *side {
+                Side::Cell(n) => {
+                    let n = n as usize;
+                    let vn = self.nu_tilde.get(n).copied().unwrap_or(0.0);
+                    let un = input.u.get(n).map_or(0.0, |un| 0.5 * (uc[a] + un[a]) * sign);
+                    let d = 0.5 * (eta_c + diffusivity(vn, nu)) / SIGMA;
+                    slopes[a][k % 2] = Some(vn - v);
+                    (Some(vn), un, d)
+                }
+                Side::Wall => {
+                    slopes[a][k % 2] = Some(-2.0 * v);
+                    (Some(0.0), 0.0, 2.0 * nu / SIGMA)
+                }
+                Side::Inflow => {
+                    slopes[a][k % 2] = Some(2.0 * (self.inflow - v));
+                    (Some(self.inflow), uc[a] * sign, 2.0 * diffusivity(self.inflow, nu) / SIGMA)
+                }
+                Side::Open => (None, uc[a] * sign, 0.0),
+            };
+            let upwind = (-un).max(0.0);
+            if let Some(face) = face {
+                rate += (upwind + d) * (face - v);
+                coef += upwind + d;
+            }
+        }
+        let mut grad2 = 0.0;
+        for s in slopes {
+            grad2 += match s {
+                [Some(a), Some(b)] => 0.5 * (a * a + b * b),
+                [Some(a), None] | [None, Some(a)] => a * a,
+                [None, None] => 0.0,
+            };
+        }
+        rate += C_B2 / SIGMA * grad2;
+        if let Some(s) = input.source {
+            rate += s.get(c).copied().unwrap_or(0.0);
+        }
+        (rate, coef)
+    }
+
+    /// One lattice step (Δt = 1) of ν̃, in as many sub-steps as monotone transport needs.
+    ///
+    /// An `Err` (bad input lengths, or [`Error::Unstable`](crate::Error::Unstable) after
+    /// [`MAX_SUBSTEPS`]) may leave ν̃ partly advanced: the caller discards the field, as
+    /// `Session::execute` restores the model on any error.
+    pub fn advance(&mut self, input: &SaInput) -> crate::Result<SaStats> {
+        let cells = self.nu_tilde.len();
+        let bad = |what: &str, len: usize| crate::Error::Invalid(format!("Spalart–Allmaras: {len} {what} for {cells} cells"));
+        if input.u.len() != cells {
+            return Err(bad("velocities", input.u.len()));
+        }
+        if input.vorticity.len() != cells {
+            return Err(bad("vorticities", input.vorticity.len()));
+        }
+        if input.length.len() != cells {
+            return Err(bad("lengths", input.length.len()));
+        }
+        if let Some(s) = input.source
+            && s.len() != cells
+        {
+            return Err(bad("sources", s.len()));
+        }
+        if !(input.nu > 0.0 && input.nu.is_finite()) {
+            return Err(crate::Error::Invalid(format!("Spalart–Allmaras: the viscosity {} must be above 0", input.nu)));
+        }
+        let mut rates = vec![(0.0, 0.0); cells];
+        let mut next = vec![0.0; cells];
+        let too_many = |field: &[f64]| {
+            crate::Error::Unstable(format!(
+                "Spalart–Allmaras: ν̃'s transport needs more than {MAX_SUBSTEPS} sub-steps per lattice step (the largest ν̃/ν is {:.3e}): refine the grid or lower the inflow ν̃",
+                field.iter().fold(0.0f64, |m, &v| m.max(v)) / input.nu
+            ))
+        };
+        // The part of the lattice step still to take; each sub-step is at most the monotone bound.
+        let mut remaining = 1.0f64;
+        let mut substeps = 0;
+        while remaining > 0.0 {
+            if substeps == MAX_SUBSTEPS {
+                return Err(too_many(&self.nu_tilde));
+            }
+            let this = &*self;
+            fieldcraft_parallel::chunks_mut(&mut rates, BLOCK, |b, out| {
+                for (i, r) in out.iter_mut().enumerate() {
+                    let c = b * BLOCK + i;
+                    *r = if this.fluid.get(c).copied().unwrap_or(false) { this.rate(c, input) } else { (0.0, 0.0) };
+                }
+            });
+            let most = rates.iter().fold(0.0f64, |m, r| if r.1 > m { r.1 } else { m });
+            if !most.is_finite() {
+                return Err(crate::Error::Unstable("Spalart–Allmaras: ν̃'s transport coefficients are not finite".into()));
+            }
+            if most > f64::from(MAX_SUBSTEPS) {
+                return Err(too_many(&self.nu_tilde));
+            }
+            let parts = (most * remaining).ceil().max(1.0);
+            let dt = if parts <= 1.0 { remaining } else { remaining / parts };
+            let this = &*self;
+            let rates = &rates;
+            fieldcraft_parallel::chunks_mut(&mut next, BLOCK, |b, out| {
+                for (i, o) in out.iter_mut().enumerate() {
+                    let c = b * BLOCK + i;
+                    *o = this.update(c, rates.get(c).map_or(0.0, |r| r.0), dt, input);
+                }
+            });
+            if let Some(c) = next.iter().position(|v| !v.is_finite()) {
+                return Err(crate::Error::Unstable(format!("Spalart–Allmaras: ν̃ is not finite at cell {c}")));
+            }
+            std::mem::swap(&mut self.nu_tilde, &mut next);
+            remaining = if parts <= 1.0 { 0.0 } else { remaining - dt };
+            substeps += 1;
+        }
+        let mut stats = SaStats { substeps, min_nu_tilde: f64::INFINITY, ..SaStats::default() };
+        for (&v, &f) in self.nu_tilde.iter().zip(&self.fluid) {
+            if f {
+                stats.max_nu_t = stats.max_nu_t.max(nu_t(v, input.nu));
+                stats.min_nu_tilde = stats.min_nu_tilde.min(v);
+                stats.negative_cells += usize::from(v < 0.0);
+            }
+        }
+        if stats.min_nu_tilde == f64::INFINITY {
+            stats.min_nu_tilde = 0.0;
+        }
+        Ok(stats)
+    }
+
+    /// Cell `c` after a sub-step `dt` with transport rate `rate`: explicit transport, then the
+    /// model's sources point-implicitly.
+    fn update(&self, c: usize, rate: f64, dt: f64, input: &SaInput) -> f64 {
+        if !self.fluid.get(c).copied().unwrap_or(false) {
+            return 0.0;
+        }
+        let v = self.nu_tilde.get(c).copied().unwrap_or(0.0) + dt * rate;
+        if !input.model {
+            return v;
+        }
+        let omega = input.vorticity.get(c).copied().unwrap_or(0.0);
+        let d = input.length.get(c).copied().unwrap_or(0.0);
+        let s = sources(v, input.nu, omega, d);
+        if v > 0.0 {
+            // P ≥ 0 here (S̃ > 0); D may be below 0 only through f_t2, then explicit.
+            (v + dt * (s.production + (-s.destruction).max(0.0))) / (1.0 + dt * s.destruction.max(0.0) / v)
+        } else if v < 0.0 {
+            // Both SA-neg sources are a decay towards 0: rate = −a ν̃ with a ≥ 0.
+            let a = ((s.production - s.destruction) / -v).max(0.0);
+            v / (1.0 + dt * a)
+        } else {
+            v
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -277,5 +612,253 @@ mod tests {
         let strain = [[0.2, 0.0, 0.0], [0.0, -0.2, 0.0], [0.0; 3]];
         assert_eq!(vorticity(&strain), 0.0);
         assert_eq!(vorticity(&[[f64::NAN; 3]; 3]), 0.0);
+    }
+}
+
+#[cfg(test)]
+mod transport_tests {
+    use super::*;
+    use std::f64::consts::PI;
+
+    /// The manufactured field (physical units on the unit square, periodic):
+    /// ν̃ = ν (A + B cos(ωt) sin(kx) cos(ky)), k = ω = 2π, frozen velocity
+    /// u = U (0.3 + 0.2 sin(ky), −0.2 + 0.1 cos(kx)). The forcing, derived by hand:
+    /// S = ∂ν̃/∂t + u·∇ν̃ − (1/σ)[η′(ν̃)|∇ν̃|² + η(ν̃)∇²ν̃ + c_b2 |∇ν̃|²] (∇·(η∇ν̃) expanded),
+    /// with ∇²ν̃ = −2k² (ν̃ − νA), η′ = 1 above 0 and f_n + χ f_n′(χ), f_n′ = 96 χ² / (16 − χ³)²,
+    /// below.
+    struct Mms {
+        nu: f64,
+        a: f64,
+        b: f64,
+        u: f64,
+    }
+
+    const K: f64 = 2.0 * PI;
+    const W: f64 = 2.0 * PI;
+
+    impl Mms {
+        fn value(&self, x: f64, y: f64, t: f64) -> f64 {
+            self.nu * (self.a + self.b * (W * t).cos() * (K * x).sin() * (K * y).cos())
+        }
+
+        fn velocity(&self, x: f64, y: f64) -> [f64; 2] {
+            [self.u * (0.3 + 0.2 * (K * y).sin()), self.u * (-0.2 + 0.1 * (K * x).cos())]
+        }
+
+        fn eta_prime(&self, v: f64) -> f64 {
+            if v >= 0.0 {
+                return 1.0;
+            }
+            let chi = v / self.nu;
+            let c3 = chi * chi * chi;
+            f_n(chi) + chi * 96.0 * chi * chi / ((16.0 - c3) * (16.0 - c3))
+        }
+
+        fn forcing(&self, x: f64, y: f64, t: f64) -> f64 {
+            let (nu, b) = (self.nu, self.b);
+            let v = self.value(x, y, t);
+            let dt = -nu * b * W * (W * t).sin() * (K * x).sin() * (K * y).cos();
+            let gx = nu * b * (W * t).cos() * K * (K * x).cos() * (K * y).cos();
+            let gy = -nu * b * (W * t).cos() * K * (K * x).sin() * (K * y).sin();
+            let lap = -2.0 * K * K * (v - nu * self.a);
+            let [ux, uy] = self.velocity(x, y);
+            let g2 = gx * gx + gy * gy;
+            dt + ux * gx + uy * gy - (self.eta_prime(v) * g2 + diffusivity(v, nu) * lap + C_B2 * g2) / SIGMA
+        }
+
+        /// The L2 error (over ν) at `t_end` on an n × n grid, in lattice units with Δt = h²
+        /// (diffusive scaling: ν and ν̃ keep their values, velocities scale by h, rates by h²).
+        fn error(&self, n: usize, t_end: f64) -> f64 {
+            let h = 1.0 / n as f64;
+            let cells = n * n;
+            let at = |c: usize| (((c % n) as f64 + 0.5) * h, ((c / n) as f64 + 0.5) * h);
+            let mut field = SaField::boxed([n, n, 1], &vec![true; cells], [BoxFace::Periodic; 6], 0.0, 0.0).unwrap();
+            let init: Vec<f64> = (0..cells).map(|c| self.value(at(c).0, at(c).1, 0.0)).collect();
+            field.set_nu_tilde(&init).unwrap();
+            let u: Vec<[f64; 3]> = (0..cells)
+                .map(|c| {
+                    let [ux, uy] = self.velocity(at(c).0, at(c).1);
+                    [ux * h, uy * h, 0.0]
+                })
+                .collect();
+            let zeros = vec![0.0; cells];
+            let steps = (t_end / (h * h)).round() as usize;
+            for s in 0..steps {
+                let t = s as f64 * h * h;
+                let source: Vec<f64> = (0..cells).map(|c| self.forcing(at(c).0, at(c).1, t) * h * h).collect();
+                let input = SaInput { u: &u, vorticity: &zeros, length: &zeros, nu: self.nu, model: false, source: Some(&source) };
+                field.advance(&input).unwrap();
+            }
+            let t = steps as f64 * h * h;
+            let sum: f64 = (0..cells).map(|c| (field.nu_tilde()[c] - self.value(at(c).0, at(c).1, t)).powi(2)).sum();
+            (sum / cells as f64).sqrt() / self.nu
+        }
+
+        /// The observed orders 16→32 and 32→64, and the three errors.
+        fn orders(&self, t_end: f64) -> (f64, f64, [f64; 3]) {
+            let e = [16, 32, 64].map(|n| self.error(n, t_end));
+            let (p1, p2) = ((e[0] / e[1]).log2(), (e[1] / e[2]).log2());
+            println!("MMS A {} U {} T {t_end}: L2 errors {e:?}, orders {p1:.4} {p2:.4}", self.a, self.u);
+            (p1, p2, e)
+        }
+    }
+
+    /// Advection, diffusion and source: first order (upwind), in [0.9, 1.2] on 16/32/64. The
+    /// advection is strong (U = 4) so its first-order error dominates the second-order ones, over
+    /// a short time (T = 0.025) so it stays in its linear range (k² U h T / 2 small): with weaker
+    /// advection the two cancel on these grids, with longer times the damping saturates.
+    #[test]
+    fn mms_advection_diffusion_source_is_first_order() {
+        let (p1, p2, e) = Mms { nu: 0.02, a: 1.5, b: 1.0, u: 4.0 }.orders(0.025);
+        assert!((0.9..=1.2).contains(&p2), "orders {p1:.3} {p2:.3}, errors {e:?}");
+    }
+
+    /// Pure diffusion (the c_b2 term and the ν̃-dependent diffusivity): second order, in [1.8, 2.2].
+    #[test]
+    fn mms_pure_diffusion_is_second_order() {
+        let (p1, p2, e) = Mms { nu: 0.02, a: 1.5, b: 1.0, u: 0.0 }.orders(0.25);
+        assert!((1.8..=2.2).contains(&p2), "orders {p1:.3} {p2:.3}, errors {e:?}");
+    }
+
+    /// A field that crosses zero (SA-neg's diffusivity below 0) converges at the same orders.
+    #[test]
+    fn mms_through_zero_keeps_its_orders() {
+        let (p1, p2, e) = Mms { nu: 0.02, a: 0.2, b: 1.0, u: 4.0 }.orders(0.025);
+        assert!((0.9..=1.2).contains(&p2), "advected: orders {p1:.3} {p2:.3}, errors {e:?}");
+        let (p1, p2, e) = Mms { nu: 0.02, a: 0.2, b: 1.0, u: 0.0 }.orders(0.25);
+        assert!((1.8..=2.2).contains(&p2), "diffused: orders {p1:.3} {p2:.3}, errors {e:?}");
+    }
+
+    const NU: f64 = 1e-3;
+
+    /// A channel-like box: walls at y = −½ and y = 15½, inflow at −x, open at +x, periodic in z,
+    /// a block obstacle, a sheared velocity and a random initial ν̃.
+    fn channel(seed: f64) -> (SaField, Vec<[f64; 3]>, Vec<f64>, Vec<f64>) {
+        let dims = [24, 16, 12];
+        let cells = 24 * 16 * 12;
+        let fluid: Vec<bool> = (0..cells)
+            .map(|c| {
+                let (i, j) = (c % 24, (c / 24) % 16);
+                !((10..13).contains(&i) && (6..9).contains(&j))
+            })
+            .collect();
+        let faces = [BoxFace::Inflow, BoxFace::Open, BoxFace::Wall, BoxFace::Wall, BoxFace::Periodic, BoxFace::Periodic];
+        let mut field = SaField::boxed(dims, &fluid, faces, 3.0 * NU, 3.0 * NU).unwrap();
+        let mut x = seed;
+        let init: Vec<f64> = (0..cells)
+            .map(|_| {
+                x = (x * 9301.0 + 0.4927).fract();
+                x * 50.0 * NU
+            })
+            .collect();
+        field.set_nu_tilde(&init).unwrap();
+        let u: Vec<[f64; 3]> = (0..cells)
+            .map(|c| {
+                let y = (((c / 24) % 16) as f64 + 0.5) / 16.0;
+                [0.15 * 4.0 * y * (1.0 - y), 0.01 * ((c % 7) as f64 - 3.0), 0.0]
+            })
+            .collect();
+        let vort: Vec<f64> = (0..cells).map(|c| 0.6 * (1.0 - 2.0 * (((c / 24) % 16) as f64 + 0.5) / 16.0).abs() / 16.0).collect();
+        // The exact distance to every wall face (the channel's and the obstacle's), as the
+        // solver's own field gives it: the destruction needs it, the plane walls alone would
+        // leave the cells behind the obstacle with d ≈ 7.5 and ν̃ running away there.
+        let at = |c: usize| [c % 24, (c / 24) % 16, c / (24 * 16)].map(|v| v as f64);
+        let mut points = Vec::new();
+        for (c, sides) in field.sides.iter().enumerate() {
+            for (k, side) in sides.iter().enumerate() {
+                if *side == Side::Wall && fluid[c] {
+                    let mut p = at(c);
+                    p[AXIS_OF_SIDE[k]] += 0.5 * SIGN_OF_SIDE[k];
+                    points.push(p);
+                }
+            }
+        }
+        let d: Vec<f64> = (0..cells)
+            .map(|c| {
+                let p = at(c);
+                points
+                    .iter()
+                    .map(|q: &[f64; 3]| ((p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2) + (p[2] - q[2]).powi(2)).sqrt())
+                    .fold(f64::INFINITY, f64::min)
+            })
+            .collect();
+        assert_eq!(d[24 * 7 + 13], 0.5);
+        (field, u, vort, d)
+    }
+
+    fn input<'a>(u: &'a [[f64; 3]], vort: &'a [f64], d: &'a [f64]) -> SaInput<'a> {
+        SaInput { u, vorticity: vort, length: d, nu: NU, model: true, source: None }
+    }
+
+    /// From a non-negative start, with the model on, ν̃ never goes below 0 and ν_t ≥ 0, every step.
+    #[test]
+    fn nu_tilde_stays_non_negative() {
+        let (mut field, u, vort, d) = channel(0.37);
+        for step in 0..300 {
+            let stats = field.advance(&input(&u, &vort, &d)).unwrap();
+            assert_eq!(stats.negative_cells, 0, "step {step}");
+            assert!(stats.min_nu_tilde >= 0.0 && stats.substeps >= 1);
+            assert!(field.nu_tilde().iter().all(|&v| v >= 0.0 && v.is_finite()), "step {step}");
+            assert!((0..field.nu_tilde().len()).all(|c| field.nu_t(c, NU) >= 0.0));
+        }
+    }
+
+    /// From a field with negative cells (SA-neg's branch), the most negative ν̃ only rises towards
+    /// 0 and, once there, stays at or above it; ν_t is 0 wherever ν̃ ≤ 0.
+    #[test]
+    fn negative_nu_tilde_recovers_and_has_no_eddy_viscosity() {
+        let (mut field, u, vort, d) = channel(0.61);
+        let shifted: Vec<f64> = field.nu_tilde().iter().map(|v| v - 25.0 * NU).collect();
+        field.set_nu_tilde(&shifted).unwrap();
+        let mut lowest = field.nu_tilde().iter().fold(0.0f64, |m, &v| m.min(v));
+        assert!(lowest < 0.0);
+        for step in 0..300 {
+            let stats = field.advance(&input(&u, &vort, &d)).unwrap();
+            assert!(stats.min_nu_tilde >= lowest.min(0.0), "step {step}: {} below {lowest}", stats.min_nu_tilde);
+            lowest = stats.min_nu_tilde;
+            for (c, &v) in field.nu_tilde().iter().enumerate() {
+                assert!(field.nu_t(c, NU) >= 0.0);
+                if v <= 0.0 {
+                    assert_eq!(field.nu_t(c, NU), 0.0);
+                }
+            }
+        }
+    }
+
+    /// The same result bit for bit on 1, 2 and 7 threads (the box has 4608 cells, two blocks).
+    #[test]
+    fn threads_do_not_change_the_result() {
+        let run = |threads: usize| {
+            fieldcraft_parallel::with_threads(threads, || {
+                let (mut field, u, vort, d) = channel(0.37);
+                for _ in 0..40 {
+                    field.advance(&input(&u, &vort, &d)).unwrap();
+                }
+                field.nu_tilde().iter().map(|v| v.to_bits()).collect::<Vec<u64>>()
+            })
+        };
+        let one = run(1);
+        assert_eq!(one, run(2));
+        assert_eq!(one, run(7));
+    }
+
+    /// Hostile inputs are refused, not panicked on; a runaway diffusivity stops at the sub-step cap.
+    #[test]
+    fn hostile_inputs_are_refused() {
+        let (mut field, u, vort, d) = channel(0.37);
+        let short = vec![0.0; 3];
+        assert!(matches!(field.advance(&input(&u, &short, &d)), Err(crate::Error::Invalid(_))));
+        for nu in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            let bad = SaInput { nu, ..input(&u, &vort, &d) };
+            assert!(field.advance(&bad).is_err(), "{nu}");
+        }
+        assert!(field.set_nu_tilde(&vec![f64::NAN; u.len()]).is_err());
+        field.set_nu_tilde(&vec![1e3; u.len()]).unwrap();
+        assert!(matches!(field.advance(&input(&u, &vort, &d)), Err(crate::Error::Unstable(_))));
+        assert!(SaField::boxed([2, 2, 2], &[true; 7], [BoxFace::Open; 6], 0.0, 0.0).is_err());
+        let one_sided = [BoxFace::Periodic, BoxFace::Open, BoxFace::Open, BoxFace::Open, BoxFace::Open, BoxFace::Open];
+        assert!(SaField::boxed([2, 2, 2], &[true; 8], one_sided, 0.0, 0.0).is_err());
+        assert!(SaField::new(vec![[Side::Cell(5); 6]], vec![true], 0.0, 0.0).is_err());
+        assert!(SaField::new(vec![[Side::Open; 6]], vec![true], f64::NAN, 0.0).is_err());
     }
 }
