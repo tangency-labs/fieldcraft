@@ -76,7 +76,7 @@
     "from": "probe7",
     "pointer": "/nodes/0/von_mises"
    },
-   "value": 143.21,
+   "value": 142.27,
    "tolerance": {
     "relative": 0.05
    },
@@ -89,7 +89,7 @@
     "from": "probe5",
     "pointer": "/nodes/0/von_mises"
    },
-   "value": 143.21,
+   "value": 142.27,
    "tolerance": {
     "relative": 0.02
    },

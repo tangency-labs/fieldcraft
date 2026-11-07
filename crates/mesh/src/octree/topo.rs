@@ -315,7 +315,7 @@ pub(crate) fn hidden_vertices(hexes: &[[u32; 8]], keep: &[bool], xyz: &dyn Fn(u3
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[test]

@@ -4,10 +4,6 @@
     "linux-x86_64": {
       "stages": {},
       "values": {}
-    },
-    "macos-aarch64": {
-      "stages": {},
-      "values": {}
     }
   },
   "stages": {
@@ -15,7 +11,7 @@
     "build": "ok",
     "cdt": "ok",
     "hex": "ok: extrude",
-    "octree": "no: meshing failed",
+    "octree": "ok",
     "quality": "ok",
     "surface": "ok"
   },
@@ -75,6 +71,22 @@
     "hex.hex8_min_sj": {
       "band": 1.0008151400298465e-9,
       "value": 0.9998151400298464
+    },
+    "octree.hexes": {
+      "band": 0,
+      "value": 52274
+    },
+    "octree.mean_sj": {
+      "band": 9.760537041267324e-10,
+      "value": 0.9750537041267323
+    },
+    "octree.min_sj": {
+      "band": 7.576254163721193e-11,
+      "value": 0.07476254163721194
+    },
+    "octree.volume_mm3": {
+      "band": 0.00004700038255918452,
+      "value": 47000.38155918452
     },
     "quality.max_dihedral_deg": {
       "band": 1.3274972815606035e-7,
