@@ -605,6 +605,9 @@ mod tests {
         fn conducting(&self) -> &[Vec<u32>] {
             &[]
         }
+        fn power_share(&self) -> &[f64] {
+            &[]
+        }
     }
 
     /// 2000 steps, a window of 50 steps.

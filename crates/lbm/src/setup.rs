@@ -215,6 +215,10 @@ pub struct SolidSetup {
     pub limit: Option<f64>,
     /// Radiation from its faces that touch the fluid, when it radiates.
     pub radiation: Option<RadiationSetup>,
+    /// Its share of one body of the whole model, which its power is for: ½ per symmetry plane
+    /// its geometry reaches (it continues across the plane as its mirror image), else 1. Its
+    /// power is spread over its cells in the box over this, so the box generates this share.
+    pub share: f64,
 }
 
 /// A conducting solid's radiation to its surroundings, in the fluid's lattice heat units: each
@@ -317,6 +321,9 @@ pub struct ZoneSetup {
     pub hi: [usize; 3],
     /// The axis the flow goes through it along (its thickness and its reported flow).
     pub axis: usize,
+    /// Its share of one zone of the whole model: ½ per symmetry plane it reaches (it continues
+    /// across the plane as its mirror image), else 1. A fan's curve is read at its flow over this.
+    pub share: f64,
 }
 
 impl ZoneSetup {
@@ -347,6 +354,63 @@ fn cell_range(grid: &Grid, min: [f64; 3], max: [f64; 3]) -> Option<([usize; 3], 
     Some((lo, hi))
 }
 
+/// The symmetry planes a part of the model (a fan, porous zone or solid) is continued across:
+/// every plane but those of an axis whose two faces are both planes (an unbounded strip, which
+/// has no whole model).
+pub(crate) fn mirror_planes(domain: &FluidDomain) -> Vec<BoxFace> {
+    domain.symmetry_planes().filter(|p| !domain.faces.get(p.opposite()).is_symmetry()).collect()
+}
+
+/// The obstacles a symmetry plane cuts off their middle, one message each: an obstacle that
+/// reaches past the plane is solved as its part in the box and that part's mirror image, which
+/// is not the obstacle unless its extent across the plane is symmetric about it. (Its bounding
+/// box is checked, which an asymmetric shape can pass; one that ends at the plane is the half
+/// of a body the half model is meant to solve and is not warned about.)
+fn obstacle_symmetry_warnings(domain: &FluidDomain, obstacles: &[Obstacle]) -> Vec<String> {
+    const SYMMETRIC: f64 = 1e-6; // unit-factors: relative to the spacing
+    let mut out = Vec::new();
+    for plane in domain.symmetry_planes() {
+        let at = domain.face_at(plane);
+        for o in obstacles.iter().filter(|o| domain.obstacles.contains(&o.body)) {
+            let (lo, hi) = extent(o, plane.axis());
+            if !domain.plane_cuts(plane, lo, hi) {
+                continue;
+            }
+            if ((at - lo) - (hi - at)).abs() > SYMMETRIC * domain.spacing {
+                out.push(format!(
+                    "symmetry plane {}: it cuts obstacle `{}` off its middle, so the half model solves its part in the box and that part's mirror image, not the obstacle",
+                    plane.name(),
+                    o.body
+                ));
+            }
+        }
+    }
+    out
+}
+
+/// Obstacle `o`'s extent along `axis`, from its surface's points.
+fn extent(o: &Obstacle, axis: usize) -> (f64, f64) {
+    let along = o.surface.points().iter().filter_map(|p| p.get(axis).copied());
+    along.fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), x| (lo.min(x), hi.max(x)))
+}
+
+/// The share of a part of the model in the box whose geometry spans `min..max`: a part that
+/// reaches a symmetry plane is half of one part of the whole model, continued across the plane
+/// as its mirror image, so ½ per plane it reaches; 1 for one clear of every plane (its mirror
+/// image is a second part). Decided from the geometry, as [`FluidDomain::symmetry_warnings`]
+/// does, never from the cells it falls in: a part a fraction of a cell short of a plane can
+/// still have cells on it.
+fn mirror_share(domain: &FluidDomain, min: [f64; 3], max: [f64; 3]) -> f64 {
+    let span = |axis: usize| (min.get(axis).copied().unwrap_or(0.0), max.get(axis).copied().unwrap_or(0.0));
+    mirror_planes(domain)
+        .iter()
+        .filter(|p| {
+            let (lo, hi) = span(p.axis());
+            domain.reaches_plane(**p, lo, hi)
+        })
+        .fold(1.0, |share, _| share * 0.5)
+}
+
 /// The domain's porous zones and fans in lattice units.
 fn zones(domain: &FluidDomain, grid: &Grid, viscosity: f64, dt: f64, density: f64) -> Result<Vec<ZoneSetup>> {
     let h = grid.spacing;
@@ -369,27 +433,41 @@ fn zones(domain: &FluidDomain, grid: &Grid, viscosity: f64, dt: f64, density: f6
         if !(alpha.is_finite() && beta.is_finite()) {
             return Err(Error::Invalid(format!("porous zone `{}`: its resistance is too large for this lattice", z.name)));
         }
-        out.push(ZoneSetup { name: z.name.clone(), kind: ZoneKind::Porous { alpha, beta }, lo, hi, axis });
+        let share = mirror_share(domain, z.min, z.max);
+        out.push(ZoneSetup { name: z.name.clone(), kind: ZoneKind::Porous { alpha, beta }, lo, hi, axis, share });
     }
     for f in &domain.fans {
         let (lo, hi) = place("fan", &f.name, f.min, f.max)?;
         let (axis, sign) = f.direction.axis_sign();
-        let curve: Vec<[f64; 2]> = f.curve.iter().map(|p| [p[0] / volume_flow_scale, p[1] / pressure_scale]).collect();
+        // A fan that reaches a symmetry plane is part of one fan of the whole model, so its flow
+        // in the box is its share of the whole fan's: its curve is read at the whole fan's flow.
+        let share = mirror_share(domain, f.min, f.max);
+        let curve: Vec<[f64; 2]> = f.curve.iter().map(|p| [share * p[0] / volume_flow_scale, p[1] / pressure_scale]).collect();
         if curve.iter().flatten().any(|v| !v.is_finite()) {
             return Err(Error::Invalid(format!("fan `{}`: its curve does not fit this lattice", f.name)));
         }
         let relaxation = f.relaxation.unwrap_or(DEFAULT_FAN_RELAXATION);
-        out.push(ZoneSetup { name: f.name.clone(), kind: ZoneKind::Fan { sign, curve, relaxation }, lo, hi, axis });
+        out.push(ZoneSetup { name: f.name.clone(), kind: ZoneKind::Fan { sign, curve, relaxation }, lo, hi, axis, share });
     }
     Ok(out)
 }
 
-/// The domain's conducting obstacles in lattice units (`rho_c` the fluid's `ρ c`).
-fn solids(model: &Model, t: &fieldcraft_model::FluidThermal, obstacles: &[String], rho_c: f64, dt: f64, h: f64) -> Result<Vec<SolidSetup>> {
+/// The domain's conducting obstacles in lattice units (`rho_c` the fluid's `ρ c`), their
+/// geometry from `geometry` (the caller's obstacles).
+fn solids(
+    model: &Model,
+    domain: &FluidDomain,
+    t: &fieldcraft_model::FluidThermal,
+    geometry: &[Obstacle],
+    rho_c: f64,
+    dt: f64,
+    h: f64,
+) -> Result<Vec<SolidSetup>> {
     let scale = dt / (h * h);
     let mut out = Vec::with_capacity(t.solids.len());
     for c in &t.solids {
-        let obstacle = obstacles
+        let obstacle = domain
+            .obstacles
             .iter()
             .position(|o| *o == c.body)
             .ok_or_else(|| Error::NotFound(format!("conducting solid `{}` is not an obstacle of the domain", c.body)))?;
@@ -421,7 +499,14 @@ fn solids(model: &Model, t: &fieldcraft_model::FluidThermal, obstacles: &[String
                 Ok(RadiationSetup { emit, ambient: rad.ambient })
             })
             .transpose()?;
-        out.push(SolidSetup { body: c.body.clone(), obstacle, conductivity, capacity, capacity_scale: 1.0, power, limit: c.limit, radiation });
+        let share = geometry.iter().find(|o| o.body == c.body).map_or(1.0, |o| {
+            let (min, max) = (0..3).fold(([0.0; 3], [0.0; 3]), |(mut min, mut max), axis| {
+                (min[axis], max[axis]) = extent(o, axis);
+                (min, max)
+            });
+            mirror_share(domain, min, max)
+        });
+        out.push(SolidSetup { body: c.body.clone(), obstacle, conductivity, capacity, capacity_scale: 1.0, power, limit: c.limit, radiation, share });
     }
     Ok(out)
 }
@@ -659,7 +744,7 @@ impl Setup {
             match *domain.faces.get(face) {
                 FaceCondition::MovingWall { velocity } | FaceCondition::Velocity { velocity, .. } => u_char = u_char.max(norm(velocity)),
                 FaceCondition::Pressure { pressure, .. } => pressures.push(pressure),
-                FaceCondition::Wall {} | FaceCondition::Slip {} | FaceCondition::Periodic {} => {}
+                FaceCondition::Wall {} | FaceCondition::Slip {} | FaceCondition::Symmetry {} | FaceCondition::Periodic {} => {}
             }
         }
         for sb in &domain.surfaces {
@@ -765,7 +850,9 @@ impl Setup {
                 "the lattice Mach number is {mach:.3} (velocity {u_char} with time step {dt} and spacing {h}), above {MAX_MACH}: lower the time step"
             )));
         }
-        let mut warnings = Vec::new();
+        // A half model whose inputs cross its symmetry plane solves something else than half.
+        let mut warnings = domain.symmetry_warnings();
+        warnings.extend(obstacle_symmetry_warnings(&domain, obstacles));
         // A shear-dependent fluid in lattice units; its temperatures count from the scalar
         // lattice's zero.
         let rheology = newtonian.is_none().then(|| Rheology {
@@ -884,7 +971,7 @@ impl Setup {
                     faces,
                     heat_scale: rho_c * h * h * h / dt,
                     conductivity: alpha,
-                    solids: solids(model, t, &domain.obstacles, rho_c, dt, h)?,
+                    solids: solids(model, &domain, t, obstacles, rho_c, dt, h)?,
                     contacts: contacts(t, rho_c, dt, h)?,
                     phase,
                 })
