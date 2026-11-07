@@ -2903,6 +2903,20 @@ pub const REACTIONS: &[Field] = &[
         .help("Nonlinear static steps: the frame (converged increment) whose reactions to sum; the final state when empty."),
 ];
 
+pub const INVERSE_JOINT: &[Field] = &[
+    json("parameters", "Parameters (explicit SI)").req().help("2–3 unique parameter identities with lower_si, upper_si and positive scale_si."),
+    json("observations", "Observations (explicit SI)")
+        .req()
+        .help("Mixed response descriptors, value_si and known standard_deviation_si. Mode/frame indices start at zero."),
+    flag("uniform_material_scaling", "Exact homogeneous E/density reuse").def("false").help("Only homogeneous isotropic Young/density with zero imposed motion, no springs/point masses and mass-independent static loads; exact identities after actual FE baselines."),
+    positive("regularization", "Regularization", D::None).def("0").help("Nonnegative normalized prior penalty; never supplies missing data rank and disables sampling covariance."),
+    int("max_iterations", "Maximum iterations", 1, 64).def("32").help("Bounded optimizer iterations; the general evaluator recomputes model derivatives."),
+    SENSITIVITY_INCREMENT,
+    MAX_DOFS,
+    MAX_FACTOR,
+    THREADS,
+];
+
 #[cfg(test)]
 mod tests {
     use fieldcraft_model::DisplaySystem;

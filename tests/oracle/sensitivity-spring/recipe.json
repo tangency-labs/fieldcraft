@@ -228,5 +228,147 @@
         0
       ]
     }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 2,
+      "xyz": [
+        1,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "tip2",
+      "nodes": [
+        2
+      ]
+    }
+  },
+  {
+    "command": "model.mass.create",
+    "params": {
+      "name": "m2",
+      "target": {
+        "set": "tip2"
+      },
+      "mass": 1
+    }
+  },
+  {
+    "command": "model.spring.create",
+    "params": {
+      "name": "k2",
+      "type": "spring",
+      "first": {
+        "set": "tip2"
+      },
+      "direction": {
+        "dof": 1
+      },
+      "stiffness": 8
+    }
+  },
+  {
+    "command": "model.boundary_condition.create",
+    "params": {
+      "name": "guide2",
+      "type": "displacement",
+      "target": {
+        "set": "tip2"
+      },
+      "values": [
+        null,
+        0,
+        0,
+        null,
+        null,
+        null
+      ]
+    }
+  },
+  {
+    "command": "model.load.create",
+    "params": {
+      "name": "force2",
+      "type": "force",
+      "target": {
+        "set": "tip2"
+      },
+      "vector": [
+        1,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.step.create",
+    "params": {
+      "name": "Joint",
+      "procedure": {
+        "type": "static"
+      },
+      "boundary_conditions": [
+        "guide",
+        "guide2"
+      ],
+      "loads": [
+        "force",
+        "force2"
+      ]
+    }
+  },
+  {
+    "command": "solve.inverse.joint",
+    "params": {
+      "parameters": [
+        {
+          "parameter": {
+            "type": "spring_stiffness",
+            "name": "k"
+          },
+          "lower_si": 1,
+          "upper_si": 20,
+          "scale_si": 4
+        },
+        {
+          "parameter": {
+            "type": "spring_stiffness",
+            "name": "k2"
+          },
+          "lower_si": 1,
+          "upper_si": 20,
+          "scale_si": 8
+        }
+      ],
+      "observations": [
+        {
+          "response": {
+            "kind": "static",
+            "step": "Joint",
+            "node": 1,
+            "dof": 1
+          },
+          "value_si": 0.2,
+          "standard_deviation_si": 0.001
+        },
+        {
+          "response": {
+            "kind": "static",
+            "step": "Joint",
+            "node": 2,
+            "dof": 1
+          },
+          "value_si": 0.1,
+          "standard_deviation_si": 0.001
+        }
+      ]
+    },
+    "id": "joint"
   }
 ]

@@ -107,3 +107,7 @@ mod harmonic;
 pub use harmonic::{HarmonicDerivative, HarmonicObservation, HarmonicSensitivity, harmonic_sensitivity, inverse_harmonic};
 
 mod nelson;
+
+mod joint;
+pub use joint::inverse_joint_uniform_material;
+pub use joint::{JointEstimate, JointFit, JointObservation, JointParameter, JointResponse, fit_joint, inverse_joint};

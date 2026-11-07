@@ -19,3 +19,9 @@ The complex-response inverse uses the zero-frequency response of k=8 N/m.
 Nelson's normalized scalar mode is constant for this fixed unit mass, so its
 stiffness derivative is zero. These additions cover harmonic inversion on
 this oscillator; they do not certify joint identification or large models.
+
+The joint extension adds a second grounded spring and fits both stiffnesses to
+independent unit-force static observations. Exact targets u1=0.2m and u2=0.1m
+identify k1=5N/m, k2=10N/m. Declared 0.001m errors and parameter scales4,8N/m
+give scaled Jacobian singular values160,80 and condition number2. No external
+solver data is used.

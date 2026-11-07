@@ -72,7 +72,7 @@ increments: truncation and cancellation have competing step-size dependence.
 ## Limitations
 
 This is a linear-model entry point. It does not provide clustered-subspace
-derivatives, joint-parameter inversion, beam section stress derivatives or
+derivatives, beam section stress derivatives or
 nonlinear/thermal sensitivity. Direct harmonic response is required for
 harmonic sensitivities; a truncated modal basis is not differentiated. Modal analysis uses consistent mass at the command boundary.
 Assembly differencing can lose small derivatives when unrelated contributions
@@ -130,8 +130,7 @@ A local 95% normal interval is returned only for known observation standard
 deviations, an interior estimate, zero regularization and nonzero local
 information. It is conditional on the model and measurement error assumptions,
 not a model-discrepancy or global-identifiability certificate. Otherwise it is
-null with a warning. No residual-estimated covariance, joint-parameter fit,
-or mode-crossing tracking is implemented. Complex harmonic inversion is described below.
+null with a warning. No residual-estimated covariance or mode-crossing tracking is implemented. Complex harmonic inversion is described below.
 
 The oracle recovers k=9 N/m from its exact frequency starting at k=4 N/m.
 Command tests also perturb that observation by 0.2 of its known standard
@@ -194,3 +193,64 @@ tensors at element nodes, concatenated bottom, middle, then top. The
 `stress_sampling` string identifies this ordering. Differentiation includes
 the explicit material/thickness change and the displacement derivative.
 Beam section stress recovery is still unsupported.
+
+## Joint bounded identification
+
+`solve.inverse.joint` fits two or three unique existing parameters together,
+using mixed static displacement, simple frequency, or direct complex-response
+observations. The existing one-parameter commands remain available. Every
+number in this command is explicitly SI, independent of the display system:
+
+```json
+{"parameters":[
+  {"parameter":{"type":"material","name":"Steel","constant":"young"},
+   "lower_si":180e9,"upper_si":260e9,"scale_si":210e9},
+  {"parameter":{"type":"material","name":"Steel","constant":"density"},
+   "lower_si":7000,"upper_si":9000,"scale_si":7850}],
+ "observations":[
+  {"response":{"kind":"static","step":"Load","node":1,"dof":3},
+   "value_si":-1e-6,"standard_deviation_si":1e-9},
+  {"response":{"kind":"frequency","step":"Modes","mode":0},
+   "value_si":100,"standard_deviation_si":0.1}],
+ "regularization":0,"max_iterations":32,"relative_increment":0.00001}
+```
+
+The model supplies the initial parameters. Bounds and positive `scale_si`
+normalize parameter coordinates; known positive observation standard deviations
+whiten the residuals. Frequency `mode` and harmonic `frame` indices start at
+zero; `harmonic_real` and `harmonic_imaginary` also take step, node and dof.
+The values above illustrate the schema and are not a physical benchmark.
+
+Before adding regularization or LM damping, a one-sided Jacobi SVD checks the
+scaled data Jacobian. Rank deficiency or condition number above 1e8 is refused,
+including when a prior penalty was requested. Repeated frequencies of a uniform
+body constrain E/rho, not E and rho separately. More observations help only if
+they add independent parameter information; a mass-independent static response
+can supply the missing direction. Local full rank does not prove global uniqueness.
+
+Output includes `estimate_si`, `predicted_si`, `residuals_si`, `jacobian_si`,
+parameter scales, scaled singular values, rank and condition number. For an
+interior unregularized solution, `covariance_si` is the inverse data information
+in original parameter units. The 95% joint confidence region is
+(delta p)^T covariance^-1 (delta p) <= `joint_chi_square` (5.99146 for two,
+7.81473 for three). `joint_projection_intervals_si` are projections of that
+ellipsoid, not separate marginal intervals; correlations matter when checking
+whether a parameter vector is inside it. Known independent Gaussian errors and
+local linearization are assumptions; model discrepancy is excluded. Regularized
+or bound-active solutions return no covariance.
+
+Optional `uniform_material_scaling:true` accepts exactly [Young, density] for
+one isotropic material, no springs/point masses, homogeneous prescribed motion,
+mass-independent loads and static/frequency observations. Actual FE primal
+baselines are followed by exact u~1/E and f~sqrt(E/rho) evaluation, not repeated
+FE solves. Mixed materials or elastic supports require the general evaluator.
+The general path reuses existing derivatives for every Jacobian column and can
+be expensive. This command does not introduce grouped support stiffnesses,
+shape variables, nonlinear sensitivity or a differentiated harmonic modal basis.
+
+For a grounded spring targeting a node set, the named stiffness is applied to
+each target node. It is a per-node stiffness, not the sum over the set. A common
+value on N nodes gives total parallel stiffness N*k; arbitrary weighted groups
+are not an additional parameter type. The weakest-direction refusal is in
+scaled parameter coordinates; multiply components by the supplied scales to
+interpret a physical parameter perturbation.

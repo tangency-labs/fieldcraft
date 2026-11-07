@@ -158,6 +158,45 @@
         "absolute": 1e-09
       },
       "reason": "Exact scalar impedance or fixed-mass normalization; finite assembled differences and requested inverse tolerance."
+    },
+    {
+      "id": "joint_k1",
+      "quantity": "joint_k1",
+      "measure": {
+        "from": "joint",
+        "pointer": "/estimate_si/0"
+      },
+      "value": 5.0,
+      "tolerance": {
+        "relative": 1e-06
+      },
+      "reason": "Independent grounded springs with unit force: u=1/k. Scaled Jacobian diagonal magnitudes160 and80 for declared0.001m errors; condition2."
+    },
+    {
+      "id": "joint_k2",
+      "quantity": "joint_k2",
+      "measure": {
+        "from": "joint",
+        "pointer": "/estimate_si/1"
+      },
+      "value": 10.0,
+      "tolerance": {
+        "relative": 1e-06
+      },
+      "reason": "Independent grounded springs with unit force: u=1/k. Scaled Jacobian diagonal magnitudes160 and80 for declared0.001m errors; condition2."
+    },
+    {
+      "id": "joint_condition",
+      "quantity": "joint_condition",
+      "measure": {
+        "from": "joint",
+        "pointer": "/condition_number"
+      },
+      "value": 2.0,
+      "tolerance": {
+        "relative": 1e-06
+      },
+      "reason": "Independent grounded springs with unit force: u=1/k. Scaled Jacobian diagonal magnitudes160 and80 for declared0.001m errors; condition2."
     }
   ]
 }

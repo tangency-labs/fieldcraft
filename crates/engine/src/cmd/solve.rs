@@ -1931,6 +1931,34 @@ fn run_inverse_harmonic(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(out)
 }
 
+pub const INVERSE_JOINT: CommandSpec = CommandSpec {
+    id: "solve.inverse.joint",
+    label: "Fit a Parameter Vector",
+    params: r#"{"parameters":[{"parameter":{"type":"material","name":"Steel","constant":"young"},"lower_si":1e11,"upper_si":3e11,"scale_si":2.1e11},{"parameter":{"type":"material","name":"Steel","constant":"density"},"lower_si":7000,"upper_si":9000,"scale_si":7850}],"observations":[{"response":{"kind":"frequency","step":"Modes","mode":0},"value_si":100,"standard_deviation_si":0.1},{"response":{"kind":"static","step":"Load","node":1,"dof":3},"value_si":-1e-6,"standard_deviation_si":1e-9}]} — 2–3 unique bounded parameters with mixed static/simple-frequency/direct-complex observations. Explicit SI quantities only, including parameter scales, covariance and outputs; mode/frame indices zero-based. Data-only rank/condition check precedes optional regularization, refuses unidentifiable combinations. Returns local joint95% ellipsoid for known independent Gaussian errors and unregularized interior estimates. No mutation. Defaults max_iterations32, relative_increment1e-5, regularization0. uniform_material_scaling=true explicitly restricts [Young,density] to homogeneous material, zero support motion, no springs/point masses, mass-independent static loads and static/frequency observations, reusing exact identities after actual FE baselines."#,
+    form: Some(super::forms::INVERSE_JOINT),
+    kind: CommandKind::Model,
+    requires: &[Requirement::Step],
+    run: run_inverse_joint,
+};
+fn run_inverse_joint(s: &mut Session, p: &Value) -> Result<Value> {
+    use fieldcraft_solver::sensitivity::{JointFit, inverse_joint, inverse_joint_uniform_material};
+    let fit = JointFit {
+        parameters: req(p, "parameters")?,
+        observations: req(p, "observations")?,
+        regularization: opt::<f64>(p, "regularization")?.unwrap_or(0.0),
+        max_iterations: opt::<usize>(p, "max_iterations")?.unwrap_or(32),
+        relative_increment: opt::<f64>(p, "relative_increment")?.unwrap_or(1e-5),
+    };
+    let mut limits = limits(p)?;
+    // The joint optimizer iteration cap must not truncate each modal basis.
+    limits.max_lanczos_vectors = cap(p, "max_lanczos_vectors", Limits::MAX_LANCZOS_VECTORS)?;
+    let reuse = opt::<bool>(p, "uniform_material_scaling")?.unwrap_or(false);
+    let result = with_threads(threads(s, p)?, || {
+        if reuse { inverse_joint_uniform_material(&s.model, &fit, &limits) } else { inverse_joint(&s.model, &fit, &limits) }
+    })?;
+    serde_json::to_value(result).map_err(|e| EngineError::Params(e.to_string()))
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     /// `file.sample` opens the cantilever with nothing to save; `solve.run` solves both its steps

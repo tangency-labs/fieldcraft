@@ -679,11 +679,11 @@ pub static CATALOGUE: &[Capability] = &[
     ),
     ready_more(
         "solve.inverse.frequency",
-        "Fit Frequencies",
+        "Identify Parameters",
         Solve,
         "Design studies",
-        "Fit one material, thickness or spring parameter to frequencies; complex harmonic observations in the drop-down",
-        &["solve.inverse.harmonic"],
+        "Fit material, thickness or spring parameters; complex-response and joint mixed-observation fits in the drop-down",
+        &["solve.inverse.harmonic", "solve.inverse.joint"],
     ),
     ready(
         "solve.explicit",
