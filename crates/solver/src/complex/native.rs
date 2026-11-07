@@ -37,7 +37,8 @@ impl C {
     const ZERO: Self = Self { re: 0.0, im: 0.0 };
     const ONE: Self = Self { re: 1.0, im: 0.0 };
     fn abs(self) -> f64 {
-        self.re.hypot(self.im)
+        // Pivot comparisons must not depend on the host math library.
+        libm::hypot(self.re, self.im)
     }
     fn is_finite(self) -> bool {
         self.re.is_finite() && self.im.is_finite()

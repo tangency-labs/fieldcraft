@@ -59,12 +59,12 @@ impl Vector {
 
     /// Component amplitudes (not the maximum length of the vector during a cycle).
     pub fn amplitudes(&self) -> Vec<f64> {
-        self.real.iter().zip(&self.imaginary).map(|(a, b)| a.hypot(*b)).collect()
+        self.real.iter().zip(&self.imaginary).map(|(a, b)| libm::hypot(*a, *b)).collect()
     }
 
     /// Component phases in radians, in [−π, π]; zero has the conventional phase 0.
     pub fn phases(&self) -> Vec<f64> {
-        self.real.iter().zip(&self.imaginary).map(|(a, b)| if *a == 0.0 && *b == 0.0 { 0.0 } else { b.atan2(*a) }).collect()
+        self.real.iter().zip(&self.imaginary).map(|(a, b)| if *a == 0.0 && *b == 0.0 { 0.0 } else { libm::atan2(*b, *a) }).collect()
     }
 }
 
@@ -286,7 +286,7 @@ fn imbalance(a: &Csr, b: &Csr, rhs: &Vector, u: &Vector) -> Result<Vector> {
 }
 
 fn refine(a: &Csr, b: &Csr, rhs: &Vector, mut u: Vector, solve: impl Fn(&mut Vector) -> Result<()>) -> Result<Vector> {
-    let norm = |v: &Vector| v.real.iter().zip(&v.imaginary).map(|(r, i)| r.hypot(*i)).fold(0.0_f64, f64::max);
+    let norm = |v: &Vector| v.real.iter().zip(&v.imaginary).map(|(r, i)| libm::hypot(*r, *i)).fold(0.0_f64, f64::max);
     let mut residual = imbalance(a, b, rhs, &u)?;
     let mut size = norm(&residual);
     for _ in 0..3 {
@@ -321,17 +321,17 @@ fn residual_unchecked(a: &Csr, b: &Csr, rhs: &Vector, u: &Vector) -> Result<Resi
     let mut norm_z = 0.0_f64;
     let mut norm = 0.0_f64;
     for r in 0..a.n {
-        let residual = imbalance.real[r].hypot(imbalance.imaginary[r]);
-        let load = rhs.real[r].hypot(rhs.imaginary[r]);
-        let displacement = u.real[r].hypot(u.imaginary[r]);
+        let residual = libm::hypot(imbalance.real[r], imbalance.imaginary[r]);
+        let load = libm::hypot(rhs.real[r], rhs.imaginary[r]);
+        let displacement = libm::hypot(u.real[r], u.imaginary[r]);
         let (_, ar) = a.row(r);
         let (_, br) = b.row(r);
-        let row: f64 = ar.iter().zip(br).map(|(a, b)| a.hypot(*b)).sum();
+        let row: f64 = ar.iter().zip(br).map(|(a, b)| libm::hypot(*a, *b)).sum();
         if !residual.is_finite() || !load.is_finite() || !displacement.is_finite() || !row.is_finite() {
             return Err(Error::Invalid("overflow in harmonic residual evaluation".into()));
         }
         norm_r = norm_r.max(residual);
-        norm = norm.hypot(residual);
+        norm = libm::hypot(norm, residual);
         norm_f = norm_f.max(load);
         norm_u = norm_u.max(displacement);
         norm_z = norm_z.max(row);

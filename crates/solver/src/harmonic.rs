@@ -414,13 +414,13 @@ fn full_residual(a: &Csr, b: &Csr, mass: &Csr, u: &Vector, force: &Vector, dampi
     let mut norm = 0.0_f64;
     let mut residual_norm = 0.0_f64;
     for i in 0..a.n {
-        let r = (real[i] - force.real[i]).hypot(imaginary[i] - force.imaginary[i]);
-        let f = force.real[i].hypot(force.imaginary[i]);
+        let r = libm::hypot(real[i] - force.real[i], imaginary[i] - force.imaginary[i]);
+        let f = libm::hypot(force.real[i], force.imaginary[i]);
         if !r.is_finite() || !f.is_finite() {
             return Err(Error::Invalid("non-finite harmonic modal residual".into()));
         }
         residual = residual.max(r);
-        residual_norm = residual_norm.hypot(r);
+        residual_norm = libm::hypot(residual_norm, r);
         norm = norm.max(f);
     }
     if residual == 0.0 {

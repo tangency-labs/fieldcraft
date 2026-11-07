@@ -334,7 +334,8 @@ pub fn solve_harmonic(model: &Model, name: Option<&str>, limits: &Limits) -> Res
                 .enumerate()
                 .map(|(j, lambda)| {
                     let ratio = ratios.get(if ratios.len() == 1 { 0 } else { j }).copied().unwrap_or(0.0);
-                    let square = out.coordinates.real[j].powi(2) + out.coordinates.imaginary[j].powi(2);
+                    let (real, imaginary) = (out.coordinates.real[j], out.coordinates.imaginary[j]);
+                    let square = real * real + imaginary * imaginary;
                     omega * omega * ratio * lambda.max(0.0).sqrt() * square
                 })
                 .sum::<f64>();

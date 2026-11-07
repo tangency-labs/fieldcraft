@@ -91,7 +91,7 @@ impl Frequencies {
                         }
                         let fraction = i as f64 / (r.count - 1) as f64;
                         if r.logarithmic {
-                            ((1.0 - fraction) * r.start.ln() + fraction * r.end.ln()).exp()
+                            libm::exp((1.0 - fraction) * libm::log(r.start) + fraction * libm::log(r.end))
                         } else {
                             (1.0 - fraction) * r.start + fraction * r.end
                         }
@@ -99,8 +99,10 @@ impl Frequencies {
                     .collect()
             }
         };
-        if values.iter().any(|f| !f.is_finite() || *f < 0.0 || !(2.0 * std::f64::consts::PI * f).powi(2).is_finite())
-            || values.windows(2).any(|w| w[0] >= w[1])
+        if values.iter().any(|f| {
+            let omega = 2.0 * std::f64::consts::PI * f;
+            !f.is_finite() || *f < 0.0 || !(omega * omega).is_finite()
+        }) || values.windows(2).any(|w| w[0] >= w[1])
         {
             return Err(Error::Invalid(
                 "harmonic frequencies must be finite, nonnegative, strictly ascending and have representable squared angular frequencies".into(),
@@ -178,7 +180,7 @@ impl LoadFactor {
     }
 
     pub fn components(&self) -> (f64, f64) {
-        (self.amplitude * self.phase.cos(), self.amplitude * self.phase.sin())
+        (self.amplitude * libm::cos(self.phase), self.amplitude * libm::sin(self.phase))
     }
 }
 

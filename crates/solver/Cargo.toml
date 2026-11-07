@@ -9,11 +9,11 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+# Match mesh: pure-Rust math for harmonic frequencies, phasors and complex norms.
+libm = "0.2"
 fieldcraft-model = { workspace = true }
 fieldcraft-fem = { workspace = true }
 fieldcraft-parallel = { workspace = true }
-# Use the mesh crate's pure-Rust math convention for the flat-shell geometry checks.
-libm = "0.2"
 thiserror = { workspace = true }
 serde = { workspace = true }
 

@@ -1609,9 +1609,9 @@ fn probe_harmonic(r: &fieldcraft_solver::HarmonicResult, nodes: &[u32], p: &Valu
     let phasor = |out: &mut Value, prefix: &str, real: &[f64], imaginary: &[f64]| {
         out[format!("{prefix}_real")] = json!(real);
         out[format!("{prefix}_imaginary")] = json!(imaginary);
-        out[format!("{prefix}_amplitude")] = json!(real.iter().zip(imaginary).map(|(r, i)| r.hypot(*i)).collect::<Vec<_>>());
+        out[format!("{prefix}_amplitude")] = json!(real.iter().zip(imaginary).map(|(r, i)| libm::hypot(*r, *i)).collect::<Vec<_>>());
         out[format!("{prefix}_phase")] =
-            json!(real.iter().zip(imaginary).map(|(r, i)| if *r == 0.0 && *i == 0.0 { 0.0 } else { i.atan2(*r) }).collect::<Vec<_>>());
+            json!(real.iter().zip(imaginary).map(|(r, i)| if *r == 0.0 && *i == 0.0 { 0.0 } else { libm::atan2(*i, *r) }).collect::<Vec<_>>());
     };
     let mut curves = Vec::new();
     for &label in nodes {

@@ -9,6 +9,8 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+# Match mesh: pure-Rust math for harmonic frequencies, phasors and complex norms.
+libm = "0.2"
 fieldcraft-model = { workspace = true }
 # Samples build their geometry from SolidCraft scripts (sample.rs).
 fieldcraft-geometry = { workspace = true, features = ["scripts"] }
