@@ -352,6 +352,17 @@ impl SaField {
         &self.nu_tilde
     }
 
+    /// Each cell's six faces (−x, +x, −y, +y, −z, +z): what a device backend checks its own
+    /// neighbour rule against.
+    pub fn sides(&self) -> &[[Side; 6]] {
+        &self.sides
+    }
+
+    /// ν̃ at inflow faces.
+    pub fn inflow(&self) -> f64 {
+        self.inflow
+    }
+
     /// Set ν̃ per cell (a checkpoint, a test); refused unless one finite value per cell.
     pub fn set_nu_tilde(&mut self, values: &[f64]) -> crate::Result<()> {
         if values.len() != self.nu_tilde.len() || values.iter().any(|v| !v.is_finite()) {
