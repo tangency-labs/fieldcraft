@@ -335,6 +335,7 @@ impl Beam {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dense::Cholesky;
 
     const STEEL: Elastic = Elastic::Isotropic { young: 210e3, poisson: 0.3 };
 
@@ -407,6 +408,40 @@ mod tests {
         assert!((lumped.get(0, 0) - total / 2.0).abs() < 1e-12 * total);
         assert!(Beam::new(&xyz, [40.0, 30.0, 0.0], section).is_err(), "orientation along the axis");
         assert!(Beam::new(&[xyz[0], xyz[0]], [0.0, 0.0, 1.0], section).is_err(), "zero length");
+    }
+
+    #[test]
+    fn two_skew_beams_preserve_all_six_rigid_motions_after_assembly() {
+        let profile = BeamProfile::Rectangle { width: 3.0, height: 5.0 };
+        let section = BeamSection::new(&profile, &STEEL).unwrap();
+        let x = [[0.0, 0.0, 0.0], [40.0, 0.0, 0.0], [40.0, 30.0, 20.0]];
+        let a = Beam::new(&x[..2], [0.0, 0.0, 1.0], section).unwrap();
+        let b = Beam::new(&x[1..], [0.0, 0.0, 1.0], section).unwrap();
+        let modes = rigid_motions(&x);
+        for mode in modes {
+            let mut f = vec![0.0; 18];
+            let fa = a.stiffness().mul_vec(&mode[..12]);
+            let fb = b.stiffness().mul_vec(&mode[6..]);
+            for i in 0..12 {
+                f[i] += fa[i];
+                f[i + 6] += fb[i];
+            }
+            assert!(f.iter().all(|v| v.abs() < 1e-7), "assembled beam rigid residual: {f:?}");
+        }
+    }
+
+    #[test]
+    fn consistent_and_lumped_mass_carry_translational_and_rotary_inertia() {
+        let profile = BeamProfile::Rectangle { width: 0.02, height: 0.03 };
+        let section = BeamSection::new(&profile, &STEEL).unwrap();
+        let beam = Beam::new(&[[0.0, 0.0, 0.0], [1.0, 0.3, 0.2]], [0.0, 0.0, 1.0], section).unwrap();
+        let consistent = beam.mass(7800.0);
+        let lumped = beam.lumped_mass(7800.0);
+        assert!(Cholesky::new(&consistent).is_ok(), "consistent beam mass lost rank");
+        assert!(Cholesky::new(&lumped).is_ok(), "lumped beam mass lost rank");
+        for node in [0, 6] {
+            assert!(lumped.get(node, node) > 0.0 && lumped.get(node + 3, node + 3) > 0.0);
+        }
     }
 
     #[test]
