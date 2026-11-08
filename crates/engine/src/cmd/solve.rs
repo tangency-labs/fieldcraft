@@ -1782,7 +1782,7 @@ fn run_sensitivity_static(s: &mut Session, p: &Value) -> Result<Value> {
 pub const SENSITIVITY_HARMONIC: CommandSpec = CommandSpec {
     id: "solve.sensitivity.harmonic",
     label: "Harmonic Sensitivity",
-    params: r#"{"step":"Harmonic", "parameter":{"type":"material","name":"Steel","constant":"young"}, "node":1, "dof":1, "relative_increment":0.00001} — physical direct harmonic response and parameter derivatives at every excitation frequency. Returns complex direct/transpose-adjoint, magnitude and locally unwrapped phase derivatives, including material damping, mass, loads and prescribed-motion elimination. Parameters as solve.sensitivity.static. Direct method only; thermal/initial fields, modal truncation, poles and zero response phase are refused. No model mutation. Display units per display parameter unit; phase radians. Sweep increments near resonance. Threads and caps as solve.static."#,
+    params: r#"{"step":"Harmonic", "parameter":{"type":"material","name":"Steel","constant":"young"}, "node":1, "dof":1, "relative_increment":0.00001} — physical direct or fixed-basis modal harmonic response derivatives at every excitation frequency. Returns complex direct/transpose-adjoint, magnitude and locally unwrapped phase derivatives, including material damping, mass, loads and prescribed-motion elimination. Parameters as solve.sensitivity.static. Modal method projects all operators once per sweep, including residual vectors; its residual fields refer to projected equations and do not bound truncation error. Step damping parameters use {type:damping,step:H,component:{kind:alpha|beta|loss_factor|modal_ratio,mode:0}}; mode is required only for modal_ratio. Homogeneous supports required for modal derivatives; physical parameters with nonzero modal ratios are refused. Thermal/initial fields, poles and zero response phase are refused. No model mutation. Values and derivatives are SI per SI parameter unit; phase radians. Sweep increments near resonance. Threads and caps as solve.static."#,
     form: Some(super::forms::SENSITIVITY_HARMONIC),
     kind: CommandKind::Model,
     requires: &[Requirement::Step],
@@ -1812,7 +1812,8 @@ fn run_sensitivity_harmonic(s: &mut Session, p: &Value) -> Result<Value> {
     out["response_quantity"] = json!(if dof <= 3 { "length" } else { "angle" });
     out["node"] = json!(node);
     out["dof"] = json!(dof);
-    out["method"] = json!("semi_analytical");
+    out["method"] = json!(if matches!(parameter, Parameter::Damping { .. }) { "analytic_damping" } else { "semi_analytical" });
+    out["units"] = json!("SI");
     Ok(out)
 }
 

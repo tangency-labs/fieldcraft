@@ -119,3 +119,4 @@ mod modal_observation;
 pub use joint::inverse_joint_with_modes;
 pub use modal_observation::{ModalObservationGroup, ModalPairingReport, ModalSensor, ShapeNormalization};
 
+mod projected;

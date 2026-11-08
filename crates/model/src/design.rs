@@ -21,12 +21,23 @@ pub enum MaterialConstant {
     G23,
 }
 
+/// Analysis-step damping coefficients. Alpha has inverse-time units (not angular frequency).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum DampingParameter {
+    Alpha,
+    Beta,
+    LossFactor,
+    ModalRatio { mode: usize },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Parameter {
     Material { name: String, constant: MaterialConstant },
     ShellThickness { name: String },
     SpringStiffness { name: String },
+    Damping { step: String, component: DampingParameter },
 }
 
 fn missing() -> Error {
@@ -60,9 +71,38 @@ fn material_slot(material: &mut crate::Material, constant: MaterialConstant) -> 
     }
 }
 
+fn damping_slot(step: &mut crate::Step, component: DampingParameter) -> Result<&mut f64> {
+    let crate::Procedure::Harmonic(h) = &mut step.procedure else {
+        return Err(missing());
+    };
+    match component {
+        DampingParameter::Alpha => Ok(&mut h.damping.alpha),
+        DampingParameter::Beta => Ok(&mut h.damping.beta),
+        DampingParameter::LossFactor => Ok(&mut h.damping.loss_factor),
+        DampingParameter::ModalRatio { mode } => {
+            let crate::harmonic::Method::Modal { modes, damping_ratios, .. } = &mut h.method else {
+                return Err(missing());
+            };
+            if mode >= *modes as usize {
+                return Err(missing());
+            }
+            // Expand a shared or absent ratio into explicit per-mode values before editing.
+            if damping_ratios.len() <= 1 {
+                let value = damping_ratios.first().copied().unwrap_or(0.0);
+                *damping_ratios = vec![value; *modes as usize];
+            }
+            damping_ratios.get_mut(mode).ok_or_else(missing)
+        }
+    }
+}
+
 impl Parameter {
     pub fn value(&self, model: &Model) -> Result<f64> {
         match self {
+            Self::Damping { step, component } => {
+                let mut step = model.step(step).cloned().ok_or_else(missing)?;
+                Ok(*damping_slot(&mut step, *component)?)
+            }
             Self::Material { name, constant } => {
                 let mut material = model.material(name).cloned().ok_or_else(missing)?;
                 Ok(*material_slot(&mut material, *constant)?)
@@ -81,6 +121,11 @@ impl Parameter {
     pub fn quantity(&self, model: &Model) -> Result<Quantity> {
         self.value(model)?;
         Ok(match self {
+            Self::Damping { component, .. } => match component {
+                DampingParameter::Alpha => Quantity::Frequency,
+                DampingParameter::Beta => Quantity::Time,
+                _ => Quantity::Dimensionless,
+            },
             Self::Material { constant, .. } => match constant {
                 MaterialConstant::Density => Quantity::Density,
                 MaterialConstant::Poisson | MaterialConstant::Nu12 | MaterialConstant::Nu13 | MaterialConstant::Nu23 => Quantity::Dimensionless,
@@ -99,6 +144,11 @@ impl Parameter {
             return Err(Error::Invalid("design parameter must be finite".into()));
         }
         match self {
+            Self::Damping { step, component } => {
+                let mut step = model.step(step).cloned().ok_or_else(missing)?;
+                *damping_slot(&mut step, *component)? = value;
+                model.replace_step(step)
+            }
             Self::Material { name, constant } => {
                 let mut material = model.material(name).cloned().ok_or_else(missing)?;
                 *material_slot(&mut material, *constant)? = value;
@@ -173,5 +223,38 @@ mod tests {
             assert!(Parameter::Material { name: "iso".into(), constant: c }.set(&mut m, v).is_err());
             assert_eq!(m, before);
         }
+    }
+}
+
+#[cfg(test)]
+mod damping_tests {
+    use super::*;
+    #[test]
+    fn damping_updates_validate_and_expand_shared_ratios() {
+        use crate::harmonic::{Damping, Frequencies, Harmonic, Method};
+        let mut m = Model::default();
+        m.add_step(
+            crate::Step::new(
+                "H",
+                crate::Procedure::Harmonic(Harmonic {
+                    frequencies: Frequencies::List(vec![1.0]),
+                    method: Method::Modal { modes: 2, damping_ratios: vec![0.02], residual_vectors: 0 },
+                    damping: Damping::default(),
+                    load_factors: Default::default(),
+                }),
+            ),
+            None,
+        )
+        .unwrap();
+        let p = Parameter::Damping { step: "H".into(), component: DampingParameter::ModalRatio { mode: 1 } };
+        assert_eq!(p.value(&m).unwrap(), 0.02);
+        p.set(&mut m, 0.03).unwrap();
+        let first = Parameter::Damping { step: "H".into(), component: DampingParameter::ModalRatio { mode: 0 } };
+        assert_eq!(first.value(&m).unwrap(), 0.02);
+        assert_eq!(p.value(&m).unwrap(), 0.03);
+        let old = m.clone();
+        assert!(p.set(&mut m, -0.1).is_err());
+        assert_eq!(m, old);
+        assert!(Parameter::Damping { step: "H".into(), component: DampingParameter::ModalRatio { mode: 2 } }.value(&m).is_err());
     }
 }

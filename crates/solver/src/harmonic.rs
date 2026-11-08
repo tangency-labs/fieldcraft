@@ -187,6 +187,10 @@ impl<'a> Modal<'a> {
     pub fn shapes(&self) -> &[Vec<f64>] {
         &self.shapes[..self.eigenvalues.len()]
     }
+    /// Complete fixed projection basis, including load-dependent Ritz corrections.
+    pub fn basis_vectors(&self) -> &[Vec<f64>] {
+        &self.shapes
+    }
     pub fn residual_vectors(&self) -> usize {
         self.shapes.len() - self.eigenvalues.len()
     }

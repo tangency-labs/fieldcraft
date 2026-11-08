@@ -73,8 +73,7 @@ increments: truncation and cancellation have competing step-size dependence.
 
 This is a linear-model entry point. It does not provide clustered-subspace
 derivatives, beam section stress derivatives or
-nonlinear/thermal sensitivity. Direct harmonic response is required for
-harmonic sensitivities; a truncated modal basis is not differentiated. Modal analysis uses consistent mass at the command boundary.
+nonlinear/thermal sensitivity. Harmonic sensitivities support direct response or a fixed modal basis; derivatives of the truncation basis are not included. Modal analysis uses consistent mass at the command boundary.
 Assembly differencing can lose small derivatives when unrelated contributions
 dominate; the residual checks alone do not bound that error. No BASE-scale
 performance or third-party agreement is claimed by this page.
@@ -143,15 +142,14 @@ Problems in Least Squares*, Q. Appl. Math. 2:164–168, doi:10.1090/qam/10666.
 ## Complex harmonic response
 
 `solve.sensitivity.harmonic` takes the same named parameter and relative
-increment, a direct harmonic step, and an observation `node` / `dof` (1–6).
+increment, a direct or modal harmonic step, and an observation `node` / `dof` (1–6).
 Each frame returns complex displacement, direct and transpose-adjoint
 parameter derivatives, magnitude and locally unwrapped phase derivatives.
 Phase is in radians; all derivatives divide by the displayed parameter unit.
 The assembly differences include mass, material Rayleigh/loss damping, loads,
-and elimination of real prescribed support motion. Global damping is held
-fixed. Try several increments near resonance. A zero response has undefined
+and elimination of real prescribed support motion. Step damping is held fixed for physical parameters; explicit damping parameters differentiate it analytically. Try several increments near resonance. A zero response has undefined
 phase; unresolved cancellation or a singular operator returns an error.
-Modal response and derivatives of a truncated modal basis are not supported.
+Modal response uses a fixed modal/Ritz basis, with applicability described below.
 The direct primal, tangent and adjoint currently factor separately.
 
 `solve.inverse.harmonic` fits one named parameter within `lower` / `upper`.
@@ -304,3 +302,34 @@ coordinates**. Dividing noisy measured components by the same noisy reference
 usually produces correlated, non-Gaussian errors; supplying their marginal sigmas
 does not validate that covariance. Reference selection, sensor mapping and measurement
 noise modelling remain explicit input responsibilities.
+
+
+### Step damping and fixed-basis modal harmonic derivatives
+
+A design parameter may be `{"type":"damping","step":"H","component":{"kind":"alpha"}}`.
+Kinds are `alpha` (s^-1), `beta` (s), `loss_factor` (dimensionless), or
+`modal_ratio` with a zero-based `mode` (dimensionless). Alpha is inverse time,
+not a cyclic or angular natural frequency. Values are finite and nonnegative.
+Updating one modal ratio expands any common ratio to per-mode values while retaining
+all other modes. Step and material damping contributions remain additive.
+
+With exp(iωt), step derivatives are Z_α=iωM, Z_β=iωK and Z_η=iK.
+A modal-ratio derivative is i 2ωω_j Mφ_jφ_jᵀM. These derivatives are analytic,
+including at a zero coefficient; they do not centrally perturb damping below zero.
+The existing bounded joint and scalar harmonic fits accept these identities.
+An alpha/beta pair may be unidentifiable on a single-mode structure; the data-rank
+check still applies, and priors cannot supply the missing information.
+
+For a modal step, a fresh basis with the requested residual-vector cycles is built
+inside the sensitivity call. Physical operator derivatives are projected once,
+then all frequency points solve the small Galerkin derivative system. No basis
+cache or out-of-call preprocessing is required. The reported derivative holds the
+modal/Ritz basis fixed. Full-basis and Ritz-completed two-coordinate tests compare
+to direct derivatives with absolute/relative tolerance 1e-8; a truncated large model
+requires a separate truncation assessment. Residual fields are projected-equation
+residuals, not full-space error bounds. Prescribed nonzero support motion and
+physical-parameter derivatives with nonzero modal ratios are refused in this method.
+
+`solve.sensitivity.harmonic` returns SI values and derivatives per SI parameter unit,
+with `units:"SI"`; this makes the existing numeric convention explicit. Modal and
+direct complex outputs remain observable through the same command.

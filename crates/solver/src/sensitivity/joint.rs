@@ -268,7 +268,18 @@ pub fn fit_joint(initial: &[f64], fit: &JointFit, response: impl Fn(&[f64]) -> R
                 projected[i] = 0.0;
             }
         }
-        let norm = projected.iter().enumerate().map(|(i, g)| g.abs() / current.info[i][i].sqrt()).fold(0.0_f64, f64::max);
+        let diagonal_norm = projected.iter().enumerate().map(|(i, g)| g.abs() / current.info[i][i].sqrt()).fold(0.0_f64, f64::max);
+        // The diagonal gradient alone hides unconverged weak directions when
+        // identifiable parameters are correlated. Use the data-SVD covariance
+        // to measure the projected gradient in the full information metric.
+        // Keep the previous criterion for regularized fits (different Hessian).
+        let norm = if fit.regularization == 0.0 {
+            let decrement: f64 =
+                projected.iter().enumerate().map(|(i, g)| g * current.covariance[i].iter().zip(&projected).map(|(c, g)| c * g).sum::<f64>()).sum();
+            diagonal_norm.max(decrement.max(0.0).sqrt())
+        } else {
+            diagonal_norm
+        };
         if norm < GRADIENT_TOLERANCE {
             let at_bound = x.iter().zip(&fit.parameters).any(|(x, p)| *x == p.lower_si || *x == p.upper_si);
             let chi = if n == 2 { 5.991464547107979 } else { 7.814727903251179 };

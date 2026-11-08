@@ -233,3 +233,142 @@ fn badly_conditioned_data_is_rejected_before_regularization() {
     let e = fit_joint(&[1.0, 1.0], &fit, |x| Ok((vec![x[0], 1e-9 * x[1]], vec![vec![1.0, 0.0], vec![0.0, 1e-9]]))).unwrap_err().to_string();
     assert!(e.contains("unidentifiable") && e.contains("weakest scaled parameter direction"), "{e}");
 }
+
+#[test]
+fn step_damping_derivatives_and_joint_recovery() {
+    use fieldcraft_model::design::DampingParameter as D;
+    let m = rod(Damping::default(), Damping { alpha: 0.2, beta: 0.01, loss_factor: 0.03 }, Method::Direct, 0.0);
+    for component in [D::Alpha, D::Beta, D::LossFactor] {
+        let p = Parameter::Damping { step: "H".into(), component };
+        let value = p.value(&m).unwrap();
+        let h = value * 1e-4;
+        let derivative = harmonic_sensitivity(&m, Some("H"), &p, h, HarmonicObservation { node: 2, dof: 1 }, &Limits::default()).unwrap();
+        let mut plus = m.clone();
+        let mut minus = m.clone();
+        p.set(&mut plus, value + h).unwrap();
+        p.set(&mut minus, value - h).unwrap();
+        let rp = solve_harmonic(&plus, Some("H"), &Limits::default()).unwrap();
+        let rm = solve_harmonic(&minus, Some("H"), &Limits::default()).unwrap();
+        for ((d, p), m) in derivative.frames.iter().zip(&rp.frames).zip(&rm.frames) {
+            for (i, fd) in [(0, (p.real[1][0] - m.real[1][0]) / (2.0 * h)), (1, (p.imaginary[1][0] - m.imaginary[1][0]) / (2.0 * h))] {
+                assert!((d.direct[i] - fd).abs() < 1e-6 * fd.abs().max(1.0), "{:?}: {} {fd}", component, d.direct[i]);
+            }
+        }
+    }
+    let parameters = vec![
+        JointParameter { parameter: Parameter::Damping { step: "H".into(), component: D::Alpha }, lower_si: 0.0, upper_si: 1.0, scale_si: 0.2 },
+        JointParameter { parameter: Parameter::Damping { step: "H".into(), component: D::LossFactor }, lower_si: 0.0, upper_si: 0.2, scale_si: 0.03 },
+    ];
+    let mut target = m.clone();
+    parameters[0].parameter.set(&mut target, 0.23).unwrap();
+    parameters[1].parameter.set(&mut target, 0.04).unwrap();
+    let truth = solve_harmonic(&target, Some("H"), &Limits::default()).unwrap();
+    let mut observations = Vec::new();
+    for (frame, v) in truth.frames.iter().enumerate() {
+        observations.push(JointObservation {
+            response: JointResponse::HarmonicReal { step: "H".into(), node: 2, dof: 1, frame },
+            value_si: v.real[1][0],
+            standard_deviation_si: 0.001,
+        });
+        observations.push(JointObservation {
+            response: JointResponse::HarmonicImaginary { step: "H".into(), node: 2, dof: 1, frame },
+            value_si: v.imaginary[1][0],
+            standard_deviation_si: 0.001,
+        });
+    }
+    let fit = JointFit { parameters, observations, regularization: 0.0, max_iterations: 32, relative_increment: 1e-5 };
+    let r = inverse_joint(&m, &fit, &Limits::default()).unwrap();
+    assert!((r.estimate_si[0] / 0.23 - 1.0).abs() < 1e-6, "{r:?}");
+    assert!((r.estimate_si[1] / 0.04 - 1.0).abs() < 1e-6);
+    let zero = Parameter::Damping { step: "H".into(), component: D::Alpha };
+    let mut zero_model = m.clone();
+    zero.set(&mut zero_model, 0.0).unwrap();
+    assert!(harmonic_sensitivity(&zero_model, Some("H"), &zero, 1e-5, HarmonicObservation { node: 2, dof: 1 }, &Limits::default()).is_ok());
+}
+
+#[test]
+fn full_modal_basis_derivatives_agree_with_direct_and_ratio_differences() {
+    use fieldcraft_model::design::DampingParameter as D;
+    let damping = Damping { alpha: 0.2, beta: 0.01, loss_factor: 0.03 };
+    let direct = rod(Damping::default(), damping, Method::Direct, 0.0);
+    let modal = rod(Damping::default(), damping, Method::Modal { modes: 1, damping_ratios: vec![], residual_vectors: 0 }, 0.0);
+    for p in [
+        Parameter::Material { name: "bar".into(), constant: MaterialConstant::Young },
+        Parameter::Material { name: "bar".into(), constant: MaterialConstant::Density },
+        Parameter::Damping { step: "H".into(), component: D::Alpha },
+        Parameter::Damping { step: "H".into(), component: D::Beta },
+        Parameter::Damping { step: "H".into(), component: D::LossFactor },
+    ] {
+        let h = p.value(&direct).unwrap() * 1e-4;
+        let a = harmonic_sensitivity(&direct, Some("H"), &p, h, HarmonicObservation { node: 2, dof: 1 }, &Limits::default()).unwrap();
+        let b = harmonic_sensitivity(&modal, Some("H"), &p, h, HarmonicObservation { node: 2, dof: 1 }, &Limits::default()).unwrap();
+        for (a, b) in a.frames.iter().zip(&b.frames) {
+            for i in 0..2 {
+                assert!((a.direct[i] - b.direct[i]).abs() < 1e-8 * a.direct[i].abs().max(1.0));
+                assert!((b.direct[i] - b.adjoint[i]).abs() < 1e-8 * b.direct[i].abs().max(1.0));
+            }
+        }
+    }
+    let p = Parameter::Damping { step: "H".into(), component: D::ModalRatio { mode: 0 } };
+    let mut modal = modal;
+    p.set(&mut modal, 0.02).unwrap();
+    let d = harmonic_sensitivity(&modal, Some("H"), &p, 1e-5, HarmonicObservation { node: 2, dof: 1 }, &Limits::default()).unwrap();
+    let mut plus = modal.clone();
+    let mut minus = modal.clone();
+    p.set(&mut plus, 0.020001).unwrap();
+    p.set(&mut minus, 0.019999).unwrap();
+    let rp = solve_harmonic(&plus, Some("H"), &Limits::default()).unwrap();
+    let rm = solve_harmonic(&minus, Some("H"), &Limits::default()).unwrap();
+    for ((d, p), m) in d.frames.iter().zip(&rp.frames).zip(&rm.frames) {
+        let fd = (p.real[1][0] - m.real[1][0]) / 2e-6;
+        assert!((d.direct[0] - fd).abs() < 1e-6 * fd.abs().max(1.0));
+    }
+}
+
+#[test]
+fn modal_ratio_and_loss_are_identified_from_complex_frequency_data() {
+    use fieldcraft_model::design::DampingParameter as D;
+    let m = rod(
+        Damping::default(),
+        Damping { alpha: 0.1, beta: 0.0, loss_factor: 0.03 },
+        Method::Modal { modes: 1, damping_ratios: vec![0.02], residual_vectors: 0 },
+        0.0,
+    );
+    let parameters = vec![
+        JointParameter {
+            parameter: Parameter::Damping { step: "H".into(), component: D::ModalRatio { mode: 0 } },
+            lower_si: 0.0,
+            upper_si: 0.1,
+            scale_si: 0.02,
+        },
+        JointParameter { parameter: Parameter::Damping { step: "H".into(), component: D::LossFactor }, lower_si: 0.0, upper_si: 0.1, scale_si: 0.03 },
+    ];
+    let truth = [0.025, 0.04];
+    let mut target = m.clone();
+    for (p, x) in parameters.iter().zip(truth) {
+        p.parameter.set(&mut target, x).unwrap();
+    }
+    let response = solve_harmonic(&target, Some("H"), &Limits::default()).unwrap();
+    let mut observations = Vec::new();
+    for (frame, v) in response.frames.iter().enumerate() {
+        observations.push(JointObservation {
+            response: JointResponse::HarmonicReal { step: "H".into(), node: 2, dof: 1, frame },
+            value_si: v.real[1][0],
+            standard_deviation_si: 0.001,
+        });
+        observations.push(JointObservation {
+            response: JointResponse::HarmonicImaginary { step: "H".into(), node: 2, dof: 1, frame },
+            value_si: v.imaginary[1][0],
+            standard_deviation_si: 0.001,
+        });
+    }
+    let r = inverse_joint(
+        &m,
+        &JointFit { parameters, observations, regularization: 0.0, max_iterations: 32, relative_increment: 1e-5 },
+        &Limits::default(),
+    )
+    .unwrap();
+    for (x, t) in r.estimate_si.iter().zip(truth) {
+        assert!((x / t - 1.0).abs() < 1e-6, "{r:?}");
+    }
+}

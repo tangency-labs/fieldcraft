@@ -2,7 +2,11 @@
 //! Central differences apply to assembled operators, including material damping
 //! and prescribed-motion elimination, not independently solved responses.
 use fieldcraft_fem::DofKind;
-use fieldcraft_model::{Model, Procedure, design::Parameter, harmonic::Method};
+use fieldcraft_model::{
+    Model, Procedure,
+    design::{DampingParameter, Parameter},
+    harmonic::Method,
+};
 use serde::Serialize;
 
 use super::model::{cold, difference, matrix_difference, perturb};
@@ -56,14 +60,20 @@ pub fn harmonic_sensitivity(
     observation: HarmonicObservation,
     limits: &Limits,
 ) -> Result<HarmonicSensitivity> {
-    let (plus, minus) = perturb(model, parameter, increment)?;
+    let damping_parameter = if let Parameter::Damping { step, component } = parameter { Some((step, *component)) } else { None };
+    let perturbed = if damping_parameter.is_none() { Some(perturb(model, parameter, increment)?) } else { None };
     let resolved = model.resolve()?;
     let step = model.select_step(step, |p| matches!(p, Procedure::Harmonic(_)), "harmonic")?;
     let Procedure::Harmonic(h) = &step.procedure else {
         return Err(Error::Internal("harmonic sensitivity step".into()));
     };
-    if h.method != Method::Direct {
-        return Err(Error::NotSupported("harmonic sensitivity requires direct response; modal-basis derivatives are not implemented".into()));
+    if let Some((parameter_step, component)) = damping_parameter {
+        if parameter_step != &step.name {
+            return Err(Error::Invalid("damping parameter belongs to a different harmonic step".into()));
+        }
+        if matches!(component, DampingParameter::ModalRatio { .. }) && h.method == Method::Direct {
+            return Err(Error::NotSupported("modal-ratio derivatives require modal response".into()));
+        }
     }
     let mesh = Mesh::new(model, &resolved, limits.max_dofs)?;
     let setup = Setup { model, resolved: &resolved, mesh: &mesh, step };
@@ -98,11 +108,91 @@ pub fn harmonic_sensitivity(
         Ok((k, mass, c, g, f))
     };
     let original = assemble(model)?;
-    let p = assemble(&plus)?;
-    let m = assemble(&minus)?;
+    let perturbed_operators = perturbed.as_ref().map(|(p, m)| -> Result<_> { Ok((assemble(p)?, assemble(m)?)) }).transpose()?;
+    let reduced_modal = if matches!(h.method, Method::Modal { .. }) {
+        if red.largest_prescribed() != 0.0 {
+            return Err(Error::NotSupported("fixed-basis modal derivatives require homogeneous support motion".into()));
+        }
+        let [mut k, mut m] = red.reduce([&original.0, &original.1])?;
+        k.mirror_lower();
+        m.mirror_lower();
+        let reduce_optional = |a: Option<&crate::sparse::Csr>| -> Result<_> {
+            a.map(|a| -> Result<_> {
+                let [mut r] = red.reduce([a])?;
+                r.mirror_lower();
+                Ok(r)
+            })
+            .transpose()
+        };
+        Some((k, m, reduce_optional(original.2.as_ref())?, reduce_optional(original.3.as_ref())?))
+    } else {
+        None
+    };
+    let matrices = reduced_modal.as_ref().map(|(k, m, c, g)| Matrices { stiffness: k, mass: m, viscous: c.as_ref(), loss: g.as_ref() });
+    let modal = if let (Some(matrices), Method::Modal { modes, residual_vectors, .. }) = (&matrices, &h.method) {
+        let force = Vector { real: red.restrict(&original.4.real), imaginary: red.restrict(&original.4.imaginary) };
+        Some(harmonic::Modal::with_residual_vectors(matrices, *modes as usize, &force, *residual_vectors as usize, limits)?)
+    } else {
+        None
+    };
+    let ratios = if let Method::Modal { damping_ratios, .. } = &h.method { damping_ratios.as_slice() } else { &[] };
+    if modal.is_some() && damping_parameter.is_none() && ratios.iter().any(|x| *x != 0.0) {
+        return Err(Error::NotSupported(
+            "physical-parameter fixed-basis derivatives with nonzero modal ratios need differentiated modal damping operators".into(),
+        ));
+    }
+    if modal.is_some() {
+        warnings.push("Fixed modal/Ritz basis derivative: differentiates projected physical operators, not the truncation basis. Full-basis limit agrees with direct sensitivity; validate truncation separately. Modal-ratio parameters hold the basis, mass and eigenfrequencies fixed.".into());
+    }
+
     let mut weights = vec![0.0; mesh.dofs()];
     *weights.get_mut(dof).ok_or_else(|| Error::Internal("harmonic observation dof".into()))? = 1.0;
     let weights = Vector { real: red.restrict(&weights), imaginary: vec![0.0; red.neq()] };
+    if let (Some(modal), Some(matrices)) = (&modal, matrices) {
+        let derivative = if let Some((p, m)) = &perturbed_operators {
+            let reduce = |a: &crate::sparse::Csr| -> Result<_> {
+                let [mut r] = red.reduce([a])?;
+                r.mirror_lower();
+                Ok(r)
+            };
+            let optional = |p: Option<&crate::sparse::Csr>, m: Option<&crate::sparse::Csr>| -> Result<_> {
+                match (p, m) {
+                    (None, None) => Ok(None),
+                    (Some(p), Some(m)) => Ok(Some(reduce(&matrix_difference(p, m, increment)?)?)),
+                    _ => Err(Error::NotSupported("parameter changes modal damping sparsity".into())),
+                }
+            };
+            Some(super::projected::Operators {
+                k: reduce(&matrix_difference(&p.0, &m.0, increment)?)?,
+                m: reduce(&matrix_difference(&p.1, &m.1, increment)?)?,
+                c: optional(p.2.as_ref(), m.2.as_ref())?,
+                g: optional(p.3.as_ref(), m.3.as_ref())?,
+                f: Vector {
+                    real: red.restrict(&difference(&p.4.real, &m.4.real, increment)?),
+                    imaginary: red.restrict(&difference(&p.4.imaginary, &m.4.imaginary, increment)?),
+                },
+            })
+        } else {
+            None
+        };
+        let force = Vector { real: red.restrict(&original.4.real), imaginary: red.restrict(&original.4.imaginary) };
+        warnings.push("Residual fields are projected-equation residuals, not full-space truncation-error bounds. All sparse operator projections occur once inside this timed sweep.".into());
+        return super::projected::solve(
+            super::projected::Sweep {
+                modal,
+                matrices,
+                derivative,
+                force,
+                weights: &weights,
+                harmonic: h,
+                parameter,
+                value: parameter.value(model)?,
+                increment,
+                warnings,
+            },
+            limits,
+        );
+    }
     let mut frames = Vec::new();
     for frequency in h.frequencies.points()? {
         fieldcraft_model::progress::check()?;
@@ -125,11 +215,33 @@ pub fn harmonic_sensitivity(
             return Err(Error::Singular(format!("harmonic sensitivity unresolved dynamic cancellation at {frequency} Hz")));
         }
 
-        let (ap, bp, fp) = dynamic(&p)?;
-        let (am, bm, fm) = dynamic(&m)?;
-        let da = matrix_difference(&ap, &am, increment)?;
-        let db = matrix_difference(&bp, &bm, increment)?;
-        let df = Vector { real: difference(&fp.real, &fm.real, increment)?, imaginary: difference(&fp.imaginary, &fm.imaginary, increment)? };
+        let (da, db, df) = if let Some((_, component)) = damping_parameter {
+            let (operator, factor) = match component {
+                DampingParameter::Alpha => (&original.1, omega),
+                DampingParameter::Beta => (&original.0, omega),
+                DampingParameter::LossFactor => (&original.0, 1.0),
+                DampingParameter::ModalRatio { .. } => (&original.0, 0.0),
+            };
+            let mut full_db = operator.clone();
+            for value in &mut full_db.val {
+                *value *= factor;
+            }
+            let zero = vec![0.0; mesh.dofs()];
+            let df = Vector { real: vec![0.0; red.neq()], imaginary: red.rhs(&zero, &full_db) };
+            let [mut db] = red.reduce([&full_db])?;
+            db.mirror_lower();
+            let da = crate::sparse::Csr { val: vec![0.0; db.val.len()], ..db.clone() };
+            (da, db, df)
+        } else {
+            let (p, m) = perturbed_operators.as_ref().ok_or_else(|| Error::Internal("missing perturbed harmonic operators".into()))?;
+            let (ap, bp, fp) = dynamic(p)?;
+            let (am, bm, fm) = dynamic(m)?;
+            (
+                matrix_difference(&ap, &am, increment)?,
+                matrix_difference(&bp, &bm, increment)?,
+                Vector { real: difference(&fp.real, &fm.real, increment)?, imaginary: difference(&fp.imaginary, &fm.imaginary, increment)? },
+            )
+        };
         let primal = complex::solve(&a, &b, &rhs, limits)?;
         let tangent = super::tangent_load(&da, &db, &primal.displacement, &df, limits)?;
         let derivative = super::direct(&a, &b, &tangent, limits)?;

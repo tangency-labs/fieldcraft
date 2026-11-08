@@ -180,3 +180,10 @@ damping identification, coverage statistics and modal harmonic derivatives remai
 Joint inversion now accepts reference-normalized real measured mode components and
 MAC-matched frequencies. Nelson quotient derivatives, final-estimate pairing reports
 and ambiguous/invalid sensor refusals have command-level regression coverage.
+
+Step damping parameters (Rayleigh alpha/beta, loss factor and individual modal ratios)
+now have analytic harmonic derivatives and bounded joint identification. Fixed modal/Ritz
+basis sensitivities project the operators once per sweep; projected residuals do not certify
+truncation error. Physical parameters with nonzero modal ratios and nonzero support motion
+remain outside this modal derivative implementation. A prespecified 200-replicate,
+100-element rod test validates the local known-independent-noise joint ellipsoid.
