@@ -39,10 +39,12 @@ pub mod gmsh;
 pub mod memory;
 pub mod mesh;
 pub mod migrate;
+pub mod observations;
 pub mod recovery;
 pub mod results;
 pub mod roots;
 pub mod stl;
+pub mod uff;
 pub mod views;
 pub mod vtk;
 
