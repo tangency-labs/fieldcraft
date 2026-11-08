@@ -67,6 +67,7 @@ fn physical_design_outputs_are_identical_across_thread_counts() {
                 lower: 800.0,
                 upper: 1300.0,
                 observed,
+                mode_indices: None,
                 standard_deviation: None,
                 regularization: 0.0,
                 max_iterations: 16,

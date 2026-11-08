@@ -20,6 +20,7 @@ pub struct FrequencyFit {
     pub lower: f64,
     pub upper: f64,
     pub observed: Vec<f64>,
+    pub mode_indices: Option<Vec<usize>>,
     /// Known independent Gaussian observation standard deviations, in Hz.
     /// None uses relative residuals and does not claim a confidence interval.
     pub standard_deviation: Option<Vec<f64>>,
@@ -68,7 +69,19 @@ pub fn inverse_frequency(model: &Model, step: Option<&str>, parameter: &Paramete
     }
     fit_scalar(model, parameter, fit, &fit.observed, "Simple ordered modes must retain their identity throughout the bounds.", |trial, increment| {
         let response = frequency_sensitivity(trial, step, parameter, increment, &FrequencyOptions::default(), limits)?;
-        Ok(response.modes.iter().map(|m| (m.frequency, m.frequency_derivative)).collect())
+        let indices = fit.mode_indices.as_deref().map_or_else(|| (0..fit.observed.len()).collect(), ToOwned::to_owned);
+        indices
+            .iter()
+            .map(|&i| {
+                response.modes.get(i).ok_or_else(|| Error::Invalid(format!("frequency observation mode index {i} is out of range"))).and_then(|m| {
+                    if m.modal_mass == 0.0 {
+                        Err(Error::NotSupported(format!("frequency observation points to near-zero mode index {i} (order {})", i + 1)))
+                    } else {
+                        Ok((m.frequency, m.frequency_derivative))
+                    }
+                })
+            })
+            .collect()
     })
 }
 
@@ -80,6 +93,11 @@ pub(super) fn fit_scalar(
     condition: &str,
     response: impl Fn(&Model, f64) -> Result<Vec<(f64, f64)>>,
 ) -> Result<FrequencyEstimate> {
+    if let Some(indices) = &fit.mode_indices
+        && (indices.len() != fit.observed.len() || indices.iter().enumerate().any(|(i, v)| indices[..i].contains(v)))
+    {
+        return Err(Error::Invalid("mode_indices must be unique zero-based indices, one per observation".into()));
+    }
     let initial = parameter.value(model)?;
     if !fit.lower.is_finite() || !fit.upper.is_finite() || fit.lower >= fit.upper || initial < fit.lower || initial > fit.upper {
         return Err(Error::Invalid("frequency fit needs finite ordered bounds containing the initial parameter".into()));
@@ -245,14 +263,22 @@ pub fn inverse_frequency_uniform_young(
         |trial, _increment| {
             let value = parameter.value(trial)?;
             let ratio = (value / initial).sqrt();
-            Ok(baseline
-                .modes
+            let indices = fit.mode_indices.as_deref().map_or_else(|| (0..fit.observed.len()).collect(), ToOwned::to_owned);
+            indices
                 .iter()
-                .map(|m| {
-                    let f = m.frequency * ratio;
-                    (f, f / (2.0 * value))
+                .map(|&i| {
+                    baseline.modes.get(i).ok_or_else(|| Error::Invalid(format!("frequency observation mode index {i} is out of range"))).and_then(
+                        |m| {
+                            if m.modal_mass == 0.0 {
+                                Err(Error::NotSupported(format!("frequency observation points to near-zero mode index {i} (order {})", i + 1)))
+                            } else {
+                                let f = m.frequency * ratio;
+                                Ok((f, f / (2.0 * value)))
+                            }
+                        },
+                    )
                 })
-                .collect())
+                .collect()
         },
     )?;
     result.model_evaluations = 1;

@@ -172,6 +172,7 @@ fn exact_uniform_young_fit_agrees_with_recomputed_finite_elements() {
         lower: 800.0,
         upper: 1300.0,
         observed: target.modes.iter().map(|m| m.frequency).collect(),
+        mode_indices: None,
         standard_deviation: None,
         regularization: 0.0,
         max_iterations: 16,

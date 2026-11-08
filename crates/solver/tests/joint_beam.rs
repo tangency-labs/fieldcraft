@@ -147,6 +147,7 @@ fn composite_sections_refuse_uniform_single_material_scaling() {
         lower: 800.0,
         upper: 1200.0,
         observed: vec![1.0],
+        mode_indices: None,
         standard_deviation: None,
         regularization: 0.0,
         max_iterations: 2,

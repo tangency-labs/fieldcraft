@@ -116,6 +116,7 @@ fn harmonic_inverse_recovers_material_with_complex_observations() {
         upper: 4.5,
         standard_deviation: Some(vec![0.01; observed.len()]),
         observed,
+        mode_indices: None,
         regularization: 0.0,
         max_iterations: 32,
         relative_increment: 1e-5,

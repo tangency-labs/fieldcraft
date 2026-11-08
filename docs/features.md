@@ -6,7 +6,7 @@ Every entry is a toolbar button. **Ready** entries run their command; **coming s
 shown greyed with the roadmap milestone that brings them (ROADMAP.md). Scripts, the command line,
 the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 
-94 ready, 31 coming soon.
+93 ready, 31 coming soon.
 
 ## Geometry
 
@@ -122,7 +122,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Contact | Find Contacts — Find the parts of the mesh that touch, and make contact pairs of them | ready | `interaction.contact.find` |
 | Contact | Rigid Wall — A fixed rigid plane a set's nodes cannot pass, with friction, in an explicit dynamics step | ready | `interaction.rigid_wall`, `interaction.rigid_wall.delete` |
 | Connectors | Bolt Load — Bolt pretension | coming soon (M7) |  |
-| Connectors | Spring — Spring or dashpot to the ground or between two points, along a direction or their line | ready | `model.spring.create`, `model.spring.edit`, `model.spring.delete`, `model.foundation.create`, `model.foundation.edit`, `model.foundation.delete` |
+| Connectors | Spring — Spring or dashpot to the ground or between two points, along a direction or their line | ready | `model.spring.create`, `model.spring.edit`, `model.spring.delete` |
 | Connectors | Point Mass — Point mass and rotary inertia at nodes or a reference point | ready | `model.mass.create`, `model.mass.edit`, `model.mass.delete` |
 | Connectors | Connector — Connector elements between points | coming soon (M7) |  |
 | Coupled | FSI Interface — The fluid–structure interface | coming soon (M13) |  |
@@ -139,10 +139,8 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Decks | Read Deck — Read an Abaqus input deck's model data: mesh, sets, materials and sections; unread keywords are listed, not kept | ready | `deck.read` |
 | Implicit | Static — Linear static (or coupled temperature–displacement) solve of a step with FieldCraft's own solver; nonlinear static, buckling, harmonic response and heat transfer in the drop-down | ready | `solve.static`, `solve.nonlinear`, `solve.buckle`, `solve.harmonic`, `solve.heat` |
 | Implicit | Frequency — Natural frequencies and mode shapes of a frequency step | ready | `solve.frequency` |
-| Implicit | Random Response — Projects stored harmonic frames and a one-sided PSD into nodal component spectra and RMS; supports coherent absolute acceleration for a declared unit base inertial load | ready | `solve.random` |
 | Design studies | Sensitivity — Static displacement, work and continuum stress derivatives; simple-mode frequency and direct harmonic derivatives in the drop-down | ready | `solve.sensitivity.static`, `solve.sensitivity.frequency`, `solve.sensitivity.harmonic` |
-| Design studies | Measured Observations — Import measured modal frequencies from CSV or UFF with explicit pairing and uncertainty; read raw complex UFF data in the drop-down | ready | `observations.import`, `observations.read` |
-| Design studies | Identify Parameters — Fit material, thickness or spring parameters; complex-response and joint mixed-observation fits in the drop-down | ready | `solve.inverse.frequency`, `solve.inverse.harmonic`, `solve.inverse.joint` |
+| Design studies | Identify Parameters — Fit selected zero-based frequency modes, material, thickness or spring parameters; complex-response and joint mixed-observation fits in the drop-down | ready | `solve.inverse.frequency`, `solve.inverse.harmonic`, `solve.inverse.joint` |
 | Explicit | Explicit — Transient dynamics of an explicit step by central differences (contact and erosion coming in M10) | ready | `solve.explicit` |
 | Explicit | Blast & Impact — EOS-driven fluids with fluid–structure contact (ALE or SPH) | coming soon (M14) |  |
 | Fluids | Lattice Boltzmann — Lattice Boltzmann flow of a fluid step on the CPU or a GPU, with wall forces, and the heat it carries | ready | `solve.fluid`, `solve.settings` |
@@ -174,7 +172,6 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Panel | Capability | Status | Command |
 |---|---|---|---|
 | Model | Model Info — Node and element counts and the model summary | ready | `model.info`, `model.rename` |
-| Model | Node Coordinates — Return coordinates for selected mesh node labels | ready | `model.node.coordinates` |
 | File | Open Model — Open a .fieldcraft model | ready | `file.open`, `file.new` |
 | File | Samples — Open a sample model, ready to solve | ready | `file.sample` |
 | File | Save — Save the model to its .fieldcraft file | ready | `file.save` |

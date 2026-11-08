@@ -697,7 +697,7 @@ pub static CATALOGUE: &[Capability] = &[
         "Identify Parameters",
         Solve,
         "Design studies",
-        "Fit material, thickness or spring parameters; complex-response and joint mixed-observation fits in the drop-down",
+        "Fit selected zero-based frequency modes, material, thickness or spring parameters; complex-response and joint mixed-observation fits in the drop-down",
         &["solve.inverse.harmonic", "solve.inverse.joint"],
     ),
     ready(

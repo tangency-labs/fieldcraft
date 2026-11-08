@@ -2561,6 +2561,8 @@ pub const INVERSE_FREQUENCY: &[Field] = &[
     DESIGN_PARAMETER,
     json("lower", "Lower bound").req().help("A number in the parameter display unit, or a quoted typed value such as \"100 GPa\"."),
     json("upper", "Upper bound").req().help("A number in the parameter display unit, or a quoted typed value such as \"300 GPa\"."),
+    json("mode_indices", "Observed mode indices")
+        .help("Optional unique zero-based indices, one per observed frequency; omitted selects the first N modes."),
     json("observed", "Observed frequencies")
         .req()
         .help("Array of up to 256 frequencies in mode order; numbers use display frequency units, typed strings are accepted."),

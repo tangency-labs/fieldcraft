@@ -353,7 +353,7 @@ pub struct FrequencySensitivity {
 /// Simple-eigenvalue derivatives φᵀ(K'−λM')φ/(φᵀMφ), from the actual
 /// assembled FE operators. Fox and Kapoor (1968), AIAA J. 6:2426–2429,
 /// doi:10.2514/3.5008; summarized in NASA TM-86333. One extra mode checks
-/// the upper gap. Clustered/rigid modes and frequency windows are refused;
+/// the upper gap. Clustered elastic modes and frequency windows are refused; rigid derivatives are zero;
 /// use `frequency_sensitivity_with_vectors` for normalized Nelson vectors.
 pub fn frequency_sensitivity(
     model: &Model,
@@ -403,8 +403,12 @@ pub fn frequency_sensitivity_with_vectors(
     if result.modes.len() < requested || (result.modes.len() == requested && result.stats.equations > requested) {
         return Err(Error::NotConverged("modal sensitivity needs requested modes and an upper gap guard".into()));
     }
+    // Relative spectral threshold: frequency ratios below 1e-5 are unresolved rigid modes.
+    let rigid_cutoff = result.modes.last().map_or(0.0, |m| m.eigenvalue.abs()) * 1e-10;
     for pair in result.modes.windows(2) {
         if let [a, b] = pair
+            && a.eigenvalue > rigid_cutoff
+            && b.eigenvalue > rigid_cutoff
             && (a.eigenvalue - b.eigenvalue).abs() <= 1e-5 * a.eigenvalue.abs().max(b.eigenvalue.abs())
         {
             return Err(Error::NotSupported("clustered eigenvalues need subspace sensitivity; individual modal derivatives refused".into()));
@@ -456,9 +460,20 @@ pub fn frequency_sensitivity_with_vectors(
     };
     drop((p.k, m.k));
     let mut out = Vec::new();
-    for mode in result.modes.iter().take(requested) {
-        if mode.eigenvalue <= 0.0 || mode.eigenvalue <= result.modes.last().map_or(0.0, |m| m.eigenvalue) * 1e-10 {
-            return Err(Error::NotSupported("rigid or near-zero eigenvalue sensitivity".into()));
+    let mut skipped = Vec::new();
+    for (index, mode) in result.modes.iter().take(requested).enumerate() {
+        let rigid = mode.eigenvalue <= rigid_cutoff;
+        if rigid {
+            skipped.push(index);
+            out.push(FrequencyDerivative {
+                frequency: mode.frequency,
+                eigenvalue: mode.eigenvalue,
+                frequency_derivative: 0.0,
+                eigenvalue_derivative: 0.0,
+                modal_mass: 0.0,
+                vector: None,
+            });
+            continue;
         }
         let mut phi = Vec::with_capacity(mesh.dofs());
         for dof in 0..mesh.dofs() {
@@ -527,13 +542,11 @@ pub fn frequency_sensitivity_with_vectors(
             vector,
         });
     }
-    Ok(FrequencySensitivity {
-        parameter: parameter.clone(),
-        parameter_value: parameter.value(model)?,
-        increment,
-        modes: out,
-        warnings: result.warnings,
-    })
+    let mut warnings = result.warnings;
+    if !skipped.is_empty() {
+        warnings.push(format!("Skipped near-zero mode derivatives (zero-based indices): {skipped:?}; cutoff eigenvalue {rigid_cutoff}"));
+    }
+    Ok(FrequencySensitivity { parameter: parameter.clone(), parameter_value: parameter.value(model)?, increment, modes: out, warnings })
 }
 
 #[cfg(test)]
