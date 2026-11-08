@@ -330,6 +330,13 @@ requires a separate truncation assessment. Residual fields are projected-equatio
 residuals, not full-space error bounds. Prescribed nonzero support motion and
 physical-parameter derivatives with nonzero modal ratios are refused in this method.
 
-`solve.sensitivity.harmonic` returns SI values and derivatives per SI parameter unit,
-with `units:"SI"`; this makes the existing numeric convention explicit. Modal and
+`solve.sensitivity.harmonic` computes in SI internally. The engine converts its reply
+to display response units per display parameter unit, with an explicit `units` map;
+phase remains radians. `solve.inverse.joint` observations retain their explicit SI contract. Modal and
 direct complex outputs remain observable through the same command.
+
+### Bounded harmonic batches
+
+`solve.sensitivity.harmonic` also accepts `requests`, an array of 1–16 single-sweep requests (each with `step`, `parameter`, `node`, optional `dof` and `relative_increment`). `threads` and work limits remain on the outer request. The reply contains `results` in request order, per-result display units, and `modal_basis_builds`.
+
+A batch retains modal/Ritz vectors only during that immutable-model call. Exact matching of supports, active loads, complex load factors, mode count and Ritz cycles is required for reuse; excitation frequencies and step damping may differ because they do not enter the real basis extraction. Every derivative column still assembles and projects its own physical derivative operators. All preprocessing is inside the command, so end-to-end timing includes the first extraction. Nothing survives into the next command. Different load factors require a distinct basis even if a complete basis would happen to give the same answer.

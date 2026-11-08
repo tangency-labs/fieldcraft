@@ -2522,6 +2522,7 @@ pub const SENSITIVITY_STATIC: &[Field] = &[
     THREADS,
 ];
 pub const SENSITIVITY_HARMONIC: &[Field] = &[
+    json("requests", "Batch requests").help("Optional 1–16 single-sweep requests; identical modal bases are reused only inside this call."),
     STEP,
     DESIGN_PARAMETER,
     int("node", "Observation node", 1, u32::MAX as i64).req().help("Label of the node whose displacement or rotation is observed."),

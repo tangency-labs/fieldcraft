@@ -969,6 +969,13 @@ pub fn show_by_key(v: &mut Value, display: &DisplaySystem, rule: &dyn Fn(&str, u
 }
 
 fn sensitivity_reply(reply: &mut Value, from: &DisplaySystem, to: &DisplaySystem) -> Result<()> {
+    if let Some(Value::Array(results)) = reply.get_mut("results") {
+        for result in results {
+            sensitivity_reply(result, from, to)?;
+        }
+        reply["units"] = json!("per_result");
+        return Ok(());
+    }
     let parse = |key: &str| -> Result<Quantity> {
         serde_json::from_value(reply.get(key).cloned().unwrap_or(Value::Null)).map_err(|e| EngineError::Params(e.to_string()))
     };

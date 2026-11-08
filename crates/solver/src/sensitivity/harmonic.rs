@@ -49,8 +49,37 @@ pub struct HarmonicSensitivity {
     pub warnings: Vec<String>,
 }
 
-/// Differentiate direct harmonic equilibrium with a fixed physical observation.
-/// Modal truncation and parameter-dependent observation weights are unsupported.
+/// One column/sweep of a bounded, invocation-local harmonic batch.
+pub struct HarmonicSensitivityRequest {
+    pub step: Option<String>,
+    pub parameter: Parameter,
+    pub increment: f64,
+    pub observation: HarmonicObservation,
+}
+#[derive(Debug, Serialize)]
+pub struct HarmonicSensitivityBatch {
+    pub results: Vec<HarmonicSensitivity>,
+    pub modal_basis_builds: usize,
+}
+struct CachedBasis {
+    step: fieldcraft_model::Step,
+    vectors: Vec<Vec<f64>>,
+    eigenvalues: Vec<f64>,
+}
+/// Reuse modal/Ritz bases only within this immutable-model call. All assembly,
+/// basis extraction and projections occur here; no cross-call cache is accepted.
+pub fn harmonic_sensitivity_batch(model: &Model, requests: &[HarmonicSensitivityRequest], limits: &Limits) -> Result<HarmonicSensitivityBatch> {
+    if requests.is_empty() || requests.len() > 16 {
+        return Err(Error::Invalid("harmonic batch requires 1..=16 requests".into()));
+    }
+    let mut cache = Vec::new();
+    let mut results = Vec::new();
+    for r in requests {
+        results.push(harmonic_sensitivity_cached(model, r.step.as_deref(), &r.parameter, r.increment, r.observation, limits, &mut cache)?);
+    }
+    Ok(HarmonicSensitivityBatch { results, modal_basis_builds: cache.len() })
+}
+/// Differentiate physical equilibrium in a direct or fixed modal/Ritz basis.
 /// A zero observation refuses amplitude/phase derivatives rather than inventing them.
 pub fn harmonic_sensitivity(
     model: &Model,
@@ -59,6 +88,17 @@ pub fn harmonic_sensitivity(
     increment: f64,
     observation: HarmonicObservation,
     limits: &Limits,
+) -> Result<HarmonicSensitivity> {
+    harmonic_sensitivity_cached(model, step, parameter, increment, observation, limits, &mut Vec::new())
+}
+fn harmonic_sensitivity_cached(
+    model: &Model,
+    step: Option<&str>,
+    parameter: &Parameter,
+    increment: f64,
+    observation: HarmonicObservation,
+    limits: &Limits,
+    cache: &mut Vec<CachedBasis>,
 ) -> Result<HarmonicSensitivity> {
     let damping_parameter = if let Parameter::Damping { step, component } = parameter { Some((step, *component)) } else { None };
     let perturbed = if damping_parameter.is_none() { Some(perturb(model, parameter, increment)?) } else { None };
@@ -130,8 +170,27 @@ pub fn harmonic_sensitivity(
     };
     let matrices = reduced_modal.as_ref().map(|(k, m, c, g)| Matrices { stiffness: k, mass: m, viscous: c.as_ref(), loss: g.as_ref() });
     let modal = if let (Some(matrices), Method::Modal { modes, residual_vectors, .. }) = (&matrices, &h.method) {
-        let force = Vector { real: red.restrict(&original.4.real), imaginary: red.restrict(&original.4.imaginary) };
-        Some(harmonic::Modal::with_residual_vectors(matrices, *modes as usize, &force, *residual_vectors as usize, limits)?)
+        // Frequency and step damping do not enter the real K/M eigenproblem or
+        // Ritz load. Preserve every other step field, including load factors,
+        // constraints, mode count and residual cycles, in the exact cache key.
+        let mut key = step.clone();
+        key.name.clear();
+        if let Procedure::Harmonic(h) = &mut key.procedure {
+            h.frequencies = fieldcraft_model::harmonic::Frequencies::List(vec![0.0]);
+            h.damping = Default::default();
+            if let Method::Modal { damping_ratios, .. } = &mut h.method {
+                damping_ratios.clear();
+            }
+        }
+        let index = if let Some(index) = cache.iter().position(|entry| entry.step == key) {
+            index
+        } else {
+            let force = Vector { real: red.restrict(&original.4.real), imaginary: red.restrict(&original.4.imaginary) };
+            let modal = harmonic::Modal::with_residual_vectors(matrices, *modes as usize, &force, *residual_vectors as usize, limits)?;
+            cache.push(CachedBasis { step: key, vectors: modal.basis_vectors().to_vec(), eigenvalues: modal.eigenvalues().to_vec() });
+            cache.len() - 1
+        };
+        Some(cache.get(index).ok_or_else(|| Error::Internal("modal batch cache index".into()))?)
     } else {
         None
     };
@@ -179,7 +238,8 @@ pub fn harmonic_sensitivity(
         warnings.push("Residual fields are projected-equation residuals, not full-space truncation-error bounds. All sparse operator projections occur once inside this timed sweep.".into());
         return super::projected::solve(
             super::projected::Sweep {
-                modal,
+                basis: &modal.vectors,
+                eigenvalues: &modal.eigenvalues,
                 matrices,
                 derivative,
                 force,

@@ -1782,7 +1782,7 @@ fn run_sensitivity_static(s: &mut Session, p: &Value) -> Result<Value> {
 pub const SENSITIVITY_HARMONIC: CommandSpec = CommandSpec {
     id: "solve.sensitivity.harmonic",
     label: "Harmonic Sensitivity",
-    params: r#"{"step":"Harmonic", "parameter":{"type":"material","name":"Steel","constant":"young"}, "node":1, "dof":1, "relative_increment":0.00001} — physical direct or fixed-basis modal harmonic response derivatives at every excitation frequency. Returns complex direct/transpose-adjoint, magnitude and locally unwrapped phase derivatives, including material damping, mass, loads and prescribed-motion elimination. Parameters as solve.sensitivity.static. Modal method projects all operators once per sweep, including residual vectors; its residual fields refer to projected equations and do not bound truncation error. Step damping parameters use {type:damping,step:H,component:{kind:alpha|beta|loss_factor|modal_ratio,mode:0}}; mode is required only for modal_ratio. Homogeneous supports required for modal derivatives; physical parameters with nonzero modal ratios are refused. Thermal/initial fields, poles and zero response phase are refused. No model mutation. Values and derivatives are SI per SI parameter unit; phase radians. Sweep increments near resonance. Threads and caps as solve.static."#,
+    params: r#"{"step":"Harmonic", "parameter":{"type":"material","name":"Steel","constant":"young"}, "node":1, "dof":1, "relative_increment":0.00001} — physical direct or fixed-basis modal harmonic response derivatives at every excitation frequency. Returns complex direct/transpose-adjoint, magnitude and locally unwrapped phase derivatives, including material damping, mass, loads and prescribed-motion elimination. Parameters as solve.sensitivity.static. Modal method projects all operators once per sweep, including residual vectors; its residual fields refer to projected equations and do not bound truncation error. Step damping parameters use {type:damping,step:H,component:{kind:alpha|beta|loss_factor|modal_ratio,mode:0}}; mode is required only for modal_ratio. Homogeneous supports required for modal derivatives; physical parameters with nonzero modal ratios are refused. Thermal/initial fields, poles and zero response phase are refused. Optional requests:[{step,parameter,node,dof,relative_increment}] batches 1–16 sweeps with one invocation-local modal/Ritz basis per identical load/support configuration; all preprocessing stays inside the call. Returns results in request order and modal_basis_builds. No model mutation. Values and derivatives use display output units per display parameter unit; phase radians. Sweep increments near resonance. Threads and caps as solve.static."#,
     form: Some(super::forms::SENSITIVITY_HARMONIC),
     kind: CommandKind::Model,
     requires: &[Requirement::Step],
@@ -1792,6 +1792,43 @@ pub const SENSITIVITY_HARMONIC: CommandSpec = CommandSpec {
 fn run_sensitivity_harmonic(s: &mut Session, p: &Value) -> Result<Value> {
     use fieldcraft_model::design::Parameter;
     use fieldcraft_solver::sensitivity::{HarmonicObservation, harmonic_sensitivity};
+    if let Some(requests) = p.get("requests") {
+        use fieldcraft_solver::sensitivity::{HarmonicSensitivityRequest, harmonic_sensitivity_batch};
+        let requests = requests.as_array().ok_or_else(|| EngineError::Params("requests must be an array".into()))?;
+        if requests.is_empty() || requests.len() > 16 {
+            return Err(EngineError::Params("harmonic batch requires 1..=16 requests".into()));
+        }
+        let mut inputs = Vec::new();
+        for r in requests {
+            let parameter: Parameter = super::req(r, "parameter")?;
+            let fraction = opt::<f64>(r, "relative_increment")?.unwrap_or(1e-5);
+            if !fraction.is_finite() || fraction <= 0.0 || fraction > 0.1 {
+                return Err(EngineError::Params("relative_increment must be in (0, 0.1]".into()));
+            }
+            let value = parameter.value(&s.model)?;
+            inputs.push(HarmonicSensitivityRequest {
+                step: opt(r, "step")?,
+                increment: (if value == 0.0 { 1.0 } else { value.abs() }) * fraction,
+                parameter,
+                observation: HarmonicObservation { node: super::req(r, "node")?, dof: opt::<u8>(r, "dof")?.unwrap_or(1) },
+            });
+        }
+        let limits = limits(p)?;
+        let batch = with_threads(threads(s, p)?, || harmonic_sensitivity_batch(&s.model, &inputs, &limits))?;
+        let mut out = serde_json::to_value(&batch).map_err(|e| EngineError::Params(e.to_string()))?;
+        if let Some(results) = out.get_mut("results").and_then(Value::as_array_mut) {
+            for (result, request) in results.iter_mut().zip(&inputs) {
+                result["parameter_quantity"] = json!(request.parameter.quantity(&s.model)?.name());
+                result["response_quantity"] = json!(if request.observation.dof <= 3 { "length" } else { "angle" });
+                result["node"] = json!(request.observation.node);
+                result["dof"] = json!(request.observation.dof);
+                result["method"] = json!(if matches!(request.parameter, Parameter::Damping { .. }) { "analytic_damping" } else { "semi_analytical" });
+            }
+        }
+        out["units"] = json!("per_result");
+        out["timing_scope"] = json!("All assembly, modal/Ritz extraction and projections inside this call; invocation-local basis reuse only.");
+        return Ok(out);
+    }
     let parameter: Parameter = super::req(p, "parameter")?;
     let node = super::req(p, "node")?;
     let dof = opt::<u8>(p, "dof")?.unwrap_or(1);

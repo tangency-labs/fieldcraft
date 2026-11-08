@@ -104,7 +104,10 @@ mod inverse;
 pub use inverse::{FrequencyEstimate, FrequencyFit, inverse_frequency, inverse_frequency_uniform_young};
 
 mod harmonic;
-pub use harmonic::{HarmonicDerivative, HarmonicObservation, HarmonicSensitivity, harmonic_sensitivity, inverse_harmonic};
+pub use harmonic::{
+    HarmonicDerivative, HarmonicObservation, HarmonicSensitivity, HarmonicSensitivityBatch, HarmonicSensitivityRequest, harmonic_sensitivity,
+    harmonic_sensitivity_batch, inverse_harmonic,
+};
 
 mod nelson;
 

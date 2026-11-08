@@ -4,7 +4,7 @@ use super::{HarmonicDerivative, HarmonicSensitivity};
 use crate::{
     Error, Limits, Result,
     complex::{self, Vector},
-    harmonic::{Matrices, Modal},
+    harmonic::Matrices,
     sparse::Csr,
 };
 use fieldcraft_model::{
@@ -41,8 +41,9 @@ fn vector(x: &[f64], basis: &[Vec<f64>]) -> Vec<f64> {
 fn dense(n: usize, val: Vec<f64>) -> Csr {
     Csr { n, ptr: (0..=n).map(|i| i * n).collect(), idx: (0..n).flat_map(|_| 0..n).collect(), val }
 }
-pub(super) struct Sweep<'a, 'b> {
-    pub modal: &'a Modal<'b>,
+pub(super) struct Sweep<'a> {
+    pub basis: &'a [Vec<f64>],
+    pub eigenvalues: &'a [f64],
     pub matrices: Matrices<'a>,
     pub derivative: Option<Operators>,
     pub force: Vector,
@@ -53,8 +54,8 @@ pub(super) struct Sweep<'a, 'b> {
     pub increment: f64,
     pub warnings: Vec<String>,
 }
-pub(super) fn solve(s: Sweep<'_, '_>, limits: &Limits) -> Result<HarmonicSensitivity> {
-    let basis = s.modal.basis_vectors();
+pub(super) fn solve(s: Sweep<'_>, limits: &Limits) -> Result<HarmonicSensitivity> {
+    let basis = s.basis;
     let n = basis.len();
     if n == 0 {
         return Err(Error::Invalid("empty modal derivative basis".into()));
@@ -97,7 +98,7 @@ pub(super) fn solve(s: Sweep<'_, '_>, limits: &Limits) -> Result<HarmonicSensiti
             .zip(dc.iter().zip(&dg))
             .map(|((k, m), (c, g))| omega * (c + damping.alpha * m + damping.beta * k) + g + damping.loss_factor * k)
             .collect();
-        for (j, lambda) in s.modal.eigenvalues().iter().enumerate() {
+        for (j, lambda) in s.eigenvalues.iter().enumerate() {
             let ratio = ratios.get(if ratios.len() == 1 { 0 } else { j }).copied().unwrap_or(0.0);
             let derivative = matches!(s.parameter,Parameter::Damping{component:DampingParameter::ModalRatio{mode},..} if *mode==j);
             for row in 0..n {
@@ -124,7 +125,7 @@ pub(super) fn solve(s: Sweep<'_, '_>, limits: &Limits) -> Result<HarmonicSensiti
                 }
                 DampingParameter::LossFactor => db.clone_from(&k),
                 DampingParameter::ModalRatio { mode } => {
-                    if *mode >= s.modal.eigenvalues().len() {
+                    if *mode >= s.eigenvalues.len() {
                         return Err(Error::Invalid("modal ratio index exceeds extracted modes".into()));
                     }
                 }
@@ -168,6 +169,7 @@ pub(super) fn solve(s: Sweep<'_, '_>, limits: &Limits) -> Result<HarmonicSensiti
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::harmonic::Modal;
     use fieldcraft_model::harmonic::{Damping, Frequencies, Method};
     #[test]
     fn full_and_ritz_completed_bases_match_two_coordinate_direct_derivatives() -> Result<()> {
@@ -191,7 +193,8 @@ mod tests {
             };
             let r = solve(
                 Sweep {
-                    modal: &modal,
+                    basis: modal.basis_vectors(),
+                    eigenvalues: modal.eigenvalues(),
                     matrices,
                     derivative: Some(Operators { k: dk.clone(), m: zero.clone(), c: None, g: None, f: Vector::zeros(2) }),
                     force: force.clone(),

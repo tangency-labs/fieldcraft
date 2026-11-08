@@ -85,3 +85,40 @@ fn crossing_frequency_observations_follow_shapes_not_order() {
     assert_eq!(r["modal_pairings"][0]["pairing"]["pairs"][0]["computed_mode"], 0);
     // Initial x was index1, final x index0; order-only fitting would retain the swapped identity.
 }
+
+#[test]
+fn harmonic_batch_reuses_only_matching_invocation_local_bases() {
+    let mut s = system(4.0, 5.0, 0.3);
+    s.execute("model.load.create", &json!({"name":"P","type":"force","target":{"set":"n1"},"vector":[1,0,0]})).unwrap();
+    for (name, frequencies, loss, amplitude) in
+        [("Zero", vec![0.0], 0.0, 1.0), ("Positive", vec![0.1, 0.2], 0.03, 1.0), ("OtherLoad", vec![0.1], 0.03, 2.0)]
+    {
+        s.execute("model.step.create", &json!({"name":name,"procedure":{"type":"harmonic","frequencies":frequencies,"method":{"type":"modal","modes":2,"residual_vectors":1},"damping":{"alpha":0.2,"beta":0.01,"loss_factor":loss},"load_factors":{"P":{"amplitude":amplitude,"phase":0}}},"boundary_conditions":["g1","g2"],"loads":["P"]})).unwrap();
+    }
+    let mut requests = Vec::new();
+    for k in ["k1", "k2"] {
+        for step in ["Zero", "Positive"] {
+            requests.push(json!({"step":step,"parameter":{"type":"spring_stiffness","name":k},"node":1,"dof":1}));
+        }
+    }
+    let original = s.model.clone();
+    let batch = s.execute("solve.sensitivity.harmonic", &json!({"requests":requests})).unwrap();
+    assert_eq!(s.model, original);
+    assert_eq!(batch["modal_basis_builds"], 1);
+    for (i, r) in requests.iter().enumerate() {
+        let single = s.execute("solve.sensitivity.harmonic", r).unwrap();
+        assert_eq!(batch["results"][i]["frames"], single["frames"]);
+    }
+    requests.push(json!({"step":"OtherLoad","parameter":{"type":"spring_stiffness","name":"k1"},"node":1}));
+    let other = s.execute("solve.sensitivity.harmonic", &json!({"requests":requests})).unwrap();
+    assert_eq!(other["modal_basis_builds"], 2);
+    s.execute("model.units", &json!({"system":"mm-t-s-N-MPa"})).unwrap();
+    let displayed = s.execute("solve.sensitivity.harmonic", &json!({"requests":requests})).unwrap();
+    for (i, r) in requests.iter().enumerate() {
+        let single = s.execute("solve.sensitivity.harmonic", r).unwrap();
+        assert_eq!(displayed["results"][i]["frames"], single["frames"]);
+        assert_eq!(displayed["results"][i]["units"], single["units"]);
+    }
+
+    assert!(s.execute("solve.sensitivity.harmonic", &json!({"requests":[]})).is_err());
+}

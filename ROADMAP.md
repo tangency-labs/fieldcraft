@@ -187,3 +187,5 @@ basis sensitivities project the operators once per sweep; projected residuals do
 truncation error. Physical parameters with nonzero modal ratios and nonzero support motion
 remain outside this modal derivative implementation. A prespecified 200-replicate,
 100-element rod test validates the local known-independent-noise joint ellipsoid.
+
+- Harmonic derivative batches reuse identical modal/Ritz bases within one immutable-model invocation; all cold preprocessing remains inside the timed command. Supports and complex load factors are exact reuse boundaries.
