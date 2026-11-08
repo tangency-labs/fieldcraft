@@ -79,10 +79,26 @@ fn crossing_frequency_observations_follow_shapes_not_order() {
  "modal_observations":[
  {"id":"x","step":"F","sensors":[{"node":1,"dof":1},{"node":2,"dof":1}],"measured_modes":[[1,0]],"min_mac":0.99,"min_assignment_margin":0.01,"normalization":{"kind":"reference","reference_sensor":0}},
  {"id":"y","step":"F","sensors":[{"node":1,"dof":1},{"node":2,"dof":1}],"measured_modes":[[0,-2]],"min_mac":0.99,"min_assignment_margin":0.01,"normalization":{"kind":"reference","reference_sensor":1}}]});
+    // Sorted-frequency fitting has a second, physically swapped solution.
+    // Run that competing hypothesis rather than relying on an explanatory comment.
+    let mut ordered = p.clone();
+    ordered.as_object_mut().unwrap().remove("modal_observations");
+    for mode in 0..2 {
+        ordered["observations"][mode]["response"] = json!({"kind":"frequency","step":"F","mode":mode});
+    }
+    let wrong = s.execute("solve.inverse.joint", &ordered).unwrap();
+    for (i, swapped) in [4.02, 3.98].iter().enumerate() {
+        assert!((wrong["estimate_si"][i].as_f64().unwrap() - swapped).abs() < 1e-7, "{wrong}");
+        assert!((wrong["predicted_si"][i].as_f64().unwrap() - ordered["observations"][i]["value_si"].as_f64().unwrap()).abs() < 1e-8);
+    }
     let r = s.execute("solve.inverse.joint", &p).unwrap();
     assert!((r["estimate_si"][0].as_f64().unwrap() - 3.98).abs() < 1e-7);
     assert!((r["estimate_si"][1].as_f64().unwrap() - 4.02).abs() < 1e-7);
     assert_eq!(r["modal_pairings"][0]["pairing"]["pairs"][0]["computed_mode"], 0);
+    assert_eq!(r["modal_pairings"][1]["pairing"]["pairs"][0]["computed_mode"], 1);
+    for group in 0..2 {
+        assert!(r["modal_pairings"][group]["pairing"]["pairs"][0]["mac"].as_f64().unwrap() > 0.999999);
+    }
     // Initial x was index1, final x index0; order-only fitting would retain the swapped identity.
 }
 

@@ -320,8 +320,9 @@ fn full_modal_basis_derivatives_agree_with_direct_and_ratio_differences() {
     let rp = solve_harmonic(&plus, Some("H"), &Limits::default()).unwrap();
     let rm = solve_harmonic(&minus, Some("H"), &Limits::default()).unwrap();
     for ((d, p), m) in d.frames.iter().zip(&rp.frames).zip(&rm.frames) {
-        let fd = (p.real[1][0] - m.real[1][0]) / 2e-6;
-        assert!((d.direct[0] - fd).abs() < 1e-6 * fd.abs().max(1.0));
+        for (i, fd) in [(0, (p.real[1][0] - m.real[1][0]) / 2e-6), (1, (p.imaginary[1][0] - m.imaginary[1][0]) / 2e-6)] {
+            assert!((d.direct[i] - fd).abs() < 1e-6 * fd.abs().max(1.0), "modal ratio component {i}: {} vs {fd}", d.direct[i]);
+        }
     }
 }
 

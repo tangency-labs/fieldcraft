@@ -169,13 +169,13 @@ an explicit factor-only byte budget before numeric allocation, without changing 
 Whole-solve command admission, shared CSR/Lanczos/result reservations, complex-factor estimates
 and large-model validation remain pending; existing command limits are unchanged.
 
-### Inverse modal observations (in progress)
+### Inverse modal observations (core delivery verified)
 
 Sensor-space real MAC pairing now has a bounded, deterministic one-to-one
 maximum-weight assignment, minimum-MAC filtering and a global alternative-assignment
 ambiguity check. Tests cover order exchange, sign/scale invariance and invalid inputs.
-Connecting these pairs and normalized Nelson vector derivatives to joint observations,
-damping identification, coverage statistics and modal harmonic derivatives remains open.
+The two-coordinate exchange regression also runs ordered-frequency fitting and proves
+that it recovers swapped spring identities despite matching the frequency observations.
 
 Joint inversion now accepts reference-normalized real measured mode components and
 MAC-matched frequencies. Nelson quotient derivatives, final-estimate pairing reports

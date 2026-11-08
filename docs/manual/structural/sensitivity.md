@@ -340,3 +340,37 @@ direct complex outputs remain observable through the same command.
 `solve.sensitivity.harmonic` also accepts `requests`, an array of 1–16 single-sweep requests (each with `step`, `parameter`, `node`, optional `dof` and `relative_increment`). `threads` and work limits remain on the outer request. The reply contains `results` in request order, per-result display units, and `modal_basis_builds`.
 
 A batch retains modal/Ritz vectors only during that immutable-model call. Exact matching of supports, active loads, complex load factors, mode count and Ritz cycles is required for reuse; excitation frequencies and step damping may differ because they do not enter the real basis extraction. Every derivative column still assembles and projects its own physical derivative operators. All preprocessing is inside the command, so end-to-end timing includes the first extraction. Nothing survives into the next command. Different load factors require a distinct basis even if a complete basis would happen to give the same answer.
+
+
+### Verification tolerances and adoption boundary
+
+The test tolerances below apply to the stated SI test models, component by component;
+they are not universal relative-error guarantees near a zero derivative.
+
+| Check | Acceptance bound | Scope |
+| --- | --- | --- |
+| Direct versus full modal derivative, and modal direct versus adjoint | `abs(a-b) < 1e-8 * max(abs(a), 1)` | One active rod coordinate; E, density, alpha, beta, eta; real and imaginary components |
+| Complete or Ritz-completed modal projection versus direct | `abs(a-b) < 1e-8 * max(abs(b), 1)` | Two-coordinate spring matrix, both complex components |
+| Analytic alpha/beta/eta versus central differences | `abs(d-fd) < 1e-6 * max(abs(fd), 1)` | Independently solved responses at `p +/- p*1e-4` |
+| Modal-ratio derivative versus central differences | Same `1e-6` mixed bound | zeta=0.02, step=1e-6, both complex components |
+| Reference-normalized Nelson derivative versus closed-form differences | Absolute error below `1e-7` | Coupled two-coordinate spring matrix; difference step=1e-5 |
+
+`crossing_frequency_observations_follow_shapes_not_order` starts with k1=4.01,
+k2=3.99 and fits the exchanged truth k1=3.98, k2=4.02. Sorted-frequency fitting
+matches both frequencies while estimating the wrong spring identities (4.02,3.98);
+MAC fitting recovers the correct identities within absolute 1e-7. This checks both
+sides of the crossing, not differentiability at the repeated eigenvalue itself.
+
+The ignored `joint_ellipsoid_coverage_200` test fixes its seed before execution:
+0x2511001020261107, 100 consistent-mass rod elements, 200 replicates, independent
+Gaussian static displacement and frequency noise with sigma=0.002 times truth.
+It obtained 189/200 joint-ellipsoid inclusions, inside the predeclared binomial
+95% count interval [184,196]. This validates local, interior, unregularized covariance
+with known independent noise; it does not validate correlated reference-normalized
+measurements, model discrepancy or global parameter uniqueness.
+
+The frozen `inverse-modal-observations` and `inverse-damping-modal` theory oracles
+cover twelve quantities. Existing published-experiment amplitude mismatches remain
+known failures; they are not repaired by fitting damping or changing tolerances.
+Actual measured-data fitting and cross-platform bitwise equality are separate
+validation obligations, not consequences of these Linux tests.
