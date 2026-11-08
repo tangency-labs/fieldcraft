@@ -55,7 +55,11 @@ pub use buckle::{Buckling, solve_buckle};
 pub use harmonic::{HarmonicResult, solve_harmonic};
 pub use heat::{HeatResult, solve_heat};
 pub use nonlinear::solve_nonlinear;
-pub use random::{MilesResult, RandomInput, RandomResponse, integrate_psd, miles_base_acceleration_rms, modal_base_response, sdof_base_acceleration_psd};
+pub use random::{
+    MilesResult, RandomFieldOutput, RandomInput, RandomResponse, distributed_force_modal_psd, integrate_psd, miles_base_acceleration_rms,
+    modal_base_response, modal_coordinate_psd, modal_stress_field_psd, modal_stress_rms, sdof_base_acceleration_psd, sdof_force_bandpass_variance,
+    von_mises_rms_from_components,
+};
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum Error {

@@ -2615,6 +2615,13 @@ pub const SOLVE_RANDOM: &[Field] = &[
     num("natural_frequency", "Natural frequency", D::Of(Quantity::Frequency)).help("Natural frequency of the SDOF check in Hz.").req(),
     positive("damping_ratio", "Damping ratio", D::None).help("Viscous modal damping ratio ζ.").req(),
     positive("base_acceleration_psd", "Base acceleration PSD", D::Acceleration).help("One-sided white base acceleration PSD.").req(),
+    json("frequencies", "Frequency grid").help("Optional frequency grid in Hz for modal PSD output."),
+    json("transfer", "Displacement transfer").help("Optional modal displacement transfer magnitudes."),
+    json("base_psd", "Base PSD grid").help("Optional one-sided base PSD values on the frequency grid."),
+    json("stress_psd", "Stress PSD grid").help("Optional six-component stress PSD rows in SI units."),
+    json("probe_indices", "Probe indices").help("Optional node or element probe indices."),
+    json("input_psd", "Input PSD table").help("Rows [frequency in Hz, one-sided PSD], covering every stored harmonic frequency."),
+    text("step", "Harmonic step").help("Optional previously solved harmonic step name."),
 ];
 pub const SOLVE_NONLINEAR: &[Field] = &[
     STEP,

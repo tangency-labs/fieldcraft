@@ -175,3 +175,36 @@ a commercial solver was run.
 The model contract is in `crates/model/src/harmonic.rs`; the matrix kernels in
 `crates/solver/src/{complex,harmonic}.rs`; model assembly and recovery in
 `crates/solver/src/harmonic/model.rs`; commands in `crates/engine/src/cmd/solve.rs`.
+
+## Projecting an input PSD onto stored frames
+
+After a unit-amplitude spatial load has been solved, `solve.random` accepts the stored
+harmonic step and a one-sided PSD table in SI units, per Hz:
+
+```json
+{"command":"solve.random","params":{"step":"Sweep","input_psd":[[0,1],[2000,1]]}}
+```
+
+The table must cover every stored frequency. Linear interpolation supplies the input PSD;
+complex transfer magnitudes squared give response PSD, and trapezoidal frequency integration
+gives RMS. Returned nodal displacement spectra sum the three translational component spectra.
+The optional stress spectrum sums six component spectra: it is neither an individual normal
+stress spectrum nor a von Mises statistic. Recover individual components from the complex
+harmonic stress frames when those are required. The returned arrays follow the stored result's
+node order. This path does not assemble a general random-vibration analysis step or automatically
+interpret a base-motion excitation.
+
+The acceleration calculation is `omega^4` times the displacement PSD. It represents absolute
+acceleration for a force-loaded structure with stationary supports. If harmonic frames instead
+represent relative displacement under a unit base-acceleration inertial load `-M r`, that output
+is relative acceleration. Absolute acceleration must be formed coherently from the complex
+transfer `r - omega^2 H_relative`, before squaring and multiplying by the base PSD. Adding the
+base and relative acceleration PSDs would lose their cross term. A white acceleration spectrum
+extending to zero frequency does not define a finite stationary absolute base-displacement RMS;
+label relative displacement explicitly.
+
+For uniform translational support motion, an existing whole-model gravity load with acceleration
+opposite the unit base direction supplies the consistent inertial spatial load. This relative-motion
+construction requires supports moving together and damping formulated for relative motion; it
+does not cover independent support motions. Modal truncation, residual correction, frequency
+sampling and stress recovery still require checks for the particular model.

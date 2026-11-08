@@ -1,5 +1,5 @@
 use fieldcraft_engine::Session;
-use serde_json::json;
+use serde_json::{Value, json};
 
 fn oscillator() -> Session {
     let mut s = Session::default();
@@ -51,6 +51,46 @@ fn command_phasors_units_modal_and_round_trip() {
     let fieldcraft_solver::StepResult::Harmonic(ref mut harmonic) = damaged else { panic!() };
     harmonic.frames[0].imaginary.clear();
     assert!(fieldcraft_io::results::check(&fieldcraft_io::results::Solved::Implicit(damaged)).is_err());
+}
+
+#[test]
+fn harmonic_then_random_keeps_frequency_and_probe_indices() {
+    let mut s = oscillator();
+    let h = s.execute("solve.harmonic", &json!({"threads": 1})).unwrap();
+    assert_eq!(h["frequencies"].as_array().unwrap().len(), 2);
+    let r = s
+        .execute(
+            "solve.random",
+            &json!({
+            "natural_frequency": 1.0, "damping_ratio": 0.05, "base_acceleration_psd": 2.0,
+            "frequencies": [0.0, 1.0], "transfer": [1.0, 1.0], "base_psd": [2.0, 2.0],
+                    "probe_indices": [0], "step": "Sweep"
+                }),
+        )
+        .unwrap();
+    assert_eq!(r["frequencies"], json!([0.0, 1.0]));
+    assert_eq!(r["probe_indices"], json!([0]));
+    assert_eq!(r["units"], Value::Null);
+    assert!(r["displacement_rms"].as_f64().unwrap() > 0.0);
+}
+
+#[test]
+fn random_projects_input_psd_onto_stored_harmonic_frames() {
+    let mut s = oscillator();
+    s.execute("solve.harmonic", &json!({"threads": 1})).unwrap();
+    let r = s
+        .execute(
+            "solve.random",
+            &json!({
+                "step": "Sweep",
+                "input_psd": [[0.0, 2.0], [1.0 / std::f64::consts::PI, 4.0]],
+            }),
+        )
+        .unwrap();
+    assert_eq!(r["method"], "harmonic_frame_psd");
+    assert_eq!(r["frequencies"], json!([0.0, 1.0 / std::f64::consts::PI]));
+    assert_eq!(r["input_psd"], json!([2.0, 4.0]));
+    assert!(r["node_displacement_rms"][0].as_f64().unwrap() > 0.0);
 }
 
 #[test]
