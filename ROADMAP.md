@@ -199,8 +199,12 @@ Model entities and unit-aware commands now connect to static, modal and harmonic
 assembly, including composite shells. Foundation stiffness parameters use exact
 operator derivatives and joint identification; Abaqus has native normal-only and
 K/C/H matrix export paths. Axial-theory and Navier composite-plate command oracles,
-crate regressions, the full oracle and wasm checks pass. Finite-beam bending, the
-remaining rigid-body/limit cases, plate E+k and BASE E+k recovery, and independent
+crate regressions, the full oracle and wasm checks pass. Formal finite-beam
+displacement/moment, rigid-translation frequencies/compliance/stiffness limits, and
+beam/plate E+k recovery oracles now pass and have frozen fixtures. These synthetic
+and rigid-body checks do not establish deformable-body stress limits or experimental
+validity. BASE foundation modes were obtained, but the E+k identification reached
+its one-hour resource cap without returning an estimate. BASE E+k and independent
 third-party acceptance remain open; this is not yet a completed foundation milestone.
 
 Static joint identification now groups observations by step and shares each trial

@@ -1,0 +1,241 @@
+{
+  "title": "Rigid foundation translations, tangential compliance and stiffness limits",
+  "kind": "theory",
+  "source": "Newton second law and static equilibrium of a rigid body on a Winkler surface: K=integral(k_n nn^T+k_t(I-nn^T))dA; f=sqrt(kA/m)/(2*pi), u=F/(kA).",
+  "quantities": [
+    {
+      "id": "f0_0",
+      "quantity": "translation frequency, scale 1.0, mode 1 (Hz)",
+      "measure": {
+        "from": "f0",
+        "pointer": "/modes/0/frequency"
+      },
+      "value": 1.1253953951963827,
+      "tolerance": {
+        "relative": 1e-06
+      },
+      "reason": "Rigid body frequency sqrt(k*A/m)/(2*pi), with m=2 kg and A=1 m^2."
+    },
+    {
+      "id": "f0_1",
+      "quantity": "translation frequency, scale 1.0, mode 2 (Hz)",
+      "measure": {
+        "from": "f0",
+        "pointer": "/modes/1/frequency"
+      },
+      "value": 1.5915494309189535,
+      "tolerance": {
+        "relative": 1e-06
+      },
+      "reason": "Rigid body frequency sqrt(k*A/m)/(2*pi), with m=2 kg and A=1 m^2."
+    },
+    {
+      "id": "f0_2",
+      "quantity": "translation frequency, scale 1.0, mode 3 (Hz)",
+      "measure": {
+        "from": "f0",
+        "pointer": "/modes/2/frequency"
+      },
+      "value": 1.5915494309189535,
+      "tolerance": {
+        "relative": 1e-06
+      },
+      "reason": "Rigid body frequency sqrt(k*A/m)/(2*pi), with m=2 kg and A=1 m^2."
+    },
+    {
+      "id": "u0_0",
+      "quantity": "rigid displacement, scale 1.0, axis 1 (m)",
+      "measure": {
+        "from": "p0",
+        "pointer": "/nodes/0/displacement/0"
+      },
+      "value": 0.01,
+      "tolerance": {
+        "relative": 1e-06
+      },
+      "reason": "Rigid equilibrium F/(k*A); normal is x, equal tangential coefficients in y and z."
+    },
+    {
+      "id": "u0_1",
+      "quantity": "rigid displacement, scale 1.0, axis 2 (m)",
+      "measure": {
+        "from": "p0",
+        "pointer": "/nodes/0/displacement/1"
+      },
+      "value": 0.01,
+      "tolerance": {
+        "relative": 1e-06
+      },
+      "reason": "Rigid equilibrium F/(k*A); normal is x, equal tangential coefficients in y and z."
+    },
+    {
+      "id": "u0_2",
+      "quantity": "rigid displacement, scale 1.0, axis 3 (m)",
+      "measure": {
+        "from": "p0",
+        "pointer": "/nodes/0/displacement/2"
+      },
+      "value": 0.015,
+      "tolerance": {
+        "relative": 1e-06
+      },
+      "reason": "Rigid equilibrium F/(k*A); normal is x, equal tangential coefficients in y and z."
+    },
+    {
+      "id": "f1_0",
+      "quantity": "translation frequency, scale 0.0001, mode 1 (Hz)",
+      "measure": {
+        "from": "f1",
+        "pointer": "/modes/0/frequency"
+      },
+      "value": 0.011253953951963826,
+      "tolerance": {
+        "relative": 1e-06
+      },
+      "reason": "Rigid body frequency sqrt(k*A/m)/(2*pi), with m=2 kg and A=1 m^2."
+    },
+    {
+      "id": "f1_1",
+      "quantity": "translation frequency, scale 0.0001, mode 2 (Hz)",
+      "measure": {
+        "from": "f1",
+        "pointer": "/modes/1/frequency"
+      },
+      "value": 0.015915494309189534,
+      "tolerance": {
+        "relative": 1e-06
+      },
+      "reason": "Rigid body frequency sqrt(k*A/m)/(2*pi), with m=2 kg and A=1 m^2."
+    },
+    {
+      "id": "f1_2",
+      "quantity": "translation frequency, scale 0.0001, mode 3 (Hz)",
+      "measure": {
+        "from": "f1",
+        "pointer": "/modes/2/frequency"
+      },
+      "value": 0.015915494309189534,
+      "tolerance": {
+        "relative": 1e-06
+      },
+      "reason": "Rigid body frequency sqrt(k*A/m)/(2*pi), with m=2 kg and A=1 m^2."
+    },
+    {
+      "id": "u1_0",
+      "quantity": "rigid displacement, scale 0.0001, axis 1 (m)",
+      "measure": {
+        "from": "p1",
+        "pointer": "/nodes/0/displacement/0"
+      },
+      "value": 100.0,
+      "tolerance": {
+        "relative": 1e-06
+      },
+      "reason": "Rigid equilibrium F/(k*A); normal is x, equal tangential coefficients in y and z."
+    },
+    {
+      "id": "u1_1",
+      "quantity": "rigid displacement, scale 0.0001, axis 2 (m)",
+      "measure": {
+        "from": "p1",
+        "pointer": "/nodes/0/displacement/1"
+      },
+      "value": 100.0,
+      "tolerance": {
+        "relative": 1e-06
+      },
+      "reason": "Rigid equilibrium F/(k*A); normal is x, equal tangential coefficients in y and z."
+    },
+    {
+      "id": "u1_2",
+      "quantity": "rigid displacement, scale 0.0001, axis 3 (m)",
+      "measure": {
+        "from": "p1",
+        "pointer": "/nodes/0/displacement/2"
+      },
+      "value": 150.0,
+      "tolerance": {
+        "relative": 1e-06
+      },
+      "reason": "Rigid equilibrium F/(k*A); normal is x, equal tangential coefficients in y and z."
+    },
+    {
+      "id": "f2_0",
+      "quantity": "translation frequency, scale 1000000.0, mode 1 (Hz)",
+      "measure": {
+        "from": "f2",
+        "pointer": "/modes/0/frequency"
+      },
+      "value": 1125.3953951963827,
+      "tolerance": {
+        "relative": 1e-06
+      },
+      "reason": "Rigid body frequency sqrt(k*A/m)/(2*pi), with m=2 kg and A=1 m^2."
+    },
+    {
+      "id": "f2_1",
+      "quantity": "translation frequency, scale 1000000.0, mode 2 (Hz)",
+      "measure": {
+        "from": "f2",
+        "pointer": "/modes/1/frequency"
+      },
+      "value": 1591.5494309189535,
+      "tolerance": {
+        "relative": 1e-06
+      },
+      "reason": "Rigid body frequency sqrt(k*A/m)/(2*pi), with m=2 kg and A=1 m^2."
+    },
+    {
+      "id": "f2_2",
+      "quantity": "translation frequency, scale 1000000.0, mode 3 (Hz)",
+      "measure": {
+        "from": "f2",
+        "pointer": "/modes/2/frequency"
+      },
+      "value": 1591.5494309189535,
+      "tolerance": {
+        "relative": 1e-06
+      },
+      "reason": "Rigid body frequency sqrt(k*A/m)/(2*pi), with m=2 kg and A=1 m^2."
+    },
+    {
+      "id": "u2_0",
+      "quantity": "rigid displacement, scale 1000000.0, axis 1 (m)",
+      "measure": {
+        "from": "p2",
+        "pointer": "/nodes/0/displacement/0"
+      },
+      "value": 1e-08,
+      "tolerance": {
+        "relative": 1e-06
+      },
+      "reason": "Rigid equilibrium F/(k*A); normal is x, equal tangential coefficients in y and z."
+    },
+    {
+      "id": "u2_1",
+      "quantity": "rigid displacement, scale 1000000.0, axis 2 (m)",
+      "measure": {
+        "from": "p2",
+        "pointer": "/nodes/0/displacement/1"
+      },
+      "value": 1e-08,
+      "tolerance": {
+        "relative": 1e-06
+      },
+      "reason": "Rigid equilibrium F/(k*A); normal is x, equal tangential coefficients in y and z."
+    },
+    {
+      "id": "u2_2",
+      "quantity": "rigid displacement, scale 1000000.0, axis 3 (m)",
+      "measure": {
+        "from": "p2",
+        "pointer": "/nodes/0/displacement/2"
+      },
+      "value": 1.5e-08,
+      "tolerance": {
+        "relative": 1e-06
+      },
+      "reason": "Rigid equilibrium F/(k*A); normal is x, equal tangential coefficients in y and z."
+    }
+  ]
+}

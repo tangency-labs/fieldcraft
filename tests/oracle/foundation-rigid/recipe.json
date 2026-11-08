@@ -1,0 +1,356 @@
+[
+  {
+    "command": "model.units",
+    "params": {
+      "system": "m-kg-s-N-Pa"
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 1,
+      "xyz": [
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 2,
+      "xyz": [
+        1,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 3,
+      "xyz": [
+        1,
+        1,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 4,
+      "xyz": [
+        0,
+        1,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 5,
+      "xyz": [
+        0,
+        0,
+        1
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 6,
+      "xyz": [
+        1,
+        0,
+        1
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 7,
+      "xyz": [
+        1,
+        1,
+        1
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 8,
+      "xyz": [
+        0,
+        1,
+        1
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 1,
+      "kind": "hex8",
+      "nodes": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "all",
+      "elements": [
+        1
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "bed",
+      "faces": [
+        {
+          "element": 1,
+          "face": 6
+        }
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "tip",
+      "faces": [
+        {
+          "element": 1,
+          "face": 4
+        }
+      ]
+    }
+  },
+  {
+    "command": "model.material.create",
+    "params": {
+      "name": "Mat",
+      "elastic": {
+        "type": "isotropic",
+        "young": 1000,
+        "poisson": 0
+      },
+      "density": 2
+    }
+  },
+  {
+    "command": "model.section.create",
+    "params": {
+      "name": "Solid",
+      "set": "all",
+      "material": "Mat",
+      "kind": {
+        "type": "solid"
+      }
+    }
+  },
+  {
+    "command": "model.reference_point.create",
+    "params": {
+      "name": "RP",
+      "xyz": [
+        0.5,
+        0.5,
+        0.5
+      ],
+      "label": 100
+    }
+  },
+  {
+    "command": "model.coupling.create",
+    "params": {
+      "name": "Rigid",
+      "reference_point": "RP",
+      "set": "all",
+      "kind": "kinematic"
+    }
+  },
+  {
+    "command": "model.boundary_condition.create",
+    "params": {
+      "name": "NoRotation",
+      "type": "displacement",
+      "target": {
+        "reference_point": "RP"
+      },
+      "values": [
+        null,
+        null,
+        null,
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.load.create",
+    "params": {
+      "name": "Shear",
+      "type": "force",
+      "target": {
+        "reference_point": "RP"
+      },
+      "vector": [
+        1,
+        2,
+        3
+      ]
+    }
+  },
+  {
+    "command": "model.step.create",
+    "params": {
+      "name": "F",
+      "procedure": {
+        "type": "frequency",
+        "modes": 3
+      },
+      "boundary_conditions": [
+        "NoRotation"
+      ]
+    }
+  },
+  {
+    "command": "model.step.create",
+    "params": {
+      "name": "S",
+      "procedure": {
+        "type": "static"
+      },
+      "boundary_conditions": [
+        "NoRotation"
+      ],
+      "loads": [
+        "Shear"
+      ]
+    }
+  },
+  {
+    "command": "model.foundation.create",
+    "params": {
+      "name": "Bed",
+      "set": "bed",
+      "normal": 100,
+      "tangential": 200
+    }
+  },
+  {
+    "command": "model.foundation.edit",
+    "params": {
+      "name": "Bed",
+      "set": "bed",
+      "normal": 100.0,
+      "tangential": 200.0
+    }
+  },
+  {
+    "command": "solve.frequency",
+    "params": {
+      "step": "F"
+    },
+    "id": "f0"
+  },
+  {
+    "command": "solve.static",
+    "params": {
+      "step": "S"
+    }
+  },
+  {
+    "command": "solve.probe",
+    "params": {
+      "step": "S",
+      "nodes": [
+        100
+      ]
+    },
+    "id": "p0"
+  },
+  {
+    "command": "model.foundation.edit",
+    "params": {
+      "name": "Bed",
+      "set": "bed",
+      "normal": 0.01,
+      "tangential": 0.02
+    }
+  },
+  {
+    "command": "solve.frequency",
+    "params": {
+      "step": "F"
+    },
+    "id": "f1"
+  },
+  {
+    "command": "solve.static",
+    "params": {
+      "step": "S"
+    }
+  },
+  {
+    "command": "solve.probe",
+    "params": {
+      "step": "S",
+      "nodes": [
+        100
+      ]
+    },
+    "id": "p1"
+  },
+  {
+    "command": "model.foundation.edit",
+    "params": {
+      "name": "Bed",
+      "set": "bed",
+      "normal": 100000000.0,
+      "tangential": 200000000.0
+    }
+  },
+  {
+    "command": "solve.frequency",
+    "params": {
+      "step": "F"
+    },
+    "id": "f2"
+  },
+  {
+    "command": "solve.static",
+    "params": {
+      "step": "S"
+    }
+  },
+  {
+    "command": "solve.probe",
+    "params": {
+      "step": "S",
+      "nodes": [
+        100
+      ]
+    },
+    "id": "p2"
+  }
+]

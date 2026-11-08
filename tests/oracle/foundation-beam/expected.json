@@ -1,0 +1,69 @@
+{
+  "title": "Finite Winkler beam: displacement and bending moment",
+  "kind": "theory",
+  "source": "Hetenyi (1946), Beams on Elastic Foundation; NPTEL course 105106049 chapter 11 equations 11.1-11.7, https://archive.nptel.ac.in/content/storage2/courses/105106049/lecnotes/mainch11.html. Independent sinusoidal separated solution of EI d4w/dx4 + k b w = q b sin(pi x/L).",
+  "quantities": [
+    {
+      "id": "w",
+      "quantity": "midspan transverse displacement (m)",
+      "measure": {
+        "from": "probe",
+        "pointer": "/nodes/0/displacement/2"
+      },
+      "value": 5.5195483974141724e-05,
+      "tolerance": {
+        "relative": 0.02
+      },
+      "reason": "Predeclared 2% for a 32x2 MITC4 strip, h/L=.01."
+    },
+    {
+      "id": "moment",
+      "quantity": "section bending moment at x=0.484375 m (N m)",
+      "measure": {
+        "from": "probe",
+        "pointer": "/elements/0/plies/0/0/top/stress/0",
+        "scale": 2.0833333333333336e-07,
+        "plus": {
+          "from": "probe",
+          "pointer": "/elements/0/plies/0/0/bottom/stress/0",
+          "scale": -2.0833333333333336e-07,
+          "plus": {
+            "from": "probe",
+            "pointer": "/elements/0/plies/1/0/top/stress/0",
+            "scale": 2.0833333333333336e-07,
+            "plus": {
+              "from": "probe",
+              "pointer": "/elements/0/plies/1/0/bottom/stress/0",
+              "scale": -2.0833333333333336e-07,
+              "plus": {
+                "from": "probe",
+                "pointer": "/elements/0/plies/2/0/top/stress/0",
+                "scale": 2.0833333333333336e-07,
+                "plus": {
+                  "from": "probe",
+                  "pointer": "/elements/0/plies/2/0/bottom/stress/0",
+                  "scale": -2.0833333333333336e-07,
+                  "plus": {
+                    "from": "probe",
+                    "pointer": "/elements/0/plies/3/0/top/stress/0",
+                    "scale": 2.0833333333333336e-07,
+                    "plus": {
+                      "from": "probe",
+                      "pointer": "/elements/0/plies/3/0/bottom/stress/0",
+                      "scale": -2.0833333333333336e-07
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "value": 0.0045341783931238154,
+      "tolerance": {
+        "relative": 0.02
+      },
+      "reason": "Integrate the linear one-ply stress across thickness and width, average four in-plane quadrature points; same predeclared 2% band."
+    }
+  ]
+}
