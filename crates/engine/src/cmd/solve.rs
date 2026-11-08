@@ -203,12 +203,19 @@ fn limits_with_factor_ceiling(p: &Value, factor_ceiling: usize) -> Result<Limits
             Ok(bytes as usize)
         })
         .transpose()?;
+    // With an explicit memory budget, the byte budget is the governing cap.  The
+    // legacy entry ceiling remains in force for calls without that budget, while
+    // callers that opt into bounded factor memory may request enough entries for
+    // the budget; Factor's symbolic estimate then rejects before allocation.
+    let entry_ceiling = max_factor_memory_bytes
+        .map(|bytes| bytes / std::mem::size_of::<f64>())
+        .map_or(factor_ceiling, |budget_entries| factor_ceiling.max(budget_entries));
     Ok(Limits {
         max_dofs: cap(p, "max_dofs", Limits::MAX_DOFS)?,
         max_factor_entries: if p.get("max_factor_entries").is_none() {
             Limits::MAX_FACTOR_ENTRIES
         } else {
-            cap(p, "max_factor_entries", factor_ceiling)?
+            cap(p, "max_factor_entries", entry_ceiling)?
         },
         max_lanczos_vectors: cap(p, "max_iterations", Limits::MAX_LANCZOS_VECTORS)?,
         max_newton_iterations: cap(p, "max_newton_iterations", Limits::MAX_NEWTON_ITERATIONS)?,
