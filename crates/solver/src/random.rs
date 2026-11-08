@@ -235,7 +235,7 @@ pub fn sdof_base_acceleration_psd(frequency_hz: f64, natural_frequency_hz: f64, 
     }
     let r = frequency_hz / natural_frequency_hz;
     let denominator = (1.0 - r * r).powi(2) + (2.0 * damping_ratio * r).powi(2);
-    Ok(base_psd * (1.0 + (2.0 * damping_ratio * r).powi(2) * r * r) / denominator)
+    Ok(base_psd * (1.0 + (2.0 * damping_ratio * r).powi(2)) / denominator)
 }
 
 /// Absolute displacement PSD for a force-excited SDOF oscillator with unit mass.
@@ -260,6 +260,13 @@ pub fn sdof_force_displacement_psd(frequency_hz: f64, natural_frequency_hz: f64,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn absolute_acceleration_transmissibility_includes_damping_numerator() {
+        // w/wn=2, zeta=1/2: |(1+2i)/(1-4+2i)|² = 5/13.
+        let value = sdof_base_acceleration_psd(2., 1., 0.5, 1.).unwrap();
+        assert!((value - 5. / 13.).abs() < 1e-14);
+    }
 
     #[test]
     fn integrates_constant_psd() {

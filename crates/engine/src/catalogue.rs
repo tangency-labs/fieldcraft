@@ -674,7 +674,7 @@ pub static CATALOGUE: &[Capability] = &[
         "Random Response",
         Solve,
         "Implicit",
-        "Modal random response from force or base-acceleration PSD inputs; reports PSD and RMS quantities",
+        "Projects stored harmonic frames and a one-sided PSD into nodal component spectra and RMS; supports coherent absolute acceleration for a declared unit base inertial load",
     ),
     ready_more(
         "solve.sensitivity.static",

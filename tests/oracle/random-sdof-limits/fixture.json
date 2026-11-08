@@ -1,0 +1,21 @@
+{
+  "note": "FieldCraft's accepted results for this case, written by `cargo xtask oracle --bless`. A result outside its band fails CI.",
+  "values": {
+    "narrow_band_exact_rms": {
+      "band": 1.576958760638469e-11,
+      "value": 0.015769577606186393
+    },
+    "narrow_band_limit_rms": {
+      "band": 1.5769588262594843e-11,
+      "value": 0.015769577606186393
+    },
+    "quasistatic_low_band_rms": {
+      "band": 1.4104839635674442e-12,
+      "value": 0.0014104739635674441
+    },
+    "zero_frequency_static_compliance": {
+      "band": 2.5000001e-10,
+      "value": 0.25
+    }
+  }
+}

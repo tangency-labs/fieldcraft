@@ -1,0 +1,22 @@
+{
+  "title": "FE mass-spring band-limited force PSD: closed-form RMS",
+  "kind": "theory",
+  "source": "Newland, An Introduction to Random Vibrations, Spectral and Wavelet Analysis, 3rd ed. (1993), linear system spectral response; independently integrated SDOF rational transfer, derivation in README.md.",
+  "slow": false,
+  "quantities": [
+    {
+      "id": "displacement_rms_closed_form",
+      "quantity": "displacement_rms_closed_form",
+      "measure": {
+        "from": "Band",
+        "pointer": "/probes/0/displacement_rms"
+      },
+      "value": 0.8662575243662564,
+      "tolerance": {
+        "relative": 2e-05,
+        "absolute": 1e-14
+      },
+      "reason": "Trapezoidal PSD quadrature on a fixed fine grid against an independent closed-form integral; tolerance fixed before execution."
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "title": "NAFEMS 5R: converged Hex20 random displacement, remaining known failure",
+  "kind": "benchmark",
+  "source": "NAFEMS, Selected Benchmarks for Forced Vibration, R0016, 1989, Test 5R",
+  "slow": true,
+  "quantities": [
+    {
+      "id": "midspan_displacement_peak_PSD",
+      "quantity": "midspan_displacement_peak_PSD",
+      "measure": {
+        "from": "R",
+        "pointer": "/probes/0/samples",
+        "max_by": "/displacement_psd",
+        "scale": 1000000.0
+      },
+      "value": 180.9,
+      "tolerance": {
+        "relative": 0.01,
+        "absolute": 1e-14
+      },
+      "reason": "1% predeclared public-reference target, tighter than the observed ~1.68% remaining model discrepancy; do not widen to bless.",
+      "known_failure": "Hex20 converged displacement peak remains ~1.68% below the published beam value; continuum end-face supports, single-node axial locator and 16-mode truncation remain limitations."
+    },
+    {
+      "id": "displacement_peak_frequency",
+      "quantity": "displacement_peak_frequency",
+      "measure": {
+        "from": "R",
+        "pointer": "/probes/0/samples",
+        "max_by": "/displacement_psd",
+        "value": "/frequency"
+      },
+      "value": 42.65,
+      "tolerance": {
+        "relative": 0.002,
+        "absolute": 1e-14
+      },
+      "reason": "0.2% allowance for public frequency rounding, damped peak and finite frequency sampling; not a displacement acceptance."
+    }
+  ]
+}

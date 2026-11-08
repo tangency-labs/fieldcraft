@@ -1,6 +1,8 @@
 //! `solve.*`: run the model's steps with the implicit, the explicit or the lattice Boltzmann
 //! solver, keep the results in the session, and read them back.
 
+mod random_frames;
+
 use crate::schema::ProblemKind;
 use fieldcraft_explicit::{ExplicitResult, solve_explicit};
 use fieldcraft_lbm::{FluidResult, Obstacle};
@@ -52,7 +54,7 @@ pub const HARMONIC: CommandSpec = CommandSpec {
 pub const RANDOM: CommandSpec = CommandSpec {
     id: "solve.random",
     label: "Solve Random Response",
-    params: r#"{"step":"Sweep", "input_psd":[[frequency_hz, psd], ...]} — projects an input one-sided PSD table onto stored solve.harmonic frequency frames (unit harmonic load), returning response displacement PSD and RMS; the legacy natural_frequency/damping_ratio/base_acceleration_psd form runs the Miles SDOF check"#,
+    params: r#"{"step":"Sweep", "input_psd":[[frequency_hz, psd], ...], "nodes":[1], "base_direction":[1,0,0]} — projects an input one-sided PSD table onto stored solve.harmonic frequency frames (unit harmonic load), returning SI response component PSD and RMS; optional base_direction coherently adds the unit base acceleration to relative inertial-load frames; the legacy natural_frequency/damping_ratio/base_acceleration_psd form runs the Miles SDOF check"#,
     form: Some(super::forms::SOLVE_RANDOM),
     kind: CommandKind::Model,
     requires: &[],
@@ -430,101 +432,7 @@ fn run_harmonic(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn run_random(s: &mut Session, p: &Value) -> Result<Value> {
     if let (Some(step), Some(table)) = (p.get("step").and_then(Value::as_str), p.get("input_psd")) {
-        let result = s.result(step).ok_or_else(|| EngineError::invalid("step", "no stored result for this step; run solve.harmonic first"))?;
-        let StepResult::Implicit(ImplicitResult::Harmonic(harmonic)) = result.as_ref() else {
-            return Err(EngineError::invalid("step", "the stored result is not harmonic"));
-        };
-        let table: Vec<[f64; 2]> = serde_json::from_value(table.clone()).map_err(|e| EngineError::invalid("input_psd", e.to_string()))?;
-        if table.len() < 2
-            || table.windows(2).any(|w| !w[0][0].is_finite() || w[0][0] < 0.0 || w[1][0] <= w[0][0] || !w[0][1].is_finite() || w[0][1] < 0.0)
-        {
-            return Err(EngineError::invalid("input_psd", "PSD table needs finite, non-negative, strictly increasing [frequency_hz, psd] rows"));
-        }
-        let interp = |f: f64| -> Result<f64> {
-            if f < table[0][0] || f > table[table.len() - 1][0] {
-                return Err(EngineError::invalid("input_psd", format!("PSD table does not cover harmonic frequency {f} Hz")));
-            }
-            let i = table.partition_point(|row| row[0] <= f).saturating_sub(1).min(table.len() - 2);
-            let (f0, s0) = (table[i][0], table[i][1]);
-            let (f1, s1) = (table[i + 1][0], table[i + 1][1]);
-            Ok(s0 + (s1 - s0) * (f - f0) / (f1 - f0))
-        };
-        let psd: Vec<f64> = harmonic.frames.iter().map(|frame| interp(frame.frequency)).collect::<Result<_>>()?;
-        let integrate = |values: &[f64]| -> Result<f64> {
-            let samples = harmonic
-                .frames
-                .iter()
-                .zip(values)
-                .map(|(frame, &value)| fieldcraft_solver::RandomInput { frequency_hz: frame.frequency, psd: value })
-                .collect::<Vec<_>>();
-            Ok(fieldcraft_solver::integrate_psd(&samples)?.sqrt())
-        };
-        let node_displacement_psd: Vec<Vec<f64>> = harmonic
-            .frames
-            .iter()
-            .enumerate()
-            .map(|(k, frame)| {
-                frame
-                    .real
-                    .iter()
-                    .zip(&frame.imaginary)
-                    .map(|(r, i)| (r[0] * r[0] + i[0] * i[0] + r[1] * r[1] + i[1] * i[1] + r[2] * r[2] + i[2] * i[2]) * psd[k])
-                    .collect()
-            })
-            .collect();
-        let node_acceleration_psd: Vec<Vec<f64>> = harmonic
-            .frames
-            .iter()
-            .enumerate()
-            .map(|(k, frame)| {
-                let w4 = (2.0 * std::f64::consts::PI * frame.frequency).powi(4);
-                node_displacement_psd[k].iter().map(|value| value * w4).collect()
-            })
-            .collect();
-        let displacement_rms: Vec<f64> = (0..harmonic.nodes.len())
-            .map(|node| {
-                integrate(
-                    &harmonic
-                        .frames
-                        .iter()
-                        .enumerate()
-                        .map(|(k, frame)| {
-                            let r = frame.real[node];
-                            let i = frame.imaginary[node];
-                            (r[0] * r[0] + i[0] * i[0] + r[1] * r[1] + i[1] * i[1] + r[2] * r[2] + i[2] * i[2]) * psd[k]
-                        })
-                        .collect::<Vec<_>>(),
-                )
-                .unwrap_or(0.0)
-            })
-            .collect();
-        let acceleration_rms: Vec<f64> = (0..harmonic.nodes.len())
-            .map(|node| integrate(&node_acceleration_psd.iter().map(|row| row[node]).collect::<Vec<_>>()).unwrap_or(0.0))
-            .collect();
-        let stress_psd = harmonic
-            .frames
-            .iter()
-            .enumerate()
-            .filter_map(|(k, frame)| {
-                frame.stress_real.as_ref().map(|stress| {
-                    stress
-                        .iter()
-                        .zip(frame.stress_imaginary.as_ref().into_iter().flatten())
-                        .map(|(r, i)| r.iter().zip(i).map(|(a, b)| (a * a + b * b) * psd[k]).sum())
-                        .collect::<Vec<f64>>()
-                })
-            })
-            .collect::<Vec<_>>();
-        let stress_rms = if stress_psd.len() == harmonic.frames.len() {
-            (0..stress_psd[0].len())
-                .map(|entity| integrate(&stress_psd.iter().map(|row| row[entity]).collect::<Vec<_>>()).unwrap_or(0.0))
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        };
-        return Ok(
-            json!({"step": step, "frequencies": harmonic.frames.iter().map(|f| f.frequency).collect::<Vec<_>>(), "input_psd": psd, "node_displacement_psd": node_displacement_psd, "node_acceleration_psd": node_acceleration_psd, "node_displacement_rms": displacement_rms, "node_acceleration_rms": acceleration_rms, "stress_psd": stress_psd, "stress_rms": stress_rms, "method": "harmonic_frame_psd"}),
-        );
+        return random_frames::run(s, p, step, table);
     }
     if let (Some(f), Some(t), Some(b)) = (p.get("frequencies"), p.get("transfer"), p.get("base_psd")) {
         let frequencies: Vec<f64> = serde_json::from_value(f.clone()).map_err(|e| EngineError::invalid("frequencies", e.to_string()))?;

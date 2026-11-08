@@ -1,0 +1,17 @@
+{
+  "note": "FieldCraft's accepted results for this case, written by `cargo xtask oracle --bless`. A result outside its band fails CI.",
+  "values": {
+    "absolute_acceleration_DC_PSD": {
+      "band": 1.0000000100000001e-9,
+      "value": 1.0
+    },
+    "absolute_acceleration_rms_Miles_approximation": {
+      "band": 3.5383627312709727e-9,
+      "value": 3.5383627212709725
+    },
+    "absolute_acceleration_rms_exact_finite_band": {
+      "band": 3.5383627312709727e-9,
+      "value": 3.5383627212709725
+    }
+  }
+}

@@ -1,0 +1,9 @@
+# Independent continuum reference
+L=1.0m, E=210000000000.0Pa, rho=7800.0kg/m³, b=0.1m, h=0.001m; A=0.0001, I=8.333333333333335e-12. Tip one-sided force PSD=1N²/Hz, 0..50Hz, zeta=.02. Planar bending is enforced; 40 beam2 elements. Real solve.harmonic uses 1,2,4 FE modes, then solve.random integrates stored phasors at the tip.
+Continuum phi_tip²/M=4/(rho A L) for each mode. H(w)=sum B/(wn²-w²+2i zeta wn w); integrate H(w)Hbar(w)dw/(2pi) from0 to2pi*50. Independent rational residues at p=±wn sqrt(1-zeta²)±i zeta wn give exact finite-band log antiderivatives, INCLUDING cross terms. No solver transfer, FE mode shape or solver eigenfrequency is used in references.
+Continuum finite-band RMS by mode count: [[1, 1.060771091293121], [2, 1.0629405797595983], [4, 1.0630534471567936]]. This corrects the withdrawn S09 script (missing observation participation, wrong one-sided factor, no cross terms, hard-coded zero error). No old S09 value is a reference.
+
+
+To reproduce the independent reference, write D_i^s(w)=wn_i²−w²+s·2iζwn_iw, s=±1. For each root p of D_i^s, the residue of H_+(w)H_−(w) is B_i·[sum_j B_j/D_j^(−s)(p)]/[-2p+s·2iζwn_i]. Sum residue·[log(2π f_high−p)−log(−p)] over all 4N poles, divide the real part by 2π, and take its square root. The log branch is continuous along the real integration segment (all poles are off-axis). This finite-band expression includes every pair of modes; summing individual modal variances would be a different, incorrect reference for a common tip force.
+
+The force PSD is a unit normalization for a linear verification problem, not a small-deflection prediction under a physically admissible service load. References scale linearly in PSD variance and by its square root in RMS. The fixed 0.2% RMS/0.1% frequency criteria are not inferred from an observed FE result.

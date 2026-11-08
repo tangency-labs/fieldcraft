@@ -194,3 +194,27 @@ fn harmonic_complex_memory_cap_is_explicit_and_preserves_results_on_refusal() {
     let schema = fieldcraft_engine::schema::json_schema(fieldcraft_engine::find_command("solve.harmonic").unwrap().form.unwrap());
     assert_eq!(schema["properties"]["max_factor_entries"]["maximum"], 4_000_000_000u64);
 }
+
+#[test]
+fn random_base_motion_adds_coherent_acceleration_and_validates_inputs() {
+    let mut s = oscillator();
+    s.execute("solve.harmonic", &json!({"threads":1})).unwrap();
+    let p = json!({"step":"Sweep","nodes":[1],"input_psd":[[0.,2.],[1.,2.]],"base_direction":[1.,0.,0.]});
+    let r = s.execute("solve.random", &p).unwrap();
+    assert_eq!(r["probes"][0]["samples"][0]["acceleration_components_psd"], json!([2., 0., 0.]));
+    assert_eq!(r["acceleration_reference"], "absolute_base_motion");
+    let probe = s.execute("solve.probe", &json!({"step":"Sweep","nodes":[1]})).unwrap();
+    let sample = &probe["nodes"][0]["samples"][1];
+    let w2 = (2. * std::f64::consts::PI * sample["frequency"].as_f64().unwrap()).powi(2);
+    let re = sample["displacement_real"][0].as_f64().unwrap();
+    let im = sample["displacement_imaginary"][0].as_f64().unwrap();
+    let expected = ((1. - w2 * re).powi(2) + (w2 * im).powi(2)) * 2.;
+    assert!((r["probes"][0]["samples"][1]["acceleration_components_psd"][0].as_f64().unwrap() - expected).abs() < 1e-12);
+    for (key, value) in
+        [("nodes", json!([1, 1])), ("nodes", json!([999])), ("base_direction", json!([0, 0, 0])), ("input_psd", json!([[0., 1.], [1., -1.]]))]
+    {
+        let mut bad = p.clone();
+        bad[key] = value;
+        assert!(s.execute("solve.random", &bad).is_err());
+    }
+}

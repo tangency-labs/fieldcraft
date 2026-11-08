@@ -194,11 +194,12 @@ harmonic stress frames when those are required. The returned arrays follow the s
 node order. This path does not assemble a general random-vibration analysis step or automatically
 interpret a base-motion excitation.
 
-The acceleration calculation is `omega^4` times the displacement PSD. It represents absolute
+Without `base_direction`, the acceleration calculation is `omega^4` times the displacement PSD. It represents absolute
 acceleration for a force-loaded structure with stationary supports. If harmonic frames instead
 represent relative displacement under a unit base-acceleration inertial load `-M r`, that output
-is relative acceleration. Absolute acceleration must be formed coherently from the complex
-transfer `r - omega^2 H_relative`, before squaring and multiplying by the base PSD. Adding the
+is relative acceleration. Pass `"base_direction":[rx,ry,rz]` (a unit vector) when the stored frames are the response to
+the matching unit inertial load `-M r`. The command forms absolute acceleration coherently
+from `r - omega^2 H_relative`, before squaring and multiplying by the base PSD. Adding the
 base and relative acceleration PSDs would lose their cross term. A white acceleration spectrum
 extending to zero frequency does not define a finite stationary absolute base-displacement RMS;
 label relative displacement explicitly.
@@ -208,3 +209,17 @@ opposite the unit base direction supplies the consistent inertial spatial load. 
 construction requires supports moving together and damping formulated for relative motion; it
 does not cover independent support motions. Modal truncation, residual correction, frequency
 sampling and stress recovery still require checks for the particular model.
+
+`nodes:[label,...]` selects solved nodes in the requested order (no duplicates). `probes`
+contains per-node `samples` with frequency, displacement/acceleration component PSDs and,
+when recovered by harmonic, six stress component PSDs (xx,yy,zz,xy,xz,yz). Per-component RMS
+and vector RMS are both reported. Returned random quantities are explicitly SI, irrespective
+of display units; the input PSD must match the unit spatial harmonic load's SI amplitude.
+Base motion returns relative displacement and absolute acceleration, labeled in the result.
+The user must supply the matching inertial spatial load: the command does not infer it from
+a PSD or change the model. At most four million selected node-frame samples are allowed.
+
+Executable command oracles in `tests/oracle/random-*` cover exact finite-band SDOF integrals,
+Miles' approximation separately, low/narrow-band limits, coherent cantilever modal response,
+and a source-bound 5R known discrepancy. They do not certify arbitrary load normalization,
+independent multiple inputs, or a general `RandomVibration` step assembler.

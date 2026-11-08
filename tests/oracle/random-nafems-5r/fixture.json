@@ -1,0 +1,9 @@
+{
+  "note": "FieldCraft's accepted results for this case, written by `cargo xtask oracle --bless`. A result outside its band fails CI.",
+  "values": {
+    "displacement_peak_frequency": {
+      "band": 4.2676943875871346e-8,
+      "value": 42.676943865871344
+    }
+  }
+}

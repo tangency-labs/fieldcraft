@@ -1,0 +1,45 @@
+{
+  "note": "FieldCraft's accepted results for this case, written by `cargo xtask oracle --bless`. A result outside its band fails CI.",
+  "values": {
+    "modes_1_frequency_1": {
+      "band": 8.381902643799544e-10,
+      "value": 0.8381895983060544
+    },
+    "modes_2_frequency_1": {
+      "band": 8.381902643799544e-10,
+      "value": 0.8381895983060547
+    },
+    "modes_2_frequency_2": {
+      "band": 5.252848669442676e-9,
+      "value": 5.252820561318494
+    },
+    "modes_4_frequency_1": {
+      "band": 8.381902643799544e-10,
+      "value": 0.8381895983060544
+    },
+    "modes_4_frequency_2": {
+      "band": 5.252848669442676e-9,
+      "value": 5.252820561318494
+    },
+    "modes_4_frequency_3": {
+      "band": 1.4708128358341128e-8,
+      "value": 14.707951546160132
+    },
+    "modes_4_frequency_4": {
+      "band": 2.8822061358480656e-8,
+      "value": 28.821481250922183
+    },
+    "tip_rms_1_coherent_modes": {
+      "band": 1.0612820017226521e-9,
+      "value": 1.061281991722652
+    },
+    "tip_rms_2_coherent_modes": {
+      "band": 1.0634504360042302e-9,
+      "value": 1.0634504260042301
+    },
+    "tip_rms_4_coherent_modes": {
+      "band": 1.0635632378835117e-9,
+      "value": 1.0635632278835117
+    }
+  }
+}

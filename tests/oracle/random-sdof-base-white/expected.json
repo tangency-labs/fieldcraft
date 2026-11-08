@@ -1,0 +1,50 @@
+{
+  "title": "FE mass-spring base white noise: exact absolute RMS and Miles approximation",
+  "kind": "theory",
+  "source": "Newland, An Introduction to Random Vibrations, Spectral and Wavelet Analysis, 3rd ed. (1993), linear system spectral response; independently integrated SDOF rational transfer, derivation in README.md.",
+  "slow": false,
+  "quantities": [
+    {
+      "id": "absolute_acceleration_rms_exact_finite_band",
+      "quantity": "absolute_acceleration_rms_exact_finite_band",
+      "measure": {
+        "from": "White",
+        "pointer": "/probes/0/acceleration_rms"
+      },
+      "value": 3.5383604678701843,
+      "tolerance": {
+        "relative": 2e-05,
+        "absolute": 1e-14
+      },
+      "reason": "Trapezoidal PSD quadrature on a fixed fine grid against an independent closed-form integral; tolerance fixed before execution."
+    },
+    {
+      "id": "absolute_acceleration_rms_Miles_approximation",
+      "quantity": "absolute_acceleration_rms_Miles_approximation",
+      "measure": {
+        "from": "White",
+        "pointer": "/probes/0/acceleration_rms"
+      },
+      "value": 3.5355339059327378,
+      "tolerance": {
+        "relative": 0.001,
+        "absolute": 1e-14
+      },
+      "reason": "Miles is a narrow-resonance approximation; at zeta=.02 the exact finite-band RMS exceeds Miles by about 0.08%, so 0.1% compares the FE result to the approximation without treating Miles as exact."
+    },
+    {
+      "id": "absolute_acceleration_DC_PSD",
+      "quantity": "absolute_acceleration_DC_PSD",
+      "measure": {
+        "from": "White",
+        "pointer": "/probes/0/samples/0/acceleration_components_psd/0"
+      },
+      "value": 1,
+      "tolerance": {
+        "relative": 1e-10,
+        "absolute": 1e-14
+      },
+      "reason": "Trapezoidal PSD quadrature on a fixed fine grid against an independent closed-form integral; tolerance fixed before execution."
+    }
+  ]
+}

@@ -1,0 +1,64 @@
+{
+  "title": "FE random response: omega to zero and narrow-band limits",
+  "kind": "theory",
+  "source": "Newland, An Introduction to Random Vibrations, Spectral and Wavelet Analysis, 3rd ed. (1993), linear system spectral response; independently integrated SDOF rational transfer, derivation in README.md.",
+  "slow": false,
+  "quantities": [
+    {
+      "id": "zero_frequency_static_compliance",
+      "quantity": "zero_frequency_static_compliance",
+      "measure": {
+        "from": "LowU",
+        "pointer": "/nodes/0/samples/0/displacement_real/0"
+      },
+      "value": 0.25,
+      "tolerance": {
+        "relative": 1e-10,
+        "absolute": 1e-14
+      },
+      "reason": "Trapezoidal PSD quadrature on a fixed fine grid against an independent closed-form integral; tolerance fixed before execution."
+    },
+    {
+      "id": "quasistatic_low_band_rms",
+      "quantity": "quasistatic_low_band_rms",
+      "measure": {
+        "from": "Low",
+        "pointer": "/probes/0/displacement_rms"
+      },
+      "value": 0.0014104739588693908,
+      "tolerance": {
+        "relative": 1e-07,
+        "absolute": 1e-14
+      },
+      "reason": "Trapezoidal PSD quadrature on a fixed fine grid against an independent closed-form integral; tolerance fixed before execution."
+    },
+    {
+      "id": "narrow_band_exact_rms",
+      "quantity": "narrow_band_exact_rms",
+      "measure": {
+        "from": "Narrow",
+        "pointer": "/probes/0/displacement_rms"
+      },
+      "value": 0.01576957760638469,
+      "tolerance": {
+        "relative": 1e-07,
+        "absolute": 1e-14
+      },
+      "reason": "Trapezoidal PSD quadrature on a fixed fine grid against an independent closed-form integral; tolerance fixed before execution."
+    },
+    {
+      "id": "narrow_band_limit_rms",
+      "quantity": "narrow_band_limit_rms",
+      "measure": {
+        "from": "Narrow",
+        "pointer": "/probes/0/displacement_rms"
+      },
+      "value": 0.015769578262594845,
+      "tolerance": {
+        "relative": 1e-06,
+        "absolute": 1e-14
+      },
+      "reason": "Trapezoidal PSD quadrature on a fixed fine grid against an independent closed-form integral; tolerance fixed before execution."
+    }
+  ]
+}

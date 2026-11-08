@@ -1,0 +1,148 @@
+{
+  "title": "Finite-element cantilever under tip white force: coherent 1/2/4 mode RMS",
+  "kind": "theory",
+  "source": "Euler-Bernoulli cantilever characteristic cosh(beta)cos(beta)=-1; Timoshenko, Young and Weaver, Vibration Problems in Engineering (1974), cantilever modes; Newland (1993), coherent linear spectral response.",
+  "slow": false,
+  "quantities": [
+    {
+      "id": "tip_rms_1_coherent_modes",
+      "quantity": "tip_rms_1_coherent_modes",
+      "measure": {
+        "from": "Modes1",
+        "pointer": "/probes/0/displacement_rms"
+      },
+      "value": 1.060771091293121,
+      "tolerance": {
+        "relative": 0.002,
+        "absolute": 1e-14
+      },
+      "reason": "Slender L/h=1000 beam, 40 beam2 elements; 0.2% predeclared allowance for FE modal discretization/shear and trapezoidal integration. Common tip force requires cross-modal terms."
+    },
+    {
+      "id": "modes_1_frequency_1",
+      "quantity": "modes_1_frequency_1",
+      "measure": {
+        "from": "Modes1H",
+        "pointer": "/natural_frequencies/0"
+      },
+      "value": 0.8381902543799543,
+      "tolerance": {
+        "relative": 0.001,
+        "absolute": 1e-14
+      },
+      "reason": "Slender beam FE versus Euler-Bernoulli continuum; 0.1% modal frequency allowance."
+    },
+    {
+      "id": "tip_rms_2_coherent_modes",
+      "quantity": "tip_rms_2_coherent_modes",
+      "measure": {
+        "from": "Modes2",
+        "pointer": "/probes/0/displacement_rms"
+      },
+      "value": 1.0629405797595983,
+      "tolerance": {
+        "relative": 0.002,
+        "absolute": 1e-14
+      },
+      "reason": "Slender L/h=1000 beam, 40 beam2 elements; 0.2% predeclared allowance for FE modal discretization/shear and trapezoidal integration. Common tip force requires cross-modal terms."
+    },
+    {
+      "id": "modes_2_frequency_1",
+      "quantity": "modes_2_frequency_1",
+      "measure": {
+        "from": "Modes2H",
+        "pointer": "/natural_frequencies/0"
+      },
+      "value": 0.8381902543799543,
+      "tolerance": {
+        "relative": 0.001,
+        "absolute": 1e-14
+      },
+      "reason": "Slender beam FE versus Euler-Bernoulli continuum; 0.1% modal frequency allowance."
+    },
+    {
+      "id": "modes_2_frequency_2",
+      "quantity": "modes_2_frequency_2",
+      "measure": {
+        "from": "Modes2H",
+        "pointer": "/natural_frequencies/1"
+      },
+      "value": 5.252848659442676,
+      "tolerance": {
+        "relative": 0.001,
+        "absolute": 1e-14
+      },
+      "reason": "Slender beam FE versus Euler-Bernoulli continuum; 0.1% modal frequency allowance."
+    },
+    {
+      "id": "tip_rms_4_coherent_modes",
+      "quantity": "tip_rms_4_coherent_modes",
+      "measure": {
+        "from": "Modes4",
+        "pointer": "/probes/0/displacement_rms"
+      },
+      "value": 1.0630534471567936,
+      "tolerance": {
+        "relative": 0.002,
+        "absolute": 1e-14
+      },
+      "reason": "Slender L/h=1000 beam, 40 beam2 elements; 0.2% predeclared allowance for FE modal discretization/shear and trapezoidal integration. Common tip force requires cross-modal terms."
+    },
+    {
+      "id": "modes_4_frequency_1",
+      "quantity": "modes_4_frequency_1",
+      "measure": {
+        "from": "Modes4H",
+        "pointer": "/natural_frequencies/0"
+      },
+      "value": 0.8381902543799543,
+      "tolerance": {
+        "relative": 0.001,
+        "absolute": 1e-14
+      },
+      "reason": "Slender beam FE versus Euler-Bernoulli continuum; 0.1% modal frequency allowance."
+    },
+    {
+      "id": "modes_4_frequency_2",
+      "quantity": "modes_4_frequency_2",
+      "measure": {
+        "from": "Modes4H",
+        "pointer": "/natural_frequencies/1"
+      },
+      "value": 5.252848659442676,
+      "tolerance": {
+        "relative": 0.001,
+        "absolute": 1e-14
+      },
+      "reason": "Slender beam FE versus Euler-Bernoulli continuum; 0.1% modal frequency allowance."
+    },
+    {
+      "id": "modes_4_frequency_3",
+      "quantity": "modes_4_frequency_3",
+      "measure": {
+        "from": "Modes4H",
+        "pointer": "/natural_frequencies/2"
+      },
+      "value": 14.708128348341127,
+      "tolerance": {
+        "relative": 0.001,
+        "absolute": 1e-14
+      },
+      "reason": "Slender beam FE versus Euler-Bernoulli continuum; 0.1% modal frequency allowance."
+    },
+    {
+      "id": "modes_4_frequency_4",
+      "quantity": "modes_4_frequency_4",
+      "measure": {
+        "from": "Modes4H",
+        "pointer": "/natural_frequencies/3"
+      },
+      "value": 28.822061348480652,
+      "tolerance": {
+        "relative": 0.001,
+        "absolute": 1e-14
+      },
+      "reason": "Slender beam FE versus Euler-Bernoulli continuum; 0.1% modal frequency allowance."
+    }
+  ]
+}
