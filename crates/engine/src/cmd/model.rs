@@ -9,6 +9,16 @@ use crate::{CommandKind, CommandSpec, EngineError, Result, Session};
 pub const INFO: CommandSpec =
     CommandSpec { id: "model.info", label: "Model Info", params: "{}", form: Some(&[]), kind: CommandKind::Model, requires: &[], run: info };
 
+pub const NODE_COORDS: CommandSpec = CommandSpec {
+    id: "model.node.coordinates",
+    label: "Node Coordinates",
+    params: r#"{"nodes": [1, 2]} — returns the requested mesh node labels and coordinates in the model's display length units"#,
+    form: Some(super::forms::NODE_COORDS),
+    kind: CommandKind::Model,
+    requires: &[Requirement::Mesh],
+    run: node_coordinates,
+};
+
 pub const UNITS: CommandSpec = CommandSpec {
     id: "model.units",
     label: "Unit System",
@@ -42,6 +52,22 @@ fn info(s: &mut Session, _: &Value) -> Result<Value> {
         "own_units": s.model.display_units().is_some(),
         "definitions": definitions,
     }))
+}
+
+fn node_coordinates(s: &mut Session, p: &Value) -> Result<Value> {
+    let nodes = p.get("nodes").and_then(Value::as_array).ok_or_else(|| EngineError::Params("`nodes` must be an array".into()))?;
+    if nodes.len() > 10_000 {
+        return Err(EngineError::Params("`nodes` may contain at most 10000 labels".into()));
+    }
+    let mut out = Vec::with_capacity(nodes.len());
+    for value in nodes {
+        let label =
+            value.as_u64().and_then(|n| u32::try_from(n).ok()).ok_or_else(|| EngineError::Params("node labels must be whole numbers".into()))?;
+        let node = s.model.node(label).ok_or_else(|| EngineError::Params(format!("node {label} is not on the mesh")))?;
+        let xyz = node.xyz.map(|value| s.units().express(Quantity::Length, value).unwrap_or(f64::NAN));
+        out.push(json!({"node": label, "xyz": xyz}));
+    }
+    Ok(json!({"nodes": out, "units": s.units().symbol(fieldcraft_model::units::Quantity::Length)}))
 }
 
 /// The units a display system shows the common quantities in, for replies.

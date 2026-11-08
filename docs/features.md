@@ -6,7 +6,7 @@ Every entry is a toolbar button. **Ready** entries run their command; **coming s
 shown greyed with the roadmap milestone that brings them (ROADMAP.md). Scripts, the command line,
 the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 
-93 ready, 31 coming soon.
+94 ready, 31 coming soon.
 
 ## Geometry
 
@@ -172,6 +172,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Panel | Capability | Status | Command |
 |---|---|---|---|
 | Model | Model Info — Node and element counts and the model summary | ready | `model.info`, `model.rename` |
+| Model | Node Coordinates — Return coordinates for selected mesh node labels | ready | `model.node.coordinates` |
 | File | Open Model — Open a .fieldcraft model | ready | `file.open`, `file.new` |
 | File | Samples — Open a sample model, ready to solve | ready | `file.sample` |
 | File | Save — Save the model to its .fieldcraft file | ready | `file.save` |

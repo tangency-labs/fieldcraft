@@ -69,6 +69,7 @@ use crate::{CommandSpec, EngineError, Result, Session};
 
 pub static ALL: &[CommandSpec] = &[
     model::INFO,
+    model::NODE_COORDS,
     library::LIST,
     library::ADD,
     geometry::OPEN,
