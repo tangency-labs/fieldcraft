@@ -132,3 +132,38 @@ fn harmonic_inverse_recovers_material_with_complex_observations() {
     let ci = r.confidence_interval.unwrap();
     assert!(ci[0] < 4.1 && ci[1] > 4.1, "{r:?}");
 }
+
+#[test]
+fn harmonic_batch_matches_row_calls_bitwise() {
+    use fieldcraft_model::design::{MaterialConstant, Parameter};
+    use fieldcraft_solver::sensitivity::{HarmonicSensitivityRequest, harmonic_sensitivity_batch};
+    let model = rod(Damping { alpha: 0.02, beta: 0.005, loss_factor: 0.03 }, Damping::default(), Method::Direct, 0.0);
+    let parameter = Parameter::Material { name: "bar".into(), constant: MaterialConstant::Young };
+    let requests = vec![
+        HarmonicSensitivityRequest {
+            step: Some("H".into()),
+            parameter: parameter.clone(),
+            increment: 1e-4,
+            observation: fieldcraft_solver::sensitivity::HarmonicObservation { node: 2, dof: 1 },
+        },
+        HarmonicSensitivityRequest {
+            step: Some("H".into()),
+            parameter: parameter.clone(),
+            increment: 1e-4,
+            observation: fieldcraft_solver::sensitivity::HarmonicObservation { node: 2, dof: 1 },
+        },
+    ];
+    let batch = harmonic_sensitivity_batch(&model, &requests, &Limits::default()).unwrap();
+    for (request, got) in requests.iter().zip(batch.results.iter()) {
+        let row = fieldcraft_solver::sensitivity::harmonic_sensitivity(
+            &model,
+            request.step.as_deref(),
+            &request.parameter,
+            request.increment,
+            request.observation,
+            &Limits::default(),
+        )
+        .unwrap();
+        assert_eq!(format!("{:?}", got.frames), format!("{:?}", row.frames));
+    }
+}

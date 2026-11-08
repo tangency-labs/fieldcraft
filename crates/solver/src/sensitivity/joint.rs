@@ -370,6 +370,8 @@ pub fn inverse_joint_with_modes(model: &Model, fit: &JointFit, groups: &[super::
         for (col, p) in fit.parameters.iter().enumerate() {
             let mut modal_cache = std::collections::BTreeMap::new();
             let mut pair_cache = std::collections::BTreeMap::new();
+            let mut frequency_cache = std::collections::BTreeMap::new();
+            let mut harmonic_cache = std::collections::BTreeMap::new();
             let h = x[col].abs().max(p.scale_si * INCREMENT_FLOOR) * fit.relative_increment;
             for (row, o) in fit.observations.iter().enumerate() {
                 let (value, derivative) = match &o.response {
@@ -396,14 +398,36 @@ pub fn inverse_joint_with_modes(model: &Model, fit: &JointFit, groups: &[super::
                     }
                     JointResponse::Static { .. } => continue,
                     JointResponse::Frequency { step, mode } => {
-                        let r = super::frequency_sensitivity(&trial, Some(step), &p.parameter, h, &Default::default(), limits)?;
+                        if !frequency_cache.contains_key(step) {
+                            frequency_cache.insert(
+                                step.clone(),
+                                super::frequency_sensitivity(&trial, Some(step), &p.parameter, h, &Default::default(), limits)?,
+                            );
+                        }
+                        let r = frequency_cache.get(step).ok_or_else(|| Error::Internal("frequency cache missing".into()))?;
                         let r =
                             r.modes.get(*mode).ok_or_else(|| Error::Invalid("joint frequency mode index is zero-based and out of range".into()))?;
+                        if r.modal_mass == 0.0 {
+                            return Err(Error::NotSupported(format!("frequency observation points to near-zero mode at order {}", *mode + 1)));
+                        }
                         (r.frequency, r.frequency_derivative)
                     }
                     JointResponse::HarmonicReal { step, node, dof, frame } | JointResponse::HarmonicImaginary { step, node, dof, frame } => {
-                        let r =
-                            super::harmonic_sensitivity(&trial, Some(step), &p.parameter, h, HarmonicObservation { node: *node, dof: *dof }, limits)?;
+                        let key = (step.clone(), *node, *dof);
+                        if !harmonic_cache.contains_key(&key) {
+                            harmonic_cache.insert(
+                                key.clone(),
+                                super::harmonic_sensitivity(
+                                    &trial,
+                                    Some(step),
+                                    &p.parameter,
+                                    h,
+                                    HarmonicObservation { node: *node, dof: *dof },
+                                    limits,
+                                )?,
+                            );
+                        }
+                        let r = harmonic_cache.get(&key).ok_or_else(|| Error::Internal("harmonic cache missing".into()))?;
                         let r = r.frames.get(*frame).ok_or_else(|| Error::Invalid("joint harmonic frame out of range".into()))?;
                         let i = usize::from(matches!(o.response, JointResponse::HarmonicImaginary { .. }));
                         (r.displacement[i], r.direct[i])
