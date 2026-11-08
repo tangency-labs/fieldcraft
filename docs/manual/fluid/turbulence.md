@@ -31,6 +31,13 @@ Vreman's model takes the same fields but `van_driest`:
 "turbulence": {"type": "vreman", "constant": 0.18}
 ```
 
+The Spalart–Allmaras model is a Reynolds-averaged one and takes `inflow_ratio` (ν̃/ν at inflows and in the
+initial field, 3 by default) instead of a constant:
+
+```json
+"turbulence": {"type": "spalart_allmaras", "inflow_ratio": 3}
+```
+
 `model.step.create` takes these fields; `solve.fluid` runs the step. The wall model replaces
 `van_driest` with `"wall_model": "musker"` and is used with `"collision": "mrt"`
 ([Large-eddy simulation](les.md)).
@@ -39,8 +46,9 @@ Vreman's model takes the same fields but `van_driest`:
 
 | Field | Value | Default | Meaning |
 |---|---|---|---|
-| `turbulence.type` | `"smagorinsky"`, `"vreman"` | required | The subgrid model. Without `turbulence` the step has no eddy viscosity. |
+| `turbulence.type` | `"smagorinsky"`, `"vreman"`, `"spalart_allmaras"` | required | The subgrid model, or the Reynolds-averaged Spalart–Allmaras model. Without `turbulence` the step has no eddy viscosity. |
 | `turbulence.constant` | above 0, at most 0.5 | required | Smagorinsky's constant C. 0.1 to 0.2 is usual; 0.17 is Lilly's value for isotropic turbulence. For `vreman`, the Smagorinsky-equivalent C_s of Vreman's c = 2.5 C_s² (0.17 gives his c = 0.07; Jacob et al. 2018 use 0.18). |
+| `turbulence.inflow_ratio` | at least 0 | 3 | `spalart_allmaras` only: ν̃/ν at the inflows and in the initial field (3 is the value of NASA's Turbulence Modeling Resource). With 0 the model gives no eddy viscosity and the flow equals the model off bit for bit. |
 | `turbulence.prandtl` | 0.1 to 10 | 0.9 | Turbulent Prandtl number Pr_t of the turbulent heat diffusivity ν_t / Pr_t (with heat only). 0.85 to 0.9 is usual for air and water. |
 | `turbulence.van_driest` | 1 to 100 | none | Van Driest's A⁺: damps the length scale near no-slip walls. 26 is Van Driest's value. Smagorinsky's model only: Vreman's needs no damping, and the field is refused with it. |
 | `turbulence.wall_model` | `"musker"`, `"spalding_bounce"`, `"spalding_bounce_halfway"` | none | `"musker"` rebuilds each fluid cell next to a no-slip wall from Musker's profile, for a first cell above the viscous sublayer (y⁺ 30 to 100). `"spalding_bounce"` is Han, Ooka and Kikumoto's wall-function bounce as their eq. 14 states it (2021), on-node: the outermost cell layer at each plane no-slip box face is the wall (the wall plane through its centres, so a channel 2δ wide is 2δ + Δx high), bounces back and sends into the fluid the specular images of its incoming diagonals less the stress of Spalding's law at the interior node one cell above; CPU and GPU, the box periodic along the walls, no obstacles, moving walls or heat. `"spalding_bounce_halfway"` is disabled because its wall-row checkerboard mode grows. Files preserve this selection when loaded, but solves refuse it at setup. Remove `wall_model` for resolved no-slip walls, or explicitly select and validate a supported treatment; the on-node variant changes the wall location. |
@@ -48,7 +56,7 @@ Vreman's model takes the same fields but `van_driest`:
 
 A value outside its range is refused when the step is set up, naming the range. With a
 turbulence model the fluid's own symmetric relaxation time τ⁺ may go down to 0.5001
-(`MIN_TAU_TURBULENT`); without one the floor is 0.505 and the refusal suggests adding `turbulence`.
+(`MIN_TAU_TURBULENT`; the Spalart–Allmaras model with `inflow_ratio` 0 gives no eddy viscosity and keeps 0.505); without one the floor is 0.505 and the refusal suggests adding `turbulence`.
 
 ## Theory
 
@@ -149,6 +157,32 @@ population of the wall cell from the profile's velocity at the first cell, its d
 regularised stress; the cell relaxes with a mixing-length eddy viscosity (κ = 0.384, A⁺ = 26) in
 place of Smagorinsky's. The method, its parameters, its reported wall force and its validation are
 in [Large-eddy simulation](les.md).
+
+## Spalart–Allmaras model
+
+A one-equation Reynolds-averaged model (Spalart and Allmaras 1994, with the f_t2 term, the limited
+S̃ and the negative form of Allmaras, Johnson and Spalart 2012). ν̃ is transported on the lattice
+cells (first-order upwind advection in advective form, conservative central diffusion, bounded,
+sub-stepped where its coefficients need it), and ν_t = ν̃ f_v1
+enters every collision through the same explicit-rate route as Vreman's model. Each cell reads its
+exact distance to the nearest no-slip wall (a separable distance transform, Felzenszwalb and
+Huttenlocher 2012; it crosses periodic faces). ν̃ is part of a checkpoint.
+
+The model adds no wall law: walls are halfway bounce-back, ν̃ = 0 on them, and the boundary layer
+must be resolved (the first cell's centre at y⁺ 1 or below). The fluid keeps the laminar floor on
+τ⁺ (0.505): ν_t goes to 0 at a wall, so it does not hold the wall cells stable as a subgrid model's
+does. It does not add to a subgrid model, it replaces one.
+
+Refused, with a message that names the model: a wall model (`musker`, `spalding_bounce`: the wall
+law's rate would replace ν_t at the wall cell while ν̃ keeps its own wall condition, until a wall
+law is chosen for the model), interpolated walls and the hybrid collision's dynamic σ (both
+backends); on the GPU also heat, fans and porous zones, and a box face with two kinds of cell (an
+inlet patch). `backend: "cpu"` runs these.
+
+On the GPU each sub-step's Δt is chosen on the device from that sub-step's largest coefficient sum, by the CPU's
+rule (parts = ⌈largest sum × time left⌉, Δt = time left / parts, so Δt Σ coefficients ≤ 1), with at most 64
+sub-steps per time step; a time step that needs more is refused, as on the CPU. In single precision the product
+Δt × largest sum is checked and one more part taken where it is not below 1.
 
 ## Algorithm
 
@@ -413,10 +447,17 @@ docs/verification.md and summarised in [Large-eddy simulation](les.md).
 - `crates/lbm-gpu/src/lbm.wgsl`: `smagorinsky_omega`, `collide_trt_rate`, `wall_omega`, behind the
   override constants `SMAGORINSKY` and `WALL_MODEL`; `gradient_velocity`, `fd_gradient`,
   `vreman_nu`, `explicit_omega` behind `VREMAN`.
+- `crates/lbm/src/sa.rs`: the closure (its constants, `f_v1`, `f_v2`, `f_w`, `f_t2`, `f_n`, `s_tilde`,
+  `sources`) and `SaField` (ν̃'s transport);
+  `crates/lbm/src/distance.rs`: `WallDistance`.
+- `crates/lbm-gpu/src/lbm.wgsl`, `native.rs`: ν̃'s transport pass and the wall distance on the device, behind the override constant `SA`.
 - `crates/model/src/steps.rs`: `Turbulence`, `WallModel`.
 
 ## References
 
+- P. R. Spalart, S. R. Allmaras. *A one-equation turbulence model for aerodynamic flows.* La Recherche Aérospatiale 1994(1):5–21.
+- S. R. Allmaras, F. T. Johnson, P. R. Spalart. *Modifications and clarifications for the implementation of the Spalart–Allmaras turbulence model.* ICCFD7-1902, 2012.
+- P. F. Felzenszwalb, D. P. Huttenlocher. *Distance transforms of sampled functions.* Theory of Computing 8:415–428, 2012.
 - A. W. Vreman. *An eddy-viscosity subgrid-scale model for turbulent shear flow: Algebraic theory and applications.* Phys. Fluids 16(10):3670–3681, 2004. doi:[10.1063/1.1785131](https://doi.org/10.1063/1.1785131)
 - J. Smagorinsky. *General circulation experiments with the primitive equations.* Mon. Weather Rev. 91(3):99–164, 1963. doi:[10.1175/1520-0493(1963)091<0099:GCEWTP>2.3.CO;2](https://doi.org/10.1175/1520-0493(1963)091%3C0099:GCEWTP%3E2.3.CO;2)
 - S. Hou, J. Sterling, S. Chen, G. D. Doolen. *A lattice Boltzmann subgrid model for high Reynolds number flows.* Fields Inst. Commun. 6:151–166, 1996. doi:[10.1090/fic/006/12](https://doi.org/10.1090/fic/006/12)
