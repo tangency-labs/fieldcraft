@@ -2611,6 +2611,11 @@ pub const SOLVE_HARMONIC: &[Field] = &[
     int("max_iterations", "Max Lanczos vectors", 1, 3000).help("Cap on the Lanczos vectors for the modal method.").hint("3000"),
     THREADS,
 ];
+pub const SOLVE_RANDOM: &[Field] = &[
+    num("natural_frequency", "Natural frequency", D::Of(Quantity::Frequency)).help("Natural frequency of the SDOF check in Hz.").req(),
+    positive("damping_ratio", "Damping ratio", D::None).help("Viscous modal damping ratio ζ.").req(),
+    positive("base_acceleration_psd", "Base acceleration PSD", D::Acceleration).help("One-sided white base acceleration PSD.").req(),
+];
 pub const SOLVE_NONLINEAR: &[Field] = &[
     STEP,
     MAX_DOFS,

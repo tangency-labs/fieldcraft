@@ -41,6 +41,7 @@ pub mod heat;
 pub mod ldlt;
 pub mod nonlinear;
 pub mod ordering;
+pub mod random;
 pub mod sensitivity;
 pub mod sparse;
 pub mod system;
@@ -54,6 +55,7 @@ pub use buckle::{Buckling, solve_buckle};
 pub use harmonic::{HarmonicResult, solve_harmonic};
 pub use heat::{HeatResult, solve_heat};
 pub use nonlinear::solve_nonlinear;
+pub use random::{MilesResult, RandomInput, RandomResponse, integrate_psd, miles_base_acceleration_rms, modal_base_response, sdof_base_acceleration_psd};
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum Error {

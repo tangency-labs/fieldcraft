@@ -350,6 +350,7 @@ impl Model {
                 let why = match s.procedure {
                     Procedure::Frequency { .. } => "extracts frequencies",
                     Procedure::Harmonic(_) => "is harmonic",
+                    Procedure::RandomVibration(_) => "is random vibration",
                     Procedure::ExplicitDynamic(_) => "is dynamic",
                     Procedure::HeatTransfer { transient: Some(_) } => "is transient heat transfer",
                     Procedure::Static {}
@@ -561,7 +562,11 @@ impl Model {
                 }
             }
             match &s.procedure {
-                Procedure::Static {} | Procedure::NonlinearStatic(_) | Procedure::Buckle { .. } | Procedure::Harmonic(_) => {
+                Procedure::Static {}
+                | Procedure::NonlinearStatic(_)
+                | Procedure::Buckle { .. }
+                | Procedure::Harmonic(_)
+                | Procedure::RandomVibration(_) => {
                     if s.loads.is_empty() && !prescribes_motion {
                         d.warning(&subject, "nothing loads the model in this step");
                     }

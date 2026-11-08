@@ -58,6 +58,7 @@ pub mod mesh_plans;
 pub mod nodal;
 pub mod progress;
 pub mod pvt;
+pub mod random;
 pub mod relaxations;
 pub mod rename;
 pub mod sections;

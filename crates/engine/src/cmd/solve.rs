@@ -49,6 +49,16 @@ pub const HARMONIC: CommandSpec = CommandSpec {
     run: run_harmonic,
 };
 
+pub const RANDOM: CommandSpec = CommandSpec {
+    id: "solve.random",
+    label: "Solve Random Response",
+    params: r#"{"natural_frequency": f (Hz), "damping_ratio": ζ, "base_acceleration_psd": S (acceleration²/Hz)} — minimal SDOF Miles random-response check; full modal PSD projection is added through the RandomVibration step"#,
+    form: Some(super::forms::SOLVE_RANDOM),
+    kind: CommandKind::Model,
+    requires: &[],
+    run: run_random,
+};
+
 pub const NONLINEAR: CommandSpec = CommandSpec {
     id: "solve.nonlinear",
     label: "Solve Nonlinear Static Step",
@@ -255,6 +265,7 @@ fn run_all(s: &mut Session, _: &Value) -> Result<Value> {
                 Procedure::ExplicitDynamic(_) => (run_explicit, "solve.explicit"),
                 Procedure::Fluid { .. } => (run_fluid, "solve.fluid"),
                 Procedure::NonlinearStatic(_) => (run_nonlinear, "solve.nonlinear"),
+                Procedure::RandomVibration(_) => (run_random, "solve.random"),
             };
             (st.name.clone(), st.procedure.name(), solve, id)
         })
@@ -415,6 +426,25 @@ fn run_harmonic(s: &mut Session, p: &Value) -> Result<Value> {
         "warnings": r.warnings});
     s.store_result(StepResult::Implicit(ImplicitResult::Harmonic(r)));
     Ok(summary)
+}
+
+fn run_random(_s: &mut Session, p: &Value) -> Result<Value> {
+    if let (Some(f), Some(t), Some(b)) = (p.get("frequencies"), p.get("transfer"), p.get("base_psd")) {
+        let frequencies: Vec<f64> = serde_json::from_value(f.clone()).map_err(|e| EngineError::invalid("frequencies", e.to_string()))?;
+        let transfer: Vec<f64> = serde_json::from_value(t.clone()).map_err(|e| EngineError::invalid("transfer", e.to_string()))?;
+        let base_psd: Vec<f64> = serde_json::from_value(b.clone()).map_err(|e| EngineError::invalid("base_psd", e.to_string()))?;
+        let r = fieldcraft_solver::modal_base_response(&frequencies, &transfer, &base_psd)?;
+        return Ok(json!({"frequencies": r.frequencies_hz, "displacement_psd": r.displacement_psd,
+            "acceleration_psd": r.acceleration_psd, "displacement_rms": r.displacement_rms,
+            "acceleration_rms": r.acceleration_rms, "method": "modal_psd"}));
+    }
+    let f = req::<f64>(p, "natural_frequency")?;
+    let zeta = req::<f64>(p, "damping_ratio")?;
+    let psd = req::<f64>(p, "base_acceleration_psd")?;
+    let r = fieldcraft_solver::miles_base_acceleration_rms(f, zeta, psd)?;
+    Ok(json!({"natural_frequency": r.natural_frequency_hz, "quality_factor": r.quality_factor,
+        "acceleration_psd": r.acceleration_psd, "acceleration_rms": r.acceleration_rms,
+        "method": "miles_sdof_white_noise"}))
 }
 
 fn run_frequency(s: &mut Session, p: &Value) -> Result<Value> {

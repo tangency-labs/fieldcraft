@@ -669,6 +669,7 @@ pub static CATALOGUE: &[Capability] = &[
         &["solve.nonlinear", "solve.buckle", "solve.harmonic", "solve.heat"],
     ),
     ready("solve.frequency", "Frequency", Solve, "Implicit", "Natural frequencies and mode shapes of a frequency step"),
+    ready("solve.random", "Random Response", Solve, "Implicit", "Modal random response from force or base-acceleration PSD inputs; reports PSD and RMS quantities"),
     ready_more(
         "solve.sensitivity.static",
         "Sensitivity",

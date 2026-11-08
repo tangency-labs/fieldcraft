@@ -950,6 +950,7 @@ fn write_step(d: &mut Deck, model: &Model, r: &Resolved, plan: &Plan, step: &Ste
     d.card([Field::from(1), Field::from(first_increment)]);
     match &step.procedure {
         Procedure::Fluid { .. } => return Err(crate::fluid_step(FORMAT, &step.name)),
+        Procedure::RandomVibration(_) => return Err(Error::Unsupported { format: FORMAT, what: format!("step `{}`: random response is not written yet", step.name) }),
         Procedure::Static {} => {
             d.line("*CONTROL_IMPLICIT_SOLUTION");
             d.header(&["nsolvr"]);

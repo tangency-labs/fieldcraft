@@ -49,6 +49,8 @@ pub enum Procedure {
     Static {},
     /// Steady-state response to harmonic loads, in the exp(iωt) convention.
     Harmonic(crate::harmonic::Harmonic),
+    /// Modal random response from one-sided force or base-acceleration PSD inputs.
+    RandomVibration(crate::random::RandomVibration),
     /// Natural frequencies and mode shapes: the lowest `modes` modes, optionally only those
     /// between `min_hz` and `max_hz` (cycles per time unit of the unit system).
     Frequency {
@@ -1070,6 +1072,7 @@ impl Procedure {
         match self {
             Procedure::Static {} => "static",
             Procedure::Harmonic(_) => "harmonic",
+            Procedure::RandomVibration(_) => "random_vibration",
             Procedure::Frequency { .. } => "frequency",
             Procedure::Buckle { .. } => "buckle",
             Procedure::ExplicitDynamic(_) => "explicit_dynamic",
@@ -1184,7 +1187,9 @@ impl Procedure {
         match self {
             Procedure::Static {} | Procedure::NonlinearStatic(_) => OutputVariable::ALL.into_iter().collect(),
             Procedure::Frequency { .. } | Procedure::Buckle { .. } => [OutputVariable::Displacement].into_iter().collect(),
-            Procedure::ExplicitDynamic(_) | Procedure::Harmonic(_) => [OutputVariable::Displacement, OutputVariable::Stress].into_iter().collect(),
+            Procedure::ExplicitDynamic(_) | Procedure::Harmonic(_) | Procedure::RandomVibration(_) => {
+                [OutputVariable::Displacement, OutputVariable::Stress].into_iter().collect()
+            }
             // Velocity, pressure and wall forces, always.
             Procedure::Fluid { .. } => BTreeSet::new(),
             Procedure::HeatTransfer { .. } => [OutputVariable::Temperature, OutputVariable::HeatFlux].into_iter().collect(),

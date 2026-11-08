@@ -407,6 +407,20 @@ impl Quantities for Step {
                     f(Q::Angle, &mut factor.phase);
                 }
             }
+            Procedure::RandomVibration(r) => {
+                for f0 in &mut r.frequencies {
+                    f(Q::Frequency, f0);
+                }
+                for e in &mut r.excitations {
+                    let spectrum = match e {
+                        crate::random::Excitation::Force { spectrum, .. } | crate::random::Excitation::BaseAcceleration { spectrum, .. } => spectrum,
+                    };
+                    for p in spectrum {
+                        f(Q::Frequency, &mut p.frequency);
+                    }
+                }
+                r.damping.quantities(f);
+            }
             Procedure::Frequency { modes: _, min_hz, max_hz } => {
                 for v in [min_hz, max_hz].into_iter().flatten() {
                     f(Q::Frequency, v);

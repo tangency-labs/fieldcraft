@@ -139,6 +139,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Decks | Read Deck — Read an Abaqus input deck's model data: mesh, sets, materials and sections; unread keywords are listed, not kept | ready | `deck.read` |
 | Implicit | Static — Linear static (or coupled temperature–displacement) solve of a step with FieldCraft's own solver; nonlinear static, buckling, harmonic response and heat transfer in the drop-down | ready | `solve.static`, `solve.nonlinear`, `solve.buckle`, `solve.harmonic`, `solve.heat` |
 | Implicit | Frequency — Natural frequencies and mode shapes of a frequency step | ready | `solve.frequency` |
+| Implicit | Random Response — Modal random response from force or base-acceleration PSD inputs; reports PSD and RMS quantities | ready | `solve.random` |
 | Design studies | Sensitivity — Static displacement, work and continuum stress derivatives; simple-mode frequency and direct harmonic derivatives in the drop-down | ready | `solve.sensitivity.static`, `solve.sensitivity.frequency`, `solve.sensitivity.harmonic` |
 | Design studies | Measured Observations — Import measured modal frequencies from CSV or UFF with explicit pairing and uncertainty; read raw complex UFF data in the drop-down | ready | `observations.import`, `observations.read` |
 | Design studies | Identify Parameters — Fit material, thickness or spring parameters; complex-response and joint mixed-observation fits in the drop-down | ready | `solve.inverse.frequency`, `solve.inverse.harmonic`, `solve.inverse.joint` |
