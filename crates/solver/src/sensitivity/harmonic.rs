@@ -101,12 +101,23 @@ fn harmonic_sensitivity_cached(
     cache: &mut Vec<CachedBasis>,
 ) -> Result<HarmonicSensitivity> {
     let damping_parameter = if let Parameter::Damping { step, component } = parameter { Some((step, *component)) } else { None };
-    let perturbed = if damping_parameter.is_none() { Some(perturb(model, parameter, increment)?) } else { None };
+    let mut perturbed = if damping_parameter.is_none() { Some(perturb(model, parameter, increment)?) } else { None };
     let resolved = model.resolve()?;
     let step = model.select_step(step, |p| matches!(p, Procedure::Harmonic(_)), "harmonic")?;
     let Procedure::Harmonic(h) = &step.procedure else {
         return Err(Error::Internal("harmonic sensitivity step".into()));
     };
+    // The shared perturbation helper leaves foundations unchanged for analytic
+    // physical derivatives. Fixed-basis modal operators instead need actual
+    // parameter perturbations before projection (the basis remains fixed).
+    if matches!(h.method, Method::Modal { .. })
+        && matches!(parameter, Parameter::Foundation { .. })
+        && let Some((plus, minus)) = &mut perturbed
+    {
+        let value = parameter.value(model)?;
+        parameter.set(plus, value + increment)?;
+        parameter.set(minus, value - increment)?;
+    }
     if let Some((parameter_step, component)) = damping_parameter {
         if parameter_step != &step.name {
             return Err(Error::Invalid("damping parameter belongs to a different harmonic step".into()));

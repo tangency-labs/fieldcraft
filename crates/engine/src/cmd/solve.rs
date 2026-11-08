@@ -431,6 +431,13 @@ fn run_harmonic(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn run_random(s: &mut Session, p: &Value) -> Result<Value> {
+    if !s.model.foundations().is_empty()
+        && let Some(step) = p.get("step").and_then(Value::as_str).and_then(|name| s.model.step(name))
+        && let fieldcraft_model::Procedure::RandomVibration(random) = &step.procedure
+        && random.excitations.iter().any(|e| matches!(e, fieldcraft_model::random::Excitation::BaseAcceleration { .. }))
+    {
+        return Err(EngineError::invalid("step", "base acceleration random response with a surface foundation is not supported yet"));
+    }
     if let (Some(step), Some(table)) = (p.get("step").and_then(Value::as_str), p.get("input_psd")) {
         return random_frames::run(s, p, step, table);
     }
