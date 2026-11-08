@@ -48,10 +48,13 @@ const GRADIENT_VELOCITY: u64 = 3 * F64;
 /// wall cells' own records are on the surface and not counted); with the wall model alone, the
 /// index only ([`INDEX`]).
 const WALL_DISTANCE: u64 = F64 + 4;
-/// Per cell with the Spalart–Allmaras model (CPU only): its field ([`crate::sa::BYTES_PER_CELL`]:
+/// Per cell with the Spalart–Allmaras model on the CPU: its field ([`crate::sa::BYTES_PER_CELL`]:
 /// ν̃, faces, mask and scratch), wall distance and vorticity, and the distance transform's working
 /// memory (three passes of f64, counted throughout to stay on the safe side).
 const SPALART_ALLMARAS: u64 = crate::sa::BYTES_PER_CELL + 2 * F64 + 3 * F64;
+/// Per cell the GPU backend stages on the host for the Spalart–Allmaras model: the wall distance and the
+/// initial ν̃ in single precision. The device's own buffers are not host memory and are not counted.
+const DEVICE_SA_STAGING: u64 = 2 * F32;
 /// Per cell with fans or porous zones, and with conducting obstacles: an index.
 const INDEX: u64 = 4;
 /// Per cell with a free surface: its kind, its mass and fill level, whether it is populated,
@@ -153,7 +156,15 @@ struct Shape {
 impl Shape {
     /// The shape of a run over `domain` keeping `frames` frames after the initial one, with or
     /// without a turbulence model, its wall damping and its wall model.
-    fn new(domain: &FluidDomain, frames: u64, turbulence: bool, damping: bool, wall_model: bool, spalart_allmaras: bool) -> Result<Shape> {
+    fn new(
+        domain: &FluidDomain,
+        frames: u64,
+        turbulence: bool,
+        damping: bool,
+        wall_model: bool,
+        gradients: bool,
+        spalart_allmaras: bool,
+    ) -> Result<Shape> {
         let thermal = domain.thermal.as_ref();
         Ok(Shape {
             cells: domain.cells()?,
@@ -164,7 +175,7 @@ impl Shape {
             turbulence,
             damping,
             wall_model,
-            gradients: false,
+            gradients,
             spalart_allmaras,
             zones: !domain.fans.is_empty() || !domain.porous.is_empty(),
             zone_count: (domain.fans.len() + domain.porous.len()) as u64,
@@ -205,10 +216,10 @@ impl Memory {
             setup.turbulent(),
             setup.van_driest.is_some(),
             setup.wall_model.is_some(),
+            setup.collision == Collision::Hrr || setup.vreman > 0.0 || setup.spalart_allmaras.is_some(),
             setup.spalart_allmaras.is_some(),
         )?;
-        let gradients = setup.collision == Collision::Hrr || setup.vreman > 0.0 || setup.spalart_allmaras.is_some();
-        Ok(Memory::from_shape(&Shape { gradients, ..shape }, backend))
+        Ok(Memory::from_shape(&shape, backend))
     }
 
     /// The memory of fluid step `step` of `model` on `backend`, from the model alone (no
@@ -222,8 +233,8 @@ impl Memory {
         let (damping, wall_model) = turbulence.map_or((false, false), |t| (t.van_driest().is_some(), t.wall_model().is_some()));
         let sa = matches!(turbulence, Some(fieldcraft_model::Turbulence::SpalartAllmaras { .. }));
         let gradients = *collision == Some(Collision::Hrr) || matches!(turbulence, Some(fieldcraft_model::Turbulence::Vreman { .. })) || sa;
-        let shape = Shape::new(domain, u64::from(*frames), turbulence.is_some(), damping, wall_model, sa)?;
-        Ok(Memory::from_shape(&Shape { gradients, ..shape }, backend))
+        let shape = Shape::new(domain, u64::from(*frames), turbulence.is_some(), damping, wall_model, gradients, sa)?;
+        Ok(Memory::from_shape(&shape, backend))
     }
 
     fn from_shape(s: &Shape, backend: Choice) -> Memory {
@@ -295,7 +306,9 @@ impl Memory {
             Choice::Device => (
                 prepared
                     .saturating_add(outlet_staging)
-                    .saturating_add(per_cell(DEVICE_STAGING + if s.damping { DEVICE_DAMPING } else { 0 }))
+                    .saturating_add(per_cell(
+                        DEVICE_STAGING + if s.damping { DEVICE_DAMPING } else { 0 } + if s.spalart_allmaras { DEVICE_SA_STAGING } else { 0 },
+                    ))
                     .saturating_add(s.zone_data.saturating_add(zone_cells).saturating_mul(3)),
                 per_cell(2 * RESULT).saturating_add(s.zone_data).saturating_add(zone_cells),
                 per_cell(READBACK + DEVICE_READBACK + if s.heat { READBACK_HEAT + DEVICE_READBACK_HEAT } else { 0 })

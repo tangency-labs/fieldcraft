@@ -2013,18 +2013,17 @@ pub(crate) mod tests {
         assert_eq!(s.model, before);
     }
 
-    /// The Spalart–Allmaras model: hostile parameters refused with a message naming them, the GPU
-    /// "not supported yet"; never a panic, the model unchanged, nothing solved. An
-    /// unknown field is refused by the command. A valid model solves on the CPU, reporting its
-    /// largest ν_t/ν.
+    /// The Spalart–Allmaras model: hostile parameters refused with a message naming them on either
+    /// backend; never a panic, the model unchanged, nothing solved (what the GPU does not run yet
+    /// is lbm-gpu's tests). An unknown field is refused by the command. A valid model solves on the CPU,
+    /// reporting its largest ν_t/ν.
     #[test]
     fn spalart_allmaras_solves_on_the_cpu_and_hostile_parameters_are_named() {
         use fieldcraft_model::{Procedure, Turbulence};
         let mut s = Session::default();
         couette(&mut s);
         let sa = |prandtl: f64, inflow_ratio: f64| Turbulence::SpalartAllmaras { prandtl, wall_model: None, inflow_ratio };
-        let mut cases = vec![(sa(0.9, 3.0), "not supported yet")];
-        let gpu_only = format!("{:?}", cases[0].0);
+        let mut cases = Vec::new();
         for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -1.0, 0.0, 1e300] {
             cases.push((sa(bad, 3.0), "turbulent Prandtl number"));
             if bad != 0.0 {
@@ -2039,9 +2038,7 @@ pub(crate) mod tests {
             s.model.replace_step(step).unwrap();
             // Compared as text: a NaN parameter is never equal to itself.
             let before = format!("{:?}", s.model);
-            // The valid model is refused on the GPU alone; the CPU solves it below.
-            let backends: &[&str] = if format!("{turbulence:?}") == gpu_only { &["gpu"] } else { &["cpu", "gpu"] };
-            for backend in backends {
+            for backend in ["cpu", "gpu"] {
                 let error = s.execute("solve.fluid", &json!({"backend": backend})).unwrap_err().to_string();
                 assert!(error.contains(want), "{turbulence:?} on {backend}: {error}");
                 assert_eq!(format!("{:?}", s.model), before);

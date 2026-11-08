@@ -2,7 +2,8 @@
 //! "spalart_allmaras"}`): ν̃ transported on the cells that collide, its ν_t = ν̃ f_v1 in the
 //! collision's rate. With no ν̃ the flow is the laminar one bit for bit; a forced channel takes a
 //! positive ν_t that stays finite, with halfway and on-node walls; the result is the same bit for
-//! bit on any number of threads; dynamic σ and the GPU are refused, naming the model.
+//! bit on any number of threads; dynamic σ is refused, naming the model (the GPU's own
+//! refusals are lbm-gpu's tests).
 //!
 //! Each test prints its numbers (`cargo test -p fieldcraft-lbm --test spalart_allmaras -- --nocapture`).
 
@@ -137,8 +138,8 @@ fn results_are_bit_for_bit_the_same_on_one_and_many_threads() {
     assert_eq!(one, solve(3));
 }
 
-/// Dynamic σ, an inflow ratio out of range and the GPU are refused with the model's name and
-/// what to do instead; nothing panics. The memory estimate counts the model's field.
+/// Dynamic σ and an inflow ratio out of range are refused with the model's name and what to do
+/// instead; nothing panics. The memory estimate counts the model's field.
 #[test]
 fn what_is_not_supported_is_refused_and_the_memory_counts_the_field() {
     let refused = |t: Turbulence, collision: Collision, sigma: Option<HrrSigma>| {
@@ -174,14 +175,7 @@ fn what_is_not_supported_is_refused_and_the_memory_counts_the_field() {
     let e = low(0.0).unwrap_err().to_string();
     assert!(e.contains("below 0.505") && e.contains("turbulence"), "{e}");
     let m = model(1.0, 0.1, couette(4), with(collide(0.1, 0.01, None, Collision::Trt), Some(sa(3.0, None))));
-    let (setup, flow) = prepare(&m, &[]);
-    match fieldcraft_lbm::backend::backend(Choice::Device, flow, &setup) {
-        Ok(_) => panic!("the GPU must refuse the model"),
-        Err(e) => {
-            let e = e.to_string();
-            assert!(e.contains("not supported yet") && e.contains("Spalart–Allmaras") && e.contains("GPU"), "{e}");
-        }
-    }
+    let (setup, _) = prepare(&m, &[]);
     let plain = model(1.0, 0.1, couette(4), collide(0.1, 0.01, None, Collision::Trt));
     let (with_sa, without) = (Memory::estimate(&m, None, Choice::Cpu).unwrap(), Memory::estimate(&plain, None, Choice::Cpu).unwrap());
     let cells = with_sa.cells;
