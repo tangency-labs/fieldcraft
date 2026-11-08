@@ -189,13 +189,20 @@ fn limits(p: &Value) -> Result<Limits> {
 }
 
 fn limits_with_factor_ceiling(p: &Value, factor_ceiling: usize) -> Result<Limits> {
-    let max_factor_memory_bytes = p.get("max_memory_gib").map(|v| {
-        let gib = v.as_f64().filter(|x| x.is_finite() && *x > 0.0)
-            .ok_or_else(|| EngineError::Params("`max_memory_gib` must be a finite positive number".into()))?;
-        let bytes = gib * (1u64 << 30) as f64;
-        if bytes > usize::MAX as f64 { return Err(EngineError::Params("`max_memory_gib` is too large".into())); }
-        Ok(bytes as usize)
-    }).transpose()?;
+    let max_factor_memory_bytes = p
+        .get("max_memory_gib")
+        .map(|v| {
+            let gib = v
+                .as_f64()
+                .filter(|x| x.is_finite() && *x > 0.0)
+                .ok_or_else(|| EngineError::Params("`max_memory_gib` must be a finite positive number".into()))?;
+            let bytes = gib * (1u64 << 30) as f64;
+            if bytes > usize::MAX as f64 {
+                return Err(EngineError::Params("`max_memory_gib` is too large".into()));
+            }
+            Ok(bytes as usize)
+        })
+        .transpose()?;
     Ok(Limits {
         max_dofs: cap(p, "max_dofs", Limits::MAX_DOFS)?,
         max_factor_entries: if p.get("max_factor_entries").is_none() {
