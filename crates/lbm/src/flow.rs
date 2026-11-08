@@ -714,6 +714,10 @@ struct SaState {
     field: SaField,
     distance: crate::distance::WallDistance,
     vorticity: Vec<f64>,
+    /// A fixed sub-step count ([`Flow::set_sa_substeps`]); none: as many as the bound needs.
+    substeps: Option<u32>,
+    /// Whether the model's sources act ([`Flow::set_sa_model`]; off: ν̃'s transport alone).
+    model: bool,
 }
 
 /// Cells per parallel block of the collision and the streaming: about a 256th of the grid, so a
@@ -1367,7 +1371,7 @@ impl Flow {
                 let distance = crate::distance::WallDistance::new(&grid, &fluid, &surface, periodic, &setup.limits)?;
                 let inflow = sa.inflow_ratio * nu;
                 let field = SaField::new(sides, fluid.clone(), inflow, inflow)?;
-                Some(SaState { field, distance, vorticity: filled(n, 0.0, "vorticities")? })
+                Some(SaState { field, distance, vorticity: filled(n, 0.0, "vorticities")?, substeps: None, model: true })
             }
         };
         open.shrink_to_fit();
@@ -1851,6 +1855,35 @@ impl Flow {
     /// turbulence model).
     pub fn eddy_viscosity_ratio(&self) -> f64 {
         self.eddy_ratio
+    }
+
+    /// With the Spalart–Allmaras model: take exactly `n` equal sub-steps of ν̃ per lattice step
+    /// ([`SaInput::substeps`]), the reference a device backend with a fixed count is checked
+    /// against; `None` (the default) takes as many as the monotone bound needs.
+    #[doc(hidden)]
+    pub fn set_sa_substeps(&mut self, n: Option<u32>) {
+        if let Some(sa) = &mut self.sa {
+            sa.substeps = n;
+        }
+    }
+
+    /// With the Spalart–Allmaras model: whether its production and destruction act (on by
+    /// default); off, ν̃ is only transported, for verification ([`SaInput::model`]).
+    #[doc(hidden)]
+    pub fn set_sa_model(&mut self, on: bool) {
+        if let Some(sa) = &mut self.sa {
+            sa.model = on;
+        }
+    }
+
+    /// With the Spalart–Allmaras model: set ν̃ in every cell (lattice units; one finite value per
+    /// cell, 0 kept outside the fluid), for verification and restarts from another field.
+    #[doc(hidden)]
+    pub fn set_sa_nu_tilde(&mut self, values: &[f64]) -> Result<()> {
+        match &mut self.sa {
+            Some(sa) => sa.field.set_nu_tilde(values),
+            None => Err(Error::Invalid("the flow has no Spalart–Allmaras model".into())),
+        }
     }
 
     /// The body acceleration in lattice units.
@@ -2538,7 +2571,7 @@ impl Flow {
             }
         });
         let nu = (1.0 / self.omega_plus - 0.5) / 3.0;
-        let input = SaInput { u, vorticity: &sa.vorticity, length: sa.distance.as_slice(), nu, model: true, source: None, substeps: None };
+        let input = SaInput { u, vorticity: &sa.vorticity, length: sa.distance.as_slice(), nu, model: sa.model, source: None, substeps: sa.substeps };
         sa.field.advance(&input).map_err(|e| match e {
             Error::Unstable(m) => Error::Unstable(format!("{m} (at time step {})", steps + 1)),
             other => other,
@@ -3525,6 +3558,10 @@ impl crate::backend::Backend for Flow {
 
     fn eddy_viscosity_ratio(&self) -> f64 {
         Flow::eddy_viscosity_ratio(self)
+    }
+
+    fn nu_tilde(&mut self) -> Result<Option<Vec<f64>>> {
+        Ok(self.spalart_allmaras().map(|f| f.nu_tilde().to_vec()))
     }
 
     fn wall_y_plus(&self) -> Option<f64> {
