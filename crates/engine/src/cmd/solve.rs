@@ -189,6 +189,13 @@ fn limits(p: &Value) -> Result<Limits> {
 }
 
 fn limits_with_factor_ceiling(p: &Value, factor_ceiling: usize) -> Result<Limits> {
+    let max_factor_memory_bytes = p.get("max_memory_gib").map(|v| {
+        let gib = v.as_f64().filter(|x| x.is_finite() && *x > 0.0)
+            .ok_or_else(|| EngineError::Params("`max_memory_gib` must be a finite positive number".into()))?;
+        let bytes = gib * (1u64 << 30) as f64;
+        if bytes > usize::MAX as f64 { return Err(EngineError::Params("`max_memory_gib` is too large".into())); }
+        Ok(bytes as usize)
+    }).transpose()?;
     Ok(Limits {
         max_dofs: cap(p, "max_dofs", Limits::MAX_DOFS)?,
         max_factor_entries: if p.get("max_factor_entries").is_none() {
@@ -198,6 +205,7 @@ fn limits_with_factor_ceiling(p: &Value, factor_ceiling: usize) -> Result<Limits
         },
         max_lanczos_vectors: cap(p, "max_iterations", Limits::MAX_LANCZOS_VECTORS)?,
         max_newton_iterations: cap(p, "max_newton_iterations", Limits::MAX_NEWTON_ITERATIONS)?,
+        max_factor_memory_bytes,
     })
 }
 
@@ -2105,6 +2113,10 @@ pub(crate) mod tests {
             [json!(null), json!(true), json!("467000000"), json!(-1), json!(0), json!(2.5), json!(2_000_000_001u64), json!(u64::MAX), json!(1e300)]
         {
             assert!(limits(&json!({"max_factor_entries": entries})).is_err(), "{entries}");
+        }
+        assert_eq!(limits(&json!({"max_memory_gib": 256.0})).unwrap().max_factor_memory_bytes, Some(256usize << 30));
+        for value in [json!(0), json!(-1), json!(null), json!(true), json!("256")] {
+            assert!(limits(&json!({"max_memory_gib": value})).is_err(), "{value}");
         }
         for params in [
             json!({"max_dofs": Limits::MAX_DOFS + 1}),

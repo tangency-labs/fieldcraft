@@ -106,6 +106,9 @@ pub struct Limits {
     pub max_lanczos_vectors: usize,
     /// Newton iterations of a nonlinear step, over all its increments.
     pub max_newton_iterations: usize,
+    /// Optional whole-factor byte budget. This is checked after symbolic analysis and before
+    /// numeric factor storage; the caller must keep separate budgets for matrices/results.
+    pub max_factor_memory_bytes: Option<usize>,
 }
 
 impl Limits {
@@ -122,6 +125,7 @@ impl Default for Limits {
             max_factor_entries: Limits::MAX_FACTOR_ENTRIES,
             max_lanczos_vectors: Limits::MAX_LANCZOS_VECTORS,
             max_newton_iterations: Limits::MAX_NEWTON_ITERATIONS,
+            max_factor_memory_bytes: None,
         }
     }
 }

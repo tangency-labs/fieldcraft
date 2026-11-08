@@ -270,7 +270,11 @@ pub(crate) fn assemble(mesh: &Mesh, graph: &NodeGraph, mass: Option<MassKind>) -
 
 /// Factor a free-dof matrix; a singular pivot is reported as the free-dof column it hit.
 pub(crate) fn factor_raw(a: &Csr, limits: &Limits) -> std::result::Result<Factor, FactorError> {
-    Factor::new(&UpperColumns::from_symmetric(a), limits.max_factor_entries)
+    let upper = UpperColumns::from_symmetric(a);
+    match limits.max_factor_memory_bytes {
+        Some(bytes) => Factor::with_memory_limit(&upper, limits.max_factor_entries, bytes).map(|(factor, _)| factor),
+        None => Factor::new(&upper, limits.max_factor_entries),
+    }
 }
 
 /// Factor a free-dof matrix by Cholesky, LDLᵀ, or Cholesky with LDLᵀ when it is not positive

@@ -2453,6 +2453,9 @@ const MAX_DOFS: Field = int("max_dofs", "Max DOFs", 1, 6_000_000).help("Cap on t
 const MAX_FACTOR: Field = int("max_factor_entries", "Max factor entries", 1, super::solve::FACTOR_ENTRY_CEILING as i64)
     .help("Cap on factor entries (8 bytes each): 400M by default; raise deliberately up to 2B (16 GB of values alone). Indices, workspace and other solver storage need additional memory.")
     .hint("400000000");
+const MAX_MEMORY_GIB: Field = num("max_memory_gib", "Max factor memory (GiB)")
+    .help("Optional whole-factor memory budget. Symbolic storage is checked before numeric factor allocation; matrices, results and Lanczos vectors require separate headroom.")
+    .hint("unset");
 const THREADS: Field = int("threads", "Threads", 1, 256).help("Threads to use; the session's setting when empty.").hint("the session's");
 
 const DESIGN_PARAMETER: Field = variants(
@@ -2584,7 +2587,7 @@ pub const INVERSE_HARMONIC: &[Field] = &[
     THREADS,
 ];
 
-pub const SOLVE_STATIC: &[Field] = &[STEP, MAX_DOFS, MAX_FACTOR, THREADS];
+pub const SOLVE_STATIC: &[Field] = &[STEP, MAX_DOFS, MAX_FACTOR, MAX_MEMORY_GIB, THREADS];
 pub const SOLVE_HARMONIC: &[Field] = &[
     STEP,
     MAX_DOFS,
@@ -2608,7 +2611,7 @@ pub const SOLVE_FREQUENCY: &[Field] = &[
         .def("\"consistent\""),
     num("shift", "Shift", D::Eigenvalue).help("Look for frequencies near this eigenvalue (ω²); 0 finds the lowest.").hint("0"),
     MAX_DOFS,
-    MAX_FACTOR,
+    MAX_FACTOR, MAX_MEMORY_GIB,
     int("max_iterations", "Max Lanczos vectors", 1, 3000).help("Cap on the Lanczos vectors.").hint("3000"),
     THREADS,
 ];
