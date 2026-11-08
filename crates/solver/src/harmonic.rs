@@ -118,6 +118,9 @@ fn factor_error(e: FactorError) -> Error {
             Error::Singular(format!("harmonic mode extraction: no pivot at equation {column}"))
         }
         FactorError::TooLarge { entries, limit } => Error::factor_limit(entries, limit),
+        FactorError::MemoryLimit { entries, estimated_bytes, limit_bytes } => Error::Limit(format!(
+            "factorization needs {entries} entries; estimated factor storage including indices, matrices and workspace is {estimated_bytes} bytes, exceeding factor budget {limit_bytes} bytes"
+        )),
         FactorError::OutOfMemory { entries } => Error::Limit(format!("cannot allocate {entries} factor entries for harmonic modes")),
         FactorError::Internal(message) => Error::Internal(message),
         FactorError::Cancelled => fieldcraft_model::Error::Cancelled.into(),

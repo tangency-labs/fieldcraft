@@ -228,12 +228,57 @@ pub enum FactorError {
     Singular { column: usize },
     /// The factor would hold more entries than allowed.
     TooLarge { entries: usize, limit: usize },
+    /// A symbolic storage estimate exceeds the caller's factor-only byte budget.
+    MemoryLimit { entries: usize, estimated_bytes: usize, limit_bytes: usize },
     /// The memory for the factor could not be had.
     OutOfMemory { entries: usize },
     /// A broken internal invariant (a bug), reported instead of a panic.
     Internal(String),
     /// The command was cancelled ([`fieldcraft_model::progress`]) between supernodes.
     Cancelled,
+}
+
+/// Storage estimate for a real supernodal factorization, derived from its actual symbolic
+/// structure (Liu–Ng–Peyton 1993, as cited above) and this implementation's buffers.
+/// Includes the supplied upper triangle, reordered matrix, indices, numeric factor and
+/// concurrent subtree work. Excludes the caller's CSR matrices, model, results and Lanczos
+/// basis: callers must reserve those separately before assigning a factor budget.
+/// This is an allocation estimate, not a measurement of process RSS or allocator overhead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FactorMemory {
+    pub entries: usize,
+    pub values_bytes: usize,
+    pub indices_bytes: usize,
+    pub matrix_bytes: usize,
+    pub workspace_bytes: usize,
+}
+
+impl FactorMemory {
+    /// Saturation is deliberately a refusal, never a wrapped small allocation estimate.
+    pub fn total_bytes(&self) -> usize {
+        self.values_bytes.saturating_add(self.indices_bytes).saturating_add(self.matrix_bytes).saturating_add(self.workspace_bytes)
+    }
+
+    pub(crate) fn check(&self, limit_bytes: usize) -> std::result::Result<(), FactorError> {
+        let estimated_bytes = self.total_bytes();
+        if estimated_bytes == usize::MAX || estimated_bytes > limit_bytes {
+            return Err(FactorError::MemoryLimit { entries: self.entries, estimated_bytes, limit_bytes });
+        }
+        Ok(())
+    }
+}
+
+fn buffer_bytes<T>(v: &Vec<T>) -> usize {
+    v.capacity().saturating_mul(std::mem::size_of::<T>())
+}
+
+/// Upper bound on simultaneous products buffers, including every tile's packed input.
+/// Counting all tiles also covers nested parallel regions without assuming a thread count.
+fn products_bytes(mu: usize, wu: usize, kw: usize) -> usize {
+    let tiles = mu.div_ceil(TILE);
+    let y = wu.saturating_add(wu.div_ceil(NR).saturating_mul(NR)).saturating_mul(kw);
+    let tiles_data = tiles.saturating_mul(TILE).saturating_mul(kw.saturating_add(wu));
+    y.saturating_add(tiles_data).saturating_mul(8).saturating_add(tiles.saturating_mul(std::mem::size_of::<Vec<f64>>()))
 }
 
 impl FactorError {
@@ -1007,6 +1052,58 @@ impl Symbolic {
         Ok(Symbolic { n, perm, structure, a, updates, tasks, top, entries: total })
     }
 
+    /// Estimate from allocated symbolic capacities and the largest live buffers of each
+    /// scheduled subtree. Subtrees may overlap in time; top supernodes run afterwards.
+    pub(crate) fn memory_estimate(&self, upper: &UpperColumns) -> FactorMemory {
+        let sum = |xs: &[usize]| xs.iter().copied().fold(0usize, usize::saturating_add);
+        let structure = sum(&[buffer_bytes(&self.structure.first), buffer_bytes(&self.structure.rptr), buffer_bytes(&self.structure.rows)]);
+        let indices_bytes = sum(&[
+            structure.saturating_mul(2),
+            buffer_bytes(&self.perm).saturating_mul(2),
+            buffer_bytes(&self.updates),
+            self.updates.iter().map(buffer_bytes).fold(0usize, usize::saturating_add),
+            buffer_bytes(&self.tasks),
+            buffer_bytes(&self.top),
+            // LDLT pivot order and pivot tags, plus block/vector headers and task bookkeeping.
+            self.n.saturating_mul(std::mem::size_of::<usize>() + std::mem::size_of::<Pivot>()),
+            self.supernodes().saturating_mul(256),
+        ]);
+        let matrix_bytes = sum(&[
+            buffer_bytes(&upper.ptr),
+            buffer_bytes(&upper.idx),
+            buffer_bytes(&upper.val),
+            buffer_bytes(&self.a.ptr),
+            buffer_bytes(&self.a.idx),
+            buffer_bytes(&self.a.val),
+            buffer_bytes(&self.a.diag),
+            buffer_bytes(&self.a.scale),
+        ]);
+        let node_work = |j: usize| {
+            let (m, w) = (self.structure.rows(j).len(), self.structure.cols(j).len());
+            let mut work = products_bytes(m, PANEL.min(w), w);
+            for u in self.updates.get(j).map(Vec::as_slice).unwrap_or_default() {
+                let mu = self.structure.rows(u.k).len().saturating_sub(u.p1);
+                let wu = u.p2.saturating_sub(u.p1);
+                let kw = self.structure.cols(u.k).len();
+                work = work.max(products_bytes(mu, wu, kw));
+            }
+            // Relative-row mapping and LDLT's three reusable scratch vectors, including growth.
+            work.saturating_add(m.saturating_mul(64))
+        };
+        let parallel_work = self.tasks.iter().map(|r| r.clone().map(node_work).max().unwrap_or(0)).fold(0usize, usize::saturating_add);
+        let top_work = self.top.iter().copied().map(node_work).max().unwrap_or(0);
+        // The symbolic phase has column/tree arrays and temporary (index,value) pairs. Count
+        // them conservatively alongside retained storage instead of assuming perfect reuse.
+        let symbolic_work = self.n.saturating_mul(192).saturating_add(upper.val.len().saturating_mul(16));
+        FactorMemory {
+            entries: self.entries,
+            values_bytes: self.entries.saturating_mul(8),
+            indices_bytes,
+            matrix_bytes,
+            workspace_bytes: parallel_work.max(top_work).max(symbolic_work),
+        }
+    }
+
     /// Supernodes.
     pub(crate) fn supernodes(&self) -> usize {
         self.structure.first.len().saturating_sub(1)
@@ -1128,6 +1225,21 @@ impl Factor {
         Factor::from_symbolic(&Symbolic::new(a, max_entries)?)
     }
 
+    /// Estimate factor storage without allocating the numeric factor. Symbolic storage is
+    /// still allocated; `max_entries` remains an independent cap on the symbolic count.
+    pub fn estimate_memory(a: &UpperColumns, max_entries: usize) -> std::result::Result<FactorMemory, FactorError> {
+        Ok(Symbolic::new(a, max_entries)?.memory_estimate(a))
+    }
+
+    /// Factor within a factor-only byte budget, checked before allocating numeric values.
+    /// Callers must deduct their other live allocations from the process budget first.
+    pub fn with_memory_limit(a: &UpperColumns, max_entries: usize, max_bytes: usize) -> std::result::Result<(Factor, FactorMemory), FactorError> {
+        let symbolic = Symbolic::new(a, max_entries)?;
+        let estimate = symbolic.memory_estimate(a);
+        estimate.check(max_bytes)?;
+        Ok((Factor::from_symbolic(&symbolic)?, estimate))
+    }
+
     pub(crate) fn from_symbolic(symbolic: &Symbolic) -> std::result::Result<Factor, FactorError> {
         let mut values = symbolic.allocate()?;
         symbolic.factor(&mut values, |context, j, done, base, own| context.supernode(j, done, base, own))?;
@@ -1149,6 +1261,57 @@ impl Factor {
 mod tests {
     use super::*;
     use crate::sparse::Csr;
+
+    #[test]
+    fn memory_budget_refuses_before_numeric_and_preserves_values() {
+        let upper = UpperColumns::from_symmetric(&dense_to_csr(&[vec![4.0, 1.0], vec![1.0, 3.0]]));
+        let estimate = Factor::estimate_memory(&upper, 10).unwrap();
+        assert_eq!(estimate.entries, 3);
+        assert_eq!(estimate.values_bytes, 24);
+        assert!(estimate.indices_bytes > 0 && estimate.matrix_bytes > 0 && estimate.workspace_bytes > 0);
+        assert!(matches!(Factor::with_memory_limit(&upper, 10, estimate.total_bytes() - 1), Err(FactorError::MemoryLimit { entries: 3, .. })));
+        let (bounded, observed) = Factor::with_memory_limit(&upper, 10, estimate.total_bytes()).unwrap();
+        let original = Factor::new(&upper, 10).unwrap();
+        assert_eq!(observed, estimate);
+        assert_eq!(bounded.values, original.values);
+        assert_eq!(bounded.perm, original.perm);
+        assert_eq!(bounded.values.iter().map(|v| v.len() * 8).sum::<usize>(), estimate.values_bytes);
+        let mut x = vec![1.0, 2.0];
+        let mut y = x.clone();
+        bounded.solve(&mut x).unwrap();
+        original.solve(&mut y).unwrap();
+        assert_eq!(x, y);
+        // With room for symbolic work but no numeric storage, memory wins over the bad pivot.
+        let bad = UpperColumns::from_symmetric(&dense_to_csr(&[vec![-1.0]]));
+        assert!(matches!(Factor::with_memory_limit(&bad, 10, 0), Err(FactorError::MemoryLimit { .. })));
+        assert!(matches!(Factor::with_memory_limit(&upper, 2, usize::MAX), Err(FactorError::TooLarge { .. })));
+    }
+
+    #[test]
+    fn memory_estimates_fail_closed_on_overflow() {
+        let m = FactorMemory { entries: 1, values_bytes: usize::MAX, indices_bytes: 1, matrix_bytes: 0, workspace_bytes: 0 };
+        assert_eq!(m.total_bytes(), usize::MAX);
+        assert!(m.check(usize::MAX).is_err());
+        assert_eq!(products_bytes(usize::MAX, usize::MAX, usize::MAX), usize::MAX);
+    }
+
+    #[test]
+    fn symmetric_memory_budget_keeps_auto_and_indefinite_results() {
+        use crate::ldlt::{Kind, Symmetric};
+        let a = UpperColumns::from_symmetric(&dense_to_csr(&[vec![0.0, 1.0], vec![1.0, 0.0]]));
+        for kind in [Kind::Auto, Kind::Indefinite] {
+            assert!(matches!(Symmetric::with_memory_limit(&a, 10, kind, 0), Err(FactorError::MemoryLimit { .. })));
+            let (bounded, estimate) = Symmetric::with_memory_limit(&a, 10, kind, 1_000_000).unwrap();
+            let original = Symmetric::new(&a, 10, kind).unwrap();
+            assert_eq!(bounded.entries(), estimate.entries);
+            let mut x = vec![2.0, 3.0];
+            let mut y = x.clone();
+            bounded.solve(&mut x).unwrap();
+            original.solve(&mut y).unwrap();
+            assert_eq!(x, y);
+            assert_eq!(x, vec![3.0, 2.0]);
+        }
+    }
 
     /// [`products`] one output column at a time, its sum over k in order: the reference the
     /// micro-tiles reorganise.
@@ -1379,8 +1542,11 @@ mod tests {
         let widest = (0..supernodes).map(|s| one.structure.cols(s).len()).max().unwrap();
         assert!(widest > 2 * PANEL, "a supernode spans panels: {widest}");
         check_solve(&csr, &one, 1e-12);
+        let estimate = Factor::estimate_memory(&upper, usize::MAX).unwrap();
         for threads in [2, 7] {
-            let other = parallel::with_threads(threads, || Factor::new(&upper, usize::MAX)).unwrap();
+            let (other, measured) =
+                parallel::with_threads(threads, || Factor::with_memory_limit(&upper, usize::MAX, estimate.total_bytes())).unwrap();
+            assert_eq!(measured, estimate, "the allocation estimate is independent of scheduling");
             assert!(one.values.iter().flatten().zip(other.values.iter().flatten()).all(|(a, b)| a.to_bits() == b.to_bits()), "{threads} threads");
         }
     }

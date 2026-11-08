@@ -441,6 +441,29 @@ pub enum Symmetric {
 }
 
 impl Symmetric {
+    /// Real symmetric factorization under a factor-only byte budget. The caller reserves
+    /// model, CSR matrices, results and iteration vectors separately; numeric order is unchanged.
+    pub fn with_memory_limit(
+        a: &UpperColumns,
+        max_entries: usize,
+        kind: Kind,
+        max_bytes: usize,
+    ) -> std::result::Result<(Symmetric, crate::cholesky::FactorMemory), FactorError> {
+        let symbolic = Symbolic::new(a, max_entries)?;
+        let estimate = symbolic.memory_estimate(a);
+        estimate.check(max_bytes)?;
+        let factor = match kind {
+            Kind::Definite => Factor::from_symbolic(&symbolic).map(Symmetric::Cholesky),
+            Kind::Indefinite => LdltFactor::from_symbolic(&symbolic).map(Symmetric::Indefinite),
+            Kind::Auto => match Factor::from_symbolic(&symbolic) {
+                Ok(f) => Ok(Symmetric::Cholesky(f)),
+                Err(FactorError::NotPositiveDefinite { .. }) => LdltFactor::from_symbolic(&symbolic).map(Symmetric::Indefinite),
+                Err(e) => Err(e),
+            },
+        }?;
+        Ok((factor, estimate))
+    }
+
     pub fn new(a: &UpperColumns, max_entries: usize, kind: Kind) -> std::result::Result<Symmetric, FactorError> {
         match kind {
             Kind::Definite => Factor::new(a, max_entries).map(Symmetric::Cholesky),

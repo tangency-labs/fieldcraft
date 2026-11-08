@@ -307,6 +307,7 @@ fn prescribed(model: &Model, resolved: &Resolved, mesh: &HeatMesh, step: &Step) 
 fn factor(a: &Csr, limits: &Limits, mesh: &HeatMesh, eqs: &Reduction) -> Result<Factor> {
     Factor::new(&UpperColumns::from_symmetric(a), limits.max_factor_entries).map_err(|e| match e {
         FactorError::TooLarge { entries, limit } => Error::factor_limit(entries, limit),
+        FactorError::MemoryLimit { entries, estimated_bytes, limit_bytes } => Error::Limit(format!("factorization needs {entries} entries; estimated factor storage including indices, matrices and workspace is {estimated_bytes} bytes, exceeding factor budget {limit_bytes} bytes")),
         FactorError::OutOfMemory { entries } => Error::Limit(format!("not enough memory for the factorization ({entries} entries)")),
         FactorError::Internal(what) => Error::Internal(what),
         FactorError::Cancelled => Error::Model(fieldcraft_model::Error::Cancelled),

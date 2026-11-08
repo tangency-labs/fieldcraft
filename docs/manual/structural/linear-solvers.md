@@ -352,3 +352,24 @@ CI on any change of a frozen result beyond its band (10⁻⁹ of the value).
 - J. W. H. Liu. *The multifrontal method for sparse matrix solution: theory and practice.* SIAM Review 34(1):82–109, 1992.
 - E. Anderson et al. *LAPACK Users' Guide.* SIAM, 1999.
 - N. J. Higham. *Accuracy and Stability of Numerical Algorithms*, 2nd ed. SIAM, 2002.
+
+### Factor-only byte budgets (library API)
+
+`cholesky::Factor::estimate_memory` analyzes the actual symbolic pattern and reports factor
+values, index storage, upper/reordered matrix storage and workspace separately.
+`Factor::with_memory_limit` and `ldlt::Symmetric::with_memory_limit` refuse an insufficient
+factor budget before allocating numeric values, while retaining the independent entry cap.
+The real LDLᵀ pivot buffers are included; this API does not estimate native complex factors.
+
+Workspace estimates count the largest products/solve buffers per scheduled subtree, sum
+subtrees that may run concurrently, and compare with the sequential top and symbolic phases.
+Indices use actual vector capacities, including the structure copied into the returned factor.
+Saturating byte arithmetic is rejected rather than accepted as a small wrapped estimate.
+The existing constructors and their floating-point operation order are unchanged.
+
+This budget covers the factorization only, **not the process**. The caller must separately
+reserve its full and reduced CSR matrices, model, retained results and Lanczos basis before
+assigning the remaining budget. Symbolic storage is still allocated for the estimate; the
+numeric budget check is not a pre-assembly memory guard. Allocator overhead and RSS are not
+measured by this API. Whole-solve `max_memory_gib` command admission remains pending; the
+existing command defaults and ceilings still apply.

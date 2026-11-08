@@ -284,6 +284,9 @@ pub(crate) fn factor_symmetric(a: &Csr, limits: &Limits, kind: Kind) -> std::res
 pub(crate) fn factor_error(e: FactorError, mesh: &Mesh, reduction: &Reduction) -> Error {
     match e {
         FactorError::TooLarge { entries, limit } => Error::factor_limit(entries, limit),
+        FactorError::MemoryLimit { entries, estimated_bytes, limit_bytes } => Error::Limit(format!(
+            "factorization needs {entries} entries; estimated factor storage including indices, matrices and workspace is {estimated_bytes} bytes, exceeding factor budget {limit_bytes} bytes"
+        )),
         FactorError::OutOfMemory { entries } => Error::Limit(format!("not enough memory for the factorization ({entries} entries)")),
         FactorError::Internal(what) => Error::Internal(what),
         FactorError::Cancelled => Error::Model(fieldcraft_model::Error::Cancelled),
