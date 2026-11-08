@@ -678,6 +678,14 @@ pub static CATALOGUE: &[Capability] = &[
         &["solve.sensitivity.frequency", "solve.sensitivity.harmonic"],
     ),
     ready_more(
+        "observations.import",
+        "Measured Observations",
+        Solve,
+        "Design studies",
+        "Import measured modal frequencies from CSV or UFF with explicit pairing and uncertainty; read raw complex UFF data in the drop-down",
+        &["observations.read"],
+    ),
+    ready_more(
         "solve.inverse.frequency",
         "Identify Parameters",
         Solve,

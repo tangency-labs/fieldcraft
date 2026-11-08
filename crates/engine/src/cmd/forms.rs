@@ -2921,6 +2921,25 @@ pub const REACTIONS: &[Field] = &[
         .help("Nonlinear static steps: the frame (converged increment) whose reactions to sum; the final state when empty."),
 ];
 
+pub const OBSERVATIONS_READ: &[Field] = &[
+    path("path", "UFF file", false).req().help("ASCII datasets 15,55,58; raw values retain file units."),
+    choice("format", "Format", &[("uff", "UFF"), ("accelerance_csv", "Accelerance CSV")])
+        .help("UFF: datasets 15, 55 and 58 as written. Accelerance CSV: frequency, real and imaginary accelerance in mm/s² per N.")
+        .def("\"uff\""),
+];
+pub const OBSERVATIONS_IMPORT: &[Field] = &[
+    path("path", "Measurement file", false).req().help("Measured modal table (CSV), ASCII UFF or accelerance CSV."),
+    choice("format", "Format", &[("csv", "CSV"), ("uff", "UFF"), ("accelerance_csv", "Accelerance CSV")])
+        .help("CSV: columns mode,frequency_hz[,damping_ratio][,sigma_hz]. UFF: dataset 55 normal-mode frequencies. Accelerance CSV is returned as measured, without observations.")
+        .def("\"csv\""),
+    text("step", "Frequency step").req().help("The frequency step whose computed modes the observations refer to."),
+    json("mode_indices", "Computed mode indices").req().help("One explicit zero-based solver index per measured row."),
+    positive("sigma_hz", "Fallback standard deviation (Hz)", D::None)
+        .help("Explicit SI Hz; file sigma takes precedence. An assumed weight is not measured uncertainty."),
+    json("sensors", "Sensors (explicit SI)").help("{id,xyz_m,direction_global}; global signed unit directions."),
+    positive("max_distance_m", "Maximum mapping distance (m)", D::None).help("Explicit SI metres, required with sensors."),
+];
+
 pub const INVERSE_JOINT: &[Field] = &[
     json("modal_observations", "Measured mode groups").help("Real sensor-space vectors, reference normalization and explicit MAC/assignment thresholds; matched_frequency and mode_shape refer to group id."),
     json("parameters", "Parameters (explicit SI)").req().help("2–3 unique parameter identities with lower_si, upper_si and positive scale_si."),

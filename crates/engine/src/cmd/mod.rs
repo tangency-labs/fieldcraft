@@ -38,6 +38,7 @@ mod model;
 pub(crate) mod names;
 pub(crate) mod node_move;
 pub(crate) mod nodes;
+mod observations;
 pub(crate) mod octree;
 mod orphan;
 mod path;
@@ -74,6 +75,8 @@ pub static ALL: &[CommandSpec] = &[
     foundation::CREATE,
     foundation::EDIT,
     foundation::DELETE,
+    observations::IMPORT,
+    observations::READ,
     library::LIST,
     library::ADD,
     geometry::OPEN,
