@@ -57,6 +57,7 @@ struct Evaluation {
     gradient: f64,
     information: f64,
     data_information: f64,
+    whitened_residual_norm: f64,
 }
 
 /// Fit one existing material/section/support property to the frequency step's
@@ -134,12 +135,14 @@ pub(super) fn fit_scalar(
         let mut cost = 0.0;
         let mut gradient = 0.0;
         let mut data_information = 0.0;
+        let mut whitened_residual_squared = 0.0;
         let mut predicted = Vec::new();
         let mut residuals = Vec::new();
         for (((prediction, derivative), obs), s) in values.iter().zip(&fit.observed).zip(sigma) {
             let r = (prediction - obs) / s;
             let j = derivative * scale / s;
             cost += r * r;
+            whitened_residual_squared += r * r;
             gradient += j * r;
             data_information += j * j;
             predicted.push(*prediction);
@@ -156,7 +159,15 @@ pub(super) fn fit_scalar(
         {
             return Err(Error::Invalid("frequency fit has non-finite values or no local parameter information".into()));
         }
-        Ok(Evaluation { predicted, residuals, cost, gradient, information: data_information + fit.regularization, data_information })
+        Ok(Evaluation {
+            predicted,
+            residuals,
+            cost,
+            gradient,
+            information: data_information + fit.regularization,
+            data_information,
+            whitened_residual_norm: whitened_residual_squared.sqrt(),
+        })
     };
     let mut value = initial;
     let mut current = evaluate(value)?;
@@ -164,7 +175,7 @@ pub(super) fn fit_scalar(
     for iteration in 0..=fit.max_iterations {
         let at_lower = value == fit.lower;
         let at_upper = value == fit.upper;
-        let stationary = current.gradient.abs() / current.information.sqrt() <= STATIONARITY_TOLERANCE;
+        let stationary = current.gradient.abs() / current.information.sqrt() <= STATIONARITY_TOLERANCE * current.whitened_residual_norm.max(1.0);
         if stationary || (at_lower && current.gradient >= 0.0) || (at_upper && current.gradient <= 0.0) {
             let at_bound = at_lower || at_upper;
             let confidence_interval = if fit.standard_deviation.is_some() && !at_bound && fit.regularization == 0.0 {
