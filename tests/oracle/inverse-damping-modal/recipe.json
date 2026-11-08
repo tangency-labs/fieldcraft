@@ -1,0 +1,268 @@
+[
+  {
+    "command": "model.units",
+    "params": {
+      "system": "m-kg-s-N-Pa"
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 1,
+      "xyz": [
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "tip",
+      "nodes": [
+        1
+      ]
+    }
+  },
+  {
+    "command": "model.mass.create",
+    "params": {
+      "name": "m",
+      "target": {
+        "set": "tip"
+      },
+      "mass": 1
+    }
+  },
+  {
+    "command": "model.spring.create",
+    "params": {
+      "name": "k",
+      "type": "spring",
+      "first": {
+        "set": "tip"
+      },
+      "direction": {
+        "dof": 1
+      },
+      "stiffness": 4
+    }
+  },
+  {
+    "command": "model.boundary_condition.create",
+    "params": {
+      "name": "guide",
+      "type": "displacement",
+      "target": {
+        "set": "tip"
+      },
+      "values": [
+        null,
+        0,
+        0,
+        null,
+        null,
+        null
+      ]
+    }
+  },
+  {
+    "command": "model.load.create",
+    "params": {
+      "name": "force",
+      "type": "force",
+      "target": {
+        "set": "tip"
+      },
+      "vector": [
+        1,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.step.create",
+    "params": {
+      "name": "Load",
+      "procedure": {
+        "type": "static"
+      },
+      "boundary_conditions": [
+        "guide"
+      ],
+      "loads": [
+        "force"
+      ]
+    }
+  },
+  {
+    "command": "model.step.create",
+    "params": {
+      "name": "Modes",
+      "procedure": {
+        "type": "frequency",
+        "modes": 1
+      },
+      "boundary_conditions": [
+        "guide"
+      ]
+    }
+  },
+  {
+    "command": "model.step.create",
+    "params": {
+      "name": "H",
+      "procedure": {
+        "type": "harmonic",
+        "frequencies": [
+          0.3183098861837907
+        ],
+        "method": {
+          "type": "direct"
+        },
+        "damping": {
+          "loss_factor": 0.5
+        }
+      },
+      "boundary_conditions": [
+        "guide"
+      ],
+      "loads": [
+        "force"
+      ]
+    }
+  },
+  {
+    "command": "model.step.create",
+    "params": {
+      "name": "HM",
+      "procedure": {
+        "type": "harmonic",
+        "frequencies": [
+          0.3183098861837907
+        ],
+        "method": {
+          "type": "modal",
+          "modes": 1
+        },
+        "damping": {
+          "loss_factor": 0.5
+        }
+      },
+      "boundary_conditions": [
+        "guide"
+      ],
+      "loads": [
+        "force"
+      ]
+    }
+  },
+  {
+    "id": "H-alpha",
+    "command": "solve.sensitivity.harmonic",
+    "params": {
+      "step": "H",
+      "parameter": {
+        "type": "damping",
+        "step": "H",
+        "component": {
+          "kind": "alpha"
+        }
+      },
+      "node": 1
+    }
+  },
+  {
+    "id": "H-beta",
+    "command": "solve.sensitivity.harmonic",
+    "params": {
+      "step": "H",
+      "parameter": {
+        "type": "damping",
+        "step": "H",
+        "component": {
+          "kind": "beta"
+        }
+      },
+      "node": 1
+    }
+  },
+  {
+    "id": "H-loss_factor",
+    "command": "solve.sensitivity.harmonic",
+    "params": {
+      "step": "H",
+      "parameter": {
+        "type": "damping",
+        "step": "H",
+        "component": {
+          "kind": "loss_factor"
+        }
+      },
+      "node": 1
+    }
+  },
+  {
+    "id": "HM-alpha",
+    "command": "solve.sensitivity.harmonic",
+    "params": {
+      "step": "HM",
+      "parameter": {
+        "type": "damping",
+        "step": "HM",
+        "component": {
+          "kind": "alpha"
+        }
+      },
+      "node": 1
+    }
+  },
+  {
+    "id": "HM-beta",
+    "command": "solve.sensitivity.harmonic",
+    "params": {
+      "step": "HM",
+      "parameter": {
+        "type": "damping",
+        "step": "HM",
+        "component": {
+          "kind": "beta"
+        }
+      },
+      "node": 1
+    }
+  },
+  {
+    "id": "HM-loss_factor",
+    "command": "solve.sensitivity.harmonic",
+    "params": {
+      "step": "HM",
+      "parameter": {
+        "type": "damping",
+        "step": "HM",
+        "component": {
+          "kind": "loss_factor"
+        }
+      },
+      "node": 1
+    }
+  },
+  {
+    "id": "ratio",
+    "command": "solve.sensitivity.harmonic",
+    "params": {
+      "step": "HM",
+      "parameter": {
+        "type": "damping",
+        "step": "HM",
+        "component": {
+          "kind": "modal_ratio",
+          "mode": 0
+        }
+      },
+      "node": 1
+    }
+  }
+]

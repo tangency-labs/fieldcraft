@@ -1,0 +1,72 @@
+{
+  "title": "Measured modal component and paired frequency jointly identify two springs",
+  "kind": "theory",
+  "source": "Independent closed-form matrix K=[[k1+1,-1],[-1,k2+1]], M=I. At k1=k2=5 eigenvalues5,7; normalized shapes[1,1],[1,-1]. Nelson (1976), AIAA14(9):1201-1205, doi:10.2514/3.7211; sensor-space MAC as Allemang (2003), Sound and Vibration37(8):14-23.",
+  "quantities": [
+    {
+      "id": "k1",
+      "quantity": "k1",
+      "measure": {
+        "from": "fit",
+        "pointer": "/estimate_si/0"
+      },
+      "value": 5,
+      "tolerance": {
+        "relative": 1e-06
+      },
+      "reason": "Independent 2DOF oscillator eigenpairs: symmetric ground springs5 plus coupling1 gives eigenvalues5,7 and shape ratios+1,-1."
+    },
+    {
+      "id": "k2",
+      "quantity": "k2",
+      "measure": {
+        "from": "fit",
+        "pointer": "/estimate_si/1"
+      },
+      "value": 5,
+      "tolerance": {
+        "relative": 1e-06
+      },
+      "reason": "Independent 2DOF oscillator eigenpairs: symmetric ground springs5 plus coupling1 gives eigenvalues5,7 and shape ratios+1,-1."
+    },
+    {
+      "id": "shape",
+      "quantity": "shape",
+      "measure": {
+        "from": "fit",
+        "pointer": "/predicted_si/1"
+      },
+      "value": 1,
+      "tolerance": {
+        "relative": 1e-06
+      },
+      "reason": "Independent 2DOF oscillator eigenpairs: symmetric ground springs5 plus coupling1 gives eigenvalues5,7 and shape ratios+1,-1."
+    },
+    {
+      "id": "mac",
+      "quantity": "mac",
+      "measure": {
+        "from": "fit",
+        "pointer": "/modal_pairings/0/pairing/pairs/0/mac"
+      },
+      "value": 1,
+      "tolerance": {
+        "relative": 1e-06
+      },
+      "reason": "Independent 2DOF oscillator eigenpairs: symmetric ground springs5 plus coupling1 gives eigenvalues5,7 and shape ratios+1,-1."
+    },
+    {
+      "id": "rank",
+      "quantity": "rank",
+      "measure": {
+        "from": "fit",
+        "pointer": "/rank"
+      },
+      "value": 2,
+      "tolerance": {
+        "relative": 1e-06
+      },
+      "reason": "Independent 2DOF oscillator eigenpairs: symmetric ground springs5 plus coupling1 gives eigenvalues5,7 and shape ratios+1,-1."
+    }
+  ]
+}

@@ -1,0 +1,98 @@
+{
+  "title": "Analytic step damping and full-basis modal derivatives",
+  "kind": "theory",
+  "source": "Scalar oscillator k=4 N/m, m=1 kg, eta=0.5, F=1 N, omega=2 rad/s. Z=2i; derivative=-Zprime/Z^2. Rayleigh Zalpha=i omega m, Zbeta=i omega k, Zeta=i k. Modal Zzeta=2i omega omega_n. Independent closed-form algebra; modal projection: Vandiver MIT 2.003SC lectures24-25 (2011).",
+  "quantities": [
+    {
+      "id": "H-alpha",
+      "quantity": "imaginary displacement derivative",
+      "measure": {
+        "from": "H-alpha",
+        "pointer": "/frames/0/direct/1"
+      },
+      "value": 0.5,
+      "tolerance": {
+        "relative": 1e-08
+      },
+      "reason": "Exact scalar impedance derivative -Zprime/Z^2, full modal basis."
+    },
+    {
+      "id": "H-beta",
+      "quantity": "imaginary displacement derivative",
+      "measure": {
+        "from": "H-beta",
+        "pointer": "/frames/0/direct/1"
+      },
+      "value": 2.0,
+      "tolerance": {
+        "relative": 1e-08
+      },
+      "reason": "Exact scalar impedance derivative -Zprime/Z^2, full modal basis."
+    },
+    {
+      "id": "H-loss_factor",
+      "quantity": "imaginary displacement derivative",
+      "measure": {
+        "from": "H-loss_factor",
+        "pointer": "/frames/0/direct/1"
+      },
+      "value": 1.0,
+      "tolerance": {
+        "relative": 1e-08
+      },
+      "reason": "Exact scalar impedance derivative -Zprime/Z^2, full modal basis."
+    },
+    {
+      "id": "HM-alpha",
+      "quantity": "imaginary displacement derivative",
+      "measure": {
+        "from": "HM-alpha",
+        "pointer": "/frames/0/direct/1"
+      },
+      "value": 0.5,
+      "tolerance": {
+        "relative": 1e-08
+      },
+      "reason": "Exact scalar impedance derivative -Zprime/Z^2, full modal basis."
+    },
+    {
+      "id": "HM-beta",
+      "quantity": "imaginary displacement derivative",
+      "measure": {
+        "from": "HM-beta",
+        "pointer": "/frames/0/direct/1"
+      },
+      "value": 2.0,
+      "tolerance": {
+        "relative": 1e-08
+      },
+      "reason": "Exact scalar impedance derivative -Zprime/Z^2, full modal basis."
+    },
+    {
+      "id": "HM-loss_factor",
+      "quantity": "imaginary displacement derivative",
+      "measure": {
+        "from": "HM-loss_factor",
+        "pointer": "/frames/0/direct/1"
+      },
+      "value": 1.0,
+      "tolerance": {
+        "relative": 1e-08
+      },
+      "reason": "Exact scalar impedance derivative -Zprime/Z^2, full modal basis."
+    },
+    {
+      "id": "ratio",
+      "quantity": "imaginary displacement derivative per modal ratio",
+      "measure": {
+        "from": "ratio",
+        "pointer": "/frames/0/direct/1"
+      },
+      "value": 2.0,
+      "tolerance": {
+        "relative": 1e-08
+      },
+      "reason": "Zprime=i 2 omega omega_n =8i at omega=omega_n=2."
+    }
+  ]
+}

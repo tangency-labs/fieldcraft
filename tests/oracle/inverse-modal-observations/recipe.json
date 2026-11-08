@@ -1,0 +1,242 @@
+[
+  {
+    "command": "model.units",
+    "params": {
+      "system": "m-kg-s-N-Pa"
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 1,
+      "xyz": [
+        1,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "n1",
+      "nodes": [
+        1
+      ]
+    }
+  },
+  {
+    "command": "model.mass.create",
+    "params": {
+      "name": "m1",
+      "target": {
+        "set": "n1"
+      },
+      "mass": 1
+    }
+  },
+  {
+    "command": "model.spring.create",
+    "params": {
+      "name": "k1",
+      "type": "spring",
+      "first": {
+        "set": "n1"
+      },
+      "direction": {
+        "dof": 1
+      },
+      "stiffness": 4
+    }
+  },
+  {
+    "command": "model.boundary_condition.create",
+    "params": {
+      "name": "g1",
+      "type": "displacement",
+      "target": {
+        "set": "n1"
+      },
+      "values": [
+        null,
+        0,
+        0,
+        null,
+        null,
+        null
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 2,
+      "xyz": [
+        2,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "n2",
+      "nodes": [
+        2
+      ]
+    }
+  },
+  {
+    "command": "model.mass.create",
+    "params": {
+      "name": "m2",
+      "target": {
+        "set": "n2"
+      },
+      "mass": 1
+    }
+  },
+  {
+    "command": "model.spring.create",
+    "params": {
+      "name": "k2",
+      "type": "spring",
+      "first": {
+        "set": "n2"
+      },
+      "direction": {
+        "dof": 1
+      },
+      "stiffness": 4
+    }
+  },
+  {
+    "command": "model.boundary_condition.create",
+    "params": {
+      "name": "g2",
+      "type": "displacement",
+      "target": {
+        "set": "n2"
+      },
+      "values": [
+        null,
+        0,
+        0,
+        null,
+        null,
+        null
+      ]
+    }
+  },
+  {
+    "command": "model.spring.create",
+    "params": {
+      "name": "c",
+      "type": "spring",
+      "first": {
+        "set": "n1"
+      },
+      "second": {
+        "set": "n2"
+      },
+      "direction": {
+        "dof": 1
+      },
+      "stiffness": 1
+    }
+  },
+  {
+    "command": "model.step.create",
+    "params": {
+      "name": "F",
+      "procedure": {
+        "type": "frequency",
+        "modes": 2
+      },
+      "boundary_conditions": [
+        "g1",
+        "g2"
+      ]
+    }
+  },
+  {
+    "id": "fit",
+    "command": "solve.inverse.joint",
+    "params": {
+      "parameters": [
+        {
+          "parameter": {
+            "type": "spring_stiffness",
+            "name": "k1"
+          },
+          "lower_si": 1,
+          "upper_si": 9,
+          "scale_si": 4
+        },
+        {
+          "parameter": {
+            "type": "spring_stiffness",
+            "name": "k2"
+          },
+          "lower_si": 1,
+          "upper_si": 9,
+          "scale_si": 4
+        }
+      ],
+      "observations": [
+        {
+          "response": {
+            "kind": "matched_frequency",
+            "group": "g",
+            "measured_mode": 0
+          },
+          "value_si": 0.3558812717085886,
+          "standard_deviation_si": 0.001
+        },
+        {
+          "response": {
+            "kind": "mode_shape",
+            "group": "g",
+            "measured_mode": 0,
+            "sensor": 1
+          },
+          "value_si": 1,
+          "standard_deviation_si": 0.001
+        }
+      ],
+      "modal_observations": [
+        {
+          "id": "g",
+          "step": "F",
+          "sensors": [
+            {
+              "node": 1,
+              "dof": 1
+            },
+            {
+              "node": 2,
+              "dof": 1
+            }
+          ],
+          "measured_modes": [
+            [
+              1,
+              1
+            ],
+            [
+              1,
+              -1
+            ]
+          ],
+          "min_mac": 0.9,
+          "min_assignment_margin": 0.01,
+          "normalization": {
+            "kind": "reference",
+            "reference_sensor": 0
+          }
+        }
+      ]
+    }
+  }
+]
