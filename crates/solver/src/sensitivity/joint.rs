@@ -259,6 +259,8 @@ pub fn fit_joint(initial: &[f64], fit: &JointFit, response: impl Fn(&[f64]) -> R
     let mut x = initial.to_vec();
     let mut current = evaluate(&x)?;
     let mut damping = INITIAL_DAMPING;
+    let mut floating_point_plateau = None;
+    let mut normalized_gradient = f64::INFINITY;
 
     for iteration in 0..=fit.max_iterations {
         let mut projected = current.gradient.clone();
@@ -280,7 +282,8 @@ pub fn fit_joint(initial: &[f64], fit: &JointFit, response: impl Fn(&[f64]) -> R
         } else {
             diagonal_norm
         };
-        if norm < GRADIENT_TOLERANCE {
+        normalized_gradient = norm;
+        if floating_point_plateau.is_some() || norm < GRADIENT_TOLERANCE {
             let at_bound = x.iter().zip(&fit.parameters).any(|(x, p)| *x == p.lower_si || *x == p.upper_si);
             let chi = if n == 2 { 5.991464547107979 } else { 7.814727903251179 };
             let covariance = (!at_bound && fit.regularization == 0.0).then(|| {
@@ -299,7 +302,31 @@ pub fn fit_joint(initial: &[f64], fit: &JointFit, response: impl Fn(&[f64]) -> R
                     })
                     .collect()
             });
-            return Ok(JointEstimate{modal_pairings:Vec::new(),parameters:fit.parameters.iter().map(|p|p.parameter.clone()).collect(),estimate_si:x,predicted_si:current.predicted,residuals_si:current.residual,jacobian_si:current.jac,parameter_scales_si:fit.parameters.iter().map(|p|p.scale_si).collect(),singular_values_scaled:current.singular,rank:n,condition_number:current.condition,covariance_si:covariance,joint_projection_intervals_si:intervals,confidence_level:0.95,joint_chi_square:chi,objective:current.cost,evaluations: iteration + 1,iterations:iteration,at_bound,warnings:vec!["Local data-only rank diagnosis; not global identifiability. Covariance is a known-independent-Gaussian-error linearization. Joint projection intervals are projections of one 95% ellipsoid, not marginal intervals. No covariance for regularization or bound-active estimates.".into()]});
+            let mut warnings = vec!["Local data-only rank diagnosis; not global identifiability. Covariance is a known-independent-Gaussian-error linearization. Joint projection intervals are projections of one 95% ellipsoid, not marginal intervals. No covariance for regularization or bound-active estimates.".into()];
+            if let Some(decrease) = floating_point_plateau {
+                warnings.push(format!("Floating-point plateau after rejected step: gradient criterion not met, but the predicted relative decrease is at most sqrt(machine epsilon), below finite-element evaluation noise; normalized_gradient={norm}, predicted_decrease={decrease}, objective={}", current.cost));
+            }
+            return Ok(JointEstimate {
+                modal_pairings: Vec::new(),
+                parameters: fit.parameters.iter().map(|p| p.parameter.clone()).collect(),
+                estimate_si: x,
+                predicted_si: current.predicted,
+                residuals_si: current.residual,
+                jacobian_si: current.jac,
+                parameter_scales_si: fit.parameters.iter().map(|p| p.scale_si).collect(),
+                singular_values_scaled: current.singular,
+                rank: n,
+                condition_number: current.condition,
+                covariance_si: covariance,
+                joint_projection_intervals_si: intervals,
+                confidence_level: 0.95,
+                joint_chi_square: chi,
+                objective: current.cost,
+                evaluations: iteration + 1,
+                iterations: iteration,
+                at_bound,
+                warnings,
+            });
         }
         if iteration == fit.max_iterations {
             break;
@@ -317,10 +344,24 @@ pub fn fit_joint(initial: &[f64], fit: &JointFit, response: impl Fn(&[f64]) -> R
             current = candidate;
             damping = (damping / 3.0).max(MIN_DAMPING);
         } else {
+            // Use the undamped model: escalating LM damping must never manufacture convergence.
+            // With a prior, data covariance is not the inverse of the full information matrix.
+            let direction = if fit.regularization == 0.0 {
+                current.covariance.iter().map(|row| row.iter().zip(&current.gradient).map(|(c, g)| c * g).sum()).collect()
+            } else {
+                solve(current.info.clone(), current.gradient.clone())?
+            };
+            let decrease = 0.5 * current.gradient.iter().zip(direction).map(|(g, d)| g * d).sum::<f64>();
+            if decrease.is_finite() && decrease >= 0.0 && decrease <= f64::EPSILON.sqrt() * current.cost {
+                floating_point_plateau = Some(decrease);
+            }
             damping = (damping * 10.0).min(MAX_DAMPING);
         }
     }
-    Err(Error::NotConverged(format!("joint inverse iteration cap; objective {}", current.cost)))
+    Err(Error::NotConverged(format!(
+        "joint inverse iteration cap; parameters_si={x:?}, normalized_gradient={normalized_gradient}, damping={damping}, objective={}",
+        current.cost
+    )))
 }
 
 /// Assemble Jacobian columns from the existing model derivative implementations.
@@ -578,4 +619,75 @@ pub fn inverse_joint_uniform_material(model: &Model, fit: &JointFit, limits: &Li
     })?;
     r.warnings.push(format!("Exact homogeneous E/rho identities after {} actual FE static baseline solves and {} actual modal baseline solves. Optimizer evaluations are not additional FE solves.",statics.len(),modal.len()));
     Ok(r)
+}
+
+#[cfg(test)]
+mod platform_tests {
+    use super::*;
+    use fieldcraft_model::design::MaterialConstant;
+    fn run(initial: &[f64], observations: &[f64], bias: f64, cap: usize) -> Result<JointEstimate> {
+        let parameters = [MaterialConstant::Young, MaterialConstant::Density]
+            .into_iter()
+            .map(|constant| JointParameter {
+                parameter: Parameter::Material { name: "m".into(), constant },
+                lower_si: 0.5,
+                upper_si: 2.5,
+                scale_si: 1.0,
+            })
+            .collect();
+        let fit = JointFit {
+            parameters,
+            observations: observations
+                .iter()
+                .enumerate()
+                .map(|(mode, &value_si)| JointObservation {
+                    response: JointResponse::Frequency { step: "F".into(), mode },
+                    value_si,
+                    standard_deviation_si: 1.0,
+                })
+                .collect(),
+            regularization: 0.0,
+            max_iterations: cap,
+            relative_increment: 1e-5,
+        };
+        fit_joint(initial, &fit, |x| {
+            Ok((vec![x[0], x[0], x[1], x[1]], vec![vec![1.0 + bias, 0.0], vec![1.0, 0.0], vec![0.0, 1.0 + bias], vec![0.0, 1.0]]))
+        })
+    }
+    #[test]
+    fn joint_zero_residual_snapshot() {
+        let r = run(&[0.9, 1.8], &[1.0, 1.0, 2.0, 2.0], 0.0, 32).unwrap();
+        assert_eq!(
+            (r.estimate_si.iter().map(|x| x.to_bits()).collect::<Vec<_>>(), r.objective.to_bits(), r.iterations, r.evaluations),
+            (vec![4607182418500177320, 4611686018127547816], 4398033392809034205, 2, 3)
+        );
+        eprintln!(
+            "JOINT_ZERO {:?}",
+            (r.estimate_si.iter().map(|x| x.to_bits()).collect::<Vec<_>>(), r.objective.to_bits(), r.iterations, r.evaluations)
+        );
+        assert!(!r.warnings.iter().any(|w| w.contains("Floating-point plateau")));
+    }
+    #[test]
+    fn joint_derivative_bias_platform() {
+        let r = run(&[1.0, 2.0], &[-49.0, 51.0, -48.0, 52.0], 5e-8, 1).unwrap();
+        for (i, &center) in [1.0, 2.0].iter().enumerate() {
+            let scanned = (-100..=100)
+                .map(|k| center + f64::from(k) * 1e-4)
+                .min_by(|a, b| {
+                    let cost = |x: f64| (x - center + 50.0).powi(2) + (x - center - 50.0).powi(2);
+                    cost(*a).total_cmp(&cost(*b))
+                })
+                .unwrap();
+            assert_eq!(r.estimate_si[i].to_bits(), scanned.to_bits());
+        }
+        assert_eq!((r.iterations, r.evaluations), (1, 2));
+        assert!(r.covariance_si.is_some());
+        assert!(r.warnings.iter().any(|w| w.contains("Floating-point plateau") && w.contains("normalized_gradient=")));
+        eprintln!("JOINT_PLATFORM estimate={:?} objective={} {:?}", r.estimate_si, r.objective, r.warnings);
+        let error = run(&[0.9, 1.8], &[1.0, 1.0, 2.0, 2.0], 0.0, 1).unwrap_err().to_string();
+        for key in ["parameters_si=", "normalized_gradient=", "damping=", "objective="] {
+            assert!(error.contains(key), "{error}");
+        }
+        assert!(run(&[1.0, 2.0], &[-49.0, 51.0, -48.0, 52.0], 0.1, 32).is_err());
+    }
 }

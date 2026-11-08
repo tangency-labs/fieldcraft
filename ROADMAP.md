@@ -192,6 +192,8 @@ remain outside this modal derivative implementation. A prespecified 200-replicat
 
 Inverse follow-up: selected zero-based frequency observations through free-body spectra; rigid MAC candidate exclusion; explicit measured-mode removal with reports and retained-data rank checks; invocation-local joint harmonic sweep reuse.
 
+Inverse fitting: detect rejected-step floating-point plateaus with undamped predicted decrease; report convergence reason and complete iteration-cap diagnostics.
+
 ## Surface foundations (fusion fork)
 
 Started: the FEM kernel integrates normal and isotropic tangential Winkler coefficients

@@ -172,11 +172,12 @@ pub(super) fn fit_scalar(
     let mut value = initial;
     let mut current = evaluate(value)?;
     let mut damping = INITIAL_DAMPING;
+    let mut floating_point_plateau = false;
     for iteration in 0..=fit.max_iterations {
         let at_lower = value == fit.lower;
         let at_upper = value == fit.upper;
         let stationary = current.gradient.abs() / current.information.sqrt() <= STATIONARITY_TOLERANCE * current.whitened_residual_norm.max(1.0);
-        if stationary || (at_lower && current.gradient >= 0.0) || (at_upper && current.gradient <= 0.0) {
+        if floating_point_plateau || stationary || (at_lower && current.gradient >= 0.0) || (at_upper && current.gradient <= 0.0) {
             let at_bound = at_lower || at_upper;
             let confidence_interval = if fit.standard_deviation.is_some() && !at_bound && fit.regularization == 0.0 {
                 let half = 1.959963984540054 * scale / current.data_information.sqrt();
@@ -193,6 +194,11 @@ pub(super) fn fit_scalar(
                 );
             } else {
                 warnings.push("Confidence interval is a local Gaussian linearization conditional on the model and known independent observation errors; it excludes model discrepancy.".into());
+            }
+            if floating_point_plateau {
+                warnings.push(format!("Floating-point plateau after rejected step: gradient criterion not met, but the predicted relative decrease is at most sqrt(machine epsilon), below finite-element evaluation noise; normalized_gradient={}, predicted_decrease={}, objective={}",
+                    current.gradient.abs() / current.information.sqrt(),
+                    0.5 * (current.gradient / current.information.sqrt()).powi(2), current.cost));
             }
             return Ok(FrequencyEstimate {
                 parameter: parameter.clone(),
@@ -224,12 +230,18 @@ pub(super) fn fit_scalar(
             current = candidate;
             damping = (damping / 3.0).max(MIN_DAMPING);
         } else {
+            // Undamped GN decrease, not the artificially small LM step at large damping.
+            // cost stores the squared whitened residual (including any prior).
+            let decrease = 0.5 * (current.gradient / current.information.sqrt()).powi(2);
+            floating_point_plateau = decrease.is_finite() && decrease <= f64::EPSILON.sqrt() * current.cost;
             damping = (damping * 10.0).min(MAX_DAMPING);
         }
     }
     Err(Error::NotConverged(format!(
-        "frequency inverse reached {} iterations, objective {} at parameter {}",
-        fit.max_iterations, current.cost, value
+        "frequency inverse reached {} iterations; parameter_si={value}, normalized_gradient={}, damping={damping}, objective={}",
+        fit.max_iterations,
+        current.gradient.abs() / current.information.sqrt(),
+        current.cost
     )))
 }
 
@@ -296,4 +308,58 @@ pub fn inverse_frequency_uniform_young(
     result.evaluation_method = "exact_uniform_young_scaling".into();
     result.baseline = Some(baseline);
     Ok(result)
+}
+
+#[cfg(test)]
+mod platform_tests {
+    use super::*;
+    use fieldcraft_model::{Material, design::MaterialConstant};
+    fn run(initial: f64, observations: Vec<f64>, bias: f64, cap: usize) -> Result<FrequencyEstimate> {
+        let mut model = Model::default();
+        model.add_material("m", Material { density: Some(initial), ..Default::default() }).unwrap();
+        let parameter = Parameter::Material { name: "m".into(), constant: MaterialConstant::Density };
+        let fit = FrequencyFit {
+            lower: 0.5,
+            upper: 1.5,
+            observed: observations,
+            mode_indices: None,
+            standard_deviation: Some(vec![1.0; 2]),
+            regularization: 0.0,
+            max_iterations: cap,
+            relative_increment: 1e-5,
+        };
+        fit_scalar(&model, &parameter, &fit, &[1.0; 2], "injected linear response", |m, _| {
+            let x = parameter.value(m)?;
+            Ok(vec![(x, 1.0 + bias), (x, 1.0)])
+        })
+    }
+    #[test]
+    fn scalar_zero_residual_snapshot() {
+        let r = run(0.9, vec![1.0, 1.0], 0.0, 32).unwrap();
+        assert_eq!((r.estimate.to_bits(), r.objective.to_bits(), r.iterations, r.evaluations), (4607182418799984096, 4269563221574156288, 3, 4));
+        eprintln!("SCALAR_ZERO {:?}", (r.estimate.to_bits(), r.objective.to_bits(), r.iterations, r.evaluations));
+        assert!(!r.warnings.iter().any(|w| w.contains("Floating-point plateau")));
+    }
+    #[test]
+    fn scalar_derivative_bias_platform() {
+        let r = run(1.0, vec![-49.0, 51.0], 5e-8, 1).unwrap();
+        let scanned = (-100..=100)
+            .map(|i| 1.0 + f64::from(i) * 1e-4)
+            .min_by(|a, b| {
+                let cost = |x: f64| (x + 49.0).powi(2) + (x - 51.0).powi(2);
+                cost(*a).total_cmp(&cost(*b))
+            })
+            .unwrap();
+        assert_eq!(r.estimate.to_bits(), scanned.to_bits());
+        assert_eq!((r.iterations, r.evaluations), (1, 2));
+        assert!(r.confidence_interval.is_some());
+        assert!(r.warnings.iter().any(|w| w.contains("Floating-point plateau") && w.contains("normalized_gradient=")));
+        eprintln!("SCALAR_PLATFORM estimate={} objective={} {:?}", r.estimate, r.objective, r.warnings);
+        let error = run(0.9, vec![1.0, 1.0], 0.0, 1).unwrap_err().to_string();
+        for key in ["parameter_si=", "normalized_gradient=", "damping=", "objective="] {
+            assert!(error.contains(key), "{error}");
+        }
+        // A strongly wrong derivative must not be excused by repeated LM rejection.
+        assert!(run(1.0, vec![-49.0, 51.0], 0.1, 32).is_err());
+    }
 }
