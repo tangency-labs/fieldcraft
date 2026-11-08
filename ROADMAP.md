@@ -202,3 +202,7 @@ K/C/H matrix export paths. Axial-theory and Navier composite-plate command oracl
 crate regressions, the full oracle and wasm checks pass. Finite-beam bending, the
 remaining rigid-body/limit cases, plate E+k and BASE E+k recovery, and independent
 third-party acceptance remain open; this is not yet a completed foundation milestone.
+
+Static joint identification now groups observations by step and shares each trial
+factorization across parameter columns. A prescribed-motion, zero-foundation-coefficient
+check compares the batched response/Jacobian bit for bit with scalar sensitivities.

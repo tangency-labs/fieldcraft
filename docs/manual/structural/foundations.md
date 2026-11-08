@@ -33,7 +33,10 @@ The design parameter is `{"type":"foundation","name":"Bed","component":"normal"}
 or `"component":"tangential"`. Static, simple-mode frequency and direct harmonic
 sensitivities use exact dK/dk, including at zero stiffness; loss-factor stiffness
 derivatives are retained. Joint identification accepts these parameters together
-with material parameters. Repeated eigenvalues retain the existing sensitivity
+with material parameters. For static observations, each trial shares one baseline
+factorization per step across parameters and observation points; tangent vectors
+retain the same assembled derivatives as scalar sensitivities. This is not a
+uniform-material scaling approximation. Repeated eigenvalues retain the existing sensitivity
 refusal; modal harmonic sensitivities remain outside this branch's scope.
 
 Abaqus export uses `*FOUNDATION` for normal-only undamped support. General linear

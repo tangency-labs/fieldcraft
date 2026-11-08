@@ -40,11 +40,16 @@ pub struct StaticSensitivity {
     pub warnings: Vec<String>,
 }
 
-pub(super) fn perturb(model: &Model, parameter: &Parameter, h: f64) -> Result<(Model, Model)> {
+fn check_increment(model: &Model, parameter: &Parameter, h: f64) -> Result<f64> {
     let value = parameter.value(model)?;
     if !h.is_finite() || h <= 0.0 || value + h == value || value - h == value {
         return Err(Error::Invalid("sensitivity increment must be positive, finite and representable at the parameter value".into()));
     }
+    Ok(value)
+}
+
+pub(super) fn perturb(model: &Model, parameter: &Parameter, h: f64) -> Result<(Model, Model)> {
+    let value = check_increment(model, parameter, h)?;
     if matches!(parameter, Parameter::Foundation { .. }) {
         return Ok((model.clone(), model.clone()));
     }
@@ -66,6 +71,90 @@ pub(super) fn difference(a: &[f64], b: &[f64], h: f64) -> Result<Vec<f64>> {
         return Err(Error::Invalid("non-finite assembled derivative".into()));
     }
     Ok(out)
+}
+
+/// Displacement observations share one factor per step and trial. The tangent equation is
+/// the same as in `static_sensitivity`; no uniform-material scaling identity is assumed.
+pub(super) struct StaticJacobian {
+    pub values: Vec<f64>,
+    pub derivatives: Vec<Vec<f64>>,
+}
+
+pub(super) fn static_jacobian(
+    model: &Model,
+    step_name: &str,
+    parameters: &[(Parameter, f64)],
+    observations: &[StaticObservation],
+    limits: &Limits,
+) -> Result<StaticJacobian> {
+    let resolved = model.resolve()?;
+    let step = model.select_step(Some(step_name), |p| matches!(p, Procedure::Static {}), "linear static")?;
+    let mesh = Mesh::new(model, &resolved, limits.max_dofs)?;
+    let setup = Setup { model, resolved: &resolved, mesh: &mesh, step };
+    cold(&setup)?;
+    let dofs: Vec<_> = observations
+        .iter()
+        .map(|o| {
+            if o.stress_element.is_some() {
+                return Err(Error::NotSupported("batched static Jacobian contains displacement observations only".into()));
+            }
+            let kind = o
+                .dof
+                .checked_sub(1)
+                .and_then(|i| DofKind::from_direction(i as usize))
+                .ok_or_else(|| Error::Invalid("sensitivity dof must be 1..=6".into()))?;
+            let node = mesh.node(o.node).ok_or_else(|| Error::Invalid("sensitivity node does not exist".into()))?;
+            mesh.dof(node, kind)
+        })
+        .collect::<Result<_>>()?;
+    for (parameter, h) in parameters {
+        check_increment(model, parameter, *h)?;
+    }
+    let (graph, order) = analysis::pattern(&mesh);
+    let mut warnings = Vec::new();
+    let red = analysis::reduction(&setup, true, &order, analysis::budget(limits, &mesh, &graph, 3), &mut warnings)?;
+    let k = analysis::assemble(&mesh, &graph, None)?.k;
+    let f = system::loads(model, &resolved, &mesh, step, &red.active)?;
+    let [kff] = red.reduce([&k])?;
+    let mut q = red.rhs(&f, &k);
+    let factor = analysis::factor_raw(&kff, limits).map_err(|e| analysis::factor_error(e, &mesh, &red))?;
+    factor.solve(&mut q)?;
+    let u = red.expand(&q, true);
+    let mut derivatives = vec![vec![0.; parameters.len()]; dofs.len()];
+    let assembled = |m: &Model| -> Result<_> {
+        let r = m.resolve()?;
+        let step = m.step(step_name).ok_or_else(|| Error::Internal("sensitivity step".into()))?;
+        let perturbed = Mesh::new(m, &r, limits.max_dofs)?;
+        if perturbed.labels != mesh.labels || perturbed.dofs() != mesh.dofs() {
+            return Err(Error::Invalid("parameter changed mesh layout".into()));
+        }
+        Ok((analysis::assemble(&perturbed, &graph, None)?.k, system::loads(m, &r, &perturbed, step, &red.active)?))
+    };
+    for (col, (parameter, h)) in parameters.iter().enumerate() {
+        let (dk, drhs) = if let Some((dk, _)) = crate::foundation::derivative(&mesh, &graph, parameter)? {
+            let drhs = red.rhs(&vec![0.; mesh.dofs()], &dk);
+            (dk, drhs)
+        } else {
+            let (plus, minus) = perturb(model, parameter, *h)?;
+            let (kp, fp) = assembled(&plus)?;
+            let (km, fm) = assembled(&minus)?;
+            (matrix_difference(&kp, &km, *h)?, difference(&red.rhs(&fp, &kp), &red.rhs(&fm, &km), *h)?)
+        };
+        let [dkff] = red.reduce([&dk])?;
+        let mut dku = vec![0.; q.len()];
+        dkff.mul(&q, &mut dku);
+        let mut dq: Vec<_> = drhs.iter().zip(dku).map(|(f, k)| f - k).collect();
+        factor.solve(&mut dq)?;
+        let du = red.expand(&dq, false);
+        for (row, dof) in dofs.iter().enumerate() {
+            derivatives[row][col] = *du.get(*dof).ok_or_else(|| Error::Internal("observation derivative".into()))?;
+        }
+    }
+    let values = dofs.iter().map(|d| u.get(*d).copied().ok_or_else(|| Error::Internal("observation".into()))).collect::<Result<Vec<_>>>()?;
+    if values.iter().chain(derivatives.iter().flatten()).any(|x| !x.is_finite()) {
+        return Err(Error::Invalid("non-finite static Jacobian".into()));
+    }
+    Ok(StaticJacobian { values, derivatives })
 }
 pub(super) fn matrix_difference(a: &Csr, b: &Csr, h: f64) -> Result<Csr> {
     if a.n != b.n || a.ptr != b.ptr || a.idx != b.idx {
@@ -445,4 +534,71 @@ pub fn frequency_sensitivity_with_vectors(
         modes: out,
         warnings: result.warnings,
     })
+}
+
+#[cfg(test)]
+mod batch_tests {
+    use super::*;
+    use fieldcraft_model::design::{FoundationComponent, MaterialConstant};
+    use fieldcraft_model::*;
+
+    #[test]
+    fn static_batch_matches_scalar_with_prescribed_motion_and_zero_coefficient() {
+        let mut m = Model::default();
+        for (i, p) in
+            [[0., 0., 0.], [1., 0., 0.], [1., 1., 0.], [0., 1., 0.], [0., 0., 1.], [1., 0., 1.], [1., 1., 1.], [0., 1., 1.]].into_iter().enumerate()
+        {
+            m.set_node(i as u32 + 1, p).unwrap();
+        }
+        m.set_element(1, ElementKind::Hex8, vec![1, 2, 3, 4, 5, 6, 7, 8]).unwrap();
+        m.add_set("all", Set { elements: vec![1], ..Set::default() }).unwrap();
+        m.add_set("bed", Set { faces: vec![ElementFace { element: 1, face: 6 }], ..Set::default() }).unwrap();
+        m.add_set("tip", Set { faces: vec![ElementFace { element: 1, face: 4 }], ..Set::default() }).unwrap();
+        m.add_set("drive", Set { nodes: vec![7], ..Set::default() }).unwrap();
+        m.add_material("M", Material { elastic: Some(Elastic::Isotropic { young: 1000., poisson: 0.3 }), ..Material::default() }).unwrap();
+        m.add_section(
+            "S",
+            Section { set: "all".into(), material: "M".into(), kind: SectionKind::Solid {}, orientation: None, formulation: Default::default() },
+        )
+        .unwrap();
+        m.add_foundation(
+            "Bed",
+            Foundation { set: "bed".into(), normal: 0., tangential: 100., normal_damping: 0., tangential_damping: 0., loss_factor: 0. },
+        )
+        .unwrap();
+        m.add_foundation(
+            "Other",
+            Foundation { set: "bed".into(), normal: 100., tangential: 0., normal_damping: 0., tangential_damping: 0., loss_factor: 0. },
+        )
+        .unwrap();
+        m.add_boundary_condition(
+            "Drive",
+            BoundaryCondition::Displacement { target: Target::Set("drive".into()), values: [None, None, Some(0.002), None, None, None] },
+        )
+        .unwrap();
+        m.add_load("P", Load::Pressure { set: "tip".into(), magnitude: -1. }).unwrap();
+        let mut step = Step::new("S", Procedure::Static {});
+        step.boundary_conditions.insert("Drive".into());
+        step.loads.insert("P".into());
+        m.add_step(step, None).unwrap();
+        let parameters = vec![
+            (Parameter::Material { name: "M".into(), constant: MaterialConstant::Young }, 0.01),
+            (Parameter::Foundation { name: "Bed".into(), component: FoundationComponent::Normal }, 0.01),
+            (Parameter::Foundation { name: "Bed".into(), component: FoundationComponent::Tangential }, 0.01),
+        ];
+        let observations = [
+            StaticObservation { node: 2, dof: 1, stress_element: None },
+            StaticObservation { node: 1, dof: 2, stress_element: None },
+            StaticObservation { node: 7, dof: 3, stress_element: None },
+        ];
+        let limits = Limits::default();
+        let batch = static_jacobian(&m, "S", &parameters, &observations, &limits).unwrap();
+        for (row, o) in observations.iter().enumerate() {
+            for (col, (p, h)) in parameters.iter().enumerate() {
+                let scalar = static_sensitivity(&m, Some("S"), p, *h, *o, &limits).unwrap();
+                assert_eq!(batch.values[row].to_bits(), scalar.displacement.to_bits());
+                assert_eq!(batch.derivatives[row][col].to_bits(), scalar.direct.to_bits());
+            }
+        }
+    }
 }
