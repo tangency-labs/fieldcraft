@@ -1,0 +1,31 @@
+{
+  "shapes": [
+    {
+      "d": "M4 4 L4 20 M2 6 L4 4 M2 10 L4 8 M2 14 L4 12 M2 18 L4 16",
+      "stroke": "line",
+      "width": 1.25
+    },
+    {
+      "d": "M4 10 L20 10",
+      "stroke": "soft",
+      "dash": [
+        2,
+        2
+      ]
+    },
+    {
+      "d": "M4 10 C10 10 15 12 20 17",
+      "stroke": "accent",
+      "width": 1.75
+    },
+    {
+      "d": "M20 11 L20 17 M18 14 L20 17 L22 14",
+      "stroke": "warm"
+    },
+    {
+      "d": "M9 20 L14 20 M12 18 L14 20 L12 22",
+      "stroke": "line",
+      "width": 1
+    }
+  ]
+}

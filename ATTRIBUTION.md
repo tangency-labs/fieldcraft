@@ -289,6 +289,12 @@ is committed and listed here with its exports.
 | packaging/macos/README.txt, packaging/linux/io.github.tangencylabs.fieldcraft.desktop, packaging/linux/io.github.tangencylabs.fieldcraft.metainfo.xml, packaging/macos/entitlements.plist | FieldCraft contributors | Original packaging text: the disk image's install note, the Linux desktop entry, the AppStream metainfo and the (empty) hardened-runtime entitlements | MIT OR Apache-2.0 |
 | crates/ui-egui/fonts/Inter-SemiBold.ttf | The Inter Project Authors | https://github.com/rsms/inter release v4.1 (Inter-4.1.zip, extras/ttf/Inter-SemiBold.ttf), unmodified; licence text in crates/ui-egui/fonts/OFL.txt; the interface's caps labels (theme::LABEL_FAMILY) | SIL OFL 1.1 |
 | docs/sponsors/blacksmith-ci-powered.png | Blacksmith (blacksmith.sh) | "CI powered by Blacksmith" sponsor banner supplied by Blacksmith for the sponsorship credit; used only to credit the sponsor, not part of the application | © Blacksmith, used with permission |
+| assets/icons/model.node.coordinates.svg, assets/icons/model.node.coordinates.vectorcraft | FieldCraft contributors | Original toolbar icon drawn with VectorCraft from `assets/icons/src/model.node.coordinates.json` (`cargo xtask icons`) | MIT OR Apache-2.0 |
+| assets/icons/model.section.properties.svg, assets/icons/model.section.properties.vectorcraft | FieldCraft contributors | Original toolbar icon drawn with VectorCraft from `assets/icons/src/model.section.properties.json` (`cargo xtask icons`) | MIT OR Apache-2.0 |
+| assets/icons/observations.import.svg, assets/icons/observations.import.vectorcraft | FieldCraft contributors | Original toolbar icon drawn with VectorCraft from `assets/icons/src/observations.import.json` (`cargo xtask icons`) | MIT OR Apache-2.0 |
+| assets/icons/solve.inverse.frequency.svg, assets/icons/solve.inverse.frequency.vectorcraft | FieldCraft contributors | Original toolbar icon drawn with VectorCraft from `assets/icons/src/solve.inverse.frequency.json` (`cargo xtask icons`) | MIT OR Apache-2.0 |
+| assets/icons/solve.random.svg, assets/icons/solve.random.vectorcraft | FieldCraft contributors | Original toolbar icon drawn with VectorCraft from `assets/icons/src/solve.random.json` (`cargo xtask icons`) | MIT OR Apache-2.0 |
+| assets/icons/solve.sensitivity.static.svg, assets/icons/solve.sensitivity.static.vectorcraft | FieldCraft contributors | Original toolbar icon drawn with VectorCraft from `assets/icons/src/solve.sensitivity.static.json` (`cargo xtask icons`) | MIT OR Apache-2.0 |
 
 ## Adapted code
 

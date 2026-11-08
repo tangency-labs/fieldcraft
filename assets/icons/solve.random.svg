@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="24" height="24" viewBox="0 0 24 24">
+  <title>solve.random</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <polyline points="3,3 3,21 21,21" fill="none" stroke="#dde2ea" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <polygon points="5,19 7,14 9,16 11,5 13,12 15,9 17,17 20,19" fill="#2d4e70"/>
+    <polyline points="5,19 7,14 9,16 11,5 13,12 15,9 17,17 20,19" fill="none" stroke="#4f9ce8" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M18 4 L18 8 M16 6 L20 6" fill="none" stroke="#f0b44a" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

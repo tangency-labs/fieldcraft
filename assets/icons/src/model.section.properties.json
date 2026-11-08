@@ -1,0 +1,23 @@
+{
+  "shapes": [
+    {
+      "d": "M6 4 L18 4 L18 7 L14 7 L14 17 L18 17 L18 20 L6 20 L6 17 L10 17 L10 7 L6 7 Z",
+      "stroke": "accent",
+      "fill": "soft"
+    },
+    {
+      "d": "M3 4 L3 20 M2 4 L4 4 M2 20 L4 20",
+      "stroke": "line",
+      "width": 1
+    },
+    {
+      "d": "M7 12 L17 12",
+      "stroke": "warm",
+      "width": 1,
+      "dash": [
+        1,
+        2
+      ]
+    }
+  ]
+}
