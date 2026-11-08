@@ -260,3 +260,47 @@ For inverse commands, `max_iterations` limits optimization only; the independent
 by factor-memory capacity). Sensitivity and joint modal baselines that reach a
 truncated basis cap are refused rather than treating capped Ritz values as
 converged observations. Increase the modal budget, not the optimization count.
+
+### Measured real modes and reference-normalized components
+
+`solve.inverse.joint` optionally accepts `modal_observations`, a list of groups:
+
+```json
+{"id":"test","step":"Modes",
+ "sensors":[{"node":10,"dof":3},{"node":20,"dof":3}],
+ "measured_modes":[[1,0.7]],"min_mac":0.8,"min_assignment_margin":0.01,
+ "normalization":{"kind":"reference","reference_sensor":0}}
+```
+
+Use `{"kind":"matched_frequency","group":"test","measured_mode":0}`
+for a frequency, or `{"kind":"mode_shape","group":"test","measured_mode":0,"sensor":1}`
+for a dimensionless normalized component. `value_si` and `standard_deviation_si`
+are the measured frequency in Hz or the **reference-normalized ratio** and its
+known standard deviation. Indices start at zero. The reference component itself
+is constant and is refused as an observation. The measured vectors define mode
+identity; their amplitudes need not be mass calibrated. The response value is
+still explicitly supplied in the observation list.
+
+Each trial recomputes real sensor-space MAC and a maximum-total-MAC one-to-one
+assignment within each group. Groups define independent measurement sets; combine
+modes in one group when they must have distinct computed identities. Returned
+`modal_pairings` refer to the final estimate, with computed indices, MAC, sign
+alignment and the total-MAC gap to the best distinct feasible assignment. Weak
+or ambiguous assignments are errors, not a frequency-order fallback. Thresholds
+are caller policy, not confidence probabilities. Sensors must be unique and have
+consistent translation/rotation dimensions. At most 64 groups, 64 candidate modes
+per frequency step and 4096 sensors per group are accepted. Complex measured
+modes and projected oblique sensor directions are not supported by this interface.
+
+For r=φ_i/φ_ref the Jacobian uses
+r'=(φ_i'−r φ_ref')/φ_ref, with Nelson's mass-normalized derivative; sign and
+arbitrary modal scale cancel. A reference component below 1e-8 of the largest
+sensor magnitude is refused. The existing simple-eigenvalue gap checks still
+apply: MAC tracking across an exchange does not make individual derivatives at
+a repeated eigenvalue unique. These groups cannot use uniform-material reuse.
+
+The covariance assumes independent Gaussian errors **in the normalized observation
+coordinates**. Dividing noisy measured components by the same noisy reference
+usually produces correlated, non-Gaussian errors; supplying their marginal sigmas
+does not validate that covariance. Reference selection, sensor mapping and measurement
+noise modelling remain explicit input responsibilities.

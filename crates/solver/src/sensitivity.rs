@@ -114,3 +114,8 @@ pub use joint::{JointEstimate, JointFit, JointObservation, JointParameter, Joint
 
 mod pairing;
 pub use pairing::{ModePair, ModePairing, pair_modes};
+
+mod modal_observation;
+pub use joint::inverse_joint_with_modes;
+pub use modal_observation::{ModalObservationGroup, ModalPairingReport, ModalSensor, ShapeNormalization};
+

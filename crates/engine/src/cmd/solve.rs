@@ -1952,7 +1952,7 @@ fn run_inverse_harmonic(s: &mut Session, p: &Value) -> Result<Value> {
 pub const INVERSE_JOINT: CommandSpec = CommandSpec {
     id: "solve.inverse.joint",
     label: "Fit a Parameter Vector",
-    params: r#"{"parameters":[{"parameter":{"type":"material","name":"Steel","constant":"young"},"lower_si":1e11,"upper_si":3e11,"scale_si":2.1e11},{"parameter":{"type":"material","name":"Steel","constant":"density"},"lower_si":7000,"upper_si":9000,"scale_si":7850}],"observations":[{"response":{"kind":"frequency","step":"Modes","mode":0},"value_si":100,"standard_deviation_si":0.1},{"response":{"kind":"static","step":"Load","node":1,"dof":3},"value_si":-1e-6,"standard_deviation_si":1e-9}]} — 2–3 unique bounded parameters with mixed static/simple-frequency/direct-complex observations. Explicit SI quantities only, including parameter scales, covariance and outputs; mode/frame indices zero-based. Data-only rank/condition check precedes optional regularization, refuses unidentifiable combinations. Returns local joint95% ellipsoid for known independent Gaussian errors and unregularized interior estimates. No mutation. Defaults max_iterations32, relative_increment1e-5, regularization0. max_lanczos_vectors (default3000) independently limits each modal basis; optimization iterations never change it. uniform_material_scaling=true explicitly restricts [Young,density] to homogeneous material, zero support motion, no springs/point masses, mass-independent static loads and static/frequency observations, reusing exact identities after actual FE baselines."#,
+    params: r#"{"parameters":[{"parameter":{"type":"material","name":"Steel","constant":"young"},"lower_si":1e11,"upper_si":3e11,"scale_si":2.1e11},{"parameter":{"type":"material","name":"Steel","constant":"density"},"lower_si":7000,"upper_si":9000,"scale_si":7850}],"observations":[{"response":{"kind":"frequency","step":"Modes","mode":0},"value_si":100,"standard_deviation_si":0.1},{"response":{"kind":"static","step":"Load","node":1,"dof":3},"value_si":-1e-6,"standard_deviation_si":1e-9}]} — 2–3 unique bounded parameters with mixed static/simple-frequency/direct-complex observations. Optional modal_observations groups contain id, step, sensors[{node,dof}], measured_modes, min_mac, min_assignment_margin, normalization:{kind:reference,reference_sensor}. Responses matched_frequency and mode_shape reference group/measured_mode; mode_shape adds sensor. Real modes only, reference-normalized ratios with Nelson derivatives, final modal_pairings report one-to-one MAC assignment; ambiguous pairs refused. Explicit SI quantities only, including parameter scales, covariance and outputs; mode/frame indices zero-based. Data-only rank/condition check precedes optional regularization, refuses unidentifiable combinations. Returns local joint95% ellipsoid for known independent Gaussian errors and unregularized interior estimates. No mutation. Defaults max_iterations32, relative_increment1e-5, regularization0. max_lanczos_vectors (default3000) independently limits each modal basis; optimization iterations never change it. uniform_material_scaling=true explicitly restricts [Young,density] to homogeneous material, zero support motion, no springs/point masses, mass-independent static loads and static/frequency observations, reusing exact identities after actual FE baselines."#,
     form: Some(super::forms::INVERSE_JOINT),
     kind: CommandKind::Model,
     requires: &[Requirement::Step],
@@ -1966,7 +1966,7 @@ fn inverse_limits(p: &Value) -> Result<Limits> {
 }
 
 fn run_inverse_joint(s: &mut Session, p: &Value) -> Result<Value> {
-    use fieldcraft_solver::sensitivity::{JointFit, inverse_joint, inverse_joint_uniform_material};
+    use fieldcraft_solver::sensitivity::{JointFit, ModalObservationGroup, inverse_joint_uniform_material, inverse_joint_with_modes};
     let fit = JointFit {
         parameters: req(p, "parameters")?,
         observations: req(p, "observations")?,
@@ -1975,9 +1975,13 @@ fn run_inverse_joint(s: &mut Session, p: &Value) -> Result<Value> {
         relative_increment: opt::<f64>(p, "relative_increment")?.unwrap_or(1e-5),
     };
     let limits = inverse_limits(p)?;
+    let groups = opt::<Vec<ModalObservationGroup>>(p, "modal_observations")?.unwrap_or_default();
     let reuse = opt::<bool>(p, "uniform_material_scaling")?.unwrap_or(false);
+    if reuse && !groups.is_empty() {
+        return Err(EngineError::Params("modal observations cannot use uniform material reuse".into()));
+    }
     let result = with_threads(threads(s, p)?, || {
-        if reuse { inverse_joint_uniform_material(&s.model, &fit, &limits) } else { inverse_joint(&s.model, &fit, &limits) }
+        if reuse { inverse_joint_uniform_material(&s.model, &fit, &limits) } else { inverse_joint_with_modes(&s.model, &fit, &groups, &limits) }
     })?;
     serde_json::to_value(result).map_err(|e| EngineError::Params(e.to_string()))
 }

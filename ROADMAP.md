@@ -176,3 +176,7 @@ maximum-weight assignment, minimum-MAC filtering and a global alternative-assign
 ambiguity check. Tests cover order exchange, sign/scale invariance and invalid inputs.
 Connecting these pairs and normalized Nelson vector derivatives to joint observations,
 damping identification, coverage statistics and modal harmonic derivatives remains open.
+
+Joint inversion now accepts reference-normalized real measured mode components and
+MAC-matched frequencies. Nelson quotient derivatives, final-estimate pairing reports
+and ambiguous/invalid sensor refusals have command-level regression coverage.

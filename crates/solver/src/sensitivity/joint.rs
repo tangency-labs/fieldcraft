@@ -27,6 +27,8 @@ pub struct JointParameter {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum JointResponse {
     Static { step: String, node: u32, dof: u8 },
+    MatchedFrequency { group: String, measured_mode: usize },
+    ModeShape { group: String, measured_mode: usize, sensor: usize },
     Frequency { step: String, mode: usize },
     HarmonicReal { step: String, node: u32, dof: u8, frame: usize },
     HarmonicImaginary { step: String, node: u32, dof: u8, frame: usize },
@@ -48,6 +50,7 @@ pub struct JointFit {
 #[derive(Debug, Serialize)]
 pub struct JointEstimate {
     pub parameters: Vec<Parameter>,
+    pub modal_pairings: Vec<super::ModalPairingReport>,
     pub estimate_si: Vec<f64>,
     pub predicted_si: Vec<f64>,
     pub residuals_si: Vec<f64>,
@@ -285,7 +288,7 @@ pub fn fit_joint(initial: &[f64], fit: &JointFit, response: impl Fn(&[f64]) -> R
                     })
                     .collect()
             });
-            return Ok(JointEstimate{parameters:fit.parameters.iter().map(|p|p.parameter.clone()).collect(),estimate_si:x,predicted_si:current.predicted,residuals_si:current.residual,jacobian_si:current.jac,parameter_scales_si:fit.parameters.iter().map(|p|p.scale_si).collect(),singular_values_scaled:current.singular,rank:n,condition_number:current.condition,covariance_si:covariance,joint_projection_intervals_si:intervals,confidence_level:0.95,joint_chi_square:chi,objective:current.cost,evaluations: iteration + 1,iterations:iteration,at_bound,warnings:vec!["Local data-only rank diagnosis; not global identifiability. Covariance is a known-independent-Gaussian-error linearization. Joint projection intervals are projections of one 95% ellipsoid, not marginal intervals. No covariance for regularization or bound-active estimates.".into()]});
+            return Ok(JointEstimate{modal_pairings:Vec::new(),parameters:fit.parameters.iter().map(|p|p.parameter.clone()).collect(),estimate_si:x,predicted_si:current.predicted,residuals_si:current.residual,jacobian_si:current.jac,parameter_scales_si:fit.parameters.iter().map(|p|p.scale_si).collect(),singular_values_scaled:current.singular,rank:n,condition_number:current.condition,covariance_si:covariance,joint_projection_intervals_si:intervals,confidence_level:0.95,joint_chi_square:chi,objective:current.cost,evaluations: iteration + 1,iterations:iteration,at_bound,warnings:vec!["Local data-only rank diagnosis; not global identifiability. Covariance is a known-independent-Gaussian-error linearization. Joint projection intervals are projections of one 95% ellipsoid, not marginal intervals. No covariance for regularization or bound-active estimates.".into()]});
         }
         if iteration == fit.max_iterations {
             break;
@@ -311,18 +314,55 @@ pub fn fit_joint(initial: &[f64], fit: &JointFit, response: impl Fn(&[f64]) -> R
 
 /// Assemble Jacobian columns from the existing model derivative implementations.
 pub fn inverse_joint(model: &Model, fit: &JointFit, limits: &Limits) -> Result<JointEstimate> {
+    inverse_joint_with_modes(model, fit, &[], limits)
+}
+
+/// Joint observations with fixed measured-mode groups; pair each trial afresh.
+pub fn inverse_joint_with_modes(model: &Model, fit: &JointFit, groups: &[super::ModalObservationGroup], limits: &Limits) -> Result<JointEstimate> {
+    super::modal_observation::validate(groups)?;
+    for g in groups {
+        let step = model.select_step(Some(&g.step), |p| matches!(p, fieldcraft_model::Procedure::Frequency { .. }), "frequency")?;
+        if !matches!(step.procedure, fieldcraft_model::Procedure::Frequency { modes: 1..=64, min_hz: None, max_hz: None }) {
+            return Err(Error::Invalid("modal observation groups require 1..=64 candidate modes and no frequency window".into()));
+        }
+    }
     let initial = fit.parameters.iter().map(|p| p.parameter.value(model)).collect::<std::result::Result<Vec<_>, _>>()?;
-    fit_joint(&initial, fit, |x| {
+    validate_fit(&initial, fit)?;
+    let evaluate = |x: &[f64]| {
         let mut trial = model.clone();
         for (p, x) in fit.parameters.iter().zip(x) {
             p.parameter.set(&mut trial, *x)?;
         }
         let mut predictions = vec![0.0; fit.observations.len()];
         let mut jac = vec![vec![0.0; x.len()]; fit.observations.len()];
+        let mut reports = Vec::new();
         for (col, p) in fit.parameters.iter().enumerate() {
+            let mut modal_cache = std::collections::BTreeMap::new();
+            let mut pair_cache = std::collections::BTreeMap::new();
             let h = x[col].abs().max(p.scale_si * INCREMENT_FLOOR) * fit.relative_increment;
             for (row, o) in fit.observations.iter().enumerate() {
                 let (value, derivative) = match &o.response {
+                    JointResponse::MatchedFrequency { group, measured_mode } | JointResponse::ModeShape { group, measured_mode, .. } => {
+                        let g = groups.iter().find(|g| &g.id == group).ok_or_else(|| Error::Invalid(format!("unknown modal group {group}")))?;
+                        if !modal_cache.contains_key(&g.step) {
+                            let result =
+                                super::frequency_sensitivity_with_vectors(&trial, Some(&g.step), &p.parameter, h, &Default::default(), true, limits)?;
+                            modal_cache.insert(g.step.clone(), result);
+                        }
+                        let result = modal_cache.get(&g.step).ok_or_else(|| Error::Internal("modal cache missing".into()))?;
+                        if !pair_cache.contains_key(group) {
+                            pair_cache.insert(group.clone(), super::modal_observation::pairing(g, result)?);
+                        }
+                        let paired = pair_cache.get(group).ok_or_else(|| Error::Internal("modal pairing missing".into()))?;
+                        if let JointResponse::ModeShape { sensor, .. } = &o.response {
+                            super::modal_observation::component(g, result, paired, *measured_mode, *sensor)?
+                        } else {
+                            let index =
+                                paired.pairs.get(*measured_mode).ok_or_else(|| Error::Invalid("measured mode out of range".into()))?.computed_mode;
+                            let mode = result.modes.get(index).ok_or_else(|| Error::Internal("paired mode missing".into()))?;
+                            (mode.frequency, mode.frequency_derivative)
+                        }
+                    }
                     JointResponse::Static { step, node, dof } => {
                         let r = super::static_sensitivity(
                             &trial,
@@ -351,9 +391,19 @@ pub fn inverse_joint(model: &Model, fit: &JointFit, limits: &Limits) -> Result<J
                 predictions[row] = value;
                 jac[row][col] = derivative;
             }
+            if col == 0 {
+                reports = pair_cache.into_iter().map(|(group, pairing)| super::ModalPairingReport { group, pairing }).collect();
+            }
         }
-        Ok((predictions, jac))
-    })
+        Ok((predictions, jac, reports))
+    };
+    let mut estimate = fit_joint(&initial, fit, |x| evaluate(x).map(|(y, j, _)| (y, j)))?;
+    if !groups.is_empty() {
+        let (_, _, reports) = evaluate(&estimate.estimate_si)?;
+        estimate.modal_pairings = reports;
+        estimate.warnings.push("MAC assignments recomputed at every trial and at the returned estimate. Reference-normalized shape errors must have known independent sigma in normalized coordinates; noise in a shared measured reference is correlated and not represented by this covariance.".into());
+    }
+    Ok(estimate)
 }
 
 /// Exact homogeneous E/rho reuse for mixed static and frequency observations.

@@ -2911,6 +2911,7 @@ pub const REACTIONS: &[Field] = &[
 ];
 
 pub const INVERSE_JOINT: &[Field] = &[
+    json("modal_observations", "Measured mode groups").help("Real sensor-space vectors, reference normalization and explicit MAC/assignment thresholds; matched_frequency and mode_shape refer to group id."),
     json("parameters", "Parameters (explicit SI)").req().help("2–3 unique parameter identities with lower_si, upper_si and positive scale_si."),
     json("observations", "Observations (explicit SI)")
         .req()
