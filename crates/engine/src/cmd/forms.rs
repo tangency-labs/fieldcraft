@@ -2611,7 +2611,8 @@ pub const SOLVE_FREQUENCY: &[Field] = &[
         .def("\"consistent\""),
     num("shift", "Shift", D::Eigenvalue).help("Look for frequencies near this eigenvalue (ω²); 0 finds the lowest.").hint("0"),
     MAX_DOFS,
-    MAX_FACTOR, MAX_MEMORY_GIB,
+    MAX_FACTOR,
+    MAX_MEMORY_GIB,
     int("max_iterations", "Max Lanczos vectors", 1, 3000).help("Cap on the Lanczos vectors.").hint("3000"),
     THREADS,
 ];
