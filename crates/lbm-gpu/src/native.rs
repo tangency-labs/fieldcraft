@@ -117,8 +117,16 @@ fn wait_for_readback(
 /// Seconds in a nanosecond: GPU timestamp periods are in nanoseconds (wgpu).
 const NANOSECOND: f64 = 1e-9; // unit-factors: wall-clock profiling time, not a model quantity
 
+/// How many workgroups a dispatch runs: a count known to the host, or the count the device left at a byte offset
+/// of the Spalart–Allmaras gate buffer (`sa_gate` in lbm.wgsl), read by an indirect dispatch.
+#[derive(Clone, Copy, Debug)]
+enum Groups {
+    Fixed((u32, u32)),
+    SaGate(u64),
+}
+
 /// A bounded chunk's dispatches, shared by the normal and timestamped paths.
-type Dispatch = (usize, &'static str, (u32, u32));
+type Dispatch = (usize, &'static str, Groups);
 
 /// A vector of `len` copies of `value`, or [`Error::Limit`] when memory runs out (the host
 /// arrays are sized by the grid: 16 M cells is over a gigabyte of populations).
@@ -289,6 +297,128 @@ pub struct GpuFlow {
     weight_forces: Vec<[f64; 3]>,
     /// The conducting solids, when there are any.
     solid: Option<Solids>,
+    /// The Spalart–Allmaras model, when the flow has it, and its per-cell vorticity and wall
+    /// distance buffer.
+    sa: Option<SaDevice>,
+    sa_cells: Option<wgpu::Buffer>,
+}
+
+/// The Spalart–Allmaras model on the device (see `lbm.wgsl`): its ν̃ buffer, the gate of its sub-step passes and
+/// what its sub-stepping last did. The device chooses each sub-step's dt from that sub-step's largest coefficient
+/// sum, as `SaField::advance` does (`sa_plan`).
+struct SaDevice {
+    nu_tilde: wgpu::Buffer,
+    /// The workgroup counts of the gated passes (`sa_gate`): `sa_plan` writes them, indirect dispatches read them.
+    gate: wgpu::Buffer,
+    /// A fixed sub-step count ([`GpuFlow::fix_sa_substeps`]); none: as many as the monotone bound needs.
+    fixed: Option<u32>,
+    /// The last chunk's sub-stepping; none before the first chunk.
+    last: Option<SaChunk>,
+}
+
+/// What ν̃'s sub-stepping did in one chunk.
+#[derive(Clone, Copy, Debug)]
+struct SaChunk {
+    /// The most sub-steps one lattice step took.
+    substeps: u32,
+    /// The largest sub-step dt × coefficient sum (the monotone bound is 1).
+    bound: f64,
+}
+
+impl SaDevice {
+    /// The sub-step slots encoded per lattice step: the fixed count, or the most a lattice step may take.
+    fn slots(&self) -> u32 {
+        self.fixed.unwrap_or(SA_MAX_SUBSTEPS)
+    }
+}
+
+/// The Spalart–Allmaras sub-steps per lattice step, at most (`fieldcraft_lbm::sa::MAX_SUBSTEPS`).
+const SA_MAX_SUBSTEPS: u32 = fieldcraft_lbm::sa::MAX_SUBSTEPS;
+/// `params.sa`'s byte offset in the uniforms, and the fixed sub-step count's within it (0: none).
+const SA_PARAMS: u64 = 192;
+const SA_FIXED: u64 = SA_PARAMS + 8;
+/// The words of the `stats` buffer (lbm.wgsl) and, among them, those of ν̃'s sub-stepping.
+const STATS_WORDS: usize = 16;
+const STAT_SA_MOST: usize = 4;
+const STAT_SA_NOT_FINITE: usize = 5;
+const STAT_SA_STOP: usize = 6;
+const STAT_SA_SUBSTEPS: usize = 7;
+const STAT_SA_BOUND: usize = 12;
+/// The byte offsets of the two gated passes' workgroup counts in `sa_gate` (three u32 each).
+const SA_GATE_RATE: u64 = 0;
+const SA_GATE_UPDATE: u64 = 12;
+
+/// The Spalart–Allmaras model's box-face kinds for `lbm.wgsl` (2 bits per face: 1 wall,
+/// 2 inflow, 3 open), checked against every fluid cell's faces on the CPU: the device's rule is a
+/// fluid neighbour, a solid cell (a halfway wall) or, beyond a face that is not periodic, that
+/// face's one kind. A face it cannot reproduce (an inlet patch, an on-node wall) is refused.
+fn sa_faces(flow: &Flow, field: &fieldcraft_lbm::sa::SaField) -> Result<u32> {
+    use fieldcraft_lbm::sa::Side;
+    let refuse = |what: String| {
+        Error::Invalid(format!("not supported yet: the Spalart–Allmaras model on the GPU with {what}; solve on the CPU (`backend: \"cpu\"`)"))
+    };
+    let grid = flow.grid();
+    let periodic = flow.periodic();
+    let edge = |p: [usize; 3], k: usize| {
+        let axis = k / 2;
+        let at = if k % 2 == 1 { p[axis] + 1 == grid.cells[axis] } else { p[axis] == 0 };
+        at && !periodic[axis]
+    };
+    let mut kinds = [None::<u32>; 6];
+    for (cell, sides) in field.sides().iter().enumerate() {
+        if !flow.is_fluid(cell) {
+            continue;
+        }
+        let p = grid.coords(cell);
+        for (k, side) in sides.iter().enumerate() {
+            if !edge(p, k) {
+                continue;
+            }
+            let kind = match side {
+                Side::Wall => 1,
+                Side::Inflow => 2,
+                Side::Open => 3,
+                other => return Err(refuse(format!("a box face whose cells meet {other:?}"))),
+            };
+            match kinds.get_mut(k) {
+                Some(slot @ None) => *slot = Some(kind),
+                Some(Some(prev)) if *prev != kind => return Err(refuse("two kinds of face on one box face (an inlet patch)".into())),
+                _ => {}
+            }
+        }
+    }
+    for (cell, sides) in field.sides().iter().enumerate() {
+        if !flow.is_fluid(cell) {
+            continue;
+        }
+        let p = grid.coords(cell);
+        for (k, side) in sides.iter().enumerate() {
+            let (axis, up) = (k / 2, k % 2 == 1);
+            let device = if edge(p, k) {
+                match kinds.get(k).copied().flatten() {
+                    Some(1) => Side::Wall,
+                    Some(2) => Side::Inflow,
+                    _ => Side::Open,
+                }
+            } else {
+                let n = grid.cells[axis];
+                let mut q = p;
+                q[axis] = if up { (p[axis] + 1) % n } else { (p[axis] + n - 1) % n };
+                let nb = grid.index(q);
+                if flow.is_fluid(nb) {
+                    Side::Cell(u32::try_from(nb).map_err(|_| Error::Limit("too many cells for the GPU solver".into()))?)
+                } else {
+                    Side::Wall
+                }
+            };
+            if device != *side {
+                return Err(refuse(format!(
+                    "a face the device's neighbour rule does not reproduce (cell {cell}: {side:?}, the device's {device:?})"
+                )));
+            }
+        }
+    }
+    Ok(kinds.iter().enumerate().fold(0u32, |bits, (k, kind)| bits | kind.unwrap_or(3) << (2 * k)))
 }
 
 /// Van Driest's damping on the device (see `lbm.wgsl`, `damping`).
@@ -426,7 +556,7 @@ fn solid_data(solid: &fieldcraft_lbm::conduction::SolidHeat, t0: f64) -> Result<
 }
 
 /// The entry points of `lbm.wgsl` a flow dispatches.
-const KERNELS: [&str; 36] = [
+const KERNELS: [&str; 41] = [
     "clear_eddy",
     "gradient_velocity",
     "fan_partials",
@@ -463,6 +593,11 @@ const KERNELS: [&str; 36] = [
     "solid_scatter",
     "solid_contrib",
     "solid_wall_heat",
+    "sa_prepare",
+    "sa_begin",
+    "sa_rate",
+    "sa_plan",
+    "sa_update",
 ];
 
 /// The bindings each kernel uses, read from the shader (naga's analysis of which globals an entry
@@ -554,6 +689,8 @@ struct Variant {
     zones: bool,
     /// Interpolated wall links.
     interpolated: bool,
+    /// The Spalart–Allmaras model.
+    sa: bool,
 }
 
 /// A compiled kernel: its pipeline, its bind group's layout and the bindings in it.
@@ -607,6 +744,8 @@ fn compile(device: &wgpu::Device, variant: Variant) -> Result<Kernels> {
                     ("DYNAMIC", if variant.dynamic { 1.0 } else { 0.0 }),
                     ("ZONES", if variant.zones { 1.0 } else { 0.0 }),
                     ("INTERPOLATED", if variant.interpolated { 1.0 } else { 0.0 }),
+                    ("SA", if variant.sa { 1.0 } else { 0.0 }),
+                    ("SA_MAX_SUBSTEPS", f64::from(SA_MAX_SUBSTEPS)),
                     ("MAX_SPEED", MAX_LATTICE_SPEED),
                 ],
                 ..Default::default()
@@ -744,6 +883,26 @@ impl GpuFlow {
                 "radiation from conducting solids is not on the GPU backend yet: solve on the CPU (`backend: \"cpu\"`)".into(),
             ));
         }
+        let sa_faces = match flow.spalart_allmaras() {
+            None => None,
+            Some(field) => {
+                let refuse = |what: &str| {
+                    Err(Error::Invalid(format!(
+                        "not supported yet: the Spalart–Allmaras model on the GPU with {what}; solve on the CPU (`backend: \"cpu\"`)"
+                    )))
+                };
+                if flow.thermal().is_some() {
+                    return refuse("heat");
+                }
+                if flow.hybrid_sigma() == Some(fieldcraft_model::HrrSigma::Dynamic) {
+                    return refuse("the hybrid collision's dynamic σ");
+                }
+                if flow.sa_wall_distance().is_none_or(|d| d.len() != flow.grid().len()) {
+                    return refuse("no wall distance");
+                }
+                Some(sa_faces(flow, field)?)
+            }
+        };
         fieldcraft_model::progress::backend_diagnostic(fieldcraft_model::progress::BackendDiagnostic {
             phase: "selecting_adapter".into(),
             devices_opened: Some(DEVICES_OPENED.load(Ordering::Relaxed)),
@@ -758,10 +917,21 @@ impl GpuFlow {
             *flag = u32::from(flow.is_fluid(cell));
         }
         let zones = crate::zones::append(flow, &mut fluid_u32)?;
+        if sa_faces.is_some() && zones.zones > 0 {
+            return Err(Error::Invalid(
+                "not supported yet: the Spalart–Allmaras model on the GPU with fans or porous zones; solve on the CPU (`backend: \"cpu\"`)".into(),
+            ));
+        }
         let Some((adapter, tier)) = select::adapter(policy).map_err(gpu_error)? else {
             return Err(Error::NoDevice);
         };
         let info = adapter.get_info();
+        if sa_faces.is_some() && !adapter.get_downlevel_capabilities().flags.contains(wgpu::DownlevelFlags::INDIRECT_EXECUTION) {
+            return Err(Error::Backend(
+                "this GPU's backend has no indirect dispatch, which the Spalart–Allmaras model's sub-steps need: solve with `backend: \"cpu\"`"
+                    .into(),
+            ));
+        }
         if let Some(progress) = fieldcraft_model::progress::current()
             && let Some(mut context) = progress.backend_diagnostic()
         {
@@ -1147,6 +1317,7 @@ impl GpuFlow {
         let l_max = flow.grid().cells.iter().copied().min().unwrap_or(1) as f32;
         let les = [fixed_sigma as f32, flow.vreman() as f32, l_max, 0.0];
         let periodic = flow.periodic().map(u32::from);
+        let sa_inflow = flow.spalart_allmaras().map_or(0.0, |f| f.inflow());
         let params = [0u32, 1].map(|phase| {
             let mut bytes = params.clone();
             bytes.extend_from_slice(&bytes_u32(&[phase, zones.zones, zones.fans, zones.fan_table]));
@@ -1155,6 +1326,7 @@ impl GpuFlow {
             bytes.extend_from_slice(&bytes_u32(&wall_params));
             bytes.extend_from_slice(&bytes_f32(&les));
             bytes.extend_from_slice(&bytes_u32(&[periodic[0], periodic[1], periodic[2], 0]));
+            bytes.extend_from_slice(&bytes_u32(&[sa_faces.unwrap_or(0), (sa_inflow as f32).to_bits(), 0, 1]));
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("lbm params"),
                 contents: &bytes,
@@ -1198,9 +1370,32 @@ impl GpuFlow {
         let moments = empty("lbm moments", 16 * n as u64);
         // With the hybrid collision or Vreman's model, every cell's velocity before the collision
         // (three f32 per cell) for the finite-difference gradient.
-        let gradients = hybrid.is_some() || flow.vreman() > 0.0;
+        let gradients = hybrid.is_some() || flow.vreman() > 0.0 || sa_faces.is_some();
         let velocity = empty("lbm gradient velocities", if gradients { 12 * n as u64 } else { 16 });
-        let stats = storage("lbm stats", &bytes_u32(&[0, 0, 0, 0]));
+        let stats = storage("lbm stats", &bytes_u32(&[0; STATS_WORDS]));
+        let (nu_tilde, sa_rates, sa_cell) = match (flow.spalart_allmaras(), flow.sa_wall_distance()) {
+            (Some(field), Some(distance)) if sa_faces.is_some() => {
+                let mut v = filled(n, 0.0f32, "Spalart–Allmaras ν̃")?;
+                for (out, x) in v.iter_mut().zip(field.nu_tilde()) {
+                    *out = *x as f32;
+                }
+                let nu_tilde = storage("lbm sa nu_tilde", &bytes_f32(&v));
+                drop(v);
+                let mut cell = filled(2 * n, 0.0f32, "Spalart–Allmaras wall distances")?;
+                for (out, d) in cell.as_chunks_mut::<2>().0.iter_mut().zip(distance) {
+                    out[1] = *d as f32;
+                }
+                let sa_cell = storage("lbm sa cells", &bytes_f32(&cell));
+                (nu_tilde, empty("lbm sa rates", 8 * n as u64), sa_cell)
+            }
+            _ => (empty("lbm sa nu_tilde", 16), empty("lbm sa rates", 16), empty("lbm sa cells", 16)),
+        };
+        // The gate of ν̃'s sub-step passes (lbm.wgsl, `sa_gate`): closed, then the cells' workgroup counts.
+        let sa_gate = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("lbm sa gate"),
+            contents: &bytes_u32(&[0, 0, 0, 0, 0, 0, cells.0, cells.1]),
+            usage: if sa_faces.is_some() { wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT } else { wgpu::BufferUsages::STORAGE },
+        });
         let contrib = empty("lbm link forces", 16 * links.len() as u64);
         let by_group = storage("lbm links by group", &bytes_u32(&by_group));
         let group_start = storage("lbm group start", &bytes_u32(&group_start));
@@ -1239,6 +1434,7 @@ impl GpuFlow {
             dynamic: hybrid == Some(HrrSigma::Dynamic),
             zones: zones.zones > 0,
             interpolated,
+            sa: sa_faces.is_some(),
         })?;
         // Every binding's buffer in bind group k (the two differ in the phase and the A–B swap).
         let resource = |binding: u32, k: usize| -> Option<&wgpu::Buffer> {
@@ -1271,6 +1467,10 @@ impl GpuFlow {
                 25 => &velocity,
                 // The flags buffer again, writable, for `fan_update` alone (lbm.wgsl).
                 26 => &fluid_buf,
+                27 => &nu_tilde,
+                28 => &sa_rates,
+                29 => &sa_cell,
+                30 => &sa_gate,
                 _ => return None,
             })
         };
@@ -1358,7 +1558,63 @@ impl GpuFlow {
                 }),
                 None => None,
             },
+            sa: sa_faces.map(|_| SaDevice { nu_tilde, gate: sa_gate, fixed: None, last: None }),
+            sa_cells: sa_faces.map(|_| sa_cell),
         })
+    }
+
+    /// With the Spalart–Allmaras model: take exactly `n` sub-steps of ν̃ per lattice step from now
+    /// on (1 to `fieldcraft_lbm::sa::MAX_SUBSTEPS`), as the CPU's [`Flow::set_sa_substeps`] does,
+    /// for parity with it; a sub-step
+    /// whose coefficients break the monotone bound then stops the run. `None`: as many as the bound needs again.
+    #[doc(hidden)]
+    pub fn fix_sa_substeps(&mut self, n: Option<u32>) -> Result<()> {
+        let Some(sa) = &mut self.sa else { return Err(Error::Invalid("the flow has no Spalart–Allmaras model".into())) };
+        if let Some(n) = n.filter(|n| !(1..=SA_MAX_SUBSTEPS).contains(n)) {
+            return Err(Error::Invalid(format!("Spalart–Allmaras: {n} sub-steps; give 1 to {SA_MAX_SUBSTEPS}")));
+        }
+        sa.fixed = n;
+        for p in &self.params {
+            self.queue.write_buffer(p, SA_FIXED, &n.unwrap_or(0).to_le_bytes());
+        }
+        Ok(())
+    }
+
+    /// With the Spalart–Allmaras model: whether its sources act (on by default); off, ν̃ is only
+    /// transported, as the CPU's [`Flow::set_sa_model`].
+    #[doc(hidden)]
+    pub fn set_sa_model(&mut self, on: bool) -> Result<()> {
+        if self.sa.is_none() {
+            return Err(Error::Invalid("the flow has no Spalart–Allmaras model".into()));
+        }
+        for p in &self.params {
+            self.queue.write_buffer(p, SA_PARAMS + 12, &u32::from(on).to_le_bytes());
+        }
+        Ok(())
+    }
+
+    /// With the Spalart–Allmaras model, the wall distance each cell holds on the device (lattice
+    /// units, uploaded once as f32).
+    pub fn sa_wall_distance(&self) -> Result<Option<Vec<f64>>> {
+        if self.sa.is_none() {
+            return Ok(None);
+        }
+        let Some(cells) = self.sa_cells.as_ref() else { return Ok(None) };
+        let v = self.read_f32(cells, 2 * self.n)?;
+        Ok(Some(v.as_chunks::<2>().0.iter().map(|c| f64::from(c[1])).collect()))
+    }
+
+    /// With the Spalart–Allmaras model, the most sub-steps one lattice step of the last chunk took (none before the
+    /// first chunk).
+    pub fn sa_substeps(&self) -> Option<u32> {
+        self.sa.as_ref().and_then(|s| s.last).map(|c| c.substeps)
+    }
+
+    /// With the Spalart–Allmaras model, the last chunk's largest sub-step dt × coefficient sum (the monotone bound is
+    /// 1); none before the first chunk.
+    #[doc(hidden)]
+    pub fn sa_bound(&self) -> Option<f64> {
+        self.sa.as_ref().and_then(|s| s.last).map(|c| c.bound)
     }
 
     /// The adapter's name.
@@ -1382,12 +1638,18 @@ impl GpuFlow {
         self.kernel_times.as_ref().map(|t| t.borrow().clone())
     }
 
-    fn dispatch(&self, pass: &mut wgpu::ComputePass<'_>, bind: usize, name: &str, (gx, gy): (u32, u32)) -> Result<()> {
+    fn dispatch(&self, pass: &mut wgpu::ComputePass<'_>, bind: usize, name: &str, groups: Groups) -> Result<()> {
         let kernel = self.kernels.get(name).ok_or_else(|| gpu_error(format!("no kernel {name}")))?;
         let group = self.bind.get(name).and_then(|b| b.get(bind)).ok_or_else(|| gpu_error(format!("no bind group for {name}")))?;
         pass.set_bind_group(0, group, &[]);
         pass.set_pipeline(&kernel.pipeline);
-        pass.dispatch_workgroups(gx, gy, 1);
+        match groups {
+            Groups::Fixed((gx, gy)) => pass.dispatch_workgroups(gx, gy, 1),
+            Groups::SaGate(offset) => {
+                let sa = self.sa.as_ref().ok_or_else(|| gpu_error(format!("{name}: no Spalart–Allmaras gate")))?;
+                pass.dispatch_workgroups_indirect(&sa.gate, offset);
+            }
+        }
         Ok(())
     }
 
@@ -1531,7 +1793,7 @@ impl GpuFlow {
     }
     /// The moments of the current state into the moments buffer.
     fn compute_moments(&self) -> Result<()> {
-        self.submit("lbm moments", &[(self.current, "cell_moments", self.cells)])
+        self.submit("lbm moments", &[(self.current, "cell_moments", Groups::Fixed(self.cells))])
     }
 }
 
@@ -1540,78 +1802,90 @@ impl GpuFlow {
     /// solids' with their sub-steps).
     fn dispatches_per_step(&self) -> usize {
         let solid = self.solid.as_ref().map_or(0, |sd| 3 + sd.substeps as usize);
-        13 + solid + if self.zones.fans > 0 { 2 } else { 0 }
+        let sa = self.sa.as_ref().map_or(0, |s| 2 + 3 * s.slots() as usize);
+        13 + solid + sa + if self.zones.fans > 0 { 2 } else { 0 }
     }
 
     /// One submission of `steps` (≤ MAX_CHUNK) time steps, then the stability check.
     fn advance_chunk(&mut self, steps: u64) -> Result<()> {
-        self.queue.write_buffer(&self.stats, 0, &bytes_u32(&[0, 0, 0, 0]));
+        let sa_slots = self.sa.as_ref().map_or(0, SaDevice::slots);
+        self.queue.write_buffer(&self.stats, 0, &bytes_u32(&[0; STATS_WORDS]));
         let mut commands = Vec::with_capacity(self.dispatches_per_step() * steps as usize + 7);
         for step in 0..steps {
             // Each fan's flow from the populations and its previous push, then its rise moved
             // toward its curve, before anything else in the step reads the push (as on the CPU).
             if self.zones.fans > 0 {
                 if self.zones.fan_groups > 0 {
-                    commands.push((self.current, "fan_partials", self.fan_groups));
+                    commands.push((self.current, "fan_partials", Groups::Fixed(self.fan_groups)));
                 }
-                commands.push((self.current, "fan_update", (self.zones.fans, 1)));
+                commands.push((self.current, "fan_update", Groups::Fixed((self.zones.fans, 1))));
             }
             if step + 1 == steps {
-                commands.push((self.current, "clear_eddy", (1, 1)));
+                commands.push((self.current, "clear_eddy", Groups::Fixed((1, 1))));
             }
             if let Some(d) = &self.damping {
-                commands.push((self.current, "damping_refresh", d.groups));
+                commands.push((self.current, "damping_refresh", Groups::Fixed(d.groups)));
             }
             if let Some(groups) = self.wall_groups {
-                commands.push((self.current, if self.wall_bounce || self.on_node { "bounce_sample" } else { "wall_sample" }, groups));
+                commands.push((self.current, if self.wall_bounce || self.on_node { "bounce_sample" } else { "wall_sample" }, Groups::Fixed(groups)));
             }
             if self.gradients {
-                commands.push((self.current, "gradient_velocity", self.cells));
+                commands.push((self.current, "gradient_velocity", Groups::Fixed(self.cells)));
             }
-            commands.push((self.current, "collide", self.cells));
+            if sa_slots > 0 {
+                commands.push((self.current, "sa_prepare", Groups::Fixed(self.cells)));
+                commands.push((self.current, "sa_begin", Groups::Fixed((1, 1))));
+                // Each slot is one sub-step while the lattice step has time left; `sa_plan` closes the rest.
+                for _ in 0..sa_slots {
+                    commands.push((self.current, "sa_rate", Groups::SaGate(SA_GATE_RATE)));
+                    commands.push((self.current, "sa_plan", Groups::Fixed((1, 1))));
+                    commands.push((self.current, "sa_update", Groups::SaGate(SA_GATE_UPDATE)));
+                }
+            }
+            commands.push((self.current, "collide", Groups::Fixed(self.cells)));
             if let Some(groups) = self.wall_groups.filter(|_| self.on_node) {
-                commands.push((self.current, "node_bounce", groups));
+                commands.push((self.current, "node_bounce", Groups::Fixed(groups)));
             }
             if !self.aa {
-                commands.push((self.current, "stream", self.cells));
+                commands.push((self.current, "stream", Groups::Fixed(self.cells)));
             }
             if self.link_count > 0 {
                 // The last step's momentum exchange is the one read back.
                 let exchange = self.aa && step + 1 == steps;
-                commands.push((self.current, if exchange { "stream_links_exchange" } else { "stream_links" }, self.links_groups));
+                commands.push((self.current, if exchange { "stream_links_exchange" } else { "stream_links" }, Groups::Fixed(self.links_groups)));
                 if self.aa {
-                    commands.push((self.current, "scatter_links", self.links_groups));
+                    commands.push((self.current, "scatter_links", Groups::Fixed(self.links_groups)));
                 }
             }
             if self.inlets {
-                commands.push((self.current, "inlet_prepare", self.open_groups));
+                commands.push((self.current, "inlet_prepare", Groups::Fixed(self.open_groups)));
             }
             if self.prepare_outlets {
-                commands.push((self.current, "outlet_convect", self.open_groups));
+                commands.push((self.current, "outlet_convect", Groups::Fixed(self.open_groups)));
             }
             if self.open_count > 0 {
-                commands.push((self.current, "open_boundaries", self.open_groups));
+                commands.push((self.current, "open_boundaries", Groups::Fixed(self.open_groups)));
             }
             if self.thermal.is_some() {
-                commands.push((self.current, "collide_thermal", self.cells));
-                commands.push((self.current, "stream_thermal", self.cells));
+                commands.push((self.current, "collide_thermal", Groups::Fixed(self.cells)));
+                commands.push((self.current, "stream_thermal", Groups::Fixed(self.cells)));
                 if self.link_count > 0 {
-                    commands.push((self.current, "stream_links_thermal", self.links_groups));
+                    commands.push((self.current, "stream_links_thermal", Groups::Fixed(self.links_groups)));
                 }
                 if let Some(sd) = &self.solid {
-                    commands.push((self.current, "solid_ab", sd.cell_groups));
+                    commands.push((self.current, "solid_ab", Groups::Fixed(sd.cell_groups)));
                     for k in 0..sd.substeps {
-                        commands.push((self.current, if k % 2 == 0 { "solid_sub0" } else { "solid_sub1" }, sd.cell_groups));
+                        commands.push((self.current, if k % 2 == 0 { "solid_sub0" } else { "solid_sub1" }, Groups::Fixed(sd.cell_groups)));
                     }
                     if sd.substeps % 2 == 1 {
-                        commands.push((self.current, "solid_copy", sd.cell_groups));
+                        commands.push((self.current, "solid_copy", Groups::Fixed(sd.cell_groups)));
                     }
-                    commands.push((self.current, "solid_scatter", sd.link_groups));
+                    commands.push((self.current, "solid_scatter", Groups::Fixed(sd.link_groups)));
                 }
                 // After the interface, as on the CPU: an inlet holds its temperature on its
                 // links into a solid too, and an outlet copies its neighbour's final populations.
                 if self.open_count > 0 {
-                    commands.push((self.current, "open_thermal", self.open_groups));
+                    commands.push((self.current, "open_thermal", Groups::Fixed(self.open_groups)));
                 }
             }
             self.current ^= 1;
@@ -1619,25 +1893,25 @@ impl GpuFlow {
         // The momentum (and heat) exchange of the last step, from its post-collision
         // populations; with solids also without fluid links, for their heat into box faces.
         if (self.link_count > 0 || self.solid.is_some()) && self.group_count > 0 {
-            commands.push((self.current ^ 1, "link_forces", self.links_groups));
+            commands.push((self.current ^ 1, "link_forces", Groups::Fixed(self.links_groups)));
             if let Some(groups) = self.wall_groups {
-                commands.push((self.current ^ 1, "wall_forces", groups));
+                commands.push((self.current ^ 1, "wall_forces", Groups::Fixed(groups)));
             }
             if let Some(sd) = &self.solid {
-                commands.push((self.current ^ 1, "solid_contrib", sd.link_groups));
+                commands.push((self.current ^ 1, "solid_contrib", Groups::Fixed(sd.link_groups)));
             }
-            commands.push((self.current ^ 1, "group_forces", self.force_groups));
+            commands.push((self.current ^ 1, "group_forces", Groups::Fixed(self.force_groups)));
             if self.solid.is_some() {
-                commands.push((self.current ^ 1, "solid_wall_heat", (6, 1)));
+                commands.push((self.current ^ 1, "solid_wall_heat", Groups::Fixed((6, 1))));
             }
         }
         if self.thermal.is_some() {
-            commands.push((self.current, "thermal_check", self.cells));
+            commands.push((self.current, "thermal_check", Groups::Fixed(self.cells)));
         }
         self.submit("lbm steps", &commands)?;
         self.steps_done += steps;
         self.exchange_cache = None;
-        let stats = self.read(&self.stats, 16)?;
+        let stats = self.read(&self.stats, 4 * STATS_WORDS as u64)?;
         let word = |k: usize| stats.get(4 * k..4 * k + 4).and_then(|b| b.try_into().ok()).map(u32::from_le_bytes).unwrap_or(0);
         let max_u2 = f32::from_bits(word(0));
         if word(1) != 0 || !(f64::from(max_u2) <= MAX_LATTICE_SPEED * MAX_LATTICE_SPEED) {
@@ -1657,6 +1931,39 @@ impl GpuFlow {
         if self.nu0 > 0.0 {
             self.eddy_ratio = f64::from(f32::from_bits(word(3))) / self.nu0;
         }
+        if let Some(sa) = &mut self.sa {
+            // A ν̃ that stopped being finite comes first: the coefficients it spoils stop the sub-stepping next.
+            if word(STAT_SA_NOT_FINITE) != 0 {
+                return Err(Error::Unstable(format!("Spalart–Allmaras: ν̃ stopped being a finite number by time step {}", self.steps_done)));
+            }
+            let most = f64::from(f32::from_bits(word(STAT_SA_MOST)));
+            // The codes are lbm.wgsl's SA_STOP_COEFFICIENTS, SA_STOP_SUBSTEPS and SA_STOP_FIXED.
+            match word(STAT_SA_STOP) {
+                0 => {}
+                1 => {
+                    return Err(Error::Unstable(format!(
+                        "Spalart–Allmaras: ν̃'s transport coefficients are not finite (by time step {})",
+                        self.steps_done
+                    )));
+                }
+                2 => {
+                    return Err(Error::Unstable(format!(
+                        "Spalart–Allmaras: ν̃'s transport needs more than {SA_MAX_SUBSTEPS} sub-steps per lattice step: refine the grid or lower the inflow ν̃ (by time step {})",
+                        self.steps_done
+                    )));
+                }
+                3 => {
+                    return Err(Error::Unstable(format!(
+                        "Spalart–Allmaras: {} fixed sub-steps break ν̃'s monotone bound, which needs {} (by time step {})",
+                        sa.fixed.unwrap_or(0),
+                        most.ceil(),
+                        self.steps_done
+                    )));
+                }
+                code => return Err(gpu_error(format!("the Spalart–Allmaras sub-stepping stopped with an unknown code {code}"))),
+            }
+            sa.last = Some(SaChunk { substeps: word(STAT_SA_SUBSTEPS), bound: f64::from(f32::from_bits(word(STAT_SA_BOUND))) });
+        }
         Ok(())
     }
 }
@@ -1664,6 +1971,11 @@ impl GpuFlow {
 impl Backend for GpuFlow {
     fn eddy_viscosity_ratio(&self) -> f64 {
         self.eddy_ratio
+    }
+
+    fn nu_tilde(&mut self) -> Result<Option<Vec<f64>>> {
+        let Some(sa) = &self.sa else { return Ok(None) };
+        Ok(Some(self.read_f32(&sa.nu_tilde, self.n)?.into_iter().map(f64::from).collect()))
     }
 
     fn wall_y_plus(&self) -> Option<f64> {
@@ -1717,7 +2029,7 @@ impl Backend for GpuFlow {
         self.compute_moments()?;
         // The wall model's cells at the velocity their reconstruction imposes (as the CPU's).
         if self.wall_count > 0 && self.steps_done > 0 {
-            self.submit("lbm wall moments", &[(self.current, "wall_moments", self.cells)])?;
+            self.submit("lbm wall moments", &[(self.current, "wall_moments", Groups::Fixed(self.cells))])?;
         }
         let m = self.read_f32(&self.moments, 4 * self.n)?;
         let density = m.as_chunks::<4>().0.iter().map(|v| f64::from(v[3])).collect();
@@ -1755,7 +2067,7 @@ impl Backend for GpuFlow {
 
     fn mass(&mut self) -> Result<f64> {
         self.compute_moments()?;
-        self.submit("lbm mass", &[(self.current, "mass", self.cells)])?;
+        self.submit("lbm mass", &[(self.current, "mass", Groups::Fixed(self.cells))])?;
         let partials = self.read_f32(&self.partials, self.partial_count)?;
         // Summed in a fixed order on the host, so the result is deterministic on this device.
         Ok(partials.iter().map(|v| f64::from(*v)).sum())
@@ -1773,7 +2085,7 @@ impl Backend for GpuFlow {
             self.queue.write_buffer(p, 148, &bytes_u32(&[axis]));
         }
         self.compute_moments()?;
-        self.submit("lbm mean velocity", &[(self.current, "mean_velocity", self.cells)])?;
+        self.submit("lbm mean velocity", &[(self.current, "mean_velocity", Groups::Fixed(self.cells))])?;
         let partials = self.read_f32(&self.partials, self.partial_count)?;
         // Summed in a fixed order on the host, so the result is deterministic on this device.
         Ok(partials.iter().map(|v| f64::from(*v)).sum::<f64>() / self.fluid_cells.max(1) as f64)
@@ -1785,7 +2097,7 @@ impl Backend for GpuFlow {
             return Ok(Vec::new());
         }
         self.compute_moments()?;
-        self.submit("lbm zone samples", &[(self.current, "zone_samples", (self.zones.zones, 1))])?;
+        self.submit("lbm zone samples", &[(self.current, "zone_samples", Groups::Fixed((self.zones.zones, 1)))])?;
         let samples = self.read_f32(&self.partials, 4 * count)?;
         Ok(samples
             .as_chunks::<4>()
