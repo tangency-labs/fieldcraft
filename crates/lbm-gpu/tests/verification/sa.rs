@@ -123,24 +123,25 @@ fn sa_neg_recovers_like_the_cpu() {
 /// The coupled RANS channel (ν_t in the collision) at Re_τ 20 (τ 0.5057): velocity, density,
 /// ν̃, the largest ν_t/ν and each wall's shear (its mean over the last 200 steps, as a skin
 /// friction is read) follow the CPU over 2000 steps, both layouts, the two-relaxation-time and
-/// multiple-relaxation-time collisions, and the hybrid collision in place. A single step's shear
-/// is not the measure: the two-relaxation-time collision's acoustic noise moves it 1e-3 between
+/// multiple-relaxation-time collisions, and the hybrid collision (σ 0.99) in place; and the hybrid
+/// collision again at Re_τ 1000 (τ − ½ 1.15e-4, the gated cases' τ). A single step's shear is
+/// not the measure: the two-relaxation-time collision's acoustic noise moves it 1e-3 between
 /// backends whose fields agree to 5e-6 (the mean, 1e-5).
 ///
-/// Not at Re_τ 180 (τ 0.50064): there the backends' own f32 drift, with Vreman's model as much
-/// as with this one, is above the LES bounds (measured on an RTX 4070 Laptop: velocity 2.0e-4
-/// with Vreman's, 1.4e-4 with this model; each wall's shear 6 to 40 %, the two walls no longer
-/// equal), where at Re_τ 20 both models meet them; the bounds are to be
-/// checked at the case's τ.
+/// The two-relaxation-time collision is not run below τ − ½ ≈ 2e-3: at Λ 3/16 its antisymmetric
+/// modes relax at ω⁻ = (τ⁺ − ½)/Λ, almost not at all, and their f32 rounding builds up (velocity
+/// 2.0e-4 at Re_τ 180, 1.5e-3 at Re_τ 1000, on an RTX 4070 Laptop), where the multiple-relaxation-time and hybrid collisions meet the
+/// bounds down to τ − ½ 1.15e-4.
 #[test]
 fn the_sa_channel_follows_the_cpu() {
     let cases = [Collision::Trt, Collision::Mrt]
         .into_iter()
         .flat_map(|c| [Streaming::InPlace, Streaming::TwoBuffers].map(move |s| (c, s)))
-        .chain([(Collision::Hrr, Streaming::InPlace)]);
+        .map(|(c, s)| (c, s, 20.0))
+        .chain([(Collision::Hrr, Streaming::InPlace, 20.0), (Collision::Hrr, Streaming::InPlace, 1000.0)]);
     let mut failed = Vec::new();
-    for (collision, streaming) in cases {
-        let (setup, mut cpu) = prepare(&forced_channel(collision, 2000.0, 20.0), &[]);
+    for (collision, streaming, re) in cases {
+        let (setup, mut cpu) = prepare(&forced_channel(collision, 2000.0, re), &[]);
         cpu.set_sa_substeps(Some(2));
         let Some(mut gpu) = gpu(&cpu, streaming) else { return };
         gpu.fix_sa_substeps(Some(2)).unwrap();
@@ -166,10 +167,54 @@ fn the_sa_channel_follows_the_cpu() {
         let (du, drho) = field_difference(&mut cpu, &mut gpu);
         let (rc, rg) = (Backend::eddy_viscosity_ratio(&cpu), gpu.eddy_viscosity_ratio());
         println!(
-            "SA channel ({collision:?}, {streaming:?}), Re_τ 20, 2000 steps: ν̃ {dv:.2e} of {scale:.3e}; velocity {du:.2e}, density {drho:.2e}; ν_t/ν {rc:.4} vs {rg:.4}; wall shear, mean of 200 steps {dshear:.2e} (last step {last:.2e}); CPU {mc:?} GPU {mg:?}"
+            "SA channel ({collision:?}, {streaming:?}), Re_τ {re}, 2000 steps: ν̃ {dv:.2e} of {scale:.3e}; velocity {du:.2e}, density {drho:.2e}; ν_t/ν {rc:.4} vs {rg:.4}; wall shear, mean of 200 steps {dshear:.2e} (last step {last:.2e}); CPU {mc:?} GPU {mg:?}"
         );
         if !(rc > 0.0 && ((rg - rc) / rc).abs() < 1e-3 && dv < 5e-5 && du < 1e-4 && drho < 1e-5 && dshear < 1e-3) {
-            failed.push(format!("{collision:?} {streaming:?}"));
+            failed.push(format!("{collision:?} {streaming:?} Re_τ {re}"));
+        }
+    }
+    assert!(failed.is_empty(), "{failed:?}");
+}
+
+/// The RANS channel at Re_τ 1000 (τ − ½ 1.15e-4, the gated cases' τ) over 20 000 steps, the hybrid
+/// collision (σ 0.99) and the multiple-relaxation-time one in place: whether their parity stays
+/// bounded past the 2000 steps of [`the_sa_channel_follows_the_cpu`], with that test's bounds at
+/// every 5000 steps.
+#[test]
+#[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+fn the_sa_channel_stays_with_the_cpu_for_20000_steps() {
+    let mut failed = Vec::new();
+    for collision in [Collision::Hrr, Collision::Mrt] {
+        let (_, mut cpu) = prepare(&forced_channel(collision, 20_000.0, 1000.0), &[]);
+        cpu.set_sa_substeps(Some(2));
+        let Some(mut gpu) = gpu(&cpu, Streaming::InPlace) else { return };
+        gpu.fix_sa_substeps(Some(2)).unwrap();
+        let walls = [BoxFace::YMin.index(), BoxFace::YMax.index()];
+        let (tail, mut done) = (200u64, 0u64);
+        for mark in [5_000u64, 10_000, 15_000, 20_000] {
+            cpu.advance(mark - tail - done).unwrap();
+            gpu.advance(mark - tail - done).unwrap();
+            let (mut mc, mut mg) = ([0.0f64; 2], [0.0f64; 2]);
+            for _ in 0..tail {
+                cpu.advance(1).unwrap();
+                gpu.advance(1).unwrap();
+                let (fc, fg) = (Backend::forces(&mut cpu).unwrap(), gpu.forces().unwrap());
+                for (k, &w) in walls.iter().enumerate() {
+                    mc[k] += fc[w][0] / tail as f64;
+                    mg[k] += fg[w][0] / tail as f64;
+                }
+            }
+            done = mark;
+            let dshear = (0..2).map(|k| (mc[k] - mg[k]).abs() / mc[k].abs().max(1e-300)).fold(0.0, f64::max);
+            let (dv, scale) = nu_tilde_difference(&mut cpu, &mut gpu);
+            let (du, drho) = field_difference(&mut cpu, &mut gpu);
+            let (rc, rg) = (Backend::eddy_viscosity_ratio(&cpu), gpu.eddy_viscosity_ratio());
+            println!(
+                "SA channel ({collision:?}), Re_τ 1000, {mark} steps: ν̃ {dv:.2e} of {scale:.3e}; velocity {du:.2e}, density {drho:.2e}; ν_t/ν {rc:.4} vs {rg:.4}; wall shear, mean of 200 steps {dshear:.2e}"
+            );
+            if !(rc > 0.0 && ((rg - rc) / rc).abs() < 1e-3 && dv < 5e-5 && du < 1e-4 && drho < 1e-5 && dshear < 1e-3) {
+                failed.push(format!("{collision:?} at {mark}"));
+            }
         }
     }
     assert!(failed.is_empty(), "{failed:?}");

@@ -1698,7 +1698,8 @@ fn collide_regularized(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function, ar
     // odd ones (orders 1 and 3, the force's first) change sign.
     var rest = w_of(0u) * (drho - 1.5 * rho * uu - relax * 1.5 * trace);
     if forced { rest = rest - 1.5 * w_of(0u) * uf; }
-    f[post_index(0u, cell, xyz)] = rest;
+    var out: array<f32, 19>;
+    out[0] = rest;
     for (var q = 1u; q < Q; q = q + 2u) {
         let c = vec3<f32>(c_of(q));
         let w = w_of(q);
@@ -1720,8 +1721,28 @@ fn collide_regularized(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function, ar
             even = even + 0.5 * w * (9.0 * cu * cf - 3.0 * uf);
             odd = odd + 1.5 * w * cf;
         }
-        f[post_index(q, cell, xyz)] = even + odd;
-        f[post_index(q + 1u, cell, xyz)] = even - odd;
+        out[q] = even + odd;
+        out[q + 1u] = even - odd;
+    }
+    // The rebuild from (δρ, j, P) keeps mass and momentum only to its f32 rounding, and in a
+    // nearly steady flow beside walls that rounding has the same sign every step: the mean
+    // momentum drifted about 4e-8 of itself per step from the CPU's, at any τ, with or without
+    // the force, and only where walls make the flow non-uniform. So the rebuilt populations are projected
+    // back onto the collision's exact budget, mass unchanged and momentum + F, through the
+    // weights' first two moments (Σ w = 1, Σ w c = 0, Σ 3 w c c = I). The defects are summed as
+    // per-direction differences fq − out, small numbers among themselves, and the force added
+    // to that sum: a target of ρu + F/2 against Σ c out instead added F/2 (~1e-6) to ρu (~0.1),
+    // rounding the force to ulp(ρu) the same way every step, and left the forced drift.
+    var dm = 0.0;
+    var dj = vec3<f32>(0.0);
+    for (var q = 0u; q < Q; q = q + 1u) {
+        let d = (*fq)[q] - out[q];
+        dm = dm + d;
+        dj = dj + vec3<f32>(c_of(q)) * d;
+    }
+    if forced { dj = dj + force; }
+    for (var q = 0u; q < Q; q = q + 1u) {
+        f[post_index(q, cell, xyz)] = out[q] + w_of(q) * (dm + 3.0 * dot(vec3<f32>(c_of(q)), dj));
     }
 }
 
