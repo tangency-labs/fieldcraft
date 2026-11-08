@@ -111,3 +111,6 @@ mod nelson;
 mod joint;
 pub use joint::inverse_joint_uniform_material;
 pub use joint::{JointEstimate, JointFit, JointObservation, JointParameter, JointResponse, fit_joint, inverse_joint};
+
+mod pairing;
+pub use pairing::{ModePair, ModePairing, pair_modes};
