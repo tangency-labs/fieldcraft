@@ -190,6 +190,8 @@ remain outside this modal derivative implementation. A prespecified 200-replicat
 
 - Harmonic derivative batches reuse identical modal/Ritz bases within one immutable-model invocation; all cold preprocessing remains inside the timed command. Supports and complex load factors are exact reuse boundaries.
 
+Inverse follow-up: selected zero-based frequency observations through free-body spectra; rigid MAC candidate exclusion; explicit measured-mode removal with reports and retained-data rank checks; invocation-local joint harmonic sweep reuse.
+
 ## Surface foundations (fusion fork)
 
 Started: the FEM kernel integrates normal and isotropic tangential Winkler coefficients

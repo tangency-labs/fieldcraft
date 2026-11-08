@@ -48,7 +48,7 @@ strain energy. Thermal and initial fields are currently refused.
 
 For a simple mode, λ'=φᵀ(K'−λM')φ/(φᵀMφ) and f'=f λ'/(2λ). The model is
 solved with one additional mode to check the upper gap. Relative gaps at or
-below 1e-5 are refused; rigid/near-zero modes and frequency windows are also
+below 1e-5 between elastic modes are refused; frequency windows are also
 refused. Modal mass is recomputed, rather than assumed to equal one.
 
 ## Output and units
@@ -374,3 +374,43 @@ cover twelve quantities. Existing published-experiment amplitude mismatches rema
 known failures; they are not repaired by fitting damping or changing tolerances.
 Actual measured-data fitting and cross-platform bitwise equality are separate
 validation obligations, not consequences of these Linux tests.
+
+
+### Free-body identification and explicit MAC removal
+
+`solve.inverse.frequency` accepts optional `mode_indices`, a unique zero-based
+index per observed frequency (for example `[6]` for the first elastic mode of a
+six-rigid-mode beam). It applies to both FE reevaluation and
+`uniform_young_scaling`. If omitted, the first N modes are observed. Only a
+selected near-zero mode is rejected, with its zero-based index and physical order.
+The frequency step must request enough modes to include every selected index.
+The scalar stationary-gradient threshold is `1e-9 * max(1, norm(whitened data
+residual))`; zero-residual behavior is unchanged and regularization is excluded
+from that norm.
+
+Sensitivity scans preserve original modal indices. Eigenvalues at or below
+`1e-10 * largest extracted eigenvalue` (including the upper gap guard) are
+reported with zero derivatives and no Nelson vector. This corresponds to a
+frequency ratio of `1e-5`; it is a numerical rigid-mode cutoff, not a physical
+identification of every mechanism. Warnings list the skipped zero-based indices.
+MAC candidates exclude those modes **before** assignment; pairing reports include
+`excluded_near_zero_modes` in original zero-based computed numbering.
+
+Modal groups optionally accept `allow_mac_fallback: true` (default `false`).
+Despite its historical name, it never substitutes frequency-order matching.
+It removes measured modes below `min_mac` or involved in ambiguous assignments,
+including competing assignments within `min_assignment_margin`. Oversubscribed
+candidate sets conservatively remove rows sharing eligible candidates. Each
+`removed_modes` entry contains the original zero-based `measured_mode`, its
+`best_mac` across elastic candidates, and `reason`. `measured_indices` maps
+retained pairs back to the original measured list. Corresponding matched-frequency
+and mode-shape observation rows are excluded from the objective and covariance;
+returned prediction/Jacobian rows follow the retained original observation order.
+The retained set is fixed at the initial evaluation: a trial that would change it
+is refused, so changing the objective cannot manufacture convergence. Rank and
+information checks use only retained rows, including a refusal when too few remain.
+Without the switch, weak or ambiguous assignments still fail as a whole.
+
+Joint harmonic observations at the same `(step, node, dof)` reuse one sweep per
+parameter and trial; real and imaginary rows index the same immutable result.
+No cache survives into a different parameter vector or command.

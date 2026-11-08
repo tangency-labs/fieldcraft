@@ -367,6 +367,8 @@ pub fn inverse_joint_with_modes(model: &Model, fit: &JointFit, groups: &[super::
                 jac[row] = derivatives;
             }
         }
+
+        let mut active = vec![true; fit.observations.len()];
         for (col, p) in fit.parameters.iter().enumerate() {
             let mut modal_cache = std::collections::BTreeMap::new();
             let mut pair_cache = std::collections::BTreeMap::new();
@@ -387,11 +389,14 @@ pub fn inverse_joint_with_modes(model: &Model, fit: &JointFit, groups: &[super::
                             pair_cache.insert(group.clone(), super::modal_observation::pairing(g, result)?);
                         }
                         let paired = pair_cache.get(group).ok_or_else(|| Error::Internal("modal pairing missing".into()))?;
+                        if paired.removed_modes.iter().any(|r| r.measured_mode == *measured_mode) {
+                            active[row] = false;
+                            continue;
+                        }
                         if let JointResponse::ModeShape { sensor, .. } = &o.response {
                             super::modal_observation::component(g, result, paired, *measured_mode, *sensor)?
                         } else {
-                            let index =
-                                paired.pairs.get(*measured_mode).ok_or_else(|| Error::Invalid("measured mode out of range".into()))?.computed_mode;
+                            let index = paired.pair(*measured_mode).ok_or_else(|| Error::Invalid("measured mode out of range".into()))?.computed_mode;
                             let mode = result.modes.get(index).ok_or_else(|| Error::Internal("paired mode missing".into()))?;
                             (mode.frequency, mode.frequency_derivative)
                         }
@@ -440,11 +445,26 @@ pub fn inverse_joint_with_modes(model: &Model, fit: &JointFit, groups: &[super::
                 reports = pair_cache.into_iter().map(|(group, pairing)| super::ModalPairingReport { group, pairing }).collect();
             }
         }
-        Ok((predictions, jac, reports))
+        Ok((predictions, jac, reports, active))
     };
-    let mut estimate = fit_joint(&initial, fit, |x| evaluate(x).map(|(y, j, _)| (y, j)))?;
+    let active = if groups.iter().any(|g| g.allow_mac_fallback) { evaluate(&initial)?.3 } else { vec![true; fit.observations.len()] };
+    let mut retained_fit = fit.clone();
+    retained_fit.observations = fit.observations.iter().zip(&active).filter(|(_, keep)| **keep).map(|(o, _)| o.clone()).collect();
+    if retained_fit.observations.len() < fit.parameters.len() {
+        return Err(Error::Invalid("rank deficient after MAC removal: fewer retained observations than parameters".into()));
+    }
+    let mut estimate = fit_joint(&initial, &retained_fit, |x| {
+        let (y, j, _, current_active) = evaluate(x)?;
+        if current_active != active {
+            return Err(Error::Invalid("MAC retained observation set changed during fit; review measured modes and restart".into()));
+        }
+        Ok((
+            y.into_iter().zip(&active).filter(|(_, keep)| **keep).map(|(v, _)| v).collect(),
+            j.into_iter().zip(&active).filter(|(_, keep)| **keep).map(|(v, _)| v).collect(),
+        ))
+    })?;
     if !groups.is_empty() {
-        let (_, _, reports) = evaluate(&estimate.estimate_si)?;
+        let (_, _, reports, _) = evaluate(&estimate.estimate_si)?;
         estimate.modal_pairings = reports;
         estimate.warnings.push("MAC assignments recomputed at every trial and at the returned estimate. Reference-normalized shape errors must have known independent sigma in normalized coordinates; noise in a shared measured reference is correlated and not represented by this covariance.".into());
     }

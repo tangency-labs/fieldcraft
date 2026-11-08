@@ -20,8 +20,22 @@ pub struct ModePair {
 }
 
 #[derive(Debug, Serialize)]
+pub struct RemovedMode {
+    pub measured_mode: usize,
+    pub best_mac: f64,
+    pub reason: &'static str,
+}
+#[derive(Debug, Serialize)]
 pub struct ModePairing {
     pub pairs: Vec<ModePair>,
+    /// Original measured indices for retained pairs, present only after removal.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub measured_indices: Vec<usize>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub removed_modes: Vec<RemovedMode>,
+    /// Zero-based original computed indices excluded before sensor-space MAC.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub excluded_near_zero_modes: Vec<usize>,
     pub total_mac: f64,
     /// Best total MAC minus the best distinct feasible assignment; None if unique by dimensions.
     pub assignment_margin: Option<f64>,
@@ -171,7 +185,107 @@ pub fn pair_modes(measured: &[Vec<f64>], computed: &[Vec<f64>], min_mac: f64, mi
         .enumerate()
         .map(|(i, j)| ModePair { computed_mode: *j, mac: 1.0 - cost[i][*j], sign: if dots[i][*j] < 0.0 { -1.0 } else { 1.0 } })
         .collect();
-    Ok(ModePairing { pairs, total_mac, assignment_margin: margin })
+    Ok(ModePairing {
+        pairs,
+        total_mac,
+        assignment_margin: margin,
+        measured_indices: Vec::new(),
+        removed_modes: Vec::new(),
+        excluded_near_zero_modes: Vec::new(),
+    })
+}
+
+impl ModePairing {
+    pub(super) fn pair(&self, measured: usize) -> Option<&ModePair> {
+        if self.removed_modes.is_empty() {
+            self.pairs.get(measured)
+        } else {
+            self.measured_indices.iter().position(|&i| i == measured).and_then(|i| self.pairs.get(i))
+        }
+    }
+}
+
+/// Explicit conservative removal policy. Retain only rows with a strong,
+/// unambiguous global assignment. No ordered-mode substitute is constructed.
+pub(super) fn pair_modes_dropping(measured: &[Vec<f64>], computed: &[Vec<f64>], min_mac: f64, min_margin: f64) -> Result<ModePairing> {
+    let measured_unit = measured.iter().map(|x| unit_vector(x)).collect::<Result<Vec<_>>>()?;
+    let computed_unit = computed.iter().map(|x| unit_vector(x)).collect::<Result<Vec<_>>>()?;
+    let macs: Vec<Vec<f64>> = measured_unit
+        .iter()
+        .map(|a| computed_unit.iter().map(|b| a.iter().zip(b).map(|(x, y)| x * y).sum::<f64>().powi(2).min(1.0)).collect())
+        .collect();
+    let best: Vec<f64> = macs.iter().map(|r| r.iter().copied().fold(0.0_f64, f64::max)).collect();
+    let mut retained = Vec::new();
+    let mut removed = Vec::new();
+    for (i, &m) in best.iter().enumerate() {
+        if m < min_mac || computed.is_empty() {
+            removed.push(RemovedMode { measured_mode: i, best_mac: m, reason: "below_min_mac" });
+        } else {
+            retained.push(i);
+        }
+    }
+    // At most one removal pass per input row; ties use the same absolute
+    // total-MAC margin as strict assignment, not a per-row greedy match.
+    for _ in 0..=measured.len() {
+        if retained.is_empty() {
+            break;
+        }
+        let cost: Vec<Vec<f64>> =
+            retained.iter().map(|&i| macs[i].iter().map(|&m| if m < min_mac { FORBIDDEN } else { 1.0 - m }).collect()).collect();
+        let mut ambiguous = vec![false; retained.len()];
+        if retained.len() > computed.len() {
+            for i in 0..retained.len() {
+                for j in 0..i {
+                    if cost[i].iter().zip(&cost[j]).any(|(a, b)| *a < FORBIDDEN && *b < FORBIDDEN) {
+                        ambiguous[i] = true;
+                        ambiguous[j] = true;
+                    }
+                }
+            }
+        } else if let Some((indices, total)) = assign(&cost, None)? {
+            for (i, &j) in indices.iter().enumerate() {
+                if let Some((other, alternate)) = assign(&cost, Some((i, j)))?
+                    && total - alternate <= min_margin.max(64.0 * f64::EPSILON * retained.len() as f64)
+                {
+                    for r in 0..indices.len() {
+                        if indices[r] != other[r] {
+                            ambiguous[r] = true;
+                        }
+                    }
+                }
+            }
+        } else {
+            ambiguous.fill(true);
+        }
+        if !ambiguous.iter().any(|v| *v) {
+            let rows: Vec<_> = retained.iter().map(|&i| measured[i].clone()).collect();
+            let mut out = pair_modes(&rows, computed, min_mac, min_margin)?;
+            if !removed.is_empty() {
+                out.measured_indices = retained;
+            }
+            removed.sort_by_key(|r| r.measured_mode);
+            out.removed_modes = removed;
+            return Ok(out);
+        }
+        let mut next = Vec::new();
+        for (&i, bad) in retained.iter().zip(ambiguous) {
+            if bad {
+                removed.push(RemovedMode { measured_mode: i, best_mac: best[i], reason: "ambiguous_assignment" });
+            } else {
+                next.push(i);
+            }
+        }
+        retained = next;
+    }
+    removed.sort_by_key(|r| r.measured_mode);
+    Ok(ModePairing {
+        pairs: Vec::new(),
+        total_mac: 0.0,
+        assignment_margin: None,
+        measured_indices: Vec::new(),
+        removed_modes: removed,
+        excluded_near_zero_modes: Vec::new(),
+    })
 }
 
 #[cfg(test)]

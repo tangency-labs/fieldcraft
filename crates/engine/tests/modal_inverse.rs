@@ -138,3 +138,37 @@ fn harmonic_batch_reuses_only_matching_invocation_local_bases() {
 
     assert!(s.execute("solve.sensitivity.harmonic", &json!({"requests":[]})).is_err());
 }
+
+#[test]
+fn mac_drop_ambiguous_rows_preserves_original_indices_and_rank_check() {
+    let mut s = system(4.0, 5.0, 0.3);
+    let source = request(4.2, 5.3, 0.3);
+    let low = source["modal_observations"][0]["measured_modes"][0].clone();
+    let high = source["modal_observations"][0]["measured_modes"][1].clone();
+    let mut p = source.clone();
+    p["modal_observations"][0]["measured_modes"] = json!([low, low, high]);
+    p["observations"] = json!([
+        {"response":{"kind":"frequency","step":"F","mode":0},"value_si":source["observations"][0]["value_si"],"standard_deviation_si":0.001},
+        {"response":{"kind":"matched_frequency","group":"g","measured_mode":2},"value_si":source["observations"][1]["value_si"],"standard_deviation_si":0.001},
+        {"response":{"kind":"matched_frequency","group":"g","measured_mode":0},"value_si":999.0,"standard_deviation_si":0.001},
+        {"response":{"kind":"matched_frequency","group":"g","measured_mode":1},"value_si":999.0,"standard_deviation_si":0.001}
+    ]);
+    assert!(s.execute("solve.inverse.joint", &p).is_err());
+    p["modal_observations"][0]["allow_mac_fallback"] = json!(true);
+    let r = s.execute("solve.inverse.joint", &p).unwrap();
+    for (i, t) in [4.2, 5.3].iter().enumerate() {
+        assert!((r["estimate_si"][i].as_f64().unwrap() / t - 1.0).abs() <= 1e-6, "{r}");
+    }
+    let report = &r["modal_pairings"][0]["pairing"];
+    eprintln!("ambiguous removal report {report}");
+    assert_eq!(report["measured_indices"], json!([2]));
+    assert_eq!(report["removed_modes"].as_array().unwrap().len(), 2);
+    for i in 0..2 {
+        assert_eq!(report["removed_modes"][i]["measured_mode"], i);
+        assert!(report["removed_modes"][i]["best_mac"].as_f64().unwrap() > 0.99);
+        assert_eq!(report["removed_modes"][i]["reason"], "ambiguous_assignment");
+    }
+    p["observations"].as_array_mut().unwrap().remove(0);
+    let error = s.execute("solve.inverse.joint", &p).unwrap_err().to_string();
+    assert!(error.contains("rank"), "{error}");
+}

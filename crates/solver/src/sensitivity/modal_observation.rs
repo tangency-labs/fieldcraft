@@ -26,6 +26,8 @@ pub struct ModalObservationGroup {
     pub measured_modes: Vec<Vec<f64>>,
     pub min_mac: f64,
     pub min_assignment_margin: f64,
+    #[serde(default)]
+    pub allow_mac_fallback: bool,
     pub normalization: ShapeNormalization,
 }
 #[derive(Debug, Serialize)]
@@ -80,15 +82,26 @@ pub(super) fn validate(groups: &[ModalObservationGroup]) -> Result<()> {
 }
 
 pub(super) fn pairing(g: &ModalObservationGroup, result: &FrequencySensitivity) -> Result<ModePairing> {
-    let candidates = result
-        .modes
+    let excluded: Vec<usize> = result.modes.iter().enumerate().filter_map(|(i, m)| (m.modal_mass == 0.0).then_some(i)).collect();
+    let candidate_indices: Vec<usize> = result.modes.iter().enumerate().filter_map(|(i, m)| (m.modal_mass != 0.0).then_some(i)).collect();
+    let candidates = candidate_indices
         .iter()
-        .map(|m| {
+        .map(|&i| {
+            let m = &result.modes[i];
             let v = m.vector.as_ref().ok_or_else(|| Error::Internal("missing Nelson vector".into()))?;
             g.sensors.iter().map(|s| sample(v, s).map(|x| x.0)).collect::<Result<Vec<_>>>()
         })
         .collect::<Result<Vec<_>>>()?;
-    pair_modes(&g.measured_modes, &candidates, g.min_mac, g.min_assignment_margin)
+    let mut pairing = if g.allow_mac_fallback {
+        super::pairing::pair_modes_dropping(&g.measured_modes, &candidates, g.min_mac, g.min_assignment_margin)?
+    } else {
+        pair_modes(&g.measured_modes, &candidates, g.min_mac, g.min_assignment_margin)?
+    };
+    for p in &mut pairing.pairs {
+        p.computed_mode = *candidate_indices.get(p.computed_mode).ok_or_else(|| Error::Internal("MAC candidate index".into()))?;
+    }
+    pairing.excluded_near_zero_modes = excluded;
+    Ok(pairing)
 }
 
 pub(super) fn normalized(values: &[f64], derivatives: &[f64], reference: usize, sensor: usize) -> Result<(f64, f64)> {
@@ -121,7 +134,7 @@ pub(super) fn component(
     if sensor == reference_sensor {
         return Err(Error::Invalid("reference component is constant and supplies no independent information".into()));
     }
-    let index = pairing.pairs.get(measured_mode).ok_or_else(|| Error::Invalid("measured mode index out of range".into()))?.computed_mode;
+    let index = pairing.pair(measured_mode).ok_or_else(|| Error::Invalid("measured mode index out of range".into()))?.computed_mode;
     let v = result.modes.get(index).and_then(|x| x.vector.as_ref()).ok_or_else(|| Error::Internal("paired vector missing".into()))?;
     let samples = g.sensors.iter().map(|s| sample(v, s)).collect::<Result<Vec<_>>>()?;
     let (values, derivatives): (Vec<_>, Vec<_>) = samples.into_iter().unzip();
