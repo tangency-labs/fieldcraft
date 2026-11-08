@@ -223,6 +223,7 @@ pub fn inverse_frequency_uniform_young(
         || model.sections().values().any(|s| s.material != *name)
         || model.sections().values().any(|s| matches!(s.kind, fieldcraft_model::SectionKind::CompositeShell { .. }))
         || !model.springs().is_empty()
+        || !model.foundations().is_empty()
         || !model.initial_fields().is_empty()
         || !matches!(model.material(name).and_then(|m| m.elastic.as_ref()), Some(Elastic::Isotropic { .. }))
         || fit.lower <= 0.0

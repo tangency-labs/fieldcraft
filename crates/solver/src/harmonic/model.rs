@@ -84,8 +84,10 @@ fn material_damping(model: &Model, resolved: &Resolved) -> BTreeMap<u32, Damping
 
 /// Element damping is assembled on the existing graph; no averaging across materials.
 fn damping_matrices(mesh: &Mesh, graph: &NodeGraph, materials: &BTreeMap<u32, Damping>) -> Result<(Option<Csr>, Option<Csr>)> {
-    let viscous = materials.values().any(|d| d.alpha != 0.0 || d.beta != 0.0) || !mesh.discrete.dashpots().is_empty();
-    let loss = materials.values().any(|d| d.loss_factor != 0.0);
+    let viscous = materials.values().any(|d| d.alpha != 0.0 || d.beta != 0.0)
+        || !mesh.discrete.dashpots().is_empty()
+        || mesh.foundations.iter().any(|f| f.normal_damping != 0.0 || f.tangential_damping != 0.0);
+    let loss = materials.values().any(|d| d.loss_factor != 0.0) || mesh.foundations.iter().any(|f| f.loss_factor != 0.0);
     let mut c = viscous.then(|| graph.zero_matrix(&mesh.layout));
     let mut g = loss.then(|| graph.zero_matrix(&mesh.layout));
     for e in &mesh.elements {
@@ -142,6 +144,14 @@ fn damping_matrices(mesh: &Mesh, graph: &NodeGraph, materials: &BTreeMap<u32, Da
         }
         if let Some(g) = &mut g {
             add_block(g, &mesh.layout, &e.nodes, Structural::KINDS, &scaled(&stiffness, d.loss_factor))?;
+        }
+    }
+    for f in &mesh.foundations {
+        if let Some(c) = &mut c {
+            f.add(mesh, c, f.normal_damping, f.tangential_damping)?;
+        }
+        if let Some(g) = &mut g {
+            f.add(mesh, g, f.loss_factor * f.normal, f.loss_factor * f.tangential)?;
         }
     }
     if let Some(c) = &mut c {

@@ -2498,6 +2498,16 @@ const DESIGN_PARAMETER: Field = variants(
             &[reference("name", "Section", C::Section).req().help("The existing homogeneous shell section.")],
         ),
         variant(
+            "foundation",
+            "Surface foundation",
+            &[
+                text("name", "Foundation name").req().help("An existing surface foundation."),
+                choice("component", "Component", &[("normal", "Normal"), ("tangential", "Tangential")])
+                    .req()
+                    .help("The unit-area normal or isotropic tangential stiffness."),
+            ],
+        ),
+        variant(
             "spring_stiffness",
             "Spring stiffness",
             &[reference("name", "Spring", C::Spring).req().help("The existing elastic spring or compliant support.")],

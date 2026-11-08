@@ -493,3 +493,30 @@ fn harmonic_laminate_static_limit_and_named_ply_damping_refusal() {
     let error = solve_harmonic(&p.model, None, &Limits::default()).unwrap_err().to_string();
     assert!(error.contains("per-ply material damping"), "{error}");
 }
+
+#[test]
+fn surface_foundation_composite_plate_uniform_pressure_and_translation_mode() {
+    let mut p = Plate::new(2, 2, [1., 1.], 0.1, &[0., 90.], Procedure::Static {});
+    let faces = p.model.elements().keys().map(|e| ElementFace { element: *e, face: 1 }).collect();
+    p.model.add_set("bed", Set { faces, ..Set::default() }).unwrap();
+    p.model
+        .add_foundation(
+            "Bed",
+            Foundation { set: "bed".into(), normal: 1000., tangential: 500., normal_damping: 0., tangential_damping: 0., loss_factor: 0. },
+        )
+        .unwrap();
+    // Positive pressure on face 1 points opposite its +z normal.
+    p.load("pressure", Load::Pressure { set: "bed".into(), magnitude: 1. });
+    let result = solve_static(&p.model, None, &Limits::default()).unwrap();
+    for u in &result.displacement {
+        assert!((u[2] + 0.001).abs() < 1e-8, "{u:?}");
+    }
+    p.model.add_step(Step::new("F", Procedure::Frequency { modes: 6, min_hz: None, max_hz: None }), None).unwrap();
+    let result = solve_frequency(&p.model, Some("F"), &FrequencyOptions::default(), &Limits::default()).unwrap();
+    // Uniform normal translation: ω²=k/(rho*t), independent of laminate E.
+    assert!(
+        result.modes.iter().any(|m| (m.eigenvalue / (1000. / 160.) - 1.).abs() < 1e-5),
+        "{:?}",
+        result.modes.iter().map(|m| m.eigenvalue).collect::<Vec<_>>()
+    );
+}

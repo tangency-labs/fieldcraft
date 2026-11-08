@@ -212,6 +212,7 @@ pub fn write_resolved(model: &Model, r: &Resolved, units: Preset) -> Result<Stri
     d.contacts(model, r)?;
     d.ties(model)?;
     d.equations(model, r)?;
+    d.out.push_str(&crate::foundation::abaqus(model, r)?);
     d.steps(model, r)?;
     Ok(d.out)
 }

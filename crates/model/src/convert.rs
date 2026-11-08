@@ -596,6 +596,7 @@ impl Model {
             ties,
             masses,
             springs,
+            foundations,
             boundary_conditions,
             loads,
             initial_fields,
@@ -630,6 +631,12 @@ impl Model {
         }
         masses.values_mut().for_each(|x| x.quantities(f));
         springs.values_mut().for_each(|x| x.quantities(f));
+        for x in foundations.values_mut() {
+            f(Q::ForcePerVolume, &mut x.normal);
+            f(Q::ForcePerVolume, &mut x.tangential);
+            f(Q::SurfaceDamping, &mut x.normal_damping);
+            f(Q::SurfaceDamping, &mut x.tangential_damping);
+        }
         boundary_conditions.values_mut().for_each(|x| x.quantities(f));
         loads.values_mut().for_each(|x| x.quantities(f));
         for field in initial_fields.values_mut() {
@@ -714,6 +721,7 @@ impl Model {
         keep_map(&self.ties, &c.ties, &b.ties, &mut out.ties);
         keep_map(&self.masses, &c.masses, &b.masses, &mut out.masses);
         keep_map(&self.springs, &c.springs, &b.springs, &mut out.springs);
+        keep_map(&self.foundations, &c.foundations, &b.foundations, &mut out.foundations);
         keep_map(&self.boundary_conditions, &c.boundary_conditions, &b.boundary_conditions, &mut out.boundary_conditions);
         keep_map(&self.loads, &c.loads, &b.loads, &mut out.loads);
         keep_map(&self.initial_fields, &c.initial_fields, &b.initial_fields, &mut out.initial_fields);

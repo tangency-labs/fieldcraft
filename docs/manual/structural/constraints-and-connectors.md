@@ -418,3 +418,10 @@ Tests:
 - A. Popp, B. I. Wohlmuth, M. W. Gee, W. A. Wall. *Dual quadratic mortar finite element methods for 3D finite deformation contact.* SIAM J. Sci. Comput. 34(4):B421–B446, 2012.
 - T. Belytschko, W. K. Liu, B. Moran, K. Elkhodary. *Nonlinear Finite Elements for Continua and Structures*, 2nd ed., Wiley 2014 (§2.4, §4.5, §6.2, §6.3).
 - S. Timoshenko, S. Woinowsky-Krieger. *Theory of Plates and Shells*, 2nd ed., McGraw-Hill 1959 (§30).
+
+## Surface foundations
+
+For a distributed normal and in-plane elastic support, use
+[`model.foundation.create`](foundations.md). Its coefficients are per unit area,
+with consistent surface integration; a point spring's force/displacement value
+is not interchangeable with a foundation's pressure/displacement coefficient.

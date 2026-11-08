@@ -34,10 +34,18 @@ pub enum DampingParameter {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Parameter {
+    Foundation { name: String, component: FoundationComponent },
     Material { name: String, constant: MaterialConstant },
     ShellThickness { name: String },
     SpringStiffness { name: String },
     Damping { step: String, component: DampingParameter },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FoundationComponent {
+    Normal,
+    Tangential,
 }
 
 fn missing() -> Error {
@@ -103,6 +111,13 @@ impl Parameter {
                 let mut step = model.step(step).cloned().ok_or_else(missing)?;
                 Ok(*damping_slot(&mut step, *component)?)
             }
+            Self::Foundation { name, component } => {
+                let f = model.foundation(name).ok_or_else(missing)?;
+                Ok(match component {
+                    FoundationComponent::Normal => f.normal,
+                    FoundationComponent::Tangential => f.tangential,
+                })
+            }
             Self::Material { name, constant } => {
                 let mut material = model.material(name).cloned().ok_or_else(missing)?;
                 Ok(*material_slot(&mut material, *constant)?)
@@ -126,6 +141,7 @@ impl Parameter {
                 DampingParameter::Beta => Quantity::Time,
                 _ => Quantity::Dimensionless,
             },
+            Self::Foundation { .. } => Quantity::ForcePerVolume,
             Self::Material { constant, .. } => match constant {
                 MaterialConstant::Density => Quantity::Density,
                 MaterialConstant::Poisson | MaterialConstant::Nu12 | MaterialConstant::Nu13 | MaterialConstant::Nu23 => Quantity::Dimensionless,
@@ -148,6 +164,14 @@ impl Parameter {
                 let mut step = model.step(step).cloned().ok_or_else(missing)?;
                 *damping_slot(&mut step, *component)? = value;
                 model.replace_step(step)
+            }
+            Self::Foundation { name, component } => {
+                let mut f = model.foundation(name).cloned().ok_or_else(missing)?;
+                match component {
+                    FoundationComponent::Normal => f.normal = value,
+                    FoundationComponent::Tangential => f.tangential = value,
+                };
+                model.replace_foundation(name, f)
             }
             Self::Material { name, constant } => {
                 let mut material = model.material(name).cloned().ok_or_else(missing)?;

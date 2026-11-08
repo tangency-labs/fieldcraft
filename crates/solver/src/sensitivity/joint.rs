@@ -434,6 +434,7 @@ pub fn inverse_joint_uniform_material(model: &Model, fit: &JointFit, limits: &Li
         || model.sections().values().any(|s| matches!(s.kind, fieldcraft_model::SectionKind::CompositeShell { .. }))
         || !matches!(model.material(name).and_then(|m| m.elastic.as_ref()), Some(Elastic::Isotropic { .. }))
         || !model.springs().is_empty()
+        || !model.foundations().is_empty()
         || !model.masses().is_empty()
         || !model.initial_fields().is_empty()
         || model

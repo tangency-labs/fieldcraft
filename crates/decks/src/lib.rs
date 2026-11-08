@@ -15,6 +15,7 @@
 
 pub mod abaqus;
 mod composite;
+mod foundation;
 pub mod lsdyna;
 pub mod nastran;
 

@@ -256,6 +256,9 @@ impl Model {
 
     /// The references only a set has: sections, contacts, ties and explicit steps.
     fn rewrite_set_only(&mut self, from: &str, to: &str) {
+        for f in self.foundations.values_mut() {
+            swap(&mut f.set, from, to);
+        }
         for s in self.sections.values_mut() {
             swap(&mut s.set, from, to);
         }

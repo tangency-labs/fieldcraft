@@ -1,0 +1,20 @@
+{
+  "title": "Navier sinusoidal composite plate on a Winkler foundation",
+  "kind": "theory",
+  "source": "Bert and Siu NASA CR-112140 (1972), Navier FSDT system as derived in composite-navier-static-thick/README; Winkler term adds k to the transverse diagonal (Hetenyi 1946). W=1/(1/W0+k), W0=1.1636747564990154e-9 m, q=1 Pa, k=1e8 N/m\u00b3.",
+  "quantities": [
+    {
+      "id": "w",
+      "quantity": "centre transverse displacement (m)",
+      "measure": {
+        "from": "probe",
+        "pointer": "/nodes/0/displacement/2"
+      },
+      "value": 1.042376083038046e-09,
+      "tolerance": {
+        "relative": 0.03
+      },
+      "reason": "Same predeclared 3% 8x8 MITC4 discretization band as the parent Navier FSDT case; foundation stiffness included through consistent surface integration."
+    }
+  ]
+}

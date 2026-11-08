@@ -470,6 +470,7 @@ pub struct Mesh {
     pub warnings: Vec<String>,
     /// Point masses, springs and dashpots ([`crate::discrete`]).
     pub discrete: crate::discrete::Discrete,
+    pub foundations: Vec<crate::foundation::Face>,
 }
 
 impl Mesh {
@@ -760,6 +761,7 @@ impl Mesh {
             structural: Vec::with_capacity(structural.len()),
             warnings,
             discrete: crate::discrete::Discrete::default(),
+            foundations: Vec::new(),
         };
         for e in elements {
             let idx: Vec<usize> = e.nodes.iter().filter_map(|n| mesh.node(*n)).collect();
@@ -790,6 +792,7 @@ impl Mesh {
             mesh.structural.push(Structural { label, kind, nodes: idx, xyz: exyz, density, section });
         }
         mesh.discrete = crate::discrete::Discrete::new(&mesh, resolved)?;
+        mesh.foundations = crate::foundation::resolve(model, resolved, &mesh)?;
         Ok(mesh)
     }
 
@@ -801,7 +804,8 @@ impl Mesh {
             .iter()
             .map(|e| e.nodes.as_slice())
             .chain(self.trusses.iter().map(|t| t.nodes.as_slice()))
-            .chain(self.structural.iter().map(|s| s.nodes.as_slice()));
+            .chain(self.structural.iter().map(|s| s.nodes.as_slice()))
+            .chain(self.foundations.iter().map(|f| f.nodes.as_slice()));
         elements.map(std::borrow::Cow::Borrowed).chain(self.discrete.couplings().map(|dofs| {
             let mut slots: Vec<usize> = dofs.iter().filter_map(|d| self.layout.locate(*d).map(|(slot, _)| slot)).collect();
             slots.dedup();

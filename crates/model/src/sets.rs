@@ -152,6 +152,7 @@ impl Model {
         users.extend(self.couplings.iter().filter(|(_, c)| c.set == set).map(|(n, _)| format!("coupling `{n}`")));
         users.extend(self.contact_users(set));
         users.extend(self.tie_users(set));
+        users.extend(self.foundations.iter().filter(|(_, f)| f.set == set).map(|(n, _)| format!("foundation `{n}`")));
         users.extend(self.discrete_users(|t| t.set() == Some(set)));
         users
     }

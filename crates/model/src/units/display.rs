@@ -71,6 +71,7 @@ const TABLE: &[Row] = {
         (Q::Stiffness, ["N/m", "N/mm", "kN/mm", "N/mm", "lbf/in"]),
         (Q::ForcePerLength, ["N/m", "N/mm", "kN/mm", "N/mm", "lbf/in"]),
         (Q::RotationalStiffness, ["N·m/rad", "N·mm/rad", "kN·mm/rad", "N·mm/rad", "lbf·in/rad"]),
+        (Q::SurfaceDamping, ["N·s/m³", "N·s/mm³", "kN·ms/mm³", "N·ms/mm³", "lbf·s/in³"]),
         (Q::Damping, ["N·s/m", "N·s/mm", "kN·ms/mm", "N·ms/mm", "lbf·s/in"]),
         (Q::RotationalDamping, ["N·m·s/rad", "N·mm·s/rad", "kN·mm·ms/rad", "N·mm·ms/rad", "lbf·in·s/rad"]),
         (Q::Energy, ["J", "mJ", "J", "mJ", "in·lbf"]),

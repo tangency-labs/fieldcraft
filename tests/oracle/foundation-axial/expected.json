@@ -1,0 +1,59 @@
+{
+  "title": "Axial solid on a consistent surface foundation",
+  "kind": "theory",
+  "source": "Virtual-work Winkler surface model (Hetenyi, Beams on Elastic Foundation, 1946); independent uniaxial equilibrium and Hooke law u(0)=p/k and u(L)=p/k+pL/E, Poisson ratio zero.",
+  "quantities": [
+    {
+      "id": "tip",
+      "quantity": "tip",
+      "measure": {
+        "from": "sensitivity",
+        "pointer": "/displacement"
+      },
+      "value": 0.011,
+      "tolerance": {
+        "relative": 1e-09
+      },
+      "reason": "Exact axial solution pL/E+p/k, derivative -p/k\u00b2; noiseless independent support and tip observations distinguish E and k."
+    },
+    {
+      "id": "dk",
+      "quantity": "dk",
+      "measure": {
+        "from": "sensitivity",
+        "pointer": "/direct"
+      },
+      "value": -0.0001,
+      "tolerance": {
+        "relative": 1e-09
+      },
+      "reason": "Exact axial solution pL/E+p/k, derivative -p/k\u00b2; noiseless independent support and tip observations distinguish E and k."
+    },
+    {
+      "id": "E",
+      "quantity": "E",
+      "measure": {
+        "from": "joint",
+        "pointer": "/estimate_si/0"
+      },
+      "value": 1250,
+      "tolerance": {
+        "relative": 1e-06
+      },
+      "reason": "Exact axial solution pL/E+p/k, derivative -p/k\u00b2; noiseless independent support and tip observations distinguish E and k."
+    },
+    {
+      "id": "k",
+      "quantity": "k",
+      "measure": {
+        "from": "joint",
+        "pointer": "/estimate_si/1"
+      },
+      "value": 125,
+      "tolerance": {
+        "relative": 1e-06
+      },
+      "reason": "Exact axial solution pL/E+p/k, derivative -p/k\u00b2; noiseless independent support and tip observations distinguish E and k."
+    }
+  ]
+}

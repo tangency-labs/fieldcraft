@@ -45,6 +45,9 @@ pub(super) fn perturb(model: &Model, parameter: &Parameter, h: f64) -> Result<(M
     if !h.is_finite() || h <= 0.0 || value + h == value || value - h == value {
         return Err(Error::Invalid("sensitivity increment must be positive, finite and representable at the parameter value".into()));
     }
+    if matches!(parameter, Parameter::Foundation { .. }) {
+        return Ok((model.clone(), model.clone()));
+    }
     let (mut plus, mut minus) = (model.clone(), model.clone());
     parameter.set(&mut plus, value + h)?;
     parameter.set(&mut minus, value - h)?;
@@ -159,9 +162,13 @@ pub fn static_sensitivity(
     };
     let (mp, kp, fp) = assemble_perturbed(&plus)?;
     let (mm, km, fm) = assemble_perturbed(&minus)?;
-    let dk = matrix_difference(&kp, &km, increment)?;
+    let exact = crate::foundation::derivative(&mesh, &graph, parameter)?;
+    let dk = match &exact {
+        Some((k, _)) => k.clone(),
+        None => matrix_difference(&kp, &km, increment)?,
+    };
     let df = difference(&fp, &fm, increment)?;
-    let drhs = difference(&red.rhs(&fp, &kp), &red.rhs(&fm, &km), increment)?;
+    let drhs = if exact.is_some() { red.rhs(&vec![0.; mesh.dofs()], &dk) } else { difference(&red.rhs(&fp, &kp), &red.rhs(&fm, &km), increment)? };
     let [dkff] = red.reduce([&dk])?;
     let mut dku = vec![0.0; q.len()];
     dkff.mul(&q, &mut dku);
@@ -345,7 +352,10 @@ pub fn frequency_sensitivity_with_vectors(
     };
     let p = assembled(&plus)?;
     let m = assembled(&minus)?;
-    let dk = matrix_difference(&p.k, &m.k, increment)?;
+    let dk = match crate::foundation::derivative(&mesh, &graph, parameter)? {
+        Some((k, _)) => k,
+        None => matrix_difference(&p.k, &m.k, increment)?,
+    };
     let dm = if mass_changes {
         Some(matrix_difference(
             &p.m.ok_or_else(|| Error::Internal("perturbed mass".into()))?,

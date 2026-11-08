@@ -1,0 +1,270 @@
+[
+  {
+    "command": "model.units",
+    "params": {
+      "system": "m-kg-s-N-Pa"
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 1,
+      "xyz": [
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 2,
+      "xyz": [
+        1,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 3,
+      "xyz": [
+        1,
+        1,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 4,
+      "xyz": [
+        0,
+        1,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 5,
+      "xyz": [
+        0,
+        0,
+        1
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 6,
+      "xyz": [
+        1,
+        0,
+        1
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 7,
+      "xyz": [
+        1,
+        1,
+        1
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 8,
+      "xyz": [
+        0,
+        1,
+        1
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 1,
+      "kind": "hex8",
+      "nodes": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "all",
+      "elements": [
+        1
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "bed",
+      "faces": [
+        {
+          "element": 1,
+          "face": 6
+        }
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "tip",
+      "faces": [
+        {
+          "element": 1,
+          "face": 4
+        }
+      ]
+    }
+  },
+  {
+    "command": "model.material.create",
+    "params": {
+      "name": "Mat",
+      "elastic": {
+        "type": "isotropic",
+        "young": 1000,
+        "poisson": 0
+      },
+      "density": 2
+    }
+  },
+  {
+    "command": "model.section.create",
+    "params": {
+      "name": "Solid",
+      "set": "all",
+      "material": "Mat",
+      "kind": {
+        "type": "solid"
+      }
+    }
+  },
+  {
+    "command": "model.foundation.create",
+    "params": {
+      "name": "Bed",
+      "set": "bed",
+      "normal": 100,
+      "tangential": 100
+    }
+  },
+  {
+    "command": "model.load.create",
+    "params": {
+      "name": "P",
+      "type": "pressure",
+      "set": "tip",
+      "magnitude": -1
+    }
+  },
+  {
+    "command": "model.step.create",
+    "params": {
+      "name": "S",
+      "procedure": {
+        "type": "static"
+      },
+      "loads": [
+        "P"
+      ]
+    }
+  },
+  {
+    "command": "solve.static",
+    "params": {
+      "step": "S"
+    },
+    "id": "solve"
+  },
+  {
+    "command": "solve.sensitivity.static",
+    "params": {
+      "step": "S",
+      "parameter": {
+        "type": "foundation",
+        "name": "Bed",
+        "component": "normal"
+      },
+      "node": 2,
+      "dof": 1
+    },
+    "id": "sensitivity"
+  },
+  {
+    "command": "solve.inverse.joint",
+    "params": {
+      "parameters": [
+        {
+          "parameter": {
+            "type": "material",
+            "name": "Mat",
+            "constant": "young"
+          },
+          "lower_si": 500,
+          "upper_si": 2000,
+          "scale_si": 1000
+        },
+        {
+          "parameter": {
+            "type": "foundation",
+            "name": "Bed",
+            "component": "normal"
+          },
+          "lower_si": 50,
+          "upper_si": 200,
+          "scale_si": 100
+        }
+      ],
+      "observations": [
+        {
+          "response": {
+            "kind": "static",
+            "step": "S",
+            "node": 1,
+            "dof": 1
+          },
+          "value_si": 0.008,
+          "standard_deviation_si": 1e-05
+        },
+        {
+          "response": {
+            "kind": "static",
+            "step": "S",
+            "node": 2,
+            "dof": 1
+          },
+          "value_si": 0.0088,
+          "standard_deviation_si": 1e-05
+        }
+      ]
+    },
+    "id": "joint"
+  }
+]

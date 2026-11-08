@@ -292,6 +292,16 @@ fn harmonic_sensitivity_cached(
             db.mirror_lower();
             let da = crate::sparse::Csr { val: vec![0.0; db.val.len()], ..db.clone() };
             (da, db, df)
+        } else if let Some((dk, mut dh)) = crate::foundation::derivative(&mesh, &graph, parameter)? {
+            // Step Rayleigh beta and structural loss multiply the total stiffness.
+            for (g, k) in dh.val.iter_mut().zip(&dk.val) {
+                *g += (omega * h.damping.beta + h.damping.loss_factor) * k;
+            }
+            let df = Vector { real: red.rhs(&vec![0.; mesh.dofs()], &dk), imaginary: red.rhs(&vec![0.; mesh.dofs()], &dh) };
+            let [mut da, mut db] = red.reduce([&dk, &dh])?;
+            da.mirror_lower();
+            db.mirror_lower();
+            (da, db, df)
         } else {
             let (p, m) = perturbed_operators.as_ref().ok_or_else(|| Error::Internal("missing perturbed harmonic operators".into()))?;
             let (ap, bp, fp) = dynamic(p)?;

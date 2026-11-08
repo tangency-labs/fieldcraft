@@ -1269,6 +1269,8 @@ pub struct StepInputs<'a> {
     ties: &'a BTreeMap<String, crate::Tie>,
     masses: &'a BTreeMap<String, crate::PointMass>,
     springs: &'a BTreeMap<String, crate::Spring>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    foundations: &'a BTreeMap<String, crate::Foundation>,
     boundary_conditions: BTreeMap<&'a str, &'a crate::BoundaryCondition>,
     loads: BTreeMap<&'a str, &'a crate::Load>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
@@ -1301,6 +1303,7 @@ impl Model {
             ties: &self.ties,
             masses: &self.masses,
             springs: &self.springs,
+            foundations: &self.foundations,
             boundary_conditions: self
                 .boundary_conditions
                 .iter()

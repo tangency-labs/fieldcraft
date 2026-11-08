@@ -203,6 +203,9 @@ fn per_node(x: &[f64]) -> Vec<[f64; 3]> {
 
 /// Solve an explicit dynamic step: the step named `step`, or the model's only one.
 pub fn solve_explicit(model: &Model, step: Option<&str>, limits: &Limits) -> Result<ExplicitResult> {
+    if let Some((name, _)) = model.foundations().iter().next() {
+        return Err(Error::NotSupported(format!("foundation `{name}` in explicit dynamics")));
+    }
     let resolved = model.resolve()?;
     let (step, settings) = select_step(model, step)?;
     let mut sys = System::new(model, &resolved, step, settings, limits)?;

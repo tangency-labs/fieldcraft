@@ -262,6 +262,9 @@ pub(crate) fn assemble(mesh: &Mesh, graph: &NodeGraph, mass: Option<MassKind>) -
         }
     }
     mesh.discrete.add_stiffness(&mut k)?;
+    for f in &mesh.foundations {
+        f.add(mesh, &mut k, f.normal, f.tangential)?;
+    }
     if let Some(mm) = m.as_mut() {
         mesh.discrete.add_mass(mm)?;
     }
@@ -551,7 +554,24 @@ pub(crate) fn static_on(setup: &Setup<'_>, limits: &Limits) -> Result<StaticResu
     let stress: Vec<[f64; 6]> = sum.iter().zip(&count).map(|(s, c)| s.map(|v| if *c > 0 { v / f64::from(*c) } else { 0.0 })).collect();
     let von_mises = stress.iter().map(von_mises).collect();
     let scale = crate::system::balance_scale(&applied_total, &reaction_total, &reaction);
-    let ground = mesh.discrete.ground_force(&u, mesh);
+    let mut ground = mesh.discrete.ground_force(&u, mesh);
+    for f in &mesh.foundations {
+        let data = fieldcraft_fem::foundation::matrix(&f.xyz, f.normal, f.tangential).map_err(|e| Error::Invalid(e.to_string()))?;
+        let dofs: Vec<_> = f
+            .nodes
+            .iter()
+            .flat_map(|n| (0..3).map(move |c| (*n, c)))
+            .map(|(n, c)| {
+                let kind = fieldcraft_fem::DofKind::translation(c).ok_or_else(|| Error::Internal("foundation direction".into()))?;
+                mesh.dof(n, kind)
+            })
+            .collect::<Result<_>>()?;
+        for (i, row) in data.chunks(dofs.len()).enumerate() {
+            for (value, dof) in row.iter().zip(&dofs) {
+                ground[i % 3] -= value * u.get(*dof).copied().unwrap_or(0.);
+            }
+        }
+    }
     let imbalance = (0..3).map(|c| (applied_total[c] + reaction_total[c] + ground[c]).abs()).fold(0.0, f64::max);
     if scale > 0.0 && imbalance > crate::system::BALANCE_TOLERANCE * scale {
         warnings.push(format!("loads and reactions differ by {imbalance:.3e} (relative {:.1e})", imbalance / scale));

@@ -42,6 +42,8 @@ mod convert;
 pub mod datums;
 pub mod design;
 pub mod discrete;
+pub mod foundation;
+pub use foundation::Foundation;
 pub mod fluid_zones;
 pub mod fluids;
 pub mod geometry;
@@ -176,6 +178,8 @@ pub struct Model {
     masses: BTreeMap<String, PointMass>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     springs: BTreeMap<String, Spring>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    foundations: BTreeMap<String, Foundation>,
     boundary_conditions: BTreeMap<String, BoundaryCondition>,
     loads: BTreeMap<String, Load>,
     /// Initial temperature and stress fields, by name.
@@ -252,6 +256,8 @@ struct ModelData {
     masses: BTreeMap<String, PointMass>,
     #[serde(default)]
     springs: BTreeMap<String, Spring>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    foundations: BTreeMap<String, Foundation>,
     #[serde(default)]
     boundary_conditions: BTreeMap<String, BoundaryCondition>,
     #[serde(default)]
@@ -341,6 +347,9 @@ impl TryFrom<ModelData> for Model {
         }
         for (n, v) in d.masses {
             m.add_mass(&n, v)?;
+        }
+        for (n, v) in d.foundations {
+            m.add_foundation(&n, v)?;
         }
         for (n, v) in d.springs {
             m.add_spring(&n, v)?;
@@ -522,6 +531,7 @@ impl Model {
             ties: self.ties.clone(),
             masses: self.masses.clone(),
             springs: self.springs.clone(),
+            foundations: self.foundations.clone(),
             boundary_conditions: self.boundary_conditions.clone(),
             loads: self.loads.clone(),
             initial_fields: self.initial_fields.clone(),
@@ -589,7 +599,7 @@ impl Model {
     }
 
     /// Counts of each kind of definition, for summaries.
-    pub fn definition_counts(&self) -> [(&'static str, usize); 22] {
+    pub fn definition_counts(&self) -> [(&'static str, usize); 23] {
         [
             ("sets", self.sets.len()),
             ("materials", self.materials.len()),
@@ -600,6 +610,7 @@ impl Model {
             ("ties", self.ties.len()),
             ("masses", self.masses.len()),
             ("springs", self.springs.len()),
+            ("foundations", self.foundations.len()),
             ("boundary_conditions", self.boundary_conditions.len()),
             ("loads", self.loads.len()),
             ("initial_fields", self.initial_fields.len()),

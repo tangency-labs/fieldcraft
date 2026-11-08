@@ -635,7 +635,7 @@ pub static CATALOGUE: &[Capability] = &[
         Interactions,
         "Connectors",
         "Spring or dashpot to the ground or between two points, along a direction or their line",
-        &["model.spring.edit", "model.spring.delete"],
+        &["model.spring.edit", "model.spring.delete", "model.foundation.create", "model.foundation.edit", "model.foundation.delete"],
     ),
     ready_more(
         "model.mass.create",

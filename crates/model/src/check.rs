@@ -495,6 +495,14 @@ impl Model {
             }
         }
 
+        for (name, foundation) in &self.foundations {
+            if let Err(e) = foundation.validate() {
+                d.error(format!("foundation `{name}`"), e.to_string());
+            }
+            if resolved.sets.get(&foundation.set).is_none_or(|s| s.faces.is_empty()) {
+                d.error(format!("foundation `{name}`"), "foundation set must resolve to element faces");
+            }
+        }
         // Point masses, springs and dashpots.
         let (masses, springs) = self.resolve_discrete(&resolved, &mut d, &has_rotations);
 

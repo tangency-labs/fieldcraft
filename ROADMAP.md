@@ -195,5 +195,10 @@ remain outside this modal derivative implementation. A prespecified 200-replicat
 Started: the FEM kernel integrates normal and isotropic tangential Winkler coefficients
 on tri3, tri6, quad4 and quad8 reference faces, sharing surface-load quadrature. Exact
 triangle coefficients, rigid-translation energy and hostile-input checks cover this layer.
-Model entities, solver assembly, commands, design parameters, deck export and foundation
-oracles remain pending; this kernel alone is not a user-facing foundation capability.
+Model entities and unit-aware commands now connect to static, modal and harmonic
+assembly, including composite shells. Foundation stiffness parameters use exact
+operator derivatives and joint identification; Abaqus has native normal-only and
+K/C/H matrix export paths. Axial-theory and Navier composite-plate command oracles,
+crate regressions, the full oracle and wasm checks pass. Finite-beam bending, the
+remaining rigid-body/limit cases, plate E+k and BASE E+k recovery, and independent
+third-party acceptance remain open; this is not yet a completed foundation milestone.

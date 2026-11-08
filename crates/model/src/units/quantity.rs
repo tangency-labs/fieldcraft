@@ -72,6 +72,7 @@ quantities! {
     Stiffness = "stiffness", d(0, 1, -2, 0), "N/m";
     ForcePerLength = "force_per_length", d(0, 1, -2, 0), "N/m";
     RotationalStiffness = "rotational_stiffness", d(2, 1, -2, 0), "N·m/rad";
+    SurfaceDamping = "surface_damping", d(-2, 1, -1, 0), "N·s/m³";
     Damping = "damping", d(0, 1, -1, 0), "N·s/m";
     RotationalDamping = "rotational_damping", d(2, 1, -1, 0), "N·m·s/rad";
     Energy = "energy", d(2, 1, -2, 0), "J";
