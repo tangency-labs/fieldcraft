@@ -2453,7 +2453,7 @@ const MAX_DOFS: Field = int("max_dofs", "Max DOFs", 1, 6_000_000).help("Cap on t
 const MAX_FACTOR: Field = int("max_factor_entries", "Max factor entries", 1, super::solve::FACTOR_ENTRY_CEILING as i64)
     .help("Cap on factor entries (8 bytes each): 400M by default; raise deliberately up to 2B (16 GB of values alone). Indices, workspace and other solver storage need additional memory.")
     .hint("400000000");
-const MAX_MEMORY_GIB: Field = num("max_memory_gib", "Max factor memory (GiB)")
+const MAX_MEMORY_GIB: Field = num("max_memory_gib", "Max factor memory (GiB)", D::None)
     .help("Optional whole-factor memory budget. Symbolic storage is checked before numeric factor allocation; matrices, results and Lanczos vectors require separate headroom.")
     .hint("unset");
 const THREADS: Field = int("threads", "Threads", 1, 256).help("Threads to use; the session's setting when empty.").hint("the session's");
