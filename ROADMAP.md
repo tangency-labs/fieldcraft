@@ -189,3 +189,11 @@ remain outside this modal derivative implementation. A prespecified 200-replicat
 100-element rod test validates the local known-independent-noise joint ellipsoid.
 
 - Harmonic derivative batches reuse identical modal/Ritz bases within one immutable-model invocation; all cold preprocessing remains inside the timed command. Supports and complex load factors are exact reuse boundaries.
+
+## Surface foundations (fusion fork)
+
+Started: the FEM kernel integrates normal and isotropic tangential Winkler coefficients
+on tri3, tri6, quad4 and quad8 reference faces, sharing surface-load quadrature. Exact
+triangle coefficients, rigid-translation energy and hostile-input checks cover this layer.
+Model entities, solver assembly, commands, design parameters, deck export and foundation
+oracles remain pending; this kernel alone is not a user-facing foundation capability.

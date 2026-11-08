@@ -70,6 +70,7 @@ pub mod element;
 pub mod face;
 pub mod failure;
 pub mod finite;
+pub mod foundation;
 pub mod frame;
 pub mod heat;
 pub mod hybrid;
