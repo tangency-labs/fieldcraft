@@ -523,3 +523,15 @@ drag. The diagnostics do not repair the wall model, and completion of a study
 does not certify physical validation. See the
 [wall-stress verification contract](../../verification.md#requested-applied-and-carried-wall-stress)
 for test thresholds, scope and the known-failure regression.
+
+## Statistical acceptance of study windows
+
+The long channel studies stop only when their averaged signal passes a shared
+statistical acceptance: enough complete blocks after the start-up, a narrow mean
+interval at two block lengths, no drift between the window's halves and no
+correlation between blocks. A study that reaches its time cap without passing
+reports **inconclusive**, never steady or validated, and prints every criterion
+it checked. Passing says only that the mean is well sampled; drag, frequency,
+wall treatment and resolution still need their own reference comparisons. The
+thresholds, their sources and the rejection controls are in
+[Verification and validation](../../verification.md#statistical-acceptance-of-study-windows).
