@@ -1,4 +1,4 @@
-//! Eight-node curved MITC8, small-displacement homogeneous and layered elastic statics.
+//! Eight-node curved MITC8, small-displacement homogeneous and layered elasticity and inertia.
 //!
 //! K. J. Bathe & E. N. Dvorkin, IJNME 22 (1986), 697–722,
 //! doi:10.1002/nme.1620220312, Fig. 7 and equations (9)–(22): the in-layer
@@ -15,7 +15,7 @@
 //! the solver supplies sign-aligned averages at shared nodes for smooth patches.
 //! They are interpolated WITHOUT renormalization through the element, preserving
 //! exact infinitesimal rigid motions. Thickness is constant, with the same signed
-//! reference-surface offset as `ShellSection`. No finite rotations or mass model.
+//! reference-surface offset as `ShellSection`. No finite rotations. Mass uses the same director kinematics.
 
 use crate::basis::Basis;
 use crate::dense::{Matrix, inverse3};
@@ -489,6 +489,146 @@ impl Mitc8 {
         Ok(k)
     }
 
+    /// Consistent kinetic energy of u=ΣN(u_i+z theta_i×n_i), with physical
+    /// translation/rotation coupling integrated through each density layer.
+    /// Lee & Bathe (2004), eqs. (1)-(8), inserted in T=∫rho |u_dot|²/2 dV.
+    /// As in the flat shell, add ∫rho z² (ΣN theta_i·n_i)²/2: artificial
+    /// drilling inertia, not part of the five-DOF shell. Three Gauss points per
+    /// direction and per ply; no MITC strain interpolation is used for inertia.
+    pub fn mass(&self, density: f64) -> Result<Matrix> {
+        let mut out = Matrix::zeros(DOFS);
+        for q in Rule::Quad(3).points() {
+            for (t, tw, ply) in self.thickness_rule() {
+                let p = [q.xi[0], q.xi[1], t];
+                let m = self.map(p)?;
+                let sh = Basis::Quad8.eval(p);
+                let z = self.section.eccentricity + 0.5 * self.section.thickness * t;
+                let w = self.density(density, ply)? * q.weight * tw * m.det;
+                let v: [Vec3; DOFS] = std::array::from_fn(|i| {
+                    let mut a = [0.0; 3];
+                    a[i % 3] = sh.n[i / 6];
+                    if i % 6 < 3 { a } else { scaled(cross(a, self.directors[i / 6]), z) }
+                });
+                let drill: [f64; DOFS] = std::array::from_fn(|i| if i % 6 < 3 { 0.0 } else { z * sh.n[i / 6] * self.directors[i / 6][i % 3] });
+                for i in 0..DOFS {
+                    for j in i..DOFS {
+                        let a = w * (dot(v[i], v[j]) + drill[i] * drill[j]);
+                        out.add(i, j, a);
+                        if i != j {
+                            out.add(j, i, a);
+                        }
+                    }
+                }
+            }
+        }
+        finite_matrix(out, "mass")
+    }
+
+    fn density(&self, homogeneous: f64, ply: usize) -> Result<f64> {
+        let rho = match &self.layers {
+            Some(l) => l
+                .plies
+                .get(ply)
+                .and_then(|p| p.density)
+                .ok_or_else(|| Error::Invalid("every MITC8 ply needs density for inertia or gravity".into()))?,
+            None => homogeneous,
+        };
+        if !(rho > 0.0 && rho.is_finite()) {
+            return Err(Error::Invalid("MITC8 density must be positive and finite".into()));
+        }
+        Ok(rho)
+    }
+
+    /// Positive diagonal scaling (Hinton, Rock & Zienkiewicz 1976,
+    /// doi:10.1002/eqe.4290040305), separately conserving ∫rho and ∫rho z².
+    /// Omits I1 and all inter-node coupling; not row-sum lumping (quad8 row
+    /// sums can be negative), and not an exact rigid-rotation energy integral.
+    pub fn lumped_mass(&self, density: f64) -> Result<Matrix> {
+        let mut diagonal = [[0.0; N]; 2];
+        let mut total = [0.0; 2];
+        for q in Rule::Quad(3).points() {
+            for (t, tw, ply) in self.thickness_rule() {
+                let p = [q.xi[0], q.xi[1], t];
+                let sh = Basis::Quad8.eval(p);
+                let z = self.section.eccentricity + 0.5 * self.section.thickness * t;
+                let w = self.density(density, ply)? * q.weight * tw * self.map(p)?.det;
+                for (a, moment) in [w, w * z * z].into_iter().enumerate() {
+                    total[a] += moment;
+                    for i in 0..N {
+                        diagonal[a][i] += moment * sh.n[i] * sh.n[i];
+                    }
+                }
+            }
+        }
+        let mut out = Matrix::zeros(DOFS);
+        for a in 0..2 {
+            let sum: f64 = diagonal[a].iter().sum();
+            if !(sum > 0.0 && total[a] > 0.0) {
+                return Err(Error::Invalid("MITC8 mass moment underflow".into()));
+            }
+            for i in 0..N {
+                for c in 0..3 {
+                    out.add(6 * i + 3 * a + c, 6 * i + 3 * a + c, diagonal[a][i] * total[a] / sum);
+                }
+            }
+        }
+        finite_matrix(out, "lumped mass")
+    }
+
+    /// Reference normal for the flat-plate applicability check. Curvature and
+    /// the preload are checked by the solver before assembling plate K_sigma.
+    pub fn plate_normal(&self) -> Result<Vec3> {
+        Ok(self.map([0.0; 3])?.axes[2])
+    }
+
+    /// Small-slope flat-plate initial-stress operator, Bathe (2014), §6.8.2:
+    /// ∫ grad(w)^T N grad(w) dA; also NASA TP-2528 (1986), eq. (12).
+    /// Membrane resultants come from the actual
+    /// MITC preload strain and layer laws at each integration point. No curved
+    /// shell tangent, director geometric terms, or follower-load stiffness.
+    pub fn plate_geometric_stiffness(&self, u: &[f64]) -> Result<Matrix> {
+        if u.len() != DOFS || u.iter().any(|v| !v.is_finite()) {
+            return Err(Error::Invalid("MITC8 plate preload needs 48 finite degrees of freedom".into()));
+        }
+        let normal = self.plate_normal()?;
+        let extent = self.xyz.iter().map(|x| norm(sub(*x, self.xyz[0]))).fold(0.0, f64::max);
+        if self.xyz.iter().any(|x| dot(sub(*x, self.xyz[0]), normal).abs() > 1e-8 * extent)
+            || self.directors.iter().any(|n| dot(*n, normal) < 1.0 - 1e-8)
+        {
+            return Err(Error::NotSupported("MITC8 curved-shell buckling: only coplanar plates with flat directors are supported".into()));
+        }
+        let mut out = Matrix::zeros(DOFS);
+        for q in Rule::Quad(3).points() {
+            for (t, tw, ply) in self.thickness_rule() {
+                let p = [q.xi[0], q.xi[1], t];
+                let m = self.map(p)?;
+                let b = self.strain_operator(p, true)?;
+                let strain: [f64; 5] = std::array::from_fn(|i| b[i].iter().zip(u).map(|(b, u)| b * u).sum());
+                let c = self.material(p, ply)?;
+                let stress: [f64; 3] = std::array::from_fn(|i| (0..5).map(|j| c[i][j] * strain[j]).sum());
+                let sh = Basis::Quad8.eval(p);
+                let g: [[f64; 2]; N] = std::array::from_fn(|i| {
+                    let v = sum(scaled(m.dual[0], sh.dn[i][0]), scaled(m.dual[1], sh.dn[i][1]));
+                    [dot(v, m.axes[0]), dot(v, m.axes[1])]
+                });
+                for i in 0..N {
+                    for j in 0..N {
+                        let v = q.weight
+                            * tw
+                            * m.det
+                            * (g[i][0] * (stress[0] * g[j][0] + stress[2] * g[j][1]) + g[i][1] * (stress[2] * g[j][0] + stress[1] * g[j][1]));
+                        for a in 0..3 {
+                            for b in 0..3 {
+                                out.add(6 * i + a, 6 * j + b, v * normal[a] * normal[b]);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        finite_matrix(out, "plate initial-stress stiffness")
+    }
+
     pub fn body_force(&self, force: Vec3) -> Result<Vec<f64>> {
         self.volume_load(force, None)
     }
@@ -602,4 +742,11 @@ impl Mitc8 {
         }
         Ok(out)
     }
+}
+
+fn finite_matrix(m: Matrix, name: &str) -> Result<Matrix> {
+    if m.data.iter().any(|v| !v.is_finite()) {
+        return Err(Error::Invalid(format!("MITC8 nonfinite {name}")));
+    }
+    Ok(m)
 }

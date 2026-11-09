@@ -1,0 +1,37 @@
+{
+  "note": "FieldCraft's accepted results for this case, written by `cargo xtask oracle --bless`. A result outside its band fails CI.",
+  "values": {
+    "consistent1": {
+      "band": 4.0907565892283494e-8,
+      "value": 40.90756589228349
+    },
+    "consistent2": {
+      "band": 8.213119862614898e-8,
+      "value": 82.13119862614897
+    },
+    "consistent3": {
+      "band": 1.4117915764527733e-7,
+      "value": 141.17915764527731
+    },
+    "consistent_mass": {
+      "band": 1.6000000000000127e-8,
+      "value": 16.000000000000124
+    },
+    "lumped1": {
+      "band": 4.082260671417634e-8,
+      "value": 40.751175665992584
+    },
+    "lumped2": {
+      "band": 8.072343659864754e-8,
+      "value": 80.54429793502116
+    },
+    "lumped3": {
+      "band": 1.3910179764346976e-7,
+      "value": 138.39195313712716
+    },
+    "lumped_mass": {
+      "band": 1.6e-8,
+      "value": 15.99999999999996
+    }
+  }
+}

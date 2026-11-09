@@ -462,7 +462,7 @@ pub const SECTION: &[Field] = &[
                 "shell",
                 "Shell",
                 &[
-                    positive("thickness", "Thickness", D::Length).help("Constant shell thickness. Quad8 uses curved MITC8 for elastic homogeneous or layered linear statics; mass and buckling are not implemented.").req(),
+                    positive("thickness", "Thickness", D::Length).help("Constant shell thickness. Quad8 uses curved MITC8 for elastic homogeneous or layered statics, frequency and harmonic analysis; buckling requires a coplanar plate with flat preload.").req(),
                     range("offset", "Offset", D::None, -0.5, 0.5)
                         .help("Where the reference surface sits, as a fraction of the thickness: 0 mid-surface, ±0.5 top or bottom.")
                         .def("0")

@@ -1,8 +1,8 @@
 # Composite shells and material directions
 
 Composite and oriented sections support `tri3`/`quad4` flat shells and `quad8` curved
-MITC8 linear statics. MITC8 uses shared nodal directors and three thickness Gauss
-points per ply; mass and buckling remain refused. See [MITC8 conventions and limits](../../solvers/mitc8.md).
+MITC8 statics, frequency and harmonic analysis. MITC8 uses shared nodal directors and three thickness Gauss
+points per ply, including density moments; linear buckling requires coplanar geometry and a flat preload. See [MITC8 conventions and limits](../../solvers/mitc8.md).
 
 Define a material, assign its directions and an ordered layup to a shell set, solve a linear
 static, frequency or flat-plate buckling step, then inspect each ply through `solve.probe`.

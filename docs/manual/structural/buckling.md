@@ -1,13 +1,14 @@
 # Linear buckling
 
-The `quad8` MITC8 element has no initial-stress stiffness yet and is refused in buckling
-and prestressed perturbation analyses, even when its geometry is flat.
+The `quad8` MITC8 element supports flat-plate initial-stress stiffness and linear
+buckling with a flat equilibrium preload. Curved geometry, tilted directors and
+pre-bent states are refused, including in prestressed perturbation analyses.
 See [MITC8 scope](../../solvers/mitc8.md).
 
 `solve.buckle` computes the load factors λ at which the loads of a step, applied as a linear
 preload, make the structure lose stiffness, (K + λ K_σ) φ = 0, and the buckling mode shapes φ.
 The step is solved as a linear static step first; the preload's stresses form the
-initial-stress stiffness K_σ of every solid, 2D element and supported flat shell. The lowest
+initial-stress stiffness K_σ of every solid, 2D element and supported flat shell (including homogeneous or layered MITC8). The lowest
 positive load factors, or those above a given shift, come from the block Lanczos method in the
 buckling spectral transformations.
 
@@ -213,7 +214,7 @@ the column slightly. The verification case `buckle-euler-cantilever` uses ν = 0
 
 ## Limitations
 
-- Trusses, shells and beams are refused: they have no initial-stress stiffness yet.
+- Trusses and beams are refused. Shells, including MITC8, require coplanar plates and a flat preload; curved shells and pre-bent states are refused.
 - Linearised buckling about the undeformed state: the preload is linear, pressures are dead loads
   (no load stiffness), and material nonlinearity is left out (plastic materials take their
   elastic constants, with a warning).

@@ -1,7 +1,7 @@
-# Eight-node curved MITC8 statics
+# Eight-node curved MITC8
 
 `quad8` with an elastic `shell` or `composite_shell` section and **full** integration uses
-`fem::mitc8::Mitc8` in `solve.static`. This is an eight-node serendipity shell, not MITC9:
+`fem::mitc8::Mitc8` in static, frequency and harmonic solves. This is an eight-node serendipity shell, not MITC9:
 four corners counterclockwise from (-1,-1), followed by the four edge midpoints. There
 is no centre node, internal centre displacement, or condensation. Each node shares the
 existing global `[ux, uy, uz, rx, ry, rz]` structural layout.
@@ -76,11 +76,13 @@ The paper has five physical unknowns per node. The extra drilling rotation in th
 six-DOF interface is tied to the reference surface's tangential infinitesimal spin
 with the Hughes–Brezzi penalty `G*h/100`, as in the existing flat shell. It is an
 explicit additional stabilization, not a claim of algebraic identity with the
-original five-DOF element or with an Abaqus element. No artificial mass is introduced.
+original five-DOF element or with an Abaqus element. Dynamics adds the explicit drilling inertia described below.
 
 Homogeneous and layered elastic linear statics are enabled.
-Modal/frequency/harmonic/transient analyses, initial-stress stiffness and buckling are
-not implemented for MITC8 and are refused. Nonlinear steps do not support these shells.
+Curved frequency and direct/modal harmonic analyses use the mass operator below.
+Linear buckling is limited to coplanar plates with a flat preload. Curved-shell
+buckling, non-flat preloads (including laminate extension–bending coupling), transient
+and response-spectrum procedures are refused by name. Nonlinear steps do not support these shells.
 The existing MITC3/MITC4 analysis paths are unchanged.
 
 Reduced-integration quad8 shells are refused in the internal solver: Abaqus S8R is
@@ -133,8 +135,8 @@ reported centre `axes` does not reconstruct every nodal material basis. Use the 
 geometry, shared directors and section orientation to reconstruct those bases. No
 new result type or field is added. The fields are an equivalent-single-layer recovery,
 not equilibrated interlaminar stresses or delamination predictions. Static gravity
-integrates the actual density of each ply, including its first moment; a dynamic
-mass matrix is still not supplied.
+integrates the actual density of each ply, including its first moment, as does
+consistent dynamic mass.
 
 Independent tests check isotropic single-ply degeneration on flat and curved
 surfaces, nonsymmetric layer membrane/bending energy, one-sided interface stress,
@@ -145,3 +147,73 @@ symmetric cross-ply plate with B=D16=D26=0; they do not validate a general unsym
 curved laminate. Thick-plate full 4/8/16 meshes missed the fixed 3% band
 (14.2/8.72/3.43% errors); the equivalent full 32 mesh passed at 0.999%.
 Those coarse failures remain explicit in the thick-case README.
+
+
+## Inertia and mass choices
+
+`Mitc8::mass` inserts the Lee–Bathe (2004), equations (1)–(8), displacement
+kinematics into kinetic energy; it does not interpolate inertia with the MITC strain
+operator:
+
+```
+v = sum N_i (v_i + z omega_i cross n_i)
+T_physical = 1/2 integral rho |v|² dV
+T_drilling = 1/2 integral rho z² (sum N_i omega_i dot n_i)² dV
+```
+
+The second term is artificial drilling inertia, following the existing flat-shell
+six-DOF convention. It is not physical inertia of a director spinning about itself,
+not a massless drilling constraint, and not an assertion that S8R uses this model.
+It makes the six-DOF mass positive definite. Rigid-body rotation energy tests include
+this explicitly reported addition. Modes dominated by drilling are numerical modes;
+no physical validation of their high-frequency spectrum is claimed.
+
+Three Gauss points in each surface direction and per ply integrate the actual
+thickness Jacobian and each layer density. Consistent mass retains inter-node blocks,
+rotary inertia and the translation–rotation first moment (including offset). Missing
+or nonpositive ply density is refused, not replaced by an average. Unit translation
+inertia equals the consistent gravity vector.
+
+`Mitc8::lumped_mass` uses positive diagonal scaling after Hinton, Rock & Zienkiewicz,
+Earthquake Engineering & Structural Dynamics 4 (1976), 245–249,
+[doi:10.1002/eqe.4290040305](https://doi.org/10.1002/eqe.4290040305).
+The diagonal weights integral rho N_i² and integral rho z² N_i² are separately
+scaled to integral rho and integral rho z². Each supplies three global components;
+the rotational diagonal includes the same artificial drilling convention. Lumping
+preserves total translation mass and these scalar rotary moments in the reference
+thickness coordinate z. On curved elements this is not the rotary energy of the
+interpolated, non-unit interior director. It omits I1,
+inter-node coupling and exact rigid-rotation energy. It is not row-sum lumping:
+quad8 corner row sums can be negative. Do not equate consistent and lumped spectra.
+
+Both choices enter the existing assembly, Lanczos and direct/modal harmonic paths.
+The Navier tests hold drilling and in-plane DOFs to isolate the symmetric laminate's
+flexural branch. They compare the first three frequencies and complex phasors below
+resonance against the independent separated 3x3 FSDT equations, for both mass choices.
+The curved free-body command test checks six rigid modes, and shared-node tests check
+assembled mass under cyclic/reversed numbering. General curved spectra still need
+problem-specific convergence checks. Per-ply damping and unrepresented analysis
+combinations retain the existing named refusals.
+
+## Linear plate buckling
+
+`Mitc8::plate_geometric_stiffness` uses the existing small-slope flat-plate theory
+(Bathe, Finite Element Procedures, 2014, section6.8.2):
+`K_sigma = integral grad(w)^T N grad(w) dA`.
+At each point, N is obtained by integrating the actual MITC preload strains and each
+ply law through thickness; compression is negative. `buckle::initial_stress_stiffness`
+assembles this operator from the solved static preload, then the existing Lanczos
+buckling path solves `(K + lambda K_sigma) phi = 0`.
+
+Every shell reference surface/director must be coplanar. The preload must remain flat,
+including director tilt; otherwise the solver refuses the combination. This supports
+flat symmetric laminates, or other layers whose actual constrained preload remains
+flat; it does not silently drop pre-bending from an unsymmetric laminate. No curved
+shell geometric tangent, finite rotations, nonlinear material tangent, follower
+pressure or load stiffness is provided. The same scope checks protect prestressed
+linear perturbations. The Bryan square-plate command case checks the entire preload,
+material/geometric assembly and eigenproblem against `Ncr=4*pi²*D/a²`.
+
+Frequency and buckling retain the existing frequency-result representation; harmonic
+uses the existing mass-aware harmonic result. Native save/reopen tests compare modal,
+buckling and complex displacement probes exactly, with no result format extension.

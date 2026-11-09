@@ -336,3 +336,5 @@ Layered statics add `mitc8-single-ply-bending`, `mitc8-navier-thin` and
 layer reversal and independent coupled energies are tested. These do not validate
 mass, prestress, folded junctions or arbitrary distorted curved laminates.
 The separate axisymmetric LE7 known failure is retained.
+
+MITC8 dynamics: `mitc8-navier-frequency` checks the first three laminate flexural modes and total mass for consistent/lumped choices; `mitc8-navier-harmonic` checks both real and imaginary displacement at20/30Hz with direct and modal solves. `mitc8-leissa-frequency` checks a published thin-square plate frequency; `mitc8-bryan-buckle` checks the solved flat preload and buckling operator against Bryan's formula and NASA TP-2528's unperforated isotropic coefficient. Independent inertia integrals, shared-node mass permutations and curved free-body modes are tested separately. Engine tests save/reopen modal, harmonic and buckling probes exactly using existing result types. These do not qualify curved-shell buckling, transient/spectrum, pre-bent laminates or the previously failing coarse thick-plate static meshes.

@@ -624,9 +624,9 @@ fn mitc8_solves_pure_bending_and_refuses_unimplemented_procedures() {
     b.model.replace_section("panel", section).unwrap();
     assert!(solve_static(&b.model, None, &Limits::default()).unwrap_err().to_string().contains("S8R"));
     let b = quadratic_shell_model(Procedure::Frequency { modes: 1, min_hz: None, max_hz: None });
-    assert!(solve_frequency(&b.model, None, &FrequencyOptions::default(), &Limits::default()).unwrap_err().to_string().contains("MITC8 mass"));
+    assert!(solve_frequency(&b.model, None, &FrequencyOptions::default(), &Limits::default()).unwrap().modes[0].frequency > 0.0);
     let b = quadratic_shell_model(Procedure::Buckle { modes: 1, shift: None });
-    assert!(fieldcraft_solver::solve_buckle(&b.model, None, &Limits::default()).unwrap_err().to_string().contains("MITC8"));
+    assert!(fieldcraft_solver::solve_buckle(&b.model, None, &Limits::default()).unwrap_err().to_string().contains("non-flat shell preload"));
 }
 
 #[test]
@@ -660,15 +660,19 @@ fn mitc8_shared_directors_and_global_rotations_are_compatible() {
         Mesh::new(&b.model, &resolved, 1000).unwrap()
     };
     let mut reference = None;
+    let mut mass_reference: Option<fieldcraft_fem::dense::Matrix> = None;
     for permutation in [[0, 1, 2, 3, 4, 5, 6, 7], [1, 2, 3, 0, 5, 6, 7, 4], [0, 3, 2, 1, 7, 6, 5, 4]] {
         let mesh = build(permutation, true);
         let mut k = fieldcraft_fem::dense::Matrix::zeros(6 * mesh.xyz.len());
+        let mut mass = fieldcraft_fem::dense::Matrix::zeros(6 * mesh.xyz.len());
         for el in &mesh.structural {
             let StructuralKernel::Mitc8(shell) = el.kernel().unwrap() else { panic!() };
             let ke = shell.stiffness().unwrap();
+            let me = shell.mass(1.0).unwrap();
             for i in 0..48 {
                 for j in 0..48 {
                     k.add(6 * el.nodes[i / 6] + i % 6, 6 * el.nodes[j / 6] + j % 6, ke.get(i, j));
+                    mass.add(6 * el.nodes[i / 6] + i % 6, 6 * el.nodes[j / 6] + j % 6, me.get(i, j));
                 }
             }
             let omega = [0.3, -0.2, 0.7];
@@ -690,6 +694,11 @@ fn mitc8_shared_directors_and_global_rotations_are_compatible() {
             assert!(k.data.iter().zip(&old.data).all(|(a, b)| (a - b).abs() < 1e-11 * scale));
         } else {
             reference = Some(k);
+        }
+        if let Some(old) = &mass_reference {
+            assert!(mass.data.iter().zip(&old.data).all(|(a, b)| (a - b).abs() < 1e-13));
+        } else {
+            mass_reference = Some(mass);
         }
         let a = &mesh.structural[0];
         let b = &mesh.structural[1];

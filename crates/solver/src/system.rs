@@ -410,9 +410,8 @@ impl StructuralKernel {
     /// The consistent or lumped mass over every element degree of freedom.
     pub fn mass(&self, density: f64, kind: MassKind) -> fieldcraft_fem::Result<Matrix> {
         Ok(match (self, kind) {
-            (StructuralKernel::Mitc8(_), _) => {
-                return Err(fieldcraft_fem::Error::NotSupported("MITC8 mass: frequency, harmonic and transient analyses are not implemented".into()));
-            }
+            (StructuralKernel::Mitc8(s), MassKind::Consistent) => s.mass(density)?,
+            (StructuralKernel::Mitc8(s), MassKind::Lumped) => s.lumped_mass(density)?,
             (StructuralKernel::Shell(s), MassKind::Consistent) => {
                 if s.is_laminated() {
                     s.ply_mass()?
@@ -602,7 +601,7 @@ impl Mesh {
                 && set.elements.iter().any(|label| model.element(*label).is_some_and(|e| e.kind == ElementKind::Quad8))
             {
                 return Err(Error::NotSupported(format!(
-                    "section `{name}`: reduced-integration quad8 shell (S8R) is not MITC8; use full integration for MITC8 statics"
+                    "section `{name}`: reduced-integration quad8 shell (S8R) is not MITC8; use full integration for MITC8"
                 )));
             }
             if let SectionKind::CompositeShell { layup } = &section.kind {

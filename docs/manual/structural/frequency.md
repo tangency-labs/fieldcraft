@@ -1,7 +1,10 @@
 # Natural frequencies
 
-The curved `quad8` MITC8 element currently has no mass operator. Frequency, harmonic
-and transient analyses using it are refused, including flat instances of that element.
+Curved `quad8` MITC8 supports consistent and positive-diagonal lumped mass for
+frequency and harmonic analysis, including ply densities and rotary inertia.
+Consistent mass retains offset/density first-moment coupling; lumped mass omits it.
+Both include an explicitly artificial drilling inertia. Transient and spectrum steps
+remain refused; curved-shell prestress is also refused.
 See [MITC8 scope](../../solvers/mitc8.md).
 
 `solve.frequency` computes the lowest natural frequencies and mode shapes of a structure,

@@ -226,9 +226,8 @@ pub(crate) fn initial_stress_stiffness(mesh: &Mesh, graph: &NodeGraph, preload: 
     }
     let matrices = fieldcraft_parallel::map_grained(mesh.structural.len(), crate::analysis::GRAIN, |i| -> Result<_> {
         let e = mesh.structural.get(i).ok_or_else(|| Error::Internal("shell index".into()))?;
-        let StructuralKernel::Shell(shell) = e.kernel()? else {
-            return Err(Error::NotSupported(format!("beam {} in buckling", e.label)));
-        };
+        let kernel = e.kernel()?;
+        let normal = shell_normal(&kernel, e.label)?;
         let u: Vec<[f64; 6]> = e
             .nodes
             .iter()
@@ -238,8 +237,13 @@ pub(crate) fn initial_stress_stiffness(mesh: &Mesh, graph: &NodeGraph, preload: 
                 [u[0], u[1], u[2], r[0], r[1], r[2]]
             })
             .collect();
-        flat_preload(e, &shell, &u)?;
-        shell.plate_geometric_stiffness(u.as_flattened()).map_err(|err| Error::element(e.label, err))
+        flat_preload(e, normal, &u)?;
+        match kernel {
+            StructuralKernel::Shell(s) => s.plate_geometric_stiffness(u.as_flattened()),
+            StructuralKernel::Mitc8(s) => s.plate_geometric_stiffness(u.as_flattened()),
+            StructuralKernel::Beam(_) => return Err(Error::NotSupported(format!("beam {} in buckling", e.label))),
+        }
+        .map_err(|err| Error::element(e.label, err))
     });
     for (e, m) in mesh.structural.iter().zip(matrices) {
         add_block(&mut kg, &mesh.layout, &e.nodes, Structural::KINDS, &m?.data)?;
@@ -253,21 +257,17 @@ const FLAT_TOLERANCE: f64 = 1e-8;
 /// All shell reference surfaces lie in one plane. Opposite element normals are permitted:
 /// their layups and signed resultants have already been interpreted in their own frames.
 fn flat_shells(mesh: &Mesh) -> Result<()> {
-    if mesh.structural.iter().any(|e| e.kind == fieldcraft_model::ElementKind::Quad8) {
-        return Err(Error::NotSupported("MITC8 initial-stress stiffness: buckling and prestressed perturbation analyses are not implemented".into()));
-    }
     let Some(first) = mesh.structural.first() else { return Ok(()) };
-    let StructuralKernel::Shell(first_shell) = first.kernel()? else {
-        return Err(Error::NotSupported(format!("beams in buckling steps (element {})", first.label)));
-    };
+    let normal = shell_normal(&first.kernel()?, first.label)?;
     let origin = first.xyz.first().copied().ok_or_else(|| Error::Internal("shell origin".into()))?;
-    let normal = first_shell.axes()[2];
     let extent = mesh.structural.iter().flat_map(|e| &e.xyz).map(|x| norm(sub(*x, origin))).fold(0.0, f64::max);
     for e in &mesh.structural {
-        let StructuralKernel::Shell(shell) = e.kernel()? else {
-            return Err(Error::NotSupported(format!("beams in buckling steps (element {})", e.label)));
-        };
-        if (dot(normal, shell.axes()[2]).abs() - 1.0).abs() > FLAT_TOLERANCE
+        let kernel = e.kernel()?;
+        let local = shell_normal(&kernel, e.label)?;
+        let tilted =
+            matches!(&kernel, StructuralKernel::Mitc8(s) if s.directors().iter().any(|n| (dot(*n, normal).abs() - 1.0).abs() > FLAT_TOLERANCE));
+        if tilted
+            || (dot(normal, local).abs() - 1.0).abs() > FLAT_TOLERANCE
             || e.xyz.iter().any(|x| dot(sub(*x, origin), normal).abs() > FLAT_TOLERANCE * extent)
         {
             return Err(Error::NotSupported(format!(
@@ -279,8 +279,15 @@ fn flat_shells(mesh: &Mesh) -> Result<()> {
     Ok(())
 }
 
-fn flat_preload(e: &Structural, shell: &fieldcraft_fem::shell::Shell, u: &[[f64; 6]]) -> Result<()> {
-    let normal = shell.axes()[2];
+fn shell_normal(kernel: &StructuralKernel, label: u32) -> Result<[f64; 3]> {
+    match kernel {
+        StructuralKernel::Shell(s) => Ok(s.axes()[2]),
+        StructuralKernel::Mitc8(s) => s.plate_normal().map_err(|err| Error::element(label, err)),
+        StructuralKernel::Beam(_) => Err(Error::NotSupported(format!("beam {label} in buckling"))),
+    }
+}
+
+fn flat_preload(e: &Structural, normal: [f64; 3], u: &[[f64; 6]]) -> Result<()> {
     let origin = e.xyz.first().copied().ok_or_else(|| Error::Internal("shell origin".into()))?;
     let extent = e.xyz.iter().map(|x| norm(sub(*x, origin))).fold(0.0, f64::max);
     let motion = u.iter().map(|v| norm([v[0], v[1], v[2]])).fold(0.0, f64::max);

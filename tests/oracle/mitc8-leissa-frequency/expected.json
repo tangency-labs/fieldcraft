@@ -1,0 +1,20 @@
+{
+  "title": "MITC8 simply supported thin square: Leissa frequency parameter",
+  "kind": "benchmark",
+  "source": "A.W. Leissa, Vibration of Plates, NASA SP-160 (1969), chapter4, simply supported rectangular plate omega11 a\u00b2 sqrt(rho*h/D)=2*pi\u00b2; https://ntrs.nasa.gov/citations/19700009156",
+  "quantities": [
+    {
+      "id": "f1",
+      "quantity": "f1",
+      "measure": {
+        "from": "modes",
+        "pointer": "/modes/0/frequency"
+      },
+      "value": 49.32883962161016,
+      "tolerance": {
+        "relative": 0.02
+      },
+      "reason": "Fixed2% mesh and thin-plate/FSDT difference band, h/a=.01, full4x4 quad8."
+    }
+  ]
+}

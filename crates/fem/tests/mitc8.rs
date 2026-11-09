@@ -229,3 +229,108 @@ fn layered_weight_keeps_the_first_mass_moment() {
     assert!((force - 1.2).abs() < 1e-13);
     assert!((moment - 0.01).abs() < 1e-13);
 }
+
+#[test]
+fn inertia_integrates_rigid_motion_and_density_moments() {
+    use fieldcraft_fem::{frame::dot, quadrature::Rule};
+    for curved in [false, true] {
+        let xyz = nodes(curved);
+        let s = Mitc8::new(&xyz, section(0.2, 0.3)).unwrap();
+        let m = s.mass(3.0).unwrap();
+        Cholesky::new(&m).unwrap();
+        let omega = [0.4, -0.3, 0.7];
+        let velocity = [0.2, 0.5, -0.1];
+        let u = field(&xyz, |x| {
+            let v = cross(omega, x);
+            [v[0] + velocity[0], v[1] + velocity[1], v[2] + velocity[2], omega[0], omega[1], omega[2]]
+        });
+        // Independently form x(r,s,t), its three tangents and omega×x+v.
+        // Same declared integration rule: this checks the discrete kinetic energy,
+        // not an exact quadrature claim for arbitrary curved Jacobians.
+        let mut reference = 0.0;
+        let mut total = 0.0;
+        let mut rotary = 0.0;
+        for q in Rule::Quad(3).points() {
+            for (t, w) in fieldcraft_fem::quadrature::gauss_legendre(3) {
+                let sh = Basis::Quad8.eval(q.xi);
+                let z = -0.06 + 0.1 * t;
+                let mut x = [0.0; 3];
+                let mut g = [[0.0; 3]; 3];
+                let mut drill = 0.0;
+                for (i, node) in xyz.iter().enumerate() {
+                    let n = s.directors()[i];
+                    drill += sh.n[i] * dot(omega, n);
+                    for a in 0..3 {
+                        x[a] += sh.n[i] * (node[a] + z * n[a]);
+                        for (b, tangent) in g.iter_mut().enumerate().take(2) {
+                            tangent[a] += sh.dn[i][b] * (node[a] + z * n[a]);
+                        }
+                        g[2][a] += 0.1 * sh.n[i] * n[a];
+                    }
+                }
+                let v = cross(omega, x);
+                let speed: f64 = (0..3).map(|a| (v[a] + velocity[a]).powi(2)).sum();
+                let dv = 3.0 * q.weight * w * dot(cross(g[0], g[1]), g[2]);
+                reference += 0.5 * dv * (speed + z * z * drill * drill);
+                total += dv;
+                rotary += dv * z * z;
+            }
+        }
+        assert!((energy(&m, &u) / reference - 1.0).abs() < 2e-13);
+        let lump = s.lumped_mass(3.0).unwrap();
+        for a in 0..3 {
+            let trans = field(&xyz, |_| {
+                let mut v = [0.0; 6];
+                v[a] = 1.0;
+                v
+            });
+            assert!((2.0 * energy(&m, &trans) / total - 1.0).abs() < 2e-13);
+            assert!((2.0 * energy(&lump, &trans) / total - 1.0).abs() < 2e-13);
+            let rot = field(&xyz, |_| {
+                let mut v = [0.0; 6];
+                v[a + 3] = 1.0;
+                v
+            });
+            assert!((2.0 * energy(&lump, &rot) / rotary - 1.0).abs() < 2e-13);
+            let f = s.gravity(3.0, std::array::from_fn(|c| if c == a { 1.0 } else { 0.0 })).unwrap();
+            assert!(m.mul_vec(&trans).iter().zip(f).all(|(x, y)| (x - y).abs() < 2e-14));
+        }
+        assert!(lump.data.iter().enumerate().all(|(i, x)| if i / 48 == i % 48 { *x > 0.0 } else { *x == 0.0 }));
+    }
+    use fieldcraft_fem::laminate::PlyProperties;
+    let plies: Vec<_> = [(0.08, 2.0), (0.12, 5.0)]
+        .into_iter()
+        .map(|(thickness, density)| PlyProperties {
+            thickness,
+            density: Some(density),
+            elastic: Elastic::Isotropic { young: 1200.0, poisson: 0.25 },
+            angle: 0.0,
+            points: 3,
+            strength: None,
+        })
+        .collect();
+    let s = Mitc8::laminated(&nodes(false), &plies, 0.0, None, 1).unwrap();
+    let m = s.mass(1.0).unwrap();
+    let t = field(&nodes(false), |_| [1.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+    let r = field(&nodes(false), |_| [0.0, 0.0, 0.0, 0.0, 1.0, 0.0]);
+    // area=4; I0=.76; I1=.0144; I2=2*(.1³-.02³)/3+5*(.1³+.02³)/3.
+    assert!((2.0 * energy(&m, &t) - 4.0 * 0.76).abs() < 1e-13);
+    assert!((t.iter().zip(m.mul_vec(&r)).map(|(a, b)| a * b).sum::<f64>() - 4.0 * 0.0144).abs() < 1e-13);
+    let i2 = 2.0 * (0.001 - 0.000008) / 3.0 + 5.0 * (0.001 + 0.000008) / 3.0;
+    assert!((2.0 * energy(&m, &r) - 4.0 * i2).abs() < 1e-13);
+    assert!(s.lumped_mass(1.0).unwrap().mul_vec(&r).iter().zip(&t).map(|(a, b)| a * b).sum::<f64>() == 0.0);
+}
+
+#[test]
+fn plate_initial_stress_has_independent_membrane_energy() {
+    let xyz = nodes(false);
+    let s = Mitc8::new(&xyz, section(0.2, 0.0)).unwrap();
+    // epsilon_x=-.001, epsilon_y=nu*.001 -> sigma_x=-1.2, sigma_y=0.
+    let preload = field(&xyz, |x| [-0.001 * x[0], 0.00025 * x[1], 0.0, 0.0, 0.0, 0.0]);
+    let kg = s.plate_geometric_stiffness(&preload).unwrap();
+    let w = field(&xyz, |x| [0.0, 0.0, x[0] * x[1], 0.0, 0.0, 0.0]);
+    assert!((energy(&kg, &w) - (-0.5 * 1.2 * 0.2 * 4.0 / 3.0)).abs() < 2e-13);
+    assert!(
+        Mitc8::new(&nodes(true), section(0.2, 0.0)).unwrap().plate_geometric_stiffness(&preload).unwrap_err().to_string().contains("curved-shell")
+    );
+}
