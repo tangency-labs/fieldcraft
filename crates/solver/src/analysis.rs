@@ -446,8 +446,11 @@ pub(crate) fn static_on(setup: &Setup<'_>, limits: &Limits) -> Result<StaticResu
 }
 
 // A caller must explicitly opt in; a static preload is not a standalone static solve.
-fn standalone_linear_order(step: &Step, standalone: bool) -> bool {
-    standalone && step.base_state.is_none() && matches!(step.procedure, Procedure::Static {} | Procedure::Frequency { .. })
+fn standalone_linear_order(model: &Model, step: &Step, standalone: bool) -> bool {
+    standalone
+        && model.pretensions().is_empty()
+        && step.base_state.is_none()
+        && matches!(step.procedure, Procedure::Static {} | Procedure::Frequency { .. })
 }
 
 fn static_on_with_order(setup: &Setup<'_>, limits: &Limits, standalone: bool) -> Result<StaticResult> {
@@ -470,7 +473,7 @@ fn static_on_with_order(setup: &Setup<'_>, limits: &Limits, standalone: bool) ->
     if field.is_some() && !mesh.structural.is_empty() {
         warnings.push("shells and beams take no thermal strain yet; the temperatures strain the solid, 2D and truss elements only".into());
     }
-    let (graph, order) = pattern_with_order(mesh, standalone_linear_order(step, standalone));
+    let (graph, order) = pattern_with_order(mesh, standalone_linear_order(model, step, standalone));
     ignored_dashpots(mesh, &mut warnings);
     let red = reduction(setup, true, &order, budget(limits, mesh, &graph, 1), &mut warnings)?;
     let mut f = loads(model, resolved, mesh, step, &red.active)?;
@@ -829,7 +832,7 @@ fn frequency_impl(
 ) -> Result<(FrequencyResult, Option<Csr>, Option<crate::convergence::ModalConvergence>)> {
     let first = frequency_once(model, step, options, limits, retain_mass, diagnostics, standalone)?;
     let selected = model.select_step(step, |p| matches!(p, Procedure::Frequency { .. }), "frequency")?;
-    if standalone_linear_order(selected, standalone)
+    if standalone_linear_order(model, selected, standalone)
         && !crate::ordering::legacy_requested()
         && let Some(reason) = modal_order_fallback_reason(&first.0)
     {
@@ -878,7 +881,7 @@ fn frequency_once(
     let mut warnings: Vec<String> = resolved.warnings.iter().map(ToString::to_string).chain(mesh.warnings.iter().cloned()).collect();
     warnings.extend(inelastic_warnings(model));
     warnings.extend(fieldcraft_model::initial::left_out(model, step));
-    let use_multilevel = standalone_linear_order(step, standalone);
+    let use_multilevel = standalone_linear_order(model, step, standalone);
     let (graph, order) = pattern_with_order(&mesh, use_multilevel);
     ignored_dashpots(&mesh, &mut warnings);
     let setup = Setup { model, resolved: &resolved, mesh: &mesh, step };
@@ -1125,14 +1128,36 @@ mod tests {
     }
 
     #[test]
+    fn pretension_model_keeps_legacy_even_before_a_base_state_is_named() {
+        let mut model = block();
+        model.add_reference_point("BoltControl", fieldcraft_model::ReferencePoint { xyz: [0.0; 3], label: 0 }).unwrap();
+        model
+            .add_pretension(
+                "Bolt",
+                fieldcraft_model::PretensionSection {
+                    first: "base".into(),
+                    second: "top".into(),
+                    normal: [0.0, 0.0, 1.0],
+                    control: "BoltControl".into(),
+                },
+            )
+            .unwrap();
+        for procedure in [Procedure::Static {}, Procedure::Frequency { modes: 6, min_hz: None, max_hz: None }] {
+            let step = Step::new("Before", procedure);
+            assert!(step.base_state.is_none());
+            assert!(!standalone_linear_order(&model, &step, true));
+        }
+    }
+
+    #[test]
     fn multilevel_scope_excludes_preloads_derivatives_and_other_procedures() {
         for procedure in [Procedure::Static {}, Procedure::Frequency { modes: 6, min_hz: None, max_hz: None }] {
             let mut step = Step::new("linear", procedure);
-            assert!(standalone_linear_order(&step, true));
+            assert!(standalone_linear_order(&Model::default(), &step, true));
             // Internal callers (buckling/prestress preloads and sensitivities) never opt in.
-            assert!(!standalone_linear_order(&step, false));
+            assert!(!standalone_linear_order(&Model::default(), &step, false));
             step.base_state = Some("preload".into());
-            assert!(!standalone_linear_order(&step, true));
+            assert!(!standalone_linear_order(&Model::default(), &step, true));
         }
         for procedure in [
             Procedure::Buckle { modes: 1, shift: None },
@@ -1140,7 +1165,7 @@ mod tests {
             Procedure::CoupledTemperatureDisplacement {},
             Procedure::MatrixGeneration { matrices: Default::default() },
         ] {
-            assert!(!standalone_linear_order(&Step::new("other", procedure), true));
+            assert!(!standalone_linear_order(&Model::default(), &Step::new("other", procedure), true));
         }
     }
 

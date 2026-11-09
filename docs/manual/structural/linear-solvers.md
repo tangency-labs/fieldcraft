@@ -522,3 +522,21 @@ basis size; convergence fields describe the returned legacy solve. Full command
 time includes both attempts. A comparison override requesting legacy ordering
 never retries. This preserves individual modes in numerically ambiguous cases
 at the cost of extra work for those cases.
+
+A model containing any pretension section retains legacy ordering for every step,
+including a standalone static or frequency step without a named base state.
+
+The FM refinement checks the remaining partition capacity against the smallest
+vertex weight before searching a gain heap. If no vertex can fit, it returns no
+move without draining and restoring the heap. This preserves the weighted gain
+ordering, stale-entry rules and fixed tie breaks. The diagnostic override
+`FIELDCRAFT_ORDERING_REFINEMENT=baseline` retains the original heap scan for
+same-program comparisons; it does not select a different permutation.
+
+`FIELDCRAFT_ORDERING_PROFILE=1` reports exclusive serial phase totals for
+canonical/induced graph construction, coarsening, initial growth, refinement,
+separator extraction, leaf ordering and uncoarsening. `recursion_other` is the
+remaining control/allocation/component work; `total` covers the complete
+multilevel ordering. Input file decoding and later symbolic factor counts are
+outside that total. FM query counts and impossible-query time are diagnostic
+subsets of refinement, not additional wall time to add to the phase sum.
