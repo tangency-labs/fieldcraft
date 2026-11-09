@@ -253,6 +253,9 @@ const FLAT_TOLERANCE: f64 = 1e-8;
 /// All shell reference surfaces lie in one plane. Opposite element normals are permitted:
 /// their layups and signed resultants have already been interpreted in their own frames.
 fn flat_shells(mesh: &Mesh) -> Result<()> {
+    if mesh.structural.iter().any(|e| e.kind == fieldcraft_model::ElementKind::Quad8) {
+        return Err(Error::NotSupported("MITC8 initial-stress stiffness: buckling and prestressed perturbation analyses are not implemented".into()));
+    }
     let Some(first) = mesh.structural.first() else { return Ok(()) };
     let StructuralKernel::Shell(first_shell) = first.kernel()? else {
         return Err(Error::NotSupported(format!("beams in buckling steps (element {})", first.label)));

@@ -1,0 +1,20 @@
+{
+  "title": "Scordelis-Lo roof with curved eight-node MITC8 shells",
+  "kind": "benchmark",
+  "source": "MacNeal & Harder, Finite Elements in Analysis and Design 1 (1985) 3\u201320, Fig.8 and Table5(a); Bathe & Dvorkin (1986), IJNME 22:697\u2013722, equations(9)\u2013(22). Original quarter-roof model with 8 x 8 quadratic shell elements.",
+  "quantities": [
+    {
+      "id": "uz",
+      "quantity": "vertical displacement at free edge midspan",
+      "measure": {
+        "from": "probe",
+        "pointer": "/nodes/0/displacement/2"
+      },
+      "value": -0.3024,
+      "tolerance": {
+        "relative": 0.02
+      },
+      "reason": "Same 2% published benchmark accuracy allowance as the existing MITC4 roof; fixed before the MITC8 run, not fitted."
+    }
+  ]
+}

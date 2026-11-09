@@ -255,3 +255,7 @@ extrapolation are named unsupported combinations; no PSD time history is synthes
   mass harmonic, full energy-and-mass dynamics, static fatigue and harmonic fatigue.
   Old05/06 kinds 0–5 use frozen schemas; higher development kinds are refused with
   the regeneration message. See docs/results-kind-layout.md.
+
+### Curved quadratic shell statics
+
+Eight-node MITC8 homogeneous isotropic statics use quadratic surface/director geometry and the Bathe–Dvorkin tensor interpolation. See [formulation and verification](docs/solvers/mitc8.md). Six-node triangular, continuum and axisymmetric shells, MITC8 composites, mass and curved-shell geometric stiffness remain open.

@@ -1,5 +1,9 @@
 # Natural frequencies
 
+The curved `quad8` MITC8 element currently has no mass operator. Frequency, harmonic
+and transient analyses using it are refused, including flat instances of that element.
+See [MITC8 scope](../../solvers/mitc8.md).
+
 `solve.frequency` computes the lowest natural frequencies and mode shapes of a structure,
 K φ = ω² M φ, with every boundary condition of the step held at zero, together with each mode's
 participation factors and effective masses. The eigenproblem is solved by the shifted block

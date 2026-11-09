@@ -1,0 +1,401 @@
+[
+  {
+    "command": "model.units",
+    "params": {
+      "system": "m-kg-s-N-Pa"
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 1,
+      "xyz": [
+        -1.0,
+        0.0,
+        0.15
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 2,
+      "xyz": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 3,
+      "xyz": [
+        1.0,
+        0.0,
+        0.15
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 4,
+      "xyz": [
+        -1.0,
+        1.0,
+        0.15
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 5,
+      "xyz": [
+        1.0,
+        1.0,
+        0.15
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 6,
+      "xyz": [
+        -1.0,
+        2.0,
+        0.15
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 7,
+      "xyz": [
+        0.0,
+        2.0,
+        0.0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 8,
+      "xyz": [
+        1.0,
+        2.0,
+        0.15
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 1,
+      "kind": "quad8",
+      "nodes": [
+        1,
+        3,
+        8,
+        6,
+        2,
+        5,
+        7,
+        4
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "panel",
+      "elements": [
+        1
+      ]
+    }
+  },
+  {
+    "command": "model.material.create",
+    "params": {
+      "name": "Mat",
+      "elastic": {
+        "type": "isotropic",
+        "young": 1200.0,
+        "poisson": 0.0
+      },
+      "density": 1
+    }
+  },
+  {
+    "command": "model.section.create",
+    "params": {
+      "name": "Panel",
+      "set": "panel",
+      "material": "Mat",
+      "kind": {
+        "type": "shell",
+        "thickness": 0.1
+      }
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "bc1",
+      "nodes": [
+        1
+      ]
+    }
+  },
+  {
+    "command": "model.boundary_condition.create",
+    "params": {
+      "name": "bc1",
+      "type": "displacement",
+      "target": {
+        "set": "bc1"
+      },
+      "values": [
+        0,
+        0.0,
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "bc2",
+      "nodes": [
+        2
+      ]
+    }
+  },
+  {
+    "command": "model.boundary_condition.create",
+    "params": {
+      "name": "bc2",
+      "type": "displacement",
+      "target": {
+        "set": "bc2"
+      },
+      "values": [
+        0,
+        0.0,
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "bc3",
+      "nodes": [
+        3
+      ]
+    }
+  },
+  {
+    "command": "model.boundary_condition.create",
+    "params": {
+      "name": "bc3",
+      "type": "displacement",
+      "target": {
+        "set": "bc3"
+      },
+      "values": [
+        0,
+        0.0,
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "bc4",
+      "nodes": [
+        4
+      ]
+    }
+  },
+  {
+    "command": "model.boundary_condition.create",
+    "params": {
+      "name": "bc4",
+      "type": "displacement",
+      "target": {
+        "set": "bc4"
+      },
+      "values": [
+        0,
+        null,
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "bc5",
+      "nodes": [
+        5
+      ]
+    }
+  },
+  {
+    "command": "model.boundary_condition.create",
+    "params": {
+      "name": "bc5",
+      "type": "displacement",
+      "target": {
+        "set": "bc5"
+      },
+      "values": [
+        0,
+        null,
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "bc6",
+      "nodes": [
+        6
+      ]
+    }
+  },
+  {
+    "command": "model.boundary_condition.create",
+    "params": {
+      "name": "bc6",
+      "type": "displacement",
+      "target": {
+        "set": "bc6"
+      },
+      "values": [
+        0,
+        0.002,
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "bc7",
+      "nodes": [
+        7
+      ]
+    }
+  },
+  {
+    "command": "model.boundary_condition.create",
+    "params": {
+      "name": "bc7",
+      "type": "displacement",
+      "target": {
+        "set": "bc7"
+      },
+      "values": [
+        0,
+        0.002,
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "bc8",
+      "nodes": [
+        8
+      ]
+    }
+  },
+  {
+    "command": "model.boundary_condition.create",
+    "params": {
+      "name": "bc8",
+      "type": "displacement",
+      "target": {
+        "set": "bc8"
+      },
+      "values": [
+        0,
+        0.002,
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.step.create",
+    "params": {
+      "name": "Load",
+      "procedure": {
+        "type": "static"
+      },
+      "boundary_conditions": [
+        "bc1",
+        "bc2",
+        "bc3",
+        "bc4",
+        "bc5",
+        "bc6",
+        "bc7",
+        "bc8"
+      ],
+      "loads": []
+    }
+  },
+  {
+    "command": "solve.static",
+    "params": {
+      "step": "Load"
+    }
+  },
+  {
+    "id": "probe",
+    "command": "solve.probe",
+    "params": {
+      "step": "Load",
+      "nodes": [
+        5
+      ],
+      "elements": [
+        1
+      ]
+    }
+  }
+]

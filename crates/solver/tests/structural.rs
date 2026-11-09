@@ -568,8 +568,8 @@ fn structural_models_that_cannot_be_solved_are_errors() {
     let err = solve_static(&b.model, None, &Limits::default()).unwrap_err();
     assert!(err.to_string().contains("parallel"), "{err}");
 
-    // A quad8 shell is not supported yet; a degenerate quad4 is an error naming the element.
-    for (kind, nodes, want) in [(ElementKind::Quad8, 8, "not supported"), (ElementKind::Quad4, 4, "degenerate")] {
+    // Degenerate first- and second-order shells name the element.
+    for (kind, nodes, want) in [(ElementKind::Quad8, 8, "normal"), (ElementKind::Quad4, 4, "degenerate")] {
         let mut b = Build::new(Elastic::Isotropic { young: 1.0, poisson: 0.0 }, 1.0, Procedure::Static {});
         for i in 0..nodes {
             b.node(i as u32 + 1, [f64::from(i as u8 % 2), 0.0, 0.0]);
@@ -591,4 +591,40 @@ fn structural_models_that_cannot_be_solved_are_errors() {
     b.load("twist", Load::Moment { target: Target::Set("end".into()), vector: [1.0, 0.0, 0.0], distribution: Distribution::Total });
     let err = solve_static(&b.model, None, &Limits::default()).unwrap_err();
     assert!(err.to_string().contains("rotations"), "{err}");
+}
+
+fn quadratic_shell_model(procedure: Procedure) -> Build {
+    let mut b = Build::new(Elastic::Isotropic { young: 1200.0, poisson: 0.0 }, 1.0, procedure);
+    for (i, p) in fieldcraft_fem::basis::Basis::Quad8.nodes().iter().enumerate() {
+        b.node(i as u32 + 1, [p[0] + 1.0, 0.5 * (p[1] + 1.0), 0.0]);
+    }
+    let el = b.element(ElementKind::Quad8, (1..=8).collect());
+    b.section("panel", vec![el], SectionKind::Shell { thickness: 0.1, offset: 0.0, points: 5 });
+    b.hold_nodes("clamp", [Some(0.0); 6], vec![1, 4, 8]);
+    for (node, w) in [(2, 1.0 / 6.0), (3, 1.0 / 6.0), (6, 2.0 / 3.0)] {
+        let name = format!("m{node}");
+        b.model.add_set(&name, Set { nodes: vec![node], ..Set::default() }).unwrap();
+        b.load(&name, Load::Moment { target: Target::Set(name.clone()), vector: [0.0, 1e-4 * w, 0.0], distribution: Distribution::Total });
+    }
+    b
+}
+
+#[test]
+fn mitc8_solves_pure_bending_and_refuses_unimplemented_procedures() {
+    let mut b = quadratic_shell_model(Procedure::Static {});
+    let r = b.solve();
+    let tip = at(&r, 6);
+    assert!((r.displacement[tip][2] / -0.002 - 1.0).abs() < 1e-7, "{:?}", r.displacement[tip]);
+    assert_eq!(r.shells[0].stress.top.len(), 8);
+    for s in &r.shells[0].stress.top {
+        assert!((s[0] - 0.06).abs() < 1e-8, "{s:?}");
+    }
+    let mut section = b.model.sections()["panel"].clone();
+    section.formulation.integration = fieldcraft_model::Integration::Reduced;
+    b.model.replace_section("panel", section).unwrap();
+    assert!(solve_static(&b.model, None, &Limits::default()).unwrap_err().to_string().contains("S8R"));
+    let b = quadratic_shell_model(Procedure::Frequency { modes: 1, min_hz: None, max_hz: None });
+    assert!(solve_frequency(&b.model, None, &FrequencyOptions::default(), &Limits::default()).unwrap_err().to_string().contains("MITC8 mass"));
+    let b = quadratic_shell_model(Procedure::Buckle { modes: 1, shift: None });
+    assert!(fieldcraft_solver::solve_buckle(&b.model, None, &Limits::default()).unwrap_err().to_string().contains("MITC8"));
 }

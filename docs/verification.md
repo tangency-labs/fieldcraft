@@ -325,3 +325,12 @@ The other nine inherited reference misses are listed separately:
 | [pure-bending-coupling](../tests/oracle/pure-bending-coupling/) | `rotation` | 1.2% high: the distributing coupling weights every node of the end face equally, corner and mid-side nodes of hex20 alike, which is not the consistent linear traction; the end face deforms locally and the fitted rotation includes it. Area-consistent weights would remove it |
 
 These records preserve unresolved model/reference applicability or formulation limits. They do not change the stated acceptance bands or turn the known failures into numerical passes.
+
+## Curved eight-node shell statics
+
+The [MITC8 implementation](solvers/mitc8.md) has independent rigid-motion, membrane,
+bending/shear energy, and zero-mode checks in `crates/fem/tests/mitc8.rs`. Its command
+cases are `mitc8-pure-bending`, `mitc8-curved-extension`, and `scordelis-lo-roof-mitc8`.
+These cover homogeneous isotropic linear statics; they do not validate composite
+coordinates, mass, prestress, folded junctions or arbitrary curved-patch continuity.
+The separate axisymmetric LE7 known failure is retained.

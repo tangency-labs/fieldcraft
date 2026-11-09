@@ -78,6 +78,7 @@ pub mod jet;
 pub mod laminate;
 pub mod locate;
 pub mod material;
+pub mod mitc8;
 mod material_axes;
 pub mod mortar;
 pub mod plane;

@@ -1,5 +1,9 @@
 # Composite shells and material directions
 
+Composite and oriented shell sections currently use the flat `tri3`/`quad4` kernels.
+The curved `quad8` MITC8 path accepts only homogeneous isotropic sections and refuses
+layups and material orientations; its local frame is not a ply-coordinate implementation.
+
 Define a material, assign its directions and an ordered layup to a shell set, solve a linear
 static, frequency or flat-plate buckling step, then inspect each ply through `solve.probe`.
 The CLI, scripts and MCP use these same commands. A first-ply failure index does not change

@@ -564,6 +564,18 @@ pub(crate) fn static_on(setup: &Setup<'_>, limits: &Limits) -> Result<StaticResu
                 }
                 shells.push(ShellResult { label: s.label, kind: s.kind, stress });
             }
+            StructuralKernel::Mitc8(shell) => {
+                let stress = shell.stresses(&ue).map_err(at)?;
+                for (n, v) in s.nodes.iter().zip(&stress.top) {
+                    if let (Some(acc), Some(c)) = (sum.get_mut(*n), count.get_mut(*n)) {
+                        for k in 0..6 {
+                            acc[k] += v[k];
+                        }
+                        *c += 1;
+                    }
+                }
+                shells.push(ShellResult { label: s.label, kind: s.kind, stress });
+            }
             StructuralKernel::Beam(beam) => beams.push(BeamResult { label: s.label, kind: s.kind, forces: beam.forces(&ue, *body).map_err(at)? }),
         }
     }

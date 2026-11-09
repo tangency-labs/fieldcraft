@@ -462,13 +462,13 @@ pub const SECTION: &[Field] = &[
                 "shell",
                 "Shell",
                 &[
-                    positive("thickness", "Thickness", D::Length).help("Shell thickness.").req(),
+                    positive("thickness", "Thickness", D::Length).help("Constant shell thickness. Quad8 uses curved MITC8 for homogeneous isotropic linear statics only; tri3/quad4 also support composites and dynamics.").req(),
                     range("offset", "Offset", D::None, -0.5, 0.5)
                         .help("Where the reference surface sits, as a fraction of the thickness: 0 mid-surface, ±0.5 top or bottom.")
                         .def("0")
                         .hint("fraction of the thickness"),
                     int("points", "Integration points", 1, 15)
-                        .help("Points through the thickness. 5 is usual; more for plasticity through the thickness.")
+                        .help("Section sampling count for deck output. The homogeneous linear solver integrates tri3/quad4 analytically and MITC8 with three thickness Gauss points.")
                         .def("5"),
                 ],
             ),

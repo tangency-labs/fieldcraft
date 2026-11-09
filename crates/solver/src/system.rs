@@ -352,6 +352,7 @@ pub struct Structural {
 #[derive(Debug, Clone)]
 pub enum StructuralKernel {
     Shell(Shell),
+    Mitc8(Box<fieldcraft_fem::mitc8::Mitc8>),
     Beam(Beam),
 }
 
@@ -361,6 +362,12 @@ impl Structural {
 
     pub fn kernel(&self) -> Result<StructuralKernel> {
         let k = match &self.section {
+            Section::Shell(s) if self.kind == ElementKind::Quad8 => {
+                fieldcraft_fem::mitc8::Mitc8::new(&self.xyz, *s).map(|k| StructuralKernel::Mitc8(Box::new(k)))
+            }
+            Section::Laminated { .. } if self.kind == ElementKind::Quad8 => Err(fieldcraft_fem::Error::NotSupported(
+                "MITC8 laminated or oriented sections; only homogeneous isotropic statics are implemented".into(),
+            )),
             Section::Shell(s) => Shell::new(self.kind, &self.xyz, *s).map(StructuralKernel::Shell),
             Section::Laminated { plies, offset, orientation } => Shell::laminated(
                 self.kind,
@@ -381,6 +388,7 @@ impl StructuralKernel {
     pub fn stiffness(&self) -> fieldcraft_fem::Result<Matrix> {
         match self {
             StructuralKernel::Shell(s) => s.stiffness(),
+            StructuralKernel::Mitc8(s) => s.stiffness(),
             StructuralKernel::Beam(b) => Ok(b.stiffness()),
         }
     }
@@ -388,6 +396,9 @@ impl StructuralKernel {
     /// The consistent or lumped mass over every element degree of freedom.
     pub fn mass(&self, density: f64, kind: MassKind) -> fieldcraft_fem::Result<Matrix> {
         Ok(match (self, kind) {
+            (StructuralKernel::Mitc8(_), _) => {
+                return Err(fieldcraft_fem::Error::NotSupported("MITC8 mass: frequency, harmonic and transient analyses are not implemented".into()));
+            }
             (StructuralKernel::Shell(s), MassKind::Consistent) => {
                 if s.is_laminated() {
                     s.ply_mass()?
@@ -412,6 +423,7 @@ impl StructuralKernel {
     pub fn body_force(&self, b: [f64; 3]) -> fieldcraft_fem::Result<Vec<f64>> {
         match self {
             StructuralKernel::Shell(s) => s.body_force(b),
+            StructuralKernel::Mitc8(s) => s.body_force(b),
             StructuralKernel::Beam(beam) => Ok(beam.body_force(b)),
         }
     }
@@ -570,6 +582,14 @@ impl Mesh {
                 return Err(Error::NotSupported("2D and solid sections in one model".into()));
             }
             let set = resolved.sets.get(&section.set).ok_or_else(|| Error::Invalid(format!("set `{}` is not resolved", section.set)))?;
+            if shell_or_beam
+                && section.formulation.integration == Integration::Reduced
+                && set.elements.iter().any(|label| model.element(*label).is_some_and(|e| e.kind == ElementKind::Quad8))
+            {
+                return Err(Error::NotSupported(format!(
+                    "section `{name}`: reduced-integration quad8 shell (S8R) is not MITC8; use full integration for MITC8 statics"
+                )));
+            }
             if let SectionKind::CompositeShell { layup } = &section.kind {
                 let plies = resolve_plies(layup, model).map_err(|e| Error::Invalid(format!("section `{name}`: {e}")))?;
                 let laminate = Laminate::new(&plies, layup.offset).map_err(|e| Error::Invalid(format!("section `{name}`: {e}")))?;

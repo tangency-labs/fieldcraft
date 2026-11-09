@@ -1,5 +1,9 @@
 # Linear buckling
 
+The `quad8` MITC8 element has no initial-stress stiffness yet and is refused in buckling
+and prestressed perturbation analyses, even when its geometry is flat.
+See [MITC8 scope](../../solvers/mitc8.md).
+
 `solve.buckle` computes the load factors λ at which the loads of a step, applied as a linear
 preload, make the structure lose stiffness, (K + λ K_σ) φ = 0, and the buckling mode shapes φ.
 The step is solved as a linear static step first; the preload's stresses form the

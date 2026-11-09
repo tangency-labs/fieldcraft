@@ -260,6 +260,8 @@ stress has no volume constraint and is refused.
 
 ### Shells
 
+For eight-node curved homogeneous statics, see [MITC8](../../solvers/mitc8.md).
+
 Flat MITC4 quadrilaterals and MITC3 triangles (`crate::shell`) with six unknowns per node. Each
 element is projected onto its mean plane, where membrane, Reissner–Mindlin plate and drilling
 stiffness are superposed in local axes and rotated to the global ones (the facet approach;
@@ -374,6 +376,7 @@ beams warns that only solid, 2D and truss elements are strained ([Heat transfer]
 | plane stress tri3, tri6, quad4, quad8 | yes | yes | refused | refused | refused |
 | plane strain, axisymmetric tri3, tri6, quad4, quad8 (and hybrid quad4, quad8, tri6) | yes | yes | refused | yes | refused |
 | shell tri3, quad4 | yes (homogeneous or composite) | flat plates with flat preload only | refused | refused | refused |
+| shell quad8 (MITC8) | homogeneous isotropic linear static only; frequency refused | refused | refused | refused | refused |
 | beam2 | yes | refused | refused | refused | refused |
 | rod2, rod3 | yes | refused | refused | refused | rod2; rod3 with `nonlinear_geometry: false` only; elastic only |
 | point mass, spring, dashpot | yes (dashpots ignored) | yes (dashpots ignored) | — | springs, along their fixed directions | translational ones; rotary inertia and torsional springs refused |
@@ -542,8 +545,9 @@ explicit, engine and io test suites hashed identically before and after.
 
 ## Limitations
 
-- Shells: tri3 and quad4 only (tri6 and quad8 shells are refused); flat facets with isotropic
-  homogeneous or [composite sections](composites.md). Initial-stress stiffness supports only
+- Shells: tri3 and quad4 are flat facets with isotropic
+  homogeneous or [composite sections](composites.md). Quad8 uses [curved MITC8](../../solvers/mitc8.md)
+  for homogeneous isotropic linear statics only; tri6 is still refused. Initial-stress stiffness supports only
   coplanar plates with a flat preload; curved shells and non-flat preloads (including those
   caused by extension–bending coupling) are refused in buckling. No large rotations (refused in nonlinear steps), heat conduction or thermal strain.
 - Beams: two-node Timoshenko only; isotropic material; no warping of open sections; refused in
