@@ -4,6 +4,23 @@ use std::io::Write;
 use std::sync::OnceLock;
 use std::time::Instant;
 
+fn enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("FIELDCRAFT_SOLVER_TIMING").is_ok_and(|v| v == "1"))
+}
+
+/// Successful triangular traversals: RHS columns, executed lanes, equations, coefficient
+/// visits, scalar multiply/subtract updates and permuted scalar values. These are logical
+/// work counts, not measured cache misses, memory transactions or CPU time.
+pub(crate) fn triangular_work(rhs: usize, lanes: usize, n: usize, entries: usize) {
+    if enabled() {
+        let visits = entries.saturating_mul(2);
+        let updates = entries.saturating_sub(n).saturating_mul(2).saturating_mul(lanes);
+        let copies = n.saturating_mul(rhs).saturating_mul(2);
+        let _ = writeln!(std::io::stderr().lock(), "FIELDCRAFT_TRIANGULAR_WORK\t{rhs}\t{lanes}\t{n}\t{visits}\t{updates}\t{copies}");
+    }
+}
+
 pub(crate) struct Span {
     name: &'static str,
     start: Option<Instant>,
@@ -11,9 +28,7 @@ pub(crate) struct Span {
 
 impl Span {
     pub(crate) fn new(name: &'static str) -> Self {
-        static ENABLED: OnceLock<bool> = OnceLock::new();
-        let enabled = *ENABLED.get_or_init(|| std::env::var("FIELDCRAFT_SOLVER_TIMING").is_ok_and(|v| v == "1"));
-        Self { name, start: enabled.then(Instant::now) }
+        Self { name, start: enabled().then(Instant::now) }
     }
 }
 

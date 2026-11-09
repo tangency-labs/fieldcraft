@@ -1306,11 +1306,44 @@ impl Factor {
     /// is across independent RHS lanes, never a reassociation of a dot product.
     pub fn solve_block(&self, rhs: &mut [Vec<f64>]) -> Result<()> {
         let _timing = crate::timing::Span::new("backsolve_block");
+        self.solve_lanes::<8>(rhs)
+    }
+
+    /// Independent pairs share one factor stream, with one writer for each RHS. This
+    /// retains column parallelism as well as multiple-RHS reuse; no dot product is split.
+    #[cfg(test)]
+    fn solve_pairs(&self, rhs: &mut [Vec<f64>]) -> Result<()> {
+        let _timing = crate::timing::Span::new("backsolve_pairs");
+        if rhs.iter().any(|b| b.len() != self.n) {
+            return Err(Error::Internal("paired right-hand side length".into()));
+        }
+        let mut groups: Vec<_> = rhs.chunks_mut(2).map(|group| (group, Ok(()))).collect();
+        parallel::for_each_mut(&mut groups, |_, (group, result)| {
+            *result = if group.len() == 1 {
+                match group.first_mut() {
+                    Some(rhs) => self.solve(rhs),
+                    None => Ok(()),
+                }
+            } else {
+                self.solve_lanes::<2>(group)
+            };
+        });
+        for (_, result) in groups {
+            result?;
+        }
+        Ok(())
+    }
+
+    fn solve_lanes<const LANES: usize>(&self, rhs: &mut [Vec<f64>]) -> Result<()> {
+        let _timing = crate::timing::Span::new("backsolve_lane_group_inclusive");
+        if LANES == 0 {
+            return Err(Error::Internal("zero right-hand side lanes".into()));
+        }
         if rhs.iter().any(|b| b.len() != self.n) {
             return Err(Error::Internal("block right-hand side length".into()));
         }
-        for group in rhs.chunks_mut(8) {
-            let mut x = vec![[0.0; 8]; self.n];
+        for group in rhs.chunks_mut(LANES) {
+            let mut x = vec![[0.0; LANES]; self.n];
             for (&p, row) in self.perm.iter().zip(&mut x) {
                 for (v, b) in row.iter_mut().zip(group.iter()) {
                     *v = b.get(p).copied().unwrap_or(0.0);
@@ -1375,6 +1408,7 @@ impl Factor {
                     }
                 }
             }
+            crate::timing::triangular_work(group.len(), LANES, self.n, self.entries);
         }
         Ok(())
     }
@@ -1387,7 +1421,11 @@ impl Factor {
     /// Solve A x = b in place.
     pub fn solve(&self, b: &mut [f64]) -> Result<()> {
         let _timing = crate::timing::Span::new("backsolve_inclusive");
-        solve_supernodes(self.n, &self.perm, &self.structure, &self.values, b)
+        let result = solve_supernodes(self.n, &self.perm, &self.structure, &self.values, b);
+        if result.is_ok() {
+            crate::timing::triangular_work(1, 1, self.n, self.entries);
+        }
+        result
     }
 }
 
@@ -1412,9 +1450,16 @@ mod tests {
                 let mut got = rhs.clone();
                 parallel::with_threads(threads, || factor.solve_block(&mut got)).unwrap();
                 assert!(got.iter().flatten().zip(reference.iter().flatten()).all(|(a, b)| a.to_bits() == b.to_bits()));
+                let mut paired = rhs.clone();
+                parallel::with_threads(threads, || factor.solve_pairs(&mut paired)).unwrap();
+                assert!(paired.iter().flatten().zip(reference.iter().flatten()).all(|(a, b)| a.to_bits() == b.to_bits()));
             }
         }
         assert!(factor.solve_block(&mut [vec![1.0; n - 1]]).is_err());
+        let mut bad = vec![vec![1.0; n], vec![2.0; n - 1]];
+        let original = bad.clone();
+        assert!(factor.solve_pairs(&mut bad).is_err());
+        assert_eq!(bad, original);
     }
 
     #[test]

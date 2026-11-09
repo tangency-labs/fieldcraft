@@ -405,3 +405,13 @@ includes its dense products; concurrent node times must not be summed as factori
 time. Product throughput includes packing, allocation and scheduling, and counts each multiply
 and add separately, including padded micro-tiles. These diagnostics do not alter arithmetic or
 work partitions; logging itself can affect measured time.
+
+Triangular solves also emit `FIELDCRAFT_TRIANGULAR_WORK` when solver timing is enabled:
+right-hand-side columns, executed lanes (including any padding), equations, logical factor
+coefficient visits, scalar multiply/subtract updates, and permuted scalar values. Each record
+is emitted after a successful traversal. Counts use that traversal's actual dimensions; they
+are not hardware memory-traffic counters. Multiply coefficient visits by eight for the logical
+coefficient byte volume, not measured DRAM traffic.
+
+The `backsolve_lane_group_inclusive` and `backsolve_inclusive` spans may overlap across
+workers. Their sum is accumulated elapsed time, not CPU time or command wall time.
