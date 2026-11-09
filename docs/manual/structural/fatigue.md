@@ -140,3 +140,15 @@ Linux engine tests and refusal cases pass. The original 1001-frame rod export
 passes release-mode checks against its analytic step-response stress and one
 residual half cycle, with uncorrected and Goodman Miner damage. This verifies
 the exported-data path, not a native transient solver or BASE fatigue life.
+
+
+## BASE demonstration scope
+
+A release-mode face-supported BASE case (314430 nodes, 198174 Tet10 elements)
+uses 40 modes, six residual vectors and 71 frequency points over 0–2000 Hz.
+Two probes bind to the actual source mesh. Narrow-band, Dirlik and BT results
+share the same scalar stress projection; independent moment integration and
+narrow-band damage checks pass. These checks validate the command path and
+postprocessing of the sampled spectrum, not frequency-grid or modal convergence.
+The S–N data are synthetic. The ranked probes are not a full-field hotspot search,
+and their reported life is not an engineering prediction for the real component.

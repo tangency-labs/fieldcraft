@@ -222,8 +222,13 @@ corrections; coherent harmonic stress projections with narrow-band, Dirlik and
 BT2005 damage; stored linear reference-load superposition command. Linux solver/engine tests, Clippy and the full oracle pass with the existing
 15 known oracle failures unchanged. Release rod examples pass independent PSD,
 moment, narrow-band and reference-load Miner checks. General multiaxial criteria,
-material persistence, contours, published-example acceptance, BASE and actual
+material persistence, contours, published-example acceptance, full-field BASE validation and actual
 native transient-result integration remain open. An exported SI transient-probe
 adapter passes Linux engine/refusal tests and a real 1001-frame rod export
 check against analytic residual-half-cycle Miner damage. See the fatigue
 manual for restrictions.
+
+A release-mode BASE demonstration now evaluates two source-bound probes with the
+three spectral methods. Its moments and narrow-band damage pass independent
+integration checks; this does not establish frequency-grid convergence, a global
+hotspot, or life with measured material fatigue properties.
