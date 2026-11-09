@@ -109,8 +109,19 @@ pub(super) fn procedure(body: &[Block<'_>], model: &Model, tables: &BTreeMap<Str
     if model.steps().len() != 1 || source.base_state.is_some() {
         return Err(unsupported(b.line, "modal FREQUENCY base state or preceding general history is not mapped"));
     }
-    if let Some((id, e)) = model.elements().iter().next() {
-        return Err(unsupported(b.line, format!("modal mass mapping for element {id} {}: only explicit MASS/SPRING1", e.kind.name())));
+    // The existing dynamic writer verifies rod2 <-> T3D2 only with explicit
+    // mass=lumped. Import does not select a solver mass policy; its report
+    // retains that requirement, just as for other imported modal procedures.
+    for (id, e) in model.elements() {
+        if b.keyword != "RESPONSESPECTRUM" || e.kind.name() != "rod2" {
+            return Err(unsupported(
+                b.line,
+                format!(
+                    "modal mass mapping for element {id} {}: only explicit MASS/SPRING1 or response-spectrum T3D2 with mass=lumped",
+                    e.kind.name()
+                ),
+            ));
+        }
     }
     if !model.ties().is_empty()
         || !model.contacts().is_empty()
@@ -160,9 +171,11 @@ pub(super) fn procedure(body: &[Block<'_>], model: &Model, tables: &BTreeMap<Str
         return Ok((Procedure::Transient(t), period));
     }
     allow(b, &["SUM", "COMP"])?;
-    if canonical(value(b, "SUM", "ABS")?) != "SRSS" {
-        return Err(unsupported(b.line, "RESPONSE SPECTRUM SUM: only explicit SRSS is mapped"));
-    }
+    let combination = match canonical(value(b, "SUM", "ABS")?).as_str() {
+        "SRSS" => Combination::Srss,
+        "CQC" => Combination::Cqc,
+        _ => return Err(unsupported(b.line, "RESPONSE SPECTRUM SUM: only explicit SRSS or CQC is mapped")),
+    };
     let comp = match canonical(value(b, "COMP", "SRSS")?).as_str() {
         "SRSS" => DirectionCombination::Srss,
         "R40" => DirectionCombination::Percent1004040,
@@ -199,7 +212,7 @@ pub(super) fn procedure(body: &[Block<'_>], model: &Model, tables: &BTreeMap<Str
         modes,
         damping_ratio: table.damping,
         modal_damping_ratios: Vec::new(),
-        combination: Combination::Srss,
+        combination,
         direction: [1.0, 0.0, 0.0],
         pseudo_acceleration: table.points.clone(),
         period_tables: Vec::new(),
@@ -256,6 +269,27 @@ mod tests {
         assert!(!r.analysis_complete);
         assert_eq!(r.model.steps().len(), 1);
         assert!(r.warnings.iter().any(|w| w.contains("multiple procedures")));
+    }
+    #[test]
+    fn cqc_preserves_combination_and_requires_positive_matching_damping() {
+        let input = format!("{MODEL}{TABLE}{BASIS}{RESPONSE}").replace("SUM=SRSS", "SUM=CQC");
+        let r = read_analysis_limited(&input, Preset::MKgS, Limits::default()).unwrap();
+        assert!(r.analysis_complete, "{:?}", r.warnings);
+        let Procedure::ResponseSpectrum(s) = &r.model.steps()[1].procedure else { panic!("not spectrum") };
+        assert_eq!(s.combination, fieldcraft_model::dynamics::Combination::Cqc);
+        assert_eq!(s.damping_ratio, 0.05);
+        assert_eq!(s.mode_damping(0), 0.05);
+        assert_eq!(s.mode_damping(1), 0.05);
+        for (from, to) in [
+            (".05", "0"),
+            ("1,2,.05", "1,1,.05\n2,2,.02"),
+            ("SUM=CQC", "SUM=DSC"),
+            ("SUM=CQC", "SUM=CQC,RIGID RESPONSE=GUPTA"),
+            ("SUM=CQC", "SUM=CQC,UNKNOWN=1"),
+        ] {
+            let r = read_analysis_limited(&input.replace(from, to), Preset::MKgS, Limits::default()).unwrap();
+            assert!(!r.analysis_complete, "accepted {from} -> {to}");
+        }
     }
     #[test]
     fn spectrum_units_directions_and_named_refusals() {
