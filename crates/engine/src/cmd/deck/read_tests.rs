@@ -1226,7 +1226,8 @@ fn nonlinear_rod_import_preserves_yes_base_state_and_source() {
     let fieldcraft_model::Procedure::NonlinearStatic(n) = &s.model.step("Preload").unwrap().procedure else { panic!("nonlinear step lost") };
     assert!(n.nonlinear_geometry);
     assert_eq!(n.initial_increment, 1.0);
-    assert!(report["warnings"].to_string().contains("nonlinear static truss"));
+    assert!(report["warnings"].to_string().contains("native nonlinear static truss St. Venant-Kirchhoff"));
+    assert!(!report["warnings"].to_string().contains("truss solving is not supported"));
     // Independent StVK force law: N=EA*lambda*(lambda^2-1)/2.
     // Bisection uses only the prescribed force, not the solver's displacement.
     let (mut lo, mut hi) = (1.0_f64, 1.001_f64);

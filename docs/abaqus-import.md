@@ -859,7 +859,7 @@ included in result invalidation, and exposed by `model.step.create/edit`.
 Normalized export retains `NLGEOM=NO`; it refuses a nonlatest base or a base shared
 by linear and stress-stiffened consumers because one source general step cannot
 express both choices. Nonlinear equilibrium remains a distinct procedure: no YES
-flag is changed to NO and unsupported nonlinear rod solving still refuses.
+flag is changed to NO. Nonlinear rods use the native St. Venant–Kirchhoff formulation; unsupported constitutive combinations still refuse.
 
 Frequency and harmonic perturbations retain the base support DOFs with zero
 incremental values. Inherited static amplitudes are cleared before validating the
@@ -984,3 +984,20 @@ Source replay retains original labels; canonical output uses native generated
 ROTARYI sets. A beam-end torsional oscillator checks the added inertia against
 GJ/L and the beam's consistent polar mass, with native solve/save/reopen/replay.
 Reference: [ROTARY INERTIA](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-rotaryinertia.htm).
+
+
+## Constant normal element foundations
+
+`FOUNDATION` model data imports constant Tet4 face supports: element label or element set,
+`F1` through `F4`, and normal stiffness per area (force/length³). The model stores N/m³.
+Part/instance references follow element numbering; the support remains active across steps.
+The adapter uses the existing consistent face operator, not diagonal nodal springs.
+Linear static, frequency and direct harmonic steps are mapped. Step activation, keyword
+parameters, beam/planar/shell face identifiers and other element types are explicitly refused.
+Finite-displacement foundation normals in the public format follow the deformed face;
+the native reference-face operator is not that law, so nonlinear history is refused and
+the source retained. Matrix-based foundation export is a separate format and is not imported.
+An original Tet4 compression model on a triangular bed checks `u_b=-F/(k A)`,
+`u_tip-u_b=-3 F h/(E A)` at zero Poisson ratio, and `sigma_zz=-3 F/A`, with original,
+reopened and normalized-deck results and an independent native-command model.
+Source: [public foundation definition](https://abaqus.uclouvain.be/English/SIMACAEMODRefMap/simamod-c-foundation.htm).

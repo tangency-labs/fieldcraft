@@ -479,6 +479,7 @@ fn emit(
             | "ORIENTATION"
             | "MASS"
             | "ROTARYINERTIA"
+            | "FOUNDATION"
             | "SPRING"
             | "BOUNDARY"
             | "CLOAD"
@@ -601,7 +602,7 @@ fn emit(
                     *v = reference(v, target_scope, node, maps, assembly, row.line)?;
                 }
             }
-            "BOUNDARY" | "CLOAD" | "DLOAD" | "DSLOAD" => {
+            "BOUNDARY" | "CLOAD" | "DLOAD" | "DSLOAD" | "FOUNDATION" => {
                 if let Some(v) = f.first_mut().filter(|v| !v.is_empty()) {
                     *v = reference(v, scope, matches!(b.keyword.as_str(), "BOUNDARY" | "CLOAD"), maps, assembly, row.line)?;
                 }

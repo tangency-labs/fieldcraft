@@ -19,6 +19,7 @@ mod composite;
 mod constraints;
 mod discrete;
 mod dynamic;
+mod foundation;
 mod history;
 mod lex;
 mod mass;
@@ -123,6 +124,7 @@ fn read_mode(text: &str, preset: Preset, limits: Limits, analysis: bool) -> Resu
         read.mass_requirements = mass::inspect(flat)?;
         mass::restore(flat, &mut read.model)?;
         constraints::import(flat, &mut read, preset, limits)?;
+        foundation::import(flat, &mut read, preset, limits)?;
         if analysis {
             history::import(flat, &mut read, preset, limits)?;
         }
@@ -136,7 +138,7 @@ fn read_mode(text: &str, preset: Preset, limits: Limits, analysis: bool) -> Resu
         if read.model.steps().iter().any(|s| matches!(s.procedure, fieldcraft_model::Procedure::NonlinearStatic(_)))
             && read.model.elements().values().any(|e| e.kind == fieldcraft_model::ElementKind::Rod2)
         {
-            read.warnings.push("NLGEOM=YES T3D2/T2D2 steps and base_state are retained semantically, but native nonlinear static truss solving is not supported; solve.nonlinear and dependent frequency will refuse, not use NLGEOM=NO".into());
+            read.warnings.push("NLGEOM=YES T3D2/T2D2 uses the native nonlinear static truss St. Venant-Kirchhoff formulation and preserves base_state; unsupported constitutive or analysis combinations are refused, never changed to NLGEOM=NO".into());
         }
         if read.model.steps().iter().any(
             |s| matches!(&s.procedure, fieldcraft_model::Procedure::Transient(t) if matches!(t.method, fieldcraft_model::dynamics::Method::Direct)),

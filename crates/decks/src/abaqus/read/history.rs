@@ -534,6 +534,15 @@ fn prepare(
     {
         return Err(unsupported(b.line, "ROTARY INERTIA requires linear static, frequency or direct harmonic analysis"));
     }
+    if !model.foundations().is_empty()
+        && !matches!(procedure, Procedure::Static {} | Procedure::Frequency { .. })
+        && !matches!(&procedure, Procedure::Harmonic(h) if matches!(h.method, fieldcraft_model::harmonic::Method::Direct))
+    {
+        return Err(unsupported(
+            b.line,
+            "FOUNDATION requires small-displacement linear static, frequency or direct harmonic analysis; follower/finite-rotation support is not mapped",
+        ));
+    }
     if let Some(damping) = global_damping {
         let Procedure::Harmonic(h) = &mut procedure else {
             return Err(unsupported(b.line, "GLOBAL DAMPING outside harmonic analysis"));
