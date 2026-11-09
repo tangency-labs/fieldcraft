@@ -660,7 +660,9 @@ impl Operator for ShiftInvert<'_> {
         self.m.n
     }
     fn mass(&self, x: &[f64], y: &mut [f64]) {
-        self.m.mul(x, y);
+        // A smaller row task exposes parallelism for the repeated modal products,
+        // without changing any within-row sum or any Lanczos recurrence order.
+        self.m.mul_with_rows(x, y, 512);
     }
     fn solve(&self, x: &mut [f64]) -> Result<()> {
         self.factor.solve(x)

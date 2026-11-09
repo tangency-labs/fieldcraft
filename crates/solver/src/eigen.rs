@@ -261,8 +261,12 @@ fn orthonormalize(
     for (i, mut v) in w.into_iter().enumerate() {
         let mut fresh = false;
         for _attempt in 0..4 {
-            op.mass(&v, scratch);
+            {
+                let _mass_timing = crate::timing::Span::new("lanczos_orthogonalize_mass");
+                op.mass(&v, scratch);
+            }
             let before = dot(&v, scratch).max(0.0).sqrt();
+            let projection_timing = crate::timing::Span::new("lanczos_orthogonalize_projection");
             for _ in 0..2 {
                 for (qj, mqj) in q.iter().zip(mq) {
                     let c = dot(mqj, &v);
@@ -276,7 +280,11 @@ fn orthonormalize(
                     }
                 }
             }
-            op.mass(&v, scratch);
+            drop(projection_timing);
+            {
+                let _mass_timing = crate::timing::Span::new("lanczos_orthogonalize_mass");
+                op.mass(&v, scratch);
+            }
             let norm = dot(&v, scratch).max(0.0).sqrt();
             if norm > 1e-8 * before && norm > 0.0 {
                 if !fresh && let Some(x) = r.get_mut(i).and_then(|row| row.get_mut(i)) {
