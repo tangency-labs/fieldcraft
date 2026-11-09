@@ -1270,6 +1270,9 @@ pub struct Step {
     /// Equilibrium step whose terminal state defines this linear perturbation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_state: Option<String>,
+    /// Include conservative reference-surface pressure stiffness in a shell modal perturbation.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub perturbation_follower_pressure: bool,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub pretension: BTreeMap<String, crate::PretensionControl>,
     pub output: BTreeSet<OutputVariable>,
@@ -1287,6 +1290,7 @@ impl Step {
         Step {
             name: name.into(),
             base_state: None,
+            perturbation_follower_pressure: false,
             pretension: BTreeMap::new(),
             output: procedure.default_output(),
             procedure,
@@ -1457,6 +1461,9 @@ impl Model {
     }
 
     fn check_step(&self, step: &Step) -> Result<()> {
+        if step.perturbation_follower_pressure && (step.base_state.is_none() || !matches!(step.procedure, Procedure::Frequency { .. })) {
+            return Err(Error::Invalid("perturbation_follower_pressure requires a frequency step with base_state".into()));
+        }
         if !step.pretension.is_empty() && !matches!(step.procedure, Procedure::Static {} | Procedure::NonlinearStatic(_)) {
             return Err(Error::Invalid("pretension control requires a static equilibrium step; perturbations lock the base adjustment".into()));
         }

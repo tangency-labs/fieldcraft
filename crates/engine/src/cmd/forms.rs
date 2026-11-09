@@ -1325,6 +1325,7 @@ pub const STEP_CREATE: &[Field] = &[
     STEP_BCS,
     STEP_LOADS,
     reference("base_state", "Equilibrium base", C::Step).help("Earlier static or nonlinear static step for a linear perturbation."),
+    flag("perturbation_follower_pressure", "Modal pressure stiffness").help("Frequency with a linear static base: conservative zero-offset MITC8 pressure tangent; unchanged direct supports. Default false keeps dead loads."),
     reference("before", "Insert before", C::Step).help("The step the new one goes before; last when empty.").hint("last"),
 ];
 
@@ -1335,6 +1336,7 @@ pub const STEP_EDIT: &[Field] = &[
     STEP_BCS,
     STEP_LOADS,
     reference("base_state", "Equilibrium base", C::Step).help("Earlier equilibrium step; null in a command clears the base."),
+    flag("perturbation_follower_pressure", "Modal pressure stiffness").help("Frequency with a linear static base: conservative zero-offset MITC8 pressure tangent; unchanged direct supports. Default false keeps dead loads."),
 ];
 
 pub const STEP_ACTIVATE: &[Field] = &[

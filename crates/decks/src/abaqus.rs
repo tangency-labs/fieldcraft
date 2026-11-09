@@ -420,6 +420,12 @@ fn elements_by_type<'m>(model: &'m Model, r: &Resolved) -> Result<BTreeMap<Strin
 /// Everything else the format cannot express: case-only name clashes, orthotropic materials
 /// outside solids, distributing couplings with a free translation.
 fn check_expressible(model: &Model) -> Result<()> {
+    if model.steps().iter().any(|s| s.perturbation_follower_pressure) {
+        return Err(Error::Unsupported {
+            format: FORMAT,
+            what: "quadratic-shell modal pressure tangent has no faithful Abaqus shell mapping".into(),
+        });
+    }
     let mut bad = BTreeSet::new();
     let namespaces: [(&str, Vec<&str>); 4] = [
         ("sets", model.sets().keys().map(String::as_str).collect()),

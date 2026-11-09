@@ -291,7 +291,7 @@ pub(crate) fn initial_stress_stiffness(mesh: &Mesh, graph: &NodeGraph, preload: 
 /// Schweizerhof-Ramm (1984), reused from fem::face, at zero displacement.
 /// A shell face here is the nodal reference surface; offset pressure faces and
 /// thickness-face follower moments are outside this limited implementation.
-fn pressure_stiffness(
+pub(crate) fn pressure_stiffness(
     model: &Model,
     resolved: &fieldcraft_model::Resolved,
     mesh: &Mesh,
@@ -306,17 +306,17 @@ fn pressure_stiffness(
             let e = mesh
                 .structural_index(face.element)
                 .and_then(|i| mesh.structural.get(i))
-                .ok_or_else(|| Error::NotSupported("follower-pressure buckling requires MITC8/MITC6 shell faces".into()))?;
+                .ok_or_else(|| Error::NotSupported("follower-pressure stiffness requires MITC8/MITC6 shell faces".into()))?;
             if !matches!(e.kind, fieldcraft_model::ElementKind::Quad8 | fieldcraft_model::ElementKind::Tri6) {
-                return Err(Error::NotSupported("follower-pressure buckling requires MITC8/MITC6 shell faces".into()));
+                return Err(Error::NotSupported("follower-pressure stiffness requires MITC8/MITC6 shell faces".into()));
             }
             let offset = match &e.section {
                 crate::system::Section::Shell(s) => s.eccentricity,
                 crate::system::Section::Laminated { offset, .. } => *offset,
-                _ => return Err(Error::NotSupported("follower-pressure buckling section".into())),
+                _ => return Err(Error::NotSupported("follower-pressure stiffness section".into())),
             };
             if offset != 0.0 {
-                return Err(Error::NotSupported("offset-shell follower-pressure buckling".into()));
+                return Err(Error::NotSupported("offset-shell follower-pressure stiffness".into()));
             }
             let labels = model.face_nodes(*face).ok_or_else(|| Error::Invalid("pressure face connectivity".into()))?;
             let nodes: Vec<_> = labels.iter().map(|l| mesh.node(*l).ok_or_else(|| Error::Invalid("pressure node".into()))).collect::<Result<_>>()?;
@@ -336,7 +336,7 @@ fn pressure_stiffness(
     Ok(out)
 }
 
-fn conservative_pressure(k: &Csr) -> Result<()> {
+pub(crate) fn conservative_pressure(k: &Csr) -> Result<()> {
     let mut total = 0.0_f64;
     let mut skew = 0.0_f64;
     for i in 0..k.n {
@@ -350,7 +350,7 @@ fn conservative_pressure(k: &Csr) -> Result<()> {
     }
     if skew > 1e-10 * total {
         return Err(Error::NotSupported(
-            "nonconservative follower-pressure buckling: free-DOF load stiffness is nonsymmetric; close or support the pressure boundary".into(),
+            "nonconservative follower-pressure stiffness: free-DOF load stiffness is nonsymmetric; close or support the pressure boundary".into(),
         ));
     }
     Ok(())

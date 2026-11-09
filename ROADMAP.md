@@ -322,3 +322,5 @@ SI-unit LE7 shell command test; consistent curved MITC8/MITC6 initial-stress
 operators and opt-in conservative pressure stiffness, checked by perfect axial
 and pressure cylinders with native result roundtrips. Nonlinear equilibrium,
 curved prestressed dynamics and faithful commercial shell mappings remain open.
+
+Curved MITC8 modal perturbations: reference elastic plus Green-strain/director initial-stress stiffness, explicit conservative pressure-tangent option, reference mass and unchanged direct supports. Cylinder ring-limit pressure/frequency checks and native roundtrips; MITC6-a curved prestressed modes remain refused after preload-field and actual-residual failures; no finite-preload geometry, curved prestressed harmonic response or faithful commercial shell mapping. See `docs/solvers/curved-shell-modes.md`.
