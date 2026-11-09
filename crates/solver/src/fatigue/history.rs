@@ -2,7 +2,7 @@
 //! recovery location and homogeneous boundary operator are required by the caller.
 //! Coefficients multiply the complete reference pattern; they are dimensionless.
 //! Rainflow and Miner are applied AFTER tensor superposition and fixed projection.
-use super::{Basquin, MAX_HISTORY_POINTS, life::StressMean, miner, rainflow};
+use super::{MAX_HISTORY_POINTS, curve::StressLife, life::StressMean, miner, rainflow};
 use crate::{Error, Result, StaticResult};
 
 #[derive(Debug, serde::Serialize)]
@@ -20,7 +20,7 @@ pub fn evaluate(
     times: &[f64],
     nodes: &[u32],
     weights: [f64; 6],
-    curve: &Basquin,
+    curve: &impl StressLife,
     correction: StressMean,
 ) -> Result<Vec<NodeDamage>> {
     curve.validate()?;
@@ -33,7 +33,7 @@ pub fn evaluate(
         || times.windows(2).any(|w| w[1] <= w[0])
         || coefficients.iter().any(|c| c.len() != times.len() || c.iter().any(|v| !v.is_finite()))
         || nodes.is_empty()
-        || nodes.len() > 100000
+        || nodes.len() > MAX_HISTORY_POINTS
         || nodes.iter().collect::<std::collections::BTreeSet<_>>().len() != nodes.len()
         || weights.iter().any(|x| !x.is_finite())
         || weights.iter().all(|x| *x == 0.0)

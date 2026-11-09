@@ -5,6 +5,8 @@
 use super::{Basquin, life::StressMean};
 use crate::{Error, HarmonicResult, RandomInput, Result};
 
+const PROBABILITY_ROUNDOFF: f64 = 1e-12; // unit-factors: dimensionless probability/moment roundoff, not a conversion
+
 /// Project six coherent stress phasors BEFORE squaring. Components are
 /// xx,yy,zz,xy,xz,yz. Weights are dimensionless and fixed over frequency.
 /// A plane normal n uses [nx²,ny²,nz²,2nxny,2nxnz,2nynz].
@@ -117,7 +119,7 @@ pub fn narrow_band(samples: &[RandomInput], curve: &Basquin, seconds: f64, mean:
         || rate <= 0.0
         || !irregularity.is_finite()
         || irregularity <= 0.0
-        || irregularity > 1.0 + 1e-12
+        || irregularity > 1.0 + PROBABILITY_ROUNDOFF
         || !damage.is_finite()
         || damage == 0.0
     {
@@ -147,7 +149,7 @@ pub fn broadband_ratio(m: [f64; 4], k: f64, method: Method) -> Result<f64> {
     }
     let a1 = (m1 / libm::sqrt(m0)) / libm::sqrt(m2);
     let a2 = libm::sqrt(m2 / m0) / libm::sqrt(m4 / m2);
-    if !a1.is_finite() || !a2.is_finite() || a2 <= 0.0 || a1 > 1.0 + 1e-12 || a2 > a1 + 1e-12 {
+    if !a1.is_finite() || !a2.is_finite() || a2 <= 0.0 || a1 > 1.0 + PROBABILITY_ROUNDOFF || a2 > a1 + PROBABILITY_ROUNDOFF {
         return Err(Error::Invalid("inconsistent spectral moment inequalities".into()));
     }
     if method == Method::NarrowBand || 1.0 - a2 <= 1e-8 {
@@ -159,7 +161,7 @@ pub fn broadband_ratio(m: [f64; 4], k: f64, method: Method) -> Result<f64> {
             let delta = a1 - a2;
             // (1-a1)(1-a2) avoids cancellation in 1+a1*a2-a1-a2.
             let w = delta * (1.112 * (1.0 - a1) * (1.0 - a2) * libm::exp(2.11 * a2) + delta) / (1.0 - a2).powi(2);
-            if !w.is_finite() || !(-1e-12..=1.0 + 1e-12).contains(&w) {
+            if !w.is_finite() || !(-PROBABILITY_ROUNDOFF..=1.0 + PROBABILITY_ROUNDOFF).contains(&w) {
                 return Err(Error::Invalid("Benasciutti-Tovo weight outside probability domain".into()));
             }
             let w = w.clamp(0.0, 1.0);
@@ -177,7 +179,7 @@ pub fn broadband_ratio(m: [f64; 4], k: f64, method: Method) -> Result<f64> {
             let d3 = 1.0 - d1 - d2;
             // Eq.8 simplifies identically to Q=1.25*D1, avoiding cancellation.
             let q = 1.25 * d1;
-            if [r, d1, d2, d3, q].iter().any(|x| !x.is_finite()) || d2 < -1e-12 || d3 < -1e-12 || q <= 0.0 {
+            if [r, d1, d2, d3, q].iter().any(|x| !x.is_finite()) || d2 < -PROBABILITY_ROUNDOFF || d3 < -PROBABILITY_ROUNDOFF || q <= 0.0 {
                 return Err(Error::Invalid("Dirlik mixture outside probability domain".into()));
             }
             let rayleigh_moment = libm::pow(2.0, k * 0.5) * libm::tgamma(1.0 + k * 0.5);
@@ -304,6 +306,26 @@ mod scale_tests {
             assert!((damage(&faster, &curve, 10.0, 0.0, StressMean::None, method).unwrap().damage / d - 2.0).abs() < 1e-10);
             let nb = damage(&thin, &curve, 10.0, 0.0, StressMean::None, Method::NarrowBand).unwrap().damage;
             assert!((damage(&thin, &curve, 10.0, 0.0, StressMean::None, method).unwrap().damage / nb - 1.0).abs() < 1e-10);
+        }
+    }
+}
+
+#[cfg(test)]
+mod published_benchmark {
+    use super::*;
+    /// Dirlik & Benasciutti 2021, Metals 11,1333, Table 1: band-limited
+    /// rectangular spectra, f2/f1=5 and 20, slopes 3,5,7. Ratios are independent
+    /// of PSD level and frequency scaling. 0.001 tolerance covers 3-digit printing.
+    #[test]
+    fn original_authors_table1_damage_ratios() {
+        for (c, expected) in [(5., [0.980, 0.920, 0.867]), (20., [0.998, 0.932, 0.875])] {
+            let psd = [RandomInput { frequency_hz: 1., psd: 1. }, RandomInput { frequency_hz: c, psd: 1. }];
+            for (k, reference) in [3., 5., 7.].into_iter().zip(expected) {
+                let curve = Basquin { amplitude_ref: 1., cycles_ref: 1., exponent: k, endurance_limit: 0. };
+                let dk = damage(&psd, &curve, 1., 0., StressMean::None, Method::Dirlik).unwrap().damage;
+                let tb = damage(&psd, &curve, 1., 0., StressMean::None, Method::BenasciuttiTovo).unwrap().damage;
+                assert!((tb / dk - reference).abs() < 0.001, "c={c}, k={k}, ratio={}, reference={reference}", tb / dk);
+            }
         }
     }
 }

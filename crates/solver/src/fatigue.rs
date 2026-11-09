@@ -7,6 +7,8 @@
 
 use crate::{Error, Result};
 
+pub mod curve;
+pub mod field;
 pub mod history;
 pub mod life;
 pub mod spectral;
@@ -127,7 +129,7 @@ pub fn miner_uncorrected(cycles: &[Cycle], curve: &Basquin) -> Result<f64> {
 }
 
 /// Miner damage with a caller-selected mean-stress law, applied per cycle.
-pub fn miner(cycles: &[Cycle], curve: &Basquin, correction: life::StressMean) -> Result<f64> {
+pub fn miner(cycles: &[Cycle], curve: &impl curve::StressLife, correction: life::StressMean) -> Result<f64> {
     curve.validate()?;
     if cycles.len() > MAX_HISTORY_POINTS {
         return Err(Error::Invalid("fatigue cycle count exceeds storage limit".into()));
@@ -187,5 +189,21 @@ mod tests {
         assert!(rainflow(&[]).is_err());
         assert!(curve().damage_per_cycle(-1.0).is_err());
         assert_eq!(curve().damage_per_cycle(0.0).unwrap(), 0.0);
+    }
+}
+
+#[cfg(test)]
+mod published_counting {
+    use super::*;
+    /// ASTM E1049-85(2017), §5.4.4.2 / Fig.6 / Table X1.3.
+    /// Numerical reversal/cycle facts only; no copied figure, prose or implementation.
+    #[test]
+    fn astm_e1049_fig6_each_cycle() {
+        let counted = rainflow(&[-2., 1., -3., 5., -1., 3., -4., 4., -2.]).unwrap();
+        let expected = [(3., -0.5, 0.5), (4., -1., 0.5), (4., 1., 1.), (8., 1., 0.5), (9., 0.5, 0.5), (8., 0., 0.5), (6., 1., 0.5)];
+        assert_eq!(counted.len(), expected.len());
+        for (c, (range, mean, count)) in counted.iter().zip(expected) {
+            assert_eq!((c.range, c.mean, c.count), (range, mean, count));
+        }
     }
 }
