@@ -184,6 +184,42 @@ fn solids() -> Model {
     m
 }
 
+/// The beam profiles of a frame in the four sides of a 1000 × 500 mm rectangle in the XZ plane,
+/// each side its own section and orientation, with a truss brace across it: held at node 1,
+/// loaded by a force and a moment at the opposite corner. (I profiles are refused: their shear
+/// areas differ by direction.)
+fn frame() -> Model {
+    let mut m = Model::default();
+    for (l, xyz) in [(1, [0.0, 0.0, 0.0]), (2, [1000.0, 0.0, 0.0]), (3, [1000.0, 0.0, 500.0]), (4, [0.0, 0.0, 500.0])] {
+        m.set_node(l, xyz).unwrap();
+    }
+    m.add_material("Steel", steel()).unwrap();
+    let sides = [
+        ("girder", [1, 2], BeamProfile::Rectangle { width: 20.0, height: 60.0 }, [0.0, 1.0, 1.0]),
+        ("post", [2, 3], BeamProfile::Circle { radius: 10.0 }, [1.0, 0.0, 0.0]),
+        ("rail", [3, 4], BeamProfile::Pipe { radius: 20.0, thickness: 2.0 }, [0.0, 0.0, 1.0]),
+        ("leg", [4, 1], BeamProfile::Box { width: 40.0, height: 40.0, thickness: 3.0 }, [1.0, 0.0, 0.0]),
+    ];
+    for (e, (name, nodes, profile, orientation)) in (1..).zip(sides) {
+        m.set_element(e, ElementKind::Beam2, nodes.to_vec()).unwrap();
+        m.add_set(name, Set { elements: vec![e], ..Set::default() }).unwrap();
+        let kind = SectionKind::Beam { profile, orientation };
+        m.add_section(name, Section { set: name.into(), material: "Steel".into(), kind, formulation: Formulation::default() }).unwrap();
+    }
+    m.set_element(5, ElementKind::Rod2, vec![1, 3]).unwrap();
+    m.add_set("brace", Set { elements: vec![5], ..Set::default() }).unwrap();
+    let rod = SectionKind::Rod { area: 50.0 };
+    m.add_section("brace", Section { set: "brace".into(), material: "Steel".into(), kind: rod, formulation: Formulation::default() }).unwrap();
+    m.add_set("base", Set { nodes: vec![1], ..Set::default() }).unwrap();
+    m.add_set("corner", Set { nodes: vec![3], ..Set::default() }).unwrap();
+    m.add_boundary_condition("clamp", BoundaryCondition::Fixed { target: Target::Set("base".into()) }).unwrap();
+    m.add_load("push", Load::Force { target: Target::Set("corner".into()), vector: [500.0, 0.0, -1000.0], distribution: Distribution::Total })
+        .unwrap();
+    m.add_load("turn", Load::Moment { target: Target::Set("corner".into()), vector: [0.0, 2e5, 0.0], distribution: Distribution::Total }).unwrap();
+    m.add_step(step("Load", Procedure::Static {}, &["clamp"], &["push", "turn"]), None).unwrap();
+    m
+}
+
 /// A unit 20-node hexahedron at `o` in model order.
 fn hex20_nodes(o: [f64; 3]) -> Vec<[f64; 3]> {
     let corners = CUBE.map(|c| c.map(|v| (v + 1.0) / 2.0));
@@ -260,6 +296,48 @@ fn golden_solids_and_distributing_coupling() {
     }
 }
 
+#[test]
+fn golden_beam_frame() {
+    let w = golden("frame", &frame());
+    let deck = read(&w.text);
+    assert_eq!(deck.elements[&1], vec![1, 2]);
+    assert_eq!(deck.orientations[&1], [0.0, 1.0, 1.0], "the section's orientation, per element");
+    assert_eq!(deck.orientations.len(), 4, "the truss has no orientation");
+    assert_eq!(deck.elements[&5], vec![1, 3]);
+    assert_eq!(deck.parts.len(), 5);
+}
+
+/// Every beam section's `*SECTION_BEAM` is the resultant beam (ELFORM 2) with the profile's own
+/// properties, the numbers FieldCraft's beam is built from: so the deck's axial, bending,
+/// torsional and shear stiffness are FieldCraft's.
+#[test]
+fn beam_sections_carry_the_profile_properties_in_lsdyna_axes() {
+    let m = frame();
+    let w = lsdyna::write(&m).unwrap();
+    let deck = read(&w.text);
+    for (name, s) in m.sections() {
+        let SectionKind::Beam { profile, .. } = s.kind else { continue };
+        let (elform, card) = &deck.beam_sections[name];
+        assert_eq!(*elform, 2, "{name}");
+        let p = profile.properties(0.3);
+        assert_eq!(card, &vec![p.area, p.iy, p.iz, p.torsion, p.shear_y], "{name}");
+        assert_eq!(p.shear_y, p.shear_z, "{name}: one shear area");
+    }
+    // The axes: s is the orientation (the profile's width, local 1) and t its height (local 2),
+    // so ISS (about s) = w h³/12 and ITT (about t) = h w³/12. A 20 wide, 60 high rectangle is
+    // nine times stiffer bending across its height.
+    let (_, girder) = &deck.beam_sections["girder"];
+    assert_eq!((girder[1], girder[2]), (20.0 * 60f64.powi(3) / 12.0, 60.0 * 20f64.powi(3) / 12.0));
+    // The square box's shear areas agree, so it is written; the solid circle's J is its polar moment.
+    let (_, post) = &deck.beam_sections["post"];
+    assert!((post[3] - std::f64::consts::PI * 1e4 / 2.0).abs() < 1e-9);
+
+    // Written in metres, the properties are those of the profile in metres.
+    let si = read(&lsdyna::write_si(&common::si(&m)).unwrap().text);
+    let (_, girder_si) = &si.beam_sections["girder"];
+    assert!((girder_si[1] / (girder[1] * 1e-12) - 1.0).abs() < 1e-12, "{girder_si:?}");
+}
+
 // ---------------------------------------------------------------------------------------------
 // A minimal reader of our own output: nodes, elements and node sets.
 
@@ -271,6 +349,13 @@ struct Read {
     /// The part ids elements are in.
     parts: BTreeSet<u32>,
     node_sets: BTreeMap<String, Vec<u32>>,
+    /// Beam element → its orientation vector.
+    orientations: BTreeMap<u32, [f64; 3]>,
+    /// Part title → the ELFORM and second card of its `*SECTION_BEAM` (resultant beams only;
+    /// section and part ids are the same).
+    beam_sections: BTreeMap<String, (i32, Vec<f64>)>,
+    /// Section id → resultant beam section, until its part names it.
+    pending: BTreeMap<u32, (i32, Vec<f64>)>,
 }
 
 fn fields(line: &str) -> Vec<&str> {
@@ -302,6 +387,26 @@ fn read(text: &str) -> Read {
                 let f: Vec<u32> = fields(c).iter().map(|v| v.parse().unwrap()).collect();
                 out.elements.insert(f[0], f[2..].to_vec());
                 out.parts.insert(f[1]);
+            }
+        }
+        "*ELEMENT_BEAM_ORIENTATION" => {
+            for e in cards.chunks(2) {
+                let f: Vec<u32> = fields(e[0]).iter().map(|v| v.parse().unwrap()).collect();
+                let v: Vec<f64> = fields(e[1]).iter().map(|v| v.parse().unwrap()).collect();
+                out.elements.insert(f[0], f[2..].to_vec());
+                out.parts.insert(f[1]);
+                out.orientations.insert(f[0], [v[0], v[1], v[2]]);
+            }
+        }
+        "*SECTION_BEAM" if cards.len() == 2 && fields(cards[1]).len() == 5 => {
+            let head = fields(cards[0]);
+            let card = fields(cards[1]).iter().map(|v| v.parse().unwrap()).collect();
+            out.pending.insert(head[0].parse().unwrap(), (head[1].parse().unwrap(), card));
+        }
+        "*PART" => {
+            let pid: u32 = fields(cards[1])[0].parse().unwrap();
+            if let Some(s) = out.pending.remove(&pid) {
+                out.beam_sections.insert(cards[0].to_string(), s);
             }
         }
         "*SET_NODE_LIST_TITLE" => {
@@ -633,6 +738,30 @@ fn what_lsdyna_cannot_take_is_named() {
     )
     .unwrap();
     unsupported(&m, "11 integration points");
+
+    // Resultant beams take one shear area: an I's web and flanges differ, as do a box's walls
+    // when it is not square.
+    let beam = |profile| SectionKind::Beam { profile, orientation: [0.0, 1.0, 1.0] };
+    for (profile, what) in [
+        (BeamProfile::I { height: 100.0, width: 50.0, web: 5.0, flange: 8.0 }, "its `i` profile's shear areas differ by direction"),
+        (BeamProfile::Box { width: 40.0, height: 60.0, thickness: 3.0 }, "its `box` profile's shear areas differ by direction"),
+    ] {
+        let mut m = frame();
+        m.replace_section(
+            "girder",
+            Section { set: "girder".into(), material: "Steel".into(), kind: beam(profile), formulation: Formulation::default() },
+        )
+        .unwrap();
+        unsupported(&m, &format!("section `girder`: {what}"));
+    }
+    let mut m = frame();
+    let bilinear = Plastic::Bilinear { yield_stress: 250.0, hardening_modulus: 1000.0, hardening: Hardening::Isotropic };
+    m.replace_material("Steel", Material { plastic: Some(bilinear), ..steel() }).unwrap();
+    unsupported(&m, "plastic material `Steel` on beams");
+    let mut m = frame();
+    let ply = Elastic::EngineeringConstants { young: [140e3, 10e3, 10e3], poisson: [0.3, 0.3, 0.4], shear: [5e3, 5e3, 3.8e3] };
+    m.replace_material("Steel", Material { elastic: Some(ply), ..steel() }).unwrap();
+    unsupported(&m, "material `Steel` on beams (LS-DYNA's resultant beams take an isotropic elastic material)");
 
     let mut m = plate();
     m.add_set("half", Set { elements: vec![1], ..Set::default() }).unwrap();

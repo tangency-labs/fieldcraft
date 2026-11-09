@@ -48,6 +48,17 @@ pub enum BeamProfile {
 }
 
 impl BeamProfile {
+    /// `rectangle`, `circle`, `pipe`, `i` or `box` (the `type` it is written with).
+    pub fn name(&self) -> &'static str {
+        match self {
+            BeamProfile::Rectangle { .. } => "rectangle",
+            BeamProfile::Circle { .. } => "circle",
+            BeamProfile::Pipe { .. } => "pipe",
+            BeamProfile::I { .. } => "i",
+            BeamProfile::Box { .. } => "box",
+        }
+    }
+
     pub fn validate(&self) -> Result<()> {
         match *self {
             BeamProfile::Rectangle { width, height } => {

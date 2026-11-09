@@ -7,6 +7,16 @@
 //! - one `*PART` per section and element kind, with `*SECTION_SOLID`, `*SECTION_SHELL` or
 //!   `*SECTION_BEAM` (rods as trusses) and the element formulation mapped from the section's
 //!   ([`elements`]); `*HOURGLASS` where a reduced-integration formulation needs it;
+//! - beams as Belytschko–Schwer resultant beams (ELFORM 2) whose `*SECTION_BEAM` gives the
+//!   profile's area, second moments, Saint-Venant torsion constant and shear area, the numbers
+//!   FieldCraft's own beam uses ([`fieldcraft_model::BeamProfile::properties`]), so the deck has
+//!   the same axial, bending, torsional and shear stiffness. The local axes match the model's:
+//!   r runs from node 1 to node 2, s is the section's orientation vector (written per element on
+//!   `*ELEMENT_BEAM_ORIENTATION`, no orientation node) made normal to r, the profile's local 1
+//!   (its width), and t = r × s its local 2 (its height); so ISS = ∫ t² dA is the model's I_y
+//!   and ITT = ∫ s² dA its I_z. Resultant beams take one shear area: an I or box profile whose
+//!   shear areas differ by direction is reported, as are beams of plastic or orthotropic
+//!   materials;
 //! - `*MAT_ELASTIC` for isotropic and `*MAT_ORTHOTROPIC_ELASTIC` (global material axes) for
 //!   orthotropic materials; von Mises plasticity as `*MAT_PLASTIC_KINEMATIC` (bilinear: the
 //!   tangent modulus E·H/(E + H) of the uniaxial curve, β = 1 isotropic or 0 kinematic, the
@@ -16,7 +26,8 @@
 //!   LS-DYNA material needs an equation of state and belongs to explicit analyses, which this
 //!   writer does not write yet;
 //! - `*ELEMENT_SOLID` (tetrahedra and wedges as degenerate hexahedra, 10-node tetrahedra),
-//!   `*ELEMENT_SOLID_H20`, `*ELEMENT_SHELL` and `*ELEMENT_BEAM`;
+//!   `*ELEMENT_SOLID_H20`, `*ELEMENT_SHELL`, `*ELEMENT_BEAM` (trusses) and
+//!   `*ELEMENT_BEAM_ORIENTATION` (beams);
 //! - `*SET_NODE_LIST` and `*SET_SEGMENT` for the sets boundary conditions, loads and couplings
 //!   use (with the set's name as title);
 //! - couplings: kinematic as `*CONSTRAINED_NODAL_RIGID_BODY` (the reference point first in its
@@ -65,8 +76,9 @@
 //! thickness of 1 is written; pressures on 2D element edges are the consistent nodal forces
 //! (`*LOAD_NODE_POINT`).
 //!
-//! What LS-DYNA cannot take is an [`Error::Unsupported`] naming the item: beam sections (not yet
-//! written), body forces per volume, kinematic couplings of some degrees of freedom only, boundary
+//! What LS-DYNA cannot take is an [`Error::Unsupported`] naming the item: beam profiles whose
+//! shear areas differ by direction and beams of plastic or orthotropic materials, body forces per
+//! volume, kinematic couplings of some degrees of freedom only, boundary
 //! conditions on a coupled reference point, gravity on different sets, hybrid formulations other
 //! than on tet4, reduced integration of quadratic elements, materials without a density, more
 //! than 10 shell integration points.
@@ -77,8 +89,8 @@ mod elements;
 use std::collections::{BTreeMap, BTreeSet};
 
 use fieldcraft_model::{
-    BoundaryCondition, ContactSurfaces, CouplingKind, Diagnostic, Dofs, Elastic, Element, ElementKind, Hardening, InitialPenetration, Load, Material,
-    Model, OutputVariable, Plastic, Procedure, Resolved, ResolvedDirection, Section, SectionKind, Step, Target,
+    BeamProfile, BeamProperties, BoundaryCondition, ContactSurfaces, CouplingKind, Diagnostic, Dofs, Elastic, Element, ElementKind, Hardening,
+    InitialPenetration, Load, Material, Model, OutputVariable, Plastic, Procedure, Resolved, ResolvedDirection, Section, SectionKind, Step, Target,
 };
 
 use crate::{Error, Result};
@@ -130,6 +142,8 @@ struct Part<'a> {
     elform: i32,
     material: u32,
     hourglass: Option<u32>,
+    /// A beam section's properties ([`beam_properties`]).
+    beam: Option<BeamProperties>,
     elements: Vec<(u32, &'a Element)>,
 }
 
@@ -256,6 +270,10 @@ fn plan<'a>(model: &'a Model, r: &Resolved) -> Result<Plan<'a>> {
                 "section `{name}`: {points} integration points through the thickness (LS-DYNA's Gauss rule takes at most {MAX_SHELL_POINTS})"
             ));
         }
+        let beam = match sec.kind {
+            SectionKind::Beam { profile, .. } => beam_properties(model, name, sec, profile).map_err(|why| refused.insert(why)).ok(),
+            _ => None,
+        };
         for (kind, list) in by_kind {
             let f = match elements::elform(kind, &sec.kind, sec.formulation, name) {
                 Ok(f) => f,
@@ -274,6 +292,7 @@ fn plan<'a>(model: &'a Model, r: &Resolved) -> Result<Plan<'a>> {
                 elform: f.elform,
                 material: materials.get(sec.material.as_str()).copied().unwrap_or_default(),
                 hourglass,
+                beam,
                 elements: list,
             });
         }
@@ -410,6 +429,33 @@ fn plan<'a>(model: &'a Model, r: &Resolved) -> Result<Plan<'a>> {
     }
     crate::unsupported(FORMAT, refused)?;
     Ok(Plan { parts, materials, hourglasses, sets, node_sets, segment_sets, uniform, gravity_parts, curves })
+}
+
+/// The properties of a beam section's resultant beams: the profile's ([`BeamProfile::properties`],
+/// the numbers FieldCraft's own beam uses), with the Poisson's ratio of its isotropic elastic
+/// material. What the resultant beam cannot take is the reason, naming the section: another
+/// material, and profiles whose shear areas differ by direction (LS-DYNA takes one shear area).
+fn beam_properties(model: &Model, name: &str, section: &Section, profile: BeamProfile) -> std::result::Result<BeamProperties, String> {
+    let material = &section.material;
+    let poisson = match model.material(material) {
+        Some(m) if m.plastic.is_some() => {
+            return Err(format!(
+                "section `{name}`: plastic material `{material}` on beams (LS-DYNA's resultant beams yield by their own resultant laws, not a stress–strain curve)"
+            ));
+        }
+        Some(Material { elastic: Some(Elastic::Isotropic { poisson, .. }), .. }) => *poisson,
+        _ => return Err(format!("section `{name}`: material `{material}` on beams (LS-DYNA's resultant beams take an isotropic elastic material)")),
+    };
+    let p = profile.properties(poisson);
+    if p.shear_y != p.shear_z {
+        return Err(format!(
+            "section `{name}`: its `{}` profile's shear areas differ by direction ({} along local 1, {} along local 2), and LS-DYNA's resultant beams take one shear area",
+            profile.name(),
+            p.shear_y,
+            p.shear_z
+        ));
+    }
+    Ok(p)
 }
 
 /// A 1-based id from a 0-based index.
@@ -577,7 +623,15 @@ fn parts(d: &mut Deck, plan: &Plan) -> Result<()> {
                 d.header(&["a"]);
                 d.card([Field::from(area)]);
             }
-            SectionKind::Beam { .. } => return Err(broken(format!("section `{}`: beams have no LS-DYNA formulation", p.name))),
+            SectionKind::Beam { .. } => {
+                // ISS is the model's I_y, ITT its I_z (the module docs give the axes).
+                let b = p.beam.ok_or_else(|| broken(format!("section `{}`: no beam properties", p.name)))?;
+                d.line("*SECTION_BEAM");
+                d.header(&["secid", "elform"]);
+                d.card([Field::from(p.id), Field::from(p.elform)]);
+                d.header(&["a", "iss", "itt", "j", "sa"]);
+                d.card([b.area, b.iy, b.iz, b.torsion, b.shear_y].map(Field::from));
+            }
             SectionKind::PlaneStress { thickness } | SectionKind::PlaneStrain { thickness } => {
                 d.line("*SECTION_SHELL");
                 d.header(&["secid", "elform"]);
@@ -615,24 +669,38 @@ fn parts(d: &mut Deck, plan: &Plan) -> Result<()> {
 }
 
 fn element_cards(d: &mut Deck, plan: &Plan) -> Result<()> {
-    let mut by_keyword: BTreeMap<Keyword, Vec<(u32, u32, &Element)>> = BTreeMap::new();
+    let mut by_keyword: BTreeMap<Keyword, Vec<(u32, &Part, &Element)>> = BTreeMap::new();
     for p in &plan.parts {
-        by_keyword.entry(Keyword::of(p.kind)).or_default().extend(p.elements.iter().map(|(label, el)| (*label, p.id, *el)));
+        by_keyword.entry(Keyword::of(p.kind)).or_default().extend(p.elements.iter().map(|(label, el)| (*label, p, *el)));
     }
     for (keyword, mut elements) in by_keyword {
         elements.sort_unstable_by_key(|e| e.0);
         d.line(keyword.name());
         match keyword {
             Keyword::Shell | Keyword::Beam => d.header(&["eid", "pid", "n1", "n2", "n3", "n4", "n5", "n6", "n7", "n8"]),
+            // N3 is left out: the vector (from N1) points to the orientation node, so the
+            // local s axis is the section's orientation made normal to the beam (its local 1).
+            Keyword::BeamOrientation => {
+                d.header(&["eid", "pid", "n1", "n2", "n3"]);
+                d.header(&["vx", "vy", "vz"]);
+            }
             Keyword::Solid | Keyword::SolidH20 => {
                 d.header(&["eid", "pid"]);
                 d.header(&["n1", "n2", "n3", "n4", "n5", "n6", "n7", "n8", "n9", "n10"]);
             }
         }
-        for (label, pid, el) in elements {
+        for (label, part, el) in elements {
+            let pid = part.id;
             let nodes = elements::connectivity(el.kind, &el.nodes).ok_or_else(|| broken(format!("element {label} has {} nodes", el.nodes.len())))?;
             match keyword {
                 Keyword::Shell | Keyword::Beam => d.card([Field::from(label), Field::from(pid)].into_iter().chain(ints(&nodes))),
+                Keyword::BeamOrientation => {
+                    let SectionKind::Beam { orientation, .. } = part.section.kind else {
+                        return Err(broken(format!("element {label}: a beam outside a beam section")));
+                    };
+                    d.card([Field::from(label), Field::from(pid)].into_iter().chain(ints(&nodes)));
+                    d.card(orientation.map(Field::from));
+                }
                 Keyword::Solid | Keyword::SolidH20 => {
                     d.card([Field::from(label), Field::from(pid)]);
                     for chunk in nodes.chunks(10) {
