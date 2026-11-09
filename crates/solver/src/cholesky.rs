@@ -885,6 +885,7 @@ impl Symbolic {
     /// The structure of the factor of `a`, refused before any numeric memory is taken when the
     /// factor would hold more than `max_entries` entries.
     pub(crate) fn new(a: &UpperColumns, max_entries: usize) -> std::result::Result<Symbolic, FactorError> {
+        let _timing = crate::timing::Span::new("symbolic");
         let n = a.n;
         let internal = |what: &str| FactorError::Internal(format!("supernodal structure: {what}"));
         let (parent0, counts0) = symbolic(a);
@@ -1241,8 +1242,12 @@ impl Factor {
     }
 
     pub(crate) fn from_symbolic(symbolic: &Symbolic) -> std::result::Result<Factor, FactorError> {
+        let allocation_timing = crate::timing::Span::new("factor_allocate");
         let mut values = symbolic.allocate()?;
+        drop(allocation_timing);
+        let numeric_timing = crate::timing::Span::new("numeric_factor");
         symbolic.factor(&mut values, |context, j, done, base, own| context.supernode(j, done, base, own))?;
+        drop(numeric_timing);
         Ok(Factor { n: symbolic.n, perm: symbolic.perm.clone(), structure: symbolic.structure.clone(), values, entries: symbolic.entries })
     }
 
@@ -1253,6 +1258,7 @@ impl Factor {
 
     /// Solve A x = b in place.
     pub fn solve(&self, b: &mut [f64]) -> Result<()> {
+        let _timing = crate::timing::Span::new("backsolve_inclusive");
         solve_supernodes(self.n, &self.perm, &self.structure, &self.values, b)
     }
 }

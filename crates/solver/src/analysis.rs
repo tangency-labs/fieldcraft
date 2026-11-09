@@ -399,6 +399,7 @@ pub(crate) fn budget(limits: &Limits, mesh: &Mesh, graph: &NodeGraph, matrices: 
 /// quasi-static thermoelasticity without thermoelastic dissipation, so solving the two in turn
 /// is the monolithic solution exactly.
 pub fn solve_static(model: &Model, step: Option<&str>, limits: &Limits) -> Result<StaticResult> {
+    let _timing = crate::timing::Span::new("solve_static");
     // A job cancelled before it starts stops here, before any setup work.
     fieldcraft_model::progress::check()?;
     let resolved = model.resolve()?;
@@ -659,6 +660,7 @@ pub(crate) const TOLERANCE: f64 = 1e-9; // unit-factors: a relative residual
 /// Solve a frequency step (the step named `step`, or the model's only frequency step): the
 /// lowest natural modes within the step's frequency range.
 pub fn solve_frequency(model: &Model, step: Option<&str>, options: &FrequencyOptions, limits: &Limits) -> Result<FrequencyResult> {
+    let _timing = crate::timing::Span::new("solve_frequency");
     frequency_impl(model, step, options, limits, false).map(|(result, _)| result)
 }
 

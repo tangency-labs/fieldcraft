@@ -373,3 +373,25 @@ assigning the remaining budget. Symbolic storage is still allocated for the esti
 numeric budget check is not a pre-assembly memory guard. Allocator overhead and RSS are not
 measured by this API. Whole-solve `max_memory_gib` command admission remains pending; the
 existing command defaults and ceilings still apply.
+
+## Diagnostic timing
+
+Set `FIELDCRAFT_SOLVER_TIMING=1` before starting a native process to emit tab-separated
+`FIELDCRAFT_TIMING`, stage name and wall seconds on stderr. It is disabled by default and
+sampled once per process. The diagnostic covers ordering, symbolic analysis, factor allocation,
+Cholesky numeric factorization and back substitution, plus static/frequency calls and the
+Lanczos start, block operator, projection, reorthogonalization, dense eigenproblem, convergence
+check and reconstruction. It does not alter arithmetic, tolerances or partition sizes.
+
+Spans are **inclusive**: Lanczos contains its sub-stages and concurrent `backsolve_inclusive`
+records overlap inside `lanczos_block_operator`. Do not sum those records as wall time. A span
+also appears when its scope returns an error, so check the solve result. Logging overhead and
+other machine workloads affect diagnostic times; use separate controlled runs for performance
+acceptance. The timer does not measure peak memory or loading/saving of model files.
+
+For `solve.static`, `solve.frequency` and `solve.harmonic`, the engine also emits
+`FIELDCRAFT_COMMAND_TIMING`, command id and wall seconds for the complete `Session::execute`
+call, including assembly, factorization, solution, summary construction and in-session result
+storage. This is the primary diagnostic time. Separate `file.open` and `file.save` commands and
+external RPC transport are excluded. Solver spans explain this total; they do not replace it.
+An error still emits a partial elapsed span; only successful commands are comparable.

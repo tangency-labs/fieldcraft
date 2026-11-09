@@ -16,6 +16,7 @@ pub mod autosave;
 pub mod bug_report;
 pub mod catalogue;
 pub mod cmd;
+mod command_timing;
 pub mod crash;
 pub mod flow;
 pub mod logfile;
@@ -431,6 +432,7 @@ impl Session {
     /// Run a command. On an error or a panic the model, the design and the surfaces are left as
     /// they were.
     pub fn execute(&mut self, id: &str, params: &Value) -> Result<Value> {
+        let _command_timing = command_timing::Span::for_command(id);
         // An id from hostile input is not echoed in full.
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.chars().take(100).collect()))?;
         let timer = usage::Timer::start(self.origin);

@@ -274,6 +274,7 @@ fn orthonormalize(
 
 /// Shift-invert block Lanczos with full reorthogonalization.
 pub fn lanczos(op: &impl Operator, shift: f64, wanted: Wanted, block: usize, max_basis: usize, tolerance: f64) -> Result<Eigenpairs> {
+    let _timing = crate::timing::Span::new("lanczos");
     let n = op.n();
     if n == 0 {
         return Err(Error::Invalid("there are no free degrees of freedom".into()));
@@ -289,7 +290,9 @@ pub fn lanczos(op: &impl Operator, shift: f64, wanted: Wanted, block: usize, max
 
     // Start block.
     let start: Vec<Vec<f64>> = (0..b).map(|_| (0..n).map(|_| rng.uniform()).collect()).collect();
+    let start_timing = crate::timing::Span::new("lanczos_start");
     let (mut cur, mut mcur, _) = orthonormalize(op, start, &q, &mq, &mut rng, &mut scratch);
+    drop(start_timing);
     if cur.len() < b {
         return Err(Error::NotConverged("could not build a Lanczos start block".into()));
     }
@@ -298,6 +301,7 @@ pub fn lanczos(op: &impl Operator, shift: f64, wanted: Wanted, block: usize, max
     loop {
         fieldcraft_model::progress::check()?;
         let j0 = q.len();
+        let block_timing = crate::timing::Span::new("lanczos_block_operator");
         // W = Op Q_j.
         let mut w: Vec<Vec<f64>> = Vec::with_capacity(b);
         // The block's solves are independent: one task each.
@@ -307,6 +311,8 @@ pub fn lanczos(op: &impl Operator, shift: f64, wanted: Wanted, block: usize, max
         }) {
             w.push(y?);
         }
+        drop(block_timing);
+        let project_timing = crate::timing::Span::new("lanczos_projection");
         // A_j = Q_jᵀ M W (symmetrized), W −= Q_j A_j (the earlier blocks go in the full
         // reorthogonalization below).
         let mut a = vec![vec![0.0; b]; b];
@@ -343,15 +349,21 @@ pub fn lanczos(op: &impl Operator, shift: f64, wanted: Wanted, block: usize, max
                 }
             }
         }
+        drop(project_timing);
+        let orthogonal_timing = crate::timing::Span::new("lanczos_reorthogonalize");
         // Full reorthogonalization happens inside the QR against the whole basis.
         let full = m >= max_basis || m + b > n;
         let (next, mnext, bnext) =
             if full { (Vec::new(), Vec::new(), vec![vec![0.0; b]; b]) } else { orthonormalize(op, w, &q, &mq, &mut rng, &mut scratch) };
+        drop(orthogonal_timing);
         // Convergence check on a schedule (the dense eigenproblem costs m³).
         if m >= next_check || full || next.len() < b {
             next_check = m + (m / 4).max(b);
+            let dense_timing = crate::timing::Span::new("lanczos_dense_eigen");
             let dense: Vec<f64> = t.iter().flatten().copied().collect();
             let (theta, s) = symmetric_eigen(&dense, m)?;
+            drop(dense_timing);
+            let convergence_timing = crate::timing::Span::new("lanczos_convergence");
             // Order by λ ascending = θ descending (θ > 0 below the spectrum).
             let mut idx: Vec<usize> = (0..m).collect();
             idx.sort_by(|&x, &y| theta[y].total_cmp(&theta[x]).then(x.cmp(&y)));
@@ -398,7 +410,9 @@ pub fn lanczos(op: &impl Operator, shift: f64, wanted: Wanted, block: usize, max
                     )));
                 }
             }
+            drop(convergence_timing);
             if done {
+                let _reconstruct_timing = crate::timing::Span::new("lanczos_reconstruct");
                 // Negative Ritz values that have converged, largest magnitude first.
                 let mut negative = Vec::new();
                 for &i in idx.iter().rev() {
