@@ -601,3 +601,33 @@ other nonlinear solid/shell imports, RIKS, DIRECT, STABILIZE, named nonlinear am
 instantaneous STEP loading and unsupported controls are named refusals. Their source
 text remains available for exact replay; they are not replaced by linear steps.
 This ordinary rod path does not implement pretension-section import/export.
+
+### Multi-step endpoint loads and boundary identity
+
+For supported linear static steps, the importer evaluates relative amplitudes at
+step end. STEP TIME uses that step's duration and then holds the attained value
+if the condition is inherited; TOTAL TIME continues along accumulated general-step
+time. A new OP=MOD reference replaces the previous magnitude/amplitude, while
+OP=NEW removes the whole corresponding load or boundary family before restating it.
+Removing a displacement restraint is different from setting its value to zero.
+Normalized export represents these effective equilibrium states; it does not
+reconstruct the original amplitude curves or time sampling. Source replay retains
+those original cards and all INCLUDE bytes exactly.
+
+Boundary history also keeps its original node/set identity and named/direct format.
+Changing a set-based boundary to a node-based one, or changing a named boundary to
+direct format without OP=NEW, is refused rather than silently overwriting the same
+expanded DOF. Conflicting repeated definitions within one step are refused too.
+The [public boundary propagation reference](https://abaqus.uclouvain.be/English/SIMACAEPRCRefMap/simaprc-c-boundary.htm)
+explains the identity and removal requirements. Unsupported steps remain in the
+source bundle and the import report names the first refusal; preceding supported
+steps are not a certificate that the remaining history can be solved.
+
+The command regression uses two instances of an original axial rod and two levels
+of INCLUDE, five general steps of durations 2, 3, 1, 2, 1, separate step/total-time
+curves, OP=MOD and OP=NEW, and a support transferred from a root to a tip. It checks
+each step's expanded constraints and nodal force vectors, analytic displacement
+and reaction, saved results, exact source replay and normalized readback. INCLUDE
+paths in this workflow are relative to the root input directory, including nested
+files; a missing dependency is a named error, never silently skipped. This does
+not extend nonlinear paths, transient loading, FIXED or follower-load support.

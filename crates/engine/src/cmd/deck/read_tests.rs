@@ -1318,3 +1318,114 @@ fn nonlinear_tet_import_solves_reopens_and_roundtrips() {
     assert_eq!(s.execute("solve.probe", &json!({"step":"Pull","nodes":[2]})).unwrap(), probe);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+const MULTISTEP_ROOT: &str = "** Original SI two-rod endpoint-history discriminator; no commercial source\n*INCLUDE,INPUT=parts/rod.inc\n*MATERIAL,NAME=M\n*ELASTIC\n1000,0\n*ASSEMBLY,NAME=Assembly\n*INSTANCE,NAME=A,PART=Rod\n*END INSTANCE\n*INSTANCE,NAME=B,PART=Rod\n0,3,0\n*END INSTANCE\n*NSET,NSET=Roots\nA.Root,B.Root\n*NSET,NSET=Tips\nA.Tip,B.Tip\n*NSET,NSET=TipA,INSTANCE=A\n2\n*NSET,NSET=TipB,INSTANCE=B\n2\n*END ASSEMBLY\n*AMPLITUDE,NAME=Local,TIME=STEP TIME\n0,0,2,2,4,9\n*AMPLITUDE,NAME=Global,TIME=TOTAL TIME\n0,0,2,3,5,6,6,8\n8,10,9,12\n*BOUNDARY\nRoots,1,3\nTips,2,3\n*STEP,NAME=One\n*STATIC\n1,2\n*BOUNDARY,AMPLITUDE=Local\nRoots,1,1,0.01\n*CLOAD,AMPLITUDE=Local\nTipA,1,10\n*CLOAD,AMPLITUDE=Global\nTipB,1,5\n*END STEP\n*STEP,NAME=Two\n*STATIC\n1,3\n*END STEP\n*STEP,NAME=Three\n*STATIC\n1,1\n*BOUNDARY,OP=MOD,AMPLITUDE=Global\nRoots,1,1,0.001\n*CLOAD,OP=MOD\nTipA,1,7\n*END STEP\n*STEP,NAME=Four\n*STATIC\n1,2\n*BOUNDARY,OP=NEW\nA.Root,1,3\nB.Root,2,3\nTips,2,3\n*BOUNDARY,OP=NEW,AMPLITUDE=Global\nB.2,1,1,0.001\n*CLOAD,OP=NEW,AMPLITUDE=Local\nTipB,1,2\n*END STEP\n*STEP,NAME=Five\n*STATIC\n1,1\n*NODE PRINT,NSET=Tips\nU,RF\n*END STEP\n";
+
+const MULTISTEP_PART: &str = "*PART,NAME=Rod\n*INCLUDE,INPUT=parts/mesh.inc\n*SOLID SECTION,ELSET=RodElements,MATERIAL=M\n0.5\n*END PART\n";
+
+const MULTISTEP_MESH: &str = "*NODE\n1,0,0,0\n2,2,0,0\n*ELEMENT,TYPE=T3D2,ELSET=RodElements\n1,1,2\n*NSET,NSET=Root\n1\n*NSET,NSET=Tip\n2\n";
+
+#[test]
+fn multistep_instance_amplitudes_solve_reopen_and_normalize_effective_conditions() {
+    use fieldcraft_model::{BoundaryCondition, Load, Target};
+    type Conditions = std::collections::BTreeMap<(u32, usize), f64>;
+    fn effective(s: &Session, step: &str) -> (Conditions, [[f64; 3]; 4]) {
+        let step = s.model.step(step).unwrap();
+        let mut bcs = Conditions::new();
+        let mut forces = [[0.; 3]; 4];
+        for name in &step.boundary_conditions {
+            let BoundaryCondition::Displacement { target: Target::Set(set), values } = s.model.boundary_condition(name).unwrap() else {
+                panic!("prescribed boundary")
+            };
+            for node in &s.model.set(set).unwrap().nodes {
+                for (dof, v) in values.iter().enumerate() {
+                    if let Some(v) = v {
+                        assert!(bcs.insert((*node, dof), *v).is_none());
+                    }
+                }
+            }
+        }
+        for name in &step.loads {
+            let Load::Force { target: Target::Set(set), vector, distribution } = s.model.load(name).unwrap() else { panic!("nodal force") };
+            assert_eq!(*distribution, fieldcraft_model::Distribution::PerNode);
+            for node in &s.model.set(set).unwrap().nodes {
+                for (x, v) in forces[(*node - 1) as usize].iter_mut().zip(vector) {
+                    *x += v;
+                }
+            }
+        }
+        (bcs, forces)
+    }
+    let dir = folder();
+    std::fs::create_dir(dir.join("parts")).unwrap();
+    for (name, text) in [("main.inp", MULTISTEP_ROOT), ("parts/rod.inc", MULTISTEP_PART), ("parts/mesh.inc", MULTISTEP_MESH)] {
+        std::fs::write(dir.join(name), text).unwrap();
+    }
+    let mut s = Session::default();
+    let read = s.execute("deck.read", &json!({"format":"abaqus","path":dir.join("main.inp"),"units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(read["analysis_complete"], true, "{read}");
+    assert_eq!(read["source_files"].as_array().unwrap().len(), 3);
+    assert_eq!(s.model.node(3).unwrap().xyz, [0., 3., 0.]);
+    let names = ["One", "Two", "Three", "Four", "Five"];
+    let u = [[0.02, 0.1, 0.02, 0.08], [0.02, 0.1, 0.02, 0.14], [0.008, 0.036, 0.008, 0.168], [0., 0., 0.01, 0.01], [0., 0., 0.012, 0.012]];
+    let reactions = [[-20., 0., -15., 0.], [-20., 0., -30., 0.], [-7., 0., -40., 0.], [0., 0., 0., -4.], [0., 0., 0., -4.]];
+    let forces = [[20., 15.], [20., 30.], [7., 40.], [0., 4.], [0., 4.]];
+    let mut snapshots = Vec::new();
+    let mut probes = Vec::new();
+    for (i, step) in names.iter().enumerate() {
+        let (bcs, f) = effective(&s, step);
+        let mut expected = Conditions::new();
+        for n in 1..=4 {
+            expected.insert((n, 1), 0.);
+            expected.insert((n, 2), 0.);
+        }
+        expected.insert((1, 0), u[i][0]);
+        expected.insert((if i < 3 { 3 } else { 4 }, 0), if i < 3 { u[i][2] } else { u[i][3] });
+        assert_eq!(bcs, expected);
+        assert_eq!(f, [[0., 0., 0.], [forces[i][0], 0., 0.], [0., 0., 0.], [forces[i][1], 0., 0.]]);
+        snapshots.push((bcs, f));
+        s.execute("solve.static", &json!({"step":step})).unwrap();
+        let probe = s.execute("solve.probe", &json!({"step":step,"nodes":[1,2,3,4]})).unwrap();
+        for n in 0..4 {
+            assert!((probe["nodes"][n]["displacement"][0].as_f64().unwrap() - u[i][n]).abs() < 1e-12);
+            assert!((probe["nodes"][n]["reaction"][0].as_f64().unwrap() - reactions[i][n]).abs() < 1e-10);
+        }
+        probes.push(probe);
+    }
+    let project = dir.join("saved.fieldcraft");
+    s.execute("file.save_as", &json!({"path":project,"results":true})).unwrap();
+    s.execute("file.open", &json!({"path":project})).unwrap();
+    let replay = dir.join("replay");
+    std::fs::create_dir(&replay).unwrap();
+    s.execute("deck.source.write", &json!({"path":replay.join("main.inp")})).unwrap();
+    for (name, text) in [("main.inp", MULTISTEP_ROOT), ("parts/rod.inc", MULTISTEP_PART), ("parts/mesh.inc", MULTISTEP_MESH)] {
+        assert_eq!(std::fs::read_to_string(replay.join(name)).unwrap(), text);
+    }
+    for (i, step) in names.iter().enumerate() {
+        assert_eq!(effective(&s, step), snapshots[i]);
+        assert_eq!(s.execute("solve.probe", &json!({"step":step,"nodes":[1,2,3,4]})).unwrap(), probes[i]);
+    }
+    let normalized = dir.join("normalized.inp");
+    s.execute("deck.write", &json!({"format":"abaqus","path":normalized,"units":"m-kg-s-N-Pa"})).unwrap();
+    let report = s.execute("deck.read", &json!({"format":"abaqus","path":normalized,"units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(report["analysis_complete"], true);
+    for (i, step) in names.iter().enumerate() {
+        assert_eq!(effective(&s, step), snapshots[i]);
+        s.execute("solve.static", &json!({"step":step})).unwrap();
+        assert_eq!(s.execute("solve.probe", &json!({"step":step,"nodes":[1,2,3,4]})).unwrap(), probes[i]);
+    }
+    let conflicting = MULTISTEP_ROOT.replace("*CLOAD,AMPLITUDE=Local", "*BOUNDARY\nA.Root,1,1,.1\n*CLOAD,AMPLITUDE=Local");
+    std::fs::write(dir.join("bad.inp"), &conflicting).unwrap();
+    let report = s.execute("deck.read", &json!({"format":"abaqus","path":dir.join("bad.inp"),"units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(report["analysis_complete"], false);
+    assert!(report["warnings"].to_string().contains("BOUNDARY target/type"));
+    assert!(s.model.steps().is_empty());
+    assert!(s.execute("solve.static", &json!({"step":"One"})).is_err());
+    s.execute("file.save_as", &json!({"path":project})).unwrap();
+    s.execute("file.open", &json!({"path":project})).unwrap();
+    let bad_replay = dir.join("bad-replay");
+    std::fs::create_dir(&bad_replay).unwrap();
+    s.execute("deck.source.write", &json!({"path":bad_replay.join("bad.inp")})).unwrap();
+    assert_eq!(std::fs::read_to_string(bad_replay.join("bad.inp")).unwrap(), conflicting);
+    std::fs::remove_dir_all(dir).unwrap();
+}
