@@ -1,4 +1,4 @@
-//! Eight-node curved MITC8, small-displacement homogeneous elastic statics.
+//! Eight-node curved MITC8, small-displacement homogeneous and layered elastic statics.
 //!
 //! K. J. Bathe & E. N. Dvorkin, IJNME 22 (1986), 697–722,
 //! doi:10.1002/nme.1620220312, Fig. 7 and equations (9)–(22): the in-layer
@@ -11,7 +11,8 @@
 //! The physical director variation is theta cross director (two independent
 //! rotations). A separate Hughes–Brezzi drilling penalty, as in `shell`, supplies
 //! the sixth rotation; this addition is not part of the original five-DOF MITC8.
-//! Nodal directors are normals of the quadratic reference surface at its nodes.
+//! Standalone nodal directors are normals of the quadratic reference surface;
+//! the solver supplies sign-aligned averages at shared nodes for smooth patches.
 //! They are interpolated WITHOUT renormalization through the element, preserving
 //! exact infinitesimal rigid motions. Thickness is constant, with the same signed
 //! reference-surface offset as `ShellSection`. No finite rotations or mass model.
@@ -19,9 +20,11 @@
 use crate::basis::Basis;
 use crate::dense::{Matrix, inverse3};
 use crate::frame::{Axes, Vec3, cross, dot, norm, sub, tensor_to_global, unit};
+use crate::laminate::{Lamina, Laminate, PlyFields, PlyProperties, section_abscissae};
 use crate::quadrature::{Rule, gauss_legendre};
-use crate::shell::{DRILLING, SHEAR_CORRECTION, ShellSection, ShellStress};
+use crate::shell::{DRILLING, ShellSection, ShellStress};
 use crate::{Error, Result};
+use fieldcraft_model::MaterialOrientation;
 
 const N: usize = 8;
 const DOFS: usize = 48;
@@ -35,6 +38,15 @@ pub struct Mitc8 {
     xyz: [Vec3; N],
     directors: [Vec3; N],
     section: ShellSection,
+    layers: Option<Layers>,
+}
+
+#[derive(Debug, Clone)]
+struct Layers {
+    plies: Vec<PlyProperties>,
+    orientation: Option<MaterialOrientation>,
+    reference_axis: u8,
+    drilling: f64,
 }
 
 struct Map {
@@ -104,7 +116,7 @@ impl Mitc8 {
         if directors.iter().any(|n| dot(*n, normal) <= 1e-8) {
             return Err(Error::Degenerate("MITC8 folded surface or nodal normals turning 90 degrees from the centre; refine the geometry".into()));
         }
-        let out = Self { xyz, directors, section };
+        let out = Self { xyz, directors, section, layers: None };
         // Geometry screen, including both thickness faces and the reference nodes. All
         // quadrature and tying locations are checked again when used. This is a sampled
         // Jacobian check, not a global positivity certificate for an arbitrary curved map.
@@ -119,6 +131,50 @@ impl Mitc8 {
             }
         }
         Ok(out)
+    }
+
+    /// Layerwise plane-stress integration following Nettles, NASA RP-1351
+    /// (1994), sections II-IV. Geometry/strain interpolation remains BD86 MITC8.
+    pub fn laminated(
+        xyz: &[[f64; 3]],
+        plies: &[PlyProperties],
+        offset: f64,
+        orientation: Option<MaterialOrientation>,
+        reference_axis: u8,
+    ) -> Result<Self> {
+        let laminate = Laminate::new(plies, offset)?;
+        if orientation.is_none() && reference_axis != 1 {
+            return Err(Error::Invalid("MITC8 non-default reference axis needs a material orientation".into()));
+        }
+        // This section supplies geometry only; the law below always uses the
+        // individual laminae and their own thickness intervals.
+        let geometry = ShellSection::new(laminate.thickness(), offset, &fieldcraft_model::Elastic::Isotropic { young: 1.0, poisson: 0.0 })?;
+        let mut out = Self::new(xyz, geometry)?;
+        out.layers = Some(Layers { plies: plies.to_vec(), orientation, reference_axis, drilling: laminate.drilling() });
+        Ok(out)
+    }
+
+    /// Use mesh-resolved unit directors, signed along this element's normal.
+    /// Sharing these vectors and global rotations makes the interpolated director
+    /// displacement identical on a common quadratic edge. Geometry is rechecked.
+    pub fn with_directors(mut self, directors: [[f64; 3]; N]) -> Result<Self> {
+        for (n, old) in directors.iter().zip(&self.directors) {
+            if n.iter().any(|v| !v.is_finite()) || (norm(*n) - 1.0).abs() > 1e-10 || dot(*n, *old) < 0.5 {
+                return Err(Error::Invalid("MITC8 shared directors must be unit vectors within 60 degrees of local normals".into()));
+            }
+        }
+        self.directors = directors;
+        for p in Basis::Quad8.nodes().iter().chain(&[[0.0; 3]]) {
+            for t in [-1.0, 0.0, 1.0] {
+                self.map([p[0], p[1], t])?;
+            }
+        }
+        for p in Rule::Quad(3).points() {
+            for t in [-1.0, 0.0, 1.0] {
+                self.map([p.xi[0], p.xi[1], t])?;
+            }
+        }
+        Ok(self)
     }
 
     pub fn directors(&self) -> &[Vec3; N] {
@@ -295,18 +351,78 @@ impl Mitc8 {
         Ok(b)
     }
 
-    fn material(&self) -> [[f64; 5]; 5] {
-        let e = self.section.young;
-        let nu = self.section.poisson;
-        let c = e / (1.0 - nu * nu);
-        let g = self.section.shear_modulus();
-        [
-            [c, c * nu, 0.0, 0.0, 0.0],
-            [c * nu, c, 0.0, 0.0, 0.0],
-            [0.0, 0.0, g, 0.0, 0.0],
-            [0.0, 0.0, 0.0, SHEAR_CORRECTION * g, 0.0],
-            [0.0, 0.0, 0.0, 0.0, SHEAR_CORRECTION * g],
-        ]
+    fn intervals(&self) -> Vec<(f64, f64)> {
+        let h = self.section.thickness;
+        if let Some(layers) = &self.layers {
+            let mut lo = -1.0;
+            layers
+                .plies
+                .iter()
+                .enumerate()
+                .map(|(i, p)| {
+                    let hi = if i + 1 == layers.plies.len() { 1.0 } else { lo + 2.0 * p.thickness / h };
+                    let span = (lo, hi);
+                    lo = hi;
+                    span
+                })
+                .collect()
+        } else {
+            vec![(-1.0, 1.0)]
+        }
+    }
+
+    fn thickness_rule(&self) -> Vec<(f64, f64, usize)> {
+        self.intervals()
+            .iter()
+            .enumerate()
+            .flat_map(|(i, &(lo, hi))| gauss_legendre(3).iter().map(move |&(x, w)| (0.5 * (lo + hi) + 0.5 * (hi - lo) * x, 0.5 * (hi - lo) * w, i)))
+            .collect()
+    }
+
+    fn ply_at(&self, t: f64) -> usize {
+        self.intervals().iter().position(|&(_, hi)| t <= hi + 1e-14).unwrap_or(0)
+    }
+
+    /// Actual fibre angle in the current integration-point strain frame. The
+    /// section reference direction is projected at the reference surface, then
+    /// held along its director through thickness; it does not rotate with g_r(t).
+    fn ply_angle(&self, p: [f64; 3], ply: usize) -> Result<f64> {
+        let Some(layers) = &self.layers else { return Ok(0.0) };
+        let input = layers.plies.get(ply).ok_or_else(|| Error::Invalid("MITC8 ply index".into()))?;
+        let mid = self.map([p[0], p[1], 0.0])?;
+        let sh = Basis::Quad8.eval(p);
+        let position = std::array::from_fn(|j| (0..8).map(|i| sh.n[i] * self.xyz[i][j]).sum());
+        let axes = match &layers.orientation {
+            Some(o) => o.shell_axes_at(position, mid.axes[2], layers.reference_axis).map_err(|e| Error::Invalid(e.to_string()))?,
+            None => mid.axes,
+        };
+        let (sn, cs) = libm::sincos(input.angle);
+        let fibre = sum(scaled(axes[0], cs), scaled(axes[1], sn));
+        let current = self.map(p)?;
+        Ok(libm::atan2(dot(fibre, current.axes[1]), dot(fibre, current.axes[0])))
+    }
+
+    fn material(&self, p: [f64; 3], ply: usize) -> Result<[[f64; 5]; 5]> {
+        let (law, angle) = if let Some(layers) = &self.layers {
+            let input = layers.plies.get(ply).ok_or_else(|| Error::Invalid("MITC8 ply index".into()))?;
+            (Lamina::new(&input.elastic)?, self.ply_angle(p, ply)?)
+        } else {
+            (Lamina::new(&fieldcraft_model::Elastic::Isotropic { young: self.section.young, poisson: self.section.poisson })?, 0.0)
+        };
+        let q = law.rotated(angle)?;
+        let shear = law.rotated_shear(angle)?;
+        let mut c = [[0.0; 5]; 5];
+        for i in 0..3 {
+            for j in 0..3 {
+                c[i][j] = q[i][j];
+            }
+        }
+        for i in 0..2 {
+            for j in 0..2 {
+                c[i + 3][j + 3] = shear[i][j];
+            }
+        }
+        Ok(c)
     }
 
     fn drilling(&self, p: [f64; 3]) -> Result<([f64; DOFS], f64)> {
@@ -335,12 +451,13 @@ impl Mitc8 {
 
     pub fn stiffness(&self) -> Result<Matrix> {
         let mut k = Matrix::zeros(DOFS);
-        let c = self.material();
+        let rule = self.thickness_rule();
         for q in Rule::Quad(3).points() {
-            for &(t, tw) in gauss_legendre(3) {
+            for &(t, tw, ply) in &rule {
                 let p = [q.xi[0], q.xi[1], t];
                 let m = self.map(p)?;
                 let b = self.strain_operator(p, true)?;
+                let c = self.material(p, ply)?;
                 let cb: StrainOperator = std::array::from_fn(|a| std::array::from_fn(|i| (0..5).map(|j| c[a][j] * b[j][i]).sum()));
                 let w = q.weight * tw * m.det;
                 for i in 0..DOFS {
@@ -354,7 +471,8 @@ impl Mitc8 {
                 }
             }
             let (b, area) = self.drilling(q.xi)?;
-            let w = DRILLING * self.section.shear_modulus() * self.section.thickness * area * q.weight;
+            let penalty = self.layers.as_ref().map_or(DRILLING * self.section.shear_modulus() * self.section.thickness, |l| l.drilling);
+            let w = penalty * area * q.weight;
             for i in 0..DOFS {
                 for j in i..DOFS {
                     let v = w * b[i] * b[j];
@@ -372,17 +490,39 @@ impl Mitc8 {
     }
 
     pub fn body_force(&self, force: Vec3) -> Result<Vec<f64>> {
+        self.volume_load(force, None)
+    }
+
+    /// Static weight integrates each ply density, including its first moment;
+    /// this is not a mass operator for dynamic analyses.
+    pub fn gravity(&self, density: f64, acceleration: Vec3) -> Result<Vec<f64>> {
+        if !(density > 0.0 && density.is_finite()) {
+            return Err(Error::Invalid("MITC8 gravity needs positive finite density".into()));
+        }
+        self.volume_load(acceleration, Some(density))
+    }
+
+    fn volume_load(&self, force: Vec3, density: Option<f64>) -> Result<Vec<f64>> {
         if force.iter().any(|v| !v.is_finite()) {
             return Err(Error::Invalid("MITC8 body force must be finite".into()));
         }
         let mut out = vec![0.0; DOFS];
         for q in Rule::Quad(3).points() {
-            for &(t, tw) in gauss_legendre(3) {
+            for (t, tw, ply) in self.thickness_rule() {
                 let p = [q.xi[0], q.xi[1], t];
                 let m = self.map(p)?;
                 let sh = Basis::Quad8.eval(p);
                 let z = self.section.eccentricity + 0.5 * self.section.thickness * p[2];
-                let w = q.weight * tw * m.det;
+                let rho = match (density, &self.layers) {
+                    (Some(_), Some(layers)) => layers
+                        .plies
+                        .get(ply)
+                        .and_then(|p| p.density)
+                        .ok_or_else(|| Error::Invalid("every MITC8 ply needs density for gravity".into()))?,
+                    (Some(rho), None) => rho,
+                    (None, _) => 1.0,
+                };
+                let w = q.weight * tw * m.det * rho;
                 for i in 0..N {
                     for j in 0..3 {
                         let mut v = [0.0; 3];
@@ -408,8 +548,8 @@ impl Mitc8 {
         }
         let axes = self.map([0.0; 3])?.axes;
         let mut out = ShellStress { axes, forces: Vec::new(), bottom: Vec::new(), middle: Vec::new(), top: Vec::new(), plies: Vec::new() };
-        let c = self.material();
-        let stress = |p: [f64; 3]| -> Result<Tensor> {
+        let stress = |p: [f64; 3], ply: usize| -> Result<Tensor> {
+            let c = self.material(p, ply)?;
             let b = self.strain_operator(p, false)?;
             let strain: [f64; 5] = std::array::from_fn(|i| b[i].iter().zip(u).map(|(x, y)| x * y).sum());
             let s: [f64; 5] = std::array::from_fn(|i| (0..5).map(|j| c[i][j] * strain[j]).sum());
@@ -419,12 +559,12 @@ impl Mitc8 {
         };
         for q in Basis::Quad8.nodes() {
             for (t, values) in [(-1.0, &mut out.bottom), (0.0, &mut out.middle), (1.0, &mut out.top)] {
-                let s = stress([q[0], q[1], t])?;
+                let s = stress([q[0], q[1], t], self.ply_at(t))?;
                 values.push([s[0][0], s[1][1], s[2][2], s[0][1], s[0][2], s[1][2]]);
             }
             let mut f = [0.0; 8];
-            for &(t, tw) in gauss_legendre(3) {
-                let s = stress([q[0], q[1], t])?;
+            for (t, tw, ply) in self.thickness_rule() {
+                let s = stress([q[0], q[1], t], ply)?;
                 let w = 0.5 * self.section.thickness * tw;
                 let z = self.section.eccentricity + 0.5 * self.section.thickness * t;
                 for (i, (a, b)) in [(0, 0), (1, 1), (0, 1)].into_iter().enumerate() {
@@ -436,6 +576,26 @@ impl Mitc8 {
                 f[7] += w * contract(&s, axes[1], axes[2]);
             }
             out.forces.push(f);
+            if let Some(layers) = &self.layers {
+                let mut fields = Vec::new();
+                for (i, (&(lo, hi), input)) in self.intervals().iter().zip(&layers.plies).enumerate() {
+                    let at = |t: f64| {
+                        let p = [q[0], q[1], t];
+                        let b = self.strain_operator(p, false)?;
+                        let e = std::array::from_fn(|k| b[k].iter().zip(u).map(|(a, b)| a * b).sum());
+                        let z = self.section.eccentricity + 0.5 * self.section.thickness * t;
+                        Lamina::new(&input.elastic)?.recover_strain(e, self.ply_angle(p, i)?, z, input.strength)
+                    };
+                    fields.push(PlyFields {
+                        angle: self.ply_angle([q[0], q[1], 0.0], i)?,
+                        bottom: at(lo)?,
+                        middle: at(0.5 * (lo + hi))?,
+                        top: at(hi)?,
+                        points: section_abscissae(input.points)?.iter().map(|x| at(0.5 * (lo + hi) + 0.5 * (hi - lo) * x)).collect::<Result<_>>()?,
+                    });
+                }
+                out.plies.push(fields);
+            }
         }
         if out.bottom.iter().chain(&out.middle).chain(&out.top).flatten().chain(out.forces.iter().flatten()).any(|v| !v.is_finite()) {
             return Err(Error::Invalid("MITC8 nonfinite stress recovery".into()));

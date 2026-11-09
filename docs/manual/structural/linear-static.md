@@ -268,8 +268,8 @@ probe at the foot's end lies within 0.13 % of the fine tet10 solution.
 
 ## Limitations
 
-- Quad8 shell sections use [MITC8](../../solvers/mitc8.md) for homogeneous isotropic linear statics.
-  Reduced-integration quad8 (S8R), composite/oriented quad8 sections and mass-based procedures
+- Quad8 shell sections use [MITC8](../../solvers/mitc8.md) for homogeneous or layered elastic linear statics.
+  Reduced-integration quad8 (S8R) and mass-based procedures
   are refused; the other shell families keep their existing scope.
 
 - Small displacements and linear elasticity: plasticity, damage and erosion are left out with a

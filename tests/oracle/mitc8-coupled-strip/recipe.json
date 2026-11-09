@@ -1,0 +1,378 @@
+[
+  {
+    "command": "model.units",
+    "params": {
+      "system": "m-kg-s-N-Pa"
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 1,
+      "xyz": [
+        0.0,
+        0.0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 2,
+      "xyz": [
+        0.5,
+        0.0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 3,
+      "xyz": [
+        1.0,
+        0.0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 4,
+      "xyz": [
+        1.5,
+        0.0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 5,
+      "xyz": [
+        2.0,
+        0.0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 6,
+      "xyz": [
+        0.0,
+        0.5,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 7,
+      "xyz": [
+        1.0,
+        0.5,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 8,
+      "xyz": [
+        2.0,
+        0.5,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 9,
+      "xyz": [
+        0.0,
+        1.0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 10,
+      "xyz": [
+        0.5,
+        1.0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 11,
+      "xyz": [
+        1.0,
+        1.0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 12,
+      "xyz": [
+        1.5,
+        1.0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 13,
+      "xyz": [
+        2.0,
+        1.0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 1,
+      "kind": "quad8",
+      "nodes": [
+        1,
+        3,
+        11,
+        9,
+        2,
+        7,
+        10,
+        6
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 2,
+      "kind": "quad8",
+      "nodes": [
+        3,
+        5,
+        13,
+        11,
+        4,
+        8,
+        12,
+        7
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "panel",
+      "elements": [
+        1,
+        2
+      ]
+    }
+  },
+  {
+    "command": "model.material.create",
+    "params": {
+      "name": "Mat",
+      "elastic": {
+        "type": "isotropic",
+        "young": 1200.0,
+        "poisson": 0.0
+      },
+      "density": 1
+    }
+  },
+  {
+    "command": "model.material.create",
+    "params": {
+      "name": "Stiff",
+      "elastic": {
+        "type": "isotropic",
+        "young": 3000,
+        "poisson": 0
+      },
+      "density": 1
+    }
+  },
+  {
+    "command": "model.section.create",
+    "params": {
+      "name": "Panel",
+      "set": "panel",
+      "kind": {
+        "type": "composite_shell",
+        "layup": {
+          "plies": [
+            {
+              "material": "Mat",
+              "thickness": 0.04,
+              "angle": 0,
+              "points": 3
+            },
+            {
+              "material": "Stiff",
+              "thickness": 0.06,
+              "angle": 0,
+              "points": 3
+            }
+          ],
+          "offset": 0
+        }
+      }
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "clamp",
+      "nodes": [
+        1,
+        6,
+        9
+      ]
+    }
+  },
+  {
+    "command": "model.boundary_condition.create",
+    "params": {
+      "name": "clamp",
+      "type": "fixed",
+      "target": {
+        "set": "clamp"
+      }
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "m0",
+      "nodes": [
+        5
+      ]
+    }
+  },
+  {
+    "command": "model.load.create",
+    "params": {
+      "name": "m0",
+      "type": "moment",
+      "target": {
+        "set": "m0"
+      },
+      "vector": [
+        0,
+        1.6666666666666667e-05,
+        0
+      ],
+      "distribution": "per_node"
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "m1",
+      "nodes": [
+        8
+      ]
+    }
+  },
+  {
+    "command": "model.load.create",
+    "params": {
+      "name": "m1",
+      "type": "moment",
+      "target": {
+        "set": "m1"
+      },
+      "vector": [
+        0,
+        6.666666666666667e-05,
+        0
+      ],
+      "distribution": "per_node"
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "m2",
+      "nodes": [
+        13
+      ]
+    }
+  },
+  {
+    "command": "model.load.create",
+    "params": {
+      "name": "m2",
+      "type": "moment",
+      "target": {
+        "set": "m2"
+      },
+      "vector": [
+        0,
+        1.6666666666666667e-05,
+        0
+      ],
+      "distribution": "per_node"
+    }
+  },
+  {
+    "command": "model.step.create",
+    "params": {
+      "name": "Load",
+      "procedure": {
+        "type": "static"
+      },
+      "boundary_conditions": [
+        "clamp"
+      ],
+      "loads": [
+        "m0",
+        "m1",
+        "m2"
+      ]
+    }
+  },
+  {
+    "command": "solve.static",
+    "params": {
+      "step": "Load"
+    }
+  },
+  {
+    "id": "probe",
+    "command": "solve.probe",
+    "params": {
+      "step": "Load",
+      "nodes": [
+        8
+      ],
+      "elements": [
+        1
+      ]
+    }
+  }
+]

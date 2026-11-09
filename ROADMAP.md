@@ -258,4 +258,8 @@ extrapolation are named unsupported combinations; no PSD time history is synthes
 
 ### Curved quadratic shell statics
 
-Eight-node MITC8 homogeneous isotropic statics use quadratic surface/director geometry and the Bathe–Dvorkin tensor interpolation. See [formulation and verification](docs/solvers/mitc8.md). Six-node triangular, continuum and axisymmetric shells, MITC8 composites, mass and curved-shell geometric stiffness remain open.
+Eight-node MITC8 homogeneous and layered elastic statics use quadratic surface/director geometry and the Bathe–Dvorkin tensor interpolation. See [formulation and verification](docs/solvers/mitc8.md). Six-node triangular, continuum and axisymmetric shells, mass and curved-shell geometric stiffness remain open.
+
+- MITC8 smooth patches share nodal director axes with global rotations. Layerwise
+  elastic statics integrate each ply and its material directions; mass, dynamics
+  and initial-stress operators remain unsupported.

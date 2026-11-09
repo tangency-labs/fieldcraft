@@ -628,3 +628,136 @@ fn mitc8_solves_pure_bending_and_refuses_unimplemented_procedures() {
     let b = quadratic_shell_model(Procedure::Buckle { modes: 1, shift: None });
     assert!(fieldcraft_solver::solve_buckle(&b.model, None, &Limits::default()).unwrap_err().to_string().contains("MITC8"));
 }
+
+#[test]
+fn mitc8_shared_directors_and_global_rotations_are_compatible() {
+    use fieldcraft_fem::{
+        basis::Basis,
+        frame::{cross, dot},
+    };
+    use fieldcraft_solver::system::{Mesh, StructuralKernel};
+    let build = |permutation: [usize; 8], curved: bool| {
+        let mut b = Build::new(Elastic::Isotropic { young: 1200.0, poisson: 0.0 }, 1.0, Procedure::Static {});
+        let mut labels = BTreeMap::new();
+        for j in 0..3 {
+            for (i, x) in [0.0f64, 0.5, 1.0, 1.75, 2.5].into_iter().enumerate() {
+                if j == 1 && i % 2 == 1 {
+                    continue;
+                }
+                let label = labels.len() as u32 + 1;
+                labels.insert((i, j), label);
+                b.node(label, [x, j as f64 / 2.0, if curved { 0.05 * x.powi(3) } else { 0.0 }]);
+            }
+        }
+        let mut els = Vec::new();
+        for i in [0, 2] {
+            let n = [(i, 0), (i + 2, 0), (i + 2, 2), (i, 2), (i + 1, 0), (i + 2, 1), (i + 1, 2), (i, 1)].map(|p| labels[&p]);
+            let order = if i == 0 { [0, 1, 2, 3, 4, 5, 6, 7] } else { permutation };
+            els.push(b.element(ElementKind::Quad8, order.map(|j| n[j]).to_vec()));
+        }
+        b.section("panel", els, SectionKind::Shell { thickness: 0.1, offset: 0.0, points: 3 });
+        let resolved = b.model.resolve().unwrap();
+        Mesh::new(&b.model, &resolved, 1000).unwrap()
+    };
+    let mut reference = None;
+    for permutation in [[0, 1, 2, 3, 4, 5, 6, 7], [1, 2, 3, 0, 5, 6, 7, 4], [0, 3, 2, 1, 7, 6, 5, 4]] {
+        let mesh = build(permutation, true);
+        let mut k = fieldcraft_fem::dense::Matrix::zeros(6 * mesh.xyz.len());
+        for el in &mesh.structural {
+            let StructuralKernel::Mitc8(shell) = el.kernel().unwrap() else { panic!() };
+            let ke = shell.stiffness().unwrap();
+            for i in 0..48 {
+                for j in 0..48 {
+                    k.add(6 * el.nodes[i / 6] + i % 6, 6 * el.nodes[j / 6] + j % 6, ke.get(i, j));
+                }
+            }
+            let omega = [0.3, -0.2, 0.7];
+            let u: Vec<_> = el
+                .xyz
+                .iter()
+                .flat_map(|x| {
+                    let v = cross(omega, *x);
+                    [v[0], v[1], v[2], omega[0], omega[1], omega[2]]
+                })
+                .collect();
+            for row in shell.strain_operator([0.31, -0.27, 0.8], true).unwrap() {
+                assert!(row.iter().zip(&u).map(|(a, b)| a * b).sum::<f64>().abs() < 2e-12);
+            }
+        }
+        if let Some(old) = &reference {
+            let old: &fieldcraft_fem::dense::Matrix = old;
+            let scale = old.data.iter().map(|v| v.abs()).fold(0.0, f64::max);
+            assert!(k.data.iter().zip(&old.data).all(|(a, b)| (a - b).abs() < 1e-11 * scale));
+        } else {
+            reference = Some(k);
+        }
+        let a = &mesh.structural[0];
+        let b = &mesh.structural[1];
+        for (i, n) in a.nodes.iter().enumerate() {
+            if let Some(j) = b.nodes.iter().position(|m| m == n) {
+                let na = a.directors.unwrap()[i];
+                let nb = b.directors.unwrap()[j];
+                assert!((dot(na, nb).abs() - 1.0).abs() < 1e-14);
+            }
+        }
+        // Independently interpolate each side's thickened common edge with arbitrary
+        // shared global rotations. Equality is checked away from the nodes as well.
+        let edge = |el: &fieldcraft_solver::system::Structural, y: f64| {
+            let local = el.xyz.iter().enumerate().filter(|(_, x)| x[0] == 1.0).map(|(i, _)| i).collect::<Vec<_>>();
+            let mut p = [0.0; 3];
+            for &i in &local {
+                let yn = el.xyz[i][1];
+                let w = if yn == 0.0 {
+                    2.0 * (y - 0.5) * (y - 1.0)
+                } else if yn == 1.0 {
+                    2.0 * y * (y - 0.5)
+                } else {
+                    4.0 * y * (1.0 - y)
+                };
+                let x = el.xyz[i];
+                let n = el.directors.unwrap()[i];
+                let sign = if n[2] > 0.0 { 1.0 } else { -1.0 };
+                let rotation = [x[1] * 0.1, 0.2 * x[0], -0.3 * x[1]];
+                let v = cross(rotation, n);
+                for j in 0..3 {
+                    p[j] += w * (x[j] + 0.04 * sign * n[j] + 0.04 * sign * v[j]);
+                }
+            }
+            p
+        };
+        for y in [0.0, 0.23, 0.5, 0.81, 1.0] {
+            let x = edge(a, y);
+            let z = edge(b, y);
+            assert!(x.iter().zip(z).all(|(a, b)| (a - b).abs() < 1e-14));
+        }
+    }
+    // Two-element pure bending patch energy, independent Eh^3/12 integral.
+    let mesh = build([0, 1, 2, 3, 4, 5, 6, 7], false);
+    let mut got = 0.0;
+    for el in &mesh.structural {
+        let u: Vec<_> = el.xyz.iter().flat_map(|x| [0.0, 0.0, -0.5 * x[0] * x[0], 0.0, x[0], 0.0]).collect();
+        let k = el.kernel().unwrap().stiffness().unwrap();
+        got += 0.5 * k.mul_vec(&u).iter().zip(&u).map(|(a, b)| a * b).sum::<f64>();
+    }
+    assert!((got / (0.5 * 2.5 * 1200.0 * 0.1f64.powi(3) / 12.0) - 1.0).abs() < 1e-10);
+    // Coincident midside coordinates with different labels are NOT a common
+    // quadratic edge: refuse rather than silently leave the rotation field split.
+    let mut bad = Build::new(Elastic::Isotropic { young: 1200.0, poisson: 0.0 }, 1.0, Procedure::Static {});
+    for (&label, &x) in mesh.labels.iter().zip(&mesh.xyz) {
+        bad.node(label, x);
+    }
+    let mut ids = Vec::new();
+    for (i, el) in mesh.structural.iter().enumerate() {
+        let mut labels: Vec<_> = el.nodes.iter().map(|&n| mesh.labels[n]).collect();
+        if i == 1 {
+            let j = el.xyz.iter().position(|p| p[0] == 1.0 && p[1] == 0.5).unwrap();
+            bad.node(99, el.xyz[j]);
+            labels[j] = 99;
+        }
+        ids.push(bad.element(ElementKind::Quad8, labels));
+    }
+    bad.section("panel", ids, SectionKind::Shell { thickness: 0.1, offset: 0.0, points: 3 });
+    let resolved = bad.model.resolve().unwrap();
+    assert!(Mesh::new(&bad.model, &resolved, 1000).unwrap_err().to_string().contains("nonconforming"));
+    assert_eq!(Basis::Quad8.nodes().len(), 8);
+}

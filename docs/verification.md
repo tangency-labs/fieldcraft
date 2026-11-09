@@ -331,6 +331,8 @@ These records preserve unresolved model/reference applicability or formulation l
 The [MITC8 implementation](solvers/mitc8.md) has independent rigid-motion, membrane,
 bending/shear energy, and zero-mode checks in `crates/fem/tests/mitc8.rs`. Its command
 cases are `mitc8-pure-bending`, `mitc8-curved-extension`, and `scordelis-lo-roof-mitc8`.
-These cover homogeneous isotropic linear statics; they do not validate composite
-coordinates, mass, prestress, folded junctions or arbitrary curved-patch continuity.
+Layered statics add `mitc8-single-ply-bending`, `mitc8-navier-thin` and
+`mitc8-navier-thick-quarter16` and `mitc8-coupled-strip`. Shared-edge geometry/rotation continuity, local renumbering,
+layer reversal and independent coupled energies are tested. These do not validate
+mass, prestress, folded junctions or arbitrary distorted curved laminates.
 The separate axisymmetric LE7 known failure is retained.

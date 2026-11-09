@@ -1346,3 +1346,5 @@ multi-sweeping.
 ## Curved shell discretization
 
 The eight-node shell kernel follows K. J. Bathe and E. N. Dvorkin, *A formulation of general shell elements—the use of mixed interpolation of tensorial components*, IJNME 22:697–722 (1986), doi:10.1002/nme.1620220312, Fig. 7 and equations (9)–(22). Geometry/director notation also follows P.-S. Lee and K.-J. Bathe, Computers & Structures 82:945–962 (2004), equations (1)–(8), doi:10.1016/j.compstruc.2004.02.004. Formula-to-code mapping and limitations: [MITC8](../solvers/mitc8.md).
+
+- P.-S. Lee and K.-J. Bathe, *Insight into finite element shell discretizations by use of the basic shell mathematical model*, Computers & Structures 83 (2005), 69–90, doi:10.1016/j.compstruc.2004.07.005, section 3: shared nodal director construction in `solver::system`; only the geometry discussion is used, not its MITC9 interpolation.

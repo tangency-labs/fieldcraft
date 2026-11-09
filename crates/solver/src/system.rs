@@ -346,6 +346,8 @@ pub struct Structural {
     pub xyz: Vec<[f64; 3]>,
     pub density: Option<f64>,
     pub section: Section,
+    /// Mesh-shared director axes, signed along the local element normal.
+    pub directors: Option<[[f64; 3]; 8]>,
 }
 
 /// The kernel of a shell or beam element.
@@ -362,12 +364,24 @@ impl Structural {
 
     pub fn kernel(&self) -> Result<StructuralKernel> {
         let k = match &self.section {
-            Section::Shell(s) if self.kind == ElementKind::Quad8 => {
-                fieldcraft_fem::mitc8::Mitc8::new(&self.xyz, *s).map(|k| StructuralKernel::Mitc8(Box::new(k)))
-            }
-            Section::Laminated { .. } if self.kind == ElementKind::Quad8 => Err(fieldcraft_fem::Error::NotSupported(
-                "MITC8 laminated or oriented sections; only homogeneous isotropic statics are implemented".into(),
-            )),
+            Section::Shell(s) if self.kind == ElementKind::Quad8 => fieldcraft_fem::mitc8::Mitc8::new(&self.xyz, *s)
+                .and_then(|k| match self.directors {
+                    Some(n) => k.with_directors(n),
+                    None => Ok(k),
+                })
+                .map(|k| StructuralKernel::Mitc8(Box::new(k))),
+            Section::Laminated { plies, offset, orientation } if self.kind == ElementKind::Quad8 => fieldcraft_fem::mitc8::Mitc8::laminated(
+                &self.xyz,
+                plies,
+                *offset,
+                orientation.map(|o| o.frame),
+                orientation.map_or(1, |o| o.shell_reference_axis),
+            )
+            .and_then(|k| match self.directors {
+                Some(n) => k.with_directors(n),
+                None => Ok(k),
+            })
+            .map(|k| StructuralKernel::Mitc8(Box::new(k))),
             Section::Shell(s) => Shell::new(self.kind, &self.xyz, *s).map(StructuralKernel::Shell),
             Section::Laminated { plies, offset, orientation } => Shell::laminated(
                 self.kind,
@@ -432,6 +446,7 @@ impl StructuralKernel {
     pub fn gravity(&self, density: f64, acceleration: [f64; 3]) -> fieldcraft_fem::Result<Vec<f64>> {
         match self {
             StructuralKernel::Shell(s) if s.is_laminated() => s.ply_gravity(acceleration),
+            StructuralKernel::Mitc8(s) => s.gravity(density, acceleration),
             _ => self.body_force(acceleration.map(|a| density * a)),
         }
     }
@@ -810,8 +825,9 @@ impl Mesh {
         for (label, kind, nodes, density, section) in structural {
             let idx: Vec<usize> = nodes.iter().filter_map(|n| mesh.node(*n)).collect();
             let exyz: Vec<[f64; 3]> = idx.iter().filter_map(|i| mesh.xyz.get(*i).copied()).collect();
-            mesh.structural.push(Structural { label, kind, nodes: idx, xyz: exyz, density, section });
+            mesh.structural.push(Structural { label, kind, nodes: idx, xyz: exyz, density, section, directors: None });
         }
+        share_shell_directors(&mut mesh.structural)?;
         mesh.discrete = crate::discrete::Discrete::new(&mesh, resolved)?;
         mesh.foundations = crate::foundation::resolve(model, resolved, &mesh)?;
         Ok(mesh)
@@ -1325,4 +1341,71 @@ pub fn inelastic_warnings(model: &Model) -> Vec<String> {
             )
         })
         .collect()
+}
+
+/// Resolve an unoriented unit normal axis at every shared MITC8 node.
+/// Lee & Bathe, Computers & Structures 83 (2005), 69-90, section 3,
+/// doi:10.1016/j.compstruc.2004.07.005: average adjacent midsurface normals. Input element
+/// order is sorted by label; vectors are aligned before summing, so reversing a
+/// connectivity reverses its signed director but not the physical rotation field.
+/// This is a smooth-patch construction, not a folded-junction constraint model.
+fn share_shell_directors(elements: &mut [Structural]) -> Result<()> {
+    use fieldcraft_fem::frame::{dot, unit};
+    let mut incident: BTreeMap<usize, Vec<(usize, usize, [f64; 3])>> = BTreeMap::new();
+    let mut edges: BTreeMap<(usize, usize), (usize, usize)> = BTreeMap::new();
+    for e in elements.iter().filter(|e| e.kind == ElementKind::Quad8) {
+        if e.nodes.len() != 8 {
+            return Err(Error::Invalid("MITC8 requires eight connected nodes".into()));
+        }
+        for i in 0..4 {
+            let a = e.nodes[i];
+            let b = e.nodes[(i + 1) % 4];
+            let key = (a.min(b), a.max(b));
+            let item = edges.entry(key).or_insert((e.nodes[i + 4], 0));
+            item.1 += 1;
+            if item.0 != e.nodes[i + 4] || item.1 > 2 {
+                return Err(Error::NotSupported(
+                    "MITC8 nonconforming or nonmanifold edge: two neighbours must share both corners and the midside node".into(),
+                ));
+            }
+        }
+    }
+
+    for (i, e) in elements.iter().enumerate().filter(|(_, e)| e.kind == ElementKind::Quad8) {
+        let StructuralKernel::Mitc8(k) = e.kernel()? else { continue };
+        for (j, (&node, &normal)) in e.nodes.iter().zip(k.directors()).enumerate() {
+            incident.entry(node).or_default().push((i, j, normal));
+        }
+    }
+    for e in elements.iter().filter(|e| matches!(e.kind, ElementKind::Tri3 | ElementKind::Quad4 | ElementKind::Tri6)) {
+        if e.nodes.iter().any(|n| incident.contains_key(n)) {
+            return Err(Error::NotSupported("MITC8 mixed-order shell junction: shared director constraints are not implemented".into()));
+        }
+    }
+    for neighbours in incident.values() {
+        let Some(&(_, _, first)) = neighbours.first() else { continue };
+        let mut mean = [0.0; 3];
+        for &(_, _, n) in neighbours {
+            let d = dot(n, first);
+            if d.abs() < 0.5 {
+                return Err(Error::NotSupported(
+                    "MITC8 folded junction: incident normals differ by at least 60 degrees; use separate patches".into(),
+                ));
+            }
+            for k in 0..3 {
+                mean[k] += d.signum() * n[k];
+            }
+        }
+        let mean = unit(mean).ok_or_else(|| Error::Invalid("MITC8 shared normal cancels".into()))?;
+        for &(i, j, n) in neighbours {
+            let signed = mean.map(|v| v * dot(mean, n).signum());
+            let e = &mut elements[i];
+            e.directors.get_or_insert([[0.0; 3]; 8])[j] = signed;
+        }
+    }
+    // Validate the thickened geometry with the common directors before assembly.
+    for e in elements.iter().filter(|e| e.directors.is_some()) {
+        e.kernel()?;
+    }
+    Ok(())
 }

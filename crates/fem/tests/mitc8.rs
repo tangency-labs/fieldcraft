@@ -138,3 +138,94 @@ fn body_force_and_invalid_geometry() {
     assert!(shell.strain_operator([f64::NAN, 0.0, 0.0], true).is_err());
     assert!(shell.stresses(&[0.0; 47]).is_err());
 }
+
+#[test]
+fn laminated_mitc8_single_ply_coupling_and_material_directions() {
+    use fieldcraft_fem::laminate::PlyProperties;
+    use fieldcraft_model::MaterialOrientation;
+    let ply = |young, thickness, angle| PlyProperties {
+        elastic: Elastic::Isotropic { young, poisson: 0.0 },
+        thickness,
+        angle,
+        points: 3,
+        density: None,
+        strength: None,
+    };
+    for curved in [false, true] {
+        let xyz = nodes(curved);
+        let sec = ShellSection::new(0.1, 0.2, &Elastic::Isotropic { young: 1200.0, poisson: 0.0 }).unwrap();
+        let h = Mitc8::new(&xyz, sec).unwrap();
+        let l = Mitc8::laminated(&xyz, &[ply(1200.0, 0.1, 0.37)], 0.2, None, 1).unwrap();
+        let a = h.stiffness().unwrap();
+        let b = l.stiffness().unwrap();
+        assert!(a.data.iter().zip(&b.data).all(|(a, b)| (a - b).abs() < 2e-12));
+    }
+    let xyz = nodes(false);
+    let plies = [ply(1200.0, 0.04, 0.0), ply(3000.0, 0.06, 0.0)];
+    let shell = Mitc8::laminated(&xyz, &plies, 0.0, None, 1).unwrap();
+    let (e, kappa) = (0.002, 0.003);
+    let u = field(&xyz, |p| [e * p[0], 0.0, -0.5 * kappa * p[0] * p[0], 0.0, kappa * p[0], 0.0]);
+    let want = 0.5
+        * 4.0
+        * [(1200.0, -0.05f64, -0.01f64), (3000.0, -0.01, 0.05)]
+            .iter()
+            .map(|&(c, a, b)| c * (e * e * (b - a) + e * kappa * (b * b - a * a) + kappa * kappa * (b.powi(3) - a.powi(3)) / 3.0))
+            .sum::<f64>();
+    let got = energy(&shell.stiffness().unwrap(), &u);
+    assert!((got / want - 1.0).abs() < 2e-12, "coupling energy {got} != {want}");
+    let r = shell.stresses(&u).unwrap();
+    for n in &r.plies {
+        assert!((n[0].top.stress[0] - 1200.0 * (e - 0.01 * kappa)).abs() < 1e-12);
+        assert!((n[1].bottom.stress[0] - 3000.0 * (e - 0.01 * kappa)).abs() < 1e-12);
+        assert_eq!(n[0].top.z, n[1].bottom.z);
+    }
+    // Orthotropic fibres fixed in physical space, independent of local r/s order.
+    let mut orth = ply(1.0, 0.1, 0.31);
+    orth.elastic = Elastic::EngineeringConstants { young: [1000.0, 100.0, 100.0], poisson: [0.0; 3], shear: [50.0, 35.0, 20.0] };
+    let axes = MaterialOrientation::Rectangular { axis1: [1.0, 0.0, 0.0], axis2: [0.0, 1.0, 0.0] };
+    let base = Mitc8::laminated(&xyz, &[orth], 0.0, Some(axes), 1).unwrap().stiffness().unwrap();
+    for perm in [[1, 2, 3, 0, 5, 6, 7, 4], [0, 3, 2, 1, 7, 6, 5, 4]] {
+        let reflected = perm[1] == 3;
+        let x: Vec<_> = perm.iter().map(|&i| xyz[i]).collect();
+        let mut p = orth;
+        if reflected {
+            p.angle = -p.angle;
+        }
+        let m = Mitc8::laminated(&x, &[p], 0.0, Some(axes), 1).unwrap().stiffness().unwrap();
+        for i in 0..48 {
+            for j in 0..48 {
+                assert!((m.get(i, j) - base.get(6 * perm[i / 6] + i % 6, 6 * perm[j / 6] + j % 6)).abs() < 2e-11);
+            }
+        }
+    }
+    // Reversing the signed normal also reverses physical layer order and offset.
+    let perm = [0, 3, 2, 1, 7, 6, 5, 4];
+    let x: Vec<_> = perm.iter().map(|&i| xyz[i]).collect();
+    let a = Mitc8::laminated(&xyz, &plies, 0.2, None, 1).unwrap().stiffness().unwrap();
+    let b = Mitc8::laminated(&x, &[plies[1], plies[0]], -0.2, None, 1).unwrap().stiffness().unwrap();
+    for i in 0..48 {
+        for j in 0..48 {
+            assert!((b.get(i, j) - a.get(6 * perm[i / 6] + i % 6, 6 * perm[j / 6] + j % 6)).abs() < 2e-11);
+        }
+    }
+    println!("MITC8 laminate coupling energy: computed={got:.16e}, independent={want:.16e}");
+}
+
+#[test]
+fn layered_weight_keeps_the_first_mass_moment() {
+    use fieldcraft_fem::laminate::PlyProperties;
+    let ply = |density| PlyProperties {
+        elastic: Elastic::Isotropic { young: 1200.0, poisson: 0.0 },
+        thickness: 0.05,
+        angle: 0.0,
+        points: 3,
+        density: Some(density),
+        strength: None,
+    };
+    let shell = Mitc8::laminated(&nodes(false), &[ply(2.0), ply(4.0)], 0.0, None, 1).unwrap();
+    let f = shell.gravity(3.0, [1.0, 0.0, 0.0]).unwrap();
+    let force: f64 = f.as_chunks::<6>().0.iter().map(|v| v[0]).sum();
+    let moment: f64 = f.as_chunks::<6>().0.iter().map(|v| v[4]).sum();
+    assert!((force - 1.2).abs() < 1e-13);
+    assert!((moment - 0.01).abs() < 1e-13);
+}

@@ -1,0 +1,20 @@
+{
+  "title": "MITC8 thick Navier plate, 16 x 16 quarter mesh (32 x 32 equivalent full mesh)",
+  "kind": "theory",
+  "source": "C. W. Bert and C. C. Siu, NASA CR-112140 (1972), \u00a7\u00a72.2\u20132.6 and 4.1, https://ntrs.nasa.gov/citations/19720022240; separated Navier amplitudes derived in README, with this case's fixed 5/6 shear factor; static separated solution and thickness moments derived in README",
+  "quantities": [
+    {
+      "id": "w_fsdt",
+      "quantity": "centre transverse displacement, FSDT (m)",
+      "measure": {
+        "from": "probe",
+        "pointer": "/nodes/0/displacement/2"
+      },
+      "value": 1.1636747564990154e-09,
+      "tolerance": {
+        "relative": 0.03
+      },
+      "reason": "Fixed 3% reference tolerance. This 16 x 16 quarter model is equivalent to a 32 x 32 full mesh; full 4/8/16 meshes failed and are explicitly reported in README, not counted as passes."
+    }
+  ]
+}

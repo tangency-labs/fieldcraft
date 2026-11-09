@@ -1,6 +1,6 @@
 # Eight-node curved MITC8 statics
 
-`quad8` with an isotropic homogeneous `shell` section and **full** integration uses
+`quad8` with an elastic `shell` or `composite_shell` section and **full** integration uses
 `fem::mitc8::Mitc8` in `solve.static`. This is an eight-node serendipity shell, not MITC9:
 four corners counterclockwise from (-1,-1), followed by the four edge midpoints. There
 is no centre node, internal centre displacement, or condensation. Each node shares the
@@ -34,11 +34,26 @@ quadratic tangents. With h the constant section thickness and e=-offset*h,
 `x(r,s,t) = sum N_i(r,s) [x_i + (e+h*t/2) n_i]`. Director vectors are interpolated
 without renormalization inside the element. Their variation is `theta_i cross n_i`.
 This preserves infinitesimal rigid motion even on a curved surface and with offset.
-Normals are element-local; there is no smoothing across neighbouring elements.
-Adjacent quadratic patches can therefore have different directors at a shared node;
-shared rotations do not guarantee identical through-thickness edge displacements.
-Use smooth, sufficiently refined patches; arbitrary folded junctions and global
-director continuity are not validated by the roof case.
+The solver aligns incident nodal normals before averaging and normalizing them. Each
+shared node then has one director axis, signed along each element's own normal. All
+nodes retain global rotation vectors: `delta n = theta cross n`, so a shared quadratic
+edge has the same thickened position and displacement on both sides at a common
+physical thickness position. This follows the nodal-normal discussion in Lee–Bathe,
+*Computers & Structures* 83 (2005), 69–90, section 3,
+[doi:10.1016/j.compstruc.2004.07.005](https://doi.org/10.1016/j.compstruc.2004.07.005).
+It does not replace the eight-node BD86 strain interpolation with MITC9.
+
+The implementation rejects incident normal axes separated by 60 degrees or more
+and mixed-order shell junctions. Common edges must have the same midside node;
+nonconforming and nonmanifold edge connections are rejected. It is a smooth-patch construction, not a folded
+junction model. The normal-axis screen is local: it cannot distinguish every
+fold-back or overlapping patch from a reversed connectivity, and is not a global
+self-intersection or orientability certificate. Supply a valid smooth surface mesh. Reversing connectivity reverses the signed normal. To describe the
+same asymmetric physical laminate, also reverse ply order, negate offset and ply
+angles, and keep the physical section reference direction fixed. Rotating local
+corner numbering preserves an explicitly oriented material; an unspecified material
+orientation intentionally follows the element r direction. Different thicknesses or
+offsets on adjacent sections do not imply matching outer faces.
 
 The Jacobian uses the actual three covariant bases through the thickness. Zero,
 nonfinite or negative scaled determinants are rejected. Both thickness faces, all
@@ -52,7 +67,8 @@ is the interpolated director. Plane stress eliminates the normal stress; enginee
 shears include the factor two. Transverse shear uses the fixed 5/6 correction of the
 existing shell model. Thin-shell locking is checked independently of patch accuracy.
 The section `points` value remains a deck sampling parameter; this elastic kernel
-uses three thickness points regardless of that value.
+uses three thickness Gauss points per ply regardless of that value. These integrate
+flat elastic layer moments exactly; curved-shell integration remains numerical.
 
 ## Sixth rotation and scope
 
@@ -62,8 +78,8 @@ with the Hughes–Brezzi penalty `G*h/100`, as in the existing flat shell. It is
 explicit additional stabilization, not a claim of algebraic identity with the
 original five-DOF element or with an Abaqus element. No artificial mass is introduced.
 
-Only homogeneous isotropic linear statics are enabled. Composite or oriented sections,
-modal/frequency/harmonic/transient analyses, initial-stress stiffness and buckling are
+Homogeneous and layered elastic linear statics are enabled.
+Modal/frequency/harmonic/transient analyses, initial-stress stiffness and buckling are
 not implemented for MITC8 and are refused. Nonlinear steps do not support these shells.
 The existing MITC3/MITC4 analysis paths are unchanged.
 
@@ -93,3 +109,39 @@ The command-level oracle cases `mitc8-pure-bending`, `mitc8-curved-extension` an
 The curved axial patch is not a bending-dominated validation; the roof is checked
 separately. These checks do not validate every shell geometry or the unsupported
 procedures. The axisymmetric LE7 thin-shell discrepancy remains unresolved.
+
+## Layered elastic sections
+
+The law follows Nettles, NASA RP-1351 (1994), sections II–IV, using the existing
+`Lamina` energy-conjugate engineering-strain transformations. `Mitc8::thickness_rule`
+splits at every ply interface; `material` evaluates the rotated plane-stress and
+transverse-shear law in each ply. Thus the actual layer positions produce A, B and D
+coupling, rather than replacing the stack by an averaged modulus. Constant layer
+thicknesses and the fixed 5/6 shear correction are used.
+
+At every surface point, `ply_angle` projects the supplied rectangular or cylindrical
+material reference axis onto the interpolated-director plane, then applies the ply
+angle. This physical fibre direction is held along the director through thickness;
+it does not follow the varying covariant tangent at each depth. A singular reference
+projection is rejected. With no section orientation, the reference is the local r
+direction. Material axes and ply angles are independent of the shared global DOFs.
+
+Existing result fields retain separate one-sided ply interface stresses and sampling
+points. Ply stress and strain components are in material axes; each nodal `angle`
+is measured in that node's reference-surface frame. For a curved patch, the single
+reported centre `axes` does not reconstruct every nodal material basis. Use the model
+geometry, shared directors and section orientation to reconstruct those bases. No
+new result type or field is added. The fields are an equivalent-single-layer recovery,
+not equilibrated interlaminar stresses or delamination predictions. Static gravity
+integrates the actual density of each ply, including its first moment; a dynamic
+mass matrix is still not supplied.
+
+Independent tests check isotropic single-ply degeneration on flat and curved
+surfaces, nonsymmetric layer membrane/bending energy, one-sided interface stress,
+explicit fibre directions under local renumbering, and reversal of normals/layer
+order/offset. Command cases `mitc8-single-ply-bending`, `mitc8-navier-thin` and
+`mitc8-navier-thick-quarter16` and `mitc8-coupled-strip` check the composite solve path. Navier references apply to the
+symmetric cross-ply plate with B=D16=D26=0; they do not validate a general unsymmetric
+curved laminate. Thick-plate full 4/8/16 meshes missed the fixed 3% band
+(14.2/8.72/3.43% errors); the equivalent full 32 mesh passed at 0.999%.
+Those coarse failures remain explicit in the thick-case README.
