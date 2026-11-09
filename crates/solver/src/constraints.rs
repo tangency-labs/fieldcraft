@@ -689,6 +689,24 @@ impl Reduction {
 
     /// Free equations.
     /// Whether supports only select DOFs (no multipoint transformation).
+    /// Exact elimination identity for disposable solver caches (no hashing).
+    pub(crate) fn cache_identity(&self) -> Vec<u64> {
+        let mut out = Vec::new();
+        let mut append = |values: Vec<u64>| {
+            out.push(values.len() as u64);
+            out.extend(values);
+        };
+        append(self.eq_dof.iter().map(|&v| v as u64).collect());
+        append(self.active.iter().map(|&v| u64::from(v)).collect());
+        for terms in [&self.free, &self.fixed] {
+            append(terms.ptr.iter().map(|&v| v as u64).collect());
+            append(terms.idx.iter().map(|&v| v as u64).collect());
+            append(terms.val.iter().map(|v| v.to_bits()).collect());
+        }
+        append(self.prescribed_motion.iter().map(|v| v.to_bits()).collect());
+        out
+    }
+
     pub(crate) fn is_selection(&self) -> bool {
         !self.has_dependents
     }

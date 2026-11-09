@@ -267,3 +267,19 @@ retained matrix/basis storage is bounded by the factor-entry allowance. The
 cache is disposable, shared by session snapshots, and never written to result
 files. Pretension models, prestressed steps and prescribed-motion sweeps use
 the uncached path.
+
+The cache also distinguishes the mass selection, every section's formulation
+and lumping policy, node labels, the actual ordering and the exact constraint
+elimination map. It records extraction options that can affect arithmetic.
+The harmonic extractor's block width, tolerance and automatic shift policy are
+fixed within the running program; a cache never survives a program restart.
+
+For unprestressed homogeneous modal sweeps, projected load coordinates are
+formed once. All requested complex response coordinates are solved before
+recovery. Displacement recovery uses fixed DOF tiles and bounded frequency
+panels, with each output accumulated in ascending basis order. When stress is
+requested, one elastic stress field per basis vector is computed and combined
+into the requested frames; only one basis stress field is retained at a time.
+Full physical residual and power checks still run at every frequency. Prescribed
+motion and prestressed models retain the scalar recovery path. Default output
+fields and the saved result layout are unchanged.

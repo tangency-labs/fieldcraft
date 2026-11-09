@@ -194,6 +194,15 @@ pub struct ModalSolution {
     pub diagonal: bool,
 }
 
+struct ModalCoordinates {
+    q: Vector,
+    coordinates: Vector,
+    modal_c: Vec<f64>,
+    projected_residual: complex::Residual,
+    diagonal: bool,
+    omega: f64,
+}
+
 impl<'a> Modal<'a> {
     pub fn eigenvalues(&self) -> &[f64] {
         &self.data.eigenvalues
@@ -334,7 +343,15 @@ impl<'a> Modal<'a> {
 
     // The model-level power audit uses the same physical loss operator as the
     // full residual, avoiding a second construction without changing arithmetic.
-    fn solve_with_operator(&self, omega: f64, damping: Damping, ratios: &[f64], force: &Vector, limits: &Limits) -> Result<(ModalSolution, Csr)> {
+    fn prepare_coordinates(
+        &self,
+        omega: f64,
+        damping: Damping,
+        ratios: &[f64],
+        force: &Vector,
+        limits: &Limits,
+        projected_force: Option<&Vector>,
+    ) -> Result<ModalCoordinates> {
         let matrices = &self.matrices;
         angular_frequency(omega)?;
         damping.validate()?;
@@ -384,9 +401,13 @@ impl<'a> Modal<'a> {
                 }
             }
         }
-        for (j, phi) in self.data.shapes.iter().enumerate() {
-            rhs.real[j] = dot(phi, &force.real);
-            rhs.imaginary[j] = dot(phi, &force.imaginary);
+        if let Some(projected) = projected_force {
+            rhs = projected.clone();
+        } else {
+            for (j, phi) in self.data.shapes.iter().enumerate() {
+                rhs.real[j] = dot(phi, &force.real);
+                rhs.imaginary[j] = dot(phi, &force.imaginary);
+            }
         }
         let diagonal = a.iter().zip(&b).enumerate().all(|(i, (a, b))| i / count == i % count || (*a == 0.0 && *b == 0.0));
         let a = dense(count, a);
@@ -418,29 +439,91 @@ impl<'a> Modal<'a> {
             complex::solve(&a, &b, &rhs, limits)?.displacement
         };
         let projected_residual = complex::residual(&a, &b, &rhs, &q, limits)?;
-        let mut displacement = Vector::zeros(self.n);
         let mut coordinates = Vector::zeros(mode_count);
         for j in 0..mode_count {
             let row = &self.data.mass[j * count..(j + 1) * count];
             coordinates.real[j] = dot(row, &q.real);
             coordinates.imaginary[j] = dot(row, &q.imaginary);
         }
-        // Additional modal damping force is iω M Φ diag(2ζω_j) Φᵀ M u.
+        Ok(ModalCoordinates { q, coordinates, modal_c, projected_residual, diagonal, omega })
+    }
+    fn finish_response(
+        &self,
+        damping: Damping,
+        force: &Vector,
+        limits: &Limits,
+        prepared: &ModalCoordinates,
+        displacement: Vector,
+        damping_shape: Vector,
+    ) -> Result<(ModalSolution, Csr)> {
+        let _timing = crate::timing::Span::new("harmonic_full_residual");
+        let (physical_a, physical_b) = self.dynamic(prepared.omega, damping, limits)?;
+        let (full_relative_residual, full_residual_norm) =
+            full_residual(&physical_a, &physical_b, self.matrices.mass, &displacement, force, &damping_shape)?;
+        Ok((
+            ModalSolution {
+                displacement,
+                coordinates: prepared.coordinates.clone(),
+                projected_residual: prepared.projected_residual,
+                full_relative_residual,
+                full_residual_norm,
+                diagonal: prepared.diagonal,
+            },
+            physical_b,
+        ))
+    }
+
+    fn solve_with_operator(&self, omega: f64, damping: Damping, ratios: &[f64], force: &Vector, limits: &Limits) -> Result<(ModalSolution, Csr)> {
+        let prepared = self.prepare_coordinates(omega, damping, ratios, force, limits, None)?;
+        let mut displacement = Vector::zeros(self.n);
         let mut damping_shape = Vector::zeros(self.n);
+        let _timing = crate::timing::Span::new("harmonic_displacement_recovery");
         for (j, phi) in self.data.shapes.iter().enumerate() {
             for (i, p) in phi.iter().enumerate() {
-                displacement.real[i] += p * q.real[j];
-                displacement.imaginary[i] += p * q.imaginary[j];
-                if j < mode_count {
-                    damping_shape.real[i] -= omega * p * modal_c[j] * coordinates.imaginary[j];
-                    damping_shape.imaginary[i] += omega * p * modal_c[j] * coordinates.real[j];
+                displacement.real[i] += p * prepared.q.real[j];
+                displacement.imaginary[i] += p * prepared.q.imaginary[j];
+                if j < self.data.eigenvalues.len() {
+                    damping_shape.real[i] -= omega * p * prepared.modal_c[j] * prepared.coordinates.imaginary[j];
+                    damping_shape.imaginary[i] += omega * p * prepared.modal_c[j] * prepared.coordinates.real[j];
                 }
             }
         }
-        let (physical_a, physical_b) = self.dynamic(omega, damping, limits)?;
-        let (full_relative_residual, full_residual_norm) =
-            full_residual(&physical_a, &physical_b, matrices.mass, &displacement, force, &damping_shape)?;
-        Ok((ModalSolution { displacement, coordinates, projected_residual, full_relative_residual, full_residual_norm, diagonal }, physical_b))
+        drop(_timing);
+        self.finish_response(damping, force, limits, &prepared, displacement, damping_shape)
+    }
+
+    // Phi Q in fixed DOF tiles and bounded frequency panels. Each output belongs to
+    // one task; every sum follows ascending basis index, independent of scheduling.
+    fn recover_batch(&self, coordinates: &[ModalCoordinates]) -> std::collections::VecDeque<(Vector, Vector)> {
+        let _timing = crate::timing::Span::new("harmonic_displacement_recovery");
+        let width = coordinates.len();
+        let mut tile = vec![[0.0; 4]; self.n * width];
+        fieldcraft_parallel::chunks_mut(&mut tile, 256 * width, |block, output| {
+            let first = block * 256;
+            for (j, phi) in self.data.shapes.iter().enumerate() {
+                for (i, row) in output.chunks_mut(width).enumerate() {
+                    let p = phi[first + i];
+                    for (value, c) in row.iter_mut().zip(coordinates) {
+                        value[0] += p * c.q.real[j];
+                        value[1] += p * c.q.imaginary[j];
+                        if j < self.data.eigenvalues.len() {
+                            value[2] -= c.omega * p * c.modal_c[j] * c.coordinates.imaginary[j];
+                            value[3] += c.omega * p * c.modal_c[j] * c.coordinates.real[j];
+                        }
+                    }
+                }
+            }
+        });
+        (0..width)
+            .map(|f| {
+                let mut u = Vector::zeros(self.n);
+                let mut d = Vector::zeros(self.n);
+                for (i, row) in tile.chunks_exact(width).enumerate() {
+                    [u.real[i], u.imaginary[i], d.real[i], d.imaginary[i]] = row[f];
+                }
+                (u, d)
+            })
+            .collect()
     }
 }
 
@@ -485,5 +568,50 @@ fn full_residual(a: &Csr, b: &Csr, mass: &Csr, u: &Vector, force: &Vector, dampi
         Err(Error::NotConverged("nonzero harmonic residual for zero force or unrepresentable residual ratio".into()))
     } else {
         Ok((residual / norm, residual_norm))
+    }
+}
+
+#[cfg(test)]
+mod batch_tests {
+    use super::*;
+    #[test]
+    fn blocked_recovery_matches_scalar_and_closed_form_at_every_thread_count() -> Result<()> {
+        let k = dense(2, vec![4.0, 0.0, 0.0, 9.0]);
+        let m = dense(2, vec![1.0, 0.0, 0.0, 2.0]);
+        let matrices = Matrices { stiffness: &k, mass: &m, viscous: None, loss: None };
+        let force = Vector { real: vec![1.0, 2.0], imaginary: vec![0.4, -0.3] };
+        let limits = Limits::default();
+        let damping = Damping { alpha: 0.1, beta: 0.02, loss_factor: 0.01 };
+        let modal = Modal::new(&matrices, 2, &limits)?;
+        let prepared = [0.0, 1.99, 2.0, 2.01, 3.0]
+            .into_iter()
+            .map(|w| modal.prepare_coordinates(w, damping, &[], &force, &limits, None))
+            .collect::<Result<Vec<_>>>()?;
+        let run = || -> Result<Vec<u64>> {
+            let mut bits = Vec::new();
+            for (p, (u, d)) in prepared.iter().zip(modal.recover_batch(&prepared)) {
+                let (out, _) = modal.finish_response(damping, &force, &limits, p, u, d)?;
+                let scalar = modal.solve(p.omega, damping, &[], &force, &limits)?;
+                assert_eq!(out.displacement, scalar.displacement);
+                assert!(out.full_relative_residual < 1e-12);
+                for i in 0..2 {
+                    let stiffness = k.val[i * 2 + i];
+                    let mass = m.val[i * 2 + i];
+                    let a = stiffness - p.omega * p.omega * mass;
+                    let b = p.omega * (damping.alpha * mass + damping.beta * stiffness) + damping.loss_factor * stiffness;
+                    let real = (a * force.real[i] + b * force.imaginary[i]) / (a * a + b * b);
+                    let imag = (a * force.imaginary[i] - b * force.real[i]) / (a * a + b * b);
+                    assert!((out.displacement.real[i] - real).abs() <= 1e-12 * real.abs().max(1.0));
+                    assert!((out.displacement.imaginary[i] - imag).abs() <= 1e-12 * imag.abs().max(1.0));
+                }
+                bits.extend(out.displacement.real.iter().chain(&out.displacement.imaginary).map(|x| x.to_bits()));
+            }
+            Ok(bits)
+        };
+        let expected = fieldcraft_parallel::with_threads(1, run)?;
+        for threads in [2, 7] {
+            assert_eq!(expected, fieldcraft_parallel::with_threads(threads, run)?);
+        }
+        Ok(())
     }
 }

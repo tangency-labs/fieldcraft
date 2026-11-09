@@ -144,3 +144,37 @@ fn selected_mass_direct_modal_and_material_damping_match_closed_form() {
         }
     }
 }
+
+#[test]
+fn batched_stress_and_displacement_follow_the_independent_axial_equation() {
+    let d = Damping { alpha: 0.02, beta: 0.005, loss_factor: 0.03 };
+    let mut model = rod(Damping::default(), d, Method::Modal { modes: 1, damping_ratios: vec![], residual_vectors: 0 }, 0.0);
+    let mut step = model.steps()[0].clone();
+    if let Procedure::Harmonic(h) = &mut step.procedure {
+        h.frequencies = Frequencies::List((0..79).map(|i| i as f64 / 78.0).collect());
+    }
+    model.replace_step(step).unwrap();
+    let run = || {
+        let result = solve_harmonic(&model, None, &Limits::default()).unwrap();
+        assert_eq!(result.frames.len(), 79);
+        for frame in &result.frames {
+            let w = 2.0 * PI * frame.frequency;
+            let a = 4.0 - w * w;
+            let b = w * (d.alpha + 4.0 * d.beta) + 4.0 * d.loss_factor;
+            let fr = 2.0 * 0.4_f64.cos();
+            let fi = 2.0 * 0.4_f64.sin();
+            let re = (a * fr + b * fi) / (a * a + b * b);
+            let im = (a * fi - b * fr) / (a * a + b * b);
+            assert!((frame.real[1][0] - re).abs() < 1e-11);
+            assert!((frame.imaginary[1][0] - im).abs() < 1e-11);
+            assert!((frame.stress_real.as_ref().unwrap()[1][0] - 4.0 * re).abs() < 1e-10);
+            assert!((frame.stress_imaginary.as_ref().unwrap()[1][0] - 4.0 * im).abs() < 1e-10);
+            assert!(frame.relative_residual < 1e-11);
+        }
+        serde_json::to_vec(&result).unwrap()
+    };
+    let expected = fieldcraft_parallel::with_threads(1, run);
+    for threads in [2, 7] {
+        assert_eq!(expected, fieldcraft_parallel::with_threads(threads, run));
+    }
+}
