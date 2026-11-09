@@ -684,7 +684,7 @@ pub static CATALOGUE: &[Capability] = &[
         "Static",
         Solve,
         "Implicit",
-        "Linear static (or coupled temperature–displacement) solve of a step with FieldCraft's own solver; nonlinear static, buckling, harmonic response, transient, experimental geometric rod transient (SI diagnostics only), response spectrum and heat transfer in the drop-down",
+        "Linear static (or coupled temperature–displacement) solve of a step with FieldCraft's own solver; nonlinear static, buckling, harmonic response, transient, geometric rod transient (native nonlinear histories, stresses and energies), response spectrum and heat transfer in the drop-down",
         &[
             "solve.nonlinear",
             "solve.buckle",

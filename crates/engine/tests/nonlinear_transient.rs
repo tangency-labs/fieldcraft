@@ -154,14 +154,14 @@ fn large_rotation_pendulum_and_tensioned_string_converge_with_energy_accounts() 
     }
 }
 #[test]
-fn failure_does_not_replace_linear_results_or_persist_nonlinear_frames() {
+fn failed_nonlinear_solve_preserves_previous_result_and_success_is_stored() {
     let (mut s, _) = model(false, 0.01, None, "consistent", 0.);
     run(&mut s, "solve.transient", json!({"step":"Motion"}));
     let before = run(&mut s, "solve.probe", json!({"step":"Motion","nodes":[2]}));
     assert!(s.execute("solve.transient.nonlinear", &json!({"step":"Motion","max_iterations":1})).is_err());
     assert_eq!(before, run(&mut s, "solve.probe", json!({"step":"Motion","nodes":[2]})));
     run(&mut s, "solve.transient.nonlinear", json!({"step":"Motion"}));
-    assert_eq!(before, run(&mut s, "solve.probe", json!({"step":"Motion","nodes":[2]})));
+    assert!(matches!(s.result("Motion").unwrap().as_ref(), fieldcraft_engine::StepResult::Nonlinear(_)));
 }
 
 #[test]
@@ -184,4 +184,89 @@ fn nonfinite_energy_is_refused_before_returning_diagnostics() {
     let result = session.execute("solve.transient.nonlinear", &json!({"step":"Motion"}));
     let error = result.expect_err("overflowing kinetic energy must not serialize as null");
     assert!(error.to_string().contains("energy overflow"), "{error}");
+}
+
+#[test]
+fn native_kind11_roundtrip_stress_and_version_boundaries() {
+    use fieldcraft_io::results::{self, Solved, StoredRef};
+    for (mass, alpha) in [("consistent", None), ("lumped", Some(-0.1))] {
+        let (_, mut input) = model(true, 0.0025, alpha, mass, 0.2);
+        for command in input.as_array_mut().unwrap() {
+            if command["command"] == "model.step.create" {
+                command["params"]["procedure"]["increments"] = json!(4);
+                command["params"]["procedure"]["output_every"] = json!(2);
+            }
+        }
+        let mut session = Session::default();
+        session.run_script(&input).unwrap();
+        let reply = run(&mut session, "solve.transient.nonlinear", json!({"step":"Motion","mass":mass}));
+        assert_eq!(reply["persisted"], true);
+        let result = session.result("Motion").unwrap().clone();
+        let fieldcraft_engine::StepResult::Nonlinear(r) = result.as_ref() else { panic!("wrong kind") };
+        r.validate().unwrap();
+        assert_eq!(r.frames.len(), 3);
+        for f in &r.frames {
+            let y = f.displacement[1][1];
+            // Independent closed expression for either unit-length rod: E_G=y²/2.
+            for stress in &f.rods {
+                assert!((stress.green_strain - y * y / 2.).abs() < 1e-15);
+                assert!((stress.second_piola_stress - 500. * y * y).abs() < 1e-12);
+                assert!((stress.nominal_stress - 500. * y * y * (1. + y * y).sqrt()).abs() < 1e-12);
+            }
+            assert!((f.internal_force[1][1] - 1000. * y.powi(3)).abs() < 1e-11);
+            assert_eq!(f.external_force[1], [0., 8., 0.]);
+        }
+        let bytes = results::encode(&[("Motion", StoredRef { definition: [0; 32], result: result.as_stored() })]).unwrap();
+        assert_eq!(&bytes[..8], b"MCRSLT07");
+        let kind_offset = 8 + 4 + 8 + "Motion".len() + 32;
+        assert_eq!(bytes[kind_offset], 11);
+        let results::Decoded::Results(decoded) = results::decode(&bytes).unwrap() else { panic!("missing result") };
+        assert_eq!(decoded[0].result, Solved::Nonlinear(r.clone()));
+        for magic in [b"MCRSLT05", b"MCRSLT06"] {
+            for kind in [9, 10, 11] {
+                let mut bad = bytes.clone();
+                bad[..8].copy_from_slice(magic);
+                bad[kind_offset] = kind;
+                assert!(results::decode(&bad).unwrap_err().to_string().contains("ambiguous development"));
+            }
+        }
+        for kind in [9, 10, 12] {
+            let mut bad = bytes.clone();
+            bad[kind_offset] = kind;
+            assert!(results::decode(&bad).unwrap_err().to_string().contains("unknown kind"));
+        }
+        assert!(results::decode(&bytes[..bytes.len() - 1]).is_err());
+        let mut bad = r.clone();
+        bad.frames[1].rods[0].second_piola_stress += 1.;
+        assert!(bad.validate().is_err());
+        bad = r.clone();
+        bad.frames[1].relative_residual = 1.;
+        assert!(bad.validate().is_err());
+        let root = std::env::var_os("FIELDCRAFT_KIND11_EVIDENCE")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::env::temp_dir().join(format!("fieldcraft-kind11-{}", std::process::id())));
+        std::fs::create_dir_all(&root).unwrap();
+        let file = root.join(format!("{mass}.fieldcraft"));
+        run(&mut session, "file.save_as", json!({"path":file}));
+        let archive = fieldcraft_io::read(&std::fs::read(&file).unwrap()).unwrap();
+        assert_eq!(archive.results[0].result, Solved::Nonlinear(r.clone()));
+        let mut opened = Session::default();
+        run(&mut opened, "file.open", json!({"path":file}));
+        assert_eq!(opened.result("Motion").unwrap().as_ref(), result.as_ref());
+        let probe = run(&mut opened, "solve.probe", json!({"step":"Motion","nodes":[2]}));
+        assert_eq!(probe["frames"], reply["frames"]);
+        run(&mut opened, "model.units", json!({"system":"mm-kg-ms-kN-GPa"}));
+        let converted = run(&mut opened, "solve.probe", json!({"step":"Motion","nodes":[2]}));
+        assert_eq!(converted["frames"], reply["frames"]);
+        assert_eq!(converted["units"], "SI");
+        assert!(opened.execute("solve.probe", &json!({"step":"Motion","nodes":[2],"frame":0})).is_err());
+        assert!(opened.execute("solve.probe", &json!({"step":"Motion","nodes":[999]})).is_err());
+        if std::env::var_os("FIELDCRAFT_KIND11_EVIDENCE").is_some() {
+            std::fs::write(root.join(format!("{mass}-input.json")), serde_json::to_vec_pretty(&input).unwrap()).unwrap();
+            std::fs::write(root.join(format!("{mass}-actual.json")), serde_json::to_vec_pretty(&reply).unwrap()).unwrap();
+            std::fs::write(root.join(format!("{mass}-results.bin")), bytes).unwrap();
+        } else {
+            std::fs::remove_file(file).unwrap();
+        }
+    }
 }

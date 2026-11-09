@@ -66,7 +66,7 @@ pub const TRANSIENT: CommandSpec = CommandSpec {
 pub const NONLINEAR_TRANSIENT: CommandSpec = CommandSpec {
     id: "solve.transient.nonlinear",
     label: "Solve Geometric Rod Transient",
-    params: r#"{"step":"Motion","mass":"consistent|lumped","max_iterations":30,"tolerance":1e-8} — experimental rod2 finite-rotation Newmark/HHT full Newton; fixed supports, dead nodal forces and mass-proportional viscous damping only. Returns SI histories and energy diagnostics in this reply; does not store or replace native results. Save the reply separately. Unsupported elements/options are refused by name. No new result kind."#,
+    params: r#"{"step":"Motion","mass":"consistent|lumped","max_iterations":30,"tolerance":1e-8} — experimental rod2 finite-rotation Newmark/HHT full Newton; fixed supports, dead nodal forces and mass-proportional viscous damping only. Stores native kind 11 accepted SI histories, rod Green/second-Piola/nominal fields, forces, energies and Newton diagnostics; file.save_as/file.open retain them. Failed solves leave previous results unchanged. Read all nonlinear fields with solve.probe (SI). Unsupported elements/options are refused by name."#,
     form: Some(super::forms::SOLVE_NONLINEAR_TRANSIENT),
     kind: CommandKind::Model,
     requires: &[Requirement::Analysable, Requirement::Step],
@@ -176,7 +176,7 @@ pub const FLUID: CommandSpec = CommandSpec {
 pub const PROBE: CommandSpec = CommandSpec {
     id: "solve.probe",
     label: "Probe Results",
-    params: r#"{"step": "Load", "nodes": [1, 2] (or "set": "fillet", a set's nodes), "mode": 1, "frame": 0} — the stored result at nodes (with `max_von_mises`, the largest among them, for static steps): displacement, rotation, reaction, reaction moment, stress, principal stresses (the values, largest first, without their directions) and von Mises (static, with `elements` each element's results: solid, 2D and truss nodal stresses (and, in a nonlinear step, the equivalent plastic strain at the integration points of a plastic element), shell section forces (N, M, Q per length in the element's axes) and bottom, middle and top global stresses; composite plies[node][ply] retain material-axis strain (engineering shears), stress and failure indices at bottom/middle/top and additional points, with z about the nodal surface and angle from the element axes; absent strengths give null failure, beam end forces (N, V_y, V_z, T, M_y, M_z in its axes)), the shape of mode `mode` with its rotations (frequency, from 1), or displacement and velocity in field frame `frame` (explicit, from 0; the last by default) at `nodes` (or at the nodes nearest to points: "at": [[x, y, z], ...], lowest label on a tie, each entry then giving its `xyz` and `distance`) and, with `elements` (explicit), each element's stress, von Mises stress, strain, equivalent plastic strain, damage, temperature and whether it has eroded; a coupled reference point's label gives its six displacements (translations, rotations) and reactions (forces, moments). Fluid steps: {"step": "Flow", "points": [[x, y, z]], "frame": 10 (default the last)} gives velocity, pressure and (with heat) temperature in the cells at the points; {"step": "Flow", "forces": ["x_min", "F2:top", "Body1/F2:top"]} gives those walls' force histories and {"step": "Flow", "heat": ["y_min"]} the heat into them over time (power, positive into the wall); {"step": "Flow", "line": {"from": [x, y, z], "to": [x, y, z], "count": 65 (default one point per cell spacing), "field": "velocity_x|velocity_y|velocity_z|speed|pressure|temperature|fill|wall_heat_flux", "face": "x_min" (wall_heat_flux: the box wall the line lies on)}, "frame": 10} gives the field at `count` points evenly along the line (`xyz`; trilinear between the cell centres, null outside the fluid; within half a cell of a box face the nearest cell centre's value, so a temperature line run onto a held wall reads the first cell, not the wall) and its `max` and `min` with their `xyz`, located between the samples by the parabola through the extreme sample and its neighbours; `wall_heat_flux` is the heat per area into a box wall (positive into the wall): at a held temperature from the second-order one-sided difference through the wall and the two cell layers beside it, at a flux face its flux, at an adiabatic face zero; `fill` is a free surface's fill level, 1 liquid to 0 gas; {"step": "Flow", "front": {"axis": "x", "end": "max", "at": [[x, y, z], …]}} gives a free surface's liquid front: the liquid's extent along the axis at every history time (the `max` (default) or `min` face of the cells at least half full) and its `volume`, and per point in `at` the time the extent first reached the point's coordinate along the axis, coming or going (`arrivals`; between two samples by linear interpolation; null when it never did); {"step": "Flow", "depth": {"axis": "z", "at": [[x, y, z], …]}, "frame": 10} gives, per point, the liquid in the column of cells through it along the axis in that frame (the fill levels summed times the spacing: a wave gauge's depth, a collapsing column's height at its wall)"#,
+    params: r#"{"step": "Load", "nodes": [1, 2] (or "set": "fillet", a set's nodes), "mode": 1, "frame": 0} — the stored result at nodes (with `max_von_mises`, the largest among them, for static steps): displacement, rotation, reaction, reaction moment, stress, principal stresses (the values, largest first, without their directions) and von Mises (static, with `elements` each element's results: solid, 2D and truss nodal stresses (and, in a nonlinear step, the equivalent plastic strain at the integration points of a plastic element), shell section forces (N, M, Q per length in the element's axes) and bottom, middle and top global stresses; composite plies[node][ply] retain material-axis strain (engineering shears), stress and failure indices at bottom/middle/top and additional points, with z about the nodal surface and angle from the element axes; absent strengths give null failure, beam end forces (N, V_y, V_z, T, M_y, M_z in its axes)), the shape of mode `mode` with its rotations (frequency, from 1), or displacement and velocity in field frame `frame` (explicit, from 0; the last by default) at `nodes` (or at the nodes nearest to points: "at": [[x, y, z], ...], lowest label on a tie, each entry then giving its `xyz` and `distance`) and, with `elements` (explicit), each element's stress, von Mises stress, strain, equivalent plastic strain, damage, temperature and whether it has eroded; a coupled reference point's label gives its six displacements (translations, rotations) and reactions (forces, moments). Fluid steps: {"step": "Flow", "points": [[x, y, z]], "frame": 10 (default the last)} gives velocity, pressure and (with heat) temperature in the cells at the points; {"step": "Flow", "forces": ["x_min", "F2:top", "Body1/F2:top"]} gives those walls' force histories and {"step": "Flow", "heat": ["y_min"]} the heat into them over time (power, positive into the wall); {"step": "Flow", "line": {"from": [x, y, z], "to": [x, y, z], "count": 65 (default one point per cell spacing), "field": "velocity_x|velocity_y|velocity_z|speed|pressure|temperature|fill|wall_heat_flux", "face": "x_min" (wall_heat_flux: the box wall the line lies on)}, "frame": 10} gives the field at `count` points evenly along the line (`xyz`; trilinear between the cell centres, null outside the fluid; within half a cell of a box face the nearest cell centre's value, so a temperature line run onto a held wall reads the first cell, not the wall) and its `max` and `min` with their `xyz`, located between the samples by the parabola through the extreme sample and its neighbours; `wall_heat_flux` is the heat per area into a box wall (positive into the wall): at a held temperature from the second-order one-sided difference through the wall and the two cell layers beside it, at a flux face its flux, at an adiabatic face zero; `fill` is a free surface's fill level, 1 liquid to 0 gas; {"step": "Flow", "front": {"axis": "x", "end": "max", "at": [[x, y, z], …]}} gives a free surface's liquid front: the liquid's extent along the axis at every history time (the `max` (default) or `min` face of the cells at least half full) and its `volume`, and per point in `at` the time the extent first reached the point's coordinate along the axis, coming or going (`arrivals`; between two samples by linear interpolation; null when it never did); {"step": "Flow", "depth": {"axis": "z", "at": [[x, y, z], …]}, "frame": 10} gives, per point, the liquid in the column of cells through it along the axis in that frame (the fill levels summed times the spacing: a wave gauge's depth, a collapsing column's height at its wall). Nonlinear rod kind 11 returns the complete SI history and settings for all nodes/elements; nodes/set/elements identities are validated but do not filter the reply. frame/mode/at selection is refused for this full-history interface."#,
     form: Some(super::forms::SOLVE_PROBE),
     kind: CommandKind::Model,
     requires: &[Requirement::Result],
@@ -478,11 +478,12 @@ fn run_nonlinear_transient(s: &mut Session, p: &Value) -> Result<Value> {
     let r = with_threads(threads(s, p)?, || {
         fieldcraft_solver::transient::nonlinear::solve(&s.model, step.as_deref(), mass, max_iterations, tolerance, &limits)
     })?;
-    let mut reply = serde_json::to_value(r).map_err(|e| EngineError::Params(format!("nonlinear SI diagnostics: {e}")))?;
+    let mut reply = serde_json::to_value(&r).map_err(|e| EngineError::Params(format!("nonlinear SI diagnostics: {e}")))?;
     if let Some(o) = reply.as_object_mut() {
         o.insert("units".into(), json!("SI"));
-        o.insert("persisted".into(), json!(false));
+        o.insert("persisted".into(), json!(true));
     }
+    s.store_result(StepResult::Nonlinear(r));
     Ok(reply)
 }
 fn run_spectrum(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1561,7 +1562,9 @@ pub(crate) fn probe(s: &mut Session, p: &Value) -> Result<Value> {
     if let StepResult::Fluid(r) = result.as_ref() {
         let mut out = probe_fluid(&s.model, r, p)?;
         let display = s.units().clone();
-        show_probe(&mut out, result, &display);
+        if !matches!(result.as_ref(), StepResult::Nonlinear(_)) {
+            show_probe(&mut out, result, &display);
+        }
         return Ok(out);
     }
     let (nodes, located) = match (p.get("nodes"), p.get("at")) {
@@ -1589,6 +1592,26 @@ pub(crate) fn probe(s: &mut Session, p: &Value) -> Result<Value> {
         }
         StepResult::Implicit(r) => probe_implicit(r, &step, &nodes, p)?,
         StepResult::Fluid(r) => probe_fluid(&s.model, r, p)?,
+        StepResult::Nonlinear(r) => {
+            for key in ["frame", "mode", "at"] {
+                if p.get(key).is_some() {
+                    return Err(EngineError::Params(format!("nonlinear full-history probe does not support `{key}`")));
+                }
+            }
+            if nodes.iter().any(|n| r.nodes.binary_search(n).is_err()) {
+                return Err(EngineError::Params("nonlinear probe node is not in the result".into()));
+            }
+            if p.get("elements").is_some() {
+                let elements = labels(p, "elements", MAX_PROBE)?;
+                if elements.iter().any(|n| r.elements.binary_search_by_key(n, |e| e.label).is_err()) {
+                    return Err(EngineError::Params("nonlinear probe element is not in the result".into()));
+                }
+            }
+            let mut value = serde_json::to_value(r).map_err(|e| EngineError::Params(e.to_string()))?;
+            value["units"] = json!("SI");
+            value["kind"] = json!(11);
+            value
+        }
     };
     // The largest von Mises stress among the probed nodes (static results).
     let peak = out.get("nodes").and_then(Value::as_array).and_then(|entries| {
@@ -1609,7 +1632,9 @@ pub(crate) fn probe(s: &mut Session, p: &Value) -> Result<Value> {
         }
     }
     let display = s.units().clone();
-    show_probe(&mut out, result, &display);
+    if !matches!(result.as_ref(), StepResult::Nonlinear(_)) {
+        show_probe(&mut out, result, &display);
+    }
     Ok(out)
 }
 

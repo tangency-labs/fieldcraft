@@ -3,7 +3,7 @@
 //! (1980), doi:10.1016/0045-7825(80)90051-1, full Newton iteration.
 //! Hughes (1987/2000), ch. 9; Hilber, Hughes & Taylor (1977),
 //! doi:10.1002/eqe.4290050306. See docs/manual/structural/nonlinear-transient.md
-//! for verified sources and limits. No native result serialization is defined.
+//! for verified sources and limits. Native kind 11 stores only converged accepted frames.
 use super::{Integration, State, factor, vector};
 use crate::analysis::{self, Setup};
 use crate::sparse::{Csr, add_block};
@@ -11,7 +11,7 @@ use crate::system::{self, Mesh};
 use crate::{Error, Limits, MassKind, Result};
 use fieldcraft_model::dynamics::{Integration as Choice, Method};
 use fieldcraft_model::{ElementKind, Load, Model, Procedure};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 fn dot(a: &[f64], b: &[f64]) -> f64 {
     a.iter().zip(b).map(|(x, y)| x * y).sum()
@@ -160,7 +160,7 @@ fn rod(x: &[[f64; 3]], u: &[f64], ea: f64) -> Result<(Vec<f64>, Vec<f64>, f64)> 
 
 /// Elastic measures recovered from a saved displacement using the actual rod force kernel.
 /// These are diagnostics, not a native result payload. No lateral law defines Cauchy stress.
-#[derive(Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RodRecovery {
     pub green_strain: f64,
     pub second_piola_stress: f64,
@@ -194,13 +194,16 @@ pub fn recover_rod(x: &[[f64; 3]], u: &[f64], young: f64, area: f64) -> Result<R
     })
 }
 
-/// Ephemeral SI diagnostics only: deliberately not a linear Response or a native Result.
-#[derive(Serialize)]
+/// Accepted nonlinear state; never interpreted as a linear dynamics result.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Frame {
     pub time: f64,
     pub displacement: Vec<[f64; 3]>,
     pub velocity: Vec<[f64; 3]>,
     pub acceleration: Vec<[f64; 3]>,
+    pub internal_force: Vec<[f64; 3]>,
+    pub external_force: Vec<[f64; 3]>,
+    pub rods: Vec<RodRecovery>,
     pub kinetic_energy: f64,
     pub strain_energy: f64,
     pub external_work: f64,
@@ -209,13 +212,37 @@ pub struct Frame {
     pub newton_corrections: usize,
     pub relative_residual: f64,
 }
-#[derive(Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct History {
     pub step: String,
     pub mass: MassKind,
+    #[serde(with = "stored_settings")]
+    pub settings: fieldcraft_model::dynamics::Transient,
+    pub max_iterations: usize,
+    pub tolerance: f64,
     pub nodes: Vec<u32>,
+    pub elements: Vec<RodIdentity>,
     pub frames: Vec<Frame>,
+    pub accepted_steps: Vec<AcceptedStep>,
     pub warnings: Vec<String>,
+}
+
+/// Every accepted increment, including those omitted by the field output stride.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AcceptedStep {
+    pub time: f64,
+    pub newton_corrections: usize,
+    pub relative_residual: f64,
+}
+
+/// Reference configuration and constant element recovery location (uniform rod).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RodIdentity {
+    pub label: u32,
+    pub nodes: Vec<u32>,
+    pub reference_coordinates: Vec<[f64; 3]>,
+    pub reference_area: f64,
+    pub young: f64,
 }
 
 /// Experimental elastic rod2 path, dead nodal forces, fixed supports, constant M/C.
@@ -235,8 +262,15 @@ pub fn solve(model: &Model, name: Option<&str>, mass: MassKind, max_iterations: 
     {
         return Err(Error::NotSupported("nonlinear transient: modal, adaptive, base motion, stiffness damping or linear_acceleration".into()));
     }
-    if step.output.iter().any(|v| !matches!(v, fieldcraft_model::OutputVariable::Displacement)) {
-        return Err(Error::NotSupported("nonlinear transient stress/other requested output; only nodal histories and energies supported".into()));
+    if step.output.iter().any(|v| {
+        !matches!(
+            v,
+            fieldcraft_model::OutputVariable::Displacement | fieldcraft_model::OutputVariable::Stress | fieldcraft_model::OutputVariable::Strain
+        )
+    }) {
+        return Err(Error::NotSupported(
+            "nonlinear transient requested reaction/thermal output; use nodal histories, rod stress/strain and energies".into(),
+        ));
     }
     system::refuse_contact(model, "nonlinear transient")?;
     if !model.foundations().is_empty()
@@ -278,8 +312,15 @@ pub fn solve(model: &Model, name: Option<&str>, mass: MassKind, max_iterations: 
         return Err(Error::NotSupported("nonlinear transient requires free equations and homogeneous fixed supports".into()));
     }
     let frames = t.increments / t.output_every + 2;
-    if mesh.labels.len().checked_mul(frames as usize).and_then(|n| n.checked_mul(9)).is_none_or(|n| n > limits.max_factor_entries.min(5_000_000)) {
-        return Err(Error::Limit("nonlinear diagnostic frame budget".into()));
+    let stored_values = mesh
+        .labels
+        .len()
+        .checked_mul(15)
+        .and_then(|n| mesh.trusses.len().checked_mul(11).and_then(|e| n.checked_add(e)))
+        .and_then(|n| n.checked_mul(frames as usize))
+        .and_then(|n| n.checked_add(t.increments as usize * 3));
+    if stored_values.is_none_or(|n| n > limits.max_factor_entries.min(5_000_000)) {
+        return Err(Error::Limit("nonlinear accepted frame/diagnostic budget".into()));
     }
     let assembled = analysis::assemble(&mesh, &graph, Some(mass))?;
     let mut m = assembled.m.ok_or_else(|| Error::Internal("nonlinear mass".into()))?;
@@ -373,8 +414,30 @@ pub fn solve(model: &Model, name: Option<&str>, mass: MassKind, max_iterations: 
             .collect()
     };
     let mut total_iterations = 0usize;
-    let mut out = History { step: step.name.clone(), mass, nodes: mesh.labels.clone(), frames: Vec::new(), warnings };
-    out.warnings.push("Experimental geometric rod2 dynamics: SI diagnostics only, not persisted. Energy balance includes time-integration and work-quadrature error; it is not physical damping.".into());
+    let elements = mesh
+        .trusses
+        .iter()
+        .map(|e| RodIdentity {
+            label: e.label,
+            nodes: e.nodes.iter().map(|n| mesh.labels[*n]).collect(),
+            reference_coordinates: e.xyz.clone(),
+            reference_area: e.area,
+            young: e.young,
+        })
+        .collect();
+    let mut out = History {
+        step: step.name.clone(),
+        mass,
+        settings: t.clone(),
+        max_iterations,
+        tolerance,
+        nodes: mesh.labels.clone(),
+        elements,
+        frames: Vec::new(),
+        accepted_steps: Vec::new(),
+        warnings,
+    };
+    out.warnings.push("Experimental geometric rod2 dynamics: native kind 11; Green strain / second Piola stress in reference material axis, nominal stress along current rod, uniform element recovery. Energy balance includes time-integration and work-quadrature error; it is not physical damping.".into());
     for i in 0..=t.increments {
         let (mut iterations, mut residual) = (0, initial_residual);
         if i > 0 {
@@ -400,6 +463,7 @@ pub fn solve(model: &Model, name: Option<&str>, mass: MassKind, max_iterations: 
                 return Err(Error::Invalid("nonlinear work overflow".into()));
             }
         }
+        out.accepted_steps.push(AcceptedStep { time: i as f64 * t.time_step, newton_corrections: iterations, relative_residual: residual });
         if i % t.output_every == 0 || i == t.increments {
             let kinetic = 0.5 * dot(&state.velocity, &mul(&mr, &state.velocity));
             let strain = evaluate(&state.displacement)?.strain_energy;
@@ -407,11 +471,54 @@ pub fn solve(model: &Model, name: Option<&str>, mass: MassKind, max_iterations: 
             if !kinetic.is_finite() || !balance.is_finite() {
                 return Err(Error::Invalid("nonlinear energy overflow".into()));
             }
+            let full = red.expand(&state.displacement, false);
+            let mut internal = vec![0.; mesh.dofs()];
+            let mut rods = Vec::new();
+            for e in &mesh.trusses {
+                let ds = mesh
+                    .layout
+                    .element_dofs(&e.nodes, fieldcraft_fem::DofSet::TRANSLATIONS)
+                    .ok_or_else(|| Error::Internal("rod recovery dofs".into()))?;
+                let ue: Vec<_> = ds.iter().map(|d| full[*d]).collect();
+                let recovery = recover_rod(&e.xyz, &ue, e.young, e.area)?;
+                for (d, value) in ds.iter().zip(&recovery.nodal_internal_force) {
+                    internal[*d] += value;
+                }
+                rods.push(recovery);
+            }
+            let time = i as f64 * t.time_step;
+            let mut external = vec![0.; mesh.dofs()];
+            for name in &step.loads {
+                let mut one = step.clone();
+                one.loads.clear();
+                one.loads.insert(name.clone());
+                let load = system::loads(model, &resolved, &mesh, &one, &red.active)?;
+                let multiplier = match t.load_amplitudes.get(name) {
+                    Some(a) => a.evaluator()?.value(time)?,
+                    None => 1.,
+                };
+                for (v, f) in external.iter_mut().zip(load) {
+                    *v += multiplier * f;
+                }
+            }
+            let nodal = |full: &[f64]| -> Result<Vec<[f64; 3]>> {
+                mesh.labels
+                    .iter()
+                    .enumerate()
+                    .map(|(n, _)| {
+                        let ds = system::translations(&mesh, n)?;
+                        Ok(std::array::from_fn(|i| ds.get(i).and_then(|d| full.get(*d)).copied().unwrap_or(0.)))
+                    })
+                    .collect()
+            };
             out.frames.push(Frame {
                 time: i as f64 * t.time_step,
                 displacement: field(&state.displacement)?,
                 velocity: field(&state.velocity)?,
                 acceleration: field(&state.acceleration)?,
+                internal_force: nodal(&internal)?,
+                external_force: nodal(&external)?,
+                rods,
                 kinetic_energy: kinetic,
                 strain_energy: strain,
                 external_work: work,
@@ -479,5 +586,151 @@ mod tests {
         solver.advance(&mut other, &[0.], &[0.], eval).unwrap();
         assert_eq!(state.displacement, other.displacement);
         assert_eq!(state.velocity, other.velocity);
+    }
+}
+
+impl History {
+    /// Validate the fixed kind-11 contract before native storage or use.
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        self.settings.validate().map_err(|e| e.to_string())?;
+        if self.step.is_empty()
+            || self.nodes.is_empty()
+            || self.elements.is_empty()
+            || self.nodes.windows(2).any(|w| w[0] >= w[1])
+            || self.nodes.contains(&0)
+            || !(1..=100).contains(&self.max_iterations)
+            || !self.tolerance.is_finite()
+            || self.tolerance <= 0.
+            || self.tolerance > 0.01
+            || !matches!(self.settings.method, Method::Direct)
+            || self.settings.adaptive.is_some()
+            || self.settings.base_acceleration.is_some()
+            || self.settings.base_displacement.is_some()
+            || self.settings.damping.beta != 0.
+            || matches!(self.settings.integration, Choice::LinearAcceleration)
+        {
+            return Err("invalid nonlinear rod settings or identities".into());
+        }
+        if self.elements.windows(2).any(|w| w[0].label >= w[1].label) {
+            return Err("nonlinear element labels must ascend".into());
+        }
+        for e in &self.elements {
+            if e.label == 0
+                || e.nodes.len() != 2
+                || e.nodes[0] == e.nodes[1]
+                || e.nodes.iter().any(|n| self.nodes.binary_search(n).is_err())
+                || e.reference_coordinates.len() != 2
+                || e.reference_coordinates.iter().flatten().any(|x| !x.is_finite())
+                || !e.young.is_finite()
+                || e.young <= 0.
+                || !e.reference_area.is_finite()
+                || e.reference_area <= 0.
+                || e.reference_coordinates[0] == e.reference_coordinates[1]
+            {
+                return Err("invalid nonlinear rod reference identity".into());
+            }
+        }
+        let t = &self.settings;
+        if self.accepted_steps.len() != t.increments as usize + 1 {
+            return Err("incomplete nonlinear convergence log".into());
+        }
+        for (i, d) in self.accepted_steps.iter().enumerate() {
+            if d.time != i as f64 * t.time_step
+                || !d.relative_residual.is_finite()
+                || d.relative_residual < 0.
+                || (i > 0 && d.relative_residual > self.tolerance)
+                || d.newton_corrections > self.max_iterations
+            {
+                return Err("invalid nonlinear convergence log".into());
+            }
+        }
+        let expected = t.increments / t.output_every + 1 + u32::from(!t.increments.is_multiple_of(t.output_every));
+        if self.frames.len() != expected as usize {
+            return Err("incomplete nonlinear accepted frames".into());
+        }
+        for (i, f) in self.frames.iter().enumerate() {
+            let increment = (i as u64 * u64::from(t.output_every)).min(u64::from(t.increments));
+            if f.time != increment as f64 * t.time_step
+                || !f.time.is_finite()
+                || !f.relative_residual.is_finite()
+                || f.relative_residual < 0.
+                || (i > 0 && f.relative_residual > self.tolerance)
+                || f.newton_corrections > self.max_iterations
+                || f.rods.len() != self.elements.len()
+                || [f.kinetic_energy, f.strain_energy, f.external_work, f.physical_dissipation, f.energy_balance].iter().any(|x| !x.is_finite())
+                || f.kinetic_energy < 0.
+                || f.strain_energy < 0.
+                || f.physical_dissipation < 0.
+            {
+                return Err("invalid nonlinear accepted state or energy".into());
+            }
+            for a in [&f.displacement, &f.velocity, &f.acceleration, &f.internal_force, &f.external_force] {
+                if a.len() != self.nodes.len() || a.iter().flatten().any(|x| !x.is_finite()) {
+                    return Err("invalid nonlinear nodal fields".into());
+                }
+            }
+            let d = &self.accepted_steps[increment as usize];
+            if d.newton_corrections != f.newton_corrections || d.relative_residual != f.relative_residual {
+                return Err("inconsistent nonlinear frame convergence".into());
+            }
+            let mut internal = vec![[0.; 3]; self.nodes.len()];
+            for (e, r) in self.elements.iter().zip(&f.rods) {
+                let mut u = Vec::new();
+                for n in &e.nodes {
+                    let k = self.nodes.binary_search(n).map_err(|_| "missing nonlinear node")?;
+                    u.extend_from_slice(&f.displacement[k]);
+                }
+                let recovered = recover_rod(&e.reference_coordinates, &u, e.young, e.reference_area).map_err(|e| e.to_string())?;
+                // Re-evaluate from the stored accepted state: stress must not be a fabricated summary.
+                if r != &recovered {
+                    return Err("nonlinear recovered stress does not match accepted displacement".into());
+                }
+                for (local, n) in e.nodes.iter().enumerate() {
+                    let k = self.nodes.binary_search(n).map_err(|_| "missing nonlinear node")?;
+                    for axis in 0..3 {
+                        internal[k][axis] += recovered.nodal_internal_force[3 * local + axis];
+                    }
+                }
+            }
+            if internal != f.internal_force {
+                return Err("inconsistent nonlinear internal force".into());
+            }
+        }
+        Ok(())
+    }
+}
+
+// Model settings contain tagged amplitude enums and stringified node-map keys.
+// Use their canonical model JSON inside the binary codec; human replies retain an object.
+mod stored_settings {
+    use fieldcraft_model::dynamics::Transient;
+    use serde::{Deserialize, Serialize};
+    pub fn serialize<S: serde::Serializer>(t: &Transient, s: S) -> Result<S::Ok, S::Error> {
+        if s.is_human_readable() { t.serialize(s) } else { serde_json::to_string(t).map_err(serde::ser::Error::custom)?.serialize(s) }
+    }
+    pub fn deserialize<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Transient, D::Error> {
+        if d.is_human_readable() {
+            Transient::deserialize(d)
+        } else {
+            let text = String::deserialize(d)?;
+            let value: serde_json::Value = serde_json::from_str(&text).map_err(serde::de::Error::custom)?;
+            for key in [
+                "time_step",
+                "increments",
+                "output_every",
+                "integration",
+                "method",
+                "damping",
+                "load_amplitudes",
+                "initial_displacement",
+                "initial_velocity",
+                "base_acceleration",
+            ] {
+                if value.get(key).is_none() {
+                    return Err(serde::de::Error::custom(format!("missing nonlinear setting {key}")));
+                }
+            }
+            serde_json::from_value(value).map_err(serde::de::Error::custom)
+        }
     }
 }

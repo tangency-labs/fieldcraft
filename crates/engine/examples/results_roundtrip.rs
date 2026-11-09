@@ -30,6 +30,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             Solved::Implicit(StepResult::Frequency(r)) => ("frequency", serde_json::to_value(r)?, Value::Null),
             Solved::Implicit(StepResult::Heat(r)) => ("heat", serde_json::to_value(r)?, Value::Null),
             Solved::Explicit(r) => ("explicit", serde_json::to_value(r)?, Value::Null),
+            Solved::Nonlinear(r) => ("nonlinear_rod", serde_json::to_value(r)?, Value::Null),
             Solved::Fluid(r) => ("fluid", serde_json::to_value(r)?, Value::Null),
         };
         fields.push(json!({"kind":kind,"definition":stored.definition,"payload":payload,"fatigue":fatigue}));

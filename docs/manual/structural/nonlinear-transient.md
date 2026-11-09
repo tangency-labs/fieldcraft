@@ -1,4 +1,4 @@
-# Geometric nonlinear transient diagnostics
+# Geometric nonlinear transient
 
 `solve.transient.nonlinear {"step":"Motion","mass":"consistent",
 "max_iterations":30,"tolerance":1e-8}` integrates an existing transient step with
@@ -9,21 +9,29 @@ optional point masses and mass-proportional physical viscous damping.
 
 The reply contains SI nodal displacement, velocity, acceleration and T, V, W,
 physical damping dissipation, energy balance, Newton correction counts and
-residuals. It is ephemeral diagnostics: save the command reply separately.
-It neither creates nor replaces a stored linear result. `file.save_as` does not
-persist these nonlinear frames. No native result kind or payload is added.
-Native nonlinear persistence requires a separately approved version contract.
-The existing transient step supplies time controls; the nonlinear selection is
-the explicit command above. Reproduce with the full command script. Saving
-only the model or exporting that step with `deck.write` does not turn it into
-a nonlinear analysis. Use the separate `deck.write.nonlinear` command described below.
-The coordinated fatigue merge supplies unified MCRSLT07 for existing linear
-results. This diagnostic command adds no persisted nonlinear kind or payload;
-existing 06 archives are not 07 deliverables.
+residuals. Successful solves store a distinct **MCRSLT07 kind 11** result,
+which `file.save_as` and `file.open` preserve without solving. Use
+`solve.probe {"step":"Motion","nodes":[2]}` to retrieve the complete nonlinear
+SI history (all nodes and elements, including reference identities). The node
+selector is checked against the model but does not reduce this full-history reply.
+This is not a linear kind-6 response. A failed solve restores the previous session
+result; no rejected trial state is stored as an accepted frame. The error reports
+the failed increment and last committed time. All accepted increments, including
+those omitted by `output_every`, retain correction counts and relative residuals.
+
+The model's existing transient step supplies time controls; the explicit nonlinear
+command selects the rod formulation and stores its actual settings with the result.
+Saving a result-free model or exporting via `deck.write` does not select nonlinear
+analysis. Reproduce with `solve.transient.nonlinear`; use `deck.write.nonlinear`
+for the separately supported user-element export. No archive-version upgrade is
+required; older unified-07 readers reject unknown kind 11; pre-07 readers retain their
+unsupported-magic result-drop warning. Kinds 0–8 are unchanged; 9/10
+remain unused, and old 05/06 kinds above 5 remain refused.
+See [the complete layout](../../results-kind-layout.md#nonlinear-rod-kind-11).
 
 Solids, shells, beams, rod3, contacts, couplings, foundations, springs/dashpots,
 plasticity/hyperelasticity, material damping, follower loads, base motion,
-nonzero prescribed displacements, requested stress/other field output, modal reduction, adaptive steps and
+nonzero prescribed displacements, requested reaction/thermal field output, modal reduction, adaptive steps and
 stiffness-proportional damping are refused. Point masses must provide a positive
 mass operator on the free coordinates. This rod formulation is not a tension-only
 cable law: compression is elastic, and collapse is refused. It does not extend
@@ -179,5 +187,5 @@ check): [truss theory](https://docs.software.vt.edu/abaqusv2025/English/SIMACAET
 [user-subroutine C interoperability](https://docs.software.vt.edu/abaqusv2025/English/SIMACAESUBRefMap/simasub-c-subroutineover.htm),
 [execution precision](https://docs.software.vt.edu/abaqusv2025/English/SIMACAEEXCRefMap/simaexc-c-analysisproc.htm),
 [ENERGY FILE](https://docs.software.vt.edu/abaqusv2025/English/SIMACAEKEYRefMap/simakey-r-energyfile.htm).
-This export adds no persistent nonlinear result type or changes to the unified
-07 layout. A separate approved model/result version contract is still required.
+The user-element export itself does not change the unified
+07 envelope or kinds 0–8. Native nonlinear histories use the separately allocated kind 11 described above.

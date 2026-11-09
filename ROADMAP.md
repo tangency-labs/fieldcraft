@@ -215,7 +215,7 @@ Static joint identification now groups observations by step and shares each tria
 factorization across parameter columns. A prescribed-motion, zero-foundation-coefficient
 check compares the batched response/Jacobian bit for bit with scalar sensitivities.
 
-Geometric rod2 dynamics: experimental `solve.transient.nonlinear` Newmark/HHT full Newton, consistent/lumped reference mass and SI diagnostic histories. Native nonlinear result persistence and general solid/contact/material extension remain open.
+Geometric rod2 dynamics: `solve.transient.nonlinear` Newmark/HHT full Newton with consistent/lumped reference mass. Native MCRSLT07 kind 11 retains actual settings, accepted SI U/V/A and nodal forces, recovered Green/second-Piola/nominal rod fields, energy accounts and all accepted-step convergence diagnostics. Native save/reopen and legacy-kind boundaries are verified; general solid/contact/material extensions and nonlinear field visualization remain open.
 ## Fatigue (fusion fork, development)
 
 Implemented: finite-record rainflow, Basquin/Miner, CMB/Morrow/SWT and stress mean

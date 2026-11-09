@@ -3080,7 +3080,7 @@ pub const SOLVE_NONLINEAR_TRANSIENT: &[Field] = &[
     STEP,
     choice("mass", "Mass matrix", &[("consistent", "Consistent"), ("lumped", "Lumped")])
         .def("\"consistent\"")
-        .help("Reference mass for inertia, initial balance and kinetic energy."),
+        .help("Reference mass for inertia, initial balance and kinetic energy; retained in native nonlinear kind 11."),
     int("max_iterations", "Newton corrections per step", 1, 100)
         .help("Full tangent rebuild at each correction; failure leaves committed state unchanged."),
     num("tolerance", "Relative force tolerance", D::None).help("Positive, at most 0.01; default 1e-8."),
