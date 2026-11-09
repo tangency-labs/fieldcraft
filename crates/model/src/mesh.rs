@@ -619,6 +619,20 @@ mod tests {
     }
 
     #[test]
+    fn tet10_internal_face_direction_is_oriented_and_includes_mid_nodes() {
+        let faces = ElementKind::Tet10.faces();
+        assert_eq!(faces[0], &[0, 2, 1, 6, 5, 4]);
+        assert_eq!(faces[1], &[0, 1, 3, 4, 8, 7]);
+        let all = faces[0].to_vec();
+        assert_eq!(all.len(), 6);
+        assert!(all.contains(&4) && all.contains(&5) && all.contains(&6));
+        // The first three corner nodes define the directed face; reversing the
+        // element orientation reverses the normal while preserving its node set.
+        assert_ne!(faces[0][0..3], [0, 1, 2]);
+        assert_eq!(faces[0][3..], [6, 5, 4]);
+    }
+
+    #[test]
     fn merging_nodes_rewrites_elements_sets_and_tags_and_refuses_a_collapse() {
         use crate::{GeometryRef, Set};
         let mut m = Model::default();

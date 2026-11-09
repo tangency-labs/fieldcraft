@@ -7,6 +7,8 @@ use crate::{Error, Result};
 use fieldcraft_fem::DofKind;
 use fieldcraft_model::{Model, PretensionControl, PretensionSection, Resolved, Step};
 use std::collections::BTreeSet;
+mod cut;
+pub(crate) use cut::prepare;
 
 pub(crate) fn control_dof(mesh: &Mesh, section: &PretensionSection) -> Result<usize> {
     let point = mesh.point(&section.control).ok_or_else(|| Error::Invalid(format!("pretension control `{}` is missing", section.control)))?;
@@ -20,6 +22,11 @@ pub(crate) fn control_dofs(model: &Model, mesh: &Mesh) -> Result<BTreeSet<usize>
 pub(crate) fn rows<'a>(model: &'a Model, resolved: &Resolved, mesh: &Mesh) -> Result<Vec<Row<'a>>> {
     let mut rows = Vec::new();
     for (name, section) in model.pretensions() {
+        if section.face.is_some() {
+            return Err(Error::NotSupported(format!(
+                "pretension `{name}` continuous face requires internal cut preparation; currently available in static equilibrium analyses"
+            )));
+        }
         if mesh.theory.is_some() {
             return Err(Error::NotSupported(format!("pretension `{name}` in 2D")));
         }
@@ -77,7 +84,11 @@ pub(crate) fn prescribe(model: &Model, mesh: &Mesh, step: &Step, values: bool, o
         let value = match step.pretension.get(name) {
             Some(PretensionControl::Force { .. }) => None,
             Some(PretensionControl::Adjustment { value }) => Some(if values { *value } else { 0.0 }),
-            Some(PretensionControl::Fixed) => return Err(Error::Invalid(format!("pretension `{name}` current-value FIXED is an export-only control; solve from a resolved adjustment or use model.pretension.lock"))),
+            Some(PretensionControl::Fixed) => {
+                return Err(Error::Invalid(format!(
+                    "pretension `{name}` current-value FIXED is an export-only control; solve from a resolved adjustment or use model.pretension.lock"
+                )));
+            }
             None => Some(0.0), // undeformed cut or locked perturbation increment
         };
         let q = control_dof(mesh, section)?;

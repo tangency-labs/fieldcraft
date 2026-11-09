@@ -34,6 +34,29 @@ duplicated across the cut. For every paired node,
 not a physical global X translation. Its other directions are inactive.
 A positive force conjugate to q tightens the bolt halves.
 
+For a continuous solid mesh, the optional `face` names a planar internal
+element-face set. Its normal must point away from the selected underlying
+elements. The source keeps shared nodes; static equilibrium solvers prepare a
+private copy before assembly, duplicate the negative-normal trace (including
+quadratic mid-side nodes), and rewire every incident element on that side.
+The existing node-pair constraints and exact elimination then enforce tangential
+continuity and `u_minus - u_plus = normal * q`. `first` and `second` remain named
+sets for compatibility but do not impose end-face displacement constraints in
+this mode. In particular, q can be nonzero with both outer ends fixed.
+
+```json
+{"command":"model.pretension.create","params":{"name":"Bolt","first":"Bottom","second":"Top","face":"InternalCut","normal":[0,0,1],"control":"BoltControl"}}
+```
+
+Only static equilibrium currently prepares continuous faces; frequency and
+harmonic analyses require the explicit node-pair representation until their
+base-state transfer supports this preparation. Boundary faces, intersecting cuts,
+incomplete sections and nonplanar cuts are refused. Public nodal output retains
+the positive-side trace at source cut nodes; q reports the jump separately, and
+element stresses are retained on both sides. Private duplicate labels are never
+written into the source model or its native deck. The native face export uses
+the shared connectivity and `*PRE-TENSION SECTION`, without transverse equations.
+
 ```json
 [
  {"command":"model.pretension.create","params":{"name":"Bolt","first":"cut1","second":"cut2","normal":[0,0,1],"control":"BoltControl"}},
@@ -61,7 +84,7 @@ The scalar load is an internal force pair and is excluded from global force sums
 Definitions, controls and section results are serialized with the model/results.
 
 Current limitations: conforming coincident planar cuts only, fixed normal and
-constant jump; no automatic bolt cutting, nonconforming pretension cut, or evolving
+constant jump; no automatic selection of a bolt cut, nonconforming pretension cut, or evolving
 cut normal. Keep the cut control point separate from ordinary loads, springs,
 couplings and boundary conditions. The Abaqus writer emits native `*PRE-TENSION SECTION` for conforming cuts whose element faces can be resolved, writes the control-node force in the preload general step, and carries a locked adjustment with a nonzero control-node boundary value. Frequency and harmonic steps with `base_state` are emitted as perturbation steps; a general static step feeding such a perturbation is written with `NLGEOM=YES` so Abaqus includes preload/initial-stress stiffness. Nonconforming or face-less cuts, unsupported native procedures, and pretension on a perturbation step are refused by name. Nastran and LS-DYNA writers continue to refuse pretension and `base_state`.
 Sensitivity paths that assume unloaded stiffness refuse prestressed steps.

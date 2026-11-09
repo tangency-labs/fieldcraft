@@ -1137,6 +1137,51 @@ impl Deck {
                 .sets
                 .get(&p.second)
                 .ok_or_else(|| Error::Unsupported { format: FORMAT, what: format!("pretension `{name}`: missing second set `{}`", p.second) })?;
+            if let Some(face_name) = &p.face {
+                let face_set = r.sets.get(face_name).ok_or_else(|| Error::Unsupported {
+                    format: FORMAT,
+                    what: format!("pretension `{name}`: missing element-face set `{face_name}`"),
+                })?;
+                if face_set.faces.is_empty() {
+                    return Err(Error::Unsupported { format: FORMAT, what: format!("pretension `{name}`: element-face set `{face_name}` is empty") });
+                }
+                for face in &face_set.faces {
+                    let labels = model
+                        .face_nodes(*face)
+                        .ok_or_else(|| Error::Unsupported { format: FORMAT, what: format!("pretension `{name}`: invalid internal face") })?;
+                    let nodes: BTreeSet<_> = labels.into_iter().collect();
+                    let neighbours = model
+                        .elements()
+                        .iter()
+                        .filter(|(label, e)| {
+                            **label != face.element
+                                && e.kind.dimension() == 3
+                                && e.kind.faces().iter().any(|f| f.iter().filter_map(|i| e.nodes.get(*i)).copied().collect::<BTreeSet<_>>() == nodes)
+                        })
+                        .count();
+                    if neighbours != 1 {
+                        return Err(Error::Unsupported {
+                            format: FORMAT,
+                            what: format!(
+                                "pretension `{name}`: internal face must share nodes with exactly one neighbour; coincident coordinates but no element connectivity are not a continuous cut"
+                            ),
+                        });
+                    }
+                }
+                let surface = format!("FC-PRET-{name}");
+                let control = r.reference_point_nodes.get(&p.control).ok_or_else(|| Error::Unsupported {
+                    format: FORMAT,
+                    what: format!("pretension `{name}`: control point `{}` has no node", p.control),
+                })?;
+                self.comment(&format!("Native continuous internal face `{name}` from set `{face_name}`; control U1 is cut tightening adjustment"));
+                self.line(&format!("*SURFACE, NAME={surface}, TYPE=ELEMENT"));
+                for ef in &face_set.faces {
+                    self.line(&format!("{}, S{}", ef.element, ef.face));
+                }
+                self.line(&format!("*PRE-TENSION SECTION, SURFACE={surface}, NODE={control}"));
+                self.numbers_line("", &p.normal)?;
+                continue;
+            }
             let nodes = |set: &fieldcraft_model::ResolvedSet| -> BTreeSet<u32> { set.nodes.iter().copied().collect() };
             let first_nodes = nodes(first);
             let second_nodes = nodes(second);
@@ -1204,6 +1249,9 @@ impl Deck {
     /// leaving the scalar normal DOF to the native pretension section.
     fn pretension_connections(&mut self, model: &Model, r: &Resolved) -> Result<()> {
         for (name, p) in model.pretensions() {
+            if p.face.is_some() {
+                continue;
+            }
             let Some(first) = r.sets.get(&p.first) else { continue };
             let Some(second) = r.sets.get(&p.second) else { continue };
             let connected = model

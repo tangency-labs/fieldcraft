@@ -1309,6 +1309,14 @@ fn followers(model: &Model, resolved: &fieldcraft_model::Resolved, mesh: &Mesh, 
 /// Solve a nonlinear static step: the step named `step`, or the model's only nonlinear static
 /// step.
 pub fn solve_nonlinear(model: &Model, step: Option<&str>, limits: &Limits) -> Result<StaticResult> {
+    if model.pretensions().values().any(|p| p.face.is_some()) {
+        fieldcraft_model::progress::check()?;
+        let resolved = model.resolve()?;
+        let prepared = crate::pretension::prepare(model, &resolved, limits.max_dofs)?;
+        let mut result = solve_nonlinear(prepared.model.as_ref(), step, limits)?;
+        prepared.project(&mut result);
+        return Ok(result);
+    }
     if let Some((name, _)) = model.foundations().iter().next() {
         return Err(Error::NotSupported(format!("foundation `{name}` in nonlinear analysis")));
     }

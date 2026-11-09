@@ -414,6 +414,9 @@ pub fn solve_static(model: &Model, step: Option<&str>, limits: &Limits) -> Resul
     // A job cancelled before it starts stops here, before any setup work.
     fieldcraft_model::progress::check()?;
     let resolved = model.resolve()?;
+    let prepared = crate::pretension::prepare(model, &resolved, limits.max_dofs)?;
+    let model = prepared.model.as_ref();
+    let resolved = if prepared.copies.is_empty() { resolved } else { model.resolve()? };
     let step = model.select_step(
         step,
         |p| matches!(p, Procedure::Static {} | Procedure::CoupledTemperatureDisplacement {}),
@@ -421,7 +424,9 @@ pub fn solve_static(model: &Model, step: Option<&str>, limits: &Limits) -> Resul
     )?;
     crate::system::refuse_contact(model, "linear static")?;
     let mesh = Mesh::new(model, &resolved, limits.max_dofs)?;
-    static_on(&Setup { model, resolved: &resolved, mesh: &mesh, step }, limits)
+    let mut result = static_on(&Setup { model, resolved: &resolved, mesh: &mesh, step }, limits)?;
+    prepared.project(&mut result);
+    Ok(result)
 }
 
 /// Static equilibrium on an already validated step and mesh, also used for a buckling preload.
