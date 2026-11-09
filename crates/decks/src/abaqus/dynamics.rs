@@ -41,6 +41,9 @@ pub(super) fn check(model: &Model) -> Result<()> {
         if !model.reference_points().is_empty() || !model.contacts().is_empty() || !model.initial_fields().is_empty() {
             return Err(refuse(step, "reference points, contact or initial fields in a linear dynamics export"));
         }
+        if matches!(&step.procedure, Procedure::Transient(t) if t.adaptive.is_some()) {
+            return Err(refuse(step, "adaptive transient error estimator has no equivalent native export control"));
+        }
         let projected = !matches!(&step.procedure, Procedure::Transient(t) if matches!(t.method, Method::Direct));
         for (name, m) in model.materials() {
             if m.plastic.is_some() || m.hyperelastic.is_some() {

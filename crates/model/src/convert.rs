@@ -396,6 +396,11 @@ impl Quantities for Step {
             Procedure::Static {} | Procedure::CoupledTemperatureDisplacement {} => {}
             Procedure::Transient(t) => {
                 f(Q::Time, &mut t.time_step);
+                if let Some(a) = &mut t.adaptive {
+                    f(Q::Time, &mut a.min_step);
+                    f(Q::Time, &mut a.max_step);
+                    f(Q::Length, &mut a.absolute_tolerance);
+                }
                 t.damping.quantities(f);
                 for a in t.load_amplitudes.values_mut() {
                     amplitude_quantities(a, f);

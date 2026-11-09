@@ -42,9 +42,49 @@ pub struct BaseDisplacement {
     pub initial_velocity: f64,
     pub initial_acceleration: f64,
 }
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorEstimator {
+    #[default]
+    ZienkiewiczXie,
+    QuadraticAcceleration,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Adaptive {
+    pub min_step: f64,
+    pub max_step: f64,
+    pub absolute_tolerance: f64,
+    #[serde(default)]
+    pub relative_tolerance: f64,
+    pub max_attempts: u32,
+    #[serde(default)]
+    pub estimator: ErrorEstimator,
+}
+impl Adaptive {
+    pub fn validate(&self, interval: f64) -> Result<()> {
+        if !self.min_step.is_finite()
+            || !self.max_step.is_finite()
+            || self.min_step <= 0.0
+            || self.max_step < self.min_step
+            || self.max_step > interval
+            || !self.absolute_tolerance.is_finite()
+            || self.absolute_tolerance <= 0.0
+            || !self.relative_tolerance.is_finite()
+            || !(0.0..=1.0).contains(&self.relative_tolerance)
+            || !(1..=1_000_000).contains(&self.max_attempts)
+        {
+            return Err(Error::Invalid("adaptive transient requires 0 < min_step <= max_step <= time_step, positive absolute_tolerance, relative_tolerance in [0,1], and 1..1000000 max_attempts".into()));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Transient {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adaptive: Option<Adaptive>,
     pub time_step: f64,
     pub increments: u32,
     #[serde(default = "one")]
@@ -120,6 +160,15 @@ impl Transient {
         }
         if let Method::Modal { modes, damping_ratios } = &self.method {
             ratios(*modes, damping_ratios)?;
+        }
+        if let Some(a) = &self.adaptive {
+            a.validate(self.time_step)?;
+            if !matches!(self.integration, Integration::AverageAcceleration)
+                || !matches!(self.method, Method::Direct)
+                || self.base_displacement.is_some()
+            {
+                return Err(Error::Invalid("adaptive transient currently supports direct average_acceleration without base_displacement".into()));
+            }
         }
         self.damping.validate()?;
         if self.damping.loss_factor != 0.0 {

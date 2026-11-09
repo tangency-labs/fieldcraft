@@ -159,7 +159,7 @@ period inputs in ms, and millimetre output. It exercises the full command, assem
 
 ## Scope limits
 
-This is a linear, fixed-step solver. The reusable reduced-matrix integration interface is a
+This is a linear solver with fixed-step methods and opt-in error-controlled direct average-acceleration substeps. The reusable reduced-matrix integration interface is a
 building block for future tangent updates, not a nonlinear equilibrium iteration. Adaptive
 stepping, residual vectors, independent support motions and rotational initial states are
 not implemented. These limits are separate from the available amplitude, direct/modal,
@@ -294,3 +294,52 @@ work. For modal histories the integrated projected damping includes the specifie
 modal ratios. For base excitation this is the relative-coordinate effective-force
 work, not absolute ground input energy. The load interpolation and output cadence
 are unchanged.
+
+### Error-controlled substeps
+
+For a direct average-acceleration step with translational degrees of freedom, add:
+
+```json
+"adaptive": {
+  "min_step": "0.00001 s",
+  "max_step": "0.2 s",
+  "absolute_tolerance": "0.00000001 m",
+  "relative_tolerance": 0,
+  "max_attempts": 10000,
+  "estimator": "zienkiewicz_xie"
+}
+```
+
+`time_step` remains the sampling-grid interval; `increments` sets the duration and
+`output_every` the saved-frame cadence. Internal substeps may shrink and grow, but
+end at grid points and tabular/smooth-step load knots. `max_step <= time_step`.
+The controller accepts when every displacement estimate is within
+`absolute_tolerance + relative_tolerance * max(abs(u_old), abs(u_trial))`.
+Rejected trials do not update the state or energy ledger. A tolerance failure at
+`min_step`, or exhaustion of `max_attempts` including rejections, returns an error.
+Solve warnings report accepted/rejected counts and actual minimum/maximum steps.
+Initial acceleration still comes from physical equilibrium.
+
+The two-point estimate is `(beta-1/6)*h^2*(a_new-a_old)`, from
+[Zienkiewicz–Xie (1991)](https://doi.org/10.1002/eqe.4290200907), independently reproduced
+as equation (6) of [Mayr, Wall and Gee](https://mediatum.ub.tum.de/doc/1416703/document.pdf).
+`quadratic_acceleration` adds `c*h^4/12`, where
+`c=((a_new-a_old)/h-(a_old-a_previous)/g)/(h+g)` and `g` is the previous accepted step.
+This is our unequal-step quadratic-acceleration reconstruction of the higher-order
+auxiliary-integration idea described by
+[Li, Zeng and Wiberg (1993)](https://doi.org/10.1002/cnm.1640090402).
+Its equal-step coefficients are checked against equation (32) of
+[Neumann and Schweizerhof (1999)](https://www.ifm.kit.edu/download/1999_JN_KS_1.pdf).
+The original 1993 full-text procedure has not been reproduced verbatim; attribution
+is to its stated reconstruction principle and the independently available formula.
+Startup and a load knot reset use the two-point estimate.
+
+These are **local smooth-solution estimates, not global error bounds**. Tighten the
+tolerance and compare actual response errors. Choose a maximum step that resolves
+excitation and relevant modes; local estimation alone cannot prevent aliasing.
+HHT, linear acceleration, modal projection, rotational/pressure/thermal coordinates
+and prescribed base displacement are currently refused with adaptive control.
+The two-point estimate degenerates at linear-acceleration beta=1/6; no such zero is
+interpreted as accuracy. Native Abaqus export also refuses this controller because
+it has no demonstrated equivalent target option. Fixed-step models remain unchanged.
+

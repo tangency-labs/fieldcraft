@@ -154,6 +154,14 @@ pub fn solve(model: &Model, name: Option<&str>, limits: &Limits, spectrum: bool)
         }
     }
     let mesh = Mesh::new(model, &resolved, limits.max_dofs)?;
+    if matches!(&step.procedure, Procedure::Transient(t) if t.adaptive.is_some())
+        && (0..mesh.dofs())
+            .any(|d| !matches!(mesh.kind(d), Some(fieldcraft_fem::DofKind::Ux | fieldcraft_fem::DofKind::Uy | fieldcraft_fem::DofKind::Uz)))
+    {
+        return Err(Error::NotSupported(
+            "adaptive transient requires translational degrees of freedom; rotation/pressure/thermal coordinates are unsupported".into(),
+        ));
+    }
     if !mesh.points.is_empty() {
         return Err(Error::NotSupported("linear dynamics reference-point output".into()));
     }
@@ -416,7 +424,21 @@ pub fn solve(model: &Model, name: Option<&str>, limits: &Limits, spectrum: bool)
         };
         let mut f = project_f(force(0.0)?);
         let mut state = Integrator::initial_state(&ki, &mi, &ci, ui, vi, &f, limits)?;
-        let integrator = Integrator::new(&ki, &mi, &ci, t.time_step, method, limits)?;
+        let integrator = if t.adaptive.is_none() { Some(Integrator::new(&ki, &mi, &ci, t.time_step, method, limits)?) } else { None };
+        let mut controller = super::adaptive::Controller::new(t.time_step);
+        let mut knots = Vec::new();
+        if t.adaptive.is_some() {
+            for curve in t.load_amplitudes.values().chain(t.base_acceleration.iter().map(|b| &b.amplitude)) {
+                match curve {
+                    fieldcraft_model::amplitude::Amplitude::Tabular { points } | fieldcraft_model::amplitude::Amplitude::SmoothStep { points } => {
+                        knots.extend(points.iter().map(|p| p[0]))
+                    }
+                    fieldcraft_model::amplitude::Amplitude::Periodic { origin, .. } => knots.push(*origin),
+                }
+            }
+            knots.sort_by(f64::total_cmp);
+            knots.dedup();
+        }
         let initial_energy = energy(&mi, &state.velocity) + energy(&ki, &state.displacement);
         let mut damping_dissipation = 0.0;
         let mut external_work = 0.0;
@@ -424,11 +446,29 @@ pub fn solve(model: &Model, name: Option<&str>, limits: &Limits, spectrum: bool)
         for i in 0..=t.increments {
             fieldcraft_model::progress::check()?;
             let time = i as f64 * t.time_step;
-            if i > 0 {
+            if i > 0
+                && let Some(settings) = &t.adaptive
+            {
+                let (d, w) = controller.advance_to(
+                    &mut state,
+                    &mut f,
+                    (i - 1) as f64 * t.time_step,
+                    time,
+                    &ki,
+                    &mi,
+                    &ci,
+                    settings,
+                    &knots,
+                    &mut |time| Ok(project_f(force(time)?)),
+                    limits,
+                )?;
+                damping_dissipation += d;
+                external_work += w;
+            } else if i > 0 {
                 let next = project_f(force(time)?);
                 let previous_u = state.displacement.clone();
                 let previous_v = state.velocity.clone();
-                integrator.advance(&mut state, &f, &next)?;
+                integrator.as_ref().ok_or_else(|| Error::Internal("missing fixed-step integrator".into()))?.advance(&mut state, &f, &next)?;
                 // Midpoint power / trapezoidal force work. Average-acceleration
                 // Newmark satisfies delta-u = dt*v_mid, so its discrete balance
                 // closes to roundoff for linear time-invariant operators.
@@ -471,6 +511,10 @@ pub fn solve(model: &Model, name: Option<&str>, limits: &Limits, spectrum: bool)
             });
         }
         output.energy = Some(energies);
+        if t.adaptive.is_some() {
+            output.warnings.push(format!("Adaptive local displacement control: accepted={}, rejected={}, min_step_s={}, max_step_s={}; estimates are not global error bounds; saved frames retain the requested grid.",
+                controller.accepted, controller.rejected, controller.minimum_used, controller.maximum_used));
+        }
     }
     output.validate().map_err(Error::Invalid)?;
     Ok(output)

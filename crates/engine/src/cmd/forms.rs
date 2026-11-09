@@ -1102,7 +1102,7 @@ const PROCEDURE: Field = variants(
             ],
         ),
         variant("transient", "Linear transient", &[
-            positive("time_step", "Time step", D::Time).help("Fixed integration time increment.").req(),
+            positive("time_step", "Time step", D::Time).help("Fixed increment, or sampling-grid increment with adaptive substeps.").req(),
             int("increments", "Increments", 1, 1_000_000).help("Number of time increments after the initial state.").req(),
             int("output_every", "Output every", 1, 1_000_000).help("Store every nth increment; initial and final states are always stored.").def("1"),
             variants("integration", "Integration", &[
@@ -1117,6 +1117,8 @@ const PROCEDURE: Field = variants(
             group("damping", "Viscous damping", &[
                 num("alpha", "Rayleigh alpha", D::StrainRate).help("Nonnegative mass-proportional viscous coefficient."), num("beta", "Rayleigh beta", D::Time).help("Nonnegative stiffness-proportional viscous coefficient."),
             ]).help("Add Rayleigh viscous damping to material and support damping."),
+            json("adaptive", "Error-controlled substeps").numbers(&[("/min_step", D::Time), ("/max_step", D::Time), ("/absolute_tolerance", D::Length)])
+                .help("{min_step,max_step,absolute_tolerance,relative_tolerance:0,max_attempts,estimator:zienkiewicz_xie|quadratic_acceleration}; direct average acceleration with translational coordinates only. Saved time grid is unchanged."),
             json("load_amplitudes", "Load amplitudes").numbers(&[("/*/points/*/0", D::Time), ("/*/origin", D::Time), ("/*/angular_frequency", D::Of(Quantity::AngularVelocity))])
                 .help("Active load names mapped to tabular/smooth_step points or periodic Fourier coefficients. Values are dimensionless; outside tables holds endpoints."),
             json("initial_displacement", "Initial nodal translations").numbers(&[("/*", D::Length)]).help("Node labels mapped to XYZ translations; unspecified nodes start at zero."),

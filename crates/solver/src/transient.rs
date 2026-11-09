@@ -12,6 +12,7 @@
 //! The same reduced-matrix integrator accepts projected modal operators, including
 //! non-diagonal damping. It stores only the current state; callers budget outputs.
 
+mod adaptive;
 mod model;
 pub use model::{Energy, Frame, Response, solve};
 
