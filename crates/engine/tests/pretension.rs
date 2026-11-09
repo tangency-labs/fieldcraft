@@ -51,7 +51,11 @@ fn bolt_clamp_load_lock_persistence_and_perturbation() {
     let mut replay = Session::default();
     replay.run_script(&journal).unwrap();
     assert_eq!(session.model, replay.model);
-    assert!(fieldcraft_decks::abaqus::write(&session.model, fieldcraft_model::units::Preset::MKgS).is_err());
+    let deck = fieldcraft_decks::abaqus::write(&session.model, fieldcraft_model::units::Preset::MKgS).unwrap();
+    assert!(deck.contains("*PRE-TENSION SECTION, SURFACE=FC-PRET-Bolt, NODE="));
+    assert!(deck.contains("*FREQUENCY, EIGENSOLVER=LANCZOS"));
+    assert!(deck.contains("*STEADY STATE DYNAMICS, DIRECT"));
+    assert!(deck.contains("*STEP, NAME=Modes, PERTURBATION"));
 }
 
 // Check physical increments, not just that a solver returned successfully.
