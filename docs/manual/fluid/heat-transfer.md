@@ -15,7 +15,7 @@ against its limit.
 | **Step procedure** | `"fluid"` on a domain with `thermal` settings |
 | **Solver** | `crates/lbm` (CPU, f64); `crates/lbm-gpu` (GPU, f32), conducting solids and contacts included |
 | **Method** | D3Q7 passive scalar with two relaxation times (Krüger et al. 2017; Ginzburg 2005); cell-centred finite-volume conduction in solids (Patankar 1980) coupled through anti-bounce-back links (Li, Mei & Klausner 2013) |
-| **Verified by** | oracle `de-vahl-davis-ra1e3` … `ra1e6`, `conjugate-cavity-centred-body`, `stefan-two-phase`, `frozen-channel-poiseuille`; `crates/lbm/tests/thermal.rs`, `crates/lbm/tests/conjugate.rs`, `crates/lbm/tests/solidification.rs` |
+| **Verified by** | oracle `de-vahl-davis-ra1e3` … `ra1e6`, `conjugate-cavity-centred-body`, `stefan-two-phase`, `frozen-channel-poiseuille`, `thin-wall-series-conduction`; `crates/lbm/tests/thermal.rs`, `crates/lbm/tests/conjugate.rs`, `crates/lbm/tests/solidification.rs` |
 
 ## Synopsis
 
@@ -30,7 +30,8 @@ against its limit.
    "solids": [{"body": "Die", "material": "Silicon", "power": 5, "limit": 95},
               {"body": "Lid", "material": "Aluminium"}],
    "contacts": [{"bodies": ["Die", "Lid"], "thickness": 0.05, "conductivity": 5}]
- }}
+ },
+ "baffles": [{"name": "Sheet", "axis": "y", "position": 50, "conductance": 0.5}]}
 ```
 
 `model.fluid_domain.create` (or `.edit`) takes the domain; the numbers are in the display units
@@ -79,6 +80,26 @@ against its limit.
 **Thermal contact** (`contacts`): `bodies`, two conducting solids that share at least one cell face;
 either `resistance` (per area, K·m²/W in SI) or `thickness` with `conductivity` (R = t / k), not
 both. Solids not listed touch perfectly. One contact per pair.
+
+**Thin wall** (`baffles` of the fluid domain, beside `thermal`, at most 64): a zero-thickness,
+no-slip sheet across the whole box, separating the passages either side, with its conduction
+through the thickness as a conductance per area. Without `thermal` it is a no-slip wall only.
+
+| Field | Value | Meaning |
+|---|---|---|
+| `name` | text | Unique in the domain; its two sides report as `baffle/<name>/low` and `/high` in the heat and force histories. |
+| `axis` | `x`, `y` or `z` | The sheet's normal. |
+| `position` | length | Where it crosses the axis: on a lattice face strictly inside the box. |
+| `conductance` | ≥ 0, power per area and temperature | Conductivity over thickness, k / t (or 1 / R); 0 insulates. |
+
+Sheets in one domain are parallel and on distinct faces. The first version takes closed boxes
+(walls, moving walls and slip faces; periodic faces only along the sheet), sheets clear of
+obstacles, laminar flow without phase change or a free surface, on the CPU; anything else is
+refused. Where a sheet meets a moving box wall, the links through its edge take the wall's
+motion and give it their force, as at an edge of the box. The solve reports, per sheet, its
+`area` and, with heat, the mean `temperature` of its low and high sides and the `heat_flux` into
+the sheet from each side (equal and opposite), in the solve's reply; a saved file keeps each
+side's heat history (`heat`), not yet the side temperatures.
 
 The fluid's material needs a positive isotropic conductivity and a positive specific heat.
 
@@ -183,6 +204,23 @@ g = 1 / (1/(2 k_a) + 1/(2 k_b) + r),   r = R (ρ c)_f Δx / Δt
 
 (Incropera et al. 2011, §3.1.4). Both cells see the same g, so heat is conserved, and a resistance
 only lowers a conductance, so the sub-cycling limit holds as without it.
+
+**Thin walls.** A sheet sits on a lattice face, where the halfway rules put a wall. Every
+momentum link that crosses it bounces back on its own side (Ladd 1994), so no fluid crosses it
+and it takes no cells. On the scalar lattice the two populations a (leaving the low side) and b
+(leaving the high side) through each face return as a − H and b + H, and the anti-bounce-back
+relation (Krüger et al. 2017, ch. 8) gives the two surface temperatures, T_low = 4 (2a − H) and
+T_high = 4 (2b + H) with the weight 1/8. Fourier's law through the sheet, H = G (T_low − T_high),
+then closes it:
+
+```text
+H = (a − b) G / (G + 1/8),   G = conductance Δt / ((ρ c)_f Δx)
+```
+
+What one side loses the other gains, face by face, so heat is conserved exactly, zero
+conductance passes none, and the mix factor stays below 1 for any conductance (no stability
+limit, no resolved cell). In the steady state the discrete profile is the exact series solution
+q = ΔT / (L/k_f + 1/G).
 
 **Units of the solid.** Heat is counted in the fluid's lattice heat, (ρ c)_f Δx³ per degree. A
 solid's lattice conductivity is k Δt / ((ρ c)_f Δx²), its capacity ρ c / (ρ c)_f and its power
@@ -386,6 +424,13 @@ heavy).
 | Local wall flux at τ_T 0.8 and 1.4 | independent of τ_T with Λ_T fixed | 3e-3 (single relaxation time: > 2e-2) | `local_wall_heat_flux_does_not_depend_on_the_thermal_relaxation_time` |
 | Fluid, conducting slab, fluid in series | q = ΔT / Σ (L/k), exact discrete solution | 1e-9 | `a_composite_wall_conducts_in_series` |
 | Two solids with a contact | jump q R across it | 1e-9 | `a_contact_resistance_drops_the_temperature_by_q_r` |
+| Thin wall between held plates, normal along x, y and z, G 0, 0.05 and 10¹² | q = ΔT / (L/k_f + 1/G); side temperatures T_hot − q L_low/k_f and T_cold + q L_high/k_f | 1e-9 | `thin_wall_matches_series_conduction_on_every_axis` (`crates/lbm/tests/baffles.rs`) |
+| Counter-flowing Couette streams either side of the sheet | u = U (1 − 2y) in both passages; the series conduction; equal and opposite shear on the sides | 1e-9 | `counter_flowing_streams_either_side_of_a_conducting_sheet` |
+| Thin wall between held plates (oracle) | q = ΔT / (L/k_f + 1/G) and both side temperatures | 1e-9 | `thin-wall-series-conduction` |
+| Thin wall against the same wall resolved, one cell of k = G Δx | the slab's flux and face temperatures: the series conduction with the fluid path shortened by Δx, ΔT / ((L − Δx)/k_f + 1/G); the thin wall's, with the whole path | 1e-6; 1e-9 | `thin_wall_matches_a_resolved_conducting_slab` |
+| A sheet in an isothermal flow driven by a moving wall across its edge | each passage the half box with a resting wall in the sheet's place, every cell at every step; the moving wall's force twice the half box's | 1e-13; 1e-12 | `sheet_divides_an_isothermal_flow_driven_by_a_moving_wall_across_its_edge` |
+| Moving fluid either side, G 0, 0.05, 10¹² | each passage's mass; total heat; G = 0 passes none | 1e-11 | `baffle_conserves_heat_and_each_passages_mass` |
+| A thin wall through commands | units in and out; side difference = flux / G; refusals | 1e-9 | `a_thin_wall_reports_both_sides` (engine) |
 | Powered die and lid, contact | solids gain power less what leaves, every step | 1e-9 | `heat_crosses_a_contact_conserved_and_a_contact_must_touch` |
 | Heat-generating slab | half the power to each plate; parabola, error s Δx² / (8 k_s), second order | 1e-6; 2 %; order > 1.8 | `a_heat_generating_slab_balances_and_converges` |
 | Heated wall under a channel flow | the conduction solution | 2e-3 | `a_heated_wall_under_a_channel_flow_conducts_across_it` |
@@ -437,6 +482,9 @@ conductor filling the box and a low-capacity solid, temperature and heat within 
 - Solid–fluid interfaces are staircases of cell faces: curved interfaces lose accuracy, an
   error of first order for insulating inclusions.
 - There is no contact resistance between a solid and the fluid.
+- Thin walls are planar, grid-aligned and span the whole box, without in-plane conduction or heat
+  capacity; inlets and outlets, obstacles touching a sheet, turbulence, phase change, free
+  surfaces, checkpoints and the GPU refuse them for now.
 - The fluid's conductivity is isotropic.
 - A steady run's transient is not physical when a solid's capacity is scaled.
 - The numerical diffusion along the flow, 4 u² of the diffusivity in lattice units, bounds the
@@ -460,6 +508,7 @@ conductor filling the box and a low-capacity solid, temperature and heat within 
 - `crates/lbm/src/flow.rs`: `ThermalState`, `collide_thermal`, `stream_thermal`,
   `open_boundaries_thermal`, `refresh_buoyancy`, `update_temperature`, `conduct`; `Phase`,
   `MUSHY`, `freezing` (melting and freezing).
+- `crates/lbm/src/baffle.rs`: `Baffle` (thin walls: links, the through-wall mix, side results).
 - `crates/lbm/src/conduction.rs`: `SolidHeat::build`, `series`, `with_resistance`,
   `smallest_capacity`, `MAX_SUBSTEPS`.
 - `crates/lbm/src/setup.rs`: `ThermalSetup`, `SolidSetup`, `ContactSetup`, `thermal_magic`,
