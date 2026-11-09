@@ -343,3 +343,27 @@ The two-point estimate degenerates at linear-acceleration beta=1/6; no such zero
 interpreted as accuracy. Native Abaqus export also refuses this controller because
 it has no demonstrated equivalent target option. Fixed-step models remain unchanged.
 
+
+### Spectrum stress component peaks
+
+Request `output:["displacement","stress"]` on the spectrum step and read
+`solve.probe.nodes[].samples[0].stress` in `xx,yy,zz,xy,xz,yz` order.
+Each signed modal displacement is used to recover its stress tensor first. Nodal
+averaging occurs within that mode, followed by SRSS/CQC per stress component and
+then the requested direction combination. Recovering stress from already combined
+peak displacement would discard modal signs and is not equivalent.
+
+The original command recipe `examples/spectrum-stress-rods.json` uses two orthogonal
+unit-length rods meeting at TIP node 1, with the other ends fixed and U3 constrained.
+Each has area 1 m² and density 1.5 kg/m³; E is 192.3769 or 194.0449 Pa. The free mass
+is I kg and full consistent-mass base participation is 1.5 I kg. For flat Sa=1 m/s²,
+the TIP averaged modal stress tensor is `0.75*(n·direction)*(n⊗n)` Pa. Its signed
+normal/shear contributions provide independent checks of both modal combinations
+and all three direction choices, including cancellation of near-frequency modes.
+
+These are **individual component peak estimates**, not a simultaneous tensor,
+principal stress, von Mises peak, element hot-spot envelope or fatigue history.
+The current representation is global nodal averaging; shell output uses the top
+surface and beam section stress is refused. Element stress output in a native deck
+must be compared with the same recovery/averaging convention, not blindly with a
+commercial element integration-point maximum.
