@@ -452,3 +452,33 @@ factorization time. The writeback count excludes the separate contiguous below-p
 copy. Existing assembly and product intervals include their nested operations; do
 not add them together. `numeric_subtrees` and `numeric_top` partition the factor's
 subtree-dispatch and serial top-node phases, apart from setup and error handling.
+
+## Experimental multilevel ordering
+
+The solver tests contain an opt-in third candidate for `fill_reducing_order`, in
+`ordering_multilevel.rs`. Normal builds retain the coordinate and graph-level
+candidates. The experiment contracts heavy edges, grows a balanced coarse partition,
+then refines it during uncoarsening with locked single-vertex moves and best-prefix
+rollback. Crossing edges yield a vertex separator through bipartite matching and
+minimum vertex cover; child parts precede their separator. Leaves of at most 64
+vertices use quotient-graph approximate-degree bounds. This is a bounded variant,
+without supervariable amalgamation or a claim to reproduce another AMD package.
+
+Visits, adjacency, coarse ids, eight starting vertices and all ties are deterministic.
+There are at most 32 coarsening levels, four refinement passes per level and 64
+separator levels. Disconnected components are handled separately; dense or
+unsplittable parts fall back to their stable input order. The candidate remains
+experimental until both symbolic quality and ordering cost meet their gates,
+followed by numerical and convergence checks. Small separators alone are not enough.
+
+In solver test processes, `FIELDCRAFT_ORDERING_EXPERIMENT=multilevel` enables the
+third candidate; the least-fill choice keeps the existing candidate on a tie.
+`FIELDCRAFT_ORDERING_TRACE=1` reports separator depth, part/child/separator sizes,
+coarsening levels and cut weight. The ignored `measure_multilevel_graph` harness
+reports exact node-graph column counts, three-DOF expansion and actual supernode
+row fronts separately. None of these diagnostics changes the result-file format.
+
+Algorithm sources: [Karypis and Kumar (1998)](https://people.eecs.berkeley.edu/~jordan/sail/readings/karypis-kumar.pdf),
+[Fiduccia and Mattheyses (1982)](https://ics-websites.science.uu.nl/docs/vakken/ea/pdf/FidMath_GBP.pdf),
+and [Amestoy, Davis and Duff (1996)](https://people.engr.tamu.edu/davis/publications_files/An_Approximate_Minimum_Degree_Ordering_Algorithm.pdf).
+This is an independent implementation; no external partitioner is linked or vendored.
