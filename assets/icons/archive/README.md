@@ -4,6 +4,8 @@ These original recipes and VectorCraft/SVG pairs are retained unchanged for hist
 `model.orientation` and `model.section.composite` were planned catalogue entries;
 material directions and layups are now exposed through `model.section.create`,
 with laminate properties through `model.section.properties`.
+`interaction.bolt` was the planned bolt load entry; bolt pretension is now
+`model.pretension.create`, which has its own icon.
 
 Only SVGs directly in `assets/icons/` are embedded in the active toolbar, and
 `cargo xtask icons` reads recipes directly in `assets/icons/src/`. Retired artwork

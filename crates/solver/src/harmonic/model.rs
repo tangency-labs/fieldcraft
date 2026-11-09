@@ -170,7 +170,7 @@ fn damping_matrices(mesh: &Mesh, graph: &NodeGraph, materials: &BTreeMap<u32, Da
     Ok((c, g))
 }
 
-fn stresses(mesh: &Mesh, u: &[f64], displacement: &[[f64; 3]]) -> Result<Vec<[f64; 6]>> {
+pub(crate) fn stresses(mesh: &Mesh, u: &[f64], displacement: &[[f64; 3]]) -> Result<Vec<[f64; 6]>> {
     let mut sum = vec![[0.0; 6]; mesh.labels.len()];
     let mut count = vec![0usize; mesh.labels.len()];
     let mut accumulate = |nodes: &[usize], values: &[[f64; 6]]| {
@@ -250,7 +250,9 @@ pub fn solve_harmonic(model: &Model, name: Option<&str>, limits: &Limits) -> Res
     let Procedure::Harmonic(h) = &step.procedure else {
         return Err(Error::Internal("harmonic step".into()));
     };
-    system::refuse_contact(model, "harmonic")?;
+    if step.base_state.is_none() {
+        system::refuse_contact(model, "harmonic")?;
+    }
     for name in &step.loads {
         if matches!(
             model.load(name),
@@ -293,12 +295,20 @@ pub fn solve_harmonic(model: &Model, name: Option<&str>, limits: &Limits) -> Res
     warnings.extend(fieldcraft_model::initial::left_out(model, step));
     let (graph, order) = analysis::pattern(&mesh);
     let setup = Setup { model, resolved: &resolved, mesh: &mesh, step };
-    let red = analysis::reduction(&setup, true, &order, analysis::budget(limits, &mesh, &graph, 4), &mut warnings)?;
+    let assembled = analysis::assemble(&mesh, &graph, Some(MassKind::Consistent))?;
+    let terminal = crate::prestress::stiffness(&setup, &graph, assembled.k, limits, &mut warnings)?;
+    let red = analysis::reduction_with_frozen(
+        &setup,
+        true,
+        &order,
+        analysis::budget(limits, &mesh, &graph, 4),
+        &mut warnings,
+        step.base_state.as_ref().map(|_| terminal.constraints.as_slice()),
+    )?;
     if red.neq() == 0 {
         return Err(Error::Invalid("every harmonic degree of freedom is prescribed".into()));
     }
-    let assembled = analysis::assemble(&mesh, &graph, Some(MassKind::Consistent))?;
-    let mut k = assembled.k;
+    let mut k = terminal.stiffness;
     let mut m = assembled.m.ok_or_else(|| Error::Internal("harmonic mass".into()))?;
     k.mirror_lower();
     m.mirror_lower();
@@ -416,3 +426,9 @@ pub fn solve_harmonic(model: &Model, name: Option<&str>, limits: &Limits) -> Res
         warnings,
     })
 }
+
+mod matrices;
+pub use matrices::{MatrixExport, export_matrices};
+
+mod element_stress;
+pub use element_stress::{ElementStressRecovery, StressLocation};

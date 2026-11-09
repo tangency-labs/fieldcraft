@@ -110,6 +110,7 @@ impl Model {
                 .map(|(n, _)| format!("boundary condition `{n}`")),
         );
         users.extend(self.loads.iter().filter(|(_, l)| l.reference_point() == Some(name)).map(|(n, _)| format!("load `{n}`")));
+        users.extend(self.pretensions.iter().filter(|(_, p)| p.control == name).map(|(n, _)| format!("pretension `{n}`")));
         users.extend(self.discrete_users(|t| t.reference_point() == Some(name)));
         users
     }

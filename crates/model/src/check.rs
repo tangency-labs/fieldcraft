@@ -350,10 +350,13 @@ impl Model {
                 let why = match s.procedure {
                     Procedure::Frequency { .. } => "extracts frequencies",
                     Procedure::Harmonic(_) => "is harmonic",
+                    Procedure::Transient(_) | Procedure::ResponseSpectrum(_) => "needs dynamic mass",
                     Procedure::RandomVibration(_) => "is random vibration",
+                    Procedure::MatrixGeneration { ref matrices } if matrices.contains(&crate::steps::MatrixKind::Mass) => "exports mass",
                     Procedure::ExplicitDynamic(_) => "is dynamic",
                     Procedure::HeatTransfer { transient: Some(_) } => "is transient heat transfer",
                     Procedure::Static {}
+                    | Procedure::MatrixGeneration { .. }
                     | Procedure::Buckle { .. }
                     | Procedure::NonlinearStatic(_)
                     | Procedure::Fluid { .. }
@@ -496,6 +499,22 @@ impl Model {
             }
         }
 
+        for (name, p) in &self.pretensions {
+            for set in [&p.first, &p.second] {
+                if resolved.sets.get(set).is_none_or(|s| s.nodes.is_empty()) {
+                    d.error(format!("pretension `{name}`"), format!("cut set `{set}` has no nodes"));
+                }
+            }
+            if self.reference_point_users(&p.control).len() != 1 {
+                d.error(format!("pretension `{name}`"), "control reference point must be dedicated to this section");
+            }
+            for s in &self.steps {
+                if !matches!(s.procedure, Procedure::Static {} | Procedure::NonlinearStatic(_) | Procedure::Frequency { .. } | Procedure::Harmonic(_))
+                {
+                    d.error(format!("step `{}`", s.name), format!("pretension `{name}` is unsupported in this procedure"));
+                }
+            }
+        }
         for (name, foundation) in &self.foundations {
             if let Err(e) = foundation.validate() {
                 d.error(format!("foundation `{name}`"), e.to_string());
@@ -551,6 +570,12 @@ impl Model {
         }
         for s in &self.steps {
             let subject = format!("step `{}`", s.name);
+            if let Err(error) = self.perturbation_base(s) {
+                d.error(&subject, error.to_string());
+            }
+            let pretension_loads = s.pretension.values().any(|control| match control {
+                crate::PretensionControl::Force { value } | crate::PretensionControl::Adjustment { value } => *value != 0.0,
+            });
             let prescribes_motion = s
                 .boundary_conditions
                 .iter()
@@ -565,13 +590,15 @@ impl Model {
                 Procedure::Static {}
                 | Procedure::NonlinearStatic(_)
                 | Procedure::Buckle { .. }
+                | Procedure::Transient(_)
+                | Procedure::ResponseSpectrum(_)
                 | Procedure::Harmonic(_)
                 | Procedure::RandomVibration(_) => {
-                    if s.loads.is_empty() && !prescribes_motion {
+                    if s.loads.is_empty() && !prescribes_motion && !pretension_loads {
                         d.warning(&subject, "nothing loads the model in this step");
                     }
                 }
-                Procedure::Frequency { .. } => {
+                Procedure::Frequency { .. } | Procedure::MatrixGeneration { .. } => {
                     if !s.loads.is_empty() {
                         d.warning(&subject, "loads have no effect on natural frequencies");
                     }

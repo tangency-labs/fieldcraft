@@ -389,6 +389,9 @@ pub fn frequency_sensitivity_with_vectors(
 ) -> Result<FrequencySensitivity> {
     let (plus, minus) = perturb(model, parameter, increment)?;
     let step = model.select_step(step, |p| matches!(p, Procedure::Frequency { .. }), "frequency")?;
+    if step.base_state.is_some() {
+        return Err(Error::NotSupported(format!("sensitivity of prestressed step `{}`", step.name)));
+    }
     let Procedure::Frequency { modes, min_hz: None, max_hz: None } = step.procedure else {
         return Err(Error::NotSupported("frequency windows in modal sensitivity".into()));
     };

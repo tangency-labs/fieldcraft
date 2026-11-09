@@ -1,0 +1,136 @@
+[
+  {
+    "command": "model.units",
+    "params": {
+      "system": "m-kg-s-N-Pa"
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 1,
+      "xyz": [
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "n1",
+      "nodes": [
+        1
+      ]
+    }
+  },
+  {
+    "command": "model.mass.create",
+    "params": {
+      "name": "m1",
+      "target": {
+        "set": "n1"
+      },
+      "mass": 1
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "all",
+      "nodes": [
+        1
+      ]
+    }
+  },
+  {
+    "command": "model.boundary_condition.create",
+    "params": {
+      "name": "guide",
+      "type": "displacement",
+      "target": {
+        "set": "all"
+      },
+      "values": [
+        null,
+        0,
+        0,
+        null,
+        null,
+        null
+      ]
+    }
+  },
+  {
+    "command": "model.spring.create",
+    "params": {
+      "name": "k",
+      "type": "spring",
+      "first": {
+        "set": "n1"
+      },
+      "direction": {
+        "dof": 1
+      },
+      "stiffness": 4
+    }
+  },
+  {
+    "command": "model.load.create",
+    "params": {
+      "name": "F",
+      "type": "force",
+      "target": {
+        "set": "n1"
+      },
+      "vector": [
+        1,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.step.create",
+    "params": {
+      "name": "STEP_FORCE",
+      "procedure": {
+        "type": "transient",
+        "time_step": 0.001,
+        "increments": 1000,
+        "output_every": 1,
+        "integration": {
+          "type": "average_acceleration"
+        },
+        "method": {
+          "type": "direct"
+        },
+        "load_amplitudes": {
+          "F": {
+            "type": "tabular",
+            "points": [
+              [
+                0,
+                1
+              ],
+              [
+                1,
+                1
+              ]
+            ]
+          }
+        }
+      },
+      "loads": [
+        "F"
+      ],
+      "boundary_conditions": [
+        "guide"
+      ],
+      "output": [
+        "displacement"
+      ]
+    }
+  }
+]

@@ -79,6 +79,9 @@ pub enum Source {
     Symmetry,
     /// A tie: its secondary node follows a weighted average of main nodes.
     Tie,
+    /// A closed contact frozen as a bonded interface in a linear perturbation.
+    FrozenContact,
+    Pretension,
 }
 
 impl Source {
@@ -87,6 +90,8 @@ impl Source {
             Source::Coupling => "coupling",
             Source::Symmetry => "boundary condition",
             Source::Tie => "tie",
+            Source::FrozenContact => "frozen contact",
+            Source::Pretension => "pretension",
         }
     }
 }

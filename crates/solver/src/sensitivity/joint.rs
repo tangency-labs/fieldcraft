@@ -374,6 +374,9 @@ pub fn inverse_joint_with_modes(model: &Model, fit: &JointFit, groups: &[super::
     super::modal_observation::validate(groups)?;
     for g in groups {
         let step = model.select_step(Some(&g.step), |p| matches!(p, fieldcraft_model::Procedure::Frequency { .. }), "frequency")?;
+        if step.base_state.is_some() {
+            return Err(Error::NotSupported(format!("sensitivity of prestressed step `{}`", step.name)));
+        }
         if !matches!(step.procedure, fieldcraft_model::Procedure::Frequency { modes: 1..=64, min_hz: None, max_hz: None }) {
             return Err(Error::Invalid("modal observation groups require 1..=64 candidate modes and no frequency window".into()));
         }
@@ -569,6 +572,9 @@ pub fn inverse_joint_uniform_material(model: &Model, fit: &JointFit, limits: &Li
             JointResponse::Frequency { step, mode } => {
                 if !modal.contains_key(step) {
                     let selected = model.select_step(Some(step), |p| matches!(p, fieldcraft_model::Procedure::Frequency { .. }), "frequency")?;
+                    if selected.base_state.is_some() {
+                        return Err(Error::NotSupported(format!("sensitivity of prestressed step `{}`", selected.name)));
+                    }
                     let fieldcraft_model::Procedure::Frequency { modes, min_hz: None, max_hz: None } = selected.procedure else {
                         return Err(Error::NotSupported("frequency windows in uniform joint reuse".into()));
                     };

@@ -1002,7 +1002,11 @@ impl Interface {
     fn fixed_pairs(&self, mesh: &Mesh) -> Result<Vec<Vec<Fixed>>> {
         let zero = vec![0.0; mesh.dofs()];
         // Faces within a main element's thickness may touch later.
-        self.search(mesh, &zero, 2.0, |xs, xm, found| {
+        self.mapping_at(mesh, &zero, 2.0)
+    }
+
+    fn mapping_at(&self, mesh: &Mesh, u: &[f64], reach: f64) -> Result<Vec<Vec<Fixed>>> {
+        self.search(mesh, u, reach, |xs, xm, found| {
             found
                 .into_iter()
                 .filter_map(|f| {
@@ -1027,6 +1031,65 @@ impl Interface {
                 })
                 .collect()
         })
+    }
+
+    /// Freeze converged mortar pairing and the closed multiplier rows, in all
+    /// translational directions (bonded when closed, absent when open). This is
+    /// a perturbation policy, not the Coulomb slip tangent. Integrals follow
+    /// Puso & Laursen (2004), with the same multiplier basis as equilibrium.
+    pub(crate) fn frozen_rows(&self, mesh: &Mesh, u: &[f64], state: &State) -> Result<Vec<crate::prestress::FrozenRow>> {
+        let mapped;
+        let mapping = match &self.fixed {
+            Some(fixed) => fixed,
+            None => {
+                mapped = self.mapping_at(mesh, u, 1.0)?;
+                &mapped
+            }
+        };
+        let mut coefficients: BTreeMap<usize, BTreeMap<usize, f64>> = BTreeMap::new();
+        for (secondary, pairs) in self.secondary.iter().zip(mapping) {
+            for pair in pairs {
+                let main = self.main.get(pair.main).ok_or_else(|| Error::Internal("frozen contact main face".into()))?;
+                for (a, node) in secondary.nodes.iter().enumerate() {
+                    let at = self.nodes.binary_search(node).map_err(|_| Error::Internal("frozen contact secondary node".into()))?;
+                    if !state.pressure.get(at).is_some_and(|p| *p > 0.0) {
+                        continue;
+                    }
+                    let row = coefficients.entry(*node).or_default();
+                    for (n, value) in secondary.nodes.iter().zip(pair.d.get(a).into_iter().flatten()) {
+                        *row.entry(*n).or_default() += value;
+                    }
+                    for (n, value) in main.nodes.iter().zip(pair.m.get(a).into_iter().flatten()) {
+                        *row.entry(*n).or_default() -= value;
+                    }
+                }
+            }
+        }
+        let mut rows = Vec::new();
+        for (at, node) in self.nodes.iter().enumerate() {
+            if !state.pressure.get(at).is_some_and(|p| *p > 0.0) {
+                continue;
+            }
+            let terms =
+                coefficients.get(node).ok_or_else(|| Error::Invalid(format!("contact `{}`: closed node lost its terminal pairing", self.name)))?;
+            let scale = terms.values().map(|v| v.abs()).fold(0.0, f64::max);
+            if !scale.is_finite() || scale <= 0.0 {
+                return Err(Error::Invalid(format!("contact `{}`: empty terminal mortar constraint", self.name)));
+            }
+            for kind in mesh.translation_kinds().iter() {
+                rows.push(crate::prestress::FrozenRow {
+                    name: self.name.clone(),
+                    source: crate::constraints::Source::FrozenContact,
+                    pivot: mesh.dof(*node, kind)?,
+                    terms: terms
+                        .iter()
+                        .filter(|(_, v)| **v != 0.0)
+                        .map(|(n, value)| Ok((mesh.dof(*n, kind)?, value / scale)))
+                        .collect::<Result<_>>()?,
+                });
+            }
+        }
+        Ok(rows)
     }
 
     /// The global and local search at displacements `u`: per secondary face (corners `xs`), the

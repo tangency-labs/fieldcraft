@@ -147,7 +147,7 @@ results without solving again (`results.contour`, `results.frame`, `results.slic
 `results.streamlines`, `solve.probe` and the rest work at once). Little-endian:
 
 ```
-"MCRSLT05"                     magic (the results encoding's version is 05)
+"MCRSLT06"                     magic (the results encoding's version is 06)
 u32 steps
 steps × { u64 length, step name (UTF-8),
           32 bytes: SHA-256 of the definition it was solved from,
