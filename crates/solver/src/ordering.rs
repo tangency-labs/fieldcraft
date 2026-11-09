@@ -21,8 +21,7 @@
 //! keeps the one whose Cholesky factor has fewer entries; the symbolic count costs O(|L|) time
 //! and O(n + |A|) memory, small next to the numeric factorization.
 
-// Experimental until the symbolic and numerical acceptance gates have passed.
-#[cfg(test)]
+// Independent multilevel candidate, enabled only by validated linear analysis callers.
 #[path = "ordering_multilevel.rs"]
 mod multilevel;
 
@@ -104,7 +103,23 @@ pub fn nested_dissection(xyz: &[[f64; 3]], adjacency: &[Vec<usize>]) -> Vec<usiz
 
 /// The nested dissection order of the nodes that fills the factor less: by coordinate planes or
 /// by the graph's level structures. Ties keep the coordinate order.
+/// Stable reference order for the physical random starting block. Kept separate
+/// from the experimental factor order so a fill choice does not change that block.
 pub fn fill_reducing_order(xyz: &[[f64; 3]], adjacency: &[Vec<usize>]) -> Vec<usize> {
+    let planes = nested_dissection(xyz, adjacency);
+    if adjacency.len() <= LEAF {
+        return planes;
+    }
+    let graph = graph_dissection(adjacency);
+    if fill(adjacency, &graph) < fill(adjacency, &planes) { graph } else { planes }
+}
+
+/// A diagnostic comparison can explicitly request the unchanged two-candidate path.
+pub(crate) fn legacy_requested() -> bool {
+    std::env::var("FIELDCRAFT_ORDERING_EXPERIMENT").is_ok_and(|v| v == "legacy")
+}
+
+pub(crate) fn linear_order(xyz: &[[f64; 3]], adjacency: &[Vec<usize>]) -> Vec<usize> {
     let _timing = crate::timing::Span::new("ordering");
     let by_planes = nested_dissection(xyz, adjacency);
     if adjacency.len() <= LEAF {
@@ -113,10 +128,15 @@ pub fn fill_reducing_order(xyz: &[[f64; 3]], adjacency: &[Vec<usize>]) -> Vec<us
     }
     let by_graph = graph_dissection(adjacency);
     let current = if fill(adjacency, &by_graph) < fill(adjacency, &by_planes) { by_graph } else { by_planes };
-    #[cfg(test)]
-    if std::env::var("FIELDCRAFT_ORDERING_EXPERIMENT").is_ok_and(|v| v == "multilevel") {
+    if !legacy_requested() {
         let third = multilevel::order(adjacency);
-        if fill(adjacency, &third) < fill(adjacency, &current) {
+        let old_fill = fill(adjacency, &current);
+        let new_fill = fill(adjacency, &third);
+        {
+            use std::io::Write;
+            let _ = writeln!(std::io::stderr().lock(), "FIELDCRAFT_ORDER_CHOICE\t{old_fill}\t{new_fill}\t{}", new_fill < old_fill);
+        }
+        if new_fill < old_fill {
             return third;
         }
     }
@@ -492,6 +512,28 @@ mod tests {
             let r = 50.0 + j as f64 * 0.5;
             [r * t.cos(), r * t.sin(), k as f64 * 2.0]
         })
+    }
+
+    #[test]
+    fn linear_choice_is_a_fixed_least_fill_permutation_across_threads() {
+        let (xyz, adj) = hex_grid([12, 4, 6], false, |i, j, k| [i as f64, j as f64, k as f64]);
+        let legacy = fill_reducing_order(&xyz, &adj);
+        let mut previous = None;
+        for threads in [1, 2, 7] {
+            let chosen = fieldcraft_parallel::with_threads(threads, || linear_order(&xyz, &adj));
+            let mut permutation = chosen.clone();
+            permutation.sort_unstable();
+            assert_eq!(permutation, (0..adj.len()).collect::<Vec<_>>());
+            let old_fill = fill(&adj, &legacy);
+            assert!(fill(&adj, &chosen) <= old_fill);
+            if fill(&adj, &chosen) == old_fill {
+                assert_eq!(chosen, legacy, "ties retain the existing order");
+            }
+            if let Some(old) = previous {
+                assert_eq!(chosen, old);
+            }
+            previous = Some(chosen);
+        }
     }
 
     #[test]

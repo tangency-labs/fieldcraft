@@ -187,6 +187,9 @@ pub struct Wanted {
 /// The operators the Lanczos iteration needs.
 pub trait Operator: Sync {
     fn n(&self) -> usize;
+    /// Map fixed-seed random values from a stable physical coordinate order into
+    /// this operator's equation order. The default already uses that order.
+    fn prepare_start(&self, _values: &mut [f64]) {}
     /// y = M x.
     fn mass(&self, x: &[f64], y: &mut [f64]);
     /// x ← (K − σM)⁻¹ x.
@@ -370,6 +373,7 @@ fn orthonormalize(
             }
             fresh = true;
             v = (0..n).map(|_| rng.uniform()).collect();
+            op.prepare_start(&mut v);
         }
     }
     (out, mout, r)
@@ -392,7 +396,13 @@ pub fn lanczos(op: &impl Operator, shift: f64, wanted: Wanted, block: usize, max
     let mut scratch = vec![0.0; n];
 
     // Start block.
-    let start: Vec<Vec<f64>> = (0..b).map(|_| (0..n).map(|_| rng.uniform()).collect()).collect();
+    let start: Vec<Vec<f64>> = (0..b)
+        .map(|_| {
+            let mut values: Vec<f64> = (0..n).map(|_| rng.uniform()).collect();
+            op.prepare_start(&mut values);
+            values
+        })
+        .collect();
     let (mut cur, mut mcur, _) = orthonormalize(op, start, &q, &mq, &mut rng, &mut scratch);
     if cur.len() < b {
         return Err(Error::NotConverged("could not build a Lanczos start block".into()));
@@ -501,6 +511,10 @@ pub fn lanczos(op: &impl Operator, shift: f64, wanted: Wanted, block: usize, max
                 }
                 // Residual bound ‖B_{j+1} s_last‖ with s_last the last block of the Ritz vector.
                 let res2 = residual_squared(i)?;
+                if std::env::var("FIELDCRAFT_RITZ_TRACE").is_ok_and(|v| v == "1") {
+                    use std::io::Write;
+                    let _ = writeln!(std::io::stderr().lock(), "FIELDCRAFT_RITZ_RESIDUAL\t{m}\t{i}\t{:.17e}\t{tolerance:.17e}", res2.sqrt() / th);
+                }
                 if res2.sqrt() > tolerance * th {
                     break;
                 }
@@ -638,6 +652,56 @@ mod tests {
             }
             Ok(())
         }
+    }
+
+    #[test]
+    fn physical_start_hook_covers_initial_block_and_rank_refill() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        struct Mapped {
+            diagonal: Diagonal,
+            order: Vec<usize>,
+            calls: AtomicUsize,
+        }
+        impl Operator for Mapped {
+            fn n(&self) -> usize {
+                self.diagonal.n()
+            }
+            fn mass(&self, x: &[f64], y: &mut [f64]) {
+                self.diagonal.mass(x, y);
+            }
+            fn solve(&self, x: &mut [f64]) -> Result<()> {
+                self.diagonal.solve(x)
+            }
+            fn prepare_start(&self, x: &mut [f64]) {
+                self.calls.fetch_add(1, Ordering::Relaxed);
+                let original = x.to_vec();
+                for (physical, &equation) in self.order.iter().enumerate() {
+                    x[equation] = original[physical];
+                }
+            }
+        }
+        let n = 48;
+        let order: Vec<_> = (0..n).map(|i| (7 * i) % n).collect();
+        let mut k = vec![0.0; n];
+        let mut m = vec![0.0; n];
+        for (physical, &equation) in order.iter().enumerate() {
+            m[equation] = 1.0 + (physical % 3) as f64;
+            k[equation] = (physical + 1) as f64 * m[equation];
+        }
+        let op = Mapped { diagonal: Diagonal { k, m, shift: 0.0 }, order, calls: AtomicUsize::new(0) };
+        let pairs = lanczos(&op, 0.0, Wanted { count: 4, min: 0.0, max: f64::INFINITY }, 6, n, 1e-10).unwrap();
+        assert!(op.calls.load(Ordering::Relaxed) >= 6);
+        for (i, value) in pairs.values.iter().enumerate() {
+            assert!((value - (i + 1) as f64).abs() < 1e-10);
+        }
+        let before = op.calls.load(Ordering::Relaxed);
+        let mut rng = Random::new(73);
+        let mut scratch = vec![0.0; n];
+        // A zero column forces a fresh random column; it needs the same physical map.
+        let (q, mq, _) = orthonormalize(&op, vec![vec![0.0; n]], &[], &[], &mut rng, &mut scratch);
+        assert_eq!(op.calls.load(Ordering::Relaxed), before + 1);
+        assert_eq!(q.len(), 1);
+        assert!((dot(&q[0], &mq[0]) - 1.0).abs() < 1e-12);
     }
 
     #[test]
