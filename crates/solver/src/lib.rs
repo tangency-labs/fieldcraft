@@ -36,6 +36,7 @@ pub mod contact;
 pub mod convergence;
 pub mod discrete;
 pub mod eigen;
+pub mod fatigue;
 pub mod foundation;
 pub mod harmonic;
 pub mod heat;
@@ -58,7 +59,7 @@ pub use analysis::{
     solve_frequency_report, solve_static,
 };
 pub use buckle::{Buckling, solve_buckle};
-pub use harmonic::{HarmonicResult, MatrixExport, export_matrices, solve_harmonic};
+pub use harmonic::{HarmonicResult, MatrixExport, export_matrices, solve_harmonic, solve_harmonic_with_mass};
 pub use heat::{HeatResult, solve_heat};
 pub use nonlinear::solve_nonlinear;
 pub use random::{

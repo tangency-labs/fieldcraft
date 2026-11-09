@@ -49,7 +49,7 @@ pub fn export_matrices(model: &Model, name: Option<&str>, limits: &Limits) -> Re
     }
     let assembled = analysis::assemble(&mesh, &graph, matrices.contains(&MatrixKind::Mass).then_some(MassKind::Consistent))?;
     let (c, g) = if matrices.contains(&MatrixKind::ViscousDamping) || matrices.contains(&MatrixKind::StructuralDamping) {
-        damping_matrices(&mesh, &graph, &material_damping(model, &resolved))?
+        damping_matrices(&mesh, &graph, &material_damping(model, &resolved), MassKind::Consistent)?
     } else {
         (None, None)
     };

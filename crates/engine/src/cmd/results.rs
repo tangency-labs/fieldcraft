@@ -24,7 +24,7 @@ pub const DEFORMED: CommandSpec = CommandSpec {
 pub const CONTOUR: CommandSpec = CommandSpec {
     id: "results.contour",
     label: "Contours",
-    params: r#"{"step": "Load", "field": "von_mises", "bands": 12, "range"?: {"min"?: 0, "max"?: 80} | "auto"} — contours of a nodal field: displacement, displacement_x/y/z, velocity (explicit and fluid steps), pressure (fluid steps), temperature (thermal frames), wall_heat_flux (signed face average on thermal fluid obstacles), von_mises, max/mid/min_principal, stress_xx/yy/zz/xy/xz/yz (stresses for static steps), contact_pressure, contact_gap, contact_status (0 open, 1 closed or stick, 2 slip), contact_shear, contact_slip (friction; nonlinear static steps with contact, at the contacts' secondary surfaces); "none" turns them off; 2 to 24 bands; `range` clamps the legend (a bound left out, null or "auto" follows the field; values above `max` are drawn in the over colour), kept until the field changes"#,
+    params: r#"{"step": "Load", "field": "von_mises", "bands": 12, "range"?: {"min"?: 0, "max"?: 80} | "auto"} — contours of a nodal field: fatigue_damage (dimensionless), fatigue_life (repeated-record time; missing/unbounded life has no contour value), displacement, displacement_x/y/z, velocity (explicit and fluid steps), pressure (fluid steps), temperature (thermal frames), wall_heat_flux (signed face average on thermal fluid obstacles), von_mises, max/mid/min_principal, stress_xx/yy/zz/xy/xz/yz (stresses for static steps), contact_pressure, contact_gap, contact_status (0 open, 1 closed or stick, 2 slip), contact_shear, contact_slip (friction; nonlinear static steps with contact, at the contacts' secondary surfaces); "none" turns them off; 2 to 24 bands; `range` clamps the legend (a bound left out, null or "auto" follows the field; values above `max` are drawn in the over colour), kept until the field changes"#,
     form: Some(super::forms::CONTOUR),
     kind: CommandKind::Session,
     requires: &[Requirement::Result],
@@ -74,7 +74,7 @@ pub const REACTIONS: CommandSpec = CommandSpec {
 pub const EXPORT_VTU: CommandSpec = CommandSpec {
     id: "results.export.vtu",
     label: "Export VTU",
-    params: r#"{"step": "Load", "path": "out.vtu" | "out.pvd", "mode": 1, "frames": "all|last", "encoding": "ascii|binary"} — writes a solved step as VTK XML unstructured grids for ParaView: the mesh (points in node label order, cells in element label order, arrays `node_label` and `element_label`), the step's nodal fields as point data and per-element fields as cell data. Static: displacement, rotation (with shells or beams), reaction, stress (6 components in VTK order XX, YY, ZZ, XY, YZ, XZ), von_mises, temperature (coupled steps); nonlinear static: displacement per frame, with stress and von_mises when the step's `output` requests stress, the final fields on the last; frequency: mode_shape, with mode, frequency and eigenvalue as field data; explicit: displacement and velocity per frame, cell stress, plastic_strain, damage, eroded; heat: temperature per frame, heat_flux on the last. Point array `has_result` is 0 at nodes the step has no values for (written as 0, as are values that are not finite). A `.vtu` path writes one state (the last frame, or `mode`, default 1); a `.pvd` path writes every frame or mode (`frames: "last"` only the last) as `out_0000.vtu`, … beside it and the collection listing each with its time (load factor, mode number). `encoding` ascii (default) or binary (inline base64). Fluid steps are not supported yet. Replies {files, bytes, points, cells}"#,
+    params: r#"{"step": "Load", "path": "out.vtu" | "out.pvd", "mode": 1, "frames": "all|last", "encoding": "ascii|binary"} — writes a solved step as VTK XML unstructured grids for ParaView: the mesh (points in node label order, cells in element label order, arrays `node_label` and `element_label`), the step's nodal fields as point data and per-element fields as cell data. Static: displacement, rotation (with shells or beams), reaction, stress (6 components in VTK order XX, YY, ZZ, XY, YZ, XZ), von_mises, temperature (coupled steps); nonlinear static: displacement per frame, with stress and von_mises when the step's `output` requests stress, the final fields on the last; frequency: mode_shape, with mode, frequency and eigenvalue as field data; explicit: displacement and velocity per frame, cell stress, plastic_strain, damage, eroded; heat: temperature per frame, heat_flux on the last. Point array `has_result` is 0 at nodes the step has no values for (written as 0, as are values that are not finite). A `.vtu` path writes one state (the last frame, or `mode`, default 1); a `.pvd` path writes every frame or mode (`frames: "last"` only the last) as `out_0000.vtu`, … beside it and the collection listing each with its time (load factor, mode number). `encoding` ascii (default) or binary (inline base64). Stored fatigue fields: fatigue_damage, fatigue_life and their has_fatigue_damage/has_fatigue_life masks; harmonic steps with fatigue export these fields, not complex phasors. Fluid steps are not supported yet. Replies {files, bytes, points, cells}"#,
     form: Some(super::forms::EXPORT_VTU),
     kind: CommandKind::Session,
     requires: &[Requirement::Result],
@@ -286,6 +286,10 @@ fn contour(s: &mut Session, p: &Value) -> Result<Value> {
         (v.range_min, v.range_max) = (None, None);
     }
     v.contour = field;
+    if matches!(field, Some(Field::FatigueDamage | Field::FatigueLife)) {
+        v.animate = false;
+        v.deformed = false;
+    }
     if let Some(b) = bands {
         v.bands = b;
     }
@@ -352,6 +356,9 @@ fn animate(s: &mut Session, p: &Value) -> Result<Value> {
     let step = step_for(s, &json!({}), Want::Any)?;
     let fluid = s.latest_result(&step).is_some_and(|(r, _)| matches!(r.kind(), Kind::Fluid(_)));
     let v = view_of(s, &step)?;
+    if matches!(v.contour, Some(Field::FatigueDamage | Field::FatigueLife)) {
+        return Err(EngineError::invalid("on", "fatigue is accumulated over the complete record, not a proportional animation"));
+    }
     v.animate = true;
     // A fluid step has nothing to deform; animating plays its frames (as results.frame does) in
     // order. A structural step animates its deformation (or an explicit step its frames).
@@ -773,9 +780,9 @@ fn export_vtu(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let states: Vec<State> = match r.kind() {
         Kind::Fluid(_) => return Err(EngineError::Params("fluid results are per cell; not supported yet".into())),
-        Kind::Harmonic(_) | Kind::Dynamics(_) => {
-            return Err(EngineError::Params("dynamic response VTU export is not supported yet; read solve.probe".into()));
-        }
+        Kind::Harmonic(h) if h.fatigue.is_some() => vec![State::Final],
+        Kind::Harmonic(_) => return Err(EngineError::Params("harmonic VTU export is not supported yet; export probe curves as CSV".into())),
+        Kind::Dynamics(_) => return Err(EngineError::Params("dynamic response VTU export is not supported yet; read solve.probe".into())),
         Kind::Static(st) => match &st.nonlinear {
             Some(h) if !h.frames.is_empty() => frames(h.frames.len(), "frames")?,
             _ => vec![State::Final],
@@ -912,6 +919,7 @@ fn vtu_fields(
             "reaction" if heat => Unit::Of(Q::Power),
             "reaction" => Unit::Of(Q::Force),
             "stress" | "von_mises" => Unit::Of(Q::Pressure),
+            "fatigue_life" => Unit::Of(Q::Time),
             "temperature" => Unit::Of(Q::Temperature),
             "velocity" => Unit::Of(Q::Velocity),
             "heat_flux" => Unit::Of(Q::HeatFlux),
@@ -935,6 +943,21 @@ fn vtu_fields(
     add("has_result", Location::Point, 1, on(r.nodes()), true);
     let point = Location::Point;
     let cell = Location::Cell;
+    if let Some(f) = r.fatigue() {
+        let scalar = |values: &[Option<f64>]| {
+            nodes.iter().map(|n| r.nodes().binary_search(n).ok().and_then(|i| values.get(i)).copied().flatten().unwrap_or(0.)).collect::<Vec<_>>()
+        };
+        let coverage = |values: &[Option<f64>]| {
+            nodes
+                .iter()
+                .map(|n| if r.nodes().binary_search(n).ok().and_then(|i| values.get(i)).is_some_and(Option::is_some) { 1. } else { 0. })
+                .collect::<Vec<_>>()
+        };
+        add("fatigue_damage", point, 1, scalar(&f.damage), false);
+        add("fatigue_life", point, 1, scalar(&f.life_seconds), false);
+        add("has_fatigue_damage", point, 1, coverage(&f.damage), true);
+        add("has_fatigue_life", point, 1, coverage(&f.life_seconds), true);
+    }
     let time = match (r.kind(), state) {
         (Kind::Static(st), _) => {
             let frame = match (state, &st.nonlinear) {

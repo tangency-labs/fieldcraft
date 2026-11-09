@@ -14,7 +14,7 @@
 
 mod adaptive;
 mod model;
-pub use model::{Energy, Frame, Response, solve};
+pub use model::{Energy, Frame, Response, solve, solve_with_mass};
 
 use crate::cholesky::{Factor, FactorError, UpperColumns};
 use crate::sparse::Csr;
