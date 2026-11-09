@@ -557,7 +557,7 @@ pub fn inverse_joint_uniform_material(model: &Model, fit: &JointFit, limits: &Li
         let value = match &o.response {
             JointResponse::Static { step, node, dof } => {
                 if !statics.contains_key(step) {
-                    statics.insert(step.clone(), crate::solve_static(model, Some(step), limits)?);
+                    statics.insert(step.clone(), crate::analysis::solve_static_legacy(model, Some(step), limits)?);
                 }
                 let r = statics.get(step).ok_or_else(|| Error::Internal("uniform static baseline".into()))?;
                 let i = r.nodes.binary_search(node).map_err(|_| Error::Invalid("uniform static observation node missing".into()))?;
@@ -586,7 +586,7 @@ pub fn inverse_joint_uniform_material(model: &Model, fit: &JointFit, limits: &Li
                         max_hz: None,
                     };
                     guarded.replace_step(selected)?;
-                    let r = crate::solve_frequency(&guarded, Some(step), &Default::default(), limits)?;
+                    let r = crate::analysis::solve_frequency_legacy(&guarded, Some(step), &Default::default(), limits)?;
                     super::model::require_uncapped_modes(&r, limits)?;
                     let requested = modes as usize;
                     if r.modes.len() < requested || (r.modes.len() == requested && r.stats.equations > requested) {

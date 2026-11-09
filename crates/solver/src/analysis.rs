@@ -337,7 +337,7 @@ pub(crate) fn pattern(mesh: &Mesh) -> (NodeGraph, Vec<usize>) {
 // Only the linear static/frequency experiment opts into the third ordering.
 // Buckling, nonlinear and other callers retain the validated legacy choice.
 fn pattern_with_order(mesh: &Mesh, experiment: bool) -> (NodeGraph, Vec<usize>) {
-    let order_fn = if experiment { crate::ordering::experimental_order } else { fill_reducing_order };
+    let order_fn = if experiment { crate::ordering::linear_order } else { fill_reducing_order };
     let graph = NodeGraph::new(mesh.block_count(), mesh.blocks());
     // The order covers the mesh nodes; reference point equations follow them.
     let n = mesh.labels.len();
@@ -418,6 +418,14 @@ pub(crate) fn budget(limits: &Limits, mesh: &Mesh, graph: &NodeGraph, matrices: 
 /// quasi-static thermoelasticity without thermoelastic dissipation, so solving the two in turn
 /// is the monolithic solution exactly.
 pub fn solve_static(model: &Model, step: Option<&str>, limits: &Limits) -> Result<StaticResult> {
+    solve_static_impl(model, step, limits, true)
+}
+
+pub(crate) fn solve_static_legacy(model: &Model, step: Option<&str>, limits: &Limits) -> Result<StaticResult> {
+    solve_static_impl(model, step, limits, false)
+}
+
+fn solve_static_impl(model: &Model, step: Option<&str>, limits: &Limits, allow_multilevel: bool) -> Result<StaticResult> {
     let _timing = crate::timing::Span::new("solve_static");
     // A job cancelled before it starts stops here, before any setup work.
     fieldcraft_model::progress::check()?;
@@ -429,11 +437,20 @@ pub fn solve_static(model: &Model, step: Option<&str>, limits: &Limits) -> Resul
     )?;
     crate::system::refuse_contact(model, "linear static")?;
     let mesh = Mesh::new(model, &resolved, limits.max_dofs)?;
-    static_on(&Setup { model, resolved: &resolved, mesh: &mesh, step }, limits)
+    static_on_with_order(&Setup { model, resolved: &resolved, mesh: &mesh, step }, limits, allow_multilevel)
 }
 
 /// Static equilibrium on an already validated step and mesh, also used for a buckling preload.
 pub(crate) fn static_on(setup: &Setup<'_>, limits: &Limits) -> Result<StaticResult> {
+    static_on_with_order(setup, limits, false)
+}
+
+// A caller must explicitly opt in; a static preload is not a standalone static solve.
+fn standalone_linear_order(step: &Step, standalone: bool) -> bool {
+    standalone && step.base_state.is_none() && matches!(step.procedure, Procedure::Static {} | Procedure::Frequency { .. })
+}
+
+fn static_on_with_order(setup: &Setup<'_>, limits: &Limits, standalone: bool) -> Result<StaticResult> {
     fieldcraft_model::progress::check()?;
     let (model, resolved, mesh, step) = (setup.model, setup.resolved, setup.mesh, setup.step);
     bound_ply_results(mesh, limits)?;
@@ -453,7 +470,7 @@ pub(crate) fn static_on(setup: &Setup<'_>, limits: &Limits) -> Result<StaticResu
     if field.is_some() && !mesh.structural.is_empty() {
         warnings.push("shells and beams take no thermal strain yet; the temperatures strain the solid, 2D and truss elements only".into());
     }
-    let (graph, order) = pattern_with_order(mesh, matches!(step.procedure, Procedure::Static {}));
+    let (graph, order) = pattern_with_order(mesh, standalone_linear_order(step, standalone));
     ignored_dashpots(mesh, &mut warnings);
     let red = reduction(setup, true, &order, budget(limits, mesh, &graph, 1), &mut warnings)?;
     let mut f = loads(model, resolved, mesh, step, &red.active)?;
@@ -670,8 +687,8 @@ fn bound_ply_results(mesh: &Mesh, limits: &Limits) -> Result<()> {
 
 /// Preserve the pre-experiment physical starting vectors while changing only
 /// the factor/equation ordering. This does not reorder any returned eigenpairs.
-fn legacy_start_coordinates(mesh: &Mesh, graph: &NodeGraph, red: &Reduction) -> Result<Option<Vec<usize>>> {
-    if !std::env::var("FIELDCRAFT_LANCZOS_START").is_ok_and(|v| v == "legacy_physical") {
+fn legacy_start_coordinates(mesh: &Mesh, graph: &NodeGraph, red: &Reduction, enabled: bool) -> Result<Option<Vec<usize>>> {
+    if !enabled || crate::ordering::legacy_requested() {
         return Ok(None);
     }
     let _timing = crate::timing::Span::new("frequency_start_coordinates");
@@ -757,7 +774,11 @@ pub(crate) const TOLERANCE: f64 = 1e-9; // unit-factors: a relative residual
 /// lowest natural modes within the step's frequency range.
 pub fn solve_frequency(model: &Model, step: Option<&str>, options: &FrequencyOptions, limits: &Limits) -> Result<FrequencyResult> {
     let _timing = crate::timing::Span::new("solve_frequency");
-    frequency_impl(model, step, options, limits, false, false).map(|(result, _, _)| result)
+    frequency_impl(model, step, options, limits, false, false, true).map(|(result, _, _)| result)
+}
+
+pub(crate) fn solve_frequency_legacy(model: &Model, step: Option<&str>, options: &FrequencyOptions, limits: &Limits) -> Result<FrequencyResult> {
+    frequency_impl(model, step, options, limits, false, false, false).map(|(result, _, _)| result)
 }
 
 /// Solve and report the actual unshifted reduced-pencil residuals and block iterations.
@@ -769,15 +790,32 @@ pub fn solve_frequency_report(
     limits: &Limits,
 ) -> Result<(FrequencyResult, crate::convergence::ModalConvergence)> {
     let _timing = crate::timing::Span::new("solve_frequency");
-    let (result, _, convergence) = frequency_impl(model, step, options, limits, false, true)?;
+    let (result, _, convergence) = frequency_impl(model, step, options, limits, false, true, true)?;
     Ok((result, convergence.ok_or_else(|| Error::Internal("frequency diagnostics missing".into()))?))
 }
 
 /// Reuse the actual physical mass operator for modal derivative contractions.
 /// Ordinary frequency solves still release it before factorization.
 pub(crate) fn frequency_with_mass(model: &Model, step: Option<&str>, options: &FrequencyOptions, limits: &Limits) -> Result<(FrequencyResult, Csr)> {
-    let (result, mass, _) = frequency_impl(model, step, options, limits, true, false)?;
+    let (result, mass, _) = frequency_impl(model, step, options, limits, true, false, false)?;
     Ok((result, mass.ok_or_else(|| Error::Internal("retained modal mass".into()))?))
+}
+
+// A simple eigenvector is not stable at a repeated root, and a vanishing
+// participation has an ill-conditioned relative effective-mass comparison.
+// Keep the legacy scalar results in these cases; never rotate/relabel modes.
+fn modal_order_fallback_reason(result: &FrequencyResult) -> Option<&'static str> {
+    if result
+        .modes
+        .windows(2)
+        .any(|p| (p[1].eigenvalue - p[0].eigenvalue).abs() <= f64::EPSILON.sqrt() * p[0].eigenvalue.abs().max(p[1].eigenvalue.abs()))
+    {
+        return Some("unresolved individual basis at a repeated or near-repeated eigenvalue");
+    }
+    if result.modes.iter().any(|m| m.effective_mass.iter().sum::<f64>() <= 128.0 * f64::EPSILON * result.total_mass) {
+        return Some("near-zero translational participation");
+    }
+    None
 }
 
 fn frequency_impl(
@@ -787,7 +825,40 @@ fn frequency_impl(
     limits: &Limits,
     retain_mass: bool,
     diagnostics: bool,
+    standalone: bool,
 ) -> Result<(FrequencyResult, Option<Csr>, Option<crate::convergence::ModalConvergence>)> {
+    let first = frequency_once(model, step, options, limits, retain_mass, diagnostics, standalone)?;
+    let selected = model.select_step(step, |p| matches!(p, Procedure::Frequency { .. }), "frequency")?;
+    if standalone_linear_order(selected, standalone)
+        && !crate::ordering::legacy_requested()
+        && let Some(reason) = modal_order_fallback_reason(&first.0)
+    {
+        // Count the discarded work without changing the final basis/cap semantics.
+        // The enclosing command timer covers both attempts, including assembly.
+        let trial_iterations = first.3;
+        let trial_vectors = first.0.stats.lanczos_vectors;
+        // Release the first result and optional retained matrix before rebuilding.
+        drop(first);
+        use std::io::Write;
+        let _ = writeln!(std::io::stderr().lock(), "FIELDCRAFT_ORDER_FALLBACK\t{trial_iterations}\t{trial_vectors}\t{reason}");
+        let mut legacy = frequency_once(model, step, options, limits, retain_mass, diagnostics, false)?;
+        legacy.0.warnings.push(format!(
+            "legacy ordering retained: {reason}; discarded trial used {trial_iterations} Lanczos block iterations and {trial_vectors} basis vectors; reported convergence describes the returned legacy solve; full command time includes both attempts"
+        ));
+        return Ok((legacy.0, legacy.1, legacy.2));
+    }
+    Ok((first.0, first.1, first.2))
+}
+
+fn frequency_once(
+    model: &Model,
+    step: Option<&str>,
+    options: &FrequencyOptions,
+    limits: &Limits,
+    retain_mass: bool,
+    diagnostics: bool,
+    standalone: bool,
+) -> Result<(FrequencyResult, Option<Csr>, Option<crate::convergence::ModalConvergence>, usize)> {
     // A job cancelled before it starts stops here, before any setup work.
     fieldcraft_model::progress::check()?;
     let resolved: Resolved = model.resolve()?;
@@ -807,7 +878,8 @@ fn frequency_impl(
     let mut warnings: Vec<String> = resolved.warnings.iter().map(ToString::to_string).chain(mesh.warnings.iter().cloned()).collect();
     warnings.extend(inelastic_warnings(model));
     warnings.extend(fieldcraft_model::initial::left_out(model, step));
-    let (graph, order) = pattern_with_order(&mesh, step.base_state.is_none());
+    let use_multilevel = standalone_linear_order(step, standalone);
+    let (graph, order) = pattern_with_order(&mesh, use_multilevel);
     ignored_dashpots(&mesh, &mut warnings);
     let setup = Setup { model, resolved: &resolved, mesh: &mesh, step };
     let Assembled { k, m } = assemble(&mesh, &graph, Some(options.mass))?;
@@ -871,7 +943,7 @@ fn frequency_impl(
         max: max_hz.map_or(f64::INFINITY, |f| (two_pi * f).powi(2)),
     };
     let max_basis = lanczos_basis(limits, neq);
-    let start_order = legacy_start_coordinates(&mesh, &graph, &red)?;
+    let start_order = legacy_start_coordinates(&mesh, &graph, &red, use_multilevel)?;
     let op = ShiftInvert { m: &mff, factor: &chol, start_order };
     let tolerance = std::env::var("FIELDCRAFT_LANCZOS_TOLERANCE")
         .ok()
@@ -959,6 +1031,7 @@ fn frequency_impl(
         },
         retained_mass,
         convergence,
+        pairs.iterations,
     ))
 }
 
@@ -1022,6 +1095,54 @@ impl StepResult {
 mod tests {
     use super::*;
     use fieldcraft_model::{BoundaryCondition, Directional, Elastic, Formulation, Load, Material, Section, SectionKind, Set, Target, Thermal};
+
+    #[test]
+    fn ambiguous_modal_basis_repeats_the_legacy_solve_without_relabeling() {
+        let mode = |lambda, mass| Mode {
+            eigenvalue: lambda,
+            frequency: 0.0,
+            shape: vec![],
+            rotation: vec![],
+            participation: [0.0; 3],
+            effective_mass: [mass, 0.0, 0.0],
+            point_shape: vec![],
+        };
+        let mut result = FrequencyResult {
+            step: "Modes".into(),
+            nodes: vec![],
+            reference_points: vec![],
+            modes: vec![mode(1.0, 1.0), mode(1.0 + f64::EPSILON, 1.0)],
+            total_mass: 10.0,
+            stats: Stats { dofs: 0, equations: 0, factor_entries: 0, lanczos_vectors: 0 },
+            warnings: vec![],
+            buckling: None,
+        };
+        assert!(modal_order_fallback_reason(&result).unwrap().contains("repeated"));
+        result.modes[1].eigenvalue = 2.0;
+        assert!(modal_order_fallback_reason(&result).is_none());
+        result.modes[1].effective_mass = [0.0; 3];
+        assert!(modal_order_fallback_reason(&result).unwrap().contains("participation"));
+    }
+
+    #[test]
+    fn multilevel_scope_excludes_preloads_derivatives_and_other_procedures() {
+        for procedure in [Procedure::Static {}, Procedure::Frequency { modes: 6, min_hz: None, max_hz: None }] {
+            let mut step = Step::new("linear", procedure);
+            assert!(standalone_linear_order(&step, true));
+            // Internal callers (buckling/prestress preloads and sensitivities) never opt in.
+            assert!(!standalone_linear_order(&step, false));
+            step.base_state = Some("preload".into());
+            assert!(!standalone_linear_order(&step, true));
+        }
+        for procedure in [
+            Procedure::Buckle { modes: 1, shift: None },
+            Procedure::HeatTransfer { transient: None },
+            Procedure::CoupledTemperatureDisplacement {},
+            Procedure::MatrixGeneration { matrices: Default::default() },
+        ] {
+            assert!(!standalone_linear_order(&Step::new("other", procedure), true));
+        }
+    }
 
     #[test]
     fn raised_factor_budget_keeps_the_lanczos_vector_limit() {
