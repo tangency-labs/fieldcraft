@@ -103,3 +103,24 @@ fn tied_clamp_keeps_its_mapping_through_lock_and_perturbations() {
     session.run_script(&recipe).unwrap();
     check_frozen_perturbations(&session);
 }
+
+#[test]
+fn abaqus_native_chain_rejects_missing_lock_and_late_unbased_frequency() {
+    let recipe: Value = serde_json::from_str(include_str!("fixtures/pretension.json")).unwrap();
+    let mut session = Session::default();
+    session.run_script(&recipe).unwrap();
+    let mut locked = session.model.step("Locked").cloned().unwrap();
+    locked.pretension.clear();
+    session.model.replace_step(locked).unwrap();
+    let err = fieldcraft_decks::abaqus::write(&session.model, fieldcraft_model::units::Preset::MKgS).unwrap_err().to_string();
+    assert!(err.contains("missing nonzero adjustment"), "{err}");
+
+    let mut session = Session::default();
+    session.run_script(&recipe).unwrap();
+    session.run_script(&serde_json::json!([{
+        "command":"model.step.create",
+        "params":{"name":"LateFreeModes","procedure":{"type":"frequency","modes":2},"boundary_conditions":["Bottom","CapGuide"]}
+    }])).unwrap();
+    let err = fieldcraft_decks::abaqus::write(&session.model, fieldcraft_model::units::Preset::MKgS).unwrap_err().to_string();
+    assert!(err.contains("unbased frequency/response follows pretension"), "{err}");
+}

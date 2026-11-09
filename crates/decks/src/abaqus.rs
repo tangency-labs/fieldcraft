@@ -206,6 +206,7 @@ pub fn write_resolved_with_mass(model: &Model, r: &Resolved, units: Preset, mass
     let model = prepared.as_ref().unwrap_or(model);
     let prepared_resolved = prepared.as_ref().map(Model::resolve).transpose()?;
     let r = prepared_resolved.as_ref().unwrap_or(r);
+    validate_pretension_chain(model)?;
     let discrete = discrete_groups(model, r)?;
     let mut d = Deck::default();
     d.heading(units);
@@ -232,6 +233,37 @@ pub fn write_resolved_with_mass(model: &Model, r: &Resolved, units: Preset, mass
     d.dynamics_data(model)?;
     d.steps(model, r)?;
     Ok(d.out)
+}
+
+/// Native pretension sections are stateful: an unbased frequency must precede
+/// preload, and a perturbation based on a locked state must carry an explicit,
+/// nonzero adjustment for every section.  Reject incomplete chains instead of
+/// silently writing a misleading deck.
+fn validate_pretension_chain(model: &Model) -> Result<()> {
+    if model.pretensions().is_empty() { return Ok(()); }
+    for (i, step) in model.steps().iter().enumerate() {
+        if matches!(step.procedure, Procedure::Frequency { .. } | Procedure::Harmonic(_)) && step.base_state.is_none()
+            && model.steps()[..i].iter().any(|s| !s.pretension.is_empty())
+        {
+            return Err(Error::Unsupported { format: FORMAT, what: format!(
+                "step `{}`: unbased frequency/response follows pretension; create the unpreloaded step before force control or set base_state",
+                step.name
+            ) });
+        }
+        if let Some(base) = &step.base_state {
+            let Some(base_step) = model.steps().iter().find(|s| s.name == *base) else {
+                return Err(Error::Unsupported { format: FORMAT, what: format!("step `{}`: missing base_state `{base}`", step.name) });
+            };
+            for name in model.pretensions().keys() {
+                match base_step.pretension.get(name) {
+                    Some(fieldcraft_model::PretensionControl::Adjustment { value }) if value.is_finite() && *value != 0.0 => {}
+                    Some(fieldcraft_model::PretensionControl::Adjustment { .. }) => return Err(Error::Unsupported { format: FORMAT, what: format!("step `{}`: locked base `{base}` has zero/non-finite adjustment for pretension `{name}`", step.name) }),
+                    _ => return Err(Error::Unsupported { format: FORMAT, what: format!("step `{}`: locked base `{base}` is missing nonzero adjustment for pretension `{name}`", step.name) }),
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The Abaqus element type of an element of `kind` in `section`, or why there is none.
@@ -1148,6 +1180,9 @@ impl Deck {
                     self.numbers_line(&format!("{node}, 1"), &[*value])?;
                 }
                 fieldcraft_model::PretensionControl::Adjustment { value } => {
+                    if !value.is_finite() || *value == 0.0 {
+                        return Err(Error::Unsupported { format: FORMAT, what: format!("step `{}`: pretension `{name}` requires a nonzero finite lock adjustment", step.name) });
+                    }
                     // Abaqus holds the reached adjustment by prescribing the current control DOF;
                     // never write zero, which would discard the locked length.
                     self.line("*BOUNDARY");
