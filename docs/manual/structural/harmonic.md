@@ -223,3 +223,8 @@ Executable command oracles in `tests/oracle/random-*` cover exact finite-band SD
 Miles' approximation separately, low/narrow-band limits, coherent cantilever modal response,
 and a source-bound 5R known discrepancy. They do not certify arbitrary load normalization,
 independent multiple inputs, or a general `RandomVibration` step assembler.
+
+A development `stress_projection` option projects the stored complex stress before
+squaring and can evaluate a narrow-band fatigue approximation. Its normalization,
+correlation contract and current verification limits are documented in
+[Fatigue](fatigue.md). The summed six-component stress spectrum is not its input.

@@ -668,13 +668,20 @@ pub static CATALOGUE: &[Capability] = &[
         "Linear static (or coupled temperature–displacement) solve of a step with FieldCraft's own solver; nonlinear static, buckling, harmonic response and heat transfer in the drop-down",
         &["solve.nonlinear", "solve.buckle", "solve.harmonic", "solve.heat"],
     ),
+    ready(
+        "solve.fatigue.history",
+        "Reference-load Fatigue",
+        Solve,
+        "Implicit",
+        "Superposes current static reference tensors, counts finite-record rainflow cycles and reports selected-node Miner damage in SI",
+    ),
     ready("solve.frequency", "Frequency", Solve, "Implicit", "Natural frequencies and mode shapes of a frequency step"),
     ready(
         "solve.random",
         "Random Response",
         Solve,
         "Implicit",
-        "Projects stored harmonic frames and a one-sided PSD into nodal component spectra and RMS; supports coherent absolute acceleration for a declared unit base inertial load",
+        "Projects stored harmonic frames into component spectra, RMS and fixed coherent scalar stress projections; optional narrow-band/Dirlik/BT fatigue approximations and declared unit base inertial load",
     ),
     ready_more(
         "solve.sensitivity.static",

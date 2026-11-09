@@ -214,3 +214,13 @@ third-party acceptance remain open; this is not yet a completed foundation miles
 Static joint identification now groups observations by step and shares each trial
 factorization across parameter columns. A prescribed-motion, zero-foundation-coefficient
 check compares the batched response/Jacobian bit for bit with scalar sensitivities.
+
+## Fatigue (fusion fork, development)
+
+Implemented: finite-record rainflow, Basquin/Miner, CMB/Morrow/SWT and stress mean
+corrections; coherent harmonic stress projections with narrow-band, Dirlik and
+BT2005 damage; stored linear reference-load superposition command. Linux solver/engine tests, Clippy and the full oracle pass with the existing
+15 known oracle failures unchanged. Release rod examples pass independent PSD,
+moment, narrow-band and reference-load Miner checks. General multiaxial criteria,
+material persistence, contours, published-example acceptance, BASE and actual
+transient stress integration remain open. See the fatigue manual for restrictions.

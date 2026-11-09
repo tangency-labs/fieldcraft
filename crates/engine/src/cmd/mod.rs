@@ -11,6 +11,7 @@ pub(crate) mod define;
 pub mod diagnostics;
 mod edit;
 mod extrude;
+mod fatigue;
 pub(crate) mod file;
 pub(crate) mod forms;
 mod foundation;
@@ -242,6 +243,7 @@ pub static ALL: &[CommandSpec] = &[
     solve::FREQUENCY,
     solve::HARMONIC,
     solve::RANDOM,
+    fatigue::HISTORY,
     solve::BUCKLE,
     solve::HEAT,
     solve::EXPLICIT,
