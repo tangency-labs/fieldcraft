@@ -673,7 +673,7 @@ pub static CATALOGUE: &[Capability] = &[
         "Reference-load Fatigue",
         Solve,
         "Implicit",
-        "Superposes current static reference tensors, counts finite-record rainflow cycles and reports selected-node Miner damage in SI",
+        "Superposes current static reference tensors, counts finite-record rainflow and stores damage/life contours with node coverage; Basquin or segmented S-N with strength factors",
     ),
     ready(
         "solve.fatigue.transient",

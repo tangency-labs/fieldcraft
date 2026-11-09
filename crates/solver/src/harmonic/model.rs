@@ -38,6 +38,8 @@ pub struct Frame {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HarmonicResult {
+    #[serde(skip)]
+    pub fatigue: Option<crate::fatigue::field::FatigueField>,
     pub step: String,
     pub nodes: Vec<u32>,
     pub reference_points: Vec<(String, u32)>,
@@ -406,6 +408,7 @@ pub fn solve_harmonic(model: &Model, name: Option<&str>, limits: &Limits) -> Res
     let natural_frequencies =
         modal.as_ref().map(|m| m.eigenvalues().iter().map(|l| l.max(0.0).sqrt() / (2.0 * std::f64::consts::PI)).collect()).unwrap_or_default();
     Ok(HarmonicResult {
+        fatigue: None,
         step: step.name.clone(),
         nodes: mesh.labels.clone(),
         reference_points: mesh.points.iter().map(|p| (p.name.clone(), p.label)).collect(),

@@ -32,8 +32,8 @@ struct NarrowBandInput {
     stationary_gaussian: bool,
 }
 
-pub(super) fn run(s: &Session, p: &Value, step: &str, table: &Value) -> Result<Value> {
-    let result = s.result(step).ok_or_else(|| EngineError::invalid("step", "no stored result for this step; run solve.harmonic first"))?;
+pub(super) fn run(s: &mut Session, p: &Value, step: &str, table: &Value) -> Result<Value> {
+    let result = s.result(step).ok_or_else(|| EngineError::invalid("step", "no stored result for this step; run solve.harmonic first"))?.clone();
     let StepResult::Implicit(ImplicitResult::Harmonic(h)) = result.as_ref() else {
         return Err(EngineError::invalid("step", "the stored result is not harmonic"));
     };
@@ -161,8 +161,36 @@ pub(super) fn run(s: &Session, p: &Value, step: &str, table: &Value) -> Result<V
         let samples = h.frames.iter().enumerate().map(|(j,f)| json!({"frequency":f.frequency,"displacement_psd":up.get(j).and_then(|r|r.get(k)),"acceleration_psd":ap.get(j).and_then(|r|r.get(k)),"displacement_components_psd":u.get(j).and_then(|r|r.get(k)),"acceleration_components_psd":acc.get(j).and_then(|r|r.get(k)),"stress_components_psd":stress.get(j).and_then(|r|r.get(k))})).collect::<Vec<_>>();
         json!({"node":n,"displacement_rms":ut.get(k),"acceleration_rms":at.get(k),"displacement_components_rms":uc.get(k),"acceleration_components_rms":ac.get(k),"stress_components_rms":sc.get(k),"samples":samples})
     }).collect::<Vec<_>>();
+    let mut ranked = Vec::new();
+    if let Some(rows) = &projected {
+        let map = rows
+            .iter()
+            .filter(|r| r["fatigue"].is_object())
+            .filter_map(|r| r["node"].as_u64().and_then(|n| u32::try_from(n).ok()).map(|n| (n, r)))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        if !map.is_empty() {
+            let mut stored = h.clone();
+            let hash = fieldcraft_io::results::definition_hash(&s.model, step, &s.sources)
+                .ok_or_else(|| EngineError::invalid("step", "missing source identity"))?;
+            stored.fatigue = Some(fieldcraft_solver::fatigue::field::FatigueField {
+                damage: h.nodes.iter().map(|n| map.get(n).and_then(|r| r["fatigue"]["damage"].as_f64())).collect(),
+                life_seconds: h.nodes.iter().map(|n| map.get(n).and_then(|r| r["fatigue"]["life_seconds"].as_f64())).collect(),
+                inputs_json: p.to_string(),
+                dependencies: vec![(step.to_string(), hash)],
+            });
+            if let Some(f) = &stored.fatigue {
+                f.validate(h.nodes.len())?;
+            }
+            ranked =
+                map.values().map(|r| json!({"node":r["node"],"damage":r["fatigue"]["damage"],"life_seconds":r["fatigue"]["life_seconds"]})).collect();
+            ranked.sort_by(|a, b| {
+                b["damage"].as_f64().unwrap_or(0.).total_cmp(&a["damage"].as_f64().unwrap_or(0.)).then(a["node"].as_u64().cmp(&b["node"].as_u64()))
+            });
+            s.store_result(StepResult::Implicit(ImplicitResult::Harmonic(stored)));
+        }
+    }
     Ok(
-        json!({"step":step,"method":"harmonic_frame_psd","nodes":nodes,"frequencies":h.frames.iter().map(|f|f.frequency).collect::<Vec<_>>(),"input_psd":psd,"node_displacement_psd":up,"node_acceleration_psd":ap,"node_displacement_rms":ut,"node_acceleration_rms":at,"stress_psd":sp,"stress_rms":st,"projected_stress":projected,"projection_weights":projection.as_ref().map(|v|v.weights),"projection_psd_unit":"Pa²/Hz","probes":probes,"acceleration_reference":if direction.is_some(){"absolute_base_motion"}else{"stationary_support"},"displacement_reference":if direction.is_some(){"relative_to_base"}else{"stationary_support"},"units":{"frequency":"Hz","displacement_rms":"m","acceleration_rms":"m/s²","stress_rms":"Pa","psd":"squared SI response unit per Hz"}}),
+        json!({"fatigue_ranked_nodes":ranked,"fatigue_coverage_all":!ranked.is_empty()&&ranked.len()==h.nodes.len(),"step":step,"method":"harmonic_frame_psd","nodes":nodes,"frequencies":h.frames.iter().map(|f|f.frequency).collect::<Vec<_>>(),"input_psd":psd,"node_displacement_psd":up,"node_acceleration_psd":ap,"node_displacement_rms":ut,"node_acceleration_rms":at,"stress_psd":sp,"stress_rms":st,"projected_stress":projected,"projection_weights":projection.as_ref().map(|v|v.weights),"projection_psd_unit":"Pa²/Hz","probes":probes,"acceleration_reference":if direction.is_some(){"absolute_base_motion"}else{"stationary_support"},"displacement_reference":if direction.is_some(){"relative_to_base"}else{"stationary_support"},"units":{"frequency":"Hz","displacement_rms":"m","acceleration_rms":"m/s²","stress_rms":"Pa","psd":"squared SI response unit per Hz"}}),
     )
 }
 
@@ -216,6 +244,7 @@ mod fatigue_tests {
             })
             .collect();
         let h = HarmonicResult {
+            fatigue: None,
             step: "synthetic".into(),
             nodes: vec![7],
             reference_points: vec![],
@@ -226,6 +255,7 @@ mod fatigue_tests {
             warnings: vec![],
         };
         let mut s = Session::default();
+        s.execute("model.step.create", &json!({"name":"synthetic","procedure":{"type":"static"}})).unwrap();
         s.store_result(StepResult::Implicit(ImplicitResult::Harmonic(h)));
         s
     }
@@ -241,6 +271,9 @@ mod fatigue_tests {
         let mut s = stored_session(2.0);
         let r = s.execute("solve.random", &p).unwrap();
         assert_eq!(r["projected_stress"][0]["psd"], json!([4.0, 4.0]));
+        assert_eq!(r["fatigue_coverage_all"], true);
+        let contour = s.execute("results.contour", &json!({"step":"synthetic","field":"fatigue_damage"})).unwrap();
+        assert_eq!(contour["contour"]["range"]["max"]["value"], r["projected_stress"][0]["fatigue"]["damage"]);
         let d = r["projected_stress"][0]["fatigue"]["damage"].as_f64().unwrap();
         assert!((d / (0.4 * (13.0_f64 / 3.0).sqrt()) - 1.0).abs() < 1e-12);
         let mut opposite = stored_session(-2.0);
@@ -255,6 +288,19 @@ mod fatigue_tests {
         s.store_result(source);
         assert_eq!(s.execute("solve.random", &p).unwrap()["projected_stress"], r["projected_stress"]);
     }
+    #[test]
+    fn spectral_fatigue_survives_native_file_roundtrip() {
+        let mut s = stored_session(2.0);
+        let r = s.execute("solve.random", &params()).unwrap();
+        let path = std::env::temp_dir().join(format!("fieldcraft-spectral-fatigue-{}.fieldcraft", std::process::id()));
+        s.execute("file.save", &json!({"path":path.to_str().unwrap()})).unwrap();
+        let mut opened = Session::default();
+        opened.execute("file.open", &json!({"path":path.to_str().unwrap()})).unwrap();
+        let contour = opened.execute("results.contour", &json!({"step":"synthetic","field":"fatigue_damage"})).unwrap();
+        assert_eq!(contour["contour"]["range"]["max"]["value"], r["projected_stress"][0]["fatigue"]["damage"]);
+        std::fs::remove_file(path).unwrap();
+    }
+
     #[test]
     fn unavailable_coherence_and_stress_are_not_silently_substituted() {
         let mut s = stored_session(2.0);

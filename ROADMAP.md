@@ -222,7 +222,7 @@ corrections; coherent harmonic stress projections with narrow-band, Dirlik and
 BT2005 damage; stored linear reference-load superposition command. Linux solver/engine tests, Clippy and the full oracle pass with the existing
 15 known oracle failures unchanged. Release rod examples pass independent PSD,
 moment, narrow-band and reference-load Miner checks. General multiaxial criteria,
-material persistence, contours, published-example acceptance, full-field BASE validation and actual
+model-level material persistence, full-field BASE validation and actual
 native transient-result integration remain open. An exported SI transient-probe
 adapter passes Linux engine/refusal tests and a real 1001-frame rod export
 check against analytic residual-half-cycle Miner damage. See the fatigue
@@ -235,5 +235,8 @@ hotspot, or life with measured material fatigue properties.
 
 The counted-total-strain command exposes CMB with Morrow/SWT and Miner damage,
 without inferring plastic strain or pairing stress and strain automatically.
-Segmented S–N, surface/size factors, material persistence, multiaxial criteria and
-full-field fatigue visualization remain outside the delivered command scope.
+Model-level material persistence, multiaxial criteria and measured fatigue
+material validation remain open.
+Time-domain segmented S–N and explicit surface/size strength factors are supported;
+static/harmonic fatigue fields now use native contours, persisted results and masked
+VTU export. ASTM Fig.6 and original-author Dirlik/BT Table1 provide numerical checks.

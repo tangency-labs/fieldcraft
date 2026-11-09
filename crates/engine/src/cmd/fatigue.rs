@@ -3,7 +3,7 @@ use crate::schema::{Field, json as field_json};
 use crate::{CommandKind, CommandSpec, EngineError, Result, Session, StepResult};
 use fieldcraft_solver::{
     StepResult as ImplicitResult,
-    fatigue::{Basquin, life::StressMean},
+    fatigue::{curve::SnCurve, life::StressMean},
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -13,15 +13,15 @@ const FORM: &[Field] = &[
         .req()
         .help("[{step,coefficients:[dimensionless load factors]}]; one value per time, same homogeneous supports, current model."),
     field_json("times_seconds", "Times (s)").req().help("Strictly increasing finite SI seconds; no interpolation."),
-    field_json("nodes", "Node labels").req().help("Selected node labels shared by every reference result."),
+    field_json("nodes", "Node labels").req().help("Node labels shared by every reference result, or \"all\" for every reference node."),
     field_json("weights", "Stress projection").req().help("Fixed [xx,yy,zz,xy,xz,yz] weights; applied after tensor summation."),
-    field_json("curve", "Basquin curve (SI)").req().help("amplitude_ref Pa, cycles_ref cycles, exponent, endurance_limit Pa."),
+    field_json("curve", "S-N curve (SI)").req().help("Basquin: amplitude_ref Pa, cycles_ref, exponent, endurance_limit Pa; or points [{cycles,amplitude Pa}], endurance_limit, surface_factor, size_factor, extrapolation end_slopes/reject."),
     field_json("correction", "Mean stress correction").req().help("Tagged type none/goodman/gerber/soderberg and strength in Pa."),
 ];
 pub const HISTORY: CommandSpec = CommandSpec {
     id: "solve.fatigue.history",
     label: "Reference-load Fatigue",
-    params: r#"{channels:[{step,coefficients}],times_seconds,nodes,weights,curve,correction} — sums stored linear static reference stress tensors on the current model, then projects, rainflow counts finite records and sums Miner damage. Coefficients multiply full reference load patterns, not assumed 1 N. Requires identical homogeneous supports; excludes thermal, contact and nonlinear base states. Outputs SI damage/life and ranked selected nodes; no transient dynamics."#,
+    params: r#"{channels:[{step,coefficients}],times_seconds,nodes,weights,curve,correction} — sums stored linear static reference stress tensors on the current model, then projects, rainflow counts finite records and sums Miner damage. Coefficients multiply full reference load patterns, not assumed 1 N. Requires identical homogeneous supports; excludes thermal, contact and nonlinear base states. Stores fatigue_damage/fatigue_life contours on the first reference step, with explicit node coverage and ranked nodes; no transient dynamics."#,
     form: Some(FORM),
     kind: CommandKind::Model,
     requires: &[],
@@ -36,9 +36,9 @@ struct Channel {
 struct Input {
     channels: Vec<Channel>,
     times_seconds: Vec<f64>,
-    nodes: Vec<u32>,
+    nodes: Value,
     weights: [f64; 6],
-    curve: Basquin,
+    curve: SnCurve,
     correction: StressMean,
 }
 pub(super) fn field<T: serde::de::DeserializeOwned>(p: &Value, key: &str) -> Result<T> {
@@ -87,19 +87,48 @@ fn run(s: &mut Session, p: &Value) -> Result<Value> {
             _ => Err(EngineError::invalid("channels", "stored reference is not static")),
         })
         .collect::<Result<Vec<_>>>()?;
+    let labels: Vec<u32> = if input.nodes == "all" {
+        results.first().ok_or_else(|| EngineError::invalid("channels", "no reference"))?.nodes.clone()
+    } else {
+        serde_json::from_value(input.nodes.clone()).map_err(|e| EngineError::invalid("nodes", e.to_string()))?
+    };
     let nodes = fieldcraft_solver::fatigue::history::evaluate(
         &results,
         &coefficients,
         &input.times_seconds,
-        &input.nodes,
+        &labels,
         input.weights,
         &input.curve,
         input.correction,
     )?;
+    let stored = results.first().ok_or_else(|| EngineError::invalid("channels", "no reference"))?;
+    let mut stored = (**stored).clone();
+    let map = nodes.iter().map(|n| (n.node, n)).collect::<std::collections::BTreeMap<_, _>>();
+    let dependencies = input
+        .channels
+        .iter()
+        .map(|c| {
+            fieldcraft_io::results::definition_hash(&s.model, &c.step, &s.sources)
+                .map(|h| (c.step.clone(), h))
+                .ok_or_else(|| EngineError::invalid("channels", "missing source identity"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    stored.fatigue = Some(fieldcraft_solver::fatigue::field::FatigueField {
+        damage: stored.nodes.iter().map(|n| map.get(n).map(|v| v.damage)).collect(),
+        life_seconds: stored.nodes.iter().map(|n| map.get(n).and_then(|v| v.repeated_record_life_seconds)).collect(),
+        inputs_json: p.to_string(),
+        dependencies,
+    });
+    if let Some(f) = &stored.fatigue {
+        f.validate(stored.nodes.len())?;
+    }
+    let coverage_all = nodes.len() == stored.nodes.len();
+    let stored_step = stored.step.clone();
+    s.store_result(StepResult::Implicit(ImplicitResult::Static(stored)));
     let mut ranked = nodes.iter().collect::<Vec<_>>();
     ranked.sort_by(|a, b| b.damage.total_cmp(&a.damage).then(a.node.cmp(&b.node)));
     Ok(json!({"method":"linear_reference_superposition_rainflow_miner","nodes":nodes,"dangerous_selected_nodes":ranked,
-        "source_steps":input.channels.iter().map(|c|&c.step).collect::<Vec<_>>(),"weights":input.weights,
+        "stored_step":stored_step,"coverage_all":coverage_all,"source_steps":input.channels.iter().map(|c|&c.step).collect::<Vec<_>>(),"weights":input.weights,
         "units":{"stress":"Pa","time":"s","life":"s","coefficients":"dimensionless"},
         "limitations":"finite record with half-cycle residues; repeated-record life assumes repetition of counted spectrum; no transient inertia or general multiaxial criterion"}))
 }

@@ -175,7 +175,7 @@ pub fn frame(view: &ResultsView, result: &StepResult, now: f64) -> Option<u64> {
         Kind::Fluid(_) => true,
         Kind::Explicit(_) => view.deformed || view.contour.is_some(),
         Kind::Static(r) if r.nonlinear.is_some() => view.deformed || view.contour.is_some(),
-        Kind::Static(_) | Kind::Frequency(_) => view.deformed || view.contour.is_some_and(|f| !f.is_thermal()),
+        Kind::Static(_) | Kind::Frequency(_) => view.deformed || view.contour.is_some_and(|f| !invariant(f)),
     };
     (view.animate && plays && now.is_finite()).then(|| ((now.max(0.0) / PERIOD * FRAMES as f64).floor() as u64) % FRAMES)
 }
@@ -194,8 +194,13 @@ pub fn swing(result: &StepResult, frame: Option<u64>) -> f64 {
     }
 }
 
-/// Only linear static and modal plots interpolate a solved field. Other procedures draw
-/// their recorded frames, without an extra load multiplier.
+/// Temperature and accumulated fatigue are not proportional stress fields.
+fn invariant(field: Field) -> bool {
+    field.is_thermal() || matches!(field, Field::FatigueDamage | Field::FatigueLife)
+}
+
+/// Only linear static and modal plots interpolate a solved field. Other procedures
+/// draw their recorded frames without an extra load multiplier.
 fn amplitude(result: &StepResult, frame: Option<u64>) -> Option<f64> {
     frame?;
     match result.kind() {
@@ -269,7 +274,7 @@ pub fn prepare(session: &Session, base: &DisplayMesh, pick: Pick, bodies: &[&str
         let shown = |v: Option<f64>| v.map(|v| field.shown(result, v, units));
         // Keep one colour scale throughout a proportional animation. Rescaling each frame
         // to its current extremes would make a growing stress field look constant again.
-        let (lo, hi) = if view.animate && !field.is_thermal() && amplitude(result, Some(0)).is_some() {
+        let (lo, hi) = if view.animate && !invariant(field) && amplitude(result, Some(0)).is_some() {
             if matches!(result.kind(), Kind::Frequency(_)) && !matches!(field, Field::Displacement | Field::VonMises) {
                 let peak = min.1.abs().max(max.1.abs());
                 (-peak, peak)
@@ -293,7 +298,7 @@ pub fn plot(session: &Session, base: &DisplayMesh, frame: Option<u64>, prepared:
     let pick = pick(view, result, frame);
     let amplitude = amplitude(result, frame);
     let contour = prepared.contour.as_ref().map(|c| {
-        let Some(factor) = amplitude.filter(|_| !c.field.is_thermal()) else { return c.clone() };
+        let Some(factor) = amplitude.filter(|_| !invariant(c.field)) else { return c.clone() };
         // A magnitude remains nonnegative when a mode swings through its negative shape.
         let factor = if matches!(c.field, Field::Displacement | Field::VonMises) { factor.abs() } else { factor };
         if factor == 1.0 {
@@ -718,6 +723,21 @@ pub(crate) mod tests {
             assert_eq!(frame(&view, result, PERIOD * 0.25), Some(FRAMES / 4), "geometry still moves under an invariant contour");
             view.deformed = false;
             assert_eq!(frame(&view, result, PERIOD * 0.25), None, "an invariant contour alone does not animate");
+        }
+    }
+
+    #[test]
+    fn fatigue_contours_do_not_scale_with_animation() {
+        let mut s = solved_cantilever();
+        s.execute("results.contour", &json!({"step":"Load","field":"von_mises"})).unwrap();
+        s.execute("results.animate", &json!({})).unwrap();
+        let base = DisplayMesh::from_model(&s.model);
+        let mut prepared = prepare(&s, &base, Pick::default(), &[]).unwrap();
+        for field in [Field::FatigueDamage, Field::FatigueLife] {
+            let values = vec![0.25; shown(&s).unwrap().1.nodes().len()];
+            prepared.contour = Some(Arc::new(Contour { field, bands: Bands::new(0.0, 1.0, 6), min: (1, 0.25), max: (1, 0.25), values }));
+            let p = plot(&s, &base, Some(0), &prepared).unwrap();
+            assert!(Arc::ptr_eq(p.contour.as_ref().unwrap(), prepared.contour.as_ref().unwrap()));
         }
     }
 

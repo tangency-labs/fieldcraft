@@ -5,7 +5,7 @@ The required solver/engine tests, formatting and Clippy checks pass on Linux.
 The full oracle retains its 15 existing known failures (750/765 quantities pass).
 Release-mode rod examples check coherent stress PSD and moments against an
 analytic transfer function, narrow-band damage, and two-reference Miner damage.
-This does not establish full-field BASE or published fatigue-example acceptance.
+This does not establish full-field BASE acceptance or real material fatigue life.
 
 ## Conventions
 
@@ -78,7 +78,7 @@ a narrow spectrum and a single Basquin slope without endurance cutoff. A constan
 cycle mean is supplied separately; the PSD does not encode it. The output reports
 the irregularity factor and upcrossing rate; it does not certify Gaussianity,
 bandwidth, coverage or mesh/modal convergence. Broader spectra need other methods.
-Dirlik and Benasciutti–Tovo (2005 four-moment w2 variant) are implemented and exercised by the rod command example. Fatigue contours, full-field BASE validation and transient integration remain pending.
+Dirlik and Benasciutti–Tovo (2005 four-moment w2 variant) are implemented and exercised by the rod command example. Native fatigue contours and the exported SI transient adapter are available; full-field BASE validation remains open.
 
 ## References
 
@@ -109,10 +109,10 @@ and thermal base states are refused. Coefficients multiply the complete referenc
 pattern, which need not be a one-newton load. Times are SI seconds and match every
 channel without interpolation. Six components are summed before projection and
 counting; no dynamic inertia is added. Output includes damage, cycle count,
-finite representable repeated-record life and ranking of selected nodes only.
+finite representable repeated-record life and ranking of the requested nodes.
 Null life is not an endurance certification. Repetition refers to the counted
-finite-record spectrum, not periodic rainflow closure. Persistent fatigue contour
-fields are still pending.
+finite-record spectrum, not periodic rainflow closure. For full node coverage and
+stored contours, see the output instructions below.
 
 
 ## Exported transient stress history
@@ -174,14 +174,59 @@ null life, not a validated fatigue limit. The existing 0.5–1e16 cycle bracket 
 
 ## Delivered scope and remaining limits
 
-S–N commands use a single Basquin slope and optional time-domain endurance cutoff;
-segmented S–N, surface/size factors and persistent material fatigue records are
-not implemented. Stress histories use a fixed linear tensor projection; signed
+Time-domain commands accept the legacy Basquin curve or a segmented S–N table:
+
+```json
+{"points":[{"cycles":100,"amplitude":400000000},
+           {"cycles":10000,"amplitude":40000000},
+           {"cycles":10000000,"amplitude":4000000}],
+ "endurance_limit":2000000,"surface_factor":0.8,"size_factor":0.5,
+ "extrapolation":"reject"}
+```
+
+Amplitudes and endurance limit are fully reversed Pa before reduction. Cycles must
+strictly increase and amplitudes decrease (2–1024 points). Interpolate linearly in
+log amplitude / log cycles; `reject` refuses amplitudes outside the table, while
+`end_slopes` explicitly extrapolates the first/last segment. Amplitudes at or below
+the reduced endurance limit cause zero damage. Surface and size factors are
+user-supplied strength multipliers in (0,1], not empirical estimates: after mean
+correction divide amplitude by their product before evaluating the unreduced
+curve. They also reduce the endurance limit; they do not change ultimate/yield
+strength in the mean correction. Two points can represent a single Basquin slope.
+Spectral methods still require a single-slope Basquin curve without endurance
+cutoff; piecewise spectral integration is not claimed.
+
+`solve.fatigue.history` accepts `nodes:"all"` or explicit labels and saves the field
+on its first reference step. `solve.random` with harmonic frames saves projected
+fatigue fields on the harmonic step; omit `nodes` for all nodes. Existing bounded
+work limits apply (history: 20 million node-time-channel products; spectral:
+4 million node-frame samples). A successful subset is never called full coverage.
+Both commands report coverage and descending damage rankings with label tie-breaks.
+
+Use `results.contour {"step":"A","field":"fatigue_damage"}` or
+`fatigue_life` for native nodal contours. Damage is dimensionless; life is seconds
+in storage, converted to display time units. Missing coverage and zero-damage
+unbounded life have no colour value. These accumulated fields cannot be animated
+as proportional stress. `file.save` / `file.open` preserve fields, exact command
+inputs and all reference definition hashes; changing any reference invalidates
+the result, including a secondary superposition channel. New result kinds 6/7
+carry the extension; old static/harmonic binary layouts 0/5 remain readable.
+`results.export.vtu` writes damage/life plus `has_fatigue_damage` and
+`has_fatigue_life` masks. Masked zeros are placeholders, not computed values.
+Harmonic VTU output contains fatigue fields, not complex phasor vectors.
+External transient exports retain their source labels and JSON cycle results;
+they are not attached to an unrelated current mesh.
+
+Verification includes the seven individual finite-record cycles of ASTM
+E1049-85(2017) §5.4.4.2 / Fig.6, and the original authors' numerical Table 1
+in Dirlik & Benasciutti (2021), DOI 10.3390/met11091333: rectangular spectral
+band ratios 5 and 20, slopes 3/5/7, published TB/Dirlik damage ratios. The 0.001
+absolute comparison tolerance covers printed three-decimal precision. These are
+numerical benchmarks, not material validation or an experiment.
+
+Stress histories currently use a fixed linear tensor projection; signed
 von Mises, maximum-principal and critical-plane fatigue criteria remain open.
-Returned node values and selected-node rankings are JSON postprocessing results:
-there is no persisted fatigue field, full-field contour or automatic global hotspot
-search. The strain-cycle command consumes already-counted cycles, and transient
-integration consumes exported SI probe data rather than directly resolving an
-unmerged transient solver's internal result type. Published ASTM-example and
-independent published Dirlik numerical-case acceptance remain open; analytic tests,
-PDF integration checks and examples do not substitute for those acceptance items.
+Persistent model-level fatigue material records are not implemented. The
+strain-cycle command consumes already-counted cycles; transient integration
+consumes exported SI probe data. The BASE demonstration above remains a
+**two-candidate, synthetic-S–N demonstration**, not a full-field hotspot assessment.

@@ -2788,6 +2788,8 @@ pub const CONTOUR: &[Field] = &[
             ("contact_status", "Contact status"),
             ("contact_shear", "Contact shear"),
             ("contact_slip", "Contact slip"),
+            ("fatigue_damage", "Fatigue damage"),
+            ("fatigue_life", "Repeated-record fatigue life"),
             ("none", "None"),
         ],
     )

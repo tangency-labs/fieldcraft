@@ -3,7 +3,12 @@
 use super::fatigue::field;
 use crate::schema::{Field, json as field_json};
 use crate::{CommandKind, CommandSpec, EngineError, Result, Session};
-use fieldcraft_solver::fatigue::{Basquin, MAX_HISTORY_POINTS, life::StressMean, miner, rainflow};
+use fieldcraft_solver::fatigue::{
+    MAX_HISTORY_POINTS,
+    curve::{SnCurve, StressLife},
+    life::StressMean,
+    miner, rainflow,
+};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
@@ -18,7 +23,7 @@ const FORM: &[Field] = &[
         .req()
         .help("Explicit sampling contract; no interpolation or automatic peak recovery."),
     field_json("weights", "Stress projection").req().help("Fixed global [xx,yy,zz,xy,xz,yz] weights applied before rainflow."),
-    field_json("curve", "Basquin curve (SI)").req().help("amplitude_ref Pa, cycles_ref cycles, exponent, endurance_limit Pa."),
+    field_json("curve", "S-N curve (SI)").req().help("Basquin: amplitude_ref Pa, cycles_ref, exponent, endurance_limit Pa; or points [{cycles,amplitude Pa}], endurance_limit, surface_factor, size_factor, extrapolation end_slopes/reject."),
     field_json("correction", "Mean stress correction").req().help("Tagged type none/goodman/gerber/soderberg with strengths in Pa."),
 ];
 pub const TRANSIENT: CommandSpec = CommandSpec {
@@ -40,7 +45,7 @@ fn run(_: &mut Session, p: &Value) -> Result<Value> {
     let nodes: Vec<u32> = field(p, "nodes")?;
     let gap: f64 = field(p, "max_time_step_seconds")?;
     let weights: [f64; 6] = field(p, "weights")?;
-    let curve: Basquin = field(p, "curve")?;
+    let curve: SnCurve = field(p, "curve")?;
     let correction: StressMean = field(p, "correction")?;
     if source_id.trim().is_empty() || source_id.len() > 1024 {
         return Err(EngineError::invalid("source_id", "need a nonempty source identity of at most 1024 bytes"));

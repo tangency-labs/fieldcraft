@@ -78,6 +78,8 @@ pub fn frame(r: &ExplicitResult, pick: Pick) -> Result<&Frame> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Field {
+    FatigueDamage,
+    FatigueLife,
     /// Displacement magnitude (a mode's shape magnitude for a frequency step).
     Displacement,
     DisplacementX,
@@ -118,7 +120,9 @@ pub enum Field {
 }
 
 impl Field {
-    pub const ALL: [Field; 24] = [
+    pub const ALL: [Field; 26] = [
+        Field::FatigueDamage,
+        Field::FatigueLife,
         Field::Displacement,
         Field::DisplacementX,
         Field::DisplacementY,
@@ -148,6 +152,8 @@ impl Field {
     /// The id commands take (`von_mises`…).
     pub fn id(self) -> &'static str {
         match self {
+            Field::FatigueDamage => "fatigue_damage",
+            Field::FatigueLife => "fatigue_life",
             Field::Displacement => "displacement",
             Field::DisplacementX => "displacement_x",
             Field::DisplacementY => "displacement_y",
@@ -177,6 +183,8 @@ impl Field {
 
     pub fn label(self) -> &'static str {
         match self {
+            Field::FatigueDamage => "Fatigue damage",
+            Field::FatigueLife => "Repeated-record fatigue life",
             Field::Displacement => "Displacement magnitude",
             Field::DisplacementX => "Displacement X",
             Field::DisplacementY => "Displacement Y",
@@ -207,6 +215,8 @@ impl Field {
     /// What it measures; `None` for a code (a contact status).
     pub fn quantity(self) -> Option<Quantity> {
         Some(match self {
+            Field::FatigueDamage => Quantity::Dimensionless,
+            Field::FatigueLife => Quantity::Time,
             Field::Displacement | Field::DisplacementX | Field::DisplacementY | Field::DisplacementZ | Field::ContactSlip | Field::ContactGap => {
                 Quantity::Length
             }
@@ -283,7 +293,9 @@ impl Field {
     pub fn is_stress(self) -> bool {
         !matches!(
             self,
-            Field::Displacement
+            Field::FatigueDamage
+                | Field::FatigueLife
+                | Field::Displacement
                 | Field::DisplacementX
                 | Field::DisplacementY
                 | Field::DisplacementZ
@@ -312,7 +324,7 @@ impl Field {
         let (stress, velocity, temperature, flux) = match r.kind() {
             Kind::Static(s) => (true, false, s.temperature.is_some(), false),
             Kind::Frequency(_) => (false, false, false, false),
-            Kind::Harmonic(_) => return Vec::new().into_iter(),
+            Kind::Harmonic(h) => return if h.fatigue.is_some() { vec![Field::FatigueDamage, Field::FatigueLife] } else { Vec::new() }.into_iter(),
             Kind::Explicit(e) => {
                 e.frames.last().map_or((false, false, false, false), |f| (!f.stress.is_empty(), !f.velocity.is_empty(), false, false))
             }
@@ -332,6 +344,7 @@ impl Field {
         Field::ALL
             .into_iter()
             .filter(move |f| match f {
+                Field::FatigueDamage | Field::FatigueLife => r.fatigue().is_some(),
                 Field::Velocity => velocity,
                 Field::Pressure => false,
                 Field::WallHeatFlux => false,
@@ -596,6 +609,11 @@ pub fn field_values(model: &Model, r: &StepResult, field: Field, pick: Pick) -> 
     let each = |f: &dyn Fn(&[f64; 6]) -> f64| -> Result<Vec<f64>> { Ok(stresses()?.iter().map(f).collect()) };
     let principal = |k: usize| each(&|t| fieldcraft_fem::principal(t).get(k).copied().unwrap_or(f64::NAN));
     match field {
+        Field::FatigueDamage | Field::FatigueLife => {
+            let f = r.fatigue().ok_or_else(unavailable)?;
+            f.validate(r.nodes().len())?;
+            Ok(if field == Field::FatigueDamage { &f.damage } else { &f.life_seconds }.iter().map(|v| v.unwrap_or(f64::NAN)).collect())
+        }
         Field::Displacement => component(|v| magnitude(*v)),
         Field::DisplacementX => component(|v| v[0]),
         Field::DisplacementY => component(|v| v[1]),
@@ -1064,7 +1082,7 @@ mod tests {
         }
         let (modes, _) = s.latest_result("Modes").unwrap();
         assert_eq!(Field::available(modes).count(), 4);
-        assert_eq!(Field::available(bend).count(), Field::ALL.len() - 10, "all but velocity, pressure, the thermal and the contact fields");
+        assert_eq!(Field::available(bend).count(), Field::ALL.len() - 12, "all but velocity, pressure, the thermal and the contact fields");
         assert!(field_values(&s.model, modes, Field::VonMises, Pick { mode: 1, frame: None }).is_err());
         assert!(field_values(&s.model, modes, Field::Displacement, Pick { mode: 9, frame: None }).is_err());
         assert_eq!(field_values(&s.model, modes, Field::Displacement, Pick { mode: 2, frame: None }).unwrap().len(), modes.nodes().len());

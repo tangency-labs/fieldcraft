@@ -1675,6 +1675,7 @@ fn finish(
         warnings.push(format!("loads and reactions differ by {imbalance:.3e} (relative {:.1e})", imbalance / scale));
     }
     Ok(StaticResult {
+        fatigue: None,
         step: step.name.clone(),
         nodes: mesh.labels.clone(),
         displacement,

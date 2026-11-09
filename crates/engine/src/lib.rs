@@ -159,6 +159,14 @@ pub enum StepResult {
 }
 
 impl StepResult {
+    pub fn fatigue(&self) -> Option<&fieldcraft_solver::fatigue::field::FatigueField> {
+        match self {
+            Self::Implicit(fieldcraft_solver::StepResult::Static(r)) => r.fatigue.as_ref(),
+            Self::Implicit(fieldcraft_solver::StepResult::Harmonic(r)) => r.fatigue.as_ref(),
+            _ => None,
+        }
+    }
+
     pub fn step(&self) -> &str {
         match self {
             StepResult::Implicit(r) => r.step(),
@@ -802,7 +810,10 @@ impl Session {
     /// it). Opening is not solving: nothing is unsaved.
     pub(crate) fn keep_stored_result(&mut self, result: StepResult, definition: [u8; 32]) -> bool {
         let step = result.step().to_string();
-        let current = fieldcraft_io::results::definition_hash(&self.model, &step, &self.sources) == Some(definition);
+        let current = fieldcraft_io::results::definition_hash(&self.model, &step, &self.sources) == Some(definition)
+            && result.fatigue().is_none_or(|f| {
+                f.dependencies.iter().all(|(name, hash)| fieldcraft_io::results::definition_hash(&self.model, name, &self.sources) == Some(*hash))
+            });
         let revision = if current { self.revision } else { next_revision() };
         self.result_inputs.insert(step.clone(), definition);
         self.results.insert(step, (revision, Arc::new(result)));
@@ -826,9 +837,14 @@ impl Session {
     /// others go stale.
     fn refresh_results(&mut self) {
         let revision = self.revision;
-        for (step, (solved, _)) in self.results.iter_mut().filter(|(_, (r, _))| *r != revision) {
+        for (step, (solved, r)) in self.results.iter_mut().filter(|(_, (r, _))| *r != revision) {
             let read = self.result_inputs.get(step).copied();
-            if read.is_some() && read == fieldcraft_io::results::definition_hash(&self.model, step, &self.sources) {
+            if read.is_some()
+                && read == fieldcraft_io::results::definition_hash(&self.model, step, &self.sources)
+                && r.fatigue().is_none_or(|f| {
+                    f.dependencies.iter().all(|(name, hash)| fieldcraft_io::results::definition_hash(&self.model, name, &self.sources) == Some(*hash))
+                })
+            {
                 *solved = revision;
             }
         }

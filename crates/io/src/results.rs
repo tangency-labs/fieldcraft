@@ -9,7 +9,7 @@
 //! u32 steps
 //! steps × { u64 length, step name (UTF-8),
 //!           32 bytes: SHA-256 of the definition it was solved from ([`definition_hash`]),
-//!           u8 kind (0 static, 1 frequency, 2 heat transfer, 3 explicit dynamic, 4 fluid, 5 harmonic),
+//!           u8 kind (0 static, 1 frequency, 2 heat transfer, 3 explicit dynamic, 4 fluid, 5 harmonic, 6 static with fatigue, 7 harmonic with fatigue),
 //!           u64 length, the result in the [`crate::codec`] encoding }   names ascending
 //! ```
 //!
@@ -97,10 +97,22 @@ impl<'a> SolvedRef<'a> {
     /// The kind code of the format.
     fn kind(&self) -> u8 {
         match self {
-            SolvedRef::Implicit(fieldcraft_solver::StepResult::Static(_)) => 0,
+            SolvedRef::Implicit(fieldcraft_solver::StepResult::Static(r)) => {
+                if r.fatigue.is_some() {
+                    6
+                } else {
+                    0
+                }
+            }
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Frequency(_)) => 1,
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Heat(_)) => 2,
-            SolvedRef::Implicit(fieldcraft_solver::StepResult::Harmonic(_)) => 5,
+            SolvedRef::Implicit(fieldcraft_solver::StepResult::Harmonic(r)) => {
+                if r.fatigue.is_some() {
+                    7
+                } else {
+                    5
+                }
+            }
             SolvedRef::Explicit(_) => 3,
             SolvedRef::Fluid(_) => 4,
         }
@@ -108,10 +120,16 @@ impl<'a> SolvedRef<'a> {
 
     fn encode_into(&self, out: &mut Vec<u8>) -> std::result::Result<(), codec::CodecError> {
         match self {
-            SolvedRef::Implicit(fieldcraft_solver::StepResult::Static(r)) => codec::encode_into(r, out),
+            SolvedRef::Implicit(fieldcraft_solver::StepResult::Static(r)) => match &r.fatigue {
+                Some(f) => codec::encode_into(&(r, f), out),
+                None => codec::encode_into(r, out),
+            },
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Frequency(r)) => codec::encode_into(r, out),
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Heat(r)) => codec::encode_into(r, out),
-            SolvedRef::Implicit(fieldcraft_solver::StepResult::Harmonic(r)) => codec::encode_into(r, out),
+            SolvedRef::Implicit(fieldcraft_solver::StepResult::Harmonic(r)) => match &r.fatigue {
+                Some(f) => codec::encode_into(&(r, f), out),
+                None => codec::encode_into(r, out),
+            },
             SolvedRef::Explicit(r) => codec::encode_into(r, out),
             SolvedRef::Fluid(r) => codec::encode_into(r, out),
         }
@@ -269,6 +287,18 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded> {
             3 => Solved::Explicit(codec::decode(payload).map_err(damaged)?),
             4 => Solved::Fluid(codec::decode(payload).map_err(damaged)?),
             5 => Solved::Implicit(fieldcraft_solver::StepResult::Harmonic(codec::decode(payload).map_err(damaged)?)),
+            6 => {
+                let (mut r, f): (fieldcraft_solver::StaticResult, fieldcraft_solver::fatigue::field::FatigueField) =
+                    codec::decode(payload).map_err(damaged)?;
+                r.fatigue = Some(f);
+                Solved::Implicit(fieldcraft_solver::StepResult::Static(r))
+            }
+            7 => {
+                let (mut r, f): (fieldcraft_solver::HarmonicResult, fieldcraft_solver::fatigue::field::FatigueField) =
+                    codec::decode(payload).map_err(damaged)?;
+                r.fatigue = Some(f);
+                Solved::Implicit(fieldcraft_solver::StepResult::Harmonic(r))
+            }
             k => return invalid(format!("{PART}: step `{name}` has a result of unknown kind {k}")),
         };
         if result.step() != name {
@@ -306,6 +336,9 @@ pub fn check(r: &Solved) -> std::result::Result<(), String> {
     use fieldcraft_solver::StepResult as S;
     match r {
         Solved::Implicit(S::Harmonic(h)) => {
+            if let Some(f) = &h.fatigue {
+                f.validate(h.nodes.len()).map_err(|e| e.to_string())?;
+            }
             if h.natural_frequencies.iter().any(|f| !f.is_finite() || *f < 0.0) {
                 return Err("harmonic natural frequencies must be finite and nonnegative".into());
             }
@@ -357,6 +390,9 @@ pub fn check(r: &Solved) -> std::result::Result<(), String> {
             Ok(())
         }
         Solved::Implicit(S::Static(s)) => {
+            if let Some(f) = &s.fatigue {
+                f.validate(s.nodes.len()).map_err(|e| e.to_string())?;
+            }
             if !ascending(&s.nodes) {
                 return Err("its nodes do not ascend".into());
             }

@@ -138,7 +138,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Decks | LS-DYNA Deck — Write an LS-DYNA keyword file | ready | `deck.write {"format":"lsdyna"}` |
 | Decks | Read Deck — Read an Abaqus input deck's model data: mesh, sets, materials and sections; unread keywords are listed, not kept | ready | `deck.read` |
 | Implicit | Static — Linear static (or coupled temperature–displacement) solve of a step with FieldCraft's own solver; nonlinear static, buckling, harmonic response and heat transfer in the drop-down | ready | `solve.static`, `solve.nonlinear`, `solve.buckle`, `solve.harmonic`, `solve.heat` |
-| Implicit | Reference-load Fatigue — Superposes current static reference tensors, counts finite-record rainflow cycles and reports selected-node Miner damage in SI | ready | `solve.fatigue.history` |
+| Implicit | Reference-load Fatigue — Superposes current static reference tensors, counts finite-record rainflow and stores damage/life contours with node coverage; Basquin or segmented S-N with strength factors | ready | `solve.fatigue.history` |
 | Implicit | Transient Stress Fatigue — Counts exported SI nodal transient stress histories with explicit source identity, time-axis validation and per-cycle Miner damage | ready | `solve.fatigue.transient` |
 | Implicit | Strain-cycle Fatigue — Evaluates explicitly counted local total-strain cycles with CMB, Morrow or SWT, and Miner accumulation | ready | `solve.fatigue.strain_cycles` |
 | Implicit | Frequency — Natural frequencies and mode shapes of a frequency step | ready | `solve.frequency` |
