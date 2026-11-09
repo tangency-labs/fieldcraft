@@ -695,7 +695,7 @@ pub static CATALOGUE: &[Capability] = &[
         "Random Response",
         Solve,
         "Implicit",
-        "Projects stored harmonic frames into component spectra, RMS and fixed coherent scalar stress projections; optional narrow-band/Dirlik/BT fatigue approximations and declared unit base inertial load",
+        "Projects stored harmonic frames into component spectra, RMS and fixed coherent scalar stress projections; optional narrow-band/Dirlik fatigue with segmented S-N, single-slope BT fatigue and declared unit base inertial load",
     ),
     ready_more(
         "solve.sensitivity.static",

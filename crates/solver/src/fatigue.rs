@@ -11,6 +11,7 @@ pub mod curve;
 pub mod field;
 pub mod history;
 pub mod life;
+pub mod segmented_spectral;
 pub mod spectral;
 pub mod stress;
 

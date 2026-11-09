@@ -25,7 +25,7 @@ enum InputModel {
 struct NarrowBandInput {
     #[serde(default)]
     method: fieldcraft_solver::fatigue::spectral::Method,
-    curve: fieldcraft_solver::fatigue::Basquin,
+    curve: fieldcraft_solver::fatigue::curve::SnCurve,
     duration_seconds: f64,
     mean_stress_pa: f64,
     correction: fieldcraft_solver::fatigue::life::StressMean,
@@ -100,6 +100,15 @@ pub(super) fn run(s: &mut Session, p: &Value, step: &str, table: &Value) -> Resu
                 return Err(EngineError::invalid("narrow_band", "use fatigue for broadband methods"));
             }
             let fatigue_input = config.fatigue.as_ref().or(config.narrow_band.as_ref());
+            if let Some(f) = fatigue_input
+                && let fieldcraft_solver::fatigue::curve::SnCurve::Table(t) = &f.curve
+                && nodes.len().checked_mul(t.points.len()).is_none_or(|n| n > 256)
+            {
+                return Err(EngineError::invalid(
+                    "stress_projection",
+                    "segmented spectral integration work cap: node count times table points must be <=256; select fewer nodes",
+                ));
+            }
             if fatigue_input.is_some_and(|f| !f.stationary_gaussian) {
                 return Err(EngineError::invalid("stress_projection", "narrow-band damage requires explicit stationary Gaussian applicability"));
             }
@@ -111,7 +120,14 @@ pub(super) fn run(s: &mut Session, p: &Value, step: &str, table: &Value) -> Resu
                     let moments = spectral::moments(&samples)?;
                     let fatigue = fatigue_input
                         .map(|f| -> Result<Value> {
-                            let r = spectral::damage(&samples, &f.curve, f.duration_seconds, f.mean_stress_pa, f.correction, f.method)?;
+                            let r = fieldcraft_solver::fatigue::segmented_spectral::damage(
+                                &samples,
+                                &f.curve,
+                                f.duration_seconds,
+                                f.mean_stress_pa,
+                                f.correction,
+                                f.method,
+                            )?;
                             Ok(json!({"method":f.method, "damage":r.damage,
                     "narrow_band_limit":r.moments_hz[0]>0.0 && 1.0-r.irregularity<=1e-8,
                     "life_seconds":if r.damage>0.0 { let life=f.duration_seconds/r.damage; life.is_finite().then_some(life) } else { None },

@@ -246,3 +246,6 @@ maximum principal stress, with checked proportionality before rainflow/Miner.
 Analytic tension/compression, biaxial shear and rotated tensors exercise scalar-cycle
 means and damage. Nonproportional critical-plane laws remain open; component PSDs
 cannot provide these signed histories or nonlinear scalar spectra.
+Spectral fatigue tables: Rayleigh and Dirlik integrate piecewise S–N amplitude
+laws with explicit strength factors and endurance cutoff. TB tables and rejected
+extrapolation are named unsupported combinations; no PSD time history is synthesized.

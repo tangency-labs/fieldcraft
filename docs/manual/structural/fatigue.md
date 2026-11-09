@@ -74,7 +74,8 @@ quadrature per interval; this exactly integrates the moment polynomials, but doe
 not recover an unresolved resonance. Omit `fatigue` for projection only. The earlier `narrow_band` object remains a narrow-band-only alias; specifying both objects is refused.
 
 The Rayleigh approximation requires a stationary Gaussian scalar linear response,
-a narrow spectrum and a single Basquin slope without endurance cutoff. A constant
+a narrow spectrum. Its legacy closed form uses single-slope Basquin without
+endurance cutoff; the table path integrates piecewise laws and a cutoff. A constant
 cycle mean is supplied separately; the PSD does not encode it. The output reports
 the irregularity factor and upcrossing rate; it does not certify Gaussianity,
 bandwidth, coverage or mesh/modal convergence. Broader spectra need other methods.
@@ -193,8 +194,8 @@ user-supplied strength multipliers in (0,1], not empirical estimates: after mean
 correction divide amplitude by their product before evaluating the unreduced
 curve. They also reduce the endurance limit; they do not change ultimate/yield
 strength in the mean correction. Two points can represent a single Basquin slope.
-Spectral methods still require a single-slope Basquin curve without endurance
-cutoff; piecewise spectral integration is not claimed.
+Spectral tables are supported by narrow-band and Dirlik as detailed below; TB
+retains only its single-slope Basquin interface.
 
 `solve.fatigue.history` accepts `nodes:"all"` or explicit labels and saves the field
 on its first reference step. `solve.random` with harmonic frames saves projected
@@ -276,3 +277,41 @@ Max principal samples [1,4,1] give a=1.5, mean=2.5; Goodman ultimate=10 Pa
 corrects a to 2 Pa and gives D=0.04. Uniaxial sigma0=2 Pa gives D=0.04
 (signed VM) or 0.01 (max principal, no correction). These are analytic
 implementation checks, not measured material data or BASE validation.
+
+### Segmented S–N in spectral fatigue
+
+`solve.random` → `stress_projection.fatigue.curve` accepts the same S–N table
+as time-domain fatigue: `points:[{cycles,amplitude}]` in cycles/Pa,
+`endurance_limit` in Pa, `surface_factor`, `size_factor` in (0,1], and
+`extrapolation:"end_slopes"`. Tables require 2..64 points and each log-log
+slope in 1..20. Node count times point count is capped at 256 per command
+to bound quadrature work. Strength factors multiply the S–N stress axis and endurance
+limit; the applied PSD is unchanged. A factor below one increases damage.
+
+`narrow_band` integrates the Rayleigh amplitude density with the zero-crossing
+rate. `dirlik` integrates its exponential/two-Rayleigh mixture with the peak
+rate; in its near-narrow-band limit it uses Rayleigh and the crossing rate.
+Both split the integral at every table knot and endurance cutoff. The public
+basis is Dirlik & Benasciutti (2021), Metals 11:1333, equations (4), (7), (8):
+D = duration × cycle-rate × integral[p(amplitude)/N(amplitude)]. The distribution
+is over amplitude, half the rainflow range; no stress history is constructed.
+
+The numerical implementation integrates each power segment after t=u² using
+bounded Simpson refinement (relative successive-integral tolerance 2e-9).
+The exponential tail is bounded by a cutoff beyond the mode with an additional
+128+20 ln(1+lower) margin for supported slopes. Out-of-domain intervals,
+nonconvergence and nonrepresentable damage return errors, never a silent zero.
+The table's outer slopes must be explicitly extrapolated: Gaussian amplitude
+support is unbounded, so `extrapolation:"reject"` is refused by name.
+
+`benasciutti_tovo` with a table is refused by name: the existing exponent-dependent
+single-slope correction has no implemented piecewise extension. Dirlik tables
+require zero mean and `correction:{type:"none"}`; narrow-band tables retain the
+existing constant scalar cycle-mean correction. Legacy single-slope Basquin
+behavior is unchanged. Missing correlations, nonlinear invariant PSDs, and
+PSD-derived signed time histories remain unsupported. These are approximate
+stationary Gaussian scalar stress methods, not general multiaxial laws.
+
+This extends the former single-slope-only interface; it does not claim measured
+material properties or full-field BASE validation. Existing BASE evidence remains
+two candidate points with synthetic material data.

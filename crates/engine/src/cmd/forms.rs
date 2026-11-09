@@ -2614,7 +2614,7 @@ pub const SOLVE_HARMONIC: &[Field] = &[
     THREADS,
 ];
 pub const SOLVE_RANDOM: &[Field] = &[
-    json("stress_projection", "Scalar stress projection").help("Fixed six weights and input_model=common_scalar_unit_pattern; projects complex harmonic stress before squaring. Optional fatigue: method=narrow_band/dirlik/benasciutti_tovo, curve, duration_seconds, mean_stress_pa, correction, stationary_gaussian=true. Broad-band requires zero mean and correction=none. SI only; not von Mises or unknown-correlated inputs."),
+    json("stress_projection", "Scalar stress projection").help("Fixed six weights and input_model=common_scalar_unit_pattern; projects complex harmonic stress before squaring. Optional fatigue: method=narrow_band/dirlik/benasciutti_tovo, curve, duration_seconds, mean_stress_pa, correction, stationary_gaussian=true. Broad-band requires zero mean and correction=none. Segmented S-N points/cycles/amplitude with surface_factor,size_factor,endurance_limit and end_slopes are supported by narrow_band and dirlik (2..64 points, slopes 1..20); benasciutti_tovo and extrapolation=reject refuse tables. SI only; not von Mises or unknown-correlated inputs."),
     num("natural_frequency", "Natural frequency", D::Of(Quantity::Frequency)).def("1").help("Natural frequency of the SDOF check in Hz."),
     positive("damping_ratio", "Damping ratio", D::None).def("0.02").help("Viscous modal damping ratio ζ."),
     positive("base_acceleration_psd", "Base acceleration PSD", D::Acceleration).def("1").help("One-sided white base acceleration PSD."),
