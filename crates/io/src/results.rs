@@ -9,7 +9,7 @@
 //! u32 steps
 //! steps × { u64 length, step name (UTF-8),
 //!           32 bytes: SHA-256 of the definition it was solved from ([`definition_hash`]),
-//!           u8 kind (0 static, 1 frequency, 2 heat transfer, 3 explicit dynamic, 4 fluid, 5 harmonic, 6 static with fatigue, 7 harmonic with fatigue),
+//!           u8 kind (0 static, 1 frequency, 2 heat transfer, 3 explicit dynamic, 4 fluid, 5 harmonic, 6 static with fatigue, 7 legacy harmonic with fatigue, 8 harmonic with mass identity, 9 harmonic with mass identity and fatigue),
 //!           u64 length, the result in the [`crate::codec`] encoding }   names ascending
 //! ```
 //!
@@ -108,9 +108,9 @@ impl<'a> SolvedRef<'a> {
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Heat(_)) => 2,
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Harmonic(r)) => {
                 if r.fatigue.is_some() {
-                    7
+                    9
                 } else {
-                    5
+                    8
                 }
             }
             SolvedRef::Explicit(_) => 3,
@@ -286,16 +286,23 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded> {
             2 => Solved::Implicit(fieldcraft_solver::StepResult::Heat(codec::decode(payload).map_err(damaged)?)),
             3 => Solved::Explicit(codec::decode(payload).map_err(damaged)?),
             4 => Solved::Fluid(codec::decode(payload).map_err(damaged)?),
-            5 => Solved::Implicit(fieldcraft_solver::StepResult::Harmonic(codec::decode(payload).map_err(damaged)?)),
+            5 => Solved::Implicit(fieldcraft_solver::StepResult::Harmonic(decode_legacy_harmonic(payload).map_err(damaged)?)),
+            8 => Solved::Implicit(fieldcraft_solver::StepResult::Harmonic(codec::decode(payload).map_err(damaged)?)),
             6 => {
                 let (mut r, f): (fieldcraft_solver::StaticResult, fieldcraft_solver::fatigue::field::FatigueField) =
                     codec::decode(payload).map_err(damaged)?;
                 r.fatigue = Some(f);
                 Solved::Implicit(fieldcraft_solver::StepResult::Static(r))
             }
-            7 => {
+            9 => {
                 let (mut r, f): (fieldcraft_solver::HarmonicResult, fieldcraft_solver::fatigue::field::FatigueField) =
                     codec::decode(payload).map_err(damaged)?;
+                r.fatigue = Some(f);
+                Solved::Implicit(fieldcraft_solver::StepResult::Harmonic(r))
+            }
+            7 => {
+                let (old, f): (LegacyHarmonic, fieldcraft_solver::fatigue::field::FatigueField) = codec::decode(payload).map_err(damaged)?;
+                let mut r = old.into_current();
                 r.fatigue = Some(f);
                 Solved::Implicit(fieldcraft_solver::StepResult::Harmonic(r))
             }
@@ -531,4 +538,64 @@ fn check_fluid(f: &FluidResult) -> std::result::Result<(), String> {
         return Err("a conducting solid has a cell outside the grid".into());
     }
     Ok(())
+}
+
+// Kinds 5/7 predate selectable harmonic mass. Keep their exact binary field order.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct LegacyHarmonic {
+    step: String,
+    nodes: Vec<u32>,
+    reference_points: Vec<(String, u32)>,
+    frames: Vec<fieldcraft_solver::harmonic::Frame>,
+    natural_frequencies: Vec<f64>,
+    residual_vectors: usize,
+    stats: fieldcraft_solver::Stats,
+    warnings: Vec<String>,
+}
+impl LegacyHarmonic {
+    fn into_current(self) -> fieldcraft_solver::HarmonicResult {
+        fieldcraft_solver::HarmonicResult {
+            mass: fieldcraft_solver::MassKind::Consistent,
+            operator_diagonal_bounds: None,
+            fatigue: None,
+            step: self.step,
+            nodes: self.nodes,
+            reference_points: self.reference_points,
+            frames: self.frames,
+            natural_frequencies: self.natural_frequencies,
+            residual_vectors: self.residual_vectors,
+            stats: self.stats,
+            warnings: self.warnings,
+        }
+    }
+}
+fn decode_legacy_harmonic(payload: &[u8]) -> std::result::Result<fieldcraft_solver::HarmonicResult, codec::CodecError> {
+    Ok(codec::decode::<LegacyHarmonic>(payload)?.into_current())
+}
+
+#[cfg(test)]
+mod harmonic_mass_compatibility {
+    use super::*;
+    #[test]
+    fn old_binary_mass_is_consistent_and_new_binary_preserves_lumped() {
+        let legacy = LegacyHarmonic {
+            step: "H".into(),
+            nodes: vec![1],
+            reference_points: vec![],
+            frames: vec![],
+            natural_frequencies: vec![],
+            residual_vectors: 0,
+            stats: fieldcraft_solver::Stats { dofs: 1, equations: 1, factor_entries: 0, lanczos_vectors: 0 },
+            warnings: vec![],
+        };
+        let mut bytes = vec![];
+        codec::encode_into(&legacy, &mut bytes).unwrap();
+        let mut r = decode_legacy_harmonic(&bytes).unwrap();
+        assert_eq!(r.mass, fieldcraft_solver::MassKind::Consistent);
+        r.mass = fieldcraft_solver::MassKind::Lumped;
+        r.operator_diagonal_bounds = Some([[1000., 1000.], [0.5, 0.5]]);
+        bytes.clear();
+        codec::encode_into(&r, &mut bytes).unwrap();
+        assert_eq!(codec::decode::<fieldcraft_solver::HarmonicResult>(&bytes).unwrap(), r);
+    }
 }

@@ -2606,6 +2606,9 @@ pub const INVERSE_HARMONIC: &[Field] = &[
 pub const SOLVE_STATIC: &[Field] = &[STEP, MAX_DOFS, MAX_FACTOR, MAX_MEMORY_GIB, THREADS];
 pub const SOLVE_HARMONIC: &[Field] = &[
     STEP,
+    choice("mass", "Mass matrix", &[("consistent", "Consistent"), ("lumped", "Lumped")])
+        .help("Mass discretization for inertia, damping and the modal basis; random response inherits it.")
+        .def("\"consistent\""),
     MAX_DOFS,
     int("max_factor_entries", "Max factor entries", 1, super::solve::HARMONIC_FACTOR_ENTRY_CEILING as i64)
         .help("Cap in 8-byte real slots, two per complex factor entry: 400M by default; explicitly raise up to 4B (32 GB of values). Indices, workspace and other solver storage are additional.")

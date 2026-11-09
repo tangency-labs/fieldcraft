@@ -44,7 +44,7 @@ pub const STATIC: CommandSpec = CommandSpec {
 pub const HARMONIC: CommandSpec = CommandSpec {
     id: "solve.harmonic",
     label: "Solve Harmonic Step",
-    params: r#"{"step": "Sweep", "max_factor_entries": 400000000, "threads": 6} — steady-state complex response with Re(U exp(iωt)), consistent mass and the step's frequencies, direct or modal method and additive damping. Stores each frequency's displacement and optional stress phasors. Reports full-equation residuals, projected residuals for modal response, and input/dissipated power; a small projected residual alone does not certify a truncated modal solution. Limits and threads as for solve.static, except an explicit max_factor_entries can reach 4000000000 real 8-byte slots (two per complex entry; 32 GB of factor values alone). The default remains 400000000. Use solve.probe to read frequency curves."#,
+    params: r#"{"step": "Sweep", "mass": "consistent|lumped", "max_factor_entries": 400000000, "threads": 6} — steady-state complex response with Re(U exp(iωt)), mass chosen as consistent (default) or lumped and the step's frequencies, direct or modal method and additive damping. Stores each frequency's displacement and optional stress phasors. Reports full-equation residuals, projected residuals for modal response, and input/dissipated power; a small projected residual alone does not certify a truncated modal solution. Limits and threads as for solve.static, except an explicit max_factor_entries can reach 4000000000 real 8-byte slots (two per complex entry; 32 GB of factor values alone). The default remains 400000000. Use solve.probe to read frequency curves."#,
     form: Some(super::forms::SOLVE_HARMONIC),
     kind: CommandKind::Model,
     requires: &[Requirement::Analysable, Requirement::Step],
@@ -421,8 +421,9 @@ fn run_heat(s: &mut Session, p: &Value) -> Result<Value> {
 fn run_harmonic(s: &mut Session, p: &Value) -> Result<Value> {
     let limits = limits_with_factor_ceiling(p, HARMONIC_FACTOR_ENTRY_CEILING)?;
     let step = opt::<String>(p, "step")?;
-    let r = with_threads(threads(s, p)?, || fieldcraft_solver::solve_harmonic(&s.model, step.as_deref(), &limits))?;
-    let summary = json!({"step": r.step, "stats": r.stats, "natural_frequencies": r.natural_frequencies, "residual_vectors": r.residual_vectors,
+    let mass = opt::<MassKind>(p, "mass")?.unwrap_or_default();
+    let r = with_threads(threads(s, p)?, || fieldcraft_solver::solve_harmonic_with_mass(&s.model, step.as_deref(), mass, &limits))?;
+    let summary = json!({"step": r.step, "mass": r.mass, "operator_diagonal_bounds": r.operator_diagonal_bounds, "stats": r.stats, "natural_frequencies": r.natural_frequencies, "residual_vectors": r.residual_vectors,
         "frequencies": r.frames.iter().map(|f| json!({"frequency": f.frequency, "relative_residual": f.relative_residual,
             "residual_norm_si": f.residual_norm_si, "projected_residual": f.projected_residual, "input_power": f.input_power, "dissipated_power": f.dissipated_power})).collect::<Vec<_>>(),
         "warnings": r.warnings});
@@ -1750,7 +1751,7 @@ fn probe_harmonic(r: &fieldcraft_solver::HarmonicResult, nodes: &[u32], p: &Valu
         }
         curves.push(curve);
     }
-    Ok(json!({"step": r.step, "nodes": curves, "phase_convention": "Re(U exp(i omega t)); phase of zero amplitude is 0"}))
+    Ok(json!({"step": r.step, "nodes": curves, "mass": r.mass, "phase_convention": "Re(U exp(i omega t)); phase of zero amplitude is 0"}))
 }
 
 /// The entry of a label-sorted result list.
@@ -2111,6 +2112,53 @@ fn run_inverse_joint(s: &mut Session, p: &Value) -> Result<Value> {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    #[test]
+    fn harmonic_mass_contract_and_random_identity() {
+        let mut s = Session::default();
+        s.execute("model.units", &json!({"system":"m-kg-s-N-Pa"})).unwrap();
+        s.execute("mesh.node.add", &json!({"label":1,"xyz":[0,0,0]})).unwrap();
+        s.execute("mesh.node.add", &json!({"label":2,"xyz":[1,0,0]})).unwrap();
+        s.execute("mesh.element.add", &json!({"label":1,"kind":"rod2","nodes":[1,2]})).unwrap();
+        s.execute("model.set.create", &json!({"name":"root","nodes":[1]})).unwrap();
+        s.execute("model.set.create", &json!({"name":"tip","nodes":[2]})).unwrap();
+        s.execute("model.set.create", &json!({"name":"member","elements":[1]})).unwrap();
+        s.execute("model.material.create", &json!({"name":"synthetic","elastic":{"type":"isotropic","young":1000,"poisson":0.3},"density":1}))
+            .unwrap();
+        s.execute("model.section.create", &json!({"name":"rod","set":"member","material":"synthetic","kind":{"type":"rod","area":1}})).unwrap();
+        s.execute("model.boundary_condition.create", &json!({"name":"clamp","type":"fixed","target":{"set":"root"}})).unwrap();
+        s.execute(
+            "model.boundary_condition.create",
+            &json!({"name":"guide","type":"displacement","target":{"set":"tip"},"values":[null,0,0,null,null,null]}),
+        )
+        .unwrap();
+        s.execute("model.load.create", &json!({"name":"unit","type":"force","target":{"set":"tip"},"vector":[1,0,0]})).unwrap();
+        s.execute("model.step.create", &json!({"name":"Sweep","procedure":{"type":"harmonic","frequencies":[1,1.01,1.02],"method":{"type":"direct"}},"boundary_conditions":["clamp","guide"],"loads":["unit"],"output":["displacement","stress"]})).unwrap();
+        let a = s.execute("solve.harmonic", &json!({"step":"Sweep"})).unwrap();
+        let pa = s.execute("solve.probe", &json!({"step":"Sweep","nodes":[2]})).unwrap();
+        let b = s.execute("solve.harmonic", &json!({"step":"Sweep","mass":"consistent"})).unwrap();
+        assert_eq!(a, b);
+        assert_eq!(pa, s.execute("solve.probe", &json!({"step":"Sweep","nodes":[2]})).unwrap());
+        assert!(s.execute("solve.harmonic", &json!({"step":"Sweep","mass":"invalid"})).is_err());
+        let l = s.execute("solve.harmonic", &json!({"step":"Sweep","mass":"lumped"})).unwrap();
+        assert_eq!(l["mass"], "lumped");
+        let p = s.execute("solve.probe", &json!({"step":"Sweep","nodes":[2]})).unwrap();
+        assert_ne!(p["nodes"], pa["nodes"]);
+        let mut input = json!({"step":"Sweep","nodes":[2],"input_psd":[[1,4],[1.02,4]],"stress_projection":{"weights":[1,0,0,0,0,0],"input_model":"common_scalar_unit_pattern","fatigue":{"curve":{"amplitude_ref":2,"cycles_ref":100,"exponent":2,"endurance_limit":0},"duration_seconds":10,"mean_stress_pa":0,"correction":{"type":"none"},"stationary_gaussian":true,"method":"narrow_band"}}});
+        let r = s.execute("solve.random", &input).unwrap();
+        assert_eq!(r["mass"], "lumped");
+        let StepResult::Implicit(ImplicitResult::Harmonic(h)) = s.result("Sweep").unwrap().as_ref() else { panic!() };
+        assert_eq!(h.mass, MassKind::Lumped);
+        assert!(h.fatigue.is_some());
+        let encoded = serde_json::to_value(h).unwrap();
+        let restored: fieldcraft_solver::HarmonicResult = serde_json::from_value(encoded.clone()).unwrap();
+        assert_eq!(restored.mass, MassKind::Lumped);
+        let mut legacy = encoded;
+        legacy.as_object_mut().unwrap().remove("mass");
+        assert_eq!(serde_json::from_value::<fieldcraft_solver::HarmonicResult>(legacy).unwrap().mass, MassKind::Consistent);
+        input["mass"] = json!("consistent");
+        assert!(s.execute("solve.random", &input).unwrap_err().to_string().contains("mass"));
+    }
+
     #[test]
     fn inverse_iteration_budget_does_not_truncate_eigen_basis() {
         for iterations in [2, 8, 32, 64] {

@@ -37,6 +37,9 @@ pub(super) fn run(s: &mut Session, p: &Value, step: &str, table: &Value) -> Resu
     let StepResult::Implicit(ImplicitResult::Harmonic(h)) = result.as_ref() else {
         return Err(EngineError::invalid("step", "the stored result is not harmonic"));
     };
+    if p.get("mass").is_some() {
+        return Err(EngineError::invalid("mass", "inherited from stored harmonic result; select mass in solve.harmonic"));
+    }
     let table: Vec<[f64; 2]> = serde_json::from_value(table.clone()).map_err(|e| EngineError::invalid("input_psd", e.to_string()))?;
     if table.len() < 2
         || table.len() > 10000
@@ -206,7 +209,7 @@ pub(super) fn run(s: &mut Session, p: &Value, step: &str, table: &Value) -> Resu
         }
     }
     Ok(
-        json!({"fatigue_ranked_nodes":ranked,"fatigue_coverage_all":!ranked.is_empty()&&ranked.len()==h.nodes.len(),"step":step,"method":"harmonic_frame_psd","nodes":nodes,"frequencies":h.frames.iter().map(|f|f.frequency).collect::<Vec<_>>(),"input_psd":psd,"node_displacement_psd":up,"node_acceleration_psd":ap,"node_displacement_rms":ut,"node_acceleration_rms":at,"stress_psd":sp,"stress_rms":st,"projected_stress":projected,"projection_weights":projection.as_ref().map(|v|v.weights),"projection_psd_unit":"Pa²/Hz","probes":probes,"acceleration_reference":if direction.is_some(){"absolute_base_motion"}else{"stationary_support"},"displacement_reference":if direction.is_some(){"relative_to_base"}else{"stationary_support"},"units":{"frequency":"Hz","displacement_rms":"m","acceleration_rms":"m/s²","stress_rms":"Pa","psd":"squared SI response unit per Hz"}}),
+        json!({"fatigue_ranked_nodes":ranked,"fatigue_coverage_all":!ranked.is_empty()&&ranked.len()==h.nodes.len(),"step":step,"method":"harmonic_frame_psd","mass":h.mass,"nodes":nodes,"frequencies":h.frames.iter().map(|f|f.frequency).collect::<Vec<_>>(),"input_psd":psd,"node_displacement_psd":up,"node_acceleration_psd":ap,"node_displacement_rms":ut,"node_acceleration_rms":at,"stress_psd":sp,"stress_rms":st,"projected_stress":projected,"projection_weights":projection.as_ref().map(|v|v.weights),"projection_psd_unit":"Pa²/Hz","probes":probes,"acceleration_reference":if direction.is_some(){"absolute_base_motion"}else{"stationary_support"},"displacement_reference":if direction.is_some(){"relative_to_base"}else{"stationary_support"},"units":{"frequency":"Hz","displacement_rms":"m","acceleration_rms":"m/s²","stress_rms":"Pa","psd":"squared SI response unit per Hz"}}),
     )
 }
 
@@ -260,6 +263,8 @@ mod fatigue_tests {
             })
             .collect();
         let h = HarmonicResult {
+            mass: fieldcraft_solver::MassKind::Consistent,
+            operator_diagonal_bounds: None,
             fatigue: None,
             step: "synthetic".into(),
             nodes: vec![7],

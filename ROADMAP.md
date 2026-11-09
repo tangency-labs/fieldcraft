@@ -249,3 +249,5 @@ cannot provide these signed histories or nonlinear scalar spectra.
 Spectral fatigue tables: Rayleigh and Dirlik integrate piecewise S–N amplitude
 laws with explicit strength factors and endurance cutoff. TB tables and rejected
 extrapolation are named unsupported combinations; no PSD time history is synthesized.
+
+- Harmonic mass choice: `solve.harmonic mass=consistent|lumped` (default consistent), shared direct/modal and damping operators; random fatigue retains source mass identity.
