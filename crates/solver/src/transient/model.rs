@@ -33,6 +33,8 @@ pub struct Energy {
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Response {
+    /// Assembly choice used by this solve; preserved with the result.
+    pub mass: MassKind,
     pub step: String,
     pub nodes: Vec<u32>,
     pub frames: Vec<Frame>,
@@ -113,6 +115,11 @@ fn energy(a: &Csr, q: &[f64]) -> f64 {
 }
 
 pub fn solve(model: &Model, name: Option<&str>, limits: &Limits, spectrum: bool) -> Result<Response> {
+    solve_with_mass(model, name, MassKind::Consistent, limits, spectrum)
+}
+
+/// Solve with one mass choice for assembly, damping, modes, initial balance and energy.
+pub fn solve_with_mass(model: &Model, name: Option<&str>, mass: MassKind, limits: &Limits, spectrum: bool) -> Result<Response> {
     let resolved = model.resolve()?;
     let wanted: fn(&Procedure) -> bool =
         if spectrum { |p| matches!(p, Procedure::ResponseSpectrum(_)) } else { |p| matches!(p, Procedure::Transient(_)) };
@@ -193,12 +200,12 @@ pub fn solve(model: &Model, name: Option<&str>, limits: &Limits, spectrum: bool)
     if red.largest_prescribed() != 0.0 {
         return Err(Error::NotSupported("linear dynamics nonzero prescribed motion; use base_acceleration".into()));
     }
-    let assembled = analysis::assemble(&mesh, &graph, Some(MassKind::Consistent))?;
+    let assembled = analysis::assemble(&mesh, &graph, Some(mass))?;
     let mut k = assembled.k;
     let mut m = assembled.m.ok_or_else(|| Error::Internal("dynamic mass".into()))?;
     k.mirror_lower();
     m.mirror_lower();
-    let (viscous, loss) = crate::harmonic::damping_operators(model, &resolved, &mesh, &graph)?;
+    let (viscous, loss) = crate::harmonic::damping_operators_with_mass(model, &resolved, &mesh, &graph, mass)?;
     if loss.as_ref().is_some_and(|g| g.val.iter().any(|x| *x != 0.0)) {
         return Err(Error::NotSupported("structural loss in linear dynamics".into()));
     }
@@ -211,6 +218,7 @@ pub fn solve(model: &Model, name: Option<&str>, limits: &Limits, spectrum: bool)
     mr.mirror_lower();
     cr.mirror_lower();
     let mut output = Response {
+        mass,
         step: step.name.clone(),
         nodes: mesh.labels.clone(),
         frames: Vec::new(),

@@ -6,7 +6,7 @@ Every entry is a toolbar button. **Ready** entries run their command; **coming s
 shown greyed with the roadmap milestone that brings them (ROADMAP.md). Scripts, the command line,
 the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 
-99 ready, 30 coming soon.
+102 ready, 30 coming soon.
 
 ## Geometry
 
@@ -133,15 +133,18 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 |---|---|---|---|
 | Run | Solve — Solve every step in order and show the results | ready | `solve.run` |
 | Check | Check Model — Name every missing or bad definition before writing or solving | ready | `model.check` |
-| Decks | Abaqus Input — Write Abaqus input (.inp), including direct/modal transient and constant response-spectrum steps | ready | `deck.write {"format":"abaqus"}` |
+| Decks | Abaqus Input — Write Abaqus input (.inp), including direct/modal transient and constant response-spectrum steps with checked mass mapping | ready | `deck.write {"format":"abaqus"}` |
 | Decks | Nastran Deck — Write Nastran bulk data (SOL 101, 103) | ready | `deck.write {"format":"nastran"}` |
 | Decks | LS-DYNA Deck — Write an LS-DYNA keyword file | ready | `deck.write {"format":"lsdyna"}` |
 | Decks | Read Deck — Read Abaqus model data, instances and supported linear steps; save original input files for exact replay | ready | `deck.read` |
 | Input Source | Write Original Source — Replay retained Abaqus input and INCLUDE files without exporting model edits | ready | `deck.source.write` |
 | Implicit | Static — Linear static (or coupled temperature–displacement) solve of a step with FieldCraft's own solver; nonlinear static, buckling, harmonic response, transient, response spectrum and heat transfer in the drop-down | ready | `solve.static`, `solve.nonlinear`, `solve.buckle`, `solve.harmonic`, `solve.transient`, `solve.spectrum`, `solve.heat` |
+| Implicit | Reference-load Fatigue — Superposes current static reference tensors, counts finite-record rainflow and stores damage/life contours with node coverage; Basquin or segmented S-N with strength factors | ready | `solve.fatigue.history` |
+| Implicit | Transient Stress Fatigue — Counts exported SI nodal transient stress histories with explicit source identity, time-axis validation and per-cycle Miner damage | ready | `solve.fatigue.transient` |
+| Implicit | Strain-cycle Fatigue — Evaluates explicitly counted local total-strain cycles with CMB, Morrow or SWT, and Miner accumulation | ready | `solve.fatigue.strain_cycles` |
 | Implicit | Matrices — Assemble reduced linear structural matrices and optionally export SI operator files | ready | `solve.matrices` |
 | Implicit | Frequency — Natural frequencies and mode shapes of a frequency step | ready | `solve.frequency` |
-| Implicit | Random Response — Executes imported modal random steps or projects stored harmonic frames and a one-sided PSD into nodal and optional unaveraged solid element component spectra and RMS; supports coherent absolute acceleration for a declared unit base inertial load | ready | `solve.random` |
+| Implicit | Random Response — Executes imported modal random steps or projects stored harmonic frames into nodal and unaveraged element PSD/RMS; fixed coherent scalar stress projections support narrow-band/Dirlik segmented S-N and single-slope BT fatigue | ready | `solve.random` |
 | Design studies | Sensitivity — Static displacement, work and continuum stress derivatives; simple-mode frequency and direct harmonic derivatives in the drop-down | ready | `solve.sensitivity.static`, `solve.sensitivity.frequency`, `solve.sensitivity.harmonic` |
 | Design studies | Measured Observations — Import measured modal frequencies from CSV or UFF with explicit pairing and uncertainty; read raw complex UFF data in the drop-down | ready | `observations.import`, `observations.read` |
 | Design studies | Identify Parameters — Fit selected zero-based frequency modes, material, thickness or spring parameters; complex-response and joint mixed-observation fits in the drop-down | ready | `solve.inverse.frequency`, `solve.inverse.harmonic`, `solve.inverse.joint` |
@@ -158,7 +161,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Display | Contours — Contours of displacement and stress, with a legend | ready | `results.contour` |
 | Display | Mode Shapes — Mode shapes and frequencies of a frequency step | ready | `results.modes` |
 | Display | Animate — Animate the deformed shape, a mode or an explicit step's frames | ready | `results.animate`, `results.frame` |
-| Query | Probe — Nodal fields, element section forces, modes, and transient frames with kinetic, strain, damping, work and balance energies | ready | `solve.probe`, `solve.history` |
+| Query | Probe — Nodal fields, element section forces, modes, and transient frames with stored consistent/lumped mass and kinetic, strain, damping, work and balance energies | ready | `solve.probe`, `solve.history` |
 | Query | Reactions — Reaction force and moment sums per set | ready | `results.reactions`, `results.export.csv` |
 | Query | Linearize — Membrane, bending and peak stresses along a path through a wall (ASME VIII-2 Annex 5-A) | ready | `results.linearize` |
 | Query | Free Body — Free-body forces across a cut | coming soon (M9) |  |

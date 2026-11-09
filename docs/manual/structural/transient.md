@@ -367,3 +367,50 @@ The current representation is global nodal averaging; shell output uses the top
 surface and beam section stress is refused. Element stress output in a native deck
 must be compared with the same recovery/averaging convention, not blindly with a
 commercial element integration-point maximum.
+
+### Mass matrix selection
+
+`solve.transient {"step":"Pulse","mass":"consistent"}` and
+`solve.transient {"step":"Pulse","mass":"lumped"}` select the assembled mass
+for either direct or modal histories. Omission means **consistent on each call**,
+including after a lumped solve. This is a solve option, not a step attribute.
+The same selection feeds element mass-proportional damping, step Rayleigh damping,
+modal extraction/projection, base inertia, physical initial acceleration and kinetic
+energy. A constrained rod of length/area 1, density 3 and Young's modulus 4 has
+free mass 1 kg (consistent) or 1.5 kg (lumped), stiffness 4 N/m and initial
+acceleration 1 or 2/3 m/s² under a 1 N step with zero initial displacement/velocity.
+These are different discrete models, not alternative integrator settings.
+
+Solve summaries and `solve.probe` report `mass`; saved results retain it. Old05/06 linear dynamic development results are refused with the regeneration
+message; use their verified original program to recover them. `solve.run {"mass":"lumped"}` forwards
+the choice only if every step is frequency, transient or response spectrum;
+other mixed analyses are refused before any solve. Omitting `mass` preserves the
+old dispatch defaults. Invalid names are refused.
+
+For native dynamics export, pass the same `mass` to `deck.write`. A stored-result
+mismatch is rejected. Point masses need no matrix conversion; native T3D2 rods
+require `lumped`. Consistent rods and other distributed-element dynamic mass
+mappings are currently rejected by element name, rather than silently changing
+discretization. Static exports are unchanged. This follows the public Abaqus
+[Element Library mass formulation](https://docs.software.vt.edu/abaqusv2026/English/SIMACAEELMRefMap/simaelm-c-general.htm)
+and [rod dynamic-loading benchmark](https://ceae-server.colorado.edu/v2016/books/bmk/ch01s04ach45.html).
+
+### Response spectrum mass and reference precision
+
+`solve.spectrum {"step":"Spectrum","mass":"consistent|lumped"}` uses that
+choice for the eigenproblem and full-mass participation vector before constraint
+reduction. Default is consistent; summaries, probes and saved results retain the
+choice. Frequency-dependent spectrum ordinates therefore change with the selected
+discretization, even when total physical mass is unchanged. Native export follows
+the same mass restrictions as transient export.
+
+Black-box handoffs must state reference storage precision. FieldCraft stores f64
+results; JSON retains round-trip precision and reference CSV uses 17 significant
+digits. Compare the other program's output precision with the requested tolerance
+before interpreting differences; single-precision fields and time stamps cannot
+be assumed to carry f64 precision. Keep historical precision failures separate
+from full-precision comparisons.
+
+Persistence uses unified MCRSLT07 and full type 6 dynamics
+payload (including energy and mass); see [result layout](../../results-kind-layout.md).
+Old05/06 dynamics require verified-producer recovery.

@@ -114,3 +114,33 @@ fn zero_frequency_static_limit_and_full_modal_agreement() {
     let s = solve_static(&m, Some("S"), &Limits::default()).unwrap();
     assert!((a.frames[0].real[1][0] - 2.0 * 0.4_f64.cos() * s.displacement[1][0]).abs() < 1e-13);
 }
+
+#[test]
+fn selected_mass_direct_modal_and_material_damping_match_closed_form() {
+    use fieldcraft_solver::{MassKind, solve_harmonic_with_mass};
+    let d = Damping { alpha: 0.07, beta: 0.01, loss_factor: 0.02 };
+    for mass in [MassKind::Consistent, MassKind::Lumped] {
+        let mf = if mass == MassKind::Consistent { 1.0 } else { 1.5 };
+        for method in [Method::Direct, Method::Modal { modes: 1, damping_ratios: vec![], residual_vectors: 0 }] {
+            let model = rod(d, Damping::default(), method, 0.0);
+            let r = solve_harmonic_with_mass(&model, None, mass, &Limits::default()).unwrap();
+            assert_eq!(r.mass, mass);
+            let bounds = r.operator_diagonal_bounds.unwrap();
+            for (actual, expected) in bounds.into_iter().flatten().zip([4.0, 4.0, mf, mf]) {
+                assert!((actual / expected - 1.0).abs() < 1e-14);
+            }
+            if mass == MassKind::Consistent {
+                assert_eq!(r, solve_harmonic(&model, None, &Limits::default()).unwrap());
+            }
+            for f in &r.frames {
+                let w = 2.0 * PI * f.frequency;
+                let x = 4.0 - w * w * mf;
+                let y = w * (d.alpha * mf + d.beta * 4.0) + d.loss_factor * 4.0;
+                let fr = 2.0 * 0.4_f64.cos();
+                let fi = 2.0 * 0.4_f64.sin();
+                assert!((f.real[1][0] - (fr * x + fi * y) / (x * x + y * y)).abs() < 1e-10);
+                assert!((f.imaginary[1][0] - (fi * x - fr * y) / (x * x + y * y)).abs() < 1e-10);
+            }
+        }
+    }
+}

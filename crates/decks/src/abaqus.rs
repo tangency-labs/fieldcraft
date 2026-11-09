@@ -192,6 +192,12 @@ pub fn write(model: &Model, units: Preset) -> Result<String> {
 
 /// [`write`] for a model already expressed in `units` ([`crate::express`]) and resolved.
 pub fn write_resolved(model: &Model, r: &Resolved, units: Preset) -> Result<String> {
+    write_resolved_with_mass(model, r, units, fieldcraft_model::MassKind::Consistent)
+}
+
+/// As [`write_resolved`], with an explicit dynamics mass matrix choice.
+pub fn write_resolved_with_mass(model: &Model, r: &Resolved, units: Preset, mass: fieldcraft_model::MassKind) -> Result<String> {
+    dynamics::check_mass(model, mass)?;
     crate::refuse_fluid(FORMAT, model)?;
     crate::refuse_prestress(FORMAT, model)?;
     let by_type = elements_by_type(model, r)?;
@@ -204,6 +210,13 @@ pub fn write_resolved(model: &Model, r: &Resolved, units: Preset) -> Result<Stri
     let discrete = discrete_groups(model, r)?;
     let mut d = Deck::default();
     d.heading(units);
+    if model.steps().iter().any(|s| matches!(s.procedure, Procedure::Transient(_) | Procedure::ResponseSpectrum(_))) {
+        let name = match mass {
+            fieldcraft_model::MassKind::Consistent => "consistent",
+            fieldcraft_model::MassKind::Lumped => "lumped",
+        };
+        writeln!(d.out, "** FieldCraft dynamics mass={name}; native mass mapping checked").ok();
+    }
     d.nodes(model)?;
     d.elements(&by_type);
     d.discrete_elements(&discrete);
