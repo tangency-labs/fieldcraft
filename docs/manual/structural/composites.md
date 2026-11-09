@@ -4,12 +4,11 @@ Affine swept `hex8` continuum shells use the opt-in `solid_shell` formulation.
 See [geometry, physical ply layers, supported analyses and named refusals](../../solvers/solid-shell.md).
 
 Six-node `tri6` shells use [MITC6-a](../../solvers/mitc6.md), with shared curved
-directors and layered constitutive/mass integration. Its documented plate-only
-buckling and coarse-mesh accuracy limits apply.
+directors and layered constitutive/mass integration. Its documented analysis restrictions and coarse-mesh accuracy limits apply.
 
 Composite and oriented sections support `tri3`/`quad4` flat shells and `quad8` curved
 MITC8 statics, frequency and harmonic analysis. MITC8 uses shared nodal directors and three thickness Gauss
-points per ply, including density moments; linear buckling requires coplanar geometry and a flat preload. See [MITC8 conventions and limits](../../solvers/mitc8.md).
+points per ply, including density moments; linear buckling uses a flat-plate or consistent curved-shell operator according to geometry. See [MITC8 conventions and limits](../../solvers/mitc8.md).
 
 Define a material, assign its directions and an ordered layup to a shell set, solve a linear
 static, frequency or flat-plate buckling step, then inspect each ply through `solve.probe`.

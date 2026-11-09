@@ -1097,6 +1097,7 @@ const PROCEDURE: Field = variants(
             &[
                 int("modes", "Modes", 1, 100_000).help("How many buckling modes to find.").req().def("4"),
                 num("shift", "Shift", D::None).help("Look for eigenvalues near this value; 0 finds the lowest."),
+                flag("follower_pressure", "Follower pressure").help("Include conservative pressure load stiffness on quadratic shell faces; requires symmetric free-DOF loads and direct supports."),
             ],
         ),
         variant(

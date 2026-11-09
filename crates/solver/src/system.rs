@@ -1041,6 +1041,24 @@ pub fn prescribed(
             }
         }
     }
+    // NASA CR-2568, section 4.1.11: a ring-shell pole has ur=beta=0.
+    // Enforce this in the shared production constraint path (all analyses),
+    // not only in a benchmark recipe. Axial translation remains free.
+    if mesh.structural.iter().any(|e| matches!(e.section, Section::Axishell { .. })) {
+        for (n, p) in mesh.xyz.iter().enumerate() {
+            if p[0] != 0.0 {
+                continue;
+            }
+            for kind in [DofKind::Ux, DofKind::Rz] {
+                let index = mesh.dof(n, kind)?;
+                let slot = out.get_mut(index).ok_or_else(|| Error::Internal("pole dof index".into()))?;
+                if slot.is_some_and(|v| v != 0.0) {
+                    return Err(Error::Invalid(format!("axisymmetric shell pole requires {} = 0", mesh.describe_dof(index))));
+                }
+                *slot = Some(0.0);
+            }
+        }
+    }
     crate::pretension::prescribe(model, mesh, step, values, &mut out)?;
     Ok(out)
 }

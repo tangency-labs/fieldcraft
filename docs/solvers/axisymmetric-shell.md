@@ -31,7 +31,7 @@ shear uses its midpoint value and one-point integration. This **selective** rule
 differs from the fully reduced rule in the cited paper. It is also not a claim
 that this discretization is Abaqus SAX1. No MITC or solid B-bar operator is used.
 The thin-shell measure omits through-thickness curvature Jacobian corrections;
-positive radii and thickness/minimum nodal radius <=0.05 are required.
+nonnegative radii and the hoop-curvature thickness screen below are required.
 
 Section material axes are `(t,negative model Z,n)`, a right-handed triad. Positive
 thickness follows n: inward for a meridian running upward on a cylinder, upward
@@ -60,7 +60,7 @@ Production commands `solve.static`, `solve.frequency`, and direct/modal
 solver. Nodal ring forces, moments, density-integrated gravity and body force
 are supported. Pressure and thermal loads are explicitly rejected; callers must
 supply independently integrated mechanical ring forces. Point masses/springs,
-mixed 3D sections, poles at r=0, explicit material frames, transient/response
+mixed 3D sections, negative-radius axis crossing, explicit material frames, transient/response
 spectrum, explicit dynamics and sensitivity analyses are not supported.
 
 `solve.buckle` supports **flat annular plates with a flat membrane preload only**.
@@ -102,3 +102,37 @@ defines its axisymmetric positive normal by a counterclockwise quarter turn
 from node 1 toward node 2, and excludes explicit orientations for SAX1/SAX2.
 These conventions are checked individually; matching a normal convention does
 not establish an element-formula mapping.
+
+## Regular poles and LE7
+
+A meridian may end at r=0; negative radius and an edge entirely on the axis are
+refused. NASA CR-2568 (1975), section 4.1.11, supplies the regularity conditions
+and endpoint limiting procedure, not this element's interpolation. The common
+production constraint path imposes u_r=beta=0 at every pole, leaves axial motion
+free, and rejects conflicting prescribed values. For smooth fields,
+`lim u_r/r = u_r'/r'`, `lim beta/r = beta'/r'`; hence
+`lim k_h = -beta'`. The constrained pole shape contributes zero to the hoop
+operator. The non-pole linear shape uses `N'/r'` at the endpoint. Interior Gauss
+points retain their positive radii and the measure 2*pi*r; no epsilon radius,
+new cap node, mass, or fictitious stiffness is introduced. Stress recovery also
+rejects nonregular pole coordinates. Faceted tangent/director errors near a
+smooth pole converge with meridian refinement; a sharp conical apex is not a
+smooth-pole accuracy claim.
+
+The thin-shell screen now uses `h*abs(dz/ds)/r_mid <= .05` (hoop curvature),
+not h divided by the smallest nodal ring radius. A sphere has finite curvature
+at its pole although its ring radius vanishes. Meridional curvature is resolved
+by conical facets; this screen alone is not a universal thin-shell certificate.
+
+`axishell_pole` builds a distinct, SI-unit NAFEMS LE7 **shell** model: R=1 m,
+h=.025 m, E=210 GPa, nu=.3; full-circumference loads integrate 1 MPa normal
+pressure on the mid-surface. F fixes axial motion and symmetry rotation; A has
+the automatic pole constraints. D is a node at (1,1.4034,0), with its physical
+outer surface at (1.0125,1.4034,0). Connectivity runs from F toward A, making
+positive thickness inward: **bottom**, not the default nodal top stress, is the
+outer surface. Both adjacent element endpoint sigma_YY values are checked
+against 25.86 MPa at the unchanged 1% limit; 50/100/200 elements per metre give
+outer endpoint pairs (25.61413,25.93402), (25.71127,25.88083),
+(25.76013,25.84542) MPa. Native static results reopen exactly. This does not
+replace the old axisymmetric-solid LE7 recipe, its millimetre-scale geometry,
+or its -2.233% shell-reference failure.

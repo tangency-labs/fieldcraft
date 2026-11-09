@@ -73,6 +73,10 @@ pub enum Procedure {
         modes: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         shift: Option<f64>,
+        /// Include conservative pressure load stiffness on quadratic shell faces.
+        /// Only an assembled symmetric free-DOF operator is accepted.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        follower_pressure: bool,
     },
     /// Transient dynamics by explicit time integration up to `end_time`.
     ExplicitDynamic(ExplicitDynamic),
@@ -1189,7 +1193,7 @@ impl Procedure {
         if let Procedure::HeatTransfer { transient: Some(t) } = self {
             return t.validate();
         }
-        if let Procedure::Buckle { modes, shift } = *self {
+        if let Procedure::Buckle { modes, shift, .. } = *self {
             if !(1..=MAX_MODES).contains(&modes) {
                 return Err(Error::Invalid(format!("a buckling step extracts 1 to {MAX_MODES} modes, got {modes}")));
             }

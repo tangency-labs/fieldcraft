@@ -971,7 +971,7 @@ mod tests {
         model
             .add_load("force", Load::Force { target: Target::Set("top".into()), vector: [0.0, 0.0, -1.0], distribution: Default::default() })
             .unwrap();
-        let mut step = Step::new("Buckle", Procedure::Buckle { modes: 1, shift: None });
+        let mut step = Step::new("Buckle", Procedure::Buckle { modes: 1, shift: None, follower_pressure: false });
         step.boundary_conditions.insert("fixed".into());
         step.loads.insert("force".into());
         model.add_step(step, None).unwrap();

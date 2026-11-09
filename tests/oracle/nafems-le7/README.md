@@ -92,3 +92,13 @@ the recipe's corners, so it is the same on every platform.
 cargo xtask oracle --case nafems-le7
 cargo xtask oracle --bless nafems-le7   # only after the case passes
 ```
+
+
+Historical boundary: the frozen recipe omits `model.units` and is therefore read
+in the default mm–tonne–s–N–MPa system. Its geometry is 1e-3 of the stated metre
+geometry, while E and pressure convert to 210 GPa and 1 MPa. Uniform scaling
+preserves this pressure-only linear stress comparison, not displacements,
+forces, mass or frequencies. It remains an axisymmetric **solid** recipe and
+its shell-reference known failure is retained. The separate axisymmetric-shell
+pole/LE7 command test uses explicit SI units and compares outer shell stresses;
+it does not overwrite this model or fixture.

@@ -1446,7 +1446,13 @@ impl Deck {
                     base_bcs.clone_from(&step.boundary_conditions);
                     base_loads.clone_from(&step.loads);
                 }
-                Procedure::Buckle { modes, shift } => {
+                Procedure::Buckle { modes, shift, follower_pressure } => {
+                    if follower_pressure {
+                        return Err(Error::Unsupported {
+                            format: FORMAT,
+                            what: "quadratic-shell follower-pressure buckling export: formulation correspondence not established".into(),
+                        });
+                    }
                     // Abaqus's buckling base state is the end of the previous general step;
                     // FieldCraft's steps all start from the undeformed, unloaded model.
                     if !base_loads.is_empty()

@@ -271,3 +271,10 @@ Eight-node MITC8 homogeneous and layered elastic statics use quadratic surface/d
 Affine swept hex8 continuum solid-shell: opt-in full-integration ANS/EAS10, 24 translations, separate physical orthotropic layers, static/modal/harmonic command paths and native result persistence. Curved/warped/oblique and aspect ratios above100, integrated composite sections, nonlinear/transient/buckling and faithful SC8R export remain unsupported; see `docs/solvers/solid-shell.md`. Matrix export now selects the same consistent/lumped mass as harmonic analysis.
 
 - Axisymmetric two-ring thin shells: native static, modal, harmonic and flat-annular membrane-preload buckling; explicit curved-buckling/pole/SAX1-export refusals. See `docs/solvers/axisymmetric-shell.md`. MITC8 twisted-strip and point-loaded hemispherical benchmarks now have executable own-mesh recipes.
+
+
+Quadratic-shell verification update: regular axisymmetric poles and a separate
+SI-unit LE7 shell command test; consistent curved MITC8/MITC6 initial-stress
+operators and opt-in conservative pressure stiffness, checked by perfect axial
+and pressure cylinders with native result roundtrips. Nonlinear equilibrium,
+curved prestressed dynamics and faithful commercial shell mappings remain open.

@@ -490,7 +490,7 @@ impl Quantities for Step {
                 }
             }
             // The shift is a load factor.
-            Procedure::Buckle { modes: _, shift: _ } | Procedure::MatrixGeneration { .. } => {}
+            Procedure::Buckle { .. } | Procedure::MatrixGeneration { .. } => {}
             Procedure::ExplicitDynamic(e) => {
                 let ExplicitDynamic {
                     end_time,

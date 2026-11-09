@@ -116,7 +116,7 @@ pub const FREQUENCY: CommandSpec = CommandSpec {
 pub const BUCKLE: CommandSpec = CommandSpec {
     id: "solve.buckle",
     label: "Solve Buckling Step",
-    params: r#"{"step": "Buckle", "max_dofs": 6000000, "max_factor_entries": 400000000, "max_iterations": 3000, "threads": 8} — linear buckling of a buckling step (the only one when `step` is left out): the step's loads as a linear preload, then the lowest load factors λ with (K + λ K_σ) φ = 0 and their mode shapes (largest component 1), or those above the step's shift (whose LDLᵀ factor counts the load factors below it); negative load factors found are reported; the result stays in the session and its modes display like frequency modes; `max_factor_entries` and `threads` as for solve.static"#,
+    params: r#"{"step": "Buckle", "max_dofs": 6000000, "max_factor_entries": 400000000, "max_iterations": 3000, "threads": 8} — linear buckling of a buckling step (the only one when `step` is left out); procedure.follower_pressure includes conservative load stiffness on zero-offset MITC8/MITC6 reference faces (direct supports only), otherwise pressures are dead: the step's loads as a linear preload, then the lowest load factors λ with (K + λ K_σ) φ = 0 and their mode shapes (largest component 1), or those above the step's shift (whose LDLᵀ factor counts the load factors below it); negative load factors found are reported; the result stays in the session and its modes display like frequency modes; `max_factor_entries` and `threads` as for solve.static"#,
     form: Some(super::forms::SOLVE_BUCKLE),
     kind: CommandKind::Model,
     requires: &[Requirement::Analysable, Requirement::ElementMaterial, Requirement::ElementSection, Requirement::Step],

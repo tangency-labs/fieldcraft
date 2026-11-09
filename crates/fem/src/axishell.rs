@@ -8,6 +8,10 @@
 //! integration (selective reduced penalty), not the paper's fully reduced rule
 //! and not a claim of equivalence to Abaqus SAX1. Thin-shell measure 2*pi*r ds,
 //! laminate ABD and density moments; only meridional/hoop-aligned plies.
+//! Pole regularity follows NASA CR-2568 (1975), section 4.1.11: ur=beta=0,
+//! interior Gauss integration, and L'Hopital limits for endpoint recovery.
+//! This is not the report's Hermite element. A pole is a meridian endpoint,
+//! never a continuation into negative radius.
 use crate::dense::Matrix;
 use crate::frame::tensor_to_global;
 use crate::laminate::{Laminate, PlyPoint, PlyProperties};
@@ -24,8 +28,10 @@ pub struct Axishell {
 impl Axishell {
     pub fn new(x: &[[f64; 3]], plies: &[PlyProperties], offset: f64) -> Result<Self> {
         let x: [[f64; 3]; 2] = x.try_into().map_err(|_| Error::Invalid("axisymmetric shell requires two ring nodes".into()))?;
-        if x.iter().flatten().any(|v| !v.is_finite()) || x.iter().any(|p| p[0] <= 0.0 || p[2] != 0.0) {
-            return Err(Error::NotSupported("axisymmetric shell requires positive radius, XY meridian; poles at r=0 are not supported".into()));
+        if x.iter().flatten().any(|v| !v.is_finite()) || x.iter().any(|p| p[0] < 0.0 || p[2] != 0.0) {
+            return Err(Error::NotSupported(
+                "axisymmetric shell requires nonnegative radius and XY meridian; negative-radius axis crossing is not supported".into(),
+            ));
         }
         let length = ((x[1][0] - x[0][0]).powi(2) + (x[1][1] - x[0][1]).powi(2)).sqrt();
         if !length.is_finite() || length <= 0.0 {
@@ -37,10 +43,18 @@ impl Axishell {
             }
         }
         let section = Laminate::new(plies, offset)?;
-        if section.thickness() > 0.05 * x[0][0].min(x[1][0]) {
-            return Err(Error::NotSupported("axisymmetric thin-shell thickness/radius above 0.05".into()));
+        let tangent = [(x[1][0] - x[0][0]) / length, (x[1][1] - x[0][1]) / length];
+        let radius = 0.5 * (x[0][0] + x[1][0]);
+        if radius <= 0.0 {
+            return Err(Error::Degenerate("axisymmetric shell meridian lies on the axis".into()));
         }
-        Ok(Self { x, length, tangent: [(x[1][0] - x[0][0]) / length, (x[1][1] - x[0][1]) / length], section })
+        // Hoop curvature is |dz/ds|/r, not 1/r. At a smooth spherical pole
+        // both numerator and radius vanish. The facet midpoint ratio has a
+        // finite limit, whereas h/min(nodal radius) wrongly excludes caps.
+        if section.thickness() * tangent[1].abs() > 0.05 * radius {
+            return Err(Error::NotSupported("axisymmetric thin-shell thickness times hoop curvature above 0.05".into()));
+        }
+        Ok(Self { x, length, tangent, section })
     }
     fn shape(&self, q: f64) -> ([f64; 2], [f64; 2], f64) {
         let n = [(1.0 - q) / 2.0, (1.0 + q) / 2.0];
@@ -58,9 +72,19 @@ impl Axishell {
             let j = 3 * i;
             b[0][j] = c * d[i];
             b[0][j + 1] = s * d[i];
-            b[1][j] = n[i] / r;
+            // The constrained pole shape has no radial/rotation contribution.
+            // For a regular field ur=O(r), beta=O(r), the remaining shape/r
+            // tends to N'/r' at r=0; no artificial epsilon radius is used.
+            let hoop = if self.x[i][0] == 0.0 {
+                0.0
+            } else if r == 0.0 {
+                d[i] / c
+            } else {
+                n[i] / r
+            };
+            b[1][j] = hoop;
             b[3][j + 2] = -d[i];
-            b[4][j + 2] = -c * n[i] / r;
+            b[4][j + 2] = -c * hoop;
             b[6][j] = -s * d[i];
             b[6][j + 1] = c * d[i];
             b[6][j + 2] = -0.5;
@@ -192,6 +216,11 @@ impl Axishell {
         if u.iter().any(|v| !v.is_finite()) {
             return Err(Error::Invalid("axisymmetric displacement not finite".into()));
         }
+        for (i, x) in self.x.iter().enumerate() {
+            if x[0] == 0.0 && (u[3 * i] != 0.0 || u[3 * i + 2] != 0.0) {
+                return Err(Error::Invalid("axisymmetric shell pole recovery requires ur=beta=0".into()));
+            }
+        }
         let [c, s] = self.tangent;
         let axes = [[c, s, 0.0], [0.0, 0.0, 1.0], [s, -c, 0.0]];
         // Paper's positive thickness normal is (-s,c), so choose the hoop -Z
@@ -298,6 +327,41 @@ mod tests {
             for row in a.operator(q).unwrap() {
                 assert!(row.iter().zip(rigid).map(|(b, u)| b * u).sum::<f64>().abs() < 1e-14);
             }
+        }
+    }
+    #[test]
+    fn regular_pole_limits_patch_mass_and_connectivity() {
+        for reverse in [false, true] {
+            let mut x = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
+            let mut u = [0.0, 0.0, 0.0, 0.001, 0.001, 0.002];
+            if reverse {
+                x.reverse();
+                u.rotate_left(3);
+            }
+            let s = shell(&x, 0.01);
+            for q in [-1.0, -0.999999, 0.0, 0.999999, 1.0] {
+                let b = s.operator(q).unwrap();
+                let e: [f64; 8] = std::array::from_fn(|i| b[i].iter().zip(u).map(|(b, u)| b * u).sum());
+                assert!((e[0] - 0.001).abs() < 1e-14);
+                assert!((e[1] - 0.001).abs() < 1e-14);
+                let sign = if reverse { 1.0 } else { -1.0 };
+                assert!((e[3] - sign * 0.002).abs() < 1e-14);
+                assert!((e[4] - sign * 0.002).abs() < 1e-14);
+                assert!(e[6].abs() < 1e-14);
+            }
+            let rigid = [0.0, 1.0, 0.0, 0.0, 1.0, 0.0];
+            for row in s.operator(if reverse { 1.0 } else { -1.0 }).unwrap() {
+                assert!(row.iter().zip(rigid).map(|(b, u)| b * u).sum::<f64>().abs() < 1e-14);
+            }
+            for lumped in [false, true] {
+                assert!((energy(&s.mass(lumped).unwrap(), &rigid) / (std::f64::consts::PI * 0.01 * 7800.0) - 1.0).abs() < 1e-12);
+            }
+            assert!(s.stiffness().unwrap().data.iter().all(|x| x.is_finite()));
+        }
+        // A smooth spherical cap remains admissible as its first facet shrinks.
+        for theta in [0.1_f64, 0.01, 0.001] {
+            let s = shell(&[[0.0, 1.0, 0.0], [theta.sin(), theta.cos(), 0.0]], 0.025);
+            assert!(s.operator(-1.0).unwrap().iter().flatten().all(|v| v.is_finite()));
         }
     }
     #[test]

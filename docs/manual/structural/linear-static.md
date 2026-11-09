@@ -4,8 +4,7 @@ Affine swept `hex8` continuum shells use the opt-in `solid_shell` formulation.
 See [geometry, physical ply layers, supported analyses and named refusals](../../solvers/solid-shell.md).
 
 Six-node `tri6` shells use [MITC6-a](../../solvers/mitc6.md), with shared curved
-directors and layered constitutive/mass integration. Its documented plate-only
-buckling and coarse-mesh accuracy limits apply.
+directors and layered constitutive/mass integration. Its documented analysis restrictions and coarse-mesh accuracy limits apply.
 
 `solve.static` computes the small-displacement equilibrium K u = f of a static step: the
 displacements and rotations, the reactions at the prescribed degrees of freedom and coupled
@@ -277,7 +276,7 @@ probe at the foot's end lies within 0.13 % of the fine tet10 solution.
 
 - Quad8 shell sections use [MITC8](../../solvers/mitc8.md) for homogeneous or layered elastic linear statics.
   Reduced-integration quad8 (S8R) is refused; frequency/harmonic analysis uses the documented MITC8 mass,
-  and buckling requires a coplanar plate and flat preload; the other shell families keep their existing scope.
+  and buckling adds the documented curved Green-strain/director Hessian; the other shell families keep their existing scope.
 
 - Small displacements and linear elasticity: plasticity, damage and erosion are left out with a
   warning; hyperelastic materials take their small-strain linear limit. For large deformation,

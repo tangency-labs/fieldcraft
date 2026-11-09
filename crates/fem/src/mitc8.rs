@@ -121,7 +121,7 @@ impl<const N: usize, const DOFS: usize> QuadraticShell<N, DOFS> {
     }
     /// Lee–Bathe 2004 Fig.6 and (29)–(34). Components are covariant tensor
     /// strains, not engineering shear. q=(-r+s)/sqrt(2); qq=(rr+ss)/2-rs.
-    fn triangle_layer(&self, p: [f64; 3]) -> Result<TensorRows<DOFS>> {
+    fn triangle_layer(&self, p: [f64; 3], variation: Option<usize>) -> Result<TensorRows<DOFS>> {
         let root = 3.0_f64.sqrt();
         let a = 0.5 - 0.5 / root;
         let b = 1.0 - a;
@@ -129,11 +129,11 @@ impl<const N: usize, const DOFS: usize> QuadraticShell<N, DOFS> {
             let q = [r, s, p[2]];
             let m = self.map(q)?;
             if j < 2 {
-                return Ok(self.covariant(q, &m, j, j));
+                return Ok(self.covariant(q, &m, j, j, variation));
             }
-            let rr = self.covariant(q, &m, 0, 0);
-            let ss = self.covariant(q, &m, 1, 1);
-            let rs = self.covariant(q, &m, 0, 1);
+            let rr = self.covariant(q, &m, 0, 0, variation);
+            let ss = self.covariant(q, &m, 1, 1, variation);
+            let rs = self.covariant(q, &m, 0, 1, variation);
             Ok(std::array::from_fn(|k| 0.5 * (rr[k] + ss[k]) - rs[k]))
         };
         let values = [
@@ -166,14 +166,14 @@ impl<const N: usize, const DOFS: usize> QuadraticShell<N, DOFS> {
     }
     /// Lee–Bathe 2004 Fig.7a, (35)–(38): six edge tying points and
     /// two shear components at the centroid, with quadratic interior terms.
-    fn triangle_shear(&self, p: [f64; 3]) -> Result<TensorRows<DOFS>> {
+    fn triangle_shear(&self, p: [f64; 3], variation: Option<usize>) -> Result<TensorRows<DOFS>> {
         let root = 3.0_f64.sqrt();
         let a = 0.5 - 0.5 / root;
         let b = 1.0 - a;
         let sample = |r: f64, s: f64, j: usize| -> Result<[f64; DOFS]> {
             let q = [r, s, p[2]];
             let m = self.map(q)?;
-            Ok(self.covariant(q, &m, j, 2))
+            Ok(self.covariant(q, &m, j, 2, variation))
         };
         let r1 = sample(a, 0.0, 0)?;
         let r2 = sample(b, 0.0, 0)?;
@@ -344,22 +344,40 @@ impl<const N: usize, const DOFS: usize> QuadraticShell<N, DOFS> {
         [scaled(v, z * sh.dn[node][0]), scaled(v, z * sh.dn[node][1]), scaled(v, 0.5 * self.section.thickness * sh.n[node])]
     }
 
-    fn covariant(&self, p: [f64; 3], m: &Map, a: usize, b: usize) -> [f64; DOFS] {
+    fn covariant(&self, p: [f64; 3], m: &Map, a: usize, b: usize, variation: Option<usize>) -> [f64; DOFS] {
         let sh = Self::basis().eval(p);
         let z = self.section.eccentricity + 0.5 * self.section.thickness * p[2];
         std::array::from_fn(|k| {
             let d = self.displacement_gradient(&sh, z, k);
-            0.5 * (dot(m.g[a], d[b]) + dot(m.g[b], d[a]))
+            if let Some(i) = variation {
+                let v = self.displacement_gradient(&sh, z, i);
+                let mut second = [[0.0; 3]; 3];
+                if i / 6 == k / 6 && i % 6 >= 3 && k % 6 >= 3 {
+                    let node = i / 6;
+                    let mut ei = [0.0; 3];
+                    let mut ek = [0.0; 3];
+                    ei[i % 3] = 1.0;
+                    ek[k % 3] = 1.0;
+                    // Unit-director retraction d(theta)=(d+theta x d)/|d+theta x d|.
+                    // Its mixed derivative is -d (ei x d).(ek x d).
+                    // The drilling coordinate is a null direction of this retraction.
+                    let dd = scaled(self.directors[node], -dot(cross(ei, self.directors[node]), cross(ek, self.directors[node])));
+                    second = [scaled(dd, z * sh.dn[node][0]), scaled(dd, z * sh.dn[node][1]), scaled(dd, 0.5 * self.section.thickness * sh.n[node])];
+                }
+                0.5 * (dot(v[a], d[b]) + dot(v[b], d[a]) + dot(m.g[a], second[b]) + dot(m.g[b], second[a]))
+            } else {
+                0.5 * (dot(m.g[a], d[b]) + dot(m.g[b], d[a]))
+            }
         })
     }
 
     /// Direct in-layer tensor, BD86 equations (10),(12); membrane and bending
     /// coexist through z. Normal strain is eliminated by the plane-stress law.
-    fn in_layer(&self, p: [f64; 3]) -> Result<TensorRows<DOFS>> {
+    fn in_layer(&self, p: [f64; 3], variation: Option<usize>) -> Result<TensorRows<DOFS>> {
         let m = self.map(p)?;
-        let rr = self.covariant(p, &m, 0, 0);
-        let ss = self.covariant(p, &m, 1, 1);
-        let rs = self.covariant(p, &m, 0, 1);
+        let rr = self.covariant(p, &m, 0, 0, variation);
+        let ss = self.covariant(p, &m, 1, 1, variation);
+        let rs = self.covariant(p, &m, 0, 1, variation);
         Ok(std::array::from_fn(|k| {
             let mut e = [[0.0; 3]; 3];
             add_tensor(&mut e, &outer(m.dual[0], m.dual[0]), rr[k]);
@@ -372,16 +390,16 @@ impl<const N: usize, const DOFS: usize> QuadraticShell<N, DOFS> {
     /// BD86 (11)–(18). Use the repository's corner order throughout. Edge tensors
     /// keep the transverse-to-edge normal strain direct and reconstruct the other
     /// components from adjacent corner tensors in an orthogonalized covariant basis.
-    fn assumed_layer(&self, p: [f64; 3]) -> Result<TensorRows<DOFS>> {
+    fn assumed_layer(&self, p: [f64; 3], variation: Option<usize>) -> Result<TensorRows<DOFS>> {
         if N == 6 {
-            return self.triangle_layer(p);
+            return self.triangle_layer(p, variation);
         }
         let a = 1.0 / 3.0f64.sqrt();
         let points = Self::basis().nodes();
         let mut samples = vec![[[0.0; 3]; 3]; DOFS * 8];
         for i in 0..4 {
             let q = [points[i][0] * a, points[i][1] * a, p[2]];
-            let e = self.in_layer(q)?;
+            let e = self.in_layer(q, variation)?;
             samples[i * DOFS..(i + 1) * DOFS].copy_from_slice(&e);
         }
         for edge in 0..4 {
@@ -395,7 +413,7 @@ impl<const N: usize, const DOFS: usize> QuadraticShell<N, DOFS> {
             let mut g = m.g;
             g[other] = sub(g[other], scaled(g[keep], dot(g[other], g[keep]) / dot(g[keep], g[keep])));
             let d = dual(&g)?;
-            let direct = self.covariant(q, &m, keep, keep);
+            let direct = self.covariant(q, &m, keep, keep, variation);
             for k in 0..DOFS {
                 let mut mean = samples[edge * DOFS + k];
                 for row in &mut mean {
@@ -423,16 +441,16 @@ impl<const N: usize, const DOFS: usize> QuadraticShell<N, DOFS> {
 
     /// BD86 (19)–(22): four edge samples plus the mean of RA/RB (or SA/SB)
     /// multiplied by the contravariant dyad at the centre, NOT the dyad at RA/RB.
-    fn shear(&self, p: [f64; 3], assumed: bool) -> Result<TensorRows<DOFS>> {
+    fn shear(&self, p: [f64; 3], assumed: bool, variation: Option<usize>) -> Result<TensorRows<DOFS>> {
         if N == 6 && assumed {
-            return self.triangle_shear(p);
+            return self.triangle_shear(p, variation);
         }
         let mut out = [[[0.0; 3]; 3]; DOFS];
         let a = 1.0 / 3.0f64.sqrt();
         for along in 0..2 {
             if !assumed {
                 let m = self.map(p)?;
-                let v = self.covariant(p, &m, along, 2);
+                let v = self.covariant(p, &m, along, 2, variation);
                 for k in 0..DOFS {
                     add_tensor(&mut out[k], &sym_dyad(m.dual[along], m.dual[2]), v[k]);
                 }
@@ -445,7 +463,7 @@ impl<const N: usize, const DOFS: usize> QuadraticShell<N, DOFS> {
                 q[along] = a * signs[0];
                 q[across] = signs[1];
                 let m = self.map(q)?;
-                let v = self.covariant(q, &m, along, 2);
+                let v = self.covariant(q, &m, along, 2, variation);
                 let w = 0.25 * ((1.0 + signs[0] * p[along] / a) * (1.0 + signs[1] * p[across]) - bubble);
                 for k in 0..DOFS {
                     add_tensor(&mut out[k], &sym_dyad(m.dual[along], m.dual[2]), w * v[k]);
@@ -456,7 +474,7 @@ impl<const N: usize, const DOFS: usize> QuadraticShell<N, DOFS> {
                 let mut q = [0.0, 0.0, p[2]];
                 q[along] = sign * a;
                 let m = self.map(q)?;
-                let v = self.covariant(q, &m, along, 2);
+                let v = self.covariant(q, &m, along, 2, variation);
                 for k in 0..DOFS {
                     add_tensor(&mut out[k], &sym_dyad(centre.dual[along], centre.dual[2]), 0.5 * bubble * v[k]);
                 }
@@ -468,9 +486,15 @@ impl<const N: usize, const DOFS: usize> QuadraticShell<N, DOFS> {
     /// Physical engineering-strain operator at a natural point; `assumed=false`
     /// is the direct displacement field (for independent diagnostics/recovery).
     pub fn strain_operator(&self, p: [f64; 3], assumed: bool) -> Result<StrainOperator<DOFS>> {
+        self.strain_derivative(p, assumed, None)
+    }
+
+    // The MITC projection is linear in covariant strain with reference-geometry
+    // coefficients, so the same tying operator applies to both variations.
+    fn strain_derivative(&self, p: [f64; 3], assumed: bool, variation: Option<usize>) -> Result<StrainOperator<DOFS>> {
         let m = self.map(p)?;
-        let mut e = if assumed { self.assumed_layer(p)? } else { self.in_layer(p)? };
-        let shear = self.shear(p, assumed)?;
+        let mut e = if assumed { self.assumed_layer(p, variation)? } else { self.in_layer(p, variation)? };
+        let shear = self.shear(p, assumed, variation)?;
         let mut b = [[0.0; DOFS]; 5];
         for k in 0..DOFS {
             add_tensor(&mut e[k], &shear[k], 1.0);
@@ -708,6 +732,13 @@ impl<const N: usize, const DOFS: usize> QuadraticShell<N, DOFS> {
         finite_matrix(out, "lumped mass")
     }
 
+    pub fn is_flat(&self) -> Result<bool> {
+        let normal = self.plate_normal()?;
+        let extent = self.xyz.iter().map(|x| norm(sub(*x, self.xyz[0]))).fold(0.0, f64::max);
+        Ok(self.xyz.iter().all(|x| dot(sub(*x, self.xyz[0]), normal).abs() <= 1e-8 * extent)
+            && self.directors.iter().all(|n| dot(*n, normal) >= 1.0 - 1e-8))
+    }
+
     /// Reference normal for the flat-plate applicability check. Curvature and
     /// the preload are checked by the solver before assembling plate K_sigma.
     pub fn plate_normal(&self) -> Result<Vec3> {
@@ -760,6 +791,42 @@ impl<const N: usize, const DOFS: usize> QuadraticShell<N, DOFS> {
             }
         }
         finite_matrix(out, "plate initial-stress stiffness")
+    }
+
+    /// Consistent reference-configuration initial-stress Hessian.
+    /// Bathe-Dvorkin (1986), (2)-(4): E_ab=(g_a.g_b-G_a.G_b)/2,
+    /// KG_ij=integral S:delta_i delta_j E dV. The same MITC tensor projection
+    /// as the elastic operator acts on the second variation, including transverse
+    /// shear, thickness geometry and the unit-director second derivative.
+    /// This is a linear bifurcation operator, not a nonlinear equilibrium solver.
+    /// The external load potential must be dead; no follower-pressure Hessian.
+    pub fn geometric_stiffness(&self, u: &[f64]) -> Result<Matrix> {
+        if u.len() != DOFS || u.iter().any(|v| !v.is_finite()) {
+            return Err(Error::Invalid("MITC8/MITC6-a geometric preload coordinates".into()));
+        }
+        let mut out = Matrix::zeros(DOFS);
+        for q in Self::surface_points() {
+            for (t, tw, ply) in self.thickness_rule() {
+                let p = [q.xi[0], q.xi[1], t];
+                let m = self.map(p)?;
+                let b = self.strain_operator(p, true)?;
+                let strain: [f64; 5] = std::array::from_fn(|a| b[a].iter().zip(u).map(|(b, u)| b * u).sum());
+                let c = self.material(p, ply)?;
+                let stress: [f64; 5] = std::array::from_fn(|a| (0..5).map(|b| c[a][b] * strain[b]).sum());
+                let w = q.weight * tw * m.det;
+                for i in 0..DOFS {
+                    let h = self.strain_derivative(p, true, Some(i))?;
+                    for j in i..DOFS {
+                        let v = w * (0..5).map(|a| stress[a] * h[a][j]).sum::<f64>();
+                        out.add(i, j, v);
+                        if i != j {
+                            out.add(j, i, v);
+                        }
+                    }
+                }
+            }
+        }
+        finite_matrix(out, "curved initial-stress stiffness")
     }
 
     pub fn body_force(&self, force: Vec3) -> Result<Vec<f64>> {
@@ -882,4 +949,56 @@ fn finite_matrix(m: Matrix, name: &str) -> Result<Matrix> {
         return Err(Error::Invalid(format!("MITC8/MITC6-a nonfinite {name}")));
     }
     Ok(m)
+}
+
+#[cfg(test)]
+mod geometric_tests {
+    use super::*;
+    fn check<const N: usize, const D: usize>() {
+        let basis = if N == 8 { Basis::Quad8 } else { Basis::Tri6 };
+        let x: Vec<_> = basis.nodes().iter().map(|p| [p[0], p[1], 0.12 * p[0] * p[0] + 0.08 * p[0] * p[1]]).collect();
+        let section = ShellSection::new(0.1, 0.2, &fieldcraft_model::Elastic::Isotropic { young: 1200.0, poisson: 0.25 }).unwrap();
+        let s = QuadraticShell::<N, D>::new(&x, section).unwrap();
+        let p = [0.2, 0.3, 0.4];
+        let m = s.map(p).unwrap();
+        let v: Vec<_> = (0..D).map(|i| (i as f64 * 0.7).sin() * 0.3).collect();
+        let w: Vec<_> = (0..D).map(|i| (i as f64 * 0.4).cos() * 0.2).collect();
+        let metric = |a: f64, b: f64| {
+            let mut t = s.clone();
+            for n in 0..N {
+                let u: Vec3 = std::array::from_fn(|j| a * v[6 * n + j] + b * w[6 * n + j]);
+                let r: Vec3 = std::array::from_fn(|j| a * v[6 * n + 3 + j] + b * w[6 * n + 3 + j]);
+                t.xyz[n] = sum(t.xyz[n], u);
+                t.directors[n] = unit(sum(s.directors[n], cross(r, s.directors[n]))).unwrap();
+            }
+            t.map(p).unwrap().g
+        };
+        let eps = 1e-4;
+        let g = [metric(eps, eps), metric(eps, -eps), metric(-eps, eps), metric(-eps, -eps)];
+        for a in 0..3 {
+            for b in a..3 {
+                let analytic: f64 = (0..D).map(|i| v[i] * s.covariant(p, &m, a, b, Some(i)).iter().zip(&w).map(|(h, w)| h * w).sum::<f64>()).sum();
+                let measured = (dot(g[0][a], g[0][b]) - dot(g[1][a], g[1][b]) - dot(g[2][a], g[2][b]) + dot(g[3][a], g[3][b])) / (8.0 * eps * eps);
+                assert!((analytic - measured).abs() < 2e-8, "{N}: ({a},{b}) {analytic} != {measured}");
+            }
+        }
+        let preload: Vec<_> = x.iter().flat_map(|p| [0.0, -0.001 * p[1], 0.0, 0.0, 0.0, 0.0]).collect();
+        let kg = s.geometric_stiffness(&preload).unwrap();
+        for c in 0..3 {
+            let rigid: Vec<_> = (0..D).map(|i| if i % 6 == c { 1.0 } else { 0.0 }).collect();
+            assert!(kg.mul_vec(&rigid).iter().all(|x| x.abs() < 1e-10));
+        }
+        for i in 0..D {
+            for j in 0..D {
+                assert_eq!(kg.data[i * D + j], kg.data[j * D + i]);
+            }
+        }
+        let zero = s.geometric_stiffness(&vec![0.0; D]).unwrap();
+        assert!(zero.data.iter().all(|v| *v == 0.0));
+    }
+    #[test]
+    fn curved_green_hessian_includes_unit_director_second_variation() {
+        check::<8, 48>();
+        check::<6, 36>();
+    }
 }
