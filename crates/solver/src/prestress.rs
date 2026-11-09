@@ -59,11 +59,8 @@ pub(crate) fn stiffness(setup: &Setup<'_>, graph: &NodeGraph, k: Csr, limits: &L
     }
     let shell_modal = curved || setup.step.perturbation_follower_pressure;
     if shell_modal {
-        if setup.mesh.structural.iter().any(|e| e.kind == fieldcraft_model::ElementKind::Tri6) {
-            return Err(Error::NotSupported("curved MITC6-a prestressed frequency/harmonic or MITC6-a follower-pressure modal tangent: preload-field and actual-pencil residual verification remain open".into()));
-        }
         if !matches!(setup.step.procedure, Procedure::Frequency { .. }) {
-            return Err(Error::NotSupported("curved MITC8 prestressed harmonic response; only modal perturbation verified".into()));
+            return Err(Error::NotSupported("curved MITC8/MITC6-a prestressed harmonic response; only modal perturbation verified".into()));
         }
         if !setup.mesh.elements.is_empty()
             || !setup.mesh.trusses.is_empty()
@@ -71,7 +68,7 @@ pub(crate) fn stiffness(setup: &Setup<'_>, graph: &NodeGraph, k: Csr, limits: &L
             || setup.mesh.structural.iter().any(|e| !matches!(e.kind, fieldcraft_model::ElementKind::Quad8 | fieldcraft_model::ElementKind::Tri6))
             || !setup.model.pretensions().is_empty()
         {
-            return Err(Error::NotSupported("curved shell modal perturbation requires only MITC8 shells; mixed solids, beams, ring shells and pretension sections are not verified".into()));
+            return Err(Error::NotSupported("curved shell modal perturbation requires only MITC8/MITC6-a shells; mixed solids, beams, ring shells and pretension sections are not verified".into()));
         }
         if !setup.model.initial_fields().is_empty()
             || base.loads.iter().any(|name| matches!(setup.model.load(name), Some(fieldcraft_model::Load::Temperature { .. })))

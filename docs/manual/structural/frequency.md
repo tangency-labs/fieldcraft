@@ -395,3 +395,12 @@ optional conservative pressure load stiffness through
 Curved MITC6-a prestressed frequency remains refused: the new cylinder study
 failed coarse-preload accuracy and fine-mesh actual-residual checks. Its existing
 ordinary modes and verified buckling support are unchanged.
+
+### Actual equation residuals
+
+The transformed Lanczos Ritz test is followed by a bounded inverse residual
+correction when the original K phi = lambda M phi relative residual exceeds
+1e-6. It reuses the factor and mass inner product, accepts only improvements,
+and reports any remaining error; it does not change K, M, loading or a benchmark
+tolerance. The [curved-shell modal checks](../../solvers/curved-shell-modes.md)
+include the previously failing MITC6-a single/two-mode cases and native reopening.

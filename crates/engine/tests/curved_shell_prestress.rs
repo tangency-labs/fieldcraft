@@ -63,6 +63,7 @@ fn run(tri: bool, divisions: usize) {
         let elements: Vec<_> = session.model.elements().keys().copied().collect();
         let static_fields = session.execute("solve.probe", &json!({"step":"Base","nodes":all,"elements":elements})).unwrap();
         let modal_fields = session.execute("solve.probe", &json!({"step":"Modes","nodes":all,"mode":1})).unwrap();
+        let modal_fields2 = session.execute("solve.probe", &json!({"step":"Modes","nodes":all,"mode":2})).unwrap();
         if let Some(dir) = std::env::var_os("FIELDCRAFT_TEST_ARTIFACTS") {
             let path = std::path::PathBuf::from(dir).join(format!("raw-tri{tri}-n{divisions}-p{pressure}-follower{follower}.json"));
             std::fs::write(path, serde_json::to_vec_pretty(&json!({"frequency":result,"static_fields":static_fields,"mode":modal_fields})).unwrap())
@@ -116,7 +117,8 @@ fn run(tri: bool, divisions: usize) {
         opened.execute("file.open", &json!({"path":archive})).unwrap();
         assert_eq!(static_fields, opened.execute("solve.probe", &json!({"step":"Base","nodes":all,"elements":elements})).unwrap());
         assert_eq!(modal_fields, opened.execute("solve.probe", &json!({"step":"Modes","nodes":all,"mode":1})).unwrap());
-        let row = json!({"tri":tri,"pressure":pressure,"follower":follower,"reference_hz":reference,"actual_hz":f,"relative_error":f/reference-1.0,"n2_shape_relative_l2":shape_error,"mean_hoop_stress":mean_hoop,"max_axial_stress":max_axial,"preload":preload,"frequency":result,"static_fields":static_fields,"mode1_fields":modal_fields});
+        assert_eq!(modal_fields2, opened.execute("solve.probe", &json!({"step":"Modes","nodes":all,"mode":2})).unwrap());
+        let row = json!({"mode2_fields":modal_fields2,"tri":tri,"pressure":pressure,"follower":follower,"reference_hz":reference,"actual_hz":f,"relative_error":f/reference-1.0,"n2_shape_relative_l2":shape_error,"mean_hoop_stress":mean_hoop,"max_axial_stress":max_axial,"preload":preload,"frequency":result,"static_fields":static_fields,"mode1_fields":modal_fields});
         println!("pressurized shell tri={tri} p={pressure} follower={follower}: f={f}, reference={reference}");
         if std::env::var_os("FIELDCRAFT_TEST_ARTIFACTS").is_some() {
             std::fs::write(dir.join(format!("{stem}.json")), serde_json::to_vec_pretty(&row).unwrap()).unwrap();
@@ -146,11 +148,23 @@ fn pressurized_mitc8_modes_and_native_reopen() {
     run(false, 4);
 }
 #[test]
-fn curved_mitc6_modal_preload_is_refused_until_field_and_residual_checks_pass() {
+#[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+fn pressurized_mitc6_modes_and_native_reopen() {
+    run(true, 64);
+}
+#[test]
+fn curved_mitc6_prestressed_harmonic_is_refused() {
     let mut session = Session::default();
     session.run_script(&definition(true, 1)).unwrap();
-    let error = session.execute("solve.frequency", &json!({"step":"Modes","mass":"consistent"})).unwrap_err().to_string();
-    assert!(error.contains("curved MITC6-a prestressed frequency/harmonic"));
+    session
+        .execute(
+            "model.step.edit",
+            &json!({"name":"Modes", "perturbation_follower_pressure":false,
+        "procedure":{"type":"harmonic","frequencies":[0.3],"method":{"type":"direct"}}}),
+        )
+        .unwrap();
+    let error = session.execute("solve.harmonic", &json!({"step":"Modes"})).unwrap_err().to_string();
+    assert!(error.contains("prestressed harmonic response"));
 }
 #[test]
 fn curved_modal_options_refuse_changed_supports_before_preload() {

@@ -332,3 +332,5 @@ Nonlinear rod diagnostics now have an explicit SI Abaqus UEL/DYNAMIC writer and 
 Direct and modal transient base_state perturbations reuse the converged equilibrium tangent and frozen contact/tie/pretension constraints; reference mass and incremental energies, native kind-6 save/reopen. Based stress recovery and changing contact status remain unsupported.
 
 Pure rod2 nonlinear static equilibria now share the geometric transient St Venant–Kirchhoff force and tangent. Frequency and direct/modal transient base_state use the actual converged state, preserving stress stiffening; reference linear-preload K+K_sigma remains a separately documented approximation. Zero-load and tensile equilibrium/derivative/time-history/native round-trip tests cover both mass policies. Contact/solid and kind12 layouts are unchanged.
+
+MITC6-a curved modal perturbations: reference-geometry linear preload and conservative pressure stiffness verified on the fine cylindrical-ring mesh. Bounded inverse residual correction resolves the original-pencil modal residual defect; coarse preload failures and curved prestressed harmonic/nonlinear refusals remain.

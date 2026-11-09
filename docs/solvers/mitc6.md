@@ -48,8 +48,9 @@ not integration-point extrapolation or equilibrated interlaminar stress.
 assembly. `solve.buckle` retains the flat-plate path and adds the consistent
 curved Green-strain/director Hessian, with the same MITC6-a tying interpolation.
 See [curved bifurcation, follower-pressure option and restrictions](mitc8.md#curved-shell-bifurcation-and-pressure-stiffness).
-Curved prestressed frequency and follower-pressure modal tangents remain refused;
-see the [preload-field and actual-residual failures](curved-shell-modes.md).
+Curved prestressed frequency and conservative follower-pressure modal tangents use the
+[verified reference-geometry path](curved-shell-modes.md). Coarse preload-field failures
+remain; the fine-mesh actual-residual failure was corrected by bounded inverse iteration.
 Finite-rotation/nonlinear shells, curved prestressed harmonic, transient
 and response-spectrum MITC6-a analyses remain refused. Native result save/open uses the existing
 static, frequency/buckling and harmonic result layouts.

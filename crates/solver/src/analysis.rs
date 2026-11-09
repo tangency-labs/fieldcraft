@@ -443,8 +443,6 @@ fn solve_static_impl(model: &Model, step: Option<&str>, limits: &Limits, allow_m
     let model = fixed.as_ref();
     crate::system::refuse_contact(model, "linear static")?;
     let mesh = Mesh::new(model, &resolved, limits.max_dofs)?;
-    // Pretension sections are outside the verified scope of the multilevel ordering.
-    let allow_multilevel = allow_multilevel && model.pretensions().is_empty();
     let mut result = static_on_with_order(&Setup { model, resolved: &resolved, mesh: &mesh, step }, limits, allow_multilevel)?;
     prepared.project(&mut result);
     Ok(result)
@@ -833,6 +831,78 @@ impl Operator for ShiftInvert<'_> {
     }
 }
 
+/// A transformed Ritz residual can be small while the original pencil residual
+/// is not. Bounded inverse iteration with the existing shifted factor corrects
+/// that defect without changing K, M, the shift or the requested spectrum.
+/// Parlett, The Symmetric Eigenvalue Problem (1998), inverse iteration and
+/// mass-inner-product orthogonalization. Accepted pairs keep their original bits.
+fn refine_frequency_pairs(k: &Csr, m: &Csr, factor: &Factor, pairs: &mut crate::eigen::Eigenpairs, warnings: &mut Vec<String>) -> Result<()> {
+    const LIMIT: f64 = 1e-6; // unit-factors: relative unshifted equation residual
+    const MAX_CORRECTIONS: usize = 4;
+    let dot = |a: &[f64], b: &[f64]| a.iter().zip(b).map(|(a, b)| a * b).sum::<f64>();
+    for mode in 0..pairs.values.len() {
+        let mut residual = crate::convergence::frequency_residual(k, m, pairs.values[mode], &pairs.vectors[mode])?;
+        if pairs.values[mode] <= 0.0 || residual.relative_residual.is_none_or(|r| r <= LIMIT) {
+            continue;
+        }
+        let mut corrections = 0;
+        for _ in 0..MAX_CORRECTIONS {
+            let phi = &pairs.vectors[mode];
+            let mut kp = vec![0.0; k.n];
+            let mut mp = vec![0.0; k.n];
+            k.mul(phi, &mut kp);
+            m.mul(phi, &mut mp);
+            let mut correction: Vec<_> = kp.iter().zip(&mp).map(|(a, b)| pairs.values[mode] * b - a).collect();
+            factor.solve(&mut correction)?;
+            let mut candidate: Vec<_> = phi.iter().zip(correction).map(|(a, b)| a + b).collect();
+            // Twice through the already accepted lower modes; retain repeated eigenspaces.
+            for _ in 0..2 {
+                for prior in &pairs.vectors[..mode] {
+                    m.mul(&candidate, &mut mp);
+                    let projection = dot(prior, &mp);
+                    for (v, q) in candidate.iter_mut().zip(prior) {
+                        *v -= projection * q;
+                    }
+                }
+            }
+            m.mul(&candidate, &mut mp);
+            let mass = dot(&candidate, &mp);
+            if !(mass > 0.0 && mass.is_finite()) {
+                break;
+            }
+            let scale = mass.sqrt();
+            for v in &mut candidate {
+                *v /= scale;
+            }
+            k.mul(&candidate, &mut kp);
+            m.mul(&candidate, &mut mp);
+            let lambda = dot(&candidate, &kp) / dot(&candidate, &mp);
+            if !lambda.is_finite() || lambda <= 0.0 {
+                break;
+            }
+            let next = crate::convergence::frequency_residual(k, m, lambda, &candidate)?;
+            if !matches!((next.relative_residual, residual.relative_residual), (Some(a), Some(b)) if a < b) {
+                break;
+            }
+            pairs.vectors[mode] = candidate;
+            pairs.values[mode] = lambda;
+            residual = next;
+            corrections += 1;
+            if residual.relative_residual.is_some_and(|r| r <= LIMIT) {
+                break;
+            }
+        }
+        warnings.push(format!(
+            "mode {}: {corrections} inverse residual corrections; actual unshifted relative residual {:?}",
+            mode + 1,
+            residual.relative_residual
+        ));
+        // The diagnostics retain the actual remaining error, including roundoff floors.
+        // A correction is not itself evidence that the physical mode is validated.
+    }
+    Ok(())
+}
+
 /// Block size of the Lanczos iteration: enough for the six rigid-body modes of a free body.
 pub(crate) const BLOCK: usize = 6;
 
@@ -1028,7 +1098,7 @@ fn frequency_once(
             Err(e) => return Err(factor_error(e, &mesh, &red)),
         },
     };
-    let residual_k = diagnostics.then_some(kff);
+
     let two_pi = 2.0 * std::f64::consts::PI;
     let wanted = Wanted {
         count: usize::try_from(modes).unwrap_or(usize::MAX).min(neq),
@@ -1043,7 +1113,10 @@ fn frequency_once(
         .and_then(|s| s.parse::<f64>().ok())
         .filter(|t| (1e-13..=TOLERANCE).contains(t))
         .unwrap_or(TOLERANCE);
-    let pairs = lanczos(&op, shift, wanted, BLOCK, max_basis, tolerance)?;
+    let mut pairs = lanczos(&op, shift, wanted, BLOCK, max_basis, tolerance)?;
+    // The residual correction needs the stiffness, so it stays alive through the Lanczos run.
+    refine_frequency_pairs(&kff, &mff, &chol, &mut pairs, &mut warnings)?;
+    let residual_k = diagnostics.then_some(kff);
     if std::env::var("FIELDCRAFT_MODAL_ORTHOGONALITY").is_ok_and(|v| v == "1") {
         use std::io::Write;
         let _timing = crate::timing::Span::new("frequency_mass_orthogonality");
@@ -1188,6 +1261,36 @@ impl StepResult {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn inverse_correction_recovers_original_pencil_not_only_ritz_value() {
+        let k = Csr { n: 2, ptr: vec![0, 1, 2], idx: vec![0, 1], val: vec![1.0, 1e9] };
+        let m = Csr { n: 2, ptr: vec![0, 1, 2], idx: vec![0, 1], val: vec![2.0, 3.0] };
+        let factor = factor_raw(&k, &Limits::default()).unwrap();
+        let mut pairs = crate::eigen::Eigenpairs {
+            values: vec![0.5],
+            vectors: vec![vec![0.5_f64.sqrt(), 1e-7]],
+            negative: vec![],
+            basis: 2,
+            iterations: 1,
+            basis_limit: 2,
+            basis_limit_reached: true,
+            full_space_reached: true,
+        };
+        let mut warnings = vec![];
+        let initial = crate::convergence::frequency_residual(&k, &m, pairs.values[0], &pairs.vectors[0]).unwrap();
+        assert!(initial.relative_residual.unwrap() > 0.9);
+        refine_frequency_pairs(&k, &m, &factor, &mut pairs, &mut warnings).unwrap();
+        let final_error = crate::convergence::frequency_residual(&k, &m, pairs.values[0], &pairs.vectors[0]).unwrap();
+        assert!(final_error.relative_residual.unwrap() < 1e-6);
+        assert!((pairs.values[0] - 0.5).abs() < 1e-12);
+        let mut mass_shape = vec![0.0; 2];
+        m.mul(&pairs.vectors[0], &mut mass_shape);
+        let mass: f64 = pairs.vectors[0].iter().zip(&mass_shape).map(|(a, b)| a * b).sum();
+        assert!((mass - 1.0).abs() < 1e-14);
+        let frozen = (pairs.values.clone(), pairs.vectors.clone());
+        refine_frequency_pairs(&k, &m, &factor, &mut pairs, &mut warnings).unwrap();
+        assert_eq!(frozen, (pairs.values, pairs.vectors));
+    }
     use super::*;
     use fieldcraft_model::{BoundaryCondition, Directional, Elastic, Formulation, Load, Material, Section, SectionKind, Set, Target, Thermal};
 
@@ -1231,6 +1334,7 @@ mod tests {
                 fieldcraft_model::PretensionSection {
                     first: "base".into(),
                     second: "top".into(),
+                    face: None,
                     normal: [0.0, 0.0, 1.0],
                     control: "BoltControl".into(),
                 },
