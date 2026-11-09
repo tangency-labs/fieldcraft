@@ -546,6 +546,11 @@ impl Model {
         }
 
         for (name, p) in &self.pretensions {
+            if let Some(face) = &p.face
+                && resolved.sets.get(face).is_none_or(|s| s.faces.is_empty())
+            {
+                d.error(format!("pretension `{name}`"), format!("internal cut set `{face}` has no element faces"));
+            }
             for set in [&p.first, &p.second] {
                 if resolved.sets.get(set).is_none_or(|s| s.nodes.is_empty()) {
                     d.error(format!("pretension `{name}`"), format!("cut set `{set}` has no nodes"));

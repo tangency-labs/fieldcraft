@@ -67,7 +67,10 @@ fn cut_bolt() -> Model {
         .unwrap();
     model.add_reference_point("Control", ReferencePoint { xyz: [0.5, 0.5, 1.], label: 100 }).unwrap();
     model
-        .add_pretension("Cut", PretensionSection { first: "first".into(), second: "second".into(), normal: [0., 0., 1.], control: "Control".into() })
+        .add_pretension(
+            "Cut",
+            PretensionSection { first: "first".into(), second: "second".into(), face: None, normal: [0., 0., 1.], control: "Control".into() },
+        )
         .unwrap();
     model.add_boundary_condition("Ends", BoundaryCondition::Fixed { target: Target::Set("ends".into()) }).unwrap();
     let mut preload = Step::new("Preload", Procedure::Static {});

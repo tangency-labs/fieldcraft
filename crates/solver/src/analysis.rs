@@ -430,14 +430,24 @@ fn solve_static_impl(model: &Model, step: Option<&str>, limits: &Limits, allow_m
     // A job cancelled before it starts stops here, before any setup work.
     fieldcraft_model::progress::check()?;
     let resolved = model.resolve()?;
+    let prepared = crate::pretension::prepare(model, &resolved, limits.max_dofs)?;
+    let model = prepared.model.as_ref();
+    let resolved = if prepared.copies.is_empty() { resolved } else { model.resolve()? };
     let step = model.select_step(
         step,
         |p| matches!(p, Procedure::Static {} | Procedure::CoupledTemperatureDisplacement {}),
         "static or coupled temperature–displacement",
     )?;
+    let fixed = crate::pretension::resolve_fixed(model, &step.name, limits)?;
+    let step = fixed.step(&step.name).ok_or_else(|| Error::Internal("resolved static step".into()))?;
+    let model = fixed.as_ref();
     crate::system::refuse_contact(model, "linear static")?;
     let mesh = Mesh::new(model, &resolved, limits.max_dofs)?;
-    static_on_with_order(&Setup { model, resolved: &resolved, mesh: &mesh, step }, limits, allow_multilevel)
+    // Pretension sections are outside the verified scope of the multilevel ordering.
+    let allow_multilevel = allow_multilevel && model.pretensions().is_empty();
+    let mut result = static_on_with_order(&Setup { model, resolved: &resolved, mesh: &mesh, step }, limits, allow_multilevel)?;
+    prepared.project(&mut result);
+    Ok(result)
 }
 
 /// Static equilibrium on an already validated step and mesh, also used for a buckling preload.
@@ -861,6 +871,19 @@ fn frequency_impl(
     diagnostics: bool,
     standalone: bool,
 ) -> Result<(FrequencyResult, Option<Csr>, Option<crate::convergence::ModalConvergence>)> {
+    if model.pretensions().values().any(|p| p.face.is_some()) {
+        // A job cancelled before it starts stops here, before any setup work.
+        fieldcraft_model::progress::check()?;
+        if retain_mass {
+            return Err(Error::NotSupported("modal derivatives on a private pretension cut".into()));
+        }
+        let resolved = model.resolve()?;
+        let prepared = crate::pretension::prepare(model, &resolved, limits.max_dofs)?;
+        // Pretension sections are outside the verified scope of the multilevel ordering.
+        let (mut result, mass, convergence) = frequency_impl(prepared.model.as_ref(), step, options, limits, false, diagnostics, false)?;
+        prepared.project_frequency(&mut result);
+        return Ok((result, mass, convergence));
+    }
     let first = frequency_once(model, step, options, limits, retain_mass, diagnostics, standalone)?;
     let selected = model.select_step(step, |p| matches!(p, Procedure::Frequency { .. }), "frequency")?;
     if standalone_linear_order(selected, standalone)
