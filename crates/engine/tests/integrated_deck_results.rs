@@ -61,25 +61,112 @@ fn imported_three_step_model_survives_export_and_native_result_roundtrip() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+fn history_outputs(s: &mut Session, displacement: f64, reaction: f64) -> Vec<Value> {
+    s.execute("solve.static", &json!({"step":"Static","threads":1})).unwrap();
+    let fieldcraft_engine::StepResult::Implicit(fieldcraft_solver::StepResult::Static(r)) = s.result("Static").unwrap().as_ref() else {
+        panic!("static")
+    };
+    assert!((r.displacement[1][0] - displacement).abs() < 1e-12);
+    assert!((r.reaction[0][0] - reaction).abs() < 1e-12);
+    assert!((r.stress[1][0] - 4. * displacement).abs() < 1e-12);
+    let modes = s.execute("solve.frequency", &json!({"step":"Modes","mass":"consistent","threads":1})).unwrap();
+    assert!((modes["modes"][0]["frequency"].as_f64().unwrap() - 1. / std::f64::consts::PI).abs() < 1e-12);
+    s.execute("solve.harmonic", &json!({"step":"Response","mass":"consistent","threads":1})).unwrap();
+    let fieldcraft_engine::StepResult::Implicit(fieldcraft_solver::StepResult::Harmonic(h)) = s.result("Response").unwrap().as_ref() else {
+        panic!("harmonic")
+    };
+    let omega = 2. * std::f64::consts::PI * 0.1;
+    assert!((h.frames[0].real[1][0] - 1. / (4. - omega * omega)).abs() < 1e-12);
+    assert_eq!(h.mass, fieldcraft_solver::MassKind::Consistent);
+    assert!(h.frames[0].relative_residual < 1e-12);
+    ["Static", "Modes", "Response"].map(|step| s.execute("solve.probe", &json!({"step":step,"nodes":[1,2]})).unwrap()).to_vec()
+}
+
 #[test]
-fn imported_harmonic_after_static_reports_incomplete_history_without_running_it() {
+fn imported_static_history_harmonic_preserves_incremental_loads_and_linear_base() {
     let static_step = "*STEP,NAME=Static\n*STATIC\n*CLOAD\n2,1,1\n*END STEP\n";
-    let history = DECK.replace(static_step, "").replace("*STEP,NAME=Modes", &format!("{static_step}*STEP,NAME=Modes"));
-    let path = std::env::temp_dir().join(format!("fieldcraft-imported-base-state-{}.inp", std::process::id()));
-    std::fs::write(&path, history).unwrap();
-    let mut s = Session::default();
-    let imported = s.execute("deck.read", &json!({"format":"abaqus","path":path,"units":"m-kg-s-N-Pa"})).unwrap();
-    assert_eq!(imported["analysis_complete"], false);
-    assert!(
-        imported["warnings"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|w| w.as_str().unwrap().contains("base-state perturbation requires the prestress interface"))
-    );
-    assert!(s.model.step("Response").is_none());
-    assert!(s.execute("solve.harmonic", &json!({"step":"Response"})).is_err());
-    std::fs::remove_file(path).unwrap();
+    // Preserve the original three-step source and order, formerly explicitly refused.
+    let original = DECK.replace(static_step, "").replace("*STEP,NAME=Modes", &format!("{static_step}*STEP,NAME=Modes"));
+    let gravity = original.replacen("*CLOAD\n2,1,1", "*DLOAD\nBar,GRAV,1,1,0,0\n*CLOAD\n2,1,1", 1);
+    let amplitude = original.replacen("*STEP,NAME=Static", "*AMPLITUDE,NAME=Ramp,TIME=TOTAL TIME\n0,0,1,2,2,3,4,9\n*STEP,NAME=Static", 1).replacen(
+        "*CLOAD\n2,1,1",
+        "*CLOAD,AMPLITUDE=Ramp\n2,1,1",
+        1,
+    ) + "*STEP,NAME=Resume\n*STATIC\n*END STEP\n";
+    let root = std::env::temp_dir().join(format!("fieldcraft-integrated-static-history-{}", std::process::id()));
+    for (case, source, u, rf) in [("original", original.clone(), 0.25, -1.), ("gravity", gravity, 0.625, -4.), ("amplitude", amplitude, 0.5, -2.)] {
+        let dir = root.join(case);
+        std::fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("input.inp");
+        std::fs::write(&input, &source).unwrap();
+        let mut s = Session::default();
+        let imported = s.execute("deck.read", &json!({"format":"abaqus","path":input,"units":"m-kg-s-N-Pa"})).unwrap();
+        assert_eq!(imported["analysis_complete"], true, "{imported}");
+        for name in ["Modes", "Response"] {
+            let step = s.model.step(name).unwrap();
+            assert_eq!(step.base_state.as_deref(), Some("Static"));
+            assert!(step.linear_base);
+        }
+        assert!(s.model.step("Modes").unwrap().loads.is_empty());
+        assert_eq!(s.model.step("Response").unwrap().loads.len(), 1);
+        let expected = history_outputs(&mut s, u, rf);
+        // Perturbation steps do not overwrite general-step load/amplitude state or time.
+        if case == "amplitude" {
+            let r = s.execute("solve.static", &json!({"step":"Resume","threads":1})).unwrap();
+            assert!((r["max_displacement"]["value"].as_f64().unwrap() - 0.75).abs() < 1e-12);
+        }
+        let definition = s.model.clone();
+        let archive = dir.join("results.fieldcraft");
+        s.execute("file.save_as", &json!({"path":archive,"results":true})).unwrap();
+        let mut reopened = Session::default();
+        reopened.execute("file.open", &json!({"path":archive})).unwrap();
+        assert_eq!(reopened.model, definition);
+        for (step, old) in ["Static", "Modes", "Response"].into_iter().zip(&expected) {
+            assert_eq!(&reopened.execute("solve.probe", &json!({"step":step,"nodes":[1,2]})).unwrap(), old);
+            assert_eq!(reopened.result(step).unwrap().as_ref(), s.result(step).unwrap().as_ref());
+            use fieldcraft_io::results::{Decoded, Solved, Stored, StoredRef, decode, encode};
+            let fieldcraft_engine::StepResult::Implicit(r) = s.result(step).unwrap().as_ref() else { panic!("implicit") };
+            let stored = Solved::Implicit(r.clone());
+            let bytes = encode(&[(step, StoredRef { definition: [7; 32], result: stored.as_ref() })]).unwrap();
+            assert_eq!(&bytes[..8], b"MCRSLT07");
+            assert_eq!(decode(&bytes).unwrap(), Decoded::Results(vec![Stored { definition: [7; 32], result: stored }]));
+        }
+        let replay = dir.join("replay.inp");
+        reopened.execute("deck.source.write", &json!({"path":replay})).unwrap();
+        assert_eq!(std::fs::read_to_string(replay).unwrap(), source);
+        let normalized = dir.join("normalized.inp");
+        reopened.execute("deck.write", &json!({"format":"abaqus","path":normalized,"units":"m-kg-s-N-Pa"})).unwrap();
+        let text = std::fs::read_to_string(&normalized).unwrap();
+        assert!(text.contains("NAME=Static, NLGEOM=NO"));
+        assert!(!text.contains("NLGEOM=YES"));
+        let r = reopened.execute("deck.read", &json!({"format":"abaqus","path":normalized,"units":"m-kg-s-N-Pa"})).unwrap();
+        assert_eq!(r["analysis_complete"], true, "{r}");
+        assert_eq!(history_outputs(&mut reopened, u, rf), expected);
+        if case == "amplitude" {
+            let r = reopened.execute("solve.static", &json!({"step":"Resume","threads":1})).unwrap();
+            assert!((r["max_displacement"]["value"].as_f64().unwrap() - 0.75).abs() < 1e-12);
+        }
+        if let Ok(folder) = std::env::var("FIELDCRAFT_TEST_ARTIFACTS") {
+            let folder = std::path::Path::new(&folder).join(case);
+            std::fs::create_dir_all(&folder).unwrap();
+            for name in ["input.inp", "normalized.inp", "results.fieldcraft"] {
+                std::fs::copy(dir.join(name), folder.join(name)).unwrap();
+            }
+            std::fs::write(folder.join("probes.json"), serde_json::to_vec_pretty(&expected).unwrap()).unwrap();
+        }
+    }
+    // Explicit current-step amplitude is still unsupported; do not silently discard it.
+    let invalid = original
+        .replacen("*STEP,NAME=Static", "*AMPLITUDE,NAME=Bad\n0,1,1,1\n*STEP,NAME=Static", 1)
+        .replace("*STEADY STATE DYNAMICS,DIRECT\n0.1,0\n*CLOAD", "*STEADY STATE DYNAMICS,DIRECT\n0.1,0\n*CLOAD,AMPLITUDE=Bad");
+    let input = root.join("explicit-amplitude.inp");
+    std::fs::write(&input, invalid).unwrap();
+    let mut refused = Session::default();
+    let reply = refused.execute("deck.read", &json!({"format":"abaqus","path":input,"units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(reply["analysis_complete"], false);
+    assert!(reply["warnings"].as_array().unwrap().iter().any(|w| w.as_str().unwrap().contains("amplitude on non-static step")));
+    assert!(refused.model.step("Response").is_none());
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
