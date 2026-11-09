@@ -83,6 +83,7 @@ fn classify(t: &str) -> (Option<&'static str>, &'static str, &'static str, &'sta
             "full rotational/drilling inertia rule not established",
         ),
         "MASS" => (None, "specified_point_mass", "explicit mass property", "not a distributed mass selection"),
+        "ROTARYI" => (None, "specified_rotary_inertia", "explicit global inertia tensor", "not a distributed mass selection"),
         "SPRING1" => (
             None,
             "zero_incremental_mass",

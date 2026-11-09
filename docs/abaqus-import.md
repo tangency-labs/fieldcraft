@@ -961,3 +961,21 @@ element-local or material-local; a local stress component is not a global one by
 Plastic state still starts from zero in each independent native nonlinear equilibrium.
 A single step's load path is not state transfer between general steps. Multiple-step plastic
 import remains refused; the limited single-step hardening mapping above is unchanged.
+
+### Global rotary inertia
+
+`ROTARYI` with `ROTARY INERTIA, ELSET=...` maps a constant global tensor to
+native point rotary inertia, independently of translational MASS. Three diagonal
+entries or six entries ordered I11,I22,I33,I12,I13,I23 are accepted; products
+retain their signs. Values use the declared mass × length² units and are stored
+in kg·m². The native positive-semidefinite tensor checks remain active. No beam
+or distributed mass policy is changed by import.
+
+This mapping supports linear static, frequency and direct harmonic steps at nodes
+with rotational degrees of freedom (for example B31 nodes). Local ORIENTATION,
+rotated instances, ALPHA/COMPOSITE damping and other analysis combinations are
+refused rather than discarded. Translated instance sets are resolved normally.
+Source replay retains original labels; canonical output uses native generated
+ROTARYI sets. A beam-end torsional oscillator checks the added inertia against
+GJ/L and the beam's consistent polar mass, with native solve/save/reopen/replay.
+Reference: [ROTARY INERTIA](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-rotaryinertia.htm).

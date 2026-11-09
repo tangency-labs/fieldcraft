@@ -354,6 +354,9 @@ pub(super) fn expand(text: &str, limits: Limits) -> Result<Option<Expanded>> {
             if i.transform.angle != 0.0 && b.keyword == "MASS" && b.value("TYPE").is_some_and(|v| canonical(v) == "ANISOTROPIC") {
                 return Err(error(b.line, "ANISOTROPIC MASS in a rotated instance is not mapped; principal axes are not inferred"));
             }
+            if i.transform.angle != 0.0 && b.keyword == "ROTARYINERTIA" {
+                return Err(error(b.line, "ROTARY INERTIA in a rotated instance is not mapped; inertia axes must be explicit"));
+            }
             if i.transform.angle != 0.0 && b.keyword == "SPRING" {
                 return Err(error(b.line, "SPRING property in a rotated instance is not mapped; local spring axes must be explicit"));
             }
@@ -475,6 +478,7 @@ fn emit(
             | "BEAMSECTION"
             | "ORIENTATION"
             | "MASS"
+            | "ROTARYINERTIA"
             | "SPRING"
             | "BOUNDARY"
             | "CLOAD"

@@ -465,7 +465,7 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
                         check_work(index)?;
                         let f = row_fields(row.text, row.line)?;
                         let [id, node] = f.as_slice() else {
-                            return Err(error(row.line, "MASS/SPRING1 requires an element label and one node"));
+                            return Err(error(row.line, "MASS/ROTARYI/SPRING1 requires an element label and one node"));
                         };
                         let id = label(id, row.line)?;
                         let node = label(node, row.line)?;
@@ -528,7 +528,7 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
                     return Err(error(line, "*ELEMENT has no data"));
                 }
             }
-            "MASS" | "SPRING" => discrete_properties.push(block),
+            "MASS" | "ROTARYINERTIA" | "SPRING" => discrete_properties.push(block),
             "NSET" | "ELSET" => {
                 block.only(if k == "NSET" { &["NSET", "GENERATE", "ELSET"] } else { &["ELSET", "GENERATE"] })?;
                 let name = named(block.required(k)?, line)?;
@@ -853,7 +853,7 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
     }
     discrete::apply(&mut model, &discrete_elements, &discrete_properties, &expanded_elements, &units)?;
     if !discrete_elements.is_empty() {
-        warnings.push(format!("{} MASS/SPRING1 labels mapped to native InpDiscreteElement<label> definitions and explicit node target sets; their original ELSET memberships remain in source, not mesh element sets.", discrete_elements.len()));
+        warnings.push(format!("{} MASS/ROTARYI/SPRING1 labels mapped to native InpDiscreteElement<label> definitions and explicit node target sets; their original ELSET memberships remain in source, not mesh element sets.", discrete_elements.len()));
     }
     let mut has_planar = false;
     let mut assigned = BTreeMap::new();

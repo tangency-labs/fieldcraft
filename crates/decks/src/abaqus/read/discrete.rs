@@ -1,6 +1,7 @@
-//! Constant isotropic or global diagonal MASS and grounded SPRING1 import.
-//! Syntax: Abaqus public Keywords Reference, *MASS and *SPRING:
+//! Constant global MASS/ROTARYI and grounded SPRING1 import.
+//! Syntax: Abaqus public Keywords Reference, *MASS, *ROTARY INERTIA and *SPRING:
 //! https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-mass.htm
+//! https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-rotaryinertia.htm
 //! https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-spring.htm
 //! Discrete labels become native definitions, not fictitious mesh elements. Original labels
 //! and ELSET memberships remain in the retained source; generated target sets are explicit.
@@ -13,12 +14,14 @@ use std::collections::{BTreeMap, BTreeSet};
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Kind {
     Mass,
+    Inertia,
     Spring,
 }
 impl Kind {
     pub(super) fn parse(s: &str) -> Option<Self> {
         match canonical(s).as_str() {
             "MASS" => Some(Self::Mass),
+            "ROTARYI" => Some(Self::Inertia),
             "SPRING1" => Some(Self::Spring),
             _ => None,
         }
@@ -43,9 +46,11 @@ pub(super) fn apply(
     for b in properties {
         let line = b.line;
         let mass = b.keyword == "MASS";
+        let rotary = b.keyword == "ROTARYINERTIA";
         b.only(if mass { &["ELSET", "TYPE"] } else { &["ELSET"] })?;
         let entries = values(b)?;
         let mut point_mass = None;
+        let mut inertia = None;
         let (kind, dof, value) = if mass {
             if b.rows.len() != 1 {
                 return Err(error(line, "constant MASS requires exactly one data row"));
@@ -63,6 +68,16 @@ pub(super) fn apply(
                 }
             });
             (Kind::Mass, 0, 0.0)
+        } else if rotary {
+            if b.rows.len() != 1 || !matches!(entries.len(), 3 | 6) {
+                return Err(error(line, "ROTARY INERTIA needs one row: I11,I22,I33 and optional I12,I13,I23"));
+            }
+            let mut tensor = [0.0; 6];
+            for (value, input) in tensor.iter_mut().zip(&entries) {
+                *value = quantity(units, Quantity::RotaryInertia, *input, line)?;
+            }
+            inertia = Some(tensor);
+            (Kind::Inertia, 0, 0.0)
         } else {
             if b.rows.len() != 2 {
                 return Err(error(line, "constant SPRING1 needs a degree-of-freedom row and a stiffness row"));
@@ -110,8 +125,8 @@ pub(super) fn apply(
             model.add_set(&target, Set { nodes: vec![record.node], ..Set::default() }).map_err(|e| error(line, e.to_string()))?;
             let target = Target::Set(target);
             let name = format!("InpDiscreteElement{id}");
-            if mass {
-                model.add_mass(&name, PointMass { target, mass: point_mass, inertia: None })
+            if mass || rotary {
+                model.add_mass(&name, PointMass { target, mass: point_mass, inertia })
             } else {
                 model.add_spring(&name, Spring::Spring { first: target, second: None, direction: Direction::Dof(dof), stiffness: value })
             }
@@ -129,6 +144,21 @@ mod tests {
     use super::*;
     use crate::abaqus::read::{Limits, read_analysis_limited, read_in};
     use fieldcraft_model::units::Preset;
+
+    #[test]
+    fn rotary_inertia_keeps_signed_global_tensor_and_units() {
+        let input = "*NODE\n7,0,0,0\n*ELEMENT,TYPE=ROTARYI,ELSET=J\n10,7\n*ROTARY INERTIA,ELSET=J\n100,200,250,10,-20,30\n";
+        let r = read_in(input, Preset::MmTonneS).unwrap();
+        assert_eq!(r.model.masses().values().next().unwrap().inertia, Some([0.1, 0.2, 0.25, 0.01, -0.02, 0.03]));
+        for (a, b) in [
+            ("ELSET=J\n100", "ELSET=J,ORIENTATION=Local\n100"),
+            ("ELSET=J\n100", "ELSET=J,ALPHA=1\n100"),
+            ("ELSET=J\n100", "ELSET=J,COMPOSITE=.05\n100"),
+            ("100,200,250,10,-20,30", "1,1,1,2,0,0"),
+        ] {
+            assert!(read_in(&input.replace(a, b), Preset::MmTonneS).is_err());
+        }
+    }
 
     // Original one-mass oscillator: k=200 N/m, m=2 kg, f=sqrt(k/m)/(2*pi).
     const SOURCE: &str = "*NODE\n7,0,0,0\n*ELEMENT,TYPE=MASS,ELSET=Mass\n10,7\n*ELEMENT,TYPE=SPRING1,ELSET=Spring\n11,7\n*NSET,NSET=InpDiscreteTarget1\n7\n*NSET,NSET=FromMass,ELSET=Mass\n*MASS,ELSET=Mass\n2\n*SPRING,ELSET=Spring\n1\n200\n*BOUNDARY\n7,2,3\n*STEP,NAME=Modes\n*FREQUENCY\n1\n*END STEP\n";
