@@ -373,7 +373,7 @@ beams warns that only solid, 2D and truss elements are strained ([Heat transfer]
 | hybrid hex8, hex20, tet10 | yes | yes | yes (as the displacement element) | yes (needs the neo-Hookean option or another hyperelastic or plastic model with a volumetric split) | refused |
 | plane stress tri3, tri6, quad4, quad8 | yes | yes | refused | refused | refused |
 | plane strain, axisymmetric tri3, tri6, quad4, quad8 (and hybrid quad4, quad8, tri6) | yes | yes | refused | yes | refused |
-| shell tri3, quad4 | yes | refused | refused | refused | refused |
+| shell tri3, quad4 | yes (homogeneous or composite) | flat plates with flat preload only | refused | refused | refused |
 | beam2 | yes | refused | refused | refused | refused |
 | rod2, rod3 | yes | refused | refused | refused | rod2; rod3 with `nonlinear_geometry: false` only; elastic only |
 | point mass, spring, dashpot | yes (dashpots ignored) | yes (dashpots ignored) | — | springs, along their fixed directions | translational ones; rotary inertia and torsional springs refused |
@@ -542,9 +542,10 @@ explicit, engine and io test suites hashed identically before and after.
 
 ## Limitations
 
-- Shells: tri3 and quad4 only (tri6 and quad8 shells are refused); flat facets; isotropic,
-  homogeneous sections; no initial-stress stiffness (refused in buckling), no large rotations
-  (refused in nonlinear steps), no heat conduction, no thermal strain.
+- Shells: tri3 and quad4 only (tri6 and quad8 shells are refused); flat facets with isotropic
+  homogeneous or [composite sections](composites.md). Initial-stress stiffness supports only
+  coplanar plates with a flat preload; curved shells and non-flat preloads (including those
+  caused by extension–bending coupling) are refused in buckling. No large rotations (refused in nonlinear steps), heat conduction or thermal strain.
 - Beams: two-node Timoshenko only; isotropic material; no warping of open sections; refused in
   buckling, nonlinear and heat transfer steps; no thermal strain.
 - Trusses: isotropic Young's modulus only; refused in buckling and nonlinear steps.
@@ -553,7 +554,8 @@ explicit, engine and io test suites hashed identically before and after.
 - Hybrid elements need isotropic elasticity; hybrid tet4, wedge6, pyramid5 and tri3 are refused;
   continuous nodal-pressure (Taylor–Hood) elements are not implemented.
 - quad9, hex27 and wedge15 have shape functions only; there are no wedge15 or pyramid13 elements.
-- Material axes are the global axes: there are no material orientations.
+- Solid material orientations and projected shell reference directions are supported; shell
+  directions are evaluated at each facet centre. See [composite directions](composites.md).
 - A 2D model takes no couplings, no shells or beams; an axisymmetric model takes no trusses,
   point masses, springs or dashpots.
 - Not implemented: Euler–Bernoulli (cubic), three-node and planar 2D beams; pipe and elbow

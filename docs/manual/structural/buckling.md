@@ -3,9 +3,9 @@
 `solve.buckle` computes the load factors λ at which the loads of a step, applied as a linear
 preload, make the structure lose stiffness, (K + λ K_σ) φ = 0, and the buckling mode shapes φ.
 The step is solved as a linear static step first; the preload's stresses form the
-initial-stress stiffness K_σ of every solid and 2D element; the lowest positive load factors, or
-those above a given shift, come from the block Lanczos method in the buckling spectral
-transformations.
+initial-stress stiffness K_σ of every solid, 2D element and supported flat shell. The lowest
+positive load factors, or those above a given shift, come from the block Lanczos method in the
+buckling spectral transformations.
 
 | | |
 |---|---|
@@ -84,8 +84,9 @@ Modes are scaled to a largest component of 1 (positive).
 ## Algorithm
 
 1. **Select and check.** The step named, or the only buckling step; `modes` 1 to 100 000 and a
-   finite shift are checked; a model with contact is refused. Trusses, shells and beams are
-   refused by name ("their initial-stress stiffness is not implemented").
+   finite shift are checked; a model with contact is refused. Trusses and beams are refused
+   by name. Shells must be coplanar flat plates, with a flat equilibrium preload: transverse
+   slopes and director tilt, including those induced by an unsymmetric laminate, are refused.
 2. **Preload.** The step solved as a [linear static](linear-static.md) step on the same mesh: its
    loads, prescribed motions and temperature loads (heat loads have no effect, with a warning);
    its warnings carry over.
