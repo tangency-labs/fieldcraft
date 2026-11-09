@@ -56,6 +56,7 @@ enum Family {
     PressureS,
     TractionS(u8),
     Gravity,
+    Body,
 }
 type State = BTreeMap<(Family, String, u32, u8), Driven>;
 type Touched = BTreeSet<(Family, String, u32, u8)>;
@@ -315,12 +316,13 @@ fn prepare(
     for block in body.iter().filter(|b| b.keyword == "DLOAD") {
         for row in &block.rows {
             let fields = row_fields(row.text, row.line)?;
-            if fields.get(1).is_some_and(|kind| canonical(kind) == "GRAV") {
+            let kind = canonical(fields.get(1).map(String::as_str).unwrap_or_default());
+            if matches!(kind.as_str(), "GRAV" | "BX" | "BY" | "BZ") {
                 let target = name(fields.first().map(String::as_str).unwrap_or_default(), row.line)?;
                 if data.discrete_targets.contains(&target) || (target.is_empty() && !model.masses().is_empty()) {
                     return Err(unsupported(
                         row.line,
-                        format!("GRAV target `{target}` includes discrete elements; discrete load membership mapping is not supported"),
+                        format!("{kind} target `{target}` includes discrete elements; discrete load membership mapping is not supported"),
                     ));
                 }
             }
@@ -473,6 +475,9 @@ fn prepare(
     if next.keys().any(|(family, _, _, _)| matches!(family, Family::TractionS(_))) && !matches!(procedure, Procedure::Static {}) {
         return Err(unsupported(b.line, "DSLOAD TRVEC requires small-displacement linear STATIC"));
     }
+    if next.keys().any(|(family, _, _, _)| *family == Family::Body) && !matches!(procedure, Procedure::Static {}) {
+        return Err(unsupported(b.line, "DLOAD BX/BY/BZ requires small-displacement linear STATIC"));
+    }
     if let Some(damping) = global_damping {
         let Procedure::Harmonic(h) = &mut procedure else {
             return Err(unsupported(b.line, "GLOBAL DAMPING outside harmonic analysis"));
@@ -571,7 +576,7 @@ fn apply(
                 "BOUNDARY" => *family != Family::Boundary,
                 "CLOAD" => *family != Family::Force,
                 "DSLOAD" => !matches!(family, Family::PressureS | Family::TractionS(_)),
-                _ => !matches!(family, Family::PressureD | Family::Gravity),
+                _ => !matches!(family, Family::PressureD | Family::Gravity | Family::Body),
             });
         }
     }
@@ -743,6 +748,26 @@ fn apply(
                             insert(Family::Gravity, element, (i + 1) as u8, magnitude * v / norm)?;
                         }
                     }
+                } else if matches!(kind.as_str(), "BX" | "BY" | "BZ") {
+                    if target.is_empty() {
+                        return Err(unsupported(row.line, format!("DLOAD {kind} requires an explicit element or element set")));
+                    }
+                    if f.len() != 3 {
+                        return Err(error(row.line, format!("DLOAD {kind} needs target, load label and force per volume")));
+                    }
+                    let component = match kind.as_str() {
+                        "BX" => 1,
+                        "BY" => 2,
+                        _ => 3,
+                    };
+                    let magnitude = number(f.get(2).map(String::as_str).unwrap_or_default(), row.line)?;
+                    for element in elements {
+                        let e = model.element(element).ok_or_else(|| error(row.line, "missing body force element"))?;
+                        if e.kind != fieldcraft_model::ElementKind::Tet4 {
+                            return Err(unsupported(row.line, format!("DLOAD {kind} element {element} ({:?}): only Tet4 is mapped", e.kind)));
+                        }
+                        insert(Family::Body, element, component, magnitude)?;
+                    }
                 } else if let Some(face) = kind.strip_prefix('P').and_then(|s| s.parse::<u8>().ok()) {
                     if f.len() != 3 {
                         return Err(error(row.line, "element pressure needs three entries"));
@@ -808,6 +833,7 @@ fn materialize(model: &mut Model, step: &mut Step, state: &mut State, evaluation
                 }
             }
             Family::PressureD | Family::PressureS | Family::TractionS(_) => Quantity::Pressure,
+            Family::Body => Quantity::ForcePerVolume,
             _ => Quantity::Acceleration,
         };
         v = super::quantity(units, q, v, driven.line)?;
@@ -816,7 +842,7 @@ fn materialize(model: &mut Model, step: &mut Step, state: &mut State, evaluation
     for ((family, id, dof), v) in accumulated {
         // Retain zero components in history for OP=MOD/NEW, but not as invalid
         // native gravity definitions. Cancellation likewise has no effective load.
-        if matches!(family, Family::Gravity | Family::TractionS(_)) && v == 0.0 {
+        if matches!(family, Family::Gravity | Family::TractionS(_) | Family::Body) && v == 0.0 {
             continue;
         }
         if !v.is_finite() {
@@ -874,6 +900,7 @@ fn materialize(model: &mut Model, step: &mut Step, state: &mut State, evaluation
             let load = match family {
                 Family::Force if dof <= 3 => Load::Force { target, vector, distribution: Distribution::PerNode },
                 Family::Force => Load::Moment { target, vector, distribution: Distribution::PerNode },
+                Family::Body => Load::BodyForce { set: name.clone(), vector },
                 Family::TractionS(_) => Load::Traction { set: name.clone(), vector },
                 Family::PressureD | Family::PressureS => Load::Pressure { set: name.clone(), magnitude: value },
                 _ => Load::Gravity { acceleration: vector, set: Some(name.clone()) },
@@ -1045,6 +1072,88 @@ Side,TRVEC,5,-1,0,0
         let pressure = read(&pressure);
         assert!(pressure.analysis_complete);
         assert!(pressure.model.step("Three").unwrap().loads.iter().all(|n| matches!(pressure.model.load(n), Some(Load::Pressure { .. }))));
+    }
+
+    #[test]
+    fn body_force_components_inherit_modify_and_clear_in_force_per_volume() {
+        let input = r#"** Original global volume force, not acceleration or surface traction; SI
+*NODE
+1,0,0,0
+2,1,0,0
+3,0,1,0
+4,0,0,1
+*ELEMENT,TYPE=C3D4,ELSET=Solid
+1,1,2,3,4
+*NSET,NSET=Base
+1,2,3
+*ELSET,ELSET=Volume
+Solid
+*MATERIAL,NAME=Elastic
+*ELASTIC
+120000,.25
+*DENSITY
+7
+*SOLID SECTION,ELSET=Solid,MATERIAL=Elastic
+*BOUNDARY
+Base,1,3
+*AMPLITUDE,NAME=Local,TIME=STEP TIME
+0,0,1,2,2,3
+*AMPLITUDE,NAME=Global,TIME=TOTAL TIME
+0,0,4,8
+*STEP,NAME=One
+*STATIC
+1,1
+*DLOAD,AMPLITUDE=Local
+Volume,BX,12
+Volume,BY,-6
+Volume,BZ,24
+*END STEP
+*STEP,NAME=Two
+*STATIC
+1,1
+*DLOAD,AMPLITUDE=Global
+Volume,BX,5
+*END STEP
+*STEP,NAME=Three
+*STATIC
+1,1
+*END STEP
+*STEP,NAME=Four
+*STATIC
+1,1
+*DLOAD,OP=NEW
+1,BZ,-16
+*END STEP
+"#;
+        let got = read(input);
+        assert!(got.analysis_complete, "{:?}", got.warnings);
+        for (step, expected) in
+            [("One", [24.0, -12.0, 48.0]), ("Two", [20.0, -12.0, 48.0]), ("Three", [30.0, -12.0, 48.0]), ("Four", [0.0, 0.0, -16.0])]
+        {
+            let mut actual = [0.0; 3];
+            for name in &got.model.step(step).unwrap().loads {
+                let Load::BodyForce { set, vector } = got.model.load(name).unwrap() else { panic!("expected body force") };
+                assert_eq!(got.model.set(set).unwrap().elements, vec![1]);
+                for (a, v) in actual.iter_mut().zip(vector) {
+                    *a += v;
+                }
+            }
+            assert_eq!(actual, expected);
+        }
+        for (old, new, reason) in [
+            ("Volume,BX", "Volume,BXNU", "BXNU"),
+            ("Volume,BX", ",BX", "explicit element"),
+            ("*DLOAD,AMPLITUDE=Local", "*DLOAD,ORIENTATION=Local,AMPLITUDE=Local", "ORIENTATION"),
+            ("*STEP,NAME=One", "*STEP,NAME=One,NLGEOM=YES", "BX/BY/BZ"),
+        ] {
+            let denied = read(&input.replace(old, new));
+            assert!(!denied.analysis_complete);
+            assert!(denied.model.steps().is_empty());
+            assert!(denied.warnings.iter().any(|w| w.contains(reason)), "{:?}", denied.warnings);
+        }
+        let cleared = read(&input.replace("1,BZ,-16", "1,GRAV,1,0,0,-1"));
+        assert!(cleared.analysis_complete);
+        assert!(cleared.model.step("Four").unwrap().loads.iter().all(|n| matches!(cleared.model.load(n), Some(Load::Gravity { .. }))));
     }
     const MODEL: &str = "*NODE,NSET=Tip\n1,0,0,0\n2,1,0,0\n*BOUNDARY\n1,ENCASTRE\n";
     fn read(text: &str) -> Read {

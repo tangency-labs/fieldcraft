@@ -786,3 +786,22 @@ from TOTAL TIME evaluation and load replacement; U, RF and constant element stre
 checked against the same native model and `K u = f` with isotropic elasticity. Units are
 converted through the shared quantity table. Syntax follows the
 [public DSLOAD reference](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-dsload.htm).
+
+### Constant global volume force
+
+`DLOAD` labels `BX`, `BY` and `BZ` map to native `BodyForce` on explicitly selected Tet4
+mesh elements in small-displacement linear static steps. Their magnitude is force per volume,
+converted with `Quantity::ForcePerVolume`; density is not a multiplier. This is distinct from
+`GRAV` acceleration and surface traction. Element-set aliases are resolved; blank targets and
+sets containing discrete elements are refused instead of silently changing membership.
+
+Each global component has its own history identity. `OP=MOD` changes that component while
+retaining the others; `OP=NEW` removes all prior DLOAD body forces, gravity and element pressure.
+Relative STEP TIME and TOTAL TIME amplitudes follow the existing static endpoint rules.
+The canonical writer retains the BX/BY/BZ representation in the selected unit system.
+
+Nonuniform labels such as `BXNU`, local `ORIENTATION`, other element types and non-static
+procedures are named refusals. Original cards remain in the retained source. An original
+four-step tetrahedron regression checks component replacement, inheritance, load-family clearing,
+SI and millimetre units, and the exact consistent volume load `f_i = b*V/4` against static U/RF/S.
+The load definition follows the [public three-dimensional element reference](https://abaqus.uclouvain.be/English/SIMACAEELMRefMap/simaelm-r-3delem.htm).
