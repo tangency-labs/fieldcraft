@@ -719,3 +719,22 @@ Sources: [MODAL DYNAMIC](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/si
 [MODAL DAMPING](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-modaldamping.htm),
 [SPECTRUM](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-spectrum.htm),
 [RESPONSE SPECTRUM](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-responsespectrum.htm).
+
+### Pretension and cross-format formulation boundaries
+
+The Abaqus writer checks which procedures can reference equilibrium base states
+separately from pretension control history. Frequency and harmonic perturbations
+may reference an earlier locked equilibrium; missing lock controls, force-only
+bases and unbased frequency steps after pretension are refused. Chain validation
+runs before element-type mapping, so an unrelated element refusal cannot conceal
+an invalid control history. Standard full Hex8 still has no equivalent C3D8
+export: it is refused rather than silently replaced with B-bar. Selecting B-bar
+for a linear export fixture does not establish nonlinear pretension equivalence.
+Contact closure, force control, locked adjustment persistence and frozen contact
+or tie mappings remain native solver checks on their original formulation.
+
+The current Nastran and LS-DYNA writers do not encode the volume-averaged B-bar
+section contract. Both reject the named section through the formulation-policy
+check. Their ordinary solid cards must not be used as silent substitutes. This
+states the implemented writer boundary, not that those products lack alternative
+solid formulations.

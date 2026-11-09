@@ -11,6 +11,8 @@ use fieldcraft_model::{
 };
 use std::collections::BTreeMap;
 
+const MAX_MODAL_INCREMENTS: f64 = 1_000_000.0; // unit-factors: bounded increment count, not a unit conversion
+
 pub(super) struct Table {
     points: Vec<[f64; 2]>,
     damping: f64,
@@ -137,7 +139,7 @@ pub(super) fn procedure(body: &[Block<'_>], model: &Model, tables: &BTreeMap<Str
         let dt = number(dt, row.line)?;
         let period = number(period, row.line)?;
         let n = period / dt;
-        if dt <= 0.0 || !n.is_finite() || !(1.0..=1e6).contains(&n) || (n - n.round()).abs() > 1e-10 * n {
+        if dt <= 0.0 || !n.is_finite() || !(1.0..=MAX_MODAL_INCREMENTS).contains(&n) || (n - n.round()).abs() > 1e-10 * n {
             return Err(unsupported(row.line, "MODAL DYNAMIC period must contain whole fixed increments"));
         }
         let t = Transient {

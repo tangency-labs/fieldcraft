@@ -6,6 +6,8 @@ use crate::Result;
 use fieldcraft_model::{DisplaySystem, Model, Procedure, Step, amplitude::Amplitude, units::Quantity};
 use std::collections::BTreeMap;
 
+const MAX_DIRECT_INCREMENTS: f64 = 1_000_000.0; // unit-factors: bounded increment count, not a unit conversion
+
 pub(super) fn procedure(b: &Block<'_>, step: &Block<'_>, model: &Model, units: &DisplaySystem) -> Result<(Procedure, f64)> {
     allow(b, &["DIRECT", "APPLICATION", "ALPHA", "BETA", "GAMMA"])?;
     if !matches!(b.params.get("DIRECT"), Some(None)) {
@@ -51,7 +53,12 @@ pub(super) fn procedure(b: &Block<'_>, step: &Block<'_>, model: &Model, units: &
     let dt = number(fields.first().map(String::as_str).unwrap_or_default(), row.line)?;
     let period = number(fields.get(1).map(String::as_str).unwrap_or_default(), row.line)?;
     let count = period / dt;
-    if dt <= 0.0 || period <= 0.0 || !count.is_finite() || !(1.0..=1_000_000.0).contains(&count) || (count - count.round()).abs() > 1e-10 * count {
+    if dt <= 0.0
+        || period <= 0.0
+        || !count.is_finite()
+        || !(1.0..=MAX_DIRECT_INCREMENTS).contains(&count)
+        || (count - count.round()).abs() > 1e-10 * count
+    {
         return Err(unsupported(row.line, "DYNAMIC period must be 1..1000000 whole fixed increments"));
     }
     let increments = count.round() as u32;
