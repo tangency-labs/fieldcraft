@@ -1,6 +1,6 @@
 # Read an Abaqus input deck
 
-`deck.read` imports flat model data for inspection and a new FieldCraft analysis:
+`deck.read` imports model data, including part instances, for inspection and a new FieldCraft analysis:
 
 ```json
 {"command":"deck.read","params":{"format":"abaqus","path":"part.inp","units":"mm-t-s-N-MPa"}}
@@ -18,7 +18,9 @@ The file is read and its new model constructed before the current session change
 syntax or validation error keeps the existing model, results, path, undo and unsaved work.
 An empty, heading-only or unknown-only file cannot replace the current project. Success
 replaces its mesh/definitions, clears old geometry/results/history/path, and leaves an unsaved
-model. Save it as a new `.fieldcraft` project.
+model. Save it as a new `.fieldcraft` project. Original INP files are retained separately in
+the project as `deck-source.json`, protected by the package size and SHA-256 checks.
+Reopening validates paths and bounds but never reads the original input files from disk.
 
 In the desktop app, open **Read Abaqus Deck** from the command search or File commands,
 choose the path and consistent units, then confirm. The reader runs as a cancellable background
@@ -32,8 +34,8 @@ The reusable [beam recipe](../tools/abaqus-import/beam.json) starts a new docume
 an original 80 x 10 x 10 mm steel beam (81 nodes, 32 hex8 elements with incompatible modes),
 clamps its root and applies a total 100 N downward tip force. It solves that source model,
 writes its own Abaqus deck, imports the model data with explicit mm-t-s-N-MPa units, then
-recreates the intended constraint/load/static step and solves again. Its final project includes
-the newly solved results. The generated deck's analysis history is reported as unread.
+solves the imported static step directly, without recreating constraints or loads. Its final project includes
+the newly solved results. The source bundle and solved model are both saved.
 
 Run the built CLI from an empty work directory of your choice, using the recipe's absolute path:
 
@@ -53,7 +55,8 @@ the current document; save existing work before running it in a session you are 
 - `NODE`, with optional node set; labels and coordinates.
 - `ELEMENT`, with type, connectivity and optional element set. Long connectivity may continue.
 - `NSET` and `ELSET`: label lists, other set names and bounded `GENERATE` ranges. A node set may
-  also name an element set. References resolve without changing their labels.
+  also name an element set. Flat model labels are unchanged; instance labels are mapped to
+  deterministic global labels and reported with their original identity.
 - `SURFACE, TYPE=ELEMENT`: solid faces, shell sides and planar element edges, using an element
   label or element set.
 - `MATERIAL`, constant `ELASTIC` (isotropic or engineering constants) and constant `DENSITY`.
@@ -76,25 +79,86 @@ a letter followed by letters, digits, `_` or `-`, up to 64 ASCII characters. Uns
 spaces/characters and longer names are refused rather than silently renamed. Mesh labels must
 fit `1..=99_999_999`.
 
-Comments and headings are ignored. Abaqus sections do not carry a semantic section name;
+Comments and headings do not affect the interpreted model but remain in the source bundle. Abaqus sections do not carry a semantic section name;
 the importer generates `Section1`, `Section2`, and so on. It does not recover names from comments.
 Canonical roundtrip tests compare the supported keyword/data definitions, mesh and physical
-section data, not comment text or discarded analysis history. Some writer encodings cannot
+section data, not comment text or uninterpreted analysis history. Source-replay tests separately require exact bytes. Some writer encodings cannot
 recover extra metadata: a reduced tet4, for example, is written as C3D4 without a separate
 integration marker.
+
+## Parts, instances and original source
+
+`PART`/`END PART`, one `ASSEMBLY`/`END ASSEMBLY`, and its `INSTANCE`/`END INSTANCE`
+scopes are expanded before model construction. Mesh data may live in the part or the instance.
+Local node/element labels are allocated globally without collisions. Local sets, surfaces and
+orientations receive deterministic `InpLocal…` names; the `instances` reply carries the original
+instance/part names and label/name maps. `INSTANCE=` sets, `GENERATE`, `Instance.Set`,
+`Instance.Label` and assembly-qualified references are resolved. Material names stay global.
+Uninstanced parts remain in the source bundle and are listed in a warning. Rotated orthotropic
+solids must supply an explicit part orientation; implicit material axes are not inferred.
+Translation precedes axis rotation. Coordinates, constant orientation points and beam directions
+follow that transform. Missing parts/references, duplicate labels/instances and malformed scope
+endings are errors. More general coordinate systems and imported-result instances are refused.
+
+`INCLUDE, INPUT=…` resolves relative to the main INP directory, used as the submission directory,
+including when the directive occurs in a nested file. Data-only fragments are supported. Absolute
+paths, `.`/`..` components, backslash/drive paths, encrypted inputs and symlink escapes are refused.
+The directory boundary is enforced even in an unconfined interactive session, in addition to
+any automation read root. Cycles, depth over 32, more than 1024 files, source/expanded text over
+64 MiB and excessive expansion work are refused. Errors identify the source file and line.
+
+To recover the imported source without normalizing its spelling or interpreting its history:
+
+```json
+{"command":"deck.source.write","params":{"path":"copy/original.inp"}}
+```
+
+The destination parent must exist. The command writes the retained root file and its dependencies
+at their original relative paths, preserving CRLF/LF, comments, unknown options and missing final
+newlines. It never rereads the inputs. It checks all destinations before writing, writes dependencies
+first and the root last; individual writes are atomic, the whole bundle is not a transaction.
+A root filename colliding with a dependency is refused. The reply explicitly states that model
+edits were not exported. Use `deck.write` for an edited model. Starting/opening another project
+replaces the retained source with that project’s saved source, or clears it if absent.
+Save the project or export the source before discarding an unsaved import.
+
+These syntax mappings follow the public [Assembly Definition](https://abaqus.uclouvain.be/English/SIMACAEMODRefMap/simamod-c-partassy.htm),
+[INSTANCE](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-instance.htm),
+[INCLUDE](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-include.htm) and
+[Input Syntax Rules](https://abaqus.uclouvain.be/English/SIMACAEMODRefMap/simamod-c-inputsyntax.htm).
+Fixtures are original handwritten inputs, not manual examples.
 
 ## Unread data and refusals
 
 The reply lists unread keywords with their original one-based physical lines. `unknown` holds
-the first 100 records; `unknown_count` counts all of them. Read the warnings and this list before
-creating an analysis. No unknown text is stored in the model or re-emitted on export.
+the first 100 records, with file/line and up to 4096 characters of original text each;
+`original_truncated` indicates a preview limit, while the source bundle retains the full text.
+`unknown_count` counts all unread occurrences. Read the warnings and this list before
+creating an analysis. Unknown text is retained in the original source bundle, separate from the
+model; `deck.write` exports only the interpreted model. `deck.source.write` replays originals.
 
-Steps, boundary conditions, loads, contact, coupling and other history/model extensions are not
-imported. Every keyword inside an unread step stays reported, even if that keyword is supported
-at model level. Nested, unmatched or truncated step scopes are refused. Node-based surfaces are
+The command maps linear `STATIC`, `FREQUENCY` and a first-base-state `BUCKLE` to native
+steps. Structural `BOUNDARY` accepts numeric DOFs, ENCASTRE, PINNED and X/Y/ZSYMM;
+`CLOAD` maps per-node forces/moments, `DLOAD` maps element pressures and gravity, and
+`DSLOAD` maps element-surface pressure. `OP=NEW` clears the named family once per step;
+`OP=MOD` modifies the same original target/load type and retains other definitions. Different
+node/set identities remain additive, even where their expanded nodes overlap.
+
+Relative TABULAR/SMOOTH STEP amplitudes are evaluated at the linear static equilibrium end.
+STEP TIME values freeze at the preceding step end when carried forward; TOTAL TIME curves
+continue along accumulated general-step time. This does not validate any transient trajectory.
+The full curve remains in the original source. Native frequency steps use homogeneous support
+DOFs and no applied loads; native modal normalization/output defaults apply.
+
+Contact, coupling, unsupported material laws, nonlinear/dynamic steps and unsupported load
+variants are not silently omitted from runnable analyses. Unhandled model physics blocks analysis
+mapping; an unsupported step stops that and later mappings. `history_imported` says whether any
+step was imported; `analysis_complete` says whether the entire supported history was mapped.
+It is not a solver-success flag. Output requests remain in the unread report; native procedure
+default outputs are used. Every keyword inside an unread step stays reported. Nested, unmatched or truncated step scopes are refused. Node-based surfaces are
 reported as unread; they are not converted into element surfaces.
 
-`INCLUDE`, parts, assemblies and instances are refused. Global `SYSTEM` records are refused
+`PARAMETER` and global `SYSTEM` records are refused
 because later Cartesian nodes could otherwise be misread in local coordinates. `NODE, SYSTEM=R`
 is accepted; cylindrical/spherical node coordinates are refused. Alternate input files,
 coordinate-system transforms, unsupported physical parameters and temperature-/field-dependent property tables
@@ -125,7 +189,8 @@ Supported records must remain finite and consistent: missing referenced labels/s
 overlapping section assignments, invalid connectivity/faces and unrepresentable section shapes
 are refused with line numbers. This reader does not promise that an arbitrary imported mesh is
 ready to solve. Add the intended constraints, loads and analysis steps through normal commands,
-then run Check Model.
+then run Check Model. The pure `abaqus::read_limited` retains its model-data-only contract;
+`abaqus::read::read_analysis_limited` enables the analysis mapping used by `deck.read`.
 
 ## Bounds and automation
 

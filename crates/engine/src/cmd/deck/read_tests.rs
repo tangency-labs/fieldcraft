@@ -35,6 +35,10 @@ fn constrain(s: &mut Session) {
 
 fn assert_unchanged(s: &Session, before: &Session) {
     assert_eq!(s.model, before.model);
+    assert_eq!(s.deck_source.is_some(), before.deck_source.is_some());
+    if let (Some(now), Some(old)) = (&s.deck_source, &before.deck_source) {
+        assert!(std::sync::Arc::ptr_eq(now, old));
+    }
     assert_eq!(s.document(), before.document());
     assert_eq!(s.journal, before.journal);
     assert_eq!(s.results_report(), before.results_report());
@@ -57,7 +61,7 @@ fn assert_unchanged(s: &Session, before: &Session) {
 }
 
 #[test]
-fn read_replaces_only_after_success_and_reconstrained_bar_solves_the_same() {
+fn read_replaces_only_after_success_and_imported_bar_solves_the_same() {
     let dir = folder();
     let path = dir.join("original.inp");
     let mut s = bar();
@@ -68,13 +72,12 @@ fn read_replaces_only_after_success_and_reconstrained_bar_solves_the_same() {
     assert_eq!(result["nodes"], 12);
     assert_eq!(result["elements"]["hex8"], 2);
     assert_eq!(result["units"], "mm-t-s-N-MPa");
-    assert_eq!(result["history_imported"], false);
-    assert!(result["unknown"].as_array().unwrap().iter().any(|v| v["keyword"] == "STEP" && v["line"].as_u64().unwrap() > 0));
-    assert!(s.model.steps().is_empty() && s.model.loads().is_empty() && s.model.boundary_conditions().is_empty());
+    assert_eq!(result["history_imported"], true);
+    assert_eq!(result["analysis_complete"], true);
+    assert_eq!(s.model.steps().len(), 1);
     assert_eq!(s.undo_depth(), (0, 0));
     assert!(s.journal.is_empty() && s.path.is_none() && s.result("Bend").is_none() && s.is_dirty());
     assert!(s.design.is_none() && s.surfaces.is_empty());
-    constrain(&mut s);
     let resumed = s.execute("solve.static", &json!({"step":"Bend"})).unwrap();
     let before = original["max_displacement"]["value"].as_f64().unwrap();
     let after = resumed["max_displacement"]["value"].as_f64().unwrap();
@@ -189,4 +192,128 @@ fn the_session_import_caps_bound_the_read() {
     s.limits = crate::Limits { max_import_nodes: 12, max_import_elements: 2, ..crate::Limits::default() };
     assert!(s.execute("deck.read", &json!({"format":"abaqus","path":path,"units":"mm-t-s-N-MPa"})).is_ok());
     assert_eq!(s.limits.max_import_nodes, 12, "the new document keeps the session's caps");
+}
+
+#[test]
+fn real_commands_replay_unknown_text_history_and_include_bytes() {
+    let dir = folder();
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    let root = "** untouched header\r\n*INCLUDE,INPUT=sub/mesh.inc\r\n*Future Option,flag=YES\r\nabc, DEF\r\n*STEP,NAME=Load\r\n*STATIC\r\n0.1,1\r\n*CLOAD\r\n1,2,-5\r\n*END STEP";
+    let fragment = "*NODE\n1,0,0,0\n2,1,0,0";
+    std::fs::write(dir.join("input.inp"), root).unwrap();
+    std::fs::write(dir.join("sub/mesh.inc"), fragment).unwrap();
+    let mut session = Session::default();
+    let reply = session.execute("deck.read", &json!({"format":"abaqus","path":dir.join("input.inp")})).unwrap();
+    assert_eq!(reply["source_retained"], true);
+    assert_eq!(reply["history_imported"], false);
+    assert!(session.model.steps().is_empty());
+    assert!(
+        reply["unknown"].as_array().unwrap().iter().any(|u| u["keyword"] == "FUTUREOPTION" && u["original"].as_str().unwrap().contains("abc, DEF"))
+    );
+    let out = dir.join("out");
+    std::fs::create_dir(&out).unwrap();
+    session.execute("deck.source.write", &json!({"path":out.join("replay.inp")})).unwrap();
+    assert_eq!(std::fs::read(out.join("replay.inp")).unwrap(), root.as_bytes());
+    assert_eq!(std::fs::read(out.join("sub/mesh.inc")).unwrap(), fragment.as_bytes());
+    let model = session.model.clone();
+    session.execute("deck.read", &json!({"format":"abaqus","path":out.join("replay.inp")})).unwrap();
+    assert_eq!(session.model, model);
+    // Replaying originals never misrepresents a changed model as an edited source deck.
+    session.execute("mesh.node.add", &json!({"label":3,"xyz":[0,0,1]})).unwrap();
+    let reply = session.execute("deck.source.write", &json!({"path":out.join("replay.inp")})).unwrap();
+    assert_eq!(reply["model_edits_exported"], false);
+    assert_eq!(std::fs::read(out.join("replay.inp")).unwrap(), root.as_bytes());
+    session.execute("file.new", &json!({})).unwrap();
+    assert!(session.execute("deck.source.write", &json!({"path":out.join("empty.inp")})).is_err());
+}
+
+#[test]
+fn include_failure_and_output_collision_do_not_replace_session_or_write_root() {
+    let dir = folder();
+    let path = dir.join("input.inp");
+    let mut session = bar();
+    let before = session.clone();
+    for input in ["*INCLUDE,INPUT=../escape.inc", "*INCLUDE,INPUT=input.inp", "*INCLUDE,INPUT=missing.inc"] {
+        std::fs::write(&path, input).unwrap();
+        assert!(session.execute("deck.read", &json!({"format":"abaqus","path":path})).is_err());
+        assert_unchanged(&session, &before);
+    }
+    std::fs::write(&path, "*INCLUDE,INPUT=mesh.inc\n").unwrap();
+    std::fs::write(dir.join("mesh.inc"), "*NODE\n1,0,0,0\n").unwrap();
+    session.execute("deck.read", &json!({"format":"abaqus","path":path})).unwrap();
+    let out = dir.join("out");
+    std::fs::create_dir(&out).unwrap();
+    assert!(session.execute("deck.source.write", &json!({"path":out.join("mesh.inc")})).is_err());
+    assert!(!out.join("mesh.inc").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn includes_cannot_escape_through_symlinks_even_when_session_is_unconfined() {
+    let dir = folder();
+    let outside = folder();
+    std::fs::write(outside.join("nodes.inc"), "*NODE\n1,0,0,0\n").unwrap();
+    std::os::unix::fs::symlink(outside.join("nodes.inc"), dir.join("alias.inc")).unwrap();
+    std::fs::write(dir.join("root.inp"), "*INCLUDE,INPUT=alias.inc\n").unwrap();
+    let mut session = Session::default();
+    let error = session.execute("deck.read", &json!({"format":"abaqus","path":dir.join("root.inp")})).unwrap_err().to_string();
+    assert!(error.contains("outside") && error.contains("alias.inc"), "{error}");
+}
+
+#[test]
+fn commands_expand_part_include_and_replay_assembly_without_flattening_source() {
+    let dir = folder();
+    let part = "*PART,NAME=P\n*NODE,NSET=All\n1,0,0,0\n2,1,0,0\n*END PART\n";
+    let root = "*INCLUDE,INPUT=part.inc\n*ASSEMBLY,NAME=A\n*INSTANCE,NAME=I,PART=P\n3,0,0\n*END INSTANCE\n*NSET,NSET=Pick,INSTANCE=I\n2\n*END ASSEMBLY\n*STEP,NAME=Modes\n*FREQUENCY\n6\n*END STEP\n";
+    std::fs::write(dir.join("part.inc"), part).unwrap();
+    std::fs::write(dir.join("root.inp"), root).unwrap();
+    let mut session = Session::default();
+    let reply = session.execute("deck.read", &json!({"format":"abaqus","path":dir.join("root.inp"),"units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(session.model.node(2).unwrap().xyz, [4.0, 0.0, 0.0]);
+    assert_eq!(session.model.set("PICK").unwrap().nodes, vec![2]);
+    assert_eq!(reply["instances"][0]["name"], "I");
+    assert_eq!(reply["history_imported"], true);
+    let out = dir.join("copy");
+    std::fs::create_dir(&out).unwrap();
+    session.execute("deck.source.write", &json!({"path":out.join("root.inp")})).unwrap();
+    assert_eq!(std::fs::read_to_string(out.join("root.inp")).unwrap(), root);
+    assert_eq!(std::fs::read_to_string(out.join("part.inc")).unwrap(), part);
+    let expected = session.model.clone();
+    session.execute("deck.read", &json!({"format":"abaqus","path":out.join("root.inp"),"units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(session.model, expected);
+    let before = session.clone();
+    std::fs::write(dir.join("bad.inp"), "*INCLUDE,INPUT=missing.inc\n").unwrap();
+    assert!(session.execute("deck.read", &json!({"format":"abaqus","path":dir.join("bad.inp")})).is_err());
+    assert_unchanged(&session, &before);
+}
+
+const AXIAL_BEAM: &str = "** Original handwritten FieldCraft import validation; SI: m, kg, s, N, Pa\n*NODE,NSET=All\n1,0,0,0\n2,1,0,0\n*ELEMENT,TYPE=B31,ELSET=Beam\n1,1,2\n*MATERIAL,NAME=Steel\n*ELASTIC\n200000000000,0.3\n*DENSITY\n7800\n*BEAM SECTION,ELSET=Beam,MATERIAL=Steel,SECTION=RECT\n0.1,0.1\n0,0,-1\n*AMPLITUDE,NAME=Ramp,DEFINITION=TABULAR\n0,0,1,2\n*BOUNDARY\n1,ENCASTRE\n*STEP,NAME=Pull,NLGEOM=NO\n*STATIC\n1,1\n*CLOAD,AMPLITUDE=Ramp\n2,1,500\n*OUTPUT,FIELD\n*NODE OUTPUT\nU,RF\n*ELEMENT OUTPUT\nS,E\n*END STEP\n";
+
+#[test]
+fn imported_beam_solves_and_saved_source_survives_reopen_without_original_files() {
+    let dir = folder();
+    let inp = dir.join("beam.inp");
+    let saved = dir.join("beam.fieldcraft");
+    std::fs::write(&inp, AXIAL_BEAM).unwrap();
+    let mut s = Session::default();
+    let imported = s.execute("deck.read", &json!({"format":"abaqus","path":inp,"units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(imported["history_imported"], true, "{imported}");
+    assert_eq!(imported["analysis_complete"], true, "{imported}");
+    let solved = s.execute("solve.static", &json!({"step":"Pull"})).unwrap();
+    let displacement = solved["max_displacement"]["value"].as_f64().unwrap();
+    assert!((displacement - 5e-7).abs() < 5e-17, "{solved}");
+    s.execute("file.save_as", &json!({"path":saved,"results":true})).unwrap();
+    std::fs::remove_file(&inp).unwrap();
+    s.execute("file.new", &json!({})).unwrap();
+    s.execute("file.open", &json!({"path":saved})).unwrap();
+    let original = dir.join("original.inp");
+    s.execute("deck.source.write", &json!({"path":original})).unwrap();
+    assert_eq!(std::fs::read_to_string(original).unwrap(), AXIAL_BEAM);
+    let again = s.execute("solve.static", &json!({"step":"Pull"})).unwrap();
+    assert_eq!(again["max_displacement"], solved["max_displacement"]);
+    let normalized = dir.join("normalized.inp");
+    s.execute("deck.write", &json!({"format":"abaqus","path":normalized})).unwrap();
+    s.execute("deck.read", &json!({"format":"abaqus","path":normalized,"units":"m-kg-s-N-Pa"})).unwrap();
+    let roundtrip = s.execute("solve.static", &json!({"step":"Pull"})).unwrap();
+    assert_eq!(roundtrip["max_displacement"], solved["max_displacement"]);
 }

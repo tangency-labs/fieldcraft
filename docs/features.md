@@ -6,7 +6,7 @@ Every entry is a toolbar button. **Ready** entries run their command; **coming s
 shown greyed with the roadmap milestone that brings them (ROADMAP.md). Scripts, the command line,
 the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 
-96 ready, 31 coming soon.
+97 ready, 31 coming soon.
 
 ## Geometry
 
@@ -136,7 +136,8 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Decks | Abaqus Input — Write an Abaqus input file (.inp) | ready | `deck.write {"format":"abaqus"}` |
 | Decks | Nastran Deck — Write Nastran bulk data (SOL 101, 103) | ready | `deck.write {"format":"nastran"}` |
 | Decks | LS-DYNA Deck — Write an LS-DYNA keyword file | ready | `deck.write {"format":"lsdyna"}` |
-| Decks | Read Deck — Read an Abaqus input deck's model data: mesh, sets, materials and sections; unread keywords are listed, not kept | ready | `deck.read` |
+| Decks | Read Deck — Read Abaqus model data, instances and supported linear steps; save original input files for exact replay | ready | `deck.read` |
+| Input Source | Write Original Source — Replay retained Abaqus input and INCLUDE files without exporting model edits | ready | `deck.source.write` |
 | Implicit | Static — Linear static (or coupled temperature–displacement) solve of a step with FieldCraft's own solver; nonlinear static, buckling, harmonic response and heat transfer in the drop-down | ready | `solve.static`, `solve.nonlinear`, `solve.buckle`, `solve.harmonic`, `solve.heat` |
 | Implicit | Frequency — Natural frequencies and mode shapes of a frequency step | ready | `solve.frequency` |
 | Implicit | Random Response — Projects stored harmonic frames and a one-sided PSD into nodal component spectra and RMS; supports coherent absolute acceleration for a declared unit base inertial load | ready | `solve.random` |

@@ -1,17 +1,24 @@
-//! Flat model-data import, designed from the public Abaqus keyword reference.
+//! Model-data import with part-instance expansion, designed from the public Abaqus keyword reference.
 //!
 //! Syntax: Dassault Systemes, *Abaqus 2017 Analysis User's Guide*, "Input syntax rules", and the
 //! *NODE, *ELEMENT, *NSET, *ELSET, *SURFACE, *MATERIAL, *ELASTIC, *DENSITY and section entries
 //! of the *Abaqus 2017 Keywords Reference Guide*. Material scope: *Abaqus 2025 Materials Guide*,
 //! "Material data definition".
 //! Only original handwritten or FieldCraft-writer-generated decks are used in tests.
-//! No history, assembly, includes or raw-keyword passthrough is imported. Numbers in a deck
+//! Model-data APIs report history; `read_analysis_limited` maps supported native steps.
+//! Hosts use `bundle` for INCLUDE expansion
+//! and exact source replay; the model writer does not pass arbitrary keywords through. Numbers in a deck
 //! have no intrinsic units: callers choose a consistent preset; the model stores SI.
 //! Recognized material behaviors keep the active material even when their data are reported
 //! unread. Other model options and unrecognized keywords end that context.
 
+mod assembly;
+pub use assembly::InstanceMap;
+pub mod bundle;
 mod composite;
+mod history;
 mod lex;
+pub mod source;
 mod types;
 
 use crate::Result;
@@ -38,10 +45,15 @@ pub struct Unknown {
     pub line: usize,
 }
 
-/// A new model, without history. Unknown output is bounded; `unknown_count` counts all options.
+/// An imported model, with history when requested. Unknown output is bounded;
+/// `unknown_count` counts all unread options.
 #[derive(Debug, Clone)]
 pub struct Read {
+    /// Whether all history steps were mapped without unsupported physical semantics.
+    pub analysis_complete: bool,
     pub model: Model,
+    /// Deterministic local-to-global labels and names for expanded instances.
+    pub instances: Vec<InstanceMap>,
     pub unknown: Vec<Unknown>,
     pub unknown_count: usize,
     pub warnings: Vec<String>,
@@ -76,7 +88,37 @@ pub fn read_in(text: &str, preset: Preset) -> Result<Read> {
 
 /// [`read_in`] within the caller's storage and work bounds.
 pub fn read_limited(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
-    parse(text, preset, limits)
+    read_mode(text, preset, limits, false)
+}
+
+/// Import supported analysis history as native steps, retaining named unsupported semantics.
+pub fn read_analysis_limited(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
+    read_mode(text, preset, limits, true)
+}
+
+fn read_mode(text: &str, preset: Preset, limits: Limits, analysis: bool) -> Result<Read> {
+    if text.len() > MAX_INPUT_BYTES {
+        return Err(error(1, "input exceeds 64 MiB"));
+    }
+    let expanded = assembly::expand(text, limits)?;
+    let flat = expanded.as_ref().map_or(text, |e| e.text.as_str());
+    let parse_all = || -> Result<Read> {
+        let mut read = parse(flat, preset, limits)?;
+        if analysis {
+            history::import(flat, &mut read, preset, limits)?;
+        }
+        read.unknown.truncate(MAX_UNKNOWN_SHOWN);
+        Ok(read)
+    };
+    let mut read = parse_all().map_err(|e| expanded.as_ref().map_or(e.clone(), |x| x.source_error(e)))?;
+    if let Some(expanded) = expanded {
+        for unknown in &mut read.unknown {
+            unknown.line = expanded.original_line(unknown.line);
+        }
+        read.warnings.extend(expanded.warnings);
+        read.instances = expanded.instances;
+    }
+    Ok(read)
 }
 
 /// Cooperate with the host without a thread-local lookup for every small token.
@@ -304,7 +346,7 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
         progress::check()?;
         let k = block.keyword.as_str();
         let line = block.line;
-        if ["INCLUDE", "SYSTEM", "PART", "ASSEMBLY", "INSTANCE", "ENDPART", "ENDASSEMBLY", "ENDINSTANCE"].contains(&k) {
+        if ["PARAMETER", "INCLUDE", "SYSTEM", "PART", "ASSEMBLY", "INSTANCE", "ENDPART", "ENDASSEMBLY", "ENDINSTANCE"].contains(&k) {
             return Err(error(line, format!("*{k} is not supported by the flat model-data reader")));
         }
         if k == "STEP" {
@@ -320,9 +362,7 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
         let ignored = history.is_some() || k == "ENDSTEP";
         if ignored {
             unknown_count += 1;
-            if unknown.len() < MAX_UNKNOWN_SHOWN {
-                unknown.push(Unknown { keyword: k.to_string(), line });
-            }
+            unknown.push(Unknown { keyword: k.to_string(), line });
             if k == "ENDSTEP" {
                 history = None;
             }
@@ -482,9 +522,7 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
                 block.only(&["TYPE", "NAME"])?;
                 if block.value("TYPE").is_some_and(|t| canonical(t) != "ELEMENT") {
                     unknown_count += 1;
-                    if unknown.len() < MAX_UNKNOWN_SHOWN {
-                        unknown.push(Unknown { keyword: k.to_string(), line });
-                    }
+                    unknown.push(Unknown { keyword: k.to_string(), line });
                     if warnings.len() < MAX_UNKNOWN_SHOWN {
                         warnings.push(format!(
                             "line {line}: *SURFACE TYPE={} is unread; only element-based surfaces are imported",
@@ -590,9 +628,7 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
             }
             _ => {
                 unknown_count += 1;
-                if unknown.len() < MAX_UNKNOWN_SHOWN {
-                    unknown.push(Unknown { keyword: k.to_string(), line });
-                }
+                unknown.push(Unknown { keyword: k.to_string(), line });
             }
         }
     }
@@ -799,7 +835,7 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
             "{unassigned} mesh elements have no section: their input family/formulation is not stored on the mesh element. Assign compatible sections before analysis; reduced/hybrid/shell/plane context is not retained without them."
         ));
     }
-    Ok(Read { model, unknown, unknown_count, warnings })
+    Ok(Read { model, analysis_complete: false, instances: Vec::new(), unknown, unknown_count, warnings })
 }
 
 fn section_kind(raw: &SectionRecord, typ: Type, units: &DisplaySystem) -> Result<SectionKind> {
@@ -885,3 +921,6 @@ fn section_kind(raw: &SectionRecord, typ: Type, units: &DisplaySystem) -> Result
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod assembly_tests;

@@ -32,6 +32,8 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+pub mod deck_source;
+pub use deck_source::DeckSource;
 pub mod checkpoint;
 pub mod codec;
 pub mod fs;
@@ -430,6 +432,7 @@ pub struct JournalHeader {
 /// What a `.fieldcraft` file holds.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ModelFile {
+    pub deck_source: Option<DeckSource>,
     pub model: Model,
     pub geometry: Geometry,
     pub journal: Vec<JournalEntry>,
@@ -467,6 +470,8 @@ struct Manifest {
 /// when there is some.
 #[derive(Debug, Clone, Default)]
 pub struct Extras<'a> {
+    /// Original imported INP files, kept independently of edited model definitions.
+    pub deck_source: Option<&'a DeckSource>,
     /// Solved results to keep (`results.bin`), by step name.
     pub results: Vec<(&'a str, results::StoredRef<'a>)>,
     /// Geometry files to embed, by the SHA-256 of their content: a geometry source whose hash is
@@ -565,6 +570,11 @@ pub fn write_with(
     let journal = journal_text(header, journal)?;
     let mut parts: Vec<(String, std::borrow::Cow<'_, [u8]>)> =
         vec![(MODEL.into(), model_json.into()), (MESH.into(), mesh.into()), (JOURNAL.into(), journal.into())];
+    if let Some(source) = extras.deck_source {
+        source.validate()?;
+        let bytes = serde_json::to_vec(source).map_err(|e| json_error(deck_source::PART, e))?;
+        parts.push((deck_source::PART.into(), bytes.into()));
+    }
     if !extras.results.is_empty() {
         parts.push((results::PART.into(), results::encode(&extras.results)?.into()));
     }
@@ -680,7 +690,7 @@ pub fn read_versioned(bytes: &[u8]) -> Result<(ModelFile, u32)> {
         return invalid(format!("`{MANIFEST}` must list the parts {MODEL}, {MESH} and {JOURNAL}"));
     }
     // Format 3 may also hold results and embedded geometry, each listed.
-    let optional = |name: &str| format == FORMAT_VERSION && (name == results::PART || check_geometry_part(name).is_ok());
+    let optional = |name: &str| format == FORMAT_VERSION && (name == results::PART || name == deck_source::PART || check_geometry_part(name).is_ok());
     if let Some(extra) = listed.keys().find(|n| !required.contains(&n.as_str()) && !optional(n)) {
         return invalid(if format == FORMAT_VERSION {
             format!("`{MANIFEST}` lists an unexpected part `{}`", extra.chars().filter(|c| !c.is_control()).take(80).collect::<String>())
@@ -688,7 +698,7 @@ pub fn read_versioned(bytes: &[u8]) -> Result<(ModelFile, u32)> {
             format!("`{MANIFEST}` must list exactly the parts {MODEL}, {MESH} and {JOURNAL}")
         });
     }
-    if listed.len() > 4 + 1 + MAX_MESH_SOURCES {
+    if listed.len() > 4 + 2 + MAX_MESH_SOURCES {
         return Err(Error::Limit(format!("`{MANIFEST}` lists {} parts", listed.len())));
     }
     let mut seen = BTreeSet::new();
@@ -708,6 +718,14 @@ pub fn read_versioned(bytes: &[u8]) -> Result<(ModelFile, u32)> {
             return invalid(format!("part `{name}` is damaged: its size or SHA-256 differs from the manifest"));
         }
         Ok(data)
+    };
+    let deck_source = if listed.contains_key(deck_source::PART) {
+        let bytes = part(deck_source::PART, deck_source::MAX_JSON_BYTES)?;
+        let source: DeckSource = serde_json::from_slice(&bytes).map_err(|e| json_error(deck_source::PART, e))?;
+        source.validate()?;
+        Some(source)
+    } else {
+        None
     };
     // The optional parts first: a missing one is named before the larger ones are read.
     let mut embedded = BTreeMap::new();
@@ -791,6 +809,7 @@ pub fn read_versioned(bytes: &[u8]) -> Result<(ModelFile, u32)> {
     let journal = read_journal(journal.commands)?;
     Ok((
         ModelFile {
+            deck_source,
             model,
             geometry: manifest.geometry,
             journal,

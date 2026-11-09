@@ -2424,9 +2424,14 @@ pub const DECK: &[Field] = &[
     .hint("the display system's"),
 ];
 
+pub const DECK_SOURCE: &[Field] =
+    &[path("path", "Original input file", true).help("Replay the retained root INP and its INCLUDE files; model edits are not exported.").req()];
+
 pub const DECK_READ: &[Field] = &[
-    choice("format", "Format", &[("abaqus", "Abaqus input (.inp)")]).help("The model-data input format to read.").req().def("\"abaqus\""),
-    path("path", "Input deck", false).help("Flat Abaqus model data; replaces the current model only after a successful read.").req(),
+    choice("format", "Format", &[("abaqus", "Abaqus input (.inp)")]).help("The input format for model data and supported analysis steps.").req().def("\"abaqus\""),
+    path("path", "Input deck", false)
+        .help("Read Abaqus model data, parts, relative INCLUDE files and supported linear steps; retain original input with the saved project. Replaces the model only after a successful read.")
+        .req(),
     choice(
         "units",
         "Input units",

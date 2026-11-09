@@ -1,4 +1,7 @@
-//! Solver decks: write model data, or read a flat Abaqus deck into a new session.
+//! Solver decks: interpret Abaqus model data and retain original files for explicit replay.
+
+mod source;
+pub use source::WRITE_SOURCE;
 
 use std::path::Path;
 
@@ -22,7 +25,7 @@ pub const WRITE: CommandSpec = CommandSpec {
 pub const READ: CommandSpec = CommandSpec {
     id: "deck.read",
     label: "Read Abaqus Deck",
-    params: r#"{"format":"abaqus","path":"part.inp","units"?:"mm-t-s-N-MPa|m-kg-s-N-Pa|mm-kg-ms-kN-GPa|mm-g-ms-N-MPa|in-lbf-s-psi"} — replaces the model with a flat Abaqus deck's mesh, sets, element surfaces, elastic/density materials and sections; input numbers use this consistent preset (default: the current display preset, ignoring overrides), then store SI; the reply states units, unread keywords with original lines (first 100 and total count), and warnings. No steps, loads, conditions or unknown text are retained; INCLUDE/parts/assemblies and unsupported physical variants are refused. Empty supported data is refused. Success clears old results/design/path/undo and is unsaved; errors leave the whole session intact."#,
+    params: r#"{"format":"abaqus","path":"part.inp","units"?:"mm-t-s-N-MPa|m-kg-s-N-Pa|mm-kg-ms-kN-GPa|mm-g-ms-N-MPa|in-lbf-s-psi"} — replaces the model with an Abaqus deck's mesh, sets, element surfaces, elastic/density materials and sections; expands parts and instances and bounded relative INCLUDE files; input numbers use this consistent preset (default: the current display preset, ignoring overrides), then store SI; the reply states units, unread keywords with original lines (first 100 and total count), and warnings. Original files are stored with the project for deck.source.write. Supported linear static/frequency/buckling steps, structural boundaries, concentrated forces/moments, pressure and gravity are mapped; tabular/smooth-step static amplitudes are evaluated at the step end. Unsupported physical options retain source and block affected analysis mappings; inspect analysis_complete and warnings before solving. Unsupported physical variants are refused. Empty supported data is refused. Success clears old results/design/path/undo and is unsaved; errors leave the whole session intact."#,
     form: Some(super::forms::DECK_READ),
     kind: CommandKind::Session,
     requires: &[],
@@ -47,7 +50,8 @@ fn read(s: &mut Session, p: &Value) -> Result<Value> {
         elements: s.limits.max_import_elements,
         members: s.limits.max_import_members,
     };
-    let imported = fieldcraft_decks::abaqus::read_limited(text, units, limits)?;
+    let bundle = source::load(s, &path, text)?;
+    let imported = fieldcraft_decks::abaqus::read::read_analysis_limited(&bundle.expanded, units, limits).map_err(|e| bundle.source_error(e))?;
     let model = &imported.model;
     if model.nodes().is_empty()
         && model.elements().is_empty()
@@ -64,12 +68,39 @@ fn read(s: &mut Session, p: &Value) -> Result<Value> {
     for element in model.elements().values() {
         *kinds.entry(element.kind.name()).or_default() += 1;
     }
-    let unknown: Vec<Value> = imported.unknown.iter().map(|u| json!({"keyword":u.keyword,"line":u.line})).collect();
+    let unknown: Vec<Value> = imported
+        .unknown
+        .iter()
+        .map(|u| {
+            let at = bundle.location(u.line);
+            let original = at.and_then(|at| {
+                bundle.files.get(&at.file).and_then(|doc| doc.blocks().iter().position(|b| b.line == at.line).and_then(|index| doc.block_text(index)))
+            });
+            let preview = original.map(|text| text.chars().take(4096).collect::<String>());
+            let truncated = original.zip(preview.as_deref()).is_some_and(|(full, shown)| full.len() != shown.len());
+            json!({"keyword":u.keyword,"line":at.map_or(u.line, |at|at.line),"file":at.map(|at| &at.file),
+                "original":preview,"original_truncated":truncated})
+        })
+        .collect();
+    let instances: Vec<Value> = imported
+        .instances
+        .iter()
+        .map(|i| {
+            json!({"name":i.name,"part":i.part,
+        "nodes":i.nodes,"elements":i.elements,"names":i.names})
+        })
+        .collect();
     let reply = json!({"format":"abaqus","path":path,"units":units.label(),"nodes":model.nodes().len(),"elements":kinds,
         "sets":model.sets().len(),"materials":model.materials().len(),"sections":model.sections().len(),"unknown":unknown,
-        "unknown_count":imported.unknown_count,"warnings":imported.warnings,"history_imported":false});
+        "unknown_count":imported.unknown_count,"warnings":imported.warnings,"history_imported":!model.steps().is_empty(),"analysis_complete":imported.analysis_complete,"steps":model.steps().len(),
+        "source_retained":true,"source_storage":"project","source_files":bundle.files.keys().collect::<Vec<_>>(),"instances":instances});
     // The new, unsaved document has no journal, but still needs its own dirty revision.
-    let opened = Session { model: imported.model, revision: crate::next_revision(), ..Session::default() };
+    let archive = fieldcraft_io::DeckSource {
+        root: bundle.root.clone(),
+        files: bundle.files.iter().map(|(name, doc)| (name.clone(), doc.original().to_string())).collect(),
+    };
+    let opened =
+        Session { model: imported.model, deck_source: Some(std::sync::Arc::new(archive)), revision: crate::next_revision(), ..Session::default() };
     s.replace_with(opened);
     Ok(reply)
 }
