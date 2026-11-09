@@ -199,7 +199,6 @@ pub fn write_resolved(model: &Model, r: &Resolved, units: Preset) -> Result<Stri
 pub fn write_resolved_with_mass(model: &Model, r: &Resolved, units: Preset, mass: fieldcraft_model::MassKind) -> Result<String> {
     dynamics::check_mass(model, mass)?;
     crate::refuse_fluid(FORMAT, model)?;
-    crate::refuse_prestress(FORMAT, model)?;
     let by_type = elements_by_type(model, r)?;
     check_expressible(model)?;
     dynamics::check(model)?;
@@ -207,6 +206,7 @@ pub fn write_resolved_with_mass(model: &Model, r: &Resolved, units: Preset, mass
     let model = prepared.as_ref().unwrap_or(model);
     let prepared_resolved = prepared.as_ref().map(Model::resolve).transpose()?;
     let r = prepared_resolved.as_ref().unwrap_or(r);
+    validate_pretension_chain(model)?;
     let discrete = discrete_groups(model, r)?;
     let mut d = Deck::default();
     d.heading(units);
@@ -227,11 +227,44 @@ pub fn write_resolved_with_mass(model: &Model, r: &Resolved, units: Preset, mass
     d.couplings(model, r);
     d.contacts(model, r)?;
     d.ties(model)?;
+    d.pretension_sections(model, r)?;
     d.equations(model, r)?;
     d.out.push_str(&crate::foundation::abaqus(model, r)?);
     d.dynamics_data(model)?;
     d.steps(model, r)?;
     Ok(d.out)
+}
+
+/// Native pretension sections are stateful: an unbased frequency must precede
+/// preload, and a perturbation based on a locked state must carry an explicit,
+/// nonzero adjustment for every section.  Reject incomplete chains instead of
+/// silently writing a misleading deck.
+fn validate_pretension_chain(model: &Model) -> Result<()> {
+    if model.pretensions().is_empty() { return Ok(()); }
+    for (i, step) in model.steps().iter().enumerate() {
+        if matches!(step.procedure, Procedure::Frequency { .. } | Procedure::Harmonic(_)) && step.base_state.is_none()
+            && model.steps()[..i].iter().any(|s| !s.pretension.is_empty())
+        {
+            return Err(Error::Unsupported { format: FORMAT, what: format!(
+                "step `{}`: unbased frequency/response follows pretension; create the unpreloaded step before force control or set base_state",
+                step.name
+            ) });
+        }
+        if let Some(base) = &step.base_state {
+            let Some(base_step) = model.steps().iter().find(|s| s.name == *base) else {
+                return Err(Error::Unsupported { format: FORMAT, what: format!("step `{}`: missing base_state `{base}`", step.name) });
+            };
+            for name in model.pretensions().keys() {
+                match base_step.pretension.get(name) {
+                    Some(fieldcraft_model::PretensionControl::Adjustment { value }) if value.is_finite() && *value != 0.0 => {}
+                    Some(fieldcraft_model::PretensionControl::Adjustment { .. }) => return Err(Error::Unsupported { format: FORMAT, what: format!("step `{}`: locked base `{base}` has zero/non-finite adjustment for pretension `{name}`", step.name) }),
+                    Some(fieldcraft_model::PretensionControl::Fixed) => {}
+                    _ => return Err(Error::Unsupported { format: FORMAT, what: format!("step `{}`: locked base `{base}` is missing nonzero adjustment for pretension `{name}`", step.name) }),
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The Abaqus element type of an element of `kind` in `section`, or why there is none.
@@ -1071,6 +1104,128 @@ impl Deck {
         }
     }
 
+    /// Native Abaqus pretension sections. FieldCraft stores conforming cut node sets;
+    /// Abaqus needs the corresponding element faces, so resolve faces by exact node-set
+    /// containment and reject ambiguous or face-less cuts by name.
+    fn pretension_sections(&mut self, model: &Model, r: &Resolved) -> Result<()> {
+        if model.pretensions().is_empty() {
+            return Ok(());
+        }
+        for (name, p) in model.pretensions() {
+            let first = r
+                .sets
+                .get(&p.first)
+                .ok_or_else(|| Error::Unsupported { format: FORMAT, what: format!("pretension `{name}`: missing first set `{}`", p.first) })?;
+            let second = r
+                .sets
+                .get(&p.second)
+                .ok_or_else(|| Error::Unsupported { format: FORMAT, what: format!("pretension `{name}`: missing second set `{}`", p.second) })?;
+            let nodes = |set: &fieldcraft_model::ResolvedSet| -> BTreeSet<u32> { set.nodes.iter().copied().collect() };
+            let first_nodes = nodes(first);
+            let second_nodes = nodes(second);
+            let mut first_faces = Vec::new();
+            let mut second_faces = Vec::new();
+            for (&label, e) in model.elements() {
+                for (i, local) in e.kind.faces().iter().enumerate() {
+                    let face: BTreeSet<u32> = local.iter().filter_map(|&j| e.nodes.get(j)).copied().collect();
+                    if face.len() == local.len() {
+                        if face.is_subset(&first_nodes) { first_faces.push((label, i + 1)); }
+                        if face.is_subset(&second_nodes) { second_faces.push((label, i + 1)); }
+                    }
+                }
+            }
+            // Abaqus computes the pretension normal from one oriented cut.  Writing
+            // both coincident halves makes equal and opposite normals cancel to zero.
+            let mut faces = if first_faces.is_empty() { second_faces } else { first_faces };
+            faces.sort_unstable();
+            faces.dedup();
+            // A conforming bolt cut may contain the coincident face on each half.
+            // Remove only geometrically coincident reverse duplicates; preserve
+            // every distinct face of a multi-face cut surface.
+            let mut seen_geometry = BTreeSet::new();
+            faces.retain(|(label, face)| {
+                let Some(e) = model.elements().get(label) else { return false };
+                let Some(local) = e.kind.faces().get(face.saturating_sub(1)) else { return false };
+                let mut points: Vec<String> = local.iter().filter_map(|&j| e.nodes.get(j)).filter_map(|n| model.nodes().get(n)).map(|n| format!("{:.12e},{:.12e},{:.12e}", n.xyz[0], n.xyz[1], n.xyz[2])).collect();
+                points.sort_unstable();
+                seen_geometry.insert(points.join(";"))
+            });
+            if faces.is_empty() {
+                return Err(Error::Unsupported {
+                    format: FORMAT,
+                    what: format!("pretension `{name}`: cut sets have no resolvable element face for native PRE-TENSION SECTION"),
+                });
+            }
+            let surface = format!("FC-PRET-{name}");
+            let control = r.reference_point_nodes.get(&p.control).ok_or_else(|| Error::Unsupported {
+                format: FORMAT,
+                what: format!("pretension `{name}`: control point `{}` has no node", p.control),
+            })?;
+            self.comment(&format!(
+                "Native Abaqus pretension `{name}`: cut sets `{}`/`{}`; current locked length is carried by the control node",
+                p.first, p.second
+            ));
+            self.line(&format!("*SURFACE, NAME={surface}, TYPE=ELEMENT"));
+            for (element, face) in faces {
+                self.line(&format!("{element}, S{face}"));
+            }
+            self.line(&format!("*PRE-TENSION SECTION, SURFACE={surface}, NODE={control}"));
+        }
+        Ok(())
+    }
+
+    fn pretension_step(&mut self, model: &Model, r: &Resolved, step: &Step) -> Result<()> {
+        if step.pretension.is_empty() {
+            return Ok(());
+        }
+        if matches!(step.procedure, Procedure::Frequency { .. } | Procedure::Harmonic(_)) {
+            return Err(Error::Unsupported {
+                format: FORMAT,
+                what: format!("step `{}`: pretension controls belong in a static equilibrium step", step.name),
+            });
+        }
+        for (name, control) in &step.pretension {
+            let Some(section) = model.pretensions().get(name) else {
+                return Err(Error::Unsupported { format: FORMAT, what: format!("step `{}`: unknown pretension `{name}`", step.name) });
+            };
+            let Some(node) = r.reference_point_nodes.get(&section.control) else {
+                return Err(Error::Unsupported { format: FORMAT, what: format!("pretension `{name}`: control node missing") });
+            };
+            match control {
+                fieldcraft_model::PretensionControl::Force { value } => {
+                    self.line("*CLOAD");
+                    self.numbers_line(&format!("{node}, 1"), &[*value])?;
+                }
+                fieldcraft_model::PretensionControl::Adjustment { value } => {
+                    if !value.is_finite() || *value == 0.0 {
+                        return Err(Error::Unsupported { format: FORMAT, what: format!("step `{}`: pretension `{name}` requires a nonzero finite lock adjustment", step.name) });
+                    }
+                    // Abaqus holds the reached adjustment by prescribing the current control DOF;
+                    // never write zero, which would discard the locked length.
+                    self.line("*BOUNDARY");
+                    self.numbers_line(&format!("{node}, 1, 1"), &[*value])?;
+                }
+                fieldcraft_model::PretensionControl::Fixed => {
+                    self.line("*BOUNDARY, FIXED");
+                    // Abaqus requires the constrained DOF range even with FIXED.
+                    self.line(&format!("{node}, 1, 1"));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn pretension_initial_boundary(&mut self, model: &Model, r: &Resolved) -> Result<()> {
+        if model.pretensions().is_empty() { return Ok(()); }
+        self.comment("Unpreloaded state: hold each native pretension control DOF at zero before force loading");
+        self.line("*BOUNDARY");
+        for p in model.pretensions().values() {
+            let node = r.reference_point_nodes.get(&p.control).ok_or_else(|| Error::Unsupported { format: FORMAT, what: format!("pretension control `{}` has no node", p.control) })?;
+            self.line(&format!("{node}, 1, 1, 0.0"));
+        }
+        Ok(())
+    }
+
     /// One surface interaction (the friction) per contact, then its pair, and every general
     /// contact in the model's one `*CONTACT` definition.
     fn contacts(&mut self, model: &Model, r: &Resolved) -> Result<()> {
@@ -1423,11 +1578,24 @@ impl Deck {
                         }
                         self.comment("iterations and convergence: Abaqus's own controls (its residual norms differ from FieldCraft's)");
                     } else {
-                        self.line(&format!("*STEP, NAME={}, NLGEOM=NO", step.name));
+                        let feeds_perturbation = steps.iter().skip(index + 1).any(|later| later.base_state.as_deref() == Some(step.name.as_str()));
+                        let nlgeom = if feeds_perturbation { "YES" } else { "NO" };
+                        self.line(&format!("*STEP, NAME={}, NLGEOM={nlgeom}", step.name));
                         self.line("*STATIC");
                         self.line("1.0, 1.0");
                     }
-                    self.step_boundaries(model, r, &base_bcs, &step.boundary_conditions)?;
+                    let release_initial_pretension = step.pretension.values().any(|c| matches!(c, fieldcraft_model::PretensionControl::Force { .. }))
+                        && index > 0
+                        && matches!(steps[index - 1].procedure, Procedure::Frequency { .. })
+                        && steps[index - 1].base_state.is_none();
+                    if release_initial_pretension {
+                        // Remove only the temporary Before-step control DOFs while
+                        // restating every ordinary support; OP=NEW must not drop them.
+                        self.line("*BOUNDARY, OP=NEW");
+                        self.boundary_lines(model, r, &step.boundary_conditions)?;
+                    } else {
+                        self.step_boundaries(model, r, &base_bcs, &step.boundary_conditions)?;
+                    }
                     if step.loads == base_loads {
                         self.comment("loads: as in the previous general step");
                     } else {
@@ -1435,6 +1603,7 @@ impl Deck {
                         self.step_loads(&loads, written)?;
                         written = loads.written();
                     }
+                    self.pretension_step(model, r, step)?;
                     base_bcs.clone_from(&step.boundary_conditions);
                     base_loads.clone_from(&step.loads);
                 }
@@ -1467,7 +1636,8 @@ impl Deck {
                     written = loads.written();
                 }
                 Procedure::Frequency { modes, min_hz, max_hz } => {
-                    self.line(&format!("*STEP, NAME={}", step.name));
+                    let perturbation = if step.base_state.is_some() { ", PERTURBATION" } else { "" };
+                    self.line(&format!("*STEP, NAME={}{}", step.name, perturbation));
                     self.line("*FREQUENCY, EIGENSOLVER=LANCZOS");
                     // Modes, then the frequency range; empty trailing fields are left off.
                     let _ = write!(self.out, "{modes}");
@@ -1480,6 +1650,9 @@ impl Deck {
                     }
                     self.out.push('\n');
                     self.step_boundaries(model, r, &base_bcs, &step.boundary_conditions)?;
+                    if step.base_state.is_none() && !steps[..index].iter().any(|s| matches!(s.procedure, Procedure::Static {} | Procedure::NonlinearStatic(_))) {
+                        self.pretension_initial_boundary(model, r)?;
+                    }
                     if !step.loads.is_empty() {
                         self.comment("loads have no effect on natural frequencies and are not written");
                     }
@@ -1490,12 +1663,6 @@ impl Deck {
                 }
                 Procedure::Harmonic(ref h) => {
                     use fieldcraft_model::harmonic::Method;
-                    if has_nonlinear_step(model) {
-                        return Err(Error::Unsupported {
-                            format: FORMAT,
-                            what: format!("harmonic step `{}` with a nonlinear base state; FieldCraft starts from the undeformed state", step.name),
-                        });
-                    }
                     if let Method::Modal { modes, residual_vectors, .. } = h.method {
                         if residual_vectors > 0 {
                             return Err(Error::Unsupported {

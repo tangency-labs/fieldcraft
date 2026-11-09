@@ -634,7 +634,7 @@ pub static CATALOGUE: &[Capability] = &[
         Interactions,
         "Connectors",
         "Conforming cut with force or prescribed adjustment, lock from a solved equilibrium and report section force",
-        &["model.pretension.force", "model.pretension.adjust", "model.pretension.lock", "solve.pretension"],
+        &["model.pretension.force", "model.pretension.adjust", "model.pretension.fix", "model.pretension.lock", "solve.pretension"],
     ),
     ready_more(
         "model.spring.create",
