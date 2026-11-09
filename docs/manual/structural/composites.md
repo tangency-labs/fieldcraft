@@ -120,3 +120,9 @@ Puck and LaRC remain outside this capability.
 The [deck mappings](../../composite-decks.md) state the supported directions, sample counts
 and named refusals for Abaqus, Nastran and LS-DYNA. None of those mappings is a certificate
 from running a commercial solver.
+
+## Axisymmetric ring shells
+
+The two-ring axisymmetric formulation and its analysis/export restrictions are
+documented in [Axisymmetric meridional shell](../../solvers/axisymmetric-shell.md).
+Use the explicit `axisymmetric_shell` section flag; `beam2` alone remains a beam.

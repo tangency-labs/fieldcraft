@@ -278,6 +278,9 @@ pub struct Formulation {
     /// Linear ANS/EAS solid-shell on an orthogonal affine swept hex8.
     #[serde(default, skip_serializing_if = "is_false")]
     pub solid_shell: bool,
+    /// Two-node conical axisymmetric shell, not an axisymmetric continuum.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub axisymmetric_shell: bool,
     #[serde(default)]
     pub integration: Integration,
     /// Enhanced (incompatible) bending modes: linear hexahedra (solid sections) and linear
@@ -293,6 +296,15 @@ impl Formulation {
     /// Check the options against each other and against the section kind (the element kinds are
     /// checked when the model is resolved).
     pub fn validate_for(&self, kind: &SectionKind) -> Result<()> {
+        if self.axisymmetric_shell
+            && (!matches!(kind, SectionKind::Shell { .. } | SectionKind::CompositeShell { .. })
+                || self.solid_shell
+                || self.hybrid
+                || self.incompatible_modes
+                || self.integration != Integration::Full)
+        {
+            return Err(Error::Invalid("axisymmetric_shell requires shell/composite_shell and no other formulation options".into()));
+        }
         if self.solid_shell
             && (!matches!(kind, SectionKind::Solid {}) || self.incompatible_modes || self.hybrid || self.integration != Integration::Full)
         {
@@ -414,7 +426,7 @@ mod tests {
         let shell = SectionKind::Shell { thickness: 2.0, offset: 0.0, points: 5 };
         assert!(Formulation { hybrid: true, ..Formulation::default() }.validate_for(&shell).is_err());
         assert!(
-            Formulation { solid_shell: false, incompatible_modes: true, integration: Integration::Reduced, hybrid: false }
+            Formulation { axisymmetric_shell: false, solid_shell: false, incompatible_modes: true, integration: Integration::Reduced, hybrid: false }
                 .validate_for(&SectionKind::Solid {})
                 .is_err()
         );

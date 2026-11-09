@@ -246,3 +246,9 @@ the column slightly. The verification case `buckle-euler-cantilever` uses ν = 0
 - S. P. Timoshenko, J. M. Gere. *Theory of Elastic Stability*, 2nd ed. McGraw-Hill, 1961.
 - G. H. Bryan. Proc. London Math. Soc. 22:54–67, 1891.
 - N. J. Higham. *Accuracy and Stability of Numerical Algorithms*, 2nd ed. SIAM, 2002.
+
+## Axisymmetric ring shells
+
+The two-ring axisymmetric formulation and its analysis/export restrictions are
+documented in [Axisymmetric meridional shell](../../solvers/axisymmetric-shell.md).
+Use the explicit `axisymmetric_shell` section flag; `beam2` alone remains a beam.

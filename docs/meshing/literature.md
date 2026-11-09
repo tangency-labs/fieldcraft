@@ -1356,3 +1356,5 @@ MITC6-a: Lee & Bathe (2004), doi:10.1016/j.compstruc.2004.02.004, equations
 See [the formula-to-code mapping](../solvers/mitc6.md).
 
 - Harnau, Schweizerhof & Hauptmann (2000), *On solid-shell elements with linear and quadratic shape functions for small and large deformations*, ECCOMAS2000, https://congress2.cimne.com/eccomas/proceedings/eccomas2000/pdf/826.pdf. Affine linear ANS/EAS10 specialization in `fem::solid_shell`, equations1,3,5,6,10,15,16; scope in `docs/solvers/solid-shell.md`.
+
+- Simões Moita et al. (2023), Applied Sciences 13, 5325, doi:10.3390/app13095325: axisymmetric meridional shell strain/laminate relations, implemented with explicitly distinct selective integration in `fem::axishell`.

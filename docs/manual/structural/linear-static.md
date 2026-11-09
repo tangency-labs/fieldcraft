@@ -326,3 +326,9 @@ probe at the foot's end lies within 0.13 % of the fine tet10 solution.
 - NAFEMS. *The Standard NAFEMS Benchmarks*, TNSB Rev. 3, October 1990.
 - R. H. MacNeal, R. L. Harder. *A proposed standard set of problems to test finite element accuracy.* Finite Elements in Analysis and Design 1(1):3–20, 1985.
 - S. P. Timoshenko, J. N. Goodier. *Theory of Elasticity*, 3rd ed. McGraw-Hill, 1970.
+
+## Axisymmetric ring shells
+
+The two-ring axisymmetric formulation and its analysis/export restrictions are
+documented in [Axisymmetric meridional shell](../../solvers/axisymmetric-shell.md).
+Use the explicit `axisymmetric_shell` section flag; `beam2` alone remains a beam.

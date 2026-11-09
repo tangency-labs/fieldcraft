@@ -272,3 +272,9 @@ amplitude has no physical size; the pictures use deformation scales of 0.4 and 0
 - S. Timoshenko, D. H. Young, W. Weaver. *Vibration Problems in Engineering*, 4th ed. Wiley, 1974.
 - S. P. Timoshenko, J. N. Goodier. *Theory of Elasticity*, 3rd ed. McGraw-Hill, 1970.
 - NAFEMS. *The Standard NAFEMS Benchmarks*, TNSB Rev. 3, October 1990.
+
+## Axisymmetric ring shells
+
+The two-ring axisymmetric formulation and its analysis/export restrictions are
+documented in [Axisymmetric meridional shell](../../solvers/axisymmetric-shell.md).
+Use the explicit `axisymmetric_shell` section flag; `beam2` alone remains a beam.

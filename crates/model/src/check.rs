@@ -273,15 +273,21 @@ impl Model {
             if r.elements.is_empty() {
                 d.error(&subject, format!("set `{}` has no elements", sec.set));
             }
-            let fits = |k: ElementKind| match sec.kind {
-                SectionKind::Solid {} => k.dimension() == 3,
-                SectionKind::Shell { .. }
-                | SectionKind::CompositeShell { .. }
-                | SectionKind::PlaneStress { .. }
-                | SectionKind::PlaneStrain { .. }
-                | SectionKind::Axisymmetric {} => k.dimension() == 2,
-                SectionKind::Beam { .. } => k == ElementKind::Beam2,
-                SectionKind::Rod { .. } => matches!(k, ElementKind::Rod2 | ElementKind::Rod3),
+            let fits = |k: ElementKind| {
+                if sec.formulation.axisymmetric_shell {
+                    k == ElementKind::Beam2
+                } else {
+                    match sec.kind {
+                        SectionKind::Solid {} => k.dimension() == 3,
+                        SectionKind::Shell { .. }
+                        | SectionKind::CompositeShell { .. }
+                        | SectionKind::PlaneStress { .. }
+                        | SectionKind::PlaneStrain { .. }
+                        | SectionKind::Axisymmetric {} => k.dimension() == 2,
+                        SectionKind::Beam { .. } => k == ElementKind::Beam2,
+                        SectionKind::Rod { .. } => matches!(k, ElementKind::Rod2 | ElementKind::Rod3),
+                    }
+                }
             };
             // The linear element with an incompatible-modes formulation for this kind of section.
             let incompatible_kind = if sec.kind.is_planar() { ElementKind::Quad4 } else { ElementKind::Hex8 };

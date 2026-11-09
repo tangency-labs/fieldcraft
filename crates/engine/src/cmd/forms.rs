@@ -522,6 +522,7 @@ pub const SECTION: &[Field] = &[
             choice("integration", "Integration", &[("full", "Full"), ("reduced", "Reduced")])
                 .help("Full: every integration point. Reduced: fewer points, cheaper and less stiff, but may need hourglass control.")
                 .def("\"full\""),
+            flag("axisymmetric_shell", "Axisymmetric ring shell").help("Shell section on two-node connectivity; r=X, axial=Y, active dofs 1/2/6, whole-ring nodal forces. Thin conical facets; aligned plies only.").def("false"),
             flag("solid_shell", "Continuum solid-shell")
                 .help("Linear ANS/EAS10 on orthogonal affine swept hex8; thickness is node pairs 1–5, 2–6, 3–7, 4–8. Separate solid layers for laminates.")
                 .def("false"),

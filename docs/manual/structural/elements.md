@@ -616,3 +616,9 @@ explicit, engine and io test suites hashed identically before and after.
 - W. D. Pilkey. *Analysis and Design of Elastic Beams.* Wiley, 2002.
 - R. H. MacNeal, R. L. Harder. *A proposed standard set of problems to test finite element accuracy.* Finite Elements in Analysis and Design 1(1):3–20, 1985.
 - D. P. Flanagan, T. Belytschko. *A uniform strain hexahedron and quadrilateral with orthogonal hourglass control.* IJNME 17(5):679–706, 1981. doi:[10.1002/nme.1620170504](https://doi.org/10.1002/nme.1620170504)
+
+## Axisymmetric ring shells
+
+The two-ring axisymmetric formulation and its analysis/export restrictions are
+documented in [Axisymmetric meridional shell](../../solvers/axisymmetric-shell.md).
+Use the explicit `axisymmetric_shell` section flag; `beam2` alone remains a beam.

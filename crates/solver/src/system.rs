@@ -331,9 +331,16 @@ struct SolidEntry {
 /// What a shell or beam element is made of.
 #[derive(Debug, Clone)]
 pub enum Section {
+    Axishell { plies: Arc<[PlyProperties]>, offset: f64 },
     Shell(ShellSection),
     Laminated { plies: Arc<[PlyProperties]>, offset: f64, orientation: Option<SectionOrientation> },
     Beam { section: BeamSection, orientation: [f64; 3] },
+}
+
+impl Section {
+    fn kinds(&self) -> DofSet {
+        if matches!(self, Self::Axishell { .. }) { DofSet::of(&[DofKind::Ux, DofKind::Uy, DofKind::Rz]) } else { DofSet::STRUCTURAL }
+    }
 }
 
 /// A shell or beam element ready for its kernel: six degrees of freedom per node.
@@ -354,6 +361,7 @@ pub struct Structural {
 /// The kernel of a shell or beam element.
 #[derive(Debug, Clone)]
 pub enum StructuralKernel {
+    Axishell(Box<fieldcraft_fem::axishell::Axishell>),
     Shell(Shell),
     Mitc8(Box<fieldcraft_fem::mitc8::Mitc8>),
     Mitc6(Box<fieldcraft_fem::mitc8::Mitc6>),
@@ -363,9 +371,15 @@ pub enum StructuralKernel {
 impl Structural {
     /// The unknowns every node of a shell or beam carries.
     pub const KINDS: DofSet = DofSet::STRUCTURAL;
+    pub fn kinds(&self) -> DofSet {
+        self.section.kinds()
+    }
 
     pub fn kernel(&self) -> Result<StructuralKernel> {
         let k = match &self.section {
+            Section::Axishell { plies, offset } => {
+                fieldcraft_fem::axishell::Axishell::new(&self.xyz, plies, *offset).map(Box::new).map(StructuralKernel::Axishell)
+            }
             Section::Shell(s) if self.kind == ElementKind::Quad8 => fieldcraft_fem::mitc8::Mitc8::new(&self.xyz, *s)
                 .and_then(|k| match self.directors {
                     Some(n) => k.with_directors(n),
@@ -421,6 +435,7 @@ impl Structural {
 impl StructuralKernel {
     pub fn stiffness(&self) -> fieldcraft_fem::Result<Matrix> {
         match self {
+            StructuralKernel::Axishell(s) => s.stiffness(),
             StructuralKernel::Shell(s) => s.stiffness(),
             StructuralKernel::Mitc8(s) => s.stiffness(),
             StructuralKernel::Mitc6(s) => s.stiffness(),
@@ -431,6 +446,7 @@ impl StructuralKernel {
     /// The consistent or lumped mass over every element degree of freedom.
     pub fn mass(&self, density: f64, kind: MassKind) -> fieldcraft_fem::Result<Matrix> {
         Ok(match (self, kind) {
+            (StructuralKernel::Axishell(s), kind) => s.mass(kind == MassKind::Lumped)?,
             (StructuralKernel::Mitc8(s), MassKind::Consistent) => s.mass(density)?,
             (StructuralKernel::Mitc6(s), MassKind::Consistent) => s.mass(density)?,
             (StructuralKernel::Mitc8(s), MassKind::Lumped) => s.lumped_mass(density)?,
@@ -458,6 +474,7 @@ impl StructuralKernel {
     /// Consistent nodal forces and moments of a uniform force per volume, six per node.
     pub fn body_force(&self, b: [f64; 3]) -> fieldcraft_fem::Result<Vec<f64>> {
         match self {
+            StructuralKernel::Axishell(s) => s.body_force(b, false),
             StructuralKernel::Shell(s) => s.body_force(b),
             StructuralKernel::Mitc8(s) => s.body_force(b),
             StructuralKernel::Mitc6(s) => s.body_force(b),
@@ -468,6 +485,7 @@ impl StructuralKernel {
     /// A laminate integrates each ply's inertia, including its first mass moment.
     pub fn gravity(&self, density: f64, acceleration: [f64; 3]) -> fieldcraft_fem::Result<Vec<f64>> {
         match self {
+            StructuralKernel::Axishell(s) => s.body_force(acceleration, true),
             StructuralKernel::Shell(s) if s.is_laminated() => s.ply_gravity(acceleration),
             StructuralKernel::Mitc8(s) => s.gravity(density, acceleration),
             StructuralKernel::Mitc6(s) => s.gravity(density, acceleration),
@@ -540,7 +558,7 @@ impl Mesh {
 
     /// The kinds trusses and translational discrete elements carry at their nodes.
     pub fn translation_kinds(&self) -> DofSet {
-        translation_kinds(self.theory.is_some())
+        translation_kinds(self.theory.is_some() || self.structural.iter().any(|e| matches!(e.section, Section::Axishell { .. })))
     }
 
     pub fn element(&self, label: u32) -> Option<&Elem> {
@@ -585,6 +603,25 @@ impl Mesh {
 
     /// Build it from the model and its resolved view, refusing what the solver cannot represent.
     pub fn new(model: &Model, resolved: &Resolved, max_dofs: usize) -> Result<Mesh> {
+        let axishell = model.sections().values().any(|s| s.formulation.axisymmetric_shell);
+        if axishell && !model.initial_fields().is_empty() {
+            return Err(Error::NotSupported("axisymmetric shell initial stress/temperature fields".into()));
+        }
+        if axishell && model.boundary_conditions().values().any(|bc| [3, 4, 5].iter().any(|d| bc.value(*d).is_some_and(|v| v != 0.0))) {
+            return Err(Error::NotSupported("axisymmetric shell prescribed absent DOF 3, 4 or 5".into()));
+        }
+        if axishell && (!model.masses().is_empty() || !model.springs().is_empty()) {
+            return Err(Error::NotSupported("axisymmetric ring-shell point masses/springs: circumference semantics not implemented".into()));
+        }
+        if axishell && model.loads().values().any(|l| matches!(l, Load::Pressure { .. } | Load::Temperature { .. })) {
+            return Err(Error::NotSupported(
+                "axisymmetric shell pressure/thermal loading: supply independently integrated ring nodal forces; thermal shell strains not supported"
+                    .into(),
+            ));
+        }
+        if axishell && model.sections().values().any(|s| !s.formulation.axisymmetric_shell) {
+            return Err(Error::NotSupported("mixing axisymmetric ring shells with 3D or continuum sections".into()));
+        }
         let mut elements = Vec::new();
         let mut trusses = Vec::new();
         let mut structural = Vec::new();
@@ -628,6 +665,42 @@ impl Mesh {
                 return Err(Error::NotSupported(format!(
                     "section `{name}`: reduced-integration quadratic shell (including S8R) is not MITC8/MITC6-a; use full integration"
                 )));
+            }
+            if section.formulation.axisymmetric_shell {
+                if section.orientation.is_some() {
+                    return Err(Error::NotSupported("axisymmetric shell explicit frame: use meridional/hoop ply angles".into()));
+                }
+                let (plies, offset) = match &section.kind {
+                    SectionKind::CompositeShell { layup } => (resolve_plies(layup, model).map_err(|e| Error::Invalid(e.to_string()))?, layup.offset),
+                    SectionKind::Shell { thickness, offset, points } => {
+                        let m = model.material(&section.material).ok_or_else(|| Error::Invalid("axisymmetric shell material missing".into()))?;
+                        let elastic = m.elastic.ok_or_else(|| Error::Invalid("axisymmetric shell elastic constants missing".into()))?;
+                        (
+                            vec![PlyProperties {
+                                elastic,
+                                thickness: *thickness,
+                                angle: 0.0,
+                                points: *points,
+                                density: m.density,
+                                strength: m.ply_strength,
+                            }],
+                            *offset,
+                        )
+                    }
+                    _ => return Err(Error::NotSupported("axisymmetric shell section type".into())),
+                };
+                let density = if plies.iter().all(|p| p.density.is_some()) {
+                    let l = Laminate::new(&plies, offset).map_err(|e| Error::Invalid(e.to_string()))?;
+                    Some(l.mass_moments().map_err(|e| Error::Invalid(e.to_string()))?[0] / l.thickness())
+                } else {
+                    None
+                };
+                let body = Section::Axishell { plies: plies.into(), offset };
+                for &label in &set.elements {
+                    let el = model.element(label).ok_or_else(|| Error::Invalid("axisymmetric element missing".into()))?;
+                    structural.push((label, el.kind, el.nodes.clone(), density, body.clone()));
+                }
+                continue;
             }
             if let SectionKind::CompositeShell { layup } = &section.kind {
                 let plies = resolve_plies(layup, model).map_err(|e| Error::Invalid(format!("section `{name}`: {e}")))?;
@@ -793,7 +866,7 @@ impl Mesh {
             layout.element(&e.2, fieldcraft_fem::ElementDofs::new(translations));
         }
         for e in &structural {
-            layout.element(&e.2, ElementDofs::new(Structural::KINDS));
+            layout.element(&e.2, ElementDofs::new(e.4.kinds()));
         }
         for (label, kinds) in needs.iter().filter(|n| model.node(n.0).is_some()) {
             layout.node(*label, *kinds);
@@ -989,7 +1062,7 @@ fn vector_dofs(mesh: &Mesh, slot: usize, rotation: bool) -> Option<Vec<usize>> {
     let dofs: Vec<Option<usize>> = [0, 1, 2].map(|c| kind(c).and_then(|k| mesh.layout.dof(slot, k))).into();
     match dofs.as_slice() {
         [Some(a), Some(b), Some(c)] => Some(vec![*a, *b, *c]),
-        [Some(a), Some(b), None] if !rotation && mesh.theory.is_some() => Some(vec![*a, *b]),
+        [Some(a), Some(b), None] if !rotation && mesh.translation_kinds() == DofSet::PLANE => Some(vec![*a, *b]),
         _ => None,
     }
 }
@@ -1021,20 +1094,22 @@ pub fn loads(model: &Model, resolved: &Resolved, mesh: &Mesh, step: &Step, activ
                 for (label, v) in resolved.nodal_loads.get(name).map(Vec::as_slice).unwrap_or_default() {
                     let slot =
                         mesh.layout.slot(*label).ok_or_else(|| Error::Invalid(format!("load `{name}`: node {label} belongs to no solid element")))?;
-                    let dofs = vector_dofs(mesh, slot, rotation).ok_or_else(|| {
-                        Error::Invalid(format!(
-                            "moment `{name}`: node {label} has no rotations (only shell and beam nodes do); apply it to a coupled reference point"
-                        ))
-                    })?;
-                    for (&dof, x) in dofs.iter().zip(v) {
-                        if *x != 0.0 && !active.get(dof).copied().unwrap_or(false) {
-                            return Err(Error::Invalid(format!(
-                                "load `{name}`: {} is not coupled to the mesh (its coupling leaves that direction free)",
-                                mesh.describe_dof(dof)
-                            )));
+                    for (c, x) in v.iter().enumerate().filter(|(_, x)| **x != 0.0) {
+                        let kind = if rotation { DofKind::rotation(c) } else { DofKind::translation(c) };
+                        let dof = kind.and_then(|k| mesh.layout.dof(slot, k)).ok_or_else(|| {
+                            Error::NotSupported(format!(
+                                "load `{name}` node {label}: absent {} component {}",
+                                if rotation { "rotation" } else { "translation" },
+                                c + 1
+                            ))
+                        })?;
+                        if !active.get(dof).copied().unwrap_or(false) {
+                            return Err(Error::Invalid(format!("load `{name}`: {} is not coupled to the mesh", mesh.describe_dof(dof))));
+                        }
+                        if let Some(value) = f.get_mut(dof) {
+                            *value += x;
                         }
                     }
-                    add(&mut f, &dofs, *v);
                 }
             }
             Load::Pressure { set, magnitude } if mesh.theory.is_some() => {
@@ -1168,8 +1243,7 @@ fn structural_body(f: &mut [f64], mesh: &Mesh, e: &Structural, b: [f64; 3]) -> R
 }
 
 fn add_structural_forces(f: &mut [f64], mesh: &Mesh, e: &Structural, forces: &[f64]) -> Result<()> {
-    let dofs =
-        mesh.layout.element_dofs(&e.nodes, Structural::KINDS).ok_or_else(|| Error::Internal(format!("element {} degrees of freedom", e.label)))?;
+    let dofs = mesh.layout.element_dofs(&e.nodes, e.kinds()).ok_or_else(|| Error::Internal(format!("element {} degrees of freedom", e.label)))?;
     for (d, v) in dofs.iter().zip(forces) {
         if let Some(x) = f.get_mut(*d) {
             *x += v;

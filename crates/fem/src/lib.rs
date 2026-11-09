@@ -116,3 +116,6 @@ pub type Result<T> = std::result::Result<T, Error>;
 mod tests;
 
 mod solid_shell;
+
+/// Axisymmetric conical ring shell.
+pub mod axishell;

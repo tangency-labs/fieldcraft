@@ -242,12 +242,13 @@ pub(crate) fn initial_stress_stiffness(mesh: &Mesh, graph: &NodeGraph, preload: 
             StructuralKernel::Shell(s) => s.plate_geometric_stiffness(u.as_flattened()),
             StructuralKernel::Mitc8(s) => s.plate_geometric_stiffness(u.as_flattened()),
             StructuralKernel::Mitc6(s) => s.plate_geometric_stiffness(u.as_flattened()),
+            StructuralKernel::Axishell(s) => s.plate_geometric_stiffness(&u.iter().flat_map(|v| [v[0], v[1], v[5]]).collect::<Vec<_>>()),
             StructuralKernel::Beam(_) => return Err(Error::NotSupported(format!("beam {} in buckling", e.label))),
         }
         .map_err(|err| Error::element(e.label, err))
     });
     for (e, m) in mesh.structural.iter().zip(matrices) {
-        add_block(&mut kg, &mesh.layout, &e.nodes, Structural::KINDS, &m?.data)?;
+        add_block(&mut kg, &mesh.layout, &e.nodes, e.kinds(), &m?.data)?;
     }
     Ok(kg)
 }
@@ -285,6 +286,7 @@ fn shell_normal(kernel: &StructuralKernel, label: u32) -> Result<[f64; 3]> {
         StructuralKernel::Shell(s) => Ok(s.axes()[2]),
         StructuralKernel::Mitc8(s) => s.plate_normal().map_err(|err| Error::element(label, err)),
         StructuralKernel::Mitc6(s) => s.plate_normal().map_err(|err| Error::element(label, err)),
+        StructuralKernel::Axishell(s) => s.plate_normal().map_err(|err| Error::element(label, err)),
         StructuralKernel::Beam(_) => Err(Error::NotSupported(format!("beam {label} in buckling"))),
     }
 }

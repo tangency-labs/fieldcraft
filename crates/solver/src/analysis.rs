@@ -18,8 +18,8 @@ use crate::ldlt::{Kind, Symmetric};
 use crate::ordering::fill_reducing_order;
 use crate::sparse::{Csr, NodeGraph, add_block, add_diagonal, add_scalar};
 use crate::system::{
-    InitialState, Mesh, Structural, StructuralKernel, add_thermal_loads, inelastic_warnings, loads, prescribed, structural_body_forces,
-    temperature_loads, translation_block,
+    InitialState, Mesh, StructuralKernel, add_thermal_loads, inelastic_warnings, loads, prescribed, structural_body_forces, temperature_loads,
+    translation_block,
 };
 use crate::{Error, Limits, Result};
 
@@ -252,9 +252,9 @@ pub(crate) fn assemble(mesh: &Mesh, graph: &NodeGraph, mass: Option<MassKind>) -
         });
         for (s, computed) in elements.iter().zip(matrices) {
             let (stiffness, element_mass) = computed?;
-            add_block(&mut k, layout, &s.nodes, Structural::KINDS, &stiffness)?;
+            add_block(&mut k, layout, &s.nodes, s.kinds(), &stiffness)?;
             if let (Some(mm), Some(data)) = (m.as_mut(), element_mass) {
-                add_block(mm, layout, &s.nodes, Structural::KINDS, &data)?;
+                add_block(mm, layout, &s.nodes, s.kinds(), &data)?;
             }
         }
     }
@@ -546,12 +546,21 @@ pub(crate) fn static_on(setup: &Setup<'_>, limits: &Limits) -> Result<StaticResu
     let per_volume = structural_body_forces(model, resolved, mesh, step)?;
     for (s, body) in mesh.structural.iter().zip(&per_volume) {
         let at = |err| Error::element(s.label, err);
-        let dofs = mesh
-            .layout
-            .element_dofs(&s.nodes, Structural::KINDS)
-            .ok_or_else(|| Error::Internal(format!("element {} degrees of freedom", s.label)))?;
+        let dofs = mesh.layout.element_dofs(&s.nodes, s.kinds()).ok_or_else(|| Error::Internal(format!("element {} degrees of freedom", s.label)))?;
         let ue: Vec<f64> = dofs.iter().map(|d| u.get(*d).copied().unwrap_or(0.0)).collect();
         match s.kernel()? {
+            StructuralKernel::Axishell(shell) => {
+                let stress = shell.stresses(&ue).map_err(at)?;
+                for (n, v) in s.nodes.iter().zip(&stress.top) {
+                    if let (Some(acc), Some(c)) = (sum.get_mut(*n), count.get_mut(*n)) {
+                        for k in 0..6 {
+                            acc[k] += v[k];
+                        }
+                        *c += 1;
+                    }
+                }
+                shells.push(ShellResult { label: s.label, kind: s.kind, stress });
+            }
             StructuralKernel::Shell(shell) => {
                 let stress = shell.stresses(&ue).map_err(at)?;
                 for (n, v) in s.nodes.iter().zip(&stress.top) {
@@ -612,7 +621,8 @@ pub(crate) fn static_on(setup: &Setup<'_>, limits: &Limits) -> Result<StaticResu
             }
         }
     }
-    let imbalance = (0..3).map(|c| (applied_total[c] + reaction_total[c] + ground[c]).abs()).fold(0.0, f64::max);
+    let axishell = mesh.structural.iter().any(|e| matches!(e.section, crate::system::Section::Axishell { .. }));
+    let imbalance = (0..3).filter(|c| !axishell || *c == 1).map(|c| (applied_total[c] + reaction_total[c] + ground[c]).abs()).fold(0.0, f64::max);
     if scale > 0.0 && imbalance > crate::system::BALANCE_TOLERANCE * scale {
         warnings.push(format!("loads and reactions differ by {imbalance:.3e} (relative {:.1e})", imbalance / scale));
     }
