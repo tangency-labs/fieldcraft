@@ -27,8 +27,8 @@ use crate::{CommandKind, CommandSpec, EngineError, Result, Session, StepResult};
 pub const RUN: CommandSpec = CommandSpec {
     id: "solve.run",
     label: "Solve All Steps",
-    params: r#"{} — solves every step in order with its procedure's solver (solve.static, solve.frequency, solve.explicit, solve.fluid with their default caps) and keeps the results; stops at the first step that fails, naming it"#,
-    form: Some(&[]),
+    params: r#"{"mass"?:"consistent|lumped"} — optional mass applies only when every step is frequency, transient or response_spectrum; defaults to consistent. Solves every step in order with its procedure's solver (solve.static, solve.frequency, solve.explicit, solve.fluid with their default caps) and keeps the results; stops at the first step that fails, naming it"#,
+    form: Some(super::forms::SOLVE_ALL),
     kind: CommandKind::Model,
     requires: &[Requirement::Analysable, Requirement::ElementMaterial, Requirement::ElementSection, Requirement::Step],
     run: run_all,
@@ -47,7 +47,7 @@ pub const STATIC: CommandSpec = CommandSpec {
 pub const HARMONIC: CommandSpec = CommandSpec {
     id: "solve.harmonic",
     label: "Solve Harmonic Step",
-    params: r#"{"step": "Sweep", "max_factor_entries": 400000000, "threads": 6} — steady-state complex response with Re(U exp(iωt)), consistent mass and the step's frequencies, direct or modal method and additive damping. Stores each frequency's displacement and optional stress phasors. Reports full-equation residuals, projected residuals for modal response, and input/dissipated power; a small projected residual alone does not certify a truncated modal solution. Limits and threads as for solve.static, except an explicit max_factor_entries can reach 4000000000 real 8-byte slots (two per complex entry; 32 GB of factor values alone). The default remains 400000000. Use solve.probe to read frequency curves."#,
+    params: r#"{"step": "Sweep", "mass": "consistent|lumped", "max_factor_entries": 400000000, "threads": 6} — steady-state complex response with Re(U exp(iωt)), mass chosen as consistent (default) or lumped and the step's frequencies, direct or modal method and additive damping. Stores each frequency's displacement and optional stress phasors. Reports full-equation residuals, projected residuals for modal response, and input/dissipated power; a small projected residual alone does not certify a truncated modal solution. Limits and threads as for solve.static, except an explicit max_factor_entries can reach 4000000000 real 8-byte slots (two per complex entry; 32 GB of factor values alone). The default remains 400000000. Use solve.probe to read frequency curves."#,
     form: Some(super::forms::SOLVE_HARMONIC),
     kind: CommandKind::Model,
     requires: &[Requirement::Analysable, Requirement::Step],
@@ -57,8 +57,8 @@ pub const HARMONIC: CommandSpec = CommandSpec {
 pub const TRANSIENT: CommandSpec = CommandSpec {
     id: "solve.transient",
     label: "Solve Transient Step",
-    params: r#"{"step":"Pulse","threads":1} — linear Newmark/HHT response, direct or modal; optional error-controlled substeps for direct average acceleration with translational coordinates; stores displacement, velocity, relative acceleration, optional nodal stress and mechanical energies. Read frames with solve.probe. Limits as solve.static. Uniform base displacement/acceleration amplitudes are supported; independent nonzero displacement boundary conditions and reference points are refused."#,
-    form: Some(super::forms::SOLVE_STATIC),
+    params: r#"{"step":"Pulse","threads":1,"mass":"consistent|lumped"} — mass defaults to consistent on each solve and is stored with results; linear Newmark/HHT response, direct or modal; optional error-controlled substeps for direct average acceleration with translational coordinates; stores displacement, velocity, relative acceleration, optional nodal stress and mechanical energies. Read frames with solve.probe. Limits as solve.static. Uniform base displacement/acceleration amplitudes are supported; independent nonzero displacement boundary conditions and reference points are refused."#,
+    form: Some(super::forms::SOLVE_DYNAMICS),
     kind: CommandKind::Model,
     requires: &[Requirement::Analysable, Requirement::Step],
     run: run_transient,
@@ -66,8 +66,8 @@ pub const TRANSIENT: CommandSpec = CommandSpec {
 pub const SPECTRUM: CommandSpec = CommandSpec {
     id: "solve.spectrum",
     label: "Solve Response Spectrum",
-    params: r#"{"step":"Spectrum","threads":1} — frequency/period and damping-interpolated pseudo-acceleration spectrum with SRSS or 100-40-40 direction combination, mass-normalized modal participation, SRSS or CQC; stores component peak estimates. These are not simultaneous fields or a time history. Frequency tables use Hz, period tables use time units, and ordinates use acceleration; no extrapolation. Limits as solve.static."#,
-    form: Some(super::forms::SOLVE_STATIC),
+    params: r#"{"step":"Spectrum","threads":1,"mass":"consistent|lumped"} — mass defaults to consistent on each solve and is stored with results; frequency/period and damping-interpolated pseudo-acceleration spectrum with SRSS or 100-40-40 direction combination, mass-normalized modal participation, SRSS or CQC; stores component peak estimates. These are not simultaneous fields or a time history. Frequency tables use Hz, period tables use time units, and ordinates use acceleration; no extrapolation. Limits as solve.static."#,
+    form: Some(super::forms::SOLVE_DYNAMICS),
     kind: CommandKind::Model,
     requires: &[Requirement::Analysable, Requirement::Step],
     run: run_spectrum,
@@ -76,7 +76,7 @@ pub const SPECTRUM: CommandSpec = CommandSpec {
 pub const RANDOM: CommandSpec = CommandSpec {
     id: "solve.random",
     label: "Solve Random Response",
-    params: r#"{"step":"Sweep", "input_psd":[[frequency_hz, psd], ...], "nodes":[1], "base_direction":[1,0,0]} — for an imported modal random step, omit input_psd and base_direction: execute its fully correlated spatial loads and constant multiplier PSD using modal intervals and damping. Optional elements:[1,2] recovers solid element-node and integration-point stress PSD/RMS without averaging; element_phasors:true also returns complex stresses. Point numbering follows the native quadrature rule; coordinates identify positions. Returns SI PSD/RMS in the reply (save the reply separately; no random result frames are persisted). Otherwise projects an input one-sided PSD table onto stored solve.harmonic frequency frames (unit harmonic load), returning SI response component PSD and RMS; optional base_direction coherently adds the unit base acceleration to relative inertial-load frames; the legacy natural_frequency/damping_ratio/base_acceleration_psd form runs the Miles SDOF check"#,
+    params: r#"{"step":"Sweep", "input_psd":[[frequency_hz, psd], ...], "nodes":[1], "base_direction":[1,0,0]} — for an imported modal random step, omit input_psd and base_direction to execute its declared modal random loads. Optional elements recovers unaveraged element component PSD/RMS and element_phasors includes complex stresses. Otherwise projects an input one-sided PSD table onto stored solve.harmonic frequency frames (unit harmonic load), returning SI response component PSD and RMS; optional stress_projection {weights:[xx,yy,zz,xy,xz,yz],input_model:common_scalar_unit_pattern,fatigue:{method:narrow_band|dirlik|benasciutti_tovo,curve,duration_seconds,mean_stress_pa,correction,stationary_gaussian:true}} projects complex stresses before squaring and optionally evaluates a stationary Gaussian spectral fatigue approximation (broad-band requires zero mean, correction=none); nonlinear signed von Mises/principal criteria are refused (PSD does not identify a signed tensor history); independent/unknown correlated inputs are not supported; Segmented S-N points/cycles/amplitude with surface_factor,size_factor,endurance_limit and end_slopes are supported by narrow_band and dirlik (2..64 points, slopes 1..20); benasciutti_tovo and extrapolation=reject refuse tables. optional base_direction coherently adds the unit base acceleration to relative inertial-load frames; the legacy natural_frequency/damping_ratio/base_acceleration_psd form runs the Miles SDOF check"#,
     form: Some(super::forms::SOLVE_RANDOM),
     kind: CommandKind::Model,
     requires: &[],
@@ -271,7 +271,7 @@ fn with_threads<R: Send>(threads: usize, f: impl FnOnce() -> R + Send) -> R {
     parallel::with_threads(threads, move || fieldcraft_model::progress::scoped(progress, f))
 }
 
-fn run_all(s: &mut Session, _: &Value) -> Result<Value> {
+fn run_all(s: &mut Session, p: &Value) -> Result<Value> {
     use fieldcraft_model::Procedure;
     type Solve = fn(&mut Session, &Value) -> Result<Value>;
     // Each solve with the command whose summary it gives (its units).
@@ -300,12 +300,22 @@ fn run_all(s: &mut Session, _: &Value) -> Result<Value> {
     if steps.is_empty() {
         return Err(EngineError::Params("the model has no steps to solve: add one (model.step.create)".into()));
     }
+    let mass = opt::<MassKind>(p, "mass")?;
+    if mass.is_some() && steps.iter().any(|(_, _, _, id)| !matches!(*id, "solve.transient" | "solve.spectrum" | "solve.frequency")) {
+        return Err(EngineError::invalid(
+            "mass",
+            "solve.run mass requires only transient, response_spectrum or frequency steps; solve other steps individually",
+        ));
+    }
     let mut done = Vec::new();
     let count = steps.len();
     for (index, (name, procedure, solve, id)) in steps.into_iter().enumerate() {
         fieldcraft_model::progress::step(&name, index + 1, count);
         fieldcraft_model::progress::check()?;
-        let params = json!({"step": name});
+        let mut params = json!({"step": name});
+        if let Some(mass) = mass {
+            params["mass"] = json!(mass);
+        }
         let progress = fieldcraft_model::progress::current();
         let before = progress.as_ref().map_or(0, |p| p.observations());
         let outcome = solve(s, &params);
@@ -452,9 +462,9 @@ fn run_spectrum(s: &mut Session, p: &Value) -> Result<Value> {
 fn run_dynamics(s: &mut Session, p: &Value, spectrum: bool) -> Result<Value> {
     let limits = limits(p)?;
     let step = opt::<String>(p, "step")?;
-    let r = with_threads(threads(s, p)?, || fieldcraft_solver::transient::solve(&s.model, step.as_deref(), &limits, spectrum))?;
-    let reply =
-        json!({"step":r.step,"spectrum":r.spectrum,"frames":r.frames.len(),"natural_frequencies":r.natural_frequencies,"warnings":r.warnings});
+    let mass = opt::<MassKind>(p, "mass")?.unwrap_or_default();
+    let r = with_threads(threads(s, p)?, || fieldcraft_solver::transient::solve_with_mass(&s.model, step.as_deref(), mass, &limits, spectrum))?;
+    let reply = json!({"step":r.step,"mass":r.mass,"spectrum":r.spectrum,"frames":r.frames.len(),"natural_frequencies":r.natural_frequencies,"warnings":r.warnings});
     s.store_result(StepResult::Implicit(ImplicitResult::Dynamics(r)));
     Ok(reply)
 }
@@ -462,8 +472,9 @@ fn run_dynamics(s: &mut Session, p: &Value, spectrum: bool) -> Result<Value> {
 fn run_harmonic(s: &mut Session, p: &Value) -> Result<Value> {
     let limits = limits_with_factor_ceiling(p, HARMONIC_FACTOR_ENTRY_CEILING)?;
     let step = opt::<String>(p, "step")?;
-    let r = with_threads(threads(s, p)?, || fieldcraft_solver::solve_harmonic(&s.model, step.as_deref(), &limits))?;
-    let summary = json!({"step": r.step, "stats": r.stats, "natural_frequencies": r.natural_frequencies, "residual_vectors": r.residual_vectors,
+    let mass = opt::<MassKind>(p, "mass")?.unwrap_or_default();
+    let r = with_threads(threads(s, p)?, || fieldcraft_solver::solve_harmonic_with_mass(&s.model, step.as_deref(), mass, &limits))?;
+    let summary = json!({"step": r.step, "mass": r.mass, "operator_diagonal_bounds": r.operator_diagonal_bounds, "stats": r.stats, "natural_frequencies": r.natural_frequencies, "residual_vectors": r.residual_vectors,
         "frequencies": r.frames.iter().map(|f| json!({"frequency": f.frequency, "relative_residual": f.relative_residual,
             "residual_norm_si": f.residual_norm_si, "projected_residual": f.projected_residual, "input_power": f.input_power, "dissipated_power": f.dissipated_power})).collect::<Vec<_>>(),
         "warnings": r.warnings});
@@ -472,6 +483,24 @@ fn run_harmonic(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn run_random(s: &mut Session, p: &Value) -> Result<Value> {
+    if p.get("mass").is_some() {
+        return Err(EngineError::invalid("mass", "random response inherits source mass; select mass in solve.harmonic"));
+    }
+    if p.get("criterion").is_some()
+        || p.pointer("/stress_projection/criterion").is_some()
+        || p.pointer("/stress_projection/fatigue/criterion").is_some()
+    {
+        return Err(EngineError::invalid(
+            "stress_projection",
+            "PSD cannot determine signed tensor histories or nonlinear principal/von Mises spectra; use complete time-domain tensors",
+        ));
+    }
+    if p.get("stress_projection").is_some() && !(p.get("step").and_then(Value::as_str).is_some() && p.get("input_psd").is_some()) {
+        return Err(EngineError::invalid(
+            "stress_projection",
+            "requires stored harmonic step and input_psd; auto-spectra cannot reconstruct coherence",
+        ));
+    }
     // These are alternative input contracts, so an empty form cannot name one
     // unconditional required numeric parameter (the native step needs none).
     if p.get("step").is_none() && p.get("frequencies").is_none() && p.get("natural_frequency").is_none() {
@@ -1772,7 +1801,7 @@ fn probe_dynamics(r: &fieldcraft_solver::transient::Response, nodes: &[u32], p: 
         })
         .collect();
     Ok(
-        json!({"step":r.step,"spectrum":r.spectrum,"nodes":curves,"stress_components":["xx","yy","zz","xy","xz","yz"],"stress_location":"global nodal average; shell top surface","acceleration_kind":if r.spectrum {"pseudo_acceleration_peak"}else{"relative"},"frames":frames}),
+        json!({"step":r.step,"mass":r.mass,"spectrum":r.spectrum,"nodes":curves,"stress_components":["xx","yy","zz","xy","xz","yz"],"stress_location":"global nodal average; shell top surface","acceleration_kind":if r.spectrum {"pseudo_acceleration_peak"}else{"relative"},"frames":frames}),
     )
 }
 
@@ -1829,7 +1858,7 @@ fn probe_harmonic(r: &fieldcraft_solver::HarmonicResult, nodes: &[u32], p: &Valu
         }
         curves.push(curve);
     }
-    Ok(json!({"step": r.step, "nodes": curves, "phase_convention": "Re(U exp(i omega t)); phase of zero amplitude is 0"}))
+    Ok(json!({"step": r.step, "nodes": curves, "mass": r.mass, "phase_convention": "Re(U exp(i omega t)); phase of zero amplitude is 0"}))
 }
 
 /// The entry of a label-sorted result list.
@@ -2190,6 +2219,53 @@ fn run_inverse_joint(s: &mut Session, p: &Value) -> Result<Value> {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    #[test]
+    fn harmonic_mass_contract_and_random_identity() {
+        let mut s = Session::default();
+        s.execute("model.units", &json!({"system":"m-kg-s-N-Pa"})).unwrap();
+        s.execute("mesh.node.add", &json!({"label":1,"xyz":[0,0,0]})).unwrap();
+        s.execute("mesh.node.add", &json!({"label":2,"xyz":[1,0,0]})).unwrap();
+        s.execute("mesh.element.add", &json!({"label":1,"kind":"rod2","nodes":[1,2]})).unwrap();
+        s.execute("model.set.create", &json!({"name":"root","nodes":[1]})).unwrap();
+        s.execute("model.set.create", &json!({"name":"tip","nodes":[2]})).unwrap();
+        s.execute("model.set.create", &json!({"name":"member","elements":[1]})).unwrap();
+        s.execute("model.material.create", &json!({"name":"synthetic","elastic":{"type":"isotropic","young":1000,"poisson":0.3},"density":1}))
+            .unwrap();
+        s.execute("model.section.create", &json!({"name":"rod","set":"member","material":"synthetic","kind":{"type":"rod","area":1}})).unwrap();
+        s.execute("model.boundary_condition.create", &json!({"name":"clamp","type":"fixed","target":{"set":"root"}})).unwrap();
+        s.execute(
+            "model.boundary_condition.create",
+            &json!({"name":"guide","type":"displacement","target":{"set":"tip"},"values":[null,0,0,null,null,null]}),
+        )
+        .unwrap();
+        s.execute("model.load.create", &json!({"name":"unit","type":"force","target":{"set":"tip"},"vector":[1,0,0]})).unwrap();
+        s.execute("model.step.create", &json!({"name":"Sweep","procedure":{"type":"harmonic","frequencies":[1,1.01,1.02],"method":{"type":"direct"}},"boundary_conditions":["clamp","guide"],"loads":["unit"],"output":["displacement","stress"]})).unwrap();
+        let a = s.execute("solve.harmonic", &json!({"step":"Sweep"})).unwrap();
+        let pa = s.execute("solve.probe", &json!({"step":"Sweep","nodes":[2]})).unwrap();
+        let b = s.execute("solve.harmonic", &json!({"step":"Sweep","mass":"consistent"})).unwrap();
+        assert_eq!(a, b);
+        assert_eq!(pa, s.execute("solve.probe", &json!({"step":"Sweep","nodes":[2]})).unwrap());
+        assert!(s.execute("solve.harmonic", &json!({"step":"Sweep","mass":"invalid"})).is_err());
+        let l = s.execute("solve.harmonic", &json!({"step":"Sweep","mass":"lumped"})).unwrap();
+        assert_eq!(l["mass"], "lumped");
+        let p = s.execute("solve.probe", &json!({"step":"Sweep","nodes":[2]})).unwrap();
+        assert_ne!(p["nodes"], pa["nodes"]);
+        let mut input = json!({"step":"Sweep","nodes":[2],"input_psd":[[1,4],[1.02,4]],"stress_projection":{"weights":[1,0,0,0,0,0],"input_model":"common_scalar_unit_pattern","fatigue":{"curve":{"amplitude_ref":2,"cycles_ref":100,"exponent":2,"endurance_limit":0},"duration_seconds":10,"mean_stress_pa":0,"correction":{"type":"none"},"stationary_gaussian":true,"method":"narrow_band"}}});
+        let r = s.execute("solve.random", &input).unwrap();
+        assert_eq!(r["mass"], "lumped");
+        let StepResult::Implicit(ImplicitResult::Harmonic(h)) = s.result("Sweep").unwrap().as_ref() else { panic!() };
+        assert_eq!(h.mass, MassKind::Lumped);
+        assert!(h.fatigue.is_some());
+        let encoded = serde_json::to_value(h).unwrap();
+        let restored: fieldcraft_solver::HarmonicResult = serde_json::from_value(encoded.clone()).unwrap();
+        assert_eq!(restored.mass, MassKind::Lumped);
+        let mut legacy = encoded;
+        legacy.as_object_mut().unwrap().remove("mass");
+        assert_eq!(serde_json::from_value::<fieldcraft_solver::HarmonicResult>(legacy).unwrap().mass, MassKind::Consistent);
+        input["mass"] = json!("consistent");
+        assert!(s.execute("solve.random", &input).unwrap_err().to_string().contains("mass"));
+    }
+
     #[test]
     fn inverse_iteration_budget_does_not_truncate_eigen_basis() {
         for iterations in [2, 8, 32, 64] {

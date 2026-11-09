@@ -1746,6 +1746,7 @@ fn finish(
     }
     let pretension = crate::pretension::recover(&problem.pretension_sections, step, red, &u, &e.internal, &e.external)?;
     Ok(StaticResult {
+        fatigue: None,
         step: step.name.clone(),
         nodes: mesh.labels.clone(),
         displacement,

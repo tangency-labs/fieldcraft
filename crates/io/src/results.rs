@@ -5,11 +5,13 @@
 //! Little-endian:
 //!
 //! ```text
-//! "MCRSLT06"                     magic, 8 bytes (the results encoding's version is 06)
+//! "MCRSLT07"                     magic, 8 bytes (unified result-kind allocation)
 //! u32 steps
 //! steps × { u64 length, step name (UTF-8),
 //!           32 bytes: SHA-256 of the definition it was solved from ([`definition_hash`]),
-//!           u8 kind (0 static, 1 frequency, 2 heat transfer, 3 explicit dynamic, 4 fluid, 5 harmonic, 6 legacy linear dynamics, 7 dynamics with energy ledger),
+//!           u8 kind (0 static, 1 frequency, 2 heat transfer, 3 explicit dynamic, 4 fluid,
+//!                    5 harmonic with mass, 6 linear dynamics with energy and mass,
+//!                    7 static with fatigue, 8 harmonic with mass and fatigue),
 //!           u64 length, the result in the [`crate::codec`] encoding }   names ascending
 //! ```
 //!
@@ -24,8 +26,10 @@
 //!
 //! The payload follows the field and variant order of the solvers' result types, so the
 //! encoding's version changes with any change to them ([`MAGIC`]). A file whose results are of
-//! another version opens without them ([`Decoded::OtherVersion`]): results are what solving
-//! gives again, unlike the definition.
+//! an unknown version opens without them ([`Decoded::OtherVersion`]). Version 05
+//! retains kinds 0–5; its overlapping higher kinds are explicitly refused, never
+//! guessed or silently dropped. Version 06 also reads only kinds 0–5 using its
+//! pre-merge schemas. See docs/results-kind-layout.md for recovery.
 //!
 //! Reading treats the part as hostile, as `mesh.bin`: the number of steps is capped, every length
 //! is checked against the bytes present before anything is read for it, nothing may be left
@@ -39,8 +43,10 @@ use sha2::{Digest, Sha256};
 
 use crate::{Error, Geometry, MAX_FILE_BYTES, Result, codec, invalid};
 
-/// The magic bytes the part starts with (the `06` is the results encoding's version).
-pub const MAGIC: &[u8; 8] = b"MCRSLT06";
+/// Unified version 07. Old development kinds above 5 are never inferred.
+pub const MAGIC: &[u8; 8] = b"MCRSLT07";
+const LEGACY_MAGIC: &[u8; 8] = b"MCRSLT05";
+const PRE_MERGE_MAGIC: &[u8; 8] = b"MCRSLT06";
 
 /// The part's name.
 pub const PART: &str = "results.bin";
@@ -97,11 +103,23 @@ impl<'a> SolvedRef<'a> {
     /// The kind code of the format.
     fn kind(&self) -> u8 {
         match self {
-            SolvedRef::Implicit(fieldcraft_solver::StepResult::Static(_)) => 0,
+            SolvedRef::Implicit(fieldcraft_solver::StepResult::Static(r)) => {
+                if r.fatigue.is_some() {
+                    7
+                } else {
+                    0
+                }
+            }
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Frequency(_)) => 1,
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Heat(_)) => 2,
-            SolvedRef::Implicit(fieldcraft_solver::StepResult::Harmonic(_)) => 5,
-            SolvedRef::Implicit(fieldcraft_solver::StepResult::Dynamics(_)) => 7,
+            SolvedRef::Implicit(fieldcraft_solver::StepResult::Harmonic(r)) => {
+                if r.fatigue.is_some() {
+                    8
+                } else {
+                    5
+                }
+            }
+            SolvedRef::Implicit(fieldcraft_solver::StepResult::Dynamics(_)) => 6,
             SolvedRef::Explicit(_) => 3,
             SolvedRef::Fluid(_) => 4,
         }
@@ -109,10 +127,16 @@ impl<'a> SolvedRef<'a> {
 
     fn encode_into(&self, out: &mut Vec<u8>) -> std::result::Result<(), codec::CodecError> {
         match self {
-            SolvedRef::Implicit(fieldcraft_solver::StepResult::Static(r)) => codec::encode_into(r, out),
+            SolvedRef::Implicit(fieldcraft_solver::StepResult::Static(r)) => match &r.fatigue {
+                Some(f) => codec::encode_into(&(r, f), out),
+                None => codec::encode_into(r, out),
+            },
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Frequency(r)) => codec::encode_into(r, out),
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Heat(r)) => codec::encode_into(r, out),
-            SolvedRef::Implicit(fieldcraft_solver::StepResult::Harmonic(r)) => codec::encode_into(r, out),
+            SolvedRef::Implicit(fieldcraft_solver::StepResult::Harmonic(r)) => match &r.fatigue {
+                Some(f) => codec::encode_into(&(r, f), out),
+                None => codec::encode_into(r, out),
+            },
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Dynamics(r)) => codec::encode_into(r, out),
             SolvedRef::Explicit(r) => codec::encode_into(r, out),
             SolvedRef::Fluid(r) => codec::encode_into(r, out),
@@ -239,7 +263,7 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded> {
     }
     let mut r = Reader { bytes };
     let magic: [u8; 8] = r.array("the magic")?;
-    if &magic != MAGIC {
+    if &magic != MAGIC && &magic != LEGACY_MAGIC && &magic != PRE_MERGE_MAGIC {
         if magic.starts_with(b"MCRSLT") {
             return Ok(Decoded::OtherVersion(magic.iter().map(|b| if b.is_ascii_graphic() { *b as char } else { '?' }).collect()));
         }
@@ -261,29 +285,40 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded> {
         last = Some(name);
         let definition: [u8; 32] = r.array("a definition hash")?;
         let [kind] = r.array::<1>("a result kind")?;
+        if &magic != MAGIC && kind > 5 {
+            return invalid("统一前的开发文件，请用原程序重新生成");
+        }
         let len = u64::from_le_bytes(r.array("a result's length")?);
         let payload = r.take(len, "a result")?;
         let damaged = |e: codec::CodecError| Error::Invalid(format!("{PART}: the result of step `{name}` is damaged: {e}"));
         let result = match kind {
-            0 => Solved::Implicit(fieldcraft_solver::StepResult::Static(codec::decode(payload).map_err(damaged)?)),
+            0 => Solved::Implicit(fieldcraft_solver::StepResult::Static(if &magic == LEGACY_MAGIC {
+                codec::decode::<LegacyStatic>(payload).map_err(damaged)?.into_current()
+            } else {
+                codec::decode(payload).map_err(damaged)?
+            })),
             1 => Solved::Implicit(fieldcraft_solver::StepResult::Frequency(codec::decode(payload).map_err(damaged)?)),
             2 => Solved::Implicit(fieldcraft_solver::StepResult::Heat(codec::decode(payload).map_err(damaged)?)),
             3 => Solved::Explicit(codec::decode(payload).map_err(damaged)?),
             4 => Solved::Fluid(codec::decode(payload).map_err(damaged)?),
-            5 => Solved::Implicit(fieldcraft_solver::StepResult::Harmonic(codec::decode(payload).map_err(damaged)?)),
-            6 => {
-                let old: LegacyDynamics = codec::decode(payload).map_err(damaged)?;
-                Solved::Implicit(fieldcraft_solver::StepResult::Dynamics(fieldcraft_solver::transient::Response {
-                    step: old.step,
-                    nodes: old.nodes,
-                    frames: old.frames,
-                    spectrum: old.spectrum,
-                    natural_frequencies: old.natural_frequencies,
-                    warnings: old.warnings,
-                    energy: None,
-                }))
+            5 => Solved::Implicit(fieldcraft_solver::StepResult::Harmonic(if &magic == MAGIC {
+                codec::decode(payload).map_err(damaged)?
+            } else {
+                decode_legacy_harmonic(payload).map_err(damaged)?
+            })),
+            6 => Solved::Implicit(fieldcraft_solver::StepResult::Dynamics(codec::decode(payload).map_err(damaged)?)),
+            7 => {
+                let (mut r, f): (fieldcraft_solver::StaticResult, fieldcraft_solver::fatigue::field::FatigueField) =
+                    codec::decode(payload).map_err(damaged)?;
+                r.fatigue = Some(f);
+                Solved::Implicit(fieldcraft_solver::StepResult::Static(r))
             }
-            7 => Solved::Implicit(fieldcraft_solver::StepResult::Dynamics(codec::decode(payload).map_err(damaged)?)),
+            8 => {
+                let (mut r, f): (fieldcraft_solver::HarmonicResult, fieldcraft_solver::fatigue::field::FatigueField) =
+                    codec::decode(payload).map_err(damaged)?;
+                r.fatigue = Some(f);
+                Solved::Implicit(fieldcraft_solver::StepResult::Harmonic(r))
+            }
             k => return invalid(format!("{PART}: step `{name}` has a result of unknown kind {k}")),
         };
         if result.step() != name {
@@ -322,6 +357,9 @@ pub fn check(r: &Solved) -> std::result::Result<(), String> {
     match r {
         Solved::Implicit(S::Dynamics(r)) => r.validate(),
         Solved::Implicit(S::Harmonic(h)) => {
+            if let Some(f) = &h.fatigue {
+                f.validate(h.nodes.len()).map_err(|e| e.to_string())?;
+            }
             if h.natural_frequencies.iter().any(|f| !f.is_finite() || *f < 0.0) {
                 return Err("harmonic natural frequencies must be finite and nonnegative".into());
             }
@@ -373,6 +411,9 @@ pub fn check(r: &Solved) -> std::result::Result<(), String> {
             Ok(())
         }
         Solved::Implicit(S::Static(s)) => {
+            if let Some(f) = &s.fatigue {
+                f.validate(s.nodes.len()).map_err(|e| e.to_string())?;
+            }
             if !ascending(&s.nodes) {
                 return Err("its nodes do not ascend".into());
             }
@@ -521,13 +562,146 @@ fn check_fluid(f: &FluidResult) -> std::result::Result<(), String> {
     Ok(())
 }
 
-// The v6 field order is frozen: the binary codec is not self-describing.
-#[derive(serde::Deserialize)]
-struct LegacyDynamics {
+// Independent pre-mass schema used by compatibility tests.
+#[cfg(test)]
+#[derive(serde::Serialize)]
+struct LegacyHarmonicRef<'a> {
+    step: &'a str,
+    nodes: &'a [u32],
+    reference_points: &'a [(String, u32)],
+    frames: &'a [fieldcraft_solver::harmonic::Frame],
+    natural_frequencies: &'a [f64],
+    residual_vectors: usize,
+    stats: &'a fieldcraft_solver::Stats,
+    warnings: &'a [String],
+}
+#[cfg(test)]
+impl<'a> From<&'a fieldcraft_solver::HarmonicResult> for LegacyHarmonicRef<'a> {
+    fn from(r: &'a fieldcraft_solver::HarmonicResult) -> Self {
+        Self {
+            step: &r.step,
+            nodes: &r.nodes,
+            reference_points: &r.reference_points,
+            frames: &r.frames,
+            natural_frequencies: &r.natural_frequencies,
+            residual_vectors: r.residual_vectors,
+            stats: &r.stats,
+            warnings: &r.warnings,
+        }
+    }
+}
+
+// Version 05/06 kind 5 only. Never infer old kinds 6 and above.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct LegacyHarmonic {
     step: String,
     nodes: Vec<u32>,
-    frames: Vec<fieldcraft_solver::transient::Frame>,
-    spectrum: bool,
+    reference_points: Vec<(String, u32)>,
+    frames: Vec<fieldcraft_solver::harmonic::Frame>,
     natural_frequencies: Vec<f64>,
+    residual_vectors: usize,
+    stats: fieldcraft_solver::Stats,
     warnings: Vec<String>,
+}
+impl LegacyHarmonic {
+    fn into_current(self) -> fieldcraft_solver::HarmonicResult {
+        fieldcraft_solver::HarmonicResult {
+            mass: fieldcraft_solver::MassKind::Consistent,
+            operator_diagonal_bounds: None,
+            fatigue: None,
+            step: self.step,
+            nodes: self.nodes,
+            reference_points: self.reference_points,
+            frames: self.frames,
+            natural_frequencies: self.natural_frequencies,
+            residual_vectors: self.residual_vectors,
+            stats: self.stats,
+            warnings: self.warnings,
+        }
+    }
+}
+fn decode_legacy_harmonic(payload: &[u8]) -> std::result::Result<fieldcraft_solver::HarmonicResult, codec::CodecError> {
+    Ok(codec::decode::<LegacyHarmonic>(payload)?.into_current())
+}
+
+#[cfg(test)]
+mod harmonic_mass_compatibility {
+    use super::*;
+    #[test]
+    fn old_binary_mass_is_consistent_and_new_binary_preserves_lumped() {
+        let legacy = LegacyHarmonic {
+            step: "H".into(),
+            nodes: vec![1],
+            reference_points: vec![],
+            frames: vec![],
+            natural_frequencies: vec![],
+            residual_vectors: 0,
+            stats: fieldcraft_solver::Stats { dofs: 1, equations: 1, factor_entries: 0, lanczos_vectors: 0 },
+            warnings: vec![],
+        };
+        let mut bytes = vec![];
+        codec::encode_into(&legacy, &mut bytes).unwrap();
+        let mut r = decode_legacy_harmonic(&bytes).unwrap();
+        assert_eq!(r.mass, fieldcraft_solver::MassKind::Consistent);
+        r.mass = fieldcraft_solver::MassKind::Lumped;
+        r.operator_diagonal_bounds = Some([[1000., 1000.], [0.5, 0.5]]);
+        bytes.clear();
+        codec::encode_into(&r, &mut bytes).unwrap();
+        assert_eq!(codec::decode::<fieldcraft_solver::HarmonicResult>(&bytes).unwrap(), r);
+    }
+}
+
+#[cfg(test)]
+#[path = "result_kinds_tests.rs"]
+mod kind_tests;
+
+// Version 05 static payload predates pretension; decode only under that explicit header.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct LegacyStatic {
+    step: String,
+    nodes: Vec<u32>,
+    displacement: Vec<[f64; 3]>,
+    rotation: Vec<[f64; 3]>,
+    reaction: Vec<[f64; 3]>,
+    reaction_moment: Vec<[f64; 3]>,
+    stress: Vec<[f64; 6]>,
+    von_mises: Vec<f64>,
+    elements: Vec<fieldcraft_solver::ElementStress>,
+    shells: Vec<fieldcraft_solver::analysis::ShellResult>,
+    beams: Vec<fieldcraft_solver::analysis::BeamResult>,
+    reference_points: Vec<fieldcraft_solver::PointResult>,
+    applied_total: [f64; 3],
+    reaction_total: [f64; 3],
+    stats: fieldcraft_solver::Stats,
+    warnings: Vec<String>,
+    temperature: Option<Vec<f64>>,
+    nonlinear: Option<fieldcraft_solver::nonlinear::History>,
+    contacts: Vec<fieldcraft_solver::contact::ContactResult>,
+}
+impl LegacyStatic {
+    fn into_current(self) -> fieldcraft_solver::StaticResult {
+        fieldcraft_solver::StaticResult {
+            fatigue: None,
+            pretension: Vec::new(),
+            step: self.step,
+            nodes: self.nodes,
+            displacement: self.displacement,
+            rotation: self.rotation,
+            reaction: self.reaction,
+            reaction_moment: self.reaction_moment,
+            stress: self.stress,
+            von_mises: self.von_mises,
+            elements: self.elements,
+            shells: self.shells,
+            beams: self.beams,
+            reference_points: self.reference_points,
+            applied_total: self.applied_total,
+            reaction_total: self.reaction_total,
+            stats: self.stats,
+            warnings: self.warnings,
+            temperature: self.temperature,
+            nonlinear: self.nonlinear,
+            contacts: self.contacts,
+        }
+    }
 }

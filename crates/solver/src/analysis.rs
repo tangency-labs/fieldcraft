@@ -80,6 +80,8 @@ pub struct PointResult {
 /// The result of a static step.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct StaticResult {
+    #[serde(skip)]
+    pub fatigue: Option<crate::fatigue::field::FatigueField>,
     pub step: String,
     /// Node labels with degrees of freedom, sorted; the per-node vectors follow this order.
     pub nodes: Vec<u32>,
@@ -156,14 +158,7 @@ pub struct FrequencyResult {
     pub buckling: Option<crate::buckle::Buckling>,
 }
 
-/// Mass matrix choice for a frequency analysis.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MassKind {
-    #[default]
-    Consistent,
-    Lumped,
-}
+pub use fieldcraft_model::MassKind;
 
 /// Options of a frequency analysis.
 #[derive(Debug, Clone, Copy, Default)]
@@ -607,6 +602,7 @@ pub(crate) fn static_on(setup: &Setup<'_>, limits: &Limits) -> Result<StaticResu
         crate::pretension::recover(&crate::pretension::section_dofs(model, mesh)?, step, &red, &u, &internal, &f)?
     };
     Ok(StaticResult {
+        fatigue: None,
         step: step.name.clone(),
         nodes: mesh.labels.clone(),
         displacement,

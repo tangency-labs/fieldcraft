@@ -1665,3 +1665,31 @@ Harmonic residual refinement also uses compensated summation as analyzed by N. J
 [doi:10.1137/0914050](https://doi.org/10.1137/0914050). Corrections use the existing direct
 factor (Higham, *Accuracy and Stability of Numerical Algorithms*, 2nd ed., 2002, §12.2),
 with a fixed iteration cap and no change to the physical operator or equilibrium tolerance.
+
+## Fatigue kernels (fusion fork, development)
+
+ASTM E1049 §5.4.4 supplies finite-record rainflow semantics. Stephens et al.,
+*Metal Fatigue in Engineering*, 2nd ed. (2000), supplies stress/strain-life and
+mean-stress methods; Smith, Watson & Topper (1970), *A stress-strain function for
+the fatigue of metals*, supplies SWT. Public equation cross-reference:
+https://help.altair.com/hwsolvers/os/topics/solvers/os/analysis_fatigue_uniaxial_r.htm .
+Dirlik & Benasciutti (2021), Metals 11,1333, doi:10.3390/met11091333, eqs. 1,2,5,
+supplies spectral moments and narrow-band damage. Fixed coherent projection
+uses the linear transfer identity S=(w·H)conj(w·H)G. Implementations and tests
+are checked in solver tests; see the fatigue manual for scope restrictions.
+
+The same Dirlik–Benasciutti review, eqs.8/9 and 11/13, supplies the implemented
+Dirlik mixture and TB2005 w2 correction. The degenerate narrow-band limit is
+handled separately. Library tests compare the mixture's closed-form moment with
+independent PDF quadrature and check a hand-derived TB weight. The published
+numerical comparison is separately identified below.
+
+Fatigue numerical references: ASTM E1049-85(2017) §5.4.4.2 / Figure 6 / Table X1.3
+(seven finite-record cycles), and Dirlik & Benasciutti (2021) Table 1
+(rectangular band ratios 5 and 20, S–N slopes 3/5/7, six published TB/Dirlik
+damage ratios). The latter uses absolute tolerance 0.001 for three-decimal
+printing; it is independent published numerical evidence, not a measured material
+validation. S–N tables use straight segments in log stress/log cycles (piecewise
+Basquin). Supplied surface and size factors multiply fatigue strength. Applying
+constant factors to every segment is an explicit user-selected curve reduction,
+not a built-in empirical surface/size correlation or a universal material law.

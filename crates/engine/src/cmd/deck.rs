@@ -15,7 +15,7 @@ use crate::{CommandKind, CommandSpec, EngineError, Result, Session};
 pub const WRITE: CommandSpec = CommandSpec {
     id: "deck.write",
     label: "Write Solver Deck",
-    params: r#"{"format": "abaqus|nastran|lsdyna", "path": "part.inp", "steps": ["Load"], "units": "mm-t-s-N-MPa|m-kg-s-N-Pa|mm-kg-ms-kN-GPa|mm-g-ms-N-MPa|in-lbf-s-psi"} — writes the model as a solver deck in one consistent unit system, stated in its header (default: the display system's, ignoring its overrides) (formats: fieldcraft_decks::FORMATS); `steps` (optional) writes only those steps, as a Nastran run needs (static or frequency steps, not both); LS-DYNA writes several steps as *CASE analyses (run it with CASE); Abaqus writes one independent transient or constant-spectrum step per file, adding modal extraction as needed (select it with steps); unsupported dynamics options are named; fails naming every error of the model check and everything the format cannot express"#,
+    params: r#"{"format": "abaqus|nastran|lsdyna", "path": "part.inp", "steps": ["Load"], "units": "mm-t-s-N-MPa|m-kg-s-N-Pa|mm-kg-ms-kN-GPa|mm-g-ms-N-MPa|in-lbf-s-psi"} — writes the model as a solver deck in one consistent unit system, stated in its header (default: the display system's, ignoring its overrides) (formats: fieldcraft_decks::FORMATS); `steps` (optional) writes only those steps, as a Nastran run needs (static or frequency steps, not both); LS-DYNA writes several steps as *CASE analyses (run it with CASE); Abaqus writes one independent transient or constant-spectrum step per file, adding modal extraction as needed (select it with steps); mass (consistent|lumped, default consistent) must match a stored dynamic result; native rod2 dynamics requires lumped, other distributed-element mass mappings are refused; unsupported dynamics options are named; fails naming every error of the model check and everything the format cannot express"#,
     form: Some(super::forms::DECK),
     kind: CommandKind::Session,
     requires: &[Requirement::Analysable, Requirement::ElementMaterial, Requirement::ElementSection],
@@ -136,9 +136,40 @@ fn write(s: &mut Session, p: &Value) -> Result<Value> {
             EngineError::invalid("units", format!("must be one of {}", known.join(", ")))
         })?,
     };
-    let deck = format.write_steps(&s.model, steps.as_deref(), units)?;
+    let mass = opt::<fieldcraft_model::MassKind>(p, "mass")?.unwrap_or_default();
+    let dynamic_steps: Vec<_> = s
+        .model
+        .steps()
+        .iter()
+        .filter(|st| steps.as_ref().is_none_or(|names| names.contains(&st.name)))
+        .filter(|st| matches!(st.procedure, fieldcraft_model::Procedure::Transient(_) | fieldcraft_model::Procedure::ResponseSpectrum(_)))
+        .collect();
+    for st in &dynamic_steps {
+        if let Some(result) = s.result(&st.name)
+            && let crate::StepResult::Implicit(fieldcraft_solver::StepResult::Dynamics(r)) = result.as_ref()
+            && r.mass != mass
+        {
+            return Err(EngineError::invalid(
+                "mass",
+                format!(
+                    "step `{}` stored mass {:?} differs from export {:?}; select the stored mass explicitly or solve again",
+                    st.name, r.mass, mass
+                ),
+            ));
+        }
+    }
+    let deck = if dynamic_steps.is_empty() {
+        if p.get("mass").is_some() {
+            return Err(EngineError::invalid("mass", "deck.write mass applies only to transient or response_spectrum steps"));
+        }
+        format.write_steps(&s.model, steps.as_deref(), units)?
+    } else {
+        format.write_steps_with_mass(&s.model, steps.as_deref(), units, mass)?
+    };
     fieldcraft_io::fs::write_output(Path::new(&path), deck.text.as_bytes())?;
-    Ok(json!({"format": format.name, "path": path, "bytes": deck.text.len(), "units": units.label(), "warnings": deck.warnings}))
+    Ok(
+        json!({"format": format.name, "path": path, "bytes": deck.text.len(), "units": units.label(), "warnings": deck.warnings, "mass": if dynamic_steps.is_empty() { None } else { Some(mass) }}),
+    )
 }
 
 #[cfg(test)]
