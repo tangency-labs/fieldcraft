@@ -415,3 +415,18 @@ coefficient byte volume, not measured DRAM traffic.
 
 The `backsolve_lane_group_inclusive` and `backsolve_inclusive` spans may overlap across
 workers. Their sum is accumulated elapsed time, not CPU time or command wall time.
+
+Set `FIELDCRAFT_STATIC_RESIDUAL=1` to report `FIELDCRAFT_STATIC_RESIDUAL` on stderr:
+the reduced-system residual norm, right-hand-side norm, and their ratio, computed
+from the actual constrained stiffness and solved displacement. A zero right-hand-side
+norm makes the ratio undefined (`NaN`). This opt-in diagnostic retains the reduced
+matrix and right-hand side; its time and memory belong to the complete static command.
+It does not add fields to the result archive.
+
+With solver timing enabled, eligible wide Cholesky updates emit
+`FIELDCRAFT_DENSE_WORK`: cache-panel variant flag, output rows, output columns,
+reduction width, padded multiply/add FLOPs, and an upper bound on extra panel-merge
+additions including padded columns. Counts describe logical work, not hardware
+traffic. `dense_update_reference` spans can overlap and their sum is accumulated
+elapsed time, not factorization wall time or CPU time. The cache-panel experiment
+is retained only in solver tests; production uses the original full-width update.

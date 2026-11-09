@@ -30,6 +30,16 @@ pub(crate) fn projection_work(kind: &str, n: usize, basis: usize, columns: usize
     }
 }
 
+/// Actual eligible dense update dimensions and logical padded arithmetic.
+pub(crate) fn dense_work(cached: bool, mu: usize, wu: usize, kw: usize, tile: usize, nr: usize) {
+    if enabled() {
+        let cells: usize = (0..mu).step_by(tile).map(|r| wu.min(r + tile.min(mu - r)).div_ceil(nr) * nr * tile).sum();
+        let flops = (cells as u128) * (kw as u128) * 2;
+        let extra_adds = if cached { (cells as u128) * (kw.div_ceil(256) as u128) } else { 0 };
+        let _ = writeln!(std::io::stderr().lock(), "FIELDCRAFT_DENSE_WORK\t{cached}\t{mu}\t{wu}\t{kw}\t{flops}\t{extra_adds}");
+    }
+}
+
 pub(crate) struct Span {
     name: &'static str,
     start: Option<Instant>,

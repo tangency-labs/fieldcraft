@@ -460,9 +460,20 @@ pub(crate) fn static_on(setup: &Setup<'_>, limits: &Limits) -> Result<StaticResu
     }
     let [kff] = red.reduce([&k])?;
     let chol = factor_raw(&kff, limits).map_err(|e| factor_error(e, mesh, &red))?;
-    drop(kff);
+    let diagnostic_k = std::env::var("FIELDCRAFT_STATIC_RESIDUAL").is_ok_and(|v| v == "1").then_some(kff);
     let mut q = red.rhs(&f, &k);
+    let diagnostic_rhs = diagnostic_k.as_ref().map(|_| q.clone());
     chol.solve(&mut q)?;
+    if let (Some(matrix), Some(rhs)) = (diagnostic_k, diagnostic_rhs) {
+        use std::io::Write;
+        let _timing = crate::timing::Span::new("static_actual_residual");
+        let mut product = vec![0.0; q.len()];
+        matrix.mul(&q, &mut product);
+        let error = product.iter().zip(&rhs).map(|(a, b)| (a - b).powi(2)).sum::<f64>().sqrt();
+        let scale = rhs.iter().map(|v| v * v).sum::<f64>().sqrt();
+        let ratio = if scale > 0.0 { error / scale } else { f64::NAN };
+        let _ = writeln!(std::io::stderr().lock(), "FIELDCRAFT_STATIC_RESIDUAL\t{error:.17e}\t{scale:.17e}\t{ratio:.17e}");
+    }
     let u = red.expand(&q, true);
     if u.iter().any(|x| !x.is_finite()) {
         return Err(Error::Singular("the solution is not finite; the model is ill-conditioned".into()));
