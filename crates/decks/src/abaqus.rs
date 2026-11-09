@@ -232,6 +232,7 @@ pub fn write_resolved_with_mass(model: &Model, r: &Resolved, units: Preset, mass
     d.contacts(model, r)?;
     d.ties(model)?;
     d.pretension_sections(model, r)?;
+    d.pretension_connections(model, r)?;
     d.equations(model, r)?;
     d.out.push_str(&crate::foundation::abaqus(model, r)?);
     d.dynamics_data(model)?;
@@ -1227,6 +1228,47 @@ impl Deck {
                 self.line(&format!("{element}, S{face}"));
             }
             self.line(&format!("*PRE-TENSION SECTION, SURFACE={surface}, NODE={control}"));
+        }
+        Ok(())
+    }
+
+    /// Keep coincident cut nodes connected in the transverse directions while
+    /// leaving the scalar normal DOF to the native pretension section.
+    fn pretension_connections(&mut self, model: &Model, r: &Resolved) -> Result<()> {
+        for (name, p) in model.pretensions() {
+            let Some(first) = r.sets.get(&p.first) else { continue };
+            let Some(second) = r.sets.get(&p.second) else { continue };
+            let connected = model
+                .elements()
+                .values()
+                .any(|e| e.nodes.iter().any(|n| first.nodes.contains(n)) && e.nodes.iter().any(|n| second.nodes.contains(n)));
+            if !connected {
+                return Err(Error::Unsupported {
+                    format: FORMAT,
+                    what: format!(
+                        "pretension `{name}`: cut halves have coincident coordinates but no element connectivity; native PRE-TENSION SECTION cannot express this disconnected topology"
+                    ),
+                });
+            }
+            for &a in &first.nodes {
+                let Some(na) = model.nodes().get(&a) else { continue };
+                const COINCIDENT_TOLERANCE: f64 = 1e-12; // unit-factors: dimensionless geometric tolerance
+                let Some(&b) = second.nodes.iter().find(|&&b| {
+                    model.nodes().get(&b).is_some_and(|nb| na.xyz.iter().zip(nb.xyz).all(|(x, y)| (*x - y).abs() <= COINCIDENT_TOLERANCE))
+                }) else {
+                    return Err(Error::Unsupported {
+                        format: FORMAT,
+                        what: format!("pretension `{name}`: cut nodes have no coincident partner for transverse continuity"),
+                    });
+                };
+                for dof in 1..=3 {
+                    if p.normal[dof - 1].abs() < COINCIDENT_TOLERANCE {
+                        self.line("*EQUATION");
+                        self.line("2");
+                        self.line(&format!("{a}, {dof}, 1.0, {b}, {dof}, -1.0"));
+                    }
+                }
+            }
         }
         Ok(())
     }

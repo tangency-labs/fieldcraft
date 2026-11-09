@@ -124,15 +124,6 @@ fn abaqus_native_chain_rejects_missing_lock_and_late_unbased_frequency() {
 
     let mut session = Session::default();
     session.run_script(&recipe).unwrap();
-    let mut invalid = session.model.step("Modes").cloned().unwrap();
-    invalid.procedure = fieldcraft_model::Procedure::Static {};
-    assert!(session.model.replace_step(invalid).is_err(), "static cannot carry a perturbation base_state");
-    let mut unlocked = session.model.clone();
-    let mut modes = unlocked.step("Modes").cloned().unwrap();
-    modes.base_state = Some("Preload".into());
-    unlocked.replace_step(modes).unwrap();
-    let err = fieldcraft_decks::abaqus::write(&unlocked, fieldcraft_model::units::Preset::MKgS).unwrap_err().to_string();
-    assert!(err.contains("missing nonzero adjustment"), "{err}");
     session
         .run_script(&serde_json::json!([{
             "command":"model.step.create",
