@@ -57,6 +57,8 @@ pub struct Unknown {
 /// `unknown_count` counts all unread options.
 #[derive(Debug, Clone)]
 pub struct Read {
+    // Source targets containing discrete labels must not be confused with filtered mesh sets.
+    discrete_targets: BTreeSet<String>,
     /// Whether all history steps were mapped without unsupported physical semantics.
     pub analysis_complete: bool,
     /// Unapplied, condition-scoped mass requirements; independent of history completeness.
@@ -928,7 +930,19 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
             "{unassigned} mesh elements have no section: their input family/formulation is not stored on the mesh element. Assign compatible sections before analysis; reduced/hybrid/shell/plane context is not retained without them."
         ));
     }
-    Ok(Read { model, mass_requirements: Vec::new(), analysis_complete: false, instances: Vec::new(), unknown, unknown_count, warnings })
+    let mut discrete_targets: BTreeSet<String> = discrete_elements.keys().map(u32::to_string).collect();
+    discrete_targets
+        .extend(expanded_elements.iter().filter(|(_, ids)| ids.iter().any(|id| discrete_elements.contains_key(id))).map(|(name, _)| name.clone()));
+    Ok(Read {
+        discrete_targets,
+        model,
+        mass_requirements: Vec::new(),
+        analysis_complete: false,
+        instances: Vec::new(),
+        unknown,
+        unknown_count,
+        warnings,
+    })
 }
 
 fn section_kind(raw: &SectionRecord, typ: Type, units: &DisplaySystem) -> Result<SectionKind> {

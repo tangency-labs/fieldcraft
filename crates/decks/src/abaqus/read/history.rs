@@ -200,7 +200,7 @@ pub(super) fn import(text: &str, read: &mut Read, preset: Preset, limits: Limits
             body,
             &state,
             &read.model,
-            &HistoryData { curves: &curves, spectra: &spectra, response_tables: &response_tables },
+            &HistoryData { curves: &curves, spectra: &spectra, response_tables: &response_tables, discrete_targets: &read.discrete_targets },
             &units,
             limits,
         );
@@ -289,6 +289,7 @@ fn is_output(k: &str) -> bool {
 }
 
 struct HistoryData<'a> {
+    discrete_targets: &'a BTreeSet<String>,
     response_tables: &'a BTreeMap<String, projected::Table>,
     curves: &'a BTreeMap<String, Curve>,
     spectra: &'a BTreeMap<String, Vec<fieldcraft_model::random::SpectrumPoint>>,
@@ -305,6 +306,22 @@ fn prepare(
 ) -> Result<(Procedure, f64, State)> {
     if model.steps().iter().any(|s| matches!(s.procedure, Procedure::Transient(_) | Procedure::ResponseSpectrum(_))) {
         return Err(unsupported(b.line, "continuation after a transient/response-spectrum step is not mapped"));
+    }
+    // Mesh sets omit MASS/SPRING1 labels. Check source membership before any
+    // expansion, including aliases and mixed sets, so a partial load cannot run.
+    for block in body.iter().filter(|b| b.keyword == "DLOAD") {
+        for row in &block.rows {
+            let fields = row_fields(row.text, row.line)?;
+            if fields.get(1).is_some_and(|kind| canonical(kind) == "GRAV") {
+                let target = name(fields.first().map(String::as_str).unwrap_or_default(), row.line)?;
+                if data.discrete_targets.contains(&target) || (target.is_empty() && !model.masses().is_empty()) {
+                    return Err(unsupported(
+                        row.line,
+                        format!("GRAV target `{target}` includes discrete elements; discrete load membership mapping is not supported"),
+                    ));
+                }
+            }
+        }
     }
     let curves = data.curves;
     let spectra = data.spectra;
@@ -686,9 +703,6 @@ fn apply(
                 let kind = canonical(f.get(1).map(String::as_str).unwrap_or_default());
                 let elements = if target.is_empty() { model.elements().keys().copied().collect() } else { members(model, target, false, row.line)? };
                 if kind == "GRAV" {
-                    if !model.masses().is_empty() {
-                        return Err(unsupported(row.line, "GRAV with imported point masses needs discrete load membership mapping"));
-                    }
                     if f.len() != 6 {
                         return Err(error(row.line, "GRAV needs magnitude and three direction components"));
                     }
@@ -777,6 +791,11 @@ fn materialize(model: &mut Model, step: &mut Step, state: &mut State, evaluation
         *accumulated.entry((*family, *id, *dof)).or_default() += v;
     }
     for ((family, id, dof), v) in accumulated {
+        // Retain zero components in history for OP=MOD/NEW, but not as invalid
+        // native gravity definitions. Cancellation likewise has no effective load.
+        if family == Family::Gravity && v == 0.0 {
+            continue;
+        }
         if !v.is_finite() {
             return Err(error(1, "accumulated load is non-finite"));
         }
@@ -849,6 +868,80 @@ fn materialize(model: &mut Model, step: &mut Step, state: &mut State, evaluation
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gravity_mesh_targets_do_not_load_unrelated_discrete_masses() {
+        let input = r#"*NODE
+1,0,0,0
+2,1,0,0
+7,2,0,0
+*ELEMENT,TYPE=T3D2,ELSET=Bar
+1,1,2
+*ELEMENT,TYPE=MASS,ELSET=M
+10,7
+*ELEMENT,TYPE=SPRING1,ELSET=K
+11,7
+*ELSET,ELSET=Mixed
+Bar,M
+*ELSET,ELSET=Alias
+Bar
+*MATERIAL,NAME=Steel
+*ELASTIC
+1000,.3
+*DENSITY
+2
+*SOLID SECTION,ELSET=Bar,MATERIAL=Steel
+1
+*MASS,ELSET=M
+3
+*SPRING,ELSET=K
+1
+100
+*BOUNDARY
+1,1,3
+2,2,3
+7,2,3
+*AMPLITUDE,NAME=A
+0,0,1,2
+*STEP,NAME=One
+*STATIC
+1,1
+*DLOAD,AMPLITUDE=A
+Alias,GRAV,10,1,0,0
+*END STEP
+*STEP,NAME=Two
+*STATIC
+1,1
+*END STEP
+*STEP,NAME=Three
+*STATIC
+1,1
+*DLOAD,OP=NEW
+1,GRAV,5,-1,0,0
+*END STEP
+"#;
+        let got = read(input);
+        assert!(got.analysis_complete, "{:?}", got.warnings);
+        assert_eq!(got.model.steps().len(), 3);
+        for (step, expected) in [("One", 20.0), ("Two", 20.0), ("Three", -5.0)] {
+            let mut acceleration = 0.0;
+            for name in &got.model.step(step).unwrap().loads {
+                let Load::Gravity { acceleration: a, set: Some(set) } = got.model.load(name).unwrap() else { panic!("expected scoped gravity") };
+                assert_eq!(got.model.set(set).unwrap().elements, vec![1]);
+                acceleration += a[0];
+            }
+            assert_eq!(acceleration, expected);
+        }
+        let zero = read(&input.replace("1,GRAV,5,-1,0,0", "1,GRAV,0,-1,0,0"));
+        assert!(zero.analysis_complete);
+        assert!(zero.model.step("Three").unwrap().loads.is_empty());
+        for target in ["", "M", "Mixed", "10", "K"] {
+            let denied = read(&input.replace("Alias,GRAV", &format!("{target},GRAV")));
+            assert!(!denied.analysis_complete);
+            assert!(denied.model.steps().is_empty());
+            assert!(denied.warnings.iter().any(|w| w.contains("GRAV target") && w.contains("discrete")), "{:?}", denied.warnings);
+        }
+    }
     const MODEL: &str = "*NODE,NSET=Tip\n1,0,0,0\n2,1,0,0\n*BOUNDARY\n1,ENCASTRE\n";
     fn read(text: &str) -> Read {
         super::super::read_analysis_limited(text, Preset::MKgS, Limits::default()).unwrap()

@@ -738,3 +738,23 @@ section contract. Both reject the named section through the formulation-policy
 check. Their ordinary solid cards must not be used as silent substitutes. This
 states the implemented writer boundary, not that those products lack alternative
 solid formulations.
+
+### Gravity on selected mesh elements in a model with point masses
+
+`DLOAD, GRAV` on an explicit ordinary mesh element label or element set does not
+load unrelated point masses. Set aliases are resolved before selecting the loaded elements.
+Zero acceleration components remain in the history state for replacement and inheritance,
+but do not create invalid zero-vector native loads. Relative amplitudes and `OP=MOD/NEW`
+use the same history rules as other supported static loads.
+
+A target containing any imported discrete element (including a mixed mesh/discrete set or
+an alias), and a blank whole-model target when point masses exist, are explicitly refused.
+The source membership is checked before discrete labels are removed from mesh sets; filtering
+cannot silently turn a mixed target into a partial load. The original text is still retained.
+This does not implement gravity on selected point masses or expand the supported analysis types.
+
+The regression model is an axial rod with an independent mass and grounded spring: the
+rod's uniform body load gives `u_tip = rho*g*L^2/(2*E)` and `RF_root = -rho*A*L*g`,
+while the unloaded spring's displacement is zero. These checks distinguish scoped gravity
+from whole-model acceleration and cover amplitude scaling, inheritance and replacement.
+Syntax reference: [Abaqus public DLOAD reference](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-dload.htm).
