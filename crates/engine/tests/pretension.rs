@@ -65,6 +65,7 @@ fn bolt_clamp_load_lock_persistence_and_perturbation() {
     fixed.replace_step(locked_step).unwrap();
     let fixed_deck = fieldcraft_decks::abaqus::write(&fixed, fieldcraft_model::units::Preset::MKgS).unwrap();
     assert!(fixed_deck.contains("*BOUNDARY, FIXED"));
+    assert!(fixed_deck.lines().any(|line| line.trim_end().ends_with(", 1, 1")));
 }
 
 // Check physical increments, not just that a solver returned successfully.

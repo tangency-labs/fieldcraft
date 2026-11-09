@@ -1207,7 +1207,8 @@ impl Deck {
                 }
                 fieldcraft_model::PretensionControl::Fixed => {
                     self.line("*BOUNDARY, FIXED");
-                    self.line(&format!("{node}"));
+                    // Abaqus requires the constrained DOF range even with FIXED.
+                    self.line(&format!("{node}, 1, 1"));
                 }
             }
         }
