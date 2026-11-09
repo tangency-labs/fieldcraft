@@ -2443,10 +2443,18 @@ pub const SAMPLE: &[Field] = &[choice(
 pub const COUNT: &[Field] = &[int("count", "Count", 1, 1_000_000).help("How many steps.").def("1")];
 
 pub const DECK: &[Field] = &[
-    choice("format", "Format", &[("abaqus", "Abaqus input (.inp)"), ("nastran", "Nastran bulk data (.bdf)"), ("lsdyna", "LS-DYNA keyword (.k)")])
-        .help("The solver deck format.")
-        .req()
-        .def("\"abaqus\""),
+    choice(
+        "format",
+        "Format",
+        &[
+            ("abaqus", "Abaqus input (.inp), including supported dynamics"),
+            ("nastran", "Nastran bulk data (.bdf)"),
+            ("lsdyna", "LS-DYNA keyword (.k)"),
+        ],
+    )
+    .help("The solver deck format.")
+    .req()
+    .def("\"abaqus\""),
     path("path", "File", true).help("Where to write the deck.").req(),
     references("steps", "Steps", C::Step).help("The steps to write; all when empty.").hint("all"),
     choice(

@@ -97,8 +97,9 @@ A peak frame has no time and no velocity or energy. Component peaks are not simu
 do not compute a signed stress history or fatigue from them. Acceleration is a
 pseudo-acceleration peak, not the maximum true absolute acceleration. Residual corrections remain unimplemented.
 
-All three deck writers explicitly refuse these new procedures pending complete export
-semantics. The project handoff decks are separate original inputs, not verified exports.
+Abaqus native export uses `deck.write` for supported dynamics; Nastran and LS-DYNA
+still refuse these procedures by name. Earlier handoff decks were separate original inputs;
+they are not evidence of native export. See the export scope below.
 
 ## References and verification
 
@@ -237,3 +238,37 @@ rho, theta, period ratio, equivalent damping and per-cycle amplitude is 2.905e-1
 Damping of order 1e-14 at alpha zero is floating-point roundoff. In particular, damping
 high frequencies does not remove period elongation: at alpha=-1/3 and Omega=1 the
 measured period ratio is 1.110521, so the step is unsuitable if small phase error is required.
+
+## Native Abaqus dynamics export
+
+`deck.write {format:"abaqus",path:"pulse.inp",steps:["Pulse"],units:"m-kg-s-N-Pa"}`
+writes one independent dynamics step per deck through the same units, mass, spring, section
+and resolved-load paths as other native exports. Direct transient writes `*DYNAMIC, DIRECT`
+with explicit alpha/beta/gamma (including zero algorithmic damping for average acceleration).
+Modal transient writes its own mass-normalized frequency extraction and `*MODAL DYNAMIC`,
+with explicit mode damping. A constant pseudo-acceleration spectrum writes frequency
+extraction, `*SPECTRUM` and `*RESPONSE SPECTRUM`, preserving SRSS/CQC and SRSS/R40 directions.
+
+Time/load units are converted with the model; amplitude tables are not copied in display
+units. A common load amplitude can be tabular, smooth-step or a zero-origin Fourier series.
+Absent amplitudes become an explicit constant curve so the target's default ramp cannot
+change the initial load. All three exports require zero initial displacement and velocity;
+the target's initial output frame still needs independent interpretation. Transient files
+request U/V/A with an explicit node set at the model output stride; spectrum files request
+U/A peaks. Requested stress is written as element S; this is not the native solver's global
+nodal average and must be compared at a common recovery location.
+
+Named refusals cover mixed independent steps, nonzero initial states/support motion, step
+Rayleigh damping, different amplitudes per load, modal HHT or linear-acceleration integration,
+and unrepresented projected damping. Spectrum period/damping tables, unequal modal damping
+and nonconstant ordinates are refused: Abaqus interpolates log-log and extends endpoints,
+whereas FieldCraft interpolates linearly and rejects extrapolation. Even for constant spectra,
+check extracted modes lie inside the declared band. Modal time integration belongs to the
+target solver, not FieldCraft's Newmark recurrence; use the stated time-discretization tolerance.
+
+This writes input only. It neither invokes a commercial solver nor certifies its preprocessing
+or numerical response. Public syntax sources:
+[DYNAMIC](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-dynamic.htm),
+[AMPLITUDE](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-amplitude.htm),
+[MODAL DYNAMIC](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-modaldynamic.htm),
+[response-spectrum interpolation](https://abaqus.uclouvain.be/English/SIMACAEANLRefMap/simaanl-c-responsespectrum.htm).

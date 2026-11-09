@@ -650,7 +650,12 @@ pub static CATALOGUE: &[Capability] = &[
     // ---- Solve ----
     ready("solve.run", "Solve", Solve, "Run", "Solve every step in order and show the results"),
     ready("model.check", "Check Model", Solve, "Check", "Name every missing or bad definition before writing or solving"),
-    deck("deck.write.abaqus", "Abaqus Input", "abaqus", "Write an Abaqus input file (.inp)"),
+    deck(
+        "deck.write.abaqus",
+        "Abaqus Input",
+        "abaqus",
+        "Write Abaqus input (.inp), including direct/modal transient and constant response-spectrum steps",
+    ),
     deck("deck.write.nastran", "Nastran Deck", "nastran", "Write Nastran bulk data (SOL 101, 103)"),
     deck("deck.write.lsdyna", "LS-DYNA Deck", "lsdyna", "Write an LS-DYNA keyword file"),
     ready(
