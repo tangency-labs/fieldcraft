@@ -461,7 +461,7 @@ pub fn solve_harmonic_with_mass(model: &Model, name: Option<&str>, mass: MassKin
 }
 
 mod matrices;
-pub use matrices::{MatrixExport, export_matrices};
+pub use matrices::{MatrixExport, export_matrices, export_matrices_with_mass};
 
 mod element_stress;
 pub use element_stress::{ElementStressRecovery, StressLocation};

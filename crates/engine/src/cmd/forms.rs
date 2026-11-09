@@ -2672,6 +2672,9 @@ pub const INVERSE_HARMONIC: &[Field] = &[
 
 pub const SOLVE_MATRICES: &[Field] = &[
     STEP,
+    choice("mass", "Mass matrix", &[("consistent", "Consistent"), ("lumped", "Lumped")])
+        .help("Inertia and material damping discretization; excludes analysis-step Rayleigh damping.")
+        .def("\"consistent\""),
     path("path", "Matrix manifest", true).help("Optional SI manifest; sibling .mtx files hold the requested operators."),
     MAX_DOFS,
     MAX_FACTOR,
