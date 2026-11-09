@@ -256,3 +256,5 @@ extrapolation are named unsupported combinations; no PSD time history is synthes
   mass harmonic, full energy-and-mass dynamics, static fatigue and harmonic fatigue.
   Old05/06 kinds 0–5 use frozen schemas; higher development kinds are refused with
   the regeneration message. See docs/results-kind-layout.md.
+
+Nonlinear rod diagnostics now have an explicit SI Abaqus UEL/DYNAMIC writer and saved-state internal-force recovery. Standard T3D2 StVK mapping is refused; native nonlinear result persistence requires a versioned model/result contract.

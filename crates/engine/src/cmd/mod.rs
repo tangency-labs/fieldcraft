@@ -238,6 +238,7 @@ pub static ALL: &[CommandSpec] = &[
     edit::UNDO,
     edit::REDO,
     deck::WRITE,
+    deck::WRITE_NONLINEAR,
     deck::READ,
     deck::WRITE_SOURCE,
     solve::RUN,

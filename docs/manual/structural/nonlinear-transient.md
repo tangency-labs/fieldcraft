@@ -16,7 +16,7 @@ Native nonlinear persistence requires a separately approved version contract.
 The existing transient step supplies time controls; the nonlinear selection is
 the explicit command above. Reproduce with the full command script. Saving
 only the model or exporting that step with `deck.write` does not turn it into
-a nonlinear analysis; a native nonlinear deck-export path is not delivered here.
+a nonlinear analysis. Use the separate `deck.write.nonlinear` command described below.
 The coordinated fatigue merge supplies unified MCRSLT07 for existing linear
 results. This diagnostic command adds no persisted nonlinear kind or payload;
 existing 06 archives are not 07 deliverables.
@@ -82,9 +82,11 @@ Sources actually checked:
   rigid-limit parameter set or its plotted numerical values.
 - Hughes, *The Finite Element Method*, ch. 9, is the requested integration
   reference; the book's complete chapter has not been available for a new
-  page-by-page check. HHT formulas use the original Hilber–Hughes–Taylor (1977),
-  [doi:10.1002/eqe.4290050306](https://doi.org/10.1002/eqe.4290050306), already
-  used by the linear integrator. The nonlinear effective tangent above is
+  page-by-page check. HHT formulas were checked against the publicly available
+  [Sierra Solid Mechanics 5.20 theory manual](https://www.sandia.gov/app/uploads/sites/315/2025/07/SM_Theory_5_20.pdf),
+  equations (12.5)–(12.6), using its negative-alpha convention. The original
+  Hilber–Hughes–Taylor (1977), [doi:10.1002/eqe.4290050306](https://doi.org/10.1002/eqe.4290050306),
+  is the bibliographic origin; its complete paper has not been newly audited. The nonlinear effective tangent above is
   explicitly differentiated from that residual, not attributed to an unchecked
   book equation number. Bathe textbook edition-specific section numbering also
   remains distinct from the publicly checked lecture/paper equations.
@@ -112,3 +114,70 @@ balance below 0.1% of the characteristic mechanical/work scale, and Newton
 relative residual below 1e-8. HHT acceleration is the algorithm's acceleration
 at the nominal time, not a replacement obtained by imposing instantaneous
 physical force balance after the weighted HHT solve.
+
+
+## Native nonlinear black-box input
+
+`deck.write.nonlinear {"path":"motion.inp","step":"Motion",
+"mass":"consistent","representation":"uel"}` writes **new** `.inp` and `.c`
+files in SI. Both are required. It does not run an external solver. Existing
+paths are refused. The generated C is an original user-element implementation,
+not a copy of a vendor example. The executable application remains Rust.
+
+A native finite-strain T3D2 with `*ELASTIC` is not this Green-strain/second-Piola
+StVK law and is explicitly refused. The generated general user element uses
+the same reference nodes, connectivity, E, A and density, and the selected full
+consistent or lumped mass. It supplies current internal force and tangent,
+initial-acceleration mass/residual, HHT residual/Jacobian and elastic/kinetic
+energy through the public UEL interface. This checks a target solver's assembly,
+constraints and time integration with our specified constitutive law; it is not
+an independent validation against the target's built-in material implementation.
+
+The supported export is deliberately limited to constant dead nodal forces,
+homogeneous supports, zero initial velocity, no physical damping and rod2.
+Load-amplitude curves, adaptive/modal/base excitation, other elements, point
+masses, nonlinear materials and interactions are refused by name. Other options
+are not silently linearized. The solver's broader diagnostic support is distinct
+from this export subset.
+
+`FC_INITIALIZE` is a fully prescribed geometrically nonlinear static step that
+establishes the original initial displacement and the constant applied forces.
+`FC_MOTION` retains the physical supports and releases preparation constraints
+with step amplitude, using `NLGEOM=YES`, `DYNAMIC,DIRECT,NOHAF`, and explicit
+alpha/beta/gamma. It does not disable initial acceleration. Compare dynamic step
+time and the unchanged reference displacement definition, not the preparation
+pseudo-time. Initial stresses/strain energy are retained. Subtract dynamic-start
+external work when comparing a cumulative multi-step target energy record.
+
+Run the generated source through the target's user-subroutine build with
+`user=motion.c output_precision=full`. A site-configured C compiler and the
+vendor-supplied interoperability header/link environment are required. A separately
+validated Linux object can also be supplied via `user=...o`; it is not portable
+across platforms or automatically proof of target ABI compatibility. The
+standalone C test macro only substitutes the calling-name convention for tests;
+it does not include or reproduce a commercial header.
+
+Nodal U/V/A/RF are requested on `FC_NODES`, at the specified output frequency.
+The six element state variables are resisting forces at end 1 XYZ, then end 2
+XYZ, in N; `EL FILE,SDV` requests them in the results file. `ENERGY FILE` requests
+total energies with no data line. User-element stress output in ODB is not
+claimed. Independently recovered axial measures are Green strain, second Piola
+stress S, nominal stress P=lambda S and axial force A0 P. They are not Cauchy
+stress; this one-dimensional law has no independent lateral/volume constitutive
+rule. The solver's `recover_rod` API evaluates its real force kernel from saved
+nodal displacement without advancing time or inventing a prior stored field.
+
+The full-output execution option selects double-precision Standard field data;
+history data and timestamps have separate precision limits. Preserve raw values,
+zero frames and failures of a strict time-matching gate. Do not change physical
+initial acceleration to imitate a target's zero-output-frame convention.
+
+Public contracts actually consulted (2025 edition; not a claim of a 2024 runtime
+check): [truss theory](https://docs.software.vt.edu/abaqusv2025/English/SIMACAETHERefMap/simathe-c-trusses.htm),
+[UEL](https://docs.software.vt.edu/abaqusv2025/English/SIMACAESUBRefMap/simasub-c-uel.htm),
+[DYNAMIC](https://docs.software.vt.edu/abaqusv2025/English/SIMACAEKEYRefMap/simakey-r-dynamic.htm),
+[user-subroutine C interoperability](https://docs.software.vt.edu/abaqusv2025/English/SIMACAESUBRefMap/simasub-c-subroutineover.htm),
+[execution precision](https://docs.software.vt.edu/abaqusv2025/English/SIMACAEEXCRefMap/simaexc-c-analysisproc.htm),
+[ENERGY FILE](https://docs.software.vt.edu/abaqusv2025/English/SIMACAEKEYRefMap/simakey-r-energyfile.htm).
+This export adds no persistent nonlinear result type or changes to the unified
+07 layout. A separate approved model/result version contract is still required.

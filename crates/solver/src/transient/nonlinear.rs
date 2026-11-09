@@ -158,6 +158,42 @@ fn rod(x: &[[f64; 3]], u: &[f64], ea: f64) -> Result<(Vec<f64>, Vec<f64>, f64)> 
     Ok((f, k, energy))
 }
 
+/// Elastic measures recovered from a saved displacement using the actual rod force kernel.
+/// These are diagnostics, not a native result payload. No lateral law defines Cauchy stress.
+#[derive(Serialize)]
+pub struct RodRecovery {
+    pub green_strain: f64,
+    pub second_piola_stress: f64,
+    pub nominal_stress: f64,
+    pub axial_force: f64,
+    pub nodal_internal_force: Vec<f64>,
+    pub strain_energy: f64,
+}
+pub fn recover_rod(x: &[[f64; 3]], u: &[f64], young: f64, area: f64) -> Result<RodRecovery> {
+    if !young.is_finite() || !area.is_finite() || young <= 0. || area <= 0. {
+        return Err(Error::Invalid("rod recovery material/area".into()));
+    }
+    let (force, _, energy) = rod(x, u, young * area)?;
+    let dx: [f64; 3] = std::array::from_fn(|i| x[1][i] - x[0][i]);
+    let d: [f64; 3] = std::array::from_fn(|i| dx[i] + u[i + 3] - u[i]);
+    let l2 = dot(&dx, &dx);
+    let strain = (dot(&d, &d) - l2) / (2. * l2);
+    let second_piola = young * strain;
+    let nominal = libm::sqrt(dot(&d, &d) / l2) * second_piola;
+    let axial = area * nominal;
+    if [strain, second_piola, nominal, axial, energy].iter().any(|x| !x.is_finite()) {
+        return Err(Error::Invalid("rod recovery overflow".into()));
+    }
+    Ok(RodRecovery {
+        green_strain: strain,
+        second_piola_stress: second_piola,
+        nominal_stress: nominal,
+        axial_force: axial,
+        nodal_internal_force: force,
+        strain_energy: energy,
+    })
+}
+
 /// Ephemeral SI diagnostics only: deliberately not a linear Response or a native Result.
 #[derive(Serialize)]
 pub struct Frame {

@@ -164,6 +164,7 @@ use crate::{Error, Result, unsupported};
 
 mod composite;
 mod dynamics;
+pub mod nonlinear;
 pub mod read;
 pub use read::{Limits, Read, Unknown, read, read_in, read_limited};
 

@@ -2455,6 +2455,17 @@ pub const SAMPLE: &[Field] = &[choice(
 .def("\"cantilever\"")];
 pub const COUNT: &[Field] = &[int("count", "Count", 1, 1_000_000).help("How many steps.").def("1")];
 
+pub const DECK_NONLINEAR: &[Field] = &[
+    path("path", "Input file", true).req().help(".inp and required original .c user-element companion, SI."),
+    STEP,
+    choice("mass", "Reference mass", &[("consistent", "Consistent"), ("lumped", "Lumped")])
+        .help("Use the same reference mass as the nonlinear solve; default consistent.")
+        .def("\"consistent\""),
+    choice("representation", "Element mapping", &[("uel", "Original StVK user element")])
+        .help("Required original C companion; the built-in T3D2 elastic law is not equivalent.")
+        .def("\"uel\""),
+];
+
 pub const DECK: &[Field] = &[
     choice("mass", "Dynamics mass", &[("consistent", "Consistent"), ("lumped", "Lumped")]).help("Dynamics only; default consistent. Must match stored results. Native rod2 requires lumped; unsupported distributed mass mappings are refused."),
     choice(
