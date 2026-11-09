@@ -144,7 +144,6 @@ fn unsupported_layer_and_orientation_semantics_are_refused_at_their_lines() {
         ("COMPOSITE, OFFSET", "COMPOSITE, SYMMETRIC, OFFSET", "SYMMETRIC"),
         ("COMPOSITE, OFFSET", "COMPOSITE, SECTION INTEGRATION=GAUSS, OFFSET", "Gauss"),
         ("DEFINITION=COORDINATES", "DEFINITION=NODES", "COORDINATES"),
-        ("3, 0.0\n*SHELL", "3, 10.0\n*SHELL", "nonzero additional"),
         ("ORIENTATION=FC_ORI_1", "ORIENTATION=Missing", "Missing"),
         ("0.001, 3, Carbon", "0.001, 2, Carbon", "odd Simpson"),
     ] {
@@ -152,6 +151,17 @@ fn unsupported_layer_and_orientation_semantics_are_refused_at_their_lines() {
         assert_ne!(bad, text, "replacement {from}");
         let error = abaqus::read(&bad).unwrap_err().to_string();
         assert!(error.contains("line ") && error.contains(why), "{error}");
+    }
+    let rotated = text.replace("3, 0.0\n*SHELL", "3, 10.0\n*SHELL");
+    assert_ne!(rotated, text);
+    let read = abaqus::read::read_analysis_limited(&rotated, Preset::MKgS, abaqus::read::Limits::default()).unwrap();
+    assert!(read.analysis_complete);
+    let normalized = abaqus::write(&read.model, Preset::MKgS).unwrap();
+    let back = abaqus::read(&normalized).unwrap();
+    let a = read.model.sections().values().next().unwrap().orientation.unwrap();
+    let b = back.model.sections().values().next().unwrap().orientation.unwrap();
+    for (x, y) in a.frame.axes_at([0.; 3]).unwrap().into_iter().flatten().zip(b.frame.axes_at([0.; 3]).unwrap().into_iter().flatten()) {
+        close(x, y);
     }
     assert!(abaqus::read("*FAIL STRESS\n1,2,3,4,5,0\n").unwrap_err().to_string().contains("S23"));
     let mut one_point = plate();

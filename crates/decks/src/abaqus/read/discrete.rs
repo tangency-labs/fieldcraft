@@ -1,4 +1,4 @@
-//! Constant isotropic MASS and grounded SPRING1 import.
+//! Constant isotropic or global diagonal MASS and grounded SPRING1 import.
 //! Syntax: Abaqus public Keywords Reference, *MASS and *SPRING:
 //! https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-mass.htm
 //! https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-spring.htm
@@ -44,15 +44,25 @@ pub(super) fn apply(
         let line = b.line;
         let mass = b.keyword == "MASS";
         b.only(if mass { &["ELSET", "TYPE"] } else { &["ELSET"] })?;
-        if mass && b.params.contains_key("TYPE") && canonical(b.required("TYPE")?) != "ISOTROPIC" {
-            return Err(error(line, "only constant isotropic MASS is supported"));
-        }
         let entries = values(b)?;
+        let mut point_mass = None;
         let (kind, dof, value) = if mass {
-            let [value] = entries.as_slice() else {
-                return Err(error(line, "constant isotropic MASS needs exactly one value"));
-            };
-            (Kind::Mass, 0, quantity(units, Quantity::Mass, *value, line)?)
+            if b.rows.len() != 1 {
+                return Err(error(line, "constant MASS requires exactly one data row"));
+            }
+            let convert = |v| quantity(units, Quantity::Mass, v, line);
+            let typ = if b.params.contains_key("TYPE") { b.required("TYPE")? } else { "ISOTROPIC" };
+            point_mass = Some(match (canonical(typ).as_str(), entries.as_slice()) {
+                ("ISOTROPIC", [m]) => Mass::Isotropic(convert(*m)?),
+                ("ANISOTROPIC", [x, y, z]) => Mass::Directional([convert(*x)?, convert(*y)?, convert(*z)?]),
+                _ => {
+                    return Err(error(
+                        line,
+                        "constant MASS needs TYPE=ISOTROPIC with one value or TYPE=ANISOTROPIC with three global principal values",
+                    ));
+                }
+            });
+            (Kind::Mass, 0, 0.0)
         } else {
             if b.rows.len() != 2 {
                 return Err(error(line, "constant SPRING1 needs a degree-of-freedom row and a stiffness row"));
@@ -101,7 +111,7 @@ pub(super) fn apply(
             let target = Target::Set(target);
             let name = format!("InpDiscreteElement{id}");
             if mass {
-                model.add_mass(&name, PointMass { target, mass: Some(Mass::Isotropic(value)), inertia: None })
+                model.add_mass(&name, PointMass { target, mass: point_mass, inertia: None })
             } else {
                 model.add_spring(&name, Spring::Spring { first: target, second: None, direction: Direction::Dof(dof), stiffness: value })
             }
@@ -151,6 +161,7 @@ mod tests {
         for text in [
             SOURCE.replace("*MASS,ELSET=Mass\n2\n", ""),
             SOURCE.replace("*MASS,ELSET=Mass", "*MASS,ELSET=Mass,ALPHA=0.1"),
+            SOURCE.replace("*MASS,ELSET=Mass", "*MASS,ELSET=Mass,TYPE"),
             SOURCE.replace("*SPRING,ELSET=Spring", "*SPRING,ELSET=Spring,NONLINEAR"),
             SOURCE.replace("1\n200\n", "1\n200,5\n"),
             SOURCE.replace("10,7", "10,99"),
@@ -160,6 +171,22 @@ mod tests {
             assert!(read_in(&text, Preset::MKgS).is_err(), "{text}");
         }
         assert!(super::super::read_limited(SOURCE, Preset::MKgS, Limits { elements: 1, ..Limits::default() }).is_err());
+    }
+
+    #[test]
+    fn global_directional_mass_preserves_axes_and_refuses_unmapped_options() {
+        let input = SOURCE.replace("*MASS,ELSET=Mass\n2", "*MASS,ELSET=Mass,TYPE=ANISOTROPIC\n2,3,5");
+        let got = read_analysis_limited(&input, Preset::MKgS, Limits::default()).unwrap();
+        assert!(got.analysis_complete);
+        assert_eq!(got.model.masses().values().next().unwrap().mass, Some(Mass::Directional([2., 3., 5.])));
+        for (from, to) in [("TYPE=ANISOTROPIC", "TYPE=ANISOTROPIC,ORIENTATION=Axes"), ("2,3,5", "2,3,5,20"), ("2,3,5", "2,-3,5")] {
+            assert!(read_in(&input.replace(from, to), Preset::MKgS).is_err());
+        }
+        let changed = input.replace("*FREQUENCY\n1", "*FREQUENCY\n1\n*MASS,ELSET=Mass,TYPE=ANISOTROPIC\n3,4,6");
+        let denied = read_analysis_limited(&changed, Preset::MKgS, Limits::default()).unwrap();
+        assert!(!denied.analysis_complete);
+        assert_eq!(denied.model.masses().values().next().unwrap().mass, Some(Mass::Directional([2., 3., 5.])));
+        assert!(denied.unknown.iter().any(|u| u.keyword == "MASS"));
     }
 
     #[test]

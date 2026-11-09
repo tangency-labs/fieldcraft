@@ -54,13 +54,13 @@ the current document; save existing work before running it in a session you are 
 
 - `NODE`, with optional node set; labels and coordinates.
 - `ELEMENT`, with type, connectivity and optional element set. Long connectivity may continue.
-- Constant isotropic `MASS` and grounded `SPRING1` elements with `MASS`/`SPRING` properties.
+- Constant isotropic or global diagonal anisotropic `MASS` and grounded `SPRING1` elements with `MASS`/`SPRING` properties.
   These become native point masses and springs named `InpDiscreteElement<label>` with explicit,
   collision-free node target sets. Translational and rotational spring stiffness use their own
   unit quantities. Discrete ELSETs resolve properties and `NSET, ELSET=...`; discrete labels are
   excluded from native mesh element sets, with a warning. Their original labels and memberships
   remain in the retained source. Translated instances remap labels and property set references;
-  springs in rotated instances are explicitly refused. Anisotropic/damped masses, nonlinear or
+  springs and anisotropic masses in rotated instances are explicitly refused. Oriented/damped masses, nonlinear or
   frequency-dependent springs, SPRING2/A, dashpots and rotary inertia are not mapped yet.
   Gravity may select ordinary mesh elements despite unrelated point masses; targets containing
   discrete elements and whole-model gravity with point masses remain refused.
@@ -182,7 +182,7 @@ FRACTION`, `CONDUCTIVITY`, `EXPANSION`, `CREEP`, `VISCOELASTIC`, `DAMPING`, `DAM
 after them are imported into that material; every unread option is still reported with its
 line number. For example, a writer-generated hyperelastic material retains its density, but
 its hyperelastic law is unread and its stiffness is absent. Review and supply the intended
-material behavior before solving. No plastic, hyperelastic or thermal law is inferred.
+material behavior before solving. No hyperelastic or thermal law is inferred. Constant isotropic plastic hardening has the explicit limited mapping below.
 
 Another model option or an unrecognized keyword ends material context. A later `ELASTIC` or
 `DENSITY` then needs a new `MATERIAL` definition, preventing association across unknown scopes.
@@ -354,7 +354,7 @@ save/open, exact source replay, and normalized deck write/read. Reference:
 [Boundary conditions](https://docs.software.vt.edu/abaqusv2025/English/SIMACAEPRCRefMap/simaprc-c-boundary.htm).
 
 Command-level refusal regressions also reopen source bundles containing unsupported `TIE`
-defaults, coupling orientations, `PLASTIC` or nodal `TRANSFORM`. They require the original
+defaults, coupling orientations, unsupported plastic histories or nodal `TRANSFORM`. They require the original
 text to survive and no runnable step to be created. This verifies conservative
 retention, not support for those physical definitions. Named antisymmetry is a
 linear structural mapping; it does not enable finite-rotation or transformed-node
@@ -522,9 +522,9 @@ columns and a plane-stress `LAMINA` completion are not inferred.
 For rectangular solid frames, the optional [orientation rotation](https://docs.software.vt.edu/abaqusv2025/English/SIMACAEKEYRefMap/simakey-r-orientation.htm)
 rotates the orthonormal material axes about local axis 1, 2 or 3. The resulting
 frame is persisted and exported explicitly; source replay retains the original
-axis/angle lines. Nonzero shell additional rotation (which needs projection in a
-different order), cylindrical twist, nodal/distributed frames remain named
-refusals. This does not relax the isotropic, unoriented B-bar material restriction.
+axis/angle lines. Rectangular shell frames use the same rotation followed by
+projection, as described below. Cylindrical twist and nodal/distributed frames
+remain named refusals. This does not relax the isotropic, unoriented B-bar material restriction.
 
 An original rotated tetrahedron tests `Kxx = E2/6`, `ux = 0.003 m` for a 1 N load,
 against independently constructed native commands, then save/open and normalized
@@ -849,8 +849,10 @@ by linear and stress-stiffened consumers because one source general step cannot
 express both choices. Nonlinear equilibrium remains a distinct procedure: no YES
 flag is changed to NO and unsupported nonlinear rod solving still refuses.
 
-Each harmonic perturbation retains the base support DOFs with zero incremental
-values, but starts with no loads: only loads written in that perturbation act.
+Frequency and harmonic perturbations retain the base support DOFs with zero
+incremental values. Inherited static amplitudes are cleared before validating the
+new procedure; explicitly supplied unsupported amplitudes still refuse. Each
+harmonic perturbation starts with no loads: only loads written in that perturbation act.
 The general history remains unchanged for subsequent general steps. Nonzero
 prescribed harmonic motion and frequency-dependent amplitudes remain named
 refusals. An empty `IMAGINARY, OP=NEW` load block maps an explicitly zero imaginary
@@ -869,3 +871,86 @@ column check distinguishes elastic stiffness from initial-stress stiffening.
 Public procedure semantics: [general and perturbation procedures](https://abaqus.uclouvain.be/English/SIMACAEANLRefMap/simaanl-c-linearnonlinear.htm),
 [direct steady-state dynamics](https://abaqus.uclouvain.be/English/SIMACAEANLRefMap/simaanl-c-steadystdyndirect.htm),
 and [loads in perturbation steps](https://abaqus.uclouvain.be/English/SIMACAEPRCRefMap/simaprc-c-loading.htm).
+
+
+### Global directional point mass
+
+`MASS, TYPE=ANISOTROPIC` with exactly one row of three constant principal values
+maps to the native global diagonal `Mass::Directional([mx,my,mz])`. Values are masses,
+not weights: each is converted through the mass unit. Without `ORIENTATION` the
+principal directions are the global axes, per the public [MASS keyword](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-mass.htm).
+Normalized export writes the three values and `TYPE=ANISOTROPIC`; equal components
+may normalize to an isotropic mass with the same physical tensor. Exact source replay
+retains the original keyword and numbers separately.
+
+The mapped range is linear static, frequency and direct harmonic analysis. Local
+orientation, a rotated instance, mass-proportional/composite damping parameters,
+extra temperature/field columns and other analysis combinations are refused by name.
+A mass redefinition inside a step is retained as unsupported history, never applied
+retroactively to earlier steps. The mass is model data and remains fixed across
+supported steps. No constitutive law, continuum mass quadrature or lumping default
+is inferred from this point-mass mapping.
+
+An original three-axis oscillator uses masses [2,3,5] kg and grounded spring stiffnesses
+[200,600,1500] N/m. Independent formulas are f_i=sqrt(k_i/m_i)/(2*pi) and
+U_i=F_i/(k_i-m_i*(2*pi*f)^2). Two direct response steps use forces [2,3,5] N and
+[4,0,0] N at 1 Hz. Tests compare native commands, SI/mm-tonne-second inputs,
+saved-result reopening, exact source replay and normalized export/read. There is
+no continuum stress in this discrete model; harmonic reaction forces are not
+exposed by the current probe. This is a mapping/analytical check, not commercial
+validation or evidence for general rotated mass tensors.
+
+### Constant isotropic plastic hardening in one small-strain equilibrium
+
+`*PLASTIC` (default or explicit `HARDENING=ISOTROPIC`) accepts constant pairs of
+true yield stress and equivalent plastic strain. Stress uses the chosen deck pressure unit;
+strain is dimensionless. The native J2 table interpolates between entries and holds the last
+yield stress beyond the final entry. The first plastic strain must be zero, strains strictly
+increase, stresses are positive and nondecreasing. No guessed elastic strain is subtracted.
+[Public PLASTIC keyword](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-plastic.htm)
+
+Analysis import is limited to exactly one automatic `STATIC`, `NLGEOM=NO`, isotropic C3D4
+step with no material orientation. It selects the existing material-nonlinear static solver
+with small-displacement kinematics, not the linear elastic solver. Increment sizes are
+normalized by the step period; this rate-independent solve uses a proportional ramp from
+zero initial plastic strain. Material state advances through converged increments within
+that step. It does not transfer plastic history to another step. Preserved results are
+endpoint results, not a restart file for integration-point history.
+
+Temperature/field/rate dependence, softening, other hardening types, local orientations,
+finite-strain plastic imports, perturbations, multiple steps and named load amplitudes are
+refused. Unsupported source history remains replayable; malformed material cards reject
+`deck.read` atomically and the original input file remains the evidence. No constitutive
+kernel or result layout is added. A positive import is not validation of other plastic laws.
+
+The original one-tetrahedron check has E=1000 Pa, nu=0.25, yield=1 Pa and hardening slope
+100 Pa, with 1.5 Pa uniaxial stress. The independent small-strain solution is plastic strain
+0.005, axial displacement 0.0065 m over 1 m, and lateral displacement -0.002875 m.
+The SI and mm-tonne-second inputs use the same forces, axes and strain table. Native commands,
+source replay, saved-result reopening and canonical reimport are separate checks.
+
+### Rectangular shell frames with an additional rotation
+
+A constant rectangular `ORIENTATION` now applies its scalar angle (degrees) about the
+selected local axis before the existing shell projection. The cyclic successor axis is
+projected into the element plane; the positive element normal completes the right-handed
+frame. This order is significant on tilted surfaces. The rotated frame and reference-axis
+index are native model data and survive save/open. Canonical output writes that frame with
+zero additional angle; source replay instead retains the original angle and text.
+[Public orientation algorithm](https://abaqus.uclouvain.be/English/SIMACAEMODRefMap/simamod-c-orientation.htm)
+
+This reuses existing shell material axes; it adds no constitutive law or nonlinear shell
+analysis. Cylindrical twist, distributed angles, node-based frames and unsupported coordinate
+systems remain named refusals. A degenerate projected direction is rejected by the native
+frame validation. The executable check is a flat orthotropic S4 membrane in linear statics:
+E1=2000 Pa, E2=1000 Pa, nu12=0.2, thickness=0.1 m, unit edge, total axial force=1 N.
+A 90-degree material rotation gives axial displacement 0.01 m and transverse contraction
+-0.001 m; the unrotated native control gives axial displacement 0.005 m. SI and mm-tonne-second
+inputs are compared with independently constructed native commands, source replay, reopened
+endpoint results and a canonical write/read/solve. This is not general shell bending or
+finite-rotation verification. Tensor comparisons must state whether components are global,
+element-local or material-local; a local stress component is not a global one by name alone.
+
+Plastic state still starts from zero in each independent native nonlinear equilibrium.
+A single step's load path is not state transfer between general steps. Multiple-step plastic
+import remains refused; the limited single-step hardening mapping above is unchanged.

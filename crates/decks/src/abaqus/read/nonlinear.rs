@@ -6,7 +6,7 @@ use super::{Block, error, label, number, row_fields};
 use crate::Result;
 use fieldcraft_model::{Elastic, ElementKind, Model, NonlinearStatic, Procedure};
 
-pub(super) fn procedure(step: &Block<'_>, block: &Block<'_>, model: &Model) -> Result<Procedure> {
+pub(super) fn procedure(step: &Block<'_>, block: &Block<'_>, model: &Model, nonlinear_geometry: bool) -> Result<Procedure> {
     if model.sections().values().any(|s| s.formulation.enhanced_strain13) {
         return Err(unsupported(step.line, "C3D8I with NLGEOM=YES is not mapped"));
     }
@@ -16,9 +16,9 @@ pub(super) fn procedure(step: &Block<'_>, block: &Block<'_>, model: &Model) -> R
     if model.elements().values().any(|e| !matches!(e.kind, ElementKind::Rod2 | ElementKind::Tet4))
         || model.sections().values().any(|s| {
             s.orientation.is_some()
-                || !model
-                    .material(&s.material)
-                    .is_some_and(|m| matches!(m.elastic, Some(Elastic::Isotropic { .. })) && m.plastic.is_none() && m.hyperelastic.is_none())
+                || !model.material(&s.material).is_some_and(|m| {
+                    matches!(m.elastic, Some(Elastic::Isotropic { .. })) && (!nonlinear_geometry || m.plastic.is_none()) && m.hyperelastic.is_none()
+                })
         })
     {
         return Err(unsupported(step.line, "NLGEOM=YES import currently requires isotropic elastic T3D2/T2D2 or C3D4"));
@@ -36,6 +36,7 @@ pub(super) fn procedure(step: &Block<'_>, block: &Block<'_>, model: &Model) -> R
     let min = at(2, (initial * period).min(1e-5 * period))? / period;
     let max = at(3, period)?.min(period) / period;
     let n = NonlinearStatic {
+        nonlinear_geometry,
         initial_increment: initial,
         min_increment: min,
         max_increment: max,
