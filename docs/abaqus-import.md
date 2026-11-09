@@ -54,13 +54,13 @@ the current document; save existing work before running it in a session you are 
 
 - `NODE`, with optional node set; labels and coordinates.
 - `ELEMENT`, with type, connectivity and optional element set. Long connectivity may continue.
-- Constant isotropic `MASS` and grounded `SPRING1` elements with `MASS`/`SPRING` properties.
+- Constant isotropic or global diagonal anisotropic `MASS` and grounded `SPRING1` elements with `MASS`/`SPRING` properties.
   These become native point masses and springs named `InpDiscreteElement<label>` with explicit,
   collision-free node target sets. Translational and rotational spring stiffness use their own
   unit quantities. Discrete ELSETs resolve properties and `NSET, ELSET=...`; discrete labels are
   excluded from native mesh element sets, with a warning. Their original labels and memberships
   remain in the retained source. Translated instances remap labels and property set references;
-  springs in rotated instances are explicitly refused. Anisotropic/damped masses, nonlinear or
+  springs and anisotropic masses in rotated instances are explicitly refused. Oriented/damped masses, nonlinear or
   frequency-dependent springs, SPRING2/A, dashpots and rotary inertia are not mapped yet.
   Gravity may select ordinary mesh elements despite unrelated point masses; targets containing
   discrete elements and whole-model gravity with point masses remain refused.
@@ -864,3 +864,31 @@ column check distinguishes elastic stiffness from initial-stress stiffening.
 Public procedure semantics: [general and perturbation procedures](https://abaqus.uclouvain.be/English/SIMACAEANLRefMap/simaanl-c-linearnonlinear.htm),
 [direct steady-state dynamics](https://abaqus.uclouvain.be/English/SIMACAEANLRefMap/simaanl-c-steadystdyndirect.htm),
 and [loads in perturbation steps](https://abaqus.uclouvain.be/English/SIMACAEPRCRefMap/simaprc-c-loading.htm).
+
+
+### Global directional point mass
+
+`MASS, TYPE=ANISOTROPIC` with exactly one row of three constant principal values
+maps to the native global diagonal `Mass::Directional([mx,my,mz])`. Values are masses,
+not weights: each is converted through the mass unit. Without `ORIENTATION` the
+principal directions are the global axes, per the public [MASS keyword](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-mass.htm).
+Normalized export writes the three values and `TYPE=ANISOTROPIC`; equal components
+may normalize to an isotropic mass with the same physical tensor. Exact source replay
+retains the original keyword and numbers separately.
+
+The mapped range is linear static, frequency and direct harmonic analysis. Local
+orientation, a rotated instance, mass-proportional/composite damping parameters,
+extra temperature/field columns and other analysis combinations are refused by name.
+A mass redefinition inside a step is retained as unsupported history, never applied
+retroactively to earlier steps. The mass is model data and remains fixed across
+supported steps. No constitutive law, continuum mass quadrature or lumping default
+is inferred from this point-mass mapping.
+
+An original three-axis oscillator uses masses [2,3,5] kg and grounded spring stiffnesses
+[200,600,1500] N/m. Independent formulas are f_i=sqrt(k_i/m_i)/(2*pi) and
+U_i=F_i/(k_i-m_i*(2*pi*f)^2). Two direct response steps use forces [2,3,5] N and
+[4,0,0] N at 1 Hz. Tests compare native commands, SI/mm-tonne-second inputs,
+saved-result reopening, exact source replay and normalized export/read. There is
+no continuum stress in this discrete model; harmonic reaction forces are not
+exposed by the current probe. This is a mapping/analytical check, not commercial
+validation or evidence for general rotated mass tensors.

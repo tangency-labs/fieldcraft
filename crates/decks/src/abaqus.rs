@@ -103,12 +103,12 @@
 //!
 //! Point masses, springs and dashpots are elements numbered after the mesh's, one per resolved
 //! copy, in an element set per definition (`<name>-mass`, `<name>-inertia`, `<name>-spring`, made
-//! unique against the model's sets): `MASS` with `*MASS` (one mass for every direction),
+//! unique against the model's sets): `MASS` with `*MASS` (isotropic or global principal values),
 //! `ROTARYI` with `*ROTARY INERTIA` (I11, I22, I33, I12, I13, I23), and `SPRING1`/`DASHPOT1` to
 //! the ground and `SPRING2`/`DASHPOT2` between two nodes along a global degree of freedom, or
-//! `SPRINGA`/`DASHPOTA` along the line of the nodes, with `*SPRING`/`*DASHPOT`. A mass that
-//! differs by direction and a spring along a skew fixed vector are reported (they need a local
-//! orientation, not written yet).
+//! `SPRINGA`/`DASHPOTA` along the line of the nodes, with `*SPRING`/`*DASHPOT`. Directional
+//! masses are limited to linear static, frequency and direct harmonic steps; a spring along
+//! a skew fixed vector still needs a local orientation and is not written.
 //!
 //! | FieldCraft | Plane stress | Plane strain | Axisymmetric |
 //! |---|---|---|---|
@@ -509,7 +509,7 @@ fn held_conditions(model: &Model, names: &BTreeSet<String>) -> BTreeSet<String> 
 
 /// The property of a group of discrete elements.
 enum DiscreteProperty {
-    Mass(f64),
+    Mass([f64; 3]),
     Inertia([f64; 6]),
     /// `*SPRING` or `*DASHPOT`: the degrees of freedom line (empty for the axial form) and the
     /// stiffness or damping coefficient.
@@ -562,10 +562,18 @@ fn discrete_groups<'r>(model: &Model, r: &'r Resolved) -> Result<Vec<DiscreteGro
     let mut bad = BTreeSet::new();
     for m in &r.masses {
         if m.mass.iter().any(|c| *c != 0.0) {
-            if m.mass[0] != m.mass[1] || m.mass[0] != m.mass[2] {
-                bad.insert(format!("point mass `{}`: a mass that differs by direction (needs a local orientation, not written yet)", m.name));
+            if (m.mass[0] != m.mass[1] || m.mass[0] != m.mass[2])
+                && model.steps().iter().any(|s| {
+                    !matches!(s.procedure, Procedure::Static {} | Procedure::Frequency { .. })
+                        && !matches!(&s.procedure, Procedure::Harmonic(h) if matches!(h.method, fieldcraft_model::harmonic::Method::Direct))
+                })
+            {
+                bad.insert(format!(
+                    "point mass `{}`: global ANISOTROPIC MASS is mapped only for linear static, frequency and direct harmonic steps",
+                    m.name
+                ));
             }
-            push(&m.name, "mass", "MASS", DiscreteProperty::Mass(m.mass[0]), (label()?, vec![m.node]));
+            push(&m.name, "mass", "MASS", DiscreteProperty::Mass(m.mass), (label()?, vec![m.node]));
         }
     }
     for m in &r.masses {
@@ -914,8 +922,13 @@ impl Deck {
         for g in groups {
             match &g.property {
                 DiscreteProperty::Mass(m) => {
-                    self.line(&format!("*MASS, ELSET={}", g.elset));
-                    self.numbers_line("", &[*m])?;
+                    if m[0] == m[1] && m[0] == m[2] {
+                        self.line(&format!("*MASS, ELSET={}", g.elset));
+                        self.numbers_line("", &m[..1])?;
+                    } else {
+                        self.line(&format!("*MASS, ELSET={}, TYPE=ANISOTROPIC", g.elset));
+                        self.numbers_line("", m)?;
+                    }
                 }
                 DiscreteProperty::Inertia(i) => {
                     self.line(&format!("*ROTARY INERTIA, ELSET={}", g.elset));

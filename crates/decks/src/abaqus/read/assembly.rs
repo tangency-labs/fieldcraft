@@ -351,6 +351,9 @@ pub(super) fn expand(text: &str, limits: Limits) -> Result<Option<Expanded>> {
                     return Err(error(b.line, "rotated orthotropic solid requires explicit part ORIENTATION; implicit axes are not inferred"));
                 }
             }
+            if i.transform.angle != 0.0 && b.keyword == "MASS" && b.value("TYPE").is_some_and(|v| canonical(v) == "ANISOTROPIC") {
+                return Err(error(b.line, "ANISOTROPIC MASS in a rotated instance is not mapped; principal axes are not inferred"));
+            }
             if i.transform.angle != 0.0 && b.keyword == "SPRING" {
                 return Err(error(b.line, "SPRING property in a rotated instance is not mapped; local spring axes must be explicit"));
             }
