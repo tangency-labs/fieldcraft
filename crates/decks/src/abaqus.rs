@@ -166,6 +166,7 @@ mod composite;
 mod dynamics;
 mod limited;
 pub mod nonlinear;
+mod random_matrix;
 pub mod read;
 pub use read::{Limits, Read, Unknown, read, read_in, read_limited};
 
@@ -236,6 +237,7 @@ pub fn write_resolved_with_mass(model: &Model, r: &Resolved, units: Preset, mass
     d.equations(model, r)?;
     d.out.push_str(&crate::foundation::abaqus(model, r)?);
     d.dynamics_data(model)?;
+    d.random_data(model)?;
     d.steps(model, r)?;
     Ok(d.out)
 }
@@ -1715,11 +1717,11 @@ impl Deck {
             self.comment(&format!("Step {}", step.name));
             match step.procedure {
                 Procedure::Fluid { .. } => return Err(crate::fluid_step(FORMAT, &step.name)),
-                Procedure::MatrixGeneration { .. } => {
-                    return Err(Error::Unsupported { format: FORMAT, what: "matrix generation: use solve.matrices or deck.source.write".into() });
+                Procedure::MatrixGeneration { ref matrices } => {
+                    self.matrix_step(model, r, step, &base_bcs, matrices)?;
                 }
                 Procedure::RandomVibration(_) => {
-                    return Err(Error::Unsupported { format: FORMAT, what: format!("step `{}`: random response is not written yet", step.name) });
+                    self.random_step(model, r, step, index, &base_bcs, &everything)?;
                 }
                 Procedure::Static {} | Procedure::NonlinearStatic(_) => {
                     if let Procedure::NonlinearStatic(n) = &step.procedure {

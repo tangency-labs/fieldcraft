@@ -286,8 +286,9 @@ factorization is needed. With no path the command assembles and reports metadata
 only; `solve.run` does not silently create files. Loads, initial fields, preload,
 nonlinear material behavior and nondefault matrix options are refused. Files are
 atomic individually, not a transaction. A native project saves the procedure;
-operator files are separate artifacts. Normalized deck writers currently refuse
-these procedures; `deck.source.write` replays their original text exactly.
+operator files are separate artifacts. The Abaqus canonical writer supports the
+limited random/matrix subsets described below; other deck formats still refuse them.
+`deck.source.write` independently replays their original text exactly.
 
 The SDOF random test compares every sampled displacement PSD with the analytic
 transfer function, then reopens and executes the saved definition. The axial-bar
@@ -582,7 +583,8 @@ thermal/initial stress, nonlinear materials, orientation and unsupported analysi
 combinations remain refused. A constant-simplex one-DOF test independently checks
 consistent versus row-sum modal frequencies and every sampled force PSD, including
 an incompatible cached source, save/reopen and exact source replay. Normalized
-random-step export remains a named refusal; source replay is not semantic export. A mixed
+random-step export now preserves the supported constant correlated modal subset;
+source replay remains a separate operation. A mixed
 B-bar Hex8/consistent Tet4 matrix test checks inertia integrals and `C=alpha M+beta K`.
 
 
@@ -1022,3 +1024,16 @@ nonlinear/complex properties, missing or duplicate endpoints and mismatched prop
 are reported by name and line. Step-level redefinition is not approximated. Canonical writing
 uses the existing SPRING1/2 and DASHPOT1/2 writer, while original labels, comments and
 unknown source text remain available through source replay after saving and reopening.
+
+### Canonical random and matrix steps
+
+The canonical writer now emits the supported unloaded linear `MATRIX GENERATE`/
+`MATRIX OUTPUT` operator selections instead of requiring source replay. Nonzero
+prescribed motion, active loads and base-state matrices remain named refusals.
+For modal random response it writes the immediately preceding unwindowed frequency
+step reference, one band including its bias and frequency scale, mode-number damping,
+and one real constant fully correlated multiplier PSD. Concentrated loads use case 2;
+distributed loads use case 1. Mixed cases, nonconstant spectra, explicit-frequency
+procedures and extra global damping are refused. Runtime sampling overrides remain
+solver-call settings, not invented input keywords. These paths preserve native model
+semantics; they do not assert equivalence of different solvers' sampling or recovery.

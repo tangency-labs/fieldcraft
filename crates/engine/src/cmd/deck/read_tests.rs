@@ -1170,8 +1170,9 @@ fn random_continuum_mass_uses_requested_operator_not_cached_modes_and_reopens() 
     s.execute("deck.source.write", &json!({"path":replay})).unwrap();
     assert_eq!(std::fs::read_to_string(replay).unwrap(), source);
     let normalized = dir.join("normalized.inp");
-    let error = s.execute("deck.write", &json!({"path":normalized,"format":"abaqus"})).unwrap_err().to_string();
-    assert!(error.contains("random response is not written yet"), "{error}");
+    s.execute("deck.write", &json!({"path":normalized,"format":"abaqus"})).unwrap();
+    let imported = s.execute("deck.read", &json!({"path":normalized,"format":"abaqus","units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(imported["analysis_complete"], true);
     let again = s.execute("solve.random", &json!({"step":"Random","mass":"lumped","nodes":[2],"sampling_frequencies":grid})).unwrap();
     assert_eq!(again["natural_frequencies"], lumped["natural_frequencies"]);
     assert_eq!(again["node_displacement_rms"], lumped["node_displacement_rms"]);
