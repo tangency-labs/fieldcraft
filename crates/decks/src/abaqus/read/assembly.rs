@@ -259,7 +259,7 @@ pub(super) fn expand(text: &str, limits: Limits) -> Result<Option<Expanded>> {
     let mut maps = BTreeMap::new();
     let mut used_names = BTreeSet::new();
     for b in &blocks {
-        for key in ["NSET", "ELSET", "NAME"] {
+        for key in ["NSET", "ELSET", "NAME", "CONSTRAINTNAME"] {
             if let Some(v) = b.value(key) {
                 used_names.insert(lex::unquote(v, b.line)?.to_ascii_uppercase());
             }
@@ -292,9 +292,9 @@ pub(super) fn expand(text: &str, limits: Limits) -> Result<Option<Expanded>> {
             }
         }
         for b in &i.blocks {
-            for key in ["NSET", "ELSET", "NAME"] {
+            for key in ["NSET", "ELSET", "NAME", "CONSTRAINTNAME"] {
                 if let Some(value) = b.value(key) {
-                    if key == "NAME" && !matches!(b.keyword.as_str(), "SURFACE" | "ORIENTATION") {
+                    if key == "NAME" && !matches!(b.keyword.as_str(), "SURFACE" | "ORIENTATION" | "TIE") {
                         continue;
                     }
                     let key = id(value, b.line)?;
@@ -477,15 +477,24 @@ fn emit(
             | "CLOAD"
             | "DLOAD"
             | "DSLOAD"
+            | "TIE"
+            | "COUPLING"
     );
     if mapped {
+        if b.keyword == "COUPLING" {
+            for key in ["CONSTRAINTNAME", "SURFACE", "REFNODE"] {
+                if let Some(Some(value)) = params.get_mut(key) {
+                    *value = reference(value, scope, key == "REFNODE", maps, assembly, b.line)?;
+                }
+            }
+        }
         for key in ["NSET", "ELSET", "ORIENTATION"] {
             if let Some(Some(value)) = params.get_mut(key) {
                 let reference_scope = if b.keyword == "NSET" && key == "ELSET" { target_scope } else { scope };
                 *value = reference(value, reference_scope, key == "NSET", maps, assembly, b.line)?;
             }
         }
-        if matches!(b.keyword.as_str(), "SURFACE" | "ORIENTATION")
+        if matches!(b.keyword.as_str(), "SURFACE" | "ORIENTATION" | "TIE")
             && let Some(Some(value)) = params.get_mut("NAME")
         {
             *value = reference(value, scope, false, maps, assembly, b.line)?;
@@ -588,6 +597,11 @@ fn emit(
             "BOUNDARY" | "CLOAD" | "DLOAD" | "DSLOAD" => {
                 if let Some(v) = f.first_mut().filter(|v| !v.is_empty()) {
                     *v = reference(v, scope, matches!(b.keyword.as_str(), "BOUNDARY" | "CLOAD"), maps, assembly, row.line)?;
+                }
+            }
+            "TIE" => {
+                for v in &mut f {
+                    *v = reference(v, scope, false, maps, assembly, row.line)?;
                 }
             }
             "SURFACE" => {

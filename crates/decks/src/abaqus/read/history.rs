@@ -628,7 +628,7 @@ fn materialize(model: &mut Model, step: &mut Step, state: &mut State, evaluation
     let limits = evaluation.limits;
     let time = evaluation.time;
     let total = evaluation.total;
-    let mut groups: BTreeMap<(Family, u8, u64), Vec<u32>> = BTreeMap::new();
+    let mut groups: BTreeMap<(Family, u8, u64, Option<String>), Vec<u32>> = BTreeMap::new();
     let mut accumulated: BTreeMap<(Family, u32, u8), f64> = BTreeMap::new();
     for ((family, _, id, dof), driven) in state.iter_mut() {
         check_work(groups.len())?;
@@ -666,9 +666,14 @@ fn materialize(model: &mut Model, step: &mut Step, state: &mut State, evaluation
         if !v.is_finite() {
             return Err(error(1, "accumulated load is non-finite"));
         }
-        groups.entry((family, dof, v.to_bits())).or_default().push(id);
+        let point = if matches!(family, Family::Boundary | Family::Force) {
+            model.reference_points().iter().find(|(_, p)| p.label == id).map(|(n, _)| n.clone())
+        } else {
+            None
+        };
+        groups.entry((family, dof, v.to_bits(), point)).or_default().push(id);
     }
-    for ((family, dof, bits), ids) in groups {
+    for ((family, dof, bits, point), ids) in groups {
         if ids.len() > limits.members {
             return Err(error(1, "analysis member limit reached"));
         }
@@ -689,15 +694,18 @@ fn materialize(model: &mut Model, step: &mut Step, state: &mut State, evaluation
             Family::PressureD | Family::PressureS => set.faces = ids.into_iter().map(|element| ElementFace { element, face: dof }).collect(),
             _ => set.elements = ids,
         }
-        model.add_set(&name, set).map_err(|e| error(1, e.to_string()))?;
+        let target = if let Some(point) = point {
+            Target::ReferencePoint(point)
+        } else {
+            model.add_set(&name, set).map_err(|e| error(1, e.to_string()))?;
+            Target::Set(name.clone())
+        };
         if family == Family::Boundary {
             let mut values = [None; 6];
             if let Some(slot) = values.get_mut(usize::from(dof) - 1) {
                 *slot = Some(value);
             }
-            model
-                .add_boundary_condition(&name, BoundaryCondition::Displacement { target: Target::Set(name.clone()), values })
-                .map_err(|e| error(1, e.to_string()))?;
+            model.add_boundary_condition(&name, BoundaryCondition::Displacement { target, values }).map_err(|e| error(1, e.to_string()))?;
             step.boundary_conditions.insert(name);
         } else {
             let mut vector = [0.0; 3];
@@ -705,8 +713,8 @@ fn materialize(model: &mut Model, step: &mut Step, state: &mut State, evaluation
                 *slot = value;
             }
             let load = match family {
-                Family::Force if dof <= 3 => Load::Force { target: Target::Set(name.clone()), vector, distribution: Distribution::PerNode },
-                Family::Force => Load::Moment { target: Target::Set(name.clone()), vector, distribution: Distribution::PerNode },
+                Family::Force if dof <= 3 => Load::Force { target, vector, distribution: Distribution::PerNode },
+                Family::Force => Load::Moment { target, vector, distribution: Distribution::PerNode },
                 Family::PressureD | Family::PressureS => Load::Pressure { set: name.clone(), magnitude: value },
                 _ => Load::Gravity { acceleration: vector, set: Some(name.clone()) },
             };

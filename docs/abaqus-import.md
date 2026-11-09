@@ -159,13 +159,13 @@ continue along accumulated general-step time. This does not validate any transie
 The full curve remains in the original source. Native frequency steps use homogeneous support
 DOFs and no applied loads; native modal normalization/output defaults apply.
 
-Contact, coupling, unsupported material laws, nonlinear/dynamic steps and unsupported load
+Contact, unsupported coupling variants, unsupported material laws, nonlinear/dynamic steps and unsupported load
 variants are not silently omitted from runnable analyses. Unhandled model physics blocks analysis
 mapping; an unsupported step stops that and later mappings. `history_imported` says whether any
 step was imported; `analysis_complete` says whether the entire supported history was mapped.
 It is not a solver-success flag. Output requests remain in the unread report; native procedure
-default outputs are used. Every keyword inside an unread step stays reported. Nested, unmatched or truncated step scopes are refused. Node-based surfaces are
-reported as unread; they are not converted into element surfaces.
+default outputs are used. Every keyword inside an unread step stays reported. Nested, unmatched or truncated step scopes are refused. Node-based surfaces used by supported couplings become native node sets; other node-based
+surfaces remain unread. They are not converted into element surfaces.
 
 `PARAMETER` and global `SYSTEM` records are refused
 because later Cartesian nodes could otherwise be misread in local coordinates. `NODE, SYSTEM=R`
@@ -346,9 +346,59 @@ checks all eight named conditions against explicit DOF lists through project
 save/open, exact source replay, and normalized deck write/read. Reference:
 [Boundary conditions](https://docs.software.vt.edu/abaqusv2025/English/SIMACAEPRCRefMap/simaprc-c-boundary.htm).
 
-Command-level refusal regressions also reopen source bundles containing `TIE`,
-`COUPLING`/`KINEMATIC`, `PLASTIC` or nodal `TRANSFORM`. They require the original
+Command-level refusal regressions also reopen source bundles containing unsupported `TIE`
+defaults, coupling orientations, `PLASTIC` or nodal `TRANSFORM`. They require the original
 text to survive and no runnable step to be created. This verifies conservative
 retention, not support for those physical definitions. Named antisymmetry is a
 linear structural mapping; it does not enable finite-rotation or transformed-node
 analysis.
+
+
+### Bonded surfaces and reference-point couplings
+
+`TIE` maps one secondary/main pair of solid element surfaces to a native `Tie`.
+It requires `ADJUST=NO` and an explicit positive `POSITION TOLERANCE`, converted
+with the selected length units. Omitted `TYPE` or `TYPE=SURFACE TO SURFACE` is
+accepted. FieldCraft enforces its native dual-mortar constraint; this is not a
+claim that interpolation coefficients, selection tolerances or nonmatching-mesh
+responses equal another solver. Default adjustment/tolerance, `TYPE=NODE TO SURFACE`,
+`TIED NSET`, `NO ROTATION`, shell ties and multiple pairs per name are not mapped.
+
+`COUPLING` maps an isolated numeric reference node or singleton node set, a
+`SURFACE, TYPE=NODE` with unit node weights, and `KINEMATIC` or uniform
+`DISTRIBUTING, COUPLING=CONTINUUM` to native reference-point constraints.
+The supported cloud consists only of solid-element nodes, in global axes, with
+all six reference DOFs selected (omitted data, blank first DOF, or ranges covering
+1–6). Continuum distribution uses equal nodal weights and translation-derived
+cloud rotation. The reference point retains its original label and coordinates;
+its temporary mesh-node alias is removed. Original reference node sets are
+expanded before this removal. Boundary, force and moment groups split reference
+points from ordinary mesh nodes, preserving per-node values and step activity.
+Source-only reference sets remain recoverable in exact replay; normalized export
+writes reference-point targets as numeric labels.
+
+Part/instance expansion rewrites local constraint names, tie surface pairs,
+coupling surfaces and reference node/set names before mapping. Invalid references
+fail the read transaction. Unsupported parameters/subcards produce named warnings,
+retain the source and block runnable history: e.g. `ORIENTATION`, `INFLUENCE RADIUS`,
+`KINEMATIC, ALPHA`, partial DOFs, nonuniform weights, `DISTRIBUTING, COUPLING=STRUCTURAL`,
+explicit structural rotational coupling, `FREE NODES`, `SINGLE FACET`, `UNIFORM`,
+and reference nodes already targeted by `MASS`/`SPRING` (discrete-target retargeting
+is not yet mapped).
+Some of these may be expressible with further native mapping; they are not claimed
+implemented or validated here. Unknown physics never becomes a successful solve
+merely because its source is retained.
+
+Original two-cube command tests compare imported constraints to independently built
+native commands, including a translated instance and reference-point force/moment
+transfer. The axial patch has area 1 m², length 2 m, E=1000 Pa, nu=0 and load 1 N:
+its theoretical end displacement is 0.002 m. Tests compare displacement, nodal stress
+and total support reaction, then save/open and normalized write/read and solve again.
+Exact source replay checks original bytes separately. These small native comparisons
+validate mapping and persistence, not commercial parity, arbitrary mesh mortar accuracy,
+nonlinear motion, shell coupling or modal truncation.
+
+Syntax references: [TIE](https://docs.software.vt.edu/abaqusv2025/English/SIMACAEKEYRefMap/simakey-r-tie.htm),
+[COUPLING](https://docs.software.vt.edu/abaqusv2025/English/SIMACAEKEYRefMap/simakey-r-coupling.htm),
+[KINEMATIC](https://docs.software.vt.edu/abaqusv2025/English/SIMACAEKEYRefMap/simakey-r-kinematic.htm),
+[DISTRIBUTING](https://docs.software.vt.edu/abaqusv2025/English/SIMACAEKEYRefMap/simakey-r-distributing.htm).

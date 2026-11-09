@@ -16,6 +16,7 @@ mod assembly;
 pub use assembly::InstanceMap;
 pub mod bundle;
 mod composite;
+mod constraints;
 mod discrete;
 mod dynamic;
 mod history;
@@ -108,9 +109,11 @@ fn read_mode(text: &str, preset: Preset, limits: Limits, analysis: bool) -> Resu
     let flat = expanded.as_ref().map_or(text, |e| e.text.as_str());
     let parse_all = || -> Result<Read> {
         let mut read = parse(flat, preset, limits)?;
+        constraints::import(flat, &mut read, preset, limits)?;
         if analysis {
             history::import(flat, &mut read, preset, limits)?;
         }
+        constraints::finish(&mut read.model)?;
         read.unknown.truncate(MAX_UNKNOWN_SHOWN);
         Ok(read)
     };

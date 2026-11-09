@@ -525,7 +525,7 @@ fn named_boundaries_reopen_replay_and_normalized_read_preserve_dofs() {
 fn unmapped_constraints_and_materials_survive_reopen_without_runnable_steps() {
     for (keyword, block) in [
         ("TIE", "*TIE,NAME=Joint\nSlave,Master\n"),
-        ("COUPLING", "*COUPLING,CONSTRAINT NAME=Joint,REF NODE=1,SURFACE=Slave\n*KINEMATIC\n1,6\n"),
+        ("COUPLING", "*COUPLING,CONSTRAINT NAME=Joint,REF NODE=1,SURFACE=Slave,ORIENTATION=Unmapped\n*KINEMATIC\n1,6\n"),
         ("PLASTIC", "*MATERIAL,NAME=M\n*ELASTIC\n1000,.3\n*PLASTIC\n10,0\n"),
         ("TRANSFORM", "*TRANSFORM,NSET=All,TYPE=R\n0,1,0,-1,0,0\n"),
     ] {
@@ -554,4 +554,254 @@ fn unmapped_constraints_and_materials_survive_reopen_without_runnable_steps() {
         assert_eq!(std::fs::read(output).unwrap(), text.as_bytes());
         std::fs::remove_dir_all(dir).unwrap();
     }
+}
+
+// Original two-cube axial patch: disjoint interface nodes, unit area, length 2,
+// E=1000, nu=0, one newton through a rigid top reference point: u_z=0.002.
+fn constraint_input() -> String {
+    let mut text = String::from("*NODE\n");
+    let corners = [[0., 0., 0.], [1., 0., 0.], [1., 1., 0.], [0., 1., 0.], [0., 0., 1.], [1., 0., 1.], [1., 1., 1.], [0., 1., 1.]];
+    for cube in 0..2 {
+        for (i, p) in corners.iter().enumerate() {
+            text += &format!("{},{},{},{}\n", cube * 8 + i + 1, p[0], p[1], p[2] + cube as f64);
+        }
+    }
+    text + "99,.5,.5,2\n*ELEMENT,TYPE=C3D8,ELSET=All\n1,1,2,3,4,5,6,7,8\n2,9,10,11,12,13,14,15,16\n*NSET,NSET=Base\n1,2,3,4\n*NSET,NSET=Top\n13,14,15,16\n*NSET,NSET=RP\n99\n*SURFACE,TYPE=ELEMENT,NAME=Main\n1,S2\n*SURFACE,TYPE=ELEMENT,NAME=Secondary\n2,S1\n*SURFACE,TYPE=NODE,NAME=Pad\nTop,1\n*MATERIAL,NAME=M\n*ELASTIC\n1000,0\n*DENSITY\n1\n*SOLID SECTION,ELSET=All,MATERIAL=M\n*TIE,NAME=Glue,ADJUST=NO,POSITION TOLERANCE=.01\nSecondary,Main\n*COUPLING,CONSTRAINT NAME=Rigid,REF NODE=RP,SURFACE=Pad\n*KINEMATIC\n1,6\n*STEP,NAME=Pull\n*STATIC\n*BOUNDARY\nBase,1,3\n*CLOAD\nRP,3,1\n*END STEP\n"
+}
+fn native_constraint_patch() -> Session {
+    let mut s = Session::default();
+    s.execute("model.units", &json!({"system":"m-kg-s-N-Pa"})).unwrap();
+    for (i, xyz) in [
+        [0, 0, 0],
+        [1, 0, 0],
+        [1, 1, 0],
+        [0, 1, 0],
+        [0, 0, 1],
+        [1, 0, 1],
+        [1, 1, 1],
+        [0, 1, 1],
+        [0, 0, 1],
+        [1, 0, 1],
+        [1, 1, 1],
+        [0, 1, 1],
+        [0, 0, 2],
+        [1, 0, 2],
+        [1, 1, 2],
+        [0, 1, 2],
+    ]
+    .iter()
+    .enumerate()
+    {
+        s.execute("mesh.node.add", &json!({"label":i+1,"xyz":xyz})).unwrap();
+    }
+    for (id, nodes) in [(1, vec![1, 2, 3, 4, 5, 6, 7, 8]), (2, vec![9, 10, 11, 12, 13, 14, 15, 16])] {
+        s.execute("mesh.element.add", &json!({"label":id,"kind":"hex8","nodes":nodes})).unwrap();
+    }
+    s.run_script(&json!([
+        {"command":"model.set.create","params":{"name":"All","elements":[1,2]}},
+        {"command":"model.set.create","params":{"name":"Base","nodes":[1,2,3,4]}},
+        {"command":"model.set.create","params":{"name":"Top","nodes":[13,14,15,16]}},
+        {"command":"model.set.create","params":{"name":"Main","faces":[{"element":1,"face":2}]}},
+        {"command":"model.set.create","params":{"name":"Secondary","faces":[{"element":2,"face":1}]}},
+        {"command":"model.material.create","params":{"name":"M","elastic":{"type":"isotropic","young":1000,"poisson":0},"density":1}},
+        {"command":"model.section.create","params":{"name":"S","set":"All","material":"M","kind":{"type":"solid"}}},
+        {"command":"interaction.tie","params":{"name":"Glue","main":"Main","secondary":"Secondary","position_tolerance":0.01}},
+        {"command":"model.reference_point.create","params":{"name":"RP","xyz":[0.5,0.5,2],"label":99}},
+        {"command":"model.coupling.create","params":{"name":"Rigid","reference_point":"RP","set":"Top","kind":"kinematic"}},
+        {"command":"model.boundary_condition.create","params":{"name":"Clamp","type":"displacement","target":{"set":"Base"},"values":[0,0,0,null,null,null]}},
+        {"command":"model.load.create","params":{"name":"F","type":"force","target":{"reference_point":"RP"},"vector":[0,0,1]}},
+        {"command":"model.step.create","params":{"name":"Pull","procedure":{"type":"static"},"boundary_conditions":["Clamp"],"loads":["F"]}}
+    ])).unwrap();
+    s
+}
+#[test]
+fn imported_constraints_solve_reopen_replay_and_normalize_like_native_commands() {
+    let dir = folder();
+    let input = dir.join("input.inp");
+    let text = constraint_input();
+    std::fs::write(&input, &text).unwrap();
+    let mut native = native_constraint_patch();
+    let expected = native.execute("solve.static", &json!({"step":"Pull"})).unwrap();
+    let expected = expected["max_displacement"]["value"].as_f64().unwrap();
+    assert!((expected - 0.002).abs() < 1e-12, "native {expected}");
+    let mut s = Session::default();
+    let reply = s.execute("deck.read", &json!({"path":input,"format":"abaqus","units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(reply["analysis_complete"], true, "{reply}");
+    assert_eq!(s.model.ties().len(), 1);
+    assert_eq!(s.model.couplings().len(), 1);
+    assert!(s.model.node(99).is_none());
+    assert_eq!(s.model.reference_points().values().next().unwrap().label, 99);
+    let saved = dir.join("saved.fieldcraft");
+    for phase in 0..3 {
+        let actual = s.execute("solve.static", &json!({"step":"Pull"})).unwrap();
+        let actual = actual["max_displacement"]["value"].as_f64().unwrap();
+        assert!((actual - expected).abs() < 1e-12, "phase {phase}: {actual} vs {expected}");
+        assert_constraint_results(&native, &s);
+        println!("constraint patch phase={phase} native={expected:.15e} imported={actual:.15e} error={:.3e}", (actual - expected).abs());
+        if phase == 0 {
+            s.execute("file.save_as", &json!({"path":saved,"results":true})).unwrap();
+            s.execute("file.new", &json!({})).unwrap();
+            s.execute("file.open", &json!({"path":saved})).unwrap();
+            let replay = dir.join("replay.inp");
+            s.execute("deck.source.write", &json!({"path":replay})).unwrap();
+            assert_eq!(std::fs::read(replay).unwrap(), text.as_bytes());
+        } else if phase == 1 {
+            let normalized = dir.join("normalized.inp");
+            s.execute("deck.write", &json!({"path":normalized,"format":"abaqus"})).unwrap();
+            let read = s.execute("deck.read", &json!({"path":normalized,"format":"abaqus","units":"m-kg-s-N-Pa"})).unwrap();
+            assert_eq!(read["analysis_complete"], true, "{read}");
+        }
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+#[test]
+fn imported_constraints_named_rejections_preserve_source_and_bad_references_are_atomic() {
+    let dir = folder();
+    let input = dir.join("input.inp");
+    for (from, to, reason) in [
+        ("ADJUST=NO", "ADJUST=YES", "ADJUST"),
+        ("*STEP,NAME=Pull", "*ELEMENT,TYPE=MASS,ELSET=PointMass\n100,99\n*MASS,ELSET=PointMass\n1\n*STEP,NAME=Pull", "MASS/SPRING"),
+        ("POSITION TOLERANCE=.01", "POSITION TOLERANCE=.01,NO ROTATION", "NOROTATION"),
+        ("SURFACE=Pad", "SURFACE=Pad,ORIENTATION=Local", "ORIENTATION"),
+        ("SURFACE=Pad", "SURFACE=Pad,INFLUENCE RADIUS=1", "INFLUENCERADIUS"),
+        ("*KINEMATIC\n1,6", "*DISTRIBUTING,COUPLING=STRUCTURAL\n1,6", "STRUCTURAL"),
+        ("*KINEMATIC\n1,6", "*KINEMATIC\n1,3", "partial DOFs"),
+    ] {
+        let text = constraint_input().replace(from, to);
+        std::fs::write(&input, &text).unwrap();
+        let mut s = Session::default();
+        let read = s.execute("deck.read", &json!({"path":input,"format":"abaqus"})).unwrap();
+        assert_eq!(read["analysis_complete"], false, "{read}");
+        assert!(read["warnings"].to_string().contains(reason), "{reason}: {read}");
+        assert!(s.model.steps().is_empty());
+        let replay = dir.join(format!("{}.inp", reason.replace('/', "-")));
+        s.execute("deck.source.write", &json!({"path":replay})).unwrap();
+        assert_eq!(std::fs::read(replay).unwrap(), text.as_bytes());
+    }
+    let mut s = native_constraint_patch();
+    for (from, to) in [("Secondary,Main", "Missing,Main"), ("REF NODE=RP", "REF NODE=100"), ("SURFACE=Pad", "SURFACE=Missing")] {
+        std::fs::write(&input, constraint_input().replace(from, to)).unwrap();
+        let before = s.clone();
+        let err = s.execute("deck.read", &json!({"path":input,"format":"abaqus"})).unwrap_err();
+        assert!(err.to_string().contains("missing"), "{err}");
+        assert_unchanged(&s, &before);
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+fn assert_constraint_results(native: &Session, imported: &Session) {
+    fn result(s: &Session) -> &fieldcraft_solver::StaticResult {
+        let crate::StepResult::Implicit(fieldcraft_solver::StepResult::Static(r)) = s.result("Pull").unwrap().as_ref() else {
+            panic!("static result");
+        };
+        r
+    }
+    let (a, b) = (result(native), result(imported));
+    for (x, y) in a.displacement.iter().flatten().zip(b.displacement.iter().flatten()) {
+        assert!((x - y).abs() < 1e-12, "displacement {x} vs {y}");
+    }
+    for (x, y) in a.stress.iter().flatten().zip(b.stress.iter().flatten()) {
+        assert!((x - y).abs() < 1e-9, "stress {x} vs {y}");
+    }
+    for (x, y) in a.reaction_total.iter().zip(b.reaction_total.iter()) {
+        assert!((x - y).abs() < 1e-12, "reaction {x} vs {y}");
+    }
+    assert_eq!(a.displacement.len(), b.displacement.len());
+    let du = a.displacement.iter().flatten().zip(b.displacement.iter().flatten()).map(|(x, y)| (x - y).abs()).fold(0.0_f64, f64::max);
+    let ds = a.stress.iter().flatten().zip(b.stress.iter().flatten()).map(|(x, y)| (x - y).abs()).fold(0.0_f64, f64::max);
+    println!("constraint native comparison max_du={du:.6e} max_ds={ds:.6e} applied={:?} reaction={:?}", b.applied_total, b.reaction_total);
+
+    assert!((b.reaction_total[2] + b.applied_total[2]).abs() < 1e-12);
+}
+#[test]
+fn imported_constraints_instance_references_and_moment_transfer() {
+    let dir = folder();
+    let input = dir.join("instance.inp");
+    let material = "*MATERIAL,NAME=M\n*ELASTIC\n1000,0\n*DENSITY\n1\n";
+    let text = constraint_input().replace(material, "");
+    let (part, step) = text.split_once("*STEP").unwrap();
+    let text = format!(
+        "{material}*PART,NAME=P\n{part}*END PART\n*ASSEMBLY,NAME=A\n*INSTANCE,NAME=I,PART=P\n3,0,0\n*END INSTANCE\n*END ASSEMBLY\n*STEP{}",
+        step.replace("Base,1,3", "I.Base,1,3").replace("RP,3,1", "I.RP,3,1\nI.RP,5,.2")
+    );
+    std::fs::write(&input, text).unwrap();
+    let mut native = native_constraint_patch();
+    native.execute("model.load.create", &json!({"name":"Moment","type":"moment","target":{"reference_point":"RP"},"vector":[0,0.2,0]})).unwrap();
+    native
+        .execute("model.step.edit", &json!({"name":"Pull","procedure":{"type":"static"},"boundary_conditions":["Clamp"],"loads":["F","Moment"]}))
+        .unwrap();
+    native.execute("solve.static", &json!({"step":"Pull"})).unwrap();
+    let mut s = Session::default();
+    let reply = s.execute("deck.read", &json!({"path":input,"format":"abaqus","units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(reply["analysis_complete"], true, "{reply}");
+    let rp = s.model.reference_points().values().next().unwrap();
+    assert_eq!(rp.xyz, [3.5, 0.5, 2.0]);
+    assert_eq!(reply["instances"][0]["name"], "I");
+    s.execute("solve.static", &json!({"step":"Pull"})).unwrap();
+    assert_constraint_results(&native, &s);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn imported_constraints_uniform_distribution_reopens_and_round_trips_with_moment() {
+    let dir = folder();
+    let input = dir.join("distributed.inp");
+    let text = constraint_input().replace("*KINEMATIC", "*DISTRIBUTING,WEIGHTING METHOD=UNIFORM").replace("RP,3,1", "RP,3,1\nRP,5,.2");
+    std::fs::write(&input, &text).unwrap();
+    let mut native = native_constraint_patch();
+    native.execute("model.coupling.edit", &json!({"name":"Rigid","reference_point":"RP","set":"Top","kind":"distributing"})).unwrap();
+    native.execute("model.load.create", &json!({"name":"Moment","type":"moment","target":{"reference_point":"RP"},"vector":[0,0.2,0]})).unwrap();
+    native
+        .execute("model.step.edit", &json!({"name":"Pull","procedure":{"type":"static"},"boundary_conditions":["Clamp"],"loads":["F","Moment"]}))
+        .unwrap();
+    native.execute("solve.static", &json!({"step":"Pull"})).unwrap();
+    let mut s = Session::default();
+    let read = s.execute("deck.read", &json!({"path":input,"format":"abaqus","units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(read["analysis_complete"], true, "{read}");
+    for phase in 0..3 {
+        s.execute("solve.static", &json!({"step":"Pull"})).unwrap();
+        assert_constraint_results(&native, &s);
+        if phase == 0 {
+            let saved = dir.join("saved.fieldcraft");
+            s.execute("file.save_as", &json!({"path":saved,"results":true})).unwrap();
+            s.execute("file.new", &json!({})).unwrap();
+            s.execute("file.open", &json!({"path":saved})).unwrap();
+            let replay = dir.join("replay.inp");
+            s.execute("deck.source.write", &json!({"path":replay})).unwrap();
+            assert_eq!(std::fs::read(replay).unwrap(), text.as_bytes());
+        } else if phase == 1 {
+            let path = dir.join("normalized.inp");
+            s.execute("deck.write", &json!({"path":path,"format":"abaqus"})).unwrap();
+            let read = s.execute("deck.read", &json!({"path":path,"format":"abaqus","units":"m-kg-s-N-Pa"})).unwrap();
+            assert_eq!(read["analysis_complete"], true, "{read}");
+        }
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn imported_constraints_split_mixed_node_point_loads_and_reference_boundaries() {
+    let dir = folder();
+    let input = dir.join("mixed.inp");
+    let text = constraint_input()
+        .replace("*STEP,NAME=Pull", "*NSET,NSET=Mixed\n13,99\n*STEP,NAME=Pull")
+        .replace("Base,1,3", "Base,1,3\nRP,1,1")
+        .replace("RP,3,1", "Mixed,3,1");
+    std::fs::write(&input, text).unwrap();
+    let mut native = native_constraint_patch();
+    native.run_script(&json!([
+        {"command":"model.set.create","params":{"name":"Corner","nodes":[13]}},
+        {"command":"model.load.create","params":{"name":"CornerForce","type":"force","target":{"set":"Corner"},"vector":[0,0,1]}},
+        {"command":"model.boundary_condition.create","params":{"name":"Hold","type":"displacement","target":{"reference_point":"RP"},"values":[0,null,null,null,null,null]}},
+        {"command":"model.step.edit","params":{"name":"Pull","procedure":{"type":"static"},"boundary_conditions":["Clamp","Hold"],"loads":["F","CornerForce"]}}
+    ])).unwrap();
+    native.execute("solve.static", &json!({"step":"Pull"})).unwrap();
+    let mut s = Session::default();
+    let reply = s.execute("deck.read", &json!({"path":input,"format":"abaqus","units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(reply["analysis_complete"], true, "{reply}");
+    assert!(s.model.boundary_conditions().values().any(|b| b.target().reference_point().is_some()));
+    assert_eq!(s.model.loads().len(), 2);
+    s.execute("solve.static", &json!({"step":"Pull"})).unwrap();
+    assert_constraint_results(&native, &s);
+    std::fs::remove_dir_all(dir).unwrap();
 }
