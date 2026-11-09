@@ -211,6 +211,8 @@ pub fn solve_buckle(model: &Model, step: Option<&str>, limits: &Limits) -> Resul
         stats: Stats { dofs: mesh.dofs(), equations: neq, factor_entries: entries, lanczos_vectors: pairs.basis },
         warnings,
         buckling: Some(buckling),
+        mass_kind: None,
+        section_mass_policy: None,
     })
 }
 
