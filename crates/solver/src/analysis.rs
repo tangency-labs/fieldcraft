@@ -422,6 +422,9 @@ pub fn solve_static(model: &Model, step: Option<&str>, limits: &Limits) -> Resul
         |p| matches!(p, Procedure::Static {} | Procedure::CoupledTemperatureDisplacement {}),
         "static or coupled temperature–displacement",
     )?;
+    let fixed = crate::pretension::resolve_fixed(model, &step.name, limits)?;
+    let step = fixed.step(&step.name).ok_or_else(|| Error::Internal("resolved static step".into()))?;
+    let model = fixed.as_ref();
     crate::system::refuse_contact(model, "linear static")?;
     let mesh = Mesh::new(model, &resolved, limits.max_dofs)?;
     let mut result = static_on(&Setup { model, resolved: &resolved, mesh: &mesh, step }, limits)?;
@@ -710,6 +713,16 @@ fn frequency_impl(
 ) -> Result<(FrequencyResult, Option<Csr>)> {
     // A job cancelled before it starts stops here, before any setup work.
     fieldcraft_model::progress::check()?;
+    if model.pretensions().values().any(|p| p.face.is_some()) {
+        if retain_mass {
+            return Err(Error::NotSupported("modal derivatives on a private pretension cut".into()));
+        }
+        let resolved = model.resolve()?;
+        let prepared = crate::pretension::prepare(model, &resolved, limits.max_dofs)?;
+        let (mut result, mass) = frequency_impl(prepared.model.as_ref(), step, options, limits, false)?;
+        prepared.project_frequency(&mut result);
+        return Ok((result, mass));
+    }
     let resolved: Resolved = model.resolve()?;
     let step = model.select_step(step, |p| matches!(p, Procedure::Frequency { .. }), "frequency")?;
     let Procedure::Frequency { modes, min_hz, max_hz } = step.procedure else {

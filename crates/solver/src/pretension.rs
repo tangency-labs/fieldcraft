@@ -9,6 +9,8 @@ use fieldcraft_model::{Model, PretensionControl, PretensionSection, Resolved, St
 use std::collections::BTreeSet;
 mod cut;
 pub(crate) use cut::prepare;
+mod fixed;
+pub(crate) use fixed::resolve_fixed;
 
 pub(crate) fn control_dof(mesh: &Mesh, section: &PretensionSection) -> Result<usize> {
     let point = mesh.point(&section.control).ok_or_else(|| Error::Invalid(format!("pretension control `{}` is missing", section.control)))?;
@@ -23,9 +25,7 @@ pub(crate) fn rows<'a>(model: &'a Model, resolved: &Resolved, mesh: &Mesh) -> Re
     let mut rows = Vec::new();
     for (name, section) in model.pretensions() {
         if section.face.is_some() {
-            return Err(Error::NotSupported(format!(
-                "pretension `{name}` continuous face requires internal cut preparation; currently available in static equilibrium analyses"
-            )));
+            return Err(Error::NotSupported(format!("pretension `{name}` continuous face requires internal cut preparation for this analysis")));
         }
         if mesh.theory.is_some() {
             return Err(Error::NotSupported(format!("pretension `{name}` in 2D")));
@@ -86,7 +86,7 @@ pub(crate) fn prescribe(model: &Model, mesh: &Mesh, step: &Step, values: bool, o
             Some(PretensionControl::Adjustment { value }) => Some(if values { *value } else { 0.0 }),
             Some(PretensionControl::Fixed) => {
                 return Err(Error::Invalid(format!(
-                    "pretension `{name}` current-value FIXED is an export-only control; solve from a resolved adjustment or use model.pretension.lock"
+                    "pretension `{name}` current-value FIXED must be resolved from its preceding equilibrium before assembly"
                 )));
             }
             None => Some(0.0), // undeformed cut or locked perturbation increment

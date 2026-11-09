@@ -1323,6 +1323,9 @@ pub fn solve_nonlinear(model: &Model, step: Option<&str>, limits: &Limits) -> Re
     // A job cancelled before it starts stops here, before any setup work.
     fieldcraft_model::progress::check()?;
     let chosen = model.select_step(step, |p| matches!(p, Procedure::NonlinearStatic(_)), "nonlinear static")?;
+    let fixed = crate::pretension::resolve_fixed(model, &chosen.name, limits)?;
+    let chosen = fixed.step(&chosen.name).ok_or_else(|| Error::Internal("resolved nonlinear step".into()))?;
+    let model = fixed.as_ref();
     let Procedure::NonlinearStatic(settings) = &chosen.procedure else {
         return Err(Error::Internal("nonlinear static step".into()));
     };
@@ -1336,6 +1339,8 @@ pub fn solve_nonlinear(model: &Model, step: Option<&str>, limits: &Limits) -> Re
 /// discarded. The tangent already contains stress stiffness; do not add K_sigma again.
 /// Contact requires a frozen constraint mapping, not the contact penalty tangent.
 pub(crate) fn terminal_tangent(model: &Model, step: &str, limits: &Limits) -> Result<(StaticResult, crate::prestress::Terminal)> {
+    let fixed = crate::pretension::resolve_fixed(model, step, limits)?;
+    let model = fixed.as_ref();
     let chosen = model.step(step).ok_or_else(|| Error::Invalid(format!("no base step `{step}`")))?;
     let Procedure::NonlinearStatic(settings) = &chosen.procedure else {
         return Err(Error::Invalid(format!("base step `{step}` is not nonlinear static")));

@@ -1651,6 +1651,7 @@ impl Deck {
         let mut base_bcs = initial;
         let mut base_loads: BTreeSet<String> = BTreeSet::new();
         let mut written = Written::default();
+        let mut had_pretension_force = false;
         for (index, step) in steps.iter().enumerate() {
             self.comment(&format!("Step {}", step.name));
             match step.procedure {
@@ -1719,14 +1720,18 @@ impl Deck {
                     } else {
                         self.step_boundaries(model, r, &base_bcs, &step.boundary_conditions)?;
                     }
-                    if step.loads == base_loads {
+                    if step.loads == base_loads && !had_pretension_force {
                         self.comment("loads: as in the previous general step");
                     } else {
                         let loads = StepLoads::new(model, r, step, &everything);
-                        self.step_loads(&loads, written)?;
+                        // Native general-step loads persist. Clear the preceding
+                        // scalar cut force even when ordinary loads are unchanged,
+                        // then restate those loads and this step's cut controls.
+                        self.step_loads(&loads, Written { concentrated: written.concentrated || had_pretension_force, ..written })?;
                         written = loads.written();
                     }
                     self.pretension_step(model, r, step)?;
+                    had_pretension_force = step.pretension.values().any(|c| matches!(c, fieldcraft_model::PretensionControl::Force { .. }));
                     base_bcs.clone_from(&step.boundary_conditions);
                     base_loads.clone_from(&step.loads);
                 }

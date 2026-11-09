@@ -273,6 +273,13 @@ pub fn solve_harmonic(model: &Model, name: Option<&str>, limits: &Limits) -> Res
 /// Solve using the same mass choice for inertia, material damping and modal reduction.
 pub fn solve_harmonic_with_mass(model: &Model, name: Option<&str>, mass: MassKind, limits: &Limits) -> Result<HarmonicResult> {
     fieldcraft_model::progress::check()?;
+    if model.pretensions().values().any(|p| p.face.is_some()) {
+        let resolved = model.resolve()?;
+        let prepared = crate::pretension::prepare(model, &resolved, limits.max_dofs)?;
+        let mut result = solve_harmonic_with_mass(prepared.model.as_ref(), name, mass, limits)?;
+        prepared.project_harmonic(&mut result);
+        return Ok(result);
+    }
     let resolved = model.resolve()?;
     let step = model.select_step(name, |p| matches!(p, Procedure::Harmonic(_)), "harmonic")?;
     let Procedure::Harmonic(h) = &step.procedure else {

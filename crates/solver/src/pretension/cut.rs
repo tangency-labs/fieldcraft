@@ -179,7 +179,42 @@ pub(crate) fn prepare<'a>(model: &'a Model, resolved: &Resolved, max_dofs: usize
     Ok(Prepared { model: Cow::Owned(out), copies })
 }
 
+fn retain<T>(values: &mut Vec<T>, keep: &[bool]) {
+    let mut i = 0;
+    values.retain(|_| {
+        let yes = keep.get(i).copied().unwrap_or(false);
+        i += 1;
+        yes
+    });
+}
+
 impl Prepared<'_> {
+    pub fn project_frequency(&self, result: &mut crate::FrequencyResult) {
+        let keep: Vec<bool> = result.nodes.iter().map(|n| !self.copies.contains_key(n)).collect();
+        for mode in &mut result.modes {
+            retain(&mut mode.shape, &keep);
+            retain(&mut mode.rotation, &keep);
+        }
+        retain(&mut result.nodes, &keep);
+    }
+
+    pub fn project_harmonic(&self, result: &mut crate::HarmonicResult) {
+        let keep: Vec<bool> = result.nodes.iter().map(|n| !self.copies.contains_key(n)).collect();
+        for frame in &mut result.frames {
+            retain(&mut frame.real, &keep);
+            retain(&mut frame.imaginary, &keep);
+            retain(&mut frame.rotation_real, &keep);
+            retain(&mut frame.rotation_imaginary, &keep);
+            if let Some(stress) = &mut frame.stress_real {
+                retain(stress, &keep);
+            }
+            if let Some(stress) = &mut frame.stress_imaginary {
+                retain(stress, &keep);
+            }
+        }
+        retain(&mut result.nodes, &keep);
+    }
+
     /// Strip only private trace nodes at the public result boundary. Element
     /// stresses and the scalar jump remain available; no averaged displacement
     /// is invented for a discontinuity.
@@ -209,14 +244,6 @@ impl Prepared<'_> {
                     }
                 }
             }
-        }
-        fn retain<T>(values: &mut Vec<T>, keep: &[bool]) {
-            let mut i = 0;
-            values.retain(|_| {
-                let yes = keep.get(i).copied().unwrap_or(false);
-                i += 1;
-                yes
-            });
         }
         retain(&mut result.nodes, &keep);
         retain(&mut result.displacement, &keep);

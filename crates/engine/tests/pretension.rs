@@ -7,6 +7,129 @@ use fieldcraft_model::{
 use serde_json::{Value, json};
 
 #[test]
+fn native_fixed_releases_the_cut_force_and_retains_ordinary_loads() {
+    let recipe: Vec<Value> = serde_json::from_str(include_str!("fixtures/internal-pretension.json")).unwrap();
+    let mut session = Session::default();
+    session.run_script(&Value::Array(recipe[..recipe.len() - 2].to_vec())).unwrap();
+    let mut model = session.model.clone();
+    model.add_set("OneNode", Set { nodes: vec![9], ..Set::default() }).unwrap();
+    model
+        .add_load(
+            "Ordinary",
+            fieldcraft_model::Load::Force { target: Target::Set("OneNode".into()), vector: [0., 0., 25.], distribution: Default::default() },
+        )
+        .unwrap();
+    let mut preload = model.step("Preload").unwrap().clone();
+    preload.loads.insert("Ordinary".into());
+    model.replace_step(preload.clone()).unwrap();
+    let mut locked = preload;
+    locked.name = "Locked".into();
+    locked.pretension.insert("Cut".into(), fieldcraft_model::PretensionControl::Fixed);
+    model.add_step(locked, None).unwrap();
+    let deck = fieldcraft_decks::abaqus::write(&model, fieldcraft_model::units::Preset::MKgS).unwrap();
+    let locked = deck.split("** Step Locked\n").nth(1).unwrap();
+    assert!(locked.contains("*CLOAD, OP=NEW\n9, 3, 25.0\n"), "{locked}");
+    assert!(locked.contains("*BOUNDARY, FIXED\n100, 1, 1\n"));
+    assert!(!locked.contains("100, 1, 1000"));
+    assert!(!deck.contains("*EQUATION"));
+    assert_eq!(&model.element(1).unwrap().nodes[4..], &model.element(2).unwrap().nodes[..4]);
+}
+
+#[test]
+fn continuous_bolt_fixed_chain_keeps_terminal_contact_and_source_topology() {
+    let recipe: Vec<Value> = serde_json::from_str(include_str!("fixtures/pretension.json")).unwrap();
+    let label = |n: u64| if (9..=12).contains(&n) { n - 4 } else { n };
+    let mut commands = Vec::new();
+    for mut c in recipe {
+        let command = c["command"].as_str().unwrap().to_owned();
+        if command == "mesh.node.add" && (9..=12).contains(&c["params"]["label"].as_u64().unwrap()) {
+            continue;
+        }
+        if matches!(command.as_str(), "mesh.element.add" | "model.set.create")
+            && let Some(nodes) = c.get_mut("params").and_then(|p| p.get_mut("nodes")).and_then(Value::as_array_mut)
+        {
+            for n in nodes {
+                *n = json!(label(n.as_u64().unwrap()));
+            }
+        }
+        if command == "model.pretension.create" {
+            commands.push(json!({"command":"model.set.create","params":{"name":"BoltFace","faces":[{"element":1,"face":2}]}}));
+            c["params"]["face"] = json!("BoltFace");
+        }
+        if command == "model.pretension.lock" {
+            c["command"] = json!("model.pretension.fix");
+            c["params"].as_object_mut().unwrap().remove("from");
+        }
+        // This new current-value chain checks frictionless contact; the original
+        // frictional, explicit-adjustment recipe remains an independent regression.
+        if command == "interaction.contact.pair" {
+            c["params"]["friction"] = json!({"static":0.0});
+        }
+        commands.push(c);
+    }
+    let mut session = Session::default();
+    session.run_script(&Value::Array(commands)).unwrap();
+    assert_eq!(&session.model.element(1).unwrap().nodes[4..], &session.model.element(2).unwrap().nodes[..4]);
+    assert!(matches!(session.model.step("Locked").unwrap().pretension["Bolt"], fieldcraft_model::PretensionControl::Fixed));
+    use fieldcraft_engine::StepResult;
+    use fieldcraft_solver::StepResult as Implicit;
+    let StepResult::Implicit(Implicit::Static(pre)) = session.result("Preload").unwrap().as_ref() else { panic!("preload") };
+    let StepResult::Implicit(Implicit::Static(locked)) = session.result("Locked").unwrap().as_ref() else { panic!("locked") };
+    assert_eq!(pre.pretension[0].adjustment.to_bits(), locked.pretension[0].adjustment.to_bits());
+    assert!((locked.pretension[0].section_force / 100. - 1.).abs() < 0.005);
+    for result in [pre, locked] {
+        let history = result.nonlinear.as_ref().unwrap();
+        assert!(history.increments.last().unwrap().converged);
+        assert_eq!(history.increments.last().unwrap().load_factor, 1.);
+        assert!((result.contacts[0].normal_force / 100. - 1.).abs() < 0.005);
+    }
+    let StepResult::Implicit(Implicit::Frequency(modes)) = session.result("Modes").unwrap().as_ref() else { panic!("modes") };
+    let StepResult::Implicit(Implicit::Harmonic(response)) = session.result("Response").unwrap().as_ref() else { panic!("response") };
+    assert_eq!(modes.nodes.len(), 28);
+    assert_eq!(modes.nodes, response.nodes);
+    let check = |values: &[[f64; 3]]| {
+        let scale = values.iter().flatten().fold(0.0_f64, |a, b| a.max(b.abs())).max(1e-30);
+        let mut mismatch = 0.0_f64;
+        for (a, b) in [(21, 25), (22, 26), (23, 27), (24, 28)] {
+            let a = modes.nodes.iter().position(|n| *n == a).unwrap();
+            let b = modes.nodes.iter().position(|n| *n == b).unwrap();
+            for (a, b) in values[a].iter().zip(values[b]) {
+                mismatch = mismatch.max((a - b).abs() / scale);
+            }
+        }
+        // Same terminal-mortar trace tolerance as the existing contact regression
+        // below: the deformed projection need not join equal reference labels exactly.
+        assert!(mismatch <= 1e-8, "terminal contact trace mismatch {mismatch}");
+        println!("terminal contact trace mismatch={mismatch:.17e}");
+    };
+    let control = modes.reference_points.iter().position(|(name, _)| name == "CutControl").unwrap();
+    for mode in &modes.modes {
+        check(&mode.shape);
+        assert_eq!(mode.point_shape[control][0], 0.);
+    }
+    for frame in &response.frames {
+        check(&frame.real);
+        check(&frame.imaginary);
+        assert_eq!(frame.points_real[control][0], 0.);
+        assert_eq!(frame.points_imaginary[control][0], 0.);
+        assert!(frame.relative_residual < 1e-8);
+    }
+    fn roundtrip<T: serde::Serialize + serde::de::DeserializeOwned + PartialEq + std::fmt::Debug>(result: &T) {
+        let bytes = fieldcraft_io::codec::encode(result).unwrap();
+        let restored: T = fieldcraft_io::codec::decode(&bytes).unwrap();
+        assert_eq!(*result, restored);
+    }
+    roundtrip(pre);
+    roundtrip(locked);
+    roundtrip(modes);
+    roundtrip(response);
+    session.execute("model.pretension.force", &json!({"name":"Bolt","step":"Preload","value":101})).unwrap();
+    for name in ["Preload", "Locked", "Modes", "Response"] {
+        assert!(session.result(name).is_none(), "stale {name}");
+    }
+}
+
+#[test]
 fn continuous_internal_cut_runs_through_commands_and_keeps_native_source_connected() {
     let recipe: Value = serde_json::from_str(include_str!("fixtures/internal-pretension.json")).unwrap();
     let mut session = Session::default();

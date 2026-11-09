@@ -1334,6 +1334,8 @@ pub struct StepInputs<'a> {
     step: &'a Step,
     #[serde(skip_serializing_if = "Option::is_none")]
     base_state: Option<&'a Step>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    fixed_predecessors: Vec<&'a Step>,
 }
 
 /// What a step that takes no initial fields reads of them.
@@ -1348,16 +1350,19 @@ impl Model {
     pub fn step_inputs(&self, name: &str) -> Option<StepInputs<'_>> {
         let step = self.step(name)?;
         let base = step.base_state.as_deref().and_then(|n| self.step(n));
+        let mut fixed_predecessors = Vec::new();
+        let mut current = base.unwrap_or(step);
+        while current.pretension.values().any(|c| matches!(c, crate::PretensionControl::Fixed)) {
+            let Some(previous) = self.pretension_predecessor(current) else { break };
+            fixed_predecessors.push(previous);
+            current = previous;
+        }
+        let involved: Vec<_> = std::iter::once(step).chain(base).chain(fixed_predecessors.iter().copied()).collect();
         Some(StepInputs {
             nodes: &self.nodes,
             elements: &self.elements,
             classification: &self.classification,
-            sets: self
-                .sets
-                .iter()
-                .filter(|(n, _)| self.step_uses_set(step, n) || base.is_some_and(|b| self.step_uses_set(b, n)))
-                .map(|(n, s)| (n.as_str(), s))
-                .collect(),
+            sets: self.sets.iter().filter(|(n, _)| involved.iter().any(|s| self.step_uses_set(s, n))).map(|(n, s)| (n.as_str(), s)).collect(),
             materials: &self.materials,
             sections: &self.sections,
             reference_points: &self.reference_points,
@@ -1371,24 +1376,23 @@ impl Model {
             boundary_conditions: self
                 .boundary_conditions
                 .iter()
-                .filter(|(n, _)| step.boundary_conditions.contains(*n) || base.is_some_and(|b| b.boundary_conditions.contains(*n)))
+                .filter(|(n, _)| involved.iter().any(|s| s.boundary_conditions.contains(*n)))
                 .map(|(n, b)| (n.as_str(), b))
                 .collect(),
-            loads: self
-                .loads
-                .iter()
-                .filter(|(n, _)| step.loads.contains(*n) || base.is_some_and(|b| b.loads.contains(*n)))
-                .map(|(n, l)| (n.as_str(), l))
-                .collect(),
-            initial_fields: if crate::initial::acts_in(&step.procedure) || base.is_some_and(|b| crate::initial::acts_in(&b.procedure)) {
-                &self.initial_fields
-            } else {
-                &NO_FIELDS
-            },
+            loads: self.loads.iter().filter(|(n, _)| involved.iter().any(|s| s.loads.contains(*n))).map(|(n, l)| (n.as_str(), l)).collect(),
+            initial_fields: if involved.iter().any(|s| crate::initial::acts_in(&s.procedure)) { &self.initial_fields } else { &NO_FIELDS },
             fluid_domains: &self.fluid_domains,
             step,
             base_state: base,
+            fixed_predecessors,
         })
+    }
+
+    /// Current-value pretension takes the immediately preceding general structural
+    /// equilibrium in analysis order, skipping perturbation steps.
+    pub fn pretension_predecessor(&self, step: &Step) -> Option<&Step> {
+        let at = self.steps.iter().position(|s| s.name == step.name)?;
+        self.steps.iter().take(at).rev().find(|s| matches!(s.procedure, Procedure::Static {} | Procedure::NonlinearStatic(_)))
     }
 
     /// The steps in analysis order.

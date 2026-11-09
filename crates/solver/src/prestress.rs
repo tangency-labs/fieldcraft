@@ -45,7 +45,9 @@ pub(crate) fn stiffness(setup: &Setup<'_>, graph: &NodeGraph, k: Csr, limits: &L
         return Ok(terminal);
     }
     crate::system::refuse_contact(setup.model, "linear static base_state; use a nonlinear equilibrium for contact")?;
-    let preload = static_on(&Setup { model: setup.model, resolved: setup.resolved, mesh: setup.mesh, step: base }, limits)?;
+    let fixed = crate::pretension::resolve_fixed(setup.model, &base.name, limits)?;
+    let base = fixed.step(&base.name).ok_or_else(|| Error::Internal("resolved perturbation base".into()))?;
+    let preload = static_on(&Setup { model: fixed.as_ref(), resolved: setup.resolved, mesh: setup.mesh, step: base }, limits)?;
     let kg = crate::buckle::initial_stress_stiffness(setup.mesh, graph, &preload)?;
     warnings.extend(preload.warnings);
     warnings
