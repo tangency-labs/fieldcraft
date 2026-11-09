@@ -137,7 +137,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Decks | Nastran Deck — Write Nastran bulk data (SOL 101, 103) | ready | `deck.write {"format":"nastran"}` |
 | Decks | LS-DYNA Deck — Write an LS-DYNA keyword file | ready | `deck.write {"format":"lsdyna"}` |
 | Decks | Read Deck — Read an Abaqus input deck's model data: mesh, sets, materials and sections; unread keywords are listed, not kept | ready | `deck.read` |
-| Implicit | Static — Linear static (or coupled temperature–displacement) solve of a step with FieldCraft's own solver; nonlinear static, buckling, harmonic response and heat transfer in the drop-down | ready | `solve.static`, `solve.nonlinear`, `solve.buckle`, `solve.harmonic`, `solve.heat` |
+| Implicit | Static — Linear static (or coupled temperature–displacement) solve of a step with FieldCraft's own solver; nonlinear static, buckling, harmonic response and heat transfer in the drop-down | ready | `solve.static`, `solve.nonlinear`, `solve.buckle`, `solve.harmonic`, `solve.transient`, `solve.spectrum`, `solve.heat` |
 | Implicit | Frequency — Natural frequencies and mode shapes of a frequency step | ready | `solve.frequency` |
 | Implicit | Random Response — Projects stored harmonic frames and a one-sided PSD into nodal component spectra and RMS; supports coherent absolute acceleration for a declared unit base inertial load | ready | `solve.random` |
 | Design studies | Sensitivity — Static displacement, work and continuum stress derivatives; simple-mode frequency and direct harmonic derivatives in the drop-down | ready | `solve.sensitivity.static`, `solve.sensitivity.frequency`, `solve.sensitivity.harmonic` |

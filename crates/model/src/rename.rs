@@ -213,6 +213,12 @@ impl Model {
                         active.insert(to.to_string());
                     }
                     if kind == Kind::Load
+                        && let Procedure::Transient(t) = &mut step.procedure
+                        && let Some(curve) = t.load_amplitudes.remove(from)
+                    {
+                        t.load_amplitudes.insert(to.to_string(), curve);
+                    }
+                    if kind == Kind::Load
                         && let Procedure::Harmonic(h) = &mut step.procedure
                         && let Some(factor) = h.load_factors.remove(from)
                     {

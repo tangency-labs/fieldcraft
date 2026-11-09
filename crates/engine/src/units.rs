@@ -469,6 +469,8 @@ pub const REPLIES: &[(&str, &[(&str, Dim)])] = &[
         ],
     ),
     ("solve.static", STATIC),
+    ("solve.transient", &[("/natural_frequencies", Dim::Hertz)]),
+    ("solve.spectrum", &[("/natural_frequencies", Dim::Hertz)]),
     (
         "solve.harmonic",
         &[

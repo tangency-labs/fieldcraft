@@ -808,6 +808,7 @@ pub enum StepResult {
     Static(StaticResult),
     Frequency(FrequencyResult),
     Harmonic(crate::harmonic::HarmonicResult),
+    Dynamics(crate::transient::Response),
     Heat(crate::heat::HeatResult),
 }
 
@@ -817,6 +818,7 @@ impl StepResult {
             StepResult::Static(r) => &r.step,
             StepResult::Frequency(r) => &r.step,
             StepResult::Harmonic(r) => &r.step,
+            StepResult::Dynamics(r) => &r.step,
             StepResult::Heat(r) => &r.step,
         }
     }
@@ -826,6 +828,7 @@ impl StepResult {
             StepResult::Static(r) => &r.nodes,
             StepResult::Frequency(r) => &r.nodes,
             StepResult::Harmonic(r) => &r.nodes,
+            StepResult::Dynamics(r) => &r.nodes,
             StepResult::Heat(r) => &r.nodes,
         }
     }
@@ -840,7 +843,7 @@ impl StepResult {
             StepResult::Static(r) => r.reference_points.iter().position(|p| p.label == label),
             StepResult::Frequency(r) => r.reference_points.iter().position(|p| p.1 == label),
             StepResult::Harmonic(r) => r.reference_points.iter().position(|p| p.1 == label),
-            StepResult::Heat(_) => None,
+            StepResult::Heat(_) | StepResult::Dynamics(_) => None,
         }
         .map(Location::Point)
     }

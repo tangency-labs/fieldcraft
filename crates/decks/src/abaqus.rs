@@ -1464,6 +1464,9 @@ impl Deck {
                         self.comment("loads have no effect on natural frequencies and are not written");
                     }
                 }
+                Procedure::Transient(_) | Procedure::ResponseSpectrum(_) => {
+                    return Err(Error::Unsupported { format: FORMAT, what: format!("step `{}`: {} export", step.name, step.procedure.name()) });
+                }
                 Procedure::Harmonic(ref h) => {
                     use fieldcraft_model::harmonic::Method;
                     if has_nonlinear_step(model) {

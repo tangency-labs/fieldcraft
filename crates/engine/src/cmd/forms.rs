@@ -1101,6 +1101,44 @@ const PROCEDURE: Field = variants(
                 positive("max_hz", "Max frequency", D::Hertz).help("Highest frequency of interest."),
             ],
         ),
+        variant("transient", "Linear transient", &[
+            positive("time_step", "Time step", D::Time).help("Fixed integration time increment.").req(),
+            int("increments", "Increments", 1, 1_000_000).help("Number of time increments after the initial state.").req(),
+            int("output_every", "Output every", 1, 1_000_000).help("Store every nth increment; initial and final states are always stored.").def("1"),
+            variants("integration", "Integration", &[
+                variant("average_acceleration", "Newmark average acceleration", &[]),
+                variant("linear_acceleration", "Newmark linear acceleration", &[]),
+                variant("hht", "HHT", &[num("alpha", "Alpha (-1/3 to 0)", D::None).help("HHT numerical damping parameter; zero gives average acceleration.").req()]),
+            ]).help("Average acceleration by default; linear acceleration is conditionally stable; HHT adds numerical damping."),
+            variants("method", "Method", &[
+                variant("direct", "Direct", &[]),
+                variant("modal", "Modal", &[int("modes", "Modes", 1, 4096).help("Number of mass-normalized modes retained.").req(), json("damping_ratios", "Additional modal damping ratios").help("Empty, one shared ratio, or one per mode; additive to projected physical damping.")]),
+            ]).help("Integrate the physical degrees of freedom or a retained modal basis."),
+            group("damping", "Viscous damping", &[
+                num("alpha", "Rayleigh alpha", D::StrainRate).help("Nonnegative mass-proportional viscous coefficient."), num("beta", "Rayleigh beta", D::Time).help("Nonnegative stiffness-proportional viscous coefficient."),
+            ]).help("Add Rayleigh viscous damping to material and support damping."),
+            json("load_amplitudes", "Load amplitudes").numbers(&[("/*/points/*/0", D::Time), ("/*/origin", D::Time), ("/*/angular_frequency", D::Of(Quantity::AngularVelocity))])
+                .help("Active load names mapped to tabular/smooth_step points or periodic Fourier coefficients. Values are dimensionless; outside tables holds endpoints."),
+            json("initial_displacement", "Initial nodal translations").numbers(&[("/*", D::Length)]).help("Node labels mapped to XYZ translations; unspecified nodes start at zero."),
+            json("initial_velocity", "Initial nodal velocities").numbers(&[("/*", D::Velocity)]).help("Node labels mapped to XYZ velocities; unspecified nodes start at rest."),
+            json("base_acceleration", "Base acceleration").numbers(&[("/magnitude", D::Of(Quantity::Acceleration)), ("/amplitude/points/*/0", D::Time), ("/amplitude/origin", D::Time), ("/amplitude/angular_frequency", D::Of(Quantity::AngularVelocity))])
+                .help("{direction: unit XYZ, magnitude: acceleration, amplitude: curve}; output is relative motion."),
+        ]),
+        variant("response_spectrum", "Response spectrum", &[
+            int("modes", "Modes", 1, 4096).help("Number of mass-normalized modes retained.").req(),
+            num("damping_ratio", "Spectrum modal damping ratio", D::None).help("Default modal damping ratio used for interpolation and CQC.").req(),
+            choice("combination", "Modal combination", &[("srss", "SRSS"), ("cqc", "CQC")]).help("Combine signed modal responses by SRSS or damping-dependent CQC.").req(),
+            json("direction", "Unit excitation direction").help("Single direction, defaults to X; use directions for multiple axes."),
+            json("modal_damping_ratios", "Modal damping ratios").help("Empty uses damping_ratio; otherwise one shared value or one per requested mode."),
+            json("directions", "Excitation directions").help("1 to 3 orthogonal {direction:[x,y,z], scale} entries; scale is dimensionless."),
+            choice("direction_combination", "Direction combination", &[("srss", "SRSS"), ("percent1004040", "100-40-40")]).help("Combine directional peaks by SRSS or the largest 100-40-40 envelope."),
+            json("pseudo_acceleration", "Single frequency spectrum").numbers(&[("/*/0", D::Hertz), ("/*/1", D::Of(Quantity::Acceleration))])
+                .help("Ascending [frequency, pseudo-acceleration] at damping_ratio; exclusive of tables/period_tables."),
+            json("tables", "Frequency spectra by damping").numbers(&[("/*/points/*/0",D::Hertz),("/*/points/*/1",D::Acceleration)])
+                .help("Ascending {damping_ratio, points:[[frequency,acceleration],...]} tables. Linear axis/damping interpolation; no extrapolation."),
+            json("period_tables", "Period spectra by damping").numbers(&[("/*/points/*/0",D::Time),("/*/points/*/1",D::Acceleration)])
+                .help("As tables, but abscissae are periods in display time units. Mutually exclusive with frequency tables."),
+        ]),
         variant("harmonic", "Steady-state harmonic", &[
             json("frequencies", "Frequencies")
                 .numbers(&[("/count", D::None), ("/logarithmic", D::None), ("/*", D::Hertz)])
