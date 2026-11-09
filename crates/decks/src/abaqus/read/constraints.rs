@@ -102,8 +102,11 @@ fn coupling(b: &Block<'_>, sub: Option<&Block<'_>>, blocks: &[Block<'_>], model:
             bits |= 1 << (d - 1);
         }
     }
-    if bits != 63 {
-        return Err(history::unsupported(sub.line, format!("*{} partial DOFs (currently requires 1..6)", sub.keyword)));
+    if (kind == CouplingKind::Distributing && bits != 63) || bits & 7 == 0 {
+        return Err(history::unsupported(
+            sub.line,
+            format!("*{} DOFs: distributing requires 1..6; kinematic requires at least one translation", sub.keyword),
+        ));
     }
     let labels = nodes(model, b.required("REFNODE")?, b.line)?;
     let [label]: [u32; 1] = labels.try_into().map_err(|_| history::unsupported(b.line, "*COUPLING REF NODE requires a singleton"))?;
@@ -122,25 +125,37 @@ fn coupling(b: &Block<'_>, sub: Option<&Block<'_>>, blocks: &[Block<'_>], model:
         .collect();
     let [surface]: [&Block<'_>; 1] = surfaces.try_into().map_err(|_| error(b.line, format!("missing or duplicate coupling surface {surf}")))?;
     history::allow(surface, &["NAME", "TYPE"])?;
-    if canonical(history::value(surface, "TYPE", "ELEMENT")?) != "NODE" {
-        return Err(history::unsupported(surface.line, "*COUPLING requires TYPE=NODE surface"));
-    }
+    let element_surface = match canonical(history::value(surface, "TYPE", "ELEMENT")?).as_str() {
+        "NODE" => false,
+        "ELEMENT" if kind == CouplingKind::Kinematic => true,
+        "ELEMENT" => return Err(history::unsupported(surface.line, "*DISTRIBUTING element-surface tributary weights are not mapped")),
+        _ => return Err(history::unsupported(surface.line, "*COUPLING surface TYPE requires NODE or kinematic ELEMENT")),
+    };
     let mut members = BTreeSet::new();
-    for row in &surface.rows {
-        let f = row_fields(row.text, row.line)?;
-        if f.len() > 2 || f.is_empty() {
-            return Err(error(row.line, "node surface needs node/set and optional weight"));
+    if element_surface {
+        let name = set_name(model, &surf, surface.line)?;
+        let resolved = model.resolve_set(&name).map_err(|e| error(surface.line, e.to_string()))?;
+        if resolved.nodes.len() > limits.members {
+            return Err(error(surface.line, "coupling member limit reached"));
         }
-        if let Some(weight) = f.get(1)
-            && number(weight, row.line)? != 1.0
-        {
-            return Err(history::unsupported(row.line, "*SURFACE non-unit node weight"));
-        }
-        for n in nodes(model, f.first().map(String::as_str).unwrap_or_default(), row.line)? {
-            if members.len() >= limits.members && !members.contains(&n) {
-                return Err(error(row.line, "coupling member limit reached"));
+        members.extend(resolved.nodes);
+    } else {
+        for row in &surface.rows {
+            let f = row_fields(row.text, row.line)?;
+            if f.len() > 2 || f.is_empty() {
+                return Err(error(row.line, "node surface needs node/set and optional weight"));
             }
-            members.insert(n);
+            if let Some(weight) = f.get(1)
+                && number(weight, row.line)? != 1.0
+            {
+                return Err(history::unsupported(row.line, "*SURFACE non-unit node weight"));
+            }
+            for n in nodes(model, f.first().map(String::as_str).unwrap_or_default(), row.line)? {
+                if members.len() >= limits.members && !members.contains(&n) {
+                    return Err(error(row.line, "coupling member limit reached"));
+                }
+                members.insert(n);
+            }
         }
     }
     if members.is_empty() || members.contains(&label) {
@@ -158,16 +173,25 @@ fn coupling(b: &Block<'_>, sub: Option<&Block<'_>>, blocks: &[Block<'_>], model:
         let xyz = model.node(label).ok_or_else(|| error(b.line, "missing reference node"))?.xyz;
         model.add_reference_point(&rp, ReferencePoint { xyz, label }).map_err(|e| error(b.line, e.to_string()))?;
     }
-    let set = Set { nodes: members.into_iter().collect(), ..Set::default() };
-    if let Some(existing) = model.set(&surf) {
-        if existing != &set {
-            return Err(error(surface.line, "coupling surface name collides with another set"));
-        }
+    let coupling_set = if element_surface {
+        // Keep the actual spelling and face identity of the resolved model set.
+        set_name(model, &surf, surface.line)?
     } else {
-        model.add_set(&surf, set).map_err(|e| error(surface.line, e.to_string()))?;
-    }
+        let set = Set { nodes: members.into_iter().collect(), ..Set::default() };
+        if let Some(existing) = model.set(&surf) {
+            if existing != &set {
+                return Err(error(surface.line, "coupling surface name collides with another set"));
+            }
+        } else {
+            model.add_set(&surf, set).map_err(|e| error(surface.line, e.to_string()))?;
+        }
+        surf
+    };
     model
-        .add_coupling(&history::name(b.required("CONSTRAINTNAME")?, b.line)?, Coupling { reference_point: rp, set: surf, kind, dofs: Dofs::all() })
+        .add_coupling(
+            &history::name(b.required("CONSTRAINTNAME")?, b.line)?,
+            Coupling { reference_point: rp, set: coupling_set, kind, dofs: Dofs::from_bits(bits) },
+        )
         .map_err(|e| error(b.line, e.to_string()))?;
     Ok(vec![b.line, sub.line, surface.line])
 }

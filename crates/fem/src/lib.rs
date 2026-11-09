@@ -59,6 +59,7 @@
 #![allow(clippy::needless_range_loop)]
 
 pub mod basis;
+mod bbar;
 pub mod beam;
 pub mod constitutive;
 pub mod contact;
@@ -67,6 +68,7 @@ pub mod dof;
 pub mod dual;
 pub mod elastoplastic;
 pub mod element;
+mod enhanced13;
 pub mod face;
 pub mod failure;
 pub mod finite;

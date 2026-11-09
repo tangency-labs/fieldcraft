@@ -23,6 +23,7 @@ mod history;
 mod lex;
 mod mass;
 mod matrices;
+mod nonlinear;
 pub use mass::MassRequirement;
 mod random;
 pub mod source;
@@ -110,15 +111,30 @@ fn read_mode(text: &str, preset: Preset, limits: Limits, analysis: bool) -> Resu
         return Err(error(1, "input exceeds 64 MiB"));
     }
     let expanded = assembly::expand(text, limits)?;
+    if expanded.is_some() && text.lines().any(|l| l.trim().starts_with(mass::POLICY_MARKER)) {
+        return Err(error(1, "FIELDCRAFT LUMPED MASS metadata requires a flattened native deck; instance policy scope is not supported"));
+    }
     let flat = expanded.as_ref().map_or(text, |e| e.text.as_str());
     let parse_all = || -> Result<Read> {
         let mut read = parse(flat, preset, limits)?;
         read.mass_requirements = mass::inspect(flat)?;
+        mass::restore(flat, &mut read.model)?;
         constraints::import(flat, &mut read, preset, limits)?;
         if analysis {
             history::import(flat, &mut read, preset, limits)?;
         }
         constraints::finish(&mut read.model)?;
+        if read.model.sections().values().any(|s| s.formulation.b_bar) {
+            read.warnings.push("C3D8 maps to volume-averaged B-bar Hex8, not native standard Hex8; supported only for linear isotropic static/frequency/matrix analysis without orientation, thermal strain or initial stress. Other combinations are refused at model validation or solve.".into());
+        }
+        if read.model.sections().values().any(|s| s.formulation.enhanced_strain13) {
+            read.warnings.push("C3D8I maps to thirteen enhanced-strain variables, full integration, nonhybrid constant isotropic small-strain static only; C3D8IH and other material/analysis combinations are not mapped".into());
+        }
+        if read.model.steps().iter().any(|s| matches!(s.procedure, fieldcraft_model::Procedure::NonlinearStatic(_)))
+            && read.model.elements().values().any(|e| e.kind == fieldcraft_model::ElementKind::Rod2)
+        {
+            read.warnings.push("NLGEOM=YES T3D2/T2D2 steps and base_state are retained semantically, but native nonlinear static truss solving is not supported; solve.nonlinear and dependent frequency will refuse, not use NLGEOM=NO".into());
+        }
         read.unknown.truncate(MAX_UNKNOWN_SHOWN);
         Ok(read)
     };
@@ -628,6 +644,7 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
                             young: quantity(&units, Quantity::Pressure, v.first().copied().unwrap_or_default(), line)?,
                             poisson: v.get(1).copied().unwrap_or_default(),
                         },
+                        "ORTHOTROPIC" if v.len() == 9 => composite::orthotropic(&v, &units, line)?,
                         "ENGINEERINGCONSTANTS" if v.len() == 9 => {
                             let mut young = [0.; 3];
                             let mut poisson = [0.; 3];
@@ -862,8 +879,8 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
                 let key = key(name, line)?;
                 orientations
                     .get(&key)
-                    .map(|o| o.section(typ.family == Family::Shell))
-                    .ok_or_else(|| error(line, format!("section names missing orientation `{name}`")))
+                    .ok_or_else(|| error(line, format!("section names missing orientation `{name}`")))?
+                    .section(typ.family == Family::Shell)
             })
             .transpose()?;
         if orientation.is_none()

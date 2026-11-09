@@ -290,6 +290,7 @@ impl<'a> Plane<'a> {
         }
         let ok = match formulation {
             Formulation::Full => true,
+            Formulation::BBar | Formulation::EnhancedStrain13 => false,
             Formulation::Reduced => ty.reduced.is_some(),
             Formulation::IncompatibleModes => ty.incompatible_modes,
             Formulation::Hybrid { pressures } => pressures == 1 && HYBRID_PRESSURES.contains(&kind),

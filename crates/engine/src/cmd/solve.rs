@@ -86,7 +86,7 @@ pub const SPECTRUM: CommandSpec = CommandSpec {
 pub const RANDOM: CommandSpec = CommandSpec {
     id: "solve.random",
     label: "Solve Random Response",
-    params: r#"{"step":"Sweep", "input_psd":[[frequency_hz, psd], ...], "nodes":[1], "base_direction":[1,0,0]} — for an imported modal random step, omit input_psd and base_direction to execute its declared modal random loads. Optional elements recovers unaveraged element component PSD/RMS and element_phasors includes complex stresses. Otherwise projects an input one-sided PSD table onto stored solve.harmonic frequency frames (unit harmonic load), returning SI response component PSD and RMS; optional stress_projection {weights:[xx,yy,zz,xy,xz,yz],input_model:common_scalar_unit_pattern,fatigue:{method:narrow_band|dirlik|benasciutti_tovo,curve,duration_seconds,mean_stress_pa,correction,stationary_gaussian:true}} projects complex stresses before squaring and optionally evaluates a stationary Gaussian spectral fatigue approximation (broad-band requires zero mean, correction=none); nonlinear signed von Mises/principal criteria are refused (PSD does not identify a signed tensor history); independent/unknown correlated inputs are not supported; Segmented S-N points/cycles/amplitude with surface_factor,size_factor,endurance_limit and end_slopes are supported by narrow_band and dirlik (2..64 points, slopes 1..20); benasciutti_tovo and extrapolation=reject refuse tables. optional base_direction coherently adds the unit base acceleration to relative inertial-load frames; the legacy natural_frequency/damping_ratio/base_acceleration_psd form runs the Miles SDOF check"#,
+    params: r#"{"step":"Sweep", "input_psd":[[frequency_hz, psd], ...], "nodes":[1], "base_direction":[1,0,0]} — for an imported modal random step, omit input_psd and base_direction to execute its declared modal random loads; mass=consistent|lumped (default consistent) selects the same source-mode, inertia and damping operator, including explicit section policies; optional sampling_frequencies replays an explicit increasing SI-Hz grid within the source bands, without changing modes or loads. Stored harmonic projections inherit their source mass and reject this override. Optional elements recovers unaveraged element component PSD/RMS and element_phasors includes complex stresses. Otherwise projects an input one-sided PSD table onto stored solve.harmonic frequency frames (unit harmonic load), returning SI response component PSD and RMS; optional stress_projection {weights:[xx,yy,zz,xy,xz,yz],input_model:common_scalar_unit_pattern,fatigue:{method:narrow_band|dirlik|benasciutti_tovo,curve,duration_seconds,mean_stress_pa,correction,stationary_gaussian:true}} projects complex stresses before squaring and optionally evaluates a stationary Gaussian spectral fatigue approximation (broad-band requires zero mean, correction=none); nonlinear signed von Mises/principal criteria are refused (PSD does not identify a signed tensor history); independent/unknown correlated inputs are not supported; Segmented S-N points/cycles/amplitude with surface_factor,size_factor,endurance_limit and end_slopes are supported by narrow_band and dirlik (2..64 points, slopes 1..20); benasciutti_tovo and extrapolation=reject refuse tables. optional base_direction coherently adds the unit base acceleration to relative inertial-load frames; the legacy natural_frequency/damping_ratio/base_acceleration_psd form runs the Miles SDOF check"#,
     form: Some(super::forms::SOLVE_RANDOM),
     kind: CommandKind::Model,
     requires: &[],
@@ -504,7 +504,7 @@ fn run_harmonic(s: &mut Session, p: &Value) -> Result<Value> {
     let step = opt::<String>(p, "step")?;
     let mass = opt::<MassKind>(p, "mass")?.unwrap_or_default();
     let r = with_threads(threads(s, p)?, || fieldcraft_solver::solve_harmonic_with_mass(&s.model, step.as_deref(), mass, &limits))?;
-    let summary = json!({"step": r.step, "mass": r.mass, "operator_diagonal_bounds": r.operator_diagonal_bounds, "stats": r.stats, "natural_frequencies": r.natural_frequencies, "residual_vectors": r.residual_vectors,
+    let summary = json!({"step": r.step, "mass": r.mass, "section_mass_policies": if mass == MassKind::Lumped { json!(s.model.sections().iter().map(|(n,s)|(n,s.formulation.lumped_mass)).collect::<std::collections::BTreeMap<_,_>>()) } else { json!({}) }, "operator_diagonal_bounds": r.operator_diagonal_bounds, "stats": r.stats, "natural_frequencies": r.natural_frequencies, "residual_vectors": r.residual_vectors,
         "frequencies": r.frames.iter().map(|f| json!({"frequency": f.frequency, "relative_residual": f.relative_residual,
             "residual_norm_si": f.residual_norm_si, "projected_residual": f.projected_residual, "input_power": f.input_power, "dissipated_power": f.dissipated_power})).collect::<Vec<_>>(),
         "warnings": r.warnings});
@@ -513,8 +513,16 @@ fn run_harmonic(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn run_random(s: &mut Session, p: &Value) -> Result<Value> {
-    if p.get("mass").is_some() {
-        return Err(EngineError::invalid("mass", "random response inherits source mass; select mass in solve.harmonic"));
+    let native = p
+        .get("step")
+        .and_then(Value::as_str)
+        .and_then(|name| s.model.step(name))
+        .is_some_and(|step| matches!(step.procedure, fieldcraft_model::Procedure::RandomVibration(_)));
+    if p.get("sampling_frequencies").is_some() && !native {
+        return Err(EngineError::invalid("sampling_frequencies", "requires a native modal random step"));
+    }
+    if p.get("mass").is_some() && !native {
+        return Err(EngineError::invalid("mass", "stored random response inherits source mass; select mass in solve.harmonic"));
     }
     if p.get("criterion").is_some()
         || p.pointer("/stress_projection/criterion").is_some()
@@ -606,6 +614,8 @@ fn run_frequency(s: &mut Session, p: &Value) -> Result<Value> {
     let r = with_threads(threads(s, p)?, || solve_frequency(model, step.as_deref(), &FrequencyOptions { mass, shift }, &limits))?;
     let summary = json!({
         "step": r.step,
+        "mass":mass,
+        "section_mass_policies": if mass==MassKind::Lumped { json!(model.sections().iter().map(|(n,s)|(n,s.formulation.lumped_mass)).collect::<std::collections::BTreeMap<_,_>>()) } else { json!({}) },
         "dofs": r.stats.dofs,
         "equations": r.stats.equations,
         "lanczos_vectors": r.stats.lanczos_vectors,

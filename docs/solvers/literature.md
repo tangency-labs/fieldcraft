@@ -1693,3 +1693,13 @@ validation. S–N tables use straight segments in log stress/log cycles (piecewi
 Basquin). Supplied surface and size factors multiply fatigue strength. Applying
 constant factors to every segment is an explicit user-selected curve reduction,
 not a built-in empirical surface/size correlation or a universal material law.
+
+### Linear enhanced-gradient Hex8 with thirteen variables
+
+Simo, J. C. and Rifai, M. S. (1990), *A class of mixed assumed strain methods
+and the method of incompatible modes*, IJNME 29, 1595–1638,
+[doi:10.1002/nme.1620290802](https://doi.org/10.1002/nme.1620290802).
+The independent `fem::enhanced13` kernel uses the explicit three-dimensional
+basis in the [public linear theory guide](https://docs.software.vt.edu/abaqusv2025/English/SIMACAETHERefMap/simathe-c-incompatible.htm)
+and the paper's element-level elimination. It is restricted to small-strain
+linear static analysis; see `docs/enhanced-strain13.md` for validation boundaries.

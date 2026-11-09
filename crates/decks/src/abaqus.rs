@@ -92,7 +92,7 @@
 //! | tet10 | C3D10 (H) | | | |
 //! | wedge6 | C3D6 (H) | | | |
 //! | pyramid5 | C3D5 (H) | | | |
-//! | hex8 | C3D8, C3D8R, C3D8I (H) | | | |
+//! | hex8 | C3D8 (B-bar), C3D8R/H; C3D8I (thirteen variables); standard and nine-mode export refused | | | |
 //! | hex20 | C3D20, C3D20R (H) | | | |
 //! | tri3, quad4 | | S3 / S3R, S4 / S4R | | |
 //! | quad8 | | S8R (reduced only) | | |
@@ -164,6 +164,7 @@ use crate::{Error, Result, unsupported};
 
 mod composite;
 mod dynamics;
+mod limited;
 pub mod nonlinear;
 pub mod read;
 pub use read::{Limits, Read, Unknown, read, read_in, read_limited};
@@ -200,6 +201,8 @@ pub fn write_resolved(model: &Model, r: &Resolved, units: Preset) -> Result<Stri
 pub fn write_resolved_with_mass(model: &Model, r: &Resolved, units: Preset, mass: fieldcraft_model::MassKind) -> Result<String> {
     dynamics::check_mass(model, mass)?;
     crate::refuse_fluid(FORMAT, model)?;
+    limited::mapped_base_states(model)?;
+    limited::enhanced(model, None)?;
     let by_type = elements_by_type(model, r)?;
     check_expressible(model)?;
     dynamics::check(model)?;
@@ -274,6 +277,26 @@ pub fn element_type(kind: ElementKind, section: &Section) -> std::result::Result
     use SectionKind as S;
     let f = section.formulation;
     let reduced = f.integration == Integration::Reduced;
+    if f.enhanced_strain13 {
+        if kind != K::Hex8 || !matches!(section.kind, S::Solid {}) || f.hybrid || f.b_bar || f.incompatible_modes || reduced {
+            return Err("C3D8I: enhanced_strain13 requires full non-hybrid solid Hex8 without other strain formulations".into());
+        }
+        return Ok("C3D8I".into());
+    }
+    if f.b_bar && (kind != K::Hex8 || !matches!(section.kind, S::Solid {}) || f.hybrid || f.incompatible_modes || reduced) {
+        return Err("B-bar requires full, non-hybrid, non-incompatible solid Hex8".into());
+    }
+    if kind == K::Hex8 && matches!(section.kind, S::Solid {}) && !reduced {
+        if f.incompatible_modes {
+            return Err("C3D8I: native nine internal modes are not established equivalent to thirteen vendor modes".into());
+        }
+        if !f.b_bar && !f.hybrid {
+            return Err(
+                "standard full Hex8 is not equivalent to C3D8 volume-averaged B-bar; choose b_bar explicitly or preserve the native project".into()
+            );
+        }
+    }
+
     if (f.hybrid && section.kind.dimension() != 3) || (f.incompatible_modes && !section.kind.is_continuum()) {
         return Err(format!("hybrid or incompatible-mode {} sections", section.kind.name()));
     }
@@ -1034,6 +1057,14 @@ impl Deck {
             self.comment(&format!("section {name}"));
             let orientation = composite::write_orientation(self, model, s, index)?;
             let (set, material) = (&s.set, &s.material);
+            if !s.formulation.lumped_mass.is_default() {
+                let strategy = match s.formulation.lumped_mass {
+                    fieldcraft_model::LumpedMass::Hrz => "HRZ",
+                    fieldcraft_model::LumpedMass::RowSum => "ROW_SUM",
+                    fieldcraft_model::LumpedMass::Consistent => "CONSISTENT",
+                };
+                self.comment(&format!("FIELDCRAFT LUMPED MASS, ELSET={set}, STRATEGY={strategy}"));
+            }
             match s.kind {
                 SectionKind::CompositeShell { ref layup } => {
                     self.line(&format!("*SHELL SECTION, ELSET={set}, COMPOSITE, OFFSET={}{orientation}", number(layup.offset)?));

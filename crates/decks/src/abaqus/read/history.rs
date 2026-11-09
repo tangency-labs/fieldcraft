@@ -1,4 +1,4 @@
-//! Linear analysis mapping from public Abaqus keyword semantics, not solver observations.
+//! Conservative analysis mapping from public Abaqus keyword semantics, not solver observations.
 //! Sources: .../SIMACAEKEYRefMap/simakey-r-{step,static,frequency,buckle,boundary,
 //! cload,dload,dsload,amplitude}.htm at https://abaqus.uclouvain.be/English/ .
 //! Static amplitudes are evaluated at equilibrium end time; no transient integration is implied.
@@ -39,6 +39,7 @@ struct Driven {
     amplitude: Option<String>,
     line: usize,
     multiple: bool,
+    boundary_origin: Option<(String, bool)>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Family {
@@ -150,6 +151,7 @@ pub(super) fn import(text: &str, read: &mut Read, preset: Preset, limits: Limits
     let mut consumed = BTreeSet::new();
     let mut total = 0.0;
     let mut sequence = 0usize;
+    let mut base_state: Option<String> = None;
     let mut index = 0;
     while index < blocks.len() {
         let Some(b) = blocks.get(index) else {
@@ -217,6 +219,12 @@ pub(super) fn import(text: &str, read: &mut Read, preset: Preset, limits: Limits
         let step_name = lex::unquote(value(b, "NAME", "")?, b.line)?;
         let step_name = if step_name.is_empty() { format!("ImportedStep{}", read.model.steps().len() + 1) } else { step_name };
         let mut step = Step::new(step_name, procedure);
+        if matches!(step.procedure, Procedure::Frequency { .. }) {
+            step.base_state = base_state.clone();
+        }
+        if matches!(step.procedure, Procedure::Static {} | Procedure::NonlinearStatic(_)) {
+            base_state = Some(step.name.clone());
+        }
         materialize(
             &mut read.model,
             &mut step,
@@ -270,9 +278,20 @@ fn prepare(
 ) -> Result<(Procedure, f64, State)> {
     let curves = data.curves;
     let spectra = data.spectra;
-    allow(b, &["NAME", "NLGEOM", "PERTURBATION", "AMPLITUDE"])?;
-    if canonical(value(b, "NLGEOM", "NO")?) != "NO" {
-        return Err(unsupported(b.line, "nonlinear geometry"));
+    allow(b, &["NAME", "NLGEOM", "PERTURBATION", "AMPLITUDE", "INC"])?;
+    let nonlinear = match b.params.get("NLGEOM") {
+        Some(None) => true,
+        _ => match canonical(value(b, "NLGEOM", "NO")?).as_str() {
+            "YES" => true,
+            "NO" => false,
+            _ => return Err(error(b.line, "NLGEOM expects YES or NO")),
+        },
+    };
+    if nonlinear && (!model.steps().is_empty() || b.params.contains_key("PERTURBATION")) {
+        return Err(unsupported(b.line, "NLGEOM: sequential equilibrium or PERTURBATION is not mapped"));
+    }
+    if nonlinear && canonical(value(b, "AMPLITUDE", "RAMP")?) != "RAMP" {
+        return Err(unsupported(b.line, "NLGEOM with STEP AMPLITUDE other than RAMP"));
     }
     if b.params.get("PERTURBATION").is_some_and(Option::is_some) {
         return Err(error(b.line, "PERTURBATION is a flag"));
@@ -313,13 +332,13 @@ fn prepare(
                         return Err(error(row.line, "STATIC expects at most four increment/time entries"));
                     }
                     for token in f.iter().filter(|s| !s.is_empty()) {
-                        if number(token, row.line)? <= 0.0 {
-                            return Err(error(row.line, "STATIC increments/time must be positive"));
+                        if number(token, row.line)? < 0.0 {
+                            return Err(error(row.line, "STATIC increments/time must be nonnegative"));
                         }
                     }
-                    duration = f.get(1).filter(|s| !s.is_empty()).map(|s| number(s, row.line)).transpose()?.unwrap_or(1.0);
+                    duration = f.get(1).filter(|s| !s.is_empty()).map(|s| number(s, row.line)).transpose()?.filter(|v| *v > 0.0).unwrap_or(1.0);
                 }
-                procedure = Some(Procedure::Static {});
+                procedure = Some(if nonlinear { super::nonlinear::procedure(b, part, model)? } else { Procedure::Static {} });
             }
             "STEADYSTATEDYNAMICS" => {
                 if procedure.is_some() {
@@ -400,6 +419,19 @@ fn prepare(
     {
         return Err(unsupported(b.line, "matrix export requires homogeneous boundaries and no active loads"));
     }
+    if nonlinear && !matches!(procedure, Procedure::NonlinearStatic(_)) {
+        return Err(unsupported(b.line, "NLGEOM=YES requires a supported *STATIC step"));
+    }
+    if nonlinear && next.values().any(|v| v.amplitude.is_some()) {
+        return Err(unsupported(b.line, "NLGEOM with named load/boundary AMPLITUDE"));
+    }
+    if !nonlinear
+        && model.steps().iter().any(|s| matches!(s.procedure, Procedure::NonlinearStatic(_)))
+        && !matches!(procedure, Procedure::Frequency { .. })
+    {
+        return Err(unsupported(b.line, "NLGEOM continuation: subsequent general steps are not mapped"));
+    }
+    super::super::limited::enhanced(model, Some(&procedure))?;
     Ok((procedure, duration, next))
 }
 
@@ -472,11 +504,37 @@ fn apply(
     for row in &b.rows {
         let f = row_fields(row.text, row.line)?;
         let target = f.first().map(String::as_str).unwrap_or_default();
+        let boundary_origin = if b.keyword == "BOUNDARY" {
+            Some((name(target, row.line)?, f.get(1).is_some_and(|v| canonical(v).parse::<u8>().is_err())))
+        } else {
+            None
+        };
         let mut insert = |family, node, dof, mut value| -> Result<()> {
             let identity = if family == Family::Boundary { String::new() } else { name(target, row.line)? };
             let key = (family, identity, node, dof);
             if state.len() >= limits.members && !state.contains_key(&key) {
                 return Err(error(row.line, "analysis membership limit reached"));
+            }
+            if family == Family::Boundary
+                && let Some(old) = state.get(&key)
+            {
+                if let (Some((previous, named)), Some((current, now_named))) = (&old.boundary_origin, &boundary_origin)
+                    && (previous != current || (*named && !now_named))
+                {
+                    return Err(unsupported(
+                        row.line,
+                        format!(
+                            "BOUNDARY target/type modification at node {node}, DOF {dof} (previous line {}): retain the original node/set and type format or remove with OP=NEW",
+                            old.line
+                        ),
+                    ));
+                }
+                if touched.contains(&key) && (old.value != value || old.amplitude != amplitude) {
+                    return Err(unsupported(
+                        row.line,
+                        format!("BOUNDARY conflicting definitions at node {node}, DOF {dof} in one step (previous line {})", old.line),
+                    ));
+                }
             }
             let mut multiple = false;
             if family != Family::Boundary
@@ -493,7 +551,7 @@ fn apply(
                 }
             }
             touched.insert(key.clone());
-            state.insert(key, Driven { value, amplitude: amplitude.clone(), line: row.line, multiple });
+            state.insert(key, Driven { value, amplitude: amplitude.clone(), line: row.line, multiple, boundary_origin: boundary_origin.clone() });
             Ok(())
         };
         match b.keyword.as_str() {
@@ -778,6 +836,24 @@ mod tests {
         assert!(!got.analysis_complete);
         assert!(got.model.steps().is_empty());
         assert!(got.unknown.iter().any(|u| u.keyword == "FUTUREPHYSICS"));
+    }
+    #[test]
+    fn boundary_identity_and_named_format_cannot_be_silently_replaced() {
+        for (first, next) in [("Tip,1,1,0", "1,1,1,.1"), ("Tip,XSYMM", "Tip,1,1,.1")] {
+            let text = format!(
+                "*NODE,NSET=Tip\n1,0,0,0\n2,1,0,0\n*STEP,NAME=One\n*STATIC\n*BOUNDARY\n{first}\n*END STEP\n*STEP,NAME=Two\n*STATIC\n*BOUNDARY\n{next}\n*END STEP\n"
+            );
+            let got = read(&text);
+            assert!(!got.analysis_complete);
+            assert_eq!(got.model.steps().len(), 1);
+            assert!(got.warnings.iter().any(|w| w.contains("BOUNDARY target/type")));
+            let cleared = text.replace(&format!("*BOUNDARY\n{next}"), &format!("*BOUNDARY,OP=NEW\n{next}"));
+            assert!(read(&cleared).analysis_complete);
+        }
+        let text = "*NODE\n1,0,0,0\n*STEP\n*STATIC\n*BOUNDARY\n1,1,1,.1\n1,1,1,.2\n*END STEP\n";
+        let got = read(text);
+        assert!(!got.analysis_complete);
+        assert!(got.warnings.iter().any(|w| w.contains("BOUNDARY conflicting")));
     }
     #[test]
     fn malformed_amplitude_and_missing_boundary_target_are_errors() {

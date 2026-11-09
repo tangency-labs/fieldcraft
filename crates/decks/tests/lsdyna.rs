@@ -701,6 +701,11 @@ fn hostile_numbers_stay_within_their_fields() {
 #[test]
 fn explicit_steps_are_refused_by_every_format() {
     let mut m = cantilever();
+    let (name, section) = m.sections().iter().next().unwrap();
+    let name = name.clone();
+    let mut section = section.clone();
+    section.formulation = Formulation { hybrid: true, ..Formulation::default() };
+    m.replace_section(&name, section).unwrap();
     m.add_step(step("Impact", Procedure::ExplicitDynamic(ExplicitDynamic::new(1e-3)), &["clamp"], &[]), None).unwrap();
     for f in fieldcraft_decks::FORMATS {
         let e = f.write(&common::si(&m), fieldcraft_model::units::Preset::MmTonneS).unwrap_err();

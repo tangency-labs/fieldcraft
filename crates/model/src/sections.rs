@@ -267,10 +267,34 @@ pub enum Integration {
     Reduced,
 }
 
+/// The section's policy when a solve explicitly selects `mass=lumped`.
+/// `mass=consistent` always uses consistent inertia; legacy lumping remains HRZ.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LumpedMass {
+    #[default]
+    Hrz,
+    RowSum,
+    Consistent,
+}
+impl LumpedMass {
+    pub fn is_default(&self) -> bool {
+        *self == Self::Hrz
+    }
+}
+
 /// How the section's elements are formulated, independent of any solver's element names.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Formulation {
+    /// Volume-averaged dilatation for linear isotropic Hex8; default remains standard.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub b_bar: bool,
+    /// Thirteen-parameter enhanced strain Hex8, linear static only.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub enhanced_strain13: bool,
+    #[serde(default, skip_serializing_if = "LumpedMass::is_default")]
+    pub lumped_mass: LumpedMass,
     #[serde(default)]
     pub integration: Integration,
     /// Enhanced (incompatible) bending modes: linear hexahedra (solid sections) and linear
@@ -286,6 +310,25 @@ impl Formulation {
     /// Check the options against each other and against the section kind (the element kinds are
     /// checked when the model is resolved).
     pub fn validate_for(&self, kind: &SectionKind) -> Result<()> {
+        if self.enhanced_strain13
+            && (!matches!(kind, SectionKind::Solid {})
+                || self.b_bar
+                || self.hybrid
+                || self.incompatible_modes
+                || self.integration != Integration::Full)
+        {
+            return Err(Error::Invalid("enhanced_strain13 requires a full solid section without B-bar, hybrid or nine incompatible modes".into()));
+        }
+        if self.b_bar && (!matches!(kind, SectionKind::Solid {}) || self.hybrid || self.incompatible_modes || self.integration != Integration::Full) {
+            return Err(Error::Invalid("B-bar requires a full, non-hybrid, non-incompatible solid section".into()));
+        }
+        if self.lumped_mass != LumpedMass::Hrz && !kind.is_continuum() {
+            return Err(Error::Invalid(format!(
+                "section lumped_mass {:?} requires solid or planar continuum elements, not {}",
+                self.lumped_mass,
+                kind.name()
+            )));
+        }
         if self.incompatible_modes && self.integration == Integration::Reduced {
             return Err(Error::Invalid("incompatible modes use full integration".into()));
         }
@@ -402,7 +445,9 @@ mod tests {
         let shell = SectionKind::Shell { thickness: 2.0, offset: 0.0, points: 5 };
         assert!(Formulation { hybrid: true, ..Formulation::default() }.validate_for(&shell).is_err());
         assert!(
-            Formulation { incompatible_modes: true, integration: Integration::Reduced, hybrid: false }.validate_for(&SectionKind::Solid {}).is_err()
+            Formulation { incompatible_modes: true, integration: Integration::Reduced, hybrid: false, ..Formulation::default() }
+                .validate_for(&SectionKind::Solid {})
+                .is_err()
         );
         Formulation { incompatible_modes: true, hybrid: true, ..Formulation::default() }.validate_for(&SectionKind::Solid {}).unwrap();
         for bad in [

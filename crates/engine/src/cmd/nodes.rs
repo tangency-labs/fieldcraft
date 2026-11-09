@@ -371,7 +371,13 @@ mod tests {
                 assert!((x - y).abs() <= 1e-9, "{a} vs {b}");
             }
         }
-        let deck = fieldcraft_decks::abaqus::write(&s.model, fieldcraft_model::units::Preset::MmTonneS).unwrap();
+        // Renumbering the native nine-mode model remains numerically unchanged.
+        // Export a separately selected supported formulation to inspect labels.
+        let mut export = s.model.clone();
+        let mut section = export.section("Beam").unwrap().clone();
+        section.formulation = fieldcraft_model::Formulation { b_bar: true, ..Default::default() };
+        export.replace_section("Beam", section).unwrap();
+        let deck = fieldcraft_decks::abaqus::write(&export, fieldcraft_model::units::Preset::MmTonneS).unwrap();
         assert!(deck.lines().any(|l| l.starts_with("1000,")) && deck.lines().any(|l| l.starts_with("501,")), "{deck}");
         // Body by body and compact, then refusals that change nothing.
         s.execute("mesh.renumber", &json!({"by": "body"})).unwrap();

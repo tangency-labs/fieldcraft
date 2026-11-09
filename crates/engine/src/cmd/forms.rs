@@ -522,9 +522,13 @@ pub const SECTION: &[Field] = &[
             choice("integration", "Integration", &[("full", "Full"), ("reduced", "Reduced")])
                 .help("Full: every integration point. Reduced: fewer points, cheaper and less stiff, but may need hourglass control.")
                 .def("\"full\""),
+            flag("enhanced_strain13", "Enhanced strain Hex8 (13)").help("Thirteen-variable Hex8; C3D8I mapping only for nonhybrid small-strain isotropic static analysis.").def("false"),
+            flag("b_bar", "B-bar Hex8").help("Volume-averaged dilatation for linear isotropic Hex8; standard remains the default.").def("false"),
             flag("incompatible_modes", "Incompatible modes")
                 .help("Extra bending modes for linear hexahedra, so a coarse hex8 mesh bends without locking.")
                 .def("false"),
+            choice("lumped_mass", "Lumped mass policy", &[("hrz","HRZ"),("row_sum","Row sum"),("consistent","Keep consistent")])
+                .help("For explicit mass=lumped solves on solid/plane sections; mass=consistent ignores this policy. Row sum requires supported positive-basis linear elements.").def("\"hrz\""),
             flag("hybrid", "Hybrid").help("Pressure as an extra unknown, for nearly incompressible materials such as rubber.").def("false"),
         ],
     )
@@ -2704,6 +2708,9 @@ pub const SOLVE_HARMONIC: &[Field] = &[
     THREADS,
 ];
 pub const SOLVE_RANDOM: &[Field] = &[
+    json("sampling_frequencies", "Replay frequency grid").help("Native modal random only: explicit increasing SI-Hz grid within the source bands. Leave empty for source sampling."),
+    choice("mass", "Native modal mass", &[("consistent", "Consistent"), ("lumped", "Lumped")])
+        .help("Native random model steps only; default consistent. Lumped honors explicit section policies. Stored harmonic frames inherit mass; leave empty."),
     json("stress_projection", "Scalar stress projection").help("Fixed six weights and input_model=common_scalar_unit_pattern; projects complex harmonic stress before squaring. Optional fatigue: method=narrow_band/dirlik/benasciutti_tovo, curve, duration_seconds, mean_stress_pa, correction, stationary_gaussian=true. Broad-band requires zero mean and correction=none. Segmented S-N points/cycles/amplitude with surface_factor,size_factor,endurance_limit and end_slopes are supported by narrow_band and dirlik (2..64 points, slopes 1..20); benasciutti_tovo and extrapolation=reject refuse tables. SI only; not von Mises or unknown-correlated inputs."),
     num("natural_frequency", "Natural frequency", D::Of(Quantity::Frequency)).hint("1").help("Natural frequency of the SDOF check in Hz."),
     positive("damping_ratio", "Damping ratio", D::None).hint("0.02").help("Viscous modal damping ratio ζ."),

@@ -28,7 +28,7 @@ FieldCraft model, units mm-t-s-N-MPa
 ** reference point Tip
 99999999, 110.0, 5.0, 5.0
 ** Elements
-*ELEMENT, TYPE=C3D8I
+*ELEMENT, TYPE=C3D8H
 1, 1, 5, 7, 3, 2, 6, 8, 4
 2, 5, 9, 11, 7, 6, 10, 12, 8
 3, 9, 13, 15, 11, 10, 14, 16, 12
