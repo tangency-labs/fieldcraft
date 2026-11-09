@@ -25,105 +25,18 @@
 //! reported as the section forces at each end (axial force N, shears V_y, V_z, torque T, moments
 //! M_y, M_z on the cut whose outward normal is +x).
 //!
-//! **Section properties.** Area, second moments I_y = ∫ z² dA and I_z = ∫ y² dA, the polar
-//! moment I_y + I_z (rotary inertia of torsion), the torsion constant J and the shear areas:
-//! - rectangle: J from Saint-Venant's series, J = a b³/3 (1 − 192 b/(π⁵ a) Σ_{n odd}
-//!   tanh(nπa/2b)/n⁵) for sides a ≥ b (S. P. Timoshenko, J. N. Goodier, *Theory of Elasticity*,
-//!   3rd ed., McGraw-Hill 1970, §109); shear coefficient 10(1 + ν)/(12 + 11ν);
-//! - circle and pipe: J = I_y + I_z; shear coefficients 6(1 + ν)/(7 + 6ν) and, for a tube of
-//!   radius ratio m, 6(1 + ν)(1 + m²)² / ((7 + 6ν)(1 + m²)² + (20 + 12ν) m²) (G. R. Cowper,
-//!   *The shear coefficient in Timoshenko's beam theory*, J. Appl. Mech. 33(2):335–340, 1966);
-//! - I and box (thin-walled): J = Σ b t³/3 over the midline walls (open I) and Bredt's
-//!   4 A_m² t / p (closed box); shear areas the walls parallel to the shear, between the midlines
-//!   of the walls across it (the web for shear along z, 5/6 of the flanges along y; the two
-//!   webs or the two flanges of a box) (W. D. Pilkey, *Analysis and Design of Elastic Beams*,
-//!   Wiley 2002, ch. 6).
+//! **Section properties** are the profile's ([`fieldcraft_model::BeamProperties`], computed in
+//! the model so the deck writers give other solvers the same numbers): area, second moments, the
+//! torsion constant and the shear areas; the polar moment I_y + I_z is the rotary inertia of
+//! torsion.
 
-use fieldcraft_model::{BeamProfile, Elastic};
+use fieldcraft_model::{BeamProfile, BeamProperties, Elastic};
 
 use crate::dense::Matrix;
 use crate::dof::{DofSet, ElementDofs};
 use crate::frame::{Axes, Vec3, cross, dot, norm, rotate_matrix, rotate_to_global, rotate_to_local, sub, to_local, translation, unit};
 use crate::quadrature::gauss_legendre;
 use crate::{Error, Result};
-
-/// Cross-section properties in the beam's local axes (y along the profile's width, z along its
-/// height).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Properties {
-    pub area: f64,
-    /// ∫ z² dA: bending with deflection along z.
-    pub iy: f64,
-    /// ∫ y² dA: bending with deflection along y.
-    pub iz: f64,
-    /// Saint-Venant torsion constant.
-    pub torsion: f64,
-    /// Shear areas for shear along y and along z.
-    pub shear_y: f64,
-    pub shear_z: f64,
-}
-
-/// Saint-Venant's torsion constant of a solid rectangle.
-fn rectangle_torsion(width: f64, height: f64) -> f64 {
-    let (a, b) = (width.max(height), width.min(height));
-    let pi = std::f64::consts::PI;
-    let series: f64 = (0..50).map(|k| f64::from(2 * k + 1)).map(|n| (n * pi * a / (2.0 * b)).tanh() / n.powi(5)).sum();
-    a * b * b * b / 3.0 * (1.0 - 192.0 * b / (pi.powi(5) * a) * series)
-}
-
-/// The section properties of a profile (`poisson` enters the shear coefficients).
-pub fn properties(profile: &BeamProfile, poisson: f64) -> Properties {
-    let pi = std::f64::consts::PI;
-    let area = profile.area();
-    match *profile {
-        BeamProfile::Rectangle { width, height } => {
-            let k = 10.0 * (1.0 + poisson) / (12.0 + 11.0 * poisson);
-            Properties {
-                area,
-                iy: width * height.powi(3) / 12.0,
-                iz: height * width.powi(3) / 12.0,
-                torsion: rectangle_torsion(width, height),
-                shear_y: k * area,
-                shear_z: k * area,
-            }
-        }
-        BeamProfile::Circle { radius } => {
-            let i = pi * radius.powi(4) / 4.0;
-            let k = 6.0 * (1.0 + poisson) / (7.0 + 6.0 * poisson);
-            Properties { area, iy: i, iz: i, torsion: 2.0 * i, shear_y: k * area, shear_z: k * area }
-        }
-        BeamProfile::Pipe { radius, thickness } => {
-            let inner = radius - thickness;
-            let i = pi * (radius.powi(4) - inner.powi(4)) / 4.0;
-            let m2 = (inner / radius).powi(2);
-            let k = 6.0 * (1.0 + poisson) * (1.0 + m2).powi(2) / ((7.0 + 6.0 * poisson) * (1.0 + m2).powi(2) + (20.0 + 12.0 * poisson) * m2);
-            Properties { area, iy: i, iz: i, torsion: 2.0 * i, shear_y: k * area, shear_z: k * area }
-        }
-        BeamProfile::I { height, width, web, flange } => {
-            let inside = height - 2.0 * flange;
-            Properties {
-                area,
-                iy: (width * height.powi(3) - (width - web) * inside.powi(3)) / 12.0,
-                iz: (2.0 * flange * width.powi(3) + inside * web.powi(3)) / 12.0,
-                torsion: (2.0 * width * flange.powi(3) + (height - flange) * web.powi(3)) / 3.0,
-                shear_y: 5.0 / 6.0 * 2.0 * width * flange,
-                shear_z: (height - flange) * web,
-            }
-        }
-        BeamProfile::Box { width, height, thickness: t } => {
-            let (wi, hi) = (width - 2.0 * t, height - 2.0 * t);
-            let (wm, hm) = (width - t, height - t);
-            Properties {
-                area,
-                iy: (width * height.powi(3) - wi * hi.powi(3)) / 12.0,
-                iz: (height * width.powi(3) - hi * wi.powi(3)) / 12.0,
-                torsion: 4.0 * (wm * hm).powi(2) * t / (2.0 * (wm + hm)),
-                shear_y: 2.0 * wm * t,
-                shear_z: 2.0 * hm * t,
-            }
-        }
-    }
-}
 
 /// The Young's and shear moduli and Poisson's ratio of an isotropic material.
 /// (`what` names the section kind in errors.)
@@ -135,7 +48,7 @@ fn moduli(elastic: &Elastic, what: &str) -> Result<(f64, f64, f64)> {
 /// A beam section: profile properties and an isotropic material.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BeamSection {
-    pub properties: Properties,
+    pub properties: BeamProperties,
     pub young: f64,
     pub shear_modulus: f64,
 }
@@ -144,7 +57,7 @@ impl BeamSection {
     pub fn new(profile: &BeamProfile, elastic: &Elastic) -> Result<BeamSection> {
         profile.validate().map_err(|e| Error::Invalid(e.to_string()))?;
         let (young, shear_modulus, poisson) = moduli(elastic, "beam")?;
-        Ok(BeamSection { properties: properties(profile, poisson), young, shear_modulus })
+        Ok(BeamSection { properties: profile.properties(poisson), young, shear_modulus })
     }
 }
 
@@ -407,26 +320,5 @@ mod tests {
         assert!((lumped.get(0, 0) - total / 2.0).abs() < 1e-12 * total);
         assert!(Beam::new(&xyz, [40.0, 30.0, 0.0], section).is_err(), "orientation along the axis");
         assert!(Beam::new(&[xyz[0], xyz[0]], [0.0, 0.0, 1.0], section).is_err(), "zero length");
-    }
-
-    #[test]
-    fn profile_properties() {
-        // A square: J = 0.1406 a⁴ (Timoshenko & Goodier's table, 0.1406); thin strip J → b t³/3.
-        let sq = properties(&BeamProfile::Rectangle { width: 2.0, height: 2.0 }, 0.3);
-        assert!((sq.torsion / 16.0 - 0.1406).abs() < 1e-4, "{}", sq.torsion / 16.0);
-        let strip = properties(&BeamProfile::Rectangle { width: 1000.0, height: 1.0 }, 0.3);
-        assert!((strip.torsion / (1000.0 / 3.0) - 1.0).abs() < 1e-3, "{}", strip.torsion);
-        // A thin pipe: the shear coefficient tends to 2(1 + ν)/(4 + 3ν), J = 2 π r³ t.
-        let (r, t) = (100.0, 0.01);
-        let pipe = properties(&BeamProfile::Pipe { radius: r, thickness: t }, 0.3);
-        let k = pipe.shear_y / pipe.area;
-        assert!((k - 2.6 / 4.9).abs() < 1e-3, "{k}");
-        assert!((pipe.torsion / (2.0 * std::f64::consts::PI * r.powi(3) * t) - 1.0).abs() < 1e-3);
-        // A box is a pair of I sections in bending: the same I_y with webs of twice the thickness.
-        let b = properties(&BeamProfile::Box { width: 10.0, height: 20.0, thickness: 1.0 }, 0.3);
-        let i = properties(&BeamProfile::I { height: 20.0, width: 10.0, web: 2.0, flange: 1.0 }, 0.3);
-        assert!((b.iy - i.iy).abs() < 1e-9 && (b.area - i.area).abs() < 1e-12);
-        let circle = properties(&BeamProfile::Circle { radius: 2.0 }, 0.3);
-        assert!((circle.torsion - std::f64::consts::PI * 8.0).abs() < 1e-12);
     }
 }
