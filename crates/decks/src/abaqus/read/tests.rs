@@ -78,18 +78,11 @@ fn unread_material_behaviors_preserve_the_current_material_and_physical_lines() 
     let got = read(text).unwrap();
     assert_eq!(got.model.material("M").unwrap().density, Some(1.));
     assert_eq!(got.model.material("M").unwrap().elastic, Some(Elastic::Isotropic { young: 2., poisson: 0.3 }));
-    assert!(got.model.material("M").unwrap().plastic.is_none());
+    assert!(matches!(got.model.material("M").unwrap().plastic, Some(fieldcraft_model::Plastic::Table { .. })));
     assert_eq!(got.model.material("N").unwrap().density, Some(2.));
     assert!(got.model.material("N").unwrap().elastic.is_none());
-    assert_eq!(
-        got.unknown,
-        vec![
-            Unknown { keyword: "CONDUCTIVITY".into(), line: 2 },
-            Unknown { keyword: "PLASTIC".into(), line: 6 },
-            Unknown { keyword: "SPECIFICHEAT".into(), line: 11 }
-        ]
-    );
-    assert_eq!(got.unknown_count, 3);
+    assert_eq!(got.unknown, vec![Unknown { keyword: "CONDUCTIVITY".into(), line: 2 }, Unknown { keyword: "SPECIFICHEAT".into(), line: 11 }]);
+    assert_eq!(got.unknown_count, 2);
 }
 
 #[test]

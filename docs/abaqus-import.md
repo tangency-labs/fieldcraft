@@ -182,7 +182,7 @@ FRACTION`, `CONDUCTIVITY`, `EXPANSION`, `CREEP`, `VISCOELASTIC`, `DAMPING`, `DAM
 after them are imported into that material; every unread option is still reported with its
 line number. For example, a writer-generated hyperelastic material retains its density, but
 its hyperelastic law is unread and its stiffness is absent. Review and supply the intended
-material behavior before solving. No plastic, hyperelastic or thermal law is inferred.
+material behavior before solving. No hyperelastic or thermal law is inferred. Constant isotropic plastic hardening has the explicit limited mapping below.
 
 Another model option or an unrecognized keyword ends material context. A later `ELASTIC` or
 `DENSITY` then needs a new `MATERIAL` definition, preventing association across unknown scopes.
@@ -349,7 +349,7 @@ save/open, exact source replay, and normalized deck write/read. Reference:
 [Boundary conditions](https://docs.software.vt.edu/abaqusv2025/English/SIMACAEPRCRefMap/simaprc-c-boundary.htm).
 
 Command-level refusal regressions also reopen source bundles containing unsupported `TIE`
-defaults, coupling orientations, `PLASTIC` or nodal `TRANSFORM`. They require the original
+defaults, coupling orientations, unsupported plastic histories or nodal `TRANSFORM`. They require the original
 text to survive and no runnable step to be created. This verifies conservative
 retention, not support for those physical definitions. Named antisymmetry is a
 linear structural mapping; it does not enable finite-rotation or transformed-node
@@ -892,3 +892,32 @@ saved-result reopening, exact source replay and normalized export/read. There is
 no continuum stress in this discrete model; harmonic reaction forces are not
 exposed by the current probe. This is a mapping/analytical check, not commercial
 validation or evidence for general rotated mass tensors.
+
+### Constant isotropic plastic hardening in one small-strain equilibrium
+
+`*PLASTIC` (default or explicit `HARDENING=ISOTROPIC`) accepts constant pairs of
+true yield stress and equivalent plastic strain. Stress uses the chosen deck pressure unit;
+strain is dimensionless. The native J2 table interpolates between entries and holds the last
+yield stress beyond the final entry. The first plastic strain must be zero, strains strictly
+increase, stresses are positive and nondecreasing. No guessed elastic strain is subtracted.
+[Public PLASTIC keyword](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-plastic.htm)
+
+Analysis import is limited to exactly one automatic `STATIC`, `NLGEOM=NO`, isotropic C3D4
+step with no material orientation. It selects the existing material-nonlinear static solver
+with small-displacement kinematics, not the linear elastic solver. Increment sizes are
+normalized by the step period; this rate-independent solve uses a proportional ramp from
+zero initial plastic strain. Material state advances through converged increments within
+that step. It does not transfer plastic history to another step. Preserved results are
+endpoint results, not a restart file for integration-point history.
+
+Temperature/field/rate dependence, softening, other hardening types, local orientations,
+finite-strain plastic imports, perturbations, multiple steps and named load amplitudes are
+refused. Unsupported source history remains replayable; malformed material cards reject
+`deck.read` atomically and the original input file remains the evidence. No constitutive
+kernel or result layout is added. A positive import is not validation of other plastic laws.
+
+The original one-tetrahedron check has E=1000 Pa, nu=0.25, yield=1 Pa and hardening slope
+100 Pa, with 1.5 Pa uniaxial stress. The independent small-strain solution is plastic strain
+0.005, axial displacement 0.0065 m over 1 m, and lateral displacement -0.002875 m.
+The SI and mm-tonne-second inputs use the same forces, axes and strain table. Native commands,
+source replay, saved-result reopening and canonical reimport are separate checks.

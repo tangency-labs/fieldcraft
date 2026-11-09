@@ -526,7 +526,7 @@ fn unmapped_constraints_and_materials_survive_reopen_without_runnable_steps() {
     for (keyword, block) in [
         ("TIE", "*TIE,NAME=Joint\nSlave,Master\n"),
         ("COUPLING", "*COUPLING,CONSTRAINT NAME=Joint,REF NODE=1,SURFACE=Slave,ORIENTATION=Unmapped\n*KINEMATIC\n1,6\n"),
-        ("PLASTIC", "*MATERIAL,NAME=M\n*ELASTIC\n1000,.3\n*PLASTIC\n10,0\n"),
+        ("EXPANSION", "*MATERIAL,NAME=M\n*ELASTIC\n1000,.3\n*EXPANSION\n0.00001\n"),
         ("TRANSFORM", "*TRANSFORM,NSET=All,TYPE=R\n0,1,0,-1,0,0\n"),
     ] {
         let dir = folder();

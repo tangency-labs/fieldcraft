@@ -125,6 +125,13 @@ fn curves(blocks: &[Block<'_>]) -> Result<BTreeMap<String, Curve>> {
 /// from a runnable step. Unsupported history stops this and subsequent step mappings.
 pub(super) fn import(text: &str, read: &mut Read, preset: Preset, limits: Limits) -> Result<()> {
     let blocks = lex::blocks(text, super::MAX_RECORDS)?;
+    if read.model.materials().values().any(|m| m.plastic.is_some()) && blocks.iter().filter(|b| b.keyword == "STEP").count() != 1 {
+        read.warnings.push(
+            "PLASTIC import requires exactly one STATIC step; plastic history transfer and perturbation bases are not mapped; original retained"
+                .into(),
+        );
+        return Ok(());
+    }
     let curves = match curves(&blocks) {
         Ok(v) => v,
         Err(e @ Error::Unsupported { .. }) => {
@@ -339,6 +346,10 @@ fn prepare(
             _ => return Err(error(b.line, "NLGEOM expects YES or NO")),
         },
     };
+    let plastic = model.materials().values().any(|m| m.plastic.is_some());
+    if plastic {
+        super::plastic::scope(b, body, model, nonlinear)?;
+    }
     if nonlinear && (!model.steps().is_empty() || b.params.contains_key("PERTURBATION")) {
         return Err(unsupported(b.line, "NLGEOM: sequential equilibrium or PERTURBATION is not mapped"));
     }
@@ -420,7 +431,7 @@ fn prepare(
                     }
                     duration = f.get(1).filter(|s| !s.is_empty()).map(|s| number(s, row.line)).transpose()?.filter(|v| *v > 0.0).unwrap_or(1.0);
                 }
-                procedure = Some(if nonlinear { super::nonlinear::procedure(b, part, model)? } else { Procedure::Static {} });
+                procedure = Some(if nonlinear || plastic { super::nonlinear::procedure(b, part, model, nonlinear)? } else { Procedure::Static {} });
             }
             "MODALDYNAMIC" | "RESPONSESPECTRUM" | "MODALDAMPING" if projected => {}
             "DYNAMIC" => {
