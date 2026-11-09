@@ -359,3 +359,19 @@ fn caller_limits_refuse_nodes_elements_and_members_at_their_line() {
     let message = read_limited("*NSET,NSET=A,GENERATE\n1,1000\n", Preset::MKgS, Limits { members: 10, ..Limits::default() }).unwrap_err().to_string();
     assert!(message.contains("line 2") && message.contains("member limit"), "{message}");
 }
+
+#[test]
+fn orthotropic_stiffness_inverts_normal_compliance_and_refuses_indefinite_data() {
+    // D normal = [[4,1,1],[1,3,0],[1,0,2]]; inverse cofactors / 19.
+    let text = "*MATERIAL,NAME=M\n*ELASTIC,TYPE=ORTHOTROPIC\n4,1,3,1,0,2,5,6\n7\n";
+    let got = read(text).unwrap();
+    let Elastic::EngineeringConstants { young, poisson, shear } = got.model.material("M").unwrap().elastic.unwrap() else { panic!("wrong material") };
+    for (a, b) in young.into_iter().zip([19. / 6., 19. / 7., 19. / 11.]) {
+        assert!((a - b).abs() < 1e-12);
+    }
+    for (a, b) in poisson.into_iter().zip([2. / 6., 3. / 6., -1. / 7.]) {
+        assert!((a - b).abs() < 1e-12);
+    }
+    assert_eq!(shear, [5., 6., 7.]);
+    assert!(read(&text.replace("4,1,3,1,0,2", "1,2,1,0,0,1")).unwrap_err().to_string().contains("positive definite"));
+}

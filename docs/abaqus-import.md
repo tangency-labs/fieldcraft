@@ -368,8 +368,10 @@ responses equal another solver. Default adjustment/tolerance, `TYPE=NODE TO SURF
 `SURFACE, TYPE=NODE` with unit node weights, and `KINEMATIC` or uniform
 `DISTRIBUTING, COUPLING=CONTINUUM` to native reference-point constraints.
 The supported cloud consists only of solid-element nodes, in global axes, with
-all six reference DOFs selected (omitted data, blank first DOF, or ranges covering
-1–6). Continuum distribution uses equal nodal weights and translation-derived
+kinematic global DOF ranges containing at least one translation, or all six
+reference DOFs for distributing (omitted data, blank first DOF, or ranges covering
+1–6). Kinematic element surfaces resolve all face nodes (including midside nodes);
+element-based distributing weights remain refused. Continuum distribution uses equal nodal weights and translation-derived
 cloud rotation. The reference point retains its original label and coordinates;
 its temporary mesh-node alias is removed. Original reference node sets are
 expanded before this removal. Boundary, force and moment groups split reference
@@ -381,7 +383,7 @@ Part/instance expansion rewrites local constraint names, tie surface pairs,
 coupling surfaces and reference node/set names before mapping. Invalid references
 fail the read transaction. Unsupported parameters/subcards produce named warnings,
 retain the source and block runnable history: e.g. `ORIENTATION`, `INFLUENCE RADIUS`,
-`KINEMATIC, ALPHA`, partial DOFs, nonuniform weights, `DISTRIBUTING, COUPLING=STRUCTURAL`,
+`KINEMATIC, ALPHA`, rotation-only solid kinematic DOFs, partial distributing DOFs, nonuniform weights, `DISTRIBUTING, COUPLING=STRUCTURAL`,
 explicit structural rotational coupling, `FREE NODES`, `SINGLE FACET`, `UNIFORM`,
 and reference nodes already targeted by `MASS`/`SPRING` (discrete-target retargeting
 is not yet mapped).
@@ -485,3 +487,45 @@ Nagtegaal, Parks and Rice (1974), CMAME 4, 153–178. The public 2025 solid theo
 provides the C3D8 mapping rationale. This does not certify the unavailable 2024
 manual version or finite-strain extensions. No commercial response values are
 used to fit the implementation.
+
+
+### Constant orthotropic stiffness and additional solid-frame rotation
+
+`*ELASTIC, TYPE=ORTHOTROPIC` accepts the nine constant stiffness entries in the
+[public keyword order](https://docs.software.vt.edu/abaqusv2025/English/SIMACAEKEYRefMap/simakey-r-elastic.htm).
+The symmetric normal 3×3 block is inverted to reciprocal engineering constants;
+shear moduli are retained independently. Positive definiteness, finite numbers,
+units and the native material validation are enforced. Temperature/dependency
+columns and a plane-stress `LAMINA` completion are not inferred.
+
+For rectangular solid frames, the optional [orientation rotation](https://docs.software.vt.edu/abaqusv2025/English/SIMACAEKEYRefMap/simakey-r-orientation.htm)
+rotates the orthonormal material axes about local axis 1, 2 or 3. The resulting
+frame is persisted and exported explicitly; source replay retains the original
+axis/angle lines. Nonzero shell additional rotation (which needs projection in a
+different order), cylindrical twist, nodal/distributed frames remain named
+refusals. This does not relax the isotropic, unoriented B-bar material restriction.
+
+An original rotated tetrahedron tests `Kxx = E2/6`, `ux = 0.003 m` for a 1 N load,
+against independently constructed native commands, then save/open and normalized
+write/read. Partial kinematic and element-face coupling tests likewise compare
+native constraints, displacement, nodal recovered stress and reactions through
+these phases. Exact source replay is a separate byte equality assertion; it is
+not evidence that every retained keyword is solvable. Tie adjustment/default
+tolerances and local coupling axes are still not mapped. Plasticity, thermal
+material cards and other previously unimplemented physics remain explicitly
+outside this constant-elastic increment.
+
+### Internal-mode discrimination remains a validation gate
+
+Native Hex8 incompatible modes use nine condensed displacement variables and the
+centre-Jacobian correction cited in `fem::element` ([Taylor, Beresford and Wilson,
+1976](https://doi.org/10.1002/nme.1620100602)). The public
+[C3D8I library entry](https://docs.software.vt.edu/abaqusv2025/English/SIMACAEELMRefMap/simaelm-r-3delem.htm)
+specifies thirteen internal variables. Condensation removes internal DOFs but
+does not prove equality of the enhanced strain spaces. The public
+[distortion discussion](https://docs.software.vt.edu/abaqusv2025/English/SIMACAEGSARefMap/simagsa-c-ctmincompat.htm)
+also distinguishes parallel and trapezoidal distortions. Matching one rectangular
+nu=0 bending case cannot establish equivalence for either distortion or nonzero
+Poisson ratio. Import and normalized export of C3D8I/IH remain refused. Native
+nine-mode candidate results, if supplied for independent black-box comparison,
+are labelled as such and never as successful C3D8I imports.

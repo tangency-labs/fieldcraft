@@ -670,7 +670,8 @@ fn imported_constraints_named_rejections_preserve_source_and_bad_references_are_
         ("SURFACE=Pad", "SURFACE=Pad,ORIENTATION=Local", "ORIENTATION"),
         ("SURFACE=Pad", "SURFACE=Pad,INFLUENCE RADIUS=1", "INFLUENCERADIUS"),
         ("*KINEMATIC\n1,6", "*DISTRIBUTING,COUPLING=STRUCTURAL\n1,6", "STRUCTURAL"),
-        ("*KINEMATIC\n1,6", "*KINEMATIC\n1,3", "partial DOFs"),
+        ("*KINEMATIC\n1,6", "*KINEMATIC\n4,6", "at least one translation"),
+        ("*KINEMATIC\n1,6", "*DISTRIBUTING\n1,3", "distributing requires 1..6"),
     ] {
         let text = constraint_input().replace(from, to);
         std::fs::write(&input, &text).unwrap();
@@ -1050,4 +1051,83 @@ Base,1,3
     s.execute("deck.source.write", &json!({"path":replay})).unwrap();
     assert!(std::fs::read_to_string(replay).unwrap().contains("TYPE=C3D8"));
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+fn property_closure(text: &str, native: &mut Session, expected: f64) {
+    let dir = folder();
+    let input = dir.join("input.inp");
+    std::fs::write(&input, text).unwrap();
+    native.execute("solve.static", &json!({"step":"Pull"})).unwrap();
+    let mut s = Session::default();
+    let reply = s.execute("deck.read", &json!({"path":input,"format":"abaqus","units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(reply["analysis_complete"], true, "{reply}");
+    for phase in 0..3 {
+        let reply = s.execute("solve.static", &json!({"step":"Pull"})).unwrap();
+        let u = reply["max_displacement"]["value"].as_f64().unwrap();
+        assert!((u - expected).abs() < 1e-12, "phase={phase}, u={u}, expected={expected}");
+        assert_constraint_results(native, &s);
+        if phase == 0 {
+            let saved = dir.join("saved.fieldcraft");
+            s.execute("file.save_as", &json!({"path":saved,"results":true})).unwrap();
+            s.execute("file.new", &json!({})).unwrap();
+            s.execute("file.open", &json!({"path":saved})).unwrap();
+            let replay = dir.join("source.inp");
+            s.execute("deck.source.write", &json!({"path":replay})).unwrap();
+            assert_eq!(std::fs::read(replay).unwrap(), text.as_bytes());
+        } else if phase == 1 {
+            let normalized = dir.join("normalized.inp");
+            s.execute("deck.write", &json!({"path":normalized,"format":"abaqus"})).unwrap();
+            let read = s.execute("deck.read", &json!({"path":normalized,"format":"abaqus","units":"m-kg-s-N-Pa"})).unwrap();
+            assert_eq!(read["analysis_complete"], true, "{read}");
+        }
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn orthotropic_stiffness_rotated_solid_solves_reopens_and_normalizes() {
+    let text = "*NODE\n1,0,0,0\n2,1,0,0\n3,0,1,0\n4,0,0,1\n*ELEMENT,TYPE=C3D4,ELSET=All\n1,1,2,3,4\n*NSET,NSET=Base\n1,3,4\n*NSET,NSET=Top\n2\n*MATERIAL,NAME=M\n*ELASTIC,TYPE=ORTHOTROPIC\n1000,0,2000,0,0,3000,400,500\n600\n*ORIENTATION,NAME=Axes\n1,0,0,0,1,0\n3,90\n*SOLID SECTION,ELSET=All,MATERIAL=M,ORIENTATION=Axes\n*STEP,NAME=Pull\n*STATIC\n*BOUNDARY\nBase,1,3\n*CLOAD\nTop,1,1\n*END STEP\n";
+    let mut native = Session::default();
+    native.execute("model.units", &json!({"system":"m-kg-s-N-Pa"})).unwrap();
+    for (i, xyz) in [[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]].iter().enumerate() {
+        native.execute("mesh.node.add", &json!({"label":i+1,"xyz":xyz})).unwrap();
+    }
+    native.run_script(&json!([
+        {"command":"mesh.element.add","params":{"label":1,"kind":"tet4","nodes":[1,2,3,4]}},
+        {"command":"model.set.create","params":{"name":"All","elements":[1]}},
+        {"command":"model.set.create","params":{"name":"Base","nodes":[1,3,4]}},
+        {"command":"model.set.create","params":{"name":"Top","nodes":[2]}},
+        {"command":"model.material.create","params":{"name":"M","elastic":{"type":"engineering_constants","young":[1000,2000,3000],"poisson":[0,0,0],"shear":[400,500,600]}}},
+        {"command":"model.section.create","params":{"name":"S","set":"All","material":"M","kind":{"type":"solid"},"orientation":{"frame":{"type":"rectangular","axis1":[0,1,0],"axis2":[-1,0,0]}}}},
+        {"command":"model.boundary_condition.create","params":{"name":"Clamp","type":"displacement","target":{"set":"Base"},"values":[0,0,0,null,null,null]}},
+        {"command":"model.load.create","params":{"name":"F","type":"force","target":{"set":"Top"},"vector":[1,0,0]}},
+        {"command":"model.step.create","params":{"name":"Pull","procedure":{"type":"static"},"boundary_conditions":["Clamp"],"loads":["F"]}}
+    ])).unwrap();
+    // Unit tetra V=1/6, grad(N2)=ex: Kxx=E_local2/6 after 90 degree rotation.
+    property_closure(text, &mut native, 6. / 2000.);
+}
+
+#[test]
+fn partial_kinematic_translation_with_explicit_reference_restraints_closes() {
+    let text = constraint_input().replace("*KINEMATIC\n1,6", "*KINEMATIC\n3,3").replace("Base,1,3\n*CLOAD", "Base,1,3\nRP,1,2\nRP,4,6\n*CLOAD");
+    let mut native = native_constraint_patch();
+    let mut c = native.model.coupling("Rigid").unwrap().clone();
+    c.dofs = fieldcraft_model::Dofs::from_bits(4);
+    native.model.replace_coupling("Rigid", c).unwrap();
+    native
+        .execute(
+            "model.boundary_condition.create",
+            &json!({"name":"RPClamp","type":"displacement","target":{"reference_point":"RP"},"values":[0,0,null,0,0,0]}),
+        )
+        .unwrap();
+    let mut step = native.model.step("Pull").unwrap().clone();
+    step.boundary_conditions.insert("RPClamp".into());
+    native.model.replace_step(step).unwrap();
+    property_closure(&text, &mut native, 0.002);
+}
+
+#[test]
+fn kinematic_element_surface_resolves_face_nodes_and_roundtrips() {
+    let text = constraint_input().replace("*SURFACE,TYPE=NODE,NAME=Pad\nTop,1", "*SURFACE,TYPE=ELEMENT,NAME=Pad\n2,S2");
+    property_closure(&text, &mut native_constraint_patch(), 0.002);
 }

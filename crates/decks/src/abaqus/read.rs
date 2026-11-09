@@ -635,6 +635,7 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
                             young: quantity(&units, Quantity::Pressure, v.first().copied().unwrap_or_default(), line)?,
                             poisson: v.get(1).copied().unwrap_or_default(),
                         },
+                        "ORTHOTROPIC" if v.len() == 9 => composite::orthotropic(&v, &units, line)?,
                         "ENGINEERINGCONSTANTS" if v.len() == 9 => {
                             let mut young = [0.; 3];
                             let mut poisson = [0.; 3];
@@ -869,8 +870,8 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
                 let key = key(name, line)?;
                 orientations
                     .get(&key)
-                    .map(|o| o.section(typ.family == Family::Shell))
-                    .ok_or_else(|| error(line, format!("section names missing orientation `{name}`")))
+                    .ok_or_else(|| error(line, format!("section names missing orientation `{name}`")))?
+                    .section(typ.family == Family::Shell)
             })
             .transpose()?;
         if orientation.is_none()
