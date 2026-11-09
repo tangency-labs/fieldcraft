@@ -111,3 +111,20 @@ fn cut_force_balance_and_locked_adjustment_are_work_conjugate() {
     assert_eq!(vibration.modes.len(), 6);
     assert!(vibration.modes.iter().all(|m| m.frequency > 0. && m.frequency.is_finite()));
 }
+
+#[test]
+fn linear_base_preserves_dependency_without_stress_stiffening() {
+    let limits = Limits::default();
+    let options = FrequencyOptions::default();
+    let reference = solve_frequency(&column(0.), Some("Modes"), &options, &limits).unwrap();
+    let mut model = column(0.5);
+    let mut step = model.step("Modes").unwrap().clone();
+    step.linear_base = true;
+    model.replace_step(step).unwrap();
+    let result = solve_frequency(&model, Some("Modes"), &options, &limits).unwrap();
+    for (actual, expected) in result.modes.iter().zip(&reference.modes) {
+        assert!((actual.eigenvalue / expected.eigenvalue - 1.).abs() < 1e-12);
+    }
+    assert!(result.warnings.iter().any(|w| w.contains("no initial-stress stiffness")));
+    assert_eq!(model.step("Modes").unwrap().base_state.as_deref(), Some("Step"));
+}

@@ -226,8 +226,9 @@ the `*NODE`, `*ELEMENT`, `*NSET`, `*SURFACE`, `*ELASTIC` and `*SOLID SECTION` en
 
 Direct harmonic import also maps constant material/global Rayleigh and structural damping,
 explicit single-frequency rows (`upper=0`) and real concentrated/distributed loads. Frequency
-ranges with bias, modal/subspace harmonic methods, imaginary loads, prescribed harmonic motion
-and prestressed harmonic base states remain reported as unsupported. The `imported_steps` reply
+ranges with bias, modal/subspace harmonic methods, nonempty imaginary loads and prescribed
+harmonic motion remain reported as unsupported. Static-history base-state mapping and its
+stiffness policy are described below. The `imported_steps` reply
 lists the steps actually created; `analysis_complete=false` still means the entire source is
 not mapped. A later matrix-export step is a separate native matrix-generation procedure
 (see below); `solve.harmonic` executes only the selected harmonic step, while
@@ -827,3 +828,39 @@ filtering. A mixed solid/MASS or solid/SPRING1 target is refused, including set 
 cannot be accepted as pressure on only the surviving solid elements. A blank target is refused
 instead of being silently interpreted as the whole model. The affected step is not runnable,
 and the original source remains available through project reopening and source replay.
+
+
+### Static history followed by direct harmonic response
+
+A frequency or direct harmonic step after an ordinary `STATIC` step retains that
+latest equilibrium as `base_state`, with `linear_base: true`. This explicitly uses
+the reference-geometry elastic stiffness without initial-stress stiffness, matching
+an input whose general step has `NLGEOM=NO` (including the default). The native
+`base_state` default remains stress stiffened; `linear_base` is opt-in and requires
+an ordinary linear static base without pretension. It is stored with the model,
+included in result invalidation, and exposed by `model.step.create/edit`.
+Normalized export retains `NLGEOM=NO`; it refuses a nonlatest base or a base shared
+by linear and stress-stiffened consumers because one source general step cannot
+express both choices. Nonlinear equilibrium remains a distinct procedure: no YES
+flag is changed to NO and unsupported nonlinear rod solving still refuses.
+
+Each harmonic perturbation retains the base support DOFs with zero incremental
+values, but starts with no loads: only loads written in that perturbation act.
+The general history remains unchanged for subsequent general steps. Nonzero
+prescribed harmonic motion and frequency-dependent amplitudes remain named
+refusals. An empty `IMAGINARY, OP=NEW` load block maps an explicitly zero imaginary
+component without clearing the real component; nonempty imaginary loads remain
+unsupported. No time-domain amplitude is reinterpreted as a frequency curve.
+
+The original axial oscillator uses K=4 N/m and a consistently assembled free mass
+of 1 kg. Its static displacement is 0.25 m, frequency 1/pi Hz and response to a
+1 N load at 0.1 Hz is 1/(4-(2*pi*0.1)^2) m. Import, solving, saved-result reopening,
+source replay and normalized writing/reading retain the complete three-step order.
+A second input adds a force only to the static step to distinguish load histories.
+Mass is explicitly selected as `consistent` for these comparisons; this does not
+infer or apply a source solver's default lumping policy. A separate prestressed
+column check distinguishes elastic stiffness from initial-stress stiffening.
+
+Public procedure semantics: [general and perturbation procedures](https://abaqus.uclouvain.be/English/SIMACAEANLRefMap/simaanl-c-linearnonlinear.htm),
+[direct steady-state dynamics](https://abaqus.uclouvain.be/English/SIMACAEANLRefMap/simaanl-c-steadystdyndirect.htm),
+and [loads in perturbation steps](https://abaqus.uclouvain.be/English/SIMACAEPRCRefMap/simaprc-c-loading.htm).

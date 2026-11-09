@@ -37,7 +37,21 @@ pub(super) fn enhanced(model: &Model, procedure: Option<&Procedure>) -> Result<(
 /// Base states the writer maps: frequency extraction and steady-state response as perturbations
 /// of an earlier general step. The pretension chain itself is checked by `validate_pretension_chain`.
 pub(super) fn mapped_base_states(model: &Model) -> Result<()> {
-    for step in model.steps() {
+    for (index, step) in model.steps().iter().enumerate() {
+        if step.linear_base {
+            let latest = model.steps()[..index].iter().rev().find(|s| matches!(s.procedure, Procedure::Static {} | Procedure::NonlinearStatic(_)));
+            if latest.map(|s| s.name.as_str()) != step.base_state.as_deref()
+                || model.steps().iter().any(|s| s.base_state == step.base_state && !s.linear_base)
+            {
+                return Err(Error::Unsupported {
+                    format: FORMAT,
+                    what: format!(
+                        "step `{}`: linear_base must reference the latest general step and cannot share it with a stress-stiffened perturbation",
+                        step.name
+                    ),
+                });
+            }
+        }
         if step.base_state.is_some() && !matches!(step.procedure, Procedure::Frequency { .. } | Procedure::Harmonic(_)) {
             return Err(Error::Unsupported {
                 format: FORMAT,

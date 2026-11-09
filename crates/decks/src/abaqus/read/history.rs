@@ -228,10 +228,8 @@ pub(super) fn import(text: &str, read: &mut Read, preset: Preset, limits: Limits
                     | Procedure::MatrixGeneration { .. }
             );
         if total > 0.0
-            && (matches!(
-                procedure,
-                Procedure::Buckle { .. } | Procedure::Harmonic(_) | Procedure::RandomVibration(_) | Procedure::MatrixGeneration { .. }
-            ) || (b.params.contains_key("PERTURBATION") && matches!(procedure, Procedure::Static {})))
+            && (matches!(procedure, Procedure::Buckle { .. } | Procedure::RandomVibration(_) | Procedure::MatrixGeneration { .. })
+                || (b.params.contains_key("PERTURBATION") && matches!(procedure, Procedure::Static {})))
         {
             read.warnings.push(format!(
                 "line {}: base-state perturbation requires the prestress interface; this and subsequent steps are retained only",
@@ -249,8 +247,10 @@ pub(super) fn import(text: &str, read: &mut Read, preset: Preset, limits: Limits
         let step_name = lex::unquote(value(b, "NAME", "")?, b.line)?;
         let step_name = if step_name.is_empty() { format!("ImportedStep{}", read.model.steps().len() + 1) } else { step_name };
         let mut step = Step::new(step_name, procedure);
-        if matches!(step.procedure, Procedure::Frequency { .. }) {
+        if matches!(step.procedure, Procedure::Frequency { .. } | Procedure::Harmonic(_)) {
             step.base_state = base_state.clone();
+            step.linear_base =
+                base_state.as_deref().and_then(|name| read.model.step(name)).is_some_and(|base| matches!(base.procedure, Procedure::Static {}));
         }
         if matches!(step.procedure, Procedure::Static {} | Procedure::NonlinearStatic(_)) {
             base_state = Some(step.name.clone());
@@ -368,9 +368,30 @@ fn prepare(
     }
     let mut global_damping = None;
     let mut next = state.clone();
+    // A steady-state perturbation starts with the base supports, not its loads.
+    // Prescribed values are increments about equilibrium, initially zero.
+    if body.iter().any(|part| part.keyword == "STEADYSTATEDYNAMICS") {
+        next.retain(|(family, _, _, _), _| *family == Family::Boundary);
+        for driven in next.values_mut() {
+            driven.value = 0.0;
+            driven.amplitude = None;
+        }
+    }
     let mut ops = BTreeMap::new();
     let mut touched = Touched::new();
     for part in body {
+        if matches!(part.keyword.as_str(), "CLOAD" | "DLOAD" | "DSLOAD")
+            && part.params.contains_key("IMAGINARY")
+            && body.iter().any(|b| b.keyword == "STEADYSTATEDYNAMICS")
+        {
+            allow(part, &["OP", "IMAGINARY"])?;
+            if part.params.get("IMAGINARY").is_some_and(Option::is_some) || !part.rows.is_empty() || canonical(value(part, "OP", "MOD")?) != "NEW" {
+                return Err(unsupported(part.line, "IMAGINARY harmonic loads: only an empty OP=NEW zero-component reset is mapped"));
+            }
+            // Perturbation loads start empty. This explicit zero imaginary component
+            // must not clear the independently defined real component.
+            continue;
+        }
         match part.keyword.as_str() {
             "MATRIXGENERATE" => {
                 if procedure.is_some() {
@@ -508,7 +529,7 @@ fn prepare(
     }
     if !nonlinear
         && model.steps().iter().any(|s| matches!(s.procedure, Procedure::NonlinearStatic(_)))
-        && !matches!(procedure, Procedure::Frequency { .. })
+        && !matches!(procedure, Procedure::Frequency { .. } | Procedure::Harmonic(_))
     {
         return Err(unsupported(b.line, "NLGEOM continuation: subsequent general steps are not mapped"));
     }

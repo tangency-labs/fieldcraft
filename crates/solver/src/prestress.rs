@@ -46,6 +46,12 @@ pub(crate) fn stiffness(setup: &Setup<'_>, graph: &NodeGraph, k: Csr, limits: &L
     }
     crate::system::refuse_contact(setup.model, "linear static base_state; use a nonlinear equilibrium for contact")?;
     let preload = static_on(&Setup { model: setup.model, resolved: setup.resolved, mesh: setup.mesh, step: base }, limits)?;
+    if setup.step.linear_base {
+        warnings.extend(preload.warnings);
+        warnings.push(format!("linear perturbation about `{}`: reference-geometry elastic stiffness, no initial-stress stiffness", base.name));
+        let constraints = crate::tie::rows(setup.model, setup.resolved, setup.mesh, warnings)?.into_iter().map(FrozenRow::from_row).collect();
+        return Ok(Terminal { stiffness: k, constraints });
+    }
     let kg = crate::buckle::initial_stress_stiffness(setup.mesh, graph, &preload)?;
     warnings.extend(preload.warnings);
     warnings
