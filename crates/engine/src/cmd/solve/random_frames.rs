@@ -139,20 +139,20 @@ pub(super) fn evaluate(h: &HarmonicResult, p: &Value, step: &str, table: &Value)
                 return Err(EngineError::invalid("narrow_band", "use fatigue for broadband methods"));
             }
             let fatigue_input = config.fatigue.as_ref().or(config.narrow_band.as_ref());
-            if let Some(f) = fatigue_input
-                && let fieldcraft_solver::fatigue::curve::SnCurve::Table(t) = &f.curve
-                && nodes.len().checked_mul(t.points.len()).is_none_or(|n| n > 256)
-            {
-                return Err(EngineError::invalid(
-                    "stress_projection",
-                    "segmented spectral integration work cap: node count times table points must be <=256; select fewer nodes",
-                ));
-            }
+            // Bound working memory by evaluating nodes in deterministic chunks. The output
+            // ordering and all frequency/PSD inputs remain unchanged for full-field runs.
+            let chunk_size = fatigue_input
+                .and_then(|f| match &f.curve {
+                    fieldcraft_solver::fatigue::curve::SnCurve::Table(t) => Some((256 / t.points.len().max(1)).max(1)),
+                    _ => None,
+                })
+                .unwrap_or(256);
             if fatigue_input.is_some_and(|f| !f.stationary_gaussian) {
                 return Err(EngineError::invalid("stress_projection", "narrow-band damage requires explicit stationary Gaussian applicability"));
             }
             nodes
-                .iter()
+                .chunks(chunk_size)
+                .flat_map(|chunk| chunk.iter())
                 .map(|&node| -> Result<Value> {
                     use fieldcraft_solver::fatigue::spectral;
                     let samples = spectral::from_harmonic(h, node, &config.weights, &psd)?;
