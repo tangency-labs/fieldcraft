@@ -191,46 +191,6 @@
     }
   },
   {
-    "command": "model.boundary_condition.create",
-    "params": {
-      "name": "Clamp",
-      "type": "fixed",
-      "target": {
-        "set": "root"
-      }
-    }
-  },
-  {
-    "command": "model.load.create",
-    "params": {
-      "name": "TipForce",
-      "type": "force",
-      "target": {
-        "set": "tip"
-      },
-      "vector": [
-        "0 N",
-        "0 N",
-        "-100 N"
-      ]
-    }
-  },
-  {
-    "command": "model.step.create",
-    "params": {
-      "name": "Bend",
-      "procedure": {
-        "type": "static"
-      },
-      "boundary_conditions": [
-        "Clamp"
-      ],
-      "loads": [
-        "TipForce"
-      ]
-    }
-  },
-  {
     "command": "model.check",
     "params": {}
   },

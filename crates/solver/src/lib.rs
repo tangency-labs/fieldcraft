@@ -35,6 +35,7 @@ pub mod constraints;
 pub mod contact;
 pub mod discrete;
 pub mod eigen;
+pub mod fatigue;
 pub mod foundation;
 pub mod harmonic;
 pub mod heat;
@@ -46,15 +47,17 @@ pub mod pretension;
 pub mod random;
 pub mod sensitivity;
 pub mod sparse;
+pub mod spectrum;
 pub mod system;
 pub mod tie;
+pub mod transient;
 
 pub use analysis::{
     ElementStress, FrequencyOptions, FrequencyResult, Location, MassKind, Mode, PointResult, StaticResult, Stats, StepResult, solve_frequency,
     solve_static,
 };
 pub use buckle::{Buckling, solve_buckle};
-pub use harmonic::{HarmonicResult, solve_harmonic};
+pub use harmonic::{HarmonicResult, MatrixExport, export_matrices, solve_harmonic, solve_harmonic_with_mass};
 pub use heat::{HeatResult, solve_heat};
 pub use nonlinear::solve_nonlinear;
 pub use random::{

@@ -26,6 +26,13 @@ const MAX_PX: u32 = 256;
 
 /// The icon's SVG text.
 pub fn svg(id: &str) -> Option<&'static str> {
+    // Fatigue shares the existing original VectorCraft signal/curve artwork.
+    // These are semantic aliases, not external assets or a generic missing-icon fallback.
+    let id = match id {
+        "solve.fatigue.history" | "solve.fatigue.transient" => "model.amplitude",
+        "solve.fatigue.strain_cycles" => "results.xy",
+        other => other,
+    };
     ICONS.binary_search_by(|(k, _)| (*k).cmp(id)).ok().and_then(|i| ICONS.get(i)).map(|(_, s)| *s)
 }
 

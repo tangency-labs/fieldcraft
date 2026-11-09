@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="24" height="24" viewBox="0 0 24 24">
+  <title>deck.write.abaqus</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M4 3 L12 3 L16 7 L16 21 L4 21 Z" fill="#2d4e70" stroke="#dde2ea" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M12 3 L12 7 L16 7" fill="none" stroke="#dde2ea" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M7 10 L13 10 M7 13 L13 13 M7 16 L11 16" fill="none" stroke="#dde2ea" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M15 15 L21 15 M18.19 16.53 L21 15 L18.19 13.47" fill="none" stroke="#4f9ce8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M16 6 C16 4.619 17.119 3.5 18.5 3.5 C19.881 3.5 21 4.619 21 6 C21 7.381 19.881 8.5 18.5 8.5 C17.119 8.5 16 7.381 16 6 Z" fill="#4f9ce8" stroke="#4f9ce8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

@@ -313,9 +313,12 @@ fn solution(steps: &[&Step]) -> std::result::Result<u32, String> {
     if let Some(s) = steps.iter().find(|s| matches!(s.procedure, Procedure::NonlinearStatic(_))) {
         return Err(format!("step `{}`: nonlinear static steps (Nastran's SOL 400; this writer writes SOL 101 and 103 so far)", s.name));
     }
+    if let Some(s) = steps.iter().find(|s| matches!(s.procedure, Procedure::RandomVibration(_) | Procedure::MatrixGeneration { .. })) {
+        return Err(format!("step `{}`: random response or operator export is not mapped by this writer", s.name));
+    }
     let statics = steps.iter().find(|s| matches!(s.procedure, Procedure::Static {}));
-    if let Some(s) = steps.iter().find(|s| matches!(s.procedure, Procedure::Harmonic(_))) {
-        return Err(format!("step `{}`: harmonic response (SOL 108/111; this writer writes SOL 101 and 103 so far)", s.name));
+    if let Some(s) = steps.iter().find(|s| matches!(s.procedure, Procedure::Harmonic(_) | Procedure::Transient(_) | Procedure::ResponseSpectrum(_))) {
+        return Err(format!("step `{}`: {} response is not supported by this writer", s.name, s.procedure.name()));
     }
     let modes = steps.iter().find(|s| matches!(s.procedure, Procedure::Frequency { .. }));
     match (statics, modes) {

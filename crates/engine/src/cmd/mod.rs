@@ -11,6 +11,9 @@ pub(crate) mod define;
 pub mod diagnostics;
 mod edit;
 mod extrude;
+mod fatigue;
+mod fatigue_strain;
+mod fatigue_transient;
 pub(crate) mod file;
 pub(crate) mod forms;
 mod foundation;
@@ -236,6 +239,7 @@ pub static ALL: &[CommandSpec] = &[
     edit::REDO,
     deck::WRITE,
     deck::READ,
+    deck::WRITE_SOURCE,
     solve::RUN,
     solve::STATIC,
     solve::SENSITIVITY_STATIC,
@@ -247,7 +251,13 @@ pub static ALL: &[CommandSpec] = &[
     solve::NONLINEAR,
     solve::FREQUENCY,
     solve::HARMONIC,
+    solve::TRANSIENT,
+    solve::SPECTRUM,
     solve::RANDOM,
+    fatigue::HISTORY,
+    fatigue_transient::TRANSIENT,
+    fatigue_strain::STRAIN_CYCLES,
+    solve::MATRICES,
     solve::BUCKLE,
     solve::HEAT,
     solve::EXPLICIT,

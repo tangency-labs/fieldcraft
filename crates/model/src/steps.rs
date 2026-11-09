@@ -47,8 +47,14 @@ fn default_frames() -> u32 {
 pub enum Procedure {
     /// Linear static equilibrium under the active loads and boundary conditions.
     Static {},
+    /// Export reduced linear structural operators in SI; no response solve.
+    MatrixGeneration {
+        matrices: BTreeSet<MatrixKind>,
+    },
     /// Steady-state response to harmonic loads, in the exp(iωt) convention.
     Harmonic(crate::harmonic::Harmonic),
+    Transient(crate::dynamics::Transient),
+    ResponseSpectrum(crate::dynamics::Spectrum),
     /// Modal random response from one-sided force or base-acceleration PSD inputs.
     RandomVibration(crate::random::RandomVibration),
     /// Natural frequencies and mode shapes: the lowest `modes` modes, optionally only those
@@ -1066,12 +1072,25 @@ impl BulkViscosity {
     }
 }
 
+/// Operators in K u + C u′ + M u″, with i G for structural loss in frequency space.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MatrixKind {
+    Stiffness,
+    Mass,
+    ViscousDamping,
+    StructuralDamping,
+}
+
 impl Procedure {
     /// The procedure's type, as the model file names it.
     pub fn name(&self) -> &'static str {
         match self {
             Procedure::Static {} => "static",
+            Procedure::MatrixGeneration { .. } => "matrix_generation",
             Procedure::Harmonic(_) => "harmonic",
+            Procedure::Transient(_) => "transient",
+            Procedure::ResponseSpectrum(_) => "response_spectrum",
             Procedure::RandomVibration(_) => "random_vibration",
             Procedure::Frequency { .. } => "frequency",
             Procedure::Buckle { .. } => "buckle",
@@ -1104,7 +1123,7 @@ impl Procedure {
 
     /// Whether the procedure is transient dynamics (it needs mass; a free body is legitimate).
     pub fn is_dynamic(&self) -> bool {
-        matches!(self, Procedure::ExplicitDynamic(_))
+        matches!(self, Procedure::ExplicitDynamic(_) | Procedure::Transient(_))
     }
 
     /// The sets the procedure's own settings refer to.
@@ -1117,6 +1136,20 @@ impl Procedure {
     }
 
     pub fn validate(&self) -> Result<()> {
+        if let Procedure::Transient(t) = self {
+            return t.validate();
+        }
+        if let Procedure::ResponseSpectrum(t) = self {
+            return t.validate();
+        }
+        if let Procedure::MatrixGeneration { matrices } = self
+            && matrices.is_empty()
+        {
+            return Err(Error::Invalid("matrix generation needs an operator".into()));
+        }
+        if let Procedure::RandomVibration(r) = self {
+            return r.validate();
+        }
         if let Procedure::Harmonic(h) = self {
             return h.validate();
         }
@@ -1187,11 +1220,13 @@ impl Procedure {
         match self {
             Procedure::Static {} | Procedure::NonlinearStatic(_) => OutputVariable::ALL.into_iter().collect(),
             Procedure::Frequency { .. } | Procedure::Buckle { .. } => [OutputVariable::Displacement].into_iter().collect(),
-            Procedure::ExplicitDynamic(_) | Procedure::Harmonic(_) | Procedure::RandomVibration(_) => {
-                [OutputVariable::Displacement, OutputVariable::Stress].into_iter().collect()
-            }
+            Procedure::Transient(_)
+            | Procedure::ResponseSpectrum(_)
+            | Procedure::ExplicitDynamic(_)
+            | Procedure::Harmonic(_)
+            | Procedure::RandomVibration(_) => [OutputVariable::Displacement, OutputVariable::Stress].into_iter().collect(),
             // Velocity, pressure and wall forces, always.
-            Procedure::Fluid { .. } => BTreeSet::new(),
+            Procedure::Fluid { .. } | Procedure::MatrixGeneration { .. } => BTreeSet::new(),
             Procedure::HeatTransfer { .. } => [OutputVariable::Temperature, OutputVariable::HeatFlux].into_iter().collect(),
             Procedure::CoupledTemperatureDisplacement {} => {
                 OutputVariable::ALL.into_iter().chain([OutputVariable::Temperature, OutputVariable::HeatFlux]).collect()
@@ -1445,6 +1480,14 @@ impl Model {
         for l in &step.loads {
             require(&self.loads, "load", l).map_err(|e| context("step", &step.name, e))?;
         }
+        // Initial node references are resolved against the solve mesh, like set targets.
+        // Native files deserialize the definition before loading mesh.bin, so checking
+        // node existence here would reject every saved nonempty initial state.
+        if let Procedure::Transient(t) = &step.procedure
+            && let Some(name) = t.load_amplitudes.keys().find(|name| !step.loads.contains(*name))
+        {
+            return Err(context("step", &step.name, Error::Invalid(format!("amplitude names inactive load `{name}`"))));
+        }
         if let Procedure::Harmonic(h) = &step.procedure
             && let Some(name) = h.load_factors.keys().find(|name| !step.loads.contains(*name))
         {
@@ -1515,6 +1558,9 @@ impl Model {
         // A load the step no longer lists takes its own load path with it.
         if !active && let Procedure::NonlinearStatic(n) = &mut step.procedure {
             n.load_paths.remove(name);
+        }
+        if !active && let Procedure::Transient(t) = &mut step.procedure {
+            t.load_amplitudes.remove(name);
         }
         if !active && let Procedure::Harmonic(h) = &mut step.procedure {
             h.load_factors.remove(name);

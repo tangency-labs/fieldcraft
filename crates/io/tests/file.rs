@@ -393,7 +393,7 @@ fn results_round_trip_and_hostile_results_are_refused() {
     refused(long_name, "a name longer than the part");
     let kind_at = 12 + 8 + 4 + 32;
     let mut kind = rb.clone();
-    kind[kind_at] = 9;
+    kind[kind_at] = u8::MAX;
     assert!(refused(kind, "kind").contains("unknown kind"));
     let mut wrong_kind = rb.clone();
     wrong_kind[kind_at] = 4;
@@ -585,4 +585,42 @@ fn run_settings_round_trip_and_are_checked() {
         ..Default::default()
     };
     assert!(fieldcraft_io::write_with(&f.model, &f.geometry, &f.journal, &f.journal_header, &f.view, &bad).is_err());
+}
+
+#[test]
+fn original_deck_source_is_integrity_checked_and_roundtrips() {
+    let source = fieldcraft_io::DeckSource {
+        root: "model.inp".into(),
+        files: std::collections::BTreeMap::from([
+            ("model.inp".into(), "** unchanged\r\n*INCLUDE,INPUT=part.inc\r\n*Future\r\nopaque".into()),
+            ("part.inc".into(), "*NODE\n1,0,0,0".into()),
+        ]),
+    };
+    let m = fieldcraft_model::Model::default();
+    let bytes = fieldcraft_io::write_with(
+        &m,
+        &Default::default(),
+        &[],
+        &Default::default(),
+        &Default::default(),
+        &fieldcraft_io::Extras { deck_source: Some(&source), ..Default::default() },
+    )
+    .unwrap();
+    assert_eq!(fieldcraft_io::read(&bytes).unwrap().deck_source, Some(source.clone()));
+    let mut corrupted = parts(&bytes);
+    corrupted.iter_mut().find(|(name, _)| name == "deck-source.json").unwrap().1.push(b' ');
+    assert!(fieldcraft_io::read(&package(&corrupted)).unwrap_err().to_string().contains("SHA-256"));
+    let mut bad = source;
+    bad.files.insert("../escape.inc".into(), "x".into());
+    assert!(
+        fieldcraft_io::write_with(
+            &m,
+            &Default::default(),
+            &[],
+            &Default::default(),
+            &Default::default(),
+            &fieldcraft_io::Extras { deck_source: Some(&bad), ..Default::default() }
+        )
+        .is_err()
+    );
 }

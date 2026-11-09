@@ -1015,6 +1015,9 @@ const PROCEDURE: Field = variants(
     "Procedure",
     &[
         variant("static", "Static, linear", &[]),
+        variant("matrix_generation", "Structural matrices", &[
+            json("matrices", "Operators").help("Array of stiffness, mass, viscous_damping, structural_damping; homogeneous linear model only.").req().def(r#"["stiffness","mass"]"#),
+        ]),
         variant(
             "nonlinear_static",
             "Static, nonlinear",
@@ -1101,6 +1104,48 @@ const PROCEDURE: Field = variants(
                 positive("max_hz", "Max frequency", D::Hertz).help("Highest frequency of interest."),
             ],
         ),
+        variant("transient", "Linear transient", &[
+            positive("time_step", "Time step", D::Time).help("Fixed increment, or sampling-grid increment with adaptive substeps.").req(),
+            int("increments", "Increments", 1, 1_000_000).help("Number of time increments after the initial state.").req(),
+            int("output_every", "Output every", 1, 1_000_000).help("Store every nth increment; initial and final states are always stored.").def("1"),
+            variants("integration", "Integration", &[
+                variant("average_acceleration", "Newmark average acceleration", &[]),
+                variant("linear_acceleration", "Newmark linear acceleration", &[]),
+                variant("hht", "HHT", &[num("alpha", "Alpha (-1/3 to 0)", D::None).help("HHT numerical damping parameter; zero gives average acceleration.").req()]),
+            ]).help("Average acceleration by default; linear acceleration is conditionally stable; HHT adds numerical damping."),
+            variants("method", "Method", &[
+                variant("direct", "Direct", &[]),
+                variant("modal", "Modal", &[int("modes", "Modes", 1, 4096).help("Number of mass-normalized modes retained.").req(), json("damping_ratios", "Additional modal damping ratios").help("Empty, one shared ratio, or one per mode; additive to projected physical damping.")]),
+            ]).help("Integrate the physical degrees of freedom or a retained modal basis."),
+            group("damping", "Viscous damping", &[
+                num("alpha", "Rayleigh alpha", D::StrainRate).help("Nonnegative mass-proportional viscous coefficient."), num("beta", "Rayleigh beta", D::Time).help("Nonnegative stiffness-proportional viscous coefficient."),
+            ]).help("Add Rayleigh viscous damping to material and support damping."),
+            json("adaptive", "Error-controlled substeps").numbers(&[("/min_step", D::Time), ("/max_step", D::Time), ("/absolute_tolerance", D::Length)])
+                .help("{min_step,max_step,absolute_tolerance,relative_tolerance:0,max_attempts,estimator:zienkiewicz_xie|quadratic_acceleration}; direct average acceleration with translational coordinates only. Saved time grid is unchanged."),
+            json("load_amplitudes", "Load amplitudes").numbers(&[("/*/points/*/0", D::Time), ("/*/origin", D::Time), ("/*/angular_frequency", D::Of(Quantity::AngularVelocity))])
+                .help("Active load names mapped to tabular/smooth_step points or periodic Fourier coefficients. Values are dimensionless; outside tables holds endpoints."),
+            json("initial_displacement", "Initial nodal translations").numbers(&[("/*", D::Length)]).help("Node labels mapped to XYZ translations; unspecified nodes start at zero."),
+            json("initial_velocity", "Initial nodal velocities").numbers(&[("/*", D::Velocity)]).help("Node labels mapped to XYZ velocities; unspecified nodes start at rest."),
+            json("base_acceleration", "Base acceleration").numbers(&[("/magnitude", D::Of(Quantity::Acceleration)), ("/amplitude/points/*/0", D::Time), ("/amplitude/origin", D::Time), ("/amplitude/angular_frequency", D::Of(Quantity::AngularVelocity))])
+                .help("{direction: unit XYZ, magnitude: acceleration, amplitude: curve}; output is relative motion."),
+            json("base_displacement", "Prescribed base displacement").numbers(&[("/magnitude", D::Length), ("/initial_velocity", D::Velocity), ("/initial_acceleration", D::Acceleration), ("/amplitude/points/*/0", D::Time), ("/amplitude/origin", D::Time), ("/amplitude/angular_frequency", D::Of(Quantity::AngularVelocity))])
+                .help("Uniform base {direction, magnitude, amplitude, initial_velocity, initial_acceleration}; explicit initial derivatives, Newmark-consistent sampled motion. Exclusive of base_acceleration; outputs remain relative."),
+        ]),
+        variant("response_spectrum", "Response spectrum", &[
+            int("modes", "Modes", 1, 4096).help("Number of mass-normalized modes retained.").req(),
+            num("damping_ratio", "Spectrum modal damping ratio", D::None).help("Default modal damping ratio used for interpolation and CQC.").req(),
+            choice("combination", "Modal combination", &[("srss", "SRSS"), ("cqc", "CQC")]).help("Combine signed modal responses by SRSS or damping-dependent CQC.").req(),
+            json("direction", "Unit excitation direction").help("Single direction, defaults to X; use directions for multiple axes."),
+            json("modal_damping_ratios", "Modal damping ratios").help("Empty uses damping_ratio; otherwise one shared value or one per requested mode."),
+            json("directions", "Excitation directions").help("1 to 3 orthogonal {direction:[x,y,z], scale} entries; scale is dimensionless."),
+            choice("direction_combination", "Direction combination", &[("srss", "SRSS"), ("percent1004040", "100-40-40")]).help("Combine directional peaks by SRSS or the largest 100-40-40 envelope."),
+            json("pseudo_acceleration", "Single frequency spectrum").numbers(&[("/*/0", D::Hertz), ("/*/1", D::Of(Quantity::Acceleration))])
+                .help("Ascending [frequency, pseudo-acceleration] at damping_ratio; exclusive of tables/period_tables."),
+            json("tables", "Frequency spectra by damping").numbers(&[("/*/points/*/0",D::Hertz),("/*/points/*/1",D::Acceleration)])
+                .help("Ascending {damping_ratio, points:[[frequency,acceleration],...]} tables. Linear axis/damping interpolation; no extrapolation."),
+            json("period_tables", "Period spectra by damping").numbers(&[("/*/points/*/0",D::Time),("/*/points/*/1",D::Acceleration)])
+                .help("As tables, but abscissae are periods in display time units. Mutually exclusive with frequency tables."),
+        ]),
         variant("harmonic", "Steady-state harmonic", &[
             json("frequencies", "Frequencies")
                 .numbers(&[("/count", D::None), ("/logarithmic", D::None), ("/*", D::Hertz)])
@@ -2411,10 +2456,19 @@ pub const SAMPLE: &[Field] = &[choice(
 pub const COUNT: &[Field] = &[int("count", "Count", 1, 1_000_000).help("How many steps.").def("1")];
 
 pub const DECK: &[Field] = &[
-    choice("format", "Format", &[("abaqus", "Abaqus input (.inp)"), ("nastran", "Nastran bulk data (.bdf)"), ("lsdyna", "LS-DYNA keyword (.k)")])
-        .help("The solver deck format.")
-        .req()
-        .def("\"abaqus\""),
+    choice("mass", "Dynamics mass", &[("consistent", "Consistent"), ("lumped", "Lumped")]).help("Dynamics only; default consistent. Must match stored results. Native rod2 requires lumped; unsupported distributed mass mappings are refused."),
+    choice(
+        "format",
+        "Format",
+        &[
+            ("abaqus", "Abaqus input (.inp), including supported dynamics"),
+            ("nastran", "Nastran bulk data (.bdf)"),
+            ("lsdyna", "LS-DYNA keyword (.k)"),
+        ],
+    )
+    .help("The solver deck format.")
+    .req()
+    .def("\"abaqus\""),
     path("path", "File", true).help("Where to write the deck.").req(),
     references("steps", "Steps", C::Step).help("The steps to write; all when empty.").hint("all"),
     choice(
@@ -2432,9 +2486,14 @@ pub const DECK: &[Field] = &[
     .hint("the display system's"),
 ];
 
+pub const DECK_SOURCE: &[Field] =
+    &[path("path", "Original input file", true).help("Replay the retained root INP and its INCLUDE files; model edits are not exported.").req()];
+
 pub const DECK_READ: &[Field] = &[
-    choice("format", "Format", &[("abaqus", "Abaqus input (.inp)")]).help("The model-data input format to read.").req().def("\"abaqus\""),
-    path("path", "Input deck", false).help("Flat Abaqus model data; replaces the current model only after a successful read.").req(),
+    choice("format", "Format", &[("abaqus", "Abaqus input (.inp)")]).help("The input format for model data and supported analysis steps.").req().def("\"abaqus\""),
+    path("path", "Input deck", false)
+        .help("Read Abaqus model data, parts, relative INCLUDE files and supported linear steps; retain original input with the saved project. Replaces the model only after a successful read.")
+        .req(),
     choice(
         "units",
         "Input units",
@@ -2611,9 +2670,21 @@ pub const INVERSE_HARMONIC: &[Field] = &[
     THREADS,
 ];
 
+pub const SOLVE_MATRICES: &[Field] = &[
+    STEP,
+    path("path", "Matrix manifest", true).help("Optional SI manifest; sibling .mtx files hold the requested operators."),
+    MAX_DOFS,
+    MAX_FACTOR,
+    MAX_MEMORY_GIB,
+    THREADS,
+];
+
 pub const SOLVE_STATIC: &[Field] = &[STEP, MAX_DOFS, MAX_FACTOR, MAX_MEMORY_GIB, THREADS];
 pub const SOLVE_HARMONIC: &[Field] = &[
     STEP,
+    choice("mass", "Mass matrix", &[("consistent", "Consistent"), ("lumped", "Lumped")])
+        .help("Mass discretization for inertia, damping and the modal basis; random response inherits it.")
+        .def("\"consistent\""),
     MAX_DOFS,
     int("max_factor_entries", "Max factor entries", 1, super::solve::HARMONIC_FACTOR_ENTRY_CEILING as i64)
         .help("Cap in 8-byte real slots, two per complex factor entry: 400M by default; explicitly raise up to 4B (32 GB of values). Indices, workspace and other solver storage are additional.")
@@ -2622,9 +2693,10 @@ pub const SOLVE_HARMONIC: &[Field] = &[
     THREADS,
 ];
 pub const SOLVE_RANDOM: &[Field] = &[
-    num("natural_frequency", "Natural frequency", D::Of(Quantity::Frequency)).def("1").help("Natural frequency of the SDOF check in Hz."),
-    positive("damping_ratio", "Damping ratio", D::None).def("0.02").help("Viscous modal damping ratio ζ."),
-    positive("base_acceleration_psd", "Base acceleration PSD", D::Acceleration).def("1").help("One-sided white base acceleration PSD."),
+    json("stress_projection", "Scalar stress projection").help("Fixed six weights and input_model=common_scalar_unit_pattern; projects complex harmonic stress before squaring. Optional fatigue: method=narrow_band/dirlik/benasciutti_tovo, curve, duration_seconds, mean_stress_pa, correction, stationary_gaussian=true. Broad-band requires zero mean and correction=none. Segmented S-N points/cycles/amplitude with surface_factor,size_factor,endurance_limit and end_slopes are supported by narrow_band and dirlik (2..64 points, slopes 1..20); benasciutti_tovo and extrapolation=reject refuse tables. SI only; not von Mises or unknown-correlated inputs."),
+    num("natural_frequency", "Natural frequency", D::Of(Quantity::Frequency)).hint("1").help("Natural frequency of the SDOF check in Hz."),
+    positive("damping_ratio", "Damping ratio", D::None).hint("0.02").help("Viscous modal damping ratio ζ."),
+    positive("base_acceleration_psd", "Base acceleration PSD", D::Acceleration).hint("1").help("One-sided white base acceleration PSD."),
     json("frequencies", "Frequency grid").help("Optional frequency grid in Hz for modal PSD output."),
     json("transfer", "Displacement transfer").help("Optional modal displacement transfer magnitudes."),
     json("base_psd", "Base PSD grid").help("Optional one-sided base PSD values on the frequency grid."),
@@ -2632,8 +2704,11 @@ pub const SOLVE_RANDOM: &[Field] = &[
     json("probe_indices", "Probe indices").help("Optional node or element probe indices."),
     json("base_direction", "Base direction").help("Optional unit translation vector; harmonic frames must use matching unit inertial load -M r. Returns absolute acceleration and relative displacement."),
     json("nodes", "Node labels").help("Optional solved node labels to limit PSD output."),
+    labels("elements", "Solid element stresses", LabelOf::Element).help("Optional solid labels: unaveraged element-node and integration-point component PSD/RMS in SI."),
+    flag("element_phasors", "Include element phasors").help("Requires elements; include real and imaginary stress values in addition to PSD/RMS."),
     json("input_psd", "Input PSD table").help("Rows [frequency in Hz, one-sided PSD], covering every stored harmonic frequency."),
-    text("step", "Harmonic step").help("Optional previously solved harmonic step name."),
+    text("step", "Response step").help("Native modal random step, or a previously solved harmonic step with input_psd."),
+    MAX_DOFS, MAX_FACTOR, MAX_MEMORY_GIB, THREADS,
 ];
 pub const SOLVE_NONLINEAR: &[Field] = &[
     STEP,
@@ -2795,6 +2870,8 @@ pub const CONTOUR: &[Field] = &[
             ("contact_status", "Contact status"),
             ("contact_shear", "Contact shear"),
             ("contact_slip", "Contact slip"),
+            ("fatigue_damage", "Fatigue damage"),
+            ("fatigue_life", "Repeated-record fatigue life"),
             ("none", "None"),
         ],
     )
@@ -2979,6 +3056,17 @@ pub const INVERSE_JOINT: &[Field] = &[
     MAX_FACTOR,
     THREADS,
 ];
+
+/// Per-solve dynamics mass, shared by direct/modal histories and spectra.
+pub const SOLVE_DYNAMICS: &[Field] = &[
+    STEP,
+    choice("mass", "Mass matrix", &[("consistent", "Consistent"), ("lumped", "Lumped")])
+        .def("\"consistent\"").help("Used in assembly, material damping, modal extraction, initial balance and energy; stored with the result. Each solve defaults to consistent."),
+    MAX_DOFS, MAX_FACTOR, MAX_MEMORY_GIB, THREADS,
+];
+
+pub const SOLVE_ALL: &[Field] = &[choice("mass", "Mass matrix", &[("consistent", "Consistent"), ("lumped", "Lumped")])
+    .help("Optional; requires all steps to be frequency, transient or response_spectrum. Defaults to consistent on each solve.")];
 
 #[cfg(test)]
 mod tests {

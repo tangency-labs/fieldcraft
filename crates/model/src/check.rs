@@ -350,10 +350,13 @@ impl Model {
                 let why = match s.procedure {
                     Procedure::Frequency { .. } => "extracts frequencies",
                     Procedure::Harmonic(_) => "is harmonic",
+                    Procedure::Transient(_) | Procedure::ResponseSpectrum(_) => "needs dynamic mass",
                     Procedure::RandomVibration(_) => "is random vibration",
+                    Procedure::MatrixGeneration { ref matrices } if matrices.contains(&crate::steps::MatrixKind::Mass) => "exports mass",
                     Procedure::ExplicitDynamic(_) => "is dynamic",
                     Procedure::HeatTransfer { transient: Some(_) } => "is transient heat transfer",
                     Procedure::Static {}
+                    | Procedure::MatrixGeneration { .. }
                     | Procedure::Buckle { .. }
                     | Procedure::NonlinearStatic(_)
                     | Procedure::Fluid { .. }
@@ -587,13 +590,15 @@ impl Model {
                 Procedure::Static {}
                 | Procedure::NonlinearStatic(_)
                 | Procedure::Buckle { .. }
+                | Procedure::Transient(_)
+                | Procedure::ResponseSpectrum(_)
                 | Procedure::Harmonic(_)
                 | Procedure::RandomVibration(_) => {
                     if s.loads.is_empty() && !prescribes_motion && !pretension_loads {
                         d.warning(&subject, "nothing loads the model in this step");
                     }
                 }
-                Procedure::Frequency { .. } => {
+                Procedure::Frequency { .. } | Procedure::MatrixGeneration { .. } => {
                     if !s.loads.is_empty() {
                         d.warning(&subject, "loads have no effect on natural frequencies");
                     }

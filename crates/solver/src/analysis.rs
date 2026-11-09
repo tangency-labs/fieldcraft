@@ -80,6 +80,8 @@ pub struct PointResult {
 /// The result of a static step.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct StaticResult {
+    #[serde(skip)]
+    pub fatigue: Option<crate::fatigue::field::FatigueField>,
     pub step: String,
     /// Node labels with degrees of freedom, sorted; the per-node vectors follow this order.
     pub nodes: Vec<u32>,
@@ -156,14 +158,7 @@ pub struct FrequencyResult {
     pub buckling: Option<crate::buckle::Buckling>,
 }
 
-/// Mass matrix choice for a frequency analysis.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MassKind {
-    #[default]
-    Consistent,
-    Lumped,
-}
+pub use fieldcraft_model::MassKind;
 
 /// Options of a frequency analysis.
 #[derive(Debug, Clone, Copy, Default)]
@@ -607,6 +602,7 @@ pub(crate) fn static_on(setup: &Setup<'_>, limits: &Limits) -> Result<StaticResu
         crate::pretension::recover(&crate::pretension::section_dofs(model, mesh)?, step, &red, &u, &internal, &f)?
     };
     Ok(StaticResult {
+        fatigue: None,
         step: step.name.clone(),
         nodes: mesh.labels.clone(),
         displacement,
@@ -856,6 +852,7 @@ pub enum StepResult {
     Static(StaticResult),
     Frequency(FrequencyResult),
     Harmonic(crate::harmonic::HarmonicResult),
+    Dynamics(crate::transient::Response),
     Heat(crate::heat::HeatResult),
 }
 
@@ -865,6 +862,7 @@ impl StepResult {
             StepResult::Static(r) => &r.step,
             StepResult::Frequency(r) => &r.step,
             StepResult::Harmonic(r) => &r.step,
+            StepResult::Dynamics(r) => &r.step,
             StepResult::Heat(r) => &r.step,
         }
     }
@@ -874,6 +872,7 @@ impl StepResult {
             StepResult::Static(r) => &r.nodes,
             StepResult::Frequency(r) => &r.nodes,
             StepResult::Harmonic(r) => &r.nodes,
+            StepResult::Dynamics(r) => &r.nodes,
             StepResult::Heat(r) => &r.nodes,
         }
     }
@@ -888,7 +887,7 @@ impl StepResult {
             StepResult::Static(r) => r.reference_points.iter().position(|p| p.label == label),
             StepResult::Frequency(r) => r.reference_points.iter().position(|p| p.1 == label),
             StepResult::Harmonic(r) => r.reference_points.iter().position(|p| p.1 == label),
-            StepResult::Heat(_) => None,
+            StepResult::Heat(_) | StepResult::Dynamics(_) => None,
         }
         .map(Location::Point)
     }
