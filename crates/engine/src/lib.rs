@@ -312,6 +312,8 @@ impl Default for Limits {
 #[derive(Debug, Clone, Default)]
 pub struct Session {
     pub model: Model,
+    /// Original Abaqus files for explicit source replay and project persistence; never solver state.
+    pub deck_source: Option<Arc<fieldcraft_io::DeckSource>>,
     /// The open SolidCraft design (`geometry.open`); shared, so a snapshot costs nothing.
     pub design: Option<Arc<Design>>,
     /// Face-tagged boundary surfaces (`geometry.import.mesh`): the input to volume meshing.

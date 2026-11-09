@@ -286,7 +286,7 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
     match reply.command.as_str() {
         "deck.read" => {
             ui.label(
-                RichText::new("Model data only. Analysis history was not imported; review unread keywords and warnings before solving.")
+                RichText::new("Review imported steps, unread keywords and warnings before solving. Original source is retained independently.")
                     .color(t.text_dim),
             );
             value(ui, t, egui::Id::new("fc_deck_read"), &reply.value, 0);

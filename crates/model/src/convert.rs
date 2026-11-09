@@ -463,12 +463,23 @@ impl Quantities for Step {
                 for f0 in &mut r.frequencies {
                     f(Q::Frequency, f0);
                 }
+                if let Some(modal) = &mut r.modal {
+                    for band in &mut modal.bands {
+                        f(Q::Frequency, &mut band.lower);
+                        f(Q::Frequency, &mut band.upper);
+                    }
+                }
                 for e in &mut r.excitations {
+                    let multiplier = matches!(e, crate::random::Excitation::CorrelatedLoads { .. });
                     let spectrum = match e {
+                        crate::random::Excitation::CorrelatedLoads { spectrum } => spectrum,
                         crate::random::Excitation::Force { spectrum, .. } | crate::random::Excitation::BaseAcceleration { spectrum, .. } => spectrum,
                     };
                     for p in spectrum {
                         f(Q::Frequency, &mut p.frequency);
+                        if multiplier {
+                            f(Q::Time, &mut p.psd);
+                        }
                     }
                 }
                 r.damping.quantities(f);
@@ -479,7 +490,7 @@ impl Quantities for Step {
                 }
             }
             // The shift is a load factor.
-            Procedure::Buckle { modes: _, shift: _ } => {}
+            Procedure::Buckle { modes: _, shift: _ } | Procedure::MatrixGeneration { .. } => {}
             Procedure::ExplicitDynamic(e) => {
                 let ExplicitDynamic {
                     end_time,

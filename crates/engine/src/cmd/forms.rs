@@ -1015,6 +1015,9 @@ const PROCEDURE: Field = variants(
     "Procedure",
     &[
         variant("static", "Static, linear", &[]),
+        variant("matrix_generation", "Structural matrices", &[
+            json("matrices", "Operators").help("Array of stiffness, mass, viscous_damping, structural_damping; homogeneous linear model only.").req().def(r#"["stiffness","mass"]"#),
+        ]),
         variant(
             "nonlinear_static",
             "Static, nonlinear",
@@ -2482,9 +2485,14 @@ pub const DECK: &[Field] = &[
     .hint("the display system's"),
 ];
 
+pub const DECK_SOURCE: &[Field] =
+    &[path("path", "Original input file", true).help("Replay the retained root INP and its INCLUDE files; model edits are not exported.").req()];
+
 pub const DECK_READ: &[Field] = &[
-    choice("format", "Format", &[("abaqus", "Abaqus input (.inp)")]).help("The model-data input format to read.").req().def("\"abaqus\""),
-    path("path", "Input deck", false).help("Flat Abaqus model data; replaces the current model only after a successful read.").req(),
+    choice("format", "Format", &[("abaqus", "Abaqus input (.inp)")]).help("The input format for model data and supported analysis steps.").req().def("\"abaqus\""),
+    path("path", "Input deck", false)
+        .help("Read Abaqus model data, parts, relative INCLUDE files and supported linear steps; retain original input with the saved project. Replaces the model only after a successful read.")
+        .req(),
     choice(
         "units",
         "Input units",
@@ -2661,6 +2669,15 @@ pub const INVERSE_HARMONIC: &[Field] = &[
     THREADS,
 ];
 
+pub const SOLVE_MATRICES: &[Field] = &[
+    STEP,
+    path("path", "Matrix manifest", true).help("Optional SI manifest; sibling .mtx files hold the requested operators."),
+    MAX_DOFS,
+    MAX_FACTOR,
+    MAX_MEMORY_GIB,
+    THREADS,
+];
+
 pub const SOLVE_STATIC: &[Field] = &[STEP, MAX_DOFS, MAX_FACTOR, MAX_MEMORY_GIB, THREADS];
 pub const SOLVE_HARMONIC: &[Field] = &[
     STEP,
@@ -2672,9 +2689,9 @@ pub const SOLVE_HARMONIC: &[Field] = &[
     THREADS,
 ];
 pub const SOLVE_RANDOM: &[Field] = &[
-    num("natural_frequency", "Natural frequency", D::Of(Quantity::Frequency)).def("1").help("Natural frequency of the SDOF check in Hz."),
-    positive("damping_ratio", "Damping ratio", D::None).def("0.02").help("Viscous modal damping ratio ζ."),
-    positive("base_acceleration_psd", "Base acceleration PSD", D::Acceleration).def("1").help("One-sided white base acceleration PSD."),
+    num("natural_frequency", "Natural frequency", D::Of(Quantity::Frequency)).hint("1").help("Natural frequency of the SDOF check in Hz."),
+    positive("damping_ratio", "Damping ratio", D::None).hint("0.02").help("Viscous modal damping ratio ζ."),
+    positive("base_acceleration_psd", "Base acceleration PSD", D::Acceleration).hint("1").help("One-sided white base acceleration PSD."),
     json("frequencies", "Frequency grid").help("Optional frequency grid in Hz for modal PSD output."),
     json("transfer", "Displacement transfer").help("Optional modal displacement transfer magnitudes."),
     json("base_psd", "Base PSD grid").help("Optional one-sided base PSD values on the frequency grid."),
@@ -2682,8 +2699,11 @@ pub const SOLVE_RANDOM: &[Field] = &[
     json("probe_indices", "Probe indices").help("Optional node or element probe indices."),
     json("base_direction", "Base direction").help("Optional unit translation vector; harmonic frames must use matching unit inertial load -M r. Returns absolute acceleration and relative displacement."),
     json("nodes", "Node labels").help("Optional solved node labels to limit PSD output."),
+    labels("elements", "Solid element stresses", LabelOf::Element).help("Optional solid labels: unaveraged element-node and integration-point component PSD/RMS in SI."),
+    flag("element_phasors", "Include element phasors").help("Requires elements; include real and imaginary stress values in addition to PSD/RMS."),
     json("input_psd", "Input PSD table").help("Rows [frequency in Hz, one-sided PSD], covering every stored harmonic frequency."),
-    text("step", "Harmonic step").help("Optional previously solved harmonic step name."),
+    text("step", "Response step").help("Native modal random step, or a previously solved harmonic step with input_psd."),
+    MAX_DOFS, MAX_FACTOR, MAX_MEMORY_GIB, THREADS,
 ];
 pub const SOLVE_NONLINEAR: &[Field] = &[
     STEP,

@@ -58,7 +58,8 @@ reader's explicit unread-keyword report.
 Additional unsupported inputs include symmetric half-stack declarations, named/distributed
 ply angles, ply-name metadata, nonlinear ply laws and unrepresentable shell formulations.
 The reader rejects unknown physical parameters rather than treating them as defaults. Its
-existing unread-history policy is unchanged; it never executes or preserves arbitrary keywords.
+unread-history policy still does not execute arbitrary keywords; the original source bundle
+retains them for explicit `deck.source.write` replay, separate from model export.
 These are format mapping checks, not evidence that another solver has run or that its shell
 formulation, shear correction, drilling stiffness or output conventions match FieldCraft.
 

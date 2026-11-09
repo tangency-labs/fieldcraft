@@ -218,3 +218,89 @@ fn random_base_motion_adds_coherent_acceleration_and_validates_inputs() {
         assert!(s.execute("solve.random", &bad).is_err());
     }
 }
+
+#[test]
+fn solid_element_stress_locations_phasors_psd_and_reopen() {
+    let mut s = Session::default();
+    s.execute("model.units", &json!({"system":"m-kg-s-N-Pa"})).unwrap();
+    let xyz = [[0., 0., 0.], [1., 0., 0.], [1., 1., 0.], [0., 1., 0.], [0., 0., 1.], [1., 0., 1.], [1., 1., 1.], [0., 1., 1.]];
+    for (i, x) in xyz.iter().enumerate() {
+        s.execute("mesh.node.add", &json!({"label":i+1,"xyz":x})).unwrap();
+    }
+    s.run_script(&json!([
+        {"command":"mesh.element.add","params":{"label":1,"kind":"hex8","nodes":[1,2,3,4,5,6,7,8]}},
+        {"command":"model.set.create","params":{"name":"body","elements":[1],"nodes":[1,2,3,4,5,6,7,8]}},
+        {"command":"model.set.create","params":{"name":"root","nodes":[1,4,5,8]}},
+        {"command":"model.set.create","params":{"name":"tip","nodes":[2,3,6,7]}},
+        {"command":"model.material.create","params":{"name":"m","elastic":{"type":"isotropic","young":100,"poisson":0},"density":1}},
+        {"command":"model.section.create","params":{"name":"s","set":"body","material":"m","kind":{"type":"solid"}}},
+        {"command":"model.boundary_condition.create","params":{"name":"root","type":"displacement","target":{"set":"root"},"values":[0,null,null,null,null,null]}},
+        {"command":"model.boundary_condition.create","params":{"name":"guide","type":"displacement","target":{"set":"body"},"values":[null,0,0,null,null,null]}},
+        {"command":"model.load.create","params":{"name":"f","type":"force","target":{"set":"tip"},"vector":[1,0,0],"distribution":"total"}},
+        {"command":"model.step.create","params":{"name":"H","procedure":{"type":"harmonic","frequencies":[0,0.1],"method":{"type":"direct"}},"boundary_conditions":["root","guide"],"loads":["f"]}}
+    ])).unwrap();
+    s.execute("solve.harmonic", &json!({"step":"H","threads":1})).unwrap();
+    let params = json!({"step":"H","input_psd":[[0,2],[0.1,2]],"nodes":[2],"elements":[1],"element_phasors":true});
+    let out = s.execute("solve.random", &params).unwrap();
+    let e = &out["element_stress"];
+    assert_eq!(e["locations"].as_array().unwrap().len(), 16);
+    for (i, location) in e["locations"].as_array().unwrap().iter().enumerate() {
+        assert_eq!(location["element"], 1);
+        if i < 8 {
+            assert_eq!(location["node"], i + 1);
+            assert_eq!(location["xyz"], json!(xyz[i]));
+        } else {
+            for j in 0..3 {
+                let xi = location["natural_coordinates"][j].as_f64().unwrap();
+                assert!((xi.abs() - 1. / 3_f64.sqrt()).abs() < 1e-14);
+                assert!((location["xyz"][j].as_f64().unwrap() - (1. + xi) / 2.).abs() < 1e-14);
+            }
+        }
+        assert!((e["stress_real"][0][i][0].as_f64().unwrap() - 1.).abs() < 1e-12);
+        assert!(e["stress_imaginary"][0][i][0].as_f64().unwrap().abs() < 1e-12);
+        let p0 = e["components_psd"][0][i][0].as_f64().unwrap();
+        let p1 = e["components_psd"][1][i][0].as_f64().unwrap();
+        assert!((p0 - 2.).abs() < 1e-12);
+        assert!((e["components_rms"][i][0].as_f64().unwrap().powi(2) - 0.05 * (p0 + p1)).abs() < 1e-12);
+    }
+    let dir = std::env::temp_dir().join(format!("fieldcraft-element-stress-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("model.fieldcraft");
+    s.execute("file.save_as", &json!({"path":path,"results":true})).unwrap();
+    s.execute("file.new", &json!({})).unwrap();
+    s.execute("file.open", &json!({"path":path})).unwrap();
+    assert_eq!(s.execute("solve.random", &params).unwrap(), out);
+    assert!(s.execute("solve.random", &json!({"step":"H","input_psd":[[0,2],[0.1,2]],"elements":[1,1]})).is_err());
+    // Constitutive patch: two independently labelled overlapping solids share
+    // every node, but their moduli differ. A manufactured affine field must
+    // retain both stresses, never their shared-node average.
+    use fieldcraft_model::{Elastic, ElementKind, Material, Section, SectionKind, Set};
+    let mut model = s.model.clone();
+    model.set_element(2, ElementKind::Hex8, (1..=8).collect()).unwrap();
+    model.add_set("second", Set { elements: vec![2], ..Set::default() }).unwrap();
+    model
+        .add_material("twice", Material { elastic: Some(Elastic::Isotropic { young: 200., poisson: 0. }), density: Some(1.), ..Material::default() })
+        .unwrap();
+    model
+        .add_section(
+            "second",
+            Section {
+                set: "second".into(),
+                material: "twice".into(),
+                kind: SectionKind::Solid {},
+                orientation: None,
+                formulation: Default::default(),
+            },
+        )
+        .unwrap();
+    let fieldcraft_engine::StepResult::Implicit(fieldcraft_solver::StepResult::Harmonic(h)) = s.result("H").unwrap().as_ref() else { panic!() };
+    let recovery = fieldcraft_solver::harmonic::ElementStressRecovery::new(&model, h, &[1, 2], &fieldcraft_solver::Limits::default()).unwrap();
+    let affine = xyz.iter().map(|x| [0.01 * x[0] + 0.02 * x[1] + 0.03 * x[2], 0.04 * x[1] + 0.05 * x[2], 0.06 * x[2]]).collect::<Vec<_>>();
+    let values = recovery.recover(&affine).unwrap();
+    for (location, stress) in recovery.locations.iter().zip(values) {
+        for (a, b) in stress.iter().zip([1., 4., 6., 1., 1.5, 2.5]) {
+            assert!((a - b * f64::from(location.element)).abs() < 1e-12, "{location:?}: {stress:?}");
+        }
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
