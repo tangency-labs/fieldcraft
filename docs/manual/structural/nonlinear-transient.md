@@ -34,8 +34,9 @@ plasticity/hyperelasticity, material damping, follower loads, base motion,
 nonzero prescribed displacements, requested reaction/thermal field output, modal reduction, adaptive steps and
 stiffness-proportional damping are refused. Point masses must provide a positive
 mass operator on the free coordinates. This rod formulation is not a tension-only
-cable law: compression is elastic, and collapse is refused. It does not extend
-the supported elements of the separate nonlinear static solver.
+cable law: compression is elastic, and collapse is refused. The nonlinear static solver also supports pure elastic rod2 equilibria through
+this shared force/tangent kernel; these equilibria can supply the frozen tangent
+to frequency and direct/modal perturbation steps (see [base states](transient.md)).
 
 ## Equations and verified sources
 

@@ -224,3 +224,137 @@ fn axial_rod_base_nullspace_is_not_a_transverse_support() {
         );
     }
 }
+
+/// Same total-Lagrangian force law as geometric dynamics, independently differentiated
+/// here; the equilibrium is obtained through commands, never supplied analytically.
+#[test]
+fn finite_rod_equilibrium_tangent_and_dynamic_chain() {
+    for force in [0_f64, 1000., 10000.] {
+        for mass in ["consistent", "lumped"] {
+            let mut rows = Vec::new();
+            let mut add = |command: &str, params: Value| rows.push(json!({"command":command,"params":params}));
+            add("model.units", json!({"system":"m-kg-s-N-Pa"}));
+            for (label, x) in [(1, 0.), (2, 1.)] {
+                add("mesh.node.add", json!({"label":label,"xyz":[x,0,0]}));
+            }
+            add("mesh.element.add", json!({"label":1,"kind":"rod2","nodes":[1,2]}));
+            for (name, nodes) in [("fix", vec![1]), ("tip", vec![2])] {
+                add("model.set.create", json!({"name":name,"nodes":nodes}));
+            }
+            add("model.set.create", json!({"name":"rod","elements":[1]}));
+            add("model.material.create", json!({"name":"E","elastic":{"type":"isotropic","young":2.1e11,"poisson":0.3},"density":7850.}));
+            add("model.section.create", json!({"name":"A","set":"rod","material":"E","kind":{"type":"rod","area":1e-4}}));
+            add("model.boundary_condition.create", json!({"name":"fixed","type":"fixed","target":{"set":"fix"}}));
+            if force != 0. {
+                add("model.load.create", json!({"name":"pull","type":"force","target":{"set":"tip"},"vector":[force,0,0]}));
+            }
+            add(
+                "model.step.create",
+                json!({"name":"Preload","procedure":{"type":"nonlinear_static","nonlinear_geometry":true},"boundary_conditions":["fixed"],"loads":if force==0. {json!([])} else {json!(["pull"])}}),
+            );
+            add("solve.nonlinear", json!({"step":"Preload"}));
+            add(
+                "model.step.create",
+                json!({"name":"Modes","base_state":"Preload","procedure":{"type":"frequency","modes":3},"boundary_conditions":["fixed"]}),
+            );
+            add("solve.frequency", json!({"step":"Modes","mass":mass}));
+            for (name, modal, zero) in [("Direct", false, false), ("Modal", true, false), ("Zero", false, true)] {
+                add(
+                    "model.step.create",
+                    json!({"name":name,"base_state":"Preload","procedure":{"type":"transient","time_step":1e-4,"increments":100,"method":if modal{json!({"type":"modal","modes":3})}else{json!({"type":"direct"})},"initial_displacement":if zero{json!({})}else{json!({"2":[0,1e-5,0]})}},"boundary_conditions":["fixed"],"output":["displacement"]}),
+                );
+                add("solve.transient", json!({"step":name,"mass":mass}));
+            }
+            let script = json!(rows);
+            let mut s = Session::default();
+            s.run_script(&script).unwrap();
+            let StepResult::Implicit(Implicit::Static(base)) = s.result("Preload").unwrap().as_ref() else { panic!() };
+            let ea = 21e6;
+            let stretch = 1. + base.displacement[1][0];
+            let axial = 0.5 * ea * stretch * (stretch * stretch - 1.);
+            let ue = [0., 0., 0., base.displacement[1][0], base.displacement[1][1], base.displacement[1][2]];
+            let recovered = fieldcraft_solver::transient::nonlinear::recover_rod(&[[0., 0., 0.], [1., 0., 0.]], &ue, 2.1e11, 1e-4).unwrap();
+            assert!((recovered.nodal_internal_force[3] - force).abs() < 1e-6);
+            if let Some(root) = std::env::var_os("FIELDCRAFT_BASE_STATE_EVIDENCE") {
+                let root = std::path::PathBuf::from(root);
+                std::fs::create_dir_all(&root).unwrap();
+                let value = json!({"source":"production recover_rod evaluated at actual solve.nonlinear saved state", "recovery":recovered,"external_force":[0.,0.,0.,force,0.,0.],"free_residual":[recovered.nodal_internal_force[3]-force,recovered.nodal_internal_force[4],recovered.nodal_internal_force[5]],"reaction":base.reaction,"displacement":base.displacement});
+                std::fs::write(
+                    root.join(format!("finite-axial-{force}-{mass}-equilibrium-diagnostic.json")),
+                    serde_json::to_vec_pretty(&value).unwrap(),
+                )
+                .unwrap();
+            }
+
+            assert!((axial - force).abs() < 1e-6, "force {force}, residual {}", axial - force);
+            assert!((base.reaction[0][0] + force).abs() < 1e-6);
+            assert!((base.elements[0].points[0].stress[0] - 2.1e11 * (stretch * stretch - 1.) / 2.).abs() < 1e-3);
+            assert!((base.elements[0].points[0].strain[0] - (stretch * stretch - 1.) / 2.).abs() < 1e-14);
+            assert!(base.nonlinear.as_ref().unwrap().increments.iter().all(|i| i.converged));
+            // Scalar independent equilibrium root and exact material + stress tangent.
+            let mut root = 1.;
+            for _ in 0..12 {
+                root -= (0.5 * ea * root * (root * root - 1.) - force) / (0.5 * ea * (3. * root * root - 1.));
+            }
+            assert!((stretch - root).abs() < 1e-12);
+            let expected = [0.5 * ea * (3. * stretch * stretch - 1.), 0.5 * ea * (stretch * stretch - 1.), 0.5 * ea * (stretch * stretch - 1.)];
+            let modal_mass = 0.785 / if mass == "lumped" { 2. } else { 3. };
+            let StepResult::Implicit(Implicit::Frequency(freq)) = s.result("Modes").unwrap().as_ref() else { panic!() };
+            assert_eq!(freq.modes.len(), 3);
+            let mut actual = [[0.; 3]; 3];
+            for (i, row) in actual.iter_mut().enumerate() {
+                for (j, value) in row.iter_mut().enumerate() {
+                    *value = modal_mass * modal_mass * freq.modes.iter().map(|m| m.eigenvalue * m.shape[1][i] * m.shape[1][j]).sum::<f64>();
+                }
+            }
+            let law = |d: [f64; 3]| {
+                let g = 0.5 * (d.iter().map(|x| x * x).sum::<f64>() - 1.);
+                d.map(|x| ea * g * x)
+            };
+            for h in [1e-5, 1e-6, 1e-7] {
+                for j in 0..3 {
+                    let mut p = [stretch, 0., 0.];
+                    let mut m = p;
+                    p[j] += h;
+                    m[j] -= h;
+                    let fp = law(p);
+                    let fm = law(m);
+                    for i in 0..3 {
+                        let fd = (fp[i] - fm[i]) / (2. * h);
+                        assert!((actual[i][j] - fd).abs() < 0.1, "P={force}, ({i},{j}) {} vs {fd}", actual[i][j]);
+                    }
+                }
+            }
+            for i in 0..3 {
+                assert!(
+                    (actual[i][i] - expected[i]).abs() < 1e-9 * expected[0],
+                    "force={force} mass={mass} actual={actual:?} expected={expected:?} frequencies={:?}",
+                    freq.modes.iter().map(|m| m.frequency).collect::<Vec<_>>()
+                );
+            }
+            let w = (expected[1] / modal_mass).sqrt();
+            assert!((freq.modes[0].frequency - w / (2. * std::f64::consts::PI)).abs() < 1e-6);
+            let d = response(&s, "Direct");
+            let m = response(&s, "Modal");
+            let z = response(&s, "Zero");
+            let theta = 2. * (w * 1e-4 / 2.).atan();
+            for (index, ((a, b), zero)) in d.frames.iter().zip(&m.frames).zip(&z.frames).enumerate() {
+                let expected_u = 1e-5 * (index as f64 * theta).cos();
+                assert!((a.displacement[1][1] - expected_u).abs() < 1e-11);
+                for (c, stiffness) in expected.iter().enumerate() {
+                    assert!((a.displacement[1][c] - b.displacement[1][c]).abs() < 1e-12);
+                    assert!((a.acceleration[1][c] - b.acceleration[1][c]).abs() < 1e-8);
+                    assert!((modal_mass * a.acceleration[1][c] + stiffness * a.displacement[1][c]).abs() < 1e-7);
+                }
+                assert!(zero.displacement.iter().chain(&zero.velocity).chain(&zero.acceleration).flatten().all(|v| *v == 0.));
+            }
+            roundtrip(&mut s, &format!("finite-axial-{force}-{mass}"), &script);
+            if force == 0. {
+                run(&mut s, "model.load.create", json!({"name":"pull","type":"force","target":{"set":"tip"},"vector":[0,1,0]}));
+                run(&mut s, "model.step.edit", json!({"name":"Preload","loads":["pull"]}));
+            }
+            run(&mut s, "model.load.edit", json!({"name":"pull","type":"force","target":{"set":"tip"},"vector":[force,1,0]}));
+            assert!(s.execute("solve.nonlinear", &json!({"step":"Preload"})).unwrap_err().to_string().contains("zero-stiffness direction"));
+        }
+    }
+}

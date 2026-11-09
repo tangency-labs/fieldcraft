@@ -440,6 +440,34 @@ Other mechanisms are not regularized; any stabilizing spring must be an explicit
 physical model component. This reference initial-stress operator is not a finite
 strain truss material tangent at the deformed length.
 
+For a **true finite rod equilibrium**, use a `nonlinear_static` preload with
+`nonlinear_geometry:true`, then name it in the frequency or transient step's
+`base_state`. Pure isotropic elastic rod2 models use the same total-Lagrangian
+St Venant–Kirchhoff force kernel as `solve.transient.nonlinear`. At reference
+length L and current end-to-end vector d, E_G=(d·d−L²)/(2L²),
+f_tip=EA E_G d/L, and K_tip=EA/L (d⊗d/L²+E_G I). Newton equilibrium and the
+returned terminal tangent use that same state, force law, dead load and constraint
+set. The stress term is retained, and no separate K_sigma is added.
+
+For an axial dead force P, solve EA*lambda*(lambda²−1)/2=P. The transverse
+stiffness is P/(lambda*L), and the axial stiffness is EA*(3*lambda²−1)/(2*L).
+The free tip mass is rho*A*L/2 for lumped mass or rho*A*L/3 for consistent mass.
+At P=0, transverse modes remain zero-frequency modes; Newton may select zero
+correction in an exactly unloaded zero row/column, but never changes the returned
+tangent or dynamic supports. A residual force in such a singular direction is
+refused, not silently balanced by a numerical spring. This does not supply a
+continuation method through general mechanisms or unstable compressive branches.
+
+The static rod's saved recovery is **second Piola stress and Green strain in the
+reference material axis**, at the uniform element midpoint, expanded into global
+reference-axis tensor components (engineering shear strains). Its warning records
+this measure; these values are not Cauchy stresses or the older linear-static
+rod stress. The equilibrium displacement, reactions and accepted Newton history
+use the existing static result layout. No kind12 or other result layout is changed.
+Rod3, mixed rod/solid nonlinear models, rod thermal/initial fields, rod contact,
+rod inelastic materials and rod arc-length control are refused by name. Pure-rod
+load control currently accepts dead nodal forces, not follower or thermal loads.
+
 The transient must retain its base's boundary-condition set. Those conditions
 constrain increments to zero even if their equilibrium displacements are nonzero.
 Outputs u, v and a and supplied initial u/v are perturbation increments; total u

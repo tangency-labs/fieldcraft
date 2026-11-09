@@ -45,6 +45,7 @@ pub mod ordering;
 mod prestress;
 pub mod pretension;
 pub mod random;
+mod rod;
 pub mod sensitivity;
 pub mod sparse;
 pub mod spectrum;

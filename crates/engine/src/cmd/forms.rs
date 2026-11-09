@@ -1023,7 +1023,7 @@ const PROCEDURE: Field = variants(
             "Static, nonlinear",
             &[
                 flag("nonlinear_geometry", "Nonlinear geometry")
-                    .help("Account for large displacements and rotations. Needed for buckling-like and large-deflection problems.")
+                    .help("Account for large displacements and rotations. Pure elastic rod2 uses the finite St Venant-Kirchhoff force and consistent terminal tangent; supports frequency/transient base_state.")
                     .def("true"),
                 range("initial_increment", "Initial increment", D::None, 0.0, 1.0)
                     .help("First increment, as a fraction of the step (0.1 = 10 %).")
