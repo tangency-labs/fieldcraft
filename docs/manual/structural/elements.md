@@ -391,6 +391,11 @@ ELEMENT_MASS (per-direction masses: Nastran only); rotary inertia to ROTARYI, CO
 ELEMENT_INERTIA; springs to SPRING1/2/A, CELAS2 and ELEMENT_DISCRETE (skew fixed directions:
 LS-DYNA only); dashpots to DASHPOT1/2/A, CDAMP2 and ELEMENT_DISCRETE; rod2 to T3D2 / T2D2, CROD
 and an LS-DYNA truss beam (3D models); rod3 to T3D3 / T2D3 (no Nastran or LS-DYNA counterpart);
+beam2 to B31 with the profile's BEAM SECTION, CBEAM with its PBEAML, and an LS-DYNA
+Belytschko–Schwer resultant beam (ELEMENT_BEAM_ORIENTATION) given the profile's area, second
+moments, torsion constant and shear area, the numbers this element uses (isotropic elastic
+materials only; I and box profiles whose shear areas differ by direction have no LS-DYNA
+counterpart, its resultant beams taking one shear area);
 pyramid5 to C3D5, CPYRAM and an LS-DYNA degenerate solid.
 
 ## Algorithm

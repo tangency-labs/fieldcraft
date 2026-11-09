@@ -28,8 +28,11 @@ pub(crate) enum Keyword {
     SolidH20,
     /// `*ELEMENT_SHELL`: 4 or 8 nodes.
     Shell,
-    /// `*ELEMENT_BEAM`: 2 nodes.
+    /// `*ELEMENT_BEAM`: 2 nodes (trusses).
     Beam,
+    /// `*ELEMENT_BEAM_ORIENTATION`: 2 nodes, then the section's orientation vector on a second
+    /// card (beams).
+    BeamOrientation,
 }
 
 impl Keyword {
@@ -38,7 +41,8 @@ impl Keyword {
             ElementKind::Hex20 => Keyword::SolidH20,
             ElementKind::Tet4 | ElementKind::Tet10 | ElementKind::Wedge6 | ElementKind::Pyramid5 | ElementKind::Hex8 => Keyword::Solid,
             ElementKind::Tri3 | ElementKind::Tri6 | ElementKind::Quad4 | ElementKind::Quad8 => Keyword::Shell,
-            ElementKind::Rod2 | ElementKind::Rod3 | ElementKind::Beam2 => Keyword::Beam,
+            ElementKind::Rod2 | ElementKind::Rod3 => Keyword::Beam,
+            ElementKind::Beam2 => Keyword::BeamOrientation,
         }
     }
 
@@ -48,6 +52,7 @@ impl Keyword {
             Keyword::SolidH20 => "*ELEMENT_SOLID_H20",
             Keyword::Shell => "*ELEMENT_SHELL",
             Keyword::Beam => "*ELEMENT_BEAM",
+            Keyword::BeamOrientation => "*ELEMENT_BEAM_ORIENTATION",
         }
     }
 }
@@ -100,7 +105,8 @@ pub(crate) struct Elform {
 /// hexahedra), reduced 15 (two-point pentahedron); pyramids 2 (as degenerate hexahedra); tet4 10 (one point, exact for a linear
 /// tetrahedron), hybrid 13 (nodal pressure); tet10 16; hex20 23. Shells: quad4 16 (fully
 /// integrated), reduced 2 (one-point) with hourglass control; tri3 4 (C0 triangle); quad8 23;
-/// tri6 24. Rods: 3 (truss). 2D (in the XY plane): plane stress 12, plane strain 13, both one-point
+/// tri6 24. Rods: 3 (truss). Beams: 2 (the Belytschko–Schwer resultant beam, whose section is
+/// its area, second moments, torsion constant and shear area; no integration rule applies). 2D (in the XY plane): plane stress 12, plane strain 13, both one-point
 /// forms on quad4 (written for reduced integration, with hourglass control) and tri3 (exact at one
 /// point); quadratic 2D elements and axisymmetric sections have no form written here.
 /// What it cannot express is the reason, naming the section.
@@ -149,7 +155,10 @@ pub(crate) fn elform(kind: ElementKind, section: &SectionKind, f: Formulation, s
             ElementKind::Rod3 => no("LS-DYNA's trusses have two nodes; there is no counterpart for"),
             _ => no("a rod section cannot hold"),
         },
-        SectionKind::Beam { .. } => no("beam sections are not written to LS-DYNA decks yet (planned with beam profiles):"),
+        SectionKind::Beam { .. } => match kind {
+            ElementKind::Beam2 => plain(2),
+            _ => no("a beam section cannot hold"),
+        },
         SectionKind::Axisymmetric {} => {
             no("axisymmetric sections are not written to LS-DYNA decks yet (its axisymmetric forms count loads per radian; not verified):")
         }
@@ -207,5 +216,9 @@ mod tests {
         assert!(elform(ElementKind::Quad8, &shell, reduced, "s").is_err());
         assert!(elform(ElementKind::Hex8, &shell, full, "s").is_err());
         assert_eq!(elform(ElementKind::Rod2, &SectionKind::Rod { area: 1.0 }, full, "s").unwrap().elform, 3);
+        let beam = SectionKind::Beam { profile: fieldcraft_model::BeamProfile::Circle { radius: 1.0 }, orientation: [0.0, 0.0, 1.0] };
+        assert_eq!(elform(ElementKind::Beam2, &beam, full, "s").unwrap(), Elform { elform: 2, hourglass: None });
+        assert_eq!(elform(ElementKind::Beam2, &beam, reduced, "s").unwrap().elform, 2, "a resultant beam has no integration rule");
+        assert!(elform(ElementKind::Rod2, &beam, full, "s").unwrap_err().contains("a beam section cannot hold rod2"));
     }
 }
