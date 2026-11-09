@@ -10,6 +10,10 @@ pub(super) fn run(s: &Session, p: &Value, step: &str, table: &Value) -> Result<V
     let StepResult::Implicit(ImplicitResult::Harmonic(h)) = result.as_ref() else {
         return Err(EngineError::invalid("step", "the stored result is not harmonic"));
     };
+    evaluate(h, p, step, table)
+}
+
+pub(super) fn evaluate(h: &HarmonicResult, p: &Value, step: &str, table: &Value) -> Result<Value> {
     let table: Vec<[f64; 2]> = serde_json::from_value(table.clone()).map_err(|e| EngineError::invalid("input_psd", e.to_string()))?;
     if table.len() < 2
         || table.len() > 10000

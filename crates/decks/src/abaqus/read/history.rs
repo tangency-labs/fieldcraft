@@ -51,23 +51,23 @@ enum Family {
 type State = BTreeMap<(Family, String, u32, u8), Driven>;
 type Touched = BTreeSet<(Family, String, u32, u8)>;
 
-fn unsupported(line: usize, message: impl Into<String>) -> Error {
+pub(super) fn unsupported(line: usize, message: impl Into<String>) -> Error {
     Error::Unsupported { format: "Abaqus analysis import", what: format!("line {line}: {}", message.into()) }
 }
-fn allow(b: &Block<'_>, keys: &[&str]) -> Result<()> {
+pub(super) fn allow(b: &Block<'_>, keys: &[&str]) -> Result<()> {
     if let Some(key) = b.params.keys().find(|k| !keys.contains(&k.as_str())) {
         return Err(unsupported(b.line, format!("*{} parameter {key}", b.keyword)));
     }
     Ok(())
 }
-fn value<'a>(b: &'a Block<'_>, key: &str, default: &'a str) -> Result<&'a str> {
+pub(super) fn value<'a>(b: &'a Block<'_>, key: &str, default: &'a str) -> Result<&'a str> {
     match b.params.get(key) {
         None => Ok(default),
         Some(Some(v)) if !v.is_empty() => Ok(v),
         _ => Err(error(b.line, format!("{key} requires a value"))),
     }
 }
-fn name(s: &str, line: usize) -> Result<String> {
+pub(super) fn name(s: &str, line: usize) -> Result<String> {
     Ok(lex::unquote(s, line)?.to_ascii_uppercase())
 }
 fn curves(blocks: &[Block<'_>]) -> Result<BTreeMap<String, Curve>> {
@@ -123,13 +123,22 @@ pub(super) fn import(text: &str, read: &mut Read, preset: Preset, limits: Limits
         }
         Err(e) => return Err(e),
     };
+    let units = DisplaySystem::new(preset);
+    let spectra = match super::random::spectra(&blocks, &units) {
+        Ok(v) => v,
+        Err(e @ Error::Unsupported { .. }) => {
+            read.warnings.push(e.to_string());
+            return Ok(());
+        }
+        Err(e) => return Err(e),
+    };
     let mut in_step = false;
     let unknown: BTreeSet<usize> = read.unknown.iter().map(|u| u.line).collect();
     for b in &blocks {
         if b.keyword == "STEP" {
             in_step = true;
         }
-        if !in_step && unknown.contains(&b.line) && !matches!(b.keyword.as_str(), "BOUNDARY" | "AMPLITUDE" | "PREPRINT") {
+        if !in_step && unknown.contains(&b.line) && !matches!(b.keyword.as_str(), "BOUNDARY" | "AMPLITUDE" | "PREPRINT" | "PSD-DEFINITION") {
             read.warnings.push(format!("analysis not imported: unhandled model option *{} at line {}; original retained", b.keyword, b.line));
             return Ok(());
         }
@@ -137,7 +146,6 @@ pub(super) fn import(text: &str, read: &mut Read, preset: Preset, limits: Limits
             in_step = false;
         }
     }
-    let units = DisplaySystem::new(preset);
     let mut state = State::new();
     let mut consumed = BTreeSet::new();
     let mut total = 0.0;
@@ -147,7 +155,7 @@ pub(super) fn import(text: &str, read: &mut Read, preset: Preset, limits: Limits
         let Some(b) = blocks.get(index) else {
             break;
         };
-        if b.keyword == "AMPLITUDE" {
+        if matches!(b.keyword.as_str(), "AMPLITUDE" | "PSD-DEFINITION") {
             consumed.insert(b.line);
             index += 1;
             continue;
@@ -169,7 +177,7 @@ pub(super) fn import(text: &str, read: &mut Read, preset: Preset, limits: Limits
             .find(|j| blocks.get(*j).is_some_and(|b| b.keyword == "ENDSTEP"))
             .ok_or_else(|| error(b.line, "STEP has no END STEP"))?;
         let body = blocks.get(index + 1..end).ok_or_else(|| error(b.line, "invalid step range"))?;
-        let prepared = prepare(b, body, &state, &read.model, &curves, &units, limits);
+        let prepared = prepare(b, body, &state, &read.model, &HistoryData { curves: &curves, spectra: &spectra }, &units, limits);
         let (procedure, duration, mut next) = match prepared {
             Ok(v) => v,
             Err(e @ Error::Unsupported { .. }) => {
@@ -179,10 +187,19 @@ pub(super) fn import(text: &str, read: &mut Read, preset: Preset, limits: Limits
             Err(e) => return Err(e),
         };
         let perturbation = b.params.contains_key("PERTURBATION")
-            || matches!(procedure, Procedure::Frequency { .. } | Procedure::Buckle { .. } | Procedure::Harmonic(_));
+            || matches!(
+                procedure,
+                Procedure::Frequency { .. }
+                    | Procedure::Buckle { .. }
+                    | Procedure::Harmonic(_)
+                    | Procedure::RandomVibration(_)
+                    | Procedure::MatrixGeneration { .. }
+            );
         if total > 0.0
-            && (matches!(procedure, Procedure::Buckle { .. } | Procedure::Harmonic(_))
-                || (b.params.contains_key("PERTURBATION") && matches!(procedure, Procedure::Static {})))
+            && (matches!(
+                procedure,
+                Procedure::Buckle { .. } | Procedure::Harmonic(_) | Procedure::RandomVibration(_) | Procedure::MatrixGeneration { .. }
+            ) || (b.params.contains_key("PERTURBATION") && matches!(procedure, Procedure::Static {})))
         {
             read.warnings.push(format!(
                 "line {}: base-state perturbation requires the prestress interface; this and subsequent steps are retained only",
@@ -237,15 +254,22 @@ fn is_output(k: &str) -> bool {
     matches!(k, "OUTPUT" | "NODEOUTPUT" | "ELEMENTOUTPUT" | "NODEPRINT" | "ELPRINT" | "ENERGYOUTPUT" | "PREPRINT")
 }
 
+struct HistoryData<'a> {
+    curves: &'a BTreeMap<String, Curve>,
+    spectra: &'a BTreeMap<String, Vec<fieldcraft_model::random::SpectrumPoint>>,
+}
+
 fn prepare(
     b: &Block<'_>,
     body: &[Block<'_>],
     state: &State,
     model: &Model,
-    curves: &BTreeMap<String, Curve>,
+    data: &HistoryData<'_>,
     units: &DisplaySystem,
     limits: Limits,
 ) -> Result<(Procedure, f64, State)> {
+    let curves = data.curves;
+    let spectra = data.spectra;
     allow(b, &["NAME", "NLGEOM", "PERTURBATION", "AMPLITUDE"])?;
     if canonical(value(b, "NLGEOM", "NO")?) != "NO" {
         return Err(unsupported(b.line, "nonlinear geometry"));
@@ -259,7 +283,8 @@ fn prepare(
     if !b.rows.is_empty() {
         return Err(unsupported(b.line, "step description rows are not mapped"));
     }
-    let mut procedure = None;
+    let random = body.iter().any(|b| b.keyword == "RANDOMRESPONSE");
+    let mut procedure = if random { Some(super::random::procedure(body, model, spectra, units)?) } else { None };
     let mut duration = 1.0;
     let mut global_damping = None;
     let mut next = state.clone();
@@ -267,6 +292,13 @@ fn prepare(
     let mut touched = Touched::new();
     for part in body {
         match part.keyword.as_str() {
+            "MATRIXGENERATE" => {
+                if procedure.is_some() {
+                    return Err(error(part.line, "multiple analysis procedures"));
+                }
+                procedure = Some(super::matrices::procedure(part, body)?);
+            }
+            "MATRIXOUTPUT" if body.iter().any(|b| b.keyword == "MATRIXGENERATE") => {}
             "STATIC" => {
                 allow(part, &[])?;
                 if procedure.is_some() {
@@ -333,6 +365,18 @@ fn prepare(
                     Procedure::Buckle { modes, shift: None }
                 });
             }
+            "RANDOMRESPONSE" | "MODALDAMPING" | "CORRELATION" if random => {}
+            "CLOAD" if random && part.params.contains_key("LOADCASE") => {
+                let mut params = part.params.clone();
+                params.remove("LOADCASE");
+                let mapped = Block {
+                    line: part.line,
+                    keyword: part.keyword.clone(),
+                    params,
+                    rows: part.rows.iter().map(|r| lex::Row { line: r.line, text: r.text }).collect(),
+                };
+                apply(&mapped, &mut next, model, curves, &mut ops, &mut touched, limits)?;
+            }
             "BOUNDARY" | "CLOAD" | "DLOAD" | "DSLOAD" => apply(part, &mut next, model, curves, &mut ops, &mut touched, limits)?,
             k if is_output(k) => {}
             _ => return Err(unsupported(part.line, format!("*{} in STEP", part.keyword))),
@@ -350,6 +394,11 @@ fn prepare(
     }
     if !matches!(procedure, Procedure::Static {}) && next.values().any(|v| v.amplitude.is_some()) {
         return Err(unsupported(b.line, "amplitude on non-static step"));
+    }
+    if matches!(procedure, Procedure::MatrixGeneration { .. })
+        && next.iter().any(|((family, _, _, _), v)| *family != Family::Boundary || v.value != 0.0)
+    {
+        return Err(unsupported(b.line, "matrix export requires homogeneous boundaries and no active loads"));
     }
     Ok((procedure, duration, next))
 }

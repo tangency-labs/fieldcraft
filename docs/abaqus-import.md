@@ -235,3 +235,49 @@ Native solver limits still apply after a complete physical mapping: B31 harmonic
 recovery is currently unsupported and is reported by `solve.harmonic`; the importer does not
 remove requested stress to force a solve. The direct-harmonic solve regression uses an original
 solid beam, and a separate B31 regression requires the explicit unsupported-stress error.
+
+
+### Modal random response and operator export
+
+`deck.read` maps a preceding unwindowed `FREQUENCY` extraction followed by
+`RANDOM RESPONSE` into a native modal random step. Current scope is one real,
+constant `PSD-DEFINITION,TYPE=FORCE` multiplier, one fully correlated load case
+with unit correlation weight, homogeneous nodal constraints, and mode-number
+`MODAL DAMPING`. Distributed pressure is case 1; concentrated forces/moments
+require an explicit other case. Spatial load magnitudes remain physical; the
+scalar spectrum multiplies the coherent response power once. Interval sampling
+uses the extracted natural frequencies, the requested points **per interval**,
+bias and linear/logarithmic spacing. `solve.random {"step":"Random","nodes":[1]}`
+executes this model definition. It returns SI component PSD and trapezoidal RMS
+in its reply. Save that reply separately: native project persistence retains the
+random definition and input source, not random response frames. Stress components
+use native harmonic nodal recovery, not element integration-point output; the
+aggregate stress RMS is a component norm, not von Mises RMS. A small projected
+residual does not certify a truncated modal basis. Nonconstant spectra, multiple
+or complex correlations, base excitation and preloaded modal histories remain
+explicitly unsupported by this import path.
+
+`MATRIX GENERATE` maps stiffness, consistent mass, viscous and structural damping
+to a native matrix-generation step. `MATRIX OUTPUT,FORMAT=MATRIX INPUT` is retained;
+`solve.matrices {"step":"Matrices","path":"operators.json"}` exports a manifest
+and sibling five-column operator files. Each row identifies native model node/DOF
+pairs (flattened global labels after instance mapping), with a symmetric lower triangle by node/DOF labels; the manifest separately records independent-equation order. Operators are
+always SI (rotations in radians), with `K - omega² M + i(omega C + G)` convention;
+material Rayleigh damping contributes to C and loss factors to G. Homogeneous
+supports and native MPC transformations are eliminated. The manifest gives the
+independent coordinate ordering, units and warnings. No response calculation or
+factorization is needed. With no path the command assembles and reports metadata
+only; `solve.run` does not silently create files. Loads, initial fields, preload,
+nonlinear material behavior and nondefault matrix options are refused. Files are
+atomic individually, not a transaction. A native project saves the procedure;
+operator files are separate artifacts. Normalized deck writers currently refuse
+these procedures; `deck.source.write` replays their original text exactly.
+
+The SDOF random test compares every sampled displacement PSD with the analytic
+transfer function, then reopens and executes the saved definition. The axial-bar
+matrix test checks K, M, C and G numerically and after reopening. Source replay
+checks byte equality only; it does not establish solver equivalence for unknown
+keywords or output requests. Syntax sources: the public Abaqus keyword references
+for RANDOM RESPONSE, PSD-DEFINITION, CORRELATION, MODAL DAMPING, MATRIX GENERATE and
+MATRIX OUTPUT, and its random-response analysis guide. No commercial outputs are
+used in implementation or these checks.

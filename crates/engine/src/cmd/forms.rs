@@ -1015,6 +1015,9 @@ const PROCEDURE: Field = variants(
     "Procedure",
     &[
         variant("static", "Static, linear", &[]),
+        variant("matrix_generation", "Structural matrices", &[
+            json("matrices", "Operators").help("Array of stiffness, mass, viscous_damping, structural_damping; homogeneous linear model only.").req().def(r#"["stiffness","mass"]"#),
+        ]),
         variant(
             "nonlinear_static",
             "Static, nonlinear",
@@ -2608,6 +2611,15 @@ pub const INVERSE_HARMONIC: &[Field] = &[
     THREADS,
 ];
 
+pub const SOLVE_MATRICES: &[Field] = &[
+    STEP,
+    path("path", "Matrix manifest", true).help("Optional SI manifest; sibling .mtx files hold the requested operators."),
+    MAX_DOFS,
+    MAX_FACTOR,
+    MAX_MEMORY_GIB,
+    THREADS,
+];
+
 pub const SOLVE_STATIC: &[Field] = &[STEP, MAX_DOFS, MAX_FACTOR, MAX_MEMORY_GIB, THREADS];
 pub const SOLVE_HARMONIC: &[Field] = &[
     STEP,
@@ -2619,9 +2631,9 @@ pub const SOLVE_HARMONIC: &[Field] = &[
     THREADS,
 ];
 pub const SOLVE_RANDOM: &[Field] = &[
-    num("natural_frequency", "Natural frequency", D::Of(Quantity::Frequency)).def("1").help("Natural frequency of the SDOF check in Hz."),
-    positive("damping_ratio", "Damping ratio", D::None).def("0.02").help("Viscous modal damping ratio ζ."),
-    positive("base_acceleration_psd", "Base acceleration PSD", D::Acceleration).def("1").help("One-sided white base acceleration PSD."),
+    num("natural_frequency", "Natural frequency", D::Of(Quantity::Frequency)).hint("1").help("Natural frequency of the SDOF check in Hz."),
+    positive("damping_ratio", "Damping ratio", D::None).hint("0.02").help("Viscous modal damping ratio ζ."),
+    positive("base_acceleration_psd", "Base acceleration PSD", D::Acceleration).hint("1").help("One-sided white base acceleration PSD."),
     json("frequencies", "Frequency grid").help("Optional frequency grid in Hz for modal PSD output."),
     json("transfer", "Displacement transfer").help("Optional modal displacement transfer magnitudes."),
     json("base_psd", "Base PSD grid").help("Optional one-sided base PSD values on the frequency grid."),
@@ -2630,7 +2642,8 @@ pub const SOLVE_RANDOM: &[Field] = &[
     json("base_direction", "Base direction").help("Optional unit translation vector; harmonic frames must use matching unit inertial load -M r. Returns absolute acceleration and relative displacement."),
     json("nodes", "Node labels").help("Optional solved node labels to limit PSD output."),
     json("input_psd", "Input PSD table").help("Rows [frequency in Hz, one-sided PSD], covering every stored harmonic frequency."),
-    text("step", "Harmonic step").help("Optional previously solved harmonic step name."),
+    text("step", "Response step").help("Native modal random step, or a previously solved harmonic step with input_psd."),
+    MAX_DOFS, MAX_FACTOR, MAX_MEMORY_GIB, THREADS,
 ];
 pub const SOLVE_NONLINEAR: &[Field] = &[
     STEP,

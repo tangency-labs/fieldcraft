@@ -47,6 +47,8 @@ fn default_frames() -> u32 {
 pub enum Procedure {
     /// Linear static equilibrium under the active loads and boundary conditions.
     Static {},
+    /// Export reduced linear structural operators in SI; no response solve.
+    MatrixGeneration { matrices: BTreeSet<MatrixKind> },
     /// Steady-state response to harmonic loads, in the exp(iωt) convention.
     Harmonic(crate::harmonic::Harmonic),
     /// Modal random response from one-sided force or base-acceleration PSD inputs.
@@ -1066,11 +1068,22 @@ impl BulkViscosity {
     }
 }
 
+/// Operators in K u + C u′ + M u″, with i G for structural loss in frequency space.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MatrixKind {
+    Stiffness,
+    Mass,
+    ViscousDamping,
+    StructuralDamping,
+}
+
 impl Procedure {
     /// The procedure's type, as the model file names it.
     pub fn name(&self) -> &'static str {
         match self {
             Procedure::Static {} => "static",
+            Procedure::MatrixGeneration { .. } => "matrix_generation",
             Procedure::Harmonic(_) => "harmonic",
             Procedure::RandomVibration(_) => "random_vibration",
             Procedure::Frequency { .. } => "frequency",
@@ -1117,6 +1130,14 @@ impl Procedure {
     }
 
     pub fn validate(&self) -> Result<()> {
+        if let Procedure::MatrixGeneration { matrices } = self
+            && matrices.is_empty()
+        {
+            return Err(Error::Invalid("matrix generation needs an operator".into()));
+        }
+        if let Procedure::RandomVibration(r) = self {
+            return r.validate();
+        }
         if let Procedure::Harmonic(h) = self {
             return h.validate();
         }
@@ -1191,7 +1212,7 @@ impl Procedure {
                 [OutputVariable::Displacement, OutputVariable::Stress].into_iter().collect()
             }
             // Velocity, pressure and wall forces, always.
-            Procedure::Fluid { .. } => BTreeSet::new(),
+            Procedure::Fluid { .. } | Procedure::MatrixGeneration { .. } => BTreeSet::new(),
             Procedure::HeatTransfer { .. } => [OutputVariable::Temperature, OutputVariable::HeatFlux].into_iter().collect(),
             Procedure::CoupledTemperatureDisplacement {} => {
                 OutputVariable::ALL.into_iter().chain([OutputVariable::Temperature, OutputVariable::HeatFlux]).collect()

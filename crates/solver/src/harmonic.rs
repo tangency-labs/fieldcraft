@@ -27,7 +27,7 @@ use crate::{Error, Limits, Result};
 
 mod model;
 mod residual;
-pub use model::{Frame, HarmonicResult, solve_harmonic};
+pub use model::{Frame, HarmonicResult, MatrixExport, export_matrices, solve_harmonic};
 pub(crate) use model::{damping_operators, load_vector};
 
 /// Reduced physical matrices in one equation order and on the same CSR pattern.

@@ -330,9 +330,9 @@ fn harmonic_beam_stress_is_refused_without_dropping_requested_output() {
     std::fs::write(&inp, source).unwrap();
     let mut s = Session::default();
     let reply = s.execute("deck.read", &json!({"format":"abaqus","path":inp,"units":"m-kg-s-N-Pa"})).unwrap();
-    assert_eq!(reply["imported_steps"], json!(["Pull"]));
-    assert_eq!(reply["analysis_complete"], false);
-    assert!(reply["warnings"].as_array().unwrap().iter().any(|v| v.as_str().unwrap().contains("MATRIXGENERATE")));
+    assert_eq!(reply["imported_steps"], json!(["Pull", "Matrices"]));
+    assert_eq!(reply["analysis_complete"], true);
+    assert!(matches!(s.model.step("Matrices").unwrap().procedure, fieldcraft_model::Procedure::MatrixGeneration { .. }));
     let error = s.execute("solve.harmonic", &json!({"step":"Pull"})).unwrap_err();
     assert!(error.to_string().contains("harmonic beam section stress"), "{error}");
     assert!(s.result("Pull").is_none());
@@ -385,4 +385,82 @@ fn imported_discrete_oscillator_solves_after_save_reopen_and_normalized_write() 
     s.execute("deck.read", &json!({"format":"abaqus","path":normalized,"units":"m-kg-s-N-Pa"})).unwrap();
     let again = s.execute("solve.frequency", &json!({"step":"Modes"})).unwrap();
     assert_eq!(again["modes"], first["modes"]);
+}
+
+#[test]
+fn imported_random_oscillator_runs_modal_psd_and_survives_reopen() {
+    // Original SDOF: m=2 kg, k=200 N/m, zeta=.05, unit force multiplier PSD.
+    let source = "*NODE\n7,0,0,0\n*ELEMENT,TYPE=MASS,ELSET=M\n10,7\n*ELEMENT,TYPE=SPRING1,ELSET=K\n11,7\n*MASS,ELSET=M\n2\n*SPRING,ELSET=K\n1\n200\n*BOUNDARY\n7,2,3\n*PSD-DEFINITION,NAME=White,TYPE=FORCE\n1,0,0\n1,0,4\n*STEP,NAME=Modes,PERTURBATION\n*FREQUENCY\n1\n*END STEP\n*STEP,NAME=Random,PERTURBATION\n*RANDOM RESPONSE\n0,4,101,3,1\n*MODAL DAMPING,DEFINITION=MODE NUMBERS\n1,1,0.05\n*CLOAD,LOAD CASE=2\n7,1,1\n*CORRELATION,TYPE=CORRELATED,PSD=White\n2,1\n*END STEP\n";
+    let dir = folder();
+    let inp = dir.join("random.inp");
+    std::fs::write(&inp, source).unwrap();
+    let mut s = Session::default();
+    let read = s.execute("deck.read", &json!({"format":"abaqus","path":inp,"units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(read["analysis_complete"], true, "{read}");
+    let r = s.execute("solve.random", &json!({"step":"Random"})).unwrap();
+    assert_eq!(r["frequency_points"], 201);
+    let samples = r["probes"][0]["samples"].as_array().unwrap();
+    for sample in samples {
+        let omega = 2.0 * std::f64::consts::PI * sample["frequency"].as_f64().unwrap();
+        let expected = 1.0 / ((200.0 - 2.0 * omega * omega).powi(2) + (2.0 * omega).powi(2));
+        let actual = sample["displacement_components_psd"][0].as_f64().unwrap();
+        assert!((actual - expected).abs() < expected * 1e-8, "{sample}");
+    }
+    let saved = dir.join("random.fieldcraft");
+    s.execute("file.save_as", &json!({"path":saved})).unwrap();
+    std::fs::remove_file(inp).unwrap();
+    s.execute("file.new", &json!({})).unwrap();
+    s.execute("file.open", &json!({"path":saved})).unwrap();
+    let again = s.execute("solve.random", &json!({"step":"Random"})).unwrap();
+    assert_eq!(again, r);
+    let replay = dir.join("replay.inp");
+    s.execute("deck.source.write", &json!({"path":replay})).unwrap();
+    assert_eq!(std::fs::read_to_string(replay).unwrap(), source);
+}
+
+#[test]
+fn imported_matrices_export_theory_operators_and_survive_reopen() {
+    // Two original axial bars: each E A/L=300, rho A L/3=10; C=2M+.1K, G=.05K.
+    // Labels deliberately disagree with physical order; exported triangle uses labels.
+    let source = "*NODE\n10,0,0,0\n20,2,0,0\n5,4,0,0\n*ELEMENT,TYPE=T3D2,ELSET=Bar\n1,10,20\n2,20,5\n*MATERIAL,NAME=Steel\n*ELASTIC\n200,0.3\n*DENSITY\n5\n*DAMPING,ALPHA=2,BETA=0.1,STRUCTURAL=0.05\n*SOLID SECTION,ELSET=Bar,MATERIAL=Steel\n3\n*BOUNDARY\n10,1,3\n20,2,3\n5,2,3\n*STEP,NAME=Matrices,PERTURBATION\n*MATRIX GENERATE,STIFFNESS,MASS,VISCOUS DAMPING,STRUCTURAL DAMPING\n*MATRIX OUTPUT,STIFFNESS,MASS,VISCOUS DAMPING,STRUCTURAL DAMPING,FORMAT=MATRIX INPUT\n*END STEP\n";
+    let dir = folder();
+    let inp = dir.join("matrices.inp");
+    std::fs::write(&inp, source).unwrap();
+    let mut s = Session::default();
+    let read = s.execute("deck.read", &json!({"format":"abaqus","path":inp,"units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(read["analysis_complete"], true, "{read}");
+    let manifest = dir.join("operators.json");
+    let result = s.execute("solve.matrices", &json!({"step":"Matrices","path":manifest})).unwrap();
+    let degrees: std::collections::BTreeSet<(u32, u8)> = serde_json::from_value(result["degrees"].clone()).unwrap();
+    assert_eq!(degrees, [(5, 1), (20, 1)].into_iter().collect());
+    for (name, diagonal, off) in [("stiffness", 300., -300.), ("mass", 10., 5.), ("viscous_damping", 50., -20.), ("structural_damping", 15., -15.)] {
+        let path = result["matrices"][name]["path"].as_str().unwrap();
+        let text = std::fs::read_to_string(path).unwrap();
+        let rows: Vec<_> = text.lines().filter(|l| !l.starts_with("**")).collect();
+        assert_eq!(rows.len(), 3);
+        let mut seen = std::collections::BTreeSet::new();
+        for line in rows {
+            let row: Vec<_> = line.split(',').map(str::trim).collect();
+            let left: (u32, u8) = (row[0].parse().unwrap(), row[1].parse().unwrap());
+            let right: (u32, u8) = (row[2].parse().unwrap(), row[3].parse().unwrap());
+            assert!(left >= right);
+            assert!(seen.insert((left, right)));
+            let expected = match (left, right) {
+                ((5, 1), (5, 1)) => diagonal,
+                ((20, 1), (20, 1)) => 2. * diagonal,
+                ((20, 1), (5, 1)) => off,
+                _ => panic!("unexpected coordinate"),
+            };
+            assert!((row[4].parse::<f64>().unwrap() - expected).abs() < 1e-10);
+        }
+    }
+    let saved = dir.join("matrices.fieldcraft");
+    s.execute("file.save_as", &json!({"path":saved})).unwrap();
+    std::fs::remove_file(inp).unwrap();
+    s.execute("file.new", &json!({})).unwrap();
+    s.execute("file.open", &json!({"path":saved})).unwrap();
+    assert_eq!(s.execute("solve.matrices", &json!({"step":"Matrices","path":manifest})).unwrap(), result);
+    let replay = dir.join("replay.inp");
+    s.execute("deck.source.write", &json!({"path":replay})).unwrap();
+    assert_eq!(std::fs::read_to_string(replay).unwrap(), source);
 }

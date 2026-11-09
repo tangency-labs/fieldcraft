@@ -416,3 +416,6 @@ pub fn solve_harmonic(model: &Model, name: Option<&str>, limits: &Limits) -> Res
         warnings,
     })
 }
+
+mod matrices;
+pub use matrices::{MatrixExport, export_matrices};

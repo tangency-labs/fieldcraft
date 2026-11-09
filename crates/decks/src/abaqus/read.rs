@@ -20,6 +20,8 @@ mod discrete;
 mod dynamic;
 mod history;
 mod lex;
+mod matrices;
+mod random;
 pub mod source;
 mod types;
 
