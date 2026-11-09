@@ -317,3 +317,41 @@ fn imported_beam_solves_and_saved_source_survives_reopen_without_original_files(
     let roundtrip = s.execute("solve.static", &json!({"step":"Pull"})).unwrap();
     assert_eq!(roundtrip["max_displacement"], solved["max_displacement"]);
 }
+
+#[test]
+fn harmonic_beam_stress_is_refused_without_dropping_requested_output() {
+    let dir = folder();
+    let inp = dir.join("harmonic.inp");
+    let source = AXIAL_BEAM
+        .replace("*AMPLITUDE,NAME=Ramp,DEFINITION=TABULAR\n0,0,1,2\n", "")
+        .replace("*STATIC\n1,1\n", "*STEADY STATE DYNAMICS,DIRECT\n0,0\n")
+        .replace("*CLOAD,AMPLITUDE=Ramp\n2,1,500", "*CLOAD,REAL\n2,1,1000")
+        + "*STEP,NAME=Matrices\n*MATRIX GENERATE,STIFFNESS,MASS\n*MATRIX OUTPUT,STIFFNESS,MASS\n*END STEP\n";
+    std::fs::write(&inp, source).unwrap();
+    let mut s = Session::default();
+    let reply = s.execute("deck.read", &json!({"format":"abaqus","path":inp,"units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(reply["imported_steps"], json!(["Pull"]));
+    assert_eq!(reply["analysis_complete"], false);
+    assert!(reply["warnings"].as_array().unwrap().iter().any(|v| v.as_str().unwrap().contains("MATRIXGENERATE")));
+    let error = s.execute("solve.harmonic", &json!({"step":"Pull"})).unwrap_err();
+    assert!(error.to_string().contains("harmonic beam section stress"), "{error}");
+    assert!(s.result("Pull").is_none());
+}
+
+#[test]
+fn imported_solid_bar_solves_direct_harmonic_without_rebuilding_the_step() {
+    let dir = folder();
+    let inp = dir.join("harmonic-solid.inp");
+    let mut s = bar();
+    s.execute("deck.write", &json!({"format":"abaqus","path":inp})).unwrap();
+    let source = std::fs::read_to_string(&inp).unwrap();
+    assert!(source.contains("*STATIC\n1.0, 1.0"), "{source}");
+    let source = source.replace("*STATIC\n1.0, 1.0", "*STEADY STATE DYNAMICS,DIRECT\n0,0\n10,0");
+    std::fs::write(&inp, source).unwrap();
+    let reply = s.execute("deck.read", &json!({"format":"abaqus","path":inp,"units":"mm-t-s-N-MPa"})).unwrap();
+    assert_eq!(reply["analysis_complete"], true);
+    assert_eq!(reply["imported_steps"], json!(["Bend"]));
+    let result = s.execute("solve.harmonic", &json!({"step":"Bend"})).unwrap();
+    assert_eq!(result["frequencies"].as_array().unwrap().len(), 2);
+    assert!(s.result("Bend").is_some());
+}

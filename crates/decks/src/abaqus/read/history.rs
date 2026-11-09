@@ -169,7 +169,7 @@ pub(super) fn import(text: &str, read: &mut Read, preset: Preset, limits: Limits
             .find(|j| blocks.get(*j).is_some_and(|b| b.keyword == "ENDSTEP"))
             .ok_or_else(|| error(b.line, "STEP has no END STEP"))?;
         let body = blocks.get(index + 1..end).ok_or_else(|| error(b.line, "invalid step range"))?;
-        let prepared = prepare(b, body, &state, &read.model, &curves, limits);
+        let prepared = prepare(b, body, &state, &read.model, &curves, &units, limits);
         let (procedure, duration, mut next) = match prepared {
             Ok(v) => v,
             Err(e @ Error::Unsupported { .. }) => {
@@ -181,7 +181,8 @@ pub(super) fn import(text: &str, read: &mut Read, preset: Preset, limits: Limits
         let perturbation = b.params.contains_key("PERTURBATION")
             || matches!(procedure, Procedure::Frequency { .. } | Procedure::Buckle { .. } | Procedure::Harmonic(_));
         if total > 0.0
-            && (matches!(procedure, Procedure::Buckle { .. }) || (b.params.contains_key("PERTURBATION") && matches!(procedure, Procedure::Static {})))
+            && (matches!(procedure, Procedure::Buckle { .. } | Procedure::Harmonic(_))
+                || (b.params.contains_key("PERTURBATION") && matches!(procedure, Procedure::Static {})))
         {
             read.warnings.push(format!(
                 "line {}: base-state perturbation requires the prestress interface; this and subsequent steps are retained only",
@@ -242,6 +243,7 @@ fn prepare(
     state: &State,
     model: &Model,
     curves: &BTreeMap<String, Curve>,
+    units: &DisplaySystem,
     limits: Limits,
 ) -> Result<(Procedure, f64, State)> {
     allow(b, &["NAME", "NLGEOM", "PERTURBATION", "AMPLITUDE"])?;
@@ -259,6 +261,7 @@ fn prepare(
     }
     let mut procedure = None;
     let mut duration = 1.0;
+    let mut global_damping = None;
     let mut next = state.clone();
     let mut ops = BTreeMap::new();
     let mut touched = Touched::new();
@@ -285,6 +288,17 @@ fn prepare(
                     duration = f.get(1).filter(|s| !s.is_empty()).map(|s| number(s, row.line)).transpose()?.unwrap_or(1.0);
                 }
                 procedure = Some(Procedure::Static {});
+            }
+            "STEADYSTATEDYNAMICS" => {
+                if procedure.is_some() {
+                    return Err(error(part.line, "multiple analysis procedures in one STEP"));
+                }
+                procedure = Some(Procedure::Harmonic(super::dynamic::harmonic(part, units)?));
+            }
+            "GLOBALDAMPING" => {
+                if global_damping.replace(super::dynamic::damping(part, units)?).is_some() {
+                    return Err(error(part.line, "duplicate GLOBAL DAMPING"));
+                }
             }
             "FREQUENCY" | "BUCKLE" => {
                 allow(part, &["EIGENSOLVER", "NORMALIZATION"])?;
@@ -324,7 +338,16 @@ fn prepare(
             _ => return Err(unsupported(part.line, format!("*{} in STEP", part.keyword))),
         }
     }
-    let procedure = procedure.ok_or_else(|| unsupported(b.line, "STEP has no supported procedure"))?;
+    let mut procedure = procedure.ok_or_else(|| unsupported(b.line, "STEP has no supported procedure"))?;
+    if let Some(damping) = global_damping {
+        let Procedure::Harmonic(h) = &mut procedure else {
+            return Err(unsupported(b.line, "GLOBAL DAMPING outside harmonic analysis"));
+        };
+        h.damping = damping;
+    }
+    if matches!(procedure, Procedure::Harmonic(_)) && next.iter().any(|((family, _, _, _), v)| *family == Family::Boundary && v.value != 0.0) {
+        return Err(unsupported(b.line, "nonzero harmonic prescribed motion"));
+    }
     if !matches!(procedure, Procedure::Static {}) && next.values().any(|v| v.amplitude.is_some()) {
         return Err(unsupported(b.line, "amplitude on non-static step"));
     }
@@ -360,7 +383,10 @@ fn apply(
     touched: &mut Touched,
     limits: Limits,
 ) -> Result<()> {
-    allow(b, &["OP", "AMPLITUDE", "TYPE"])?;
+    allow(b, &["OP", "AMPLITUDE", "TYPE", "REAL"])?;
+    if b.params.contains_key("REAL") && (b.keyword == "BOUNDARY" || b.params.get("REAL").is_some_and(Option::is_some)) {
+        return Err(unsupported(b.line, "REAL must be a load flag"));
+    }
     if b.keyword == "BOUNDARY" && canonical(value(b, "TYPE", "DISPLACEMENT")?) != "DISPLACEMENT" {
         return Err(unsupported(b.line, "boundary velocity/acceleration"));
     }

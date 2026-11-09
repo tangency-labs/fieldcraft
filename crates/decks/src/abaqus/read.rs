@@ -16,6 +16,7 @@ mod assembly;
 pub use assembly::InstanceMap;
 pub mod bundle;
 mod composite;
+mod dynamic;
 mod history;
 mod lex;
 pub mod source;
@@ -555,6 +556,14 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
                     return Err(error(line, "duplicate material"));
                 }
                 material = Some(name);
+            }
+            "DAMPING" => {
+                let name = material.as_ref().ok_or_else(|| error(line, "DAMPING outside MATERIAL"))?;
+                let m = materials.get_mut(name).ok_or_else(|| error(line, "missing active material"))?;
+                if m.0.damping.is_some() {
+                    return Err(error(line, "duplicate material DAMPING"));
+                }
+                m.0.damping = Some(dynamic::damping(block, &units)?);
             }
             "ELASTIC" | "DENSITY" => {
                 let name = material.as_ref().ok_or_else(|| error(line, format!("*{k} outside a supported *MATERIAL block")))?;

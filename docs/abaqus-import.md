@@ -212,3 +212,17 @@ The syntax and supported options follow Dassault Systemes' public documentation,
 and version: the "Input syntax rules" chapter of the *Abaqus 2017 Analysis User's Guide*, and
 the `*NODE`, `*ELEMENT`, `*NSET`, `*SURFACE`, `*ELASTIC` and `*SOLID SECTION` entries of the
 *Abaqus 2017 Keywords Reference Guide* and its `*BEAM SECTION` entry in the 2025 edition.
+
+
+Direct harmonic import also maps constant material/global Rayleigh and structural damping,
+explicit single-frequency rows (`upper=0`) and real concentrated/distributed loads. Frequency
+ranges with bias, modal/subspace harmonic methods, imaginary loads, prescribed harmonic motion
+and prestressed harmonic base states remain reported as unsupported. The `imported_steps` reply
+lists the steps actually created; `analysis_complete=false` still means the entire source is
+not mapped. A later matrix-export step does not invalidate an already mapped harmonic step,
+but its original keywords and warning remain visible; it is not executed by the native solver.
+
+Native solver limits still apply after a complete physical mapping: B31 harmonic stress
+recovery is currently unsupported and is reported by `solve.harmonic`; the importer does not
+remove requested stress to force a solve. The direct-harmonic solve regression uses an original
+solid beam, and a separate B31 regression requires the explicit unsupported-stress error.
