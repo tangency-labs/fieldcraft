@@ -8,10 +8,12 @@
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, VecDeque};
 
-// Exclusive accumulated serial phase times; clocks never affect decisions.
+// Exclusive accumulated phase wall times; clocks never affect decisions.
 struct Profile {
     start: Option<std::time::Instant>,
     capacity_prune: bool,
+    csr: bool,
+    seeded: bool,
     moves: std::cell::Cell<[usize; 4]>,
     impossible_seconds: std::cell::Cell<f64>,
     seconds: std::cell::Cell<[f64; 7]>,
@@ -27,6 +29,9 @@ impl Profile {
         Self {
             start: std::env::var("FIELDCRAFT_ORDERING_PROFILE").is_ok_and(|v| v == "1").then(std::time::Instant::now),
             capacity_prune: !std::env::var("FIELDCRAFT_ORDERING_REFINEMENT").is_ok_and(|v| v == "baseline"),
+            csr: !std::env::var("FIELDCRAFT_ORDERING_STORAGE").is_ok_and(|v| v == "baseline"),
+            seeded: !std::env::var("FIELDCRAFT_ORDERING_VISITS").is_ok_and(|v| v == "degree")
+                && !std::env::var("FIELDCRAFT_ORDERING_STORAGE").is_ok_and(|v| v == "baseline"),
             moves: [0; 4].into(),
             impossible_seconds: 0.0.into(),
             seconds: [0.0; 7].into(),
@@ -91,6 +96,8 @@ const COARSE: usize = 128;
 #[derive(Clone)]
 struct Graph {
     rows: Vec<Vec<(usize, i64)>>,
+    offsets: Vec<usize>,
+    edges: Vec<(usize, i64)>,
     weights: Vec<usize>,
     keys: Vec<usize>,
 }
@@ -101,44 +108,58 @@ fn value<T: Copy + Default>(a: &[T], i: usize) -> T {
 
 impl Graph {
     fn row(&self, v: usize) -> &[(usize, i64)] {
-        self.rows.get(v).map(Vec::as_slice).unwrap_or_default()
+        if self.offsets.is_empty() {
+            self.rows.get(v).map(Vec::as_slice).unwrap_or_default()
+        } else {
+            self.edges.get(value(&self.offsets, v)..value(&self.offsets, v + 1)).unwrap_or_default()
+        }
     }
 
     fn n(&self) -> usize {
-        self.rows.len()
+        self.weights.len()
     }
 
-    fn induced(adj: &[Vec<usize>], part: &[usize], position: &mut [usize]) -> Self {
+    fn induced(adj: &NodeAdj, part: &[usize], position: &mut [usize], csr: bool) -> Self {
         for (i, &v) in part.iter().enumerate() {
             if let Some(p) = position.get_mut(v) {
                 *p = i;
             }
         }
-        let rows = part
-            .iter()
-            .map(|&v| {
-                adj.get(v)
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|&u| {
-                        let j = position.get(u).copied().unwrap_or(NONE);
-                        (j != NONE).then_some((j, 1))
-                    })
-                    .collect()
-            })
-            .collect();
+        let mut graph = Self { rows: Vec::new(), offsets: Vec::new(), edges: Vec::new(), weights: vec![1; part.len()], keys: part.to_vec() };
+        if csr {
+            graph.offsets.push(0);
+            for &v in part {
+                graph.edges.extend(adj.row(v).iter().filter_map(|&u| {
+                    let j = position.get(u).copied().unwrap_or(NONE);
+                    (j != NONE).then_some((j, 1))
+                }));
+                graph.offsets.push(graph.edges.len());
+            }
+        } else {
+            graph.rows = part
+                .iter()
+                .map(|&v| {
+                    adj.row(v)
+                        .iter()
+                        .filter_map(|&u| {
+                            let j = position.get(u).copied().unwrap_or(NONE);
+                            (j != NONE).then_some((j, 1))
+                        })
+                        .collect()
+                })
+                .collect();
+        }
         for &v in part {
             if let Some(p) = position.get_mut(v) {
                 *p = NONE;
             }
         }
-        Self { rows, weights: vec![1; part.len()], keys: part.to_vec() }
+        graph
     }
 
     fn cut(&self, side: &[usize]) -> i64 {
-        self.rows
-            .iter()
-            .enumerate()
+        (0..self.n())
+            .map(|v| (v, self.row(v)))
             .map(|(v, row)| row.iter().filter(|&&(u, _)| u > v && value(side, u) != value(side, v)).map(|&(_, w)| w).sum::<i64>())
             .sum()
     }
@@ -147,14 +168,28 @@ impl Graph {
         self.row(v).iter().map(|&(u, w)| if value(side, u) == value(side, v) { -w } else { w }).sum()
     }
 
-    fn coarsen(&self, profile: &Profile) -> Option<(Self, Vec<usize>)> {
+    fn coarsen(&self, profile: &Profile, scratch: &mut Scratch) -> Option<(Self, Vec<usize>)> {
         let _phase = profile.phase(1);
-        let mut visits: Vec<_> = (0..self.n()).collect();
-        visits.sort_unstable_by_key(|&v| (self.row(v).len(), value(&self.keys, v)));
+        scratch.visits.clear();
+        scratch.visits.extend(0..self.n());
+        if profile.seeded {
+            // Fixed SplitMix64 state, integer-only Fisher-Yates; independent of pools.
+            let mut state = 0x243f_6a88_85a3_08d3_u64;
+            for i in (1..scratch.visits.len()).rev() {
+                state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+                let mut z = state;
+                z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+                z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+                z ^= z >> 31;
+                scratch.visits.swap(i, (z % (i as u64 + 1)) as usize);
+            }
+        } else {
+            scratch.visits.sort_unstable_by_key(|&v| (self.row(v).len(), value(&self.keys, v)));
+        }
         let mut map = vec![NONE; self.n()];
         let (mut weights, mut keys) = (Vec::new(), Vec::new());
         let limit = (self.weights.iter().sum::<usize>() / 32).max(2);
-        for v in visits {
+        for &v in &scratch.visits {
             if map.get(v) != Some(&NONE) {
                 continue;
             }
@@ -180,11 +215,15 @@ impl Graph {
             weights.push(weight);
             keys.push(key);
         }
+        // Contraction ratio = coarse vertices / fine vertices; reject >= 0.9.
         if weights.len() * 10 >= self.n() * 9 {
             return None;
         }
+        if profile.csr {
+            return Some((self.contract(&map, weights, keys, scratch), map));
+        }
         let mut rows = vec![Vec::new(); weights.len()];
-        for (v, row) in self.rows.iter().enumerate() {
+        for (v, row) in (0..self.n()).map(|v| (v, self.row(v))) {
             let a = value(&map, v);
             for &(u, w) in row {
                 let b = value(&map, u);
@@ -209,8 +248,190 @@ impl Graph {
             }
             *row = merged;
         }
-        Some((Self { rows, weights, keys }, map))
+        Some((Self { rows, offsets: Vec::new(), edges: Vec::new(), weights, keys }, map))
     }
+}
+
+// Reused across coarsening levels and recursive subgraphs. Fine-to-coarse maps and
+// coarse graphs themselves stay alive for uncoarsening and cannot be recycled yet.
+#[derive(Default)]
+struct Scratch {
+    visits: Vec<usize>,
+    head: Vec<usize>,
+    next: Vec<usize>,
+    marks: Vec<usize>,
+    sums: Vec<i64>,
+    touched: Vec<usize>,
+}
+
+impl Graph {
+    fn contract(&self, map: &[usize], weights: Vec<usize>, keys: Vec<usize>, scratch: &mut Scratch) -> Self {
+        let n = weights.len();
+        scratch.head.clear();
+        scratch.head.resize(n, NONE);
+        scratch.next.clear();
+        scratch.next.resize(self.n(), NONE);
+        // Ascending fine-id traversal within each aggregate, independent of matching order.
+        for v in (0..self.n()).rev() {
+            let a = value(map, v);
+            if let (Some(h), Some(next)) = (scratch.head.get_mut(a), scratch.next.get_mut(v)) {
+                *next = *h;
+                *h = v;
+            }
+        }
+        scratch.marks.clear();
+        scratch.marks.resize(n, NONE);
+        scratch.sums.resize(n, 0);
+        let mut offsets = Vec::with_capacity(n + 1);
+        let mut edges = Vec::new();
+        offsets.push(0);
+        for a in 0..n {
+            scratch.touched.clear();
+            let mut v = value(&scratch.head, a);
+            while v != NONE {
+                for &(u, w) in self.row(v) {
+                    let b = value(map, u);
+                    if a == b {
+                        continue;
+                    }
+                    if let (Some(mark), Some(sum)) = (scratch.marks.get_mut(b), scratch.sums.get_mut(b)) {
+                        if *mark != a {
+                            *mark = a;
+                            *sum = w;
+                            scratch.touched.push(b);
+                        } else {
+                            *sum += w;
+                        }
+                    }
+                }
+                v = value(&scratch.next, v);
+            }
+            scratch.touched.sort_unstable();
+            edges.extend(scratch.touched.iter().map(|&b| (b, value(&scratch.sums, b))));
+            offsets.push(edges.len());
+        }
+        Self { rows: Vec::new(), offsets, edges, weights, keys }
+    }
+}
+
+struct NodeAdj {
+    rows: Vec<Vec<usize>>,
+    offsets: Vec<usize>,
+    edges: Vec<usize>,
+}
+impl NodeAdj {
+    fn row(&self, v: usize) -> &[usize] {
+        if self.offsets.is_empty() {
+            self.rows.get(v).map(Vec::as_slice).unwrap_or_default()
+        } else {
+            self.edges.get(value(&self.offsets, v)..value(&self.offsets, v + 1)).unwrap_or_default()
+        }
+    }
+}
+
+fn canonical(adjacency: &[Vec<usize>], csr: bool) -> NodeAdj {
+    let n = adjacency.len();
+    let mut graph = NodeAdj { rows: Vec::new(), offsets: Vec::new(), edges: Vec::new() };
+    if !csr {
+        graph.rows.resize(n, Vec::new());
+        for (v, row) in adjacency.iter().enumerate() {
+            for &u in row {
+                if u < n && u != v {
+                    if let Some(r) = graph.rows.get_mut(v) {
+                        r.push(u);
+                    }
+                    if let Some(r) = graph.rows.get_mut(u) {
+                        r.push(v);
+                    }
+                }
+            }
+        }
+        for row in &mut graph.rows {
+            row.sort_unstable();
+            row.dedup();
+        }
+        return graph;
+    }
+    // Two passes: count symmetric entries, then fill disjoint row ranges.
+    let mut counts = vec![0usize; n];
+    for (v, row) in adjacency.iter().enumerate() {
+        for &u in row {
+            if u < n && u != v {
+                if let Some(c) = counts.get_mut(v) {
+                    *c += 1;
+                }
+                if let Some(c) = counts.get_mut(u) {
+                    *c += 1;
+                }
+            }
+        }
+    }
+    graph.offsets.push(0);
+    for &count in &counts {
+        graph.offsets.push(graph.offsets.last().copied().unwrap_or(0) + count);
+    }
+    graph.edges.resize(graph.offsets.last().copied().unwrap_or(0), 0);
+    let mut cursor = graph.offsets.clone();
+    for (v, row) in adjacency.iter().enumerate() {
+        for &u in row {
+            if u < n && u != v {
+                for (a, b) in [(v, u), (u, v)] {
+                    if let Some(at) = cursor.get_mut(a) {
+                        if let Some(e) = graph.edges.get_mut(*at) {
+                            *e = b;
+                        }
+                        *at += 1;
+                    }
+                }
+            }
+        }
+    }
+    // Each row has one writer. Dedup lengths are collected in fixed row order;
+    // compaction below is serial and never depends on worker completion order.
+    let mut rest = graph.edges.as_mut_slice();
+    let mut rows = Vec::with_capacity(n);
+    for &count in &counts {
+        let (row, tail) = rest.split_at_mut(count);
+        rows.push(row);
+        rest = tail;
+    }
+    let mut parts: Vec<_> = rows.into_iter().zip(counts.iter_mut()).collect();
+    fieldcraft_parallel::for_each_mut(&mut parts, |_, (row, count)| {
+        row.sort_unstable();
+        let mut unique = 0;
+        let mut last = NONE;
+        for read in 0..row.len() {
+            let u = value(row, read);
+            if u != last {
+                if let Some(dst) = row.get_mut(unique) {
+                    *dst = u;
+                }
+                unique += 1;
+                last = u;
+            }
+        }
+        **count = unique;
+    });
+    drop(parts);
+    let old_offsets = graph.offsets.clone();
+    let mut write = 0;
+    for v in 0..n {
+        if let Some(o) = graph.offsets.get_mut(v) {
+            *o = write;
+        }
+        for read in value(&old_offsets, v)..value(&old_offsets, v) + value(&counts, v) {
+            let e = value(&graph.edges, read);
+            if let Some(dst) = graph.edges.get_mut(write) {
+                *dst = e;
+            }
+            write += 1;
+        }
+    }
+    if let Some(o) = graph.offsets.last_mut() {
+        *o = write;
+    }
+    graph.edges.truncate(write);
+    graph
 }
 
 type Heap = BinaryHeap<(i64, Reverse<usize>, usize, usize)>;
@@ -388,7 +609,7 @@ fn grow(g: &Graph, seed: usize, profile: &Profile) -> Vec<usize> {
     side
 }
 
-fn partition(g: &Graph, profile: &Profile) -> (Vec<usize>, usize) {
+fn partition(g: &Graph, profile: &Profile, scratch: &mut Scratch) -> (Vec<usize>, usize) {
     let mut graphs = vec![g.clone()];
     let mut maps = Vec::new();
     for _ in 0..32 {
@@ -396,7 +617,7 @@ fn partition(g: &Graph, profile: &Profile) -> (Vec<usize>, usize) {
         if last.n() <= COARSE {
             break;
         }
-        let Some((coarse, map)) = last.coarsen(profile) else { break };
+        let Some((coarse, map)) = last.coarsen(profile, scratch) else { break };
         maps.push(map);
         graphs.push(coarse);
     }
@@ -510,7 +731,7 @@ fn cover(g: &Graph, side: &[usize], profile: &Profile) -> Vec<bool> {
 /// of reproducing another AMD implementation's ordering.
 fn amd(g: &Graph, profile: &Profile) -> Vec<usize> {
     let _phase = profile.phase(5);
-    let mut direct: Vec<Vec<usize>> = g.rows.iter().map(|r| r.iter().map(|e| e.0).collect()).collect();
+    let mut direct: Vec<Vec<usize>> = (0..g.n()).map(|v| g.row(v).iter().map(|e| e.0).collect()).collect();
     let mut incident = vec![Vec::<usize>::new(); g.n()];
     let mut elements: Vec<Vec<usize>> = Vec::new();
     let mut active = vec![true; g.n()];
@@ -565,23 +786,8 @@ pub(crate) fn order(adjacency: &[Vec<usize>]) -> Vec<usize> {
     let n = adjacency.len();
     // Canonical undirected graph; duplicate, self and out-of-range entries cannot
     // affect traversal or create input-dependent unchecked indexing.
-    let mut adj = vec![Vec::new(); n];
-    for (v, row) in adjacency.iter().enumerate() {
-        for &u in row {
-            if u < n && u != v {
-                if let Some(r) = adj.get_mut(v) {
-                    r.push(u);
-                }
-                if let Some(r) = adj.get_mut(u) {
-                    r.push(v);
-                }
-            }
-        }
-    }
-    for row in &mut adj {
-        row.sort_unstable();
-        row.dedup();
-    }
+    let adj = canonical(adjacency, profile.csr);
+    let mut scratch = Scratch::default();
     drop(build);
     let mut position = vec![NONE; n];
     enum Task {
@@ -602,7 +808,7 @@ pub(crate) fn order(adjacency: &[Vec<usize>]) -> Vec<usize> {
             continue;
         }
         let build = profile.phase(0);
-        let g = Graph::induced(&adj, &part, &mut position);
+        let g = Graph::induced(&adj, &part, &mut position, profile.csr);
         drop(build);
         if part.len() <= LEAF {
             result.extend(amd(&g, &profile));
@@ -641,7 +847,7 @@ pub(crate) fn order(adjacency: &[Vec<usize>]) -> Vec<usize> {
             }
             continue;
         }
-        let (side, levels) = partition(&g, &profile);
+        let (side, levels) = partition(&g, &profile, &mut scratch);
         let separator = cover(&g, &side, &profile);
         let (mut left, mut right, mut sep) = (Vec::new(), Vec::new(), Vec::new());
         for (v, &key) in g.keys.iter().enumerate() {
@@ -683,9 +889,50 @@ mod tests {
     use super::*;
 
     #[test]
+    fn csr_build_induction_and_weighted_contraction_match_reference() {
+        let mut adj: Vec<Vec<usize>> = (0..257).map(|v| vec![(v + 1) % 257, (v + 13) % 257, v, NONE, (v + 1) % 257]).collect();
+        adj[17].reverse();
+        let old = canonical(&adj, false);
+        for threads in [1, 2, 7] {
+            let csr = fieldcraft_parallel::with_threads(threads, || canonical(&adj, true));
+            for v in 0..adj.len() {
+                assert_eq!(old.row(v), csr.row(v));
+            }
+            let part: Vec<_> = (0..257).filter(|v| v % 5 != 0).collect();
+            let mut position = vec![NONE; 257];
+            let mut a = Graph::induced(&old, &part, &mut position, false);
+            let mut b = Graph::induced(&csr, &part, &mut position, true);
+            assert!(position.iter().all(|&v| v == NONE));
+            let mut reference = Profile::new();
+            reference.csr = false;
+            reference.seeded = false;
+            let mut candidate = Profile::new();
+            candidate.csr = true;
+            candidate.seeded = false;
+            let (mut sa, mut sb) = (Scratch::default(), Scratch::default());
+            for _ in 0..32 {
+                assert_eq!(a.weights, b.weights);
+                assert_eq!(a.keys, b.keys);
+                for v in 0..a.n() {
+                    assert_eq!(a.row(v), b.row(v));
+                }
+                match (a.coarsen(&reference, &mut sa), b.coarsen(&candidate, &mut sb)) {
+                    (Some((x, ma)), Some((y, mb))) => {
+                        assert_eq!(ma, mb);
+                        a = x;
+                        b = y;
+                    }
+                    (None, None) => break,
+                    _ => panic!("coarsening stop differs"),
+                }
+            }
+        }
+    }
+
+    #[test]
     fn cover_is_minimum_on_every_three_by_three_crossing_graph() {
         for bits in 0..512 {
-            let mut g = Graph { rows: vec![vec![]; 6], weights: vec![1; 6], keys: (0..6).collect() };
+            let mut g = Graph { offsets: Vec::new(), edges: Vec::new(), rows: vec![vec![]; 6], weights: vec![1; 6], keys: (0..6).collect() };
             for a in 0..3 {
                 for b in 0..3 {
                     if bits & (1 << (3 * a + b)) != 0 {
@@ -731,11 +978,13 @@ mod tests {
     fn coarsening_preserves_weights_and_partition_cut() {
         let n = 64;
         let g = Graph {
+            offsets: Vec::new(),
+            edges: Vec::new(),
             rows: (0..n).map(|v| [(v + n - 1) % n, (v + 1) % n].into_iter().map(|u| (u, 1)).collect()).collect(),
             weights: vec![1; n],
             keys: (0..n).collect(),
         };
-        let (coarse, map) = g.coarsen(&Profile::new()).unwrap();
+        let (coarse, map) = g.coarsen(&Profile::new(), &mut Scratch::default()).unwrap();
         assert_eq!(coarse.weights.iter().sum::<usize>(), n);
         for stride in 1..5 {
             let side: Vec<_> = (0..coarse.n()).map(|v| (v / stride) % 2).collect();
@@ -748,6 +997,8 @@ mod tests {
     fn fm_keeps_the_best_prefix_and_balance() {
         let n = 80;
         let g = Graph {
+            offsets: Vec::new(),
+            edges: Vec::new(),
             rows: (0..n).map(|v| [(v + n - 1) % n, (v + 1) % n].into_iter().map(|u| (u, 1)).collect()).collect(),
             weights: vec![1; n],
             keys: (0..n).collect(),
