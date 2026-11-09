@@ -8,6 +8,8 @@ use fieldcraft_model::units::{Preset, Quantity};
 use fieldcraft_model::{BoundaryCondition, DisplaySystem, Distribution, ElementFace, Load, Model, Procedure, Set, Step, Target};
 use std::collections::{BTreeMap, BTreeSet};
 
+#[path = "projected.rs"]
+mod projected;
 #[path = "transient.rs"]
 mod transient;
 
@@ -136,13 +138,24 @@ pub(super) fn import(text: &str, read: &mut Read, preset: Preset, limits: Limits
         }
         Err(e) => return Err(e),
     };
+    let response_tables = match projected::tables(&blocks, &units) {
+        Ok(v) => v,
+        Err(e @ Error::Unsupported { .. }) => {
+            read.warnings.push(e.to_string());
+            return Ok(());
+        }
+        Err(e) => return Err(e),
+    };
     let mut in_step = false;
     let unknown: BTreeSet<usize> = read.unknown.iter().map(|u| u.line).collect();
     for b in &blocks {
         if b.keyword == "STEP" {
             in_step = true;
         }
-        if !in_step && unknown.contains(&b.line) && !matches!(b.keyword.as_str(), "BOUNDARY" | "AMPLITUDE" | "PREPRINT" | "PSD-DEFINITION") {
+        if !in_step
+            && unknown.contains(&b.line)
+            && !matches!(b.keyword.as_str(), "BOUNDARY" | "AMPLITUDE" | "PREPRINT" | "PSD-DEFINITION" | "SPECTRUM")
+        {
             read.warnings.push(format!("analysis not imported: unhandled model option *{} at line {}; original retained", b.keyword, b.line));
             return Ok(());
         }
@@ -160,7 +173,7 @@ pub(super) fn import(text: &str, read: &mut Read, preset: Preset, limits: Limits
         let Some(b) = blocks.get(index) else {
             break;
         };
-        if matches!(b.keyword.as_str(), "AMPLITUDE" | "PSD-DEFINITION") {
+        if matches!(b.keyword.as_str(), "AMPLITUDE" | "PSD-DEFINITION" | "SPECTRUM") {
             consumed.insert(b.line);
             index += 1;
             continue;
@@ -182,7 +195,15 @@ pub(super) fn import(text: &str, read: &mut Read, preset: Preset, limits: Limits
             .find(|j| blocks.get(*j).is_some_and(|b| b.keyword == "ENDSTEP"))
             .ok_or_else(|| error(b.line, "STEP has no END STEP"))?;
         let body = blocks.get(index + 1..end).ok_or_else(|| error(b.line, "invalid step range"))?;
-        let prepared = prepare(b, body, &state, &read.model, &HistoryData { curves: &curves, spectra: &spectra }, &units, limits);
+        let prepared = prepare(
+            b,
+            body,
+            &state,
+            &read.model,
+            &HistoryData { curves: &curves, spectra: &spectra, response_tables: &response_tables },
+            &units,
+            limits,
+        );
         let (procedure, duration, mut next) = match prepared {
             Ok(v) => v,
             Err(e @ Error::Unsupported { .. }) => {
@@ -191,7 +212,9 @@ pub(super) fn import(text: &str, read: &mut Read, preset: Preset, limits: Limits
             }
             Err(e) => return Err(e),
         };
-        let perturbation = b.params.contains_key("PERTURBATION")
+        let perturbation = matches!(&procedure, Procedure::Transient(t) if matches!(t.method, fieldcraft_model::dynamics::Method::Modal { .. }))
+            || matches!(procedure, Procedure::ResponseSpectrum(_))
+            || b.params.contains_key("PERTURBATION")
             || matches!(
                 procedure,
                 Procedure::Frequency { .. }
@@ -266,6 +289,7 @@ fn is_output(k: &str) -> bool {
 }
 
 struct HistoryData<'a> {
+    response_tables: &'a BTreeMap<String, projected::Table>,
     curves: &'a BTreeMap<String, Curve>,
     spectra: &'a BTreeMap<String, Vec<fieldcraft_model::random::SpectrumPoint>>,
 }
@@ -279,8 +303,8 @@ fn prepare(
     units: &DisplaySystem,
     limits: Limits,
 ) -> Result<(Procedure, f64, State)> {
-    if model.steps().iter().any(|s| matches!(s.procedure, Procedure::Transient(_))) {
-        return Err(unsupported(b.line, "continuation after *DYNAMIC is not mapped"));
+    if model.steps().iter().any(|s| matches!(s.procedure, Procedure::Transient(_) | Procedure::ResponseSpectrum(_))) {
+        return Err(unsupported(b.line, "continuation after a transient/response-spectrum step is not mapped"));
     }
     let curves = data.curves;
     let spectra = data.spectra;
@@ -309,8 +333,17 @@ fn prepare(
         return Err(unsupported(b.line, "step description rows are not mapped"));
     }
     let random = body.iter().any(|b| b.keyword == "RANDOMRESPONSE");
+    let projected = body.iter().any(|b| matches!(b.keyword.as_str(), "MODALDYNAMIC" | "RESPONSESPECTRUM"));
+    if random && projected {
+        return Err(unsupported(b.line, "multiple procedures: RANDOM RESPONSE with MODAL DYNAMIC/RESPONSE SPECTRUM"));
+    }
     let mut procedure = if random { Some(super::random::procedure(body, model, spectra, units)?) } else { None };
     let mut duration = 1.0;
+    if projected {
+        let (p, time) = projected::procedure(body, model, data.response_tables, units)?;
+        procedure = Some(p);
+        duration = time;
+    }
     let mut global_damping = None;
     let mut next = state.clone();
     let mut ops = BTreeMap::new();
@@ -346,6 +379,7 @@ fn prepare(
                 }
                 procedure = Some(if nonlinear { super::nonlinear::procedure(b, part, model)? } else { Procedure::Static {} });
             }
+            "MODALDYNAMIC" | "RESPONSESPECTRUM" | "MODALDAMPING" if projected => {}
             "DYNAMIC" => {
                 if procedure.is_some() {
                     return Err(error(part.line, "multiple analysis procedures"));
@@ -447,6 +481,9 @@ fn prepare(
     }
     if matches!(procedure, Procedure::Transient(_)) {
         transient::validate_history(b, &next, curves)?;
+    }
+    if matches!(procedure, Procedure::ResponseSpectrum(_)) {
+        projected::validate_state(&next)?;
     }
     super::super::limited::enhanced(model, Some(&procedure))?;
     Ok((procedure, duration, next))

@@ -652,8 +652,8 @@ explicit point masses are unchanged by this choice. This does **not** establish
 continuous-element mass equivalence. Structural elements, continuation/base state,
 nonzero or amplitude-driven boundaries, automatic increments, DIRECT=NO STOP,
 other HHT parameters, multiple amplitude names and distributed loads are refused.
-MODAL DYNAMIC and RESPONSE SPECTRUM remain source-preserved, non-runnable imports;
-the existence of native solvers/exporters does not establish their import mapping.
+Modal time history and response-spectrum imports have the separate restricted
+contract below; other combinations remain source-preserved and non-runnable.
 No step is silently converted into static equilibrium or another procedure.
 
 Verification uses an original 2 kg / 200 N/m oscillator driven by a triangular
@@ -664,3 +664,58 @@ integration error is distinguished from import error. Byte-exact source replay
 checks text preservation separately. Commercial same-input comparison is pending.
 Public syntax: [DYNAMIC](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-dynamic.htm)
 and [AMPLITUDE](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-amplitude.htm).
+
+### Modal time history and response spectrum
+
+The importer accepts `MODAL DYNAMIC, CONTINUE=NO` (also the default) after one
+immediately preceding, unwindowed `FREQUENCY` step with no equilibrium base state.
+All extracted modes are used, with unchanged fixed boundary conditions. The mode
+count and those conditions compile into native modal re-extraction, **not cached
+frequency-result reuse**. The original frequency step and its name remain in the
+model/source. Editing that step later does not change the compiled dynamic mode
+count. This is currently restricted to explicit MASS/SPRING1 models, whose masses
+are identical under `mass=consistent|lumped`; distributed-element mass mappings
+are refused. Modal selection, changed boundaries, prestress, continuation and
+initial conditions are refused. No nonlinear or alternate procedure is inferred.
+
+`MODAL DAMPING` maps non-overlapping mode-number ranges of fractions of critical
+viscous damping; omitted modes have zero damping. Frequency-range, structural,
+composite and Rayleigh damping definitions are refused. Independent modal histories
+retain the complete common relative TABULAR/SMOOTH STEP amplitude, translational
+CLOAD magnitudes and directions, zero initial state and the entire fixed time
+interval. STEP TIME and TOTAL TIME coincide in this restricted first perturbation
+history. **Native integration is Newmark average acceleration, not Abaqus's modal
+integration algorithm.** Continuous-response error must be checked separately;
+matching the imported and native-command models does not prove equal time discretization.
+
+`RESPONSE SPECTRUM` accepts explicit `SUM=SRSS` and `COMP=SRSS|R40` (default COMP
+is SRSS). Omitted SUM defaults to ABS in the source format and is refused, not
+silently changed. One shared positive constant `SPECTRUM, TYPE=ACCELERATION`
+table supplies pseudo-acceleration in the declared length/time-squared units,
+frequency in cycles/time, and one critical damping ratio matching every selected
+mode. Constant ordinates avoid replacing logarithmic interpolation with native
+linear interpolation. The solver refuses frequencies outside the supplied band.
+One to three global orthonormal direction vectors and nonnegative scale factors
+map to independent directional excitation. Direction combination follows modal
+combination. Spatial loads are refused; output is a peak envelope, not a time
+history or simultaneous signed state, and acceleration is pseudo-acceleration.
+Nonconstant tables, TYPE=G/VELOCITY/DISPLACEMENT, damping tables, distinct spectra
+by direction, CQC/ABS/DSC and rigid-response additions are explicitly refused.
+
+Use `deck.write steps=["<dynamic step>"]` to write the independent analysis;
+the native writer supplies the equivalent modal extraction step. All transient
+increments are stored even when original output requests selected fewer frames;
+the exact original requests remain in source replay. MCRSLT07 kind 6 retains
+nodal U/V/A and spectrum peaks as f64. Reopening must preserve these fields exactly;
+this does not assert the precision of unrelated result kinds or commercial files.
+
+Validation uses an original two-direction MASS/SPRING1 model, unequal modal
+damping and signed loads for the transient, and oblique orthogonal directions
+with unequal scales for SRSS/R40 spectra. Checks compare imported/native-command
+models, independent damped step-response and peak-combination formulas, native
+save/reopen, source replay, and normalized write/read. Commercial comparison is
+pending and uses the supplied time-step/peak tolerances.
+Sources: [MODAL DYNAMIC](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-modaldynamic.htm),
+[MODAL DAMPING](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-modaldamping.htm),
+[SPECTRUM](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-spectrum.htm),
+[RESPONSE SPECTRUM](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-responsespectrum.htm).
