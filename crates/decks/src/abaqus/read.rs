@@ -16,6 +16,7 @@ mod assembly;
 pub use assembly::InstanceMap;
 pub mod bundle;
 mod composite;
+mod discrete;
 mod dynamic;
 mod history;
 mod lex;
@@ -336,6 +337,8 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
     let (mut nsets, mut elsets): (BTreeMap<String, RawSet>, BTreeMap<String, RawSet>) = (BTreeMap::new(), BTreeMap::new());
     let mut node_from_element_sets = Vec::new();
     let mut elements = Vec::new();
+    let mut discrete_elements = BTreeMap::new();
+    let mut discrete_properties = Vec::new();
     let mut element_labels = BTreeSet::new();
     let mut surfaces = Vec::new();
     let mut sections = Vec::new();
@@ -411,6 +414,35 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
             }
             "ELEMENT" => {
                 block.only(&["TYPE", "ELSET"])?;
+                if let Some(kind) = discrete::Kind::parse(block.required("TYPE")?) {
+                    let set =
+                        block.value("ELSET").map(|s| named(s, line)).transpose()?.map(|name| name_entry(&mut names, &name, line)).transpose()?;
+                    if block.rows.is_empty() {
+                        return Err(error(line, "*ELEMENT has no data"));
+                    }
+                    for (index, row) in block.rows.iter().enumerate() {
+                        check_work(index)?;
+                        let f = row_fields(row.text, row.line)?;
+                        let [id, node] = f.as_slice() else {
+                            return Err(error(row.line, "MASS/SPRING1 requires an element label and one node"));
+                        };
+                        let id = label(id, row.line)?;
+                        let node = label(node, row.line)?;
+                        if !element_labels.insert(id) {
+                            return Err(error(row.line, format!("duplicate element {id}")));
+                        }
+                        if element_labels.len() > limits.elements {
+                            return Err(error(row.line, format!("element limit of {} reached", limits.elements)));
+                        }
+                        discrete_elements.insert(id, discrete::Record { kind, node, line: row.line });
+                        if let Some(name) = &set {
+                            let raw = elsets.entry(name.clone()).or_default();
+                            raw.line = line;
+                            append_member(raw, Member::Label(id, row.line), &mut budget, member_limit, row.line)?;
+                        }
+                    }
+                    continue;
+                }
                 let typ = Type::parse(block.required("TYPE")?, line)?;
                 let set = block.value("ELSET").map(|s| named(s, line)).transpose()?.map(|name| name_entry(&mut names, &name, line)).transpose()?;
                 let mut pending: Option<ElementRecord> = None;
@@ -455,6 +487,7 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
                     return Err(error(line, "*ELEMENT has no data"));
                 }
             }
+            "MASS" | "SPRING" => discrete_properties.push(block),
             "NSET" | "ELSET" => {
                 block.only(if k == "NSET" { &["NSET", "GENERATE", "ELSET"] } else { &["ELSET", "GENERATE"] })?;
                 let name = named(block.required(k)?, line)?;
@@ -662,7 +695,7 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
         let labels = expand(name, &elsets, &mut expanded_elements, &mut active, 0, &mut work, member_limit, raw.line)?;
         for (index, l) in labels.iter().enumerate() {
             check_work(index)?;
-            if model.element(*l).is_none() {
+            if model.element(*l).is_none() && !discrete_elements.contains_key(l) {
                 return Err(error(raw.line, format!("element set `{name}` names missing element {l}")));
             }
         }
@@ -673,7 +706,9 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
         let raw = nsets.entry(name).or_default();
         raw.line = line;
         for l in elements {
-            if let Some(e) = model.element(*l) {
+            if let Some(e) = discrete_elements.get(l) {
+                append_member(raw, Member::Label(e.node, line), &mut budget, member_limit, line)?;
+            } else if let Some(e) = model.element(*l) {
                 for n in &e.nodes {
                     append_member(raw, Member::Label(*n, line), &mut budget, member_limit, line)?;
                 }
@@ -697,7 +732,10 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
     }
     for (name, labels) in &expanded_elements {
         progress::check()?;
-        sets.entry(name.clone()).or_default().elements = labels.clone();
+        let mesh: Vec<_> = labels.iter().copied().filter(|id| !discrete_elements.contains_key(id)).collect();
+        if !mesh.is_empty() || labels.is_empty() {
+            sets.entry(name.clone()).or_default().elements = mesh;
+        }
     }
     for surface in surfaces {
         progress::check()?;
@@ -759,6 +797,13 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
         progress::check()?;
         let spelling = names.get(&name).ok_or_else(|| error(1, "missing set spelling"))?;
         model.add_set(spelling, set).map_err(|e| error(1, e.to_string()))?;
+    }
+    if budget.saturating_add(discrete_elements.len()) > member_limit {
+        return Err(error(1, "discrete target membership limit reached"));
+    }
+    discrete::apply(&mut model, &discrete_elements, &discrete_properties, &expanded_elements, &units)?;
+    if !discrete_elements.is_empty() {
+        warnings.push(format!("{} MASS/SPRING1 labels mapped to native InpDiscreteElement<label> definitions and explicit node target sets; their original ELSET memberships remain in source, not mesh element sets.", discrete_elements.len()));
     }
     let mut has_planar = false;
     let mut assigned = BTreeMap::new();

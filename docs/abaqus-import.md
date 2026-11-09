@@ -54,6 +54,15 @@ the current document; save existing work before running it in a session you are 
 
 - `NODE`, with optional node set; labels and coordinates.
 - `ELEMENT`, with type, connectivity and optional element set. Long connectivity may continue.
+- Constant isotropic `MASS` and grounded `SPRING1` elements with `MASS`/`SPRING` properties.
+  These become native point masses and springs named `InpDiscreteElement<label>` with explicit,
+  collision-free node target sets. Translational and rotational spring stiffness use their own
+  unit quantities. Discrete ELSETs resolve properties and `NSET, ELSET=...`; discrete labels are
+  excluded from native mesh element sets, with a warning. Their original labels and memberships
+  remain in the retained source. Translated instances remap labels and property set references;
+  springs in rotated instances are explicitly refused. Anisotropic/damped masses, nonlinear or
+  frequency-dependent springs, SPRING2/A, dashpots and rotary inertia are not mapped yet.
+  Gravity history with imported point masses is refused until discrete load membership is mapped.
 - `NSET` and `ELSET`: label lists, other set names and bounded `GENERATE` ranges. A node set may
   also name an element set. Flat model labels are unchanged; instance labels are mapped to
   deterministic global labels and reported with their original identity.

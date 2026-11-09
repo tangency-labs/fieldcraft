@@ -351,6 +351,9 @@ pub(super) fn expand(text: &str, limits: Limits) -> Result<Option<Expanded>> {
                     return Err(error(b.line, "rotated orthotropic solid requires explicit part ORIENTATION; implicit axes are not inferred"));
                 }
             }
+            if i.transform.angle != 0.0 && b.keyword == "SPRING" {
+                return Err(error(b.line, "SPRING property in a rotated instance is not mapped; local spring axes must be explicit"));
+            }
             emit(&mut out, b, Some(i), &maps, (assembly, false), &mut members, limits.members)?;
         }
     }
@@ -358,6 +361,10 @@ pub(super) fn expand(text: &str, limits: Limits) -> Result<Option<Expanded>> {
         emit(&mut out, b, None, &maps, (assembly, outside), &mut members, limits.members)?;
     }
     Ok(Some(out))
+}
+
+fn element_nodes(b: &Block<'_>) -> Result<usize> {
+    if super::discrete::Kind::parse(b.required("TYPE")?).is_some() { Ok(1) } else { Ok(Type::parse(b.required("TYPE")?, b.line)?.kind.node_count()) }
 }
 
 fn labels(blocks: &[&Block<'_>]) -> Result<(BTreeSet<u32>, BTreeSet<u32>)> {
@@ -373,7 +380,7 @@ fn labels(blocks: &[&Block<'_>]) -> Result<(BTreeSet<u32>, BTreeSet<u32>)> {
                 }
             }
         } else if b.keyword == "ELEMENT" {
-            let count = Type::parse(b.required("TYPE")?, b.line)?.kind.node_count();
+            let count = element_nodes(b)?;
             let mut remaining = 0usize;
             for row in &b.rows {
                 let f = row_fields(row.text, row.line)?;
@@ -464,6 +471,8 @@ fn emit(
             | "SHELLSECTION"
             | "BEAMSECTION"
             | "ORIENTATION"
+            | "MASS"
+            | "SPRING"
             | "BOUNDARY"
             | "CLOAD"
             | "DLOAD"
@@ -533,7 +542,7 @@ fn emit(
                 f.extend(xyz.iter().map(ToString::to_string));
             }
             "ELEMENT" => {
-                let count = Type::parse(b.required("TYPE")?, b.line)?.kind.node_count();
+                let count = element_nodes(b)?;
                 for (j, value) in f.iter_mut().enumerate() {
                     if remaining == 0 && j == 0 {
                         *value = reference(value, scope, false, maps, assembly, row.line)?;

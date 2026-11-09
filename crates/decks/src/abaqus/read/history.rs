@@ -522,6 +522,9 @@ fn apply(
                 let kind = canonical(f.get(1).map(String::as_str).unwrap_or_default());
                 let elements = if target.is_empty() { model.elements().keys().copied().collect() } else { members(model, target, false, row.line)? };
                 if kind == "GRAV" {
+                    if !model.masses().is_empty() {
+                        return Err(unsupported(row.line, "GRAV with imported point masses needs discrete load membership mapping"));
+                    }
                     if f.len() != 6 {
                         return Err(error(row.line, "GRAV needs magnitude and three direction components"));
                     }

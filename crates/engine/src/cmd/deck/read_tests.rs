@@ -355,3 +355,34 @@ fn imported_solid_bar_solves_direct_harmonic_without_rebuilding_the_step() {
     assert_eq!(result["frequencies"].as_array().unwrap().len(), 2);
     assert!(s.result("Bend").is_some());
 }
+
+#[test]
+fn imported_discrete_oscillator_solves_after_save_reopen_and_normalized_write() {
+    // Original analytical oscillator, f = sqrt(200 / 2) / (2 pi).
+    let source = "*NODE\n7,0,0,0\n*ELEMENT,TYPE=MASS,ELSET=M\n10,7\n*ELEMENT,TYPE=SPRING1,ELSET=K\n11,7\n*MASS,ELSET=M\n2\n*SPRING,ELSET=K\n1\n200\n*BOUNDARY\n7,2,3\n*STEP,NAME=Modes\n*FREQUENCY\n1\n*END STEP\n";
+    let dir = folder();
+    let inp = dir.join("oscillator.inp");
+    std::fs::write(&inp, source).unwrap();
+    let mut s = Session::default();
+    let reply = s.execute("deck.read", &json!({"format":"abaqus","path":inp,"units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(reply["analysis_complete"], true, "{reply}");
+    let expected = 10.0 / (2.0 * std::f64::consts::PI);
+    let first = s.execute("solve.frequency", &json!({"step":"Modes"})).unwrap();
+    let frequency = first["modes"][0]["frequency"].as_f64().unwrap();
+    assert!((frequency - expected).abs() < expected * 1e-10, "{first}");
+    let saved = dir.join("oscillator.fieldcraft");
+    s.execute("file.save_as", &json!({"path":saved,"results":true})).unwrap();
+    std::fs::remove_file(inp).unwrap();
+    s.execute("file.new", &json!({})).unwrap();
+    s.execute("file.open", &json!({"path":saved})).unwrap();
+    let replay = dir.join("replay.inp");
+    s.execute("deck.source.write", &json!({"path":replay})).unwrap();
+    assert_eq!(std::fs::read_to_string(replay).unwrap(), source);
+    let reopened = s.execute("solve.frequency", &json!({"step":"Modes"})).unwrap();
+    assert_eq!(reopened["modes"], first["modes"]);
+    let normalized = dir.join("normalized.inp");
+    s.execute("deck.write", &json!({"format":"abaqus","path":normalized})).unwrap();
+    s.execute("deck.read", &json!({"format":"abaqus","path":normalized,"units":"m-kg-s-N-Pa"})).unwrap();
+    let again = s.execute("solve.frequency", &json!({"step":"Modes"})).unwrap();
+    assert_eq!(again["modes"], first["modes"]);
+}
