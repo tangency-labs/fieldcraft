@@ -60,8 +60,14 @@ impl StrainLife {
     /// numerical bracket is an error, not an endurance-limit assertion.
     /// None means zero strain amplitude only, not demonstrated infinite life.
     /// Total local strain and stress must describe the SAME physical cycle.
+    /// One coefficient may be zero for the exact Basquin or Coffin-Manson limit;
+    /// mean corrections require a positive fatigue strength coefficient.
+    /// These limits are equation checks, not estimates of missing material data.
     pub fn cycles(self, amplitude: f64, correction: StrainMean) -> Result<Option<f64>> {
-        if [self.young, self.strength, self.ductility].iter().any(|x| !x.is_finite() || *x <= 0.0)
+        if !self.young.is_finite()
+            || self.young <= 0.0
+            || [self.strength, self.ductility].iter().any(|x| !x.is_finite() || *x < 0.0)
+            || (self.strength == 0.0 && self.ductility == 0.0)
             || [self.b, self.c].iter().any(|x| !x.is_finite() || *x >= 0.0)
             || !amplitude.is_finite()
             || amplitude < 0.0
@@ -71,14 +77,16 @@ impl StrainLife {
         let (a, b, c, d, target) = match correction {
             StrainMean::None => (self.strength / self.young, self.b, self.ductility, self.c, amplitude),
             StrainMean::Morrow { mean_stress } => {
-                if !mean_stress.is_finite() || mean_stress >= self.strength {
+                if self.strength == 0.0 || !mean_stress.is_finite() || mean_stress >= self.strength {
                     return Err(Error::Invalid("Morrow mean stress must be finite and below fatigue strength coefficient".into()));
                 }
                 ((self.strength - mean_stress.max(0.0)) / self.young, self.b, self.ductility, self.c, amplitude)
             }
             StrainMean::Swt { maximum_stress } => {
-                if !maximum_stress.is_finite() || maximum_stress <= 0.0 {
-                    return Err(Error::Invalid("SWT requires a positive tensile maximum stress; compression-only cycles unsupported".into()));
+                if self.strength == 0.0 || !maximum_stress.is_finite() || maximum_stress <= 0.0 {
+                    return Err(Error::Invalid(
+                        "SWT requires positive fatigue strength and tensile maximum stress; compression-only cycles unsupported".into(),
+                    ));
                 }
                 (
                     self.strength / self.young * self.strength,
@@ -89,7 +97,7 @@ impl StrainLife {
                 )
             }
         };
-        if [a, b, c, d, target].iter().any(|x| !x.is_finite()) || a <= 0.0 || c <= 0.0 {
+        if [a, b, c, d, target].iter().any(|x| !x.is_finite()) || a < 0.0 || c < 0.0 || (a == 0.0 && c == 0.0) {
             return Err(Error::Invalid("strain-life equation overflow or underflow".into()));
         }
         if amplitude == 0.0 {

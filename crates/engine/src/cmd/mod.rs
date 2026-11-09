@@ -12,6 +12,7 @@ pub mod diagnostics;
 mod edit;
 mod extrude;
 mod fatigue;
+mod fatigue_axial;
 mod fatigue_strain;
 mod fatigue_transient;
 pub(crate) mod file;

@@ -256,5 +256,12 @@ extrapolation are named unsupported combinations; no PSD time history is synthes
   mass harmonic, full energy-and-mass dynamics, static fatigue and harmonic fatigue.
   Old05/06 kinds 0–5 use frozen schemas; higher development kinds are refused with
   the regeneration message. See docs/results-kind-layout.md.
-
-Nonlinear rod diagnostics now have an explicit SI Abaqus UEL/DYNAMIC writer and saved-state internal-force recovery. Standard T3D2 StVK mapping is refused; native nonlinear result persistence requires a versioned model/result contract.
+- External rod fatigue: an explicit nominal axial reference-area channel accepts
+  producer-recovered material-following scalar histories with matching declared
+  S–N/mean-strength calibration. PK2/Cauchy substitution and tensor criteria are
+  refused. Fatigue results remain independent diagnostic JSON; no fatigue fields
+  are added to nonlinear native histories.
+- Nonlinear rod histories use native MCRSLT07 kind 11 and fieldcraft/3 archives;
+  kinds 0–8 retain their layouts and 9/10 remain unused. Complete accepted states,
+  rod recovery and SI probe output survive save/open. The explicit SI Abaqus
+  UEL/DYNAMIC writer remains separate; standard T3D2 StVK mapping is refused.

@@ -90,3 +90,26 @@ fn selected_coverage_does_not_fabricate_zero_damage_elsewhere() {
     assert!(values[0].is_nan());
     assert!((values[1] - 0.01).abs() < 1e-12);
 }
+
+#[test]
+fn phase_aligned_channels_are_added_as_signed_tensors_not_equivalent_amplitudes() {
+    let mut s = setup();
+    let mut p = params();
+    p["times_seconds"] = json!([0., 0.25, 0.5, 0.75, 1.]);
+    p["channels"][0]["coefficients"] = json!([0., 1., 0., -1., 0.]);
+    p["channels"][1]["coefficients"] = json!([0.5, 0., -0.5, 0., 0.5]);
+    // F/A references are 1 and 2 Pa. Quadrature samples sum to [1,1,-1,-1,1].
+    // Plateaus reduce to [1,-1,1]: two half cycles, amplitude 1, mean 0,
+    // D=(1/2)^3/100=1/800, repeated-block life=800 seconds.
+    for criterion in [json!({"type":"projection","weights":[1,0,0,0,0,0]}), json!({"type":"signed_von_mises"})] {
+        p.as_object_mut().unwrap().remove("weights");
+        p["criterion"] = criterion;
+        let r = s.execute("solve.fatigue.history", &p).unwrap();
+        assert!((r["nodes"][0]["damage"].as_f64().unwrap() - 0.00125).abs() < 1e-13);
+        assert_eq!(r["nodes"][0]["cycle_count"], 1.);
+        assert!((r["nodes"][0]["repeated_record_life_seconds"].as_f64().unwrap() - 800.).abs() < 1e-9);
+    }
+    // Per-channel clocks/phase shifts are not guessed or silently interpolated.
+    p["channels"][1]["times_seconds"] = json!([0.1, 0.35, 0.6, 0.85, 1.1]);
+    assert!(s.execute("solve.fatigue.history", &p).is_err());
+}
