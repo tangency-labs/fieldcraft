@@ -53,7 +53,11 @@ fn model() -> Model {
 
 #[test]
 fn abaqus_writes_interactions_pairs_and_general_contact() {
-    let deck = abaqus::write(&model()).unwrap();
+    let mut model = model();
+    let mut section = model.section("all").unwrap().clone();
+    section.formulation.b_bar = true;
+    model.replace_section("all", section).unwrap();
+    let deck = abaqus::write(&model).unwrap();
     for expected in [
         "*SURFACE, TYPE=ELEMENT, NAME=lower\n1, S2\n",
         "*SURFACE INTERACTION, NAME=stack-interaction\n*FRICTION, EXPONENTIAL DECAY\n0.3, 0.2, 5.0\n",

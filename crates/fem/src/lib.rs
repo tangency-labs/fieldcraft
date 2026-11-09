@@ -59,6 +59,7 @@
 #![allow(clippy::needless_range_loop)]
 
 pub mod basis;
+mod bbar;
 pub mod beam;
 pub mod constitutive;
 pub mod contact;

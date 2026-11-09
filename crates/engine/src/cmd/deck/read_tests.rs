@@ -18,7 +18,7 @@ fn bar() -> Session {
         {"command":"model.set.create","params":{"name":"root","geometry":[{"body":"Bar","face":"left"}]}},
         {"command":"model.set.create","params":{"name":"end","geometry":[{"body":"Bar","face":"right"}]}},
         {"command":"model.material.create","params":{"name":"Steel","elastic":{"type":"isotropic","young":"210 GPa","poisson":0.3},"density":"7850 kg/m^3"}},
-        {"command":"model.section.create","params":{"name":"BarSection","set":"all","material":"Steel","kind":{"type":"solid"},"formulation":{"incompatible_modes":true}}}
+        {"command":"model.section.create","params":{"name":"BarSection","set":"all","material":"Steel","kind":{"type":"solid"},"formulation":{"b_bar":true}}}
     ])).unwrap();
     constrain(&mut s);
     s
@@ -343,6 +343,11 @@ fn imported_solid_bar_solves_direct_harmonic_without_rebuilding_the_step() {
     let dir = folder();
     let inp = dir.join("harmonic-solid.inp");
     let mut s = bar();
+    // This test exercises harmonic history with the existing hybrid mapping;
+    // B-bar harmonic support is a separate integration task.
+    let mut sec = s.model.section("BarSection").unwrap().clone();
+    sec.formulation = fieldcraft_model::Formulation { hybrid: true, ..Default::default() };
+    s.model.replace_section("BarSection", sec).unwrap();
     s.execute("deck.write", &json!({"format":"abaqus","path":inp})).unwrap();
     let source = std::fs::read_to_string(&inp).unwrap();
     assert!(source.contains("*STATIC\n1.0, 1.0"), "{source}");
@@ -604,7 +609,7 @@ fn native_constraint_patch() -> Session {
         {"command":"model.set.create","params":{"name":"Main","faces":[{"element":1,"face":2}]}},
         {"command":"model.set.create","params":{"name":"Secondary","faces":[{"element":2,"face":1}]}},
         {"command":"model.material.create","params":{"name":"M","elastic":{"type":"isotropic","young":1000,"poisson":0},"density":1}},
-        {"command":"model.section.create","params":{"name":"S","set":"All","material":"M","kind":{"type":"solid"}}},
+        {"command":"model.section.create","params":{"name":"S","set":"All","material":"M","kind":{"type":"solid"},"formulation":{"b_bar":true}}},
         {"command":"interaction.tie","params":{"name":"Glue","main":"Main","secondary":"Secondary","position_tolerance":0.01}},
         {"command":"model.reference_point.create","params":{"name":"RP","xyz":[0.5,0.5,2],"label":99}},
         {"command":"model.coupling.create","params":{"name":"Rigid","reference_point":"RP","set":"Top","kind":"kinematic"}},
@@ -910,5 +915,139 @@ fn section_mass_policy_is_effective_after_native_reopen_and_deck_round_trip() {
         assert_unchanged(&s, &before);
     }
 
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn bbar_two_bricks_reopen_and_round_trip_preserve_response_and_identity() {
+    let dir = folder();
+    let input = dir.join("bbar.inp");
+    let text = r#"*NODE
+1,0,0,0
+2,1,0,0
+3,1,1,0
+4,0,1,0
+5,0,0,1
+6,1,0,1
+7,1,1,1
+8,0,1,1
+9,0,0,1
+10,1,0,1
+11,1,1,1
+12,0,1,1
+13,0,0,2
+14,1,0,2
+15,1,1,2
+16,0,1,2
+*ELEMENT,TYPE=C3D8,ELSET=All
+1,1,2,3,4,5,6,7,8
+2,9,10,11,12,13,14,15,16
+*NSET,NSET=Base
+1,2,3,4
+*NSET,NSET=Top
+13,14,15,16
+*SURFACE,TYPE=ELEMENT,NAME=Main
+1,S2
+*SURFACE,TYPE=ELEMENT,NAME=Secondary
+2,S1
+*MATERIAL,NAME=M
+*ELASTIC
+1000,0
+*DENSITY
+1
+*SOLID SECTION,ELSET=All,MATERIAL=M
+*TIE,NAME=Glue,ADJUST=NO,POSITION TOLERANCE=.01
+Secondary,Main
+*STEP,NAME=Pull
+*STATIC
+*BOUNDARY
+Base,1,3
+*CLOAD
+13,3,.35
+14,3,.15
+15,3,.15
+16,3,.35
+*END STEP
+"#;
+    std::fs::write(&input, text).unwrap();
+    let mut s = Session::default();
+    s.execute("deck.read", &json!({"path":input,"format":"abaqus","units":"m-kg-s-N-Pa"})).unwrap();
+    let mut reference = None;
+    for phase in 0..3 {
+        assert!(s.model.sections().values().all(|sec| sec.formulation.b_bar));
+        s.execute("solve.static", &json!({"step":"Pull"})).unwrap();
+        if let Some(ref baseline) = reference {
+            assert_constraint_results(baseline, &s);
+        } else {
+            reference = Some(s.clone());
+        }
+        let crate::StepResult::Implicit(fieldcraft_solver::StepResult::Static(r)) = s.result("Pull").unwrap().as_ref() else { panic!("static") };
+        let mut mean = [0.; 3];
+        let mut theta = 0.;
+        for id in 13..=16 {
+            let i = r.nodes.binary_search(&id).unwrap();
+            let u = r.displacement[i];
+            for j in 0..3 {
+                mean[j] += u[j] / 4.;
+            }
+            let x = if id == 13 || id == 16 { -0.5 } else { 0.5 };
+            theta -= x * u[2];
+        }
+        println!("B-bar two bricks phase={phase}: mean={mean:?}, theta_y={theta:.16e}");
+        if phase == 0 {
+            let path = dir.join("bbar.fieldcraft");
+            s.execute("file.save_as", &json!({"path":path,"results":true})).unwrap();
+            s.execute("file.new", &json!({})).unwrap();
+            s.execute("file.open", &json!({"path":path})).unwrap();
+            let replay = dir.join("source.inp");
+            s.execute("deck.source.write", &json!({"path":replay})).unwrap();
+            assert_eq!(std::fs::read_to_string(replay).unwrap(), text);
+        }
+        if phase == 1 {
+            let path = dir.join("normal.inp");
+            s.execute("deck.write", &json!({"path":path,"format":"abaqus"})).unwrap();
+            s.execute("deck.read", &json!({"path":path,"format":"abaqus","units":"m-kg-s-N-Pa"})).unwrap();
+        }
+    }
+    // Native standard stays standard and is refused by the Abaqus writer, rather than relabelled.
+    let (name, sec) = s.model.sections().iter().next().unwrap();
+    let mut edit = serde_json::to_value(sec).unwrap();
+    edit["name"] = json!(name);
+    edit["formulation"]["b_bar"] = json!(false);
+    s.execute("model.section.edit", &edit).unwrap();
+    s.execute("solve.static", &json!({"step":"Pull"})).unwrap();
+    let error = s.execute("deck.write", &json!({"path":dir.join("standard.inp"),"format":"abaqus"})).unwrap_err().to_string();
+    assert!(error.contains("standard full Hex8"), "{error}");
+    for incompatible in [false, true] {
+        let (name, sec) = s.model.sections().iter().next().unwrap();
+        let mut section = sec.clone();
+        let name = name.clone();
+        section.formulation.incompatible_modes = incompatible;
+        s.model.replace_section(&name, section).unwrap();
+        s.execute("solve.static", &json!({"step":"Pull"})).unwrap();
+        let crate::StepResult::Implicit(fieldcraft_solver::StepResult::Static(r)) = s.result("Pull").unwrap().as_ref() else { panic!("static") };
+        let mut mean = [0.; 3];
+        let mut theta = 0.;
+        for id in 13..=16 {
+            let u = r.displacement[r.nodes.binary_search(&id).unwrap()];
+            for j in 0..3 {
+                mean[j] += u[j] / 4.;
+            }
+            let x = if id == 13 || id == 16 { -0.5 } else { 0.5 };
+            theta -= x * u[2];
+        }
+        println!(
+            "Native two bricks incompatible={incompatible}: mean={mean:?}, theta_y={theta:.16e}; beam theory ux=0.0048, uz=0.002, theta_y=0.0048 (limited rectangular nu=0 case)"
+        );
+    }
+
+    let before = s.clone();
+    std::fs::write(&input, text.replace("TYPE=C3D8,", "TYPE=C3D8I,")).unwrap();
+    let error = s.execute("deck.read", &json!({"path":input,"format":"abaqus","units":"m-kg-s-N-Pa"})).unwrap_err().to_string();
+    assert!(error.contains("thirteen internal modes"), "{error}");
+    assert_unchanged(&s, &before);
+    let replay = dir.join("retained-after-refusal.inp");
+    s.execute("deck.source.write", &json!({"path":replay})).unwrap();
+    assert!(std::fs::read_to_string(replay).unwrap().contains("TYPE=C3D8"));
     std::fs::remove_dir_all(dir).unwrap();
 }

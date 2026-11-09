@@ -220,3 +220,8 @@ Section mass policies: continuum sections now persist explicit `hrz`, `row_sum`,
 row sums and mixed consistent sections are checked against independent matrices;
 native Abaqus comments preserve the policy on write/read. Harmonic/random mass
 integration and result identity remain a separate interface integration task.
+
+Hex8 mean dilatation: explicit persisted B-bar formulation and C3D8 mapping,
+with standard native Hex8 unchanged. Standard Hex8 and unverified nine-mode
+C3D8I export are refused. Linear isotropic static/modal/matrix scope; nonlinear,
+thermal/initial stress and harmonic/random B-bar integration remain unsupported.

@@ -156,6 +156,8 @@ pub fn element_type(kind: ElementKind) -> Result<&'static ElementType> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Formulation {
     Full,
+    /// Hughes (1980), volume-averaged dilatation, linear Hex8 only.
+    BBar,
     Reduced,
     IncompatibleModes,
     /// Mixed displacement–pressure with `pressures` discontinuous pressure unknowns condensed
@@ -177,6 +179,12 @@ impl Formulation {
     /// The formulation a model section asks for, if this element type has it.
     pub fn from_section(kind: ElementKind, f: &fieldcraft_model::Formulation) -> Result<Formulation> {
         let ty = element_type(kind)?;
+        if f.b_bar {
+            if kind != ElementKind::Hex8 || f.hybrid || f.incompatible_modes || f.integration != fieldcraft_model::Integration::Full {
+                return Err(Error::NotSupported("B-bar requires full Hex8 without hybrid or incompatible modes".into()));
+            }
+            return Ok(Formulation::BBar);
+        }
         if f.hybrid {
             if f.incompatible_modes || f.integration == fieldcraft_model::Integration::Reduced {
                 return Err(Error::NotSupported("hybrid elements with incompatible modes or reduced integration".into()));
@@ -269,6 +277,7 @@ impl<'a> Solid<'a> {
         fieldcraft_model::check_coordinates(xyz.as_flattened()).map_err(|e| Error::Invalid(e.to_string()))?;
         let ok = match formulation {
             Formulation::Full => true,
+            Formulation::BBar => kind == ElementKind::Hex8,
             Formulation::Reduced => ty.reduced.is_some(),
             Formulation::IncompatibleModes => ty.incompatible_modes,
             Formulation::Hybrid { pressures } => crate::hybrid::pressures(kind) == Some(pressures),
@@ -398,6 +407,9 @@ impl<'a> Solid<'a> {
         if let Formulation::Hybrid { .. } = self.formulation {
             return self.hybrid_stiffness(d);
         }
+        if self.formulation == Formulation::BBar {
+            return self.bbar_stiffness(d);
+        }
         let n = 3 * self.ty.nodes;
         if self.formulation == Formulation::IncompatibleModes {
             let IncompatibleParts { kuu: mut k, kua, kaa, .. } = self.incompatible_parts(d, true)?;
@@ -487,6 +499,9 @@ impl<'a> Solid<'a> {
     /// (the initial-strain load of Zienkiewicz, Taylor & Zhu 2013, §6.2.3); incompatible modes
     /// are condensed out as in the stiffness, f = f_u − K_ua K_aa⁻¹ f_a.
     pub fn thermal_load(&self, d: &Elasticity, thermal: &ThermalStrain) -> Result<Vec<[f64; 3]>> {
+        if self.formulation == Formulation::BBar {
+            return Err(Error::NotSupported("B-bar thermal strain loads".into()));
+        }
         thermal.check(self.ty.nodes)?;
         if let Formulation::Hybrid { .. } = self.formulation {
             return self.hybrid_thermal_load(d, thermal);
@@ -567,6 +582,9 @@ impl<'a> Solid<'a> {
     /// σ = D (ε − ε_th) + σ₀. A self-equilibrated σ₀ (∇·σ₀ = 0, no traction on a free surface)
     /// gives no load. Incompatible modes are condensed out as in [`Self::thermal_load`].
     pub fn initial_stress_load(&self, d: &Elasticity, initial: &[[f64; 6]]) -> Result<Vec<[f64; 3]>> {
+        if self.formulation == Formulation::BBar {
+            return Err(Error::NotSupported("B-bar initial stress loads".into()));
+        }
         self.check_initial(initial)?;
         self.eigen_load(d, |n| Self::initial_stress_at(initial, n).map(|v| -v))
     }
@@ -591,6 +609,9 @@ impl<'a> Solid<'a> {
         thermal: Option<&ThermalStrain>,
         initial: Option<&[[f64; 6]]>,
     ) -> Result<Vec<PointStress>> {
+        if self.formulation == Formulation::BBar && (thermal.is_some() || initial.is_some()) {
+            return Err(Error::NotSupported("B-bar thermal or initial stress recovery".into()));
+        }
         if let Some(i) = initial {
             self.check_initial(i)?;
         }
@@ -628,6 +649,7 @@ impl<'a> Solid<'a> {
         } else {
             None
         };
+        let average = if self.formulation == Formulation::BBar { Some(self.bbar_average()?) } else { None };
         let mut out = Vec::new();
         for p in self.rule().points() {
             let g = self.gradients(p.xi)?;
@@ -649,7 +671,14 @@ impl<'a> Solid<'a> {
                     }
                 }
             }
-            let strain = [grad[0][0], grad[1][1], grad[2][2], grad[0][1] + grad[1][0], grad[0][2] + grad[2][0], grad[1][2] + grad[2][1]];
+            let mut strain = [grad[0][0], grad[1][1], grad[2][2], grad[0][1] + grad[1][0], grad[0][2] + grad[2][0], grad[1][2] + grad[2][1]];
+            if let Some(avg) = &average {
+                let trace: f64 = avg.iter().zip(u).map(|(a, v)| a.iter().zip(v).map(|(x, y)| x * y).sum::<f64>()).sum();
+                let correction = (trace - strain[0] - strain[1] - strain[2]) / 3.0;
+                for value in &mut strain[..3] {
+                    *value += correction;
+                }
+            }
             let xyz = self.position_of(g.shape.values());
             // The mechanical strain, less the thermal strain when there is one.
             let mechanical = match thermal {

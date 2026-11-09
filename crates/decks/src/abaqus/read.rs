@@ -123,6 +123,9 @@ fn read_mode(text: &str, preset: Preset, limits: Limits, analysis: bool) -> Resu
             history::import(flat, &mut read, preset, limits)?;
         }
         constraints::finish(&mut read.model)?;
+        if read.model.sections().values().any(|s| s.formulation.b_bar) {
+            read.warnings.push("C3D8 maps to volume-averaged B-bar Hex8, not native standard Hex8; supported only for linear isotropic static/frequency/matrix analysis without orientation, thermal strain or initial stress. Other combinations are refused at model validation or solve.".into());
+        }
         read.unknown.truncate(MAX_UNKNOWN_SHOWN);
         Ok(read)
     };

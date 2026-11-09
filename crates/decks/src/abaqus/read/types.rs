@@ -24,6 +24,9 @@ pub(super) struct Type {
 impl Type {
     pub fn parse(name: &str, line: usize) -> Result<Self> {
         let normalized = canonical(name);
+        if matches!(normalized.as_str(), "C3D8I" | "C3D8IH") {
+            return Err(error(line, format!("{name}: native nine modes do not establish equivalence to thirteen internal modes")));
+        }
         let (family, tail) = if let Some(t) = normalized.strip_prefix("C3D") {
             (Family::Solid, t)
         } else if let Some(t) = normalized.strip_prefix("CPS") {
@@ -75,6 +78,7 @@ impl Type {
                 integration: if reduced { Integration::Reduced } else { Integration::Full },
                 incompatible_modes: incompatible,
                 hybrid,
+                b_bar: normalized == "C3D8",
                 ..Formulation::default()
             },
         };

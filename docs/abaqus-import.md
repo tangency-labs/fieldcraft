@@ -31,7 +31,7 @@ unread keywords and their lines. A programmatic command never opens a dialog.
 ## Reproduce an original import and solve
 
 The reusable [beam recipe](../tools/abaqus-import/beam.json) starts a new document, constructs
-an original 80 x 10 x 10 mm steel beam (81 nodes, 32 hex8 elements with incompatible modes),
+an original 80 x 10 x 10 mm steel beam (81 nodes, 32 Hex8 elements with explicit B-bar),
 clamps its root and applies a total 100 N downward tip force. It solves that source model,
 writes its own Abaqus deck, imports the model data with explicit mm-t-s-N-MPa units, then
 solves the imported static step directly, without recreating constraints or loads. Its final project includes
@@ -78,7 +78,7 @@ the current document; save existing work before running it in a session you are 
 The reader inverts the writer's supported solid, shell, planar, beam and truss element types:
 tet4/tet10/wedge6/pyramid5/hex8/hex20; tri3/quad4/quad8 shells; plane stress, plane strain and
 axisymmetric triangles/quadrilaterals; B31 and two-/three-node trusses. Encoded reduced,
-incompatible-mode and hybrid formulations are assigned to sections. A section mixing full and
+planar incompatible-mode and hybrid formulations are assigned to sections; C3D8 selects B-bar, while C3D8I/IH are refused until their internal-mode equivalence is established. A section mixing full and
 reduced hex elements is refused by name instead of being guessed or split.
 
 Names are matched case-insensitively and retain their original spelling. Definitions differing
@@ -459,11 +459,29 @@ and unapplied: it does not silently select this native policy for arbitrary inpu
 S8R rotational inertia, CAX6's particular six-point rule and the named unknown
 pyramid/shell distributions remain separate gaps.
 
-**Stiffness boundary:** the current `C3D8` mapping uses FieldCraft's standard
-full-integration Hex8. It is not established equivalent to a volume-averaged
-B-bar formulation. Consequently writing this native element as `C3D8` does not
-certify identical stiffness semantics in another program. The distributing
-coupling's kinematic/virtual-work identity and the element stiffness discretization
-must be checked separately. Selecting a mass policy does not change or resolve
-this stiffness boundary. A B-bar implementation requires its own public-formula
-validation and mapping work; changing a label alone is insufficient.
+**C3D8 stiffness mapping:** `C3D8` now selects `formulation.b_bar=true`:
+2x2x2 volume-weighted mean dilatation, with the deviatoric/shear strains retained.
+Native Hex8 defaults to the original standard full-integration formulation;
+its Abaqus export is refused by name rather than silently relabelled `C3D8`.
+The flag is saved in the model and recovered on normalized deck read. This is a
+physical formulation choice, independent of `lumped_mass`.
+
+The current B-bar scope is Hex8, linear isotropic elasticity, no material
+orientation, small-strain static, frequency or matrix generation. Reduced,
+hybrid, incompatible, non-Hex8, nonlinear/material-plastic and other analysis
+combinations are refused. Thermal strain and initial-stress recovery are not
+implemented. Positive Jacobians are required at every integration point;
+tests cover rectangular and moderately warped elements, not arbitrary mesh
+quality or a version-wide commercial equivalence claim.
+
+`C3D8I` and `C3D8IH` import/export are explicitly refused: FieldCraft's native
+nine-mode enhanced element remains available, but equivalence to thirteen
+internal variables is not established. Source text remains the authority for
+exact replay; refusal is not a silent substitute formula.
+
+Formula: Hughes (1980), DOI 10.1002/nme.1620150914, mean-dilatation specialization;
+Nagtegaal, Parks and Rice (1974), CMAME 4, 153–178. The public 2025 solid theory
+(https://docs.software.vt.edu/abaqusv2025/English/SIMACAETHERefMap/simathe-c-solidisoquadhex.htm)
+provides the C3D8 mapping rationale. This does not certify the unavailable 2024
+manual version or finite-strain extensions. No commercial response values are
+used to fit the implementation.

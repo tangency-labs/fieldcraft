@@ -92,7 +92,7 @@
 //! | tet10 | C3D10 (H) | | | |
 //! | wedge6 | C3D6 (H) | | | |
 //! | pyramid5 | C3D5 (H) | | | |
-//! | hex8 | C3D8, C3D8R, C3D8I (H) | | | |
+//! | hex8 | C3D8 (B-bar), C3D8R/H; standard and nine-mode C3D8I refused | | | |
 //! | hex20 | C3D20, C3D20R (H) | | | |
 //! | tri3, quad4 | | S3 / S3R, S4 / S4R | | |
 //! | quad8 | | S8R (reduced only) | | |
@@ -223,6 +223,20 @@ pub fn element_type(kind: ElementKind, section: &Section) -> std::result::Result
     use SectionKind as S;
     let f = section.formulation;
     let reduced = f.integration == Integration::Reduced;
+    if f.b_bar && (kind != K::Hex8 || !matches!(section.kind, S::Solid {}) || f.hybrid || f.incompatible_modes || reduced) {
+        return Err("B-bar requires full, non-hybrid, non-incompatible solid Hex8".into());
+    }
+    if kind == K::Hex8 && matches!(section.kind, S::Solid {}) && !reduced {
+        if f.incompatible_modes {
+            return Err("C3D8I: native nine internal modes are not established equivalent to thirteen vendor modes".into());
+        }
+        if !f.b_bar && !f.hybrid {
+            return Err(
+                "standard full Hex8 is not equivalent to C3D8 volume-averaged B-bar; choose b_bar explicitly or preserve the native project".into()
+            );
+        }
+    }
+
     if (f.hybrid && section.kind.dimension() != 3) || (f.incompatible_modes && !section.kind.is_continuum()) {
         return Err(format!("hybrid or incompatible-mode {} sections", section.kind.name()));
     }

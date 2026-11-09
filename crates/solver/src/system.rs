@@ -623,6 +623,23 @@ impl Mesh {
                 .ok_or_else(|| Error::Invalid(format!("section `{name}`: material `{}` is missing", section.material)))?;
             let elastic =
                 material.elastic.as_ref().ok_or_else(|| Error::Invalid(format!("material `{}` has no elastic constants", section.material)))?;
+            if section.formulation.b_bar {
+                if !matches!(elastic, Elastic::Isotropic { .. }) || section.orientation.is_some() {
+                    return Err(Error::NotSupported(format!("section `{name}`: B-bar requires isotropic elasticity without material orientation")));
+                }
+                if model.steps().iter().any(|s| {
+                    !matches!(
+                        s.procedure,
+                        fieldcraft_model::Procedure::Static {}
+                            | fieldcraft_model::Procedure::Frequency { .. }
+                            | fieldcraft_model::Procedure::MatrixGeneration { .. }
+                    )
+                }) {
+                    return Err(Error::NotSupported(format!(
+                        "section `{name}`: B-bar currently supports linear static, frequency and matrix generation only"
+                    )));
+                }
+            }
             if section.formulation.hybrid && !matches!(elastic, Elastic::Isotropic { .. }) {
                 return Err(Error::NotSupported(format!(
                     "hybrid elements of the orthotropic material `{}` (section `{name}`): the pressure split needs isotropic elasticity",

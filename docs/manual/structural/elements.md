@@ -64,6 +64,7 @@ mixed in one model (trusses may join either).
 | Field | Value | Default | Meaning |
 |---|---|---|---|
 | `integration` | `full`, `reduced` | `full` | `reduced` exists for hex20 (2 × 2 × 2) and quad8 (2 × 2), and for hex8 in explicit dynamics (one point with hourglass control); elsewhere it is refused |
+| `b_bar` | `true`, `false` | `false` | Hex8 mean dilatation; linear isotropic small-strain static, frequency and matrix generation only; excludes reduced, hybrid and incompatible options |
 | `incompatible_modes` | `true`, `false` | `false` | enhanced bending modes: hex8 (solid sections) and quad4 (2D sections) only; needs full integration |
 | `hybrid` | `true`, `false` | `false` | mixed displacement–pressure: solid, plane strain and axisymmetric sections only; isotropic materials only |
 
@@ -606,3 +607,14 @@ explicit, engine and io test suites hashed identically before and after.
 - W. D. Pilkey. *Analysis and Design of Elastic Beams.* Wiley, 2002.
 - R. H. MacNeal, R. L. Harder. *A proposed standard set of problems to test finite element accuracy.* Finite Elements in Analysis and Design 1(1):3–20, 1985.
 - D. P. Flanagan, T. Belytschko. *A uniform strain hexahedron and quadrilateral with orthogonal hourglass control.* IJNME 17(5):679–706, 1981. doi:[10.1002/nme.1620170504](https://doi.org/10.1002/nme.1620170504)
+
+### Hex8 mean dilatation
+
+`b_bar=true` uses Bbar = B + (average(div N) - div N)/3 in each
+normal-strain row; shear rows are unchanged. The average uses det(J)-weighted
+2x2x2 quadrature. Stiffness and recovered integration-point strains use the
+same operator; reported B-bar strain is the assumed strain, not the unmodified
+nodal displacement gradient. Mass, loads and native standard Hex8 defaults are unchanged.
+No additional result kind is allocated. See [import boundaries](../../abaqus-import.md)
+for C3D8/C3D8I mapping and unsupported combinations. The implementation follows
+Hughes, IJNME 15 (1980), 1413–1418, doi:10.1002/nme.1620150914.

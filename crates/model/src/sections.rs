@@ -287,6 +287,9 @@ impl LumpedMass {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Formulation {
+    /// Volume-averaged dilatation for linear isotropic Hex8; default remains standard.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub b_bar: bool,
     #[serde(default, skip_serializing_if = "LumpedMass::is_default")]
     pub lumped_mass: LumpedMass,
     #[serde(default)]
@@ -304,6 +307,9 @@ impl Formulation {
     /// Check the options against each other and against the section kind (the element kinds are
     /// checked when the model is resolved).
     pub fn validate_for(&self, kind: &SectionKind) -> Result<()> {
+        if self.b_bar && (!matches!(kind, SectionKind::Solid {}) || self.hybrid || self.incompatible_modes || self.integration != Integration::Full) {
+            return Err(Error::Invalid("B-bar requires a full, non-hybrid, non-incompatible solid section".into()));
+        }
         if self.lumped_mass != LumpedMass::Hrz && !kind.is_continuum() {
             return Err(Error::Invalid(format!(
                 "section lumped_mass {:?} requires solid or planar continuum elements, not {}",
