@@ -80,7 +80,8 @@
 //! geometry an element of a plastic material takes the same loops with small strain, and an
 //! elastic one its linear stiffness (K u). Incompatible-mode elements keep their enhanced modes
 //! after the material history and solve them element by element at every evaluation, so the
-//! solver's history contract is unchanged. Springs act along their fixed directions. Trusses,
+//! solver's history contract is unchanged. Springs act along their fixed directions.
+//! Pure elastic rod2 models also use the shared St Venant–Kirchhoff force/tangent from geometric transient dynamics. Rod3,
 //! shells and beams (large rotations), plane stress and centrifugal loads are refused by name.
 //!
 //! **Thermal strain.** The step's temperatures are its temperature loads, or, when it has
@@ -454,6 +455,35 @@ impl Problem<'_> {
         if self.finite { Some(Kinematics::Finite) } else { self.materials.get(e).filter(|m| m.is_path_dependent()).map(|_| Kinematics::Small) }
     }
 
+    /// Select zero correction only in exactly unloaded null coordinates. This modifies
+    /// a reduced Newton work matrix, never the returned equilibrium tangent.
+    fn rod_correction_gauge(&self, k: &mut Csr, residual: &[f64]) -> Result<()> {
+        if self.mesh.trusses.is_empty() || !self.mesh.elements.is_empty() {
+            return Ok(());
+        }
+        let mut nonzero = vec![false; k.n];
+        for row in 0..k.n {
+            let (cols, vals) = k.row(row);
+            for (&col, &value) in cols.iter().zip(vals) {
+                if value != 0. {
+                    nonzero[row] = true;
+                    nonzero[col] = true;
+                }
+            }
+        }
+        for (i, active) in nonzero.iter().enumerate() {
+            if !active {
+                if residual.get(i).copied().unwrap_or(0.) != 0. {
+                    return Err(Error::Singular(
+                        "rod equilibrium has force in a zero-stiffness direction; supply a stable starting geometry or constraints".into(),
+                    ));
+                }
+                crate::sparse::add_entry(k, i, i, 1.)?;
+            }
+        }
+        Ok(())
+    }
+
     /// The temperatures of element `e` at load factor λ, which ramps them from the reference
     /// temperature to the field's (J2 Johnson–Cook softening and thermal strain): the
     /// material's expansion and reference temperature, or no expansion from the Johnson–Cook
@@ -583,6 +613,20 @@ impl Problem<'_> {
                     let kinds = self.element_kinds.get(e).copied().ok_or_else(|| Error::Internal("element kinds".into()))?;
                     add_block(k, layout, &el.nodes, kinds, &ke.data)?;
                 }
+            }
+        }
+        for el in &self.mesh.trusses {
+            let dofs =
+                layout.element_dofs(&el.nodes, fieldcraft_fem::DofSet::TRANSLATIONS).ok_or_else(|| Error::Internal("rod equilibrium dofs".into()))?;
+            let ue: Vec<_> = dofs.iter().map(|d| u.get(*d).copied().unwrap_or(0.)).collect();
+            let (f, ke, _) = crate::rod::evaluate(&el.xyz, &ue, el.young * el.area)?;
+            for (d, value) in dofs.iter().zip(f) {
+                if let Some(v) = internal.get_mut(*d) {
+                    *v += value;
+                }
+            }
+            if let Some(k) = k.as_mut() {
+                add_block(k, layout, &el.nodes, fieldcraft_fem::DofSet::TRANSLATIONS, &ke)?;
             }
         }
         if let Some(s) = &self.springs {
@@ -910,7 +954,8 @@ impl Run<'_> {
         let k = e.tangent.take().ok_or_else(|| Failure::Fatal(Error::Internal("tangent".into())))?;
         let rf: Vec<f64> = free_residual(red, &e).iter().zip(prescribed_force(red, &k, to - from)).map(|(a, b)| a - b).collect();
         let mut dq = rf.clone();
-        let [kff] = red.reduce([&k])?;
+        let [mut kff] = red.reduce([&k])?;
+        self.problem.rod_correction_gauge(&mut kff, &rf)?;
         drop(k);
         let chol = match factor_raw(&kff, self.limits) {
             Ok(chol) => chol,
@@ -971,7 +1016,8 @@ impl Run<'_> {
             }
             self.iterations += 1;
             let k = eval.tangent.take().ok_or_else(|| Failure::Fatal(Error::Internal("tangent".into())))?;
-            let [kff] = red.reduce([&k])?;
+            let [mut kff] = red.reduce([&k])?;
+            self.problem.rod_correction_gauge(&mut kff, &r)?;
             // The first tangent of the step: a singular one is a modelling error, not a cutback.
             let first = self.force_floor.is_none();
             if first {
@@ -1152,8 +1198,22 @@ fn check_supported(model: &Model, mesh: &Mesh, step: &Step, settings: &Nonlinear
     if let Some((name, _)) = model.sections().iter().find(|(_, s)| s.orientation.is_some()) {
         return Err(at(format!("material orientation of section `{name}`")));
     }
-    if let Some(t) = mesh.trusses.first() {
-        return Err(at(format!("trusses (element {})", t.label)));
+    if !mesh.trusses.is_empty() {
+        if !settings.nonlinear_geometry
+            || settings.arc_length.is_some()
+            || !mesh.elements.is_empty()
+            || mesh.trusses.iter().any(|e| e.kind != fieldcraft_model::ElementKind::Rod2)
+        {
+            return Err(at("rod nonlinear equilibrium requires pure rod2, nonlinear_geometry and load control".into()));
+        }
+        crate::system::refuse_contact(model, "nonlinear rod equilibrium")?;
+        if !model.initial_fields().is_empty()
+            || model.materials().values().any(|m| m.plastic.is_some() || m.hyperelastic.is_some())
+            || step.loads.iter().any(|n| !matches!(model.load(n), Some(Load::Force { .. })))
+        {
+            return Err(at("nonlinear rod thermal/initial fields, inelastic materials or non-dead-force loads".into()));
+        }
+        warnings.push("rod2 equilibrium: total-Lagrangian St Venant–Kirchhoff; recovered stress is second Piola and strain is Green strain in the reference material axis. Exact unloaded null coordinates retain zero Newton correction only; no gauge stiffness is retained in the terminal operator.".into());
     }
     if let Some(s) = mesh.structural.first() {
         return Err(at(format!("shells and beams, whose large rotations are not implemented yet (element {})", s.label)));
@@ -1846,6 +1906,34 @@ fn stresses(
             }
         }
         elements.push(ElementStress { label: el.label, kind: el.kind, points, nodal, plastic_strain });
+    }
+    for el in &mesh.trusses {
+        let dofs =
+            mesh.layout.element_dofs(&el.nodes, fieldcraft_fem::DofSet::TRANSLATIONS).ok_or_else(|| Error::Internal("rod recovery dofs".into()))?;
+        let ue: Vec<_> = dofs.iter().map(|d| u.get(*d).copied().unwrap_or(0.)).collect();
+        let recovery = crate::transient::nonlinear::recover_rod(&el.xyz, &ue, el.young, el.area)?;
+        let dx: [f64; 3] = std::array::from_fn(|i| el.xyz[1][i] - el.xyz[0][i]);
+        let l = dot(&dx, &dx).sqrt();
+        let n = dx.map(|v| v / l);
+        let tensor = [n[0] * n[0], n[1] * n[1], n[2] * n[2], n[0] * n[1], n[1] * n[2], n[2] * n[0]];
+        let stress = tensor.map(|v| recovery.second_piola_stress * v);
+        let strain = std::array::from_fn(|i| recovery.green_strain * tensor[i] * if i < 3 { 1. } else { 2. });
+        let xyz = std::array::from_fn(|i| 0.5 * (el.xyz[0][i] + el.xyz[1][i]));
+        elements.push(ElementStress {
+            label: el.label,
+            kind: el.kind,
+            points: vec![PointStress { xyz, strain, stress }],
+            nodal: vec![stress; 2],
+            plastic_strain: Vec::new(),
+        });
+        for node in &el.nodes {
+            if let (Some(acc), Some(c)) = (sum.get_mut(*node), count.get_mut(*node)) {
+                for i in 0..6 {
+                    acc[i] += stress[i];
+                }
+                *c += 1;
+            }
+        }
     }
     let stress: Vec<[f64; 6]> = sum.iter().zip(&count).map(|(s, c)| s.map(|v| if *c > 0 { v / f64::from(*c) } else { 0.0 })).collect();
     Ok((elements, stress))

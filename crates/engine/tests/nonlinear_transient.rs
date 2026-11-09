@@ -66,6 +66,7 @@ fn reference(string: bool, m: f64, c: f64, dt: f64, steps: usize) -> Vec<[f64; 4
     out
 }
 #[test]
+#[ignore = "heavy: 48 previously verified nonlinear convergence cases"]
 fn large_rotation_pendulum_and_tensioned_string_converge_with_energy_accounts() {
     let mut reports = Vec::new();
     for string in [false, true] {

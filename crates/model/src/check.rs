@@ -561,6 +561,7 @@ impl Model {
             }
             for s in &self.steps {
                 if !matches!(s.procedure, Procedure::Static {} | Procedure::NonlinearStatic(_) | Procedure::Frequency { .. } | Procedure::Harmonic(_))
+                    && !(matches!(s.procedure, Procedure::Transient(_)) && s.base_state.is_some())
                 {
                     d.error(format!("step `{}`", s.name), format!("pretension `{name}` is unsupported in this procedure"));
                 }

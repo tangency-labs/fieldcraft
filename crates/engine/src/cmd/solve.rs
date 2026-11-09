@@ -56,7 +56,7 @@ pub const HARMONIC: CommandSpec = CommandSpec {
 pub const TRANSIENT: CommandSpec = CommandSpec {
     id: "solve.transient",
     label: "Solve Transient Step",
-    params: r#"{"step":"Pulse","threads":1,"mass":"consistent|lumped"} — mass defaults to consistent on each solve and is stored with results; linear Newmark/HHT response, direct or modal; optional error-controlled substeps for direct average acceleration with translational coordinates; stores displacement, velocity, relative acceleration, optional nodal stress and mechanical energies. Read frames with solve.probe. Limits as solve.static. Uniform base displacement/acceleration amplitudes are supported; independent nonzero displacement boundary conditions and reference points are refused."#,
+    params: r#"{"step":"Pulse","threads":1,"mass":"consistent|lumped"} — mass defaults to consistent on each solve and is stored with results; linear Newmark/HHT response, direct or modal; with step base_state, returns perturbation increments about the recomputed equilibrium tangent and frozen contact/tie/pretension constraints, reference mass and perturbation energy; preload loads are not repeated; optional error-controlled substeps for direct average acceleration with translational coordinates; stores displacement, velocity, relative acceleration, optional nodal stress and mechanical energies. Read frames with solve.probe. Limits as solve.static. Uniform base displacement/acceleration amplitudes are supported; independent nonzero displacement boundary conditions and reference points are refused."#,
     form: Some(super::forms::SOLVE_DYNAMICS),
     kind: CommandKind::Model,
     requires: &[Requirement::Analysable, Requirement::Step],

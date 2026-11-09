@@ -326,3 +326,9 @@ curved prestressed dynamics and faithful commercial shell mappings remain open.
 Curved MITC8 modal perturbations: reference elastic plus Green-strain/director initial-stress stiffness, explicit conservative pressure-tangent option, reference mass and unchanged direct supports. Cylinder ring-limit pressure/frequency checks and native roundtrips; MITC6-a curved prestressed modes remain refused after preload-field and actual-residual failures; no finite-preload geometry, curved prestressed harmonic response or faithful commercial shell mapping. See `docs/solvers/curved-shell-modes.md`.
 
 LE7 verification now uses the validated regular-pole ring shell in `nafems-le7`, with the original 25.86 MPa reference and 1% band. The legacy scaled solid input/fixture remains `nafems-le7-solid`; its inapplicable shell comparison is archived rather than counted as a current known failure.
+
+Nonlinear rod diagnostics now have an explicit SI Abaqus UEL/DYNAMIC writer and saved-state internal-force recovery. Standard T3D2 StVK mapping is refused; native nonlinear result persistence requires a versioned model/result contract.
+
+Direct and modal transient base_state perturbations reuse the converged equilibrium tangent and frozen contact/tie/pretension constraints; reference mass and incremental energies, native kind-6 save/reopen. Based stress recovery and changing contact status remain unsupported.
+
+Pure rod2 nonlinear static equilibria now share the geometric transient St Venant–Kirchhoff force and tangent. Frequency and direct/modal transient base_state use the actual converged state, preserving stress stiffening; reference linear-preload K+K_sigma remains a separately documented approximation. Zero-load and tensile equilibrium/derivative/time-history/native round-trip tests cover both mass policies. Contact/solid and kind12 layouts are unchanged.

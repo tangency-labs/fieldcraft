@@ -1031,7 +1031,7 @@ const PROCEDURE: Field = variants(
             "Static, nonlinear",
             &[
                 flag("nonlinear_geometry", "Nonlinear geometry")
-                    .help("Account for large displacements and rotations. Needed for buckling-like and large-deflection problems.")
+                    .help("Account for large displacements and rotations. Pure elastic rod2 uses the finite St Venant-Kirchhoff force and consistent terminal tangent; supports frequency/transient base_state.")
                     .def("true"),
                 range("initial_increment", "Initial increment", D::None, 0.0, 1.0)
                     .help("First increment, as a fraction of the step (0.1 = 10 %).")
@@ -1324,7 +1324,8 @@ pub const STEP_CREATE: &[Field] = &[
     OUTPUT,
     STEP_BCS,
     STEP_LOADS,
-    reference("base_state", "Equilibrium base", C::Step).help("Earlier static or nonlinear static step for a linear perturbation."),
+    reference("base_state", "Equilibrium base", C::Step)
+        .help("Earlier static/nonlinear static equilibrium for frequency, harmonic or direct/modal transient increments."),
     flag("linear_base", "Linear base stiffness")
         .help("Keep a linear static base dependency without initial-stress stiffness; no pretension.")
         .def("false"),

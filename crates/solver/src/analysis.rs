@@ -492,10 +492,43 @@ fn static_on_with_order(setup: &Setup<'_>, limits: &Limits, standalone: bool) ->
     if red.neq() == 0 {
         return Err(Error::Invalid("every degree of freedom is prescribed; there is nothing to solve".into()));
     }
-    let [kff] = red.reduce([&k])?;
+    let [mut kff] = red.reduce([&k])?;
+    let mut q = red.rhs(&f, &k);
+    // An axis-aligned rod preload may have exact unloaded transverse null rows.
+    // Select zero motion in that nullspace only for a named perturbation base.
+    // This is an algebraic gauge in the preload solve, NOT support or stiffness
+    // carried into the perturbation operator, which includes its actual K_sigma.
+    if !mesh.trusses.is_empty()
+        && mesh.elements.is_empty()
+        && mesh.structural.is_empty()
+        && model.steps().iter().any(|s| s.base_state.as_deref() == Some(step.name.as_str()))
+    {
+        let mut nonzero = vec![false; kff.n];
+        for row in 0..kff.n {
+            let (cols, vals) = kff.row(row);
+            for (&col, &value) in cols.iter().zip(vals) {
+                if value != 0. {
+                    nonzero[row] = true;
+                    nonzero[col] = true;
+                }
+            }
+        }
+        let mut count = 0;
+        for (i, active) in nonzero.iter().enumerate() {
+            if !active {
+                if q[i] != 0. {
+                    return Err(Error::Singular("rod base has a load in a zero-stiffness direction; nonlinear equilibrium is required".into()));
+                }
+                crate::sparse::add_entry(&mut kff, i, i, 1.)?;
+                count += 1;
+            }
+        }
+        if count > 0 {
+            warnings.push(format!("rod equilibrium: selected zero displacement in {count} exactly unloaded null coordinates; no artificial stiffness or constraints retained in perturbation"));
+        }
+    }
     let chol = factor_raw(&kff, limits).map_err(|e| factor_error(e, mesh, &red))?;
     let diagnostic_k = std::env::var("FIELDCRAFT_STATIC_RESIDUAL").is_ok_and(|v| v == "1").then_some(kff);
-    let mut q = red.rhs(&f, &k);
     let diagnostic_rhs = diagnostic_k.as_ref().map(|_| q.clone());
     chol.solve(&mut q)?;
     if let (Some(matrix), Some(rhs)) = (diagnostic_k, diagnostic_rhs) {
