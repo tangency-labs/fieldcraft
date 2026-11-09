@@ -226,6 +226,39 @@ calling the known stress defect a validation pass. The frozen-data test checks
 classification, not a fresh flow result; after the repair, rerun the study and
 review its diagnostic gates before claiming physical validation.
 
+### Statistical acceptance of study windows
+
+The M&S and Han studies stop on `fieldcraft_lbm::statistics::Blocks` (#796). A burn-in in samples
+precedes equally spaced samples; partial blocks never count. Acceptance is assessed on the largest
+even prefix of complete blocks, so both block lengths cover the same window, and needs:
+
+- at least 40 base blocks (`MIN_BLOCKS`), so the doubled-length series has 20 values;
+- a Student-t 95 % mean half-width below 1 % of the absolute mean at both block lengths, and a
+  change of less than 20 % in that half-width when the block length doubles;
+- a half-window drift below 1 %;
+- absolute block correlations below 0.5 at lags 1 to 5 on both block lengths.
+
+The block minimum follows from the lags tested: a lag-k autocorrelation from N independent values
+has a standard error near 1/√N (NIST/SEMATECH §1.3.5.12, after Bartlett 1946), and Box & Jenkins
+(1976, §2.1.6) estimate lags only up to about N/4, so lag 5 on the doubled series needs 20 doubled
+blocks. At the earlier minimum of 20 base blocks (10 doubled values, standard error about 0.3) a
+simulation of 20 000 independent Gaussian windows rejected 47 %: 18 % on the doubled-series
+correlations and 34 % on the half-width change. At 40 blocks 14 % are rejected and at 80 blocks
+1.5 %; a rejected window only means the study keeps averaging. The unit test
+`independent_windows_at_the_minimum_usually_pass` checks the same on 400 synthetic windows.
+
+The interval uses the [NIST/SEMATECH Student-t definition](https://www.itl.nist.gov/div898/handbook/eda/section3/eda352.htm)
+with its [0.975 critical values](https://www.itl.nist.gov/div898/handbook/eda/section3/eda3672.htm),
+rounded upward; above 30 degrees of freedom the value for 30 is used (conservative). A zero mean
+cannot pass a relative interval. The store is capped at 65 536 block means (512 KiB); a sample
+beyond the cap is an error and leaves acceptance false.
+
+Rejection controls: three FieldCraft cylinder drag histories from #796 (Re 3900, N12, HRR, GB10;
+100–200 and 400–600 D/U, and 400–600 D/U from a potential-flow start) are replayed at blocks of
+1.2 and 2.5 D/U (at least 40 blocks each) and must keep failing on the evidence: their relative
+half-widths are 2.7–9.2 % and their drifts 1.8–8.8 %. They are failure controls, not validation
+fixtures. The synthetic unit tests reject alternating, lag-2, drifting and pair-dependent signals.
+
 ### Wall-modelled LES: Han, Ooka & Kikumoto not reproduced at A20
 
 Han, Ooka & Kikumoto's channel (Fluid Dyn. Res. 53:045506, 2021) at A20 (Re_τ 640), with their
