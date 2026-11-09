@@ -402,3 +402,33 @@ Syntax references: [TIE](https://docs.software.vt.edu/abaqusv2025/English/SIMACA
 [COUPLING](https://docs.software.vt.edu/abaqusv2025/English/SIMACAEKEYRefMap/simakey-r-coupling.htm),
 [KINEMATIC](https://docs.software.vt.edu/abaqusv2025/English/SIMACAEKEYRefMap/simakey-r-kinematic.htm),
 [DISTRIBUTING](https://docs.software.vt.edu/abaqusv2025/English/SIMACAEKEYRefMap/simakey-r-distributing.htm).
+
+### Mass semantics report: requirements are not applied settings
+
+`deck.read` returns `mass_semantics` separately from `analysis_complete`. It lists
+source element types and ELEMENT-card ELSET hints (not resolved section assignments), a conditional `consistent`/`lumped` choice when
+identified, the actual formula/quadrature requirement, applicability conditions,
+and native implementation gaps. `applied=false` and `conditions_verified=false`
+are explicit: importing a runnable history does not establish a matching source
+mass matrix. Source replay after project reopening preserves the original types;
+normalized export represents the native model, not a verified vendor default.
+
+The current evidence scope is uniform-property, unconstrained `MATRIX GENERATE,MASS`
+small cases. It does not establish frequency, harmonic or random-response defaults.
+Do not change an engineering response calculation on that evidence alone. A global
+`mass=lumped` switch is insufficient: native solid/plane lumping uses HRZ diagonal
+scaling, whereas a row-sum requirement means summing every consistent matrix row.
+These coincide for affine uniform simplices and straight uniform two-node rods,
+but not generally for distorted hexes/wedges or radius-weighted axisymmetric elements.
+A mixed linear/quadratic mesh may need lumped and consistent mass by section/type;
+`mixed_choices_require_per_type_or_section` identifies that conflict. It does not
+apply or persist such a policy. Quadratic axisymmetric triangles additionally need
+an identified integration rule: six-point degree-four quadrature is distinct from
+native `TriConical(4)`. Even `consistent` does not encode this difference.
+
+Pyramid distribution (`U-PYR`: C3D5/H) and shell projection (`U-SHELL`: S3/R, S4/R)
+remain named unknowns. S8R translational agreement does not establish its rotational
+or drilling inertia. Beam equivalence is limited to uniform straight prismatic,
+unoffset conditions. No unidentified option is assigned a guessed default. Commercial
+matrix originals are not repository fixtures; formula tests and original command
+round trips are separate from local, authorized observational evidence.

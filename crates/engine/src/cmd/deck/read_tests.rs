@@ -805,3 +805,55 @@ fn imported_constraints_split_mixed_node_point_loads_and_reference_boundaries() 
     assert_constraint_results(&native, &s);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn imported_mass_requirements_are_unapplied_and_survive_source_and_model_round_trips() {
+    let dir = folder();
+    let input = dir.join("input.inp");
+    std::fs::write(&input, constraint_input()).unwrap();
+    let mut s = Session::default();
+    let read = s.execute("deck.read", &json!({"path":input,"format":"abaqus","units":"m-kg-s-N-Pa"})).unwrap();
+    let report = read["mass_semantics"].clone();
+    assert_eq!(report["applied"], false);
+    assert_eq!(report["conditions_verified"], false);
+    assert_eq!(report["requirements"][0]["choice"], "lumped");
+    assert_eq!(report["requirements"][0]["rule"], "row_sum");
+    assert!(report["requirements"][0]["native_gap"].as_str().unwrap().contains("HRZ"));
+    let saved = dir.join("model.fieldcraft");
+    s.execute("file.save_as", &json!({"path":saved})).unwrap();
+    s.execute("file.new", &json!({})).unwrap();
+    s.execute("file.open", &json!({"path":saved})).unwrap();
+    let replay = dir.join("replay.inp");
+    s.execute("deck.source.write", &json!({"path":replay})).unwrap();
+    let again = s.execute("deck.read", &json!({"path":replay,"format":"abaqus","units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(again["mass_semantics"], report);
+    let normalized = dir.join("normalized.inp");
+    s.execute("deck.write", &json!({"path":normalized,"format":"abaqus"})).unwrap();
+    let again = s.execute("deck.read", &json!({"path":normalized,"format":"abaqus","units":"m-kg-s-N-Pa"})).unwrap();
+    // The native writer emits ELSET separately from ELEMENT. Source-card metadata changes,
+    // while type, rule, choice, applicability and the explicit unapplied status must not.
+    let mut normalized_report = report;
+    normalized_report["requirements"][0]["elset"] = Value::Null;
+    assert_eq!(again["mass_semantics"], normalized_report);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn imported_mass_requirement_row_sum_is_not_native_hrz_on_a_tapered_hex() {
+    // Original analytic map x=(1+z)*xi, y=eta, z=zeta on [0,1]^3.
+    // detJ=1+z; volume=3/2. Integrating each Ni gives bottom 1/6, top 5/24.
+    // Integrating Ni^2 gives bottom 5/108, top 7/108. HRZ scales by 27/8.
+    let xyz = [[0., 0., 0.], [1., 0., 0.], [1., 1., 0.], [0., 1., 0.], [0., 0., 1.], [2., 0., 1.], [2., 1., 1.], [0., 1., 1.]];
+    let solid = fieldcraft_fem::element::Solid::new(fieldcraft_model::ElementKind::Hex8, &xyz, fieldcraft_fem::element::Formulation::Full).unwrap();
+    let c = solid.mass(1.0).unwrap();
+    let hrz = solid.lumped_mass(1.0).unwrap();
+    for (i, h) in hrz.iter().enumerate() {
+        let row: f64 = (0..8).map(|j| c.get(i, j)).sum();
+        let expected = if i < 4 { 1.0 / 6.0 } else { 5.0 / 24.0 };
+        let expected_hrz = if i < 4 { 5.0 / 32.0 } else { 7.0 / 32.0 };
+        assert!((row - expected).abs() < 1e-14);
+        assert!((h - expected_hrz).abs() < 1e-14);
+        assert!((row - h).abs() > 0.01, "lumped must not be reported as row-sum");
+    }
+    println!("analytic tapered hex: total mass=1.5 kg; row_sum=[1/6 x4,5/24 x4]; native_HRZ=[5/32 x4,7/32 x4]; max_difference=1/96 kg");
+}

@@ -21,7 +21,9 @@ mod discrete;
 mod dynamic;
 mod history;
 mod lex;
+mod mass;
 mod matrices;
+pub use mass::MassRequirement;
 mod random;
 pub mod source;
 mod types;
@@ -56,6 +58,8 @@ pub struct Unknown {
 pub struct Read {
     /// Whether all history steps were mapped without unsupported physical semantics.
     pub analysis_complete: bool,
+    /// Unapplied, condition-scoped mass requirements; independent of history completeness.
+    pub mass_requirements: Vec<MassRequirement>,
     pub model: Model,
     /// Deterministic local-to-global labels and names for expanded instances.
     pub instances: Vec<InstanceMap>,
@@ -109,6 +113,7 @@ fn read_mode(text: &str, preset: Preset, limits: Limits, analysis: bool) -> Resu
     let flat = expanded.as_ref().map_or(text, |e| e.text.as_str());
     let parse_all = || -> Result<Read> {
         let mut read = parse(flat, preset, limits)?;
+        read.mass_requirements = mass::inspect(flat)?;
         constraints::import(flat, &mut read, preset, limits)?;
         if analysis {
             history::import(flat, &mut read, preset, limits)?;
@@ -894,7 +899,7 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
             "{unassigned} mesh elements have no section: their input family/formulation is not stored on the mesh element. Assign compatible sections before analysis; reduced/hybrid/shell/plane context is not retained without them."
         ));
     }
-    Ok(Read { model, analysis_complete: false, instances: Vec::new(), unknown, unknown_count, warnings })
+    Ok(Read { model, mass_requirements: Vec::new(), analysis_complete: false, instances: Vec::new(), unknown, unknown_count, warnings })
 }
 
 fn section_kind(raw: &SectionRecord, typ: Type, units: &DisplaySystem) -> Result<SectionKind> {

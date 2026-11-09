@@ -90,10 +90,25 @@ fn read(s: &mut Session, p: &Value) -> Result<Value> {
         "nodes":i.nodes,"elements":i.elements,"names":i.names})
         })
         .collect();
+    let requirements: Vec<Value> = imported
+        .mass_requirements
+        .iter()
+        .map(|m| {
+            json!({
+                "element_type":m.element_type,"elset":m.elset,"choice":m.choice,"rule":m.rule,
+                "conditions":m.conditions,"native_gap":m.native_gap
+            })
+        })
+        .collect();
+    let choices: std::collections::BTreeSet<_> = imported.mass_requirements.iter().filter_map(|m| m.choice).collect();
+    let mass_report = json!({"applied":false,"conditions_verified":false,
+        "evidence_scope":"unconstrained MATRIX GENERATE,MASS; no cross-procedure inference",
+        "mixed_choices_require_per_type_or_section":choices.len()>1,"requirements":requirements,
+        "warning":"No imported mass default is applied. Native solver defaults are not a verified source mass mapping; consistent/lumped alone does not identify quadrature or lumping formula."});
     let reply = json!({"format":"abaqus","path":path,"units":units.label(),"nodes":model.nodes().len(),"elements":kinds,
         "sets":model.sets().len(),"materials":model.materials().len(),"sections":model.sections().len(),"unknown":unknown,
         "masses":model.masses().len(),"springs":model.springs().len(),"unknown_count":imported.unknown_count,"warnings":imported.warnings,"history_imported":!model.steps().is_empty(),"analysis_complete":imported.analysis_complete,"steps":model.steps().len(),"imported_steps":model.steps().iter().map(|s|s.name.as_str()).collect::<Vec<_>>(),
-        "source_retained":true,"source_storage":"project","source_files":bundle.files.keys().collect::<Vec<_>>(),"instances":instances});
+        "mass_semantics":mass_report,"source_retained":true,"source_storage":"project","source_files":bundle.files.keys().collect::<Vec<_>>(),"instances":instances});
     // The new, unsaved document has no journal, but still needs its own dirty revision.
     let archive = fieldcraft_io::DeckSource {
         root: bundle.root.clone(),
