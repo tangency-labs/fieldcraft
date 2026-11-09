@@ -10,7 +10,9 @@ Curved `quad8` MITC8 supports consistent and positive-diagonal lumped mass for
 frequency and harmonic analysis, including ply densities and rotary inertia.
 Consistent mass retains offset/density first-moment coupling; lumped mass omits it.
 Both include an explicitly artificial drilling inertia. Transient and spectrum steps
-remain refused; curved-shell prestress is also refused.
+remain refused; curved-shell prestressed frequency has the limited
+[reference-geometry modal path](../../solvers/curved-shell-modes.md).
+Curved prestressed harmonic response remains refused.
 See [MITC8 scope](../../solvers/mitc8.md).
 
 `solve.frequency` computes the lowest natural frequencies and mode shapes of a structure,
@@ -243,8 +245,8 @@ amplitude has no physical size; the pictures use deformation scales of 0.4 and 0
 
 ## Limitations
 
-- Undamped, real modes only; no damping, no complex eigenvalues, no prestressed (stress-stiffened)
-  frequencies.
+- Undamped, real modes only; no damping or complex eigenvalues. Equilibrium-base
+  perturbations are limited to the explicitly supported element/tangent combinations.
 - `shift` is factored by Cholesky: a shift above the lowest eigenvalue makes K − σM indefinite and
   the solve stops with the singular-matrix error naming a degree of freedom.
 - Contact is refused; dashpots are ignored.
@@ -382,3 +384,14 @@ the same executable. Both paths retain the convergence tests and random
 replacement of vanished directions. Block projection additionally stores
 packed basis and mass-basis panels; account for this workspace when comparing
 peak process memory. This selection does not change the archive format.
+
+## Curved-shell equilibrium bases
+
+Curved MITC8 shells support small-preload linear static bases and
+optional conservative pressure load stiffness through
+`perturbation_follower_pressure` on the frequency step. See the
+[formula, cylinder boundary conditions and refusals](../../solvers/curved-shell-modes.md).
+
+Curved MITC6-a prestressed frequency remains refused: the new cylinder study
+failed coarse-preload accuracy and fine-mesh actual-residual checks. Its existing
+ordinary modes and verified buckling support are unchanged.

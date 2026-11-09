@@ -258,7 +258,8 @@ probe at the foot's end lies within 0.13 % of the fine tet10 solution.
 | NAFEMS LE1 elliptic membrane | benchmark | +0.18 % (hex20 layer), −0.056 % (plane stress) | 1 % | `nafems-le1`, `nafems-le1-plane-stress` |
 | NAFEMS LE10 thick plate | benchmark | +0.86 % | 2 % | `nafems-le10` |
 | NAFEMS LE5 Z-section cantilever | benchmark | −1.35 % | 2 % | `nafems-le5` |
-| NAFEMS LE7 axisymmetric cylinder/sphere | benchmark | −2.23 % against the thin-shell target (known failure: no axisymmetric shell); +0.05 % against the converged solid | 1 % | `nafems-le7` |
+| NAFEMS LE7 axisymmetric cylinder/sphere | benchmark | +0.080553 % outer axial shell stress; explicit SI geometry and regular pole | 1 % | `nafems-le7` |
+| LE7 auxiliary legacy axisymmetric solid | benchmark | +0.04965 % against the converged solid; scaled geometry, not shell validation | 1 % | `nafems-le7-solid` |
 | NAFEMS LE2, LE3, LE6; Scordelis–Lo; pinched cylinder (shells) | benchmark | see [Element library](elements.md#verification) | | |
 | Scordelis–Lo roof with solids | benchmark | 0.33 % | 2 % | `scordelis-lo-roof-solid` |
 | Tie patch test, non-matching meshes | theory | < 10⁻⁴ % | 10⁻⁹ rel. | `tie-patch` |

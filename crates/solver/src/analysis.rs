@@ -1152,6 +1152,8 @@ mod tests {
             stats: Stats { dofs: 0, equations: 0, factor_entries: 0, lanczos_vectors: 0 },
             warnings: vec![],
             buckling: None,
+            mass_kind: None,
+            section_mass_policy: None,
         };
         assert!(modal_order_fallback_reason(&result).unwrap().contains("repeated"));
         result.modes[1].eigenvalue = 2.0;
@@ -1171,7 +1173,7 @@ mod tests {
             assert!(!standalone_linear_order(&step, true));
         }
         for procedure in [
-            Procedure::Buckle { modes: 1, shift: None },
+            Procedure::Buckle { modes: 1, shift: None, follower_pressure: false },
             Procedure::HeatTransfer { transient: None },
             Procedure::CoupledTemperatureDisplacement {},
             Procedure::MatrixGeneration { matrices: Default::default() },

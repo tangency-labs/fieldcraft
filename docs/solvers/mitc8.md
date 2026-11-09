@@ -209,8 +209,8 @@ For the legacy plate operator, reference surfaces/directors must be coplanar. Th
 including director tilt; otherwise the solver refuses the combination. This supports
 flat symmetric laminates, or other layers whose actual constrained preload remains
 flat; it does not silently drop pre-bending from an unsymmetric laminate. This plate path does not provide a nonlinear material tangent or finite-rotation
-equilibrium. Curved prestressed frequency/harmonic remains refused; the new curved
-bifurcation path below does not silently enable those analyses. The Bryan square-plate command case checks the entire preload,
+equilibrium. Curved prestressed frequency uses the explicitly verified
+[modal perturbation path](curved-shell-modes.md); curved prestressed harmonic remains refused. The Bryan square-plate command case checks the entire preload,
 material/geometric assembly and eigenproblem against `Ncr=4*pi²*D/a²`.
 
 Frequency and buckling retain the existing frequency-result representation; harmonic
@@ -247,7 +247,8 @@ It is limited to zero-offset MITC8/MITC6 pressure faces and direct supports.
 The free-DOF assembled pressure matrix must be symmetric to relative roundoff;
 nonconservative open boundaries and multipoint/inclined constraints are refused,
 not silently symmetrized. Offset/thickness-face moments, curved prestressed
-modal/harmonic analysis and faithful commercial export remain refused.
+harmonic analysis and faithful commercial export remain refused. Frequency has
+a separate [explicit pressure-tangent model option](curved-shell-modes.md).
 The option is stored in the model JSON; native result layouts do not change.
 
 Independent quarter-cylinder command models use R=1, h=.02, E=1e7, nu=0.

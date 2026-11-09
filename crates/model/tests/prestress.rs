@@ -28,3 +28,21 @@ fn equilibrium_dependency_is_ordered_and_round_trips() {
     model.remove_step("Modes").unwrap();
     model.remove_step("Load").unwrap();
 }
+
+#[test]
+fn modal_pressure_option_is_explicit_validated_and_fingerprinted() {
+    let mut model = Model::default();
+    let mut invalid = Step::new("Load", Procedure::Static {});
+    invalid.perturbation_follower_pressure = true;
+    assert!(model.add_step(invalid, None).unwrap_err().to_string().contains("frequency step with base_state"));
+    model.add_step(Step::new("Load", Procedure::Static {}), None).unwrap();
+    model.add_step(modes("Load"), None).unwrap();
+    let before = serde_json::to_value(model.step_inputs("Modes").unwrap()).unwrap();
+    let mut step = model.step("Modes").unwrap().clone();
+    step.perturbation_follower_pressure = true;
+    model.replace_step(step).unwrap();
+    let encoded = serde_json::to_vec(&model).unwrap();
+    let restored: Model = serde_json::from_slice(&encoded).unwrap();
+    assert!(restored.step("Modes").unwrap().perturbation_follower_pressure);
+    assert_ne!(before, serde_json::to_value(restored.step_inputs("Modes").unwrap()).unwrap());
+}

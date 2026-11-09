@@ -971,3 +971,14 @@ fn arc_length_steps() {
     m.replace_step(step("Snap", Procedure::NonlinearStatic(spherical), &["clamp"], &["end"])).unwrap();
     assert!(abaqus::write(&m).is_err());
 }
+
+#[test]
+fn modal_pressure_tangent_is_not_silently_exported_as_abaqus() {
+    let mut m = cantilever_mesh();
+    m.add_step(step("Base", Procedure::Static {}, &["clamp"], &[]), None).unwrap();
+    let mut modes = step("Modes", Procedure::Frequency { modes: 2, min_hz: None, max_hz: None }, &["clamp"], &[]);
+    modes.base_state = Some("Base".into());
+    modes.perturbation_follower_pressure = true;
+    m.add_step(modes, None).unwrap();
+    assert!(abaqus::write(&m).unwrap_err().to_string().contains("modal pressure tangent"));
+}

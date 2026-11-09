@@ -1328,6 +1328,7 @@ pub const STEP_CREATE: &[Field] = &[
     flag("linear_base", "Linear base stiffness")
         .help("Keep a linear static base dependency without initial-stress stiffness; no pretension.")
         .def("false"),
+    flag("perturbation_follower_pressure", "Modal pressure stiffness").help("Frequency with a linear static base: conservative zero-offset MITC8 pressure tangent; unchanged direct supports. Default false keeps dead loads."),
     reference("before", "Insert before", C::Step).help("The step the new one goes before; last when empty.").hint("last"),
 ];
 
@@ -1340,6 +1341,7 @@ pub const STEP_EDIT: &[Field] = &[
     reference("base_state", "Equilibrium base", C::Step).help("Earlier equilibrium step; null in a command clears the base."),
     flag("linear_base", "Linear base stiffness")
         .help("Keep a linear static base dependency without initial-stress stiffness; clear when removing the base."),
+    flag("perturbation_follower_pressure", "Modal pressure stiffness").help("Frequency with a linear static base: conservative zero-offset MITC8 pressure tangent; unchanged direct supports. Default false keeps dead loads."),
 ];
 
 pub const STEP_ACTIVATE: &[Field] = &[
