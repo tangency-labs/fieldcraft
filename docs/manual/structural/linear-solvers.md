@@ -395,3 +395,13 @@ call, including assembly, factorization, solution, summary construction and in-s
 storage. This is the primary diagnostic time. Separate `file.open` and `file.save` commands and
 external RPC transport are excluded. Solver spans explain this total; they do not replace it.
 An error still emits a partial elapsed span; only successful commands are comparable.
+
+For supernode diagnostics, also set `FIELDCRAFT_SUPERNODE_TIMING=1`. Cholesky emits each
+supernode's index, row count, width, inclusive wall time, assembly time, dense-product time,
+padded product FLOP count, below-panel solve time, and the product time within assembly as
+`FIELDCRAFT_SUPERNODE` records.
+`FIELDCRAFT_SUPERNODE_TOP` lists the nodes processed serially above the subtree tasks. Assembly
+includes its dense products; concurrent node times must not be summed as factorization wall
+time. Product throughput includes packing, allocation and scheduling, and counts each multiply
+and add separately, including padded micro-tiles. These diagnostics do not alter arithmetic or
+work partitions; logging itself can affect measured time.

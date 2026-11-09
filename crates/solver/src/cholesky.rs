@@ -756,6 +756,17 @@ impl Context<'_> {
     /// descendant K that reaches it (Y = L, or L D), in supernode order; the descendants are
     /// `done[k - base]`.
     pub(crate) fn assemble<T: Supernode>(&self, j: usize, done: &[T], base: usize, own: &mut [f64]) -> std::result::Result<(), FactorError> {
+        self.assemble_profiled(j, done, base, own, None)
+    }
+
+    fn assemble_profiled<T: Supernode>(
+        &self,
+        j: usize,
+        done: &[T],
+        base: usize,
+        own: &mut [f64],
+        mut timing: Option<&mut crate::timing::Supernode>,
+    ) -> std::result::Result<(), FactorError> {
         let rows = self.s.rows(j);
         let cols = self.s.cols(j);
         let (m, w, f) = (rows.len(), cols.len(), cols.start);
@@ -796,7 +807,11 @@ impl Context<'_> {
                 }
                 relative.push(at);
             }
+            let clock = timing.as_ref().and_then(|t| t.clock());
             let tiles = products(&Panel { m: kr.len(), data: lk }, 0..kw, u.p1, mu, wu, done_k.pivots());
+            if let Some(timing) = timing.as_mut() {
+                timing.product(clock, mu, wu, kw, TILE, NR);
+            }
             subtract(own, m, &tiles, mu, wu, |i| relative.get(i).copied().unwrap_or(0));
         }
         Ok(())
@@ -805,7 +820,11 @@ impl Context<'_> {
     /// Factor supernode `j` into `own`; its descendants' values are `done[k - base]`. Fails with
     /// the first column (postorder) whose pivot is not positive.
     fn supernode(&self, j: usize, done: &[Vec<f64>], base: usize, own: &mut [f64]) -> std::result::Result<(), FactorError> {
-        self.assemble(j, done, base, own)?;
+        let mut timing = crate::timing::Supernode::new(j, self.s.rows(j).len(), self.s.cols(j).len());
+        let clock = timing.clock();
+        self.assemble_profiled(j, done, base, own, Some(&mut timing))?;
+        timing.assembly_seconds = crate::timing::Supernode::elapsed(clock);
+        timing.finish_assembly();
         let rows = self.s.rows(j);
         let cols = self.s.cols(j);
         let (m, w, f) = (rows.len(), cols.len(), cols.start);
@@ -815,7 +834,9 @@ impl Context<'_> {
             let pw = c1 - c0;
             if c0 > 0 {
                 // The panel minus its products with the columns before it.
+                let clock = timing.clock();
                 let tiles = products(&Panel { m, data: own }, 0..c0, c0, m - c0, pw, None);
+                timing.product(clock, m - c0, pw, c0, TILE, NR);
                 subtract(own, m, &tiles, m - c0, pw, |i| c0 + i);
             }
             // The diagonal block, column by column.
@@ -846,7 +867,9 @@ impl Context<'_> {
             }
             // The rows below the panel, by tiles.
             if c1 < m {
+                let clock = timing.clock();
                 let solved = solve_below(&Panel { m, data: own }, c0, c1);
+                timing.below(clock);
                 for (t, tile) in solved.iter().enumerate() {
                     let i0 = c1 + t * TILE;
                     let h = TILE.min(m - i0);
@@ -1245,6 +1268,10 @@ impl Factor {
         let allocation_timing = crate::timing::Span::new("factor_allocate");
         let mut values = symbolic.allocate()?;
         drop(allocation_timing);
+        if std::env::var("FIELDCRAFT_SUPERNODE_TIMING").is_ok_and(|v| v == "1") {
+            use std::io::Write;
+            let _ = writeln!(std::io::stderr().lock(), "FIELDCRAFT_SUPERNODE_TOP\t{:?}", symbolic.top);
+        }
         let numeric_timing = crate::timing::Span::new("numeric_factor");
         symbolic.factor(&mut values, |context, j, done, base, own| context.supernode(j, done, base, own))?;
         drop(numeric_timing);
