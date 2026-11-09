@@ -102,10 +102,13 @@ fn coupling(b: &Block<'_>, sub: Option<&Block<'_>>, blocks: &[Block<'_>], model:
             bits |= 1 << (d - 1);
         }
     }
-    if (kind == CouplingKind::Distributing && bits != 63) || bits & 7 == 0 {
+    if (kind == CouplingKind::Distributing && bits != 63 && bits != 7) || bits & 7 == 0 {
         return Err(history::unsupported(
             sub.line,
-            format!("*{} DOFs: distributing requires 1..6; kinematic requires at least one translation", sub.keyword),
+            format!(
+                "*{} DOFs: distributing requires explicit 1..3 or 1..6; partial rotational release is not mapped; kinematic requires at least one translation",
+                sub.keyword
+            ),
         ));
     }
     let labels = nodes(model, b.required("REFNODE")?, b.line)?;
@@ -167,6 +170,26 @@ fn coupling(b: &Block<'_>, sub: Option<&Block<'_>>, blocks: &[Block<'_>], model:
     let rotating_nodes: BTreeSet<_> = model.elements().values().filter(|e| e.kind.dimension() != 3).flat_map(|e| e.nodes.iter().copied()).collect();
     if members.iter().any(|n| !solid_nodes.contains(n) || rotating_nodes.contains(n)) {
         return Err(history::unsupported(b.line, "*COUPLING cloud requires nodes belonging only to solid elements"));
+    }
+    if kind == CouplingKind::Distributing && bits == 7 {
+        // The new translation-only subset is the exact equal-weight mean at the
+        // cloud centroid. Do not infer a released-rotation rule for an offset RP.
+        let mut centroid = [0.0; 3];
+        let mut scale = 0.0_f64;
+        for node in &members {
+            let xyz = model.node(*node).ok_or_else(|| error(b.line, "missing distributing cloud node"))?.xyz;
+            for axis in 0..3 {
+                centroid[axis] += xyz[axis] / members.len() as f64;
+                scale = scale.max(xyz[axis].abs());
+            }
+        }
+        let xyz = model.node(label).ok_or_else(|| error(b.line, "missing distributing reference node"))?.xyz;
+        if xyz.iter().zip(centroid).any(|(x, c)| (*x - c).abs() > 64.0 * f64::EPSILON * scale) {
+            return Err(history::unsupported(
+                b.line,
+                "*DISTRIBUTING DOFs 1..3 require REF NODE at the equal-weight cloud centroid; offset reference points are not mapped",
+            ));
+        }
     }
     let rp = format!("InpReference{label}");
     if model.reference_point(&rp).is_none() {
@@ -253,4 +276,60 @@ pub(super) fn finish(model: &mut Model) -> Result<()> {
         model.remove_node(label).map_err(|e| error(1, e.to_string()))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn translation_only_distributing_requires_the_explicit_supported_subset() {
+        let input = r#"** Original equal-weight translation-only distributing coupling, SI
+*NODE
+1,0,0,0
+2,1,0,0
+3,0,1,0
+4,0,0,1
+99,.3333333333333333,0,.3333333333333333
+*ELEMENT,TYPE=C3D4,ELSET=Solid
+1,1,2,3,4
+*NSET,NSET=Base
+1,2,3
+*NSET,NSET=Cloud
+1,2,4
+*NSET,NSET=RP
+99
+*SURFACE,TYPE=NODE,NAME=Pad
+Cloud,1
+*MATERIAL,NAME=Elastic
+*ELASTIC
+120000,.25
+*SOLID SECTION,ELSET=Solid,MATERIAL=Elastic
+*COUPLING,CONSTRAINT NAME=Mean,REF NODE=RP,SURFACE=Pad
+*DISTRIBUTING,COUPLING=CONTINUUM,WEIGHTING METHOD=UNIFORM
+1,3
+*STEP,NAME=Pull
+*STATIC
+*BOUNDARY
+Base,1,3
+RP,4,6
+*CLOAD
+RP,1,3
+*END STEP
+"#;
+        let read = |text: &str| super::super::read_analysis_limited(text, Preset::MKgS, Limits::default()).unwrap();
+        let got = read(input);
+        assert!(got.analysis_complete, "{:?}", got.warnings);
+        assert_eq!(got.model.couplings().values().next().unwrap().dofs.list(), vec![1, 2, 3]);
+        for (old, new, reason) in [
+            ("1,3\n*STEP", "1,5\n*STEP", "partial rotational"),
+            ("99,.3333333333333333", "99,.4", "centroid"),
+            ("WEIGHTING METHOD=UNIFORM", "WEIGHTING METHOD=LINEAR", "WEIGHTING"),
+            ("*STATIC\n", "*FREQUENCY\n1\n", "linear STATIC"),
+        ] {
+            let denied = read(&input.replace(old, new));
+            assert!(!denied.analysis_complete);
+            assert!(denied.model.steps().is_empty());
+            assert!(denied.warnings.iter().any(|w| w.contains(reason)), "{:?}", denied.warnings);
+        }
+    }
 }

@@ -371,7 +371,11 @@ responses equal another solver. Default adjustment/tolerance, `TYPE=NODE TO SURF
 The supported cloud consists only of solid-element nodes, in global axes, with
 kinematic global DOF ranges containing at least one translation, or all six
 reference DOFs for distributing (omitted data, blank first DOF, or ranges covering
-1–6). Kinematic element surfaces resolve all face nodes (including midside nodes);
+1–6). Explicit distributing DOFs 1–3 additionally map all translations with all
+rotations released, limited to small-displacement linear static steps and a reference
+point at the equal-weight cloud centroid (roundoff tolerance only; no coordinate
+adjustment). Partial rotational release and offset references for this subset remain
+refused. Kinematic element surfaces resolve all face nodes (including midside nodes);
 element-based distributing weights remain refused. Continuum distribution uses equal nodal weights and translation-derived
 cloud rotation. The reference point retains its original label and coordinates;
 its temporary mesh-node alias is removed. Original reference node sets are
@@ -384,7 +388,7 @@ Part/instance expansion rewrites local constraint names, tie surface pairs,
 coupling surfaces and reference node/set names before mapping. Invalid references
 fail the read transaction. Unsupported parameters/subcards produce named warnings,
 retain the source and block runnable history: e.g. `ORIENTATION`, `INFLUENCE RADIUS`,
-`KINEMATIC, ALPHA`, rotation-only solid kinematic DOFs, partial distributing DOFs, nonuniform weights, `DISTRIBUTING, COUPLING=STRUCTURAL`,
+`KINEMATIC, ALPHA`, rotation-only solid kinematic DOFs, partial rotational distributing DOFs, nonuniform weights, `DISTRIBUTING, COUPLING=STRUCTURAL`,
 explicit structural rotational coupling, `FREE NODES`, `SINGLE FACET`, `UNIFORM`,
 and reference nodes already targeted by `MASS`/`SPRING` (discrete-target retargeting
 is not yet mapped).
@@ -400,6 +404,15 @@ and total support reaction, then save/open and normalized write/read and solve a
 Exact source replay checks original bytes separately. These small native comparisons
 validate mapping and persistence, not commercial parity, arbitrary mesh mortar accuracy,
 nonlinear motion, shell coupling or modal truncation.
+
+A translation-only original Tet4 fixture fixes the three base nodes and reference
+rotations and applies a 3 N reference force in x. With E=120000 Pa, nu=0.25 and
+unit coordinate edges, the free node displacement is 0.000125 m and shear stress
+is 6 Pa: the centroid force distributes equally to the three cloud nodes. The
+same model with all six DOFs coupled gives x displacement 1/104000 m and z
+displacement -2/104000 m, distinguishing released rotations from a full coupling.
+Both native commands and normalized input round trips check this behavior; the
+comparison is a discrete analytical reference, not external solver validation.
 
 Syntax references: [TIE](https://docs.software.vt.edu/abaqusv2025/English/SIMACAEKEYRefMap/simakey-r-tie.htm),
 [COUPLING](https://docs.software.vt.edu/abaqusv2025/English/SIMACAEKEYRefMap/simakey-r-coupling.htm),

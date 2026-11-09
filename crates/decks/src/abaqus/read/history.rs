@@ -478,6 +478,11 @@ fn prepare(
     if next.keys().any(|(family, _, _, _)| *family == Family::Body) && !matches!(procedure, Procedure::Static {}) {
         return Err(unsupported(b.line, "DLOAD BX/BY/BZ requires small-displacement linear STATIC"));
     }
+    if model.couplings().values().any(|c| c.kind == fieldcraft_model::CouplingKind::Distributing && c.dofs.list() == [1, 2, 3])
+        && !matches!(procedure, Procedure::Static {})
+    {
+        return Err(unsupported(b.line, "DISTRIBUTING DOFs 1..3 requires small-displacement linear STATIC"));
+    }
     if let Some(damping) = global_damping {
         let Procedure::Harmonic(h) = &mut procedure else {
             return Err(unsupported(b.line, "GLOBAL DAMPING outside harmonic analysis"));
