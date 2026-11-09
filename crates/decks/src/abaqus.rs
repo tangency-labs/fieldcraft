@@ -1215,6 +1215,17 @@ impl Deck {
         Ok(())
     }
 
+    fn pretension_initial_boundary(&mut self, model: &Model, r: &Resolved) -> Result<()> {
+        if model.pretensions().is_empty() { return Ok(()); }
+        self.comment("Unpreloaded state: hold each native pretension control DOF at zero before force loading");
+        self.line("*BOUNDARY");
+        for p in model.pretensions().values() {
+            let node = r.reference_point_nodes.get(&p.control).ok_or_else(|| Error::Unsupported { format: FORMAT, what: format!("pretension control `{}` has no node", p.control) })?;
+            self.line(&format!("{node}, 1, 1, 0.0"));
+        }
+        Ok(())
+    }
+
     /// One surface interaction (the friction) per contact, then its pair, and every general
     /// contact in the model's one `*CONTACT` definition.
     fn contacts(&mut self, model: &Model, r: &Resolved) -> Result<()> {
@@ -1573,7 +1584,18 @@ impl Deck {
                         self.line("*STATIC");
                         self.line("1.0, 1.0");
                     }
-                    self.step_boundaries(model, r, &base_bcs, &step.boundary_conditions)?;
+                    let release_initial_pretension = step.pretension.values().any(|c| matches!(c, fieldcraft_model::PretensionControl::Force { .. }))
+                        && index > 0
+                        && matches!(steps[index - 1].procedure, Procedure::Frequency { .. })
+                        && steps[index - 1].base_state.is_none();
+                    if release_initial_pretension {
+                        // Remove only the temporary Before-step control DOFs while
+                        // restating every ordinary support; OP=NEW must not drop them.
+                        self.line("*BOUNDARY, OP=NEW");
+                        self.boundary_lines(model, r, &step.boundary_conditions)?;
+                    } else {
+                        self.step_boundaries(model, r, &base_bcs, &step.boundary_conditions)?;
+                    }
                     if step.loads == base_loads {
                         self.comment("loads: as in the previous general step");
                     } else {
@@ -1628,6 +1650,9 @@ impl Deck {
                     }
                     self.out.push('\n');
                     self.step_boundaries(model, r, &base_bcs, &step.boundary_conditions)?;
+                    if step.base_state.is_none() && !steps[..index].iter().any(|s| matches!(s.procedure, Procedure::Static {} | Procedure::NonlinearStatic(_))) {
+                        self.pretension_initial_boundary(model, r)?;
+                    }
                     if !step.loads.is_empty() {
                         self.comment("loads have no effect on natural frequencies and are not written");
                     }
