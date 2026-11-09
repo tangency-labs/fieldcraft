@@ -47,6 +47,105 @@ fn supported_bar_and_exact_design_derivative() {
     p.set(&mut large, 1e9).unwrap();
     assert!((solve_static(&large, None, &Limits::default()).unwrap().displacement[i][0] - 0.001).abs() < 2e-9);
 }
+
+#[test]
+fn nonlinear_bar_keeps_reference_foundation_force_and_balance() {
+    // Independent axial StVK patch: P=E lambda (lambda^2-1)/2,
+    // u_tip=P/k + (lambda-1)L. Foundation work is P^2/(2k).
+    for finite in [false, true] {
+        let mut g = bar();
+        let mut step = g.model.step("Step").unwrap().clone();
+        step.procedure = Procedure::NonlinearStatic(NonlinearStatic { nonlinear_geometry: finite, ..NonlinearStatic::default() });
+        g.model.replace_step(step).unwrap();
+        let r = fieldcraft_solver::solve_nonlinear(&g.model, None, &Limits::default()).unwrap();
+        let mut stretch = 1.001_f64;
+        for _ in 0..8 {
+            stretch -= (500. * stretch * (stretch * stretch - 1.) - 1.) / (500. * (3. * stretch * stretch - 1.));
+        }
+        let extension = if finite { stretch - 1. } else { 0.001 };
+        for (label, p) in &g.param {
+            let i = r.nodes.binary_search(label).unwrap();
+            assert!((r.displacement[i][0] - (0.01 + p[0] * extension)).abs() < 1e-10);
+        }
+        assert!((r.applied_total[0] - 1.).abs() < 1e-12);
+        let bed_u = r.displacement[r.nodes.binary_search(&g.nodes_where(|p| near(p[0], 0.))[0]).unwrap()][0];
+        assert!((r.applied_total[0] + r.reaction_total[0] - 100. * bed_u).abs() < 1e-9);
+        assert!(!r.warnings.iter().any(|w| w.contains("loads and reactions differ")), "{:?}", r.warnings);
+        let history = r.nonlinear.as_ref().unwrap();
+        assert!(history.increments.iter().all(|i| i.converged));
+        assert_eq!(history.increments.last().unwrap().load_factor, 1.);
+        println!("finite={finite} bed_u={bed_u:.17e} stretch={stretch:.17e} history={history:?}");
+    }
+}
+
+#[test]
+fn reference_foundation_terminal_tangent_has_the_exact_rigid_translation_modes() {
+    // A rigid unit cube of density 2 on a unit-area bed has M=2, K=k.
+    // Translation causes no solid strain/stress stiffness. The support contributes
+    // exactly once in static equilibrium and in both perturbation procedures.
+    for direction in 0..3 {
+        let mut g = grid([1, 1, 1], ElementKind::Hex8, |p| p);
+        g.define(
+            iso(1000., 0.),
+            Some(2.),
+            full(),
+            Procedure::NonlinearStatic(NonlinearStatic { nonlinear_geometry: true, ..NonlinearStatic::default() }),
+        );
+        g.face_set("bed", |p| near(p[0], 0.));
+        g.model
+            .add_foundation(
+                "Bed",
+                Foundation { set: "bed".into(), normal: 100., tangential: 30., normal_damping: 0., tangential_damping: 0., loss_factor: 0. },
+            )
+            .unwrap();
+        g.model.add_reference_point("Motion", ReferencePoint { xyz: [0.5; 3], label: 100 }).unwrap();
+        g.model
+            .add_coupling("Rigid", Coupling { reference_point: "Motion".into(), set: "all".into(), kind: CouplingKind::Kinematic, dofs: Dofs::all() })
+            .unwrap();
+        let mut values = [Some(0.); 6];
+        values[direction] = None;
+        g.bc("Guide", BoundaryCondition::Displacement { target: Target::ReferencePoint("Motion".into()), values });
+        let mut vector = [0.; 3];
+        vector[direction] = 1.;
+        g.load("Probe", Load::Force { target: Target::ReferencePoint("Motion".into()), vector, distribution: Default::default() });
+        let mut modes = Step::new("Modes", Procedure::Frequency { modes: 1, min_hz: None, max_hz: None });
+        modes.base_state = Some("Step".into());
+        modes.boundary_conditions.insert("Guide".into());
+        g.model.add_step(modes, None).unwrap();
+        let mut response = Step::new(
+            "Response",
+            Procedure::Harmonic(Harmonic {
+                frequencies: Frequencies::List(vec![0., 0.5]),
+                method: Method::Direct,
+                damping: Damping::default(),
+                load_factors: Default::default(),
+            }),
+        );
+        response.base_state = Some("Step".into());
+        response.boundary_conditions.insert("Guide".into());
+        response.loads.insert("Probe".into());
+        g.model.add_step(response, None).unwrap();
+        let source = g.model.clone();
+        let limits = Limits::default();
+        let k = if direction == 0 { 100. } else { 30. };
+        let r = fieldcraft_solver::solve_nonlinear(&g.model, Some("Step"), &limits).unwrap();
+        for u in &r.displacement {
+            assert!((u[direction] - 1. / k).abs() < 1e-11);
+        }
+        let f = fieldcraft_solver::solve_frequency(&g.model, Some("Modes"), &Default::default(), &limits).unwrap();
+        assert_eq!(f.stats.equations, 1);
+        assert!((f.total_mass - 2.).abs() < 1e-12);
+        assert!((f.modes[0].eigenvalue - k / 2.).abs() < 1e-9);
+        let h = fieldcraft_solver::solve_harmonic(&g.model, Some("Response"), &limits).unwrap();
+        for frame in h.frames {
+            let omega = 2. * std::f64::consts::PI * frame.frequency;
+            let expected = 1. / (k - 2. * omega * omega);
+            assert!((frame.real[0][direction] - expected).abs() < 1e-10);
+            assert!(frame.relative_residual < 1e-10);
+        }
+        assert_eq!(g.model, source);
+    }
+}
 #[test]
 fn harmonic_zero_frequency_keeps_foundation_loss_and_direct_matches_modal() {
     let mut g = bar();

@@ -211,6 +211,12 @@ validity. BASE foundation modes were obtained, but the E+k identification reache
 its one-hour resource cap without returning an estimate. BASE E+k and independent
 third-party acceptance remain open; this is not yet a completed foundation milestone.
 
+Reference-surface foundations also enter nonlinear static equilibrium and its
+terminal modal/harmonic tangent, with global force balance using the same face
+operator. Independent StVK bar, rigid translation and continuous pretension-cut
+checks cover support force, current-value locking and stiffness counted once.
+Nonlinear Abaqus export keeps these supports as fixed reference matrices.
+
 Static joint identification now groups observations by step and shares each trial
 factorization across parameter columns. A prescribed-motion, zero-foundation-coefficient
 check compares the batched response/Jacobian bit for bit with scalar sensitivities.

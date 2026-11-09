@@ -197,6 +197,56 @@ fn fixed_without_a_predecessor_is_rejected() {
 }
 
 #[test]
+fn supported_continuous_cut_keeps_fixed_equilibrium_and_terminal_stiffness() {
+    // The positive cut trace rests on a unit-area reference foundation.
+    // For extensions y below and x above the cut: P(y)=F, P(x)+k_f x=F,
+    // q=x+y, K_perturb=P'(y)+P'(x)+k_f, with P from the StVK bar law.
+    let foundation = 2e5;
+    for force in [0., 1000.] {
+        let mut m = chain(force, true);
+        m.add_set("SupportedTrace", Set { faces: vec![ElementFace { element: 2, face: 1 }], ..Set::default() }).unwrap();
+        m.add_foundation(
+            "Bed",
+            Foundation {
+                set: "SupportedTrace".into(),
+                normal: foundation,
+                tangential: 0.,
+                normal_damping: 0.,
+                tangential_damping: 0.,
+                loss_factor: 0.,
+            },
+        )
+        .unwrap();
+        let source = m.clone();
+        let extension = |support: f64| {
+            let mut x = force / (1e6 + support);
+            for _ in 0..8 {
+                let stretch = 1. + x;
+                x -= (0.5e6 * stretch * (stretch * stretch - 1.) + support * x - force) / (0.5e6 * (3. * stretch * stretch - 1.) + support);
+            }
+            x
+        };
+        let (x, y) = (extension(foundation), extension(0.));
+        let pre = equilibrium(&m, "Preload", true);
+        let locked = equilibrium(&m, "Locked", true);
+        assert_eq!(pre.pretension[0].adjustment.to_bits(), locked.pretension[0].adjustment.to_bits());
+        for r in [&pre, &locked] {
+            assert!((r.pretension[0].adjustment - x - y).abs() < 1e-11);
+            assert!((r.pretension[0].section_force - force).abs() < 1e-6);
+            let middle = r.nodes.binary_search(&5).unwrap();
+            assert!((r.displacement[middle][2] + x).abs() < 1e-11);
+            assert!((r.reaction_total[2] - foundation * r.displacement[middle][2]).abs() < 1e-6);
+            assert!(r.nonlinear.as_ref().unwrap().increments.last().unwrap().converged);
+        }
+        let k = 0.5e6 * (3. * (1. + y).powi(2) - 1.) + 0.5e6 * (3. * (1. + x).powi(2) - 1.) + foundation;
+        let f = solve_frequency(&m, Some("Modes"), &FrequencyOptions::default(), &Limits::default()).unwrap();
+        assert!((f.modes[0].eigenvalue / (k / (2. / 3.)) - 1.).abs() < 1e-9);
+        assert_eq!(m, source);
+        println!("supported cut F={force} q={:.17e} eigenvalue={:.17e}", pre.pretension[0].adjustment, f.modes[0].eigenvalue);
+    }
+}
+
+#[test]
 fn zero_preload_degenerates_to_the_unsplit_frequency_and_response() {
     let cut = chain(0., false);
     let mut plain = cut.clone();

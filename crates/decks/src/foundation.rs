@@ -22,14 +22,18 @@ pub(crate) fn abaqus(model: &Model, r: &Resolved) -> Result<String> {
         if r.is_planar() {
             return Err(error("planar/axisymmetric foundations"));
         }
-        let matrix = f.tangential != 0. || f.normal_damping != 0. || f.tangential_damping != 0. || f.loss_factor != 0.;
+        // Matrix data stays fixed in a nonlinear step (Analysis Guide, "Using
+        // Matrices"). This preserves our reference normal and area even for a
+        // normal-only foundation; no follower support stiffness is introduced.
+        let finite = model.steps().iter().any(|s| matches!(&s.procedure, Procedure::NonlinearStatic(n) if n.nonlinear_geometry));
+        let matrix = finite || f.tangential != 0. || f.normal_damping != 0. || f.tangential_damping != 0. || f.loss_factor != 0.;
         for s in model.steps() {
             match &s.procedure {
-                Procedure::Static {} | Procedure::Frequency { .. } => (),
+                Procedure::Static {} | Procedure::NonlinearStatic(_) | Procedure::Frequency { .. } => (),
                 Procedure::Harmonic(h) if !matrix || matches!(h.method, fieldcraft_model::harmonic::Method::Direct) => (),
                 _ => {
                     return Err(error(
-                        "only linear static, frequency and direct harmonic matrix usage are supported; modal matrix usage requires SIM architecture",
+                        "only static, nonlinear static, frequency and direct harmonic matrix usage are supported; modal matrix usage requires SIM architecture",
                     ));
                 }
             }
@@ -179,5 +183,35 @@ mod tests {
             assert!((a - b).abs() < 1e-12);
         }
         assert!(refuse("Nastran", &m).unwrap_err().to_string().contains("Bed"));
+    }
+
+    #[test]
+    fn nonlinear_foundation_export_keeps_the_reference_matrix() {
+        for tangential in [0., 50.] {
+            let mut m = model();
+            let mut f = m.foundation("Bed").unwrap().clone();
+            f.tangential = tangential;
+            m.replace_foundation("Bed", f).unwrap();
+            let linear = abaqus(&m, &m.resolve().unwrap()).unwrap();
+            let mut step = m.step("S").unwrap().clone();
+            step.procedure = Procedure::NonlinearStatic(NonlinearStatic { nonlinear_geometry: true, ..NonlinearStatic::default() });
+            m.replace_step(step).unwrap();
+            let finite = abaqus(&m, &m.resolve().unwrap()).unwrap();
+            assert!(finite.contains("*MATRIX ASSEMBLE, STIFFNESS="));
+            assert!(!finite.contains("*FOUNDATION\n"));
+            if tangential != 0. {
+                assert_eq!(linear, finite);
+            }
+            // A constant unit normal displacement of a triangle of area 1/2
+            // produces total force k_n/2, including symmetric off-diagonals.
+            let sum: f64 = finite
+                .lines()
+                .filter_map(|line| {
+                    let v: Vec<_> = line.split(',').map(str::trim).collect();
+                    (v.len() == 5 && v[1] == "3" && v[3] == "3").then(|| v[4].parse::<f64>().unwrap() * if v[0] == v[2] { 1. } else { 2. })
+                })
+                .sum();
+            assert!((sum - 50.).abs() < 1e-12);
+        }
     }
 }

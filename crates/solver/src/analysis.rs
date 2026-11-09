@@ -684,23 +684,7 @@ fn static_on_with_order(setup: &Setup<'_>, limits: &Limits, standalone: bool) ->
     let von_mises = stress.iter().map(von_mises).collect();
     let scale = crate::system::balance_scale(&applied_total, &reaction_total, &reaction);
     let mut ground = mesh.discrete.ground_force(&u, mesh);
-    for f in &mesh.foundations {
-        let data = fieldcraft_fem::foundation::matrix(&f.xyz, f.normal, f.tangential).map_err(|e| Error::Invalid(e.to_string()))?;
-        let dofs: Vec<_> = f
-            .nodes
-            .iter()
-            .flat_map(|n| (0..3).map(move |c| (*n, c)))
-            .map(|(n, c)| {
-                let kind = fieldcraft_fem::DofKind::translation(c).ok_or_else(|| Error::Internal("foundation direction".into()))?;
-                mesh.dof(n, kind)
-            })
-            .collect::<Result<_>>()?;
-        for (i, row) in data.chunks(dofs.len()).enumerate() {
-            for (value, dof) in row.iter().zip(&dofs) {
-                ground[i % 3] -= value * u.get(*dof).copied().unwrap_or(0.);
-            }
-        }
-    }
+    crate::foundation::add_ground_force(mesh, &u, &mut ground)?;
     let axishell = mesh.structural.iter().any(|e| matches!(e.section, crate::system::Section::Axishell { .. }));
     let imbalance = (0..3).filter(|c| !axishell || *c == 1).map(|c| (applied_total[c] + reaction_total[c] + ground[c]).abs()).fold(0.0, f64::max);
     if scale > 0.0 && imbalance > crate::system::BALANCE_TOLERANCE * scale {
