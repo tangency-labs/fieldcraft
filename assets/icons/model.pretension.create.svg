@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="24" height="24" viewBox="0 0 24 24">
+  <title>model.pretension.create</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <rect x="7" y="3" width="10" height="4" fill="#2d4e70" stroke="#dde2ea" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="9.5" y="7" width="5" height="14" fill="#2d4e70" stroke="#dde2ea" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <line x1="6.5" y1="14" x2="17.5" y2="14" fill="none" stroke="#4f9ce8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="2 1.5"/>
+    <path d="M3 12.5 L3 6.5 M4.2 8.69 L3 6.5 L1.8 8.69" fill="none" stroke="#f0b44a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M3 15.5 L3 21.5 M1.8 19.31 L3 21.5 L4.2 19.31" fill="none" stroke="#f0b44a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M21 12.5 L21 6.5 M22.2 8.69 L21 6.5 L19.8 8.69" fill="none" stroke="#f0b44a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M21 15.5 L21 21.5 M19.8 19.31 L21 21.5 L22.2 19.31" fill="none" stroke="#f0b44a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>
