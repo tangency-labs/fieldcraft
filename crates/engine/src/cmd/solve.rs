@@ -15,8 +15,7 @@ use fieldcraft_model::FluidDomain;
 use fieldcraft_model::units::Quantity;
 use fieldcraft_parallel as parallel;
 use fieldcraft_solver::{
-    FrequencyOptions, Limits, Location, MassKind, StaticResult, StepResult as ImplicitResult, solve_buckle, solve_frequency, solve_heat,
-    solve_nonlinear, solve_static,
+    FrequencyOptions, Limits, Location, MassKind, StaticResult, StepResult as ImplicitResult, solve_buckle, solve_heat, solve_nonlinear, solve_static,
 };
 use serde_json::{Value, json};
 
@@ -106,7 +105,7 @@ pub const HEAT: CommandSpec = CommandSpec {
 pub const FREQUENCY: CommandSpec = CommandSpec {
     id: "solve.frequency",
     label: "Solve Frequency Step",
-    params: r#"{"step": "Modes", "mass": "consistent|lumped", "shift": 0.0, "max_dofs": 6000000, "max_factor_entries": 400000000, "max_iterations": 3000, "threads": 8} — natural frequencies and mode shapes of a frequency step (its modes and range); `max_iterations` caps the Lanczos vectors; the result stays in the session; `max_factor_entries` and `threads` as for solve.static"#,
+    params: r#"{"step": "Modes", "mass": "consistent|lumped", "shift": 0.0, "max_dofs": 6000000, "max_factor_entries": 400000000, "max_iterations": 3000, "threads": 8} — natural frequencies and mode shapes of a frequency step (its modes and range); `max_iterations` caps basis vectors, not block iterations. Returns actual block iterations/cap status and per-mode ||K phi - lambda M phi||/||K phi|| on the actual reduced unshifted pencil; a zero denominator is null with a reason, near-rigid ratios are flagged. Diagnostics are in this reply, not persisted in legacy results.bin; numeric results stay in the session; `max_factor_entries` and `threads` as for solve.static"#,
     form: Some(super::forms::SOLVE_FREQUENCY),
     kind: CommandKind::Model,
     requires: &[Requirement::Analysable, Requirement::ElementMaterial, Requirement::ElementSection, Requirement::Step],
@@ -544,18 +543,22 @@ fn run_frequency(s: &mut Session, p: &Value) -> Result<Value> {
     let mass = opt::<MassKind>(p, "mass")?.unwrap_or_default();
     let shift = opt::<f64>(p, "shift")?;
     let model = &s.model;
-    let r = with_threads(threads(s, p)?, || solve_frequency(model, step.as_deref(), &FrequencyOptions { mass, shift }, &limits))?;
+    let (r, convergence) = with_threads(threads(s, p)?, || {
+        fieldcraft_solver::solve_frequency_report(model, step.as_deref(), &FrequencyOptions { mass, shift }, &limits)
+    })?;
     let summary = json!({
         "step": r.step,
         "dofs": r.stats.dofs,
         "equations": r.stats.equations,
         "lanczos_vectors": r.stats.lanczos_vectors,
         "total_mass": r.total_mass,
+        "convergence": convergence,
         "modes": r.modes.iter().enumerate().map(|(i, m)| json!({
             "mode": i + 1,
             "frequency": m.frequency,
             "eigenvalue": m.eigenvalue,
             "effective_mass": m.effective_mass,
+            "equation_residual": convergence.modes.get(i),
         })).collect::<Vec<_>>(),
         "warnings": r.warnings,
     });

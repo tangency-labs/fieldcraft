@@ -33,6 +33,7 @@ pub mod cholesky;
 pub mod complex;
 pub mod constraints;
 pub mod contact;
+pub mod convergence;
 pub mod discrete;
 pub mod eigen;
 pub mod foundation;
@@ -54,7 +55,7 @@ pub mod transient;
 
 pub use analysis::{
     ElementStress, FrequencyOptions, FrequencyResult, Location, MassKind, Mode, PointResult, StaticResult, Stats, StepResult, solve_frequency,
-    solve_static,
+    solve_frequency_report, solve_static,
 };
 pub use buckle::{Buckling, solve_buckle};
 pub use harmonic::{HarmonicResult, MatrixExport, export_matrices, solve_harmonic};

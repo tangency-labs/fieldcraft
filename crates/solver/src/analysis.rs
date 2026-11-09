@@ -669,6 +669,16 @@ impl Operator for ShiftInvert<'_> {
     fn solve(&self, x: &mut [f64]) -> Result<()> {
         self.factor.solve(x)
     }
+    fn apply_block(&self, x: &[Vec<f64>], mx: &[Vec<f64>]) -> Result<Vec<Vec<f64>>> {
+        // Reusing a factor stream wins reliably with one worker. With more workers the
+        // original independent solves exploit RHS parallelism; both keep identical sums.
+        if parallel::current_threads() > 1 {
+            return crate::eigen::independent_block(self, x, mx);
+        }
+        let mut rhs = mx.to_vec();
+        self.factor.solve_block(&mut rhs)?;
+        Ok(rhs)
+    }
 }
 
 /// Block size of the Lanczos iteration: enough for the six rigid-body modes of a free body.
@@ -692,13 +702,26 @@ pub(crate) const TOLERANCE: f64 = 1e-9; // unit-factors: a relative residual
 /// lowest natural modes within the step's frequency range.
 pub fn solve_frequency(model: &Model, step: Option<&str>, options: &FrequencyOptions, limits: &Limits) -> Result<FrequencyResult> {
     let _timing = crate::timing::Span::new("solve_frequency");
-    frequency_impl(model, step, options, limits, false).map(|(result, _)| result)
+    frequency_impl(model, step, options, limits, false, false).map(|(result, _, _)| result)
+}
+
+/// Solve and report the actual unshifted reduced-pencil residuals and block iterations.
+/// Diagnostics are returned separately: legacy stored numeric results keep their format.
+pub fn solve_frequency_report(
+    model: &Model,
+    step: Option<&str>,
+    options: &FrequencyOptions,
+    limits: &Limits,
+) -> Result<(FrequencyResult, crate::convergence::ModalConvergence)> {
+    let _timing = crate::timing::Span::new("solve_frequency");
+    let (result, _, convergence) = frequency_impl(model, step, options, limits, false, true)?;
+    Ok((result, convergence.ok_or_else(|| Error::Internal("frequency diagnostics missing".into()))?))
 }
 
 /// Reuse the actual physical mass operator for modal derivative contractions.
 /// Ordinary frequency solves still release it before factorization.
 pub(crate) fn frequency_with_mass(model: &Model, step: Option<&str>, options: &FrequencyOptions, limits: &Limits) -> Result<(FrequencyResult, Csr)> {
-    let (result, mass) = frequency_impl(model, step, options, limits, true)?;
+    let (result, mass, _) = frequency_impl(model, step, options, limits, true, false)?;
     Ok((result, mass.ok_or_else(|| Error::Internal("retained modal mass".into()))?))
 }
 
@@ -708,7 +731,8 @@ fn frequency_impl(
     options: &FrequencyOptions,
     limits: &Limits,
     retain_mass: bool,
-) -> Result<(FrequencyResult, Option<Csr>)> {
+    diagnostics: bool,
+) -> Result<(FrequencyResult, Option<Csr>, Option<crate::convergence::ModalConvergence>)> {
     // A job cancelled before it starts stops here, before any setup work.
     fieldcraft_model::progress::check()?;
     let resolved: Resolved = model.resolve()?;
@@ -784,7 +808,7 @@ fn frequency_impl(
             Err(e) => return Err(factor_error(e, &mesh, &red)),
         },
     };
-    drop(kff);
+    let residual_k = diagnostics.then_some(kff);
     let two_pi = 2.0 * std::f64::consts::PI;
     let wanted = Wanted {
         count: usize::try_from(modes).unwrap_or(usize::MAX).min(neq),
@@ -794,6 +818,25 @@ fn frequency_impl(
     let max_basis = lanczos_basis(limits, neq);
     let op = ShiftInvert { m: &mff, factor: &chol };
     let pairs = lanczos(&op, shift, wanted, BLOCK, max_basis, TOLERANCE)?;
+    let convergence = if let Some(k) = residual_k {
+        let _timing = crate::timing::Span::new("frequency_actual_residuals");
+        let residuals = pairs
+            .values
+            .iter()
+            .zip(&pairs.vectors)
+            .map(|(&lambda, phi)| crate::convergence::frequency_residual(&k, &mff, lambda, phi))
+            .collect::<Result<Vec<_>>>()?;
+        Some(crate::convergence::ModalConvergence {
+            iterations: pairs.iterations,
+            basis_vectors: pairs.basis,
+            basis_limit: pairs.basis_limit,
+            basis_limit_reached: pairs.basis_limit_reached,
+            full_space_reached: pairs.full_space_reached,
+            modes: residuals,
+        })
+    } else {
+        None
+    };
     // Participation: Γ_d = φᵀ M r_d with r_d the unit translation along d on the free equations
     // (mesh and reference point translations).
     let directions: Vec<Option<usize>> = red.eq_dof.iter().map(|dof| mesh.kind(*dof).and_then(DofKind::direction)).collect();
@@ -840,6 +883,7 @@ fn frequency_impl(
             buckling: None,
         },
         retained_mass,
+        convergence,
     ))
 }
 

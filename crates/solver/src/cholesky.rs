@@ -1300,6 +1300,85 @@ impl Factor {
         Ok(Factor { n: symbolic.n, perm: symbolic.perm.clone(), structure: symbolic.structure.clone(), values, entries: symbolic.entries })
     }
 
+    /// Solve independent right-hand sides with factor entries reused across up to eight
+    /// columns. Each lane preserves solve_supernodes' column and row subtraction order.
+    /// This is the multiple-RHS triangular solve of Golub–Van Loan §3.1; vectorization
+    /// is across independent RHS lanes, never a reassociation of a dot product.
+    pub fn solve_block(&self, rhs: &mut [Vec<f64>]) -> Result<()> {
+        let _timing = crate::timing::Span::new("backsolve_block");
+        if rhs.iter().any(|b| b.len() != self.n) {
+            return Err(Error::Internal("block right-hand side length".into()));
+        }
+        for group in rhs.chunks_mut(8) {
+            let mut x = vec![[0.0; 8]; self.n];
+            for (&p, row) in self.perm.iter().zip(&mut x) {
+                for (v, b) in row.iter_mut().zip(group.iter()) {
+                    *v = b.get(p).copied().unwrap_or(0.0);
+                }
+            }
+            for (k, values) in self.values.iter().enumerate() {
+                let rows = self.structure.rows(k);
+                let (m, f, w) = (rows.len(), self.structure.cols(k).start, self.structure.cols(k).len());
+                let t = Panel { m, data: values };
+                for q in 0..w {
+                    let y = x.get_mut(f + q).ok_or_else(|| Error::Internal("block solve column".into()))?;
+                    let d = t.at(q, q);
+                    for v in y.iter_mut() {
+                        *v /= d;
+                    }
+                    let yq = *y;
+                    for (row, &l) in x.get_mut(f + q + 1..f + w).unwrap_or_default().iter_mut().zip(t.column(q, q + 1, w - q - 1)) {
+                        for (v, y) in row.iter_mut().zip(yq) {
+                            *v -= l * y;
+                        }
+                    }
+                    for (&r, &l) in rows.get(w..).unwrap_or_default().iter().zip(t.column(q, w, m - w)) {
+                        if let Some(row) = x.get_mut(r) {
+                            for (v, y) in row.iter_mut().zip(yq) {
+                                *v -= l * y;
+                            }
+                        }
+                    }
+                }
+            }
+            for (k, values) in self.values.iter().enumerate().rev() {
+                let rows = self.structure.rows(k);
+                let (m, f, w) = (rows.len(), self.structure.cols(k).start, self.structure.cols(k).len());
+                let t = Panel { m, data: values };
+                for q in (0..w).rev() {
+                    let mut sum = x.get(f + q).copied().ok_or_else(|| Error::Internal("block solve column".into()))?;
+                    for (row, &l) in x.get(f + q + 1..f + w).unwrap_or_default().iter().zip(t.column(q, q + 1, w - q - 1)) {
+                        for (v, y) in sum.iter_mut().zip(row) {
+                            *v -= l * y;
+                        }
+                    }
+                    for (&r, &l) in rows.get(w..).unwrap_or_default().iter().zip(t.column(q, w, m - w)) {
+                        if let Some(row) = x.get(r) {
+                            for (v, y) in sum.iter_mut().zip(row) {
+                                *v -= l * y;
+                            }
+                        }
+                    }
+                    let d = t.at(q, q);
+                    for v in &mut sum {
+                        *v /= d;
+                    }
+                    if let Some(row) = x.get_mut(f + q) {
+                        *row = sum;
+                    }
+                }
+            }
+            for (&p, row) in self.perm.iter().zip(&x) {
+                for (b, v) in group.iter_mut().zip(row) {
+                    if let Some(y) = b.get_mut(p) {
+                        *y = *v;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Entries in L.
     pub fn entries(&self) -> usize {
         self.entries
@@ -1316,6 +1395,27 @@ impl Factor {
 mod tests {
     use super::*;
     use crate::sparse::Csr;
+
+    #[test]
+    fn multiple_rhs_preserves_scalar_solve_bits() {
+        let n = 65;
+        let a: Vec<Vec<f64>> =
+            (0..n).map(|i| (0..n).map(|j| if i == j { 100.0 } else { ((i.min(j) * 7 + i.max(j) * 13) % 23) as f64 / 23.0 }).collect()).collect();
+        let factor = Factor::new(&UpperColumns::from_symmetric(&dense_to_csr(&a)), usize::MAX).unwrap();
+        for width in [0, 1, 6, 9] {
+            let rhs: Vec<Vec<f64>> = (0..width).map(|k| (0..n).map(|j| ((j * 7 + k * 11) % 31) as f64 - 15.0).collect()).collect();
+            let mut reference = rhs.clone();
+            for b in &mut reference {
+                factor.solve(b).unwrap();
+            }
+            for threads in [1, 2, 7] {
+                let mut got = rhs.clone();
+                parallel::with_threads(threads, || factor.solve_block(&mut got)).unwrap();
+                assert!(got.iter().flatten().zip(reference.iter().flatten()).all(|(a, b)| a.to_bits() == b.to_bits()));
+            }
+        }
+        assert!(factor.solve_block(&mut [vec![1.0; n - 1]]).is_err());
+    }
 
     #[test]
     fn memory_budget_refuses_before_numeric_and_preserves_values() {
