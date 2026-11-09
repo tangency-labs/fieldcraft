@@ -339,7 +339,9 @@ pub(crate) fn pattern(mesh: &Mesh) -> (NodeGraph, Vec<usize>) {
 // Buckling, nonlinear and other callers retain the validated legacy choice.
 fn pattern_with_order(mesh: &Mesh, experiment: bool) -> (NodeGraph, Vec<usize>) {
     let order_fn = if experiment { crate::ordering::linear_order } else { fill_reducing_order };
+    let graph_timing = crate::timing::Span::new("ordering_node_graph");
     let graph = NodeGraph::new(mesh.block_count(), mesh.blocks());
+    drop(graph_timing);
     // The order covers the mesh nodes; reference point equations follow them.
     let n = mesh.labels.len();
     let order = if graph.adjacency.len() == n {

@@ -106,6 +106,7 @@ pub fn nested_dissection(xyz: &[[f64; 3]], adjacency: &[Vec<usize>]) -> Vec<usiz
 /// Stable reference order for the physical random starting block. Kept separate
 /// from the experimental factor order so a fill choice does not change that block.
 pub fn fill_reducing_order(xyz: &[[f64; 3]], adjacency: &[Vec<usize>]) -> Vec<usize> {
+    let _timing = crate::timing::Span::new("ordering_legacy");
     let planes = nested_dissection(xyz, adjacency);
     if adjacency.len() <= LEAF {
         return planes;
