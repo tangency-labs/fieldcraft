@@ -18,7 +18,7 @@ fn bar() -> Session {
         {"command":"model.set.create","params":{"name":"root","geometry":[{"body":"Bar","face":"left"}]}},
         {"command":"model.set.create","params":{"name":"end","geometry":[{"body":"Bar","face":"right"}]}},
         {"command":"model.material.create","params":{"name":"Steel","elastic":{"type":"isotropic","young":"210 GPa","poisson":0.3},"density":"7850 kg/m^3"}},
-        {"command":"model.section.create","params":{"name":"BarSection","set":"all","material":"Steel","kind":{"type":"solid"},"formulation":{"incompatible_modes":true}}}
+        {"command":"model.section.create","params":{"name":"BarSection","set":"all","material":"Steel","kind":{"type":"solid"},"formulation":{"b_bar":true}}}
     ])).unwrap();
     constrain(&mut s);
     s
@@ -526,7 +526,7 @@ fn unmapped_constraints_and_materials_survive_reopen_without_runnable_steps() {
     for (keyword, block) in [
         ("TIE", "*TIE,NAME=Joint\nSlave,Master\n"),
         ("COUPLING", "*COUPLING,CONSTRAINT NAME=Joint,REF NODE=1,SURFACE=Slave,ORIENTATION=Unmapped\n*KINEMATIC\n1,6\n"),
-        ("PLASTIC", "*MATERIAL,NAME=M\n*ELASTIC\n1000,.3\n*PLASTIC\n10,0\n"),
+        ("EXPANSION", "*MATERIAL,NAME=M\n*ELASTIC\n1000,.3\n*EXPANSION\n0.00001\n"),
         ("TRANSFORM", "*TRANSFORM,NSET=All,TYPE=R\n0,1,0,-1,0,0\n"),
     ] {
         let dir = folder();
@@ -604,7 +604,7 @@ fn native_constraint_patch() -> Session {
         {"command":"model.set.create","params":{"name":"Main","faces":[{"element":1,"face":2}]}},
         {"command":"model.set.create","params":{"name":"Secondary","faces":[{"element":2,"face":1}]}},
         {"command":"model.material.create","params":{"name":"M","elastic":{"type":"isotropic","young":1000,"poisson":0},"density":1}},
-        {"command":"model.section.create","params":{"name":"S","set":"All","material":"M","kind":{"type":"solid"}}},
+        {"command":"model.section.create","params":{"name":"S","set":"All","material":"M","kind":{"type":"solid"},"formulation":{"b_bar":true}}},
         {"command":"interaction.tie","params":{"name":"Glue","main":"Main","secondary":"Secondary","position_tolerance":0.01}},
         {"command":"model.reference_point.create","params":{"name":"RP","xyz":[0.5,0.5,2],"label":99}},
         {"command":"model.coupling.create","params":{"name":"Rigid","reference_point":"RP","set":"Top","kind":"kinematic"}},
@@ -665,7 +665,8 @@ fn imported_constraints_named_rejections_preserve_source_and_bad_references_are_
         ("SURFACE=Pad", "SURFACE=Pad,ORIENTATION=Local", "ORIENTATION"),
         ("SURFACE=Pad", "SURFACE=Pad,INFLUENCE RADIUS=1", "INFLUENCERADIUS"),
         ("*KINEMATIC\n1,6", "*DISTRIBUTING,COUPLING=STRUCTURAL\n1,6", "STRUCTURAL"),
-        ("*KINEMATIC\n1,6", "*KINEMATIC\n1,3", "partial DOFs"),
+        ("*KINEMATIC\n1,6", "*KINEMATIC\n4,6", "at least one translation"),
+        ("*KINEMATIC\n1,6", "*DISTRIBUTING\n1,5", "partial rotational release"),
     ] {
         let text = constraint_input().replace(from, to);
         std::fs::write(&input, &text).unwrap();
@@ -856,4 +857,681 @@ fn imported_mass_requirement_row_sum_is_not_native_hrz_on_a_tapered_hex() {
         assert!((row - h).abs() > 0.01, "lumped must not be reported as row-sum");
     }
     println!("analytic tapered hex: total mass=1.5 kg; row_sum=[1/6 x4,5/24 x4]; native_HRZ=[5/32 x4,7/32 x4]; max_difference=1/96 kg");
+}
+
+#[test]
+fn section_mass_policy_is_effective_after_native_reopen_and_deck_round_trip() {
+    let dir = folder();
+    let input = dir.join("mass.inp");
+    let text = "*NODE\n1,0,0,0\n2,1,0,0\n3,1,1,0\n4,0,1,0\n5,0,0,1\n6,2,0,1\n7,2,1,1\n8,0,1,1\n*ELEMENT,TYPE=C3D8,ELSET=Body\n1,1,2,3,4,5,6,7,8\n*NSET,NSET=Base\n1,2,3,4\n*MATERIAL,NAME=M\n*ELASTIC\n1000,0\n*DENSITY\n1\n*SOLID SECTION,ELSET=Body,MATERIAL=M\n** FIELDCRAFT LUMPED MASS, ELSET=Body, STRATEGY=ROW_SUM\n*STEP,NAME=Modes\n*FREQUENCY\n1\n*BOUNDARY\nBase,1,3\n*END STEP\n";
+    std::fs::write(&input, text).unwrap();
+    let mut s = Session::default();
+    let read = s.execute("deck.read", &json!({"format":"abaqus","path":input,"units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(read["native_lumped_mass_policies"][0]["strategy"], "row_sum");
+    let a = s.execute("solve.frequency", &json!({"step":"Modes"})).unwrap();
+    let b = s.execute("solve.frequency", &json!({"step":"Modes","mass":"consistent"})).unwrap();
+    assert_eq!(a, b, "default remains consistent");
+    let row = s.execute("solve.frequency", &json!({"step":"Modes","mass":"lumped"})).unwrap();
+    let expected = row["modes"][0]["frequency"].as_f64().unwrap();
+    assert_eq!(row["mass"], "lumped");
+    let saved = dir.join("mass.fieldcraft");
+    s.execute("file.save_as", &json!({"path":saved,"results":true})).unwrap();
+    s.execute("file.new", &json!({})).unwrap();
+    s.execute("file.open", &json!({"path":saved})).unwrap();
+    assert!(s.result("Modes").is_some(), "frequency result and unchanged format remain readable");
+    let replay = dir.join("replay.inp");
+    s.execute("deck.source.write", &json!({"path":replay})).unwrap();
+    assert_eq!(std::fs::read_to_string(replay).unwrap(), text);
+    for phase in 0..2 {
+        let reply = s.execute("solve.frequency", &json!({"step":"Modes","mass":"lumped"})).unwrap();
+        let actual = reply["modes"][0]["frequency"].as_f64().unwrap();
+        assert!((actual - expected).abs() < 1e-12);
+        println!("native row_sum phase={phase} frequency={actual:.16e} Hz");
+        if phase == 0 {
+            let path = dir.join("normalized.inp");
+            s.execute("deck.write", &json!({"path":path,"format":"abaqus"})).unwrap();
+            assert!(std::fs::read_to_string(&path).unwrap().contains("FIELDCRAFT LUMPED MASS"));
+            s.execute("deck.read", &json!({"path":path,"format":"abaqus","units":"m-kg-s-N-Pa"})).unwrap();
+        }
+    }
+    let (name, section) = s.model.sections().iter().next().unwrap();
+    let mut edit = serde_json::to_value(section).unwrap();
+    edit["name"] = json!(name);
+    edit["formulation"]["lumped_mass"] = json!("hrz");
+    s.execute("model.section.edit", &edit).unwrap();
+    let hrz = s.execute("solve.frequency", &json!({"step":"Modes","mass":"lumped"})).unwrap();
+    let hrz = hrz["modes"][0]["frequency"].as_f64().unwrap();
+    assert!((hrz - expected).abs() > expected * 0.01, "the selected mass changes the actual eigenproblem");
+    assert!((expected / hrz - (21.0_f64 / 20.0).sqrt()).abs() < 1e-12, "the free top-node masses differ by exactly 21/20");
+    println!("mass-only tapered hex: row_sum={expected:.16e} Hz HRZ={hrz:.16e} Hz");
+    for bad in [text.replace("STRATEGY=ROW_SUM", "STRATEGY=GUESS"), text.replace("ELSET=Body, STRATEGY", "ELSET=Missing, STRATEGY")] {
+        std::fs::write(&input, bad).unwrap();
+        let before = s.clone();
+        assert!(s.execute("deck.read", &json!({"path":input,"format":"abaqus"})).is_err());
+        assert_unchanged(&s, &before);
+    }
+
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn bbar_two_bricks_reopen_and_round_trip_preserve_response_and_identity() {
+    let dir = folder();
+    let input = dir.join("bbar.inp");
+    let text = r#"*NODE
+1,0,0,0
+2,1,0,0
+3,1,1,0
+4,0,1,0
+5,0,0,1
+6,1,0,1
+7,1,1,1
+8,0,1,1
+9,0,0,1
+10,1,0,1
+11,1,1,1
+12,0,1,1
+13,0,0,2
+14,1,0,2
+15,1,1,2
+16,0,1,2
+*ELEMENT,TYPE=C3D8,ELSET=All
+1,1,2,3,4,5,6,7,8
+2,9,10,11,12,13,14,15,16
+*NSET,NSET=Base
+1,2,3,4
+*NSET,NSET=Top
+13,14,15,16
+*SURFACE,TYPE=ELEMENT,NAME=Main
+1,S2
+*SURFACE,TYPE=ELEMENT,NAME=Secondary
+2,S1
+*MATERIAL,NAME=M
+*ELASTIC
+1000,0
+*DENSITY
+1
+*SOLID SECTION,ELSET=All,MATERIAL=M
+*TIE,NAME=Glue,ADJUST=NO,POSITION TOLERANCE=.01
+Secondary,Main
+*STEP,NAME=Pull
+*STATIC
+*BOUNDARY
+Base,1,3
+*CLOAD
+13,3,.35
+14,3,.15
+15,3,.15
+16,3,.35
+*END STEP
+"#;
+    std::fs::write(&input, text).unwrap();
+    let mut s = Session::default();
+    s.execute("deck.read", &json!({"path":input,"format":"abaqus","units":"m-kg-s-N-Pa"})).unwrap();
+    let mut reference = None;
+    for phase in 0..3 {
+        assert!(s.model.sections().values().all(|sec| sec.formulation.b_bar));
+        s.execute("solve.static", &json!({"step":"Pull"})).unwrap();
+        if let Some(ref baseline) = reference {
+            assert_constraint_results(baseline, &s);
+        } else {
+            reference = Some(s.clone());
+        }
+        let crate::StepResult::Implicit(fieldcraft_solver::StepResult::Static(r)) = s.result("Pull").unwrap().as_ref() else { panic!("static") };
+        let mut mean = [0.; 3];
+        let mut theta = 0.;
+        for id in 13..=16 {
+            let i = r.nodes.binary_search(&id).unwrap();
+            let u = r.displacement[i];
+            for j in 0..3 {
+                mean[j] += u[j] / 4.;
+            }
+            let x = if id == 13 || id == 16 { -0.5 } else { 0.5 };
+            theta -= x * u[2];
+        }
+        println!("B-bar two bricks phase={phase}: mean={mean:?}, theta_y={theta:.16e}");
+        if phase == 0 {
+            let path = dir.join("bbar.fieldcraft");
+            s.execute("file.save_as", &json!({"path":path,"results":true})).unwrap();
+            s.execute("file.new", &json!({})).unwrap();
+            s.execute("file.open", &json!({"path":path})).unwrap();
+            let replay = dir.join("source.inp");
+            s.execute("deck.source.write", &json!({"path":replay})).unwrap();
+            assert_eq!(std::fs::read_to_string(replay).unwrap(), text);
+        }
+        if phase == 1 {
+            let path = dir.join("normal.inp");
+            s.execute("deck.write", &json!({"path":path,"format":"abaqus"})).unwrap();
+            s.execute("deck.read", &json!({"path":path,"format":"abaqus","units":"m-kg-s-N-Pa"})).unwrap();
+        }
+    }
+    // Native standard stays standard and is refused by the Abaqus writer, rather than relabelled.
+    let (name, sec) = s.model.sections().iter().next().unwrap();
+    let mut edit = serde_json::to_value(sec).unwrap();
+    edit["name"] = json!(name);
+    edit["formulation"]["b_bar"] = json!(false);
+    s.execute("model.section.edit", &edit).unwrap();
+    s.execute("solve.static", &json!({"step":"Pull"})).unwrap();
+    let error = s.execute("deck.write", &json!({"path":dir.join("standard.inp"),"format":"abaqus"})).unwrap_err().to_string();
+    assert!(error.contains("standard full Hex8"), "{error}");
+    for incompatible in [false, true] {
+        let (name, sec) = s.model.sections().iter().next().unwrap();
+        let mut section = sec.clone();
+        let name = name.clone();
+        section.formulation.incompatible_modes = incompatible;
+        s.model.replace_section(&name, section).unwrap();
+        s.execute("solve.static", &json!({"step":"Pull"})).unwrap();
+        let crate::StepResult::Implicit(fieldcraft_solver::StepResult::Static(r)) = s.result("Pull").unwrap().as_ref() else { panic!("static") };
+        let mut mean = [0.; 3];
+        let mut theta = 0.;
+        for id in 13..=16 {
+            let u = r.displacement[r.nodes.binary_search(&id).unwrap()];
+            for j in 0..3 {
+                mean[j] += u[j] / 4.;
+            }
+            let x = if id == 13 || id == 16 { -0.5 } else { 0.5 };
+            theta -= x * u[2];
+        }
+        println!(
+            "Native two bricks incompatible={incompatible}: mean={mean:?}, theta_y={theta:.16e}; beam theory ux=0.0048, uz=0.002, theta_y=0.0048 (limited rectangular nu=0 case)"
+        );
+    }
+
+    let before = s.clone();
+    std::fs::write(&input, text.replace("TYPE=C3D8,", "TYPE=C3D8IH,")).unwrap();
+    let error = s.execute("deck.read", &json!({"path":input,"format":"abaqus","units":"m-kg-s-N-Pa"})).unwrap_err().to_string();
+    assert!(error.contains("C3D8IH"), "{error}");
+    assert_unchanged(&s, &before);
+    let replay = dir.join("retained-after-refusal.inp");
+    s.execute("deck.source.write", &json!({"path":replay})).unwrap();
+    assert!(std::fs::read_to_string(replay).unwrap().contains("TYPE=C3D8"));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+fn property_closure(text: &str, native: &mut Session, expected: f64) {
+    let dir = folder();
+    let input = dir.join("input.inp");
+    std::fs::write(&input, text).unwrap();
+    native.execute("solve.static", &json!({"step":"Pull"})).unwrap();
+    let mut s = Session::default();
+    let reply = s.execute("deck.read", &json!({"path":input,"format":"abaqus","units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(reply["analysis_complete"], true, "{reply}");
+    for phase in 0..3 {
+        let reply = s.execute("solve.static", &json!({"step":"Pull"})).unwrap();
+        let u = reply["max_displacement"]["value"].as_f64().unwrap();
+        assert!((u - expected).abs() < 1e-12, "phase={phase}, u={u}, expected={expected}");
+        assert_constraint_results(native, &s);
+        if phase == 0 {
+            let saved = dir.join("saved.fieldcraft");
+            s.execute("file.save_as", &json!({"path":saved,"results":true})).unwrap();
+            s.execute("file.new", &json!({})).unwrap();
+            s.execute("file.open", &json!({"path":saved})).unwrap();
+            let replay = dir.join("source.inp");
+            s.execute("deck.source.write", &json!({"path":replay})).unwrap();
+            assert_eq!(std::fs::read(replay).unwrap(), text.as_bytes());
+        } else if phase == 1 {
+            let normalized = dir.join("normalized.inp");
+            s.execute("deck.write", &json!({"path":normalized,"format":"abaqus"})).unwrap();
+            let read = s.execute("deck.read", &json!({"path":normalized,"format":"abaqus","units":"m-kg-s-N-Pa"})).unwrap();
+            assert_eq!(read["analysis_complete"], true, "{read}");
+        }
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn orthotropic_stiffness_rotated_solid_solves_reopens_and_normalizes() {
+    let text = "*NODE\n1,0,0,0\n2,1,0,0\n3,0,1,0\n4,0,0,1\n*ELEMENT,TYPE=C3D4,ELSET=All\n1,1,2,3,4\n*NSET,NSET=Base\n1,3,4\n*NSET,NSET=Top\n2\n*MATERIAL,NAME=M\n*ELASTIC,TYPE=ORTHOTROPIC\n1000,0,2000,0,0,3000,400,500\n600\n*ORIENTATION,NAME=Axes\n1,0,0,0,1,0\n3,90\n*SOLID SECTION,ELSET=All,MATERIAL=M,ORIENTATION=Axes\n*STEP,NAME=Pull\n*STATIC\n*BOUNDARY\nBase,1,3\n*CLOAD\nTop,1,1\n*END STEP\n";
+    let mut native = Session::default();
+    native.execute("model.units", &json!({"system":"m-kg-s-N-Pa"})).unwrap();
+    for (i, xyz) in [[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]].iter().enumerate() {
+        native.execute("mesh.node.add", &json!({"label":i+1,"xyz":xyz})).unwrap();
+    }
+    native.run_script(&json!([
+        {"command":"mesh.element.add","params":{"label":1,"kind":"tet4","nodes":[1,2,3,4]}},
+        {"command":"model.set.create","params":{"name":"All","elements":[1]}},
+        {"command":"model.set.create","params":{"name":"Base","nodes":[1,3,4]}},
+        {"command":"model.set.create","params":{"name":"Top","nodes":[2]}},
+        {"command":"model.material.create","params":{"name":"M","elastic":{"type":"engineering_constants","young":[1000,2000,3000],"poisson":[0,0,0],"shear":[400,500,600]}}},
+        {"command":"model.section.create","params":{"name":"S","set":"All","material":"M","kind":{"type":"solid"},"orientation":{"frame":{"type":"rectangular","axis1":[0,1,0],"axis2":[-1,0,0]}}}},
+        {"command":"model.boundary_condition.create","params":{"name":"Clamp","type":"displacement","target":{"set":"Base"},"values":[0,0,0,null,null,null]}},
+        {"command":"model.load.create","params":{"name":"F","type":"force","target":{"set":"Top"},"vector":[1,0,0]}},
+        {"command":"model.step.create","params":{"name":"Pull","procedure":{"type":"static"},"boundary_conditions":["Clamp"],"loads":["F"]}}
+    ])).unwrap();
+    // Unit tetra V=1/6, grad(N2)=ex: Kxx=E_local2/6 after 90 degree rotation.
+    property_closure(text, &mut native, 6. / 2000.);
+}
+
+#[test]
+fn partial_kinematic_translation_with_explicit_reference_restraints_closes() {
+    let text = constraint_input().replace("*KINEMATIC\n1,6", "*KINEMATIC\n3,3").replace("Base,1,3\n*CLOAD", "Base,1,3\nRP,1,2\nRP,4,6\n*CLOAD");
+    let mut native = native_constraint_patch();
+    let mut c = native.model.coupling("Rigid").unwrap().clone();
+    c.dofs = fieldcraft_model::Dofs::from_bits(4);
+    native.model.replace_coupling("Rigid", c).unwrap();
+    native
+        .execute(
+            "model.boundary_condition.create",
+            &json!({"name":"RPClamp","type":"displacement","target":{"reference_point":"RP"},"values":[0,0,null,0,0,0]}),
+        )
+        .unwrap();
+    let mut step = native.model.step("Pull").unwrap().clone();
+    step.boundary_conditions.insert("RPClamp".into());
+    native.model.replace_step(step).unwrap();
+    property_closure(&text, &mut native, 0.002);
+}
+
+#[test]
+fn kinematic_element_surface_resolves_face_nodes_and_roundtrips() {
+    let text = constraint_input().replace("*SURFACE,TYPE=NODE,NAME=Pad\nTop,1", "*SURFACE,TYPE=ELEMENT,NAME=Pad\n2,S2");
+    property_closure(&text, &mut native_constraint_patch(), 0.002);
+}
+
+#[test]
+fn random_continuum_mass_uses_requested_operator_not_cached_modes_and_reopens() {
+    // One free tetrahedron DOF: k=E*V=1000/6; C22=rho*V/10=.2,
+    // row-sum L22=rho*V/4=.5. These are independent simplex integrals.
+    let source = "*NODE\n1,0,0,0\n2,1,0,0\n3,0,1,0\n4,0,0,1\n*ELEMENT,TYPE=C3D4,ELSET=Body\n1,1,2,3,4\n*MATERIAL,NAME=M\n*ELASTIC\n1000,0\n*DENSITY\n12\n*SOLID SECTION,ELSET=Body,MATERIAL=M\n** FIELDCRAFT LUMPED MASS,ELSET=Body,STRATEGY=ROW_SUM\n*BOUNDARY\n1,1,3\n3,1,3\n4,1,3\n2,2,3\n*PSD-DEFINITION,NAME=White,TYPE=FORCE\n1,0,0\n1,0,10\n*STEP,NAME=Modes,PERTURBATION\n*FREQUENCY\n1\n*END STEP\n*STEP,NAME=Random,PERTURBATION\n*RANDOM RESPONSE\n0,10,11,3,1\n*MODAL DAMPING,DEFINITION=MODE NUMBERS\n1,1,.05\n*CLOAD,LOAD CASE=2\n2,1,1\n*CORRELATION,TYPE=CORRELATED,PSD=White\n2,1\n*END STEP\n";
+    let dir = folder();
+    let input = dir.join("input.inp");
+    std::fs::write(&input, source).unwrap();
+    let mut s = Session::default();
+    let imported = s.execute("deck.read", &json!({"format":"abaqus","path":input,"units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(imported["analysis_complete"], true, "{imported}");
+    assert!(s.model.step("Random").is_some(), "{:?}", s.model.steps());
+    let grid = json!([0, 1, 2, 3, 4, 5, 6, 8, 10]);
+    let mut lumped = Value::Null;
+    for (choice, mass) in [("consistent", 0.2_f64), ("lumped", 0.5)] {
+        // Deliberately seed an incompatible cached frequency result before the lumped request.
+        s.execute("solve.frequency", &json!({"step":"Modes","mass":"consistent"})).unwrap();
+        let out = s.execute("solve.random", &json!({"step":"Random","mass":choice,"nodes":[2],"sampling_frequencies":grid})).unwrap();
+        let k = 1000. / 6.;
+        let f = (k / mass).sqrt() / (2. * std::f64::consts::PI);
+        assert!((out["natural_frequencies"][0].as_f64().unwrap() - f).abs() < 1e-10);
+        assert_eq!(out["mass"], choice);
+        assert_eq!(out["sampling_source"], "explicit_replay_grid");
+        let samples = out["probes"][0]["samples"].as_array().unwrap();
+        for sample in samples {
+            let omega = 2. * std::f64::consts::PI * sample["frequency"].as_f64().unwrap();
+            let c = 0.1 * (k * mass).sqrt();
+            let expected = 1. / ((k - omega * omega * mass).powi(2) + (omega * c).powi(2));
+            let actual = sample["displacement_components_psd"][0].as_f64().unwrap();
+            assert!((actual - expected).abs() < expected * 1e-8);
+        }
+        if choice == "lumped" {
+            lumped = out;
+        }
+    }
+    let saved = dir.join("saved.fieldcraft");
+    s.execute("file.save_as", &json!({"path":saved})).unwrap();
+    s.execute("file.new", &json!({})).unwrap();
+    s.execute("file.open", &json!({"path":saved})).unwrap();
+    let replay = dir.join("replay.inp");
+    s.execute("deck.source.write", &json!({"path":replay})).unwrap();
+    assert_eq!(std::fs::read_to_string(replay).unwrap(), source);
+    let normalized = dir.join("normalized.inp");
+    let error = s.execute("deck.write", &json!({"path":normalized,"format":"abaqus"})).unwrap_err().to_string();
+    assert!(error.contains("random response is not written yet"), "{error}");
+    let again = s.execute("solve.random", &json!({"step":"Random","mass":"lumped","nodes":[2],"sampling_frequencies":grid})).unwrap();
+    assert_eq!(again["natural_frequencies"], lumped["natural_frequencies"]);
+    assert_eq!(again["node_displacement_rms"], lumped["node_displacement_rms"]);
+    for bad in [json!([0, 11]), json!([0, 0]), json!([1])] {
+        assert!(s.execute("solve.random", &json!({"step":"Random","mass":"lumped","sampling_frequencies":bad})).is_err());
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn enhanced13_native_static_persists_and_refuses_unvalidated_deck_mapping() {
+    let dir = folder();
+    let mut s = bar();
+    let section = s.model.sections().get("BarSection").unwrap();
+    let mut edit = serde_json::to_value(section).unwrap();
+    edit["formulation"] = json!({"enhanced_strain13":true});
+    edit["name"] = json!("BarSection");
+    s.execute("model.section.edit", &edit).unwrap();
+    let result = s.execute("solve.static", &json!({"step":"Bend"}));
+    assert!(result.is_ok(), "{result:?}");
+    let probe = s.execute("solve.probe", &json!({"step":"Bend","set":"end"})).unwrap();
+    s.execute("file.save_as", &json!({"path":dir.join("enhanced.fieldcraft"),"results":true})).unwrap();
+    s.execute("file.new", &json!({})).unwrap();
+    s.execute("file.open", &json!({"path":dir.join("enhanced.fieldcraft")})).unwrap();
+    assert!(s.model.sections().get("BarSection").unwrap().formulation.enhanced_strain13);
+    assert_eq!(s.execute("solve.probe", &json!({"step":"Bend","set":"end"})).unwrap(), probe);
+    let input = dir.join("enhanced.inp");
+    s.execute("deck.write", &json!({"path":input,"format":"abaqus","units":"mm-t-s-N-MPa"})).unwrap();
+    assert!(std::fs::read_to_string(&input).unwrap().contains("TYPE=C3D8I"));
+    let report = s.execute("deck.read", &json!({"path":input,"format":"abaqus","units":"mm-t-s-N-MPa"})).unwrap();
+    assert_eq!(report["analysis_complete"], true);
+    assert!(s.model.sections().values().all(|s| s.formulation.enhanced_strain13 && !s.formulation.incompatible_modes));
+    s.execute("solve.static", &json!({"step":"Bend"})).unwrap();
+    let reread = s.execute("solve.probe", &json!({"step":"Bend","set":"end"})).unwrap();
+    assert_eq!(reread, probe);
+    s.execute("model.step.create", &json!({"name":"Modes","procedure":{"type":"frequency","modes":2}})).unwrap();
+    let error = s.execute("solve.frequency", &json!({"step":"Modes"})).unwrap_err().to_string();
+    assert!(error.contains("enhanced_strain13"), "{error}");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn nonlinear_rod_import_preserves_yes_base_state_and_source() {
+    let dir = folder();
+    let input = dir.join("string.inp");
+    let text = "*NODE\n1,0,0,0\n2,1,0,0\n*ELEMENT,TYPE=T3D2,ELSET=Bar\n1,1,2\n*MATERIAL,NAME=M\n*ELASTIC\n2.1e11,.3\n*DENSITY\n7850\n*SOLID SECTION,ELSET=Bar,MATERIAL=M\n.0001\n*STEP,NAME=Preload,NLGEOM=YES,INC=100\n*STATIC\n1,1\n*BOUNDARY\n1,1,3\n*CLOAD\n2,1,1000\n*END STEP\n*STEP,NAME=Modes\n*FREQUENCY\n3\n*BOUNDARY\n1,1,3\n*END STEP\n";
+    std::fs::write(&input, text).unwrap();
+    let mut s = Session::default();
+    let report = s.execute("deck.read", &json!({"format":"abaqus","path":input,"units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(report["analysis_complete"], true, "{report}");
+    assert_eq!(s.model.step("Modes").unwrap().base_state.as_deref(), Some("Preload"));
+    let fieldcraft_model::Procedure::NonlinearStatic(n) = &s.model.step("Preload").unwrap().procedure else { panic!("nonlinear step lost") };
+    assert!(n.nonlinear_geometry);
+    assert_eq!(n.initial_increment, 1.0);
+    assert!(report["warnings"].to_string().contains("nonlinear static truss"));
+    // Independent StVK force law: N=EA*lambda*(lambda^2-1)/2.
+    // Bisection uses only the prescribed force, not the solver's displacement.
+    let (mut lo, mut hi) = (1.0_f64, 1.001_f64);
+    for _ in 0..60 {
+        let stretch = (lo + hi) / 2.;
+        if 21e6 * stretch * (stretch * stretch - 1.) / 2. < 1000. {
+            lo = stretch;
+        } else {
+            hi = stretch;
+        }
+    }
+    let stretch = (lo + hi) / 2.;
+    let check = |s: &mut Session| {
+        let preload = s.execute("solve.nonlinear", &json!({"step":"Preload"})).unwrap();
+        assert!((preload["max_displacement"]["value"].as_f64().unwrap() - (stretch - 1.)).abs() < 1e-12);
+        assert!((preload["reaction_total"][0].as_f64().unwrap() + 1000.).abs() < 1e-6);
+        let modes = s.execute("solve.frequency", &json!({"step":"Modes","mass":"consistent"})).unwrap();
+        let mass = 7850. * 0.0001 / 3.;
+        let kt = 21e6 * (stretch * stretch - 1.) / 2.;
+        let kx = 21e6 * (3. * stretch * stretch - 1.) / 2.;
+        for (mode, stiffness) in modes["modes"].as_array().unwrap().iter().zip([kt, kt, kx]) {
+            let expected = (stiffness / mass).sqrt() / (2. * std::f64::consts::PI);
+            assert!((mode["frequency"].as_f64().unwrap() - expected).abs() < 1e-6);
+        }
+        assert_eq!(modes["modes"].as_array().unwrap().len(), 3);
+        println!(
+            "rod equilibrium u={} reaction={} frequencies={:?}",
+            preload["max_displacement"]["value"],
+            preload["reaction_total"][0],
+            modes["modes"].as_array().unwrap().iter().map(|m| &m["frequency"]).collect::<Vec<_>>()
+        );
+        (s.result("Preload").cloned(), s.result("Modes").cloned())
+    };
+    let saved = check(&mut s);
+    s.execute("file.save_as", &json!({"path":dir.join("saved.fieldcraft"),"results":true})).unwrap();
+    s.execute("file.open", &json!({"path":dir.join("saved.fieldcraft")})).unwrap();
+    assert_eq!(s.model.step("Modes").unwrap().base_state.as_deref(), Some("Preload"));
+    assert_eq!((s.result("Preload").cloned(), s.result("Modes").cloned()), saved);
+    s.execute("deck.source.write", &json!({"path":dir.join("source.inp")})).unwrap();
+    assert_eq!(std::fs::read_to_string(dir.join("source.inp")).unwrap(), text);
+    s.execute("deck.write", &json!({"format":"abaqus","path":dir.join("normalized.inp"),"units":"m-kg-s-N-Pa"})).unwrap();
+    let written = std::fs::read_to_string(dir.join("normalized.inp")).unwrap();
+    assert!(written.contains("NLGEOM=YES"));
+    let report = s.execute("deck.read", &json!({"format":"abaqus","path":dir.join("normalized.inp"),"units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(report["analysis_complete"], true, "{report}");
+    assert_eq!(s.model.step("Modes").unwrap().base_state.as_deref(), Some("Preload"));
+    assert_eq!(check(&mut s), saved);
+    assert_eq!(s.model.step("Modes").unwrap().base_state.as_deref(), Some("Preload"));
+    for option in ["*STATIC,RIKS", "*STATIC,STABILIZE", "*STATIC,DIRECT"] {
+        let denied = text.replace("*STATIC", option);
+        std::fs::write(&input, &denied).unwrap();
+        let report = s.execute("deck.read", &json!({"format":"abaqus","path":input,"units":"m-kg-s-N-Pa"})).unwrap();
+        assert_eq!(report["analysis_complete"], false);
+        assert!(report["warnings"].to_string().contains(option.split(',').nth(1).unwrap()));
+        assert!(s.model.steps().is_empty());
+        s.execute("deck.source.write", &json!({"path":dir.join("refused.inp")})).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("refused.inp")).unwrap(), denied);
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn enhanced_strain13_import_refuses_unverified_combinations_and_keeps_source() {
+    let dir = folder();
+    let mut s = bar();
+    let section = s.model.sections().get("BarSection").unwrap();
+    let mut edit = serde_json::to_value(section).unwrap();
+    edit["name"] = json!("BarSection");
+    edit["formulation"] = json!({"enhanced_strain13":true});
+    s.execute("model.section.edit", &edit).unwrap();
+    let path = dir.join("input.inp");
+    s.execute("deck.write", &json!({"format":"abaqus","path":path})).unwrap();
+    let original = std::fs::read_to_string(&path).unwrap();
+    let hybrid = original.replace("TYPE=C3D8I", "TYPE=C3D8IH");
+    std::fs::write(&path, hybrid).unwrap();
+    let before = s.clone();
+    let error = s.execute("deck.read", &json!({"format":"abaqus","path":path})).unwrap_err().to_string();
+    assert!(error.contains("C3D8IH"), "{error}");
+    assert_unchanged(&s, &before);
+    let dynamic = original.replace("*STATIC\n1.0, 1.0\n", "*FREQUENCY\n2,\n");
+    assert_ne!(dynamic, original);
+    std::fs::write(&path, &dynamic).unwrap();
+    let report = s.execute("deck.read", &json!({"format":"abaqus","path":path})).unwrap();
+    assert_eq!(report["analysis_complete"], false, "{report}");
+    assert!(report["warnings"].to_string().contains("C3D8I"));
+    assert!(s.model.steps().is_empty());
+    s.execute("file.save_as", &json!({"path":dir.join("refused.fieldcraft")})).unwrap();
+    s.execute("file.open", &json!({"path":dir.join("refused.fieldcraft")})).unwrap();
+    s.execute("deck.source.write", &json!({"path":dir.join("replay.inp")})).unwrap();
+    assert_eq!(std::fs::read_to_string(dir.join("replay.inp")).unwrap(), dynamic);
+    std::fs::write(&path, &original).unwrap();
+    s.execute("deck.read", &json!({"format":"abaqus","path":path})).unwrap();
+    // A native material edit must not widen the export scope.
+    s.execute("model.material.edit", &json!({"name":"Steel","elastic":{"type":"engineering_constants","young":[210000,210000,210000],"poisson":[0.3,0.3,0.3],"shear":[80769,80769,80769]}})).unwrap();
+    let error = s.execute("deck.write", &json!({"format":"abaqus","path":dir.join("orthotropic.inp")})).unwrap_err().to_string();
+    assert!(error.contains("C3D8I") || error.contains("enhanced_strain13"), "{error}");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn nonlinear_tet_import_solves_reopens_and_roundtrips() {
+    let dir = folder();
+    let input = dir.join("tet.inp");
+    // Uniform extension, one free displacement. The reference is the same native
+    // total-Lagrangian model, not a commercial finite-strain material assumption.
+    let text = "*NODE\n1,0,0,0\n2,1,0,0\n3,0,1,0\n4,0,0,1\n*ELEMENT,TYPE=C3D4,ELSET=All\n1,1,2,3,4\n*MATERIAL,NAME=M\n*ELASTIC\n1000,0\n*SOLID SECTION,ELSET=All,MATERIAL=M\n*STEP,NAME=Pull,NLGEOM=YES\n*STATIC\n.5,1\n*BOUNDARY\n1,1,3\n2,2,3\n3,1,3\n4,1,3\n*CLOAD\n2,1,1\n*END STEP\n";
+    std::fs::write(&input, text).unwrap();
+    let mut s = Session::default();
+    let report = s.execute("deck.read", &json!({"format":"abaqus","path":input,"units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(report["analysis_complete"], true, "{report}");
+    s.execute("solve.nonlinear", &json!({"step":"Pull"})).unwrap();
+    let probe = s.execute("solve.probe", &json!({"step":"Pull","nodes":[2]})).unwrap();
+    s.execute("file.save_as", &json!({"path":dir.join("tet.fieldcraft"),"results":true})).unwrap();
+    s.execute("file.open", &json!({"path":dir.join("tet.fieldcraft")})).unwrap();
+    assert_eq!(s.execute("solve.probe", &json!({"step":"Pull","nodes":[2]})).unwrap(), probe);
+    s.execute("deck.write", &json!({"format":"abaqus","path":dir.join("again.inp"),"units":"m-kg-s-N-Pa"})).unwrap();
+    let report = s.execute("deck.read", &json!({"format":"abaqus","path":dir.join("again.inp"),"units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(report["analysis_complete"], true, "{report}");
+    s.execute("solve.nonlinear", &json!({"step":"Pull"})).unwrap();
+    assert_eq!(s.execute("solve.probe", &json!({"step":"Pull","nodes":[2]})).unwrap(), probe);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+const MULTISTEP_ROOT: &str = "** Original SI two-rod endpoint-history discriminator; no commercial source\n*INCLUDE,INPUT=parts/rod.inc\n*MATERIAL,NAME=M\n*ELASTIC\n1000,0\n*ASSEMBLY,NAME=Assembly\n*INSTANCE,NAME=A,PART=Rod\n*END INSTANCE\n*INSTANCE,NAME=B,PART=Rod\n0,3,0\n*END INSTANCE\n*NSET,NSET=Roots\nA.Root,B.Root\n*NSET,NSET=Tips\nA.Tip,B.Tip\n*NSET,NSET=TipA,INSTANCE=A\n2\n*NSET,NSET=TipB,INSTANCE=B\n2\n*END ASSEMBLY\n*AMPLITUDE,NAME=Local,TIME=STEP TIME\n0,0,2,2,4,9\n*AMPLITUDE,NAME=Global,TIME=TOTAL TIME\n0,0,2,3,5,6,6,8\n8,10,9,12\n*BOUNDARY\nRoots,1,3\nTips,2,3\n*STEP,NAME=One\n*STATIC\n1,2\n*BOUNDARY,AMPLITUDE=Local\nRoots,1,1,0.01\n*CLOAD,AMPLITUDE=Local\nTipA,1,10\n*CLOAD,AMPLITUDE=Global\nTipB,1,5\n*END STEP\n*STEP,NAME=Two\n*STATIC\n1,3\n*END STEP\n*STEP,NAME=Three\n*STATIC\n1,1\n*BOUNDARY,OP=MOD,AMPLITUDE=Global\nRoots,1,1,0.001\n*CLOAD,OP=MOD\nTipA,1,7\n*END STEP\n*STEP,NAME=Four\n*STATIC\n1,2\n*BOUNDARY,OP=NEW\nA.Root,1,3\nB.Root,2,3\nTips,2,3\n*BOUNDARY,OP=NEW,AMPLITUDE=Global\nB.2,1,1,0.001\n*CLOAD,OP=NEW,AMPLITUDE=Local\nTipB,1,2\n*END STEP\n*STEP,NAME=Five\n*STATIC\n1,1\n*NODE PRINT,NSET=Tips\nU,RF\n*END STEP\n";
+
+const MULTISTEP_PART: &str = "*PART,NAME=Rod\n*INCLUDE,INPUT=parts/mesh.inc\n*SOLID SECTION,ELSET=RodElements,MATERIAL=M\n0.5\n*END PART\n";
+
+const MULTISTEP_MESH: &str = "*NODE\n1,0,0,0\n2,2,0,0\n*ELEMENT,TYPE=T3D2,ELSET=RodElements\n1,1,2\n*NSET,NSET=Root\n1\n*NSET,NSET=Tip\n2\n";
+
+#[test]
+fn multistep_instance_amplitudes_solve_reopen_and_normalize_effective_conditions() {
+    use fieldcraft_model::{BoundaryCondition, Load, Target};
+    type Conditions = std::collections::BTreeMap<(u32, usize), f64>;
+    fn effective(s: &Session, step: &str) -> (Conditions, [[f64; 3]; 4]) {
+        let step = s.model.step(step).unwrap();
+        let mut bcs = Conditions::new();
+        let mut forces = [[0.; 3]; 4];
+        for name in &step.boundary_conditions {
+            let BoundaryCondition::Displacement { target: Target::Set(set), values } = s.model.boundary_condition(name).unwrap() else {
+                panic!("prescribed boundary")
+            };
+            for node in &s.model.set(set).unwrap().nodes {
+                for (dof, v) in values.iter().enumerate() {
+                    if let Some(v) = v {
+                        assert!(bcs.insert((*node, dof), *v).is_none());
+                    }
+                }
+            }
+        }
+        for name in &step.loads {
+            let Load::Force { target: Target::Set(set), vector, distribution } = s.model.load(name).unwrap() else { panic!("nodal force") };
+            assert_eq!(*distribution, fieldcraft_model::Distribution::PerNode);
+            for node in &s.model.set(set).unwrap().nodes {
+                for (x, v) in forces[(*node - 1) as usize].iter_mut().zip(vector) {
+                    *x += v;
+                }
+            }
+        }
+        (bcs, forces)
+    }
+    let dir = folder();
+    std::fs::create_dir(dir.join("parts")).unwrap();
+    for (name, text) in [("main.inp", MULTISTEP_ROOT), ("parts/rod.inc", MULTISTEP_PART), ("parts/mesh.inc", MULTISTEP_MESH)] {
+        std::fs::write(dir.join(name), text).unwrap();
+    }
+    let mut s = Session::default();
+    let read = s.execute("deck.read", &json!({"format":"abaqus","path":dir.join("main.inp"),"units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(read["analysis_complete"], true, "{read}");
+    assert_eq!(read["source_files"].as_array().unwrap().len(), 3);
+    assert_eq!(s.model.node(3).unwrap().xyz, [0., 3., 0.]);
+    let names = ["One", "Two", "Three", "Four", "Five"];
+    let u = [[0.02, 0.1, 0.02, 0.08], [0.02, 0.1, 0.02, 0.14], [0.008, 0.036, 0.008, 0.168], [0., 0., 0.01, 0.01], [0., 0., 0.012, 0.012]];
+    let reactions = [[-20., 0., -15., 0.], [-20., 0., -30., 0.], [-7., 0., -40., 0.], [0., 0., 0., -4.], [0., 0., 0., -4.]];
+    let forces = [[20., 15.], [20., 30.], [7., 40.], [0., 4.], [0., 4.]];
+    let mut snapshots = Vec::new();
+    let mut probes = Vec::new();
+    for (i, step) in names.iter().enumerate() {
+        let (bcs, f) = effective(&s, step);
+        let mut expected = Conditions::new();
+        for n in 1..=4 {
+            expected.insert((n, 1), 0.);
+            expected.insert((n, 2), 0.);
+        }
+        expected.insert((1, 0), u[i][0]);
+        expected.insert((if i < 3 { 3 } else { 4 }, 0), if i < 3 { u[i][2] } else { u[i][3] });
+        assert_eq!(bcs, expected);
+        assert_eq!(f, [[0., 0., 0.], [forces[i][0], 0., 0.], [0., 0., 0.], [forces[i][1], 0., 0.]]);
+        snapshots.push((bcs, f));
+        s.execute("solve.static", &json!({"step":step})).unwrap();
+        let probe = s.execute("solve.probe", &json!({"step":step,"nodes":[1,2,3,4]})).unwrap();
+        for n in 0..4 {
+            assert!((probe["nodes"][n]["displacement"][0].as_f64().unwrap() - u[i][n]).abs() < 1e-12);
+            assert!((probe["nodes"][n]["reaction"][0].as_f64().unwrap() - reactions[i][n]).abs() < 1e-10);
+        }
+        probes.push(probe);
+    }
+    let project = dir.join("saved.fieldcraft");
+    s.execute("file.save_as", &json!({"path":project,"results":true})).unwrap();
+    s.execute("file.open", &json!({"path":project})).unwrap();
+    let replay = dir.join("replay");
+    std::fs::create_dir(&replay).unwrap();
+    s.execute("deck.source.write", &json!({"path":replay.join("main.inp")})).unwrap();
+    for (name, text) in [("main.inp", MULTISTEP_ROOT), ("parts/rod.inc", MULTISTEP_PART), ("parts/mesh.inc", MULTISTEP_MESH)] {
+        assert_eq!(std::fs::read_to_string(replay.join(name)).unwrap(), text);
+    }
+    for (i, step) in names.iter().enumerate() {
+        assert_eq!(effective(&s, step), snapshots[i]);
+        assert_eq!(s.execute("solve.probe", &json!({"step":step,"nodes":[1,2,3,4]})).unwrap(), probes[i]);
+    }
+    let normalized = dir.join("normalized.inp");
+    s.execute("deck.write", &json!({"format":"abaqus","path":normalized,"units":"m-kg-s-N-Pa"})).unwrap();
+    let report = s.execute("deck.read", &json!({"format":"abaqus","path":normalized,"units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(report["analysis_complete"], true);
+    for (i, step) in names.iter().enumerate() {
+        assert_eq!(effective(&s, step), snapshots[i]);
+        s.execute("solve.static", &json!({"step":step})).unwrap();
+        assert_eq!(s.execute("solve.probe", &json!({"step":step,"nodes":[1,2,3,4]})).unwrap(), probes[i]);
+    }
+    let conflicting = MULTISTEP_ROOT.replace("*CLOAD,AMPLITUDE=Local", "*BOUNDARY\nA.Root,1,1,.1\n*CLOAD,AMPLITUDE=Local");
+    std::fs::write(dir.join("bad.inp"), &conflicting).unwrap();
+    let report = s.execute("deck.read", &json!({"format":"abaqus","path":dir.join("bad.inp"),"units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(report["analysis_complete"], false);
+    assert!(report["warnings"].to_string().contains("BOUNDARY target/type"));
+    assert!(s.model.steps().is_empty());
+    assert!(s.execute("solve.static", &json!({"step":"One"})).is_err());
+    s.execute("file.save_as", &json!({"path":project})).unwrap();
+    s.execute("file.open", &json!({"path":project})).unwrap();
+    let bad_replay = dir.join("bad-replay");
+    std::fs::create_dir(&bad_replay).unwrap();
+    s.execute("deck.source.write", &json!({"path":bad_replay.join("bad.inp")})).unwrap();
+    assert_eq!(std::fs::read_to_string(bad_replay.join("bad.inp")).unwrap(), conflicting);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn distributing_translation_release_solves_reopens_and_round_trips() {
+    let source = r#"** Original equal-weight translation-only distributing coupling, SI
+*NODE
+1,0,0,0
+2,1,0,0
+3,0,1,0
+4,0,0,1
+99,.3333333333333333,0,.3333333333333333
+*ELEMENT,TYPE=C3D4,ELSET=Solid
+1,1,2,3,4
+*NSET,NSET=Base
+1,2,3
+*NSET,NSET=Cloud
+1,2,4
+*NSET,NSET=RP
+99
+*SURFACE,TYPE=NODE,NAME=Pad
+Cloud,1
+*MATERIAL,NAME=Elastic
+*ELASTIC
+120000,.25
+*SOLID SECTION,ELSET=Solid,MATERIAL=Elastic
+*COUPLING,CONSTRAINT NAME=Mean,REF NODE=RP,SURFACE=Pad
+*DISTRIBUTING,COUPLING=CONTINUUM,WEIGHTING METHOD=UNIFORM
+1,3
+*STEP,NAME=Pull
+*STATIC
+*BOUNDARY
+Base,1,3
+RP,4,6
+*CLOAD
+RP,1,3
+*END STEP
+"#;
+    let dir = folder();
+    let input = dir.join("input.inp");
+    std::fs::write(&input, source).unwrap();
+    let mut s = Session::default();
+    let read = s.execute("deck.read", &json!({"format":"abaqus","path":input,"units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(read["analysis_complete"], true, "{read}");
+    s.execute("solve.static", &json!({"step":"Pull"})).unwrap();
+    let probe = s.execute("solve.probe", &json!({"step":"Pull","nodes":[1,2,3,4]})).unwrap();
+    // V=1/6, mu=lambda=48000; K44=diag(8000,8000,24000).
+    // Centroid translations are the three-node mean: the 3 N load gives 1 N per node.
+    let reactions = [[-2., 0., -1.], [-1., 0., 1.], [0., 0., 0.], [0., 0., 0.]];
+    for (i, node) in probe["nodes"].as_array().unwrap().iter().enumerate() {
+        for axis in 0..3 {
+            let u = if i == 3 && axis == 0 { 0.000125 } else { 0. };
+            assert!((node["displacement"][axis].as_f64().unwrap() - u).abs() < 1e-12);
+            assert!((node["reaction"][axis].as_f64().unwrap() - reactions[i][axis]).abs() < 1e-10);
+        }
+        for axis in 0..6 {
+            let stress = if axis == 4 { 6. } else { 0. };
+            assert!((node["stress"][axis].as_f64().unwrap() - stress).abs() < 1e-9);
+        }
+    }
+    let project = dir.join("model.fieldcraft");
+    s.execute("file.save_as", &json!({"path":project,"results":true})).unwrap();
+    s.execute("file.new", &json!({})).unwrap();
+    s.execute("file.open", &json!({"path":project})).unwrap();
+    assert_eq!(s.model.couplings().values().next().unwrap().dofs.list(), vec![1, 2, 3]);
+    assert_eq!(s.execute("solve.probe", &json!({"step":"Pull","nodes":[1,2,3,4]})).unwrap(), probe);
+    let replay = dir.join("replay.inp");
+    s.execute("deck.source.write", &json!({"path":replay})).unwrap();
+    assert_eq!(std::fs::read_to_string(replay).unwrap(), source);
+    let normalized = dir.join("normalized.inp");
+    s.execute("deck.write", &json!({"format":"abaqus","path":normalized,"units":"m-kg-s-N-Pa"})).unwrap();
+    let read = s.execute("deck.read", &json!({"format":"abaqus","path":normalized,"units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(read["analysis_complete"], true, "{read}");
+    s.execute("solve.static", &json!({"step":"Pull"})).unwrap();
+    assert_eq!(s.execute("solve.probe", &json!({"step":"Pull","nodes":[1,2,3,4]})).unwrap(), probe);
+    std::fs::remove_dir_all(dir).unwrap();
 }

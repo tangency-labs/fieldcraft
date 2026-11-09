@@ -50,7 +50,7 @@ fn original_results() -> Vec<Solved> {
     vec![
         Solved::Implicit(StepResult::Static(static_result())),
         Solved::Implicit(StepResult::Frequency(fieldcraft_solver::FrequencyResult {
-            step:"H".into(),nodes:vec![1],reference_points:vec![],modes:vec![],total_mass:1.,stats:Default::default(),warnings:vec![],buckling:None,
+            step:"H".into(),nodes:vec![1],reference_points:vec![],modes:vec![],total_mass:1.,stats:Default::default(),warnings:vec![],buckling:None,mass_kind:None,section_mass_policy:None,
         })),
         Solved::Implicit(StepResult::Heat(serde_json::from_value(json!({"step":"H","nodes":[1],"times":[0],"frames":[[300]],"flux":[],"elements":[],"reaction":[],"loads":[],"applied_total":0,"reaction_total":0,"stats":fieldcraft_solver::Stats::default(),"warnings":[]})).unwrap())),
         Solved::Explicit(ExplicitResult {
@@ -121,7 +121,7 @@ fn original_zero_through_five_read_version_05() {
             Solved::Implicit(StepResult::Frequency(x)) => codec::encode_into(x, &mut payload).unwrap(),
             Solved::Implicit(StepResult::Heat(x)) => codec::encode_into(x, &mut payload).unwrap(),
             Solved::Implicit(StepResult::Harmonic(x)) => codec::encode_into(&LegacyHarmonicRef::from(x), &mut payload).unwrap(),
-            Solved::Implicit(StepResult::Dynamics(_)) => panic!("not an original kind"),
+            Solved::Nonlinear(_) | Solved::Implicit(StepResult::Dynamics(_)) => panic!("not an original kind"),
             Solved::Explicit(x) => codec::encode_into(x, &mut payload).unwrap(),
             Solved::Fluid(x) => codec::encode_into(x, &mut payload).unwrap(),
         }
@@ -181,7 +181,7 @@ fn old_overlapping_kinds_are_never_guessed() {
 
 #[test]
 fn seven_has_no_development_kind_aliases() {
-    for kind in 9..=u8::MAX {
+    for kind in (9..=u8::MAX).filter(|k| *k != 11 && *k != 12) {
         assert!(decode(&record(MAGIC, kind, &[])).unwrap_err().to_string().contains("unknown kind"));
     }
 }
@@ -219,4 +219,19 @@ fn six_preserves_complete_dynamics_and_energy() {
     spectrum.frames[0].time = None;
     spectrum.energy = None;
     round_trip(&Solved::Implicit(StepResult::Dynamics(spectrum)), 6);
+}
+
+#[test]
+fn frequency_mass_metadata_uses_kind12_and_legacy_missing_metadata_is_kind1() {
+    let mut result = original_results()
+        .into_iter()
+        .find_map(|r| match r {
+            Solved::Implicit(StepResult::Frequency(f)) => Some(f),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(Solved::Implicit(StepResult::Frequency(result.clone())).as_ref().kind(), 1);
+    result.mass_kind = Some(fieldcraft_model::MassKind::Lumped);
+    result.section_mass_policy = Some("declared section area and density".into());
+    assert_eq!(Solved::Implicit(StepResult::Frequency(result)).as_ref().kind(), 12);
 }

@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 const FORM: &[Field] = &[
     field_json("curve", "Strain-life curve (SI)")
         .req()
-        .help("{young_pa,strength_pa,ductility,b,c}: CMB coefficients; total strain is dimensionless, stress in Pa."),
+        .help("{young_pa,strength_pa,ductility,b,c}: CMB coefficients; total strain is dimensionless, stress in Pa. One of strength_pa/ductility may be zero for an exact single-term limit; not both. Mean corrections require positive strength_pa."),
     field_json("cycles", "Counted total-strain cycles")
         .req()
         .help("[{total_strain_amplitude,count,mean_stress_pa?,maximum_stress_pa?}]; stress and strain must describe the same local cycle."),
@@ -21,7 +21,7 @@ const FORM: &[Field] = &[
 pub const STRAIN_CYCLES: CommandSpec = CommandSpec {
     id: "solve.fatigue.strain_cycles",
     label: "Strain-cycle Fatigue",
-    params: "{curve,cycles,correction} — Coffin–Manson–Basquin life and Miner damage from explicitly counted local total-strain cycles; Morrow or SWT; no inferred plastic strain or automatic stress/strain pairing",
+    params: "{curve,cycles,correction} — Coffin–Manson–Basquin life and Miner damage from explicitly counted local total-strain cycles; Morrow or SWT; exact elastic/plastic single-term limits; no inferred plastic strain or automatic stress/strain pairing",
     form: Some(FORM),
     kind: CommandKind::Model,
     requires: &[],

@@ -882,3 +882,13 @@ fn nonlinear_static_steps_are_refused_by_name() {
     m.replace_step(s).unwrap();
     assert!(unsupported(&m).contains(&format!("step `{name}`: nonlinear static steps (Nastran's SOL 400")), "{}", unsupported(&m));
 }
+
+#[test]
+fn bbar_solid_is_not_silently_written_as_standard_hex8() {
+    let mut model = cantilever();
+    let mut section = model.section("bar").unwrap().clone();
+    section.formulation.b_bar = true;
+    model.replace_section("bar", section).unwrap();
+    let error = nastran::write(&model).unwrap_err().to_string();
+    assert!(error.contains("B-bar") && error.contains("bar"), "{error}");
+}

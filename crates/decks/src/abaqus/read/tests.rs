@@ -78,18 +78,11 @@ fn unread_material_behaviors_preserve_the_current_material_and_physical_lines() 
     let got = read(text).unwrap();
     assert_eq!(got.model.material("M").unwrap().density, Some(1.));
     assert_eq!(got.model.material("M").unwrap().elastic, Some(Elastic::Isotropic { young: 2., poisson: 0.3 }));
-    assert!(got.model.material("M").unwrap().plastic.is_none());
+    assert!(matches!(got.model.material("M").unwrap().plastic, Some(fieldcraft_model::Plastic::Table { .. })));
     assert_eq!(got.model.material("N").unwrap().density, Some(2.));
     assert!(got.model.material("N").unwrap().elastic.is_none());
-    assert_eq!(
-        got.unknown,
-        vec![
-            Unknown { keyword: "CONDUCTIVITY".into(), line: 2 },
-            Unknown { keyword: "PLASTIC".into(), line: 6 },
-            Unknown { keyword: "SPECIFICHEAT".into(), line: 11 }
-        ]
-    );
-    assert_eq!(got.unknown_count, 3);
+    assert_eq!(got.unknown, vec![Unknown { keyword: "CONDUCTIVITY".into(), line: 2 }, Unknown { keyword: "SPECIFICHEAT".into(), line: 11 }]);
+    assert_eq!(got.unknown_count, 2);
 }
 
 #[test]
@@ -224,9 +217,9 @@ fn supported_writer_table_has_canonical_inverse_formulations() {
     for name in ["C3D8R", "C3D8RH", "C3D20R", "C3D20RH", "S3R", "S4R", "S8R"] {
         assert_eq!(Type::parse(name, 1).unwrap().formulation.integration, Integration::Reduced);
     }
-    for name in ["C3D8I", "C3D8IH"] {
-        assert!(Type::parse(name, 1).unwrap().formulation.incompatible_modes);
-    }
+    assert!(Type::parse("C3D8I", 1).unwrap().formulation.enhanced_strain13);
+    assert!(!Type::parse("C3D8I", 1).unwrap().formulation.incompatible_modes);
+    assert!(Type::parse("C3D8IH", 1).is_err());
     for prefix in ["CPS", "CPE", "CAX"] {
         for suffix in ["3", "6", "4", "4R", "4I", "8", "8R"] {
             assert!(Type::parse(&format!("{prefix}{suffix}"), 1).is_ok(), "{prefix}{suffix}");
@@ -358,4 +351,20 @@ fn caller_limits_refuse_nodes_elements_and_members_at_their_line() {
     assert!(message.contains("line 7") && message.contains("element limit of 0"), "{message}");
     let message = read_limited("*NSET,NSET=A,GENERATE\n1,1000\n", Preset::MKgS, Limits { members: 10, ..Limits::default() }).unwrap_err().to_string();
     assert!(message.contains("line 2") && message.contains("member limit"), "{message}");
+}
+
+#[test]
+fn orthotropic_stiffness_inverts_normal_compliance_and_refuses_indefinite_data() {
+    // D normal = [[4,1,1],[1,3,0],[1,0,2]]; inverse cofactors / 19.
+    let text = "*MATERIAL,NAME=M\n*ELASTIC,TYPE=ORTHOTROPIC\n4,1,3,1,0,2,5,6\n7\n";
+    let got = read(text).unwrap();
+    let Elastic::EngineeringConstants { young, poisson, shear } = got.model.material("M").unwrap().elastic.unwrap() else { panic!("wrong material") };
+    for (a, b) in young.into_iter().zip([19. / 6., 19. / 7., 19. / 11.]) {
+        assert!((a - b).abs() < 1e-12);
+    }
+    for (a, b) in poisson.into_iter().zip([2. / 6., 3. / 6., -1. / 7.]) {
+        assert!((a - b).abs() < 1e-12);
+    }
+    assert_eq!(shear, [5., 6., 7.]);
+    assert!(read(&text.replace("4,1,3,1,0,2", "1,2,1,0,0,1")).unwrap_err().to_string().contains("positive definite"));
 }

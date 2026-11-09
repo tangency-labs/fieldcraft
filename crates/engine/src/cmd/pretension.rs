@@ -9,15 +9,19 @@ const NAME: Field = text("name", "Section name").req().help("The pretension sect
 const STEP: Field = reference("step", "Step", C::Step).req().help("Static or nonlinear static target step.");
 const CREATE_FORM: &[Field] = &[
     NAME,
-    reference("first", "First cut", C::Set).req().help("First conforming cut-node set, with duplicate nodes at the second cut."),
-    reference("second", "Second cut", C::Set).req().help("Second cut-node set, geometrically coincident but not sharing nodes."),
+    reference("first", "First cut", C::Set).req().help("First conforming cut-node set; unused when an internal face is supplied."),
+    reference("second", "Second cut", C::Set)
+        .req()
+        .help("Second coincident cut-node set with distinct nodes; unused when an internal face is supplied."),
+    reference("face", "Internal cut face", C::Set)
+        .help("Optional planar internal element-face set in a continuous solid mesh; overrides the cut-node sets."),
     reference("control", "Scalar control point", C::ReferencePoint).req().help("Dedicated reference point; Ux is cut adjustment, not global X."),
     vector("normal", "Cut normal", Dim::None, &["x", "y", "z"]).req().help("Unit direction from first half toward second half."),
 ];
 pub const CREATE: CommandSpec = CommandSpec {
     id: "model.pretension.create",
     label: "New Pretension Section",
-    params: r#"{"name":"Bolt","first":"cut1","second":"cut2","normal":[0,0,1],"control":"BoltControl"} — coincident conforming cut nodes; dedicated reference Ux represents uniform axial adjustment"#,
+    params: r#"{"name":"Bolt","first":"cut1","second":"cut2","face":"InternalFace","normal":[0,0,1],"control":"BoltControl"} — face is optional for a continuous internal cut, otherwise use coincident conforming cut nodes; dedicated reference Ux is tightening adjustment"#,
     form: Some(CREATE_FORM),
     kind: CommandKind::Model,
     requires: &[Requirement::Set],
@@ -28,6 +32,7 @@ pub const CREATE: CommandSpec = CommandSpec {
             PretensionSection {
                 first: super::req(p, "first")?,
                 second: super::req(p, "second")?,
+                face: super::opt(p, "face")?,
                 normal: super::req(p, "normal")?,
                 control: super::req(p, "control")?,
             },
@@ -61,6 +66,22 @@ pub const ADJUST: CommandSpec = CommandSpec {
     kind: CommandKind::Model,
     requires: &[Requirement::Step],
     run: |s, p| set_control(s, p, false),
+};
+pub const FIX: CommandSpec = CommandSpec {
+    id: "model.pretension.fix",
+    label: "Fix Pretension Current Value",
+    params: r#"{"name":"Bolt","step":"Locked"} — hold the current adjustment reached by the preceding equilibrium; distinct from a prescribed adjustment"#,
+    form: Some(&[NAME, STEP]),
+    kind: CommandKind::Model,
+    requires: &[Requirement::Step],
+    run: |s, p| {
+        let name = super::name(p)?;
+        let step: &str = super::req(p, "step")?;
+        let mut target = s.model.step(step).cloned().ok_or_else(|| EngineError::Params(format!("no step `{step}`")))?;
+        target.pretension.insert(name.into(), PretensionControl::Fixed);
+        s.model.replace_step(target)?;
+        Ok(json!({"name":name,"step":step}))
+    },
 };
 fn equilibrium<'a>(s: &'a Session, step: &str) -> Result<&'a fieldcraft_solver::StaticResult> {
     match s.result(step).map(|r| r.as_ref()) {

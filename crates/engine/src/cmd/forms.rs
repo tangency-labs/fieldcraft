@@ -462,13 +462,13 @@ pub const SECTION: &[Field] = &[
                 "shell",
                 "Shell",
                 &[
-                    positive("thickness", "Thickness", D::Length).help("Shell thickness.").req(),
+                    positive("thickness", "Thickness", D::Length).help("Constant shell thickness. Quad8 uses curved MITC8 and tri6 uses MITC6-a for elastic homogeneous or layered statics, frequency and harmonic analysis; buckling requires a coplanar plate with flat preload.").req(),
                     range("offset", "Offset", D::None, -0.5, 0.5)
                         .help("Where the reference surface sits, as a fraction of the thickness: 0 mid-surface, ±0.5 top or bottom.")
                         .def("0")
                         .hint("fraction of the thickness"),
                     int("points", "Integration points", 1, 15)
-                        .help("Points through the thickness. 5 is usual; more for plasticity through the thickness.")
+                        .help("Section sampling count for deck output. The linear solver integrates tri3/quad4 analytically and MITC8/MITC6-a with three thickness Gauss points per ply; sampling does not change stiffness.")
                         .def("5"),
                 ],
             ),
@@ -522,9 +522,17 @@ pub const SECTION: &[Field] = &[
             choice("integration", "Integration", &[("full", "Full"), ("reduced", "Reduced")])
                 .help("Full: every integration point. Reduced: fewer points, cheaper and less stiff, but may need hourglass control.")
                 .def("\"full\""),
+            flag("axisymmetric_shell", "Axisymmetric ring shell").help("Shell section on two-node connectivity; r=X, axial=Y, active dofs 1/2/6, whole-ring nodal forces. Thin conical facets; aligned plies only.").def("false"),
+            flag("solid_shell", "Continuum solid-shell")
+                .help("Linear ANS/EAS10 on orthogonal affine swept hex8; thickness is node pairs 1–5, 2–6, 3–7, 4–8. Separate solid layers for laminates.")
+                .def("false"),
+            flag("enhanced_strain13", "Enhanced strain Hex8 (13)").help("Thirteen-variable Hex8; C3D8I mapping only for nonhybrid small-strain isotropic static analysis.").def("false"),
+            flag("b_bar", "B-bar Hex8").help("Volume-averaged dilatation for linear isotropic Hex8; standard remains the default.").def("false"),
             flag("incompatible_modes", "Incompatible modes")
                 .help("Extra bending modes for linear hexahedra, so a coarse hex8 mesh bends without locking.")
                 .def("false"),
+            choice("lumped_mass", "Lumped mass policy", &[("hrz","HRZ"),("row_sum","Row sum"),("consistent","Keep consistent")])
+                .help("For explicit mass=lumped solves on solid/plane sections; mass=consistent ignores this policy. Row sum requires supported positive-basis linear elements.").def("\"hrz\""),
             flag("hybrid", "Hybrid").help("Pressure as an extra unknown, for nearly incompressible materials such as rubber.").def("false"),
         ],
     )
@@ -1023,7 +1031,7 @@ const PROCEDURE: Field = variants(
             "Static, nonlinear",
             &[
                 flag("nonlinear_geometry", "Nonlinear geometry")
-                    .help("Account for large displacements and rotations. Needed for buckling-like and large-deflection problems.")
+                    .help("Account for large displacements and rotations. Pure elastic rod2 uses the finite St Venant-Kirchhoff force and consistent terminal tangent; supports frequency/transient base_state.")
                     .def("true"),
                 range("initial_increment", "Initial increment", D::None, 0.0, 1.0)
                     .help("First increment, as a fraction of the step (0.1 = 10 %).")
@@ -1093,6 +1101,7 @@ const PROCEDURE: Field = variants(
             &[
                 int("modes", "Modes", 1, 100_000).help("How many buckling modes to find.").req().def("4"),
                 num("shift", "Shift", D::None).help("Look for eigenvalues near this value; 0 finds the lowest."),
+                flag("follower_pressure", "Follower pressure").help("Include conservative pressure load stiffness on quadratic shell faces; requires symmetric free-DOF loads and direct supports."),
             ],
         ),
         variant(
@@ -1315,7 +1324,12 @@ pub const STEP_CREATE: &[Field] = &[
     OUTPUT,
     STEP_BCS,
     STEP_LOADS,
-    reference("base_state", "Equilibrium base", C::Step).help("Earlier static or nonlinear static step for a linear perturbation."),
+    reference("base_state", "Equilibrium base", C::Step)
+        .help("Earlier static/nonlinear static equilibrium for frequency, harmonic or direct/modal transient increments."),
+    flag("linear_base", "Linear base stiffness")
+        .help("Keep a linear static base dependency without initial-stress stiffness; no pretension.")
+        .def("false"),
+    flag("perturbation_follower_pressure", "Modal pressure stiffness").help("Frequency with a linear static base: conservative zero-offset MITC8 pressure tangent; unchanged direct supports. Default false keeps dead loads."),
     reference("before", "Insert before", C::Step).help("The step the new one goes before; last when empty.").hint("last"),
 ];
 
@@ -1326,6 +1340,9 @@ pub const STEP_EDIT: &[Field] = &[
     STEP_BCS,
     STEP_LOADS,
     reference("base_state", "Equilibrium base", C::Step).help("Earlier equilibrium step; null in a command clears the base."),
+    flag("linear_base", "Linear base stiffness")
+        .help("Keep a linear static base dependency without initial-stress stiffness; clear when removing the base."),
+    flag("perturbation_follower_pressure", "Modal pressure stiffness").help("Frequency with a linear static base: conservative zero-offset MITC8 pressure tangent; unchanged direct supports. Default false keeps dead loads."),
 ];
 
 pub const STEP_ACTIVATE: &[Field] = &[
@@ -2455,6 +2472,17 @@ pub const SAMPLE: &[Field] = &[choice(
 .def("\"cantilever\"")];
 pub const COUNT: &[Field] = &[int("count", "Count", 1, 1_000_000).help("How many steps.").def("1")];
 
+pub const DECK_NONLINEAR: &[Field] = &[
+    path("path", "Input file", true).req().help(".inp and required original .c user-element companion, SI."),
+    STEP,
+    choice("mass", "Reference mass", &[("consistent", "Consistent"), ("lumped", "Lumped")])
+        .help("Use the same reference mass as the nonlinear solve; default consistent.")
+        .def("\"consistent\""),
+    choice("representation", "Element mapping", &[("uel", "Original StVK user element")])
+        .help("Required original C companion; the built-in T3D2 elastic law is not equivalent.")
+        .def("\"uel\""),
+];
+
 pub const DECK: &[Field] = &[
     choice("mass", "Dynamics mass", &[("consistent", "Consistent"), ("lumped", "Lumped")]).help("Dynamics only; default consistent. Must match stored results. Native rod2 requires lumped; unsupported distributed mass mappings are refused."),
     choice(
@@ -2672,6 +2700,9 @@ pub const INVERSE_HARMONIC: &[Field] = &[
 
 pub const SOLVE_MATRICES: &[Field] = &[
     STEP,
+    choice("mass", "Mass matrix", &[("consistent", "Consistent"), ("lumped", "Lumped")])
+        .help("Inertia and material damping discretization; excludes analysis-step Rayleigh damping.")
+        .def("\"consistent\""),
     path("path", "Matrix manifest", true).help("Optional SI manifest; sibling .mtx files hold the requested operators."),
     MAX_DOFS,
     MAX_FACTOR,
@@ -2693,6 +2724,9 @@ pub const SOLVE_HARMONIC: &[Field] = &[
     THREADS,
 ];
 pub const SOLVE_RANDOM: &[Field] = &[
+    json("sampling_frequencies", "Replay frequency grid").help("Native modal random only: explicit increasing SI-Hz grid within the source bands. Leave empty for source sampling."),
+    choice("mass", "Native modal mass", &[("consistent", "Consistent"), ("lumped", "Lumped")])
+        .help("Native random model steps only; default consistent. Lumped honors explicit section policies. Stored harmonic frames inherit mass; leave empty."),
     json("stress_projection", "Scalar stress projection").help("Fixed six weights and input_model=common_scalar_unit_pattern; projects complex harmonic stress before squaring. Optional fatigue: method=narrow_band/dirlik/benasciutti_tovo, curve, duration_seconds, mean_stress_pa, correction, stationary_gaussian=true. Broad-band requires zero mean and correction=none. Segmented S-N points/cycles/amplitude with surface_factor,size_factor,endurance_limit and end_slopes are supported by narrow_band and dirlik (2..64 points, slopes 1..20); benasciutti_tovo and extrapolation=reject refuse tables. SI only; not von Mises or unknown-correlated inputs."),
     num("natural_frequency", "Natural frequency", D::Of(Quantity::Frequency)).hint("1").help("Natural frequency of the SDOF check in Hz."),
     positive("damping_ratio", "Damping ratio", D::None).hint("0.02").help("Viscous modal damping ratio ζ."),
@@ -3063,6 +3097,20 @@ pub const SOLVE_DYNAMICS: &[Field] = &[
     choice("mass", "Mass matrix", &[("consistent", "Consistent"), ("lumped", "Lumped")])
         .def("\"consistent\"").help("Used in assembly, material damping, modal extraction, initial balance and energy; stored with the result. Each solve defaults to consistent."),
     MAX_DOFS, MAX_FACTOR, MAX_MEMORY_GIB, THREADS,
+];
+
+pub const SOLVE_NONLINEAR_TRANSIENT: &[Field] = &[
+    STEP,
+    choice("mass", "Mass matrix", &[("consistent", "Consistent"), ("lumped", "Lumped")])
+        .def("\"consistent\"")
+        .help("Reference mass for inertia, initial balance and kinetic energy; retained in native nonlinear kind 11."),
+    int("max_iterations", "Newton corrections per step", 1, 100)
+        .help("Full tangent rebuild at each correction; failure leaves committed state unchanged."),
+    num("tolerance", "Relative force tolerance", D::None).help("Positive, at most 0.01; default 1e-8."),
+    MAX_DOFS,
+    MAX_FACTOR,
+    MAX_MEMORY_GIB,
+    THREADS,
 ];
 
 pub const SOLVE_ALL: &[Field] = &[choice("mass", "Mass matrix", &[("consistent", "Consistent"), ("lumped", "Lumped")])

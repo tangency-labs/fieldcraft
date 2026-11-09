@@ -1,94 +1,38 @@
-# NAFEMS LE7 axisymmetric cylinder/sphere under pressure (axisymmetric quad8)
+# NAFEMS LE7: axisymmetric shell with a regular pole
 
-Our model of the published problem: a thin-walled vessel, a cylinder closed by a hemispherical
-cap, of mid-surface radius 1 m and wall thickness 0.025 m, E = 210 GPa, ν = 0.3 (m, MN, MPa),
-under an internal pressure of 1 MPa. In FieldCraft's axisymmetric models x is the radius and y the
-axis. The cylinder runs from F (y = 0) to the junction C (y = 1.5), the cap from C to the pole A
-(y = 2.5). The axial displacement is zero at F (the vessel's plane of symmetry: the whole bottom
-edge) and the radial one at A (the pole edge, on the axis). The target is the axial stress σ_yy
-on the outer surface at D (R = 1.0125, y = 1.4034), 0.0966 m below the junction, inside the
-bending boundary layer the cap's different stiffness causes.
+Independent command model, explicit m-kg-s-N-Pa units. R=1 m, h=.025 m,
+E=210 GPa, nu=.3, density7800kg/m³ (irrelevant to this static result), cylinder
+length1.5m capped by a hemisphere. Two-ring conical shell elements on beam2
+connectivity use 100 intervals per metre (rounded upward per region).
+D=(1,1.4034,0) is a midsurface node; the target outer face is at R=1.0125.
+Connectivity runs upward from F to A, so the section normal points inward and
+bottom is the outer surface. The measured value is element D's first endpoint
+sigma_YY, without averaging it with the adjacent element. Both endpoint values
+and a 50/100/200 refinement check are documented in the axisymmetric shell manual.
 
-## The mesh
+F fixes axial translation and symmetry rotation. Pole radial translation and
+rotation are automatically constrained by the production solver. Pressure1MPa
+acts on the thin-shell midsurface as independently integrated consistent ring
+nodal forces: 2*pi*p*integral N*r*(dz,-dr). No pressure-face follower behavior is
+needed in this linear static problem. Its axial resultant is pi*p*R².
 
-Four `mesh.block` quad8 patches through the wall thickness: three cylinder blocks with E
-(y = 1.1136) and D as block corners, so D is a node, and the cap, a quarter ring whose two curved
-edges are arcs about (0, 1.5) and whose fourth edge lies on the axis. 2 elements through the
-wall, about 50 per metre along it (56, 14 and 5 in the cylinder blocks, 79 round the cap); the
-blocks share their edges, so `mesh.block` joins them. The pressure acts on the inner edges of all
-four blocks.
+The 25.86MPa target and 1% tolerance come from the same public shell reference as
+the old LE7 case (ESRD2018, p.23). The previously verified `nafems-le7-shell` case is now the canonical
+`nafems-le7` entry; its recipe and frozen numeric value/band are unchanged.
+The measured quantity retains the canonical ID `syy_D`. The public 25.86 MPa
+reference is represented as 25860000 Pa in this explicit-SI recipe; this is
+only a unit conversion, not a revised target.
 
-The recipe was generated with this script (`python3 le7.py 2 50 > recipe.json`):
+Node 142 is the midsurface D=(1,1.4034,0). Element 142 starts there, so
+`/elements/0/bottom/0/1` in the labeled `probe` reply selects its first
+endpoint's outer-surface global YY stress. The physical outer radius is
+1.0125 m. The frozen result is 25880831.09923982 Pa (+0.080553%);
+the adjacent element 141 gives 25711266.661304317 Pa (-0.57515%), also
+within the original band. This contract does not choose or average results
+after the solve. The pole is node 310 at (0,2.5,0).
 
-```python
-import json, math, sys
-
-def le7(nt, per_m):
-    """NAFEMS LE7 cylinder with a hemispherical cap, axisymmetric (m, MN, MPa): x is the radius,
-    y the axis. Mid-surface radius 1, wall 0.025 thick; the cylinder runs from F (y = 0, the plane
-    of symmetry) to C (y = 1.5), the cap from C to the pole A (y = 2.5). nt elements through the
-    wall, about per_m elements per metre along it."""
-    ri, ro = 1 - 0.0125, 1 + 0.0125
-    cuts = [0.0, 1.1136, 1.4034, 1.5]  # F, E, D, C: E and D are nodes
-    along = lambda length: max(1, round(length * per_m))
-    commands = []
-    for k, (y0, y1) in enumerate(zip(cuts, cuts[1:])):
-        commands.append({"command": "mesh.block", "params": {"body": f"cylinder_{k + 1}", "kind": "quad8",
-            "corners": [[ri, y0, 0], [ro, y0, 0], [ro, y1, 0], [ri, y1, 0]], "divisions": [nt, along(y1 - y0)],
-            "edges": [{"corners": [1, 4], "name": "inside"}, {"corners": [1, 2], "name": "bottom"}]}})
-    commands.append({"command": "mesh.block", "params": {"body": "cap", "kind": "quad8",
-        "corners": [[ri, 1.5, 0], [ro, 1.5, 0], [0, 1.5 + ro, 0], [0, 1.5 + ri, 0]], "divisions": [nt, along(math.pi / 2)],
-        "edges": [{"corners": [2, 3], "arc": {"center": [0, 1.5, 0]}}, {"corners": [4, 1], "arc": {"center": [0, 1.5, 0]}, "name": "inside"},
-                  {"corners": [3, 4], "name": "pole"}]}})
-    bodies = ["cylinder_1", "cylinder_2", "cylinder_3", "cap"]
-    return commands + [
-        {"command": "model.set.create", "params": {"name": "all", "geometry": [{"body": b, "face": "area"} for b in bodies]}},
-        {"command": "model.set.create", "params": {"name": "inside", "geometry": [{"body": b, "edge": "inside"} for b in bodies]}},
-        {"command": "model.set.create", "params": {"name": "F", "geometry": [{"body": "cylinder_1", "edge": "bottom"}]}},
-        {"command": "model.set.create", "params": {"name": "A", "geometry": [{"body": "cap", "edge": "pole"}]}},
-        {"command": "model.material.create", "params": {"name": "Steel", "elastic": {"type": "isotropic", "young": 210000.0, "poisson": 0.3}}},
-        {"command": "model.section.create", "params": {"name": "vessel", "set": "all", "material": "Steel", "kind": {"type": "axisymmetric"}}},
-        {"command": "model.boundary_condition.create", "params": {"name": "F", "type": "symmetry", "target": {"set": "F"}, "plane": "y"}},
-        {"command": "model.boundary_condition.create", "params": {"name": "A", "type": "symmetry", "target": {"set": "A"}, "plane": "x"}},
-        {"command": "model.load.create", "params": {"name": "pressure", "type": "pressure", "set": "inside", "magnitude": 1.0}},
-        {"command": "model.step.create", "params": {"name": "Pressure", "procedure": {"type": "static"}, "boundary_conditions": ["F", "A"], "loads": ["pressure"]}},
-        {"command": "solve.static", "params": {}, "id": "solve"},
-    ]
-
-nt, per_m = (int(a) for a in sys.argv[1:3]) if len(sys.argv) > 2 else (2, 50)
-print("[\n " + ",\n ".join(json.dumps(c) for c in le7(nt, per_m)) + "\n]")
-```
-
-## Refinement
-
-Every row is the listing above with the row's divisions, solved and probed at D as the case does;
-the case mesh is 2 × 50:
-
-| through the wall × per metre | σ_yy at D | against 25.86 | against 25.27 |
-|---|---|---|---|
-| 2 × 25 | 25.331 | −2.05% | +0.24% |
-| 2 × 50 (this case) | 25.283 | −2.23% | +0.05% |
-| 4 × 100 | 25.271 | −2.28% | +0.00% |
-| 8 × 200 | 25.269 | −2.29% | −0.00% |
-
-Far from the junction the model is exact: at F the axial stress on the outer surface is 19.503
-(p r_i²/(r_o² − r_i²)) and the hoop stress 39.006 (Lamé).
-
-## Two references, one known failure
-
-The published target, 25.86, comes from axisymmetric thin-shell theory. The ESRD guide solves the
-same problem with axisymmetric solid elements and reports 25.27 on two meshes, 2.3% below the
-target, and our solid model converges to the same 25.27: the difference is the model, not the
-mesh. So the case keeps the NAFEMS target with the
-tolerance a shell model would earn, 1%, marked `known_failure` until FieldCraft has an
-axisymmetric shell element, and checks the solid model against the solid reference, also at 1%.
-
-`fixture.json` holds the passing quantity's 2 × 50 value: the mesh is built by `mesh.block` from
-the recipe's corners, so it is the same on every platform.
-
-## Running it
-
-```sh
-cargo xtask oracle --case nafems-le7
-cargo xtask oracle --bless nafems-le7   # only after the case passes
-```
+The [auxiliary solid case](../nafems-le7-solid/) preserves the old recipe,
+frozen solid value and historical shell-reference failure. Its inapplicable
+solid-versus-shell comparison no longer contributes to current known failures.
+No duplicate `nafems-le7-shell` execution remains.
+See docs/solvers/axisymmetric-shell.md for formulas, pole limits and restrictions.

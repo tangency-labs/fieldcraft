@@ -1,0 +1,3 @@
+# Harmonic laminate plate
+
+Same full4x4 model and consistent sinusoidal loads as mitc8-navier-thin. K and M are the independent3x3 Navier matrices documented in ../composite-navier-frequency-thick/README.md. With alpha=2/s and beta=0, solve [K+(-omega²+i2omega)M]q=[0,0,1]. References are calculated by analytic Schur elimination, not a FEM operator. Compare centre real/imaginary response at20 and30Hz (below resonance), fixed3%. Both mass choices and direct/modal12 modes. Drilling and in-plane DOFs held for this B=0 flexural branch. Values: [(1.249792775722662e-06-6.282290392801996e-09j), (2.064799662521623e-06-2.5724415656570984e-08j)]

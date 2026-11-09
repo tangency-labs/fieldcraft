@@ -56,12 +56,22 @@ pub const HARMONIC: CommandSpec = CommandSpec {
 pub const TRANSIENT: CommandSpec = CommandSpec {
     id: "solve.transient",
     label: "Solve Transient Step",
-    params: r#"{"step":"Pulse","threads":1,"mass":"consistent|lumped"} — mass defaults to consistent on each solve and is stored with results; linear Newmark/HHT response, direct or modal; optional error-controlled substeps for direct average acceleration with translational coordinates; stores displacement, velocity, relative acceleration, optional nodal stress and mechanical energies. Read frames with solve.probe. Limits as solve.static. Uniform base displacement/acceleration amplitudes are supported; independent nonzero displacement boundary conditions and reference points are refused."#,
+    params: r#"{"step":"Pulse","threads":1,"mass":"consistent|lumped"} — mass defaults to consistent on each solve and is stored with results; linear Newmark/HHT response, direct or modal; with step base_state, returns perturbation increments about the recomputed equilibrium tangent and frozen contact/tie/pretension constraints, reference mass and perturbation energy; preload loads are not repeated; optional error-controlled substeps for direct average acceleration with translational coordinates; stores displacement, velocity, relative acceleration, optional nodal stress and mechanical energies. Read frames with solve.probe. Limits as solve.static. Uniform base displacement/acceleration amplitudes are supported; independent nonzero displacement boundary conditions and reference points are refused."#,
     form: Some(super::forms::SOLVE_DYNAMICS),
     kind: CommandKind::Model,
     requires: &[Requirement::Analysable, Requirement::Step],
     run: run_transient,
 };
+pub const NONLINEAR_TRANSIENT: CommandSpec = CommandSpec {
+    id: "solve.transient.nonlinear",
+    label: "Solve Geometric Rod Transient",
+    params: r#"{"step":"Motion","mass":"consistent|lumped","max_iterations":30,"tolerance":1e-8} — experimental rod2 finite-rotation Newmark/HHT full Newton; fixed supports, dead nodal forces and mass-proportional viscous damping only. Stores native kind 11 accepted SI histories, rod Green/second-Piola/nominal fields, forces, energies and Newton diagnostics; file.save_as/file.open retain them. Failed solves leave previous results unchanged. Read all nonlinear fields with solve.probe (SI). Unsupported elements/options are refused by name."#,
+    form: Some(super::forms::SOLVE_NONLINEAR_TRANSIENT),
+    kind: CommandKind::Model,
+    requires: &[Requirement::Analysable, Requirement::Step],
+    run: run_nonlinear_transient,
+};
+
 pub const SPECTRUM: CommandSpec = CommandSpec {
     id: "solve.spectrum",
     label: "Solve Response Spectrum",
@@ -75,7 +85,7 @@ pub const SPECTRUM: CommandSpec = CommandSpec {
 pub const RANDOM: CommandSpec = CommandSpec {
     id: "solve.random",
     label: "Solve Random Response",
-    params: r#"{"step":"Sweep", "input_psd":[[frequency_hz, psd], ...], "nodes":[1], "base_direction":[1,0,0]} — for an imported modal random step, omit input_psd and base_direction to execute its declared modal random loads. Optional elements recovers unaveraged element component PSD/RMS and element_phasors includes complex stresses. Otherwise projects an input one-sided PSD table onto stored solve.harmonic frequency frames (unit harmonic load), returning SI response component PSD and RMS; optional stress_projection {weights:[xx,yy,zz,xy,xz,yz],input_model:common_scalar_unit_pattern,fatigue:{method:narrow_band|dirlik|benasciutti_tovo,curve,duration_seconds,mean_stress_pa,correction,stationary_gaussian:true}} projects complex stresses before squaring and optionally evaluates a stationary Gaussian spectral fatigue approximation (broad-band requires zero mean, correction=none); nonlinear signed von Mises/principal criteria are refused (PSD does not identify a signed tensor history); independent/unknown correlated inputs are not supported; Segmented S-N points/cycles/amplitude with surface_factor,size_factor,endurance_limit and end_slopes are supported by narrow_band and dirlik (2..64 points, slopes 1..20); benasciutti_tovo and extrapolation=reject refuse tables. optional base_direction coherently adds the unit base acceleration to relative inertial-load frames; the legacy natural_frequency/damping_ratio/base_acceleration_psd form runs the Miles SDOF check"#,
+    params: r#"{"step":"Sweep", "input_psd":[[frequency_hz, psd], ...], "nodes":[1], "base_direction":[1,0,0]} — for an imported modal random step, omit input_psd and base_direction to execute its declared modal random loads; mass=consistent|lumped (default consistent) selects the same source-mode, inertia and damping operator, including explicit section policies; optional sampling_frequencies replays an explicit increasing SI-Hz grid within the source bands, without changing modes or loads. Stored harmonic projections inherit their source mass and reject this override. Optional elements recovers unaveraged element component PSD/RMS and element_phasors includes complex stresses. Otherwise projects an input one-sided PSD table onto stored solve.harmonic frequency frames (unit harmonic load), returning SI response component PSD and RMS; optional stress_projection {weights:[xx,yy,zz,xy,xz,yz],input_model:common_scalar_unit_pattern,fatigue:{method:narrow_band|dirlik|benasciutti_tovo,curve,duration_seconds,mean_stress_pa,correction,stationary_gaussian:true}} projects complex stresses before squaring and optionally evaluates a stationary Gaussian spectral fatigue approximation (broad-band requires zero mean, correction=none); nonlinear signed von Mises/principal criteria are refused (PSD does not identify a signed tensor history); independent/unknown correlated inputs are not supported; Segmented S-N points/cycles/amplitude with surface_factor,size_factor,endurance_limit and end_slopes are supported by narrow_band and dirlik (2..64 points, slopes 1..20); benasciutti_tovo and extrapolation=reject refuse tables. optional base_direction coherently adds the unit base acceleration to relative inertial-load frames; the legacy natural_frequency/damping_ratio/base_acceleration_psd form runs the Miles SDOF check"#,
     form: Some(super::forms::SOLVE_RANDOM),
     kind: CommandKind::Model,
     requires: &[],
@@ -115,7 +125,7 @@ pub const FREQUENCY: CommandSpec = CommandSpec {
 pub const BUCKLE: CommandSpec = CommandSpec {
     id: "solve.buckle",
     label: "Solve Buckling Step",
-    params: r#"{"step": "Buckle", "max_dofs": 6000000, "max_factor_entries": 400000000, "max_iterations": 3000, "threads": 8} — linear buckling of a buckling step (the only one when `step` is left out): the step's loads as a linear preload, then the lowest load factors λ with (K + λ K_σ) φ = 0 and their mode shapes (largest component 1), or those above the step's shift (whose LDLᵀ factor counts the load factors below it); negative load factors found are reported; the result stays in the session and its modes display like frequency modes; `max_factor_entries` and `threads` as for solve.static"#,
+    params: r#"{"step": "Buckle", "max_dofs": 6000000, "max_factor_entries": 400000000, "max_iterations": 3000, "threads": 8} — linear buckling of a buckling step (the only one when `step` is left out); procedure.follower_pressure includes conservative load stiffness on zero-offset MITC8/MITC6 reference faces (direct supports only), otherwise pressures are dead: the step's loads as a linear preload, then the lowest load factors λ with (K + λ K_σ) φ = 0 and their mode shapes (largest component 1), or those above the step's shift (whose LDLᵀ factor counts the load factors below it); negative load factors found are reported; the result stays in the session and its modes display like frequency modes; `max_factor_entries` and `threads` as for solve.static"#,
     form: Some(super::forms::SOLVE_BUCKLE),
     kind: CommandKind::Model,
     requires: &[Requirement::Analysable, Requirement::ElementMaterial, Requirement::ElementSection, Requirement::Step],
@@ -165,7 +175,7 @@ pub const FLUID: CommandSpec = CommandSpec {
 pub const PROBE: CommandSpec = CommandSpec {
     id: "solve.probe",
     label: "Probe Results",
-    params: r#"{"step": "Load", "nodes": [1, 2] (or "set": "fillet", a set's nodes), "mode": 1, "frame": 0} — the stored result at nodes (with `max_von_mises`, the largest among them, for static steps): displacement, rotation, reaction, reaction moment, stress, principal stresses (the values, largest first, without their directions) and von Mises (static, with `elements` each element's results: solid, 2D and truss nodal stresses (and, in a nonlinear step, the equivalent plastic strain at the integration points of a plastic element), shell section forces (N, M, Q per length in the element's axes) and bottom, middle and top global stresses; composite plies[node][ply] retain material-axis strain (engineering shears), stress and failure indices at bottom/middle/top and additional points, with z about the nodal surface and angle from the element axes; absent strengths give null failure, beam end forces (N, V_y, V_z, T, M_y, M_z in its axes)), the shape of mode `mode` with its rotations (frequency, from 1), or displacement and velocity in field frame `frame` (explicit, from 0; the last by default) at `nodes` (or at the nodes nearest to points: "at": [[x, y, z], ...], lowest label on a tie, each entry then giving its `xyz` and `distance`) and, with `elements` (explicit), each element's stress, von Mises stress, strain, equivalent plastic strain, damage, temperature and whether it has eroded; a coupled reference point's label gives its six displacements (translations, rotations) and reactions (forces, moments). Fluid steps: {"step": "Flow", "points": [[x, y, z]], "frame": 10 (default the last)} gives velocity, pressure and (with heat) temperature in the cells at the points; {"step": "Flow", "forces": ["x_min", "F2:top", "Body1/F2:top"]} gives those walls' force histories and {"step": "Flow", "heat": ["y_min"]} the heat into them over time (power, positive into the wall); {"step": "Flow", "line": {"from": [x, y, z], "to": [x, y, z], "count": 65 (default one point per cell spacing), "field": "velocity_x|velocity_y|velocity_z|speed|pressure|temperature|fill|wall_heat_flux", "face": "x_min" (wall_heat_flux: the box wall the line lies on)}, "frame": 10} gives the field at `count` points evenly along the line (`xyz`; trilinear between the cell centres, null outside the fluid; within half a cell of a box face the nearest cell centre's value, so a temperature line run onto a held wall reads the first cell, not the wall) and its `max` and `min` with their `xyz`, located between the samples by the parabola through the extreme sample and its neighbours; `wall_heat_flux` is the heat per area into a box wall (positive into the wall): at a held temperature from the second-order one-sided difference through the wall and the two cell layers beside it, at a flux face its flux, at an adiabatic face zero; `fill` is a free surface's fill level, 1 liquid to 0 gas; {"step": "Flow", "front": {"axis": "x", "end": "max", "at": [[x, y, z], …]}} gives a free surface's liquid front: the liquid's extent along the axis at every history time (the `max` (default) or `min` face of the cells at least half full) and its `volume`, and per point in `at` the time the extent first reached the point's coordinate along the axis, coming or going (`arrivals`; between two samples by linear interpolation; null when it never did); {"step": "Flow", "depth": {"axis": "z", "at": [[x, y, z], …]}, "frame": 10} gives, per point, the liquid in the column of cells through it along the axis in that frame (the fill levels summed times the spacing: a wave gauge's depth, a collapsing column's height at its wall)"#,
+    params: r#"{"step": "Load", "nodes": [1, 2] (or "set": "fillet", a set's nodes), "mode": 1, "frame": 0} — the stored result at nodes (with `max_von_mises`, the largest among them, for static steps): displacement, rotation, reaction, reaction moment, stress, principal stresses (the values, largest first, without their directions) and von Mises (static, with `elements` each element's results: solid, 2D and truss nodal stresses (and, in a nonlinear step, the equivalent plastic strain at the integration points of a plastic element), shell section forces (N, M, Q per length in the element's axes) and bottom, middle and top global stresses; composite plies[node][ply] retain material-axis strain (engineering shears), stress and failure indices at bottom/middle/top and additional points, with z about the nodal surface and angle from the element axes; absent strengths give null failure, beam end forces (N, V_y, V_z, T, M_y, M_z in its axes)), the shape of mode `mode` with its rotations (frequency, from 1), or displacement and velocity in field frame `frame` (explicit, from 0; the last by default) at `nodes` (or at the nodes nearest to points: "at": [[x, y, z], ...], lowest label on a tie, each entry then giving its `xyz` and `distance`) and, with `elements` (explicit), each element's stress, von Mises stress, strain, equivalent plastic strain, damage, temperature and whether it has eroded; a coupled reference point's label gives its six displacements (translations, rotations) and reactions (forces, moments). Fluid steps: {"step": "Flow", "points": [[x, y, z]], "frame": 10 (default the last)} gives velocity, pressure and (with heat) temperature in the cells at the points; {"step": "Flow", "forces": ["x_min", "F2:top", "Body1/F2:top"]} gives those walls' force histories and {"step": "Flow", "heat": ["y_min"]} the heat into them over time (power, positive into the wall); {"step": "Flow", "line": {"from": [x, y, z], "to": [x, y, z], "count": 65 (default one point per cell spacing), "field": "velocity_x|velocity_y|velocity_z|speed|pressure|temperature|fill|wall_heat_flux", "face": "x_min" (wall_heat_flux: the box wall the line lies on)}, "frame": 10} gives the field at `count` points evenly along the line (`xyz`; trilinear between the cell centres, null outside the fluid; within half a cell of a box face the nearest cell centre's value, so a temperature line run onto a held wall reads the first cell, not the wall) and its `max` and `min` with their `xyz`, located between the samples by the parabola through the extreme sample and its neighbours; `wall_heat_flux` is the heat per area into a box wall (positive into the wall): at a held temperature from the second-order one-sided difference through the wall and the two cell layers beside it, at a flux face its flux, at an adiabatic face zero; `fill` is a free surface's fill level, 1 liquid to 0 gas; {"step": "Flow", "front": {"axis": "x", "end": "max", "at": [[x, y, z], …]}} gives a free surface's liquid front: the liquid's extent along the axis at every history time (the `max` (default) or `min` face of the cells at least half full) and its `volume`, and per point in `at` the time the extent first reached the point's coordinate along the axis, coming or going (`arrivals`; between two samples by linear interpolation; null when it never did); {"step": "Flow", "depth": {"axis": "z", "at": [[x, y, z], …]}, "frame": 10} gives, per point, the liquid in the column of cells through it along the axis in that frame (the fill levels summed times the spacing: a wave gauge's depth, a collapsing column's height at its wall). Nonlinear rod kind 11 returns the complete SI history and settings for all nodes/elements; nodes/set/elements identities are validated but do not filter the reply. frame/mode/at selection is refused for this full-history interface."#,
     form: Some(super::forms::SOLVE_PROBE),
     kind: CommandKind::Model,
     requires: &[Requirement::Result],
@@ -455,6 +465,26 @@ fn run_heat(s: &mut Session, p: &Value) -> Result<Value> {
 fn run_transient(s: &mut Session, p: &Value) -> Result<Value> {
     run_dynamics(s, p, false)
 }
+fn run_nonlinear_transient(s: &mut Session, p: &Value) -> Result<Value> {
+    let limits = limits(p)?;
+    let step = opt::<String>(p, "step")?;
+    let mass = opt::<MassKind>(p, "mass")?.unwrap_or_default();
+    let max_iterations = opt::<usize>(p, "max_iterations")?.unwrap_or(30);
+    let tolerance = opt::<f64>(p, "tolerance")?.unwrap_or(1e-8);
+    if !(1..=100).contains(&max_iterations) || !tolerance.is_finite() || tolerance <= 0.0 || tolerance > 1e-2 {
+        return Err(EngineError::Params("max_iterations in 1..100; tolerance in (0,0.01]".into()));
+    }
+    let r = with_threads(threads(s, p)?, || {
+        fieldcraft_solver::transient::nonlinear::solve(&s.model, step.as_deref(), mass, max_iterations, tolerance, &limits)
+    })?;
+    let mut reply = serde_json::to_value(&r).map_err(|e| EngineError::Params(format!("nonlinear SI diagnostics: {e}")))?;
+    if let Some(o) = reply.as_object_mut() {
+        o.insert("units".into(), json!("SI"));
+        o.insert("persisted".into(), json!(true));
+    }
+    s.store_result(StepResult::Nonlinear(r));
+    Ok(reply)
+}
 fn run_spectrum(s: &mut Session, p: &Value) -> Result<Value> {
     run_dynamics(s, p, true)
 }
@@ -473,7 +503,7 @@ fn run_harmonic(s: &mut Session, p: &Value) -> Result<Value> {
     let step = opt::<String>(p, "step")?;
     let mass = opt::<MassKind>(p, "mass")?.unwrap_or_default();
     let r = with_threads(threads(s, p)?, || fieldcraft_solver::solve_harmonic_with_mass(&s.model, step.as_deref(), mass, &limits))?;
-    let summary = json!({"step": r.step, "mass": r.mass, "operator_diagonal_bounds": r.operator_diagonal_bounds, "stats": r.stats, "natural_frequencies": r.natural_frequencies, "residual_vectors": r.residual_vectors,
+    let summary = json!({"step": r.step, "mass": r.mass, "section_mass_policies": if mass == MassKind::Lumped { json!(s.model.sections().iter().map(|(n,s)|(n,s.formulation.lumped_mass)).collect::<std::collections::BTreeMap<_,_>>()) } else { json!({}) }, "operator_diagonal_bounds": r.operator_diagonal_bounds, "stats": r.stats, "natural_frequencies": r.natural_frequencies, "residual_vectors": r.residual_vectors,
         "frequencies": r.frames.iter().map(|f| json!({"frequency": f.frequency, "relative_residual": f.relative_residual,
             "residual_norm_si": f.residual_norm_si, "projected_residual": f.projected_residual, "input_power": f.input_power, "dissipated_power": f.dissipated_power})).collect::<Vec<_>>(),
         "warnings": r.warnings});
@@ -482,8 +512,16 @@ fn run_harmonic(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn run_random(s: &mut Session, p: &Value) -> Result<Value> {
-    if p.get("mass").is_some() {
-        return Err(EngineError::invalid("mass", "random response inherits source mass; select mass in solve.harmonic"));
+    let native = p
+        .get("step")
+        .and_then(Value::as_str)
+        .and_then(|name| s.model.step(name))
+        .is_some_and(|step| matches!(step.procedure, fieldcraft_model::Procedure::RandomVibration(_)));
+    if p.get("sampling_frequencies").is_some() && !native {
+        return Err(EngineError::invalid("sampling_frequencies", "requires a native modal random step"));
+    }
+    if p.get("mass").is_some() && !native {
+        return Err(EngineError::invalid("mass", "stored random response inherits source mass; select mass in solve.harmonic"));
     }
     if p.get("criterion").is_some()
         || p.pointer("/stress_projection/criterion").is_some()
@@ -572,11 +610,16 @@ fn run_frequency(s: &mut Session, p: &Value) -> Result<Value> {
     let mass = opt::<MassKind>(p, "mass")?.unwrap_or_default();
     let shift = opt::<f64>(p, "shift")?;
     let model = &s.model;
-    let (r, convergence) = with_threads(threads(s, p)?, || {
+    let (mut r, convergence) = with_threads(threads(s, p)?, || {
         fieldcraft_solver::solve_frequency_report(model, step.as_deref(), &FrequencyOptions { mass, shift }, &limits)
     })?;
+    r.mass_kind = Some(mass);
+    r.section_mass_policy =
+        Some("rod/beam reference section mass uses declared section area and material density; no inferred cross-section policy".into());
     let summary = json!({
         "step": r.step,
+        "mass":mass,
+        "section_mass_policies": if mass==MassKind::Lumped { json!(model.sections().iter().map(|(n,s)|(n,s.formulation.lumped_mass)).collect::<std::collections::BTreeMap<_,_>>()) } else { json!({}) },
         "dofs": r.stats.dofs,
         "equations": r.stats.equations,
         "lanczos_vectors": r.stats.lanczos_vectors,
@@ -1535,7 +1578,9 @@ pub(crate) fn probe(s: &mut Session, p: &Value) -> Result<Value> {
     if let StepResult::Fluid(r) = result.as_ref() {
         let mut out = probe_fluid(&s.model, r, p)?;
         let display = s.units().clone();
-        show_probe(&mut out, result, &display);
+        if !matches!(result.as_ref(), StepResult::Nonlinear(_)) {
+            show_probe(&mut out, result, &display);
+        }
         return Ok(out);
     }
     let (nodes, located) = match (p.get("nodes"), p.get("at")) {
@@ -1563,6 +1608,26 @@ pub(crate) fn probe(s: &mut Session, p: &Value) -> Result<Value> {
         }
         StepResult::Implicit(r) => probe_implicit(r, &step, &nodes, p)?,
         StepResult::Fluid(r) => probe_fluid(&s.model, r, p)?,
+        StepResult::Nonlinear(r) => {
+            for key in ["frame", "mode", "at"] {
+                if p.get(key).is_some() {
+                    return Err(EngineError::Params(format!("nonlinear full-history probe does not support `{key}`")));
+                }
+            }
+            if nodes.iter().any(|n| r.nodes.binary_search(n).is_err()) {
+                return Err(EngineError::Params("nonlinear probe node is not in the result".into()));
+            }
+            if p.get("elements").is_some() {
+                let elements = labels(p, "elements", MAX_PROBE)?;
+                if elements.iter().any(|n| r.elements.binary_search_by_key(n, |e| e.label).is_err()) {
+                    return Err(EngineError::Params("nonlinear probe element is not in the result".into()));
+                }
+            }
+            let mut value = serde_json::to_value(r).map_err(|e| EngineError::Params(e.to_string()))?;
+            value["units"] = json!("SI");
+            value["kind"] = json!(11);
+            value
+        }
     };
     // The largest von Mises stress among the probed nodes (static results).
     let peak = out.get("nodes").and_then(Value::as_array).and_then(|entries| {
@@ -1571,6 +1636,10 @@ pub(crate) fn probe(s: &mut Session, p: &Value) -> Result<Value> {
             .filter_map(|e| Some((e.get("node")?.as_u64()?, e.get("von_mises")?.as_f64()?)))
             .fold(None, |best: Option<(u64, f64)>, (n, v)| if best.is_none_or(|b| v > b.1) { Some((n, v)) } else { best })
     });
+    if let (StepResult::Implicit(fieldcraft_solver::StepResult::Frequency(f)), Some(obj)) = (result.as_ref(), out.as_object_mut()) {
+        obj.insert("mass_kind".into(), serde_json::to_value(f.mass_kind).unwrap_or(Value::Null));
+        obj.insert("section_mass_policy".into(), serde_json::to_value(&f.section_mass_policy).unwrap_or(Value::Null));
+    }
     if let (Some((node, value)), Some(obj)) = (peak, out.as_object_mut()) {
         obj.insert("max_von_mises".into(), json!({"node": node, "value": value}));
     }
@@ -1583,7 +1652,9 @@ pub(crate) fn probe(s: &mut Session, p: &Value) -> Result<Value> {
         }
     }
     let display = s.units().clone();
-    show_probe(&mut out, result, &display);
+    if !matches!(result.as_ref(), StepResult::Nonlinear(_)) {
+        show_probe(&mut out, result, &display);
+    }
     Ok(out)
 }
 

@@ -1,5 +1,20 @@
 # Natural frequencies
 
+Affine swept `hex8` continuum shells use the opt-in `solid_shell` formulation.
+See [geometry, physical ply layers, supported analyses and named refusals](../../solvers/solid-shell.md).
+
+Six-node `tri6` shells use [MITC6-a](../../solvers/mitc6.md), with shared curved
+directors and layered constitutive/mass integration. Its documented analysis restrictions and coarse-mesh accuracy limits apply.
+
+Curved `quad8` MITC8 supports consistent and positive-diagonal lumped mass for
+frequency and harmonic analysis, including ply densities and rotary inertia.
+Consistent mass retains offset/density first-moment coupling; lumped mass omits it.
+Both include an explicitly artificial drilling inertia. Transient and spectrum steps
+remain refused; curved-shell prestressed frequency has the limited
+[reference-geometry modal path](../../solvers/curved-shell-modes.md).
+Curved prestressed harmonic response remains refused.
+See [MITC8 scope](../../solvers/mitc8.md).
+
 `solve.frequency` computes the lowest natural frequencies and mode shapes of a structure,
 K φ = ω² M φ, with every boundary condition of the step held at zero, together with each mode's
 participation factors and effective masses. The eigenproblem is solved by the shifted block
@@ -230,8 +245,8 @@ amplitude has no physical size; the pictures use deformation scales of 0.4 and 0
 
 ## Limitations
 
-- Undamped, real modes only; no damping, no complex eigenvalues, no prestressed (stress-stiffened)
-  frequencies.
+- Undamped, real modes only; no damping or complex eigenvalues. Equilibrium-base
+  perturbations are limited to the explicitly supported element/tangent combinations.
 - `shift` is factored by Cholesky: a shift above the lowest eigenvalue makes K − σM indefinite and
   the solve stops with the singular-matrix error naming a degree of freedom.
 - Contact is refused; dashpots are ignored.
@@ -258,6 +273,46 @@ amplitude has no physical size; the pictures use deformation scales of 0.4 and 0
 - S. Timoshenko, D. H. Young, W. Weaver. *Vibration Problems in Engineering*, 4th ed. Wiley, 1974.
 - S. P. Timoshenko, J. N. Goodier. *Theory of Elasticity*, 3rd ed. McGraw-Hill, 1970.
 - NAFEMS. *The Standard NAFEMS Benchmarks*, TNSB Rev. 3, October 1990.
+
+## Axisymmetric ring shells
+
+The two-ring axisymmetric formulation and its analysis/export restrictions are
+documented in [Axisymmetric meridional shell](../../solvers/axisymmetric-shell.md).
+Use the explicit `axisymmetric_shell` section flag; `beam2` alone remains a beam.
+### Explicit section policies for a lumped solve
+
+The command contract remains `mass=consistent|lumped`, default `consistent`. A
+solid or planar-continuum section can set
+`formulation.lumped_mass` to `hrz` (default), `row_sum`, or `consistent`, through
+`model.section.create` / `model.section.edit`. This policy is active **only when
+the solve explicitly selects `mass=lumped`**. A consistent solve ignores it.
+The frequency reply reports the requested mass and section policies. The policy
+is stored with the model; the global solve option remains a per-call choice.
+Reopening a project does not make a later omitted `mass` argument lumped.
+
+For `row_sum`, the diagonal is `L_ii = sum_j C_ij`, where `C` is the native
+consistent element mass at its existing mass quadrature. No stiffness, density,
+load or integration point for stiffness is changed. Supported positive-basis
+linear continuum types are Tet4, Wedge6, Hex8, and planar Tri3/Quad4 (including
+axisymmetric radius weighting). Higher-order sign-changing bases, pyramids,
+shells and beams are refused for this override. Every nodal value must be finite
+and strictly positive. `hrz` keeps the existing consistent-diagonal scaling and
+its existing applicability. `consistent` retains the full consistent matrix of
+a continuum section even within a globally lumped solve; this allows a linear
+row-sum section and a quadratic consistent section in one model. Split sections
+when their element types need different policies; one section has one policy.
+
+An analytic tapered Hex8 (`x=(1+z)xi`, `y=eta`, unit parameter cube, density 1)
+has mass 3/2. Row sums are 1/6 at each bottom node and 5/24 at each top node;
+HRZ gives 5/32 and 7/32. A mixed Hex8/Tet4 assembly test also checks the tetrahedral
+consistent diagonal `V/10`, off-diagonal `V/20`, and unchanged stiffness entries.
+These are formula and implementation checks, not a claim of another solver's
+mass defaults or stiffness equivalence.
+
+Harmonic and native modal random commands accept the shared `mass` choice and
+apply these section policies to inertia and material mass-proportional damping.
+Default remains consistent. Projection of stored harmonic frames inherits that
+result's mass choice and rejects an override; the project retains section policies.
 
 ## Convergence diagnostics
 
@@ -329,3 +384,23 @@ the same executable. Both paths retain the convergence tests and random
 replacement of vanished directions. Block projection additionally stores
 packed basis and mass-basis panels; account for this workspace when comparing
 peak process memory. This selection does not change the archive format.
+
+## Curved-shell equilibrium bases
+
+Curved MITC8 shells support small-preload linear static bases and
+optional conservative pressure load stiffness through
+`perturbation_follower_pressure` on the frequency step. See the
+[formula, cylinder boundary conditions and refusals](../../solvers/curved-shell-modes.md).
+
+Curved MITC6-a prestressed frequency remains refused: the new cylinder study
+failed coarse-preload accuracy and fine-mesh actual-residual checks. Its existing
+ordinary modes and verified buckling support are unchanged.
+
+### Actual equation residuals
+
+The transformed Lanczos Ritz test is followed by a bounded inverse residual
+correction when the original K phi = lambda M phi relative residual exceeds
+1e-6. It reuses the factor and mass inner product, accepts only improvements,
+and reports any remaining error; it does not change K, M, loading or a benchmark
+tolerance. The [curved-shell modal checks](../../solvers/curved-shell-modes.md)
+include the previously failing MITC6-a single/two-mode cases and native reopening.

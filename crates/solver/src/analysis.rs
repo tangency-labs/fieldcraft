@@ -18,8 +18,8 @@ use crate::ldlt::{Kind, Symmetric};
 use crate::ordering::fill_reducing_order;
 use crate::sparse::{Csr, NodeGraph, add_block, add_diagonal, add_scalar};
 use crate::system::{
-    InitialState, Mesh, Structural, StructuralKernel, add_thermal_loads, inelastic_warnings, loads, prescribed, structural_body_forces,
-    temperature_loads, translation_block,
+    InitialState, Mesh, StructuralKernel, add_thermal_loads, inelastic_warnings, loads, prescribed, structural_body_forces, temperature_loads,
+    translation_block,
 };
 use crate::{Error, Limits, Result};
 
@@ -156,6 +156,10 @@ pub struct FrequencyResult {
     /// For a buckling step: its modes' eigenvalues are load factors (`frequency`, participation
     /// and total mass are zero) and this says what else the eigenproblem found.
     pub buckling: Option<crate::buckle::Buckling>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mass_kind: Option<MassKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section_mass_policy: Option<String>,
 }
 
 pub use fieldcraft_model::MassKind;
@@ -183,6 +187,7 @@ pub(crate) const GRAIN: usize = 16;
 
 /// Assemble the stiffness (and the mass when `mass` is set) on the mesh's node graph.
 pub(crate) fn assemble(mesh: &Mesh, graph: &NodeGraph, mass: Option<MassKind>) -> Result<Assembled> {
+    let _timing = crate::timing::Span::new("assembly");
     let layout = &mesh.layout;
     let mut k = graph.zero_matrix(layout);
     let mut m = mass.map(|_| graph.zero_matrix(layout));
@@ -193,16 +198,12 @@ pub(crate) fn assemble(mesh: &Mesh, graph: &NodeGraph, mass: Option<MassKind>) -
         let matrices = parallel::map_grained(elements.len(), GRAIN, |i| -> Result<_> {
             let Some(e) = elements.get(i) else { return Err(Error::Internal("element index".into())) };
             let kernel = e.kernel()?;
-            let at = |err| Error::element(e.label, err);
             let stiffness = e.stiffness()?.data;
             let element_mass = match mass {
                 None => None,
                 Some(kind) => {
                     let rho = e.density.ok_or_else(|| Error::Invalid(format!("element {} has no density", e.label)))?;
-                    Some(match kind {
-                        MassKind::Consistent => kernel.mass(rho).map_err(at)?.data,
-                        MassKind::Lumped => kernel.lumped_mass(rho).map_err(at)?,
-                    })
+                    Some(e.mass_matrix(kind, rho)?)
                 }
             };
             Ok((kernel.dofs().node, stiffness, element_mass))
@@ -210,7 +211,7 @@ pub(crate) fn assemble(mesh: &Mesh, graph: &NodeGraph, mass: Option<MassKind>) -
         for (e, computed) in elements.iter().zip(matrices) {
             let (kinds, stiffness, element_mass) = computed?;
             add_block(&mut k, layout, &e.nodes, kinds, &stiffness)?;
-            if let (Some(mm), Some(kind), Some(data)) = (m.as_mut(), mass, element_mass) {
+            if let (Some(mm), Some((kind, data))) = (m.as_mut(), element_mass) {
                 match kind {
                     MassKind::Consistent => add_scalar(mm, layout, &e.nodes, kinds, &data)?,
                     MassKind::Lumped => add_diagonal(mm, layout, &e.nodes, kinds, &data)?,
@@ -252,9 +253,9 @@ pub(crate) fn assemble(mesh: &Mesh, graph: &NodeGraph, mass: Option<MassKind>) -
         });
         for (s, computed) in elements.iter().zip(matrices) {
             let (stiffness, element_mass) = computed?;
-            add_block(&mut k, layout, &s.nodes, Structural::KINDS, &stiffness)?;
+            add_block(&mut k, layout, &s.nodes, s.kinds(), &stiffness)?;
             if let (Some(mm), Some(data)) = (m.as_mut(), element_mass) {
-                add_block(mm, layout, &s.nodes, Structural::KINDS, &data)?;
+                add_block(mm, layout, &s.nodes, s.kinds(), &data)?;
             }
         }
     }
@@ -430,14 +431,22 @@ fn solve_static_impl(model: &Model, step: Option<&str>, limits: &Limits, allow_m
     // A job cancelled before it starts stops here, before any setup work.
     fieldcraft_model::progress::check()?;
     let resolved = model.resolve()?;
+    let prepared = crate::pretension::prepare(model, &resolved, limits.max_dofs)?;
+    let model = prepared.model.as_ref();
+    let resolved = if prepared.copies.is_empty() { resolved } else { model.resolve()? };
     let step = model.select_step(
         step,
         |p| matches!(p, Procedure::Static {} | Procedure::CoupledTemperatureDisplacement {}),
         "static or coupled temperature–displacement",
     )?;
+    let fixed = crate::pretension::resolve_fixed(model, &step.name, limits)?;
+    let step = fixed.step(&step.name).ok_or_else(|| Error::Internal("resolved static step".into()))?;
+    let model = fixed.as_ref();
     crate::system::refuse_contact(model, "linear static")?;
     let mesh = Mesh::new(model, &resolved, limits.max_dofs)?;
-    static_on_with_order(&Setup { model, resolved: &resolved, mesh: &mesh, step }, limits, allow_multilevel)
+    let mut result = static_on_with_order(&Setup { model, resolved: &resolved, mesh: &mesh, step }, limits, allow_multilevel)?;
+    prepared.project(&mut result);
+    Ok(result)
 }
 
 /// Static equilibrium on an already validated step and mesh, also used for a buckling preload.
@@ -485,10 +494,43 @@ fn static_on_with_order(setup: &Setup<'_>, limits: &Limits, standalone: bool) ->
     if red.neq() == 0 {
         return Err(Error::Invalid("every degree of freedom is prescribed; there is nothing to solve".into()));
     }
-    let [kff] = red.reduce([&k])?;
+    let [mut kff] = red.reduce([&k])?;
+    let mut q = red.rhs(&f, &k);
+    // An axis-aligned rod preload may have exact unloaded transverse null rows.
+    // Select zero motion in that nullspace only for a named perturbation base.
+    // This is an algebraic gauge in the preload solve, NOT support or stiffness
+    // carried into the perturbation operator, which includes its actual K_sigma.
+    if !mesh.trusses.is_empty()
+        && mesh.elements.is_empty()
+        && mesh.structural.is_empty()
+        && model.steps().iter().any(|s| s.base_state.as_deref() == Some(step.name.as_str()))
+    {
+        let mut nonzero = vec![false; kff.n];
+        for row in 0..kff.n {
+            let (cols, vals) = kff.row(row);
+            for (&col, &value) in cols.iter().zip(vals) {
+                if value != 0. {
+                    nonzero[row] = true;
+                    nonzero[col] = true;
+                }
+            }
+        }
+        let mut count = 0;
+        for (i, active) in nonzero.iter().enumerate() {
+            if !active {
+                if q[i] != 0. {
+                    return Err(Error::Singular("rod base has a load in a zero-stiffness direction; nonlinear equilibrium is required".into()));
+                }
+                crate::sparse::add_entry(&mut kff, i, i, 1.)?;
+                count += 1;
+            }
+        }
+        if count > 0 {
+            warnings.push(format!("rod equilibrium: selected zero displacement in {count} exactly unloaded null coordinates; no artificial stiffness or constraints retained in perturbation"));
+        }
+    }
     let chol = factor_raw(&kff, limits).map_err(|e| factor_error(e, mesh, &red))?;
     let diagnostic_k = std::env::var("FIELDCRAFT_STATIC_RESIDUAL").is_ok_and(|v| v == "1").then_some(kff);
-    let mut q = red.rhs(&f, &k);
     let diagnostic_rhs = diagnostic_k.as_ref().map(|_| q.clone());
     chol.solve(&mut q)?;
     if let (Some(matrix), Some(rhs)) = (diagnostic_k, diagnostic_rhs) {
@@ -585,13 +627,46 @@ fn static_on_with_order(setup: &Setup<'_>, limits: &Limits, standalone: bool) ->
     let per_volume = structural_body_forces(model, resolved, mesh, step)?;
     for (s, body) in mesh.structural.iter().zip(&per_volume) {
         let at = |err| Error::element(s.label, err);
-        let dofs = mesh
-            .layout
-            .element_dofs(&s.nodes, Structural::KINDS)
-            .ok_or_else(|| Error::Internal(format!("element {} degrees of freedom", s.label)))?;
+        let dofs = mesh.layout.element_dofs(&s.nodes, s.kinds()).ok_or_else(|| Error::Internal(format!("element {} degrees of freedom", s.label)))?;
         let ue: Vec<f64> = dofs.iter().map(|d| u.get(*d).copied().unwrap_or(0.0)).collect();
         match s.kernel()? {
+            StructuralKernel::Axishell(shell) => {
+                let stress = shell.stresses(&ue).map_err(at)?;
+                for (n, v) in s.nodes.iter().zip(&stress.top) {
+                    if let (Some(acc), Some(c)) = (sum.get_mut(*n), count.get_mut(*n)) {
+                        for k in 0..6 {
+                            acc[k] += v[k];
+                        }
+                        *c += 1;
+                    }
+                }
+                shells.push(ShellResult { label: s.label, kind: s.kind, stress });
+            }
             StructuralKernel::Shell(shell) => {
+                let stress = shell.stresses(&ue).map_err(at)?;
+                for (n, v) in s.nodes.iter().zip(&stress.top) {
+                    if let (Some(acc), Some(c)) = (sum.get_mut(*n), count.get_mut(*n)) {
+                        for k in 0..6 {
+                            acc[k] += v[k];
+                        }
+                        *c += 1;
+                    }
+                }
+                shells.push(ShellResult { label: s.label, kind: s.kind, stress });
+            }
+            StructuralKernel::Mitc8(shell) => {
+                let stress = shell.stresses(&ue).map_err(at)?;
+                for (n, v) in s.nodes.iter().zip(&stress.top) {
+                    if let (Some(acc), Some(c)) = (sum.get_mut(*n), count.get_mut(*n)) {
+                        for k in 0..6 {
+                            acc[k] += v[k];
+                        }
+                        *c += 1;
+                    }
+                }
+                shells.push(ShellResult { label: s.label, kind: s.kind, stress });
+            }
+            StructuralKernel::Mitc6(shell) => {
                 let stress = shell.stresses(&ue).map_err(at)?;
                 for (n, v) in s.nodes.iter().zip(&stress.top) {
                     if let (Some(acc), Some(c)) = (sum.get_mut(*n), count.get_mut(*n)) {
@@ -610,24 +685,9 @@ fn static_on_with_order(setup: &Setup<'_>, limits: &Limits, standalone: bool) ->
     let von_mises = stress.iter().map(von_mises).collect();
     let scale = crate::system::balance_scale(&applied_total, &reaction_total, &reaction);
     let mut ground = mesh.discrete.ground_force(&u, mesh);
-    for f in &mesh.foundations {
-        let data = fieldcraft_fem::foundation::matrix(&f.xyz, f.normal, f.tangential).map_err(|e| Error::Invalid(e.to_string()))?;
-        let dofs: Vec<_> = f
-            .nodes
-            .iter()
-            .flat_map(|n| (0..3).map(move |c| (*n, c)))
-            .map(|(n, c)| {
-                let kind = fieldcraft_fem::DofKind::translation(c).ok_or_else(|| Error::Internal("foundation direction".into()))?;
-                mesh.dof(n, kind)
-            })
-            .collect::<Result<_>>()?;
-        for (i, row) in data.chunks(dofs.len()).enumerate() {
-            for (value, dof) in row.iter().zip(&dofs) {
-                ground[i % 3] -= value * u.get(*dof).copied().unwrap_or(0.);
-            }
-        }
-    }
-    let imbalance = (0..3).map(|c| (applied_total[c] + reaction_total[c] + ground[c]).abs()).fold(0.0, f64::max);
+    crate::foundation::add_ground_force(mesh, &u, &mut ground)?;
+    let axishell = mesh.structural.iter().any(|e| matches!(e.section, crate::system::Section::Axishell { .. }));
+    let imbalance = (0..3).filter(|c| !axishell || *c == 1).map(|c| (applied_total[c] + reaction_total[c] + ground[c]).abs()).fold(0.0, f64::max);
     if scale > 0.0 && imbalance > crate::system::BALANCE_TOLERANCE * scale {
         warnings.push(format!("loads and reactions differ by {imbalance:.3e} (relative {:.1e})", imbalance / scale));
     }
@@ -756,6 +816,78 @@ impl Operator for ShiftInvert<'_> {
     }
 }
 
+/// A transformed Ritz residual can be small while the original pencil residual
+/// is not. Bounded inverse iteration with the existing shifted factor corrects
+/// that defect without changing K, M, the shift or the requested spectrum.
+/// Parlett, The Symmetric Eigenvalue Problem (1998), inverse iteration and
+/// mass-inner-product orthogonalization. Accepted pairs keep their original bits.
+fn refine_frequency_pairs(k: &Csr, m: &Csr, factor: &Factor, pairs: &mut crate::eigen::Eigenpairs, warnings: &mut Vec<String>) -> Result<()> {
+    const LIMIT: f64 = 1e-6; // unit-factors: relative unshifted equation residual
+    const MAX_CORRECTIONS: usize = 4;
+    let dot = |a: &[f64], b: &[f64]| a.iter().zip(b).map(|(a, b)| a * b).sum::<f64>();
+    for mode in 0..pairs.values.len() {
+        let mut residual = crate::convergence::frequency_residual(k, m, pairs.values[mode], &pairs.vectors[mode])?;
+        if pairs.values[mode] <= 0.0 || residual.relative_residual.is_none_or(|r| r <= LIMIT) {
+            continue;
+        }
+        let mut corrections = 0;
+        for _ in 0..MAX_CORRECTIONS {
+            let phi = &pairs.vectors[mode];
+            let mut kp = vec![0.0; k.n];
+            let mut mp = vec![0.0; k.n];
+            k.mul(phi, &mut kp);
+            m.mul(phi, &mut mp);
+            let mut correction: Vec<_> = kp.iter().zip(&mp).map(|(a, b)| pairs.values[mode] * b - a).collect();
+            factor.solve(&mut correction)?;
+            let mut candidate: Vec<_> = phi.iter().zip(correction).map(|(a, b)| a + b).collect();
+            // Twice through the already accepted lower modes; retain repeated eigenspaces.
+            for _ in 0..2 {
+                for prior in &pairs.vectors[..mode] {
+                    m.mul(&candidate, &mut mp);
+                    let projection = dot(prior, &mp);
+                    for (v, q) in candidate.iter_mut().zip(prior) {
+                        *v -= projection * q;
+                    }
+                }
+            }
+            m.mul(&candidate, &mut mp);
+            let mass = dot(&candidate, &mp);
+            if !(mass > 0.0 && mass.is_finite()) {
+                break;
+            }
+            let scale = mass.sqrt();
+            for v in &mut candidate {
+                *v /= scale;
+            }
+            k.mul(&candidate, &mut kp);
+            m.mul(&candidate, &mut mp);
+            let lambda = dot(&candidate, &kp) / dot(&candidate, &mp);
+            if !lambda.is_finite() || lambda <= 0.0 {
+                break;
+            }
+            let next = crate::convergence::frequency_residual(k, m, lambda, &candidate)?;
+            if !matches!((next.relative_residual, residual.relative_residual), (Some(a), Some(b)) if a < b) {
+                break;
+            }
+            pairs.vectors[mode] = candidate;
+            pairs.values[mode] = lambda;
+            residual = next;
+            corrections += 1;
+            if residual.relative_residual.is_some_and(|r| r <= LIMIT) {
+                break;
+            }
+        }
+        warnings.push(format!(
+            "mode {}: {corrections} inverse residual corrections; actual unshifted relative residual {:?}",
+            mode + 1,
+            residual.relative_residual
+        ));
+        // The diagnostics retain the actual remaining error, including roundoff floors.
+        // A correction is not itself evidence that the physical mode is validated.
+    }
+    Ok(())
+}
+
 /// Block size of the Lanczos iteration: enough for the six rigid-body modes of a free body.
 pub(crate) const BLOCK: usize = 6;
 
@@ -830,6 +962,19 @@ fn frequency_impl(
     diagnostics: bool,
     standalone: bool,
 ) -> Result<(FrequencyResult, Option<Csr>, Option<crate::convergence::ModalConvergence>)> {
+    if model.pretensions().values().any(|p| p.face.is_some()) {
+        // A job cancelled before it starts stops here, before any setup work.
+        fieldcraft_model::progress::check()?;
+        if retain_mass {
+            return Err(Error::NotSupported("modal derivatives on a private pretension cut".into()));
+        }
+        let resolved = model.resolve()?;
+        let prepared = crate::pretension::prepare(model, &resolved, limits.max_dofs)?;
+        // Pretension sections are outside the verified scope of the multilevel ordering.
+        let (mut result, mass, convergence) = frequency_impl(prepared.model.as_ref(), step, options, limits, false, diagnostics, false)?;
+        prepared.project_frequency(&mut result);
+        return Ok((result, mass, convergence));
+    }
     let first = frequency_once(model, step, options, limits, retain_mass, diagnostics, standalone)?;
     let selected = model.select_step(step, |p| matches!(p, Procedure::Frequency { .. }), "frequency")?;
     if standalone_linear_order(model, selected, standalone)
@@ -938,7 +1083,7 @@ fn frequency_once(
             Err(e) => return Err(factor_error(e, &mesh, &red)),
         },
     };
-    let residual_k = diagnostics.then_some(kff);
+
     let two_pi = 2.0 * std::f64::consts::PI;
     let wanted = Wanted {
         count: usize::try_from(modes).unwrap_or(usize::MAX).min(neq),
@@ -953,7 +1098,13 @@ fn frequency_once(
         .and_then(|s| s.parse::<f64>().ok())
         .filter(|t| (1e-13..=TOLERANCE).contains(t))
         .unwrap_or(TOLERANCE);
-    let pairs = lanczos(&op, shift, wanted, BLOCK, max_basis, tolerance)?;
+    let mut pairs = lanczos(&op, shift, wanted, BLOCK, max_basis, tolerance)?;
+    // The residual correction needs the stiffness, so it stays alive through the Lanczos run.
+    {
+        let _timing = crate::timing::Span::new("frequency_residual_correction");
+        refine_frequency_pairs(&kff, &mff, &chol, &mut pairs, &mut warnings)?;
+    }
+    let residual_k = diagnostics.then_some(kff);
     if std::env::var("FIELDCRAFT_MODAL_ORTHOGONALITY").is_ok_and(|v| v == "1") {
         use std::io::Write;
         let _timing = crate::timing::Span::new("frequency_mass_orthogonality");
@@ -1031,6 +1182,8 @@ fn frequency_once(
             stats: Stats { dofs: mesh.dofs(), equations: neq, factor_entries: chol.entries(), lanczos_vectors: pairs.basis },
             warnings,
             buckling: None,
+            mass_kind: None,
+            section_mass_policy: None,
         },
         retained_mass,
         convergence,
@@ -1096,6 +1249,36 @@ impl StepResult {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn inverse_correction_recovers_original_pencil_not_only_ritz_value() {
+        let k = Csr { n: 2, ptr: vec![0, 1, 2], idx: vec![0, 1], val: vec![1.0, 1e9] };
+        let m = Csr { n: 2, ptr: vec![0, 1, 2], idx: vec![0, 1], val: vec![2.0, 3.0] };
+        let factor = factor_raw(&k, &Limits::default()).unwrap();
+        let mut pairs = crate::eigen::Eigenpairs {
+            values: vec![0.5],
+            vectors: vec![vec![0.5_f64.sqrt(), 1e-7]],
+            negative: vec![],
+            basis: 2,
+            iterations: 1,
+            basis_limit: 2,
+            basis_limit_reached: true,
+            full_space_reached: true,
+        };
+        let mut warnings = vec![];
+        let initial = crate::convergence::frequency_residual(&k, &m, pairs.values[0], &pairs.vectors[0]).unwrap();
+        assert!(initial.relative_residual.unwrap() > 0.9);
+        refine_frequency_pairs(&k, &m, &factor, &mut pairs, &mut warnings).unwrap();
+        let final_error = crate::convergence::frequency_residual(&k, &m, pairs.values[0], &pairs.vectors[0]).unwrap();
+        assert!(final_error.relative_residual.unwrap() < 1e-6);
+        assert!((pairs.values[0] - 0.5).abs() < 1e-12);
+        let mut mass_shape = vec![0.0; 2];
+        m.mul(&pairs.vectors[0], &mut mass_shape);
+        let mass: f64 = pairs.vectors[0].iter().zip(&mass_shape).map(|(a, b)| a * b).sum();
+        assert!((mass - 1.0).abs() < 1e-14);
+        let frozen = (pairs.values.clone(), pairs.vectors.clone());
+        refine_frequency_pairs(&k, &m, &factor, &mut pairs, &mut warnings).unwrap();
+        assert_eq!(frozen, (pairs.values, pairs.vectors));
+    }
     use super::*;
     use fieldcraft_model::{BoundaryCondition, Directional, Elastic, Formulation, Load, Material, Section, SectionKind, Set, Target, Thermal};
 
@@ -1119,6 +1302,8 @@ mod tests {
             stats: Stats { dofs: 0, equations: 0, factor_entries: 0, lanczos_vectors: 0 },
             warnings: vec![],
             buckling: None,
+            mass_kind: None,
+            section_mass_policy: None,
         };
         assert!(modal_order_fallback_reason(&result).unwrap().contains("repeated"));
         result.modes[1].eigenvalue = 2.0;
@@ -1137,6 +1322,7 @@ mod tests {
                 fieldcraft_model::PretensionSection {
                     first: "base".into(),
                     second: "top".into(),
+                    face: None,
                     normal: [0.0, 0.0, 1.0],
                     control: "BoltControl".into(),
                 },
@@ -1160,7 +1346,7 @@ mod tests {
             assert!(!standalone_linear_order(&Model::default(), &step, true));
         }
         for procedure in [
-            Procedure::Buckle { modes: 1, shift: None },
+            Procedure::Buckle { modes: 1, shift: None, follower_pressure: false },
             Procedure::HeatTransfer { transient: None },
             Procedure::CoupledTemperatureDisplacement {},
             Procedure::MatrixGeneration { matrices: Default::default() },
@@ -1208,7 +1394,7 @@ mod tests {
         model
             .add_load("force", Load::Force { target: Target::Set("top".into()), vector: [0.0, 0.0, -1.0], distribution: Default::default() })
             .unwrap();
-        let mut step = Step::new("Buckle", Procedure::Buckle { modes: 1, shift: None });
+        let mut step = Step::new("Buckle", Procedure::Buckle { modes: 1, shift: None, follower_pressure: false });
         step.boundary_conditions.insert("fixed".into());
         step.loads.insert("force".into());
         model.add_step(step, None).unwrap();
@@ -1290,5 +1476,116 @@ mod tests {
             }
         });
         assert_eq!(model, before);
+    }
+}
+
+#[cfg(test)]
+mod section_mass_tests {
+    use super::*;
+    use fieldcraft_model::{Elastic, Formulation, LumpedMass, Material, Section, SectionKind, Set};
+
+    #[test]
+    fn mixed_sections_assemble_row_sum_and_consistent_without_changing_stiffness() {
+        let mut model = Model::default();
+        for (i, x) in [
+            [0., 0., 0.],
+            [1., 0., 0.],
+            [1., 1., 0.],
+            [0., 1., 0.],
+            [0., 0., 1.],
+            [2., 0., 1.],
+            [2., 1., 1.],
+            [0., 1., 1.],
+            [3., 0., 0.],
+            [4., 0., 0.],
+            [3., 1., 0.],
+            [3., 0., 1.],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            model.set_node(i as u32 + 1, x).unwrap();
+        }
+        model.set_element(1, ElementKind::Hex8, (1..=8).collect()).unwrap();
+        model.set_element(2, ElementKind::Tet4, (9..=12).collect()).unwrap();
+        model
+            .add_material(
+                "M",
+                Material {
+                    elastic: Some(Elastic::Isotropic { young: 1000., poisson: 0.0 }),
+                    density: Some(1.0),
+                    damping: Some(fieldcraft_model::harmonic::Damping { alpha: 0.7, beta: 0.2, loss_factor: 0.0 }),
+                    ..Material::default()
+                },
+            )
+            .unwrap();
+        for (name, id, policy) in [("Hex", 1, LumpedMass::RowSum), ("Tet", 2, LumpedMass::Consistent)] {
+            model.add_set(name, Set { elements: vec![id], ..Set::default() }).unwrap();
+            model
+                .add_section(
+                    name,
+                    Section {
+                        set: name.into(),
+                        material: "M".into(),
+                        kind: SectionKind::Solid {},
+                        orientation: None,
+                        formulation: Formulation { lumped_mass: policy, b_bar: id == 1, ..Formulation::default() },
+                    },
+                )
+                .unwrap();
+        }
+        model.add_step(fieldcraft_model::Step::new("Matrix", Procedure::Static {}), None).unwrap();
+        let resolved = model.resolve().unwrap();
+        let mesh = Mesh::new(&model, &resolved, 1000).unwrap();
+        let graph = NodeGraph::new(mesh.block_count(), mesh.blocks());
+        let consistent = assemble(&mesh, &graph, Some(MassKind::Consistent)).unwrap();
+        let selected = assemble(&mesh, &graph, Some(MassKind::Lumped)).unwrap();
+        assert_eq!(consistent.k, selected.k, "mass-only choice cannot modify K");
+        let (damping, _) = crate::harmonic::damping_operators_with_mass(&model, &resolved, &mesh, &graph, MassKind::Lumped).unwrap();
+        let damping = damping.unwrap();
+        let mass = selected.m.unwrap();
+        for ((c, k), m) in damping.val.iter().zip(&selected.k.val).zip(&mass.val) {
+            assert!((c - (0.2 * k + 0.7 * m)).abs() < 1e-12, "section inertia must also drive material damping");
+        }
+        let diag = mass.diagonal();
+        for n in 0..8 {
+            let expected = if n < 4 { 1.0 / 6.0 } else { 5.0 / 24.0 };
+            for dof in 0..3 {
+                assert!((diag[3 * n + dof] - expected).abs() < 1e-14);
+            }
+        }
+        // Unit affine tetrahedron: volume=1/6, Cii=V/10, Cij=V/20.
+        for i in 8..12 {
+            let (cols, values) = mass.row(i * 3);
+            for j in 8..12 {
+                let actual = values[cols.binary_search(&(j * 3)).unwrap()];
+                let expected = if i == j { 1.0 / 60.0 } else { 1.0 / 120.0 };
+                assert!((actual - expected).abs() < 1e-14, "{i},{j}: {actual}");
+            }
+        }
+        assert_eq!(model.section("Hex").unwrap().formulation.lumped_mass, LumpedMass::RowSum);
+        // A quadratic simplex has sign-changing corner basis functions; no silent row-sum fallback.
+        for (id, xyz) in
+            [(13, [3.5, 0., 0.]), (14, [3.5, 0.5, 0.]), (15, [3., 0.5, 0.]), (16, [3., 0., 0.5]), (17, [3.5, 0., 0.5]), (18, [3., 0.5, 0.5])]
+        {
+            model.set_node(id, xyz).unwrap();
+        }
+        model.set_element(2, ElementKind::Tet10, (9..=18).collect()).unwrap();
+        let mixed_mesh = Mesh::new(&model, &model.resolve().unwrap(), 1000).unwrap();
+        let mixed_graph = NodeGraph::new(mixed_mesh.block_count(), mixed_mesh.blocks());
+        let mixed = assemble(&mixed_mesh, &mixed_graph, Some(MassKind::Lumped)).unwrap();
+        let diagonal = mixed.m.unwrap().diagonal();
+        // Quadratic simplex barycentric integrals: corner Cii=V/70, edge Cii=8V/105.
+        for n in 8..18 {
+            let expected = if n < 12 { 1.0 / 420.0 } else { 4.0 / 315.0 };
+            assert!((diagonal[n * 3] - expected).abs() < 1e-14, "quadratic consistent override node {n}");
+        }
+        let mut section = model.section("Tet").unwrap().clone();
+        section.formulation.lumped_mass = LumpedMass::RowSum;
+        model.replace_section("Tet", section).unwrap();
+        let mesh = Mesh::new(&model, &model.resolve().unwrap(), 1000).unwrap();
+        let graph = NodeGraph::new(mesh.block_count(), mesh.blocks());
+        let error = assemble(&mesh, &graph, Some(MassKind::Lumped)).err().unwrap().to_string();
+        assert!(error.contains("element 2") && error.contains("row_sum"), "{error}");
     }
 }

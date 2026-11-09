@@ -23,12 +23,16 @@ locations are common. One-point/even-count plies and Gauss section
 integration are refused. [Abaqus 2026 SHELL SECTION](https://docs.software.vt.edu/abaqusv2026/English/SIMACAEKEYRefMap/simakey-r-shellsection.htm)
 
 `ORIENTATION, DEFINITION=COORDINATES` carries rectangular frames and cylindrical radial/hoop/
-axial frames. A rectangular origin is eliminated by taking coordinate differences. For solids, cylindrical endpoints retain the axis line. Shell cylindrical frames are
+axial frames. `SYSTEM=Z RECTANGULAR` is converted from points on local Z and the XZ plane
+to the same native X/Y/Z frame, before any additional rotation. Its canonical export is
+`RECTANGULAR`; source replay preserves the original spelling and points. A rectangular origin is eliminated by taking coordinate differences. For solids, cylindrical endpoints retain the axis line. Shell cylindrical frames are
 evaluated at the element node-average centre and written as a constant rectangular frame,
 matching FieldCraft's current discrete shell definition; refinement reevaluates those frames.
 The arbitrary scale of a direction vector is not retained.
-Nonzero additional rotations, distributions, node-based definitions and unsupported coordinate
-systems are refused on import. Solids retain the whole frame. [Abaqus 2026 ORIENTATION](https://docs.software.vt.edu/abaqusv2026/English/SIMACAEKEYRefMap/simakey-r-orientation.htm)
+Constant rectangular additional rotations are applied before shell projection, with the cyclic
+successor of the selected rotation axis as the reference direction. Cylindrical additional
+twist, distributions, node-based definitions and unsupported coordinate systems remain refused.
+Solids retain the whole frame. [Abaqus 2026 ORIENTATION](https://docs.software.vt.edu/abaqusv2026/English/SIMACAEKEYRefMap/simakey-r-orientation.htm)
 
 For shells, Abaqus projects the cyclic successor of the specified rotation axis. The adapter
 therefore maps `shell_reference_axis` 1/2/3 to rotation axis 3/1/2, with zero additional rotation.

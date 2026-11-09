@@ -73,6 +73,10 @@ pub enum Procedure {
         modes: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         shift: Option<f64>,
+        /// Include conservative pressure load stiffness on quadratic shell faces.
+        /// Only an assembled symmetric free-DOF operator is accepted.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        follower_pressure: bool,
     },
     /// Transient dynamics by explicit time integration up to `end_time`.
     ExplicitDynamic(ExplicitDynamic),
@@ -1189,7 +1193,7 @@ impl Procedure {
         if let Procedure::HeatTransfer { transient: Some(t) } = self {
             return t.validate();
         }
-        if let Procedure::Buckle { modes, shift } = *self {
+        if let Procedure::Buckle { modes, shift, .. } = *self {
             if !(1..=MAX_MODES).contains(&modes) {
                 return Err(Error::Invalid(format!("a buckling step extracts 1 to {MAX_MODES} modes, got {modes}")));
             }
@@ -1266,6 +1270,13 @@ pub struct Step {
     /// Equilibrium step whose terminal state defines this linear perturbation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_state: Option<String>,
+    /// Retain an earlier linear equilibrium dependency without initial-stress stiffness.
+    /// False preserves the native stress-stiffened base-state contract.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub linear_base: bool,
+    /// Include conservative reference-surface pressure stiffness in a shell modal perturbation.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub perturbation_follower_pressure: bool,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub pretension: BTreeMap<String, crate::PretensionControl>,
     pub output: BTreeSet<OutputVariable>,
@@ -1283,6 +1294,8 @@ impl Step {
         Step {
             name: name.into(),
             base_state: None,
+            linear_base: false,
+            perturbation_follower_pressure: false,
             pretension: BTreeMap::new(),
             output: procedure.default_output(),
             procedure,
@@ -1334,6 +1347,8 @@ pub struct StepInputs<'a> {
     step: &'a Step,
     #[serde(skip_serializing_if = "Option::is_none")]
     base_state: Option<&'a Step>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    fixed_predecessors: Vec<&'a Step>,
 }
 
 /// What a step that takes no initial fields reads of them.
@@ -1348,16 +1363,19 @@ impl Model {
     pub fn step_inputs(&self, name: &str) -> Option<StepInputs<'_>> {
         let step = self.step(name)?;
         let base = step.base_state.as_deref().and_then(|n| self.step(n));
+        let mut fixed_predecessors = Vec::new();
+        let mut current = base.unwrap_or(step);
+        while current.pretension.values().any(|c| matches!(c, crate::PretensionControl::Fixed)) {
+            let Some(previous) = self.pretension_predecessor(current) else { break };
+            fixed_predecessors.push(previous);
+            current = previous;
+        }
+        let involved: Vec<_> = std::iter::once(step).chain(base).chain(fixed_predecessors.iter().copied()).collect();
         Some(StepInputs {
             nodes: &self.nodes,
             elements: &self.elements,
             classification: &self.classification,
-            sets: self
-                .sets
-                .iter()
-                .filter(|(n, _)| self.step_uses_set(step, n) || base.is_some_and(|b| self.step_uses_set(b, n)))
-                .map(|(n, s)| (n.as_str(), s))
-                .collect(),
+            sets: self.sets.iter().filter(|(n, _)| involved.iter().any(|s| self.step_uses_set(s, n))).map(|(n, s)| (n.as_str(), s)).collect(),
             materials: &self.materials,
             sections: &self.sections,
             reference_points: &self.reference_points,
@@ -1371,24 +1389,23 @@ impl Model {
             boundary_conditions: self
                 .boundary_conditions
                 .iter()
-                .filter(|(n, _)| step.boundary_conditions.contains(*n) || base.is_some_and(|b| b.boundary_conditions.contains(*n)))
+                .filter(|(n, _)| involved.iter().any(|s| s.boundary_conditions.contains(*n)))
                 .map(|(n, b)| (n.as_str(), b))
                 .collect(),
-            loads: self
-                .loads
-                .iter()
-                .filter(|(n, _)| step.loads.contains(*n) || base.is_some_and(|b| b.loads.contains(*n)))
-                .map(|(n, l)| (n.as_str(), l))
-                .collect(),
-            initial_fields: if crate::initial::acts_in(&step.procedure) || base.is_some_and(|b| crate::initial::acts_in(&b.procedure)) {
-                &self.initial_fields
-            } else {
-                &NO_FIELDS
-            },
+            loads: self.loads.iter().filter(|(n, _)| involved.iter().any(|s| s.loads.contains(*n))).map(|(n, l)| (n.as_str(), l)).collect(),
+            initial_fields: if involved.iter().any(|s| crate::initial::acts_in(&s.procedure)) { &self.initial_fields } else { &NO_FIELDS },
             fluid_domains: &self.fluid_domains,
             step,
             base_state: base,
+            fixed_predecessors,
         })
+    }
+
+    /// Current-value pretension takes the immediately preceding general structural
+    /// equilibrium in analysis order, skipping perturbation steps.
+    pub fn pretension_predecessor(&self, step: &Step) -> Option<&Step> {
+        let at = self.steps.iter().position(|s| s.name == step.name)?;
+        self.steps.iter().take(at).rev().find(|s| matches!(s.procedure, Procedure::Static {} | Procedure::NonlinearStatic(_)))
     }
 
     /// The steps in analysis order.
@@ -1437,9 +1454,14 @@ impl Model {
     }
 
     fn base_before(&self, step: &Step, at: usize) -> Result<Option<&Step>> {
-        let Some(name) = &step.base_state else { return Ok(None) };
-        if !matches!(step.procedure, Procedure::Frequency { .. } | Procedure::Harmonic(_)) {
-            return Err(Error::Invalid(format!("step `{}`: base_state requires a frequency or harmonic step", step.name)));
+        let Some(name) = &step.base_state else {
+            if step.linear_base {
+                return Err(Error::Invalid("linear_base requires base_state".into()));
+            }
+            return Ok(None);
+        };
+        if !matches!(step.procedure, Procedure::Frequency { .. } | Procedure::Harmonic(_) | Procedure::Transient(_)) {
+            return Err(Error::Invalid(format!("step `{}`: base_state requires a frequency, harmonic or transient step", step.name)));
         }
         let index = self.step_index(name)?;
         let base = self.steps.get(index).ok_or_else(|| Error::NotFound(format!("base step `{name}`")))?;
@@ -1449,10 +1471,21 @@ impl Model {
                 step.name
             )));
         }
+        if step.linear_base && (!matches!(base.procedure, Procedure::Static {}) || !base.pretension.is_empty()) {
+            return Err(Error::Invalid("linear_base requires an ordinary linear static equilibrium without pretension".into()));
+        }
         Ok(Some(base))
     }
 
     fn check_step(&self, step: &Step) -> Result<()> {
+        if step.perturbation_follower_pressure && (step.base_state.is_none() || !matches!(step.procedure, Procedure::Frequency { .. })) {
+            return Err(Error::Invalid("perturbation_follower_pressure requires a frequency step with base_state".into()));
+        }
+        if step.perturbation_follower_pressure && step.linear_base {
+            return Err(Error::Invalid(
+                "perturbation_follower_pressure needs the stress-stiffened base; linear_base leaves out initial-stress stiffness".into(),
+            ));
+        }
         if !step.pretension.is_empty() && !matches!(step.procedure, Procedure::Static {} | Procedure::NonlinearStatic(_)) {
             return Err(Error::Invalid("pretension control requires a static equilibrium step; perturbations lock the base adjustment".into()));
         }

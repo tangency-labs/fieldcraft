@@ -102,8 +102,14 @@ fn coupling(b: &Block<'_>, sub: Option<&Block<'_>>, blocks: &[Block<'_>], model:
             bits |= 1 << (d - 1);
         }
     }
-    if bits != 63 {
-        return Err(history::unsupported(sub.line, format!("*{} partial DOFs (currently requires 1..6)", sub.keyword)));
+    if (kind == CouplingKind::Distributing && bits != 63 && bits != 7) || bits & 7 == 0 {
+        return Err(history::unsupported(
+            sub.line,
+            format!(
+                "*{} DOFs: distributing requires explicit 1..3 or 1..6; partial rotational release is not mapped; kinematic requires at least one translation",
+                sub.keyword
+            ),
+        ));
     }
     let labels = nodes(model, b.required("REFNODE")?, b.line)?;
     let [label]: [u32; 1] = labels.try_into().map_err(|_| history::unsupported(b.line, "*COUPLING REF NODE requires a singleton"))?;
@@ -122,25 +128,37 @@ fn coupling(b: &Block<'_>, sub: Option<&Block<'_>>, blocks: &[Block<'_>], model:
         .collect();
     let [surface]: [&Block<'_>; 1] = surfaces.try_into().map_err(|_| error(b.line, format!("missing or duplicate coupling surface {surf}")))?;
     history::allow(surface, &["NAME", "TYPE"])?;
-    if canonical(history::value(surface, "TYPE", "ELEMENT")?) != "NODE" {
-        return Err(history::unsupported(surface.line, "*COUPLING requires TYPE=NODE surface"));
-    }
+    let element_surface = match canonical(history::value(surface, "TYPE", "ELEMENT")?).as_str() {
+        "NODE" => false,
+        "ELEMENT" if kind == CouplingKind::Kinematic => true,
+        "ELEMENT" => return Err(history::unsupported(surface.line, "*DISTRIBUTING element-surface tributary weights are not mapped")),
+        _ => return Err(history::unsupported(surface.line, "*COUPLING surface TYPE requires NODE or kinematic ELEMENT")),
+    };
     let mut members = BTreeSet::new();
-    for row in &surface.rows {
-        let f = row_fields(row.text, row.line)?;
-        if f.len() > 2 || f.is_empty() {
-            return Err(error(row.line, "node surface needs node/set and optional weight"));
+    if element_surface {
+        let name = set_name(model, &surf, surface.line)?;
+        let resolved = model.resolve_set(&name).map_err(|e| error(surface.line, e.to_string()))?;
+        if resolved.nodes.len() > limits.members {
+            return Err(error(surface.line, "coupling member limit reached"));
         }
-        if let Some(weight) = f.get(1)
-            && number(weight, row.line)? != 1.0
-        {
-            return Err(history::unsupported(row.line, "*SURFACE non-unit node weight"));
-        }
-        for n in nodes(model, f.first().map(String::as_str).unwrap_or_default(), row.line)? {
-            if members.len() >= limits.members && !members.contains(&n) {
-                return Err(error(row.line, "coupling member limit reached"));
+        members.extend(resolved.nodes);
+    } else {
+        for row in &surface.rows {
+            let f = row_fields(row.text, row.line)?;
+            if f.len() > 2 || f.is_empty() {
+                return Err(error(row.line, "node surface needs node/set and optional weight"));
             }
-            members.insert(n);
+            if let Some(weight) = f.get(1)
+                && number(weight, row.line)? != 1.0
+            {
+                return Err(history::unsupported(row.line, "*SURFACE non-unit node weight"));
+            }
+            for n in nodes(model, f.first().map(String::as_str).unwrap_or_default(), row.line)? {
+                if members.len() >= limits.members && !members.contains(&n) {
+                    return Err(error(row.line, "coupling member limit reached"));
+                }
+                members.insert(n);
+            }
         }
     }
     if members.is_empty() || members.contains(&label) {
@@ -153,21 +171,50 @@ fn coupling(b: &Block<'_>, sub: Option<&Block<'_>>, blocks: &[Block<'_>], model:
     if members.iter().any(|n| !solid_nodes.contains(n) || rotating_nodes.contains(n)) {
         return Err(history::unsupported(b.line, "*COUPLING cloud requires nodes belonging only to solid elements"));
     }
+    if kind == CouplingKind::Distributing && bits == 7 {
+        // The new translation-only subset is the exact equal-weight mean at the
+        // cloud centroid. Do not infer a released-rotation rule for an offset RP.
+        let mut centroid = [0.0; 3];
+        let mut scale = 0.0_f64;
+        for node in &members {
+            let xyz = model.node(*node).ok_or_else(|| error(b.line, "missing distributing cloud node"))?.xyz;
+            for axis in 0..3 {
+                centroid[axis] += xyz[axis] / members.len() as f64;
+                scale = scale.max(xyz[axis].abs());
+            }
+        }
+        let xyz = model.node(label).ok_or_else(|| error(b.line, "missing distributing reference node"))?.xyz;
+        if xyz.iter().zip(centroid).any(|(x, c)| (*x - c).abs() > 64.0 * f64::EPSILON * scale) {
+            return Err(history::unsupported(
+                b.line,
+                "*DISTRIBUTING DOFs 1..3 require REF NODE at the equal-weight cloud centroid; offset reference points are not mapped",
+            ));
+        }
+    }
     let rp = format!("InpReference{label}");
     if model.reference_point(&rp).is_none() {
         let xyz = model.node(label).ok_or_else(|| error(b.line, "missing reference node"))?.xyz;
         model.add_reference_point(&rp, ReferencePoint { xyz, label }).map_err(|e| error(b.line, e.to_string()))?;
     }
-    let set = Set { nodes: members.into_iter().collect(), ..Set::default() };
-    if let Some(existing) = model.set(&surf) {
-        if existing != &set {
-            return Err(error(surface.line, "coupling surface name collides with another set"));
-        }
+    let coupling_set = if element_surface {
+        // Keep the actual spelling and face identity of the resolved model set.
+        set_name(model, &surf, surface.line)?
     } else {
-        model.add_set(&surf, set).map_err(|e| error(surface.line, e.to_string()))?;
-    }
+        let set = Set { nodes: members.into_iter().collect(), ..Set::default() };
+        if let Some(existing) = model.set(&surf) {
+            if existing != &set {
+                return Err(error(surface.line, "coupling surface name collides with another set"));
+            }
+        } else {
+            model.add_set(&surf, set).map_err(|e| error(surface.line, e.to_string()))?;
+        }
+        surf
+    };
     model
-        .add_coupling(&history::name(b.required("CONSTRAINTNAME")?, b.line)?, Coupling { reference_point: rp, set: surf, kind, dofs: Dofs::all() })
+        .add_coupling(
+            &history::name(b.required("CONSTRAINTNAME")?, b.line)?,
+            Coupling { reference_point: rp, set: coupling_set, kind, dofs: Dofs::from_bits(bits) },
+        )
         .map_err(|e| error(b.line, e.to_string()))?;
     Ok(vec![b.line, sub.line, surface.line])
 }
@@ -229,4 +276,60 @@ pub(super) fn finish(model: &mut Model) -> Result<()> {
         model.remove_node(label).map_err(|e| error(1, e.to_string()))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn translation_only_distributing_requires_the_explicit_supported_subset() {
+        let input = r#"** Original equal-weight translation-only distributing coupling, SI
+*NODE
+1,0,0,0
+2,1,0,0
+3,0,1,0
+4,0,0,1
+99,.3333333333333333,0,.3333333333333333
+*ELEMENT,TYPE=C3D4,ELSET=Solid
+1,1,2,3,4
+*NSET,NSET=Base
+1,2,3
+*NSET,NSET=Cloud
+1,2,4
+*NSET,NSET=RP
+99
+*SURFACE,TYPE=NODE,NAME=Pad
+Cloud,1
+*MATERIAL,NAME=Elastic
+*ELASTIC
+120000,.25
+*SOLID SECTION,ELSET=Solid,MATERIAL=Elastic
+*COUPLING,CONSTRAINT NAME=Mean,REF NODE=RP,SURFACE=Pad
+*DISTRIBUTING,COUPLING=CONTINUUM,WEIGHTING METHOD=UNIFORM
+1,3
+*STEP,NAME=Pull
+*STATIC
+*BOUNDARY
+Base,1,3
+RP,4,6
+*CLOAD
+RP,1,3
+*END STEP
+"#;
+        let read = |text: &str| super::super::read_analysis_limited(text, Preset::MKgS, Limits::default()).unwrap();
+        let got = read(input);
+        assert!(got.analysis_complete, "{:?}", got.warnings);
+        assert_eq!(got.model.couplings().values().next().unwrap().dofs.list(), vec![1, 2, 3]);
+        for (old, new, reason) in [
+            ("1,3\n*STEP", "1,5\n*STEP", "partial rotational"),
+            ("99,.3333333333333333", "99,.4", "centroid"),
+            ("WEIGHTING METHOD=UNIFORM", "WEIGHTING METHOD=LINEAR", "WEIGHTING"),
+            ("*STATIC\n", "*FREQUENCY\n1\n", "linear STATIC"),
+        ] {
+            let denied = read(&input.replace(old, new));
+            assert!(!denied.analysis_complete);
+            assert!(denied.model.steps().is_empty());
+            assert!(denied.warnings.iter().any(|w| w.contains(reason)), "{:?}", denied.warnings);
+        }
+    }
 }

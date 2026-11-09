@@ -1,11 +1,22 @@
 # Linear buckling
 
+Affine swept `hex8` continuum shells use the opt-in `solid_shell` formulation.
+See [geometry, physical ply layers, supported analyses and named refusals](../../solvers/solid-shell.md).
+
+Six-node `tri6` shells use [MITC6-a](../../solvers/mitc6.md), with shared curved
+directors and layered constitutive/mass integration. Its documented analysis restrictions and coarse-mesh accuracy limits apply.
+
+The `quad8` MITC8 element supports flat-plate initial-stress stiffness and linear
+buckling with a flat equilibrium preload. Curved geometry, tilted directors and
+pre-bent states are refused, including in prestressed perturbation analyses.
+See [MITC8 scope](../../solvers/mitc8.md).
+
 `solve.buckle` computes the load factors λ at which the loads of a step, applied as a linear
 preload, make the structure lose stiffness, (K + λ K_σ) φ = 0, and the buckling mode shapes φ.
 The step is solved as a linear static step first; the preload's stresses form the
-initial-stress stiffness K_σ of every solid and 2D element; the lowest positive load factors, or
-those above a given shift, come from the block Lanczos method in the buckling spectral
-transformations.
+initial-stress stiffness K_σ of every solid, 2D element and supported flat shell (including homogeneous or layered MITC8). The lowest
+positive load factors, or those above a given shift, come from the block Lanczos method in the
+buckling spectral transformations.
 
 | | |
 |---|---|
@@ -61,7 +72,7 @@ where the total tangent becomes singular (Bathe 2014, §6.8.2):
 
 K_σ is formed from the preload's stresses at each element's stiffness integration points
 (`Solid::geometric_stiffness`, `Plane::geometric_stiffness`, with the axisymmetric hoop term).
-Pressures are dead loads: the load stiffness of a follower pressure is not part of K_σ.
+Pressures default to dead loads. The explicit `follower_pressure` step option adds conservative pressure stiffness for the quadratic-shell scope below.
 
 K is positive definite for a supported structure, while K_σ is indefinite. The eigenproblem is
 solved in the K inner product (Grimes, Lewis & Simon 1994, §3):
@@ -84,8 +95,9 @@ Modes are scaled to a largest component of 1 (positive).
 ## Algorithm
 
 1. **Select and check.** The step named, or the only buckling step; `modes` 1 to 100 000 and a
-   finite shift are checked; a model with contact is refused. Trusses, shells and beams are
-   refused by name ("their initial-stress stiffness is not implemented").
+   finite shift are checked; a model with contact is refused. Trusses and beams are refused
+   by name. First-order shell plates require a flat equilibrium preload. Quadratic curved
+   shells use the consistent reference-configuration Hessian described below.
 2. **Preload.** The step solved as a [linear static](linear-static.md) step on the same mesh: its
    loads, prescribed motions and temperature loads (heat loads have no effect, with a warning);
    its warnings carry over.
@@ -208,8 +220,8 @@ the column slightly. The verification case `buckle-euler-cantilever` uses ν = 0
 
 ## Limitations
 
-- Trusses, shells and beams are refused: they have no initial-stress stiffness yet.
-- Linearised buckling about the undeformed state: the preload is linear, pressures are dead loads
+- Trusses and beams are refused. The plate operator requires a flat preload; MITC8/MITC6 curved shells use the separate consistent Hessian. Finite-rotation equilibrium remains unsupported.
+- Linearised buckling about the undeformed state: the preload is linear, pressures default to dead loads
   (no load stiffness), and material nonlinearity is left out (plastic materials take their
   elastic constants, with a warning).
 - Contact is refused.
@@ -233,3 +245,23 @@ the column slightly. The verification case `buckle-euler-cantilever` uses ν = 0
 - S. P. Timoshenko, J. M. Gere. *Theory of Elastic Stability*, 2nd ed. McGraw-Hill, 1961.
 - G. H. Bryan. Proc. London Math. Soc. 22:54–67, 1891.
 - N. J. Higham. *Accuracy and Stability of Numerical Algorithms*, 2nd ed. SIAM, 2002.
+
+## Axisymmetric ring shells
+
+The two-ring axisymmetric formulation and its analysis/export restrictions are
+documented in [Axisymmetric meridional shell](../../solvers/axisymmetric-shell.md).
+Use the explicit `axisymmetric_shell` section flag; `beam2` alone remains a beam.
+
+
+### Quadratic curved shells
+
+MITC8 and MITC6-a now assemble a consistent reference-configuration Green-strain
+Hessian including director variations, validated through axial-cylinder and
+external-pressure cylinder command chains. The optional step field
+`follower_pressure: true` includes conservative pressure load stiffness on
+zero-offset quadratic shell reference faces. Default false retains dead loads.
+Nonconservative pressure boundaries, multipoint supports for this option,
+curved prestressed modal/harmonic and finite-rotation equilibrium are refused.
+See [formula, tests and physical limits](../../solvers/mitc8.md#curved-shell-bifurcation-and-pressure-stiffness).
+Axisymmetric ring-shell buckling remains limited to flat annuli; the new pole
+regularity does not extend that geometric-stiffness formulation.

@@ -1,0 +1,13 @@
+{
+  "note": "FieldCraft's accepted results for this case, written by `cargo xtask oracle --bless`. A result outside its band fails CI.",
+  "values": {
+    "in_plane": {
+      "band": 5.424e-12,
+      "value": 0.005412275127378016
+    },
+    "out_of_plane": {
+      "band": 1.754e-12,
+      "value": 0.0017492933521195207
+    }
+  }
+}

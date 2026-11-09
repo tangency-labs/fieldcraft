@@ -488,6 +488,8 @@ impl Solid<'_> {
     fn check_nonlinear(&self, m: &MaterialModel, u: &[[f64; 3]]) -> Result<()> {
         check_displacements(u, self.ty.nodes)?;
         match self.formulation {
+            Formulation::EnhancedStrain13 => Err(Error::NotSupported("enhanced_strain13 nonlinear analysis".into())),
+            Formulation::BBar => Err(Error::NotSupported("B-bar nonlinear analysis".into())),
             Formulation::Hybrid { .. } if !m.is_decoupled() => Err(Error::NotSupported(format!(
                 "hybrid elements of a {} material in nonlinear steps (the mixed formulation needs a volumetric–isochoric split of the strain energy; give the material the neo-Hookean option)",
                 m.name()
@@ -556,6 +558,9 @@ impl Solid<'_> {
         updated: &mut [f64],
         tangent: bool,
     ) -> Result<(Finite, Vec<(PointKinematics, Response)>)> {
+        if self.formulation == Formulation::SolidShell {
+            return Err(Error::NotSupported("solid-shell nonlinear analysis".into()));
+        }
         self.check_nonlinear(m, u)?;
         let modes = self.dofs().internal.incompatible_modes;
         check_history(m, self.rule().points().len(), modes, committed, updated)?;
@@ -747,6 +752,9 @@ impl Solid<'_> {
     /// geometric term of the tangent with the reference gradients (linear buckling: Bathe 2014,
     /// §6.8.2; the same term as [`Solid::nonlinear`]'s at u = 0 with τ = σ).
     pub fn geometric_stiffness(&self, stress: &[[f64; 6]]) -> Result<Matrix> {
+        if self.formulation == Formulation::SolidShell {
+            return Err(Error::NotSupported("solid-shell buckling or prestressed perturbation".into()));
+        }
         let points = self.rule().points();
         if stress.len() != points.len() {
             return Err(Error::Invalid(format!("{} stresses for {} integration points", stress.len(), points.len())));

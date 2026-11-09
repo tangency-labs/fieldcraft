@@ -296,7 +296,8 @@ fn carbon_epoxy_cantilever_matches_published_experiment() {
 
 #[test]
 fn laminate_flat_plate_buckling_and_thread_determinism() {
-    let mut p = Plate::new(8, 8, [1.0; 2], 0.01, &[0.0, PI / 2.0, PI / 2.0, 0.0], Procedure::Buckle { modes: 3, shift: None });
+    let mut p =
+        Plate::new(8, 8, [1.0; 2], 0.01, &[0.0, PI / 2.0, PI / 2.0, 0.0], Procedure::Buckle { modes: 3, shift: None, follower_pressure: false });
     p.supported(false);
     for j in 0..=p.ny {
         let f = -(if j == 0 || j == p.ny { 0.5 } else { 1.0 }) / p.ny as f64;

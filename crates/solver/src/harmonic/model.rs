@@ -11,7 +11,7 @@ use super::{Matrices, Modal};
 use crate::analysis::{self, Setup, Stats};
 use crate::complex::Vector;
 use crate::sparse::{Csr, NodeGraph, add_block, add_diagonal, add_entry, add_scalar};
-use crate::system::{self, Mesh, Structural, StructuralKernel};
+use crate::system::{self, Mesh, StructuralKernel};
 use crate::{Error, Limits, MassKind, Result};
 
 /// Physical displacement phasors and optional elastic stress phasors at one frequency.
@@ -102,16 +102,16 @@ fn damping_matrices(mesh: &Mesh, graph: &NodeGraph, materials: &BTreeMap<u32, Da
     for e in &mesh.elements {
         let Some(d) = materials.get(&e.label) else { continue };
         let kernel = e.kernel()?;
-        let at = |err| Error::element(e.label, err);
         let stiffness = e.stiffness()?.data;
         let kinds = kernel.dofs().node;
         if let Some(c) = &mut c {
             add_block(c, &mesh.layout, &e.nodes, kinds, &scaled(&stiffness, d.beta))?;
             if d.alpha != 0.0 {
                 let density = e.density.ok_or_else(|| Error::Invalid(format!("element {} has no density", e.label)))?;
-                match mass {
-                    MassKind::Consistent => add_scalar(c, &mesh.layout, &e.nodes, kinds, &scaled(&kernel.mass(density).map_err(at)?.data, d.alpha))?,
-                    MassKind::Lumped => add_diagonal(c, &mesh.layout, &e.nodes, kinds, &scaled(&kernel.lumped_mass(density).map_err(at)?, d.alpha))?,
+                let (storage, values) = e.mass_matrix(mass, density)?;
+                match storage {
+                    MassKind::Consistent => add_scalar(c, &mesh.layout, &e.nodes, kinds, &scaled(&values, d.alpha))?,
+                    MassKind::Lumped => add_diagonal(c, &mesh.layout, &e.nodes, kinds, &scaled(&values, d.alpha))?,
                 }
             }
         }
@@ -149,14 +149,14 @@ fn damping_matrices(mesh: &Mesh, graph: &NodeGraph, materials: &BTreeMap<u32, Da
         let at = |err| Error::element(e.label, err);
         let stiffness = kernel.stiffness().map_err(at)?.data;
         if let Some(c) = &mut c {
-            add_block(c, &mesh.layout, &e.nodes, Structural::KINDS, &scaled(&stiffness, d.beta))?;
+            add_block(c, &mesh.layout, &e.nodes, e.kinds(), &scaled(&stiffness, d.beta))?;
             if d.alpha != 0.0 {
                 let density = e.density.ok_or_else(|| Error::Invalid(format!("element {} has no density", e.label)))?;
-                add_block(c, &mesh.layout, &e.nodes, Structural::KINDS, &scaled(&kernel.mass(density, mass).map_err(at)?.data, d.alpha))?;
+                add_block(c, &mesh.layout, &e.nodes, e.kinds(), &scaled(&kernel.mass(density, mass).map_err(at)?.data, d.alpha))?;
             }
         }
         if let Some(g) = &mut g {
-            add_block(g, &mesh.layout, &e.nodes, Structural::KINDS, &scaled(&stiffness, d.loss_factor))?;
+            add_block(g, &mesh.layout, &e.nodes, e.kinds(), &scaled(&stiffness, d.loss_factor))?;
         }
     }
     for f in &mesh.foundations {
@@ -214,8 +214,11 @@ pub(crate) fn stresses(mesh: &Mesh, u: &[f64], displacement: &[[f64; 3]]) -> Res
         accumulate(&e.nodes, &kernel.extrapolate(&values).map_err(at)?);
     }
     for e in &mesh.structural {
-        let dofs = mesh.layout.element_dofs(&e.nodes, Structural::KINDS).ok_or_else(|| Error::Internal("harmonic element dofs".into()))?;
+        let dofs = mesh.layout.element_dofs(&e.nodes, e.kinds()).ok_or_else(|| Error::Internal("harmonic element dofs".into()))?;
         let ue: Vec<_> = dofs.iter().map(|d| u.get(*d).copied().unwrap_or(0.0)).collect();
+        if let StructuralKernel::Axishell(shell) = e.kernel()? {
+            accumulate(&e.nodes, &shell.stresses(&ue).map_err(|err| Error::element(e.label, err))?.top);
+        }
         if let StructuralKernel::Shell(shell) = e.kernel()? {
             accumulate(&e.nodes, &shell.stresses(&ue).map_err(|err| Error::element(e.label, err))?.top);
         }
@@ -273,6 +276,13 @@ pub fn solve_harmonic(model: &Model, name: Option<&str>, limits: &Limits) -> Res
 /// Solve using the same mass choice for inertia, material damping and modal reduction.
 pub fn solve_harmonic_with_mass(model: &Model, name: Option<&str>, mass: MassKind, limits: &Limits) -> Result<HarmonicResult> {
     fieldcraft_model::progress::check()?;
+    if model.pretensions().values().any(|p| p.face.is_some()) {
+        let resolved = model.resolve()?;
+        let prepared = crate::pretension::prepare(model, &resolved, limits.max_dofs)?;
+        let mut result = solve_harmonic_with_mass(prepared.model.as_ref(), name, mass, limits)?;
+        prepared.project_harmonic(&mut result);
+        return Ok(result);
+    }
     let resolved = model.resolve()?;
     let step = model.select_step(name, |p| matches!(p, Procedure::Harmonic(_)), "harmonic")?;
     let Procedure::Harmonic(h) = &step.procedure else {
@@ -323,6 +333,7 @@ pub fn solve_harmonic_with_mass(model: &Model, name: Option<&str>, mass: MassKin
     warnings.extend(fieldcraft_model::initial::left_out(model, step));
     let (graph, order) = analysis::pattern(&mesh);
     let setup = Setup { model, resolved: &resolved, mesh: &mesh, step };
+    let assembly_timing = crate::timing::Span::new("harmonic_assembly_reduction");
     let assembled = analysis::assemble(&mesh, &graph, Some(mass))?;
     let terminal = crate::prestress::stiffness(&setup, &graph, assembled.k, limits, &mut warnings)?;
     let red = analysis::reduction_with_frozen(
@@ -361,6 +372,8 @@ pub fn solve_harmonic_with_mass(model: &Model, name: Option<&str>, mass: MassKin
     let operator_diagonal_bounds = Some([bounds(&kr), bounds(&mr)]);
     let matrices = Matrices { stiffness: &kr, mass: &mr, viscous: cr.as_ref(), loss: gr.as_ref() };
     let reduced_force = Vector { real: red.restrict(&force.real), imaginary: red.restrict(&force.imaginary) };
+    drop(assembly_timing);
+    let basis_timing = crate::timing::Span::new("harmonic_basis");
     let modal = match h.method {
         Method::Direct => None,
         Method::Modal { modes, residual_vectors, .. } => {
@@ -370,12 +383,14 @@ pub fn solve_harmonic_with_mass(model: &Model, name: Option<&str>, mass: MassKin
             Some(Modal::with_residual_vectors(&matrices, modes as usize, &reduced_force, residual_vectors as usize, limits)?)
         }
     };
+    drop(basis_timing);
     let mut frames = Vec::with_capacity(frequencies.len());
     let mut stats = Stats { dofs: mesh.dofs(), equations: red.neq(), factor_entries: 0, lanczos_vectors: 0 };
     if let Some(m) = &modal {
         stats.factor_entries = m.factor_entries;
         stats.lanczos_vectors = m.lanczos_vectors;
     }
+    let response_timing = crate::timing::Span::new("harmonic_response_recovery");
     for frequency in frequencies {
         fieldcraft_model::progress::check()?;
         let omega = 2.0 * std::f64::consts::PI * frequency;
@@ -443,6 +458,7 @@ pub fn solve_harmonic_with_mass(model: &Model, name: Option<&str>, mass: MassKin
             dissipated_power,
         });
     }
+    drop(response_timing);
     let natural_frequencies =
         modal.as_ref().map(|m| m.eigenvalues().iter().map(|l| l.max(0.0).sqrt() / (2.0 * std::f64::consts::PI)).collect()).unwrap_or_default();
     Ok(HarmonicResult {
@@ -461,7 +477,7 @@ pub fn solve_harmonic_with_mass(model: &Model, name: Option<&str>, mass: MassKin
 }
 
 mod matrices;
-pub use matrices::{MatrixExport, export_matrices};
+pub use matrices::{MatrixExport, export_matrices, export_matrices_with_mass};
 
 mod element_stress;
 pub use element_stress::{ElementStressRecovery, StressLocation};

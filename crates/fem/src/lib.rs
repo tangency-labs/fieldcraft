@@ -59,6 +59,7 @@
 #![allow(clippy::needless_range_loop)]
 
 pub mod basis;
+mod bbar;
 pub mod beam;
 pub mod constitutive;
 pub mod contact;
@@ -67,6 +68,7 @@ pub mod dof;
 pub mod dual;
 pub mod elastoplastic;
 pub mod element;
+mod enhanced13;
 pub mod face;
 pub mod failure;
 pub mod finite;
@@ -79,6 +81,7 @@ pub mod laminate;
 pub mod locate;
 pub mod material;
 mod material_axes;
+pub mod mitc8;
 pub mod mortar;
 pub mod plane;
 pub mod plasticity;
@@ -113,3 +116,8 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[cfg(test)]
 mod tests;
+
+mod solid_shell;
+
+/// Axisymmetric conical ring shell.
+pub mod axishell;

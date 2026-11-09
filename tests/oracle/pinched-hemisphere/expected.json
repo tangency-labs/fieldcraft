@@ -1,14 +1,20 @@
 {
- "title": "Hemispherical shell with an 18° hole under alternating point loads",
- "kind": "benchmark",
- "source": "MacNeal and Harder, 'A proposed standard set of problems to test finite element accuracy', Finite Elements in Analysis and Design 1 (1985) 3–20, Fig. 9 (p. 9), Table 5(b) (p. 11): 0.0940 (lower bound 0.0924 from their [7])",
- "status": "pending",
- "requires": "a doubly curved shell mesh: mesh.block's 2D form is planar and takes z = 0, so the quarter hemisphere with its 18° polar hole must be written node by node (as scordelis-lo-roof-shell and pinched-cylinder are), or a new patch command must mesh a doubly curved face",
- "quantities": [
-  {
-   "id": "u",
-   "quantity": "displacement under the load along the load",
-   "value": 0.094
-  }
- ]
+  "title": "Hemispherical shell with an 18\u00b0 hole under alternating point loads",
+  "kind": "benchmark",
+  "source": "MacNeal and Harder, 'A proposed standard set of problems to test finite element accuracy', Finite Elements in Analysis and Design 1 (1985) 3\u201320, Fig. 9 (p. 9), Table 5(b) (p. 11): 0.0940 (lower bound 0.0924 from their [7])",
+  "quantities": [
+    {
+      "id": "u",
+      "quantity": "displacement under the load along the load",
+      "value": 0.094,
+      "tolerance": {
+        "relative": 0.02
+      },
+      "measure": {
+        "from": "probe",
+        "pointer": "/nodes/0/displacement/0"
+      },
+      "reason": "Two percent public-reference gate for this quadratic shell mesh; not an equivalence claim to a commercial element."
+    }
+  ]
 }

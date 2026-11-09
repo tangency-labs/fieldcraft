@@ -88,7 +88,7 @@ fn abaqus_writes_every_discrete_element_and_rod3() {
     let mut m = model(false);
     m.add_set("motor-mass", Set { nodes: vec![4], ..Set::default() }).unwrap();
     assert!(abaqus::write(&m).unwrap().contains("ELSET=motor-mass-2\n"));
-    // Skew directions and masses per direction need orientations.
+    // Global principal masses need no orientation; skew spring axes still do.
     let mut m = model(false);
     m.replace_spring(
         "mount",
@@ -97,7 +97,10 @@ fn abaqus_writes_every_discrete_element_and_rod3() {
     .unwrap();
     m.replace_mass("motor", PointMass { target: Target::Set("tip".into()), mass: Some(Mass::Directional([1.0, 2.0, 3.0])), inertia: None }).unwrap();
     let what = unsupported(abaqus::write(&m));
-    assert!(what.contains("spring `mount`") && what.contains("point mass `motor`"), "{what}");
+    assert!(what.contains("spring `mount`") && !what.contains("point mass `motor`"), "{what}");
+    m.replace_spring("mount", Spring::Spring { first: Target::Set("tip".into()), second: None, direction: Direction::Dof(2), stiffness: 1.0 })
+        .unwrap();
+    assert!(abaqus::write(&m).unwrap().contains("*MASS, ELSET=motor-mass, TYPE=ANISOTROPIC\n1.0, 2.0, 3.0\n"));
 }
 
 #[test]

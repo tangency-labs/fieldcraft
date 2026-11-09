@@ -1,5 +1,11 @@
 # Linear static analysis
 
+Affine swept `hex8` continuum shells use the opt-in `solid_shell` formulation.
+See [geometry, physical ply layers, supported analyses and named refusals](../../solvers/solid-shell.md).
+
+Six-node `tri6` shells use [MITC6-a](../../solvers/mitc6.md), with shared curved
+directors and layered constitutive/mass integration. Its documented analysis restrictions and coarse-mesh accuracy limits apply.
+
 `solve.static` computes the small-displacement equilibrium K u = f of a static step: the
 displacements and rotations, the reactions at the prescribed degrees of freedom and coupled
 reference points, and the stresses at the integration points and averaged at the nodes. It
@@ -252,7 +258,8 @@ probe at the foot's end lies within 0.13 % of the fine tet10 solution.
 | NAFEMS LE1 elliptic membrane | benchmark | +0.18 % (hex20 layer), −0.056 % (plane stress) | 1 % | `nafems-le1`, `nafems-le1-plane-stress` |
 | NAFEMS LE10 thick plate | benchmark | +0.86 % | 2 % | `nafems-le10` |
 | NAFEMS LE5 Z-section cantilever | benchmark | −1.35 % | 2 % | `nafems-le5` |
-| NAFEMS LE7 axisymmetric cylinder/sphere | benchmark | −2.23 % against the thin-shell target (known failure: no axisymmetric shell); +0.05 % against the converged solid | 1 % | `nafems-le7` |
+| NAFEMS LE7 axisymmetric cylinder/sphere | benchmark | +0.080553 % outer axial shell stress; explicit SI geometry and regular pole | 1 % | `nafems-le7` |
+| LE7 auxiliary legacy axisymmetric solid | benchmark | +0.04965 % against the converged solid; scaled geometry, not shell validation | 1 % | `nafems-le7-solid` |
 | NAFEMS LE2, LE3, LE6; Scordelis–Lo; pinched cylinder (shells) | benchmark | see [Element library](elements.md#verification) | | |
 | Scordelis–Lo roof with solids | benchmark | 0.33 % | 2 % | `scordelis-lo-roof-solid` |
 | Tie patch test, non-matching meshes | theory | < 10⁻⁴ % | 10⁻⁹ rel. | `tie-patch` |
@@ -267,6 +274,10 @@ probe at the foot's end lies within 0.13 % of the fine tet10 solution.
 | Errors and caps | singular model names a node; `max_dofs`, `max_factor_entries` refuse with the byte estimate | — | — | `errors_name_the_problem` |
 
 ## Limitations
+
+- Quad8 shell sections use [MITC8](../../solvers/mitc8.md) for homogeneous or layered elastic linear statics.
+  Reduced-integration quad8 (S8R) is refused; frequency/harmonic analysis uses the documented MITC8 mass,
+  and buckling adds the documented curved Green-strain/director Hessian; the other shell families keep their existing scope.
 
 - Small displacements and linear elasticity: plasticity, damage and erosion are left out with a
   warning; hyperelastic materials take their small-strain linear limit. For large deformation,
@@ -315,3 +326,9 @@ probe at the foot's end lies within 0.13 % of the fine tet10 solution.
 - NAFEMS. *The Standard NAFEMS Benchmarks*, TNSB Rev. 3, October 1990.
 - R. H. MacNeal, R. L. Harder. *A proposed standard set of problems to test finite element accuracy.* Finite Elements in Analysis and Design 1(1):3–20, 1985.
 - S. P. Timoshenko, J. N. Goodier. *Theory of Elasticity*, 3rd ed. McGraw-Hill, 1970.
+
+## Axisymmetric ring shells
+
+The two-ring axisymmetric formulation and its analysis/export restrictions are
+documented in [Axisymmetric meridional shell](../../solvers/axisymmetric-shell.md).
+Use the explicit `axisymmetric_shell` section flag; `beam2` alone remains a beam.

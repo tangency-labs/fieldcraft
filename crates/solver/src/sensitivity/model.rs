@@ -170,6 +170,9 @@ fn residual(k: &Csr, u: &[f64], rhs: &[f64]) -> f64 {
     if scale > 0.0 { r / scale } else { r }
 }
 pub(super) fn cold(setup: &Setup<'_>) -> Result<()> {
+    if setup.mesh.structural.iter().any(|e| matches!(e.section, system::Section::Axishell { .. })) {
+        return Err(Error::NotSupported("axisymmetric shell sensitivities".into()));
+    }
     if !setup.model.initial_fields().is_empty() || system::temperature_loads(setup.model, setup.resolved, setup.mesh, setup.step)?.is_some() {
         return Err(Error::NotSupported("thermal or initial fields in model sensitivities".into()));
     }

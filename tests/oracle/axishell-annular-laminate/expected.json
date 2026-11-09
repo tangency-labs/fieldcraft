@@ -1,0 +1,33 @@
+{
+  "title": "Axisymmetric annular shell with unsymmetric physical layup",
+  "kind": "theory",
+  "source": "Moita et al. Appl Sci 13 (2023) 5325 eq.5 and ABD eq.8-11; exact constant curvature and N=0 gives epsilon=-A^-1 B kappa. Own ring mesh.",
+  "quantities": [
+    {
+      "id": "w",
+      "quantity": "outer axial displacement",
+      "measure": {
+        "from": "probe",
+        "pointer": "/nodes/0/displacement/1"
+      },
+      "value": 0.003,
+      "tolerance": {
+        "relative": 1e-07
+      },
+      "reason": "Exact annular curvature patch, midpoint shear zero and independently integrated edge ring couples."
+    },
+    {
+      "id": "ur",
+      "quantity": "outer radial displacement from extension-bending coupling",
+      "measure": {
+        "from": "probe",
+        "pointer": "/nodes/0/displacement/0"
+      },
+      "value": 3.3333333333333337e-06,
+      "tolerance": {
+        "relative": 1e-07
+      },
+      "reason": "Zero membrane resultant and isotropic plies with equal Poisson ratio; epsilon=-B/A*kappa."
+    }
+  ]
+}

@@ -270,18 +270,64 @@ impl Model {
         for (name, sec) in &self.sections {
             let subject = format!("section `{name}`");
             let r = set_of(&sec.set);
+            if sec.formulation.enhanced_strain13 {
+                if r.elements.iter().any(|id| self.elements.get(id).is_some_and(|e| e.kind != ElementKind::Hex8)) {
+                    d.error(&subject, "enhanced_strain13 requires Hex8 elements");
+                }
+                if sec.orientation.is_some()
+                    || self.materials.get(&sec.material).is_some_and(|m| {
+                        !matches!(m.elastic, Some(crate::Elastic::Isotropic { .. })) || m.plastic.is_some() || m.hyperelastic.is_some()
+                    })
+                {
+                    d.error(&subject, "enhanced_strain13 requires linear isotropic elasticity without orientation");
+                }
+                if self.steps().iter().any(|s| !matches!(s.procedure, crate::Procedure::Static {})) {
+                    d.error(&subject, "enhanced_strain13 supports linear static analysis only");
+                }
+            }
+            if sec.formulation.b_bar {
+                if r.elements.iter().any(|id| self.elements.get(id).is_some_and(|e| e.kind != ElementKind::Hex8)) {
+                    d.error(&subject, "B-bar requires Hex8 elements");
+                }
+                if sec.orientation.is_some()
+                    || self.materials.get(&sec.material).is_some_and(|m| {
+                        !matches!(m.elastic, Some(crate::Elastic::Isotropic { .. })) || m.plastic.is_some() || m.hyperelastic.is_some()
+                    })
+                {
+                    d.error(&subject, "B-bar requires linear isotropic elasticity without material orientation");
+                }
+                if self.steps().iter().any(|s| {
+                    !matches!(
+                        s.procedure,
+                        crate::Procedure::Static {}
+                            | crate::Procedure::Frequency { .. }
+                            | crate::Procedure::MatrixGeneration { .. }
+                            | crate::Procedure::Harmonic(_)
+                            | crate::Procedure::RandomVibration(_)
+                    )
+                }) {
+                    d.error(&subject, "B-bar supports linear static, frequency, harmonic, modal random and matrix generation only");
+                }
+            }
+
             if r.elements.is_empty() {
                 d.error(&subject, format!("set `{}` has no elements", sec.set));
             }
-            let fits = |k: ElementKind| match sec.kind {
-                SectionKind::Solid {} => k.dimension() == 3,
-                SectionKind::Shell { .. }
-                | SectionKind::CompositeShell { .. }
-                | SectionKind::PlaneStress { .. }
-                | SectionKind::PlaneStrain { .. }
-                | SectionKind::Axisymmetric {} => k.dimension() == 2,
-                SectionKind::Beam { .. } => k == ElementKind::Beam2,
-                SectionKind::Rod { .. } => matches!(k, ElementKind::Rod2 | ElementKind::Rod3),
+            let fits = |k: ElementKind| {
+                if sec.formulation.axisymmetric_shell {
+                    k == ElementKind::Beam2
+                } else {
+                    match sec.kind {
+                        SectionKind::Solid {} => k.dimension() == 3,
+                        SectionKind::Shell { .. }
+                        | SectionKind::CompositeShell { .. }
+                        | SectionKind::PlaneStress { .. }
+                        | SectionKind::PlaneStrain { .. }
+                        | SectionKind::Axisymmetric {} => k.dimension() == 2,
+                        SectionKind::Beam { .. } => k == ElementKind::Beam2,
+                        SectionKind::Rod { .. } => matches!(k, ElementKind::Rod2 | ElementKind::Rod3),
+                    }
+                }
             };
             // The linear element with an incompatible-modes formulation for this kind of section.
             let incompatible_kind = if sec.kind.is_planar() { ElementKind::Quad4 } else { ElementKind::Hex8 };
@@ -500,6 +546,11 @@ impl Model {
         }
 
         for (name, p) in &self.pretensions {
+            if let Some(face) = &p.face
+                && resolved.sets.get(face).is_none_or(|s| s.faces.is_empty())
+            {
+                d.error(format!("pretension `{name}`"), format!("internal cut set `{face}` has no element faces"));
+            }
             for set in [&p.first, &p.second] {
                 if resolved.sets.get(set).is_none_or(|s| s.nodes.is_empty()) {
                     d.error(format!("pretension `{name}`"), format!("cut set `{set}` has no nodes"));
@@ -510,6 +561,7 @@ impl Model {
             }
             for s in &self.steps {
                 if !matches!(s.procedure, Procedure::Static {} | Procedure::NonlinearStatic(_) | Procedure::Frequency { .. } | Procedure::Harmonic(_))
+                    && !(matches!(s.procedure, Procedure::Transient(_)) && s.base_state.is_some())
                 {
                     d.error(format!("step `{}`", s.name), format!("pretension `{name}` is unsupported in this procedure"));
                 }
@@ -575,6 +627,7 @@ impl Model {
             }
             let pretension_loads = s.pretension.values().any(|control| match control {
                 crate::PretensionControl::Force { value } | crate::PretensionControl::Adjustment { value } => *value != 0.0,
+                crate::PretensionControl::Fixed => true,
             });
             let prescribes_motion = s
                 .boundary_conditions

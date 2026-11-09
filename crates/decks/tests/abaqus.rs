@@ -57,7 +57,8 @@ fn cantilever_mesh() -> Model {
     m.add_set("root", faces(&[(1, 6)])).unwrap();
     m.add_set("tip", faces(&[(4, 4)])).unwrap();
     m.add_material("Steel", steel()).unwrap();
-    let formulation = Formulation { incompatible_modes: true, ..Formulation::default() };
+    // Exercise deck syntax with the existing hybrid mapping; native nine-mode Hex8 is now refused.
+    let formulation = Formulation { hybrid: true, ..Formulation::default() };
     m.add_section("beam", Section { orientation: None, set: "all".into(), material: "Steel".into(), kind: SectionKind::Solid {}, formulation })
         .unwrap();
     m.add_boundary_condition("clamp", BoundaryCondition::Fixed { target: Target::Set("root".into()) }).unwrap();
@@ -492,7 +493,7 @@ fn one_element(kind: ElementKind) -> Model {
     m.add_set("base", Set { nodes: vec![1], ..Set::default() }).unwrap();
     m.add_material("Steel", steel()).unwrap();
     let (section, formulation) = if kind.dimension() == 3 {
-        (SectionKind::Solid {}, Formulation::default())
+        (SectionKind::Solid {}, Formulation { b_bar: kind == ElementKind::Hex8, ..Formulation::default() })
     } else {
         (SectionKind::Shell { thickness: 1.0, offset: 0.0, points: 5 }, Formulation { integration: Integration::Reduced, ..Formulation::default() })
     };
@@ -726,6 +727,7 @@ fn what_abaqus_cannot_express_is_named() {
     .unwrap();
     tri6.add_step(step("Modes", Procedure::Frequency { modes: 1, min_hz: None, max_hz: None }, &[], &[]), None).unwrap();
     assert!(unsupported(&tri6).contains("tri6 shells"));
+    assert!(unsupported(&tri6).contains("STRI65"));
 
     assert!(unsupported(&with_section(ElementKind::Quad8, shell.clone(), Integration::Full)).contains("full integration of quad8"));
     assert!(unsupported(&with_section(ElementKind::Tet10, SectionKind::Solid {}, Integration::Reduced)).contains("reduced integration of tet10"));
@@ -937,11 +939,11 @@ fn nonlinear_plastic_steps_and_what_is_refused() {
 fn buckling_steps() {
     let mut m = cantilever_mesh();
     m.add_load("end", Load::Force { target: Target::Set("tip".into()), vector: [-100.0, 0.0, 0.0], distribution: Distribution::Total }).unwrap();
-    m.add_step(step("Buckle", Procedure::Buckle { modes: 4, shift: None }, &["clamp"], &["end"]), None).unwrap();
+    m.add_step(step("Buckle", Procedure::Buckle { modes: 4, shift: None, follower_pressure: false }, &["clamp"], &["end"]), None).unwrap();
     let deck = abaqus::write(&m).unwrap();
     assert!(deck.contains("*BUCKLE, EIGENSOLVER=LANCZOS\n4\n") && deck.contains("*CLOAD"), "{deck}");
     let mut shifted = m.clone();
-    shifted.replace_step(step("Buckle", Procedure::Buckle { modes: 4, shift: Some(2.0) }, &["clamp"], &["end"])).unwrap();
+    shifted.replace_step(step("Buckle", Procedure::Buckle { modes: 4, shift: Some(2.0), follower_pressure: false }, &["clamp"], &["end"])).unwrap();
     assert!(abaqus::write(&shifted).unwrap_err().to_string().contains("shift"));
     m.add_step(step("Bend", Procedure::Static {}, &["clamp"], &["end"]), Some("Buckle")).unwrap();
     assert!(abaqus::write(&m).unwrap_err().to_string().contains("after a general step"));
@@ -968,4 +970,15 @@ fn arc_length_steps() {
     let spherical = NonlinearStatic { arc_length: Some(ArcLength { constraint: ArcConstraint::Spherical, ..arc }), ..NonlinearStatic::default() };
     m.replace_step(step("Snap", Procedure::NonlinearStatic(spherical), &["clamp"], &["end"])).unwrap();
     assert!(abaqus::write(&m).is_err());
+}
+
+#[test]
+fn modal_pressure_tangent_is_not_silently_exported_as_abaqus() {
+    let mut m = cantilever_mesh();
+    m.add_step(step("Base", Procedure::Static {}, &["clamp"], &[]), None).unwrap();
+    let mut modes = step("Modes", Procedure::Frequency { modes: 2, min_hz: None, max_hz: None }, &["clamp"], &[]);
+    modes.base_state = Some("Base".into());
+    modes.perturbation_follower_pressure = true;
+    m.add_step(modes, None).unwrap();
+    assert!(abaqus::write(&m).unwrap_err().to_string().contains("modal pressure tangent"));
 }

@@ -124,7 +124,7 @@
         "type": "solid"
       },
       "formulation": {
-        "incompatible_modes": true
+        "b_bar": true
       }
     }
   },

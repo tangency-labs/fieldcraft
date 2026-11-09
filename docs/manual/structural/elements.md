@@ -1,5 +1,8 @@
 # Element library
 
+Affine swept `hex8` continuum shells use the opt-in `solid_shell` formulation.
+See [geometry, physical ply layers, supported analyses and named refusals](../../solvers/solid-shell.md).
+
 The finite elements of `crates/fem` that the structural solvers assemble: continuum solids, 2D
 continua (plane stress, plane strain, axisymmetric), flat shells, Timoshenko beams, trusses and
 the discrete point masses, springs and dashpots. Every element is isoparametric over one shared
@@ -64,6 +67,8 @@ mixed in one model (trusses may join either).
 | Field | Value | Default | Meaning |
 |---|---|---|---|
 | `integration` | `full`, `reduced` | `full` | `reduced` exists for hex20 (2 × 2 × 2) and quad8 (2 × 2), and for hex8 in explicit dynamics (one point with hourglass control); elsewhere it is refused |
+| `b_bar` | `true`, `false` | `false` | Hex8 mean dilatation; linear isotropic small-strain static, frequency and matrix generation only; excludes reduced, hybrid and incompatible options |
+| `enhanced_strain13` | `true`, `false` | `false` | independent 13-variable Hex8; full integration, linear isotropic static only; excludes other enhancements, thermal/initial stress and material axes; limited nonhybrid small-strain static C3D8I mapping |
 | `incompatible_modes` | `true`, `false` | `false` | enhanced bending modes: hex8 (solid sections) and quad4 (2D sections) only; needs full integration |
 | `hybrid` | `true`, `false` | `false` | mixed displacement–pressure: solid, plane strain and axisymmetric sections only; isotropic materials only |
 
@@ -260,6 +265,8 @@ stress has no volume constraint and is refused.
 
 ### Shells
 
+For eight-node curved homogeneous and layered statics, frequency and harmonic analysis, see [MITC8](../../solvers/mitc8.md).
+
 Flat MITC4 quadrilaterals and MITC3 triangles (`crate::shell`) with six unknowns per node. Each
 element is projected onto its mean plane, where membrane, Reissner–Mindlin plate and drilling
 stiffness are superposed in local axes and rotated to the global ones (the facet approach;
@@ -373,7 +380,9 @@ beams warns that only solid, 2D and truss elements are strained ([Heat transfer]
 | hybrid hex8, hex20, tet10 | yes | yes | yes (as the displacement element) | yes (needs the neo-Hookean option or another hyperelastic or plastic model with a volumetric split) | refused |
 | plane stress tri3, tri6, quad4, quad8 | yes | yes | refused | refused | refused |
 | plane strain, axisymmetric tri3, tri6, quad4, quad8 (and hybrid quad4, quad8, tri6) | yes | yes | refused | yes | refused |
-| shell tri3, quad4 | yes | refused | refused | refused | refused |
+| shell tri3, quad4 | yes (homogeneous or composite) | flat plates with flat preload only | refused | refused | refused |
+| shell quad8 (MITC8) | homogeneous or layered elastic statics/frequency; consistent or lumped mass | flat plates; curved Green-strain/director Hessian, conservative pressure opt-in | refused | refused | refused |
+| shell tri6 (MITC6-a) | homogeneous or layered elastic statics/frequency; consistent or lumped mass | flat plates; curved Green-strain/director Hessian, conservative pressure opt-in | refused | refused | refused |
 | beam2 | yes | refused | refused | refused | refused |
 | rod2, rod3 | yes | refused | refused | refused | rod2; rod3 with `nonlinear_geometry: false` only; elastic only |
 | point mass, spring, dashpot | yes (dashpots ignored) | yes (dashpots ignored) | — | springs, along their fixed directions | translational ones; rotary inertia and torsional springs refused |
@@ -542,9 +551,11 @@ explicit, engine and io test suites hashed identically before and after.
 
 ## Limitations
 
-- Shells: tri3 and quad4 only (tri6 and quad8 shells are refused); flat facets; isotropic,
-  homogeneous sections; no initial-stress stiffness (refused in buckling), no large rotations
-  (refused in nonlinear steps), no heat conduction, no thermal strain.
+- Shells: tri3 and quad4 are flat facets with isotropic
+  homogeneous or [composite sections](composites.md). Quad8 uses [curved MITC8](../../solvers/mitc8.md)
+  for homogeneous or layered elastic statics, frequency and harmonic analysis; tri6 uses [MITC6-a](../../solvers/mitc6.md). Quadratic curved shells have a consistent Green-strain/director initial-stress Hessian;
+  first-order plates still require a flat preload. The conservative follower-pressure option
+  is restricted to zero-offset quadratic reference faces and direct supports. No large rotations (refused in nonlinear steps), heat conduction or thermal strain.
 - Beams: two-node Timoshenko only; isotropic material; no warping of open sections; refused in
   buckling, nonlinear and heat transfer steps; no thermal strain.
 - Trusses: isotropic Young's modulus only; refused in buckling and nonlinear steps.
@@ -553,13 +564,14 @@ explicit, engine and io test suites hashed identically before and after.
 - Hybrid elements need isotropic elasticity; hybrid tet4, wedge6, pyramid5 and tri3 are refused;
   continuous nodal-pressure (Taylor–Hood) elements are not implemented.
 - quad9, hex27 and wedge15 have shape functions only; there are no wedge15 or pyramid13 elements.
-- Material axes are the global axes: there are no material orientations.
+- Solid material orientations and projected shell reference directions are supported; shell
+  directions are evaluated at each facet centre. See [composite directions](composites.md).
 - A 2D model takes no couplings, no shells or beams; an axisymmetric model takes no trusses,
   point masses, springs or dashpots.
 - Not implemented: Euler–Bernoulli (cubic), three-node and planar 2D beams; pipe and elbow
   elements; open-section beams with warping; rebar and stringers; generalized plane strain,
-  axisymmetric elements with twist and axisymmetric shells; quad8 and tri6 shells, continuum
-  shells and composite ply layups; membranes and surface elements; a modified quadratic tet;
+  axisymmetric elements with twist and axisymmetric shells; continuum
+  shells; membranes and surface elements; a modified quadratic tet;
   cohesive, gasket, infinite, acoustic and rigid elements; heat conduction in 2D, shell and beam
   elements.
 
@@ -606,3 +618,28 @@ explicit, engine and io test suites hashed identically before and after.
 - W. D. Pilkey. *Analysis and Design of Elastic Beams.* Wiley, 2002.
 - R. H. MacNeal, R. L. Harder. *A proposed standard set of problems to test finite element accuracy.* Finite Elements in Analysis and Design 1(1):3–20, 1985.
 - D. P. Flanagan, T. Belytschko. *A uniform strain hexahedron and quadrilateral with orthogonal hourglass control.* IJNME 17(5):679–706, 1981. doi:[10.1002/nme.1620170504](https://doi.org/10.1002/nme.1620170504)
+
+## Axisymmetric ring shells
+
+The two-ring axisymmetric formulation and its analysis/export restrictions are
+documented in [Axisymmetric meridional shell](../../solvers/axisymmetric-shell.md).
+Use the explicit `axisymmetric_shell` section flag; `beam2` alone remains a beam.
+### Hex8 mean dilatation
+
+`b_bar=true` uses Bbar = B + (average(div N) - div N)/3 in each
+normal-strain row; shear rows are unchanged. The average uses det(J)-weighted
+2x2x2 quadrature. Stiffness and recovered integration-point strains use the
+same operator; reported B-bar strain is the assumed strain, not the unmodified
+nodal displacement gradient. Mass, loads and native standard Hex8 defaults are unchanged.
+No additional result kind is allocated. See [import boundaries](../../abaqus-import.md)
+for C3D8/C3D8I mapping and unsupported combinations. The implementation follows
+Hughes, IJNME 15 (1980), 1413–1418, doi:10.1002/nme.1620150914.
+
+### Separate solid and ring-shell formulations
+
+`solid_shell`, `b_bar`, `enhanced_strain13` and `axisymmetric_shell` select
+separate operators and cannot be combined. ANS/EAS10 solid-shell condensation
+is not the thirteen-variable Hex8 enhancement or volume-averaged B-bar.
+The per-section `lumped_mass` policy applies to solid/planar continuum mass
+only when the solve requests lumped mass; it does not replace ring-shell or
+MITC translational/rotational inertia. See [frequency](frequency.md).

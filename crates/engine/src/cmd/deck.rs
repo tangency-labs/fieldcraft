@@ -22,6 +22,41 @@ pub const WRITE: CommandSpec = CommandSpec {
     run: write,
 };
 
+pub const WRITE_NONLINEAR: CommandSpec = CommandSpec {
+    id: "deck.write.nonlinear",
+    label: "Write Nonlinear Rod Dynamics",
+    params: r#"{"path":"motion.inp","step":"Motion","mass":"consistent|lumped","representation":"uel"} — writes SI Abaqus NLGEOM DYNAMIC and a required original C UEL companion (same stem, .c). Exact StVK rod2, constant dead forces, zero initial velocity and no physical damping only. A fully prescribed static preparation initializes u0 before release; compare FC_MOTION. Standard T3D2 mapping is refused. Use output_precision=full when running; never runs commercial software or creates a native result."#,
+    form: Some(super::forms::DECK_NONLINEAR),
+    kind: CommandKind::Session,
+    requires: &[Requirement::Analysable, Requirement::Step],
+    run: write_nonlinear,
+};
+fn write_nonlinear(s: &mut Session, p: &Value) -> Result<Value> {
+    let path = super::file_param(s, p, "path", Access::Write)?;
+    if Path::new(&path).extension().and_then(|x| x.to_str()) != Some("inp") {
+        return Err(EngineError::invalid("path", "nonlinear export requires an .inp extension"));
+    }
+    let companion = Path::new(&path).with_extension("c");
+    let companion_params = json!({"path":companion});
+    let companion = super::file_param(s, &companion_params, "path", Access::Write)?;
+    if Path::new(&path).exists() || Path::new(&companion).exists() {
+        return Err(EngineError::invalid("path", "nonlinear export needs new .inp and .c paths"));
+    }
+    let step = opt::<String>(p, "step")?;
+    let mass = opt::<fieldcraft_model::MassKind>(p, "mass")?.unwrap_or_default();
+    let representation = opt::<String>(p, "representation")?.unwrap_or_else(|| "uel".into());
+    let text = fieldcraft_decks::abaqus::nonlinear::write(&s.model, step.as_deref(), mass, &representation)?;
+    let source = fieldcraft_decks::abaqus::nonlinear::USER_ELEMENT_SOURCE;
+    fieldcraft_io::fs::write_output(Path::new(&companion), source.as_bytes())?;
+    if let Err(error) = fieldcraft_io::fs::write_output(Path::new(&path), text.as_bytes()) {
+        let _ = std::fs::remove_file(&companion);
+        return Err(error.into());
+    }
+    Ok(json!({"path":path,"companion":companion,"units":"m-kg-s-N-Pa","mass":mass,
+        "requires_user_subroutine":true,"output_precision":"full","comparison_step":"FC_MOTION",
+        "deck_sha256":fieldcraft_io::sha256_hex(text.as_bytes()),"companion_sha256":fieldcraft_io::sha256_hex(source.as_bytes())}))
+}
+
 pub const READ: CommandSpec = CommandSpec {
     id: "deck.read",
     label: "Read Abaqus Deck",
@@ -108,7 +143,8 @@ fn read(s: &mut Session, p: &Value) -> Result<Value> {
     let reply = json!({"format":"abaqus","path":path,"units":units.label(),"nodes":model.nodes().len(),"elements":kinds,
         "sets":model.sets().len(),"materials":model.materials().len(),"sections":model.sections().len(),"unknown":unknown,
         "masses":model.masses().len(),"springs":model.springs().len(),"unknown_count":imported.unknown_count,"warnings":imported.warnings,"history_imported":!model.steps().is_empty(),"analysis_complete":imported.analysis_complete,"steps":model.steps().len(),"imported_steps":model.steps().iter().map(|s|s.name.as_str()).collect::<Vec<_>>(),
-        "mass_semantics":mass_report,"source_retained":true,"source_storage":"project","source_files":bundle.files.keys().collect::<Vec<_>>(),"instances":instances});
+        "section_formulations":model.sections().iter().map(|(n,s)|(n,s.formulation)).collect::<std::collections::BTreeMap<_,_>>(),
+        "native_lumped_mass_policies":model.sections().iter().filter(|(_,s)|!s.formulation.lumped_mass.is_default()).map(|(n,s)|json!({"section":n,"set":s.set,"strategy":s.formulation.lumped_mass,"activation":"explicit mass=lumped solve"})).collect::<Vec<_>>(),"mass_semantics":mass_report,"source_retained":true,"source_storage":"project","source_files":bundle.files.keys().collect::<Vec<_>>(),"instances":instances});
     // The new, unsaved document has no journal, but still needs its own dirty revision.
     let archive = fieldcraft_io::DeckSource {
         root: bundle.root.clone(),
@@ -185,13 +221,16 @@ mod tests {
 
         let mut s = Session::default();
         crate::cmd::define::tests::defined_bar(&mut s);
+        let mut section = s.model.section("bar").unwrap().clone();
+        section.formulation = fieldcraft_model::Formulation { b_bar: true, ..Default::default() };
+        s.model.replace_section("bar", section).unwrap();
         let journal = s.journal.len();
         let out = s.execute("deck.write", &json!({"format": "abaqus", "path": path_str})).unwrap();
         let written = std::fs::read_to_string(&path).unwrap();
         assert_eq!(written, fieldcraft_decks::abaqus::write(&s.model, fieldcraft_model::units::Preset::MmTonneS).unwrap());
         assert_eq!(out["bytes"], written.len());
         assert_eq!(out["warnings"].as_array().map(Vec::len), Some(1), "`press` is in no step: {out}");
-        assert!(written.contains("*ELEMENT, TYPE=C3D8I"), "{written}");
+        assert!(written.contains("*ELEMENT, TYPE=C3D8\n"), "{written}");
         assert_eq!(s.journal.len(), journal, "writing a deck does not change the model");
         assert!(std::fs::read_dir(&dir).unwrap().count() == 1, "no partial file is left behind");
 
@@ -205,6 +244,12 @@ mod tests {
         assert!(!dir.join("other.inp").exists());
         assert!(matches!(s.execute("deck.write", &json!({"format": "abaqus", "path": dir.to_string_lossy()})), Err(EngineError::File(_))));
 
+        let refused = s.execute("deck.write", &json!({"format":"nastran","path":dir.join("bbar.bdf")})).unwrap_err().to_string();
+        assert!(refused.contains("B-bar policies"), "{refused}");
+        // Nastran syntax checks use an explicitly selected native standard section.
+        let mut section = s.model.section("bar").unwrap().clone();
+        section.formulation.b_bar = false;
+        s.model.replace_section("bar", section).unwrap();
         // Nastran: one run is static or frequency steps, so the bar's two steps need two decks.
         let bdf = dir.join("bar.bdf").to_string_lossy().into_owned();
         let e = s.execute("deck.write", &json!({"format": "nastran", "path": bdf})).unwrap_err().to_string();

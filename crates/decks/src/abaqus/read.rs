@@ -23,6 +23,8 @@ mod history;
 mod lex;
 mod mass;
 mod matrices;
+mod nonlinear;
+mod plastic;
 pub use mass::MassRequirement;
 mod random;
 pub mod source;
@@ -56,6 +58,8 @@ pub struct Unknown {
 /// `unknown_count` counts all unread options.
 #[derive(Debug, Clone)]
 pub struct Read {
+    // Source targets containing discrete labels must not be confused with filtered mesh sets.
+    discrete_targets: BTreeSet<String>,
     /// Whether all history steps were mapped without unsupported physical semantics.
     pub analysis_complete: bool,
     /// Unapplied, condition-scoped mass requirements; independent of history completeness.
@@ -110,15 +114,42 @@ fn read_mode(text: &str, preset: Preset, limits: Limits, analysis: bool) -> Resu
         return Err(error(1, "input exceeds 64 MiB"));
     }
     let expanded = assembly::expand(text, limits)?;
+    if expanded.is_some() && text.lines().any(|l| l.trim().starts_with(mass::POLICY_MARKER)) {
+        return Err(error(1, "FIELDCRAFT LUMPED MASS metadata requires a flattened native deck; instance policy scope is not supported"));
+    }
     let flat = expanded.as_ref().map_or(text, |e| e.text.as_str());
     let parse_all = || -> Result<Read> {
         let mut read = parse(flat, preset, limits)?;
         read.mass_requirements = mass::inspect(flat)?;
+        mass::restore(flat, &mut read.model)?;
         constraints::import(flat, &mut read, preset, limits)?;
         if analysis {
             history::import(flat, &mut read, preset, limits)?;
         }
         constraints::finish(&mut read.model)?;
+        if read.model.sections().values().any(|s| s.formulation.b_bar) {
+            read.warnings.push("C3D8 maps to volume-averaged B-bar Hex8, not native standard Hex8; supported only for linear isotropic static/frequency/matrix analysis without orientation, thermal strain or initial stress. Other combinations are refused at model validation or solve.".into());
+        }
+        if read.model.sections().values().any(|s| s.formulation.enhanced_strain13) {
+            read.warnings.push("C3D8I maps to thirteen enhanced-strain variables, full integration, nonhybrid constant isotropic small-strain static only; C3D8IH and other material/analysis combinations are not mapped".into());
+        }
+        if read.model.steps().iter().any(|s| matches!(s.procedure, fieldcraft_model::Procedure::NonlinearStatic(_)))
+            && read.model.elements().values().any(|e| e.kind == fieldcraft_model::ElementKind::Rod2)
+        {
+            read.warnings.push("NLGEOM=YES T3D2/T2D2 steps and base_state are retained semantically, but native nonlinear static truss solving is not supported; solve.nonlinear and dependent frequency will refuse, not use NLGEOM=NO".into());
+        }
+        if read.model.steps().iter().any(
+            |s| matches!(&s.procedure, fieldcraft_model::Procedure::Transient(t) if matches!(t.method, fieldcraft_model::dynamics::Method::Direct)),
+        ) {
+            read.warnings.push("DYNAMIC DIRECT: independent fixed-step average acceleration with zero initial state; explicit point masses retain their values, common load AMPLITUDE is evaluated throughout time, not at its endpoint. Material/element mass defaults, continuation and other dynamic procedures are not inferred.".into());
+        }
+        for step in read.model.steps() {
+            if matches!(&step.procedure, fieldcraft_model::Procedure::Transient(t) if matches!(t.method, fieldcraft_model::dynamics::Method::Modal { .. }))
+                || matches!(step.procedure, fieldcraft_model::Procedure::ResponseSpectrum(_))
+            {
+                read.warnings.push(format!("step {}: preceding unwindowed FREQUENCY count and unchanged fixed supports compiled into native modal re-extraction (not cached-result reuse); explicit point masses are unchanged by consistent/lumped. Modal time histories use native Newmark, not the target modal integration algorithm. Spectrum output is pseudo-acceleration and peak envelopes; output request text is retained, all transient increments are stored.", step.name));
+            }
+        }
         read.unknown.truncate(MAX_UNKNOWN_SHOWN);
         Ok(read)
     };
@@ -608,6 +639,14 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
                 }
                 m.0.damping = Some(dynamic::damping(block, &units)?);
             }
+            "PLASTIC" => {
+                let name = material.as_ref().ok_or_else(|| error(line, "*PLASTIC outside *MATERIAL"))?;
+                let m = materials.get_mut(name).ok_or_else(|| error(line, "missing active material"))?;
+                if m.0.plastic.is_some() {
+                    return Err(error(line, "duplicate *PLASTIC"));
+                }
+                m.0.plastic = Some(plastic::material(block, &units)?);
+            }
             "ELASTIC" | "DENSITY" => {
                 let name = material.as_ref().ok_or_else(|| error(line, format!("*{k} outside a supported *MATERIAL block")))?;
                 block.only(if k == "ELASTIC" { &["TYPE"] } else { &[] })?;
@@ -628,6 +667,7 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
                             young: quantity(&units, Quantity::Pressure, v.first().copied().unwrap_or_default(), line)?,
                             poisson: v.get(1).copied().unwrap_or_default(),
                         },
+                        "ORTHOTROPIC" if v.len() == 9 => composite::orthotropic(&v, &units, line)?,
                         "ENGINEERINGCONSTANTS" if v.len() == 9 => {
                             let mut young = [0.; 3];
                             let mut poisson = [0.; 3];
@@ -862,8 +902,8 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
                 let key = key(name, line)?;
                 orientations
                     .get(&key)
-                    .map(|o| o.section(typ.family == Family::Shell))
-                    .ok_or_else(|| error(line, format!("section names missing orientation `{name}`")))
+                    .ok_or_else(|| error(line, format!("section names missing orientation `{name}`")))?
+                    .section(typ.family == Family::Shell)
             })
             .transpose()?;
         if orientation.is_none()
@@ -899,7 +939,19 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
             "{unassigned} mesh elements have no section: their input family/formulation is not stored on the mesh element. Assign compatible sections before analysis; reduced/hybrid/shell/plane context is not retained without them."
         ));
     }
-    Ok(Read { model, mass_requirements: Vec::new(), analysis_complete: false, instances: Vec::new(), unknown, unknown_count, warnings })
+    let mut discrete_targets: BTreeSet<String> = discrete_elements.keys().map(u32::to_string).collect();
+    discrete_targets
+        .extend(expanded_elements.iter().filter(|(_, ids)| ids.iter().any(|id| discrete_elements.contains_key(id))).map(|(name, _)| name.clone()));
+    Ok(Read {
+        discrete_targets,
+        model,
+        mass_requirements: Vec::new(),
+        analysis_complete: false,
+        instances: Vec::new(),
+        unknown,
+        unknown_count,
+        warnings,
+    })
 }
 
 fn section_kind(raw: &SectionRecord, typ: Type, units: &DisplaySystem) -> Result<SectionKind> {

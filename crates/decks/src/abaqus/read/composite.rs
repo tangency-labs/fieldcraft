@@ -3,20 +3,69 @@ use super::{Block, Result, canonical, error, number, quantity, row_fields};
 use fieldcraft_model::units::{Quantity, Unit};
 use fieldcraft_model::{DisplaySystem, MaterialOrientation, Ply, SectionOrientation};
 
+/// Public *ELASTIC, TYPE=ORTHOTROPIC stiffness order. Invert the normal block
+/// to the native reciprocal engineering constants; no plane-stress completion.
+pub(super) fn orthotropic(v: &[f64], units: &DisplaySystem, line: usize) -> Result<fieldcraft_model::Elastic> {
+    let scale = v.iter().copied().map(f64::abs).fold(0.0_f64, f64::max);
+    if !scale.is_finite() || scale <= 0.0 {
+        return Err(error(line, "*ELASTIC TYPE=ORTHOTROPIC requires a positive definite stiffness"));
+    }
+    let at = |i| v.get(i).copied().unwrap_or_default() / scale;
+    let (a, b, c, d, e, f) = (at(0), at(1), at(2), at(3), at(4), at(5));
+    let minor = a * c - b * b;
+    let determinant = a * (c * f - e * e) - b * (b * f - d * e) + d * (b * e - c * d);
+    if a <= 0.0 || minor <= 0.0 || determinant <= 0.0 || (6..9).any(|i| at(i) <= 0.0) {
+        return Err(error(line, "*ELASTIC TYPE=ORTHOTROPIC requires a positive definite stiffness"));
+    }
+    let diagonal = [(c * f - e * e) / determinant, (a * f - d * d) / determinant, minor / determinant];
+    let mut young = [0.0; 3];
+    let mut shear = [0.0; 3];
+    for i in 0..3 {
+        young[i] = quantity(units, Quantity::Pressure, scale / diagonal[i], line)?;
+        shear[i] = quantity(units, Quantity::Pressure, v.get(i + 6).copied().unwrap_or_default(), line)?;
+    }
+    let poisson =
+        [(b * f - d * e) / (determinant * diagonal[0]), (c * d - b * e) / (determinant * diagonal[0]), (a * e - b * d) / (determinant * diagonal[1])];
+    Ok(fieldcraft_model::Elastic::EngineeringConstants { young, poisson, shear })
+}
+
 pub(super) struct Orientation {
     frame: MaterialOrientation,
     rotation_axis: u8,
+    rotation: f64,
+    line: usize,
 }
 
 impl Orientation {
-    pub(super) fn section(&self, shell: bool) -> SectionOrientation {
-        SectionOrientation { frame: self.frame, shell_reference_axis: if shell { self.rotation_axis % 3 + 1 } else { 1 } }
+    pub(super) fn section(&self, shell: bool) -> Result<SectionOrientation> {
+        let mut frame = self.frame;
+        if self.rotation != 0.0 {
+            if !matches!(frame, MaterialOrientation::Rectangular { .. }) {
+                return Err(error(
+                    self.line,
+                    "nonzero additional *ORIENTATION rotation requires a rectangular frame; cylindrical twist is not mapped",
+                ));
+            }
+            let axes = frame.axes_at([0.0; 3]).map_err(|e| error(self.line, e.to_string()))?;
+            let axis = axes.get(usize::from(self.rotation_axis - 1)).copied().ok_or_else(|| error(self.line, "invalid rotation axis"))?;
+            let (sin, cos) = self.rotation.sin_cos();
+            let rotate = |v: [f64; 3]| {
+                let dot = axis.iter().zip(v).map(|(a, b)| a * b).sum::<f64>();
+                let cross = [axis[1] * v[2] - axis[2] * v[1], axis[2] * v[0] - axis[0] * v[2], axis[0] * v[1] - axis[1] * v[0]];
+                std::array::from_fn(|i| cos * v[i] + sin * cross[i] + (1.0 - cos) * dot * axis[i])
+            };
+            frame = MaterialOrientation::Rectangular { axis1: rotate(axes[0]), axis2: rotate(axes[1]) };
+        }
+        // The public Orientations algorithm rotates first, then projects the cyclic
+        // successor of the rotation axis; the native shell frame performs that projection.
+        // https://abaqus.uclouvain.be/English/SIMACAEMODRefMap/simamod-c-orientation.htm
+        Ok(SectionOrientation { frame, shell_reference_axis: if shell { self.rotation_axis % 3 + 1 } else { 1 } })
     }
 }
 
 pub(super) fn orientation(block: &Block<'_>, units: &DisplaySystem) -> Result<Orientation> {
     block.only(&["NAME", "SYSTEM", "DEFINITION"])?;
-    if block.value("DEFINITION").is_some_and(|v| canonical(v) != "COORDINATES") {
+    if block.params.contains_key("DEFINITION") && canonical(block.required("DEFINITION")?) != "COORDINATES" {
         return Err(error(block.line, "*ORIENTATION supports constant DEFINITION=COORDINATES only"));
     }
     if block.rows.is_empty() || block.rows.len() > 2 {
@@ -25,11 +74,23 @@ pub(super) fn orientation(block: &Block<'_>, units: &DisplaySystem) -> Result<Or
     let row = block.rows.first().ok_or_else(|| error(block.line, "missing orientation coordinates"))?;
     let values = row_fields(row.text, row.line)?.iter().map(|v| number(v, row.line)).collect::<Result<Vec<_>>>()?;
     let at = |i| values.get(i).copied().unwrap_or_default();
-    let frame = match canonical(block.value("SYSTEM").unwrap_or("RECTANGULAR")).as_str() {
+    let system = if block.params.contains_key("SYSTEM") { block.required("SYSTEM")? } else { "RECTANGULAR" };
+    let frame = match canonical(system).as_str() {
         "RECTANGULAR" if values.len() == 6 || values.len() == 9 => MaterialOrientation::Rectangular {
             axis1: std::array::from_fn(|i| at(i) - at(i + 6)),
             axis2: std::array::from_fn(|i| at(i + 3) - at(i + 6)),
         },
+        "ZRECTANGULAR" if values.len() == 6 || values.len() == 9 => {
+            // The public Z RECTANGULAR definition places a on Z and b in XZ.
+            // Build Z/X/Y, then cyclically relabel to native X/Y/Z before rotation.
+            let zxy = MaterialOrientation::Rectangular {
+                axis1: std::array::from_fn(|i| at(i) - at(i + 6)),
+                axis2: std::array::from_fn(|i| at(i + 3) - at(i + 6)),
+            }
+            .axes_at([0.; 3])
+            .map_err(|e| error(row.line, e.to_string()))?;
+            MaterialOrientation::Rectangular { axis1: zxy[1], axis2: zxy[2] }
+        }
         "CYLINDRICAL" if values.len() == 6 => {
             let mut origin = [0.0; 3];
             for (i, v) in origin.iter_mut().enumerate() {
@@ -46,6 +107,7 @@ pub(super) fn orientation(block: &Block<'_>, units: &DisplaySystem) -> Result<Or
     };
     frame.validate().map_err(|e| error(row.line, e.to_string()))?;
     let mut rotation_axis = 1;
+    let mut rotation = 0.0;
     if let Some(row) = block.rows.get(1) {
         let f = row_fields(row.text, row.line)?;
         if f.len() > 2 {
@@ -55,13 +117,12 @@ pub(super) fn orientation(block: &Block<'_>, units: &DisplaySystem) -> Result<Or
             rotation_axis =
                 v.parse::<u8>().ok().filter(|v| (1..=3).contains(v)).ok_or_else(|| error(row.line, "orientation rotation axis must be 1, 2 or 3"))?;
         }
-        if let Some(v) = f.get(1).filter(|v| !v.is_empty())
-            && number(v, row.line)? != 0.0
-        {
-            return Err(error(row.line, "nonzero additional *ORIENTATION rotation is not imported; supply the rotated constant frame explicitly"));
+        if let Some(v) = f.get(1).filter(|v| !v.is_empty()) {
+            let unit = Unit::parse("deg").map_err(|e| error(row.line, e.to_string()))?;
+            rotation = Quantity::Angle.to_si(number(v, row.line)?, &unit).map_err(|e| error(row.line, e.to_string()))?;
         }
     }
-    Ok(Orientation { frame, rotation_axis })
+    Ok(Orientation { frame, rotation_axis, rotation, line: block.line })
 }
 
 pub(super) fn plies(block: &Block<'_>, units: &DisplaySystem) -> Result<Vec<Ply>> {
@@ -104,5 +165,54 @@ pub(super) fn offset(value: Option<&str>, line: usize) -> Result<f64> {
         Some("SPOS") => Ok(0.5),
         Some("SNEG") => Ok(-0.5),
         Some(v) => number(v, line),
+    }
+}
+
+#[cfg(test)]
+mod rotation_tests {
+    use super::*;
+    use fieldcraft_model::units::Preset;
+
+    #[test]
+    fn z_rectangular_permutation_and_origin_are_preserved() {
+        for row in ["1,0,0,0,1,0", "3,3,4,2,4,4,2,3,4"] {
+            let text = format!("*ORIENTATION,NAME=A,SYSTEM=Z RECTANGULAR\n{row}\n");
+            let blocks = super::super::lex::blocks(&text, 10).unwrap();
+            let o = orientation(&blocks[0], &DisplaySystem::new(Preset::MKgS)).unwrap().section(false).unwrap();
+            assert_eq!(o.frame.axes_at([0.; 3]).unwrap(), [[0., 1., 0.], [0., 0., 1.], [1., 0., 0.]]);
+        }
+        for header in ["SYSTEM", "SYSTEM=SPHERICAL", "DEFINITION", "DEFINITION=NODES"] {
+            let text = format!("*ORIENTATION,NAME=A,{header}\n1,0,0,0,1,0\n");
+            let blocks = super::super::lex::blocks(&text, 10).unwrap();
+            assert!(orientation(&blocks[0], &DisplaySystem::new(Preset::MKgS)).is_err());
+        }
+    }
+
+    #[test]
+    fn shell_rotation_precedes_projection_and_uses_the_positive_normal() {
+        for (axis, angle, normal, expected) in [
+            (3, 90, [0., 1., 1.], [0., 1. / 2.0_f64.sqrt(), -1. / 2.0_f64.sqrt()]),
+            (1, 45, [1., 0., 1.], [-1. / 6.0_f64.sqrt(), 2. / 6.0_f64.sqrt(), 1. / 6.0_f64.sqrt()]),
+        ] {
+            let text = format!("*ORIENTATION,NAME=A\n1,0,0,0,1,0\n{axis},{angle}\n");
+            let blocks = super::super::lex::blocks(&text, 10).unwrap();
+            let orientation = orientation(&blocks[0], &DisplaySystem::new(Preset::MKgS)).unwrap().section(true).unwrap();
+            let axes = orientation.frame.shell_axes_at([0.; 3], normal, orientation.shell_reference_axis).unwrap();
+            let reverse = orientation.frame.shell_axes_at([0.; 3], normal.map(|x| -x), orientation.shell_reference_axis).unwrap();
+            for i in 0..3 {
+                assert!((axes[0][i] - expected[i]).abs() < 1e-14);
+                assert!((axes[0][i] - reverse[0][i]).abs() < 1e-14);
+                assert!((axes[1][i] + reverse[1][i]).abs() < 1e-14);
+                assert!((axes[2][i] + reverse[2][i]).abs() < 1e-14);
+            }
+        }
+    }
+
+    #[test]
+    fn cylindrical_twist_remains_explicitly_unmapped() {
+        let text = "*ORIENTATION,NAME=A,SYSTEM=CYLINDRICAL\n0,0,0,0,0,1\n1,30\n";
+        let blocks = super::super::lex::blocks(text, 10).unwrap();
+        let o = orientation(&blocks[0], &DisplaySystem::new(Preset::MKgS)).unwrap();
+        assert!(o.section(true).unwrap_err().to_string().contains("cylindrical twist"));
     }
 }

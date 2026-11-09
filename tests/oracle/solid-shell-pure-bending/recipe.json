@@ -1,0 +1,520 @@
+[
+  {
+    "command": "model.units",
+    "params": {
+      "system": "m-kg-s-N-Pa"
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 1,
+      "xyz": [
+        0.0,
+        0,
+        -0.01
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 2,
+      "xyz": [
+        0.25,
+        0,
+        -0.01
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 3,
+      "xyz": [
+        0.5,
+        0,
+        -0.01
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 4,
+      "xyz": [
+        0.75,
+        0,
+        -0.01
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 5,
+      "xyz": [
+        1.0,
+        0,
+        -0.01
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 6,
+      "xyz": [
+        0.0,
+        0.2,
+        -0.01
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 7,
+      "xyz": [
+        0.25,
+        0.2,
+        -0.01
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 8,
+      "xyz": [
+        0.5,
+        0.2,
+        -0.01
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 9,
+      "xyz": [
+        0.75,
+        0.2,
+        -0.01
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 10,
+      "xyz": [
+        1.0,
+        0.2,
+        -0.01
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 11,
+      "xyz": [
+        0.0,
+        0,
+        0.01
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 12,
+      "xyz": [
+        0.25,
+        0,
+        0.01
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 13,
+      "xyz": [
+        0.5,
+        0,
+        0.01
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 14,
+      "xyz": [
+        0.75,
+        0,
+        0.01
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 15,
+      "xyz": [
+        1.0,
+        0,
+        0.01
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 16,
+      "xyz": [
+        0.0,
+        0.2,
+        0.01
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 17,
+      "xyz": [
+        0.25,
+        0.2,
+        0.01
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 18,
+      "xyz": [
+        0.5,
+        0.2,
+        0.01
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 19,
+      "xyz": [
+        0.75,
+        0.2,
+        0.01
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 20,
+      "xyz": [
+        1.0,
+        0.2,
+        0.01
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 1,
+      "kind": "hex8",
+      "nodes": [
+        1,
+        2,
+        7,
+        6,
+        11,
+        12,
+        17,
+        16
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 2,
+      "kind": "hex8",
+      "nodes": [
+        2,
+        3,
+        8,
+        7,
+        12,
+        13,
+        18,
+        17
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 3,
+      "kind": "hex8",
+      "nodes": [
+        3,
+        4,
+        9,
+        8,
+        13,
+        14,
+        19,
+        18
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 4,
+      "kind": "hex8",
+      "nodes": [
+        4,
+        5,
+        10,
+        9,
+        14,
+        15,
+        20,
+        19
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "layer0",
+      "elements": [
+        1,
+        2,
+        3,
+        4
+      ]
+    }
+  },
+  {
+    "command": "model.material.create",
+    "params": {
+      "name": "ply0",
+      "elastic": {
+        "type": "engineering_constants",
+        "young": [
+          70000000000.0,
+          35000000000.0,
+          10000000000.0
+        ],
+        "poisson": [
+          0,
+          0,
+          0
+        ],
+        "shear": [
+          5000000000.0,
+          3000000000.0,
+          3000000000.0
+        ]
+      },
+      "density": 2700
+    }
+  },
+  {
+    "command": "model.section.create",
+    "params": {
+      "name": "layer0",
+      "set": "layer0",
+      "material": "ply0",
+      "kind": {
+        "type": "solid"
+      },
+      "formulation": {
+        "solid_shell": true
+      },
+      "orientation": {
+        "frame": {
+          "type": "rectangular",
+          "axis1": [
+            1.0,
+            0.0,
+            0
+          ],
+          "axis2": [
+            -0.0,
+            1.0,
+            0
+          ]
+        },
+        "shell_reference_axis": 1
+      }
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "root",
+      "nodes": [
+        1,
+        6,
+        11,
+        16
+      ]
+    }
+  },
+  {
+    "command": "model.boundary_condition.create",
+    "params": {
+      "name": "clamp",
+      "type": "fixed",
+      "target": {
+        "set": "root"
+      }
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "end5",
+      "nodes": [
+        5
+      ]
+    }
+  },
+  {
+    "command": "model.load.create",
+    "params": {
+      "name": "end5",
+      "type": "force",
+      "target": {
+        "set": "end5"
+      },
+      "vector": [
+        -24.999999999999993,
+        0,
+        0
+      ],
+      "distribution": "per_node"
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "end15",
+      "nodes": [
+        15
+      ]
+    }
+  },
+  {
+    "command": "model.load.create",
+    "params": {
+      "name": "end15",
+      "type": "force",
+      "target": {
+        "set": "end15"
+      },
+      "vector": [
+        24.999999999999993,
+        0,
+        0
+      ],
+      "distribution": "per_node"
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "end10",
+      "nodes": [
+        10
+      ]
+    }
+  },
+  {
+    "command": "model.load.create",
+    "params": {
+      "name": "end10",
+      "type": "force",
+      "target": {
+        "set": "end10"
+      },
+      "vector": [
+        -24.999999999999993,
+        0,
+        0
+      ],
+      "distribution": "per_node"
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "end20",
+      "nodes": [
+        20
+      ]
+    }
+  },
+  {
+    "command": "model.load.create",
+    "params": {
+      "name": "end20",
+      "type": "force",
+      "target": {
+        "set": "end20"
+      },
+      "vector": [
+        24.999999999999993,
+        0,
+        0
+      ],
+      "distribution": "per_node"
+    }
+  },
+  {
+    "command": "model.step.create",
+    "params": {
+      "name": "Bend",
+      "procedure": {
+        "type": "static"
+      },
+      "boundary_conditions": [
+        "clamp"
+      ],
+      "loads": [
+        "end5",
+        "end15",
+        "end10",
+        "end20"
+      ]
+    }
+  },
+  {
+    "command": "solve.static",
+    "params": {
+      "step": "Bend"
+    },
+    "id": "solution"
+  },
+  {
+    "command": "solve.probe",
+    "params": {
+      "step": "Bend",
+      "nodes": [
+        15
+      ]
+    },
+    "id": "tip"
+  }
+]
