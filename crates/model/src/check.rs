@@ -547,6 +547,15 @@ impl Model {
                     d.error(&subject, format!("set `{set}` has no nodes"));
                 }
             }
+            // A fluid step writes its flow fields always and lists no output.
+            if s.procedure.fluid_domain().is_none() {
+                if s.output.is_empty() {
+                    d.warning(&subject, "requests no output, so it writes no results");
+                }
+                for v in s.output.iter().filter(|v| if v.is_thermal() { !s.procedure.is_thermal() } else { !s.procedure.is_structural() }) {
+                    d.warning(&subject, format!("requests {}, which a {} step does not compute", v.name(), s.procedure.name()));
+                }
+            }
             match &s.procedure {
                 Procedure::Static {} | Procedure::NonlinearStatic(_) | Procedure::Buckle { .. } => {
                     if s.loads.is_empty() && !prescribes_motion {
