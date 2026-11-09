@@ -36,6 +36,9 @@
 
 use fieldcraft_parallel as parallel;
 
+#[cfg(test)]
+mod diagnostics;
+
 use crate::{Error, Result};
 
 /// Relative pivot size below which the matrix counts as singular.
