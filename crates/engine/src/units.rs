@@ -468,6 +468,8 @@ pub const REPLIES: &[(&str, &[(&str, Dim)])] = &[
             ("/transition_temperature", Dim::Temperature),
         ],
     ),
+    ("solve.pretension", &[("/adjustment", Dim::Length), ("/section_force", Dim::Force), ("/applied_force", Dim::Force)]),
+    ("model.pretension.lock", &[("/adjustment", Dim::Length)]),
     ("solve.static", STATIC),
     (
         "solve.harmonic",

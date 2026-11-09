@@ -628,7 +628,14 @@ pub static CATALOGUE: &[Capability] = &[
         "A fixed rigid plane a set's nodes cannot pass, with friction, in an explicit dynamics step",
         &["interaction.rigid_wall.delete"],
     ),
-    soon("interaction.bolt", "Bolt Load", Interactions, "Connectors", "M7", "Bolt pretension"),
+    ready_more(
+        "model.pretension.create",
+        "Bolt Pretension",
+        Interactions,
+        "Connectors",
+        "Conforming cut with force or prescribed adjustment, lock from a solved equilibrium and report section force",
+        &["model.pretension.force", "model.pretension.adjust", "model.pretension.lock", "solve.pretension"],
+    ),
     ready_more(
         "model.spring.create",
         "Spring",

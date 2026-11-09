@@ -85,6 +85,7 @@ pub fn write(model: &Model, units: Preset) -> Result<String> {
 /// [`write`] for a model already expressed in `units` ([`crate::express`]) and resolved.
 pub fn write_resolved(model: &Model, r: &Resolved, units: Preset) -> Result<String> {
     crate::refuse_fluid(FORMAT, model)?;
+    crate::refuse_prestress(FORMAT, model)?;
     crate::foundation::refuse(FORMAT, model)?;
     composite::check(model)?;
     let prepared = crate::composite::explicit_shell_frames(model, r, FORMAT)?;

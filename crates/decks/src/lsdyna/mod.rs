@@ -182,6 +182,7 @@ fn control_units(units: Preset) -> [&'static str; 4] {
 
 fn write_with(model: &Model, r: &Resolved, units: Preset) -> Result<Written> {
     crate::refuse_fluid(FORMAT, model)?;
+    crate::refuse_prestress(FORMAT, model)?;
     crate::foundation::refuse(FORMAT, model)?;
     if let Some(step) = model.steps().iter().find(|s| matches!(s.procedure, Procedure::Harmonic(_))) {
         return Err(Error::Unsupported {

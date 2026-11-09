@@ -391,7 +391,13 @@ impl Quantities for FluidDomain {
 
 impl Quantities for Step {
     fn quantities(&mut self, f: &mut dyn FnMut(Q, &mut f64)) {
-        let Step { name: _, procedure, output: _, boundary_conditions: _, loads: _ } = self;
+        let Step { name: _, base_state: _, pretension, procedure, output: _, boundary_conditions: _, loads: _ } = self;
+        for control in pretension.values_mut() {
+            match control {
+                crate::PretensionControl::Force { value } => f(Q::Force, value),
+                crate::PretensionControl::Adjustment { value } => f(Q::Length, value),
+            }
+        }
         match procedure {
             Procedure::Static {} | Procedure::CoupledTemperatureDisplacement {} => {}
             Procedure::Harmonic(h) => {
@@ -611,6 +617,7 @@ impl Model {
             masses,
             springs,
             foundations,
+            pretensions: _,
             boundary_conditions,
             loads,
             initial_fields,
@@ -736,6 +743,7 @@ impl Model {
         keep_map(&self.masses, &c.masses, &b.masses, &mut out.masses);
         keep_map(&self.springs, &c.springs, &b.springs, &mut out.springs);
         keep_map(&self.foundations, &c.foundations, &b.foundations, &mut out.foundations);
+        keep_map(&self.pretensions, &c.pretensions, &b.pretensions, &mut out.pretensions);
         keep_map(&self.boundary_conditions, &c.boundary_conditions, &b.boundary_conditions, &mut out.boundary_conditions);
         keep_map(&self.loads, &c.loads, &b.loads, &mut out.loads);
         keep_map(&self.initial_fields, &c.initial_fields, &b.initial_fields, &mut out.initial_fields);

@@ -1270,10 +1270,18 @@ pub const STEP_CREATE: &[Field] = &[
     OUTPUT,
     STEP_BCS,
     STEP_LOADS,
+    reference("base_state", "Equilibrium base", C::Step).help("Earlier static or nonlinear static step for a linear perturbation."),
     reference("before", "Insert before", C::Step).help("The step the new one goes before; last when empty.").hint("last"),
 ];
 
-pub const STEP_EDIT: &[Field] = &[reference("name", "Step", C::Step).help("The step to change.").req(), PROCEDURE, OUTPUT, STEP_BCS, STEP_LOADS];
+pub const STEP_EDIT: &[Field] = &[
+    reference("name", "Step", C::Step).help("The step to change.").req(),
+    PROCEDURE,
+    OUTPUT,
+    STEP_BCS,
+    STEP_LOADS,
+    reference("base_state", "Equilibrium base", C::Step).help("Earlier equilibrium step; null in a command clears the base."),
+];
 
 pub const STEP_ACTIVATE: &[Field] = &[
     reference("step", "Step", C::Step).help("The step to change.").req(),
@@ -3117,6 +3125,8 @@ mod tests {
         "no saved view",
         "no render",
         "is not a composite shell",
+        "lock source must precede the target",
+        "no pretension section result",
     ];
 
     /// Fill top-level required names (a fresh one) and references (the first existing item).

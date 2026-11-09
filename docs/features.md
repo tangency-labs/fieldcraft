@@ -6,7 +6,7 @@ Every entry is a toolbar button. **Ready** entries run their command; **coming s
 shown greyed with the roadmap milestone that brings them (ROADMAP.md). Scripts, the command line,
 the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 
-96 ready, 31 coming soon.
+97 ready, 30 coming soon.
 
 ## Geometry
 
@@ -121,7 +121,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Contact | Contact Pair — Contact between two surfaces: with friction in explicit dynamics, mortar contact with friction in nonlinear static steps | ready | `interaction.contact.pair` |
 | Contact | Find Contacts — Find the parts of the mesh that touch, and make contact pairs of them | ready | `interaction.contact.find` |
 | Contact | Rigid Wall — A fixed rigid plane a set's nodes cannot pass, with friction, in an explicit dynamics step | ready | `interaction.rigid_wall`, `interaction.rigid_wall.delete` |
-| Connectors | Bolt Load — Bolt pretension | coming soon (M7) |  |
+| Connectors | Bolt Pretension — Conforming cut with force or prescribed adjustment, lock from a solved equilibrium and report section force | ready | `model.pretension.create`, `model.pretension.force`, `model.pretension.adjust`, `model.pretension.lock`, `solve.pretension` |
 | Connectors | Spring — Spring or dashpot to the ground or between two points, along a direction or their line | ready | `model.spring.create`, `model.spring.edit`, `model.spring.delete`, `model.foundation.create`, `model.foundation.edit`, `model.foundation.delete` |
 | Connectors | Point Mass — Point mass and rotary inertia at nodes or a reference point | ready | `model.mass.create`, `model.mass.edit`, `model.mass.delete` |
 | Connectors | Connector — Connector elements between points | coming soon (M7) |  |
