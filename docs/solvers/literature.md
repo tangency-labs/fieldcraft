@@ -535,6 +535,16 @@ checked against the DOI handle API and Crossref, as above.
 - J. D. Sterling, S. Chen. *Stability Analysis of Lattice Boltzmann Methods.* JCP 123(1):196–206, 1996. DOI [10.1006/jcph.1996.0016](https://doi.org/10.1006/jcph.1996.0016).
 - P. Lallemand, L.-S. Luo. *Theory of the lattice Boltzmann method: Dispersion, dissipation, isotropy, Galilean invariance, and stability.* PRE 61:6546–6562, 2000. DOI [10.1103/PhysRevE.61.6546](https://doi.org/10.1103/PhysRevE.61.6546).
 - **Use.** Linear stability (von Neumann) analysis of BGK/MRT; the source for the stable (u, τ) region and the case for MRT.
+  Lallemand & Luo (Sec. 6, Fig. 2) find BGK unstable above V ≈ 0.07 at 1/τ = 1.99 (τ ≈ 0.5025), worst for sound along
+  the flow; their stable MRT relaxes the odd moments fast (1.92).
+- **Also.** F. Wissocq, P. Sagaut, J.-F. Boussuge, *An extended spectral analysis of the lattice Boltzmann method:
+  modal interactions and stability issues*, J. Comput. Phys. 380:311–333, 2019. DOI
+  [10.1016/j.jcp.2018.12.015](https://doi.org/10.1016/j.jcp.2018.12.015). The same linearisation about a uniform mean
+  flow (App. B.2), all wavevector directions; BGK's instability arises from collisions of non-hydrodynamic with
+  acoustic/shear modes as the Mach number rises (Sec. 5), on oblique waves rather than along the flow. No TRT.
+- **Used as.** `crates/lbm/tests/trt_stability.rs` applies this analysis to D3Q19 TRT about #820's uniform stream
+  (U = 0.05, 16³ modes): with Λ = 3/16 growing modes for τ⁺ ≤ 0.502, none from 0.5025; at τ⁺ = 0.5005 stable only to
+  U = 0.01, or with Λ ≤ 1e-5. No published TRT boundary covers this case; the analysis and its numbers are ours.
 
 **C1.6 Guo, Zheng, Shi 2002, forcing.** **Verdict: build on.** PRE 65:046308, 2002. DOI [10.1103/PhysRevE.65.046308](https://doi.org/10.1103/PhysRevE.65.046308). The second-order body-force scheme every IB-LBM coupling (D2) needs.
 
@@ -563,6 +573,11 @@ checked against the DOI handle API and Crossref, as above.
 - **Method.** Two relaxation rates (symmetric/antisymmetric parts); the "magic parameter" Λ = 3/16 puts the
   bounce-back wall exactly halfway and makes the solution viscosity-independent in steady flow. BGK cost, much of
   MRT's benefit.
+- **Also.** I. Ginzburg, F. Verhaeghe, D. d'Humières, *Study of simple hydrodynamic solutions with the
+  two-relaxation-times lattice Boltzmann scheme*, Commun. Comput. Phys. 3(3):519–581, 2008. DOI
+  [10.4208/cicp.2008.v3.p519](https://doi.org/10.4208/cicp.2008.v3.p519). Eq. 2.29 gives the effective Poiseuille
+  width of halfway bounce-back, `H_eff² = H² + (16Λ − 3)/3`: the cost of any Λ ≠ 3/16, e.g. of a near-BGK Λ chosen
+  for bulk stability close to τ⁺ = ½ (#820).
 - **Complexity.** Low.
 
 **C2.3 Geier et al. 2015, cumulant LBM.** **Verdict: build on (high-Re collision, D3Q27).**
@@ -667,6 +682,24 @@ JCP 232(1):100–117, 2013, DOI [10.1016/j.jcp.2012.07.023](https://doi.org/10.1
   extrapolation residual only, so the alternating boundary mode is removed while the slowly varying
   density, where extrapolating outright made long acoustic waves unstable, keeps Zou–He's value.
   Never applied to the bulk flow or the imposed velocity.
+
+**C3.3c Velocity inlets tried for #820 and not adopted.** **Verdict: reference.**
+- J. Latt, B. Chopard, O. Malaspinas, M. Deville, A. Michler, *Straight velocity boundaries in the lattice Boltzmann
+  method*, Phys. Rev. E 77:056703, 2008. DOI [10.1103/PhysRevE.77.056703](https://doi.org/10.1103/PhysRevE.77.056703).
+  The regularised reconstruction from the prescribed velocity and the non-equilibrium stress.
+- Characteristic inlets: J. Izquierdo, N. Fueyo, *Characteristic nonreflecting boundary conditions for
+  open boundaries in lattice Boltzmann methods*, Phys. Rev. E 78:046707, 2008. DOI
+  [10.1103/PhysRevE.78.046707](https://doi.org/10.1103/PhysRevE.78.046707) (D2Q9 MRT; LODI amplitudes with a pressure
+  relaxation, velocity bounce-back); S. Heubes, A. Bartel, M. Ehrhardt, *Characteristic boundary conditions in the
+  lattice Boltzmann method for fluid and gas dynamics*, J. Comput. Appl. Math. 262:51–61, 2014. DOI
+  [10.1016/j.cam.2013.09.019](https://doi.org/10.1016/j.cam.2013.09.019) (D2Q9 BGK; LODI density and velocity, then
+  equilibrium or extrapolated non-equilibrium populations).
+- **Tried as.** On the #820 box at τ⁺ = 0.5005, U = 0.05, Smagorinsky 0.1: a LODI boundary density (outgoing
+  amplitude from one-sided interior differences, the velocity held, a pressure relaxation of 0–0.5 per step) with
+  velocity bounce-back, equilibrium, extrapolated or regularised populations; also the Latt et al. inlet, plain
+  equilibrium and full non-equilibrium extrapolation. With Λ = 3/16 every one went unstable; with a near-BGK Λ (bulk
+  stable) they failed or kept departures of 1e-3–1e-2 against a 1e-6 seed. None was shown near τ = ½ in its paper.
+  The adopted inlet (C3.3a/C3.3b) is FieldCraft's own and holds from τ⁺ = 0.505.
 
 **C3.4 Orlanski 1976, convective outflow condition.** **Verdict: build on (convective outlets, #599).**
 - **Citation.** I. Orlanski, *A simple boundary condition for unbounded hyperbolic flows*, J. Comput. Phys.

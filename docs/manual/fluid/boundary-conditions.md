@@ -124,18 +124,45 @@ pointing outward, the original reconstruction is retained. Free-surface flows al
 a moving liquid/gas interface does not provide two fixed inner fluid samples. The correction reads a snapshot
 of streamed populations before any open face is changed. It changes neither the bulk TRT
 collision nor SGS viscosity, and the other collision operators retain their inlet closure.
-This combines non-equilibrium extrapolation (Guo, Zheng & Shi 2002,
-[doi:10.1088/1009-1963/11/4/310](https://doi.org/10.1088/1009-1963/11/4/310))
-with Shapiro's selective filter (1970,
-[doi:10.1029/RG008i002p00359](https://doi.org/10.1029/RG008i002p00359)); the particular
-trace/residual combination is FieldCraft's, not a scheme attributed to either paper.
+This correction is FieldCraft's own: it is not a published inflow condition. It takes the
+equilibrium/non-equilibrium split of non-equilibrium extrapolation (Guo, Zheng & Shi 2002,
+[doi:10.1088/1009-1963/11/4/310](https://doi.org/10.1088/1009-1963/11/4/310)) and
+Shapiro's selective filter (1970,
+[doi:10.1029/RG008i002p00359](https://doi.org/10.1029/RG008i002p00359)), and combines them
+in a way neither paper describes. Published closures were tried on the same box first:
+full non-equilibrium extrapolation, the regularised inlet of Latt et al. (2008,
+[doi:10.1103/PhysRevE.77.056703](https://doi.org/10.1103/PhysRevE.77.056703)), an
+equilibrium inlet, and a characteristic (LODI) inlet density after Izquierdo & Fueyo (2008,
+[doi:10.1103/PhysRevE.78.046707](https://doi.org/10.1103/PhysRevE.78.046707)) and Heubes,
+Bartel & Ehrhardt (2014, [doi:10.1016/j.cam.2013.09.019](https://doi.org/10.1016/j.cam.2013.09.019)).
+At τ = 0.5005 each either went unstable or left disturbances far above the 1e-6 seed (below).
 
 The 16³, U=0.05, τ=0.505 checkerboard reproduction that failed at step 2838 completes
-30,000 steps with density departure about 8e-9. Broadband disturbances and τ=0.518
-are also checked. This does **not** establish stability arbitrarily close to τ=1/2:
-at τ=0.5005 with Smagorinsky C=0.1, even the fully periodic control without an inlet
-amplifies a 1e-6 broadband seed (density reaches 1.1e-3). That separate bulk limitation
-remains; this inlet repair is not a validation of high-Reynolds-number LES or drag.
+30,000 steps with density departure about 8e-9. Broadband disturbances and τ=0.507 and
+0.518 are also checked. **Below τ = 0.505 the TRT velocity inlet is not stable**, and the
+setup warns about it (only a turbulence model allows τ below 0.505):
+
+- The bulk is itself the first limit. Linearised about the uniform stream at U = 0.05
+  (Mach 0.087), with the default Λ = 3/16 the TRT collision has growing modes on the 16³ box
+  for τ ≤ 0.502 (1.96e-3 per step at τ = 0.5005) and none from 0.5025; at τ = 0.5005 it is
+  stable only up to U = 0.01. The analysis is the von Neumann one of Sterling & Chen (1996)
+  and Wissocq, Sagaut & Boussuge (2019,
+  [doi:10.1016/j.jcp.2018.12.015](https://doi.org/10.1016/j.jcp.2018.12.015)), who trace
+  BGK's instability to collisions of non-hydrodynamic with physical modes, worst for oblique
+  waves; Lallemand & Luo (2000) find BGK unstable above V ≈ 0.07 already at τ ≈ 0.5025.
+  Λ = 3/16 at τ = 0.5005 makes τ⁻ ≈ 375, odd moments that hardly relax; the stable MRT of
+  Lallemand & Luo relaxes them fast. The test `tests/trt_stability.rs` keeps these numbers.
+- A near-BGK Λ (≤ 3e-5, τ⁻ ≤ 0.56) makes the bulk stable at τ = 0.5005, but moves the
+  bounce-back wall: the effective channel width is √(H² + (16Λ − 3)/3) (Ginzburg,
+  Verhaeghe & d'Humières 2008,
+  [doi:10.4208/cicp.2008.v3.p519](https://doi.org/10.4208/cicp.2008.v3.p519), from Eq. 2.29),
+  for a channel of H cells, exact only at Λ = 3/16. With it no inlet closure above held either: Zou–He and this
+  correction fail within 150 steps, the others fail or keep departures of 1e-3 to 1e-2.
+- Where the bulk is stable but τ < 0.505 (τ = 0.5005 at U = 0.01; τ = 0.5025–0.503 at
+  U = 0.05) this inlet still fails or keeps departures of 5e-3 and more: its own floor is
+  between 0.503 and 0.505 at Mach 0.087.
+
+This inlet repair is not a validation of high-Reynolds-number LES or drag.
 
 A uniform pressure face uses non-equilibrium extrapolation (Guo, Zheng & Shi 2002):
 its density is prescribed, physical tangential velocity is zero, and normal velocity is taken

@@ -973,6 +973,20 @@ impl Setup {
                 "τ = {tau_plus:.4} is close to ½: under-resolved flows may go unstable; a finer spacing or the regularized collision (`collision: \"regularized\"`) is safer"
             ));
         }
+        // Below MIN_TAU (reachable only with a turbulence model) the TRT velocity inlet did not
+        // hold a 1e-6 disturbance at #820's Mach number 0.087 (16³ box: departures of 2e-3–1e-2
+        // at τ = 0.5005, 5e-3 and more at 0.5025–0.503), and with Λ = 3/16 the uniform stream
+        // itself is linearly unstable for τ ≤ 0.502 at that speed (tests/trt_stability.rs); a
+        // uniform inflow has no eddy viscosity to lift the inlet cell's τ.
+        if tau_plus < MIN_TAU
+            && collision == Collision::Trt
+            && domain.free_surface.is_none()
+            && BoxFace::ALL.iter().any(|f| matches!(domain.faces.get(*f), FaceCondition::Velocity { .. }))
+        {
+            warnings.push(format!(
+                "τ = {tau_plus:.4} is below {MIN_TAU}, where the two-relaxation-time velocity inlet is not stable: a uniform inflow has no eddy viscosity to raise it; a finer spacing or a longer time step is safer"
+            ));
+        }
         if tau_plus < REGULARIZED_TAU_LIMIT && collision.is_regularized() {
             warnings.push(format!(
                 "τ = {tau_plus:.4} is below {REGULARIZED_TAU_LIMIT}, where even the regularized collision went unstable on a coarse bluff-body grid: the inlet and outlet still reflect pressure waves there; a finer spacing is safer"

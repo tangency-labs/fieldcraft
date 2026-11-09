@@ -7,9 +7,18 @@
 //! `rho_b = rho_ZH + (I - S_t1 S_t2)(2 rho_1 - rho_2 - rho_ZH)`.
 //! Each `S` is Shapiro's fourth-order filter `[-1,4,10,4,-1]/16`.
 //!
-//! This is our boundary-local combination of non-equilibrium extrapolation (Guo, Zheng &
-//! Shi 2002, doi:10.1088/1009-1963/11/4/310) and selective filtering (Shapiro 1970,
-//! doi:10.1029/RG008i002p00359), not an algorithm attributed verbatim to either paper.
+//! The combination is FieldCraft's own, not a published inflow condition: it borrows the
+//! equilibrium/non-equilibrium split of Guo, Zheng & Shi's extrapolation (2002,
+//! doi:10.1088/1009-1963/11/4/310) and Shapiro's selective filter (1970,
+//! doi:10.1029/RG008i002p00359). Published closures were tried first on the #820 box and kept
+//! failing: full non-equilibrium extrapolation (long acoustic waves grow), the regularised inlet of
+//! Latt et al. (2008, doi:10.1103/PhysRevE.77.056703), an equilibrium inlet, and a characteristic
+//! (LODI) density with each of those reconstructions, after Izquierdo & Fueyo (2008,
+//! doi:10.1103/PhysRevE.78.046707) and Heubes, Bartel & Ehrhardt (2014,
+//! doi:10.1016/j.cam.2013.09.019). Below τ⁺ = 0.505 (reachable only with a turbulence model)
+//! none of them, this one included, holds a 1e-6 disturbance at Mach 0.087, and with Λ = 3/16
+//! the bulk stream is itself linearly unstable there for τ⁺ ≤ 0.502 (`tests/trt_stability.rs`);
+//! the setup warns below 0.505.
 //! The filter acts on the reconstruction residual, not on bulk flow or imposed velocity.
 //! Its zero-frequency response vanishes. The stress correction has zero mass/momentum
 //! and an isotropic second moment; it leaves the five deviatoric stress components alone.
