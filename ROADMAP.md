@@ -255,3 +255,7 @@ extrapolation are named unsupported combinations; no PSD time history is synthes
   mass harmonic, full energy-and-mass dynamics, static fatigue and harmonic fatigue.
   Old05/06 kinds 0–5 use frozen schemas; higher development kinds are refused with
   the regeneration message. See docs/results-kind-layout.md.
+- External rod fatigue: an explicit nominal axial reference-area channel accepts
+  producer-recovered material-following scalar histories with matching declared
+  S–N/mean-strength calibration. PK2/Cauchy substitution and tensor criteria are
+  refused; results remain diagnostic JSON, without a native nonlinear result kind.

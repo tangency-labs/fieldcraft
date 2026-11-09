@@ -374,3 +374,42 @@ External stress histories retain their source identity and SI/time/location chec
 The verified linear 1001-frame rod chain is not a nonlinear-history handoff.
 Nonlinear constitutive histories, automatic local stress/total-strain pairing,
 critical-plane methods, and PSD-to-signed-history synthesis remain unsupported.
+
+### Nominal axial histories from geometrically nonlinear rods
+
+`solve.fatigue.transient` also accepts `axial_history` **instead of**
+`history`, `nodes`, `weights`, or `criterion`. It consumes a signed axial scalar
+on the material-following rod axis, not an invented global nodal stress tensor:
+
+```json
+{"source_id":"model/input/program/raw-output identities","step":"Motion",
+ "max_time_step_seconds":0.01,
+ "axial_history":{"step":"Motion","element":1,
+   "location":"constant_rod2_midpoint",
+   "stress_measure":"nominal_axial_reference_area",
+   "axis":"material_following_axial","reference_material_axis":[1,0,0],
+   "reference_area_m2":1,"stress_unit":"Pa","time_unit":"s",
+   "samples":[{"time":0,"stress":0},{"time":0.01,"stress":2},{"time":0.02,"stress":0}]},
+ "curve_stress_measure":"nominal_axial_reference_area",
+ "calibration_source":"synthetic nominal-stress verification only",
+ "curve":{"amplitude_ref":100,"cycles_ref":1,"exponent":3,"endurance_limit":0},
+ "correction":{"type":"goodman","ultimate":100}}
+```
+
+Nominal axial stress is signed force divided by **reference** area. PK2 stress
+and Cauchy stress are different measures even though all use Pa. Only the declared
+nominal measure is supported here. The S–N curve, fatigue limit, and any correction
+strength must be calibrated in that same nominal convention; the required
+`curve_stress_measure` and `calibration_source` declare this responsibility, not
+proof of material calibration. Synthetic examples verify arithmetic, not physical
+fatigue life. No stress conversion, strain inference or material fitting occurs.
+
+Producer output must identify the element, recovery position, material axis,
+reference area, complete time samples and original source identity. An adapter may
+copy actual nominal values and times without changing their meaning; it must not
+reconstruct them from displacement summaries, average element values into fictitious
+nodes, or substitute PK2. Rotating a rod axis does not turn this scalar channel into
+a general nonproportional multiaxial criterion. Tensor criteria are refused in this
+mode. Sampling is not certified, and no periodic closing cycle is added. Replies
+retain source, calibration, scalar measure, per-cycle mean/amplitude/count/damage,
+and explicitly `persisted:false`; they do not add a native result type or contour.
