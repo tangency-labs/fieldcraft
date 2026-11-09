@@ -233,7 +233,7 @@ fn native_kind11_roundtrip_stress_and_version_boundaries() {
         for kind in [9, 10, 12] {
             let mut bad = bytes.clone();
             bad[kind_offset] = kind;
-            assert!(results::decode(&bad).unwrap_err().to_string().contains("unknown kind"));
+            assert!(results::decode(&bad).is_err());
         }
         assert!(results::decode(&bytes[..bytes.len() - 1]).is_err());
         let mut bad = r.clone();

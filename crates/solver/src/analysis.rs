@@ -156,6 +156,10 @@ pub struct FrequencyResult {
     /// For a buckling step: its modes' eigenvalues are load factors (`frequency`, participation
     /// and total mass are zero) and this says what else the eigenproblem found.
     pub buckling: Option<crate::buckle::Buckling>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mass_kind: Option<MassKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section_mass_policy: Option<String>,
 }
 
 pub use fieldcraft_model::MassKind;
@@ -832,6 +836,8 @@ fn frequency_impl(
             stats: Stats { dofs: mesh.dofs(), equations: neq, factor_entries: chol.entries(), lanczos_vectors: pairs.basis },
             warnings,
             buckling: None,
+            mass_kind: None,
+            section_mass_policy: None,
         },
         retained_mass,
     ))

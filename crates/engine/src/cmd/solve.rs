@@ -603,7 +603,10 @@ fn run_frequency(s: &mut Session, p: &Value) -> Result<Value> {
     let mass = opt::<MassKind>(p, "mass")?.unwrap_or_default();
     let shift = opt::<f64>(p, "shift")?;
     let model = &s.model;
-    let r = with_threads(threads(s, p)?, || solve_frequency(model, step.as_deref(), &FrequencyOptions { mass, shift }, &limits))?;
+    let mut r = with_threads(threads(s, p)?, || solve_frequency(model, step.as_deref(), &FrequencyOptions { mass, shift }, &limits))?;
+    r.mass_kind = Some(mass);
+    r.section_mass_policy =
+        Some("rod/beam reference section mass uses declared section area and material density; no inferred cross-section policy".into());
     let summary = json!({
         "step": r.step,
         "dofs": r.stats.dofs,
@@ -1620,6 +1623,10 @@ pub(crate) fn probe(s: &mut Session, p: &Value) -> Result<Value> {
             .filter_map(|e| Some((e.get("node")?.as_u64()?, e.get("von_mises")?.as_f64()?)))
             .fold(None, |best: Option<(u64, f64)>, (n, v)| if best.is_none_or(|b| v > b.1) { Some((n, v)) } else { best })
     });
+    if let (StepResult::Implicit(fieldcraft_solver::StepResult::Frequency(f)), Some(obj)) = (result.as_ref(), out.as_object_mut()) {
+        obj.insert("mass_kind".into(), serde_json::to_value(f.mass_kind).unwrap_or(Value::Null));
+        obj.insert("section_mass_policy".into(), serde_json::to_value(&f.section_mass_policy).unwrap_or(Value::Null));
+    }
     if let (Some((node, value)), Some(obj)) = (peak, out.as_object_mut()) {
         obj.insert("max_von_mises".into(), json!({"node": node, "value": value}));
     }
