@@ -432,3 +432,38 @@ or drilling inertia. Beam equivalence is limited to uniform straight prismatic,
 unoffset conditions. No unidentified option is assigned a guessed default. Commercial
 matrix originals are not repository fixtures; formula tests and original command
 round trips are separate from local, authorized observational evidence.
+
+### Native section mass policy round trips
+
+An explicit native section setting is separate from inferred source defaults.
+The writer retains nondefault policies using a FieldCraft-only comment:
+
+```text
+** FIELDCRAFT LUMPED MASS, ELSET=Body, STRATEGY=ROW_SUM
+```
+
+`STRATEGY` accepts `HRZ`, `ROW_SUM`, or `CONSISTENT`; its target must have a section.
+The reader restores `formulation.lumped_mass` and reports it separately as
+`native_lumped_mass_policies`, with activation `explicit mass=lumped solve`.
+Duplicate/unknown strategies and missing targets are errors. Metadata on a deck
+with PART/INSTANCE expansion is refused until scoped policy references are
+supported; the native writer emits a flat deck. Nastran and LS-DYNA exports refuse
+nondefault policies instead of discarding them. The comment is ignored by Abaqus:
+it is not an Abaqus keyword, a portable mass control, or a way to force a vendor
+analysis to use FieldCraft's rule. Exact source replay remains byte-preserving.
+
+Model save/open preserves the policy; a native normalized write/read restores it
+and reproduces the explicitly lumped frequency solution. Default/explicit consistent
+solutions stay identical. The imported mass-evidence report is still conditional
+and unapplied: it does not silently select this native policy for arbitrary input.
+S8R rotational inertia, CAX6's particular six-point rule and the named unknown
+pyramid/shell distributions remain separate gaps.
+
+**Stiffness boundary:** the current `C3D8` mapping uses FieldCraft's standard
+full-integration Hex8. It is not established equivalent to a volume-averaged
+B-bar formulation. Consequently writing this native element as `C3D8` does not
+certify identical stiffness semantics in another program. The distributing
+coupling's kinematic/virtual-work identity and the element stiffness discretization
+must be checked separately. Selecting a mass policy does not change or resolve
+this stiffness boundary. A B-bar implementation requires its own public-formula
+validation and mapping work; changing a label alone is insufficient.

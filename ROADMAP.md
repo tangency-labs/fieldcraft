@@ -214,3 +214,9 @@ third-party acceptance remain open; this is not yet a completed foundation miles
 Static joint identification now groups observations by step and shares each trial
 factorization across parameter columns. A prescribed-motion, zero-foundation-coefficient
 check compares the batched response/Jacobian bit for bit with scalar sensitivities.
+
+Section mass policies: continuum sections now persist explicit `hrz`, `row_sum`, or
+`consistent` overrides for a `mass=lumped` frequency solve. Linear positive-basis
+row sums and mixed consistent sections are checked against independent matrices;
+native Abaqus comments preserve the policy on write/read. Harmonic/random mass
+integration and result identity remain a separate interface integration task.

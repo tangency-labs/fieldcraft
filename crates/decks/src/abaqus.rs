@@ -983,6 +983,14 @@ impl Deck {
             self.comment(&format!("section {name}"));
             let orientation = composite::write_orientation(self, model, s, index)?;
             let (set, material) = (&s.set, &s.material);
+            if !s.formulation.lumped_mass.is_default() {
+                let strategy = match s.formulation.lumped_mass {
+                    fieldcraft_model::LumpedMass::Hrz => "HRZ",
+                    fieldcraft_model::LumpedMass::RowSum => "ROW_SUM",
+                    fieldcraft_model::LumpedMass::Consistent => "CONSISTENT",
+                };
+                self.comment(&format!("FIELDCRAFT LUMPED MASS, ELSET={set}, STRATEGY={strategy}"));
+            }
             match s.kind {
                 SectionKind::CompositeShell { ref layup } => {
                     self.line(&format!("*SHELL SECTION, ELSET={set}, COMPOSITE, OFFSET={}{orientation}", number(layup.offset)?));

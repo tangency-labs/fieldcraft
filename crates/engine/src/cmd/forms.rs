@@ -525,6 +525,8 @@ pub const SECTION: &[Field] = &[
             flag("incompatible_modes", "Incompatible modes")
                 .help("Extra bending modes for linear hexahedra, so a coarse hex8 mesh bends without locking.")
                 .def("false"),
+            choice("lumped_mass", "Lumped mass policy", &[("hrz","HRZ"),("row_sum","Row sum"),("consistent","Keep consistent")])
+                .help("For explicit mass=lumped solves on solid/plane sections; mass=consistent ignores this policy. Row sum requires supported positive-basis linear elements.").def("\"hrz\""),
             flag("hybrid", "Hybrid").help("Pressure as an extra unknown, for nearly incompressible materials such as rubber.").def("false"),
         ],
     )

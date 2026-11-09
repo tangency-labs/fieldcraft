@@ -75,6 +75,7 @@ impl Type {
                 integration: if reduced { Integration::Reduced } else { Integration::Full },
                 incompatible_modes: incompatible,
                 hybrid,
+                ..Formulation::default()
             },
         };
         let section = fieldcraft_model::Section {

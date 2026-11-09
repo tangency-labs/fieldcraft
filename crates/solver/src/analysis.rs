@@ -196,16 +196,12 @@ pub(crate) fn assemble(mesh: &Mesh, graph: &NodeGraph, mass: Option<MassKind>) -
         let matrices = parallel::map_grained(elements.len(), GRAIN, |i| -> Result<_> {
             let Some(e) = elements.get(i) else { return Err(Error::Internal("element index".into())) };
             let kernel = e.kernel()?;
-            let at = |err| Error::element(e.label, err);
             let stiffness = e.stiffness()?.data;
             let element_mass = match mass {
                 None => None,
                 Some(kind) => {
                     let rho = e.density.ok_or_else(|| Error::Invalid(format!("element {} has no density", e.label)))?;
-                    Some(match kind {
-                        MassKind::Consistent => kernel.mass(rho).map_err(at)?.data,
-                        MassKind::Lumped => kernel.lumped_mass(rho).map_err(at)?,
-                    })
+                    Some(e.mass_matrix(kind, rho)?)
                 }
             };
             Ok((kernel.dofs().node, stiffness, element_mass))
@@ -213,7 +209,7 @@ pub(crate) fn assemble(mesh: &Mesh, graph: &NodeGraph, mass: Option<MassKind>) -
         for (e, computed) in elements.iter().zip(matrices) {
             let (kinds, stiffness, element_mass) = computed?;
             add_block(&mut k, layout, &e.nodes, kinds, &stiffness)?;
-            if let (Some(mm), Some(kind), Some(data)) = (m.as_mut(), mass, element_mass) {
+            if let (Some(mm), Some((kind, data))) = (m.as_mut(), element_mass) {
                 match kind {
                     MassKind::Consistent => add_scalar(mm, layout, &e.nodes, kinds, &data)?,
                     MassKind::Lumped => add_diagonal(mm, layout, &e.nodes, kinds, &data)?,
@@ -972,5 +968,106 @@ mod tests {
             }
         });
         assert_eq!(model, before);
+    }
+}
+
+#[cfg(test)]
+mod section_mass_tests {
+    use super::*;
+    use fieldcraft_model::{Elastic, Formulation, LumpedMass, Material, Section, SectionKind, Set};
+
+    #[test]
+    fn mixed_sections_assemble_row_sum_and_consistent_without_changing_stiffness() {
+        let mut model = Model::default();
+        for (i, x) in [
+            [0., 0., 0.],
+            [1., 0., 0.],
+            [1., 1., 0.],
+            [0., 1., 0.],
+            [0., 0., 1.],
+            [2., 0., 1.],
+            [2., 1., 1.],
+            [0., 1., 1.],
+            [3., 0., 0.],
+            [4., 0., 0.],
+            [3., 1., 0.],
+            [3., 0., 1.],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            model.set_node(i as u32 + 1, x).unwrap();
+        }
+        model.set_element(1, ElementKind::Hex8, (1..=8).collect()).unwrap();
+        model.set_element(2, ElementKind::Tet4, (9..=12).collect()).unwrap();
+        model
+            .add_material(
+                "M",
+                Material { elastic: Some(Elastic::Isotropic { young: 1000., poisson: 0.0 }), density: Some(1.0), ..Material::default() },
+            )
+            .unwrap();
+        for (name, id, policy) in [("Hex", 1, LumpedMass::RowSum), ("Tet", 2, LumpedMass::Consistent)] {
+            model.add_set(name, Set { elements: vec![id], ..Set::default() }).unwrap();
+            model
+                .add_section(
+                    name,
+                    Section {
+                        set: name.into(),
+                        material: "M".into(),
+                        kind: SectionKind::Solid {},
+                        orientation: None,
+                        formulation: Formulation { lumped_mass: policy, ..Formulation::default() },
+                    },
+                )
+                .unwrap();
+        }
+        model.add_step(fieldcraft_model::Step::new("Matrix", Procedure::Static {}), None).unwrap();
+        let resolved = model.resolve().unwrap();
+        let mesh = Mesh::new(&model, &resolved, 1000).unwrap();
+        let graph = NodeGraph::new(mesh.block_count(), mesh.blocks());
+        let consistent = assemble(&mesh, &graph, Some(MassKind::Consistent)).unwrap();
+        let selected = assemble(&mesh, &graph, Some(MassKind::Lumped)).unwrap();
+        assert_eq!(consistent.k, selected.k, "mass-only choice cannot modify K");
+        let mass = selected.m.unwrap();
+        let diag = mass.diagonal();
+        for n in 0..8 {
+            let expected = if n < 4 { 1.0 / 6.0 } else { 5.0 / 24.0 };
+            for dof in 0..3 {
+                assert!((diag[3 * n + dof] - expected).abs() < 1e-14);
+            }
+        }
+        // Unit affine tetrahedron: volume=1/6, Cii=V/10, Cij=V/20.
+        for i in 8..12 {
+            let (cols, values) = mass.row(i * 3);
+            for j in 8..12 {
+                let actual = values[cols.binary_search(&(j * 3)).unwrap()];
+                let expected = if i == j { 1.0 / 60.0 } else { 1.0 / 120.0 };
+                assert!((actual - expected).abs() < 1e-14, "{i},{j}: {actual}");
+            }
+        }
+        assert_eq!(model.section("Hex").unwrap().formulation.lumped_mass, LumpedMass::RowSum);
+        // A quadratic simplex has sign-changing corner basis functions; no silent row-sum fallback.
+        for (id, xyz) in
+            [(13, [3.5, 0., 0.]), (14, [3.5, 0.5, 0.]), (15, [3., 0.5, 0.]), (16, [3., 0., 0.5]), (17, [3.5, 0., 0.5]), (18, [3., 0.5, 0.5])]
+        {
+            model.set_node(id, xyz).unwrap();
+        }
+        model.set_element(2, ElementKind::Tet10, (9..=18).collect()).unwrap();
+        let mixed_mesh = Mesh::new(&model, &model.resolve().unwrap(), 1000).unwrap();
+        let mixed_graph = NodeGraph::new(mixed_mesh.block_count(), mixed_mesh.blocks());
+        let mixed = assemble(&mixed_mesh, &mixed_graph, Some(MassKind::Lumped)).unwrap();
+        let diagonal = mixed.m.unwrap().diagonal();
+        // Quadratic simplex barycentric integrals: corner Cii=V/70, edge Cii=8V/105.
+        for n in 8..18 {
+            let expected = if n < 12 { 1.0 / 420.0 } else { 4.0 / 315.0 };
+            assert!((diagonal[n * 3] - expected).abs() < 1e-14, "quadratic consistent override node {n}");
+        }
+        let mut section = model.section("Tet").unwrap().clone();
+        section.formulation.lumped_mass = LumpedMass::RowSum;
+        model.replace_section("Tet", section).unwrap();
+        let mesh = Mesh::new(&model, &model.resolve().unwrap(), 1000).unwrap();
+        let graph = NodeGraph::new(mesh.block_count(), mesh.blocks());
+        let error = assemble(&mesh, &graph, Some(MassKind::Lumped)).err().unwrap().to_string();
+        assert!(error.contains("element 2") && error.contains("row_sum"), "{error}");
     }
 }

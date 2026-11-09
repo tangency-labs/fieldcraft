@@ -352,3 +352,12 @@ pub(crate) fn unique_name(base: &str, taken: &mut BTreeSet<String>) -> String {
     taken.insert(candidate.to_ascii_uppercase());
     candidate
 }
+
+/// Formats without native policy metadata must not silently discard section mass settings.
+fn refuse_mass_policy(format: &'static str, model: &fieldcraft_model::Model) -> Result<()> {
+    let names: Vec<_> = model.sections().iter().filter(|(_, s)| !s.formulation.lumped_mass.is_default()).map(|(n, _)| n.as_str()).collect();
+    if !names.is_empty() {
+        return Err(Error::Unsupported { format, what: format!("section lumped-mass policies: {}", names.join(", ")) });
+    }
+    Ok(())
+}

@@ -110,10 +110,14 @@ fn read_mode(text: &str, preset: Preset, limits: Limits, analysis: bool) -> Resu
         return Err(error(1, "input exceeds 64 MiB"));
     }
     let expanded = assembly::expand(text, limits)?;
+    if expanded.is_some() && text.lines().any(|l| l.trim().starts_with(mass::POLICY_MARKER)) {
+        return Err(error(1, "FIELDCRAFT LUMPED MASS metadata requires a flattened native deck; instance policy scope is not supported"));
+    }
     let flat = expanded.as_ref().map_or(text, |e| e.text.as_str());
     let parse_all = || -> Result<Read> {
         let mut read = parse(flat, preset, limits)?;
         read.mass_requirements = mass::inspect(flat)?;
+        mass::restore(flat, &mut read.model)?;
         constraints::import(flat, &mut read, preset, limits)?;
         if analysis {
             history::import(flat, &mut read, preset, limits)?;

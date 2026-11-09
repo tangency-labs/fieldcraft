@@ -56,7 +56,7 @@ fn classify(t: &str) -> (Option<&'static str>, &'static str, &'static str, &'sta
             Some("lumped"),
             "row_sum",
             "uniform density; tested geometry and section; axisymmetric full ring",
-            "native solid/plane lumped mass is HRZ, not row-sum",
+            "native default is HRZ; explicit section row_sum is available for mass=lumped, but source applicability is not automatically verified",
         ),
         "CAX6" => (
             Some("consistent"),
@@ -91,6 +91,40 @@ fn classify(t: &str) -> (Option<&'static str>, &'static str, &'static str, &'sta
         ),
         _ => (None, "unknown", "outside established mass evidence", "no mass-default mapping"),
     }
+}
+
+pub(super) const POLICY_MARKER: &str = "** FIELDCRAFT LUMPED MASS,";
+
+/// Native-only policy metadata. Abaqus treats this as a comment, never a vendor keyword.
+pub(super) fn restore(text: &str, model: &mut fieldcraft_model::Model) -> Result<()> {
+    let mut assigned = BTreeSet::new();
+    for (index, line) in text.lines().enumerate() {
+        let Some(params) = line.trim().strip_prefix(POLICY_MARKER) else { continue };
+        let synthetic = format!("*FIELDCRAFTLUMPEDMASS,{params}\n");
+        let blocks = lex::blocks(&synthetic, MAX_RECORDS)?;
+        let b = blocks.first().ok_or_else(|| lex::error(index + 1, "empty mass policy"))?;
+        b.only(&["ELSET", "STRATEGY"]).map_err(|e| lex::error(index + 1, e.to_string()))?;
+        let set = lex::unquote(b.required("ELSET").map_err(|e| lex::error(index + 1, e.to_string()))?, index + 1)?;
+        let strategy = match canonical(b.required("STRATEGY").map_err(|e| lex::error(index + 1, e.to_string()))?).as_str() {
+            "HRZ" => fieldcraft_model::LumpedMass::Hrz,
+            "ROWSUM" | "ROW_SUM" => fieldcraft_model::LumpedMass::RowSum,
+            "CONSISTENT" => fieldcraft_model::LumpedMass::Consistent,
+            _ => return Err(lex::error(index + 1, "unknown FIELDCRAFT LUMPED MASS STRATEGY")),
+        };
+        let names: Vec<_> = model.sections().iter().filter(|(_, s)| s.set.eq_ignore_ascii_case(&set)).map(|(n, _)| n.clone()).collect();
+        if names.is_empty() {
+            return Err(lex::error(index + 1, format!("mass policy ELSET {set} has no section")));
+        }
+        for name in names {
+            if !assigned.insert(name.clone()) {
+                return Err(lex::error(index + 1, format!("duplicate mass policy for section {name}")));
+            }
+            let mut section = model.sections().get(&name).cloned().ok_or_else(|| lex::error(index + 1, "missing section"))?;
+            section.formulation.lumped_mass = strategy;
+            model.replace_section(&name, section).map_err(|e| lex::error(index + 1, e.to_string()))?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

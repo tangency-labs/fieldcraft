@@ -108,7 +108,7 @@ fn read(s: &mut Session, p: &Value) -> Result<Value> {
     let reply = json!({"format":"abaqus","path":path,"units":units.label(),"nodes":model.nodes().len(),"elements":kinds,
         "sets":model.sets().len(),"materials":model.materials().len(),"sections":model.sections().len(),"unknown":unknown,
         "masses":model.masses().len(),"springs":model.springs().len(),"unknown_count":imported.unknown_count,"warnings":imported.warnings,"history_imported":!model.steps().is_empty(),"analysis_complete":imported.analysis_complete,"steps":model.steps().len(),"imported_steps":model.steps().iter().map(|s|s.name.as_str()).collect::<Vec<_>>(),
-        "mass_semantics":mass_report,"source_retained":true,"source_storage":"project","source_files":bundle.files.keys().collect::<Vec<_>>(),"instances":instances});
+        "native_lumped_mass_policies":model.sections().iter().filter(|(_,s)|!s.formulation.lumped_mass.is_default()).map(|(n,s)|json!({"section":n,"set":s.set,"strategy":s.formulation.lumped_mass,"activation":"explicit mass=lumped solve"})).collect::<Vec<_>>(),"mass_semantics":mass_report,"source_retained":true,"source_storage":"project","source_files":bundle.files.keys().collect::<Vec<_>>(),"instances":instances});
     // The new, unsaved document has no journal, but still needs its own dirty revision.
     let archive = fieldcraft_io::DeckSource {
         root: bundle.root.clone(),

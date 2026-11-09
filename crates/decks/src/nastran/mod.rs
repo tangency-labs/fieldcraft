@@ -85,6 +85,7 @@ pub fn write(model: &Model, units: Preset) -> Result<String> {
 /// [`write`] for a model already expressed in `units` ([`crate::express`]) and resolved.
 pub fn write_resolved(model: &Model, r: &Resolved, units: Preset) -> Result<String> {
     crate::refuse_fluid(FORMAT, model)?;
+    crate::refuse_mass_policy(FORMAT, model)?;
     crate::foundation::refuse(FORMAT, model)?;
     composite::check(model)?;
     let prepared = crate::composite::explicit_shell_frames(model, r, FORMAT)?;
@@ -1189,7 +1190,7 @@ mod tests {
 
     #[test]
     fn formulations_map_or_are_named() {
-        let f = |integration, incompatible_modes, hybrid| Formulation { integration, incompatible_modes, hybrid };
+        let f = |integration, incompatible_modes, hybrid| Formulation { integration, incompatible_modes, hybrid, ..Formulation::default() };
         assert_eq!(solid_rule(ElementKind::Hex8, f(Integration::Full, false, false)), Ok((Some("TWO"), Some("FULL"))));
         assert_eq!(solid_rule(ElementKind::Hex8, f(Integration::Full, true, false)), Ok((Some("BUBBLE"), None)));
         assert_eq!(solid_rule(ElementKind::Hex20, f(Integration::Reduced, false, false)), Ok((Some("TWO"), Some("FULL"))));

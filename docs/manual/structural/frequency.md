@@ -258,3 +258,37 @@ amplitude has no physical size; the pictures use deformation scales of 0.4 and 0
 - S. Timoshenko, D. H. Young, W. Weaver. *Vibration Problems in Engineering*, 4th ed. Wiley, 1974.
 - S. P. Timoshenko, J. N. Goodier. *Theory of Elasticity*, 3rd ed. McGraw-Hill, 1970.
 - NAFEMS. *The Standard NAFEMS Benchmarks*, TNSB Rev. 3, October 1990.
+
+### Explicit section policies for a lumped solve
+
+The command contract remains `mass=consistent|lumped`, default `consistent`. A
+solid or planar-continuum section can set
+`formulation.lumped_mass` to `hrz` (default), `row_sum`, or `consistent`, through
+`model.section.create` / `model.section.edit`. This policy is active **only when
+the solve explicitly selects `mass=lumped`**. A consistent solve ignores it.
+The frequency reply reports the requested mass and section policies. The policy
+is stored with the model; the global solve option remains a per-call choice.
+Reopening a project does not make a later omitted `mass` argument lumped.
+
+For `row_sum`, the diagonal is `L_ii = sum_j C_ij`, where `C` is the native
+consistent element mass at its existing mass quadrature. No stiffness, density,
+load or integration point for stiffness is changed. Supported positive-basis
+linear continuum types are Tet4, Wedge6, Hex8, and planar Tri3/Quad4 (including
+axisymmetric radius weighting). Higher-order sign-changing bases, pyramids,
+shells and beams are refused for this override. Every nodal value must be finite
+and strictly positive. `hrz` keeps the existing consistent-diagonal scaling and
+its existing applicability. `consistent` retains the full consistent matrix of
+a continuum section even within a globally lumped solve; this allows a linear
+row-sum section and a quadratic consistent section in one model. Split sections
+when their element types need different policies; one section has one policy.
+
+An analytic tapered Hex8 (`x=(1+z)xi`, `y=eta`, unit parameter cube, density 1)
+has mass 3/2. Row sums are 1/6 at each bottom node and 5/24 at each top node;
+HRZ gives 5/32 and 7/32. A mixed Hex8/Tet4 assembly test also checks the tetrahedral
+consistent diagonal `V/10`, off-diagonal `V/20`, and unchanged stiffness entries.
+These are formula and implementation checks, not a claim of another solver's
+mass defaults or stiffness equivalence.
+
+This branch's harmonic/random selection and persisted harmonic mass identity
+must be integrated with the shared harmonic mass interface; the section policy
+alone does not enable a mass argument on an older harmonic/random command.

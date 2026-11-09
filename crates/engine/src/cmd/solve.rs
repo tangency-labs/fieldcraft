@@ -510,6 +510,8 @@ fn run_frequency(s: &mut Session, p: &Value) -> Result<Value> {
     let r = with_threads(threads(s, p)?, || solve_frequency(model, step.as_deref(), &FrequencyOptions { mass, shift }, &limits))?;
     let summary = json!({
         "step": r.step,
+        "mass":mass,
+        "section_mass_policies": if mass==MassKind::Lumped { json!(model.sections().iter().map(|(n,s)|(n,s.formulation.lumped_mass)).collect::<std::collections::BTreeMap<_,_>>()) } else { json!({}) },
         "dofs": r.stats.dofs,
         "equations": r.stats.equations,
         "lanczos_vectors": r.stats.lanczos_vectors,

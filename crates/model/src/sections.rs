@@ -267,10 +267,28 @@ pub enum Integration {
     Reduced,
 }
 
+/// The section's policy when a solve explicitly selects `mass=lumped`.
+/// `mass=consistent` always uses consistent inertia; legacy lumping remains HRZ.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LumpedMass {
+    #[default]
+    Hrz,
+    RowSum,
+    Consistent,
+}
+impl LumpedMass {
+    pub fn is_default(&self) -> bool {
+        *self == Self::Hrz
+    }
+}
+
 /// How the section's elements are formulated, independent of any solver's element names.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Formulation {
+    #[serde(default, skip_serializing_if = "LumpedMass::is_default")]
+    pub lumped_mass: LumpedMass,
     #[serde(default)]
     pub integration: Integration,
     /// Enhanced (incompatible) bending modes: linear hexahedra (solid sections) and linear
@@ -286,6 +304,13 @@ impl Formulation {
     /// Check the options against each other and against the section kind (the element kinds are
     /// checked when the model is resolved).
     pub fn validate_for(&self, kind: &SectionKind) -> Result<()> {
+        if self.lumped_mass != LumpedMass::Hrz && !kind.is_continuum() {
+            return Err(Error::Invalid(format!(
+                "section lumped_mass {:?} requires solid or planar continuum elements, not {}",
+                self.lumped_mass,
+                kind.name()
+            )));
+        }
         if self.incompatible_modes && self.integration == Integration::Reduced {
             return Err(Error::Invalid("incompatible modes use full integration".into()));
         }
@@ -402,7 +427,9 @@ mod tests {
         let shell = SectionKind::Shell { thickness: 2.0, offset: 0.0, points: 5 };
         assert!(Formulation { hybrid: true, ..Formulation::default() }.validate_for(&shell).is_err());
         assert!(
-            Formulation { incompatible_modes: true, integration: Integration::Reduced, hybrid: false }.validate_for(&SectionKind::Solid {}).is_err()
+            Formulation { incompatible_modes: true, integration: Integration::Reduced, hybrid: false, ..Formulation::default() }
+                .validate_for(&SectionKind::Solid {})
+                .is_err()
         );
         Formulation { incompatible_modes: true, hybrid: true, ..Formulation::default() }.validate_for(&SectionKind::Solid {}).unwrap();
         for bad in [

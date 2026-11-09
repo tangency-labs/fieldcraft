@@ -857,3 +857,58 @@ fn imported_mass_requirement_row_sum_is_not_native_hrz_on_a_tapered_hex() {
     }
     println!("analytic tapered hex: total mass=1.5 kg; row_sum=[1/6 x4,5/24 x4]; native_HRZ=[5/32 x4,7/32 x4]; max_difference=1/96 kg");
 }
+
+#[test]
+fn section_mass_policy_is_effective_after_native_reopen_and_deck_round_trip() {
+    let dir = folder();
+    let input = dir.join("mass.inp");
+    let text = "*NODE\n1,0,0,0\n2,1,0,0\n3,1,1,0\n4,0,1,0\n5,0,0,1\n6,2,0,1\n7,2,1,1\n8,0,1,1\n*ELEMENT,TYPE=C3D8,ELSET=Body\n1,1,2,3,4,5,6,7,8\n*NSET,NSET=Base\n1,2,3,4\n*MATERIAL,NAME=M\n*ELASTIC\n1000,0\n*DENSITY\n1\n*SOLID SECTION,ELSET=Body,MATERIAL=M\n** FIELDCRAFT LUMPED MASS, ELSET=Body, STRATEGY=ROW_SUM\n*STEP,NAME=Modes\n*FREQUENCY\n1\n*BOUNDARY\nBase,1,3\n*END STEP\n";
+    std::fs::write(&input, text).unwrap();
+    let mut s = Session::default();
+    let read = s.execute("deck.read", &json!({"format":"abaqus","path":input,"units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(read["native_lumped_mass_policies"][0]["strategy"], "row_sum");
+    let a = s.execute("solve.frequency", &json!({"step":"Modes"})).unwrap();
+    let b = s.execute("solve.frequency", &json!({"step":"Modes","mass":"consistent"})).unwrap();
+    assert_eq!(a, b, "default remains consistent");
+    let row = s.execute("solve.frequency", &json!({"step":"Modes","mass":"lumped"})).unwrap();
+    let expected = row["modes"][0]["frequency"].as_f64().unwrap();
+    assert_eq!(row["mass"], "lumped");
+    let saved = dir.join("mass.fieldcraft");
+    s.execute("file.save_as", &json!({"path":saved,"results":true})).unwrap();
+    s.execute("file.new", &json!({})).unwrap();
+    s.execute("file.open", &json!({"path":saved})).unwrap();
+    assert!(s.result("Modes").is_some(), "frequency result and unchanged format remain readable");
+    let replay = dir.join("replay.inp");
+    s.execute("deck.source.write", &json!({"path":replay})).unwrap();
+    assert_eq!(std::fs::read_to_string(replay).unwrap(), text);
+    for phase in 0..2 {
+        let reply = s.execute("solve.frequency", &json!({"step":"Modes","mass":"lumped"})).unwrap();
+        let actual = reply["modes"][0]["frequency"].as_f64().unwrap();
+        assert!((actual - expected).abs() < 1e-12);
+        println!("native row_sum phase={phase} frequency={actual:.16e} Hz");
+        if phase == 0 {
+            let path = dir.join("normalized.inp");
+            s.execute("deck.write", &json!({"path":path,"format":"abaqus"})).unwrap();
+            assert!(std::fs::read_to_string(&path).unwrap().contains("FIELDCRAFT LUMPED MASS"));
+            s.execute("deck.read", &json!({"path":path,"format":"abaqus","units":"m-kg-s-N-Pa"})).unwrap();
+        }
+    }
+    let (name, section) = s.model.sections().iter().next().unwrap();
+    let mut edit = serde_json::to_value(section).unwrap();
+    edit["name"] = json!(name);
+    edit["formulation"]["lumped_mass"] = json!("hrz");
+    s.execute("model.section.edit", &edit).unwrap();
+    let hrz = s.execute("solve.frequency", &json!({"step":"Modes","mass":"lumped"})).unwrap();
+    let hrz = hrz["modes"][0]["frequency"].as_f64().unwrap();
+    assert!((hrz - expected).abs() > expected * 0.01, "the selected mass changes the actual eigenproblem");
+    assert!((expected / hrz - (21.0_f64 / 20.0).sqrt()).abs() < 1e-12, "the free top-node masses differ by exactly 21/20");
+    println!("mass-only tapered hex: row_sum={expected:.16e} Hz HRZ={hrz:.16e} Hz");
+    for bad in [text.replace("STRATEGY=ROW_SUM", "STRATEGY=GUESS"), text.replace("ELSET=Body, STRATEGY", "ELSET=Missing, STRATEGY")] {
+        std::fs::write(&input, bad).unwrap();
+        let before = s.clone();
+        assert!(s.execute("deck.read", &json!({"path":input,"format":"abaqus"})).is_err());
+        assert_unchanged(&s, &before);
+    }
+
+    std::fs::remove_dir_all(dir).unwrap();
+}
