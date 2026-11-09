@@ -33,6 +33,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+pub mod amplitude;
 pub mod bcs;
 pub mod check;
 pub mod composite;
@@ -42,6 +43,7 @@ mod convert;
 pub mod datums;
 pub mod design;
 pub mod discrete;
+pub mod dynamics;
 pub mod foundation;
 pub use foundation::Foundation;
 pub mod fluid_zones;
