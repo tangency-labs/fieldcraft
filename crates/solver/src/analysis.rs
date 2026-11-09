@@ -1050,7 +1050,12 @@ mod section_mass_tests {
         model
             .add_material(
                 "M",
-                Material { elastic: Some(Elastic::Isotropic { young: 1000., poisson: 0.0 }), density: Some(1.0), ..Material::default() },
+                Material {
+                    elastic: Some(Elastic::Isotropic { young: 1000., poisson: 0.0 }),
+                    density: Some(1.0),
+                    damping: Some(fieldcraft_model::harmonic::Damping { alpha: 0.7, beta: 0.2, loss_factor: 0.0 }),
+                    ..Material::default()
+                },
             )
             .unwrap();
         for (name, id, policy) in [("Hex", 1, LumpedMass::RowSum), ("Tet", 2, LumpedMass::Consistent)] {
@@ -1063,7 +1068,7 @@ mod section_mass_tests {
                         material: "M".into(),
                         kind: SectionKind::Solid {},
                         orientation: None,
-                        formulation: Formulation { lumped_mass: policy, ..Formulation::default() },
+                        formulation: Formulation { lumped_mass: policy, b_bar: id == 1, ..Formulation::default() },
                     },
                 )
                 .unwrap();
@@ -1075,7 +1080,12 @@ mod section_mass_tests {
         let consistent = assemble(&mesh, &graph, Some(MassKind::Consistent)).unwrap();
         let selected = assemble(&mesh, &graph, Some(MassKind::Lumped)).unwrap();
         assert_eq!(consistent.k, selected.k, "mass-only choice cannot modify K");
+        let (damping, _) = crate::harmonic::damping_operators_with_mass(&model, &resolved, &mesh, &graph, MassKind::Lumped).unwrap();
+        let damping = damping.unwrap();
         let mass = selected.m.unwrap();
+        for ((c, k), m) in damping.val.iter().zip(&selected.k.val).zip(&mass.val) {
+            assert!((c - (0.2 * k + 0.7 * m)).abs() < 1e-12, "section inertia must also drive material damping");
+        }
         let diag = mass.diagonal();
         for n in 0..8 {
             let expected = if n < 4 { 1.0 / 6.0 } else { 5.0 / 24.0 };

@@ -469,7 +469,8 @@ The flag is saved in the model and recovered on normalized deck read. This is a
 physical formulation choice, independent of `lumped_mass`.
 
 The current B-bar scope is Hex8, linear isotropic elasticity, no material
-orientation, small-strain static, frequency or matrix generation. Reduced,
+orientation, small-strain static, frequency, harmonic, correlated modal random
+or matrix generation. Reduced,
 hybrid, incompatible, non-Hex8, nonlinear/material-plastic and other analysis
 combinations are refused. Thermal strain and initial-stress recovery are not
 implemented. Positive Jacobians are required at every integration point;
@@ -529,3 +530,31 @@ nu=0 bending case cannot establish equivalence for either distortion or nonzero
 Poisson ratio. Import and normalized export of C3D8I/IH remain refused. Native
 nine-mode candidate results, if supplied for independent black-box comparison,
 are labelled as such and never as successful C3D8I imports.
+
+
+### Modal random mass and fixed sampling
+
+Native `solve.random` accepts `mass=consistent|lumped`, default `consistent`.
+With `lumped`, an explicit continuum section policy selects row-sum, HRZ or
+consistent inertia; the same assembled operator enters mode extraction, harmonic
+inertia, Rayleigh material damping and modal damping. Frequency results without
+a mass identity are not reused as the modal source. The reply reports the global
+selection and section policies. Stored harmonic-frame PSD projection continues
+to inherit its source mass and rejects an override. No result-kind allocation or
+binary layout changes are involved.
+
+Optional `sampling_frequencies` gives an increasing, bounded SI-Hz replay grid
+inside the input modal bands. It changes sampling only; modes, damping and loads
+remain defined by the imported model. Its reply is labelled `explicit_replay_grid`;
+without it, `source_modal_bands` constructs the usual biased grid from the newly
+computed natural frequencies. This distinction matters when comparing material or
+inertia choices: fixing only band endpoints does not fix resonance-biased points.
+
+Linear isotropic B-bar now permits harmonic and correlated modal random steps.
+Its stiffness and assumed-strain stress recovery are shared with static analysis;
+thermal/initial stress, nonlinear materials, orientation and unsupported analysis
+combinations remain refused. A constant-simplex one-DOF test independently checks
+consistent versus row-sum modal frequencies and every sampled force PSD, including
+an incompatible cached source, save/reopen and exact source replay. Normalized
+random-step export remains a named refusal; source replay is not semantic export. A mixed
+B-bar Hex8/consistent Tet4 matrix test checks inertia integrals and `C=alpha M+beta K`.

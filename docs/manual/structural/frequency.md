@@ -289,6 +289,7 @@ consistent diagonal `V/10`, off-diagonal `V/20`, and unchanged stiffness entries
 These are formula and implementation checks, not a claim of another solver's
 mass defaults or stiffness equivalence.
 
-This branch's harmonic/random selection and persisted harmonic mass identity
-must be integrated with the shared harmonic mass interface; the section policy
-alone does not enable a mass argument on an older harmonic/random command.
+Harmonic and native modal random commands accept the shared `mass` choice and
+apply these section policies to inertia and material mass-proportional damping.
+Default remains consistent. Projection of stored harmonic frames inherits that
+result's mass choice and rejects an override; the project retains section policies.

@@ -218,13 +218,16 @@ check compares the batched response/Jacobian bit for bit with scalar sensitiviti
 Section mass policies: continuum sections now persist explicit `hrz`, `row_sum`, or
 `consistent` overrides for a `mass=lumped` frequency solve. Linear positive-basis
 row sums and mixed consistent sections are checked against independent matrices;
-native Abaqus comments preserve the policy on write/read. Harmonic/random mass
-integration and result identity remain a separate interface integration task.
+native Abaqus comments preserve the policy on write/read. Harmonic and native
+modal random solves use the selected section inertia for material damping too;
+stored harmonic projections inherit the source mass identity.
 
 Hex8 mean dilatation: explicit persisted B-bar formulation and C3D8 mapping,
 with standard native Hex8 unchanged. Standard Hex8 and unverified nine-mode
 C3D8I export are refused. Linear isotropic static/modal/matrix scope; nonlinear,
-thermal/initial stress and harmonic/random B-bar integration remain unsupported.
+thermal/initial stress remain unsupported. Linear harmonic and correlated modal
+random recovery now use the same B-bar operator; near-incompressible or distorted
+element accuracy is not established by this interface integration.
 ## Fatigue (fusion fork, development)
 
 Implemented: finite-record rainflow, Basquin/Miner, CMB/Morrow/SWT and stress mean

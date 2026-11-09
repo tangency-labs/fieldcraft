@@ -633,10 +633,12 @@ impl Mesh {
                         fieldcraft_model::Procedure::Static {}
                             | fieldcraft_model::Procedure::Frequency { .. }
                             | fieldcraft_model::Procedure::MatrixGeneration { .. }
+                            | fieldcraft_model::Procedure::Harmonic(_)
+                            | fieldcraft_model::Procedure::RandomVibration(_)
                     )
                 }) {
                     return Err(Error::NotSupported(format!(
-                        "section `{name}`: B-bar currently supports linear static, frequency and matrix generation only"
+                        "section `{name}`: B-bar supports linear static, frequency, harmonic, modal random and matrix generation only"
                     )));
                 }
             }

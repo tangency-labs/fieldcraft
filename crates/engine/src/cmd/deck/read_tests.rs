@@ -343,11 +343,6 @@ fn imported_solid_bar_solves_direct_harmonic_without_rebuilding_the_step() {
     let dir = folder();
     let inp = dir.join("harmonic-solid.inp");
     let mut s = bar();
-    // This test exercises harmonic history with the existing hybrid mapping;
-    // B-bar harmonic support is a separate integration task.
-    let mut sec = s.model.section("BarSection").unwrap().clone();
-    sec.formulation = fieldcraft_model::Formulation { hybrid: true, ..Default::default() };
-    s.model.replace_section("BarSection", sec).unwrap();
     s.execute("deck.write", &json!({"format":"abaqus","path":inp})).unwrap();
     let source = std::fs::read_to_string(&inp).unwrap();
     assert!(source.contains("*STATIC\n1.0, 1.0"), "{source}");
@@ -1130,4 +1125,58 @@ fn partial_kinematic_translation_with_explicit_reference_restraints_closes() {
 fn kinematic_element_surface_resolves_face_nodes_and_roundtrips() {
     let text = constraint_input().replace("*SURFACE,TYPE=NODE,NAME=Pad\nTop,1", "*SURFACE,TYPE=ELEMENT,NAME=Pad\n2,S2");
     property_closure(&text, &mut native_constraint_patch(), 0.002);
+}
+
+#[test]
+fn random_continuum_mass_uses_requested_operator_not_cached_modes_and_reopens() {
+    // One free tetrahedron DOF: k=E*V=1000/6; C22=rho*V/10=.2,
+    // row-sum L22=rho*V/4=.5. These are independent simplex integrals.
+    let source = "*NODE\n1,0,0,0\n2,1,0,0\n3,0,1,0\n4,0,0,1\n*ELEMENT,TYPE=C3D4,ELSET=Body\n1,1,2,3,4\n*MATERIAL,NAME=M\n*ELASTIC\n1000,0\n*DENSITY\n12\n*SOLID SECTION,ELSET=Body,MATERIAL=M\n** FIELDCRAFT LUMPED MASS,ELSET=Body,STRATEGY=ROW_SUM\n*BOUNDARY\n1,1,3\n3,1,3\n4,1,3\n2,2,3\n*PSD-DEFINITION,NAME=White,TYPE=FORCE\n1,0,0\n1,0,10\n*STEP,NAME=Modes,PERTURBATION\n*FREQUENCY\n1\n*END STEP\n*STEP,NAME=Random,PERTURBATION\n*RANDOM RESPONSE\n0,10,11,3,1\n*MODAL DAMPING,DEFINITION=MODE NUMBERS\n1,1,.05\n*CLOAD,LOAD CASE=2\n2,1,1\n*CORRELATION,TYPE=CORRELATED,PSD=White\n2,1\n*END STEP\n";
+    let dir = folder();
+    let input = dir.join("input.inp");
+    std::fs::write(&input, source).unwrap();
+    let mut s = Session::default();
+    let imported = s.execute("deck.read", &json!({"format":"abaqus","path":input,"units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(imported["analysis_complete"], true, "{imported}");
+    assert!(s.model.step("Random").is_some(), "{:?}", s.model.steps());
+    let grid = json!([0, 1, 2, 3, 4, 5, 6, 8, 10]);
+    let mut lumped = Value::Null;
+    for (choice, mass) in [("consistent", 0.2_f64), ("lumped", 0.5)] {
+        // Deliberately seed an incompatible cached frequency result before the lumped request.
+        s.execute("solve.frequency", &json!({"step":"Modes","mass":"consistent"})).unwrap();
+        let out = s.execute("solve.random", &json!({"step":"Random","mass":choice,"nodes":[2],"sampling_frequencies":grid})).unwrap();
+        let k = 1000. / 6.;
+        let f = (k / mass).sqrt() / (2. * std::f64::consts::PI);
+        assert!((out["natural_frequencies"][0].as_f64().unwrap() - f).abs() < 1e-10);
+        assert_eq!(out["mass"], choice);
+        assert_eq!(out["sampling_source"], "explicit_replay_grid");
+        let samples = out["probes"][0]["samples"].as_array().unwrap();
+        for sample in samples {
+            let omega = 2. * std::f64::consts::PI * sample["frequency"].as_f64().unwrap();
+            let c = 0.1 * (k * mass).sqrt();
+            let expected = 1. / ((k - omega * omega * mass).powi(2) + (omega * c).powi(2));
+            let actual = sample["displacement_components_psd"][0].as_f64().unwrap();
+            assert!((actual - expected).abs() < expected * 1e-8);
+        }
+        if choice == "lumped" {
+            lumped = out;
+        }
+    }
+    let saved = dir.join("saved.fieldcraft");
+    s.execute("file.save_as", &json!({"path":saved})).unwrap();
+    s.execute("file.new", &json!({})).unwrap();
+    s.execute("file.open", &json!({"path":saved})).unwrap();
+    let replay = dir.join("replay.inp");
+    s.execute("deck.source.write", &json!({"path":replay})).unwrap();
+    assert_eq!(std::fs::read_to_string(replay).unwrap(), source);
+    let normalized = dir.join("normalized.inp");
+    let error = s.execute("deck.write", &json!({"path":normalized,"format":"abaqus"})).unwrap_err().to_string();
+    assert!(error.contains("random response is not written yet"), "{error}");
+    let again = s.execute("solve.random", &json!({"step":"Random","mass":"lumped","nodes":[2],"sampling_frequencies":grid})).unwrap();
+    assert_eq!(again["natural_frequencies"], lumped["natural_frequencies"]);
+    assert_eq!(again["node_displacement_rms"], lumped["node_displacement_rms"]);
+    for bad in [json!([0, 11]), json!([0, 0]), json!([1])] {
+        assert!(s.execute("solve.random", &json!({"step":"Random","mass":"lumped","sampling_frequencies":bad})).is_err());
+    }
+    std::fs::remove_dir_all(dir).unwrap();
 }

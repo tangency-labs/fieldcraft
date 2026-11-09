@@ -284,10 +284,14 @@ impl Model {
                 if self.steps().iter().any(|s| {
                     !matches!(
                         s.procedure,
-                        crate::Procedure::Static {} | crate::Procedure::Frequency { .. } | crate::Procedure::MatrixGeneration { .. }
+                        crate::Procedure::Static {}
+                            | crate::Procedure::Frequency { .. }
+                            | crate::Procedure::MatrixGeneration { .. }
+                            | crate::Procedure::Harmonic(_)
+                            | crate::Procedure::RandomVibration(_)
                     )
                 }) {
-                    d.error(&subject, "B-bar supports linear static, frequency and matrix generation only");
+                    d.error(&subject, "B-bar supports linear static, frequency, harmonic, modal random and matrix generation only");
                 }
             }
 
