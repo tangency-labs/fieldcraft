@@ -682,7 +682,7 @@ pub static CATALOGUE: &[Capability] = &[
         "Random Response",
         Solve,
         "Implicit",
-        "Executes imported modal random steps or projects stored harmonic frames and a one-sided PSD into nodal component spectra and RMS; supports coherent absolute acceleration for a declared unit base inertial load",
+        "Executes imported modal random steps or projects stored harmonic frames and a one-sided PSD into nodal and optional unaveraged solid element component spectra and RMS; supports coherent absolute acceleration for a declared unit base inertial load",
     ),
     ready_more(
         "solve.sensitivity.static",

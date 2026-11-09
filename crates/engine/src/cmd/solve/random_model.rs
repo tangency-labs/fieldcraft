@@ -119,6 +119,7 @@ pub(super) fn run(s: &mut Session, p: &Value, name: &str) -> Result<Value> {
     }
     let table = json!(spectrum.iter().map(|p| [p.frequency, p.psd]).collect::<Vec<_>>());
     let mut out = random_frames::evaluate(&h, p, name, &table)?;
+    random_frames::element_output(&model, &h, p, &mut out)?;
     out["method"] = json!("modal_correlated_force_psd");
     out["source_step"] = json!(modal.source_step);
     out["natural_frequencies"] = json!(natural);

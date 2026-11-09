@@ -2641,6 +2641,8 @@ pub const SOLVE_RANDOM: &[Field] = &[
     json("probe_indices", "Probe indices").help("Optional node or element probe indices."),
     json("base_direction", "Base direction").help("Optional unit translation vector; harmonic frames must use matching unit inertial load -M r. Returns absolute acceleration and relative displacement."),
     json("nodes", "Node labels").help("Optional solved node labels to limit PSD output."),
+    labels("elements", "Solid element stresses", LabelOf::Element).help("Optional solid labels: unaveraged element-node and integration-point component PSD/RMS in SI."),
+    flag("element_phasors", "Include element phasors").help("Requires elements; include real and imaginary stress values in addition to PSD/RMS."),
     json("input_psd", "Input PSD table").help("Rows [frequency in Hz, one-sided PSD], covering every stored harmonic frequency."),
     text("step", "Response step").help("Native modal random step, or a previously solved harmonic step with input_psd."),
     MAX_DOFS, MAX_FACTOR, MAX_MEMORY_GIB, THREADS,

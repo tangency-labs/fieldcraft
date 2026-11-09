@@ -57,7 +57,7 @@ pub const HARMONIC: CommandSpec = CommandSpec {
 pub const RANDOM: CommandSpec = CommandSpec {
     id: "solve.random",
     label: "Solve Random Response",
-    params: r#"{"step":"Sweep", "input_psd":[[frequency_hz, psd], ...], "nodes":[1], "base_direction":[1,0,0]} — for an imported modal random step, omit input_psd and base_direction: execute its fully correlated spatial loads and constant multiplier PSD using modal intervals and damping. Returns SI PSD/RMS in the reply (save the reply separately; no random result frames are persisted). Otherwise projects an input one-sided PSD table onto stored solve.harmonic frequency frames (unit harmonic load), returning SI response component PSD and RMS; optional base_direction coherently adds the unit base acceleration to relative inertial-load frames; the legacy natural_frequency/damping_ratio/base_acceleration_psd form runs the Miles SDOF check"#,
+    params: r#"{"step":"Sweep", "input_psd":[[frequency_hz, psd], ...], "nodes":[1], "base_direction":[1,0,0]} — for an imported modal random step, omit input_psd and base_direction: execute its fully correlated spatial loads and constant multiplier PSD using modal intervals and damping. Optional elements:[1,2] recovers solid element-node and integration-point stress PSD/RMS without averaging; element_phasors:true also returns complex stresses. Point numbering follows the native quadrature rule; coordinates identify positions. Returns SI PSD/RMS in the reply (save the reply separately; no random result frames are persisted). Otherwise projects an input one-sided PSD table onto stored solve.harmonic frequency frames (unit harmonic load), returning SI response component PSD and RMS; optional base_direction coherently adds the unit base acceleration to relative inertial-load frames; the legacy natural_frequency/damping_ratio/base_acceleration_psd form runs the Miles SDOF check"#,
     form: Some(super::forms::SOLVE_RANDOM),
     kind: CommandKind::Model,
     requires: &[],
@@ -454,6 +454,9 @@ fn run_random(s: &mut Session, p: &Value) -> Result<Value> {
     }
     if let (Some(step), Some(table)) = (p.get("step").and_then(Value::as_str), p.get("input_psd")) {
         return random_frames::run(s, p, step, table);
+    }
+    if p.get("elements").is_some() || p.get("element_phasors").is_some() {
+        return Err(EngineError::invalid("elements", "element recovery requires native random or solved harmonic FE frames"));
     }
     if let (Some(f), Some(t), Some(b)) = (p.get("frequencies"), p.get("transfer"), p.get("base_psd")) {
         let frequencies: Vec<f64> = serde_json::from_value(f.clone()).map_err(|e| EngineError::invalid("frequencies", e.to_string()))?;

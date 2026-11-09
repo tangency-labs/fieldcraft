@@ -228,8 +228,10 @@ explicit single-frequency rows (`upper=0`) and real concentrated/distributed loa
 ranges with bias, modal/subspace harmonic methods, imaginary loads, prescribed harmonic motion
 and prestressed harmonic base states remain reported as unsupported. The `imported_steps` reply
 lists the steps actually created; `analysis_complete=false` still means the entire source is
-not mapped. A later matrix-export step does not invalidate an already mapped harmonic step,
-but its original keywords and warning remain visible; it is not executed by the native solver.
+not mapped. A later matrix-export step is a separate native matrix-generation procedure
+(see below); `solve.harmonic` executes only the selected harmonic step, while
+`solve.matrices` assembles and optionally exports the operators without repeating
+the harmonic sweep.
 
 Native solver limits still apply after a complete physical mapping: B31 harmonic stress
 recovery is currently unsupported and is reported by `solve.harmonic`; the importer does not
@@ -250,9 +252,10 @@ uses the extracted natural frequencies, the requested points **per interval**,
 bias and linear/logarithmic spacing. `solve.random {"step":"Random","nodes":[1]}`
 executes this model definition. It returns SI component PSD and trapezoidal RMS
 in its reply. Save that reply separately: native project persistence retains the
-random definition and input source, not random response frames. Stress components
-use native harmonic nodal recovery, not element integration-point output; the
-aggregate stress RMS is a component norm, not von Mises RMS. A small projected
+random definition and input source, not random response frames. The default nodal stress components
+use native averaged harmonic recovery; the aggregate stress RMS is a component
+norm, not von Mises RMS. Optional `elements` selects unaveraged solid recovery as
+described below. A small projected
 residual does not certify a truncated modal basis. Nonconstant spectra, multiple
 or complex correlations, base excitation and preloaded modal histories remain
 explicitly unsupported by this import path.
@@ -281,3 +284,58 @@ keywords or output requests. Syntax sources: the public Abaqus keyword reference
 for RANDOM RESPONSE, PSD-DEFINITION, CORRELATION, MODAL DAMPING, MATRIX GENERATE and
 MATRIX OUTPUT, and its random-response analysis guide. No commercial outputs are
 used in implementation or these checks.
+
+
+### Element stress recovery and truncation checks
+
+`solve.random {"step":"Random","nodes":[1],"elements":[10,11]}` also returns
+`element_stress` for each selected solid, both at its own extrapolated nodes and
+at its integration points. The same option works with stored harmonic frames and
+an explicit `input_psd` table. Recovery uses the solved complex displacements,
+the element constitutive law and the existing quadrature/extrapolation kernels;
+it never reconstructs an element field from averaged nodal stresses. Each location
+includes the element label, local point index, global physical coordinates and,
+where applicable, node label or natural integration coordinates. Match quadrature
+points by coordinates, not by assuming another program's point numbering.
+
+Component ordering is `[xx, yy, zz, xy, xz, yz]` in global Cartesian axes. The
+reply contains SI component PSD and trapezoidal component RMS; optional
+`element_phasors:true` includes real and imaginary stresses in Pa for the
+deterministic coherent spatial-load transfer, before PSD multiplication; these
+are not instantaneous random stresses. Coordinates
+remain metres even when the display system differs. There is no claimed von
+Mises RMS. Only solid elements are supported by this optional recovery; shell,
+beam, rod and 2D selections fail explicitly. Selection is bounded to 1024 unique
+elements and one million location-frame samples. Harmonic project results retain
+the displacements needed to repeat recovery after reopening; random replies must
+still be saved separately.
+
+Original `OUTPUT` selection/frequency requests remain retained source, not native
+output-selection definitions. In particular, the caller must explicitly select
+the requested element labels. `POSITION=NODES` denotes each element's unaveraged
+extrapolated values, whereas integration-point requests use the other location
+rows. A successful source replay or `analysis_complete` does not establish that
+all original output requests were executed. See the public
+[*ELEMENT OUTPUT reference](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-elementoutput.htm).
+
+The full-equation modal residual is computed on all independent equations after
+constraint elimination, including the lifted modal damping force. Its relative
+value is the maximum complex residual magnitude divided by the maximum complex
+load magnitude. `residual_norm_si` separately reports the residual L2 norm.
+The projected residual checks only the equations in the retained modal subspace,
+relative to their projected loads. A small projected residual demonstrates that
+the reduced equations were solved, not that omitted modes make negligible
+contributions to displacement or stress. Neither number is a response-error
+percentage. Compare responses at representative frequencies and the static limit;
+keep the spatial load, PSD and damping assumptions explicit. Truncating through a
+repeated-frequency cluster can also make a mode-number damping boundary ambiguous.
+Do not silently extend a damping range or replace an undamped pole with an arbitrary
+damping value to obtain a result.
+
+Validation separates exact source replay, solved-project reopening, constitutive
+recovery and response accuracy. The solid harmonic regression checks a uniform
+axial stress, component PSD/RMS and physical/natural recovery positions, then
+reopens the solved project and repeats recovery. A manufactured affine field with
+two distinct moduli at shared nodes verifies all six components and the absence
+of cross-element averaging. These tests do not certify modal truncation for a
+particular engineering model.
