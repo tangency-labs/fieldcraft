@@ -26,7 +26,7 @@ struct Tile<'a> {
 }
 
 #[inline(never)]
-pub(super) fn update<const FIXED: bool>(
+pub(super) fn update<const FIXED: bool, const ROW_FIRST: bool>(
     l: &Panel<'_>,
     cols: std::ops::Range<usize>,
     p: usize,
@@ -97,34 +97,41 @@ pub(super) fn update<const FIXED: bool>(
     }
     parallel::for_each_mut(&mut tiles, |_, tile| {
         let h = TILE.min(mu - tile.row);
-        for b in (0..tile.columns.len()).step_by(NR) {
+        let row_blocks = TILE / MR;
+        let column_blocks = tile.columns.len().div_ceil(NR);
+        for micro in 0..row_blocks * column_blocks {
+            // Change only independent output micro-tile traversal: each sum still
+            // consumes k in ascending order and each output has one writer.
+            let (b, r) = if ROW_FIRST {
+                ((micro % column_blocks) * NR, (micro / column_blocks) * MR)
+            } else {
+                ((micro / row_blocks) * NR, (micro % row_blocks) * MR)
+            };
             let ys = yp.get((tile.col + b) / NR * kw..((tile.col + b) / NR + 1) * kw).unwrap_or_default();
-            for r in (0..TILE).step_by(MR) {
-                let xs = xp.get((tile.row + r) / MR * kw..((tile.row + r) / MR + 1) * kw).unwrap_or_default();
-                let acc = if FIXED {
-                    fixed_kernel(xs, ys)
-                } else {
-                    let mut acc = [[0.0; MR]; NR];
-                    for (x, y) in xs.iter().zip(ys) {
-                        for (a, yj) in acc.iter_mut().zip(y) {
-                            for (ai, xi) in a.iter_mut().zip(x) {
-                                *ai += xi * yj;
-                            }
+            let xs = xp.get((tile.row + r) / MR * kw..((tile.row + r) / MR + 1) * kw).unwrap_or_default();
+            let acc = if FIXED {
+                fixed_kernel(xs, ys)
+            } else {
+                let mut acc = [[0.0; MR]; NR];
+                for (x, y) in xs.iter().zip(ys) {
+                    for (a, yj) in acc.iter_mut().zip(y) {
+                        for (ai, xi) in a.iter_mut().zip(x) {
+                            *ai += xi * yj;
                         }
                     }
-                    acc
-                };
-                for (j, sums) in acc.iter().enumerate() {
-                    let c = tile.col + b + j;
-                    if let Some(column) = tile.columns.get_mut(b + j) {
-                        for (i, &sum) in sums.iter().enumerate().take(h.saturating_sub(r)) {
-                            let ri = tile.row + r + i;
-                            if ri >= c
-                                && let Some(&mapped) = relative.get(ri)
-                                && let Some(value) = column.values.get_mut(mapped.wrapping_sub(column.row))
-                            {
-                                *value -= sum;
-                            }
+                }
+                acc
+            };
+            for (j, sums) in acc.iter().enumerate() {
+                let c = tile.col + b + j;
+                if let Some(column) = tile.columns.get_mut(b + j) {
+                    for (i, &sum) in sums.iter().enumerate().take(h.saturating_sub(r)) {
+                        let ri = tile.row + r + i;
+                        if ri >= c
+                            && let Some(&mapped) = relative.get(ri)
+                            && let Some(value) = column.values.get_mut(mapped.wrapping_sub(column.row))
+                        {
+                            *value -= sum;
                         }
                     }
                 }

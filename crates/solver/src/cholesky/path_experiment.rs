@@ -27,10 +27,12 @@ pub(super) fn update(
     values: &mut [f64],
 ) -> std::result::Result<(), FactorError> {
     let target = candidate::Target { m, first, relative, values };
-    if MODE.load(Ordering::Relaxed) == 2 {
-        candidate::update::<true>(l, cols, p, mu, wu, target)
+    if MODE.load(Ordering::Relaxed) == 3 {
+        candidate::update::<false, true>(l, cols, p, mu, wu, target)
+    } else if MODE.load(Ordering::Relaxed) == 2 {
+        candidate::update::<true, false>(l, cols, p, mu, wu, target)
     } else {
-        candidate::update::<false>(l, cols, p, mu, wu, target)
+        candidate::update::<false, false>(l, cols, p, mu, wu, target)
     }
 }
 #[test]
@@ -55,7 +57,7 @@ fn real_factor_paths() {
     reference.solve(&mut reference_x).unwrap();
     let threads = std::env::var("FC_PATH_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
     let mode = std::env::var("FC_PATH_MODE").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
-    assert!(mode <= 2);
+    assert!(mode <= 3);
     CALLS.store(0, Ordering::Relaxed);
     FLOPS.store(0, Ordering::Relaxed);
     MODE.store(mode, Ordering::Relaxed);
@@ -72,6 +74,53 @@ fn real_factor_paths() {
     eprintln!(
         "PATH_RESULT mode={mode} threads={threads} n={n} factor_seconds={factor_seconds:.9} factor_solve_seconds={command_seconds:.9} calls={} padded_flops={} bitwise=true relative_error=0 hash={hash:016x}",
         CALLS.load(Ordering::Relaxed),
+        FLOPS.load(Ordering::Relaxed)
+    );
+    MODE.store(0, Ordering::Relaxed);
+}
+
+#[test]
+#[ignore = "bounded BASE-shape panel updates with explicitly synthetic values"]
+fn base_shape_panels() {
+    let node: usize = std::env::var("FC_SHAPE_NODE").unwrap().parse().unwrap();
+    let (m, w) = match node {
+        45479 => (11868, 6507),
+        89737 => (4911, 4911),
+        _ => panic!("unknown frozen shape"),
+    };
+    let c0 = 4096;
+    let pw = PANEL;
+    assert!(c0 + pw <= w);
+    let threads = std::env::var("FC_PATH_THREADS").unwrap().parse().unwrap();
+    let mode = std::env::var("FC_PATH_MODE").unwrap().parse().unwrap();
+    assert!([0, 1, 3].contains(&mode));
+    let original: Vec<f64> = (0..trapezoid(m, c0 + pw)).map(|i| ((i * 37 % 101) as f64 - 50.0) / 101.0).collect();
+    let baseline = |own: &mut [f64]| {
+        let tiles = products(&Panel { m, data: own }, 0..c0, c0, m - c0, pw, None);
+        subtract(own, m, &tiles, m - c0, pw, |i| c0 + i);
+    };
+    let mut reference = original.clone();
+    parallel::with_threads(1, || baseline(&mut reference));
+    let mut own = original;
+    MODE.store(mode, Ordering::Relaxed);
+    CALLS.store(0, Ordering::Relaxed);
+    FLOPS.store(0, Ordering::Relaxed);
+    let clock = std::time::Instant::now();
+    parallel::with_threads(threads, || {
+        if enabled(m - c0, pw, c0) {
+            let (done, target) = own.split_at_mut(offset(m, c0));
+            let relative: Vec<_> = (c0..m).collect();
+            update(&Panel { m, data: done }, 0..c0, c0, m - c0, pw, m, c0, &relative, target).unwrap();
+        } else {
+            baseline(&mut own);
+        }
+    });
+    let seconds = clock.elapsed().as_secs_f64();
+    assert!(own.iter().zip(&reference).all(|(a, b)| a.to_bits() == b.to_bits()));
+    let hash = own.iter().fold(0xcbf29ce484222325u64, |h, v| (h ^ v.to_bits()).wrapping_mul(0x100000001b3));
+    eprintln!(
+        "SHAPE_RESULT node={node} m={m} w={w} c0={c0} mu={} wu={pw} kw={c0} threads={threads} mode={mode} seconds={seconds:.9} padded_flops={} source=synthetic bitwise=true relative_error=0 hash={hash:016x}",
+        m - c0,
         FLOPS.load(Ordering::Relaxed)
     );
     MODE.store(0, Ordering::Relaxed);
