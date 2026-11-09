@@ -91,7 +91,7 @@ pub use mesh::{
 pub use mesh_plans::{CutRole, MeshPlan, PlanCut, PlanFeature, PlanMesher, PlanRing, PlanUnmapped, RingKind};
 pub use pvt::{Pvt, PvtDomain, PvtState, TaitDomain};
 pub use relaxations::{Relaxation, RelaxationCell};
-pub use sections::{BeamProfile, Extent, Formulation, Integration, Section, SectionKind};
+pub use sections::{BeamProfile, BeamProperties, Extent, Formulation, Integration, Section, SectionKind};
 pub use seeds::{Bias, BiasToward, Divisions, Seed, SeedConstraint};
 pub use sets::Set;
 pub use sizes::{SizeControl, SizeRegion};
