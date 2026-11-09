@@ -1587,7 +1587,7 @@ mod tests {
     fn fluid() -> Session {
         // The synthetic result is in SI, and shown so.
         let mut s = Session { default_units: crate::units::si().clone(), ..Session::default() };
-        s.store_result(crate::StepResult::Fluid(crate::flow::tests::channel()));
+        s.store_result(crate::StepResult::Fluid(Box::new(crate::flow::tests::channel())));
         s
     }
 
@@ -1657,7 +1657,7 @@ mod tests {
         r.frames[1].temperature = vec![70.0; r.grid.len()];
         // The synthetic result is in SI (70 K), and shown so.
         let mut s = Session { default_units: crate::units::si().clone(), ..Session::default() };
-        s.store_result(crate::StepResult::Fluid(r));
+        s.store_result(crate::StepResult::Fluid(Box::new(r)));
         for command in ["results.slice", "results.surface", "results.streamlines", "results.contour"] {
             let report = s.execute(command, &json!({"field": "temperature"})).unwrap();
             assert_eq!(report["contour"]["field"], "temperature", "{command}: {report}");
@@ -1676,7 +1676,7 @@ mod tests {
         let mut incomplete = crate::flow::tests::channel();
         incomplete.frames[0].temperature = vec![20.0; incomplete.grid.len()];
         incomplete.frames[1].temperature = vec![70.0; incomplete.grid.len().saturating_sub(1)];
-        let incomplete = crate::StepResult::Fluid(incomplete);
+        let incomplete = crate::StepResult::Fluid(Box::new(incomplete));
         assert!(!Field::available(&incomplete).any(|f| f == Field::Temperature));
         let mut cold = fluid();
         let before = cold.results_view.clone();

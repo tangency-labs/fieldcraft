@@ -143,6 +143,7 @@ pub(crate) fn singles(a: &mut dyn Archive, values: &mut Vec<f32>, expected: usiz
 
 /// The time-loop state is borrowed: saving it never copies the saved frames or histories.
 pub(crate) struct RunState<'a> {
+    pub validity: &'a mut Vec<crate::validity::Sample>,
     pub k: &'a mut u64,
     /// Last event of the ordinary loop, excluding the additional storage boundaries.
     pub last_event: &'a mut u64,
@@ -159,7 +160,7 @@ pub(crate) struct RunState<'a> {
 
 impl RunState<'_> {
     pub fn archive(&mut self, a: &mut dyn Archive, setup: &crate::Setup) -> Result<()> {
-        fixed(a, u64::from_le_bytes(*b"FCRST4\0\0"))?; // The layout tag: a change to the saved state changes it.
+        fixed(a, u64::from_le_bytes(*b"FCRST5\0\0"))?; // The layout tag: a change to the saved state changes it.
         u64(a, self.k)?;
         if *self.k == 0 || *self.k > setup.steps {
             return Err(Error::Invalid("checkpoint step is outside this run".into()));
@@ -246,6 +247,24 @@ impl RunState<'_> {
             m.checkpoint(a, setup, *self.k, *self.finished)?;
         } else if *self.finished {
             return Err(Error::Invalid("checkpoint has an early stop without a steady rule".into()));
+        }
+        let len = count(a, self.validity.len(), crate::validity::MAX_SAMPLES)?;
+        if a.loading() {
+            resize(self.validity, len)?;
+        }
+        let mut previous = None;
+        for s in self.validity.iter_mut() {
+            u64(a, &mut s.step)?;
+            boolean(a, &mut s.invalid)?;
+            f64(a, &mut s.density_min)?;
+            f64(a, &mut s.density_max)?;
+            f64(a, &mut s.density_departure)?;
+            f64(a, &mut s.mach_min)?;
+            f64(a, &mut s.mach_max)?;
+            if s.step > *self.k || previous.is_some_and(|p| s.step <= p) || !s.valid() {
+                return Err(Error::Invalid("checkpoint validity sample is invalid".into()));
+            }
+            previous = Some(s.step);
         }
         Ok(())
     }

@@ -135,7 +135,7 @@ mod tests {
         f.temperature = (0..r.grid.len()).map(|c| if r.grid.coords(c)[0] == 0 { 20.0 } else { 30.0 }).collect();
         r.history_times = vec![0.5, 1.5];
         r.heat = vec![fieldcraft_lbm::HeatHistory { name: "heater,\"face\"".into(), body: Some("Block".into()), power: vec![-1200.0, -2000.0] }];
-        s.store_result(StepResult::Fluid(r));
+        s.store_result(StepResult::Fluid(Box::new(r)));
         s.results_view = None;
         s
     }

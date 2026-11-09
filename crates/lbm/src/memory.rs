@@ -295,7 +295,7 @@ impl Memory {
             cells: n,
             frames: s.frames,
             setup,
-            state,
+            state: state.saturating_add((crate::validity::MAX_SAMPLES * size_of::<crate::validity::Sample>()) as u64),
             frame_bytes: per_cell(FRAME + if s.heat { FRAME_HEAT } else { 0 } + if s.surface { FRAME_FILL } else { 0 }).saturating_mul(s.frames),
             readback,
             device,

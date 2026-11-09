@@ -1337,7 +1337,7 @@ mod tests {
         assert_eq!(encoded["port_properties"], json!({"density": 2.0, "specific_heat": 5.0}));
         let decoded: fieldcraft_lbm::FluidResult = serde_json::from_value(encoded).unwrap();
         assert_eq!(decoded, flow);
-        s.store_result(crate::StepResult::Fluid(flow));
+        s.store_result(crate::StepResult::Fluid(Box::new(flow)));
         let params = json!({"step": "Shear", "frame": 1});
         let before = s.execute("results.frame", &params).unwrap()["ports"].clone();
         assert_eq!(before["units"]["temperature"], "°C");
