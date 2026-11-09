@@ -56,6 +56,12 @@ fn bolt_clamp_load_lock_persistence_and_perturbation() {
     assert!(deck.contains("*FREQUENCY, EIGENSOLVER=LANCZOS"));
     assert!(deck.contains("*STEADY STATE DYNAMICS, DIRECT"));
     assert!(deck.contains("*STEP, NAME=Modes, PERTURBATION"));
+    let mut fixed = session.model.clone();
+    let mut locked_step = fixed.step("Locked").cloned().unwrap();
+    locked_step.pretension.insert("Bolt".into(), fieldcraft_model::PretensionControl::Fixed);
+    fixed.replace_step(locked_step).unwrap();
+    let fixed_deck = fieldcraft_decks::abaqus::write(&fixed, fieldcraft_model::units::Preset::MKgS).unwrap();
+    assert!(fixed_deck.contains("*BOUNDARY, FIXED"));
 }
 
 // Check physical increments, not just that a solver returned successfully.

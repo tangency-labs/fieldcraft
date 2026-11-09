@@ -79,6 +79,7 @@ pub static ALL: &[CommandSpec] = &[
     pretension::CREATE,
     pretension::FORCE,
     pretension::ADJUST,
+    pretension::FIX,
     pretension::LOCK,
     pretension::RESULT,
     foundation::CREATE,

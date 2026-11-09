@@ -258,6 +258,7 @@ fn validate_pretension_chain(model: &Model) -> Result<()> {
                 match base_step.pretension.get(name) {
                     Some(fieldcraft_model::PretensionControl::Adjustment { value }) if value.is_finite() && *value != 0.0 => {}
                     Some(fieldcraft_model::PretensionControl::Adjustment { .. }) => return Err(Error::Unsupported { format: FORMAT, what: format!("step `{}`: locked base `{base}` has zero/non-finite adjustment for pretension `{name}`", step.name) }),
+                    Some(fieldcraft_model::PretensionControl::Fixed) => {}
                     _ => return Err(Error::Unsupported { format: FORMAT, what: format!("step `{}`: locked base `{base}` is missing nonzero adjustment for pretension `{name}`", step.name) }),
                 }
             }
@@ -1187,6 +1188,10 @@ impl Deck {
                     // never write zero, which would discard the locked length.
                     self.line("*BOUNDARY");
                     self.numbers_line(&format!("{node}, 1, 1"), &[*value])?;
+                }
+                fieldcraft_model::PretensionControl::Fixed => {
+                    self.line("*BOUNDARY, FIXED");
+                    self.line(&format!("{node}"));
                 }
             }
         }
