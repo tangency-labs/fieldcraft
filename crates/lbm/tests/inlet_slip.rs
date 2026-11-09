@@ -85,3 +85,32 @@ fn inlet_controls_decay() {
         assert!(peak.into_iter().all(|v| v <= 1e-6), "{peak:?}");
     }
 }
+
+/// Below the laminar floor, reachable only with a turbulence model, the TRT velocity inlet is not
+/// stable at #820's Mach number: the setup says so, and only where a TRT velocity inlet exists.
+#[test]
+fn a_trt_velocity_inlet_below_the_floor_is_warned_about() {
+    use common::*;
+    use fieldcraft_lbm::{Limits, Setup};
+    use fieldcraft_model::{FaceCondition, Outflow, Procedure, Profile, Turbulence};
+    let setup = |tau: f64, collision: Collision, inlet: bool| {
+        let mut d = domain([0.0; 3], [8.0; 3], 1.0);
+        if inlet {
+            d.faces.x_min = FaceCondition::Velocity { velocity: [0.05, 0.0, 0.0], profile: Profile::Uniform };
+            d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Convective };
+        } else {
+            d.faces.x_min = FaceCondition::Periodic {};
+            d.faces.x_max = FaceCondition::Periodic {};
+        }
+        let mut p = collide(10.0, 1.0, None, collision);
+        if let Procedure::Fluid { turbulence, .. } = &mut p {
+            *turbulence = Some(Turbulence::Smagorinsky { constant: 0.1, prandtl: 0.9, van_driest: None, wall_model: None });
+        }
+        Setup::new(&model(1.0, (tau - 0.5) / 3.0, d, p), None, &[], &Limits::default()).unwrap().warnings
+    };
+    let warned = |w: Vec<String>| w.iter().any(|w| w.contains("velocity inlet is not stable"));
+    assert!(warned(setup(0.5005, Collision::Trt, true)));
+    assert!(!warned(setup(0.505, Collision::Trt, true)));
+    assert!(!warned(setup(0.5005, Collision::Trt, false)));
+    assert!(!warned(setup(0.5005, Collision::Hrr, true)));
+}
