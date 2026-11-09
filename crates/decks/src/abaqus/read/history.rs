@@ -379,9 +379,9 @@ fn prepare(
     }
     let mut global_damping = None;
     let mut next = state.clone();
-    // A steady-state perturbation starts with the base supports, not its loads.
+    // Frequency and steady-state perturbations start with base supports, not loads.
     // Prescribed values are increments about equilibrium, initially zero.
-    if body.iter().any(|part| part.keyword == "STEADYSTATEDYNAMICS") {
+    if body.iter().any(|part| matches!(part.keyword.as_str(), "FREQUENCY" | "STEADYSTATEDYNAMICS")) {
         next.retain(|(family, _, _, _), _| *family == Family::Boundary);
         for driven in next.values_mut() {
             driven.value = 0.0;

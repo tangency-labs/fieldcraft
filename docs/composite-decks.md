@@ -23,7 +23,9 @@ locations are common. One-point/even-count plies and Gauss section
 integration are refused. [Abaqus 2026 SHELL SECTION](https://docs.software.vt.edu/abaqusv2026/English/SIMACAEKEYRefMap/simakey-r-shellsection.htm)
 
 `ORIENTATION, DEFINITION=COORDINATES` carries rectangular frames and cylindrical radial/hoop/
-axial frames. A rectangular origin is eliminated by taking coordinate differences. For solids, cylindrical endpoints retain the axis line. Shell cylindrical frames are
+axial frames. `SYSTEM=Z RECTANGULAR` is converted from points on local Z and the XZ plane
+to the same native X/Y/Z frame, before any additional rotation. Its canonical export is
+`RECTANGULAR`; source replay preserves the original spelling and points. A rectangular origin is eliminated by taking coordinate differences. For solids, cylindrical endpoints retain the axis line. Shell cylindrical frames are
 evaluated at the element node-average centre and written as a constant rectangular frame,
 matching FieldCraft's current discrete shell definition; refinement reevaluates those frames.
 The arbitrary scale of a direction vector is not retained.

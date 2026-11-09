@@ -65,7 +65,7 @@ impl Orientation {
 
 pub(super) fn orientation(block: &Block<'_>, units: &DisplaySystem) -> Result<Orientation> {
     block.only(&["NAME", "SYSTEM", "DEFINITION"])?;
-    if block.value("DEFINITION").is_some_and(|v| canonical(v) != "COORDINATES") {
+    if block.params.contains_key("DEFINITION") && canonical(block.required("DEFINITION")?) != "COORDINATES" {
         return Err(error(block.line, "*ORIENTATION supports constant DEFINITION=COORDINATES only"));
     }
     if block.rows.is_empty() || block.rows.len() > 2 {
@@ -74,11 +74,23 @@ pub(super) fn orientation(block: &Block<'_>, units: &DisplaySystem) -> Result<Or
     let row = block.rows.first().ok_or_else(|| error(block.line, "missing orientation coordinates"))?;
     let values = row_fields(row.text, row.line)?.iter().map(|v| number(v, row.line)).collect::<Result<Vec<_>>>()?;
     let at = |i| values.get(i).copied().unwrap_or_default();
-    let frame = match canonical(block.value("SYSTEM").unwrap_or("RECTANGULAR")).as_str() {
+    let system = if block.params.contains_key("SYSTEM") { block.required("SYSTEM")? } else { "RECTANGULAR" };
+    let frame = match canonical(system).as_str() {
         "RECTANGULAR" if values.len() == 6 || values.len() == 9 => MaterialOrientation::Rectangular {
             axis1: std::array::from_fn(|i| at(i) - at(i + 6)),
             axis2: std::array::from_fn(|i| at(i + 3) - at(i + 6)),
         },
+        "ZRECTANGULAR" if values.len() == 6 || values.len() == 9 => {
+            // The public Z RECTANGULAR definition places a on Z and b in XZ.
+            // Build Z/X/Y, then cyclically relabel to native X/Y/Z before rotation.
+            let zxy = MaterialOrientation::Rectangular {
+                axis1: std::array::from_fn(|i| at(i) - at(i + 6)),
+                axis2: std::array::from_fn(|i| at(i + 3) - at(i + 6)),
+            }
+            .axes_at([0.; 3])
+            .map_err(|e| error(row.line, e.to_string()))?;
+            MaterialOrientation::Rectangular { axis1: zxy[1], axis2: zxy[2] }
+        }
         "CYLINDRICAL" if values.len() == 6 => {
             let mut origin = [0.0; 3];
             for (i, v) in origin.iter_mut().enumerate() {
@@ -160,6 +172,21 @@ pub(super) fn offset(value: Option<&str>, line: usize) -> Result<f64> {
 mod rotation_tests {
     use super::*;
     use fieldcraft_model::units::Preset;
+
+    #[test]
+    fn z_rectangular_permutation_and_origin_are_preserved() {
+        for row in ["1,0,0,0,1,0", "3,3,4,2,4,4,2,3,4"] {
+            let text = format!("*ORIENTATION,NAME=A,SYSTEM=Z RECTANGULAR\n{row}\n");
+            let blocks = super::super::lex::blocks(&text, 10).unwrap();
+            let o = orientation(&blocks[0], &DisplaySystem::new(Preset::MKgS)).unwrap().section(false).unwrap();
+            assert_eq!(o.frame.axes_at([0.; 3]).unwrap(), [[0., 1., 0.], [0., 0., 1.], [1., 0., 0.]]);
+        }
+        for header in ["SYSTEM", "SYSTEM=SPHERICAL", "DEFINITION", "DEFINITION=NODES"] {
+            let text = format!("*ORIENTATION,NAME=A,{header}\n1,0,0,0,1,0\n");
+            let blocks = super::super::lex::blocks(&text, 10).unwrap();
+            assert!(orientation(&blocks[0], &DisplaySystem::new(Preset::MKgS)).is_err());
+        }
+    }
 
     #[test]
     fn shell_rotation_precedes_projection_and_uses_the_positive_normal() {

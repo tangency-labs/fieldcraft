@@ -844,8 +844,10 @@ by linear and stress-stiffened consumers because one source general step cannot
 express both choices. Nonlinear equilibrium remains a distinct procedure: no YES
 flag is changed to NO and unsupported nonlinear rod solving still refuses.
 
-Each harmonic perturbation retains the base support DOFs with zero incremental
-values, but starts with no loads: only loads written in that perturbation act.
+Frequency and harmonic perturbations retain the base support DOFs with zero
+incremental values. Inherited static amplitudes are cleared before validating the
+new procedure; explicitly supplied unsupported amplitudes still refuse. Each
+harmonic perturbation starts with no loads: only loads written in that perturbation act.
 The general history remains unchanged for subsequent general steps. Nonzero
 prescribed harmonic motion and frequency-dependent amplitudes remain named
 refusals. An empty `IMAGINARY, OP=NEW` load block maps an explicitly zero imaginary
