@@ -20,8 +20,12 @@ pub struct PretensionSection {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PretensionControl {
-    Force { value: f64 },
-    Adjustment { value: f64 },
+    Force {
+        value: f64,
+    },
+    Adjustment {
+        value: f64,
+    },
     /// Hold the adjustment reached by the preceding equilibrium state.
     Fixed,
 }

@@ -244,15 +244,21 @@ pub fn write_resolved_with_mass(model: &Model, r: &Resolved, units: Preset, mass
 /// nonzero adjustment for every section.  Reject incomplete chains instead of
 /// silently writing a misleading deck.
 fn validate_pretension_chain(model: &Model) -> Result<()> {
-    if model.pretensions().is_empty() { return Ok(()); }
+    if model.pretensions().is_empty() {
+        return Ok(());
+    }
     for (i, step) in model.steps().iter().enumerate() {
-        if matches!(step.procedure, Procedure::Frequency { .. } | Procedure::Harmonic(_)) && step.base_state.is_none()
+        if matches!(step.procedure, Procedure::Frequency { .. } | Procedure::Harmonic(_))
+            && step.base_state.is_none()
             && model.steps()[..i].iter().any(|s| !s.pretension.is_empty())
         {
-            return Err(Error::Unsupported { format: FORMAT, what: format!(
-                "step `{}`: unbased frequency/response follows pretension; create the unpreloaded step before force control or set base_state",
-                step.name
-            ) });
+            return Err(Error::Unsupported {
+                format: FORMAT,
+                what: format!(
+                    "step `{}`: unbased frequency/response follows pretension; create the unpreloaded step before force control or set base_state",
+                    step.name
+                ),
+            });
         }
         if let Some(base) = &step.base_state {
             let Some(base_step) = model.steps().iter().find(|s| s.name == *base) else {
@@ -261,9 +267,19 @@ fn validate_pretension_chain(model: &Model) -> Result<()> {
             for name in model.pretensions().keys() {
                 match base_step.pretension.get(name) {
                     Some(fieldcraft_model::PretensionControl::Adjustment { value }) if value.is_finite() && *value != 0.0 => {}
-                    Some(fieldcraft_model::PretensionControl::Adjustment { .. }) => return Err(Error::Unsupported { format: FORMAT, what: format!("step `{}`: locked base `{base}` has zero/non-finite adjustment for pretension `{name}`", step.name) }),
+                    Some(fieldcraft_model::PretensionControl::Adjustment { .. }) => {
+                        return Err(Error::Unsupported {
+                            format: FORMAT,
+                            what: format!("step `{}`: locked base `{base}` has zero/non-finite adjustment for pretension `{name}`", step.name),
+                        });
+                    }
                     Some(fieldcraft_model::PretensionControl::Fixed) => {}
-                    _ => return Err(Error::Unsupported { format: FORMAT, what: format!("step `{}`: locked base `{base}` is missing nonzero adjustment for pretension `{name}`", step.name) }),
+                    _ => {
+                        return Err(Error::Unsupported {
+                            format: FORMAT,
+                            what: format!("step `{}`: locked base `{base}` is missing nonzero adjustment for pretension `{name}`", step.name),
+                        });
+                    }
                 }
             }
         }
@@ -1161,8 +1177,12 @@ impl Deck {
                 for (i, local) in e.kind.faces().iter().enumerate() {
                     let face: BTreeSet<u32> = local.iter().filter_map(|&j| e.nodes.get(j)).copied().collect();
                     if face.len() == local.len() {
-                        if face.is_subset(&first_nodes) { first_faces.push((label, i + 1)); }
-                        if face.is_subset(&second_nodes) { second_faces.push((label, i + 1)); }
+                        if face.is_subset(&first_nodes) {
+                            first_faces.push((label, i + 1));
+                        }
+                        if face.is_subset(&second_nodes) {
+                            second_faces.push((label, i + 1));
+                        }
                     }
                 }
             }
@@ -1178,7 +1198,12 @@ impl Deck {
             faces.retain(|(label, face)| {
                 let Some(e) = model.elements().get(label) else { return false };
                 let Some(local) = e.kind.faces().get(face.saturating_sub(1)) else { return false };
-                let mut points: Vec<String> = local.iter().filter_map(|&j| e.nodes.get(j)).filter_map(|n| model.nodes().get(n)).map(|n| format!("{:.12e},{:.12e},{:.12e}", n.xyz[0], n.xyz[1], n.xyz[2])).collect();
+                let mut points: Vec<String> = local
+                    .iter()
+                    .filter_map(|&j| e.nodes.get(j))
+                    .filter_map(|n| model.nodes().get(n))
+                    .map(|n| format!("{:.12e},{:.12e},{:.12e}", n.xyz[0], n.xyz[1], n.xyz[2]))
+                    .collect();
                 points.sort_unstable();
                 seen_geometry.insert(points.join(";"))
             });
@@ -1230,7 +1255,10 @@ impl Deck {
                 }
                 fieldcraft_model::PretensionControl::Adjustment { value } => {
                     if !value.is_finite() || *value == 0.0 {
-                        return Err(Error::Unsupported { format: FORMAT, what: format!("step `{}`: pretension `{name}` requires a nonzero finite lock adjustment", step.name) });
+                        return Err(Error::Unsupported {
+                            format: FORMAT,
+                            what: format!("step `{}`: pretension `{name}` requires a nonzero finite lock adjustment", step.name),
+                        });
                     }
                     // Abaqus holds the reached adjustment by prescribing the current control DOF;
                     // never write zero, which would discard the locked length.
@@ -1248,11 +1276,16 @@ impl Deck {
     }
 
     fn pretension_initial_boundary(&mut self, model: &Model, r: &Resolved) -> Result<()> {
-        if model.pretensions().is_empty() { return Ok(()); }
+        if model.pretensions().is_empty() {
+            return Ok(());
+        }
         self.comment("Unpreloaded state: hold each native pretension control DOF at zero before force loading");
         self.line("*BOUNDARY");
         for p in model.pretensions().values() {
-            let node = r.reference_point_nodes.get(&p.control).ok_or_else(|| Error::Unsupported { format: FORMAT, what: format!("pretension control `{}` has no node", p.control) })?;
+            let node = r
+                .reference_point_nodes
+                .get(&p.control)
+                .ok_or_else(|| Error::Unsupported { format: FORMAT, what: format!("pretension control `{}` has no node", p.control) })?;
             self.line(&format!("{node}, 1, 1, 0.0"));
         }
         Ok(())
@@ -1682,7 +1715,9 @@ impl Deck {
                     }
                     self.out.push('\n');
                     self.step_boundaries(model, r, &base_bcs, &step.boundary_conditions)?;
-                    if step.base_state.is_none() && !steps[..index].iter().any(|s| matches!(s.procedure, Procedure::Static {} | Procedure::NonlinearStatic(_))) {
+                    if step.base_state.is_none()
+                        && !steps[..index].iter().any(|s| matches!(s.procedure, Procedure::Static {} | Procedure::NonlinearStatic(_)))
+                    {
                         self.pretension_initial_boundary(model, r)?;
                     }
                     if !step.loads.is_empty() {

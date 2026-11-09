@@ -127,10 +127,12 @@ fn abaqus_native_chain_rejects_missing_lock_and_late_unbased_frequency() {
 
     let mut session = Session::default();
     session.run_script(&recipe).unwrap();
-    session.run_script(&serde_json::json!([{
-        "command":"model.step.create",
-        "params":{"name":"LateFreeModes","procedure":{"type":"frequency","modes":2},"boundary_conditions":["Bottom","CapGuide"]}
-    }])).unwrap();
+    session
+        .run_script(&serde_json::json!([{
+            "command":"model.step.create",
+            "params":{"name":"LateFreeModes","procedure":{"type":"frequency","modes":2},"boundary_conditions":["Bottom","CapGuide"]}
+        }]))
+        .unwrap();
     let err = fieldcraft_decks::abaqus::write(&session.model, fieldcraft_model::units::Preset::MKgS).unwrap_err().to_string();
     assert!(err.contains("unbased frequency/response follows pretension"), "{err}");
 }
