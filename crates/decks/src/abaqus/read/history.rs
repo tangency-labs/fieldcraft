@@ -10,6 +10,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 #[path = "projected.rs"]
 mod projected;
+#[path = "traction.rs"]
+mod traction;
 #[path = "transient.rs"]
 mod transient;
 
@@ -52,6 +54,7 @@ enum Family {
     Force,
     PressureD,
     PressureS,
+    TractionS(u8),
     Gravity,
 }
 type State = BTreeMap<(Family, String, u32, u8), Driven>;
@@ -467,6 +470,9 @@ fn prepare(
         }
     }
     let mut procedure = procedure.ok_or_else(|| unsupported(b.line, "STEP has no supported procedure"))?;
+    if next.keys().any(|(family, _, _, _)| matches!(family, Family::TractionS(_))) && !matches!(procedure, Procedure::Static {}) {
+        return Err(unsupported(b.line, "DSLOAD TRVEC requires small-displacement linear STATIC"));
+    }
     if let Some(damping) = global_damping {
         let Procedure::Harmonic(h) = &mut procedure else {
             return Err(unsupported(b.line, "GLOBAL DAMPING outside harmonic analysis"));
@@ -535,7 +541,11 @@ fn apply(
     touched: &mut Touched,
     limits: Limits,
 ) -> Result<()> {
-    allow(b, &["OP", "AMPLITUDE", "TYPE", "REAL"])?;
+    if b.keyword == "DSLOAD" {
+        allow(b, &["OP", "AMPLITUDE", "TYPE", "REAL", "FOLLOWER", "CONSTANTRESULTANT"])?;
+    } else {
+        allow(b, &["OP", "AMPLITUDE", "TYPE", "REAL"])?;
+    }
     if b.params.contains_key("REAL") && (b.keyword == "BOUNDARY" || b.params.get("REAL").is_some_and(Option::is_some)) {
         return Err(unsupported(b.line, "REAL must be a load flag"));
     }
@@ -560,7 +570,7 @@ fn apply(
             state.retain(|(family, _, _, _), _| match b.keyword.as_str() {
                 "BOUNDARY" => *family != Family::Boundary,
                 "CLOAD" => *family != Family::Force,
-                "DSLOAD" => *family != Family::PressureS,
+                "DSLOAD" => !matches!(family, Family::PressureS | Family::TractionS(_)),
                 _ => !matches!(family, Family::PressureD | Family::Gravity),
             });
         }
@@ -681,8 +691,12 @@ fn apply(
                 }
             }
             "DSLOAD" => {
-                if f.len() != 3 || f.get(1).is_none_or(|v| canonical(v) != "P") {
-                    return Err(unsupported(row.line, "only DSLOAD pressure P is mapped"));
+                let kind = canonical(f.get(1).map(String::as_str).unwrap_or_default());
+                if kind != "P" && kind != "TRVEC" {
+                    return Err(unsupported(row.line, format!("DSLOAD {kind}")));
+                }
+                if kind == "P" && (f.len() != 3 || b.params.contains_key("FOLLOWER") || b.params.contains_key("CONSTANTRESULTANT")) {
+                    return Err(unsupported(row.line, "DSLOAD P requires three fields without traction controls"));
                 }
                 let key = name(target, row.line)?;
                 let set = model
@@ -690,13 +704,22 @@ fn apply(
                     .iter()
                     .find(|(n, _)| n.eq_ignore_ascii_case(&key))
                     .map(|(_, s)| s)
-                    .ok_or_else(|| error(row.line, "missing pressure surface"))?;
+                    .ok_or_else(|| error(row.line, "missing DSLOAD surface"))?;
                 if set.faces.is_empty() || !set.edges.is_empty() {
-                    return Err(unsupported(row.line, "pressure requires element faces"));
+                    return Err(unsupported(row.line, "DSLOAD requires element faces"));
                 }
-                let magnitude = number(f.get(2).map(String::as_str).unwrap_or_default(), row.line)?;
-                for face in &set.faces {
-                    insert(Family::PressureS, face.element, face.face, magnitude)?;
+                if kind == "TRVEC" {
+                    let vector = traction::vector(b, &f, set, model, row.line)?;
+                    for face in &set.faces {
+                        for (axis, component) in vector.iter().enumerate() {
+                            insert(Family::TractionS(axis as u8), face.element, face.face, *component)?;
+                        }
+                    }
+                } else {
+                    let magnitude = number(f.get(2).map(String::as_str).unwrap_or_default(), row.line)?;
+                    for face in &set.faces {
+                        insert(Family::PressureS, face.element, face.face, magnitude)?;
+                    }
                 }
             }
             _ => {
@@ -784,7 +807,7 @@ fn materialize(model: &mut Model, step: &mut Step, state: &mut State, evaluation
                     Quantity::Moment
                 }
             }
-            Family::PressureD | Family::PressureS => Quantity::Pressure,
+            Family::PressureD | Family::PressureS | Family::TractionS(_) => Quantity::Pressure,
             _ => Quantity::Acceleration,
         };
         v = super::quantity(units, q, v, driven.line)?;
@@ -793,7 +816,7 @@ fn materialize(model: &mut Model, step: &mut Step, state: &mut State, evaluation
     for ((family, id, dof), v) in accumulated {
         // Retain zero components in history for OP=MOD/NEW, but not as invalid
         // native gravity definitions. Cancellation likewise has no effective load.
-        if family == Family::Gravity && v == 0.0 {
+        if matches!(family, Family::Gravity | Family::TractionS(_)) && v == 0.0 {
             continue;
         }
         if !v.is_finite() {
@@ -824,7 +847,9 @@ fn materialize(model: &mut Model, step: &mut Step, state: &mut State, evaluation
         let mut set = Set::default();
         match family {
             Family::Boundary | Family::Force => set.nodes = ids,
-            Family::PressureD | Family::PressureS => set.faces = ids.into_iter().map(|element| ElementFace { element, face: dof }).collect(),
+            Family::PressureD | Family::PressureS | Family::TractionS(_) => {
+                set.faces = ids.into_iter().map(|element| ElementFace { element, face: dof }).collect()
+            }
             _ => set.elements = ids,
         }
         let target = if let Some(point) = point {
@@ -842,12 +867,14 @@ fn materialize(model: &mut Model, step: &mut Step, state: &mut State, evaluation
             step.boundary_conditions.insert(name);
         } else {
             let mut vector = [0.0; 3];
-            if let Some(slot) = vector.get_mut((usize::from(dof) - 1) % 3) {
+            let axis = if let Family::TractionS(axis) = family { usize::from(axis) } else { (usize::from(dof) - 1) % 3 };
+            if let Some(slot) = vector.get_mut(axis) {
                 *slot = value;
             }
             let load = match family {
                 Family::Force if dof <= 3 => Load::Force { target, vector, distribution: Distribution::PerNode },
                 Family::Force => Load::Moment { target, vector, distribution: Distribution::PerNode },
+                Family::TractionS(_) => Load::Traction { set: name.clone(), vector },
                 Family::PressureD | Family::PressureS => Load::Pressure { set: name.clone(), magnitude: value },
                 _ => Load::Gravity { acceleration: vector, set: Some(name.clone()) },
             };
@@ -941,6 +968,83 @@ Alias,GRAV,10,1,0,0
             assert!(denied.model.steps().is_empty());
             assert!(denied.warnings.iter().any(|w| w.contains("GRAV target") && w.contains("discrete")), "{:?}", denied.warnings);
         }
+    }
+
+    #[test]
+    fn fixed_surface_traction_retains_amplitude_time_and_load_family() {
+        let input = r#"** Original fixed global surface traction on a linear tetrahedron; SI
+*NODE
+1,0,0,0
+2,1,0,0
+3,0,1,0
+4,0,0,1
+*ELEMENT,TYPE=C3D4,ELSET=Solid
+1,1,2,3,4
+*NSET,NSET=Base
+1,2,3
+*SURFACE,TYPE=ELEMENT,NAME=Side
+Solid,S2
+*MATERIAL,NAME=Elastic
+*ELASTIC
+120000,.25
+*SOLID SECTION,ELSET=Solid,MATERIAL=Elastic
+*BOUNDARY
+Base,1,3
+*AMPLITUDE,NAME=Local,TIME=STEP TIME
+0,0,1,2,2,3
+*AMPLITUDE,NAME=Global,TIME=TOTAL TIME
+0,0,4,8
+*STEP,NAME=One
+*STATIC
+1,1
+*DSLOAD,FOLLOWER=NO,CONSTANT RESULTANT=YES,AMPLITUDE=Local
+Side,TRVEC,10,.6,0,.8
+*END STEP
+*STEP,NAME=Two
+*STATIC
+1,1
+*END STEP
+*STEP,NAME=Three
+*STATIC
+1,1
+*DSLOAD,OP=NEW,FOLLOWER=NO,CONSTANT RESULTANT=YES,AMPLITUDE=Global
+Side,TRVEC,5,-1,0,0
+*END STEP
+*STEP,NAME=Four
+*STATIC
+1,1
+*END STEP
+"#;
+        let got = read(input);
+        assert!(got.analysis_complete, "{:?}", got.warnings);
+        for (step, expected) in [("One", [12.0, 0.0, 16.0]), ("Two", [12.0, 0.0, 16.0]), ("Three", [-30.0, 0.0, 0.0]), ("Four", [-40.0, 0.0, 0.0])] {
+            let mut actual = [0.0; 3];
+            for name in &got.model.step(step).unwrap().loads {
+                let Load::Traction { set, vector } = got.model.load(name).unwrap() else { panic!("expected traction") };
+                assert_eq!(got.model.set(set).unwrap().faces, vec![ElementFace { element: 1, face: 2 }]);
+                for (a, v) in actual.iter_mut().zip(vector) {
+                    *a += v;
+                }
+            }
+            assert_eq!(actual, expected);
+        }
+        for (old, new, reason) in [
+            ("FOLLOWER=NO", "FOLLOWER=YES", "FOLLOWER"),
+            ("CONSTANT RESULTANT=YES", "CONSTANT RESULTANT=NO", "CONSTANT RESULTANT"),
+            ("TRVEC", "TRSHR", "TRSHR"),
+            ("*STEP,NAME=One", "*STEP,NAME=One,NLGEOM=YES", "TRVEC"),
+            ("FOLLOWER=NO", "FOLLOWER=NO,ORIENTATION=Local", "ORIENTATION"),
+        ] {
+            let denied = read(&input.replace(old, new));
+            assert!(!denied.analysis_complete);
+            assert!(denied.model.steps().is_empty());
+            assert!(denied.warnings.iter().any(|w| w.contains(reason)), "{:?}", denied.warnings);
+        }
+        let pressure =
+            input.replace("*DSLOAD,OP=NEW,FOLLOWER=NO,CONSTANT RESULTANT=YES,AMPLITUDE=Global\nSide,TRVEC,5,-1,0,0", "*DSLOAD,OP=NEW\nSide,P,5");
+        let pressure = read(&pressure);
+        assert!(pressure.analysis_complete);
+        assert!(pressure.model.step("Three").unwrap().loads.iter().all(|n| matches!(pressure.model.load(n), Some(Load::Pressure { .. }))));
     }
     const MODEL: &str = "*NODE,NSET=Tip\n1,0,0,0\n2,1,0,0\n*BOUNDARY\n1,ENCASTRE\n";
     fn read(text: &str) -> Read {

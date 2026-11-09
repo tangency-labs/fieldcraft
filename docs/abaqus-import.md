@@ -758,3 +758,31 @@ rod's uniform body load gives `u_tip = rho*g*L^2/(2*E)` and `RF_root = -rho*A*L*
 while the unloaded spring's displacement is zero. These checks distinguish scoped gravity
 from whole-model acceleration and cover amplitude scaling, inheritance and replacement.
 Syntax reference: [Abaqus public DLOAD reference](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-dload.htm).
+
+### Fixed surface traction
+
+`DSLOAD` with `TRVEC` maps to native surface traction for Tet4 triangular element faces in
+small-displacement linear static steps. The vector is given in global coordinates, with
+explicit `FOLLOWER=NO` and `CONSTANT RESULTANT=YES`. The reference magnitude multiplies
+the normalized direction and the relative amplitude. `OP=NEW` clears both pressure and
+traction in the DSLOAD family; an inherited STEP TIME amplitude holds its previous endpoint,
+while TOTAL TIME continues to use accumulated step duration. Replacing a direction also
+replaces its zero components, so a previous component cannot remain active accidentally.
+
+Other elements, local `ORIENTATION`, follower or current-area controls, `TRSHR`, nonuniform
+traction and non-static procedures are named refusals. Defaults that do not explicitly select
+the fixed/reference-area form are also refused. This mapping does not add these capabilities
+to the nonlinear or transient importer.
+
+The native model keeps the face selection and integrates the constant traction with the
+linear triangle shape functions. The existing canonical writer emits the equivalent consistent
+nodal forces (area times traction divided by three at each face node), which reproduce the
+same linear static FE equations exactly in this scope. It does not emit a general follower
+traction card. Source replay preserves the original cards, amplitudes and time data unchanged.
+Static results and canonical output represent step endpoints, not the intervening load history.
+
+An original tetrahedron test uses four steps to distinguish STEP TIME endpoint inheritance
+from TOTAL TIME evaluation and load replacement; U, RF and constant element stress are
+checked against the same native model and `K u = f` with isotropic elasticity. Units are
+converted through the shared quantity table. Syntax follows the
+[public DSLOAD reference](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-dsload.htm).
