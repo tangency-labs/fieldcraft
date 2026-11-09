@@ -1123,17 +1123,28 @@ impl Deck {
             let nodes = |set: &fieldcraft_model::ResolvedSet| -> BTreeSet<u32> { set.nodes.iter().copied().collect() };
             let first_nodes = nodes(first);
             let second_nodes = nodes(second);
-            let mut faces = Vec::new();
+            let mut first_faces = Vec::new();
+            let mut second_faces = Vec::new();
             for (&label, e) in model.elements() {
                 for (i, local) in e.kind.faces().iter().enumerate() {
                     let face: BTreeSet<u32> = local.iter().filter_map(|&j| e.nodes.get(j)).copied().collect();
-                    if face.len() == local.len() && (face.is_subset(&first_nodes) || face.is_subset(&second_nodes)) {
-                        faces.push((label, i + 1));
+                    if face.len() == local.len() {
+                        if face.is_subset(&first_nodes) { first_faces.push((label, i + 1)); }
+                        if face.is_subset(&second_nodes) { second_faces.push((label, i + 1)); }
                     }
                 }
             }
+            // Abaqus computes the pretension normal from one oriented cut.  Writing
+            // both coincident halves makes equal and opposite normals cancel to zero.
+            let mut faces = if first_faces.is_empty() { second_faces } else { first_faces };
             faces.sort_unstable();
             faces.dedup();
+            // A conforming bolt cut may contain the coincident face on each half.
+            // A native pretension section takes one oriented side; retain the
+            // deterministic first face instead of emitting opposing duplicates.
+            if faces.len() > 1 {
+                faces.truncate(1);
+            }
             if faces.is_empty() {
                 return Err(Error::Unsupported {
                     format: FORMAT,
