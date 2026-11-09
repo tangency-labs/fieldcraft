@@ -1140,11 +1140,16 @@ impl Deck {
             faces.sort_unstable();
             faces.dedup();
             // A conforming bolt cut may contain the coincident face on each half.
-            // A native pretension section takes one oriented side; retain the
-            // deterministic first face instead of emitting opposing duplicates.
-            if faces.len() > 1 {
-                faces.truncate(1);
-            }
+            // Remove only geometrically coincident reverse duplicates; preserve
+            // every distinct face of a multi-face cut surface.
+            let mut seen_geometry = BTreeSet::new();
+            faces.retain(|(label, face)| {
+                let Some(e) = model.elements().get(label) else { return false };
+                let Some(local) = e.kind.faces().get(face.saturating_sub(1)) else { return false };
+                let mut points: Vec<String> = local.iter().filter_map(|&j| e.nodes.get(j)).filter_map(|n| model.nodes().get(n)).map(|n| format!("{:.12e},{:.12e},{:.12e}", n.xyz[0], n.xyz[1], n.xyz[2])).collect();
+                points.sort_unstable();
+                seen_geometry.insert(points.join(";"))
+            });
             if faces.is_empty() {
                 return Err(Error::Unsupported {
                     format: FORMAT,
