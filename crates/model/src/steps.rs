@@ -1209,6 +1209,23 @@ impl OutputVariable {
     /// The structural variables.
     pub const ALL: [OutputVariable; 4] =
         [OutputVariable::Displacement, OutputVariable::ReactionForce, OutputVariable::Stress, OutputVariable::Strain];
+
+    /// The name commands and files use for it.
+    pub fn name(self) -> &'static str {
+        match self {
+            OutputVariable::Displacement => "displacement",
+            OutputVariable::ReactionForce => "reaction_force",
+            OutputVariable::Stress => "stress",
+            OutputVariable::Strain => "strain",
+            OutputVariable::Temperature => "temperature",
+            OutputVariable::HeatFlux => "heat_flux",
+        }
+    }
+
+    /// Whether the variable is a temperature result (else a structural one).
+    pub fn is_thermal(self) -> bool {
+        matches!(self, OutputVariable::Temperature | OutputVariable::HeatFlux)
+    }
 }
 
 /// An analysis step.

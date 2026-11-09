@@ -198,6 +198,34 @@ fn the_check_names_what_is_missing() {
 }
 
 #[test]
+fn the_check_names_output_a_step_will_not_write() {
+    let text = |m: &Model| -> Vec<String> { m.check().iter().map(ToString::to_string).collect() };
+    assert!(!text(&defined()).iter().any(|t| t.contains("output") || t.contains("does not compute")), "{:#?}", text(&defined()));
+
+    let mut m = defined();
+    let mut bend = m.step("Bend").cloned().unwrap();
+    bend.output.insert(OutputVariable::Temperature);
+    m.replace_step(bend).unwrap();
+    let mut modes = m.step("Modes").cloned().unwrap();
+    modes.output.clear();
+    m.replace_step(modes).unwrap();
+    let t = text(&m);
+    let has = |needle: &str| t.iter().any(|t| t.contains(needle));
+    assert!(has("warning: step `Bend`: requests temperature, which a static step does not compute"), "{t:#?}");
+    assert!(has("warning: step `Modes`: requests no output, so it writes no results"), "{t:#?}");
+
+    // A pure heat transfer step computes no stress; a coupled one computes both.
+    let mut m = defined();
+    let mut heat = Step::new("Heat", Procedure::HeatTransfer { transient: None });
+    heat.output.insert(OutputVariable::Stress);
+    m.add_step(heat, None).unwrap();
+    m.add_step(Step::new("Coupled", Procedure::CoupledTemperatureDisplacement {}), None).unwrap();
+    let t = text(&m);
+    assert!(t.iter().any(|t| t.contains("step `Heat`: requests stress, which a heat_transfer step does not compute")), "{t:#?}");
+    assert!(!t.iter().any(|t| t.contains("step `Coupled`: requests")), "{t:#?}");
+}
+
+#[test]
 fn definitions_refer_only_to_existing_items_and_cannot_be_deleted_while_used() {
     let mut m = defined();
     let section = |set: &str, material: &str| Section {
