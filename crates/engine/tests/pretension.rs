@@ -11,6 +11,10 @@ fn native_fixed_releases_the_cut_force_and_retains_ordinary_loads() {
     let recipe: Vec<Value> = serde_json::from_str(include_str!("fixtures/internal-pretension.json")).unwrap();
     let mut session = Session::default();
     session.run_script(&Value::Array(recipe[..recipe.len() - 2].to_vec())).unwrap();
+    // This test exercises native C3D8 export; select its B-bar formulation explicitly.
+    session
+        .execute("model.section.edit", &json!({"name":"Solid","set":"All","material":"Elastic","kind":{"type":"solid"},"formulation":{"b_bar":true}}))
+        .unwrap();
     let mut model = session.model.clone();
     model.add_set("OneNode", Set { nodes: vec![9], ..Set::default() }).unwrap();
     model
@@ -135,10 +139,16 @@ fn continuous_internal_cut_runs_through_commands_and_keeps_native_source_connect
     let mut session = Session::default();
     let commands = recipe.as_array().unwrap();
     session.run_script(&Value::Array(commands[..commands.len() - 2].to_vec())).unwrap();
+    session
+        .execute("model.section.edit", &json!({"name":"Solid","set":"All","material":"Elastic","kind":{"type":"solid"},"formulation":{"b_bar":true}}))
+        .unwrap();
     let original = session.model.clone();
     let before = fieldcraft_decks::abaqus::write(&original, fieldcraft_model::units::Preset::MKgS).unwrap();
     let results = session.run_script(&Value::Array(commands[commands.len() - 2..].to_vec())).unwrap();
-    assert!((results[1]["adjustment"].as_f64().unwrap() / 0.002 - 1.).abs() < 1e-12);
+    // Two unit bars, E=1e6, A=1, nu=0: uniform axial strain makes B-bar
+    // identical to full integration. The independent compliance is 2L/(EA).
+    let expected_adjustment = 1000. * 2. / 1e6;
+    assert!((results[1]["adjustment"].as_f64().unwrap() / expected_adjustment - 1.).abs() < 1e-12);
     assert!((results[1]["section_force"].as_f64().unwrap() / 1000. - 1.).abs() < 1e-12);
     assert_eq!(session.model, original);
     assert_eq!(session.model.nodes().len(), 12);

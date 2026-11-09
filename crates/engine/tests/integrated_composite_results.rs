@@ -44,7 +44,12 @@ fn cross_ply_static_modes_and_harmonic_keep_model_and_result_semantics() {
         for f in &h.frames {
             assert!(f.relative_residual < 1e-8);
         }
-        steps.extend([(modes, 1), (response, 5)]);
+        let StepResult::Frequency(f) = result(&s, &modes) else { panic!("frequency") };
+        assert_eq!(f.mass_kind, Some(mass));
+        assert!(f.section_mass_policy.as_deref().unwrap().contains("declared section"));
+        let probe = s.execute("solve.probe", &json!({"step":modes,"nodes":[18]})).unwrap();
+        assert_eq!(probe["mass_kind"], json!(mass));
+        steps.extend([(modes, 12), (response, 5)]);
     }
     assert!((masses[0] - masses[1]).abs() < 1e-12);
     let definition = s.model.clone();
@@ -74,7 +79,6 @@ fn cross_ply_static_modes_and_harmonic_keep_model_and_result_semantics() {
     for (p, old) in probes {
         assert_eq!(reopened.execute("solve.probe", &p).unwrap(), old);
     }
-    // FrequencyResult stores the actual eigenvectors and mass, not a mass-kind tag;
-    // distinct step names preserve this test's explicit solve provenance.
+    // The actual solve mass and section policy survive kind12 and native reopening.
     std::fs::remove_file(path).unwrap();
 }
