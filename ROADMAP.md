@@ -258,3 +258,5 @@ extrapolation are named unsupported combinations; no PSD time history is synthes
   the regeneration message. See docs/results-kind-layout.md.
 
 Nonlinear rod diagnostics now have an explicit SI Abaqus UEL/DYNAMIC writer and saved-state internal-force recovery. Standard T3D2 StVK mapping is refused; native nonlinear result persistence requires a versioned model/result contract.
+
+Direct and modal transient base_state perturbations reuse the converged equilibrium tangent and frozen contact/tie/pretension constraints; reference mass and incremental energies, native kind-6 save/reopen. Based stress recovery and changing contact status remain unsupported.

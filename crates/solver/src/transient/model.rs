@@ -125,12 +125,32 @@ pub fn solve_with_mass(model: &Model, name: Option<&str>, mass: MassKind, limits
         if spectrum { |p| matches!(p, Procedure::ResponseSpectrum(_)) } else { |p| matches!(p, Procedure::Transient(_)) };
     let step = model.select_step(name, wanted, if spectrum { "response_spectrum" } else { "transient" })?;
     step.procedure.validate()?;
-    system::refuse_contact(model, "linear dynamics")?;
+    let equilibrium = model.perturbation_base(step)?;
+    if equilibrium.is_none() {
+        system::refuse_contact(model, "linear dynamics")?;
+    }
+    if let Some(base) = equilibrium {
+        if step.boundary_conditions != base.boundary_conditions {
+            return Err(Error::NotSupported(
+                "base_state transient must retain the equilibrium boundary-condition set; support changes require a new equilibrium".into(),
+            ));
+        }
+        if step.output.contains(&OutputVariable::Stress) {
+            return Err(Error::NotSupported(
+                "base_state transient stress recovery: tangent-consistent stress increments are not available; request displacement histories".into(),
+            ));
+        }
+    }
     // Reject data with no implemented linear time-domain meaning rather than drop it.
     if !model.initial_fields().is_empty() {
         return Err(Error::NotSupported("linear dynamics initial fields; use transient nodal initial states".into()));
     }
     for (name, m) in model.materials() {
+        if equilibrium.is_some() && m.damping.is_some_and(|d| d.beta != 0.) {
+            return Err(Error::NotSupported(format!(
+                "base_state transient material `{name}` stiffness damping: use step Rayleigh beta with the frozen tangent"
+            )));
+        }
         if m.damping.is_some_and(|d| d.loss_factor != 0.0) {
             return Err(Error::NotSupported(format!("material `{name}` structural loss in time/spectrum response")));
         }
@@ -169,7 +189,7 @@ pub fn solve_with_mass(model: &Model, name: Option<&str>, mass: MassKind, limits
             "adaptive transient requires translational degrees of freedom; rotation/pressure/thermal coordinates are unsupported".into(),
         ));
     }
-    if !mesh.points.is_empty() {
+    if !mesh.points.is_empty() && equilibrium.is_none() {
         return Err(Error::NotSupported("linear dynamics reference-point output".into()));
     }
     if step.output.iter().any(|o| !matches!(o, OutputVariable::Displacement | OutputVariable::Stress)) {
@@ -196,12 +216,23 @@ pub fn solve_with_mass(model: &Model, name: Option<&str>, mass: MassKind, limits
     warnings.extend(system::inelastic_warnings(model));
     let (graph, order) = analysis::pattern(&mesh);
     let setup = Setup { model, resolved: &resolved, mesh: &mesh, step };
-    let red = analysis::reduction(&setup, true, &order, analysis::budget(limits, &mesh, &graph, 4), &mut warnings)?;
+    let assembled = analysis::assemble(&mesh, &graph, Some(mass))?;
+    let terminal = crate::prestress::stiffness(&setup, &graph, assembled.k, limits, &mut warnings)?;
+    let red = analysis::reduction_with_frozen(
+        &setup,
+        equilibrium.is_none(),
+        &order,
+        analysis::budget(limits, &mesh, &graph, 4),
+        &mut warnings,
+        equilibrium.map(|_| terminal.constraints.as_slice()),
+    )?;
+    if let Some(base) = equilibrium {
+        warnings.push(format!("Transient perturbation about `{}`: displacement/velocity/acceleration and initial states are increments; loads are additional perturbations, not repeated preload. Total displacement is equilibrium displacement plus increment. Reference mass ({mass:?}), frozen tangent K and constraints; Rayleigh damping uses alpha*M + beta*K. Energies describe the perturbation, not total prestress energy.", base.name));
+    }
     if red.largest_prescribed() != 0.0 {
         return Err(Error::NotSupported("linear dynamics nonzero prescribed motion; use base_acceleration".into()));
     }
-    let assembled = analysis::assemble(&mesh, &graph, Some(mass))?;
-    let mut k = assembled.k;
+    let mut k = terminal.stiffness;
     let mut m = assembled.m.ok_or_else(|| Error::Internal("dynamic mass".into()))?;
     k.mirror_lower();
     m.mirror_lower();
@@ -398,6 +429,9 @@ pub fn solve_with_mass(model: &Model, name: Option<&str>, mass: MassKind, limits
             None
         };
         let (ki, mi, ci, ui, vi) = if let Some(modal) = &modal {
+            if equilibrium.is_some() && modal.eigenvalues().iter().any(|v| *v < 0.) {
+                return Err(Error::Invalid("base_state transient has a negative squared modal frequency; unstable equilibrium".into()));
+            }
             let basis = modal.shapes();
             if basis.len().checked_mul(basis.len()).and_then(|n| n.checked_mul(3)).is_none_or(|n| n > limits.max_factor_entries) {
                 return Err(Error::Limit("projected dynamic operators exceed the entry budget".into()));

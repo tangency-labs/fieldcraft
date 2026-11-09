@@ -1315,7 +1315,8 @@ pub const STEP_CREATE: &[Field] = &[
     OUTPUT,
     STEP_BCS,
     STEP_LOADS,
-    reference("base_state", "Equilibrium base", C::Step).help("Earlier static or nonlinear static step for a linear perturbation."),
+    reference("base_state", "Equilibrium base", C::Step)
+        .help("Earlier static/nonlinear static equilibrium for frequency, harmonic or direct/modal transient increments."),
     reference("before", "Insert before", C::Step).help("The step the new one goes before; last when empty.").hint("last"),
 ];
 

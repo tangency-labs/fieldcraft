@@ -208,12 +208,40 @@ pub(crate) fn initial_stress_stiffness(mesh: &Mesh, graph: &NodeGraph, preload: 
     if preload.nonlinear.is_some() {
         return Err(Error::NotSupported("initial-stress assembly from nonlinear output: use the converged material tangent".into()));
     }
-    if let Some(t) = mesh.trusses.first() {
-        return Err(Error::NotSupported(format!("truss {}: initial-stress stiffness is not implemented", t.label)));
+    if let Some(t) = mesh.trusses.iter().find(|t| t.kind != fieldcraft_model::ElementKind::Rod2) {
+        return Err(Error::NotSupported(format!("truss {}: initial-stress stiffness requires rod2", t.label)));
     }
     flat_shells(mesh)?;
     let stresses: BTreeMap<u32, Vec<[f64; 6]>> = preload.elements.iter().map(|e| (e.label, e.points.iter().map(|p| p.stress).collect())).collect();
     let mut kg = graph.zero_matrix(&mesh.layout);
+    // Reference-geometry initial stress: delta²W_sigma = (N/L) delta d . delta d.
+    // The small-strain preload determines N=EA*(n.delta u)/L; no finite-strain
+    // material tangent is inferred from averaged output stresses.
+    for e in &mesh.trusses {
+        let dx: [f64; 3] = std::array::from_fn(|c| e.xyz[1][c] - e.xyz[0][c]);
+        let l2: f64 = dx.iter().map(|v| v * v).sum();
+        let l = l2.sqrt();
+        if !l.is_finite() || l <= 0. {
+            return Err(Error::Invalid("rod preload reference length".into()));
+        }
+        let a = preload.displacement.get(e.nodes[0]).ok_or_else(|| Error::Internal("rod preload node".into()))?;
+        let b = preload.displacement.get(e.nodes[1]).ok_or_else(|| Error::Internal("rod preload node".into()))?;
+        let strain: f64 = (0..3).map(|c| dx[c] * (b[c] - a[c]) / l2).sum();
+        let force = e.young * e.area * strain;
+        if !force.is_finite() {
+            return Err(Error::Invalid("rod preload axial force overflow".into()));
+        }
+        let mut matrix = vec![0.; 36];
+        for i in 0..6 {
+            for j in 0..6 {
+                if i % 3 == j % 3 {
+                    matrix[i * 6 + j] = if i / 3 == j / 3 { force / l } else { -force / l };
+                }
+            }
+        }
+        add_block(&mut kg, &mesh.layout, &e.nodes, fieldcraft_fem::DofSet::TRANSLATIONS, &matrix)?;
+    }
+
     let matrices = fieldcraft_parallel::map_grained(mesh.elements.len(), crate::analysis::GRAIN, |i| -> Result<_> {
         let e = mesh.elements.get(i).ok_or_else(|| Error::Internal("element index".into()))?;
         let kernel = e.kernel()?;

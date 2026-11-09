@@ -457,10 +457,43 @@ pub(crate) fn static_on(setup: &Setup<'_>, limits: &Limits) -> Result<StaticResu
     if red.neq() == 0 {
         return Err(Error::Invalid("every degree of freedom is prescribed; there is nothing to solve".into()));
     }
-    let [kff] = red.reduce([&k])?;
+    let [mut kff] = red.reduce([&k])?;
+    let mut q = red.rhs(&f, &k);
+    // An axis-aligned rod preload may have exact unloaded transverse null rows.
+    // Select zero motion in that nullspace only for a named perturbation base.
+    // This is an algebraic gauge in the preload solve, NOT support or stiffness
+    // carried into the perturbation operator, which includes its actual K_sigma.
+    if !mesh.trusses.is_empty()
+        && mesh.elements.is_empty()
+        && mesh.structural.is_empty()
+        && model.steps().iter().any(|s| s.base_state.as_deref() == Some(step.name.as_str()))
+    {
+        let mut nonzero = vec![false; kff.n];
+        for row in 0..kff.n {
+            let (cols, vals) = kff.row(row);
+            for (&col, &value) in cols.iter().zip(vals) {
+                if value != 0. {
+                    nonzero[row] = true;
+                    nonzero[col] = true;
+                }
+            }
+        }
+        let mut count = 0;
+        for (i, active) in nonzero.iter().enumerate() {
+            if !active {
+                if q[i] != 0. {
+                    return Err(Error::Singular("rod base has a load in a zero-stiffness direction; nonlinear equilibrium is required".into()));
+                }
+                crate::sparse::add_entry(&mut kff, i, i, 1.)?;
+                count += 1;
+            }
+        }
+        if count > 0 {
+            warnings.push(format!("rod equilibrium: selected zero displacement in {count} exactly unloaded null coordinates; no artificial stiffness or constraints retained in perturbation"));
+        }
+    }
     let chol = factor_raw(&kff, limits).map_err(|e| factor_error(e, mesh, &red))?;
     drop(kff);
-    let mut q = red.rhs(&f, &k);
     chol.solve(&mut q)?;
     let u = red.expand(&q, true);
     if u.iter().any(|x| !x.is_finite()) {

@@ -253,6 +253,9 @@ pub fn solve(model: &Model, name: Option<&str>, mass: MassKind, max_iterations: 
         return Err(Error::Internal("transient step".into()));
     };
     t.validate()?;
+    if step.base_state.is_some() {
+        return Err(Error::NotSupported("nonlinear rod transient base_state; use the direct/modal linear perturbation transient solver".into()));
+    }
     if !matches!(t.method, Method::Direct)
         || t.adaptive.is_some()
         || t.base_acceleration.is_some()

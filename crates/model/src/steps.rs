@@ -1438,8 +1438,8 @@ impl Model {
 
     fn base_before(&self, step: &Step, at: usize) -> Result<Option<&Step>> {
         let Some(name) = &step.base_state else { return Ok(None) };
-        if !matches!(step.procedure, Procedure::Frequency { .. } | Procedure::Harmonic(_)) {
-            return Err(Error::Invalid(format!("step `{}`: base_state requires a frequency or harmonic step", step.name)));
+        if !matches!(step.procedure, Procedure::Frequency { .. } | Procedure::Harmonic(_) | Procedure::Transient(_)) {
+            return Err(Error::Invalid(format!("step `{}`: base_state requires a frequency, harmonic or transient step", step.name)));
         }
         let index = self.step_index(name)?;
         let base = self.steps.get(index).ok_or_else(|| Error::NotFound(format!("base step `{name}`")))?;
