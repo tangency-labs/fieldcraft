@@ -534,6 +534,20 @@ fn prepare(
     {
         return Err(unsupported(b.line, "ROTARY INERTIA requires linear static, frequency or direct harmonic analysis"));
     }
+    if model.springs().values().any(|s| s.is_dashpot())
+        && !matches!(&procedure, Procedure::Harmonic(h) if matches!(h.method, fieldcraft_model::harmonic::Method::Direct))
+    {
+        return Err(unsupported(
+            b.line,
+            "DASHPOT1/2 import currently requires direct harmonic analysis; modal damping or other procedures are not substituted",
+        ));
+    }
+    if model.springs().values().any(|s| s.second().is_some())
+        && !matches!(procedure, Procedure::Static {} | Procedure::Frequency { .. })
+        && !matches!(&procedure, Procedure::Harmonic(h) if matches!(h.method, fieldcraft_model::harmonic::Method::Direct))
+    {
+        return Err(unsupported(b.line, "SPRING2 import requires linear static, frequency or direct harmonic analysis"));
+    }
     if !model.foundations().is_empty()
         && !matches!(procedure, Procedure::Static {} | Procedure::Frequency { .. })
         && !matches!(&procedure, Procedure::Harmonic(h) if matches!(h.method, fieldcraft_model::harmonic::Method::Direct))

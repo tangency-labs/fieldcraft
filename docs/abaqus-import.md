@@ -54,14 +54,20 @@ the current document; save existing work before running it in a session you are 
 
 - `NODE`, with optional node set; labels and coordinates.
 - `ELEMENT`, with type, connectivity and optional element set. Long connectivity may continue.
-- Constant isotropic or global diagonal anisotropic `MASS` and grounded `SPRING1` elements with `MASS`/`SPRING` properties.
+- Constant isotropic or global diagonal anisotropic `MASS` and global `ROTARYI`, `SPRING1/2`, `DASHPOT1/2` elements with their corresponding properties.
   These become native point masses and springs named `InpDiscreteElement<label>` with explicit,
   collision-free node target sets. Translational and rotational spring stiffness use their own
   unit quantities. Discrete ELSETs resolve properties and `NSET, ELSET=...`; discrete labels are
   excluded from native mesh element sets, with a warning. Their original labels and memberships
   remain in the retained source. Translated instances remap labels and property set references;
-  springs and anisotropic masses in rotated instances are explicitly refused. Oriented/damped masses, nonlinear or
-  frequency-dependent springs, SPRING2/A, dashpots and rotary inertia are not mapped yet.
+  springs, dashpots, rotary inertia and anisotropic masses in rotated instances are explicitly refused.
+  Oriented/damped masses, nonlinear or frequency/temperature/field-dependent spring/dashpot
+  coefficients, and axial SPRINGA/DASHPOTA are not mapped. Two-point elements require two
+  distinct existing nodes and the same global DOF (1–6) at both ends. Different endpoint DOFs
+  cannot be represented by the native shared direction and are refused. Translational damping
+  uses N·s/m and rotational damping N·m·s/rad, rather than stiffness units. SPRING2 is limited
+  to linear static, frequency and direct harmonic import; DASHPOT1/2 requires direct harmonic
+  import, rather than silently discarding damping in a modal or static procedure.
   Gravity may select ordinary mesh elements despite unrelated point masses; targets containing
   discrete elements and whole-model gravity with point masses remain refused.
 - `NSET` and `ELSET`: label lists, other set names and bounded `GENERATE` ranges. A node set may
@@ -1001,3 +1007,18 @@ An original Tet4 compression model on a triangular bed checks `u_b=-F/(k A)`,
 `u_tip-u_b=-3 F h/(E A)` at zero Poisson ratio, and `sigma_zz=-3 F/A`, with original,
 reopened and normalized-deck results and an independent native-command model.
 Source: [public foundation definition](https://abaqus.uclouvain.be/English/SIMACAEMODRefMap/simamod-c-foundation.htm).
+
+### Constant two-point springs and dashpots
+
+The public [SPRING](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-spring.htm)
+and [DASHPOT](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-dashpot.htm)
+DOF rows identify each endpoint separately. The supported equal-global-DOF subset maps to
+the native two-node relative operator: `k [[1,-1],[-1,1]]` or `c [[1,-1],[-1,1]]`;
+a grounded element contributes just `k` or `c`. Neither adds mass. Point masses remain
+explicit and continuum mass policy is never inferred from a spring/dashpot card.
+
+Constant properties are persistent model data. Extra data columns, local orientations,
+nonlinear/complex properties, missing or duplicate endpoints and mismatched property sets
+are reported by name and line. Step-level redefinition is not approximated. Canonical writing
+uses the existing SPRING1/2 and DASHPOT1/2 writer, while original labels, comments and
+unknown source text remain available through source replay after saving and reopening.

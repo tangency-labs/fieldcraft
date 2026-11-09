@@ -357,8 +357,8 @@ pub(super) fn expand(text: &str, limits: Limits) -> Result<Option<Expanded>> {
             if i.transform.angle != 0.0 && b.keyword == "ROTARYINERTIA" {
                 return Err(error(b.line, "ROTARY INERTIA in a rotated instance is not mapped; inertia axes must be explicit"));
             }
-            if i.transform.angle != 0.0 && b.keyword == "SPRING" {
-                return Err(error(b.line, "SPRING property in a rotated instance is not mapped; local spring axes must be explicit"));
+            if i.transform.angle != 0.0 && matches!(b.keyword.as_str(), "SPRING" | "DASHPOT") {
+                return Err(error(b.line, format!("{} property in a rotated instance is not mapped; local axes must be explicit", b.keyword)));
             }
             emit(&mut out, b, Some(i), &maps, (assembly, false), &mut members, limits.members)?;
         }
@@ -370,7 +370,11 @@ pub(super) fn expand(text: &str, limits: Limits) -> Result<Option<Expanded>> {
 }
 
 fn element_nodes(b: &Block<'_>) -> Result<usize> {
-    if super::discrete::Kind::parse(b.required("TYPE")?).is_some() { Ok(1) } else { Ok(Type::parse(b.required("TYPE")?, b.line)?.kind.node_count()) }
+    if let Some(kind) = super::discrete::Kind::parse(b.required("TYPE")?) {
+        Ok(kind.node_count())
+    } else {
+        Ok(Type::parse(b.required("TYPE")?, b.line)?.kind.node_count())
+    }
 }
 
 fn labels(blocks: &[&Block<'_>]) -> Result<(BTreeSet<u32>, BTreeSet<u32>)> {
@@ -481,6 +485,7 @@ fn emit(
             | "ROTARYINERTIA"
             | "FOUNDATION"
             | "SPRING"
+            | "DASHPOT"
             | "BOUNDARY"
             | "CLOAD"
             | "DLOAD"

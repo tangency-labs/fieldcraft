@@ -1,8 +1,9 @@
-//! Constant global MASS/ROTARYI and grounded SPRING1 import.
+//! Constant global MASS/ROTARYI and constant global SPRING1/2 and DASHPOT1/2 import.
 //! Syntax: Abaqus public Keywords Reference, *MASS, *ROTARY INERTIA and *SPRING:
 //! https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-mass.htm
 //! https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-rotaryinertia.htm
 //! https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-spring.htm
+//! https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-dashpot.htm
 //! Discrete labels become native definitions, not fictitious mesh elements. Original labels
 //! and ELSET memberships remain in the retained source; generated target sets are explicit.
 use super::{Block, canonical, check_work, error, key, label, quantity, row_fields, values};
@@ -16,13 +17,22 @@ pub(super) enum Kind {
     Mass,
     Inertia,
     Spring,
+    Spring2,
+    Dashpot,
+    Dashpot2,
 }
 impl Kind {
+    pub(super) fn node_count(self) -> usize {
+        if matches!(self, Self::Spring2 | Self::Dashpot2) { 2 } else { 1 }
+    }
     pub(super) fn parse(s: &str) -> Option<Self> {
         match canonical(s).as_str() {
             "MASS" => Some(Self::Mass),
             "ROTARYI" => Some(Self::Inertia),
             "SPRING1" => Some(Self::Spring),
+            "SPRING2" => Some(Self::Spring2),
+            "DASHPOT1" => Some(Self::Dashpot),
+            "DASHPOT2" => Some(Self::Dashpot2),
             _ => None,
         }
     }
@@ -30,6 +40,7 @@ impl Kind {
 pub(super) struct Record {
     pub kind: Kind,
     pub node: u32,
+    pub second: Option<u32>,
     pub line: usize,
 }
 
@@ -80,22 +91,44 @@ pub(super) fn apply(
             (Kind::Inertia, 0, 0.0)
         } else {
             if b.rows.len() != 2 {
-                return Err(error(line, "constant SPRING1 needs a degree-of-freedom row and a stiffness row"));
+                return Err(error(line, format!("{} requires exactly a DOF row and a constant coefficient row", b.keyword)));
             }
-            let first = b.rows.first().ok_or_else(|| error(line, "missing spring degree of freedom"))?;
+            let first = b.rows.first().ok_or_else(|| error(line, "missing discrete degree of freedom"))?;
             let fields = row_fields(first.text, first.line)?;
-            if fields.len() != 1 || entries.len() != 2 {
+            if !matches!(fields.len(), 1 | 2) || entries.len() != fields.len() + 1 {
                 return Err(error(
                     line,
-                    "SPRING1 requires one degree of freedom and one constant stiffness; frequency/temperature dependence is not mapped",
+                    format!(
+                        "{} requires one or two DOFs and one constant coefficient; frequency/temperature/field dependence is not mapped",
+                        b.keyword
+                    ),
                 ));
             }
             let dof = label(fields.first().map(String::as_str).unwrap_or_default(), first.line)?;
             if !(1..=6).contains(&dof) {
-                return Err(error(first.line, "spring degree of freedom must be 1 through 6"));
+                return Err(error(first.line, "spring/dashpot degree of freedom must be 1 through 6"));
             }
-            let q = if dof <= 3 { Quantity::Stiffness } else { Quantity::RotationalStiffness };
-            (Kind::Spring, dof as u8, quantity(units, q, *entries.get(1).ok_or_else(|| error(line, "missing stiffness"))?, line)?)
+            let pair = fields.len() == 2;
+            if pair && fields.get(1).map(|v| label(v, first.line)).transpose()? != Some(dof) {
+                return Err(error(
+                    first.line,
+                    format!("{}2 different endpoint DOFs are not expressible by the native shared global direction", b.keyword),
+                ));
+            }
+            let dashpot = b.keyword == "DASHPOT";
+            let q = match (dashpot, dof <= 3) {
+                (false, true) => Quantity::Stiffness,
+                (false, false) => Quantity::RotationalStiffness,
+                (true, true) => Quantity::Damping,
+                (true, false) => Quantity::RotationalDamping,
+            };
+            let kind = match (dashpot, pair) {
+                (false, false) => Kind::Spring,
+                (false, true) => Kind::Spring2,
+                (true, false) => Kind::Dashpot,
+                (true, true) => Kind::Dashpot2,
+            };
+            (kind, dof as u8, quantity(units, q, *entries.last().ok_or_else(|| error(line, "missing coefficient"))?, line)?)
         };
         let set = key(b.required("ELSET")?, line)?;
         let labels = elsets.get(&set).filter(|v| !v.is_empty()).ok_or_else(|| error(line, format!("missing/empty discrete element set `{set}`")))?;
@@ -106,29 +139,35 @@ pub(super) fn apply(
             if !assigned.insert(*id) {
                 return Err(error(line, format!("overlapping discrete properties for element {id}")));
             }
-            if model.node(record.node).is_none() {
-                return Err(error(record.line, format!("discrete element {id} names missing node {}", record.node)));
-            }
-            // Each iteration consumes either an existing name or a new definition. The bound
-            // includes all input sets, so hostile names cannot cause an unbounded search.
-            let mut target = None;
-            for _ in 0..=names.len() {
-                serial = serial.checked_add(1).ok_or_else(|| error(line, "discrete name limit reached"))?;
-                check_work(serial)?;
-                let name = format!("InpDiscreteTarget{serial}");
-                if names.insert(name.to_ascii_uppercase()) {
-                    target = Some(name);
-                    break;
+            let mut targets = Vec::new();
+            for node in std::iter::once(record.node).chain(record.second) {
+                if model.node(node).is_none() {
+                    return Err(error(record.line, format!("discrete element {id} names missing node {node}")));
                 }
+                // Bounded collision-free target names, including both endpoints.
+                let mut target = None;
+                for _ in 0..=names.len() {
+                    serial = serial.checked_add(1).ok_or_else(|| error(line, "discrete name limit reached"))?;
+                    check_work(serial)?;
+                    let name = format!("InpDiscreteTarget{serial}");
+                    if names.insert(name.to_ascii_uppercase()) {
+                        target = Some(name);
+                        break;
+                    }
+                }
+                let target = target.ok_or_else(|| error(line, "no free discrete target name"))?;
+                model.add_set(&target, Set { nodes: vec![node], ..Set::default() }).map_err(|e| error(line, e.to_string()))?;
+                targets.push(Target::Set(target));
             }
-            let target = target.ok_or_else(|| error(line, "no free discrete target name"))?;
-            model.add_set(&target, Set { nodes: vec![record.node], ..Set::default() }).map_err(|e| error(line, e.to_string()))?;
-            let target = Target::Set(target);
+            let target = targets.first().cloned().ok_or_else(|| error(line, "missing discrete target"))?;
+            let second = targets.get(1).cloned();
             let name = format!("InpDiscreteElement{id}");
             if mass || rotary {
                 model.add_mass(&name, PointMass { target, mass: point_mass, inertia })
+            } else if b.keyword == "DASHPOT" {
+                model.add_spring(&name, Spring::Dashpot { first: target, second, direction: Direction::Dof(dof), coefficient: value })
             } else {
-                model.add_spring(&name, Spring::Spring { first: target, second: None, direction: Direction::Dof(dof), stiffness: value })
+                model.add_spring(&name, Spring::Spring { first: target, second, direction: Direction::Dof(dof), stiffness: value })
             }
             .map_err(|e| error(line, e.to_string()))?;
         }
@@ -157,6 +196,27 @@ mod tests {
             ("100,200,250,10,-20,30", "1,1,1,2,0,0"),
         ] {
             assert!(read_in(&input.replace(a, b), Preset::MmTonneS).is_err());
+        }
+    }
+
+    #[test]
+    fn two_point_properties_keep_endpoints_units_and_refuse_distinct_dofs() {
+        let source = "*NODE\n1,0,0,0\n2,1,0,0\n*ELEMENT,TYPE=SPRING2,ELSET=K\n10,1,2\n*ELEMENT,TYPE=DASHPOT2,ELSET=C\n11,2,1\n*SPRING,ELSET=K\n1,1\n200\n*DASHPOT,ELSET=C\n1,1\n6\n*NSET,NSET=Ends,ELSET=K\n";
+        let mut model = read_in(source, Preset::MmTonneS).unwrap().model;
+        model.add_step(fieldcraft_model::Step::new("Check", fieldcraft_model::Procedure::Static {}), None).unwrap();
+        assert_eq!(model.set("Ends").unwrap().nodes, vec![1, 2]);
+        let resolved = model.resolve().unwrap();
+        assert!(resolved.springs.iter().any(|s| !s.dashpot && s.first == 1 && s.second == Some(2) && s.value == 200000.));
+        assert!(resolved.springs.iter().any(|s| s.dashpot && s.first == 2 && s.second == Some(1) && s.value == 6000.));
+        for text in [
+            source.replace("1,1\n200", "1,2\n200"),
+            source.replace("1,1\n6", "1,2\n6"),
+            source.replace("11,2,1", "11,2,99"),
+            source.replace("11,2,1", "11,2,2"),
+            source.replace("*DASHPOT,ELSET=C", "*DASHPOT,ELSET=C,NONLINEAR"),
+            source.replace("1,1\n6", "1,1\n6,10"),
+        ] {
+            assert!(read_in(&text, Preset::MKgS).is_err(), "{text}");
         }
     }
 

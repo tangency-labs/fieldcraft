@@ -466,18 +466,25 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
                     for (index, row) in block.rows.iter().enumerate() {
                         check_work(index)?;
                         let f = row_fields(row.text, row.line)?;
-                        let [id, node] = f.as_slice() else {
-                            return Err(error(row.line, "MASS/ROTARYI/SPRING1 requires an element label and one node"));
-                        };
-                        let id = label(id, row.line)?;
-                        let node = label(node, row.line)?;
+                        if f.len() != 1 + kind.node_count() {
+                            return Err(error(
+                                row.line,
+                                format!("{} requires an element label and {} node(s)", block.required("TYPE")?, kind.node_count()),
+                            ));
+                        }
+                        let id = label(f.first().map(String::as_str).unwrap_or_default(), row.line)?;
+                        let node = label(f.get(1).map(String::as_str).unwrap_or_default(), row.line)?;
+                        let second = f.get(2).map(|v| label(v, row.line)).transpose()?;
+                        if second == Some(node) {
+                            return Err(error(row.line, "two-point discrete element requires distinct nodes"));
+                        }
                         if !element_labels.insert(id) {
                             return Err(error(row.line, format!("duplicate element {id}")));
                         }
                         if element_labels.len() > limits.elements {
                             return Err(error(row.line, format!("element limit of {} reached", limits.elements)));
                         }
-                        discrete_elements.insert(id, discrete::Record { kind, node, line: row.line });
+                        discrete_elements.insert(id, discrete::Record { kind, node, second, line: row.line });
                         if let Some(name) = &set {
                             let raw = elsets.entry(name.clone()).or_default();
                             raw.line = line;
@@ -530,7 +537,7 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
                     return Err(error(line, "*ELEMENT has no data"));
                 }
             }
-            "MASS" | "ROTARYINERTIA" | "SPRING" => discrete_properties.push(block),
+            "MASS" | "ROTARYINERTIA" | "SPRING" | "DASHPOT" => discrete_properties.push(block),
             "NSET" | "ELSET" => {
                 block.only(if k == "NSET" { &["NSET", "GENERATE", "ELSET"] } else { &["ELSET", "GENERATE"] })?;
                 let name = named(block.required(k)?, line)?;
@@ -759,7 +766,9 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
         raw.line = line;
         for l in elements {
             if let Some(e) = discrete_elements.get(l) {
-                append_member(raw, Member::Label(e.node, line), &mut budget, member_limit, line)?;
+                for node in std::iter::once(e.node).chain(e.second) {
+                    append_member(raw, Member::Label(node, line), &mut budget, member_limit, line)?;
+                }
             } else if let Some(e) = model.element(*l) {
                 for n in &e.nodes {
                     append_member(raw, Member::Label(*n, line), &mut budget, member_limit, line)?;
@@ -850,12 +859,12 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
         let spelling = names.get(&name).ok_or_else(|| error(1, "missing set spelling"))?;
         model.add_set(spelling, set).map_err(|e| error(1, e.to_string()))?;
     }
-    if budget.saturating_add(discrete_elements.len()) > member_limit {
+    if budget.saturating_add(discrete_elements.values().map(|r| r.kind.node_count()).sum::<usize>()) > member_limit {
         return Err(error(1, "discrete target membership limit reached"));
     }
     discrete::apply(&mut model, &discrete_elements, &discrete_properties, &expanded_elements, &units)?;
     if !discrete_elements.is_empty() {
-        warnings.push(format!("{} MASS/ROTARYI/SPRING1 labels mapped to native InpDiscreteElement<label> definitions and explicit node target sets; their original ELSET memberships remain in source, not mesh element sets.", discrete_elements.len()));
+        warnings.push(format!("{} MASS/ROTARYI/SPRING1/SPRING2/DASHPOT1/DASHPOT2 labels mapped to native InpDiscreteElement<label> definitions and explicit node target sets; their original ELSET memberships remain in source, not mesh element sets.", discrete_elements.len()));
     }
     let mut has_planar = false;
     let mut assigned = BTreeMap::new();
