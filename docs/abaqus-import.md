@@ -708,7 +708,7 @@ history. **Native integration is Newmark average acceleration, not Abaqus's moda
 integration algorithm.** Continuous-response error must be checked separately;
 matching the imported and native-command models does not prove equal time discretization.
 
-`RESPONSE SPECTRUM` accepts explicit `SUM=SRSS` and `COMP=SRSS|R40` (default COMP
+`RESPONSE SPECTRUM` accepts explicit `SUM=SRSS|CQC` and `COMP=SRSS|R40` (default COMP
 is SRSS). Omitted SUM defaults to ABS in the source format and is refused, not
 silently changed. One shared positive constant `SPECTRUM, TYPE=ACCELERATION`
 table supplies pseudo-acceleration in the declared length/time-squared units,
@@ -720,7 +720,19 @@ map to independent directional excitation. Direction combination follows modal
 combination. Spatial loads are refused; output is a peak envelope, not a time
 history or simultaneous signed state, and acceleration is pseudo-acceleration.
 Nonconstant tables, TYPE=G/VELOCITY/DISPLACEMENT, damping tables, distinct spectra
-by direction, CQC/ABS/DSC and rigid-response additions are explicitly refused.
+by direction, ABS/DSC and rigid-response additions are explicitly refused.
+
+Response-spectrum T3D2 rods additionally require explicit `mass=lumped` in both
+solve and export; import does not select or change the solver mass policy.
+Consistent rod mass is not an equivalent T3D2 dynamic export and remains refused.
+The modal time-history importer retains its discrete MASS/SPRING1 restriction.
+
+CQC uses the native signed modal quadratic combination with the supplied common
+positive critical damping ratio; it is never substituted by SRSS. Zero damping
+is refused for CQC. Unequal modal damping remains refused by this single-damping
+spectrum-table importer, even though the native CQC kernel supports it. Close-mode
+verification compares an original two-mass rod model with the public equal-damping
+CQC correlation formula, an explicit SRSS control, save/reopen and normalized replay.
 
 Use `deck.write steps=["<dynamic step>"]` to write the independent analysis;
 the native writer supplies the equivalent modal extraction step. All transient

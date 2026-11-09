@@ -290,6 +290,13 @@ pub(super) fn import(text: &str, read: &mut Read, preset: Preset, limits: Limits
     if !curves.is_empty() && read.model.steps().iter().any(|s| matches!(s.procedure, Procedure::Static {})) {
         read.warnings.push("static amplitude curves are evaluated at the equilibrium step end; the original curves remain in the saved source, not a transient solution".into());
     }
+    if read.model.steps().iter().any(|s| matches!(s.procedure, Procedure::ResponseSpectrum(_)))
+        && read.model.elements().values().any(|e| e.kind.name() == "rod2")
+    {
+        read.warnings.push(
+            "RESPONSE SPECTRUM T3D2 requires explicit mass=lumped for equivalent solve/export; no solver mass policy was changed by import".into(),
+        );
+    }
     if read.unknown.iter().any(|u| is_output(&u.keyword)) {
         read.warnings.push("output requests retained; native procedure default outputs are used".into());
     }
