@@ -66,10 +66,6 @@ fn original_results() -> Vec<Solved> {
 }
 fn record(magic: &[u8; 8], kind: u8, payload: &[u8]) -> Vec<u8> {
     let mut b = magic.to_vec();
-    if magic == MAGIC {
-        b.extend_from_slice(&LAYOUT_SENTINEL.to_le_bytes());
-        b.extend_from_slice(LAYOUT);
-    }
     b.extend_from_slice(&1u32.to_le_bytes());
     b.extend_from_slice(&1u64.to_le_bytes());
     b.push(b'H');
@@ -106,7 +102,7 @@ fn round_trip(r: &Solved, kind: u8) {
     assert_eq!(opened.results.len(), 1);
     assert_eq!(opened.results[0].result, *r);
     assert_eq!(&b[..8], MAGIC);
-    assert_eq!(b[73], kind);
+    assert_eq!(b[53], kind);
     assert_eq!(decoded(&b), *r);
     let back = decoded(&b);
     assert_eq!(encode(&[("H", StoredRef { definition: [3; 32], result: back.as_ref() })]).unwrap(), b);
@@ -132,13 +128,18 @@ fn original_zero_through_five_read_version_05() {
         let old = record(LEGACY_MAGIC, kind as u8, &payload);
         assert_eq!(decoded(&old), r);
         let new = encode(&[("H", StoredRef { definition: [3; 32], result: r.as_ref() })]).unwrap();
-        if kind != 0 {
-            assert_eq!(&new[28..], &old[8..], "original kind {kind} payload changed");
+        if (1..=4).contains(&kind) {
+            assert_eq!(&new[8..], &old[8..], "original kind {kind} payload changed");
         }
+        if let Solved::Implicit(StepResult::Static(x)) = &r {
+            payload.clear();
+            codec::encode_into(x, &mut payload).unwrap();
+        }
+        assert_eq!(decoded(&record(PRE_MERGE_MAGIC, kind as u8, &payload)), r);
     }
 }
 #[test]
-fn allocated_seven_through_ten_round_trip_without_identity_loss() {
+fn seven_and_eight_preserve_fatigue_and_selected_mass() {
     let mut s = static_result();
     s.pretension =
         vec![fieldcraft_solver::pretension::SectionResult { name: "Bolt".into(), adjustment: 0.01, section_force: 10., applied_force: 10. }];
@@ -151,13 +152,13 @@ fn allocated_seven_through_ten_round_trip_without_identity_loss() {
         let mut h = harmonic();
         h.mass = mass;
         h.operator_diagonal_bounds = Some([[1000., 1000.], [0.5, 0.5]]);
-        round_trip(&Solved::Implicit(StepResult::Harmonic(h.clone())), 9);
+        round_trip(&Solved::Implicit(StepResult::Harmonic(h.clone())), 5);
         h.fatigue = Some(fatigue());
-        round_trip(&Solved::Implicit(StepResult::Harmonic(h)), 10);
+        round_trip(&Solved::Implicit(StepResult::Harmonic(h)), 8);
     }
     let mut h = harmonic();
     h.mass = MassKind::Lumped;
-    round_trip(&Solved::Implicit(StepResult::Harmonic(h)), 9);
+    round_trip(&Solved::Implicit(StepResult::Harmonic(h)), 5);
 }
 #[test]
 fn old_overlapping_kinds_are_never_guessed() {
@@ -167,32 +168,29 @@ fn old_overlapping_kinds_are_never_guessed() {
     assert!(error.contains("damaged"), "{error}");
     let mut old_harmonic = vec![];
     codec::encode_into(&(harmonic(), fatigue()), &mut old_harmonic).unwrap();
-    for kind in 6..=10 {
+    for kind in 6..=u8::MAX {
         // Even decodable fatigue bytes may not be guessed from an old overlapping number.
         for payload in [&old_static, &old_harmonic] {
-            let error = decode(&record(LEGACY_MAGIC, kind, payload)).unwrap_err().to_string();
-            assert!(error.contains("conflicting producer layouts"), "{kind}: {error}");
+            for magic in [LEGACY_MAGIC, PRE_MERGE_MAGIC] {
+                let error = decode(&record(magic, kind, payload)).unwrap_err().to_string();
+                assert!(error.contains("统一前的开发文件，请用原程序重新生成"), "{kind}: {error}");
+            }
         }
     }
 }
 
 #[test]
-fn unmarked_six_from_both_producers_requires_verified_recovery() {
-    for kind in 0..=10 {
-        let current = record(MAGIC, kind, &[]);
-        let mut old = MAGIC.to_vec();
-        old.extend_from_slice(&current[28..]);
-        assert!(decode(&old).unwrap_err().to_string().contains("unmarked version 06"));
+fn seven_has_no_development_kind_aliases() {
+    for kind in 9..=u8::MAX {
+        assert!(decode(&record(MAGIC, kind, &[])).unwrap_err().to_string().contains("unknown kind"));
     }
-    let mut unknown = record(MAGIC, 6, &[]);
-    unknown[12] ^= 1;
-    assert!(decode(&unknown).unwrap_err().to_string().contains("unknown version 06 layout"));
 }
 
 #[test]
 fn six_preserves_complete_dynamics_and_energy() {
     use fieldcraft_solver::transient::{Energy, Frame, Response};
-    let r = Response {
+    let mut r = Response {
+        mass: MassKind::Consistent,
         step: "H".into(),
         nodes: vec![1],
         spectrum: false,
@@ -210,6 +208,8 @@ fn six_preserves_complete_dynamics_and_energy() {
         }],
         energy: Some(vec![Energy { damping_dissipation: 4., external_work: 5., energy_balance: 6. }]),
     };
+    round_trip(&Solved::Implicit(StepResult::Dynamics(r.clone())), 6);
+    r.mass = MassKind::Lumped;
     round_trip(&Solved::Implicit(StepResult::Dynamics(r.clone())), 6);
     let mut spectrum = r;
     spectrum.frames[0].velocity.clear();

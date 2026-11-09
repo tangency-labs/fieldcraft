@@ -243,7 +243,7 @@ PSD and spectral fatigue inherit this identity and these phasors; `solve.random`
 rejects a separate `mass` parameter. Original version 05 kind 5 harmonic results without this field mean consistent
 mass. Version 05 kinds 6 and above are ambiguous across producer branches and
 are refused; preserve them and recover using the verified producer. New files
-use version 06 and the [unified result kinds](../../results-kind-layout.md). A later harmonic solve replaces the source and its fatigue
+use version 07 and the [unified result kinds](../../results-kind-layout.md). A later harmonic solve replaces the source and its fatigue
 result. Sensitivity/inverse harmonic commands retain their existing consistent-mass
 contract; they do not reuse a previously solved lumped result. Body/gravity load
 integration is unchanged; the base-motion PSD option still requires matching

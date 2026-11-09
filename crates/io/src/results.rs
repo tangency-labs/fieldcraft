@@ -5,14 +5,13 @@
 //! Little-endian:
 //!
 //! ```text
-//! "MCRSLT06"                     magic, 8 bytes (unified result-kind allocation)
-//! u32::MAX, "FC-P4A-UNIFIED-1"   explicit unified layout (16 ASCII bytes)
+//! "MCRSLT07"                     magic, 8 bytes (unified result-kind allocation)
 //! u32 steps
 //! steps × { u64 length, step name (UTF-8),
 //!           32 bytes: SHA-256 of the definition it was solved from ([`definition_hash`]),
 //!           u8 kind (0 static, 1 frequency, 2 heat transfer, 3 explicit dynamic, 4 fluid,
-//!                    5 legacy harmonic, 6 linear dynamics, 7 static with fatigue,
-//!                    8 legacy harmonic with fatigue, 9 harmonic with mass, 10 harmonic with mass and fatigue),
+//!                    5 harmonic with mass, 6 linear dynamics with energy and mass,
+//!                    7 static with fatigue, 8 harmonic with mass and fatigue),
 //!           u64 length, the result in the [`crate::codec`] encoding }   names ascending
 //! ```
 //!
@@ -29,8 +28,8 @@
 //! encoding's version changes with any change to them ([`MAGIC`]). A file whose results are of
 //! an unknown version opens without them ([`Decoded::OtherVersion`]). Version 05
 //! retains kinds 0–5; its overlapping higher kinds are explicitly refused, never
-//! guessed or silently dropped. Unmarked version 06 is also refused: both pre-merge
-//! producers used it for incompatible schemas. See docs/results-kind-layout.md for recovery.
+//! guessed or silently dropped. Version 06 also reads only kinds 0–5 using its
+//! pre-merge schemas. See docs/results-kind-layout.md for recovery.
 //!
 //! Reading treats the part as hostile, as `mesh.bin`: the number of steps is capped, every length
 //! is checked against the bytes present before anything is read for it, nothing may be left
@@ -44,12 +43,10 @@ use sha2::{Digest, Sha256};
 
 use crate::{Error, Geometry, MAX_FILE_BYTES, Result, codec, invalid};
 
-/// Unified allocation. Version 05 kinds above 5 are ambiguous across producer branches.
-pub const MAGIC: &[u8; 8] = b"MCRSLT06";
+/// Unified version 07. Old development kinds above 5 are never inferred.
+pub const MAGIC: &[u8; 8] = b"MCRSLT07";
 const LEGACY_MAGIC: &[u8; 8] = b"MCRSLT05";
-/// Distinguishes the unified layout from both incompatible pre-merge version 06 producers.
-const LAYOUT_SENTINEL: u32 = u32::MAX;
-const LAYOUT: &[u8; 16] = b"FC-P4A-UNIFIED-1";
+const PRE_MERGE_MAGIC: &[u8; 8] = b"MCRSLT06";
 
 /// The part's name.
 pub const PART: &str = "results.bin";
@@ -115,12 +112,13 @@ impl<'a> SolvedRef<'a> {
             }
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Frequency(_)) => 1,
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Heat(_)) => 2,
-            SolvedRef::Implicit(fieldcraft_solver::StepResult::Harmonic(r)) => match (legacy_harmonic(r), r.fatigue.is_some()) {
-                (true, false) => 5,
-                (true, true) => 8,
-                (false, false) => 9,
-                (false, true) => 10,
-            },
+            SolvedRef::Implicit(fieldcraft_solver::StepResult::Harmonic(r)) => {
+                if r.fatigue.is_some() {
+                    8
+                } else {
+                    5
+                }
+            }
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Dynamics(_)) => 6,
             SolvedRef::Explicit(_) => 3,
             SolvedRef::Fluid(_) => 4,
@@ -135,20 +133,10 @@ impl<'a> SolvedRef<'a> {
             },
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Frequency(r)) => codec::encode_into(r, out),
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Heat(r)) => codec::encode_into(r, out),
-            SolvedRef::Implicit(fieldcraft_solver::StepResult::Harmonic(r)) => {
-                if legacy_harmonic(r) {
-                    let old = LegacyHarmonicRef::from(r);
-                    match &r.fatigue {
-                        Some(f) => codec::encode_into(&(old, f), out),
-                        None => codec::encode_into(&old, out),
-                    }
-                } else {
-                    match &r.fatigue {
-                        Some(f) => codec::encode_into(&(r, f), out),
-                        None => codec::encode_into(r, out),
-                    }
-                }
-            }
+            SolvedRef::Implicit(fieldcraft_solver::StepResult::Harmonic(r)) => match &r.fatigue {
+                Some(f) => codec::encode_into(&(r, f), out),
+                None => codec::encode_into(r, out),
+            },
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Dynamics(r)) => codec::encode_into(r, out),
             SolvedRef::Explicit(r) => codec::encode_into(r, out),
             SolvedRef::Fluid(r) => codec::encode_into(r, out),
@@ -218,8 +206,6 @@ pub fn encode(results: &[(&str, StoredRef<'_>)]) -> Result<Vec<u8>> {
         return invalid(format!("{PART}: a step's result is listed twice"));
     }
     let mut out = MAGIC.to_vec();
-    out.extend_from_slice(&LAYOUT_SENTINEL.to_le_bytes());
-    out.extend_from_slice(LAYOUT);
     out.extend_from_slice(&u32::try_from(sorted.len()).unwrap_or(u32::MAX).to_le_bytes());
     for (name, stored) in sorted {
         if stored.result.step() != *name {
@@ -277,22 +263,11 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded> {
     }
     let mut r = Reader { bytes };
     let magic: [u8; 8] = r.array("the magic")?;
-    if &magic != MAGIC && &magic != LEGACY_MAGIC {
+    if &magic != MAGIC && &magic != LEGACY_MAGIC && &magic != PRE_MERGE_MAGIC {
         if magic.starts_with(b"MCRSLT") {
             return Ok(Decoded::OtherVersion(magic.iter().map(|b| if b.is_ascii_graphic() { *b as char } else { '?' }).collect()));
         }
         return invalid(format!("{PART} is not a results part (no {} magic)", String::from_utf8_lossy(MAGIC)));
-    }
-    if &magic == MAGIC {
-        let sentinel = u32::from_le_bytes(r.array("the layout sentinel")?);
-        if sentinel != LAYOUT_SENTINEL {
-            return invalid(format!(
-                "{PART}: unmarked version 06 has conflicting producer layouts; preserve the original and recover with its verified source/binary identity"
-            ));
-        }
-        if &r.array::<16>("the unified layout")? != LAYOUT {
-            return invalid(format!("{PART}: unknown version 06 layout; no fallback decoding"));
-        }
     }
     let count = u32::from_le_bytes(r.array("the step count")?) as usize;
     if count > MAX_STEPS {
@@ -310,14 +285,12 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded> {
         last = Some(name);
         let definition: [u8; 32] = r.array("a definition hash")?;
         let [kind] = r.array::<1>("a result kind")?;
+        if &magic != MAGIC && kind > 5 {
+            return invalid("统一前的开发文件，请用原程序重新生成");
+        }
         let len = u64::from_le_bytes(r.array("a result's length")?);
         let payload = r.take(len, "a result")?;
         let damaged = |e: codec::CodecError| Error::Invalid(format!("{PART}: the result of step `{name}` is damaged: {e}"));
-        if &magic == LEGACY_MAGIC && kind > 5 {
-            return invalid(format!(
-                "{PART}: version 05 kind {kind} has conflicting producer layouts; preserve the original and recover with its verified source/binary identity, then regenerate with version 06"
-            ));
-        }
         let result = match kind {
             0 => Solved::Implicit(fieldcraft_solver::StepResult::Static(if &magic == LEGACY_MAGIC {
                 codec::decode::<LegacyStatic>(payload).map_err(damaged)?.into_current()
@@ -328,8 +301,11 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded> {
             2 => Solved::Implicit(fieldcraft_solver::StepResult::Heat(codec::decode(payload).map_err(damaged)?)),
             3 => Solved::Explicit(codec::decode(payload).map_err(damaged)?),
             4 => Solved::Fluid(codec::decode(payload).map_err(damaged)?),
-            5 => Solved::Implicit(fieldcraft_solver::StepResult::Harmonic(decode_legacy_harmonic(payload).map_err(damaged)?)),
-            9 => Solved::Implicit(fieldcraft_solver::StepResult::Harmonic(codec::decode(payload).map_err(damaged)?)),
+            5 => Solved::Implicit(fieldcraft_solver::StepResult::Harmonic(if &magic == MAGIC {
+                codec::decode(payload).map_err(damaged)?
+            } else {
+                decode_legacy_harmonic(payload).map_err(damaged)?
+            })),
             6 => Solved::Implicit(fieldcraft_solver::StepResult::Dynamics(codec::decode(payload).map_err(damaged)?)),
             7 => {
                 let (mut r, f): (fieldcraft_solver::StaticResult, fieldcraft_solver::fatigue::field::FatigueField) =
@@ -337,15 +313,9 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded> {
                 r.fatigue = Some(f);
                 Solved::Implicit(fieldcraft_solver::StepResult::Static(r))
             }
-            10 => {
+            8 => {
                 let (mut r, f): (fieldcraft_solver::HarmonicResult, fieldcraft_solver::fatigue::field::FatigueField) =
                     codec::decode(payload).map_err(damaged)?;
-                r.fatigue = Some(f);
-                Solved::Implicit(fieldcraft_solver::StepResult::Harmonic(r))
-            }
-            8 => {
-                let (old, f): (LegacyHarmonic, fieldcraft_solver::fatigue::field::FatigueField) = codec::decode(payload).map_err(damaged)?;
-                let mut r = old.into_current();
                 r.fatigue = Some(f);
                 Solved::Implicit(fieldcraft_solver::StepResult::Harmonic(r))
             }
@@ -592,11 +562,8 @@ fn check_fluid(f: &FluidResult) -> std::result::Result<(), String> {
     Ok(())
 }
 
-fn legacy_harmonic(r: &fieldcraft_solver::HarmonicResult) -> bool {
-    r.mass == fieldcraft_solver::MassKind::Consistent && r.operator_diagonal_bounds.is_none()
-}
-
-// Borrow the old field order without copying potentially large frame arrays.
+// Independent pre-mass schema used by compatibility tests.
+#[cfg(test)]
 #[derive(serde::Serialize)]
 struct LegacyHarmonicRef<'a> {
     step: &'a str,
@@ -608,6 +575,7 @@ struct LegacyHarmonicRef<'a> {
     stats: &'a fieldcraft_solver::Stats,
     warnings: &'a [String],
 }
+#[cfg(test)]
 impl<'a> From<&'a fieldcraft_solver::HarmonicResult> for LegacyHarmonicRef<'a> {
     fn from(r: &'a fieldcraft_solver::HarmonicResult) -> Self {
         Self {
@@ -623,7 +591,7 @@ impl<'a> From<&'a fieldcraft_solver::HarmonicResult> for LegacyHarmonicRef<'a> {
     }
 }
 
-// Kinds 5/8 use the pre-mass harmonic layout. Never decode ambiguous version 05 kinds 6–9 here.
+// Version 05/06 kind 5 only. Never infer old kinds 6 and above.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct LegacyHarmonic {
     step: String,

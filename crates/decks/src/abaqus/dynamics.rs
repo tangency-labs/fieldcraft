@@ -25,6 +25,26 @@ fn common_curve<'a>(step: &Step, t: &'a Transient) -> Result<Option<&'a Amplitud
     Ok(first)
 }
 
+/// Only mappings whose mass operators are known to agree are written. In particular
+/// T3D2 is lumped, not a representation of FieldCraft's default consistent rod.
+/// Public Abaqus Element Library / Mass Formulation and rod dynamic-loading benchmark.
+pub(super) fn check_mass(model: &Model, mass: fieldcraft_model::MassKind) -> Result<()> {
+    for step in model.steps().iter().filter(|s| matches!(s.procedure, Procedure::Transient(_) | Procedure::ResponseSpectrum(_))) {
+        for (label, element) in model.elements() {
+            if element.kind.name() != "rod2" || mass != fieldcraft_model::MassKind::Lumped {
+                return Err(refuse(
+                    step,
+                    format!(
+                        "mass={mass:?}, element {label} `{}`: native dynamic mass mapping is not supported; rod2 requires lumped (T3D2)",
+                        element.kind.name()
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn check(model: &Model) -> Result<()> {
     for step in model.steps().iter().filter(|s| matches!(s.procedure, Procedure::Transient(_) | Procedure::ResponseSpectrum(_))) {
         if model.steps().len() != 1 {

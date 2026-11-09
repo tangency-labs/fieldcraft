@@ -2456,6 +2456,7 @@ pub const SAMPLE: &[Field] = &[choice(
 pub const COUNT: &[Field] = &[int("count", "Count", 1, 1_000_000).help("How many steps.").def("1")];
 
 pub const DECK: &[Field] = &[
+    choice("mass", "Dynamics mass", &[("consistent", "Consistent"), ("lumped", "Lumped")]).help("Dynamics only; default consistent. Must match stored results. Native rod2 requires lumped; unsupported distributed mass mappings are refused."),
     choice(
         "format",
         "Format",
@@ -3055,6 +3056,17 @@ pub const INVERSE_JOINT: &[Field] = &[
     MAX_FACTOR,
     THREADS,
 ];
+
+/// Per-solve dynamics mass, shared by direct/modal histories and spectra.
+pub const SOLVE_DYNAMICS: &[Field] = &[
+    STEP,
+    choice("mass", "Mass matrix", &[("consistent", "Consistent"), ("lumped", "Lumped")])
+        .def("\"consistent\"").help("Used in assembly, material damping, modal extraction, initial balance and energy; stored with the result. Each solve defaults to consistent."),
+    MAX_DOFS, MAX_FACTOR, MAX_MEMORY_GIB, THREADS,
+];
+
+pub const SOLVE_ALL: &[Field] = &[choice("mass", "Mass matrix", &[("consistent", "Consistent"), ("lumped", "Lumped")])
+    .help("Optional; requires all steps to be frequency, transient or response_spectrum. Defaults to consistent on each solve.")];
 
 #[cfg(test)]
 mod tests {

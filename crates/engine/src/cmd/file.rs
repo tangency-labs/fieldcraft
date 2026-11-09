@@ -1408,7 +1408,8 @@ mod tests {
     #[test]
     fn results_of_this_encoding_read_back() {
         let legacy = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/results/MCRSLT05");
-        for d in [results_fixtures(), legacy] {
+        let pre_merge = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/results/MCRSLT06");
+        for d in [results_fixtures(), legacy, pre_merge] {
             for (name, steps) in [("cantilever", &["Bend", "Modes"][..]), ("couette", &["Shear"]), ("impact", &["Impact"]), ("blocks", &["Squeeze"])]
             {
                 let bytes = std::fs::read(d.join(format!("{name}.fieldcraft"))).unwrap();

@@ -386,12 +386,12 @@ fn results_round_trip_and_hostile_results_are_refused() {
     trailing.push(0);
     assert!(refused(trailing, "trailing").contains("trailing"));
     let mut many = rb.clone();
-    many[28..32].copy_from_slice(&(results::MAX_STEPS as u32 + 1).to_le_bytes());
+    many[8..12].copy_from_slice(&(results::MAX_STEPS as u32 + 1).to_le_bytes());
     assert!(matches!(read(&with_part(&bytes, "results.bin", many)), Err(Error::Limit(_))));
     let mut long_name = rb.clone();
-    long_name[32..40].copy_from_slice(&u64::MAX.to_le_bytes());
+    long_name[12..20].copy_from_slice(&u64::MAX.to_le_bytes());
     refused(long_name, "a name longer than the part");
-    let kind_at = 32 + 8 + 4 + 32;
+    let kind_at = 12 + 8 + 4 + 32;
     let mut kind = rb.clone();
     kind[kind_at] = u8::MAX;
     assert!(refused(kind, "kind").contains("unknown kind"));
@@ -402,13 +402,13 @@ fn results_round_trip_and_hostile_results_are_refused() {
     payload_len[kind_at + 1..kind_at + 9].copy_from_slice(&(1u64 << 40).to_le_bytes());
     refused(payload_len, "a payload longer than the part");
     let mut name = rb.clone();
-    name[40] = b'1';
+    name[20] = b'1';
     refused(name, "a step name commands refuse");
     // A result that names another step, and one whose nodes do not ascend.
     let other = fieldcraft_solver::StepResult::Heat(fieldcraft_solver::HeatResult { step: "Other".into(), ..heat_result() });
     let wrong = results::encode(&[("Other", StoredRef { definition: hash, result: SolvedRef::Implicit(&other) })]).unwrap();
     let mut renamed = wrong.clone();
-    renamed[40..45].copy_from_slice(b"Otxer");
+    renamed[20..25].copy_from_slice(b"Otxer");
     assert!(refused(renamed, "renamed").contains("step `Other`'s"));
     let unsorted = fieldcraft_solver::StepResult::Heat(fieldcraft_solver::HeatResult { nodes: vec![3, 2, 1], ..heat_result() });
     let b = results::encode(&[("Heat", StoredRef { definition: hash, result: SolvedRef::Implicit(&unsorted) })]).unwrap();

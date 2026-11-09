@@ -251,7 +251,17 @@ pub(crate) fn load_vector(model: &Model, resolved: &Resolved, mesh: &Mesh, step:
 }
 
 pub(crate) fn damping_operators(model: &Model, resolved: &Resolved, mesh: &Mesh, graph: &NodeGraph) -> Result<(Option<Csr>, Option<Csr>)> {
-    damping_matrices(mesh, graph, &material_damping(model, resolved), MassKind::Consistent)
+    damping_operators_with_mass(model, resolved, mesh, graph, MassKind::Consistent)
+}
+
+pub(crate) fn damping_operators_with_mass(
+    model: &Model,
+    resolved: &Resolved,
+    mesh: &Mesh,
+    graph: &NodeGraph,
+    mass: MassKind,
+) -> Result<(Option<Csr>, Option<Csr>)> {
+    damping_matrices(mesh, graph, &material_damping(model, resolved), mass)
 }
 
 /// Solve a harmonic model step with consistent mass and the original boundary
