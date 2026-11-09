@@ -21,6 +21,15 @@ pub(crate) fn triangular_work(rhs: usize, lanes: usize, n: usize, entries: usize
     }
 }
 
+/// Logical projection pairings and vector elements, not hardware traffic.
+pub(crate) fn projection_work(kind: &str, n: usize, basis: usize, columns: usize, passes: usize) {
+    if enabled() {
+        let pairs = basis.saturating_mul(columns).saturating_mul(passes);
+        let elements = n.saturating_mul(pairs);
+        let _ = writeln!(std::io::stderr().lock(), "FIELDCRAFT_PROJECTION_WORK\t{kind}\t{n}\t{basis}\t{columns}\t{passes}\t{pairs}\t{elements}");
+    }
+}
+
 pub(crate) struct Span {
     name: &'static str,
     start: Option<Instant>,

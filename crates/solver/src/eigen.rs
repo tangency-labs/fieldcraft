@@ -20,6 +20,7 @@
 //! so results are reproducible.
 
 use crate::{Error, Result};
+use fieldcraft_parallel as parallel;
 
 /// Eigenvalues (ascending) and eigenvectors (column k of the row-major `vectors`) of a dense
 /// symmetric matrix (row-major, n × n).
@@ -240,6 +241,62 @@ fn dot(a: &[f64], b: &[f64]) -> f64 {
     a.iter().zip(b).map(|(x, y)| x * y).sum()
 }
 
+// Block classical Gram–Schmidt, twice (Parlett, ch. 13). Fixed panels and row
+// reductions are part of the algorithm, independent of the worker count.
+fn project_block(w: &mut [Vec<f64>], q: &[Vec<f64>], mq: &[Vec<f64>], n: usize) {
+    const WIDTH: usize = 8;
+    const ROWS: usize = 512;
+    let _timing = crate::timing::Span::new("lanczos_orthogonalize_projection");
+    let pack = |columns: &[Vec<f64>]| -> Vec<[f64; WIDTH]> {
+        (0..n).map(|i| std::array::from_fn(|j| columns.get(j).and_then(|v| v.get(i)).copied().unwrap_or(0.0))).collect()
+    };
+    let panels: Vec<_> = q.chunks(WIDTH).zip(mq.chunks(WIDTH)).map(|(q, mq)| (pack(q), pack(mq), q.len())).collect();
+    for columns in w.chunks_mut(WIDTH) {
+        let width = columns.len();
+        let mut values = pack(columns);
+        for _ in 0..2 {
+            for (basis, mass_basis, rank) in &panels {
+                let partials = parallel::map(n.div_ceil(ROWS), |tile| {
+                    let mut sums = [[0.0; WIDTH]; WIDTH];
+                    let start = tile * ROWS;
+                    let end = (start + ROWS).min(n);
+                    for (row, mrow) in values[start..end].iter().zip(&mass_basis[start..end]) {
+                        for (a, coefficients) in sums.iter_mut().enumerate().take(*rank) {
+                            for (sum, value) in coefficients.iter_mut().zip(row).take(width) {
+                                *sum += mrow[a] * value;
+                            }
+                        }
+                    }
+                    sums
+                });
+                let mut coefficients = [[0.0; WIDTH]; WIDTH];
+                for part in partials {
+                    for (row, p) in coefficients.iter_mut().zip(part).take(*rank) {
+                        for (c, v) in row.iter_mut().zip(p).take(width) {
+                            *c += v;
+                        }
+                    }
+                }
+                parallel::chunks_mut(&mut values, ROWS, |tile, rows| {
+                    for (row, qrow) in rows.iter_mut().zip(&basis[tile * ROWS..]) {
+                        for (a, c) in coefficients.iter().enumerate().take(*rank) {
+                            for (v, coefficient) in row.iter_mut().zip(c).take(width) {
+                                *v -= qrow[a] * coefficient;
+                            }
+                        }
+                    }
+                });
+            }
+        }
+        for (j, column) in columns.iter_mut().enumerate() {
+            for (v, row) in column.iter_mut().zip(&values) {
+                *v = row[j];
+            }
+        }
+    }
+    crate::timing::projection_work("block", n, q.len(), w.len(), 2);
+}
+
 /// Orthonormalize a block against the basis and itself in the M inner product (classical
 /// Gram–Schmidt, twice). A column that vanishes is replaced by a fresh random direction and its
 /// diagonal coefficient stays zero. Returns the new vectors, their M products and the
@@ -255,22 +312,37 @@ fn orthonormalize(
     let _timing = crate::timing::Span::new("lanczos_orthogonalize");
     let n = op.n();
     let k = w.len();
+    let blocked = !q.is_empty() && !std::env::var("FIELDCRAFT_PROJECTION").is_ok_and(|v| v == "scalar");
+    let mut w = w;
+    let mut initial_norms = Vec::new();
+    if blocked {
+        for v in &w {
+            let _mass_timing = crate::timing::Span::new("lanczos_orthogonalize_mass");
+            op.mass(v, scratch);
+            initial_norms.push(dot(v, scratch).max(0.0).sqrt());
+        }
+        project_block(&mut w, q, mq, n);
+    }
     let mut r = vec![vec![0.0; k]; k];
     let mut out: Vec<Vec<f64>> = Vec::with_capacity(k);
     let mut mout: Vec<Vec<f64>> = Vec::with_capacity(k);
     for (i, mut v) in w.into_iter().enumerate() {
         let mut fresh = false;
         for _attempt in 0..4 {
-            {
+            let before = if blocked && !fresh {
+                initial_norms.get(i).copied().unwrap_or(0.0)
+            } else {
                 let _mass_timing = crate::timing::Span::new("lanczos_orthogonalize_mass");
                 op.mass(&v, scratch);
-            }
-            let before = dot(&v, scratch).max(0.0).sqrt();
+                dot(&v, scratch).max(0.0).sqrt()
+            };
             let projection_timing = crate::timing::Span::new("lanczos_orthogonalize_projection");
             for _ in 0..2 {
-                for (qj, mqj) in q.iter().zip(mq) {
-                    let c = dot(mqj, &v);
-                    v.iter_mut().zip(qj).for_each(|(x, y)| *x -= c * y);
+                if !blocked || fresh {
+                    for (qj, mqj) in q.iter().zip(mq) {
+                        let c = dot(mqj, &v);
+                        v.iter_mut().zip(qj).for_each(|(x, y)| *x -= c * y);
+                    }
                 }
                 for (j, (qj, mqj)) in out.iter().zip(&mout).enumerate() {
                     let c = dot(mqj, &v);
@@ -280,6 +352,7 @@ fn orthonormalize(
                     }
                 }
             }
+            crate::timing::projection_work("column", n, out.len() + if !blocked || fresh { q.len() } else { 0 }, 1, 2);
             drop(projection_timing);
             {
                 let _mass_timing = crate::timing::Span::new("lanczos_orthogonalize_mass");
@@ -564,6 +637,46 @@ mod tests {
                 x[i] /= self.k[i] - self.shift * self.m[i];
             }
             Ok(())
+        }
+    }
+
+    #[test]
+    fn block_projection_fixed_reduction_and_tail_panels() {
+        let n = 1031;
+        let op = Diagonal { k: vec![1.0; n], m: (0..n).map(|i| 1.0 + (i % 7) as f64).collect(), shift: 0.0 };
+        let mut rng = Random::new(91);
+        let mut scratch = vec![0.0; n];
+        let start = (0..11).map(|_| (0..n).map(|_| rng.uniform()).collect()).collect();
+        let (q, mq, _) = orthonormalize(&op, start, &[], &[], &mut rng, &mut scratch);
+        let w: Vec<Vec<f64>> = (0..9).map(|_| (0..n).map(|_| rng.uniform()).collect()).collect();
+        let mut scalar = w.clone();
+        for v in &mut scalar {
+            for _ in 0..2 {
+                for (qj, mqj) in q.iter().zip(&mq) {
+                    let c = dot(mqj, v);
+                    for (x, y) in v.iter_mut().zip(qj) {
+                        *x -= c * y;
+                    }
+                }
+            }
+        }
+        let mut reference = None;
+        for threads in [1, 2, 7] {
+            let mut got = w.clone();
+            parallel::with_threads(threads, || project_block(&mut got, &q, &mq, n));
+            for (v, expected) in got.iter().zip(&scalar) {
+                let error = v.iter().zip(expected).map(|(a, b)| (a - b).powi(2)).sum::<f64>().sqrt();
+                assert!(error < 1e-12, "projection difference {error}");
+                for mqj in &mq {
+                    assert!(dot(mqj, v).abs() < 1e-12);
+                }
+            }
+            let bits: Vec<_> = got.iter().flatten().map(|v| v.to_bits()).collect();
+            if let Some(expected) = &reference {
+                assert_eq!(&bits, expected);
+            } else {
+                reference = Some(bits);
+            }
         }
     }
 

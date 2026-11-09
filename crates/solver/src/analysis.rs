@@ -816,6 +816,20 @@ fn frequency_impl(
     let max_basis = lanczos_basis(limits, neq);
     let op = ShiftInvert { m: &mff, factor: &chol };
     let pairs = lanczos(&op, shift, wanted, BLOCK, max_basis, TOLERANCE)?;
+    if std::env::var("FIELDCRAFT_MODAL_ORTHOGONALITY").is_ok_and(|v| v == "1") {
+        use std::io::Write;
+        let _timing = crate::timing::Span::new("frequency_mass_orthogonality");
+        let mut mphi = vec![0.0; neq];
+        let mut maximum = 0.0_f64;
+        for (j, phi) in pairs.vectors.iter().enumerate() {
+            mff.mul(phi, &mut mphi);
+            for (i, v) in pairs.vectors.iter().enumerate() {
+                let g: f64 = v.iter().zip(&mphi).map(|(a, b)| a * b).sum();
+                maximum = maximum.max((g - if i == j { 1.0 } else { 0.0 }).abs());
+            }
+        }
+        let _ = writeln!(std::io::stderr().lock(), "FIELDCRAFT_MASS_ORTHOGONALITY\t{}\t{maximum:.17e}", pairs.values.len());
+    }
     let convergence = if let Some(k) = residual_k {
         let _timing = crate::timing::Span::new("frequency_actual_residuals");
         let residuals = pairs
