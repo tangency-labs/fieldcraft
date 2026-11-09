@@ -1,5 +1,9 @@
 # Linear static analysis
 
+Six-node `tri6` shells use [MITC6-a](../../solvers/mitc6.md), with shared curved
+directors and layered constitutive/mass integration. Its documented plate-only
+buckling and coarse-mesh accuracy limits apply.
+
 `solve.static` computes the small-displacement equilibrium K u = f of a static step: the
 displacements and rotations, the reactions at the prescribed degrees of freedom and coupled
 reference points, and the stresses at the integration points and averaged at the nodes. It
@@ -267,6 +271,10 @@ probe at the foot's end lies within 0.13 % of the fine tet10 solution.
 | Errors and caps | singular model names a node; `max_dofs`, `max_factor_entries` refuse with the byte estimate | — | — | `errors_name_the_problem` |
 
 ## Limitations
+
+- Quad8 shell sections use [MITC8](../../solvers/mitc8.md) for homogeneous or layered elastic linear statics.
+  Reduced-integration quad8 (S8R) is refused; frequency/harmonic analysis uses the documented MITC8 mass,
+  and buckling requires a coplanar plate and flat preload; the other shell families keep their existing scope.
 
 - Small displacements and linear elasticity: plasticity, damage and erosion are left out with a
   warning; hyperelastic materials take their small-strain linear limit. For large deformation,

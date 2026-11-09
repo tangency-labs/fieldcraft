@@ -161,6 +161,11 @@ pub fn solve_with_mass(model: &Model, name: Option<&str>, mass: MassKind, limits
         }
     }
     let mesh = Mesh::new(model, &resolved, limits.max_dofs)?;
+    if mesh.structural.iter().any(|e| matches!(e.kind, fieldcraft_model::ElementKind::Quad8 | fieldcraft_model::ElementKind::Tri6)) {
+        return Err(Error::NotSupported(
+            "MITC8/MITC6-a transient and response-spectrum procedures are not validated; use frequency or harmonic steps".into(),
+        ));
+    }
     if matches!(&step.procedure, Procedure::Transient(t) if t.adaptive.is_some())
         && (0..mesh.dofs())
             .any(|d| !matches!(mesh.kind(d), Some(fieldcraft_fem::DofKind::Ux | fieldcraft_fem::DofKind::Uy | fieldcraft_fem::DofKind::Uz)))

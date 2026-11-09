@@ -1342,3 +1342,15 @@ multi-sweeping.
 - The DualCube code repo: 404 at the name given in search results.
 - The HexMe workflow repo URL: not stated in the paper. `dds-hexmeshing` is a related LIHPC repo, not confirmed as the
   HexMe workflow.
+
+## Curved shell discretization
+
+The eight-node shell kernel follows K. J. Bathe and E. N. Dvorkin, *A formulation of general shell elements—the use of mixed interpolation of tensorial components*, IJNME 22:697–722 (1986), doi:10.1002/nme.1620220312, Fig. 7 and equations (9)–(22). Geometry/director notation also follows P.-S. Lee and K.-J. Bathe, Computers & Structures 82:945–962 (2004), equations (1)–(8), doi:10.1016/j.compstruc.2004.02.004. Formula-to-code mapping and limitations: [MITC8](../solvers/mitc8.md).
+
+- P.-S. Lee and K.-J. Bathe, *Insight into finite element shell discretizations by use of the basic shell mathematical model*, Computers & Structures 83 (2005), 69–90, doi:10.1016/j.compstruc.2004.07.005, section 3: shared nodal director construction in `solver::system`; only the geometry discussion is used, not its MITC9 interpolation.
+
+MITC8 inertia inserts the same Lee–Bathe director kinematics into kinetic energy; diagonal scaling follows Hinton, Rock & Zienkiewicz, Earthquake Engineering & Structural Dynamics4(1976),245–249, doi:10.1002/eqe.4290040305. The explicit artificial drilling inertia is documented separately from physical director inertia. Flat-plate initial-stress energy follows Bathe2014 §6.8.2 and Nemeth, Stein & Johnson, [NASA TP-2528](https://ntrs.nasa.gov/citations/19860011385), equation(12); its p.10 Table I unperforated isotropic K=4.00 supplies an independent buckling reference. Leissa, [NASA SP-160](https://ntrs.nasa.gov/citations/19700009156), chapter4 pp.44–45, supplies the simply-supported rectangular plate frequency reference. No reference program sources or input decks are used.
+
+MITC6-a: Lee & Bathe (2004), doi:10.1016/j.compstruc.2004.02.004, equations
+(29)–(38), Figures 6–7a, implemented in `fem::mitc8::QuadraticShell<6,36>`.
+See [the formula-to-code mapping](../solvers/mitc6.md).

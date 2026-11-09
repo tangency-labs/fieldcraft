@@ -1,0 +1,215 @@
+{
+  "title": "MITC8 laminate harmonic Navier response",
+  "kind": "theory",
+  "source": "C. W. Bert and C. C. Siu, NASA CR-112140 (1972), \u00a7\u00a72.2\u20132.6 and 4.1, https://ntrs.nasa.gov/citations/19720022240; separated Navier amplitudes derived in README, with this case's fixed 5/6 shear factor; laminate moments: A. T. Nettles, Basic Mechanics of Laminated Composite Plates, NASA RP-1351 (1994), \u00a7\u00a7II\u2013IV, https://ntrs.nasa.gov/citations/19950009349; independent dynamic stiffness K-omega^2 M+i omega (2M), exp(+i omega t).",
+  "quantities": [
+    {
+      "id": "consistent_direct0real",
+      "quantity": "consistent_direct0real",
+      "measure": {
+        "from": "consistent_direct",
+        "pointer": "/nodes/0/samples/0/displacement_real/2"
+      },
+      "value": 1.249792775722662e-06,
+      "tolerance": {
+        "relative": 0.03
+      },
+      "reason": "Fixed3% separated FSDT phasor band at20/30Hz below first40.82Hz mode; alpha=2/s; no fit at resonance."
+    },
+    {
+      "id": "consistent_direct0imaginary",
+      "quantity": "consistent_direct0imaginary",
+      "measure": {
+        "from": "consistent_direct",
+        "pointer": "/nodes/0/samples/0/displacement_imaginary/2"
+      },
+      "value": -6.282290392801996e-09,
+      "tolerance": {
+        "relative": 0.03
+      },
+      "reason": "Fixed3% separated FSDT phasor band at20/30Hz below first40.82Hz mode; alpha=2/s; no fit at resonance."
+    },
+    {
+      "id": "consistent_direct1real",
+      "quantity": "consistent_direct1real",
+      "measure": {
+        "from": "consistent_direct",
+        "pointer": "/nodes/0/samples/1/displacement_real/2"
+      },
+      "value": 2.064799662521623e-06,
+      "tolerance": {
+        "relative": 0.03
+      },
+      "reason": "Fixed3% separated FSDT phasor band at20/30Hz below first40.82Hz mode; alpha=2/s; no fit at resonance."
+    },
+    {
+      "id": "consistent_direct1imaginary",
+      "quantity": "consistent_direct1imaginary",
+      "measure": {
+        "from": "consistent_direct",
+        "pointer": "/nodes/0/samples/1/displacement_imaginary/2"
+      },
+      "value": -2.5724415656570984e-08,
+      "tolerance": {
+        "relative": 0.03
+      },
+      "reason": "Fixed3% separated FSDT phasor band at20/30Hz below first40.82Hz mode; alpha=2/s; no fit at resonance."
+    },
+    {
+      "id": "consistent_modal0real",
+      "quantity": "consistent_modal0real",
+      "measure": {
+        "from": "consistent_modal",
+        "pointer": "/nodes/0/samples/0/displacement_real/2"
+      },
+      "value": 1.249792775722662e-06,
+      "tolerance": {
+        "relative": 0.03
+      },
+      "reason": "Fixed3% separated FSDT phasor band at20/30Hz below first40.82Hz mode; alpha=2/s; no fit at resonance."
+    },
+    {
+      "id": "consistent_modal0imaginary",
+      "quantity": "consistent_modal0imaginary",
+      "measure": {
+        "from": "consistent_modal",
+        "pointer": "/nodes/0/samples/0/displacement_imaginary/2"
+      },
+      "value": -6.282290392801996e-09,
+      "tolerance": {
+        "relative": 0.03
+      },
+      "reason": "Fixed3% separated FSDT phasor band at20/30Hz below first40.82Hz mode; alpha=2/s; no fit at resonance."
+    },
+    {
+      "id": "consistent_modal1real",
+      "quantity": "consistent_modal1real",
+      "measure": {
+        "from": "consistent_modal",
+        "pointer": "/nodes/0/samples/1/displacement_real/2"
+      },
+      "value": 2.064799662521623e-06,
+      "tolerance": {
+        "relative": 0.03
+      },
+      "reason": "Fixed3% separated FSDT phasor band at20/30Hz below first40.82Hz mode; alpha=2/s; no fit at resonance."
+    },
+    {
+      "id": "consistent_modal1imaginary",
+      "quantity": "consistent_modal1imaginary",
+      "measure": {
+        "from": "consistent_modal",
+        "pointer": "/nodes/0/samples/1/displacement_imaginary/2"
+      },
+      "value": -2.5724415656570984e-08,
+      "tolerance": {
+        "relative": 0.03
+      },
+      "reason": "Fixed3% separated FSDT phasor band at20/30Hz below first40.82Hz mode; alpha=2/s; no fit at resonance."
+    },
+    {
+      "id": "lumped_direct0real",
+      "quantity": "lumped_direct0real",
+      "measure": {
+        "from": "lumped_direct",
+        "pointer": "/nodes/0/samples/0/displacement_real/2"
+      },
+      "value": 1.249792775722662e-06,
+      "tolerance": {
+        "relative": 0.03
+      },
+      "reason": "Fixed3% separated FSDT phasor band at20/30Hz below first40.82Hz mode; alpha=2/s; no fit at resonance."
+    },
+    {
+      "id": "lumped_direct0imaginary",
+      "quantity": "lumped_direct0imaginary",
+      "measure": {
+        "from": "lumped_direct",
+        "pointer": "/nodes/0/samples/0/displacement_imaginary/2"
+      },
+      "value": -6.282290392801996e-09,
+      "tolerance": {
+        "relative": 0.03
+      },
+      "reason": "Fixed3% separated FSDT phasor band at20/30Hz below first40.82Hz mode; alpha=2/s; no fit at resonance."
+    },
+    {
+      "id": "lumped_direct1real",
+      "quantity": "lumped_direct1real",
+      "measure": {
+        "from": "lumped_direct",
+        "pointer": "/nodes/0/samples/1/displacement_real/2"
+      },
+      "value": 2.064799662521623e-06,
+      "tolerance": {
+        "relative": 0.03
+      },
+      "reason": "Fixed3% separated FSDT phasor band at20/30Hz below first40.82Hz mode; alpha=2/s; no fit at resonance."
+    },
+    {
+      "id": "lumped_direct1imaginary",
+      "quantity": "lumped_direct1imaginary",
+      "measure": {
+        "from": "lumped_direct",
+        "pointer": "/nodes/0/samples/1/displacement_imaginary/2"
+      },
+      "value": -2.5724415656570984e-08,
+      "tolerance": {
+        "relative": 0.03
+      },
+      "reason": "Fixed3% separated FSDT phasor band at20/30Hz below first40.82Hz mode; alpha=2/s; no fit at resonance."
+    },
+    {
+      "id": "lumped_modal0real",
+      "quantity": "lumped_modal0real",
+      "measure": {
+        "from": "lumped_modal",
+        "pointer": "/nodes/0/samples/0/displacement_real/2"
+      },
+      "value": 1.249792775722662e-06,
+      "tolerance": {
+        "relative": 0.03
+      },
+      "reason": "Fixed3% separated FSDT phasor band at20/30Hz below first40.82Hz mode; alpha=2/s; no fit at resonance."
+    },
+    {
+      "id": "lumped_modal0imaginary",
+      "quantity": "lumped_modal0imaginary",
+      "measure": {
+        "from": "lumped_modal",
+        "pointer": "/nodes/0/samples/0/displacement_imaginary/2"
+      },
+      "value": -6.282290392801996e-09,
+      "tolerance": {
+        "relative": 0.03
+      },
+      "reason": "Fixed3% separated FSDT phasor band at20/30Hz below first40.82Hz mode; alpha=2/s; no fit at resonance."
+    },
+    {
+      "id": "lumped_modal1real",
+      "quantity": "lumped_modal1real",
+      "measure": {
+        "from": "lumped_modal",
+        "pointer": "/nodes/0/samples/1/displacement_real/2"
+      },
+      "value": 2.064799662521623e-06,
+      "tolerance": {
+        "relative": 0.03
+      },
+      "reason": "Fixed3% separated FSDT phasor band at20/30Hz below first40.82Hz mode; alpha=2/s; no fit at resonance."
+    },
+    {
+      "id": "lumped_modal1imaginary",
+      "quantity": "lumped_modal1imaginary",
+      "measure": {
+        "from": "lumped_modal",
+        "pointer": "/nodes/0/samples/1/displacement_imaginary/2"
+      },
+      "value": -2.5724415656570984e-08,
+      "tolerance": {
+        "relative": 0.03
+      },
+      "reason": "Fixed3% separated FSDT phasor band at20/30Hz below first40.82Hz mode; alpha=2/s; no fit at resonance."
+    }
+  ]
+}

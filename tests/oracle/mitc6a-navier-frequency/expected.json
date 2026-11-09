@@ -1,0 +1,111 @@
+{
+  "title": "MITC6-a laminate Navier frequencies and total mass",
+  "kind": "theory",
+  "source": "C. W. Bert and C. C. Siu, NASA CR-112140 (1972), \u00a7\u00a72.2\u20132.6 and 4.1, https://ntrs.nasa.gov/citations/19720022240; separated Navier amplitudes derived in README, with this case's fixed 5/6 shear factor; laminate moments: A. T. Nettles, Basic Mechanics of Laminated Composite Plates, NASA RP-1351 (1994), \u00a7\u00a7II\u2013IV, https://ntrs.nasa.gov/citations/19950009349; Element: Lee & Bathe (2004), doi:10.1016/j.compstruc.2004.02.004, MITC6-a equations (29)-(38).",
+  "quantities": [
+    {
+      "id": "consistent1",
+      "quantity": "consistent1",
+      "measure": {
+        "from": "consistent",
+        "pointer": "/modes/0/frequency"
+      },
+      "value": 40.82260671417634,
+      "tolerance": {
+        "relative": 0.02
+      },
+      "reason": "Fixed 2% first / 5% higher flexural-mode band; split4x4 (32 triangles) MITC6-a, both mass choices; includes FSDT shear and physical rotary inertia."
+    },
+    {
+      "id": "consistent2",
+      "quantity": "consistent2",
+      "measure": {
+        "from": "consistent",
+        "pointer": "/modes/1/frequency"
+      },
+      "value": 80.72343659864754,
+      "tolerance": {
+        "relative": 0.05
+      },
+      "reason": "Fixed 2% first / 5% higher flexural-mode band; split4x4 (32 triangles) MITC6-a, both mass choices; includes FSDT shear and physical rotary inertia."
+    },
+    {
+      "id": "consistent3",
+      "quantity": "consistent3",
+      "measure": {
+        "from": "consistent",
+        "pointer": "/modes/2/frequency"
+      },
+      "value": 139.10179764346975,
+      "tolerance": {
+        "relative": 0.05
+      },
+      "reason": "Fixed 2% first / 5% higher flexural-mode band; split4x4 (32 triangles) MITC6-a, both mass choices; includes FSDT shear and physical rotary inertia."
+    },
+    {
+      "id": "consistent_mass",
+      "quantity": "consistent_mass",
+      "measure": {
+        "from": "consistent",
+        "pointer": "/total_mass"
+      },
+      "value": 16.0,
+      "tolerance": {
+        "relative": 1e-12
+      },
+      "reason": "Total density times reference volume; exact for this flat plate."
+    },
+    {
+      "id": "lumped1",
+      "quantity": "lumped1",
+      "measure": {
+        "from": "lumped",
+        "pointer": "/modes/0/frequency"
+      },
+      "value": 40.82260671417634,
+      "tolerance": {
+        "relative": 0.02
+      },
+      "reason": "Fixed 2% first / 5% higher flexural-mode band; split4x4 (32 triangles) MITC6-a, both mass choices; includes FSDT shear and physical rotary inertia."
+    },
+    {
+      "id": "lumped2",
+      "quantity": "lumped2",
+      "measure": {
+        "from": "lumped",
+        "pointer": "/modes/1/frequency"
+      },
+      "value": 80.72343659864754,
+      "tolerance": {
+        "relative": 0.05
+      },
+      "reason": "Fixed 2% first / 5% higher flexural-mode band; split4x4 (32 triangles) MITC6-a, both mass choices; includes FSDT shear and physical rotary inertia."
+    },
+    {
+      "id": "lumped3",
+      "quantity": "lumped3",
+      "measure": {
+        "from": "lumped",
+        "pointer": "/modes/2/frequency"
+      },
+      "value": 139.10179764346975,
+      "tolerance": {
+        "relative": 0.05
+      },
+      "reason": "Fixed 2% first / 5% higher flexural-mode band; split4x4 (32 triangles) MITC6-a, both mass choices; includes FSDT shear and physical rotary inertia."
+    },
+    {
+      "id": "lumped_mass",
+      "quantity": "lumped_mass",
+      "measure": {
+        "from": "lumped",
+        "pointer": "/total_mass"
+      },
+      "value": 16.0,
+      "tolerance": {
+        "relative": 1e-12
+      },
+      "reason": "Total density times reference volume; exact for this flat plate."
+    }
+  ]
+}

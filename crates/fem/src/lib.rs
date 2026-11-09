@@ -81,6 +81,7 @@ pub mod laminate;
 pub mod locate;
 pub mod material;
 mod material_axes;
+pub mod mitc8;
 pub mod mortar;
 pub mod plane;
 pub mod plasticity;

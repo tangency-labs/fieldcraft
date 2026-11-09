@@ -286,3 +286,16 @@ Native Hex8 now has an independent thirteen-variable enhanced-gradient option fo
 Abaqus import: C3D8I now selects the thirteen-variable nonhybrid isotropic small-strain static formulation; C3D8IH and unsupported procedures remain refused. First elastic rod NLGEOM=YES equilibrium and its frequency base state round-trip without dropping history.
 
 Abaqus history: boundary modifications retain node/set and named/direct identity; ambiguous replacements are refused. A five-step, two-instance INCLUDE case checks effective load/constraint inheritance, amplitude endpoints, solving and source/normalized round trips.
+
+
+### Curved quadratic shell statics
+
+Eight-node MITC8 homogeneous and layered elastic statics use quadratic surface/director geometry and the Bathe–Dvorkin tensor interpolation. See [formulation and verification](docs/solvers/mitc8.md). Consistent and positive-diagonal lumped density-layer mass feed frequency and direct/modal harmonic solves; flat-preload plates support linear buckling. Six-node triangular, continuum and axisymmetric shells, transient/spectrum and curved-shell geometric stiffness remain open.
+
+- MITC8 smooth patches share nodal director axes with global rotations. Layerwise
+  elastic statics integrate each ply and its material directions; mass, dynamics
+  and initial-stress operators remain unsupported.
+
+- Six-node MITC6-a: shared curved geometry/directors, layer integration and mass;
+  linear static, modal/harmonic and flat-plate buckling paths. Formula and accuracy
+  limits: [MITC6-a](docs/solvers/mitc6.md).

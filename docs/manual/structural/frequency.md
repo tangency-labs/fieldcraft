@@ -1,5 +1,16 @@
 # Natural frequencies
 
+Six-node `tri6` shells use [MITC6-a](../../solvers/mitc6.md), with shared curved
+directors and layered constitutive/mass integration. Its documented plate-only
+buckling and coarse-mesh accuracy limits apply.
+
+Curved `quad8` MITC8 supports consistent and positive-diagonal lumped mass for
+frequency and harmonic analysis, including ply densities and rotary inertia.
+Consistent mass retains offset/density first-moment coupling; lumped mass omits it.
+Both include an explicitly artificial drilling inertia. Transient and spectrum steps
+remain refused; curved-shell prestress is also refused.
+See [MITC8 scope](../../solvers/mitc8.md).
+
 `solve.frequency` computes the lowest natural frequencies and mode shapes of a structure,
 K φ = ω² M φ, with every boundary condition of the step held at zero, together with each mode's
 participation factors and effective masses. The eigenproblem is solved by the shifted block

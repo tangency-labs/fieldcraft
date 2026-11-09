@@ -727,6 +727,7 @@ fn what_abaqus_cannot_express_is_named() {
     .unwrap();
     tri6.add_step(step("Modes", Procedure::Frequency { modes: 1, min_hz: None, max_hz: None }, &[], &[]), None).unwrap();
     assert!(unsupported(&tri6).contains("tri6 shells"));
+    assert!(unsupported(&tri6).contains("STRI65"));
 
     assert!(unsupported(&with_section(ElementKind::Quad8, shell.clone(), Integration::Full)).contains("full integration of quad8"));
     assert!(unsupported(&with_section(ElementKind::Tet10, SectionKind::Solid {}, Integration::Reduced)).contains("reduced integration of tet10"));
