@@ -282,3 +282,31 @@ fn two_close_modes_keep_signed_components_through_spectrum_commands() {
         assert!((u[1].as_f64().unwrap() - (a * a + b * b - cross).sqrt()).abs() < 1e-10);
     }
 }
+
+#[test]
+fn nonzero_initial_state_round_trip_and_missing_node_refusal() {
+    let mut s = rod();
+    let procedure = json!({"type":"transient","time_step":0.01,"increments":10,"output_every":1,
+        "integration":{"type":"hht","alpha":-0.1},
+        "initial_displacement":{"2":[0.001,0,0]},"initial_velocity":{"2":[0.002,0,0]}});
+    s.execute("model.step.edit", &json!({"name":"Pulse","loads":[],"procedure":procedure})).unwrap();
+    s.execute("solve.transient", &json!({"step":"Pulse","threads":1})).unwrap();
+    let before = probe(&mut s);
+    let initial = &before["nodes"][0]["samples"][0];
+    assert_eq!(initial["displacement"][0], 0.001);
+    assert_eq!(initial["velocity"][0], 0.002);
+    assert!((initial["acceleration"][0].as_f64().unwrap() + 0.004).abs() < 1e-12);
+    let path = std::env::temp_dir().join(format!("fieldcraft-initial-roundtrip-{}.fieldcraft", std::process::id()));
+    s.execute("file.save_as", &json!({"path":path,"results":true})).unwrap();
+    let mut restored = Session::default();
+    restored.execute("file.open", &json!({"path":path})).unwrap();
+    assert_eq!(probe(&mut restored), before);
+    restored.execute("solve.transient", &json!({"step":"Pulse","threads":1})).unwrap();
+    assert_eq!(probe(&mut restored), before);
+    let mut missing = procedure;
+    missing["initial_displacement"] = json!({"999":[0.001,0,0]});
+    restored.execute("model.step.edit", &json!({"name":"Pulse","procedure":missing})).unwrap();
+    let error = restored.execute("solve.transient", &json!({"step":"Pulse","threads":1})).unwrap_err();
+    assert!(error.to_string().contains("initial node 999 not present"), "{error}");
+    let _ = std::fs::remove_file(path);
+}

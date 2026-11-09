@@ -1395,15 +1395,13 @@ impl Model {
         for l in &step.loads {
             require(&self.loads, "load", l).map_err(|e| context("step", &step.name, e))?;
         }
-        if let Procedure::Transient(t) = &step.procedure {
-            if let Some(name) = t.load_amplitudes.keys().find(|name| !step.loads.contains(*name)) {
-                return Err(context("step", &step.name, Error::Invalid(format!("amplitude names inactive load `{name}`"))));
-            }
-            for node in t.initial_displacement.keys().chain(t.initial_velocity.keys()) {
-                if self.node(*node).is_none() {
-                    return Err(Error::Invalid(format!("initial node {node} does not exist")));
-                }
-            }
+        // Initial node references are resolved against the solve mesh, like set targets.
+        // Native files deserialize the definition before loading mesh.bin, so checking
+        // node existence here would reject every saved nonempty initial state.
+        if let Procedure::Transient(t) = &step.procedure
+            && let Some(name) = t.load_amplitudes.keys().find(|name| !step.loads.contains(*name))
+        {
+            return Err(context("step", &step.name, Error::Invalid(format!("amplitude names inactive load `{name}`"))));
         }
         if let Procedure::Harmonic(h) = &step.procedure
             && let Some(name) = h.load_factors.keys().find(|name| !step.loads.contains(*name))

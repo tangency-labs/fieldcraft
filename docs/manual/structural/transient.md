@@ -31,7 +31,8 @@ The solver assembles consistent M, K (including surface foundations), and C (das
 material and foundation viscous damping). Step Rayleigh damping adds `alpha M + beta K`.
 Structural loss factors are refused, not converted into a time-domain damping constant.
 `initial_displacement` and `initial_velocity` map node labels to XYZ translations.
-They default to zero and must satisfy active constraints. Initial acceleration is obtained
+They default to zero and must satisfy active constraints. Node existence is checked against
+the resolved solve mesh; native files load their definition before the separate mesh part. Initial acceleration is obtained
 from `M a0 = f(0+) - C v0 - K u0`; it is not assumed zero.
 
 The fixed-step methods are Newmark average acceleration (`beta=1/4, gamma=1/2`),
@@ -165,3 +166,74 @@ SRSS/CQC and damping/direction interpolation features. A successful solve does n
 modal truncation accuracy or an external benchmark agreement. Performance reports must name
 the actual integration method, retained modes, time step, increment count and saved frames;
 command timing does not include later file serialization.
+
+## Finite-step HHT damping and period
+
+For an undamped, unforced linear oscillator, set `Omega = omega * dt`. Using the negative
+alpha convention of Sierra equations 12.5–12.6, the discrete equilibrium is
+
+`M*a[n+1] + (1+alpha)*(C*v[n+1]+K*u[n+1]-f[n+1]) - alpha*(C*v[n]+K*u[n]-f[n]) = 0`.
+
+Substitution of a discrete mode `u[n] ~ lambda^n` into this equation and the Newmark
+kinematics gives the characteristic polynomial (derived here, not a quoted formula):
+
+`lambda*(lambda-1)^2 + Omega^2*((1+alpha)*lambda-alpha) *
+ (beta*lambda^2 + (1/2-2*beta+gamma)*lambda + (1/2+beta-gamma)) = 0`.
+
+For the oscillatory root `lambda=rho*exp(i*theta)`, the numerical period divided by the
+physical period is `Omega/theta`, amplitude retained per numerical cycle is
+`rho^(2*pi/theta)`, and the equivalent algorithmic damping ratio is
+`-ln(rho)/sqrt(ln(rho)^2+theta^2)`. These quantities describe the oscillatory pair after
+the parasitic root has decayed; they are not physical material damping. For alpha zero,
+`rho=1` and `theta=2*atan(Omega/2)` recover average-acceleration Newmark. At high frequency
+the three roots approach `alpha/(1+alpha)` and the repeated
+`-(1+alpha)/(1-alpha)`, with spectral radius `(1+alpha)/(1-alpha)` in the permitted range.
+Finite-step phase error must be checked separately: high-frequency stability alone does
+not establish time-history accuracy. These expressions apply to a fixed-step, linear,
+unforced oscillator with zero physical damping; the full damped or forced response is
+not a single decaying sinusoid.
+
+## Original command-chain examples
+
+[Modal history](examples/modal-close-modes.json) and
+[CQC with 100/40/40 directions](examples/spectrum-close-modes.json) contain complete
+original model-building commands in SI: a 1 kg point mass and two orthogonal oblique
+springs, with angular frequencies 13.87 and 13.93 rad/s. Run the recipe through the CLI
+or a session, then `solve.transient {step:"ModalPulse"}` or
+`solve.spectrum {step:"Spectrum"}` and `solve.probe {nodes:[1],step:...}`.
+Use `file.save_as {path:...,results:true}` and `file.open` to retain and read the actual fields.
+
+The modal recipe uses two modes, damping ratios 0.02 and 0.05, a constant 1 N X force,
+zero initial displacement/velocity, dt=0.0005 s and 2000 increments, storing 201 samples.
+Its maximum component errors against the damped step-load closed form are
+1.785e-7 m, 2.373e-6 m/s and 3.474e-5 m/s²; allowances are 1e-6, 1e-5 and 1e-4 in SI.
+For modal unit-force responses q1/q2, physical X/Y are their half sum/difference.
+The response-spectrum recipe uses constant Sa=1 m/s², damping 0.05, X scale 1 and Y scale
+0.6. SRSS and CQC, each with single-axis, directional SRSS and 100/40/40 variants, have
+been checked through solve, save, open and probe against the two-mode closed form
+with a 1e-10 m absolute allowance. This is a linear discrete-model check, not evidence of
+continuum mesh convergence or an external software comparison.
+
+A native command-chain check uses m=1 kg, k=4 N/m, u0=0.001 m, v0=0, no force or
+physical damping, and 200 increments for each alpha in {0,-0.1,-1/3} and Omega in
+{0.2,0.5,1}. From saved and reopened displacement frames 20–200, the oscillatory recurrence
+is fitted and compared with the independent polynomial. The largest discrepancy among
+rho, theta, period ratio, equivalent damping and per-cycle amplitude is 2.905e-13
+(absolute allowance 1e-9); all three discrete equilibrium/kinematics residuals are below
+3e-18 in their SI units (allowance 1e-12).
+
+| alpha | Omega | measured period ratio | measured algorithmic damping | amplitude per cycle |
+|---:|---:|---:|---:|---:|
+| 0 | 0.2 | 1.00332449071 | 4.622742896e-14 | 1 |
+| 0 | 0.5 | 1.02049703762 | 1.155638894e-14 | 1 |
+| 0 | 1.0 | 1.07840521615 | -4.789081203e-16 | 1 |
+| -0.1 | 0.2 | 1.00416336495 | 7.947059974e-05 | 0.999500796138 |
+| -0.1 | 0.5 | 1.02540631365 | 0.001128788865 | 0.992932697545 |
+| -0.1 | 1.0 | 1.09450000982 | 0.006754745798 | 0.95844577793 |
+| -0.333333333 | 0.2 | 1.00496977752 | 0.0001450047039 | 0.999089323483 |
+| -0.333333333 | 0.5 | 1.03014766172 | 0.002037813892 | 0.987277633442 |
+| -0.333333333 | 1.0 | 1.11052104369 | 0.01193140211 | 0.927768955893 |
+
+Damping of order 1e-14 at alpha zero is floating-point roundoff. In particular, damping
+high frequencies does not remove period elongation: at alpha=-1/3 and Omega=1 the
+measured period ratio is 1.110521, so the step is unsuitable if small phase error is required.
