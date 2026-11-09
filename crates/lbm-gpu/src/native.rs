@@ -667,6 +667,9 @@ impl GpuFlow {
 
     /// [`GpuFlow::new`] with `options`.
     pub fn with_options(flow: &Flow, policy: Policy, options: Options) -> Result<GpuFlow> {
+        if flow.has_baffles() {
+            return Err(Error::Invalid("baffles are not supported on the GPU yet: solve on the CPU".into()));
+        }
         if let Some(r) = flow.rheology() {
             return Err(Error::Invalid(format!(
                 "the GPU backend does not step a shear-dependent viscosity yet (a {} fluid): solve on the CPU (`backend: \"cpu\"`)",

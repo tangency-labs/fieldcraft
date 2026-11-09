@@ -281,6 +281,7 @@ impl Quantities for FluidDomain {
             thermal,
             porous,
             fans,
+            baffles,
             free_surface,
         } = self;
         each(min, Q::Length, f);
@@ -300,6 +301,10 @@ impl Quantities for FluidDomain {
         each(acceleration, Q::Acceleration, f);
         if let Some(t) = tolerance {
             f(Q::Length, t);
+        }
+        for ThinWall { name: _, axis: _, position, conductance } in baffles {
+            f(Q::Length, position);
+            f(Q::HeatTransferCoefficient, conductance);
         }
         if let Some(FluidThermal { initial_temperature, gravity, expansion, faces, surfaces, solids, contacts, temperature_zero }) = thermal {
             f(Q::Temperature, initial_temperature);

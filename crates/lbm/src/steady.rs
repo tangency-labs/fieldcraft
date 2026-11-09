@@ -609,6 +609,7 @@ mod tests {
             thermal: None,
             porous: vec![],
             fans: vec![],
+            baffles: vec![],
             free_surface: None,
         };
         m.add_fluid_domain("Flow", domain).unwrap();
