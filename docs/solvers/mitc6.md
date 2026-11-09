@@ -45,10 +45,11 @@ energy. Ply stress output is direct nodal strain recovery in material coordinate
 not integration-point extrapolation or equilibrated interlaminar stress.
 
 `solve.static`, `solve.frequency`, and direct/modal `solve.harmonic` use the production
-assembly. `solve.buckle` uses the solved reference membrane stresses, but only for
-coplanar plates with flat preloads. Curved-shell buckling, prebent configurations,
-finite-rotation/nonlinear shells, transient and response-spectrum MITC6-a analyses
-are not validated and remain refused. Native result save/open uses the existing
+assembly. `solve.buckle` retains the flat-plate path and adds the consistent
+curved Green-strain/director Hessian, with the same MITC6-a tying interpolation.
+See [curved bifurcation, follower-pressure option and restrictions](mitc8.md#curved-shell-bifurcation-and-pressure-stiffness).
+Finite-rotation/nonlinear shells, curved prestressed frequency/harmonic, transient
+and response-spectrum MITC6-a analyses remain refused. Native result save/open uses the existing
 static, frequency/buckling and harmonic result layouts.
 
 Verification includes independent rigid motion, membrane, bending and shear energy

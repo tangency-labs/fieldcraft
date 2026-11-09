@@ -59,7 +59,7 @@ pub use analysis::{
     StepResult, solve_frequency, solve_frequency_report, solve_static,
 };
 pub use buckle::{Buckling, solve_buckle};
-pub use harmonic::{HarmonicResult, MatrixExport, export_matrices, solve_harmonic, solve_harmonic_with_mass};
+pub use harmonic::{HarmonicResult, MatrixExport, export_matrices, export_matrices_with_mass, solve_harmonic, solve_harmonic_with_mass};
 pub use heat::{HeatResult, solve_heat};
 pub use nonlinear::solve_nonlinear;
 pub use random::{

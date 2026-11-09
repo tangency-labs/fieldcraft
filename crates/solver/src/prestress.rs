@@ -44,6 +44,16 @@ pub(crate) fn stiffness(setup: &Setup<'_>, graph: &NodeGraph, k: Csr, limits: &L
         ));
         return Ok(terminal);
     }
+    for e in &setup.mesh.structural {
+        let curved = match e.kernel()? {
+            crate::system::StructuralKernel::Mitc8(s) => !s.is_flat().map_err(|err| Error::element(e.label, err))?,
+            crate::system::StructuralKernel::Mitc6(s) => !s.is_flat().map_err(|err| Error::element(e.label, err))?,
+            _ => false,
+        };
+        if curved {
+            return Err(Error::NotSupported("curved MITC8/MITC6 prestressed frequency/harmonic; only linear bifurcation verified".into()));
+        }
+    }
     crate::system::refuse_contact(setup.model, "linear static base_state; use a nonlinear equilibrium for contact")?;
     let preload = static_on(&Setup { model: setup.model, resolved: setup.resolved, mesh: setup.mesh, step: base }, limits)?;
     let kg = crate::buckle::initial_stress_stiffness(setup.mesh, graph, &preload)?;

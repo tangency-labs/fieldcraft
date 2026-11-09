@@ -262,11 +262,16 @@ explicitly unsupported by this import path.
 
 `MATRIX GENERATE` maps stiffness, consistent mass, viscous and structural damping
 to a native matrix-generation step. `MATRIX OUTPUT,FORMAT=MATRIX INPUT` is retained;
-`solve.matrices {"step":"Matrices","path":"operators.json"}` exports a manifest
+`solve.matrices {"step":"Matrices","path":"operators.json","mass":"consistent"}` exports a manifest
 and sibling five-column operator files. Each row identifies native model node/DOF
 pairs (flattened global labels after instance mapping), with a symmetric lower triangle by node/DOF labels; the manifest separately records independent-equation order. Operators are
 always SI (rotations in radians), with `K - omega² M + i(omega C + G)` convention;
-material Rayleigh damping contributes to C and loss factors to G. Homogeneous
+material Rayleigh damping contributes to C and loss factors to G. The optional
+`mass` selects `consistent` (default) or `lumped` for both inertia and material
+mass-proportional damping; the manifest records this choice. Analysis-step
+Rayleigh damping is excluded from C: for a harmonic step add `alpha*M + beta*K`
+to the exported material/discrete C. No mass equivalence with a vendor element
+is implied. Homogeneous
 supports and native MPC transformations are eliminated. The manifest gives the
 independent coordinate ordering, units and warnings. No response calculation or
 factorization is needed. With no path the command assembles and reports metadata

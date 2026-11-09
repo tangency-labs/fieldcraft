@@ -1,8 +1,10 @@
 # Linear static analysis
 
+Affine swept `hex8` continuum shells use the opt-in `solid_shell` formulation.
+See [geometry, physical ply layers, supported analyses and named refusals](../../solvers/solid-shell.md).
+
 Six-node `tri6` shells use [MITC6-a](../../solvers/mitc6.md), with shared curved
-directors and layered constitutive/mass integration. Its documented plate-only
-buckling and coarse-mesh accuracy limits apply.
+directors and layered constitutive/mass integration. Its documented analysis restrictions and coarse-mesh accuracy limits apply.
 
 `solve.static` computes the small-displacement equilibrium K u = f of a static step: the
 displacements and rotations, the reactions at the prescribed degrees of freedom and coupled
@@ -274,7 +276,7 @@ probe at the foot's end lies within 0.13 % of the fine tet10 solution.
 
 - Quad8 shell sections use [MITC8](../../solvers/mitc8.md) for homogeneous or layered elastic linear statics.
   Reduced-integration quad8 (S8R) is refused; frequency/harmonic analysis uses the documented MITC8 mass,
-  and buckling requires a coplanar plate and flat preload; the other shell families keep their existing scope.
+  and buckling adds the documented curved Green-strain/director Hessian; the other shell families keep their existing scope.
 
 - Small displacements and linear elasticity: plasticity, damage and erosion are left out with a
   warning; hyperelastic materials take their small-strain linear limit. For large deformation,
@@ -323,3 +325,9 @@ probe at the foot's end lies within 0.13 % of the fine tet10 solution.
 - NAFEMS. *The Standard NAFEMS Benchmarks*, TNSB Rev. 3, October 1990.
 - R. H. MacNeal, R. L. Harder. *A proposed standard set of problems to test finite element accuracy.* Finite Elements in Analysis and Design 1(1):3–20, 1985.
 - S. P. Timoshenko, J. N. Goodier. *Theory of Elasticity*, 3rd ed. McGraw-Hill, 1970.
+
+## Axisymmetric ring shells
+
+The two-ring axisymmetric formulation and its analysis/export restrictions are
+documented in [Axisymmetric meridional shell](../../solvers/axisymmetric-shell.md).
+Use the explicit `axisymmetric_shell` section flag; `beam2` alone remains a beam.

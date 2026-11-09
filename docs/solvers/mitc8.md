@@ -80,9 +80,9 @@ original five-DOF element or with an Abaqus element. Dynamics adds the explicit 
 
 Homogeneous and layered elastic linear statics are enabled.
 Curved frequency and direct/modal harmonic analyses use the mass operator below.
-Linear buckling is limited to coplanar plates with a flat preload. Curved-shell
-buckling, non-flat preloads (including laminate extension–bending coupling), transient
-and response-spectrum procedures are refused by name. Nonlinear steps do not support these shells.
+Linear buckling retains the verified flat-plate path and adds the consistent
+curved-shell reference-configuration operator described below. Prestressed curved
+frequency/harmonic, transient and response-spectrum procedures remain refused. Nonlinear steps do not support these shells.
 The existing MITC3/MITC4 analysis paths are unchanged.
 
 Reduced-integration quad8 shells are refused in the internal solver: Abaqus S8R is
@@ -205,15 +205,60 @@ ply law through thickness; compression is negative. `buckle::initial_stress_stif
 assembles this operator from the solved static preload, then the existing Lanczos
 buckling path solves `(K + lambda K_sigma) phi = 0`.
 
-Every shell reference surface/director must be coplanar. The preload must remain flat,
+For the legacy plate operator, reference surfaces/directors must be coplanar. The preload must remain flat,
 including director tilt; otherwise the solver refuses the combination. This supports
 flat symmetric laminates, or other layers whose actual constrained preload remains
-flat; it does not silently drop pre-bending from an unsymmetric laminate. No curved
-shell geometric tangent, finite rotations, nonlinear material tangent, follower
-pressure or load stiffness is provided. The same scope checks protect prestressed
-linear perturbations. The Bryan square-plate command case checks the entire preload,
+flat; it does not silently drop pre-bending from an unsymmetric laminate. This plate path does not provide a nonlinear material tangent or finite-rotation
+equilibrium. Curved prestressed frequency/harmonic remains refused; the new curved
+bifurcation path below does not silently enable those analyses. The Bryan square-plate command case checks the entire preload,
 material/geometric assembly and eigenproblem against `Ncr=4*pi²*D/a²`.
 
 Frequency and buckling retain the existing frequency-result representation; harmonic
 uses the existing mass-aware harmonic result. Native save/reopen tests compare modal,
 buckling and complex displacement probes exactly, with no result format extension.
+
+
+## Curved-shell bifurcation and pressure stiffness
+
+Bathe–Dvorkin (1986), equations (2)–(4), give the Green tensor
+`E_ab=(g_a.g_b-G_a.G_b)/2` and its virtual work. `geometric_stiffness`
+integrates `S : delta_i delta_j E` through every layer, with stress from the
+actual linear static MITC preload. Both variations use the same membrane and
+shear tying operators as `strain_operator`: the projection coefficients are
+fixed in the reference geometry. Curvature enters the covariant/dual bases and
+thickness mapping; all translational, rotational and mixed blocks are retained.
+
+Nodal directors use the unit-sphere retraction
+`d(theta)=(d+theta cross d)/|d+theta cross d|`. At zero rotation its first
+variation is `theta cross d` and its mixed second variation is
+`-d*((ei cross d).(ej cross d))`. This term is essential; retaining only the
+product of displacement gradients omits part of geometric stiffness. This
+coordinate choice has no physical drilling variation. The existing artificial
+linear drilling penalty has no initial-stress Hessian. Tests compare mixed
+second derivatives with independently perturbed normalized geometry, and check
+zero-preload stiffness, symmetry and rigid translation for both topologies.
+No finite-rotation equilibrium or general postbuckling capability is claimed.
+
+`procedure: {type: buckle, modes: 2, follower_pressure: true}` additionally
+assembles the reference-surface pressure load stiffness `-df/du`, reusing
+`fem::face::follower_pressure` (Schweizerhof and Ramm, Computers & Structures
+18, 1984, 1099–1114). The option defaults false, preserving dead-load behavior.
+It is limited to zero-offset MITC8/MITC6 pressure faces and direct supports.
+The free-DOF assembled pressure matrix must be symmetric to relative roundoff;
+nonconservative open boundaries and multipoint/inclined constraints are refused,
+not silently symmetrized. Offset/thickness-face moments, curved prestressed
+modal/harmonic analysis and faithful commercial export remain refused.
+The option is stored in the model JSON; native result layouts do not change.
+
+Independent quarter-cylinder command models use R=1, h=.02, E=1e7, nu=0.
+Axial compression uses classical `Ncr=E*h²/sqrt(3*(1-nu²))`, with an axial
+half-wave length selected from the classical axisymmetric minimum, simple
+radial supports and symmetry at quarter meridians. NASA SP-8007's classical
+elastic value is used with knockdown factor one: this is a perfect-shell
+bifurcation check, not an imperfection-sensitive design allowable.
+The plane-strain pressure example allows circumferential n=2 ovalization:
+`pcr=3D/R³` for follower pressure, versus `4D/R³` for fixed-direction radial
+traction, where `D=E*h³/(12*(1-nu²))`. Both load definitions have separate
+command tests and saved/reopened modes. A fixed 5% mesh/thin-theory band was
+specified before execution. The reference-configuration operator does not
+account for a finite pre-buckling change in geometry.

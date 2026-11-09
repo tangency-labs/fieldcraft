@@ -522,6 +522,10 @@ pub const SECTION: &[Field] = &[
             choice("integration", "Integration", &[("full", "Full"), ("reduced", "Reduced")])
                 .help("Full: every integration point. Reduced: fewer points, cheaper and less stiff, but may need hourglass control.")
                 .def("\"full\""),
+            flag("axisymmetric_shell", "Axisymmetric ring shell").help("Shell section on two-node connectivity; r=X, axial=Y, active dofs 1/2/6, whole-ring nodal forces. Thin conical facets; aligned plies only.").def("false"),
+            flag("solid_shell", "Continuum solid-shell")
+                .help("Linear ANS/EAS10 on orthogonal affine swept hex8; thickness is node pairs 1–5, 2–6, 3–7, 4–8. Separate solid layers for laminates.")
+                .def("false"),
             flag("enhanced_strain13", "Enhanced strain Hex8 (13)").help("Thirteen-variable Hex8; C3D8I mapping only for nonhybrid small-strain isotropic static analysis.").def("false"),
             flag("b_bar", "B-bar Hex8").help("Volume-averaged dilatation for linear isotropic Hex8; standard remains the default.").def("false"),
             flag("incompatible_modes", "Incompatible modes")
@@ -1097,6 +1101,7 @@ const PROCEDURE: Field = variants(
             &[
                 int("modes", "Modes", 1, 100_000).help("How many buckling modes to find.").req().def("4"),
                 num("shift", "Shift", D::None).help("Look for eigenvalues near this value; 0 finds the lowest."),
+                flag("follower_pressure", "Follower pressure").help("Include conservative pressure load stiffness on quadratic shell faces; requires symmetric free-DOF loads and direct supports."),
             ],
         ),
         variant(
@@ -2687,6 +2692,9 @@ pub const INVERSE_HARMONIC: &[Field] = &[
 
 pub const SOLVE_MATRICES: &[Field] = &[
     STEP,
+    choice("mass", "Mass matrix", &[("consistent", "Consistent"), ("lumped", "Lumped")])
+        .help("Inertia and material damping discretization; excludes analysis-step Rayleigh damping.")
+        .def("\"consistent\""),
     path("path", "Matrix manifest", true).help("Optional SI manifest; sibling .mtx files hold the requested operators."),
     MAX_DOFS,
     MAX_FACTOR,

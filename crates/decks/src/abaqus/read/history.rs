@@ -451,7 +451,7 @@ fn prepare(
                     if f.len() > 1 {
                         return Err(unsupported(row.line, "buckling shift/extraction controls require explicit mapping"));
                     }
-                    Procedure::Buckle { modes, shift: None }
+                    Procedure::Buckle { modes, shift: None, follower_pressure: false }
                 });
             }
             "RANDOMRESPONSE" | "MODALDAMPING" | "CORRELATION" if random => {}

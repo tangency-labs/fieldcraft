@@ -28,7 +28,8 @@ use crate::{Error, Limits, Result};
 mod model;
 mod residual;
 pub use model::{
-    ElementStressRecovery, Frame, HarmonicResult, MatrixExport, StressLocation, export_matrices, solve_harmonic, solve_harmonic_with_mass,
+    ElementStressRecovery, Frame, HarmonicResult, MatrixExport, StressLocation, export_matrices, export_matrices_with_mass, solve_harmonic,
+    solve_harmonic_with_mass,
 };
 pub(crate) use model::{damping_operators, damping_operators_with_mass, load_vector, stresses};
 

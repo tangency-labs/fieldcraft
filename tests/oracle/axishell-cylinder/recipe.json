@@ -1,0 +1,522 @@
+[
+  {
+    "command": "model.units",
+    "params": {
+      "system": "m-kg-s-N-Pa"
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 1,
+      "xyz": [
+        1,
+        0.0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 2,
+      "xyz": [
+        1,
+        0.125,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 3,
+      "xyz": [
+        1,
+        0.25,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 4,
+      "xyz": [
+        1,
+        0.375,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 5,
+      "xyz": [
+        1,
+        0.5,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 6,
+      "xyz": [
+        1,
+        0.625,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 7,
+      "xyz": [
+        1,
+        0.75,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 8,
+      "xyz": [
+        1,
+        0.875,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 9,
+      "xyz": [
+        1,
+        1.0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 1,
+      "kind": "beam2",
+      "nodes": [
+        1,
+        2
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 2,
+      "kind": "beam2",
+      "nodes": [
+        2,
+        3
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 3,
+      "kind": "beam2",
+      "nodes": [
+        3,
+        4
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 4,
+      "kind": "beam2",
+      "nodes": [
+        4,
+        5
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 5,
+      "kind": "beam2",
+      "nodes": [
+        5,
+        6
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 6,
+      "kind": "beam2",
+      "nodes": [
+        6,
+        7
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 7,
+      "kind": "beam2",
+      "nodes": [
+        7,
+        8
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 8,
+      "kind": "beam2",
+      "nodes": [
+        8,
+        9
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "all",
+      "elements": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "nodes": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ]
+    }
+  },
+  {
+    "command": "model.material.create",
+    "params": {
+      "name": "E",
+      "elastic": {
+        "type": "isotropic",
+        "young": 100000000.0,
+        "poisson": 0
+      },
+      "density": 1000
+    }
+  },
+  {
+    "command": "model.section.create",
+    "params": {
+      "name": "ring",
+      "set": "all",
+      "material": "E",
+      "kind": {
+        "type": "shell",
+        "thickness": 0.01
+      },
+      "formulation": {
+        "axisymmetric_shell": true
+      }
+    }
+  },
+  {
+    "command": "model.boundary_condition.create",
+    "params": {
+      "name": "hold",
+      "type": "displacement",
+      "target": {
+        "set": "all"
+      },
+      "values": [
+        null,
+        0,
+        null,
+        null,
+        null,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "F0",
+      "nodes": [
+        1
+      ]
+    }
+  },
+  {
+    "command": "model.load.create",
+    "params": {
+      "name": "F0",
+      "type": "force",
+      "target": {
+        "set": "F0"
+      },
+      "vector": [
+        39.269908169872416,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "F1",
+      "nodes": [
+        2
+      ]
+    }
+  },
+  {
+    "command": "model.load.create",
+    "params": {
+      "name": "F1",
+      "type": "force",
+      "target": {
+        "set": "F1"
+      },
+      "vector": [
+        78.53981633974483,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "F2",
+      "nodes": [
+        3
+      ]
+    }
+  },
+  {
+    "command": "model.load.create",
+    "params": {
+      "name": "F2",
+      "type": "force",
+      "target": {
+        "set": "F2"
+      },
+      "vector": [
+        78.53981633974483,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "F3",
+      "nodes": [
+        4
+      ]
+    }
+  },
+  {
+    "command": "model.load.create",
+    "params": {
+      "name": "F3",
+      "type": "force",
+      "target": {
+        "set": "F3"
+      },
+      "vector": [
+        78.53981633974483,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "F4",
+      "nodes": [
+        5
+      ]
+    }
+  },
+  {
+    "command": "model.load.create",
+    "params": {
+      "name": "F4",
+      "type": "force",
+      "target": {
+        "set": "F4"
+      },
+      "vector": [
+        78.53981633974483,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "F5",
+      "nodes": [
+        6
+      ]
+    }
+  },
+  {
+    "command": "model.load.create",
+    "params": {
+      "name": "F5",
+      "type": "force",
+      "target": {
+        "set": "F5"
+      },
+      "vector": [
+        78.53981633974483,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "F6",
+      "nodes": [
+        7
+      ]
+    }
+  },
+  {
+    "command": "model.load.create",
+    "params": {
+      "name": "F6",
+      "type": "force",
+      "target": {
+        "set": "F6"
+      },
+      "vector": [
+        78.53981633974483,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "F7",
+      "nodes": [
+        8
+      ]
+    }
+  },
+  {
+    "command": "model.load.create",
+    "params": {
+      "name": "F7",
+      "type": "force",
+      "target": {
+        "set": "F7"
+      },
+      "vector": [
+        78.53981633974483,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "F8",
+      "nodes": [
+        9
+      ]
+    }
+  },
+  {
+    "command": "model.load.create",
+    "params": {
+      "name": "F8",
+      "type": "force",
+      "target": {
+        "set": "F8"
+      },
+      "vector": [
+        39.269908169872416,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "model.step.create",
+    "params": {
+      "name": "Static",
+      "procedure": {
+        "type": "static"
+      },
+      "boundary_conditions": [
+        "hold"
+      ],
+      "loads": [
+        "F0",
+        "F1",
+        "F2",
+        "F3",
+        "F4",
+        "F5",
+        "F6",
+        "F7",
+        "F8"
+      ]
+    }
+  },
+  {
+    "command": "solve.static",
+    "params": {
+      "step": "Static"
+    }
+  },
+  {
+    "command": "solve.probe",
+    "params": {
+      "step": "Static",
+      "nodes": [
+        5
+      ]
+    },
+    "id": "probe"
+  }
+]

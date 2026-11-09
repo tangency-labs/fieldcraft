@@ -558,6 +558,9 @@ impl Solid<'_> {
         updated: &mut [f64],
         tangent: bool,
     ) -> Result<(Finite, Vec<(PointKinematics, Response)>)> {
+        if self.formulation == Formulation::SolidShell {
+            return Err(Error::NotSupported("solid-shell nonlinear analysis".into()));
+        }
         self.check_nonlinear(m, u)?;
         let modes = self.dofs().internal.incompatible_modes;
         check_history(m, self.rule().points().len(), modes, committed, updated)?;
@@ -749,6 +752,9 @@ impl Solid<'_> {
     /// geometric term of the tangent with the reference gradients (linear buckling: Bathe 2014,
     /// §6.8.2; the same term as [`Solid::nonlinear`]'s at u = 0 with τ = σ).
     pub fn geometric_stiffness(&self, stress: &[[f64; 6]]) -> Result<Matrix> {
+        if self.formulation == Formulation::SolidShell {
+            return Err(Error::NotSupported("solid-shell buckling or prestressed perturbation".into()));
+        }
         let points = self.rule().points();
         if stress.len() != points.len() {
             return Err(Error::Invalid(format!("{} stresses for {} integration points", stress.len(), points.len())));

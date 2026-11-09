@@ -9,7 +9,7 @@ use std::fmt::Write;
 pub const EXPORT: CommandSpec = CommandSpec {
     id: "solve.matrices",
     label: "Export Structural Matrices",
-    params: r#"{"step":"Matrices", "path":"operators.json"} — assembles the requested unloaded linear structural operators with homogeneous constraints eliminated. Optional path writes an SI manifest and sibling MATRIX INPUT five-column .mtx files (node, DOF, node, DOF, value; lower triangle by node/DOF labels). Rotations use radians. Without path returns metadata only. No factorization, response solve or result frames; each output file is atomic, the collection is not a transaction. Limits/threads as solve.static."#,
+    params: r#"{"step":"Matrices", "path":"operators.json"} — assembles the requested unloaded linear structural operators with homogeneous constraints eliminated. Optional mass: consistent (default) or lumped selects inertia and material damping. Step Rayleigh damping is excluded. Optional path writes an SI manifest and sibling MATRIX INPUT five-column .mtx files (node, DOF, node, DOF, value; lower triangle by node/DOF labels). Rotations use radians. Without path returns metadata only. No factorization, response solve or result frames; each output file is atomic, the collection is not a transaction. Limits/threads as solve.static."#,
     form: Some(super::super::forms::SOLVE_MATRICES),
     kind: CommandKind::Model,
     requires: &[Requirement::Analysable, Requirement::Step],
@@ -27,8 +27,11 @@ pub(super) fn run(s: &mut Session, p: &Value) -> Result<Value> {
     let path = if p.get("path").is_some() { Some(super::super::file_param(s, p, "path", Access::Write)?) } else { None };
     let limits = super::limits(p)?;
     let threads = super::threads(s, p)?;
-    let r = super::with_threads(threads, || fieldcraft_solver::export_matrices(&s.model, p.get("step").and_then(Value::as_str), &limits))?;
-    let mut out = json!({"step":r.step,"equations":r.degrees.len(),"degrees":r.degrees,"units":"SI (m, kg, s, N, rad)","triangle":"lower by native node label and DOF", "constraint_reduction":"T^T A T; homogeneous prescribed and dependent coordinates eliminated", "convention":"K - omega^2 M + i(omega C + G)","warnings":r.warnings,"exported":path.is_some(),"matrices":{}});
+    let mass = super::opt::<fieldcraft_solver::MassKind>(p, "mass")?.unwrap_or_default();
+    let r = super::with_threads(threads, || {
+        fieldcraft_solver::export_matrices_with_mass(&s.model, p.get("step").and_then(Value::as_str), mass, &limits)
+    })?;
+    let mut out = json!({"step":r.step,"mass":mass,"equations":r.degrees.len(),"degrees":r.degrees,"units":"SI (m, kg, s, N, rad)","triangle":"lower by native node label and DOF", "constraint_reduction":"T^T A T; homogeneous prescribed and dependent coordinates eliminated", "convention":"K - omega^2 M + i(omega C + G)","warnings":r.warnings,"exported":path.is_some(),"matrices":{}});
     let mut destinations = Vec::new();
     if let Some(path) = &path {
         let manifest = std::path::PathBuf::from(super::super::file::absolute(path));
