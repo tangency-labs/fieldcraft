@@ -1,0 +1,24 @@
+{
+ "title": "NAFEMS LE7 axisymmetric cylinder/sphere under pressure (axisymmetric quad8)",
+ "kind": "benchmark",
+ "source": "NAFEMS, The Standard NAFEMS Benchmarks, TNSB Rev. 3, October 1990, test LE7 (target: axial stress 25.86 MPa on the outer surface at D, R = 1.0125, Z = 1.4034), as reproduced in the ESRD StressCheck Benchmarks Guide 'The Standard NAFEMS Benchmarks: Linear Elastic Tests' (2018), p. 23, which also gives its converged axisymmetric solid result, 25.27 MPa (p. 24); the Abaqus 2016 Benchmarks Guide, section 4.2.7 'LE7: Axisymmetric cylinder/sphere under pressure', gives the target rounded to 25.9 MPa",
+ "quantities": [
+  {
+   "id": "syy_D",
+   "quantity": "axial stress σ_yy at D (1.0125, 1.4034), outer surface",
+   "measure": {"command": "solve.probe", "params": {"step": "Pressure", "at": [[1.0125, 1.4034, 0]]}, "pointer": "/nodes/0/stress/1"},
+   "value": 25.86,
+   "tolerance": {"relative": 0.01},
+   "reason": "the target is published to four figures for the thin-shell model of the vessel, and a model of the same theory converges well within 1%",
+   "known_failure": "the target is the axisymmetric thin-shell solution and FieldCraft has no axisymmetric shell element; our axisymmetric solid model converges to 25.27 (−2.3%), the value ESRD reports for its converged axisymmetric solid (quantity syy_D_solid)"
+  },
+  {
+   "id": "syy_D_solid",
+   "quantity": "axial stress σ_yy at D (1.0125, 1.4034), outer surface, against the converged solid model",
+   "measure": {"command": "solve.probe", "params": {"step": "Pressure", "at": [[1.0125, 1.4034, 0]]}, "pointer": "/nodes/0/stress/1"},
+   "value": 25.27,
+   "tolerance": {"relative": 0.01},
+   "reason": "the same model idealisation (axisymmetric solid) as the reference, which ESRD reports converged to under 1% on two meshes; ours moves by 0.05% on the next refinement (see README)"
+  }
+ ]
+}

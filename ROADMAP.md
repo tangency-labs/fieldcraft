@@ -324,3 +324,5 @@ and pressure cylinders with native result roundtrips. Nonlinear equilibrium,
 curved prestressed dynamics and faithful commercial shell mappings remain open.
 
 Curved MITC8 modal perturbations: reference elastic plus Green-strain/director initial-stress stiffness, explicit conservative pressure-tangent option, reference mass and unchanged direct supports. Cylinder ring-limit pressure/frequency checks and native roundtrips; MITC6-a curved prestressed modes remain refused after preload-field and actual-residual failures; no finite-preload geometry, curved prestressed harmonic response or faithful commercial shell mapping. See `docs/solvers/curved-shell-modes.md`.
+
+LE7 verification now uses the validated regular-pole ring shell in `nafems-le7`, with the original 25.86 MPa reference and 1% band. The legacy scaled solid input/fixture remains `nafems-le7-solid`; its inapplicable shell comparison is archived rather than counted as a current known failure.

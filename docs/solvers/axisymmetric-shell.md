@@ -133,6 +133,9 @@ positive thickness inward: **bottom**, not the default nodal top stress, is the
 outer surface. Both adjacent element endpoint sigma_YY values are checked
 against 25.86 MPa at the unchanged 1% limit; 50/100/200 elements per metre give
 outer endpoint pairs (25.61413,25.93402), (25.71127,25.88083),
-(25.76013,25.84542) MPa. Native static results reopen exactly. This does not
-replace the old axisymmetric-solid LE7 recipe, its millimetre-scale geometry,
-or its -2.233% shell-reference failure.
+(25.76013,25.84542) MPa. Native static results reopen exactly. The canonical
+`nafems-le7` oracle now uses this already validated SI shell recipe and its
+unchanged frozen endpoint result. The old axisymmetric-solid recipe remains
+`nafems-le7-solid` with its millimetre-scale geometry and matching solid
+reference; its -2.233% shell-reference miss is archived as an inapplicable
+historical comparison, not counted as a current known failure.

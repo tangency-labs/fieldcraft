@@ -306,11 +306,11 @@ model-off results unchanged, and Poiseuille and Taylor–Green converging like �
 
 ## Retained known failures in the fusion integration
 
-The generated [oracle report](oracle.md) distinguishes reference passes from known failures; a successful oracle command does not make the latter validated. Original recipes, reference values, tolerances and fixtures remain unchanged.
+The generated [oracle report](oracle.md) distinguishes reference passes from known failures; a successful oracle command does not make the latter validated. Reference values and tolerances remain unchanged. LE7 now binds the shell reference to the verified ring-shell model; the legacy solid input and fixture are retained as a separate auxiliary comparison.
 
 Five quantities, `peak_1` through `peak_5` in [harmonic-tip-mass-experiment](../tests/oracle/harmonic-tip-mass-experiment/), retain their experimental amplitude mismatch. The published excitation forcing-sign discrepancy is a hypothesis requiring reconciliation, not a corrected measurement, an exemption, or evidence that the experiment is wrong. The peak-frequency comparison is separate.
 
-The other nine inherited reference misses are listed separately:
+The other eight inherited reference misses are listed separately:
 
 | Case | Quantity ID | Retained limitation |
 |---|---|---|
@@ -321,7 +321,6 @@ The other nine inherited reference misses are listed separately:
 | [mh-straight-cantilever](../tests/oracle/mh-straight-cantilever/) | `out_of_plane` | 0.973 of the theory, grade B, as for in-plane shear (MacNeal–Harder's HEXA(8): 0.981) |
 | [mh-straight-cantilever](../tests/oracle/mh-straight-cantilever/) | `twist` | 0.892 of the theory, grade C: one element across the section cannot represent the torsion warping (MacNeal–Harder's HEXA(8): 0.910, HEX20: 0.904) |
 | [nafems-le6](../tests/oracle/nafems-le6/) | `s1_E` | the target is a thin-plate value; at the specified 10 mm the transverse shear deformation the MITC4 shell keeps raises it to 0.8197 (+2.2%; converged about 0.821), as ESRD's converged thin-solid model does (quantity s1_E_solid), and thinner plates move towards 0.802 only slowly (about 0.809 at 1 mm, see README); FieldCraft has no thin-plate (Kirchhoff) element |
-| [nafems-le7](../tests/oracle/nafems-le7/) | `syy_D` | the target is the axisymmetric thin-shell solution and FieldCraft has no axisymmetric shell element; our axisymmetric solid model converges to 25.27 (−2.3%), the value ESRD reports for its converged axisymmetric solid (quantity syy_D_solid) |
 | [pure-bending-coupling](../tests/oracle/pure-bending-coupling/) | `rotation` | 1.2% high: the distributing coupling weights every node of the end face equally, corner and mid-side nodes of hex20 alike, which is not the consistent linear traction; the end face deforms locally and the fitted rotation includes it. Area-consistent weights would remove it |
 
 These records preserve unresolved model/reference applicability or formulation limits. They do not change the stated acceptance bands or turn the known failures into numerical passes.
@@ -335,17 +334,30 @@ Layered statics add `mitc8-single-ply-bending`, `mitc8-navier-thin` and
 `mitc8-navier-thick-quarter16` and `mitc8-coupled-strip`. Shared-edge geometry/rotation continuity, local renumbering,
 layer reversal and independent coupled energies are tested. These do not validate
 mass, prestress, folded junctions or arbitrary distorted curved laminates.
-The separate axisymmetric LE7 known failure is retained.
+LE7 now uses the regular-pole axisymmetric shell below; the old solid comparison is historical.
 
 MITC8 dynamics: `mitc8-navier-frequency` checks the first three laminate flexural modes and total mass for consistent/lumped choices; `mitc8-navier-harmonic` checks both real and imaginary displacement at20/30Hz with direct and modal solves. `mitc8-leissa-frequency` checks a published thin-square plate frequency; `mitc8-bryan-buckle` checks the solved flat preload and buckling operator against Bryan's formula and NASA TP-2528's unperforated isotropic coefficient. Independent inertia integrals, shared-node mass permutations and curved free-body modes are tested separately. Engine tests save/reopen modal, harmonic and buckling probes exactly using existing result types. These do not qualify curved-shell buckling, transient/spectrum, pre-bent laminates or the previously failing coarse thick-plate static meshes.
 
 MITC6-a quadratic triangular shell checks and explicit coarse-mesh limits are listed
 in [the formulation note](solvers/mitc6.md); the original MITC8 coarse thick-plate
-and LE7 limitations remain unchanged.
+limit remains unchanged; LE7 is verified separately with the regular-pole ring shell.
 
 Affine continuum-shell verification and scope: [ANS/EAS10 solid-shell](solvers/solid-shell.md). The high-aspect stiffness-conditioning failure is retained as an explicit domain refusal, not a tolerance change. Matrix export regression reconstructs a frozen shell harmonic point with both mass choices and mass-normalized production modes.
 
 Axisymmetric ring-shell scope and analytical checks are in
 [the formulation note](solvers/axisymmetric-shell.md). Twisted-strip and
 point-loaded hemispherical MITC8 cases use public reference displacements;
-these do not validate external-pressure shell buckling or remove the LE7 boundary.
+these are separate from the regular-pole LE7 verification and the documented curved-shell buckling checks.
+
+## LE7 reference-model correction
+
+[nafems-le7](../tests/oracle/nafems-le7/) now runs the already validated
+axisymmetric ring-shell recipe (formerly `nafems-le7-shell`), with explicit SI
+geometry, pole regularity and outer-surface axial stress at D. The public
+25.86 MPa reference and 1% tolerance are unchanged. The frozen result is
+25.88083109923982 MPa (+0.080553%).
+[nafems-le7-solid](../tests/oracle/nafems-le7-solid/) retains the old input and
+solid fixture against the matching 25.27 MPa reference. Its default-millimetre
+geometry and -2.233% historical comparison against the shell reference are
+archived explicitly; that inapplicable pairing is no longer a current known
+failure. No solver, reference threshold or frozen numeric band was changed.

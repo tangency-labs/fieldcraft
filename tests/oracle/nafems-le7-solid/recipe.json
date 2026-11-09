@@ -1,0 +1,17 @@
+[
+ {"command": "mesh.block", "params": {"body": "cylinder_1", "kind": "quad8", "corners": [[0.9875, 0.0, 0], [1.0125, 0.0, 0], [1.0125, 1.1136, 0], [0.9875, 1.1136, 0]], "divisions": [2, 56], "edges": [{"corners": [1, 4], "name": "inside"}, {"corners": [1, 2], "name": "bottom"}]}},
+ {"command": "mesh.block", "params": {"body": "cylinder_2", "kind": "quad8", "corners": [[0.9875, 1.1136, 0], [1.0125, 1.1136, 0], [1.0125, 1.4034, 0], [0.9875, 1.4034, 0]], "divisions": [2, 14], "edges": [{"corners": [1, 4], "name": "inside"}, {"corners": [1, 2], "name": "bottom"}]}},
+ {"command": "mesh.block", "params": {"body": "cylinder_3", "kind": "quad8", "corners": [[0.9875, 1.4034, 0], [1.0125, 1.4034, 0], [1.0125, 1.5, 0], [0.9875, 1.5, 0]], "divisions": [2, 5], "edges": [{"corners": [1, 4], "name": "inside"}, {"corners": [1, 2], "name": "bottom"}]}},
+ {"command": "mesh.block", "params": {"body": "cap", "kind": "quad8", "corners": [[0.9875, 1.5, 0], [1.0125, 1.5, 0], [0, 2.5125, 0], [0, 2.4875, 0]], "divisions": [2, 79], "edges": [{"corners": [2, 3], "arc": {"center": [0, 1.5, 0]}}, {"corners": [4, 1], "arc": {"center": [0, 1.5, 0]}, "name": "inside"}, {"corners": [3, 4], "name": "pole"}]}},
+ {"command": "model.set.create", "params": {"name": "all", "geometry": [{"body": "cylinder_1", "face": "area"}, {"body": "cylinder_2", "face": "area"}, {"body": "cylinder_3", "face": "area"}, {"body": "cap", "face": "area"}]}},
+ {"command": "model.set.create", "params": {"name": "inside", "geometry": [{"body": "cylinder_1", "edge": "inside"}, {"body": "cylinder_2", "edge": "inside"}, {"body": "cylinder_3", "edge": "inside"}, {"body": "cap", "edge": "inside"}]}},
+ {"command": "model.set.create", "params": {"name": "F", "geometry": [{"body": "cylinder_1", "edge": "bottom"}]}},
+ {"command": "model.set.create", "params": {"name": "A", "geometry": [{"body": "cap", "edge": "pole"}]}},
+ {"command": "model.material.create", "params": {"name": "Steel", "elastic": {"type": "isotropic", "young": 210000.0, "poisson": 0.3}}},
+ {"command": "model.section.create", "params": {"name": "vessel", "set": "all", "material": "Steel", "kind": {"type": "axisymmetric"}}},
+ {"command": "model.boundary_condition.create", "params": {"name": "F", "type": "symmetry", "target": {"set": "F"}, "plane": "y"}},
+ {"command": "model.boundary_condition.create", "params": {"name": "A", "type": "symmetry", "target": {"set": "A"}, "plane": "x"}},
+ {"command": "model.load.create", "params": {"name": "pressure", "type": "pressure", "set": "inside", "magnitude": 1.0}},
+ {"command": "model.step.create", "params": {"name": "Pressure", "procedure": {"type": "static"}, "boundary_conditions": ["F", "A"], "loads": ["pressure"]}},
+ {"command": "solve.static", "params": {}, "id": "solve"}
+]
