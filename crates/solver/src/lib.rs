@@ -35,6 +35,7 @@ pub mod constraints;
 pub mod contact;
 pub mod discrete;
 pub mod eigen;
+pub mod fatigue;
 pub mod foundation;
 pub mod harmonic;
 pub mod heat;
