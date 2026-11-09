@@ -147,7 +147,7 @@ creating an analysis. Unknown text is retained in the original source bundle, se
 model; `deck.write` exports only the interpreted model. `deck.source.write` replays originals.
 
 The command maps linear `STATIC`, `FREQUENCY` and a first-base-state `BUCKLE` to native
-steps. Structural `BOUNDARY` accepts numeric DOFs, ENCASTRE, PINNED and X/Y/ZSYMM;
+steps. Structural `BOUNDARY` accepts numeric DOFs, ENCASTRE, PINNED, X/Y/ZSYMM and X/Y/ZASYMM;
 `CLOAD` maps per-node forces/moments, `DLOAD` maps element pressures and gravity, and
 `DSLOAD` maps element-surface pressure. `OP=NEW` clears the named family once per step;
 `OP=MOD` modifies the same original target/load type and retains other definitions. Different
@@ -339,3 +339,16 @@ reopens the solved project and repeats recovery. A manufactured affine field wit
 two distinct moduli at shared nodes verifies all six components and the absence
 of cross-element averaging. These tests do not certify modal truncation for a
 particular engineering model.
+
+Named symmetry and antisymmetry conditions expand to global structural DOFs; nodal
+transforms remain unsupported and block analysis mapping. The command regression
+checks all eight named conditions against explicit DOF lists through project
+save/open, exact source replay, and normalized deck write/read. Reference:
+[Boundary conditions](https://docs.software.vt.edu/abaqusv2025/English/SIMACAEPRCRefMap/simaprc-c-boundary.htm).
+
+Command-level refusal regressions also reopen source bundles containing `TIE`,
+`COUPLING`/`KINEMATIC`, `PLASTIC` or nodal `TRANSFORM`. They require the original
+text to survive and no runnable step to be created. This verifies conservative
+retention, not support for those physical definitions. Named antisymmetry is a
+linear structural mapping; it does not enable finite-rotation or transformed-node
+analysis.

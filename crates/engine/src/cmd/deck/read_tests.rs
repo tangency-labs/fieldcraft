@@ -464,3 +464,94 @@ fn imported_matrices_export_theory_operators_and_survive_reopen() {
     s.execute("deck.source.write", &json!({"path":replay})).unwrap();
     assert_eq!(std::fs::read_to_string(replay).unwrap(), source);
 }
+
+#[test]
+fn named_boundaries_reopen_replay_and_normalized_read_preserve_dofs() {
+    use fieldcraft_model::{BoundaryCondition, Model, Target};
+    let constraints = |m: &Model| {
+        let step = m.step("Load").unwrap();
+        let mut dofs = std::collections::BTreeSet::new();
+        for name in &step.boundary_conditions {
+            let BoundaryCondition::Displacement { target: Target::Set(set), values } = &m.boundary_conditions()[name] else { panic!() };
+            for node in &m.set(set).unwrap().nodes {
+                for (dof, value) in values.iter().enumerate() {
+                    if let Some(value) = value {
+                        assert_eq!(*value, 0.);
+                        dofs.insert((*node, dof + 1));
+                    }
+                }
+            }
+        }
+        dofs
+    };
+    for (kind, dofs) in [
+        ("ENCASTRE", vec![1, 2, 3, 4, 5, 6]),
+        ("PINNED", vec![1, 2, 3]),
+        ("XSYMM", vec![1, 5, 6]),
+        ("YSYMM", vec![2, 4, 6]),
+        ("ZSYMM", vec![3, 4, 5]),
+        ("XASYMM", vec![2, 3, 4]),
+        ("YASYMM", vec![1, 3, 5]),
+        ("ZASYMM", vec![1, 2, 6]),
+    ] {
+        let dir = folder();
+        let input = dir.join("input.inp");
+        let text = format!(
+            "** own boundary fixture\n*NODE,NSET=Edge\n1,0,0,0\n2,1,0,0\n*ELEMENT,TYPE=B31,ELSET=Beam\n1,1,2\n*MATERIAL,NAME=M\n*ELASTIC\n1000,.3\n*BEAM SECTION,ELSET=Beam,MATERIAL=M,SECTION=RECT\n1,1\n0,1,0\n*STEP,NAME=Load\n*STATIC\n*BOUNDARY\nEdge,{kind}\n*END STEP\n"
+        );
+        std::fs::write(&input, &text).unwrap();
+        let mut s = Session::default();
+        let reply = s.execute("deck.read", &json!({"format":"abaqus","path":input,"units":"m-kg-s-N-Pa"})).unwrap();
+        assert_eq!(reply["analysis_complete"], true, "{kind}: {reply}");
+        let expected = dofs.iter().flat_map(|d| [(1, *d), (2, *d)]).collect();
+        assert_eq!(constraints(&s.model), expected);
+        let project = dir.join("model.fieldcraft");
+        s.execute("file.save_as", &json!({"path":project})).unwrap();
+        s.execute("file.new", &json!({})).unwrap();
+        s.execute("file.open", &json!({"path":project})).unwrap();
+        assert_eq!(constraints(&s.model), expected);
+        let replay = dir.join("replay.inp");
+        s.execute("deck.source.write", &json!({"path":replay})).unwrap();
+        assert_eq!(std::fs::read(&replay).unwrap(), text.as_bytes());
+        let normalized = dir.join("normalized.inp");
+        s.execute("deck.write", &json!({"format":"abaqus","path":normalized,"units":"m-kg-s-N-Pa"})).unwrap();
+        s.execute("deck.read", &json!({"format":"abaqus","path":normalized,"units":"m-kg-s-N-Pa"})).unwrap();
+        assert_eq!(constraints(&s.model), expected);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[test]
+fn unmapped_constraints_and_materials_survive_reopen_without_runnable_steps() {
+    for (keyword, block) in [
+        ("TIE", "*TIE,NAME=Joint\nSlave,Master\n"),
+        ("COUPLING", "*COUPLING,CONSTRAINT NAME=Joint,REF NODE=1,SURFACE=Slave\n*KINEMATIC\n1,6\n"),
+        ("PLASTIC", "*MATERIAL,NAME=M\n*ELASTIC\n1000,.3\n*PLASTIC\n10,0\n"),
+        ("TRANSFORM", "*TRANSFORM,NSET=All,TYPE=R\n0,1,0,-1,0,0\n"),
+    ] {
+        let dir = folder();
+        let input = dir.join("input.inp");
+        let text = format!("*NODE,NSET=All\n1,0,0,0\n2,1,0,0\n{block}*STEP,NAME=Load\n*STATIC\n*BOUNDARY\nAll,XASYMM\n*END STEP\n");
+        std::fs::write(&input, &text).unwrap();
+        let mut s = Session::default();
+        let reply = s.execute("deck.read", &json!({"format":"abaqus","path":input})).unwrap();
+        assert_eq!(reply["analysis_complete"], false, "{keyword}: {reply}");
+        assert!(s.model.steps().is_empty());
+        assert!(
+            reply["unknown"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|x| x["keyword"] == keyword && x["original"].as_str().unwrap().contains(&format!("*{keyword}")))
+        );
+        let project = dir.join("model.fieldcraft");
+        s.execute("file.save_as", &json!({"path":project})).unwrap();
+        s.execute("file.new", &json!({})).unwrap();
+        s.execute("file.open", &json!({"path":project})).unwrap();
+        assert!(s.model.steps().is_empty());
+        let output = dir.join("replay.inp");
+        s.execute("deck.source.write", &json!({"path":output})).unwrap();
+        assert_eq!(std::fs::read(output).unwrap(), text.as_bytes());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}

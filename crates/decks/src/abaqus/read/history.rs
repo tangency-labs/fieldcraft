@@ -524,6 +524,9 @@ fn apply(
                         "XSYMM" => vec![1, 5, 6],
                         "YSYMM" => vec![2, 4, 6],
                         "ZSYMM" => vec![3, 4, 5],
+                        "XASYMM" => vec![2, 3, 4],
+                        "YASYMM" => vec![1, 3, 5],
+                        "ZASYMM" => vec![1, 2, 6],
                         _ => return Err(unsupported(row.line, format!("boundary type {kind}"))),
                     };
                     (dofs, 0.0)
