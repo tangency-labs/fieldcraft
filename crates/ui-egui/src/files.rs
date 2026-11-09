@@ -1827,18 +1827,31 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    // The picker fixture deliberately selects the supported B-bar export formula.
+    // Keep all material, geometry, loads and boundary data unchanged.
+    fn select_bbar_export(app: &mut ModelApp) {
+        let mut section = app.session.model.section("Beam").unwrap().clone();
+        section.formulation.incompatible_modes = false;
+        section.formulation.b_bar = true;
+        let mut params = serde_json::to_value(section).unwrap();
+        params["name"] = json!("Beam");
+        app.run("model.section.edit", params).unwrap();
+    }
+
     #[test]
     fn asynchronous_deck_and_csv_exports_keep_names_parameters_and_extensions() {
         let dir = temp("async-exports");
         let mut app = ModelApp::new(Session::default());
         app.open_sample("cantilever");
         app.wait_loaded();
+        select_bbar_export(&mut app);
         app.run("solve.static", json!({})).unwrap();
         let chooser = deferred(&mut app);
         app.write_deck("abaqus");
         let deck = dir.join("beam.inp");
         *chooser.answer.borrow_mut() = Some(Some(dir.join("beam").to_string_lossy().into_owned()));
         app.poll_picker();
+        app.wait_loaded();
         assert!(std::fs::read_to_string(deck).unwrap().to_ascii_uppercase().contains("*NODE"));
         assert_eq!(
             chooser.requests.borrow()[0],
@@ -1848,6 +1861,7 @@ mod tests {
         let csv = dir.join("reactions.CSV");
         *chooser.answer.borrow_mut() = Some(Some(csv.to_string_lossy().into_owned()));
         app.poll_picker();
+        app.wait_loaded();
         let text = std::fs::read_to_string(csv).unwrap();
         assert!(text.starts_with("set,nodes,fx [N]") && text.contains("\r\ntotal,"));
         assert_eq!(
@@ -2262,12 +2276,14 @@ mod tests {
         let target = dir.join("cantilever").to_string_lossy().to_string();
         let mut app = ModelApp::new(Session::default());
         app.run_script(&fieldcraft_engine::sample::cantilever()).unwrap();
+        select_bbar_export(&mut app);
         let t = target.clone();
         app.services.pick_save = Some(Box::new(move |name: &str, f: &[Filter]| {
             assert_eq!((name, f.first().map(|f| f.extensions)), ("Untitled.inp", Some(&["inp"][..])));
             Some(t.clone())
         }));
         app.start("deck.write.abaqus").unwrap();
+        app.wait_loaded();
         assert!(app.dialog.is_none());
         let text = std::fs::read_to_string(format!("{target}.inp")).unwrap();
         assert!(text.contains("*NODE") || text.contains("*Node"), "{}", &text[..text.len().min(200)]);

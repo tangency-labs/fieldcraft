@@ -287,6 +287,18 @@ Abaqus import: C3D8I now selects the thirteen-variable nonhybrid isotropic small
 
 Abaqus history: boundary modifications retain node/set and named/direct identity; ambiguous replacements are refused. A five-step, two-instance INCLUDE case checks effective load/constraint inheritance, amplitude endpoints, solving and source/normalized round trips.
 
+- Abaqus independent direct transient import: explicit average-acceleration
+  DYNAMIC/DIRECT for MASS/SPRING1, complete common load amplitude, zero initial
+  state and fixed homogeneous supports. Continuous-element mass, base-state
+  continuation and unsupported dynamic combinations remain refused;
+  source preservation is distinct from runnable semantics.
+
+- Abaqus modal time history and constant pseudo-acceleration spectrum import:
+  compile an immediately preceding unwindowed frequency basis into native modal
+  re-extraction for explicit MASS/SPRING1. Preserve common amplitudes, mode-number
+  viscous damping and global SRSS/R40 directions; refuse unsupported selection,
+  base states, interpolation and mass mappings. Native modal time integration is
+  Newmark and is verified separately against the continuous response.
 
 ### Curved quadratic shell statics
 

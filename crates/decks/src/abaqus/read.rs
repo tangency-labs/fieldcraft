@@ -57,6 +57,8 @@ pub struct Unknown {
 /// `unknown_count` counts all unread options.
 #[derive(Debug, Clone)]
 pub struct Read {
+    // Source targets containing discrete labels must not be confused with filtered mesh sets.
+    discrete_targets: BTreeSet<String>,
     /// Whether all history steps were mapped without unsupported physical semantics.
     pub analysis_complete: bool,
     /// Unapplied, condition-scoped mass requirements; independent of history completeness.
@@ -134,6 +136,18 @@ fn read_mode(text: &str, preset: Preset, limits: Limits, analysis: bool) -> Resu
             && read.model.elements().values().any(|e| e.kind == fieldcraft_model::ElementKind::Rod2)
         {
             read.warnings.push("NLGEOM=YES T3D2/T2D2 steps and base_state are retained semantically, but native nonlinear static truss solving is not supported; solve.nonlinear and dependent frequency will refuse, not use NLGEOM=NO".into());
+        }
+        if read.model.steps().iter().any(
+            |s| matches!(&s.procedure, fieldcraft_model::Procedure::Transient(t) if matches!(t.method, fieldcraft_model::dynamics::Method::Direct)),
+        ) {
+            read.warnings.push("DYNAMIC DIRECT: independent fixed-step average acceleration with zero initial state; explicit point masses retain their values, common load AMPLITUDE is evaluated throughout time, not at its endpoint. Material/element mass defaults, continuation and other dynamic procedures are not inferred.".into());
+        }
+        for step in read.model.steps() {
+            if matches!(&step.procedure, fieldcraft_model::Procedure::Transient(t) if matches!(t.method, fieldcraft_model::dynamics::Method::Modal { .. }))
+                || matches!(step.procedure, fieldcraft_model::Procedure::ResponseSpectrum(_))
+            {
+                read.warnings.push(format!("step {}: preceding unwindowed FREQUENCY count and unchanged fixed supports compiled into native modal re-extraction (not cached-result reuse); explicit point masses are unchanged by consistent/lumped. Modal time histories use native Newmark, not the target modal integration algorithm. Spectrum output is pseudo-acceleration and peak envelopes; output request text is retained, all transient increments are stored.", step.name));
+            }
         }
         read.unknown.truncate(MAX_UNKNOWN_SHOWN);
         Ok(read)
@@ -916,7 +930,19 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
             "{unassigned} mesh elements have no section: their input family/formulation is not stored on the mesh element. Assign compatible sections before analysis; reduced/hybrid/shell/plane context is not retained without them."
         ));
     }
-    Ok(Read { model, mass_requirements: Vec::new(), analysis_complete: false, instances: Vec::new(), unknown, unknown_count, warnings })
+    let mut discrete_targets: BTreeSet<String> = discrete_elements.keys().map(u32::to_string).collect();
+    discrete_targets
+        .extend(expanded_elements.iter().filter(|(_, ids)| ids.iter().any(|id| discrete_elements.contains_key(id))).map(|(name, _)| name.clone()));
+    Ok(Read {
+        discrete_targets,
+        model,
+        mass_requirements: Vec::new(),
+        analysis_complete: false,
+        instances: Vec::new(),
+        unknown,
+        unknown_count,
+        warnings,
+    })
 }
 
 fn section_kind(raw: &SectionRecord, typ: Type, units: &DisplaySystem) -> Result<SectionKind> {

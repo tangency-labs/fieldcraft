@@ -8,6 +8,13 @@ use fieldcraft_model::units::{Preset, Quantity};
 use fieldcraft_model::{BoundaryCondition, DisplaySystem, Distribution, ElementFace, Load, Model, Procedure, Set, Step, Target};
 use std::collections::{BTreeMap, BTreeSet};
 
+#[path = "projected.rs"]
+mod projected;
+#[path = "traction.rs"]
+mod traction;
+#[path = "transient.rs"]
+mod transient;
+
 #[derive(Clone)]
 struct Curve {
     points: Vec<(f64, f64)>,
@@ -47,7 +54,9 @@ enum Family {
     Force,
     PressureD,
     PressureS,
+    TractionS(u8),
     Gravity,
+    Body,
 }
 type State = BTreeMap<(Family, String, u32, u8), Driven>;
 type Touched = BTreeSet<(Family, String, u32, u8)>;
@@ -133,13 +142,24 @@ pub(super) fn import(text: &str, read: &mut Read, preset: Preset, limits: Limits
         }
         Err(e) => return Err(e),
     };
+    let response_tables = match projected::tables(&blocks, &units) {
+        Ok(v) => v,
+        Err(e @ Error::Unsupported { .. }) => {
+            read.warnings.push(e.to_string());
+            return Ok(());
+        }
+        Err(e) => return Err(e),
+    };
     let mut in_step = false;
     let unknown: BTreeSet<usize> = read.unknown.iter().map(|u| u.line).collect();
     for b in &blocks {
         if b.keyword == "STEP" {
             in_step = true;
         }
-        if !in_step && unknown.contains(&b.line) && !matches!(b.keyword.as_str(), "BOUNDARY" | "AMPLITUDE" | "PREPRINT" | "PSD-DEFINITION") {
+        if !in_step
+            && unknown.contains(&b.line)
+            && !matches!(b.keyword.as_str(), "BOUNDARY" | "AMPLITUDE" | "PREPRINT" | "PSD-DEFINITION" | "SPECTRUM")
+        {
             read.warnings.push(format!("analysis not imported: unhandled model option *{} at line {}; original retained", b.keyword, b.line));
             return Ok(());
         }
@@ -157,7 +177,7 @@ pub(super) fn import(text: &str, read: &mut Read, preset: Preset, limits: Limits
         let Some(b) = blocks.get(index) else {
             break;
         };
-        if matches!(b.keyword.as_str(), "AMPLITUDE" | "PSD-DEFINITION") {
+        if matches!(b.keyword.as_str(), "AMPLITUDE" | "PSD-DEFINITION" | "SPECTRUM") {
             consumed.insert(b.line);
             index += 1;
             continue;
@@ -179,7 +199,15 @@ pub(super) fn import(text: &str, read: &mut Read, preset: Preset, limits: Limits
             .find(|j| blocks.get(*j).is_some_and(|b| b.keyword == "ENDSTEP"))
             .ok_or_else(|| error(b.line, "STEP has no END STEP"))?;
         let body = blocks.get(index + 1..end).ok_or_else(|| error(b.line, "invalid step range"))?;
-        let prepared = prepare(b, body, &state, &read.model, &HistoryData { curves: &curves, spectra: &spectra }, &units, limits);
+        let prepared = prepare(
+            b,
+            body,
+            &state,
+            &read.model,
+            &HistoryData { curves: &curves, spectra: &spectra, response_tables: &response_tables, discrete_targets: &read.discrete_targets },
+            &units,
+            limits,
+        );
         let (procedure, duration, mut next) = match prepared {
             Ok(v) => v,
             Err(e @ Error::Unsupported { .. }) => {
@@ -188,7 +216,9 @@ pub(super) fn import(text: &str, read: &mut Read, preset: Preset, limits: Limits
             }
             Err(e) => return Err(e),
         };
-        let perturbation = b.params.contains_key("PERTURBATION")
+        let perturbation = matches!(&procedure, Procedure::Transient(t) if matches!(t.method, fieldcraft_model::dynamics::Method::Modal { .. }))
+            || matches!(procedure, Procedure::ResponseSpectrum(_))
+            || b.params.contains_key("PERTURBATION")
             || matches!(
                 procedure,
                 Procedure::Frequency { .. }
@@ -250,7 +280,7 @@ pub(super) fn import(text: &str, read: &mut Read, preset: Preset, limits: Limits
     read.unknown.retain(|u| !consumed.contains(&u.line));
     read.unknown_count = read.unknown.len();
     read.analysis_complete = index == blocks.len();
-    if !curves.is_empty() {
+    if !curves.is_empty() && read.model.steps().iter().any(|s| matches!(s.procedure, Procedure::Static {})) {
         read.warnings.push("static amplitude curves are evaluated at the equilibrium step end; the original curves remain in the saved source, not a transient solution".into());
     }
     if read.unknown.iter().any(|u| is_output(&u.keyword)) {
@@ -263,6 +293,8 @@ fn is_output(k: &str) -> bool {
 }
 
 struct HistoryData<'a> {
+    discrete_targets: &'a BTreeSet<String>,
+    response_tables: &'a BTreeMap<String, projected::Table>,
     curves: &'a BTreeMap<String, Curve>,
     spectra: &'a BTreeMap<String, Vec<fieldcraft_model::random::SpectrumPoint>>,
 }
@@ -276,6 +308,26 @@ fn prepare(
     units: &DisplaySystem,
     limits: Limits,
 ) -> Result<(Procedure, f64, State)> {
+    if model.steps().iter().any(|s| matches!(s.procedure, Procedure::Transient(_) | Procedure::ResponseSpectrum(_))) {
+        return Err(unsupported(b.line, "continuation after a transient/response-spectrum step is not mapped"));
+    }
+    // Mesh sets omit MASS/SPRING1 labels. Check source membership before any
+    // expansion, including aliases and mixed sets, so a partial load cannot run.
+    for block in body.iter().filter(|b| b.keyword == "DLOAD") {
+        for row in &block.rows {
+            let fields = row_fields(row.text, row.line)?;
+            let kind = canonical(fields.get(1).map(String::as_str).unwrap_or_default());
+            if matches!(kind.as_str(), "GRAV" | "BX" | "BY" | "BZ") {
+                let target = name(fields.first().map(String::as_str).unwrap_or_default(), row.line)?;
+                if data.discrete_targets.contains(&target) || (target.is_empty() && !model.masses().is_empty()) {
+                    return Err(unsupported(
+                        row.line,
+                        format!("{kind} target `{target}` includes discrete elements; discrete load membership mapping is not supported"),
+                    ));
+                }
+            }
+        }
+    }
     let curves = data.curves;
     let spectra = data.spectra;
     allow(b, &["NAME", "NLGEOM", "PERTURBATION", "AMPLITUDE", "INC"])?;
@@ -303,8 +355,17 @@ fn prepare(
         return Err(unsupported(b.line, "step description rows are not mapped"));
     }
     let random = body.iter().any(|b| b.keyword == "RANDOMRESPONSE");
+    let projected = body.iter().any(|b| matches!(b.keyword.as_str(), "MODALDYNAMIC" | "RESPONSESPECTRUM"));
+    if random && projected {
+        return Err(unsupported(b.line, "multiple procedures: RANDOM RESPONSE with MODAL DYNAMIC/RESPONSE SPECTRUM"));
+    }
     let mut procedure = if random { Some(super::random::procedure(body, model, spectra, units)?) } else { None };
     let mut duration = 1.0;
+    if projected {
+        let (p, time) = projected::procedure(body, model, data.response_tables, units)?;
+        procedure = Some(p);
+        duration = time;
+    }
     let mut global_damping = None;
     let mut next = state.clone();
     let mut ops = BTreeMap::new();
@@ -339,6 +400,15 @@ fn prepare(
                     duration = f.get(1).filter(|s| !s.is_empty()).map(|s| number(s, row.line)).transpose()?.filter(|v| *v > 0.0).unwrap_or(1.0);
                 }
                 procedure = Some(if nonlinear { super::nonlinear::procedure(b, part, model)? } else { Procedure::Static {} });
+            }
+            "MODALDYNAMIC" | "RESPONSESPECTRUM" | "MODALDAMPING" if projected => {}
+            "DYNAMIC" => {
+                if procedure.is_some() {
+                    return Err(error(part.line, "multiple analysis procedures"));
+                }
+                let (p, time) = transient::procedure(part, b, model, units)?;
+                procedure = Some(p);
+                duration = time;
             }
             "STEADYSTATEDYNAMICS" => {
                 if procedure.is_some() {
@@ -402,6 +472,12 @@ fn prepare(
         }
     }
     let mut procedure = procedure.ok_or_else(|| unsupported(b.line, "STEP has no supported procedure"))?;
+    if next.keys().any(|(family, _, _, _)| matches!(family, Family::TractionS(_))) && !matches!(procedure, Procedure::Static {}) {
+        return Err(unsupported(b.line, "DSLOAD TRVEC requires small-displacement linear STATIC"));
+    }
+    if next.keys().any(|(family, _, _, _)| *family == Family::Body) && !matches!(procedure, Procedure::Static {}) {
+        return Err(unsupported(b.line, "DLOAD BX/BY/BZ requires small-displacement linear STATIC"));
+    }
     if let Some(damping) = global_damping {
         let Procedure::Harmonic(h) = &mut procedure else {
             return Err(unsupported(b.line, "GLOBAL DAMPING outside harmonic analysis"));
@@ -411,7 +487,7 @@ fn prepare(
     if matches!(procedure, Procedure::Harmonic(_)) && next.iter().any(|((family, _, _, _), v)| *family == Family::Boundary && v.value != 0.0) {
         return Err(unsupported(b.line, "nonzero harmonic prescribed motion"));
     }
-    if !matches!(procedure, Procedure::Static {}) && next.values().any(|v| v.amplitude.is_some()) {
+    if !matches!(procedure, Procedure::Static {} | Procedure::Transient(_)) && next.values().any(|v| v.amplitude.is_some()) {
         return Err(unsupported(b.line, "amplitude on non-static step"));
     }
     if matches!(procedure, Procedure::MatrixGeneration { .. })
@@ -430,6 +506,12 @@ fn prepare(
         && !matches!(procedure, Procedure::Frequency { .. })
     {
         return Err(unsupported(b.line, "NLGEOM continuation: subsequent general steps are not mapped"));
+    }
+    if matches!(procedure, Procedure::Transient(_)) {
+        transient::validate_history(b, &next, curves)?;
+    }
+    if matches!(procedure, Procedure::ResponseSpectrum(_)) {
+        projected::validate_state(&next)?;
     }
     super::super::limited::enhanced(model, Some(&procedure))?;
     Ok((procedure, duration, next))
@@ -464,7 +546,11 @@ fn apply(
     touched: &mut Touched,
     limits: Limits,
 ) -> Result<()> {
-    allow(b, &["OP", "AMPLITUDE", "TYPE", "REAL"])?;
+    if b.keyword == "DSLOAD" {
+        allow(b, &["OP", "AMPLITUDE", "TYPE", "REAL", "FOLLOWER", "CONSTANTRESULTANT"])?;
+    } else {
+        allow(b, &["OP", "AMPLITUDE", "TYPE", "REAL"])?;
+    }
     if b.params.contains_key("REAL") && (b.keyword == "BOUNDARY" || b.params.get("REAL").is_some_and(Option::is_some)) {
         return Err(unsupported(b.line, "REAL must be a load flag"));
     }
@@ -489,8 +575,8 @@ fn apply(
             state.retain(|(family, _, _, _), _| match b.keyword.as_str() {
                 "BOUNDARY" => *family != Family::Boundary,
                 "CLOAD" => *family != Family::Force,
-                "DSLOAD" => *family != Family::PressureS,
-                _ => !matches!(family, Family::PressureD | Family::Gravity),
+                "DSLOAD" => !matches!(family, Family::PressureS | Family::TractionS(_)),
+                _ => !matches!(family, Family::PressureD | Family::Gravity | Family::Body),
             });
         }
     }
@@ -610,8 +696,12 @@ fn apply(
                 }
             }
             "DSLOAD" => {
-                if f.len() != 3 || f.get(1).is_none_or(|v| canonical(v) != "P") {
-                    return Err(unsupported(row.line, "only DSLOAD pressure P is mapped"));
+                let kind = canonical(f.get(1).map(String::as_str).unwrap_or_default());
+                if kind != "P" && kind != "TRVEC" {
+                    return Err(unsupported(row.line, format!("DSLOAD {kind}")));
+                }
+                if kind == "P" && (f.len() != 3 || b.params.contains_key("FOLLOWER") || b.params.contains_key("CONSTANTRESULTANT")) {
+                    return Err(unsupported(row.line, "DSLOAD P requires three fields without traction controls"));
                 }
                 let key = name(target, row.line)?;
                 let set = model
@@ -619,22 +709,28 @@ fn apply(
                     .iter()
                     .find(|(n, _)| n.eq_ignore_ascii_case(&key))
                     .map(|(_, s)| s)
-                    .ok_or_else(|| error(row.line, "missing pressure surface"))?;
+                    .ok_or_else(|| error(row.line, "missing DSLOAD surface"))?;
                 if set.faces.is_empty() || !set.edges.is_empty() {
-                    return Err(unsupported(row.line, "pressure requires element faces"));
+                    return Err(unsupported(row.line, "DSLOAD requires element faces"));
                 }
-                let magnitude = number(f.get(2).map(String::as_str).unwrap_or_default(), row.line)?;
-                for face in &set.faces {
-                    insert(Family::PressureS, face.element, face.face, magnitude)?;
+                if kind == "TRVEC" {
+                    let vector = traction::vector(b, &f, set, model, row.line)?;
+                    for face in &set.faces {
+                        for (axis, component) in vector.iter().enumerate() {
+                            insert(Family::TractionS(axis as u8), face.element, face.face, *component)?;
+                        }
+                    }
+                } else {
+                    let magnitude = number(f.get(2).map(String::as_str).unwrap_or_default(), row.line)?;
+                    for face in &set.faces {
+                        insert(Family::PressureS, face.element, face.face, magnitude)?;
+                    }
                 }
             }
             _ => {
                 let kind = canonical(f.get(1).map(String::as_str).unwrap_or_default());
                 let elements = if target.is_empty() { model.elements().keys().copied().collect() } else { members(model, target, false, row.line)? };
                 if kind == "GRAV" {
-                    if !model.masses().is_empty() {
-                        return Err(unsupported(row.line, "GRAV with imported point masses needs discrete load membership mapping"));
-                    }
                     if f.len() != 6 {
                         return Err(error(row.line, "GRAV needs magnitude and three direction components"));
                     }
@@ -651,6 +747,26 @@ fn apply(
                         for (i, v) in direction.iter().enumerate() {
                             insert(Family::Gravity, element, (i + 1) as u8, magnitude * v / norm)?;
                         }
+                    }
+                } else if matches!(kind.as_str(), "BX" | "BY" | "BZ") {
+                    if target.is_empty() {
+                        return Err(unsupported(row.line, format!("DLOAD {kind} requires an explicit element or element set")));
+                    }
+                    if f.len() != 3 {
+                        return Err(error(row.line, format!("DLOAD {kind} needs target, load label and force per volume")));
+                    }
+                    let component = match kind.as_str() {
+                        "BX" => 1,
+                        "BY" => 2,
+                        _ => 3,
+                    };
+                    let magnitude = number(f.get(2).map(String::as_str).unwrap_or_default(), row.line)?;
+                    for element in elements {
+                        let e = model.element(element).ok_or_else(|| error(row.line, "missing body force element"))?;
+                        if e.kind != fieldcraft_model::ElementKind::Tet4 {
+                            return Err(unsupported(row.line, format!("DLOAD {kind} element {element} ({:?}): only Tet4 is mapped", e.kind)));
+                        }
+                        insert(Family::Body, element, component, magnitude)?;
                     }
                 } else if let Some(face) = kind.strip_prefix('P').and_then(|s| s.parse::<u8>().ok()) {
                     if f.len() != 3 {
@@ -691,7 +807,9 @@ fn materialize(model: &mut Model, step: &mut Step, state: &mut State, evaluation
     for ((family, _, id, dof), driven) in state.iter_mut() {
         check_work(groups.len())?;
         let mut v = driven.value;
-        if let Some(name) = &driven.amplitude {
+        if !matches!(step.procedure, Procedure::Transient(_))
+            && let Some(name) = &driven.amplitude
+        {
             let curve = curves.get(name).ok_or_else(|| error(driven.line, "missing amplitude"))?;
             v *= curve.at(if curve.total { total } else { time });
             if !curve.total {
@@ -714,13 +832,19 @@ fn materialize(model: &mut Model, step: &mut Step, state: &mut State, evaluation
                     Quantity::Moment
                 }
             }
-            Family::PressureD | Family::PressureS => Quantity::Pressure,
+            Family::PressureD | Family::PressureS | Family::TractionS(_) => Quantity::Pressure,
+            Family::Body => Quantity::ForcePerVolume,
             _ => Quantity::Acceleration,
         };
         v = super::quantity(units, q, v, driven.line)?;
         *accumulated.entry((*family, *id, *dof)).or_default() += v;
     }
     for ((family, id, dof), v) in accumulated {
+        // Retain zero components in history for OP=MOD/NEW, but not as invalid
+        // native gravity definitions. Cancellation likewise has no effective load.
+        if matches!(family, Family::Gravity | Family::TractionS(_) | Family::Body) && v == 0.0 {
+            continue;
+        }
         if !v.is_finite() {
             return Err(error(1, "accumulated load is non-finite"));
         }
@@ -749,7 +873,9 @@ fn materialize(model: &mut Model, step: &mut Step, state: &mut State, evaluation
         let mut set = Set::default();
         match family {
             Family::Boundary | Family::Force => set.nodes = ids,
-            Family::PressureD | Family::PressureS => set.faces = ids.into_iter().map(|element| ElementFace { element, face: dof }).collect(),
+            Family::PressureD | Family::PressureS | Family::TractionS(_) => {
+                set.faces = ids.into_iter().map(|element| ElementFace { element, face: dof }).collect()
+            }
             _ => set.elements = ids,
         }
         let target = if let Some(point) = point {
@@ -767,12 +893,15 @@ fn materialize(model: &mut Model, step: &mut Step, state: &mut State, evaluation
             step.boundary_conditions.insert(name);
         } else {
             let mut vector = [0.0; 3];
-            if let Some(slot) = vector.get_mut((usize::from(dof) - 1) % 3) {
+            let axis = if let Family::TractionS(axis) = family { usize::from(axis) } else { (usize::from(dof) - 1) % 3 };
+            if let Some(slot) = vector.get_mut(axis) {
                 *slot = value;
             }
             let load = match family {
                 Family::Force if dof <= 3 => Load::Force { target, vector, distribution: Distribution::PerNode },
                 Family::Force => Load::Moment { target, vector, distribution: Distribution::PerNode },
+                Family::Body => Load::BodyForce { set: name.clone(), vector },
+                Family::TractionS(_) => Load::Traction { set: name.clone(), vector },
                 Family::PressureD | Family::PressureS => Load::Pressure { set: name.clone(), magnitude: value },
                 _ => Load::Gravity { acceleration: vector, set: Some(name.clone()) },
             };
@@ -780,6 +909,7 @@ fn materialize(model: &mut Model, step: &mut Step, state: &mut State, evaluation
             step.loads.insert(name);
         }
     }
+    transient::attach(step, state, curves, units)?;
     // Eigen frequencies are converted only at the model boundary, like all other quantities.
     if let Procedure::Frequency { min_hz, max_hz, .. } = &mut step.procedure {
         for value in [min_hz, max_hz].into_iter().flatten() {
@@ -792,6 +922,239 @@ fn materialize(model: &mut Model, step: &mut Step, state: &mut State, evaluation
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gravity_mesh_targets_do_not_load_unrelated_discrete_masses() {
+        let input = r#"*NODE
+1,0,0,0
+2,1,0,0
+7,2,0,0
+*ELEMENT,TYPE=T3D2,ELSET=Bar
+1,1,2
+*ELEMENT,TYPE=MASS,ELSET=M
+10,7
+*ELEMENT,TYPE=SPRING1,ELSET=K
+11,7
+*ELSET,ELSET=Mixed
+Bar,M
+*ELSET,ELSET=Alias
+Bar
+*MATERIAL,NAME=Steel
+*ELASTIC
+1000,.3
+*DENSITY
+2
+*SOLID SECTION,ELSET=Bar,MATERIAL=Steel
+1
+*MASS,ELSET=M
+3
+*SPRING,ELSET=K
+1
+100
+*BOUNDARY
+1,1,3
+2,2,3
+7,2,3
+*AMPLITUDE,NAME=A
+0,0,1,2
+*STEP,NAME=One
+*STATIC
+1,1
+*DLOAD,AMPLITUDE=A
+Alias,GRAV,10,1,0,0
+*END STEP
+*STEP,NAME=Two
+*STATIC
+1,1
+*END STEP
+*STEP,NAME=Three
+*STATIC
+1,1
+*DLOAD,OP=NEW
+1,GRAV,5,-1,0,0
+*END STEP
+"#;
+        let got = read(input);
+        assert!(got.analysis_complete, "{:?}", got.warnings);
+        assert_eq!(got.model.steps().len(), 3);
+        for (step, expected) in [("One", 20.0), ("Two", 20.0), ("Three", -5.0)] {
+            let mut acceleration = 0.0;
+            for name in &got.model.step(step).unwrap().loads {
+                let Load::Gravity { acceleration: a, set: Some(set) } = got.model.load(name).unwrap() else { panic!("expected scoped gravity") };
+                assert_eq!(got.model.set(set).unwrap().elements, vec![1]);
+                acceleration += a[0];
+            }
+            assert_eq!(acceleration, expected);
+        }
+        let zero = read(&input.replace("1,GRAV,5,-1,0,0", "1,GRAV,0,-1,0,0"));
+        assert!(zero.analysis_complete);
+        assert!(zero.model.step("Three").unwrap().loads.is_empty());
+        for target in ["", "M", "Mixed", "10", "K"] {
+            let denied = read(&input.replace("Alias,GRAV", &format!("{target},GRAV")));
+            assert!(!denied.analysis_complete);
+            assert!(denied.model.steps().is_empty());
+            assert!(denied.warnings.iter().any(|w| w.contains("GRAV target") && w.contains("discrete")), "{:?}", denied.warnings);
+        }
+    }
+
+    #[test]
+    fn fixed_surface_traction_retains_amplitude_time_and_load_family() {
+        let input = r#"** Original fixed global surface traction on a linear tetrahedron; SI
+*NODE
+1,0,0,0
+2,1,0,0
+3,0,1,0
+4,0,0,1
+*ELEMENT,TYPE=C3D4,ELSET=Solid
+1,1,2,3,4
+*NSET,NSET=Base
+1,2,3
+*SURFACE,TYPE=ELEMENT,NAME=Side
+Solid,S2
+*MATERIAL,NAME=Elastic
+*ELASTIC
+120000,.25
+*SOLID SECTION,ELSET=Solid,MATERIAL=Elastic
+*BOUNDARY
+Base,1,3
+*AMPLITUDE,NAME=Local,TIME=STEP TIME
+0,0,1,2,2,3
+*AMPLITUDE,NAME=Global,TIME=TOTAL TIME
+0,0,4,8
+*STEP,NAME=One
+*STATIC
+1,1
+*DSLOAD,FOLLOWER=NO,CONSTANT RESULTANT=YES,AMPLITUDE=Local
+Side,TRVEC,10,.6,0,.8
+*END STEP
+*STEP,NAME=Two
+*STATIC
+1,1
+*END STEP
+*STEP,NAME=Three
+*STATIC
+1,1
+*DSLOAD,OP=NEW,FOLLOWER=NO,CONSTANT RESULTANT=YES,AMPLITUDE=Global
+Side,TRVEC,5,-1,0,0
+*END STEP
+*STEP,NAME=Four
+*STATIC
+1,1
+*END STEP
+"#;
+        let got = read(input);
+        assert!(got.analysis_complete, "{:?}", got.warnings);
+        for (step, expected) in [("One", [12.0, 0.0, 16.0]), ("Two", [12.0, 0.0, 16.0]), ("Three", [-30.0, 0.0, 0.0]), ("Four", [-40.0, 0.0, 0.0])] {
+            let mut actual = [0.0; 3];
+            for name in &got.model.step(step).unwrap().loads {
+                let Load::Traction { set, vector } = got.model.load(name).unwrap() else { panic!("expected traction") };
+                assert_eq!(got.model.set(set).unwrap().faces, vec![ElementFace { element: 1, face: 2 }]);
+                for (a, v) in actual.iter_mut().zip(vector) {
+                    *a += v;
+                }
+            }
+            assert_eq!(actual, expected);
+        }
+        for (old, new, reason) in [
+            ("FOLLOWER=NO", "FOLLOWER=YES", "FOLLOWER"),
+            ("CONSTANT RESULTANT=YES", "CONSTANT RESULTANT=NO", "CONSTANT RESULTANT"),
+            ("TRVEC", "TRSHR", "TRSHR"),
+            ("*STEP,NAME=One", "*STEP,NAME=One,NLGEOM=YES", "TRVEC"),
+            ("FOLLOWER=NO", "FOLLOWER=NO,ORIENTATION=Local", "ORIENTATION"),
+        ] {
+            let denied = read(&input.replace(old, new));
+            assert!(!denied.analysis_complete);
+            assert!(denied.model.steps().is_empty());
+            assert!(denied.warnings.iter().any(|w| w.contains(reason)), "{:?}", denied.warnings);
+        }
+        let pressure =
+            input.replace("*DSLOAD,OP=NEW,FOLLOWER=NO,CONSTANT RESULTANT=YES,AMPLITUDE=Global\nSide,TRVEC,5,-1,0,0", "*DSLOAD,OP=NEW\nSide,P,5");
+        let pressure = read(&pressure);
+        assert!(pressure.analysis_complete);
+        assert!(pressure.model.step("Three").unwrap().loads.iter().all(|n| matches!(pressure.model.load(n), Some(Load::Pressure { .. }))));
+    }
+
+    #[test]
+    fn body_force_components_inherit_modify_and_clear_in_force_per_volume() {
+        let input = r#"** Original global volume force, not acceleration or surface traction; SI
+*NODE
+1,0,0,0
+2,1,0,0
+3,0,1,0
+4,0,0,1
+*ELEMENT,TYPE=C3D4,ELSET=Solid
+1,1,2,3,4
+*NSET,NSET=Base
+1,2,3
+*ELSET,ELSET=Volume
+Solid
+*MATERIAL,NAME=Elastic
+*ELASTIC
+120000,.25
+*DENSITY
+7
+*SOLID SECTION,ELSET=Solid,MATERIAL=Elastic
+*BOUNDARY
+Base,1,3
+*AMPLITUDE,NAME=Local,TIME=STEP TIME
+0,0,1,2,2,3
+*AMPLITUDE,NAME=Global,TIME=TOTAL TIME
+0,0,4,8
+*STEP,NAME=One
+*STATIC
+1,1
+*DLOAD,AMPLITUDE=Local
+Volume,BX,12
+Volume,BY,-6
+Volume,BZ,24
+*END STEP
+*STEP,NAME=Two
+*STATIC
+1,1
+*DLOAD,AMPLITUDE=Global
+Volume,BX,5
+*END STEP
+*STEP,NAME=Three
+*STATIC
+1,1
+*END STEP
+*STEP,NAME=Four
+*STATIC
+1,1
+*DLOAD,OP=NEW
+1,BZ,-16
+*END STEP
+"#;
+        let got = read(input);
+        assert!(got.analysis_complete, "{:?}", got.warnings);
+        for (step, expected) in
+            [("One", [24.0, -12.0, 48.0]), ("Two", [20.0, -12.0, 48.0]), ("Three", [30.0, -12.0, 48.0]), ("Four", [0.0, 0.0, -16.0])]
+        {
+            let mut actual = [0.0; 3];
+            for name in &got.model.step(step).unwrap().loads {
+                let Load::BodyForce { set, vector } = got.model.load(name).unwrap() else { panic!("expected body force") };
+                assert_eq!(got.model.set(set).unwrap().elements, vec![1]);
+                for (a, v) in actual.iter_mut().zip(vector) {
+                    *a += v;
+                }
+            }
+            assert_eq!(actual, expected);
+        }
+        for (old, new, reason) in [
+            ("Volume,BX", "Volume,BXNU", "BXNU"),
+            ("Volume,BX", ",BX", "explicit element"),
+            ("*DLOAD,AMPLITUDE=Local", "*DLOAD,ORIENTATION=Local,AMPLITUDE=Local", "ORIENTATION"),
+            ("*STEP,NAME=One", "*STEP,NAME=One,NLGEOM=YES", "BX/BY/BZ"),
+        ] {
+            let denied = read(&input.replace(old, new));
+            assert!(!denied.analysis_complete);
+            assert!(denied.model.steps().is_empty());
+            assert!(denied.warnings.iter().any(|w| w.contains(reason)), "{:?}", denied.warnings);
+        }
+        let cleared = read(&input.replace("1,BZ,-16", "1,GRAV,1,0,0,-1"));
+        assert!(cleared.analysis_complete);
+        assert!(cleared.model.step("Four").unwrap().loads.iter().all(|n| matches!(cleared.model.load(n), Some(Load::Gravity { .. }))));
+    }
     const MODEL: &str = "*NODE,NSET=Tip\n1,0,0,0\n2,1,0,0\n*BOUNDARY\n1,ENCASTRE\n";
     fn read(text: &str) -> Read {
         super::super::read_analysis_limited(text, Preset::MKgS, Limits::default()).unwrap()

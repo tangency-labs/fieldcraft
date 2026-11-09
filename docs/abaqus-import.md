@@ -631,3 +631,177 @@ and reaction, saved results, exact source replay and normalized readback. INCLUD
 paths in this workflow are relative to the root input directory, including nested
 files; a missing dependency is a named error, never silently skipped. This does
 not extend nonlinear paths, transient loading, FIXED or follower-load support.
+
+### Independent direct time history
+
+`DYNAMIC, DIRECT` now maps to the native transient procedure for explicit point
+`MASS` and linear grounded `SPRING1` models. It requires explicit `ALPHA=0`,
+`BETA=.25`, `GAMMA=.5`, `APPLICATION=TRANSIENT FIDELITY` (or omitted application),
+a positive increment and period containing a whole number of increments, and
+sufficient `STEP, INC`. The omitted HHT alpha default is **not** average
+acceleration and is refused rather than guessed. Initial displacement/velocity
+and physical damping are zero. Only homogeneous fixed boundaries and translational
+`CLOAD`s sharing one explicit relative TABULAR/SMOOTH STEP amplitude are mapped.
+The reference force remains unscaled; the native solver evaluates the complete
+curve at each time, including endpoint holding. This independent first step starts
+at total time zero, so STEP TIME and TOTAL TIME coincide. Output is retained every
+increment; original output-request text remains in source replay.
+
+Run `solve.transient` with `mass=consistent` (the shared default) or `lumped`:
+explicit point masses are unchanged by this choice. This does **not** establish
+continuous-element mass equivalence. Structural elements, continuation/base state,
+nonzero or amplitude-driven boundaries, automatic increments, DIRECT=NO STOP,
+other HHT parameters, multiple amplitude names and distributed loads are refused.
+Modal time history and response-spectrum imports have the separate restricted
+contract below; other combinations remain source-preserved and non-runnable.
+No step is silently converted into static equilibrium or another procedure.
+
+Verification uses an original 2 kg / 200 N/m oscillator driven by a triangular
+1 N pulse on [0,.2] s and followed to .4 s. Native-command construction, saved
+results reopened and normalized INP reread must reproduce all sampled U/V/A.
+The independent continuous convolution supplies the physical reference; finite
+integration error is distinguished from import error. Byte-exact source replay
+checks text preservation separately. Commercial same-input comparison is pending.
+Public syntax: [DYNAMIC](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-dynamic.htm)
+and [AMPLITUDE](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-amplitude.htm).
+
+### Modal time history and response spectrum
+
+The importer accepts `MODAL DYNAMIC, CONTINUE=NO` (also the default) after one
+immediately preceding, unwindowed `FREQUENCY` step with no equilibrium base state.
+All extracted modes are used, with unchanged fixed boundary conditions. The mode
+count and those conditions compile into native modal re-extraction, **not cached
+frequency-result reuse**. The original frequency step and its name remain in the
+model/source. Editing that step later does not change the compiled dynamic mode
+count. This is currently restricted to explicit MASS/SPRING1 models, whose masses
+are identical under `mass=consistent|lumped`; distributed-element mass mappings
+are refused. Modal selection, changed boundaries, prestress, continuation and
+initial conditions are refused. No nonlinear or alternate procedure is inferred.
+
+`MODAL DAMPING` maps non-overlapping mode-number ranges of fractions of critical
+viscous damping; omitted modes have zero damping. Frequency-range, structural,
+composite and Rayleigh damping definitions are refused. Independent modal histories
+retain the complete common relative TABULAR/SMOOTH STEP amplitude, translational
+CLOAD magnitudes and directions, zero initial state and the entire fixed time
+interval. STEP TIME and TOTAL TIME coincide in this restricted first perturbation
+history. **Native integration is Newmark average acceleration, not Abaqus's modal
+integration algorithm.** Continuous-response error must be checked separately;
+matching the imported and native-command models does not prove equal time discretization.
+
+`RESPONSE SPECTRUM` accepts explicit `SUM=SRSS` and `COMP=SRSS|R40` (default COMP
+is SRSS). Omitted SUM defaults to ABS in the source format and is refused, not
+silently changed. One shared positive constant `SPECTRUM, TYPE=ACCELERATION`
+table supplies pseudo-acceleration in the declared length/time-squared units,
+frequency in cycles/time, and one critical damping ratio matching every selected
+mode. Constant ordinates avoid replacing logarithmic interpolation with native
+linear interpolation. The solver refuses frequencies outside the supplied band.
+One to three global orthonormal direction vectors and nonnegative scale factors
+map to independent directional excitation. Direction combination follows modal
+combination. Spatial loads are refused; output is a peak envelope, not a time
+history or simultaneous signed state, and acceleration is pseudo-acceleration.
+Nonconstant tables, TYPE=G/VELOCITY/DISPLACEMENT, damping tables, distinct spectra
+by direction, CQC/ABS/DSC and rigid-response additions are explicitly refused.
+
+Use `deck.write steps=["<dynamic step>"]` to write the independent analysis;
+the native writer supplies the equivalent modal extraction step. All transient
+increments are stored even when original output requests selected fewer frames;
+the exact original requests remain in source replay. MCRSLT07 kind 6 retains
+nodal U/V/A and spectrum peaks as f64. Reopening must preserve these fields exactly;
+this does not assert the precision of unrelated result kinds or commercial files.
+
+Validation uses an original two-direction MASS/SPRING1 model, unequal modal
+damping and signed loads for the transient, and oblique orthogonal directions
+with unequal scales for SRSS/R40 spectra. Checks compare imported/native-command
+models, independent damped step-response and peak-combination formulas, native
+save/reopen, source replay, and normalized write/read. Commercial comparison is
+pending and uses the supplied time-step/peak tolerances.
+Sources: [MODAL DYNAMIC](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-modaldynamic.htm),
+[MODAL DAMPING](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-modaldamping.htm),
+[SPECTRUM](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-spectrum.htm),
+[RESPONSE SPECTRUM](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-responsespectrum.htm).
+
+### Pretension and cross-format formulation boundaries
+
+The Abaqus writer checks which procedures can reference equilibrium base states
+separately from pretension control history. Frequency and harmonic perturbations
+may reference an earlier locked equilibrium; missing lock controls, force-only
+bases and unbased frequency steps after pretension are refused. Chain validation
+runs before element-type mapping, so an unrelated element refusal cannot conceal
+an invalid control history. Standard full Hex8 still has no equivalent C3D8
+export: it is refused rather than silently replaced with B-bar. Selecting B-bar
+for a linear export fixture does not establish nonlinear pretension equivalence.
+Contact closure, force control, locked adjustment persistence and frozen contact
+or tie mappings remain native solver checks on their original formulation.
+
+The current Nastran and LS-DYNA writers do not encode the volume-averaged B-bar
+section contract. Both reject the named section through the formulation-policy
+check. Their ordinary solid cards must not be used as silent substitutes. This
+states the implemented writer boundary, not that those products lack alternative
+solid formulations.
+
+### Gravity on selected mesh elements in a model with point masses
+
+`DLOAD, GRAV` on an explicit ordinary mesh element label or element set does not
+load unrelated point masses. Set aliases are resolved before selecting the loaded elements.
+Zero acceleration components remain in the history state for replacement and inheritance,
+but do not create invalid zero-vector native loads. Relative amplitudes and `OP=MOD/NEW`
+use the same history rules as other supported static loads.
+
+A target containing any imported discrete element (including a mixed mesh/discrete set or
+an alias), and a blank whole-model target when point masses exist, are explicitly refused.
+The source membership is checked before discrete labels are removed from mesh sets; filtering
+cannot silently turn a mixed target into a partial load. The original text is still retained.
+This does not implement gravity on selected point masses or expand the supported analysis types.
+
+The regression model is an axial rod with an independent mass and grounded spring: the
+rod's uniform body load gives `u_tip = rho*g*L^2/(2*E)` and `RF_root = -rho*A*L*g`,
+while the unloaded spring's displacement is zero. These checks distinguish scoped gravity
+from whole-model acceleration and cover amplitude scaling, inheritance and replacement.
+Syntax reference: [Abaqus public DLOAD reference](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-dload.htm).
+
+### Fixed surface traction
+
+`DSLOAD` with `TRVEC` maps to native surface traction for Tet4 triangular element faces in
+small-displacement linear static steps. The vector is given in global coordinates, with
+explicit `FOLLOWER=NO` and `CONSTANT RESULTANT=YES`. The reference magnitude multiplies
+the normalized direction and the relative amplitude. `OP=NEW` clears both pressure and
+traction in the DSLOAD family; an inherited STEP TIME amplitude holds its previous endpoint,
+while TOTAL TIME continues to use accumulated step duration. Replacing a direction also
+replaces its zero components, so a previous component cannot remain active accidentally.
+
+Other elements, local `ORIENTATION`, follower or current-area controls, `TRSHR`, nonuniform
+traction and non-static procedures are named refusals. Defaults that do not explicitly select
+the fixed/reference-area form are also refused. This mapping does not add these capabilities
+to the nonlinear or transient importer.
+
+The native model keeps the face selection and integrates the constant traction with the
+linear triangle shape functions. The existing canonical writer emits the equivalent consistent
+nodal forces (area times traction divided by three at each face node), which reproduce the
+same linear static FE equations exactly in this scope. It does not emit a general follower
+traction card. Source replay preserves the original cards, amplitudes and time data unchanged.
+Static results and canonical output represent step endpoints, not the intervening load history.
+
+An original tetrahedron test uses four steps to distinguish STEP TIME endpoint inheritance
+from TOTAL TIME evaluation and load replacement; U, RF and constant element stress are
+checked against the same native model and `K u = f` with isotropic elasticity. Units are
+converted through the shared quantity table. Syntax follows the
+[public DSLOAD reference](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-dsload.htm).
+
+### Constant global volume force
+
+`DLOAD` labels `BX`, `BY` and `BZ` map to native `BodyForce` on explicitly selected Tet4
+mesh elements in small-displacement linear static steps. Their magnitude is force per volume,
+converted with `Quantity::ForcePerVolume`; density is not a multiplier. This is distinct from
+`GRAV` acceleration and surface traction. Element-set aliases are resolved; blank targets and
+sets containing discrete elements are refused instead of silently changing membership.
+
+Each global component has its own history identity. `OP=MOD` changes that component while
+retaining the others; `OP=NEW` removes all prior DLOAD body forces, gravity and element pressure.
+Relative STEP TIME and TOTAL TIME amplitudes follow the existing static endpoint rules.
+The canonical writer retains the BX/BY/BZ representation in the selected unit system.
+
+Nonuniform labels such as `BXNU`, local `ORIENTATION`, other element types and non-static
+procedures are named refusals. Original cards remain in the retained source. An original
+four-step tetrahedron regression checks component replacement, inheritance, load-family clearing,
+SI and millimetre units, and the exact consistent volume load `f_i = b*V/4` against static U/RF/S.
+The load definition follows the [public three-dimensional element reference](https://abaqus.uclouvain.be/English/SIMACAEELMRefMap/simaelm-r-3delem.htm).

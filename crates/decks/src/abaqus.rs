@@ -202,6 +202,7 @@ pub fn write_resolved_with_mass(model: &Model, r: &Resolved, units: Preset, mass
     dynamics::check_mass(model, mass)?;
     crate::refuse_fluid(FORMAT, model)?;
     limited::mapped_base_states(model)?;
+    validate_pretension_chain(model)?;
     limited::enhanced(model, None)?;
     let by_type = elements_by_type(model, r)?;
     check_expressible(model)?;
@@ -210,7 +211,6 @@ pub fn write_resolved_with_mass(model: &Model, r: &Resolved, units: Preset, mass
     let model = prepared.as_ref().unwrap_or(model);
     let prepared_resolved = prepared.as_ref().map(Model::resolve).transpose()?;
     let r = prepared_resolved.as_ref().unwrap_or(r);
-    validate_pretension_chain(model)?;
     let discrete = discrete_groups(model, r)?;
     let mut d = Deck::default();
     d.heading(units);
@@ -1799,5 +1799,77 @@ impl Deck {
             self.line("*END STEP");
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod pretension_chain_tests {
+    use super::*;
+    use fieldcraft_model::{PretensionControl, PretensionSection, ReferencePoint, Set};
+
+    fn chain() -> Model {
+        let mut model = Model::default();
+        for (name, node) in [("first", 1), ("second", 2)] {
+            model.set_node(node, [0.0, 0.0, 0.0]).unwrap();
+            model.add_set(name, Set { nodes: vec![node], ..Set::default() }).unwrap();
+        }
+        model.add_reference_point("control", ReferencePoint { xyz: [0.0; 3], label: 0 }).unwrap();
+        model
+            .add_pretension(
+                "bolt",
+                PretensionSection { first: "first".into(), second: "second".into(), normal: [1.0, 0.0, 0.0], control: "control".into() },
+            )
+            .unwrap();
+        model.add_step(Step::new("Before", Procedure::Frequency { modes: 1, min_hz: None, max_hz: None }), None).unwrap();
+        let mut preload = Step::new("Preload", Procedure::Static {});
+        preload.pretension.insert("bolt".into(), PretensionControl::Force { value: 100.0 });
+        model.add_step(preload, None).unwrap();
+        let mut locked = Step::new("Locked", Procedure::Static {});
+        locked.pretension.insert("bolt".into(), PretensionControl::Adjustment { value: 0.0004 });
+        model.add_step(locked, None).unwrap();
+        let mut modes = Step::new("Modes", Procedure::Frequency { modes: 1, min_hz: None, max_hz: None });
+        modes.base_state = Some("Locked".into());
+        model.add_step(modes, None).unwrap();
+        let mut harmonic = Step::new(
+            "Response",
+            Procedure::Harmonic(fieldcraft_model::harmonic::Harmonic {
+                frequencies: fieldcraft_model::harmonic::Frequencies::List(vec![1.0]),
+                method: fieldcraft_model::harmonic::Method::Direct,
+                damping: Default::default(),
+                load_factors: Default::default(),
+            }),
+        );
+        harmonic.base_state = Some("Locked".into());
+        model.add_step(harmonic, None).unwrap();
+        model
+    }
+
+    #[test]
+    fn mapped_base_states_and_pretension_controls_have_distinct_contracts() {
+        let mut model = chain();
+        limited::mapped_base_states(&model).unwrap();
+        validate_pretension_chain(&model).unwrap();
+        let resolved = Resolved { reference_point_nodes: [("control".into(), 3)].into(), ..Resolved::default() };
+        let mut deck = Deck::default();
+        deck.pretension_step(&model, &resolved, model.step("Preload").unwrap()).unwrap();
+        deck.pretension_step(&model, &resolved, model.step("Locked").unwrap()).unwrap();
+        assert!(deck.out.contains("*CLOAD") && deck.out.contains("*BOUNDARY"));
+        assert!(deck.out.contains("0.0004"));
+        let mut locked = model.step("Locked").unwrap().clone();
+        locked.pretension.insert("bolt".into(), PretensionControl::Fixed);
+        model.replace_step(locked.clone()).unwrap();
+        validate_pretension_chain(&model).unwrap();
+        let mut deck = Deck::default();
+        deck.pretension_step(&model, &resolved, &locked).unwrap();
+        assert!(deck.out.contains("*BOUNDARY, FIXED\n3, 1, 1\n"));
+        locked.pretension.clear();
+        model.replace_step(locked).unwrap();
+        limited::mapped_base_states(&model).unwrap();
+        assert!(validate_pretension_chain(&model).unwrap_err().to_string().contains("missing nonzero adjustment"));
+        let mut model = chain();
+        let mut modes = model.step("Modes").unwrap().clone();
+        modes.base_state = Some("Preload".into());
+        model.replace_step(modes).unwrap();
+        assert!(validate_pretension_chain(&model).unwrap_err().to_string().contains("missing nonzero adjustment"));
     }
 }
