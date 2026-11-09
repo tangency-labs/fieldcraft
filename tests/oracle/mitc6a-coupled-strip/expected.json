@@ -1,0 +1,33 @@
+{
+  "title": "MITC6-a unsymmetric two-ply strip in pure bending",
+  "kind": "theory",
+  "source": "Nettles, NASA RP-1351 (1994), sections II-IV. Independent layer moments A=228, B=2.16, D=0.1756 in SI; free axial resultant gives kappa=M/(D-B^2/A), epsilon=-B*kappa/A.; Element: Lee & Bathe (2004), doi:10.1016/j.compstruc.2004.02.004, MITC6-a equations (29)-(38).",
+  "quantities": [
+    {
+      "id": "tip_w",
+      "quantity": "tip_w",
+      "measure": {
+        "from": "probe",
+        "pointer": "/nodes/0/displacement/2"
+      },
+      "value": -0.0012891844212240468,
+      "tolerance": {
+        "relative": 1e-07
+      },
+      "reason": "Exact polynomial membrane/bending patch; rounding allowance fixed before solving."
+    },
+    {
+      "id": "tip_ux",
+      "quantity": "tip_ux",
+      "measure": {
+        "from": "probe",
+        "pointer": "/nodes/0/displacement/0"
+      },
+      "value": -1.221332609580676e-05,
+      "tolerance": {
+        "relative": 1e-07
+      },
+      "reason": "Exact polynomial membrane/bending patch; rounding allowance fixed before solving."
+    }
+  ]
+}

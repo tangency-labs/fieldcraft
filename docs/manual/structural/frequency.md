@@ -1,5 +1,9 @@
 # Natural frequencies
 
+Six-node `tri6` shells use [MITC6-a](../../solvers/mitc6.md), with shared curved
+directors and layered constitutive/mass integration. Its documented plate-only
+buckling and coarse-mesh accuracy limits apply.
+
 Curved `quad8` MITC8 supports consistent and positive-diagonal lumped mass for
 frequency and harmonic analysis, including ply densities and rotary inertia.
 Consistent mass retains offset/density first-moment coupling; lumped mass omits it.

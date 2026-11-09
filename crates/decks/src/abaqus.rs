@@ -282,7 +282,7 @@ pub fn element_type(kind: ElementKind, section: &Section) -> std::result::Result
             return Err("full integration of quad8 shells (Abaqus's eight-node shell, S8R, uses reduced integration)".into());
         }
         (S::Shell { .. } | S::CompositeShell { .. }, K::Tri6, ..) => {
-            return Err("tri6 shells (Abaqus has no general-purpose six-node triangular shell)".into());
+            return Err("MITC6-a tri6 shells export: STRI65 is a five-DOF thin-shell formulation, not an equivalent transverse-shear shell; S6 is not a supported Abaqus mapping".into());
         }
         (S::Beam { .. }, K::Beam2, ..) => "B31",
         (S::Rod { .. }, K::Rod2, ..) => "T3D2",

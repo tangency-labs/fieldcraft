@@ -377,6 +377,7 @@ beams warns that only solid, 2D and truss elements are strained ([Heat transfer]
 | plane strain, axisymmetric tri3, tri6, quad4, quad8 (and hybrid quad4, quad8, tri6) | yes | yes | refused | yes | refused |
 | shell tri3, quad4 | yes (homogeneous or composite) | flat plates with flat preload only | refused | refused | refused |
 | shell quad8 (MITC8) | homogeneous or layered elastic statics/frequency; consistent or lumped mass | flat plate, flat preload only | refused | refused | refused |
+| shell tri6 (MITC6-a) | homogeneous or layered elastic statics/frequency; consistent or lumped mass | flat plate, flat preload only | refused | refused | refused |
 | beam2 | yes | refused | refused | refused | refused |
 | rod2, rod3 | yes | refused | refused | refused | rod2; rod3 with `nonlinear_geometry: false` only; elastic only |
 | point mass, spring, dashpot | yes (dashpots ignored) | yes (dashpots ignored) | — | springs, along their fixed directions | translational ones; rotary inertia and torsional springs refused |
@@ -547,7 +548,7 @@ explicit, engine and io test suites hashed identically before and after.
 
 - Shells: tri3 and quad4 are flat facets with isotropic
   homogeneous or [composite sections](composites.md). Quad8 uses [curved MITC8](../../solvers/mitc8.md)
-  for homogeneous or layered elastic statics, frequency and harmonic analysis; tri6 is still refused. Initial-stress stiffness supports only
+  for homogeneous or layered elastic statics, frequency and harmonic analysis; tri6 uses [MITC6-a](../../solvers/mitc6.md). Initial-stress stiffness supports only
   coplanar plates with a flat preload; curved shells and non-flat preloads (including those
   caused by extension–bending coupling) are refused in buckling. No large rotations (refused in nonlinear steps), heat conduction or thermal strain.
 - Beams: two-node Timoshenko only; isotropic material; no warping of open sections; refused in
@@ -564,7 +565,7 @@ explicit, engine and io test suites hashed identically before and after.
   point masses, springs or dashpots.
 - Not implemented: Euler–Bernoulli (cubic), three-node and planar 2D beams; pipe and elbow
   elements; open-section beams with warping; rebar and stringers; generalized plane strain,
-  axisymmetric elements with twist and axisymmetric shells; tri6 and continuum
+  axisymmetric elements with twist and axisymmetric shells; continuum
   shells; membranes and surface elements; a modified quadratic tet;
   cohesive, gasket, infinite, acoustic and rigid elements; heat conduction in 2D, shell and beam
   elements.

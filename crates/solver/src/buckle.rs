@@ -241,6 +241,7 @@ pub(crate) fn initial_stress_stiffness(mesh: &Mesh, graph: &NodeGraph, preload: 
         match kernel {
             StructuralKernel::Shell(s) => s.plate_geometric_stiffness(u.as_flattened()),
             StructuralKernel::Mitc8(s) => s.plate_geometric_stiffness(u.as_flattened()),
+            StructuralKernel::Mitc6(s) => s.plate_geometric_stiffness(u.as_flattened()),
             StructuralKernel::Beam(_) => return Err(Error::NotSupported(format!("beam {} in buckling", e.label))),
         }
         .map_err(|err| Error::element(e.label, err))
@@ -264,8 +265,8 @@ fn flat_shells(mesh: &Mesh) -> Result<()> {
     for e in &mesh.structural {
         let kernel = e.kernel()?;
         let local = shell_normal(&kernel, e.label)?;
-        let tilted =
-            matches!(&kernel, StructuralKernel::Mitc8(s) if s.directors().iter().any(|n| (dot(*n, normal).abs() - 1.0).abs() > FLAT_TOLERANCE));
+        let tilted = matches!(&kernel, StructuralKernel::Mitc8(s) if s.directors().iter().any(|n| (dot(*n, normal).abs() - 1.0).abs() > FLAT_TOLERANCE))
+            || matches!(&kernel, StructuralKernel::Mitc6(s) if s.directors().iter().any(|n| (dot(*n, normal).abs() - 1.0).abs() > FLAT_TOLERANCE));
         if tilted
             || (dot(normal, local).abs() - 1.0).abs() > FLAT_TOLERANCE
             || e.xyz.iter().any(|x| dot(sub(*x, origin), normal).abs() > FLAT_TOLERANCE * extent)
@@ -283,6 +284,7 @@ fn shell_normal(kernel: &StructuralKernel, label: u32) -> Result<[f64; 3]> {
     match kernel {
         StructuralKernel::Shell(s) => Ok(s.axes()[2]),
         StructuralKernel::Mitc8(s) => s.plate_normal().map_err(|err| Error::element(label, err)),
+        StructuralKernel::Mitc6(s) => s.plate_normal().map_err(|err| Error::element(label, err)),
         StructuralKernel::Beam(_) => Err(Error::NotSupported(format!("beam {label} in buckling"))),
     }
 }

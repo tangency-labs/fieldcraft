@@ -1,5 +1,9 @@
 # Linear static analysis
 
+Six-node `tri6` shells use [MITC6-a](../../solvers/mitc6.md), with shared curved
+directors and layered constitutive/mass integration. Its documented plate-only
+buckling and coarse-mesh accuracy limits apply.
+
 `solve.static` computes the small-displacement equilibrium K u = f of a static step: the
 displacements and rotations, the reactions at the prescribed degrees of freedom and coupled
 reference points, and the stresses at the integration points and averaged at the nodes. It

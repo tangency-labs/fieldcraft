@@ -770,3 +770,79 @@ fn mitc8_shared_directors_and_global_rotations_are_compatible() {
     assert!(Mesh::new(&bad.model, &resolved, 1000).unwrap_err().to_string().contains("nonconforming"));
     assert_eq!(Basis::Quad8.nodes().len(), 8);
 }
+
+#[test]
+fn mitc6a_shared_curved_edge_and_assembled_numbering() {
+    use fieldcraft_fem::{
+        dense::Matrix,
+        frame::{cross, dot},
+    };
+    use fieldcraft_solver::system::{Mesh, StructuralKernel};
+    let mut reference: Option<(Matrix, Matrix)> = None;
+    for perm in [[0, 1, 2, 3, 4, 5], [1, 2, 0, 4, 5, 3], [0, 2, 1, 5, 4, 3]] {
+        let mut b = Build::new(Elastic::Isotropic { young: 1200.0, poisson: 0.0 }, 1.0, Procedure::Static {});
+        for (i, [x, y]) in
+            [[0.0_f64, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0], [0.5, 0.0], [1.0, 0.5], [0.5, 0.5], [0.5, 1.0], [0.0, 0.5]].into_iter().enumerate()
+        {
+            b.node(i as u32 + 1, [x, y, 0.1 * x * x * y]);
+        }
+        let first = b.element(ElementKind::Tri6, vec![1, 2, 3, 5, 6, 7]);
+        let n = [1, 3, 4, 7, 8, 9];
+        let second = b.element(ElementKind::Tri6, perm.map(|i| n[i]).to_vec());
+        b.section("panel", vec![first, second], SectionKind::Shell { thickness: 0.1, offset: 0.0, points: 3 });
+        let resolved = b.model.resolve().unwrap();
+        let mesh = Mesh::new(&b.model, &resolved, 1000).unwrap();
+        let mut k = Matrix::zeros(54);
+        let mut m = Matrix::zeros(54);
+        for e in &mesh.structural {
+            let StructuralKernel::Mitc6(s) = e.kernel().unwrap() else { panic!("not MITC6-a") };
+            let ke = s.stiffness().unwrap();
+            let me = s.mass(1.0).unwrap();
+            for i in 0..36 {
+                for j in 0..36 {
+                    let a = 6 * e.nodes[i / 6] + i % 6;
+                    let b = 6 * e.nodes[j / 6] + j % 6;
+                    k.add(a, b, ke.get(i, j));
+                    m.add(a, b, me.get(i, j));
+                }
+            }
+        }
+        if let Some((oldk, oldm)) = &reference {
+            let scale = oldk.data.iter().map(|v| v.abs()).fold(0.0, f64::max);
+            assert!(k.data.iter().zip(&oldk.data).all(|(a, b)| (a - b).abs() < 2e-11 * scale));
+            assert!(m.data.iter().zip(&oldm.data).all(|(a, b)| (a - b).abs() < 2e-13));
+        } else {
+            reference = Some((k, m));
+        }
+        let a = &mesh.structural[0];
+        let b = &mesh.structural[1];
+        for (i, n) in a.nodes.iter().enumerate() {
+            if let Some(j) = b.nodes.iter().position(|k| k == n) {
+                assert!((dot(a.directors.unwrap()[i], b.directors.unwrap()[j]).abs() - 1.0).abs() < 1e-14);
+            }
+        }
+        // Arbitrary shared physical director motion interpolated at nonnodal edge locations.
+        let edge = |e: &fieldcraft_solver::system::Structural, t: f64| {
+            let mut out = [0.0; 3];
+            for (i, x) in e.xyz.iter().enumerate().filter(|(_, x)| x[0] == x[1]) {
+                let w = if x[0] == 0.0 {
+                    2.0 * (t - 0.5) * (t - 1.0)
+                } else if x[0] == 1.0 {
+                    2.0 * t * (t - 0.5)
+                } else {
+                    4.0 * t * (1.0 - t)
+                };
+                let n = e.directors.unwrap()[i];
+                let sign = n[2].signum();
+                let v = cross([x[0], 0.3, -x[1]], n);
+                for j in 0..3 {
+                    out[j] += w * (x[j] + 0.04 * sign * (n[j] + v[j]));
+                }
+            }
+            out
+        };
+        for t in [0.23, 0.61, 0.89] {
+            assert!(edge(a, t).iter().zip(edge(b, t)).all(|(a, b)| (a - b).abs() < 2e-14));
+        }
+    }
+}

@@ -263,3 +263,7 @@ Eight-node MITC8 homogeneous and layered elastic statics use quadratic surface/d
 - MITC8 smooth patches share nodal director axes with global rotations. Layerwise
   elastic statics integrate each ply and its material directions; mass, dynamics
   and initial-stress operators remain unsupported.
+
+- Six-node MITC6-a: shared curved geometry/directors, layer integration and mass;
+  linear static, modal/harmonic and flat-plate buckling paths. Formula and accuracy
+  limits: [MITC6-a](docs/solvers/mitc6.md).

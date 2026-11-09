@@ -1,5 +1,9 @@
 # Linear buckling
 
+Six-node `tri6` shells use [MITC6-a](../../solvers/mitc6.md), with shared curved
+directors and layered constitutive/mass integration. Its documented plate-only
+buckling and coarse-mesh accuracy limits apply.
+
 The `quad8` MITC8 element supports flat-plate initial-stress stiffness and linear
 buckling with a flat equilibrium preload. Curved geometry, tilted directors and
 pre-bent states are refused, including in prestressed perturbation analyses.
