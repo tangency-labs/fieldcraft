@@ -9,42 +9,6 @@ use fieldcraft_model::{BoxFace, FaceCondition, FluidDomain, FluidThermal, Model,
 
 const PERIODIC: FaceCondition = FaceCondition::Periodic {};
 
-/// A column of `n` cells across y ∈ [0, 1], periodic in x and z, the faces at y = 0 and 1 held
-/// at `t[0]` and `t[1]`, obstacle `Slab` conducting with `power`.
-fn slab_column(n: usize, t: [f64; 2], power: f64) -> FluidDomain {
-    let dx = 1.0 / n as f64;
-    let mut d = domain([0.0; 3], [dx, 1.0, dx], dx);
-    d.faces.x_min = PERIODIC;
-    d.faces.x_max = PERIODIC;
-    d.faces.z_min = PERIODIC;
-    d.faces.z_max = PERIODIC;
-    d.obstacles = vec!["Slab".into()];
-    let mut th = FluidThermal::default();
-    th.faces.y_min = ThermalCondition::Temperature { value: kelvin(t[0]) };
-    th.faces.y_max = ThermalCondition::Temperature { value: kelvin(t[1]) };
-    th.solids = vec![conducting("Slab", power)];
-    d.thermal = Some(th);
-    d
-}
-
-fn slab_obstacle(slab: [f64; 2]) -> fieldcraft_lbm::Obstacle {
-    obstacle("Slab", cuboid([-1.0, slab[0], -1.0], [2.0, slab[1], 2.0]), &CUBOID_FACES)
-}
-
-/// The steady temperature through layers `(thickness, conductivity)` from y = 0 at `t0`, with
-/// heat flux `q` in the −y direction (from the y = 1 side to the y = 0 side) and no sources.
-fn layered(y: f64, t0: f64, q: f64, layers: &[(f64, f64)]) -> f64 {
-    let (mut base, mut t) = (0.0, t0);
-    for &(thick, k) in layers {
-        if y <= base + thick {
-            return t + q * (y - base) / k;
-        }
-        t += q * thick / k;
-        base += thick;
-    }
-    t
-}
-
 /// Fluid, a conducting slab and fluid between held plates, no flow: the steady temperature is
 /// linear in each layer with the flux continuous across both interfaces, `q = ΔT / Σ (L / k)`.
 /// The interface temperature from the series resistance of the half cells makes the

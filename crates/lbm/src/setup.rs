@@ -533,6 +533,9 @@ impl Setup {
             }
         };
         let material = model.material(&domain.material);
+        if domain.has_baffles() && (turbulence.is_some() || material.is_some_and(|m| m.phase_change.is_some()) || domain.free_surface.is_some()) {
+            return Err(Error::Invalid("baffles do not yet support turbulence, phase change or free surfaces".into()));
+        }
         let (Some(density), Some(fluid)) = (material.and_then(|m| m.density), material.and_then(|m| m.fluid)) else {
             return Err(Error::Invalid(format!("material `{}` needs a density and fluid behaviour", domain.material)));
         };

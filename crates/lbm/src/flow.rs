@@ -540,6 +540,9 @@ pub struct Flow {
     steps_done: u64,
     /// Obstacles that cover no cell centre (smaller than the spacing, or outside the box).
     empty_obstacles: Vec<String>,
+    /// Thin walls: their links are no-slip bounce-back; with heat each passes its conductive
+    /// exchange after the thermal streaming.
+    baffles: Vec<crate::baffle::Baffle>,
     /// The temperature lattice, with thermal settings.
     thermal: Option<ThermalState>,
     /// With buoyancy: every cell's body acceleration (the constant one plus the buoyant one),
@@ -698,6 +701,10 @@ impl Flow {
         let mut interface: Vec<Interface> = Vec::new();
 
         let domain = &setup.domain;
+        let baffles = crate::baffle::Baffle::prepare(setup, &mut groups)?;
+        for b in &baffles {
+            b.validate_cells(&grid, &fluid)?;
+        }
         let periodic = [domain.faces.periodic(0), domain.faces.periodic(1), domain.faces.periodic(2)];
         let wall_velocity = |face: BoxFace| match *domain.faces.get(face) {
             FaceCondition::MovingWall { velocity } => Some(setup.to_lattice(velocity)),
@@ -813,6 +820,7 @@ impl Flow {
             let p = [ijk[0] as i64, ijk[1] as i64, ijk[2] as i64];
             for q in 1..Q {
                 let cq = C[q];
+                let sheet = baffles.iter().find_map(|b| b.group_for(ijk, cq));
                 let mut s = [p[0] - i64::from(cq[0]), p[1] - i64::from(cq[1]), p[2] - i64::from(cq[2])];
                 let mut wrapped = false;
                 let mut crossed: [Option<BoxFace>; 3] = [None; 3];
@@ -827,6 +835,16 @@ impl Flow {
                     }
                 }
                 let crossed_faces = || crossed.iter().flatten().copied();
+                if let Some(group) = sheet {
+                    // Through a sheet: bounce-back at it, or at its edge on a box wall, the wall's
+                    // (with a moving wall's term, its force to the wall).
+                    let rule = match crossed_faces().find_map(|f| wall_velocity(f).map(|u| (f, u))) {
+                        Some((face, u)) => Rule::Bounce { group: face.index() as u32, du: moving_wall(q, u) },
+                        None => Rule::Bounce { group, du: 0.0 },
+                    };
+                    links.push(Link { cell: cell as u32, q: q as u8, rule });
+                    continue;
+                }
                 let rule = match crossed_faces().next() {
                     None => {
                         let from = index(s);
@@ -1141,6 +1159,7 @@ impl Flow {
             fluid_cells,
             steps_done: 0,
             empty_obstacles,
+            baffles,
             thermal,
             cell_force,
             cell_u,
@@ -1370,6 +1389,7 @@ impl Flow {
             + bytes(&self.gradient_u)
             + bytes(&self.zone_of)
             + bytes(&self.open_scratch)
+            + bytes(&self.baffles)
             + self.zone_cells.iter().map(bytes).sum::<u64>()
             + self.outlets.heap_bytes();
         if let Some(t) = &self.thermal {
@@ -1450,6 +1470,11 @@ impl Flow {
     /// The links that do not stream from the neighbour at `−c_q`, in cell order.
     pub fn links(&self) -> &[Link] {
         &self.links
+    }
+
+    /// Internal sheets need a paired thermal update that device backends must support.
+    pub fn has_baffles(&self) -> bool {
+        !self.baffles.is_empty()
     }
 
     /// The inlet and outlet cells.
@@ -1790,6 +1815,9 @@ impl Flow {
                     *h += out - back;
                 }
             }
+        }
+        for b in &mut self.baffles {
+            b.stream(&self.grid, s, g, &mut t.g2, &mut t.heat);
         }
         // Links into conducting cells: anti-bounce-back at the interface temperature, the heat
         // to the solid cell.
@@ -2666,6 +2694,10 @@ fn thermal_rule(g: &[f64], s: usize, groups: &[ThermalCondition], cell: usize, q
 }
 
 impl crate::backend::Backend for Flow {
+    fn baffles(&self) -> Vec<crate::baffle::BaffleResult> {
+        self.baffles.iter().map(|b| b.result.clone()).collect()
+    }
+
     fn checkpoint(&mut self, a: &mut dyn crate::checkpoint::Archive) -> Result<()> {
         use crate::checkpoint::{boolean, doubles, f64, fixed, u64, vectors};
         // Streaming targets are allocated once, not cloned into a separate snapshot.
@@ -2704,6 +2736,8 @@ impl crate::backend::Backend for Flow {
             fluid_cells: _,
             steps_done,
             empty_obstacles: _,
+            // `run_checkpointed` refuses them until the sides have a restart layout.
+            baffles: _,
             thermal,
             cell_force,
             cell_u,

@@ -619,6 +619,7 @@ pub(crate) mod tests {
             free_surface: None,
         };
         FluidResult {
+            baffles: Box::default(),
             port_properties: None,
             step: "Flow".into(),
             grid,

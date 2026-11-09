@@ -953,6 +953,18 @@ fn melting_and_freezing_are_refused_clearly() {
     assert!(e.as_deref().is_some_and(|e| e.contains("freezing") && e.contains("cpu")), "{e:?}");
 }
 
+/// Thin walls are CPU only for now: refused before a device is opened.
+#[test]
+fn thin_walls_are_refused_clearly() {
+    let mut d = domain([0.0; 3], [2.0, 4.0, 2.0], 1.0);
+    let baffle = fieldcraft_model::ThinWall { name: "Sheet".into(), axis: fieldcraft_model::Axis::Y, position: 2.0, conductance: 1.0 };
+    d.baffles = vec![baffle];
+    d.thermal = Some(FluidThermal::default());
+    let (_, flow) = prepare(&hot_model(1.0, 0.1, 0.05, d, step(10.0, 1.0, None)), &[]);
+    let e = GpuFlow::with_options(&flow, Policy::from_env().expect("FIELDCRAFT_GPU names a policy"), Options::default()).err().map(|e| e.to_string());
+    assert!(e.as_deref().is_some_and(|e| e.contains("baffles") && e.contains("CPU")), "{e:?}");
+}
+
 /// A body force changed while the flow runs (`Backend::set_acceleration`, for a flow held at a
 /// constant flow rate): plane Poiseuille flow driven by a for half its steps and 2a for the rest
 /// on both backends, which agree, as do their mean velocities (`Backend::mean_velocity`).

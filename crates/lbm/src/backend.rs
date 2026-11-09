@@ -26,6 +26,10 @@ pub struct Fields {
 
 /// A stepper of one prepared flow.
 pub trait Backend {
+    /// Final baffle side diagnostics (SI); unsupported backends refuse sheets at setup.
+    fn baffles(&self) -> Vec<crate::baffle::BaffleResult> {
+        Vec::new()
+    }
     /// CPU restart state; device backends deliberately do not support this format.
     #[doc(hidden)]
     fn checkpoint(&mut self, _archive: &mut dyn crate::checkpoint::Archive) -> Result<()> {
@@ -174,6 +178,8 @@ impl Choice {
 pub fn backend(choice: Choice, flow: Flow, setup: &Setup) -> Result<Box<dyn Backend>> {
     match choice {
         Choice::Cpu => Ok(Box::new(flow)),
+        // No device backend has the sheets' exchange yet: refused before one is asked for.
+        Choice::Device if flow.has_baffles() => Err(Error::Invalid("baffles are not supported on the GPU yet: solve on the CPU".into())),
         Choice::Device => match backend_factory() {
             Some(make) => make(&flow, setup),
             None => Err(Error::Backend("no GPU backend is available in this build: solve on the CPU (`backend: \"cpu\"`)".into())),
