@@ -135,6 +135,17 @@ pub(crate) fn fluid_step(format: &'static str, step: &str) -> Error {
     Error::Unsupported { format, what: format!("fluid step `{step}` (solve it with solve.fluid; write the structural steps only)") }
 }
 
+/// Refuse equilibrium semantics that a writer has not implemented, including direct writer APIs.
+pub(crate) fn refuse_prestress(format: &'static str, model: &Model) -> Result<()> {
+    if let Some(name) = model.pretensions().keys().next() {
+        return Err(Error::Unsupported { format, what: format!("pretension section `{name}`") });
+    }
+    if let Some(step) = model.steps().iter().find(|s| s.base_state.is_some()) {
+        return Err(Error::Unsupported { format, what: format!("base_state of step `{}`", step.name) });
+    }
+    Ok(())
+}
+
 /// Every writer's first check: the model has no fluid step.
 pub(crate) fn refuse_fluid(format: &'static str, model: &Model) -> Result<()> {
     match model.steps().iter().find(|s| s.procedure.fluid_domain().is_some()) {

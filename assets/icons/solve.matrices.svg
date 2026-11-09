@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="24" height="24" viewBox="0 0 24 24">
+  <title>solve.static</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M3 4 L3 14" fill="none" stroke="#dde2ea" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M3 5 L1 7 M3 8 L1 10 M3 11 L1 13" fill="none" stroke="#dde2ea" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M3 7 L21 7 L21 11 L3 11" fill="none" stroke="#dde2ea" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="1.5 1.5"/>
+    <path d="M3 7 C10 7 16 9 21 13 L21 17 C16 13 10 11 3 11 Z" fill="#2d4e70" stroke="#4f9ce8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M21 15 L21 21 M19.8 18.81 L21 21 L22.2 18.81" fill="none" stroke="#f0b44a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

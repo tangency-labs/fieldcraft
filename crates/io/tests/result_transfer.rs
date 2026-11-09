@@ -7,6 +7,7 @@ use std::path::Path;
 
 fn write(file: &ModelFile, include_results: bool) -> Vec<u8> {
     let extras = Extras {
+        deck_source: file.deck_source.as_ref(),
         results: if include_results {
             file.results.iter().map(|r| (r.result.step(), results::StoredRef { definition: r.definition, result: r.result.as_ref() })).collect()
         } else {

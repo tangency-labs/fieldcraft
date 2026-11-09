@@ -332,6 +332,8 @@ struct Follower {
 
 /// Everything an evaluation of the out-of-balance forces needs.
 struct Problem<'a> {
+    scalar_controls: std::collections::BTreeSet<usize>,
+    pretension_sections: Vec<(String, usize)>,
     mesh: &'a Mesh,
     red: &'a Reduction,
     /// Dead loads at λ = 1.
@@ -522,13 +524,28 @@ impl Problem<'_> {
         reference: &[f64],
         band: f64,
     ) -> Result<Evaluation> {
+        self.evaluate_with_contact(u, lambda, tangent, committed, contact, reference, band, true)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn evaluate_with_contact(
+        &self,
+        u: &[f64],
+        lambda: f64,
+        tangent: bool,
+        committed: &[Vec<f64>],
+        contact: &[contact::Committed],
+        reference: &[f64],
+        band: f64,
+        include_contact: bool,
+    ) -> Result<Evaluation> {
         let layout = &self.mesh.layout;
         let n = u.len();
         let mut internal = vec![0.0; n];
         // Contact first: its face pairs extend the tangent's pattern.
         let mut blocks = contact::Blocks::new();
         let mut states = Vec::with_capacity(self.contacts.len());
-        for (i, c) in self.contacts.iter().enumerate() {
+        for (i, c) in self.contacts.iter().enumerate().filter(|_| include_contact) {
             let empty = contact::Committed::default();
             states.push(c.evaluate(self.mesh, u, reference, contact.get(i).unwrap_or(&empty), band, tangent, &mut internal, &mut blocks)?);
         }
@@ -1302,9 +1319,35 @@ pub fn solve_nonlinear(model: &Model, step: Option<&str>, limits: &Limits) -> Re
         return Err(Error::Internal("nonlinear static step".into()));
     };
     settings.validate()?;
-    let Some(imperfection) = &settings.imperfection else { return solve_on(model, chosen.name.as_str(), limits, Vec::new()) };
+    let Some(imperfection) = &settings.imperfection else { return solve_on(model, chosen.name.as_str(), limits, Vec::new(), None) };
     let (perturbed, note) = imperfect(model, imperfection, limits)?;
-    solve_on(&perturbed, chosen.name.as_str(), limits, vec![note])
+    solve_on(&perturbed, chosen.name.as_str(), limits, vec![note], None)
+}
+
+/// Recompute equilibrium and capture its consistent tangent before internal history is
+/// discarded. The tangent already contains stress stiffness; do not add K_sigma again.
+/// Contact requires a frozen constraint mapping, not the contact penalty tangent.
+pub(crate) fn terminal_tangent(model: &Model, step: &str, limits: &Limits) -> Result<(StaticResult, crate::prestress::Terminal)> {
+    let chosen = model.step(step).ok_or_else(|| Error::Invalid(format!("no base step `{step}`")))?;
+    let Procedure::NonlinearStatic(settings) = &chosen.procedure else {
+        return Err(Error::Invalid(format!("base step `{step}` is not nonlinear static")));
+    };
+    if !settings.nonlinear_geometry {
+        return Err(Error::NotSupported(format!("base step `{step}`: small-strain nonlinear tangent does not include stress stiffness")));
+    }
+    if let Some((name, _)) = model.materials().iter().find(|(_, m)| m.plastic.is_some()) {
+        return Err(Error::NotSupported(format!("plastic material `{name}` in a perturbation base: elastic unloading tangent is not implemented")));
+    }
+    if settings.imperfection.is_some() {
+        return Err(Error::NotSupported(format!("base step `{step}` has an imperfection: perturbed mesh transfer is not implemented")));
+    }
+    if let Some((name, _)) = model.foundations().iter().next() {
+        return Err(Error::NotSupported(format!("foundation `{name}` in nonlinear analysis")));
+    }
+    settings.validate()?;
+    let mut tangent = None;
+    let result = solve_on(model, step, limits, Vec::new(), Some(&mut tangent))?;
+    Ok((result, tangent.ok_or_else(|| Error::Internal("missing terminal tangent".into()))?))
 }
 
 /// The model with a buckling mode, scaled to a largest component of `scale`, added to its node
@@ -1332,7 +1375,13 @@ fn imperfect(model: &Model, imperfection: &Imperfection, limits: &Limits) -> Res
     Ok((out, note))
 }
 
-fn solve_on(model: &Model, step: &str, limits: &Limits, notes: Vec<String>) -> Result<StaticResult> {
+fn solve_on(
+    model: &Model,
+    step: &str,
+    limits: &Limits,
+    notes: Vec<String>,
+    terminal: Option<&mut Option<crate::prestress::Terminal>>,
+) -> Result<StaticResult> {
     let resolved = model.resolve()?;
     let step = model.step(step).ok_or_else(|| Error::Internal("nonlinear static step".into()))?;
     let Procedure::NonlinearStatic(settings) = &step.procedure else {
@@ -1373,6 +1422,8 @@ fn solve_on(model: &Model, step: &str, limits: &Limits, notes: Vec<String>) -> R
         })
         .collect::<Result<Vec<_>>>()?;
     let mut problem = Problem {
+        scalar_controls: crate::pretension::control_dofs(model, &mesh)?,
+        pretension_sections: crate::pretension::section_dofs(model, &mesh)?,
         mesh: &mesh,
         red: &red,
         dead,
@@ -1627,6 +1678,22 @@ fn solve_on(model: &Model, step: &str, limits: &Limits, notes: Vec<String>) -> R
             "follower pressure: the skew part of its load stiffness ({a:.1e} of it, over the free degrees of freedom) is left out of the tangent; the solution is exact, Newton may converge more slowly"
         ));
     }
+    if let Some(terminal) = terminal {
+        let stiffness = problem
+            .evaluate_with_contact(&u, lambda, true, &run.committed, &run.contact, &run.reference, 0.0, false)?
+            .tangent
+            .ok_or_else(|| Error::Internal("terminal structural tangent".into()))?;
+        let mut constraints: Vec<_> =
+            crate::tie::rows(model, &resolved, &mesh, &mut warnings)?.into_iter().map(crate::prestress::FrozenRow::from_row).collect();
+        for (interface, state) in problem.contacts.iter().zip(&evaluation.contact) {
+            constraints.extend(interface.frozen_rows(&mesh, &u, state)?);
+        }
+        warnings.push(
+            "terminal contact frozen: positive-pressure nodes bonded in all translations, open nodes detached; contact penalty tangent excluded"
+                .into(),
+        );
+        *terminal = Some(crate::prestress::Terminal { stiffness, constraints });
+    }
     let contacts = problem.contacts.iter().zip(&evaluation.contact).map(|(c, s)| c.result(&mesh, s, run.augmentations)).collect();
     finish(&mesh, step, &red, &problem, u, lambda, evaluation, &run.committed, history, run.factor_entries, contacts, warnings)
 }
@@ -1654,6 +1721,9 @@ fn finish(
     let (reaction, reaction_moment, point_reaction) = split(&reactions, mesh);
     let (mut applied_total, mut reaction_total) = ([0.0; 3], [0.0; 3]);
     for (dof, (fv, rv)) in e.external.iter().zip(&reactions).enumerate() {
+        if problem.scalar_controls.contains(&dof) {
+            continue;
+        }
         let Some(d) = mesh.kind(dof).and_then(DofKind::direction) else { continue };
         if let (Some(a), Some(r)) = (applied_total.get_mut(d), reaction_total.get_mut(d)) {
             *a += fv;
@@ -1674,6 +1744,7 @@ fn finish(
     if scale > 0.0 && imbalance > crate::system::BALANCE_TOLERANCE * scale {
         warnings.push(format!("loads and reactions differ by {imbalance:.3e} (relative {:.1e})", imbalance / scale));
     }
+    let pretension = crate::pretension::recover(&problem.pretension_sections, step, red, &u, &e.internal, &e.external)?;
     Ok(StaticResult {
         step: step.name.clone(),
         nodes: mesh.labels.clone(),
@@ -1694,6 +1765,7 @@ fn finish(
         temperature: None,
         nonlinear: Some(history),
         contacts,
+        pretension,
     })
 }
 

@@ -76,3 +76,13 @@ Updating this branch is **not a cross-branch merge**. The independent fatigue
 branch can reserve/refuse kind 6 until the user-directed integration brings in
 its exact writer/reader. Any later field-order or variant-order change requires
 an explicit version contract and coordination, not another unallocated kind.
+
+## Interim fusion-p4a merge (not the unified 07 delivery)
+
+The merged static payload includes lane 15's pretension field. Version 05 kind 0
+uses its explicit pre-pretension decoder; current 06 static fixtures come from
+that merge. Lane 16's earlier 06 static archives do not acquire that field by
+guessing. Preserve them with their producer identity. Linear dynamics kind 6
+is unchanged in this interim merge. The coordinator has superseded the earlier
+allocation with a unified 07 contract to be delivered by lane 18; no archive
+written here is represented as 07, and no new kind is allocated locally.

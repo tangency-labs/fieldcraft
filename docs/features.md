@@ -6,7 +6,7 @@ Every entry is a toolbar button. **Ready** entries run their command; **coming s
 shown greyed with the roadmap milestone that brings them (ROADMAP.md). Scripts, the command line,
 the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 
-96 ready, 31 coming soon.
+99 ready, 30 coming soon.
 
 ## Geometry
 
@@ -121,7 +121,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Contact | Contact Pair — Contact between two surfaces: with friction in explicit dynamics, mortar contact with friction in nonlinear static steps | ready | `interaction.contact.pair` |
 | Contact | Find Contacts — Find the parts of the mesh that touch, and make contact pairs of them | ready | `interaction.contact.find` |
 | Contact | Rigid Wall — A fixed rigid plane a set's nodes cannot pass, with friction, in an explicit dynamics step | ready | `interaction.rigid_wall`, `interaction.rigid_wall.delete` |
-| Connectors | Bolt Load — Bolt pretension | coming soon (M7) |  |
+| Connectors | Bolt Pretension — Conforming cut with force or prescribed adjustment, lock from a solved equilibrium and report section force | ready | `model.pretension.create`, `model.pretension.force`, `model.pretension.adjust`, `model.pretension.lock`, `solve.pretension` |
 | Connectors | Spring — Spring or dashpot to the ground or between two points, along a direction or their line | ready | `model.spring.create`, `model.spring.edit`, `model.spring.delete`, `model.foundation.create`, `model.foundation.edit`, `model.foundation.delete` |
 | Connectors | Point Mass — Point mass and rotary inertia at nodes or a reference point | ready | `model.mass.create`, `model.mass.edit`, `model.mass.delete` |
 | Connectors | Connector — Connector elements between points | coming soon (M7) |  |
@@ -136,10 +136,12 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Decks | Abaqus Input — Write Abaqus input (.inp), including direct/modal transient and constant response-spectrum steps with checked mass mapping | ready | `deck.write {"format":"abaqus"}` |
 | Decks | Nastran Deck — Write Nastran bulk data (SOL 101, 103) | ready | `deck.write {"format":"nastran"}` |
 | Decks | LS-DYNA Deck — Write an LS-DYNA keyword file | ready | `deck.write {"format":"lsdyna"}` |
-| Decks | Read Deck — Read an Abaqus input deck's model data: mesh, sets, materials and sections; unread keywords are listed, not kept | ready | `deck.read` |
+| Decks | Read Deck — Read Abaqus model data, instances and supported linear steps; save original input files for exact replay | ready | `deck.read` |
+| Input Source | Write Original Source — Replay retained Abaqus input and INCLUDE files without exporting model edits | ready | `deck.source.write` |
 | Implicit | Static — Linear static (or coupled temperature–displacement) solve of a step with FieldCraft's own solver; nonlinear static, buckling, harmonic response, transient, response spectrum and heat transfer in the drop-down | ready | `solve.static`, `solve.nonlinear`, `solve.buckle`, `solve.harmonic`, `solve.transient`, `solve.spectrum`, `solve.heat` |
+| Implicit | Matrices — Assemble reduced linear structural matrices and optionally export SI operator files | ready | `solve.matrices` |
 | Implicit | Frequency — Natural frequencies and mode shapes of a frequency step | ready | `solve.frequency` |
-| Implicit | Random Response — Projects stored harmonic frames and a one-sided PSD into nodal component spectra and RMS; supports coherent absolute acceleration for a declared unit base inertial load | ready | `solve.random` |
+| Implicit | Random Response — Executes imported modal random steps or projects stored harmonic frames and a one-sided PSD into nodal and optional unaveraged solid element component spectra and RMS; supports coherent absolute acceleration for a declared unit base inertial load | ready | `solve.random` |
 | Design studies | Sensitivity — Static displacement, work and continuum stress derivatives; simple-mode frequency and direct harmonic derivatives in the drop-down | ready | `solve.sensitivity.static`, `solve.sensitivity.frequency`, `solve.sensitivity.harmonic` |
 | Design studies | Measured Observations — Import measured modal frequencies from CSV or UFF with explicit pairing and uncertainty; read raw complex UFF data in the drop-down | ready | `observations.import`, `observations.read` |
 | Design studies | Identify Parameters — Fit selected zero-based frequency modes, material, thickness or spring parameters; complex-response and joint mixed-observation fits in the drop-down | ready | `solve.inverse.frequency`, `solve.inverse.harmonic`, `solve.inverse.joint` |

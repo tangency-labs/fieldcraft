@@ -40,6 +40,74 @@ use sha2::{Digest, Sha256};
 
 use crate::{Error, Geometry, MAX_FILE_BYTES, Result, codec, invalid};
 
+// Explicit version-05 static layout, before the pretension field introduced by lane 15.
+use fieldcraft_solver::{BeamResult, ElementStress, PointResult, ShellResult, Stats};
+#[derive(serde::Deserialize)]
+struct LegacyStatic05 {
+    pub step: String,
+    /// Node labels with degrees of freedom, sorted; the per-node vectors follow this order.
+    pub nodes: Vec<u32>,
+    pub displacement: Vec<[f64; 3]>,
+    /// Rotations about X, Y, Z (zero at nodes without rotations: those of solids and trusses
+    /// only).
+    pub rotation: Vec<[f64; 3]>,
+    /// Reaction forces (zero where nothing is prescribed).
+    pub reaction: Vec<[f64; 3]>,
+    /// Reaction moments at held rotations.
+    pub reaction_moment: Vec<[f64; 3]>,
+    /// Stress averaged at the nodes over the elements that share them (xx, yy, zz, xy, xz, yz).
+    pub stress: Vec<[f64; 6]>,
+    /// Von Mises stress of the averaged nodal stress.
+    pub von_mises: Vec<f64>,
+    pub elements: Vec<ElementStress>,
+    /// Shell section forces and surface stresses, by label (their top surface, the side their
+    /// normal points to, joins the nodal stress average).
+    pub shells: Vec<ShellResult>,
+    /// Beam end section forces, by label.
+    pub beams: Vec<BeamResult>,
+    /// The coupled reference points, by name.
+    pub reference_points: Vec<PointResult>,
+    /// Sum of the applied forces and of the reaction forces (moments are not included).
+    pub applied_total: [f64; 3],
+    pub reaction_total: [f64; 3],
+    pub stats: Stats,
+    pub warnings: Vec<String>,
+    /// The temperatures of a coupled temperature–displacement step, per node.
+    pub temperature: Option<Vec<f64>>,
+    /// The increments of a nonlinear static step (its stresses are Cauchy stresses and its
+    /// strains logarithmic strains).
+    pub nonlinear: Option<fieldcraft_solver::nonlinear::History>,
+    /// Each contact's state at the end of a nonlinear static step, by name.
+    pub contacts: Vec<fieldcraft_solver::contact::ContactResult>,
+}
+
+impl From<LegacyStatic05> for fieldcraft_solver::StaticResult {
+    fn from(v: LegacyStatic05) -> Self {
+        Self {
+            step: v.step,
+            nodes: v.nodes,
+            displacement: v.displacement,
+            rotation: v.rotation,
+            reaction: v.reaction,
+            reaction_moment: v.reaction_moment,
+            stress: v.stress,
+            von_mises: v.von_mises,
+            elements: v.elements,
+            shells: v.shells,
+            beams: v.beams,
+            reference_points: v.reference_points,
+            applied_total: v.applied_total,
+            reaction_total: v.reaction_total,
+            stats: v.stats,
+            warnings: v.warnings,
+            temperature: v.temperature,
+            nonlinear: v.nonlinear,
+            contacts: v.contacts,
+            pretension: Vec::new(),
+        }
+    }
+}
+
 /// Unified results layout; see docs/results-kind-layout.md. Kind 6 is linear dynamics.
 pub const MAGIC: &[u8; 8] = b"MCRSLT06";
 /// Only kinds 0-5 of version 05 have unambiguous producer-independent layouts.
@@ -273,7 +341,12 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded> {
             ));
         }
         let result = match kind {
-            0 => Solved::Implicit(fieldcraft_solver::StepResult::Static(codec::decode(payload).map_err(damaged)?)),
+            0 => Solved::Implicit(fieldcraft_solver::StepResult::Static(if &magic == LEGACY_MAGIC {
+                let old: LegacyStatic05 = codec::decode(payload).map_err(damaged)?;
+                old.into()
+            } else {
+                codec::decode(payload).map_err(damaged)?
+            })),
             1 => Solved::Implicit(fieldcraft_solver::StepResult::Frequency(codec::decode(payload).map_err(damaged)?)),
             2 => Solved::Implicit(fieldcraft_solver::StepResult::Heat(codec::decode(payload).map_err(damaged)?)),
             3 => Solved::Explicit(codec::decode(payload).map_err(damaged)?),
@@ -397,6 +470,14 @@ pub fn check(r: &Solved) -> std::result::Result<(), String> {
                         return Err("a frame's reactions are not at ascending nodes of the result".into());
                     }
                 }
+            }
+            if s.pretension.len() > 1000
+                || !s.pretension.windows(2).all(|w| matches!(w, [a, b] if a.name < b.name))
+                || s.pretension
+                    .iter()
+                    .any(|p| p.name.is_empty() || !p.adjustment.is_finite() || !p.section_force.is_finite() || !p.applied_force.is_finite())
+            {
+                return Err("pretension results have invalid names or non-finite values".into());
             }
             let frame_contacts = s.nonlinear.iter().flat_map(|h| &h.frames).flat_map(|f| &f.contacts);
             for c in s.contacts.iter().chain(frame_contacts) {

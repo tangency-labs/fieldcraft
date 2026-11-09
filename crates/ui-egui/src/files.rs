@@ -1998,14 +1998,11 @@ mod tests {
         assert!(app.session.is_dirty() && app.session.path.is_none() && app.dialog.is_none());
         let reply = app.reply.as_ref().unwrap();
         assert_eq!(reply.command, "deck.read");
-        assert_eq!(reply.value["history_imported"], false);
-        assert_eq!(
-            reply.value["unknown"],
-            json!([
-                {"keyword":"STEP","line":12}, {"keyword":"STATIC","line":13}, {"keyword":"ENDSTEP","line":14}
-            ])
-        );
-        assert!(app.status.as_ref().unwrap().text.contains("3 unread keywords"));
+        assert_eq!(reply.value["history_imported"], true);
+        assert_eq!(reply.value["analysis_complete"], true);
+        assert_eq!(reply.value["source_retained"], true);
+        assert_eq!(reply.value["unknown"], json!([]));
+        assert!(app.status.as_ref().unwrap().text.contains("0 unread keywords"));
         assert!(app.session.journal.is_empty());
         app.new_model();
         assert_eq!(app.prompt, Some(Prompt::Unsaved(Replace::New)), "an untouched import is still unsaved work");

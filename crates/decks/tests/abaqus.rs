@@ -302,9 +302,12 @@ fn production_reader_preserves_supported_written_model_data() {
         let written = abaqus::write(&original).unwrap();
         let mut imported = fieldcraft_decks::abaqus::read_in(&written, Preset::MmTonneS).unwrap();
         let si = common::si(&original);
-        let mut expected_nodes = si.nodes().clone();
-        expected_nodes.extend(si.reference_points().values().map(|p| (p.label, fieldcraft_model::Node { xyz: p.xyz })));
-        assert_eq!(&expected_nodes, imported.model.nodes());
+        assert_eq!(si.nodes(), imported.model.nodes());
+        for point in si.reference_points().values() {
+            assert!(imported.model.reference_points().values().any(|p| p == point));
+        }
+        assert_eq!(si.reference_points().len(), imported.model.reference_points().len());
+        assert_eq!(si.couplings().len(), imported.model.couplings().len());
         assert_eq!(si.elements(), imported.model.elements());
         assert_eq!(si.materials(), imported.model.materials());
         for section in si.sections().values() {
@@ -313,7 +316,21 @@ fn production_reader_preserves_supported_written_model_data() {
         // History is deliberately unread; add a new ordinary step for the writer's model check.
         imported.model.add_step(Step::new("Imported", Procedure::Static {}), None).unwrap();
         let rewritten = fieldcraft_decks::abaqus::write(&imported.model, Preset::MmTonneS).unwrap();
-        assert_eq!(model_data(&written), model_data(&rewritten));
+        if si.couplings().is_empty() {
+            assert_eq!(model_data(&written), model_data(&rewritten));
+        } else {
+            // Coupling surfaces now become real native node sets, with generated names.
+            // Verify membership, reference identity and DOFs instead of auxiliary set spelling.
+            let again = fieldcraft_decks::abaqus::read_in(&rewritten, Preset::MmTonneS).unwrap();
+            for (name, c) in si.couplings() {
+                let native = si.resolve().unwrap();
+                let back = again.model.couplings().iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).unwrap().1;
+                assert_eq!(back.kind, c.kind);
+                assert_eq!(back.dofs, c.dofs);
+                assert_eq!(again.model.set(&back.set).unwrap().nodes, native.sets[&c.set].nodes);
+                assert_eq!(again.model.reference_point(&back.reference_point), si.reference_point(&c.reference_point));
+            }
+        }
     }
 }
 

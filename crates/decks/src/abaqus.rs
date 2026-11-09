@@ -199,6 +199,7 @@ pub fn write_resolved(model: &Model, r: &Resolved, units: Preset) -> Result<Stri
 pub fn write_resolved_with_mass(model: &Model, r: &Resolved, units: Preset, mass: fieldcraft_model::MassKind) -> Result<String> {
     dynamics::check_mass(model, mass)?;
     crate::refuse_fluid(FORMAT, model)?;
+    crate::refuse_prestress(FORMAT, model)?;
     let by_type = elements_by_type(model, r)?;
     check_expressible(model)?;
     dynamics::check(model)?;
@@ -1376,6 +1377,9 @@ impl Deck {
             self.comment(&format!("Step {}", step.name));
             match step.procedure {
                 Procedure::Fluid { .. } => return Err(crate::fluid_step(FORMAT, &step.name)),
+                Procedure::MatrixGeneration { .. } => {
+                    return Err(Error::Unsupported { format: FORMAT, what: "matrix generation: use solve.matrices or deck.source.write".into() });
+                }
                 Procedure::RandomVibration(_) => {
                     return Err(Error::Unsupported { format: FORMAT, what: format!("step `{}`: random response is not written yet", step.name) });
                 }
