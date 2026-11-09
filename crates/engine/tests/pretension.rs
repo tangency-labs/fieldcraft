@@ -53,6 +53,7 @@ fn bolt_clamp_load_lock_persistence_and_perturbation() {
     assert_eq!(session.model, replay.model);
     let deck = fieldcraft_decks::abaqus::write(&session.model, fieldcraft_model::units::Preset::MKgS).unwrap();
     assert!(deck.contains("*PRE-TENSION SECTION, SURFACE=FC-PRET-Bolt, NODE="));
+    assert!(deck.contains("*EQUATION"));
     let surface = deck.split("*SURFACE, NAME=FC-PRET-Bolt, TYPE=ELEMENT").nth(1).unwrap();
     let surface = surface.split("*PRE-TENSION SECTION").next().unwrap();
     assert_eq!(surface.lines().filter(|line| line.trim().contains(',')).count(), 1, "one oriented cut face only");

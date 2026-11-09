@@ -228,6 +228,7 @@ pub fn write_resolved_with_mass(model: &Model, r: &Resolved, units: Preset, mass
     d.contacts(model, r)?;
     d.ties(model)?;
     d.pretension_sections(model, r)?;
+    d.pretension_connections(model, r)?;
     d.equations(model, r)?;
     d.out.push_str(&crate::foundation::abaqus(model, r)?);
     d.dynamics_data(model)?;
@@ -1170,6 +1171,31 @@ impl Deck {
                 self.line(&format!("{element}, S{face}"));
             }
             self.line(&format!("*PRE-TENSION SECTION, SURFACE={surface}, NODE={control}"));
+        }
+        Ok(())
+    }
+
+    /// Keep coincident cut nodes connected in the transverse directions while
+    /// leaving the scalar normal DOF to the native pretension section.
+    fn pretension_connections(&mut self, model: &Model, r: &Resolved) -> Result<()> {
+        for (name, p) in model.pretensions() {
+            let Some(first) = r.sets.get(&p.first) else { continue };
+            let Some(second) = r.sets.get(&p.second) else { continue };
+            for &a in &first.nodes {
+                let Some(na) = model.nodes().get(&a) else { continue };
+                let Some(&b) = second.nodes.iter().find(|&&b| model.nodes().get(&b).is_some_and(|nb| {
+                    na.xyz.iter().zip(nb.xyz).all(|(x, y)| (*x - y).abs() <= 1e-12)
+                })) else {
+                    return Err(Error::Unsupported { format: FORMAT, what: format!("pretension `{name}`: cut nodes have no coincident partner for transverse continuity") });
+                };
+                for dof in 1..=3 {
+                    if p.normal[dof - 1].abs() < 1e-12 {
+                        self.line("*EQUATION");
+                        self.line("2");
+                        self.line(&format!("{a}, {dof}, 1.0, {b}, {dof}, -1.0"));
+                    }
+                }
+            }
         }
         Ok(())
     }
