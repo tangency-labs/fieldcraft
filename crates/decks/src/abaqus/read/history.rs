@@ -8,6 +8,9 @@ use fieldcraft_model::units::{Preset, Quantity};
 use fieldcraft_model::{BoundaryCondition, DisplaySystem, Distribution, ElementFace, Load, Model, Procedure, Set, Step, Target};
 use std::collections::{BTreeMap, BTreeSet};
 
+#[path = "transient.rs"]
+mod transient;
+
 #[derive(Clone)]
 struct Curve {
     points: Vec<(f64, f64)>,
@@ -250,7 +253,7 @@ pub(super) fn import(text: &str, read: &mut Read, preset: Preset, limits: Limits
     read.unknown.retain(|u| !consumed.contains(&u.line));
     read.unknown_count = read.unknown.len();
     read.analysis_complete = index == blocks.len();
-    if !curves.is_empty() {
+    if !curves.is_empty() && read.model.steps().iter().any(|s| matches!(s.procedure, Procedure::Static {})) {
         read.warnings.push("static amplitude curves are evaluated at the equilibrium step end; the original curves remain in the saved source, not a transient solution".into());
     }
     if read.unknown.iter().any(|u| is_output(&u.keyword)) {
@@ -276,6 +279,9 @@ fn prepare(
     units: &DisplaySystem,
     limits: Limits,
 ) -> Result<(Procedure, f64, State)> {
+    if model.steps().iter().any(|s| matches!(s.procedure, Procedure::Transient(_))) {
+        return Err(unsupported(b.line, "continuation after *DYNAMIC is not mapped"));
+    }
     let curves = data.curves;
     let spectra = data.spectra;
     allow(b, &["NAME", "NLGEOM", "PERTURBATION", "AMPLITUDE", "INC"])?;
@@ -339,6 +345,14 @@ fn prepare(
                     duration = f.get(1).filter(|s| !s.is_empty()).map(|s| number(s, row.line)).transpose()?.filter(|v| *v > 0.0).unwrap_or(1.0);
                 }
                 procedure = Some(if nonlinear { super::nonlinear::procedure(b, part, model)? } else { Procedure::Static {} });
+            }
+            "DYNAMIC" => {
+                if procedure.is_some() {
+                    return Err(error(part.line, "multiple analysis procedures"));
+                }
+                let (p, time) = transient::procedure(part, b, model, units)?;
+                procedure = Some(p);
+                duration = time;
             }
             "STEADYSTATEDYNAMICS" => {
                 if procedure.is_some() {
@@ -411,7 +425,7 @@ fn prepare(
     if matches!(procedure, Procedure::Harmonic(_)) && next.iter().any(|((family, _, _, _), v)| *family == Family::Boundary && v.value != 0.0) {
         return Err(unsupported(b.line, "nonzero harmonic prescribed motion"));
     }
-    if !matches!(procedure, Procedure::Static {}) && next.values().any(|v| v.amplitude.is_some()) {
+    if !matches!(procedure, Procedure::Static {} | Procedure::Transient(_)) && next.values().any(|v| v.amplitude.is_some()) {
         return Err(unsupported(b.line, "amplitude on non-static step"));
     }
     if matches!(procedure, Procedure::MatrixGeneration { .. })
@@ -430,6 +444,9 @@ fn prepare(
         && !matches!(procedure, Procedure::Frequency { .. })
     {
         return Err(unsupported(b.line, "NLGEOM continuation: subsequent general steps are not mapped"));
+    }
+    if matches!(procedure, Procedure::Transient(_)) {
+        transient::validate_history(b, &next, curves)?;
     }
     super::super::limited::enhanced(model, Some(&procedure))?;
     Ok((procedure, duration, next))
@@ -691,7 +708,9 @@ fn materialize(model: &mut Model, step: &mut Step, state: &mut State, evaluation
     for ((family, _, id, dof), driven) in state.iter_mut() {
         check_work(groups.len())?;
         let mut v = driven.value;
-        if let Some(name) = &driven.amplitude {
+        if !matches!(step.procedure, Procedure::Transient(_))
+            && let Some(name) = &driven.amplitude
+        {
             let curve = curves.get(name).ok_or_else(|| error(driven.line, "missing amplitude"))?;
             v *= curve.at(if curve.total { total } else { time });
             if !curve.total {
@@ -780,6 +799,7 @@ fn materialize(model: &mut Model, step: &mut Step, state: &mut State, evaluation
             step.loads.insert(name);
         }
     }
+    transient::attach(step, state, curves, units)?;
     // Eigen frequencies are converted only at the model boundary, like all other quantities.
     if let Procedure::Frequency { min_hz, max_hz, .. } = &mut step.procedure {
         for value in [min_hz, max_hz].into_iter().flatten() {

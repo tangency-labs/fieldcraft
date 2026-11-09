@@ -631,3 +631,36 @@ and reaction, saved results, exact source replay and normalized readback. INCLUD
 paths in this workflow are relative to the root input directory, including nested
 files; a missing dependency is a named error, never silently skipped. This does
 not extend nonlinear paths, transient loading, FIXED or follower-load support.
+
+### Independent direct time history
+
+`DYNAMIC, DIRECT` now maps to the native transient procedure for explicit point
+`MASS` and linear grounded `SPRING1` models. It requires explicit `ALPHA=0`,
+`BETA=.25`, `GAMMA=.5`, `APPLICATION=TRANSIENT FIDELITY` (or omitted application),
+a positive increment and period containing a whole number of increments, and
+sufficient `STEP, INC`. The omitted HHT alpha default is **not** average
+acceleration and is refused rather than guessed. Initial displacement/velocity
+and physical damping are zero. Only homogeneous fixed boundaries and translational
+`CLOAD`s sharing one explicit relative TABULAR/SMOOTH STEP amplitude are mapped.
+The reference force remains unscaled; the native solver evaluates the complete
+curve at each time, including endpoint holding. This independent first step starts
+at total time zero, so STEP TIME and TOTAL TIME coincide. Output is retained every
+increment; original output-request text remains in source replay.
+
+Run `solve.transient` with `mass=consistent` (the shared default) or `lumped`:
+explicit point masses are unchanged by this choice. This does **not** establish
+continuous-element mass equivalence. Structural elements, continuation/base state,
+nonzero or amplitude-driven boundaries, automatic increments, DIRECT=NO STOP,
+other HHT parameters, multiple amplitude names and distributed loads are refused.
+MODAL DYNAMIC and RESPONSE SPECTRUM remain source-preserved, non-runnable imports;
+the existence of native solvers/exporters does not establish their import mapping.
+No step is silently converted into static equilibrium or another procedure.
+
+Verification uses an original 2 kg / 200 N/m oscillator driven by a triangular
+1 N pulse on [0,.2] s and followed to .4 s. Native-command construction, saved
+results reopened and normalized INP reread must reproduce all sampled U/V/A.
+The independent continuous convolution supplies the physical reference; finite
+integration error is distinguished from import error. Byte-exact source replay
+checks text preservation separately. Commercial same-input comparison is pending.
+Public syntax: [DYNAMIC](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-dynamic.htm)
+and [AMPLITUDE](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-amplitude.htm).

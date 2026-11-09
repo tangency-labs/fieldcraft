@@ -274,3 +274,9 @@ Native Hex8 now has an independent thirteen-variable enhanced-gradient option fo
 Abaqus import: C3D8I now selects the thirteen-variable nonhybrid isotropic small-strain static formulation; C3D8IH and unsupported procedures remain refused. First elastic rod NLGEOM=YES equilibrium and its frequency base state round-trip without dropping history.
 
 Abaqus history: boundary modifications retain node/set and named/direct identity; ambiguous replacements are refused. A five-step, two-instance INCLUDE case checks effective load/constraint inheritance, amplitude endpoints, solving and source/normalized round trips.
+
+- Abaqus independent direct transient import: explicit average-acceleration
+  DYNAMIC/DIRECT for MASS/SPRING1, complete common load amplitude, zero initial
+  state and fixed homogeneous supports. Continuous-element mass, base-state
+  continuation, modal time history and response-spectrum imports remain refused;
+  source preservation is distinct from runnable semantics.

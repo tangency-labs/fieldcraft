@@ -135,6 +135,9 @@ fn read_mode(text: &str, preset: Preset, limits: Limits, analysis: bool) -> Resu
         {
             read.warnings.push("NLGEOM=YES T3D2/T2D2 steps and base_state are retained semantically, but native nonlinear static truss solving is not supported; solve.nonlinear and dependent frequency will refuse, not use NLGEOM=NO".into());
         }
+        if read.model.steps().iter().any(|s| matches!(s.procedure, fieldcraft_model::Procedure::Transient(_))) {
+            read.warnings.push("DYNAMIC DIRECT: independent fixed-step average acceleration with zero initial state; explicit point masses retain their values, common load AMPLITUDE is evaluated throughout time, not at its endpoint. Material/element mass defaults, continuation and other dynamic procedures are not inferred.".into());
+        }
         read.unknown.truncate(MAX_UNKNOWN_SHOWN);
         Ok(read)
     };
