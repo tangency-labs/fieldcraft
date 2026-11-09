@@ -347,3 +347,31 @@ payload does **not** persist this new report; opening an old solved model cannot
 supply historical iteration counts or residuals. Computing the report retains K
 through Lanczos and performs two sparse products per mode inside the complete
 solve command; its time and memory belong in performance comparisons.
+
+For an opt-in orthogonality check, set `FIELDCRAFT_MODAL_ORTHOGONALITY=1`.
+The solve evaluates the returned modes against its actual reduced mass matrix and
+writes `FIELDCRAFT_MASS_ORTHOGONALITY` to stderr: mode count and
+max|ΦᵀMΦ−I|. With solver timing enabled, `frequency_mass_orthogonality` reports
+this additional work, which is included in the complete solve command time.
+This diagnostic neither changes the modes nor adds fields to the stored result.
+
+`FIELDCRAFT_PROJECTION_WORK` records successful projection stages when solver
+timing is enabled: implementation, equations, basis columns, candidate columns,
+passes, vector pairings, and dot-product elements. The subtraction traverses the
+same number of vector elements. These are logical work counts, not cache or
+DRAM counters; timings include workspace preparation and worker scheduling.
+
+The block projection uses two reorthogonalization passes, fixed eight-column
+panels and fixed 512-row partial dot products combined in row-block order.
+Independent row blocks have one writer each. The worker count does not choose
+the partition or the reduction order. This can round differently from scalar
+Gram–Schmidt; thread-count reproducibility and agreement with an older
+algorithm within its physical-result tolerance are separate checks. Repeated
+eigenvalues require a subspace comparison, since individual vectors within a
+repeated eigenspace are not unique.
+
+`FIELDCRAFT_PROJECTION=scalar` selects the scalar reference for diagnostics in
+the same executable. Both paths retain the convergence tests and random
+replacement of vanished directions. Block projection additionally stores
+packed basis and mass-basis panels; account for this workspace when comparing
+peak process memory. This selection does not change the archive format.
