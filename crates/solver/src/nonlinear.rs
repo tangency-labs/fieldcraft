@@ -341,8 +341,8 @@ struct Problem<'a> {
     /// The dead loads with their own load path: their nonzero forces at factor 1.
     scheduled: Vec<Scheduled>,
     followers: Vec<Follower>,
-    /// Springs (linear along their fixed directions), on the pattern.
-    springs: Option<Csr>,
+    /// Springs and foundations, linear along their fixed reference directions.
+    linear_supports: Option<Csr>,
     /// Large-deformation kinematics.
     finite: bool,
     /// Each element's global degrees of freedom, in its matrices' order, and the kinds per node.
@@ -585,7 +585,7 @@ impl Problem<'_> {
                 }
             }
         }
-        if let Some(s) = &self.springs {
+        if let Some(s) = &self.linear_supports {
             let mut ku = vec![0.0; s.n];
             s.mul(u.get(..s.n).unwrap_or_default(), &mut ku);
             for (x, v) in internal.iter_mut().zip(&ku) {
@@ -1317,9 +1317,6 @@ pub fn solve_nonlinear(model: &Model, step: Option<&str>, limits: &Limits) -> Re
         prepared.project(&mut result);
         return Ok(result);
     }
-    if let Some((name, _)) = model.foundations().iter().next() {
-        return Err(Error::NotSupported(format!("foundation `{name}` in nonlinear analysis")));
-    }
     // A job cancelled before it starts stops here, before any setup work.
     fieldcraft_model::progress::check()?;
     let chosen = model.select_step(step, |p| matches!(p, Procedure::NonlinearStatic(_)), "nonlinear static")?;
@@ -1353,9 +1350,6 @@ pub(crate) fn terminal_tangent(model: &Model, step: &str, limits: &Limits) -> Re
     }
     if settings.imperfection.is_some() {
         return Err(Error::NotSupported(format!("base step `{step}` has an imperfection: perturbed mesh transfer is not implemented")));
-    }
-    if let Some((name, _)) = model.foundations().iter().next() {
-        return Err(Error::NotSupported(format!("foundation `{name}` in nonlinear analysis")));
     }
     settings.validate()?;
     let mut tangent = None;
@@ -1417,9 +1411,15 @@ fn solve_on(
     let (scheduled, dead_step) = scheduled(model, &resolved, &mesh, step, settings, dead_step, &red.active)?;
     let dead = loads(model, &resolved, &mesh, &dead_step, &red.active)?;
     let field = temperatures(model, &resolved, &mesh, step, limits)?;
-    let springs = if mesh.discrete.springs.iter().any(|s| !s.dashpot) {
+    let linear_supports = if !mesh.foundations.is_empty() || mesh.discrete.springs.iter().any(|s| !s.dashpot) {
         let mut s = graph.zero_matrix(&mesh.layout);
         mesh.discrete.add_stiffness(&mut s)?;
+        // The foundation is bilateral and measured on the reference surface:
+        // U = u^T K_f u / 2, hence its force is K_f u and its tangent is K_f.
+        // It neither follows the deformed normal nor adds stress stiffness.
+        for f in &mesh.foundations {
+            f.add(&mesh, &mut s, f.normal, f.tangential)?;
+        }
         Some(s)
     } else {
         None
@@ -1442,7 +1442,7 @@ fn solve_on(
         dead,
         scheduled,
         followers: follower_loads,
-        springs,
+        linear_supports,
         finite: settings.nonlinear_geometry,
         element_dofs,
         element_kinds,
@@ -1752,7 +1752,8 @@ fn finish(
     let (elements, stress) = stresses(mesh, problem, &u, &displacement, lambda, committed)?;
     let von_mises = stress.iter().map(von_mises).collect();
     let scale = crate::system::balance_scale(&applied_total, &reaction_total, &reaction);
-    let ground = mesh.discrete.ground_force(&u, mesh);
+    let mut ground = mesh.discrete.ground_force(&u, mesh);
+    crate::foundation::add_ground_force(mesh, &u, &mut ground)?;
     let imbalance = (0..3).map(|c| (applied_total[c] + reaction_total[c] + ground[c]).abs()).fold(0.0, f64::max);
     if scale > 0.0 && imbalance > crate::system::BALANCE_TOLERANCE * scale {
         warnings.push(format!("loads and reactions differ by {imbalance:.3e} (relative {:.1e})", imbalance / scale));

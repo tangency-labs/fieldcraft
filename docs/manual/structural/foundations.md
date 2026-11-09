@@ -22,12 +22,17 @@ not represent lift-off, friction or a finite-thickness substrate. Shells and
 composite shells use reference-surface translations, with no added rotational
 spring or thickness-offset lever arm.
 
-Linear statics and undamped natural frequencies include foundation stiffness.
+Linear and nonlinear statics and undamped natural frequencies include foundation stiffness.
+In nonlinear statics, the normal, area and shape functions remain those of the
+reference surface: the support force is K_f u and its potential is uᵀK_f u/2.
+The converged tangent used by modal and harmonic perturbations includes K_f once,
+alongside the solid's material and stress stiffness. The foundation does not
+follow a rotating surface, and its static force has no viscous or loss-factor term.
 Direct and modal harmonic response include C_f from the two viscous coefficients
 and H_f = loss_factor K_f. For exp(iωt), Z=K−ω²M+i(ωC+H).
 Step Rayleigh damping applies to total stiffness, including foundations; material
-Rayleigh damping still applies only to the material elements. Nonlinear and
-explicit dynamics refuse foundations. Planar/axisymmetric foundations are refused.
+Rayleigh damping still applies only to the material elements. Explicit dynamics
+refuse foundations. Planar/axisymmetric foundations are refused.
 
 The design parameter is `{"type":"foundation","name":"Bed","component":"normal"}`
 or `"component":"tangential"`. Static, simple-mode frequency and direct harmonic
@@ -39,11 +44,13 @@ retain the same assembled derivatives as scalar sensitivities. This is not a
 uniform-material scaling approximation. Repeated eigenvalues retain the existing sensitivity
 refusal; modal harmonic sensitivities remain outside this branch's scope.
 
-Abaqus export uses `*FOUNDATION` for normal-only undamped support. General linear
+Abaqus export uses `*FOUNDATION` for normal-only undamped support without nonlinear geometry. General linear
 support writes consistent sparse K/C/H using `*MATRIX INPUT` and `*MATRIX ASSEMBLE`,
 with shared physical nodes, global translation DOFs and a lower-triangle format.
 It does not also write the same stiffness as `*FOUNDATION`. Matrix export supports
-linear static, frequency and direct harmonic procedures; modal-superposition harmonic
+linear and nonlinear static, frequency and direct harmonic procedures. A model
+with nonlinear geometry uses matrices even for normal-only support, keeping the
+reference coefficients and directions fixed. Modal-superposition harmonic
 matrix export is refused until the writer explicitly enables the required SIM architecture.
 Nastran and LS-DYNA writers refuse foundations by name. Text export tests do not
 constitute evidence that a commercial solver has accepted or solved the deck.
