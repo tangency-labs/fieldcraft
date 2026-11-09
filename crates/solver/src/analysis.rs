@@ -331,14 +331,21 @@ pub(crate) fn split(full: &[f64], mesh: &Mesh) -> (Vec<[f64; 3]>, Vec<[f64; 3]>,
 /// The matrix pattern of the mesh (node blocks of its elements, trusses and discrete elements)
 /// and the order of its nodes for the factorization.
 pub(crate) fn pattern(mesh: &Mesh) -> (NodeGraph, Vec<usize>) {
+    pattern_with_order(mesh, false)
+}
+
+// Only the linear static/frequency experiment opts into the third ordering.
+// Buckling, nonlinear and other callers retain the validated legacy choice.
+fn pattern_with_order(mesh: &Mesh, experiment: bool) -> (NodeGraph, Vec<usize>) {
+    let order_fn = if experiment { crate::ordering::experimental_order } else { fill_reducing_order };
     let graph = NodeGraph::new(mesh.block_count(), mesh.blocks());
     // The order covers the mesh nodes; reference point equations follow them.
     let n = mesh.labels.len();
     let order = if graph.adjacency.len() == n {
-        fill_reducing_order(&mesh.xyz, &graph.adjacency)
+        order_fn(&mesh.xyz, &graph.adjacency)
     } else {
         let mesh_part: Vec<Vec<usize>> = graph.adjacency.iter().take(n).map(|row| row.iter().copied().filter(|b| *b < n).collect()).collect();
-        fill_reducing_order(&mesh.xyz, &mesh_part)
+        order_fn(&mesh.xyz, &mesh_part)
     };
     (graph, order)
 }
@@ -446,7 +453,7 @@ pub(crate) fn static_on(setup: &Setup<'_>, limits: &Limits) -> Result<StaticResu
     if field.is_some() && !mesh.structural.is_empty() {
         warnings.push("shells and beams take no thermal strain yet; the temperatures strain the solid, 2D and truss elements only".into());
     }
-    let (graph, order) = pattern(mesh);
+    let (graph, order) = pattern_with_order(mesh, matches!(step.procedure, Procedure::Static {}));
     ignored_dashpots(mesh, &mut warnings);
     let red = reduction(setup, true, &order, budget(limits, mesh, &graph, 1), &mut warnings)?;
     let mut f = loads(model, resolved, mesh, step, &red.active)?;
@@ -661,12 +668,51 @@ fn bound_ply_results(mesh: &Mesh, limits: &Limits) -> Result<()> {
     Ok(())
 }
 
+/// Preserve the pre-experiment physical starting vectors while changing only
+/// the factor/equation ordering. This does not reorder any returned eigenpairs.
+fn legacy_start_coordinates(mesh: &Mesh, graph: &NodeGraph, red: &Reduction) -> Result<Option<Vec<usize>>> {
+    if !std::env::var("FIELDCRAFT_LANCZOS_START").is_ok_and(|v| v == "legacy_physical") {
+        return Ok(None);
+    }
+    let _timing = crate::timing::Span::new("frequency_start_coordinates");
+    let n = mesh.labels.len();
+    let adjacency: Vec<Vec<usize>> = graph.adjacency.iter().take(n).map(|row| row.iter().copied().filter(|b| *b < n).collect()).collect();
+    let nodes = crate::ordering::fill_reducing_order(&mesh.xyz, &adjacency);
+    let mut rank = vec![usize::MAX; mesh.dofs()];
+    for (position, dof) in nodes.iter().flat_map(|node| mesh.layout.range(*node)).chain(mesh.mesh_dofs()..mesh.dofs()).enumerate() {
+        let entry = rank.get_mut(dof).ok_or_else(|| Error::Internal("starting-coordinate degree of freedom".into()))?;
+        *entry = position;
+    }
+    let mut keyed = Vec::with_capacity(red.eq_dof.len());
+    for (equation, &dof) in red.eq_dof.iter().enumerate() {
+        let key = rank.get(dof).copied().filter(|r| *r != usize::MAX).ok_or_else(|| Error::Internal("missing starting-coordinate rank".into()))?;
+        keyed.push((key, equation));
+    }
+    keyed.sort_unstable();
+    let order: Vec<usize> = keyed.into_iter().map(|(_, equation)| equation).collect();
+    let changed = order.iter().enumerate().filter(|(i, j)| i != *j).count();
+    use std::io::Write;
+    let _ = writeln!(std::io::stderr().lock(), "FIELDCRAFT_START_COORDINATES\t{}\t{changed}", order.len());
+    Ok(Some(order))
+}
+
 struct ShiftInvert<'a> {
     m: &'a Csr,
     factor: &'a Factor,
+    start_order: Option<Vec<usize>>,
 }
 
 impl Operator for ShiftInvert<'_> {
+    fn prepare_start(&self, values: &mut [f64]) {
+        if let Some(order) = &self.start_order {
+            let original = values.to_vec();
+            for (&equation, &value) in order.iter().zip(&original) {
+                if let Some(destination) = values.get_mut(equation) {
+                    *destination = value;
+                }
+            }
+        }
+    }
     fn n(&self) -> usize {
         self.m.n
     }
@@ -761,7 +807,7 @@ fn frequency_impl(
     let mut warnings: Vec<String> = resolved.warnings.iter().map(ToString::to_string).chain(mesh.warnings.iter().cloned()).collect();
     warnings.extend(inelastic_warnings(model));
     warnings.extend(fieldcraft_model::initial::left_out(model, step));
-    let (graph, order) = pattern(&mesh);
+    let (graph, order) = pattern_with_order(&mesh, step.base_state.is_none());
     ignored_dashpots(&mesh, &mut warnings);
     let setup = Setup { model, resolved: &resolved, mesh: &mesh, step };
     let Assembled { k, m } = assemble(&mesh, &graph, Some(options.mass))?;
@@ -825,8 +871,14 @@ fn frequency_impl(
         max: max_hz.map_or(f64::INFINITY, |f| (two_pi * f).powi(2)),
     };
     let max_basis = lanczos_basis(limits, neq);
-    let op = ShiftInvert { m: &mff, factor: &chol };
-    let pairs = lanczos(&op, shift, wanted, BLOCK, max_basis, TOLERANCE)?;
+    let start_order = legacy_start_coordinates(&mesh, &graph, &red)?;
+    let op = ShiftInvert { m: &mff, factor: &chol, start_order };
+    let tolerance = std::env::var("FIELDCRAFT_LANCZOS_TOLERANCE")
+        .ok()
+        .and_then(|s| s.parse::<f64>().ok())
+        .filter(|t| (1e-13..=TOLERANCE).contains(t))
+        .unwrap_or(TOLERANCE);
+    let pairs = lanczos(&op, shift, wanted, BLOCK, max_basis, tolerance)?;
     if std::env::var("FIELDCRAFT_MODAL_ORTHOGONALITY").is_ok_and(|v| v == "1") {
         use std::io::Write;
         let _timing = crate::timing::Span::new("frequency_mass_orthogonality");

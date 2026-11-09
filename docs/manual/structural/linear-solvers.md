@@ -455,8 +455,8 @@ subtree-dispatch and serial top-node phases, apart from setup and error handling
 
 ## Experimental multilevel ordering
 
-The solver tests contain an opt-in third candidate for `fill_reducing_order`, in
-`ordering_multilevel.rs`. Normal builds retain the coordinate and graph-level
+There is an opt-in experimental third candidate for `fill_reducing_order`, in
+`ordering_multilevel.rs`. Default settings retain the coordinate and graph-level
 candidates. The experiment contracts heavy edges, grows a balanced coarse partition,
 then refines it during uncoarsening with locked single-vertex moves and best-prefix
 rollback. Crossing edges yield a vertex separator through bipartite matching and
@@ -468,10 +468,12 @@ Visits, adjacency, coarse ids, eight starting vertices and all ties are determin
 There are at most 32 coarsening levels, four refinement passes per level and 64
 separator levels. Disconnected components are handled separately; dense or
 unsplittable parts fall back to their stable input order. The candidate remains
-experimental until both symbolic quality and ordering cost meet their gates,
-followed by numerical and convergence checks. Small separators alone are not enough.
+experimental until numerical, convergence and thread-determinism checks pass and
+complete solve-command measurements show a benefit. Include ordering and diagnostics
+in that total; a local ordering budget alone cannot determine the net benefit.
+Small separators alone are not enough.
 
-In solver test processes, `FIELDCRAFT_ORDERING_EXPERIMENT=multilevel` enables the
+`FIELDCRAFT_ORDERING_EXPERIMENT=multilevel` enables the
 third candidate; the least-fill choice keeps the existing candidate on a tie.
 `FIELDCRAFT_ORDERING_TRACE=1` reports separator depth, part/child/separator sizes,
 coarsening levels and cut weight. The ignored `measure_multilevel_graph` harness
@@ -482,3 +484,27 @@ Algorithm sources: [Karypis and Kumar (1998)](https://people.eecs.berkeley.edu/~
 [Fiduccia and Mattheyses (1982)](https://ics-websites.science.uu.nl/docs/vakken/ea/pdf/FidMath_GBP.pdf),
 and [Amestoy, Davis and Duff (1996)](https://people.engr.tamu.edu/davis/publications_files/An_Approximate_Minimum_Degree_Ordering_Algorithm.pdf).
 This is an independent implementation; no external partitioner is linked or vendored.
+
+For frequency comparisons, pair this experiment with
+`FIELDCRAFT_LANCZOS_START=legacy_physical`. It assigns the existing fixed-seed
+random stream to the same physical free degrees of freedom as the original
+coordinate/graph selection, including random columns replacing lost rank. The
+factor may use a different equation order, but the physical starting block remains
+fixed. It does not relabel returned modes, aggregate mode clusters or loosen any
+convergence check. Building this coordinate map costs time and must remain inside
+the complete command measurement. Normal production selection stays unchanged.
+
+Diagnostic controls for isolating finite-iteration effects are
+`FIELDCRAFT_LANCZOS_TOLERANCE` (frequency only, bounded to 1e-13 through the original
+1e-9, default unchanged) and `FIELDCRAFT_RITZ_TRACE=1` (basis size, Ritz index,
+transformed relative residual bound and tolerance). A transformed residual bound
+is not the physical residual `||K phi - lambda M phi|| / ||K phi||`. Tighter
+convergence is a diagnostic reference, not permission to replace a frozen baseline;
+record its extra iterations and full command time. These controls do not change
+result identifiers or payloads.
+
+The ordering experiment is scoped to linear static and unprestressed frequency
+assembly. Buckling, nonlinear, heat and prestressed analyses retain the legacy
+ordering, including when the experimental environment variables are set. The
+first unrestricted diagnostic moved two unrelated oracle fixtures; those failures
+are not waived, and the experiment is not validated for those analysis paths.

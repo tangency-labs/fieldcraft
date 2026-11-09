@@ -22,7 +22,6 @@
 //! and O(n + |A|) memory, small next to the numeric factorization.
 
 // Experimental until the symbolic and numerical acceptance gates have passed.
-#[cfg(test)]
 #[path = "ordering_multilevel.rs"]
 mod multilevel;
 
@@ -104,7 +103,18 @@ pub fn nested_dissection(xyz: &[[f64; 3]], adjacency: &[Vec<usize>]) -> Vec<usiz
 
 /// The nested dissection order of the nodes that fills the factor less: by coordinate planes or
 /// by the graph's level structures. Ties keep the coordinate order.
+/// Stable reference order for the physical random starting block. Kept separate
+/// from the experimental factor order so a fill choice does not change that block.
 pub fn fill_reducing_order(xyz: &[[f64; 3]], adjacency: &[Vec<usize>]) -> Vec<usize> {
+    let planes = nested_dissection(xyz, adjacency);
+    if adjacency.len() <= LEAF {
+        return planes;
+    }
+    let graph = graph_dissection(adjacency);
+    if fill(adjacency, &graph) < fill(adjacency, &planes) { graph } else { planes }
+}
+
+pub(crate) fn experimental_order(xyz: &[[f64; 3]], adjacency: &[Vec<usize>]) -> Vec<usize> {
     let _timing = crate::timing::Span::new("ordering");
     let by_planes = nested_dissection(xyz, adjacency);
     if adjacency.len() <= LEAF {
@@ -113,10 +123,15 @@ pub fn fill_reducing_order(xyz: &[[f64; 3]], adjacency: &[Vec<usize>]) -> Vec<us
     }
     let by_graph = graph_dissection(adjacency);
     let current = if fill(adjacency, &by_graph) < fill(adjacency, &by_planes) { by_graph } else { by_planes };
-    #[cfg(test)]
     if std::env::var("FIELDCRAFT_ORDERING_EXPERIMENT").is_ok_and(|v| v == "multilevel") {
         let third = multilevel::order(adjacency);
-        if fill(adjacency, &third) < fill(adjacency, &current) {
+        let old_fill = fill(adjacency, &current);
+        let new_fill = fill(adjacency, &third);
+        {
+            use std::io::Write;
+            let _ = writeln!(std::io::stderr().lock(), "FIELDCRAFT_ORDER_CHOICE\t{old_fill}\t{new_fill}\t{}", new_fill < old_fill);
+        }
+        if new_fill < old_fill {
             return third;
         }
     }
