@@ -1325,6 +1325,9 @@ pub const STEP_CREATE: &[Field] = &[
     STEP_BCS,
     STEP_LOADS,
     reference("base_state", "Equilibrium base", C::Step).help("Earlier static or nonlinear static step for a linear perturbation."),
+    flag("linear_base", "Linear base stiffness")
+        .help("Keep a linear static base dependency without initial-stress stiffness; no pretension.")
+        .def("false"),
     reference("before", "Insert before", C::Step).help("The step the new one goes before; last when empty.").hint("last"),
 ];
 
@@ -1335,6 +1338,8 @@ pub const STEP_EDIT: &[Field] = &[
     STEP_BCS,
     STEP_LOADS,
     reference("base_state", "Equilibrium base", C::Step).help("Earlier equilibrium step; null in a command clears the base."),
+    flag("linear_base", "Linear base stiffness")
+        .help("Keep a linear static base dependency without initial-stress stiffness; clear when removing the base."),
 ];
 
 pub const STEP_ACTIVATE: &[Field] = &[

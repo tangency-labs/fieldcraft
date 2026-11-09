@@ -228,10 +228,8 @@ pub(super) fn import(text: &str, read: &mut Read, preset: Preset, limits: Limits
                     | Procedure::MatrixGeneration { .. }
             );
         if total > 0.0
-            && (matches!(
-                procedure,
-                Procedure::Buckle { .. } | Procedure::Harmonic(_) | Procedure::RandomVibration(_) | Procedure::MatrixGeneration { .. }
-            ) || (b.params.contains_key("PERTURBATION") && matches!(procedure, Procedure::Static {})))
+            && (matches!(procedure, Procedure::Buckle { .. } | Procedure::RandomVibration(_) | Procedure::MatrixGeneration { .. })
+                || (b.params.contains_key("PERTURBATION") && matches!(procedure, Procedure::Static {})))
         {
             read.warnings.push(format!(
                 "line {}: base-state perturbation requires the prestress interface; this and subsequent steps are retained only",
@@ -249,8 +247,10 @@ pub(super) fn import(text: &str, read: &mut Read, preset: Preset, limits: Limits
         let step_name = lex::unquote(value(b, "NAME", "")?, b.line)?;
         let step_name = if step_name.is_empty() { format!("ImportedStep{}", read.model.steps().len() + 1) } else { step_name };
         let mut step = Step::new(step_name, procedure);
-        if matches!(step.procedure, Procedure::Frequency { .. }) {
+        if matches!(step.procedure, Procedure::Frequency { .. } | Procedure::Harmonic(_)) {
             step.base_state = base_state.clone();
+            step.linear_base =
+                base_state.as_deref().and_then(|name| read.model.step(name)).is_some_and(|base| matches!(base.procedure, Procedure::Static {}));
         }
         if matches!(step.procedure, Procedure::Static {} | Procedure::NonlinearStatic(_)) {
             base_state = Some(step.name.clone());
@@ -317,7 +317,7 @@ fn prepare(
         for row in &block.rows {
             let fields = row_fields(row.text, row.line)?;
             let kind = canonical(fields.get(1).map(String::as_str).unwrap_or_default());
-            if matches!(kind.as_str(), "GRAV" | "BX" | "BY" | "BZ") {
+            if matches!(kind.as_str(), "GRAV" | "BX" | "BY" | "BZ") || kind.strip_prefix('P').is_some_and(|face| face.parse::<u8>().is_ok()) {
                 let target = name(fields.first().map(String::as_str).unwrap_or_default(), row.line)?;
                 if data.discrete_targets.contains(&target) || (target.is_empty() && !model.masses().is_empty()) {
                     return Err(unsupported(
@@ -368,9 +368,30 @@ fn prepare(
     }
     let mut global_damping = None;
     let mut next = state.clone();
+    // A steady-state perturbation starts with the base supports, not its loads.
+    // Prescribed values are increments about equilibrium, initially zero.
+    if body.iter().any(|part| part.keyword == "STEADYSTATEDYNAMICS") {
+        next.retain(|(family, _, _, _), _| *family == Family::Boundary);
+        for driven in next.values_mut() {
+            driven.value = 0.0;
+            driven.amplitude = None;
+        }
+    }
     let mut ops = BTreeMap::new();
     let mut touched = Touched::new();
     for part in body {
+        if matches!(part.keyword.as_str(), "CLOAD" | "DLOAD" | "DSLOAD")
+            && part.params.contains_key("IMAGINARY")
+            && body.iter().any(|b| b.keyword == "STEADYSTATEDYNAMICS")
+        {
+            allow(part, &["OP", "IMAGINARY"])?;
+            if part.params.get("IMAGINARY").is_some_and(Option::is_some) || !part.rows.is_empty() || canonical(value(part, "OP", "MOD")?) != "NEW" {
+                return Err(unsupported(part.line, "IMAGINARY harmonic loads: only an empty OP=NEW zero-component reset is mapped"));
+            }
+            // Perturbation loads start empty. This explicit zero imaginary component
+            // must not clear the independently defined real component.
+            continue;
+        }
         match part.keyword.as_str() {
             "MATRIXGENERATE" => {
                 if procedure.is_some() {
@@ -478,6 +499,11 @@ fn prepare(
     if next.keys().any(|(family, _, _, _)| *family == Family::Body) && !matches!(procedure, Procedure::Static {}) {
         return Err(unsupported(b.line, "DLOAD BX/BY/BZ requires small-displacement linear STATIC"));
     }
+    if model.couplings().values().any(|c| c.kind == fieldcraft_model::CouplingKind::Distributing && c.dofs.list() == [1, 2, 3])
+        && !matches!(procedure, Procedure::Static {})
+    {
+        return Err(unsupported(b.line, "DISTRIBUTING DOFs 1..3 requires small-displacement linear STATIC"));
+    }
     if let Some(damping) = global_damping {
         let Procedure::Harmonic(h) = &mut procedure else {
             return Err(unsupported(b.line, "GLOBAL DAMPING outside harmonic analysis"));
@@ -503,7 +529,7 @@ fn prepare(
     }
     if !nonlinear
         && model.steps().iter().any(|s| matches!(s.procedure, Procedure::NonlinearStatic(_)))
-        && !matches!(procedure, Procedure::Frequency { .. })
+        && !matches!(procedure, Procedure::Frequency { .. } | Procedure::Harmonic(_))
     {
         return Err(unsupported(b.line, "NLGEOM continuation: subsequent general steps are not mapped"));
     }
@@ -769,6 +795,9 @@ fn apply(
                         insert(Family::Body, element, component, magnitude)?;
                     }
                 } else if let Some(face) = kind.strip_prefix('P').and_then(|s| s.parse::<u8>().ok()) {
+                    if target.is_empty() {
+                        return Err(unsupported(row.line, format!("DLOAD {kind} requires an explicit element or element set")));
+                    }
                     if f.len() != 3 {
                         return Err(error(row.line, "element pressure needs three entries"));
                     }
@@ -1154,6 +1183,53 @@ Volume,BX,5
         let cleared = read(&input.replace("1,BZ,-16", "1,GRAV,1,0,0,-1"));
         assert!(cleared.analysis_complete);
         assert!(cleared.model.step("Four").unwrap().loads.iter().all(|n| matches!(cleared.model.load(n), Some(Load::Gravity { .. }))));
+    }
+
+    #[test]
+    fn element_pressure_never_filters_discrete_members_or_infers_a_blank_target() {
+        let input = r#"** Original global volume force, not acceleration or surface traction; SI
+*NODE
+1,0,0,0
+2,1,0,0
+3,0,1,0
+4,0,0,1
+*ELEMENT,TYPE=C3D4,ELSET=Solid
+1,1,2,3,4
+*NSET,NSET=Base
+1,2,3
+*ELSET,ELSET=Volume
+Solid
+*ELEMENT,TYPE=MASS,ELSET=M
+10,4
+*MASS,ELSET=M
+3
+*ELSET,ELSET=Mixed
+Volume,M
+*MATERIAL,NAME=Elastic
+*ELASTIC
+120000,.25
+*DENSITY
+7
+*SOLID SECTION,ELSET=Solid,MATERIAL=Elastic
+*BOUNDARY
+Base,1,3
+*STEP,NAME=One
+*STATIC
+1,1
+*DLOAD
+Mixed,P1,1
+*END STEP
+"#;
+        let denied = read(input);
+        assert!(!denied.analysis_complete);
+        assert!(denied.model.steps().is_empty());
+        assert!(denied.warnings.iter().any(|w| w.contains("P1 target") && w.contains("discrete")));
+        let blank =
+            input.replace("*ELEMENT,TYPE=MASS,ELSET=M\n10,4\n*MASS,ELSET=M\n3\n*ELSET,ELSET=Mixed\nVolume,M\n", "").replace("Mixed,P1", ",P1");
+        let denied = read(&blank);
+        assert!(!denied.analysis_complete);
+        assert!(denied.model.steps().is_empty());
+        assert!(denied.warnings.iter().any(|w| w.contains("P1 requires an explicit element")));
     }
     const MODEL: &str = "*NODE,NSET=Tip\n1,0,0,0\n2,1,0,0\n*BOUNDARY\n1,ENCASTRE\n";
     fn read(text: &str) -> Read {

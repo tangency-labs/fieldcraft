@@ -62,7 +62,8 @@ the current document; save existing work before running it in a session you are 
   remain in the retained source. Translated instances remap labels and property set references;
   springs in rotated instances are explicitly refused. Anisotropic/damped masses, nonlinear or
   frequency-dependent springs, SPRING2/A, dashpots and rotary inertia are not mapped yet.
-  Gravity history with imported point masses is refused until discrete load membership is mapped.
+  Gravity may select ordinary mesh elements despite unrelated point masses; targets containing
+  discrete elements and whole-model gravity with point masses remain refused.
 - `NSET` and `ELSET`: label lists, other set names and bounded `GENERATE` ranges. A node set may
   also name an element set. Flat model labels are unchanged; instance labels are mapped to
   deterministic global labels and reported with their original identity.
@@ -225,8 +226,9 @@ the `*NODE`, `*ELEMENT`, `*NSET`, `*SURFACE`, `*ELASTIC` and `*SOLID SECTION` en
 
 Direct harmonic import also maps constant material/global Rayleigh and structural damping,
 explicit single-frequency rows (`upper=0`) and real concentrated/distributed loads. Frequency
-ranges with bias, modal/subspace harmonic methods, imaginary loads, prescribed harmonic motion
-and prestressed harmonic base states remain reported as unsupported. The `imported_steps` reply
+ranges with bias, modal/subspace harmonic methods, nonempty imaginary loads and prescribed
+harmonic motion remain reported as unsupported. Static-history base-state mapping and its
+stiffness policy are described below. The `imported_steps` reply
 lists the steps actually created; `analysis_complete=false` still means the entire source is
 not mapped. A later matrix-export step is a separate native matrix-generation procedure
 (see below); `solve.harmonic` executes only the selected harmonic step, while
@@ -375,7 +377,11 @@ responses equal another solver. Default adjustment/tolerance, `TYPE=NODE TO SURF
 The supported cloud consists only of solid-element nodes, in global axes, with
 kinematic global DOF ranges containing at least one translation, or all six
 reference DOFs for distributing (omitted data, blank first DOF, or ranges covering
-1–6). Kinematic element surfaces resolve all face nodes (including midside nodes);
+1–6). Explicit distributing DOFs 1–3 additionally map all translations with all
+rotations released, limited to small-displacement linear static steps and a reference
+point at the equal-weight cloud centroid (roundoff tolerance only; no coordinate
+adjustment). Partial rotational release and offset references for this subset remain
+refused. Kinematic element surfaces resolve all face nodes (including midside nodes);
 element-based distributing weights remain refused. Continuum distribution uses equal nodal weights and translation-derived
 cloud rotation. The reference point retains its original label and coordinates;
 its temporary mesh-node alias is removed. Original reference node sets are
@@ -388,7 +394,7 @@ Part/instance expansion rewrites local constraint names, tie surface pairs,
 coupling surfaces and reference node/set names before mapping. Invalid references
 fail the read transaction. Unsupported parameters/subcards produce named warnings,
 retain the source and block runnable history: e.g. `ORIENTATION`, `INFLUENCE RADIUS`,
-`KINEMATIC, ALPHA`, rotation-only solid kinematic DOFs, partial distributing DOFs, nonuniform weights, `DISTRIBUTING, COUPLING=STRUCTURAL`,
+`KINEMATIC, ALPHA`, rotation-only solid kinematic DOFs, partial rotational distributing DOFs, nonuniform weights, `DISTRIBUTING, COUPLING=STRUCTURAL`,
 explicit structural rotational coupling, `FREE NODES`, `SINGLE FACET`, `UNIFORM`,
 and reference nodes already targeted by `MASS`/`SPRING` (discrete-target retargeting
 is not yet mapped).
@@ -404,6 +410,15 @@ and total support reaction, then save/open and normalized write/read and solve a
 Exact source replay checks original bytes separately. These small native comparisons
 validate mapping and persistence, not commercial parity, arbitrary mesh mortar accuracy,
 nonlinear motion, shell coupling or modal truncation.
+
+A translation-only original Tet4 fixture fixes the three base nodes and reference
+rotations and applies a 3 N reference force in x. With E=120000 Pa, nu=0.25 and
+unit coordinate edges, the free node displacement is 0.000125 m and shear stress
+is 6 Pa: the centroid force distributes equally to the three cloud nodes. The
+same model with all six DOFs coupled gives x displacement 1/104000 m and z
+displacement -2/104000 m, distinguishing released rotations from a full coupling.
+Both native commands and normalized input round trips check this behavior; the
+comparison is a discrete analytical reference, not external solver validation.
 
 Syntax references: [TIE](https://docs.software.vt.edu/abaqusv2025/English/SIMACAEKEYRefMap/simakey-r-tie.htm),
 [COUPLING](https://docs.software.vt.edu/abaqusv2025/English/SIMACAEKEYRefMap/simakey-r-coupling.htm),
@@ -810,3 +825,47 @@ procedures are named refusals. Original cards remain in the retained source. An 
 four-step tetrahedron regression checks component replacement, inheritance, load-family clearing,
 SI and millimetre units, and the exact consistent volume load `f_i = b*V/4` against static U/RF/S.
 The load definition follows the [public three-dimensional element reference](https://abaqus.uclouvain.be/English/SIMACAEELMRefMap/simaelm-r-3delem.htm).
+
+
+Element pressure `DLOAD, Pn` requires an explicit element or element set. Like scoped gravity
+and body force, its target is checked against original discrete membership before mesh-set
+filtering. A mixed solid/MASS or solid/SPRING1 target is refused, including set aliases; it
+cannot be accepted as pressure on only the surviving solid elements. A blank target is refused
+instead of being silently interpreted as the whole model. The affected step is not runnable,
+and the original source remains available through project reopening and source replay.
+
+
+### Static history followed by direct harmonic response
+
+A frequency or direct harmonic step after an ordinary `STATIC` step retains that
+latest equilibrium as `base_state`, with `linear_base: true`. This explicitly uses
+the reference-geometry elastic stiffness without initial-stress stiffness, matching
+an input whose general step has `NLGEOM=NO` (including the default). The native
+`base_state` default remains stress stiffened; `linear_base` is opt-in and requires
+an ordinary linear static base without pretension. It is stored with the model,
+included in result invalidation, and exposed by `model.step.create/edit`.
+Normalized export retains `NLGEOM=NO`; it refuses a nonlatest base or a base shared
+by linear and stress-stiffened consumers because one source general step cannot
+express both choices. Nonlinear equilibrium remains a distinct procedure: no YES
+flag is changed to NO and unsupported nonlinear rod solving still refuses.
+
+Each harmonic perturbation retains the base support DOFs with zero incremental
+values, but starts with no loads: only loads written in that perturbation act.
+The general history remains unchanged for subsequent general steps. Nonzero
+prescribed harmonic motion and frequency-dependent amplitudes remain named
+refusals. An empty `IMAGINARY, OP=NEW` load block maps an explicitly zero imaginary
+component without clearing the real component; nonempty imaginary loads remain
+unsupported. No time-domain amplitude is reinterpreted as a frequency curve.
+
+The original axial oscillator uses K=4 N/m and a consistently assembled free mass
+of 1 kg. Its static displacement is 0.25 m, frequency 1/pi Hz and response to a
+1 N load at 0.1 Hz is 1/(4-(2*pi*0.1)^2) m. Import, solving, saved-result reopening,
+source replay and normalized writing/reading retain the complete three-step order.
+A second input adds a force only to the static step to distinguish load histories.
+Mass is explicitly selected as `consistent` for these comparisons; this does not
+infer or apply a source solver's default lumping policy. A separate prestressed
+column check distinguishes elastic stiffness from initial-stress stiffening.
+
+Public procedure semantics: [general and perturbation procedures](https://abaqus.uclouvain.be/English/SIMACAEANLRefMap/simaanl-c-linearnonlinear.htm),
+[direct steady-state dynamics](https://abaqus.uclouvain.be/English/SIMACAEANLRefMap/simaanl-c-steadystdyndirect.htm),
+and [loads in perturbation steps](https://abaqus.uclouvain.be/English/SIMACAEPRCRefMap/simaprc-c-loading.htm).

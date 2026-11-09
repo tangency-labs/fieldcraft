@@ -666,7 +666,7 @@ fn imported_constraints_named_rejections_preserve_source_and_bad_references_are_
         ("SURFACE=Pad", "SURFACE=Pad,INFLUENCE RADIUS=1", "INFLUENCERADIUS"),
         ("*KINEMATIC\n1,6", "*DISTRIBUTING,COUPLING=STRUCTURAL\n1,6", "STRUCTURAL"),
         ("*KINEMATIC\n1,6", "*KINEMATIC\n4,6", "at least one translation"),
-        ("*KINEMATIC\n1,6", "*DISTRIBUTING\n1,3", "distributing requires 1..6"),
+        ("*KINEMATIC\n1,6", "*DISTRIBUTING\n1,5", "partial rotational release"),
     ] {
         let text = constraint_input().replace(from, to);
         std::fs::write(&input, &text).unwrap();
@@ -1427,5 +1427,80 @@ fn multistep_instance_amplitudes_solve_reopen_and_normalize_effective_conditions
     std::fs::create_dir(&bad_replay).unwrap();
     s.execute("deck.source.write", &json!({"path":bad_replay.join("bad.inp")})).unwrap();
     assert_eq!(std::fs::read_to_string(bad_replay.join("bad.inp")).unwrap(), conflicting);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn distributing_translation_release_solves_reopens_and_round_trips() {
+    let source = r#"** Original equal-weight translation-only distributing coupling, SI
+*NODE
+1,0,0,0
+2,1,0,0
+3,0,1,0
+4,0,0,1
+99,.3333333333333333,0,.3333333333333333
+*ELEMENT,TYPE=C3D4,ELSET=Solid
+1,1,2,3,4
+*NSET,NSET=Base
+1,2,3
+*NSET,NSET=Cloud
+1,2,4
+*NSET,NSET=RP
+99
+*SURFACE,TYPE=NODE,NAME=Pad
+Cloud,1
+*MATERIAL,NAME=Elastic
+*ELASTIC
+120000,.25
+*SOLID SECTION,ELSET=Solid,MATERIAL=Elastic
+*COUPLING,CONSTRAINT NAME=Mean,REF NODE=RP,SURFACE=Pad
+*DISTRIBUTING,COUPLING=CONTINUUM,WEIGHTING METHOD=UNIFORM
+1,3
+*STEP,NAME=Pull
+*STATIC
+*BOUNDARY
+Base,1,3
+RP,4,6
+*CLOAD
+RP,1,3
+*END STEP
+"#;
+    let dir = folder();
+    let input = dir.join("input.inp");
+    std::fs::write(&input, source).unwrap();
+    let mut s = Session::default();
+    let read = s.execute("deck.read", &json!({"format":"abaqus","path":input,"units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(read["analysis_complete"], true, "{read}");
+    s.execute("solve.static", &json!({"step":"Pull"})).unwrap();
+    let probe = s.execute("solve.probe", &json!({"step":"Pull","nodes":[1,2,3,4]})).unwrap();
+    // V=1/6, mu=lambda=48000; K44=diag(8000,8000,24000).
+    // Centroid translations are the three-node mean: the 3 N load gives 1 N per node.
+    let reactions = [[-2., 0., -1.], [-1., 0., 1.], [0., 0., 0.], [0., 0., 0.]];
+    for (i, node) in probe["nodes"].as_array().unwrap().iter().enumerate() {
+        for axis in 0..3 {
+            let u = if i == 3 && axis == 0 { 0.000125 } else { 0. };
+            assert!((node["displacement"][axis].as_f64().unwrap() - u).abs() < 1e-12);
+            assert!((node["reaction"][axis].as_f64().unwrap() - reactions[i][axis]).abs() < 1e-10);
+        }
+        for axis in 0..6 {
+            let stress = if axis == 4 { 6. } else { 0. };
+            assert!((node["stress"][axis].as_f64().unwrap() - stress).abs() < 1e-9);
+        }
+    }
+    let project = dir.join("model.fieldcraft");
+    s.execute("file.save_as", &json!({"path":project,"results":true})).unwrap();
+    s.execute("file.new", &json!({})).unwrap();
+    s.execute("file.open", &json!({"path":project})).unwrap();
+    assert_eq!(s.model.couplings().values().next().unwrap().dofs.list(), vec![1, 2, 3]);
+    assert_eq!(s.execute("solve.probe", &json!({"step":"Pull","nodes":[1,2,3,4]})).unwrap(), probe);
+    let replay = dir.join("replay.inp");
+    s.execute("deck.source.write", &json!({"path":replay})).unwrap();
+    assert_eq!(std::fs::read_to_string(replay).unwrap(), source);
+    let normalized = dir.join("normalized.inp");
+    s.execute("deck.write", &json!({"format":"abaqus","path":normalized,"units":"m-kg-s-N-Pa"})).unwrap();
+    let read = s.execute("deck.read", &json!({"format":"abaqus","path":normalized,"units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(read["analysis_complete"], true, "{read}");
+    s.execute("solve.static", &json!({"step":"Pull"})).unwrap();
+    assert_eq!(s.execute("solve.probe", &json!({"step":"Pull","nodes":[1,2,3,4]})).unwrap(), probe);
     std::fs::remove_dir_all(dir).unwrap();
 }

@@ -1693,7 +1693,8 @@ impl Deck {
                         }
                         self.comment("iterations and convergence: Abaqus's own controls (its residual norms differ from FieldCraft's)");
                     } else {
-                        let feeds_perturbation = steps.iter().skip(index + 1).any(|later| later.base_state.as_deref() == Some(step.name.as_str()));
+                        let feeds_perturbation =
+                            steps.iter().skip(index + 1).any(|later| later.base_state.as_deref() == Some(step.name.as_str()) && !later.linear_base);
                         let nlgeom = if feeds_perturbation { "YES" } else { "NO" };
                         self.line(&format!("*STEP, NAME={}, NLGEOM={nlgeom}", step.name));
                         self.line("*STATIC");
