@@ -739,7 +739,7 @@ pub static CATALOGUE: &[Capability] = &[
         "Probe",
         Results,
         "Query",
-        "Displacement, rotation, reaction and stress at nodes, element section forces, a mode shape, or an explicit field frame (or click the model)",
+        "Nodal fields, element section forces, modes, and transient frames with kinetic, strain, damping, work and balance energies",
         &["solve.history"],
     ),
     ready_more("results.reactions", "Reactions", Results, "Query", "Reaction force and moment sums per set", &["results.export.csv"]),

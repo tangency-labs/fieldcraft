@@ -1583,7 +1583,7 @@ fn probe_quantity(r: &StepResult, display: &fieldcraft_model::DisplaySystem, key
         "heat_flux" => Q::HeatFlux,
         "velocity" => Q::Velocity,
         "acceleration" => Q::Acceleration,
-        "kinetic_energy" | "strain_energy" => Q::Energy,
+        "kinetic_energy" | "strain_energy" | "damping_dissipation" | "external_work" | "energy_balance" => Q::Energy,
         "extent" | "depth" => Q::Length,
         "volume" => Q::Volume,
         "time" | "times" => Q::Time,
@@ -1740,8 +1740,22 @@ fn probe_dynamics(r: &fieldcraft_solver::transient::Response, nodes: &[u32], p: 
         let samples:Vec<_>=selected.iter().map(|f|json!({"time":f.time,"displacement":f.displacement.get(i),"rotation":f.rotation.get(i),"velocity":f.velocity.get(i),"acceleration":f.acceleration.get(i),"stress":f.stress.as_ref().and_then(|s|s.get(i))})).collect();
         curves.push(json!({"node":label,"samples":samples}));
     }
+    let first = opt::<usize>(p, "frame")?.unwrap_or(0);
+    let frames: Vec<_> = selected
+        .iter()
+        .enumerate()
+        .map(|(offset, f)| {
+            let mut value = json!({"time":f.time,"kinetic_energy":f.kinetic_energy,"strain_energy":f.strain_energy});
+            if let Some(e) = r.energy.as_ref().and_then(|v| v.get(first + offset)) {
+                value["damping_dissipation"] = json!(e.damping_dissipation);
+                value["external_work"] = json!(e.external_work);
+                value["energy_balance"] = json!(e.energy_balance);
+            }
+            value
+        })
+        .collect();
     Ok(
-        json!({"step":r.step,"spectrum":r.spectrum,"nodes":curves,"stress_components":["xx","yy","zz","xy","xz","yz"],"stress_location":"global nodal average; shell top surface","acceleration_kind":if r.spectrum {"pseudo_acceleration_peak"}else{"relative"},"frames":selected.iter().map(|f|json!({"time":f.time,"kinetic_energy":f.kinetic_energy,"strain_energy":f.strain_energy})).collect::<Vec<_>>()}),
+        json!({"step":r.step,"spectrum":r.spectrum,"nodes":curves,"stress_components":["xx","yy","zz","xy","xz","yz"],"stress_location":"global nodal average; shell top surface","acceleration_kind":if r.spectrum {"pseudo_acceleration_peak"}else{"relative"},"frames":frames}),
     )
 }
 

@@ -310,3 +310,50 @@ fn nonzero_initial_state_round_trip_and_missing_node_refusal() {
     assert!(error.to_string().contains("initial node 999 not present"), "{error}");
     let _ = std::fs::remove_file(path);
 }
+
+#[test]
+fn direct_energy_ledger_closes_and_survives_save_open() {
+    let mut s = rod();
+    let mut procedure = serde_json::to_value(&s.model.steps()[0].procedure).unwrap();
+    procedure["damping"] = json!({"alpha":0.2,"beta":0.0,"loss_factor":0.0});
+    s.execute("model.step.edit", &json!({"name":"Pulse","procedure":procedure})).unwrap();
+    s.execute("solve.transient", &json!({"threads":1})).unwrap();
+    let before = probe(&mut s);
+    let mut previous_d = 0.0;
+    let mut theory_error = 0.0_f64;
+    for (frame, sample) in before["frames"].as_array().unwrap().iter().zip(before["nodes"][0]["samples"].as_array().unwrap()) {
+        let work = frame["external_work"].as_f64().unwrap();
+        let loss = frame["damping_dissipation"].as_f64().unwrap();
+        let u = sample["displacement"][0].as_f64().unwrap();
+        assert!((work - u).abs() < 1e-12); // constant 1 N, zero u0
+        assert!(loss >= previous_d && frame["energy_balance"].as_f64().unwrap().abs() < 1e-12);
+        previous_d = loss;
+        let time = sample["time"].as_f64().unwrap();
+        let omega = 3.99_f64.sqrt();
+        let decay = (-0.1 * time).exp();
+        let u_exact = 0.25 * (1.0 - decay * ((omega * time).cos() + 0.1 / omega * (omega * time).sin()));
+        let v_exact = decay / omega * (omega * time).sin();
+        let exact = [0.5 * v_exact * v_exact, 2.0 * u_exact * u_exact, u_exact - 0.5 * v_exact * v_exact - 2.0 * u_exact * u_exact, u_exact];
+        for (key, expected) in ["kinetic_energy", "strain_energy", "damping_dissipation", "external_work"].iter().zip(exact) {
+            theory_error = theory_error.max((frame[*key].as_f64().unwrap() - expected).abs());
+        }
+    }
+    assert!(previous_d > 0.01);
+    assert!(theory_error < 1e-6);
+    println!("ENERGY_THEORY maximum_error_J={theory_error:.16e}, tolerance_J=1e-6");
+    let maximum = before["frames"].as_array().unwrap().iter().map(|f| f["energy_balance"].as_f64().unwrap().abs()).fold(0.0_f64, f64::max);
+    println!("ENERGY_AUDIT max_balance_J={maximum:.16e}, tolerance_J=1e-12, final_frame={}", before["frames"].as_array().unwrap().last().unwrap());
+    let path = std::env::temp_dir().join(format!("fieldcraft-energy-{}.fieldcraft", std::process::id()));
+    s.execute("file.save_as", &json!({"path":path,"results":true})).unwrap();
+    let mut restored = Session::default();
+    restored.execute("file.open", &json!({"path":path})).unwrap();
+    assert_eq!(probe(&mut restored), before);
+    restored.execute("model.units", &json!({"system":"mm-kg-ms-kN-GPa"})).unwrap();
+    let converted = probe(&mut restored);
+    // kN mm = J: the ledger uses the same energy conversion as kinetic energy.
+    assert_eq!(
+        converted["frames"].as_array().unwrap().last().unwrap()["external_work"],
+        before["frames"].as_array().unwrap().last().unwrap()["external_work"]
+    );
+    let _ = std::fs::remove_file(path);
+}

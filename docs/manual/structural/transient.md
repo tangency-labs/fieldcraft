@@ -272,3 +272,25 @@ or numerical response. Public syntax sources:
 [AMPLITUDE](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-amplitude.htm),
 [MODAL DYNAMIC](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-modaldynamic.htm),
 [response-spectrum interpolation](https://abaqus.uclouvain.be/English/SIMACAEANLRefMap/simaanl-c-responsespectrum.htm).
+
+
+### Energy ledger
+
+New time histories expose `kinetic_energy`, `strain_energy`, cumulative
+`damping_dissipation`, `external_work` and `energy_balance` in `solve.probe.frames`.
+Values are in the active energy unit (SI storage: J), and survive save/open.
+Old result files retain their original fields; their missing work history is not
+reconstructed from sparse output. Spectra have no energy ledger.
+
+At every integration step, including steps between output frames, the solver uses
+`D += dt * v_mid^T C v_mid` and `W += (f_old+f_new)^T (u_new-u_old)/2`.
+The balance is `T+V-(T0+V0)+D-W`, with `T=v^T M v/2`, `V=u^T K u/2`.
+These are discrete midpoint-power/trapezoidal-work quantities, not exact continuous
+integrals. The average-acceleration Newmark identities imply roundoff-level balance
+for constant linear symmetric operators. HHT and linear-acceleration residuals also
+include algorithmic and quadrature effects; a nonzero residual is not by itself a
+physical instability. Nonzero initial energy is subtracted, never counted as load
+work. For modal histories the integrated projected damping includes the specified
+modal ratios. For base excitation this is the relative-coordinate effective-force
+work, not absolute ground input energy. The load interpolation and output cadence
+are unchanged.

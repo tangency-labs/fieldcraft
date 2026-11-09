@@ -13,7 +13,7 @@
 //! non-diagonal damping. It stores only the current state; callers budget outputs.
 
 mod model;
-pub use model::{Frame, Response, solve};
+pub use model::{Energy, Frame, Response, solve};
 
 use crate::cholesky::{Factor, FactorError, UpperColumns};
 use crate::sparse::Csr;

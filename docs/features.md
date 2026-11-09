@@ -156,7 +156,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Display | Contours — Contours of displacement and stress, with a legend | ready | `results.contour` |
 | Display | Mode Shapes — Mode shapes and frequencies of a frequency step | ready | `results.modes` |
 | Display | Animate — Animate the deformed shape, a mode or an explicit step's frames | ready | `results.animate`, `results.frame` |
-| Query | Probe — Displacement, rotation, reaction and stress at nodes, element section forces, a mode shape, or an explicit field frame (or click the model) | ready | `solve.probe`, `solve.history` |
+| Query | Probe — Nodal fields, element section forces, modes, and transient frames with kinetic, strain, damping, work and balance energies | ready | `solve.probe`, `solve.history` |
 | Query | Reactions — Reaction force and moment sums per set | ready | `results.reactions`, `results.export.csv` |
 | Query | Linearize — Membrane, bending and peak stresses along a path through a wall (ASME VIII-2 Annex 5-A) | ready | `results.linearize` |
 | Query | Free Body — Free-body forces across a cut | coming soon (M9) |  |

@@ -23,6 +23,14 @@ pub struct Frame {
     pub kinetic_energy: Option<f64>,
     pub strain_energy: Option<f64>,
 }
+/// Cumulative work in the integrated coordinates (SI joules).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Energy {
+    pub damping_dissipation: f64,
+    pub external_work: f64,
+    /// E(t)-E(0)+damping_dissipation-external_work; includes algorithmic loss.
+    pub energy_balance: f64,
+}
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Response {
     pub step: String,
@@ -31,6 +39,9 @@ pub struct Response {
     pub spectrum: bool,
     pub natural_frequencies: Vec<f64>,
     pub warnings: Vec<String>,
+    /// One entry per stored frame; absent in legacy files and spectra.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub energy: Option<Vec<Energy>>,
 }
 fn dot(a: &[f64], b: &[f64]) -> f64 {
     a.iter().zip(b).map(|(x, y)| x * y).sum()
@@ -191,8 +202,15 @@ pub fn solve(model: &Model, name: Option<&str>, limits: &Limits, spectrum: bool)
     kr.mirror_lower();
     mr.mirror_lower();
     cr.mirror_lower();
-    let mut output =
-        Response { step: step.name.clone(), nodes: mesh.labels.clone(), frames: Vec::new(), spectrum, natural_frequencies: Vec::new(), warnings };
+    let mut output = Response {
+        step: step.name.clone(),
+        nodes: mesh.labels.clone(),
+        frames: Vec::new(),
+        spectrum,
+        natural_frequencies: Vec::new(),
+        warnings,
+        energy: None,
+    };
     if let Procedure::ResponseSpectrum(spec) = &step.procedure {
         if !step.loads.is_empty() || cr.val.iter().any(|c| *c != 0.0) {
             return Err(Error::NotSupported(
@@ -399,12 +417,25 @@ pub fn solve(model: &Model, name: Option<&str>, limits: &Limits, spectrum: bool)
         let mut f = project_f(force(0.0)?);
         let mut state = Integrator::initial_state(&ki, &mi, &ci, ui, vi, &f, limits)?;
         let integrator = Integrator::new(&ki, &mi, &ci, t.time_step, method, limits)?;
+        let initial_energy = energy(&mi, &state.velocity) + energy(&ki, &state.displacement);
+        let mut damping_dissipation = 0.0;
+        let mut external_work = 0.0;
+        let mut energies = Vec::new();
         for i in 0..=t.increments {
             fieldcraft_model::progress::check()?;
             let time = i as f64 * t.time_step;
             if i > 0 {
                 let next = project_f(force(time)?);
+                let previous_u = state.displacement.clone();
+                let previous_v = state.velocity.clone();
                 integrator.advance(&mut state, &f, &next)?;
+                // Midpoint power / trapezoidal force work. Average-acceleration
+                // Newmark satisfies delta-u = dt*v_mid, so its discrete balance
+                // closes to roundoff for linear time-invariant operators.
+                let midpoint_v: Vec<_> = previous_v.iter().zip(&state.velocity).map(|(a, b)| 0.5 * (a + b)).collect();
+                damping_dissipation += 2.0 * t.time_step * energy(&ci, &midpoint_v);
+                external_work +=
+                    f.iter().zip(&next).zip(previous_u.iter().zip(&state.displacement)).map(|((a, b), (u, v))| 0.5 * (a + b) * (v - u)).sum::<f64>();
                 f = next;
             }
             if i % t.output_every != 0 && i != t.increments {
@@ -422,6 +453,12 @@ pub fn solve(model: &Model, name: Option<&str>, limits: &Limits, spectrum: bool)
             let velocity = analysis::split(&red.expand(&v, false), &mesh).0;
             let acceleration = analysis::split(&red.expand(&a, false), &mesh).0;
             let stress = if stress { Some(crate::harmonic::stresses(&mesh, &full, &displacement)?) } else { None };
+            energies.push(Energy {
+                damping_dissipation,
+                external_work,
+                energy_balance: energy(&mi, &state.velocity) + energy(&ki, &state.displacement) - initial_energy + damping_dissipation
+                    - external_work,
+            });
             output.frames.push(Frame {
                 time: Some(time),
                 displacement,
@@ -433,6 +470,7 @@ pub fn solve(model: &Model, name: Option<&str>, limits: &Limits, spectrum: bool)
                 strain_energy: Some(energy(&kr, &u)),
             });
         }
+        output.energy = Some(energies);
     }
     output.validate().map_err(Error::Invalid)?;
     Ok(output)
@@ -450,6 +488,14 @@ fn combine_fields<const N: usize>(fields: &[Vec<[f64; N]>], nodes: usize, combin
 }
 impl Response {
     pub fn validate(&self) -> std::result::Result<(), String> {
+        if let Some(e) = &self.energy
+            && (self.spectrum
+                || e.len() != self.frames.len()
+                || e.iter().any(|v| !v.external_work.is_finite() || !v.damping_dissipation.is_finite() || !v.energy_balance.is_finite()))
+        {
+            return Err("invalid dynamic energy ledger".into());
+        }
+
         if self.nodes.is_empty()
             || self.nodes.first() == Some(&0)
             || self.nodes.windows(2).any(|w| w[0] >= w[1])
