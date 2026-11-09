@@ -254,3 +254,16 @@ each `[minimum, maximum]`, taken from the reduced physical operators before moda
 projection. These are generalized SI entries (N/m and kg for translation-only
 systems); they are not modal masses. For a single free translation they give the
 actual scalar K and M used by the solve. Older results may omit this diagnostic.
+
+Within one session, unprestressed modal sweeps with homogeneous supports can
+reuse one previously validated basis, including its load-dependent residual
+vectors and operator projections. Reuse requires exact agreement of all reduced
+matrix structures and floating-point bits, both load quadratures, mode and
+residual-vector counts, and solver limits. Frequency points and global step
+damping are evaluated afresh. Assembly, recovery, full physical residuals and
+power checks remain inside each solve command; a cold command still pays the
+full basis construction cost. A cache miss discards the previous entry, and
+retained matrix/basis storage is bounded by the factor-entry allowance. The
+cache is disposable, shared by session snapshots, and never written to result
+files. Pretension models, prestressed steps and prescribed-motion sweeps use
+the uncached path.

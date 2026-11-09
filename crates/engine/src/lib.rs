@@ -325,6 +325,8 @@ impl Default for Limits {
 /// The model being edited, the geometry it is built on and the commands that built it.
 #[derive(Debug, Clone, Default)]
 pub struct Session {
+    /// Disposable exact-input modal memo; never persisted and cheap to snapshot.
+    pub(crate) harmonic_cache: fieldcraft_solver::harmonic::ModalCache,
     pub model: Model,
     /// Original Abaqus files for explicit source replay and project persistence; never solver state.
     pub deck_source: Option<Arc<fieldcraft_io::DeckSource>>,

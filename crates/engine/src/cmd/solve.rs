@@ -502,7 +502,9 @@ fn run_harmonic(s: &mut Session, p: &Value) -> Result<Value> {
     let limits = limits_with_factor_ceiling(p, HARMONIC_FACTOR_ENTRY_CEILING)?;
     let step = opt::<String>(p, "step")?;
     let mass = opt::<MassKind>(p, "mass")?.unwrap_or_default();
-    let r = with_threads(threads(s, p)?, || fieldcraft_solver::solve_harmonic_with_mass(&s.model, step.as_deref(), mass, &limits))?;
+    let r = with_threads(threads(s, p)?, || {
+        fieldcraft_solver::harmonic::solve_harmonic_with_mass_cached(&s.model, step.as_deref(), mass, &limits, &mut s.harmonic_cache)
+    })?;
     let summary = json!({"step": r.step, "mass": r.mass, "section_mass_policies": if mass == MassKind::Lumped { json!(s.model.sections().iter().map(|(n,s)|(n,s.formulation.lumped_mass)).collect::<std::collections::BTreeMap<_,_>>()) } else { json!({}) }, "operator_diagonal_bounds": r.operator_diagonal_bounds, "stats": r.stats, "natural_frequencies": r.natural_frequencies, "residual_vectors": r.residual_vectors,
         "frequencies": r.frames.iter().map(|f| json!({"frequency": f.frequency, "relative_residual": f.relative_residual,
             "residual_norm_si": f.residual_norm_si, "projected_residual": f.projected_residual, "input_power": f.input_power, "dissipated_power": f.dissipated_power})).collect::<Vec<_>>(),

@@ -275,6 +275,28 @@ pub fn solve_harmonic(model: &Model, name: Option<&str>, limits: &Limits) -> Res
 
 /// Solve using the same mass choice for inertia, material damping and modal reduction.
 pub fn solve_harmonic_with_mass(model: &Model, name: Option<&str>, mass: MassKind, limits: &Limits) -> Result<HarmonicResult> {
+    solve_harmonic_impl(model, name, mass, limits, None)
+}
+
+/// Reuse one exactly matched modal basis across calls, while retaining per-call assembly,
+/// limits, response recovery and physical residual checks. Prestressed models never reuse it.
+pub fn solve_harmonic_with_mass_cached(
+    model: &Model,
+    name: Option<&str>,
+    mass: MassKind,
+    limits: &Limits,
+    cache: &mut super::ModalCache,
+) -> Result<HarmonicResult> {
+    solve_harmonic_impl(model, name, mass, limits, Some(cache))
+}
+
+fn solve_harmonic_impl(
+    model: &Model,
+    name: Option<&str>,
+    mass: MassKind,
+    limits: &Limits,
+    mut cache: Option<&mut super::ModalCache>,
+) -> Result<HarmonicResult> {
     fieldcraft_model::progress::check()?;
     if model.pretensions().values().any(|p| p.face.is_some()) {
         let resolved = model.resolve()?;
@@ -380,7 +402,12 @@ pub fn solve_harmonic_with_mass(model: &Model, name: Option<&str>, mass: MassKin
             if residual_vectors > 0 && full.is_some() {
                 return Err(Error::NotSupported("harmonic residual vectors with nonzero prescribed motion".into()));
             }
-            Some(Modal::with_residual_vectors(&matrices, modes as usize, &reduced_force, residual_vectors as usize, limits)?)
+            let reusable = model.pretensions().is_empty() && step.base_state.is_none() && full.is_none();
+            Some(if let Some(cache) = cache.as_mut().filter(|_| reusable) {
+                cache.get(&matrices, modes as usize, &reduced_force, residual_vectors as usize, limits)?
+            } else {
+                Modal::with_residual_vectors(&matrices, modes as usize, &reduced_force, residual_vectors as usize, limits)?
+            })
         }
     };
     drop(basis_timing);
