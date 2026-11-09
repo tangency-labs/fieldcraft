@@ -430,3 +430,25 @@ additions including padded columns. Counts describe logical work, not hardware
 traffic. `dense_update_reference` spans can overlap and their sum is accumulated
 elapsed time, not factorization wall time or CPU time. The cache-panel experiment
 is retained only in solver tests; production uses the original full-width update.
+
+For a controlled dense-dispatch diagnostic, set `FIELDCRAFT_DENSE_PROFILE=1`.
+`FIELDCRAFT_DENSE_PROFILE` records output rows/columns, reduction width, tile count,
+Y packing wall time, dispatch-to-join wall time, and accumulated X packing, kernel,
+and whole-task elapsed times, followed by the longest task elapsed time. The kernel
+interval includes output allocation and storing its dense tile. Task intervals can
+include preemption and overlap each other: they are neither CPU time nor pure waiting.
+Dispatch-to-join includes actual work, scheduling and joining; subtracting accumulated
+task times from it does not measure scheduler overhead.
+
+With that profiling enabled, `FIELDCRAFT_DENSE_SERIAL=1` executes the identical dense
+output tiles sequentially. It changes only their dispatch, retaining tile boundaries,
+per-element arithmetic and the supernode dependency order. This is a diagnostic
+control, not a production optimization. Subtree parallelism remains active, so the
+comparison measures the net effect of dense-task concurrency in that context.
+
+Supernode timing also emits `FIELDCRAFT_SUPERNODE_DETAIL`: node index, accumulated
+product-to-factor writeback wall time, written scalar entries, and diagonal panel
+factorization time. The writeback count excludes the separate contiguous below-panel
+copy. Existing assembly and product intervals include their nested operations; do
+not add them together. `numeric_subtrees` and `numeric_top` partition the factor's
+subtree-dispatch and serial top-node phases, apart from setup and error handling.

@@ -424,6 +424,7 @@ pub(crate) fn products(l: &Panel, cols: std::ops::Range<usize>, p: usize, mu: us
     if eligible {
         crate::timing::dense_work(false, mu, wu, kw, TILE, NR);
     }
+    let profile = crate::timing::DenseProfile::new();
     // Rows p..p+wu of the columns, transposed so that column c's coefficients are contiguous.
     let mut yt = vec![0.0; wu * kw];
     for k in 0..kw {
@@ -449,6 +450,7 @@ pub(crate) fn products(l: &Panel, cols: std::ops::Range<usize>, p: usize, mu: us
     }
     let tiles = mu.div_ceil(TILE);
     let tile = |t: usize| -> Vec<f64> {
+        let task_start = profile.clock();
         let i0 = t * TILE;
         let h = TILE.min(mu - i0);
         // The tile's rows of every column by blocks of MR rows, k-major, padded to TILE rows.
@@ -460,6 +462,7 @@ pub(crate) fn products(l: &Panel, cols: std::ops::Range<usize>, p: usize, mu: us
                 }
             }
         }
+        let packed = profile.clock();
         let cols = wu.min(i0 + h);
         let mut out = vec![0.0; cols * TILE];
         // Micro-tiles of MR rows and NR columns: each S(i, c) is summed in a register over k in
@@ -485,9 +488,17 @@ pub(crate) fn products(l: &Panel, cols: std::ops::Range<usize>, p: usize, mu: us
                 }
             }
         }
+        profile.task(task_start, packed);
         out
     };
-    if mu.saturating_mul(wu).saturating_mul(kw) >= PARALLEL_WORK { parallel::map(tiles, tile) } else { (0..tiles).map(tile).collect() }
+    let dispatch = profile.clock();
+    let result = if mu.saturating_mul(wu).saturating_mul(kw) >= PARALLEL_WORK && !profile.serial() {
+        parallel::map(tiles, tile)
+    } else {
+        (0..tiles).map(tile).collect()
+    };
+    profile.finish(dispatch, mu, wu, kw, tiles);
+    result
 }
 
 /// Cache-blocked rank update (Golub–Van Loan, matrix multiplication blocking).
@@ -889,7 +900,11 @@ impl Context<'_> {
             if let Some(timing) = timing.as_mut() {
                 timing.product(clock, mu, wu, kw, TILE, NR);
             }
+            let clock = timing.as_ref().and_then(|t| t.clock());
             subtract(own, m, &tiles, mu, wu, |i| relative.get(i).copied().unwrap_or(0));
+            if let Some(timing) = timing.as_mut() {
+                timing.writeback(clock, wu * mu - wu * wu.saturating_sub(1) / 2);
+            }
         }
         Ok(())
     }
@@ -925,9 +940,12 @@ impl Context<'_> {
                     let clock = timing.clock();
                     let tiles = products(&Panel { m, data: own }, 0..c0, c0, m - c0, pw, None);
                     timing.product(clock, m - c0, pw, c0, TILE, NR);
+                    let clock = timing.clock();
                     subtract(own, m, &tiles, m - c0, pw, |i| c0 + i);
+                    timing.writeback(clock, pw * (m - c0) - pw * pw.saturating_sub(1) / 2);
                 }
             }
+            let diagonal_clock = timing.clock();
             // The diagonal block, column by column.
             for c in c0..c1 {
                 let dst = offset(m, c);
@@ -954,6 +972,7 @@ impl Context<'_> {
                     *x /= d;
                 }
             }
+            timing.diagonal(diagonal_clock);
             // The rows below the panel, by tiles.
             if c1 < m {
                 let clock = timing.clock();
@@ -1267,6 +1286,7 @@ impl Symbolic {
         // The pool's threads do not report: they ask the caller's progress whether to stop.
         let progress = fieldcraft_model::progress::current();
         let cancelled = || progress.as_ref().is_some_and(|p| p.is_cancelled());
+        let subtree_time = crate::timing::Span::new("numeric_subtrees");
         parallel::for_each_mut(&mut pieces, |_, (range, piece, failed)| {
             for j in range.clone() {
                 if cancelled() {
@@ -1292,6 +1312,7 @@ impl Symbolic {
                 }
             }
         });
+        drop(subtree_time);
         if let Some(e) = broken.into_inner().unwrap_or_else(std::sync::PoisonError::into_inner) {
             return Err(e);
         }
@@ -1303,6 +1324,7 @@ impl Symbolic {
             Some(c) => e.at(self.original(c)),
             None => e,
         };
+        let _top_time = crate::timing::Span::new("numeric_top");
         for &j in &self.top {
             if cancelled() {
                 return Err(FactorError::Cancelled);
