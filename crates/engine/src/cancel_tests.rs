@@ -44,6 +44,7 @@ fn cancel_when(s: &mut Session, command: &str, params: Value, when: Option<impl 
                 if when(&now) {
                     at = Instant::now();
                     p.cancel();
+                    eprintln!("{command}: cancellation requested at {now:?}");
                     break;
                 }
                 std::thread::sleep(Duration::from_millis(1));
@@ -53,6 +54,7 @@ fn cancel_when(s: &mut Session, command: &str, params: Value, when: Option<impl 
         let r = worker.join().unwrap();
         (r, at.elapsed())
     });
+    eprintln!("{command}: worker joined {waited:?} after cancellation; final progress {:?}", p.snapshot());
     let e = r.expect_err(&format!("{command}: ran to the end although cancelled"));
     assert!(e.is_cancelled(), "{command}: {e}");
     assert_eq!(e.to_string(), "cancelled", "{command}");

@@ -19,7 +19,8 @@
 //! blocks one after another on the calling thread.
 //!
 //! **Thread count.** [`with_threads`] runs a closure on a pool of that many threads (pools are
-//! cached; at most [`MAX_THREADS`]). Outside it, the helpers use the default pool:
+//! cached when idle; concurrent commands lease separate pools, each with at most
+//! [`MAX_THREADS`]). Nested work keeps its command's pool. Outside it, the helpers use the default pool:
 //! [`ENV`] (`FIELDCRAFT_THREADS`) when it holds a whole number from 1 to [`MAX_THREADS`], else
 //! the available cores.
 //!
@@ -128,7 +129,10 @@ mod pool {
 
     fn cached(threads: usize) -> Option<Arc<ThreadPool>> {
         let mut pools = POOLS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(at) = pools.iter().position(|(n, _)| *n == threads) {
+        // A running command owns an Arc in addition to the cache's. Sharing that pool
+        // lets a blocked command monopolize another command's workers (including the
+        // worker that must observe cancellation). Reuse only idle pools.
+        if let Some(at) = pools.iter().position(|(n, pool)| *n == threads && Arc::strong_count(pool) == 1) {
             let entry = pools.remove(at);
             let pool = entry.1.clone();
             pools.push(entry);
@@ -147,6 +151,10 @@ mod pool {
     }
 
     pub fn with_threads<R: Send>(threads: usize, f: impl FnOnce() -> R + Send) -> R {
+        // Nested work of this command keeps its pool; independent callers lease idle pools.
+        if rayon::current_thread_index().is_some() && rayon::current_num_threads() == threads {
+            return f();
+        }
         match cached(threads) {
             Some(pool) => pool.install(f),
             // No threads to be had: the helpers fall back to the default pool or to the calling
@@ -253,6 +261,76 @@ mod tests {
         assert_eq!(blocks(10, 4).collect::<Vec<_>>(), vec![0..4, 4..8, 8..10]);
         assert_eq!(blocks(0, 4).count(), 0);
         assert_eq!(blocks(3, 0).count(), 3);
+    }
+
+    /// An unrelated command must not hold the only worker needed by a cancelled command.
+    /// Release the blocker before asserting, so this regression cannot strand a test thread.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn concurrent_commands_do_not_wait_for_another_commands_pool() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        std::thread::scope(|scope| {
+            scope.spawn(move || {
+                with_threads(1, move || {
+                    started_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                })
+            });
+            started_rx.recv().unwrap();
+            scope.spawn(move || with_threads(1, || done_tx.send(()).unwrap()));
+            let completed = done_rx.recv_timeout(Duration::from_secs(1));
+            release_tx.send(()).unwrap();
+            assert!(completed.is_ok(), "an unrelated command monopolized the cached pool");
+        });
+    }
+
+    /// While join waits for its right branch, its worker can steal another command.
+    /// Finishing our right branch must let our command return even while that other command
+    /// waits for its own event. This is the return path a cancelled command also uses.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn completed_work_is_not_held_by_an_unrelated_command() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+        let (right_tx, right_rx) = mpsc::channel();
+        let (left_tx, left_rx) = mpsc::channel();
+        let (finish_tx, finish_rx) = mpsc::channel();
+        let (other_tx, other_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        std::thread::scope(|scope| {
+            scope.spawn(move || {
+                with_threads(2, move || {
+                    rayon::join(
+                        move || {
+                            right_rx.recv().unwrap();
+                            left_tx.send(()).unwrap();
+                        },
+                        move || {
+                            right_tx.send(()).unwrap();
+                            finish_rx.recv().unwrap();
+                        },
+                    );
+                });
+                done_tx.send(()).unwrap();
+            });
+            left_rx.recv().unwrap();
+            scope.spawn(move || {
+                with_threads(2, move || {
+                    other_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                })
+            });
+            other_rx.recv().unwrap();
+            finish_tx.send(()).unwrap();
+            let completed = done_rx.recv_timeout(Duration::from_secs(1));
+            release_tx.send(()).unwrap();
+            assert!(completed.is_ok(), "completed work waited for an unrelated command stolen by its join");
+        });
     }
 
     #[test]
