@@ -5,7 +5,7 @@
 //! Little-endian:
 //!
 //! ```text
-//! "MCRSLT05"                     magic, 8 bytes (the results encoding's version is 05)
+//! "MCRSLT06"                     magic, 8 bytes (the results encoding's version is 06)
 //! u32 steps
 //! steps × { u64 length, step name (UTF-8),
 //!           32 bytes: SHA-256 of the definition it was solved from ([`definition_hash`]),
@@ -39,8 +39,8 @@ use sha2::{Digest, Sha256};
 
 use crate::{Error, Geometry, MAX_FILE_BYTES, Result, codec, invalid};
 
-/// The magic bytes the part starts with (the `05` is the results encoding's version).
-pub const MAGIC: &[u8; 8] = b"MCRSLT05";
+/// The magic bytes the part starts with (the `06` is the results encoding's version).
+pub const MAGIC: &[u8; 8] = b"MCRSLT06";
 
 /// The part's name.
 pub const PART: &str = "results.bin";
@@ -380,6 +380,14 @@ pub fn check(r: &Solved) -> std::result::Result<(), String> {
                         return Err("a frame's reactions are not at ascending nodes of the result".into());
                     }
                 }
+            }
+            if s.pretension.len() > 1000
+                || !s.pretension.windows(2).all(|w| matches!(w, [a, b] if a.name < b.name))
+                || s.pretension
+                    .iter()
+                    .any(|p| p.name.is_empty() || !p.adjustment.is_finite() || !p.section_force.is_finite() || !p.applied_force.is_finite())
+            {
+                return Err("pretension results have invalid names or non-finite values".into());
             }
             let frame_contacts = s.nonlinear.iter().flat_map(|h| &h.frames).flat_map(|f| &f.contacts);
             for c in s.contacts.iter().chain(frame_contacts) {

@@ -523,7 +523,12 @@ impl Session {
                     Some(form) if input != *self.journal_reads(id) => units::with_units(form, params, &input),
                     _ => params.clone(),
                 };
-                self.journal.push((id.to_string(), entry));
+                let entry = if id == "model.pretension.lock" {
+                    cmd::pretension::journal_entry(self, params).unwrap_or_else(|| (id.to_string(), entry))
+                } else {
+                    (id.to_string(), entry)
+                };
+                self.journal.push(entry);
                 self.revision = next_revision();
                 self.record_undo(before);
                 // An item deleted (or a body cut into cells) is no longer hidden.

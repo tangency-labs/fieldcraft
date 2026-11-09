@@ -104,6 +104,9 @@ fn harmonic_sensitivity_cached(
     let mut perturbed = if damping_parameter.is_none() { Some(perturb(model, parameter, increment)?) } else { None };
     let resolved = model.resolve()?;
     let step = model.select_step(step, |p| matches!(p, Procedure::Harmonic(_)), "harmonic")?;
+    if step.base_state.is_some() {
+        return Err(Error::NotSupported(format!("sensitivity of prestressed step `{}`", step.name)));
+    }
     let Procedure::Harmonic(h) = &step.procedure else {
         return Err(Error::Internal("harmonic sensitivity step".into()));
     };
