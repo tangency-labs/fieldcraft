@@ -215,6 +215,7 @@ Static joint identification now groups observations by step and shares each tria
 factorization across parameter columns. A prescribed-motion, zero-foundation-coefficient
 check compares the batched response/Jacobian bit for bit with scalar sensitivities.
 
+Geometric rod2 dynamics: `solve.transient.nonlinear` Newmark/HHT full Newton with consistent/lumped reference mass. Native MCRSLT07 kind 11 retains actual settings, accepted SI U/V/A and nodal forces, recovered Green/second-Piola/nominal rod fields, energy accounts and all accepted-step convergence diagnostics. Native save/reopen and legacy-kind boundaries are verified; general solid/contact/material extensions and nonlinear field visualization remain open.
 ## Fatigue (fusion fork, development)
 
 Implemented: finite-record rainflow, Basquin/Miner, CMB/Morrow/SWT and stress mean
@@ -255,3 +256,5 @@ extrapolation are named unsupported combinations; no PSD time history is synthes
   mass harmonic, full energy-and-mass dynamics, static fatigue and harmonic fatigue.
   Old05/06 kinds 0–5 use frozen schemas; higher development kinds are refused with
   the regeneration message. See docs/results-kind-layout.md.
+
+Nonlinear rod diagnostics now have an explicit SI Abaqus UEL/DYNAMIC writer and saved-state internal-force recovery. Standard T3D2 StVK mapping is refused; native nonlinear result persistence requires a versioned model/result contract.

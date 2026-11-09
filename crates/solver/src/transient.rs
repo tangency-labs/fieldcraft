@@ -14,6 +14,7 @@
 
 mod adaptive;
 mod model;
+pub mod nonlinear;
 pub use model::{Energy, Frame, Response, solve, solve_with_mass};
 
 use crate::cholesky::{Factor, FactorError, UpperColumns};

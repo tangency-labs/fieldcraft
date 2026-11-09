@@ -2455,6 +2455,17 @@ pub const SAMPLE: &[Field] = &[choice(
 .def("\"cantilever\"")];
 pub const COUNT: &[Field] = &[int("count", "Count", 1, 1_000_000).help("How many steps.").def("1")];
 
+pub const DECK_NONLINEAR: &[Field] = &[
+    path("path", "Input file", true).req().help(".inp and required original .c user-element companion, SI."),
+    STEP,
+    choice("mass", "Reference mass", &[("consistent", "Consistent"), ("lumped", "Lumped")])
+        .help("Use the same reference mass as the nonlinear solve; default consistent.")
+        .def("\"consistent\""),
+    choice("representation", "Element mapping", &[("uel", "Original StVK user element")])
+        .help("Required original C companion; the built-in T3D2 elastic law is not equivalent.")
+        .def("\"uel\""),
+];
+
 pub const DECK: &[Field] = &[
     choice("mass", "Dynamics mass", &[("consistent", "Consistent"), ("lumped", "Lumped")]).help("Dynamics only; default consistent. Must match stored results. Native rod2 requires lumped; unsupported distributed mass mappings are refused."),
     choice(
@@ -3063,6 +3074,20 @@ pub const SOLVE_DYNAMICS: &[Field] = &[
     choice("mass", "Mass matrix", &[("consistent", "Consistent"), ("lumped", "Lumped")])
         .def("\"consistent\"").help("Used in assembly, material damping, modal extraction, initial balance and energy; stored with the result. Each solve defaults to consistent."),
     MAX_DOFS, MAX_FACTOR, MAX_MEMORY_GIB, THREADS,
+];
+
+pub const SOLVE_NONLINEAR_TRANSIENT: &[Field] = &[
+    STEP,
+    choice("mass", "Mass matrix", &[("consistent", "Consistent"), ("lumped", "Lumped")])
+        .def("\"consistent\"")
+        .help("Reference mass for inertia, initial balance and kinetic energy; retained in native nonlinear kind 11."),
+    int("max_iterations", "Newton corrections per step", 1, 100)
+        .help("Full tangent rebuild at each correction; failure leaves committed state unchanged."),
+    num("tolerance", "Relative force tolerance", D::None).help("Positive, at most 0.01; default 1e-8."),
+    MAX_DOFS,
+    MAX_FACTOR,
+    MAX_MEMORY_GIB,
+    THREADS,
 ];
 
 pub const SOLVE_ALL: &[Field] = &[choice("mass", "Mass matrix", &[("consistent", "Consistent"), ("lumped", "Lumped")])

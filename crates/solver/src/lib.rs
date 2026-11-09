@@ -53,8 +53,8 @@ pub mod tie;
 pub mod transient;
 
 pub use analysis::{
-    ElementStress, FrequencyOptions, FrequencyResult, Location, MassKind, Mode, PointResult, StaticResult, Stats, StepResult, solve_frequency,
-    solve_static,
+    BeamResult, ElementStress, FrequencyOptions, FrequencyResult, Location, MassKind, Mode, PointResult, ShellResult, StaticResult, Stats,
+    StepResult, solve_frequency, solve_static,
 };
 pub use buckle::{Buckling, solve_buckle};
 pub use harmonic::{HarmonicResult, MatrixExport, export_matrices, solve_harmonic, solve_harmonic_with_mass};

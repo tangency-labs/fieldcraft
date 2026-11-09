@@ -11,7 +11,8 @@
 //!           32 bytes: SHA-256 of the definition it was solved from ([`definition_hash`]),
 //!           u8 kind (0 static, 1 frequency, 2 heat transfer, 3 explicit dynamic, 4 fluid,
 //!                    5 harmonic with mass, 6 linear dynamics with energy and mass,
-//!                    7 static with fatigue, 8 harmonic with mass and fatigue),
+//!                    7 static with fatigue, 8 harmonic with mass and fatigue,
+//!                    11 nonlinear total-Lagrangian St. Venant–Kirchhoff rod2),
 //!           u64 length, the result in the [`crate::codec`] encoding }   names ascending
 //! ```
 //!
@@ -67,6 +68,7 @@ pub enum Solved {
     Implicit(fieldcraft_solver::StepResult),
     Explicit(ExplicitResult),
     Fluid(FluidResult),
+    Nonlinear(fieldcraft_solver::transient::nonlinear::History),
 }
 
 /// A step's result to write, borrowed.
@@ -75,6 +77,7 @@ pub enum SolvedRef<'a> {
     Implicit(&'a fieldcraft_solver::StepResult),
     Explicit(&'a ExplicitResult),
     Fluid(&'a FluidResult),
+    Nonlinear(&'a fieldcraft_solver::transient::nonlinear::History),
 }
 
 impl Solved {
@@ -83,6 +86,7 @@ impl Solved {
             Solved::Implicit(r) => SolvedRef::Implicit(r),
             Solved::Explicit(r) => SolvedRef::Explicit(r),
             Solved::Fluid(r) => SolvedRef::Fluid(r),
+            Solved::Nonlinear(r) => SolvedRef::Nonlinear(r),
         }
     }
 
@@ -97,6 +101,7 @@ impl<'a> SolvedRef<'a> {
             SolvedRef::Implicit(r) => r.step(),
             SolvedRef::Explicit(r) => &r.step,
             SolvedRef::Fluid(r) => &r.step,
+            SolvedRef::Nonlinear(r) => &r.step,
         }
     }
 
@@ -122,6 +127,7 @@ impl<'a> SolvedRef<'a> {
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Dynamics(_)) => 6,
             SolvedRef::Explicit(_) => 3,
             SolvedRef::Fluid(_) => 4,
+            SolvedRef::Nonlinear(_) => 11,
         }
     }
 
@@ -140,6 +146,7 @@ impl<'a> SolvedRef<'a> {
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Dynamics(r)) => codec::encode_into(r, out),
             SolvedRef::Explicit(r) => codec::encode_into(r, out),
             SolvedRef::Fluid(r) => codec::encode_into(r, out),
+            SolvedRef::Nonlinear(r) => codec::encode_into(r, out),
         }
     }
 }
@@ -210,6 +217,9 @@ pub fn encode(results: &[(&str, StoredRef<'_>)]) -> Result<Vec<u8>> {
     for (name, stored) in sorted {
         if stored.result.step() != *name {
             return invalid(format!("{PART}: the result of step `{name}` is step `{}`'s", stored.result.step()));
+        }
+        if let SolvedRef::Nonlinear(r) = stored.result {
+            r.validate().map_err(|e| Error::Invalid(format!("{PART}: nonlinear step `{name}`: {e}")))?;
         }
         out.extend_from_slice(&(name.len() as u64).to_le_bytes());
         out.extend_from_slice(name.as_bytes());
@@ -321,6 +331,7 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded> {
                 r.fatigue = Some(f);
                 Solved::Implicit(fieldcraft_solver::StepResult::Harmonic(r))
             }
+            11 => Solved::Nonlinear(codec::decode(payload).map_err(damaged)?),
             k => return invalid(format!("{PART}: step `{name}` has a result of unknown kind {k}")),
         };
         if result.step() != name {
@@ -510,6 +521,7 @@ pub fn check(r: &Solved) -> std::result::Result<(), String> {
             Ok(())
         }
         Solved::Fluid(f) => check_fluid(f),
+        Solved::Nonlinear(r) => r.validate(),
     }
 }
 
