@@ -45,8 +45,9 @@ Only kinds **0–5** are accepted using their explicit old schemas:
 - 05/06 harmonic kind 5 has field order step, nodes, reference_points, frames,
   natural_frequencies, residual_vectors, stats, warnings. It restores consistent
   mass and no operator diagnostic; it is not read as version 07 kind 5.
-- Every old kind **6 or above** is refused before decoding its payload, with the
-  literal message **统一前的开发文件，请用原程序重新生成**.
+- Every old kind **6 or above** is refused before decoding its payload: the error names
+  the step, the kind and the older version, calls these ambiguous development layouts and
+  asks for the file to be regenerated with the program that wrote it.
 
 The pre-merge fatigue producer also wrote static kind 0 under 06 without the
 prestress field. That incompatible file is not guessed or retried: retain it and

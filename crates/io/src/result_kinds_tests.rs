@@ -173,7 +173,7 @@ fn old_overlapping_kinds_are_never_guessed() {
         for payload in [&old_static, &old_harmonic] {
             for magic in [LEGACY_MAGIC, PRE_MERGE_MAGIC] {
                 let error = decode(&record(magic, kind, payload)).unwrap_err().to_string();
-                assert!(error.contains("统一前的开发文件，请用原程序重新生成"), "{kind}: {error}");
+                assert!(error.contains("ambiguous development layouts, so regenerate the file with the program that wrote it"), "{kind}: {error}");
             }
         }
     }
