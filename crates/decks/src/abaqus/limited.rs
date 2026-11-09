@@ -34,22 +34,15 @@ pub(super) fn enhanced(model: &Model, procedure: Option<&Procedure>) -> Result<(
     Ok(())
 }
 
-/// Ordinary equilibrium followed immediately by frequency extraction; no pretension writer.
-pub(super) fn ordinary_base_states(model: &Model) -> Result<()> {
-    if let Some(name) = model.pretensions().keys().next() {
-        return Err(Error::Unsupported { format: FORMAT, what: format!("pretension section `{name}`") });
-    }
-    for (i, step) in model.steps().iter().enumerate() {
-        if let Some(base) = &step.base_state {
-            let previous = i.checked_sub(1).and_then(|j| model.steps().get(j));
-            if !matches!(step.procedure, Procedure::Frequency { .. })
-                || !previous.is_some_and(|s| s.name == *base && matches!(s.procedure, Procedure::Static {} | Procedure::NonlinearStatic(_)))
-            {
-                return Err(Error::Unsupported {
-                    format: FORMAT,
-                    what: format!("base_state of step `{}`: only immediately preceding ordinary equilibrium to FREQUENCY is mapped", step.name),
-                });
-            }
+/// Base states the writer maps: frequency extraction and steady-state response as perturbations
+/// of an earlier general step. The pretension chain itself is checked by `validate_pretension_chain`.
+pub(super) fn mapped_base_states(model: &Model) -> Result<()> {
+    for step in model.steps() {
+        if step.base_state.is_some() && !matches!(step.procedure, Procedure::Frequency { .. } | Procedure::Harmonic(_)) {
+            return Err(Error::Unsupported {
+                format: FORMAT,
+                what: format!("base_state of step `{}`: only frequency and steady-state response perturbations are mapped", step.name),
+            });
         }
     }
     Ok(())

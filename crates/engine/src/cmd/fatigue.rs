@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 const FORM: &[Field] = &[
     field_json("channels", "Reference channels")
         .req()
-        .help("[{step,coefficients:[dimensionless load factors]}]; one value per time, same homogeneous supports, current model."),
+        .help("[{step,coefficients:[dimensionless load factors]}]; one synchronized value per shared SI time, including phase/sign; no per-channel clock, interpolation or phase inference; same homogeneous supports, current model."),
     field_json("times_seconds", "Times (s)").req().help("Strictly increasing finite SI seconds; no interpolation."),
     field_json("nodes", "Node labels").req().help("Node labels shared by every reference result, or \"all\" for every reference node."),
     field_json("weights", "Stress projection").help("Fixed [xx,yy,zz,xy,xz,yz] weights; applied after tensor summation."),

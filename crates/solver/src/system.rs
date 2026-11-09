@@ -372,12 +372,17 @@ pub struct Structural {
     pub xyz: Vec<[f64; 3]>,
     pub density: Option<f64>,
     pub section: Section,
+    /// Mesh-shared director axes, signed along the local element normal.
+    /// Capacity for eight directors; tri6 uses only its first six entries.
+    pub directors: Option<[[f64; 3]; 8]>,
 }
 
 /// The kernel of a shell or beam element.
 #[derive(Debug, Clone)]
 pub enum StructuralKernel {
     Shell(Shell),
+    Mitc8(Box<fieldcraft_fem::mitc8::Mitc8>),
+    Mitc6(Box<fieldcraft_fem::mitc8::Mitc6>),
     Beam(Beam),
 }
 
@@ -387,6 +392,42 @@ impl Structural {
 
     pub fn kernel(&self) -> Result<StructuralKernel> {
         let k = match &self.section {
+            Section::Shell(s) if self.kind == ElementKind::Quad8 => fieldcraft_fem::mitc8::Mitc8::new(&self.xyz, *s)
+                .and_then(|k| match self.directors {
+                    Some(n) => k.with_directors(n),
+                    None => Ok(k),
+                })
+                .map(|k| StructuralKernel::Mitc8(Box::new(k))),
+            Section::Laminated { plies, offset, orientation } if self.kind == ElementKind::Quad8 => fieldcraft_fem::mitc8::Mitc8::laminated(
+                &self.xyz,
+                plies,
+                *offset,
+                orientation.map(|o| o.frame),
+                orientation.map_or(1, |o| o.shell_reference_axis),
+            )
+            .and_then(|k| match self.directors {
+                Some(n) => k.with_directors(n),
+                None => Ok(k),
+            })
+            .map(|k| StructuralKernel::Mitc8(Box::new(k))),
+            Section::Shell(s) if self.kind == ElementKind::Tri6 => fieldcraft_fem::mitc8::Mitc6::new(&self.xyz, *s)
+                .and_then(|k| match self.directors {
+                    Some(n) => k.with_directors(std::array::from_fn(|i| n[i])),
+                    None => Ok(k),
+                })
+                .map(|k| StructuralKernel::Mitc6(Box::new(k))),
+            Section::Laminated { plies, offset, orientation } if self.kind == ElementKind::Tri6 => fieldcraft_fem::mitc8::Mitc6::laminated(
+                &self.xyz,
+                plies,
+                *offset,
+                orientation.map(|o| o.frame),
+                orientation.map_or(1, |o| o.shell_reference_axis),
+            )
+            .and_then(|k| match self.directors {
+                Some(n) => k.with_directors(std::array::from_fn(|i| n[i])),
+                None => Ok(k),
+            })
+            .map(|k| StructuralKernel::Mitc6(Box::new(k))),
             Section::Shell(s) => Shell::new(self.kind, &self.xyz, *s).map(StructuralKernel::Shell),
             Section::Laminated { plies, offset, orientation } => Shell::laminated(
                 self.kind,
@@ -407,6 +448,8 @@ impl StructuralKernel {
     pub fn stiffness(&self) -> fieldcraft_fem::Result<Matrix> {
         match self {
             StructuralKernel::Shell(s) => s.stiffness(),
+            StructuralKernel::Mitc8(s) => s.stiffness(),
+            StructuralKernel::Mitc6(s) => s.stiffness(),
             StructuralKernel::Beam(b) => Ok(b.stiffness()),
         }
     }
@@ -414,6 +457,10 @@ impl StructuralKernel {
     /// The consistent or lumped mass over every element degree of freedom.
     pub fn mass(&self, density: f64, kind: MassKind) -> fieldcraft_fem::Result<Matrix> {
         Ok(match (self, kind) {
+            (StructuralKernel::Mitc8(s), MassKind::Consistent) => s.mass(density)?,
+            (StructuralKernel::Mitc6(s), MassKind::Consistent) => s.mass(density)?,
+            (StructuralKernel::Mitc8(s), MassKind::Lumped) => s.lumped_mass(density)?,
+            (StructuralKernel::Mitc6(s), MassKind::Lumped) => s.lumped_mass(density)?,
             (StructuralKernel::Shell(s), MassKind::Consistent) => {
                 if s.is_laminated() {
                     s.ply_mass()?
@@ -438,6 +485,8 @@ impl StructuralKernel {
     pub fn body_force(&self, b: [f64; 3]) -> fieldcraft_fem::Result<Vec<f64>> {
         match self {
             StructuralKernel::Shell(s) => s.body_force(b),
+            StructuralKernel::Mitc8(s) => s.body_force(b),
+            StructuralKernel::Mitc6(s) => s.body_force(b),
             StructuralKernel::Beam(beam) => Ok(beam.body_force(b)),
         }
     }
@@ -446,6 +495,8 @@ impl StructuralKernel {
     pub fn gravity(&self, density: f64, acceleration: [f64; 3]) -> fieldcraft_fem::Result<Vec<f64>> {
         match self {
             StructuralKernel::Shell(s) if s.is_laminated() => s.ply_gravity(acceleration),
+            StructuralKernel::Mitc8(s) => s.gravity(density, acceleration),
+            StructuralKernel::Mitc6(s) => s.gravity(density, acceleration),
             _ => self.body_force(acceleration.map(|a| density * a)),
         }
     }
@@ -596,6 +647,14 @@ impl Mesh {
                 return Err(Error::NotSupported("2D and solid sections in one model".into()));
             }
             let set = resolved.sets.get(&section.set).ok_or_else(|| Error::Invalid(format!("set `{}` is not resolved", section.set)))?;
+            if shell_or_beam
+                && section.formulation.integration == Integration::Reduced
+                && set.elements.iter().any(|label| model.element(*label).is_some_and(|e| matches!(e.kind, ElementKind::Quad8 | ElementKind::Tri6)))
+            {
+                return Err(Error::NotSupported(format!(
+                    "section `{name}`: reduced-integration quadratic shell (including S8R) is not MITC8/MITC6-a; use full integration"
+                )));
+            }
             if let SectionKind::CompositeShell { layup } = &section.kind {
                 let plies = resolve_plies(layup, model).map_err(|e| Error::Invalid(format!("section `{name}`: {e}")))?;
                 let laminate = Laminate::new(&plies, layup.offset).map_err(|e| Error::Invalid(format!("section `{name}`: {e}")))?;
@@ -851,8 +910,9 @@ impl Mesh {
         for (label, kind, nodes, density, section) in structural {
             let idx: Vec<usize> = nodes.iter().filter_map(|n| mesh.node(*n)).collect();
             let exyz: Vec<[f64; 3]> = idx.iter().filter_map(|i| mesh.xyz.get(*i).copied()).collect();
-            mesh.structural.push(Structural { label, kind, nodes: idx, xyz: exyz, density, section });
+            mesh.structural.push(Structural { label, kind, nodes: idx, xyz: exyz, density, section, directors: None });
         }
+        share_shell_directors(&mut mesh.structural)?;
         mesh.discrete = crate::discrete::Discrete::new(&mesh, resolved)?;
         mesh.foundations = crate::foundation::resolve(model, resolved, &mesh)?;
         Ok(mesh)
@@ -1366,4 +1426,76 @@ pub fn inelastic_warnings(model: &Model) -> Vec<String> {
             )
         })
         .collect()
+}
+
+/// Resolve an unoriented unit normal axis at every shared MITC8/MITC6-a node.
+/// Lee & Bathe, Computers & Structures 83 (2005), 69-90, section 3,
+/// doi:10.1016/j.compstruc.2004.07.005: average adjacent midsurface normals. Input element
+/// order is sorted by label; vectors are aligned before summing, so reversing a
+/// connectivity reverses its signed director but not the physical rotation field.
+/// This is a smooth-patch construction, not a folded-junction constraint model.
+fn share_shell_directors(elements: &mut [Structural]) -> Result<()> {
+    use fieldcraft_fem::frame::{dot, unit};
+    let mut incident: BTreeMap<usize, Vec<(usize, usize, [f64; 3])>> = BTreeMap::new();
+    let mut edges: BTreeMap<(usize, usize), (usize, usize)> = BTreeMap::new();
+    for e in elements.iter().filter(|e| matches!(e.kind, ElementKind::Quad8 | ElementKind::Tri6)) {
+        let corners = if e.kind == ElementKind::Tri6 { 3 } else { 4 };
+        if e.nodes.len() != 2 * corners {
+            return Err(Error::Invalid("MITC8/MITC6-a has an invalid quadratic connectivity".into()));
+        }
+        for i in 0..corners {
+            let a = e.nodes[i];
+            let b = e.nodes[(i + 1) % corners];
+            let key = (a.min(b), a.max(b));
+            let item = edges.entry(key).or_insert((e.nodes[i + corners], 0));
+            item.1 += 1;
+            if item.0 != e.nodes[i + corners] || item.1 > 2 {
+                return Err(Error::NotSupported(
+                    "MITC8 nonconforming or nonmanifold edge: two neighbours must share both corners and the midside node".into(),
+                ));
+            }
+        }
+    }
+
+    for (i, e) in elements.iter().enumerate().filter(|(_, e)| matches!(e.kind, ElementKind::Quad8 | ElementKind::Tri6)) {
+        let normals = match e.kernel()? {
+            StructuralKernel::Mitc8(k) => k.directors().to_vec(),
+            StructuralKernel::Mitc6(k) => k.directors().to_vec(),
+            _ => continue,
+        };
+        for (j, (&node, &normal)) in e.nodes.iter().zip(&normals).enumerate() {
+            incident.entry(node).or_default().push((i, j, normal));
+        }
+    }
+    for e in elements.iter().filter(|e| matches!(e.kind, ElementKind::Tri3 | ElementKind::Quad4)) {
+        if e.nodes.iter().any(|n| incident.contains_key(n)) {
+            return Err(Error::NotSupported("MITC8/MITC6-a mixed-order shell junction: shared director constraints are not implemented".into()));
+        }
+    }
+    for neighbours in incident.values() {
+        let Some(&(_, _, first)) = neighbours.first() else { continue };
+        let mut mean = [0.0; 3];
+        for &(_, _, n) in neighbours {
+            let d = dot(n, first);
+            if d.abs() < 0.5 {
+                return Err(Error::NotSupported(
+                    "MITC8 folded junction: incident normals differ by at least 60 degrees; use separate patches".into(),
+                ));
+            }
+            for k in 0..3 {
+                mean[k] += d.signum() * n[k];
+            }
+        }
+        let mean = unit(mean).ok_or_else(|| Error::Invalid("MITC8 shared normal cancels".into()))?;
+        for &(i, j, n) in neighbours {
+            let signed = mean.map(|v| v * dot(mean, n).signum());
+            let e = &mut elements[i];
+            e.directors.get_or_insert([[0.0; 3]; 8])[j] = signed;
+        }
+    }
+    // Validate the thickened geometry with the common directors before assembly.
+    for e in elements.iter().filter(|e| e.directors.is_some()) {
+        e.kernel()?;
+    }
+    Ok(())
 }

@@ -1,0 +1,69 @@
+{
+  "note": "FieldCraft's accepted results for this case, written by `cargo xtask oracle --bless`. A result outside its band fails CI.",
+  "values": {
+    "consistent_direct0imaginary": {
+      "band": 6.282290392801997e-18,
+      "value": -6.2434485030716996e-9
+    },
+    "consistent_direct0real": {
+      "band": 1.249792775722662e-15,
+      "value": 1.2488751065873427e-6
+    },
+    "consistent_direct1imaginary": {
+      "band": 2.5724415656570986e-17,
+      "value": -2.5384524850928547e-8
+    },
+    "consistent_direct1real": {
+      "band": 2.0647996625216235e-15,
+      "value": 2.0559758370409166e-6
+    },
+    "consistent_modal0imaginary": {
+      "band": 6.282290392801997e-18,
+      "value": -6.243448503330582e-9
+    },
+    "consistent_modal0real": {
+      "band": 1.249792775722662e-15,
+      "value": 1.2488754512167125e-6
+    },
+    "consistent_modal1imaginary": {
+      "band": 2.5724415656570986e-17,
+      "value": -2.5384524851292126e-8
+    },
+    "consistent_modal1real": {
+      "band": 2.0647996625216235e-15,
+      "value": 2.0559761816897116e-6
+    },
+    "lumped_direct0imaginary": {
+      "band": 6.323943954776604e-18,
+      "value": -6.323943954776604e-9
+    },
+    "lumped_direct0real": {
+      "band": 1.2519929647690982e-15,
+      "value": 1.251992964769098e-6
+    },
+    "lumped_direct1imaginary": {
+      "band": 2.6051784086164217e-17,
+      "value": -2.6051784086164216e-8
+    },
+    "lumped_direct1real": {
+      "band": 2.074881527985035e-15,
+      "value": 2.0748815279850348e-6
+    },
+    "lumped_modal0imaginary": {
+      "band": 6.323944285390484e-18,
+      "value": -6.323944285390483e-9
+    },
+    "lumped_modal0real": {
+      "band": 1.2522911340489162e-15,
+      "value": 1.2522911340489162e-6
+    },
+    "lumped_modal1imaginary": {
+      "band": 2.6051784582294898e-17,
+      "value": -2.6051784582294895e-8
+    },
+    "lumped_modal1real": {
+      "band": 2.075179723238668e-15,
+      "value": 2.075179723238668e-6
+    }
+  }
+}

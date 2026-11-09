@@ -325,3 +325,20 @@ The other nine inherited reference misses are listed separately:
 | [pure-bending-coupling](../tests/oracle/pure-bending-coupling/) | `rotation` | 1.2% high: the distributing coupling weights every node of the end face equally, corner and mid-side nodes of hex20 alike, which is not the consistent linear traction; the end face deforms locally and the fitted rotation includes it. Area-consistent weights would remove it |
 
 These records preserve unresolved model/reference applicability or formulation limits. They do not change the stated acceptance bands or turn the known failures into numerical passes.
+
+## Curved eight-node shell statics
+
+The [MITC8 implementation](solvers/mitc8.md) has independent rigid-motion, membrane,
+bending/shear energy, and zero-mode checks in `crates/fem/tests/mitc8.rs`. Its command
+cases are `mitc8-pure-bending`, `mitc8-curved-extension`, and `scordelis-lo-roof-mitc8`.
+Layered statics add `mitc8-single-ply-bending`, `mitc8-navier-thin` and
+`mitc8-navier-thick-quarter16` and `mitc8-coupled-strip`. Shared-edge geometry/rotation continuity, local renumbering,
+layer reversal and independent coupled energies are tested. These do not validate
+mass, prestress, folded junctions or arbitrary distorted curved laminates.
+The separate axisymmetric LE7 known failure is retained.
+
+MITC8 dynamics: `mitc8-navier-frequency` checks the first three laminate flexural modes and total mass for consistent/lumped choices; `mitc8-navier-harmonic` checks both real and imaginary displacement at20/30Hz with direct and modal solves. `mitc8-leissa-frequency` checks a published thin-square plate frequency; `mitc8-bryan-buckle` checks the solved flat preload and buckling operator against Bryan's formula and NASA TP-2528's unperforated isotropic coefficient. Independent inertia integrals, shared-node mass permutations and curved free-body modes are tested separately. Engine tests save/reopen modal, harmonic and buckling probes exactly using existing result types. These do not qualify curved-shell buckling, transient/spectrum, pre-bent laminates or the previously failing coarse thick-plate static meshes.
+
+MITC6-a quadratic triangular shell checks and explicit coarse-mesh limits are listed
+in [the formulation note](solvers/mitc6.md); the original MITC8 coarse thick-plate
+and LE7 limitations remain unchanged.

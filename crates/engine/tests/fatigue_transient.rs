@@ -104,3 +104,25 @@ fn nonlinear_tensor_criteria_refuse_ambiguous_or_incomplete_information() {
         }
     }
 }
+
+#[test]
+fn stress_mean_equations_reach_miner_with_amplitude_not_range() {
+    // Triangle 0,2,0: amplitude=mean=1 Pa, total count=1; N=100/a_eq^3.
+    for (correction, equivalent) in [
+        (json!({"type":"goodman","ultimate":4}), 4_f64 / 3.),
+        (json!({"type":"gerber","ultimate":4}), 16_f64 / 15.),
+        (json!({"type":"soderberg","yield_stress":2}), 2_f64),
+    ] {
+        let mut p = input();
+        p["correction"] = correction;
+        let r = Session::default().execute("solve.fatigue.transient", &p).unwrap();
+        assert!((r["nodes"][0]["damage"].as_f64().unwrap() - equivalent.powi(3) / 100.).abs() < 1e-13);
+        for shift in [-1., -2.] {
+            for (i, stress) in [0., 2., 0.].iter().enumerate() {
+                p["history"]["nodes"][0]["samples"][i]["stress"][0] = json!(stress + shift);
+            }
+            let r = Session::default().execute("solve.fatigue.transient", &p).unwrap();
+            assert!((r["nodes"][0]["damage"].as_f64().unwrap() - 0.01).abs() < 1e-13);
+        }
+    }
+}

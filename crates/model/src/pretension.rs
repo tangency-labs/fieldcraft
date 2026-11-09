@@ -20,13 +20,20 @@ pub struct PretensionSection {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PretensionControl {
-    Force { value: f64 },
-    Adjustment { value: f64 },
+    Force {
+        value: f64,
+    },
+    Adjustment {
+        value: f64,
+    },
+    /// Hold the adjustment reached by the preceding equilibrium state.
+    Fixed,
 }
 impl PretensionControl {
     pub fn validate(&self) -> Result<()> {
         let value = match self {
             Self::Force { value } | Self::Adjustment { value } => *value,
+            Self::Fixed => return Ok(()),
         };
         if !value.is_finite() {
             return Err(Error::Invalid("pretension value must be finite".into()));

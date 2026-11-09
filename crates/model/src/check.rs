@@ -615,6 +615,7 @@ impl Model {
             }
             let pretension_loads = s.pretension.values().any(|control| match control {
                 crate::PretensionControl::Force { value } | crate::PretensionControl::Adjustment { value } => *value != 0.0,
+                crate::PretensionControl::Fixed => true,
             });
             let prescribes_motion = s
                 .boundary_conditions

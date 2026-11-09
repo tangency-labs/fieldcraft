@@ -14,12 +14,15 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
 const FORM: &[Field] = &[
-    field_json("history", "Transient probe reply").req().help("Original solve.probe reply: SI seconds and Pa, global nodal stress, spectrum false."),
+    field_json("axial_history", "Nominal rod axial history").help("Alternative to history/nodes/weights/criterion: {step,element,location:constant_rod2_midpoint,stress_measure:nominal_axial_reference_area,axis:material_following_axial,reference_material_axis:[x,y,z],reference_area_m2,stress_unit:Pa,time_unit:s,samples:[{time,stress}]}; no PK2/Cauchy conversion or native persistence."),
+    field_json("curve_stress_measure", "Curve stress measure").help("Required for axial_history: nominal_axial_reference_area; also applies to mean-correction strengths."),
+    field_json("calibration_source", "Nominal-stress calibration source").help("Required for axial_history: identify matching material calibration, or explicitly declare synthetic verification parameters."),
+    field_json("history", "Transient probe reply").help("Original solve.probe reply: SI seconds and Pa, global nodal stress, spectrum false."),
     field_json("source_id", "Source identity")
         .req()
         .help("Caller-verified source model and raw history identity; retained, not associated with the current mesh."),
     field_json("step", "Expected source step").req().help("Must equal the exported step name."),
-    field_json("nodes", "Expected source nodes").req().help("Exact set of exported node labels, unique and positive."),
+    field_json("nodes", "Expected source nodes").help("Exact set of exported node labels, unique and positive."),
     field_json("max_time_step_seconds", "Maximum sample gap (s)")
         .req()
         .help("Explicit sampling contract; no interpolation or automatic peak recovery."),
@@ -31,7 +34,7 @@ const FORM: &[Field] = &[
 pub const TRANSIENT: CommandSpec = CommandSpec {
     id: "solve.fatigue.transient",
     label: "Transient Stress Fatigue",
-    params: "{history,source_id,step,nodes,max_time_step_seconds,weights?|criterion?,curve,correction} — validate an exported SI transient nodal stress history, scalarize (projection or proportional signed von Mises/algebraic max principal), rainflow count and accumulate Miner damage; source labels never refer to the current session mesh",
+    params: "{history,source_id,step,nodes,max_time_step_seconds,weights?|criterion?,curve,correction} — validate an exported SI transient nodal stress history, scalarize (projection or proportional signed von Mises/algebraic max principal), rainflow count and accumulate Miner damage; source labels never refer to the current session mesh. Alternatively axial_history with curve_stress_measure and calibration_source accepts only nominal material-following rod axial samples, not PK2/Cauchy or nodal tensors",
     form: Some(FORM),
     kind: CommandKind::Model,
     requires: &[],
@@ -41,8 +44,11 @@ fn bad(why: &str) -> EngineError {
     EngineError::invalid("history", why)
 }
 fn run(_: &mut Session, p: &Value) -> Result<Value> {
-    let history: Value = field(p, "history")?;
+    if p.get("axial_history").is_some() {
+        return super::fatigue_axial::run(p);
+    }
     let source_id: String = field(p, "source_id")?;
+    let history: Value = field(p, "history")?;
     let step: String = field(p, "step")?;
     let nodes: Vec<u32> = field(p, "nodes")?;
     let gap: f64 = field(p, "max_time_step_seconds")?;

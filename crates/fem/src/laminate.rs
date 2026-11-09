@@ -87,6 +87,37 @@ impl Lamina {
         Ok(Self { q, shear: [g13, g23], normal_compliance })
     }
 
+    /// Transverse shear law in axes rotated by `angle`, including the shell's
+    /// fixed shear correction; the same energy-conjugate rotation as Q-bar.
+    pub fn rotated_shear(&self, angle: f64) -> Result<[[f64; 2]; 2]> {
+        let (s, c) = sine_cosine(angle)?;
+        let [a, b] = self.shear.map(|g| g * crate::shell::SHEAR_CORRECTION);
+        Ok([[a * c * c + b * s * s, (a - b) * c * s], [(a - b) * c * s, a * s * s + b * c * c]])
+    }
+
+    /// Recover a physical engineering strain sample, without assuming a linear
+    /// through-thickness strain distribution (curved degenerate shells).
+    pub(crate) fn recover_strain(&self, input: [f64; 5], angle: f64, z: f64, strength: Option<PlyStrength>) -> Result<PlyPoint> {
+        let e = product(&strain_transform(angle)?, [input[0], input[1], input[2]]);
+        let s = product(&self.q, e);
+        let (sn, cs) = sine_cosine(angle)?;
+        let transverse = [cs * input[3] + sn * input[4], -sn * input[3] + cs * input[4]];
+        let strain = [e[0], e[1], self.normal_compliance[0] * s[0] + self.normal_compliance[1] * s[1], e[2], transverse[0], transverse[1]];
+        let stress = [
+            s[0],
+            s[1],
+            0.0,
+            s[2],
+            crate::shell::SHEAR_CORRECTION * self.shear[0] * transverse[0],
+            crate::shell::SHEAR_CORRECTION * self.shear[1] * transverse[1],
+        ];
+        if strain.iter().chain(&stress).any(|v| !v.is_finite()) {
+            return Err(Error::Invalid("recovered ply fields are not finite".into()));
+        }
+        let failure = strength.map(|strength| plane_stress_indices(s, &strength)).transpose()?;
+        Ok(PlyPoint { z, strain, stress, failure })
+    }
+
     pub fn plane_stress(&self) -> InPlane {
         self.q
     }
@@ -308,7 +339,7 @@ fn positive_shear(shear: [[f64; 2]; 2]) -> bool {
 
 /// Gauss–Legendre section-point positions, 1..=15. Newton's method on the Legendre
 /// recurrence (Abramowitz & Stegun, 1964, §22.7), bounded to 32 updates per root.
-fn section_abscissae(points: u32) -> Result<Vec<f64>> {
+pub(crate) fn section_abscissae(points: u32) -> Result<Vec<f64>> {
     fieldcraft_model::composite::check_ply_points(points).map_err(|e| Error::Invalid(e.to_string()))?;
     let n = points as usize;
     let mut out = vec![0.0; n];
@@ -369,24 +400,6 @@ pub struct PlyFields {
 
 impl IntegratedPly {
     fn at(&self, g: [f64; 8], z: f64) -> Result<PlyPoint> {
-        let e = product(&strain_transform(self.input.angle)?, [g[0] + z * g[3], g[1] + z * g[4], g[2] + z * g[5]]);
-        let s = product(&self.lamina.q, e);
-        let (sn, cs) = sine_cosine(self.input.angle)?;
-        let transverse = [cs * g[6] + sn * g[7], -sn * g[6] + cs * g[7]];
-        let strain =
-            [e[0], e[1], self.lamina.normal_compliance[0] * s[0] + self.lamina.normal_compliance[1] * s[1], e[2], transverse[0], transverse[1]];
-        let stress = [
-            s[0],
-            s[1],
-            0.0,
-            s[2],
-            crate::shell::SHEAR_CORRECTION * self.lamina.shear[0] * transverse[0],
-            crate::shell::SHEAR_CORRECTION * self.lamina.shear[1] * transverse[1],
-        ];
-        if strain.iter().chain(&stress).any(|v| !v.is_finite()) {
-            return Err(Error::Invalid("recovered ply fields are not finite".into()));
-        }
-        let failure = self.input.strength.map(|strength| plane_stress_indices(s, &strength)).transpose()?;
-        Ok(PlyPoint { z, strain, stress, failure })
+        self.lamina.recover_strain([g[0] + z * g[3], g[1] + z * g[4], g[2] + z * g[5], g[6], g[7]], self.input.angle, z, self.input.strength)
     }
 }

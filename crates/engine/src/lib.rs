@@ -16,6 +16,7 @@ pub mod autosave;
 pub mod bug_report;
 pub mod catalogue;
 pub mod cmd;
+mod command_timing;
 pub mod crash;
 pub mod flow;
 pub mod logfile;
@@ -156,6 +157,7 @@ pub enum StepResult {
     Implicit(fieldcraft_solver::StepResult),
     Explicit(ExplicitResult),
     Fluid(fieldcraft_lbm::FluidResult),
+    Nonlinear(fieldcraft_solver::transient::nonlinear::History),
 }
 
 impl StepResult {
@@ -172,6 +174,7 @@ impl StepResult {
             StepResult::Implicit(r) => r.step(),
             StepResult::Explicit(r) => &r.step,
             StepResult::Fluid(r) => &r.step,
+            StepResult::Nonlinear(r) => &r.step,
         }
     }
 
@@ -182,6 +185,7 @@ impl StepResult {
             StepResult::Explicit(r) => &r.nodes,
             // A fluid result is per cell, not per node.
             StepResult::Fluid(_) => &[],
+            StepResult::Nonlinear(r) => &r.nodes,
         }
     }
 
@@ -192,6 +196,7 @@ impl StepResult {
             StepResult::Implicit(r) => SolvedRef::Implicit(r),
             StepResult::Explicit(r) => SolvedRef::Explicit(r),
             StepResult::Fluid(r) => SolvedRef::Fluid(r),
+            StepResult::Nonlinear(r) => SolvedRef::Nonlinear(r),
         }
     }
 }
@@ -203,6 +208,7 @@ impl From<fieldcraft_io::results::Solved> for StepResult {
             Solved::Implicit(r) => StepResult::Implicit(r),
             Solved::Explicit(r) => StepResult::Explicit(r),
             Solved::Fluid(r) => StepResult::Fluid(r),
+            Solved::Nonlinear(r) => StepResult::Nonlinear(r),
         }
     }
 }
@@ -441,6 +447,7 @@ impl Session {
     /// Run a command. On an error or a panic the model, the design and the surfaces are left as
     /// they were.
     pub fn execute(&mut self, id: &str, params: &Value) -> Result<Value> {
+        let _command_timing = command_timing::Span::for_command(id);
         // An id from hostile input is not echoed in full.
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.chars().take(100).collect()))?;
         let timer = usage::Timer::start(self.origin);

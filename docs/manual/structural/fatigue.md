@@ -315,3 +315,101 @@ stationary Gaussian scalar stress methods, not general multiaxial laws.
 This extends the former single-slope-only interface; it does not claim measured
 material properties or full-field BASE validation. Existing BASE evidence remains
 two candidate points with synthetic material data.
+
+
+## Equation and multi-channel verification contract
+
+Stress amplitude is half the range; the cycle mean is the midpoint of its extrema.
+Goodman uses `a/(1-m/Sut)`, Gerber `a/(1-(m/Sut)^2)`, and Soderberg
+`a/(1-m/Sy)`. Here `m=max(mean,0)`: compression receives no beneficial credit.
+These are scalar nominal S–N transformations, not yield checks or a material
+plasticity model. The user must check peak stress against the applicable static
+strength independently. Sut, Sy and the fatigue coefficient sigma_f' are distinct.
+See Budynas–Nisbett, *Shigley's Mechanical Engineering Design*, fatigue chapter,
+sections on strain-life and fluctuating stress; a [public chapter excerpt](https://faculty.up.edu/lulay/me401/FatigueFailureChapter6-s10.pdf)
+distinguishes cycles, alternating stress and component strength modification.
+
+Coffin–Manson–Basquin uses `epsilon_a = sigma_f'/E*(2N)^b + epsilon_f'*(2N)^c`.
+N is full cycles, 2N reversals; counts of 0.5 represent half cycles. E and sigma_f'
+are Pa, epsilon_f' and total local strain amplitude dimensionless, b and c negative.
+The exact elastic limit sets ductility to zero; the exact plastic limit sets
+strength_pa to zero. Both zero is invalid. These are mathematical limits, not a
+way to estimate missing material constants. Morrow subtracts the nonnegative mean
+from sigma_f' in the elastic term only; the compressive-mean clamp is an explicit
+conservative policy, not the signed Morrow equation for negative means.
+Morrow and SWT require positive sigma_f'. SWT solves
+`sigma_max*epsilon_a = sigma_f'^2/E*(2N)^(2b) + sigma_f'*epsilon_f'*(2N)^(b+c)`.
+Its maximum tensile stress must belong to the same local cycle as epsilon_a.
+The original SWT stress-dimensional parameter is the square root of
+`E*sigma_max*epsilon_a`; the equation here uses its square divided by E.
+It does not equate sigma_max with the alternating stress when the mean is nonzero.
+
+Sources: Morrow, *Fatigue Design Handbook*, SAE (1968), section 3.2;
+Smith, Watson & Topper, *Journal of Materials* 5(4) (1970), 767–778;
+[Dowling's author presentation and papers](https://asipcon.com/proceedings/proceedings_2005/pdf%20files/Tues/0330_Dowling.pdf),
+and [Socie's equation definitions](https://fcp.mechse.illinois.edu/files/2014/07/4-Fatigue-Influencing-Factors_F10.pdf).
+These empirical laws predict local initiation behavior; the constants must fit the
+material, surface, temperature and cyclic regime. They are not universal bounds on
+experimental scatter. The [public 1020 HR plate coefficient example](https://rbb.union.edu/courses/mer419/content/data/Lectures/MER419%20L01%20Fatigue%20Review%20I.pdf)
+uses E=205 GPa, sigma_f'=895 MPa, b=-0.12, epsilon_f'=0.41 and c=-0.51.
+Mixed-term numerical checks with these coefficients verify the equations, not a
+new measured life or the material of an arbitrary structural model.
+
+For multiple reference loads the shared time array is the synchronization contract.
+Provide each coefficient at the same instant, retaining sign, offset and phase.
+No interpolation, extrapolation or phase recovery is performed. References must be
+current results on the same mesh, node recovery points and homogeneous support
+operator. Each coefficient multiplies its complete reference load pattern (which
+need not be 1 N); sum all six global stress components first, then scalarize and
+rainflow count. Adding separate von Mises values or separate channel damages is
+not this operation. Quarter-period shifted 1 Pa patterns sampled at
+`[0,.25,.5,.75,1]` give `[1,1,-1,-1,1]`, not the sum of unsigned magnitudes.
+With N=100 at amplitude 2 Pa and exponent 3, the finite record contains two half
+cycles of amplitude 1 Pa: D=1/800 and repeated-record life 800 seconds.
+
+Signed von Mises and maximum principal reject nonproportional combined tensors;
+signed von Mises also rejects opposite-sign absolute-principal ties. A supplied
+fixed projection remains a declared scalar model, not general multiaxial fatigue.
+External stress histories retain their source identity and SI/time/location checks.
+The verified linear 1001-frame rod chain is not a nonlinear-history handoff.
+Nonlinear constitutive histories, automatic local stress/total-strain pairing,
+critical-plane methods, and PSD-to-signed-history synthesis remain unsupported.
+
+### Nominal axial histories from geometrically nonlinear rods
+
+`solve.fatigue.transient` also accepts `axial_history` **instead of**
+`history`, `nodes`, `weights`, or `criterion`. It consumes a signed axial scalar
+on the material-following rod axis, not an invented global nodal stress tensor:
+
+```json
+{"source_id":"model/input/program/raw-output identities","step":"Motion",
+ "max_time_step_seconds":0.01,
+ "axial_history":{"step":"Motion","element":1,
+   "location":"constant_rod2_midpoint",
+   "stress_measure":"nominal_axial_reference_area",
+   "axis":"material_following_axial","reference_material_axis":[1,0,0],
+   "reference_area_m2":1,"stress_unit":"Pa","time_unit":"s",
+   "samples":[{"time":0,"stress":0},{"time":0.01,"stress":2},{"time":0.02,"stress":0}]},
+ "curve_stress_measure":"nominal_axial_reference_area",
+ "calibration_source":"synthetic nominal-stress verification only",
+ "curve":{"amplitude_ref":100,"cycles_ref":1,"exponent":3,"endurance_limit":0},
+ "correction":{"type":"goodman","ultimate":100}}
+```
+
+Nominal axial stress is signed force divided by **reference** area. PK2 stress
+and Cauchy stress are different measures even though all use Pa. Only the declared
+nominal measure is supported here. The S–N curve, fatigue limit, and any correction
+strength must be calibrated in that same nominal convention; the required
+`curve_stress_measure` and `calibration_source` declare this responsibility, not
+proof of material calibration. Synthetic examples verify arithmetic, not physical
+fatigue life. No stress conversion, strain inference or material fitting occurs.
+
+Producer output must identify the element, recovery position, material axis,
+reference area, complete time samples and original source identity. An adapter may
+copy actual nominal values and times without changing their meaning; it must not
+reconstruct them from displacement summaries, average element values into fictitious
+nodes, or substitute PK2. Rotating a rod axis does not turn this scalar channel into
+a general nonproportional multiaxial criterion. Tensor criteria are refused in this
+mode. Sampling is not certified, and no periodic closing cycle is added. Replies
+retain source, calibration, scalar measure, per-cycle mean/amplitude/count/damage,
+and explicitly `persisted:false`; they do not add a native result type or contour.

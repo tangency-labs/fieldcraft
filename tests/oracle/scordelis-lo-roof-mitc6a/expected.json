@@ -1,0 +1,20 @@
+{
+  "title": "Scordelis-Lo roof with curved six-node MITC6-a shells",
+  "kind": "benchmark",
+  "source": "MacNeal & Harder, Finite Elements in Analysis and Design 1 (1985) 3\u201320, Fig.8 and Table5(a); Bathe & Dvorkin (1986), IJNME 22:697\u2013722, equations(9)\u2013(22). Original quarter-roof mesh: 128 six-node triangles from an 8 x 8 split grid.; Element: Lee & Bathe (2004), doi:10.1016/j.compstruc.2004.02.004, MITC6-a equations (29)-(38).",
+  "quantities": [
+    {
+      "id": "uz",
+      "quantity": "vertical displacement at free edge midspan",
+      "measure": {
+        "from": "probe",
+        "pointer": "/nodes/0/displacement/2"
+      },
+      "value": -0.3024,
+      "tolerance": {
+        "relative": 0.02
+      },
+      "reason": "Same 2% published benchmark accuracy allowance as the existing MITC4 roof; fixed before the MITC6-a run, not fitted."
+    }
+  ]
+}

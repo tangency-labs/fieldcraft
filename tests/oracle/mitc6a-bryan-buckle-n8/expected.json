@@ -1,0 +1,20 @@
+{
+  "title": "MITC6-a Bryan plate under uniaxial compression (8x8 split mesh)",
+  "kind": "benchmark",
+  "source": "G.H. Bryan, Proc. London Math. Soc.22:54\u201367(1891); Timoshenko & Gere1961 \u00a79.2: Ncr=4pi\u00b2D/a\u00b2; same public reference as buckle-plate-square. Independent published coefficient K=4.00: Nemeth, Stein & Johnson, NASA TP-2528 (1986), p.10 Table I, isotropic d/W=0 (unperforated square); https://ntrs.nasa.gov/citations/19860011385. Uniform displacement and uniform traction give the same constant membrane preload in this unperforated case.; Element: Lee & Bathe (2004), doi:10.1016/j.compstruc.2004.02.004, MITC6-a equations (29)-(38).",
+  "quantities": [
+    {
+      "id": "lambda",
+      "quantity": "lambda",
+      "measure": {
+        "from": "solve",
+        "pointer": "/modes/0/load_factor"
+      },
+      "value": 0.00361523970735874,
+      "tolerance": {
+        "relative": 0.02
+      },
+      "reason": "Fixed2% thin-plate/FSDT and split8x8 (128 triangles) MITC6-a mesh band, h/a=.01; unit edge membrane load."
+    }
+  ]
+}

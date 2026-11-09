@@ -77,6 +77,11 @@ pub(crate) fn prescribe(model: &Model, mesh: &Mesh, step: &Step, values: bool, o
         let value = match step.pretension.get(name) {
             Some(PretensionControl::Force { .. }) => None,
             Some(PretensionControl::Adjustment { value }) => Some(if values { *value } else { 0.0 }),
+            Some(PretensionControl::Fixed) => {
+                return Err(Error::Invalid(format!(
+                    "pretension `{name}` current-value FIXED is an export-only control; solve from a resolved adjustment or use model.pretension.lock"
+                )));
+            }
             None => Some(0.0), // undeformed cut or locked perturbation increment
         };
         let q = control_dof(mesh, section)?;

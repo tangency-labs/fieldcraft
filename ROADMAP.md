@@ -215,6 +215,8 @@ Static joint identification now groups observations by step and shares each tria
 factorization across parameter columns. A prescribed-motion, zero-foundation-coefficient
 check compares the batched response/Jacobian bit for bit with scalar sensitivities.
 
+Geometric rod2 dynamics: `solve.transient.nonlinear` Newmark/HHT full Newton with consistent/lumped reference mass. Native MCRSLT07 kind 11 retains actual settings, accepted SI U/V/A and nodal forces, recovered Green/second-Piola/nominal rod fields, energy accounts and all accepted-step convergence diagnostics. Native save/reopen and legacy-kind boundaries are verified; general solid/contact/material extensions and nonlinear field visualization remain open.
+
 Section mass policies: continuum sections now persist explicit `hrz`, `row_sum`, or
 `consistent` overrides for a `mass=lumped` frequency solve. Linear positive-basis
 row sums and mixed consistent sections are checked against independent matrices;
@@ -268,6 +270,16 @@ extrapolation are named unsupported combinations; no PSD time history is synthes
   mass harmonic, full energy-and-mass dynamics, static fatigue and harmonic fatigue.
   Old05/06 kinds 0–5 use frozen schemas; higher development kinds are refused with
   the regeneration message. See docs/results-kind-layout.md.
+- External rod fatigue: an explicit nominal axial reference-area channel accepts
+  producer-recovered material-following scalar histories with matching declared
+  S–N/mean-strength calibration. PK2/Cauchy substitution and tensor criteria are
+  refused. Fatigue results remain independent diagnostic JSON; no fatigue fields
+  are added to nonlinear native histories.
+- Nonlinear rod histories use native MCRSLT07 kind 11 and fieldcraft/3 archives;
+  kinds 0–8 retain their layouts and 9/10 remain unused. Complete accepted states,
+  rod recovery and SI probe output survive save/open. The explicit SI Abaqus
+  UEL/DYNAMIC writer remains separate; standard T3D2 StVK mapping is refused.
+
 
 Native Hex8 now has an independent thirteen-variable enhanced-gradient option for linear isotropic static analysis, with determinant-corrected modes, local condensation and stress recovery. C3D8I/IH mapping remains refused pending independent distorted-case validation; see `docs/enhanced-strain13.md`.
 
@@ -287,3 +299,15 @@ Abaqus history: boundary modifications retain node/set and named/direct identity
   viscous damping and global SRSS/R40 directions; refuse unsupported selection,
   base states, interpolation and mass mappings. Native modal time integration is
   Newmark and is verified separately against the continuous response.
+
+### Curved quadratic shell statics
+
+Eight-node MITC8 homogeneous and layered elastic statics use quadratic surface/director geometry and the Bathe–Dvorkin tensor interpolation. See [formulation and verification](docs/solvers/mitc8.md). Consistent and positive-diagonal lumped density-layer mass feed frequency and direct/modal harmonic solves; flat-preload plates support linear buckling. Six-node triangular, continuum and axisymmetric shells, transient/spectrum and curved-shell geometric stiffness remain open.
+
+- MITC8 smooth patches share nodal director axes with global rotations. Layerwise
+  elastic statics integrate each ply and its material directions; mass, dynamics
+  and initial-stress operators remain unsupported.
+
+- Six-node MITC6-a: shared curved geometry/directors, layer integration and mass;
+  linear static, modal/harmonic and flat-plate buckling paths. Formula and accuracy
+  limits: [MITC6-a](docs/solvers/mitc6.md).

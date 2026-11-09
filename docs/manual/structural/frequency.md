@@ -1,5 +1,16 @@
 # Natural frequencies
 
+Six-node `tri6` shells use [MITC6-a](../../solvers/mitc6.md), with shared curved
+directors and layered constitutive/mass integration. Its documented plate-only
+buckling and coarse-mesh accuracy limits apply.
+
+Curved `quad8` MITC8 supports consistent and positive-diagonal lumped mass for
+frequency and harmonic analysis, including ply densities and rotary inertia.
+Consistent mass retains offset/density first-moment coupling; lumped mass omits it.
+Both include an explicitly artificial drilling inertia. Transient and spectrum steps
+remain refused; curved-shell prestress is also refused.
+See [MITC8 scope](../../solvers/mitc8.md).
+
 `solve.frequency` computes the lowest natural frequencies and mode shapes of a structure,
 K φ = ω² M φ, with every boundary condition of the step held at zero, together with each mode's
 participation factors and effective masses. The eigenproblem is solved by the shifted block
@@ -47,7 +58,7 @@ small negative shift automatically, so its rigid-body modes come out at zero fre
 | `shift` | finite, eigenvalue units (rad per time unit)² | 0 for a supported structure, −10⁻⁶ Σ K_ii / Σ M_ii for a free one | the spectral shift σ; it must lie below every eigenvalue of the free equations |
 | `max_dofs` | 1 to 6 000 000 | 6 000 000 | may only be lowered |
 | `max_factor_entries` | 1 to 2 000 000 000 | 400 000 000 | factor entries; also bounds the Lanczos basis ([Linear solvers](linear-solvers.md#memory-limits)) |
-| `max_iterations` | 1 to 3000 | 3000 | cap on the Lanczos vectors (iterations × block size); may only be lowered |
+| `max_iterations` | 1 to 3000 | 3000 | cap on basis vectors, not block iterations (the final block may be partial); may only be lowered |
 | `threads` | 1 to 256 | the session's | changes the time, never the result |
 
 Every element with mass needs a density in its material ("element N has no density" otherwise).
@@ -293,3 +304,46 @@ Harmonic and native modal random commands accept the shared `mass` choice and
 apply these section policies to inertia and material mass-proportional damping.
 Default remains consistent. Projection of stored harmonic frames inherits that
 result's mass choice and rejects an override; the project retains section policies.
+
+## Convergence diagnostics
+
+`solve.frequency` returns `convergence.iterations`, the actual number of block
+recurrences performed. `lanczos_vectors` / `convergence.basis_vectors` count basis
+vectors; these are not iteration counts. The legacy parameter `max_iterations`
+remains a **basis-vector capacity**, not a count of block recurrences. A final
+partial block counts as one iteration. `basis_limit` is the effective capacity
+(user setting, memory budget and equation count, with at least one start block); `basis_limit_reached` reports
+whether that capacity was reached, and `full_space_reached` distinguishes a complete
+basis from a truncated user/memory cap. A truncated cap alone never certifies
+convergence. An unconverged cap returns an error with the actual block iterations,
+vector count and `basis_limit_reached=true`, and stores no replacement result.
+
+Each returned mode has `equation_residual`:
+
+- `residual_norm` = ‖Kφ − λMφ‖₂;
+- `stiffness_action_norm` = ‖Kφ‖₂;
+- `relative_residual` = their quotient, or `null` with `undefined_reason` when the
+  denominator is zero (or the quotient overflows).
+
+These use the actual **unshifted, constrained** stiffness and the selected
+consistent/lumped mass, with the returned mode in the reduced equations. With a
+base state, K is its actual terminal tangent, including its stress stiffness and
+frozen constraints. Held-equation reactions are not counted as residual equations.
+The Euclidean norms are evaluated in the solver's SI equation coordinates; they
+are independent of mode normalization, but not of arbitrary equation rescaling.
+This is not the projected Lanczos residual and does not replace it in the algorithm.
+A small transformed Ritz bound does not by itself certify a small physical ratio.
+
+For an exact rigid mode Kφ=0, the requested ratio is undefined, including 0/0: it
+is never reported as zero. Near a rigid mode, roundoff can make ‖Kφ‖ nonzero;
+`near_zero_stiffness_action` warns when it is at most √ε ‖K‖∞ ‖φ‖₂. A finite ratio
+in that region is ill-conditioned, not a reliable rigid-mode acceptance criterion.
+The threshold is a diagnostic warning only; it does not suppress a finite ratio.
+
+Diagnostics are returned by this solve command, and by the Rust API
+`solve_frequency_report`, separately from the numeric `FrequencyResult`. Save the
+command's JSON reply when retaining this evidence. The unchanged native results
+payload does **not** persist this new report; opening an old solved model cannot
+supply historical iteration counts or residuals. Computing the report retains K
+through Lanczos and performs two sparse products per mode inside the complete
+solve command; its time and memory belong in performance comparisons.
