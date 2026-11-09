@@ -229,4 +229,47 @@ mod tests {
         }
         Ok(())
     }
+    #[test]
+    fn linear_acceleration_period_and_hht_high_frequency_dissipation() -> Result<()> {
+        let limits = Limits::default();
+        let (k, m, c) = (scalar(4.0), scalar(1.0), scalar(0.0));
+        let mut state = Integrator::initial_state(&k, &m, &c, vec![1.0], vec![0.0], &[0.0], &limits)?;
+        let integrator = Integrator::new(&k, &m, &c, 0.1, Integration::LinearAcceleration, &limits)?;
+        let omega_dt: f64 = 0.2;
+        let theta = libm::acos((1.0 - omega_dt.powi(2) / 3.0) / (1.0 + omega_dt.powi(2) / 6.0));
+        for i in 1..=100 {
+            integrator.advance(&mut state, &[0.0], &[0.0])?;
+            assert!((state.displacement[0] - libm::cos(i as f64 * theta)).abs() < 1e-12);
+        }
+        // HHT amplification polynomial in the infinite-frequency limit,
+        // derived from Hilber et al. (1977) equilibrium and Newmark kinematics.
+        // Roots: alpha/(1+alpha), twice -(1+alpha)/(1-alpha).
+        // Check all polynomial coefficients, not only a decreasing energy sample.
+        let alpha: f64 = -0.1;
+        let k = scalar(1e12);
+        let integrator = Integrator::new(&k, &m, &c, 1.0, Integration::Hht { alpha }, &limits)?;
+        let mut a = [[0.0; 3]; 3];
+        for j in 0..3 {
+            let mut state = State {
+                displacement: vec![if j == 0 { 1.0 } else { 0.0 }],
+                velocity: vec![if j == 1 { 1.0 } else { 0.0 }],
+                acceleration: vec![if j == 2 { 1.0 } else { 0.0 }],
+            };
+            integrator.advance(&mut state, &[0.0], &[0.0])?;
+            for (i, v) in [state.displacement[0], state.velocity[0], state.acceleration[0]].into_iter().enumerate() {
+                a[i][j] = v;
+            }
+        }
+        let r = alpha / (1.0 + alpha);
+        let q = -(1.0 + alpha) / (1.0 - alpha);
+        let trace = a[0][0] + a[1][1] + a[2][2];
+        let pairs = a[0][0] * a[1][1] + a[0][0] * a[2][2] + a[1][1] * a[2][2] - a[0][1] * a[1][0] - a[0][2] * a[2][0] - a[1][2] * a[2][1];
+        let det = a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0])
+            + a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]);
+        assert!((trace - r - 2.0 * q).abs() < 1e-9);
+        assert!((pairs - q * q - 2.0 * r * q).abs() < 1e-9);
+        assert!((det - r * q * q).abs() < 1e-9);
+        assert!(q.abs() < 1.0 && r.abs() < q.abs());
+        Ok(())
+    }
 }

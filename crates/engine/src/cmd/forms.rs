@@ -1123,6 +1123,8 @@ const PROCEDURE: Field = variants(
             json("initial_velocity", "Initial nodal velocities").numbers(&[("/*", D::Velocity)]).help("Node labels mapped to XYZ velocities; unspecified nodes start at rest."),
             json("base_acceleration", "Base acceleration").numbers(&[("/magnitude", D::Of(Quantity::Acceleration)), ("/amplitude/points/*/0", D::Time), ("/amplitude/origin", D::Time), ("/amplitude/angular_frequency", D::Of(Quantity::AngularVelocity))])
                 .help("{direction: unit XYZ, magnitude: acceleration, amplitude: curve}; output is relative motion."),
+            json("base_displacement", "Prescribed base displacement").numbers(&[("/magnitude", D::Length), ("/initial_velocity", D::Velocity), ("/initial_acceleration", D::Acceleration), ("/amplitude/points/*/0", D::Time), ("/amplitude/origin", D::Time), ("/amplitude/angular_frequency", D::Of(Quantity::AngularVelocity))])
+                .help("Uniform base {direction, magnitude, amplitude, initial_velocity, initial_acceleration}; explicit initial derivatives, Newmark-consistent sampled motion. Exclusive of base_acceleration; outputs remain relative."),
         ]),
         variant("response_spectrum", "Response spectrum", &[
             int("modes", "Modes", 1, 4096).help("Number of mass-normalized modes retained.").req(),

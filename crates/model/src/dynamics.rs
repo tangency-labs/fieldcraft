@@ -31,6 +31,17 @@ pub struct BaseAcceleration {
     pub magnitude: f64,
     pub amplitude: Amplitude,
 }
+/// Prescribed uniform base translation. Initial base velocity/acceleration are
+/// explicit because a displacement table alone does not specify those states.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BaseDisplacement {
+    pub direction: [f64; 3],
+    pub magnitude: f64,
+    pub amplitude: Amplitude,
+    pub initial_velocity: f64,
+    pub initial_acceleration: f64,
+}
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Transient {
@@ -53,6 +64,8 @@ pub struct Transient {
     pub initial_velocity: BTreeMap<u32, [f64; 3]>,
     #[serde(default)]
     pub base_acceleration: Option<BaseAcceleration>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_displacement: Option<BaseDisplacement>,
 }
 // Tagged procedure deserialization buffers map keys as strings. Decode labels
 // explicitly so the command path and direct JSON loading have the same contract.
@@ -127,6 +140,16 @@ impl Transient {
             direction(base.direction)?;
             if !base.magnitude.is_finite() {
                 return Err(Error::Invalid("base acceleration magnitude must be finite".into()));
+            }
+            base.amplitude.validate()?;
+        }
+        if self.base_acceleration.is_some() && self.base_displacement.is_some() {
+            return Err(Error::Invalid("choose base_acceleration or base_displacement, not both".into()));
+        }
+        if let Some(base) = &self.base_displacement {
+            direction(base.direction)?;
+            if [base.magnitude, base.initial_velocity, base.initial_acceleration].iter().any(|x| !x.is_finite()) {
+                return Err(Error::Invalid("base displacement and initial derivatives must be finite".into()));
             }
             base.amplitude.validate()?;
         }
@@ -332,5 +355,14 @@ mod tests {
         assert!(s.ordinate(2.0, 0.1).is_err());
         assert!(s.ordinate(f64::NAN, 0.05).is_err());
         Ok(())
+    }
+    #[test]
+    fn absent_base_displacement_preserves_existing_step_serialization() {
+        // Definition hashes serialize the step: a new null field would discard
+        // previously saved histories even when the input physics is unchanged.
+        let t: Transient = serde_json::from_str(r#"{"time_step":0.001,"increments":1000}"#).unwrap();
+        let encoded = serde_json::to_value(&t).unwrap();
+        assert!(encoded.get("base_displacement").is_none());
+        assert_eq!(serde_json::from_value::<Transient>(encoded).unwrap(), t);
     }
 }

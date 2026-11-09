@@ -292,6 +292,11 @@ pub fn solve(model: &Model, name: Option<&str>, limits: &Limits, spectrum: bool)
             let f = red.restrict(&system::loads(model, &resolved, &mesh, &one, &red.active)?);
             load_vectors.push((f, t.load_amplitudes.get(name).map(|a| a.evaluator()).transpose()?));
         }
+        let method = match t.integration {
+            Integration::AverageAcceleration => super::Integration::AverageAcceleration,
+            Integration::LinearAcceleration => super::Integration::LinearAcceleration,
+            Integration::Hht { alpha } => super::Integration::Hht { alpha },
+        };
         let base = if let Some(b) = &t.base_acceleration {
             let mut f = vec![0.0; m.n];
             m.mul(&translation(&mesh, b.direction), &mut f);
@@ -299,7 +304,22 @@ pub fn solve(model: &Model, name: Option<&str>, limits: &Limits, spectrum: bool)
         } else {
             None
         };
-        let force = |time: f64| -> Result<Vec<f64>> {
+        // Enforce prescribed base positions with the same Newmark kinematics as
+        // the free coordinates; corners in tables are resolved at the fixed dt.
+        let mut motion = if let Some(b) = &t.base_displacement {
+            let mut f = vec![0.0; m.n];
+            m.mul(&translation(&mesh, b.direction), &mut f);
+            let curve = b.amplitude.evaluator()?;
+            let position = b.magnitude * curve.value(0.0)?;
+            if !position.is_finite() {
+                return Err(Error::Invalid("base displacement overflow".into()));
+            }
+            Some((red.restrict(&f), curve, b.magnitude, position, b.initial_velocity, b.initial_acceleration))
+        } else {
+            None
+        };
+        let (beta, gamma, _) = method.parameters()?;
+        let mut force = |time: f64| -> Result<Vec<f64>> {
             let mut out = vec![0.0; kr.n];
             for (f, a) in &load_vectors {
                 let value = match a {
@@ -316,15 +336,28 @@ pub fn solve(model: &Model, name: Option<&str>, limits: &Limits, spectrum: bool)
                     *o += value * x;
                 }
             }
+            if let Some((mr, curve, magnitude, position, velocity, acceleration)) = &mut motion {
+                if time > 0.0 {
+                    let target = *magnitude * curve.value(time)?;
+                    let next_a = (target - *position - t.time_step * *velocity - t.time_step * t.time_step * (0.5 - beta) * *acceleration)
+                        / (beta * t.time_step * t.time_step);
+                    let next_v = *velocity + t.time_step * ((1.0 - gamma) * *acceleration + gamma * next_a);
+                    if [target, next_v, next_a].iter().any(|x| !x.is_finite()) {
+                        return Err(Error::Invalid("prescribed base motion overflow".into()));
+                    }
+                    *position = target;
+                    *velocity = next_v;
+                    *acceleration = next_a;
+                }
+                for (o, x) in out.iter_mut().zip(mr) {
+                    *o -= *acceleration * *x;
+                }
+            }
             Ok(out)
         };
         let u = initial(&t.initial_displacement, &mesh, &red)?;
         let v = initial(&t.initial_velocity, &mesh, &red)?;
-        let method = match t.integration {
-            Integration::AverageAcceleration => super::Integration::AverageAcceleration,
-            Integration::LinearAcceleration => super::Integration::LinearAcceleration,
-            Integration::Hht { alpha } => super::Integration::Hht { alpha },
-        };
+
         let modal = if let Method::Modal { modes, .. } = t.method {
             Some(Modal::new(&Matrices { stiffness: &kr, mass: &mr, viscous: Some(&cr), loss: None }, modes as usize, limits)?)
         } else {

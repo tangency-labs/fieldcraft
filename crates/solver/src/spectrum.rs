@@ -99,4 +99,59 @@ mod tests {
         assert!((directional_100_40_40([10.0, 5.0, 2.0])? - 12.8).abs() < 1e-14);
         Ok(())
     }
+    #[test]
+    fn wilson_published_five_mode_correlation_table() -> Result<()> {
+        // E. L. Wilson, Chapter 15 (2014 revision), Table 15.1, p.15-11:
+        // https://edwilson.neocities.org/bookshelf/2005/2005%20Chapter%2015%20MODIFIED%202014.pdf
+        // Published rounded reference numbers only; no vendor input/model copied.
+        let omega = [13.87, 13.93, 43.99, 44.19, 54.42];
+        let published = [
+            [1.0, 0.998, 0.006, 0.006, 0.004],
+            [0.998, 1.0, 0.006, 0.006, 0.004],
+            [0.006, 0.006, 1.0, 0.998, 0.180],
+            [0.006, 0.006, 0.998, 1.0, 0.186],
+            [0.004, 0.004, 0.180, 0.186, 1.0],
+        ];
+        // Both inputs (0.01 rad/s) and outputs (0.001) are rounded in the
+        // publication. Propagate the printed frequency intervals; comparing
+        // only with half an output digit incorrectly rejects modes 3 and 5.
+        let equal_damping = |a: f64, b: f64| {
+            let r = a / b;
+            0.02 * (1.0 + r) * r.powf(1.5) / ((1.0 - r * r).powi(2) + 0.01 * r * (1.0 + r).powi(2))
+        };
+        for i in 0..5 {
+            for j in 0..5 {
+                let actual = correlation(omega[i], 0.05, omega[j], 0.05)?;
+                assert!((actual - equal_damping(omega[i], omega[j])).abs() < 1e-13);
+                if i == j {
+                    assert!((actual - published[i][j]).abs() < 1e-13);
+                    continue;
+                }
+                let mut low = f64::INFINITY;
+                let mut high = f64::NEG_INFINITY;
+                for da in [-0.005, 0.005] {
+                    for db in [-0.005, 0.005] {
+                        let rho = equal_damping(omega[i] + da, omega[j] + db);
+                        low = low.min(rho);
+                        high = high.max(rho);
+                    }
+                }
+                assert!(
+                    low <= published[i][j] + 0.0005 && high >= published[i][j] - 0.0005,
+                    "pair {i},{j}: rounded-input interval [{low:.12},{high:.12}], published {}",
+                    published[i][j]
+                );
+            }
+        }
+        // Original signed probe components, checked against the rounded table.
+        let components = [3.0, -2.0, 1.0, -0.5, 0.2];
+        let mut expected = 0.0;
+        for i in 0..5 {
+            for j in 0..5 {
+                expected += components[i] * published[i][j] * components[j];
+            }
+        }
+        assert!((cqc(&components, &omega, &[0.05; 5])? - libm::sqrt(expected)).abs() < 0.005);
+        Ok(())
+    }
 }

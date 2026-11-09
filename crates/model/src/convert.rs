@@ -410,6 +410,12 @@ impl Quantities for Step {
                     f(Q::Acceleration, &mut b.magnitude);
                     amplitude_quantities(&mut b.amplitude, f);
                 }
+                if let Some(b) = &mut t.base_displacement {
+                    f(Q::Length, &mut b.magnitude);
+                    f(Q::Velocity, &mut b.initial_velocity);
+                    f(Q::Acceleration, &mut b.initial_acceleration);
+                    amplitude_quantities(&mut b.amplitude, f);
+                }
             }
             Procedure::ResponseSpectrum(s) => {
                 for p in &mut s.pseudo_acceleration {

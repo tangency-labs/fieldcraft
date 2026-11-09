@@ -2,7 +2,9 @@
 
 The original rod regression exercises the finite-element command path, analytical displacement
 and stress, modal equivalence, persistence, display units, damping interpolation and direction
-combination. Independent benchmark validation and large-model modal truncation studies remain pending.
+combination. Additional regressions cover Duhamel pulse loading, prescribed base displacement, a cantilever
+modal impact series, HHT high-frequency dissipation and a published CQC correlation table.
+Large-model modal truncation studies and external same-mesh comparison remain separate validation tasks.
 
 Create a `transient` step with `model.step.create`, then run `solve.transient` or `solve.run`.
 The original two-node rod recipe is `crates/engine/tests/data/transient-rod.json`.
@@ -48,8 +50,19 @@ made from the small projected system. Residual-vector augmentation is not yet ex
 `base_acceleration: {direction:[1,0,0],magnitude:"1 m/s^2",amplitude:{...}}` adds
 `-M r a_ground(t)` using the full mass matrix before constraint reduction. Direction must
 be a unit vector. Displacement, velocity and acceleration outputs are relative to the base;
-absolute acceleration is not included. Nonzero prescribed motion and reference-point
-output currently return named errors. Contact and thermal loads are refused. Massless
+absolute acceleration is not included.
+
+For uniform prescribed base translation, use
+`base_displacement: {direction:[1,0,0],magnitude:"1 m",amplitude:{...},initial_velocity:"0 m/s",initial_acceleration:"0 m/s^2"}`.
+It is mutually exclusive with `base_acceleration`. The curve specifies base positions at each
+integration time. Base acceleration is recovered using the chosen Newmark beta/gamma
+kinematics, then applied through the same full `-M r` vector. Supply both initial base
+derivatives explicitly; the displacement curve alone does not define them. Derivative jumps
+or coarse displacement sampling may create acceleration oscillations: inspect the time step
+and prefer a supplied acceleration history when available. This is uniform rigid base motion,
+not independently prescribed support motions. Initial nodal states and all outputs remain
+relative. Arbitrary nonzero displacement boundary conditions and reference-point output
+currently return named errors. Contact and thermal loads are refused. Massless
 uncondensed DOFs cannot be initialized by the SPD mass solve and are refused.
 
 `solve.probe {step:"Pulse",nodes:[2]}` returns stored time samples, or select `frame`.
@@ -86,19 +99,36 @@ pseudo-acceleration peak, not the maximum true absolute acceleration. Residual c
 All three deck writers explicitly refuse these new procedures pending complete export
 semantics. The project handoff decks are separate original inputs, not verified exports.
 
-## References and pending verification
+## References and verification
 
 - N. M. Newmark (1959), [A Method of Computation for Structural Dynamics](https://ascelibrary.org/doi/10.1061/JMCEA3.0000098).
 - H. M. Hilber, T. J. R. Hughes and R. L. Taylor (1977), [Improved numerical dissipation](https://doi.org/10.1002/eqe.4290050306).
 - A. Der Kiureghian (1981), *A response spectrum method for random vibration analysis of MDF systems*, Earthquake Engineering & Structural Dynamics 9, 419–435.
 
-Pending tests cover the original consistent-mass rod's step response, stress recovery,
-modal/direct agreement, nonzero initial conditions, spectrum participation, corrupt result
-rejection, save/open and display-unit changes. Closed-form rod values derive from its reduced
-FE equations, not continuum longitudinal-wave solutions. Independent published benchmarks,
-HHT dissipation, BASE performance and third-party same-mesh comparison remain outstanding.
+The command-level regressions in `crates/engine/tests/transient.rs` cover the original
+consistent-mass rod, file round trips, units, base displacement/acceleration equivalence,
+triangular-pulse Duhamel and Fourier-load responses, and a 40-element cantilever retaining
+four bending modes. The cantilever compares against an independently evaluated four-mode
+Euler–Bernoulli series (1% peak-relative allowance for FE mesh, shear/rotary inertia and
+time integration); this does not establish convergence in retained mode count.
 
-## Damping interpolation and direction combinations (unverified candidate)
+Core regressions check both Newmark discrete periods and the negative-alpha HHT
+high-frequency amplification polynomial. The CQC reference is E. L. Wilson's published
+five-mode correlation table, including two close pairs, accounting for the printed
+frequency intervals (±0.005 rad/s) and correlation intervals (±0.0005); the
+command test uses an original rotated two-spring model to verify signed modal cancellation.
+No commercial model files or outputs are used in these tests. Closed-form rod values derive
+from its reduced consistent-mass FE equations, not continuum longitudinal-wave solutions:
+with E=4, rho=3, A=L=1, Mff=1 and Kff=4, a constant 1 N gives
+`u=(1-cos(2t))/4`, `v=sin(2t)/2`, `a=cos(2t)` in SI.
+The full per-direction mass is `[[1,0.5],[0.5,1]] kg`, total physical mass 3 kg;
+constraint elimination keeps Mff=1 rather than redistributing the fixed node's mass.
+
+- E. L. Wilson, [Chapter 15, Table 15.1](https://edwilson.neocities.org/bookshelf/2005/2005%20Chapter%2015%20MODIFIED%202014.pdf), 2014 revision, p.15-11.
+- Sandia, [Sierra/SolidMechanics 5.20 Theory Manual](https://www.sandia.gov/app/uploads/sites/315/2025/07/SM_Theory_5_20.pdf), equations 12.5–12.6 (Newmark/HHT convention).
+- TU Graz, [Cantilever beam modes](https://lampz.tugraz.at/~hadley/memm/mechanics/cbeam.php): eigenfunctions and frequency equation, used with Duhamel integration for the original pulse test.
+
+## Damping interpolation and direction combinations
 
 Use either `pseudo_acceleration` (one frequency table at `damping_ratio`), `tables`
 (frequency tables) or `period_tables` (period tables), never multiple forms together.
@@ -123,4 +153,15 @@ These are independent-direction design combination rules, not a simulation of co
 multi-axis time histories. The command still returns component peak estimates only.
 
 The end-to-end rod test uses two oblique orthogonal axes, damping-table interpolation,
-period inputs in ms, and millimetre output. It is written but has not run on Dell yet.
+period inputs in ms, and millimetre output. It exercises the full command, assembly, combination and probe path.
+
+## Scope limits
+
+This is a linear, fixed-step solver. The reusable reduced-matrix integration interface is a
+building block for future tangent updates, not a nonlinear equilibrium iteration. Adaptive
+stepping, residual vectors, independent support motions and rotational initial states are
+not implemented. These limits are separate from the available amplitude, direct/modal,
+SRSS/CQC and damping/direction interpolation features. A successful solve does not establish
+modal truncation accuracy or an external benchmark agreement. Performance reports must name
+the actual integration method, retained modes, time step, increment count and saved frames;
+command timing does not include later file serialization.
