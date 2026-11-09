@@ -170,7 +170,7 @@ fn damping_matrices(mesh: &Mesh, graph: &NodeGraph, materials: &BTreeMap<u32, Da
     Ok((c, g))
 }
 
-fn stresses(mesh: &Mesh, u: &[f64], displacement: &[[f64; 3]]) -> Result<Vec<[f64; 6]>> {
+pub(crate) fn stresses(mesh: &Mesh, u: &[f64], displacement: &[[f64; 3]]) -> Result<Vec<[f64; 6]>> {
     let mut sum = vec![[0.0; 6]; mesh.labels.len()];
     let mut count = vec![0usize; mesh.labels.len()];
     let mut accumulate = |nodes: &[usize], values: &[[f64; 6]]| {

@@ -350,6 +350,7 @@ impl Model {
                 let why = match s.procedure {
                     Procedure::Frequency { .. } => "extracts frequencies",
                     Procedure::Harmonic(_) => "is harmonic",
+                    Procedure::Transient(_) | Procedure::ResponseSpectrum(_) => "needs dynamic mass",
                     Procedure::RandomVibration(_) => "is random vibration",
                     Procedure::ExplicitDynamic(_) => "is dynamic",
                     Procedure::HeatTransfer { transient: Some(_) } => "is transient heat transfer",
@@ -587,6 +588,8 @@ impl Model {
                 Procedure::Static {}
                 | Procedure::NonlinearStatic(_)
                 | Procedure::Buckle { .. }
+                | Procedure::Transient(_)
+                | Procedure::ResponseSpectrum(_)
                 | Procedure::Harmonic(_)
                 | Procedure::RandomVibration(_) => {
                     if s.loads.is_empty() && !prescribes_motion && !pretension_loads {

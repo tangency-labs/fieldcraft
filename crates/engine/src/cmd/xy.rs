@@ -136,7 +136,7 @@ pub fn plottable(r: &StepResult) -> Vec<Field> {
         Kind::Static(_) | Kind::Frequency(_) => shapes.to_vec(),
         Kind::Explicit(_) => Field::available(r).collect(),
         Kind::Heat(_) => vec![Field::Temperature],
-        Kind::Fluid(_) | Kind::Harmonic(_) => Vec::new(),
+        Kind::Fluid(_) | Kind::Harmonic(_) | Kind::Dynamics(_) => Vec::new(),
     }
 }
 
@@ -208,7 +208,7 @@ fn series<'a>(s: &'a Session, step: &str, r: &'a StepResult, axis: Axis, y: &Val
             Kind::Heat(h) => (h.frames.len(), true, Box::new(move |i| h.times.get(i).copied().unwrap_or(f64::NAN))),
             Kind::Frequency(f) => (f.modes.len(), false, Box::new(|i| i as f64 + 1.0)),
             Kind::Fluid(_) => return Err(y_error(format!("step `{step}` is a fluid step: its fields are per cell (solve.probe)"))),
-            Kind::Harmonic(_) => return Err(y_error("harmonic frequency curves are available through solve.probe")),
+            Kind::Harmonic(_) | Kind::Dynamics(_) => return Err(y_error("dynamic response curves are available through solve.probe")),
         };
         let point = move |i: usize| -> Result<(f64, f64)> {
             let pick = if frames { Pick { mode: 1, frame: Some(i) } } else { Pick { mode: i + 1, frame: None } };
@@ -419,7 +419,7 @@ fn natural(step: &str, r: &StepResult) -> Result<Axis> {
         ))),
         Kind::Explicit(_) | Kind::Heat(_) => Ok(Axis::Time),
         Kind::Frequency(_) => Ok(Axis::Mode),
-        Kind::Harmonic(_) => Err(EngineError::Params("read harmonic frequency curves with solve.probe".into())),
+        Kind::Harmonic(_) | Kind::Dynamics(_) => Err(EngineError::Params("read dynamic response curves with solve.probe".into())),
         Kind::Fluid(_) => Err(EngineError::Params(format!("step `{step}` is a fluid step: it has no series to plot yet"))),
     }
 }

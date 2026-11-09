@@ -1,0 +1,15 @@
+[
+  {"command":"model.units","params":{"system":"m-kg-s-N-Pa"}},
+  {"command":"mesh.node.add","params":{"label":1,"xyz":[0,0,0]}},
+  {"command":"mesh.node.add","params":{"label":2,"xyz":[1,0,0]}},
+  {"command":"mesh.element.add","params":{"label":1,"kind":"rod2","nodes":[1,2]}},
+  {"command":"model.set.create","params":{"name":"member","elements":[1]}},
+  {"command":"model.set.create","params":{"name":"fixed","nodes":[1]}},
+  {"command":"model.set.create","params":{"name":"tip","nodes":[2]}},
+  {"command":"model.material.create","params":{"name":"Elastic","elastic":{"type":"isotropic","young":4,"poisson":0.25},"density":3}},
+  {"command":"model.section.create","params":{"name":"Rod","set":"member","material":"Elastic","kind":{"type":"rod","area":1}}},
+  {"command":"model.boundary_condition.create","params":{"name":"clamp","type":"displacement","target":{"set":"fixed"},"values":[0,0,0,null,null,null]}},
+  {"command":"model.boundary_condition.create","params":{"name":"guide","type":"displacement","target":{"set":"tip"},"values":[null,0,0,null,null,null]}},
+  {"command":"model.load.create","params":{"name":"force","type":"force","target":{"set":"tip"},"vector":[1,0,0]}},
+  {"command":"model.step.create","params":{"name":"Pulse","procedure":{"type":"transient","time_step":0.001,"increments":1000,"output_every":100,"load_amplitudes":{"force":{"type":"tabular","points":[[0,1],[1,1]]}}},"boundary_conditions":["clamp","guide"],"loads":["force"],"output":["displacement","stress"]}}
+]

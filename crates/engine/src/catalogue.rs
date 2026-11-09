@@ -657,7 +657,12 @@ pub static CATALOGUE: &[Capability] = &[
     // ---- Solve ----
     ready("solve.run", "Solve", Solve, "Run", "Solve every step in order and show the results"),
     ready("model.check", "Check Model", Solve, "Check", "Name every missing or bad definition before writing or solving"),
-    deck("deck.write.abaqus", "Abaqus Input", "abaqus", "Write an Abaqus input file (.inp)"),
+    deck(
+        "deck.write.abaqus",
+        "Abaqus Input",
+        "abaqus",
+        "Write Abaqus input (.inp), including direct/modal transient and constant response-spectrum steps",
+    ),
     deck("deck.write.nastran", "Nastran Deck", "nastran", "Write Nastran bulk data (SOL 101, 103)"),
     deck("deck.write.lsdyna", "LS-DYNA Deck", "lsdyna", "Write an LS-DYNA keyword file"),
     ready(
@@ -672,8 +677,8 @@ pub static CATALOGUE: &[Capability] = &[
         "Static",
         Solve,
         "Implicit",
-        "Linear static (or coupled temperature–displacement) solve of a step with FieldCraft's own solver; nonlinear static, buckling, harmonic response and heat transfer in the drop-down",
-        &["solve.nonlinear", "solve.buckle", "solve.harmonic", "solve.heat"],
+        "Linear static (or coupled temperature–displacement) solve of a step with FieldCraft's own solver; nonlinear static, buckling, harmonic response, transient, response spectrum and heat transfer in the drop-down",
+        &["solve.nonlinear", "solve.buckle", "solve.harmonic", "solve.transient", "solve.spectrum", "solve.heat"],
     ),
     ready("solve.frequency", "Frequency", Solve, "Implicit", "Natural frequencies and mode shapes of a frequency step"),
     ready(
@@ -741,7 +746,7 @@ pub static CATALOGUE: &[Capability] = &[
         "Probe",
         Results,
         "Query",
-        "Displacement, rotation, reaction and stress at nodes, element section forces, a mode shape, or an explicit field frame (or click the model)",
+        "Nodal fields, element section forces, modes, and transient frames with kinetic, strain, damping, work and balance energies",
         &["solve.history"],
     ),
     ready_more("results.reactions", "Reactions", Results, "Query", "Reaction force and moment sums per set", &["results.export.csv"]),

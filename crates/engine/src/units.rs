@@ -471,6 +471,8 @@ pub const REPLIES: &[(&str, &[(&str, Dim)])] = &[
     ("solve.pretension", &[("/adjustment", Dim::Length), ("/section_force", Dim::Force), ("/applied_force", Dim::Force)]),
     ("model.pretension.lock", &[("/adjustment", Dim::Length)]),
     ("solve.static", STATIC),
+    ("solve.transient", &[("/natural_frequencies", Dim::Hertz)]),
+    ("solve.spectrum", &[("/natural_frequencies", Dim::Hertz)]),
     (
         "solve.harmonic",
         &[

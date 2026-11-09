@@ -30,6 +30,7 @@ pub enum Kind<'a> {
     Static(&'a StaticResult),
     Frequency(&'a FrequencyResult),
     Harmonic(&'a fieldcraft_solver::HarmonicResult),
+    Dynamics(&'a fieldcraft_solver::transient::Response),
     Explicit(&'a ExplicitResult),
     /// Per cell, not per node: drawn by [`crate::flow`].
     Fluid(&'a fieldcraft_lbm::FluidResult),
@@ -42,6 +43,7 @@ impl StepResult {
             StepResult::Implicit(fieldcraft_solver::StepResult::Static(r)) => Kind::Static(r),
             StepResult::Implicit(fieldcraft_solver::StepResult::Frequency(r)) => Kind::Frequency(r),
             StepResult::Implicit(fieldcraft_solver::StepResult::Harmonic(r)) => Kind::Harmonic(r),
+            StepResult::Implicit(fieldcraft_solver::StepResult::Dynamics(r)) => Kind::Dynamics(r),
             StepResult::Implicit(fieldcraft_solver::StepResult::Heat(r)) => Kind::Heat(r),
             StepResult::Explicit(r) => Kind::Explicit(r),
             StepResult::Fluid(r) => Kind::Fluid(r),
@@ -312,7 +314,7 @@ impl Field {
         let (stress, velocity, temperature, flux) = match r.kind() {
             Kind::Static(s) => (true, false, s.temperature.is_some(), false),
             Kind::Frequency(_) => (false, false, false, false),
-            Kind::Harmonic(_) => return Vec::new().into_iter(),
+            Kind::Harmonic(_) | Kind::Dynamics(_) => return Vec::new().into_iter(),
             Kind::Explicit(e) => {
                 e.frames.last().map_or((false, false, false, false), |f| (!f.stress.is_empty(), !f.velocity.is_empty(), false, false))
             }
@@ -385,7 +387,7 @@ pub fn deformation_unit(r: &StepResult, display: &DisplaySystem) -> f64 {
     match r.kind() {
         Kind::Frequency(f) if f.buckling.is_none() => mode_scale(r, display).1,
         Kind::Frequency(_) => display.unit_ref(Quantity::Length).factor(),
-        Kind::Static(_) | Kind::Explicit(_) | Kind::Fluid(_) | Kind::Heat(_) | Kind::Harmonic(_) => 1.0,
+        Kind::Static(_) | Kind::Explicit(_) | Kind::Fluid(_) | Kind::Heat(_) | Kind::Harmonic(_) | Kind::Dynamics(_) => 1.0,
     }
 }
 
@@ -473,7 +475,7 @@ impl ResultsView {
             step: r.step().to_string(),
             deformed: true_scale || matches!(r.kind(), Kind::Frequency(_)),
             scale: true_scale.then_some(1.0),
-            contour: (!matches!(r.kind(), Kind::Harmonic(_))).then_some(contour),
+            contour: (!matches!(r.kind(), Kind::Harmonic(_) | Kind::Dynamics(_))).then_some(contour),
             bands: DEFAULT_BANDS,
             range_min: None,
             range_max: None,
@@ -506,7 +508,7 @@ pub fn true_scale(r: &StepResult) -> bool {
     match r.kind() {
         Kind::Explicit(_) => true,
         Kind::Static(s) => s.nonlinear.is_some(),
-        Kind::Frequency(_) | Kind::Fluid(_) | Kind::Heat(_) | Kind::Harmonic(_) => false,
+        Kind::Frequency(_) | Kind::Fluid(_) | Kind::Heat(_) | Kind::Harmonic(_) | Kind::Dynamics(_) => false,
     }
 }
 
@@ -546,6 +548,7 @@ pub fn displacements(r: &StepResult, pick: Pick) -> Result<&[[f64; 3]]> {
         }
         Kind::Fluid(f) => Err(EngineError::Params(format!("step `{}` is a fluid step: its fields are per cell (solve.probe)", f.step))),
         Kind::Heat(h) => Err(EngineError::Params(format!("step `{}` is heat transfer and has no displacements", h.step))),
+        Kind::Dynamics(_) => Err(EngineError::Params("read dynamics frames with solve.probe".into())),
         Kind::Harmonic(h) => Err(EngineError::Params(format!("step `{}` has complex phasors; read its curves with solve.probe", h.step))),
     }
 }
@@ -583,7 +586,7 @@ pub fn field_values(model: &Model, r: &StepResult, field: Field, pick: Pick) -> 
     let stresses = || -> Result<std::borrow::Cow<'_, [[f64; 6]]>> {
         match r.kind() {
             Kind::Static(s) => Ok(std::borrow::Cow::Borrowed(frame_fields.map_or(s.stress.as_slice(), |f| f.stress.as_slice()))),
-            Kind::Frequency(_) | Kind::Fluid(_) | Kind::Heat(_) | Kind::Harmonic(_) => Err(unavailable()),
+            Kind::Frequency(_) | Kind::Fluid(_) | Kind::Heat(_) | Kind::Harmonic(_) | Kind::Dynamics(_) => Err(unavailable()),
             Kind::Explicit(e) => {
                 let f = frame(e, pick)?;
                 if f.stress.is_empty() {
@@ -605,7 +608,7 @@ pub fn field_values(model: &Model, r: &StepResult, field: Field, pick: Pick) -> 
                 let f = frame(e, pick)?;
                 if f.velocity.is_empty() { Err(unavailable()) } else { Ok(f.velocity.iter().map(|v| magnitude(*v)).collect()) }
             }
-            Kind::Static(_) | Kind::Frequency(_) | Kind::Fluid(_) | Kind::Heat(_) | Kind::Harmonic(_) => Err(unavailable()),
+            Kind::Static(_) | Kind::Frequency(_) | Kind::Fluid(_) | Kind::Heat(_) | Kind::Harmonic(_) | Kind::Dynamics(_) => Err(unavailable()),
         },
         // Per cell (crate::flow::cell_values), not per node.
         Field::Pressure | Field::WallHeatFlux => Err(unavailable()),
@@ -752,6 +755,10 @@ impl Session {
         }
         let time = |t: f64| shown(Quantity::Time, t, display);
         match r.kind() {
+            Kind::Dynamics(d) => {
+                out["times"] = d.frames.iter().filter_map(|f| f.time).map(time).collect();
+                out["spectrum"] = json!(d.spectrum);
+            }
             Kind::Harmonic(h) => {
                 out["frequencies"] = h.frames.iter().map(|f| json!(shown(Quantity::Frequency, f.frequency, display))).collect();
             }

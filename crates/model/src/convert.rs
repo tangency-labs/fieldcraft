@@ -400,6 +400,52 @@ impl Quantities for Step {
         }
         match procedure {
             Procedure::Static {} | Procedure::CoupledTemperatureDisplacement {} => {}
+            Procedure::Transient(t) => {
+                f(Q::Time, &mut t.time_step);
+                if let Some(a) = &mut t.adaptive {
+                    f(Q::Time, &mut a.min_step);
+                    f(Q::Time, &mut a.max_step);
+                    f(Q::Length, &mut a.absolute_tolerance);
+                }
+                t.damping.quantities(f);
+                for a in t.load_amplitudes.values_mut() {
+                    amplitude_quantities(a, f);
+                }
+                for v in t.initial_displacement.values_mut() {
+                    each(v, Q::Length, f);
+                }
+                for v in t.initial_velocity.values_mut() {
+                    each(v, Q::Velocity, f);
+                }
+                if let Some(b) = &mut t.base_acceleration {
+                    f(Q::Acceleration, &mut b.magnitude);
+                    amplitude_quantities(&mut b.amplitude, f);
+                }
+                if let Some(b) = &mut t.base_displacement {
+                    f(Q::Length, &mut b.magnitude);
+                    f(Q::Velocity, &mut b.initial_velocity);
+                    f(Q::Acceleration, &mut b.initial_acceleration);
+                    amplitude_quantities(&mut b.amplitude, f);
+                }
+            }
+            Procedure::ResponseSpectrum(s) => {
+                for p in &mut s.pseudo_acceleration {
+                    f(Q::Frequency, &mut p[0]);
+                    f(Q::Acceleration, &mut p[1]);
+                }
+                for t in &mut s.tables {
+                    for p in &mut t.points {
+                        f(Q::Frequency, &mut p[0]);
+                        f(Q::Acceleration, &mut p[1]);
+                    }
+                }
+                for t in &mut s.period_tables {
+                    for p in &mut t.points {
+                        f(Q::Time, &mut p[0]);
+                        f(Q::Acceleration, &mut p[1]);
+                    }
+                }
+            }
             Procedure::Harmonic(h) => {
                 match &mut h.frequencies {
                     crate::harmonic::Frequencies::List(values) => each(values, Q::Frequency, f),
@@ -756,6 +802,21 @@ impl Model {
         keep_map(&self.mesh_plans, &c.mesh_plans, &b.mesh_plans, &mut out.mesh_plans);
         keep_list(&self.stitches, &c.stitches, &b.stitches, &mut out.stitches);
         Ok(out)
+    }
+}
+
+fn amplitude_quantities(a: &mut crate::amplitude::Amplitude, f: &mut dyn FnMut(Q, &mut f64)) {
+    use crate::amplitude::Amplitude;
+    match a {
+        Amplitude::Tabular { points } | Amplitude::SmoothStep { points } => {
+            for p in points {
+                f(Q::Time, &mut p[0]);
+            }
+        }
+        Amplitude::Periodic { angular_frequency, origin, .. } => {
+            f(Q::AngularVelocity, angular_frequency);
+            f(Q::Time, origin);
+        }
     }
 }
 
