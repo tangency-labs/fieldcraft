@@ -1,8 +1,10 @@
 # Natural frequencies
 
+Affine swept `hex8` continuum shells use the opt-in `solid_shell` formulation.
+See [geometry, physical ply layers, supported analyses and named refusals](../../solvers/solid-shell.md).
+
 Six-node `tri6` shells use [MITC6-a](../../solvers/mitc6.md), with shared curved
-directors and layered constitutive/mass integration. Its documented plate-only
-buckling and coarse-mesh accuracy limits apply.
+directors and layered constitutive/mass integration. Its documented analysis restrictions and coarse-mesh accuracy limits apply.
 
 Curved `quad8` MITC8 supports consistent and positive-diagonal lumped mass for
 frequency and harmonic analysis, including ply densities and rotary inertia.
@@ -270,6 +272,11 @@ amplitude has no physical size; the pictures use deformation scales of 0.4 and 0
 - S. P. Timoshenko, J. N. Goodier. *Theory of Elasticity*, 3rd ed. McGraw-Hill, 1970.
 - NAFEMS. *The Standard NAFEMS Benchmarks*, TNSB Rev. 3, October 1990.
 
+## Axisymmetric ring shells
+
+The two-ring axisymmetric formulation and its analysis/export restrictions are
+documented in [Axisymmetric meridional shell](../../solvers/axisymmetric-shell.md).
+Use the explicit `axisymmetric_shell` section flag; `beam2` alone remains a beam.
 ### Explicit section policies for a lumped solve
 
 The command contract remains `mass=consistent|lumped`, default `consistent`. A

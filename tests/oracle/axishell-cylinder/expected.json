@@ -1,0 +1,20 @@
+{
+  "title": "Axisymmetric cylindrical shell breathing under ring forces",
+  "kind": "theory",
+  "source": "Membrane equilibrium N_hoop=pR and linear elastic u_r=pR^2/(Et), nu=0; conical-shell kinematics Moita et al. Appl Sci 13 (2023) 5325 eq.5. Own ring mesh.",
+  "quantities": [
+    {
+      "id": "ur",
+      "quantity": "radial displacement at ring 5",
+      "value": 0.0001,
+      "tolerance": {
+        "relative": 1e-07
+      },
+      "measure": {
+        "from": "probe",
+        "pointer": "/nodes/0/displacement/0"
+      },
+      "reason": "Exact membrane breathing, constant radius and nu=0; roundoff gate."
+    }
+  ]
+}

@@ -84,6 +84,9 @@ pub fn write(model: &Model, units: Preset) -> Result<String> {
 
 /// [`write`] for a model already expressed in `units` ([`crate::express`]) and resolved.
 pub fn write_resolved(model: &Model, r: &Resolved, units: Preset) -> Result<String> {
+    if model.sections().values().any(|s| s.formulation.axisymmetric_shell) {
+        return Err(Error::Unsupported { format: FORMAT, what: "axisymmetric conical ring shell: no faithful SAX1-equivalent mapping".into() });
+    }
     crate::refuse_fluid(FORMAT, model)?;
     crate::refuse_mass_policy(FORMAT, model)?;
     crate::refuse_prestress(FORMAT, model)?;
@@ -141,6 +144,12 @@ pub fn element_card(kind: ElementKind) -> &'static str {
 /// - One-point reduced integration of linear solids (with hourglass control) and the hybrid
 ///   (displacement–pressure) formulation have no linear Nastran counterpart.
 pub fn solid_rule(kind: ElementKind, f: Formulation) -> std::result::Result<(Option<&'static str>, Option<&'static str>), String> {
+    if f.axisymmetric_shell {
+        return Err("axisymmetric conical shell / faithful SAX1 mapping is not supported by this writer".into());
+    }
+    if f.solid_shell {
+        return Err("ANS/EAS10 solid-shell has no faithful native deck mapping".into());
+    }
     if f.hybrid {
         return Err("the hybrid (displacement–pressure) formulation".into());
     }

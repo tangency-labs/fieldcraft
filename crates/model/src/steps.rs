@@ -73,6 +73,10 @@ pub enum Procedure {
         modes: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         shift: Option<f64>,
+        /// Include conservative pressure load stiffness on quadratic shell faces.
+        /// Only an assembled symmetric free-DOF operator is accepted.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        follower_pressure: bool,
     },
     /// Transient dynamics by explicit time integration up to `end_time`.
     ExplicitDynamic(ExplicitDynamic),
@@ -1189,7 +1193,7 @@ impl Procedure {
         if let Procedure::HeatTransfer { transient: Some(t) } = self {
             return t.validate();
         }
-        if let Procedure::Buckle { modes, shift } = *self {
+        if let Procedure::Buckle { modes, shift, .. } = *self {
             if !(1..=MAX_MODES).contains(&modes) {
                 return Err(Error::Invalid(format!("a buckling step extracts 1 to {MAX_MODES} modes, got {modes}")));
             }
@@ -1266,6 +1270,10 @@ pub struct Step {
     /// Equilibrium step whose terminal state defines this linear perturbation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_state: Option<String>,
+    /// Retain an earlier linear equilibrium dependency without initial-stress stiffness.
+    /// False preserves the native stress-stiffened base-state contract.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub linear_base: bool,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub pretension: BTreeMap<String, crate::PretensionControl>,
     pub output: BTreeSet<OutputVariable>,
@@ -1283,6 +1291,7 @@ impl Step {
         Step {
             name: name.into(),
             base_state: None,
+            linear_base: false,
             pretension: BTreeMap::new(),
             output: procedure.default_output(),
             procedure,
@@ -1437,7 +1446,12 @@ impl Model {
     }
 
     fn base_before(&self, step: &Step, at: usize) -> Result<Option<&Step>> {
-        let Some(name) = &step.base_state else { return Ok(None) };
+        let Some(name) = &step.base_state else {
+            if step.linear_base {
+                return Err(Error::Invalid("linear_base requires base_state".into()));
+            }
+            return Ok(None);
+        };
         if !matches!(step.procedure, Procedure::Frequency { .. } | Procedure::Harmonic(_)) {
             return Err(Error::Invalid(format!("step `{}`: base_state requires a frequency or harmonic step", step.name)));
         }
@@ -1448,6 +1462,9 @@ impl Model {
                 "step `{}`: base_state `{name}` must be an earlier static or nonlinear static equilibrium step",
                 step.name
             )));
+        }
+        if step.linear_base && (!matches!(base.procedure, Procedure::Static {}) || !base.pretension.is_empty()) {
+            return Err(Error::Invalid("linear_base requires an ordinary linear static equilibrium without pretension".into()));
         }
         Ok(Some(base))
     }

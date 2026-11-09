@@ -15,7 +15,7 @@ const B: f64 = 1.0;
 const L: f64 = 20.0;
 
 fn buckle(modes: u32, shift: Option<f64>) -> Procedure {
-    Procedure::Buckle { modes, shift }
+    Procedure::Buckle { modes, shift, follower_pressure: false }
 }
 
 /// Engesser's critical load of a square column of side B and effective length `le`, ν = 0.
@@ -88,8 +88,8 @@ fn buckling_steps_refuse_what_they_cannot_do() {
     let e = solve_buckle(&g.model, Some("Step"), &Limits::default()).unwrap_err();
     assert!(e.to_string().contains("singular"), "{e}");
     // A shift that is not finite, and a step of another kind.
-    assert!(Procedure::Buckle { modes: 0, shift: None }.validate().is_err());
-    assert!(Procedure::Buckle { modes: 1, shift: Some(f64::NAN) }.validate().is_err());
+    assert!(Procedure::Buckle { modes: 0, shift: None, follower_pressure: false }.validate().is_err());
+    assert!(Procedure::Buckle { modes: 1, shift: Some(f64::NAN), follower_pressure: false }.validate().is_err());
 }
 
 /// A clamped–free column given its first buckling mode as an imperfection δ₀ at the top, under a

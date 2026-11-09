@@ -1,0 +1,20 @@
+{
+  "title": "Axisymmetric buckling of a simply supported annular plate",
+  "kind": "theory",
+  "source": "Thin-plate equation D Laplacian^2 w + P Laplacian w=0; axisymmetric general solution A+B ln r+C J0(kr)+D Y0(kr), k^2=P/D. Boundary w=0 and w\"+nu*w'/r=0 at r=1,2, nu=.3. Independent Bessel determinant first root k=3.2004631741291867; von Karman initial-stress energy integral 2*pi*r*Ns*(dw/dr)^2/2. Timoshenko & Gere, Theory of Elastic Stability (1961), plate stability.",
+  "quantities": [
+    {
+      "id": "lambda",
+      "quantity": "uniform meridional and hoop compressive resultant N/m",
+      "measure": {
+        "from": "buckle",
+        "pointer": "/modes/0/load_factor"
+      },
+      "value": 93.80004147396585,
+      "tolerance": {
+        "relative": 0.01
+      },
+      "reason": "Fixed 1% thin-plate/discretization band before execution; 32 linear ring elements, h/width=.01. Only n=0 axisymmetric mode, not all circumferential modes."
+    }
+  ]
+}

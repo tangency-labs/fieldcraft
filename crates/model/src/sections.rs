@@ -284,9 +284,19 @@ impl LumpedMass {
 }
 
 /// How the section's elements are formulated, independent of any solver's element names.
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Formulation {
+    /// Linear ANS/EAS solid-shell on an orthogonal affine swept hex8.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub solid_shell: bool,
+    /// Two-node conical axisymmetric shell, not an axisymmetric continuum.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub axisymmetric_shell: bool,
     /// Volume-averaged dilatation for linear isotropic Hex8; default remains standard.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub b_bar: bool,
@@ -310,16 +320,49 @@ impl Formulation {
     /// Check the options against each other and against the section kind (the element kinds are
     /// checked when the model is resolved).
     pub fn validate_for(&self, kind: &SectionKind) -> Result<()> {
+        if self.axisymmetric_shell
+            && (!matches!(kind, SectionKind::Shell { .. } | SectionKind::CompositeShell { .. })
+                || self.solid_shell
+                || self.b_bar
+                || self.enhanced_strain13
+                || self.hybrid
+                || self.incompatible_modes
+                || self.integration != Integration::Full)
+        {
+            return Err(Error::Invalid("axisymmetric_shell requires shell/composite_shell and no other formulation options".into()));
+        }
+        if self.solid_shell
+            && (!matches!(kind, SectionKind::Solid {})
+                || self.b_bar
+                || self.enhanced_strain13
+                || self.axisymmetric_shell
+                || self.incompatible_modes
+                || self.hybrid
+                || self.integration != Integration::Full)
+        {
+            return Err(Error::Invalid(
+                "solid_shell requires a full solid section without B-bar, enhanced_strain13, axisymmetric_shell, incompatible_modes or hybrid".into(),
+            ));
+        }
         if self.enhanced_strain13
             && (!matches!(kind, SectionKind::Solid {})
                 || self.b_bar
+                || self.solid_shell
+                || self.axisymmetric_shell
                 || self.hybrid
                 || self.incompatible_modes
                 || self.integration != Integration::Full)
         {
             return Err(Error::Invalid("enhanced_strain13 requires a full solid section without B-bar, hybrid or nine incompatible modes".into()));
         }
-        if self.b_bar && (!matches!(kind, SectionKind::Solid {}) || self.hybrid || self.incompatible_modes || self.integration != Integration::Full) {
+        if self.b_bar
+            && (!matches!(kind, SectionKind::Solid {})
+                || self.solid_shell
+                || self.axisymmetric_shell
+                || self.hybrid
+                || self.incompatible_modes
+                || self.integration != Integration::Full)
+        {
             return Err(Error::Invalid("B-bar requires a full, non-hybrid, non-incompatible solid section".into()));
         }
         if self.lumped_mass != LumpedMass::Hrz && !kind.is_continuum() {
@@ -430,6 +473,41 @@ impl Model {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn solid_enhancements_and_ring_shell_options_do_not_mask_each_other() {
+        let solid = SectionKind::Solid {};
+        let shell = SectionKind::Shell { thickness: 0.02, offset: 0.0, points: 5 };
+        let choices = [
+            Formulation { solid_shell: true, ..Default::default() },
+            Formulation { b_bar: true, ..Default::default() },
+            Formulation { enhanced_strain13: true, ..Default::default() },
+            Formulation { axisymmetric_shell: true, ..Default::default() },
+        ];
+        for (i, a) in choices.iter().enumerate() {
+            a.validate_for(if a.axisymmetric_shell { &shell } else { &solid }).unwrap();
+            let encoded = serde_json::to_string(a).unwrap();
+            assert_eq!(*a, serde_json::from_str::<Formulation>(&encoded).unwrap());
+            for b in &choices[i + 1..] {
+                let combined = Formulation {
+                    solid_shell: a.solid_shell || b.solid_shell,
+                    b_bar: a.b_bar || b.b_bar,
+                    enhanced_strain13: a.enhanced_strain13 || b.enhanced_strain13,
+                    axisymmetric_shell: a.axisymmetric_shell || b.axisymmetric_shell,
+                    ..Default::default()
+                };
+                assert!(combined.validate_for(&solid).is_err());
+                assert!(combined.validate_for(&shell).is_err());
+            }
+        }
+        for lumped_mass in [LumpedMass::Hrz, LumpedMass::RowSum, LumpedMass::Consistent] {
+            for f in &choices[..3] {
+                Formulation { lumped_mass, ..*f }.validate_for(&solid).unwrap();
+            }
+            let ring = Formulation { lumped_mass, ..choices[3] };
+            assert_eq!(ring.validate_for(&shell).is_ok(), lumped_mass == LumpedMass::Hrz);
+        }
+    }
 
     #[test]
     fn profiles_and_formulations_validate() {

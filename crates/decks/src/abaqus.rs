@@ -290,6 +290,14 @@ fn validate_pretension_chain(model: &Model) -> Result<()> {
 
 /// The Abaqus element type of an element of `kind` in `section`, or why there is none.
 pub fn element_type(kind: ElementKind, section: &Section) -> std::result::Result<String, String> {
+    if section.formulation.axisymmetric_shell {
+        return Err("axisymmetric conical shell / faithful SAX1 mapping is not supported by this writer".into());
+    }
+    if section.formulation.solid_shell {
+        return Err(
+            "SC8R is a reduced-integration continuum shell, not the full-integration ANS/EAS10 solid-shell; faithful export unavailable".into()
+        );
+    }
     use ElementKind as K;
     use SectionKind as S;
     let f = section.formulation;
@@ -1685,7 +1693,8 @@ impl Deck {
                         }
                         self.comment("iterations and convergence: Abaqus's own controls (its residual norms differ from FieldCraft's)");
                     } else {
-                        let feeds_perturbation = steps.iter().skip(index + 1).any(|later| later.base_state.as_deref() == Some(step.name.as_str()));
+                        let feeds_perturbation =
+                            steps.iter().skip(index + 1).any(|later| later.base_state.as_deref() == Some(step.name.as_str()) && !later.linear_base);
                         let nlgeom = if feeds_perturbation { "YES" } else { "NO" };
                         self.line(&format!("*STEP, NAME={}, NLGEOM={nlgeom}", step.name));
                         self.line("*STATIC");
@@ -1714,7 +1723,13 @@ impl Deck {
                     base_bcs.clone_from(&step.boundary_conditions);
                     base_loads.clone_from(&step.loads);
                 }
-                Procedure::Buckle { modes, shift } => {
+                Procedure::Buckle { modes, shift, follower_pressure } => {
+                    if follower_pressure {
+                        return Err(Error::Unsupported {
+                            format: FORMAT,
+                            what: "quadratic-shell follower-pressure buckling export: formulation correspondence not established".into(),
+                        });
+                    }
                     // Abaqus's buckling base state is the end of the previous general step;
                     // FieldCraft's steps all start from the undeformed, unloaded model.
                     if !base_loads.is_empty()

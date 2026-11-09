@@ -625,7 +625,7 @@ fn mitc8_solves_pure_bending_and_refuses_unimplemented_procedures() {
     assert!(solve_static(&b.model, None, &Limits::default()).unwrap_err().to_string().contains("S8R"));
     let b = quadratic_shell_model(Procedure::Frequency { modes: 1, min_hz: None, max_hz: None });
     assert!(solve_frequency(&b.model, None, &FrequencyOptions::default(), &Limits::default()).unwrap().modes[0].frequency > 0.0);
-    let b = quadratic_shell_model(Procedure::Buckle { modes: 1, shift: None });
+    let b = quadratic_shell_model(Procedure::Buckle { modes: 1, shift: None, follower_pressure: false });
     assert!(fieldcraft_solver::solve_buckle(&b.model, None, &Limits::default()).unwrap_err().to_string().contains("non-flat shell preload"));
 }
 

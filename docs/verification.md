@@ -342,3 +342,10 @@ MITC8 dynamics: `mitc8-navier-frequency` checks the first three laminate flexura
 MITC6-a quadratic triangular shell checks and explicit coarse-mesh limits are listed
 in [the formulation note](solvers/mitc6.md); the original MITC8 coarse thick-plate
 and LE7 limitations remain unchanged.
+
+Affine continuum-shell verification and scope: [ANS/EAS10 solid-shell](solvers/solid-shell.md). The high-aspect stiffness-conditioning failure is retained as an explicit domain refusal, not a tolerance change. Matrix export regression reconstructs a frozen shell harmonic point with both mass choices and mass-normalized production modes.
+
+Axisymmetric ring-shell scope and analytical checks are in
+[the formulation note](solvers/axisymmetric-shell.md). Twisted-strip and
+point-loaded hemispherical MITC8 cases use public reference displacements;
+these do not validate external-pressure shell buckling or remove the LE7 boundary.

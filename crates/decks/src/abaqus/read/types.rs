@@ -75,6 +75,8 @@ impl Type {
             kind,
             family,
             formulation: Formulation {
+                solid_shell: false,
+                axisymmetric_shell: false,
                 integration: if reduced { Integration::Reduced } else { Integration::Full },
                 incompatible_modes: incompatible && normalized != "C3D8I",
                 enhanced_strain13: normalized == "C3D8I",

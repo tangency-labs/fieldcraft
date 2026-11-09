@@ -939,11 +939,11 @@ fn nonlinear_plastic_steps_and_what_is_refused() {
 fn buckling_steps() {
     let mut m = cantilever_mesh();
     m.add_load("end", Load::Force { target: Target::Set("tip".into()), vector: [-100.0, 0.0, 0.0], distribution: Distribution::Total }).unwrap();
-    m.add_step(step("Buckle", Procedure::Buckle { modes: 4, shift: None }, &["clamp"], &["end"]), None).unwrap();
+    m.add_step(step("Buckle", Procedure::Buckle { modes: 4, shift: None, follower_pressure: false }, &["clamp"], &["end"]), None).unwrap();
     let deck = abaqus::write(&m).unwrap();
     assert!(deck.contains("*BUCKLE, EIGENSOLVER=LANCZOS\n4\n") && deck.contains("*CLOAD"), "{deck}");
     let mut shifted = m.clone();
-    shifted.replace_step(step("Buckle", Procedure::Buckle { modes: 4, shift: Some(2.0) }, &["clamp"], &["end"])).unwrap();
+    shifted.replace_step(step("Buckle", Procedure::Buckle { modes: 4, shift: Some(2.0), follower_pressure: false }, &["clamp"], &["end"])).unwrap();
     assert!(abaqus::write(&shifted).unwrap_err().to_string().contains("shift"));
     m.add_step(step("Bend", Procedure::Static {}, &["clamp"], &["end"]), Some("Buckle")).unwrap();
     assert!(abaqus::write(&m).unwrap_err().to_string().contains("after a general step"));

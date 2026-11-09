@@ -167,6 +167,11 @@ pub(crate) fn factor_entries(a: &UpperColumns) -> usize {
     symbolic(a).1.iter().sum()
 }
 
+#[cfg(test)]
+pub(crate) fn factor_column_counts(a: &UpperColumns) -> Vec<usize> {
+    symbolic(a).1
+}
+
 /// The elimination tree and the entry count of each column of L, without computing values.
 fn symbolic(a: &UpperColumns) -> (Vec<usize>, Vec<usize>) {
     let parent = etree(a);
@@ -1234,6 +1239,11 @@ impl Symbolic {
             matrix_bytes,
             workspace_bytes: parallel_work.max(top_work).max(symbolic_work),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn profile_top(&self) -> &[usize] {
+        &self.top
     }
 
     /// Supernodes.

@@ -391,7 +391,7 @@ impl Quantities for FluidDomain {
 
 impl Quantities for Step {
     fn quantities(&mut self, f: &mut dyn FnMut(Q, &mut f64)) {
-        let Step { name: _, base_state: _, pretension, procedure, output: _, boundary_conditions: _, loads: _ } = self;
+        let Step { name: _, base_state: _, linear_base: _, pretension, procedure, output: _, boundary_conditions: _, loads: _ } = self;
         for control in pretension.values_mut() {
             match control {
                 crate::PretensionControl::Force { value } => f(Q::Force, value),
@@ -491,7 +491,7 @@ impl Quantities for Step {
                 }
             }
             // The shift is a load factor.
-            Procedure::Buckle { modes: _, shift: _ } | Procedure::MatrixGeneration { .. } => {}
+            Procedure::Buckle { .. } | Procedure::MatrixGeneration { .. } => {}
             Procedure::ExplicitDynamic(e) => {
                 let ExplicitDynamic {
                     end_time,
