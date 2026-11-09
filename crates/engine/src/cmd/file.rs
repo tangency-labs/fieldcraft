@@ -1402,24 +1402,27 @@ mod tests {
     /// would misread them fails here, and is a new results encoding (a new magic, new fixtures).
     #[test]
     fn results_of_this_encoding_read_back() {
-        let d = results_fixtures();
-        for (name, steps) in [("cantilever", &["Bend", "Modes"][..]), ("couette", &["Shear"]), ("impact", &["Impact"]), ("blocks", &["Squeeze"])] {
-            let bytes = std::fs::read(d.join(format!("{name}.fieldcraft"))).unwrap();
-            let file = fieldcraft_io::read(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
-            assert!(file.results_note.is_none(), "{name}: {:?}", file.results_note);
-            let read: Vec<&str> = file.results.iter().map(|r| r.result.step()).collect();
-            assert_eq!(read, steps, "{name}");
-            for stored in &file.results {
-                if let fieldcraft_io::results::Solved::Implicit(fieldcraft_solver::StepResult::Static(r)) = &stored.result
-                    && let Some(h) = &r.nonlinear
-                {
-                    let fields = h.frames.iter().all(|f| f.has_stress() && f.contacts.len() == r.contacts.len());
-                    assert!(fields && !r.contacts.is_empty(), "{name}: every frame keeps its stress and contact state");
+        for magic in [fieldcraft_io::results::LEGACY_MAGIC, fieldcraft_io::results::MAGIC] {
+            let d = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/results").join(String::from_utf8_lossy(magic).as_ref());
+            for (name, steps) in [("cantilever", &["Bend", "Modes"][..]), ("couette", &["Shear"]), ("impact", &["Impact"]), ("blocks", &["Squeeze"])]
+            {
+                let bytes = std::fs::read(d.join(format!("{name}.fieldcraft"))).unwrap();
+                let file = fieldcraft_io::read(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
+                assert!(file.results_note.is_none(), "{name}: {:?}", file.results_note);
+                let read: Vec<&str> = file.results.iter().map(|r| r.result.step()).collect();
+                assert_eq!(read, steps, "{name}");
+                for stored in &file.results {
+                    if let fieldcraft_io::results::Solved::Implicit(fieldcraft_solver::StepResult::Static(r)) = &stored.result
+                        && let Some(h) = &r.nonlinear
+                    {
+                        let fields = h.frames.iter().all(|f| f.has_stress() && f.contacts.len() == r.contacts.len());
+                        assert!(fields && !r.contacts.is_empty(), "{name}: every frame keeps its stress and contact state");
+                    }
                 }
+                let mut s = Session::default();
+                s.execute("file.open", &json!({"path": d.join(format!("{name}.fieldcraft"))})).unwrap();
+                assert_eq!(s.result_steps().count(), steps.len(), "{name}");
             }
-            let mut s = Session::default();
-            s.execute("file.open", &json!({"path": d.join(format!("{name}.fieldcraft"))})).unwrap();
-            assert_eq!(s.result_steps().count(), steps.len(), "{name}");
         }
     }
 

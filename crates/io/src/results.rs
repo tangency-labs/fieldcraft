@@ -5,11 +5,11 @@
 //! Little-endian:
 //!
 //! ```text
-//! "MCRSLT05"                     magic, 8 bytes (the results encoding's version is 05)
+//! "MCRSLT06"                     magic, 8 bytes (the results encoding's version is 06)
 //! u32 steps
 //! steps × { u64 length, step name (UTF-8),
 //!           32 bytes: SHA-256 of the definition it was solved from ([`definition_hash`]),
-//!           u8 kind (0 static, 1 frequency, 2 heat transfer, 3 explicit dynamic, 4 fluid, 5 harmonic, 6 legacy linear dynamics, 7 legacy dynamics with energy ledger, 10 dynamics with selected mass),
+//!           u8 kind (0 static, 1 frequency, 2 heat transfer, 3 explicit dynamic, 4 fluid, 5 harmonic, 6 linear dynamics with selected mass and optional energy; 7-10 reserved for fatigue/harmonic extensions),
 //!           u64 length, the result in the [`crate::codec`] encoding }   names ascending
 //! ```
 //!
@@ -23,9 +23,10 @@
 //! forces, heat and zone histories, statistics and steady-state monitors.
 //!
 //! The payload follows the field and variant order of the solvers' result types, so the
-//! encoding's version changes with any change to them ([`MAGIC`]). A file whose results are of
-//! another version opens without them ([`Decoded::OtherVersion`]): results are what solving
-//! gives again, unlike the definition.
+//! encoding's version changes with any change to them ([`MAGIC`]). An unknown results version
+//! opens without them ([`Decoded::OtherVersion`]): results are what solving
+//! gives again, unlike the definition. Version 05 kinds above 5 are instead refused because
+//! their numbers overlapped between independent producers; see [`LEGACY_MAGIC`].
 //!
 //! Reading treats the part as hostile, as `mesh.bin`: the number of steps is capped, every length
 //! is checked against the bytes present before anything is read for it, nothing may be left
@@ -39,8 +40,10 @@ use sha2::{Digest, Sha256};
 
 use crate::{Error, Geometry, MAX_FILE_BYTES, Result, codec, invalid};
 
-/// The magic bytes the part starts with (the `05` is the results encoding's version).
-pub const MAGIC: &[u8; 8] = b"MCRSLT05";
+/// Unified results layout; see docs/results-kind-layout.md. Kind 6 is linear dynamics.
+pub const MAGIC: &[u8; 8] = b"MCRSLT06";
+/// Only kinds 0-5 of version 05 have unambiguous producer-independent layouts.
+pub const LEGACY_MAGIC: &[u8; 8] = b"MCRSLT05";
 
 /// The part's name.
 pub const PART: &str = "results.bin";
@@ -101,7 +104,7 @@ impl<'a> SolvedRef<'a> {
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Frequency(_)) => 1,
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Heat(_)) => 2,
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Harmonic(_)) => 5,
-            SolvedRef::Implicit(fieldcraft_solver::StepResult::Dynamics(_)) => 10,
+            SolvedRef::Implicit(fieldcraft_solver::StepResult::Dynamics(_)) => 6,
             SolvedRef::Explicit(_) => 3,
             SolvedRef::Fluid(_) => 4,
         }
@@ -239,7 +242,7 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded> {
     }
     let mut r = Reader { bytes };
     let magic: [u8; 8] = r.array("the magic")?;
-    if &magic != MAGIC {
+    if &magic != MAGIC && &magic != LEGACY_MAGIC {
         if magic.starts_with(b"MCRSLT") {
             return Ok(Decoded::OtherVersion(magic.iter().map(|b| if b.is_ascii_graphic() { *b as char } else { '?' }).collect()));
         }
@@ -264,6 +267,11 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded> {
         let len = u64::from_le_bytes(r.array("a result's length")?);
         let payload = r.take(len, "a result")?;
         let damaged = |e: codec::CodecError| Error::Invalid(format!("{PART}: the result of step `{name}` is damaged: {e}"));
+        if &magic == LEGACY_MAGIC && kind > 5 {
+            return invalid(format!(
+                "{PART}: version 05 kind {kind} has conflicting producer layouts; preserve the original and recover with its verified source/binary identity, then regenerate with version 06"
+            ));
+        }
         let result = match kind {
             0 => Solved::Implicit(fieldcraft_solver::StepResult::Static(codec::decode(payload).map_err(damaged)?)),
             1 => Solved::Implicit(fieldcraft_solver::StepResult::Frequency(codec::decode(payload).map_err(damaged)?)),
@@ -271,33 +279,12 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded> {
             3 => Solved::Explicit(codec::decode(payload).map_err(damaged)?),
             4 => Solved::Fluid(codec::decode(payload).map_err(damaged)?),
             5 => Solved::Implicit(fieldcraft_solver::StepResult::Harmonic(codec::decode(payload).map_err(damaged)?)),
-            6 => {
-                let old: LegacyDynamics = codec::decode(payload).map_err(damaged)?;
-                Solved::Implicit(fieldcraft_solver::StepResult::Dynamics(fieldcraft_solver::transient::Response {
-                    step: old.step,
-                    nodes: old.nodes,
-                    frames: old.frames,
-                    spectrum: old.spectrum,
-                    natural_frequencies: old.natural_frequencies,
-                    warnings: old.warnings,
-                    energy: None,
-                    mass: fieldcraft_solver::MassKind::Consistent,
-                }))
+            6 => Solved::Implicit(fieldcraft_solver::StepResult::Dynamics(codec::decode(payload).map_err(damaged)?)),
+            7..=10 => {
+                return invalid(format!(
+                    "{PART}: kind {kind} is reserved for fatigue/harmonic extensions; this unmerged linear-dynamics build cannot decode it"
+                ));
             }
-            7 => {
-                let old: LegacyEnergyDynamics = codec::decode(payload).map_err(damaged)?;
-                Solved::Implicit(fieldcraft_solver::StepResult::Dynamics(fieldcraft_solver::transient::Response {
-                    mass: fieldcraft_solver::MassKind::Consistent,
-                    step: old.step,
-                    nodes: old.nodes,
-                    frames: old.frames,
-                    spectrum: old.spectrum,
-                    natural_frequencies: old.natural_frequencies,
-                    warnings: old.warnings,
-                    energy: old.energy,
-                }))
-            }
-            10 => Solved::Implicit(fieldcraft_solver::StepResult::Dynamics(codec::decode(payload).map_err(damaged)?)),
             k => return invalid(format!("{PART}: step `{name}` has a result of unknown kind {k}")),
         };
         if result.step() != name {
@@ -525,27 +512,4 @@ fn check_fluid(f: &FluidResult) -> std::result::Result<(), String> {
         return Err("a conducting solid has a cell outside the grid".into());
     }
     Ok(())
-}
-
-// The v6 field order is frozen: the binary codec is not self-describing.
-#[derive(serde::Deserialize)]
-struct LegacyDynamics {
-    step: String,
-    nodes: Vec<u32>,
-    frames: Vec<fieldcraft_solver::transient::Frame>,
-    spectrum: bool,
-    natural_frequencies: Vec<f64>,
-    warnings: Vec<String>,
-}
-
-// Lane16 kind7 field order is frozen. Kinds8/9 are reserved by the harmonic mass extension.
-#[derive(serde::Deserialize)]
-struct LegacyEnergyDynamics {
-    step: String,
-    nodes: Vec<u32>,
-    frames: Vec<fieldcraft_solver::transient::Frame>,
-    spectrum: bool,
-    natural_frequencies: Vec<f64>,
-    warnings: Vec<String>,
-    energy: Option<Vec<fieldcraft_solver::transient::Energy>>,
 }

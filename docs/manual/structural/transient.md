@@ -381,8 +381,9 @@ free mass 1 kg (consistent) or 1.5 kg (lumped), stiffness 4 N/m and initial
 acceleration 1 or 2/3 m/s² under a 1 N step with zero initial displacement/velocity.
 These are different discrete models, not alternative integrator settings.
 
-Solve summaries and `solve.probe` report `mass`; saved results retain it. Legacy
-linear dynamic results read as consistent. `solve.run {"mass":"lumped"}` forwards
+Solve summaries and `solve.probe` report `mass`; saved results retain it. Version 06 kind 6 stores mass explicitly. Old version 05 dynamic results are
+refused because their kind numbers overlapped between branches; preserve them
+and recover only through a verified producer (see [result layout](../../results-kind-layout.md)). `solve.run {"mass":"lumped"}` forwards
 the choice only if every step is frequency, transient or response spectrum;
 other mixed analyses are refused before any solve. Omitting `mass` preserves the
 old dispatch defaults. Invalid names are refused.
