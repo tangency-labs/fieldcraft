@@ -1319,3 +1319,48 @@ fn what_2d_contact_refuses() {
     let e = solve_nonlinear(&b.model, Some("Step"), &Limits::default()).unwrap_err().to_string();
     assert!(e.contains("arc-length"), "{e}");
 }
+
+#[test]
+fn terminal_closed_contact_is_bonded_and_open_contact_is_detached_in_modes() {
+    for open in [false, true] {
+        let (mut b, _) = patch(ElementKind::Hex8, ElementKind::Hex8, true, false);
+        let mut material = b.model.material("Mat").unwrap().clone();
+        material.density = Some(1.);
+        b.model.replace_material("Mat", material).unwrap();
+        if open {
+            let BoundaryCondition::Displacement { target, mut values } = b.model.boundary_condition("push").unwrap().clone() else { panic!("push") };
+            // An initially separated, unloaded block tests the open active set
+            // without asking Newton to resolve a stress-free rigid translation.
+            let first_upper = b
+                .model
+                .set("upper_bottom")
+                .unwrap()
+                .faces
+                .iter()
+                .flat_map(|f| b.model.element(f.element).unwrap().nodes.iter().copied())
+                .min()
+                .unwrap();
+            for (label, x) in &b.xyz {
+                if *label >= first_upper {
+                    b.model.set_node(*label, [x[0], x[1], x[2] + 0.02]).unwrap();
+                }
+            }
+            values[2] = Some(0.0);
+            b.model.replace_boundary_condition("push", BoundaryCondition::Displacement { target, values }).unwrap();
+        }
+        let base = solve_nonlinear(&b.model, Some("Step"), &Limits::default()).unwrap();
+        assert_eq!(base.contacts.iter().map(|c| c.closed()).sum::<usize>() == 0, open);
+        let mut step = Step::new("Modes", Procedure::Frequency { modes: 2, min_hz: None, max_hz: None });
+        step.boundary_conditions = b.model.step("Step").unwrap().boundary_conditions.clone();
+        step.base_state = Some("Step".into());
+        b.model.add_step(step, None).unwrap();
+        let modes =
+            fieldcraft_solver::solve_frequency(&b.model, Some("Modes"), &fieldcraft_solver::FrequencyOptions::default(), &Limits::default()).unwrap();
+        assert_eq!(modes.modes.len(), 2);
+        if open {
+            assert_eq!(modes.stats.equations, base.stats.equations);
+        } else {
+            assert!(modes.stats.equations < base.stats.equations);
+        }
+    }
+}

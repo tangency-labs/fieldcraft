@@ -86,6 +86,7 @@ pub fn write(model: &Model, units: Preset) -> Result<String> {
 pub fn write_resolved(model: &Model, r: &Resolved, units: Preset) -> Result<String> {
     crate::refuse_fluid(FORMAT, model)?;
     crate::refuse_mass_policy(FORMAT, model)?;
+    crate::refuse_prestress(FORMAT, model)?;
     crate::foundation::refuse(FORMAT, model)?;
     composite::check(model)?;
     let prepared = crate::composite::explicit_shell_frames(model, r, FORMAT)?;
@@ -317,8 +318,8 @@ fn solution(steps: &[&Step]) -> std::result::Result<u32, String> {
         return Err(format!("step `{}`: random response or operator export is not mapped by this writer", s.name));
     }
     let statics = steps.iter().find(|s| matches!(s.procedure, Procedure::Static {}));
-    if let Some(s) = steps.iter().find(|s| matches!(s.procedure, Procedure::Harmonic(_))) {
-        return Err(format!("step `{}`: harmonic response (SOL 108/111; this writer writes SOL 101 and 103 so far)", s.name));
+    if let Some(s) = steps.iter().find(|s| matches!(s.procedure, Procedure::Harmonic(_) | Procedure::Transient(_) | Procedure::ResponseSpectrum(_))) {
+        return Err(format!("step `{}`: {} response is not supported by this writer", s.name, s.procedure.name()));
     }
     let modes = steps.iter().find(|s| matches!(s.procedure, Procedure::Frequency { .. }));
     match (statics, modes) {

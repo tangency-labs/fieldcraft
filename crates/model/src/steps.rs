@@ -48,9 +48,13 @@ pub enum Procedure {
     /// Linear static equilibrium under the active loads and boundary conditions.
     Static {},
     /// Export reduced linear structural operators in SI; no response solve.
-    MatrixGeneration { matrices: BTreeSet<MatrixKind> },
+    MatrixGeneration {
+        matrices: BTreeSet<MatrixKind>,
+    },
     /// Steady-state response to harmonic loads, in the exp(iωt) convention.
     Harmonic(crate::harmonic::Harmonic),
+    Transient(crate::dynamics::Transient),
+    ResponseSpectrum(crate::dynamics::Spectrum),
     /// Modal random response from one-sided force or base-acceleration PSD inputs.
     RandomVibration(crate::random::RandomVibration),
     /// Natural frequencies and mode shapes: the lowest `modes` modes, optionally only those
@@ -1085,6 +1089,8 @@ impl Procedure {
             Procedure::Static {} => "static",
             Procedure::MatrixGeneration { .. } => "matrix_generation",
             Procedure::Harmonic(_) => "harmonic",
+            Procedure::Transient(_) => "transient",
+            Procedure::ResponseSpectrum(_) => "response_spectrum",
             Procedure::RandomVibration(_) => "random_vibration",
             Procedure::Frequency { .. } => "frequency",
             Procedure::Buckle { .. } => "buckle",
@@ -1117,7 +1123,7 @@ impl Procedure {
 
     /// Whether the procedure is transient dynamics (it needs mass; a free body is legitimate).
     pub fn is_dynamic(&self) -> bool {
-        matches!(self, Procedure::ExplicitDynamic(_))
+        matches!(self, Procedure::ExplicitDynamic(_) | Procedure::Transient(_))
     }
 
     /// The sets the procedure's own settings refer to.
@@ -1130,6 +1136,12 @@ impl Procedure {
     }
 
     pub fn validate(&self) -> Result<()> {
+        if let Procedure::Transient(t) = self {
+            return t.validate();
+        }
+        if let Procedure::ResponseSpectrum(t) = self {
+            return t.validate();
+        }
         if let Procedure::MatrixGeneration { matrices } = self
             && matrices.is_empty()
         {
@@ -1208,9 +1220,11 @@ impl Procedure {
         match self {
             Procedure::Static {} | Procedure::NonlinearStatic(_) => OutputVariable::ALL.into_iter().collect(),
             Procedure::Frequency { .. } | Procedure::Buckle { .. } => [OutputVariable::Displacement].into_iter().collect(),
-            Procedure::ExplicitDynamic(_) | Procedure::Harmonic(_) | Procedure::RandomVibration(_) => {
-                [OutputVariable::Displacement, OutputVariable::Stress].into_iter().collect()
-            }
+            Procedure::Transient(_)
+            | Procedure::ResponseSpectrum(_)
+            | Procedure::ExplicitDynamic(_)
+            | Procedure::Harmonic(_)
+            | Procedure::RandomVibration(_) => [OutputVariable::Displacement, OutputVariable::Stress].into_iter().collect(),
             // Velocity, pressure and wall forces, always.
             Procedure::Fluid { .. } | Procedure::MatrixGeneration { .. } => BTreeSet::new(),
             Procedure::HeatTransfer { .. } => [OutputVariable::Temperature, OutputVariable::HeatFlux].into_iter().collect(),
@@ -1249,6 +1263,11 @@ impl OutputVariable {
 pub struct Step {
     pub name: String,
     pub procedure: Procedure,
+    /// Equilibrium step whose terminal state defines this linear perturbation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_state: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub pretension: BTreeMap<String, crate::PretensionControl>,
     pub output: BTreeSet<OutputVariable>,
     /// Boundary conditions active in this step.
     #[serde(default)]
@@ -1261,7 +1280,15 @@ pub struct Step {
 impl Step {
     /// A step with the procedure's default output and nothing active.
     pub fn new(name: impl Into<String>, procedure: Procedure) -> Step {
-        Step { name: name.into(), output: procedure.default_output(), procedure, boundary_conditions: BTreeSet::new(), loads: BTreeSet::new() }
+        Step {
+            name: name.into(),
+            base_state: None,
+            pretension: BTreeMap::new(),
+            output: procedure.default_output(),
+            procedure,
+            boundary_conditions: BTreeSet::new(),
+            loads: BTreeSet::new(),
+        }
     }
 
     /// Change the procedure. Moving between a structural and a fluid procedure starts from the
@@ -1297,12 +1324,16 @@ pub struct StepInputs<'a> {
     springs: &'a BTreeMap<String, crate::Spring>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     foundations: &'a BTreeMap<String, crate::Foundation>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pretensions: &'a BTreeMap<String, crate::PretensionSection>,
     boundary_conditions: BTreeMap<&'a str, &'a crate::BoundaryCondition>,
     loads: BTreeMap<&'a str, &'a crate::Load>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     initial_fields: &'a BTreeMap<String, crate::InitialField>,
     fluid_domains: &'a BTreeMap<String, crate::FluidDomain>,
     step: &'a Step,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    base_state: Option<&'a Step>,
 }
 
 /// What a step that takes no initial fields reads of them.
@@ -1316,11 +1347,17 @@ impl Model {
     /// in). `None` when there is no such step.
     pub fn step_inputs(&self, name: &str) -> Option<StepInputs<'_>> {
         let step = self.step(name)?;
+        let base = step.base_state.as_deref().and_then(|n| self.step(n));
         Some(StepInputs {
             nodes: &self.nodes,
             elements: &self.elements,
             classification: &self.classification,
-            sets: self.sets.iter().filter(|(n, _)| self.step_uses_set(step, n)).map(|(n, s)| (n.as_str(), s)).collect(),
+            sets: self
+                .sets
+                .iter()
+                .filter(|(n, _)| self.step_uses_set(step, n) || base.is_some_and(|b| self.step_uses_set(b, n)))
+                .map(|(n, s)| (n.as_str(), s))
+                .collect(),
             materials: &self.materials,
             sections: &self.sections,
             reference_points: &self.reference_points,
@@ -1330,16 +1367,27 @@ impl Model {
             masses: &self.masses,
             springs: &self.springs,
             foundations: &self.foundations,
+            pretensions: &self.pretensions,
             boundary_conditions: self
                 .boundary_conditions
                 .iter()
-                .filter(|(n, _)| step.boundary_conditions.contains(*n))
+                .filter(|(n, _)| step.boundary_conditions.contains(*n) || base.is_some_and(|b| b.boundary_conditions.contains(*n)))
                 .map(|(n, b)| (n.as_str(), b))
                 .collect(),
-            loads: self.loads.iter().filter(|(n, _)| step.loads.contains(*n)).map(|(n, l)| (n.as_str(), l)).collect(),
-            initial_fields: if crate::initial::acts_in(&step.procedure) { &self.initial_fields } else { &NO_FIELDS },
+            loads: self
+                .loads
+                .iter()
+                .filter(|(n, _)| step.loads.contains(*n) || base.is_some_and(|b| b.loads.contains(*n)))
+                .map(|(n, l)| (n.as_str(), l))
+                .collect(),
+            initial_fields: if crate::initial::acts_in(&step.procedure) || base.is_some_and(|b| crate::initial::acts_in(&b.procedure)) {
+                &self.initial_fields
+            } else {
+                &NO_FIELDS
+            },
             fluid_domains: &self.fluid_domains,
             step,
+            base_state: base,
         })
     }
 
@@ -1383,7 +1431,35 @@ impl Model {
         self.steps.iter_mut().find(|s| s.name == name).ok_or_else(|| Error::NotFound(format!("step `{name}`")))
     }
 
+    /// Validate an explicit equilibrium dependency in analysis order. No implicit carry-over.
+    pub fn perturbation_base(&self, step: &Step) -> Result<Option<&Step>> {
+        self.base_before(step, self.step_index(&step.name)?)
+    }
+
+    fn base_before(&self, step: &Step, at: usize) -> Result<Option<&Step>> {
+        let Some(name) = &step.base_state else { return Ok(None) };
+        if !matches!(step.procedure, Procedure::Frequency { .. } | Procedure::Harmonic(_)) {
+            return Err(Error::Invalid(format!("step `{}`: base_state requires a frequency or harmonic step", step.name)));
+        }
+        let index = self.step_index(name)?;
+        let base = self.steps.get(index).ok_or_else(|| Error::NotFound(format!("base step `{name}`")))?;
+        if index >= at || !matches!(base.procedure, Procedure::Static {} | Procedure::NonlinearStatic(_)) || base.base_state.is_some() {
+            return Err(Error::Invalid(format!(
+                "step `{}`: base_state `{name}` must be an earlier static or nonlinear static equilibrium step",
+                step.name
+            )));
+        }
+        Ok(Some(base))
+    }
+
     fn check_step(&self, step: &Step) -> Result<()> {
+        if !step.pretension.is_empty() && !matches!(step.procedure, Procedure::Static {} | Procedure::NonlinearStatic(_)) {
+            return Err(Error::Invalid("pretension control requires a static equilibrium step; perturbations lock the base adjustment".into()));
+        }
+        for (name, control) in &step.pretension {
+            require(&self.pretensions, "pretension section", name)?;
+            control.validate()?;
+        }
         step.procedure.validate().map_err(|e| context("step", &step.name, e))?;
         for set in step.procedure.sets() {
             require(&self.sets, "set", set).map_err(|e| context("step", &step.name, e))?;
@@ -1403,6 +1479,14 @@ impl Model {
         }
         for l in &step.loads {
             require(&self.loads, "load", l).map_err(|e| context("step", &step.name, e))?;
+        }
+        // Initial node references are resolved against the solve mesh, like set targets.
+        // Native files deserialize the definition before loading mesh.bin, so checking
+        // node existence here would reject every saved nonempty initial state.
+        if let Procedure::Transient(t) = &step.procedure
+            && let Some(name) = t.load_amplitudes.keys().find(|name| !step.loads.contains(*name))
+        {
+            return Err(context("step", &step.name, Error::Invalid(format!("amplitude names inactive load `{name}`"))));
         }
         if let Procedure::Harmonic(h) = &step.procedure
             && let Some(name) = h.load_factors.keys().find(|name| !step.loads.contains(*name))
@@ -1431,6 +1515,7 @@ impl Model {
             Some(b) => self.step_index(b)?,
             None => self.steps.len(),
         };
+        self.base_before(&step, at)?;
         self.steps.insert(at, step);
         Ok(())
     }
@@ -1438,12 +1523,21 @@ impl Model {
     /// Replace a step's definition (procedure, output and table entries), keeping its place.
     pub fn replace_step(&mut self, step: Step) -> Result<()> {
         self.check_step(&step)?;
+        self.perturbation_base(&step)?;
+        if self.steps.iter().any(|s| s.base_state.as_deref() == Some(step.name.as_str()))
+            && !matches!(step.procedure, Procedure::Static {} | Procedure::NonlinearStatic(_))
+        {
+            return Err(Error::Invalid(format!("step `{}` is an equilibrium base for another step", step.name)));
+        }
         let name = step.name.clone();
         *self.step_mut(&name)? = step;
         Ok(())
     }
 
     pub fn remove_step(&mut self, name: &str) -> Result<()> {
+        if let Some(user) = self.steps.iter().find(|s| s.base_state.as_deref() == Some(name)) {
+            return Err(Error::Invalid(format!("step `{name}` is the base_state of `{}`", user.name)));
+        }
         let i = self.step_index(name)?;
         self.steps.remove(i);
         Ok(())
@@ -1464,6 +1558,9 @@ impl Model {
         // A load the step no longer lists takes its own load path with it.
         if !active && let Procedure::NonlinearStatic(n) = &mut step.procedure {
             n.load_paths.remove(name);
+        }
+        if !active && let Procedure::Transient(t) = &mut step.procedure {
+            t.load_amplitudes.remove(name);
         }
         if !active && let Procedure::Harmonic(h) = &mut step.procedure {
             h.load_factors.remove(name);

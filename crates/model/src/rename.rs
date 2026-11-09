@@ -146,6 +146,14 @@ impl Model {
         match kind {
             Kind::Set | Kind::ReferencePoint => {
                 let set = kind == Kind::Set;
+                for p in self.pretensions.values_mut() {
+                    if set {
+                        swap(&mut p.first, from, to);
+                        swap(&mut p.second, from, to);
+                    } else {
+                        swap(&mut p.control, from, to);
+                    }
+                }
                 for c in self.couplings.values_mut() {
                     swap(if set { &mut c.set } else { &mut c.reference_point }, from, to);
                 }
@@ -213,6 +221,12 @@ impl Model {
                         active.insert(to.to_string());
                     }
                     if kind == Kind::Load
+                        && let Procedure::Transient(t) = &mut step.procedure
+                        && let Some(curve) = t.load_amplitudes.remove(from)
+                    {
+                        t.load_amplitudes.insert(to.to_string(), curve);
+                    }
+                    if kind == Kind::Load
                         && let Procedure::Harmonic(h) = &mut step.procedure
                         && let Some(factor) = h.load_factors.remove(from)
                     {
@@ -228,6 +242,9 @@ impl Model {
             }
             Kind::Step => {
                 for step in &mut self.steps {
+                    if let Some(base) = &mut step.base_state {
+                        swap(base, from, to);
+                    }
                     if let Procedure::NonlinearStatic(n) = &mut step.procedure
                         && let Some(i) = &mut n.imperfection
                     {

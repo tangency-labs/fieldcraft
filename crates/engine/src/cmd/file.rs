@@ -1432,7 +1432,7 @@ mod tests {
     #[test]
     fn older_result_encodings_open_without_their_results() {
         let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/results");
-        for encoding in ["MCRSLT01", "MCRSLT02", "MCRSLT03", "MCRSLT04"] {
+        for encoding in ["MCRSLT01", "MCRSLT02", "MCRSLT03", "MCRSLT04", "MCRSLT05"] {
             for (name, step) in [("cantilever", "Bend"), ("couette", "Shear"), ("impact", "Impact")] {
                 let bytes = std::fs::read(fixtures.join(encoding).join(format!("{name}.fieldcraft"))).unwrap();
                 let file = fieldcraft_io::read(&bytes).unwrap();

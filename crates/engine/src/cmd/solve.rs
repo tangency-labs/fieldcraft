@@ -54,6 +54,25 @@ pub const HARMONIC: CommandSpec = CommandSpec {
     run: run_harmonic,
 };
 
+pub const TRANSIENT: CommandSpec = CommandSpec {
+    id: "solve.transient",
+    label: "Solve Transient Step",
+    params: r#"{"step":"Pulse","threads":1} — linear Newmark/HHT response, direct or modal; optional error-controlled substeps for direct average acceleration with translational coordinates; stores displacement, velocity, relative acceleration, optional nodal stress and mechanical energies. Read frames with solve.probe. Limits as solve.static. Uniform base displacement/acceleration amplitudes are supported; independent nonzero displacement boundary conditions and reference points are refused."#,
+    form: Some(super::forms::SOLVE_STATIC),
+    kind: CommandKind::Model,
+    requires: &[Requirement::Analysable, Requirement::Step],
+    run: run_transient,
+};
+pub const SPECTRUM: CommandSpec = CommandSpec {
+    id: "solve.spectrum",
+    label: "Solve Response Spectrum",
+    params: r#"{"step":"Spectrum","threads":1} — frequency/period and damping-interpolated pseudo-acceleration spectrum with SRSS or 100-40-40 direction combination, mass-normalized modal participation, SRSS or CQC; stores component peak estimates. These are not simultaneous fields or a time history. Frequency tables use Hz, period tables use time units, and ordinates use acceleration; no extrapolation. Limits as solve.static."#,
+    form: Some(super::forms::SOLVE_STATIC),
+    kind: CommandKind::Model,
+    requires: &[Requirement::Analysable, Requirement::Step],
+    run: run_spectrum,
+};
+
 pub const RANDOM: CommandSpec = CommandSpec {
     id: "solve.random",
     label: "Solve Random Response",
@@ -266,6 +285,8 @@ fn run_all(s: &mut Session, _: &Value) -> Result<Value> {
                 Procedure::HeatTransfer { .. } => (run_heat, "solve.heat"),
                 Procedure::Frequency { .. } => (run_frequency, "solve.frequency"),
                 Procedure::Harmonic(_) => (run_harmonic, "solve.harmonic"),
+                Procedure::Transient(_) => (run_transient, "solve.transient"),
+                Procedure::ResponseSpectrum(_) => (run_spectrum, "solve.spectrum"),
                 Procedure::Buckle { .. } => (run_buckle, "solve.buckle"),
                 Procedure::ExplicitDynamic(_) => (run_explicit, "solve.explicit"),
                 Procedure::Fluid { .. } => (run_fluid, "solve.fluid"),
@@ -420,6 +441,22 @@ fn run_heat(s: &mut Session, p: &Value) -> Result<Value> {
     });
     s.store_result(StepResult::Implicit(ImplicitResult::Heat(r)));
     Ok(summary)
+}
+
+fn run_transient(s: &mut Session, p: &Value) -> Result<Value> {
+    run_dynamics(s, p, false)
+}
+fn run_spectrum(s: &mut Session, p: &Value) -> Result<Value> {
+    run_dynamics(s, p, true)
+}
+fn run_dynamics(s: &mut Session, p: &Value, spectrum: bool) -> Result<Value> {
+    let limits = limits(p)?;
+    let step = opt::<String>(p, "step")?;
+    let r = with_threads(threads(s, p)?, || fieldcraft_solver::transient::solve(&s.model, step.as_deref(), &limits, spectrum))?;
+    let reply =
+        json!({"step":r.step,"spectrum":r.spectrum,"frames":r.frames.len(),"natural_frequencies":r.natural_frequencies,"warnings":r.warnings});
+    s.store_result(StepResult::Implicit(ImplicitResult::Dynamics(r)));
+    Ok(reply)
 }
 
 fn run_harmonic(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1564,6 +1601,8 @@ fn probe_quantity(r: &StepResult, display: &fieldcraft_model::DisplaySystem, key
         "temperature" => Q::Temperature,
         "heat_flux" => Q::HeatFlux,
         "velocity" => Q::Velocity,
+        "acceleration" => Q::Acceleration,
+        "kinetic_energy" | "strain_energy" | "damping_dissipation" | "external_work" | "energy_balance" => Q::Energy,
         "extent" | "depth" => Q::Length,
         "volume" => Q::Volume,
         "time" | "times" => Q::Time,
@@ -1613,6 +1652,7 @@ fn probe_implicit(result: &ImplicitResult, step: &str, nodes: &[u32], p: &Value)
     };
     let out: Vec<Value> = match result {
         ImplicitResult::Harmonic(r) => return probe_harmonic(r, nodes, p),
+        ImplicitResult::Dynamics(r) => return probe_dynamics(r, nodes, p),
         ImplicitResult::Static(r) => nodes
             .iter()
             .map(|&l| {
@@ -1699,6 +1739,43 @@ fn probe_implicit(result: &ImplicitResult, step: &str, nodes: &[u32], p: &Value)
         response["elements"] = Value::Array(found);
     }
     Ok(response)
+}
+
+fn probe_dynamics(r: &fieldcraft_solver::transient::Response, nodes: &[u32], p: &Value) -> Result<Value> {
+    if p.get("elements").is_some() {
+        return Err(EngineError::Params("dynamic probes currently support nodal fields only".into()));
+    }
+    let selected: Vec<_> = if let Some(k) = opt::<usize>(p, "frame")? {
+        vec![r.frames.get(k).ok_or_else(|| EngineError::Params(format!("dynamic frame {k} outside stored frames")))?]
+    } else {
+        r.frames.iter().collect()
+    };
+    if nodes.len().checked_mul(selected.len()).is_none_or(|n| n > 100000) {
+        return Err(EngineError::Params("dynamic probe exceeds 100000 node-frame samples".into()));
+    }
+    let mut curves = Vec::new();
+    for label in nodes {
+        let i = r.nodes.binary_search(label).map_err(|_| EngineError::Params(format!("node {label} has no dynamic result")))?;
+        let samples:Vec<_>=selected.iter().map(|f|json!({"time":f.time,"displacement":f.displacement.get(i),"rotation":f.rotation.get(i),"velocity":f.velocity.get(i),"acceleration":f.acceleration.get(i),"stress":f.stress.as_ref().and_then(|s|s.get(i))})).collect();
+        curves.push(json!({"node":label,"samples":samples}));
+    }
+    let first = opt::<usize>(p, "frame")?.unwrap_or(0);
+    let frames: Vec<_> = selected
+        .iter()
+        .enumerate()
+        .map(|(offset, f)| {
+            let mut value = json!({"time":f.time,"kinetic_energy":f.kinetic_energy,"strain_energy":f.strain_energy});
+            if let Some(e) = r.energy.as_ref().and_then(|v| v.get(first + offset)) {
+                value["damping_dissipation"] = json!(e.damping_dissipation);
+                value["external_work"] = json!(e.external_work);
+                value["energy_balance"] = json!(e.energy_balance);
+            }
+            value
+        })
+        .collect();
+    Ok(
+        json!({"step":r.step,"spectrum":r.spectrum,"nodes":curves,"stress_components":["xx","yy","zz","xy","xz","yz"],"stress_location":"global nodal average; shell top surface","acceleration_kind":if r.spectrum {"pseudo_acceleration_peak"}else{"relative"},"frames":frames}),
+    )
 }
 
 fn probe_harmonic(r: &fieldcraft_solver::HarmonicResult, nodes: &[u32], p: &Value) -> Result<Value> {

@@ -1,0 +1,220 @@
+[
+  {
+    "command": "model.units",
+    "params": {
+      "system": "m-kg-s-N-Pa"
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 1,
+      "xyz": [
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 2,
+      "xyz": [
+        -0.7071067811865476,
+        -0.7071067811865476,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 3,
+      "xyz": [
+        0.7071067811865476,
+        -0.7071067811865476,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 1,
+      "kind": "rod2",
+      "nodes": [
+        2,
+        1
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "bar1",
+      "elements": [
+        1
+      ]
+    }
+  },
+  {
+    "command": "model.material.create",
+    "params": {
+      "name": "E1",
+      "elastic": {
+        "type": "isotropic",
+        "young": 192.3769,
+        "poisson": 0.25
+      },
+      "density": 1.5
+    }
+  },
+  {
+    "command": "model.section.create",
+    "params": {
+      "name": "Rod1",
+      "set": "bar1",
+      "material": "E1",
+      "kind": {
+        "type": "rod",
+        "area": 1
+      }
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 2,
+      "kind": "rod2",
+      "nodes": [
+        3,
+        1
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "bar2",
+      "elements": [
+        2
+      ]
+    }
+  },
+  {
+    "command": "model.material.create",
+    "params": {
+      "name": "E2",
+      "elastic": {
+        "type": "isotropic",
+        "young": 194.0449,
+        "poisson": 0.25
+      },
+      "density": 1.5
+    }
+  },
+  {
+    "command": "model.section.create",
+    "params": {
+      "name": "Rod2",
+      "set": "bar2",
+      "material": "E2",
+      "kind": {
+        "type": "rod",
+        "area": 1
+      }
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "fixed",
+      "nodes": [
+        2,
+        3
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "TIP",
+      "nodes": [
+        1
+      ]
+    }
+  },
+  {
+    "command": "model.boundary_condition.create",
+    "params": {
+      "name": "clamp",
+      "type": "displacement",
+      "target": {
+        "set": "fixed"
+      },
+      "values": [
+        0,
+        0,
+        0,
+        null,
+        null,
+        null
+      ]
+    }
+  },
+  {
+    "command": "model.boundary_condition.create",
+    "params": {
+      "name": "plane",
+      "type": "displacement",
+      "target": {
+        "set": "TIP"
+      },
+      "values": [
+        null,
+        null,
+        0,
+        null,
+        null,
+        null
+      ]
+    }
+  },
+  {
+    "command": "model.step.create",
+    "params": {
+      "name": "Spectrum",
+      "procedure": {
+        "type": "response_spectrum",
+        "modes": 2,
+        "damping_ratio": 0.05,
+        "combination": "cqc",
+        "direction": [
+          1,
+          0,
+          0
+        ],
+        "pseudo_acceleration": [
+          [
+            1,
+            1
+          ],
+          [
+            5,
+            1
+          ]
+        ]
+      },
+      "boundary_conditions": [
+        "clamp",
+        "plane"
+      ],
+      "loads": [],
+      "output": [
+        "displacement",
+        "stress"
+      ]
+    }
+  }
+]

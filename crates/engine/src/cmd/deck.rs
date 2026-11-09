@@ -15,7 +15,7 @@ use crate::{CommandKind, CommandSpec, EngineError, Result, Session};
 pub const WRITE: CommandSpec = CommandSpec {
     id: "deck.write",
     label: "Write Solver Deck",
-    params: r#"{"format": "abaqus|nastran|lsdyna", "path": "part.inp", "steps": ["Load"], "units": "mm-t-s-N-MPa|m-kg-s-N-Pa|mm-kg-ms-kN-GPa|mm-g-ms-N-MPa|in-lbf-s-psi"} — writes the model as a solver deck in one consistent unit system, stated in its header (default: the display system's, ignoring its overrides) (formats: fieldcraft_decks::FORMATS); `steps` (optional) writes only those steps, as a Nastran run needs (static or frequency steps, not both); LS-DYNA writes several steps as *CASE analyses (run it with CASE); fails naming every error of the model check and everything the format cannot express"#,
+    params: r#"{"format": "abaqus|nastran|lsdyna", "path": "part.inp", "steps": ["Load"], "units": "mm-t-s-N-MPa|m-kg-s-N-Pa|mm-kg-ms-kN-GPa|mm-g-ms-N-MPa|in-lbf-s-psi"} — writes the model as a solver deck in one consistent unit system, stated in its header (default: the display system's, ignoring its overrides) (formats: fieldcraft_decks::FORMATS); `steps` (optional) writes only those steps, as a Nastran run needs (static or frequency steps, not both); LS-DYNA writes several steps as *CASE analyses (run it with CASE); Abaqus writes one independent transient or constant-spectrum step per file, adding modal extraction as needed (select it with steps); unsupported dynamics options are named; fails naming every error of the model check and everything the format cannot express"#,
     form: Some(super::forms::DECK),
     kind: CommandKind::Session,
     requires: &[Requirement::Analysable, Requirement::ElementMaterial, Requirement::ElementSection],

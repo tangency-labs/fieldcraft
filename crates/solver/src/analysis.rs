@@ -115,6 +115,8 @@ pub struct StaticResult {
     pub nonlinear: Option<crate::nonlinear::History>,
     /// Each contact's state at the end of a nonlinear static step, by name.
     pub contacts: Vec<crate::contact::ContactResult>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pretension: Vec<crate::pretension::SectionResult>,
 }
 
 /// One natural mode.
@@ -363,8 +365,23 @@ pub(crate) struct Setup<'a> {
 }
 
 pub(crate) fn reduction(s: &Setup, values: bool, order: &[usize], budget: Budget, warnings: &mut Vec<String>) -> Result<Reduction> {
+    reduction_with_frozen(s, values, order, budget, warnings, None)
+}
+
+pub(crate) fn reduction_with_frozen(
+    s: &Setup,
+    values: bool,
+    order: &[usize],
+    budget: Budget,
+    warnings: &mut Vec<String>,
+    frozen: Option<&[crate::prestress::FrozenRow]>,
+) -> Result<Reduction> {
     let mut rows = coupling_rows(s.model, s.resolved, s.mesh)?;
-    rows.extend(crate::tie::rows(s.model, s.resolved, s.mesh, warnings)?);
+    match frozen {
+        Some(rows_at_base) => rows.extend(rows_at_base.iter().map(crate::prestress::FrozenRow::borrowed)),
+        None => rows.extend(crate::tie::rows(s.model, s.resolved, s.mesh, warnings)?),
+    }
+    rows.extend(crate::pretension::rows(s.model, s.resolved, s.mesh)?);
     // Reference point directions exist when a coupling, tie or discrete element uses them.
     let used: std::collections::BTreeSet<usize> = rows.iter().flat_map(|r| r.terms.iter().map(|t| t.0)).chain(s.mesh.discrete.dofs()).collect();
     let node_dofs = s.mesh.layout.node_dofs();
@@ -454,7 +471,11 @@ pub(crate) fn static_on(setup: &Setup<'_>, limits: &Limits) -> Result<StaticResu
     let reactions = red.reactions(&k, &u, &f);
     let (reaction, reaction_moment, point_reaction) = split(&reactions, mesh);
     let (mut applied_total, mut reaction_total) = ([0.0; 3], [0.0; 3]);
+    let scalar_controls = crate::pretension::control_dofs(model, mesh)?;
     for (dof, (fv, rv)) in f.iter().zip(&reactions).enumerate() {
+        if scalar_controls.contains(&dof) {
+            continue;
+        }
         let Some(d) = mesh.kind(dof).and_then(DofKind::direction) else { continue };
         if let (Some(a), Some(r)) = (applied_total.get_mut(d), reaction_total.get_mut(d)) {
             *a += fv;
@@ -572,6 +593,15 @@ pub(crate) fn static_on(setup: &Setup<'_>, limits: &Limits) -> Result<StaticResu
     if scale > 0.0 && imbalance > crate::system::BALANCE_TOLERANCE * scale {
         warnings.push(format!("loads and reactions differ by {imbalance:.3e} (relative {:.1e})", imbalance / scale));
     }
+    let pretension = if model.pretensions().is_empty() {
+        Vec::new()
+    } else {
+        // The assembled matrix spans physical DOFs only; scalar cut controls
+        // live in the full reduction layout and have zero direct stiffness.
+        let mut internal = vec![0.0; u.len()];
+        k.mul(&u, &mut internal);
+        crate::pretension::recover(&crate::pretension::section_dofs(model, mesh)?, step, &red, &u, &internal, &f)?
+    };
     Ok(StaticResult {
         step: step.name.clone(),
         nodes: mesh.labels.clone(),
@@ -592,6 +622,7 @@ pub(crate) fn static_on(setup: &Setup<'_>, limits: &Limits) -> Result<StaticResu
         temperature,
         nonlinear: None,
         contacts: Vec::new(),
+        pretension,
     })
 }
 
@@ -684,7 +715,9 @@ fn frequency_impl(
     {
         return Err(Error::Invalid(format!("the shift must be a finite number, got {s}")));
     }
-    crate::system::refuse_contact(model, "frequency")?;
+    if step.base_state.is_none() {
+        crate::system::refuse_contact(model, "frequency")?;
+    }
     let mesh = Mesh::new(model, &resolved, limits.max_dofs)?;
     let mut warnings: Vec<String> = resolved.warnings.iter().map(ToString::to_string).chain(mesh.warnings.iter().cloned()).collect();
     warnings.extend(inelastic_warnings(model));
@@ -692,8 +725,17 @@ fn frequency_impl(
     let (graph, order) = pattern(&mesh);
     ignored_dashpots(&mesh, &mut warnings);
     let setup = Setup { model, resolved: &resolved, mesh: &mesh, step };
-    let red = reduction(&setup, false, &order, budget(limits, &mesh, &graph, 2), &mut warnings)?;
     let Assembled { k, m } = assemble(&mesh, &graph, Some(options.mass))?;
+    let terminal = crate::prestress::stiffness(&setup, &graph, k, limits, &mut warnings)?;
+    let red = reduction_with_frozen(
+        &setup,
+        false,
+        &order,
+        budget(limits, &mesh, &graph, 2),
+        &mut warnings,
+        step.base_state.as_ref().map(|_| terminal.constraints.as_slice()),
+    )?;
+    let k = terminal.stiffness;
     fieldcraft_model::progress::check()?;
     let m = m.ok_or_else(|| Error::Internal("mass matrix".into()))?;
     // Every element's mass entries between translations sum to its mass, once per direction
@@ -759,6 +801,12 @@ fn frequency_impl(
         .collect();
     let mut out = Vec::with_capacity(pairs.values.len());
     for (lambda, phi) in pairs.values.iter().zip(&pairs.vectors) {
+        if step.base_state.is_some() && *lambda < 0.0 {
+            return Err(Error::Invalid(format!(
+                "base_state of `{}` has a negative squared frequency ({lambda}); equilibrium is unstable or a zero mode is unresolved",
+                step.name
+            )));
+        }
         let participation = [0, 1, 2].map(|d| mr.get(d).map_or(0.0, |y| y.iter().zip(phi).map(|(a, b)| a * b).sum()));
         let (shape, rotation, point_shape) = split(&red.expand(phi, false), &mesh);
         out.push(Mode {
@@ -804,6 +852,7 @@ pub enum StepResult {
     Static(StaticResult),
     Frequency(FrequencyResult),
     Harmonic(crate::harmonic::HarmonicResult),
+    Dynamics(crate::transient::Response),
     Heat(crate::heat::HeatResult),
 }
 
@@ -813,6 +862,7 @@ impl StepResult {
             StepResult::Static(r) => &r.step,
             StepResult::Frequency(r) => &r.step,
             StepResult::Harmonic(r) => &r.step,
+            StepResult::Dynamics(r) => &r.step,
             StepResult::Heat(r) => &r.step,
         }
     }
@@ -822,6 +872,7 @@ impl StepResult {
             StepResult::Static(r) => &r.nodes,
             StepResult::Frequency(r) => &r.nodes,
             StepResult::Harmonic(r) => &r.nodes,
+            StepResult::Dynamics(r) => &r.nodes,
             StepResult::Heat(r) => &r.nodes,
         }
     }
@@ -836,7 +887,7 @@ impl StepResult {
             StepResult::Static(r) => r.reference_points.iter().position(|p| p.label == label),
             StepResult::Frequency(r) => r.reference_points.iter().position(|p| p.1 == label),
             StepResult::Harmonic(r) => r.reference_points.iter().position(|p| p.1 == label),
-            StepResult::Heat(_) => None,
+            StepResult::Heat(_) | StepResult::Dynamics(_) => None,
         }
         .map(Location::Point)
     }

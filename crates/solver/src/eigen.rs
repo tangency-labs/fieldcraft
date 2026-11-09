@@ -293,10 +293,12 @@ pub fn lanczos(op: &impl Operator, shift: f64, wanted: Wanted, block: usize, max
     if cur.len() < b {
         return Err(Error::NotConverged("could not build a Lanczos start block".into()));
     }
+    let block_width = b;
     let mut prev_b: Option<Vec<Vec<f64>>> = None;
     let mut next_check = (wanted.count + b).max(2 * b);
     loop {
         fieldcraft_model::progress::check()?;
+        let b = cur.len();
         let j0 = q.len();
         // W = Op Q_j.
         let mut w: Vec<Vec<f64>> = Vec::with_capacity(b);
@@ -336,22 +338,53 @@ pub fn lanczos(op: &impl Operator, shift: f64, wanted: Wanted, block: usize, max
         }
         if let Some(bp) = &prev_b {
             // T[block j][block j−1] = B_j, T[block j−1][block j] = B_jᵀ.
-            for i in 0..b {
-                for j in 0..b {
-                    t[j0 + i][j0 - b + j] = bp[i][j];
-                    t[j0 - b + j][j0 + i] = bp[i][j];
+            let previous_width = bp.first().map_or(0, Vec::len);
+            for (i, row) in bp.iter().enumerate() {
+                for (j, value) in row.iter().enumerate() {
+                    t[j0 + i][j0 - previous_width + j] = *value;
+                    t[j0 - previous_width + j][j0 + i] = *value;
                 }
             }
         }
         // Full reorthogonalization happens inside the QR against the whole basis.
-        let full = m >= max_basis || m + b > n;
-        let (next, mnext, bnext) =
-            if full { (Vec::new(), Vec::new(), vec![vec![0.0; b]; b]) } else { orthonormalize(op, w, &q, &mq, &mut rng, &mut scratch) };
+        let full = m >= max_basis;
+        let next_width = block_width.min(max_basis.saturating_sub(m));
+        let (next, mnext, bnext) = if full {
+            (Vec::new(), Vec::new(), Vec::new())
+        } else if next_width == b {
+            orthonormalize(op, w, &q, &mq, &mut rng, &mut scratch)
+        } else {
+            // A final partial block must reach the remaining dimensions. Its coupling
+            // is rectangular: next_width rows by the previous block's b columns.
+            let (next, mnext, _) = orthonormalize(op, w.iter().take(next_width).cloned().collect(), &q, &mq, &mut rng, &mut scratch);
+            let coupling = mnext.iter().map(|v| w.iter().map(|column| dot(v, column)).collect()).collect();
+            (next, mnext, coupling)
+        };
         // Convergence check on a schedule (the dense eigenproblem costs m³).
-        if m >= next_check || full || next.len() < b {
+        if m >= next_check || full || next.len() < next_width {
             next_check = m + (m / 4).max(b);
             let dense: Vec<f64> = t.iter().flatten().copied().collect();
             let (theta, s) = symmetric_eigen(&dense, m)?;
+            // Exhausting a user/memory cap is not convergence. At a truncated cap,
+            // check the actual transformed Ritz residual in the M norm. Only a basis
+            // spanning all n dimensions may use the vanishing terminal residual.
+            let residual_squared = |i: usize| -> Result<f64> {
+                if (full && m < n) || (next_width < b && max_basis < n) {
+                    let mut x = vec![0.0; n];
+                    let mut mx = vec![0.0; n];
+                    for (k, (qk, mqk)) in q.iter().zip(&mq).enumerate() {
+                        let c = s[k * m + i];
+                        x.iter_mut().zip(qk).for_each(|(a, b)| *a += c * b);
+                        mx.iter_mut().zip(mqk).for_each(|(a, b)| *a += c * b);
+                    }
+                    let mut residual = op.operand(&x, &mx);
+                    op.solve(&mut residual)?;
+                    residual.iter_mut().zip(&x).for_each(|(a, b)| *a -= theta[i] * b);
+                    op.mass(&residual, &mut mx);
+                    return Ok(dot(&residual, &mx).max(0.0));
+                }
+                Ok(bnext.iter().map(|row| (0..b).map(|c| row[c] * s[(m - b + c) * m + i]).sum::<f64>().powi(2)).sum())
+            };
             // Order by λ ascending = θ descending (θ > 0 below the spectrum).
             let mut idx: Vec<usize> = (0..m).collect();
             idx.sort_by(|&x, &y| theta[y].total_cmp(&theta[x]).then(x.cmp(&y)));
@@ -364,13 +397,7 @@ pub fn lanczos(op: &impl Operator, shift: f64, wanted: Wanted, block: usize, max
                     break;
                 }
                 // Residual bound ‖B_{j+1} s_last‖ with s_last the last block of the Ritz vector.
-                let mut res2 = 0.0;
-                if !full {
-                    for r in 0..b {
-                        let v: f64 = (0..b).map(|c| bnext[r][c] * s[(m - b + c) * m + i]).sum();
-                        res2 += v * v;
-                    }
-                }
+                let res2 = residual_squared(i)?;
                 if res2.sqrt() > tolerance * th {
                     break;
                 }
@@ -393,7 +420,7 @@ pub fn lanczos(op: &impl Operator, shift: f64, wanted: Wanted, block: usize, max
                     done = true;
                 } else {
                     return Err(Error::NotConverged(format!(
-                        "found {found} of {} modes after {m} Lanczos vectors (the cap); raise the iteration limit or ask for fewer modes",
+                        "found {found} of {} modes after {m} Lanczos vectors (Lanczos basis cap); raise the iteration limit or ask for fewer modes",
                         wanted.count
                     )));
                 }
@@ -406,8 +433,7 @@ pub fn lanczos(op: &impl Operator, shift: f64, wanted: Wanted, block: usize, max
                     if !(th < 0.0) {
                         break;
                     }
-                    let res2: f64 =
-                        if full { 0.0 } else { (0..b).map(|r| (0..b).map(|c| bnext[r][c] * s[(m - b + c) * m + i]).sum::<f64>().powi(2)).sum() };
+                    let res2 = residual_squared(i)?;
                     if res2.sqrt() > tolerance * th.abs() {
                         break;
                     }
@@ -442,7 +468,7 @@ pub fn lanczos(op: &impl Operator, shift: f64, wanted: Wanted, block: usize, max
         }
         cur = next;
         mcur = mnext;
-        if cur.len() < b {
+        if cur.len() < next_width {
             return Err(Error::NotConverged("the Lanczos block lost rank".into()));
         }
         prev_b = Some(bnext);
@@ -499,6 +525,29 @@ mod tests {
                 x[i] /= self.k[i] - self.shift * self.m[i];
             }
             Ok(())
+        }
+    }
+
+    #[test]
+    fn lanczos_boundary_cap_does_not_imply_convergence() {
+        let op = Diagonal { k: (1..=60).map(f64::from).collect(), m: vec![1.0; 60], shift: 0.0 };
+        let wanted = Wanted { count: 1, min: 0.0, max: f64::INFINITY };
+        for cap in [6, 13] {
+            assert!(lanczos(&op, 0.0, wanted, 6, cap, 1e-12).is_err());
+        }
+    }
+
+    #[test]
+    fn lanczos_boundary_partial_last_block_spans_the_full_space() {
+        let op = Diagonal { k: (1..=25).map(f64::from).collect(), m: vec![1.0; 25], shift: 0.0 };
+        let wanted = Wanted { count: 25, min: 0.0, max: f64::INFINITY };
+        let pairs = lanczos(&op, 0.0, wanted, 6, 25, 1e-12).unwrap();
+        assert_eq!(pairs.basis, 25);
+        assert_eq!(pairs.values.len(), 25);
+        for (i, (lambda, vector)) in pairs.values.iter().zip(&pairs.vectors).enumerate() {
+            assert!((lambda - (i + 1) as f64).abs() < 1e-10);
+            let residual = vector.iter().zip(&op.k).map(|(x, k)| ((k - lambda) * x).powi(2)).sum::<f64>().sqrt();
+            assert!(residual / lambda < 1e-10);
         }
     }
 

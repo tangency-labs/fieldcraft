@@ -762,6 +762,7 @@ impl Mesh {
         let mut coupled: BTreeSet<&str> = model.couplings().values().map(|c| c.reference_point.as_str()).collect();
         let discrete_labels: BTreeSet<u32> = needs.iter().map(|n| n.0).collect();
         coupled.extend(model.reference_points().iter().filter(|(_, p)| discrete_labels.contains(&p.label)).map(|(n, _)| n.as_str()));
+        coupled.extend(model.pretensions().values().map(|p| p.control.as_str()));
         let points: Vec<Point> = coupled
             .into_iter()
             .map(|name| {
@@ -952,6 +953,7 @@ pub fn prescribed(
             }
         }
     }
+    crate::pretension::prescribe(model, mesh, step, values, &mut out)?;
     Ok(out)
 }
 
@@ -1131,6 +1133,7 @@ pub fn loads(model: &Model, resolved: &Resolved, mesh: &Mesh, step: &Step, activ
             }
         }
     }
+    crate::pretension::loads(model, mesh, step, &mut f)?;
     Ok(f)
 }
 

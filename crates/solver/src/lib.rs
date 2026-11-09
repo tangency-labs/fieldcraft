@@ -41,11 +41,15 @@ pub mod heat;
 pub mod ldlt;
 pub mod nonlinear;
 pub mod ordering;
+mod prestress;
+pub mod pretension;
 pub mod random;
 pub mod sensitivity;
 pub mod sparse;
+pub mod spectrum;
 pub mod system;
 pub mod tie;
+pub mod transient;
 
 pub use analysis::{
     ElementStress, FrequencyOptions, FrequencyResult, Location, MassKind, Mode, PointResult, StaticResult, Stats, StepResult, solve_frequency,

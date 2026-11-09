@@ -33,6 +33,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+pub mod amplitude;
 pub mod bcs;
 pub mod check;
 pub mod composite;
@@ -42,6 +43,9 @@ mod convert;
 pub mod datums;
 pub mod design;
 pub mod discrete;
+pub mod dynamics;
+pub mod pretension;
+pub use pretension::{PretensionControl, PretensionSection};
 pub mod foundation;
 pub use foundation::Foundation;
 pub mod fluid_zones;
@@ -181,6 +185,8 @@ pub struct Model {
     springs: BTreeMap<String, Spring>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     foundations: BTreeMap<String, Foundation>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pretensions: BTreeMap<String, PretensionSection>,
     boundary_conditions: BTreeMap<String, BoundaryCondition>,
     loads: BTreeMap<String, Load>,
     /// Initial temperature and stress fields, by name.
@@ -259,6 +265,8 @@ struct ModelData {
     springs: BTreeMap<String, Spring>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     foundations: BTreeMap<String, Foundation>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pretensions: BTreeMap<String, PretensionSection>,
     #[serde(default)]
     boundary_conditions: BTreeMap<String, BoundaryCondition>,
     #[serde(default)]
@@ -348,6 +356,9 @@ impl TryFrom<ModelData> for Model {
         }
         for (n, v) in d.masses {
             m.add_mass(&n, v)?;
+        }
+        for (n, v) in d.pretensions {
+            m.add_pretension(&n, v)?;
         }
         for (n, v) in d.foundations {
             m.add_foundation(&n, v)?;
@@ -533,6 +544,7 @@ impl Model {
             masses: self.masses.clone(),
             springs: self.springs.clone(),
             foundations: self.foundations.clone(),
+            pretensions: self.pretensions.clone(),
             boundary_conditions: self.boundary_conditions.clone(),
             loads: self.loads.clone(),
             initial_fields: self.initial_fields.clone(),
