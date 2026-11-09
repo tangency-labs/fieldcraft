@@ -517,9 +517,9 @@ columns and a plane-stress `LAMINA` completion are not inferred.
 For rectangular solid frames, the optional [orientation rotation](https://docs.software.vt.edu/abaqusv2025/English/SIMACAEKEYRefMap/simakey-r-orientation.htm)
 rotates the orthonormal material axes about local axis 1, 2 or 3. The resulting
 frame is persisted and exported explicitly; source replay retains the original
-axis/angle lines. Nonzero shell additional rotation (which needs projection in a
-different order), cylindrical twist, nodal/distributed frames remain named
-refusals. This does not relax the isotropic, unoriented B-bar material restriction.
+axis/angle lines. Rectangular shell frames use the same rotation followed by
+projection, as described below. Cylindrical twist and nodal/distributed frames
+remain named refusals. This does not relax the isotropic, unoriented B-bar material restriction.
 
 An original rotated tetrahedron tests `Kxx = E2/6`, `ux = 0.003 m` for a 1 N load,
 against independently constructed native commands, then save/open and normalized
@@ -921,3 +921,29 @@ The original one-tetrahedron check has E=1000 Pa, nu=0.25, yield=1 Pa and harden
 0.005, axial displacement 0.0065 m over 1 m, and lateral displacement -0.002875 m.
 The SI and mm-tonne-second inputs use the same forces, axes and strain table. Native commands,
 source replay, saved-result reopening and canonical reimport are separate checks.
+
+### Rectangular shell frames with an additional rotation
+
+A constant rectangular `ORIENTATION` now applies its scalar angle (degrees) about the
+selected local axis before the existing shell projection. The cyclic successor axis is
+projected into the element plane; the positive element normal completes the right-handed
+frame. This order is significant on tilted surfaces. The rotated frame and reference-axis
+index are native model data and survive save/open. Canonical output writes that frame with
+zero additional angle; source replay instead retains the original angle and text.
+[Public orientation algorithm](https://abaqus.uclouvain.be/English/SIMACAEMODRefMap/simamod-c-orientation.htm)
+
+This reuses existing shell material axes; it adds no constitutive law or nonlinear shell
+analysis. Cylindrical twist, distributed angles, node-based frames and unsupported coordinate
+systems remain named refusals. A degenerate projected direction is rejected by the native
+frame validation. The executable check is a flat orthotropic S4 membrane in linear statics:
+E1=2000 Pa, E2=1000 Pa, nu12=0.2, thickness=0.1 m, unit edge, total axial force=1 N.
+A 90-degree material rotation gives axial displacement 0.01 m and transverse contraction
+-0.001 m; the unrotated native control gives axial displacement 0.005 m. SI and mm-tonne-second
+inputs are compared with independently constructed native commands, source replay, reopened
+endpoint results and a canonical write/read/solve. This is not general shell bending or
+finite-rotation verification. Tensor comparisons must state whether components are global,
+element-local or material-local; a local stress component is not a global one by name alone.
+
+Plastic state still starts from zero in each independent native nonlinear equilibrium.
+A single step's load path is not state transfer between general steps. Multiple-step plastic
+import remains refused; the limited single-step hardening mapping above is unchanged.

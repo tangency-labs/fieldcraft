@@ -40,10 +40,10 @@ impl Orientation {
     pub(super) fn section(&self, shell: bool) -> Result<SectionOrientation> {
         let mut frame = self.frame;
         if self.rotation != 0.0 {
-            if shell || !matches!(frame, MaterialOrientation::Rectangular { .. }) {
+            if !matches!(frame, MaterialOrientation::Rectangular { .. }) {
                 return Err(error(
                     self.line,
-                    "nonzero additional *ORIENTATION rotation requires a rectangular solid frame; shell projection and cylindrical twist are not mapped",
+                    "nonzero additional *ORIENTATION rotation requires a rectangular frame; cylindrical twist is not mapped",
                 ));
             }
             let axes = frame.axes_at([0.0; 3]).map_err(|e| error(self.line, e.to_string()))?;
@@ -56,6 +56,9 @@ impl Orientation {
             };
             frame = MaterialOrientation::Rectangular { axis1: rotate(axes[0]), axis2: rotate(axes[1]) };
         }
+        // The public Orientations algorithm rotates first, then projects the cyclic
+        // successor of the rotation axis; the native shell frame performs that projection.
+        // https://abaqus.uclouvain.be/English/SIMACAEMODRefMap/simamod-c-orientation.htm
         Ok(SectionOrientation { frame, shell_reference_axis: if shell { self.rotation_axis % 3 + 1 } else { 1 } })
     }
 }
@@ -150,5 +153,39 @@ pub(super) fn offset(value: Option<&str>, line: usize) -> Result<f64> {
         Some("SPOS") => Ok(0.5),
         Some("SNEG") => Ok(-0.5),
         Some(v) => number(v, line),
+    }
+}
+
+#[cfg(test)]
+mod rotation_tests {
+    use super::*;
+    use fieldcraft_model::units::Preset;
+
+    #[test]
+    fn shell_rotation_precedes_projection_and_uses_the_positive_normal() {
+        for (axis, angle, normal, expected) in [
+            (3, 90, [0., 1., 1.], [0., 1. / 2.0_f64.sqrt(), -1. / 2.0_f64.sqrt()]),
+            (1, 45, [1., 0., 1.], [-1. / 6.0_f64.sqrt(), 2. / 6.0_f64.sqrt(), 1. / 6.0_f64.sqrt()]),
+        ] {
+            let text = format!("*ORIENTATION,NAME=A\n1,0,0,0,1,0\n{axis},{angle}\n");
+            let blocks = super::super::lex::blocks(&text, 10).unwrap();
+            let orientation = orientation(&blocks[0], &DisplaySystem::new(Preset::MKgS)).unwrap().section(true).unwrap();
+            let axes = orientation.frame.shell_axes_at([0.; 3], normal, orientation.shell_reference_axis).unwrap();
+            let reverse = orientation.frame.shell_axes_at([0.; 3], normal.map(|x| -x), orientation.shell_reference_axis).unwrap();
+            for i in 0..3 {
+                assert!((axes[0][i] - expected[i]).abs() < 1e-14);
+                assert!((axes[0][i] - reverse[0][i]).abs() < 1e-14);
+                assert!((axes[1][i] + reverse[1][i]).abs() < 1e-14);
+                assert!((axes[2][i] + reverse[2][i]).abs() < 1e-14);
+            }
+        }
+    }
+
+    #[test]
+    fn cylindrical_twist_remains_explicitly_unmapped() {
+        let text = "*ORIENTATION,NAME=A,SYSTEM=CYLINDRICAL\n0,0,0,0,0,1\n1,30\n";
+        let blocks = super::super::lex::blocks(text, 10).unwrap();
+        let o = orientation(&blocks[0], &DisplaySystem::new(Preset::MKgS)).unwrap();
+        assert!(o.section(true).unwrap_err().to_string().contains("cylindrical twist"));
     }
 }
