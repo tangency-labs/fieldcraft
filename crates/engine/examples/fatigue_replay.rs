@@ -38,7 +38,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         match s.execute(command, &params) {
             Ok(value) => {
                 fs::write(output.join(format!("{index:03}-{command}.json")), serde_json::to_vec_pretty(&value)?)?;
-                if command == "solve.probe" {
+                // Nonlinear probes return complete native SI histories, not spatial
+                // point matches. They must never bind nodes for harmonic random input.
+                if command == "solve.probe" && value.get("kind") == Some(&json!(11)) {
+                    if !native_nonlinear_probe(&value) {
+                        return Err("invalid native nonlinear SI probe identity".into());
+                    }
+                    probe_nodes = None;
+                } else if command == "solve.probe" {
                     let step = params.get("step").and_then(Value::as_str).ok_or("probe needs step")?.to_string();
                     let rows = value.get("nodes").and_then(Value::as_array).ok_or("probe missing nodes")?;
                     let tolerance = row.get("max_probe_distance_si").and_then(Value::as_f64).ok_or("probe distance tolerance missing")?;
@@ -80,6 +87,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn native_nonlinear_probe(value: &Value) -> bool {
+    value.get("kind") == Some(&json!(11))
+        && value.get("units").and_then(Value::as_str) == Some("SI")
+        && value
+            .get("nodes")
+            .and_then(Value::as_array)
+            .is_some_and(|nodes| !nodes.is_empty() && nodes.iter().all(|n| n.as_u64().is_some_and(|n| n > 0 && u32::try_from(n).is_ok())))
+}
+
 fn model_check_clear(value: &Value) -> bool {
     match value.get("errors") {
         Some(Value::Number(n)) => n.as_u64() == Some(0),
@@ -91,6 +107,18 @@ fn model_check_clear(value: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_probe_uses_source_labels_and_si_not_spatial_distances() {
+        assert!(native_nonlinear_probe(&json!({"kind":11,"units":"SI","nodes":[1,2,3]})));
+        for value in [
+            json!({"kind":11,"units":"MPa","nodes":[1]}),
+            json!({"kind":11,"units":"SI","nodes":[0]}),
+            json!({"kind":11,"units":"SI","nodes":[{"node":1,"distance":0}]}),
+            json!({"kind":6,"units":"SI","nodes":[1]}),
+        ] {
+            assert!(!native_nonlinear_probe(&value));
+        }
+    }
     #[test]
     fn model_check_counts_and_legacy_lists_are_fail_closed() {
         assert!(model_check_clear(&json!({"errors":0})));

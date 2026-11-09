@@ -396,6 +396,7 @@ impl Quantities for Step {
             match control {
                 crate::PretensionControl::Force { value } => f(Q::Force, value),
                 crate::PretensionControl::Adjustment { value } => f(Q::Length, value),
+                crate::PretensionControl::Fixed => {}
             }
         }
         match procedure {

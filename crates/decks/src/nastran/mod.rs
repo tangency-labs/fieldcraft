@@ -88,6 +88,7 @@ pub fn write_resolved(model: &Model, r: &Resolved, units: Preset) -> Result<Stri
         return Err(Error::Unsupported { format: FORMAT, what: "axisymmetric conical ring shell: no faithful SAX1-equivalent mapping".into() });
     }
     crate::refuse_fluid(FORMAT, model)?;
+    crate::refuse_mass_policy(FORMAT, model)?;
     crate::refuse_prestress(FORMAT, model)?;
     crate::foundation::refuse(FORMAT, model)?;
     composite::check(model)?;

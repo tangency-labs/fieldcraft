@@ -701,6 +701,11 @@ fn hostile_numbers_stay_within_their_fields() {
 #[test]
 fn explicit_steps_are_refused_by_every_format() {
     let mut m = cantilever();
+    let (name, section) = m.sections().iter().next().unwrap();
+    let name = name.clone();
+    let mut section = section.clone();
+    section.formulation = Formulation { hybrid: true, ..Formulation::default() };
+    m.replace_section(&name, section).unwrap();
     m.add_step(step("Impact", Procedure::ExplicitDynamic(ExplicitDynamic::new(1e-3)), &["clamp"], &[]), None).unwrap();
     for f in fieldcraft_decks::FORMATS {
         let e = f.write(&common::si(&m), fieldcraft_model::units::Preset::MmTonneS).unwrap_err();
@@ -801,4 +806,14 @@ fn nonlinear_static_steps() {
     // In a linear step the elastic constants are the whole of a hyperelastic material.
     m.replace_step(step("Bend", Procedure::Static {}, &["clamp"], &["tip_load"])).unwrap();
     assert!(lsdyna::write(&m).unwrap().text.contains("*MAT_ELASTIC_TITLE"));
+}
+
+#[test]
+fn bbar_solid_is_not_silently_written_as_standard_hex8() {
+    let mut model = cantilever();
+    let mut section = model.section("beam").unwrap().clone();
+    section.formulation.b_bar = true;
+    model.replace_section("beam", section).unwrap();
+    let error = lsdyna::write(&model).unwrap_err().to_string();
+    assert!(error.contains("B-bar") && error.contains("beam"), "{error}");
 }

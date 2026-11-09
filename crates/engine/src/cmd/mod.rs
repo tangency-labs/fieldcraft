@@ -12,6 +12,7 @@ pub mod diagnostics;
 mod edit;
 mod extrude;
 mod fatigue;
+mod fatigue_axial;
 mod fatigue_strain;
 mod fatigue_transient;
 pub(crate) mod file;
@@ -79,6 +80,7 @@ pub static ALL: &[CommandSpec] = &[
     pretension::CREATE,
     pretension::FORCE,
     pretension::ADJUST,
+    pretension::FIX,
     pretension::LOCK,
     pretension::RESULT,
     foundation::CREATE,
@@ -238,6 +240,7 @@ pub static ALL: &[CommandSpec] = &[
     edit::UNDO,
     edit::REDO,
     deck::WRITE,
+    deck::WRITE_NONLINEAR,
     deck::READ,
     deck::WRITE_SOURCE,
     solve::RUN,
@@ -252,6 +255,7 @@ pub static ALL: &[CommandSpec] = &[
     solve::FREQUENCY,
     solve::HARMONIC,
     solve::TRANSIENT,
+    solve::NONLINEAR_TRANSIENT,
     solve::SPECTRUM,
     solve::RANDOM,
     fatigue::HISTORY,

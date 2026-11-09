@@ -215,6 +215,21 @@ Static joint identification now groups observations by step and shares each tria
 factorization across parameter columns. A prescribed-motion, zero-foundation-coefficient
 check compares the batched response/Jacobian bit for bit with scalar sensitivities.
 
+Geometric rod2 dynamics: `solve.transient.nonlinear` Newmark/HHT full Newton with consistent/lumped reference mass. Native MCRSLT07 kind 11 retains actual settings, accepted SI U/V/A and nodal forces, recovered Green/second-Piola/nominal rod fields, energy accounts and all accepted-step convergence diagnostics. Native save/reopen and legacy-kind boundaries are verified; general solid/contact/material extensions and nonlinear field visualization remain open.
+
+Section mass policies: continuum sections now persist explicit `hrz`, `row_sum`, or
+`consistent` overrides for a `mass=lumped` frequency solve. Linear positive-basis
+row sums and mixed consistent sections are checked against independent matrices;
+native Abaqus comments preserve the policy on write/read. Harmonic and native
+modal random solves use the selected section inertia for material damping too;
+stored harmonic projections inherit the source mass identity.
+
+Hex8 mean dilatation: explicit persisted B-bar formulation and C3D8 mapping,
+with standard native Hex8 unchanged. Standard Hex8 and unverified nine-mode
+C3D8I export are refused. Linear isotropic static/modal/matrix scope; nonlinear,
+thermal/initial stress remain unsupported. Linear harmonic and correlated modal
+random recovery now use the same B-bar operator; near-incompressible or distorted
+element accuracy is not established by this interface integration.
 ## Fatigue (fusion fork, development)
 
 Implemented: finite-record rainflow, Basquin/Miner, CMB/Morrow/SWT and stress mean
@@ -255,6 +270,35 @@ extrapolation are named unsupported combinations; no PSD time history is synthes
   mass harmonic, full energy-and-mass dynamics, static fatigue and harmonic fatigue.
   Old05/06 kinds 0–5 use frozen schemas; higher development kinds are refused with
   the regeneration message. See docs/results-kind-layout.md.
+- External rod fatigue: an explicit nominal axial reference-area channel accepts
+  producer-recovered material-following scalar histories with matching declared
+  S–N/mean-strength calibration. PK2/Cauchy substitution and tensor criteria are
+  refused. Fatigue results remain independent diagnostic JSON; no fatigue fields
+  are added to nonlinear native histories.
+- Nonlinear rod histories use native MCRSLT07 kind 11 and fieldcraft/3 archives;
+  kinds 0–8 retain their layouts and 9/10 remain unused. Complete accepted states,
+  rod recovery and SI probe output survive save/open. The explicit SI Abaqus
+  UEL/DYNAMIC writer remains separate; standard T3D2 StVK mapping is refused.
+
+
+Native Hex8 now has an independent thirteen-variable enhanced-gradient option for linear isotropic static analysis, with determinant-corrected modes, local condensation and stress recovery. C3D8I/IH mapping remains refused pending independent distorted-case validation; see `docs/enhanced-strain13.md`.
+
+Abaqus import: C3D8I now selects the thirteen-variable nonhybrid isotropic small-strain static formulation; C3D8IH and unsupported procedures remain refused. First elastic rod NLGEOM=YES equilibrium and its frequency base state round-trip without dropping history.
+
+Abaqus history: boundary modifications retain node/set and named/direct identity; ambiguous replacements are refused. A five-step, two-instance INCLUDE case checks effective load/constraint inheritance, amplitude endpoints, solving and source/normalized round trips.
+
+- Abaqus independent direct transient import: explicit average-acceleration
+  DYNAMIC/DIRECT for MASS/SPRING1, complete common load amplitude, zero initial
+  state and fixed homogeneous supports. Continuous-element mass, base-state
+  continuation and unsupported dynamic combinations remain refused;
+  source preservation is distinct from runnable semantics.
+
+- Abaqus modal time history and constant pseudo-acceleration spectrum import:
+  compile an immediately preceding unwindowed frequency basis into native modal
+  re-extraction for explicit MASS/SPRING1. Preserve common amplitudes, mode-number
+  viscous damping and global SRSS/R40 directions; refuse unsupported selection,
+  base states, interpolation and mass mappings. Native modal time integration is
+  Newmark and is verified separately against the continuous response.
 
 ### Curved quadratic shell statics
 

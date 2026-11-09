@@ -526,9 +526,13 @@ pub const SECTION: &[Field] = &[
             flag("solid_shell", "Continuum solid-shell")
                 .help("Linear ANS/EAS10 on orthogonal affine swept hex8; thickness is node pairs 1–5, 2–6, 3–7, 4–8. Separate solid layers for laminates.")
                 .def("false"),
+            flag("enhanced_strain13", "Enhanced strain Hex8 (13)").help("Thirteen-variable Hex8; C3D8I mapping only for nonhybrid small-strain isotropic static analysis.").def("false"),
+            flag("b_bar", "B-bar Hex8").help("Volume-averaged dilatation for linear isotropic Hex8; standard remains the default.").def("false"),
             flag("incompatible_modes", "Incompatible modes")
                 .help("Extra bending modes for linear hexahedra, so a coarse hex8 mesh bends without locking.")
                 .def("false"),
+            choice("lumped_mass", "Lumped mass policy", &[("hrz","HRZ"),("row_sum","Row sum"),("consistent","Keep consistent")])
+                .help("For explicit mass=lumped solves on solid/plane sections; mass=consistent ignores this policy. Row sum requires supported positive-basis linear elements.").def("\"hrz\""),
             flag("hybrid", "Hybrid").help("Pressure as an extra unknown, for nearly incompressible materials such as rubber.").def("false"),
         ],
     )
@@ -2460,6 +2464,17 @@ pub const SAMPLE: &[Field] = &[choice(
 .def("\"cantilever\"")];
 pub const COUNT: &[Field] = &[int("count", "Count", 1, 1_000_000).help("How many steps.").def("1")];
 
+pub const DECK_NONLINEAR: &[Field] = &[
+    path("path", "Input file", true).req().help(".inp and required original .c user-element companion, SI."),
+    STEP,
+    choice("mass", "Reference mass", &[("consistent", "Consistent"), ("lumped", "Lumped")])
+        .help("Use the same reference mass as the nonlinear solve; default consistent.")
+        .def("\"consistent\""),
+    choice("representation", "Element mapping", &[("uel", "Original StVK user element")])
+        .help("Required original C companion; the built-in T3D2 elastic law is not equivalent.")
+        .def("\"uel\""),
+];
+
 pub const DECK: &[Field] = &[
     choice("mass", "Dynamics mass", &[("consistent", "Consistent"), ("lumped", "Lumped")]).help("Dynamics only; default consistent. Must match stored results. Native rod2 requires lumped; unsupported distributed mass mappings are refused."),
     choice(
@@ -2701,6 +2716,9 @@ pub const SOLVE_HARMONIC: &[Field] = &[
     THREADS,
 ];
 pub const SOLVE_RANDOM: &[Field] = &[
+    json("sampling_frequencies", "Replay frequency grid").help("Native modal random only: explicit increasing SI-Hz grid within the source bands. Leave empty for source sampling."),
+    choice("mass", "Native modal mass", &[("consistent", "Consistent"), ("lumped", "Lumped")])
+        .help("Native random model steps only; default consistent. Lumped honors explicit section policies. Stored harmonic frames inherit mass; leave empty."),
     json("stress_projection", "Scalar stress projection").help("Fixed six weights and input_model=common_scalar_unit_pattern; projects complex harmonic stress before squaring. Optional fatigue: method=narrow_band/dirlik/benasciutti_tovo, curve, duration_seconds, mean_stress_pa, correction, stationary_gaussian=true. Broad-band requires zero mean and correction=none. Segmented S-N points/cycles/amplitude with surface_factor,size_factor,endurance_limit and end_slopes are supported by narrow_band and dirlik (2..64 points, slopes 1..20); benasciutti_tovo and extrapolation=reject refuse tables. SI only; not von Mises or unknown-correlated inputs."),
     num("natural_frequency", "Natural frequency", D::Of(Quantity::Frequency)).hint("1").help("Natural frequency of the SDOF check in Hz."),
     positive("damping_ratio", "Damping ratio", D::None).hint("0.02").help("Viscous modal damping ratio ζ."),
@@ -2734,7 +2752,7 @@ pub const SOLVE_FREQUENCY: &[Field] = &[
     MAX_DOFS,
     MAX_FACTOR,
     MAX_MEMORY_GIB,
-    int("max_iterations", "Max Lanczos vectors", 1, 3000).help("Cap on the Lanczos vectors.").hint("3000"),
+    int("max_iterations", "Max Lanczos vectors", 1, 3000).help("Basis-vector capacity, not block iterations. The reply reports actual iterations, cap status and actual K/M residuals; zero-denominator rigid-mode ratios are undefined.").hint("3000"),
     THREADS,
 ];
 pub const SOLVE_BUCKLE: &[Field] =
@@ -3071,6 +3089,20 @@ pub const SOLVE_DYNAMICS: &[Field] = &[
     choice("mass", "Mass matrix", &[("consistent", "Consistent"), ("lumped", "Lumped")])
         .def("\"consistent\"").help("Used in assembly, material damping, modal extraction, initial balance and energy; stored with the result. Each solve defaults to consistent."),
     MAX_DOFS, MAX_FACTOR, MAX_MEMORY_GIB, THREADS,
+];
+
+pub const SOLVE_NONLINEAR_TRANSIENT: &[Field] = &[
+    STEP,
+    choice("mass", "Mass matrix", &[("consistent", "Consistent"), ("lumped", "Lumped")])
+        .def("\"consistent\"")
+        .help("Reference mass for inertia, initial balance and kinetic energy; retained in native nonlinear kind 11."),
+    int("max_iterations", "Newton corrections per step", 1, 100)
+        .help("Full tangent rebuild at each correction; failure leaves committed state unchanged."),
+    num("tolerance", "Relative force tolerance", D::None).help("Positive, at most 0.01; default 1e-8."),
+    MAX_DOFS,
+    MAX_FACTOR,
+    MAX_MEMORY_GIB,
+    THREADS,
 ];
 
 pub const SOLVE_ALL: &[Field] = &[choice("mass", "Mass matrix", &[("consistent", "Consistent"), ("lumped", "Lumped")])

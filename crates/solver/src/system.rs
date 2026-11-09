@@ -39,6 +39,7 @@ pub struct Elem {
     pub nodes: Vec<usize>,
     pub xyz: Vec<[f64; 3]>,
     pub formulation: Formulation,
+    pub lumped_mass: fieldcraft_model::LumpedMass,
     pub d: Elasticity,
     /// Linear solid material axes; cylindrical frames are evaluated at every stiffness point.
     pub material_axes: Option<(Elastic, MaterialOrientation)>,
@@ -223,6 +224,30 @@ impl Kernel<'_> {
 }
 
 impl Elem {
+    /// Return the actual storage kind and values; the same operator feeds inertia and damping.
+    pub(crate) fn mass_matrix(&self, requested: MassKind, density: f64) -> Result<(MassKind, Vec<f64>)> {
+        let kernel = self.kernel()?;
+        let at = |e| Error::element(self.label, e);
+        if requested == MassKind::Consistent || self.lumped_mass == fieldcraft_model::LumpedMass::Consistent {
+            return Ok((MassKind::Consistent, kernel.mass(density).map_err(at)?.data));
+        }
+        if self.lumped_mass == fieldcraft_model::LumpedMass::Hrz {
+            return Ok((MassKind::Lumped, kernel.lumped_mass(density).map_err(at)?));
+        }
+        if !matches!(self.kind, ElementKind::Tet4 | ElementKind::Wedge6 | ElementKind::Hex8 | ElementKind::Tri3 | ElementKind::Quad4) {
+            return Err(Error::NotSupported(format!(
+                "element {}: row_sum mass requires a supported linear positive-basis solid/plane element, got {:?}",
+                self.label, self.kind
+            )));
+        }
+        let matrix = kernel.mass(density).map_err(at)?;
+        let diagonal: Vec<f64> = (0..matrix.n).map(|i| (0..matrix.n).map(|j| matrix.get(i, j)).sum()).collect();
+        if diagonal.iter().any(|v| !v.is_finite() || *v <= 0.0) {
+            return Err(Error::Invalid(format!("element {}: row_sum mass has a non-positive or non-finite nodal mass", self.label)));
+        }
+        Ok((MassKind::Lumped, diagonal))
+    }
+
     pub fn stiffness(&self) -> Result<Matrix> {
         let k = self.kernel()?;
         let result = match (k, self.material_axes) {
@@ -318,6 +343,7 @@ struct SolidEntry {
     kind: ElementKind,
     nodes: Vec<u32>,
     formulation: Formulation,
+    lumped_mass: fieldcraft_model::LumpedMass,
     d: Elasticity,
     material_axes: Option<(Elastic, MaterialOrientation)>,
     density: Option<f64>,
@@ -729,6 +755,39 @@ impl Mesh {
                 .ok_or_else(|| Error::Invalid(format!("section `{name}`: material `{}` is missing", section.material)))?;
             let elastic =
                 material.elastic.as_ref().ok_or_else(|| Error::Invalid(format!("material `{}` has no elastic constants", section.material)))?;
+            if section.formulation.enhanced_strain13 {
+                if !matches!(elastic, Elastic::Isotropic { .. })
+                    || section.orientation.is_some()
+                    || material.plastic.is_some()
+                    || material.hyperelastic.is_some()
+                {
+                    return Err(Error::NotSupported(format!(
+                        "section `{name}`: enhanced_strain13 requires linear isotropic elasticity without orientation"
+                    )));
+                }
+                if model.steps().iter().any(|s| !matches!(s.procedure, fieldcraft_model::Procedure::Static {})) {
+                    return Err(Error::NotSupported(format!("section `{name}`: enhanced_strain13 supports linear static analysis only")));
+                }
+            }
+            if section.formulation.b_bar {
+                if !matches!(elastic, Elastic::Isotropic { .. }) || section.orientation.is_some() {
+                    return Err(Error::NotSupported(format!("section `{name}`: B-bar requires isotropic elasticity without material orientation")));
+                }
+                if model.steps().iter().any(|s| {
+                    !matches!(
+                        s.procedure,
+                        fieldcraft_model::Procedure::Static {}
+                            | fieldcraft_model::Procedure::Frequency { .. }
+                            | fieldcraft_model::Procedure::MatrixGeneration { .. }
+                            | fieldcraft_model::Procedure::Harmonic(_)
+                            | fieldcraft_model::Procedure::RandomVibration(_)
+                    )
+                }) {
+                    return Err(Error::NotSupported(format!(
+                        "section `{name}`: B-bar supports linear static, frequency, harmonic, modal random and matrix generation only"
+                    )));
+                }
+            }
             if section.formulation.hybrid && !matches!(elastic, Elastic::Isotropic { .. }) {
                 return Err(Error::NotSupported(format!(
                     "hybrid elements of the orthotropic material `{}` (section `{name}`): the pressure split needs isotropic elasticity",
@@ -820,6 +879,7 @@ impl Mesh {
                     kind: el.kind,
                     nodes: el.nodes.clone(),
                     formulation,
+                    lumped_mass: section.formulation.lumped_mass,
                     d,
                     material_axes,
                     density: material.density,
@@ -905,6 +965,7 @@ impl Mesh {
                 nodes: idx,
                 xyz: exyz,
                 formulation: e.formulation,
+                lumped_mass: e.lumped_mass,
                 d: e.d,
                 material_axes: e.material_axes,
                 density: e.density,

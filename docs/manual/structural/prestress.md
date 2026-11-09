@@ -63,8 +63,7 @@ Definitions, controls and section results are serialized with the model/results.
 Current limitations: conforming coincident planar cuts only, fixed normal and
 constant jump; no automatic bolt cutting, nonconforming pretension cut, or evolving
 cut normal. Keep the cut control point separate from ordinary loads, springs,
-couplings and boundary conditions. All deck writers refuse pretension and
-`base_state` by name; native `*PRE-TENSION SECTION` export is not implemented.
+couplings and boundary conditions. The Abaqus writer emits native `*PRE-TENSION SECTION` for conforming cuts whose element faces can be resolved, writes the control-node force in the preload general step, and carries a locked adjustment with a nonzero control-node boundary value. Frequency and harmonic steps with `base_state` are emitted as perturbation steps; a general static step feeding such a perturbation is written with `NLGEOM=YES` so Abaqus includes preload/initial-stress stiffness. Nonconforming or face-less cuts, unsupported native procedures, and pretension on a perturbation step are refused by name. Nastran and LS-DYNA writers continue to refuse pretension and `base_state`.
 Sensitivity paths that assume unloaded stiffness refuse prestressed steps.
 
 Verification sources: Bathe, *Finite Element Procedures*, 2nd ed., 2014 §6.8.2;

@@ -74,7 +74,7 @@ fn expand(q: &[f64], basis: &[Vec<f64>], n: usize) -> Vec<f64> {
     }
     out
 }
-fn initial(values: &BTreeMap<u32, [f64; 3]>, mesh: &Mesh, red: &crate::constraints::Reduction) -> Result<Vec<f64>> {
+pub(super) fn initial(values: &BTreeMap<u32, [f64; 3]>, mesh: &Mesh, red: &crate::constraints::Reduction) -> Result<Vec<f64>> {
     let mut full = vec![0.0; mesh.dofs()];
     for (label, v) in values {
         let slot = mesh.node(*label).ok_or_else(|| Error::Invalid(format!("initial node {label} not present")))?;

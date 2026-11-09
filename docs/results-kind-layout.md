@@ -18,6 +18,7 @@ The ZIP manifest verifies part sizes and SHA256.
 | 6 | Full Dynamics Response: frames, spectrum flag, natural frequencies, warnings, energy ledger and mass |
 | 7 | Tuple (StaticResult, FatigueField) |
 | 8 | Tuple (HarmonicResult including mass and operator_diagonal_bounds, FatigueField) |
+| 11 | Nonlinear total-Lagrangian St. Venant–Kirchhoff rod2 History |
 
 Fatigue is skipped in the base result's codec and encoded exactly once as the
 second tuple member. Kinds 5 and 8 always carry mass, including consistent results
@@ -88,3 +89,59 @@ entire decoded result objects, and exports complete fields plus archive hashes.
 It does not solve, infer a legacy producer, repair invalid data or replace a
 physical validation. The built-in fixture generator and IO synthetic-layout tests
 separately cover old compatibility, all current kinds and explicit refusals.
+
+## Nonlinear rod kind 11
+
+Kind 11 is independently allocated for the rod2 total-Lagrangian St. Venant–Kirchhoff
+history. The magic stays MCRSLT07 and the archive stays fieldcraft/3. No 08, kind 9,
+kind 10, archive /4 or payload-version tag is introduced. Existing kinds 0–8 retain
+their exact schemas. Old 05/06 kinds 6 and above remain ambiguous and refused,
+including 9/10/11. A unified-07 reader predating kind 11 rejects it by name. Pre-07 readers may instead
+open the model without results under their existing unsupported-magic policy.
+
+The `transient::nonlinear::History` payload follows declaration order:
+
+| Field | Codec type / shape | Meaning and SI unit |
+|---|---|---|
+| step | string | Model step name |
+| mass | MassKind enum u32 | consistent=0, lumped=1; constant reference operator |
+| settings | string containing canonical Transient model JSON | Actual dt (s), increments, output stride, Newmark/HHT choice, Rayleigh alpha (1/s), initial u (m)/v (m/s), load-amplitude definitions; no guessed required fields |
+| max_iterations; tolerance | usize/u64; f64 | Newton correction ceiling and relative force criterion |
+| nodes | Vec<u32> | Ascending node labels |
+| elements | Vec<RodIdentity> | label:u32, nodes:Vec<u32> (2 ordered), reference_coordinates:Vec<[f64;3]> (2, m), reference_area:f64 (m²), young:f64 (Pa) |
+| frames | Vec<Frame> | Accepted output states, initial and final included |
+| accepted_steps | Vec<AcceptedStep> | Every accepted increment including initial: time:f64 (s), newton_corrections:usize, relative_residual:f64 |
+| warnings | Vec<string> | Scope and interpretation |
+
+Frame order: `time:f64` s; `displacement,velocity,acceleration:Vec<[f64;3]>`
+(m, m/s, m/s²); `internal_force,external_force:Vec<[f64;3]>` N (assembled global
+Cartesian nodal fields, not support reactions); `rods:Vec<RodRecovery>` following
+element order; `kinetic_energy,strain_energy,external_work,physical_dissipation,
+energy_balance:f64` J; `newton_corrections:usize,relative_residual:f64`.
+
+RodRecovery order: `green_strain:f64` dimensionless, `second_piola_stress:f64`
+Pa (reference axial material coordinate), `nominal_stress:f64` Pa (axial first
+Piola scalar along the current rod relative to reference area), `axial_force:f64`
+N, `nodal_internal_force:Vec<f64>` (six global Cartesian N, ordered endpoints),
+`strain_energy:f64` J. These fields are uniform in the two-node element; the
+recovery location is its reference midpoint, not an extrapolated nodal stress.
+Reference/current axes and midpoint are uniquely obtained from reference coordinates
+and accepted nodal displacements. No Cauchy stress or current-area law is claimed.
+S=Young*E_G, P=lambda*S and N=A0*P. The reader recomputes all rod fields from u and
+checks their identity, and checks assembled internal forces and convergence logs.
+
+T=0.5*v^T*M*v; V=sum(0.5*Young*A0*L0*E_G²); W is accumulated trapezoidal dead-force
+work; D is accumulated trapezoidal v^T*C*v with C=alpha*M. Balance=T+V−(T0+V0)+D−W
+includes integration/work-quadrature error, not physical damping. HHT numerical
+loss is not a separate exact physical-dissipation channel. Initial acceleration
+satisfies reduced M*a0=f0−f_int(u0)−C*v0. Its initial residual is diagnostic;
+subsequent accepted residuals must satisfy the stored Newton tolerance. Only
+successful complete histories are native results; failure diagnostics stay in the
+command error/local run log, never in accepted frames.
+
+Required new fields have no missing-field defaults. The existing envelope's
+model-freshness definition hash is unchanged; no program, commit or additional
+input provenance hash is added. Those identities belong in external handoff
+manifests. Unknown kinds, damaged payloads, invalid dimensions, incomplete frames,
+nonfinite state and inconsistent recovered stress are refused. The existing
+unsupported-magic result-drop policy is unchanged.

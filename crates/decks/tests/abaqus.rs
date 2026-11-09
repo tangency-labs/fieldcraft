@@ -57,7 +57,8 @@ fn cantilever_mesh() -> Model {
     m.add_set("root", faces(&[(1, 6)])).unwrap();
     m.add_set("tip", faces(&[(4, 4)])).unwrap();
     m.add_material("Steel", steel()).unwrap();
-    let formulation = Formulation { incompatible_modes: true, ..Formulation::default() };
+    // Exercise deck syntax with the existing hybrid mapping; native nine-mode Hex8 is now refused.
+    let formulation = Formulation { hybrid: true, ..Formulation::default() };
     m.add_section("beam", Section { orientation: None, set: "all".into(), material: "Steel".into(), kind: SectionKind::Solid {}, formulation })
         .unwrap();
     m.add_boundary_condition("clamp", BoundaryCondition::Fixed { target: Target::Set("root".into()) }).unwrap();
@@ -492,7 +493,7 @@ fn one_element(kind: ElementKind) -> Model {
     m.add_set("base", Set { nodes: vec![1], ..Set::default() }).unwrap();
     m.add_material("Steel", steel()).unwrap();
     let (section, formulation) = if kind.dimension() == 3 {
-        (SectionKind::Solid {}, Formulation::default())
+        (SectionKind::Solid {}, Formulation { b_bar: kind == ElementKind::Hex8, ..Formulation::default() })
     } else {
         (SectionKind::Shell { thickness: 1.0, offset: 0.0, points: 5 }, Formulation { integration: Integration::Reduced, ..Formulation::default() })
     };

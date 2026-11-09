@@ -1,0 +1,217 @@
+//! Opt-in diagnostic wall times. No solver operands or scheduling depend on these clocks.
+//! Records are inclusive (in particular, parallel solve spans must not be summed as wall time).
+use std::io::Write;
+use std::sync::OnceLock;
+use std::time::Instant;
+
+fn enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("FIELDCRAFT_SOLVER_TIMING").is_ok_and(|v| v == "1"))
+}
+
+/// Successful triangular traversals: RHS columns, executed lanes, equations, coefficient
+/// visits, scalar multiply/subtract updates and permuted scalar values. These are logical
+/// work counts, not measured cache misses, memory transactions or CPU time.
+pub(crate) fn triangular_work(rhs: usize, lanes: usize, n: usize, entries: usize) {
+    if enabled() {
+        let visits = entries.saturating_mul(2);
+        let updates = entries.saturating_sub(n).saturating_mul(2).saturating_mul(lanes);
+        let copies = n.saturating_mul(rhs).saturating_mul(2);
+        let _ = writeln!(std::io::stderr().lock(), "FIELDCRAFT_TRIANGULAR_WORK\t{rhs}\t{lanes}\t{n}\t{visits}\t{updates}\t{copies}");
+    }
+}
+
+/// Logical projection pairings and vector elements, not hardware traffic.
+pub(crate) fn projection_work(kind: &str, n: usize, basis: usize, columns: usize, passes: usize) {
+    if enabled() {
+        let pairs = basis.saturating_mul(columns).saturating_mul(passes);
+        let elements = n.saturating_mul(pairs);
+        let _ = writeln!(std::io::stderr().lock(), "FIELDCRAFT_PROJECTION_WORK\t{kind}\t{n}\t{basis}\t{columns}\t{passes}\t{pairs}\t{elements}");
+    }
+}
+
+/// Actual eligible dense update dimensions and logical padded arithmetic.
+pub(crate) fn dense_work(cached: bool, mu: usize, wu: usize, kw: usize, tile: usize, nr: usize) {
+    if enabled() {
+        let cells: usize = (0..mu).step_by(tile).map(|r| wu.min(r + tile.min(mu - r)).div_ceil(nr) * nr * tile).sum();
+        let flops = (cells as u128) * (kw as u128) * 2;
+        let extra_adds = if cached { (cells as u128) * (kw.div_ceil(256) as u128) } else { 0 };
+        let _ = writeln!(std::io::stderr().lock(), "FIELDCRAFT_DENSE_WORK\t{cached}\t{mu}\t{wu}\t{kw}\t{flops}\t{extra_adds}");
+    }
+}
+
+/// Diagnostic dispatch control; fixed tiles and arithmetic remain identical.
+pub(crate) struct DenseProfile {
+    start: Option<Instant>,
+    pack_ns: std::sync::atomic::AtomicU64,
+    kernel_ns: std::sync::atomic::AtomicU64,
+    task_ns: std::sync::atomic::AtomicU64,
+    max_task_ns: std::sync::atomic::AtomicU64,
+}
+
+impl DenseProfile {
+    pub(crate) fn new() -> Self {
+        static PROFILE: OnceLock<bool> = OnceLock::new();
+        let enabled = *PROFILE.get_or_init(|| std::env::var("FIELDCRAFT_DENSE_PROFILE").is_ok_and(|v| v == "1"));
+        Self { start: enabled.then(Instant::now), pack_ns: 0.into(), kernel_ns: 0.into(), task_ns: 0.into(), max_task_ns: 0.into() }
+    }
+
+    pub(crate) fn serial(&self) -> bool {
+        self.start.is_some() && std::env::var("FIELDCRAFT_DENSE_SERIAL").is_ok_and(|v| v == "1")
+    }
+
+    pub(crate) fn clock(&self) -> Option<Instant> {
+        self.start.map(|_| Instant::now())
+    }
+
+    pub(crate) fn task(&self, start: Option<Instant>, packed: Option<Instant>) {
+        use std::sync::atomic::Ordering::Relaxed;
+        if let (Some(start), Some(packed)) = (start, packed) {
+            let elapsed = start.elapsed().as_nanos().min(u64::MAX as u128) as u64;
+            self.pack_ns.fetch_add(packed.duration_since(start).as_nanos().min(u64::MAX as u128) as u64, Relaxed);
+            self.kernel_ns.fetch_add(packed.elapsed().as_nanos().min(u64::MAX as u128) as u64, Relaxed);
+            self.task_ns.fetch_add(elapsed, Relaxed);
+            self.max_task_ns.fetch_max(elapsed, Relaxed);
+        }
+    }
+
+    pub(crate) fn finish(&self, dispatch: Option<Instant>, mu: usize, wu: usize, kw: usize, tiles: usize) {
+        use std::sync::atomic::Ordering::Relaxed;
+        if let (Some(start), Some(dispatch)) = (self.start, dispatch) {
+            let pack = dispatch.duration_since(start).as_secs_f64();
+            let wall = dispatch.elapsed().as_secs_f64();
+            let seconds = |v: &std::sync::atomic::AtomicU64| std::time::Duration::from_nanos(v.load(Relaxed)).as_secs_f64();
+            let _ = writeln!(
+                std::io::stderr().lock(),
+                "FIELDCRAFT_DENSE_PROFILE\t{mu}\t{wu}\t{kw}\t{tiles}\t{pack:.9}\t{wall:.9}\t{:.9}\t{:.9}\t{:.9}\t{:.9}",
+                seconds(&self.pack_ns),
+                seconds(&self.kernel_ns),
+                seconds(&self.task_ns),
+                seconds(&self.max_task_ns)
+            );
+        }
+    }
+}
+
+pub(crate) struct Span {
+    name: &'static str,
+    start: Option<Instant>,
+}
+
+impl Span {
+    pub(crate) fn new(name: &'static str) -> Self {
+        Self { name, start: enabled().then(Instant::now) }
+    }
+}
+
+impl Drop for Span {
+    fn drop(&mut self) {
+        if let Some(start) = self.start {
+            let seconds = start.elapsed().as_secs_f64();
+            // Diagnostics must never turn an otherwise successful solve into an I/O error.
+            let _ = writeln!(std::io::stderr().lock(), "FIELDCRAFT_TIMING\t{}\t{seconds:.9}", self.name);
+        }
+    }
+}
+
+/// Per-supernode diagnostics. Times of concurrent nodes are not additive wall time.
+/// Product throughput includes packing, allocation and worker scheduling; it is not a
+/// hardware instruction counter. FLOPs count multiply and add separately, including padding.
+pub(crate) struct Supernode {
+    start: Option<Instant>,
+    j: usize,
+    m: usize,
+    w: usize,
+    pub(crate) assembly_seconds: f64,
+    product_seconds: f64,
+    pub(crate) assembly_product_seconds: f64,
+    product_flops: f64,
+    below_seconds: f64,
+    writeback_seconds: f64,
+    writeback_entries: usize,
+    diagonal_seconds: f64,
+}
+
+impl Supernode {
+    pub(crate) fn new(j: usize, m: usize, w: usize) -> Self {
+        static ENABLED: OnceLock<bool> = OnceLock::new();
+        let enabled = *ENABLED.get_or_init(|| std::env::var("FIELDCRAFT_SUPERNODE_TIMING").is_ok_and(|v| v == "1"));
+        Self {
+            start: enabled.then(Instant::now),
+            j,
+            m,
+            w,
+            assembly_seconds: 0.0,
+            product_seconds: 0.0,
+            assembly_product_seconds: 0.0,
+            product_flops: 0.0,
+            below_seconds: 0.0,
+            writeback_seconds: 0.0,
+            writeback_entries: 0,
+            diagonal_seconds: 0.0,
+        }
+    }
+
+    pub(crate) fn clock(&self) -> Option<Instant> {
+        self.start.map(|_| Instant::now())
+    }
+
+    pub(crate) fn elapsed(start: Option<Instant>) -> f64 {
+        start.map_or(0.0, |s| s.elapsed().as_secs_f64())
+    }
+
+    pub(crate) fn product(&mut self, start: Option<Instant>, mu: usize, wu: usize, kw: usize, tile: usize, nr: usize) {
+        self.product_seconds += Self::elapsed(start);
+        if self.start.is_some() {
+            for i0 in (0..mu).step_by(tile) {
+                let cols = wu.min(i0 + tile.min(mu - i0));
+                self.product_flops += 2.0 * (cols.div_ceil(nr) * nr) as f64 * tile as f64 * kw as f64;
+            }
+        }
+    }
+
+    pub(crate) fn finish_assembly(&mut self) {
+        self.assembly_product_seconds = self.product_seconds;
+    }
+
+    pub(crate) fn writeback(&mut self, start: Option<Instant>, entries: usize) {
+        self.writeback_seconds += Self::elapsed(start);
+        self.writeback_entries += entries;
+    }
+
+    pub(crate) fn diagonal(&mut self, start: Option<Instant>) {
+        self.diagonal_seconds += Self::elapsed(start);
+    }
+
+    pub(crate) fn below(&mut self, start: Option<Instant>) {
+        self.below_seconds += Self::elapsed(start);
+    }
+}
+
+impl Drop for Supernode {
+    fn drop(&mut self) {
+        if let Some(start) = self.start {
+            let seconds = start.elapsed().as_secs_f64();
+            let _ = writeln!(
+                std::io::stderr().lock(),
+                "FIELDCRAFT_SUPERNODE_DETAIL\t{}\t{:.9}\t{}\t{:.9}",
+                self.j,
+                self.writeback_seconds,
+                self.writeback_entries,
+                self.diagonal_seconds
+            );
+            let _ = writeln!(
+                std::io::stderr().lock(),
+                "FIELDCRAFT_SUPERNODE\t{}\t{}\t{}\t{seconds:.9}\t{:.9}\t{:.9}\t{:.0}\t{:.9}\t{:.9}",
+                self.j,
+                self.m,
+                self.w,
+                self.assembly_seconds,
+                self.product_seconds,
+                self.product_flops,
+                self.below_seconds,
+                self.assembly_product_seconds
+            );
+        }
+    }
+}

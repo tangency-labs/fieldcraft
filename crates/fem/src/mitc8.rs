@@ -88,7 +88,8 @@ fn dual(g: &[Vec3; 3]) -> Result<[Vec3; 3]> {
     let (inverse, _) = inverse3(g).ok_or_else(|| Error::Degenerate("MITC8/MITC6-a singular covariant basis".into()))?;
     Ok(std::array::from_fn(|i| std::array::from_fn(|j| inverse[j][i])))
 }
-const NATURAL_SLACK: f64 = 1e-12; // unit-factors: dimensionless natural-coordinate tolerance
+/// Slack on the reference-element bounds for natural coordinates.
+const NATURAL_SLACK: f64 = 1e-12; // unit-factors: dimensionless natural coordinates
 fn check_point(p: [f64; 3]) -> Result<()> {
     if p.iter().any(|v| !v.is_finite() || v.abs() > 1.0 + NATURAL_SLACK) {
         return Err(Error::Invalid("MITC8/MITC6-a natural coordinates must be finite and in [-1,1]".into()));

@@ -102,16 +102,16 @@ fn damping_matrices(mesh: &Mesh, graph: &NodeGraph, materials: &BTreeMap<u32, Da
     for e in &mesh.elements {
         let Some(d) = materials.get(&e.label) else { continue };
         let kernel = e.kernel()?;
-        let at = |err| Error::element(e.label, err);
         let stiffness = e.stiffness()?.data;
         let kinds = kernel.dofs().node;
         if let Some(c) = &mut c {
             add_block(c, &mesh.layout, &e.nodes, kinds, &scaled(&stiffness, d.beta))?;
             if d.alpha != 0.0 {
                 let density = e.density.ok_or_else(|| Error::Invalid(format!("element {} has no density", e.label)))?;
-                match mass {
-                    MassKind::Consistent => add_scalar(c, &mesh.layout, &e.nodes, kinds, &scaled(&kernel.mass(density).map_err(at)?.data, d.alpha))?,
-                    MassKind::Lumped => add_diagonal(c, &mesh.layout, &e.nodes, kinds, &scaled(&kernel.lumped_mass(density).map_err(at)?, d.alpha))?,
+                let (storage, values) = e.mass_matrix(mass, density)?;
+                match storage {
+                    MassKind::Consistent => add_scalar(c, &mesh.layout, &e.nodes, kinds, &scaled(&values, d.alpha))?,
+                    MassKind::Lumped => add_diagonal(c, &mesh.layout, &e.nodes, kinds, &scaled(&values, d.alpha))?,
                 }
             }
         }

@@ -62,6 +62,22 @@ pub const ADJUST: CommandSpec = CommandSpec {
     requires: &[Requirement::Step],
     run: |s, p| set_control(s, p, false),
 };
+pub const FIX: CommandSpec = CommandSpec {
+    id: "model.pretension.fix",
+    label: "Fix Pretension Current Value",
+    params: r#"{"name":"Bolt","step":"Locked"} — hold the current adjustment reached by the preceding equilibrium; distinct from a prescribed adjustment"#,
+    form: Some(&[NAME, STEP]),
+    kind: CommandKind::Model,
+    requires: &[Requirement::Step],
+    run: |s, p| {
+        let name = super::name(p)?;
+        let step: &str = super::req(p, "step")?;
+        let mut target = s.model.step(step).cloned().ok_or_else(|| EngineError::Params(format!("no step `{step}`")))?;
+        target.pretension.insert(name.into(), PretensionControl::Fixed);
+        s.model.replace_step(target)?;
+        Ok(json!({"name":name,"step":step}))
+    },
+};
 fn equilibrium<'a>(s: &'a Session, step: &str) -> Result<&'a fieldcraft_solver::StaticResult> {
     match s.result(step).map(|r| r.as_ref()) {
         Some(StepResult::Implicit(fieldcraft_solver::StepResult::Static(r))) => Ok(r),

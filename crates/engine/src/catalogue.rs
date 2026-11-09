@@ -634,7 +634,7 @@ pub static CATALOGUE: &[Capability] = &[
         Interactions,
         "Connectors",
         "Conforming cut with force or prescribed adjustment, lock from a solved equilibrium and report section force",
-        &["model.pretension.force", "model.pretension.adjust", "model.pretension.lock", "solve.pretension"],
+        &["model.pretension.force", "model.pretension.adjust", "model.pretension.fix", "model.pretension.lock", "solve.pretension"],
     ),
     ready_more(
         "model.spring.create",
@@ -684,8 +684,17 @@ pub static CATALOGUE: &[Capability] = &[
         "Static",
         Solve,
         "Implicit",
-        "Linear static (or coupled temperature–displacement) solve of a step with FieldCraft's own solver; nonlinear static, buckling, harmonic response, transient, response spectrum and heat transfer in the drop-down",
-        &["solve.nonlinear", "solve.buckle", "solve.harmonic", "solve.transient", "solve.spectrum", "solve.heat"],
+        "Linear static (or coupled temperature–displacement) solve of a step with FieldCraft's own solver; nonlinear static, buckling, harmonic response, transient, geometric rod transient (native nonlinear histories, stresses and energies), response spectrum and heat transfer in the drop-down",
+        &[
+            "solve.nonlinear",
+            "solve.buckle",
+            "solve.harmonic",
+            "solve.transient",
+            "solve.transient.nonlinear",
+            "deck.write.nonlinear",
+            "solve.spectrum",
+            "solve.heat",
+        ],
     ),
     ready(
         "solve.fatigue.history",

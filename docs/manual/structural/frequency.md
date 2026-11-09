@@ -60,7 +60,7 @@ small negative shift automatically, so its rigid-body modes come out at zero fre
 | `shift` | finite, eigenvalue units (rad per time unit)² | 0 for a supported structure, −10⁻⁶ Σ K_ii / Σ M_ii for a free one | the spectral shift σ; it must lie below every eigenvalue of the free equations |
 | `max_dofs` | 1 to 6 000 000 | 6 000 000 | may only be lowered |
 | `max_factor_entries` | 1 to 2 000 000 000 | 400 000 000 | factor entries; also bounds the Lanczos basis ([Linear solvers](linear-solvers.md#memory-limits)) |
-| `max_iterations` | 1 to 3000 | 3000 | cap on the Lanczos vectors (iterations × block size); may only be lowered |
+| `max_iterations` | 1 to 3000 | 3000 | cap on basis vectors, not block iterations (the final block may be partial); may only be lowered |
 | `threads` | 1 to 256 | the session's | changes the time, never the result |
 
 Every element with mass needs a density in its material ("element N has no density" otherwise).
@@ -277,3 +277,108 @@ amplitude has no physical size; the pictures use deformation scales of 0.4 and 0
 The two-ring axisymmetric formulation and its analysis/export restrictions are
 documented in [Axisymmetric meridional shell](../../solvers/axisymmetric-shell.md).
 Use the explicit `axisymmetric_shell` section flag; `beam2` alone remains a beam.
+### Explicit section policies for a lumped solve
+
+The command contract remains `mass=consistent|lumped`, default `consistent`. A
+solid or planar-continuum section can set
+`formulation.lumped_mass` to `hrz` (default), `row_sum`, or `consistent`, through
+`model.section.create` / `model.section.edit`. This policy is active **only when
+the solve explicitly selects `mass=lumped`**. A consistent solve ignores it.
+The frequency reply reports the requested mass and section policies. The policy
+is stored with the model; the global solve option remains a per-call choice.
+Reopening a project does not make a later omitted `mass` argument lumped.
+
+For `row_sum`, the diagonal is `L_ii = sum_j C_ij`, where `C` is the native
+consistent element mass at its existing mass quadrature. No stiffness, density,
+load or integration point for stiffness is changed. Supported positive-basis
+linear continuum types are Tet4, Wedge6, Hex8, and planar Tri3/Quad4 (including
+axisymmetric radius weighting). Higher-order sign-changing bases, pyramids,
+shells and beams are refused for this override. Every nodal value must be finite
+and strictly positive. `hrz` keeps the existing consistent-diagonal scaling and
+its existing applicability. `consistent` retains the full consistent matrix of
+a continuum section even within a globally lumped solve; this allows a linear
+row-sum section and a quadratic consistent section in one model. Split sections
+when their element types need different policies; one section has one policy.
+
+An analytic tapered Hex8 (`x=(1+z)xi`, `y=eta`, unit parameter cube, density 1)
+has mass 3/2. Row sums are 1/6 at each bottom node and 5/24 at each top node;
+HRZ gives 5/32 and 7/32. A mixed Hex8/Tet4 assembly test also checks the tetrahedral
+consistent diagonal `V/10`, off-diagonal `V/20`, and unchanged stiffness entries.
+These are formula and implementation checks, not a claim of another solver's
+mass defaults or stiffness equivalence.
+
+Harmonic and native modal random commands accept the shared `mass` choice and
+apply these section policies to inertia and material mass-proportional damping.
+Default remains consistent. Projection of stored harmonic frames inherits that
+result's mass choice and rejects an override; the project retains section policies.
+
+## Convergence diagnostics
+
+`solve.frequency` returns `convergence.iterations`, the actual number of block
+recurrences performed. `lanczos_vectors` / `convergence.basis_vectors` count basis
+vectors; these are not iteration counts. The legacy parameter `max_iterations`
+remains a **basis-vector capacity**, not a count of block recurrences. A final
+partial block counts as one iteration. `basis_limit` is the effective capacity
+(user setting, memory budget and equation count, with at least one start block); `basis_limit_reached` reports
+whether that capacity was reached, and `full_space_reached` distinguishes a complete
+basis from a truncated user/memory cap. A truncated cap alone never certifies
+convergence. An unconverged cap returns an error with the actual block iterations,
+vector count and `basis_limit_reached=true`, and stores no replacement result.
+
+Each returned mode has `equation_residual`:
+
+- `residual_norm` = ‖Kφ − λMφ‖₂;
+- `stiffness_action_norm` = ‖Kφ‖₂;
+- `relative_residual` = their quotient, or `null` with `undefined_reason` when the
+  denominator is zero (or the quotient overflows).
+
+These use the actual **unshifted, constrained** stiffness and the selected
+consistent/lumped mass, with the returned mode in the reduced equations. With a
+base state, K is its actual terminal tangent, including its stress stiffness and
+frozen constraints. Held-equation reactions are not counted as residual equations.
+The Euclidean norms are evaluated in the solver's SI equation coordinates; they
+are independent of mode normalization, but not of arbitrary equation rescaling.
+This is not the projected Lanczos residual and does not replace it in the algorithm.
+A small transformed Ritz bound does not by itself certify a small physical ratio.
+
+For an exact rigid mode Kφ=0, the requested ratio is undefined, including 0/0: it
+is never reported as zero. Near a rigid mode, roundoff can make ‖Kφ‖ nonzero;
+`near_zero_stiffness_action` warns when it is at most √ε ‖K‖∞ ‖φ‖₂. A finite ratio
+in that region is ill-conditioned, not a reliable rigid-mode acceptance criterion.
+The threshold is a diagnostic warning only; it does not suppress a finite ratio.
+
+Diagnostics are returned by this solve command, and by the Rust API
+`solve_frequency_report`, separately from the numeric `FrequencyResult`. Save the
+command's JSON reply when retaining this evidence. The unchanged native results
+payload does **not** persist this new report; opening an old solved model cannot
+supply historical iteration counts or residuals. Computing the report retains K
+through Lanczos and performs two sparse products per mode inside the complete
+solve command; its time and memory belong in performance comparisons.
+
+For an opt-in orthogonality check, set `FIELDCRAFT_MODAL_ORTHOGONALITY=1`.
+The solve evaluates the returned modes against its actual reduced mass matrix and
+writes `FIELDCRAFT_MASS_ORTHOGONALITY` to stderr: mode count and
+max|ΦᵀMΦ−I|. With solver timing enabled, `frequency_mass_orthogonality` reports
+this additional work, which is included in the complete solve command time.
+This diagnostic neither changes the modes nor adds fields to the stored result.
+
+`FIELDCRAFT_PROJECTION_WORK` records successful projection stages when solver
+timing is enabled: implementation, equations, basis columns, candidate columns,
+passes, vector pairings, and dot-product elements. The subtraction traverses the
+same number of vector elements. These are logical work counts, not cache or
+DRAM counters; timings include workspace preparation and worker scheduling.
+
+The block projection uses two reorthogonalization passes, fixed eight-column
+panels and fixed 512-row partial dot products combined in row-block order.
+Independent row blocks have one writer each. The worker count does not choose
+the partition or the reduction order. This can round differently from scalar
+Gram–Schmidt; thread-count reproducibility and agreement with an older
+algorithm within its physical-result tolerance are separate checks. Repeated
+eigenvalues require a subspace comparison, since individual vectors within a
+repeated eigenspace are not unique.
+
+`FIELDCRAFT_PROJECTION=scalar` selects the scalar reference for diagnostics in
+the same executable. Both paths retain the convergence tests and random
+replacement of vanished directions. Block projection additionally stores
+packed basis and mass-basis panels; account for this workspace when comparing
+peak process memory. This selection does not change the archive format.

@@ -2,11 +2,11 @@
 //! projection. A coherent spatial load is solved once per frequency before its square is
 //! formed, retaining modal cross terms (Newland, Random Vibrations, 3rd ed.).
 use super::random_frames;
-use crate::{EngineError, Result, Session, StepResult};
+use crate::{EngineError, Result, Session};
 use fieldcraft_model::harmonic::{Frequencies, Harmonic, Method};
 use fieldcraft_model::random::Excitation;
 use fieldcraft_model::{BoundaryCondition, Model, Procedure, Step, Target};
-use fieldcraft_solver::{FrequencyOptions, StepResult as ImplicitResult};
+use fieldcraft_solver::{FrequencyOptions, MassKind};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
@@ -94,14 +94,24 @@ pub(super) fn run(s: &mut Session, p: &Value, name: &str) -> Result<Value> {
     }
     let limits = super::limits(p)?;
     let threads = super::threads(s, p)?;
-    let modes = match s.result(&modal.source_step).map(|r| r.as_ref()) {
-        Some(StepResult::Implicit(ImplicitResult::Frequency(f))) => f.clone(),
-        _ => super::with_threads(threads, || {
-            fieldcraft_solver::solve_frequency(&s.model, Some(&modal.source_step), &FrequencyOptions::default(), &limits)
-        })?,
-    };
+    let mass = super::opt::<MassKind>(p, "mass")?.unwrap_or_default();
+    // Frequency results do not carry a mass-kind identity. Do not reuse a cached
+    // result whose operator might differ from this explicit request.
+    let modes = super::with_threads(threads, || {
+        fieldcraft_solver::solve_frequency(&s.model, Some(&modal.source_step), &FrequencyOptions { mass, ..FrequencyOptions::default() }, &limits)
+    })?;
     let natural: Vec<f64> = modes.modes.iter().map(|m| m.frequency).collect();
-    let frequencies = modal.frequencies(&natural)?;
+    let supplied = super::opt::<Vec<f64>>(p, "sampling_frequencies")?;
+    let frequencies = if let Some(points) = supplied.as_ref() {
+        // An explicit replay grid changes sampling only, not the modal basis or loads.
+        Frequencies::List(points.clone()).points()?;
+        if points.len() < 2 || points.iter().any(|f| !modal.bands.iter().any(|b| *f >= b.lower && *f <= b.upper)) {
+            return Err(EngineError::invalid("sampling_frequencies", "requires at least two increasing frequencies within the source bands"));
+        }
+        points.clone()
+    } else {
+        modal.frequencies(&natural)?
+    };
     let mut harmonic_step = step.clone();
     harmonic_step.procedure = Procedure::Harmonic(Harmonic {
         frequencies: Frequencies::List(frequencies.clone()),
@@ -111,20 +121,30 @@ pub(super) fn run(s: &mut Session, p: &Value, name: &str) -> Result<Value> {
     });
     let mut model = s.model.clone();
     model.replace_step(harmonic_step)?;
-    let h = super::with_threads(threads, || fieldcraft_solver::solve_harmonic(&model, Some(name), &limits))?;
+    let h = super::with_threads(threads, || fieldcraft_solver::solve_harmonic_with_mass(&model, Some(name), mass, &limits))?;
     if h.natural_frequencies.len() != natural.len()
         || h.natural_frequencies.iter().zip(&natural).any(|(a, b)| (a - b).abs() > 1e-8 * a.abs().max(b.abs()))
     {
         return Err(EngineError::invalid("step", "harmonic basis frequencies disagree with the source modal analysis"));
     }
     let table = json!(spectrum.iter().map(|p| [p.frequency, p.psd]).collect::<Vec<_>>());
-    let mut out = random_frames::evaluate(&h, p, name, &table)?;
+    let mut projection = p.clone();
+    if let Some(params) = projection.as_object_mut() {
+        params.remove("mass");
+    }
+    let mut out = random_frames::evaluate(&h, &projection, name, &table)?;
+    out["section_mass_policies"] = if mass == MassKind::Lumped {
+        json!(model.sections().iter().map(|(name, section)| (name, section.formulation.lumped_mass)).collect::<std::collections::BTreeMap<_, _>>())
+    } else {
+        json!({})
+    };
     random_frames::element_output(&model, &h, p, &mut out)?;
     out["method"] = json!("modal_correlated_force_psd");
     out["source_step"] = json!(modal.source_step);
     out["natural_frequencies"] = json!(natural);
     out["damping_ratios"] = json!(modal.damping_ratios);
     out["frequency_points"] = json!(frequencies.len());
+    out["sampling_source"] = json!(if supplied.is_some() { "explicit_replay_grid" } else { "source_modal_bands" });
     out["modal_full_residual_max"] = json!(h.frames.iter().map(|f| f.relative_residual).fold(0.0_f64, f64::max));
     out["modal_projected_residual_max"] = json!(h.frames.iter().filter_map(|f| f.projected_residual).fold(0.0_f64, f64::max));
     out["warnings"] = json!(h.warnings);

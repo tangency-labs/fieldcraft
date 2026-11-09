@@ -33,10 +33,16 @@ impl Csr {
     /// y = A x.
     /// Rows are computed in parallel blocks; each row's sum runs in column order.
     pub fn mul(&self, x: &[f64], y: &mut [f64]) {
+        self.mul_with_rows(x, y, ROWS);
+    }
+
+    /// Independent row tasks; changing their size never changes a row's column-order sum.
+    pub(crate) fn mul_with_rows(&self, x: &[f64], y: &mut [f64], rows: usize) {
+        let rows = rows.max(1);
         let n = self.n.min(y.len());
-        fieldcraft_parallel::chunks_mut(y.get_mut(..n).unwrap_or_default(), ROWS, |b, block| {
+        fieldcraft_parallel::chunks_mut(y.get_mut(..n).unwrap_or_default(), rows, |b, block| {
             for (i, yr) in block.iter_mut().enumerate() {
-                let (cols, vals) = self.row(b * ROWS + i);
+                let (cols, vals) = self.row(b * rows + i);
                 *yr = cols.iter().zip(vals).map(|(c, v)| v * x.get(*c).copied().unwrap_or(0.0)).sum();
             }
         });
@@ -252,6 +258,29 @@ pub fn add_entry(k: &mut Csr, i: usize, j: usize, v: f64) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn row_task_size_preserves_product_bits_and_partial_output() {
+        let n = 8193;
+        let mut a = Csr { n, ptr: vec![0], idx: Vec::new(), val: Vec::new() };
+        for r in 0..n {
+            for c in r.saturating_sub(2)..(r + 3).min(n) {
+                a.idx.push(c);
+                a.val.push(if c % 2 == 0 { 1e12 } else { -1e-12 });
+            }
+            a.ptr.push(a.idx.len());
+        }
+        let x: Vec<f64> = (0..n).map(|i| (i % 23) as f64 - 11.0).collect();
+        for len in [n - 1, n, n + 1] {
+            let mut reference = vec![7.0; len];
+            a.mul(&x, &mut reference);
+            for threads in [1, 2, 7] {
+                let mut result = vec![7.0; len];
+                fieldcraft_parallel::with_threads(threads, || a.mul_with_rows(&x, &mut result, 512));
+                assert!(reference.iter().zip(result).all(|(a, b)| a.to_bits() == b.to_bits()));
+            }
+        }
+    }
 
     #[test]
     fn assemble_mirror_multiply() {

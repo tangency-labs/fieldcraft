@@ -20,6 +20,7 @@
 //! so results are reproducible.
 
 use crate::{Error, Result};
+use fieldcraft_parallel as parallel;
 
 /// Eigenvalues (ascending) and eigenvectors (column k of the row-major `vectors`) of a dense
 /// symmetric matrix (row-major, n × n).
@@ -196,11 +197,27 @@ pub trait Operator: Sync {
     fn operand(&self, _x: &[f64], mx: &[f64]) -> Vec<f64> {
         mx.to_vec()
     }
+    /// Apply a block of independent right-hand sides in input order. Implementations
+    /// may reuse factor data, while preserving each column's arithmetic order.
+    fn apply_block(&self, x: &[Vec<f64>], mx: &[Vec<f64>]) -> Result<Vec<Vec<f64>>> {
+        independent_block(self, x, mx)
+    }
     /// The eigenvalue of a Ritz value θ of the operator: σ + 1/θ for the spectral
     /// transformation.
     fn eigenvalue(&self, shift: f64, theta: f64) -> f64 {
         shift + 1.0 / theta
     }
+}
+
+/// Original independent-column schedule, shared by the default and the high-thread
+/// Cholesky path; collecting in column order also fixes which error is returned.
+pub(crate) fn independent_block(op: &(impl Operator + ?Sized), x: &[Vec<f64>], mx: &[Vec<f64>]) -> Result<Vec<Vec<f64>>> {
+    fieldcraft_parallel::map(mx.len(), |i| {
+        let mut y = op.operand(x.get(i).map(Vec::as_slice).unwrap_or_default(), mx.get(i).map(Vec::as_slice).unwrap_or_default());
+        op.solve(&mut y).map(|()| y)
+    })
+    .into_iter()
+    .collect()
 }
 
 /// Converged eigenpairs: λ ascending, vectors M-orthonormal.
@@ -213,10 +230,71 @@ pub struct Eigenpairs {
     pub negative: Vec<f64>,
     /// Lanczos vectors used.
     pub basis: usize,
+    /// Actual block recurrence iterations (including a final partial block).
+    pub iterations: usize,
+    pub basis_limit: usize,
+    pub basis_limit_reached: bool,
+    pub full_space_reached: bool,
 }
 
 fn dot(a: &[f64], b: &[f64]) -> f64 {
     a.iter().zip(b).map(|(x, y)| x * y).sum()
+}
+
+// Block classical Gram–Schmidt, twice (Parlett, ch. 13). Fixed panels and row
+// reductions are part of the algorithm, independent of the worker count.
+fn project_block(w: &mut [Vec<f64>], q: &[Vec<f64>], mq: &[Vec<f64>], n: usize) {
+    const WIDTH: usize = 8;
+    const ROWS: usize = 512;
+    let _timing = crate::timing::Span::new("lanczos_orthogonalize_projection");
+    let pack = |columns: &[Vec<f64>]| -> Vec<[f64; WIDTH]> {
+        (0..n).map(|i| std::array::from_fn(|j| columns.get(j).and_then(|v| v.get(i)).copied().unwrap_or(0.0))).collect()
+    };
+    let panels: Vec<_> = q.chunks(WIDTH).zip(mq.chunks(WIDTH)).map(|(q, mq)| (pack(q), pack(mq), q.len())).collect();
+    for columns in w.chunks_mut(WIDTH) {
+        let width = columns.len();
+        let mut values = pack(columns);
+        for _ in 0..2 {
+            for (basis, mass_basis, rank) in &panels {
+                let partials = parallel::map(n.div_ceil(ROWS), |tile| {
+                    let mut sums = [[0.0; WIDTH]; WIDTH];
+                    let start = tile * ROWS;
+                    let end = (start + ROWS).min(n);
+                    for (row, mrow) in values[start..end].iter().zip(&mass_basis[start..end]) {
+                        for (a, coefficients) in sums.iter_mut().enumerate().take(*rank) {
+                            for (sum, value) in coefficients.iter_mut().zip(row).take(width) {
+                                *sum += mrow[a] * value;
+                            }
+                        }
+                    }
+                    sums
+                });
+                let mut coefficients = [[0.0; WIDTH]; WIDTH];
+                for part in partials {
+                    for (row, p) in coefficients.iter_mut().zip(part).take(*rank) {
+                        for (c, v) in row.iter_mut().zip(p).take(width) {
+                            *c += v;
+                        }
+                    }
+                }
+                parallel::chunks_mut(&mut values, ROWS, |tile, rows| {
+                    for (row, qrow) in rows.iter_mut().zip(&basis[tile * ROWS..]) {
+                        for (a, c) in coefficients.iter().enumerate().take(*rank) {
+                            for (v, coefficient) in row.iter_mut().zip(c).take(width) {
+                                *v -= qrow[a] * coefficient;
+                            }
+                        }
+                    }
+                });
+            }
+        }
+        for (j, column) in columns.iter_mut().enumerate() {
+            for (v, row) in column.iter_mut().zip(&values) {
+                *v = row[j];
+            }
+        }
+    }
+    crate::timing::projection_work("block", n, q.len(), w.len(), 2);
 }
 
 /// Orthonormalize a block against the basis and itself in the M inner product (classical
@@ -231,20 +309,40 @@ fn orthonormalize(
     rng: &mut Random,
     scratch: &mut [f64],
 ) -> (Vec<Vec<f64>>, Vec<Vec<f64>>, Vec<Vec<f64>>) {
+    let _timing = crate::timing::Span::new("lanczos_orthogonalize");
     let n = op.n();
     let k = w.len();
+    let blocked = !q.is_empty() && !std::env::var("FIELDCRAFT_PROJECTION").is_ok_and(|v| v == "scalar");
+    let mut w = w;
+    let mut initial_norms = Vec::new();
+    if blocked {
+        for v in &w {
+            let _mass_timing = crate::timing::Span::new("lanczos_orthogonalize_mass");
+            op.mass(v, scratch);
+            initial_norms.push(dot(v, scratch).max(0.0).sqrt());
+        }
+        project_block(&mut w, q, mq, n);
+    }
     let mut r = vec![vec![0.0; k]; k];
     let mut out: Vec<Vec<f64>> = Vec::with_capacity(k);
     let mut mout: Vec<Vec<f64>> = Vec::with_capacity(k);
     for (i, mut v) in w.into_iter().enumerate() {
         let mut fresh = false;
         for _attempt in 0..4 {
-            op.mass(&v, scratch);
-            let before = dot(&v, scratch).max(0.0).sqrt();
+            let before = if blocked && !fresh {
+                initial_norms.get(i).copied().unwrap_or(0.0)
+            } else {
+                let _mass_timing = crate::timing::Span::new("lanczos_orthogonalize_mass");
+                op.mass(&v, scratch);
+                dot(&v, scratch).max(0.0).sqrt()
+            };
+            let projection_timing = crate::timing::Span::new("lanczos_orthogonalize_projection");
             for _ in 0..2 {
-                for (qj, mqj) in q.iter().zip(mq) {
-                    let c = dot(mqj, &v);
-                    v.iter_mut().zip(qj).for_each(|(x, y)| *x -= c * y);
+                if !blocked || fresh {
+                    for (qj, mqj) in q.iter().zip(mq) {
+                        let c = dot(mqj, &v);
+                        v.iter_mut().zip(qj).for_each(|(x, y)| *x -= c * y);
+                    }
                 }
                 for (j, (qj, mqj)) in out.iter().zip(&mout).enumerate() {
                     let c = dot(mqj, &v);
@@ -254,7 +352,12 @@ fn orthonormalize(
                     }
                 }
             }
-            op.mass(&v, scratch);
+            crate::timing::projection_work("column", n, out.len() + if !blocked || fresh { q.len() } else { 0 }, 1, 2);
+            drop(projection_timing);
+            {
+                let _mass_timing = crate::timing::Span::new("lanczos_orthogonalize_mass");
+                op.mass(&v, scratch);
+            }
             let norm = dot(&v, scratch).max(0.0).sqrt();
             if norm > 1e-8 * before && norm > 0.0 {
                 if !fresh && let Some(x) = r.get_mut(i).and_then(|row| row.get_mut(i)) {
@@ -274,6 +377,7 @@ fn orthonormalize(
 
 /// Shift-invert block Lanczos with full reorthogonalization.
 pub fn lanczos(op: &impl Operator, shift: f64, wanted: Wanted, block: usize, max_basis: usize, tolerance: f64) -> Result<Eigenpairs> {
+    let _timing = crate::timing::Span::new("lanczos");
     let n = op.n();
     if n == 0 {
         return Err(Error::Invalid("there are no free degrees of freedom".into()));
@@ -296,19 +400,16 @@ pub fn lanczos(op: &impl Operator, shift: f64, wanted: Wanted, block: usize, max
     let block_width = b;
     let mut prev_b: Option<Vec<Vec<f64>>> = None;
     let mut next_check = (wanted.count + b).max(2 * b);
+    let mut iterations = 0;
     loop {
         fieldcraft_model::progress::check()?;
+        iterations += 1;
         let b = cur.len();
         let j0 = q.len();
+        let operator_timing = crate::timing::Span::new("lanczos_block_operator");
         // W = Op Q_j.
-        let mut w: Vec<Vec<f64>> = Vec::with_capacity(b);
-        // The block's solves are independent: one task each.
-        for y in fieldcraft_parallel::map(mcur.len(), |i| {
-            let mut y = op.operand(cur.get(i).map(Vec::as_slice).unwrap_or_default(), mcur.get(i).map(Vec::as_slice).unwrap_or_default());
-            op.solve(&mut y).map(|()| y)
-        }) {
-            w.push(y?);
-        }
+        let w = op.apply_block(&cur, &mcur)?;
+        drop(operator_timing);
         // A_j = Q_jᵀ M W (symmetrized), W −= Q_j A_j (the earlier blocks go in the full
         // reorthogonalization below).
         let mut a = vec![vec![0.0; b]; b];
@@ -364,7 +465,9 @@ pub fn lanczos(op: &impl Operator, shift: f64, wanted: Wanted, block: usize, max
         if m >= next_check || full || next.len() < next_width {
             next_check = m + (m / 4).max(b);
             let dense: Vec<f64> = t.iter().flatten().copied().collect();
+            let ritz_timing = crate::timing::Span::new("lanczos_ritz");
             let (theta, s) = symmetric_eigen(&dense, m)?;
+            drop(ritz_timing);
             // Exhausting a user/memory cap is not convergence. At a truncated cap,
             // check the actual transformed Ritz residual in the M norm. Only a basis
             // spanning all n dimensions may use the vanishing terminal residual.
@@ -420,7 +523,7 @@ pub fn lanczos(op: &impl Operator, shift: f64, wanted: Wanted, block: usize, max
                     done = true;
                 } else {
                     return Err(Error::NotConverged(format!(
-                        "found {found} of {} modes after {m} Lanczos vectors (Lanczos basis cap); raise the iteration limit or ask for fewer modes",
+                        "found {found} of {} modes after {iterations} Lanczos block iterations and {m} vectors (basis_limit_reached=true, basis_limit={max_basis}; Lanczos basis cap); raise the iteration limit or ask for fewer modes",
                         wanted.count
                     )));
                 }
@@ -460,7 +563,16 @@ pub fn lanczos(op: &impl Operator, shift: f64, wanted: Wanted, block: usize, max
                     }
                     vectors.push(x);
                 }
-                return Ok(Eigenpairs { values, vectors, negative, basis: m });
+                return Ok(Eigenpairs {
+                    values,
+                    vectors,
+                    negative,
+                    basis: m,
+                    iterations,
+                    basis_limit: max_basis,
+                    basis_limit_reached: full,
+                    full_space_reached: m >= n,
+                });
             }
         }
         if full {
@@ -529,11 +641,66 @@ mod tests {
     }
 
     #[test]
+    fn block_projection_fixed_reduction_and_tail_panels() {
+        let n = 1031;
+        let op = Diagonal { k: vec![1.0; n], m: (0..n).map(|i| 1.0 + (i % 7) as f64).collect(), shift: 0.0 };
+        let mut rng = Random::new(91);
+        let mut scratch = vec![0.0; n];
+        let start = (0..11).map(|_| (0..n).map(|_| rng.uniform()).collect()).collect();
+        let (q, mq, _) = orthonormalize(&op, start, &[], &[], &mut rng, &mut scratch);
+        let w: Vec<Vec<f64>> = (0..9).map(|_| (0..n).map(|_| rng.uniform()).collect()).collect();
+        let mut scalar = w.clone();
+        for v in &mut scalar {
+            for _ in 0..2 {
+                for (qj, mqj) in q.iter().zip(&mq) {
+                    let c = dot(mqj, v);
+                    for (x, y) in v.iter_mut().zip(qj) {
+                        *x -= c * y;
+                    }
+                }
+            }
+        }
+        let mut reference = None;
+        for threads in [1, 2, 7] {
+            let mut got = w.clone();
+            parallel::with_threads(threads, || project_block(&mut got, &q, &mq, n));
+            for (v, expected) in got.iter().zip(&scalar) {
+                let error = v.iter().zip(expected).map(|(a, b)| (a - b).powi(2)).sum::<f64>().sqrt();
+                assert!(error < 1e-12, "projection difference {error}");
+                for mqj in &mq {
+                    assert!(dot(mqj, v).abs() < 1e-12);
+                }
+            }
+            let bits: Vec<_> = got.iter().flatten().map(|v| v.to_bits()).collect();
+            if let Some(expected) = &reference {
+                assert_eq!(&bits, expected);
+            } else {
+                reference = Some(bits);
+            }
+        }
+    }
+
+    #[test]
+    fn lanczos_converged_at_cap_reports_one_block_iteration() {
+        let op = Diagonal { k: vec![3.0; 60], m: vec![1.0; 60], shift: 0.0 };
+        let wanted = Wanted { count: 1, min: 0.0, max: f64::INFINITY };
+        let pairs = lanczos(&op, 0.0, wanted, 6, 6, 1e-12).unwrap();
+        assert_eq!(pairs.iterations, 1);
+        assert_eq!(pairs.basis, 6);
+        assert_eq!(pairs.basis_limit, 6);
+        assert!(pairs.basis_limit_reached);
+        assert!(!pairs.full_space_reached);
+        assert!((pairs.values[0] - 3.0).abs() < 1e-12);
+    }
+
+    #[test]
     fn lanczos_boundary_cap_does_not_imply_convergence() {
         let op = Diagonal { k: (1..=60).map(f64::from).collect(), m: vec![1.0; 60], shift: 0.0 };
         let wanted = Wanted { count: 1, min: 0.0, max: f64::INFINITY };
         for cap in [6, 13] {
-            assert!(lanczos(&op, 0.0, wanted, 6, cap, 1e-12).is_err());
+            let error = lanczos(&op, 0.0, wanted, 6, cap, 1e-12).unwrap_err().to_string();
+            assert!(error.contains("basis_limit_reached=true"), "{error}");
+            assert!(error.contains(&format!("after {} Lanczos block iterations", cap.div_ceil(6))), "{error}");
         }
     }
 
@@ -543,6 +710,9 @@ mod tests {
         let wanted = Wanted { count: 25, min: 0.0, max: f64::INFINITY };
         let pairs = lanczos(&op, 0.0, wanted, 6, 25, 1e-12).unwrap();
         assert_eq!(pairs.basis, 25);
+        assert_eq!(pairs.iterations, 5);
+        assert!(pairs.full_space_reached);
+        assert!(pairs.basis_limit_reached);
         assert_eq!(pairs.values.len(), 25);
         for (i, (lambda, vector)) in pairs.values.iter().zip(&pairs.vectors).enumerate() {
             assert!((lambda - (i + 1) as f64).abs() < 1e-10);

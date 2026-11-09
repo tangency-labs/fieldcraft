@@ -193,16 +193,12 @@ pub(crate) fn assemble(mesh: &Mesh, graph: &NodeGraph, mass: Option<MassKind>) -
         let matrices = parallel::map_grained(elements.len(), GRAIN, |i| -> Result<_> {
             let Some(e) = elements.get(i) else { return Err(Error::Internal("element index".into())) };
             let kernel = e.kernel()?;
-            let at = |err| Error::element(e.label, err);
             let stiffness = e.stiffness()?.data;
             let element_mass = match mass {
                 None => None,
                 Some(kind) => {
                     let rho = e.density.ok_or_else(|| Error::Invalid(format!("element {} has no density", e.label)))?;
-                    Some(match kind {
-                        MassKind::Consistent => kernel.mass(rho).map_err(at)?.data,
-                        MassKind::Lumped => kernel.lumped_mass(rho).map_err(at)?,
-                    })
+                    Some(e.mass_matrix(kind, rho)?)
                 }
             };
             Ok((kernel.dofs().node, stiffness, element_mass))
@@ -210,7 +206,7 @@ pub(crate) fn assemble(mesh: &Mesh, graph: &NodeGraph, mass: Option<MassKind>) -
         for (e, computed) in elements.iter().zip(matrices) {
             let (kinds, stiffness, element_mass) = computed?;
             add_block(&mut k, layout, &e.nodes, kinds, &stiffness)?;
-            if let (Some(mm), Some(kind), Some(data)) = (m.as_mut(), mass, element_mass) {
+            if let (Some(mm), Some((kind, data))) = (m.as_mut(), element_mass) {
                 match kind {
                     MassKind::Consistent => add_scalar(mm, layout, &e.nodes, kinds, &data)?,
                     MassKind::Lumped => add_diagonal(mm, layout, &e.nodes, kinds, &data)?,
@@ -411,6 +407,7 @@ pub(crate) fn budget(limits: &Limits, mesh: &Mesh, graph: &NodeGraph, matrices: 
 /// quasi-static thermoelasticity without thermoelastic dissipation, so solving the two in turn
 /// is the monolithic solution exactly.
 pub fn solve_static(model: &Model, step: Option<&str>, limits: &Limits) -> Result<StaticResult> {
+    let _timing = crate::timing::Span::new("solve_static");
     // A job cancelled before it starts stops here, before any setup work.
     fieldcraft_model::progress::check()?;
     let resolved = model.resolve()?;
@@ -459,9 +456,20 @@ pub(crate) fn static_on(setup: &Setup<'_>, limits: &Limits) -> Result<StaticResu
     }
     let [kff] = red.reduce([&k])?;
     let chol = factor_raw(&kff, limits).map_err(|e| factor_error(e, mesh, &red))?;
-    drop(kff);
+    let diagnostic_k = std::env::var("FIELDCRAFT_STATIC_RESIDUAL").is_ok_and(|v| v == "1").then_some(kff);
     let mut q = red.rhs(&f, &k);
+    let diagnostic_rhs = diagnostic_k.as_ref().map(|_| q.clone());
     chol.solve(&mut q)?;
+    if let (Some(matrix), Some(rhs)) = (diagnostic_k, diagnostic_rhs) {
+        use std::io::Write;
+        let _timing = crate::timing::Span::new("static_actual_residual");
+        let mut product = vec![0.0; q.len()];
+        matrix.mul(&q, &mut product);
+        let error = product.iter().zip(&rhs).map(|(a, b)| (a - b).powi(2)).sum::<f64>().sqrt();
+        let scale = rhs.iter().map(|v| v * v).sum::<f64>().sqrt();
+        let ratio = if scale > 0.0 { error / scale } else { f64::NAN };
+        let _ = writeln!(std::io::stderr().lock(), "FIELDCRAFT_STATIC_RESIDUAL\t{error:.17e}\t{scale:.17e}\t{ratio:.17e}");
+    }
     let u = red.expand(&q, true);
     if u.iter().any(|x| !x.is_finite()) {
         return Err(Error::Singular("the solution is not finite; the model is ill-conditioned".into()));
@@ -693,10 +701,22 @@ impl Operator for ShiftInvert<'_> {
         self.m.n
     }
     fn mass(&self, x: &[f64], y: &mut [f64]) {
-        self.m.mul(x, y);
+        // A smaller row task exposes parallelism for the repeated modal products,
+        // without changing any within-row sum or any Lanczos recurrence order.
+        self.m.mul_with_rows(x, y, 512);
     }
     fn solve(&self, x: &mut [f64]) -> Result<()> {
         self.factor.solve(x)
+    }
+    fn apply_block(&self, x: &[Vec<f64>], mx: &[Vec<f64>]) -> Result<Vec<Vec<f64>>> {
+        // Reusing a factor stream wins reliably with one worker. With more workers the
+        // original independent solves exploit RHS parallelism; both keep identical sums.
+        if parallel::current_threads() > 1 {
+            return crate::eigen::independent_block(self, x, mx);
+        }
+        let mut rhs = mx.to_vec();
+        self.factor.solve_block(&mut rhs)?;
+        Ok(rhs)
     }
 }
 
@@ -720,13 +740,27 @@ pub(crate) const TOLERANCE: f64 = 1e-9; // unit-factors: a relative residual
 /// Solve a frequency step (the step named `step`, or the model's only frequency step): the
 /// lowest natural modes within the step's frequency range.
 pub fn solve_frequency(model: &Model, step: Option<&str>, options: &FrequencyOptions, limits: &Limits) -> Result<FrequencyResult> {
-    frequency_impl(model, step, options, limits, false).map(|(result, _)| result)
+    let _timing = crate::timing::Span::new("solve_frequency");
+    frequency_impl(model, step, options, limits, false, false).map(|(result, _, _)| result)
+}
+
+/// Solve and report the actual unshifted reduced-pencil residuals and block iterations.
+/// Diagnostics are returned separately: legacy stored numeric results keep their format.
+pub fn solve_frequency_report(
+    model: &Model,
+    step: Option<&str>,
+    options: &FrequencyOptions,
+    limits: &Limits,
+) -> Result<(FrequencyResult, crate::convergence::ModalConvergence)> {
+    let _timing = crate::timing::Span::new("solve_frequency");
+    let (result, _, convergence) = frequency_impl(model, step, options, limits, false, true)?;
+    Ok((result, convergence.ok_or_else(|| Error::Internal("frequency diagnostics missing".into()))?))
 }
 
 /// Reuse the actual physical mass operator for modal derivative contractions.
 /// Ordinary frequency solves still release it before factorization.
 pub(crate) fn frequency_with_mass(model: &Model, step: Option<&str>, options: &FrequencyOptions, limits: &Limits) -> Result<(FrequencyResult, Csr)> {
-    let (result, mass) = frequency_impl(model, step, options, limits, true)?;
+    let (result, mass, _) = frequency_impl(model, step, options, limits, true, false)?;
     Ok((result, mass.ok_or_else(|| Error::Internal("retained modal mass".into()))?))
 }
 
@@ -736,7 +770,8 @@ fn frequency_impl(
     options: &FrequencyOptions,
     limits: &Limits,
     retain_mass: bool,
-) -> Result<(FrequencyResult, Option<Csr>)> {
+    diagnostics: bool,
+) -> Result<(FrequencyResult, Option<Csr>, Option<crate::convergence::ModalConvergence>)> {
     // A job cancelled before it starts stops here, before any setup work.
     fieldcraft_model::progress::check()?;
     let resolved: Resolved = model.resolve()?;
@@ -812,7 +847,7 @@ fn frequency_impl(
             Err(e) => return Err(factor_error(e, &mesh, &red)),
         },
     };
-    drop(kff);
+    let residual_k = diagnostics.then_some(kff);
     let two_pi = 2.0 * std::f64::consts::PI;
     let wanted = Wanted {
         count: usize::try_from(modes).unwrap_or(usize::MAX).min(neq),
@@ -822,6 +857,39 @@ fn frequency_impl(
     let max_basis = lanczos_basis(limits, neq);
     let op = ShiftInvert { m: &mff, factor: &chol };
     let pairs = lanczos(&op, shift, wanted, BLOCK, max_basis, TOLERANCE)?;
+    if std::env::var("FIELDCRAFT_MODAL_ORTHOGONALITY").is_ok_and(|v| v == "1") {
+        use std::io::Write;
+        let _timing = crate::timing::Span::new("frequency_mass_orthogonality");
+        let mut mphi = vec![0.0; neq];
+        let mut maximum = 0.0_f64;
+        for (j, phi) in pairs.vectors.iter().enumerate() {
+            mff.mul(phi, &mut mphi);
+            for (i, v) in pairs.vectors.iter().enumerate() {
+                let g: f64 = v.iter().zip(&mphi).map(|(a, b)| a * b).sum();
+                maximum = maximum.max((g - if i == j { 1.0 } else { 0.0 }).abs());
+            }
+        }
+        let _ = writeln!(std::io::stderr().lock(), "FIELDCRAFT_MASS_ORTHOGONALITY\t{}\t{maximum:.17e}", pairs.values.len());
+    }
+    let convergence = if let Some(k) = residual_k {
+        let _timing = crate::timing::Span::new("frequency_actual_residuals");
+        let residuals = pairs
+            .values
+            .iter()
+            .zip(&pairs.vectors)
+            .map(|(&lambda, phi)| crate::convergence::frequency_residual(&k, &mff, lambda, phi))
+            .collect::<Result<Vec<_>>>()?;
+        Some(crate::convergence::ModalConvergence {
+            iterations: pairs.iterations,
+            basis_vectors: pairs.basis,
+            basis_limit: pairs.basis_limit,
+            basis_limit_reached: pairs.basis_limit_reached,
+            full_space_reached: pairs.full_space_reached,
+            modes: residuals,
+        })
+    } else {
+        None
+    };
     // Participation: Γ_d = φᵀ M r_d with r_d the unit translation along d on the free equations
     // (mesh and reference point translations).
     let directions: Vec<Option<usize>> = red.eq_dof.iter().map(|dof| mesh.kind(*dof).and_then(DofKind::direction)).collect();
@@ -868,6 +936,7 @@ fn frequency_impl(
             buckling: None,
         },
         retained_mass,
+        convergence,
     ))
 }
 
@@ -1053,5 +1122,116 @@ mod tests {
             }
         });
         assert_eq!(model, before);
+    }
+}
+
+#[cfg(test)]
+mod section_mass_tests {
+    use super::*;
+    use fieldcraft_model::{Elastic, Formulation, LumpedMass, Material, Section, SectionKind, Set};
+
+    #[test]
+    fn mixed_sections_assemble_row_sum_and_consistent_without_changing_stiffness() {
+        let mut model = Model::default();
+        for (i, x) in [
+            [0., 0., 0.],
+            [1., 0., 0.],
+            [1., 1., 0.],
+            [0., 1., 0.],
+            [0., 0., 1.],
+            [2., 0., 1.],
+            [2., 1., 1.],
+            [0., 1., 1.],
+            [3., 0., 0.],
+            [4., 0., 0.],
+            [3., 1., 0.],
+            [3., 0., 1.],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            model.set_node(i as u32 + 1, x).unwrap();
+        }
+        model.set_element(1, ElementKind::Hex8, (1..=8).collect()).unwrap();
+        model.set_element(2, ElementKind::Tet4, (9..=12).collect()).unwrap();
+        model
+            .add_material(
+                "M",
+                Material {
+                    elastic: Some(Elastic::Isotropic { young: 1000., poisson: 0.0 }),
+                    density: Some(1.0),
+                    damping: Some(fieldcraft_model::harmonic::Damping { alpha: 0.7, beta: 0.2, loss_factor: 0.0 }),
+                    ..Material::default()
+                },
+            )
+            .unwrap();
+        for (name, id, policy) in [("Hex", 1, LumpedMass::RowSum), ("Tet", 2, LumpedMass::Consistent)] {
+            model.add_set(name, Set { elements: vec![id], ..Set::default() }).unwrap();
+            model
+                .add_section(
+                    name,
+                    Section {
+                        set: name.into(),
+                        material: "M".into(),
+                        kind: SectionKind::Solid {},
+                        orientation: None,
+                        formulation: Formulation { lumped_mass: policy, b_bar: id == 1, ..Formulation::default() },
+                    },
+                )
+                .unwrap();
+        }
+        model.add_step(fieldcraft_model::Step::new("Matrix", Procedure::Static {}), None).unwrap();
+        let resolved = model.resolve().unwrap();
+        let mesh = Mesh::new(&model, &resolved, 1000).unwrap();
+        let graph = NodeGraph::new(mesh.block_count(), mesh.blocks());
+        let consistent = assemble(&mesh, &graph, Some(MassKind::Consistent)).unwrap();
+        let selected = assemble(&mesh, &graph, Some(MassKind::Lumped)).unwrap();
+        assert_eq!(consistent.k, selected.k, "mass-only choice cannot modify K");
+        let (damping, _) = crate::harmonic::damping_operators_with_mass(&model, &resolved, &mesh, &graph, MassKind::Lumped).unwrap();
+        let damping = damping.unwrap();
+        let mass = selected.m.unwrap();
+        for ((c, k), m) in damping.val.iter().zip(&selected.k.val).zip(&mass.val) {
+            assert!((c - (0.2 * k + 0.7 * m)).abs() < 1e-12, "section inertia must also drive material damping");
+        }
+        let diag = mass.diagonal();
+        for n in 0..8 {
+            let expected = if n < 4 { 1.0 / 6.0 } else { 5.0 / 24.0 };
+            for dof in 0..3 {
+                assert!((diag[3 * n + dof] - expected).abs() < 1e-14);
+            }
+        }
+        // Unit affine tetrahedron: volume=1/6, Cii=V/10, Cij=V/20.
+        for i in 8..12 {
+            let (cols, values) = mass.row(i * 3);
+            for j in 8..12 {
+                let actual = values[cols.binary_search(&(j * 3)).unwrap()];
+                let expected = if i == j { 1.0 / 60.0 } else { 1.0 / 120.0 };
+                assert!((actual - expected).abs() < 1e-14, "{i},{j}: {actual}");
+            }
+        }
+        assert_eq!(model.section("Hex").unwrap().formulation.lumped_mass, LumpedMass::RowSum);
+        // A quadratic simplex has sign-changing corner basis functions; no silent row-sum fallback.
+        for (id, xyz) in
+            [(13, [3.5, 0., 0.]), (14, [3.5, 0.5, 0.]), (15, [3., 0.5, 0.]), (16, [3., 0., 0.5]), (17, [3.5, 0., 0.5]), (18, [3., 0.5, 0.5])]
+        {
+            model.set_node(id, xyz).unwrap();
+        }
+        model.set_element(2, ElementKind::Tet10, (9..=18).collect()).unwrap();
+        let mixed_mesh = Mesh::new(&model, &model.resolve().unwrap(), 1000).unwrap();
+        let mixed_graph = NodeGraph::new(mixed_mesh.block_count(), mixed_mesh.blocks());
+        let mixed = assemble(&mixed_mesh, &mixed_graph, Some(MassKind::Lumped)).unwrap();
+        let diagonal = mixed.m.unwrap().diagonal();
+        // Quadratic simplex barycentric integrals: corner Cii=V/70, edge Cii=8V/105.
+        for n in 8..18 {
+            let expected = if n < 12 { 1.0 / 420.0 } else { 4.0 / 315.0 };
+            assert!((diagonal[n * 3] - expected).abs() < 1e-14, "quadratic consistent override node {n}");
+        }
+        let mut section = model.section("Tet").unwrap().clone();
+        section.formulation.lumped_mass = LumpedMass::RowSum;
+        model.replace_section("Tet", section).unwrap();
+        let mesh = Mesh::new(&model, &model.resolve().unwrap(), 1000).unwrap();
+        let graph = NodeGraph::new(mesh.block_count(), mesh.blocks());
+        let error = assemble(&mesh, &graph, Some(MassKind::Lumped)).err().unwrap().to_string();
+        assert!(error.contains("element 2") && error.contains("row_sum"), "{error}");
     }
 }

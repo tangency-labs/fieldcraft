@@ -121,7 +121,7 @@ fn original_zero_through_five_read_version_05() {
             Solved::Implicit(StepResult::Frequency(x)) => codec::encode_into(x, &mut payload).unwrap(),
             Solved::Implicit(StepResult::Heat(x)) => codec::encode_into(x, &mut payload).unwrap(),
             Solved::Implicit(StepResult::Harmonic(x)) => codec::encode_into(&LegacyHarmonicRef::from(x), &mut payload).unwrap(),
-            Solved::Implicit(StepResult::Dynamics(_)) => panic!("not an original kind"),
+            Solved::Nonlinear(_) | Solved::Implicit(StepResult::Dynamics(_)) => panic!("not an original kind"),
             Solved::Explicit(x) => codec::encode_into(x, &mut payload).unwrap(),
             Solved::Fluid(x) => codec::encode_into(x, &mut payload).unwrap(),
         }
@@ -181,7 +181,7 @@ fn old_overlapping_kinds_are_never_guessed() {
 
 #[test]
 fn seven_has_no_development_kind_aliases() {
-    for kind in 9..=u8::MAX {
+    for kind in (9..=u8::MAX).filter(|k| *k != 11) {
         assert!(decode(&record(MAGIC, kind, &[])).unwrap_err().to_string().contains("unknown kind"));
     }
 }

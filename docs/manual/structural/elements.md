@@ -67,6 +67,8 @@ mixed in one model (trusses may join either).
 | Field | Value | Default | Meaning |
 |---|---|---|---|
 | `integration` | `full`, `reduced` | `full` | `reduced` exists for hex20 (2 × 2 × 2) and quad8 (2 × 2), and for hex8 in explicit dynamics (one point with hourglass control); elsewhere it is refused |
+| `b_bar` | `true`, `false` | `false` | Hex8 mean dilatation; linear isotropic small-strain static, frequency and matrix generation only; excludes reduced, hybrid and incompatible options |
+| `enhanced_strain13` | `true`, `false` | `false` | independent 13-variable Hex8; full integration, linear isotropic static only; excludes other enhancements, thermal/initial stress and material axes; limited nonhybrid small-strain static C3D8I mapping |
 | `incompatible_modes` | `true`, `false` | `false` | enhanced bending modes: hex8 (solid sections) and quad4 (2D sections) only; needs full integration |
 | `hybrid` | `true`, `false` | `false` | mixed displacement–pressure: solid, plane strain and axisymmetric sections only; isotropic materials only |
 
@@ -622,3 +624,22 @@ explicit, engine and io test suites hashed identically before and after.
 The two-ring axisymmetric formulation and its analysis/export restrictions are
 documented in [Axisymmetric meridional shell](../../solvers/axisymmetric-shell.md).
 Use the explicit `axisymmetric_shell` section flag; `beam2` alone remains a beam.
+### Hex8 mean dilatation
+
+`b_bar=true` uses Bbar = B + (average(div N) - div N)/3 in each
+normal-strain row; shear rows are unchanged. The average uses det(J)-weighted
+2x2x2 quadrature. Stiffness and recovered integration-point strains use the
+same operator; reported B-bar strain is the assumed strain, not the unmodified
+nodal displacement gradient. Mass, loads and native standard Hex8 defaults are unchanged.
+No additional result kind is allocated. See [import boundaries](../../abaqus-import.md)
+for C3D8/C3D8I mapping and unsupported combinations. The implementation follows
+Hughes, IJNME 15 (1980), 1413–1418, doi:10.1002/nme.1620150914.
+
+### Separate solid and ring-shell formulations
+
+`solid_shell`, `b_bar`, `enhanced_strain13` and `axisymmetric_shell` select
+separate operators and cannot be combined. ANS/EAS10 solid-shell condensation
+is not the thirteen-variable Hex8 enhancement or volume-averaged B-bar.
+The per-section `lumped_mass` policy applies to solid/planar continuum mass
+only when the solve requests lumped mass; it does not replace ring-shell or
+MITC translational/rotational inertia. See [frequency](frequency.md).
