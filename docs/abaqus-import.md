@@ -62,7 +62,8 @@ the current document; save existing work before running it in a session you are 
   remain in the retained source. Translated instances remap labels and property set references;
   springs in rotated instances are explicitly refused. Anisotropic/damped masses, nonlinear or
   frequency-dependent springs, SPRING2/A, dashpots and rotary inertia are not mapped yet.
-  Gravity history with imported point masses is refused until discrete load membership is mapped.
+  Gravity may select ordinary mesh elements despite unrelated point masses; targets containing
+  discrete elements and whole-model gravity with point masses remain refused.
 - `NSET` and `ELSET`: label lists, other set names and bounded `GENERATE` ranges. A node set may
   also name an element set. Flat model labels are unchanged; instance labels are mapped to
   deterministic global labels and reported with their original identity.
@@ -805,3 +806,11 @@ procedures are named refusals. Original cards remain in the retained source. An 
 four-step tetrahedron regression checks component replacement, inheritance, load-family clearing,
 SI and millimetre units, and the exact consistent volume load `f_i = b*V/4` against static U/RF/S.
 The load definition follows the [public three-dimensional element reference](https://abaqus.uclouvain.be/English/SIMACAEELMRefMap/simaelm-r-3delem.htm).
+
+
+Element pressure `DLOAD, Pn` requires an explicit element or element set. Like scoped gravity
+and body force, its target is checked against original discrete membership before mesh-set
+filtering. A mixed solid/MASS or solid/SPRING1 target is refused, including set aliases; it
+cannot be accepted as pressure on only the surviving solid elements. A blank target is refused
+instead of being silently interpreted as the whole model. The affected step is not runnable,
+and the original source remains available through project reopening and source replay.

@@ -317,7 +317,7 @@ fn prepare(
         for row in &block.rows {
             let fields = row_fields(row.text, row.line)?;
             let kind = canonical(fields.get(1).map(String::as_str).unwrap_or_default());
-            if matches!(kind.as_str(), "GRAV" | "BX" | "BY" | "BZ") {
+            if matches!(kind.as_str(), "GRAV" | "BX" | "BY" | "BZ") || kind.strip_prefix('P').is_some_and(|face| face.parse::<u8>().is_ok()) {
                 let target = name(fields.first().map(String::as_str).unwrap_or_default(), row.line)?;
                 if data.discrete_targets.contains(&target) || (target.is_empty() && !model.masses().is_empty()) {
                     return Err(unsupported(
@@ -769,6 +769,9 @@ fn apply(
                         insert(Family::Body, element, component, magnitude)?;
                     }
                 } else if let Some(face) = kind.strip_prefix('P').and_then(|s| s.parse::<u8>().ok()) {
+                    if target.is_empty() {
+                        return Err(unsupported(row.line, format!("DLOAD {kind} requires an explicit element or element set")));
+                    }
                     if f.len() != 3 {
                         return Err(error(row.line, "element pressure needs three entries"));
                     }
@@ -1154,6 +1157,53 @@ Volume,BX,5
         let cleared = read(&input.replace("1,BZ,-16", "1,GRAV,1,0,0,-1"));
         assert!(cleared.analysis_complete);
         assert!(cleared.model.step("Four").unwrap().loads.iter().all(|n| matches!(cleared.model.load(n), Some(Load::Gravity { .. }))));
+    }
+
+    #[test]
+    fn element_pressure_never_filters_discrete_members_or_infers_a_blank_target() {
+        let input = r#"** Original global volume force, not acceleration or surface traction; SI
+*NODE
+1,0,0,0
+2,1,0,0
+3,0,1,0
+4,0,0,1
+*ELEMENT,TYPE=C3D4,ELSET=Solid
+1,1,2,3,4
+*NSET,NSET=Base
+1,2,3
+*ELSET,ELSET=Volume
+Solid
+*ELEMENT,TYPE=MASS,ELSET=M
+10,4
+*MASS,ELSET=M
+3
+*ELSET,ELSET=Mixed
+Volume,M
+*MATERIAL,NAME=Elastic
+*ELASTIC
+120000,.25
+*DENSITY
+7
+*SOLID SECTION,ELSET=Solid,MATERIAL=Elastic
+*BOUNDARY
+Base,1,3
+*STEP,NAME=One
+*STATIC
+1,1
+*DLOAD
+Mixed,P1,1
+*END STEP
+"#;
+        let denied = read(input);
+        assert!(!denied.analysis_complete);
+        assert!(denied.model.steps().is_empty());
+        assert!(denied.warnings.iter().any(|w| w.contains("P1 target") && w.contains("discrete")));
+        let blank =
+            input.replace("*ELEMENT,TYPE=MASS,ELSET=M\n10,4\n*MASS,ELSET=M\n3\n*ELSET,ELSET=Mixed\nVolume,M\n", "").replace("Mixed,P1", ",P1");
+        let denied = read(&blank);
+        assert!(!denied.analysis_complete);
+        assert!(denied.model.steps().is_empty());
+        assert!(denied.warnings.iter().any(|w| w.contains("P1 requires an explicit element")));
     }
     const MODEL: &str = "*NODE,NSET=Tip\n1,0,0,0\n2,1,0,0\n*BOUNDARY\n1,ENCASTRE\n";
     fn read(text: &str) -> Read {
