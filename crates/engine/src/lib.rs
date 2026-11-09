@@ -155,7 +155,7 @@ pub type Result<T> = std::result::Result<T, EngineError>;
 pub enum StepResult {
     Implicit(fieldcraft_solver::StepResult),
     Explicit(ExplicitResult),
-    Fluid(fieldcraft_lbm::FluidResult),
+    Fluid(Box<fieldcraft_lbm::FluidResult>),
 }
 
 impl StepResult {

@@ -342,7 +342,23 @@ impl Monitor {
     /// Sample every quantity at step `k` (a sample point) and, at the end of a window, decide:
     /// `Some` reason to stop now.
     pub fn sample(&mut self, setup: &Setup, flow: &mut dyn Backend, k: u64) -> Result<Option<StopReason>> {
-        let Fields { density, velocity, temperature, fill: _ } = flow.fields()?;
+        self.sample_observed(setup, flow, k, None)
+    }
+
+    /// [`Monitor::sample`], also offering its field read to the run's validity sampler (no
+    /// read is added for it).
+    pub(crate) fn sample_observed(
+        &mut self,
+        setup: &Setup,
+        flow: &mut dyn Backend,
+        k: u64,
+        validity: Option<&mut crate::validity::Sampler>,
+    ) -> Result<Option<StopReason>> {
+        let fields = flow.fields()?;
+        if let Some(validity) = validity {
+            validity.observe(k, &fields, &|c| flow.is_fluid(c), false)?;
+        }
+        let Fields { density, velocity, temperature, fill: _ } = fields;
         let fluid: Vec<usize> = (0..setup.grid.len()).filter(|c| flow.is_fluid(*c)).collect();
         let n = fluid.len().max(1) as f64;
         let vs = setup.velocity_scale();

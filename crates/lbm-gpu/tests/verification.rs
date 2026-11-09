@@ -4202,3 +4202,40 @@ fn wall_measurement_closes_cpu_and_gpu_momentum_budgets() {
         println!("{collision:?} {streaming:?} worst scaled momentum residual: CPU {}, GPU {}", worst[0], worst[1]);
     }
 }
+
+/// Injected bounded fields are measured before output-frame rounding, in both GPU layouts.
+#[test]
+fn validity_extrema_match_injected_fields_and_cpu() {
+    use fieldcraft_lbm::validity::{ForceIndicator, measure};
+    let mut d = domain([0.0; 3], [4.0, 2.0, 2.0], 1.0);
+    for f in [BoxFace::XMin, BoxFace::XMax, BoxFace::ZMin, BoxFace::ZMax] {
+        *d.faces.get_mut(f) = PERIODIC;
+    }
+    let m = model(1.0, 0.1, d, step(4.0, 1.0, None));
+    for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+        let (_, mut cpu) = prepare(&m, &[]);
+        cpu.set_equilibrium(|i| (0.98 + 0.04 * i as f64 / 15.0, [0.01 + 0.08 * i as f64 / 15.0, 0.02, 0.0]));
+        let Some(mut device) = gpu(&cpu, streaming) else { return };
+        let mut cpu_force = fieldcraft_lbm::ForceHistory { name: "y_min".into(), body: None, force: Vec::new() };
+        let mut gpu_force = cpu_force.clone();
+        for step in 0..4 {
+            let a = measure(step, &cpu.fields().unwrap(), |_| true, |_| 1.0).unwrap();
+            let b = measure(step, &device.fields().unwrap(), |_| true, |_| 1.0).unwrap();
+            for (a, b) in [(a.density_min, b.density_min), (a.density_max, b.density_max), (a.mach_min, b.mach_min), (a.mach_max, b.mach_max)] {
+                assert!((a - b).abs() <= 1e-5, "{streaming:?} step {step}: {a} versus {b}");
+            }
+            if step == 0 {
+                assert!((a.density_min - 0.98).abs() <= 1e-12);
+                assert!((a.density_max - 1.02).abs() <= 1e-12);
+                assert!((a.mach_max - 0.09_f64.hypot(0.02) * 3.0_f64.sqrt()).abs() <= 1e-12);
+            }
+            cpu.advance(1).unwrap();
+            device.advance(1).unwrap();
+            cpu_force.force.push(cpu.forces()[BoxFace::YMin.index()]);
+            gpu_force.force.push(device.forces().unwrap()[BoxFace::YMin.index()]);
+        }
+        let (a, b) = (ForceIndicator::from_history(&cpu_force), ForceIndicator::from_history(&gpu_force));
+        assert!((a.peak_over_mean.unwrap() - b.peak_over_mean.unwrap()).abs() < 1e-5, "{a:?} {b:?}");
+        assert!((a.largest_jump_over_mean.unwrap() - b.largest_jump_over_mean.unwrap()).abs() < 1e-5, "{a:?} {b:?}");
+    }
+}

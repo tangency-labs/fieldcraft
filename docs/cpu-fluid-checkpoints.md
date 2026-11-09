@@ -56,7 +56,9 @@ transient.
 Numbers are stored as little-endian IEEE bits. The versioned `FCLBM001` container includes the
 input/settings identity and a SHA-256 of the streamed state; lengths, finite values and
 expected shapes are validated, and truncation, a bad checksum or trailing bytes are refused.
-Its solver-state version is `FCRST3`; older solver-state layouts are refused. The solver's
+Its solver-state version is `FCRST5` (since the sampled runtime validity, #793); older
+solver-state layouts are refused, so a checkpoint written by FieldCraft 0.7.5 or earlier
+(`FCRST4`) cannot be resumed: start the run again. The solver's
 checkpoint code names every field of the flow, its temperature lattice, its wall cells and the
 monitor's quantities, so a new field does not compile until it is saved or said not to be
 state, and a change to what is saved changes the version. This is not a cross-version migration format.

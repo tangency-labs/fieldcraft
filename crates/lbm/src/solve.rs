@@ -141,6 +141,9 @@ pub struct ShearDependentTau {
 /// Run statistics.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct FluidStats {
+    /// Sampled runtime diagnostics, not a validation certificate. Not encoded in legacy results.
+    #[serde(skip)]
+    pub validity: Option<Box<crate::validity::Report>>,
     pub cells: usize,
     pub fluid_cells: usize,
     pub steps: u64,
@@ -378,14 +381,16 @@ pub fn solve_fluid_checkpointed(
     run_checkpointed(&setup, &mut flow, limits, Some(store))
 }
 
-fn frame(setup: &Setup, flow: &mut dyn Backend, step: u64) -> Result<Frame> {
+fn frame(setup: &Setup, flow: &mut dyn Backend, step: u64, validity: &mut crate::validity::Sampler) -> Result<Frame> {
     let n = setup.grid.len();
     let mut velocity = Vec::new();
     let mut pressure = Vec::new();
     velocity.try_reserve_exact(n).map_err(|_| Error::Limit("not enough memory for an output frame".into()))?;
     pressure.try_reserve_exact(n).map_err(|_| Error::Limit("not enough memory for an output frame".into()))?;
     let vs = setup.velocity_scale();
-    let Fields { density, velocity: u, temperature: t, fill: e } = flow.fields()?;
+    let fields = flow.fields()?;
+    validity.observe(step, &fields, &|c| flow.is_fluid(c), false)?;
+    let Fields { density, velocity: u, temperature: t, fill: e } = fields;
     let mut temperature = Vec::new();
     if !t.is_empty() {
         temperature.try_reserve_exact(n).map_err(|_| Error::Limit("not enough memory for an output frame".into()))?;
@@ -447,10 +452,11 @@ fn run_checkpointed(
     let frames = u64::from(setup.frames).min(total).max(1);
     crate::memory::Memory::of(setup, Choice::Cpu)?.check_frames(limits)?;
     let every = total.div_ceil(MAX_HISTORY).max(1);
+    let mut validity = crate::validity::Sampler::new(total);
     let fs = setup.force_scale();
     let hs = setup.thermal.as_ref().map_or(0.0, |t| t.heat_scale);
 
-    let mut out_frames = vec![frame(setup, flow, 0)?];
+    let mut out_frames = vec![frame(setup, flow, 0, &mut validity)?];
     let mut history_times = Vec::new();
     let mut forces: Vec<Vec<[f64; 3]>> = vec![Vec::new(); flow.groups().len()];
     let mut heats: Vec<Vec<f64>> = vec![Vec::new(); if setup.thermal.is_some() { flow.groups().len() } else { 0 }];
@@ -480,7 +486,7 @@ fn run_checkpointed(
     fieldcraft_model::progress::stage("Fluid steps", Some(total as f64), "");
     let mut monitor = Monitor::new(setup, flow)?;
     if let Some(m) = monitor.as_mut() {
-        m.sample(setup, flow, 0)?;
+        m.sample_observed(setup, flow, 0, Some(&mut validity))?;
     }
     let mut sound = true;
     let mut k = 0u64;
@@ -501,6 +507,7 @@ fn run_checkpointed(
                 zones: &mut zones,
                 monitor: &mut monitor,
                 surface: &mut surface,
+                validity: &mut validity.samples,
             }
             .archive(a, setup)?;
             flow.checkpoint(a)?;
@@ -575,16 +582,16 @@ fn run_checkpointed(
             sample_surface(&mut surface, &*flow);
         }
         while next_frame <= frames && k == frame_step(next_frame) {
-            out_frames.push(frame(setup, flow, k)?);
+            out_frames.push(frame(setup, flow, k, &mut validity)?);
             next_frame += 1;
         }
         if let Some(m) = monitor.as_mut()
             && m.samples_at(k)
-            && let Some(reason) = m.sample(setup, flow, k)?
+            && let Some(reason) = m.sample_observed(setup, flow, k, Some(&mut validity))?
         {
             sound = reason != StopReason::Diverged;
             if sound && out_frames.last().is_some_and(|f| f.step != k) {
-                out_frames.push(frame(setup, flow, k)?);
+                out_frames.push(frame(setup, flow, k, &mut validity)?);
             }
             finished = true;
         }
@@ -606,6 +613,7 @@ fn run_checkpointed(
                     zones: &mut zones,
                     monitor: &mut monitor,
                     surface: &mut surface,
+                    validity: &mut validity.samples,
                 }
                 .archive(a, setup)?;
                 flow.checkpoint(a)
@@ -633,6 +641,7 @@ fn run_checkpointed(
     // Δp / (ρ c_s²) in lattice units; large ones show the time step is too long for the flow.
     let spread = if sound {
         let end = flow.fields()?;
+        validity.observe(k, &end, &|c| flow.is_fluid(c), true)?;
         (0..n).filter(|c| flow.is_fluid(*c)).filter_map(|c| end.density.get(c)).map(|rho| (rho - 1.0).abs()).fold(0.0, f64::max)
     } else {
         0.0
@@ -693,6 +702,15 @@ fn run_checkpointed(
             limit: s.limit,
         })
         .collect();
+    let forces: Vec<_> =
+        flow.groups().iter().zip(forces).map(|(g, force)| ForceHistory { name: g.name.clone(), body: g.body.clone(), force }).collect();
+    let validity = crate::validity::Report::new(validity.samples, validity.every, every, &forces)?;
+    if validity.within_study_envelope == Some(false) {
+        warnings.push("sampled fields exceed the proposed low-Mach study envelope (density departure 0.02, local Mach 0.2); execution completion does not establish validity".into());
+    }
+    if validity.invalid_field_samples > 0 {
+        warnings.push("some sampled fields were unusable; the numerical validity envelope is unassessed (see the backend guard or steady monitor for divergence)".into());
+    }
     Ok(FluidResult {
         baffles: Box::new(flow.baffles()),
         port_properties: Some(crate::PortProperties { density: setup.density, specific_heat: setup.thermal.as_ref().map(|t| t.specific_heat) }),
@@ -702,10 +720,11 @@ fn run_checkpointed(
         open_faces,
         frames: out_frames,
         history_times,
-        forces: flow.groups().iter().zip(forces).map(|(g, force)| ForceHistory { name: g.name.clone(), body: g.body.clone(), force }).collect(),
+        forces,
         zones,
         heat: flow.groups().iter().zip(heats).map(|(g, power)| HeatHistory { name: g.name.clone(), body: g.body.clone(), power }).collect(),
         stats: FluidStats {
+            validity: Some(Box::new(validity)),
             cells: n,
             fluid_cells: flow.fluid_cells(),
             steps: k,

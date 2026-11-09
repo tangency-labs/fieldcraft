@@ -60,7 +60,7 @@ pub enum Solved {
     /// A static, frequency, buckling or heat transfer step.
     Implicit(fieldcraft_solver::StepResult),
     Explicit(ExplicitResult),
-    Fluid(FluidResult),
+    Fluid(Box<FluidResult>),
 }
 
 /// A step's result to write, borrowed.
@@ -265,7 +265,7 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded> {
             1 => Solved::Implicit(fieldcraft_solver::StepResult::Frequency(codec::decode(payload).map_err(damaged)?)),
             2 => Solved::Implicit(fieldcraft_solver::StepResult::Heat(codec::decode(payload).map_err(damaged)?)),
             3 => Solved::Explicit(codec::decode(payload).map_err(damaged)?),
-            4 => Solved::Fluid(codec::decode(payload).map_err(damaged)?),
+            4 => Solved::Fluid(Box::new(codec::decode(payload).map_err(damaged)?)),
             k => return invalid(format!("{PART}: step `{name}` has a result of unknown kind {k}")),
         };
         if result.step() != name {

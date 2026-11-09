@@ -256,6 +256,7 @@ The reply of `solve.fluid`, in the display units (its `units` names them):
 | Field | Meaning |
 |---|---|
 | `step`, `backend` | The step, and what stepped it: `cpu` or `gpu: <adapter>`. |
+| `execution` | `completed`, or `diverged` when a steady rule stopped a blow-up. It says the run finished, not that its result is valid. |
 | `cells`, `fluid_cells`, `steps`, `time_step`, `end_time` | The grid and the run. |
 | `tau`, `tau_minus`, `magic`, `collision` | τ⁺, τ⁻, Λ and the collision operator. |
 | `tau_characteristic`, `tau_range` | With a shear-dependent fluid each cell relaxes with its own τ⁺: `tau_characteristic` is τ⁺ at the flow's characteristic shear rate, `tau_range` the `[τ_min, τ_max]` each cell's own is held in, and `tau` the characteristic one held within that range (the reference that sets `tau_minus`). |
@@ -268,11 +269,35 @@ The reply of `solve.fluid`, in the display units (its `units` names them):
 | `tau_thermal`, `temperature`, `heat`, `solids`, `components_ok` | With heat ([Heat transfer](heat-transfer.md)). |
 | `zones` | Fans and porous zones ([Fans and vents](fans-and-vents.md)). |
 | `stop` | With a steady rule ([Steady state and averaging](steady-state-and-averaging.md)). |
+| `validity` | Sampled density and Mach extrema and force-spike indicators ([Sampled runtime validity](#sampled-runtime-validity)). |
 | `memory` | The run's estimate: `flow_bytes`, `frame_bytes` (about 16 bytes per cell per frame, 20 with heat), `total_bytes`, `bound_bytes`, `frames_that_fit`, each cap's `ceilings`, and on the GPU the population buffer against the device's limit per buffer. |
 | `backend_choice`, `notice` | What chose the backend, and a fallback notice. |
 | `warnings` | Every warning of the setup and the run. |
 
 The result stays in the session for the results commands ([Fluid results](fluid-results.md)).
+
+### Sampled runtime validity
+
+A finished run can hide an earlier density or Mach excursion, or a force spike. `validity`
+reports what the run's own field reads show: the smallest and largest density as a ratio to the
+material's density, the largest departure from it, and the smallest and largest local Mach
+number, over every fluid cell including the inlet and outlet layers (solid and fully gaseous
+cells excluded), in full precision before the frames are rounded. It is measured on the reads
+the run makes anyway, the output frames, the steady monitor's samples and the final field, so it
+costs no extra readback on the CPU or the GPU; at most one read per `field_every_steps`
+(a 256th of the run) is kept, at most 258 in all. With few frames and no steady rule the samples
+are few: an excursion between two reads is not seen, and more frames give a denser record.
+
+Crossing a density departure of 0.02 or a local Mach number of 0.2 adds a warning. That envelope
+is a low-Mach study guide, not a stability limit: the existing blow-up guard still stops a run
+that diverges, and an unusable field is marked and leaves the envelope unassessed. A pressure
+gradient the case intends is not subtracted; a study states its own reference. Per wall, the
+peak force and the largest jump between history samples are reported against the signed mean
+force (null for a zero mean). None of this establishes statistical convergence, grid
+independence or agreement with a reference.
+
+`validity` survives a CPU checkpoint and resume bit for bit; it is part of the command's reply,
+not of the saved results, so a reopened result has none.
 
 ## Worked example
 

@@ -507,7 +507,8 @@ fn the_memory_estimate_matches_what_a_run_allocates() {
             r.frames.iter().map(|f| (f.velocity.capacity() * 12 + f.pressure.capacity() * 4 + f.temperature.capacity() * 4) as u64).sum();
         assert_eq!((memory.frames, memory.frame_bytes), (r.frames.len() as u64, frames), "heat {heat}");
         assert_eq!(memory.readback, readback, "heat {heat}");
-        let measured = held + readback + frames;
+        let diagnostics = r.stats.validity.as_ref().map_or(0, |r| r.samples.capacity() * std::mem::size_of::<fieldcraft_lbm::validity::Sample>());
+        let measured = held + readback + frames + diagnostics as u64;
         let over = memory.total() as f64 / measured as f64 - 1.0;
         assert!(memory.state >= held || sphere, "heat {heat}: {} below {held}", memory.state);
         assert!(over.abs() < 0.01, "heat {heat} sphere {sphere}: estimate {} vs {measured} allocated ({over:+.3})", memory.total());
@@ -524,8 +525,9 @@ fn the_memory_estimate_matches_what_a_run_allocates() {
         assert_eq!(cpu_on.total() - cpu_off.total(), eddy, "heat {heat}");
         // The GPU backend's flow is prepared on the host and dropped before the steps.
         assert_eq!((gpu_on.setup - gpu_off.setup, gpu_on.state, gpu_on.device), (eddy, gpu_off.state, gpu_off.device), "heat {heat}");
-        // Model off: the estimate before the model, to the byte (the 48 × 24 × 24 channel).
-        let frozen = if heat { [14_201_856, 14_201_856, 1_658_880, 1_105_920] } else { [9_556_992, 9_556_992, 1_327_104, 884_736] };
+        // Model off, to the byte (the 48 × 24 × 24 channel): state also reserves the
+        // maximum 14,448-byte validity sample payload independently of frame count.
+        let frozen = if heat { [14_201_856, 14_216_304, 1_658_880, 1_105_920] } else { [9_556_992, 9_571_440, 1_327_104, 884_736] };
         assert_eq!([cpu_off.setup, cpu_off.state, cpu_off.frame_bytes, cpu_off.readback], frozen, "heat {heat}");
     }
     // The hybrid collision and Vreman's model hold each cell's velocity for the finite-difference

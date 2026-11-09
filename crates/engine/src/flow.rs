@@ -598,6 +598,7 @@ pub(crate) mod tests {
             Frame { time: 0.0, step: 0, velocity: vec![[0.0; 3]; n], pressure: vec![0.0; n], temperature: Vec::new(), fill: Vec::new(), mass: 1.0 };
         let last = Frame { time: 1.0, step: 10, velocity, pressure, temperature: Vec::new(), fill: Vec::new(), mass: 1.0 };
         let stats = FluidStats {
+            validity: None,
             cells: n,
             fluid_cells: n - 8,
             steps: 10,
@@ -939,7 +940,7 @@ pub(crate) mod tests {
         let values = cell_values(&r, Field::Temperature, &r.frames[1]).unwrap();
         assert_eq!(values.iter().filter(|v| v.is_nan()).count(), 8);
         assert_eq!(cell_range(&values).map(|(a, b)| (a.1, b.1)), Some((20.0, 38.0)));
-        let result = Arc::new(crate::StepResult::Fluid(r));
+        let result = Arc::new(crate::StepResult::Fluid(Box::new(r)));
         let mut view = ResultsView::for_result(&result);
         view.contour = Some(Field::Temperature);
         let p = plot(&view, &result, &TraceCache::default()).unwrap();
@@ -975,7 +976,7 @@ pub(crate) mod tests {
     /// another frame, other settings or another result trace anew.
     #[test]
     fn a_trace_is_shared_until_its_result_frame_or_settings_change() {
-        let result = Arc::new(crate::StepResult::Fluid(channel()));
+        let result = Arc::new(crate::StepResult::Fluid(Box::new(channel())));
         let view = ResultsView::for_result(&result);
         let traced = TraceCache::default();
         let s = StreamlineView::default();
@@ -989,13 +990,13 @@ pub(crate) mod tests {
         assert!(!Arc::ptr_eq(&a, &c), "another frame: another trace");
         let (_, d) = traced.trace(&result, 1, &StreamlineView { count: 3, ..s.clone() }).unwrap();
         assert!(!Arc::ptr_eq(&a, &d) && d.len() < a.len(), "other settings: another trace ({} lines, then {})", a.len(), d.len());
-        let other = Arc::new(crate::StepResult::Fluid(channel()));
+        let other = Arc::new(crate::StepResult::Fluid(Box::new(channel())));
         let (_, e) = traced.trace(&other, 1, &StreamlineView { count: 3, ..s.clone() }).unwrap();
         assert!(!Arc::ptr_eq(&d, &e), "another result");
         assert!(traced.trace(&result, 2, &s).is_err(), "no frame 2");
         let cloned = traced.clone();
         assert!(Arc::ptr_eq(&cloned.trace(&other, 1, &StreamlineView { count: 3, ..s }).unwrap().1, &e), "a clone keeps the trace");
-        let solid = Arc::new(crate::StepResult::Fluid(channel()));
+        let solid = Arc::new(crate::StepResult::Fluid(Box::new(channel())));
         let mut v = view.clone();
         v.step = "Other".into();
         assert!(plot(&v, &solid, &traced).is_ok());
@@ -1005,7 +1006,7 @@ pub(crate) mod tests {
     #[test]
     fn the_plot_draws_the_slice_surface_and_streamlines() {
         let r = channel();
-        let result = Arc::new(crate::StepResult::Fluid(r.clone()));
+        let result = Arc::new(crate::StepResult::Fluid(Box::new(r.clone())));
         let mut view = ResultsView::for_result(&result);
         assert_eq!(view.contour, Some(Field::Velocity));
         let traced = TraceCache::default();
