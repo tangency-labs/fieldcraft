@@ -251,3 +251,6 @@ laws with explicit strength factors and endurance cutoff. TB tables and rejected
 extrapolation are named unsupported combinations; no PSD time history is synthesized.
 
 - Harmonic mass choice: `solve.harmonic mass=consistent|lumped` (default consistent), shared direct/modal and damping operators; random fatigue retains source mass identity.
+- Results persistence: unified version 06 kinds 0–5, reserved 6 linear dynamics,
+  7 static+fatigue, 8 legacy harmonic+fatigue, 9 mass harmonic, 10 mass harmonic+fatigue;
+  old version 05 overlapping kinds are refused by producer identity (docs/results-kind-layout.md).
