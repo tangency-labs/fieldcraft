@@ -23,6 +23,7 @@ mod history;
 mod lex;
 mod mass;
 mod matrices;
+mod nonlinear;
 pub use mass::MassRequirement;
 mod random;
 pub mod source;
@@ -125,6 +126,14 @@ fn read_mode(text: &str, preset: Preset, limits: Limits, analysis: bool) -> Resu
         constraints::finish(&mut read.model)?;
         if read.model.sections().values().any(|s| s.formulation.b_bar) {
             read.warnings.push("C3D8 maps to volume-averaged B-bar Hex8, not native standard Hex8; supported only for linear isotropic static/frequency/matrix analysis without orientation, thermal strain or initial stress. Other combinations are refused at model validation or solve.".into());
+        }
+        if read.model.sections().values().any(|s| s.formulation.enhanced_strain13) {
+            read.warnings.push("C3D8I maps to thirteen enhanced-strain variables, full integration, nonhybrid constant isotropic small-strain static only; C3D8IH and other material/analysis combinations are not mapped".into());
+        }
+        if read.model.steps().iter().any(|s| matches!(s.procedure, fieldcraft_model::Procedure::NonlinearStatic(_)))
+            && read.model.elements().values().any(|e| e.kind == fieldcraft_model::ElementKind::Rod2)
+        {
+            read.warnings.push("NLGEOM=YES T3D2/T2D2 steps and base_state are retained semantically, but native nonlinear static truss solving is not supported; solve.nonlinear and dependent frequency will refuse, not use NLGEOM=NO".into());
         }
         read.unknown.truncate(MAX_UNKNOWN_SHOWN);
         Ok(read)

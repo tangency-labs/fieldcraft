@@ -1038,9 +1038,9 @@ Base,1,3
     }
 
     let before = s.clone();
-    std::fs::write(&input, text.replace("TYPE=C3D8,", "TYPE=C3D8I,")).unwrap();
+    std::fs::write(&input, text.replace("TYPE=C3D8,", "TYPE=C3D8IH,")).unwrap();
     let error = s.execute("deck.read", &json!({"path":input,"format":"abaqus","units":"m-kg-s-N-Pa"})).unwrap_err().to_string();
-    assert!(error.contains("thirteen internal modes"), "{error}");
+    assert!(error.contains("C3D8IH"), "{error}");
     assert_unchanged(&s, &before);
     let replay = dir.join("retained-after-refusal.inp");
     s.execute("deck.source.write", &json!({"path":replay})).unwrap();
@@ -1198,10 +1198,123 @@ fn enhanced13_native_static_persists_and_refuses_unvalidated_deck_mapping() {
     s.execute("file.open", &json!({"path":dir.join("enhanced.fieldcraft")})).unwrap();
     assert!(s.model.sections().get("BarSection").unwrap().formulation.enhanced_strain13);
     assert_eq!(s.execute("solve.probe", &json!({"step":"Bend","set":"end"})).unwrap(), probe);
-    let error = s.execute("deck.write", &json!({"path":dir.join("not-equivalent.inp"),"format":"abaqus"})).unwrap_err().to_string();
-    assert!(error.contains("enhanced_strain13"), "{error}");
+    let input = dir.join("enhanced.inp");
+    s.execute("deck.write", &json!({"path":input,"format":"abaqus","units":"mm-t-s-N-MPa"})).unwrap();
+    assert!(std::fs::read_to_string(&input).unwrap().contains("TYPE=C3D8I"));
+    let report = s.execute("deck.read", &json!({"path":input,"format":"abaqus","units":"mm-t-s-N-MPa"})).unwrap();
+    assert_eq!(report["analysis_complete"], true);
+    assert!(s.model.sections().values().all(|s| s.formulation.enhanced_strain13 && !s.formulation.incompatible_modes));
+    s.execute("solve.static", &json!({"step":"Bend"})).unwrap();
+    let reread = s.execute("solve.probe", &json!({"step":"Bend","set":"end"})).unwrap();
+    assert_eq!(reread, probe);
     s.execute("model.step.create", &json!({"name":"Modes","procedure":{"type":"frequency","modes":2}})).unwrap();
     let error = s.execute("solve.frequency", &json!({"step":"Modes"})).unwrap_err().to_string();
     assert!(error.contains("enhanced_strain13"), "{error}");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn nonlinear_rod_import_preserves_yes_base_state_and_source() {
+    let dir = folder();
+    let input = dir.join("string.inp");
+    let text = "*NODE\n1,0,0,0\n2,1,0,0\n*ELEMENT,TYPE=T3D2,ELSET=Bar\n1,1,2\n*MATERIAL,NAME=M\n*ELASTIC\n2.1e11,.3\n*DENSITY\n7850\n*SOLID SECTION,ELSET=Bar,MATERIAL=M\n.0001\n*STEP,NAME=Preload,NLGEOM=YES,INC=100\n*STATIC\n1,1\n*BOUNDARY\n1,1,3\n*CLOAD\n2,1,1000\n*END STEP\n*STEP,NAME=Modes\n*FREQUENCY\n3\n*BOUNDARY\n1,1,3\n*END STEP\n";
+    std::fs::write(&input, text).unwrap();
+    let mut s = Session::default();
+    let report = s.execute("deck.read", &json!({"format":"abaqus","path":input,"units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(report["analysis_complete"], true, "{report}");
+    assert_eq!(s.model.step("Modes").unwrap().base_state.as_deref(), Some("Preload"));
+    let fieldcraft_model::Procedure::NonlinearStatic(n) = &s.model.step("Preload").unwrap().procedure else { panic!("nonlinear step lost") };
+    assert!(n.nonlinear_geometry);
+    assert_eq!(n.initial_increment, 1.0);
+    assert!(report["warnings"].to_string().contains("nonlinear static truss"));
+    for (command, step) in [("solve.nonlinear", "Preload"), ("solve.frequency", "Modes")] {
+        let error = s.execute(command, &json!({"step":step})).unwrap_err().to_string();
+        assert!(error.contains("trusses"), "{error}");
+    }
+    s.execute("file.save_as", &json!({"path":dir.join("saved.fieldcraft"),"results":true})).unwrap();
+    s.execute("file.open", &json!({"path":dir.join("saved.fieldcraft")})).unwrap();
+    assert_eq!(s.model.step("Modes").unwrap().base_state.as_deref(), Some("Preload"));
+    s.execute("deck.source.write", &json!({"path":dir.join("source.inp")})).unwrap();
+    assert_eq!(std::fs::read_to_string(dir.join("source.inp")).unwrap(), text);
+    s.execute("deck.write", &json!({"format":"abaqus","path":dir.join("normalized.inp"),"units":"m-kg-s-N-Pa"})).unwrap();
+    let written = std::fs::read_to_string(dir.join("normalized.inp")).unwrap();
+    assert!(written.contains("NLGEOM=YES"));
+    let report = s.execute("deck.read", &json!({"format":"abaqus","path":dir.join("normalized.inp"),"units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(report["analysis_complete"], true, "{report}");
+    assert_eq!(s.model.step("Modes").unwrap().base_state.as_deref(), Some("Preload"));
+    assert!(s.execute("solve.nonlinear", &json!({"step":"Preload"})).unwrap_err().to_string().contains("trusses"));
+    assert_eq!(s.model.step("Modes").unwrap().base_state.as_deref(), Some("Preload"));
+    for option in ["*STATIC,RIKS", "*STATIC,STABILIZE", "*STATIC,DIRECT"] {
+        let denied = text.replace("*STATIC", option);
+        std::fs::write(&input, &denied).unwrap();
+        let report = s.execute("deck.read", &json!({"format":"abaqus","path":input,"units":"m-kg-s-N-Pa"})).unwrap();
+        assert_eq!(report["analysis_complete"], false);
+        assert!(report["warnings"].to_string().contains(option.split(',').nth(1).unwrap()));
+        assert!(s.model.steps().is_empty());
+        s.execute("deck.source.write", &json!({"path":dir.join("refused.inp")})).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("refused.inp")).unwrap(), denied);
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn enhanced_strain13_import_refuses_unverified_combinations_and_keeps_source() {
+    let dir = folder();
+    let mut s = bar();
+    let section = s.model.sections().get("BarSection").unwrap();
+    let mut edit = serde_json::to_value(section).unwrap();
+    edit["name"] = json!("BarSection");
+    edit["formulation"] = json!({"enhanced_strain13":true});
+    s.execute("model.section.edit", &edit).unwrap();
+    let path = dir.join("input.inp");
+    s.execute("deck.write", &json!({"format":"abaqus","path":path})).unwrap();
+    let original = std::fs::read_to_string(&path).unwrap();
+    let hybrid = original.replace("TYPE=C3D8I", "TYPE=C3D8IH");
+    std::fs::write(&path, hybrid).unwrap();
+    let before = s.clone();
+    let error = s.execute("deck.read", &json!({"format":"abaqus","path":path})).unwrap_err().to_string();
+    assert!(error.contains("C3D8IH"), "{error}");
+    assert_unchanged(&s, &before);
+    let dynamic = original.replace("*STATIC\n1.0, 1.0\n", "*FREQUENCY\n2,\n");
+    assert_ne!(dynamic, original);
+    std::fs::write(&path, &dynamic).unwrap();
+    let report = s.execute("deck.read", &json!({"format":"abaqus","path":path})).unwrap();
+    assert_eq!(report["analysis_complete"], false, "{report}");
+    assert!(report["warnings"].to_string().contains("C3D8I"));
+    assert!(s.model.steps().is_empty());
+    s.execute("file.save_as", &json!({"path":dir.join("refused.fieldcraft")})).unwrap();
+    s.execute("file.open", &json!({"path":dir.join("refused.fieldcraft")})).unwrap();
+    s.execute("deck.source.write", &json!({"path":dir.join("replay.inp")})).unwrap();
+    assert_eq!(std::fs::read_to_string(dir.join("replay.inp")).unwrap(), dynamic);
+    std::fs::write(&path, &original).unwrap();
+    s.execute("deck.read", &json!({"format":"abaqus","path":path})).unwrap();
+    // A native material edit must not widen the export scope.
+    s.execute("model.material.edit", &json!({"name":"Steel","elastic":{"type":"engineering_constants","young":[210000,210000,210000],"poisson":[0.3,0.3,0.3],"shear":[80769,80769,80769]}})).unwrap();
+    let error = s.execute("deck.write", &json!({"format":"abaqus","path":dir.join("orthotropic.inp")})).unwrap_err().to_string();
+    assert!(error.contains("C3D8I") || error.contains("enhanced_strain13"), "{error}");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn nonlinear_tet_import_solves_reopens_and_roundtrips() {
+    let dir = folder();
+    let input = dir.join("tet.inp");
+    // Uniform extension, one free displacement. The reference is the same native
+    // total-Lagrangian model, not a commercial finite-strain material assumption.
+    let text = "*NODE\n1,0,0,0\n2,1,0,0\n3,0,1,0\n4,0,0,1\n*ELEMENT,TYPE=C3D4,ELSET=All\n1,1,2,3,4\n*MATERIAL,NAME=M\n*ELASTIC\n1000,0\n*SOLID SECTION,ELSET=All,MATERIAL=M\n*STEP,NAME=Pull,NLGEOM=YES\n*STATIC\n.5,1\n*BOUNDARY\n1,1,3\n2,2,3\n3,1,3\n4,1,3\n*CLOAD\n2,1,1\n*END STEP\n";
+    std::fs::write(&input, text).unwrap();
+    let mut s = Session::default();
+    let report = s.execute("deck.read", &json!({"format":"abaqus","path":input,"units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(report["analysis_complete"], true, "{report}");
+    s.execute("solve.nonlinear", &json!({"step":"Pull"})).unwrap();
+    let probe = s.execute("solve.probe", &json!({"step":"Pull","nodes":[2]})).unwrap();
+    s.execute("file.save_as", &json!({"path":dir.join("tet.fieldcraft"),"results":true})).unwrap();
+    s.execute("file.open", &json!({"path":dir.join("tet.fieldcraft")})).unwrap();
+    assert_eq!(s.execute("solve.probe", &json!({"step":"Pull","nodes":[2]})).unwrap(), probe);
+    s.execute("deck.write", &json!({"format":"abaqus","path":dir.join("again.inp"),"units":"m-kg-s-N-Pa"})).unwrap();
+    let report = s.execute("deck.read", &json!({"format":"abaqus","path":dir.join("again.inp"),"units":"m-kg-s-N-Pa"})).unwrap();
+    assert_eq!(report["analysis_complete"], true, "{report}");
+    s.execute("solve.nonlinear", &json!({"step":"Pull"})).unwrap();
+    assert_eq!(s.execute("solve.probe", &json!({"step":"Pull","nodes":[2]})).unwrap(), probe);
     std::fs::remove_dir_all(dir).unwrap();
 }

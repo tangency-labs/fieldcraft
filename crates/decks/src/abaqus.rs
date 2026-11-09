@@ -92,7 +92,7 @@
 //! | tet10 | C3D10 (H) | | | |
 //! | wedge6 | C3D6 (H) | | | |
 //! | pyramid5 | C3D5 (H) | | | |
-//! | hex8 | C3D8 (B-bar), C3D8R/H; standard and nine-mode C3D8I refused | | | |
+//! | hex8 | C3D8 (B-bar), C3D8R/H; C3D8I (thirteen variables); standard and nine-mode export refused | | | |
 //! | hex20 | C3D20, C3D20R (H) | | | |
 //! | tri3, quad4 | | S3 / S3R, S4 / S4R | | |
 //! | quad8 | | S8R (reduced only) | | |
@@ -164,6 +164,7 @@ use crate::{Error, Result, unsupported};
 
 mod composite;
 mod dynamics;
+mod limited;
 pub mod read;
 pub use read::{Limits, Read, Unknown, read, read_in, read_limited};
 
@@ -199,7 +200,8 @@ pub fn write_resolved(model: &Model, r: &Resolved, units: Preset) -> Result<Stri
 pub fn write_resolved_with_mass(model: &Model, r: &Resolved, units: Preset, mass: fieldcraft_model::MassKind) -> Result<String> {
     dynamics::check_mass(model, mass)?;
     crate::refuse_fluid(FORMAT, model)?;
-    crate::refuse_prestress(FORMAT, model)?;
+    limited::ordinary_base_states(model)?;
+    limited::enhanced(model, None)?;
     let by_type = elements_by_type(model, r)?;
     check_expressible(model)?;
     dynamics::check(model)?;
@@ -241,7 +243,10 @@ pub fn element_type(kind: ElementKind, section: &Section) -> std::result::Result
     let f = section.formulation;
     let reduced = f.integration == Integration::Reduced;
     if f.enhanced_strain13 {
-        return Err("C3D8I/IH: enhanced_strain13 equivalence has not been validated; preserve the native project".into());
+        if kind != K::Hex8 || !matches!(section.kind, S::Solid {}) || f.hybrid || f.b_bar || f.incompatible_modes || reduced {
+            return Err("C3D8I: enhanced_strain13 requires full non-hybrid solid Hex8 without other strain formulations".into());
+        }
+        return Ok("C3D8I".into());
     }
     if f.b_bar && (kind != K::Hex8 || !matches!(section.kind, S::Solid {}) || f.hybrid || f.incompatible_modes || reduced) {
         return Err("B-bar requires full, non-hybrid, non-incompatible solid Hex8".into());

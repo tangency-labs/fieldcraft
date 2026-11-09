@@ -78,7 +78,7 @@ the current document; save existing work before running it in a session you are 
 The reader inverts the writer's supported solid, shell, planar, beam and truss element types:
 tet4/tet10/wedge6/pyramid5/hex8/hex20; tri3/quad4/quad8 shells; plane stress, plane strain and
 axisymmetric triangles/quadrilaterals; B31 and two-/three-node trusses. Encoded reduced,
-planar incompatible-mode and hybrid formulations are assigned to sections; C3D8 selects B-bar, while C3D8I/IH are refused until their internal-mode equivalence is established. A section mixing full and
+planar incompatible-mode and hybrid formulations are assigned to sections; C3D8 selects B-bar, while C3D8I selects the thirteen-variable formulation in the limited static scope below; C3D8IH remains refused. A section mixing full and
 reduced hex elements is refused by name instead of being guessed or split.
 
 Names are matched case-insensitively and retain their original spelling. Definitions differing
@@ -477,10 +477,10 @@ implemented. Positive Jacobians are required at every integration point;
 tests cover rectangular and moderately warped elements, not arbitrary mesh
 quality or a version-wide commercial equivalence claim.
 
-`C3D8I` and `C3D8IH` import/export are explicitly refused: FieldCraft's native
-nine-mode enhanced element remains available, but equivalence to thirteen
-internal variables is not established. Source text remains the authority for
-exact replay; refusal is not a silent substitute formula.
+`C3D8I` maps to the distinct thirteen-variable enhanced-strain option for
+nonhybrid, small-strain, constant-isotropic static analysis. The original native
+nine-mode option is still not exported as C3D8I. C3D8IH remains a named refusal.
+Source replay preserves original text separately from semantic export.
 
 Formula: Hughes (1980), DOI 10.1002/nme.1620150914, mean-dilatation specialization;
 Nagtegaal, Parks and Rice (1974), CMAME 4, 153–178. The public 2025 solid theory
@@ -527,7 +527,7 @@ does not prove equality of the enhanced strain spaces. The public
 [distortion discussion](https://docs.software.vt.edu/abaqusv2025/English/SIMACAEGSARefMap/simagsa-c-ctmincompat.htm)
 also distinguishes parallel and trapezoidal distortions. Matching one rectangular
 nu=0 bending case cannot establish equivalence for either distortion or nonzero
-Poisson ratio. Import and normalized export of C3D8I/IH remain refused. Native
+Poisson ratio. The nine-mode option remains refused for C3D8I export. Native
 nine-mode candidate results, if supplied for independent black-box comparison,
 are labelled as such and never as successful C3D8I imports.
 
@@ -560,7 +560,7 @@ random-step export remains a named refusal; source replay is not semantic export
 B-bar Hex8/consistent Tet4 matrix test checks inertia integrals and `C=alpha M+beta K`.
 
 
-### Independent thirteen-variable Hex8 candidate
+### Thirteen-variable Hex8 mapping
 
 Native sections can select `formulation: {enhanced_strain13: true}`. This is
 separate from the original nine-variable `incompatible_modes` option and B-bar.
@@ -574,7 +574,30 @@ The current scope is small-strain linear static analysis, positive-Jacobian Hex8
 and constant isotropic elasticity. Reduced integration, hybrid pressure, B-bar,
 nine-mode combinations, material axes, thermal/initial stress and other analysis
 procedures are refused. Passing patch and energy tests is not proof of accuracy
-for arbitrarily distorted bending meshes. `C3D8I` and `C3D8IH` import and normalized
-export remain named refusals pending independent same-input comparisons. Exact
+for arbitrarily distorted bending meshes. `C3D8I` import and normalized export
+select this formulation in the stated scope. `C3D8IH` remains refused; neither
+frequency nor nonlinear use is inferred from static verification. Exact
 source replay, where a source document is retained, is not semantic conversion.
 See [the formula and verification scope](enhanced-strain13.md).
+
+### First nonlinear rod equilibrium and frequency about its base state
+
+`*STEP, NLGEOM=YES` (or the flag `NLGEOM`) with automatic `*STATIC` maps to native
+nonlinear static for constant isotropic elastic T3D2/T2D2 rods or C3D4 solids.
+The current nonlinear solver refuses rods: their steps/base-state links survive
+round-trip, but neither nonlinear equilibrium nor dependent frequency is claimed
+solved. C3D4 supplies the executable nonlinear static round-trip check. The input increment
+and minimum/maximum are divided by the step period; `INC` bounds increments.
+Zero/omitted entries follow the public [STATIC defaults](https://abaqus.uclouvain.be/English/SIMACAEKEYRefMap/simakey-r-static.htm).
+The source period remains in the source bundle; native static time is normalized.
+A subsequent FREQUENCY step references the preceding equilibrium through `base_state`;
+ordinary equilibrium-to-frequency export keeps the sequence and NLGEOM flag.
+The executable elastic continuum uses total-Lagrangian kinematics. This mapping
+preserves the declared geometric nonlinearity, not a claim of arbitrary finite-strain
+commercial material equivalence or identical convergence controls.
+
+Only the first nonlinear equilibrium is imported: sequential state continuation,
+other nonlinear solid/shell imports, RIKS, DIRECT, STABILIZE, named nonlinear amplitudes,
+instantaneous STEP loading and unsupported controls are named refusals. Their source
+text remains available for exact replay; they are not replaced by linear steps.
+This ordinary rod path does not implement pretension-section import/export.

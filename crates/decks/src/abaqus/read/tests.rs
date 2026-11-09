@@ -224,9 +224,9 @@ fn supported_writer_table_has_canonical_inverse_formulations() {
     for name in ["C3D8R", "C3D8RH", "C3D20R", "C3D20RH", "S3R", "S4R", "S8R"] {
         assert_eq!(Type::parse(name, 1).unwrap().formulation.integration, Integration::Reduced);
     }
-    for name in ["C3D8I", "C3D8IH"] {
-        assert!(Type::parse(name, 1).is_err(), "9/13 modes must not be claimed equivalent");
-    }
+    assert!(Type::parse("C3D8I", 1).unwrap().formulation.enhanced_strain13);
+    assert!(!Type::parse("C3D8I", 1).unwrap().formulation.incompatible_modes);
+    assert!(Type::parse("C3D8IH", 1).is_err());
     for prefix in ["CPS", "CPE", "CAX"] {
         for suffix in ["3", "6", "4", "4R", "4I", "8", "8R"] {
             assert!(Type::parse(&format!("{prefix}{suffix}"), 1).is_ok(), "{prefix}{suffix}");

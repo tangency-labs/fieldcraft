@@ -1,7 +1,7 @@
 # Thirteen-variable enhanced-gradient Hex8
 
 The native `enhanced_strain13` section option is independent of the existing
-nine-mode formulation. It does not authorize a C3D8I/IH import/export mapping.
+nine-mode formulation. It supplies the C3D8I mapping only in the limited nonhybrid static scope below; C3D8IH is refused.
 
 Let J map parent coordinates to physical coordinates, J0 its value at the centre,
 and r = det(J0)/det(J). For each parent direction k and physical component c,
@@ -31,15 +31,16 @@ Native save/open preserves the option and existing static results. No result
 kind or binary version is added. Verification covers rigid modes, constant
 strain on affine/non-affine cells, zero-mean enhancement, absence of extra zero
 energy modes, rotation covariance, continuum pure bending and integrated energy
-versus condensed nodal energy. Independent distorted-case equivalence remains
-an explicit validation gate, separate from these theory checks.
+versus condensed nodal energy. Mapping verification additionally covers affine skew and non-affine warped bending
+cases at multiple Poisson ratios and bending directions, separate from these theory checks.
+No conclusion is extended to arbitrary distortion, nonlinear materials or dynamics.
 
 The nonhybrid thirteen-variable basis is explicit. The hybrid case is not inferred
 from it: the public theory discussion omits the extra dilatational modes for
 hybrids, while the element-library table lists thirteen incompatible variables
 for C3D8IH and separately describes four linear-pressure variables. This does not
 supply a verified complete mixed block for this implementation. C3D8IH therefore
-remains outside scope even if the nonhybrid candidate later passes comparisons.
+remains outside scope independently of the nonhybrid static mapping.
 Stress here is the constitutive value at each Gauss point, followed by the
 existing trilinear nodal extrapolation; it is not a claim to implement every
 assumed-stress projection discussed in the paper.

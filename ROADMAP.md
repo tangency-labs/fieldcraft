@@ -270,3 +270,5 @@ extrapolation are named unsupported combinations; no PSD time history is synthes
   the regeneration message. See docs/results-kind-layout.md.
 
 Native Hex8 now has an independent thirteen-variable enhanced-gradient option for linear isotropic static analysis, with determinant-corrected modes, local condensation and stress recovery. C3D8I/IH mapping remains refused pending independent distorted-case validation; see `docs/enhanced-strain13.md`.
+
+Abaqus import: C3D8I now selects the thirteen-variable nonhybrid isotropic small-strain static formulation; C3D8IH and unsupported procedures remain refused. First elastic rod NLGEOM=YES equilibrium and its frequency base state round-trip without dropping history.
