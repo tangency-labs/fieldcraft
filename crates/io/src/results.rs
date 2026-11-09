@@ -286,7 +286,9 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded> {
         let definition: [u8; 32] = r.array("a definition hash")?;
         let [kind] = r.array::<1>("a result kind")?;
         if &magic != MAGIC && kind > 5 {
-            return invalid("统一前的开发文件，请用原程序重新生成");
+            return invalid(format!(
+                "{PART}: step `{name}` stores result kind {kind} under an older results version; kinds 6 and above from versions 05 and 06 are ambiguous development layouts, so regenerate the file with the program that wrote it"
+            ));
         }
         let len = u64::from_le_bytes(r.array("a result's length")?);
         let payload = r.take(len, "a result")?;
