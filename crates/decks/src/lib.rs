@@ -78,6 +78,20 @@ impl Format {
             Some(names) => self.write(&with_steps(model, names)?, units),
         }
     }
+    /// Write dynamics with an explicit assembly mass choice, defaulting legacy APIs to consistent.
+    pub fn write_steps_with_mass(&self, model: &Model, steps: Option<&[String]>, units: Preset, mass: fieldcraft_model::MassKind) -> Result<Deck> {
+        let selected = match steps {
+            Some(names) => with_steps(model, names)?,
+            None => model.clone(),
+        };
+        if self.name != "abaqus" {
+            return Err(Error::Unsupported { format: self.name, what: "explicit dynamics mass selection".into() });
+        }
+        let warnings = selected.resolve()?.warnings;
+        let expressed = express(&selected, units)?;
+        let text = abaqus::write_resolved_with_mass(&expressed, &expressed.resolve()?, units, mass)?;
+        Ok(Deck { text, warnings })
+    }
 }
 
 /// The model, stored in SI, with every number expressed in `units`: what a deck in that system

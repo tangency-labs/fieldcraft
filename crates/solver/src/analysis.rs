@@ -154,14 +154,7 @@ pub struct FrequencyResult {
     pub buckling: Option<crate::buckle::Buckling>,
 }
 
-/// Mass matrix choice for a frequency analysis.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MassKind {
-    #[default]
-    Consistent,
-    Lumped,
-}
+pub use fieldcraft_model::MassKind;
 
 /// Options of a frequency analysis.
 #[derive(Debug, Clone, Copy, Default)]

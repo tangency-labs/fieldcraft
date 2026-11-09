@@ -28,7 +28,7 @@ use crate::{Error, Limits, Result};
 mod model;
 mod residual;
 pub use model::{Frame, HarmonicResult, solve_harmonic};
-pub(crate) use model::{damping_operators, load_vector, stresses};
+pub(crate) use model::{damping_operators, damping_operators_with_mass, load_vector, stresses};
 
 /// Reduced physical matrices in one equation order and on the same CSR pattern.
 /// C and G contain material and discrete contributions only; global step damping

@@ -24,8 +24,8 @@ use crate::{CommandKind, CommandSpec, EngineError, Result, Session, StepResult};
 pub const RUN: CommandSpec = CommandSpec {
     id: "solve.run",
     label: "Solve All Steps",
-    params: r#"{} — solves every step in order with its procedure's solver (solve.static, solve.frequency, solve.explicit, solve.fluid with their default caps) and keeps the results; stops at the first step that fails, naming it"#,
-    form: Some(&[]),
+    params: r#"{"mass"?:"consistent|lumped"} — optional mass applies only when every step is frequency, transient or response_spectrum; defaults to consistent. Solves every step in order with its procedure's solver (solve.static, solve.frequency, solve.explicit, solve.fluid with their default caps) and keeps the results; stops at the first step that fails, naming it"#,
+    form: Some(super::forms::SOLVE_ALL),
     kind: CommandKind::Model,
     requires: &[Requirement::Analysable, Requirement::ElementMaterial, Requirement::ElementSection, Requirement::Step],
     run: run_all,
@@ -54,8 +54,8 @@ pub const HARMONIC: CommandSpec = CommandSpec {
 pub const TRANSIENT: CommandSpec = CommandSpec {
     id: "solve.transient",
     label: "Solve Transient Step",
-    params: r#"{"step":"Pulse","threads":1} — linear Newmark/HHT response, direct or modal; optional error-controlled substeps for direct average acceleration with translational coordinates; stores displacement, velocity, relative acceleration, optional nodal stress and mechanical energies. Read frames with solve.probe. Limits as solve.static. Uniform base displacement/acceleration amplitudes are supported; independent nonzero displacement boundary conditions and reference points are refused."#,
-    form: Some(super::forms::SOLVE_STATIC),
+    params: r#"{"step":"Pulse","threads":1,"mass":"consistent|lumped"} — mass defaults to consistent on each solve and is stored with results; linear Newmark/HHT response, direct or modal; optional error-controlled substeps for direct average acceleration with translational coordinates; stores displacement, velocity, relative acceleration, optional nodal stress and mechanical energies. Read frames with solve.probe. Limits as solve.static. Uniform base displacement/acceleration amplitudes are supported; independent nonzero displacement boundary conditions and reference points are refused."#,
+    form: Some(super::forms::SOLVE_DYNAMICS),
     kind: CommandKind::Model,
     requires: &[Requirement::Analysable, Requirement::Step],
     run: run_transient,
@@ -63,8 +63,8 @@ pub const TRANSIENT: CommandSpec = CommandSpec {
 pub const SPECTRUM: CommandSpec = CommandSpec {
     id: "solve.spectrum",
     label: "Solve Response Spectrum",
-    params: r#"{"step":"Spectrum","threads":1} — frequency/period and damping-interpolated pseudo-acceleration spectrum with SRSS or 100-40-40 direction combination, mass-normalized modal participation, SRSS or CQC; stores component peak estimates. These are not simultaneous fields or a time history. Frequency tables use Hz, period tables use time units, and ordinates use acceleration; no extrapolation. Limits as solve.static."#,
-    form: Some(super::forms::SOLVE_STATIC),
+    params: r#"{"step":"Spectrum","threads":1,"mass":"consistent|lumped"} — mass defaults to consistent on each solve and is stored with results; frequency/period and damping-interpolated pseudo-acceleration spectrum with SRSS or 100-40-40 direction combination, mass-normalized modal participation, SRSS or CQC; stores component peak estimates. These are not simultaneous fields or a time history. Frequency tables use Hz, period tables use time units, and ordinates use acceleration; no extrapolation. Limits as solve.static."#,
+    form: Some(super::forms::SOLVE_DYNAMICS),
     kind: CommandKind::Model,
     requires: &[Requirement::Analysable, Requirement::Step],
     run: run_spectrum,
@@ -268,7 +268,7 @@ fn with_threads<R: Send>(threads: usize, f: impl FnOnce() -> R + Send) -> R {
     parallel::with_threads(threads, move || fieldcraft_model::progress::scoped(progress, f))
 }
 
-fn run_all(s: &mut Session, _: &Value) -> Result<Value> {
+fn run_all(s: &mut Session, p: &Value) -> Result<Value> {
     use fieldcraft_model::Procedure;
     type Solve = fn(&mut Session, &Value) -> Result<Value>;
     // Each solve with the command whose summary it gives (its units).
@@ -296,12 +296,22 @@ fn run_all(s: &mut Session, _: &Value) -> Result<Value> {
     if steps.is_empty() {
         return Err(EngineError::Params("the model has no steps to solve: add one (model.step.create)".into()));
     }
+    let mass = opt::<MassKind>(p, "mass")?;
+    if mass.is_some() && steps.iter().any(|(_, _, _, id)| !matches!(*id, "solve.transient" | "solve.spectrum" | "solve.frequency")) {
+        return Err(EngineError::invalid(
+            "mass",
+            "solve.run mass requires only transient, response_spectrum or frequency steps; solve other steps individually",
+        ));
+    }
     let mut done = Vec::new();
     let count = steps.len();
     for (index, (name, procedure, solve, id)) in steps.into_iter().enumerate() {
         fieldcraft_model::progress::step(&name, index + 1, count);
         fieldcraft_model::progress::check()?;
-        let params = json!({"step": name});
+        let mut params = json!({"step": name});
+        if let Some(mass) = mass {
+            params["mass"] = json!(mass);
+        }
         let progress = fieldcraft_model::progress::current();
         let before = progress.as_ref().map_or(0, |p| p.observations());
         let outcome = solve(s, &params);
@@ -448,9 +458,9 @@ fn run_spectrum(s: &mut Session, p: &Value) -> Result<Value> {
 fn run_dynamics(s: &mut Session, p: &Value, spectrum: bool) -> Result<Value> {
     let limits = limits(p)?;
     let step = opt::<String>(p, "step")?;
-    let r = with_threads(threads(s, p)?, || fieldcraft_solver::transient::solve(&s.model, step.as_deref(), &limits, spectrum))?;
-    let reply =
-        json!({"step":r.step,"spectrum":r.spectrum,"frames":r.frames.len(),"natural_frequencies":r.natural_frequencies,"warnings":r.warnings});
+    let mass = opt::<MassKind>(p, "mass")?.unwrap_or_default();
+    let r = with_threads(threads(s, p)?, || fieldcraft_solver::transient::solve_with_mass(&s.model, step.as_deref(), mass, &limits, spectrum))?;
+    let reply = json!({"step":r.step,"mass":r.mass,"spectrum":r.spectrum,"frames":r.frames.len(),"natural_frequencies":r.natural_frequencies,"warnings":r.warnings});
     s.store_result(StepResult::Implicit(ImplicitResult::Dynamics(r)));
     Ok(reply)
 }
@@ -1755,7 +1765,7 @@ fn probe_dynamics(r: &fieldcraft_solver::transient::Response, nodes: &[u32], p: 
         })
         .collect();
     Ok(
-        json!({"step":r.step,"spectrum":r.spectrum,"nodes":curves,"stress_components":["xx","yy","zz","xy","xz","yz"],"stress_location":"global nodal average; shell top surface","acceleration_kind":if r.spectrum {"pseudo_acceleration_peak"}else{"relative"},"frames":frames}),
+        json!({"step":r.step,"mass":r.mass,"spectrum":r.spectrum,"nodes":curves,"stress_components":["xx","yy","zz","xy","xz","yz"],"stress_location":"global nodal average; shell top surface","acceleration_kind":if r.spectrum {"pseudo_acceleration_peak"}else{"relative"},"frames":frames}),
     )
 }
 

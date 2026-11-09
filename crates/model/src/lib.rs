@@ -33,6 +33,9 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+mod mass;
+pub use mass::MassKind;
+
 pub mod amplitude;
 pub mod bcs;
 pub mod check;

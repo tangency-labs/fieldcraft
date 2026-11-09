@@ -9,7 +9,7 @@
 //! u32 steps
 //! steps × { u64 length, step name (UTF-8),
 //!           32 bytes: SHA-256 of the definition it was solved from ([`definition_hash`]),
-//!           u8 kind (0 static, 1 frequency, 2 heat transfer, 3 explicit dynamic, 4 fluid, 5 harmonic, 6 legacy linear dynamics, 7 dynamics with energy ledger),
+//!           u8 kind (0 static, 1 frequency, 2 heat transfer, 3 explicit dynamic, 4 fluid, 5 harmonic, 6 legacy linear dynamics, 7 legacy dynamics with energy ledger, 10 dynamics with selected mass),
 //!           u64 length, the result in the [`crate::codec`] encoding }   names ascending
 //! ```
 //!
@@ -101,7 +101,7 @@ impl<'a> SolvedRef<'a> {
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Frequency(_)) => 1,
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Heat(_)) => 2,
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Harmonic(_)) => 5,
-            SolvedRef::Implicit(fieldcraft_solver::StepResult::Dynamics(_)) => 7,
+            SolvedRef::Implicit(fieldcraft_solver::StepResult::Dynamics(_)) => 10,
             SolvedRef::Explicit(_) => 3,
             SolvedRef::Fluid(_) => 4,
         }
@@ -281,9 +281,23 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded> {
                     natural_frequencies: old.natural_frequencies,
                     warnings: old.warnings,
                     energy: None,
+                    mass: fieldcraft_solver::MassKind::Consistent,
                 }))
             }
-            7 => Solved::Implicit(fieldcraft_solver::StepResult::Dynamics(codec::decode(payload).map_err(damaged)?)),
+            7 => {
+                let old: LegacyEnergyDynamics = codec::decode(payload).map_err(damaged)?;
+                Solved::Implicit(fieldcraft_solver::StepResult::Dynamics(fieldcraft_solver::transient::Response {
+                    mass: fieldcraft_solver::MassKind::Consistent,
+                    step: old.step,
+                    nodes: old.nodes,
+                    frames: old.frames,
+                    spectrum: old.spectrum,
+                    natural_frequencies: old.natural_frequencies,
+                    warnings: old.warnings,
+                    energy: old.energy,
+                }))
+            }
+            10 => Solved::Implicit(fieldcraft_solver::StepResult::Dynamics(codec::decode(payload).map_err(damaged)?)),
             k => return invalid(format!("{PART}: step `{name}` has a result of unknown kind {k}")),
         };
         if result.step() != name {
@@ -522,4 +536,16 @@ struct LegacyDynamics {
     spectrum: bool,
     natural_frequencies: Vec<f64>,
     warnings: Vec<String>,
+}
+
+// Lane16 kind7 field order is frozen. Kinds8/9 are reserved by the harmonic mass extension.
+#[derive(serde::Deserialize)]
+struct LegacyEnergyDynamics {
+    step: String,
+    nodes: Vec<u32>,
+    frames: Vec<fieldcraft_solver::transient::Frame>,
+    spectrum: bool,
+    natural_frequencies: Vec<f64>,
+    warnings: Vec<String>,
+    energy: Option<Vec<fieldcraft_solver::transient::Energy>>,
 }

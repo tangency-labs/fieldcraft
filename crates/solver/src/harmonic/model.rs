@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use super::{Matrices, Modal};
 use crate::analysis::{self, Setup, Stats};
 use crate::complex::Vector;
-use crate::sparse::{Csr, NodeGraph, add_block, add_entry, add_scalar};
+use crate::sparse::{Csr, NodeGraph, add_block, add_diagonal, add_entry, add_scalar};
 use crate::system::{self, Mesh, Structural, StructuralKernel};
 use crate::{Error, Limits, MassKind, Result};
 
@@ -83,7 +83,7 @@ fn material_damping(model: &Model, resolved: &Resolved) -> BTreeMap<u32, Damping
 }
 
 /// Element damping is assembled on the existing graph; no averaging across materials.
-fn damping_matrices(mesh: &Mesh, graph: &NodeGraph, materials: &BTreeMap<u32, Damping>) -> Result<(Option<Csr>, Option<Csr>)> {
+fn damping_matrices(mesh: &Mesh, graph: &NodeGraph, materials: &BTreeMap<u32, Damping>, mass: MassKind) -> Result<(Option<Csr>, Option<Csr>)> {
     let viscous = materials.values().any(|d| d.alpha != 0.0 || d.beta != 0.0)
         || !mesh.discrete.dashpots().is_empty()
         || mesh.foundations.iter().any(|f| f.normal_damping != 0.0 || f.tangential_damping != 0.0);
@@ -100,7 +100,10 @@ fn damping_matrices(mesh: &Mesh, graph: &NodeGraph, materials: &BTreeMap<u32, Da
             add_block(c, &mesh.layout, &e.nodes, kinds, &scaled(&stiffness, d.beta))?;
             if d.alpha != 0.0 {
                 let density = e.density.ok_or_else(|| Error::Invalid(format!("element {} has no density", e.label)))?;
-                add_scalar(c, &mesh.layout, &e.nodes, kinds, &scaled(&kernel.mass(density).map_err(at)?.data, d.alpha))?;
+                match mass {
+                    MassKind::Consistent => add_scalar(c, &mesh.layout, &e.nodes, kinds, &scaled(&kernel.mass(density).map_err(at)?.data, d.alpha))?,
+                    MassKind::Lumped => add_diagonal(c, &mesh.layout, &e.nodes, kinds, &scaled(&kernel.lumped_mass(density).map_err(at)?, d.alpha))?,
+                }
             }
         }
         if let Some(g) = &mut g {
@@ -117,7 +120,14 @@ fn damping_matrices(mesh: &Mesh, graph: &NodeGraph, materials: &BTreeMap<u32, Da
             add_block(c, &mesh.layout, &t.nodes, kinds, &scaled(&stiffness, d.beta))?;
             if d.alpha != 0.0 {
                 let density = t.density.ok_or_else(|| Error::Invalid(format!("element {} has no density", t.label)))?;
-                add_scalar(c, &mesh.layout, &t.nodes, kinds, &scaled(&kernel.mass(density, t.area).map_err(at)?.data, d.alpha))?;
+                match mass {
+                    MassKind::Consistent => {
+                        add_scalar(c, &mesh.layout, &t.nodes, kinds, &scaled(&kernel.mass(density, t.area).map_err(at)?.data, d.alpha))?
+                    }
+                    MassKind::Lumped => {
+                        add_diagonal(c, &mesh.layout, &t.nodes, kinds, &scaled(&kernel.lumped_mass(density, t.area).map_err(at)?, d.alpha))?
+                    }
+                }
             }
         }
         if let Some(g) = &mut g {
@@ -133,13 +143,7 @@ fn damping_matrices(mesh: &Mesh, graph: &NodeGraph, materials: &BTreeMap<u32, Da
             add_block(c, &mesh.layout, &e.nodes, Structural::KINDS, &scaled(&stiffness, d.beta))?;
             if d.alpha != 0.0 {
                 let density = e.density.ok_or_else(|| Error::Invalid(format!("element {} has no density", e.label)))?;
-                add_block(
-                    c,
-                    &mesh.layout,
-                    &e.nodes,
-                    Structural::KINDS,
-                    &scaled(&kernel.mass(density, MassKind::Consistent).map_err(at)?.data, d.alpha),
-                )?;
+                add_block(c, &mesh.layout, &e.nodes, Structural::KINDS, &scaled(&kernel.mass(density, mass).map_err(at)?.data, d.alpha))?;
             }
         }
         if let Some(g) = &mut g {
@@ -238,7 +242,17 @@ pub(crate) fn load_vector(model: &Model, resolved: &Resolved, mesh: &Mesh, step:
 }
 
 pub(crate) fn damping_operators(model: &Model, resolved: &Resolved, mesh: &Mesh, graph: &NodeGraph) -> Result<(Option<Csr>, Option<Csr>)> {
-    damping_matrices(mesh, graph, &material_damping(model, resolved))
+    damping_operators_with_mass(model, resolved, mesh, graph, MassKind::Consistent)
+}
+
+pub(crate) fn damping_operators_with_mass(
+    model: &Model,
+    resolved: &Resolved,
+    mesh: &Mesh,
+    graph: &NodeGraph,
+    mass: MassKind,
+) -> Result<(Option<Csr>, Option<Csr>)> {
+    damping_matrices(mesh, graph, &material_damping(model, resolved), mass)
 }
 
 /// Solve a harmonic model step with consistent mass and the original boundary
@@ -302,7 +316,7 @@ pub fn solve_harmonic(model: &Model, name: Option<&str>, limits: &Limits) -> Res
     let mut m = assembled.m.ok_or_else(|| Error::Internal("harmonic mass".into()))?;
     k.mirror_lower();
     m.mirror_lower();
-    let (c, g) = damping_matrices(&mesh, &graph, &material_damping(model, &resolved))?;
+    let (c, g) = damping_matrices(&mesh, &graph, &material_damping(model, &resolved), MassKind::Consistent)?;
     let [mut kr, mut mr] = red.reduce([&k, &m])?;
     kr.mirror_lower();
     mr.mirror_lower();
