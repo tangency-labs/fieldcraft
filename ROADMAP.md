@@ -240,3 +240,9 @@ material validation remain open.
 Time-domain segmented S–N and explicit surface/size strength factors are supported;
 static/harmonic fatigue fields now use native contours, persisted results and masked
 VTU export. ASTM Fig.6 and original-author Dirlik/BT Table1 provide numerical checks.
+Complete global stress histories and reference-load tensor sums also support signed
+von Mises (absolute-largest principal sign, opposite-sign ties refused) and algebraic
+maximum principal stress, with checked proportionality before rainflow/Miner.
+Analytic tension/compression, biaxial shear and rotated tensors exercise scalar-cycle
+means and damage. Nonproportional critical-plane laws remain open; component PSDs
+cannot provide these signed histories or nonlinear scalar spectra.

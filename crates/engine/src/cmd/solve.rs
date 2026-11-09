@@ -54,7 +54,7 @@ pub const HARMONIC: CommandSpec = CommandSpec {
 pub const RANDOM: CommandSpec = CommandSpec {
     id: "solve.random",
     label: "Solve Random Response",
-    params: r#"{"step":"Sweep", "input_psd":[[frequency_hz, psd], ...], "nodes":[1], "base_direction":[1,0,0]} — projects an input one-sided PSD table onto stored solve.harmonic frequency frames (unit harmonic load), returning SI response component PSD and RMS; optional stress_projection {weights:[xx,yy,zz,xy,xz,yz],input_model:common_scalar_unit_pattern,fatigue:{method:narrow_band|dirlik|benasciutti_tovo,curve,duration_seconds,mean_stress_pa,correction,stationary_gaussian:true}} projects complex stresses before squaring and optionally evaluates a stationary Gaussian spectral fatigue approximation (broad-band requires zero mean, correction=none); independent/unknown correlated inputs are not supported; optional base_direction coherently adds the unit base acceleration to relative inertial-load frames; the legacy natural_frequency/damping_ratio/base_acceleration_psd form runs the Miles SDOF check"#,
+    params: r#"{"step":"Sweep", "input_psd":[[frequency_hz, psd], ...], "nodes":[1], "base_direction":[1,0,0]} — projects an input one-sided PSD table onto stored solve.harmonic frequency frames (unit harmonic load), returning SI response component PSD and RMS; optional stress_projection {weights:[xx,yy,zz,xy,xz,yz],input_model:common_scalar_unit_pattern,fatigue:{method:narrow_band|dirlik|benasciutti_tovo,curve,duration_seconds,mean_stress_pa,correction,stationary_gaussian:true}} projects complex stresses before squaring and optionally evaluates a stationary Gaussian spectral fatigue approximation (broad-band requires zero mean, correction=none); nonlinear signed von Mises/principal criteria are refused (PSD does not identify a signed tensor history); independent/unknown correlated inputs are not supported; optional base_direction coherently adds the unit base acceleration to relative inertial-load frames; the legacy natural_frequency/damping_ratio/base_acceleration_psd form runs the Miles SDOF check"#,
     form: Some(super::forms::SOLVE_RANDOM),
     kind: CommandKind::Model,
     requires: &[],
@@ -431,6 +431,15 @@ fn run_harmonic(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn run_random(s: &mut Session, p: &Value) -> Result<Value> {
+    if p.get("criterion").is_some()
+        || p.pointer("/stress_projection/criterion").is_some()
+        || p.pointer("/stress_projection/fatigue/criterion").is_some()
+    {
+        return Err(EngineError::invalid(
+            "stress_projection",
+            "PSD cannot determine signed tensor histories or nonlinear principal/von Mises spectra; use complete time-domain tensors",
+        ));
+    }
     if p.get("stress_projection").is_some() && !(p.get("step").and_then(Value::as_str).is_some() && p.get("input_psd").is_some()) {
         return Err(EngineError::invalid(
             "stress_projection",

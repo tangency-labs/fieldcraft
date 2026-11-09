@@ -12,6 +12,7 @@ pub mod field;
 pub mod history;
 pub mod life;
 pub mod spectral;
+pub mod stress;
 
 /// Bounded input and output storage, independent of user-supplied histories.
 pub const MAX_HISTORY_POINTS: usize = 1_000_000;

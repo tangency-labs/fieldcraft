@@ -41,3 +41,66 @@ fn transient_contract_rejects_spectra_wrong_identity_units_time_and_missing_stre
         assert!(Session::default().execute("solve.fatigue.transient", &p).is_err(), "accepted {path}");
     }
 }
+
+fn tensor_input(kind: &str, tensor: [f64; 6]) -> Value {
+    let mut p = input();
+    p.as_object_mut().unwrap().remove("weights");
+    p["criterion"] = json!({"type":kind});
+    p["curve"]["exponent"] = json!(2);
+    p["history"]["nodes"][0]["samples"] =
+        json!([-1., 1., -1.].iter().enumerate().map(|(i, f)| json!({"time":i as f64,"stress":tensor.map(|v|v*f)})).collect::<Vec<_>>());
+    p
+}
+#[test]
+fn complete_tensor_criteria_count_scalar_means_and_miner() {
+    // Eigenvalues 4,0,-1; rotated tensor has the same invariants.
+    for tensor in [[3., 0., 0., 2., 0., 0.], [-0.5, 3.5, 0., 1.5, 0., 0.]] {
+        for (kind, amplitude, mean, damage) in [("signed_von_mises", 21_f64.sqrt(), 0., 0.21), ("max_principal", 1.5, 2.5, 0.04)] {
+            let mut p = tensor_input(kind, tensor);
+            if kind == "max_principal" {
+                p["correction"] = json!({"type":"goodman","ultimate":10});
+            }
+            let r = Session::default().execute("solve.fatigue.transient", &p).unwrap();
+            assert!((r["nodes"][0]["damage"].as_f64().unwrap() - damage).abs() < 1e-13);
+            assert_eq!(r["nodes"][0]["cycle_count"], 1.0);
+            for cycle in r["nodes"][0]["cycles"].as_array().unwrap() {
+                assert_eq!(cycle["count"], 0.5);
+                assert!((cycle["mean_pa"].as_f64().unwrap() - mean).abs() < 1e-13);
+                assert!((cycle["amplitude_pa"].as_f64().unwrap() - amplitude).abs() < 1e-13);
+            }
+        }
+    }
+    for (kind, damage) in [("signed_von_mises", 0.04), ("max_principal", 0.01)] {
+        let p = tensor_input(kind, [2., 0., 0., 0., 0., 0.]);
+        let r = Session::default().execute("solve.fatigue.transient", &p).unwrap();
+        assert!((r["nodes"][0]["damage"].as_f64().unwrap() - damage).abs() < 1e-13);
+    }
+}
+#[test]
+fn nonlinear_tensor_criteria_refuse_ambiguous_or_incomplete_information() {
+    let p = tensor_input("signed_von_mises", [0., 0., 0., 1., 0., 0.]);
+    assert!(Session::default().execute("solve.fatigue.transient", &p).is_err());
+    for kind in ["signed_von_mises", "max_principal"] {
+        let p = tensor_input(kind, [2., 0., 0., 0., 0., 0.]);
+        for (path, value) in [
+            ("/history/nodes/0/samples/1/stress", json!([0, 2, 0, 0, 0, 0])),
+            ("/history/nodes/0/samples/1/stress", json!([2])),
+            ("/history/stress_location", json!("local axes")),
+        ] {
+            let mut bad = p.clone();
+            *bad.pointer_mut(path).unwrap() = value;
+            assert!(Session::default().execute("solve.fatigue.transient", &bad).is_err());
+        }
+        let mut bad = p.clone();
+        bad["weights"] = json!([1, 0, 0, 0, 0, 0]);
+        assert!(Session::default().execute("solve.fatigue.transient", &bad).is_err());
+        for request in [json!({"criterion":{"type":kind}}), json!({"stress_projection":{"criterion":{"type":kind}}})] {
+            let e = Session::default().execute("solve.random", &request).unwrap_err().to_string();
+            if request.get("criterion").is_some() {
+                assert!(e.contains("has no parameter `criterion`"), "{e}");
+            } else {
+                assert!(e.contains("PSD"), "{e}");
+            }
+        }
+    }
+}

@@ -224,9 +224,55 @@ band ratios 5 and 20, slopes 3/5/7, published TB/Dirlik damage ratios. The 0.001
 absolute comparison tolerance covers printed three-decimal precision. These are
 numerical benchmarks, not material validation or an experiment.
 
-Stress histories currently use a fixed linear tensor projection; signed
-von Mises, maximum-principal and critical-plane fatigue criteria remain open.
+Stress histories support fixed projection and proportional-tensor signed von Mises /
+maximum-principal reductions below. General critical-plane fatigue remains open.
 Persistent model-level fatigue material records are not implemented. The
 strain-cycle command consumes already-counted cycles; transient integration
 consumes exported SI probe data. The BASE demonstration above remains a
 **two-candidate, synthetic-S–N demonstration**, not a full-field hotspot assessment.
+
+
+### Complete tensor history criteria
+
+`solve.fatigue.history` and `solve.fatigue.transient` accept **either** legacy
+`weights` **or** `criterion: {"type":"signed_von_mises"}` /
+`criterion: {"type":"max_principal"}`. Explicit projection is
+`criterion: {"type":"projection","weights":[1,0,0,0,0,0]}`.
+Tensor order is `[xx,yy,zz,xy,xz,yz]`, global coordinates, Pa, with tensor shear
+stresses (no engineering-strain factor). Reference-load tensors are summed at
+each time before scalarization; imported transient samples must contain all six
+components with the documented source identity, location and units. Times are s.
+
+Signed von Mises is sqrt(3 J2) times the sign of the principal stress with largest
+absolute value, following [Altair's public equivalent nominal stress convention](https://help.altair.com/hwsolvers/os/topics/solvers/os/analysis_fatigue_uniaxial_r.htm).
+Opposite-sign ties within relative 1e-10 (including pure shear) are rejected:
+a sign cannot be inferred. Hydrostatic stress gives zero von Mises.
+`max_principal` is the **algebraically largest** eigenvalue, not the signed
+absolute-largest principal. For uniaxial compression its value is zero; thus
+`[-2,2,-2]` Pa uniaxial history becomes `[0,2,0]` Pa under this criterion.
+Eigenvalues use the existing Smith (1961), CACM 4(4):168 symmetric-tensor routine.
+
+Both nonlinear reductions are deliberately limited to proportional tensors
+sigma(t)=lambda(t) sigma0, including reversals and zero samples. Every nonzero
+sample is normalized by its largest absolute component and checked against the
+first nonzero reference (absolute normalized residual <=1e-9). A rotating or
+non-collinear prestressed tensor history is rejected. This is a nominal uniaxial
+S–N approximation requiring a material curve justified for that scalar measure,
+not a general multiaxial fatigue or plastic strain model. A justified fixed
+projection remains available; the caller must ensure temporal extrema are sampled.
+
+Rainflow acts on the resulting scalar samples. Cycle range=max-min,
+amplitude=range/2, mean=(max+min)/2; mean correction acts on each scalar cycle,
+then Miner sums count/N. No tensor-mean substitution is made. Residual cycles
+retain count=0.5. `solve.random` refuses nonlinear criteria: component PSDs do not
+identify signs, phases, joint tensor histories or nonlinear principal-stress PSDs.
+Even a cross-spectral matrix does not by itself specify a realized sign history.
+
+Analytic regression: sigma0=[3,0,0,2,0,0] Pa has eigenvalues (4,0,-1),
+VM=sqrt(21). Its 45-degree rotated representation [-0.5,3.5,0,1.5,0,0]
+gives identical results. For lambda=[-1,1,-1], the two residual half cycles
+sum to one cycle. Synthetic N=100/a² gives signed VM D=0.21 (mean zero).
+Max principal samples [1,4,1] give a=1.5, mean=2.5; Goodman ultimate=10 Pa
+corrects a to 2 Pa and gives D=0.04. Uniaxial sigma0=2 Pa gives D=0.04
+(signed VM) or 0.01 (max principal, no correction). These are analytic
+implementation checks, not measured material data or BASE validation.

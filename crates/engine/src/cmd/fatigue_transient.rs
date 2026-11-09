@@ -3,6 +3,7 @@
 use super::fatigue::field;
 use crate::schema::{Field, json as field_json};
 use crate::{CommandKind, CommandSpec, EngineError, Result, Session};
+use fieldcraft_solver::fatigue::stress::Criterion;
 use fieldcraft_solver::fatigue::{
     MAX_HISTORY_POINTS,
     curve::{SnCurve, StressLife},
@@ -22,14 +23,15 @@ const FORM: &[Field] = &[
     field_json("max_time_step_seconds", "Maximum sample gap (s)")
         .req()
         .help("Explicit sampling contract; no interpolation or automatic peak recovery."),
-    field_json("weights", "Stress projection").req().help("Fixed global [xx,yy,zz,xy,xz,yz] weights applied before rainflow."),
+    field_json("weights", "Stress projection").help("Fixed global [xx,yy,zz,xy,xz,yz] weights applied before rainflow."),
+    field_json("criterion", "Tensor stress criterion").help("Use instead of weights: type=projection with weights, signed_von_mises (sign of absolute-largest principal; ties refused), or max_principal (algebraic maximum). Tensor criteria require proportional complete global Pa histories."),
     field_json("curve", "S-N curve (SI)").req().help("Basquin: amplitude_ref Pa, cycles_ref, exponent, endurance_limit Pa; or points [{cycles,amplitude Pa}], endurance_limit, surface_factor, size_factor, extrapolation end_slopes/reject."),
     field_json("correction", "Mean stress correction").req().help("Tagged type none/goodman/gerber/soderberg with strengths in Pa."),
 ];
 pub const TRANSIENT: CommandSpec = CommandSpec {
     id: "solve.fatigue.transient",
     label: "Transient Stress Fatigue",
-    params: "{history,source_id,step,nodes,max_time_step_seconds,weights,curve,correction} — validate an exported SI transient nodal stress history, project, rainflow count and accumulate Miner damage; source labels never refer to the current session mesh",
+    params: "{history,source_id,step,nodes,max_time_step_seconds,weights?|criterion?,curve,correction} — validate an exported SI transient nodal stress history, scalarize (projection or proportional signed von Mises/algebraic max principal), rainflow count and accumulate Miner damage; source labels never refer to the current session mesh",
     form: Some(FORM),
     kind: CommandKind::Model,
     requires: &[],
@@ -44,7 +46,7 @@ fn run(_: &mut Session, p: &Value) -> Result<Value> {
     let step: String = field(p, "step")?;
     let nodes: Vec<u32> = field(p, "nodes")?;
     let gap: f64 = field(p, "max_time_step_seconds")?;
-    let weights: [f64; 6] = field(p, "weights")?;
+    let criterion = super::fatigue::criterion(p)?;
     let curve: SnCurve = field(p, "curve")?;
     let correction: StressMean = field(p, "correction")?;
     if source_id.trim().is_empty() || source_id.len() > 1024 {
@@ -59,9 +61,6 @@ fn run(_: &mut Session, p: &Value) -> Result<Value> {
     }
     if !gap.is_finite() || gap <= 0.0 {
         return Err(EngineError::invalid("max_time_step_seconds", "need a finite positive sample gap"));
-    }
-    if weights.iter().any(|x| !x.is_finite()) || weights.iter().all(|x| *x == 0.0) {
-        return Err(EngineError::invalid("weights", "need a finite nonzero projection"));
     }
     curve.validate()?;
     correction.corrected_amplitude(0.0, 0.0)?;
@@ -112,6 +111,7 @@ fn run(_: &mut Session, p: &Value) -> Result<Value> {
             return Err(bad("node sample count differs from frame count"));
         }
         let mut projected = Vec::with_capacity(samples.len());
+        let mut scalarizer = criterion.scalarizer()?;
         for (sample, &time) in samples.iter().zip(&times) {
             if sample.get("time").and_then(Value::as_f64) != Some(time) {
                 return Err(bad("node and frame times differ"));
@@ -121,7 +121,7 @@ fn run(_: &mut Session, p: &Value) -> Result<Value> {
             if stress.iter().any(|x| !x.is_finite()) {
                 return Err(bad("nonfinite stress"));
             }
-            let value: f64 = stress.iter().zip(weights).map(|(s, w)| s * w).sum();
+            let value = scalarizer.push(&stress)?;
             if !value.is_finite() {
                 return Err(bad("stress projection overflow"));
             }
@@ -144,6 +144,6 @@ fn run(_: &mut Session, p: &Value) -> Result<Value> {
         result.push(json!({"node":label,"samples":samples.len(),"cycles":counted,"cycle_count":cycles.iter().map(|c|c.count).sum::<f64>(),"damage":damage,"duration_seconds":duration,"repeated_record_life_seconds":life}));
     }
     Ok(
-        json!({"source_id":source_id,"source_step":step,"nodes":result,"weights":weights,"units":{"stress":"Pa","time":"s"},"method":"exported_transient_projection_rainflow_miner","limitations":"source identity is caller-verified; no current-mesh binding; global nodal stresses only; sampling adequacy not certified; finite record residual half cycles, no periodic closure; cumulative damage is in counting order, not chronological damage history"}),
+        json!({"source_id":source_id,"source_step":step,"nodes":result,"criterion":criterion,"weights":match criterion { Criterion::Projection {weights} => Some(weights), _ => None },"units":{"stress":"Pa","time":"s"},"method":"exported_transient_projection_rainflow_miner","limitations":"source identity is caller-verified; no current-mesh binding; global nodal stresses only; sampling adequacy not certified; finite record residual half cycles, no periodic closure; cumulative damage is in counting order, not chronological damage history"}),
     )
 }

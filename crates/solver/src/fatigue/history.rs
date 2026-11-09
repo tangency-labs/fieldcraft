@@ -1,8 +1,8 @@
 //! Linear superposition of reference-load static stress tensors. Same model,
 //! recovery location and homogeneous boundary operator are required by the caller.
 //! Coefficients multiply the complete reference pattern; they are dimensionless.
-//! Rainflow and Miner are applied AFTER tensor superposition and fixed projection.
-use super::{MAX_HISTORY_POINTS, curve::StressLife, life::StressMean, miner, rainflow};
+//! Rainflow and Miner are applied AFTER tensor superposition and the selected scalar stress criterion.
+use super::{MAX_HISTORY_POINTS, curve::StressLife, life::StressMean, miner, rainflow, stress::Criterion};
 use crate::{Error, Result, StaticResult};
 
 #[derive(Debug, serde::Serialize)]
@@ -19,11 +19,12 @@ pub fn evaluate(
     coefficients: &[Vec<f64>],
     times: &[f64],
     nodes: &[u32],
-    weights: [f64; 6],
+    criterion: Criterion,
     curve: &impl StressLife,
     correction: StressMean,
 ) -> Result<Vec<NodeDamage>> {
     curve.validate()?;
+    criterion.validate()?;
     if results.is_empty()
         || results.len() > 64
         || coefficients.len() != results.len()
@@ -35,8 +36,6 @@ pub fn evaluate(
         || nodes.is_empty()
         || nodes.len() > MAX_HISTORY_POINTS
         || nodes.iter().collect::<std::collections::BTreeSet<_>>().len() != nodes.len()
-        || weights.iter().any(|x| !x.is_finite())
-        || weights.iter().all(|x| *x == 0.0)
         || nodes.len().checked_mul(times.len()).and_then(|v| v.checked_mul(results.len())).is_none_or(|n| n > 20_000_000)
     {
         return Err(Error::Invalid("fatigue superposition dimensions, times, projection or work cap invalid".into()));
@@ -59,6 +58,7 @@ pub fn evaluate(
         let fields =
             results.iter().map(|r| r.stress.get(index).ok_or_else(|| Error::Invalid("missing stress".into()))).collect::<Result<Vec<_>>>()?;
         let mut signal = Vec::with_capacity(times.len());
+        let mut scalarizer = criterion.scalarizer()?;
         for t in 0..times.len() {
             let mut tensor = [0.0; 6];
             for (field, history) in fields.iter().zip(coefficients) {
@@ -67,7 +67,7 @@ pub fn evaluate(
                     *dest += value * factor;
                 }
             }
-            let value: f64 = tensor.iter().zip(weights).map(|(x, w)| x * w).sum();
+            let value = scalarizer.push(&tensor)?;
             if tensor.iter().any(|x| !x.is_finite()) || !value.is_finite() {
                 return Err(Error::Invalid("superposed stress overflow".into()));
             }
