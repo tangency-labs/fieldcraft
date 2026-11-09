@@ -17,7 +17,8 @@ The existing transient step supplies time controls; the nonlinear selection is
 the explicit command above. Reproduce with the full command script. Saving
 only the model or exporting that step with `deck.write` does not turn it into
 a nonlinear analysis; a native nonlinear deck-export path is not delivered here.
-The pending unified 07 format must come from the coordinated fatigue merge;
+The coordinated fatigue merge supplies unified MCRSLT07 for existing linear
+results. This diagnostic command adds no persisted nonlinear kind or payload;
 existing 06 archives are not 07 deliverables.
 
 Solids, shells, beams, rod3, contacts, couplings, foundations, springs/dashpots,

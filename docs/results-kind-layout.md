@@ -1,88 +1,89 @@
-# Result encoding and kind allocation
+# Unified version 07 results
 
-The current header is **MCRSLT06**. The enclosing `.fieldcraft` ZIP and its part
-checksums are unchanged. An eight-byte header precedes a little-endian `u32`
-record count. Each name-sorted record contains `u64` UTF-8 name length, name,
-32 definition-hash bytes, `u8 kind`, `u64 payload length`, and the bounded serde
-codec payload. Both the container checksums and the decoded result are checked.
+The only current writer uses **MCRSLT07**. The little-endian envelope is eight
+ASCII magic bytes, `u32 step_count` (at most 10,000), then name-sorted records:
+`u64 name_bytes`, UTF-8 name, 32 definition-hash bytes, `u8 kind`,
+`u64 payload_bytes`, bounded serde binary codec payload. No layout sentinel,
+optional trailer, alternate development-kind aliases or trial decoders are used.
+The ZIP manifest verifies part sizes and SHA256.
 
-Kinds 0–5 keep their existing layouts (static, frequency, heat, explicit, fluid,
-and pre-mass harmonic). **Kind 6 is linear dynamics**, including direct/modal
-histories and response spectra. Kinds 7–10 are allocated to the fatigue/harmonic
-extension: static+fatigue, pre-mass harmonic+fatigue, mass-aware harmonic, and
-mass-aware harmonic+fatigue, respectively. This unmerged dynamics branch refuses
-7–10 by name; it does not implement or trial-decode those payloads. Any new kind
-requires Router allocation before implementation.
-
-## Version 06, kind 6: frozen field order
-
-The payload is `transient::Response`, in this order:
-
-| Field | Encoding / meaning |
+| Kind | Version 07 payload |
 |---|---|
-| mass | `MassKind`, LE u32 enum index: 0 consistent, 1 lumped |
-| step | UTF-8 string |
-| nodes | sequence of u32 labels, strictly ascending |
-| frames | sequence of Frame |
-| spectrum | bool; false for histories, true for component peak estimates |
-| natural_frequencies | sequence of f64 Hz |
-| warnings | sequence of strings |
-| energy | optional sequence of Energy, aligned with frames; absent for spectra or recovered old results without a ledger |
+| 0 | StaticResult without fatigue, including pretension and nested nonlinear/contact results |
+| 1 | FrequencyResult |
+| 2 | HeatResult |
+| 3 | ExplicitResult |
+| 4 | FluidResult |
+| 5 | HarmonicResult including mass and operator_diagonal_bounds |
+| 6 | Full Dynamics Response: frames, spectrum flag, natural frequencies, warnings, energy ledger and mass |
+| 7 | Tuple (StaticResult, FatigueField) |
+| 8 | Tuple (HarmonicResult including mass and operator_diagonal_bounds, FatigueField) |
 
-Every struct field has a presence byte before its value. Thus a normally written
-payload begins with `01`, followed by the four-byte mass index. Strings and
-sequences have LE u64 lengths; arrays have no length; f64 values are IEEE 754 LE.
-An Option uses a one-byte discriminant. The energy field's `skip_serializing_if`
-can instead make its struct presence byte zero. There is no optional trailer or
-payload sniffing. Missing or extra fields are not an extension mechanism.
+Fatigue is skipped in the base result's codec and encoded exactly once as the
+second tuple member. Kinds 5 and 8 always carry mass, including consistent results
+without an operator diagnostic. Kind 6 stores the complete direct/modal history
+or response-spectrum result; it is not a placeholder refusal. There are no current
+kinds 9 or 10. Additional kind assignments require Router approval.
 
-Frame order: optional time (seconds; absent for spectra), displacement (node×3),
-rotation (node×3), velocity (node×3, empty for spectra), acceleration (node×3),
-optional stress (node×6), optional kinetic energy, optional strain energy. Energy
-order: damping_dissipation, external_work, energy_balance, all f64 joules. Values
-are SI; stress order is xx, yy, zz, xy, xz, yz. The mass choice is stored with the
-result, not inferred from the model or a default on reopening. A dynamics result
-is not sufficient by itself to distinguish direct from modal integration: that
-procedure remains in the model step, bound by the definition hash.
+For decoders, type 5 field order is `mass, operator_diagonal_bounds, step, nodes,
+reference_points, frames, natural_frequencies, residual_vectors, stats, warnings`.
+Type 6 order is `mass, step, nodes, frames, spectrum, natural_frequencies, warnings,
+energy`. The fatigue member of 7/8 is `damage, life_seconds, inputs_json,
+dependencies`. The codec writes structure-field presence bytes, little-endian
+fixed-width numbers, `u64` list/string lengths, and `u32` enum variants; skipped
+fatigue fields in the base types emit no member. A complete decoder must consume
+the entire length-delimited payload, including optional values and nested fields.
 
-## Historical boundaries
+## Old version 05 and 06
 
-| Header/kind | Historical lane-16 payload | Current reader |
-|---|---|---|
-| 05 / 0–5 | Existing non-dynamics payloads | Read unchanged |
-| 05 / 6 | step, nodes, frames, spectrum, natural_frequencies, warnings; implicit consistent mass, no cumulative energy ledger | Refused |
-| 05 / 7 | Above plus optional energy; implicit consistent mass | Refused |
-| 05 / 10 | mass first, then step, nodes, frames, spectrum, natural_frequencies, warnings, optional energy | Refused |
-| 06 / 6 | Full mass-aware Response described above | Read/write |
-| 06 / 7–10 | Allocated foreign extension layouts | Reserved; unavailable in this branch |
+Only kinds **0–5** are accepted using their explicit old schemas:
 
-The old 05 numbers overlapped across independent branches. Consequently **all
-05 kinds above 5 are refused before payload decoding**, including a byte stream
-that would happen to decode successfully. Version 06 kind 6 is intentionally
-not the original 05 kind 6 payload. Its mass-aware payload matches lane 16's
-former 05 kind 10 field order, but the new header and allocated kind remove the
-ambiguous interpretation. Never patch a magic/kind byte to claim migration.
+- 05/static uses the frozen pre-pretension static structure and restores an empty
+  pretension vector. 06/static uses the pre-merge prestress structure including
+  pretension (the frozen `fusion-p4a` producer).
+- 1–4 retain their original payloads in both versions.
+- 05/06 harmonic kind 5 has field order step, nodes, reference_points, frames,
+  natural_frequencies, residual_vectors, stats, warnings. It restores consistent
+  mass and no operator diagnostic; it is not read as version 07 kind 5.
+- Every old kind **6 or above** is refused before decoding its payload, with the
+  literal message **统一前的开发文件，请用原程序重新生成**.
 
-Keep original archives, probes, source/binary identities and hashes. Recover
-identified old files with a verified old reader, exporting the model without
-results and typed result data, then validate the model definition hash and
-re-encode with the current native writer. The ignored `result_transfer` test
-helper supports this explicitly approved evidence workflow; it is not an
-application fallback or a producer detector. Unknown producers remain refused.
-No solve is necessary for an identified typed transfer. Readers older than 06
-may open the model with an unsupported-result warning and omit the results.
+The pre-merge fatigue producer also wrote static kind 0 under 06 without the
+prestress field. That incompatible file is not guessed or retried: retain it and
+recover using its verified original program. Accepting version 06 does not mean
+all incompatible development producers had the same static schema. Historical
+06/7 or 06/10 dynamics and fatigue collisions never receive aliases in this reader.
+The withdrawn intermediate unified-06 sentinel experiment is not an accepted
+schema. Other unsupported magic versions retain the existing result-drop note.
 
-Updating this branch is **not a cross-branch merge**. The independent fatigue
-branch can reserve/refuse kind 6 until the user-directed integration brings in
-its exact writer/reader. Any later field-order or variant-order change requires
-an explicit version contract and coordination, not another unallocated kind.
+Keep each original file, source/program identity and SHA256. Where a result is
+still needed, use its verified original program to export a result-free model and
+reference replies, or use an independently retained original command recipe;
+regenerate through the version 07 native solver/writer and compare all fields.
+Never change old magic/kind bytes as migration. Current built-in test fixtures
+are generated under MCRSLT07; old05/06 fixtures stay in their historical folders.
+Do not recalculate large BASE responses merely to repair metadata.
 
-## Interim fusion-p4a merge (not the unified 07 delivery)
+## Mass and cross-lane integration
 
-The merged static payload includes lane 15's pretension field. Version 05 kind 0
-uses its explicit pre-pretension decoder; current 06 static fixtures come from
-that merge. Lane 16's earlier 06 static archives do not acquire that field by
-guessing. Preserve them with their producer identity. Linear dynamics kind 6
-is unchanged in this interim merge. The coordinator has superseded the earlier
-allocation with a unified 07 contract to be delivered by lane 18; no archive
-written here is represented as 07, and no new kind is allocated locally.
+`solve.transient` (direct/modal), `solve.spectrum` and `solve.harmonic` share
+`MassKind`: `consistent|lumped`, default `consistent` on each solve. The selection
+feeds mass assembly, damping and modal projection and is stored in types 5/6/8.
+The random-frame pure evaluator and unaveraged element recovery coexist with
+session-bound fatigue persistence. Random/fatigue inherit their solved source's
+mass; a separate random `mass` override is refused. Imported modal random steps
+retain their supported default-consistent contract and refuse external overrides.
+No PSD is turned into a signed tensor history or nonlinear principal-stress spectrum.
+
+`solve.run mass` retains its scoped contract: only frequency, transient and
+response-spectrum steps together; other mixed cases use individual commands.
+The integration does not start lane 17's separately scheduled 5R or any BASE run.
+
+## Native evidence tool
+
+`cargo run --release -p fieldcraft-engine --example results_roundtrip -- input.fieldcraft new-directory`
+opens through the native reader, rewrites through the native writer, compares the
+entire decoded result objects, and exports complete fields plus archive hashes.
+It does not solve, infer a legacy producer, repair invalid data or replace a
+physical validation. The built-in fixture generator and IO synthetic-layout tests
+separately cover old compatibility, all current kinds and explicit refusals.

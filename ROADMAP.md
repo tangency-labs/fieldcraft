@@ -216,3 +216,43 @@ factorization across parameter columns. A prescribed-motion, zero-foundation-coe
 check compares the batched response/Jacobian bit for bit with scalar sensitivities.
 
 Geometric rod2 dynamics: experimental `solve.transient.nonlinear` Newmark/HHT full Newton, consistent/lumped reference mass and SI diagnostic histories. Native nonlinear result persistence and general solid/contact/material extension remain open.
+## Fatigue (fusion fork, development)
+
+Implemented: finite-record rainflow, Basquin/Miner, CMB/Morrow/SWT and stress mean
+corrections; coherent harmonic stress projections with narrow-band, Dirlik and
+BT2005 damage; stored linear reference-load superposition command. Linux solver/engine tests, Clippy and the full oracle pass with the existing
+15 known oracle failures unchanged. Release rod examples pass independent PSD,
+moment, narrow-band and reference-load Miner checks. General multiaxial criteria,
+model-level material persistence, full-field BASE validation and actual
+native transient-result integration remain open. An exported SI transient-probe
+adapter passes Linux engine/refusal tests and a real 1001-frame rod export
+check against analytic residual-half-cycle Miner damage. See the fatigue
+manual for restrictions.
+
+A release-mode BASE demonstration now evaluates two source-bound probes with the
+three spectral methods. Its moments and narrow-band damage pass independent
+integration checks; this does not establish frequency-grid convergence, a global
+hotspot, or life with measured material fatigue properties.
+
+The counted-total-strain command exposes CMB with Morrow/SWT and Miner damage,
+without inferring plastic strain or pairing stress and strain automatically.
+Model-level material persistence, multiaxial criteria and measured fatigue
+material validation remain open.
+Time-domain segmented S–N and explicit surface/size strength factors are supported;
+static/harmonic fatigue fields now use native contours, persisted results and masked
+VTU export. ASTM Fig.6 and original-author Dirlik/BT Table1 provide numerical checks.
+Complete global stress histories and reference-load tensor sums also support signed
+von Mises (absolute-largest principal sign, opposite-sign ties refused) and algebraic
+maximum principal stress, with checked proportionality before rainflow/Miner.
+Analytic tension/compression, biaxial shear and rotated tensors exercise scalar-cycle
+means and damage. Nonproportional critical-plane laws remain open; component PSDs
+cannot provide these signed histories or nonlinear scalar spectra.
+Spectral fatigue tables: Rayleigh and Dirlik integrate piecewise S–N amplitude
+laws with explicit strength factors and endurance cutoff. TB tables and rejected
+extrapolation are named unsupported combinations; no PSD time history is synthesized.
+
+- Harmonic mass choice: `solve.harmonic mass=consistent|lumped` (default consistent), shared direct/modal and damping operators; random fatigue retains source mass identity.
+- Results persistence: unified MCRSLT07 kinds 0–8: static/frequency/heat/explicit/fluid,
+  mass harmonic, full energy-and-mass dynamics, static fatigue and harmonic fatigue.
+  Old05/06 kinds 0–5 use frozen schemas; higher development kinds are refused with
+  the regeneration message. See docs/results-kind-layout.md.

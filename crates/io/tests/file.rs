@@ -393,7 +393,7 @@ fn results_round_trip_and_hostile_results_are_refused() {
     refused(long_name, "a name longer than the part");
     let kind_at = 12 + 8 + 4 + 32;
     let mut kind = rb.clone();
-    kind[kind_at] = 255;
+    kind[kind_at] = u8::MAX;
     assert!(refused(kind, "kind").contains("unknown kind"));
     let mut wrong_kind = rb.clone();
     wrong_kind[kind_at] = 4;

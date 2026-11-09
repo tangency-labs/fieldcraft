@@ -2682,6 +2682,9 @@ pub const SOLVE_MATRICES: &[Field] = &[
 pub const SOLVE_STATIC: &[Field] = &[STEP, MAX_DOFS, MAX_FACTOR, MAX_MEMORY_GIB, THREADS];
 pub const SOLVE_HARMONIC: &[Field] = &[
     STEP,
+    choice("mass", "Mass matrix", &[("consistent", "Consistent"), ("lumped", "Lumped")])
+        .help("Mass discretization for inertia, damping and the modal basis; random response inherits it.")
+        .def("\"consistent\""),
     MAX_DOFS,
     int("max_factor_entries", "Max factor entries", 1, super::solve::HARMONIC_FACTOR_ENTRY_CEILING as i64)
         .help("Cap in 8-byte real slots, two per complex factor entry: 400M by default; explicitly raise up to 4B (32 GB of values). Indices, workspace and other solver storage are additional.")
@@ -2690,6 +2693,7 @@ pub const SOLVE_HARMONIC: &[Field] = &[
     THREADS,
 ];
 pub const SOLVE_RANDOM: &[Field] = &[
+    json("stress_projection", "Scalar stress projection").help("Fixed six weights and input_model=common_scalar_unit_pattern; projects complex harmonic stress before squaring. Optional fatigue: method=narrow_band/dirlik/benasciutti_tovo, curve, duration_seconds, mean_stress_pa, correction, stationary_gaussian=true. Broad-band requires zero mean and correction=none. Segmented S-N points/cycles/amplitude with surface_factor,size_factor,endurance_limit and end_slopes are supported by narrow_band and dirlik (2..64 points, slopes 1..20); benasciutti_tovo and extrapolation=reject refuse tables. SI only; not von Mises or unknown-correlated inputs."),
     num("natural_frequency", "Natural frequency", D::Of(Quantity::Frequency)).hint("1").help("Natural frequency of the SDOF check in Hz."),
     positive("damping_ratio", "Damping ratio", D::None).hint("0.02").help("Viscous modal damping ratio ζ."),
     positive("base_acceleration_psd", "Base acceleration PSD", D::Acceleration).hint("1").help("One-sided white base acceleration PSD."),
@@ -2866,6 +2870,8 @@ pub const CONTOUR: &[Field] = &[
             ("contact_status", "Contact status"),
             ("contact_shear", "Contact shear"),
             ("contact_slip", "Contact slip"),
+            ("fatigue_damage", "Fatigue damage"),
+            ("fatigue_life", "Repeated-record fatigue life"),
             ("none", "None"),
         ],
     )

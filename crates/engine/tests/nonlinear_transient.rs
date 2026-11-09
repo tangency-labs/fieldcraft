@@ -163,3 +163,25 @@ fn failure_does_not_replace_linear_results_or_persist_nonlinear_frames() {
     run(&mut s, "solve.transient.nonlinear", json!({"step":"Motion"}));
     assert_eq!(before, run(&mut s, "solve.probe", json!({"step":"Motion","nodes":[2]})));
 }
+
+#[test]
+fn nonfinite_energy_is_refused_before_returning_diagnostics() {
+    let (_, mut input) = model(false, 0.01, None, "consistent", 0.);
+    input.as_array_mut().unwrap().retain(|c| c["command"] != "model.load.create");
+    for command in input.as_array_mut().unwrap() {
+        if command["command"] == "model.step.create" {
+            let p = &mut command["params"];
+            p["boundary_conditions"] = json!([]);
+            p["loads"] = json!([]);
+            p["procedure"]["time_step"] = json!(1e-140);
+            p["procedure"]["increments"] = json!(1);
+            p["procedure"]["initial_displacement"] = json!({});
+            p["procedure"]["initial_velocity"] = json!({"1":[1e155,0.,0.],"2":[1e155,0.,0.]});
+        }
+    }
+    let mut session = Session::default();
+    session.run_script(&input).unwrap();
+    let result = session.execute("solve.transient.nonlinear", &json!({"step":"Motion"}));
+    let error = result.expect_err("overflowing kinetic energy must not serialize as null");
+    assert!(error.to_string().contains("energy overflow"), "{error}");
+}

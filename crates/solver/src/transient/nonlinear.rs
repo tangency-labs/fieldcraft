@@ -316,6 +316,9 @@ pub fn solve(model: &Model, name: Option<&str>, mass: MassKind, max_iterations: 
     let initial_residual = if scale > 0. { initial_residual / scale } else { initial_residual };
     let mut state = State { displacement: u, velocity: v, acceleration: a };
     let energy0 = 0.5 * dot(&state.velocity, &mul(&mr, &state.velocity)) + init.strain_energy;
+    if !energy0.is_finite() {
+        return Err(Error::Invalid("nonlinear initial energy overflow".into()));
+    }
     let (mut work, mut diss) = (0., 0.);
     let method = match t.integration {
         Choice::Hht { alpha } => Integration::Hht { alpha },
@@ -364,6 +367,10 @@ pub fn solve(model: &Model, name: Option<&str>, mass: MassKind, max_iterations: 
         if i % t.output_every == 0 || i == t.increments {
             let kinetic = 0.5 * dot(&state.velocity, &mul(&mr, &state.velocity));
             let strain = evaluate(&state.displacement)?.strain_energy;
+            let balance = kinetic + strain - energy0 + diss - work;
+            if !kinetic.is_finite() || !balance.is_finite() {
+                return Err(Error::Invalid("nonlinear energy overflow".into()));
+            }
             out.frames.push(Frame {
                 time: i as f64 * t.time_step,
                 displacement: field(&state.displacement)?,
@@ -373,7 +380,7 @@ pub fn solve(model: &Model, name: Option<&str>, mass: MassKind, max_iterations: 
                 strain_energy: strain,
                 external_work: work,
                 physical_dissipation: diss,
-                energy_balance: kinetic + strain - energy0 + diss - work,
+                energy_balance: balance,
                 newton_corrections: iterations,
                 relative_residual: residual,
             });

@@ -1407,13 +1407,25 @@ mod tests {
     /// would misread them fails here, and is a new results encoding (a new magic, new fixtures).
     #[test]
     fn results_of_this_encoding_read_back() {
-        for magic in [fieldcraft_io::results::LEGACY_MAGIC, fieldcraft_io::results::MAGIC] {
-            let d = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/results").join(String::from_utf8_lossy(magic).as_ref());
+        let legacy = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/results/MCRSLT05");
+        let pre_merge = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/results/MCRSLT06");
+        for d in [results_fixtures(), legacy, pre_merge] {
             for (name, steps) in [("cantilever", &["Bend", "Modes"][..]), ("couette", &["Shear"]), ("impact", &["Impact"]), ("blocks", &["Squeeze"])]
             {
                 let bytes = std::fs::read(d.join(format!("{name}.fieldcraft"))).unwrap();
                 let file = fieldcraft_io::read(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
                 assert!(file.results_note.is_none(), "{name}: {:?}", file.results_note);
+                let extras = fieldcraft_io::Extras {
+                    results: file
+                        .results
+                        .iter()
+                        .map(|r| (r.result.step(), fieldcraft_io::results::StoredRef { definition: r.definition, result: r.result.as_ref() }))
+                        .collect(),
+                    ..Default::default()
+                };
+                let rewritten =
+                    fieldcraft_io::write_with(&file.model, &file.geometry, &file.journal, &file.journal_header, &file.view, &extras).unwrap();
+                assert_eq!(fieldcraft_io::read(&rewritten).unwrap().results, file.results, "all fields: {name}");
                 let read: Vec<&str> = file.results.iter().map(|r| r.result.step()).collect();
                 assert_eq!(read, steps, "{name}");
                 for stored in &file.results {

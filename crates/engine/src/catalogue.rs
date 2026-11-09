@@ -687,6 +687,27 @@ pub static CATALOGUE: &[Capability] = &[
         "Linear static (or coupled temperature–displacement) solve of a step with FieldCraft's own solver; nonlinear static, buckling, harmonic response, transient, experimental geometric rod transient (SI diagnostics only), response spectrum and heat transfer in the drop-down",
         &["solve.nonlinear", "solve.buckle", "solve.harmonic", "solve.transient", "solve.transient.nonlinear", "solve.spectrum", "solve.heat"],
     ),
+    ready(
+        "solve.fatigue.history",
+        "Reference-load Fatigue",
+        Solve,
+        "Implicit",
+        "Superposes current static reference tensors, counts finite-record rainflow and stores damage/life contours with node coverage; Basquin or segmented S-N with strength factors",
+    ),
+    ready(
+        "solve.fatigue.transient",
+        "Transient Stress Fatigue",
+        Solve,
+        "Implicit",
+        "Counts exported SI nodal transient stress histories with explicit source identity, time-axis validation and per-cycle Miner damage",
+    ),
+    ready(
+        "solve.fatigue.strain_cycles",
+        "Strain-cycle Fatigue",
+        Solve,
+        "Implicit",
+        "Evaluates explicitly counted local total-strain cycles with CMB, Morrow or SWT, and Miner accumulation",
+    ),
     ready("solve.matrices", "Matrices", Solve, "Implicit", "Assemble reduced linear structural matrices and optionally export SI operator files"),
     ready("solve.frequency", "Frequency", Solve, "Implicit", "Natural frequencies and mode shapes of a frequency step"),
     ready(
@@ -694,7 +715,7 @@ pub static CATALOGUE: &[Capability] = &[
         "Random Response",
         Solve,
         "Implicit",
-        "Executes imported modal random steps or projects stored harmonic frames and a one-sided PSD into nodal and optional unaveraged solid element component spectra and RMS; supports coherent absolute acceleration for a declared unit base inertial load",
+        "Executes imported modal random steps or projects stored harmonic frames into nodal and unaveraged element PSD/RMS; fixed coherent scalar stress projections support narrow-band/Dirlik segmented S-N and single-slope BT fatigue",
     ),
     ready_more(
         "solve.sensitivity.static",

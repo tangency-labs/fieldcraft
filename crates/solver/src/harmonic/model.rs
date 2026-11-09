@@ -38,6 +38,15 @@ pub struct Frame {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HarmonicResult {
+    /// Mass discretization used for both direct and modal harmonic operators.
+    #[serde(default)]
+    pub mass: MassKind,
+    /// Min/max diagonal of the reduced physical operators, before modal projection.
+    /// Generalized SI coordinates; mass is kg and stiffness N/m for translation-only systems.
+    #[serde(default)]
+    pub operator_diagonal_bounds: Option<[[f64; 2]; 2]>,
+    #[serde(skip)]
+    pub fatigue: Option<crate::fatigue::field::FatigueField>,
     pub step: String,
     pub nodes: Vec<u32>,
     pub reference_points: Vec<(String, u32)>,
@@ -258,6 +267,11 @@ pub(crate) fn damping_operators_with_mass(
 /// Solve a harmonic model step with consistent mass and the original boundary
 /// reduction. Existing spatial load definitions receive per-step phasor factors.
 pub fn solve_harmonic(model: &Model, name: Option<&str>, limits: &Limits) -> Result<HarmonicResult> {
+    solve_harmonic_with_mass(model, name, MassKind::Consistent, limits)
+}
+
+/// Solve using the same mass choice for inertia, material damping and modal reduction.
+pub fn solve_harmonic_with_mass(model: &Model, name: Option<&str>, mass: MassKind, limits: &Limits) -> Result<HarmonicResult> {
     fieldcraft_model::progress::check()?;
     let resolved = model.resolve()?;
     let step = model.select_step(name, |p| matches!(p, Procedure::Harmonic(_)), "harmonic")?;
@@ -309,7 +323,7 @@ pub fn solve_harmonic(model: &Model, name: Option<&str>, limits: &Limits) -> Res
     warnings.extend(fieldcraft_model::initial::left_out(model, step));
     let (graph, order) = analysis::pattern(&mesh);
     let setup = Setup { model, resolved: &resolved, mesh: &mesh, step };
-    let assembled = analysis::assemble(&mesh, &graph, Some(MassKind::Consistent))?;
+    let assembled = analysis::assemble(&mesh, &graph, Some(mass))?;
     let terminal = crate::prestress::stiffness(&setup, &graph, assembled.k, limits, &mut warnings)?;
     let red = analysis::reduction_with_frozen(
         &setup,
@@ -326,7 +340,7 @@ pub fn solve_harmonic(model: &Model, name: Option<&str>, limits: &Limits) -> Res
     let mut m = assembled.m.ok_or_else(|| Error::Internal("harmonic mass".into()))?;
     k.mirror_lower();
     m.mirror_lower();
-    let (c, g) = damping_matrices(&mesh, &graph, &material_damping(model, &resolved), MassKind::Consistent)?;
+    let (c, g) = damping_matrices(&mesh, &graph, &material_damping(model, &resolved), mass)?;
     let [mut kr, mut mr] = red.reduce([&k, &m])?;
     kr.mirror_lower();
     mr.mirror_lower();
@@ -343,6 +357,8 @@ pub fn solve_harmonic(model: &Model, name: Option<&str>, limits: &Limits) -> Res
     let gr = reduce_optional(&g)?;
     let force = load_vector(model, &resolved, &mesh, step, &red.active)?;
     let full = (red.largest_prescribed() != 0.0).then_some((k, m, c, g));
+    let bounds = |a: &Csr| a.diagonal().iter().fold([f64::INFINITY, f64::NEG_INFINITY], |[lo, hi], &v| [lo.min(v), hi.max(v)]);
+    let operator_diagonal_bounds = Some([bounds(&kr), bounds(&mr)]);
     let matrices = Matrices { stiffness: &kr, mass: &mr, viscous: cr.as_ref(), loss: gr.as_ref() };
     let reduced_force = Vector { real: red.restrict(&force.real), imaginary: red.restrict(&force.imaginary) };
     let modal = match h.method {
@@ -430,6 +446,9 @@ pub fn solve_harmonic(model: &Model, name: Option<&str>, limits: &Limits) -> Res
     let natural_frequencies =
         modal.as_ref().map(|m| m.eigenvalues().iter().map(|l| l.max(0.0).sqrt() / (2.0 * std::f64::consts::PI)).collect()).unwrap_or_default();
     Ok(HarmonicResult {
+        mass,
+        operator_diagonal_bounds,
+        fatigue: None,
         step: step.name.clone(),
         nodes: mesh.labels.clone(),
         reference_points: mesh.points.iter().map(|p| (p.name.clone(), p.label)).collect(),

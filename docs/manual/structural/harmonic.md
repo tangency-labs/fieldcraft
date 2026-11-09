@@ -41,8 +41,8 @@ and zero phase. Factors may only name loads active in the step.
 | `threads` | A solve parameter, using the same deterministic CPU thread pool as the other solvers. |
 
 Material definitions accept the same `damping` object. Material and step coefficients are
-**additive**. All coefficients and ratios must be finite and nonnegative. Consistent mass
-is used, including point masses and rotary inertia. Material density is required where an
+**additive**. All coefficients and ratios must be finite and nonnegative. Consistent mass is the default; `solve.harmonic mass="lumped"` selects the existing
+lumped element operators. Both include point masses and rotary inertia. Material density is required where an
 element carries inertia. Dashpots add their assembled viscous matrix.
 
 Oriented solids use the same material-axis stiffness and stress recovery as static
@@ -223,3 +223,34 @@ Executable command oracles in `tests/oracle/random-*` cover exact finite-band SD
 Miles' approximation separately, low/narrow-band limits, coherent cantilever modal response,
 and a source-bound 5R known discrepancy. They do not certify arbitrary load normalization,
 independent multiple inputs, or a general `RandomVibration` step assembler.
+
+A development `stress_projection` option projects the stored complex stress before
+squaring and can evaluate a narrow-band fatigue approximation. Its normalization,
+correlation contract and current verification limits are documented in
+[Fatigue](fatigue.md). The summed six-component stress spectrum is not its input.
+
+### Mass discretization
+
+`solve.harmonic` accepts `mass: "consistent" | "lumped"`, with the same contract as
+`solve.frequency`; omission selects consistent mass. The selected existing element
+mass operator is used by direct response, the modal basis and projection, prescribed
+motion elimination, and material/step mass-proportional damping. Stiffness and the
+physical load definitions are unchanged. Element restrictions of lumped mass remain
+those of the frequency solver; unsupported elements return errors.
+
+The stored harmonic result, `solve.probe` and `solve.random` report `mass`. Random
+PSD and spectral fatigue inherit this identity and these phasors; `solve.random`
+rejects a separate `mass` parameter. Original version 05 kind 5 harmonic results without this field mean consistent
+mass. Version 05 kinds 6 and above are ambiguous across producer branches and
+are refused; preserve them and recover using the verified producer. New files
+use version 07 and the [unified result kinds](../../results-kind-layout.md). A later harmonic solve replaces the source and its fatigue
+result. Sensitivity/inverse harmonic commands retain their existing consistent-mass
+contract; they do not reuse a previously solved lumped result. Body/gravity load
+integration is unchanged; the base-motion PSD option still requires matching
+unit inertial-load frames, not arbitrary body-force frames.
+
+`solve.harmonic` also reports `operator_diagonal_bounds`: `[stiffness, mass]`,
+each `[minimum, maximum]`, taken from the reduced physical operators before modal
+projection. These are generalized SI entries (N/m and kg for translation-only
+systems); they are not modal masses. For a single free translation they give the
+actual scalar K and M used by the solve. Older results may omit this diagnostic.
