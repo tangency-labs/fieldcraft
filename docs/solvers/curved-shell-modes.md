@@ -1,6 +1,6 @@
 # Curved quadratic-shell modal perturbations
 
-MITC8 can use an earlier **linear static** `base_state` for
+MITC8 and MITC6-a can use an earlier **linear static** `base_state` for
 `solve.frequency`. The reference-geometry tangent is
 `K_T = K_elastic + K_sigma + K_pressure`, with reference mass. The stress
 operator is the same Green-strain/director Hessian used in curved-shell
@@ -76,19 +76,36 @@ rotary inertia. At h/R=.02 the a-priori frequency gate is 3% for the coarse
 four MITC8 quadratic elements per quadrant, with a separate 1e−6 algebraic residual
 gate. No material, density, pressure or tolerance is fitted to a result.
 
-MITC6-a curved prestressed modes and its follower-pressure modal tangent are
-**refused by name**. At 64 circumferential elements per quadrant the two-mode
-run failed the second-mode actual residual (1.04e-5 at zero pressure); asking
-only for the first mode also failed (2.43e-5). This is not evidence that those
-modes are zero-energy mechanisms: the actual residual is inadequate and the
-fine-mesh preload check was not reached. The coarse preload discrepancies and
-fine residual failures remain open. Ordinary MITC6-a modes and its separately
-verified static/buckling paths retain their previous scope. No shared eigen
-solver tolerance or frequency result identity was changed to accept this case.
+The original MITC6-a fine-mesh failures were algebraic: on the same 64-element
+per quadrant K/M, the second production mode had an actual residual 1.04e-5,
+while an independent sparse eigensolve gave 5.79e-10 at the same frequency.
+The first mode is circumferential n=2; the second is n=4, not a zero-energy
+mechanism. The mass-normalized modes and constraint mapping were checked.
+Zero-pressure KG is exactly zero; the actual linear static preload's n=2
+geometric/pressure energy projections agree with the independent ring energies.
+The maximum radial expansion error decreases from 3.85% (8 segments) to
+1.21% (32) and 0.6163% (64), retaining the coarse-mesh failures.
+
+Frequency extraction now checks the original pencil after Lanczos. If its
+relative equation residual exceeds 1e-6, bounded inverse residual correction
+uses the existing shifted factor, with mass orthogonalization and Rayleigh
+quotients (Parlett 1998). At most four improving corrections are accepted;
+remaining error is still reported. Modes already within the gate keep their
+original values. This changes neither matrices nor solver/material parameters.
+For the original single-mode failure the residual drops from 2.43e-5 to
+8.26e-9; in the two-mode solve the second drops to 2.81e-10.
+
+`pressurized_mitc6_modes_and_native_reopen` verifies the 64-segment mesh using
+the actual static and frequency commands: zero pressure, 5/10 Pa follower
+pressure and 10 Pa dead pressure, both modal residuals, the original 1% preload
+field checks, 3% frequency check and complete static/two-mode native reopening.
+The historical failures are not relabeled as passes: this is a corrected
+algebraic solver and a finer mesh. MITC6-a curved prestressed harmonic remains
+refused, and the coarse meshes remain outside the stated accuracy gate.
 
 ## Scope and persistence
 
-Only MITC8 surface shells with unchanged direct supports are admitted
+Only MITC8/MITC6-a surface shells with unchanged direct supports are admitted
 for this curved modal path. Mixed solids/beams/ring shells, pretension cuts,
 MPCs/inclined supports, initial stress/temperature fields, thermal preload,
 offset follower faces and nonconservative pressure
