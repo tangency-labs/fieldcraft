@@ -2744,7 +2744,7 @@ pub const SOLVE_FREQUENCY: &[Field] = &[
     MAX_DOFS,
     MAX_FACTOR,
     MAX_MEMORY_GIB,
-    int("max_iterations", "Max Lanczos vectors", 1, 3000).help("Cap on the Lanczos vectors.").hint("3000"),
+    int("max_iterations", "Max Lanczos vectors", 1, 3000).help("Basis-vector capacity, not block iterations. The reply reports actual iterations, cap status and actual K/M residuals; zero-denominator rigid-mode ratios are undefined.").hint("3000"),
     THREADS,
 ];
 pub const SOLVE_BUCKLE: &[Field] =

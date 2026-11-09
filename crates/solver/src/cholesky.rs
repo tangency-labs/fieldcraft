@@ -36,6 +36,11 @@
 
 use fieldcraft_parallel as parallel;
 
+#[cfg(test)]
+mod diagnostics;
+#[cfg(test)]
+mod path_experiment;
+
 use crate::{Error, Result};
 
 /// Relative pivot size below which the matrix counts as singular.
@@ -756,6 +761,17 @@ impl Context<'_> {
     /// descendant K that reaches it (Y = L, or L D), in supernode order; the descendants are
     /// `done[k - base]`.
     pub(crate) fn assemble<T: Supernode>(&self, j: usize, done: &[T], base: usize, own: &mut [f64]) -> std::result::Result<(), FactorError> {
+        self.assemble_profiled(j, done, base, own, None)
+    }
+
+    fn assemble_profiled<T: Supernode>(
+        &self,
+        j: usize,
+        done: &[T],
+        base: usize,
+        own: &mut [f64],
+        mut timing: Option<&mut crate::timing::Supernode>,
+    ) -> std::result::Result<(), FactorError> {
         let rows = self.s.rows(j);
         let cols = self.s.cols(j);
         let (m, w, f) = (rows.len(), cols.len(), cols.start);
@@ -796,7 +812,16 @@ impl Context<'_> {
                 }
                 relative.push(at);
             }
+            #[cfg(test)]
+            if path_experiment::enabled(mu, wu, kw) && done_k.pivots().is_none() {
+                path_experiment::update(&Panel { m: kr.len(), data: lk }, 0..kw, u.p1, mu, wu, m, 0, &relative, own)?;
+                continue;
+            }
+            let clock = timing.as_ref().and_then(|t| t.clock());
             let tiles = products(&Panel { m: kr.len(), data: lk }, 0..kw, u.p1, mu, wu, done_k.pivots());
+            if let Some(timing) = timing.as_mut() {
+                timing.product(clock, mu, wu, kw, TILE, NR);
+            }
             subtract(own, m, &tiles, mu, wu, |i| relative.get(i).copied().unwrap_or(0));
         }
         Ok(())
@@ -805,7 +830,11 @@ impl Context<'_> {
     /// Factor supernode `j` into `own`; its descendants' values are `done[k - base]`. Fails with
     /// the first column (postorder) whose pivot is not positive.
     fn supernode(&self, j: usize, done: &[Vec<f64>], base: usize, own: &mut [f64]) -> std::result::Result<(), FactorError> {
-        self.assemble(j, done, base, own)?;
+        let mut timing = crate::timing::Supernode::new(j, self.s.rows(j).len(), self.s.cols(j).len());
+        let clock = timing.clock();
+        self.assemble_profiled(j, done, base, own, Some(&mut timing))?;
+        timing.assembly_seconds = crate::timing::Supernode::elapsed(clock);
+        timing.finish_assembly();
         let rows = self.s.rows(j);
         let cols = self.s.cols(j);
         let (m, w, f) = (rows.len(), cols.len(), cols.start);
@@ -815,8 +844,22 @@ impl Context<'_> {
             let pw = c1 - c0;
             if c0 > 0 {
                 // The panel minus its products with the columns before it.
-                let tiles = products(&Panel { m, data: own }, 0..c0, c0, m - c0, pw, None);
-                subtract(own, m, &tiles, m - c0, pw, |i| c0 + i);
+                #[cfg(test)]
+                let tiled = path_experiment::enabled(m - c0, pw, c0);
+                #[cfg(not(test))]
+                let tiled = false;
+                #[cfg(test)]
+                if tiled {
+                    let (done, target) = own.split_at_mut(offset(m, c0));
+                    let relative: Vec<_> = (c0..m).collect();
+                    path_experiment::update(&Panel { m, data: done }, 0..c0, c0, m - c0, pw, m, c0, &relative, target)?;
+                }
+                if !tiled {
+                    let clock = timing.clock();
+                    let tiles = products(&Panel { m, data: own }, 0..c0, c0, m - c0, pw, None);
+                    timing.product(clock, m - c0, pw, c0, TILE, NR);
+                    subtract(own, m, &tiles, m - c0, pw, |i| c0 + i);
+                }
             }
             // The diagonal block, column by column.
             for c in c0..c1 {
@@ -846,7 +889,9 @@ impl Context<'_> {
             }
             // The rows below the panel, by tiles.
             if c1 < m {
+                let clock = timing.clock();
                 let solved = solve_below(&Panel { m, data: own }, c0, c1);
+                timing.below(clock);
                 for (t, tile) in solved.iter().enumerate() {
                     let i0 = c1 + t * TILE;
                     let h = TILE.min(m - i0);
@@ -885,6 +930,7 @@ impl Symbolic {
     /// The structure of the factor of `a`, refused before any numeric memory is taken when the
     /// factor would hold more than `max_entries` entries.
     pub(crate) fn new(a: &UpperColumns, max_entries: usize) -> std::result::Result<Symbolic, FactorError> {
+        let _timing = crate::timing::Span::new("symbolic");
         let n = a.n;
         let internal = |what: &str| FactorError::Internal(format!("supernodal structure: {what}"));
         let (parent0, counts0) = symbolic(a);
@@ -1241,9 +1287,130 @@ impl Factor {
     }
 
     pub(crate) fn from_symbolic(symbolic: &Symbolic) -> std::result::Result<Factor, FactorError> {
+        let allocation_timing = crate::timing::Span::new("factor_allocate");
         let mut values = symbolic.allocate()?;
+        drop(allocation_timing);
+        if std::env::var("FIELDCRAFT_SUPERNODE_TIMING").is_ok_and(|v| v == "1") {
+            use std::io::Write;
+            let _ = writeln!(std::io::stderr().lock(), "FIELDCRAFT_SUPERNODE_TOP\t{:?}", symbolic.top);
+        }
+        let numeric_timing = crate::timing::Span::new("numeric_factor");
         symbolic.factor(&mut values, |context, j, done, base, own| context.supernode(j, done, base, own))?;
+        drop(numeric_timing);
         Ok(Factor { n: symbolic.n, perm: symbolic.perm.clone(), structure: symbolic.structure.clone(), values, entries: symbolic.entries })
+    }
+
+    /// Solve independent right-hand sides with factor entries reused across up to eight
+    /// columns. Each lane preserves solve_supernodes' column and row subtraction order.
+    /// This is the multiple-RHS triangular solve of Golub–Van Loan §3.1; vectorization
+    /// is across independent RHS lanes, never a reassociation of a dot product.
+    pub fn solve_block(&self, rhs: &mut [Vec<f64>]) -> Result<()> {
+        let _timing = crate::timing::Span::new("backsolve_block");
+        self.solve_lanes::<8>(rhs)
+    }
+
+    /// Independent pairs share one factor stream, with one writer for each RHS. This
+    /// retains column parallelism as well as multiple-RHS reuse; no dot product is split.
+    #[cfg(test)]
+    fn solve_pairs(&self, rhs: &mut [Vec<f64>]) -> Result<()> {
+        let _timing = crate::timing::Span::new("backsolve_pairs");
+        if rhs.iter().any(|b| b.len() != self.n) {
+            return Err(Error::Internal("paired right-hand side length".into()));
+        }
+        let mut groups: Vec<_> = rhs.chunks_mut(2).map(|group| (group, Ok(()))).collect();
+        parallel::for_each_mut(&mut groups, |_, (group, result)| {
+            *result = if group.len() == 1 {
+                match group.first_mut() {
+                    Some(rhs) => self.solve(rhs),
+                    None => Ok(()),
+                }
+            } else {
+                self.solve_lanes::<2>(group)
+            };
+        });
+        for (_, result) in groups {
+            result?;
+        }
+        Ok(())
+    }
+
+    fn solve_lanes<const LANES: usize>(&self, rhs: &mut [Vec<f64>]) -> Result<()> {
+        let _timing = crate::timing::Span::new("backsolve_lane_group_inclusive");
+        if LANES == 0 {
+            return Err(Error::Internal("zero right-hand side lanes".into()));
+        }
+        if rhs.iter().any(|b| b.len() != self.n) {
+            return Err(Error::Internal("block right-hand side length".into()));
+        }
+        for group in rhs.chunks_mut(LANES) {
+            let mut x = vec![[0.0; LANES]; self.n];
+            for (&p, row) in self.perm.iter().zip(&mut x) {
+                for (v, b) in row.iter_mut().zip(group.iter()) {
+                    *v = b.get(p).copied().unwrap_or(0.0);
+                }
+            }
+            for (k, values) in self.values.iter().enumerate() {
+                let rows = self.structure.rows(k);
+                let (m, f, w) = (rows.len(), self.structure.cols(k).start, self.structure.cols(k).len());
+                let t = Panel { m, data: values };
+                for q in 0..w {
+                    let y = x.get_mut(f + q).ok_or_else(|| Error::Internal("block solve column".into()))?;
+                    let d = t.at(q, q);
+                    for v in y.iter_mut() {
+                        *v /= d;
+                    }
+                    let yq = *y;
+                    for (row, &l) in x.get_mut(f + q + 1..f + w).unwrap_or_default().iter_mut().zip(t.column(q, q + 1, w - q - 1)) {
+                        for (v, y) in row.iter_mut().zip(yq) {
+                            *v -= l * y;
+                        }
+                    }
+                    for (&r, &l) in rows.get(w..).unwrap_or_default().iter().zip(t.column(q, w, m - w)) {
+                        if let Some(row) = x.get_mut(r) {
+                            for (v, y) in row.iter_mut().zip(yq) {
+                                *v -= l * y;
+                            }
+                        }
+                    }
+                }
+            }
+            for (k, values) in self.values.iter().enumerate().rev() {
+                let rows = self.structure.rows(k);
+                let (m, f, w) = (rows.len(), self.structure.cols(k).start, self.structure.cols(k).len());
+                let t = Panel { m, data: values };
+                for q in (0..w).rev() {
+                    let mut sum = x.get(f + q).copied().ok_or_else(|| Error::Internal("block solve column".into()))?;
+                    for (row, &l) in x.get(f + q + 1..f + w).unwrap_or_default().iter().zip(t.column(q, q + 1, w - q - 1)) {
+                        for (v, y) in sum.iter_mut().zip(row) {
+                            *v -= l * y;
+                        }
+                    }
+                    for (&r, &l) in rows.get(w..).unwrap_or_default().iter().zip(t.column(q, w, m - w)) {
+                        if let Some(row) = x.get(r) {
+                            for (v, y) in sum.iter_mut().zip(row) {
+                                *v -= l * y;
+                            }
+                        }
+                    }
+                    let d = t.at(q, q);
+                    for v in &mut sum {
+                        *v /= d;
+                    }
+                    if let Some(row) = x.get_mut(f + q) {
+                        *row = sum;
+                    }
+                }
+            }
+            for (&p, row) in self.perm.iter().zip(&x) {
+                for (b, v) in group.iter_mut().zip(row) {
+                    if let Some(y) = b.get_mut(p) {
+                        *y = *v;
+                    }
+                }
+            }
+            crate::timing::triangular_work(group.len(), LANES, self.n, self.entries);
+        }
+        Ok(())
     }
 
     /// Entries in L.
@@ -1253,7 +1420,12 @@ impl Factor {
 
     /// Solve A x = b in place.
     pub fn solve(&self, b: &mut [f64]) -> Result<()> {
-        solve_supernodes(self.n, &self.perm, &self.structure, &self.values, b)
+        let _timing = crate::timing::Span::new("backsolve_inclusive");
+        let result = solve_supernodes(self.n, &self.perm, &self.structure, &self.values, b);
+        if result.is_ok() {
+            crate::timing::triangular_work(1, 1, self.n, self.entries);
+        }
+        result
     }
 }
 
@@ -1261,6 +1433,34 @@ impl Factor {
 mod tests {
     use super::*;
     use crate::sparse::Csr;
+
+    #[test]
+    fn multiple_rhs_preserves_scalar_solve_bits() {
+        let n = 65;
+        let a: Vec<Vec<f64>> =
+            (0..n).map(|i| (0..n).map(|j| if i == j { 100.0 } else { ((i.min(j) * 7 + i.max(j) * 13) % 23) as f64 / 23.0 }).collect()).collect();
+        let factor = Factor::new(&UpperColumns::from_symmetric(&dense_to_csr(&a)), usize::MAX).unwrap();
+        for width in [0, 1, 6, 9] {
+            let rhs: Vec<Vec<f64>> = (0..width).map(|k| (0..n).map(|j| ((j * 7 + k * 11) % 31) as f64 - 15.0).collect()).collect();
+            let mut reference = rhs.clone();
+            for b in &mut reference {
+                factor.solve(b).unwrap();
+            }
+            for threads in [1, 2, 7] {
+                let mut got = rhs.clone();
+                parallel::with_threads(threads, || factor.solve_block(&mut got)).unwrap();
+                assert!(got.iter().flatten().zip(reference.iter().flatten()).all(|(a, b)| a.to_bits() == b.to_bits()));
+                let mut paired = rhs.clone();
+                parallel::with_threads(threads, || factor.solve_pairs(&mut paired)).unwrap();
+                assert!(paired.iter().flatten().zip(reference.iter().flatten()).all(|(a, b)| a.to_bits() == b.to_bits()));
+            }
+        }
+        assert!(factor.solve_block(&mut [vec![1.0; n - 1]]).is_err());
+        let mut bad = vec![vec![1.0; n], vec![2.0; n - 1]];
+        let original = bad.clone();
+        assert!(factor.solve_pairs(&mut bad).is_err());
+        assert_eq!(bad, original);
+    }
 
     #[test]
     fn memory_budget_refuses_before_numeric_and_preserves_values() {

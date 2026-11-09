@@ -100,6 +100,7 @@ pub fn nested_dissection(xyz: &[[f64; 3]], adjacency: &[Vec<usize>]) -> Vec<usiz
 /// The nested dissection order of the nodes that fills the factor less: by coordinate planes or
 /// by the graph's level structures. Ties keep the coordinate order.
 pub fn fill_reducing_order(xyz: &[[f64; 3]], adjacency: &[Vec<usize>]) -> Vec<usize> {
+    let _timing = crate::timing::Span::new("ordering");
     let by_planes = nested_dissection(xyz, adjacency);
     if adjacency.len() <= LEAF {
         // Both order a leaf as it comes: there is no choice to make.
