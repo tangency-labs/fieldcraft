@@ -36,6 +36,8 @@
 
 use fieldcraft_parallel as parallel;
 
+mod tiled;
+
 use crate::{Error, Result};
 
 /// Relative pivot size below which the matrix counts as singular.
@@ -808,11 +810,25 @@ impl Context<'_> {
                 relative.push(at);
             }
             let clock = timing.as_ref().and_then(|t| t.clock());
-            let tiles = products(&Panel { m: kr.len(), data: lk }, 0..kw, u.p1, mu, wu, done_k.pivots());
-            if let Some(timing) = timing.as_mut() {
-                timing.product(clock, mu, wu, kw, TILE, NR);
+            if done_k.pivots().is_none() && wu >= PANEL && mu.saturating_mul(wu).saturating_mul(kw) >= PARALLEL_WORK {
+                tiled::update(
+                    &Panel { m: kr.len(), data: lk },
+                    0..kw,
+                    u.p1,
+                    mu,
+                    wu,
+                    tiled::Target { m, first: 0, relative: &relative, values: own },
+                )?;
+                if let Some(timing) = timing.as_mut() {
+                    timing.product(clock, mu, wu, kw, TILE, NR);
+                }
+            } else {
+                let tiles = products(&Panel { m: kr.len(), data: lk }, 0..kw, u.p1, mu, wu, done_k.pivots());
+                if let Some(timing) = timing.as_mut() {
+                    timing.product(clock, mu, wu, kw, TILE, NR);
+                }
+                subtract(own, m, &tiles, mu, wu, |i| relative.get(i).copied().unwrap_or(0));
             }
-            subtract(own, m, &tiles, mu, wu, |i| relative.get(i).copied().unwrap_or(0));
         }
         Ok(())
     }
@@ -835,9 +851,23 @@ impl Context<'_> {
             if c0 > 0 {
                 // The panel minus its products with the columns before it.
                 let clock = timing.clock();
-                let tiles = products(&Panel { m, data: own }, 0..c0, c0, m - c0, pw, None);
-                timing.product(clock, m - c0, pw, c0, TILE, NR);
-                subtract(own, m, &tiles, m - c0, pw, |i| c0 + i);
+                if pw >= PANEL && (m - c0).saturating_mul(pw).saturating_mul(c0) >= PARALLEL_WORK {
+                    let (done, target) = own.split_at_mut(offset(m, c0));
+                    let relative: Vec<_> = (c0..m).collect();
+                    tiled::update(
+                        &Panel { m, data: done },
+                        0..c0,
+                        c0,
+                        m - c0,
+                        pw,
+                        tiled::Target { m, first: c0, relative: &relative, values: target },
+                    )?;
+                    timing.product(clock, m - c0, pw, c0, TILE, NR);
+                } else {
+                    let tiles = products(&Panel { m, data: own }, 0..c0, c0, m - c0, pw, None);
+                    timing.product(clock, m - c0, pw, c0, TILE, NR);
+                    subtract(own, m, &tiles, m - c0, pw, |i| c0 + i);
+                }
             }
             // The diagonal block, column by column.
             for c in c0..c1 {
