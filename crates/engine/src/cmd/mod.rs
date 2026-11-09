@@ -12,6 +12,7 @@ pub mod diagnostics;
 mod edit;
 mod extrude;
 mod fatigue;
+mod fatigue_transient;
 pub(crate) mod file;
 pub(crate) mod forms;
 mod foundation;
@@ -244,6 +245,7 @@ pub static ALL: &[CommandSpec] = &[
     solve::HARMONIC,
     solve::RANDOM,
     fatigue::HISTORY,
+    fatigue_transient::TRANSIENT,
     solve::BUCKLE,
     solve::HEAT,
     solve::EXPLICIT,

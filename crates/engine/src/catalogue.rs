@@ -675,6 +675,13 @@ pub static CATALOGUE: &[Capability] = &[
         "Implicit",
         "Superposes current static reference tensors, counts finite-record rainflow cycles and reports selected-node Miner damage in SI",
     ),
+    ready(
+        "solve.fatigue.transient",
+        "Transient Stress Fatigue",
+        Solve,
+        "Implicit",
+        "Counts exported SI nodal transient stress histories with explicit source identity, time-axis validation and per-cycle Miner damage",
+    ),
     ready("solve.frequency", "Frequency", Solve, "Implicit", "Natural frequencies and mode shapes of a frequency step"),
     ready(
         "solve.random",

@@ -112,3 +112,31 @@ finite representable repeated-record life and ranking of selected nodes only.
 Null life is not an endurance certification. Repetition refers to the counted
 finite-record spectrum, not periodic rainflow closure. Persistent fatigue contour
 fields are still pending.
+
+
+## Exported transient stress history
+
+`solve.fatigue.transient` consumes the actual exported `solve.probe` JSON as
+`history`. It requires `spectrum:false`, explicit units `stress:Pa`, `time:s`,
+the component order `[xx,yy,zz,xy,xz,yz]`, and the current exporter location
+`global nodal average; shell top surface`. Missing/null stresses are errors.
+Provide `step`, the exact `nodes` set, a fixed `weights` vector, `curve`,
+`correction`, and `max_time_step_seconds`. All sample times must match the frame
+axis exactly, increase strictly, and satisfy the declared maximum gap. No peaks
+are reconstructed between samples; a small gap is not proof of adequate sampling.
+
+`source_id` retains the caller-verified model/export identity. Labels refer only
+to that external source, never to the current session mesh. The file-importing
+workflow must verify the original model and raw export hashes before this command;
+the command does not authenticate a caller's identity string. The integration
+uses the exported interface without merging an unpublished transient solver branch.
+
+Results include per-node rainflow cycles (range, amplitude, mean, count), per-cycle
+Miner increments and cumulative damage in counting order, not a chronological
+crack-growth history. Residual half cycles are retained; the supplied record is not
+closed into a period. Repeated-record life repeats the counted spectrum only.
+The initial handoff is a two-node rod with 1001 samples; it is not BASE evidence.
+Linux engine tests and refusal cases pass. The original 1001-frame rod export
+passes release-mode checks against its analytic step-response stress and one
+residual half cycle, with uncorrected and Goodman Miner damage. This verifies
+the exported-data path, not a native transient solver or BASE fatigue life.

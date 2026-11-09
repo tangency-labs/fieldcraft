@@ -223,4 +223,7 @@ BT2005 damage; stored linear reference-load superposition command. Linux solver/
 15 known oracle failures unchanged. Release rod examples pass independent PSD,
 moment, narrow-band and reference-load Miner checks. General multiaxial criteria,
 material persistence, contours, published-example acceptance, BASE and actual
-transient stress integration remain open. See the fatigue manual for restrictions.
+native transient-result integration remain open. An exported SI transient-probe
+adapter passes Linux engine/refusal tests and a real 1001-frame rod export
+check against analytic residual-half-cycle Miner damage. See the fatigue
+manual for restrictions.

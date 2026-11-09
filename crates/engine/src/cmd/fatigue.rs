@@ -41,7 +41,7 @@ struct Input {
     curve: Basquin,
     correction: StressMean,
 }
-fn field<T: serde::de::DeserializeOwned>(p: &Value, key: &str) -> Result<T> {
+pub(super) fn field<T: serde::de::DeserializeOwned>(p: &Value, key: &str) -> Result<T> {
     let value = p.get(key).filter(|v| !v.is_null()).ok_or_else(|| EngineError::param(key, crate::schema::ProblemKind::Required))?;
     serde_json::from_value(value.clone()).map_err(|e| EngineError::invalid(key, e.to_string()))
 }
