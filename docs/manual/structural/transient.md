@@ -414,3 +414,87 @@ from full-precision comparisons.
 Persistence uses unified MCRSLT07 and full type 6 dynamics
 payload (including energy and mass); see [result layout](../../results-kind-layout.md).
 Old05/06 dynamics require verified-producer recovery.
+
+
+## Time histories about an equilibrium base
+
+A transient step may name an earlier static or nonlinear static `base_state`.
+`solve.transient` supports both direct and modal integration on that base. The
+base is recomputed from its current model definition; archived averaged stresses
+are not a restart state. The base definition remains part of result freshness.
+No result kind or native payload changes: model `Step.base_state` already stores
+the dependency and kind 6 still stores **increments**.
+
+For nonlinear equilibrium, the solver uses the converged consistent tangent,
+including stress and symmetric follower-load stiffness. Closed positive-pressure
+contact is bonded in all translation directions, open contact stays detached,
+and the contact penalty tangent is excluded. Ties and pretension-cut adjustments
+are frozen; scalar cut motion is zero in the perturbation. For a linear static
+base, the reference elastic stiffness is augmented by its initial-stress operator.
+For a reference rod2 this contribution is N/L times the signed 2-node identity
+blocks, N=EA(n·delta-u)/L. For a named pure-rod base, exactly zero rows and
+columns with exactly zero reduced load select zero equilibrium displacement.
+This algebraic choice adds no support or stiffness to the subsequent tangent.
+A load in such a null direction is refused and requires nonlinear equilibrium.
+Other mechanisms are not regularized; any stabilizing spring must be an explicit
+physical model component. This reference initial-stress operator is not a finite
+strain truss material tangent at the deformed length.
+
+For a **true finite rod equilibrium**, use a `nonlinear_static` preload with
+`nonlinear_geometry:true`, then name it in the frequency or transient step's
+`base_state`. Pure isotropic elastic rod2 models use the same total-Lagrangian
+St Venant–Kirchhoff force kernel as `solve.transient.nonlinear`. At reference
+length L and current end-to-end vector d, E_G=(d·d−L²)/(2L²),
+f_tip=EA E_G d/L, and K_tip=EA/L (d⊗d/L²+E_G I). Newton equilibrium and the
+returned terminal tangent use that same state, force law, dead load and constraint
+set. The stress term is retained, and no separate K_sigma is added.
+
+For an axial dead force P, solve EA*lambda*(lambda²−1)/2=P. The transverse
+stiffness is P/(lambda*L), and the axial stiffness is EA*(3*lambda²−1)/(2*L).
+The free tip mass is rho*A*L/2 for lumped mass or rho*A*L/3 for consistent mass.
+At P=0, transverse modes remain zero-frequency modes; Newton may select zero
+correction in an exactly unloaded zero row/column, but never changes the returned
+tangent or dynamic supports. A residual force in such a singular direction is
+refused, not silently balanced by a numerical spring. This does not supply a
+continuation method through general mechanisms or unstable compressive branches.
+
+The static rod's saved recovery is **second Piola stress and Green strain in the
+reference material axis**, at the uniform element midpoint, expanded into global
+reference-axis tensor components (engineering shear strains). Its warning records
+this measure; these values are not Cauchy stresses or the older linear-static
+rod stress. The equilibrium displacement, reactions and accepted Newton history
+use the existing static result layout. No kind12 or other result layout is changed.
+Rod3, mixed rod/solid nonlinear models, rod thermal/initial fields, rod contact,
+rod inelastic materials and rod arc-length control are refused by name. Pure-rod
+load control currently accepts dead nodal forces, not follower or thermal loads.
+
+The transient must retain its base's boundary-condition set. Those conditions
+constrain increments to zero even if their equilibrium displacements are nonzero.
+Outputs u, v and a and supplied initial u/v are perturbation increments; total u
+is the separately saved equilibrium u plus delta-u. Zero initial perturbation and
+no additional load give exactly zero response, hence the equilibrium persists.
+Loads listed in the transient are additional forces: listing the preload again
+would apply it again. Initial acceleration solves M*a0=f_delta(0)-K*u0-C*v0.
+
+Mass stays at the reference mesh with the requested consistent/lumped choice.
+Step Rayleigh damping uses alpha*M+beta*K with the **base tangent**. Modal damping
+adds the requested ratios in the retained basis; initial states and forces are
+projected with the same mass. T=0.5*vᵀMv and V=0.5*uᵀKu are perturbation energies,
+not the base strain energy or total-energy cross terms. Material stiffness damping
+is refused for a based transient: use step beta to avoid mixing an undeformed
+material operator with the base tangent. Reference-point forces are supported
+through the same reduction; the stored fields cover mesh nodes, not separate
+reference-point output histories.
+
+Based stress recovery is explicitly refused until a tangent-consistent recovery
+operator exists; select `output:["displacement"]`. Changing supports requires a
+new equilibrium. This is frozen linear perturbation, not contact opening/closing,
+plastic evolution or a nonlinear transient continuation. `solve.transient.nonlinear`
+and response spectra do not accept this new combination. The deck writer still
+refuses `base_state` rather than export an ordinary unprestressed transient.
+
+Conventions follow the public distinction between general and perturbation steps:
+[General and perturbation procedures](https://docs.software.vt.edu/abaqusv2026/English/SIMACAEANLRefMap/simaanl-c-linearnonlinear.htm).
+The tangent path reuses the equilibrium implementation documented in
+[prestress](prestress.md). This reference supplies semantic conventions, not
+commercial numerical validation or a claim that an unread textbook was verified.

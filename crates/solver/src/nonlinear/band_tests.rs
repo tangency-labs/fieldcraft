@@ -70,7 +70,7 @@ fn with_run<T>(model: &Model, f: impl FnOnce(&mut Run<'_>) -> T) -> T {
         dead: loads(model, &resolved, &mesh, step, &red.active).unwrap(),
         scheduled: Vec::new(),
         followers: Vec::new(),
-        springs: None,
+        linear_supports: None,
         finite: settings.nonlinear_geometry,
         element_dofs: mesh.elements.iter().zip(&kinds).map(|(e, k)| mesh.layout.element_dofs(&e.nodes, *k).unwrap()).collect(),
         element_kinds: kinds,

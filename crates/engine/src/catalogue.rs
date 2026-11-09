@@ -633,7 +633,7 @@ pub static CATALOGUE: &[Capability] = &[
         "Bolt Pretension",
         Interactions,
         "Connectors",
-        "Conforming cut with force or prescribed adjustment, lock from a solved equilibrium and report section force",
+        "Conforming node pairs or a continuous internal face; force or prescribed adjustment, lock from equilibrium and report section force",
         &["model.pretension.force", "model.pretension.adjust", "model.pretension.fix", "model.pretension.lock", "solve.pretension"],
     ),
     ready_more(
@@ -684,7 +684,7 @@ pub static CATALOGUE: &[Capability] = &[
         "Static",
         Solve,
         "Implicit",
-        "Linear static (or coupled temperature–displacement) solve of a step with FieldCraft's own solver; nonlinear static, buckling, harmonic response, transient, geometric rod transient (native nonlinear histories, stresses and energies), response spectrum and heat transfer in the drop-down",
+        "Linear static (or coupled temperature–displacement) solve of a step with FieldCraft's own solver; nonlinear static (including finite St Venant-Kirchhoff rod2 equilibria), buckling, harmonic response, transient (including frozen equilibrium base-state perturbations), geometric rod transient (native nonlinear histories, stresses and energies), response spectrum and heat transfer in the drop-down",
         &[
             "solve.nonlinear",
             "solve.buckle",

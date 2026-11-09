@@ -21,6 +21,10 @@
 //! keeps the one whose Cholesky factor has fewer entries; the symbolic count costs O(|L|) time
 //! and O(n + |A|) memory, small next to the numeric factorization.
 
+// Independent multilevel candidate, enabled only by validated linear analysis callers.
+#[path = "ordering_multilevel.rs"]
+mod multilevel;
+
 /// Parts this small are ordered as they come.
 const LEAF: usize = 16;
 
@@ -99,7 +103,23 @@ pub fn nested_dissection(xyz: &[[f64; 3]], adjacency: &[Vec<usize>]) -> Vec<usiz
 
 /// The nested dissection order of the nodes that fills the factor less: by coordinate planes or
 /// by the graph's level structures. Ties keep the coordinate order.
+/// Stable reference order for the physical random starting block. Kept separate
+/// from the experimental factor order so a fill choice does not change that block.
 pub fn fill_reducing_order(xyz: &[[f64; 3]], adjacency: &[Vec<usize>]) -> Vec<usize> {
+    let planes = nested_dissection(xyz, adjacency);
+    if adjacency.len() <= LEAF {
+        return planes;
+    }
+    let graph = graph_dissection(adjacency);
+    if fill(adjacency, &graph) < fill(adjacency, &planes) { graph } else { planes }
+}
+
+/// A diagnostic comparison can explicitly request the unchanged two-candidate path.
+pub(crate) fn legacy_requested() -> bool {
+    std::env::var("FIELDCRAFT_ORDERING_EXPERIMENT").is_ok_and(|v| v == "legacy")
+}
+
+pub(crate) fn linear_order(xyz: &[[f64; 3]], adjacency: &[Vec<usize>]) -> Vec<usize> {
     let _timing = crate::timing::Span::new("ordering");
     let by_planes = nested_dissection(xyz, adjacency);
     if adjacency.len() <= LEAF {
@@ -107,7 +127,20 @@ pub fn fill_reducing_order(xyz: &[[f64; 3]], adjacency: &[Vec<usize>]) -> Vec<us
         return by_planes;
     }
     let by_graph = graph_dissection(adjacency);
-    if fill(adjacency, &by_graph) < fill(adjacency, &by_planes) { by_graph } else { by_planes }
+    let current = if fill(adjacency, &by_graph) < fill(adjacency, &by_planes) { by_graph } else { by_planes };
+    if !legacy_requested() {
+        let third = multilevel::order(adjacency);
+        let old_fill = fill(adjacency, &current);
+        let new_fill = fill(adjacency, &third);
+        {
+            use std::io::Write;
+            let _ = writeln!(std::io::stderr().lock(), "FIELDCRAFT_ORDER_CHOICE\t{old_fill}\t{new_fill}\t{}", new_fill < old_fill);
+        }
+        if new_fill < old_fill {
+            return third;
+        }
+    }
+    current
 }
 
 /// Searches for a pseudo-peripheral node per part.
@@ -285,6 +318,124 @@ pub fn fill(adjacency: &[Vec<usize>], order: &[usize]) -> usize {
 mod tests {
     use super::*;
 
+    /// Symbolic-only external harness. Its input is our node graph, never a numeric factor.
+    #[test]
+    #[ignore = "explicit bounded graph-ordering measurement"]
+    fn measure_multilevel_graph() {
+        let bytes = std::fs::read(std::env::var("FC_GRAPH_INPUT").unwrap()).unwrap();
+        let mut offset = 0;
+        let mut u64_at = || {
+            let v = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
+            offset += 8;
+            v
+        };
+        let n = u64_at() as usize;
+        let xyz: Vec<[f64; 3]> = (0..n).map(|_| std::array::from_fn(|_| f64::from_bits(u64_at()))).collect();
+        let ptr: Vec<usize> = (0..=n).map(|_| u64_at() as usize).collect();
+        let idx: Vec<usize> = (0..ptr[n]).map(|_| u64_at() as usize).collect();
+        let adj: Vec<Vec<usize>> = ptr.windows(2).map(|p| idx[p[0]..p[1]].to_vec()).collect();
+        let mode = std::env::var("FC_GRAPH_MODE").unwrap();
+        let threads: usize = std::env::var("FC_GRAPH_THREADS").unwrap_or_else(|_| "1".into()).parse().unwrap();
+        let t = std::time::Instant::now();
+        let order = fieldcraft_parallel::with_threads(threads, || match mode.as_str() {
+            "planes" => nested_dissection(&xyz, &adj),
+            "graph" => graph_dissection(&adj),
+            "multilevel" => multilevel::order(&adj),
+            "selected" => fill_reducing_order(&xyz, &adj),
+            "external" => std::fs::read(std::env::var("FC_GRAPH_PERM").unwrap())
+                .unwrap()
+                .as_chunks::<8>()
+                .0
+                .iter()
+                .map(|v| u64::from_le_bytes(*v) as usize)
+                .collect(),
+            _ => panic!("unknown measurement mode"),
+        });
+        let ordering_seconds = t.elapsed().as_secs_f64();
+        assert!(is_permutation(&order, n));
+        let bytes: Vec<_> = order.iter().flat_map(|&v| (v as u64).to_le_bytes()).collect();
+        std::fs::write(std::env::var("FC_GRAPH_OUTPUT").unwrap(), bytes).unwrap();
+        eprintln!("ORDER_RESULT mode={mode} nodes={n} seconds={ordering_seconds:.9}");
+        if !std::env::var("FC_GRAPH_SYMBOLIC").is_ok_and(|v| v == "1") {
+            return;
+        }
+        let mut position = vec![0; n];
+        for (k, &v) in order.iter().enumerate() {
+            position[v] = k;
+        }
+        let upper = |dofs: usize| {
+            let (mut ptr, mut idx) = (vec![0], Vec::new());
+            for (k, &v) in order.iter().enumerate() {
+                let mut nb: Vec<_> = adj[v].iter().map(|&u| position[u]).filter(|&u| u < k).collect();
+                nb.sort_unstable();
+                nb.dedup();
+                for c in 0..dofs {
+                    for &u in &nb {
+                        idx.extend((dofs * u)..(dofs * u + dofs));
+                    }
+                    idx.extend(dofs * k..=dofs * k + c);
+                    ptr.push(idx.len());
+                }
+            }
+            let val = vec![0.0; idx.len()];
+            crate::cholesky::UpperColumns { n: dofs * n, ptr, idx, val }
+        };
+        let t = std::time::Instant::now();
+        let counts = crate::cholesky::factor_column_counts(&upper(1));
+        let node_nnz: usize = counts.iter().sum();
+        let dof_nnz: usize = counts.iter().map(|&c| 9 * c - 3).sum();
+        let work: u128 = counts.iter().map(|&c| (0..3).map(|i| (3 * c - i) as u128).map(|h| h * h).sum::<u128>()).sum();
+        eprintln!(
+            "ORDER_SYMBOLIC node_nnz={node_nnz} dof_nnz={dof_nnz} sum_h2={work} max_node_height={} seconds={:.9}",
+            counts.iter().max().unwrap_or(&0),
+            t.elapsed().as_secs_f64()
+        );
+        if std::env::var("FC_GRAPH_EXPANDED").is_ok_and(|v| v == "1") {
+            let t = std::time::Instant::now();
+            let symbolic = crate::cholesky::Symbolic::new(&upper(3), usize::MAX).unwrap();
+            let mut work = 0u128;
+            let mut max_rows = 0;
+            let mut max_width = 0;
+            let mut nodes = Vec::new();
+            for j in 0..symbolic.supernodes() {
+                let (m, w) = (symbolic.structure.rows(j).len(), symbolic.structure.cols(j).len());
+                work += (0..w).map(|c| (m - c) as u128).map(|h| h * h).sum::<u128>();
+                max_rows = max_rows.max(m);
+                max_width = max_width.max(w);
+                if symbolic.profile_top().binary_search(&j).is_ok() {
+                    nodes.push((m, w, j));
+                }
+            }
+            nodes.sort_unstable_by(|a, b| b.cmp(a));
+            eprintln!(
+                "ORDER_EXPANDED entries={} sum_h2={work} max_rows={max_rows} max_width={max_width} supernodes={} top_count={} seconds={:.9} top={:?}",
+                symbolic.entries,
+                symbolic.supernodes(),
+                nodes.len(),
+                t.elapsed().as_secs_f64(),
+                nodes.get(..10.min(nodes.len())).unwrap_or_default()
+            );
+        }
+    }
+
+    #[test]
+    fn multilevel_medium_graph_is_canonical_across_threads() {
+        let (_, mut adj) = hex_grid([12, 12, 12], false, |i, j, k| [i as f64, j as f64, k as f64]);
+        let mut expected = None;
+        for threads in [1, 2, 7] {
+            let got = fieldcraft_parallel::with_threads(threads, || multilevel::order(&adj));
+            assert!(is_permutation(&got, adj.len()));
+            if let Some(ref e) = expected {
+                assert_eq!(&got, e);
+            } else {
+                expected = Some(got);
+            }
+            for row in &mut adj {
+                row.reverse();
+            }
+        }
+    }
+
     #[test]
     fn a_permutation_with_separators_last() {
         // A 12 × 12 grid graph.
@@ -361,6 +512,28 @@ mod tests {
             let r = 50.0 + j as f64 * 0.5;
             [r * t.cos(), r * t.sin(), k as f64 * 2.0]
         })
+    }
+
+    #[test]
+    fn linear_choice_is_a_fixed_least_fill_permutation_across_threads() {
+        let (xyz, adj) = hex_grid([12, 4, 6], false, |i, j, k| [i as f64, j as f64, k as f64]);
+        let legacy = fill_reducing_order(&xyz, &adj);
+        let mut previous = None;
+        for threads in [1, 2, 7] {
+            let chosen = fieldcraft_parallel::with_threads(threads, || linear_order(&xyz, &adj));
+            let mut permutation = chosen.clone();
+            permutation.sort_unstable();
+            assert_eq!(permutation, (0..adj.len()).collect::<Vec<_>>());
+            let old_fill = fill(&adj, &legacy);
+            assert!(fill(&adj, &chosen) <= old_fill);
+            if fill(&adj, &chosen) == old_fill {
+                assert_eq!(chosen, legacy, "ties retain the existing order");
+            }
+            if let Some(old) = previous {
+                assert_eq!(chosen, old);
+            }
+            previous = Some(chosen);
+        }
     }
 
     #[test]

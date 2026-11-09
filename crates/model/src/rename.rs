@@ -150,6 +150,9 @@ impl Model {
                     if set {
                         swap(&mut p.first, from, to);
                         swap(&mut p.second, from, to);
+                        if let Some(face) = &mut p.face {
+                            swap(face, from, to);
+                        }
                     } else {
                         swap(&mut p.control, from, to);
                     }

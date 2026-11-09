@@ -1227,13 +1227,44 @@ fn nonlinear_rod_import_preserves_yes_base_state_and_source() {
     assert!(n.nonlinear_geometry);
     assert_eq!(n.initial_increment, 1.0);
     assert!(report["warnings"].to_string().contains("nonlinear static truss"));
-    for (command, step) in [("solve.nonlinear", "Preload"), ("solve.frequency", "Modes")] {
-        let error = s.execute(command, &json!({"step":step})).unwrap_err().to_string();
-        assert!(error.contains("trusses"), "{error}");
+    // Independent StVK force law: N=EA*lambda*(lambda^2-1)/2.
+    // Bisection uses only the prescribed force, not the solver's displacement.
+    let (mut lo, mut hi) = (1.0_f64, 1.001_f64);
+    for _ in 0..60 {
+        let stretch = (lo + hi) / 2.;
+        if 21e6 * stretch * (stretch * stretch - 1.) / 2. < 1000. {
+            lo = stretch;
+        } else {
+            hi = stretch;
+        }
     }
+    let stretch = (lo + hi) / 2.;
+    let check = |s: &mut Session| {
+        let preload = s.execute("solve.nonlinear", &json!({"step":"Preload"})).unwrap();
+        assert!((preload["max_displacement"]["value"].as_f64().unwrap() - (stretch - 1.)).abs() < 1e-12);
+        assert!((preload["reaction_total"][0].as_f64().unwrap() + 1000.).abs() < 1e-6);
+        let modes = s.execute("solve.frequency", &json!({"step":"Modes","mass":"consistent"})).unwrap();
+        let mass = 7850. * 0.0001 / 3.;
+        let kt = 21e6 * (stretch * stretch - 1.) / 2.;
+        let kx = 21e6 * (3. * stretch * stretch - 1.) / 2.;
+        for (mode, stiffness) in modes["modes"].as_array().unwrap().iter().zip([kt, kt, kx]) {
+            let expected = (stiffness / mass).sqrt() / (2. * std::f64::consts::PI);
+            assert!((mode["frequency"].as_f64().unwrap() - expected).abs() < 1e-6);
+        }
+        assert_eq!(modes["modes"].as_array().unwrap().len(), 3);
+        println!(
+            "rod equilibrium u={} reaction={} frequencies={:?}",
+            preload["max_displacement"]["value"],
+            preload["reaction_total"][0],
+            modes["modes"].as_array().unwrap().iter().map(|m| &m["frequency"]).collect::<Vec<_>>()
+        );
+        (s.result("Preload").cloned(), s.result("Modes").cloned())
+    };
+    let saved = check(&mut s);
     s.execute("file.save_as", &json!({"path":dir.join("saved.fieldcraft"),"results":true})).unwrap();
     s.execute("file.open", &json!({"path":dir.join("saved.fieldcraft")})).unwrap();
     assert_eq!(s.model.step("Modes").unwrap().base_state.as_deref(), Some("Preload"));
+    assert_eq!((s.result("Preload").cloned(), s.result("Modes").cloned()), saved);
     s.execute("deck.source.write", &json!({"path":dir.join("source.inp")})).unwrap();
     assert_eq!(std::fs::read_to_string(dir.join("source.inp")).unwrap(), text);
     s.execute("deck.write", &json!({"format":"abaqus","path":dir.join("normalized.inp"),"units":"m-kg-s-N-Pa"})).unwrap();
@@ -1242,7 +1273,7 @@ fn nonlinear_rod_import_preserves_yes_base_state_and_source() {
     let report = s.execute("deck.read", &json!({"format":"abaqus","path":dir.join("normalized.inp"),"units":"m-kg-s-N-Pa"})).unwrap();
     assert_eq!(report["analysis_complete"], true, "{report}");
     assert_eq!(s.model.step("Modes").unwrap().base_state.as_deref(), Some("Preload"));
-    assert!(s.execute("solve.nonlinear", &json!({"step":"Preload"})).unwrap_err().to_string().contains("trusses"));
+    assert_eq!(check(&mut s), saved);
     assert_eq!(s.model.step("Modes").unwrap().base_state.as_deref(), Some("Preload"));
     for option in ["*STATIC,RIKS", "*STATIC,STABILIZE", "*STATIC,DIRECT"] {
         let denied = text.replace("*STATIC", option);

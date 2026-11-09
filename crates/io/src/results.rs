@@ -12,6 +12,7 @@
 //!           u8 kind (0 static, 1 frequency, 2 heat transfer, 3 explicit dynamic, 4 fluid,
 //!                    5 harmonic with mass, 6 linear dynamics with energy and mass,
 //!                    7 static with fatigue, 8 harmonic with mass and fatigue,
+//!                    12 frequency with recorded mass provenance,
 //!                    11 nonlinear total-Lagrangian St. Venant–Kirchhoff rod2),
 //!           u64 length, the result in the [`crate::codec`] encoding }   names ascending
 //! ```
@@ -61,7 +62,34 @@ pub const MAX_STEPS: usize = 10_000;
 /// Most cells of a stored fluid grid.
 pub const MAX_CELLS: usize = u32::MAX as usize;
 
-/// A step's result as a solver reported it.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct LegacyFrequency {
+    step: String,
+    nodes: Vec<u32>,
+    reference_points: Vec<(String, u32)>,
+    modes: Vec<fieldcraft_solver::Mode>,
+    total_mass: f64,
+    stats: fieldcraft_solver::Stats,
+    warnings: Vec<String>,
+    buckling: Option<fieldcraft_solver::buckle::Buckling>,
+}
+impl LegacyFrequency {
+    fn into_current(self) -> fieldcraft_solver::FrequencyResult {
+        fieldcraft_solver::FrequencyResult {
+            step: self.step,
+            nodes: self.nodes,
+            reference_points: self.reference_points,
+            modes: self.modes,
+            total_mass: self.total_mass,
+            stats: self.stats,
+            warnings: self.warnings,
+            buckling: self.buckling,
+            mass_kind: None,
+            section_mass_policy: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Solved {
     /// A static, frequency, buckling, heat transfer or harmonic step.
@@ -115,7 +143,13 @@ impl<'a> SolvedRef<'a> {
                     0
                 }
             }
-            SolvedRef::Implicit(fieldcraft_solver::StepResult::Frequency(_)) => 1,
+            SolvedRef::Implicit(fieldcraft_solver::StepResult::Frequency(r)) => {
+                if r.mass_kind.is_some() {
+                    12
+                } else {
+                    1
+                }
+            }
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Heat(_)) => 2,
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Harmonic(r)) => {
                 if r.fatigue.is_some() {
@@ -309,7 +343,18 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded> {
             } else {
                 codec::decode(payload).map_err(damaged)?
             })),
-            1 => Solved::Implicit(fieldcraft_solver::StepResult::Frequency(codec::decode(payload).map_err(damaged)?)),
+            1 => {
+                let current = codec::decode::<fieldcraft_solver::FrequencyResult>(payload)
+                    .map(|mut r| {
+                        r.mass_kind = None;
+                        r.section_mass_policy = None;
+                        r
+                    })
+                    .or_else(|_| codec::decode::<LegacyFrequency>(payload).map(LegacyFrequency::into_current))
+                    .map_err(damaged)?;
+                Solved::Implicit(fieldcraft_solver::StepResult::Frequency(current))
+            }
+            12 => Solved::Implicit(fieldcraft_solver::StepResult::Frequency(codec::decode(payload).map_err(damaged)?)),
             2 => Solved::Implicit(fieldcraft_solver::StepResult::Heat(codec::decode(payload).map_err(damaged)?)),
             3 => Solved::Explicit(codec::decode(payload).map_err(damaged)?),
             4 => Solved::Fluid(codec::decode(payload).map_err(damaged)?),

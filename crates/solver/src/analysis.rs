@@ -18,8 +18,8 @@ use crate::ldlt::{Kind, Symmetric};
 use crate::ordering::fill_reducing_order;
 use crate::sparse::{Csr, NodeGraph, add_block, add_diagonal, add_scalar};
 use crate::system::{
-    InitialState, Mesh, Structural, StructuralKernel, add_thermal_loads, inelastic_warnings, loads, prescribed, structural_body_forces,
-    temperature_loads, translation_block,
+    InitialState, Mesh, StructuralKernel, add_thermal_loads, inelastic_warnings, loads, prescribed, structural_body_forces, temperature_loads,
+    translation_block,
 };
 use crate::{Error, Limits, Result};
 
@@ -156,6 +156,10 @@ pub struct FrequencyResult {
     /// For a buckling step: its modes' eigenvalues are load factors (`frequency`, participation
     /// and total mass are zero) and this says what else the eigenproblem found.
     pub buckling: Option<crate::buckle::Buckling>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mass_kind: Option<MassKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section_mass_policy: Option<String>,
 }
 
 pub use fieldcraft_model::MassKind;
@@ -248,9 +252,9 @@ pub(crate) fn assemble(mesh: &Mesh, graph: &NodeGraph, mass: Option<MassKind>) -
         });
         for (s, computed) in elements.iter().zip(matrices) {
             let (stiffness, element_mass) = computed?;
-            add_block(&mut k, layout, &s.nodes, Structural::KINDS, &stiffness)?;
+            add_block(&mut k, layout, &s.nodes, s.kinds(), &stiffness)?;
             if let (Some(mm), Some(data)) = (m.as_mut(), element_mass) {
-                add_block(mm, layout, &s.nodes, Structural::KINDS, &data)?;
+                add_block(mm, layout, &s.nodes, s.kinds(), &data)?;
             }
         }
     }
@@ -327,14 +331,21 @@ pub(crate) fn split(full: &[f64], mesh: &Mesh) -> (Vec<[f64; 3]>, Vec<[f64; 3]>,
 /// The matrix pattern of the mesh (node blocks of its elements, trusses and discrete elements)
 /// and the order of its nodes for the factorization.
 pub(crate) fn pattern(mesh: &Mesh) -> (NodeGraph, Vec<usize>) {
+    pattern_with_order(mesh, false)
+}
+
+// Only the linear static/frequency experiment opts into the third ordering.
+// Buckling, nonlinear and other callers retain the validated legacy choice.
+fn pattern_with_order(mesh: &Mesh, experiment: bool) -> (NodeGraph, Vec<usize>) {
+    let order_fn = if experiment { crate::ordering::linear_order } else { fill_reducing_order };
     let graph = NodeGraph::new(mesh.block_count(), mesh.blocks());
     // The order covers the mesh nodes; reference point equations follow them.
     let n = mesh.labels.len();
     let order = if graph.adjacency.len() == n {
-        fill_reducing_order(&mesh.xyz, &graph.adjacency)
+        order_fn(&mesh.xyz, &graph.adjacency)
     } else {
         let mesh_part: Vec<Vec<usize>> = graph.adjacency.iter().take(n).map(|row| row.iter().copied().filter(|b| *b < n).collect()).collect();
-        fill_reducing_order(&mesh.xyz, &mesh_part)
+        order_fn(&mesh.xyz, &mesh_part)
     };
     (graph, order)
 }
@@ -407,22 +418,50 @@ pub(crate) fn budget(limits: &Limits, mesh: &Mesh, graph: &NodeGraph, matrices: 
 /// quasi-static thermoelasticity without thermoelastic dissipation, so solving the two in turn
 /// is the monolithic solution exactly.
 pub fn solve_static(model: &Model, step: Option<&str>, limits: &Limits) -> Result<StaticResult> {
+    solve_static_impl(model, step, limits, true)
+}
+
+pub(crate) fn solve_static_legacy(model: &Model, step: Option<&str>, limits: &Limits) -> Result<StaticResult> {
+    solve_static_impl(model, step, limits, false)
+}
+
+fn solve_static_impl(model: &Model, step: Option<&str>, limits: &Limits, allow_multilevel: bool) -> Result<StaticResult> {
     let _timing = crate::timing::Span::new("solve_static");
     // A job cancelled before it starts stops here, before any setup work.
     fieldcraft_model::progress::check()?;
     let resolved = model.resolve()?;
+    let prepared = crate::pretension::prepare(model, &resolved, limits.max_dofs)?;
+    let model = prepared.model.as_ref();
+    let resolved = if prepared.copies.is_empty() { resolved } else { model.resolve()? };
     let step = model.select_step(
         step,
         |p| matches!(p, Procedure::Static {} | Procedure::CoupledTemperatureDisplacement {}),
         "static or coupled temperature–displacement",
     )?;
+    let fixed = crate::pretension::resolve_fixed(model, &step.name, limits)?;
+    let step = fixed.step(&step.name).ok_or_else(|| Error::Internal("resolved static step".into()))?;
+    let model = fixed.as_ref();
     crate::system::refuse_contact(model, "linear static")?;
     let mesh = Mesh::new(model, &resolved, limits.max_dofs)?;
-    static_on(&Setup { model, resolved: &resolved, mesh: &mesh, step }, limits)
+    let mut result = static_on_with_order(&Setup { model, resolved: &resolved, mesh: &mesh, step }, limits, allow_multilevel)?;
+    prepared.project(&mut result);
+    Ok(result)
 }
 
 /// Static equilibrium on an already validated step and mesh, also used for a buckling preload.
 pub(crate) fn static_on(setup: &Setup<'_>, limits: &Limits) -> Result<StaticResult> {
+    static_on_with_order(setup, limits, false)
+}
+
+// A caller must explicitly opt in; a static preload is not a standalone static solve.
+fn standalone_linear_order(model: &Model, step: &Step, standalone: bool) -> bool {
+    standalone
+        && model.pretensions().is_empty()
+        && step.base_state.is_none()
+        && matches!(step.procedure, Procedure::Static {} | Procedure::Frequency { .. })
+}
+
+fn static_on_with_order(setup: &Setup<'_>, limits: &Limits, standalone: bool) -> Result<StaticResult> {
     fieldcraft_model::progress::check()?;
     let (model, resolved, mesh, step) = (setup.model, setup.resolved, setup.mesh, setup.step);
     bound_ply_results(mesh, limits)?;
@@ -442,7 +481,7 @@ pub(crate) fn static_on(setup: &Setup<'_>, limits: &Limits) -> Result<StaticResu
     if field.is_some() && !mesh.structural.is_empty() {
         warnings.push("shells and beams take no thermal strain yet; the temperatures strain the solid, 2D and truss elements only".into());
     }
-    let (graph, order) = pattern(mesh);
+    let (graph, order) = pattern_with_order(mesh, standalone_linear_order(model, step, standalone));
     ignored_dashpots(mesh, &mut warnings);
     let red = reduction(setup, true, &order, budget(limits, mesh, &graph, 1), &mut warnings)?;
     let mut f = loads(model, resolved, mesh, step, &red.active)?;
@@ -454,11 +493,55 @@ pub(crate) fn static_on(setup: &Setup<'_>, limits: &Limits) -> Result<StaticResu
     if red.neq() == 0 {
         return Err(Error::Invalid("every degree of freedom is prescribed; there is nothing to solve".into()));
     }
-    let [kff] = red.reduce([&k])?;
-    let chol = factor_raw(&kff, limits).map_err(|e| factor_error(e, mesh, &red))?;
-    drop(kff);
+    let [mut kff] = red.reduce([&k])?;
     let mut q = red.rhs(&f, &k);
+    // An axis-aligned rod preload may have exact unloaded transverse null rows.
+    // Select zero motion in that nullspace only for a named perturbation base.
+    // This is an algebraic gauge in the preload solve, NOT support or stiffness
+    // carried into the perturbation operator, which includes its actual K_sigma.
+    if !mesh.trusses.is_empty()
+        && mesh.elements.is_empty()
+        && mesh.structural.is_empty()
+        && model.steps().iter().any(|s| s.base_state.as_deref() == Some(step.name.as_str()))
+    {
+        let mut nonzero = vec![false; kff.n];
+        for row in 0..kff.n {
+            let (cols, vals) = kff.row(row);
+            for (&col, &value) in cols.iter().zip(vals) {
+                if value != 0. {
+                    nonzero[row] = true;
+                    nonzero[col] = true;
+                }
+            }
+        }
+        let mut count = 0;
+        for (i, active) in nonzero.iter().enumerate() {
+            if !active {
+                if q[i] != 0. {
+                    return Err(Error::Singular("rod base has a load in a zero-stiffness direction; nonlinear equilibrium is required".into()));
+                }
+                crate::sparse::add_entry(&mut kff, i, i, 1.)?;
+                count += 1;
+            }
+        }
+        if count > 0 {
+            warnings.push(format!("rod equilibrium: selected zero displacement in {count} exactly unloaded null coordinates; no artificial stiffness or constraints retained in perturbation"));
+        }
+    }
+    let chol = factor_raw(&kff, limits).map_err(|e| factor_error(e, mesh, &red))?;
+    let diagnostic_k = std::env::var("FIELDCRAFT_STATIC_RESIDUAL").is_ok_and(|v| v == "1").then_some(kff);
+    let diagnostic_rhs = diagnostic_k.as_ref().map(|_| q.clone());
     chol.solve(&mut q)?;
+    if let (Some(matrix), Some(rhs)) = (diagnostic_k, diagnostic_rhs) {
+        use std::io::Write;
+        let _timing = crate::timing::Span::new("static_actual_residual");
+        let mut product = vec![0.0; q.len()];
+        matrix.mul(&q, &mut product);
+        let error = product.iter().zip(&rhs).map(|(a, b)| (a - b).powi(2)).sum::<f64>().sqrt();
+        let scale = rhs.iter().map(|v| v * v).sum::<f64>().sqrt();
+        let ratio = if scale > 0.0 { error / scale } else { f64::NAN };
+        let _ = writeln!(std::io::stderr().lock(), "FIELDCRAFT_STATIC_RESIDUAL\t{error:.17e}\t{scale:.17e}\t{ratio:.17e}");
+    }
     let u = red.expand(&q, true);
     if u.iter().any(|x| !x.is_finite()) {
         return Err(Error::Singular("the solution is not finite; the model is ill-conditioned".into()));
@@ -543,12 +626,21 @@ pub(crate) fn static_on(setup: &Setup<'_>, limits: &Limits) -> Result<StaticResu
     let per_volume = structural_body_forces(model, resolved, mesh, step)?;
     for (s, body) in mesh.structural.iter().zip(&per_volume) {
         let at = |err| Error::element(s.label, err);
-        let dofs = mesh
-            .layout
-            .element_dofs(&s.nodes, Structural::KINDS)
-            .ok_or_else(|| Error::Internal(format!("element {} degrees of freedom", s.label)))?;
+        let dofs = mesh.layout.element_dofs(&s.nodes, s.kinds()).ok_or_else(|| Error::Internal(format!("element {} degrees of freedom", s.label)))?;
         let ue: Vec<f64> = dofs.iter().map(|d| u.get(*d).copied().unwrap_or(0.0)).collect();
         match s.kernel()? {
+            StructuralKernel::Axishell(shell) => {
+                let stress = shell.stresses(&ue).map_err(at)?;
+                for (n, v) in s.nodes.iter().zip(&stress.top) {
+                    if let (Some(acc), Some(c)) = (sum.get_mut(*n), count.get_mut(*n)) {
+                        for k in 0..6 {
+                            acc[k] += v[k];
+                        }
+                        *c += 1;
+                    }
+                }
+                shells.push(ShellResult { label: s.label, kind: s.kind, stress });
+            }
             StructuralKernel::Shell(shell) => {
                 let stress = shell.stresses(&ue).map_err(at)?;
                 for (n, v) in s.nodes.iter().zip(&stress.top) {
@@ -592,24 +684,9 @@ pub(crate) fn static_on(setup: &Setup<'_>, limits: &Limits) -> Result<StaticResu
     let von_mises = stress.iter().map(von_mises).collect();
     let scale = crate::system::balance_scale(&applied_total, &reaction_total, &reaction);
     let mut ground = mesh.discrete.ground_force(&u, mesh);
-    for f in &mesh.foundations {
-        let data = fieldcraft_fem::foundation::matrix(&f.xyz, f.normal, f.tangential).map_err(|e| Error::Invalid(e.to_string()))?;
-        let dofs: Vec<_> = f
-            .nodes
-            .iter()
-            .flat_map(|n| (0..3).map(move |c| (*n, c)))
-            .map(|(n, c)| {
-                let kind = fieldcraft_fem::DofKind::translation(c).ok_or_else(|| Error::Internal("foundation direction".into()))?;
-                mesh.dof(n, kind)
-            })
-            .collect::<Result<_>>()?;
-        for (i, row) in data.chunks(dofs.len()).enumerate() {
-            for (value, dof) in row.iter().zip(&dofs) {
-                ground[i % 3] -= value * u.get(*dof).copied().unwrap_or(0.);
-            }
-        }
-    }
-    let imbalance = (0..3).map(|c| (applied_total[c] + reaction_total[c] + ground[c]).abs()).fold(0.0, f64::max);
+    crate::foundation::add_ground_force(mesh, &u, &mut ground)?;
+    let axishell = mesh.structural.iter().any(|e| matches!(e.section, crate::system::Section::Axishell { .. }));
+    let imbalance = (0..3).filter(|c| !axishell || *c == 1).map(|c| (applied_total[c] + reaction_total[c] + ground[c]).abs()).fold(0.0, f64::max);
     if scale > 0.0 && imbalance > crate::system::BALANCE_TOLERANCE * scale {
         warnings.push(format!("loads and reactions differ by {imbalance:.3e} (relative {:.1e})", imbalance / scale));
     }
@@ -670,12 +747,51 @@ fn bound_ply_results(mesh: &Mesh, limits: &Limits) -> Result<()> {
     Ok(())
 }
 
+/// Preserve the pre-experiment physical starting vectors while changing only
+/// the factor/equation ordering. This does not reorder any returned eigenpairs.
+fn legacy_start_coordinates(mesh: &Mesh, graph: &NodeGraph, red: &Reduction, enabled: bool) -> Result<Option<Vec<usize>>> {
+    if !enabled || crate::ordering::legacy_requested() {
+        return Ok(None);
+    }
+    let _timing = crate::timing::Span::new("frequency_start_coordinates");
+    let n = mesh.labels.len();
+    let adjacency: Vec<Vec<usize>> = graph.adjacency.iter().take(n).map(|row| row.iter().copied().filter(|b| *b < n).collect()).collect();
+    let nodes = crate::ordering::fill_reducing_order(&mesh.xyz, &adjacency);
+    let mut rank = vec![usize::MAX; mesh.dofs()];
+    for (position, dof) in nodes.iter().flat_map(|node| mesh.layout.range(*node)).chain(mesh.mesh_dofs()..mesh.dofs()).enumerate() {
+        let entry = rank.get_mut(dof).ok_or_else(|| Error::Internal("starting-coordinate degree of freedom".into()))?;
+        *entry = position;
+    }
+    let mut keyed = Vec::with_capacity(red.eq_dof.len());
+    for (equation, &dof) in red.eq_dof.iter().enumerate() {
+        let key = rank.get(dof).copied().filter(|r| *r != usize::MAX).ok_or_else(|| Error::Internal("missing starting-coordinate rank".into()))?;
+        keyed.push((key, equation));
+    }
+    keyed.sort_unstable();
+    let order: Vec<usize> = keyed.into_iter().map(|(_, equation)| equation).collect();
+    let changed = order.iter().enumerate().filter(|(i, j)| i != *j).count();
+    use std::io::Write;
+    let _ = writeln!(std::io::stderr().lock(), "FIELDCRAFT_START_COORDINATES\t{}\t{changed}", order.len());
+    Ok(Some(order))
+}
+
 struct ShiftInvert<'a> {
     m: &'a Csr,
     factor: &'a Factor,
+    start_order: Option<Vec<usize>>,
 }
 
 impl Operator for ShiftInvert<'_> {
+    fn prepare_start(&self, values: &mut [f64]) {
+        if let Some(order) = &self.start_order {
+            let original = values.to_vec();
+            for (&equation, &value) in order.iter().zip(&original) {
+                if let Some(destination) = values.get_mut(equation) {
+                    *destination = value;
+                }
+            }
+        }
+    }
     fn n(&self) -> usize {
         self.m.n
     }
@@ -699,6 +815,78 @@ impl Operator for ShiftInvert<'_> {
     }
 }
 
+/// A transformed Ritz residual can be small while the original pencil residual
+/// is not. Bounded inverse iteration with the existing shifted factor corrects
+/// that defect without changing K, M, the shift or the requested spectrum.
+/// Parlett, The Symmetric Eigenvalue Problem (1998), inverse iteration and
+/// mass-inner-product orthogonalization. Accepted pairs keep their original bits.
+fn refine_frequency_pairs(k: &Csr, m: &Csr, factor: &Factor, pairs: &mut crate::eigen::Eigenpairs, warnings: &mut Vec<String>) -> Result<()> {
+    const LIMIT: f64 = 1e-6; // unit-factors: relative unshifted equation residual
+    const MAX_CORRECTIONS: usize = 4;
+    let dot = |a: &[f64], b: &[f64]| a.iter().zip(b).map(|(a, b)| a * b).sum::<f64>();
+    for mode in 0..pairs.values.len() {
+        let mut residual = crate::convergence::frequency_residual(k, m, pairs.values[mode], &pairs.vectors[mode])?;
+        if pairs.values[mode] <= 0.0 || residual.relative_residual.is_none_or(|r| r <= LIMIT) {
+            continue;
+        }
+        let mut corrections = 0;
+        for _ in 0..MAX_CORRECTIONS {
+            let phi = &pairs.vectors[mode];
+            let mut kp = vec![0.0; k.n];
+            let mut mp = vec![0.0; k.n];
+            k.mul(phi, &mut kp);
+            m.mul(phi, &mut mp);
+            let mut correction: Vec<_> = kp.iter().zip(&mp).map(|(a, b)| pairs.values[mode] * b - a).collect();
+            factor.solve(&mut correction)?;
+            let mut candidate: Vec<_> = phi.iter().zip(correction).map(|(a, b)| a + b).collect();
+            // Twice through the already accepted lower modes; retain repeated eigenspaces.
+            for _ in 0..2 {
+                for prior in &pairs.vectors[..mode] {
+                    m.mul(&candidate, &mut mp);
+                    let projection = dot(prior, &mp);
+                    for (v, q) in candidate.iter_mut().zip(prior) {
+                        *v -= projection * q;
+                    }
+                }
+            }
+            m.mul(&candidate, &mut mp);
+            let mass = dot(&candidate, &mp);
+            if !(mass > 0.0 && mass.is_finite()) {
+                break;
+            }
+            let scale = mass.sqrt();
+            for v in &mut candidate {
+                *v /= scale;
+            }
+            k.mul(&candidate, &mut kp);
+            m.mul(&candidate, &mut mp);
+            let lambda = dot(&candidate, &kp) / dot(&candidate, &mp);
+            if !lambda.is_finite() || lambda <= 0.0 {
+                break;
+            }
+            let next = crate::convergence::frequency_residual(k, m, lambda, &candidate)?;
+            if !matches!((next.relative_residual, residual.relative_residual), (Some(a), Some(b)) if a < b) {
+                break;
+            }
+            pairs.vectors[mode] = candidate;
+            pairs.values[mode] = lambda;
+            residual = next;
+            corrections += 1;
+            if residual.relative_residual.is_some_and(|r| r <= LIMIT) {
+                break;
+            }
+        }
+        warnings.push(format!(
+            "mode {}: {corrections} inverse residual corrections; actual unshifted relative residual {:?}",
+            mode + 1,
+            residual.relative_residual
+        ));
+        // The diagnostics retain the actual remaining error, including roundoff floors.
+        // A correction is not itself evidence that the physical mode is validated.
+    }
+    Ok(())
+}
+
 /// Block size of the Lanczos iteration: enough for the six rigid-body modes of a free body.
 pub(crate) const BLOCK: usize = 6;
 
@@ -720,7 +908,11 @@ pub(crate) const TOLERANCE: f64 = 1e-9; // unit-factors: a relative residual
 /// lowest natural modes within the step's frequency range.
 pub fn solve_frequency(model: &Model, step: Option<&str>, options: &FrequencyOptions, limits: &Limits) -> Result<FrequencyResult> {
     let _timing = crate::timing::Span::new("solve_frequency");
-    frequency_impl(model, step, options, limits, false, false).map(|(result, _, _)| result)
+    frequency_impl(model, step, options, limits, false, false, true).map(|(result, _, _)| result)
+}
+
+pub(crate) fn solve_frequency_legacy(model: &Model, step: Option<&str>, options: &FrequencyOptions, limits: &Limits) -> Result<FrequencyResult> {
+    frequency_impl(model, step, options, limits, false, false, false).map(|(result, _, _)| result)
 }
 
 /// Solve and report the actual unshifted reduced-pencil residuals and block iterations.
@@ -732,15 +924,32 @@ pub fn solve_frequency_report(
     limits: &Limits,
 ) -> Result<(FrequencyResult, crate::convergence::ModalConvergence)> {
     let _timing = crate::timing::Span::new("solve_frequency");
-    let (result, _, convergence) = frequency_impl(model, step, options, limits, false, true)?;
+    let (result, _, convergence) = frequency_impl(model, step, options, limits, false, true, true)?;
     Ok((result, convergence.ok_or_else(|| Error::Internal("frequency diagnostics missing".into()))?))
 }
 
 /// Reuse the actual physical mass operator for modal derivative contractions.
 /// Ordinary frequency solves still release it before factorization.
 pub(crate) fn frequency_with_mass(model: &Model, step: Option<&str>, options: &FrequencyOptions, limits: &Limits) -> Result<(FrequencyResult, Csr)> {
-    let (result, mass, _) = frequency_impl(model, step, options, limits, true, false)?;
+    let (result, mass, _) = frequency_impl(model, step, options, limits, true, false, false)?;
     Ok((result, mass.ok_or_else(|| Error::Internal("retained modal mass".into()))?))
+}
+
+// A simple eigenvector is not stable at a repeated root, and a vanishing
+// participation has an ill-conditioned relative effective-mass comparison.
+// Keep the legacy scalar results in these cases; never rotate/relabel modes.
+fn modal_order_fallback_reason(result: &FrequencyResult) -> Option<&'static str> {
+    if result
+        .modes
+        .windows(2)
+        .any(|p| (p[1].eigenvalue - p[0].eigenvalue).abs() <= f64::EPSILON.sqrt() * p[0].eigenvalue.abs().max(p[1].eigenvalue.abs()))
+    {
+        return Some("unresolved individual basis at a repeated or near-repeated eigenvalue");
+    }
+    if result.modes.iter().any(|m| m.effective_mass.iter().sum::<f64>() <= 128.0 * f64::EPSILON * result.total_mass) {
+        return Some("near-zero translational participation");
+    }
+    None
 }
 
 fn frequency_impl(
@@ -750,7 +959,53 @@ fn frequency_impl(
     limits: &Limits,
     retain_mass: bool,
     diagnostics: bool,
+    standalone: bool,
 ) -> Result<(FrequencyResult, Option<Csr>, Option<crate::convergence::ModalConvergence>)> {
+    if model.pretensions().values().any(|p| p.face.is_some()) {
+        // A job cancelled before it starts stops here, before any setup work.
+        fieldcraft_model::progress::check()?;
+        if retain_mass {
+            return Err(Error::NotSupported("modal derivatives on a private pretension cut".into()));
+        }
+        let resolved = model.resolve()?;
+        let prepared = crate::pretension::prepare(model, &resolved, limits.max_dofs)?;
+        // Pretension sections are outside the verified scope of the multilevel ordering.
+        let (mut result, mass, convergence) = frequency_impl(prepared.model.as_ref(), step, options, limits, false, diagnostics, false)?;
+        prepared.project_frequency(&mut result);
+        return Ok((result, mass, convergence));
+    }
+    let first = frequency_once(model, step, options, limits, retain_mass, diagnostics, standalone)?;
+    let selected = model.select_step(step, |p| matches!(p, Procedure::Frequency { .. }), "frequency")?;
+    if standalone_linear_order(model, selected, standalone)
+        && !crate::ordering::legacy_requested()
+        && let Some(reason) = modal_order_fallback_reason(&first.0)
+    {
+        // Count the discarded work without changing the final basis/cap semantics.
+        // The enclosing command timer covers both attempts, including assembly.
+        let trial_iterations = first.3;
+        let trial_vectors = first.0.stats.lanczos_vectors;
+        // Release the first result and optional retained matrix before rebuilding.
+        drop(first);
+        use std::io::Write;
+        let _ = writeln!(std::io::stderr().lock(), "FIELDCRAFT_ORDER_FALLBACK\t{trial_iterations}\t{trial_vectors}\t{reason}");
+        let mut legacy = frequency_once(model, step, options, limits, retain_mass, diagnostics, false)?;
+        legacy.0.warnings.push(format!(
+            "legacy ordering retained: {reason}; discarded trial used {trial_iterations} Lanczos block iterations and {trial_vectors} basis vectors; reported convergence describes the returned legacy solve; full command time includes both attempts"
+        ));
+        return Ok((legacy.0, legacy.1, legacy.2));
+    }
+    Ok((first.0, first.1, first.2))
+}
+
+fn frequency_once(
+    model: &Model,
+    step: Option<&str>,
+    options: &FrequencyOptions,
+    limits: &Limits,
+    retain_mass: bool,
+    diagnostics: bool,
+    standalone: bool,
+) -> Result<(FrequencyResult, Option<Csr>, Option<crate::convergence::ModalConvergence>, usize)> {
     // A job cancelled before it starts stops here, before any setup work.
     fieldcraft_model::progress::check()?;
     let resolved: Resolved = model.resolve()?;
@@ -770,7 +1025,8 @@ fn frequency_impl(
     let mut warnings: Vec<String> = resolved.warnings.iter().map(ToString::to_string).chain(mesh.warnings.iter().cloned()).collect();
     warnings.extend(inelastic_warnings(model));
     warnings.extend(fieldcraft_model::initial::left_out(model, step));
-    let (graph, order) = pattern(&mesh);
+    let use_multilevel = standalone_linear_order(model, step, standalone);
+    let (graph, order) = pattern_with_order(&mesh, use_multilevel);
     ignored_dashpots(&mesh, &mut warnings);
     let setup = Setup { model, resolved: &resolved, mesh: &mesh, step };
     let Assembled { k, m } = assemble(&mesh, &graph, Some(options.mass))?;
@@ -826,7 +1082,7 @@ fn frequency_impl(
             Err(e) => return Err(factor_error(e, &mesh, &red)),
         },
     };
-    let residual_k = diagnostics.then_some(kff);
+
     let two_pi = 2.0 * std::f64::consts::PI;
     let wanted = Wanted {
         count: usize::try_from(modes).unwrap_or(usize::MAX).min(neq),
@@ -834,8 +1090,31 @@ fn frequency_impl(
         max: max_hz.map_or(f64::INFINITY, |f| (two_pi * f).powi(2)),
     };
     let max_basis = lanczos_basis(limits, neq);
-    let op = ShiftInvert { m: &mff, factor: &chol };
-    let pairs = lanczos(&op, shift, wanted, BLOCK, max_basis, TOLERANCE)?;
+    let start_order = legacy_start_coordinates(&mesh, &graph, &red, use_multilevel)?;
+    let op = ShiftInvert { m: &mff, factor: &chol, start_order };
+    let tolerance = std::env::var("FIELDCRAFT_LANCZOS_TOLERANCE")
+        .ok()
+        .and_then(|s| s.parse::<f64>().ok())
+        .filter(|t| (1e-13..=TOLERANCE).contains(t))
+        .unwrap_or(TOLERANCE);
+    let mut pairs = lanczos(&op, shift, wanted, BLOCK, max_basis, tolerance)?;
+    // The residual correction needs the stiffness, so it stays alive through the Lanczos run.
+    refine_frequency_pairs(&kff, &mff, &chol, &mut pairs, &mut warnings)?;
+    let residual_k = diagnostics.then_some(kff);
+    if std::env::var("FIELDCRAFT_MODAL_ORTHOGONALITY").is_ok_and(|v| v == "1") {
+        use std::io::Write;
+        let _timing = crate::timing::Span::new("frequency_mass_orthogonality");
+        let mut mphi = vec![0.0; neq];
+        let mut maximum = 0.0_f64;
+        for (j, phi) in pairs.vectors.iter().enumerate() {
+            mff.mul(phi, &mut mphi);
+            for (i, v) in pairs.vectors.iter().enumerate() {
+                let g: f64 = v.iter().zip(&mphi).map(|(a, b)| a * b).sum();
+                maximum = maximum.max((g - if i == j { 1.0 } else { 0.0 }).abs());
+            }
+        }
+        let _ = writeln!(std::io::stderr().lock(), "FIELDCRAFT_MASS_ORTHOGONALITY\t{}\t{maximum:.17e}", pairs.values.len());
+    }
     let convergence = if let Some(k) = residual_k {
         let _timing = crate::timing::Span::new("frequency_actual_residuals");
         let residuals = pairs
@@ -899,9 +1178,12 @@ fn frequency_impl(
             stats: Stats { dofs: mesh.dofs(), equations: neq, factor_entries: chol.entries(), lanczos_vectors: pairs.basis },
             warnings,
             buckling: None,
+            mass_kind: None,
+            section_mass_policy: None,
         },
         retained_mass,
         convergence,
+        pairs.iterations,
     ))
 }
 
@@ -963,8 +1245,111 @@ impl StepResult {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn inverse_correction_recovers_original_pencil_not_only_ritz_value() {
+        let k = Csr { n: 2, ptr: vec![0, 1, 2], idx: vec![0, 1], val: vec![1.0, 1e9] };
+        let m = Csr { n: 2, ptr: vec![0, 1, 2], idx: vec![0, 1], val: vec![2.0, 3.0] };
+        let factor = factor_raw(&k, &Limits::default()).unwrap();
+        let mut pairs = crate::eigen::Eigenpairs {
+            values: vec![0.5],
+            vectors: vec![vec![0.5_f64.sqrt(), 1e-7]],
+            negative: vec![],
+            basis: 2,
+            iterations: 1,
+            basis_limit: 2,
+            basis_limit_reached: true,
+            full_space_reached: true,
+        };
+        let mut warnings = vec![];
+        let initial = crate::convergence::frequency_residual(&k, &m, pairs.values[0], &pairs.vectors[0]).unwrap();
+        assert!(initial.relative_residual.unwrap() > 0.9);
+        refine_frequency_pairs(&k, &m, &factor, &mut pairs, &mut warnings).unwrap();
+        let final_error = crate::convergence::frequency_residual(&k, &m, pairs.values[0], &pairs.vectors[0]).unwrap();
+        assert!(final_error.relative_residual.unwrap() < 1e-6);
+        assert!((pairs.values[0] - 0.5).abs() < 1e-12);
+        let mut mass_shape = vec![0.0; 2];
+        m.mul(&pairs.vectors[0], &mut mass_shape);
+        let mass: f64 = pairs.vectors[0].iter().zip(&mass_shape).map(|(a, b)| a * b).sum();
+        assert!((mass - 1.0).abs() < 1e-14);
+        let frozen = (pairs.values.clone(), pairs.vectors.clone());
+        refine_frequency_pairs(&k, &m, &factor, &mut pairs, &mut warnings).unwrap();
+        assert_eq!(frozen, (pairs.values, pairs.vectors));
+    }
     use super::*;
     use fieldcraft_model::{BoundaryCondition, Directional, Elastic, Formulation, Load, Material, Section, SectionKind, Set, Target, Thermal};
+
+    #[test]
+    fn ambiguous_modal_basis_repeats_the_legacy_solve_without_relabeling() {
+        let mode = |lambda, mass| Mode {
+            eigenvalue: lambda,
+            frequency: 0.0,
+            shape: vec![],
+            rotation: vec![],
+            participation: [0.0; 3],
+            effective_mass: [mass, 0.0, 0.0],
+            point_shape: vec![],
+        };
+        let mut result = FrequencyResult {
+            step: "Modes".into(),
+            nodes: vec![],
+            reference_points: vec![],
+            modes: vec![mode(1.0, 1.0), mode(1.0 + f64::EPSILON, 1.0)],
+            total_mass: 10.0,
+            stats: Stats { dofs: 0, equations: 0, factor_entries: 0, lanczos_vectors: 0 },
+            warnings: vec![],
+            buckling: None,
+            mass_kind: None,
+            section_mass_policy: None,
+        };
+        assert!(modal_order_fallback_reason(&result).unwrap().contains("repeated"));
+        result.modes[1].eigenvalue = 2.0;
+        assert!(modal_order_fallback_reason(&result).is_none());
+        result.modes[1].effective_mass = [0.0; 3];
+        assert!(modal_order_fallback_reason(&result).unwrap().contains("participation"));
+    }
+
+    #[test]
+    fn pretension_model_keeps_legacy_even_before_a_base_state_is_named() {
+        let mut model = block();
+        model.add_reference_point("BoltControl", fieldcraft_model::ReferencePoint { xyz: [0.0; 3], label: 0 }).unwrap();
+        model
+            .add_pretension(
+                "Bolt",
+                fieldcraft_model::PretensionSection {
+                    first: "base".into(),
+                    second: "top".into(),
+                    face: None,
+                    normal: [0.0, 0.0, 1.0],
+                    control: "BoltControl".into(),
+                },
+            )
+            .unwrap();
+        for procedure in [Procedure::Static {}, Procedure::Frequency { modes: 6, min_hz: None, max_hz: None }] {
+            let step = Step::new("Before", procedure);
+            assert!(step.base_state.is_none());
+            assert!(!standalone_linear_order(&model, &step, true));
+        }
+    }
+
+    #[test]
+    fn multilevel_scope_excludes_preloads_derivatives_and_other_procedures() {
+        for procedure in [Procedure::Static {}, Procedure::Frequency { modes: 6, min_hz: None, max_hz: None }] {
+            let mut step = Step::new("linear", procedure);
+            assert!(standalone_linear_order(&Model::default(), &step, true));
+            // Internal callers (buckling/prestress preloads and sensitivities) never opt in.
+            assert!(!standalone_linear_order(&Model::default(), &step, false));
+            step.base_state = Some("preload".into());
+            assert!(!standalone_linear_order(&Model::default(), &step, true));
+        }
+        for procedure in [
+            Procedure::Buckle { modes: 1, shift: None, follower_pressure: false },
+            Procedure::HeatTransfer { transient: None },
+            Procedure::CoupledTemperatureDisplacement {},
+            Procedure::MatrixGeneration { matrices: Default::default() },
+        ] {
+            assert!(!standalone_linear_order(&Model::default(), &Step::new("other", procedure), true));
+        }
+    }
 
     #[test]
     fn raised_factor_budget_keeps_the_lanczos_vector_limit() {
@@ -1005,7 +1390,7 @@ mod tests {
         model
             .add_load("force", Load::Force { target: Target::Set("top".into()), vector: [0.0, 0.0, -1.0], distribution: Default::default() })
             .unwrap();
-        let mut step = Step::new("Buckle", Procedure::Buckle { modes: 1, shift: None });
+        let mut step = Step::new("Buckle", Procedure::Buckle { modes: 1, shift: None, follower_pressure: false });
         step.boundary_conditions.insert("fixed".into());
         step.loads.insert("force".into());
         model.add_step(step, None).unwrap();

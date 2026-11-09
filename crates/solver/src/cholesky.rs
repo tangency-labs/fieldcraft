@@ -167,6 +167,11 @@ pub(crate) fn factor_entries(a: &UpperColumns) -> usize {
     symbolic(a).1.iter().sum()
 }
 
+#[cfg(test)]
+pub(crate) fn factor_column_counts(a: &UpperColumns) -> Vec<usize> {
+    symbolic(a).1
+}
+
 /// The elimination tree and the entry count of each column of L, without computing values.
 fn symbolic(a: &UpperColumns) -> (Vec<usize>, Vec<usize>) {
     let parent = etree(a);
@@ -413,6 +418,18 @@ pub(crate) fn times_d(row: &mut [f64], l: &Panel, k0: usize, pivots: &[Pivot]) {
 /// `tile[c * TILE + i]`.
 pub(crate) fn products(l: &Panel, cols: std::ops::Range<usize>, p: usize, mu: usize, wu: usize, pivots: Option<&[Pivot]>) -> Vec<Vec<f64>> {
     let (k0, kw) = (cols.start, cols.len());
+    let eligible = pivots.is_none() && kw >= 256 && wu >= 128 && mu.saturating_mul(wu).saturating_mul(kw) >= PARALLEL_WORK;
+    #[cfg(test)]
+    if eligible && std::env::var("FIELDCRAFT_DENSE_UPDATE").is_ok_and(|v| v == "cached") {
+        let _timing = crate::timing::Span::new("dense_update_cached");
+        crate::timing::dense_work(true, mu, wu, kw, TILE, NR);
+        return products_cached(l, cols, p, mu, wu);
+    }
+    let _timing = eligible.then(|| crate::timing::Span::new("dense_update_reference"));
+    if eligible {
+        crate::timing::dense_work(false, mu, wu, kw, TILE, NR);
+    }
+    let profile = crate::timing::DenseProfile::new();
     // Rows p..p+wu of the columns, transposed so that column c's coefficients are contiguous.
     let mut yt = vec![0.0; wu * kw];
     for k in 0..kw {
@@ -438,6 +455,7 @@ pub(crate) fn products(l: &Panel, cols: std::ops::Range<usize>, p: usize, mu: us
     }
     let tiles = mu.div_ceil(TILE);
     let tile = |t: usize| -> Vec<f64> {
+        let task_start = profile.clock();
         let i0 = t * TILE;
         let h = TILE.min(mu - i0);
         // The tile's rows of every column by blocks of MR rows, k-major, padded to TILE rows.
@@ -449,6 +467,7 @@ pub(crate) fn products(l: &Panel, cols: std::ops::Range<usize>, p: usize, mu: us
                 }
             }
         }
+        let packed = profile.clock();
         let cols = wu.min(i0 + h);
         let mut out = vec![0.0; cols * TILE];
         // Micro-tiles of MR rows and NR columns: each S(i, c) is summed in a register over k in
@@ -474,9 +493,73 @@ pub(crate) fn products(l: &Panel, cols: std::ops::Range<usize>, p: usize, mu: us
                 }
             }
         }
+        profile.task(task_start, packed);
         out
     };
-    if mu.saturating_mul(wu).saturating_mul(kw) >= PARALLEL_WORK { parallel::map(tiles, tile) } else { (0..tiles).map(tile).collect() }
+    let dispatch = profile.clock();
+    let result = if mu.saturating_mul(wu).saturating_mul(kw) >= PARALLEL_WORK && !profile.serial() {
+        parallel::map(tiles, tile)
+    } else {
+        (0..tiles).map(tile).collect()
+    };
+    profile.finish(dispatch, mu, wu, kw, tiles);
+    result
+}
+
+/// Cache-blocked rank update (Golub–Van Loan, matrix multiplication blocking).
+/// Row tiles own their outputs throughout all fixed K panels. A panel barrier
+/// completes every partial sum before the next panel can update those outputs.
+#[cfg(test)]
+fn products_cached(l: &Panel, cols: std::ops::Range<usize>, p: usize, mu: usize, wu: usize) -> Vec<Vec<f64>> {
+    const KC: usize = 256;
+    let mut tiles: Vec<_> = (0..mu.div_ceil(TILE)).map(|t| vec![0.0; wu.min((t + 1) * TILE).min(mu) * TILE]).collect();
+    for k0 in (cols.start..cols.end).step_by(KC) {
+        let kw = KC.min(cols.end - k0);
+        let mut yp = vec![[0.0; NR]; wu.div_ceil(NR) * kw];
+        for k in 0..kw {
+            for (c, &y) in l.column(k0 + k, p, wu).iter().enumerate() {
+                if let Some(slot) = yp.get_mut((c / NR) * kw + k).and_then(|row| row.get_mut(c % NR)) {
+                    *slot = y;
+                }
+            }
+        }
+        parallel::for_each_mut(&mut tiles, |t, out| {
+            let i0 = t * TILE;
+            let h = TILE.min(mu - i0);
+            let mut xp = vec![[0.0; MR]; TILE / MR * kw];
+            for k in 0..kw {
+                for (i, &x) in l.column(k0 + k, p + i0, h).iter().enumerate() {
+                    if let Some(slot) = xp.get_mut((i / MR) * kw + k).and_then(|row| row.get_mut(i % MR)) {
+                        *slot = x;
+                    }
+                }
+            }
+            let columns = wu.min(i0 + h);
+            for (b, ys) in yp.chunks(kw).enumerate().take(columns.div_ceil(NR)) {
+                for (r, xs) in xp.chunks(kw).enumerate() {
+                    let mut acc = [[0.0; MR]; NR];
+                    for (x, y) in xs.iter().zip(ys) {
+                        for (a, yj) in acc.iter_mut().zip(y) {
+                            for (ai, xi) in a.iter_mut().zip(x) {
+                                *ai += xi * yj;
+                            }
+                        }
+                    }
+                    for (j, a) in acc.iter().enumerate() {
+                        let c = b * NR + j;
+                        if c < columns
+                            && let Some(dst) = out.get_mut(c * TILE + r * MR..c * TILE + (r + 1) * MR)
+                        {
+                            for (v, partial) in dst.iter_mut().zip(a) {
+                                *v += partial;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+    tiles
 }
 
 /// own(rel(i), rel(c)) −= S(i, c) for i ≥ c, with S in the tiles of [`products`].
@@ -822,7 +905,11 @@ impl Context<'_> {
             if let Some(timing) = timing.as_mut() {
                 timing.product(clock, mu, wu, kw, TILE, NR);
             }
+            let clock = timing.as_ref().and_then(|t| t.clock());
             subtract(own, m, &tiles, mu, wu, |i| relative.get(i).copied().unwrap_or(0));
+            if let Some(timing) = timing.as_mut() {
+                timing.writeback(clock, wu * mu - wu * wu.saturating_sub(1) / 2);
+            }
         }
         Ok(())
     }
@@ -858,9 +945,12 @@ impl Context<'_> {
                     let clock = timing.clock();
                     let tiles = products(&Panel { m, data: own }, 0..c0, c0, m - c0, pw, None);
                     timing.product(clock, m - c0, pw, c0, TILE, NR);
+                    let clock = timing.clock();
                     subtract(own, m, &tiles, m - c0, pw, |i| c0 + i);
+                    timing.writeback(clock, pw * (m - c0) - pw * pw.saturating_sub(1) / 2);
                 }
             }
+            let diagonal_clock = timing.clock();
             // The diagonal block, column by column.
             for c in c0..c1 {
                 let dst = offset(m, c);
@@ -887,6 +977,7 @@ impl Context<'_> {
                     *x /= d;
                 }
             }
+            timing.diagonal(diagonal_clock);
             // The rows below the panel, by tiles.
             if c1 < m {
                 let clock = timing.clock();
@@ -1150,6 +1241,11 @@ impl Symbolic {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn profile_top(&self) -> &[usize] {
+        &self.top
+    }
+
     /// Supernodes.
     pub(crate) fn supernodes(&self) -> usize {
         self.structure.first.len().saturating_sub(1)
@@ -1200,6 +1296,7 @@ impl Symbolic {
         // The pool's threads do not report: they ask the caller's progress whether to stop.
         let progress = fieldcraft_model::progress::current();
         let cancelled = || progress.as_ref().is_some_and(|p| p.is_cancelled());
+        let subtree_time = crate::timing::Span::new("numeric_subtrees");
         parallel::for_each_mut(&mut pieces, |_, (range, piece, failed)| {
             for j in range.clone() {
                 if cancelled() {
@@ -1225,6 +1322,7 @@ impl Symbolic {
                 }
             }
         });
+        drop(subtree_time);
         if let Some(e) = broken.into_inner().unwrap_or_else(std::sync::PoisonError::into_inner) {
             return Err(e);
         }
@@ -1236,6 +1334,7 @@ impl Symbolic {
             Some(c) => e.at(self.original(c)),
             None => e,
         };
+        let _top_time = crate::timing::Span::new("numeric_top");
         for &j in &self.top {
             if cancelled() {
                 return Err(FactorError::Cancelled);
@@ -1433,6 +1532,77 @@ impl Factor {
 mod tests {
     use super::*;
     use crate::sparse::Csr;
+
+    #[test]
+    #[ignore = "explicit bounded cache-panel factorization experiment"]
+    fn cache_panel_factor_experiment() {
+        let large = std::env::var("FC_FACTOR_SIZE").is_ok_and(|v| v == "large");
+        let (child, separator) = if large { (1024, 4911) } else { (384, 768) };
+        let n = 2 * child + separator;
+        let mut a = UpperColumns { n, ptr: vec![0], idx: vec![], val: vec![] };
+        for c in 0..n {
+            for r in 0..=c {
+                if c >= 2 * child || r / child == c / child {
+                    a.idx.push(r);
+                    a.val.push(if r == c { n as f64 + 1.0 } else { ((r * 17 + c * 31) % 29) as f64 / 29.0 - 0.5 });
+                }
+            }
+            a.ptr.push(a.idx.len());
+        }
+        let threads = std::env::var("FC_FACTOR_THREADS").unwrap().parse().unwrap();
+        let start = std::time::Instant::now();
+        let factor = parallel::with_threads(threads, || Factor::new(&a, usize::MAX)).unwrap();
+        let factor_seconds = start.elapsed().as_secs_f64();
+        let mut x = vec![1.0; n];
+        factor.solve(&mut x).unwrap();
+        let solve_seconds = start.elapsed().as_secs_f64();
+        let mut ax = vec![0.0; n];
+        for c in 0..n {
+            let (rows, values) = a.column(c);
+            for (&r, &v) in rows.iter().zip(values) {
+                ax[r] += v * x[c];
+                if r != c {
+                    ax[c] += v * x[r];
+                }
+            }
+        }
+        let residual = ax.iter().map(|v| (v - 1.0).powi(2)).sum::<f64>().sqrt() / (n as f64).sqrt();
+        assert!(residual < 1e-11, "{residual}");
+        let hash = factor.values.iter().flatten().fold(0xcbf29ce484222325_u64, |h, v| (h ^ v.to_bits()).wrapping_mul(0x100000001b3));
+        let bytes: Vec<_> = x.iter().flat_map(|v| v.to_le_bytes()).collect();
+        std::fs::write(std::env::var("FC_FACTOR_OUTPUT").unwrap(), bytes).unwrap();
+        let largest = (0..factor.values.len()).map(|j| (factor.structure.cols(j).len(), factor.structure.rows(j).len())).max();
+        eprintln!(
+            "CACHE_FACTOR n={n} child={child} separator={separator} largest={largest:?} factor_seconds={factor_seconds:.9} factor_solve_seconds={solve_seconds:.9} residual={residual:.17e} factor_hash={hash:016x}"
+        );
+    }
+
+    #[test]
+    fn cached_update_fixed_k_panels_and_row_tail() {
+        let (m, kw, mu, wu) = (800, 517, 269, 163);
+        let values: Vec<f64> = (0..trapezoid(m, kw)).map(|i| ((i * 37 % 101) as f64 - 50.0) / 101.0).collect();
+        let panel = Panel { m, data: &values };
+        let mut bits = None;
+        for threads in [1, 2, 7] {
+            let got = parallel::with_threads(threads, || products_cached(&panel, 0..kw, 530, mu, wu));
+            let mut max_error = 0.0_f64;
+            for (t, tile) in got.iter().enumerate() {
+                for c in 0..wu.min(t * TILE + TILE.min(mu - t * TILE)) {
+                    for i in 0..TILE.min(mu - t * TILE) {
+                        let reference: f64 = (0..kw).map(|k| panel.at(530 + t * TILE + i, k) * panel.at(530 + c, k)).sum();
+                        max_error = max_error.max((tile[c * TILE + i] - reference).abs());
+                    }
+                }
+            }
+            assert!(max_error < 1e-11, "{max_error}");
+            let got: Vec<_> = got.iter().flatten().map(|v| v.to_bits()).collect();
+            if let Some(expected) = &bits {
+                assert_eq!(&got, expected);
+            } else {
+                bits = Some(got);
+            }
+        }
+    }
 
     #[test]
     fn multiple_rhs_preserves_scalar_solve_bits() {

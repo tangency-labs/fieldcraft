@@ -1,0 +1,329 @@
+[
+  {
+    "command": "model.units",
+    "params": {
+      "system": "m-kg-s-N-Pa"
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 1,
+      "xyz": [
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 2,
+      "xyz": [
+        1,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 3,
+      "xyz": [
+        1,
+        1,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 4,
+      "xyz": [
+        0,
+        1,
+        0
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 5,
+      "xyz": [
+        0,
+        0,
+        1
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 6,
+      "xyz": [
+        1,
+        0,
+        1
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 7,
+      "xyz": [
+        1,
+        1,
+        1
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 8,
+      "xyz": [
+        0,
+        1,
+        1
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 9,
+      "xyz": [
+        0,
+        0,
+        2
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 10,
+      "xyz": [
+        1,
+        0,
+        2
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 11,
+      "xyz": [
+        1,
+        1,
+        2
+      ]
+    }
+  },
+  {
+    "command": "mesh.node.add",
+    "params": {
+      "label": 12,
+      "xyz": [
+        0,
+        1,
+        2
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 1,
+      "kind": "hex8",
+      "nodes": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ]
+    }
+  },
+  {
+    "command": "mesh.element.add",
+    "params": {
+      "label": 2,
+      "kind": "hex8",
+      "nodes": [
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "Bottom",
+      "nodes": [
+        1,
+        2,
+        3,
+        4
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "Top",
+      "nodes": [
+        9,
+        10,
+        11,
+        12
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "Ends",
+      "nodes": [
+        1,
+        2,
+        3,
+        4,
+        9,
+        10,
+        11,
+        12
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "All",
+      "elements": [
+        1,
+        2
+      ]
+    }
+  },
+  {
+    "command": "model.set.create",
+    "params": {
+      "name": "CutFace",
+      "faces": [
+        {
+          "element": 1,
+          "face": 2
+        }
+      ]
+    }
+  },
+  {
+    "command": "model.material.create",
+    "params": {
+      "name": "Elastic",
+      "elastic": {
+        "type": "isotropic",
+        "young": 1000000.0,
+        "poisson": 0
+      },
+      "density": 1
+    }
+  },
+  {
+    "command": "model.section.create",
+    "params": {
+      "name": "Solid",
+      "set": "All",
+      "material": "Elastic",
+      "kind": {
+        "type": "solid"
+      }
+    }
+  },
+  {
+    "command": "model.reference_point.create",
+    "params": {
+      "name": "Control",
+      "xyz": [
+        0.5,
+        0.5,
+        1
+      ],
+      "label": 100
+    }
+  },
+  {
+    "command": "model.boundary_condition.create",
+    "params": {
+      "name": "Ends",
+      "type": "fixed",
+      "target": {
+        "set": "Ends"
+      }
+    }
+  },
+  {
+    "command": "model.pretension.create",
+    "params": {
+      "name": "Cut",
+      "first": "Bottom",
+      "second": "Top",
+      "face": "CutFace",
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "control": "Control"
+    }
+  },
+  {
+    "command": "model.step.create",
+    "params": {
+      "name": "Preload",
+      "procedure": {
+        "type": "static"
+      },
+      "boundary_conditions": [
+        "Ends"
+      ]
+    }
+  },
+  {
+    "command": "model.pretension.force",
+    "params": {
+      "name": "Cut",
+      "step": "Preload",
+      "value": 1000
+    }
+  },
+  {
+    "command": "solve.static",
+    "params": {
+      "step": "Preload"
+    }
+  },
+  {
+    "command": "solve.pretension",
+    "params": {
+      "name": "Cut",
+      "step": "Preload"
+    }
+  }
+]

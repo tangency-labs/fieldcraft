@@ -56,7 +56,7 @@ pub const HARMONIC: CommandSpec = CommandSpec {
 pub const TRANSIENT: CommandSpec = CommandSpec {
     id: "solve.transient",
     label: "Solve Transient Step",
-    params: r#"{"step":"Pulse","threads":1,"mass":"consistent|lumped"} — mass defaults to consistent on each solve and is stored with results; linear Newmark/HHT response, direct or modal; optional error-controlled substeps for direct average acceleration with translational coordinates; stores displacement, velocity, relative acceleration, optional nodal stress and mechanical energies. Read frames with solve.probe. Limits as solve.static. Uniform base displacement/acceleration amplitudes are supported; independent nonzero displacement boundary conditions and reference points are refused."#,
+    params: r#"{"step":"Pulse","threads":1,"mass":"consistent|lumped"} — mass defaults to consistent on each solve and is stored with results; linear Newmark/HHT response, direct or modal; with step base_state, returns perturbation increments about the recomputed equilibrium tangent and frozen contact/tie/pretension constraints, reference mass and perturbation energy; preload loads are not repeated; optional error-controlled substeps for direct average acceleration with translational coordinates; stores displacement, velocity, relative acceleration, optional nodal stress and mechanical energies. Read frames with solve.probe. Limits as solve.static. Uniform base displacement/acceleration amplitudes are supported; independent nonzero displacement boundary conditions and reference points are refused."#,
     form: Some(super::forms::SOLVE_DYNAMICS),
     kind: CommandKind::Model,
     requires: &[Requirement::Analysable, Requirement::Step],
@@ -125,7 +125,7 @@ pub const FREQUENCY: CommandSpec = CommandSpec {
 pub const BUCKLE: CommandSpec = CommandSpec {
     id: "solve.buckle",
     label: "Solve Buckling Step",
-    params: r#"{"step": "Buckle", "max_dofs": 6000000, "max_factor_entries": 400000000, "max_iterations": 3000, "threads": 8} — linear buckling of a buckling step (the only one when `step` is left out): the step's loads as a linear preload, then the lowest load factors λ with (K + λ K_σ) φ = 0 and their mode shapes (largest component 1), or those above the step's shift (whose LDLᵀ factor counts the load factors below it); negative load factors found are reported; the result stays in the session and its modes display like frequency modes; `max_factor_entries` and `threads` as for solve.static"#,
+    params: r#"{"step": "Buckle", "max_dofs": 6000000, "max_factor_entries": 400000000, "max_iterations": 3000, "threads": 8} — linear buckling of a buckling step (the only one when `step` is left out); procedure.follower_pressure includes conservative load stiffness on zero-offset MITC8/MITC6 reference faces (direct supports only), otherwise pressures are dead: the step's loads as a linear preload, then the lowest load factors λ with (K + λ K_σ) φ = 0 and their mode shapes (largest component 1), or those above the step's shift (whose LDLᵀ factor counts the load factors below it); negative load factors found are reported; the result stays in the session and its modes display like frequency modes; `max_factor_entries` and `threads` as for solve.static"#,
     form: Some(super::forms::SOLVE_BUCKLE),
     kind: CommandKind::Model,
     requires: &[Requirement::Analysable, Requirement::ElementMaterial, Requirement::ElementSection, Requirement::Step],
@@ -610,9 +610,12 @@ fn run_frequency(s: &mut Session, p: &Value) -> Result<Value> {
     let mass = opt::<MassKind>(p, "mass")?.unwrap_or_default();
     let shift = opt::<f64>(p, "shift")?;
     let model = &s.model;
-    let (r, convergence) = with_threads(threads(s, p)?, || {
+    let (mut r, convergence) = with_threads(threads(s, p)?, || {
         fieldcraft_solver::solve_frequency_report(model, step.as_deref(), &FrequencyOptions { mass, shift }, &limits)
     })?;
+    r.mass_kind = Some(mass);
+    r.section_mass_policy =
+        Some("rod/beam reference section mass uses declared section area and material density; no inferred cross-section policy".into());
     let summary = json!({
         "step": r.step,
         "mass":mass,
@@ -1633,6 +1636,10 @@ pub(crate) fn probe(s: &mut Session, p: &Value) -> Result<Value> {
             .filter_map(|e| Some((e.get("node")?.as_u64()?, e.get("von_mises")?.as_f64()?)))
             .fold(None, |best: Option<(u64, f64)>, (n, v)| if best.is_none_or(|b| v > b.1) { Some((n, v)) } else { best })
     });
+    if let (StepResult::Implicit(fieldcraft_solver::StepResult::Frequency(f)), Some(obj)) = (result.as_ref(), out.as_object_mut()) {
+        obj.insert("mass_kind".into(), serde_json::to_value(f.mass_kind).unwrap_or(Value::Null));
+        obj.insert("section_mass_policy".into(), serde_json::to_value(&f.section_mass_policy).unwrap_or(Value::Null));
+    }
     if let (Some((node, value)), Some(obj)) = (peak, out.as_object_mut()) {
         obj.insert("max_von_mises".into(), json!({"node": node, "value": value}));
     }

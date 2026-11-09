@@ -170,7 +170,7 @@ fn imported_static_history_harmonic_preserves_incremental_loads_and_linear_base(
 }
 
 #[test]
-fn transient_base_state_is_explicitly_refused_without_changing_the_model() {
+fn transient_base_state_direct_modal_and_native_roundtrip_keep_incremental_semantics() {
     let mut s = Session::default();
     s.run_script(&serde_json::from_str::<Value>(include_str!("data/transient-rod.json")).unwrap()).unwrap();
     s.execute(
@@ -178,8 +178,69 @@ fn transient_base_state_is_explicitly_refused_without_changing_the_model() {
         &json!({"name":"Preload","procedure":{"type":"static"},"boundary_conditions":["clamp","guide"],"loads":["force"]}),
     )
     .unwrap();
-    let before = s.model.clone();
-    let error = s.execute("model.step.create", &json!({"name":"BasedMotion","base_state":"Preload","procedure":{"type":"transient","time_step":0.01,"increments":10},"boundary_conditions":["clamp","guide"],"loads":["force"]})).unwrap_err().to_string();
-    assert!(error.contains("base_state requires a frequency or harmonic step"), "{error}");
-    assert_eq!(s.model, before);
+    let base = s.execute("solve.static", &json!({"step":"Preload"})).unwrap();
+    assert!((base["max_displacement"]["value"].as_f64().unwrap() - 0.25).abs() < 1e-12);
+    // This linear-static base uses the documented reference K0+Ksigma, not a
+    // finite StVK terminal tangent: EA/L=4, N/L=1, tip consistent mass=rho*AL/3=1.
+    let omega = 5.0_f64.sqrt();
+    let theta = 2. * libm::atan(omega * 0.01 / 2.);
+    let mut saved = Vec::new();
+    for (name, method, amplitude) in [("Direct", "direct", 0.01), ("Modal", "modal", 0.01), ("Zero", "direct", 0.)] {
+        let method = if method == "modal" { json!({"type":"modal","modes":1}) } else { json!({"type":"direct"}) };
+        s.execute("model.step.create", &json!({"name":name,"base_state":"Preload","procedure":{"type":"transient","time_step":0.01,"increments":10,"method":method,"initial_displacement":{"2":[amplitude,0,0]}},"boundary_conditions":["clamp","guide"],"loads":[],"output":["displacement"]})).unwrap();
+    }
+    // Finish the project definition before solving: warning lists inspect all steps.
+    for (name, amplitude) in [("Direct", 0.01), ("Modal", 0.01), ("Zero", 0.)] {
+        s.execute("solve.transient", &json!({"step":name,"mass":"consistent","threads":1})).unwrap();
+        let fieldcraft_engine::StepResult::Implicit(fieldcraft_solver::StepResult::Dynamics(r)) = s.result(name).unwrap().as_ref() else {
+            panic!("dynamics")
+        };
+        assert_eq!(r.frames.len(), 11);
+        for (i, frame) in r.frames.iter().enumerate() {
+            assert!((frame.time.unwrap() - i as f64 * 0.01).abs() < 1e-14);
+            let phase = i as f64 * theta;
+            let u = amplitude * libm::cos(phase);
+            let v = -amplitude * omega * libm::sin(phase);
+            assert!((frame.displacement[1][0] - u).abs() < 1e-12);
+            assert!((frame.velocity[1][0] - v).abs() < 1e-12);
+            assert!((frame.acceleration[1][0] + 5. * u).abs() < 1e-12);
+            if amplitude == 0. {
+                assert!(frame.displacement.iter().chain(&frame.velocity).chain(&frame.acceleration).flatten().all(|x| *x == 0.));
+            }
+        }
+        println!(
+            "{name}: {} frames, final u/v/a={:?}/{:?}/{:?}",
+            r.frames.len(),
+            r.frames.last().unwrap().displacement[1],
+            r.frames.last().unwrap().velocity[1],
+            r.frames.last().unwrap().acceleration[1]
+        );
+        saved.push((name, s.result(name).cloned()));
+    }
+    let path = std::env::temp_dir().join(format!("integrated-based-motion-{}.fieldcraft", std::process::id()));
+    s.execute("file.save_as", &json!({"path":path,"results":true})).unwrap();
+    let mut reopened = Session::default();
+    reopened.execute("file.open", &json!({"path":path})).unwrap();
+    assert_eq!(s.model, reopened.model);
+    for (name, old) in saved {
+        assert_eq!(reopened.result(name).cloned(), old);
+        reopened.execute("solve.transient", &json!({"step":name,"mass":"consistent","threads":1})).unwrap();
+        assert_eq!(reopened.result(name).cloned(), old);
+    }
+    // Native tangent dynamics are supported; the commercial deck mapping is not.
+    let before = reopened.model.clone();
+    let error = fieldcraft_decks::abaqus::write(&reopened.model, fieldcraft_model::units::Preset::MKgS).unwrap_err().to_string();
+    assert!(error.contains("rod2 requires lumped"), "{error}");
+    // Select the deck's supported rod mass mapping to reach its separate base-state guard.
+    let error = fieldcraft_decks::abaqus::write_resolved_with_mass(
+        &reopened.model,
+        &reopened.model.resolve().unwrap(),
+        fieldcraft_model::units::Preset::MKgS,
+        fieldcraft_model::MassKind::Lumped,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("base_state"), "{error}");
+    assert_eq!(reopened.model, before);
+    std::fs::remove_file(path).unwrap();
 }

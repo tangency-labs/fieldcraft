@@ -939,11 +939,11 @@ fn nonlinear_plastic_steps_and_what_is_refused() {
 fn buckling_steps() {
     let mut m = cantilever_mesh();
     m.add_load("end", Load::Force { target: Target::Set("tip".into()), vector: [-100.0, 0.0, 0.0], distribution: Distribution::Total }).unwrap();
-    m.add_step(step("Buckle", Procedure::Buckle { modes: 4, shift: None }, &["clamp"], &["end"]), None).unwrap();
+    m.add_step(step("Buckle", Procedure::Buckle { modes: 4, shift: None, follower_pressure: false }, &["clamp"], &["end"]), None).unwrap();
     let deck = abaqus::write(&m).unwrap();
     assert!(deck.contains("*BUCKLE, EIGENSOLVER=LANCZOS\n4\n") && deck.contains("*CLOAD"), "{deck}");
     let mut shifted = m.clone();
-    shifted.replace_step(step("Buckle", Procedure::Buckle { modes: 4, shift: Some(2.0) }, &["clamp"], &["end"])).unwrap();
+    shifted.replace_step(step("Buckle", Procedure::Buckle { modes: 4, shift: Some(2.0), follower_pressure: false }, &["clamp"], &["end"])).unwrap();
     assert!(abaqus::write(&shifted).unwrap_err().to_string().contains("shift"));
     m.add_step(step("Bend", Procedure::Static {}, &["clamp"], &["end"]), Some("Buckle")).unwrap();
     assert!(abaqus::write(&m).unwrap_err().to_string().contains("after a general step"));
@@ -970,4 +970,15 @@ fn arc_length_steps() {
     let spherical = NonlinearStatic { arc_length: Some(ArcLength { constraint: ArcConstraint::Spherical, ..arc }), ..NonlinearStatic::default() };
     m.replace_step(step("Snap", Procedure::NonlinearStatic(spherical), &["clamp"], &["end"])).unwrap();
     assert!(abaqus::write(&m).is_err());
+}
+
+#[test]
+fn modal_pressure_tangent_is_not_silently_exported_as_abaqus() {
+    let mut m = cantilever_mesh();
+    m.add_step(step("Base", Procedure::Static {}, &["clamp"], &[]), None).unwrap();
+    let mut modes = step("Modes", Procedure::Frequency { modes: 2, min_hz: None, max_hz: None }, &["clamp"], &[]);
+    modes.base_state = Some("Base".into());
+    modes.perturbation_follower_pressure = true;
+    m.add_step(modes, None).unwrap();
+    assert!(abaqus::write(&m).unwrap_err().to_string().contains("modal pressure tangent"));
 }

@@ -415,3 +415,128 @@ coefficient byte volume, not measured DRAM traffic.
 
 The `backsolve_lane_group_inclusive` and `backsolve_inclusive` spans may overlap across
 workers. Their sum is accumulated elapsed time, not CPU time or command wall time.
+
+Set `FIELDCRAFT_STATIC_RESIDUAL=1` to report `FIELDCRAFT_STATIC_RESIDUAL` on stderr:
+the reduced-system residual norm, right-hand-side norm, and their ratio, computed
+from the actual constrained stiffness and solved displacement. A zero right-hand-side
+norm makes the ratio undefined (`NaN`). This opt-in diagnostic retains the reduced
+matrix and right-hand side; its time and memory belong to the complete static command.
+It does not add fields to the result archive.
+
+With solver timing enabled, eligible wide Cholesky updates emit
+`FIELDCRAFT_DENSE_WORK`: cache-panel variant flag, output rows, output columns,
+reduction width, padded multiply/add FLOPs, and an upper bound on extra panel-merge
+additions including padded columns. Counts describe logical work, not hardware
+traffic. `dense_update_reference` spans can overlap and their sum is accumulated
+elapsed time, not factorization wall time or CPU time. The cache-panel experiment
+is retained only in solver tests; production uses the original full-width update.
+
+For a controlled dense-dispatch diagnostic, set `FIELDCRAFT_DENSE_PROFILE=1`.
+`FIELDCRAFT_DENSE_PROFILE` records output rows/columns, reduction width, tile count,
+Y packing wall time, dispatch-to-join wall time, and accumulated X packing, kernel,
+and whole-task elapsed times, followed by the longest task elapsed time. The kernel
+interval includes output allocation and storing its dense tile. Task intervals can
+include preemption and overlap each other: they are neither CPU time nor pure waiting.
+Dispatch-to-join includes actual work, scheduling and joining; subtracting accumulated
+task times from it does not measure scheduler overhead.
+
+With that profiling enabled, `FIELDCRAFT_DENSE_SERIAL=1` executes the identical dense
+output tiles sequentially. It changes only their dispatch, retaining tile boundaries,
+per-element arithmetic and the supernode dependency order. This is a diagnostic
+control, not a production optimization. Subtree parallelism remains active, so the
+comparison measures the net effect of dense-task concurrency in that context.
+
+Supernode timing also emits `FIELDCRAFT_SUPERNODE_DETAIL`: node index, accumulated
+product-to-factor writeback wall time, written scalar entries, and diagonal panel
+factorization time. The writeback count excludes the separate contiguous below-panel
+copy. Existing assembly and product intervals include their nested operations; do
+not add them together. `numeric_subtrees` and `numeric_top` partition the factor's
+subtree-dispatch and serial top-node phases, apart from setup and error handling.
+
+## Experimental multilevel ordering
+
+There is an opt-in experimental third candidate for `fill_reducing_order`, in
+`ordering_multilevel.rs`. Default settings retain the coordinate and graph-level
+candidates. The experiment contracts heavy edges, grows a balanced coarse partition,
+then refines it during uncoarsening with locked single-vertex moves and best-prefix
+rollback. Crossing edges yield a vertex separator through bipartite matching and
+minimum vertex cover; child parts precede their separator. Leaves of at most 64
+vertices use quotient-graph approximate-degree bounds. This is a bounded variant,
+without supervariable amalgamation or a claim to reproduce another AMD package.
+
+Visits, adjacency, coarse ids, eight starting vertices and all ties are deterministic.
+There are at most 32 coarsening levels, four refinement passes per level and 64
+separator levels. Disconnected components are handled separately; dense or
+unsplittable parts fall back to their stable input order. The third candidate is
+enabled for standalone linear static and unprestressed frequency solves, with numerical, convergence and thread-determinism checks.
+Complete solve-command measurements determine the benefit. Include ordering and diagnostics
+in that total; a local ordering budget alone cannot determine the net benefit.
+Small separators alone are not enough.
+
+The deterministic least-fill choice compares all three candidates and keeps the
+existing coordinate/graph candidate on a tie. `FIELDCRAFT_ORDERING_EXPERIMENT=legacy`
+is a diagnostic override for comparisons with the original two-candidate selection;
+no environment setting can enable the third candidate in an excluded analysis.
+`FIELDCRAFT_ORDERING_TRACE=1` reports separator depth, part/child/separator sizes,
+coarsening levels and cut weight. The ignored `measure_multilevel_graph` harness
+reports exact node-graph column counts, three-DOF expansion and actual supernode
+row fronts separately. None of these diagnostics changes the result-file format.
+
+Algorithm sources: [Karypis and Kumar (1998)](https://people.eecs.berkeley.edu/~jordan/sail/readings/karypis-kumar.pdf),
+[Fiduccia and Mattheyses (1982)](https://ics-websites.science.uu.nl/docs/vakken/ea/pdf/FidMath_GBP.pdf),
+and [Amestoy, Davis and Duff (1996)](https://people.engr.tamu.edu/davis/publications_files/An_Approximate_Minimum_Degree_Ordering_Algorithm.pdf).
+This is an independent implementation; no external partitioner is linked or vendored.
+
+Frequency solves automatically assign the existing fixed-seed
+random stream to the same physical free degrees of freedom as the original
+coordinate/graph selection, including random columns replacing lost rank. The
+factor may use a different equation order, but the physical starting block remains
+fixed. It does not relabel returned modes, aggregate mode clusters or loosen any
+convergence check. Building this coordinate map costs time and must remain inside
+the complete command measurement. No opt-in flag is required for the supported
+production paths.
+
+Diagnostic controls for isolating finite-iteration effects are
+`FIELDCRAFT_LANCZOS_TOLERANCE` (frequency only, bounded to 1e-13 through the original
+1e-9, default unchanged) and `FIELDCRAFT_RITZ_TRACE=1` (basis size, Ritz index,
+transformed relative residual bound and tolerance). A transformed residual bound
+is not the physical residual `||K phi - lambda M phi|| / ||K phi||`. Tighter
+convergence is a diagnostic reference, not permission to replace a frozen baseline;
+record its extra iterations and full command time. These controls do not change
+result identifiers or payloads.
+
+The production choice is scoped to standalone linear static and unprestressed
+frequency assembly. Buckling and its preload, nonlinear, heat, coupled thermal,
+prestressed analyses and their preloads, harmonic/random/transient operators,
+response spectra and sensitivities retain legacy ordering, including when the
+experimental environment variables are set. The first unrestricted diagnostic moved two unrelated oracle fixtures; those failures
+are not waived, and the third ordering is not validated for those analysis paths.
+
+If a trial has adjacent squared frequencies separated by at most `sqrt(epsilon)`
+relative to their scale, or a mode's summed translational effective mass is at
+most `128 * epsilon` of total mass, the entire frequency solve is repeated with
+legacy ordering. These are conservative fallback triggers, not relaxed result
+acceptance bands. No modes are relabeled, rotated or combined. The first solve's
+storage is released before the retry. Warnings report its actual iterations and
+basis size; convergence fields describe the returned legacy solve. Full command
+time includes both attempts. A comparison override requesting legacy ordering
+never retries. This preserves individual modes in numerically ambiguous cases
+at the cost of extra work for those cases.
+
+A model containing any pretension section retains legacy ordering for every step,
+including a standalone static or frequency step without a named base state.
+
+The FM refinement checks the remaining partition capacity against the smallest
+vertex weight before searching a gain heap. If no vertex can fit, it returns no
+move without draining and restoring the heap. This preserves the weighted gain
+ordering, stale-entry rules and fixed tie breaks. The diagnostic override
+`FIELDCRAFT_ORDERING_REFINEMENT=baseline` retains the original heap scan for
+same-program comparisons; it does not select a different permutation.
+
+`FIELDCRAFT_ORDERING_PROFILE=1` reports exclusive serial phase totals for
+canonical/induced graph construction, coarsening, initial growth, refinement,
+separator extraction, leaf ordering and uncoarsening. `recursion_other` is the
+remaining control/allocation/component work; `total` covers the complete
+multilevel ordering. Input file decoding and later symbolic factor counts are
+outside that total. FM query counts and impossible-query time are diagnostic
+subsets of refinement, not additional wall time to add to the phase sum.

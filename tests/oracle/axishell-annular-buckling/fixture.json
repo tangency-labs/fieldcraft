@@ -1,0 +1,9 @@
+{
+  "note": "FieldCraft's accepted results for this case, written by `cargo xtask oracle --bless`. A result outside its band fails CI.",
+  "values": {
+    "lambda": {
+      "band": 9.391324277507324e-8,
+      "value": 93.91324277507324
+    }
+  }
+}

@@ -1,19 +1,33 @@
 {
- "title": "MacNeal–Harder twisted beam",
- "kind": "benchmark",
- "source": "MacNeal and Harder, 'A proposed standard set of problems to test finite element accuracy', Finite Elements in Analysis and Design 1 (1985) 3–20, Fig. 6 (p. 8), Table 3 (p. 10)",
- "status": "pending",
- "requires": "a helical shell mesh: mesh.block's 2D form is planar and takes z = 0, so the twisted strip must be written node by node (as scordelis-lo-roof-shell and pinched-cylinder are), or mapped blocks must gain helical edges",
- "quantities": [
-  {
-   "id": "in_plane",
-   "quantity": "tip displacement along the in-plane load",
-   "value": 0.005424
-  },
-  {
-   "id": "out_of_plane",
-   "quantity": "tip displacement along the out-of-plane load",
-   "value": 0.001754
-  }
- ]
+  "title": "MacNeal\u2013Harder twisted beam",
+  "kind": "benchmark",
+  "source": "MacNeal and Harder, 'A proposed standard set of problems to test finite element accuracy', Finite Elements in Analysis and Design 1 (1985) 3\u201320, Fig. 6 (p. 8), Table 3 (p. 10)",
+  "quantities": [
+    {
+      "id": "in_plane",
+      "quantity": "tip displacement along the in-plane load",
+      "value": 0.005424,
+      "tolerance": {
+        "relative": 0.02
+      },
+      "measure": {
+        "from": "In",
+        "pointer": "/nodes/0/displacement/2"
+      },
+      "reason": "Two percent public-reference gate for this quadratic shell mesh; not an equivalence claim to a commercial element."
+    },
+    {
+      "id": "out_of_plane",
+      "quantity": "tip displacement along the out-of-plane load",
+      "value": 0.001754,
+      "tolerance": {
+        "relative": 0.02
+      },
+      "measure": {
+        "from": "Out",
+        "pointer": "/nodes/0/displacement/1"
+      },
+      "reason": "Two percent public-reference gate for this quadratic shell mesh; not an equivalence claim to a commercial element."
+    }
+  ]
 }

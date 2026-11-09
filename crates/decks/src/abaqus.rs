@@ -232,6 +232,7 @@ pub fn write_resolved_with_mass(model: &Model, r: &Resolved, units: Preset, mass
     d.contacts(model, r)?;
     d.ties(model)?;
     d.pretension_sections(model, r)?;
+    d.pretension_connections(model, r)?;
     d.equations(model, r)?;
     d.out.push_str(&crate::foundation::abaqus(model, r)?);
     d.dynamics_data(model)?;
@@ -289,6 +290,14 @@ fn validate_pretension_chain(model: &Model) -> Result<()> {
 
 /// The Abaqus element type of an element of `kind` in `section`, or why there is none.
 pub fn element_type(kind: ElementKind, section: &Section) -> std::result::Result<String, String> {
+    if section.formulation.axisymmetric_shell {
+        return Err("axisymmetric conical shell / faithful SAX1 mapping is not supported by this writer".into());
+    }
+    if section.formulation.solid_shell {
+        return Err(
+            "SC8R is a reduced-integration continuum shell, not the full-integration ANS/EAS10 solid-shell; faithful export unavailable".into()
+        );
+    }
     use ElementKind as K;
     use SectionKind as S;
     let f = section.formulation;
@@ -411,6 +420,12 @@ fn elements_by_type<'m>(model: &'m Model, r: &Resolved) -> Result<BTreeMap<Strin
 /// Everything else the format cannot express: case-only name clashes, orthotropic materials
 /// outside solids, distributing couplings with a free translation.
 fn check_expressible(model: &Model) -> Result<()> {
+    if model.steps().iter().any(|s| s.perturbation_follower_pressure) {
+        return Err(Error::Unsupported {
+            format: FORMAT,
+            what: "quadratic-shell modal pressure tangent has no faithful Abaqus shell mapping".into(),
+        });
+    }
     let mut bad = BTreeSet::new();
     let namespaces: [(&str, Vec<&str>); 4] = [
         ("sets", model.sets().keys().map(String::as_str).collect()),
@@ -1181,6 +1196,51 @@ impl Deck {
                 .sets
                 .get(&p.second)
                 .ok_or_else(|| Error::Unsupported { format: FORMAT, what: format!("pretension `{name}`: missing second set `{}`", p.second) })?;
+            if let Some(face_name) = &p.face {
+                let face_set = r.sets.get(face_name).ok_or_else(|| Error::Unsupported {
+                    format: FORMAT,
+                    what: format!("pretension `{name}`: missing element-face set `{face_name}`"),
+                })?;
+                if face_set.faces.is_empty() {
+                    return Err(Error::Unsupported { format: FORMAT, what: format!("pretension `{name}`: element-face set `{face_name}` is empty") });
+                }
+                for face in &face_set.faces {
+                    let labels = model
+                        .face_nodes(*face)
+                        .ok_or_else(|| Error::Unsupported { format: FORMAT, what: format!("pretension `{name}`: invalid internal face") })?;
+                    let nodes: BTreeSet<_> = labels.into_iter().collect();
+                    let neighbours = model
+                        .elements()
+                        .iter()
+                        .filter(|(label, e)| {
+                            **label != face.element
+                                && e.kind.dimension() == 3
+                                && e.kind.faces().iter().any(|f| f.iter().filter_map(|i| e.nodes.get(*i)).copied().collect::<BTreeSet<_>>() == nodes)
+                        })
+                        .count();
+                    if neighbours != 1 {
+                        return Err(Error::Unsupported {
+                            format: FORMAT,
+                            what: format!(
+                                "pretension `{name}`: internal face must share nodes with exactly one neighbour; coincident coordinates but no element connectivity are not a continuous cut"
+                            ),
+                        });
+                    }
+                }
+                let surface = format!("FC-PRET-{name}");
+                let control = r.reference_point_nodes.get(&p.control).ok_or_else(|| Error::Unsupported {
+                    format: FORMAT,
+                    what: format!("pretension `{name}`: control point `{}` has no node", p.control),
+                })?;
+                self.comment(&format!("Native continuous internal face `{name}` from set `{face_name}`; control U1 is cut tightening adjustment"));
+                self.line(&format!("*SURFACE, NAME={surface}, TYPE=ELEMENT"));
+                for ef in &face_set.faces {
+                    self.line(&format!("{}, S{}", ef.element, ef.face));
+                }
+                self.line(&format!("*PRE-TENSION SECTION, SURFACE={surface}, NODE={control}"));
+                self.numbers_line("", &p.normal)?;
+                continue;
+            }
             let nodes = |set: &fieldcraft_model::ResolvedSet| -> BTreeSet<u32> { set.nodes.iter().copied().collect() };
             let first_nodes = nodes(first);
             let second_nodes = nodes(second);
@@ -1240,6 +1300,50 @@ impl Deck {
                 self.line(&format!("{element}, S{face}"));
             }
             self.line(&format!("*PRE-TENSION SECTION, SURFACE={surface}, NODE={control}"));
+        }
+        Ok(())
+    }
+
+    /// Keep coincident cut nodes connected in the transverse directions while
+    /// leaving the scalar normal DOF to the native pretension section.
+    fn pretension_connections(&mut self, model: &Model, r: &Resolved) -> Result<()> {
+        for (name, p) in model.pretensions() {
+            if p.face.is_some() {
+                continue;
+            }
+            let Some(first) = r.sets.get(&p.first) else { continue };
+            let Some(second) = r.sets.get(&p.second) else { continue };
+            let connected = model
+                .elements()
+                .values()
+                .any(|e| e.nodes.iter().any(|n| first.nodes.contains(n)) && e.nodes.iter().any(|n| second.nodes.contains(n)));
+            if !connected {
+                return Err(Error::Unsupported {
+                    format: FORMAT,
+                    what: format!(
+                        "pretension `{name}`: cut halves have coincident coordinates but no element connectivity; native PRE-TENSION SECTION cannot express this disconnected topology"
+                    ),
+                });
+            }
+            for &a in &first.nodes {
+                let Some(na) = model.nodes().get(&a) else { continue };
+                const COINCIDENT_TOLERANCE: f64 = 1e-12; // unit-factors: dimensionless geometric tolerance
+                let Some(&b) = second.nodes.iter().find(|&&b| {
+                    model.nodes().get(&b).is_some_and(|nb| na.xyz.iter().zip(nb.xyz).all(|(x, y)| (*x - y).abs() <= COINCIDENT_TOLERANCE))
+                }) else {
+                    return Err(Error::Unsupported {
+                        format: FORMAT,
+                        what: format!("pretension `{name}`: cut nodes have no coincident partner for transverse continuity"),
+                    });
+                };
+                for dof in 1..=3 {
+                    if p.normal[dof - 1].abs() < COINCIDENT_TOLERANCE {
+                        self.line("*EQUATION");
+                        self.line("2");
+                        self.line(&format!("{a}, {dof}, 1.0, {b}, {dof}, -1.0"));
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -1606,6 +1710,7 @@ impl Deck {
         let mut base_bcs = initial;
         let mut base_loads: BTreeSet<String> = BTreeSet::new();
         let mut written = Written::default();
+        let mut had_pretension_force = false;
         for (index, step) in steps.iter().enumerate() {
             self.comment(&format!("Step {}", step.name));
             match step.procedure {
@@ -1675,18 +1780,28 @@ impl Deck {
                     } else {
                         self.step_boundaries(model, r, &base_bcs, &step.boundary_conditions)?;
                     }
-                    if step.loads == base_loads {
+                    if step.loads == base_loads && !had_pretension_force {
                         self.comment("loads: as in the previous general step");
                     } else {
                         let loads = StepLoads::new(model, r, step, &everything);
-                        self.step_loads(&loads, written)?;
+                        // Native general-step loads persist. Clear the preceding
+                        // scalar cut force even when ordinary loads are unchanged,
+                        // then restate those loads and this step's cut controls.
+                        self.step_loads(&loads, Written { concentrated: written.concentrated || had_pretension_force, ..written })?;
                         written = loads.written();
                     }
                     self.pretension_step(model, r, step)?;
+                    had_pretension_force = step.pretension.values().any(|c| matches!(c, fieldcraft_model::PretensionControl::Force { .. }));
                     base_bcs.clone_from(&step.boundary_conditions);
                     base_loads.clone_from(&step.loads);
                 }
-                Procedure::Buckle { modes, shift } => {
+                Procedure::Buckle { modes, shift, follower_pressure } => {
+                    if follower_pressure {
+                        return Err(Error::Unsupported {
+                            format: FORMAT,
+                            what: "quadratic-shell follower-pressure buckling export: formulation correspondence not established".into(),
+                        });
+                    }
                     // Abaqus's buckling base state is the end of the previous general step;
                     // FieldCraft's steps all start from the undeformed, unloaded model.
                     if !base_loads.is_empty()
@@ -1831,7 +1946,7 @@ mod pretension_chain_tests {
         model
             .add_pretension(
                 "bolt",
-                PretensionSection { first: "first".into(), second: "second".into(), normal: [1.0, 0.0, 0.0], control: "control".into() },
+                PretensionSection { first: "first".into(), second: "second".into(), face: None, normal: [1.0, 0.0, 0.0], control: "control".into() },
             )
             .unwrap();
         model.add_step(Step::new("Before", Procedure::Frequency { modes: 1, min_hz: None, max_hz: None }), None).unwrap();

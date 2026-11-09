@@ -313,15 +313,21 @@ impl Model {
             if r.elements.is_empty() {
                 d.error(&subject, format!("set `{}` has no elements", sec.set));
             }
-            let fits = |k: ElementKind| match sec.kind {
-                SectionKind::Solid {} => k.dimension() == 3,
-                SectionKind::Shell { .. }
-                | SectionKind::CompositeShell { .. }
-                | SectionKind::PlaneStress { .. }
-                | SectionKind::PlaneStrain { .. }
-                | SectionKind::Axisymmetric {} => k.dimension() == 2,
-                SectionKind::Beam { .. } => k == ElementKind::Beam2,
-                SectionKind::Rod { .. } => matches!(k, ElementKind::Rod2 | ElementKind::Rod3),
+            let fits = |k: ElementKind| {
+                if sec.formulation.axisymmetric_shell {
+                    k == ElementKind::Beam2
+                } else {
+                    match sec.kind {
+                        SectionKind::Solid {} => k.dimension() == 3,
+                        SectionKind::Shell { .. }
+                        | SectionKind::CompositeShell { .. }
+                        | SectionKind::PlaneStress { .. }
+                        | SectionKind::PlaneStrain { .. }
+                        | SectionKind::Axisymmetric {} => k.dimension() == 2,
+                        SectionKind::Beam { .. } => k == ElementKind::Beam2,
+                        SectionKind::Rod { .. } => matches!(k, ElementKind::Rod2 | ElementKind::Rod3),
+                    }
+                }
             };
             // The linear element with an incompatible-modes formulation for this kind of section.
             let incompatible_kind = if sec.kind.is_planar() { ElementKind::Quad4 } else { ElementKind::Hex8 };
@@ -540,6 +546,11 @@ impl Model {
         }
 
         for (name, p) in &self.pretensions {
+            if let Some(face) = &p.face
+                && resolved.sets.get(face).is_none_or(|s| s.faces.is_empty())
+            {
+                d.error(format!("pretension `{name}`"), format!("internal cut set `{face}` has no element faces"));
+            }
             for set in [&p.first, &p.second] {
                 if resolved.sets.get(set).is_none_or(|s| s.nodes.is_empty()) {
                     d.error(format!("pretension `{name}`"), format!("cut set `{set}` has no nodes"));
@@ -550,6 +561,7 @@ impl Model {
             }
             for s in &self.steps {
                 if !matches!(s.procedure, Procedure::Static {} | Procedure::NonlinearStatic(_) | Procedure::Frequency { .. } | Procedure::Harmonic(_))
+                    && !(matches!(s.procedure, Procedure::Transient(_)) && s.base_state.is_some())
                 {
                     d.error(format!("step `{}`", s.name), format!("pretension `{name}` is unsupported in this procedure"));
                 }

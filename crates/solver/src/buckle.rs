@@ -25,9 +25,10 @@
 //!
 //! Modes are scaled to a largest component of 1 (positive). Shells use the small-slope flat
 //! plate initial-stress operator of [`fieldcraft_fem::shell::Shell::plate_geometric_stiffness`].
-//! Their reference surfaces must be coplanar and their preload must stay flat; curved shells,
-//! pre-buckling bending (including free extension–bending coupling), trusses and beams are
-//! refused. This is not a finite-rotation shell tangent or a follower-load analysis.
+//! That legacy plate path requires a flat preload. Quadratic curved shells use
+//! the Green-strain/director Hessian. An explicit follower_pressure step option
+//! adds conservative load stiffness on their reference faces. Nonconservative
+//! pressure, finite-rotation equilibrium, trusses and beams remain refused.
 
 use std::collections::BTreeMap;
 
@@ -113,7 +114,7 @@ pub fn solve_buckle(model: &Model, step: Option<&str>, limits: &Limits) -> Resul
     // A job cancelled before it starts stops here, before any setup work.
     fieldcraft_model::progress::check()?;
     let step = model.select_step(step, |p| matches!(p, Procedure::Buckle { .. }), "buckling")?;
-    let Procedure::Buckle { modes, shift } = step.procedure else {
+    let Procedure::Buckle { modes, shift, follower_pressure } = step.procedure else {
         return Err(Error::Internal("buckling step".into()));
     };
     step.procedure.validate()?;
@@ -139,8 +140,23 @@ pub fn solve_buckle(model: &Model, step: Option<&str>, limits: &Limits) -> Resul
         return Err(Error::Invalid("every degree of freedom is held; there is nothing to buckle".into()));
     }
     let k = assemble(&mesh, &graph, None)?.k;
-    let kg = initial_stress_stiffness(&mesh, &graph, &preload)?;
-    let [kff, gff] = red.reduce([&k, &kg])?;
+    let mut kg = initial_stress_stiffness(&mesh, &graph, &preload)?;
+    if follower_pressure {
+        if !red.is_selection() {
+            return Err(Error::NotSupported("follower-pressure buckling with multipoint/inclined constraints".into()));
+        }
+        let load = pressure_stiffness(model, &resolved, &mesh, step, &graph)?;
+        let [free_load] = red.reduce([&load])?;
+        conservative_pressure(&free_load)?;
+        kg = kg.add_scaled(1.0, &load)?;
+        warnings.push(
+            "quadratic-shell follower pressure: conservative reference-surface load stiffness included; no finite-preload geometry update".into(),
+        );
+    }
+    let [kff, mut gff] = red.reduce([&k, &kg])?;
+    if follower_pressure {
+        gff.mirror_lower();
+    }
     drop((k, kg));
     if gff.val.iter().all(|v| *v == 0.0) {
         return Err(Error::Invalid(format!("step `{}` puts no stress into the model, so nothing can buckle (give it loads)", step.name)));
@@ -195,6 +211,8 @@ pub fn solve_buckle(model: &Model, step: Option<&str>, limits: &Limits) -> Resul
         stats: Stats { dofs: mesh.dofs(), equations: neq, factor_entries: entries, lanczos_vectors: pairs.basis },
         warnings,
         buckling: Some(buckling),
+        mass_kind: None,
+        section_mass_policy: None,
     })
 }
 
@@ -208,12 +226,40 @@ pub(crate) fn initial_stress_stiffness(mesh: &Mesh, graph: &NodeGraph, preload: 
     if preload.nonlinear.is_some() {
         return Err(Error::NotSupported("initial-stress assembly from nonlinear output: use the converged material tangent".into()));
     }
-    if let Some(t) = mesh.trusses.first() {
-        return Err(Error::NotSupported(format!("truss {}: initial-stress stiffness is not implemented", t.label)));
+    if let Some(t) = mesh.trusses.iter().find(|t| t.kind != fieldcraft_model::ElementKind::Rod2) {
+        return Err(Error::NotSupported(format!("truss {}: initial-stress stiffness requires rod2", t.label)));
     }
     flat_shells(mesh)?;
     let stresses: BTreeMap<u32, Vec<[f64; 6]>> = preload.elements.iter().map(|e| (e.label, e.points.iter().map(|p| p.stress).collect())).collect();
     let mut kg = graph.zero_matrix(&mesh.layout);
+    // Reference-geometry initial stress: delta²W_sigma = (N/L) delta d . delta d.
+    // The small-strain preload determines N=EA*(n.delta u)/L; no finite-strain
+    // material tangent is inferred from averaged output stresses.
+    for e in &mesh.trusses {
+        let dx: [f64; 3] = std::array::from_fn(|c| e.xyz[1][c] - e.xyz[0][c]);
+        let l2: f64 = dx.iter().map(|v| v * v).sum();
+        let l = l2.sqrt();
+        if !l.is_finite() || l <= 0. {
+            return Err(Error::Invalid("rod preload reference length".into()));
+        }
+        let a = preload.displacement.get(e.nodes[0]).ok_or_else(|| Error::Internal("rod preload node".into()))?;
+        let b = preload.displacement.get(e.nodes[1]).ok_or_else(|| Error::Internal("rod preload node".into()))?;
+        let strain: f64 = (0..3).map(|c| dx[c] * (b[c] - a[c]) / l2).sum();
+        let force = e.young * e.area * strain;
+        if !force.is_finite() {
+            return Err(Error::Invalid("rod preload axial force overflow".into()));
+        }
+        let mut matrix = vec![0.; 36];
+        for i in 0..6 {
+            for j in 0..6 {
+                if i % 3 == j % 3 {
+                    matrix[i * 6 + j] = if i / 3 == j / 3 { force / l } else { -force / l };
+                }
+            }
+        }
+        add_block(&mut kg, &mesh.layout, &e.nodes, fieldcraft_fem::DofSet::TRANSLATIONS, &matrix)?;
+    }
+
     let matrices = fieldcraft_parallel::map_grained(mesh.elements.len(), crate::analysis::GRAIN, |i| -> Result<_> {
         let e = mesh.elements.get(i).ok_or_else(|| Error::Internal("element index".into()))?;
         let kernel = e.kernel()?;
@@ -227,7 +273,6 @@ pub(crate) fn initial_stress_stiffness(mesh: &Mesh, graph: &NodeGraph, preload: 
     let matrices = fieldcraft_parallel::map_grained(mesh.structural.len(), crate::analysis::GRAIN, |i| -> Result<_> {
         let e = mesh.structural.get(i).ok_or_else(|| Error::Internal("shell index".into()))?;
         let kernel = e.kernel()?;
-        let normal = shell_normal(&kernel, e.label)?;
         let u: Vec<[f64; 6]> = e
             .nodes
             .iter()
@@ -237,19 +282,108 @@ pub(crate) fn initial_stress_stiffness(mesh: &Mesh, graph: &NodeGraph, preload: 
                 [u[0], u[1], u[2], r[0], r[1], r[2]]
             })
             .collect();
-        flat_preload(e, normal, &u)?;
+        let curved = match &kernel {
+            StructuralKernel::Mitc8(s) => !s.is_flat().map_err(|err| Error::element(e.label, err))?,
+            StructuralKernel::Mitc6(s) => !s.is_flat().map_err(|err| Error::element(e.label, err))?,
+            _ => false,
+        };
+        if !curved {
+            let normal = shell_normal(&kernel, e.label)?;
+            flat_preload(e, normal, &u)?;
+        }
         match kernel {
             StructuralKernel::Shell(s) => s.plate_geometric_stiffness(u.as_flattened()),
-            StructuralKernel::Mitc8(s) => s.plate_geometric_stiffness(u.as_flattened()),
-            StructuralKernel::Mitc6(s) => s.plate_geometric_stiffness(u.as_flattened()),
+            StructuralKernel::Mitc8(s) => {
+                if curved {
+                    s.geometric_stiffness(u.as_flattened())
+                } else {
+                    s.plate_geometric_stiffness(u.as_flattened())
+                }
+            }
+            StructuralKernel::Mitc6(s) => {
+                if curved {
+                    s.geometric_stiffness(u.as_flattened())
+                } else {
+                    s.plate_geometric_stiffness(u.as_flattened())
+                }
+            }
+            StructuralKernel::Axishell(s) => s.plate_geometric_stiffness(&u.iter().flat_map(|v| [v[0], v[1], v[5]]).collect::<Vec<_>>()),
             StructuralKernel::Beam(_) => return Err(Error::NotSupported(format!("beam {} in buckling", e.label))),
         }
         .map_err(|err| Error::element(e.label, err))
     });
     for (e, m) in mesh.structural.iter().zip(matrices) {
-        add_block(&mut kg, &mesh.layout, &e.nodes, Structural::KINDS, &m?.data)?;
+        add_block(&mut kg, &mesh.layout, &e.nodes, e.kinds(), &m?.data)?;
     }
     Ok(kg)
+}
+
+/// Schweizerhof-Ramm (1984), reused from fem::face, at zero displacement.
+/// A shell face here is the nodal reference surface; offset pressure faces and
+/// thickness-face follower moments are outside this limited implementation.
+pub(crate) fn pressure_stiffness(
+    model: &Model,
+    resolved: &fieldcraft_model::Resolved,
+    mesh: &Mesh,
+    step: &fieldcraft_model::Step,
+    graph: &NodeGraph,
+) -> Result<Csr> {
+    let mut out = graph.zero_matrix(&mesh.layout);
+    let mut count = 0;
+    for name in &step.loads {
+        let Some(fieldcraft_model::Load::Pressure { set, magnitude }) = model.load(name) else { continue };
+        for face in resolved.sets.get(set).map(|s| s.faces.as_slice()).unwrap_or_default() {
+            let e = mesh
+                .structural_index(face.element)
+                .and_then(|i| mesh.structural.get(i))
+                .ok_or_else(|| Error::NotSupported("follower-pressure stiffness requires MITC8/MITC6 shell faces".into()))?;
+            if !matches!(e.kind, fieldcraft_model::ElementKind::Quad8 | fieldcraft_model::ElementKind::Tri6) {
+                return Err(Error::NotSupported("follower-pressure stiffness requires MITC8/MITC6 shell faces".into()));
+            }
+            let offset = match &e.section {
+                crate::system::Section::Shell(s) => s.eccentricity,
+                crate::system::Section::Laminated { offset, .. } => *offset,
+                _ => return Err(Error::NotSupported("follower-pressure stiffness section".into())),
+            };
+            if offset != 0.0 {
+                return Err(Error::NotSupported("offset-shell follower-pressure stiffness".into()));
+            }
+            let labels = model.face_nodes(*face).ok_or_else(|| Error::Invalid("pressure face connectivity".into()))?;
+            let nodes: Vec<_> = labels.iter().map(|l| mesh.node(*l).ok_or_else(|| Error::Invalid("pressure node".into()))).collect::<Result<_>>()?;
+            let xyz: Vec<_> = nodes
+                .iter()
+                .map(|n| mesh.xyz.get(*n).copied().ok_or_else(|| Error::Internal("pressure coordinate".into())))
+                .collect::<Result<_>>()?;
+            let (_, k) = fieldcraft_fem::face::follower_pressure(&xyz, &vec![[0.0; 3]; nodes.len()], *magnitude)
+                .map_err(|err| Error::element(e.label, err))?;
+            add_block(&mut out, &mesh.layout, &nodes, fieldcraft_fem::DofSet::TRANSLATIONS, &k)?;
+            count += 1;
+        }
+    }
+    if count == 0 {
+        return Err(Error::Invalid("follower_pressure needs a quadratic shell pressure face load".into()));
+    }
+    Ok(out)
+}
+
+pub(crate) fn conservative_pressure(k: &Csr) -> Result<()> {
+    let mut total = 0.0_f64;
+    let mut skew = 0.0_f64;
+    for i in 0..k.n {
+        let (cols, vals) = k.row(i);
+        for (&j, &v) in cols.iter().zip(vals) {
+            let (other, values) = k.row(j);
+            let t = other.binary_search(&i).ok().and_then(|p| values.get(p)).copied().unwrap_or(0.0);
+            total = total.max(v.abs());
+            skew = skew.max((v - t).abs());
+        }
+    }
+    if skew > 1e-10 * total {
+        return Err(Error::NotSupported(
+            "nonconservative follower-pressure stiffness: free-DOF load stiffness is nonsymmetric; close or support the pressure boundary".into(),
+        ));
+    }
+    Ok(())
 }
 
 // A geometric applicability tolerance, relative to the plate extent or preload motion.
@@ -258,11 +392,13 @@ const FLAT_TOLERANCE: f64 = 1e-8;
 /// All shell reference surfaces lie in one plane. Opposite element normals are permitted:
 /// their layups and signed resultants have already been interpreted in their own frames.
 fn flat_shells(mesh: &Mesh) -> Result<()> {
-    let Some(first) = mesh.structural.first() else { return Ok(()) };
+    let restricted: Vec<_> =
+        mesh.structural.iter().filter(|e| !matches!(e.kind, fieldcraft_model::ElementKind::Quad8 | fieldcraft_model::ElementKind::Tri6)).collect();
+    let Some(first) = restricted.first() else { return Ok(()) };
     let normal = shell_normal(&first.kernel()?, first.label)?;
     let origin = first.xyz.first().copied().ok_or_else(|| Error::Internal("shell origin".into()))?;
     let extent = mesh.structural.iter().flat_map(|e| &e.xyz).map(|x| norm(sub(*x, origin))).fold(0.0, f64::max);
-    for e in &mesh.structural {
+    for e in restricted {
         let kernel = e.kernel()?;
         let local = shell_normal(&kernel, e.label)?;
         let tilted = matches!(&kernel, StructuralKernel::Mitc8(s) if s.directors().iter().any(|n| (dot(*n, normal).abs() - 1.0).abs() > FLAT_TOLERANCE))
@@ -285,6 +421,7 @@ fn shell_normal(kernel: &StructuralKernel, label: u32) -> Result<[f64; 3]> {
         StructuralKernel::Shell(s) => Ok(s.axes()[2]),
         StructuralKernel::Mitc8(s) => s.plate_normal().map_err(|err| Error::element(label, err)),
         StructuralKernel::Mitc6(s) => s.plate_normal().map_err(|err| Error::element(label, err)),
+        StructuralKernel::Axishell(s) => s.plate_normal().map_err(|err| Error::element(label, err)),
         StructuralKernel::Beam(_) => Err(Error::NotSupported(format!("beam {label} in buckling"))),
     }
 }
@@ -321,4 +458,16 @@ fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
 
 fn norm(a: [f64; 3]) -> f64 {
     libm::hypot(libm::hypot(a[0], a[1]), a[2])
+}
+
+#[cfg(test)]
+mod pressure_tests {
+    use super::*;
+    #[test]
+    fn nonconservative_pressure_is_refused_not_symmetrized() {
+        let mut k = Csr { n: 2, ptr: vec![0, 2, 4], idx: vec![0, 1, 0, 1], val: vec![1.0, 2.0, 2.0, 3.0] };
+        conservative_pressure(&k).unwrap();
+        k.val[2] = 1.0;
+        assert!(conservative_pressure(&k).unwrap_err().to_string().contains("nonconservative"));
+    }
 }

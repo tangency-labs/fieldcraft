@@ -1,0 +1,9 @@
+{
+  "note": "FieldCraft's accepted results for this case, written by `cargo xtask oracle --bless`. A result outside its band fails CI.",
+  "values": {
+    "syy_D_solid": {
+      "band": 2.5282545696283336e-8,
+      "value": 25.282545696283336
+    }
+  }
+}

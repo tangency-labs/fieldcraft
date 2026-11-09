@@ -11,6 +11,12 @@ pub struct MatrixExport {
 }
 
 pub fn export_matrices(model: &Model, name: Option<&str>, limits: &Limits) -> Result<MatrixExport> {
+    export_matrices_with_mass(model, name, MassKind::Consistent, limits)
+}
+
+/// Export the same inertia and material damping discretization as harmonic analysis.
+/// Analysis-step Rayleigh damping is not a material operator and is added by the caller.
+pub fn export_matrices_with_mass(model: &Model, name: Option<&str>, mass: MassKind, limits: &Limits) -> Result<MatrixExport> {
     fieldcraft_model::progress::check()?;
     let resolved = model.resolve()?;
     let step = model.select_step(name, |p| matches!(p, Procedure::MatrixGeneration { .. }), "matrix generation")?;
@@ -47,9 +53,9 @@ pub fn export_matrices(model: &Model, name: Option<&str>, limits: &Limits) -> Re
     if red.neq() == 0 || red.largest_prescribed() != 0.0 {
         return Err(Error::NotSupported("matrix export needs free coordinates and homogeneous prescribed motion".into()));
     }
-    let assembled = analysis::assemble(&mesh, &graph, matrices.contains(&MatrixKind::Mass).then_some(MassKind::Consistent))?;
+    let assembled = analysis::assemble(&mesh, &graph, matrices.contains(&MatrixKind::Mass).then_some(mass))?;
     let (c, g) = if matrices.contains(&MatrixKind::ViscousDamping) || matrices.contains(&MatrixKind::StructuralDamping) {
-        damping_matrices(&mesh, &graph, &material_damping(model, &resolved), MassKind::Consistent)?
+        damping_matrices(&mesh, &graph, &material_damping(model, &resolved), mass)?
     } else {
         (None, None)
     };

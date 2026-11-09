@@ -688,6 +688,11 @@ impl Reduction {
     }
 
     /// Free equations.
+    /// Whether supports only select DOFs (no multipoint transformation).
+    pub(crate) fn is_selection(&self) -> bool {
+        !self.has_dependents
+    }
+
     pub fn neq(&self) -> usize {
         self.eq_dof.len()
     }

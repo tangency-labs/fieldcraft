@@ -1,14 +1,18 @@
 # Natural frequencies
 
+Affine swept `hex8` continuum shells use the opt-in `solid_shell` formulation.
+See [geometry, physical ply layers, supported analyses and named refusals](../../solvers/solid-shell.md).
+
 Six-node `tri6` shells use [MITC6-a](../../solvers/mitc6.md), with shared curved
-directors and layered constitutive/mass integration. Its documented plate-only
-buckling and coarse-mesh accuracy limits apply.
+directors and layered constitutive/mass integration. Its documented analysis restrictions and coarse-mesh accuracy limits apply.
 
 Curved `quad8` MITC8 supports consistent and positive-diagonal lumped mass for
 frequency and harmonic analysis, including ply densities and rotary inertia.
 Consistent mass retains offset/density first-moment coupling; lumped mass omits it.
 Both include an explicitly artificial drilling inertia. Transient and spectrum steps
-remain refused; curved-shell prestress is also refused.
+remain refused; curved-shell prestressed frequency has the limited
+[reference-geometry modal path](../../solvers/curved-shell-modes.md).
+Curved prestressed harmonic response remains refused.
 See [MITC8 scope](../../solvers/mitc8.md).
 
 `solve.frequency` computes the lowest natural frequencies and mode shapes of a structure,
@@ -241,8 +245,8 @@ amplitude has no physical size; the pictures use deformation scales of 0.4 and 0
 
 ## Limitations
 
-- Undamped, real modes only; no damping, no complex eigenvalues, no prestressed (stress-stiffened)
-  frequencies.
+- Undamped, real modes only; no damping or complex eigenvalues. Equilibrium-base
+  perturbations are limited to the explicitly supported element/tangent combinations.
 - `shift` is factored by Cholesky: a shift above the lowest eigenvalue makes K − σM indefinite and
   the solve stops with the singular-matrix error naming a degree of freedom.
 - Contact is refused; dashpots are ignored.
@@ -270,6 +274,11 @@ amplitude has no physical size; the pictures use deformation scales of 0.4 and 0
 - S. P. Timoshenko, J. N. Goodier. *Theory of Elasticity*, 3rd ed. McGraw-Hill, 1970.
 - NAFEMS. *The Standard NAFEMS Benchmarks*, TNSB Rev. 3, October 1990.
 
+## Axisymmetric ring shells
+
+The two-ring axisymmetric formulation and its analysis/export restrictions are
+documented in [Axisymmetric meridional shell](../../solvers/axisymmetric-shell.md).
+Use the explicit `axisymmetric_shell` section flag; `beam2` alone remains a beam.
 ### Explicit section policies for a lumped solve
 
 The command contract remains `mass=consistent|lumped`, default `consistent`. A
@@ -347,3 +356,51 @@ payload does **not** persist this new report; opening an old solved model cannot
 supply historical iteration counts or residuals. Computing the report retains K
 through Lanczos and performs two sparse products per mode inside the complete
 solve command; its time and memory belong in performance comparisons.
+
+For an opt-in orthogonality check, set `FIELDCRAFT_MODAL_ORTHOGONALITY=1`.
+The solve evaluates the returned modes against its actual reduced mass matrix and
+writes `FIELDCRAFT_MASS_ORTHOGONALITY` to stderr: mode count and
+max|ΦᵀMΦ−I|. With solver timing enabled, `frequency_mass_orthogonality` reports
+this additional work, which is included in the complete solve command time.
+This diagnostic neither changes the modes nor adds fields to the stored result.
+
+`FIELDCRAFT_PROJECTION_WORK` records successful projection stages when solver
+timing is enabled: implementation, equations, basis columns, candidate columns,
+passes, vector pairings, and dot-product elements. The subtraction traverses the
+same number of vector elements. These are logical work counts, not cache or
+DRAM counters; timings include workspace preparation and worker scheduling.
+
+The block projection uses two reorthogonalization passes, fixed eight-column
+panels and fixed 512-row partial dot products combined in row-block order.
+Independent row blocks have one writer each. The worker count does not choose
+the partition or the reduction order. This can round differently from scalar
+Gram–Schmidt; thread-count reproducibility and agreement with an older
+algorithm within its physical-result tolerance are separate checks. Repeated
+eigenvalues require a subspace comparison, since individual vectors within a
+repeated eigenspace are not unique.
+
+`FIELDCRAFT_PROJECTION=scalar` selects the scalar reference for diagnostics in
+the same executable. Both paths retain the convergence tests and random
+replacement of vanished directions. Block projection additionally stores
+packed basis and mass-basis panels; account for this workspace when comparing
+peak process memory. This selection does not change the archive format.
+
+## Curved-shell equilibrium bases
+
+Curved MITC8 shells support small-preload linear static bases and
+optional conservative pressure load stiffness through
+`perturbation_follower_pressure` on the frequency step. See the
+[formula, cylinder boundary conditions and refusals](../../solvers/curved-shell-modes.md).
+
+Curved MITC6-a prestressed frequency remains refused: the new cylinder study
+failed coarse-preload accuracy and fine-mesh actual-residual checks. Its existing
+ordinary modes and verified buckling support are unchanged.
+
+### Actual equation residuals
+
+The transformed Lanczos Ritz test is followed by a bounded inverse residual
+correction when the original K phi = lambda M phi relative residual exceeds
+1e-6. It reuses the factor and mass inner product, accepts only improvements,
+and reports any remaining error; it does not change K, M, loading or a benchmark
+tolerance. The [curved-shell modal checks](../../solvers/curved-shell-modes.md)
+include the previously failing MITC6-a single/two-mode cases and native reopening.

@@ -59,6 +59,29 @@ impl Face {
     }
 }
 
+/// Add the reference-surface support's force on the body to global balance.
+/// Use the same consistent face operator as in stiffness assembly.
+pub(crate) fn add_ground_force(mesh: &Mesh, u: &[f64], ground: &mut [f64; 3]) -> Result<()> {
+    for f in &mesh.foundations {
+        let data = fieldcraft_fem::foundation::matrix(&f.xyz, f.normal, f.tangential).map_err(|e| Error::Invalid(e.to_string()))?;
+        let dofs: Vec<_> = f
+            .nodes
+            .iter()
+            .flat_map(|n| (0..3).map(move |c| (*n, c)))
+            .map(|(n, c)| {
+                let kind = fieldcraft_fem::DofKind::translation(c).ok_or_else(|| Error::Internal("foundation direction".into()))?;
+                mesh.dof(n, kind)
+            })
+            .collect::<Result<_>>()?;
+        for (i, row) in data.chunks(dofs.len()).enumerate() {
+            for (value, dof) in row.iter().zip(&dofs) {
+                ground[i % 3] -= value * u.get(*dof).copied().unwrap_or(0.);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Exact dK/dk and dH/dk on the existing graph, including at k=0.
 pub(crate) fn derivative(
     mesh: &Mesh,

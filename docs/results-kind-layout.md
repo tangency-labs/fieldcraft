@@ -19,12 +19,18 @@ The ZIP manifest verifies part sizes and SHA256.
 | 7 | Tuple (StaticResult, FatigueField) |
 | 8 | Tuple (HarmonicResult including mass and operator_diagonal_bounds, FatigueField) |
 | 11 | Nonlinear total-Lagrangian St. Venant–Kirchhoff rod2 History |
+| 12 | FrequencyResult with explicit `mass_kind` and `section_mass_policy` provenance |
 
 Fatigue is skipped in the base result's codec and encoded exactly once as the
 second tuple member. Kinds 5 and 8 always carry mass, including consistent results
 without an operator diagnostic. Kind 6 stores the complete direct/modal history
 or response-spectrum result; it is not a placeholder refusal. There are no current
 kinds 9 or 10. Additional kind assignments require Router approval.
+
+Kind 1 remains the legacy frequency layout. Its decoded mass identity is explicitly
+`unrecorded`; readers never infer `consistent` from the model or solver defaults. New
+frequency solves write kind 12 and preserve the selected `consistent` or `lumped`
+mass policy plus the section-mass policy string. Kind 12 adds no fatigue fields.
 
 For decoders, type 5 field order is `mass, operator_diagonal_bounds, step, nodes,
 reference_points, frames, natural_frequencies, residual_vectors, stats, warnings`.
@@ -145,3 +151,8 @@ input provenance hash is added. Those identities belong in external handoff
 manifests. Unknown kinds, damaged payloads, invalid dimensions, incomplete frames,
 nonfinite state and inconsistent recovered stress are refused. The existing
 unsupported-magic result-drop policy is unchanged.
+
+
+## Kind 12
+
+Kind 12 is a frequency result produced by `solve.frequency` in the unified 07 layout. Its payload is the FrequencyResult schema with `mass_kind` (`consistent` or `lumped`) and `section_mass_policy` explicitly recorded. Kind 1 remains the frozen legacy frequency payload; missing metadata is exposed as mass identity `unrecorded`, never inferred from the model or step. Kind 12 does not alter kinds 0–11, and it carries no fatigue fields.
