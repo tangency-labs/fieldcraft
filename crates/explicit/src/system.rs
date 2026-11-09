@@ -232,6 +232,9 @@ fn material(model: &Model, name: &str) -> Result<Material> {
 /// The section's elements of a kind the explicit solver has, or why not.
 fn check_formulation(kind: ElementKind, section_name: &str, f: &fieldcraft_model::Formulation) -> Result<()> {
     let refuse = |why: &str| Err(Error::NotSupported(format!("section `{section_name}`: {why}")));
+    if f.solid_shell {
+        return refuse("ANS/EAS10 solid-shell explicit dynamics is not validated");
+    }
     if f.hybrid {
         return refuse("hybrid elements in explicit dynamics");
     }

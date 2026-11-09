@@ -105,6 +105,9 @@ pub(crate) struct Elform {
 /// point); quadratic 2D elements and axisymmetric sections have no form written here.
 /// What it cannot express is the reason, naming the section.
 pub(crate) fn elform(kind: ElementKind, section: &SectionKind, f: Formulation, section_name: &str) -> Result<Elform, String> {
+    if f.solid_shell {
+        return Err("ANS/EAS10 solid-shell has no faithful native deck mapping".into());
+    }
     let plain = |elform| Ok(Elform { elform, hourglass: None });
     let reduced = f.integration == Integration::Reduced;
     let no = |what: &str| Err(format!("section `{section_name}`: {what} {}", kind.name()));

@@ -77,3 +77,31 @@ fn exported_shell_mass_reconstructs_frozen_response() {
     }
     assert!(s.execute("solve.matrices", &json!({"step":"Operators","mass":"unknown"})).is_err());
 }
+
+#[test]
+fn material_rayleigh_export_uses_selected_mass() {
+    let recipe: Value = serde_json::from_str(include_str!("../../../tests/oracle/solid-shell-pure-bending/recipe.json")).unwrap();
+    let mut s = Session::default();
+    for c in recipe.as_array().unwrap() {
+        let cmd = c["command"].as_str().unwrap();
+        if cmd.starts_with("solve.") || cmd == "model.step.create" {
+            continue;
+        }
+        let mut params = c["params"].clone();
+        if cmd == "model.material.create" {
+            params["damping"] = json!({"alpha":0.7,"beta":0.0});
+        }
+        s.execute(cmd, &params).unwrap();
+    }
+    s.execute("model.step.create",&json!({"name":"Operators","procedure":{"type":"matrix_generation","matrices":["stiffness","mass","viscous_damping"]},"boundary_conditions":["clamp"]})).unwrap();
+    for mass in [MassKind::Consistent, MassKind::Lumped] {
+        let a = fieldcraft_solver::export_matrices_with_mass(&s.model, Some("Operators"), mass, &Limits::default()).unwrap();
+        let k = &a.matrices[&MatrixKind::Stiffness];
+        let m = &a.matrices[&MatrixKind::Mass];
+        let c = &a.matrices[&MatrixKind::ViscousDamping];
+        for ((&k, &m), &c) in k.val.iter().zip(&m.val).zip(&c.val) {
+            let expected = 0.7 * m + 0.0 * k;
+            assert!((c - expected).abs() <= 1e-12 * (1.0 + expected.abs()));
+        }
+    }
+}

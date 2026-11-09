@@ -1,5 +1,8 @@
 # Element library
 
+Affine swept `hex8` continuum shells use the opt-in `solid_shell` formulation.
+See [geometry, physical ply layers, supported analyses and named refusals](../../solvers/solid-shell.md).
+
 The finite elements of `crates/fem` that the structural solvers assemble: continuum solids, 2D
 continua (plane stress, plane strain, axisymmetric), flat shells, Timoshenko beams, trusses and
 the discrete point masses, springs and dashpots. Every element is isoparametric over one shared

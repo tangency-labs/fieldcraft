@@ -236,6 +236,11 @@ pub fn write_resolved_with_mass(model: &Model, r: &Resolved, units: Preset, mass
 
 /// The Abaqus element type of an element of `kind` in `section`, or why there is none.
 pub fn element_type(kind: ElementKind, section: &Section) -> std::result::Result<String, String> {
+    if section.formulation.solid_shell {
+        return Err(
+            "SC8R is a reduced-integration continuum shell, not the full-integration ANS/EAS10 solid-shell; faithful export unavailable".into()
+        );
+    }
     use ElementKind as K;
     use SectionKind as S;
     let f = section.formulation;

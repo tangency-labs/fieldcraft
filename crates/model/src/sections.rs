@@ -268,9 +268,16 @@ pub enum Integration {
 }
 
 /// How the section's elements are formulated, independent of any solver's element names.
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Formulation {
+    /// Linear ANS/EAS solid-shell on an orthogonal affine swept hex8.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub solid_shell: bool,
     #[serde(default)]
     pub integration: Integration,
     /// Enhanced (incompatible) bending modes: linear hexahedra (solid sections) and linear
@@ -286,6 +293,11 @@ impl Formulation {
     /// Check the options against each other and against the section kind (the element kinds are
     /// checked when the model is resolved).
     pub fn validate_for(&self, kind: &SectionKind) -> Result<()> {
+        if self.solid_shell
+            && (!matches!(kind, SectionKind::Solid {}) || self.incompatible_modes || self.hybrid || self.integration != Integration::Full)
+        {
+            return Err(Error::Invalid("solid_shell requires a solid section, full integration, no incompatible_modes or hybrid option".into()));
+        }
         if self.incompatible_modes && self.integration == Integration::Reduced {
             return Err(Error::Invalid("incompatible modes use full integration".into()));
         }
@@ -402,7 +414,9 @@ mod tests {
         let shell = SectionKind::Shell { thickness: 2.0, offset: 0.0, points: 5 };
         assert!(Formulation { hybrid: true, ..Formulation::default() }.validate_for(&shell).is_err());
         assert!(
-            Formulation { incompatible_modes: true, integration: Integration::Reduced, hybrid: false }.validate_for(&SectionKind::Solid {}).is_err()
+            Formulation { solid_shell: false, incompatible_modes: true, integration: Integration::Reduced, hybrid: false }
+                .validate_for(&SectionKind::Solid {})
+                .is_err()
         );
         Formulation { incompatible_modes: true, hybrid: true, ..Formulation::default() }.validate_for(&SectionKind::Solid {}).unwrap();
         for bad in [

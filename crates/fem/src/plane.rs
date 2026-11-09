@@ -289,6 +289,7 @@ impl<'a> Plane<'a> {
             return Err(Error::Invalid(format!("the thickness must be a positive number, got {thickness}")));
         }
         let ok = match formulation {
+            Formulation::SolidShell => false,
             Formulation::Full => true,
             Formulation::Reduced => ty.reduced.is_some(),
             Formulation::IncompatibleModes => ty.incompatible_modes,

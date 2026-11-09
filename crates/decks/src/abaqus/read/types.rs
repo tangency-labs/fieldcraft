@@ -72,6 +72,7 @@ impl Type {
             kind,
             family,
             formulation: Formulation {
+                solid_shell: false,
                 integration: if reduced { Integration::Reduced } else { Integration::Full },
                 incompatible_modes: incompatible,
                 hybrid,

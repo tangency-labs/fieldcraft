@@ -1,5 +1,8 @@
 # Natural frequencies
 
+Affine swept `hex8` continuum shells use the opt-in `solid_shell` formulation.
+See [geometry, physical ply layers, supported analyses and named refusals](../../solvers/solid-shell.md).
+
 Six-node `tri6` shells use [MITC6-a](../../solvers/mitc6.md), with shared curved
 directors and layered constitutive/mass integration. Its documented plate-only
 buckling and coarse-mesh accuracy limits apply.

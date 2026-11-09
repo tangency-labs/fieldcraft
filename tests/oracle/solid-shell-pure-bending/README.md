@@ -1,0 +1,1 @@
+Original orthogonal swept hex8 solid-shell model. 24 translational DOFs per element; ANS plus ten statically condensed EAS strains. One physical hex layer per ply; no SC8R formula equivalence. Exact pure moment end traction; no transverse resultant.

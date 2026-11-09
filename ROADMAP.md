@@ -267,3 +267,5 @@ Eight-node MITC8 homogeneous and layered elastic statics use quadratic surface/d
 - Six-node MITC6-a: shared curved geometry/directors, layer integration and mass;
   linear static, modal/harmonic and flat-plate buckling paths. Formula and accuracy
   limits: [MITC6-a](docs/solvers/mitc6.md).
+
+Affine swept hex8 continuum solid-shell: opt-in full-integration ANS/EAS10, 24 translations, separate physical orthotropic layers, static/modal/harmonic command paths and native result persistence. Curved/warped/oblique and aspect ratios above100, integrated composite sections, nonlinear/transient/buckling and faithful SC8R export remain unsupported; see `docs/solvers/solid-shell.md`. Matrix export now selects the same consistent/lumped mass as harmonic analysis.

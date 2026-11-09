@@ -88,8 +88,9 @@ fn dual(g: &[Vec3; 3]) -> Result<[Vec3; 3]> {
     let (inverse, _) = inverse3(g).ok_or_else(|| Error::Degenerate("MITC8/MITC6-a singular covariant basis".into()))?;
     Ok(std::array::from_fn(|i| std::array::from_fn(|j| inverse[j][i])))
 }
+const NATURAL_SLACK: f64 = 1e-12; // unit-factors: dimensionless natural-coordinate tolerance
 fn check_point(p: [f64; 3]) -> Result<()> {
-    if p.iter().any(|v| !v.is_finite() || v.abs() > 1.0 + 1e-12) {
+    if p.iter().any(|v| !v.is_finite() || v.abs() > 1.0 + NATURAL_SLACK) {
         return Err(Error::Invalid("MITC8/MITC6-a natural coordinates must be finite and in [-1,1]".into()));
     }
     Ok(())
@@ -307,7 +308,7 @@ impl<const N: usize, const DOFS: usize> QuadraticShell<N, DOFS> {
     /// Covariant geometry: x=sum N_i (x_i + z n_i), z=e+h*t/2.
     fn map(&self, p: [f64; 3]) -> Result<Map> {
         check_point(p)?;
-        if N == 6 && (p[0] < -1e-12 || p[1] < -1e-12 || p[0] + p[1] > 1.0 + 1e-12) {
+        if N == 6 && (p[0] < -NATURAL_SLACK || p[1] < -NATURAL_SLACK || p[0] + p[1] > 1.0 + NATURAL_SLACK) {
             return Err(Error::Invalid("MITC6-a natural point outside reference triangle".into()));
         }
         let sh = Self::basis().eval(p);
