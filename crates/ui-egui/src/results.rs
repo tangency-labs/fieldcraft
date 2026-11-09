@@ -103,7 +103,7 @@ impl Plot {
                 .modes
                 .get(self.pick.mode.checked_sub(1)?)
                 .map(|m| (self.pick.mode, mode_value(f.buckling.is_some(), m.eigenvalue, m.frequency, &self.units))),
-            Kind::Static(_) | Kind::Explicit(_) | Kind::Fluid(_) | Kind::Heat(_) | Kind::Harmonic(_) | Kind::Dynamics(_) => None,
+            Kind::Static(_) | Kind::Explicit(_) | Kind::Fluid(_) | Kind::Heat(_) | Kind::Harmonic(_) | Kind::Dynamics(_) | Kind::Nonlinear(_) => None,
         }
     }
 
@@ -171,7 +171,7 @@ pub fn shown(session: &Session) -> Option<(&ResultsView, &Arc<StepResult>, bool)
 /// explicit and nonlinear frames keep playing. Heat-only plots do not advance frames.
 pub fn frame(view: &ResultsView, result: &StepResult, now: f64) -> Option<u64> {
     let plays = match result.kind() {
-        Kind::Heat(_) | Kind::Harmonic(_) | Kind::Dynamics(_) => false,
+        Kind::Heat(_) | Kind::Harmonic(_) | Kind::Dynamics(_) | Kind::Nonlinear(_) => false,
         Kind::Fluid(_) => true,
         Kind::Explicit(_) => view.deformed || view.contour.is_some(),
         Kind::Static(r) if r.nonlinear.is_some() => view.deformed || view.contour.is_some(),
@@ -190,7 +190,7 @@ pub fn swing(result: &StepResult, frame: Option<u64>) -> f64 {
         // A nonlinear step plays its increments' frames.
         Kind::Static(r) if r.nonlinear.is_some() => 1.0,
         Kind::Static(_) => 0.5 * (1.0 - a.cos()),
-        Kind::Explicit(_) | Kind::Fluid(_) | Kind::Heat(_) | Kind::Harmonic(_) | Kind::Dynamics(_) => 1.0,
+        Kind::Explicit(_) | Kind::Fluid(_) | Kind::Heat(_) | Kind::Harmonic(_) | Kind::Dynamics(_) | Kind::Nonlinear(_) => 1.0,
     }
 }
 

@@ -782,7 +782,9 @@ fn export_vtu(s: &mut Session, p: &Value) -> Result<Value> {
         Kind::Fluid(_) => return Err(EngineError::Params("fluid results are per cell; not supported yet".into())),
         Kind::Harmonic(h) if h.fatigue.is_some() => vec![State::Final],
         Kind::Harmonic(_) => return Err(EngineError::Params("harmonic VTU export is not supported yet; export probe curves as CSV".into())),
-        Kind::Dynamics(_) => return Err(EngineError::Params("dynamic response VTU export is not supported yet; read solve.probe".into())),
+        Kind::Dynamics(_) | Kind::Nonlinear(_) => {
+            return Err(EngineError::Params("dynamic response VTU export is not supported yet; read solve.probe".into()));
+        }
         Kind::Static(st) => match &st.nonlinear {
             Some(h) if !h.frames.is_empty() => frames(h.frames.len(), "frames")?,
             _ => vec![State::Final],

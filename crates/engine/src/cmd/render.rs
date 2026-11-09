@@ -200,7 +200,7 @@ fn draw_clip(s: &mut Session, render: &Render, path: &str) -> Result<Value> {
         Some(Kind::Explicit(e)) => e.frames.len(),
         Some(Kind::Fluid(f)) => f.frames.len(),
         Some(Kind::Static(r)) => r.nonlinear.as_ref().map_or(0, |h| h.frames.len()),
-        Some(Kind::Frequency(_) | Kind::Heat(_) | Kind::Harmonic(_) | Kind::Dynamics(_)) => 0,
+        Some(Kind::Frequency(_) | Kind::Heat(_) | Kind::Harmonic(_) | Kind::Dynamics(_) | Kind::Nonlinear(_)) => 0,
     };
     let units = s.units().clone();
     let frames: Vec<Option<usize>> = if count == 0 {
