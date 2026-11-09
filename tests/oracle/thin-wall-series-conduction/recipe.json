@@ -1,0 +1,97 @@
+[
+ {
+  "command": "model.units",
+  "params": {
+   "system": "m-kg-s-N-Pa",
+   "temperature": "°C"
+  }
+ },
+ {
+  "command": "model.material.create",
+  "params": {
+   "name": "Fluid",
+   "density": 1.0,
+   "fluid": {
+    "type": "newtonian",
+    "viscosity": 0.1
+   },
+   "thermal": {
+    "conductivity": 0.05,
+    "specific_heat": 1.0
+   }
+  }
+ },
+ {
+  "command": "model.fluid_domain.create",
+  "params": {
+   "name": "Plates",
+   "material": "Fluid",
+   "min": [
+    0,
+    0,
+    0
+   ],
+   "max": [
+    0.125,
+    1.0,
+    0.125
+   ],
+   "spacing": 0.125,
+   "faces": {
+    "x_min": {
+     "type": "periodic"
+    },
+    "x_max": {
+     "type": "periodic"
+    },
+    "z_min": {
+     "type": "periodic"
+    },
+    "z_max": {
+     "type": "periodic"
+    }
+   },
+   "baffles": [
+    {
+     "name": "Sheet",
+     "axis": "y",
+     "position": 0.5,
+     "conductance": 0.05
+    }
+   ],
+   "thermal": {
+    "initial_temperature": 0.5,
+    "faces": {
+     "y_min": {
+      "type": "temperature",
+      "value": 1.0
+     },
+     "y_max": {
+      "type": "temperature",
+      "value": 0.0
+     }
+    }
+   }
+  }
+ },
+ {
+  "command": "model.step.create",
+  "params": {
+   "name": "Run",
+   "procedure": {
+    "type": "fluid",
+    "domain": "Plates",
+    "end_time": 100.0,
+    "time_step": 0.0390625,
+    "frames": 1
+   }
+  }
+ },
+ {
+  "command": "solve.fluid",
+  "params": {
+   "step": "Run"
+  },
+  "id": "solve"
+ }
+]

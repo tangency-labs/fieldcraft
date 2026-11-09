@@ -1,0 +1,46 @@
+{
+ "title": "Heat through a thin wall between two held plates: a zero-thickness sheet of conductance 0.05 between fluid layers of conductivity 0.05, 1 and 0 at the plates",
+ "kind": "theory",
+ "source": "Series thermal resistances: steady one-dimensional conduction through the fluid layers and the sheet's resistance 1/G, q = ΔT/(L/k_f + 1/G), each side's temperature the held plate's less q times its layer's resistance (F. P. Incropera, D. P. DeWitt, Fundamentals of Heat and Mass Transfer, §3.1, the composite wall)",
+ "quantities": [
+  {
+   "id": "q",
+   "quantity": "heat flux into the sheet from the hot side, ΔT/(L/k_f + 1/G)",
+   "measure": {
+    "from": "solve",
+    "pointer": "/baffles/0/heat_flux/0"
+   },
+   "value": 0.025,
+   "tolerance": {
+    "relative": 1e-09
+   },
+   "reason": "the steady discrete profile is the exact series solution (a linear field either side of the sheet), reached to round-off after five diffusion times L²/α"
+  },
+  {
+   "id": "t_low",
+   "quantity": "the sheet's hot-side temperature, T_hot − q (L/2)/k_f",
+   "measure": {
+    "from": "solve",
+    "pointer": "/baffles/0/temperature/0"
+   },
+   "value": 0.75,
+   "tolerance": {
+    "relative": 1e-09
+   },
+   "reason": "the steady discrete profile is the exact series solution (a linear field either side of the sheet), reached to round-off after five diffusion times L²/α"
+  },
+  {
+   "id": "t_high",
+   "quantity": "the sheet's cold-side temperature, T_cold + q (L/2)/k_f",
+   "measure": {
+    "from": "solve",
+    "pointer": "/baffles/0/temperature/1"
+   },
+   "value": 0.25,
+   "tolerance": {
+    "relative": 1e-09
+   },
+   "reason": "the steady discrete profile is the exact series solution (a linear field either side of the sheet), reached to round-off after five diffusion times L²/α"
+  }
+ ]
+}

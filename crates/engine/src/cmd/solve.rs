@@ -1039,6 +1039,7 @@ fn fluid_summary(r: &FluidResult, display: &DisplaySystem) -> Value {
             "emptied": fs.emptied,
         })),
         "heat": heat,
+        "baffles": r.baffles,
         "solids": solids,
         "components_ok": r.components_ok(),
         "stop": r.steady.as_ref().map(|s| steady_summary(s, &r.stats, display)),

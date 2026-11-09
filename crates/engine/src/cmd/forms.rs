@@ -923,6 +923,19 @@ pub const FLUID_DOMAIN: &[Field] = &[
     rows("porous", "Vents and filters", POROUS_ZONE)
         .help("Porous resistance zones: vents, grilles, filters and perforated plates without resolving every hole."),
     rows("fans", "Fans", FAN).help("Fans: zones that raise the pressure by their pressure–flow curve; the solve finds the operating point."),
+    rows(
+        "baffles",
+        "Thin walls",
+        &[
+            text("name", "Name").help("Unique in the domain; its two sides report as baffle/<name>/low and /high.").req(),
+            choice("axis", "Normal axis", AXIS).help("The axis the sheet is normal to.").req(),
+            num("position", "Position", D::Length).help("Where the sheet crosses its axis: on a lattice face inside the box.").req(),
+            positive("conductance", "Conductance per area", D::FilmCoefficient)
+                .help("The wall's conductivity over its thickness (or one over its resistance per area); zero insulates. Used with heat.")
+                .req(),
+        ],
+    )
+    .help("Zero-thickness no-slip sheets across the whole box; with heat they conduct through their thickness and each side's temperature and heat flux are reported. For now: closed boxes, clear of obstacles, laminar, no phase change or free surface, CPU only."),
     FREE_SURFACE,
 ];
 
