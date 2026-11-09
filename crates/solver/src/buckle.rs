@@ -35,12 +35,12 @@ use fieldcraft_model::{Model, Procedure};
 use serde::Serialize;
 
 use crate::analysis::{
-    BLOCK, FrequencyResult, Mode, Setup, Stats, TOLERANCE, assemble, budget, factor_error, factor_symmetric, lanczos_basis, pattern, reduction,
-    split, static_on,
+    BLOCK, FrequencyResult, Mode, Setup, StaticResult, Stats, TOLERANCE, assemble, budget, factor_error, factor_symmetric, lanczos_basis, pattern,
+    reduction, split, static_on,
 };
 use crate::eigen::{Operator, Wanted, lanczos};
 use crate::ldlt::{Kind, Symmetric};
-use crate::sparse::{Csr, add_block};
+use crate::sparse::{Csr, NodeGraph, add_block};
 use crate::system::{Mesh, Structural, StructuralKernel};
 use crate::{Error, Limits, Result};
 
@@ -131,7 +131,6 @@ pub fn solve_buckle(model: &Model, step: Option<&str>, limits: &Limits) -> Resul
     let setup = Setup { model, resolved: &resolved, mesh: &mesh, step };
     let preload = static_on(&setup, limits)?;
     let mut warnings: Vec<String> = preload.warnings.clone();
-    let stresses: BTreeMap<u32, Vec<[f64; 6]>> = preload.elements.iter().map(|e| (e.label, e.points.iter().map(|p| p.stress).collect())).collect();
 
     let (graph, order) = pattern(&mesh);
     let red = reduction(&setup, false, &order, budget(limits, &mesh, &graph, 2), &mut Vec::new())?;
@@ -140,37 +139,7 @@ pub fn solve_buckle(model: &Model, step: Option<&str>, limits: &Limits) -> Resul
         return Err(Error::Invalid("every degree of freedom is held; there is nothing to buckle".into()));
     }
     let k = assemble(&mesh, &graph, None)?.k;
-    let mut kg = graph.zero_matrix(&mesh.layout);
-    let matrices = fieldcraft_parallel::map_grained(mesh.elements.len(), crate::analysis::GRAIN, |i| -> Result<_> {
-        let e = mesh.elements.get(i).ok_or_else(|| Error::Internal("element index".into()))?;
-        let kernel = e.kernel()?;
-        let stress = stresses.get(&e.label).ok_or_else(|| Error::Internal(format!("element {} has no preload stress", e.label)))?;
-        Ok((kernel.dofs().node, kernel.geometric_stiffness(stress).map_err(|err| Error::element(e.label, err))?.data))
-    });
-    for (e, m) in mesh.elements.iter().zip(matrices) {
-        let (kinds, data) = m?;
-        add_block(&mut kg, &mesh.layout, &e.nodes, kinds, &data)?;
-    }
-    let matrices = fieldcraft_parallel::map_grained(mesh.structural.len(), crate::analysis::GRAIN, |i| -> Result<_> {
-        let e = mesh.structural.get(i).ok_or_else(|| Error::Internal("shell index".into()))?;
-        let StructuralKernel::Shell(shell) = e.kernel()? else {
-            return Err(Error::NotSupported(format!("beam {} in buckling", e.label)));
-        };
-        let u: Vec<[f64; 6]> = e
-            .nodes
-            .iter()
-            .map(|n| {
-                let u = preload.displacement.get(*n).copied().unwrap_or_default();
-                let r = preload.rotation.get(*n).copied().unwrap_or_default();
-                [u[0], u[1], u[2], r[0], r[1], r[2]]
-            })
-            .collect();
-        flat_preload(e, &shell, &u)?;
-        shell.plate_geometric_stiffness(u.as_flattened()).map_err(|err| Error::element(e.label, err))
-    });
-    for (e, m) in mesh.structural.iter().zip(matrices) {
-        add_block(&mut kg, &mesh.layout, &e.nodes, Structural::KINDS, &m?.data)?;
-    }
+    let kg = initial_stress_stiffness(&mesh, &graph, &preload)?;
     let [kff, gff] = red.reduce([&k, &kg])?;
     drop((k, kg));
     if gff.val.iter().all(|v| *v == 0.0) {
@@ -227,6 +196,55 @@ pub fn solve_buckle(model: &Model, step: Option<&str>, limits: &Limits) -> Resul
         warnings,
         buckling: Some(buckling),
     })
+}
+
+/// Assemble the initial-stress operator from a linear static state's integration-point
+/// stresses, on the reference mesh (Bathe 2014, §6.8.2). This is not a reconstruction
+/// of a finite-strain or inelastic tangent from output stresses.
+///
+/// Shared by buckling and the forthcoming linear perturbation path; preserve the
+/// deterministic element order and the flat-shell applicability checks.
+pub(crate) fn initial_stress_stiffness(mesh: &Mesh, graph: &NodeGraph, preload: &StaticResult) -> Result<Csr> {
+    if preload.nonlinear.is_some() {
+        return Err(Error::NotSupported("initial-stress assembly from nonlinear output: use the converged material tangent".into()));
+    }
+    if let Some(t) = mesh.trusses.first() {
+        return Err(Error::NotSupported(format!("truss {}: initial-stress stiffness is not implemented", t.label)));
+    }
+    flat_shells(mesh)?;
+    let stresses: BTreeMap<u32, Vec<[f64; 6]>> = preload.elements.iter().map(|e| (e.label, e.points.iter().map(|p| p.stress).collect())).collect();
+    let mut kg = graph.zero_matrix(&mesh.layout);
+    let matrices = fieldcraft_parallel::map_grained(mesh.elements.len(), crate::analysis::GRAIN, |i| -> Result<_> {
+        let e = mesh.elements.get(i).ok_or_else(|| Error::Internal("element index".into()))?;
+        let kernel = e.kernel()?;
+        let stress = stresses.get(&e.label).ok_or_else(|| Error::Internal(format!("element {} has no preload stress", e.label)))?;
+        Ok((kernel.dofs().node, kernel.geometric_stiffness(stress).map_err(|err| Error::element(e.label, err))?.data))
+    });
+    for (e, m) in mesh.elements.iter().zip(matrices) {
+        let (kinds, data) = m?;
+        add_block(&mut kg, &mesh.layout, &e.nodes, kinds, &data)?;
+    }
+    let matrices = fieldcraft_parallel::map_grained(mesh.structural.len(), crate::analysis::GRAIN, |i| -> Result<_> {
+        let e = mesh.structural.get(i).ok_or_else(|| Error::Internal("shell index".into()))?;
+        let StructuralKernel::Shell(shell) = e.kernel()? else {
+            return Err(Error::NotSupported(format!("beam {} in buckling", e.label)));
+        };
+        let u: Vec<[f64; 6]> = e
+            .nodes
+            .iter()
+            .map(|n| {
+                let u = preload.displacement.get(*n).copied().unwrap_or_default();
+                let r = preload.rotation.get(*n).copied().unwrap_or_default();
+                [u[0], u[1], u[2], r[0], r[1], r[2]]
+            })
+            .collect();
+        flat_preload(e, &shell, &u)?;
+        shell.plate_geometric_stiffness(u.as_flattened()).map_err(|err| Error::element(e.label, err))
+    });
+    for (e, m) in mesh.structural.iter().zip(matrices) {
+        add_block(&mut kg, &mesh.layout, &e.nodes, Structural::KINDS, &m?.data)?;
+    }
+    Ok(kg)
 }
 
 // A geometric applicability tolerance, relative to the plate extent or preload motion.

@@ -66,6 +66,10 @@ fn original_results() -> Vec<Solved> {
 }
 fn record(magic: &[u8; 8], kind: u8, payload: &[u8]) -> Vec<u8> {
     let mut b = magic.to_vec();
+    if magic == MAGIC {
+        b.extend_from_slice(&LAYOUT_SENTINEL.to_le_bytes());
+        b.extend_from_slice(LAYOUT);
+    }
     b.extend_from_slice(&1u32.to_le_bytes());
     b.extend_from_slice(&1u64.to_le_bytes());
     b.push(b'H');
@@ -83,35 +87,61 @@ fn decoded(b: &[u8]) -> Solved {
 }
 fn round_trip(r: &Solved, kind: u8) {
     let b = encode(&[("H", StoredRef { definition: [3; 32], result: r.as_ref() })]).unwrap();
+    let file = crate::write_with(
+        &Model::default(),
+        &Geometry::default(),
+        &[],
+        &crate::JournalHeader::default(),
+        &crate::View::default(),
+        &crate::Extras { results: vec![("H", StoredRef { definition: [3; 32], result: r.as_ref() })], ..Default::default() },
+    )
+    .unwrap();
+    if let Some(directory) = std::env::var_os("FIELDCRAFT_RESULT_FIXTURES") {
+        let directory = std::path::PathBuf::from(directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        let hash = crate::sha256_hex(&file);
+        std::fs::write(directory.join(format!("kind-{kind}-{hash}.fieldcraft")), &file).unwrap();
+    }
+    let opened = crate::read(&file).unwrap();
+    assert_eq!(opened.results.len(), 1);
+    assert_eq!(opened.results[0].result, *r);
     assert_eq!(&b[..8], MAGIC);
-    assert_eq!(b[53], kind);
+    assert_eq!(b[73], kind);
     assert_eq!(decoded(&b), *r);
     let back = decoded(&b);
     assert_eq!(encode(&[("H", StoredRef { definition: [3; 32], result: back.as_ref() })]).unwrap(), b);
 }
 #[test]
-fn original_zero_through_five_keep_payloads_and_read_version_05() {
+fn original_zero_through_five_read_version_05() {
     for (kind, r) in original_results().into_iter().enumerate() {
         round_trip(&r, kind as u8);
         let mut payload = vec![];
         // Explicit original payload schema, independent of the writer's kind dispatch.
         match &r {
-            Solved::Implicit(StepResult::Static(x)) => codec::encode_into(x, &mut payload).unwrap(),
+            Solved::Implicit(StepResult::Static(x)) => {
+                let old: LegacyStatic = serde_json::from_value(serde_json::to_value(x).unwrap()).unwrap();
+                codec::encode_into(&old, &mut payload).unwrap();
+            }
             Solved::Implicit(StepResult::Frequency(x)) => codec::encode_into(x, &mut payload).unwrap(),
             Solved::Implicit(StepResult::Heat(x)) => codec::encode_into(x, &mut payload).unwrap(),
             Solved::Implicit(StepResult::Harmonic(x)) => codec::encode_into(&LegacyHarmonicRef::from(x), &mut payload).unwrap(),
+            Solved::Implicit(StepResult::Dynamics(_)) => panic!("not an original kind"),
             Solved::Explicit(x) => codec::encode_into(x, &mut payload).unwrap(),
             Solved::Fluid(x) => codec::encode_into(x, &mut payload).unwrap(),
         }
         let old = record(LEGACY_MAGIC, kind as u8, &payload);
         assert_eq!(decoded(&old), r);
         let new = encode(&[("H", StoredRef { definition: [3; 32], result: r.as_ref() })]).unwrap();
-        assert_eq!(&new[8..], &old[8..], "original kind {kind} payload changed");
+        if kind != 0 {
+            assert_eq!(&new[28..], &old[8..], "original kind {kind} payload changed");
+        }
     }
 }
 #[test]
 fn allocated_seven_through_ten_round_trip_without_identity_loss() {
     let mut s = static_result();
+    s.pretension =
+        vec![fieldcraft_solver::pretension::SectionResult { name: "Bolt".into(), adjustment: 0.01, section_force: 10., applied_force: 10. }];
     s.fatigue = Some(fatigue());
     round_trip(&Solved::Implicit(StepResult::Static(s)), 7);
     let mut h = harmonic();
@@ -130,11 +160,11 @@ fn allocated_seven_through_ten_round_trip_without_identity_loss() {
     round_trip(&Solved::Implicit(StepResult::Harmonic(h)), 9);
 }
 #[test]
-fn six_is_reserved_and_old_overlapping_kinds_are_never_guessed() {
+fn old_overlapping_kinds_are_never_guessed() {
     let mut old_static = vec![];
     codec::encode_into(&(static_result(), fatigue()), &mut old_static).unwrap();
     let error = decode(&record(MAGIC, 6, &old_static)).unwrap_err().to_string();
-    assert!(error.contains("reserved for linear dynamics"), "{error}");
+    assert!(error.contains("damaged"), "{error}");
     let mut old_harmonic = vec![];
     codec::encode_into(&(harmonic(), fatigue()), &mut old_harmonic).unwrap();
     for kind in 6..=10 {
@@ -144,4 +174,49 @@ fn six_is_reserved_and_old_overlapping_kinds_are_never_guessed() {
             assert!(error.contains("conflicting producer layouts"), "{kind}: {error}");
         }
     }
+}
+
+#[test]
+fn unmarked_six_from_both_producers_requires_verified_recovery() {
+    for kind in 0..=10 {
+        let current = record(MAGIC, kind, &[]);
+        let mut old = MAGIC.to_vec();
+        old.extend_from_slice(&current[28..]);
+        assert!(decode(&old).unwrap_err().to_string().contains("unmarked version 06"));
+    }
+    let mut unknown = record(MAGIC, 6, &[]);
+    unknown[12] ^= 1;
+    assert!(decode(&unknown).unwrap_err().to_string().contains("unknown version 06 layout"));
+}
+
+#[test]
+fn six_preserves_complete_dynamics_and_energy() {
+    use fieldcraft_solver::transient::{Energy, Frame, Response};
+    let r = Response {
+        step: "H".into(),
+        nodes: vec![1],
+        spectrum: false,
+        natural_frequencies: vec![2.],
+        warnings: vec!["sample".into()],
+        frames: vec![Frame {
+            time: Some(0.0),
+            displacement: vec![[1., 2., 3.]],
+            rotation: vec![[4., 5., 6.]],
+            velocity: vec![[7., 8., 9.]],
+            acceleration: vec![[10., 11., 12.]],
+            stress: Some(vec![[1., 2., 3., 4., 5., 6.]]),
+            kinetic_energy: Some(2.),
+            strain_energy: Some(3.),
+        }],
+        energy: Some(vec![Energy { damping_dissipation: 4., external_work: 5., energy_balance: 6. }]),
+    };
+    round_trip(&Solved::Implicit(StepResult::Dynamics(r.clone())), 6);
+    let mut spectrum = r;
+    spectrum.frames[0].velocity.clear();
+    spectrum.frames[0].kinetic_energy = None;
+    spectrum.frames[0].strain_energy = None;
+    spectrum.spectrum = true;
+    spectrum.frames[0].time = None;
+    spectrum.energy = None;
+    round_trip(&Solved::Implicit(StepResult::Dynamics(spectrum)), 6);
 }

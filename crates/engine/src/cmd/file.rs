@@ -242,6 +242,7 @@ impl Session {
         };
         let copies = if keep.geometry { self.geometry_copies()? } else { Vec::new() };
         let extras = fieldcraft_io::Extras {
+            deck_source: self.deck_source.as_deref(),
             results: if keep.results { self.stored_results() } else { Vec::new() },
             embed: copies.iter().map(|(sha, b)| (sha.clone(), b.as_slice())).collect(),
             // The settings of steps the model still has.
@@ -337,6 +338,7 @@ impl Session {
             sources.meshes.push(source.without_embedded());
         }
         let mut session = Session {
+            deck_source: file.deck_source.map(Arc::new),
             model,
             design,
             surfaces,
@@ -474,6 +476,9 @@ fn keep(s: &Session, p: &Value) -> Result<Keep> {
 /// What a file of `s` saved with `keep` holds, in words: what a person sending it shares.
 fn contents(s: &Session, keep: Keep) -> Vec<String> {
     let mut out = vec!["the model definition, its mesh and the commands that built it".to_string()];
+    if let Some(source) = &s.deck_source {
+        out.push(format!("the original Abaqus input source ({} files)", source.files.len()));
+    }
     let steps: Vec<&str> = s.result_steps().map(|(n, _)| n).collect();
     if keep.results && !steps.is_empty() {
         let count = if steps.len() == 1 { "1 step".to_string() } else { format!("{} steps", steps.len()) };
@@ -1409,6 +1414,17 @@ mod tests {
                 let bytes = std::fs::read(d.join(format!("{name}.fieldcraft"))).unwrap();
                 let file = fieldcraft_io::read(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
                 assert!(file.results_note.is_none(), "{name}: {:?}", file.results_note);
+                let extras = fieldcraft_io::Extras {
+                    results: file
+                        .results
+                        .iter()
+                        .map(|r| (r.result.step(), fieldcraft_io::results::StoredRef { definition: r.definition, result: r.result.as_ref() }))
+                        .collect(),
+                    ..Default::default()
+                };
+                let rewritten =
+                    fieldcraft_io::write_with(&file.model, &file.geometry, &file.journal, &file.journal_header, &file.view, &extras).unwrap();
+                assert_eq!(fieldcraft_io::read(&rewritten).unwrap().results, file.results, "all fields: {name}");
                 let read: Vec<&str> = file.results.iter().map(|r| r.result.step()).collect();
                 assert_eq!(read, steps, "{name}");
                 for stored in &file.results {

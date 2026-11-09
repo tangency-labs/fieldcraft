@@ -235,3 +235,68 @@ fn reusable_modal_basis_retains_per_call_limits_and_dynamic_checks() {
     assert_close(&reused.displacement, &direct.displacement);
     assert!(reused.full_relative_residual < 1e-12);
 }
+
+#[test]
+fn enriched_modal_damping_keeps_exact_transpose_symmetry() {
+    let n = 12;
+    let mut k = dense(&vec![0.; n * n], n);
+    let mut m = k.clone();
+    for i in 0..n {
+        m.val[i * n + i] = 1. + i as f64 / 10.;
+        k.val[i * n + i] = m.val[i * n + i] * (i + 1).pow(2) as f64;
+    }
+    let matrices = Matrices { stiffness: &k, mass: &m, viscous: None, loss: None };
+    let force = Vector { real: (0..n).map(|i| 1. / (i + 1) as f64).collect(), imaginary: (0..n).map(|i| 0.1 * i as f64).collect() };
+    let limits = Limits::default();
+    let modal = Modal::with_residual_vectors(&matrices, 3, &force, 1, &limits).unwrap();
+    assert!(modal.residual_vectors() > 0);
+    let ratios = [0.01, 0.02, 0.03];
+    // Independent full-space damping operator, then a Galerkin projection of
+    // K, M and C together. Build each symmetric pair once, without tolerances.
+    let mut c = dense(&vec![0.; n * n], n);
+    for (j, phi) in modal.shapes().iter().enumerate() {
+        let mut mp = vec![0.; n];
+        m.mul(phi, &mut mp);
+        let factor = 2. * ratios[j] * modal.eigenvalues()[j].sqrt();
+        for row in 0..n {
+            for col in 0..=row {
+                let v = c.val[row * n + col] + factor * (mp[row] * mp[col]);
+                c.val[row * n + col] = v;
+                c.val[col * n + row] = v;
+            }
+        }
+    }
+    let basis = modal.basis_vectors();
+    let count = basis.len();
+    let project = |a: &Csr| {
+        let mut out = dense(&vec![0.; count * count], count);
+        let mut v = vec![0.; n];
+        for j in 0..count {
+            a.mul(&basis[j], &mut v);
+            for (i, phi) in basis.iter().enumerate().take(j + 1) {
+                let x = phi.iter().zip(&v).map(|(a, b)| a * b).sum();
+                out.val[i * count + j] = x;
+                out.val[j * count + i] = x;
+            }
+        }
+        out
+    };
+    let (pk, pm, pc) = (project(&k), project(&m), project(&c));
+    let dot = |x: &[f64], y: &[f64]| x.iter().zip(y).map(|(a, b)| a * b).sum::<f64>();
+    let rhs =
+        Vector { real: basis.iter().map(|v| dot(v, &force.real)).collect(), imaginary: basis.iter().map(|v| dot(v, &force.imaginary)).collect() };
+    for omega in [0.1, 1., 3., 10.] {
+        let reference =
+            Matrices { stiffness: &pk, mass: &pm, viscous: Some(&pc), loss: None }.direct(omega, Damping::default(), &rhs, &limits).unwrap();
+        let mut expected = Vector::zeros(n);
+        for (j, phi) in basis.iter().enumerate() {
+            for (i, p) in phi.iter().enumerate() {
+                expected.real[i] += p * reference.displacement.real[j];
+                expected.imaginary[i] += p * reference.displacement.imaginary[j];
+            }
+        }
+        let out = modal.solve(omega, Damping::default(), &ratios, &force, &limits).unwrap();
+        assert_close(&out.displacement, &expected);
+        assert!(out.projected_residual.relative < 1e-12);
+    }
+}

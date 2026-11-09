@@ -22,6 +22,7 @@ mod hex;
 mod initial;
 mod linearize;
 pub(crate) mod mesh;
+pub(crate) mod pretension;
 
 pub use datum::edit_params as datum_edit_params;
 pub use datum::preview as datum_preview;
@@ -75,6 +76,11 @@ use crate::{CommandSpec, EngineError, Result, Session};
 pub static ALL: &[CommandSpec] = &[
     model::INFO,
     model::NODE_COORDS,
+    pretension::CREATE,
+    pretension::FORCE,
+    pretension::ADJUST,
+    pretension::LOCK,
+    pretension::RESULT,
     foundation::CREATE,
     foundation::EDIT,
     foundation::DELETE,
@@ -233,6 +239,7 @@ pub static ALL: &[CommandSpec] = &[
     edit::REDO,
     deck::WRITE,
     deck::READ,
+    deck::WRITE_SOURCE,
     solve::RUN,
     solve::STATIC,
     solve::SENSITIVITY_STATIC,
@@ -244,10 +251,13 @@ pub static ALL: &[CommandSpec] = &[
     solve::NONLINEAR,
     solve::FREQUENCY,
     solve::HARMONIC,
+    solve::TRANSIENT,
+    solve::SPECTRUM,
     solve::RANDOM,
     fatigue::HISTORY,
     fatigue_transient::TRANSIENT,
     fatigue_strain::STRAIN_CYCLES,
+    solve::MATRICES,
     solve::BUCKLE,
     solve::HEAT,
     solve::EXPLICIT,

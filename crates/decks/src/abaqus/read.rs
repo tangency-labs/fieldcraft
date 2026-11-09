@@ -1,17 +1,31 @@
-//! Flat model-data import, designed from the public Abaqus keyword reference.
+//! Model-data import with part-instance expansion, designed from the public Abaqus keyword reference.
 //!
 //! Syntax: Dassault Systemes, *Abaqus 2017 Analysis User's Guide*, "Input syntax rules", and the
 //! *NODE, *ELEMENT, *NSET, *ELSET, *SURFACE, *MATERIAL, *ELASTIC, *DENSITY and section entries
 //! of the *Abaqus 2017 Keywords Reference Guide*. Material scope: *Abaqus 2025 Materials Guide*,
 //! "Material data definition".
 //! Only original handwritten or FieldCraft-writer-generated decks are used in tests.
-//! No history, assembly, includes or raw-keyword passthrough is imported. Numbers in a deck
+//! Model-data APIs report history; `read_analysis_limited` maps supported native steps.
+//! Hosts use `bundle` for INCLUDE expansion
+//! and exact source replay; the model writer does not pass arbitrary keywords through. Numbers in a deck
 //! have no intrinsic units: callers choose a consistent preset; the model stores SI.
 //! Recognized material behaviors keep the active material even when their data are reported
 //! unread. Other model options and unrecognized keywords end that context.
 
+mod assembly;
+pub use assembly::InstanceMap;
+pub mod bundle;
 mod composite;
+mod constraints;
+mod discrete;
+mod dynamic;
+mod history;
 mod lex;
+mod mass;
+mod matrices;
+pub use mass::MassRequirement;
+mod random;
+pub mod source;
 mod types;
 
 use crate::Result;
@@ -38,10 +52,17 @@ pub struct Unknown {
     pub line: usize,
 }
 
-/// A new model, without history. Unknown output is bounded; `unknown_count` counts all options.
+/// An imported model, with history when requested. Unknown output is bounded;
+/// `unknown_count` counts all unread options.
 #[derive(Debug, Clone)]
 pub struct Read {
+    /// Whether all history steps were mapped without unsupported physical semantics.
+    pub analysis_complete: bool,
+    /// Unapplied, condition-scoped mass requirements; independent of history completeness.
+    pub mass_requirements: Vec<MassRequirement>,
     pub model: Model,
+    /// Deterministic local-to-global labels and names for expanded instances.
+    pub instances: Vec<InstanceMap>,
     pub unknown: Vec<Unknown>,
     pub unknown_count: usize,
     pub warnings: Vec<String>,
@@ -76,7 +97,40 @@ pub fn read_in(text: &str, preset: Preset) -> Result<Read> {
 
 /// [`read_in`] within the caller's storage and work bounds.
 pub fn read_limited(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
-    parse(text, preset, limits)
+    read_mode(text, preset, limits, false)
+}
+
+/// Import supported analysis history as native steps, retaining named unsupported semantics.
+pub fn read_analysis_limited(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
+    read_mode(text, preset, limits, true)
+}
+
+fn read_mode(text: &str, preset: Preset, limits: Limits, analysis: bool) -> Result<Read> {
+    if text.len() > MAX_INPUT_BYTES {
+        return Err(error(1, "input exceeds 64 MiB"));
+    }
+    let expanded = assembly::expand(text, limits)?;
+    let flat = expanded.as_ref().map_or(text, |e| e.text.as_str());
+    let parse_all = || -> Result<Read> {
+        let mut read = parse(flat, preset, limits)?;
+        read.mass_requirements = mass::inspect(flat)?;
+        constraints::import(flat, &mut read, preset, limits)?;
+        if analysis {
+            history::import(flat, &mut read, preset, limits)?;
+        }
+        constraints::finish(&mut read.model)?;
+        read.unknown.truncate(MAX_UNKNOWN_SHOWN);
+        Ok(read)
+    };
+    let mut read = parse_all().map_err(|e| expanded.as_ref().map_or(e.clone(), |x| x.source_error(e)))?;
+    if let Some(expanded) = expanded {
+        for unknown in &mut read.unknown {
+            unknown.line = expanded.original_line(unknown.line);
+        }
+        read.warnings.extend(expanded.warnings);
+        read.instances = expanded.instances;
+    }
+    Ok(read)
 }
 
 /// Cooperate with the host without a thread-local lookup for every small token.
@@ -293,6 +347,8 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
     let (mut nsets, mut elsets): (BTreeMap<String, RawSet>, BTreeMap<String, RawSet>) = (BTreeMap::new(), BTreeMap::new());
     let mut node_from_element_sets = Vec::new();
     let mut elements = Vec::new();
+    let mut discrete_elements = BTreeMap::new();
+    let mut discrete_properties = Vec::new();
     let mut element_labels = BTreeSet::new();
     let mut surfaces = Vec::new();
     let mut sections = Vec::new();
@@ -304,7 +360,7 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
         progress::check()?;
         let k = block.keyword.as_str();
         let line = block.line;
-        if ["INCLUDE", "SYSTEM", "PART", "ASSEMBLY", "INSTANCE", "ENDPART", "ENDASSEMBLY", "ENDINSTANCE"].contains(&k) {
+        if ["PARAMETER", "INCLUDE", "SYSTEM", "PART", "ASSEMBLY", "INSTANCE", "ENDPART", "ENDASSEMBLY", "ENDINSTANCE"].contains(&k) {
             return Err(error(line, format!("*{k} is not supported by the flat model-data reader")));
         }
         if k == "STEP" {
@@ -320,9 +376,7 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
         let ignored = history.is_some() || k == "ENDSTEP";
         if ignored {
             unknown_count += 1;
-            if unknown.len() < MAX_UNKNOWN_SHOWN {
-                unknown.push(Unknown { keyword: k.to_string(), line });
-            }
+            unknown.push(Unknown { keyword: k.to_string(), line });
             if k == "ENDSTEP" {
                 history = None;
             }
@@ -370,6 +424,35 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
             }
             "ELEMENT" => {
                 block.only(&["TYPE", "ELSET"])?;
+                if let Some(kind) = discrete::Kind::parse(block.required("TYPE")?) {
+                    let set =
+                        block.value("ELSET").map(|s| named(s, line)).transpose()?.map(|name| name_entry(&mut names, &name, line)).transpose()?;
+                    if block.rows.is_empty() {
+                        return Err(error(line, "*ELEMENT has no data"));
+                    }
+                    for (index, row) in block.rows.iter().enumerate() {
+                        check_work(index)?;
+                        let f = row_fields(row.text, row.line)?;
+                        let [id, node] = f.as_slice() else {
+                            return Err(error(row.line, "MASS/SPRING1 requires an element label and one node"));
+                        };
+                        let id = label(id, row.line)?;
+                        let node = label(node, row.line)?;
+                        if !element_labels.insert(id) {
+                            return Err(error(row.line, format!("duplicate element {id}")));
+                        }
+                        if element_labels.len() > limits.elements {
+                            return Err(error(row.line, format!("element limit of {} reached", limits.elements)));
+                        }
+                        discrete_elements.insert(id, discrete::Record { kind, node, line: row.line });
+                        if let Some(name) = &set {
+                            let raw = elsets.entry(name.clone()).or_default();
+                            raw.line = line;
+                            append_member(raw, Member::Label(id, row.line), &mut budget, member_limit, row.line)?;
+                        }
+                    }
+                    continue;
+                }
                 let typ = Type::parse(block.required("TYPE")?, line)?;
                 let set = block.value("ELSET").map(|s| named(s, line)).transpose()?.map(|name| name_entry(&mut names, &name, line)).transpose()?;
                 let mut pending: Option<ElementRecord> = None;
@@ -414,6 +497,7 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
                     return Err(error(line, "*ELEMENT has no data"));
                 }
             }
+            "MASS" | "SPRING" => discrete_properties.push(block),
             "NSET" | "ELSET" => {
                 block.only(if k == "NSET" { &["NSET", "GENERATE", "ELSET"] } else { &["ELSET", "GENERATE"] })?;
                 let name = named(block.required(k)?, line)?;
@@ -482,9 +566,7 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
                 block.only(&["TYPE", "NAME"])?;
                 if block.value("TYPE").is_some_and(|t| canonical(t) != "ELEMENT") {
                     unknown_count += 1;
-                    if unknown.len() < MAX_UNKNOWN_SHOWN {
-                        unknown.push(Unknown { keyword: k.to_string(), line });
-                    }
+                    unknown.push(Unknown { keyword: k.to_string(), line });
                     if warnings.len() < MAX_UNKNOWN_SHOWN {
                         warnings.push(format!(
                             "line {line}: *SURFACE TYPE={} is unread; only element-based surfaces are imported",
@@ -517,6 +599,14 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
                     return Err(error(line, "duplicate material"));
                 }
                 material = Some(name);
+            }
+            "DAMPING" => {
+                let name = material.as_ref().ok_or_else(|| error(line, "DAMPING outside MATERIAL"))?;
+                let m = materials.get_mut(name).ok_or_else(|| error(line, "missing active material"))?;
+                if m.0.damping.is_some() {
+                    return Err(error(line, "duplicate material DAMPING"));
+                }
+                m.0.damping = Some(dynamic::damping(block, &units)?);
             }
             "ELASTIC" | "DENSITY" => {
                 let name = material.as_ref().ok_or_else(|| error(line, format!("*{k} outside a supported *MATERIAL block")))?;
@@ -590,9 +680,7 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
             }
             _ => {
                 unknown_count += 1;
-                if unknown.len() < MAX_UNKNOWN_SHOWN {
-                    unknown.push(Unknown { keyword: k.to_string(), line });
-                }
+                unknown.push(Unknown { keyword: k.to_string(), line });
             }
         }
     }
@@ -617,7 +705,7 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
         let labels = expand(name, &elsets, &mut expanded_elements, &mut active, 0, &mut work, member_limit, raw.line)?;
         for (index, l) in labels.iter().enumerate() {
             check_work(index)?;
-            if model.element(*l).is_none() {
+            if model.element(*l).is_none() && !discrete_elements.contains_key(l) {
                 return Err(error(raw.line, format!("element set `{name}` names missing element {l}")));
             }
         }
@@ -628,7 +716,9 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
         let raw = nsets.entry(name).or_default();
         raw.line = line;
         for l in elements {
-            if let Some(e) = model.element(*l) {
+            if let Some(e) = discrete_elements.get(l) {
+                append_member(raw, Member::Label(e.node, line), &mut budget, member_limit, line)?;
+            } else if let Some(e) = model.element(*l) {
                 for n in &e.nodes {
                     append_member(raw, Member::Label(*n, line), &mut budget, member_limit, line)?;
                 }
@@ -652,7 +742,10 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
     }
     for (name, labels) in &expanded_elements {
         progress::check()?;
-        sets.entry(name.clone()).or_default().elements = labels.clone();
+        let mesh: Vec<_> = labels.iter().copied().filter(|id| !discrete_elements.contains_key(id)).collect();
+        if !mesh.is_empty() || labels.is_empty() {
+            sets.entry(name.clone()).or_default().elements = mesh;
+        }
     }
     for surface in surfaces {
         progress::check()?;
@@ -714,6 +807,13 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
         progress::check()?;
         let spelling = names.get(&name).ok_or_else(|| error(1, "missing set spelling"))?;
         model.add_set(spelling, set).map_err(|e| error(1, e.to_string()))?;
+    }
+    if budget.saturating_add(discrete_elements.len()) > member_limit {
+        return Err(error(1, "discrete target membership limit reached"));
+    }
+    discrete::apply(&mut model, &discrete_elements, &discrete_properties, &expanded_elements, &units)?;
+    if !discrete_elements.is_empty() {
+        warnings.push(format!("{} MASS/SPRING1 labels mapped to native InpDiscreteElement<label> definitions and explicit node target sets; their original ELSET memberships remain in source, not mesh element sets.", discrete_elements.len()));
     }
     let mut has_planar = false;
     let mut assigned = BTreeMap::new();
@@ -799,7 +899,7 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
             "{unassigned} mesh elements have no section: their input family/formulation is not stored on the mesh element. Assign compatible sections before analysis; reduced/hybrid/shell/plane context is not retained without them."
         ));
     }
-    Ok(Read { model, unknown, unknown_count, warnings })
+    Ok(Read { model, mass_requirements: Vec::new(), analysis_complete: false, instances: Vec::new(), unknown, unknown_count, warnings })
 }
 
 fn section_kind(raw: &SectionRecord, typ: Type, units: &DisplaySystem) -> Result<SectionKind> {
@@ -885,3 +985,6 @@ fn section_kind(raw: &SectionRecord, typ: Type, units: &DisplaySystem) -> Result
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod assembly_tests;

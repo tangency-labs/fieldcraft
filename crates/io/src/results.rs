@@ -6,11 +6,12 @@
 //!
 //! ```text
 //! "MCRSLT06"                     magic, 8 bytes (unified result-kind allocation)
+//! u32::MAX, "FC-P4A-UNIFIED-1"   explicit unified layout (16 ASCII bytes)
 //! u32 steps
 //! steps × { u64 length, step name (UTF-8),
 //!           32 bytes: SHA-256 of the definition it was solved from ([`definition_hash`]),
 //!           u8 kind (0 static, 1 frequency, 2 heat transfer, 3 explicit dynamic, 4 fluid,
-//!                    5 legacy harmonic, 6 reserved linear dynamics, 7 static with fatigue,
+//!                    5 legacy harmonic, 6 linear dynamics, 7 static with fatigue,
 //!                    8 legacy harmonic with fatigue, 9 harmonic with mass, 10 harmonic with mass and fatigue),
 //!           u64 length, the result in the [`crate::codec`] encoding }   names ascending
 //! ```
@@ -28,7 +29,8 @@
 //! encoding's version changes with any change to them ([`MAGIC`]). A file whose results are of
 //! an unknown version opens without them ([`Decoded::OtherVersion`]). Version 05
 //! retains kinds 0–5; its overlapping higher kinds are explicitly refused, never
-//! guessed or silently dropped. See docs/results-kind-layout.md for recovery.
+//! guessed or silently dropped. Unmarked version 06 is also refused: both pre-merge
+//! producers used it for incompatible schemas. See docs/results-kind-layout.md for recovery.
 //!
 //! Reading treats the part as hostile, as `mesh.bin`: the number of steps is capped, every length
 //! is checked against the bytes present before anything is read for it, nothing may be left
@@ -45,6 +47,9 @@ use crate::{Error, Geometry, MAX_FILE_BYTES, Result, codec, invalid};
 /// Unified allocation. Version 05 kinds above 5 are ambiguous across producer branches.
 pub const MAGIC: &[u8; 8] = b"MCRSLT06";
 const LEGACY_MAGIC: &[u8; 8] = b"MCRSLT05";
+/// Distinguishes the unified layout from both incompatible pre-merge version 06 producers.
+const LAYOUT_SENTINEL: u32 = u32::MAX;
+const LAYOUT: &[u8; 16] = b"FC-P4A-UNIFIED-1";
 
 /// The part's name.
 pub const PART: &str = "results.bin";
@@ -116,6 +121,7 @@ impl<'a> SolvedRef<'a> {
                 (false, false) => 9,
                 (false, true) => 10,
             },
+            SolvedRef::Implicit(fieldcraft_solver::StepResult::Dynamics(_)) => 6,
             SolvedRef::Explicit(_) => 3,
             SolvedRef::Fluid(_) => 4,
         }
@@ -143,6 +149,7 @@ impl<'a> SolvedRef<'a> {
                     }
                 }
             }
+            SolvedRef::Implicit(fieldcraft_solver::StepResult::Dynamics(r)) => codec::encode_into(r, out),
             SolvedRef::Explicit(r) => codec::encode_into(r, out),
             SolvedRef::Fluid(r) => codec::encode_into(r, out),
         }
@@ -211,6 +218,8 @@ pub fn encode(results: &[(&str, StoredRef<'_>)]) -> Result<Vec<u8>> {
         return invalid(format!("{PART}: a step's result is listed twice"));
     }
     let mut out = MAGIC.to_vec();
+    out.extend_from_slice(&LAYOUT_SENTINEL.to_le_bytes());
+    out.extend_from_slice(LAYOUT);
     out.extend_from_slice(&u32::try_from(sorted.len()).unwrap_or(u32::MAX).to_le_bytes());
     for (name, stored) in sorted {
         if stored.result.step() != *name {
@@ -274,6 +283,17 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded> {
         }
         return invalid(format!("{PART} is not a results part (no {} magic)", String::from_utf8_lossy(MAGIC)));
     }
+    if &magic == MAGIC {
+        let sentinel = u32::from_le_bytes(r.array("the layout sentinel")?);
+        if sentinel != LAYOUT_SENTINEL {
+            return invalid(format!(
+                "{PART}: unmarked version 06 has conflicting producer layouts; preserve the original and recover with its verified source/binary identity"
+            ));
+        }
+        if &r.array::<16>("the unified layout")? != LAYOUT {
+            return invalid(format!("{PART}: unknown version 06 layout; no fallback decoding"));
+        }
+    }
     let count = u32::from_le_bytes(r.array("the step count")?) as usize;
     if count > MAX_STEPS {
         return Err(Error::Limit(format!("{PART} holds {count} steps' results (at most {MAX_STEPS})")));
@@ -299,14 +319,18 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded> {
             ));
         }
         let result = match kind {
-            0 => Solved::Implicit(fieldcraft_solver::StepResult::Static(codec::decode(payload).map_err(damaged)?)),
+            0 => Solved::Implicit(fieldcraft_solver::StepResult::Static(if &magic == LEGACY_MAGIC {
+                codec::decode::<LegacyStatic>(payload).map_err(damaged)?.into_current()
+            } else {
+                codec::decode(payload).map_err(damaged)?
+            })),
             1 => Solved::Implicit(fieldcraft_solver::StepResult::Frequency(codec::decode(payload).map_err(damaged)?)),
             2 => Solved::Implicit(fieldcraft_solver::StepResult::Heat(codec::decode(payload).map_err(damaged)?)),
             3 => Solved::Explicit(codec::decode(payload).map_err(damaged)?),
             4 => Solved::Fluid(codec::decode(payload).map_err(damaged)?),
             5 => Solved::Implicit(fieldcraft_solver::StepResult::Harmonic(decode_legacy_harmonic(payload).map_err(damaged)?)),
             9 => Solved::Implicit(fieldcraft_solver::StepResult::Harmonic(codec::decode(payload).map_err(damaged)?)),
-            6 => return invalid(format!("{PART}: kind 6 is reserved for linear dynamics; this build cannot decode it")),
+            6 => Solved::Implicit(fieldcraft_solver::StepResult::Dynamics(codec::decode(payload).map_err(damaged)?)),
             7 => {
                 let (mut r, f): (fieldcraft_solver::StaticResult, fieldcraft_solver::fatigue::field::FatigueField) =
                     codec::decode(payload).map_err(damaged)?;
@@ -361,6 +385,7 @@ fn lengths(n: usize, lens: &[(&str, usize, bool)]) -> std::result::Result<(), St
 pub fn check(r: &Solved) -> std::result::Result<(), String> {
     use fieldcraft_solver::StepResult as S;
     match r {
+        Solved::Implicit(S::Dynamics(r)) => r.validate(),
         Solved::Implicit(S::Harmonic(h)) => {
             if let Some(f) = &h.fatigue {
                 f.validate(h.nodes.len()).map_err(|e| e.to_string())?;
@@ -442,6 +467,14 @@ pub fn check(r: &Solved) -> std::result::Result<(), String> {
                         return Err("a frame's reactions are not at ascending nodes of the result".into());
                     }
                 }
+            }
+            if s.pretension.len() > 1000
+                || !s.pretension.windows(2).all(|w| matches!(w, [a, b] if a.name < b.name))
+                || s.pretension
+                    .iter()
+                    .any(|p| p.name.is_empty() || !p.adjustment.is_finite() || !p.section_force.is_finite() || !p.applied_force.is_finite())
+            {
+                return Err("pretension results have invalid names or non-finite values".into());
             }
             let frame_contacts = s.nonlinear.iter().flat_map(|h| &h.frames).flat_map(|f| &f.contacts);
             for c in s.contacts.iter().chain(frame_contacts) {
@@ -653,3 +686,54 @@ mod harmonic_mass_compatibility {
 #[cfg(test)]
 #[path = "result_kinds_tests.rs"]
 mod kind_tests;
+
+// Version 05 static payload predates pretension; decode only under that explicit header.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct LegacyStatic {
+    step: String,
+    nodes: Vec<u32>,
+    displacement: Vec<[f64; 3]>,
+    rotation: Vec<[f64; 3]>,
+    reaction: Vec<[f64; 3]>,
+    reaction_moment: Vec<[f64; 3]>,
+    stress: Vec<[f64; 6]>,
+    von_mises: Vec<f64>,
+    elements: Vec<fieldcraft_solver::ElementStress>,
+    shells: Vec<fieldcraft_solver::analysis::ShellResult>,
+    beams: Vec<fieldcraft_solver::analysis::BeamResult>,
+    reference_points: Vec<fieldcraft_solver::PointResult>,
+    applied_total: [f64; 3],
+    reaction_total: [f64; 3],
+    stats: fieldcraft_solver::Stats,
+    warnings: Vec<String>,
+    temperature: Option<Vec<f64>>,
+    nonlinear: Option<fieldcraft_solver::nonlinear::History>,
+    contacts: Vec<fieldcraft_solver::contact::ContactResult>,
+}
+impl LegacyStatic {
+    fn into_current(self) -> fieldcraft_solver::StaticResult {
+        fieldcraft_solver::StaticResult {
+            fatigue: None,
+            pretension: Vec::new(),
+            step: self.step,
+            nodes: self.nodes,
+            displacement: self.displacement,
+            rotation: self.rotation,
+            reaction: self.reaction,
+            reaction_moment: self.reaction_moment,
+            stress: self.stress,
+            von_mises: self.von_mises,
+            elements: self.elements,
+            shells: self.shells,
+            beams: self.beams,
+            reference_points: self.reference_points,
+            applied_total: self.applied_total,
+            reaction_total: self.reaction_total,
+            stats: self.stats,
+            warnings: self.warnings,
+            temperature: self.temperature,
+            nonlinear: self.nonlinear,
+            contacts: self.contacts,
+        }
+    }
+}

@@ -320,6 +320,8 @@ impl Default for Limits {
 #[derive(Debug, Clone, Default)]
 pub struct Session {
     pub model: Model,
+    /// Original Abaqus files for explicit source replay and project persistence; never solver state.
+    pub deck_source: Option<Arc<fieldcraft_io::DeckSource>>,
     /// The open SolidCraft design (`geometry.open`); shared, so a snapshot costs nothing.
     pub design: Option<Arc<Design>>,
     /// Face-tagged boundary surfaces (`geometry.import.mesh`): the input to volume meshing.
@@ -531,7 +533,12 @@ impl Session {
                     Some(form) if input != *self.journal_reads(id) => units::with_units(form, params, &input),
                     _ => params.clone(),
                 };
-                self.journal.push((id.to_string(), entry));
+                let entry = if id == "model.pretension.lock" {
+                    cmd::pretension::journal_entry(self, params).unwrap_or_else(|| (id.to_string(), entry))
+                } else {
+                    (id.to_string(), entry)
+                };
+                self.journal.push(entry);
                 self.revision = next_revision();
                 self.record_undo(before);
                 // An item deleted (or a body cut into cells) is no longer hidden.

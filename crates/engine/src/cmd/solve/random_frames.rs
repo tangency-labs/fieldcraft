@@ -37,6 +37,42 @@ pub(super) fn run(s: &mut Session, p: &Value, step: &str, table: &Value) -> Resu
     let StepResult::Implicit(ImplicitResult::Harmonic(h)) = result.as_ref() else {
         return Err(EngineError::invalid("step", "the stored result is not harmonic"));
     };
+    let mut out = evaluate(h, p, step, table)?;
+    element_output(&s.model, h, p, &mut out)?;
+    let mut ranked = Vec::new();
+    if let Some(rows) = out.get("projected_stress").and_then(Value::as_array) {
+        let map = rows
+            .iter()
+            .filter(|r| r["fatigue"].is_object())
+            .filter_map(|r| r["node"].as_u64().and_then(|n| u32::try_from(n).ok()).map(|n| (n, r)))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        if !map.is_empty() {
+            let mut stored = h.clone();
+            let hash = fieldcraft_io::results::definition_hash(&s.model, step, &s.sources)
+                .ok_or_else(|| EngineError::invalid("step", "missing source identity"))?;
+            stored.fatigue = Some(fieldcraft_solver::fatigue::field::FatigueField {
+                damage: h.nodes.iter().map(|n| map.get(n).and_then(|r| r["fatigue"]["damage"].as_f64())).collect(),
+                life_seconds: h.nodes.iter().map(|n| map.get(n).and_then(|r| r["fatigue"]["life_seconds"].as_f64())).collect(),
+                inputs_json: p.to_string(),
+                dependencies: vec![(step.to_string(), hash)],
+            });
+            if let Some(f) = &stored.fatigue {
+                f.validate(h.nodes.len())?;
+            }
+            ranked =
+                map.values().map(|r| json!({"node":r["node"],"damage":r["fatigue"]["damage"],"life_seconds":r["fatigue"]["life_seconds"]})).collect();
+            ranked.sort_by(|a, b| {
+                b["damage"].as_f64().unwrap_or(0.).total_cmp(&a["damage"].as_f64().unwrap_or(0.)).then(a["node"].as_u64().cmp(&b["node"].as_u64()))
+            });
+            s.store_result(StepResult::Implicit(ImplicitResult::Harmonic(stored)));
+        }
+    }
+    out["fatigue_coverage_all"] = json!(!ranked.is_empty() && ranked.len() == h.nodes.len());
+    out["fatigue_ranked_nodes"] = json!(ranked);
+    Ok(out)
+}
+
+pub(super) fn evaluate(h: &HarmonicResult, p: &Value, step: &str, table: &Value) -> Result<Value> {
     if p.get("mass").is_some() {
         return Err(EngineError::invalid("mass", "inherited from stored harmonic result; select mass in solve.harmonic"));
     }
@@ -180,36 +216,8 @@ pub(super) fn run(s: &mut Session, p: &Value, step: &str, table: &Value) -> Resu
         let samples = h.frames.iter().enumerate().map(|(j,f)| json!({"frequency":f.frequency,"displacement_psd":up.get(j).and_then(|r|r.get(k)),"acceleration_psd":ap.get(j).and_then(|r|r.get(k)),"displacement_components_psd":u.get(j).and_then(|r|r.get(k)),"acceleration_components_psd":acc.get(j).and_then(|r|r.get(k)),"stress_components_psd":stress.get(j).and_then(|r|r.get(k))})).collect::<Vec<_>>();
         json!({"node":n,"displacement_rms":ut.get(k),"acceleration_rms":at.get(k),"displacement_components_rms":uc.get(k),"acceleration_components_rms":ac.get(k),"stress_components_rms":sc.get(k),"samples":samples})
     }).collect::<Vec<_>>();
-    let mut ranked = Vec::new();
-    if let Some(rows) = &projected {
-        let map = rows
-            .iter()
-            .filter(|r| r["fatigue"].is_object())
-            .filter_map(|r| r["node"].as_u64().and_then(|n| u32::try_from(n).ok()).map(|n| (n, r)))
-            .collect::<std::collections::BTreeMap<_, _>>();
-        if !map.is_empty() {
-            let mut stored = h.clone();
-            let hash = fieldcraft_io::results::definition_hash(&s.model, step, &s.sources)
-                .ok_or_else(|| EngineError::invalid("step", "missing source identity"))?;
-            stored.fatigue = Some(fieldcraft_solver::fatigue::field::FatigueField {
-                damage: h.nodes.iter().map(|n| map.get(n).and_then(|r| r["fatigue"]["damage"].as_f64())).collect(),
-                life_seconds: h.nodes.iter().map(|n| map.get(n).and_then(|r| r["fatigue"]["life_seconds"].as_f64())).collect(),
-                inputs_json: p.to_string(),
-                dependencies: vec![(step.to_string(), hash)],
-            });
-            if let Some(f) = &stored.fatigue {
-                f.validate(h.nodes.len())?;
-            }
-            ranked =
-                map.values().map(|r| json!({"node":r["node"],"damage":r["fatigue"]["damage"],"life_seconds":r["fatigue"]["life_seconds"]})).collect();
-            ranked.sort_by(|a, b| {
-                b["damage"].as_f64().unwrap_or(0.).total_cmp(&a["damage"].as_f64().unwrap_or(0.)).then(a["node"].as_u64().cmp(&b["node"].as_u64()))
-            });
-            s.store_result(StepResult::Implicit(ImplicitResult::Harmonic(stored)));
-        }
-    }
     Ok(
-        json!({"fatigue_ranked_nodes":ranked,"fatigue_coverage_all":!ranked.is_empty()&&ranked.len()==h.nodes.len(),"step":step,"method":"harmonic_frame_psd","mass":h.mass,"nodes":nodes,"frequencies":h.frames.iter().map(|f|f.frequency).collect::<Vec<_>>(),"input_psd":psd,"node_displacement_psd":up,"node_acceleration_psd":ap,"node_displacement_rms":ut,"node_acceleration_rms":at,"stress_psd":sp,"stress_rms":st,"projected_stress":projected,"projection_weights":projection.as_ref().map(|v|v.weights),"projection_psd_unit":"Pa²/Hz","probes":probes,"acceleration_reference":if direction.is_some(){"absolute_base_motion"}else{"stationary_support"},"displacement_reference":if direction.is_some(){"relative_to_base"}else{"stationary_support"},"units":{"frequency":"Hz","displacement_rms":"m","acceleration_rms":"m/s²","stress_rms":"Pa","psd":"squared SI response unit per Hz"}}),
+        json!({"step":step,"method":"harmonic_frame_psd","mass":h.mass,"nodes":nodes,"frequencies":h.frames.iter().map(|f|f.frequency).collect::<Vec<_>>(),"input_psd":psd,"node_displacement_psd":up,"node_acceleration_psd":ap,"node_displacement_rms":ut,"node_acceleration_rms":at,"stress_psd":sp,"stress_rms":st,"projected_stress":projected,"projection_weights":projection.as_ref().map(|v|v.weights),"projection_psd_unit":"Pa²/Hz","probes":probes,"acceleration_reference":if direction.is_some(){"absolute_base_motion"}else{"stationary_support"},"displacement_reference":if direction.is_some(){"relative_to_base"}else{"stationary_support"},"units":{"frequency":"Hz","displacement_rms":"m","acceleration_rms":"m/s²","stress_rms":"Pa","psd":"squared SI response unit per Hz"}}),
     )
 }
 
@@ -363,4 +371,45 @@ mod broadband_command_tests {
             assert!(s.execute("solve.random", &p).is_err());
         }
     }
+}
+
+/// Recover each solid contribution before squaring it. In particular, this is
+/// not the square of a stress averaged across neighbouring elements.
+pub(super) fn element_output(model: &fieldcraft_model::Model, h: &HarmonicResult, p: &Value, out: &mut Value) -> Result<()> {
+    let Some(elements) = p.get("elements") else {
+        if p.get("element_phasors").is_some() {
+            return Err(EngineError::invalid("elements", "element_phasors requires element labels"));
+        }
+        return Ok(());
+    };
+    let labels: Vec<u32> = serde_json::from_value(elements.clone()).map_err(|e| EngineError::invalid("elements", e.to_string()))?;
+    let phasors: bool = super::opt(p, "element_phasors")?.unwrap_or(false);
+    let recovery = fieldcraft_solver::harmonic::ElementStressRecovery::new(model, h, &labels, &super::limits(p)?)?;
+    let input: Vec<f64> = serde_json::from_value(out["input_psd"].clone()).map_err(|e| EngineError::invalid("input_psd", e.to_string()))?;
+    if input.len() != h.frames.len() {
+        return Err(EngineError::invalid("input_psd", "inconsistent frame count"));
+    }
+    let mut spectra = Vec::new();
+    let mut real = Vec::new();
+    let mut imaginary = Vec::new();
+    for (frame, psd) in h.frames.iter().zip(input) {
+        let re = recovery.recover(&frame.real)?;
+        let im = recovery.recover(&frame.imaginary)?;
+        spectra.push(re.iter().zip(&im).map(|(r, i)| std::array::from_fn::<_, 6, _>(|c| (r[c] * r[c] + i[c] * i[c]) * psd)).collect());
+        if phasors {
+            real.push(re);
+            imaginary.push(im);
+        }
+    }
+    let (_, rms, _) = summaries(h, &spectra)?;
+    out["element_stress"] = json!({
+        "locations":recovery.locations,"components":["xx","yy","zz","xy","xz","yz"],
+        "frequencies":h.frames.iter().map(|f| f.frequency).collect::<Vec<_>>(),
+        "components_psd":spectra,"components_rms":rms,
+        "stress_real":if phasors { Some(real) } else { None },
+        "stress_imaginary":if phasors { Some(imaginary) } else { None },
+        "units":{"xyz":"m","stress":"Pa","psd":"Pa²/Hz","rms":"Pa"},
+        "recovery":"global Cartesian elastic stresses; integration-rule order (one-based), element-node extrapolation without inter-element averaging; component RMS, not von Mises RMS"
+    });
+    Ok(())
 }

@@ -182,11 +182,14 @@ fn control_units(units: Preset) -> [&'static str; 4] {
 
 fn write_with(model: &Model, r: &Resolved, units: Preset) -> Result<Written> {
     crate::refuse_fluid(FORMAT, model)?;
+    crate::refuse_prestress(FORMAT, model)?;
     crate::foundation::refuse(FORMAT, model)?;
-    if let Some(step) = model.steps().iter().find(|s| matches!(s.procedure, Procedure::Harmonic(_))) {
+    if let Some(step) =
+        model.steps().iter().find(|s| matches!(s.procedure, Procedure::Harmonic(_) | Procedure::Transient(_) | Procedure::ResponseSpectrum(_)))
+    {
         return Err(Error::Unsupported {
             format: FORMAT,
-            what: format!("step `{}`: harmonic frequency response is not supported by this writer", step.name),
+            what: format!("step `{}`: {} response is not supported by this writer", step.name, step.procedure.name()),
         });
     }
     composite::check(model)?;
@@ -950,6 +953,9 @@ fn write_step(d: &mut Deck, model: &Model, r: &Resolved, plan: &Plan, step: &Ste
     d.card([Field::from(1), Field::from(first_increment)]);
     match &step.procedure {
         Procedure::Fluid { .. } => return Err(crate::fluid_step(FORMAT, &step.name)),
+        Procedure::MatrixGeneration { .. } => {
+            return Err(Error::Unsupported { format: FORMAT, what: "matrix generation: use solve.matrices or deck.source.write".into() });
+        }
         Procedure::RandomVibration(_) => {
             return Err(Error::Unsupported { format: FORMAT, what: format!("step `{}`: random response is not written yet", step.name) });
         }
@@ -993,7 +999,9 @@ fn write_step(d: &mut Deck, model: &Model, r: &Resolved, plan: &Plan, step: &Ste
                 d.card([Field::Blank, Field::Blank, Field::Blank, Field::Blank, Field::from(1)]);
             }
         }
-        Procedure::Harmonic(_)
+        Procedure::Transient(_)
+        | Procedure::ResponseSpectrum(_)
+        | Procedure::Harmonic(_)
         | Procedure::ExplicitDynamic(_)
         | Procedure::HeatTransfer { .. }
         | Procedure::CoupledTemperatureDisplacement {}

@@ -163,6 +163,7 @@ use fieldcraft_model::units::Preset;
 use crate::{Error, Result, unsupported};
 
 mod composite;
+mod dynamics;
 pub mod read;
 pub use read::{Limits, Read, Unknown, read, read_in, read_limited};
 
@@ -192,8 +193,10 @@ pub fn write(model: &Model, units: Preset) -> Result<String> {
 /// [`write`] for a model already expressed in `units` ([`crate::express`]) and resolved.
 pub fn write_resolved(model: &Model, r: &Resolved, units: Preset) -> Result<String> {
     crate::refuse_fluid(FORMAT, model)?;
+    crate::refuse_prestress(FORMAT, model)?;
     let by_type = elements_by_type(model, r)?;
     check_expressible(model)?;
+    dynamics::check(model)?;
     let prepared = crate::composite::explicit_shell_frames(model, r, FORMAT)?;
     let model = prepared.as_ref().unwrap_or(model);
     let prepared_resolved = prepared.as_ref().map(Model::resolve).transpose()?;
@@ -213,6 +216,7 @@ pub fn write_resolved(model: &Model, r: &Resolved, units: Preset) -> Result<Stri
     d.ties(model)?;
     d.equations(model, r)?;
     d.out.push_str(&crate::foundation::abaqus(model, r)?);
+    d.dynamics_data(model)?;
     d.steps(model, r)?;
     Ok(d.out)
 }
@@ -1360,6 +1364,9 @@ impl Deck {
             self.comment(&format!("Step {}", step.name));
             match step.procedure {
                 Procedure::Fluid { .. } => return Err(crate::fluid_step(FORMAT, &step.name)),
+                Procedure::MatrixGeneration { .. } => {
+                    return Err(Error::Unsupported { format: FORMAT, what: "matrix generation: use solve.matrices or deck.source.write".into() });
+                }
                 Procedure::RandomVibration(_) => {
                     return Err(Error::Unsupported { format: FORMAT, what: format!("step `{}`: random response is not written yet", step.name) });
                 }
@@ -1463,6 +1470,10 @@ impl Deck {
                     if !step.loads.is_empty() {
                         self.comment("loads have no effect on natural frequencies and are not written");
                     }
+                }
+                Procedure::Transient(_) | Procedure::ResponseSpectrum(_) => {
+                    self.dynamics_step(model, r, step, &everything)?;
+                    continue;
                 }
                 Procedure::Harmonic(ref h) => {
                     use fieldcraft_model::harmonic::Method;

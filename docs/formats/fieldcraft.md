@@ -147,13 +147,18 @@ results without solving again (`results.contour`, `results.frame`, `results.slic
 `results.streamlines`, `solve.probe` and the rest work at once). Little-endian:
 
 ```
-"MCRSLT05"                     magic (the results encoding's version is 05)
+"MCRSLT06"                     magic
+u32::MAX, "FC-P4A-UNIFIED-1"   explicit unified layout (16 ASCII bytes)
 u32 steps
 steps × { u64 length, step name (UTF-8),
           32 bytes: SHA-256 of the definition it was solved from,
-          u8 kind (0 static, 1 frequency, 2 heat transfer, 3 explicit dynamic, 4 fluid),
+          u8 kind (0–5 original kinds, 6 linear dynamics, 7–10 fatigue/mass combinations),
           u64 length, the result }                                     names ascending
 ```
+
+See [the complete result-kind layout](../results-kind-layout.md) for payloads,
+version 05 compatibility and verified-producer recovery of both unmarked version 06
+branches. Unmarked version 06 is refused, never guessed.
 
 The result is the solver's own, every number in SI and every bit kept: a static step's
 displacements, rotations, reactions, nodal, element and integration point stresses, shell and

@@ -386,12 +386,12 @@ fn results_round_trip_and_hostile_results_are_refused() {
     trailing.push(0);
     assert!(refused(trailing, "trailing").contains("trailing"));
     let mut many = rb.clone();
-    many[8..12].copy_from_slice(&(results::MAX_STEPS as u32 + 1).to_le_bytes());
+    many[28..32].copy_from_slice(&(results::MAX_STEPS as u32 + 1).to_le_bytes());
     assert!(matches!(read(&with_part(&bytes, "results.bin", many)), Err(Error::Limit(_))));
     let mut long_name = rb.clone();
-    long_name[12..20].copy_from_slice(&u64::MAX.to_le_bytes());
+    long_name[32..40].copy_from_slice(&u64::MAX.to_le_bytes());
     refused(long_name, "a name longer than the part");
-    let kind_at = 12 + 8 + 4 + 32;
+    let kind_at = 32 + 8 + 4 + 32;
     let mut kind = rb.clone();
     kind[kind_at] = u8::MAX;
     assert!(refused(kind, "kind").contains("unknown kind"));
@@ -402,13 +402,13 @@ fn results_round_trip_and_hostile_results_are_refused() {
     payload_len[kind_at + 1..kind_at + 9].copy_from_slice(&(1u64 << 40).to_le_bytes());
     refused(payload_len, "a payload longer than the part");
     let mut name = rb.clone();
-    name[20] = b'1';
+    name[40] = b'1';
     refused(name, "a step name commands refuse");
     // A result that names another step, and one whose nodes do not ascend.
     let other = fieldcraft_solver::StepResult::Heat(fieldcraft_solver::HeatResult { step: "Other".into(), ..heat_result() });
     let wrong = results::encode(&[("Other", StoredRef { definition: hash, result: SolvedRef::Implicit(&other) })]).unwrap();
     let mut renamed = wrong.clone();
-    renamed[20..25].copy_from_slice(b"Otxer");
+    renamed[40..45].copy_from_slice(b"Otxer");
     assert!(refused(renamed, "renamed").contains("step `Other`'s"));
     let unsorted = fieldcraft_solver::StepResult::Heat(fieldcraft_solver::HeatResult { nodes: vec![3, 2, 1], ..heat_result() });
     let b = results::encode(&[("Heat", StoredRef { definition: hash, result: SolvedRef::Implicit(&unsorted) })]).unwrap();
@@ -585,4 +585,42 @@ fn run_settings_round_trip_and_are_checked() {
         ..Default::default()
     };
     assert!(fieldcraft_io::write_with(&f.model, &f.geometry, &f.journal, &f.journal_header, &f.view, &bad).is_err());
+}
+
+#[test]
+fn original_deck_source_is_integrity_checked_and_roundtrips() {
+    let source = fieldcraft_io::DeckSource {
+        root: "model.inp".into(),
+        files: std::collections::BTreeMap::from([
+            ("model.inp".into(), "** unchanged\r\n*INCLUDE,INPUT=part.inc\r\n*Future\r\nopaque".into()),
+            ("part.inc".into(), "*NODE\n1,0,0,0".into()),
+        ]),
+    };
+    let m = fieldcraft_model::Model::default();
+    let bytes = fieldcraft_io::write_with(
+        &m,
+        &Default::default(),
+        &[],
+        &Default::default(),
+        &Default::default(),
+        &fieldcraft_io::Extras { deck_source: Some(&source), ..Default::default() },
+    )
+    .unwrap();
+    assert_eq!(fieldcraft_io::read(&bytes).unwrap().deck_source, Some(source.clone()));
+    let mut corrupted = parts(&bytes);
+    corrupted.iter_mut().find(|(name, _)| name == "deck-source.json").unwrap().1.push(b' ');
+    assert!(fieldcraft_io::read(&package(&corrupted)).unwrap_err().to_string().contains("SHA-256"));
+    let mut bad = source;
+    bad.files.insert("../escape.inc".into(), "x".into());
+    assert!(
+        fieldcraft_io::write_with(
+            &m,
+            &Default::default(),
+            &[],
+            &Default::default(),
+            &Default::default(),
+            &fieldcraft_io::Extras { deck_source: Some(&bad), ..Default::default() }
+        )
+        .is_err()
+    );
 }

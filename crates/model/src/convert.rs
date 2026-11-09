@@ -391,9 +391,61 @@ impl Quantities for FluidDomain {
 
 impl Quantities for Step {
     fn quantities(&mut self, f: &mut dyn FnMut(Q, &mut f64)) {
-        let Step { name: _, procedure, output: _, boundary_conditions: _, loads: _ } = self;
+        let Step { name: _, base_state: _, pretension, procedure, output: _, boundary_conditions: _, loads: _ } = self;
+        for control in pretension.values_mut() {
+            match control {
+                crate::PretensionControl::Force { value } => f(Q::Force, value),
+                crate::PretensionControl::Adjustment { value } => f(Q::Length, value),
+            }
+        }
         match procedure {
             Procedure::Static {} | Procedure::CoupledTemperatureDisplacement {} => {}
+            Procedure::Transient(t) => {
+                f(Q::Time, &mut t.time_step);
+                if let Some(a) = &mut t.adaptive {
+                    f(Q::Time, &mut a.min_step);
+                    f(Q::Time, &mut a.max_step);
+                    f(Q::Length, &mut a.absolute_tolerance);
+                }
+                t.damping.quantities(f);
+                for a in t.load_amplitudes.values_mut() {
+                    amplitude_quantities(a, f);
+                }
+                for v in t.initial_displacement.values_mut() {
+                    each(v, Q::Length, f);
+                }
+                for v in t.initial_velocity.values_mut() {
+                    each(v, Q::Velocity, f);
+                }
+                if let Some(b) = &mut t.base_acceleration {
+                    f(Q::Acceleration, &mut b.magnitude);
+                    amplitude_quantities(&mut b.amplitude, f);
+                }
+                if let Some(b) = &mut t.base_displacement {
+                    f(Q::Length, &mut b.magnitude);
+                    f(Q::Velocity, &mut b.initial_velocity);
+                    f(Q::Acceleration, &mut b.initial_acceleration);
+                    amplitude_quantities(&mut b.amplitude, f);
+                }
+            }
+            Procedure::ResponseSpectrum(s) => {
+                for p in &mut s.pseudo_acceleration {
+                    f(Q::Frequency, &mut p[0]);
+                    f(Q::Acceleration, &mut p[1]);
+                }
+                for t in &mut s.tables {
+                    for p in &mut t.points {
+                        f(Q::Frequency, &mut p[0]);
+                        f(Q::Acceleration, &mut p[1]);
+                    }
+                }
+                for t in &mut s.period_tables {
+                    for p in &mut t.points {
+                        f(Q::Time, &mut p[0]);
+                        f(Q::Acceleration, &mut p[1]);
+                    }
+                }
+            }
             Procedure::Harmonic(h) => {
                 match &mut h.frequencies {
                     crate::harmonic::Frequencies::List(values) => each(values, Q::Frequency, f),
@@ -411,12 +463,23 @@ impl Quantities for Step {
                 for f0 in &mut r.frequencies {
                     f(Q::Frequency, f0);
                 }
+                if let Some(modal) = &mut r.modal {
+                    for band in &mut modal.bands {
+                        f(Q::Frequency, &mut band.lower);
+                        f(Q::Frequency, &mut band.upper);
+                    }
+                }
                 for e in &mut r.excitations {
+                    let multiplier = matches!(e, crate::random::Excitation::CorrelatedLoads { .. });
                     let spectrum = match e {
+                        crate::random::Excitation::CorrelatedLoads { spectrum } => spectrum,
                         crate::random::Excitation::Force { spectrum, .. } | crate::random::Excitation::BaseAcceleration { spectrum, .. } => spectrum,
                     };
                     for p in spectrum {
                         f(Q::Frequency, &mut p.frequency);
+                        if multiplier {
+                            f(Q::Time, &mut p.psd);
+                        }
                     }
                 }
                 r.damping.quantities(f);
@@ -427,7 +490,7 @@ impl Quantities for Step {
                 }
             }
             // The shift is a load factor.
-            Procedure::Buckle { modes: _, shift: _ } => {}
+            Procedure::Buckle { modes: _, shift: _ } | Procedure::MatrixGeneration { .. } => {}
             Procedure::ExplicitDynamic(e) => {
                 let ExplicitDynamic {
                     end_time,
@@ -611,6 +674,7 @@ impl Model {
             masses,
             springs,
             foundations,
+            pretensions: _,
             boundary_conditions,
             loads,
             initial_fields,
@@ -736,6 +800,7 @@ impl Model {
         keep_map(&self.masses, &c.masses, &b.masses, &mut out.masses);
         keep_map(&self.springs, &c.springs, &b.springs, &mut out.springs);
         keep_map(&self.foundations, &c.foundations, &b.foundations, &mut out.foundations);
+        keep_map(&self.pretensions, &c.pretensions, &b.pretensions, &mut out.pretensions);
         keep_map(&self.boundary_conditions, &c.boundary_conditions, &b.boundary_conditions, &mut out.boundary_conditions);
         keep_map(&self.loads, &c.loads, &b.loads, &mut out.loads);
         keep_map(&self.initial_fields, &c.initial_fields, &b.initial_fields, &mut out.initial_fields);
@@ -748,6 +813,21 @@ impl Model {
         keep_map(&self.mesh_plans, &c.mesh_plans, &b.mesh_plans, &mut out.mesh_plans);
         keep_list(&self.stitches, &c.stitches, &b.stitches, &mut out.stitches);
         Ok(out)
+    }
+}
+
+fn amplitude_quantities(a: &mut crate::amplitude::Amplitude, f: &mut dyn FnMut(Q, &mut f64)) {
+    use crate::amplitude::Amplitude;
+    match a {
+        Amplitude::Tabular { points } | Amplitude::SmoothStep { points } => {
+            for p in points {
+                f(Q::Time, &mut p[0]);
+            }
+        }
+        Amplitude::Periodic { angular_frequency, origin, .. } => {
+            f(Q::AngularVelocity, angular_frequency);
+            f(Q::Time, origin);
+        }
     }
 }
 

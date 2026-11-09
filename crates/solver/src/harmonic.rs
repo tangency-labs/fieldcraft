@@ -27,8 +27,10 @@ use crate::{Error, Limits, Result};
 
 mod model;
 mod residual;
-pub use model::{Frame, HarmonicResult, solve_harmonic, solve_harmonic_with_mass};
-pub(crate) use model::{damping_operators, load_vector};
+pub use model::{
+    ElementStressRecovery, Frame, HarmonicResult, MatrixExport, StressLocation, export_matrices, solve_harmonic, solve_harmonic_with_mass,
+};
+pub(crate) use model::{damping_operators, load_vector, stresses};
 
 /// Reduced physical matrices in one equation order and on the same CSR pattern.
 /// C and G contain material and discrete contributions only; global step damping
@@ -350,9 +352,13 @@ impl<'a> Modal<'a> {
                 continue;
             }
             // Vᵀ M Φ diag(2ζω_j) Φᵀ M V, including roundoff in M-orthogonality.
+            // Assemble one triangle and mirror it. Evaluating the two products
+            // separately changes multiplication order and can break the exact
+            // transpose symmetry required by the complex factorization.
             for row in 0..count {
-                for col in 0..count {
+                for col in 0..=row {
                     b[row * count + col] += omega * c * self.mass[row * count + j] * self.mass[j * count + col];
+                    b[col * count + row] = b[row * count + col];
                 }
             }
         }
