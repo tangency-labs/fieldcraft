@@ -48,7 +48,9 @@ pub enum Procedure {
     /// Linear static equilibrium under the active loads and boundary conditions.
     Static {},
     /// Export reduced linear structural operators in SI; no response solve.
-    MatrixGeneration { matrices: BTreeSet<MatrixKind> },
+    MatrixGeneration {
+        matrices: BTreeSet<MatrixKind>,
+    },
     /// Steady-state response to harmonic loads, in the exp(iωt) convention.
     Harmonic(crate::harmonic::Harmonic),
     Transient(crate::dynamics::Transient),
