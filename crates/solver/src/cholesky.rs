@@ -38,6 +38,8 @@ use fieldcraft_parallel as parallel;
 
 #[cfg(test)]
 mod diagnostics;
+#[cfg(test)]
+mod path_experiment;
 
 use crate::{Error, Result};
 
@@ -810,6 +812,11 @@ impl Context<'_> {
                 }
                 relative.push(at);
             }
+            #[cfg(test)]
+            if path_experiment::enabled(mu, wu, kw) && done_k.pivots().is_none() {
+                path_experiment::update(&Panel { m: kr.len(), data: lk }, 0..kw, u.p1, mu, wu, m, 0, &relative, own)?;
+                continue;
+            }
             let clock = timing.as_ref().and_then(|t| t.clock());
             let tiles = products(&Panel { m: kr.len(), data: lk }, 0..kw, u.p1, mu, wu, done_k.pivots());
             if let Some(timing) = timing.as_mut() {
@@ -837,10 +844,22 @@ impl Context<'_> {
             let pw = c1 - c0;
             if c0 > 0 {
                 // The panel minus its products with the columns before it.
-                let clock = timing.clock();
-                let tiles = products(&Panel { m, data: own }, 0..c0, c0, m - c0, pw, None);
-                timing.product(clock, m - c0, pw, c0, TILE, NR);
-                subtract(own, m, &tiles, m - c0, pw, |i| c0 + i);
+                #[cfg(test)]
+                let tiled = path_experiment::enabled(m - c0, pw, c0);
+                #[cfg(not(test))]
+                let tiled = false;
+                #[cfg(test)]
+                if tiled {
+                    let (done, target) = own.split_at_mut(offset(m, c0));
+                    let relative: Vec<_> = (c0..m).collect();
+                    path_experiment::update(&Panel { m, data: done }, 0..c0, c0, m - c0, pw, m, c0, &relative, target)?;
+                }
+                if !tiled {
+                    let clock = timing.clock();
+                    let tiles = products(&Panel { m, data: own }, 0..c0, c0, m - c0, pw, None);
+                    timing.product(clock, m - c0, pw, c0, TILE, NR);
+                    subtract(own, m, &tiles, m - c0, pw, |i| c0 + i);
+                }
             }
             // The diagonal block, column by column.
             for c in c0..c1 {

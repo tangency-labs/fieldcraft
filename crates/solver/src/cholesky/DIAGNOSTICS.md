@@ -30,3 +30,21 @@ Always compare fine-timing on/off, and compare every output bit with production
 performance: do not attribute across-build gains solely to the isolated-kernel path.
 The experiment does not adopt the reverted candidate, establish FE-model performance or
 replace frozen results. No full solver/oracle rerun is needed for these test-only copies.
+
+## Real factorization path
+
+`cholesky::path_experiment::real_factor_paths` is an additional ignored test. It constructs a
+1536-column SPD matrix with two dense children and a dense separator, then calls the actual
+`Factor::new` and `Factor::solve` path. `FC_PATH_MODE=0|1|2` selects production updates, the
+reverted two-dimensional update, or that update with the same microkernel in a fixed function
+boundary. `FC_PATH_THREADS=1|2|7` selects the worker count. Run this test alone with `--exact
+--ignored --nocapture --test-threads=1`: its process-global test selector must not overlap other
+factorizations. Outside tests the selector and candidate code do not exist.
+
+Each run compares the entire factor and solution bitwise with the production one-thread
+reference. `PATH_RESULT` distinguishes `Factor::new` from `Factor::new` plus backsolve;
+`FIELDCRAFT_SOLVER_TIMING=1` adds the numeric factor span. These are not engine command timers.
+The first numeric span belongs to the reference; the second belongs to the selected path.
+Counts are exact padded work from the selected large updates' loop extents, not total solver
+work or hardware counters. All three variants must run from one binary with one set of build
+flags; use their measured end-to-end times, not a cross-build isolated-kernel speedup.
