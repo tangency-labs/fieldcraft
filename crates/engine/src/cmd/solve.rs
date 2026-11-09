@@ -63,6 +63,16 @@ pub const TRANSIENT: CommandSpec = CommandSpec {
     requires: &[Requirement::Analysable, Requirement::Step],
     run: run_transient,
 };
+pub const NONLINEAR_TRANSIENT: CommandSpec = CommandSpec {
+    id: "solve.transient.nonlinear",
+    label: "Solve Geometric Rod Transient",
+    params: r#"{"step":"Motion","mass":"consistent|lumped","max_iterations":30,"tolerance":1e-8} — experimental rod2 finite-rotation Newmark/HHT full Newton; fixed supports, dead nodal forces and mass-proportional viscous damping only. Returns SI histories and energy diagnostics in this reply; does not store or replace native results. Save the reply separately. Unsupported elements/options are refused by name. No new result kind."#,
+    form: Some(super::forms::SOLVE_NONLINEAR_TRANSIENT),
+    kind: CommandKind::Model,
+    requires: &[Requirement::Analysable, Requirement::Step],
+    run: run_nonlinear_transient,
+};
+
 pub const SPECTRUM: CommandSpec = CommandSpec {
     id: "solve.spectrum",
     label: "Solve Response Spectrum",
@@ -455,6 +465,25 @@ fn run_heat(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn run_transient(s: &mut Session, p: &Value) -> Result<Value> {
     run_dynamics(s, p, false)
+}
+fn run_nonlinear_transient(s: &mut Session, p: &Value) -> Result<Value> {
+    let limits = limits(p)?;
+    let step = opt::<String>(p, "step")?;
+    let mass = opt::<MassKind>(p, "mass")?.unwrap_or_default();
+    let max_iterations = opt::<usize>(p, "max_iterations")?.unwrap_or(30);
+    let tolerance = opt::<f64>(p, "tolerance")?.unwrap_or(1e-8);
+    if !(1..=100).contains(&max_iterations) || !tolerance.is_finite() || tolerance <= 0.0 || tolerance > 1e-2 {
+        return Err(EngineError::Params("max_iterations in 1..100; tolerance in (0,0.01]".into()));
+    }
+    let r = with_threads(threads(s, p)?, || {
+        fieldcraft_solver::transient::nonlinear::solve(&s.model, step.as_deref(), mass, max_iterations, tolerance, &limits)
+    })?;
+    let mut reply = serde_json::to_value(r).map_err(|e| EngineError::Params(format!("nonlinear SI diagnostics: {e}")))?;
+    if let Some(o) = reply.as_object_mut() {
+        o.insert("units".into(), json!("SI"));
+        o.insert("persisted".into(), json!(false));
+    }
+    Ok(reply)
 }
 fn run_spectrum(s: &mut Session, p: &Value) -> Result<Value> {
     run_dynamics(s, p, true)

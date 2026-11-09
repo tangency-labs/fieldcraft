@@ -249,6 +249,7 @@ pub static ALL: &[CommandSpec] = &[
     solve::FREQUENCY,
     solve::HARMONIC,
     solve::TRANSIENT,
+    solve::NONLINEAR_TRANSIENT,
     solve::SPECTRUM,
     solve::RANDOM,
     solve::MATRICES,

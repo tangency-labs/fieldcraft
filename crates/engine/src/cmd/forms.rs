@@ -3059,6 +3059,20 @@ pub const SOLVE_DYNAMICS: &[Field] = &[
     MAX_DOFS, MAX_FACTOR, MAX_MEMORY_GIB, THREADS,
 ];
 
+pub const SOLVE_NONLINEAR_TRANSIENT: &[Field] = &[
+    STEP,
+    choice("mass", "Mass matrix", &[("consistent", "Consistent"), ("lumped", "Lumped")])
+        .def("\"consistent\"")
+        .help("Reference mass for inertia, initial balance and kinetic energy."),
+    int("max_iterations", "Newton corrections per step", 1, 100)
+        .help("Full tangent rebuild at each correction; failure leaves committed state unchanged."),
+    num("tolerance", "Relative force tolerance", D::None).help("Positive, at most 0.01; default 1e-8."),
+    MAX_DOFS,
+    MAX_FACTOR,
+    MAX_MEMORY_GIB,
+    THREADS,
+];
+
 pub const SOLVE_ALL: &[Field] = &[choice("mass", "Mass matrix", &[("consistent", "Consistent"), ("lumped", "Lumped")])
     .help("Optional; requires all steps to be frequency, transient or response_spectrum. Defaults to consistent on each solve.")];
 

@@ -214,3 +214,5 @@ third-party acceptance remain open; this is not yet a completed foundation miles
 Static joint identification now groups observations by step and shares each trial
 factorization across parameter columns. A prescribed-motion, zero-foundation-coefficient
 check compares the batched response/Jacobian bit for bit with scalar sensitivities.
+
+Geometric rod2 dynamics: experimental `solve.transient.nonlinear` Newmark/HHT full Newton, consistent/lumped reference mass and SI diagnostic histories. Native nonlinear result persistence and general solid/contact/material extension remain open.
