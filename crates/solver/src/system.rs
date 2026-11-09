@@ -623,6 +623,20 @@ impl Mesh {
                 .ok_or_else(|| Error::Invalid(format!("section `{name}`: material `{}` is missing", section.material)))?;
             let elastic =
                 material.elastic.as_ref().ok_or_else(|| Error::Invalid(format!("material `{}` has no elastic constants", section.material)))?;
+            if section.formulation.enhanced_strain13 {
+                if !matches!(elastic, Elastic::Isotropic { .. })
+                    || section.orientation.is_some()
+                    || material.plastic.is_some()
+                    || material.hyperelastic.is_some()
+                {
+                    return Err(Error::NotSupported(format!(
+                        "section `{name}`: enhanced_strain13 requires linear isotropic elasticity without orientation"
+                    )));
+                }
+                if model.steps().iter().any(|s| !matches!(s.procedure, fieldcraft_model::Procedure::Static {})) {
+                    return Err(Error::NotSupported(format!("section `{name}`: enhanced_strain13 supports linear static analysis only")));
+                }
+            }
             if section.formulation.b_bar {
                 if !matches!(elastic, Elastic::Isotropic { .. }) || section.orientation.is_some() {
                     return Err(Error::NotSupported(format!("section `{name}`: B-bar requires isotropic elasticity without material orientation")));

@@ -558,3 +558,23 @@ consistent versus row-sum modal frequencies and every sampled force PSD, includi
 an incompatible cached source, save/reopen and exact source replay. Normalized
 random-step export remains a named refusal; source replay is not semantic export. A mixed
 B-bar Hex8/consistent Tet4 matrix test checks inertia integrals and `C=alpha M+beta K`.
+
+
+### Independent thirteen-variable Hex8 candidate
+
+Native sections can select `formulation: {enhanced_strain13: true}`. This is
+separate from the original nine-variable `incompatible_modes` option and B-bar.
+It implements nine enhanced-gradient and four dilatational variables with the
+centre-Jacobian determinant correction, full eight-point integration and local
+static condensation. The strain used for integration-point stress recovery
+includes the recovered internal amplitudes. The formulation is stored in the
+native project; it does not change the results binary layout.
+
+The current scope is small-strain linear static analysis, positive-Jacobian Hex8
+and constant isotropic elasticity. Reduced integration, hybrid pressure, B-bar,
+nine-mode combinations, material axes, thermal/initial stress and other analysis
+procedures are refused. Passing patch and energy tests is not proof of accuracy
+for arbitrarily distorted bending meshes. `C3D8I` and `C3D8IH` import and normalized
+export remain named refusals pending independent same-input comparisons. Exact
+source replay, where a source document is retained, is not semantic conversion.
+See [the formula and verification scope](enhanced-strain13.md).

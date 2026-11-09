@@ -65,6 +65,7 @@ mixed in one model (trusses may join either).
 |---|---|---|---|
 | `integration` | `full`, `reduced` | `full` | `reduced` exists for hex20 (2 × 2 × 2) and quad8 (2 × 2), and for hex8 in explicit dynamics (one point with hourglass control); elsewhere it is refused |
 | `b_bar` | `true`, `false` | `false` | Hex8 mean dilatation; linear isotropic small-strain static, frequency and matrix generation only; excludes reduced, hybrid and incompatible options |
+| `enhanced_strain13` | `true`, `false` | `false` | independent 13-variable Hex8; full integration, linear isotropic static only; excludes other enhancements, thermal/initial stress and material axes; deck equivalence unvalidated |
 | `incompatible_modes` | `true`, `false` | `false` | enhanced bending modes: hex8 (solid sections) and quad4 (2D sections) only; needs full integration |
 | `hybrid` | `true`, `false` | `false` | mixed displacement–pressure: solid, plane strain and axisymmetric sections only; isotropic materials only |
 

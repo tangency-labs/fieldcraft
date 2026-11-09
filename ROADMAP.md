@@ -268,3 +268,5 @@ extrapolation are named unsupported combinations; no PSD time history is synthes
   mass harmonic, full energy-and-mass dynamics, static fatigue and harmonic fatigue.
   Old05/06 kinds 0–5 use frozen schemas; higher development kinds are refused with
   the regeneration message. See docs/results-kind-layout.md.
+
+Native Hex8 now has an independent thirteen-variable enhanced-gradient option for linear isotropic static analysis, with determinant-corrected modes, local condensation and stress recovery. C3D8I/IH mapping remains refused pending independent distorted-case validation; see `docs/enhanced-strain13.md`.

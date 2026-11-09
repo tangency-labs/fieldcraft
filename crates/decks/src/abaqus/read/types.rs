@@ -25,7 +25,12 @@ impl Type {
     pub fn parse(name: &str, line: usize) -> Result<Self> {
         let normalized = canonical(name);
         if matches!(normalized.as_str(), "C3D8I" | "C3D8IH") {
-            return Err(error(line, format!("{name}: native nine modes do not establish equivalence to thirteen internal modes")));
+            return Err(error(
+                line,
+                format!(
+                    "{name}: native nine modes do not establish equivalence to thirteen internal modes; enhanced_strain13 remains an unvalidated native candidate"
+                ),
+            ));
         }
         let (family, tail) = if let Some(t) = normalized.strip_prefix("C3D") {
             (Family::Solid, t)

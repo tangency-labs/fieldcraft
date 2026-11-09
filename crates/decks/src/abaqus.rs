@@ -240,6 +240,9 @@ pub fn element_type(kind: ElementKind, section: &Section) -> std::result::Result
     use SectionKind as S;
     let f = section.formulation;
     let reduced = f.integration == Integration::Reduced;
+    if f.enhanced_strain13 {
+        return Err("C3D8I/IH: enhanced_strain13 equivalence has not been validated; preserve the native project".into());
+    }
     if f.b_bar && (kind != K::Hex8 || !matches!(section.kind, S::Solid {}) || f.hybrid || f.incompatible_modes || reduced) {
         return Err("B-bar requires full, non-hybrid, non-incompatible solid Hex8".into());
     }

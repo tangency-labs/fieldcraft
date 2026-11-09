@@ -158,6 +158,8 @@ pub enum Formulation {
     Full,
     /// Hughes (1980), volume-averaged dilatation, linear Hex8 only.
     BBar,
+    /// Nine gradient modes plus four dilatational modes, statically condensed.
+    EnhancedStrain13,
     Reduced,
     IncompatibleModes,
     /// Mixed displacement–pressure with `pressures` discontinuous pressure unknowns condensed
@@ -171,7 +173,11 @@ impl Formulation {
     /// The unknowns of a solid element so formulated: three translations per node, and the
     /// incompatible modes it condenses out.
     pub fn dofs(self) -> ElementDofs {
-        let incompatible_modes = if self == Formulation::IncompatibleModes { INCOMPATIBLE_DOFS } else { 0 };
+        let incompatible_modes = match self {
+            Formulation::IncompatibleModes => INCOMPATIBLE_DOFS,
+            Formulation::EnhancedStrain13 => 13,
+            _ => 0,
+        };
         let pressure = if let Formulation::Hybrid { pressures } = self { pressures } else { 0 };
         ElementDofs { node: DofSet::TRANSLATIONS, internal: Internal { incompatible_modes, pressure } }
     }
@@ -179,6 +185,12 @@ impl Formulation {
     /// The formulation a model section asks for, if this element type has it.
     pub fn from_section(kind: ElementKind, f: &fieldcraft_model::Formulation) -> Result<Formulation> {
         let ty = element_type(kind)?;
+        if f.enhanced_strain13 {
+            if kind != ElementKind::Hex8 || f.b_bar || f.hybrid || f.incompatible_modes || f.integration != fieldcraft_model::Integration::Full {
+                return Err(Error::NotSupported("enhanced_strain13 requires full Hex8 without other enhancements".into()));
+            }
+            return Ok(Formulation::EnhancedStrain13);
+        }
         if f.b_bar {
             if kind != ElementKind::Hex8 || f.hybrid || f.incompatible_modes || f.integration != fieldcraft_model::Integration::Full {
                 return Err(Error::NotSupported("B-bar requires full Hex8 without hybrid or incompatible modes".into()));
@@ -277,7 +289,7 @@ impl<'a> Solid<'a> {
         fieldcraft_model::check_coordinates(xyz.as_flattened()).map_err(|e| Error::Invalid(e.to_string()))?;
         let ok = match formulation {
             Formulation::Full => true,
-            Formulation::BBar => kind == ElementKind::Hex8,
+            Formulation::BBar | Formulation::EnhancedStrain13 => kind == ElementKind::Hex8,
             Formulation::Reduced => ty.reduced.is_some(),
             Formulation::IncompatibleModes => ty.incompatible_modes,
             Formulation::Hybrid { pressures } => crate::hybrid::pressures(kind) == Some(pressures),
@@ -404,6 +416,9 @@ impl<'a> Solid<'a> {
 
     /// The stiffness matrix, 3n × 3n, degrees of freedom ordered node by node (x, y, z).
     pub fn stiffness(&self, d: &Elasticity) -> Result<Matrix> {
+        if self.formulation == Formulation::EnhancedStrain13 {
+            return self.enhanced13_stiffness(d);
+        }
         if let Formulation::Hybrid { .. } = self.formulation {
             return self.hybrid_stiffness(d);
         }
@@ -499,6 +514,9 @@ impl<'a> Solid<'a> {
     /// (the initial-strain load of Zienkiewicz, Taylor & Zhu 2013, §6.2.3); incompatible modes
     /// are condensed out as in the stiffness, f = f_u − K_ua K_aa⁻¹ f_a.
     pub fn thermal_load(&self, d: &Elasticity, thermal: &ThermalStrain) -> Result<Vec<[f64; 3]>> {
+        if self.formulation == Formulation::EnhancedStrain13 {
+            return Err(Error::NotSupported("enhanced_strain13 thermal or initial stress loads".into()));
+        }
         if self.formulation == Formulation::BBar {
             return Err(Error::NotSupported("B-bar thermal strain loads".into()));
         }
@@ -582,6 +600,9 @@ impl<'a> Solid<'a> {
     /// σ = D (ε − ε_th) + σ₀. A self-equilibrated σ₀ (∇·σ₀ = 0, no traction on a free surface)
     /// gives no load. Incompatible modes are condensed out as in [`Self::thermal_load`].
     pub fn initial_stress_load(&self, d: &Elasticity, initial: &[[f64; 6]]) -> Result<Vec<[f64; 3]>> {
+        if self.formulation == Formulation::EnhancedStrain13 {
+            return Err(Error::NotSupported("enhanced_strain13 thermal or initial stress loads".into()));
+        }
         if self.formulation == Formulation::BBar {
             return Err(Error::NotSupported("B-bar initial stress loads".into()));
         }
@@ -609,6 +630,12 @@ impl<'a> Solid<'a> {
         thermal: Option<&ThermalStrain>,
         initial: Option<&[[f64; 6]]>,
     ) -> Result<Vec<PointStress>> {
+        if self.formulation == Formulation::EnhancedStrain13 {
+            if thermal.is_some() || initial.is_some() {
+                return Err(Error::NotSupported("enhanced_strain13 thermal or initial stress recovery".into()));
+            }
+            return self.enhanced13_stresses(d, u);
+        }
         if self.formulation == Formulation::BBar && (thermal.is_some() || initial.is_some()) {
             return Err(Error::NotSupported("B-bar thermal or initial stress recovery".into()));
         }

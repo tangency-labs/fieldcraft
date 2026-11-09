@@ -488,6 +488,7 @@ impl Solid<'_> {
     fn check_nonlinear(&self, m: &MaterialModel, u: &[[f64; 3]]) -> Result<()> {
         check_displacements(u, self.ty.nodes)?;
         match self.formulation {
+            Formulation::EnhancedStrain13 => Err(Error::NotSupported("enhanced_strain13 nonlinear analysis".into())),
             Formulation::BBar => Err(Error::NotSupported("B-bar nonlinear analysis".into())),
             Formulation::Hybrid { .. } if !m.is_decoupled() => Err(Error::NotSupported(format!(
                 "hybrid elements of a {} material in nonlinear steps (the mixed formulation needs a volumetric–isochoric split of the strain energy; give the material the neo-Hookean option)",

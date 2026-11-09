@@ -270,6 +270,21 @@ impl Model {
         for (name, sec) in &self.sections {
             let subject = format!("section `{name}`");
             let r = set_of(&sec.set);
+            if sec.formulation.enhanced_strain13 {
+                if r.elements.iter().any(|id| self.elements.get(id).is_some_and(|e| e.kind != ElementKind::Hex8)) {
+                    d.error(&subject, "enhanced_strain13 requires Hex8 elements");
+                }
+                if sec.orientation.is_some()
+                    || self.materials.get(&sec.material).is_some_and(|m| {
+                        !matches!(m.elastic, Some(crate::Elastic::Isotropic { .. })) || m.plastic.is_some() || m.hyperelastic.is_some()
+                    })
+                {
+                    d.error(&subject, "enhanced_strain13 requires linear isotropic elasticity without orientation");
+                }
+                if self.steps().iter().any(|s| !matches!(s.procedure, crate::Procedure::Static {})) {
+                    d.error(&subject, "enhanced_strain13 supports linear static analysis only");
+                }
+            }
             if sec.formulation.b_bar {
                 if r.elements.iter().any(|id| self.elements.get(id).is_some_and(|e| e.kind != ElementKind::Hex8)) {
                     d.error(&subject, "B-bar requires Hex8 elements");

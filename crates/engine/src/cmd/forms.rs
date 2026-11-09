@@ -522,6 +522,7 @@ pub const SECTION: &[Field] = &[
             choice("integration", "Integration", &[("full", "Full"), ("reduced", "Reduced")])
                 .help("Full: every integration point. Reduced: fewer points, cheaper and less stiff, but may need hourglass control.")
                 .def("\"full\""),
+            flag("enhanced_strain13", "Enhanced strain Hex8 (13)").help("Independent thirteen-variable linear static Hex8; not a validated C3D8I mapping.").def("false"),
             flag("b_bar", "B-bar Hex8").help("Volume-averaged dilatation for linear isotropic Hex8; standard remains the default.").def("false"),
             flag("incompatible_modes", "Incompatible modes")
                 .help("Extra bending modes for linear hexahedra, so a coarse hex8 mesh bends without locking.")

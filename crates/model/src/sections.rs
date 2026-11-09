@@ -290,6 +290,9 @@ pub struct Formulation {
     /// Volume-averaged dilatation for linear isotropic Hex8; default remains standard.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub b_bar: bool,
+    /// Thirteen-parameter enhanced strain Hex8, linear static only.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub enhanced_strain13: bool,
     #[serde(default, skip_serializing_if = "LumpedMass::is_default")]
     pub lumped_mass: LumpedMass,
     #[serde(default)]
@@ -307,6 +310,15 @@ impl Formulation {
     /// Check the options against each other and against the section kind (the element kinds are
     /// checked when the model is resolved).
     pub fn validate_for(&self, kind: &SectionKind) -> Result<()> {
+        if self.enhanced_strain13
+            && (!matches!(kind, SectionKind::Solid {})
+                || self.b_bar
+                || self.hybrid
+                || self.incompatible_modes
+                || self.integration != Integration::Full)
+        {
+            return Err(Error::Invalid("enhanced_strain13 requires a full solid section without B-bar, hybrid or nine incompatible modes".into()));
+        }
         if self.b_bar && (!matches!(kind, SectionKind::Solid {}) || self.hybrid || self.incompatible_modes || self.integration != Integration::Full) {
             return Err(Error::Invalid("B-bar requires a full, non-hybrid, non-incompatible solid section".into()));
         }

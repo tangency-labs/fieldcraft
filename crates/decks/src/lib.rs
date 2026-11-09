@@ -380,6 +380,10 @@ pub(crate) fn unique_name(base: &str, taken: &mut BTreeSet<String>) -> String {
 
 /// Formats without native policy metadata must not silently discard section mass settings.
 fn refuse_mass_policy(format: &'static str, model: &fieldcraft_model::Model) -> Result<()> {
+    let enhanced: Vec<_> = model.sections().iter().filter(|(_, s)| s.formulation.enhanced_strain13).map(|(n, _)| n.as_str()).collect();
+    if !enhanced.is_empty() {
+        return Err(Error::Unsupported { format, what: format!("enhanced_strain13 section policies: {}", enhanced.join(", ")) });
+    }
     let names: Vec<_> =
         model.sections().iter().filter(|(_, s)| !s.formulation.lumped_mass.is_default() || s.formulation.b_bar).map(|(n, _)| n.as_str()).collect();
     if !names.is_empty() {

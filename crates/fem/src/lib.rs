@@ -68,6 +68,7 @@ pub mod dof;
 pub mod dual;
 pub mod elastoplastic;
 pub mod element;
+mod enhanced13;
 pub mod face;
 pub mod failure;
 pub mod finite;

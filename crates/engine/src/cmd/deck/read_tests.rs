@@ -1180,3 +1180,28 @@ fn random_continuum_mass_uses_requested_operator_not_cached_modes_and_reopens() 
     }
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn enhanced13_native_static_persists_and_refuses_unvalidated_deck_mapping() {
+    let dir = folder();
+    let mut s = bar();
+    let section = s.model.sections().get("BarSection").unwrap();
+    let mut edit = serde_json::to_value(section).unwrap();
+    edit["formulation"] = json!({"enhanced_strain13":true});
+    edit["name"] = json!("BarSection");
+    s.execute("model.section.edit", &edit).unwrap();
+    let result = s.execute("solve.static", &json!({"step":"Bend"}));
+    assert!(result.is_ok(), "{result:?}");
+    let probe = s.execute("solve.probe", &json!({"step":"Bend","set":"end"})).unwrap();
+    s.execute("file.save_as", &json!({"path":dir.join("enhanced.fieldcraft"),"results":true})).unwrap();
+    s.execute("file.new", &json!({})).unwrap();
+    s.execute("file.open", &json!({"path":dir.join("enhanced.fieldcraft")})).unwrap();
+    assert!(s.model.sections().get("BarSection").unwrap().formulation.enhanced_strain13);
+    assert_eq!(s.execute("solve.probe", &json!({"step":"Bend","set":"end"})).unwrap(), probe);
+    let error = s.execute("deck.write", &json!({"path":dir.join("not-equivalent.inp"),"format":"abaqus"})).unwrap_err().to_string();
+    assert!(error.contains("enhanced_strain13"), "{error}");
+    s.execute("model.step.create", &json!({"name":"Modes","procedure":{"type":"frequency","modes":2}})).unwrap();
+    let error = s.execute("solve.frequency", &json!({"step":"Modes"})).unwrap_err().to_string();
+    assert!(error.contains("enhanced_strain13"), "{error}");
+    std::fs::remove_dir_all(dir).unwrap();
+}
