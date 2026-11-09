@@ -232,3 +232,8 @@ A release-mode BASE demonstration now evaluates two source-bound probes with the
 three spectral methods. Its moments and narrow-band damage pass independent
 integration checks; this does not establish frequency-grid convergence, a global
 hotspot, or life with measured material fatigue properties.
+
+The counted-total-strain command exposes CMB with Morrow/SWT and Miner damage,
+without inferring plastic strain or pairing stress and strain automatically.
+Segmented S–N, surface/size factors, material persistence, multiaxial criteria and
+full-field fatigue visualization remain outside the delivered command scope.

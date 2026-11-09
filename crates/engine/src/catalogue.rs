@@ -682,6 +682,13 @@ pub static CATALOGUE: &[Capability] = &[
         "Implicit",
         "Counts exported SI nodal transient stress histories with explicit source identity, time-axis validation and per-cycle Miner damage",
     ),
+    ready(
+        "solve.fatigue.strain_cycles",
+        "Strain-cycle Fatigue",
+        Solve,
+        "Implicit",
+        "Evaluates explicitly counted local total-strain cycles with CMB, Morrow or SWT, and Miner accumulation",
+    ),
     ready("solve.frequency", "Frequency", Solve, "Implicit", "Natural frequencies and mode shapes of a frequency step"),
     ready(
         "solve.random",

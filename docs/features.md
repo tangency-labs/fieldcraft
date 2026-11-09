@@ -6,7 +6,7 @@ Every entry is a toolbar button. **Ready** entries run their command; **coming s
 shown greyed with the roadmap milestone that brings them (ROADMAP.md). Scripts, the command line,
 the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 
-98 ready, 31 coming soon.
+99 ready, 31 coming soon.
 
 ## Geometry
 
@@ -140,6 +140,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Implicit | Static — Linear static (or coupled temperature–displacement) solve of a step with FieldCraft's own solver; nonlinear static, buckling, harmonic response and heat transfer in the drop-down | ready | `solve.static`, `solve.nonlinear`, `solve.buckle`, `solve.harmonic`, `solve.heat` |
 | Implicit | Reference-load Fatigue — Superposes current static reference tensors, counts finite-record rainflow cycles and reports selected-node Miner damage in SI | ready | `solve.fatigue.history` |
 | Implicit | Transient Stress Fatigue — Counts exported SI nodal transient stress histories with explicit source identity, time-axis validation and per-cycle Miner damage | ready | `solve.fatigue.transient` |
+| Implicit | Strain-cycle Fatigue — Evaluates explicitly counted local total-strain cycles with CMB, Morrow or SWT, and Miner accumulation | ready | `solve.fatigue.strain_cycles` |
 | Implicit | Frequency — Natural frequencies and mode shapes of a frequency step | ready | `solve.frequency` |
 | Implicit | Random Response — Projects stored harmonic frames into component spectra, RMS and fixed coherent scalar stress projections; optional narrow-band/Dirlik/BT fatigue approximations and declared unit base inertial load | ready | `solve.random` |
 | Design studies | Sensitivity — Static displacement, work and continuum stress derivatives; simple-mode frequency and direct harmonic derivatives in the drop-down | ready | `solve.sensitivity.static`, `solve.sensitivity.frequency`, `solve.sensitivity.harmonic` |

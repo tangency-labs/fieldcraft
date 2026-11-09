@@ -25,7 +25,8 @@ prediction of zero damage. Strain-life input must be the local **total** strain
 amplitude and the corresponding cycle stress. No elastic-to-plastic conversion
 is inferred. Numerical strain-life inversion is bounded to 0.5–1e16 cycles;
 out-of-bracket values fail rather than implying an endurance limit.
-These library functions do not yet provide a strain-life user command.
+`solve.fatigue.strain_cycles` exposes these laws for explicitly counted local
+total-strain cycles; it does not infer plastic strain from elastic stress.
 
 ## Stored harmonic response to scalar stress PSD
 
@@ -152,3 +153,35 @@ narrow-band damage checks pass. These checks validate the command path and
 postprocessing of the sampled spectrum, not frequency-grid or modal convergence.
 The S–N data are synthetic. The ranked probes are not a full-field hotspot search,
 and their reported life is not an engineering prediction for the real component.
+
+
+## Counted total-strain cycles
+
+```json
+{"curve":{"young_pa":200000000000,"strength_pa":1000000000,
+          "ductility":0.5,"b":-0.5,"c":-0.5},
+ "cycles":[{"total_strain_amplitude":0.00505,"count":2.5}],
+ "correction":"none"}
+```
+
+Pass this object to `solve.fatigue.strain_cycles`. It reports cycles-to-failure N,
+per-cycle damage and cumulative Miner damage (here N=5000, D=0.0005).
+For `morrow`, each cycle must also contain `mean_stress_pa`; for `swt`, each must
+contain positive `maximum_stress_pa`. Supply stress and total strain for the same
+local cycle. No stress-to-plastic-strain conversion, automatic stress/strain cycle
+pairing, or life in seconds is inferred. Zero amplitude produces zero damage and
+null life, not a validated fatigue limit. The existing 0.5–1e16 cycle bracket applies.
+
+## Delivered scope and remaining limits
+
+S–N commands use a single Basquin slope and optional time-domain endurance cutoff;
+segmented S–N, surface/size factors and persistent material fatigue records are
+not implemented. Stress histories use a fixed linear tensor projection; signed
+von Mises, maximum-principal and critical-plane fatigue criteria remain open.
+Returned node values and selected-node rankings are JSON postprocessing results:
+there is no persisted fatigue field, full-field contour or automatic global hotspot
+search. The strain-cycle command consumes already-counted cycles, and transient
+integration consumes exported SI probe data rather than directly resolving an
+unmerged transient solver's internal result type. Published ASTM-example and
+independent published Dirlik numerical-case acceptance remain open; analytic tests,
+PDF integration checks and examples do not substitute for those acceptance items.
