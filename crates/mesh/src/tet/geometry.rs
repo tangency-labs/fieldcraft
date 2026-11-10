@@ -1137,3 +1137,49 @@ mod tests {
         assert!(cyl.slide([0.0, 0.0, 1.0], [1.0, 0.0, 0.0]).is_none());
     }
 }
+
+/// A triangle of a face that faces the other way from the face's exact surface: its normal turns
+/// by more than 90° from the surface's normal at its centroid, oriented as the face's triangles
+/// are on the whole (by area).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ReversedFacet {
+    pub triangle: u32,
+    pub face: u32,
+    /// The angle between the triangle's normal and the face's, in degrees (above 90).
+    pub angle: f64,
+    /// The triangle's centroid.
+    pub at: P,
+}
+
+/// The triangles that face the other way from their face's exact surface (`analytic`, by the
+/// face tags `tri_face`), in triangle order: a tessellation defect, since such a triangle folds
+/// the face over itself, though not across another triangle (SolidCraft from v0.40 gives them as
+/// needles along a trim, their corners nearly in line). A face without an exact surface, and a
+/// triangle with no area or where the surface has no normal, is passed over.
+pub fn reversed_facets(points: &[P], triangles: &[[u32; 3]], tri_face: &[u32], analytic: &[Option<AnalyticSurface>]) -> Vec<ReversedFacet> {
+    // Per triangle: its face, unit normal, area, centroid and the surface's unit normal there.
+    let mut facets: Vec<(u32, u32, P, f64, P, P)> = Vec::new();
+    for (t, tri) in triangles.iter().enumerate() {
+        let Some(&face) = tri_face.get(t) else { continue };
+        let Some(Some(surface)) = analytic.get(face as usize) else { continue };
+        let [Some(a), Some(b), Some(c)] = tri.map(|v| points.get(v as usize).copied()) else { continue };
+        let n = cross(sub(b, a), sub(c, a));
+        let (Some(n_unit), centroid) = (unit(n), scale(add(add(a, b), c), 1.0 / 3.0)) else { continue };
+        let on = surface.project(centroid).unwrap_or(centroid);
+        let Some(exact) = surface.normal_at(on).and_then(unit) else { continue };
+        facets.push((t as u32, face, n_unit, 0.5 * norm(n), centroid, exact));
+    }
+    // Each face's sense: the sign that turns the surface's normal the way its triangles face.
+    let mut sense: std::collections::BTreeMap<u32, f64> = std::collections::BTreeMap::new();
+    for &(_, face, n, area, _, exact) in &facets {
+        *sense.entry(face).or_default() += area * dot(n, exact);
+    }
+    facets
+        .into_iter()
+        .filter_map(|(triangle, face, n, _, at, exact)| {
+            let s = if sense.get(&face).copied().unwrap_or(0.0) < 0.0 { -1.0 } else { 1.0 };
+            let d = s * dot(n, exact);
+            (d < 0.0).then(|| ReversedFacet { triangle, face, angle: crate::vec3::angle_deg(n, scale(exact, s)), at })
+        })
+        .collect()
+}

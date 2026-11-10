@@ -443,3 +443,30 @@ fn seams_bound_their_face_on_both_sides() {
     let far = vec![vec![[1e300, 0.0, 0.0], [-1e300, 0.0, 0.0]]];
     assert_eq!(s.clone().with_seams(&far, 1e-9).unwrap().feature_edges().len(), before);
 }
+
+/// The sharp edges inside a face with a known exact surface go; edges between faces, and the
+/// creases of a face without one, stay. A coarse sphere's facets turn by more than the feature
+/// angle, as a fold of a tessellation does.
+#[test]
+fn a_smooth_face_has_no_sharp_edges_inside() {
+    let (p, t) = crate::cdt::tests::uv_sphere(4, 8);
+    let p: Vec<[f64; 3]> = p.iter().map(|c| c.map(|x| 5.0 * x)).collect();
+    // Two faces: the northern and the southern half.
+    let faces: Vec<u32> = t.iter().map(|tri| u32::from(tri.iter().map(|&v| p[v as usize][2]).sum::<f64>() < 0.0)).collect();
+    let options = SurfaceOptions { feature_angle: 30.0, ..SurfaceOptions::default() };
+    let s = BoundarySurface::new(&p, &t, &faces, &options).unwrap();
+    let count = |s: &BoundarySurface, k: FeatureKind| s.feature_edges().iter().filter(|e| e.kind == k).count();
+    let (sharp, between) = (count(&s, FeatureKind::Sharp), count(&s, FeatureKind::FaceBoundary));
+    assert!(sharp > 0 && between > 0);
+    // The southern half's exact surface known, the northern's not: only the southern creases go.
+    let south = s.clone().smooth_inside(&[false, true]);
+    let inside = |s: &BoundarySurface, face: u32| {
+        s.feature_edges().iter().filter(|e| e.kind == FeatureKind::Sharp && s.tri_face()[e.triangles[0] as usize] == face).count()
+    };
+    assert!(inside(&south, 0) > 0);
+    assert_eq!(inside(&south, 1), 0);
+    assert_eq!(count(&south, FeatureKind::FaceBoundary), between);
+    let both = s.smooth_inside(&[true, true]);
+    assert_eq!(count(&both, FeatureKind::Sharp), 0);
+    assert_eq!(count(&both, FeatureKind::FaceBoundary), between);
+}

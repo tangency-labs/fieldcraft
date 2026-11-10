@@ -467,7 +467,11 @@ impl Stage for OctreeHex {
         let (mut hexes, mut min_sj, mut sum_sj, mut volume) = (0usize, f64::INFINITY, 0.0, 0.0);
         for (body, mesh) in l.design.bodies.iter().zip(&l.surfaces) {
             let options = SurfaceOptions { weld_distance: mesh.weld_distance, ..SurfaceOptions::default() };
-            let s = BoundarySurface::new(&mesh.positions, &mesh.triangles, &mesh.tri_face, &options).map_err(|e| Failure::mesh(&body.name, &e))?;
+            // As `mesh.hex.octree` does: faces with exact surfaces are smooth inside.
+            let smooth: Vec<bool> = fieldcraft_engine::analytic_surfaces(body).iter().map(Option::is_some).collect();
+            let s = BoundarySurface::new(&mesh.positions, &mesh.triangles, &mesh.tri_face, &options)
+                .map_err(|e| Failure::mesh(&body.name, &e))?
+                .smooth_inside(&smooth);
             let options = OctreeOptions { max_elements: OCTREE_MAX_ELEMENTS, ..OctreeOptions::default() };
             let m = match octree_hex_mesh(&s, &UniformSize(HEX_RELATIVE_SIZE * l.diagonal), &options) {
                 Ok(m) => m,
