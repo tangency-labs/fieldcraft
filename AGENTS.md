@@ -66,6 +66,12 @@ People trust FieldCraft with their models; a crash loses their work. **This outr
   Code_Aster, OpenRadioss, Elmer, deal.II, FreeFEM, Salome, OpenFOAM — don't even read their
   sources. Permissively licensed code (MIT, BSD, Apache-2.0, MPL-2.0) may be read for reference;
   anything adapted is noted in ATTRIBUTION.md with its licence.
+- **Dependencies are permissively licensed**, with one recorded exception: SolidCraft's UI kit,
+  theme and look (`solidcraft-ui-kit`, `solidcraft-theme`, `solidcraft-look`) are under the
+  SolidCraft Brand and Interface Licence and are used only under the written permission recorded in
+  docs/adr/0001-libraries.md (requested by jyviko, approved by SolidCraft's maintainer bherbruck in
+  #872). `deny.toml` accepts that licence for those three crates only; nothing else non-permissive
+  is allowed, and any other brand-licensed SolidCraft crate needs its own recorded permission.
 - **Assets — absolutely essential.** FieldCraft contains **no iconography, images, fonts or
   artwork from commercial CAE products — ever.** Icons are original artwork made with VectorCraft:
   commit the editable `.vectorcraft` source beside the exported SVG/PNG. Any file asset must be
