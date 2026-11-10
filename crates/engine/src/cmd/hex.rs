@@ -5,7 +5,7 @@ use std::borrow::Cow;
 
 use fieldcraft_geometry::{FaceSurface, Shape, SurfaceMesh};
 use fieldcraft_mesh::hex::{BoundaryFace, Cell, HexMesh, HexMethod, HexOptions, MAX_CELLS, Surface, hex_mesh, hex_mesh_cells};
-use fieldcraft_mesh::surface::BoundarySurface;
+use fieldcraft_mesh::surface::{BoundarySurface, SurfaceOptions};
 use fieldcraft_model::{GeometryRef, Model};
 use serde_json::{Value, json};
 
@@ -45,6 +45,15 @@ pub(super) struct Input<'a> {
     /// Per triangle of `mesh`, the B-rep face it lies on: its piece of a merged face (empty for
     /// a surface that is not a body's).
     pub(super) pieces: Vec<u32>,
+}
+
+/// The boundary surface a structured hex mesher takes for body `b`: its tessellation welded as
+/// `options` say, with the kernel's seams marked ([`BoundarySurface::with_seams`]): the edges
+/// with one face, along which a closed face (a whole cylinder or torus) meets itself, bound it
+/// on both sides as the meshers need.
+pub(super) fn hex_surface(options: &SurfaceOptions, b: &Input) -> fieldcraft_mesh::Result<BoundarySurface> {
+    let surface = BoundarySurface::new(&b.mesh.positions, &b.mesh.triangles, &b.mesh.tri_face, options)?;
+    surface.with_seams(&b.mesh.seams(), options.weld_distance.max(options.weld_tolerance * b.diagonal))
 }
 
 fn analytic(s: FaceSurface) -> Surface {
@@ -226,10 +235,7 @@ pub(super) fn hex_blocks(s: &mut Session, p: &Value) -> Result<Value> {
     let mut surfaces = Vec::with_capacity(inputs.len());
     for b in &inputs {
         let options = super::mesh::surface_options(p, &b.mesh)?;
-        surfaces.push(
-            BoundarySurface::new(&b.mesh.positions, &b.mesh.triangles, &b.mesh.tri_face, &options)
-                .map_err(|e| EngineError::context(format!("body `{}`", b.name), e))?,
-        );
+        surfaces.push(hex_surface(&options, b).map_err(|e| EngineError::context(format!("body `{}`", b.name), e))?);
     }
     let cells: Vec<Cell> = surfaces.iter().zip(&inputs).map(|(surface, b)| Cell { name: &b.name, surface, faces: &b.surfaces }).collect();
     let options = HexOptions {
@@ -349,8 +355,7 @@ pub(super) fn hex_body(p: &Value, b: &Input, method: HexMethod, quadratic: bool,
         return Err(crate::units::below_diagonal("size", MIN_RELATIVE_SIZE, b.diagonal, &format!("body `{}`'s", b.name)));
     }
     let surface_options = super::mesh::surface_options(p, &b.mesh)?;
-    let surface = BoundarySurface::new(&b.mesh.positions, &b.mesh.triangles, &b.mesh.tri_face, &surface_options)
-        .map_err(|e| EngineError::context(format!("body `{}`", b.name), e))?;
+    let surface = hex_surface(&surface_options, b).map_err(|e| EngineError::context(format!("body `{}`", b.name), e))?;
     let chord = if b.surfaces.is_empty() { 0.0 } else { number(p, "tolerance")?.unwrap_or(DEFAULT_RELATIVE_TOLERANCE * b.diagonal) };
     let options = HexOptions {
         method,

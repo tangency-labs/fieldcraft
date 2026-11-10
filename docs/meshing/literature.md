@@ -1027,6 +1027,11 @@ record or the publisher; the others are cited by venue only.
 - **Citation.** T. D. Blacker. *The Cooper tool.* Proc. 5th International Meshing Roundtable, 1996, pp. 13–29.
 - **Use.** Source, target and linking faces from B-rep topology: rings of logically rectangular
   linking faces followed from the source loops until they close on one target (`hex::sweep`).
+  A closed (periodic) face the kernel gives whole, such as a cylinder's side in one piece, takes part
+  through its seam: the seam bounds the face on both sides, so its loop is the bottom chain, the seam,
+  the top chain and the seam back, a logically rectangular linking face whose two sides are one edge
+  (`hex::brep`, the kernel's seams kept as edges from a face to itself); a torus in one face gets the
+  level of its revolution from its meridian seam (`hex::layered`).
 
 **B8.2 Lai, Benzley, White 2000, many-to-many sweeping.** **Verdict: BUILD ON (multi-level extrusions).**
 - **Citation.** M. Lai, S. Benzley, D. White. *Automated hexahedral mesh generation by generalized multiple

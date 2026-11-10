@@ -328,6 +328,13 @@ impl Shape {
 }
 
 impl SurfaceMesh {
+    /// The seams: the edges with one face, along which a closed face (a whole cylinder or
+    /// torus) meets itself, as polylines. A kernel that splits closed faces (SolidCraft before
+    /// v0.40) gives none.
+    pub fn seams(&self) -> Vec<Vec<[f64; 3]>> {
+        self.edges.iter().zip(&self.edge_faces).filter(|(_, faces)| faces.len() == 1).map(|(points, _)| points.clone()).collect()
+    }
+
     /// The volume the triangles enclose (divergence theorem: the sum of the signed tetrahedra each
     /// triangle spans with the origin). Equals the solid's volume for a closed, outward-oriented
     /// surface; a triangle with a vertex index out of range counts as nothing.

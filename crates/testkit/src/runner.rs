@@ -333,9 +333,7 @@ impl Stage for StructuredHex {
         }
         let (mut methods, mut elements, mut sj8, mut sj20) = (Vec::new(), 0usize, f64::INFINITY, Ok(f64::INFINITY));
         for (body, mesh) in l.design.bodies.iter().zip(&l.surfaces) {
-            let surface_options = SurfaceOptions { weld_distance: mesh.weld_distance, ..SurfaceOptions::default() };
-            let s = BoundarySurface::new(&mesh.positions, &mesh.triangles, &mesh.tri_face, &surface_options)
-                .map_err(|e| Failure::mesh(&body.name, &e))?;
+            let s = hex_surface(mesh).map_err(|e| Failure::mesh(&body.name, &e))?;
             let faces: Vec<Option<Surface>> =
                 body.face_surfaces().map_err(|e| Failure::geometry(&body.name, &e))?.into_iter().map(|f| f.map(analytic)).collect();
             let m_method = match hex_mesh(&s, &faces, &size, &linear) {
@@ -379,14 +377,20 @@ impl Stage for StructuredHex {
     }
 }
 
+/// A body's boundary as the structured hex meshers take it, with the kernel's seams marked (as
+/// `mesh.hex.generate` and `mesh.hex.blocks` do).
+fn hex_surface(mesh: &SurfaceMesh) -> fieldcraft_mesh::Result<BoundarySurface> {
+    let options = SurfaceOptions { weld_distance: mesh.weld_distance, ..SurfaceOptions::default() };
+    BoundarySurface::new(&mesh.positions, &mesh.triangles, &mesh.tri_face, &options)?.with_seams(&mesh.seams(), mesh.weld_distance)
+}
+
 /// The bodies of a partitioned part as the cells of one conforming mesh: method, elements and
 /// the hex8 and hex20 smallest scaled Jacobians.
 fn blocks(l: &Loaded, size: &UniformSize, linear: &HexOptions, quadratic: &HexOptions, width: usize, start: Instant) -> Result<Outcome, Failure> {
     let mut surfaces = Vec::with_capacity(l.surfaces.len());
     let mut faces: Vec<Vec<Option<Surface>>> = Vec::with_capacity(l.surfaces.len());
     for (body, mesh) in l.design.bodies.iter().zip(&l.surfaces) {
-        let options = SurfaceOptions { weld_distance: mesh.weld_distance, ..SurfaceOptions::default() };
-        surfaces.push(BoundarySurface::new(&mesh.positions, &mesh.triangles, &mesh.tri_face, &options).map_err(|e| Failure::mesh(&body.name, &e))?);
+        surfaces.push(hex_surface(mesh).map_err(|e| Failure::mesh(&body.name, &e))?);
         faces.push(body.face_surfaces().map_err(|e| Failure::geometry(&body.name, &e))?.into_iter().map(|f| f.map(analytic)).collect());
     }
     let cells: Vec<Cell> =

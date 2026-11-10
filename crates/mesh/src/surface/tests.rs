@@ -412,3 +412,34 @@ fn t_junctions_are_closed() {
     // Without a weld distance nothing is split, and the open edge is reported.
     assert!(BoundarySurface::new(&sp, &st, &sf, &SurfaceOptions { weld_tolerance: 0.0, weld_distance: 0.0, feature_angle: 30.0 }).is_err());
 }
+
+/// Seams marked on a surface: a seam polyline through vertices of one face marks its edges as
+/// face boundaries; points on no vertex and segments between faces are passed over; hostile
+/// distances and oversized seams are an error.
+#[test]
+fn seams_bound_their_face_on_both_sides() {
+    // A unit box, a face per side; its top's diagonal 4–6 stands in for a seam.
+    let pts =
+        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 0.0, 1.0], [1.0, 1.0, 1.0], [0.0, 1.0, 1.0]];
+    let tris = [[0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7], [0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5], [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7]];
+    let tags = [0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5];
+    let s = BoundarySurface::new(&pts, &tris, &tags, &SurfaceOptions::default()).unwrap();
+    let before = s.feature_edges().len();
+    // The top's diagonal 4–6, a point off every vertex, and a segment 0–1 between two faces.
+    let seams = vec![vec![[0.0, 0.0, 1.0], [1.0, 1.0, 1.0], [0.5, 0.5, 5.0]], vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]];
+    let marked = s.clone().with_seams(&seams, 1e-9).unwrap();
+    assert_eq!(marked.feature_edges().len(), before + 1);
+    let e = marked.feature_edges().iter().find(|e| e.vertices == [4, 6]).unwrap();
+    assert_eq!(e.kind, FeatureKind::FaceBoundary);
+    assert_eq!(marked.tri_face()[e.triangles[0] as usize], marked.tri_face()[e.triangles[1] as usize]);
+    assert!(marked.feature_edges().windows(2).all(|w| w[0].vertices < w[1].vertices));
+    // Nothing to mark: the same surface.
+    assert_eq!(s.clone().with_seams(&[], 0.0).unwrap(), s);
+    for d in [-1.0, f64::NAN, f64::INFINITY] {
+        assert!(s.clone().with_seams(&seams, d).is_err(), "{d}");
+    }
+    let long = vec![vec![[0.0; 3]; 9]];
+    assert!(s.clone().with_seams(&long, 0.0).is_err());
+    let far = vec![vec![[1e300, 0.0, 0.0], [-1e300, 0.0, 0.0]]];
+    assert_eq!(s.clone().with_seams(&far, 1e-9).unwrap().feature_edges().len(), before);
+}
