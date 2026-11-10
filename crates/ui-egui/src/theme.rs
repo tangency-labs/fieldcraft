@@ -1,16 +1,119 @@
-//! Colours and widget style: the Craft family's dark theme (the default, blue-grey chrome around a
-//! #2e3440 viewport) and its light one, with the same chrome as SolidCraft's tokens so the apps
-//! look alike side by side, and FieldCraft's own violet accent so they are told apart. Every
-//! colour the UI uses comes from [`Tokens`].
+//! Colours and widget style. The interface draws with SolidCraft's UI kit, whose controls take
+//! their colours from `solidcraft_theme::Tokens`: FieldCraft gives the kit SolidCraft's dark and
+//! light chrome with FieldCraft's own violet accent ([`kit`]), so the apps look alike side by side
+//! and are told apart, and installs them with the kit's theme state ([`apply`]). [`Tokens`] are
+//! FieldCraft's: the chrome read from the kit's tokens, and what is FieldCraft's own (the
+//! viewport, elements, results, setup symbols and selection). Every colour the UI uses comes from
+//! one or the other.
 //!
-//! Adapted from SolidCraft's `crates/ui-egui/src/theme.rs` (MIT OR Apache-2.0), see
-//! ATTRIBUTION.md.
+//! The token structure was adapted from SolidCraft's `crates/ui-egui/src/theme.rs` (MIT OR
+//! Apache-2.0), see ATTRIBUTION.md.
 
-use egui::{Color32, Stroke};
+use egui::Color32;
 use fieldcraft_engine::view::Palette;
 use fieldcraft_model::ElementKind;
 use fieldcraft_render::Rgb;
 use fieldcraft_render::glyphs::GlyphColors;
+use solidcraft_theme as kit_theme;
+use solidcraft_ui_kit::type_face;
+
+/// The accent in the light theme: #6F47C2.
+const LIGHT_ACCENT: Color32 = Color32::from_rgb(0x6f, 0x47, 0xc2);
+/// The accent in the dark theme: #8861CF, the chosen #8A63D2 darkened by 0.008 in OKLCH lightness
+/// (hue and chroma kept) so white on it reaches 4.5:1 (#8A63D2 gives 4.38:1).
+const DARK_ACCENT: Color32 = Color32::from_rgb(0x88, 0x61, 0xcf);
+/// The dark accent lightened in OKLCH (hue kept) until it reads at 4.5:1 on every dark ground text
+/// sits on.
+const DARK_ACCENT_INK: Color32 = Color32::from_rgb(0xc3, 0x9e, 0xff);
+/// How far a hovered accent fill moves toward black: darker keeps white on it legible.
+const ACCENT_HOVER: f32 = 0.12;
+
+/// `a` moved the fraction `t` of the way to `b`, channel by channel: `Color32::lerp_to_gamma` for
+/// opaque colours, as a `const fn` so the themes stay constants.
+const fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
+    const fn channel(a: u8, b: u8, t: f32) -> u8 {
+        let v = a as f32 + (b as f32 - a as f32) * t;
+        // In range for t in 0..=1; `as` saturates otherwise.
+        (v + 0.5) as u8
+    }
+    Color32::from_rgb(channel(a.r(), b.r(), t), channel(a.g(), b.g(), t), channel(a.b(), b.b(), t))
+}
+
+/// FieldCraft's accent and the colours made from it, on SolidCraft's chrome of one theme.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Accent {
+    /// The primary action, the current tab, focus.
+    fill: Color32,
+    /// Text in the accent on a panel or form.
+    ink: Color32,
+    /// Text and marks on an accent fill.
+    on: Color32,
+    /// An accent fill under the pointer.
+    hover: Color32,
+    /// The accent faintly over the panel: selected rows and pressed controls.
+    soft: Color32,
+    /// A hovered row or control: the accent more faintly still.
+    row_hover: Color32,
+}
+
+const fn accent(dark: bool) -> Accent {
+    let chrome = if dark { kit_theme::Tokens::dark() } else { kit_theme::Tokens::light() };
+    let fill = if dark { DARK_ACCENT } else { LIGHT_ACCENT };
+    Accent {
+        fill,
+        ink: if dark { DARK_ACCENT_INK } else { LIGHT_ACCENT },
+        on: Color32::WHITE,
+        hover: mix(fill, Color32::BLACK, ACCENT_HOVER),
+        soft: if dark { mix(chrome.panel, fill, 0.30) } else { mix(chrome.panel, fill, 0.18) },
+        row_hover: if dark { mix(chrome.panel_header, fill, 0.10) } else { mix(chrome.panel, fill, 0.09) },
+    }
+}
+
+/// The tokens the kit draws with: SolidCraft's chrome for the theme, with FieldCraft's accent in
+/// every slot that carries an accent (the primary action, selection, focus, links, the start page
+/// and the accents SolidCraft gives its own workspaces), so no SolidCraft blue is left.
+pub const fn kit(dark: bool) -> kit_theme::Tokens {
+    let mut k = if dark { kit_theme::Tokens::dark() } else { kit_theme::Tokens::light() };
+    let a = accent(dark);
+    k.accent = a.fill;
+    k.accent_soft = a.soft;
+    k.hover = a.row_hover;
+    k.on_accent = a.on;
+    k.pref_on_accent = a.on;
+    k.selected_ink = a.ink;
+    k.selected_bg = a.soft;
+    k.form_primary = a.ink;
+    k.form_primary_fill = a.fill;
+    k.figure_accent = a.ink;
+    k.file_primary = a.soft;
+    k.file_primary_ink = a.ink;
+    k.file_primary_border = a.fill;
+    k.file_rail_hover = a.hover;
+    // SolidCraft's workspaces each have an accent; FieldCraft's tabs all take its own.
+    k.sketch_accent = a.fill;
+    k.sketch_ink = a.ink;
+    k.sketch_soft = a.soft;
+    k.surface_accent = a.fill;
+    k.surface_fill = a.fill;
+    k.surface_ink = a.ink;
+    k.surface_soft = a.soft;
+    k.mesh_accent = a.fill;
+    k.mesh_fill = a.fill;
+    k.mesh_ink = a.ink;
+    k.mesh_soft = a.soft;
+    k.form_accent = a.fill;
+    k.form_fill = a.fill;
+    k.form_tab_ink = a.ink;
+    k.form_soft = a.soft;
+    k.sheet_fill = a.fill;
+    k.sheet_ink = a.ink;
+    k.sheet_soft = a.soft;
+    k.render_accent = a.fill;
+    k.render_fill = a.fill;
+    k.render_ink = a.ink;
+    k.render_soft = a.soft;
+    k
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Tokens {
@@ -120,28 +223,6 @@ const CONTOUR: [Color32; 5] = [
     Color32::from_rgb(0xe0, 0x40, 0x2e),
 ];
 
-/// The accent in the light theme: #6F47C2.
-const LIGHT_ACCENT: Color32 = Color32::from_rgb(0x6f, 0x47, 0xc2);
-/// The accent in the dark theme: #8861CF, the chosen #8A63D2 darkened by 0.008 in OKLCH lightness
-/// (hue and chroma kept) so white on it reaches 4.5:1 (#8A63D2 gives 4.38:1).
-const DARK_ACCENT: Color32 = Color32::from_rgb(0x88, 0x61, 0xcf);
-/// How far a hovered accent fill moves toward black: darker keeps white on it legible.
-const ACCENT_HOVER: f32 = 0.12;
-const LIGHT_PANEL: Color32 = Color32::from_rgb(250, 251, 252);
-const DARK_PANEL: Color32 = Color32::from_rgb(39, 43, 52);
-const DARK_PANEL_HEADER: Color32 = Color32::from_rgb(47, 52, 62);
-
-/// `a` moved the fraction `t` of the way to `b`, channel by channel: `Color32::lerp_to_gamma` for
-/// opaque colours, as a `const fn` so the themes stay constants.
-const fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
-    const fn channel(a: u8, b: u8, t: f32) -> u8 {
-        let v = a as f32 + (b as f32 - a as f32) * t;
-        // In range for t in 0..=1; `as` saturates otherwise.
-        (v + 0.5) as u8
-    }
-    Color32::from_rgb(channel(a.r(), b.r(), t), channel(a.g(), b.g(), t), channel(a.b(), b.b(), t))
-}
-
 impl Tokens {
     /// Both themes, evaluated at compile time.
     const LIGHT: Tokens = Tokens::light();
@@ -151,38 +232,73 @@ impl Tokens {
         if dark { Tokens::DARK } else { Tokens::LIGHT }
     }
 
+    /// These tokens with the chrome of a theme: the kit's ([`kit`]), with FieldCraft's accent.
+    const fn with_chrome(mut self, dark: bool) -> Tokens {
+        let (k, a) = (kit(dark), accent(dark));
+        self.app_bar = k.app_bar;
+        self.app_bar_text = k.app_bar_text;
+        self.toolbar = k.toolbar;
+        self.panel = k.panel;
+        self.panel_header = k.panel_header;
+        self.dialog_bg = k.dialog_body;
+        self.border = k.border;
+        self.field = k.control_fill;
+        self.text = k.text;
+        self.text_dim = k.text_dim;
+        self.accent = a.fill;
+        self.accent_ink = a.ink;
+        self.on_accent = a.on;
+        self.accent_hover = a.hover;
+        self.accent_soft = a.soft;
+        self.hover = a.row_hover;
+        self.error = k.error;
+        self.warm = k.warning;
+        self.icon = k.icon;
+        self.timeline = k.timeline;
+        self.timeline_item = k.timeline_item;
+        self.timeline_marker = k.timeline_marker;
+        self.viewport_top = k.viewport_top;
+        self.viewport_bottom = k.viewport_bottom;
+        self.overlay = k.overlay;
+        self.overlay_text = k.text;
+        self
+    }
+
+    /// The light theme: the kit's light chrome and FieldCraft's own colours.
     pub const fn light() -> Tokens {
+        // The chrome is filled in by `with_chrome`.
+        let chrome = Color32::PLACEHOLDER;
         Tokens {
-            app_bar: Color32::from_rgb(52, 56, 64),
-            app_bar_text: Color32::from_rgb(230, 234, 242),
-            toolbar: Color32::from_rgb(246, 247, 249),
-            panel: LIGHT_PANEL,
-            panel_header: Color32::from_rgb(236, 238, 242),
-            dialog_bg: Color32::from_rgb(250, 251, 252),
+            app_bar: chrome,
+            app_bar_text: chrome,
+            toolbar: chrome,
+            panel: chrome,
+            panel_header: chrome,
+            dialog_bg: chrome,
             heading_bg: Color32::from_rgb(218, 223, 231),
             subheading_bg: Color32::from_rgb(234, 237, 242),
-            border: Color32::from_rgb(208, 212, 220),
-            field: Color32::from_rgb(232, 236, 242),
-            text: Color32::from_rgb(38, 42, 50),
-            text_dim: Color32::from_rgb(110, 116, 128),
-            accent: LIGHT_ACCENT,
-            accent_ink: LIGHT_ACCENT,
-            on_accent: Color32::WHITE,
-            accent_hover: mix(LIGHT_ACCENT, Color32::BLACK, ACCENT_HOVER),
-            accent_soft: mix(LIGHT_PANEL, LIGHT_ACCENT, 0.18),
-            hover: mix(LIGHT_PANEL, LIGHT_ACCENT, 0.09),
-            error: Color32::from_rgb(214, 54, 54),
+            border: chrome,
+            field: chrome,
+            text: chrome,
+            text_dim: chrome,
+            accent: chrome,
+            accent_ink: chrome,
+            on_accent: chrome,
+            accent_hover: chrome,
+            accent_soft: chrome,
+            hover: chrome,
+            error: chrome,
             ok: Color32::from_rgb(44, 122, 58),
-            warm: Color32::from_rgb(222, 150, 30),
-            icon: Color32::from_rgb(70, 78, 92),
+            warm: chrome,
+            icon: chrome,
             icon_fill: Color32::from_rgb(178, 196, 222),
-            timeline: Color32::from_rgb(232, 235, 240),
-            timeline_item: Color32::WHITE,
-            timeline_marker: Color32::from_rgb(70, 76, 88),
-            viewport_top: Color32::from_rgb(240, 243, 247),
-            viewport_bottom: Color32::from_rgb(203, 210, 221),
-            overlay: Color32::from_rgba_unmultiplied_const(255, 255, 255, 235),
-            overlay_text: Color32::from_rgb(38, 42, 50),
+            timeline: chrome,
+            timeline_item: chrome,
+            timeline_marker: chrome,
+            viewport_top: chrome,
+            viewport_bottom: chrome,
+            overlay: chrome,
+            overlay_text: chrome,
             axis_x: Color32::from_rgb(0xc8, 0x3c, 0x32),
             axis_y: Color32::from_rgb(0x3c, 0x96, 0x32),
             axis_z: Color32::from_rgb(0x2c, 0x64, 0xc8),
@@ -219,42 +335,17 @@ impl Tokens {
             pick_selected: Color32::from_rgb(0xd6, 0x00, 0x7f),
             pick_hover: Color32::from_rgb(0xf0, 0x7c, 0xc0),
         }
+        .with_chrome(false)
     }
 
-    /// Dark blue-grey: the viewport #2e3440, the chrome a little darker, light text, the violet
-    /// accent.
+    /// The dark theme: the kit's dark chrome (the viewport #2e3440, the chrome a little darker,
+    /// light text) and FieldCraft's own colours.
     pub const fn dark() -> Tokens {
-        let mut t = Tokens::light();
-        t.app_bar = Color32::from_rgb(28, 31, 38);
-        t.toolbar = Color32::from_rgb(37, 41, 49);
-        t.panel = DARK_PANEL;
-        t.panel_header = DARK_PANEL_HEADER;
-        t.dialog_bg = Color32::from_rgb(59, 68, 83);
-        t.heading_bg = Color32::from_rgb(38, 44, 55);
-        t.subheading_bg = Color32::from_rgb(48, 55, 68);
-        t.border = Color32::from_rgb(63, 69, 82);
-        t.field = Color32::from_rgb(30, 34, 41);
-        t.text = Color32::from_rgb(222, 226, 232);
-        t.text_dim = Color32::from_rgb(148, 155, 168);
-        t.accent = DARK_ACCENT;
-        // The accent lightened in OKLCH (hue kept) until it reads at 4.5:1 on every dark ground
-        // text sits on, the form background (#3b4453) being the closest.
-        t.accent_ink = Color32::from_rgb(0xc3, 0x9e, 0xff);
-        t.accent_hover = mix(DARK_ACCENT, Color32::BLACK, ACCENT_HOVER);
-        t.accent_soft = mix(DARK_PANEL, DARK_ACCENT, 0.30);
-        t.hover = mix(DARK_PANEL_HEADER, DARK_ACCENT, 0.10);
-        t.error = Color32::from_rgb(240, 100, 96);
+        let mut t = Tokens::light().with_chrome(true);
+        t.heading_bg = Color32::from_rgb(26, 29, 35);
+        t.subheading_bg = Color32::from_rgb(31, 35, 42);
         t.ok = Color32::from_rgb(0x8c, 0xc8, 0x8c);
-        t.warm = Color32::from_rgb(236, 170, 70);
-        t.icon = Color32::from_rgb(208, 214, 226);
         t.icon_fill = Color32::from_rgb(86, 112, 150);
-        t.timeline = Color32::from_rgb(33, 37, 45);
-        t.timeline_item = Color32::from_rgb(52, 58, 70);
-        t.timeline_marker = Color32::from_rgb(170, 178, 192);
-        t.viewport_top = Color32::from_rgb(46, 52, 64);
-        t.viewport_bottom = Color32::from_rgb(46, 52, 64);
-        t.overlay = Color32::from_rgba_unmultiplied_const(34, 38, 46, 240);
-        t.overlay_text = Color32::from_rgb(222, 226, 232);
         t.axis_x = Color32::from_rgb(0xe0, 0x5a, 0x50);
         t.axis_y = Color32::from_rgb(0x6c, 0xc0, 0x5a);
         t.axis_z = Color32::from_rgb(0x52, 0x8c, 0xe6);
@@ -290,7 +381,6 @@ impl Tokens {
         t.pick_hover = Color32::from_rgb(0xff, 0xa6, 0xdc);
         t
     }
-
     /// The contour colour scale for the renderer, low to high.
     pub fn contour_stops(&self) -> [Rgb; 5] {
         self.contour.map(rgb)
@@ -354,72 +444,47 @@ pub fn rgb(c: Color32) -> Rgb {
     Rgb(c.r(), c.g(), c.b())
 }
 
-fn visuals(dark: bool) -> egui::Visuals {
-    let t = Tokens::get(dark);
-    let mut v = if dark { egui::Visuals::dark() } else { egui::Visuals::light() };
-    v.panel_fill = t.panel;
-    v.window_fill = t.panel;
-    v.window_stroke = Stroke::new(1.0, t.border);
-    v.extreme_bg_color = t.field;
-    v.faint_bg_color = t.panel_header;
-    v.override_text_color = Some(t.text);
-    let w = &mut v.widgets;
-    let noninteractive = w.noninteractive.bg_fill;
-    for (state, fill) in [
-        (&mut w.noninteractive, noninteractive),
-        (&mut w.inactive, t.panel_header),
-        (&mut w.hovered, t.hover),
-        (&mut w.active, t.accent_soft),
-        (&mut w.open, t.panel_header),
-    ] {
-        state.bg_fill = fill;
-        state.weak_bg_fill = fill;
-        state.corner_radius = egui::CornerRadius::same(3);
-        state.fg_stroke = Stroke::new(1.0, t.text);
-    }
-    v.selection.bg_fill = t.accent_soft;
-    // egui draws selected labels' text in the selection stroke's colour, on its fill.
-    v.selection.stroke = Stroke::new(1.0, t.accent_ink);
-    v.hyperlink_color = t.accent_ink;
-    v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, t.border);
-    v.widgets.inactive.bg_stroke = Stroke::new(1.0, t.border);
-    v.window_corner_radius = egui::CornerRadius::same(6);
-    v.menu_corner_radius = egui::CornerRadius::same(6);
-    v
-}
-
-/// The font family of the interface's caps labels (tabs, panel labels, workspaces, headings):
-/// Inter SemiBold, then egui's own proportional fonts for what it lacks. egui has no bold weight
-/// of its default font, so labels need a face of their own to read at small sizes.
-pub const LABEL_FAMILY: &str = "label";
-/// Inter SemiBold 4.1 (SIL OFL 1.1, unmodified; fonts/OFL.txt, ATTRIBUTION.md).
+/// Inter SemiBold 4.1 (SIL OFL 1.1, unmodified; fonts/OFL.txt, ATTRIBUTION.md): the kit's semibold
+/// and bold weights (tabs, panel labels, headings), then egui's own proportional fonts for what it
+/// lacks. egui has no bold weight of its default font, so labels need a face of their own to read
+/// at small sizes.
 static INTER_SEMIBOLD: &[u8] = include_bytes!("../fonts/Inter-SemiBold.ttf");
 
-/// The font definitions: egui's defaults plus the label family.
+/// The font definitions: egui's defaults with Inter SemiBold for the kit's semibold and bold
+/// weights, and its medium weight in the regular face.
 pub fn fonts() -> egui::FontDefinitions {
     let mut f = egui::FontDefinitions::default();
     f.font_data.insert("inter-semibold".into(), std::sync::Arc::new(egui::FontData::from_static(INTER_SEMIBOLD)));
     let mut family = vec!["inter-semibold".to_string()];
     family.extend(f.families.get(&egui::FontFamily::Proportional).cloned().unwrap_or_default());
-    f.families.insert(egui::FontFamily::Name(LABEL_FAMILY.into()), family);
-    f
+    for weight in [type_face::SEMIBOLD_FAMILY, type_face::BOLD_FAMILY] {
+        f.families.insert(egui::FontFamily::Name(weight.into()), family.clone());
+    }
+    type_face::with_weight_families(f)
 }
 
-/// The caps-label font at `size`: the label family once the context has it (fonts set with
-/// [`apply`] take effect from the next pass), the default proportional font until then.
+/// The label font at `size`: the kit's semibold once the context has it (fonts set with [`apply`]
+/// take effect from the next pass), the default proportional font until then.
 pub fn label_font(ctx: &egui::Context, size: f32) -> egui::FontId {
-    let family = egui::FontFamily::Name(LABEL_FAMILY.into());
-    if ctx.fonts(|f| f.families().contains(&family)) { egui::FontId::new(size, family) } else { egui::FontId::proportional(size) }
+    let font = type_face::semibold(size);
+    if ctx.fonts(|f| f.families().contains(&font.family)) { font } else { egui::FontId::proportional(size) }
 }
 
-/// Style the context for the dark or light theme, with the interface's fonts.
+/// Style the context for the dark or light theme: FieldCraft's tokens and icons installed in the
+/// kit, the kit's visuals from them, and the interface's fonts. egui draws selected labels' text
+/// and links in the accent's ink, which reads on the selection fill and on panels.
 pub fn apply(ctx: &egui::Context, dark: bool) {
+    crate::icons::install_kit();
+    kit_theme::set_dark(dark);
+    kit_theme::set_custom(Some(kit_theme::Custom { dark, tokens: kit(dark) }));
     ctx.set_fonts(fonts());
-    ctx.set_theme(if dark { egui::Theme::Dark } else { egui::Theme::Light });
-    ctx.set_visuals(visuals(dark));
+    kit_theme::apply(ctx);
+    let (k, ink) = (kit(dark), Tokens::get(dark).accent_ink);
     ctx.global_style_mut(|s| {
-        s.spacing.item_spacing = egui::vec2(6.0, 4.0);
-        s.spacing.button_padding = egui::vec2(6.0, 3.0);
+        s.visuals.selection.stroke.color = ink;
+        s.visuals.hyperlink_color = ink;
+        // A plain egui field outside the kit's forms keeps an outline at rest, as the kit's do.
+        s.visuals.widgets.inactive.bg_stroke = k.control_border_stroke(k.control_border);
     });
 }
 
@@ -431,12 +496,19 @@ mod colour_tests;
 mod tests {
     use super::*;
 
+    /// The visuals [`apply`] gives a context in a theme.
+    pub(super) fn visuals(dark: bool) -> egui::Visuals {
+        let ctx = egui::Context::default();
+        apply(&ctx, dark);
+        ctx.global_style().visuals.clone()
+    }
+
     /// Empty, unfocused fields still draw an outline in either theme.
     #[test]
     fn empty_text_fields_have_a_visible_outline() {
         for dark in [false, true] {
             let ctx = egui::Context::default();
-            ctx.set_visuals(visuals(dark));
+            apply(&ctx, dark);
             let mut field_rect = egui::Rect::NOTHING;
             let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
                 field_rect = ui.text_edit_singleline(&mut String::new()).rect;
@@ -455,13 +527,15 @@ mod tests {
         }
     }
 
-    /// Title and section bands stand out from a panel, the title more than its sections.
+    /// Title and section bands stand out from the form behind them, the title more than its
+    /// sections.
     #[test]
-    fn heading_bands_are_darker_than_panels_in_order() {
-        let luma = |c: Color32| u32::from(c.r()) * 3 + u32::from(c.g()) * 6 + u32::from(c.b());
+    fn heading_bands_stand_out_in_order() {
+        let luma = |c: Color32| i32::from(c.r()) * 3 + i32::from(c.g()) * 6 + i32::from(c.b());
         for t in [Tokens::light(), Tokens::dark()] {
-            assert!(luma(t.heading_bg) < luma(t.subheading_bg), "{t:?}");
-            assert!(luma(t.subheading_bg) < luma(t.dialog_bg), "{t:?}");
+            let off = |c: Color32| (luma(c) - luma(t.dialog_bg)).abs();
+            assert!(off(t.heading_bg) > off(t.subheading_bg), "{t:?}");
+            assert!(off(t.subheading_bg) > 60, "{t:?}");
         }
     }
 
@@ -481,8 +555,25 @@ mod tests {
         assert_eq!(label_font(&ctx, 12.0).family, egui::FontFamily::Proportional);
         apply(&ctx, true);
         run(&ctx);
-        assert_eq!(label_font(&ctx, 12.0).family, egui::FontFamily::Name(LABEL_FAMILY.into()));
+        assert_eq!(label_font(&ctx, 12.0), type_face::semibold(12.0));
         run(&ctx);
+    }
+
+    /// The kit draws with FieldCraft's colours once they are applied: its tokens are [`kit`]'s,
+    /// in the theme applied, and the chrome FieldCraft draws itself is the same.
+    #[test]
+    fn the_kit_draws_with_fieldcrafts_tokens() {
+        let ctx = egui::Context::default();
+        for dark in [false, true] {
+            apply(&ctx, dark);
+            let (k, t) = (kit_theme::Tokens::get(), Tokens::get(dark));
+            assert_eq!(k, kit(dark), "dark={dark}");
+            assert!(kit_theme::is_dark() == dark);
+            for (a, b) in [(k.accent, t.accent), (k.panel, t.panel), (k.text, t.text), (k.dialog_body, t.dialog_bg), (k.selected_ink, t.accent_ink)] {
+                assert_eq!(a, b, "dark={dark}");
+            }
+            assert_eq!(ctx.global_style().visuals.panel_fill, t.panel, "dark={dark}");
+        }
     }
 
     /// Setup symbols differ from every element colour and from each other, and stand out from

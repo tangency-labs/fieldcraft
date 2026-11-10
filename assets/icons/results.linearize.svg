@@ -4,7 +4,7 @@
   <g id="Layer_1" data-name="Layer 1">
     <path d="M5 3 L19 3 C20.105 3 21 3.895 21 5 L21 19 C21 20.105 20.105 21 19 21 L5 21 C3.895 21 3 20.105 3 19 L3 5 C3 3.895 3.895 3 5 3 Z" fill="#2d4e70" stroke="#dde2ea" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
     <path d="M6 18 C8 9 12 7 18 6" fill="none" stroke="#dde2ea" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-    <line x1="6" y1="16.5" x2="18" y2="7.5" fill="none" stroke="#4f9ce8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-    <line x1="6" y1="12" x2="18" y2="12" fill="none" stroke="#f0b44a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="2 2"/>
+    <path d="M6 16.5 L18 7.5" fill="none" stroke="#4f9ce8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M6 12 L18 12" fill="none" stroke="#f0b44a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="2 2"/>
   </g>
 </svg>
