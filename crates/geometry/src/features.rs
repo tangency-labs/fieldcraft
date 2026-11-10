@@ -7,7 +7,7 @@
 //! thickness, a hole of a diameter. The provenance-driven mesh plan (`mesh.plan`) reads it.
 //!
 //! Which features built a body comes from two places: the persistent face names (each names the
-//! features that made the face, `F8:side:l1`, `F3:inner:F1:+y`, `F82:-z@F84.2` for a pattern
+//! features that made the face, `F8:side:l1`, `F3:inner(F1:+y)`, `F82:-z@F84.2` for a pattern
 //! copy), and the features that name the body (targets, tools, the body a fillet or shell
 //! works on). A feature whose faces were all removed later and that names no body (a cut that a
 //! later cut swallowed) is left out.
@@ -16,9 +16,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use fieldcraft_model::units::Typed;
 use serde::Serialize;
+use solidcore_record::{Seg2, Vec3};
 use solidcraft_doc::expr::Kind;
 use solidcraft_doc::{Document, FeatureKind, ModelState, Operation, SolvedSketch, plain};
-use solidcraft_geom::{Seg2, Vec3};
+use solidcraft_geom::PlaneGeom;
 use solidcraft_kernel::guard;
 
 use crate::{Design, Result, Shape};
@@ -212,7 +213,7 @@ fn unit(v: [f64; 3]) -> Option<[f64; 3]> {
     (n.is_finite() && n > MIN_NORM).then(|| v.map(|c| if (c / n).abs() < ZERO_COMPONENT { 0.0 } else { c / n }))
 }
 
-/// The ids of the features a persistent face name mentions (`F3:inner:F1:+y` → 3, 1).
+/// The ids of the features a persistent face name mentions (`F3:inner(F1:+y)` → 3, 1).
 pub fn feature_ids(name: &str) -> impl Iterator<Item = u64> + '_ {
     let bytes = name.as_bytes();
     (0..bytes.len()).filter_map(move |i| {
@@ -249,7 +250,7 @@ fn operation_name(op: Operation) -> &'static str {
 
 fn curves(segs: &[Seg2]) -> Vec<Curve> {
     // A loop of arcs about one centre and radius that turns a full circle is a circle.
-    let arcs: Vec<(solidcraft_geom::Vec2, f64, f64)> =
+    let arcs: Vec<(solidcore_record::Vec2, f64, f64)> =
         segs.iter().filter_map(|s| if let Seg2::Arc { center, radius, sweep, .. } = s { Some((*center, *radius, *sweep)) } else { None }).collect();
     if !arcs.is_empty() && arcs.len() == segs.len() {
         let (c0, r0, _) = arcs[0];
@@ -404,7 +405,7 @@ impl History {
             }
             FeatureKind::Mirror { plane, bodies, .. } => {
                 node.targets = plain(bodies);
-                if let Ok(p) = self.doc.resolve_plane_in(&vals, plane, 0, Some(&self.state))
+                if let Ok(p) = self.doc.resolve_plane_in(&vals, plane, 0, 0, Some(&self.state))
                     && let Some(n) = unit(xyz(p.normal()))
                 {
                     // x' = x − 2 ((x − o)·n) n
@@ -507,7 +508,7 @@ mod tests {
     #[test]
     fn feature_ids_come_from_every_name_part() {
         let ids = |n: &str| feature_ids(n).collect::<Vec<_>>();
-        assert_eq!(ids("F3:inner:F2:blend:F1:+y|F1:-x"), vec![3, 2, 1, 1]);
+        assert_eq!(ids("F3:inner(F2:blend(F1:+y|F1:-x))"), vec![3, 2, 1, 1]);
         assert_eq!(ids("F82:-z@F84.2"), vec![82, 84]);
         assert_eq!(ids("F44:side:l12"), vec![44]);
         assert_eq!(ids("partition:Half:a"), Vec::<u64>::new());
@@ -539,9 +540,9 @@ mod tests {
         let circle = &hole.sketch.as_ref().unwrap().profiles[0].outer;
         let c = plate.depth / 2.0;
         assert_eq!(circle, &[Curve::Circle { center: [c, c], radius: plate.hole_diameter / 2.0 }]);
-        // Each feature's faces: the outline's four sides and caps, the hole's two halves.
+        // Each feature's faces: the outline's four sides and caps, the hole's one cylinder.
         assert_eq!(outline.faces.len(), 6, "{:?}", outline.faces);
-        assert_eq!(hole.faces.len(), 2, "{:?}", hole.faces);
+        assert_eq!(hole.faces.len(), 1, "{:?}", hole.faces);
         assert!(!hole.edges.is_empty());
         assert!(outline.error.is_none() && hole.error.is_none());
         // Bodies the design lacks are an error, not an empty graph.

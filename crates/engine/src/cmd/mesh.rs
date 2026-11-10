@@ -1435,7 +1435,7 @@ mod tests {
         let mut s = Session { design: Some(Arc::new(open_design(&plate_design(&plate).unwrap()).unwrap())), ..Session::default() };
         let r = s.execute("mesh.surface.check", &json!({"body": "Body1", "tolerance": 0.05})).unwrap();
         assert_eq!(r["valid"], true, "{r}");
-        assert_eq!(r["faces"], 8);
+        assert_eq!(r["faces"], 7);
         assert_eq!(r["shells"].as_array().unwrap().len(), 1);
         assert_eq!(r["shells"][0]["genus"], 1, "the hole is a handle");
         let exact = (plate.width * plate.depth - std::f64::consts::PI * (plate.hole_diameter / 2.0).powi(2)) * plate.thickness;
@@ -1499,11 +1499,11 @@ mod tests {
         assert!(s.model.elements().values().all(|e| e.kind == fieldcraft_model::ElementKind::Tet4));
         let (volume, boundary) = (r["volume"].as_f64().unwrap(), r["boundary_volume"].as_f64().unwrap());
         assert!((volume - boundary).abs() <= 1e-9 * boundary, "{r}");
-        // Every element is on the body; boundary faces carry the 8 face names.
+        // Every element is on the body; boundary faces carry the 7 face names.
         let c = s.model.classification();
         assert_eq!(c.elements().len(), elements);
         let faces: std::collections::BTreeSet<u32> = c.elements().values().flat_map(|t| t.faces.values().copied()).collect();
-        assert_eq!(faces.len(), 8);
+        assert_eq!(faces.len(), 7);
         let tagged: usize = c.elements().values().map(|t| t.faces.len()).sum();
         assert_eq!(tagged as u64, r["boundary_faces"].as_u64().unwrap());
         // The certified quality report agrees.

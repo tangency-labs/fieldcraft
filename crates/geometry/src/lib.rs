@@ -164,13 +164,13 @@ pub struct SurfaceMesh {
     pub edge_faces: Vec<Vec<u32>>,
 }
 
-fn xyz(v: solidcraft_geom::Vec3) -> [f64; 3] {
+fn xyz(v: solidcore_record::Vec3) -> [f64; 3] {
     [v.x, v.y, v.z]
 }
 
 /// A box between two corners.
 pub fn block(a: [f64; 3], b: [f64; 3]) -> Result<Shape> {
-    let v = |p: [f64; 3]| solidcraft_geom::Vec3 { x: p[0], y: p[1], z: p[2] };
+    let v = |p: [f64; 3]| solidcore_record::Vec3 { x: p[0], y: p[1], z: p[2] };
     let body = guard("block", || solidcraft_kernel::box_solid(v(a), v(b)))?;
     Ok(Shape { name: "Block".into(), body, faces: Vec::new(), face_map: Vec::new(), cuts: Vec::new() })
 }
@@ -310,7 +310,29 @@ impl Shape {
             // Its value is in the geometry's millimetres, which the caller may not show: not named.
             return Err(Error::Invalid("the tessellation tolerance must be a finite, positive length".into()));
         }
-        let m = guard("tessellate", || self.body.tessellate(tolerance))?;
+        let m = guard("tessellate", || self.body.mesh(&solidcraft_kernel::MeshTolerance::chord(tolerance)))?;
+        // SolidCraft's mesher leaves out a face it cannot mesh and meshes the rest (it logs why):
+        // a boundary with a hole in it, which no volume mesher takes. Refused here, by name.
+        if !self.body.is_mesh() {
+            let mut meshed = vec![false; self.body.face_count()];
+            for f in &m.tri_face {
+                if let Some(slot) = meshed.get_mut(*f as usize) {
+                    *slot = true;
+                }
+            }
+            let missing: Vec<usize> = meshed.iter().enumerate().filter(|(_, m)| !**m).map(|(i, _)| i).collect();
+            if let Some(&first) = missing.first() {
+                // By B-rep face index; a merged face's name through the merge.
+                let face = if self.face_map.is_empty() { Some(first) } else { self.face_map.get(first).map(|&v| v as usize) };
+                let name = face.and_then(|v| self.faces.get(v)).map_or_else(|| format!("#{first}"), |f| format!("`{}`", f.name));
+                return Err(Error::Failed(format!(
+                    "SolidCraft could not triangulate {} of the {} faces of body `{}` (face {name} first)",
+                    missing.len(),
+                    meshed.len(),
+                    self.name
+                )));
+            }
+        }
         Ok(SurfaceMesh {
             positions: m.positions.into_iter().map(xyz).collect(),
             triangles: m.triangles,

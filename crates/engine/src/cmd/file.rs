@@ -585,6 +585,8 @@ fn recovery_discard(s: &mut Session, p: &Value) -> Result<Value> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use fieldcraft_geometry::sample::{Plate, plate_design};
     use serde_json::json;
 
@@ -747,6 +749,38 @@ mod tests {
         all
     }
 
+    /// Every `"face"` string anywhere in a model.
+    fn face_names(v: &Value, out: &mut BTreeSet<String>) {
+        match v {
+            Value::Object(m) => {
+                for (k, v) in m {
+                    match v.as_str() {
+                        Some(name) if k == "face" => {
+                            out.insert(name.to_string());
+                        }
+                        _ => face_names(v, out),
+                    }
+                }
+            }
+            Value::Array(a) => a.iter().for_each(|v| face_names(v, out)),
+            _ => {}
+        }
+    }
+
+    /// A face name in SolidCraft's current grammar, where a face derived from others names them
+    /// in brackets: `F2:inner:F1:+x` (before 2874e78) is `F2:inner(F1:+x)`.
+    fn current_face_name(name: &str) -> String {
+        let mut parts = name.splitn(3, ':');
+        match (parts.next(), parts.next(), parts.next()) {
+            (Some(id), Some(kind), Some(rest))
+                if id.starts_with('F') && rest.strip_prefix('F').is_some_and(|r| r.starts_with(|c: char| c.is_ascii_digit())) =>
+            {
+                format!("{id}:{kind}({})", current_face_name(rest))
+            }
+            _ => name.to_string(),
+        }
+    }
+
     /// Every format 1 fixture opens, migrated, as the reader gives it, with its geometry; opening
     /// writes nothing.
     #[test]
@@ -765,19 +799,46 @@ mod tests {
             let mut s = Session::default();
             let r = s.execute("file.open", &json!({"path": path})).unwrap();
             assert_eq!(r["migrated_from"], 1, "{r}");
+            // Each face name followed to the design's current name is a warning of its own.
+            let (renames, warnings): (Vec<&Value>, Vec<&Value>) = r["warnings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .partition(|w| w.as_str().is_some_and(|w| w.ends_with("save the model to keep the new name")));
             // A mesh of the millimetre design in a model of metres or inches opens with a note
             // saying what changed, kept with the migrated-from note until the first save.
             if ["design-metres", "design-inches", "mixed-metres"].iter().any(|n| path.file_stem().is_some_and(|s| s == *n)) {
-                let w = r["warnings"].to_string();
+                let w = json!(warnings).to_string();
                 assert!(w.contains("was made from a SolidCraft design") && w.contains("results will differ"), "{w}");
                 assert_eq!(s.migration_notes.len(), 1, "{}", path.display());
             } else {
-                assert_eq!(r["warnings"], json!([]), "{}: {r}", path.display());
+                assert!(warnings.is_empty(), "{}: {r}", path.display());
             }
             assert_eq!(s.migrated_from, Some(1));
-            assert!(!s.is_dirty(), "a migrated model has nothing unsaved: opening it again gives the same");
             let file = fieldcraft_io::read(&std::fs::read(path).unwrap()).unwrap();
-            assert_eq!((&s.model, &s.journal, &s.view), (&file.model, &file.journal, &file.view));
+            // The design's face names the fixture was saved with are followed to SolidCraft's
+            // current names (`cmd/names.rs`): exactly the old names it carries are renamed, each to
+            // its name in the current grammar, and only then is the model changed (to be saved
+            // deliberately). Opening anything else leaves it as the file reads.
+            let mut stale = BTreeSet::new();
+            face_names(&serde_json::to_value(&file.model).unwrap(), &mut stale);
+            stale.retain(|n| current_face_name(n) != *n);
+            let renamed: BTreeMap<String, String> = r["renamed"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|e| (e["from"]["face"].as_str().unwrap().to_string(), e["to"]["face"].as_str().unwrap().to_string()))
+                .collect();
+            assert_eq!(renamed.keys().cloned().collect::<BTreeSet<_>>(), stale, "{}: {r}", path.display());
+            assert_eq!(renames.len(), renamed.len(), "{}: {r}", path.display());
+            for (from, to) in &renamed {
+                assert_eq!(*to, current_face_name(from), "{}", path.display());
+            }
+            assert_eq!(r["stale"]["references"], json!([]), "{}: {r}", path.display());
+            assert_eq!(s.is_dirty(), !renamed.is_empty(), "{}: changed exactly when a name was followed", path.display());
+            if renamed.is_empty() {
+                assert_eq!((&s.model, &s.journal, &s.view), (&file.model, &file.journal, &file.view));
+            }
         }
         assert_eq!(contents(&d), before, "opening wrote nothing");
         let _ = std::fs::remove_dir_all(&d);
@@ -830,6 +891,20 @@ mod tests {
                     let (mut a, mut b) = (serde_json::to_value(&replayed.model).unwrap(), serde_json::to_value(&opened.model).unwrap());
                     worst = worst.max(settle_coordinates(&mut a, &mut b, ""));
                     settle_prose(&mut a, &mut b, "");
+                    // A mesh made from a design is SolidCraft's tessellation of it (and a relaxation
+                    // of it records its cells), and a mesh plan lists the design's faces in
+                    // SolidCraft's order, all of which the pin
+                    // decides: the 0.7.0 files hold the truck kernel's, and SolidCraft v0.40
+                    // tessellates and orders the same faces otherwise. Everything else replays
+                    // bit for bit.
+                    let from_design = script["commands"].as_array().is_some_and(|c| c.iter().any(|c| c["command"] == "geometry.open"));
+                    if from_design {
+                        for v in [&mut a, &mut b] {
+                            for key in ["nodes", "elements", "classification", "mesh_plans", "relaxations"] {
+                                v.as_object_mut().map(|m| m.remove(key));
+                            }
+                        }
+                    }
                     if a != b {
                         panic!("{what}: the replay differs at {}", difference(&a, &b, ""));
                     }

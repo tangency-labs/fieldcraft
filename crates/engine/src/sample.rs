@@ -531,11 +531,11 @@ pub const STEEL_EXPANSION: f64 = 1.2e-5;
 pub fn heated_bracket() -> Value {
     let face = |f: &str| json!({"body": "Bracket", "face": f});
     let skin: Vec<Value> =
-        ["F2:start", "F2:top", "F2:side:l1", "F2:side:l2", "F2:side:l3", "F2:side:l4", "F2:side:l6", "F3:blend:F2:side:l3|F2:side:l4"]
+        ["F2:start", "F2:top", "F2:side:l1", "F2:side:l2", "F2:side:l3", "F2:side:l4", "F2:side:l6", "F3:blend(F2:side:l3|F2:side:l4)"]
             .into_iter()
             .map(face)
             .collect();
-    let holes: Vec<Value> = ["F4:bore:side:0", "F4:bore:side:1", "F5:bore:side:0", "F5:bore:side:1"].into_iter().map(face).collect();
+    let holes: Vec<Value> = ["F4:bore:side:0", "F5:bore:side:0"].into_iter().map(face).collect();
     json!([
         {"command": "model.units", "params": {"system": "mm-t-s-N-MPa"}},
         {"command": "mesh.tet.generate", "params": {"body": "Bracket", "size": 4, "order": "quadratic", "tolerance": 0.05}},
@@ -831,38 +831,41 @@ mod tests {
         }
     }
 
-    /// A cut at x = 130 runs along the pocket's end wall (#427), and the kernel only makes it
-    /// with its cutting box nudged 1.3 µm and 2 µrad off the plane: on the half y > 0 that left a
-    /// cell bounded by slivers next to the wall, which `mesh.cells` refused with an open boundary
-    /// at x = 130. The partition refuses such a cut, saying why, on the whole crank and on the
-    /// half, and leaves the body whole; the plane moved past the pocket (x = 136) cuts the half
-    /// into cells that mesh.
+    /// A cut at x = 130 runs along the pocket's end wall (#427). The truck kernel made it only
+    /// with its cutting box nudged 1.3 µm and 2 µrad off the plane, which left a cell bounded by
+    /// slivers next to the wall that `mesh.cells` refused, so FieldCraft refused such cuts.
+    /// SolidCraft's kernel from v0.40 cuts on the plane or not at all: the cut is made, the
+    /// cells keep the half's volume, every cut face lies on the plane, and the cells mesh.
     #[test]
-    fn a_cut_the_kernel_can_only_nudge_off_its_plane_is_refused() {
+    fn a_cut_along_a_face_is_made_on_the_plane_and_its_cells_mesh() {
         let datum = |name: &str, x: f64| json!({"name": name, "by": {"type": "offset", "plane": "yz", "offset": x}});
-        let refused = |s: &mut Session, body: &str| {
-            let e = s.execute("geometry.partition", &json!({"name": "X130", "datum": "X130", "bodies": [body]})).unwrap_err().to_string();
-            assert!(e.contains(&format!("could not cut `{body}`")) && e.contains("only made off the plane"), "{e}");
-        };
-        let names = |s: &mut Session| -> Vec<String> {
+        let volume = |s: &mut Session, body: &str| -> f64 {
             let r = s.execute("geometry.bodies", &json!({})).unwrap();
-            r.as_array().unwrap().iter().filter_map(|b| b["name"].as_str().map(String::from)).collect()
+            let b = r.as_array().unwrap().iter().find(|b| b["name"] == body).unwrap_or_else(|| panic!("{body}: {r}"));
+            b["volume"].as_f64().unwrap_or_else(|| panic!("{b}"))
         };
-        let bytes = fieldcraft_geometry::script_design(CRANK_ARM).unwrap();
-        let (_dir, path) = crate::tests::design_file(&bytes);
-        let mut whole = Session::default();
-        whole.execute("geometry.open", &json!({"path": path})).unwrap();
-        whole.execute("geometry.datum", &datum("X130", 130.0)).unwrap();
-        refused(&mut whole, "CrankArm");
-        assert_eq!(names(&mut whole), ["CrankArm"]);
-
         let mut s = open("crank-mirror");
+        let half = volume(&mut s, "CrankArm/b");
         s.execute("geometry.datum", &datum("X130", 130.0)).unwrap();
-        refused(&mut s, "CrankArm/b");
-        assert_eq!(names(&mut s), ["CrankArm/a", "CrankArm/b"]);
-        s.execute("geometry.datum", &datum("X136", 136.0)).unwrap();
-        let r = s.execute("geometry.partition", &json!({"name": "X136", "datum": "X136", "bodies": ["CrankArm/b"]})).unwrap();
+        let r = s.execute("geometry.partition", &json!({"name": "X130", "datum": "X130", "bodies": ["CrankArm/b"]})).unwrap();
         assert_eq!(r["cells"], json!(["CrankArm/b/a", "CrankArm/b/b"]), "{r}");
+        let cells = volume(&mut s, "CrankArm/b/a") + volume(&mut s, "CrankArm/b/b");
+        assert!((cells - half).abs() < 1e-5 * half, "{cells} against {half}");
+        let design = s.design.clone().unwrap();
+        for cell in ["CrankArm/b/a", "CrankArm/b/b"] {
+            let shape = design.body(cell).unwrap();
+            let cut: Vec<f64> = shape
+                .faces()
+                .iter()
+                .zip(shape.face_surfaces().unwrap())
+                .filter(|(f, _)| f.name.starts_with("partition:X130:"))
+                .filter_map(|(_, srf)| match srf {
+                    Some(fieldcraft_geometry::FaceSurface::Plane { point, .. }) => Some(point[0]),
+                    _ => None,
+                })
+                .collect();
+            assert!(!cut.is_empty() && cut.iter().all(|x| (x - 130.0).abs() < 1e-9), "{cell}: {cut:?}");
+        }
         s.execute("mesh.cells", &json!({"bodies": ["CrankArm/b/a", "CrankArm/b/b"], "default": "extrude", "size": 3})).unwrap();
     }
 
@@ -1088,16 +1091,18 @@ mod tests {
         assert!(r["mass"]["relative_change"].as_f64().unwrap().abs() < 0.01, "{r}");
     }
 
-    /// The heated bracket's 4 mm tet mesh stays near its 23 000 elements. #303: refinement piled
+    /// The heated bracket's 4 mm tet mesh stays near its 9 500 elements. #303: refinement piled
     /// face vertices against a feature curve, and the improvement then grew the mesh to 29 257
     /// elements in about two minutes. The element count is the check: wall time depends on the
-    /// machine and the build profile (about 5 s in a release build, far longer on CI).
+    /// machine and the build profile (about 5 s in a release build, far longer on CI). It was
+    /// 23 000 while SolidCraft split each bore in two halves, whose seams were feature curves
+    /// the refinement crowded; from v0.40 a bore is one face (min dihedral 33.9°, no sliver).
     #[test]
     #[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
     fn the_heated_bracket_opens_with_its_usual_mesh() {
         let s = open("heated-bracket");
         let elements = s.model.elements().len();
-        assert!((20_000..=26_000).contains(&elements), "{elements} elements");
+        assert!((8_000..=11_000).contains(&elements), "{elements} elements");
     }
 
     /// The heated bracket's temperatures lie between the air's and the heater's, falling along
@@ -1118,7 +1123,7 @@ mod tests {
         let p = probe(&mut s);
         let (upright, foot) = (p["nodes"][0]["temperature"].as_f64().unwrap(), p["nodes"][1]["temperature"].as_f64().unwrap());
         assert!(upright > foot && foot > AMBIENT && upright <= HEATER, "{upright} {foot}");
-        let foot_hole = json!([{"body": "Bracket", "face": "F4:bore:side:0"}, {"body": "Bracket", "face": "F4:bore:side:1"}]);
+        let foot_hole = json!([{"body": "Bracket", "face": "F4:bore:side:0"}]);
         s.execute("model.set.create", &json!({"name": "foot_hole", "geometry": foot_hole})).unwrap();
         s.execute("model.boundary_condition.edit", &json!({"name": "Clamp", "type": "fixed", "target": {"set": "foot_hole"}})).unwrap();
         s.execute("model.load.edit", &json!({"name": "Air", "type": "convection", "set": "skin", "film": 0.01, "sink": HEATER})).unwrap();
@@ -1201,7 +1206,9 @@ mod tests {
                 assert!(!s.model.resolve_set(set).unwrap().faces.is_empty(), "{set}");
             }
             let faces = |set: &str| s.model.sets().get(set).map_or(0, |x| x.geometry.len());
-            assert_eq!((faces("spindle"), faces("pedal")), (10, 4), "{name}");
+            // The pedal hole is one cylindrical face from SolidCraft v0.40 (two halves before), so
+            // the symmetry cut leaves three pieces of it where it left four.
+            assert_eq!((faces("spindle"), faces("pedal")), (10, 3), "{name}");
         }
     }
 

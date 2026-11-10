@@ -58,75 +58,75 @@
     },
     "cdt.steiner": {
       "band": 0,
-      "value": 3
+      "value": 2
     },
     "cdt.tets": {
       "band": 0,
-      "value": 11
+      "value": 8
     },
     "hex.elements": {
       "band": 0,
       "value": 1674
     },
     "hex.hex20_min_sj": {
-      "band": 1.496807373156425e-11,
-      "value": 0.01396807373156425
+      "band": 1.4968073731563807e-11,
+      "value": 0.013968073731563807
     },
     "hex.hex8_min_sj": {
-      "band": 1.496807373156425e-11,
-      "value": 0.01396807373156425
+      "band": 1.4968073731564747e-11,
+      "value": 0.013968073731564747
     },
     "octree.hexes": {
       "band": 0,
       "value": 84952
     },
     "octree.mean_sj": {
-      "band": 9.8087235696347e-10,
-      "value": 0.9798723569634697
+      "band": 9.808721468268423e-10,
+      "value": 0.9798721468268422
     },
     "octree.min_sj": {
-      "band": 3.5499800485952726e-12,
-      "value": 0.002549980048595272
+      "band": 3.5501982380991455e-12,
+      "value": 0.002550198238099145
     },
     "octree.volume_mm3": {
-      "band": 3.0866518977723635e-6,
-      "value": 3086.6508977723634
+      "band": 3.0866527568390867e-6,
+      "value": 3086.651756839087
     },
     "quality.max_dihedral_deg": {
-      "band": 1.7623439741905036e-7,
-      "value": 176.23339741905033
+      "band": 1.7664809888196447e-7,
+      "value": 176.64709888196447
     },
     "quality.min_dihedral_deg": {
-      "band": 2.863405226111747e-9,
-      "value": 2.862405226111747
+      "band": 2.8634052261117492e-9,
+      "value": 2.862405226111749
     },
     "quality.min_radius_ratio": {
-      "band": 6.467024834867988e-12,
-      "value": 0.005467024834867988
+      "band": 4.115653292022173e-12,
+      "value": 0.0031156532920221733
     },
     "quality.slivers": {
       "band": 0,
-      "value": 157
+      "value": 141
     },
     "quality.slivers_cdt": {
       "band": 0,
-      "value": 3
+      "value": 2
     },
     "quality.tets": {
       "band": 0,
-      "value": 7463
+      "value": 7384
     },
     "surface.enclosed_mm3": {
-      "band": 3.200001e-6,
-      "value": 3200.0
+      "band": 3.2000010000000005e-6,
+      "value": 3200.0000000000005
     },
     "surface.enclosed_vs_exact": {
       "band": 1e-9,
-      "value": 0.0
+      "value": 1.4210854715202004e-16
     },
     "surface.solidcraft_mm3": {
-      "band": 3.200001e-6,
-      "value": 3200.0
+      "band": 3.2000010000000022e-6,
+      "value": 3200.0000000000023
     }
   }
 }

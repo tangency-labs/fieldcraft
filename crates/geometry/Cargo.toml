@@ -14,6 +14,7 @@ solidcraft-geom = { workspace = true }
 solidcraft-kernel = { workspace = true }
 solidcraft-doc = { workspace = true }
 solidcraft-io = { workspace = true }
+solidcore-record = { workspace = true }
 thiserror = { workspace = true }
 zip = { workspace = true }
 quick-xml = { workspace = true }

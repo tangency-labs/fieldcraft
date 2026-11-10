@@ -181,7 +181,7 @@ from 4 s at two tolerances.
 | | |
 |---|---|
 | **Model** | `flow-past`: air at 25 mm/s past the L-bracket, 184 320 cells of 2.5 mm, Δt = 0.005 s, at most 16 s (3200 steps) |
-| **Monitors** | `force` on `Bracket` faces `F2:start`, `F2:side:l2` … `l6`, `F2:top`, `F3:blend:F2:side:l3\|F2:side:l4`; `mass_flow` through `x_max` |
+| **Monitors** | `force` on `Bracket` faces `F2:start`, `F2:side:l2` … `l6`, `F2:top`, `F3:blend(F2:side:l3\|F2:side:l4)`; `mass_flow` through `x_max` |
 | **Rules** | `Steady`: `tolerance` 10⁻³, `window` 1 s, `min_time` 2 s. `Averaged`: `tolerance` 10⁻³, `window` 1 s, `averaging.start` 4 s. `AveragedLoose`: the same with `tolerance` 10⁻² |
 | **Units** | mm, t, s, N, MPa |
 
@@ -196,7 +196,7 @@ from 4 s at two tolerances.
         {"body": "Bracket", "face": "F2:side:l5"}, {"body": "Bracket", "face": "F2:side:l4"},
         {"body": "Bracket", "face": "F2:side:l3"}, {"body": "Bracket", "face": "F2:side:l2"},
         {"body": "Bracket", "face": "F2:top"},
-        {"body": "Bracket", "face": "F3:blend:F2:side:l3|F2:side:l4"}]},
+        {"body": "Bracket", "face": "F3:blend(F2:side:l3|F2:side:l4)"}]},
       {"type": "mass_flow", "face": "x_max"}]}}}},
   {"command": "model.step.create", "params": {"name": "Averaged", "procedure": {"type": "fluid",
     "domain": "Wind", "end_time": 16, "frames": 10,
@@ -206,7 +206,7 @@ from 4 s at two tolerances.
         {"body": "Bracket", "face": "F2:side:l5"}, {"body": "Bracket", "face": "F2:side:l4"},
         {"body": "Bracket", "face": "F2:side:l3"}, {"body": "Bracket", "face": "F2:side:l2"},
         {"body": "Bracket", "face": "F2:top"},
-        {"body": "Bracket", "face": "F3:blend:F2:side:l3|F2:side:l4"}]},
+        {"body": "Bracket", "face": "F3:blend(F2:side:l3|F2:side:l4)"}]},
       {"type": "mass_flow", "face": "x_max"}]}}}},
   {"command": "model.step.create", "params": {"name": "AveragedLoose", "procedure": {"type": "fluid",
     "domain": "Wind", "end_time": 16, "frames": 10,
@@ -216,7 +216,7 @@ from 4 s at two tolerances.
         {"body": "Bracket", "face": "F2:side:l5"}, {"body": "Bracket", "face": "F2:side:l4"},
         {"body": "Bracket", "face": "F2:side:l3"}, {"body": "Bracket", "face": "F2:side:l2"},
         {"body": "Bracket", "face": "F2:top"},
-        {"body": "Bracket", "face": "F3:blend:F2:side:l3|F2:side:l4"}]},
+        {"body": "Bracket", "face": "F3:blend(F2:side:l3|F2:side:l4)"}]},
       {"type": "mass_flow", "face": "x_max"}]}}}},
   {"command": "solve.fluid", "params": {"step": "Steady", "backend": "cpu"}},
   {"command": "solve.fluid", "params": {"step": "Averaged", "backend": "cpu"}},

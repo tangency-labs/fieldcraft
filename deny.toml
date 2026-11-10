@@ -21,7 +21,8 @@ allow-wildcard-paths = true
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-# SolidCraft's kernel and its patched truck crates, pinned by rev in Cargo.toml.
+# SolidCraft (its kernel, the solidcore kernel it vendors, and its patched egui-wgpu, winit and
+# accesskit_macos), pinned by rev in Cargo.toml.
 # storytold/craft-libs: the Craft family's shared UI components (craft-ui), pinned by rev.
 allow-git = ["https://github.com/tangency-labs/solidcraft", "https://github.com/storytold/craft-libs"]
 

@@ -231,9 +231,9 @@ mod tests {
         let d = open_design(&sample::plate_design(&Plate::default()).unwrap()).unwrap();
         let body = &d.bodies[0];
         let edges = body.edges().unwrap();
-        // A box with a through hole split in two half-cylinders: 12 box edges, 2 × 2 rim arcs and
-        // 2 seams.
-        assert_eq!(edges.len(), 18, "{:?}", names(&edges));
+        // A box with a through hole, one cylindrical face: 12 box edges, 2 rim circles and the
+        // hole's seam (named after the one face it joins to itself).
+        assert_eq!(edges.len(), 15, "{:?}", names(&edges));
         let mut unique = names(&edges);
         unique.dedup();
         assert_eq!(unique.len(), edges.len(), "{unique:?}");
@@ -269,8 +269,8 @@ mod tests {
         let d = open_design(&sample::plate_design(&Plate::default()).unwrap()).unwrap();
         let body = &d.bodies[0];
         let vertices = body.vertices().unwrap();
-        // The box's 8 corners and the ends of the hole's two seams (2 × 2).
-        assert_eq!(vertices.len(), 12, "{vertices:?}");
+        // The box's 8 corners and the two ends of the hole's seam.
+        assert_eq!(vertices.len(), 10, "{vertices:?}");
         let mut unique: Vec<&str> = vertices.iter().map(|v| v.name.as_str()).collect();
         unique.sort_unstable();
         unique.dedup();

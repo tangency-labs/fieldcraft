@@ -76,16 +76,21 @@ craft-ui = { git = "https://github.com/storytold/craft-libs", rev = "5c874d51eeb
 # native file pickers (the desktop app only; the UI crate takes them as services)
 rfd = "0.17"
 
-# Geometry: SolidCraft's B-rep kernel (MIT OR Apache-2.0), pinned at a release tag's commit (v0.30.1;
-# docs/architecture.md, "SolidCraft pin"). Only crates/geometry uses it
-# (plan/adr/0001-libraries.md).
-solidcraft-geom = { git = "https://github.com/tangency-labs/solidcraft", rev = "8e2b0cd60d14b4152b12b8f1fdb2bcfdcd8c52f4" }
-solidcraft-kernel = { git = "https://github.com/tangency-labs/solidcraft", rev = "8e2b0cd60d14b4152b12b8f1fdb2bcfdcd8c52f4" }
-solidcraft-doc = { git = "https://github.com/tangency-labs/solidcraft", rev = "8e2b0cd60d14b4152b12b8f1fdb2bcfdcd8c52f4" }
-solidcraft-io = { git = "https://github.com/tangency-labs/solidcraft", rev = "8e2b0cd60d14b4152b12b8f1fdb2bcfdcd8c52f4" }
+# Geometry: SolidCraft's B-rep kernel (MIT OR Apache-2.0), pinned at a commit on its main branch
+# (5e33828, 2026-11-11, after v0.40.0-rc.4; docs/architecture.md, "SolidCraft pin"). Its
+# modelling kernel is solidcore (Apache-2.0), vendored in SolidCraft's repository. Only
+# crates/geometry uses it (docs/adr/0001-libraries.md).
+solidcraft-geom = { git = "https://github.com/tangency-labs/solidcraft", rev = "5e338283969dcc2ae97260f0ac6d0edf82ec0a2a" }
+solidcraft-kernel = { git = "https://github.com/tangency-labs/solidcraft", rev = "5e338283969dcc2ae97260f0ac6d0edf82ec0a2a" }
+solidcraft-doc = { git = "https://github.com/tangency-labs/solidcraft", rev = "5e338283969dcc2ae97260f0ac6d0edf82ec0a2a" }
+solidcraft-io = { git = "https://github.com/tangency-labs/solidcraft", rev = "5e338283969dcc2ae97260f0ac6d0edf82ec0a2a" }
 # Runs SolidCraft command scripts (the test corpus recipes); only behind fieldcraft-geometry's
 # `scripts` feature.
-solidcraft-engine = { git = "https://github.com/tangency-labs/solidcraft", rev = "8e2b0cd60d14b4152b12b8f1fdb2bcfdcd8c52f4" }
+solidcraft-engine = { git = "https://github.com/tangency-labs/solidcraft", rev = "5e338283969dcc2ae97260f0ac6d0edf82ec0a2a" }
+# The geometry records SolidCraft's API speaks in (points, planes, profiles): solidcore's record
+# crate (Apache-2.0), from the copy of solidcore SolidCraft vendors (its `solidcore/`), at the same
+# rev as the crates above, so the build carries one copy of it and the types match.
+solidcore-record = { git = "https://github.com/tangency-labs/solidcraft", rev = "5e338283969dcc2ae97260f0ac6d0edf82ec0a2a" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -117,8 +122,8 @@ opt-level = 3
 [profile.dev.package.fieldcraft-solver]
 opt-level = 3
 
-# Tests and lints (`cargo xtask ci`, GitHub CI). Debug assertions are off because truck's
-# debug-only checks reject valid geometry (SolidCraft builds its tests the same way).
+# Tests and lints (`cargo xtask ci`, GitHub CI). Debug assertions are off, as SolidCraft builds
+# its tests.
 [profile.ci]
 inherits = "dev"
 opt-level = 1
@@ -145,15 +150,12 @@ lto = "thin"
 codegen-units = 16
 debug = "line-tables-only"
 
-# SolidCraft builds truck, egui-wgpu, winit and accesskit_macos with local fixes (its vendor/ directory). Patches don't
-# reach a dependent workspace, so FieldCraft applies the same ones from the same pinned commit;
-# keep this list and the rev in step with SolidCraft's [patch.crates-io].
+# SolidCraft builds egui-wgpu, winit and accesskit_macos with local fixes (its vendor/ directory).
+# Patches don't reach a dependent workspace, so FieldCraft applies the ones for its own egui line
+# (0.36) from v0.30.1's commit, the last SolidCraft release on that line; SolidCraft v0.40 moved
+# to egui 0.37 (its winit fix is unchanged, and it no longer patches accesskit_macos). Move these
+# when FieldCraft moves to egui 0.37.
 [patch.crates-io]
-truck-geometry = { git = "https://github.com/tangency-labs/solidcraft", rev = "8e2b0cd60d14b4152b12b8f1fdb2bcfdcd8c52f4" }
-truck-shapeops = { git = "https://github.com/tangency-labs/solidcraft", rev = "8e2b0cd60d14b4152b12b8f1fdb2bcfdcd8c52f4" }
-truck-stepio = { git = "https://github.com/tangency-labs/solidcraft", rev = "8e2b0cd60d14b4152b12b8f1fdb2bcfdcd8c52f4" }
-truck-meshalgo = { git = "https://github.com/tangency-labs/solidcraft", rev = "8e2b0cd60d14b4152b12b8f1fdb2bcfdcd8c52f4" }
-matext4cgmath = { git = "https://github.com/tangency-labs/solidcraft", rev = "8e2b0cd60d14b4152b12b8f1fdb2bcfdcd8c52f4" }
 # egui-wgpu with SolidCraft's fixes (vendor/egui-wgpu there): MSAA clamped to what the device
 # supports and 1x on OpenGL adapters, so the requested 4x never fails pipeline validation at start.
 egui-wgpu = { git = "https://github.com/tangency-labs/solidcraft", rev = "8e2b0cd60d14b4152b12b8f1fdb2bcfdcd8c52f4" }

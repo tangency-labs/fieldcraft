@@ -3,8 +3,9 @@
 //! same entity otherwise leaves a saved model's sets, loads and seeds on names the design no
 //! longer has (#605: SolidCraft 0.16 named `F9:face:4` `F9:section`). A pin bump that renames
 //! anything fails here and shows the renames; bless them (`FIELDCRAFT_BLESS=1`) only once
-//! opening older models finds them again (`fieldcraft_engine`'s `names` module) or they are
-//! listed for the release notes.
+//! opening older models finds them again (`fieldcraft_engine`'s `names` module) or the renames
+//! are adopted and listed for the release notes (SolidCraft v0.40's kernel: 120 names gone, 114
+//! new; 2874e78's bracketed derived names: 54 renamed; docs/architecture.md, "SolidCraft pin").
 #![cfg(feature = "scripts")]
 
 use std::path::PathBuf;

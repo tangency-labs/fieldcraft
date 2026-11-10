@@ -115,6 +115,12 @@ pub fn open_design(bytes: &[u8]) -> Result<Design> {
             Some(format) if format > DESIGN_FORMAT => crate::Error::NewerDesign { format, reads: DESIGN_FORMAT },
             _ => e.into(),
         })?;
+    // From v0.40 SolidCraft opens a newer design with what it can read of it (`newer_file`
+    // names the rest). FieldCraft still refuses one: a feature this build can't read leaves a
+    // different solid, and a model's faces would be named on it.
+    if let Some(newer) = &doc.newer_file {
+        return Err(crate::Error::NewerDesign { format: newer.format, reads: DESIGN_FORMAT });
+    }
     rebuild(&doc)
 }
 
@@ -156,7 +162,9 @@ pub(crate) fn rebuild(doc: &Document) -> Result<Design> {
     };
     // Placed in the world: a component's bodies through every occurrence of it (an instance is a
     // body of its own, named after its occurrence path), as SolidCraft displays and exports them.
-    let state = guard("place components", || Ok(solidcraft_doc::world_state(doc, &model.state())))?;
+    let state = guard("place components", || {
+        solidcraft_doc::world_state(doc, &model.state()).map_err(|e| KernelError::Failed(format!("place components: {e}")))
+    })?;
     let mut bodies = Vec::with_capacity(state.bodies.len());
     for b in &state.bodies {
         let faces = guard("name faces", || {
@@ -298,6 +306,7 @@ mod tests {
         assert!(x("Bracket.1") <= x("Bracket.30"));
     }
     use crate::sample::{self, Plate};
+    use solidcraft_geom::Vec3Geom;
 
     fn face_areas(shape: &Shape) -> Vec<f64> {
         let mesh = shape.tessellate(0.01).unwrap();
@@ -305,7 +314,7 @@ mod tests {
         for (t, f) in mesh.triangles.iter().zip(&mesh.tri_face) {
             let [a, b, c] = t.map(|i| {
                 let [x, y, z] = mesh.positions[i as usize];
-                solidcraft_geom::Vec3 { x, y, z }
+                solidcore_record::Vec3 { x, y, z }
             });
             areas[*f as usize] += 0.5 * (b - a).cross(c - a).len();
         }
@@ -323,20 +332,20 @@ mod tests {
         let r = plate.hole_diameter / 2.0;
         let expect = (plate.width * plate.depth - std::f64::consts::PI * r * r) * plate.thickness;
         assert!((m.volume - expect).abs() < 1e-3 * expect, "{} vs {expect}", m.volume);
-        // Four sides, top, bottom and the hole (a cylinder is two half faces).
-        assert_eq!(m.faces, 8);
-        assert_eq!(body.faces().len(), 8);
+        // Four sides, top, bottom and the hole (one cylindrical face).
+        assert_eq!(m.faces, 7);
+        assert_eq!(body.faces().len(), 7);
         let mesh = body.tessellate(0.01).unwrap();
         let mut tags = mesh.tri_face.clone();
         tags.sort_unstable();
         tags.dedup();
-        assert_eq!(tags.len(), 8);
+        assert_eq!(tags.len(), 7);
         assert!(tags.iter().all(|&t| (t as usize) < body.faces().len()));
         // Every face has its own name.
         let mut names: Vec<&str> = body.faces().iter().map(|f| f.name.as_str()).collect();
         names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), 8, "{names:?}");
+        assert_eq!(names.len(), 7, "{names:?}");
     }
 
     #[test]
@@ -348,8 +357,8 @@ mod tests {
         let (a, b) = (&a.bodies[0], &b.bodies[0]);
         let (area_a, area_b) = (face_areas(a), face_areas(b));
         let pi = std::f64::consts::PI;
-        // Each half of the hole.
-        let hole = |p: &Plate| pi * p.hole_diameter * p.thickness / 2.0;
+        // The hole, one face.
+        let hole = |p: &Plate| pi * p.hole_diameter * p.thickness;
         let cap = |p: &Plate| p.width * p.depth - pi * p.hole_diameter * p.hole_diameter / 4.0;
         for face in a.faces() {
             let i = a.face_index(&face.name).unwrap() as usize;

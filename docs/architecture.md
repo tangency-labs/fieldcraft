@@ -41,7 +41,7 @@ crates in strictly lower layers.
 
 Rules beyond the layer order:
 - Nothing below L7 uses egui, eframe, winit, wgpu or rfd.
-- Only `fieldcraft-geometry` uses `solidcraft-*`, pinned by rev in the workspace `Cargo.toml`
+- Only `fieldcraft-geometry` uses `solidcraft-*` and `solidcore*`, pinned by rev in the workspace `Cargo.toml`
   ("SolidCraft pin" below).
 - Everything below the apps builds for `wasm32-unknown-unknown`.
 - `fieldcraft-geometry`'s non-default `scripts` feature builds designs from SolidCraft command
@@ -52,11 +52,17 @@ Rules beyond the layer order:
 
 `solidcraft-*` come from https://github.com/tangency-labs/solidcraft (formerly
 bherbruck/solidcraft, which redirects there), pinned in the workspace `Cargo.toml` to the commit
-of a SolidCraft release tag (now v0.30.1). SolidCraft's `[patch.crates-io]` (its fixed truck
-crates) does not reach dependents, so the workspace repeats it from the same rev; bump both
-together, and keep the list in step with SolidCraft's (v0.16 added `truck-geometry`). The same
-goes for SolidCraft's patched `egui-wgpu` (MSAA clamped to what the device supports, 1x on
-OpenGL adapters, so the desktop app's 4x never fails pipeline validation at start).
+of a SolidCraft release tag or, when FieldCraft needs a change not yet released, a commit on
+SolidCraft's main branch (now 5e33828, 2026-11-11, after v0.40.0-rc.4). From v0.40 SolidCraft's
+modelling kernel is solidcore (Apache-2.0, a Rust port of NVIDIA's SMLib), which replaced the
+truck crates; SolidCraft vendors it in its repository (`solidcore/`). SolidCraft's API takes and
+gives solidcore's records (`Vec3`, `Plane`, `Region2`, …), so `fieldcraft-geometry` also depends
+on `solidcore-record`, from SolidCraft's repository at the same rev: bump both together, or the
+build carries two copies of it whose types do not match. SolidCraft's `[patch.crates-io]` does not reach dependents;
+the workspace repeats the patches its desktop app needs (`egui-wgpu`: MSAA clamped to what the
+device supports, 1x on OpenGL adapters, so the 4x never fails pipeline validation at start;
+`winit`; `accesskit_macos`) from the last SolidCraft release on FieldCraft's egui line (v0.30.1,
+egui 0.36), and moves them when FieldCraft moves to SolidCraft's egui line.
 
 The pin decides which designs FieldCraft opens: SolidCraft's reader migrates every older design
 format and refuses a newer one, and SolidCraft releases often raise the format. A design newer
@@ -80,6 +86,16 @@ it is saved deliberately; each definition still naming what the design lacks is 
 (`stale.references`) and asked to be picked again, and a remesh says which seeds and size
 controls it could not apply.
 
+SolidCraft v0.40's kernel (solidcore) names geometry otherwise, and FieldCraft adopts its names
+without a migration: a full cylinder or sphere that truck made of two half faces is one face now,
+and many faces of split bodies carry other names (the corpus bracket's frozen list lost 120 names
+and gained 114). From 2874e78 a face made from other faces names them in brackets
+(`F3:blend:F2:side:l3|F2:side:l4` is `F3:blend(F2:side:l3|F2:side:l4)`, `F2:inner:F1:+x` is
+`F2:inner(F1:+x)`, and the edges and vertices that name such a face with it). Opening a model saved before applies the checks above: a stale name is
+followed only where the model's mesh finds its face again unambiguously (one face, its area
+within 5 %), and every other use is refused and listed to be picked again, never remapped by
+guess.
+
 Three checks keep the pin current:
 - `crates/geometry/tests/design_formats.rs` opens every design in
   `crates/geometry/tests/designs` (the older fixtures and `solidcraft-<version>/`, each saved by
@@ -87,7 +103,7 @@ Three checks keep the pin current:
   volumes and face names as the older one.
 - `crates/geometry/tests/design_names.rs` freezes every face, edge and vertex name of the split
   corpus bracket (`tests/names/`): a pin bump that renames anything shows the renames there, to
-  bless once opening older models finds them again.
+  bless once opening older models finds them again, or once the renames are adopted.
 - The scheduled `SolidCraft compatibility` workflow (`.github/workflows/solidcraft-compat.yml`,
   daily and on demand) downloads SolidCraft's latest release, saves the same recipes with it
   into `solidcraft-latest/` and runs those tests. Red means a SolidCraft release saves designs

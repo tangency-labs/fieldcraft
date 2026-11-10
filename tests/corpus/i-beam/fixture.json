@@ -50,7 +50,7 @@
     },
     "cdt.cavities": {
       "band": 0,
-      "value": 0
+      "value": 7
     },
     "cdt.flat": {
       "band": 0,
@@ -58,51 +58,51 @@
     },
     "cdt.steiner": {
       "band": 0,
-      "value": 24
+      "value": 43
     },
     "cdt.tets": {
       "band": 0,
-      "value": 90
+      "value": 159
     },
     "hex.elements": {
       "band": 0,
       "value": 480
     },
     "hex.hex20_min_sj": {
-      "band": 3.08785699324004e-10,
-      "value": 0.307785699324004
+      "band": 3.087856993240037e-10,
+      "value": 0.3077856993240037
     },
     "hex.hex8_min_sj": {
-      "band": 3.0878569932400396e-10,
-      "value": 0.30778569932400396
+      "band": 3.087856993240037e-10,
+      "value": 0.3077856993240037
     },
     "octree.hexes": {
       "band": 0,
       "value": 351220
     },
     "octree.mean_sj": {
-      "band": 9.78456000435245e-10,
-      "value": 0.9774560004352447
+      "band": 9.784560004353033e-10,
+      "value": 0.9774560004353031
     },
     "octree.min_sj": {
-      "band": 3.0850895805813853e-10,
-      "value": 0.3075089580581385
+      "band": 3.085089580581345e-10,
+      "value": 0.3075089580581345
     },
     "octree.volume_mm3": {
-      "band": 0.00006160000100001393,
-      "value": 61600.00000001393
+      "band": 0.00006160000100001361,
+      "value": 61600.000000013606
     },
     "quality.max_dihedral_deg": {
-      "band": 1.4655747977436615e-7,
-      "value": 146.55647977436612
+      "band": 1.4628154823879988e-7,
+      "value": 146.28054823879987
     },
     "quality.min_dihedral_deg": {
-      "band": 2.9358047262532574e-8,
-      "value": 29.35704726253257
+      "band": 2.8256532271528487e-8,
+      "value": 28.255532271528484
     },
     "quality.min_radius_ratio": {
-      "band": 2.2400984037892988e-10,
-      "value": 0.22300984037892987
+      "band": 2.053152637922287e-10,
+      "value": 0.2043152637922287
     },
     "quality.slivers": {
       "band": 0,
@@ -110,11 +110,11 @@
     },
     "quality.slivers_cdt": {
       "band": 0,
-      "value": 70
+      "value": 127
     },
     "quality.tets": {
       "band": 0,
-      "value": 5718
+      "value": 5890
     },
     "surface.enclosed_mm3": {
       "band": 0.000061600001,

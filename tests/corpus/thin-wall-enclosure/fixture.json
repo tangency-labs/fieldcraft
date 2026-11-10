@@ -50,7 +50,7 @@
     },
     "cdt.cavities": {
       "band": 0,
-      "value": 4
+      "value": 2
     },
     "cdt.flat": {
       "band": 0,
@@ -58,11 +58,11 @@
     },
     "cdt.steiner": {
       "band": 0,
-      "value": 18
+      "value": 16
     },
     "cdt.tets": {
       "band": 0,
-      "value": 80
+      "value": 70
     },
     "hex.elements": {
       "band": 0,
@@ -77,16 +77,16 @@
       "value": 0.7071067811865474
     },
     "quality.max_dihedral_deg": {
-      "band": 1.5032548900647204e-7,
-      "value": 150.32448900647202
+      "band": 1.5047691209419846e-7,
+      "value": 150.47591209419843
     },
     "quality.min_dihedral_deg": {
-      "band": 2.5723913384180635e-8,
-      "value": 25.722913384180632
+      "band": 2.6666545242802557e-8,
+      "value": 26.665545242802555
     },
     "quality.min_radius_ratio": {
-      "band": 1.837305261261546e-10,
-      "value": 0.1827305261261546
+      "band": 1.8305434767543028e-10,
+      "value": 0.18205434767543027
     },
     "quality.slivers": {
       "band": 0,
@@ -94,11 +94,11 @@
     },
     "quality.slivers_cdt": {
       "band": 0,
-      "value": 78
+      "value": 66
     },
     "quality.tets": {
       "band": 0,
-      "value": 17196
+      "value": 17585
     },
     "surface.enclosed_mm3": {
       "band": 0.000015564001,

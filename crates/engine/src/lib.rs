@@ -1273,11 +1273,11 @@ mod tests {
         let expect = (40.0 * 30.0 - std::f64::consts::PI * 25.0) * 10.0;
         assert!((volume - expect).abs() < 1e-3 * expect, "{volume}");
         let faces = bodies[0]["faces"].as_array().unwrap();
-        assert_eq!(faces.len(), 8);
+        assert_eq!(faces.len(), 7);
         let edges = bodies[0]["edges"].as_array().unwrap();
-        assert_eq!(edges.len(), 18);
-        // Through the thickness: four box corners, the two hole seams.
-        assert_eq!(edges.iter().filter(|e| (e["length"].as_f64().unwrap() - 10.0).abs() < 1e-6).count(), 6);
+        assert_eq!(edges.len(), 15);
+        // Through the thickness: four box corners and the hole's seam.
+        assert_eq!(edges.iter().filter(|e| (e["length"].as_f64().unwrap() - 10.0).abs() < 1e-6).count(), 5);
 
         let t = s.execute("geometry.tessellate", &json!({"body": "Body1", "tolerance": 0.05})).unwrap();
         let per_face: Vec<u64> = t["faces"].as_array().unwrap().iter().map(|f| f["triangles"].as_u64().unwrap()).collect();
