@@ -334,6 +334,16 @@ is committed and listed here with its exports.
 | .github/workflows/arch-check.yml (the riscv64 cross build) | SolidCraft `.github/workflows/ci.yml` (`riscv64-gates`) | MIT OR Apache-2.0 |
 | .github/workflows/claim.yml, .github/workflows/triage.yml, scripts/claim/, scripts/triage/ (the claim and triage bots and their tests) | SolidCraft `.github/workflows/claim.yml`, `triage.yml`, `scripts/claim/`, `scripts/triage/` | MIT OR Apache-2.0 |
 
+## Dependencies under permission
+
+Crates FieldCraft depends on that are not permissively licensed. Each is used only under the
+permission recorded in docs/adr/0001-libraries.md; `deny.toml` accepts its licence for that crate
+alone.
+
+| Crate | Source | Licence | Permission |
+|---|---|---|---|
+| solidcraft-ui-kit, solidcraft-theme, solidcraft-look | https://github.com/tangency-labs/solidcraft (`crates/ui-kit`, `crates/theme`, `crates/look`), pinned by rev in Cargo.toml | SolidCraft Brand and Interface Licence (each crate's `LICENSE`; `LicenseRef-SolidCraft-Brand` in deny.toml) | §3a/§3b written permission to link and distribute them as part of FieldCraft: requested by jyviko on 2026-11-10, approved by SolidCraft's maintainer bherbruck in https://github.com/tangency-labs/fieldcraft/pull/872 (docs/adr/0001-libraries.md) |
+
 ## Test oracles
 
 Used only by tests (dev-dependencies, not shipped); no code from them is copied or adapted.

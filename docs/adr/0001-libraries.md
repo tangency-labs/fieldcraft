@@ -19,7 +19,8 @@ exchange files (STEP, which SolidCraft's kernel already reads) can be added as s
 through the same crate. Only `fieldcraft-geometry` may depend on SolidCraft.
 
 **Desktop UI: SolidCraft's UI kit** (`solidcraft-ui-kit` and the `solidcraft-theme` token contract
-it draws from; MIT OR Apache-2.0, same pinned rev). *Decided 2026-11-10 (owner):* the desktop UI
+it draws from; same pinned rev, under the SolidCraft Brand and Interface Licence, see below).
+*Decided 2026-11-10 (owner):* the desktop UI
 draws its windows, confirmations, menus, form rows, fields and buttons with the kit instead of
 FieldCraft's adapted copies of SolidCraft's widgets, so the two apps share one implementation and
 FieldCraft follows SolidCraft's egui line. FieldCraft installs its own tokens (its teal accent on
@@ -28,6 +29,21 @@ colours. `fieldcraft-ui-egui` is the only crate that may use them (`cargo xtask 
 nothing else of SolidCraft's. The kit builds for `wasm32-unknown-unknown`, so the browser app keeps
 the same UI. craft-ui (storytold/craft-libs), used before for tabs, icon buttons and widget states,
 is no longer a dependency.
+
+**SolidCraft's brand-licensed crates: used by written permission.** From SolidCraft 2874e78 on,
+`solidcraft-ui-kit`, `solidcraft-theme` and `solidcraft-look` are under the SolidCraft Brand and
+Interface Licence (each crate's `LICENSE`), not MIT or Apache-2.0: they are **not permissively
+licensed**, and §3a and §3b of that licence require the maintainers' written permission to link
+them from, or distribute them with, software that is not SolidCraft. *Permission requested
+2026-11-10* by FieldCraft's owner (GitHub `jyviko`) for FieldCraft to link these three crates and
+to distribute them as part of FieldCraft. *Approval* by SolidCraft's maintainer bherbruck is
+recorded by their approving review of the pull request that adds this section,
+https://github.com/tangency-labs/fieldcraft/pull/872; FieldCraft does not ship these crates without
+it. The permission covers those three crates only: any other SolidCraft crate under the brand
+licence needs its own permission, recorded here, before FieldCraft depends on it. `deny.toml` accepts the licence for exactly these three crates (a
+`LicenseRef-SolidCraft-Brand` clarification and exception each), never in its global allow list.
+FieldCraft does not use `solidcraft-look` yet: whether it draws SolidCraft's icons and themes or its
+own is still the owner's decision.
 
 **Meshing: our own**, implemented from published papers (`docs/meshing/literature.md`).
 Robust predicates follow Shewchuk's adaptive-precision arithmetic (the paper; his reference

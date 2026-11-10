@@ -46,3 +46,36 @@ allow = [
     "Unlicense",
     "Zlib",
 ]
+
+# SolidCraft's UI kit, its theme and its look are under the SolidCraft Brand and Interface Licence
+# (not permissive). FieldCraft links and distributes exactly these three by the written permission
+# of SolidCraft's maintainer (requested by jyviko, approved by bherbruck in #872), recorded in
+# docs/adr/0001-libraries.md. Each crate's LICENSE is named
+# a LicenseRef, allowed for that crate only; it is not in the allow list above, and any other crate
+# under that licence fails.
+[[licenses.clarify]]
+crate = "solidcraft-ui-kit"
+expression = "LicenseRef-SolidCraft-Brand"
+license-files = [{ path = "LICENSE", hash = 0x4b91093f }]
+
+[[licenses.clarify]]
+crate = "solidcraft-theme"
+expression = "LicenseRef-SolidCraft-Brand"
+license-files = [{ path = "LICENSE", hash = 0x4b91093f }]
+
+[[licenses.clarify]]
+crate = "solidcraft-look"
+expression = "LicenseRef-SolidCraft-Brand"
+license-files = [{ path = "LICENSE", hash = 0x4b91093f }]
+
+[[licenses.exceptions]]
+crate = "solidcraft-ui-kit"
+allow = ["LicenseRef-SolidCraft-Brand"]
+
+[[licenses.exceptions]]
+crate = "solidcraft-theme"
+allow = ["LicenseRef-SolidCraft-Brand"]
+
+[[licenses.exceptions]]
+crate = "solidcraft-look"
+allow = ["LicenseRef-SolidCraft-Brand"]
