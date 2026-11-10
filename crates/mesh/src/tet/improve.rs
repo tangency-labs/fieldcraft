@@ -529,7 +529,7 @@ mod tests {
         let faces = vec![0u32; s.triangles().len()];
         let s = BoundarySurface::new(s.points(), s.triangles(), &faces, &SurfaceOptions::default()).unwrap();
         let cdt = tetrahedralize(&s, &CdtOptions::default()).unwrap();
-        let (mut cx, curve_faces) = complex_from_cdt(&s, &cdt, &QualityOptions::default()).unwrap();
+        let (mut cx, curve_faces) = complex_from_cdt(&s, &cdt, &[], &QualityOptions::default()).unwrap();
         let (geometry, size) = (Tessellation::new(&s, Vec::new()), UniformSize(H));
         let ctx = Context { size: &size, geometry: &geometry, curve_faces: &curve_faces };
         let (points, live) = (cx.point_count(), cx.live_count());

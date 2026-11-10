@@ -4,9 +4,10 @@
 //!
 //! # Pipeline ([`quality_mesh`], `docs/meshing/literature.md` Part D Step 3)
 //! 1. **Boundary entities.** The CDT's boundary faces carry their B-rep face; an edge between two
-//!    faces of different B-rep faces, or whose faces turn by more than the feature angle, is a
-//!    feature edge (curve). Vertices are corners (fixed), curve vertices (move along their
-//!    curve), face vertices (move on their face) or interior.
+//!    faces of different B-rep faces, or whose faces turn by more than the feature angle within a
+//!    face whose exact surface is not known, is a feature edge (curve). Vertices are corners
+//!    (fixed), curve vertices (move along their curve), face vertices (move on their face) or
+//!    interior.
 //! 2. **Size field** ([`geometry::GradedSize`]): the global size, limited near curved boundary
 //!    to `θ r` (θ radians per element along a curve of radius `r`, from the exact surface or
 //!    estimated from the tessellation) and in thin walls to their thickness
@@ -377,8 +378,14 @@ fn seed_counts(points: &[[f64; 3]], tets: &[[u32; 4]], boundary: &[TaggedFace], 
 }
 
 /// The CDT as a [`TetComplex`] with B-rep face tags, feature curves and vertex kinds; and the
-/// feature curves' face pairs.
-pub fn complex_from_cdt(surface: &BoundarySurface, cdt: &TetMesh, o: &QualityOptions) -> Result<(TetComplex, Vec<[u32; 2]>)> {
+/// feature curves' face pairs. A face with an exact surface in `analytic` (by tag) has no
+/// feature curves inside it ([`refine::feature_curves`]).
+pub fn complex_from_cdt(
+    surface: &BoundarySurface,
+    cdt: &TetMesh,
+    analytic: &[Option<AnalyticSurface>],
+    o: &QualityOptions,
+) -> Result<(TetComplex, Vec<[u32; 2]>)> {
     let tri_face = surface.tri_face();
     let tags: Vec<(u32, usize, u32)> =
         cdt.boundary.iter().map(|b| (b.tet, usize::from(b.opposite), tri_face.get(b.triangle as usize).copied().unwrap_or(NONE))).collect();
@@ -386,7 +393,8 @@ pub fn complex_from_cdt(surface: &BoundarySurface, cdt: &TetMesh, o: &QualityOpt
     let mut cx =
         TetComplex::with_invalid(&cdt.points, kinds, &cdt.tets, &tags, &[], o.max_points.max(cdt.points.len()), o.max_tets.max(cdt.tets.len()))?;
     let feature_cos = geometry::sin_cos(o.feature_angle.clamp(0.0, 180.0).to_radians()).1;
-    let (table, edges) = refine::feature_curves(&cx, feature_cos)?;
+    let smooth: Vec<bool> = analytic.iter().map(Option::is_some).collect();
+    let (table, edges) = refine::feature_curves(&cx, feature_cos, &smooth)?;
     for &((a, b), c) in &edges {
         cx.set_curve(a, b, Some(c));
     }
@@ -553,7 +561,6 @@ use fieldcraft_model::progress;
 /// module docs). `analytic[face]` is the exact surface of a B-rep face when known.
 pub fn quality_mesh(surface: &BoundarySurface, cdt: &TetMesh, analytic: Vec<Option<AnalyticSurface>>, o: &QualityOptions) -> Result<QualityMesh> {
     let mut report = QualityReport { input: tet_quality_stats(&cdt.points, &cdt.tets)?, ..QualityReport::default() };
-    let geometry = Tessellation::new(surface, analytic);
     let (lo, hi) = bounds(surface.points());
     let global = match o.size {
         Some(h) if h > 0.0 && h.is_finite() => h,
@@ -564,8 +571,9 @@ pub fn quality_mesh(surface: &BoundarySurface, cdt: &TetMesh, analytic: Vec<Opti
         return Err(Error::Invalid("the boundary has no extent".into()));
     }
     report.size = global;
+    let (mut cx, curve_faces) = complex_from_cdt(surface, cdt, &analytic, o)?;
+    let geometry = Tessellation::new(surface, analytic);
     let size = size_field(surface, &geometry, global, o);
-    let (mut cx, curve_faces) = complex_from_cdt(surface, cdt, o)?;
     // Refinement and improvement keep boundary vertices on the tessellation, a piecewise-flat
     // surface whose creases they can mesh around; the finished mesh then moves its boundary
     // vertices onto the exact surfaces (and tet10 puts its mid-edge nodes there). Projecting onto
