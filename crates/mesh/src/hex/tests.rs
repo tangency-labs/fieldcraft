@@ -91,6 +91,49 @@ fn box_extrudes_into_a_grid() {
     assert_eq!(m.boundary.len(), 52);
 }
 
+/// Finer near the face x = 4: 0.25 within 0.5 of it, 1 elsewhere.
+struct FineAtEnd;
+
+impl crate::size::SizeField for FineAtEnd {
+    fn size(&self, p: [f64; 3]) -> f64 {
+        if p[0] > 3.5 { 0.25 } else { 1.0 }
+    }
+}
+
+/// A layer spans the whole cross-section, so the layers follow a size field that is fine near
+/// one side face only, wherever the surface lists its points: the 4 × 4 × 3 box (extruded along
+/// z, its largest faces' normal) with its points in their own order and rotated so a corner on
+/// the fine side comes first extrudes in the same 12 layers (3 / 0.25) either way.
+/// The layer count once followed a line through the surface's first point alone, so it changed
+/// with the order the kernel listed the faces in (SolidCraft v0.40).
+#[test]
+fn layers_follow_the_size_field_anywhere_on_the_cross_section() {
+    let poly = [[0.0, 0.0], [4.0, 0.0], [4.0, 4.0], [0.0, 4.0]];
+    let s = prism(&poly, 0.0, 3.0);
+    let n = poly.len() as u32;
+    let mut pts: Vec<[f64; 3]> = poly.iter().map(|p| [p[0], p[1], 0.0]).collect();
+    pts.extend(poly.iter().map(|p| [p[0], p[1], 3.0]));
+    let mut faces = vec![(0..n).rev().collect::<Vec<_>>(), (n..2 * n).collect()];
+    for k in 0..n {
+        let j = (k + 1) % n;
+        faces.push(vec![k, j, n + j, n + k]);
+    }
+    // Point k of the rotated list is point (k + 5) mod 8 of the original: the first is (4, 0, 3).
+    let rotate = |v: u32| (v + 2 * n - 5) % (2 * n);
+    let rotated_pts: Vec<[f64; 3]> = (0..2 * n).map(|k| pts[((k + 5) % (2 * n)) as usize]).collect();
+    let rotated_faces: Vec<Vec<u32>> = faces.iter().map(|f| f.iter().map(|&v| rotate(v)).collect()).collect();
+    let r = polyhedron(&rotated_pts, &rotated_faces);
+    assert_eq!(r.points()[0], [4.0, 0.0, 3.0]);
+    let opts = HexOptions { method: HexMethod::Extrude, ..HexOptions::default() };
+    for (what, surface) in [("listed", &s), ("rotated", &r)] {
+        let m = hex_mesh(surface, &[], &FineAtEnd, &opts).unwrap();
+        check(&m, 48.0);
+        assert!(m.report.description.to_string().contains("12 layers"), "{what}: {}", m.report.description);
+        let z = along(&m, 2, |p| p[0].abs() < 1e-9 && p[1].abs() < 1e-9);
+        assert_eq!(z.len(), 13, "{what}: {} {z:?}", m.report.description);
+    }
+}
+
 #[test]
 fn l_shape_extrudes_with_a_free_or_mapped_section() {
     let l = [[0.0, 0.0], [6.0, 0.0], [6.0, 2.0], [2.0, 2.0], [2.0, 6.0], [0.0, 6.0]];

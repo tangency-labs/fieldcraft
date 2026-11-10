@@ -524,11 +524,23 @@ pub(crate) fn mesh(ctxs: &[Ctx], prepared: &Prepared, refine: u32) -> Result<(Ra
     let r_max = arr.points.iter().map(|q| q[1].abs()).fold(0.0, f64::max);
     let mut layers = Vec::with_capacity(intervals.len());
     for &(lo, hi) in intervals.iter() {
-        let path: Vec<P> = match frame {
-            Frame::Translate { .. } => vec![frame.point([0.0, 0.0], lo), frame.point([0.0, 0.0], hi)],
-            Frame::Rotate { .. } => (0..=16).map(|k| frame.point([0.0, r_max], lo + (hi - lo) * k as f64 / 16.0)).collect(),
+        // A layer spans the whole cross-section, so it takes the divisions the finest of its
+        // lines needs: along the sweep through every point of the cross-section, where a size
+        // control on a side face or near one point refines it. (One line through the frame's
+        // origin, a point of whichever face the kernel lists first, missed a control elsewhere.)
+        let mut n = match frame {
+            Frame::Translate { .. } => {
+                let mut n = 1;
+                for &q in &arr.points {
+                    n = n.max(edge_divisions(ctx.field, &[frame.point(q, lo), frame.point(q, hi)])?);
+                }
+                n
+            }
+            Frame::Rotate { .. } => {
+                let path: Vec<P> = (0..=16).map(|k| frame.point([0.0, r_max], lo + (hi - lo) * k as f64 / 16.0)).collect();
+                edge_divisions(ctx.field, &path)?
+            }
         };
-        let mut n = edge_divisions(ctx.field, &path)?;
         if frame.periodic() {
             n = n.max(((hi - lo) / FRAC_PI_4).ceil() as usize);
         }
