@@ -171,7 +171,7 @@ fn accent_text_reads_on_panels() {
 #[test]
 fn selected_text_reads() {
     for dark in [false, true] {
-        let v = super::visuals(dark);
+        let v = super::tests::visuals(dark);
         let ratio = contrast(v.selection.stroke.color, v.selection.bg_fill);
         assert!(ratio >= 4.5, "dark={dark}: selected text is {ratio:.2}:1");
     }
@@ -210,5 +210,51 @@ fn soft_accents_are_ordered() {
         let d = |c: Color32| de2000(lab(linear_rgb(t.panel)), lab(linear_rgb(c)));
         assert!(d(t.hover) < d(t.accent_soft) && d(t.accent_soft) < d(t.accent), "{name}");
         assert!(d(t.hover) > 2.0, "{name}: hover is invisible on the panel");
+    }
+}
+
+/// The kit's tokens carry the accent wherever SolidCraft's carry its blue: every accent slot is
+/// violet, so no kit component draws SolidCraft's accent.
+#[test]
+fn the_kit_has_no_other_accent() {
+    for (name, dark) in [("light", false), ("dark", true)] {
+        let k = super::kit(dark);
+        for c in [
+            k.accent,
+            k.selected_ink,
+            k.form_primary,
+            k.form_primary_fill,
+            k.figure_accent,
+            k.file_primary_ink,
+            k.file_primary_border,
+            k.file_rail_hover,
+            k.sketch_accent,
+            k.surface_accent,
+            k.mesh_accent,
+            k.form_accent,
+            k.render_accent,
+        ] {
+            let hue = oklab_hue(c);
+            assert!((280.0..=320.0).contains(&hue), "{name}: {c:?} has hue {hue:.0}°");
+        }
+    }
+}
+
+/// Text the kit writes in the accent reads at 4.5:1 on every kit ground it is written on, and
+/// text on an accent fill reads on it.
+#[test]
+fn the_kits_accent_text_reads() {
+    for (name, dark) in [("light", false), ("dark", true)] {
+        let k = super::kit(dark);
+        for ink in [k.selected_ink, k.form_primary, k.file_primary_ink] {
+            for ground in [k.panel, k.panel_header, k.dialog_body, k.dialog_footer, k.control_fill, k.selected_bg, k.accent_soft, k.file_primary] {
+                let ratio = contrast(ink, ground);
+                assert!(ratio >= 4.5, "{name}: {ink:?} on {ground:?} is {ratio:.2}:1");
+            }
+        }
+        for fill in [k.accent, k.form_primary_fill, k.file_rail_hover] {
+            let ratio = contrast(k.on_accent, fill);
+            assert!(ratio >= 4.5, "{name}: on_accent on {fill:?} is {ratio:.2}:1");
+        }
     }
 }
