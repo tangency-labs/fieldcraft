@@ -25,6 +25,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
+# Portable maths for the hex planner (plan.rs), which sizes and places blocks (#115).
+libm = { workspace = true }
 # app.update.check (docs/updates.md); the browser build has no update check.
 fieldcraft-update = { workspace = true }
 

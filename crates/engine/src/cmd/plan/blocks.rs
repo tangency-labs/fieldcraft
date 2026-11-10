@@ -139,7 +139,7 @@ fn solid_angle(a: V3, b: V3, c: V3) -> f64 {
     let (la, lb, lc) = (norm(a), norm(b), norm(c));
     let num = dot(a, cross(b, c));
     let den = la * lb * lc + dot(a, b) * lc + dot(a, c) * lb + dot(b, c) * la;
-    2.0 * num.atan2(den)
+    2.0 * libm::atan2(num, den)
 }
 
 /// The generalized winding number of the closed surface `mesh` at `p`: 1 inside, 0 outside.
@@ -233,7 +233,7 @@ pub(crate) fn layout(inp: &Input) -> Result<Layout, String> {
     }
     let on_circle = |origin: V3, radius: f64| {
         let o = local(origin);
-        circles.iter().any(|c| (c.r - radius).abs() < 1e-6 * radius.max(1.0) && (c.c[0] - o[0]).hypot(c.c[1] - o[1]) < 1e-6 * radius.max(1.0))
+        circles.iter().any(|c| (c.r - radius).abs() < 1e-6 * radius.max(1.0) && libm::hypot(c.c[0] - o[0], c.c[1] - o[1]) < 1e-6 * radius.max(1.0))
     };
 
     // The faces: planes square to an axis (with their outward sign), the circles' cylinders, and
@@ -272,7 +272,7 @@ pub(crate) fn layout(inp: &Input) -> Result<Layout, String> {
     // Circles, concentric ones grouped (radii descending).
     let mut groups: Vec<Group> = Vec::new();
     for c in &circles {
-        match groups.iter_mut().find(|g| (g.c[0] - c.c[0]).hypot(g.c[1] - c.c[1]) < 1e-6 * c.r.max(1.0)) {
+        match groups.iter_mut().find(|g| libm::hypot(g.c[0] - c.c[0], g.c[1] - c.c[1]) < 1e-6 * c.r.max(1.0)) {
             Some(g) => {
                 if !g.circles.iter().any(|x| (x.r - c.r).abs() < 1e-6 * c.r.max(1.0)) {
                     g.circles.push(*c);
@@ -292,7 +292,7 @@ pub(crate) fn layout(inp: &Input) -> Result<Layout, String> {
         // The walls join the boss outside its circle: no face of theirs inside it.
         for f in crossing {
             let pts = face_points.get(f).map_or(&[][..], Vec::as_slice);
-            if pts.iter().any(|p| (p[0] - g.c[0]).hypot(p[1] - g.c[1]) < r0 * (1.0 - 1e-3)) {
+            if pts.iter().any(|p| libm::hypot(p[0] - g.c[0], p[1] - g.c[1]) < r0 * (1.0 - 1e-3)) {
                 return Err(format!("face `{}` runs through the circle of radius {}", name(f), length(r0)));
             }
         }
@@ -590,7 +590,7 @@ pub(crate) fn layout(inp: &Input) -> Result<Layout, String> {
                     // The probe: between the two radii the squares stand for, toward the
                     // segment's middle.
                     let m = [0.5 * (quad[0][0] + quad[1][0]) - g.c[0], 0.5 * (quad[0][1] + quad[1][1]) - g.c[1]];
-                    let len = m[0].hypot(m[1]).max(eps);
+                    let len = libm::hypot(m[0], m[1]).max(eps);
                     let rho = 0.5 * (outer_rho[side] + inner_rho[side]);
                     add(quad, [g.c[0] + m[0] / len * rho, g.c[1] + m[1] / len * rho, zmid], &mut t, &mut probe);
                 }
@@ -762,7 +762,7 @@ fn patch_blend(groups: &[Group], pts: &[V3]) -> Option<(usize, [[f64; 2]; 2])> {
     groups.iter().enumerate().find_map(|(i, g)| {
         let r0 = g.circles.first()?.r;
         let tol = 1e-3 * r0;
-        if !g.patch || pts.iter().any(|p| (p[0] - g.c[0]).hypot(p[1] - g.c[1]) < 0.9 * r0) {
+        if !g.patch || pts.iter().any(|p| libm::hypot(p[0] - g.c[0], p[1] - g.c[1]) < 0.9 * r0) {
             return None;
         }
         if (0..2).any(|a| bl[a] < g.c[a] - r0 - tol || bh[a] > g.c[a] + r0 + tol) {
@@ -833,5 +833,21 @@ mod tests {
         let mesh = shape.tessellate(0.01).unwrap();
         assert!((winding(&mesh, [1.0, 1.0, 1.0]) - 1.0).abs() < 1e-6);
         assert!(winding(&mesh, [3.0, 1.0, 1.0]).abs() < 1e-6);
+    }
+
+    /// The planner's angles are the same bit for bit on every platform (#115): the portable
+    /// `atan2` and `hypot`, never the system maths library's, whose last bits differ between
+    /// macOS and Linux. The fingerprint is of the bits; it moves only when the formulas do.
+    #[test]
+    fn planner_angles_are_the_same_on_every_platform() {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        let mut mix = |x: f64| h = (h ^ x.to_bits()).wrapping_mul(0x0100_0000_01b3);
+        for i in 1..40 {
+            let t = f64::from(i) * 0.173;
+            let (a, b, c) = ([1.0, 0.1 * t, -0.3], [-0.2, 1.0 + t, 0.4 * t], [0.3 * t, -0.7, 1.0 + 0.05 * t]);
+            mix(solid_angle(a, b, c));
+            mix(libm::hypot(a[0] - c[0], b[1] - t));
+        }
+        assert_eq!(h, 0xbebf_3375_60cd_66a5, "{h:#018x}");
     }
 }

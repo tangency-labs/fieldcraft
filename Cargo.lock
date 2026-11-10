@@ -1459,6 +1459,7 @@ dependencies = [
  "fieldcraft-render",
  "fieldcraft-solver",
  "fieldcraft-update",
+ "libm",
  "log",
  "png",
  "serde",

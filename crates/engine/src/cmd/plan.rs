@@ -125,7 +125,7 @@ fn curvatures(s: &FaceSurface, p: V3) -> Option<(f64, f64)> {
         FaceSurface::Plane { .. } => return None,
         FaceSurface::Cylinder { radius, .. } => (1.0 / radius, 0.0),
         FaceSurface::Sphere { radius, .. } => (1.0 / radius, 1.0 / radius),
-        FaceSurface::Cone { apex, axis, half_angle } => (half_angle.cos() / off_axis(apex, axis)?, 0.0),
+        FaceSurface::Cone { apex, axis, half_angle } => (libm::cos(half_angle) / off_axis(apex, axis)?, 0.0),
         // Round the tube 1/minor; round the axis cos φ / ρ, with ρ the distance from the axis.
         FaceSurface::Torus { center, axis, major, minor } => {
             let rho = off_axis(center, axis)?;
@@ -584,13 +584,13 @@ fn profile_wall(p: &fieldcraft_geometry::ProfileGeometry) -> Option<f64> {
                 Curve::Arc { center, radius, start, sweep } => {
                     for k in 0..8 {
                         let t = start + sweep * f64::from(k) / 8.0;
-                        pts.push([center[0] + radius * t.cos(), center[1] + radius * t.sin()]);
+                        pts.push([center[0] + radius * libm::cos(t), center[1] + radius * libm::sin(t)]);
                     }
                 }
                 Curve::Circle { center, radius } => {
                     for k in 0..16 {
                         let t = std::f64::consts::TAU * f64::from(k) / 16.0;
-                        pts.push([center[0] + radius * t.cos(), center[1] + radius * t.sin()]);
+                        pts.push([center[0] + radius * libm::cos(t), center[1] + radius * libm::sin(t)]);
                     }
                 }
                 Curve::Other { .. } => {}
@@ -1012,7 +1012,7 @@ pub(crate) fn build(design: &Design, body: &str, size: Option<f64>, layers: u32,
         ));
         h = c;
     }
-    let floor = (m.volume.abs() / max_elements as f64).cbrt();
+    let floor = libm::cbrt(m.volume.abs() / max_elements as f64);
     if h < floor {
         notes.push(format!(
             "size {} instead of {}: at most {max_elements} elements (fewer layers through the thinnest wall)",
