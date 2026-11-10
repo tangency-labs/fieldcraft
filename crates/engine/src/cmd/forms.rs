@@ -1691,23 +1691,33 @@ pub const QUALITY: &[Field] = &[
     int("bins", "Histogram bins", 1, 1000).help("Number of bars in the quality histogram.").def("10"),
 ];
 
-pub const QUALITY_MARK: &[Field] = &[
-    labels("elements", "Elements", LabelOf::Element).help("The elements to check; all when empty.").hint("all"),
-    group(
-        "limits",
-        "Limits",
-        &[
-            num("scaled_jacobian", "Scaled Jacobian at least", D::None)
-                .help("Elements with a lower scaled Jacobian are marked (1 is a perfect element).")
-                .hint("0.2"),
-            num("min_dihedral", "Min dihedral at least", D::Degree).help("Tetrahedra with a smaller dihedral angle are marked.").hint("10"),
-            num("max_dihedral", "Max dihedral at most", D::Degree).help("Tetrahedra with a larger dihedral angle are marked.").hint("165"),
-            num("aspect_ratio", "Aspect ratio at most", D::None).help("Elements with a larger aspect ratio are marked.").hint("10"),
-            num("min_angle", "Min angle at least", D::Degree).help("Shells with a smaller corner angle are marked.").hint("15"),
-            num("max_angle", "Max angle at most", D::Degree).help("Shells with a larger corner angle are marked.").hint("165"),
-        ],
-    )
-    .help("Elements worse than a limit are marked; a limit left empty keeps its default."),
+/// The quality limits of `mesh.quality.mark` and `mesh.verify`.
+const QUALITY_LIMITS: Field = group(
+    "limits",
+    "Limits",
+    &[
+        num("scaled_jacobian", "Scaled Jacobian at least", D::None)
+            .help("Elements with a lower scaled Jacobian are marked (1 is a perfect element).")
+            .hint("0.2"),
+        num("min_dihedral", "Min dihedral at least", D::Degree).help("Tetrahedra with a smaller dihedral angle are marked.").hint("10"),
+        num("max_dihedral", "Max dihedral at most", D::Degree).help("Tetrahedra with a larger dihedral angle are marked.").hint("165"),
+        num("aspect_ratio", "Aspect ratio at most", D::None).help("Elements with a larger aspect ratio are marked.").hint("10"),
+        num("min_angle", "Min angle at least", D::Degree).help("Shells with a smaller corner angle are marked.").hint("15"),
+        num("max_angle", "Max angle at most", D::Degree).help("Shells with a larger corner angle are marked.").hint("165"),
+    ],
+)
+.help("Elements worse than a limit are marked; a limit left empty keeps its default.");
+
+pub const QUALITY_MARK: &[Field] =
+    &[labels("elements", "Elements", LabelOf::Element).help("The elements to check; all when empty.").hint("all"), QUALITY_LIMITS];
+
+pub const VERIFY: &[Field] = &[
+    reference("set", "Set", C::Set)
+        .help("The set to verify: its elements; the elements its faces or edges belong to; or, for nodes only, the elements using them.")
+        .req(),
+    int("bins", "Histogram bins", 1, 1000).help("Number of bars in the quality histogram.").def("10"),
+    QUALITY_LIMITS,
+    flag("mark", "Mark failing elements").help("Draw the set's failing elements in the marker colour (set quality_marked).").def("false"),
 ];
 
 pub const SURFACE_CHECK: &[Field] = &[

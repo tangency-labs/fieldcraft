@@ -691,6 +691,7 @@ const GEOMETRY_REPLIES: &[(&str, Numbers)] = &[
     ("geometry.defeature.propose", &[("/candidates/*/size", Dim::Length)]),
     ("mesh.quality", &[("/volume", Dim::Of(Quantity::Volume)), ("/area", Dim::Area)]),
     ("mesh.quality.mark", &[("/elements/*/at", Dim::Length)]),
+    ("mesh.verify", &[("/volume", Dim::Of(Quantity::Volume)), ("/area", Dim::Area), ("/elements/*/at", Dim::Length)]),
     (
         "mesh.surface.check",
         &[("/volume", Dim::Of(Quantity::Volume)), ("/shells/*/volume", Dim::Of(Quantity::Volume)), ("/defects/listed/*/at", Dim::Length)],
