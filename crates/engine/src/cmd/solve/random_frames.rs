@@ -178,11 +178,11 @@ pub(super) fn evaluate(h: &HarmonicResult, p: &Value, step: &str, table: &Value)
                         })
                         .transpose()?;
                     Ok(if include_node_psd {
-                    json!({"node":node,"psd":samples.iter().map(|s| s.psd).collect::<Vec<_>>(),
+                        json!({"node":node,"psd":samples.iter().map(|s| s.psd).collect::<Vec<_>>(),
                     "moments_hz":moments,"rms_pa":moments[0].sqrt(),"fatigue":fatigue})
-                } else {
-                    json!({"node":node,"moments_hz":moments,"rms_pa":moments[0].sqrt(),"fatigue":fatigue})
-                })
+                    } else {
+                        json!({"node":node,"moments_hz":moments,"rms_pa":moments[0].sqrt(),"fatigue":fatigue})
+                    })
                 })
                 .collect()
         })
