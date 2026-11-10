@@ -122,17 +122,38 @@ pub(crate) fn legacy_requested() -> bool {
 
 pub(crate) fn linear_order(xyz: &[[f64; 3]], adjacency: &[Vec<usize>]) -> Vec<usize> {
     let _timing = crate::timing::Span::new("ordering");
-    let by_planes = nested_dissection(xyz, adjacency);
+    let by_planes = {
+        let _phase = crate::timing::Span::new("ordering_candidate_planes");
+        nested_dissection(xyz, adjacency)
+    };
     if adjacency.len() <= LEAF {
         // Both order a leaf as it comes: there is no choice to make.
         return by_planes;
     }
-    let by_graph = graph_dissection(adjacency);
-    let current = if fill(adjacency, &by_graph) < fill(adjacency, &by_planes) { by_graph } else { by_planes };
+    let by_graph = {
+        let _phase = crate::timing::Span::new("ordering_candidate_graph");
+        graph_dissection(adjacency)
+    };
+    // Keep each measured fill with its candidate; do not repeat the winner's
+    // symbolic traversal. Strict comparisons preserve the existing tie policy.
+    let graph_fill = {
+        let _phase = crate::timing::Span::new("ordering_fill_graph");
+        fill(adjacency, &by_graph)
+    };
+    let plane_fill = {
+        let _phase = crate::timing::Span::new("ordering_fill_planes");
+        fill(adjacency, &by_planes)
+    };
+    let (current, old_fill) = if graph_fill < plane_fill { (by_graph, graph_fill) } else { (by_planes, plane_fill) };
     if !legacy_requested() {
-        let third = multilevel::order(adjacency);
-        let old_fill = fill(adjacency, &current);
-        let new_fill = fill(adjacency, &third);
+        let third = {
+            let _phase = crate::timing::Span::new("ordering_candidate_multilevel");
+            multilevel::order(adjacency)
+        };
+        let new_fill = {
+            let _phase = crate::timing::Span::new("ordering_fill_multilevel");
+            fill(adjacency, &third)
+        };
         {
             use std::io::Write;
             let _ = writeln!(std::io::stderr().lock(), "FIELDCRAFT_ORDER_CHOICE\t{old_fill}\t{new_fill}\t{}", new_fill < old_fill);

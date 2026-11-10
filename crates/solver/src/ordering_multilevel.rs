@@ -787,15 +787,33 @@ pub(crate) fn order(adjacency: &[Vec<usize>]) -> Vec<usize> {
     // Canonical undirected graph; duplicate, self and out-of-range entries cannot
     // affect traversal or create input-dependent unchecked indexing.
     let adj = canonical(adjacency, profile.csr);
-    let mut scratch = Scratch::default();
     drop(build);
+    let parallel = !std::env::var("FIELDCRAFT_ORDERING_RECURSION").is_ok_and(|v| v == "serial");
+    if parallel && profile.start.is_some() {
+        use std::io::Write;
+        // Only parent phases are exclusive; child elapsed work is included in
+        // recursion_other and total, never summed across concurrent tasks.
+        let _ = writeln!(std::io::stderr().lock(), "FIELDCRAFT_ORDER_PROFILE_SCOPE\tparent_phases_and_inclusive_child_wall");
+    }
+    let result = order_part(&adj, (0..n).collect(), 0, &profile, parallel);
+    profile.finish();
+    result
+}
+
+// A bounded experimental frontier: only the first two separator levels can
+// spawn tasks. Each task owns its scratch/profile; ordered map fixes left/right
+// merge order independently of the worker count. An explicit serial diagnostic
+// uses the same partitions and tie decisions.
+fn order_part(adj: &NodeAdj, part: Vec<usize>, depth: usize, profile: &Profile, parallel: bool) -> Vec<usize> {
+    let n = if adj.offsets.is_empty() { adj.rows.len() } else { adj.offsets.len().saturating_sub(1) };
+    let mut scratch = Scratch::default();
     let mut position = vec![NONE; n];
     enum Task {
         Split(Vec<usize>, usize),
         Emit(Vec<usize>),
     }
-    let mut stack = vec![Task::Split((0..n).collect(), 0)];
-    let mut result = Vec::with_capacity(n);
+    let mut result = Vec::with_capacity(part.len());
+    let mut stack = vec![Task::Split(part, depth)];
     while let Some(task) = stack.pop() {
         let (part, depth) = match task {
             Task::Emit(p) => {
@@ -808,10 +826,10 @@ pub(crate) fn order(adjacency: &[Vec<usize>]) -> Vec<usize> {
             continue;
         }
         let build = profile.phase(0);
-        let g = Graph::induced(&adj, &part, &mut position, profile.csr);
+        let g = Graph::induced(adj, &part, &mut position, profile.csr);
         drop(build);
         if part.len() <= LEAF {
-            result.extend(amd(&g, &profile));
+            result.extend(amd(&g, profile));
             continue;
         }
         // Separate connected components before coarsening, avoiding artificial cuts.
@@ -847,8 +865,8 @@ pub(crate) fn order(adjacency: &[Vec<usize>]) -> Vec<usize> {
             }
             continue;
         }
-        let (side, levels) = partition(&g, &profile, &mut scratch);
-        let separator = cover(&g, &side, &profile);
+        let (side, levels) = partition(&g, profile, &mut scratch);
+        let separator = cover(&g, &side, profile);
         let (mut left, mut right, mut sep) = (Vec::new(), Vec::new(), Vec::new());
         for (v, &key) in g.keys.iter().enumerate() {
             if value(&separator, v) {
@@ -876,17 +894,57 @@ pub(crate) fn order(adjacency: &[Vec<usize>]) -> Vec<usize> {
             result.extend(part);
             continue;
         }
-        stack.push(Task::Emit(sep));
-        stack.push(Task::Split(right, depth + 1));
-        stack.push(Task::Split(left, depth + 1));
+        if parallel && depth < 2 && part.len() >= 256 {
+            let children = [left, right];
+            let settings = (profile.capacity_prune, profile.csr, profile.seeded);
+            let ordered = fieldcraft_parallel::map(2, |i| {
+                let mut child = Profile::new();
+                // Parent inclusive wall time is meaningful; child phase times
+                // overlap, so do not report them as exclusive parent phases.
+                child.start = None;
+                (child.capacity_prune, child.csr, child.seeded) = settings;
+                order_part(adj, children.get(i).cloned().unwrap_or_default(), depth + 1, &child, true)
+            });
+            result.extend(ordered.into_iter().flatten());
+            result.extend(sep);
+        } else {
+            stack.push(Task::Emit(sep));
+            stack.push(Task::Split(right, depth + 1));
+            stack.push(Task::Split(left, depth + 1));
+        }
     }
-    profile.finish();
     result
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn independent_subtrees_merge_in_serial_order() {
+        let width = 29;
+        let n = width * width;
+        let mut adj = vec![Vec::new(); n];
+        for v in 0..n {
+            for u in
+                [v.checked_sub(width), (v + width < n).then_some(v + width), (v % width > 0).then(|| v - 1), (v % width + 1 < width).then_some(v + 1)]
+                    .into_iter()
+                    .flatten()
+            {
+                adj[v].push(u);
+            }
+        }
+        let canonical = canonical(&adj, true);
+        let expected = order_part(&canonical, (0..n).collect(), 0, &Profile::new(), false);
+        for threads in [1, 2, 7] {
+            let got = fieldcraft_parallel::with_threads(threads, || order_part(&canonical, (0..n).collect(), 0, &Profile::new(), true));
+            assert_eq!(got, expected);
+            eprintln!("ORDER_SUBTREES_SMALL\tthreads={threads}\tvertices={n}\tpermutation_equal=true");
+            let mut sorted = got;
+            sorted.sort_unstable();
+            assert_eq!(sorted, (0..n).collect::<Vec<_>>());
+        }
+    }
 
     #[test]
     fn csr_build_induction_and_weighted_contraction_match_reference() {
