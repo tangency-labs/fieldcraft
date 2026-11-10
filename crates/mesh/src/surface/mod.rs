@@ -469,6 +469,20 @@ impl BoundarySurface {
         Ok(self)
     }
 
+    /// The surface without the sharp edges inside the faces `smooth` marks (by face tag; a tag
+    /// past its end is not smooth). A face whose exact surface is known is smooth inside, so a
+    /// turn between two of its triangles is the tessellation's, never a feature: a needle along
+    /// a trim, its corners nearly in line, can even face the other way (SolidCraft from v0.40,
+    /// at some tolerances). Edges between faces stay; an imported surface, with no exact
+    /// surfaces, keeps its creases.
+    #[must_use]
+    pub fn smooth_inside(mut self, smooth: &[bool]) -> Self {
+        let tri_face = &self.tri_face;
+        let smooth_at = |t: u32| tri_face.get(t as usize).and_then(|&f| smooth.get(f as usize)).copied().unwrap_or(false);
+        self.feature_edges.retain(|e| e.kind != FeatureKind::Sharp || !(smooth_at(e.triangles[0]) && smooth_at(e.triangles[1])));
+        self
+    }
+
     /// The length of the diagonal of the points' bounding box.
     fn bounding_diagonal(&self) -> f64 {
         let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);

@@ -57,8 +57,12 @@ fn hex_octree(s: &mut Session, p: &Value) -> Result<Value> {
             return Err(crate::units::below_diagonal("size", MIN_RELATIVE_SIZE, b.diagonal, &format!("body `{}`'s", b.name)));
         }
         let surface_options = super::mesh::surface_options(p, &b.mesh)?;
+        // A design body's faces with exact surfaces are smooth inside: a fold of their
+        // tessellation is no crease to refine to.
+        let analytic = s.design.as_ref().and_then(|d| d.body(&b.name)).map(super::mesh::analytic_surfaces).unwrap_or_default();
         let surface = BoundarySurface::new(&b.mesh.positions, &b.mesh.triangles, &b.mesh.tri_face, &surface_options)
-            .map_err(|e| EngineError::context(format!("body `{}`", b.name), e))?;
+            .map_err(|e| EngineError::context(format!("body `{}`", b.name), e))?
+            .smooth_inside(&super::mesh::smooth_faces(&analytic));
         let left = OctreeOptions { max_elements: options.max_elements.saturating_sub(total).max(1), ..options.clone() };
         let field = sizing.field(&b.name, h)?;
         let mesh = octree_hex_mesh(&surface, &field, &left).map_err(|e| EngineError::of_body(&b.name, e))?;

@@ -15,7 +15,7 @@
     "build": "ok",
     "cdt": "ok",
     "hex": "ok: extrude",
-    "octree": "no: limit reached",
+    "octree": "no: meshing failed",
     "quality": "ok",
     "surface": "ok"
   },

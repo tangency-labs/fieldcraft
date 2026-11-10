@@ -1057,3 +1057,35 @@ fn faces_but(tets: &[[u32; 4]], inner: &[[u32; 3]]) -> Vec<super::TaggedFace> {
     }
     out
 }
+
+/// A needle of a sphere's tessellation, its corners nearly along a meridian and ordered to face
+/// into the sphere, is reported with its face; the triangles that face out are not, and a face
+/// without an exact surface is passed over.
+#[test]
+fn a_facet_facing_into_its_face_is_reported() {
+    use super::geometry::{AnalyticSurface, reversed_facets};
+    let r = 10.0;
+    let on = |polar: f64, azimuth: f64| {
+        let (p, a) = (polar.to_radians(), azimuth.to_radians());
+        [r * p.sin() * a.cos(), r * p.sin() * a.sin(), r * p.cos()]
+    };
+    // A cap facing out (counter-clockwise seen from above), and the needle.
+    let mut points = vec![on(15.0, 0.0), on(15.0, 120.0), on(15.0, 240.0)];
+    points.extend([on(20.0, 0.0), on(25.0, 2.0), on(30.0, 0.0)]);
+    let outward = |t: [u32; 3]| {
+        let [a, b, c] = t.map(|v| points[v as usize]);
+        let n = super::measure::cross(super::measure::sub(b, a), super::measure::sub(c, a));
+        let m = super::measure::scale(super::measure::add(super::measure::add(a, b), c), 1.0 / 3.0);
+        super::measure::dot(n, m) > 0.0
+    };
+    let needle = if outward([3, 4, 5]) { [3, 5, 4] } else { [3, 4, 5] };
+    let triangles = vec![[0, 1, 2], needle];
+    assert!(outward([0, 1, 2]) && !outward(needle));
+    let sphere = [Some(AnalyticSurface::Sphere { center: [0.0; 3], radius: r })];
+    let found = reversed_facets(&points, &triangles, &[0, 0], &sphere);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!((found[0].triangle, found[0].face), (1, 0));
+    assert!(found[0].angle > 90.0 && found[0].angle <= 180.0, "{found:?}");
+    // Without the exact surface there is nothing to compare with.
+    assert!(reversed_facets(&points, &triangles, &[0, 0], &[None]).is_empty());
+}

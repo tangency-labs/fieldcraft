@@ -138,7 +138,7 @@ fn delaunay_points(_: &mut Session, p: &Value) -> Result<Value> {
 pub const SURFACE_CHECK: CommandSpec = CommandSpec {
     id: "mesh.surface.check",
     label: "Check Boundary Surface",
-    params: r#"{"body": "Body1", "tolerance": 0.05} or {"surface": 0}, optional "weld": 1e-9 (0 or 1e-15..=1e-3 of the bounding-box diagonal), "weld_distance": length (default: the surface's own, twice SolidCraft's linear tolerance for a tessellated body, 0 for an imported mesh), "feature_angle": 45 (degrees, (0, 180]) — welds the tessellated body or imported surface and checks it can bound a volume mesh: closed, manifold, outward, no self-intersections; reports shells, genus, volume and feature edges, or the located defects"#,
+    params: r#"{"body": "Body1", "tolerance": 0.05} or {"surface": 0}, optional "weld": 1e-9 (0 or 1e-15..=1e-3 of the bounding-box diagonal), "weld_distance": length (default: the surface's own, twice SolidCraft's linear tolerance for a tessellated body, 0 for an imported mesh), "feature_angle": 45 (degrees, (0, 180]) — welds the tessellated body or imported surface and checks it can bound a volume mesh: closed, manifold, outward, no self-intersections; reports shells, genus, volume and feature edges (a design body's faces with exact surfaces have no sharp edges inside), or the located defects; for a design body also `reversed_facets` (per face: `face`, `triangles`, `worst_angle` in degrees, `at`), the faces whose tessellation has triangles facing the other way from the face, a defect of the kernel's tessellation, each also a `warnings` entry (a warning: the surface is still checked)"#,
     form: Some(super::forms::SURFACE_CHECK),
     kind: CommandKind::Model,
     requires: &[Requirement::Geometry],
@@ -317,8 +317,9 @@ pub(super) fn mesh_body(
         fieldcraft_model::progress::stage(&format!("{}: boundary", input.name), None, "");
         // The mesh depends on the geometry only, not on the order the kernel lists it in.
         let soup = CanonicalSoup::new(&input.mesh.positions, &input.mesh.triangles, &input.mesh.tri_face)?;
-        let surface =
-            BoundarySurface::new(&soup.positions, &soup.triangles, &soup.tri_face, &surface_options(p, &input.mesh)?).map_err(tet_boundary_error)?;
+        let surface = BoundarySurface::new(&soup.positions, &soup.triangles, &soup.tri_face, &surface_options(p, &input.mesh)?)
+            .map_err(tet_boundary_error)?
+            .smooth_inside(&smooth_faces(&soup.analytic(&analytic)));
         fieldcraft_model::progress::stage(&format!("{}: Delaunay", input.name), None, "");
         let tets = tetrahedralize(&surface, cdt)?;
         let mut mesh = if quality {
@@ -963,9 +964,13 @@ fn quality_summary(r: &QualityReport) -> String {
 }
 
 /// The surface named by `body` (tessellated at `tolerance`) or `surface` (an imported index).
-fn surface_input<'a>(s: &'a Session, p: &Value) -> Result<Cow<'a, SurfaceMesh>> {
+/// The surface to check: a design body's tessellation with the body, or an imported surface.
+fn surface_input<'a>(s: &'a Session, p: &Value) -> Result<(Cow<'a, SurfaceMesh>, Option<&'a fieldcraft_geometry::Shape>)> {
     match (p.get("body"), p.get("surface")) {
-        (Some(_), None) => Ok(Cow::Owned(super::geometry::body_mesh(s, p)?.1)),
+        (Some(_), None) => {
+            let (shape, mesh) = super::geometry::body_mesh(s, p)?;
+            Ok((Cow::Owned(mesh), Some(shape)))
+        }
         (None, Some(i)) => {
             let n = s.surfaces.len();
             let t = i
@@ -973,7 +978,7 @@ fn surface_input<'a>(s: &'a Session, p: &Value) -> Result<Cow<'a, SurfaceMesh>> 
                 .and_then(|i| usize::try_from(i).ok())
                 .and_then(|i| s.surfaces.get(i))
                 .ok_or_else(|| EngineError::Params(format!("`surface` must be the index of an imported surface (there are {n})")))?;
-            Ok(Cow::Borrowed(&t.mesh))
+            Ok((Cow::Borrowed(&t.mesh), None))
         }
         _ => Err(EngineError::Params("give either `body` (with `tolerance`) or `surface`".into())),
     }
@@ -984,11 +989,47 @@ fn defect_json(d: &Defect, display: &fieldcraft_model::DisplaySystem) -> Value {
     json!({"kind": d.kind(), "message": message, "at": d.at()})
 }
 
+/// Whether each face is smooth inside: its exact surface is known
+/// ([`BoundarySurface::smooth_inside`]).
+pub(super) fn smooth_faces(analytic: &[Option<AnalyticSurface>]) -> Vec<bool> {
+    analytic.iter().map(Option::is_some).collect()
+}
+
+/// The faces whose tessellation has triangles facing the other way from the face's exact
+/// surface ([`fieldcraft_mesh::tet::geometry::reversed_facets`]): per face, its name, how many,
+/// the worst angle (degrees) and where the worst is; and a warning for each.
+fn reversed_facet_report(shape: &fieldcraft_geometry::Shape, mesh: &SurfaceMesh, analytic: &[Option<AnalyticSurface>]) -> (Vec<Value>, Vec<String>) {
+    let reversed = fieldcraft_mesh::tet::geometry::reversed_facets(&mesh.positions, &mesh.triangles, &mesh.tri_face, analytic);
+    let mut by_face: std::collections::BTreeMap<u32, (usize, f64, [f64; 3])> = std::collections::BTreeMap::new();
+    for r in &reversed {
+        let e = by_face.entry(r.face).or_insert((0, r.angle, r.at));
+        e.0 += 1;
+        if r.angle > e.1 {
+            (e.1, e.2) = (r.angle, r.at);
+        }
+    }
+    let faces = shape.faces();
+    let mut report = Vec::new();
+    let mut warnings = Vec::new();
+    for (face, (count, worst, at)) in by_face {
+        let name = faces.get(face as usize).map_or_else(|| format!("#{face}"), |f| f.name.clone());
+        report.push(json!({"face": name, "triangles": count, "worst_angle": worst, "at": at}));
+        warnings.push(format!(
+            "face `{name}` of body `{}`: {count} triangle(s) of its tessellation face the other way from the face (worst {worst:.0}°), a defect of the kernel's tessellation; a smaller tolerance may avoid it",
+            shape.name
+        ));
+    }
+    (report, warnings)
+}
+
 fn surface_check(s: &mut Session, p: &Value) -> Result<Value> {
-    let mesh = surface_input(s, p)?;
+    let (mesh, shape) = surface_input(s, p)?;
     let options = surface_options(p, &mesh)?;
+    // A design body's faces with exact surfaces are smooth inside; an imported surface keeps
+    // its creases.
+    let analytic = shape.map(analytic_surfaces).unwrap_or_default();
     let surface = match BoundarySurface::new(&mesh.positions, &mesh.triangles, &mesh.tri_face, &options) {
-        Ok(surface) => surface,
+        Ok(surface) => surface.smooth_inside(&smooth_faces(&analytic)),
         Err(fieldcraft_mesh::Error::Surface(d)) => {
             return Ok(
                 json!({"valid": false, "defects": {"count": d.total, "listed": d.listed.iter().map(|x| defect_json(x, s.units())).collect::<Vec<_>>()}}),
@@ -1000,6 +1041,7 @@ fn surface_check(s: &mut Session, p: &Value) -> Result<Value> {
     faces.sort_unstable();
     faces.dedup();
     let count = |k: FeatureKind| surface.feature_edges().iter().filter(|e| e.kind == k).count();
+    let (reversed, warnings) = shape.map(|shape| reversed_facet_report(shape, &mesh, &analytic)).unwrap_or_default();
     let shells: Vec<Value> = surface
         .shells()
         .iter()
@@ -1015,6 +1057,8 @@ fn surface_check(s: &mut Session, p: &Value) -> Result<Value> {
         "shells": shells,
         "feature_edges": {"face_boundary": count(FeatureKind::FaceBoundary), "sharp": count(FeatureKind::Sharp)},
         "feature_corners": surface.feature_corners().len(),
+        "reversed_facets": reversed,
+        "warnings": warnings,
     }))
 }
 
@@ -1399,6 +1443,10 @@ mod tests {
         assert!(volume >= exact && volume < exact * 1.01, "a polygonal hole inscribed in the circle: {volume} vs {exact}");
         assert!(r["feature_edges"]["face_boundary"].as_u64().unwrap() > 12);
         assert!(r["feature_corners"].as_u64().unwrap() >= 8);
+        // Every face has its exact surface: no creases inside them, and no triangle faces the
+        // other way.
+        assert_eq!(r["feature_edges"]["sharp"], 0, "{r}");
+        assert_eq!((&r["reversed_facets"], &r["warnings"]), (&json!([]), &json!([])), "{r}");
         assert!(s.journal.is_empty(), "a check changes nothing");
 
         // A tagged tetrahedron, and the same with a face missing.
