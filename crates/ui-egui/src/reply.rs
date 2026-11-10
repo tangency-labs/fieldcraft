@@ -14,6 +14,7 @@ use crate::theme::{Tokens, label_font};
 use crate::{ModelApp, Tab};
 use fieldcraft_engine::results::Quantity;
 use fieldcraft_model::DisplaySystem;
+use solidcraft_ui_kit as kit;
 
 /// The reply shown in the context panel.
 #[derive(Clone, Debug, PartialEq)]
@@ -271,10 +272,10 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
     heading(ui, t, Level::Title, |ui| {
         ui.label(RichText::new(reply.label.to_uppercase()).font(label_font(ui.ctx(), 12.0)));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.small_button("×").on_hover_text("Close").clicked() {
+            if kit::button(ui, "×", kit::Button::Small).on_hover_text("Close").clicked() {
                 acts.push(Act::Close);
             }
-            if ui.small_button("Run again").on_hover_text(reply.command.as_str()).clicked() {
+            if kit::button(ui, "Run again", kit::Button::Small).on_hover_text(reply.command.as_str()).clicked() {
                 acts.push(Act::Rerun);
             }
         });
@@ -380,7 +381,7 @@ fn defeature_list(ui: &mut egui::Ui, t: &Tokens, v: &Value, units: &DisplaySyste
     let proposal: Vec<u64> = v["proposal"].as_array().into_iter().flatten().filter_map(Value::as_u64).collect();
     let pending: Vec<u64> = candidates.iter().filter(|c| c["proposed"] == true && c["suppressed"] != true).filter_map(|c| c["id"].as_u64()).collect();
     if !proposal.is_empty() {
-        let button = ui.add_enabled(!pending.is_empty(), egui::Button::new(format!("Defeature the {} proposed", pending.len())));
+        let button = kit::button(ui, format!("Defeature the {} proposed", pending.len()), kit::Button::Enabled(!pending.is_empty()));
         if button.on_hover_text(format!("Take them out with defeature {name}")).clicked() {
             acts.push(Act::Propose { name: name.clone(), features: pending });
         }
@@ -396,7 +397,7 @@ fn defeature_list(ui: &mut egui::Ui, t: &Tokens, v: &Value, units: &DisplaySyste
             let mut on = c["suppressed"] != true;
             let by = c["by"].as_str().unwrap_or(&name).to_string();
             let hover = if on { format!("Switch off: defeature {name} takes it out") } else { format!("Switch on: defeature {by} keeps it") };
-            if ui.checkbox(&mut on, "").on_hover_text(hover).changed() {
+            if kit::checkbox(ui, "", &mut on).on_hover_text(hover).changed() {
                 acts.push(Act::Defeature { name: if on { by } else { name.clone() }, feature: id, on });
             }
             let label = format!("F{id} {}", c["name"].as_str().unwrap_or_default());
@@ -450,8 +451,7 @@ fn feature_graph(
     for (bi, b) in bodies.iter().enumerate() {
         let body = b["body"].as_str().unwrap_or_default();
         let nodes = b["features"].as_array().map(Vec::as_slice).unwrap_or_default();
-        let head = RichText::new(format!("{body}  ·  {}", plural(nodes.len() as u64, "feature"))).strong();
-        egui::CollapsingHeader::new(head).id_salt(("fc_features_body", bi)).default_open(true).show(ui, |ui| {
+        kit::section_count(ui, ("fc_features_body", bi), body, true, Some(nodes.len()), |ui| {
             for (fi, node) in nodes.iter().take(MAX_ENTITIES).enumerate() {
                 let f = describe(node, v["units"]["length"].as_str().unwrap_or_default());
                 let id = ui.scope_id().with(("fc_feature", bi, fi));
@@ -558,12 +558,12 @@ fn diagnostics(app: &ModelApp, ui: &mut egui::Ui, t: &Tokens, v: &Value, acts: &
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                 if let Some((kind, name)) = subject_definition(app, subject) {
-                    if ui.small_button("Show").on_hover_text(format!("Select {subject} to see and edit it")).clicked() {
+                    if kit::button(ui, "Show", kit::Button::Small).on_hover_text(format!("Select {subject} to see and edit it")).clicked() {
                         acts.push(Act::Select(kind, name));
                     }
                 } else if subject == "model"
                     && let Some((text, act)) = model_fix(message)
-                    && ui.small_button(text).clicked()
+                    && kit::button(ui, text, kit::Button::Small).clicked()
                 {
                     acts.push(act);
                 }
@@ -784,7 +784,7 @@ fn body_list(
     if items.is_empty() {
         return;
     }
-    egui::CollapsingHeader::new(RichText::new(format!("{title} ({})", items.len())).size(12.0)).id_salt(id).show(ui, |ui| {
+    kit::section_count(ui, id, title, false, Some(items.len()), |ui| {
         for item in items.iter().take(MAX_ENTITIES) {
             let (name, length) = read(item);
             ui.horizontal(|ui| {
@@ -939,23 +939,20 @@ fn solve_summary(ui: &mut egui::Ui, t: &Tokens, v: &Value, units: Option<&Displa
     shown.push("heat_removed");
     if let Some(modes) = m.get("modes").and_then(Value::as_array).filter(|a| !a.is_empty()) {
         shown.push("modes");
-        egui::CollapsingHeader::new(RichText::new(format!("Modes ({})", modes.len())).size(12.0))
-            .id_salt("fc_reply_solve_modes")
-            .default_open(true)
-            .show(ui, |ui| {
-                egui::Grid::new("fc_reply_solve_modes_grid").striped(true).spacing(vec2(10.0, 2.0)).show(ui, |ui| {
-                    let buckling = modes.iter().any(|x| x.get("load_factor").is_some());
-                    ui.label(RichText::new("Mode").small().color(t.text_dim));
-                    ui.label(RichText::new(if buckling { "Load factor" } else { "Frequency [Hz]" }).small().color(t.text_dim));
+        kit::section_count(ui, "fc_reply_solve_modes", "Modes", true, Some(modes.len()), |ui| {
+            egui::Grid::new("fc_reply_solve_modes_grid").striped(true).spacing(vec2(10.0, 2.0)).show(ui, |ui| {
+                let buckling = modes.iter().any(|x| x.get("load_factor").is_some());
+                ui.label(RichText::new("Mode").small().color(t.text_dim));
+                ui.label(RichText::new(if buckling { "Load factor" } else { "Frequency [Hz]" }).small().color(t.text_dim));
+                ui.end_row();
+                for x in modes.iter().take(MAX_ROWS) {
+                    ui.label(x["mode"].as_u64().map_or_else(String::new, |n| n.to_string()));
+                    ui.label(x.get(if buckling { "load_factor" } else { "frequency" }).and_then(Value::as_f64).map_or("—".into(), number));
                     ui.end_row();
-                    for x in modes.iter().take(MAX_ROWS) {
-                        ui.label(x["mode"].as_u64().map_or_else(String::new, |n| n.to_string()));
-                        ui.label(x.get(if buckling { "load_factor" } else { "frequency" }).and_then(Value::as_f64).map_or("—".into(), number));
-                        ui.end_row();
-                    }
-                });
-                more(ui, t, modes.len());
+                }
             });
+            more(ui, t, modes.len());
+        });
     }
     if let Some(w) = m.get("warnings").and_then(Value::as_array) {
         shown.push("warnings");
@@ -970,7 +967,7 @@ fn solve_summary(ui: &mut egui::Ui, t: &Tokens, v: &Value, units: Option<&Displa
         .map(|(k, x)| (k.clone(), x.clone()))
         .collect();
     if !rest.is_empty() {
-        egui::CollapsingHeader::new(RichText::new("Details").size(12.0)).id_salt("fc_reply_solve_details").default_open(false).show(ui, |ui| {
+        kit::section(ui, "fc_reply_solve_details", "Details", false, |ui| {
             let rest = Value::Object(rest.into_iter().map(|(k, x)| (k, x.as_u64().map_or(x.clone(), |n| Value::String(count(n))))).collect());
             value(ui, t, egui::Id::unique("fc_reply_solve_details"), &rest, 1);
         });
@@ -993,7 +990,7 @@ fn value(ui: &mut egui::Ui, t: &Tokens, id: egui::Id, v: &Value, depth: usize) {
                     Value::Array(a) => format!("{} ({})", k.replace('_', " "), a.len()),
                     _ => k.replace('_', " "),
                 };
-                egui::CollapsingHeader::new(RichText::new(title).size(12.0)).id_salt(id.with(k)).default_open(depth == 0).show(ui, |ui| {
+                kit::section(ui, id.with(k), &title, depth == 0, |ui| {
                     value(ui, t, id.with(k), x, depth + 1);
                 });
             }

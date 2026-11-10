@@ -1,11 +1,11 @@
 //! Form field widgets: a labelled row, a number field that keeps what is being typed until it
-//! is a number, a drop-down, a text field. They know nothing of FieldCraft (colours and widths
-//! come in a [`Style`]), so they can move to the shared Craft UI crate.
-//!
-//! The row layout (a label column, a long label wrapping inside it, then the field) is
-//! adapted from SolidCraft's dialog rows (`crates/ui-egui/src/dialogs.rs`, MIT OR Apache-2.0).
+//! is a number, a drop-down, a text field. The controls are the UI kit's (its fields, drop-down
+//! and help icon, at its row height); what is FieldCraft's own is the row's label column: a long
+//! label wraps inside it onto two lines, after it the required mark, so a form shows every label
+//! whole and says which fields it needs.
 
 use egui::{Color32, Id, RichText, Ui, vec2};
+use solidcraft_ui_kit as kit;
 
 /// Widths and colours of a form.
 #[derive(Clone, Copy, Debug)]
@@ -18,10 +18,7 @@ pub struct Style {
     pub required: Color32,
 }
 
-/// Row height.
-pub const ROW_H: f32 = 22.0;
-
-/// The room the marks after a label take: the required `*` and the help [`help_mark`].
+/// The room the marks after a label take: the required `*` and the kit's help icon.
 pub fn marks_width(required: bool, help: bool) -> f32 {
     MARK_GAP + if required { STAR_W } else { 0.0 } + if help { HELP_W } else { 0.0 }
 }
@@ -30,8 +27,8 @@ pub fn marks_width(required: bool, help: bool) -> f32 {
 const MARK_GAP: f32 = 2.0;
 /// The required mark.
 const STAR_W: f32 = 9.0;
-/// The help mark and the space before it.
-const HELP_W: f32 = 13.0;
+/// The help icon and the space before it.
+const HELP_W: f32 = 17.0;
 /// A label longer than its column wraps onto this many lines (labels are short phrases).
 pub const LABEL_LINES: usize = 2;
 
@@ -52,14 +49,15 @@ pub fn label_galley(ui: &Ui, label: &str, color: Color32, wrap: f32) -> std::syn
     ui.painter().layout_job(job)
 }
 
-/// A row: `label` (with a mark when `required`, and [`help_mark`] when there is `help`) in the
-/// label column, then `add`. A label wider than the column wraps onto [`LABEL_LINES`] lines; the
-/// marks always follow it inside the column. Hovering the label or the mark shows the label and
-/// `help`.
+/// A row: `label` (with a mark when `required`, and the kit's help icon when there is `help`) in
+/// the label column, in the kit's label colour, then `add`, a kit row high. A label wider than the
+/// column wraps onto [`LABEL_LINES`] lines; the marks always follow it inside the column.
+/// Hovering the label or the icon shows the label and `help`.
 pub fn row<R>(ui: &mut Ui, s: &Style, label: &str, required: bool, help: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
     ui.horizontal(|ui| {
-        let galley = label_galley(ui, label, s.dim, s.label_width - marks_width(required, !help.is_empty()));
-        let (rect, response) = ui.allocate_exact_size(vec2(s.label_width, galley.size().y.max(ROW_H)), egui::Sense::hover());
+        let ink = solidcraft_theme::Tokens::get().dialog_label;
+        let galley = label_galley(ui, label, ink, s.label_width - marks_width(required, !help.is_empty()));
+        let (rect, response) = ui.allocate_exact_size(vec2(s.label_width, galley.size().y.max(kit::row_height())), egui::Sense::hover());
         let text_rect = egui::Align2::LEFT_CENTER.anchor_size(rect.left_center(), galley.size());
         let tip = if help.is_empty() { label.to_string() } else { format!("{label}\n{help}") };
         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, label));
@@ -68,7 +66,7 @@ pub fn row<R>(ui: &mut Ui, s: &Style, label: &str, required: bool, help: &str, a
         let last = galley.rows.last().map_or(egui::Rect::ZERO, |r| r.rect());
         let mark_y = text_rect.top() + last.center().y;
         let mut x = text_rect.left() + last.right() + MARK_GAP;
-        ui.painter().galley(text_rect.min, galley, s.dim);
+        ui.painter().galley(text_rect.min, galley, ink);
         if required {
             let star = egui::Rect::from_min_size(egui::pos2(x, mark_y - 7.0), vec2(STAR_W, 14.0));
             ui.painter().text(egui::pos2(x, mark_y), egui::Align2::LEFT_CENTER, "*", label_font(ui), s.required);
@@ -76,19 +74,16 @@ pub fn row<R>(ui: &mut Ui, s: &Style, label: &str, required: bool, help: &str, a
             x += STAR_W;
         }
         if !help.is_empty() {
-            let mark = egui::Rect::from_center_size(egui::pos2(x + HELP_W / 2.0, mark_y), vec2(11.0, 11.0));
-            paint_help_mark(ui.painter(), mark, s.dim);
-            ui.interact(mark, ui.scope_id().with("help"), egui::Sense::hover()).on_hover_text(&tip);
+            let mark = egui::Rect::from_center_size(egui::pos2(x + HELP_W / 2.0, mark_y), vec2(HELP_W - MARK_GAP, HELP_W - MARK_GAP));
+            // In the label column already allocated: a child of its own, so the row's field keeps
+            // its place.
+            let mut mark_ui =
+                ui.new_child(egui::UiBuilder::new().max_rect(mark).layout(egui::Layout::centered_and_justified(egui::Direction::LeftToRight)));
+            kit::help_icon(&mut mark_ui, &tip);
         }
         add(ui)
     })
     .inner
-}
-
-/// A small circled "i" after a label that has help, drawn (the UI font has no such glyph).
-pub fn paint_help_mark(painter: &egui::Painter, rect: egui::Rect, color: Color32) {
-    painter.circle_stroke(rect.center(), 5.0, egui::Stroke::new(1.0, color));
-    painter.text(rect.center(), egui::Align2::CENTER_CENTER, "i", egui::FontId::proportional(8.5), color);
 }
 
 /// The width of `unit` after a field ([`unit`]), with the space before it; 0 without one.
@@ -127,7 +122,7 @@ struct Draft {
 /// value only when the text is a finite number (or empty). `integer` refuses fractions. `id` is the
 /// field's own (unique in the form, and differing between forms): it keys both the typed text and
 /// the widget, so focus and typing never move to another form's field at the same place.
-pub fn number(ui: &mut Ui, s: &Style, id: Id, value: Option<f64>, hint: &str, integer: bool, width: f32) -> NumberEdit {
+pub fn number(ui: &mut Ui, id: Id, value: Option<f64>, hint: &str, integer: bool, width: f32) -> NumberEdit {
     let shown = |v: Option<f64>| v.map(format_number).unwrap_or_default();
     let mut draft = ui.data(|d| d.get_temp::<Draft>(id)).filter(|d| d.over == value).unwrap_or_else(|| Draft { text: shown(value), over: value });
     let parse = |t: &str| -> Option<Option<f64>> {
@@ -139,11 +134,8 @@ pub fn number(ui: &mut Ui, s: &Style, id: Id, value: Option<f64>, hint: &str, in
         (!integer || x.fract() == 0.0).then_some(Some(x))
     };
     let bad = parse(&draft.text).is_none();
-    let mut edit = egui::TextEdit::singleline(&mut draft.text).id(id).desired_width(width).hint_text(RichText::new(hint).italics().color(s.dim));
-    if bad {
-        edit = edit.text_color(s.error);
-    }
-    let r = ui.add(edit);
+    // The kit's editor, keyed by `id`, in the error colours while the text is not a number.
+    let r = sized(ui, width, |ui| kit::cell_editor(ui, id, &mut draft.text, hint, bad));
     let out = if r.changed() {
         match parse(&draft.text) {
             Some(v) => {
@@ -170,10 +162,15 @@ pub fn format_number(x: f64) -> String {
     }
 }
 
-/// A drop-down of `options` (labels); returns the index picked this frame.
+/// `add` in a box `width` wide and a kit row high, left to right.
+fn sized<R>(ui: &mut Ui, width: f32, add: impl FnOnce(&mut Ui) -> R) -> R {
+    ui.allocate_ui_with_layout(vec2(width.max(0.0), kit::row_height()), egui::Layout::left_to_right(egui::Align::Center), add).inner
+}
+
+/// A drop-down of `options` (labels), the kit's; returns the index picked this frame.
 pub fn combo(ui: &mut Ui, id: Id, selected: &str, options: &[&str], width: f32) -> Option<usize> {
     let mut picked = None;
-    egui::ComboBox::from_id_salt(id).selected_text(selected).width(width).truncate().show_ui(ui, |ui| {
+    kit::bounded_dropdown_menu(ui, id, selected, width, |ui| {
         for (i, o) in options.iter().enumerate() {
             if ui.selectable_label(*o == selected, *o).clicked() {
                 picked = Some(i);
@@ -183,9 +180,16 @@ pub fn combo(ui: &mut Ui, id: Id, selected: &str, options: &[&str], width: f32) 
     picked
 }
 
-/// A one-line text field with a greyed hint, keyed by `id` (see [`number`]); true when it changed.
-pub fn text(ui: &mut Ui, s: &Style, id: Id, value: &mut String, hint: &str, width: f32) -> bool {
-    ui.add(egui::TextEdit::singleline(value).id(id).desired_width(width).hint_text(RichText::new(hint).italics().color(s.dim))).changed()
+/// A one-line text field (the kit's editor) keyed by `id` (see [`number`]), in the error colours
+/// while `bad`; its response.
+pub fn checked_text(ui: &mut Ui, id: Id, value: &mut String, hint: &str, bad: bool, width: f32) -> egui::Response {
+    sized(ui, width, |ui| kit::cell_editor(ui, id, value, hint, bad))
+}
+
+/// A one-line text field (the kit's editor) with a greyed hint, keyed by `id` (see [`number`]); true
+/// when it changed.
+pub fn text(ui: &mut Ui, id: Id, value: &mut String, hint: &str, width: f32) -> bool {
+    checked_text(ui, id, value, hint, false, width).changed()
 }
 
 /// Labels as typed: runs of consecutive labels as `a-b`, the rest by commas ("1-5, 8, 10-12").

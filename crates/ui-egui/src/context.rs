@@ -11,6 +11,7 @@ use crate::browser::Def;
 use crate::frame::{Level, heading};
 use crate::theme::{Tokens, label_font};
 use crate::{ModelApp, selection};
+use solidcraft_ui_kit as kit;
 
 /// The panel's width.
 pub const WIDTH: f32 = 310.0;
@@ -73,7 +74,7 @@ pub fn panel(app: &mut ModelApp, ui: &mut egui::Ui) {
                     heading(ui, &t, Level::Title, |ui| {
                         ui.label(RichText::new("RESULTS").font(label_font(ui.ctx(), 12.0)));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            close = ui.small_button("Close").on_hover_text("Back to the model (results.clear)").clicked();
+                            close = kit::button(ui, "Close", kit::Button::Small).on_hover_text("Back to the model (results.clear)").clicked();
                         });
                     });
                     ui.add_space(4.0);
@@ -98,7 +99,7 @@ fn refused(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
     heading(ui, t, Level::Title, |ui| {
         ui.label(RichText::new(format!("{} — NOT YET", crate::command_label(u.command).to_uppercase())).font(label_font(ui.ctx(), 12.0)));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            close = ui.small_button("×").on_hover_text("Dismiss").clicked();
+            close = kit::button(ui, "×", kit::Button::Small).on_hover_text("Dismiss").clicked();
         });
     });
     ui.add_space(4.0);
@@ -107,7 +108,7 @@ fn refused(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
     for fieldcraft_engine::requirement::Missing(r) in &u.missing {
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(format!("• {}", r.what())).color(t.text));
-            if ui.button(format!("{}…", r.place())).on_hover_text(r.provider()).clicked() {
+            if kit::button(ui, format!("{}…", r.place()), kit::Button::Normal).on_hover_text(r.provider()).clicked() {
                 start = Some(r.provider());
             }
         });
@@ -149,7 +150,7 @@ fn form(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
     heading(ui, t, Level::Title, |ui| {
         ui.label(RichText::new(spec.label.to_uppercase()).font(label_font(ui.ctx(), 12.0)));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            cancel = ui.small_button("×").on_hover_text("Cancel (Esc)").clicked();
+            cancel = kit::button(ui, "×", kit::Button::Small).on_hover_text("Cancel (Esc)").clicked();
         });
     });
     ui.add_space(4.0);
@@ -177,7 +178,7 @@ fn form(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
                 selection::Target::ExtrudeFaces => "Use as target surface",
                 _ => "Use selection",
             };
-            use_selection = ui.add_enabled(selected.is_some(), egui::Button::new(button)).on_hover_text(tip).clicked();
+            use_selection = kit::button(ui, button, kit::Button::Enabled(selected.is_some())).on_hover_text(tip).clicked();
             match &selected {
                 Some(text) => ui.add(egui::Label::new(RichText::new(text).color(t.pick_selected)).wrap()),
                 None => ui.add(egui::Label::new(RichText::new("Pick in the viewport, or choose below").color(t.text_dim)).wrap()),
@@ -258,7 +259,7 @@ fn form(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
             d.touched.extend(out.touched);
         }
         _ => {
-            ui.add(egui::TextEdit::multiline(&mut d.text).id(form_id.with("json")).code_editor().desired_rows(6).desired_width(f32::INFINITY));
+            kit::text_area(ui, "Parameters", form_id.with("json"), &mut d.text, 6, usize::MAX);
         }
     }
     if let Some(e) = &d.error {
@@ -275,7 +276,7 @@ fn form(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
             ui.label(RichText::new(problem).small().color(t.error));
         }
     }
-    ui.collapsing(RichText::new("What it takes").size(12.0).color(t.text_dim), |ui| {
+    kit::section(ui, "fc_form_takes", "What it takes", false, |ui| {
         ui.label(RichText::new(spec.params).small().color(t.text_dim));
     });
     ui.add_space(4.0);
@@ -288,8 +289,8 @@ fn form(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
     let mut attempted = false;
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            cancel |= ui.button("Cancel").clicked();
-            let ok = ui.add_enabled(ready, egui::Button::new(RichText::new("OK").color(t.on_accent)).fill(t.accent).min_size(vec2(64.0, 0.0)));
+            cancel |= kit::button(ui, "Cancel", kit::Button::Normal).clicked();
+            let ok = ui.add_enabled_ui(ready, |ui| kit::primary_button(ui, "OK")).inner;
             // A click on the greyed OK shows every problem, beside its field.
             attempted = !ready && running.is_none() && ok.contains_pointer() && ui.input(|i| i.pointer.primary_clicked());
             run = ok
@@ -354,7 +355,7 @@ fn properties(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, kind: Def, name
         ui.label(RichText::new(kind.label().to_uppercase()).font(label_font(ui.ctx(), 12.0)));
         ui.label(RichText::new(name).size(12.0));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            deselect = ui.small_button("×").on_hover_text("Deselect").clicked();
+            deselect = kit::button(ui, "×", kit::Button::Small).on_hover_text("Deselect").clicked();
         });
     });
     ui.add_space(4.0);
@@ -364,9 +365,9 @@ fn properties(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, kind: Def, name
     let editing = kind.edit_command(&app.session.model, name);
     ui.horizontal(|ui| {
         if let Some(command) = &editing {
-            edit = ui.button("Edit…").on_hover_text(command).clicked();
+            edit = kit::button(ui, "Edit…", kit::Button::Normal).on_hover_text(command).clicked();
         }
-        delete = ui.button("Delete…").on_hover_text(format!("{} (Delete key)", kind.command("delete"))).clicked();
+        delete = kit::button(ui, "Delete…", kit::Button::Normal).on_hover_text(format!("{} (Delete key)", kind.command("delete"))).clicked();
     });
     if deselect {
         app.select_definition(None);
@@ -386,7 +387,7 @@ fn seed_card(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, edge: fieldcraft
     heading(ui, t, Level::Title, |ui| {
         ui.label(RichText::new("SEED").font(label_font(ui.ctx(), 12.0)));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            deselect = ui.small_button("×").on_hover_text("Deselect").clicked();
+            deselect = kit::button(ui, "×", kit::Button::Small).on_hover_text("Deselect").clicked();
         });
     });
     ui.add_space(4.0);
@@ -394,8 +395,8 @@ fn seed_card(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, edge: fieldcraft
     ui.add_space(6.0);
     let (mut edit, mut delete) = (false, false);
     ui.horizontal(|ui| {
-        edit = ui.button("Edit…").on_hover_text("mesh.seed.edge").clicked();
-        delete = ui.button("Delete").on_hover_text("mesh.seed.clear (undo brings it back)").clicked();
+        edit = kit::button(ui, "Edit…", kit::Button::Normal).on_hover_text("mesh.seed.edge").clicked();
+        delete = kit::button(ui, "Delete", kit::Button::Normal).on_hover_text("mesh.seed.clear (undo brings it back)").clicked();
     });
     let target = crate::menu::Target::Seed(edge);
     if deselect {
@@ -432,7 +433,7 @@ fn mesh_card(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
     heading(ui, t, Level::Title, |ui| {
         ui.label(RichText::new("MESH").font(label_font(ui.ctx(), 12.0)));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            deselect = ui.small_button("×").on_hover_text("Deselect").clicked();
+            deselect = kit::button(ui, "×", kit::Button::Small).on_hover_text("Deselect").clicked();
         });
     });
     ui.add_space(4.0);
@@ -451,7 +452,7 @@ fn mesh_card(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
             ui.label(RichText::new(command.as_str()).size(11.0).color(t.text_dim));
         });
         property_grid(ui, t, &format!("fc_mesh_made_{i}"), rows);
-        if ui.button("Edit…").on_hover_text(format!("{command}: its form with these parameters")).clicked() {
+        if kit::button(ui, "Edit…", kit::Button::Normal).on_hover_text(format!("{command}: its form with these parameters")).clicked() {
             edit = Some((command.clone(), params.clone()));
         }
     }

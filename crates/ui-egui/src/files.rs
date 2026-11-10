@@ -1362,7 +1362,7 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
                         }
                         ui.label(egui::RichText::new(text).color(t.overlay_text));
                         if app.loading.is_some() {
-                            cancel = ui.button("Cancel").clicked();
+                            cancel = kit::button(ui, "Cancel", kit::Button::Normal).clicked();
                         }
                     });
                     if let Some(f) = fraction {

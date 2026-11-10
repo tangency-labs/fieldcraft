@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 use crate::ModelApp;
 use crate::results::number;
 use crate::theme::Tokens;
+use solidcraft_ui_kit as kit;
 
 const GRAPH_POINTS: usize = 400;
 const OVERLAY_POINTS: usize = 256;
@@ -205,7 +206,7 @@ pub fn controls(app: &mut ModelApp, view: &crate::results::Plot, ui: &mut egui::
     ui.horizontal(|ui| {
         ui.label(RichText::new("Path Plot").strong());
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            close = ui.small_button("×").on_hover_text("Close path plot").clicked();
+            close = kit::button(ui, "×", kit::Button::Small).on_hover_text("Close path plot").clicked();
         });
     });
     if close {
@@ -217,7 +218,8 @@ pub fn controls(app: &mut ModelApp, view: &crate::results::Plot, ui: &mut egui::
     let mut sample = false;
     let mut export = false;
     ui.add_enabled_ui(!busy, |ui| {
-        egui::ComboBox::from_id_salt("fc_path_step").selected_text(&editor.step).width(ui.available_width() - 8.0).show_ui(ui, |ui| {
+        let current = editor.step.clone();
+        kit::bounded_dropdown_menu(ui, "fc_path_step", &current, ui.available_width() - 8.0, |ui| {
             for step in app.session.solved_steps() {
                 if ui.selectable_label(editor.step == step, step).clicked() {
                     editor.step = step.to_owned();
@@ -234,7 +236,7 @@ pub fn controls(app: &mut ModelApp, view: &crate::results::Plot, ui: &mut egui::
         if !available.contains(&editor.field) {
             editor.field = available.first().copied().unwrap_or(Field::Displacement);
         }
-        egui::ComboBox::from_id_salt("fc_path_field").selected_text(editor.field.label()).width(ui.available_width() - 8.0).show_ui(ui, |ui| {
+        kit::bounded_dropdown_menu(ui, "fc_path_field", editor.field.label(), ui.available_width() - 8.0, |ui| {
             for field in available {
                 ui.selectable_value(&mut editor.field, field, field.label());
             }
@@ -256,7 +258,7 @@ pub fn controls(app: &mut ModelApp, view: &crate::results::Plot, ui: &mut egui::
                             point[k] = stored;
                         }
                     }
-                    if ui.small_button("×").on_hover_text("Remove point").clicked() {
+                    if kit::button(ui, "×", kit::Button::Small).on_hover_text("Remove point").clicked() {
                         remove = Some(i);
                     }
                 });
@@ -266,10 +268,10 @@ pub fn controls(app: &mut ModelApp, view: &crate::results::Plot, ui: &mut egui::
             editor.points.remove(i);
         }
         ui.horizontal(|ui| {
-            if ui.add_enabled(editor.points.len() < fieldcraft_engine::path::MAX_POINTS, egui::Button::new("Add point")).clicked() {
+            if kit::button(ui, "Add point", kit::Button::Enabled(editor.points.len() < fieldcraft_engine::path::MAX_POINTS)).clicked() {
                 editor.points.push(editor.points.last().copied().unwrap_or([0.0; 3]));
             }
-            ui.checkbox(&mut editor.picking, "Pick surface points")
+            kit::checkbox(ui, "Pick surface points", &mut editor.picking)
                 .on_hover_text("Click the visible mesh to add reference-coordinate points, including on deformed and curved element faces.");
         });
         if editor.picking && editor.step != view.view.step {
@@ -291,7 +293,7 @@ pub fn controls(app: &mut ModelApp, view: &crate::results::Plot, ui: &mut egui::
                 let frames = stored_frames(result, editor.field);
                 if frames > 0 {
                     let mut chosen = editor.frame.is_some();
-                    ui.checkbox(&mut chosen, "Stored frame (otherwise final)");
+                    kit::checkbox(ui, "Stored frame (otherwise final)", &mut chosen);
                     if chosen {
                         let frame = editor.frame.get_or_insert(frames.saturating_sub(1));
                         ui.add(egui::DragValue::new(frame).range(0..=frames.saturating_sub(1)));
@@ -305,8 +307,8 @@ pub fn controls(app: &mut ModelApp, view: &crate::results::Plot, ui: &mut egui::
             }
         }
         ui.horizontal(|ui| {
-            sample = ui.add_enabled(editor.points.len() >= 2, egui::Button::new("Sample path")).clicked();
-            export = ui.add_enabled(editor.points.len() >= 2, egui::Button::new("Export CSV…")).clicked();
+            sample = kit::button(ui, "Sample path", kit::Button::Enabled(editor.points.len() >= 2)).clicked();
+            export = kit::button(ui, "Export CSV…", kit::Button::Enabled(editor.points.len() >= 2)).clicked();
         });
     });
     if let Some(plot) = app.session.path_plot.as_ref() {
