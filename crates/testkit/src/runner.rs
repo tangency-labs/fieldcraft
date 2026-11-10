@@ -863,19 +863,32 @@ mod tests {
     }
 
     /// The constrained Delaunay tetrahedralization passes the gate on parts that exercise each
-    /// of its stages: an assembly whose rounding needs a few-ulp repair, cavities refilled by
-    /// gift-wrapping, and a holed plate.
+    /// of its stages: cavities refilled by gift-wrapping, and a holed plate. The raw CDT is exact
+    /// on its input, so its rounded tetrahedra pass the gate only when the input allows it: the
+    /// bolted assembly's placed copy of the clamp (SolidCraft v0.40) has a cylinder side whose
+    /// ruling ends differ by an ulp after the placement (x 71.97035241248260 against …261), so one
+    /// quad of the strip folds inward by an ulp and the exact CDT fills it with a tetrahedron of
+    /// zero rounded volume. The assembly, whose rounding also needs the few-ulp repair, is held
+    /// to the full pipeline instead: no flat or inverted tetrahedron after improvement.
     #[test]
     fn cdt_meshes_corpus_parts() {
         let mut parts = corpus::parts().unwrap();
-        parts.retain(|p| ["bolted-assembly", "thin-wall-enclosure", "analytic-plate-hole"].contains(&p.name.as_str()));
-        assert_eq!(parts.len(), 3);
+        parts.retain(|p| ["thin-wall-enclosure", "analytic-plate-hole"].contains(&p.name.as_str()));
+        assert_eq!(parts.len(), 2);
         for part in &parts {
             let (loaded, _) = load(part).unwrap();
             let cells = TetCdt.run(&loaded).unwrap_or_else(|e| panic!("{}: {}", part.name, e.message)).cells;
             assert_eq!(cells[3], "pass", "{}: {cells:?}", part.name);
             assert!(cells[0].parse::<usize>().unwrap() > 0);
         }
+        let mut parts = corpus::parts().unwrap();
+        parts.retain(|p| p.name == "bolted-assembly");
+        let (loaded, _) = load(&parts[0]).unwrap();
+        let cdt = TetCdt.run(&loaded).unwrap_or_else(|e| panic!("bolted-assembly: {}", e.message)).cells;
+        assert!(cdt[0].parse::<usize>().unwrap() > 0, "{cdt:?}");
+        let q = TetQualityStage.run(&loaded).unwrap_or_else(|e| panic!("bolted-assembly: {}", e.message));
+        assert_eq!(q.cells[5], "pass", "{:?}", q.cells);
+        assert_eq!(q.validity.as_ref().map(validity::Report::total), Some(0), "{:?}", q.cells);
     }
 
     /// The corpus as a regression gate: every part's stages come out as its fixture froze them,
