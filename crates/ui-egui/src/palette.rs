@@ -159,7 +159,10 @@ pub fn command_line(app: &mut ModelApp, ui: &mut egui::Ui) {
                 let width = (ui.available_width() * 0.4).clamp(MIN_LINE_W, MAX_LINE_W);
                 let hint = if app.command_line.is_empty() { placeholder(ui, width) } else { "" };
                 let r = ui.add(
-                    egui::TextEdit::singleline(&mut app.command_line).id(egui::Id::new("fc_command_line_text")).hint_text(hint).desired_width(width),
+                    egui::TextEdit::singleline(&mut app.command_line)
+                        .id(egui::Id::unique("fc_command_line_text"))
+                        .hint_text(hint)
+                        .desired_width(width),
                 );
                 if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     let line = std::mem::take(&mut app.command_line);
@@ -201,7 +204,7 @@ pub fn popup(app: &mut ModelApp, ctx: &egui::Context) {
     let mut open = true;
     let center = ctx.content_rect().center();
     let r = crate::frame::window(ctx, "Search commands", crate::frame::Width::Normal)
-        .id(egui::Id::new("fc_search"))
+        .id(egui::Id::unique("fc_search"))
         .pivot(Align2::CENTER_TOP)
         .fixed_pos(pos2(center.x, 140.0))
         .fixed_size(vec2(440.0, 380.0))
@@ -209,7 +212,7 @@ pub fn popup(app: &mut ModelApp, ctx: &egui::Context) {
         .show(ctx, |ui| {
             let r = ui.add(
                 egui::TextEdit::singleline(&mut app.palette_text)
-                    .id(egui::Id::new("fc_search_text"))
+                    .id(egui::Id::unique("fc_search_text"))
                     .hint_text("command name, id or what it does")
                     .desired_width(f32::INFINITY),
             );
@@ -245,7 +248,7 @@ pub fn popup(app: &mut ModelApp, ctx: &egui::Context) {
                         FontId::proportional(11.0),
                         t.text_dim,
                     );
-                    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Run as typed"));
+                    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Run as typed"));
                     if resp.on_hover_text("Run the command with these parameters").clicked() {
                         run_typed = true;
                     }
@@ -280,7 +283,7 @@ pub fn popup(app: &mut ModelApp, ctx: &egui::Context) {
                         (None, None) => h.place.clone(),
                     };
                     p.text(pos2(rect.right() - 6.0, rect.center().y), Align2::RIGHT_CENTER, right, FontId::proportional(11.0), t.text_dim);
-                    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, h.label));
+                    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, h.label));
                     let tip = fieldcraft_engine::requirement::Unavailable::tip(h.id, missing.as_ref());
                     if resp.on_hover_text(tip).clicked() && enabled {
                         picked = Some(h.id);

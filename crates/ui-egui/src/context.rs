@@ -144,7 +144,7 @@ fn form(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
     };
     // The form's widgets are its own, keyed by this opening: the keyboard focus and typed text of
     // the form it replaces (egui drops focus from a widget no longer drawn) never land here.
-    let form_id = egui::Id::new(("fc_form", spec.id, d.opening));
+    let form_id = egui::Id::unique(("fc_form", spec.id, d.opening));
     let (mut run, mut cancel) = (false, false);
     heading(ui, t, Level::Title, |ui| {
         ui.label(RichText::new(spec.label.to_uppercase()).font(label_font(ui.ctx(), 12.0)));

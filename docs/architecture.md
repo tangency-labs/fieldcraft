@@ -35,14 +35,15 @@ crates in strictly lower layers.
 | L7 | `fieldcraft-gpu` | The viewport's GPU pipelines (lit faces, wide lines, MSAA, depth) without a window toolkit, the adapter policy (`FIELDCRAFT_GPU`: hardware GPU, software GPU, CPU rasterizer) and offscreen pictures (`fieldcraft-cli snapshot`). The window draws through the same pipelines. | started |
 | L7 | `fieldcraft-lbm-gpu` | The lattice Boltzmann solver's GPU backend: the CPU scheme's step (TRT or regularized collision with Guo forcing, the per-link wall rules, Zou–He boundaries and convective outlets, momentum exchange, and the temperature lattice with its wall conditions, buoyancy and heat exchange, and the conducting solids with their implicit interface links) as wgpu compute shaders, driven through `lbm`'s `Backend` trait from the flow the CPU prepared; single precision, one population buffer streamed in place (the AA pattern, `docs/manual/fluid/gpu.md`), deterministic per device, checked against the CPU within its tests' tolerances; opt-in per solve (`solve.fluid` with `backend: "gpu"`). Opens its device with `gpu`'s adapter policy. | started |
 | L7 | `fieldcraft-mesh-gpu` | Projection smoothing's GPU device: the coloured Winslow sweeps' interior nodes (Winslow's update or the neighbour mean, the guarded step on the scaled Jacobian and edge ratio around the node) as a wgpu compute shader, driven colour by colour through `mesh`'s sweep device while the host moves the boundary nodes on the geometry; single precision about the mesh's centre, deterministic per device, the same verdicts as the CPU's coloured sweeps with a smallest scaled Jacobian within 0.02 of theirs; opt-in per projection (`mesh.hex.project` with `backend: "gpu"`). Opens its device with `gpu`'s adapter policy. | started |
-| L7 | `fieldcraft-ui-egui`, `fieldcraft-mcp` | Desktop UI in the Craft family's layout (title bar with quick actions, workspace ribbon from the catalogue, browser, viewport with navigation bar and orientation gizmo, context panel, command search and command line, journal timeline; native file pickers as host services, background opening and solving; results display with legend and probe; offscreen capture of the whole window) and control channel requests (docs/control-protocol.md); MCP server over stdio (docs/mcp.md): tools over engine commands, a headless session or the running app through its control channel, read and write roots. | ui, mcp started |
+| L7 | `fieldcraft-ui-egui`, `fieldcraft-mcp` | Desktop UI in the Craft family's layout, drawn with SolidCraft's UI kit (title bar with quick actions, workspace ribbon from the catalogue, browser, viewport with navigation bar and orientation gizmo, context panel, command search and command line, journal timeline; native file pickers as host services, background opening and solving; results display with legend and probe; offscreen capture of the whole window) and control channel requests (docs/control-protocol.md); MCP server over stdio (docs/mcp.md): tools over engine commands, a headless session or the running app through its control channel, read and write roots. | ui, mcp started |
 | testkit | `fieldcraft-testkit` | Test tooling, a dev-dependency only: the meshing test corpus (`tests/corpus/*/recipe.json`, analytic shapes) and its runner (`cargo xtask corpus`). | started |
 | apps | `fieldcraft`, `fieldcraft-cli`, `fieldcraft-web` | Desktop, command line, browser (docs/web.md). | started |
 
 Rules beyond the layer order:
 - Nothing below L7 uses egui, eframe, winit, wgpu or rfd.
 - Only `fieldcraft-geometry` uses `solidcraft-*` and `solidcore*`, pinned by rev in the workspace `Cargo.toml`
-  ("SolidCraft pin" below).
+  ("SolidCraft pin" below). One exception (owner decision, 2026-11-10): `fieldcraft-ui-egui` uses
+  SolidCraft's UI kit, `solidcraft-ui-kit` and `solidcraft-theme`, and nothing else of SolidCraft's.
 - Everything below the apps builds for `wasm32-unknown-unknown`.
 - `fieldcraft-geometry`'s non-default `scripts` feature builds designs from SolidCraft command
   scripts (`script_design`, through `solidcraft-engine`) for the test corpus; the library opens
@@ -58,11 +59,12 @@ modelling kernel is solidcore (Apache-2.0, a Rust port of NVIDIA's SMLib), which
 truck crates; SolidCraft vendors it in its repository (`solidcore/`). SolidCraft's API takes and
 gives solidcore's records (`Vec3`, `Plane`, `Region2`, …), so `fieldcraft-geometry` also depends
 on `solidcore-record`, from SolidCraft's repository at the same rev: bump both together, or the
-build carries two copies of it whose types do not match. SolidCraft's `[patch.crates-io]` does not reach dependents;
-the workspace repeats the patches its desktop app needs (`egui-wgpu`: MSAA clamped to what the
-device supports, 1x on OpenGL adapters, so the 4x never fails pipeline validation at start;
-`winit`; `accesskit_macos`) from the last SolidCraft release on FieldCraft's egui line (v0.30.1,
-egui 0.36), and moves them when FieldCraft moves to SolidCraft's egui line.
+build carries two copies of it whose types do not match. The desktop UI draws with SolidCraft's UI
+kit (`solidcraft-ui-kit`, and the `solidcraft-theme` tokens it draws from) at the same rev, so
+FieldCraft is on SolidCraft's egui line (0.37) and moves with it. SolidCraft's `[patch.crates-io]`
+does not reach dependents; the workspace repeats the patches its desktop app needs (`egui-wgpu`:
+MSAA clamped to what the device supports, 1x on OpenGL adapters, so the 4x never fails pipeline
+validation at start; `winit`) from the same rev.
 
 The pin decides which designs FieldCraft opens: SolidCraft's reader migrates every older design
 format and refuses a newer one, and SolidCraft releases often raise the format. A design newer

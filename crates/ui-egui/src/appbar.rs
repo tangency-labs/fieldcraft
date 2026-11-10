@@ -3,10 +3,10 @@
 //! version; on Windows and Linux the caption buttons ([`crate::titlebar`]).
 //!
 //! Layout follows SolidCraft's `toolbar::app_bar` (MIT OR Apache-2.0), see ATTRIBUTION.md; the
-//! quick-action buttons are craft-ui `IconButton`s and the document tab a craft-ui `Tab`.
+//! buttons and the document tab are drawn as the kit's application bar draws them
+//! (`solidcraft_ui_kit::app_bar`).
 
-use craft_ui::buttons::{ButtonVisuals, IconButton, IconButtonStyle};
-use egui::{Align2, Color32, CornerRadius, FontId, Rect, Sense, Stroke, Vec2, pos2, vec2};
+use egui::{Align2, Color32, FontId, Rect, Sense, Stroke, Vec2, pos2, vec2};
 use serde_json::json;
 
 use crate::ModelApp;
@@ -45,19 +45,6 @@ impl Quick {
             Quick::Theme => "app_bar:theme",
             Quick::Help => "app_bar:help",
         }
-    }
-}
-
-/// The quick actions' look: flat on the dark bar, lighter under the pointer.
-fn button_style(t: &Tokens) -> IconButtonStyle {
-    let normal = ButtonVisuals { fill: Color32::TRANSPARENT, stroke: Stroke::NONE, icon: t.app_bar_text };
-    IconButtonStyle {
-        normal,
-        hovered: ButtonVisuals { fill: Color32::from_white_alpha(30), ..normal },
-        pressed: Some(ButtonVisuals { fill: Color32::from_white_alpha(18), ..normal }),
-        selected: ButtonVisuals { fill: Color32::from_white_alpha(40), ..normal },
-        corner_radius: CornerRadius::same(4),
-        focus_stroke: Stroke::new(1.0, t.accent),
     }
 }
 
@@ -150,7 +137,6 @@ fn fullscreen(ctx: &egui::Context) -> bool {
 
 pub fn app_bar(app: &mut ModelApp, ui: &mut egui::Ui) {
     let t = Tokens::get(app.ui.dark);
-    let style = button_style(&t);
     let mut anchors: Vec<(Quick, Rect)> = Vec::new();
     egui::Panel::top("fc_appbar").exact_size(HEIGHT).show_separator_line(false).frame(egui::Frame::NONE.fill(t.app_bar)).show(ui, |ui| {
         let r = ui.max_rect();
@@ -188,7 +174,7 @@ pub fn app_bar(app: &mut ModelApp, ui: &mut egui::Ui) {
         ];
         let mut clicked = None;
         for ((q, icon, tip, enabled, selected), rect) in actions.into_iter().zip(lay.quick).chain(tools.into_iter().zip(lay.tools)) {
-            if quick_button(app, ui, &style, q.region(), icon, rect, &tip, enabled, selected) {
+            if quick_button(app, ui, q.region(), icon, rect, &tip, enabled, selected) {
                 clicked = Some(q);
             }
             anchors.push((q, rect));
@@ -199,7 +185,7 @@ pub fn app_bar(app: &mut ModelApp, ui: &mut egui::Ui) {
         // piece listed in the tooltip.
         let missing = app.unavailable("solve.run");
         let can = missing.is_none() && !busy;
-        let resp = ui.interact(solve, ui.id().with("fc_solve"), if can { Sense::click() } else { Sense::hover() });
+        let resp = ui.interact(solve, ui.scope_id().with("fc_solve"), if can { Sense::click() } else { Sense::hover() });
         let fill = if resp.hovered() && can {
             t.accent_hover
         } else if can {
@@ -224,12 +210,12 @@ pub fn app_bar(app: &mut ModelApp, ui: &mut egui::Ui) {
         }
         let head = if missing.is_some() { "Solve: not ready yet (or try Help › Samples)" } else { "Solve every step and show the results" };
         let tip = fieldcraft_engine::requirement::Unavailable::tip(head, missing.as_ref());
-        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, can, "Solve"));
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, can, "Solve"));
         if resp.on_hover_text(tip).clicked() && can {
             clicked = Some(Quick::Solve);
         }
         anchors.push((Quick::Solve, solve));
-        // The model's document tab, joined to the ribbon below it, centred in its room.
+        // The model's document tab, centred in its room.
         let migrated = app.session.migrated_from.map(|n| format!(" (from format {n})")).unwrap_or_default();
         let label = format!("{}{migrated}{}", app.model_name(), if app.session.is_dirty() { " •" } else { "" });
         let text_w = ui.painter().layout_no_wrap(label.clone(), FontId::proportional(13.0), t.text).size().x;
@@ -237,7 +223,7 @@ pub fn app_bar(app: &mut ModelApp, ui: &mut egui::Ui) {
         let tab_w = (text_w + 40.0).clamp(120.0, 260.0).min((room_r - room_l).max(0.0));
         let tab_x = (r.center().x - tab_w / 2.0).clamp(room_l, (room_r - tab_w).max(room_l));
         if tab_w > 40.0 {
-            let tab = Rect::from_min_size(pos2(tab_x, r.top() + 5.0), vec2(tab_w, r.height() - 5.0));
+            let tab = Rect::from_min_size(pos2(tab_x, r.center().y - 13.0), vec2(tab_w, 26.0));
             let mut tip = app.session.path.clone().unwrap_or_else(|| "Not saved yet".into());
             if let Some(n) = app.session.migrated_from {
                 tip.push_str(&format!("\nOpened from a format {n} file: the first save keeps that file as a copy beside it"));
@@ -245,18 +231,19 @@ pub fn app_bar(app: &mut ModelApp, ui: &mut egui::Ui) {
                     tip.push_str(&format!("\n{note}"));
                 }
             }
-            craft_ui::tabs::Tab::new(egui::Id::new("fc_document_tab"), &label, true).show_at(ui, tab, |ui, resp| {
-                ui.painter().rect_filled(tab, CornerRadius { nw: 5, ne: 5, sw: 0, se: 0 }, t.toolbar);
-                let clip = tab.shrink2(vec2(10.0, 0.0));
-                ui.painter().with_clip_rect(clip).text(
-                    pos2(tab.left() + 14.0, tab.center().y),
-                    Align2::LEFT_CENTER,
-                    &label,
-                    FontId::proportional(13.0),
-                    t.text,
-                );
-                let _ = resp.clone().on_hover_text(&tip);
-            });
+            let resp = ui.interact(tab, egui::Id::unique("fc_document_tab"), Sense::hover());
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Tab, true, true, &label));
+            let k = solidcraft_theme::Tokens::get();
+            solidcraft_ui_kit::app_bar::tab_shape(ui.painter(), &k, tab, true, resp.hovered());
+            let clip = tab.shrink2(vec2(10.0, 0.0));
+            ui.painter().with_clip_rect(clip).text(
+                pos2(tab.left() + 14.0, tab.center().y),
+                Align2::LEFT_CENTER,
+                &label,
+                FontId::proportional(k.font_button),
+                k.app_bar_text,
+            );
+            let _ = resp.on_hover_text(&tip);
             app.place("document_tab", tab);
         }
         ui.painter().text(
@@ -300,28 +287,17 @@ pub fn app_bar(app: &mut ModelApp, ui: &mut egui::Ui) {
 
 /// One quick action: its icon on the dark bar, dimmed when it cannot run now. `true` when clicked.
 #[allow(clippy::too_many_arguments)]
-fn quick_button(
-    app: &mut ModelApp,
-    ui: &mut egui::Ui,
-    style: &IconButtonStyle,
-    key: &str,
-    icon: &'static str,
-    rect: Rect,
-    tip: &str,
-    enabled: bool,
-    selected: bool,
-) -> bool {
-    let resp = ui
-        .scope_builder(egui::UiBuilder::new().max_rect(rect).id_salt(("fc_quick", key)), |ui| {
-            ui.add_enabled_ui(enabled, |ui| {
-                IconButton::new(tip, rect.size(), style).selected(selected).show(ui, |_, _, _| {}).on_hover_text(tip).on_disabled_hover_text(tip)
-            })
-            .inner
-        })
-        .inner;
+fn quick_button(app: &mut ModelApp, ui: &mut egui::Ui, key: &str, icon: &'static str, rect: Rect, tip: &str, enabled: bool, selected: bool) -> bool {
+    // As the kit's application bar draws its buttons (`solidcraft_ui_kit::app_bar`).
+    let k = solidcraft_theme::Tokens::get();
+    let resp = ui.interact(rect, ui.scope_id().with(("fc_quick", key)), if enabled { egui::Sense::click() } else { egui::Sense::hover() });
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, enabled, selected, tip));
+    if selected || (enabled && (resp.hovered() || resp.has_focus())) {
+        ui.painter().rect_filled(rect, k.radius_sm, if selected { k.app_bar_hover_strong } else { k.app_bar_hover_button });
+    }
     let tint = if enabled { Color32::WHITE } else { Color32::from_white_alpha(90) };
     icons::paint_tinted(app, ui, icon, rect.shrink(4.0), Look::AppBar, tint);
-    enabled && resp.clicked()
+    enabled && resp.on_hover_text(tip).clicked()
 }
 
 /// The shortcut text with this platform's command key.

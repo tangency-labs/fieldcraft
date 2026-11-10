@@ -366,12 +366,12 @@ type FluidNote = (Option<(u64, String)>, Option<(String, Option<String>)>);
 
 /// A screenshot asked for over the control channel.
 struct Shot {
-    token: u64,
     path: Option<String>,
     reply: Sender<Value>,
     /// Frames waited so far: the request's own changes get drawn before the picture is taken.
     frames: u32,
-    requested: bool,
+    /// Where the presented frame arrives, once it is asked for.
+    image: Option<inbox::Inbox<std::sync::Arc<egui::ColorImage>>>,
     /// App time after which the request is answered with an error.
     deadline: f64,
 }
@@ -457,7 +457,6 @@ pub struct ModelApp {
     pub synthetic_drops: Vec<String>,
     control_rx: Option<inbox::Inbox<ControlRequest>>,
     shots: Vec<Shot>,
-    shot_token: u64,
     /// The offscreen context `ui.capture` draws the window with (made on first use).
     offscreen: Option<Box<capture::Offscreen>>,
     /// The app time (seconds) of the current frame.
@@ -597,7 +596,6 @@ impl ModelApp {
             synthetic_drops: Vec::new(),
             control_rx: None,
             shots: Vec::new(),
-            shot_token: 0,
             offscreen: None,
             now: 0.0,
             quit_requested: false,
@@ -2434,9 +2432,8 @@ impl ModelApp {
                     let _ = req.reply.send(json!({control::PENDING: true}));
                 }
                 control::Outcome::Screenshot { path } => {
-                    self.shot_token = self.shot_token.wrapping_add(1);
                     let deadline = self.now + SHOT_TIMEOUT;
-                    self.shots.push(Shot { token: self.shot_token, path, reply: req.reply.clone(), frames: 0, requested: false, deadline });
+                    self.shots.push(Shot { path, reply: req.reply.clone(), frames: 0, image: None, deadline });
                 }
             }
             ctx.request_repaint();
@@ -2450,22 +2447,12 @@ impl ModelApp {
         if self.shots.is_empty() {
             return;
         }
-        let arrived: Vec<(u64, std::sync::Arc<egui::ColorImage>)> = ctx.input(|i| {
-            i.raw
-                .events
-                .iter()
-                .filter_map(|e| match e {
-                    egui::Event::Screenshot { user_data, image, .. } => {
-                        user_data.data.as_ref().and_then(|d| d.downcast_ref::<u64>()).map(|t| (*t, image.clone()))
-                    }
-                    _ => None,
-                })
-                .collect()
-        });
-        for (token, image) in arrived {
-            if let Some(i) = self.shots.iter().position(|s| s.token == token) {
-                let shot = self.shots.remove(i);
-                let _ = shot.reply.send(control::save_screenshot(&image, shot.path.as_deref()));
+        for shot in std::mem::take(&mut self.shots) {
+            match shot.image.as_ref().and_then(|rx| rx.try_recv().ok()) {
+                Some(image) => {
+                    let _ = shot.reply.send(control::save_screenshot(&image, shot.path.as_deref()));
+                }
+                None => self.shots.push(shot),
             }
         }
         let now = self.now;
@@ -2478,9 +2465,14 @@ impl ModelApp {
         }
         self.shots.retain_mut(|s| {
             s.frames += 1;
-            if !s.requested && s.frames >= 3 {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::new(s.token)));
-                s.requested = true;
+            if s.image.is_none() && s.frames >= 3 {
+                let (tx, rx) = inbox::channel();
+                let repaint = ctx.clone();
+                ctx.request_screenshot(move |image| {
+                    let _ = tx.send(image);
+                    repaint.request_repaint();
+                });
+                s.image = Some(rx);
             }
             true
         });
@@ -3518,6 +3510,7 @@ mod tests {
                         delta: egui::vec2(0.0, -60.0),
                         phase: egui::TouchPhase::Move,
                         modifiers: Default::default(),
+                        source: egui::MouseWheelSource::Wheel,
                     };
                     frame(&mut app, vec![egui::Event::PointerMoved(first), wheel]);
                     frame(&mut app, vec![]);

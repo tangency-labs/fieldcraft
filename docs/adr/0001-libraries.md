@@ -18,6 +18,17 @@ meshes from SolidCraft's tessellation, and reads face-tagged meshes SolidCraft e
 exchange files (STEP, which SolidCraft's kernel already reads) can be added as secondary inputs
 through the same crate. Only `fieldcraft-geometry` may depend on SolidCraft.
 
+**Desktop UI: SolidCraft's UI kit** (`solidcraft-ui-kit` and the `solidcraft-theme` token contract
+it draws from; MIT OR Apache-2.0, same pinned rev). *Decided 2026-11-10 (owner):* the desktop UI
+draws its windows, confirmations, menus, form rows, fields and buttons with the kit instead of
+FieldCraft's adapted copies of SolidCraft's widgets, so the two apps share one implementation and
+FieldCraft follows SolidCraft's egui line. FieldCraft installs its own tokens (its violet accent on
+SolidCraft's chrome) and keeps what is its own: the viewport, mesh, element, results and setup
+colours. `fieldcraft-ui-egui` is the only crate that may use them (`cargo xtask layers`); it uses
+nothing else of SolidCraft's. The kit builds for `wasm32-unknown-unknown`, so the browser app keeps
+the same UI. craft-ui (storytold/craft-libs), used before for tabs, icon buttons and widget states,
+is no longer a dependency.
+
 **Meshing: our own**, implemented from published papers (`docs/meshing/literature.md`).
 Robust predicates follow Shewchuk's adaptive-precision arithmetic (the paper; his reference
 `predicates.c` is public domain). A permissive crate may be adopted instead after review; record

@@ -189,12 +189,12 @@ pub fn timeline(app: &mut ModelApp, ui: &mut egui::Ui) {
         ] {
             let br = Rect::from_center_size(pos2(x + 11.0, r.center().y), Vec2::splat(22.0));
             let enabled = target != done && target >= oldest && target <= done + redo;
-            let resp = ui.interact(br, ui.id().with(("fc_transport", what)), if enabled { Sense::click() } else { Sense::hover() });
+            let resp = ui.interact(br, ui.scope_id().with(("fc_transport", what)), if enabled { Sense::click() } else { Sense::hover() });
             if resp.hovered() && enabled {
                 p.rect_filled(br, 3.0, t.hover);
             }
             transport_glyph(&p, br.center(), what, if enabled { t.icon } else { t.border });
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, tip));
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, tip));
             if resp.on_hover_text(tip).clicked() && enabled {
                 roll = Some(target);
             }
@@ -234,7 +234,7 @@ pub fn timeline(app: &mut ModelApp, ui: &mut egui::Ui) {
                     }
                     let undone = item.start >= done;
                     let reachable = item.end >= oldest;
-                    let resp = ui.interact(br, ui.id().with(("fc_journal", k)), if reachable { Sense::click() } else { Sense::hover() });
+                    let resp = ui.interact(br, ui.scope_id().with(("fc_journal", k)), if reachable { Sense::click() } else { Sense::hover() });
                     let bg = if resp.hovered() && reachable { t.hover } else { t.timeline_item };
                     p.rect(br, 3.0, bg, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
                     let icon = fieldcraft_engine::catalogue::entry_of(&item.command).map_or("ui.views", |c| c.id);
@@ -250,7 +250,7 @@ pub fn timeline(app: &mut ModelApp, ui: &mut egui::Ui) {
                         p.galley(b.min + vec2(1.5, 0.5), text, t.text);
                     }
                     let label = describe(item);
-                    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, reachable, &label));
+                    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, reachable, &label));
                     if resp
                         .on_hover_ui(|ui| {
                             ui.label(tip(item, reachable));

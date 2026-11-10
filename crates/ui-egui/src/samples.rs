@@ -48,7 +48,7 @@ pub fn ordered() -> Vec<&'static Sample> {
 
 /// The id of a sample's card in the grid (tests and the control channel read its response).
 pub fn card_id(name: &str) -> egui::Id {
-    egui::Id::new(("fc_sample_card", name))
+    egui::Id::unique(("fc_sample_card", name))
 }
 
 /// A PNG decoded to an egui image; `None` when it does not decode.
@@ -69,7 +69,7 @@ fn decode(bytes: &[u8]) -> Option<egui::ColorImage> {
 
 /// The thumbnail of sample `name`, uploaded once; `None` when it has none.
 fn thumbnail(ctx: &egui::Context, name: &'static str) -> Option<TextureHandle> {
-    let key = egui::Id::new(("fc_sample_thumbnail", name));
+    let key = egui::Id::unique(("fc_sample_thumbnail", name));
     if let Some(cached) = ctx.data(|d| d.get_temp::<Option<TextureHandle>>(key)) {
         return cached;
     }

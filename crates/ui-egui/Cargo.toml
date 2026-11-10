@@ -18,7 +18,8 @@ fieldcraft-decks = { workspace = true }
 # Releases and staged installs, for the update notice (the host does the downloading).
 fieldcraft-update = { workspace = true }
 egui = { workspace = true }
-craft-ui = { workspace = true }
+solidcraft-ui-kit = { workspace = true }
+solidcraft-theme = { workspace = true }
 egui-wgpu = { workspace = true }
 fieldcraft-gpu = { workspace = true }
 serde = { workspace = true }

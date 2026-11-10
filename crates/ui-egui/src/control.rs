@@ -601,6 +601,7 @@ pub fn handle(app: &mut ModelApp, ctx: &egui::Context, req: &ControlRequest) -> 
                 delta: egui::vec2(0.0, lines as f32),
                 modifiers: Default::default(),
                 phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Wheel,
             });
             ok(Value::Null)
         }
@@ -975,8 +976,8 @@ mod tests {
                 frame(&mut app, &ctx);
             }
             let opening = app.dialog.as_ref().unwrap().opening;
-            let form = egui::Id::new(("fc_form", "model.material.create", opening));
-            let young = ctx.read_response(egui::Id::new(("fc_form", form, "elastic/young"))).expect("the Young's modulus field").rect.center();
+            let form = egui::Id::unique(("fc_form", "model.material.create", opening));
+            let young = ctx.read_response(egui::Id::unique(("fc_form", form, "elastic/young"))).expect("the Young's modulus field").rect.center();
             call_in(&mut app, &ctx, "ui.click", json!({"x": young.x, "y": young.y}));
             for _ in 0..3 {
                 frame(&mut app, &ctx);

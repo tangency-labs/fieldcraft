@@ -102,6 +102,16 @@ fn is_solidcraft_crate(name: &str) -> bool {
     name.starts_with("solidcraft-") || name == "solidcore" || name.starts_with("solidcore-")
 }
 
+/// The one exception to [`SOLIDCRAFT_GATEWAY`] (owner decision, 2026-11-10): the desktop UI draws
+/// with SolidCraft's UI kit and the token contract it draws from, and with nothing else of
+/// SolidCraft's. Short crate name, then the SolidCraft crates it may use.
+pub const SOLIDCRAFT_UI_KIT: (&str, &[&str]) = ("ui-egui", &["solidcraft-ui-kit", "solidcraft-theme"]);
+
+/// Whether `krate` (short name) may depend on the SolidCraft crate `dep`.
+fn may_use_solidcraft(krate: &str, dep: &str) -> bool {
+    krate == SOLIDCRAFT_GATEWAY || (krate == SOLIDCRAFT_UI_KIT.0 && SOLIDCRAFT_UI_KIT.1.contains(&dep))
+}
+
 /// First layer allowed to use UI crates.
 pub const UI_MIN_LAYER: u8 = 7;
 
@@ -177,7 +187,12 @@ impl std::fmt::Display for Violation {
                 write!(f, "{krate} (L{layer}) depends on UI crate `{dep}`; UI toolkits are only allowed in L{UI_MIN_LAYER}+")
             }
             Violation::SolidCraftOutsideGeometry { krate, dep } => {
-                write!(f, "{krate} depends on `{dep}`; only fieldcraft-{SOLIDCRAFT_GATEWAY} may use SolidCraft")
+                write!(
+                    f,
+                    "{krate} depends on `{dep}`; only fieldcraft-{SOLIDCRAFT_GATEWAY} may use SolidCraft (and fieldcraft-{} its UI kit: {})",
+                    SOLIDCRAFT_UI_KIT.0,
+                    SOLIDCRAFT_UI_KIT.1.join(", ")
+                )
             }
         }
     }
@@ -225,7 +240,7 @@ pub fn check(crates: &[Crate]) -> Vec<Violation> {
                         }
                     }
                 }
-            } else if is_solidcraft_crate(&d.name) && short_name(&c.name) != SOLIDCRAFT_GATEWAY {
+            } else if is_solidcraft_crate(&d.name) && !may_use_solidcraft(short_name(&c.name), &d.name) {
                 out.push(Violation::SolidCraftOutsideGeometry { krate: c.name.clone(), dep: d.name.clone() });
             } else if layer < UI_MIN_LAYER && is_ui_crate(&d.name) {
                 out.push(Violation::UiBelowUiLayer { krate: c.name.clone(), dep: d.name.clone(), layer });
@@ -353,6 +368,19 @@ mod tests {
         for kernel in ["solidcore", "solidcore-record"] {
             let v = check(&[c("fieldcraft-mesh", &[(kernel, Normal, false)])]);
             assert!(matches!(v[..], [Violation::SolidCraftOutsideGeometry { .. }]), "{kernel}");
+        }
+    }
+
+    #[test]
+    fn only_the_ui_uses_the_ui_kit_and_nothing_else_of_solidcraft() {
+        for kit in ["solidcraft-ui-kit", "solidcraft-theme"] {
+            assert!(check(&[c("fieldcraft-ui-egui", &[(kit, Normal, false)])]).is_empty(), "{kit}");
+            let v = check(&[c("fieldcraft-engine", &[(kit, Normal, false)])]);
+            assert!(matches!(v[..], [Violation::SolidCraftOutsideGeometry { .. }]), "{kit}");
+        }
+        for other in ["solidcraft-kernel", "solidcraft-ui-egui", "solidcore-record"] {
+            let v = check(&[c("fieldcraft-ui-egui", &[(other, Normal, false)])]);
+            assert!(matches!(v[..], [Violation::SolidCraftOutsideGeometry { .. }]), "{other}");
         }
     }
 
