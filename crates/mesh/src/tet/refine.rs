@@ -333,9 +333,12 @@ pub fn refine(cx: &mut TetComplex, ctx: &Context, o: &RefineOptions) -> Result<R
 }
 
 /// The feature curves of a boundary: an edge between two boundary faces is a feature edge when
-/// their tags differ or their normals turn by more than `feature_cos` (cosine). Returns the
+/// their tags differ, or when their normals turn by more than `feature_cos` (cosine) and their
+/// tag is not `smooth` (by tag; a tag past its end is not). A face whose exact surface is known
+/// is smooth inside, so a turn between two of its triangles is the tessellation's own: a needle
+/// triangle along a trim, its corners nearly in line, can even face the other way. Returns the
 /// curve table (face pairs) and the edges with their curve.
-pub fn feature_curves(cx: &TetComplex, feature_cos: f64) -> Result<(Vec<[u32; 2]>, Vec<((u32, u32), u32)>)> {
+pub fn feature_curves(cx: &TetComplex, feature_cos: f64, smooth: &[bool]) -> Result<(Vec<[u32; 2]>, Vec<((u32, u32), u32)>)> {
     // Boundary edge -> (tag, oriented normal) of each side.
     let mut sides: IdMap<(u32, u32), Vec<(u32, P)>> = IdMap::default();
     for (t, vs) in cx.live_tets() {
@@ -362,7 +365,7 @@ pub fn feature_curves(cx: &TetComplex, feature_cos: f64) -> Result<(Vec<[u32; 2]
         let [(ta, na), (tb, nb)] = s else {
             return Err(Error::Failed(format!("boundary edge {e:?} has {} faces", s.len())));
         };
-        if ta != tb || measure::dot(*na, *nb) < feature_cos {
+        if ta != tb || (measure::dot(*na, *nb) < feature_cos && !smooth.get(*ta as usize).copied().unwrap_or(false)) {
             let pair = [(*ta).min(*tb), (*ta).max(*tb)];
             let id = match index.get(&pair) {
                 Some(&id) => id,

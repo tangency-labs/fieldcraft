@@ -276,7 +276,7 @@ mod pipeline {
         };
         let s = box_surface();
         let cdt = tetrahedralize(&s, &CdtOptions::default()).unwrap();
-        let (mut cx, curve_faces) = complex_from_cdt(&s, &cdt, &QualityOptions::default()).unwrap();
+        let (mut cx, curve_faces) = complex_from_cdt(&s, &cdt, &[], &QualityOptions::default()).unwrap();
         let (geometry, size) = (Tessellation::new(&s, Vec::new()), UniformSize(5.0));
         let ctx = Context { size: &size, geometry: &geometry, curve_faces: &curve_faces };
         // A curve edge on the z = 0 side, and a face vertex beside it on that side.
@@ -330,6 +330,28 @@ mod pipeline {
         let want: Vec<f64> = biased.seeds[0].fractions(8, false).iter().map(|f| 10.0 * f).collect();
         assert_eq!(x.len(), want.len(), "{x:?}");
         assert!(x.iter().zip(&want).all(|(a, b)| (a - b).abs() < 1e-9), "{x:?} {want:?}");
+    }
+
+    /// The turns between the triangles of a face with a known exact surface are the
+    /// tessellation's, never feature curves: SolidCraft tessellates the trimmed sphere of the
+    /// sphere-on-plate part with needles along the trim that face the other way, and the curves
+    /// their folds made pinned needles the refinement could not remove (min dihedral 6.5°). A
+    /// face without its exact surface (an imported mesh) keeps its creases.
+    #[test]
+    fn a_face_with_an_exact_surface_has_no_creases_inside() {
+        use super::super::complex_from_cdt;
+        let (p, t) = uv_sphere(4, 8);
+        let p: Vec<[f64; 3]> = p.iter().map(|c| c.map(|x| 5.0 * x)).collect();
+        let s = surface(&p, &t, [0.0; 3]);
+        let faces = vec![0u32; s.triangles().len()];
+        let s = BoundarySurface::new(s.points(), s.triangles(), &faces, &SurfaceOptions::default()).unwrap();
+        let cdt = tetrahedralize(&s, &CdtOptions::default()).unwrap();
+        let o = QualityOptions { feature_angle: 30.0, ..QualityOptions::default() };
+        let (imported, curves) = complex_from_cdt(&s, &cdt, &[], &o).unwrap();
+        assert!(!imported.curve_edges().is_empty() && !curves.is_empty());
+        let sphere = [Some(AnalyticSurface::Sphere { center: [0.0; 3], radius: 5.0 })];
+        let (exact, curves) = complex_from_cdt(&s, &cdt, &sphere, &o).unwrap();
+        assert!(exact.curve_edges().is_empty() && curves.is_empty(), "{curves:?}");
     }
 
     #[test]

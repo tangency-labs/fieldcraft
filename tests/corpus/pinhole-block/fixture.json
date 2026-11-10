@@ -77,16 +77,16 @@
       "value": 0.37887294650277537
     },
     "quality.max_dihedral_deg": {
-      "band": 1.6200211161776615e-7,
-      "value": 162.00111161776613
+      "band": 1.6100829417311057e-7,
+      "value": 161.00729417311055
     },
     "quality.min_dihedral_deg": {
-      "band": 1.4527348153057613e-8,
-      "value": 14.526348153057613
+      "band": 1.7458673631790926e-8,
+      "value": 17.457673631790925
     },
     "quality.min_radius_ratio": {
-      "band": 7.165571403240573e-11,
-      "value": 0.07065571403240573
+      "band": 8.225336756345311e-11,
+      "value": 0.08125336756345311
     },
     "quality.slivers": {
       "band": 0,
@@ -98,7 +98,7 @@
     },
     "quality.tets": {
       "band": 0,
-      "value": 989042
+      "value": 1003590
     },
     "surface.enclosed_mm3": {
       "band": 0.00004991936100033778,

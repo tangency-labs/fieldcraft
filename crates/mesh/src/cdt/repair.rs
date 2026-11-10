@@ -44,7 +44,7 @@ pub(super) fn repair(points: &[[f64; 3]], tets: &mut Vec<[u32; 4]>, boundary: &m
     // The segments: boundary edges between two different input triangles (never by angle).
     // Edges inside one input triangle (between its pieces) may be flipped; the triangle stays
     // covered.
-    let (_, segments) = feature_curves(&cx, -2.0)?;
+    let (_, segments) = feature_curves(&cx, -2.0, &[])?;
     for ((a, b), c) in segments {
         cx.set_curve(a, b, Some(c));
     }
