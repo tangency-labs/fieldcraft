@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 
 use crate::ModelApp;
 use crate::browser::Def;
+use solidcraft_ui_kit as kit;
 
 /// What the menu is for.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -73,7 +74,9 @@ fn activity(app: &ModelApp, target: &Target) -> Vec<(String, bool)> {
 pub fn show(app: &ModelApp, ui: &mut egui::Ui, target: &Target) -> Option<Action> {
     let mut chosen = None;
     let mut entry = |ui: &mut egui::Ui, enabled: bool, label: &str, tip: &str, action: Action| {
-        if ui.add_enabled(enabled, egui::Button::new(label)).on_hover_text(tip).clicked() {
+        let mut row = kit::MenuItem::new(label, label, "");
+        row.enabled = enabled;
+        if row.show(ui).on_hover_text(tip).clicked() {
             chosen = Some(action);
         }
     };
@@ -109,28 +112,35 @@ pub fn show(app: &ModelApp, ui: &mut egui::Ui, target: &Target) -> Option<Action
     }
     let steps = activity(app, target);
     if !steps.is_empty() {
-        ui.menu_button("Active in step", |ui| {
-            for (step, on) in steps {
-                let mut checked = on;
-                if ui.checkbox(&mut checked, &step).on_hover_text("model.step.activate").changed() {
-                    chosen = Some(Action::Active { step, active: checked });
-                    ui.close();
+        let mut item = kit::MenuItem::new("active_in_step", "Active in step", "model.step.activate");
+        item.submenu = true;
+        kit::Menu::item_button(ui, &item, |ui| {
+            kit::scope(ui, |ui| {
+                for (step, on) in steps {
+                    let mut checked = on;
+                    if kit::checkbox(ui, &step, &mut checked).on_hover_text("model.step.activate").changed() {
+                        chosen = Some(Action::Active { step, active: checked });
+                        ui.close();
+                    }
                 }
-            }
+            });
         });
     }
-    if let Target::Def(def, _) = target {
-        ui.separator();
-        let command = def.command("delete");
-        if ui.button("Delete…").on_hover_text(format!("{command} (Delete key)")).clicked() {
-            chosen = Some(Action::Delete);
-        }
+    let delete = |ui: &mut egui::Ui, label: &str, tip: &str| {
+        kit::Menu::separator(ui);
+        let mut row = kit::MenuItem::new("delete", label, "");
+        row.danger = true;
+        row.show(ui).on_hover_text(tip).clicked()
+    };
+    if let Target::Def(def, _) = target
+        && delete(ui, "Delete…", &format!("{} (Delete key)", def.command("delete")))
+    {
+        chosen = Some(Action::Delete);
     }
-    if let Target::Seed(_) = target {
-        ui.separator();
-        if ui.button("Delete").on_hover_text("mesh.seed.clear (undo brings it back)").clicked() {
-            chosen = Some(Action::Delete);
-        }
+    if let Target::Seed(_) = target
+        && delete(ui, "Delete", "mesh.seed.clear (undo brings it back)")
+    {
+        chosen = Some(Action::Delete);
     }
     if chosen.is_some() {
         ui.close();

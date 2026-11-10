@@ -39,8 +39,6 @@ pub const COLLAPSED_WIDTH: f32 = 72.0;
 const PANEL_GAP: f32 = 2.0;
 /// The » menu's width.
 const MORE_WIDTH: f32 = 40.0;
-/// A drop-down row's height.
-const ROW_H: f32 = 24.0;
 
 /// How an entry is shown on a toolbar that may be too narrow for every panel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -245,7 +243,7 @@ pub fn toolbar(app: &mut ModelApp, ui: &mut egui::Ui) {
             if lresp.on_hover_text(format!("All {panel} commands")).clicked() {
                 app.toggle_menu(&key);
             }
-            if let Some(rect) = crate::frame::menu(app, ui, &key, lr, |app, ui| dropdown(app, ui, entries)) {
+            if let Some(rect) = crate::frame::wide_menu(app, ui, &key, lr, |app, ui| dropdown(app, ui, entries)) {
                 app.place("toolbar_dropdown", rect);
             }
             px += width;
@@ -265,7 +263,9 @@ pub fn toolbar(app: &mut ModelApp, ui: &mut egui::Ui) {
             crate::frame::menu(app, ui, "more", mr, |app, ui| {
                 for entries in &overflow {
                     let panel = entries.first().map_or("", |c| c.panel);
-                    ui.menu_button(panel, |ui| dropdown(app, ui, entries));
+                    let mut item = solidcraft_ui_kit::MenuItem::new(panel, panel, "");
+                    item.submenu = true;
+                    solidcraft_ui_kit::Menu::item_button(ui, &item, |ui| dropdown(app, ui, entries));
                 }
             });
         }
@@ -298,10 +298,10 @@ fn workspace_switcher(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, r: Rect
     if resp.on_hover_text("Change workspace").clicked() {
         app.toggle_menu("workspace");
     }
-    crate::frame::menu(app, ui, "workspace", ws, |app, ui| {
+    crate::frame::wide_menu(app, ui, "workspace", ws, |app, ui| {
         let t = Tokens::get(app.ui.dark);
         for w in Workspace::ALL {
-            let (rect, resp) = ui.allocate_exact_size(vec2(360.0, 40.0), Sense::click());
+            let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::click());
             if resp.hovered() || w == app.ui.workspace {
                 ui.painter().rect_filled(rect, 3.0, if w == app.ui.workspace { t.accent_soft } else { t.hover });
             }
@@ -342,55 +342,26 @@ fn button(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, c: &'static Capabil
 /// The rows of a panel's drop-down: every entry with its related commands under it, coming-soon
 /// entries greyed with their milestone. A click starts the row's command.
 pub fn dropdown(app: &mut ModelApp, ui: &mut egui::Ui, entries: &'static [Capability]) {
-    let t = Tokens::get(app.ui.dark);
-    let font = FontId::proportional(13.0);
-    let width = entries
-        .iter()
-        .flat_map(|c| std::iter::once(c.label).chain(c.more.iter().map(|id| crate::command_label(id))))
-        .map(|l| ui.painter().layout_no_wrap(l.to_string(), font.clone(), t.text).size().x)
-        .fold(0.0_f32, f32::max)
-        .max(140.0)
-        + 96.0;
     let mut start = None;
     for c in entries {
         let missing = app.unavailable(c.id);
         let enabled = c.command().is_some() && missing.is_none();
-        let (rect, resp) = ui.allocate_exact_size(vec2(width, ROW_H), if enabled { Sense::click() } else { Sense::hover() });
-        app.toolbar_rects.push((c.id, rect, Fit::Menu));
-        if resp.hovered() && enabled {
-            ui.painter().rect_filled(rect, 3.0, t.hover);
-        }
-        icons::paint(app, ui, c.id, Rect::from_center_size(pos2(rect.left() + 15.0, rect.center().y), Vec2::splat(18.0)), Look::of(enabled));
-        let p = ui.painter();
-        p.text(pos2(rect.left() + 32.0, rect.center().y), Align2::LEFT_CENTER, c.label, font.clone(), if enabled { t.text } else { t.text_dim });
-        if let Some(m) = c.milestone() {
-            p.text(pos2(rect.right() - 8.0, rect.center().y), Align2::RIGHT_CENTER, format!("soon · {m}"), FontId::proportional(11.0), t.text_dim);
-        }
-        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, c.label));
-        if resp.on_hover_text(Unavailable::tip(&c.tooltip(), missing.as_ref())).clicked() && enabled {
+        let soon = c.milestone().map(|m| format!("soon · {m}"));
+        let mut row = solidcraft_ui_kit::MenuItem::new(c.id, c.label, c.id);
+        row.enabled = enabled;
+        row.shortcut = soon.as_deref().unwrap_or("");
+        let resp = row.show(ui);
+        app.toolbar_rects.push((c.id, resp.rect, Fit::Menu));
+        if resp.on_hover_text(Unavailable::tip(&c.tooltip(), missing.as_ref())).clicked() {
             start = Some(c.id);
         }
+        // Its related commands (edit, delete…) follow it, without an icon.
         for id in c.more {
             let missing = app.unavailable(id);
-            let enabled = missing.is_none();
-            let (rect, resp) = ui.allocate_exact_size(vec2(width, ROW_H - 2.0), if enabled { Sense::click() } else { Sense::hover() });
-            if resp.hovered() && enabled {
-                ui.painter().rect_filled(rect, 3.0, t.hover);
-            }
-            let label = crate::command_label(id);
-            let p = ui.painter();
-            p.text(
-                pos2(rect.left() + 32.0, rect.center().y),
-                Align2::LEFT_CENTER,
-                label,
-                FontId::proportional(12.5),
-                if enabled { t.text } else { t.text_dim },
-            );
-            p.line_segment([pos2(rect.left() + 15.0, rect.top()), pos2(rect.left() + 15.0, rect.center().y)], Stroke::new(1.0, t.border));
-            p.line_segment([pos2(rect.left() + 15.0, rect.center().y), pos2(rect.left() + 25.0, rect.center().y)], Stroke::new(1.0, t.border));
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
+            let mut row = solidcraft_ui_kit::MenuItem::new(id, crate::command_label(id), "");
+            row.enabled = missing.is_none();
             let tip = Unavailable::tip(id, missing.as_ref());
-            if resp.on_hover_text(tip).clicked() && enabled {
+            if row.show(ui).on_hover_text(tip).clicked() {
                 start = Some(id);
             }
         }

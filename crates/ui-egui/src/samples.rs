@@ -149,7 +149,7 @@ pub fn rows(ui: &mut egui::Ui, t: &Tokens, open: &mut Option<&'static str>) {
                     ui.label(egui::RichText::new(sample.label).strong());
                     ui.add(egui::Label::new(egui::RichText::new(sample.about).small().color(t.text_dim)).wrap());
                 });
-                if ui.button("Open").clicked() {
+                if solidcraft_ui_kit::button(ui, "Open", solidcraft_ui_kit::Button::Small).clicked() {
                     *open = Some(sample.name);
                 }
             });

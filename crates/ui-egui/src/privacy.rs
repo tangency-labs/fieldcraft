@@ -6,11 +6,11 @@
 //! has an analytics key, and neither `FIELDCRAFT_TELEMETRY=0`, CI nor automation turned it off)
 //! and the user said yes.
 
-use egui::RichText;
 use fieldcraft_engine::usage::{self, Event, Identity, Origin};
 
 use crate::ModelApp;
-use crate::files::Prompt;
+use crate::files::{Prompt, dismissed, message, note};
+use solidcraft_ui_kit as kit;
 
 /// What is sent, event by event.
 pub const PRIVACY_URL: &str = "https://github.com/tangency-labs/fieldcraft/blob/main/docs/privacy.md";
@@ -140,85 +140,75 @@ impl ModelApp {
 
 /// The consent question and Help › Settings, when open.
 pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
-    let t = crate::theme::Tokens::get(app.ui.dark);
     match app.prompt {
         Some(Prompt::Consent) => {
-            let (mut share, mut decline, mut link, mut updates) = (false, false, false, None);
-            crate::frame::window(ctx, "Help Improve FieldCraft", crate::frame::Width::Normal).id(egui::Id::unique("fc_consent")).show(ctx, |ui| {
-                ui.label(QUESTION);
-                ui.add_space(4.0);
-                ui.label(RichText::new(DETAIL).color(t.text_dim).size(11.0));
-                ui.add_space(2.0);
-                ui.label(RichText::new("You can change this any time in Help › Settings.").color(t.text_dim).size(11.0));
-                link = ui.link("What is sent (docs/privacy.md)").on_hover_text(PRIVACY_URL).clicked();
-                if app.updates_available() {
-                    ui.add_space(4.0);
-                    updates = update_check(ui, &t, app.prefs.update_check);
-                }
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    share = ui.button("Share Anonymous Usage").clicked();
-                    decline = ui.button("Don't Share").clicked();
-                });
-            });
+            let (mut link, mut updates) = (false, None);
+            let (closed, action) =
+                crate::frame::window(egui::Id::unique("fc_consent"), "ui.help", "Help Improve FieldCraft", crate::frame::Width::Normal)
+                    .actions("Share Anonymous Usage", "Don't Share", None)
+                    .show(ctx, true, |ui| {
+                        message(ui, QUESTION);
+                        note(ui, DETAIL);
+                        note(ui, "You can change this any time in Help › Settings.");
+                        link = ui.link("What is sent (docs/privacy.md)").on_hover_text(PRIVACY_URL).clicked();
+                        if app.updates_available() {
+                            updates = update_check(ui, app.prefs.update_check);
+                        }
+                    });
             if link {
                 app.open_link(ctx, PRIVACY_URL);
             }
             if let Some(on) = updates {
                 app.set_update_prefs(on, None);
             }
-            if share {
+            if action == kit::Action::Ok {
                 app.answer_consent(true);
-            } else if decline || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            } else if dismissed(closed, action) {
                 app.answer_consent(false);
             }
         }
         Some(Prompt::Settings) => {
             let available = app.usage_available();
             let (mut sharing, mut automation) = (app.prefs.usage_sharing == Some(true), app.prefs.usage_automation);
-            let (mut close, mut link, mut updates, mut unskip, mut check) = (false, false, None, false, false);
+            let (mut link, mut updates, mut unskip, mut check) = (false, None, false, false);
             let mut units = None;
-            crate::frame::window(ctx, "Settings", crate::frame::Width::Normal).id(egui::Id::unique("fc_settings")).show(ctx, |ui| {
-                crate::frame::menu_heading(ui, &t, "UNITS");
-                units = units_choice(ui, &t, app.prefs.units.preset());
-                ui.add_space(6.0);
-                if app.updates_available() {
-                    crate::frame::menu_heading(ui, &t, "UPDATES");
-                    updates = update_check(ui, &t, app.prefs.update_check);
-                    ui.horizontal(|ui| {
-                        check = ui.button("Check Now").on_hover_text("Help › Check for Updates").clicked();
-                        if !app.prefs.update_skip.is_empty() {
-                            ui.label(RichText::new(format!("Skipping FieldCraft {}", app.prefs.update_skip)).color(t.text_dim).size(11.0));
-                            unskip = ui.small_button("Offer It Again").clicked();
-                        }
+            let (closed, action) = crate::frame::window(egui::Id::unique("fc_settings"), "ui.style", "Settings", crate::frame::Width::Normal)
+                .actions("", "Close", None)
+                .show(ctx, true, |ui| {
+                    kit::section_heading(ui, "Units");
+                    units = units_choice(ui, app.prefs.units.preset());
+                    if app.updates_available() {
+                        kit::section_heading(ui, "Updates");
+                        updates = update_check(ui, app.prefs.update_check);
+                        ui.horizontal(|ui| {
+                            check = kit::button(ui, "Check Now", kit::Button::Small).on_hover_text("Help › Check for Updates").clicked();
+                            if !app.prefs.update_skip.is_empty() {
+                                unskip = kit::button(ui, "Offer It Again", kit::Button::Small)
+                                    .on_hover_text(format!("Skipping FieldCraft {}", app.prefs.update_skip))
+                                    .clicked();
+                            }
+                        });
+                    }
+                    kit::section_heading(ui, "Privacy");
+                    ui.add_enabled_ui(available, |ui| {
+                        kit::checkbox(ui, "Share anonymous usage", &mut sharing).on_hover_text(QUESTION);
                     });
-                    ui.add_space(6.0);
-                }
-                crate::frame::menu_heading(ui, &t, "PRIVACY");
-                ui.add_enabled(available, egui::Checkbox::new(&mut sharing, "Share anonymous usage")).on_hover_text(QUESTION);
-                ui.indent("fc_usage_automation", |ui| {
-                    ui.add_enabled(available && sharing, egui::Checkbox::new(&mut automation, "Include scripts and AI agents (MCP)"))
-                        .on_hover_text("Count the commands scripts, the control channel and AI agents run, apart from yours");
-                });
-                if !available {
-                    ui.label(
-                        RichText::new(
+                    ui.add_enabled_ui(available && sharing, |ui| {
+                        ui.indent("fc_usage_automation", |ui| {
+                            kit::checkbox(ui, "Include scripts and AI agents (MCP)", &mut automation)
+                                .on_hover_text("Count the commands scripts, the control channel and AI agents run, apart from yours");
+                        });
+                    });
+                    if !available {
+                        note(
+                            ui,
                             "This build or run sends nothing: it has no analytics key, or FIELDCRAFT_TELEMETRY=0, CI or automation turned it off.",
-                        )
-                        .color(t.text_dim)
-                        .size(11.0),
-                    );
-                }
-                ui.label(RichText::new(DETAIL).color(t.text_dim).size(11.0));
-                ui.label(
-                    RichText::new("Crash reports and the log stay on this computer; Help › Report a Bug sends only what you submit.")
-                        .color(t.text_dim)
-                        .size(11.0),
-                );
-                link = ui.link("What is sent (docs/privacy.md)").on_hover_text(PRIVACY_URL).clicked();
-                ui.add_space(6.0);
-                close = ui.button("Close").clicked();
-            });
+                        );
+                    }
+                    note(ui, DETAIL);
+                    note(ui, "Crash reports and the log stay on this computer; Help › Report a Bug sends only what you submit.");
+                    link = ui.link("What is sent (docs/privacy.md)").on_hover_text(PRIVACY_URL).clicked();
+                });
             if available && (sharing != (app.prefs.usage_sharing == Some(true)) || automation != app.prefs.usage_automation) {
                 app.set_usage(sharing, automation);
             }
@@ -234,7 +224,7 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
             if link {
                 app.open_link(ctx, PRIVACY_URL);
             }
-            if close || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            if dismissed(closed, action) {
                 app.prompt = None;
             }
         }
@@ -243,38 +233,27 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
 }
 
 /// The display units' drop-down (Settings › Units); the preset chosen when it changed.
-fn units_choice(ui: &mut egui::Ui, t: &crate::theme::Tokens, current: fieldcraft_model::units::Preset) -> Option<fieldcraft_model::units::Preset> {
+fn units_choice(ui: &mut egui::Ui, current: fieldcraft_model::units::Preset) -> Option<fieldcraft_model::units::Preset> {
     use fieldcraft_model::units::Preset;
-    let mut chosen = None;
-    egui::ComboBox::from_id_salt("fc_settings_units").selected_text(current.label()).width(200.0).show_ui(ui, |ui| {
-        for p in Preset::ALL {
-            if ui.selectable_label(p == current, p.label()).clicked() && p != current {
-                chosen = Some(p);
-            }
-        }
-    });
-    ui.label(
-        RichText::new("Numbers are shown and typed in these units; a model can keep its own (Model › Units). Models are stored in SI, so nothing in them changes.")
-            .color(t.text_dim)
-            .size(11.0),
+    let labels: Vec<&str> = Preset::ALL.iter().map(|p| p.label()).collect();
+    let mut selected = Preset::ALL.iter().position(|p| *p == current).unwrap_or(0);
+    kit::choice_row(ui, "Display units", "fc_settings_units", &mut selected, &labels);
+    note(
+        ui,
+        "Numbers are shown and typed in these units; a model can keep its own (Model › Units). Models are stored in SI, so nothing in them changes.",
     );
-    chosen
+    Preset::ALL.get(selected).copied().filter(|p| *p != current)
 }
 
 /// The automatic update check's checkbox; the new value when it was clicked.
-fn update_check(ui: &mut egui::Ui, t: &crate::theme::Tokens, on: bool) -> Option<bool> {
+fn update_check(ui: &mut egui::Ui, on: bool) -> Option<bool> {
     let mut checked = on;
-    let changed = ui
-        .checkbox(&mut checked, "Check for updates automatically")
+    let changed = kit::checkbox(ui, "Check for updates automatically", &mut checked)
         .on_hover_text(
             "At start-up, at most once a day, FieldCraft asks GitHub Releases for the latest version. Nothing installs until you choose Install.",
         )
         .changed();
-    ui.label(
-        RichText::new("The check sends only the request (your IP address and the FieldCraft version reach GitHub); off means no check.")
-            .color(t.text_dim)
-            .size(11.0),
-    );
+    note(ui, "The check sends only the request (your IP address and the FieldCraft version reach GitHub); off means no check.");
     changed.then_some(checked)
 }
 

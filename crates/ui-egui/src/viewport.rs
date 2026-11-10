@@ -295,32 +295,35 @@ fn context_menu(app: &mut ModelApp, response: &egui::Response) {
     if response.secondary_clicked() {
         app.viewport.menu_target = response.interact_pointer_pos().and_then(|at| menu_target(app, at));
     }
-    response.context_menu(|ui| {
+    crate::frame::context_menu(response, |ui| {
+        use solidcraft_ui_kit as kit;
         if let Some(target) = app.viewport.menu_target.clone() {
             let Target::Def(def, name) = &target else { return };
-            ui.label(egui::RichText::new(format!("{} {name}", def.label())).strong());
+            crate::frame::menu_heading(ui, &format!("{} {name}", def.label()));
             if let Some(action) = menu::show(app, ui, &target) {
                 menu::apply(app, target, action);
                 return;
             }
-            ui.separator();
+            kit::Menu::separator(ui);
         }
         let has = !app.pick.selection.is_empty();
-        if ui
-            .add_enabled(has, egui::Button::new("Create set from selection…"))
+        if crate::frame::menu_row(ui, "selection.create_set", "Create set from selection…", None, has)
             .on_hover_text("model.set.create with the selection as members")
             .clicked()
         {
             let _ = app.create_set_from_selection();
             ui.close();
         }
-        if ui.add_enabled(has, egui::Button::new("Clear selection")).on_hover_text("Esc").clicked() {
+        if crate::frame::menu_row(ui, "selection.clear", "Clear selection", Some("Esc"), has).clicked() {
             app.clear_selection();
             ui.close();
         }
-        ui.separator();
+        kit::Menu::separator(ui);
         for f in Filter::ALL {
-            if ui.radio(app.pick.filter == f, format!("Select {}", f.label().to_lowercase())).clicked() {
+            let label = format!("Select {}", f.label().to_lowercase());
+            let mut row = kit::MenuItem::new(f.label(), &label, "");
+            row.checked = Some(app.pick.filter == f);
+            if row.show(ui).clicked() {
                 app.pick.filter = f;
                 ui.close();
             }
@@ -766,42 +769,52 @@ fn nav_bar(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect, t: &Tokens) {
     }
     if let Some(br) = style_button {
         crate::frame::settings_menu(app, ui, "view", br, |app, ui| {
-            let t = Tokens::get(app.ui.dark);
-            crate::frame::menu_heading(ui, &t, "STYLE");
+            use solidcraft_ui_kit as kit;
+            crate::frame::menu_heading(ui, "Style");
             for s in Style::ALL {
-                if ui.radio(app.ui.style == s, s.label()).clicked() {
+                let mut row = kit::MenuItem::new(s.label(), s.label(), "");
+                row.checked = Some(app.ui.style == s);
+                if row.show(ui).clicked() {
                     app.ui.style = s;
                 }
             }
-            ui.separator();
-            crate::frame::menu_heading(ui, &t, "SHOW");
-            ui.checkbox(&mut app.ui.show_geometry, "Geometry");
-            ui.checkbox(&mut app.ui.show_mesh, "Mesh");
-            ui.checkbox(&mut app.ui.show_nodes, "Nodes");
-            ui.checkbox(&mut app.ui.show_loads, "Loads & BCs");
-            ui.checkbox(&mut app.ui.show_interactions, "Interactions");
-            let (lo, hi) = fieldcraft_render::glyphs::SIZE_RANGE;
-            ui.add(egui::Slider::new(&mut app.ui.symbol_size, lo..=hi).step_by(1.0).suffix(" pt").text("Symbol size"))
-                .on_hover_text("The size of boundary condition, load and interaction symbols on screen, at any zoom");
-            ui.separator();
-            ui.checkbox(&mut app.ui.show_tree, "Browser");
-            ui.checkbox(&mut app.ui.show_timeline, "Timeline");
-            ui.separator();
-            crate::frame::menu_heading(ui, &t, "NAVIGATION");
-            let current = navigation::preset(&app.ui.nav_preset);
-            egui::ComboBox::from_id_salt("fc_nav_preset")
-                .selected_text(current.label)
-                .show_ui(ui, |ui| {
-                    for p in &navigation::NAV_PRESETS {
-                        if ui.selectable_label(p.id == current.id, p.label).on_hover_text(p.help).clicked() {
-                            app.ui.nav_preset = p.id.into();
-                            app.ui.reverse_zoom = p.reverse_zoom;
-                        }
-                    }
+            crate::frame::menu_separator(ui);
+            crate::frame::menu_heading(ui, "Show");
+            kit::scope(ui, |ui| {
+                kit::checkbox(ui, "Geometry", &mut app.ui.show_geometry);
+                kit::checkbox(ui, "Mesh", &mut app.ui.show_mesh);
+                kit::checkbox(ui, "Nodes", &mut app.ui.show_nodes);
+                kit::checkbox(ui, "Loads & BCs", &mut app.ui.show_loads);
+                kit::checkbox(ui, "Interactions", &mut app.ui.show_interactions);
+                let (lo, hi) = fieldcraft_render::glyphs::SIZE_RANGE;
+                kit::row(ui, "Symbol size", |ui| {
+                    kit::slider(
+                        ui,
+                        &mut app.ui.symbol_size,
+                        lo..=hi,
+                        kit::Slider { step: Some(1.0), format: |v| format!("{v:.0} pt"), ..Default::default() },
+                    )
                 })
-                .response
-                .on_hover_text(current.help);
-            ui.checkbox(&mut app.ui.reverse_zoom, "Reverse zoom").on_hover_text("The wheel zooms the other way");
+                .on_hover_text("The size of boundary condition, load and interaction symbols on screen, at any zoom");
+            });
+            crate::frame::menu_separator(ui);
+            kit::scope(ui, |ui| {
+                kit::checkbox(ui, "Browser", &mut app.ui.show_tree);
+                kit::checkbox(ui, "Timeline", &mut app.ui.show_timeline);
+            });
+            crate::frame::menu_separator(ui);
+            crate::frame::menu_heading(ui, "Navigation");
+            kit::scope(ui, |ui| {
+                let current = navigation::preset(&app.ui.nav_preset);
+                let labels: Vec<&str> = navigation::NAV_PRESETS.iter().map(|p| p.label).collect();
+                let mut selected = navigation::NAV_PRESETS.iter().position(|p| p.id == current.id).unwrap_or(0);
+                kit::choice_row(ui, "Preset", "fc_nav_preset", &mut selected, &labels).on_hover_text(current.help);
+                if let Some(p) = navigation::NAV_PRESETS.get(selected).filter(|p| p.id != current.id) {
+                    app.ui.nav_preset = p.id.into();
+                    app.ui.reverse_zoom = p.reverse_zoom;
+                }
+                kit::checkbox(ui, "Reverse zoom", &mut app.ui.reverse_zoom).on_hover_text("The wheel zooms the other way");
+            });
         });
     }
 }

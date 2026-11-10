@@ -15,7 +15,8 @@ use egui::RichText;
 use fieldcraft_update::{Check, Finish, Release, Staged};
 
 use crate::ModelApp;
-use crate::files::{Prompt, Replace};
+use crate::files::{Prompt, Replace, dismissed, message, note};
+use solidcraft_ui_kit as kit;
 
 /// What the host is asked to do, on its own thread.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -345,47 +346,47 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
     if app.prompt != Some(Prompt::Update) {
         return;
     }
-    let t = crate::theme::Tokens::get(app.ui.dark);
     let Some((staged, finish)) = app.updates.as_ref().and_then(|u| u.staged.clone()) else {
         app.prompt = None;
         return;
     };
     let reinstall = staged.version.to_string() == crate::VERSION;
-    let (mut restart, mut later, mut open) = (false, false, false);
-    crate::frame::window(ctx, "Update FieldCraft", crate::frame::Width::Normal).id(egui::Id::unique("fc_update")).show(ctx, |ui| match &finish {
-        Finish::Swap(_) => {
-            ui.label(if reinstall {
-                format!("FieldCraft {} was downloaded again and verified. Restart to reinstall it?", staged.version)
-            } else {
-                format!("FieldCraft {} is downloaded and verified. Restart now to finish installing it?", staged.version)
-            });
-            ui.label(
-                RichText::new(format!("It replaces {}. Unsaved changes are saved or asked about first.", staged.install.describe()))
-                    .color(t.text_dim)
-                    .size(11.0),
-            );
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                restart = ui.button("Restart Now").clicked();
-                later = ui.button("Later").on_hover_text("It installs when you quit FieldCraft").clicked();
-            });
-        }
-        Finish::Package { file, command } => {
-            ui.label(format!("FieldCraft {} is downloaded and verified:", staged.version));
-            ui.label(RichText::new(file.display().to_string()).monospace().size(11.0));
-            ui.label("Install it with your system's package manager:");
-            let mut text = command.clone();
-            ui.add(egui::TextEdit::singleline(&mut text).font(egui::TextStyle::Monospace).desired_width(f32::INFINITY));
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                open = ui.button("Open with Installer").clicked();
-                later = ui.button("Close").clicked();
-            });
-        }
-    });
-    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-        later = true;
-    }
+    let (ok, cancel) = match finish {
+        Finish::Swap(_) => ("Restart Now", "Later"),
+        Finish::Package { .. } => ("Open with Installer", "Close"),
+    };
+    let (closed, action) = crate::frame::window(egui::Id::unique("fc_update"), "file.save", "Update FieldCraft", crate::frame::Width::Normal)
+        .actions(ok, cancel, None)
+        .show(ctx, true, |ui| match &finish {
+            Finish::Swap(_) => {
+                message(
+                    ui,
+                    &if reinstall {
+                        format!("FieldCraft {} was downloaded again and verified. Restart to reinstall it?", staged.version)
+                    } else {
+                        format!("FieldCraft {} is downloaded and verified. Restart now to finish installing it?", staged.version)
+                    },
+                );
+                note(
+                    ui,
+                    &format!(
+                        "It replaces {}. Unsaved changes are saved or asked about first; Later installs it when you quit FieldCraft.",
+                        staged.install.describe()
+                    ),
+                );
+            }
+            Finish::Package { file, command } => {
+                message(ui, &format!("FieldCraft {} is downloaded and verified:", staged.version));
+                ui.label(RichText::new(file.display().to_string()).monospace().size(11.0));
+                message(ui, "Install it with your system's package manager:");
+                kit::read_only_text(ui, command);
+            }
+        });
+    let (restart, open) = match finish {
+        Finish::Swap(_) => (action == kit::Action::Ok, false),
+        Finish::Package { .. } => (false, action == kit::Action::Ok),
+    };
+    let later = dismissed(closed, action);
     if open && let Finish::Package { file, .. } = &finish {
         let opened = app.updates.as_ref().map(|u| (u.host.open_file)(file));
         if let Some(Err(e)) = opened {

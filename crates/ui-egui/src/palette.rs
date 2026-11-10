@@ -7,13 +7,14 @@
 //! they need greyed with what is missing. Adapted from SolidCraft's
 //! `crates/ui-egui/src/palette.rs` (MIT OR Apache-2.0), see ATTRIBUTION.md.
 
-use egui::{Align2, FontId, Rect, RichText, Sense, Vec2, pos2, vec2};
+use egui::{FontId, RichText};
 use fieldcraft_engine::catalogue::{self, CATALOGUE};
 use serde_json::Value;
 
 use crate::ModelApp;
-use crate::icons::{self, Look};
+
 use crate::theme::Tokens;
+use solidcraft_ui_kit as kit;
 
 /// The command line's height.
 pub const HEIGHT: f32 = 28.0;
@@ -198,24 +199,13 @@ pub fn popup(app: &mut ModelApp, ctx: &egui::Context) {
     if !app.ui.palette {
         return;
     }
-    let t = Tokens::get(app.ui.dark);
     let mut picked: Option<&'static str> = None;
     let mut run_typed = false;
-    let mut open = true;
-    let center = ctx.content_rect().center();
-    let r = crate::frame::window(ctx, "Search commands", crate::frame::Width::Normal)
-        .id(egui::Id::unique("fc_search"))
-        .pivot(Align2::CENTER_TOP)
-        .fixed_pos(pos2(center.x, 140.0))
-        .fixed_size(vec2(440.0, 380.0))
-        .open(&mut open)
-        .show(ctx, |ui| {
-            let r = ui.add(
-                egui::TextEdit::singleline(&mut app.palette_text)
-                    .id(egui::Id::unique("fc_search_text"))
-                    .hint_text("command name, id or what it does")
-                    .desired_width(f32::INFINITY),
-            );
+    let id = egui::Id::unique("fc_search");
+    let closed = crate::frame::window(id, "ui.search", "Search commands", crate::frame::Width::Normal)
+        .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 140.0))
+        .show_body(ctx, |ui| {
+            let r = kit::search_field(ui, egui::Id::unique("fc_search_text"), &mut app.palette_text, "command name, id or what it does");
             let entered = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
             r.request_focus();
             // Searched again only when the query changes.
@@ -232,24 +222,14 @@ pub fn popup(app: &mut ModelApp, ctx: &egui::Context) {
                     picked = list.iter().find(|h| h.soon.is_none() && app.unavailable(h.id).is_none()).map(|h| h.id);
                 }
             }
-            egui::ScrollArea::vertical().max_height(320.0).auto_shrink([false, true]).show(ui, |ui| {
+            egui::ScrollArea::vertical().id_salt("fc_search_results").max_height(320.0).auto_shrink([false, true]).show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
                 if typed {
-                    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::click());
-                    ui.painter().rect_filled(rect, 3.0, t.hover);
-                    let font = FontId::proportional(13.0);
                     let text = format!("Run {}", app.palette_text.trim());
-                    let shown = crate::elide::middle_in(ui, &text, &font, rect.width() - 80.0);
-                    ui.painter().text(pos2(rect.left() + 8.0, rect.center().y), Align2::LEFT_CENTER, shown.as_ref(), font, t.text);
-                    ui.painter().text(
-                        pos2(rect.right() - 6.0, rect.center().y),
-                        Align2::RIGHT_CENTER,
-                        "Enter",
-                        FontId::proportional(11.0),
-                        t.text_dim,
-                    );
-                    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Run as typed"));
-                    if resp.on_hover_text("Run the command with these parameters").clicked() {
+                    let mut row = kit::MenuItem::new("search:run_typed", &text, "");
+                    row.shortcut = "Enter";
+                    row.highlighted = true;
+                    if row.show(ui).on_hover_text("Run the command with these parameters").clicked() {
                         run_typed = true;
                     }
                 }
@@ -257,42 +237,23 @@ pub fn popup(app: &mut ModelApp, ctx: &egui::Context) {
                     // Coming soon, or missing what its command needs: listed, greyed, with why.
                     let missing = app.unavailable(h.id);
                     let enabled = h.soon.is_none() && missing.is_none();
-                    let (rect, resp) =
-                        ui.allocate_exact_size(vec2(ui.available_width(), 26.0), if enabled { Sense::click() } else { Sense::hover() });
-                    if resp.hovered() && enabled {
-                        ui.painter().rect_filled(rect, 3.0, t.hover);
-                    }
-                    icons::paint(
-                        app,
-                        ui,
-                        h.icon,
-                        Rect::from_center_size(pos2(rect.left() + 14.0, rect.center().y), Vec2::splat(18.0)),
-                        Look::of(enabled),
-                    );
-                    let p = ui.painter();
-                    p.text(
-                        pos2(rect.left() + 30.0, rect.center().y),
-                        Align2::LEFT_CENTER,
-                        h.label,
-                        FontId::proportional(13.0),
-                        if enabled { t.text } else { t.text_dim },
-                    );
                     let right = match (h.soon, &missing) {
                         (Some(m), _) => format!("{} · soon ({m})", h.place),
                         (None, Some(u)) => u.missing.first().map_or_else(|| h.place.clone(), |m| format!("needs {}", m.0.what())),
                         (None, None) => h.place.clone(),
                     };
-                    p.text(pos2(rect.right() - 6.0, rect.center().y), Align2::RIGHT_CENTER, right, FontId::proportional(11.0), t.text_dim);
-                    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, h.label));
+                    let mut row = kit::MenuItem::new(h.id, h.label, h.icon);
+                    row.shortcut = &right;
+                    row.enabled = enabled;
                     let tip = fieldcraft_engine::requirement::Unavailable::tip(h.id, missing.as_ref());
-                    if resp.on_hover_text(tip).clicked() && enabled {
+                    if row.show(ui).on_hover_text(tip).clicked() {
                         picked = Some(h.id);
                     }
                 }
             });
         });
-    if let Some(r) = r {
-        app.place("palette", r.response.rect);
+    if let Some(r) = crate::frame::drawn(ctx, id) {
+        app.place("palette", r);
     }
     if run_typed {
         let line = std::mem::take(&mut app.palette_text);
@@ -302,7 +263,7 @@ pub fn popup(app: &mut ModelApp, ctx: &egui::Context) {
         app.palette_text.clear();
         app.ui.palette = false;
         let _ = app.with_origin(fieldcraft_engine::usage::Origin::Palette, |app| app.start(id));
-    } else if !open || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+    } else if closed || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         app.ui.palette = false;
         app.palette_text.clear();
     }

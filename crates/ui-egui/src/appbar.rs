@@ -281,7 +281,7 @@ pub fn app_bar(app: &mut ModelApp, ui: &mut egui::Ui) {
         }
         let anchor = |q: Quick| anchors.iter().find(|(k, _)| *k == q).map_or(r, |(_, a)| *a);
         crate::frame::menu(app, ui, "file", anchor(Quick::File), crate::files::file_menu);
-        crate::frame::menu(app, ui, "help", anchor(Quick::Help), help_menu);
+        crate::frame::wide_menu(app, ui, "help", anchor(Quick::Help), help_menu);
     });
 }
 
@@ -308,31 +308,37 @@ pub fn shortcut(key: &str) -> String {
 /// Help: the samples (ready to solve), how to navigate, keys, and the version.
 fn help_menu(app: &mut ModelApp, ui: &mut egui::Ui) {
     let t = Tokens::get(app.ui.dark);
-    ui.set_max_width(340.0);
-    crate::frame::menu_heading(ui, &t, "SAMPLES");
+    crate::frame::menu_heading(ui, "Samples");
     let mut open = None;
     crate::samples::rows(ui, &t, &mut open);
-    ui.separator();
-    crate::frame::menu_heading(ui, &t, "NAVIGATION");
-    ui.label("Left drag orbits (or pans or zooms: the navigation bar), right or middle drag pans, the wheel zooms, F or a double click fits.");
-    ui.label(format!("S or {} searches every command; the command line at the bottom runs `id {{json}}`.", shortcut("K")));
-    ui.separator();
-    let report = ui
-        .button("Report a Bug…")
-        .on_hover_text("Draft a GitHub issue with the version, the OS and the last error; nothing is sent until you submit it")
-        .clicked();
+    crate::frame::menu_separator(ui);
+    crate::frame::menu_heading(ui, "Navigation");
+    let note = |ui: &mut egui::Ui, text: &str| {
+        ui.horizontal(|ui| {
+            ui.add_space(solidcraft_theme::Tokens::get().space_8);
+            crate::files::note(ui, text);
+        });
+    };
+    note(ui, "Left drag orbits (or pans or zooms: the navigation bar), right or middle drag pans, the wheel zooms, F or a double click fits.");
+    note(ui, &format!("S or {} searches every command; the command line at the bottom runs `id {{json}}`.", shortcut("K")));
+    crate::frame::menu_separator(ui);
+    let row = |ui: &mut egui::Ui, id: &str, label: &str, tip: &str| crate::frame::menu_row(ui, id, label, None, true).on_hover_text(tip).clicked();
+    let report = row(
+        ui,
+        "help.report_bug",
+        "Report a Bug…",
+        "Draft a GitHub issue with the version, the OS and the last error; nothing is sent until you submit it",
+    );
     let (mut check, mut reinstall) = (false, false);
     if app.updates_available() {
-        check =
-            ui.button("Check for Updates").on_hover_text("Ask GitHub Releases whether a newer FieldCraft is published (app.update.check)").clicked();
-        reinstall = ui
-            .button("Reinstall FieldCraft…")
-            .on_hover_text("Download this version again, verify it and swap it in, to repair a damaged install")
-            .clicked();
+        check = row(ui, "help.check_updates", "Check for Updates", "Ask GitHub Releases whether a newer FieldCraft is published (app.update.check)");
+        reinstall =
+            row(ui, "help.reinstall", "Reinstall FieldCraft…", "Download this version again, verify it and swap it in, to repair a damaged install");
     }
-    let crashes = ui.button("Crash Reports…").on_hover_text("The crash reports saved on this computer: report, copy or delete them").clicked();
-    let settings = ui.button("Settings…").on_hover_text("Privacy and updates").clicked();
-    ui.label(egui::RichText::new(format!("FieldCraft {}", crate::VERSION)).color(t.text_dim));
+    let crashes = row(ui, "help.crash_reports", "Crash Reports…", "The crash reports saved on this computer: report, copy or delete them");
+    let settings = row(ui, "help.settings", "Settings…", "Privacy and updates");
+    crate::frame::menu_separator(ui);
+    note(ui, &format!("FieldCraft {}", crate::VERSION));
     if report {
         app.report_bug(None);
     } else if crashes {
