@@ -3922,7 +3922,10 @@ mod tests {
         assert!((ribbon.top() - bar.bottom()).abs() < 1.0 && (ribbon.height() - toolbar::HEIGHT).abs() < 1.0, "{ribbon:?}");
         // The browser's content, inside its margin.
         assert!(browser.left() < 8.0 && (browser.width() - browser::WIDTH).abs() <= 14.0, "{browser:?}");
-        assert!(view.left() >= browser.right() - 1.0 && view.top() >= ribbon.bottom() - 1.0 && view.bottom() <= line.top() + 1.0);
+        assert!(
+            view.left() >= browser.right() - 1.0 && view.top() >= ribbon.bottom() - 1.0 && view.bottom() <= line.top() + 1.0,
+            "{view:?} {browser:?} {ribbon:?} {line:?}"
+        );
         assert!((timeline.bottom() - 900.0).abs() < 1.0 && line.bottom() <= timeline.top() + 1.0);
         assert!((view.right() - 1400.0).abs() < 1.0, "no context: the viewport reaches the right edge");
         assert!(!app.layout.contains_key("context"));

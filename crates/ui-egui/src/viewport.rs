@@ -27,6 +27,7 @@ use crate::navigation::{self, NavButton};
 use crate::selection::{Filter, Mode};
 use crate::theme::Tokens;
 use crate::{ModelApp, NavMode, Style};
+use solidcraft_ui_kit as kit;
 
 /// Wheel zoom per point scrolled.
 const ZOOM_PER_POINT: f64 = 0.0015;
@@ -125,7 +126,7 @@ fn start_screen(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect, t: &Tokens) {
         ui.label(egui::RichText::new("Start").size(16.0).color(t.overlay_text));
         ui.label(egui::RichText::new("Open a model, a SolidCraft design or a tagged mesh — or drop one here.").color(t.text_dim));
         ui.add_space(4.0);
-        pick = ui.button("Open…").clicked();
+        pick = kit::button(ui, "Open…", kit::Button::Normal).clicked();
         ui.add_space(8.0);
         ui.label(egui::RichText::new("Samples").color(t.overlay_text));
         // The grid takes what the card has left and scrolls the rest.
@@ -296,7 +297,6 @@ fn context_menu(app: &mut ModelApp, response: &egui::Response) {
         app.viewport.menu_target = response.interact_pointer_pos().and_then(|at| menu_target(app, at));
     }
     crate::frame::context_menu(response, |ui| {
-        use solidcraft_ui_kit as kit;
         if let Some(target) = app.viewport.menu_target.clone() {
             let Target::Def(def, name) = &target else { return };
             crate::frame::menu_heading(ui, &format!("{} {name}", def.label()));
@@ -352,7 +352,7 @@ fn selection_bar(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect, t: &Tokens) 
             |ui| {
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new("Select").color(t.text_dim));
-                    egui::ComboBox::from_id_salt("fc_selection_filter").selected_text(app.pick.filter.label()).width(110.0).show_ui(ui, |ui| {
+                    kit::bounded_dropdown_menu(ui, "fc_selection_filter", app.pick.filter.label(), 110.0, |ui| {
                         for (i, f) in Filter::ALL.into_iter().enumerate() {
                             // Geometry, then the mesh.
                             if i > 0 && Filter::ALL.get(i - 1).is_some_and(|p| p.geometry() != f.geometry()) {
@@ -379,7 +379,7 @@ fn selection_bar(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect, t: &Tokens) 
                             text.push_str(" (capped)");
                         }
                         ui.label(egui::RichText::new(text).color(t.pick_selected));
-                        if ui.small_button("×").on_hover_text("Clear the selection (Esc)").clicked() {
+                        if kit::button(ui, "×", kit::Button::Small).on_hover_text("Clear the selection (Esc)").clicked() {
                             app.clear_selection();
                         }
                     }
@@ -769,7 +769,6 @@ fn nav_bar(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect, t: &Tokens) {
     }
     if let Some(br) = style_button {
         crate::frame::settings_menu(app, ui, "view", br, |app, ui| {
-            use solidcraft_ui_kit as kit;
             crate::frame::menu_heading(ui, "Style");
             for s in Style::ALL {
                 let mut row = kit::MenuItem::new(s.label(), s.label(), "");

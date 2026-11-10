@@ -16,8 +16,8 @@ use crate::ModelApp;
 use crate::theme::Tokens;
 use solidcraft_ui_kit as kit;
 
-/// The command line's height.
-pub const HEIGHT: f32 = 28.0;
+/// The command line's height: the kit's field (28 points) and a 3 point margin above and below.
+pub const HEIGHT: f32 = 34.0;
 /// Most results the search lists.
 const MAX_RESULTS: usize = 60;
 
@@ -139,9 +139,10 @@ const PLACEHOLDERS: [&str; 5] = [
 
 /// The longest [`PLACEHOLDERS`] that fits a command line `width` wide, so it is never cut.
 fn placeholder(ui: &egui::Ui, width: f32) -> &'static str {
-    let font = egui::TextStyle::Body.resolve(ui.style());
-    // A text field's default margin is 4 points a side.
-    let room = width - 8.0;
+    // The kit's field: monospace text, its inset on each side.
+    let t = solidcraft_theme::Tokens::get();
+    let font = egui::FontId::monospace(t.font_label);
+    let room = width - 2.0 * t.form_inset;
     let shortest = PLACEHOLDERS[PLACEHOLDERS.len() - 1];
     PLACEHOLDERS.iter().copied().find(|p| crate::elide::width(ui, p, &font) <= room).unwrap_or(shortest)
 }
@@ -159,12 +160,11 @@ pub fn command_line(app: &mut ModelApp, ui: &mut egui::Ui) {
                 // The rest of the bar keeps room for the status and the model's size.
                 let width = (ui.available_width() * 0.4).clamp(MIN_LINE_W, MAX_LINE_W);
                 let hint = if app.command_line.is_empty() { placeholder(ui, width) } else { "" };
-                let r = ui.add(
-                    egui::TextEdit::singleline(&mut app.command_line)
-                        .id(egui::Id::unique("fc_command_line_text"))
-                        .hint_text(hint)
-                        .desired_width(width),
-                );
+                let r = ui
+                    .allocate_ui(egui::vec2(width, kit::row_height()), |ui| {
+                        kit::cell_editor(ui, egui::Id::unique("fc_command_line_text"), &mut app.command_line, hint, false)
+                    })
+                    .inner;
                 if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     let line = std::mem::take(&mut app.command_line);
                     submit(app, &line);
