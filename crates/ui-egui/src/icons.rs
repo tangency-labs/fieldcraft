@@ -7,11 +7,15 @@
 //! and light themes and the greyed "coming soon" state. Icons named `ui.*` belong to the window
 //! itself (navigation bar, title bar), the others to catalogue entries. Textures are cached per
 //! icon, theme, state and pixel size.
+//!
+//! The same artwork is the UI kit's icon set ([`KIT_SET`]), in the same roles and colours: the
+//! kit's windows, confirmations and menus draw from it.
 
 use std::collections::HashMap;
 
 use egui::{Color32, TextureHandle};
 use resvg::{tiny_skia, usvg};
+use solidcraft_ui_kit::icons::{IconData, IconSet};
 
 use crate::theme::Tokens;
 
@@ -129,6 +133,61 @@ pub fn paint_tinted(app: &mut crate::ModelApp, ui: &egui::Ui, id: &'static str, 
     }
 }
 
+/// The palette roles as the UI kit names them, in [`PALETTE`]'s order, then the kit's guide role
+/// (it draws dashed line strokes in it): line, accent (`active-3`: the kit keeps an icon's active
+/// strokes in their colour when dashed), soft fill, warm (`active-2`, likewise).
+const KIT_ROLES: [&str; 5] = ["line", "active-3", "passive-1", "active-2", "guide"];
+/// The guide role's key colour: no artwork uses it; the kit draws dashed line strokes in it.
+const KIT_GUIDE: &str = "#dde2eb";
+const KIT_SOURCE: [&str; 5] = [PALETTE[0], PALETTE[1], PALETTE[2], PALETTE[3], KIT_GUIDE];
+
+const fn kit_roles(t: Tokens) -> [[u8; 3]; 5] {
+    const fn rgb(c: Color32) -> [u8; 3] {
+        [c.r(), c.g(), c.b()]
+    }
+    // The guide is the line colour, so a dashed line looks as it does in the toolbar.
+    [rgb(t.icon), rgb(t.accent), rgb(t.icon_fill), rgb(t.warm), rgb(t.icon)]
+}
+
+static KIT_LIGHT: [[u8; 3]; 5] = kit_roles(Tokens::light());
+static KIT_DARK: [[u8; 3]; 5] = kit_roles(Tokens::dark());
+
+/// The names the kit's own components draw (close buttons, disclosures, add buttons…) and the
+/// FieldCraft icon each one is.
+const KIT_ALIASES: &[(&str, &str, &str)] = &[
+    ("close", "ui.close", ""),
+    ("chevron", "ui.chevron", ""),
+    ("chevron_right", "ui.chevron_right", ""),
+    ("plus", "ui.plus", ""),
+    ("home", "ui.home", ""),
+    ("help", "ui.help", ""),
+    ("zoom", "ui.zoom", ""),
+    ("fit", "ui.fit", ""),
+    ("eye", "ui.eye", ""),
+    ("folder", "file.open", ""),
+    ("bug_report", "diagnostics.bug_report", ""),
+];
+
+/// FieldCraft's icons as the UI kit's icon set, in the theme's colours: what the kit's windows,
+/// menus and confirmations draw. [`install_kit`] makes it the kit's set.
+pub static KIT_SET: IconSet = IconSet::new(IconData {
+    role_names: &KIT_ROLES,
+    role_source_hex: &KIT_SOURCE,
+    palette: [&KIT_LIGHT, &KIT_DARK],
+    accent_names: &[],
+    accents: &[],
+    accent_variants: &[],
+    masters: KIT_MASTERS,
+    aliases: KIT_ALIASES,
+    icon_accents: &[],
+    danger_accent: "",
+});
+
+/// Give the UI kit FieldCraft's icons (once per process; again does nothing).
+pub fn install_kit() {
+    solidcraft_ui_kit::icons::install(&KIT_SET);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -184,5 +243,47 @@ mod tests {
         assert!(grey.contains(&format!("stroke=\"#{:02x}{:02x}{:02x}\"", dim.r(), dim.g(), dim.b())), "{grey}");
         assert!(rasterise("not svg", 24).is_err());
         assert_eq!(rasterise(svg, 100_000).unwrap().size, [MAX_PX as usize; 2]);
+    }
+
+    /// Every icon is a master of the kit's set that the kit reads (none falls back to its
+    /// placeholder), and every name the kit's components draw resolves to one of them.
+    #[test]
+    fn the_kit_reads_every_icon_and_finds_every_name_it_draws() {
+        assert_eq!(KIT_MASTERS.len(), ICONS.len());
+        for (id, family, svg) in KIT_MASTERS {
+            assert_eq!(*family, "", "{id}");
+            if let Err(e) = KIT_SET.parse(svg) {
+                panic!("{id}: the kit cannot read it: {e}");
+            }
+        }
+        for (name, master, _) in KIT_ALIASES {
+            assert!(svg(master).is_some(), "{name} names the missing icon {master}");
+            let r = KIT_SET.resolve(name);
+            assert!(!r.placeholder && r.master == *master, "{name} resolves to {r:?}");
+        }
+    }
+
+    /// The kit draws an icon across its square as the toolbar does: the masters are scaled from
+    /// the artwork's 24 units to the kit's 64.
+    #[test]
+    fn the_kit_draws_icons_at_their_full_size() {
+        let look = solidcraft_ui_kit::icons::Look::themed(true, None, solidcraft_theme::ColorVision::Off);
+        let doc = KIT_SET.doc_for("ui.close", 64).expect("the close icon");
+        let pixmap = solidcraft_ui_kit::icons::render(doc, look, 64).expect("rendered");
+        let inked: Vec<usize> = pixmap.data().chunks(4).enumerate().filter(|(_, p)| p[3] > 0).map(|(i, _)| i % 64).collect();
+        let (lo, hi) = (inked.iter().min().copied().unwrap_or(64), inked.iter().max().copied().unwrap_or(0));
+        // The cross runs from 6.5 to 17.5 of 24: about 17 to 47 of 64.
+        assert!(lo < 20 && hi > 44, "the cross spans columns {lo}..{hi} of 64");
+    }
+
+    /// The kit draws each role in the token the toolbar draws it in, in both themes.
+    #[test]
+    fn the_kit_draws_icons_in_the_toolbar_colours() {
+        for (dark, t) in [(false, Tokens::light()), (true, Tokens::dark())] {
+            let look = solidcraft_ui_kit::icons::Look::themed(dark, None, solidcraft_theme::ColorVision::Off);
+            for (role, colour) in KIT_ROLES.into_iter().zip(colours(&t, true).into_iter().chain([t.icon])) {
+                assert_eq!(KIT_SET.role_colour(role, look), colour, "{role} dark={dark}");
+            }
+        }
     }
 }

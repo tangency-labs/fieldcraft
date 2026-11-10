@@ -92,8 +92,10 @@ fn commands(id: &str, recipe: &Value, source: &Path) -> Result<Vec<(String, Valu
             let radius = s.get("radius").and_then(Value::as_f64).unwrap_or(0.0);
             ("shape.rectangle", json!({"x": x, "y": y, "width": width, "height": height, "radius": radius}))
         } else if let Some(l) = s.get("line") {
+            // A path, so the exported SVG keeps to the elements the UI kit's icon reader takes
+            // (paths, circles, groups): VectorCraft exports a line shape as `<line>`.
             let [x1, y1, x2, y2] = numbers::<4>(l)?;
-            ("shape.line", json!({"x1": x1, "y1": y1, "x2": x2, "y2": y2}))
+            ("path.create", json!({"d": format!("M{x1} {y1} L{x2} {y2}")}))
         } else if let Some(st) = s.get("star") {
             let [cx, cy, radius1, radius2, points] = numbers::<5>(st)?;
             ("shape.star", json!({"cx": cx, "cy": cy, "radius1": radius1, "radius2": radius2, "points": points}))
