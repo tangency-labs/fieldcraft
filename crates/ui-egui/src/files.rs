@@ -24,6 +24,7 @@ use fieldcraft_model::progress::Progress;
 
 use fieldcraft_engine::Session;
 use serde_json::{Value, json};
+use solidcraft_ui_kit as kit;
 
 use crate::inbox::Inbox;
 use crate::{ModelApp, Prebuilt};
@@ -1314,6 +1315,31 @@ pub fn ago(seconds: u64) -> String {
     }
 }
 
+/// A confirmation's or window's message, wrapping in its column.
+pub fn message(ui: &mut egui::Ui, text: &str) {
+    ui.add(egui::Label::new(egui::RichText::new(text).color(solidcraft_theme::Tokens::get().form_ink)).wrap());
+}
+
+/// A dim note under a message, wrapping in its column, at the kit's label size.
+pub fn note(ui: &mut egui::Ui, text: &str) {
+    kit::status_line(ui, text, kit::StatusTone::Dim);
+}
+
+/// Whether a window or confirmation was dismissed: its close button, or its cancel action (Esc).
+pub fn dismissed(closed: bool, action: kit::Action) -> bool {
+    closed || action == kit::Action::Cancel
+}
+
+/// What a confirmation answered: `ok`, `left` (its left action) or, dismissed, `cancel`.
+fn answer<T>(closed: bool, action: kit::Action, ok: T, left: T, cancel: T) -> Option<T> {
+    match action {
+        kit::Action::Ok => Some(ok),
+        kit::Action::Apply => Some(left),
+        _ if dismissed(closed, action) => Some(cancel),
+        _ => None,
+    }
+}
+
 /// The prompts (unsaved changes, recover), the loading overlay and the drop hint.
 pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
     let t = crate::theme::Tokens::get(app.ui.dark);
@@ -1356,172 +1382,121 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
     }
     match app.prompt.clone() {
         Some(Prompt::Unsaved(next)) => {
-            let mut answer = None;
-            crate::frame::window(ctx, "Unsaved changes", crate::frame::Width::Normal).id(egui::Id::unique("fc_unsaved")).show(ctx, |ui| {
-                ui.label(match next {
-                    Replace::Update => format!("Save the changes to {} before restarting to update?", app.model_name()),
-                    _ => format!("Save the changes to {} before opening {}?", app.model_name(), next.name()),
+            let question = match next {
+                Replace::Update => format!("Save the changes to {} before restarting to update?", app.model_name()),
+                _ => format!("Save the changes to {} before opening {}?", app.model_name(), next.name()),
+            };
+            let (closed, action) = kit::Confirm::new(egui::Id::unique("fc_unsaved"), "file.save", "Unsaved changes")
+                .tone(kit::Tone::Warning)
+                .actions("Save", "Cancel", Some("Don't Save"))
+                .secondary_left()
+                .show(ctx, true, |ui| {
+                    message(ui, &question);
+                    note(ui, "Without saving, they are lost.");
                 });
-                ui.label(egui::RichText::new("Without saving, they are lost.").color(t.text_dim));
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Save").clicked() {
-                        answer = Some(Answer::Save);
-                    }
-                    if ui.button("Don't Save").clicked() {
-                        answer = Some(Answer::Discard);
-                    }
-                    if ui.button("Cancel").clicked() {
-                        answer = Some(Answer::Cancel);
-                    }
-                });
-            });
-            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-                answer = Some(Answer::Cancel);
-            }
-            if let Some(a) = answer {
+            if let Some(a) = answer(closed, action, Answer::Save, Answer::Discard, Answer::Cancel) {
                 app.answer_unsaved(a);
             }
         }
         Some(Prompt::Design(path)) => {
-            let mut answer = None;
-            crate::frame::window(ctx, "Open design", crate::frame::Width::Normal).id(egui::Id::unique("fc_design")).show(ctx, |ui| {
-                ui.label(format!("{} has none of the bodies {}'s mesh and sets are on.", file_name(&path), app.model_name()));
-                ui.label(egui::RichText::new("A new model starts empty with this design; keeping the model keeps its mesh and definitions, which then refer to bodies the design does not have.").color(t.text_dim));
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Start a new model with this design").clicked() {
-                        answer = Some(DesignAnswer::New);
-                    }
-                    if ui.button("Keep the current model").clicked() {
-                        answer = Some(DesignAnswer::Keep);
-                    }
-                    if ui.button("Cancel").clicked() {
-                        answer = Some(DesignAnswer::Cancel);
-                    }
+            let question = format!("{} has none of the bodies {}'s mesh and sets are on.", file_name(&path), app.model_name());
+            let (closed, action) = kit::Confirm::new(egui::Id::unique("fc_design"), "geometry.open", "Open design")
+                .actions("Start a New Model", "Cancel", Some("Keep the Current Model"))
+                .secondary_left()
+                .show(ctx, true, |ui| {
+                    message(ui, &question);
+                    note(ui, "A new model starts empty with this design; keeping the model keeps its mesh and definitions, which then refer to bodies the design does not have.");
                 });
-            });
-            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-                answer = Some(DesignAnswer::Cancel);
-            } else if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-                answer = Some(DesignAnswer::New);
-            }
-            if let Some(a) = answer {
+            if let Some(a) = answer(closed, action, DesignAnswer::New, DesignAnswer::Keep, DesignAnswer::Cancel) {
                 app.answer_design(a);
             }
         }
         Some(Prompt::Delete(ask)) => {
-            let mut answer = None;
-            crate::frame::window(ctx, "Delete", crate::frame::Width::Normal).id(egui::Id::unique("fc_delete")).show(ctx, |ui| {
-                ui.label(ask.question());
-                if ask.allowed() && !ask.users.is_empty() {
-                    ui.label(egui::RichText::new("They are deleted too; Undo brings everything back.").color(t.text_dim));
-                }
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    if ask.allowed() && ui.button("Delete").clicked() {
-                        answer = Some(true);
-                    }
-                    if ui.button(if ask.allowed() { "Cancel" } else { "Close" }).clicked() {
-                        answer = Some(false);
+            let allowed = ask.allowed();
+            let (closed, action) = kit::Confirm::new(egui::Id::unique("fc_delete"), "", "Delete")
+                .tone(kit::Tone::Danger)
+                .actions(if allowed { "Delete" } else { "" }, if allowed { "Cancel" } else { "Close" }, None)
+                .show(ctx, allowed, |ui| {
+                    message(ui, &ask.question());
+                    if allowed && !ask.users.is_empty() {
+                        note(ui, "They are deleted too; Undo brings everything back.");
                     }
                 });
-            });
-            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-                answer = Some(false);
-            } else if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-                answer = Some(ask.allowed());
-            }
-            if let Some(delete) = answer {
+            if let Some(delete) = answer(closed, action, allowed, false, false) {
                 app.answer_delete(delete);
             }
         }
         Some(Prompt::ReplaceMesh(r)) => {
-            let mut answer = None;
-            crate::frame::window(ctx, "Replace mesh", crate::frame::Width::Normal).id(egui::Id::unique("fc_replace_mesh")).show(ctx, |ui| {
-                ui.label(&r.question);
-                for w in &r.warnings {
-                    ui.label(egui::RichText::new(w).color(t.text_dim));
-                }
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Replace").clicked() {
-                        answer = Some(true);
-                    }
-                    if ui.button("Cancel").clicked() {
-                        answer = Some(false);
+            let (closed, action) = kit::Confirm::new(egui::Id::unique("fc_replace_mesh"), "mesh.tet.generate", "Replace mesh")
+                .tone(kit::Tone::Warning)
+                .actions("Replace", "Cancel", None)
+                .show(ctx, true, |ui| {
+                    message(ui, &r.question);
+                    for w in &r.warnings {
+                        note(ui, w);
                     }
                 });
-            });
-            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-                answer = Some(false);
-            } else if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-                answer = Some(true);
-            }
-            if let Some(replace) = answer {
+            if let Some(replace) = answer(closed, action, true, false, false) {
                 app.answer_replace_mesh(replace);
             }
         }
         Some(Prompt::Recover) => {
             let entries = app.recover_list(ctx);
-            let (mut recover, mut discard, mut discard_all, mut close) = (None, None, false, false);
-            crate::frame::window(ctx, "Recover", crate::frame::Width::Wide).id(egui::Id::unique("fc_recover")).show(ctx, |ui| {
-                if entries.is_empty() {
-                    ui.label(egui::RichText::new("No autosaved models to recover.").color(t.text_dim));
-                }
-                egui::Grid::new("fc_recover_grid").num_columns(4).spacing(egui::vec2(10.0, 4.0)).show(ui, |ui| {
-                    for e in &entries {
-                        let id = e.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
-                        let path = e.get("path").and_then(Value::as_str);
-                        let n = |k: &str| e.get(k).and_then(Value::as_u64).unwrap_or(0);
-                        let name = ui.label(path.map_or_else(|| "Untitled".to_string(), file_name));
-                        if let Some(path) = path {
-                            name.on_hover_text(path);
+            let (mut recover, mut discard) = (None, None);
+            let (closed, action) = crate::frame::window(egui::Id::unique("fc_recover"), "file.recover", "Recover", crate::frame::Width::Wide)
+                .actions("", "Close", (entries.len() > 1).then_some("Discard All"))
+                .show(ctx, true, |ui| {
+                    if entries.is_empty() {
+                        note(ui, "No autosaved models to recover.");
+                    }
+                    // Names, ages and sizes whole: the kit's window body truncates text by default.
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                    egui::Grid::new("fc_recover_grid").num_columns(4).spacing(egui::vec2(10.0, 4.0)).show(ui, |ui| {
+                        for e in &entries {
+                            let id = e.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
+                            let path = e.get("path").and_then(Value::as_str);
+                            let n = |k: &str| e.get(k).and_then(Value::as_u64).unwrap_or(0);
+                            let name = ui.label(path.map_or_else(|| "Untitled".to_string(), file_name));
+                            if let Some(path) = path {
+                                name.on_hover_text(path);
+                            }
+                            ui.label(egui::RichText::new(ago(n("age"))).color(t.text_dim));
+                            ui.label(egui::RichText::new(format!("{} nodes, {} elements", n("nodes"), n("elements"))).color(t.text_dim));
+                            ui.horizontal(|ui| {
+                                if kit::button(ui, "Recover", kit::Button::Small).clicked() {
+                                    recover = Some(id.clone());
+                                }
+                                if kit::button(ui, "Discard", kit::Button::Small).clicked() {
+                                    discard = Some(id.clone());
+                                }
+                            });
+                            ui.end_row();
                         }
-                        ui.label(egui::RichText::new(ago(n("age"))).color(t.text_dim));
-                        ui.label(egui::RichText::new(format!("{} nodes, {} elements", n("nodes"), n("elements"))).color(t.text_dim));
-                        ui.horizontal(|ui| {
-                            if ui.button("Recover").clicked() {
-                                recover = Some(id.clone());
-                            }
-                            if ui.button("Discard").clicked() {
-                                discard = Some(id.clone());
-                            }
-                        });
-                        ui.end_row();
-                    }
+                    });
                 });
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    close = ui.button("Close").clicked();
-                    if entries.len() > 1 {
-                        discard_all = ui.button("Discard all").clicked();
-                    }
-                });
-            });
+            let discard_all = action == kit::Action::Apply;
             if let Some(id) = recover {
                 app.recover(&id);
             } else if discard.is_some() || discard_all {
                 let params = discard.map_or_else(|| json!({"all": true}), |id| json!({"id": id}));
                 let _ = app.run("file.recovery.discard", params);
                 ctx.data_mut(|d| d.remove::<Vec<Value>>(egui::Id::unique("fc_recover_entries")));
-            } else if close || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            } else if dismissed(closed, action) {
                 app.prompt = None;
                 ctx.data_mut(|d| d.remove::<Vec<Value>>(egui::Id::unique("fc_recover_entries")));
             }
         }
         Some(Prompt::Samples) => {
-            let (mut open, mut close) = (None, false);
-            crate::frame::window(ctx, "Samples", crate::frame::Width::Wide).id(egui::Id::unique("fc_samples")).show(ctx, |ui| {
-                ui.set_width(crate::frame::WINDOW_WIDE_MAX_W.min(ctx.content_rect().width() - 48.0));
-                crate::samples::grid(ui, &t, (ctx.content_rect().height() * 0.6).max(160.0), &mut open);
-                ui.add_space(6.0);
-                close = ui.button("Close").clicked();
-            });
+            let mut open = None;
+            let (closed, action) = crate::frame::window(egui::Id::unique("fc_samples"), "file.sample", "Samples", crate::frame::Width::Wide)
+                .actions("", "Close", None)
+                .show(ctx, true, |ui| {
+                    crate::samples::grid(ui, &t, (ctx.content_rect().height() * 0.6).max(160.0), &mut open);
+                });
             if let Some(name) = open {
                 app.prompt = None;
                 app.open_sample(name);
-            } else if close || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            } else if dismissed(closed, action) {
                 app.prompt = None;
             }
         }
@@ -1546,43 +1521,42 @@ impl ModelApp {
 /// The File menu's rows: open, recent files, save, decks, samples, recover. The title bar's
 /// File menu.
 pub fn file_menu(app: &mut ModelApp, ui: &mut egui::Ui) {
-    let t = crate::theme::Tokens::get(app.ui.dark);
     let key = |k: &str| crate::appbar::shortcut(k);
-    let row = |ui: &mut egui::Ui, label: &str, right: Option<&str>| crate::frame::menu_row(ui, &t, label, right, true).clicked();
+    let row = |ui: &mut egui::Ui, id: &str, label: &str, right: Option<&str>| crate::frame::menu_row(ui, id, label, right, true).clicked();
     let mut act: Option<Box<dyn FnOnce(&mut ModelApp)>> = None;
-    if row(ui, "New", Some(&key("N"))) {
+    if row(ui, "file.new", "New", Some(&key("N"))) {
         act = Some(Box::new(|app| app.new_model()));
     }
-    if row(ui, "Open…", Some(&key("O"))) {
+    if row(ui, "file.open", "Open…", Some(&key("O"))) {
         act = Some(Box::new(|app| app.open_dialog(None)));
     }
-    if row(ui, "Samples…", None) {
+    if row(ui, "file.sample", "Samples…", None) {
         act = Some(Box::new(|app| app.prompt = Some(Prompt::Samples)));
     }
     if !app.recent.paths.is_empty() {
-        crate::frame::menu_heading(ui, &t, "RECENT");
-        for p in app.recent.paths.iter().take(6) {
+        crate::frame::menu_heading(ui, "Recent");
+        for (i, p) in app.recent.paths.iter().take(6).enumerate() {
             let name = file_name(p);
-            if crate::frame::menu_row(ui, &t, &name, None, true).on_hover_text(p).clicked() {
+            if crate::frame::menu_row(ui, &format!("file.recent.{i}"), &name, None, true).on_hover_text(p).clicked() {
                 let p = p.clone();
                 act = Some(Box::new(move |app| app.open_path(&p)));
             }
         }
     }
-    ui.separator();
-    if row(ui, "Save", Some(&key("S"))) {
+    crate::frame::menu_separator(ui);
+    if row(ui, "file.save", "Save", Some(&key("S"))) {
         act = Some(Box::new(|app| {
             app.save();
         }));
     }
-    if row(ui, "Save As…", Some(&key("Shift+S"))) {
+    if row(ui, "file.save_as", "Save As…", Some(&key("Shift+S"))) {
         act = Some(Box::new(|app| {
             app.save_as();
         }));
     }
     let packed = crate::frame::menu_row(
         ui,
-        &t,
+        "file.save_packed",
         "Save With Geometry Embedded…",
         None,
         app.session.design.is_some() || !app.session.surfaces.is_empty(),
@@ -1595,25 +1569,25 @@ pub fn file_menu(app: &mut ModelApp, ui: &mut egui::Ui) {
             app.save_packed();
         }));
     }
-    ui.separator();
-    if row(ui, "Read Abaqus Deck…", None) {
+    crate::frame::menu_separator(ui);
+    if row(ui, "deck.read", "Read Abaqus Deck…", None) {
         act = Some(Box::new(|app| {
             let _ = app.start("deck.read");
         }));
     }
-    crate::frame::menu_heading(ui, &t, "WRITE DECK");
+    crate::frame::menu_heading(ui, "Write Deck");
     for c in fieldcraft_engine::catalogue::CATALOGUE.iter().filter(|c| c.panel == "Decks" && c.id != "deck.read") {
         let format = c.preset().get("format").and_then(Value::as_str).map(str::to_string);
         let soon = c.milestone().map(|m| format!("soon · {m}"));
         let enabled = format.is_some() && soon.is_none();
-        if crate::frame::menu_row(ui, &t, &format!("{}…", c.label), soon.as_deref(), enabled).on_hover_text(c.tip).clicked()
+        if crate::frame::menu_row(ui, c.id, &format!("{}…", c.label), soon.as_deref(), enabled).on_hover_text(c.tip).clicked()
             && let Some(f) = format
         {
             act = Some(Box::new(move |app| app.write_deck(&f)));
         }
     }
-    ui.separator();
-    if crate::frame::menu_row(ui, &t, "Recover…", None, true)
+    crate::frame::menu_separator(ui);
+    if crate::frame::menu_row(ui, "file.recover", "Recover…", None, true)
         .on_hover_text("Models autosaved by an app that crashed or closed with unsaved changes")
         .clicked()
     {
