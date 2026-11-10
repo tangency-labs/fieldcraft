@@ -125,7 +125,7 @@ fn card(ui: &mut egui::Ui, t: &Tokens, sample: &'static Sample, w: f32) -> bool 
             // No capture yet: the name's initial on a plain tile.
             painter.rect_filled(image_rect, 4.0, t.accent_soft);
             let initial = sample.label.chars().next().map(String::from).unwrap_or_default();
-            painter.text(image_rect.center(), egui::Align2::CENTER_CENTER, initial, egui::FontId::proportional(thumb_h * 0.4), t.accent);
+            painter.text(image_rect.center(), egui::Align2::CENTER_CENTER, initial, egui::FontId::proportional(thumb_h * 0.4), t.accent_ink);
         }
     }
     let stroke = if response.hovered() { t.accent } else { t.border };

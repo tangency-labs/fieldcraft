@@ -742,7 +742,13 @@ fn explicit(ui: &mut egui::Ui, e: &ExplicitResult, plot: &Plot, t: &Tokens, run:
     ui.label(RichText::new(format!("At t = {}{frame}", with_unit(number(now), time_unit.as_deref()))).small().color(t.text_dim));
     egui::Grid::new("fc_results_energies").num_columns(2).spacing(vec2(8.0, 2.0)).show(ui, |ui| {
         for (name, color, f) in &series {
-            ui.label(RichText::new(*name).color(*color));
+            // The series' line as its key, the name in the text colour: line colours are not
+            // text colours (the accent, warm and error fall short of 4.5:1 on a dark panel).
+            ui.horizontal(|ui| {
+                let (key, _) = ui.allocate_exact_size(vec2(14.0, 10.0), egui::Sense::hover());
+                ui.painter().line_segment([key.left_center(), key.right_center()], Stroke::new(2.0, *color));
+                ui.label(*name);
+            });
             ui.label(with_unit(number_in(energy(f(at_now)), scale), energy_unit.as_deref()));
             ui.end_row();
         }
