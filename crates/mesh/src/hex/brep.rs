@@ -14,6 +14,15 @@
 //! T. Blacker, J. Clements, *Virtual topology operators for meshing*, IJCGA 10(3):309–331, 2000).
 //! A composite face keeps an analytic surface when every member lies on the first member's;
 //! otherwise nodes go onto its triangles.
+//!
+//! **Seams.** A kernel that gives a closed face whole (a cylinder's side, a torus, a sphere; the
+//! kernel behind SolidCraft from v0.40) leaves no change of face tag where the face meets
+//! itself. The kernel's seams, marked on the surface ([`BoundarySurface::with_seams`]), are kept
+//! as edges from the face to itself (`faces` equal), used twice in the face's loop, once each
+//! way: a cylinder's side is then the bottom circle, the seam, the top circle and the seam back,
+//! the logically rectangular linking face a sweeper takes (Blacker 1996). Its loop is walked
+//! through the face's own triangles round each vertex, since the seam's ends are passed more
+//! than once.
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -174,19 +183,33 @@ impl<'a> Brep<'a> {
         }
         let mut segs = Vec::new();
         let mut edge_triangles = BTreeMap::new();
+        // Segments of the kernel's seams: inside one face, between two of its own triangles.
+        let mut seams: Vec<(u32, u32, usize)> = Vec::new();
+        let raw = surface.tri_face();
         for fe in surface.feature_edges().iter().filter(|e| e.kind == FeatureKind::FaceBoundary) {
             let (Some(left), Some(right)) = (face_of(fe.triangles[0]), face_of(fe.triangles[1])) else {
                 return Err(Error::Failed("feature edge without faces".into()));
             };
-            // The seam inside a composite face is no edge.
+            let [lo, hi] = fe.vertices;
             if left == right {
+                // The seam between the members of a composite face is no edge; the kernel's own
+                // seam of a closed face is (both triangles on the one B-rep face).
+                if raw.get(fe.triangles[0] as usize) != raw.get(fe.triangles[1] as usize) {
+                    continue;
+                }
+                edge_triangles.insert((lo, hi), fe.triangles);
+                seams.push((lo, hi, left));
                 continue;
             }
             // Orient each segment as the lower-indexed face traverses it, so that the segments of
             // one edge chain head to tail.
-            let [lo, hi] = fe.vertices;
             edge_triangles.insert((lo, hi), fe.triangles);
             segs.push(if left < right { Seg { from: lo, to: hi, left, right } } else { Seg { from: hi, to: lo, left: right, right: left } });
+        }
+        // A seam has the face on both sides, so no face orders its segments: they are oriented
+        // along their chains instead, so that the segments of one seam chain head to tail.
+        for (from, to, face) in orient_seams(&seams) {
+            segs.push(Seg { from, to, left: face, right: face });
         }
         let mut incident: Vec<Vec<usize>> = vec![Vec::new(); pts.len()];
         for (i, s) in segs.iter().enumerate() {
@@ -253,7 +276,42 @@ impl<'a> Brep<'a> {
                 u.push((e, false));
             }
         }
+        // Each directed triangle edge's triangle, for walking round a vertex inside a face.
+        let any_seam = edges.iter().any(|x| x.faces[0] == x.faces[1]);
+        let mut directed: BTreeMap<(u32, u32), u32> = BTreeMap::new();
+        if any_seam {
+            for (t, tri) in surface.triangles().iter().enumerate() {
+                for k in 0..3 {
+                    directed.insert((tri[k], tri[(k + 1) % 3]), t as u32);
+                }
+            }
+        }
+        let tri_count = surface.triangles().len();
+        // The boundary segment leaving `v` next round the face, after the segment `a → v` it
+        // arrived by (the face on the left of both): pivot through the face's triangles round
+        // `v` until a boundary segment (a face boundary or seam) is reached.
+        let next_segment = |a: u32, v: u32| -> Option<(u32, u32)> {
+            let mut t = *directed.get(&(a, v))?;
+            for _ in 0..=tri_count {
+                let tri = surface.triangles().get(t as usize)?;
+                let k = (0..3).find(|&k| tri[k] == v)?;
+                let c = tri[(k + 1) % 3];
+                if edge_triangles.contains_key(&(v.min(c), v.max(c))) {
+                    return Some((v, c));
+                }
+                t = *directed.get(&(c, v))?;
+            }
+            None
+        };
+        let vertices_of = |(e, fwd): (usize, bool)| -> Vec<u32> {
+            let mut v = edges.get(e).map(|x| x.points.clone()).unwrap_or_default();
+            if !fwd {
+                v.reverse();
+            }
+            v
+        };
         for (f, u) in uses.iter().enumerate() {
+            let seamed = u.iter().any(|&(e, _)| edges.get(e).is_some_and(|x| x.faces[0] == x.faces[1]));
             let ends = |(e, fwd): (usize, bool)| -> (u32, u32) {
                 let edge = edges.get(e);
                 let (a, b) = (edge.map_or(0, Edge::first), edge.map_or(0, Edge::last));
@@ -276,10 +334,28 @@ impl<'a> Brep<'a> {
                     let Some(&oe) = u.get(cur) else { break };
                     lp.push(oe);
                     let end = ends(oe).1;
-                    if end == origin {
+                    let free = |k: usize| !used.get(k).copied().unwrap_or(true) && u.get(k).is_some_and(|&x| ends(x).0 == end);
+                    let next = if seamed {
+                        // A face with a seam passes the seam's ends more than once (a cylinder's
+                        // loop is bottom, seam, top, seam back): the next edge is the one the
+                        // face's own triangles reach first round the vertex.
+                        let pts = vertices_of(oe);
+                        let seg = pts.len().checked_sub(2).and_then(|i| Some((*pts.get(i)?, *pts.get(i + 1)?)));
+                        let out = seg.and_then(|(a, v)| next_segment(a, v));
+                        (0..u.len()).find(|&k| {
+                            free(k)
+                                && u.get(k).is_some_and(|&x| {
+                                    let w = vertices_of(x);
+                                    out.is_some_and(|(v, c)| w.first() == Some(&v) && w.get(1) == Some(&c))
+                                })
+                        })
+                    } else {
+                        (0..u.len()).find(|&k| free(k))
+                    };
+                    if end == origin && next.is_none() {
                         break;
                     }
-                    match (0..u.len()).find(|&k| !used.get(k).copied().unwrap_or(true) && u.get(k).is_some_and(|&x| ends(x).0 == end)) {
+                    match next {
                         Some(k) => cur = k,
                         None => return Err(Error::Failed(format!("face {} has an open boundary loop", faces.get(f).map_or(0, |x| x.id)))),
                     }
@@ -315,12 +391,22 @@ impl<'a> Brep<'a> {
         v
     }
 
-    /// The vertex of face `f`'s triangle on edge `e`'s first segment that is not on the edge.
-    pub(crate) fn third_vertex(&self, e: usize, f: usize) -> Option<u32> {
-        let edge = self.edges.get(e)?;
-        let (a, b) = (*edge.points.first()?, *edge.points.get(1)?);
-        let tri = self.edge_triangles.get(&(a.min(b), a.max(b)))?.iter().copied().find(|&t| self.face_of_triangle(t) == Some(f))?;
-        self.surface.triangles().get(tri as usize)?.iter().copied().find(|&v| v != a && v != b)
+    /// The vertices of face `f`'s triangles on edge `e`'s first segment that are not on the edge:
+    /// one, or two for a seam (one on each side of it).
+    pub(crate) fn third_vertices(&self, e: usize, f: usize) -> Vec<u32> {
+        let Some(edge) = self.edges.get(e) else { return Vec::new() };
+        let (Some(&a), Some(&b)) = (edge.points.first(), edge.points.get(1)) else { return Vec::new() };
+        let Some(tris) = self.edge_triangles.get(&(a.min(b), a.max(b))) else { return Vec::new() };
+        tris.iter()
+            .copied()
+            .filter(|&t| self.face_of_triangle(t) == Some(f))
+            .filter_map(|t| self.surface.triangles().get(t as usize)?.iter().copied().find(|&v| v != a && v != b))
+            .collect()
+    }
+
+    /// Whether edge `e` is a seam: the one face on both of its sides.
+    pub(crate) fn is_seam(&self, e: usize) -> bool {
+        self.edges.get(e).is_some_and(|x| x.faces[0] == x.faces[1])
     }
 
     /// The face's name for messages: its tag.
@@ -428,4 +514,56 @@ fn composite_tags(surface: &BoundarySurface, surfaces: &[Option<Surface>]) -> Ve
         }
     }
     tri_face.iter().map(|&f| root(&parent, f)).collect()
+}
+
+/// The seam segments `(a, b, face)` oriented along their chains: each chain of segments of one
+/// face, joined where exactly two of them meet at a vertex, runs from its lower-numbered end (a
+/// closed chain from its lowest vertex, towards the lower of its two neighbours there), so
+/// consecutive segments head to tail. Deterministic: segments and vertices are visited in sorted
+/// order.
+fn orient_seams(seams: &[(u32, u32, usize)]) -> Vec<(u32, u32, usize)> {
+    let mut at: BTreeMap<(usize, u32), Vec<usize>> = BTreeMap::new();
+    for (i, &(a, b, f)) in seams.iter().enumerate() {
+        at.entry((f, a)).or_default().push(i);
+        at.entry((f, b)).or_default().push(i);
+    }
+    let degree = |f: usize, v: u32| at.get(&(f, v)).map_or(0, Vec::len);
+    let other = |i: usize, v: u32| seams.get(i).map_or(v, |&(a, b, _)| if a == v { b } else { a });
+    let mut done = vec![false; seams.len()];
+    let mut out = Vec::with_capacity(seams.len());
+    // Open chains first, from their ends (vertices where other than two segments meet), then the
+    // closed ones.
+    let mut starts: Vec<(usize, u32, usize)> = Vec::new();
+    for (&(f, v), list) in &at {
+        if list.len() != 2 {
+            starts.extend(list.iter().map(|&i| (f, v, i)));
+        }
+    }
+    let closed: Vec<(usize, u32, usize)> = at
+        .iter()
+        .filter(|(_, l)| l.len() == 2)
+        .filter_map(|(&(f, v), l)| l.iter().copied().min_by_key(|&i| other(i, v)).map(|i| (f, v, i)))
+        .collect();
+    for (f, v0, i0) in starts.into_iter().chain(closed) {
+        let (mut v, mut i) = (v0, i0);
+        // A chain has at most one step per segment.
+        for _ in 0..=seams.len() {
+            if done.get(i).copied().unwrap_or(true) {
+                break;
+            }
+            if let Some(d) = done.get_mut(i) {
+                *d = true;
+            }
+            let w = other(i, v);
+            out.push((v, w, f));
+            if degree(f, w) != 2 {
+                break;
+            }
+            match at.get(&(f, w)).and_then(|l| l.iter().copied().find(|&j| j != i)) {
+                Some(j) => (v, i) = (w, j),
+                None => break,
+            }
+        }
+    }
+    out
 }

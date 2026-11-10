@@ -28,7 +28,6 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use fieldcraft_mesh::cdt::CdtOptions;
 use fieldcraft_mesh::hex::{Cell, CellsMesh, HexMesh, HexMethod, HexOptions, hex_mesh_swept_cells};
-use fieldcraft_mesh::surface::BoundarySurface;
 use fieldcraft_model::geometry::Entity;
 use fieldcraft_model::{ElementFace, GeometryRef, Model, Set, Tie};
 use serde_json::{Value, json};
@@ -388,7 +387,7 @@ fn swept_together(
     let mut surfaces = Vec::with_capacity(inputs.len());
     for b in inputs {
         let options = super::mesh::surface_options(p, &b.mesh)?;
-        match BoundarySurface::new(&b.mesh.positions, &b.mesh.triangles, &b.mesh.tri_face, &options) {
+        match super::hex::hex_surface(&options, b) {
             Ok(surface) => surfaces.push(surface),
             Err(e) => return Ok(Err(format!("body `{}`: {}", b.name, crate::units::mesh_error_text(&e, display)))),
         }

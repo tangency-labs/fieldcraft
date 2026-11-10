@@ -73,6 +73,9 @@ pub const MAX_WINDING_WORK: u64 = 500_000_000;
 
 /// The largest weld distance, as a fraction of the bounding-box diagonal.
 pub const MAX_RELATIVE_WELD: f64 = 1e-3; // unit-factors: relative to the diagonal
+/// The finest grid cell [`BoundarySurface::with_seams`] files vertices in, relative to the
+/// bounding-box diagonal (when its distance is finer).
+const SEAM_CELL: f64 = 1e-9; // unit-factors: relative to the diagonal
 
 /// How [`BoundarySurface::new`] welds and finds features.
 ///
@@ -361,6 +364,121 @@ impl BoundarySurface {
             source_vertex,
             source_triangle,
         })
+    }
+
+    /// The surface with the B-rep's seams as face boundaries: the curves along which a closed
+    /// (periodic) face meets itself, a cylinder's or a torus's seam. A kernel that gives such a
+    /// face whole (SolidCraft from v0.40) leaves no tag change along its seam, so the edges
+    /// between the face's triangles there are no feature; marked, they bound the face on both
+    /// sides, as the structured meshers need (a linking face's sides, a revolution's level).
+    /// `seams` are polylines through surface vertices: each point is the welded vertex within
+    /// `distance` of it (the one nearest), and each segment between two consecutive vertices
+    /// that is an edge between two triangles of one face becomes a face-boundary feature edge.
+    /// A point on no vertex, or a segment that is no such edge, is passed over: the seam is then
+    /// marked in part, which the meshers treat as they treat any other feature they cannot
+    /// use. Fails on a negative or non-finite distance or more seam points than the surface
+    /// has vertices.
+    pub fn with_seams(mut self, seams: &[Vec<[f64; 3]>], distance: f64) -> Result<Self> {
+        if !(distance >= 0.0 && distance.is_finite()) {
+            return Err(Error::Invalid(format!("the seam distance must be a non-negative length, got {distance}")));
+        }
+        let total: usize = seams.iter().map(Vec::len).fold(0, usize::saturating_add);
+        if total > self.points.len().max(1) {
+            return Err(Error::Invalid(format!("{total} seam points on a surface of {} vertices", self.points.len())));
+        }
+        if total == 0 {
+            return Ok(self);
+        }
+        // Vertices by grid cell of side `cell`: a point's vertex is in its cell or a neighbour.
+        let diagonal = self.bounding_diagonal();
+        let cell = distance.max(SEAM_CELL * diagonal).max(f64::MIN_POSITIVE);
+        let key = |p: [f64; 3]| -> Option<[i64; 3]> {
+            let mut k = [0i64; 3];
+            for (slot, x) in k.iter_mut().zip(p) {
+                let q = (x / cell).floor();
+                // Within ±2^62: far beyond any coordinate the surface admits.
+                if !(q.abs() < 4.6e18) {
+                    return None;
+                }
+                *slot = q as i64;
+            }
+            Some(k)
+        };
+        let mut grid: std::collections::BTreeMap<[i64; 3], Vec<u32>> = std::collections::BTreeMap::new();
+        for (v, &p) in self.points.iter().enumerate() {
+            if let Some(k) = key(p) {
+                grid.entry(k).or_default().push(v as u32);
+            }
+        }
+        let vertex = |p: [f64; 3]| -> Option<u32> {
+            let k = key(p)?;
+            let mut best: Option<(f64, u32)> = None;
+            for dx in -1..=1 {
+                for dy in -1..=1 {
+                    for dz in -1..=1 {
+                        for &v in grid.get(&[k[0] + dx, k[1] + dy, k[2] + dz]).into_iter().flatten() {
+                            let d = norm(sub(self.points.get(v as usize).copied().unwrap_or(p), p));
+                            if d <= distance && best.is_none_or(|(b, w)| d < b || (d == b && v < w)) {
+                                best = Some((d, v));
+                            }
+                        }
+                    }
+                }
+            }
+            best.map(|(_, v)| v)
+        };
+        // The triangles on each edge, in the order of the triangles.
+        let mut on_edge: std::collections::BTreeMap<(u32, u32), Vec<u32>> = std::collections::BTreeMap::new();
+        for (t, tri) in self.triangles.iter().enumerate() {
+            for k in 0..3 {
+                let (a, b) = (tri[k], tri[(k + 1) % 3]);
+                on_edge.entry((a.min(b), a.max(b))).or_default().push(t as u32);
+            }
+        }
+        let traverses =
+            |t: u32, a: u32, b: u32| self.triangles.get(t as usize).is_some_and(|tri| (0..3).any(|k| tri[k] == a && tri[(k + 1) % 3] == b));
+        let normal = |t: u32| -> [f64; 3] {
+            let p = |v: u32| self.points.get(v as usize).copied().unwrap_or([0.0; 3]);
+            self.triangles.get(t as usize).map_or([0.0; 3], |&[a, b, c]| cross(sub(p(b), p(a)), sub(p(c), p(a))))
+        };
+        let mut marked: std::collections::BTreeMap<[u32; 2], FeatureEdge> = std::collections::BTreeMap::new();
+        for seam in seams {
+            let ids: Vec<Option<u32>> = seam.iter().map(|&p| vertex(p)).collect();
+            for w in ids.windows(2) {
+                let (Some(Some(a)), Some(Some(b))) = (w.first(), w.get(1)) else { continue };
+                let (lo, hi) = ((*a).min(*b), (*a).max(*b));
+                if lo == hi {
+                    continue;
+                }
+                let Some([t0, t1]) = on_edge.get(&(lo, hi)).and_then(|ts| <[u32; 2]>::try_from(ts.as_slice()).ok()) else { continue };
+                let face = |t: u32| self.tri_face.get(t as usize).copied();
+                if face(t0).is_none() || face(t0) != face(t1) {
+                    continue;
+                }
+                let triangles = if traverses(t0, lo, hi) { [t0, t1] } else { [t1, t0] };
+                let angle = crate::vec3::angle_deg(normal(triangles[0]), normal(triangles[1]));
+                marked.insert([lo, hi], FeatureEdge { vertices: [lo, hi], triangles, angle, kind: FeatureKind::FaceBoundary });
+            }
+        }
+        if marked.is_empty() {
+            return Ok(self);
+        }
+        self.feature_edges.retain(|e| !marked.contains_key(&e.vertices));
+        self.feature_edges.extend(marked.into_values());
+        self.feature_edges.sort_by_key(|e| e.vertices);
+        Ok(self)
+    }
+
+    /// The length of the diagonal of the points' bounding box.
+    fn bounding_diagonal(&self) -> f64 {
+        let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
+        for p in &self.points {
+            for k in 0..3 {
+                lo[k] = lo[k].min(p[k]);
+                hi[k] = hi[k].max(p[k]);
+            }
+        }
+        if self.points.is_empty() { 0.0 } else { norm(sub(hi, lo)) }
     }
 
     /// Welded vertex positions.

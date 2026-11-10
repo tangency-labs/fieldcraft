@@ -103,7 +103,9 @@ fn topology(brep: &Brep, s: usize) -> std::result::Result<Topology, String> {
                 match target {
                     None => target = Some(first),
                     Some(t) if t == first => {}
-                    Some(_) => return Err("the loops end on different faces (not one-to-one)".into()),
+                    // Loops ending on different caps parallel to the source: the body ends at
+                    // more than one level, which is the reason to give (#444).
+                    Some(_) => return Err(cap(brep, s, first).unwrap_or_else(|| "the loops end on different faces (not one-to-one)".into())),
                 }
                 break;
             }

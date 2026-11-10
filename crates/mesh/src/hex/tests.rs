@@ -708,3 +708,189 @@ fn a_biased_seed_grades_the_edges_tied_to_it() {
     assert_eq!(z.len(), 7, "{z:?}");
     assert!(z[1] - z[0] < z[6] - z[5], "{z:?}");
 }
+
+/// Closed faces in one piece, as a kernel gives them that does not split them at their seams
+/// (SolidCraft from v0.40): built from a grid round the z axis, `n` segments round, the seam at
+/// angle 0. Triangles are turned to face away from `inside` (a point or the axis).
+struct Revolved {
+    pts: Vec<[f64; 3]>,
+    tris: Vec<[u32; 3]>,
+    tags: Vec<u32>,
+}
+
+impl Revolved {
+    fn tri(&mut self, t: [u32; 3], outward: [f64; 3]) {
+        let p = |i: u32| self.pts[i as usize];
+        let n = cross(sub(p(t[1]), p(t[0])), sub(p(t[2]), p(t[0])));
+        self.tris.push(if dot(n, outward) < 0.0 { [t[0], t[2], t[1]] } else { t });
+    }
+
+    fn surface(&self, seams: &[Vec<u32>]) -> BoundarySurface {
+        let s = BoundarySurface::new(&self.pts, &self.tris, &self.tags, &SurfaceOptions::default()).unwrap();
+        let seams: Vec<Vec<[f64; 3]>> = seams.iter().map(|s| s.iter().map(|&v| self.pts[v as usize]).collect()).collect();
+        s.with_seams(&seams, 0.0).unwrap()
+    }
+}
+
+fn angle(k: usize, n: usize) -> f64 {
+    std::f64::consts::TAU * k as f64 / n as f64
+}
+
+/// A cylinder of radius `r` and height `h` along z: its side one face (tag 0) with a seam at
+/// angle 0, the bottom (1) and top (2) fans round their centres. Returns the surface with and
+/// without its seam marked, and the faces' surfaces.
+fn seamed_cylinder(r: f64, h: f64, n: usize, m: usize) -> (BoundarySurface, BoundarySurface, Vec<Option<Surface>>) {
+    let mut g = Revolved { pts: Vec::new(), tris: Vec::new(), tags: Vec::new() };
+    for j in 0..=m {
+        for k in 0..n {
+            let t = angle(k, n);
+            g.pts.push([r * t.cos(), r * t.sin(), h * j as f64 / m as f64]);
+        }
+    }
+    let id = |j: usize, k: usize| (j * n + k % n) as u32;
+    let (bottom, top) = (g.pts.len() as u32, g.pts.len() as u32 + 1);
+    g.pts.push([0.0, 0.0, 0.0]);
+    g.pts.push([0.0, 0.0, h]);
+    for j in 0..m {
+        for k in 0..n {
+            let t = angle(2 * k + 1, 2 * n);
+            let out = [t.cos(), t.sin(), 0.0];
+            g.tri([id(j, k), id(j, k + 1), id(j + 1, k + 1)], out);
+            g.tri([id(j, k), id(j + 1, k + 1), id(j + 1, k)], out);
+            g.tags.extend([0, 0]);
+        }
+    }
+    for k in 0..n {
+        g.tri([bottom, id(0, k), id(0, k + 1)], [0.0, 0.0, -1.0]);
+        g.tri([top, id(m, k), id(m, k + 1)], [0.0, 0.0, 1.0]);
+        g.tags.extend([1, 2]);
+    }
+    let seam: Vec<u32> = (0..=m).map(|j| id(j, 0)).collect();
+    let surfaces = vec![
+        Some(Surface::Cylinder { origin: [0.0; 3], axis: [0.0, 0.0, 1.0], radius: r }),
+        Some(Surface::Plane { point: [0.0; 3], normal: [0.0, 0.0, -1.0] }),
+        Some(Surface::Plane { point: [0.0, 0.0, h], normal: [0.0, 0.0, 1.0] }),
+    ];
+    (g.surface(&[seam]), g.surface(&[]), surfaces)
+}
+
+/// A torus about z (radii `major` > `minor`), one face with its two seams: the meridian at
+/// angle 0 round the tube and the parallel on the outer equator round the axis.
+fn seamed_torus(major: f64, minor: f64, nu: usize, nv: usize) -> (BoundarySurface, BoundarySurface, Vec<Option<Surface>>) {
+    let mut g = Revolved { pts: Vec::new(), tris: Vec::new(), tags: Vec::new() };
+    for i in 0..nu {
+        for j in 0..nv {
+            let (u, v) = (angle(i, nu), angle(j, nv));
+            let rho = major + minor * v.cos();
+            g.pts.push([rho * u.cos(), rho * u.sin(), minor * v.sin()]);
+        }
+    }
+    let id = |i: usize, j: usize| ((i % nu) * nv + j % nv) as u32;
+    for i in 0..nu {
+        for j in 0..nv {
+            let (u, v) = (angle(2 * i + 1, 2 * nu), angle(2 * j + 1, 2 * nv));
+            let out = [v.cos() * u.cos(), v.cos() * u.sin(), v.sin()];
+            g.tri([id(i, j), id(i + 1, j), id(i + 1, j + 1)], out);
+            g.tri([id(i, j), id(i + 1, j + 1), id(i, j + 1)], out);
+            g.tags.extend([0, 0]);
+        }
+    }
+    let meridian: Vec<u32> = (0..=nv).map(|j| id(0, j)).collect();
+    let parallel: Vec<u32> = (0..=nu).map(|i| id(i, 0)).collect();
+    let surfaces = vec![Some(Surface::Torus { center: [0.0; 3], axis: [0.0, 0.0, 1.0], major, minor })];
+    (g.surface(&[meridian, parallel]), g.surface(&[]), surfaces)
+}
+
+/// A sphere of radius `r` about the origin, one face with its seam from pole to pole at angle 0.
+fn seamed_sphere(r: f64, nu: usize, nv: usize) -> (BoundarySurface, Vec<Option<Surface>>) {
+    let mut g = Revolved { pts: Vec::new(), tris: Vec::new(), tags: Vec::new() };
+    let (north, south) = (0u32, 1u32);
+    g.pts.push([0.0, 0.0, r]);
+    g.pts.push([0.0, 0.0, -r]);
+    // Rings 1 .. nv - 1 from the north pole.
+    for j in 1..nv {
+        let phi = std::f64::consts::PI * j as f64 / nv as f64;
+        for i in 0..nu {
+            let u = angle(i, nu);
+            g.pts.push([r * phi.sin() * u.cos(), r * phi.sin() * u.sin(), r * phi.cos()]);
+        }
+    }
+    let id = |j: usize, i: usize| (2 + (j - 1) * nu + i % nu) as u32;
+    let centre = |a: [f64; 3], b: [f64; 3], c: [f64; 3]| [(a[0] + b[0] + c[0]) / 3.0, (a[1] + b[1] + c[1]) / 3.0, (a[2] + b[2] + c[2]) / 3.0];
+    for i in 0..nu {
+        let (a, b) = (id(1, i), id(1, i + 1));
+        let out = centre(g.pts[0], g.pts[a as usize], g.pts[b as usize]);
+        g.tri([north, a, b], out);
+        let (a, b) = (id(nv - 1, i), id(nv - 1, i + 1));
+        let out = centre(g.pts[1], g.pts[a as usize], g.pts[b as usize]);
+        g.tri([south, a, b], out);
+        g.tags.extend([0, 0]);
+    }
+    for j in 1..nv - 1 {
+        for i in 0..nu {
+            let q = [id(j, i), id(j, i + 1), id(j + 1, i + 1), id(j + 1, i)];
+            let out = centre(g.pts[q[0] as usize], g.pts[q[1] as usize], g.pts[q[2] as usize]);
+            g.tri([q[0], q[1], q[2]], out);
+            g.tri([q[0], q[2], q[3]], out);
+            g.tags.extend([0, 0]);
+        }
+    }
+    let seam: Vec<u32> = std::iter::once(north).chain((1..nv).map(|j| id(j, 0))).chain(std::iter::once(south)).collect();
+    (g.surface(&[seam]), vec![Some(Surface::Sphere { center: [0.0; 3], radius: r })])
+}
+
+/// A whole cylinder's side, one face with a seam, is a linking face (Blacker 1996: its loop is
+/// the bottom circle, the seam, the top circle and the seam back): the cylinder sweeps one to one
+/// from its bottom to its top, its nodes on the cylinder. Without the seam the side has two
+/// loops and is no linking face.
+#[test]
+fn a_cylinder_whose_side_is_one_face_sweeps_across_its_seam() {
+    let (s, plain, faces) = seamed_cylinder(1.0, 2.0, 24, 4);
+    let brep = Brep::new(&s, &faces).unwrap();
+    let side = &brep.faces[0];
+    assert_eq!(side.loops.len(), 1, "{:?}", side.loops);
+    assert_eq!(side.loops[0].len(), 4, "bottom, seam, top, seam back: {:?}", side.loops[0]);
+    let seam = side.loops[0].iter().find(|&&(e, _)| brep.is_seam(e)).unwrap().0;
+    assert_eq!(side.loops[0].iter().filter(|&&(e, _)| e == seam).count(), 2);
+    let opts = HexOptions { method: HexMethod::Sweep, ..HexOptions::default() };
+    let m = hex_mesh(&s, &faces, &UniformSize(0.25), &opts).unwrap();
+    check_curved(&m, &s);
+    assert!(on_radius(&m, &[0], 1.0), "the side's nodes lie on the cylinder");
+    let e = hex_mesh(&plain, &faces, &UniformSize(0.25), &opts).unwrap_err().to_string();
+    assert!(e.contains("boundary loops"), "{e}");
+}
+
+/// A torus in one face, with its seams: the meridian seam is a level of the revolution, so the
+/// torus revolves; without the seams it has no level to revolve from.
+#[test]
+fn a_torus_in_one_face_revolves_from_its_meridian_seam() {
+    let (s, plain, faces) = seamed_torus(3.0, 1.0, 32, 16);
+    let opts = HexOptions { method: HexMethod::Revolve, ..HexOptions::default() };
+    let m = hex_mesh(&s, &faces, &UniformSize(0.4), &opts).unwrap();
+    check_curved(&m, &s);
+    let e = hex_mesh(&plain, &faces, &UniformSize(0.4), &opts).unwrap_err().to_string();
+    assert!(e.contains("no source and target faces"), "{e}");
+}
+
+/// A sphere in one face with a seam from pole to pole: its loop is the seam there and back, and
+/// the structured meshers refuse it saying why (it reaches its axis of revolution), never
+/// failing on the seam.
+#[test]
+fn a_sphere_with_a_seam_is_refused_saying_why() {
+    let (s, faces) = seamed_sphere(1.0, 24, 12);
+    let brep = Brep::new(&s, &faces).unwrap();
+    assert_eq!(brep.faces.len(), 1);
+    assert_eq!(brep.faces[0].loops.len(), 1, "{:?}", brep.faces[0].loops);
+    assert_eq!(brep.faces[0].loops[0].len(), 2);
+    let e = hex_mesh(&s, &faces, &UniformSize(0.3), &HexOptions::default()).unwrap_err();
+    assert!(matches!(e.kind(), Some(crate::Kind::Unsupported)), "{e}");
+}
+
+/// A hex mesh of a curved body: valid, conforming, its volume the faceted boundary's within the
+/// chords' share.
+fn check_curved(m: &HexMesh, s: &BoundarySurface) {
+    assert!(m.report.gate.passed(), "{}", m.report.description);
+    assert_conforming(m);
+    assert!(m.report.min_scaled_jacobian > 0.2, "{}", m.report.min_scaled_jacobian);
+    assert!((m.report.volume - s.volume()).abs() < 2e-2 * s.volume(), "{} vs {}", m.report.volume, s.volume());
+}

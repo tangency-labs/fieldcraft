@@ -431,14 +431,19 @@ pub(crate) fn prepare(ctxs: &[Ctx], setup: Setup) -> Result<Prepared> {
             if !pts.iter().all(|&(q, h)| frame.span(q, frame.dh(h, h0)) <= tol) {
                 continue;
             }
-            for &f in &edge.faces {
+            // A seam has its one face on both sides: one side's triangle is above it, the other's
+            // below, so the face is a wall above the seam once.
+            let faces: &[usize] = if brep.is_seam(e) { &edge.faces[..1] } else { &edge.faces };
+            for &f in faces {
                 if roles.get(f) != Some(&Role::Wall) {
                     continue;
                 }
                 // The wall's triangle on the edge's first segment: is its third vertex above?
-                let Some(v) = brep.third_vertex(e, f) else { continue };
-                let (qc, hc) = frame.coords(brep.point(v));
-                if frame.dh(hc, h0) > 0.0 && frame.span(qc, frame.dh(hc, h0)) > tol {
+                let above = brep.third_vertices(e, f).into_iter().any(|v| {
+                    let (qc, hc) = frame.coords(brep.point(v));
+                    frame.dh(hc, h0) > 0.0 && frame.span(qc, frame.dh(hc, h0)) > tol
+                });
+                if above {
                     polylines.push((pts.iter().map(|x| x.0).collect(), offset + f));
                 }
             }
