@@ -167,11 +167,13 @@ impl Seed {
 /// `n + 1` node positions in [0, 1] for `n` divisions graded by `bias` (uniform without one).
 pub fn spacing(n: u32, bias: Option<Bias>) -> Vec<f64> {
     let n = n.clamp(1, MAX_SEED_COUNT) as usize;
-    // Element lengths, in order from the start.
+    // Element lengths, in order from the start. The growth factor is the portable `pow`, the
+    // same on every platform (the system library's `powf` differs in the last bits between macOS
+    // and Linux, #115); `powi` is repeated multiplication.
     let lengths: Vec<f64> = match bias {
         Some(b) if b.ratio > 1.0 && n > 1 => match b.toward {
             BiasToward::Start | BiasToward::End => {
-                let q = b.ratio.powf(1.0 / (n - 1) as f64);
+                let q = libm::pow(b.ratio, 1.0 / (n - 1) as f64);
                 let grow: Vec<f64> = (0..n).map(|i| q.powi(i as i32)).collect();
                 if b.toward == BiasToward::Start { grow } else { grow.into_iter().rev().collect() }
             }
@@ -179,7 +181,7 @@ pub fn spacing(n: u32, bias: Option<Bias>) -> Vec<f64> {
                 // Small at both ends, growing to the middle: the ratio is reached over half the
                 // elements on each side.
                 let half = n.div_ceil(2);
-                let q = if half > 1 { b.ratio.powf(1.0 / (half - 1) as f64) } else { 1.0 };
+                let q = if half > 1 { libm::pow(b.ratio, 1.0 / (half - 1) as f64) } else { 1.0 };
                 (0..n).map(|i| q.powi(i.min(n - 1 - i) as i32)).collect()
             }
         },
@@ -267,6 +269,22 @@ mod tests {
         let l: Vec<f64> = b.windows(2).map(|w| w[1] - w[0]).collect();
         assert!((l[0] - l[4]).abs() < 1e-12 && (l[2] / l[0] - 4.0).abs() < 1e-9, "{l:?}");
         assert_eq!(spacing(1, Some(Bias { ratio: 5.0, toward: BiasToward::End })), vec![0.0, 1.0]);
+    }
+
+    /// Graded node positions are the same bit for bit on every platform (#115): the growth factor
+    /// is the portable `pow`, never the system maths library's. The fingerprint is of every
+    /// position's bits; it holds on macOS and Linux alike, and moves only when the spacing does.
+    #[test]
+    fn graded_spacing_is_the_same_on_every_platform() {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for (ratio, toward) in [(3.7, BiasToward::Start), (11.0, BiasToward::End), (5.3, BiasToward::Both)] {
+            for n in [7, 13, 50] {
+                for x in spacing(n, Some(Bias { ratio, toward })) {
+                    h = (h ^ x.to_bits()).wrapping_mul(0x0100_0000_01b3);
+                }
+            }
+        }
+        assert_eq!(h, 0xaea6_85c2_3b0e_f37b, "{h:#018x}");
     }
 
     #[test]

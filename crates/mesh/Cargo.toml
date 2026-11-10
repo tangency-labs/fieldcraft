@@ -11,10 +11,9 @@ workspace = true
 [dependencies]
 fieldcraft-model = { workspace = true }
 fieldcraft-parallel = { workspace = true }
-# Pure-Rust maths (a port of musl's libm) for sin, cos, log, exp, pow, hypot, acos: the same
-# bits on every platform, where the system library's are not correctly rounded and differ (the
-# plate's hex mesh differed between macOS and Linux, #438). atan2 and cbrt are crate::vec3's.
-libm = "0.2"
+# Portable sin, cos, log, exp, pow, hypot, acos (the plate's hex mesh differed between macOS
+# and Linux, #438). atan2 and cbrt are crate::vec3's.
+libm = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]

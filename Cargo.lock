@@ -1599,6 +1599,7 @@ dependencies = [
 name = "fieldcraft-model"
 version = "0.7.5"
 dependencies = [
+ "libm",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
