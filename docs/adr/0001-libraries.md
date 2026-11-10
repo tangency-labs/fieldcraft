@@ -22,7 +22,7 @@ through the same crate. Only `fieldcraft-geometry` may depend on SolidCraft.
 it draws from; MIT OR Apache-2.0, same pinned rev). *Decided 2026-11-10 (owner):* the desktop UI
 draws its windows, confirmations, menus, form rows, fields and buttons with the kit instead of
 FieldCraft's adapted copies of SolidCraft's widgets, so the two apps share one implementation and
-FieldCraft follows SolidCraft's egui line. FieldCraft installs its own tokens (its violet accent on
+FieldCraft follows SolidCraft's egui line. FieldCraft installs its own tokens (its teal accent on
 SolidCraft's chrome) and keeps what is its own: the viewport, mesh, element, results and setup
 colours. `fieldcraft-ui-egui` is the only crate that may use them (`cargo xtask layers`); it uses
 nothing else of SolidCraft's. The kit builds for `wasm32-unknown-unknown`, so the browser app keeps

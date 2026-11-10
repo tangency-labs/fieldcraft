@@ -1,4 +1,4 @@
-//! The accent's colour checks: text on it and in it reads (WCAG 2.x contrast), it is violet, and
+//! The accent's colour checks: text on it and in it reads (WCAG 2.x contrast), it is teal, and
 //! it stays apart from the status colours (ok, warning, error) for normal vision and for the three
 //! dichromacies.
 //!
@@ -177,14 +177,14 @@ fn selected_text_reads() {
     }
 }
 
-/// FieldCraft's accent is violet: neither SolidCraft's blue nor orange (OKLab hue ~297°; blue is
-/// ~255°, orange ~55°).
+/// FieldCraft's accent is teal: neither SolidCraft's blue, a violet nor orange (OKLab hue ~187°; blue is
+/// ~255°, violet ~297°, orange ~55°).
 #[test]
-fn the_accent_is_violet() {
+fn the_accent_is_teal() {
     for (name, t) in themes() {
         for c in [t.accent, t.accent_ink, t.accent_hover] {
             let hue = oklab_hue(c);
-            assert!((280.0..=320.0).contains(&hue), "{name}: {c:?} has hue {hue:.0}°");
+            assert!((175.0..=200.0).contains(&hue), "{name}: {c:?} has hue {hue:.0}°");
         }
     }
 }
@@ -214,7 +214,7 @@ fn soft_accents_are_ordered() {
 }
 
 /// The kit's tokens carry the accent wherever SolidCraft's carry its blue: every accent slot is
-/// violet, so no kit component draws SolidCraft's accent.
+/// teal, so no kit component draws SolidCraft's accent.
 #[test]
 fn the_kit_has_no_other_accent() {
     for (name, dark) in [("light", false), ("dark", true)] {
@@ -235,7 +235,7 @@ fn the_kit_has_no_other_accent() {
             k.render_accent,
         ] {
             let hue = oklab_hue(c);
-            assert!((280.0..=320.0).contains(&hue), "{name}: {c:?} has hue {hue:.0}°");
+            assert!((175.0..=200.0).contains(&hue), "{name}: {c:?} has hue {hue:.0}°");
         }
     }
 }
