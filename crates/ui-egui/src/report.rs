@@ -15,7 +15,8 @@ use fieldcraft_engine::crash::{self, Summary};
 use serde_json::{Value, json};
 
 use crate::ModelApp;
-use crate::files::Prompt;
+use crate::files::{Prompt, dismissed, message, note};
+use solidcraft_ui_kit as kit;
 
 /// The Report a Bug form.
 #[derive(Debug, Default)]
@@ -244,32 +245,29 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
                 app.prompt = None;
                 return;
             };
-            let (mut report, mut close) = (false, false);
-            crate::frame::window(ctx, kind_label(&first.kind), crate::frame::Width::Normal).id(egui::Id::unique("fc_crashed")).show(ctx, |ui| {
-                ui.label(match first.kind.as_str() {
-                    "unclean_exit" => "FieldCraft closed unexpectedly the last time it ran.",
-                    _ => "FieldCraft hit an internal error the last time it ran.",
-                });
-                ui.label(RichText::new(&first.message).color(t.text_dim));
-                if reports.len() > 1 {
-                    ui.label(RichText::new(format!("And {} more since.", reports.len() - 1)).color(t.text_dim));
-                }
-                ui.add_space(4.0);
-                ui.label(
-                    RichText::new(
+            let (closed, action) = kit::Confirm::new(egui::Id::unique("fc_crashed"), "diagnostics.bug_report", kind_label(&first.kind))
+                .tone(kit::Tone::Warning)
+                .actions("Report It…", "Not Now", None)
+                .detail(&first.message)
+                .show(ctx, true, |ui| {
+                    message(
+                        ui,
+                        match first.kind.as_str() {
+                            "unclean_exit" => "FieldCraft closed unexpectedly the last time it ran.",
+                            _ => "FieldCraft hit an internal error the last time it ran.",
+                        },
+                    );
+                    if reports.len() > 1 {
+                        note(ui, &format!("And {} more since.", reports.len() - 1));
+                    }
+                    note(
+                        ui,
                         "A crash report was saved on this computer. Reporting it opens a GitHub issue you review first; nothing is sent until you submit it.",
-                    )
-                    .color(t.text_dim),
-                );
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    report = ui.button("Report It…").clicked();
-                    close = ui.button("Not Now").clicked();
+                    );
                 });
-            });
-            if report {
+            if action == kit::Action::Ok {
                 app.report_bug(Some(first.id.clone()));
-            } else if close || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            } else if dismissed(closed, action) {
                 app.prompt = None;
             }
         }
@@ -282,48 +280,50 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
                 Close,
             }
             let mut act = None;
-            crate::frame::window(ctx, "Crash Reports", crate::frame::Width::Wide).id(egui::Id::unique("fc_crash_reports")).show(ctx, |ui| {
+            let (closed, action) = crate::frame::window(
+                egui::Id::unique("fc_crash_reports"),
+                "diagnostics.bug_report",
+                "Crash Reports",
+                crate::frame::Width::Wide,
+            )
+            .actions("", "Close", Some("Delete All"))
+            .apply_enabled(!reports.is_empty())
+            .show(ctx, true, |ui| {
                 if reports.is_empty() {
-                    ui.label("No crash reports are saved on this computer.");
-                } else {
-                    ui.label(
-                        RichText::new("Saved on this computer, newest first. Reporting one opens a GitHub issue you review first; nothing is sent until you submit it.")
-                            .color(t.text_dim),
-                    );
-                    ui.add_space(4.0);
-                    egui::ScrollArea::vertical().max_height((ctx.content_rect().height() * 0.6).max(160.0)).show(ui, |ui| {
-                        for r in &reports {
-                            ui.separator();
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new(kind_label(&r.kind)).strong());
-                                let when = if r.count > 1 { format!("{} · {} times", r.time, r.count) } else { r.time.clone() };
-                                ui.label(RichText::new(when).color(t.text_dim));
-                            });
-                            ui.label(RichText::new(&r.message).color(t.text_dim).size(11.0));
-                            ui.horizontal(|ui| {
-                                if ui.button("Report…").clicked() {
-                                    act = Some(Act::Report(r.id.clone()));
-                                }
-                                if ui.button("Copy Path").on_hover_text(&r.path).clicked() {
-                                    act = Some(Act::Copy(r.path.clone()));
-                                }
-                                if ui.button("Delete").clicked() {
-                                    act = Some(Act::Delete(r.id.clone()));
-                                }
-                            });
+                    message(ui, "No crash reports are saved on this computer.");
+                    return;
+                }
+                note(
+                    ui,
+                    "Saved on this computer, newest first. Reporting one opens a GitHub issue you review first; nothing is sent until you submit it.",
+                );
+                for r in &reports {
+                    kit::divider(ui, &format!("crash:{}", r.id));
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(kind_label(&r.kind)).strong());
+                        let when = if r.count > 1 { format!("{} · {} times", r.time, r.count) } else { r.time.clone() };
+                        ui.label(RichText::new(when).color(t.text_dim));
+                    });
+                    note(ui, &r.message);
+                    ui.horizontal(|ui| {
+                        if kit::button(ui, "Report…", kit::Button::Small).clicked() {
+                            act = Some(Act::Report(r.id.clone()));
+                        }
+                        if kit::button(ui, "Copy Path", kit::Button::Small).on_hover_text(&r.path).clicked() {
+                            act = Some(Act::Copy(r.path.clone()));
+                        }
+                        if kit::button(ui, "Delete", kit::Button::Small).clicked() {
+                            act = Some(Act::Delete(r.id.clone()));
                         }
                     });
                 }
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    if ui.add_enabled(!reports.is_empty(), egui::Button::new("Delete All")).clicked() {
-                        act = Some(Act::DeleteAll);
-                    }
-                    if ui.button("Close").clicked() {
-                        act = Some(Act::Close);
-                    }
-                });
             });
+            match action {
+                kit::Action::Apply => act = Some(Act::DeleteAll),
+                kit::Action::Cancel => act = Some(Act::Close),
+                _ if closed => act = Some(Act::Close),
+                _ => {}
+            }
             match act {
                 Some(Act::Report(id)) => app.report_bug(Some(id)),
                 Some(Act::Copy(path)) => {
@@ -337,7 +337,6 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
                     let _ = app.delete_crash_reports(None);
                 }
                 Some(Act::Close) => app.prompt = None,
-                None if ctx.input(|i| i.key_pressed(egui::Key::Escape)) => app.prompt = None,
                 None => {}
             }
         }
@@ -346,39 +345,28 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
                 app.prompt = None;
                 return;
             };
-            let (mut send, mut close) = (false, false);
             let commands = form.input.commands.len();
-            crate::frame::window(ctx, "Report a Bug", crate::frame::Width::Wide).id(egui::Id::unique("fc_report_bug")).show(ctx, |ui| {
-                ui.label(
-                    RichText::new(
-                        "This opens a GitHub issue in your browser, filled in with what is shown below. Nothing is sent until you submit it there.",
-                    )
-                    .color(t.text_dim),
-                );
+            let (closed, action) = crate::frame::window(
+                egui::Id::unique("fc_report_bug"),
+                "diagnostics.bug_report",
+                "Report a Bug",
+                crate::frame::Width::Wide,
+            )
+            .actions("Open GitHub Issue", "Cancel", None)
+            .fields()
+            .show(ctx, true, |ui| {
+                note(ui, "This opens a GitHub issue in your browser, filled in with what is shown below. Nothing is sent until you submit it there.");
                 if let Some(p) = &form.problem {
-                    ui.label(RichText::new(p).color(t.error));
+                    kit::status_line(ui, p, kit::StatusTone::Error);
                 }
-                ui.add_space(4.0);
-                ui.label("Title");
                 let hint = form.draft().title.clone();
-                ui.add(egui::TextEdit::singleline(&mut form.title).hint_text(hint).desired_width(f32::INFINITY));
-                ui.label("What happened");
-                ui.add(
-                    egui::TextEdit::multiline(&mut form.observed)
-                        .hint_text("What you did, and what went wrong")
-                        .desired_rows(3)
-                        .desired_width(f32::INFINITY),
-                );
-                ui.add_space(4.0);
-                ui.checkbox(&mut form.share_session, "Share my session")
+                kit::text_row(ui, "Title", &mut form.title, &hint);
+                kit::multiline_text_field(ui, "What happened", egui::Id::unique("fc_report_observed"), &mut form.observed);
+                kit::checkbox(ui, "Share my session", &mut form.share_session)
                     .on_hover_text("Attach the commands that built the model, to replay it. They can name your files.");
-                ui.label(
-                    RichText::new(format!("The {commands} command(s) that built the model, the version and the OS; they can name your files."))
-                        .color(t.text_dim)
-                        .size(11.0),
-                );
+                note(ui, &format!("The {commands} command(s) that built the model, the version and the OS; they can name your files."));
                 ui.add_enabled_ui(form.share_session, |ui| {
-                    ui.checkbox(&mut form.include_model, "Include the model file")
+                    kit::checkbox(ui, "Include the model file", &mut form.include_model)
                         .on_hover_text("Attach the model too (you attach the file yourself).");
                 });
                 if !form.share_session {
@@ -386,13 +374,7 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
                 }
                 app.include_model_if_asked(&mut form);
                 let draft = form.draft().clone();
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    send = ui.button("Open GitHub Issue").clicked();
-                    close = ui.button("Cancel").clicked();
-                });
-                ui.add_space(4.0);
-                egui::CollapsingHeader::new("What is sent").id_salt("fc_report_sent").default_open(true).show(ui, |ui| {
+                kit::section(ui, "fc_report_sent", "What is sent", true, |ui| {
                     egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
                         ui.label(RichText::new(format!("Title: {}", draft.title)).monospace().size(11.0));
                         for (k, v) in &draft.fields {
@@ -407,16 +389,16 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
                             );
                         }
                         if draft.clipboard.is_some() {
-                            ui.label(RichText::new("The session goes on the clipboard too, to paste.").size(11.0).color(t.text_dim));
+                            note(ui, "The session goes on the clipboard too, to paste.");
                         }
                     });
                 });
             });
             let draft = form.draft().clone();
             app.report = Some(form);
-            if send {
+            if action == kit::Action::Ok {
                 app.send_report(ctx, &draft);
-            } else if close || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            } else if dismissed(closed, action) {
                 app.prompt = None;
                 app.report = None;
             }

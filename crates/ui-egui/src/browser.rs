@@ -612,7 +612,7 @@ fn item_row(app: &mut ModelApp, ui: &mut egui::Ui, id: egui::Id, mut row: Row, t
         acts.push(Act::Focus(target.clone()));
     }
     if let Some(resp) = &r.response {
-        resp.context_menu(|ui| {
+        crate::frame::context_menu(resp, |ui| {
             if let Some(a) = menu::show(app, ui, &target) {
                 acts.push(Act::Menu(target.clone(), a));
             }
