@@ -1,6 +1,6 @@
 //! Colours and widget style. The interface draws with SolidCraft's UI kit, whose controls take
 //! their colours from `solidcraft_theme::Tokens`: FieldCraft gives the kit SolidCraft's dark and
-//! light chrome with FieldCraft's own violet accent ([`kit`]), so the apps look alike side by side
+//! light chrome with FieldCraft's own teal accent ([`kit`]), so the apps look alike side by side
 //! and are told apart, and installs them with the kit's theme state ([`apply`]). [`Tokens`] are
 //! FieldCraft's: the chrome read from the kit's tokens, and what is FieldCraft's own (the
 //! viewport, elements, results, setup symbols and selection). Every colour the UI uses comes from
@@ -17,14 +17,16 @@ use fieldcraft_render::glyphs::GlyphColors;
 use solidcraft_theme as kit_theme;
 use solidcraft_ui_kit::type_face;
 
-/// The accent in the light theme: #6F47C2.
-const LIGHT_ACCENT: Color32 = Color32::from_rgb(0x6f, 0x47, 0xc2);
-/// The accent in the dark theme: #8861CF, the chosen #8A63D2 darkened by 0.008 in OKLCH lightness
-/// (hue and chroma kept) so white on it reaches 4.5:1 (#8A63D2 gives 4.38:1).
-const DARK_ACCENT: Color32 = Color32::from_rgb(0x88, 0x61, 0xcf);
-/// The dark accent lightened in OKLCH (hue kept) until it reads at 4.5:1 on every dark ground text
-/// sits on.
-const DARK_ACCENT_INK: Color32 = Color32::from_rgb(0xc3, 0x9e, 0xff);
+/// The accent in the light theme: teal #0F7F78 (OKLab hue 188°; white on it 4.85:1).
+const LIGHT_ACCENT: Color32 = Color32::from_rgb(0x0f, 0x7f, 0x78);
+/// Text in the accent on light grounds: the accent darkened (hue kept), #0B6A64, so it reads at
+/// 4.5:1 on every light ground, the panel header (#ECEEF2) being the closest.
+const LIGHT_ACCENT_INK: Color32 = Color32::from_rgb(0x0b, 0x6a, 0x64);
+/// The accent in the dark theme: teal #0E837A, #14958B darkened (hue kept) so white
+/// on it reaches 4.5:1 (#14958B gives 3.68:1).
+const DARK_ACCENT: Color32 = Color32::from_rgb(0x0e, 0x83, 0x7a);
+/// Text in the accent on dark grounds: a light teal, #5CD6CB, at least 7:1 on every dark ground.
+const DARK_ACCENT_INK: Color32 = Color32::from_rgb(0x5c, 0xd6, 0xcb);
 /// How far a hovered accent fill moves toward black: darker keeps white on it legible.
 const ACCENT_HOVER: f32 = 0.12;
 
@@ -61,7 +63,7 @@ const fn accent(dark: bool) -> Accent {
     let fill = if dark { DARK_ACCENT } else { LIGHT_ACCENT };
     Accent {
         fill,
-        ink: if dark { DARK_ACCENT_INK } else { LIGHT_ACCENT },
+        ink: if dark { DARK_ACCENT_INK } else { LIGHT_ACCENT_INK },
         on: Color32::WHITE,
         hover: mix(fill, Color32::BLACK, ACCENT_HOVER),
         soft: if dark { mix(chrome.panel, fill, 0.30) } else { mix(chrome.panel, fill, 0.18) },
@@ -133,7 +135,7 @@ pub struct Tokens {
     pub field: Color32,
     pub text: Color32,
     pub text_dim: Color32,
-    /// FieldCraft's accent (violet): the primary action, the current tab, focus and links. Violet
+    /// FieldCraft's accent (teal): the primary action, the current tab, focus and links. Teal
     /// keeps green, amber and red free for ok, warning and error.
     pub accent: Color32,
     /// Text in the accent on a panel or form (links, the next step, required marks): the accent
@@ -288,7 +290,9 @@ impl Tokens {
             accent_soft: chrome,
             hover: chrome,
             error: chrome,
-            ok: Color32::from_rgb(44, 122, 58),
+            // Darker than the kit's green so the teal accent stays apart from it for tritan
+            // vision (ΔE00 13 rather than 5).
+            ok: Color32::from_rgb(0x23, 0x5f, 0x2e),
             warm: chrome,
             icon: chrome,
             icon_fill: Color32::from_rgb(178, 196, 222),
