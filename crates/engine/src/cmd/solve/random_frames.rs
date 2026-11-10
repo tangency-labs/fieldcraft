@@ -187,6 +187,23 @@ pub(super) fn evaluate(h: &HarmonicResult, p: &Value, step: &str, table: &Value)
                 .collect()
         })
         .transpose()?;
+    // Full-field fatigue only needs projected moments/damage.  Avoid materialising
+    // the much larger displacement/stress PSD cube and per-node probe samples.
+    if nodes.len() > 10_000 {
+        return Ok(json!({
+            "step": step,
+            "method": "harmonic_frame_psd",
+            "mass": h.mass,
+            "nodes": nodes,
+            "frequencies": h.frames.iter().map(|f| f.frequency).collect::<Vec<_>>(),
+            "input_psd": psd,
+            "projected_stress": projected,
+            "projection_weights": projection.as_ref().map(|v| v.weights),
+            "projection_psd_unit": "Pa²/Hz",
+            "probes": [],
+            "units": {"frequency":"Hz", "psd":"squared SI response unit per Hz"}
+        }));
+    }
     let mut u = Vec::new();
     let mut acc = Vec::new();
     let mut stress = Vec::new();
