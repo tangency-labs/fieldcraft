@@ -21,10 +21,9 @@ allow-wildcard-paths = true
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-# SolidCraft (its kernel, the solidcore kernel it vendors, and its patched egui-wgpu, winit and
-# accesskit_macos), pinned by rev in Cargo.toml.
-# storytold/craft-libs: the Craft family's shared UI components (craft-ui), pinned by rev.
-allow-git = ["https://github.com/tangency-labs/solidcraft", "https://github.com/storytold/craft-libs"]
+# SolidCraft (its kernel, the solidcore kernel it vendors, its UI kit and its patched egui-wgpu and
+# winit), pinned by rev in Cargo.toml.
+allow-git = ["https://github.com/tangency-labs/solidcraft"]
 
 # What FieldCraft may ship: permissive licences only (no copyleft). A crate offering
 # a choice (MIT OR LGPL) passes on its permissive option. THIRD-PARTY-LICENSES.txt is generated at

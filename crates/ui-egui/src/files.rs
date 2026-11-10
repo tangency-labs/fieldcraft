@@ -1325,9 +1325,10 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
             None => "Drop to open: .fieldcraft models, .solidcraft designs, .3mf tagged meshes, .msh orphan meshes".into(),
         };
         let mut cancel = false;
-        egui::Area::new(egui::Id::new("fc_loading")).order(egui::Order::Foreground).anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0)).show(
-            ctx,
-            |ui| {
+        egui::Area::new(egui::Id::unique("fc_loading"))
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .show(ctx, |ui| {
                 egui::Frame::popup(ui.style()).fill(t.overlay).inner_margin(egui::Margin::symmetric(16, 12)).show(ui, |ui| {
                     ui.horizontal(|ui| {
                         if app.loading.is_some() {
@@ -1342,8 +1343,7 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
                         ui.add(egui::ProgressBar::new(f as f32).desired_height(4.0).fill(t.accent));
                     }
                 });
-            },
-        );
+            });
         if let Some(l) = app.loading.as_mut() {
             l.shown = true;
         }
@@ -1357,7 +1357,7 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
     match app.prompt.clone() {
         Some(Prompt::Unsaved(next)) => {
             let mut answer = None;
-            crate::frame::window(ctx, "Unsaved changes", crate::frame::Width::Normal).id(egui::Id::new("fc_unsaved")).show(ctx, |ui| {
+            crate::frame::window(ctx, "Unsaved changes", crate::frame::Width::Normal).id(egui::Id::unique("fc_unsaved")).show(ctx, |ui| {
                 ui.label(match next {
                     Replace::Update => format!("Save the changes to {} before restarting to update?", app.model_name()),
                     _ => format!("Save the changes to {} before opening {}?", app.model_name(), next.name()),
@@ -1385,7 +1385,7 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
         }
         Some(Prompt::Design(path)) => {
             let mut answer = None;
-            crate::frame::window(ctx, "Open design", crate::frame::Width::Normal).id(egui::Id::new("fc_design")).show(ctx, |ui| {
+            crate::frame::window(ctx, "Open design", crate::frame::Width::Normal).id(egui::Id::unique("fc_design")).show(ctx, |ui| {
                 ui.label(format!("{} has none of the bodies {}'s mesh and sets are on.", file_name(&path), app.model_name()));
                 ui.label(egui::RichText::new("A new model starts empty with this design; keeping the model keeps its mesh and definitions, which then refer to bodies the design does not have.").color(t.text_dim));
                 ui.add_space(6.0);
@@ -1412,7 +1412,7 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
         }
         Some(Prompt::Delete(ask)) => {
             let mut answer = None;
-            crate::frame::window(ctx, "Delete", crate::frame::Width::Normal).id(egui::Id::new("fc_delete")).show(ctx, |ui| {
+            crate::frame::window(ctx, "Delete", crate::frame::Width::Normal).id(egui::Id::unique("fc_delete")).show(ctx, |ui| {
                 ui.label(ask.question());
                 if ask.allowed() && !ask.users.is_empty() {
                     ui.label(egui::RichText::new("They are deleted too; Undo brings everything back.").color(t.text_dim));
@@ -1438,7 +1438,7 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
         }
         Some(Prompt::ReplaceMesh(r)) => {
             let mut answer = None;
-            crate::frame::window(ctx, "Replace mesh", crate::frame::Width::Normal).id(egui::Id::new("fc_replace_mesh")).show(ctx, |ui| {
+            crate::frame::window(ctx, "Replace mesh", crate::frame::Width::Normal).id(egui::Id::unique("fc_replace_mesh")).show(ctx, |ui| {
                 ui.label(&r.question);
                 for w in &r.warnings {
                     ui.label(egui::RichText::new(w).color(t.text_dim));
@@ -1465,7 +1465,7 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
         Some(Prompt::Recover) => {
             let entries = app.recover_list(ctx);
             let (mut recover, mut discard, mut discard_all, mut close) = (None, None, false, false);
-            crate::frame::window(ctx, "Recover", crate::frame::Width::Wide).id(egui::Id::new("fc_recover")).show(ctx, |ui| {
+            crate::frame::window(ctx, "Recover", crate::frame::Width::Wide).id(egui::Id::unique("fc_recover")).show(ctx, |ui| {
                 if entries.is_empty() {
                     ui.label(egui::RichText::new("No autosaved models to recover.").color(t.text_dim));
                 }
@@ -1504,15 +1504,15 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
             } else if discard.is_some() || discard_all {
                 let params = discard.map_or_else(|| json!({"all": true}), |id| json!({"id": id}));
                 let _ = app.run("file.recovery.discard", params);
-                ctx.data_mut(|d| d.remove::<Vec<Value>>(egui::Id::new("fc_recover_entries")));
+                ctx.data_mut(|d| d.remove::<Vec<Value>>(egui::Id::unique("fc_recover_entries")));
             } else if close || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
                 app.prompt = None;
-                ctx.data_mut(|d| d.remove::<Vec<Value>>(egui::Id::new("fc_recover_entries")));
+                ctx.data_mut(|d| d.remove::<Vec<Value>>(egui::Id::unique("fc_recover_entries")));
             }
         }
         Some(Prompt::Samples) => {
             let (mut open, mut close) = (None, false);
-            crate::frame::window(ctx, "Samples", crate::frame::Width::Wide).id(egui::Id::new("fc_samples")).show(ctx, |ui| {
+            crate::frame::window(ctx, "Samples", crate::frame::Width::Wide).id(egui::Id::unique("fc_samples")).show(ctx, |ui| {
                 ui.set_width(crate::frame::WINDOW_WIDE_MAX_W.min(ctx.content_rect().width() - 48.0));
                 crate::samples::grid(ui, &t, (ctx.content_rect().height() * 0.6).max(160.0), &mut open);
                 ui.add_space(6.0);
@@ -1533,7 +1533,7 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
 impl ModelApp {
     /// The recover window's entries, read from disk once while it is open.
     fn recover_list(&mut self, ctx: &egui::Context) -> Vec<Value> {
-        let key = egui::Id::new("fc_recover_entries");
+        let key = egui::Id::unique("fc_recover_entries");
         if let Some(v) = ctx.data(|d| d.get_temp::<Vec<Value>>(key)) {
             return v;
         }

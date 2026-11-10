@@ -144,7 +144,7 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
     match app.prompt {
         Some(Prompt::Consent) => {
             let (mut share, mut decline, mut link, mut updates) = (false, false, false, None);
-            crate::frame::window(ctx, "Help Improve FieldCraft", crate::frame::Width::Normal).id(egui::Id::new("fc_consent")).show(ctx, |ui| {
+            crate::frame::window(ctx, "Help Improve FieldCraft", crate::frame::Width::Normal).id(egui::Id::unique("fc_consent")).show(ctx, |ui| {
                 ui.label(QUESTION);
                 ui.add_space(4.0);
                 ui.label(RichText::new(DETAIL).color(t.text_dim).size(11.0));
@@ -178,7 +178,7 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
             let (mut sharing, mut automation) = (app.prefs.usage_sharing == Some(true), app.prefs.usage_automation);
             let (mut close, mut link, mut updates, mut unskip, mut check) = (false, false, None, false, false);
             let mut units = None;
-            crate::frame::window(ctx, "Settings", crate::frame::Width::Normal).id(egui::Id::new("fc_settings")).show(ctx, |ui| {
+            crate::frame::window(ctx, "Settings", crate::frame::Width::Normal).id(egui::Id::unique("fc_settings")).show(ctx, |ui| {
                 crate::frame::menu_heading(ui, &t, "UNITS");
                 units = units_choice(ui, &t, app.prefs.units.preset());
                 ui.add_space(6.0);

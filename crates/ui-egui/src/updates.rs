@@ -352,7 +352,7 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
     };
     let reinstall = staged.version.to_string() == crate::VERSION;
     let (mut restart, mut later, mut open) = (false, false, false);
-    crate::frame::window(ctx, "Update FieldCraft", crate::frame::Width::Normal).id(egui::Id::new("fc_update")).show(ctx, |ui| match &finish {
+    crate::frame::window(ctx, "Update FieldCraft", crate::frame::Width::Normal).id(egui::Id::unique("fc_update")).show(ctx, |ui| match &finish {
         Finish::Swap(_) => {
             ui.label(if reinstall {
                 format!("FieldCraft {} was downloaded again and verified. Restart to reinstall it?", staged.version)

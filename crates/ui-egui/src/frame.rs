@@ -93,7 +93,7 @@ fn popup<R>(
     if !open {
         return None;
     }
-    let id = egui::Id::new(("fc_menu", key));
+    let id = egui::Id::unique(("fc_menu", key));
     let shown =
         egui::Popup::new(id, ui.ctx().clone(), anchor, ui.layer_id()).kind(egui::PopupKind::Menu).open_bool(&mut open).close_behavior(close).show(
             |ui| {
@@ -130,7 +130,7 @@ pub fn menu_row(ui: &mut Ui, t: &crate::theme::Tokens, label: &str, right: Optio
     if let Some(r) = right {
         ui.painter().text(egui::pos2(rect.right() - 10.0, rect.center().y), Align2::RIGHT_CENTER, r, egui::FontId::proportional(12.0), t.text_dim);
     }
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
     resp
 }
 
