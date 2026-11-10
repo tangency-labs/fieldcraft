@@ -679,7 +679,7 @@ fn draw_ghost(app: &mut ModelApp, ui: &mut egui::Ui, s: &StageState) -> bool {
     if resp.has_focus() {
         ui.painter().rect_stroke(r.shrink(0.5), 3.0, Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);
     }
-    let col = if s.status == Status::Next { t.accent } else { t.text_dim };
+    let col = if s.status == Status::Next { t.accent_ink } else { t.text_dim };
     // Aligned with the node's children: past the fold arrow, the plus in the icon's place.
     let x = r.left() + 2.0 + MARK_W + 2.0 * INDENT + 14.0;
     let c = pos2(x + 8.0, r.center().y);

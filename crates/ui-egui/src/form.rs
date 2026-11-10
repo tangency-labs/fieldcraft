@@ -77,7 +77,7 @@ struct Form<'a> {
 
 /// The form's look; `label_width` is the label column ([`label_column`]).
 pub fn style(t: &Tokens, label_width: f32) -> Style {
-    Style { label_width, dim: t.text_dim, error: t.error, required: t.accent }
+    Style { label_width, dim: t.text_dim, error: t.error, required: t.accent_ink }
 }
 
 /// The label column of `fields` in a form `width` wide: its longest label on one line with its

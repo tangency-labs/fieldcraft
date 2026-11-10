@@ -1,6 +1,7 @@
 //! Colours and widget style: the Craft family's dark theme (the default, blue-grey chrome around a
-//! #2e3440 viewport) and its light one, with the same values as SolidCraft's tokens so the apps
-//! look alike side by side. Every colour the UI uses comes from [`Tokens`].
+//! #2e3440 viewport) and its light one, with the same chrome as SolidCraft's tokens so the apps
+//! look alike side by side, and FieldCraft's own violet accent so they are told apart. Every
+//! colour the UI uses comes from [`Tokens`].
 //!
 //! Adapted from SolidCraft's `crates/ui-egui/src/theme.rs` (MIT OR Apache-2.0), see
 //! ATTRIBUTION.md. Widget states are coloured with craft-ui's `WidgetPalette`.
@@ -29,8 +30,19 @@ pub struct Tokens {
     pub field: Color32,
     pub text: Color32,
     pub text_dim: Color32,
+    /// FieldCraft's accent (violet): the primary action, the current tab, focus and links. Violet
+    /// keeps green, amber and red free for ok, warning and error.
     pub accent: Color32,
+    /// Text in the accent on a panel or form (links, the next step, required marks): the accent
+    /// where it reads at 4.5:1, lighter where it does not (the dark theme).
+    pub accent_ink: Color32,
+    /// Text and marks drawn on an accent fill (at least 4.5:1 against it, WCAG 2.x).
+    pub on_accent: Color32,
+    /// An accent fill under the pointer.
+    pub accent_hover: Color32,
+    /// The accent faintly over the panel: selected rows and pressed controls.
     pub accent_soft: Color32,
+    /// A hovered row or control: the accent more faintly still.
     pub hover: Color32,
     pub error: Color32,
     pub ok: Color32,
@@ -108,9 +120,35 @@ const CONTOUR: [Color32; 5] = [
     Color32::from_rgb(0xe0, 0x40, 0x2e),
 ];
 
+/// The accent in the light theme: #6F47C2.
+const LIGHT_ACCENT: Color32 = Color32::from_rgb(0x6f, 0x47, 0xc2);
+/// The accent in the dark theme: #8861CF, the chosen #8A63D2 darkened by 0.008 in OKLCH lightness
+/// (hue and chroma kept) so white on it reaches 4.5:1 (#8A63D2 gives 4.38:1).
+const DARK_ACCENT: Color32 = Color32::from_rgb(0x88, 0x61, 0xcf);
+/// How far a hovered accent fill moves toward black: darker keeps white on it legible.
+const ACCENT_HOVER: f32 = 0.12;
+const LIGHT_PANEL: Color32 = Color32::from_rgb(250, 251, 252);
+const DARK_PANEL: Color32 = Color32::from_rgb(39, 43, 52);
+const DARK_PANEL_HEADER: Color32 = Color32::from_rgb(47, 52, 62);
+
+/// `a` moved the fraction `t` of the way to `b`, channel by channel: `Color32::lerp_to_gamma` for
+/// opaque colours, as a `const fn` so the themes stay constants.
+const fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
+    const fn channel(a: u8, b: u8, t: f32) -> u8 {
+        let v = a as f32 + (b as f32 - a as f32) * t;
+        // In range for t in 0..=1; `as` saturates otherwise.
+        (v + 0.5) as u8
+    }
+    Color32::from_rgb(channel(a.r(), b.r(), t), channel(a.g(), b.g(), t), channel(a.b(), b.b(), t))
+}
+
 impl Tokens {
+    /// Both themes, evaluated at compile time.
+    const LIGHT: Tokens = Tokens::light();
+    const DARK: Tokens = Tokens::dark();
+
     pub fn get(dark: bool) -> Tokens {
-        if dark { Tokens::dark() } else { Tokens::light() }
+        if dark { Tokens::DARK } else { Tokens::LIGHT }
     }
 
     pub const fn light() -> Tokens {
@@ -118,7 +156,7 @@ impl Tokens {
             app_bar: Color32::from_rgb(52, 56, 64),
             app_bar_text: Color32::from_rgb(230, 234, 242),
             toolbar: Color32::from_rgb(246, 247, 249),
-            panel: Color32::from_rgb(250, 251, 252),
+            panel: LIGHT_PANEL,
             panel_header: Color32::from_rgb(236, 238, 242),
             dialog_bg: Color32::from_rgb(250, 251, 252),
             heading_bg: Color32::from_rgb(218, 223, 231),
@@ -127,9 +165,12 @@ impl Tokens {
             field: Color32::from_rgb(232, 236, 242),
             text: Color32::from_rgb(38, 42, 50),
             text_dim: Color32::from_rgb(110, 116, 128),
-            accent: Color32::from_rgb(38, 120, 218),
-            accent_soft: Color32::from_rgb(214, 230, 250),
-            hover: Color32::from_rgb(226, 234, 246),
+            accent: LIGHT_ACCENT,
+            accent_ink: LIGHT_ACCENT,
+            on_accent: Color32::WHITE,
+            accent_hover: mix(LIGHT_ACCENT, Color32::BLACK, ACCENT_HOVER),
+            accent_soft: mix(LIGHT_PANEL, LIGHT_ACCENT, 0.18),
+            hover: mix(LIGHT_PANEL, LIGHT_ACCENT, 0.09),
             error: Color32::from_rgb(214, 54, 54),
             ok: Color32::from_rgb(44, 122, 58),
             warm: Color32::from_rgb(222, 150, 30),
@@ -180,14 +221,14 @@ impl Tokens {
         }
     }
 
-    /// Dark blue-grey: the viewport #2e3440, the chrome a little darker, light text, a blue
+    /// Dark blue-grey: the viewport #2e3440, the chrome a little darker, light text, the violet
     /// accent.
     pub const fn dark() -> Tokens {
         let mut t = Tokens::light();
         t.app_bar = Color32::from_rgb(28, 31, 38);
         t.toolbar = Color32::from_rgb(37, 41, 49);
-        t.panel = Color32::from_rgb(39, 43, 52);
-        t.panel_header = Color32::from_rgb(47, 52, 62);
+        t.panel = DARK_PANEL;
+        t.panel_header = DARK_PANEL_HEADER;
         t.dialog_bg = Color32::from_rgb(59, 68, 83);
         t.heading_bg = Color32::from_rgb(38, 44, 55);
         t.subheading_bg = Color32::from_rgb(48, 55, 68);
@@ -195,9 +236,13 @@ impl Tokens {
         t.field = Color32::from_rgb(30, 34, 41);
         t.text = Color32::from_rgb(222, 226, 232);
         t.text_dim = Color32::from_rgb(148, 155, 168);
-        t.accent = Color32::from_rgb(58, 136, 238);
-        t.accent_soft = Color32::from_rgb(42, 70, 110);
-        t.hover = Color32::from_rgb(54, 61, 74);
+        t.accent = DARK_ACCENT;
+        // The accent lightened in OKLCH (hue kept) until it reads at 4.5:1 on every dark ground
+        // text sits on, the form background (#3b4453) being the closest.
+        t.accent_ink = Color32::from_rgb(0xc3, 0x9e, 0xff);
+        t.accent_hover = mix(DARK_ACCENT, Color32::BLACK, ACCENT_HOVER);
+        t.accent_soft = mix(DARK_PANEL, DARK_ACCENT, 0.30);
+        t.hover = mix(DARK_PANEL_HEADER, DARK_ACCENT, 0.10);
         t.error = Color32::from_rgb(240, 100, 96);
         t.ok = Color32::from_rgb(0x8c, 0xc8, 0x8c);
         t.warm = Color32::from_rgb(236, 170, 70);
@@ -327,7 +372,9 @@ fn visuals(dark: bool) -> egui::Visuals {
     }
     .apply_to(&mut v.widgets, egui::CornerRadius::same(3), Stroke::new(1.0, t.text));
     v.selection.bg_fill = t.accent_soft;
-    v.selection.stroke = Stroke::new(1.0, t.accent);
+    // egui draws selected labels' text in the selection stroke's colour, on its fill.
+    v.selection.stroke = Stroke::new(1.0, t.accent_ink);
+    v.hyperlink_color = t.accent_ink;
     v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, t.border);
     v.widgets.inactive.bg_stroke = Stroke::new(1.0, t.border);
     v.window_corner_radius = egui::CornerRadius::same(6);
@@ -369,6 +416,10 @@ pub fn apply(ctx: &egui::Context, dark: bool) {
         s.spacing.button_padding = egui::vec2(6.0, 3.0);
     });
 }
+
+#[cfg(test)]
+#[path = "theme_colour_tests.rs"]
+mod colour_tests;
 
 #[cfg(test)]
 mod tests {

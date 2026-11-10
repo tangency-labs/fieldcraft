@@ -402,7 +402,9 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
                             }
                         }
                         for a in &draft.attachments {
-                            ui.label(RichText::new(format!("Attach {} ({}): {}", a.name, size(a.bytes.len()), a.what)).size(11.0).color(t.accent));
+                            ui.label(
+                                RichText::new(format!("Attach {} ({}): {}", a.name, size(a.bytes.len()), a.what)).size(11.0).color(t.accent_ink),
+                            );
                         }
                         if draft.clipboard.is_some() {
                             ui.label(RichText::new("The session goes on the clipboard too, to paste.").size(11.0).color(t.text_dim));

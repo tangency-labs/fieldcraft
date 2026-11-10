@@ -124,14 +124,15 @@ fn badge(command: &str) -> Option<Badge> {
 /// stroke on the accent for an edit.
 fn paint_badge(p: &egui::Painter, item: Rect, b: Badge, t: &Tokens) {
     let c = item.left_top() + vec2(5.0, 5.0);
-    let (fill, white) = (if b == Badge::Delete { t.error } else { t.accent }, Stroke::new(1.4, Color32::WHITE));
+    let (fill, ink) = if b == Badge::Delete { (t.error, Color32::WHITE) } else { (t.accent, t.on_accent) };
+    let ink = Stroke::new(1.4, ink);
     p.circle(c, 5.0, fill, Stroke::new(1.0, t.timeline_item));
     match b {
         Badge::Delete => {
-            p.line_segment([c - vec2(2.5, 0.0), c + vec2(2.5, 0.0)], white);
+            p.line_segment([c - vec2(2.5, 0.0), c + vec2(2.5, 0.0)], ink);
         }
         Badge::Edit => {
-            p.line_segment([c + vec2(-2.2, 2.2), c + vec2(2.2, -2.2)], white);
+            p.line_segment([c + vec2(-2.2, 2.2), c + vec2(2.2, -2.2)], ink);
         }
     }
 }

@@ -289,8 +289,7 @@ fn form(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             cancel |= ui.button("Cancel").clicked();
-            let ok =
-                ui.add_enabled(ready, egui::Button::new(RichText::new("OK").color(egui::Color32::WHITE)).fill(t.accent).min_size(vec2(64.0, 0.0)));
+            let ok = ui.add_enabled(ready, egui::Button::new(RichText::new("OK").color(t.on_accent)).fill(t.accent).min_size(vec2(64.0, 0.0)));
             // A click on the greyed OK shows every problem, beside its field.
             attempted = !ready && running.is_none() && ok.contains_pointer() && ui.input(|i| i.pointer.primary_clicked());
             run = ok

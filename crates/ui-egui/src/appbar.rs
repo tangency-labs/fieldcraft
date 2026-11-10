@@ -201,27 +201,25 @@ pub fn app_bar(app: &mut ModelApp, ui: &mut egui::Ui) {
         let can = missing.is_none() && !busy;
         let resp = ui.interact(solve, ui.id().with("fc_solve"), if can { Sense::click() } else { Sense::hover() });
         let fill = if resp.hovered() && can {
-            t.accent.gamma_multiply(1.15)
+            t.accent_hover
         } else if can {
             t.accent
         } else {
             Color32::from_white_alpha(24)
         };
         ui.painter().rect_filled(solve, 5.0, fill);
-        // A white play mark: the accent fill is the button's colour.
+        // The play mark and label in the ink for the accent fill; white on the greyed one (the
+        // title bar is dark in both themes).
+        let ink = if can { t.on_accent } else { Color32::WHITE };
         let c = pos2(solve.left() + 15.0, solve.center().y);
-        ui.painter().add(egui::Shape::convex_polygon(
-            vec![c + vec2(-3.5, -5.5), c + vec2(5.5, 0.0), c + vec2(-3.5, 5.5)],
-            Color32::WHITE,
-            Stroke::NONE,
-        ));
+        ui.painter().add(egui::Shape::convex_polygon(vec![c + vec2(-3.5, -5.5), c + vec2(5.5, 0.0), c + vec2(-3.5, 5.5)], ink, Stroke::NONE));
         if !lay.compact {
             ui.painter().text(
                 pos2(solve.left() + 28.0, solve.center().y),
                 Align2::LEFT_CENTER,
                 "Solve",
                 crate::theme::label_font(ui.ctx(), 13.0),
-                Color32::WHITE,
+                ink,
             );
         }
         let head = if missing.is_some() { "Solve: not ready yet (or try Help › Samples)" } else { "Solve every step and show the results" };

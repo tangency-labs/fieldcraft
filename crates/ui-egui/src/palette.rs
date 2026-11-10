@@ -154,7 +154,7 @@ pub fn command_line(app: &mut ModelApp, ui: &mut egui::Ui) {
         .show(ui, |ui| {
             app.place("command_line", ui.max_rect());
             ui.horizontal_centered(|ui| {
-                ui.label(RichText::new("›").strong().color(t.accent));
+                ui.label(RichText::new("›").strong().color(t.accent_ink));
                 // The rest of the bar keeps room for the status and the model's size.
                 let width = (ui.available_width() * 0.4).clamp(MIN_LINE_W, MAX_LINE_W);
                 let hint = if app.command_line.is_empty() { placeholder(ui, width) } else { "" };
