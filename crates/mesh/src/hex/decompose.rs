@@ -926,15 +926,15 @@ fn assignable(loops: &[Poly], cuts: &[Vec<Q>], s: &Settings) -> bool {
     ia.solve().is_ok()
 }
 
-/// O-grid cuts round the one hole of a region (step 2): of the layouts below, the one whose
-/// pieces (each allowed one more cut) score best.
+/// O-grid cuts round the one hole of a region (step 2): the layouts below, best first by how
+/// their pieces (each allowed one more cut) score.
 /// - From the outer loop's corners towards the hole's centre.
 /// - From the outer loop's corners along their bisectors (towards the centre where a bisector
 ///   misses the hole).
 /// - From the hole's concave corners away from its centre.
 /// - From the hole along four directions (the axes, then the diagonals): the outer loop's
 ///   corners are then cut off by the pieces' own search, the layout of a long plate.
-fn o_grid(loops: &[Poly], s: &Settings, budget: &mut usize) -> Vec<Vec<Q>> {
+fn o_grid(loops: &[Poly], s: &Settings, budget: &mut usize) -> Vec<Vec<Vec<Q>>> {
     let (Some(outer), Some(hole)) = (loops.first(), loops.get(1)) else { return Vec::new() };
     let c = centroid(&hole.pts);
     let corner = |p: &Poly, i: usize| p.is_end(i) && region::is_corner(p.angle(i));
@@ -972,7 +972,14 @@ fn o_grid(loops: &[Poly], s: &Settings, budget: &mut usize) -> Vec<Vec<Q>> {
     });
     layouts.push(extensions.filter_map(|(i, d)| ray(1, i, d, 0)).collect());
     let s2 = std::f64::consts::FRAC_1_SQRT_2;
-    for dirs in [[[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0], [0.0, -1.0]], [[s2, s2], [-s2, s2], [-s2, -s2], [s2, -s2]]] {
+    let mut directions = vec![[[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0], [0.0, -1.0]], [[s2, s2], [-s2, s2], [-s2, -s2], [s2, -s2]]];
+    // The same four directions turned so that one passes through the hole's first vertex: a
+    // whole circle the kernel gives in one face has one (its seam's end, wherever the kernel
+    // puts it), which the cut then ends on instead of leaving it alone inside an arc of a block.
+    if let Some(v) = (0..hole.len()).find(|&i| hole.is_end(i)).and_then(|i| unit(sub(hole.at(i), c))) {
+        directions.push([v, [-v[1], v[0]], [-v[0], -v[1]], [v[1], -v[0]]]);
+    }
+    for dirs in directions {
         let mut cuts = Vec::new();
         for d in dirs {
             // Where the ray leaves the hole, snapped to a hole point within the merge tolerance. A
@@ -996,7 +1003,7 @@ fn o_grid(loops: &[Poly], s: &Settings, budget: &mut usize) -> Vec<Vec<Q>> {
         }
         layouts.push(cuts);
     }
-    let mut best: Option<(Value, Vec<Vec<Q>>)> = None;
+    let mut ranked: Vec<(Value, Vec<Vec<Q>>)> = Vec::new();
     for cuts in layouts {
         if cuts.len() < 2 {
             continue;
@@ -1010,13 +1017,13 @@ fn o_grid(loops: &[Poly], s: &Settings, budget: &mut usize) -> Vec<Vec<Q>> {
             let (v, _) = search(piece, 1, s, budget);
             value = Some(value.map_or(v, |t| t.add(v)));
         }
-        if let Some(v) = value
-            && best.as_ref().is_none_or(|(b, _)| v.better(*b))
-        {
-            best = Some((v, cuts));
+        if let Some(v) = value {
+            // Best first; a layout no better than one already ranked goes after it.
+            let at = ranked.iter().position(|(b, _)| v.better(*b)).unwrap_or(ranked.len());
+            ranked.insert(at, (v, cuts));
         }
     }
-    best.map(|(_, c)| c).unwrap_or_default()
+    ranked.into_iter().map(|(_, c)| c).collect()
 }
 
 /// The cuts that decompose one region (its loops), and the pieces it ends in.
@@ -1048,7 +1055,32 @@ fn decompose_region(loops: &[Poly], s: &Settings) -> (Vec<Vec<Q>>, Vec<Vec<Poly>
                 Vec::new()
             }
             2 if ring_score(&piece, s).is_some() => Vec::new(),
-            2 => o_grid(&piece, s, &mut remaining),
+            2 => {
+                // The best O-grid whose pieces, decomposed in turn, can be given counts together:
+                // the best-scored one alone could leave pieces no interval assignment fits (a
+                // whole circle's lone vertex inside one of its arcs drew cuts that did).
+                let mut taken = false;
+                for layout in o_grid(&piece, s, &mut remaining) {
+                    let Some(parts) = pieces_after(&piece, &layout, s.tol).filter(|p| p.len() > 1) else { continue };
+                    let mut all = layout.clone();
+                    let mut ends = Vec::new();
+                    for part in &parts {
+                        let (more, rest) = decompose_region(part, s);
+                        all.extend(more);
+                        ends.extend(rest);
+                    }
+                    if assignable(&piece, &all, s) {
+                        cuts.extend(all);
+                        leaves.extend(ends);
+                        taken = true;
+                        break;
+                    }
+                }
+                if !taken {
+                    leaves.push(piece);
+                }
+                continue;
+            }
             _ => separate_holes(&piece, s),
         };
         match (step.is_empty(), pieces_after(&piece, &step, s.tol)) {
@@ -1304,6 +1336,45 @@ mod tests {
         assert_eq!(m.cuts, 4);
         // The O-grid's lines split the plate's corners (atan(20 / 30) = 34° of 90°).
         check(&m, &profile, 0.5);
+    }
+
+    /// The bolted assembly's clamp (a 20 × 10 block with a Ø4 bore, meshed at 4.69) as SolidCraft
+    /// from v0.40 tessellates it: the bore is one face, its rim one closed curve of 16 chords
+    /// from the seam (the curve's one vertex), clockwise, no point on the axes or diagonals. It
+    /// gets an O-grid. Before, the best-scored layout (along the axes) left the seam's vertex
+    /// inside an arc of a block, whose further cuts no interval assignment fitted, so the block
+    /// fell to the free mesher (smallest corner scaled Jacobian 0.4).
+    #[test]
+    fn the_clamp_whose_bore_is_one_curve_from_its_seam_gets_an_o_grid() {
+        let rim: Vec<Q> = vec![
+            [21.635851459259534, 16.150647645127933],
+            [21.94454285983684, 15.467710451302485],
+            [21.97035241248262, 14.656909092769972],
+            [21.672006986867494, 13.902551761646004],
+            [21.150647645127936, 13.364148540740468],
+            [20.467710451302487, 13.055457140163163],
+            [19.656909092769972, 13.029647587517381],
+            [18.90255176164601, 13.327993013132508],
+            [18.364148540740473, 13.849352354872064],
+            [18.055457140163167, 14.532289548697513],
+            [18.02964758751739, 15.343090907230028],
+            [18.32799301313251, 16.097448238353994],
+            [18.849352354872067, 16.635851459259527],
+            [19.532289548697516, 16.944542859836837],
+            [20.34309090723003, 16.97035241248262],
+            [21.097448238354, 16.67200698686749],
+            [21.635851459259534, 16.150647645127933],
+        ];
+        let profile = vec![polygon(&[[10.0, 10.0], [30.0, 10.0], [30.0, 20.0], [10.0, 20.0]]), vec![rim]];
+        let m = mesh_profile(&profile, &[], 4.69);
+        // Its corner quality directly: at this size the rim's chords cut off more area than the
+        // area check of `check` allows.
+        let s = &m.section;
+        let worst = s.quads.iter().flatten().flat_map(|q| (0..4).map(move |i| (q, i))).fold(f64::INFINITY, |w, (q, i)| {
+            let c = q.map(|v| s.nodes[v as usize]);
+            w.min(planar_corner(&c, i).1.unwrap())
+        });
+        assert!(m.cuts >= 4 && worst > 0.5, "{} cuts, smallest corner scaled Jacobian {worst}", m.cuts);
     }
 
     /// A thin ring of air round a square pedestal (the Pi enclosure's, #397): the opening's sides
