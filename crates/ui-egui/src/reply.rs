@@ -289,7 +289,7 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
                 RichText::new("Model data only. Analysis history was not imported; review unread keywords and warnings before solving.")
                     .color(t.text_dim),
             );
-            value(ui, t, egui::Id::new("fc_deck_read"), &reply.value, 0);
+            value(ui, t, egui::Id::unique("fc_deck_read"), &reply.value, 0);
         }
         "model.check" => diagnostics(app, ui, t, &reply.value, &mut acts),
         c if SOLVES.contains(&c) => solve_summary(ui, t, &reply.value, units),
@@ -301,7 +301,7 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
             let hovered = feature_graph(ui, t, &reply.value, &app.features_open, &mut acts);
             app.set_feature_hover(hovered);
         }
-        _ => value(ui, t, egui::Id::new("fc_reply"), &reply.value, 0),
+        _ => value(ui, t, egui::Id::unique("fc_reply"), &reply.value, 0),
     }
     for a in acts {
         match a {
@@ -454,7 +454,7 @@ fn feature_graph(
         egui::CollapsingHeader::new(head).id_salt(("fc_features_body", bi)).default_open(true).show(ui, |ui| {
             for (fi, node) in nodes.iter().take(MAX_ENTITIES).enumerate() {
                 let f = describe(node, v["units"]["length"].as_str().unwrap_or_default());
-                let id = ui.id().with(("fc_feature", bi, fi));
+                let id = ui.scope_id().with(("fc_feature", bi, fi));
                 let key = (body.to_string(), f.id);
                 let open = opened.contains(&key);
                 let bg = ui.painter().add(egui::Shape::Noop);
@@ -731,7 +731,7 @@ fn bodies(ui: &mut egui::Ui, t: &Tokens, v: &Value, units: &DisplaySystem, acts:
         let size = corner(0)
             .zip(corner(1))
             .map(|(lo, hi)| format!("{} × {} × {} {length}", q(sig(hi[0] - lo[0])), q(sig(hi[1] - lo[1])), q(sig(hi[2] - lo[2]))));
-        let id = egui::Id::new(("fc_reply_body", i));
+        let id = egui::Id::unique(("fc_reply_body", i));
         if ui.link(RichText::new(name).strong()).on_hover_text("Pick this body in the viewport").clicked() {
             acts.push(Act::Pick(pick(name, fieldcraft_model::Entity::Body)));
         }
@@ -885,7 +885,7 @@ enum Row {
 /// that do not apply left out (a steady step's end time), counts with thousands separators;
 /// lists (modes, contacts) as tables, and the solver's internals folded under Details.
 fn solve_summary(ui: &mut egui::Ui, t: &Tokens, v: &Value, units: Option<&DisplaySystem>) {
-    let Some(m) = v.as_object() else { return value(ui, t, egui::Id::new("fc_reply_solve"), v, 0) };
+    let Some(m) = v.as_object() else { return value(ui, t, egui::Id::unique("fc_reply_solve"), v, 0) };
     let steady = m.get("frames").and_then(Value::as_u64).is_some_and(|n| n <= 1);
     let rows: [(&str, &str, Row); 18] = [
         ("step", "Step", Row::Text),
@@ -972,7 +972,7 @@ fn solve_summary(ui: &mut egui::Ui, t: &Tokens, v: &Value, units: Option<&Displa
     if !rest.is_empty() {
         egui::CollapsingHeader::new(RichText::new("Details").size(12.0)).id_salt("fc_reply_solve_details").default_open(false).show(ui, |ui| {
             let rest = Value::Object(rest.into_iter().map(|(k, x)| (k, x.as_u64().map_or(x.clone(), |n| Value::String(count(n))))).collect());
-            value(ui, t, egui::Id::new("fc_reply_solve_details"), &rest, 1);
+            value(ui, t, egui::Id::unique("fc_reply_solve_details"), &rest, 1);
         });
     }
 }

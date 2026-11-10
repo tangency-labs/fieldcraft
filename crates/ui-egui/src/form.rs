@@ -181,7 +181,7 @@ impl Form<'_> {
     }
 
     fn id(&self, path: &str) -> Id {
-        Id::new(("fc_form", self.cx.salt, path))
+        Id::unique(("fc_form", self.cx.salt, path))
     }
 
     /// A value the fields cannot show: it stays as it is, editable in the JSON view.
@@ -1157,7 +1157,7 @@ mod tests {
                     let cx = Context {
                         units: &mm(),
                         names,
-                        salt: Id::new(c.id),
+                        salt: Id::unique(c.id),
                         touched: &touched,
                         attempted: true,
                         refused: None,
@@ -1202,7 +1202,7 @@ mod tests {
                     let cx = Context {
                         units: &mm(),
                         names: &one,
-                        salt: Id::new(c.id),
+                        salt: Id::unique(c.id),
                         touched: &touched,
                         attempted: false,
                         refused: None,
@@ -1308,7 +1308,7 @@ mod tests {
                 let cx = Context {
                     units: &mm(),
                     names: &names,
-                    salt: Id::new("t"),
+                    salt: Id::unique("t"),
                     touched,
                     attempted,
                     refused,
@@ -1347,7 +1347,7 @@ mod tests {
             let cx = Context {
                 units,
                 names: &names,
-                salt: Id::new("t"),
+                salt: Id::unique("t"),
                 touched: &touched,
                 attempted: false,
                 refused: None,

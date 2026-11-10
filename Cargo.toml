@@ -64,15 +64,17 @@ png = "0.18"
 resvg = { version = "0.49", default-features = false }
 
 # ui: the same egui/eframe/egui-wgpu line as SolidCraft
-egui = "0.36"
-eframe = { version = "0.36", default-features = false }
-egui-wgpu = "0.36"
+egui = "0.37"
+eframe = { version = "0.37", default-features = false }
+egui-wgpu = "0.37"
 # the wgpu egui-wgpu uses, for the offscreen viewport (crates/gpu); backends come per target there
 wgpu = { version = "30", default-features = false, features = ["std", "wgsl"] }
 pollster = "1.0"
-# Shared Craft-family egui components (icon buttons, tabs, widget palette); the same rev as
-# VectorCraft. MIT OR Apache-2.0.
-craft-ui = { git = "https://github.com/storytold/craft-libs", rev = "5c874d51eeb3de70e735c8ce87a59a7dedd47675" }
+# SolidCraft's UI kit (MIT OR Apache-2.0): the tokenised controls, panels, menus and windows the
+# desktop UI draws with, and the token contract they draw from. Only fieldcraft-ui-egui uses them
+# (docs/adr/0001-libraries.md); the same rev as the geometry crates below.
+solidcraft-ui-kit = { git = "https://github.com/tangency-labs/solidcraft", rev = "5e338283969dcc2ae97260f0ac6d0edf82ec0a2a" }
+solidcraft-theme = { git = "https://github.com/tangency-labs/solidcraft", rev = "5e338283969dcc2ae97260f0ac6d0edf82ec0a2a" }
 # native file pickers (the desktop app only; the UI crate takes them as services)
 rfd = "0.17"
 
@@ -150,18 +152,13 @@ lto = "thin"
 codegen-units = 16
 debug = "line-tables-only"
 
-# SolidCraft builds egui-wgpu, winit and accesskit_macos with local fixes (its vendor/ directory).
-# Patches don't reach a dependent workspace, so FieldCraft applies the ones for its own egui line
-# (0.36) from v0.30.1's commit, the last SolidCraft release on that line; SolidCraft v0.40 moved
-# to egui 0.37 (its winit fix is unchanged, and it no longer patches accesskit_macos). Move these
-# when FieldCraft moves to egui 0.37.
+# SolidCraft builds egui-wgpu and winit with local fixes (its vendor/ directory). Patches don't
+# reach a dependent workspace, so FieldCraft applies them itself, from the same SolidCraft rev as
+# the crates above (egui 0.37).
 [patch.crates-io]
 # egui-wgpu with SolidCraft's fixes (vendor/egui-wgpu there): MSAA clamped to what the device
 # supports and 1x on OpenGL adapters, so the requested 4x never fails pipeline validation at start.
-egui-wgpu = { git = "https://github.com/tangency-labs/solidcraft", rev = "8e2b0cd60d14b4152b12b8f1fdb2bcfdcd8c52f4" }
+egui-wgpu = { git = "https://github.com/tangency-labs/solidcraft", rev = "5e338283969dcc2ae97260f0ac6d0edf82ec0a2a" }
 # winit with SolidCraft's fix (vendor/winit there): trackpad pinch and rotation gestures on Wayland
 # (zwp_pointer_gestures_v1), which winit 0.30 never binds.
-winit = { git = "https://github.com/tangency-labs/solidcraft", rev = "8e2b0cd60d14b4152b12b8f1fdb2bcfdcd8c52f4" }
-# accesskit_macos with SolidCraft's fix (vendor/accesskit_macos there): dropping the accessibility
-# adapter leaves AppKit's key-value observers intact.
-accesskit_macos = { git = "https://github.com/tangency-labs/solidcraft", rev = "8e2b0cd60d14b4152b12b8f1fdb2bcfdcd8c52f4" }
+winit = { git = "https://github.com/tangency-labs/solidcraft", rev = "5e338283969dcc2ae97260f0ac6d0edf82ec0a2a" }

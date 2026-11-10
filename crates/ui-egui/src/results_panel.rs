@@ -47,7 +47,7 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect, t: &Tokens) {
     let mut focus = None;
     for (i, (line, node)) in extremes.into_iter().enumerate() {
         let tip = if plot.is_fluid() { "Centre this field extreme".into() } else { format!("Show and probe node {node}") };
-        let r = ui.interact(line, ui.id().with(("fc_legend_extreme", i)), egui::Sense::click()).on_hover_text(tip);
+        let r = ui.interact(line, ui.scope_id().with(("fc_legend_extreme", i)), egui::Sense::click()).on_hover_text(tip);
         if r.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }

@@ -245,7 +245,7 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
                 return;
             };
             let (mut report, mut close) = (false, false);
-            crate::frame::window(ctx, kind_label(&first.kind), crate::frame::Width::Normal).id(egui::Id::new("fc_crashed")).show(ctx, |ui| {
+            crate::frame::window(ctx, kind_label(&first.kind), crate::frame::Width::Normal).id(egui::Id::unique("fc_crashed")).show(ctx, |ui| {
                 ui.label(match first.kind.as_str() {
                     "unclean_exit" => "FieldCraft closed unexpectedly the last time it ran.",
                     _ => "FieldCraft hit an internal error the last time it ran.",
@@ -282,7 +282,7 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
                 Close,
             }
             let mut act = None;
-            crate::frame::window(ctx, "Crash Reports", crate::frame::Width::Wide).id(egui::Id::new("fc_crash_reports")).show(ctx, |ui| {
+            crate::frame::window(ctx, "Crash Reports", crate::frame::Width::Wide).id(egui::Id::unique("fc_crash_reports")).show(ctx, |ui| {
                 if reports.is_empty() {
                     ui.label("No crash reports are saved on this computer.");
                 } else {
@@ -348,7 +348,7 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
             };
             let (mut send, mut close) = (false, false);
             let commands = form.input.commands.len();
-            crate::frame::window(ctx, "Report a Bug", crate::frame::Width::Wide).id(egui::Id::new("fc_report_bug")).show(ctx, |ui| {
+            crate::frame::window(ctx, "Report a Bug", crate::frame::Width::Wide).id(egui::Id::unique("fc_report_bug")).show(ctx, |ui| {
                 ui.label(
                     RichText::new(
                         "This opens a GitHub issue in your browser, filled in with what is shown below. Nothing is sent until you submit it there.",

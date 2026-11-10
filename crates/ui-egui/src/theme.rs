@@ -4,7 +4,7 @@
 //! colour the UI uses comes from [`Tokens`].
 //!
 //! Adapted from SolidCraft's `crates/ui-egui/src/theme.rs` (MIT OR Apache-2.0), see
-//! ATTRIBUTION.md. Widget states are coloured with craft-ui's `WidgetPalette`.
+//! ATTRIBUTION.md.
 
 use egui::{Color32, Stroke};
 use fieldcraft_engine::view::Palette;
@@ -363,14 +363,20 @@ fn visuals(dark: bool) -> egui::Visuals {
     v.extreme_bg_color = t.field;
     v.faint_bg_color = t.panel_header;
     v.override_text_color = Some(t.text);
-    craft_ui::theme::WidgetPalette {
-        noninteractive: v.widgets.noninteractive.bg_fill,
-        inactive: t.panel_header,
-        hovered: t.hover,
-        active: t.accent_soft,
-        open: t.panel_header,
+    let w = &mut v.widgets;
+    let noninteractive = w.noninteractive.bg_fill;
+    for (state, fill) in [
+        (&mut w.noninteractive, noninteractive),
+        (&mut w.inactive, t.panel_header),
+        (&mut w.hovered, t.hover),
+        (&mut w.active, t.accent_soft),
+        (&mut w.open, t.panel_header),
+    ] {
+        state.bg_fill = fill;
+        state.weak_bg_fill = fill;
+        state.corner_radius = egui::CornerRadius::same(3);
+        state.fg_stroke = Stroke::new(1.0, t.text);
     }
-    .apply_to(&mut v.widgets, egui::CornerRadius::same(3), Stroke::new(1.0, t.text));
     v.selection.bg_fill = t.accent_soft;
     // egui draws selected labels' text in the selection stroke's colour, on its fill.
     v.selection.stroke = Stroke::new(1.0, t.accent_ink);

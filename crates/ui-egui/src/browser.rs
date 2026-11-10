@@ -586,7 +586,7 @@ fn draw_row(app: &mut ModelApp, ui: &mut egui::Ui, id: egui::Id, row: &Row) -> R
         Some(tip) => resp.on_hover_text(tip),
         None => resp,
     };
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, row.label));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, row.label));
     out.clicked = resp.clicked() && click_on == 0;
     out.double = resp.double_clicked() && click_on == 0;
     out.response = Some(resp);
@@ -672,7 +672,7 @@ fn draw_ghost(app: &mut ModelApp, ui: &mut egui::Ui, s: &StageState) -> bool {
     if !ui.is_rect_visible(r) {
         return false;
     }
-    let resp = ui.interact(r, egui::Id::new(("fc_row_add", ghost_region(s.stage))), Sense::click());
+    let resp = ui.interact(r, egui::Id::unique(("fc_row_add", ghost_region(s.stage))), Sense::click());
     if resp.hovered() {
         ui.painter().rect_filled(r, 3.0, t.hover);
     }
@@ -689,7 +689,7 @@ fn draw_ghost(app: &mut ModelApp, ui: &mut egui::Ui, s: &StageState) -> bool {
     let label = ghost_label(s.stage);
     ui.painter().with_clip_rect(r).text(pos2(x + 21.0, r.center().y), egui::Align2::LEFT_CENTER, label, FontId::proportional(12.5), col);
     let resp = resp.on_hover_text(stage_tip(s).unwrap_or_default());
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
     resp.clicked()
 }
 
@@ -837,7 +837,7 @@ fn rows(app: &mut ModelApp, ui: &mut egui::Ui, acts: &mut Vec<Act>) {
     draw_row(
         app,
         ui,
-        egui::Id::new("fc_row_root"),
+        egui::Id::unique("fc_row_root"),
         &Row { icon: Some("ui.views"), label: &name, note: dirty.then(|| "unsaved".into()), ..Default::default() },
     );
     // Geometry.
@@ -848,7 +848,7 @@ fn rows(app: &mut ModelApp, ui: &mut egui::Ui, acts: &mut Vec<Act>) {
     let r = draw_row(
         app,
         ui,
-        egui::Id::new("fc_row_geometry"),
+        egui::Id::unique("fc_row_geometry"),
         &Row {
             depth: 1,
             fold: Some(open(app, "geometry")),
@@ -872,17 +872,17 @@ fn rows(app: &mut ModelApp, ui: &mut egui::Ui, acts: &mut Vec<Act>) {
             draw_row(
                 app,
                 ui,
-                egui::Id::new("fc_row_design"),
+                egui::Id::unique("fc_row_design"),
                 &Row { depth: 2, icon: Some("geometry.open"), label: &label, note: Some(format!("{bodies} bodies")), ..Default::default() },
             );
             for (i, b) in d.bodies.iter().enumerate() {
                 let row = Row { depth: 3, icon: Some("geometry.bodies"), label: &b.name, ..Default::default() };
-                item_row(app, ui, egui::Id::new(("fc_row_body", i)), row, Target::Body(b.name.clone()), acts);
+                item_row(app, ui, egui::Id::unique(("fc_row_body", i)), row, Target::Body(b.name.clone()), acts);
             }
         }
         for (i, s) in surfaces.iter().enumerate() {
             let row = Row { depth: 2, icon: Some("geometry.import.mesh"), label: s, ..Default::default() };
-            item_row(app, ui, egui::Id::new(("fc_row_surface", i)), row, Target::Surface(s.clone()), acts);
+            item_row(app, ui, egui::Id::unique(("fc_row_surface", i)), row, Target::Surface(s.clone()), acts);
         }
         // Datum planes, axes and points, then the partitions in the order they cut.
         let datums: Vec<(String, &'static str)> = app.session.model.datums().iter().map(|(n, d)| (n.clone(), d.kind())).collect();
@@ -895,7 +895,7 @@ fn rows(app: &mut ModelApp, ui: &mut egui::Ui, acts: &mut Vec<Act>) {
             let off = app.session.model.datum_suppressed(n);
             let note = if off { format!("{kind} · suppressed") } else { (*kind).into() };
             let row = Row { depth: 2, icon: Some(icon), label: n, note: Some(note), dim: off, ..Default::default() };
-            item_row(app, ui, egui::Id::new(("fc_row_datum", i)), row, Target::Def(Def::Datum, n.clone()), acts);
+            item_row(app, ui, egui::Id::unique(("fc_row_datum", i)), row, Target::Def(Def::Datum, n.clone()), acts);
         }
         let model = &app.session.model;
         let partitions: Vec<(String, String, bool)> =
@@ -903,7 +903,7 @@ fn rows(app: &mut ModelApp, ui: &mut egui::Ui, acts: &mut Vec<Act>) {
         for (i, (n, datum, off)) in partitions.iter().enumerate() {
             let note = if *off { format!("by {datum} · suppressed") } else { format!("by {datum}") };
             let row = Row { depth: 2, icon: Some("geometry.partition"), label: n, note: Some(note), dim: *off, ..Default::default() };
-            item_row(app, ui, egui::Id::new(("fc_row_partition", i)), row, Target::Def(Def::Partition, n.clone()), acts);
+            item_row(app, ui, egui::Id::unique(("fc_row_partition", i)), row, Target::Def(Def::Partition, n.clone()), acts);
         }
     }
     ghost_rows(app, ui, &stages, "geometry", acts);
@@ -913,7 +913,7 @@ fn rows(app: &mut ModelApp, ui: &mut egui::Ui, acts: &mut Vec<Act>) {
     let r = draw_row(
         app,
         ui,
-        egui::Id::new("fc_row_mesh"),
+        egui::Id::unique("fc_row_mesh"),
         &Row {
             depth: 1,
             fold: Some(open(app, "mesh")),
@@ -945,7 +945,7 @@ fn rows(app: &mut ModelApp, ui: &mut egui::Ui, acts: &mut Vec<Act>) {
         let r = draw_row(
             app,
             ui,
-            egui::Id::new("fc_row_nodes"),
+            egui::Id::unique("fc_row_nodes"),
             &Row {
                 depth: 2,
                 eye: Some(app.ui.show_nodes),
@@ -966,7 +966,7 @@ fn rows(app: &mut ModelApp, ui: &mut egui::Ui, acts: &mut Vec<Act>) {
             draw_row(
                 app,
                 ui,
-                egui::Id::new(("fc_row_kind", kind.name())),
+                egui::Id::unique(("fc_row_kind", kind.name())),
                 &Row { depth: 2, swatch: Some(t.element(kind)), label: kind.name(), note: Some(format!("{n}")), ..Default::default() },
             );
         }
@@ -977,7 +977,7 @@ fn rows(app: &mut ModelApp, ui: &mut egui::Ui, acts: &mut Vec<Act>) {
             let r = draw_row(
                 app,
                 ui,
-                egui::Id::new("fc_row_seeds"),
+                egui::Id::unique("fc_row_seeds"),
                 &Row {
                     depth: 2,
                     fold: Some(open(app, "seeds")),
@@ -994,7 +994,7 @@ fn rows(app: &mut ModelApp, ui: &mut egui::Ui, acts: &mut Vec<Act>) {
                 for (i, (edge, note)) in seeds.into_iter().enumerate() {
                     let label = format!("{} · {}", edge.body, edge.entity.name().unwrap_or_default());
                     let row = Row { depth: 3, icon: Some("mesh.seed.edge"), label: &label, note: Some(note), ..Default::default() };
-                    item_row(app, ui, egui::Id::new(("fc_row_seed", i)), row, Target::Seed(edge), acts);
+                    item_row(app, ui, egui::Id::unique(("fc_row_seed", i)), row, Target::Seed(edge), acts);
                 }
             }
         }
@@ -1020,7 +1020,7 @@ fn rows(app: &mut ModelApp, ui: &mut egui::Ui, acts: &mut Vec<Act>) {
         let r = draw_row(
             app,
             ui,
-            egui::Id::new(("fc_row_group", key)),
+            egui::Id::unique(("fc_row_group", key)),
             &Row {
                 depth: 1,
                 fold: Some(open(app, key)),
@@ -1043,13 +1043,13 @@ fn rows(app: &mut ModelApp, ui: &mut egui::Ui, acts: &mut Vec<Act>) {
         }
         if open(app, key) {
             for (kind, name) in items {
-                let id = egui::Id::new(("fc_row_def", kind.stem(), &name));
+                let id = egui::Id::unique(("fc_row_def", kind.stem(), &name));
                 let (icon, moves) = item_icon(&app.session.model, kind, &name);
                 let row = Row { depth: 2, icon: Some(icon), moves, label: &name, ..Default::default() };
                 item_row(app, ui, id, row, Target::Def(kind, name.clone()), acts);
             }
             for (i, (label, step)) in walls.into_iter().enumerate() {
-                let id = egui::Id::new(("fc_row_rigid_wall", i));
+                let id = egui::Id::unique(("fc_row_rigid_wall", i));
                 let row = Row { depth: 2, icon: Some("interaction.rigid_wall"), label: &label, ..Default::default() };
                 item_row(app, ui, id, row, Target::Def(Def::Step, step), acts);
             }
@@ -1063,7 +1063,7 @@ fn rows(app: &mut ModelApp, ui: &mut egui::Ui, acts: &mut Vec<Act>) {
     let r = draw_row(
         app,
         ui,
-        egui::Id::new("fc_row_results"),
+        egui::Id::unique("fc_row_results"),
         &Row {
             depth: 1,
             fold: Some(open(app, "results")),
@@ -1086,7 +1086,7 @@ fn rows(app: &mut ModelApp, ui: &mut egui::Ui, acts: &mut Vec<Act>) {
             let r = draw_row(
                 app,
                 ui,
-                egui::Id::new(("fc_row_result", &step)),
+                egui::Id::unique(("fc_row_result", &step)),
                 &Row { depth: 2, icon: Some("results.deformed"), label: &label, selected, dim: !current, ..Default::default() },
             );
             if r.clicked {

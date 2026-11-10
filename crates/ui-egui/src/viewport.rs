@@ -333,12 +333,12 @@ const SELECTION_BAR: &str = "fc_selection_bar";
 /// Where the selection bar was drawn last: egui keeps an area's rectangle after it stops being
 /// drawn, so a hidden bar (the Start screen) still answers with where it was.
 pub(crate) fn selection_bar_rect(ctx: &egui::Context) -> Option<Rect> {
-    ctx.memory(|m| m.area_rect(egui::Id::new(SELECTION_BAR)))
+    ctx.memory(|m| m.area_rect(egui::Id::unique(SELECTION_BAR)))
 }
 
 /// The selection bar, top centre: what a click picks, box selection, and what is selected.
 fn selection_bar(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect, t: &Tokens) {
-    let area = egui::Area::new(egui::Id::new(SELECTION_BAR))
+    let area = egui::Area::new(egui::Id::unique(SELECTION_BAR))
         .fixed_pos(pos2(rect.center().x, rect.top() + 10.0))
         .pivot(egui::Align2::CENTER_TOP)
         .constrain_to(rect)
@@ -685,7 +685,7 @@ fn axis_view(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect, t: &Tokens) {
         painter.circle_stroke(*at, AXIS_RADIUS, Stroke::new(if hot { 2.0 } else { 1.0 }, if hot { t.accent } else { ink }));
         painter.text(*at, egui::Align2::CENTER_CENTER, *name, egui::FontId::proportional(11.0), ink);
     }
-    let resp = ui.interact(area, ui.id().with("fc_axis_view"), Sense::click());
+    let resp = ui.interact(area, ui.scope_id().with("fc_axis_view"), Sense::click());
     if let Some(i) = hovered
         && let Some((name, d, ..)) = tips.get(i)
     {
@@ -696,7 +696,7 @@ fn axis_view(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect, t: &Tokens) {
         }
     }
     let home = Rect::from_center_size(pos2(c.x - 44.0, c.y - 44.0), Vec2::splat(18.0));
-    let hr = ui.interact(home, ui.id().with("fc_axis_home"), Sense::click());
+    let hr = ui.interact(home, ui.scope_id().with("fc_axis_home"), Sense::click());
     if hr.hovered() {
         painter.rect_filled(home.expand(2.0), 3.0, t.hover);
     }
@@ -733,7 +733,7 @@ fn nav_bar(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect, t: &Tokens) {
     let mut style_button = None;
     for (i, (key, icon, tip)) in NAV.iter().enumerate() {
         let br = Rect::from_min_size(pos2(bar.left() + 5.0 + i as f32 * 30.0, bar.top() + 2.0), Vec2::splat(26.0));
-        let resp = ui.interact(br, ui.id().with(("fc_nav", *key)), Sense::click());
+        let resp = ui.interact(br, ui.scope_id().with(("fc_nav", *key)), Sense::click());
         let active = match *key {
             "orbit" => app.nav == NavMode::Orbit,
             "pan" => app.nav == NavMode::Pan,
@@ -746,7 +746,7 @@ fn nav_bar(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect, t: &Tokens) {
             ui.painter().rect_filled(br, 4.0, if active { t.accent_soft } else { t.hover });
         }
         icons::paint(app, ui, icon, br.shrink(4.0), Look::Normal);
-        resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, active, *tip));
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, active, *tip));
         if resp.on_hover_text(*tip).clicked() {
             match *key {
                 "orbit" => app.nav = NavMode::Orbit,

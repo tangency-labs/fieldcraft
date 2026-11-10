@@ -10,19 +10,23 @@
 //!
 //! A ready entry starts its command ([`ModelApp::start`]); a coming-soon entry does nothing and
 //! its tooltip says when it comes. Structure follows SolidCraft's `crates/ui-egui/src/toolbar.rs`
-//! (MIT OR Apache-2.0), see ATTRIBUTION.md; the tabs are craft-ui `Tab`s.
+//! (MIT OR Apache-2.0), see ATTRIBUTION.md; the tab row is the kit's (`solidcraft_ui_kit::ribbon`).
 
 use egui::{Align2, Color32, FontId, Rect, Sense, Stroke, Vec2, pos2, vec2};
 use fieldcraft_engine::catalogue::{self, Capability, Tab, Workspace};
 use fieldcraft_engine::requirement::Unavailable;
 use serde::Serialize;
+use solidcraft_theme::TabAccent;
+use solidcraft_ui_kit::ribbon;
 
 use crate::ModelApp;
 use crate::icons::{self, Look};
 use crate::theme::{Tokens, label_font};
 
-/// The ribbon's height.
-pub const HEIGHT: f32 = 92.0;
+/// The ribbon's height: the tab row, then the panels.
+pub const HEIGHT: f32 = TABS_HEIGHT + 66.0;
+/// The tab row's height (the kit's).
+const TABS_HEIGHT: f32 = ribbon::TAB_ROW_HEIGHT;
 /// Most buttons a panel shows; the rest are in its drop-down.
 pub const MAX_BUTTONS: usize = 4;
 /// A button's side and the room it takes.
@@ -123,36 +127,32 @@ pub fn toolbar(app: &mut ModelApp, ui: &mut egui::Ui) {
         app.panel_rects.clear();
         let painter = ui.painter().clone();
         workspace_switcher(app, ui, &t, r);
-        // Tabs.
-        let mut x = r.left() + PANELS_X;
-        for &tab in app.ui.workspace.tabs() {
-            let label = tab.label().to_uppercase();
-            let w = 12.0 + painter.layout_no_wrap(label.clone(), label_font(ui.ctx(), 12.0), t.text).size().x.max(28.0);
-            let tr = Rect::from_min_size(pos2(x, r.top() + 2.0), vec2(w, 22.0));
-            let active = app.ui.tab == tab;
-            let resp = craft_ui::tabs::Tab::new(egui::Id::new(("fc_tab", panel_key(tab, ""))), &label, active)
-                .focus_stroke(Stroke::new(1.0, t.accent))
-                .show_at(ui, tr, |ui, resp| {
-                    let p = ui.painter();
-                    if active {
-                        p.line_segment(
-                            [pos2(tr.left() + 4.0, tr.bottom() - 1.0), pos2(tr.right() - 4.0, tr.bottom() - 1.0)],
-                            Stroke::new(2.0, t.accent),
-                        );
-                    } else if resp.hovered() {
-                        p.rect_filled(tr, 4.0, t.hover);
-                    }
-                    p.text(tr.center(), Align2::CENTER_CENTER, &label, label_font(ui.ctx(), 12.0), if active { t.text } else { t.text_dim });
-                });
-            if resp.clicked() {
+        // Tabs: the kit's tab row, in the main accent.
+        let tabs = app.ui.workspace.tabs();
+        let accent = TabAccent::current(ui.ctx());
+        let row = ribbon::Tabs {
+            tabs: tabs.iter().map(|tab| ribbon::Tab { id: tab.id(), label: tab.label(), accent, contextual: false, aliases: &[] }).collect(),
+            active: app.ui.tab.id(),
+            add: None,
+            menu_open_from: &|_| false,
+            search_width: 0.0,
+            buttons: Vec::new(),
+            floating: false,
+            underline: None,
+            handles: ribbon::TabHandles { tab: "tab:", tab_rect: "tab_rect:", add: "tab_add", action: "tab_action:" },
+        };
+        let row_rect = Rect::from_min_max(pos2(r.left() + PANELS_X, r.top()), pos2(r.right(), r.top() + TABS_HEIGHT));
+        for action in ribbon::tabs(ui, &row, row_rect).actions {
+            if let ribbon::TabAction::Select { index, .. } = action
+                && let Some(&tab) = tabs.get(index)
+            {
                 app.ui.tab = tab;
                 app.ui.menu = None;
             }
-            x += w + 4.0;
         }
         // Panels.
         let tab = app.ui.tab;
-        let top = r.top() + 26.0;
+        let top = r.top() + TABS_HEIGHT;
         let panels: Vec<&'static [Capability]> = catalogue::panels(tab).collect();
         let shown: Vec<Vec<&'static Capability>> = panels.iter().map(|p| buttons(p)).collect();
         // A panel is as wide as its buttons, and wide enough for its label's longest word (plus
@@ -180,7 +180,7 @@ pub fn toolbar(app: &mut ModelApp, ui: &mut egui::Ui) {
             if collapsed {
                 // One button: the panel's first button's icon over a caret; it opens the drop-down.
                 let br = Rect::from_center_size(pos2(px + width / 2.0, top + 21.0), Vec2::splat(BUTTON));
-                let resp = ui.interact(br, ui.id().with(("fc_collapsed", &key)), Sense::click());
+                let resp = ui.interact(br, ui.scope_id().with(("fc_collapsed", &key)), Sense::click());
                 if resp.hovered() {
                     painter.rect_filled(br, 4.0, t.hover);
                 }
@@ -233,7 +233,7 @@ pub fn toolbar(app: &mut ModelApp, ui: &mut egui::Ui) {
             } else {
                 Rect::from_center_size(pos2(px + width / 2.0, top + 51.0), vec2(width, lh))
             };
-            let lresp = ui.interact(lr, ui.id().with(("fc_panel", &key)), Sense::click());
+            let lresp = ui.interact(lr, ui.scope_id().with(("fc_panel", &key)), Sense::click());
             let open = app.ui.menu.as_deref() == Some(key.as_str());
             if lresp.hovered() || open {
                 painter.rect_filled(lr, 3.0, t.hover);
@@ -254,7 +254,7 @@ pub fn toolbar(app: &mut ModelApp, ui: &mut egui::Ui) {
         }
         if !overflow.is_empty() {
             let mr = Rect::from_min_size(pos2(px.min(r.right() - MORE_WIDTH), top + 4.0), vec2(MORE_WIDTH - 2.0, 52.0));
-            let resp = ui.interact(mr, ui.id().with("fc_more"), Sense::click());
+            let resp = ui.interact(mr, ui.scope_id().with("fc_more"), Sense::click());
             if resp.hovered() || app.ui.menu.as_deref() == Some("more") {
                 painter.rect_filled(mr, 4.0, t.hover);
             }
@@ -282,7 +282,7 @@ pub fn toolbar(app: &mut ModelApp, ui: &mut egui::Ui) {
 /// it opens the list of workspaces.
 fn workspace_switcher(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, r: Rect) {
     let ws = Rect::from_min_max(pos2(r.left() + 6.0, r.top() + 4.0), pos2(r.left() + 104.0, r.bottom() - 5.0));
-    let resp = ui.interact(ws, ui.id().with("fc_workspace"), Sense::click());
+    let resp = ui.interact(ws, ui.scope_id().with("fc_workspace"), Sense::click());
     let open = app.ui.menu.as_deref() == Some("workspace");
     ui.painter().rect(ws, 4.0, if resp.hovered() || open { t.hover } else { t.field }, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
     let w = app.ui.workspace;
@@ -309,7 +309,7 @@ fn workspace_switcher(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, r: Rect
             let p = ui.painter();
             p.text(pos2(rect.left() + 40.0, rect.top() + 12.0), Align2::LEFT_CENTER, w.label().to_uppercase(), label_font(ui.ctx(), 12.5), t.text);
             p.text(pos2(rect.left() + 40.0, rect.top() + 28.0), Align2::LEFT_CENTER, w.about(), FontId::proportional(11.0), t.text_dim);
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, w.label()));
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, w.label()));
             if resp.clicked() {
                 app.ui.select_workspace(w);
                 app.ui.menu = None;
@@ -322,7 +322,7 @@ fn workspace_switcher(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, r: Rect
 fn button(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, c: &'static Capability, br: Rect) -> Option<&'static str> {
     let missing = app.unavailable(c.id);
     let enabled = c.command().is_some() && missing.is_none();
-    let resp = ui.interact(br, ui.id().with(("fc_button", c.id)), if enabled { Sense::click() } else { Sense::hover() });
+    let resp = ui.interact(br, ui.scope_id().with(("fc_button", c.id)), if enabled { Sense::click() } else { Sense::hover() });
     app.toolbar_rects.push((c.id, br, Fit::Full));
     let running = app.dialog.as_ref().is_some_and(|d| c.command() == Some(d.command));
     if running {
@@ -334,7 +334,7 @@ fn button(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, c: &'static Capabil
     if let Some(m) = c.milestone() {
         badge(ui.painter(), t, br.right_top() + vec2(4.0, -2.0), m);
     }
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, c.label));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, c.label));
     let resp = resp.on_hover_text(Unavailable::tip(&c.tooltip(), missing.as_ref()));
     resp.clicked().then_some(c.id)
 }
@@ -366,7 +366,7 @@ pub fn dropdown(app: &mut ModelApp, ui: &mut egui::Ui, entries: &'static [Capabi
         if let Some(m) = c.milestone() {
             p.text(pos2(rect.right() - 8.0, rect.center().y), Align2::RIGHT_CENTER, format!("soon · {m}"), FontId::proportional(11.0), t.text_dim);
         }
-        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, c.label));
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, c.label));
         if resp.on_hover_text(Unavailable::tip(&c.tooltip(), missing.as_ref())).clicked() && enabled {
             start = Some(c.id);
         }
@@ -388,7 +388,7 @@ pub fn dropdown(app: &mut ModelApp, ui: &mut egui::Ui, entries: &'static [Capabi
             );
             p.line_segment([pos2(rect.left() + 15.0, rect.top()), pos2(rect.left() + 15.0, rect.center().y)], Stroke::new(1.0, t.border));
             p.line_segment([pos2(rect.left() + 15.0, rect.center().y), pos2(rect.left() + 25.0, rect.center().y)], Stroke::new(1.0, t.border));
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
             let tip = Unavailable::tip(id, missing.as_ref());
             if resp.on_hover_text(tip).clicked() && enabled {
                 start = Some(id);
