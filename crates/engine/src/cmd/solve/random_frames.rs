@@ -151,6 +151,7 @@ pub(super) fn evaluate(h: &HarmonicResult, p: &Value, step: &str, table: &Value)
             if fatigue_input.is_some_and(|f| !f.stationary_gaussian) {
                 return Err(EngineError::invalid("stress_projection", "narrow-band damage requires explicit stationary Gaussian applicability"));
             }
+            let include_node_psd = nodes.len() <= 10_000;
             nodes
                 .chunks(chunk_size)
                 .flat_map(|chunk| chunk.iter())
@@ -176,8 +177,12 @@ pub(super) fn evaluate(h: &HarmonicResult, p: &Value, step: &str, table: &Value)
                     "applicability":"stationary Gaussian scalar linear stress; spectral approximation; bandwidth not certified"}))
                         })
                         .transpose()?;
-                    Ok(json!({"node":node,"psd":samples.iter().map(|s| s.psd).collect::<Vec<_>>(),
-                "moments_hz":moments,"rms_pa":moments[0].sqrt(),"fatigue":fatigue}))
+                    Ok(if include_node_psd {
+                    json!({"node":node,"psd":samples.iter().map(|s| s.psd).collect::<Vec<_>>(),
+                    "moments_hz":moments,"rms_pa":moments[0].sqrt(),"fatigue":fatigue})
+                } else {
+                    json!({"node":node,"moments_hz":moments,"rms_pa":moments[0].sqrt(),"fatigue":fatigue})
+                })
                 })
                 .collect()
         })
