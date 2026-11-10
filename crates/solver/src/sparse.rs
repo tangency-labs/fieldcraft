@@ -174,15 +174,19 @@ struct Block {
 
 impl Block {
     fn new(k: &Csr, layout: &DofLayout, a: usize, b: usize, kinds: DofSet) -> Result<Block> {
+        Self::from_pattern(&k.ptr, &k.idx, layout, a, b, kinds)
+    }
+
+    fn from_pattern(ptr: &[usize], idx: &[usize], layout: &DofLayout, a: usize, b: usize, kinds: DofSet) -> Result<Block> {
         let first = layout.range(a).start;
-        let (start, end) = (k.ptr.get(first).copied().unwrap_or(0), k.ptr.get(first + 1).copied().unwrap_or(0));
-        let pattern = k.idx.get(start..end).ok_or_else(|| Error::Internal("pattern".into()))?;
+        let (start, end) = (ptr.get(first).copied().unwrap_or(0), ptr.get(first + 1).copied().unwrap_or(0));
+        let pattern = idx.get(start..end).ok_or_else(|| Error::Internal("pattern".into()))?;
         let at = pattern.binary_search(&layout.range(b).start).map_err(|_| Error::Internal("entry outside the pattern".into()))?;
         let missing = |kind| Error::Internal(format!("an element degree of freedom ({kind:?}) its node does not have"));
         let mut block = Block { rows: [0; MAX_KINDS], cols: [0; MAX_KINDS] };
         for ((row, col), kind) in block.rows.iter_mut().zip(&mut block.cols).zip(kinds.iter()) {
             let r = layout.dof(a, kind).ok_or_else(|| missing(kind))?;
-            *row = k.ptr.get(r).copied().unwrap_or(0) + at;
+            *row = ptr.get(r).copied().unwrap_or(0) + at;
             *col = layout.kinds(b).position(kind).ok_or_else(|| missing(kind))?;
         }
         Ok(block)
@@ -247,6 +251,103 @@ pub fn add_diagonal(k: &mut Csr, layout: &DofLayout, nodes: &[usize], kinds: Dof
     Ok(())
 }
 
+/// Matrix shape in a bounded assembly round.
+#[derive(Clone, Copy)]
+pub(crate) enum AssemblyShape {
+    Block,
+    Scalar,
+    Diagonal,
+}
+
+/// Borrowed element data, in the original element-label order.
+pub(crate) struct AssemblyMatrix<'a> {
+    pub nodes: &'a [usize],
+    pub kinds: DofSet,
+    pub data: &'a [f64],
+    pub shape: AssemblyShape,
+}
+
+/// Disjoint node-row owners scatter a round without atomics or partial floating sums.
+/// Each owner's incidences retain element order then local node order. Thus every
+/// entry sees exactly the scalar assembly sequence, including repeated nodes.
+/// Fixed 256-node ranges are independent of the worker count (Hughes 1987 assembly).
+pub(crate) fn add_round(k: &mut Csr, layout: &DofLayout, matrices: &[AssemblyMatrix<'_>]) -> Result<()> {
+    const NODES: usize = 256;
+    let slots = matrices.iter().flat_map(|m| m.nodes.iter()).copied().max().map_or(0, |n| n + 1);
+    let mut incidence = vec![Vec::new(); slots.div_ceil(NODES)];
+    for (e, m) in matrices.iter().enumerate() {
+        let n = m.nodes.len();
+        let expected = match m.shape {
+            AssemblyShape::Block => (n * m.kinds.len()).pow(2),
+            AssemblyShape::Scalar => n * n,
+            AssemblyShape::Diagonal => n,
+        };
+        if m.data.len() != expected {
+            return Err(Error::Internal("element matrix size".into()));
+        }
+        for (i, &node) in m.nodes.iter().enumerate() {
+            if let Some(list) = incidence.get_mut(node / NODES) {
+                list.push((e, i));
+            }
+        }
+    }
+    let mut remaining = k.val.as_mut_slice();
+    let mut offset = 0;
+    let mut tasks = Vec::with_capacity(incidence.len());
+    for (b, list) in incidence.into_iter().enumerate() {
+        let end_row = layout.range(((b + 1) * NODES).min(slots) - 1).end;
+        let end = k.ptr.get(end_row).copied().ok_or_else(|| Error::Internal("assembly row range".into()))?;
+        let len = end.checked_sub(offset).filter(|len| *len <= remaining.len()).ok_or_else(|| Error::Internal("assembly row range".into()))?;
+        let (values, rest) = remaining.split_at_mut(len);
+        tasks.push((offset, values, list, None));
+        remaining = rest;
+        offset = end;
+    }
+    let ptr = &k.ptr;
+    let idx = &k.idx;
+    fieldcraft_parallel::for_each_mut(&mut tasks, |_, (offset, values, list, failed)| {
+        for &(e, i) in list.iter() {
+            let Some(m) = matrices.get(e) else { continue };
+            let Some(&a) = m.nodes.get(i) else { continue };
+            let per = m.kinds.len();
+            for (j, &b) in m.nodes.iter().enumerate() {
+                if matches!(m.shape, AssemblyShape::Diagonal) && j != i {
+                    continue;
+                }
+                let block = match Block::from_pattern(ptr, idx, layout, a, b, m.kinds) {
+                    Ok(block) => block,
+                    Err(error) => {
+                        *failed = Some((e, i, j, error));
+                        return;
+                    }
+                };
+                for r in 0..per {
+                    for c in 0..per {
+                        if !matches!(m.shape, AssemblyShape::Block) && r != c {
+                            continue;
+                        }
+                        let at = block.rows[r] + block.cols[c];
+                        let source = match m.shape {
+                            AssemblyShape::Block => (per * i + r) * (per * m.nodes.len()) + per * j + c,
+                            AssemblyShape::Scalar => i * m.nodes.len() + j,
+                            AssemblyShape::Diagonal => i,
+                        };
+                        if let Some(value) = at.checked_sub(*offset).and_then(|p| values.get_mut(p)) {
+                            *value += m.data.get(source).copied().unwrap_or(0.0);
+                        }
+                    }
+                }
+            }
+        }
+    });
+    // Worker completion order cannot select a different first structural error.
+    let failure = tasks.into_iter().filter_map(|(_, _, _, e)| e).min_by_key(|(e, i, j, _)| (*e, *i, *j));
+    if let Some((_, _, _, error)) = failure {
+        return Err(error);
+    }
+    Ok(())
+}
+
 /// Add `v` to entry (`i`, `j`), which must be in the pattern.
 pub fn add_entry(k: &mut Csr, i: usize, j: usize, v: f64) -> Result<()> {
     let (start, end) = (k.ptr.get(i).copied().unwrap_or(0), k.ptr.get(i + 1).copied().unwrap_or(0));
@@ -258,6 +359,55 @@ pub fn add_entry(k: &mut Csr, i: usize, j: usize, v: f64) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn assembly_row_owners_preserve_scalar_bits() {
+        let mut builder = DofLayout::builder();
+        for i in 0..777 {
+            builder.node(i, DofSet::TRANSLATIONS);
+        }
+        let layout = builder.build();
+        let nodes: Vec<Vec<usize>> = (0..700).map(|i| vec![i, i + 1, i + 65, i]).collect();
+        let graph = NodeGraph::new(777, nodes.iter());
+        for shape in [AssemblyShape::Block, AssemblyShape::Scalar, AssemblyShape::Diagonal] {
+            let size = match shape {
+                AssemblyShape::Block => 144,
+                AssemblyShape::Scalar => 16,
+                AssemblyShape::Diagonal => 4,
+            };
+            let data: Vec<Vec<f64>> = nodes
+                .iter()
+                .enumerate()
+                .map(|(i, _)| {
+                    (0..size)
+                        .map(|j| match (i + j) % 3 {
+                            0 => 1e16,
+                            1 => -1e16,
+                            _ => 0.25,
+                        })
+                        .collect()
+                })
+                .collect();
+            let matrices: Vec<_> =
+                nodes.iter().zip(&data).map(|(nodes, data)| AssemblyMatrix { nodes, kinds: DofSet::TRANSLATIONS, data, shape }).collect();
+            let mut reference = graph.zero_matrix(&layout);
+            for m in &matrices {
+                match shape {
+                    AssemblyShape::Block => add_block(&mut reference, &layout, m.nodes, m.kinds, m.data),
+                    AssemblyShape::Scalar => add_scalar(&mut reference, &layout, m.nodes, m.kinds, m.data),
+                    AssemblyShape::Diagonal => add_diagonal(&mut reference, &layout, m.nodes, m.kinds, m.data),
+                }
+                .unwrap();
+            }
+            for threads in [1, 2, 7] {
+                let mut actual = graph.zero_matrix(&layout);
+                fieldcraft_parallel::with_threads(threads, || add_round(&mut actual, &layout, &matrices)).unwrap();
+                assert_eq!(actual.ptr, reference.ptr);
+                assert_eq!(actual.idx, reference.idx);
+                assert!(actual.val.iter().zip(&reference.val).all(|(a, b)| a.to_bits() == b.to_bits()));
+            }
+        }
+    }
 
     #[test]
     fn row_task_size_preserves_product_bits_and_partial_output() {

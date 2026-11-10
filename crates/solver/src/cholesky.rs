@@ -175,16 +175,29 @@ pub(crate) fn factor_column_counts(a: &UpperColumns) -> Vec<usize> {
 /// The elimination tree and the entry count of each column of L, without computing values.
 fn symbolic(a: &UpperColumns) -> (Vec<usize>, Vec<usize>) {
     let parent = etree(a);
-    let mut counts = vec![1usize; a.n];
-    let mut stack = vec![0; a.n];
-    let mut mark = vec![NONE; a.n];
-    let mut path = Vec::new();
-    for k in 0..a.n {
-        let top = ereach(a, k, &parent, &mut stack, &mut mark, &mut path);
-        for &j in stack.get(top..).unwrap_or_default() {
-            if let Some(c) = counts.get_mut(j) {
-                *c += 1;
+    // The tree construction has path-compression dependencies. Once it is complete,
+    // each column reach is independent. Use at most eight fixed ranges, never a range
+    // per worker: scratch memory and integer merge order do not depend on threads.
+    let ranges: Vec<_> = parallel::blocks(a.n, a.n.div_ceil(8).max(4096)).collect();
+    let partial = parallel::map(ranges.len(), |b| {
+        let mut counts = vec![0usize; a.n];
+        let mut stack = vec![0; a.n];
+        let mut mark = vec![NONE; a.n];
+        let mut path = Vec::new();
+        for k in ranges.get(b).cloned().unwrap_or_default() {
+            let top = ereach(a, k, &parent, &mut stack, &mut mark, &mut path);
+            for &j in stack.get(top..).unwrap_or_default() {
+                if let Some(c) = counts.get_mut(j) {
+                    *c += 1;
+                }
             }
+        }
+        counts
+    });
+    let mut counts = vec![1usize; a.n];
+    for block in partial {
+        for (total, count) in counts.iter_mut().zip(block) {
+            *total += count;
         }
     }
     (parent, counts)
@@ -1231,7 +1244,7 @@ impl Symbolic {
         let top_work = self.top.iter().copied().map(node_work).max().unwrap_or(0);
         // The symbolic phase has column/tree arrays and temporary (index,value) pairs. Count
         // them conservatively alongside retained storage instead of assuming perfect reuse.
-        let symbolic_work = self.n.saturating_mul(192).saturating_add(upper.val.len().saturating_mul(16));
+        let symbolic_work = self.n.saturating_mul(384).saturating_add(upper.val.len().saturating_mul(16));
         FactorMemory {
             entries: self.entries,
             values_bytes: self.entries.saturating_mul(8),
@@ -1532,6 +1545,35 @@ impl Factor {
 mod tests {
     use super::*;
     use crate::sparse::Csr;
+
+    #[test]
+    fn parallel_symbolic_counts_match_sequential_reach() {
+        let n = 8193;
+        let mut a = UpperColumns { n, ptr: vec![0], idx: Vec::new(), val: Vec::new() };
+        for k in 0..n {
+            for j in k.saturating_sub(5)..=k {
+                a.idx.push(j);
+                a.val.push(if j == k { 12.0 } else { -1.0 });
+            }
+            a.ptr.push(a.idx.len());
+        }
+        let tree = etree(&a);
+        let mut expected = vec![1; n];
+        let mut stack = vec![0; n];
+        let mut mark = vec![NONE; n];
+        let mut path = Vec::new();
+        for k in 0..n {
+            let top = ereach(&a, k, &tree, &mut stack, &mut mark, &mut path);
+            for &j in &stack[top..] {
+                expected[j] += 1;
+            }
+        }
+        for threads in [1, 2, 7] {
+            let (parent, counts) = parallel::with_threads(threads, || symbolic(&a));
+            assert_eq!(parent, tree);
+            assert_eq!(counts, expected);
+        }
+    }
 
     #[test]
     #[ignore = "explicit bounded cache-panel factorization experiment"]

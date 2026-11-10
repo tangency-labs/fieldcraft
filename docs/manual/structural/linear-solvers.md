@@ -55,8 +55,16 @@ Internal constants (`crates/solver/src/cholesky.rs`, `ldlt.rs`, `ordering.rs`):
 Matrices are stored in compressed rows with both triangles (`sparse::Csr`). The pattern is built
 once from the element connectivity on the node graph: a node's row holds every node it shares an
 element with, and each node pair is a dense block of their unknowns (a node's unknowns are
-contiguous in the `DofLayout`), so stiffness and mass share it. Sums run in a fixed order
-(elements by label, then the element's own node order).
+contiguous in the `DofLayout`), so stiffness and mass share it. Solid element assembly uses
+fixed 256-node row owners: each CSR entry has one writer and retains element-label and local
+node order, with no floating-point partial sums. Truss, structural-element and foundation
+contributions retain their existing ordered assembly paths.
+
+Symbolic column reaches run independently after the ordered elimination-tree construction.
+At most eight fixed column ranges own their scratch arrays; integer counts are merged in range
+order. Tree construction and dependent supernode-row propagation remain ordered. The symbolic
+workspace estimate includes the extra scratch arrays. Neither partitioning depends on threads;
+ordering selection, factor caps and the whole-model pretension fallback are unchanged.
 
 ### Ordering
 
