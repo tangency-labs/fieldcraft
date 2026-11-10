@@ -11,6 +11,7 @@ use serde_json::{Map, Value, json};
 
 use crate::fields::{self, NumberEdit, Style};
 use crate::theme::Tokens;
+use solidcraft_ui_kit as kit;
 
 /// The label column: as wide as the form's longest label, at least this…
 const LABEL_MIN: f32 = 72.0;
@@ -275,7 +276,7 @@ impl Form<'_> {
             Kind::Integer { .. } => self.number(ui, id, value, f.hint, true, fill(ui)),
             Kind::Text | Kind::Path { .. } => {
                 let mut text = value.and_then(Value::as_str).unwrap_or_default().to_string();
-                let changed = fields::text(ui, &s, id, &mut text, f.hint, fill(ui));
+                let changed = fields::text(ui, id, &mut text, f.hint, fill(ui));
                 // Definition names go into solver decks, which take no spaces: a typed space
                 // becomes `_`, and the field says so.
                 if changed && is_name(f) && text.contains(' ') {
@@ -287,7 +288,7 @@ impl Form<'_> {
             Kind::Bool => {
                 // An unset key runs with the field's default, so the box shows that.
                 let mut on = value.and_then(Value::as_bool).unwrap_or(f.default == Some("true"));
-                let r = ui.checkbox(&mut on, "");
+                let r = kit::checkbox(ui, "", &mut on);
                 if !f.hint.is_empty() {
                     r.clone().on_hover_text(f.hint);
                 }
@@ -362,7 +363,7 @@ impl Form<'_> {
             self.json_only(ui);
             return None;
         }
-        match fields::number(ui, &self.style, id, current, hint, integer, width) {
+        match fields::number(ui, id, current, hint, integer, width) {
             NumberEdit::Set(Some(x)) if integer => Some(json!(x as i64)),
             NumberEdit::Set(Some(x)) => Some(json!(x)),
             NumberEdit::Set(None) => Some(Value::Null),
@@ -528,20 +529,20 @@ impl Form<'_> {
             // All, none and the others, for long lists.
             if shown.len() > 3 {
                 ui.horizontal(|ui| {
-                    if ui.small_button("All").clicked() {
+                    if kit::button(ui, "All", kit::Button::Small).clicked() {
                         changed = Some(list(shown.to_vec()));
                     }
-                    if ui.small_button("None").clicked() {
+                    if kit::button(ui, "None", kit::Button::Small).clicked() {
                         changed = Some(Value::Null);
                     }
-                    if ui.small_button("Invert").on_hover_text("Tick the unticked ones and untick the others").clicked() {
+                    if kit::button(ui, "Invert", kit::Button::Small).on_hover_text("Tick the unticked ones and untick the others").clicked() {
                         changed = Some(list(shown.iter().filter(|n| !chosen.contains(n)).cloned().collect()));
                     }
                 });
             }
             for n in shown {
                 let mut on = chosen.contains(n);
-                let r = ui.checkbox(&mut on, n);
+                let r = kit::checkbox(ui, n, &mut on);
                 if r.hovered() && c == Collection::Body {
                     self.out.hover_body = Some(n.clone());
                 }
@@ -605,7 +606,7 @@ impl Form<'_> {
                 let row = ui.horizontal(|ui| {
                     let width = (ui.available_width() * 0.5).max(FIELD_MIN);
                     ui.add_sized([width, ui.spacing().interact_size.y], egui::Label::new(n.as_str()).truncate());
-                    fields::text(ui, &self.style, id.with(i), &mut text, hint, fill(ui))
+                    fields::text(ui, id.with(i), &mut text, hint, fill(ui))
                 });
                 if row.response.contains_pointer() && c == Collection::Body {
                     self.out.hover_body = Some(n.clone());
@@ -684,7 +685,7 @@ impl Form<'_> {
             true => format!("Create {}…", c.label()),
             false => format!("{}…", fieldcraft_engine::catalogue::entry_of(r.provider()).map_or(r.provider(), |e| e.label)),
         };
-        if ui.button(text).on_hover_text(format!("{} ({})", r.place(), r.provider())).clicked() {
+        if kit::button(ui, text, kit::Button::Normal).on_hover_text(format!("{} ({})", r.place(), r.provider())).clicked() {
             self.out.create = Some((c, path.to_string()));
         }
     }
@@ -708,26 +709,18 @@ impl Form<'_> {
         };
         let mut out = None;
         ui.vertical(|ui| {
-            let parsed = fields::parse_labels(&text, schema::MAX_LABELS);
-            let mut edit =
-                egui::TextEdit::singleline(&mut text).id(id).desired_width(fill(ui)).hint_text(RichText::new(hint).italics().color(self.style.dim));
-            if parsed.is_none() {
-                edit = edit.text_color(self.style.error);
+            let bad = fields::parse_labels(&text, schema::MAX_LABELS).is_none();
+            if bad {
                 self.out.invalid += 1;
             }
-            if ui.add(edit).changed()
+            if fields::checked_text(ui, id, &mut text, hint, bad, fill(ui)).changed()
                 && let Some(l) = fields::parse_labels(&text, schema::MAX_LABELS)
             {
                 out = Some(if l.is_empty() { Value::Null } else { json!(l) });
             }
             let label = format!("Use selection ({} {}{})", picked.len(), of.label(), if picked.len() == 1 { "" } else { "s" });
             let tip = format!("The {}s picked in the viewport (Select: {}s)", of.label(), of.label());
-            if ui
-                .add_enabled(!picked.is_empty(), egui::Button::new(RichText::new(label).small()))
-                .on_hover_text(&tip)
-                .on_disabled_hover_text(&tip)
-                .clicked()
-            {
+            if kit::button(ui, label, kit::Button::Enabled(!picked.is_empty())).on_hover_text(&tip).on_disabled_hover_text(&tip).clicked() {
                 text = fields::format_labels(&picked);
                 out = Some(json!(picked));
             }
@@ -758,14 +751,11 @@ impl Form<'_> {
         let mut out = None;
         let mut over = shown.clone();
         ui.vertical(|ui| {
-            let parsed = fields::parse_sides(&text, schema::MAX_LABELS);
-            let mut edit =
-                egui::TextEdit::singleline(&mut text).id(id).desired_width(fill(ui)).hint_text(RichText::new(hint).italics().color(self.style.dim));
-            if parsed.is_none() {
-                edit = edit.text_color(self.style.error);
+            let bad = fields::parse_sides(&text, schema::MAX_LABELS).is_none();
+            if bad {
                 self.out.invalid += 1;
             }
-            if ui.add(edit).changed()
+            if fields::checked_text(ui, id, &mut text, hint, bad, fill(ui)).changed()
                 && let Some(l) = fields::parse_sides(&text, schema::MAX_LABELS)
             {
                 over = fields::format_sides(&l);
@@ -775,12 +765,7 @@ impl Form<'_> {
                 let picked = self.cx.picked.faces.clone();
                 let label = format!("Use selection ({} face{})", picked.len(), if picked.len() == 1 { "" } else { "s" });
                 let tip = "The element faces picked in the viewport (Select: Element faces)";
-                if ui
-                    .add_enabled(!picked.is_empty(), egui::Button::new(RichText::new(label).small()))
-                    .on_hover_text(tip)
-                    .on_disabled_hover_text(tip)
-                    .clicked()
-                {
+                if kit::button(ui, label, kit::Button::Enabled(!picked.is_empty())).on_hover_text(tip).on_disabled_hover_text(tip).clicked() {
                     text = fields::format_sides(&picked);
                     over = text.clone();
                     out = Some(to_value(&picked));
@@ -831,7 +816,7 @@ impl Form<'_> {
             for (i, p) in current.iter().enumerate() {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = gap;
-                    if ui.small_button("×").on_hover_text("Remove this row").clicked() {
+                    if kit::button(ui, "×", kit::Button::Small).on_hover_text("Remove this row").clicked() {
                         remove = Some(i);
                     }
                     if let Some(v) = self.vector(ui, id.with(i), Some(p), f, columns, false, Some(cell))
@@ -842,11 +827,7 @@ impl Form<'_> {
                     }
                 });
             }
-            if ui
-                .add_enabled(
-                    current.len() < max.min(MAX_ROWS),
-                    egui::Button::new(RichText::new(if columns == schema::XYZ { "Add point" } else { "Add row" }).small()),
-                )
+            if kit::button(ui, if columns == schema::XYZ { "Add point" } else { "Add row" }, kit::Button::Enabled(current.len() < max.min(MAX_ROWS)))
                 .clicked()
             {
                 next.push(Value::Array(vec![json!(0.0); columns.len()]));
@@ -868,7 +849,7 @@ impl Form<'_> {
             for (o, label) in options {
                 let v = schema::multi_value(o);
                 let mut on = chosen.contains(&v);
-                if ui.checkbox(&mut on, *label).changed() {
+                if kit::checkbox(ui, label, &mut on).changed() {
                     // In the options' order.
                     let next: Vec<Value> =
                         options.iter().map(|(x, _)| schema::multi_value(x)).filter(|x| if *x == v { on } else { chosen.contains(x) }).collect();
@@ -889,7 +870,7 @@ impl Form<'_> {
         let mut on = auto;
         let mut out = None;
         ui.horizontal(|ui| {
-            if ui.checkbox(&mut on, "Auto").changed() {
+            if kit::checkbox(ui, "Auto", &mut on).changed() {
                 out = Some(if on { json!("auto") } else { json!(1.0) });
             }
             if !auto {
@@ -911,7 +892,7 @@ impl Form<'_> {
         let mut on = split;
         let mut out = None;
         ui.vertical(|ui| {
-            if ui.checkbox(&mut on, "Per axis").on_hover_text("A different value along each axis").changed() {
+            if kit::checkbox(ui, "Per axis", &mut on).on_hover_text("A different value along each axis").changed() {
                 out = Some(match (on, value) {
                     (true, Some(v)) if v.is_number() => Value::Array(vec![v.clone(); labels.len()]),
                     (true, _) => Value::Null,
@@ -943,16 +924,10 @@ impl Form<'_> {
         let shown = value.map(Value::to_string).unwrap_or_default();
         let mut text = ui.data(|d| d.get_temp::<(String, String)>(id)).filter(|(_, over)| *over == shown).map_or_else(|| shown.clone(), |(t, _)| t);
         let bad = !text.trim().is_empty() && serde_json::from_str::<Value>(&text).is_err();
-        let mut edit = egui::TextEdit::singleline(&mut text)
-            .id(id)
-            .code_editor()
-            .desired_width(fill(ui))
-            .hint_text(RichText::new(hint).italics().color(self.style.dim));
         if bad {
-            edit = edit.text_color(self.style.error);
             self.out.invalid += 1;
         }
-        let r = ui.add(edit);
+        let r = fields::checked_text(ui, id, &mut text, hint, bad, fill(ui));
         let mut out = None;
         if r.changed() {
             if text.trim().is_empty() {
@@ -973,7 +948,11 @@ impl Form<'_> {
         let mut on = present;
         ui.add_space(2.0);
         let help = f.help_text(self.cx.units);
-        let heading = if f.required { ui.label(RichText::new(f.label).strong()) } else { ui.checkbox(&mut on, RichText::new(f.label).strong()) };
+        let heading = if f.required {
+            ui.label(RichText::new(f.label).font(crate::theme::label_font(ui.ctx(), solidcraft_theme::Tokens::get().font_label)))
+        } else {
+            kit::checkbox(ui, f.label, &mut on)
+        };
         if !help.is_empty() {
             heading.on_hover_text(help);
         }
@@ -1034,7 +1013,7 @@ impl Form<'_> {
         for (i, row) in list.iter_mut().enumerate().take(max) {
             ui.horizontal(|ui| {
                 ui.label(RichText::new(format!("{}", i + 1)).small().color(self.style.dim));
-                if ui.small_button("×").on_hover_text("Remove").clicked() {
+                if kit::button(ui, "×", kit::Button::Small).on_hover_text("Remove").clicked() {
                     remove = Some(i);
                 }
             });
@@ -1046,7 +1025,7 @@ impl Form<'_> {
             list.remove(i);
             self.touch(path);
         }
-        if list.len() < max && ui.small_button("+ Add").clicked() {
+        if list.len() < max && kit::button(ui, "+ Add", kit::Button::Small).clicked() {
             list.push(schema::prefill(fields, &json!({})));
             self.touch(path);
         }

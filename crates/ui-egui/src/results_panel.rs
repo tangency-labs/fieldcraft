@@ -15,6 +15,7 @@ use std::sync::Arc;
 use crate::ModelApp;
 use crate::results::{Plot, components, count, number, number_in, with_unit};
 use crate::theme::Tokens;
+use solidcraft_ui_kit as kit;
 
 /// Width of the panel's drop-down lists.
 const COMBO_WIDTH: f32 = 160.0;
@@ -343,7 +344,7 @@ pub fn controls(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) 
     let steps: Vec<(String, bool)> = app.session.result_steps().map(|(n, c)| (n.to_string(), c)).collect();
     egui::Grid::new("fc_results_grid").num_columns(2).spacing(vec2(8.0, 4.0)).show(ui, |ui| {
         ui.label("Step");
-        egui::ComboBox::from_id_salt("fc_results_step").selected_text(&plot.view.step).width(COMBO_WIDTH).truncate().show_ui(ui, |ui| {
+        kit::bounded_dropdown_menu(ui, "fc_results_step", &plot.view.step, COMBO_WIDTH, |ui| {
             for (name, current) in &steps {
                 let label = if *current { name.clone() } else { format!("{name} (stale)") };
                 if ui.selectable_label(*name == plot.view.step, label).clicked() && *name != plot.view.step {
@@ -354,7 +355,7 @@ pub fn controls(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) 
         ui.end_row();
         ui.label("Contours");
         let shown = plot.view.contour.map_or("None", Field::label);
-        egui::ComboBox::from_id_salt("fc_results_field").selected_text(shown).width(COMBO_WIDTH).truncate().show_ui(ui, |ui| {
+        kit::bounded_dropdown_menu(ui, "fc_results_field", shown, COMBO_WIDTH, |ui| {
             if ui.selectable_label(plot.view.contour.is_none(), "None").clicked() {
                 run.push(("results.contour", json!({"field": "none"})));
             }
@@ -375,7 +376,7 @@ pub fn controls(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) 
                 ui.horizontal(|ui| {
                     let mut auto = set.is_none();
                     let tip = format!("Follow the field's {}; untick to clamp the legend", if key == "max" { "maximum" } else { "minimum" });
-                    if ui.checkbox(&mut auto, "Auto").on_hover_text(tip).changed() {
+                    if kit::checkbox(ui, "Auto", &mut auto).on_hover_text(tip).changed() {
                         run.push(("results.contour", legend_params(plot, key, if auto { json!("auto") } else { json!(value) })));
                     }
                     // The clamp is stored in SI; the legend shows the display units.
@@ -400,9 +401,9 @@ pub fn controls(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) 
         ui.label("Show");
         ui.horizontal(|ui| {
             if plot.contour.is_some() {
-                ui.checkbox(&mut app.ui.result_extremes, "Max/Min").on_hover_text("Mark the nodes of the largest and smallest value");
+                kit::checkbox(ui, "Max/Min", &mut app.ui.result_extremes).on_hover_text("Mark the nodes of the largest and smallest value");
             }
-            ui.checkbox(&mut app.ui.result_symbols, "Loads & BCs").on_hover_text("The symbols of the step's boundary conditions and loads");
+            kit::checkbox(ui, "Loads & BCs", &mut app.ui.result_symbols).on_hover_text("The symbols of the step's boundary conditions and loads");
         });
         ui.end_row();
     });
@@ -415,11 +416,18 @@ pub fn controls(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) 
         ui.horizontal(|ui| {
             ui.label("Frame");
             let mut frame = k;
-            if ui.add(egui::Slider::new(&mut frame, 0..=n.saturating_sub(1))).changed() {
+            if kit::slider(
+                ui,
+                &mut frame,
+                0..=n.saturating_sub(1),
+                kit::Slider { integer: true, format: |v| format!("{v:.0}"), ..Default::default() },
+            )
+            .changed()
+            {
                 run.push(("results.frame", json!({"frame": frame})));
             }
             let mut animate = plot.view.animate;
-            if ui.checkbox(&mut animate, "Animate").on_hover_text("Play the frames from the start-up transient to the settled flow").changed() {
+            if kit::checkbox(ui, "Animate", &mut animate).on_hover_text("Play the frames from the start-up transient to the settled flow").changed() {
                 run.push(("results.animate", json!({"on": animate})));
             }
         });
@@ -434,7 +442,14 @@ pub fn controls(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) 
         ui.horizontal(|ui| {
             ui.label("Increment");
             let mut frame = k;
-            if ui.add(egui::Slider::new(&mut frame, 0..=n.saturating_sub(1))).changed() {
+            if kit::slider(
+                ui,
+                &mut frame,
+                0..=n.saturating_sub(1),
+                kit::Slider { integer: true, format: |v| format!("{v:.0}"), ..Default::default() },
+            )
+            .changed()
+            {
                 run.push(("results.frame", json!({"frame": frame})));
             }
         });
@@ -463,10 +478,16 @@ pub fn controls(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) 
     if matches!(plot.result.kind(), Kind::Static(_)) {
         ui.separator();
         ui.horizontal(|ui| {
-            if ui.button("Reaction sums").on_hover_text("Reaction force and moment per boundary-condition set (results.reactions)").clicked() {
+            if kit::button(ui, "Reaction sums", kit::Button::Normal)
+                .on_hover_text("Reaction force and moment per boundary-condition set (results.reactions)")
+                .clicked()
+            {
                 run.push(("results.reactions", json!({"step": plot.view.step})));
             }
-            if ui.button("Export CSV…").on_hover_text("Write the reaction sums to a CSV file (results.export.csv)").clicked() {
+            if kit::button(ui, "Export CSV…", kit::Button::Normal)
+                .on_hover_text("Write the reaction sums to a CSV file (results.export.csv)")
+                .clicked()
+            {
                 export = Some(json!({"what": "reactions", "step": plot.view.step}));
             }
         });
@@ -518,7 +539,7 @@ fn views_row(app: &ModelApp, ui: &mut egui::Ui, run: &mut Vec<(&'static str, Val
         ui.label("Views");
         let shown = current.unwrap_or(if views.is_empty() { "None saved" } else { "Choose…" });
         ui.add_enabled_ui(!views.is_empty(), |ui| {
-            egui::ComboBox::from_id_salt("fc_results_views").selected_text(shown).width(COMBO_WIDTH).truncate().show_ui(ui, |ui| {
+            kit::bounded_dropdown_menu(ui, "fc_results_views", shown, COMBO_WIDTH, |ui| {
                 for v in views {
                     if ui.selectable_label(current == Some(v.name.as_str()), &v.name).on_hover_text("Show this view (view.restore)").clicked() {
                         run.push(("view.restore", json!({"name": v.name})));
@@ -539,7 +560,7 @@ fn deformation_rows(plot: &Plot, ui: &mut egui::Ui, run: &mut Vec<(&'static str,
     ui.label("Deformed");
     ui.horizontal(|ui| {
         let mut deformed = plot.view.deformed;
-        if ui.checkbox(&mut deformed, "").changed() {
+        if kit::checkbox(ui, "", &mut deformed).changed() {
             run.push(("results.deformed", json!({"show": deformed})));
         }
         let mut auto = plot.view.scale.is_none();
@@ -548,7 +569,7 @@ fn deformation_rows(plot: &Plot, ui: &mut egui::Ui, run: &mut Vec<(&'static str,
         } else {
             "Scale the largest displacement to a tenth of the model"
         };
-        if ui.checkbox(&mut auto, "Auto").on_hover_text(tip).changed() {
+        if kit::checkbox(ui, "Auto", &mut auto).on_hover_text(tip).changed() {
             run.push(("results.deformed", json!({"scale": if auto { json!("auto") } else { json!(plot.scale) }})));
         }
         // The scale ticking Deformed draws with, also while it is off.
@@ -601,7 +622,7 @@ fn flow_rows(plot: &Plot, ui: &mut egui::Ui, run: &mut Vec<(&'static str, Value)
             return;
         }
         let shown = view.slice.as_ref().map_or("None", |s| s.axis.id());
-        egui::ComboBox::from_id_salt("fc_results_slice").selected_text(format!("Normal {}", shown.to_uppercase())).width(90.0).show_ui(ui, |ui| {
+        kit::bounded_dropdown_menu(ui, "fc_results_slice", &format!("Normal {}", shown.to_uppercase()), 90.0, |ui| {
             if ui.selectable_label(view.slice.is_none(), "None").clicked() {
                 run.push(("results.slice", json!({"axis": "none"})));
             }
@@ -628,14 +649,14 @@ fn flow_rows(plot: &Plot, ui: &mut egui::Ui, run: &mut Vec<(&'static str, Value)
     ui.end_row();
     ui.label("Obstacles");
     let mut surface = view.surface;
-    if ui.checkbox(&mut surface, "Coloured").on_hover_text("Colour the part by the selected fluid field or wall heat").changed() {
+    if kit::checkbox(ui, "Coloured", &mut surface).on_hover_text("Colour the part by the selected fluid field or wall heat").changed() {
         run.push(("results.surface", json!({"show": surface})));
     }
     ui.end_row();
     ui.label("Streamlines");
     ui.horizontal(|ui| {
         let mut on = view.streamlines.is_some();
-        if ui.checkbox(&mut on, "").on_hover_text("Streamlines from the inlet, coloured by speed or temperature when selected").changed() {
+        if kit::checkbox(ui, "", &mut on).on_hover_text("Streamlines from the inlet, coloured by speed or temperature when selected").changed() {
             run.push(("results.streamlines", json!({"show": on})));
         }
         if let Some(sl) = &view.streamlines {
@@ -672,16 +693,18 @@ fn probed(app: &ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) -> Option<
             ui.end_row();
         }
     });
-    ui.button("Export CSV…").on_hover_text("Write the node's results to a CSV file (results.export.csv)").clicked().then(|| {
-        let mut params = json!({"what": "probe", "step": p.step, "nodes": [p.node]});
-        if matches!(plot.result.kind(), Kind::Frequency(_)) {
-            params["mode"] = json!(p.mode);
-        }
-        if let Some(f) = p.frame {
-            params["frame"] = json!(f);
-        }
-        params
-    })
+    kit::button(ui, "Export CSV…", kit::Button::Normal).on_hover_text("Write the node's results to a CSV file (results.export.csv)").clicked().then(
+        || {
+            let mut params = json!({"what": "probe", "step": p.step, "nodes": [p.node]});
+            if matches!(plot.result.kind(), Kind::Frequency(_)) {
+                params["mode"] = json!(p.mode);
+            }
+            if let Some(f) = p.frame {
+                params["frame"] = json!(f);
+            }
+            params
+        },
+    )
 }
 
 /// An explicit step: a frame slider (the deformed shape and contours follow it) and the energy
@@ -693,7 +716,14 @@ fn explicit(ui: &mut egui::Ui, e: &ExplicitResult, plot: &Plot, t: &Tokens, run:
         ui.horizontal(|ui| {
             ui.label("Frame");
             let mut frame = k;
-            if ui.add(egui::Slider::new(&mut frame, 0..=n.saturating_sub(1))).changed() {
+            if kit::slider(
+                ui,
+                &mut frame,
+                0..=n.saturating_sub(1),
+                kit::Slider { integer: true, format: |v| format!("{v:.0}"), ..Default::default() },
+            )
+            .changed()
+            {
                 run.push(("results.frame", json!({"frame": frame})));
             }
         });
@@ -897,7 +927,7 @@ fn xy_section(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens, ru
     ui.horizontal(|ui| {
         ui.label(RichText::new("XY Plot").strong());
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            close = ui.small_button("×").on_hover_text("Close the XY plot").clicked();
+            close = kit::button(ui, "×", kit::Button::Small).on_hover_text("Close the XY plot").clicked();
         });
     });
     if close {
@@ -925,7 +955,7 @@ fn xy_section(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens, ru
         .unwrap_or_default();
     let shown = options.iter().find(|(_, y, x)| (y, x) == (&template.0, &template.1)).map_or("", |(l, ..)| l.as_str());
     let (mut picked, mut against) = template.clone();
-    egui::ComboBox::from_id_salt("fc_results_xy").selected_text(shown).width(ui.available_width() - 8.0).truncate().show_ui(ui, |ui| {
+    kit::bounded_dropdown_menu(ui, "fc_results_xy", shown, ui.available_width() - 8.0, |ui| {
         for (label, y, x) in &options {
             if ui.selectable_label((y, x) == (&template.0, &template.1), label).clicked() {
                 (picked, against) = (y.clone(), x.clone());
@@ -1006,7 +1036,7 @@ fn xy_section(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens, ru
         let at = |v: &[f64]| v.get(i).map_or("—".into(), |x| number(*x));
         ui.label(RichText::new(format!("{x_label} {}: {}", at(&xs), at(&ys))).small().color(t.text_dim));
     }
-    ui.button("Export CSV…").on_hover_text("Write the series to a CSV file (results.xy)").clicked().then_some(params)
+    kit::button(ui, "Export CSV…", kit::Button::Normal).on_hover_text("Write the series to a CSV file (results.xy)").clicked().then_some(params)
 }
 
 impl ModelApp {
@@ -1044,20 +1074,22 @@ fn port_transport(ui: &mut egui::Ui, f: &FluidResult, pick: fieldcraft_engine::r
     if !f.open_faces.contains(&true) {
         return;
     }
-    ui.collapsing("Inlets and outlets", |ui| {
+    kit::section(ui, "fc_inlets_outlets", "Inlets and outlets", false, |ui| {
         let report = fieldcraft_engine::results::fluid_ports(f, frame, units);
         let Some(faces) = report["faces"].as_array() else {
             ui.label(RichText::new(report["error"].as_str().unwrap_or("Port fields unavailable")).color(t.error));
             return;
         };
         ui.label(RichText::new("From the displayed frame").small().color(t.text_dim));
-        let format = |v: &Value, quantity: &str| {
-            v.as_f64().map(|v| with_unit(number(v), report["units"][quantity].as_str())).unwrap_or_else(|| "—".into())
-        };
+        let format =
+            |v: &Value, quantity: &str| v.as_f64().map(|v| with_unit(number(v), report["units"][quantity].as_str())).unwrap_or_else(|| "—".into());
         for face in faces {
             ui.label(RichText::new(face["face"].as_str().unwrap_or("?")).strong());
             egui::Grid::new(("fc_port", face["face"].as_str().unwrap_or("?"))).num_columns(3).spacing(vec2(8.0, 2.0)).show(ui, |ui| {
-                ui.label(""); ui.label("In"); ui.label("Out"); ui.end_row();
+                ui.label("");
+                ui.label("In");
+                ui.label("Out");
+                ui.end_row();
                 for (label, key, quantity) in [
                     ("Volume flow", "volume_flow", "volume_flow"),
                     ("Mass flow", "mass_flow", "mass_flow"),
