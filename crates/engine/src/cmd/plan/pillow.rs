@@ -104,7 +104,7 @@ fn cross(a: V2, b: V2) -> f64 {
 }
 
 fn norm(a: V2) -> f64 {
-    a[0].hypot(a[1])
+    libm::hypot(a[0], a[1])
 }
 
 fn unit(a: V2) -> Option<V2> {
@@ -583,7 +583,7 @@ pub(crate) fn layout(inp: &Input) -> Result<Layout, String> {
             let (a0, a1) = if seg_on(bi, i) { outline.segment(prev) } else { outline.segment(i) };
             let dir = unit(sub(a1, a0)).ok_or("a degenerate outline segment")?;
             let radial = unit(sub(p, b.c)).ok_or("a kink at a boss's centre")?;
-            let angle = dot(dir, radial).abs().clamp(0.0, 1.0).asin();
+            let angle = libm::asin(dot(dir, radial).abs().clamp(0.0, 1.0));
             if angle < MIN_KINK {
                 return Err(format!("the outline meets the boss of radius {} tangentially (at {:.1}°)", length(b.r), angle.to_degrees()));
             }
@@ -771,13 +771,13 @@ pub(crate) fn layout(inp: &Input) -> Result<Layout, String> {
     let param = |w: Wall, p: V2| -> f64 {
         match w {
             Wall::Outline => along_outline.of(p),
-            Wall::Boss(b) => bosses.get(b).map_or(0.0, |b| (p[1] - b.c[1]).atan2(p[0] - b.c[0])),
+            Wall::Boss(b) => bosses.get(b).map_or(0.0, |b| libm::atan2(p[1] - b.c[1], p[0] - b.c[0])),
         }
     };
     let point = |w: Wall, s: f64| -> V2 {
         match w {
             Wall::Outline => along_outline.at(s),
-            Wall::Boss(b) => bosses.get(b).map_or([0.0; 2], |b| add(b.c, [b.r * s.cos(), b.r * s.sin()])),
+            Wall::Boss(b) => bosses.get(b).map_or([0.0; 2], |b| add(b.c, [b.r * libm::cos(s), b.r * libm::sin(s)])),
         }
     };
     let period = |w: Wall| match w {
@@ -965,7 +965,7 @@ pub(crate) fn layout(inp: &Input) -> Result<Layout, String> {
         let mut outer: Vec<usize> = std::iter::once(land_out[*ja]).chain(run.iter().skip(1).map(|&k| land_out[k])).chain([land_in[jb]]).collect();
         outer.reverse();
         outer.push(ka);
-        let ang = |p: V2| (p[1] - b.c[1]).atan2(p[0] - b.c[0]);
+        let ang = |p: V2| libm::atan2(p[1] - b.c[1], p[0] - b.c[0]);
         let mut angles: Vec<f64> = Vec::with_capacity(outer.len());
         for &id in &outer {
             let mut x = ang(v2.get(id).copied().unwrap_or_default());
@@ -991,7 +991,7 @@ pub(crate) fn layout(inp: &Input) -> Result<Layout, String> {
         let count = ((span / step).round() as usize).max(1);
         for t in 1..count {
             let x = last + span * t as f64 / count as f64;
-            v2.push(add(b.c, [b.r * x.cos(), b.r * x.sin()]));
+            v2.push(add(b.c, [b.r * libm::cos(x), b.r * libm::sin(x)]));
             outer.push(v2.len() - 1);
             angles.push(x);
         }
@@ -1000,7 +1000,7 @@ pub(crate) fn layout(inp: &Input) -> Result<Layout, String> {
         // The inner loop: the hole's point on each outer point's ray, the corners on the nearest.
         let mut inner: Vec<V2> = Vec::with_capacity(angles.len());
         for &x in &angles {
-            let h = b.inner.ray(b.c, [x.cos(), x.sin()], 0.0).ok_or("a ray from a boss's centre misses its hole")?;
+            let h = b.inner.ray(b.c, [libm::cos(x), libm::sin(x)], 0.0).ok_or("a ray from a boss's centre misses its hole")?;
             inner.push(h.1);
         }
         let wrap = |x: f64| (x + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI;
