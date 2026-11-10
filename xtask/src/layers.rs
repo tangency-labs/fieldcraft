@@ -93,8 +93,14 @@ fn intra_layer_allowed(from: &str, to: &str) -> bool {
 /// Entries ending in `*` are prefixes.
 pub const UI_CRATES: &[&str] = &["egui", "eframe", "egui-wgpu", "wgpu", "winit", "egui_kittest", "rfd", "bevy*"];
 
-/// The only crate that may depend on SolidCraft (`solidcraft-*`): the geometry boundary.
+/// The only crate that may depend on SolidCraft (`solidcraft-*`, and the solidcore kernel crates
+/// behind it, `solidcore*`): the geometry boundary.
 pub const SOLIDCRAFT_GATEWAY: &str = "geometry";
+
+/// SolidCraft and its kernel: the crates only [`SOLIDCRAFT_GATEWAY`] may use.
+fn is_solidcraft_crate(name: &str) -> bool {
+    name.starts_with("solidcraft-") || name == "solidcore" || name.starts_with("solidcore-")
+}
 
 /// First layer allowed to use UI crates.
 pub const UI_MIN_LAYER: u8 = 7;
@@ -219,7 +225,7 @@ pub fn check(crates: &[Crate]) -> Vec<Violation> {
                         }
                     }
                 }
-            } else if d.name.starts_with("solidcraft-") && short_name(&c.name) != SOLIDCRAFT_GATEWAY {
+            } else if is_solidcraft_crate(&d.name) && short_name(&c.name) != SOLIDCRAFT_GATEWAY {
                 out.push(Violation::SolidCraftOutsideGeometry { krate: c.name.clone(), dep: d.name.clone() });
             } else if layer < UI_MIN_LAYER && is_ui_crate(&d.name) {
                 out.push(Violation::UiBelowUiLayer { krate: c.name.clone(), dep: d.name.clone(), layer });
@@ -342,6 +348,12 @@ mod tests {
         assert!(check(&[c("fieldcraft-geometry", &[("solidcraft-kernel", Normal, false)])]).is_empty());
         let v = check(&[c("fieldcraft-mesh", &[("solidcraft-geom", Normal, false)])]);
         assert!(matches!(v[..], [Violation::SolidCraftOutsideGeometry { .. }]));
+        // The kernel behind it too.
+        assert!(check(&[c("fieldcraft-geometry", &[("solidcore-record", Normal, false)])]).is_empty());
+        for kernel in ["solidcore", "solidcore-record"] {
+            let v = check(&[c("fieldcraft-mesh", &[(kernel, Normal, false)])]);
+            assert!(matches!(v[..], [Violation::SolidCraftOutsideGeometry { .. }]), "{kernel}");
+        }
     }
 
     #[test]
