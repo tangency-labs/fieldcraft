@@ -21,11 +21,11 @@ updates:
       cargo-compatible:
         update-types: [minor, patch]
     ignore:
-      # Pinned to the SolidCraft commit FieldCraft builds against, together with the truck and
-      # egui-wgpu patches from that commit ([patch.crates-io] in Cargo.toml); moved by hand.
+      # Pinned to the SolidCraft commit FieldCraft builds against, with solidcore-record from the
+      # copy of solidcore vendored there and the egui-wgpu patch from SolidCraft
+      # ([patch.crates-io] in Cargo.toml); moved by hand.
       - dependency-name: "solidcraft-*"
-      - dependency-name: "truck-*"
-      - dependency-name: matext4cgmath
+      - dependency-name: "solidcore*"
       - dependency-name: egui-wgpu
       # The egui line follows SolidCraft's (its egui-wgpu fixes are patched in): patch releases
       # come with the group, a new line (0.36 -> 0.37) moves by hand with SolidCraft.

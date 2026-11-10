@@ -11,7 +11,9 @@ algorithms, where the obvious open-source implementations are GPL-family, must c
 
 **Geometry: SolidCraft**, as git dependencies pinned by rev (`solidcraft-kernel`,
 `solidcraft-geom`, `solidcraft-doc`, `solidcraft-io`; MIT OR Apache-2.0, built on the Apache-2.0
-truck crates). SolidCraft is the primary geometry source: FieldCraft opens SolidCraft designs and
+truck crates until v0.30 and on solidcore, an Apache-2.0 Rust port of NVIDIA's SMLib, from
+v0.40, with its `solidcore-record` geometry records from the copy SolidCraft vendors). SolidCraft
+is the primary geometry source: FieldCraft opens SolidCraft designs and
 meshes from SolidCraft's tessellation, and reads face-tagged meshes SolidCraft exports. Other CAD
 exchange files (STEP, which SolidCraft's kernel already reads) can be added as secondary inputs
 through the same crate. Only `fieldcraft-geometry` may depend on SolidCraft.
@@ -129,8 +131,10 @@ docs/verification.md).
 
 - The tet and hex meshers are significant original work; the literature survey decides the
   order and the methods.
-- SolidCraft and FieldCraft move together: bumping the pinned rev bumps the repeated
-  `[patch.crates-io]` entries in the same commit. The pin is a SolidCraft release tag's commit,
+- SolidCraft and FieldCraft move together: bumping the pinned rev bumps `solidcore-record` (from
+  SolidCraft's repository) and the repeated `[patch.crates-io]` entries in the same commit. The
+  pin is a SolidCraft release tag's commit or, when FieldCraft needs a change not yet released, a
+  commit on SolidCraft's main branch,
   and a scheduled check opens designs saved by SolidCraft's latest release, so a release that
   saves a design format the pin can't read is caught before users meet it
   (docs/architecture.md, "SolidCraft pin").

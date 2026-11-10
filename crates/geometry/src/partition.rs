@@ -17,7 +17,8 @@
 //!   same surface under a point of the piece). Where a cell has several pieces of one face they
 //!   are `<name>#0`, `<name>#1`, …, which sets naming `<name>` select.
 
-use solidcraft_geom::{Plane, Vec3};
+use solidcore_record::{Plane, Vec3};
+use solidcraft_geom::PlaneGeom;
 use solidcraft_kernel::guard;
 
 use crate::{Design, Error, Face, FaceSurface, FeatureError, Result, Shape, SurfaceMesh};
@@ -242,19 +243,19 @@ fn axis_box(plane: &Plane, n: [f64; 3], bbox: &solidcraft_geom::Aabb3, positive:
 /// the plane (1.8 µm on a 140 mm body), off the faces it should meet (#384); boxes of the body's own
 /// size keep the cut on the plane.
 ///
-/// A boolean the kernel could only make by moving one body against the other (its last-resort
-/// tool nudge, micrometres and microradians) is refused: the cut would lie off the plane, next to
-/// the face it was meant to run along, and leave a cell bounded by slivers no mesher takes (#427).
+/// SolidCraft's kernel (SMLib, from v0.40) has no last-resort tool nudge: it makes the boolean
+/// with the tool where it is or refuses it. (The truck kernel before it could move the tool by
+/// micrometres to get a result, and FieldCraft refused those cuts, #427.)
 fn halves(body: &Shape, plane: &Plane, n: [f64; 3]) -> solidcraft_kernel::Result<Vec<solidcraft_kernel::Body>> {
     let bbox = solidcraft_kernel::measure(&body.body)?.bbox;
     let reach = bbox.diagonal().max(LINEAR_REACH);
     let c = plane.to_local(bbox.center());
-    let square = solidcraft_geom::Region2 {
-        outer: solidcraft_geom::Loop2::polygon(&[
-            solidcraft_geom::Vec2::new(c.x - reach, c.y - reach),
-            solidcraft_geom::Vec2::new(c.x + reach, c.y - reach),
-            solidcraft_geom::Vec2::new(c.x + reach, c.y + reach),
-            solidcraft_geom::Vec2::new(c.x - reach, c.y + reach),
+    let square = solidcore_record::Region2 {
+        outer: solidcore_record::Loop2::polygon(&[
+            solidcore_record::Vec2::new(c.x - reach, c.y - reach),
+            solidcore_record::Vec2::new(c.x + reach, c.y - reach),
+            solidcore_record::Vec2::new(c.x + reach, c.y + reach),
+            solidcore_record::Vec2::new(c.x - reach, c.y + reach),
         ]),
         holes: vec![],
     };
@@ -267,14 +268,7 @@ fn halves(body: &Shape, plane: &Plane, n: [f64; 3]) -> solidcraft_kernel::Result
                 tool
             }
         };
-        let (cut, report) =
-            solidcraft_kernel::capture_boolean_diagnostics(|| solidcraft_kernel::boolean(&body.body, &side, solidcraft_kernel::BoolOp::Intersect));
-        if let Some(moved) = report.warning() {
-            return Err(solidcraft_kernel::KernelError::Failed(format!(
-                "the cut is only made off the plane (SolidCraft's kernel: {moved}); the plane runs along a face or edge of the body: move it off (by a fraction of the element size)"
-            )));
-        }
-        out.extend(cut?);
+        out.extend(solidcraft_kernel::boolean(&body.body, &side, solidcraft_kernel::BoolOp::Intersect)?);
     }
     Ok(out)
 }

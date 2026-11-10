@@ -130,7 +130,7 @@ impl Analytic {
 
 /// The analytic shapes of the corpus.
 pub fn analytic_parts() -> Vec<Part> {
-    let plate = sample::Plate { width: 200.0, depth: 100.0, thickness: 5.0, hole_diameter: 20.0 };
+    let plate = sample::Plate { width: 200.0, depth: 100.0, thickness: 5.0, hole_diameter: 20.0, ..Default::default() };
     let shapes: [(&str, &str, &[&str], Analytic); 5] = [
         ("analytic-sphere", "Sphere r 20: curvature everywhere, no edges.", &[], Analytic::Sphere { radius: 20.0 }),
         ("analytic-torus", "Torus 30/8: genus 1 with doubly curved faces and no edges.", &["genus"], Analytic::Torus { major: 30.0, minor: 8.0 }),

@@ -1109,7 +1109,7 @@ mod tests {
         assert_eq!((faces(&app), reply.value["candidates"][0]["suppressed"].as_bool()), (6, Some(true)));
         assert_eq!(defeatured(&app, "Defeature"), [hole]);
         set_defeature(&mut app, "Defeature", Vec::new()).unwrap();
-        assert_eq!((faces(&app), app.reply.as_ref().unwrap().value["candidates"][0]["suppressed"].as_bool()), (8, Some(false)));
+        assert_eq!((faces(&app), app.reply.as_ref().unwrap().value["candidates"][0]["suppressed"].as_bool()), (7, Some(false)));
         assert!(app.session.model.defeatures().is_empty());
         std::fs::remove_dir_all(&dir).ok();
     }

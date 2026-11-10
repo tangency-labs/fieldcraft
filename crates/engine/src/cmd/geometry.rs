@@ -738,7 +738,8 @@ pub(crate) mod tests {
             .filter(|(_, s)| matches!(s, Some(FaceSurface::Cylinder { .. })))
             .map(|(f, _)| json!({"body": body.name, "face": f.name}))
             .collect();
-        assert_eq!(hole.len(), 2);
+        // The hole is one cylindrical face.
+        assert_eq!(hole.len(), 1);
         let r = s.execute("geometry.centre", &json!({"geometry": hole})).unwrap();
         near(&r, [15.0, 15.0, 5.0]);
         assert_eq!(r["from"], "circle");

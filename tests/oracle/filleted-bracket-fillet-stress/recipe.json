@@ -4,7 +4,7 @@
  {"command": "model.set.create", "params": {"name": "all", "geometry": [{"body": "Bracket"}]}},
  {"command": "model.set.create", "params": {"name": "foot", "geometry": [{"body": "Bracket", "face": "F2:side:l1"}]}},
  {"command": "model.set.create", "params": {"name": "top", "geometry": [{"body": "Bracket", "face": "F2:side:l5"}]}},
- {"command": "model.set.create", "params": {"name": "fillet", "geometry": [{"body": "Bracket", "face": "F3:blend:F2:side:l3|F2:side:l4"}]}},
+ {"command": "model.set.create", "params": {"name": "fillet", "geometry": [{"body": "Bracket", "face": "F3:blend(F2:side:l3|F2:side:l4)"}]}},
  {"command": "model.section.create", "params": {"name": "solid", "set": "all", "material": "Steel", "kind": {"type": "solid"}}},
  {"command": "model.boundary_condition.create", "params": {"name": "clamp", "type": "fixed", "target": {"set": "foot"}}},
  {"command": "model.load.create", "params": {"name": "push", "type": "force", "target": {"set": "top"}, "vector": [2000, 0, 0]}},

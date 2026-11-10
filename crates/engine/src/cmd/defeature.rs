@@ -262,7 +262,7 @@ mod tests {
     fn the_plate_hole_is_suppressed_meshed_undone_saved_and_restored() {
         let (mut s, dir) = super::super::datum::tests::plate();
         let body = s.design.as_ref().unwrap().bodies[0].name.clone();
-        assert_eq!(faces(&s), 8);
+        assert_eq!(faces(&s), 7);
         let none = s.execute("geometry.defeature.propose", &json!({"body": body, "below": {"hole_diameter": 5}})).unwrap();
         assert_eq!((none["candidates"].as_array().map(Vec::len), none["proposal"].as_array().map(Vec::len)), (Some(1), Some(0)), "{none}");
         let id = hole(&mut s);
@@ -286,7 +286,7 @@ mod tests {
         while !s.model.defeatures().is_empty() {
             s.execute("edit.undo", &json!({})).unwrap();
         }
-        assert_eq!(faces(&s), 8);
+        assert_eq!(faces(&s), 7);
         s.execute("edit.redo", &json!({})).unwrap();
         assert_eq!(faces(&s), 6);
         // Saved, and replayed on open of the model and on a re-open of the design.
@@ -301,7 +301,7 @@ mod tests {
         // Switched back on.
         let r = s.execute("geometry.defeature.delete", &json!({"name": "Holes"})).unwrap();
         assert_eq!(r["features"], json!([id]), "{r}");
-        assert_eq!(faces(&s), 8);
+        assert_eq!(faces(&s), 7);
         std::fs::remove_dir_all(dir).ok();
     }
 
@@ -316,7 +316,7 @@ mod tests {
         let base = s.execute("geometry.features", &json!({"body": body})).unwrap()["bodies"][0]["features"][0]["id"].as_u64().unwrap();
         let e = s.execute("geometry.defeature", &json!({"name": "Bad", "features": [base]})).unwrap_err();
         assert!(e.to_string().contains("builds a body"), "{e}");
-        assert!(s.model.defeatures().is_empty() && faces(&s) == 8);
+        assert!(s.model.defeatures().is_empty() && faces(&s) == 7);
         for below in [json!({"hole_diameter": -1}), json!({"hole_diameter": "x"}), json!({"nope": 1})] {
             assert!(s.execute("geometry.defeature.propose", &json!({"body": body, "below": below})).is_err(), "{below}");
         }

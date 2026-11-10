@@ -612,11 +612,15 @@ pub(crate) mod tests {
 
     /// A session with the sample plate (40 × 30 × 10, Ø10 hole at (15, 15)) open.
     pub(crate) fn plate() -> (Session, std::path::PathBuf) {
+        plate_of(&fieldcraft_geometry::sample::Plate::default())
+    }
+
+    /// A session with `plate` open from a file in a directory of its own.
+    pub(crate) fn plate_of(plate: &fieldcraft_geometry::sample::Plate) -> (Session, std::path::PathBuf) {
         let dir = std::env::temp_dir().join(format!("fieldcraft-partition-{}-{:?}", std::process::id(), std::thread::current().id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("plate.solidcraft");
-        let plate = fieldcraft_geometry::sample::Plate::default();
-        std::fs::write(&path, fieldcraft_geometry::sample::plate_design(&plate).unwrap()).unwrap();
+        std::fs::write(&path, fieldcraft_geometry::sample::plate_design(plate).unwrap()).unwrap();
         let mut s = Session::default();
         s.execute("geometry.open", &json!({"path": path.to_str().unwrap()})).unwrap();
         (s, dir)
@@ -986,8 +990,8 @@ pub(crate) mod tests {
     }
 
     /// #384: cuts stay on their plane (the kernel's own split put them 1.8 µm off it on the air
-    /// of the enclosure, so the cut faces were not even recognized), and a plane along an
-    /// existing face is refused where the kernel could only cut it off the plane. A cell whose
+    /// of the enclosure, so the cut faces were not even recognized), a plane along an existing
+    /// face included. A cell whose
     /// boundary no mesher takes is a warning naming the partition and the cell; through a
     /// standoff's hole that was SolidCraft 0.16's cut, and SolidCraft 0.18 cuts it cleanly (#655).
     #[test]
@@ -1020,11 +1024,12 @@ pub(crate) mod tests {
         assert!(r.get("warnings").is_none(), "{r}");
         on_plane(&s, "X", 16.5);
         s.execute("edit.undo", &json!({})).unwrap();
-        // Along the side of the heat sink's pedestal: the kernel only cuts with its box nudged
-        // off the plane, so the cut is refused, saying why (#427).
-        s.execute("geometry.datum", &json!({"name": "Side", "by": {"type": "offset", "plane": "yz", "offset": 34.0}})).unwrap();
-        let e = s.execute("geometry.partition", &json!({"name": "PSide", "datum": "Side", "bodies": ["Air"]})).unwrap_err().to_string();
-        assert!(e.contains("could not cut `Air`") && e.contains("only made off the plane"), "{e}");
+        // Along the side of the heat sink's pedestal: the truck kernel cut there only with its box
+        // nudged off the plane, so the cut was refused (#427); SolidCraft's kernel from v0.40 cuts
+        // on the plane.
+        plane(&mut s, "Side", 34.0);
+        on_plane(&s, "Side", 34.0);
+        s.execute("edit.undo", &json!({})).unwrap();
         // Through a standoff's hole: SolidCraft 0.16 left a cell whose boundary broke at the
         // hole's edge (the warning); SolidCraft 0.18's cells close there.
         let r = plane(&mut s, "Axis", 74.5);

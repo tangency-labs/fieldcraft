@@ -45,14 +45,14 @@ fn a_closed_hollow_box_keeps_its_void_shell() {
 
 #[test]
 fn a_post_joined_to_the_void_floor_comes_through() {
-    // The hollow box's twelve faces, the post's top and its side (two halves).
-    check(&open(include_bytes!("designs/hollow-box-post.solidcraft")), BOX - CAVITY + LID + POST, 15);
+    // The hollow box's twelve faces, the post's top and its side.
+    check(&open(include_bytes!("designs/hollow-box-post.solidcraft")), BOX - CAVITY + LID + POST, 14);
 }
 
 #[test]
 fn a_post_in_an_open_tray_comes_through() {
-    // Five outside faces, the rim, five cavity faces and the post's three.
-    check(&open(include_bytes!("designs/open-tray-post.solidcraft")), BOX - CAVITY + POST, 14);
+    // Five outside faces, the rim, five cavity faces and the post's top and side.
+    check(&open(include_bytes!("designs/open-tray-post.solidcraft")), BOX - CAVITY + POST, 13);
 }
 
 #[test]

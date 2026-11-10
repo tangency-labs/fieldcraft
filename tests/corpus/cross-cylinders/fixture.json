@@ -4,17 +4,45 @@
     "linux-x86_64": {
       "stages": {},
       "values": {
+        "boundary.vertices": {
+          "band": 0,
+          "value": 979
+        },
         "build.triangles": {
           "band": 0,
-          "value": 1542
+          "value": 1954
         },
-        "surface.enclosed_mm3": {
-          "band": 0.00003213148893261193,
-          "value": 32131.487932611926
+        "cdt.cavities": {
+          "band": 0,
+          "value": 1
         },
-        "surface.enclosed_vs_exact": {
-          "band": 1e-9,
-          "value": -0.007238836455476747
+        "cdt.steiner": {
+          "band": 0,
+          "value": 341
+        },
+        "cdt.tets": {
+          "band": 0,
+          "value": 5479
+        },
+        "quality.max_dihedral_deg": {
+          "band": 1.3907718510961123e-7,
+          "value": 139.07618510961123
+        },
+        "quality.min_dihedral_deg": {
+          "band": 3.34901816668558e-8,
+          "value": 33.48918166685579
+        },
+        "quality.min_radius_ratio": {
+          "band": 3.07265008762451e-10,
+          "value": 0.306265008762451
+        },
+        "quality.slivers_cdt": {
+          "band": 0,
+          "value": 3190
+        },
+        "quality.tets": {
+          "band": 0,
+          "value": 7662
         }
       }
     },
@@ -24,38 +52,94 @@
     }
   },
   "stages": {
-    "boundary": "error: invalid boundary surface",
+    "boundary": "ok",
     "build": "ok",
-    "cdt": "error: invalid boundary surface",
-    "hex": "error: invalid boundary surface",
-    "octree": "error: invalid boundary surface",
-    "quality": "error: invalid boundary surface",
+    "cdt": "ok",
+    "hex": "no: not supported yet",
+    "octree": "no: meshing failed",
+    "quality": "ok",
     "surface": "ok"
   },
   "values": {
+    "boundary.feature_edges": {
+      "band": 0,
+      "value": 204
+    },
+    "boundary.genus": {
+      "band": 0,
+      "value": 0
+    },
+    "boundary.shells": {
+      "band": 0,
+      "value": 1
+    },
+    "boundary.vertices": {
+      "band": 0,
+      "value": 980
+    },
     "build.bodies": {
       "band": 0,
       "value": 1
     },
     "build.faces": {
       "band": 0,
-      "value": 10
+      "value": 8
     },
     "build.triangles": {
       "band": 0,
-      "value": 1544
+      "value": 1956
+    },
+    "cdt.cavities": {
+      "band": 0,
+      "value": 0
+    },
+    "cdt.flat": {
+      "band": 0,
+      "value": 0
+    },
+    "cdt.steiner": {
+      "band": 0,
+      "value": 340
+    },
+    "cdt.tets": {
+      "band": 0,
+      "value": 5447
+    },
+    "quality.max_dihedral_deg": {
+      "band": 1.3868580394197002e-7,
+      "value": 138.68480394197002
+    },
+    "quality.min_dihedral_deg": {
+      "band": 3.3883174377251675e-8,
+      "value": 33.88217437725167
+    },
+    "quality.min_radius_ratio": {
+      "band": 3.40255319361396e-10,
+      "value": 0.33925531936139597
+    },
+    "quality.slivers": {
+      "band": 0,
+      "value": 0
+    },
+    "quality.slivers_cdt": {
+      "band": 0,
+      "value": 3129
+    },
+    "quality.tets": {
+      "band": 0,
+      "value": 7842
     },
     "surface.enclosed_mm3": {
-      "band": 0.000032131553732563126,
-      "value": 32131.552732563123
+      "band": 0.00003218185644130931,
+      "value": 32181.855441309308
     },
     "surface.enclosed_vs_exact": {
       "band": 1e-9,
-      "value": -0.007236834342313407
+      "value": -0.005682640033944055
     },
     "surface.solidcraft_mm3": {
-      "band": 0.000032364932310969166,
-      "value": 32364.93131096916
+      "band": 0.00003236577951034735,
+      "value": 32365.778510347343
     }
   }
 }

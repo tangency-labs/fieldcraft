@@ -262,6 +262,11 @@ mod tests {
 
     use crate::Session;
 
+    /// The sample plate with its hole cut as two half discs (two faces on one cylinder).
+    fn halved_plate() -> (Session, std::path::PathBuf) {
+        super::super::datum::tests::plate_of(&fieldcraft_geometry::sample::Plate { hole_halves: true, ..Default::default() })
+    }
+
     /// The plate's hole halves (two half-cylinders), by name.
     fn halves(s: &Session) -> Vec<String> {
         let b = &s.design.as_ref().unwrap().bodies[0];
@@ -287,7 +292,7 @@ mod tests {
     /// it is saved with the model and applied again when the model and its design are opened.
     #[test]
     fn a_merge_is_one_face_undone_saved_and_replayed() {
-        let (mut s, dir) = super::super::datum::tests::plate();
+        let (mut s, dir) = halved_plate();
         let before = faces(&s);
         assert_eq!(before.len(), 8);
         let r = merge_hole(&mut s);
@@ -339,7 +344,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("fieldcraft-merge-{}-{:?}", std::process::id(), std::thread::current().id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("square.solidcraft");
-        let plate = fieldcraft_geometry::sample::Plate { width: 30.0, ..Default::default() };
+        let plate = fieldcraft_geometry::sample::Plate { width: 30.0, hole_halves: true, ..Default::default() };
         std::fs::write(&path, fieldcraft_geometry::sample::plate_design(&plate).unwrap()).unwrap();
         let mut s = Session::default();
         s.execute("geometry.open", &json!({"path": path.to_str().unwrap()})).unwrap();
@@ -401,33 +406,30 @@ mod tests {
         mesher_meshes_a_merged_face_as_one("mesh.hex.generate", json!({"size": 2.5}), turned);
     }
 
-    /// The hex-meshing plan sees the merged hole as one face: the hole's feature and its ring
-    /// project onto `merge:Hole` (still a cylinder), not the halves.
+    /// The hex-meshing plan sees the merged hole as one face: before the merge it takes the
+    /// hole's halves (cut as two half discs, so two features and no circular hole to ring) each
+    /// as its own face; after it, both features project onto `merge:Hole`, not the halves.
     #[test]
     fn the_plan_sees_a_merged_face_as_one() {
-        let (mut s, dir) = super::super::datum::tests::plate();
+        let (mut s, dir) = halved_plate();
         let body = s.design.as_ref().unwrap().bodies[0].name.clone();
         let hole = halves(&s);
         let before = s.execute("mesh.plan", &json!({"body": body})).unwrap();
-        let ring = |r: &serde_json::Value| r["rings"][0]["faces"].clone();
-        let mut halves_sorted = hole.clone();
-        halves_sorted.sort();
-        let mut got: Vec<String> = serde_json::from_value(ring(&before)).unwrap();
-        got.sort();
-        assert_eq!(got, halves_sorted, "{before}");
+        let features = |r: &serde_json::Value| r["features"].as_array().unwrap().iter().map(|f| f["faces"].clone()).collect::<Vec<_>>();
+        for half in &hole {
+            assert!(features(&before).contains(&json!([half])), "{half}: {before}");
+        }
         merge_hole(&mut s);
         let after = s.execute("mesh.plan", &json!({"body": body})).unwrap();
-        assert_eq!(ring(&after), json!(["merge:Hole"]), "{after}");
-        let features = after["features"].as_array().unwrap();
-        assert!(features.iter().any(|f| f["faces"] == json!(["merge:Hole"])), "{after}");
-        assert!(!after.to_string().contains(&hole[0]), "{after}");
+        assert_eq!(features(&after).iter().filter(|f| **f == json!(["merge:Hole"])).count(), 2, "{after}");
+        assert!(hole.iter().all(|h| !after.to_string().contains(h.as_str())), "{after}");
         std::fs::remove_dir_all(dir).ok();
     }
 
     /// The viewport draws a merged face in one colour: the hole's triangles, and only those.
     #[test]
     fn a_merged_face_is_drawn_in_one_colour() {
-        let (mut s, dir) = super::super::datum::tests::plate();
+        let (mut s, dir) = halved_plate();
         let p = crate::view::Palette::LIGHT;
         let merged = |s: &Session| crate::view::scene(s, &p).0.tris.into_iter().filter(|t| t.color == p.merged).collect::<Vec<_>>();
         assert!(merged(&s).is_empty());
@@ -446,7 +448,7 @@ mod tests {
     /// Sets naming a merged face go stale (and are named); bad merges change nothing.
     #[test]
     fn bad_merges_change_nothing() {
-        let (mut s, dir) = super::super::datum::tests::plate();
+        let (mut s, dir) = halved_plate();
         let body = s.design.as_ref().unwrap().bodies[0].name.clone();
         let names = faces(&s);
         let hole = halves(&s);
@@ -587,7 +589,7 @@ mod tests {
         let r = s.execute("geometry.face.split", &json!({"name": "Band", "face": face, "datum": "Cut"})).unwrap();
         assert_eq!(r["faces"], json!(["split:Band:a", "split:Band:b"]), "{r}");
         assert!(r["replaced"].is_array(), "{r}");
-        assert_eq!(faces(&s).len(), 9);
+        assert_eq!(faces(&s).len(), 8);
         s.execute("mesh.tet.generate", &mesh).unwrap();
         let after = nodes_along(&s, 30.3);
         assert!(after >= 10 && after > before, "a node row along the 30 mm cut: {before} -> {after}");
@@ -619,9 +621,9 @@ mod tests {
         }
         assert_eq!(s.journal.len(), journal);
         s.execute("geometry.face.split.delete", &json!({"name": "Band"})).unwrap();
-        assert_eq!(faces(&s).len(), 8);
+        assert_eq!(faces(&s).len(), 7);
         s.execute("edit.undo", &json!({})).unwrap();
-        assert_eq!(faces(&s).len(), 9);
+        assert_eq!(faces(&s).len(), 8);
         std::fs::remove_dir_all(dir).ok();
     }
 }
