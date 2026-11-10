@@ -115,6 +115,7 @@ pub static ALL: &[CommandSpec] = &[
     replace::CLEAR,
     mesh::QUALITY,
     mesh::QUALITY_MARK,
+    mesh::VERIFY,
     mesh::EXPORT_STL,
     mesh::DELAUNAY_POINTS,
     mesh::SURFACE_CHECK,

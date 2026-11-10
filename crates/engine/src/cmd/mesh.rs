@@ -88,6 +88,16 @@ pub const QUALITY_MARK: CommandSpec = CommandSpec {
     run: quality_mark,
 };
 
+pub const VERIFY: CommandSpec = CommandSpec {
+    id: "mesh.verify",
+    label: "Verify Set",
+    params: r#"{"set": "web", "bins": 10 (1..=1000), "limits"?: {…} (as mesh.quality.mark: its defaults, given limits merged over them, null drops one), "mark"?: false} — after meshing, verifies the elements of one set: the set's elements; for a set with none, the elements its element faces and edges belong to (a face set verifies the elements on the face); for a set with only nodes, every element using one of them. Fails when the set does not exist, names members that are not on the mesh, or reaches no element. Replies what mesh.quality does for those elements (`summary`, `measured`, `skipped`, `valid`, `invalid`, `undetermined`, `volume`, `area`, `metrics`), with `set`, `by` (elements, faces or nodes: how the set reached them), `checked` (the elements verified), the `limits` used, `failing` (how many fail a limit or are not proven valid) and `elements` (the failing ones worst first, as mesh.quality.mark lists them; at most 100, `truncated` says when more). `mark: true` also keeps the failing elements as the element set `quality_marked` (replaced, removed when none fail), drawn in the marker colour: one undo step. Without it the model is not changed"#,
+    form: Some(super::forms::VERIFY),
+    kind: CommandKind::Model,
+    requires: &[Requirement::Mesh, Requirement::Set],
+    run: verify,
+};
+
 pub const EXPORT_STL: CommandSpec = CommandSpec {
     id: "mesh.export.stl",
     label: "Export STL",
@@ -679,16 +689,32 @@ fn export_stl(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"path": path, "triangles": triangles, "bytes": bytes.len(), "units": {"length": length}}))
 }
 
+/// The `bins` parameter of `mesh.quality` and `mesh.verify` (default 10; the report checks
+/// the range).
+fn bins_param(p: &Value) -> Result<usize> {
+    match p.get("bins") {
+        None => Ok(10),
+        Some(v) => v.as_u64().and_then(|b| usize::try_from(b).ok()).ok_or_else(|| EngineError::invalid("bins", "must be a whole number")),
+    }
+}
+
+/// The optional `elements` parameter: `None` for all.
+fn element_selection(p: &Value) -> Result<Option<Vec<u32>>> {
+    match p.get("elements") {
+        None => Ok(None),
+        Some(_) => Ok(Some(labels(p, "elements", MAX_ELEMENTS)?)),
+    }
+}
+
 fn quality_report(s: &mut Session, p: &Value) -> Result<Value> {
-    let bins = match p.get("bins") {
-        None => 10,
-        Some(v) => v.as_u64().and_then(|b| usize::try_from(b).ok()).ok_or_else(|| EngineError::invalid("bins", "must be a whole number"))?,
-    };
-    let selection = match p.get("elements") {
-        None => None,
-        Some(_) => Some(labels(p, "elements", MAX_ELEMENTS)?),
-    };
+    let bins = bins_param(p)?;
+    let selection = element_selection(p)?;
     let r: QualityReport = quality::quality_report(&s.model, selection.as_deref(), bins)?;
+    Ok(Value::Object(report_json(&r)))
+}
+
+/// The reply of `mesh.quality` for a report (`mesh.verify` adds to it).
+fn report_json(r: &QualityReport) -> serde_json::Map<String, Value> {
     let skipped: serde_json::Map<String, Value> = r.skipped.iter().map(|(k, n)| (k.name().to_string(), json!(n))).collect();
     let metrics: serde_json::Map<String, Value> = r
         .metrics
@@ -706,17 +732,20 @@ fn quality_report(s: &mut Session, p: &Value) -> Result<Value> {
             (m.metric.name().to_string(), stats)
         })
         .collect();
-    Ok(json!({
-        "summary": quality_summary(&r),
-        "measured": r.measured,
-        "skipped": skipped,
-        "valid": r.valid,
-        "invalid": listed(&r.invalid),
-        "undetermined": listed(&r.undetermined),
-        "volume": r.volume,
-        "area": r.area,
-        "metrics": metrics,
-    }))
+    [
+        ("summary", json!(quality_summary(r))),
+        ("measured", json!(r.measured)),
+        ("skipped", Value::Object(skipped)),
+        ("valid", json!(r.valid)),
+        ("invalid", listed(&r.invalid)),
+        ("undetermined", listed(&r.undetermined)),
+        ("volume", json!(r.volume)),
+        ("area", json!(r.area)),
+        ("metrics", Value::Object(metrics)),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v))
+    .collect()
 }
 
 /// The element set `mesh.quality.mark` keeps the marked elements in.
@@ -735,7 +764,9 @@ const MARK_LIMITS: [(quality::Metric, f64); 6] = [
 /// Most marked elements `mesh.quality.mark` lists.
 const MAX_MARKED_LISTED: usize = 1000;
 
-fn quality_mark(s: &mut Session, p: &Value) -> Result<Value> {
+/// The `limits` parameter of `mesh.quality.mark` and `mesh.verify`: the given limits merged
+/// over [`MARK_LIMITS`], null dropping one, in metric order.
+fn limits_param(p: &Value) -> Result<Vec<(quality::Metric, f64)>> {
     let mut limits: std::collections::BTreeMap<quality::Metric, f64> = MARK_LIMITS.into_iter().collect();
     match p.get("limits") {
         None | Some(Value::Null) => {}
@@ -761,12 +792,11 @@ fn quality_mark(s: &mut Session, p: &Value) -> Result<Value> {
         }
         Some(_) => return Err(EngineError::Params("`limits` must be an object of metric names and numbers".into())),
     }
-    let selection = match p.get("elements") {
-        None => None,
-        Some(_) => Some(labels(p, "elements", MAX_ELEMENTS)?),
-    };
-    let limits: Vec<(quality::Metric, f64)> = limits.into_iter().collect();
-    let (measured, marked) = quality::mark_elements(&s.model, selection.as_deref(), &limits)?;
+    Ok(limits.into_iter().collect())
+}
+
+/// Keeps `marked` as the element set [`MARKED_SET`], replacing it; removes it when empty.
+fn keep_marked(s: &mut Session, marked: &[quality::Marked]) -> Result<()> {
     let set = fieldcraft_model::Set { elements: marked.iter().map(|m| m.label).collect(), ..Default::default() };
     if set.elements.is_empty() {
         if s.model.set(MARKED_SET).is_some() {
@@ -777,12 +807,17 @@ fn quality_mark(s: &mut Session, p: &Value) -> Result<Value> {
     } else {
         s.model.add_set(MARKED_SET, set)?;
     }
-    let invalid = marked.iter().filter(|m| m.is_invalid()).count();
+    Ok(())
+}
+
+/// The first `max` marked elements as the replies list them: label, kind, body, centroid,
+/// validity and each limit failed.
+fn marked_json(s: &Session, marked: &[quality::Marked], max: usize) -> Vec<Value> {
     let c = s.model.classification();
     let body = |label: u32| c.elements().get(&label).and_then(|t| t.region).and_then(|r| c.entity(r)).map(|g| g.body.clone());
-    let elements: Vec<Value> = marked
+    marked
         .iter()
-        .take(MAX_MARKED_LISTED)
+        .take(max)
         .map(|m| {
             json!({
                 "label": m.label,
@@ -793,7 +828,16 @@ fn quality_mark(s: &mut Session, p: &Value) -> Result<Value> {
                 "failed": m.failed.iter().map(|(metric, v, limit)| json!({"metric": metric.name(), "value": number(*v), "limit": limit})).collect::<Vec<_>>(),
             })
         })
-        .collect();
+        .collect()
+}
+
+fn quality_mark(s: &mut Session, p: &Value) -> Result<Value> {
+    let limits = limits_param(p)?;
+    let selection = element_selection(p)?;
+    let (measured, marked) = quality::mark_elements(&s.model, selection.as_deref(), &limits)?;
+    keep_marked(s, &marked)?;
+    let invalid = marked.iter().filter(|m| m.is_invalid()).count();
+    let elements = marked_json(s, &marked, MAX_MARKED_LISTED);
     let mut summary = format!("{} of {measured} elements marked", marked.len());
     if invalid > 0 {
         summary.push_str(&format!(", {invalid} not valid"));
@@ -814,6 +858,85 @@ fn quality_mark(s: &mut Session, p: &Value) -> Result<Value> {
         "elements": elements,
         "truncated": marked.len() > MAX_MARKED_LISTED,
     }))
+}
+
+/// How `mesh.verify` reached a set's elements.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reach {
+    /// The set's own elements.
+    Elements,
+    /// The elements its element faces and edges belong to.
+    Faces,
+    /// The elements using one of its nodes.
+    Nodes,
+}
+
+impl Reach {
+    fn name(self) -> &'static str {
+        match self {
+            Reach::Elements => "elements",
+            Reach::Faces => "faces",
+            Reach::Nodes => "nodes",
+        }
+    }
+}
+
+/// The elements `mesh.verify` checks for set `name`, in label order: its elements; for a set
+/// with none, the elements its element faces and edges belong to; for one with only nodes,
+/// the elements using one of them. Fails naming the members that are not on the mesh.
+fn set_elements(m: &fieldcraft_model::Model, name: &str) -> Result<(Vec<u32>, Reach)> {
+    let r = m.resolve_set(name)?;
+    if !r.elements.is_empty() {
+        return Ok((r.elements, Reach::Elements));
+    }
+    let owners: std::collections::BTreeSet<u32> = r.faces.iter().map(|f| f.element).chain(r.edges.iter().map(|e| e.element)).collect();
+    if !owners.is_empty() {
+        return Ok((owners.into_iter().collect(), Reach::Faces));
+    }
+    // The resolved nodes are sorted, without repeats.
+    let using = m.elements().iter().filter(|(_, e)| e.nodes.iter().any(|n| r.nodes.binary_search(n).is_ok())).map(|(&l, _)| l).collect();
+    Ok((using, Reach::Nodes))
+}
+
+fn verify(s: &mut Session, p: &Value) -> Result<Value> {
+    let name: String = super::req(p, "set")?;
+    let shown: String = name.chars().take(64).collect();
+    if s.model.set(&name).is_none() {
+        return Err(EngineError::Params(format!("no set `{shown}`")));
+    }
+    let bins = bins_param(p)?;
+    let limits = limits_param(p)?;
+    let mark: bool = super::opt(p, "mark")?.unwrap_or(false);
+    let (elements, by) = set_elements(&s.model, &name)?;
+    if elements.is_empty() {
+        return Err(EngineError::Params(format!("set `{shown}` reaches no element of the mesh")));
+    }
+    let r = quality::quality_report(&s.model, Some(&elements), bins)?;
+    let (_, failing) = quality::mark_elements(&s.model, Some(&elements), &limits)?;
+    if mark {
+        keep_marked(s, &failing)?;
+    }
+    let mut summary = format!("set `{shown}`: {}", quality_summary(&r));
+    if r.measured > 0 {
+        summary.push_str(&format!("; {} fail a limit", failing.len()));
+    }
+    if mark && !failing.is_empty() {
+        summary.push_str(&format!(" (set {MARKED_SET})"));
+    }
+    let limits: serde_json::Map<String, Value> = limits.iter().map(|(m, v)| (m.name().to_string(), json!(v))).collect();
+    let mut reply = report_json(&r);
+    reply.extend([
+        ("summary".to_string(), json!(summary)),
+        ("set".to_string(), json!(name)),
+        ("by".to_string(), json!(by.name())),
+        ("checked".to_string(), json!(elements.len())),
+        ("limits".to_string(), Value::Object(limits)),
+        ("failing".to_string(), json!(failing.len())),
+        ("elements".to_string(), json!(marked_json(s, &failing, super::LISTED))),
+        ("truncated".to_string(), json!(failing.len() > super::LISTED)),
+        ("marked_set".to_string(), json!((mark && !failing.is_empty()).then_some(MARKED_SET))),
+    ]);
+    Ok(Value::Object(reply))
 }
 
 /// A quality report in a line, for the status bar and the CLI: the elements measured, how many
@@ -1071,6 +1194,142 @@ mod tests {
         ] {
             assert!(s.execute("mesh.quality.mark", &p).is_err(), "{p}");
         }
+    }
+
+    /// The two-hex bar of [`mark_session`] with its x = 2 mm face named `tip`, and sets over the
+    /// body, the face and the tip's top corner node.
+    fn verify_session() -> Session {
+        let mut s = Session::default();
+        let corners = json!([[0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0], [0, 0, 1], [2, 0, 1], [2, 1, 1], [0, 1, 1]]);
+        s.execute("mesh.block", &json!({"body": "Bar", "kind": "hex8", "corners": corners, "divisions": [2, 1, 1], "faces": {"4": "tip"}})).unwrap();
+        s.execute("model.set.create", &json!({"name": "bar", "geometry": [{"body": "Bar"}]})).unwrap();
+        s.execute("model.set.create", &json!({"name": "tip", "geometry": [{"body": "Bar", "face": "tip"}]})).unwrap();
+        let corner = tip_corner(&s);
+        s.execute("model.set.create", &json!({"name": "corner", "nodes": [corner]})).unwrap();
+        s
+    }
+
+    /// The node at (2, 1, 1) mm, stored in metres.
+    fn tip_corner(s: &Session) -> u32 {
+        s.model.nodes().iter().find(|(_, n)| n.xyz == [0.002, 0.001, 0.001]).map(|(&l, _)| l).unwrap()
+    }
+
+    /// A body set verifies its elements, a face set the elements on the face, a node set the
+    /// elements using its nodes; a report leaves the model alone.
+    #[test]
+    fn verifies_a_set_over_a_body_a_face_and_nodes() {
+        let mut s = verify_session();
+        let journal = s.journal.len();
+        let r = s.execute("mesh.verify", &json!({"set": "bar"})).unwrap();
+        assert_eq!(
+            (r["by"].as_str(), r["checked"].as_u64(), r["measured"].as_u64(), r["valid"].as_u64()),
+            (Some("elements"), Some(2), Some(2), Some(2)),
+            "{r}"
+        );
+        assert_eq!((r["failing"].as_u64(), r["elements"].as_array().map(Vec::len)), (Some(0), Some(0)), "{r}");
+        assert_eq!(r["set"], "bar");
+        assert!((r["volume"].as_f64().unwrap() - 2.0).abs() < 1e-9, "in mm³: {r}");
+        assert_eq!(r["metrics"]["scaled_jacobian"]["histogram"]["counts"].as_array().map(Vec::len), Some(10));
+        assert!(r["summary"].as_str().unwrap().starts_with("set `bar`: 2 elements, all valid"), "{r}");
+        assert_eq!(r["limits"]["scaled_jacobian"], 0.2);
+
+        // Pull the tip's top corner in: the hex at the tip fails, the other does not.
+        let corner = tip_corner(&s);
+        let (&bad, _) = s.model.elements().iter().find(|(_, e)| e.nodes.contains(&corner)).unwrap();
+        s.execute("mesh.node.add", &json!({"label": corner, "xyz": [1.7, 0.7, 0.7]})).unwrap();
+        let journal_after_move = s.journal.len();
+        assert!(journal_after_move > journal);
+        for (set, by) in [("bar", "elements"), ("tip", "faces"), ("corner", "nodes")] {
+            let r = s.execute("mesh.verify", &json!({"set": set, "bins": 4})).unwrap();
+            assert_eq!(r["by"], by, "{r}");
+            assert_eq!(r["failing"], 1, "{set}: {r}");
+            let e = &r["elements"][0];
+            assert_eq!((e["label"].as_u64(), e["body"].as_str(), e["valid"].as_bool()), (Some(u64::from(bad)), Some("Bar"), Some(true)), "{e}");
+            assert!(e["failed"].as_array().unwrap().iter().any(|f| f["metric"] == "scaled_jacobian"), "{e}");
+            assert_eq!(r["metrics"]["scaled_jacobian"]["histogram"]["counts"].as_array().map(Vec::len), Some(4));
+            assert!(r["marked_set"].is_null());
+        }
+        let tip = s.execute("mesh.verify", &json!({"set": "tip"})).unwrap();
+        assert_eq!((tip["checked"].as_u64(), tip["measured"].as_u64()), (Some(1), Some(1)), "only the hex on the face: {tip}");
+        assert_eq!(s.journal.len(), journal_after_move, "verifying does not change the model");
+        assert!(s.model.set(super::MARKED_SET).is_none());
+
+        // Looser limits pass it.
+        let r = s.execute("mesh.verify", &json!({"set": "bar", "limits": {"scaled_jacobian": null, "aspect_ratio": null}})).unwrap();
+        assert_eq!(r["failing"], 0, "{r}");
+    }
+
+    /// `mark` keeps the set's failing elements as the marked set, one undo step.
+    #[test]
+    fn verify_marks_the_failing_elements_of_the_set() {
+        let mut s = verify_session();
+        let corner = tip_corner(&s);
+        s.execute("mesh.node.add", &json!({"label": corner, "xyz": [1.7, 0.7, 0.7]})).unwrap();
+        let r = s.execute("mesh.verify", &json!({"set": "tip", "mark": true})).unwrap();
+        assert_eq!(r["marked_set"], super::MARKED_SET, "{r}");
+        let (&bad, _) = s.model.elements().iter().find(|(_, e)| e.nodes.contains(&corner)).unwrap();
+        assert_eq!(s.model.set(super::MARKED_SET).unwrap().elements, [bad]);
+        assert_eq!(crate::view::marked(&s).into_iter().collect::<Vec<_>>(), [bad]);
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert!(s.model.set(super::MARKED_SET).is_none(), "undo takes the marks back");
+    }
+
+    /// An inverted element in the set is certified invalid; a set without it is all valid.
+    #[test]
+    fn verify_detects_an_invalid_element_in_the_set() {
+        let mut s = Session::default();
+        hex(&mut s, 1, 1, false);
+        hex(&mut s, 2, 11, true);
+        s.execute("model.set.create", &json!({"name": "good", "elements": [1]})).unwrap();
+        s.execute("model.set.create", &json!({"name": "both", "elements": [1, 2]})).unwrap();
+        let r = s.execute("mesh.verify", &json!({"set": "both"})).unwrap();
+        assert_eq!((r["valid"].clone(), r["invalid"].clone()), (json!(1), json!({"count": 1, "labels": [2]})), "{r}");
+        assert_eq!(
+            (r["failing"].as_u64(), r["elements"][0]["label"].as_u64(), r["elements"][0]["valid"].as_bool()),
+            (Some(1), Some(2), Some(false)),
+            "{r}"
+        );
+        assert!(r["summary"].as_str().unwrap().contains("1 invalid"), "{r}");
+        let r = s.execute("mesh.verify", &json!({"set": "good"})).unwrap();
+        assert_eq!((r["valid"].as_u64(), r["invalid"]["count"].as_u64(), r["failing"].as_u64()), (Some(1), Some(0), Some(0)), "{r}");
+    }
+
+    /// A missing set, one naming members not on the mesh and one reaching no element are
+    /// refused, as are hostile parameters.
+    #[test]
+    fn verify_refuses_missing_empty_and_hostile_sets() {
+        let mut s = Session::default();
+        assert!(s.execute("mesh.verify", &json!({"set": "bar"})).is_err(), "needs a mesh");
+        let mut s = verify_session();
+        let e = s.execute("mesh.verify", &json!({"set": "nope"})).unwrap_err().to_string();
+        assert!(e.contains("no set `nope`"), "{e}");
+        s.execute("mesh.node.add", &json!({"label": 90_000, "xyz": [9, 9, 9]})).unwrap();
+        s.execute("model.set.create", &json!({"name": "lone", "nodes": [90_000]})).unwrap();
+        let e = s.execute("mesh.verify", &json!({"set": "lone"})).unwrap_err().to_string();
+        assert!(e.contains("reaches no element"), "{e}");
+        let first = s.model.elements().keys().copied().next().unwrap();
+        s.execute("model.set.create", &json!({"name": "stale", "nodes": [90_000], "elements": [first]})).unwrap();
+        s.execute("mesh.element.remove", &json!({"label": first})).unwrap();
+        let e = s.execute("mesh.verify", &json!({"set": "stale"})).unwrap_err().to_string();
+        assert!(e.contains("is not in the mesh"), "{e}");
+        let journal = s.journal.len();
+        for p in [
+            json!({}),
+            json!({"set": 7}),
+            json!({"set": null}),
+            json!({"set": "x".repeat(100_000)}),
+            json!({"set": "bar", "bins": 0}),
+            json!({"set": "bar", "bins": 1e9}),
+            json!({"set": "bar", "bins": -1}),
+            json!({"set": "bar", "limits": {"nope": 1}}),
+            json!({"set": "bar", "limits": {"scaled_jacobian": "low"}}),
+            json!({"set": "bar", "limits": [0.2]}),
+            json!({"set": "bar", "mark": "yes"}),
+            json!({"set": "bar", "mark": 1}),
+        ] {
+            assert!(s.execute("mesh.verify", &p).is_err(), "{p}");
+        }
+        assert_eq!(s.journal.len(), journal, "refusals change nothing");
     }
 
     #[test]
