@@ -332,6 +332,49 @@ mod pipeline {
         assert!(x.iter().zip(&want).all(|(a, b)| (a - b).abs() < 1e-9), "{x:?} {want:?}");
     }
 
+    /// An exact seed keeps its count beside a finer seed, which grades the size field down at
+    /// their shared corner (refinement split the coarse seed's end segments there, #894); a
+    /// `min` seed there may gain divisions but keeps its nodes.
+    #[test]
+    fn an_exact_seed_keeps_its_count_beside_a_finer_one() {
+        use crate::seeds::EdgeSeed;
+        use fieldcraft_model::SeedConstraint;
+        let s = box_surface();
+        let cdt = tetrahedralize(&s, &CdtOptions::default()).unwrap();
+        let seed = |name: &str, to: [f64; 3], count, constraint| EdgeSeed {
+            name: name.into(),
+            points: vec![[0.0; 3], to],
+            tolerance: 0.0,
+            count,
+            bias: None,
+            constraint,
+        };
+        let fine = seed("y", [0.0, 10.0, 0.0], 20, SeedConstraint::Exact);
+        let exact = QualityOptions {
+            size: Some(5.0),
+            seeds: vec![seed("x", [10.0, 0.0, 0.0], 3, SeedConstraint::Exact), fine.clone()],
+            ..QualityOptions::default()
+        };
+        let m = quality_mesh(&s, &cdt, Vec::new(), &exact).unwrap();
+        let counts: Vec<usize> = m.report.seeds.iter().map(|s| s.2).collect();
+        assert_eq!(counts, [3, 20]);
+        let mut x: Vec<f64> = m.points.iter().filter(|p| p[1].abs() < 1e-9 && p[2].abs() < 1e-9).map(|p| p[0]).collect();
+        x.sort_by(f64::total_cmp);
+        assert_eq!(x.len(), 4, "{x:?}");
+        assert!(x.iter().zip([0.0, 10.0 / 3.0, 20.0 / 3.0, 10.0]).all(|(a, b)| (a - b).abs() < 1e-9), "{x:?}");
+        // The seeds given the other way round: the same mesh.
+        let swapped = QualityOptions { seeds: exact.seeds.iter().rev().cloned().collect(), ..exact.clone() };
+        let n = quality_mesh(&s, &cdt, Vec::new(), &swapped).unwrap();
+        assert_eq!((&n.points, &n.elements), (&m.points, &m.elements));
+        // At least three: the nodes are kept, and refinement may add more beside the fine seed.
+        let min = QualityOptions { seeds: vec![seed("x", [10.0, 0.0, 0.0], 3, SeedConstraint::Min), fine], ..exact };
+        let m = quality_mesh(&s, &cdt, Vec::new(), &min).unwrap();
+        assert!(m.report.seeds[0].2 >= 3, "{:?}", m.report.seeds);
+        for want in [10.0 / 3.0, 20.0 / 3.0] {
+            assert!(m.points.iter().any(|p| (p[0] - want).abs() < 1e-9 && p[1].abs() < 1e-9 && p[2].abs() < 1e-9), "{want}");
+        }
+    }
+
     /// The turns between the triangles of a face with a known exact surface are the
     /// tessellation's, never feature curves: SolidCraft tessellates the trimmed sphere of the
     /// sphere-on-plate part with needles along the trim that face the other way, and the curves
