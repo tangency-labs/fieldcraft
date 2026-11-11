@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="24" height="24" viewBox="0 0 24 24">
-  <title>file.save</title>
-  <g id="Layer_1" data-name="Layer 1">
-    <path d="M3 14 L3 20 L21 20 L21 14" fill="none" stroke="#dde2ea" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M12 3 L12 15 M10.47 12.19 L12 15 L13.53 12.19" fill="none" stroke="#4f9ce8" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
-  </g>
-</svg>

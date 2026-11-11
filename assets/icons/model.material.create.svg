@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="24" height="24" viewBox="0 0 24 24">
-  <title>model.material.create</title>
-  <g id="Layer_1" data-name="Layer 1">
-    <path d="M3 12 C3 7.029 7.029 3 12 3 C16.971 3 21 7.029 21 12 C21 16.971 16.971 21 12 21 C7.029 21 3 16.971 3 12 Z" fill="#2d4e70" stroke="#dde2ea" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M7 9 C8.036 7.203 9.927 6.068 12 6" fill="none" stroke="#4f9ce8" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M3.5 13 C8 16 16 16 20.5 13" fill="none" stroke="#dde2ea" stroke-linecap="round" stroke-linejoin="round"/>
-  </g>
-</svg>

@@ -532,7 +532,7 @@ fn draw_row(app: &mut ModelApp, ui: &mut egui::Ui, id: egui::Id, row: &Row) -> R
     x += 14.0;
     if let Some(vis) = row.eye {
         let er = Rect::from_center_size(pos2(x + 8.0, cy), Vec2::splat(15.0));
-        icons::paint(app, ui, "ui.eye", er, Look::of(vis));
+        icons::paint(ui, "ui.eye", er, Look::of(vis));
         if !vis {
             ui.painter().line_segment([er.left_bottom() + vec2(2.0, -2.0), er.right_top() + vec2(-2.0, 2.0)], Stroke::new(1.4, t.text_dim));
         }
@@ -541,7 +541,7 @@ fn draw_row(app: &mut ModelApp, ui: &mut egui::Ui, id: egui::Id, row: &Row) -> R
     }
     if let Some(icon) = row.icon {
         let ir = Rect::from_min_size(pos2(x, cy - 8.0), Vec2::splat(16.0));
-        icons::paint(app, ui, icon, ir, Look::of(!row.dim));
+        icons::paint(ui, icon, ir, Look::of(!row.dim));
         if row.moves {
             // An arrow out of the icon's lower right corner, on a disc of the row's background.
             let c = ir.right_bottom() - vec2(3.0, 3.0);

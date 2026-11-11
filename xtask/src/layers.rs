@@ -103,9 +103,9 @@ fn is_solidcraft_crate(name: &str) -> bool {
 }
 
 /// The one exception to [`SOLIDCRAFT_GATEWAY`] (owner decision, 2026-11-10): the desktop UI draws
-/// with SolidCraft's UI kit and the token contract it draws from, and with nothing else of
-/// SolidCraft's. Short crate name, then the SolidCraft crates it may use.
-pub const SOLIDCRAFT_UI_KIT: (&str, &[&str]) = ("ui-egui", &["solidcraft-ui-kit", "solidcraft-theme"]);
+/// with SolidCraft's UI kit, the token contract it draws from and SolidCraft's look (its icons,
+/// glyphs, faces and themes), and with nothing else of SolidCraft's. Short crate name, then the SolidCraft crates it may use.
+pub const SOLIDCRAFT_UI_KIT: (&str, &[&str]) = ("ui-egui", &["solidcraft-ui-kit", "solidcraft-theme", "solidcraft-look"]);
 
 /// Whether `krate` (short name) may depend on the SolidCraft crate `dep`.
 fn may_use_solidcraft(krate: &str, dep: &str) -> bool {
@@ -373,7 +373,7 @@ mod tests {
 
     #[test]
     fn only_the_ui_uses_the_ui_kit_and_nothing_else_of_solidcraft() {
-        for kit in ["solidcraft-ui-kit", "solidcraft-theme"] {
+        for kit in ["solidcraft-ui-kit", "solidcraft-theme", "solidcraft-look"] {
             assert!(check(&[c("fieldcraft-ui-egui", &[(kit, Normal, false)])]).is_empty(), "{kit}");
             let v = check(&[c("fieldcraft-engine", &[(kit, Normal, false)])]);
             assert!(matches!(v[..], [Violation::SolidCraftOutsideGeometry { .. }]), "{kit}");

@@ -1,5 +1,5 @@
-//! Embeds the toolbar icons: `assets/icons/*.svg` become `ICONS`, a sorted `(id, svg)` table, and
-//! `KIT_MASTERS`, the same artwork as the masters of the UI kit's icon set (`src/icons.rs`).
+//! Embeds FieldCraft's icons (`assets/icons/*.svg`) as masters of the UI kit's icon set,
+//! `MASTERS`, sorted by id (`src/icons.rs`): in SolidCraft's colour roles and on the kit's square.
 
 use std::fmt::Write;
 use std::path::PathBuf;
@@ -11,22 +11,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut ids: Vec<String> =
         std::fs::read_dir(&dir)?.flatten().filter_map(|e| e.file_name().to_str().and_then(|n| n.strip_suffix(".svg")).map(str::to_string)).collect();
     ids.sort();
-    let mut out = String::from("/// Every toolbar icon by catalogue id, sorted by id.\npub static ICONS: &[(&str, &str)] = &[\n");
-    let mut kit =
-        String::from("/// The icons as the kit's masters: (id, family, SVG), sorted by id.\npub static KIT_MASTERS: &[(&str, &str, &str)] = &[\n");
+    let mut out = String::from(
+        "/// FieldCraft's icons as the kit's masters: (id, family, SVG), sorted by id.\npub static MASTERS: &[(&str, &str, &str)] = &[\n",
+    );
     for id in &ids {
         let path = dir.join(format!("{id}.svg"));
         println!("cargo:rerun-if-changed={}", path.display());
-        let _ = writeln!(out, "    ({id:?}, include_str!({:?})),", path.display().to_string());
-        let master = KIT_ATTRS.iter().fold(std::fs::read_to_string(&path)?, |svg, attr| scaled(&svg, attr, KIT_SCALE));
-        let _ = writeln!(kit, "    ({id:?}, \"\", {master:?}),");
+        let svg =
+            ROLES.iter().fold(std::fs::read_to_string(&path)?, |svg, (ours, theirs)| svg.replace(&format!("\"{ours}\""), &format!("\"{theirs}\"")));
+        let master = KIT_ATTRS.iter().fold(svg, |svg, attr| scaled(&svg, attr, KIT_SCALE));
+        let _ = writeln!(out, "    ({id:?}, \"\", {master:?}),");
     }
     out.push_str("];\n");
-    kit.push_str("];\n");
-    out.push_str(&kit);
     std::fs::write(PathBuf::from(std::env::var("OUT_DIR")?).join("icons.rs"), out)?;
     Ok(())
 }
+
+/// FieldCraft's artwork keys its four colour roles (`PALETTE` in `xtask/src/icons.rs`); each
+/// becomes the SolidCraft role it stands for (its `palette.toml` source hex): line art on the
+/// background (`line`, as `currentColor`), the accent (`active-3`), a soft face (`passive-1`) and
+/// warm marks (`component-orange-2`).
+const ROLES: [(&str, &str); 4] = [("#dde2ea", "currentColor"), ("#4f9ce8", "#236ead"), ("#2d4e70", "#e2e8ef"), ("#f0b44a", "#c06f00")];
 
 /// The kit draws a master on a 64-unit square; FieldCraft's artwork is drawn on 24 (`cargo xtask
 /// icons`), so its coordinates and stroke weights are scaled by 64 / 24 for the kit.

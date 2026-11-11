@@ -9,15 +9,16 @@
 //! commands, runs them headlessly with `vectorcraft-cli run` (`VECTORCRAFT_CLI`, else
 //! `vectorcraft-cli` on the PATH) and writes `assets/icons/<id>.vectorcraft` (the editable
 //! source) and `assets/icons/<id>.svg` (what the app draws). The roles' fixed colours are
-//! keys: the app recolours each role with its theme tokens (`crates/ui-egui/src/icons.rs`).
+//! keys: `crates/ui-egui/build.rs` maps each to the SolidCraft colour role it stands for, and the
+//! UI kit draws those in the theme's colours (`crates/ui-egui/src/icons.rs`).
 
 use std::path::Path;
 use std::process::Command;
 
 use serde_json::{Value, json};
 
-/// Palette roles and the fixed colour each is drawn in: keys the app swaps for its theme tokens.
-/// Keep in step with `PALETTE` in `crates/ui-egui/src/icons.rs`.
+/// Palette roles and the fixed colour each is drawn in: keys the app maps to SolidCraft's colour
+/// roles. Keep in step with `ROLES` in `crates/ui-egui/build.rs`.
 pub const PALETTE: &[(&str, &str)] = &[("line", "#dde2ea"), ("accent", "#4f9ce8"), ("soft", "#2d4e70"), ("warm", "#f0b44a")];
 
 /// The artboard side (pixels) and the default stroke weight.

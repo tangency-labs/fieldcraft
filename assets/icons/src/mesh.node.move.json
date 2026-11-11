@@ -1,1 +1,0 @@
-{"shapes": [{"rect": [4, 4, 16, 16], "radius": 1, "stroke": "line", "width": 1.5}, {"d": "M4 12 L20 12 M12 4 L12 20", "stroke": "line", "width": 1.5}, {"d": "M4 12 L15 9 L20 12 M12 4 L15 9 L12 20", "stroke": "accent", "width": 1.5}, {"circle": [15, 9, 1.8], "fill": "accent", "stroke": "accent"}]}
