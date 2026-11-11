@@ -108,22 +108,45 @@ fn popup<R>(
     (width, close): (f32, egui::PopupCloseBehavior),
     add: impl FnOnce(&mut crate::ModelApp, &mut Ui) -> R,
 ) -> Option<egui::Rect> {
+    show_popup(app, ui, key, anchor, close, |app, ui| kit::Menu::show(ui, width, |ui| add(app, ui))).map(|r| r.response.rect)
+}
+
+/// A popup below `anchor`, open while [`crate::UiState::menu`] is `key`, whose content draws its
+/// own surface (the kit's workspace menu); what `add` returned.
+pub fn surface_popup<R>(
+    app: &mut crate::ModelApp,
+    ui: &Ui,
+    key: &str,
+    anchor: egui::Rect,
+    add: impl FnOnce(&mut crate::ModelApp, &mut Ui) -> R,
+) -> Option<R> {
+    show_popup(app, ui, key, anchor, egui::PopupCloseBehavior::CloseOnClickOutside, add).map(|r| r.inner)
+}
+
+/// egui's popup places it and closes it (a click outside, Escape); `add` draws it.
+fn show_popup<R>(
+    app: &mut crate::ModelApp,
+    ui: &Ui,
+    key: &str,
+    anchor: egui::Rect,
+    close: egui::PopupCloseBehavior,
+    add: impl FnOnce(&mut crate::ModelApp, &mut Ui) -> R,
+) -> Option<egui::InnerResponse<R>> {
     let mut open = app.ui.menu.as_deref() == Some(key);
     if !open {
         return None;
     }
     let id = egui::Id::unique(("fc_menu", key));
-    // egui's popup places it and closes it; the kit draws its surface and rows.
     let shown = egui::Popup::new(id, ui.ctx().clone(), anchor, ui.layer_id())
         .kind(egui::PopupKind::Menu)
         .open_bool(&mut open)
         .close_behavior(close)
         .frame(egui::Frame::NONE)
-        .show(|ui| kit::Menu::show(ui, width, |ui| add(app, ui)));
+        .show(|ui| add(app, ui));
     if (!open || ui.input(|i| i.key_pressed(egui::Key::Escape))) && app.ui.menu.as_deref() == Some(key) {
         app.ui.menu = None;
     }
-    shown.map(|r| r.response.rect)
+    shown
 }
 
 /// The menu a right click on `response` opens: the kit's popup, [`MENU_W`] wide, for `add`'s rows.
