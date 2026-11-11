@@ -7,9 +7,10 @@
 //! they need greyed with what is missing. Adapted from SolidCraft's
 //! `crates/ui-egui/src/palette.rs` (MIT OR Apache-2.0), see ATTRIBUTION.md.
 
-use egui::{FontId, RichText};
+use egui::{FontId, Rect, RichText};
 use fieldcraft_engine::catalogue::{self, CATALOGUE};
 use serde_json::Value;
+use solidcraft_ui_kit::BackingTooltipExt as _;
 
 use crate::ModelApp;
 
@@ -20,6 +21,8 @@ use solidcraft_ui_kit as kit;
 pub const HEIGHT: f32 = 34.0;
 /// Most results the search lists.
 const MAX_RESULTS: usize = 60;
+/// The longest query the search field takes, in characters.
+const MAX_QUERY: usize = 4096;
 
 /// One search result.
 #[derive(Clone, Debug, PartialEq)]
@@ -210,67 +213,95 @@ pub fn command_line(app: &mut ModelApp, ui: &mut egui::Ui) {
         });
 }
 
-/// The command search, centred near the top of the window.
+/// Where the open search field's top left goes over the title bar's closed `field` in `screen`:
+/// its right edge kept, inside the window. The title bar keeps its document tab clear of it.
+pub fn open_field_at(screen: Rect, field: Rect) -> egui::Pos2 {
+    let k = solidcraft_theme::Tokens::get();
+    let width = kit::CommandSearch::width();
+    egui::pos2((field.right() - width).clamp(screen.left() + k.space_8, (screen.right() - width - k.space_8).max(screen.left())), field.top())
+}
+
+/// The command search: the kit's search field opened where the title bar's closed field is, with
+/// the kit's results sheet under it, as SolidCraft's command search opens.
 pub fn popup(app: &mut ModelApp, ctx: &egui::Context) {
     if !app.ui.palette {
         return;
     }
     let mut picked: Option<&'static str> = None;
     let mut run_typed = false;
-    let id = egui::Id::unique("fc_search");
-    let closed = crate::frame::window(id, "ui.search", "Search commands", crate::frame::Width::Normal)
-        .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 140.0))
-        .show_body(ctx, |ui| {
-            let r = kit::search_field(ui, egui::Id::unique("fc_search_text"), &mut app.palette_text, "command name, id or what it does");
-            let entered = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            r.request_focus();
-            // Searched again only when the query changes.
-            if app.search.as_ref().is_none_or(|(q, _)| *q != app.palette_text) {
-                app.search = Some((app.palette_text.clone(), std::sync::Arc::new(matches(&app.palette_text))));
+    let k = solidcraft_theme::Tokens::get();
+    let width = kit::CommandSearch::width();
+    // Opened over the title bar's field, its right edge kept; centred near the top without one.
+    let screen = ctx.content_rect();
+    let field = app
+        .layout
+        .get("app_bar:search")
+        .copied()
+        .unwrap_or_else(|| Rect::from_center_size(egui::pos2(screen.center().x, 60.0), egui::vec2(width, 26.0)));
+    let at = open_field_at(screen, field);
+    let key = crate::appbar::shortcut("K");
+    let shown = egui::Area::new(egui::Id::unique("fc_search")).order(egui::Order::Foreground).fixed_pos(at).show(ctx, |ui| {
+        ui.set_width(width);
+        ui.spacing_mut().item_spacing.y = 0.0;
+        let geometry = kit::SearchFieldGeometry { height: field.height(), radius: kit::CommandSearch::field_radius(1.0, false), progress: 1.0 };
+        let r = kit::CommandSearch::field(ui, &mut app.palette_text, false, true, true, geometry, Some(&key), MAX_QUERY);
+        let entered = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        // Searched again only when the query changes.
+        if app.search.as_ref().is_none_or(|(q, _)| *q != app.palette_text) {
+            app.search = Some((app.palette_text.clone(), std::sync::Arc::new(matches(&app.palette_text))));
+        }
+        let list = app.search.as_ref().map(|(_, l)| l.clone()).unwrap_or_default();
+        // `id {json}` typed here (say, typing began with no field focused) runs as typed.
+        let typed = typed_command(&app.palette_text).is_some();
+        if entered {
+            if typed {
+                run_typed = true;
+            } else {
+                picked = list.iter().find(|h| h.soon.is_none() && app.unavailable(h.id).is_none()).map(|h| h.id);
             }
-            let list = app.search.as_ref().map(|(_, l)| l.clone()).unwrap_or_default();
-            // `id {json}` typed here (say, typing began with no field focused) runs as typed.
-            let typed = typed_command(&app.palette_text).is_some();
-            if entered {
+        }
+        ui.add_space(k.space_4);
+        let query = app.palette_text.clone();
+        kit::CommandSearch::sheet(ui, width, 1.0, typed, |ui| {
+            egui::ScrollArea::vertical().id_salt("fc_search_results").max_height(360.0).auto_shrink([false, true]).show(ui, |ui| {
                 if typed {
-                    run_typed = true;
-                } else {
-                    picked = list.iter().find(|h| h.soon.is_none() && app.unavailable(h.id).is_none()).map(|h| h.id);
-                }
-            }
-            egui::ScrollArea::vertical().id_salt("fc_search_results").max_height(320.0).auto_shrink([false, true]).show(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = 0.0;
-                if typed {
-                    let text = format!("Run {}", app.palette_text.trim());
+                    let text = format!("Run {}", query.trim());
                     let mut row = kit::MenuItem::new("search:run_typed", &text, "");
                     row.shortcut = "Enter";
                     row.highlighted = true;
-                    if row.show(ui).on_hover_text("Run the command with these parameters").clicked() {
+                    if row.search_row(ui, "", "Runs the command with these parameters", None).clicked() {
                         run_typed = true;
                     }
                 }
-                for h in list.iter().take(MAX_RESULTS) {
+                kit::CommandSearch::heading(ui, "search.commands", list.len().min(MAX_RESULTS));
+                // Enter starts the first command that can run: lit as the keyboard's row.
+                let first = list.iter().take(MAX_RESULTS).position(|h| h.soon.is_none() && app.unavailable(h.id).is_none());
+                for (i, h) in list.iter().take(MAX_RESULTS).enumerate() {
                     // Coming soon, or missing what its command needs: listed, greyed, with why.
                     let missing = app.unavailable(h.id);
                     let enabled = h.soon.is_none() && missing.is_none();
-                    let right = match (h.soon, &missing) {
+                    let path = match (h.soon, &missing) {
                         (Some(m), _) => format!("{} · soon ({m})", h.place),
                         (None, Some(u)) => u.missing.first().map_or_else(|| h.place.clone(), |m| format!("needs {}", m.0.what())),
                         (None, None) => h.place.clone(),
                     };
                     let mut row = kit::MenuItem::new(h.id, h.label, h.icon);
-                    row.shortcut = &right;
                     row.enabled = enabled;
+                    row.highlighted = !typed && first == Some(i);
                     let tip = fieldcraft_engine::requirement::Unavailable::tip(h.id, missing.as_ref());
-                    if row.show(ui).on_hover_text(tip).clicked() {
+                    if row.search_row(ui, &query, &path, None).backing_on_hover_text(tip).clicked() {
                         picked = Some(h.id);
                     }
                 }
+                if list.is_empty() && !typed {
+                    kit::status_line(ui, &solidcraft_ui_text::format("search.no_match", &[("query", query.trim())]), kit::StatusTone::Dim);
+                }
             });
         });
-    if let Some(r) = crate::frame::drawn(ctx, id) {
-        app.place("palette", r);
-    }
+    });
+    app.place("palette", shown.response.rect);
+    let clicked_outside =
+        ctx.input(|i| i.pointer.any_click() && i.pointer.interact_pos().is_some_and(|p| !shown.response.rect.contains(p) && !field.contains(p)));
     if run_typed {
         let line = std::mem::take(&mut app.palette_text);
         app.ui.palette = false;
@@ -279,7 +310,7 @@ pub fn popup(app: &mut ModelApp, ctx: &egui::Context) {
         app.palette_text.clear();
         app.ui.palette = false;
         let _ = app.with_origin(fieldcraft_engine::usage::Origin::Palette, |app| app.start(id));
-    } else if closed || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+    } else if clicked_outside || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         app.ui.palette = false;
         app.palette_text.clear();
     }
