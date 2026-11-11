@@ -84,7 +84,7 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui) {
     if app.display().bounds.is_empty() && app.busy().is_none() {
         start_screen(app, ui, rect);
     } else {
-        selection_bar(app, ui, rect, &t);
+        selection_bar(app, ui, rect);
     }
     crate::results_panel::show(app, ui, rect, &t);
     crate::path_panel::overlay(app, &painter, rect, &t);
@@ -351,52 +351,59 @@ pub(crate) fn selection_bar_rect(ctx: &egui::Context) -> Option<Rect> {
 }
 
 /// The selection bar, top centre: what a click picks, box selection, and what is selected.
-fn selection_bar(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect, t: &Tokens) {
-    let area = egui::Area::new(egui::Id::unique(SELECTION_BAR))
+fn selection_bar(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect) {
+    let k = solidcraft_theme::Tokens::get();
+    let card = kit::Container::new(ui.ctx(), kit::Surface::Navigation);
+    let area = card
+        .area(egui::Id::unique(SELECTION_BAR))
         .fixed_pos(pos2(rect.center().x, rect.top() + 10.0))
         .pivot(egui::Align2::CENTER_TOP)
         .constrain_to(rect)
         .order(egui::Order::Middle);
     let shown = area.show(ui.ctx(), |ui| {
-        egui::Frame::NONE.fill(t.overlay).stroke(Stroke::new(1.0, t.border)).corner_radius(6.0).inner_margin(egui::Margin::symmetric(8, 4)).show(
-            ui,
-            |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Select").color(t.text_dim));
-                    kit::bounded_dropdown_menu(ui, "fc_selection_filter", app.pick.filter.label(), 110.0, |ui| {
-                        for (i, f) in Filter::ALL.into_iter().enumerate() {
-                            // Geometry, then the mesh.
-                            if i > 0 && Filter::ALL.get(i - 1).is_some_and(|p| p.geometry() != f.geometry()) {
-                                ui.separator();
-                            }
-                            if ui.selectable_label(app.pick.filter == f, f.label()).clicked() {
-                                app.pick.filter = f;
-                            }
+        // The kit's selection card surface, as SolidCraft's selection card.
+        let frame = card
+            .frame(ui.ctx(), k.dialog_body, kit::frame::Side::Left)
+            .corner_radius(k.space_24 as u8)
+            .inner_margin(egui::Margin::symmetric(k.space_8 as i8, k.space_3 as i8));
+        card.show_frame(ui, frame, rect, |ui| {
+            ui.horizontal(|ui| {
+                kit::text(ui, "Select", kit::Text::Inline);
+                kit::bounded_dropdown_menu(ui, "fc_selection_filter", app.pick.filter.label(), 110.0, |ui| {
+                    for (i, f) in Filter::ALL.into_iter().enumerate() {
+                        // Geometry, then the mesh.
+                        if i > 0 && Filter::ALL.get(i - 1).is_some_and(|p| p.geometry() != f.geometry()) {
+                            crate::frame::menu_separator(ui);
                         }
-                    });
-                    let boxes = app.pick.filter.boxes();
-                    let tip = if boxes {
-                        "Box selection: a left drag selects the visible items inside the box (right or middle drag pans)"
-                    } else {
-                        "Box selection picks nodes, element faces and elements"
-                    };
-                    if ui.add_enabled(boxes, egui::Button::selectable(app.pick.box_mode && boxes, "Box")).on_hover_text(tip).clicked() {
-                        app.pick.box_mode = !app.pick.box_mode;
-                    }
-                    if !app.pick.selection.is_empty() {
-                        ui.separator();
-                        let mut text = app.pick.selection.summary();
-                        if app.pick.selection.capped() {
-                            text.push_str(" (capped)");
-                        }
-                        ui.label(egui::RichText::new(text).color(t.pick_selected));
-                        if kit::button(ui, "×", kit::Button::Small).on_hover_text("Clear the selection (Esc)").clicked() {
-                            app.clear_selection();
+                        let mut row = kit::MenuItem::new(f.label(), f.label(), "");
+                        row.checked = Some(app.pick.filter == f);
+                        if row.show(ui).clicked() {
+                            app.pick.filter = f;
                         }
                     }
                 });
-            },
-        );
+                let boxes = app.pick.filter.boxes();
+                let tip = if boxes {
+                    "Box selection: a left drag selects the visible items inside the box (right or middle drag pans)"
+                } else {
+                    "Box selection picks nodes, element faces and elements"
+                };
+                if kit::compact_button(ui, "Box", tip, boxes, app.pick.box_mode && boxes).clicked() {
+                    app.pick.box_mode = !app.pick.box_mode;
+                }
+                if !app.pick.selection.is_empty() {
+                    let mut text = app.pick.selection.summary();
+                    if app.pick.selection.capped() {
+                        text.push_str(" (capped)");
+                    }
+                    let clear =
+                        kit::StageAction { icon: Some("close"), label: "Clear the selection (Esc)", enabled: true, primary: false, reason: None };
+                    if kit::selection_actions(ui, &text, &[clear]) == Some(0) {
+                        app.clear_selection();
+                    }
+                }
+            });
+        });
     });
     app.place("selection_bar", shown.response.rect);
 }
