@@ -2,14 +2,14 @@
 //! From the top: the open command's form, the properties of the definition selected in the
 //! browser (with Edit and Delete), the results controls while results are shown, and last the
 //! reply of a report (Check Model, Model Info), so what the person is working on stays on top. Each section has
-//! a heading band; everything acts through commands.
+//! the kit's panel header (its icon, title and close button); everything acts through commands.
 
 use egui::{RichText, vec2};
 use serde_json::{Value, json};
 
 use crate::browser::Def;
 use crate::frame::{Level, heading};
-use crate::theme::{Tokens, label_font};
+use crate::theme::Tokens;
 use crate::{ModelApp, selection};
 use solidcraft_ui_kit as kit;
 
@@ -71,12 +71,7 @@ pub fn panel(app: &mut ModelApp, ui: &mut egui::Ui) {
                 }
                 if let Some(plot) = app.plot() {
                     let mut close = false;
-                    heading(ui, &t, Level::Title, |ui| {
-                        ui.label(RichText::new("RESULTS").font(label_font(ui.ctx(), 12.0)));
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            close = kit::button(ui, "Close", kit::Button::Small).on_hover_text("Back to the model (results.clear)").clicked();
-                        });
-                    });
+                    kit::panel::header(ui, "results.deformed", "Results", || close = true);
                     ui.add_space(4.0);
                     crate::results_panel::controls(app, &plot, ui, &t);
                     if close {
@@ -96,12 +91,7 @@ pub fn panel(app: &mut ModelApp, ui: &mut egui::Ui) {
 fn refused(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
     let Some(u) = app.refused.clone() else { return };
     let mut close = false;
-    heading(ui, t, Level::Title, |ui| {
-        ui.label(RichText::new(format!("{} — NOT YET", crate::command_label(u.command).to_uppercase())).font(label_font(ui.ctx(), 12.0)));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            close = kit::button(ui, "×", kit::Button::Small).on_hover_text("Dismiss").clicked();
-        });
-    });
+    kit::panel::header(ui, u.command, &format!("{}: not yet", crate::command_label(u.command)), || close = true);
     ui.add_space(4.0);
     ui.label(RichText::new("It needs:").color(t.text_dim));
     let mut start = None;
@@ -147,12 +137,7 @@ fn form(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
     // the form it replaces (egui drops focus from a widget no longer drawn) never land here.
     let form_id = egui::Id::unique(("fc_form", spec.id, d.opening));
     let (mut run, mut cancel) = (false, false);
-    heading(ui, t, Level::Title, |ui| {
-        ui.label(RichText::new(spec.label.to_uppercase()).font(label_font(ui.ctx(), 12.0)));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            cancel = kit::button(ui, "×", kit::Button::Small).on_hover_text("Cancel (Esc)").clicked();
-        });
-    });
+    kit::panel::header(ui, spec.id, spec.label, || cancel = true);
     ui.add_space(4.0);
     ui.label(RichText::new(spec.id).small().color(t.text_dim));
     let params = serde_json::from_str::<Value>(&d.text).unwrap_or(Value::Null);
@@ -351,13 +336,7 @@ fn property_rows(app: &mut ModelApp, kind: Def, name: &str) -> Option<std::sync:
 fn properties(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, kind: Def, name: &str) {
     let Some(rows) = property_rows(app, kind, name) else { return };
     let mut deselect = false;
-    heading(ui, t, Level::Title, |ui| {
-        ui.label(RichText::new(kind.label().to_uppercase()).font(label_font(ui.ctx(), 12.0)));
-        ui.label(RichText::new(name).size(12.0));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            deselect = kit::button(ui, "×", kit::Button::Small).on_hover_text("Deselect").clicked();
-        });
-    });
+    kit::panel::header(ui, kind.icon(), &format!("{}: {name}", kind.label()), || deselect = true);
     ui.add_space(4.0);
     property_grid(ui, t, "fc_properties", &rows);
     ui.add_space(6.0);
@@ -384,12 +363,7 @@ fn seed_card(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, edge: fieldcraft
     let Some(seed) = app.seed(&edge) else { return };
     let rows = crate::describe::seed_rows(seed, app.session.units());
     let mut deselect = false;
-    heading(ui, t, Level::Title, |ui| {
-        ui.label(RichText::new("SEED").font(label_font(ui.ctx(), 12.0)));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            deselect = kit::button(ui, "×", kit::Button::Small).on_hover_text("Deselect").clicked();
-        });
-    });
+    kit::panel::header(ui, "mesh.seed.edge", "Seed", || deselect = true);
     ui.add_space(4.0);
     property_grid(ui, t, "fc_seed_properties", &rows);
     ui.add_space(6.0);
@@ -430,12 +404,7 @@ fn mesh_card(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
         }
     };
     let mut deselect = false;
-    heading(ui, t, Level::Title, |ui| {
-        ui.label(RichText::new("MESH").font(label_font(ui.ctx(), 12.0)));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            deselect = kit::button(ui, "×", kit::Button::Small).on_hover_text("Deselect").clicked();
-        });
-    });
+    kit::panel::header(ui, "mesh.tet.generate", "Mesh", || deselect = true);
     ui.add_space(4.0);
     let (nodes, elements) = (app.session.model.nodes().len(), app.session.model.elements().len());
     let size = [("Nodes".to_string(), crate::describe::quantity(nodes as f64)), ("Elements".to_string(), crate::describe::quantity(elements as f64))];
