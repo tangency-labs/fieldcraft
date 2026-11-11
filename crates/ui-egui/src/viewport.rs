@@ -90,7 +90,7 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui) {
     crate::results_panel::show(app, ui, rect, &t);
     crate::path_panel::overlay(app, &painter, rect, &t);
     axis_view(app, ui, rect, &t);
-    nav_bar(app, ui, rect, &t);
+    nav_bar(app, ui, rect);
 }
 
 /// Where this frame's overlays go over the viewport `rect`: the results legend, the selection
@@ -709,49 +709,85 @@ fn axis_view(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect, t: &Tokens) {
     }
 }
 
-/// The navigation bar's buttons: (key, icon, tooltip).
-const NAV: [(&str, &str, &str); 7] = [
-    ("orbit", "ui.orbit", "Orbit: left drag turns the view"),
-    ("pan", "ui.pan", "Pan: left drag moves the view (or right or middle drag)"),
-    ("zoom", "ui.zoom", "Zoom: left drag up and down (or the wheel)"),
-    ("fit", "ui.fit", "Fit the model (F, or a double click)"),
-    ("home", "ui.home", "Home view"),
-    ("perspective", "ui.perspective", "Perspective or orthographic"),
-    ("style", "ui.style", "Visual style and what is shown"),
+/// The navigation bar's slots: (key, kind, icon, name, tooltip, shortcut). The kit draws them
+/// as SolidCraft's navigation bar draws its own.
+const NAV: [(&str, kit::NavigationKind, &str, &str, &str, Option<&str>); 8] = [
+    ("orbit", kit::NavigationKind::Tool, "ui.orbit", "Orbit", "Orbit: left drag turns the view", None),
+    ("pan", kit::NavigationKind::Tool, "ui.pan", "Pan", "Pan: left drag moves the view (or right or middle drag)", None),
+    ("zoom", kit::NavigationKind::Tool, "ui.zoom", "Zoom", "Zoom: left drag up and down (or the wheel)", None),
+    ("separator", kit::NavigationKind::Separator, "", "", "", None),
+    ("fit", kit::NavigationKind::Action, "ui.fit", "Fit", "Fit the model (or a double click)", Some("F")),
+    ("home", kit::NavigationKind::Action, "ui.home", "Home view", "Home view", None),
+    ("perspective", kit::NavigationKind::Toggle, "ui.perspective", "Perspective", "Perspective or orthographic", None),
+    ("style", kit::NavigationKind::Menu, "ui.style", "Display", "Visual style and what is shown", None),
 ];
 
+/// How wide a slot of `kind` is on the bar.
+fn nav_slot_width(kind: kit::NavigationKind) -> f32 {
+    let m = kit::NavigationMetrics::for_size(kit::NavigationSize::Regular);
+    match kind {
+        kit::NavigationKind::Separator => kit::NAV_SEPARATOR,
+        kit::NavigationKind::Menu => m.icon + kit::NAV_MENU_LEFT + kit::NAV_MENU_RIGHT + kit::NAV_CHEVRON + kit::NAV_MENU_GAP,
+        _ => m.button,
+    }
+}
+
 pub(crate) fn nav_bar_rect(rect: Rect) -> Rect {
-    Rect::from_center_size(pos2(rect.center().x, rect.bottom() - 22.0), vec2(NAV.len() as f32 * 30.0 + 10.0, 30.0))
+    let m = kit::NavigationMetrics::for_size(kit::NavigationSize::Regular);
+    let inner = NAV.iter().map(|s| nav_slot_width(s.1)).sum::<f32>() + kit::NAV_GAP * (NAV.len() - 1) as f32;
+    let width = inner + 2.0 * (kit::NAV_BORDER + kit::NAV_PADDING);
+    Rect::from_min_size(pos2(rect.center().x - width / 2.0, rect.bottom() - m.height() - kit::NAV_BOTTOM), vec2(width, m.height()))
 }
 
 /// The navigation bar, bottom centre: navigation modes, fit, home, projection, and the display
-/// menu (style, geometry, mesh, nodes).
-fn nav_bar(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect, t: &Tokens) {
+/// menu (style, geometry, mesh, nodes). The kit paints the bar's surface and slots, as
+/// SolidCraft's; the display menu is FieldCraft's own (its switches and slider are more than the
+/// kit's slot menus hold).
+fn nav_bar(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect) {
     let bar = nav_bar_rect(rect);
     if !rect.contains_rect(bar) {
         return;
     }
     app.place("nav_bar", bar);
-    ui.painter().rect(bar, 6.0, t.overlay, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+    let m = kit::NavigationMetrics::for_size(kit::NavigationSize::Regular);
+    let mut x = bar.left() + kit::NAV_BORDER + kit::NAV_PADDING;
+    let slots: Vec<kit::nav_bar::SlotView> = NAV
+        .iter()
+        .enumerate()
+        .map(|(index, &(key, kind, icon, name, tip, shortcut))| {
+            let rect = Rect::from_min_size(pos2(x, bar.top() + kit::NAV_BORDER + kit::NAV_PADDING), vec2(nav_slot_width(kind), m.button));
+            x = rect.right() + kit::NAV_GAP;
+            let selected = match key {
+                "orbit" => app.nav == NavMode::Orbit,
+                "pan" => app.nav == NavMode::Pan,
+                "zoom" => app.nav == NavMode::Zoom,
+                "perspective" => app.ui.perspective,
+                "style" => app.ui.menu.as_deref() == Some("view"),
+                _ => false,
+            };
+            kit::nav_bar::SlotView {
+                index,
+                id: key,
+                kind,
+                icon,
+                text: name.into(),
+                name: name.into(),
+                tip: tip.into(),
+                key: shortcut.map(str::to_string),
+                selected,
+                enabled: true,
+                hidden: false,
+                show_text: false,
+                rect,
+                alias: None,
+            }
+        })
+        .collect();
+    let responses = kit::nav_bar::paint_slots(ui, bar, kit::NavigationSize::Regular, kit::NavigationEdge::Bottom, &slots, None);
     let mut style_button = None;
-    for (i, (key, icon, tip)) in NAV.iter().enumerate() {
-        let br = Rect::from_min_size(pos2(bar.left() + 5.0 + i as f32 * 30.0, bar.top() + 2.0), Vec2::splat(26.0));
-        let resp = ui.interact(br, ui.scope_id().with(("fc_nav", *key)), Sense::click());
-        let active = match *key {
-            "orbit" => app.nav == NavMode::Orbit,
-            "pan" => app.nav == NavMode::Pan,
-            "zoom" => app.nav == NavMode::Zoom,
-            "perspective" => app.ui.perspective,
-            "style" => app.ui.menu.as_deref() == Some("view"),
-            _ => false,
-        };
-        if active || resp.hovered() {
-            ui.painter().rect_filled(br, 4.0, if active { t.accent_soft } else { t.hover });
-        }
-        icons::paint(ui, icon, br.shrink(4.0), Look::Normal);
-        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, active, *tip));
-        if resp.on_hover_text(*tip).clicked() {
-            match *key {
+    for (slot, resp) in slots.iter().zip(&responses) {
+        if resp.clicked() {
+            match slot.id {
                 "orbit" => app.nav = NavMode::Orbit,
                 "pan" => app.nav = NavMode::Pan,
                 "zoom" => app.nav = NavMode::Zoom,
@@ -760,11 +796,12 @@ fn nav_bar(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect, t: &Tokens) {
                     app.home_view();
                 }
                 "perspective" => app.ui.perspective = !app.ui.perspective,
-                _ => app.toggle_menu("view"),
+                "style" => app.toggle_menu("view"),
+                _ => {}
             }
         }
-        if *key == "style" {
-            style_button = Some(br);
+        if slot.id == "style" {
+            style_button = Some(slot.rect);
         }
     }
     if let Some(br) = style_button {
