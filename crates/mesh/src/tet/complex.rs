@@ -266,6 +266,8 @@ pub struct TetComplex {
     curves: IdMap<(u32, u32), u32>,
     /// Boundary face tags no change may remove or add a face of ([`Self::freeze_faces`]).
     frozen: Vec<u32>,
+    /// Feature edges no change may split or collapse ([`Self::lock_curve_edges`]), sorted.
+    locked: Vec<(u32, u32)>,
     mark: Vec<u32>,
     epoch: u32,
     live: usize,
@@ -349,6 +351,7 @@ impl TetComplex {
             free: Vec::new(),
             curves: IdMap::default(),
             frozen: Vec::new(),
+            locked: Vec::new(),
             mark: vec![0; tets.len()],
             epoch: 0,
             live: tets.len(),
@@ -491,6 +494,21 @@ impl TetComplex {
 
     fn is_frozen(&self, tag: u32) -> bool {
         self.frozen.binary_search(&tag).is_ok()
+    }
+
+    /// Keep the feature edges `edges` as they are: [`Self::replace`] refuses every change that
+    /// would split one or collapse it (an exact edge seed's divisions, which refinement and
+    /// improvement must neither add a vertex to nor take one from). Their vertices must also be
+    /// [`VertexKind::Corner`]s, so nothing moves them along the curve.
+    pub fn lock_curve_edges(&mut self, edges: &[(u32, u32)]) {
+        self.locked.extend(edges.iter().map(|&(a, b)| sorted2(a, b)));
+        self.locked.sort_unstable();
+        self.locked.dedup();
+    }
+
+    /// Whether feature edge `ab` is locked ([`Self::lock_curve_edges`]).
+    pub fn is_locked(&self, a: u32, b: u32) -> bool {
+        self.locked.binary_search(&sorted2(a, b)).is_ok()
     }
 
     pub fn set_curve(&mut self, a: u32, b: u32, curve: Option<u32>) {
@@ -937,7 +955,7 @@ impl TetComplex {
     /// order of `change.new`.
     pub fn replace(&mut self, change: &Change) -> Result<Option<Vec<u32>>> {
         let old = &change.old;
-        if old.is_empty() || change.new.is_empty() {
+        if old.is_empty() || change.new.is_empty() || change.drop_curves.iter().any(|&(a, b)| self.is_locked(a, b)) {
             return Ok(None);
         }
         let n_pts = self.pts.len() as u32;

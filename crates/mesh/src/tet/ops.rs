@@ -407,6 +407,10 @@ fn site_roots(cx: &mut TetComplex, site: Site) -> Result<(Vec<u32>, Vec<[u32; 3]
             (vec![t], vec![sorted3(face_toward(vs, k))])
         }
         Site::Edge(a, b) => {
+            // `replace` refuses to split a locked feature edge; refusing here saves the cavity.
+            if cx.is_locked(a, b) {
+                return Ok((Vec::new(), Vec::new()));
+            }
             let Some(ring) = cx.edge_ring(a, b)? else { return Ok((Vec::new(), Vec::new())) };
             if ring.closed {
                 return Ok((Vec::new(), Vec::new()));
