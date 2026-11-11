@@ -48,15 +48,29 @@ sweep). A part that stops meshing or meshes worse is a regression until shown ot
 broken invariant is a bug, never a fixture value: blessing does not hide it, and the run fails
 until the mesher is fixed.
 
-Bless on both platforms, macOS first, then Linux x86_64 in Docker:
+Bless on both platforms, macOS first, then Linux x86_64 in CI. On the Mac:
 
 ```
 cargo xtask corpus --bless <name>          # or --bless all; --jobs 4 meshes four parts at once
-docker run --rm --platform linux/amd64 -v "$PWD":/src -w /src -e CARGO_TARGET_DIR=/target \
-  ubuntu:24.04 bash -c 'apt-get update -qq && apt-get install -y -qq build-essential curl pkg-config git \
-  && curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal && . ~/.cargo/env \
-  && cargo run --release -j4 -p fieldcraft-testkit --bin corpus -- --bless <name> --jobs 4 --no-write'
 ```
+
+Push the branch, then bless the same parts on Linux x86_64 with the `Corpus bless` workflow
+(`.github/workflows/corpus-bless.yml`), on the runner and toolchain of CI's heavy job. It runs
+`cargo run --release -p fieldcraft-testkit --bin corpus -- --bless <name> --jobs N --no-write` on
+the branch (`--no-write`: this page keeps the Mac's times), lists what moved in the run's summary
+and uploads the fixtures that changed as the artifact `corpus-fixtures-linux-x86_64`; it pushes
+nothing. Copy them into the worktree and fold them into the commit that moved the parts:
+
+```
+gh workflow run corpus-bless.yml -R tangency-labs/fieldcraft --ref <branch> -f parts='<name> <name>'  # or all; -f jobs=4
+gh run list -R tangency-labs/fieldcraft --workflow corpus-bless.yml --branch <branch> --limit 1
+gh run download <run-id> -R tangency-labs/fieldcraft -n corpus-fixtures-linux-x86_64 -D <dir>
+cp -R <dir>/tests/corpus/. tests/corpus/
+```
+
+The run fails, after uploading what it blessed, when a part it did not bless moved or a tet mesh
+broke an invariant. A run that changed nothing uploads no artifact: the parts measure on Linux
+what their fixtures record.
 
 A bless on a platform the fixture already records rewrites the fixture from that platform alone
 when its results moved (the other platforms' results are stale then, and the run there fails

@@ -1,0 +1,147 @@
+# Bless meshing corpus fixtures on Linux x86_64, on demand (docs/meshing/corpus.md, "Blessing").
+# The corpus measures some curved parts differently on macOS aarch64 and Linux x86_64 (#115), so
+# a part that moves is blessed on both: on a Mac locally, then here, on the runner and toolchain
+# the heavy job checks `corpus_matches_its_fixtures` on. It runs the bless on the dispatched ref
+# and uploads the fixtures it changed as an artifact; it pushes nothing. Whoever moved the part
+# downloads the artifact and folds the files into the commit that moved it (AGENTS.md):
+#
+#   gh workflow run corpus-bless.yml -R tangency-labs/fieldcraft --ref <branch> -f parts='<names>'
+#   gh run download <run-id> -R tangency-labs/fieldcraft -n corpus-fixtures-linux-x86_64 -D <dir>
+#
+# `--no-write` keeps docs/meshing/corpus.md out of it: the page holds the times of the Mac bless.
+name: Corpus bless (Linux x86_64)
+
+on:
+  workflow_dispatch:
+    inputs:
+      parts:
+        description: "Corpus parts to bless: names under tests/corpus, separated by spaces or commas, or `all`"
+        required: true
+        type: string
+      jobs:
+        description: "Parts meshed at once (--jobs, 1 to 64)"
+        required: false
+        default: "4"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: corpus-bless-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  bless:
+    name: Bless corpus fixtures (Linux x86_64)
+    # The heavy job's runner on pull requests (ci.yml); never the self-hosted runner.
+    runs-on: blacksmith-16vcpu-ubuntu-2404
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@1.98.0  # the version in rust-toolchain.toml
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: corpus-bless
+
+      - name: Check the inputs
+        id: inputs
+        env:
+          PARTS: ${{ inputs.parts }}
+          JOBS: ${{ inputs.jobs }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$JOBS" =~ ^[0-9]+$ ]] || (( 10#$JOBS < 1 || 10#$JOBS > 64 )); then
+            echo "::error::jobs must be a whole number from 1 to 64, not '$JOBS'"
+            exit 1
+          fi
+          # -d '': read every line, not the first only (read then ends at end of input, status 1).
+          IFS=$', \t\n' read -r -d '' -a names <<< "$PARTS" || true
+          if (( ${#names[@]} == 0 )); then
+            echo "::error::parts is empty: name the parts to bless, or all"
+            exit 1
+          fi
+          args=()
+          for name in "${names[@]}"; do
+            if [[ "$name" != all ]] && ! { [[ "$name" =~ ^[a-z0-9][a-z0-9-]*$ ]] && [[ -d "tests/corpus/$name" ]]; }; then
+              echo "::error::'$name' is not a corpus part (a directory under tests/corpus) or all"
+              exit 1
+            fi
+            args+=(--bless "$name")
+          done
+          # Checked names only: lower-case letters, digits and hyphens, joined by spaces.
+          echo "args=${args[*]}" >> "$GITHUB_OUTPUT"
+          echo "jobs=$((10#$JOBS))" >> "$GITHUB_OUTPUT"
+
+      - name: Bless
+        id: bless
+        env:
+          ARGS: ${{ steps.inputs.outputs.args }}
+          JOBS: ${{ steps.inputs.outputs.jobs }}
+        run: |
+          set -uo pipefail
+          read -r -a args <<< "$ARGS"
+          # The run's status is kept, not acted on yet: the fixtures it blessed are uploaded first.
+          status=0
+          cargo run --release -p fieldcraft-testkit --bin corpus -- "${args[@]}" --jobs "$JOBS" --no-write 2>&1 | tee bless.log || status=$?
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+
+      - name: Collect the changed fixtures
+        id: changed
+        if: always() && steps.bless.outcome == 'success'
+        env:
+          STATUS: ${{ steps.bless.outputs.status }}
+        run: |
+          set -euo pipefail
+          git ls-files --modified --others --exclude-standard -- 'tests/corpus/*/fixture.json' > changed.txt
+          mkdir -p bless-out
+          while IFS= read -r f; do
+            mkdir -p "bless-out/$(dirname "$f")"
+            cp "$f" "bless-out/$f"
+          done < changed.txt
+          echo "count=$(wc -l < changed.txt | tr -d ' ')" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Corpus bless on Linux x86_64"
+            echo
+            echo "Ref \`$GITHUB_REF_NAME\` at \`$GITHUB_SHA\`; the corpus run exited with $STATUS."
+            echo
+            if [[ -s changed.txt ]]; then
+              echo "### Fixtures changed ($(wc -l < changed.txt | tr -d ' '))"
+              echo
+              echo '```'
+              git diff --stat -- 'tests/corpus/*/fixture.json'
+              git ls-files --others --exclude-standard -- 'tests/corpus/*/fixture.json' | sed 's/$/ (new)/'
+              echo '```'
+              echo
+              echo "Download them with \`gh run download $GITHUB_RUN_ID -R $GITHUB_REPOSITORY -n corpus-fixtures-linux-x86_64 -D <dir>\`."
+            else
+              echo "No fixture changed: every part blessed measures on Linux x86_64 what its fixture records."
+            fi
+            echo
+            echo "### Corpus log"
+            echo
+            echo '```'
+            grep -E '^(corpus:|error:|  [a-z0-9-]+: )' bless.log || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the changed fixtures
+        if: always() && steps.changed.outputs.count != '' && steps.changed.outputs.count != '0'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: corpus-fixtures-linux-x86_64
+          # The paths under bless-out keep their place in the repository (tests/corpus/<name>/).
+          path: bless-out/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Fail when the corpus run failed
+        if: always() && steps.bless.outputs.status != '0'
+        env:
+          STATUS: ${{ steps.bless.outputs.status }}
+        run: |
+          echo "::error::the corpus run failed (exit status ${STATUS:-unknown}): a part not blessed moved, or a tet mesh broke an invariant; see the log and the summary"
+          exit 1
