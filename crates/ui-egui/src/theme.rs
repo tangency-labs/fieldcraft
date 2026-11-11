@@ -466,14 +466,26 @@ fn icon_palette(dark: bool) -> kit_icons::Palette {
 /// FieldCraft's English text for the kit's message ids (its tooltips, history controls, view
 /// compass): the kit reads every one through `solidcraft_ui_text`, and an id with no catalogue
 /// reads as itself.
-static ENGLISH: solidcraft_ui_text::Catalog = solidcraft_ui_text::Catalog::new("en", "English", include_str!("../locales/en.json"));
-static MESSAGES: &[&solidcraft_ui_text::Catalog] = &[&ENGLISH];
+/// The catalogue's text: `locales/en.json`, with the workspaces' lines and tab lists from the
+/// capability catalogue (`crate::toolbar::workspace_ids`).
+static ENGLISH_SOURCE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    let mut messages: serde_json::Map<String, serde_json::Value> = serde_json::from_str(include_str!("../locales/en.json")).unwrap_or_default();
+    for w in fieldcraft_engine::catalogue::Workspace::ALL {
+        let (about, tabs) = crate::toolbar::workspace_ids(w);
+        messages.insert(about.into(), w.about().into());
+        messages.insert(tabs.into(), w.tabs().iter().map(|t| t.label()).collect::<Vec<_>>().join(" · ").into());
+    }
+    serde_json::Value::Object(messages).to_string()
+});
+static ENGLISH: std::sync::LazyLock<solidcraft_ui_text::Catalog> =
+    std::sync::LazyLock::new(|| solidcraft_ui_text::Catalog::new("en", "English", ENGLISH_SOURCE.as_str()));
+static MESSAGES: std::sync::LazyLock<[&'static solidcraft_ui_text::Catalog; 1]> = std::sync::LazyLock::new(|| [&*ENGLISH]);
 
 /// SolidCraft's look installed into the kit, once per process: FieldCraft's icon set (SolidCraft's
 /// with ours, [`crate::icons::SET`]), SolidCraft's code-drawn glyphs and its built-in themes, and
 /// FieldCraft's text for the kit's messages.
 pub fn install_look() {
-    solidcraft_ui_text::install(MESSAGES);
+    solidcraft_ui_text::install(&*MESSAGES);
     crate::icons::install();
     solidcraft_look::glyphs::install();
     solidcraft_look::themes::install();
