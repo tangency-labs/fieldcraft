@@ -3494,7 +3494,7 @@ mod tests {
                 };
                 frame(&mut app, vec![]);
                 frame(&mut app, vec![]);
-                let card = |ctx: &egui::Context| ctx.read_response(samples::card_id(sample.name)).map(|r| (r.rect, r.interact_rect));
+                let card = |ctx: &egui::Context| ctx.data(|d| d.get_temp::<(egui::Rect, egui::Rect)>(samples::card_id(sample.name)));
                 // Wheel down over the grid until the card is in view: wholly, or (when the grid is
                 // shorter than a card) most of it.
                 let in_view = |c: Option<(egui::Rect, egui::Rect)>| {
@@ -3502,8 +3502,8 @@ mod tests {
                 };
                 // Over the first card, which is in view before any scrolling.
                 let first = ctx
-                    .read_response(samples::card_id(samples::ordered()[0].name))
-                    .map_or(egui::pos2(w / 2.0, h / 2.0), |r| r.interact_rect.center());
+                    .data(|d| d.get_temp::<(egui::Rect, egui::Rect)>(samples::card_id(samples::ordered()[0].name)))
+                    .map_or(egui::pos2(w / 2.0, h / 2.0), |(_, visible)| visible.center());
                 for _ in 0..40 {
                     if in_view(card(&ctx)) {
                         break;
