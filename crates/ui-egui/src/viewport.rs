@@ -21,7 +21,6 @@ use fieldcraft_render::{StandardView, Vec3};
 
 use crate::browser::Def;
 use crate::gpu::{Frame, GpuScene, ViewportCallback};
-use crate::icons::{self, Look};
 use crate::menu::{self, Target};
 use crate::navigation::{self, NavButton};
 use crate::selection::{Filter, Mode};
@@ -89,7 +88,7 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui) {
     }
     crate::results_panel::show(app, ui, rect, &t);
     crate::path_panel::overlay(app, &painter, rect, &t);
-    axis_view(app, ui, rect, &t);
+    axis_view(app, ui, rect);
     nav_bar(app, ui, rect);
 }
 
@@ -629,10 +628,6 @@ fn sampled_note_width(rect: Rect) -> f32 {
     (right - rect.left() - 10.0).max(80.0)
 }
 
-/// The orientation gizmo's arm length and tip radius (points).
-const AXIS_LENGTH: f32 = 38.0;
-const AXIS_RADIUS: f32 = 11.0;
-
 /// The standard view looking along `d` from outside (the one whose eye side is nearest `d`).
 fn view_along(d: Vec3) -> StandardView {
     let mut best = (StandardView::Front, f64::NEG_INFINITY);
@@ -651,61 +646,29 @@ fn axis_view_rect(rect: Rect) -> Rect {
     Rect::from_center_size(pos2(rect.right() - 68.0, rect.top() + 68.0), Vec2::splat(116.0))
 }
 
-/// The orientation gizmo (top right): the six signed axes in the current view, back to front;
-/// clicking a tip looks along it, the house returns to the home view.
-fn axis_view(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect, t: &Tokens) {
+/// The orientation gizmo (top right): the kit's view compass, the six signed axes as the camera
+/// poses them, as SolidCraft draws it. Clicking a tip looks along it, the house returns to the
+/// home view.
+fn axis_view(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect) {
     let area = axis_view_rect(rect);
     if !rect.contains_rect(area) {
         return;
     }
     app.place("axis_view", area);
-    let c = area.center();
     let (r, u, b) = app.cam.basis();
-    let mut tips: Vec<(&str, Vec3, Pos2, f64, Color32)> = [
-        ("X", Vec3::X, t.axis_x),
-        ("-X", Vec3::new(-1.0, 0.0, 0.0), t.axis_x),
-        ("Y", Vec3::Y, t.axis_y),
-        ("-Y", Vec3::new(0.0, -1.0, 0.0), t.axis_y),
-        ("Z", Vec3::Z, t.axis_z),
-        ("-Z", Vec3::new(0.0, 0.0, -1.0), t.axis_z),
-    ]
-    .into_iter()
-    .map(|(name, d, col)| (name, d, c + vec2(d.dot(r) as f32 * AXIS_LENGTH, -(d.dot(u) as f32) * AXIS_LENGTH), d.dot(b), col))
-    .collect();
-    tips.sort_by(|a, b2| a.3.total_cmp(&b2.3));
-    let hover = ui.input(|i| i.pointer.hover_pos()).filter(|p| area.contains(*p));
-    let hovered = hover.and_then(|p| tips.iter().rposition(|(_, _, at, _, _)| at.distance(p) <= AXIS_RADIUS));
-    let painter = ui.painter_at(rect);
-    if hover.is_some() {
-        painter.circle_filled(c, 55.0, t.overlay);
-    }
-    for (i, (name, _, at, depth, col)) in tips.iter().enumerate() {
-        let positive = !name.starts_with('-');
-        let ink = if *depth < -0.01 { col.gamma_multiply(0.55) } else { *col };
-        painter.line_segment([c, *at], Stroke::new(if positive { 2.0 } else { 1.0 }, ink));
-        let hot = hovered == Some(i);
-        painter.circle_filled(*at, AXIS_RADIUS, if hot { t.accent_soft } else { t.overlay });
-        painter.circle_stroke(*at, AXIS_RADIUS, Stroke::new(if hot { 2.0 } else { 1.0 }, if hot { t.accent } else { ink }));
-        painter.text(*at, egui::Align2::CENTER_CENTER, *name, egui::FontId::proportional(11.0), ink);
-    }
-    let resp = ui.interact(area, ui.scope_id().with("fc_axis_view"), Sense::click());
-    if let Some(i) = hovered
-        && let Some((name, d, ..)) = tips.get(i)
-    {
-        let view = view_along(*d);
-        let resp = resp.clone().on_hover_text(format!("Look from {name} ({})", view.label()));
-        if resp.clicked() {
-            app.set_view(view);
-        }
-    }
-    let home = Rect::from_center_size(pos2(c.x - 44.0, c.y - 44.0), Vec2::splat(18.0));
-    let hr = ui.interact(home, ui.scope_id().with("fc_axis_home"), Sense::click());
-    if hr.hovered() {
-        painter.rect_filled(home.expand(2.0), 3.0, t.hover);
-    }
-    icons::paint(ui, "ui.home", home, Look::Normal);
-    if hr.on_hover_text("Home view").clicked() {
-        app.home_view();
+    let compass = kit::view_compass::Compass {
+        clip: rect,
+        centre: area.center(),
+        axes: kit::view_compass::ViewAxes { right: [r.x, r.y, r.z], up: [u.x, u.y, u.z], back: [b.x, b.y, b.z] },
+        hover: ui.input(|i| i.pointer.hover_pos()).filter(|p| area.contains(*p)),
+        orbiting: false,
+        snap_hint: false,
+        home_label: "Home view".into(),
+    };
+    match kit::view_compass::show(ui, &compass) {
+        Some(kit::view_compass::ViewAction::Snap { direction: [x, y, z], .. }) => app.set_view(view_along(Vec3::new(x, y, z))),
+        Some(kit::view_compass::ViewAction::Home) => app.home_view(),
+        None => {}
     }
 }
 
