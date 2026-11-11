@@ -463,9 +463,17 @@ fn icon_palette(dark: bool) -> kit_icons::Palette {
     palette
 }
 
+/// FieldCraft's English text for the kit's message ids (its tooltips, history controls, view
+/// compass): the kit reads every one through `solidcraft_ui_text`, and an id with no catalogue
+/// reads as itself.
+static ENGLISH: solidcraft_ui_text::Catalog = solidcraft_ui_text::Catalog::new("en", "English", include_str!("../locales/en.json"));
+static MESSAGES: &[&solidcraft_ui_text::Catalog] = &[&ENGLISH];
+
 /// SolidCraft's look installed into the kit, once per process: FieldCraft's icon set (SolidCraft's
-/// with ours, [`crate::icons::SET`]), SolidCraft's code-drawn glyphs and its built-in themes.
+/// with ours, [`crate::icons::SET`]), SolidCraft's code-drawn glyphs and its built-in themes, and
+/// FieldCraft's text for the kit's messages.
 pub fn install_look() {
+    solidcraft_ui_text::install(MESSAGES);
     crate::icons::install();
     solidcraft_look::glyphs::install();
     solidcraft_look::themes::install();
@@ -540,6 +548,17 @@ mod tests {
             assert!(off(t.heading_bg) > off(t.subheading_bg), "{t:?}");
             assert!(off(t.subheading_bg) > 60, "{t:?}");
         }
+    }
+
+    /// The kit's messages read as FieldCraft's text, not as their ids (the browser's eye and fold
+    /// tooltips, the history controls).
+    #[test]
+    fn the_kits_messages_read_as_text() {
+        install_look();
+        for (id, text) in [("ui.hide", "Hide"), ("ui.expand", "Expand"), ("ui.history_back", "One step back (undo)")] {
+            assert_eq!(solidcraft_ui_text::tr(id), text);
+        }
+        assert_eq!(solidcraft_ui_text::format("ui.viewport_status_clear", &[("name", "Mesh")]), "Clear Mesh");
     }
 
     /// The label font is used only once the context has it; before that, the default font.
