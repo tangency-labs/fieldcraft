@@ -1,10 +1,11 @@
-//! The samples as a grid of cards (the Start card, File › Samples) and as rows (Help › Samples):
+//! The samples as the kit's sample cards (the Start card, File › Samples) and as rows (Help › Samples):
 //! every sample of `fieldcraft_engine::sample::SAMPLES`, the flagship ones first, each with its
 //! thumbnail where one exists. Thumbnails are the gallery captures (docs/media/examples) cropped
 //! and scaled to 320 px, embedded at build time so they work on the web too.
 
-use egui::{Rect, Sense, TextureHandle, vec2};
+use egui::TextureHandle;
 use fieldcraft_engine::sample::{SAMPLES, Sample};
+use solidcraft_ui_kit::{self as kit, BackingTooltipExt as _};
 
 use crate::theme::Tokens;
 
@@ -30,13 +31,6 @@ const THUMBNAILS: &[(&str, &[u8])] = &[
     ("ibeam", include_bytes!("../thumbnails/ibeam.png")),
 ];
 
-/// The thumbnails' aspect ratio (height over width).
-const THUMB_ASPECT: f32 = 213.0 / 320.0;
-/// The narrowest card; the grid fits as many columns as this allows.
-const MIN_CARD_W: f32 = 180.0;
-const MAX_COLUMNS: usize = 4;
-const GAP: f32 = 10.0;
-
 /// Every sample, flagship first.
 pub fn ordered() -> Vec<&'static Sample> {
     let rank = |s: &Sample| FLAGSHIP.iter().position(|n| *n == s.name).unwrap_or(FLAGSHIP.len());
@@ -46,7 +40,8 @@ pub fn ordered() -> Vec<&'static Sample> {
     out
 }
 
-/// The id of a sample's card in the grid (tests and the control channel read its response).
+/// Where a sample's card was drawn in the grid, kept in the context's data under this id as its
+/// rect and visible rect (tests and the control channel read them).
 pub fn card_id(name: &str) -> egui::Id {
     egui::Id::unique(("fc_sample_card", name))
 }
@@ -84,57 +79,39 @@ fn thumbnail(ctx: &egui::Context, name: &'static str) -> Option<TextureHandle> {
     texture
 }
 
-/// The samples as a grid of cards in a vertical scroll area with a solid (always drawn)
-/// scrollbar; `open` gets the one clicked.
-pub fn grid(ui: &mut egui::Ui, t: &Tokens, max_height: f32, open: &mut Option<&'static str>) {
-    ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
-    egui::ScrollArea::vertical().id_salt("fc_sample_grid").max_height(max_height).auto_shrink([false, true]).show(ui, |ui| {
-        let width = ui.available_width();
-        let columns = (((width + GAP) / (MIN_CARD_W + GAP)).floor() as usize).clamp(1, MAX_COLUMNS);
-        let card_w = ((width - GAP * (columns as f32 - 1.0)) / columns as f32).max(1.0);
-        for row in ordered().chunks(columns) {
-            ui.horizontal_top(|ui| {
-                ui.spacing_mut().item_spacing.x = GAP;
-                for sample in row {
-                    if card(ui, t, sample, card_w) {
-                        *open = Some(sample.name);
-                    }
-                }
-            });
-            ui.add_space(GAP);
+/// The samples as the kit's sample cards (as SolidCraft's start page shows its own); `open` gets
+/// the one clicked. With `max_height`, in a vertical scroll area that high with a solid (always
+/// drawn) scrollbar; without, laid out in full (the caller scrolls). Each card's rect and visible
+/// rect are kept under [`card_id`] (tests and the control channel read them).
+pub fn grid(ui: &mut egui::Ui, max_height: Option<f32>, open: &mut Option<&'static str>) {
+    match max_height {
+        Some(height) => {
+            ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
+            egui::ScrollArea::vertical().id_salt("fc_sample_grid").max_height(height).auto_shrink([false, true]).show(ui, |ui| cards(ui, open));
         }
-    });
+        None => cards(ui, open),
+    }
 }
 
-/// One sample's card: thumbnail, name and a one-line description (in full on hover). True when
-/// clicked.
-fn card(ui: &mut egui::Ui, t: &Tokens, sample: &'static Sample, w: f32) -> bool {
-    let thumb_h = (w * THUMB_ASPECT).round();
-    let text_h = 40.0;
-    let (rect, _) = ui.allocate_exact_size(vec2(w, thumb_h + text_h), Sense::hover());
-    let response = ui.interact(rect, card_id(sample.name), Sense::click()).on_hover_text(sample.about);
-    let painter = ui.painter_at(rect);
-    let fill = if response.hovered() { t.hover } else { t.panel };
-    painter.rect_filled(rect, 6.0, fill);
-    let image_rect = Rect::from_min_size(rect.min, vec2(w, thumb_h)).shrink(4.0);
-    match thumbnail(ui.ctx(), sample.name) {
-        Some(texture) => {
-            egui::Image::new(&texture).corner_radius(4.0).paint_at(ui, image_rect);
-        }
-        None => {
-            // No capture yet: the name's initial on a plain tile.
-            painter.rect_filled(image_rect, 4.0, t.accent_soft);
-            let initial = sample.label.chars().next().map(String::from).unwrap_or_default();
-            painter.text(image_rect.center(), egui::Align2::CENTER_CENTER, initial, egui::FontId::proportional(thumb_h * 0.4), t.accent_ink);
+fn cards(ui: &mut egui::Ui, open: &mut Option<&'static str>) {
+    let samples = ordered();
+    let textures: Vec<Option<TextureHandle>> = samples.iter().map(|s| thumbnail(ui.ctx(), s.name)).collect();
+    let cards: Vec<kit::SampleCard> = samples
+        .iter()
+        .zip(&textures)
+        .map(|(s, texture)| kit::SampleCard {
+            title: s.label,
+            description: s.about,
+            icon: kit::Icon::Kit("ui.views"),
+            thumbnail: texture.as_ref().map(|t| (t.id(), t.size_vec2())),
+        })
+        .collect();
+    for (sample, response) in samples.iter().zip(kit::FileView::sample_grid(ui, "fc_samples", &cards)) {
+        ui.ctx().data_mut(|d| d.insert_temp(card_id(sample.name), (response.rect, response.interact_rect)));
+        if response.backing_on_hover_text(sample.about).clicked() {
+            *open = Some(sample.name);
         }
     }
-    let stroke = if response.hovered() { t.accent } else { t.border };
-    painter.rect_stroke(rect, 6.0, egui::Stroke::new(1.0, stroke), egui::StrokeKind::Inside);
-    let text_rect = Rect::from_min_max(egui::pos2(rect.left() + 6.0, rect.top() + thumb_h + 2.0), rect.max - vec2(6.0, 2.0));
-    let mut text_ui = ui.new_child(egui::UiBuilder::new().max_rect(text_rect).layout(egui::Layout::top_down(egui::Align::Min)));
-    text_ui.add(egui::Label::new(egui::RichText::new(sample.label).strong().color(t.overlay_text)).truncate().selectable(false));
-    text_ui.add(egui::Label::new(egui::RichText::new(sample.about).small().color(t.text_dim)).truncate().selectable(false));
-    response.clicked()
 }
 
 /// The samples as rows (name, what it shows, Open) for a narrow menu; `open` gets the one clicked.

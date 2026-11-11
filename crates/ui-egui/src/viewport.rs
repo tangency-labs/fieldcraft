@@ -82,7 +82,7 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui) {
         painter.rect(r, 0.0, t.pick_selected.gamma_multiply(0.12), Stroke::new(1.0, t.pick_selected), egui::StrokeKind::Inside);
     }
     if app.display().bounds.is_empty() && app.busy().is_none() {
-        start_screen(app, ui, rect, &t);
+        start_screen(app, ui, rect);
     } else {
         selection_bar(app, ui, rect, &t);
     }
@@ -114,23 +114,35 @@ const START_RIGHT: f32 = 130.0;
 const START_BOTTOM: f32 = 56.0;
 
 /// The empty viewport: open a file or a sample (the samples are ready to solve).
-fn start_screen(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect, t: &Tokens) {
+fn start_screen(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect) {
     let mut open = None;
     let mut pick = false;
-    // Clear of the view cube (top right) and the navigation bar (bottom centre).
+    let k = solidcraft_theme::Tokens::get();
+    // Clear of the view compass (top right) and the navigation bar (bottom centre).
     let free = Rect::from_min_max(rect.min + vec2(12.0, 12.0), rect.max - vec2(START_RIGHT, START_BOTTOM));
     let area = Rect::from_center_size(free.center(), vec2(START_W.min(free.width()), START_H.min(free.height())));
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(area).layout(egui::Layout::top_down(egui::Align::Min)));
-    egui::Frame::NONE.fill(t.overlay).corner_radius(6.0).inner_margin(egui::Margin::same(14)).show(&mut child, |ui| {
-        ui.label(egui::RichText::new("Start").size(16.0).color(t.overlay_text));
-        ui.label(egui::RichText::new("Open a model, a SolidCraft design or a tagged mesh — or drop one here.").color(t.text_dim));
-        ui.add_space(4.0);
-        pick = kit::button(ui, "Open…", kit::Button::Normal).clicked();
-        ui.add_space(8.0);
-        ui.label(egui::RichText::new("Samples").color(t.overlay_text));
-        // The grid takes what the card has left and scrolls the rest.
-        let left = (area.bottom() - ui.cursor().top() - 14.0).max(60.0);
-        crate::samples::grid(ui, t, left, &mut open);
+    let card = egui::Frame::NONE
+        .fill(k.dialog_body)
+        .stroke(k.container_border(k.dialog_border))
+        .corner_radius(k.radius_xl)
+        .inner_margin(egui::Margin::same(k.space_16 as i8));
+    // The card scrolls as a whole when the view is short, as the kit's start page does.
+    card.show(&mut child, |ui| {
+        egui::ScrollArea::vertical().id_salt("fc_start_card").auto_shrink([false, true]).show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            kit::FileView::title(ui, "Start");
+            ui.add_space(k.space_6);
+            kit::FileView::subtitle(ui, "Open a model, a SolidCraft design or a tagged mesh, or drop one here.");
+            ui.add_space(k.space_12);
+            kit::FileView::section(ui, "Open", k.space_10, |ui| {
+                kit::FileView::grid(ui, "fc_start_actions", kit::FileView::tile_min_width(), 1, |ui, _, width| {
+                    pick = kit::FileView::action_tile(ui, "start:open", width, "open", "Open…", "A model, a design or a mesh", true).clicked();
+                });
+            });
+            ui.add_space(k.space_12);
+            kit::FileView::section(ui, "Samples", k.space_10, |ui| crate::samples::grid(ui, None, &mut open));
+        })
     });
     if pick {
         app.open_dialog(None);

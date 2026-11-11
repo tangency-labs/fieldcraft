@@ -1491,7 +1491,7 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
             let (closed, action) = crate::frame::window(egui::Id::unique("fc_samples"), "file.sample", "Samples", crate::frame::Width::Wide)
                 .actions("", "Close", None)
                 .show(ctx, true, |ui| {
-                    crate::samples::grid(ui, &t, (ctx.content_rect().height() * 0.6).max(160.0), &mut open);
+                    crate::samples::grid(ui, Some((ctx.content_rect().height() * 0.6).max(160.0)), &mut open);
                 });
             if let Some(name) = open {
                 app.prompt = None;
