@@ -189,7 +189,7 @@ pub struct Model {
     /// Datums kept but left out of the model ([`Model::datum_suppressed`]).
     #[serde(skip_serializing_if = "BTreeSet::is_empty")]
     suppressed_datums: BTreeSet<String>,
-    /// Edge seeds, sorted by edge.
+    /// Seeds on edges and faces, sorted by what they seed.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     seeds: Vec<Seed>,
     /// Size controls (`mesh.size.set`), by name.

@@ -1,11 +1,19 @@
-//! Edge seeds: how many elements a mesher puts along a design edge, and how they are spaced.
+//! Seeds: how many elements a mesher puts along a design edge, and how they are spaced.
 //!
-//! A seed names an edge of the geometry (`{body, edge}` with the edge's persistent name) and asks
-//! for a number of divisions (`count`) or a target element length (`size`), optionally graded
-//! geometrically toward one or both ends (`bias`). Its `constraint` says how firmly a mesher must
-//! keep it: `exact` (the edge gets exactly that count, or the mesher refuses and names the edges
-//! whose counts conflict), `min` (at least that count) or `free` (a goal the mesher may move to
-//! satisfy its other constraints).
+//! A seed names an edge of the geometry (`{body, edge}` with the edge's persistent name) or a face
+//! (`{body, face}`), and asks for a number of divisions (`count`) or a target element length
+//! (`size`), optionally graded geometrically toward one or both ends (`bias`). Its `constraint`
+//! says how firmly a mesher must keep it: `exact` (the edge gets exactly that count, or the mesher
+//! refuses and names the edges whose counts conflict), `min` (at least that count) or `free` (a
+//! goal the mesher may move to satisfy its other constraints).
+//!
+//! **Face seeds.** A seed on a face seeds every edge bounding it, as if each were seeded alike: a
+//! `count` is each edge's count, a `size` gives each edge its own length over it. It is resolved
+//! by the face's persistent name whenever a mesher runs, so it follows the design through edits
+//! that keep the name. A seed on the edge itself wins over a face's ([`Model::edge_seed`]); of
+//! two seeded faces sharing an edge, the one that gives it more divisions wins (the finer mesh).
+//! Its bias may only grade `toward: both` ends: an edge's start and end are its own curve's, so a
+//! one-sided grading over a face's edges would point every which way.
 //!
 //! **Spacing.** With `bias {ratio, toward}` the element lengths grow by a constant factor: the
 //! largest element is `ratio` times the smallest. `toward: end` puts the small elements at the
@@ -74,11 +82,12 @@ pub enum Divisions {
     Size(f64),
 }
 
-/// A seed on one edge.
+/// A seed on one edge, or on every edge of one face.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "SeedRepr", into = "SeedRepr")]
 pub struct Seed {
-    pub edge: GeometryRef,
+    /// The edge or face it seeds.
+    pub on: GeometryRef,
     pub divisions: Divisions,
     pub bias: Option<Bias>,
     pub constraint: SeedConstraint,
@@ -87,7 +96,10 @@ pub struct Seed {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SeedRepr {
-    edge: GeometryRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    edge: Option<GeometryRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    face: Option<GeometryRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     count: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -106,7 +118,12 @@ impl TryFrom<SeedRepr> for Seed {
             (None, Some(h)) => Divisions::Size(h),
             _ => return Err(Error::Invalid("a seed takes one of `count` or `size`".into())),
         };
-        Seed::new(r.edge, divisions, r.bias, r.constraint)
+        let on = match (r.edge, r.face) {
+            (Some(e), None) if matches!(e.entity, Entity::Edge(_)) => e,
+            (None, Some(f)) if matches!(f.entity, Entity::Face(_)) => f,
+            _ => return Err(Error::Invalid("a seed is on one `edge` ({body, edge}) or one `face` ({body, face})".into())),
+        };
+        Seed::new(on, divisions, r.bias, r.constraint)
     }
 }
 
@@ -116,18 +133,19 @@ impl From<Seed> for SeedRepr {
             Divisions::Count(n) => (Some(n), None),
             Divisions::Size(h) => (None, Some(h)),
         };
-        SeedRepr { edge: s.edge, count, size, bias: s.bias, constraint: s.constraint }
+        let (edge, face) = if s.on_face() { (None, Some(s.on)) } else { (Some(s.on), None) };
+        SeedRepr { edge, face, count, size, bias: s.bias, constraint: s.constraint }
     }
 }
 
 impl Seed {
-    /// A checked seed: an edge reference, a count of 1 to [`MAX_SEED_COUNT`] or a positive size,
-    /// and a bias ratio of 1 to [`MAX_BIAS_RATIO`].
-    pub fn new(edge: GeometryRef, divisions: Divisions, bias: Option<Bias>, constraint: SeedConstraint) -> Result<Seed> {
-        if !matches!(edge.entity, Entity::Edge(_)) {
-            return Err(Error::Invalid(format!("a seed is on an edge, not the {}", edge.entity.kind())));
+    /// A checked seed: an edge or face reference, a count of 1 to [`MAX_SEED_COUNT`] or a
+    /// positive size, and a bias ratio of 1 to [`MAX_BIAS_RATIO`] (toward both ends on a face).
+    pub fn new(on: GeometryRef, divisions: Divisions, bias: Option<Bias>, constraint: SeedConstraint) -> Result<Seed> {
+        if !matches!(on.entity, Entity::Edge(_) | Entity::Face(_)) {
+            return Err(Error::Invalid(format!("a seed is on an edge or a face, not the {}", on.entity.kind())));
         }
-        let what = format!("the seed on {edge}");
+        let what = format!("the seed on {on}");
         match divisions {
             Divisions::Count(n) if !(1..=MAX_SEED_COUNT).contains(&n) => {
                 return Err(Error::Invalid(format!("{what}: `count` must be 1 to {MAX_SEED_COUNT}, got {n}")));
@@ -142,7 +160,20 @@ impl Seed {
         {
             return Err(Error::Invalid(format!("{what}: the bias `ratio` must be 1 to {MAX_BIAS_RATIO}, got {}", b.ratio)));
         }
-        Ok(Seed { edge, divisions, bias, constraint })
+        if let Some(b) = bias
+            && matches!(on.entity, Entity::Face(_))
+            && b.toward != BiasToward::Both
+        {
+            return Err(Error::Invalid(format!(
+                "{what}: a face seed's bias grades toward `both` ends (each edge's start and end are its own curve's); seed the edge for a one-sided grading"
+            )));
+        }
+        Ok(Seed { on, divisions, bias, constraint })
+    }
+
+    /// Whether it seeds a face's edges (else one edge).
+    pub fn on_face(&self) -> bool {
+        matches!(self.on.entity, Entity::Face(_))
     }
 
     /// The count on an edge of `length`: the seeded count, or the length over the seeded size
@@ -200,20 +231,40 @@ pub fn spacing(n: u32, bias: Option<Bias>) -> Vec<f64> {
 }
 
 impl Model {
-    /// The edge seeds, sorted by edge.
+    /// The seeds on edges and faces, sorted by what they seed.
     pub fn seeds(&self) -> &[Seed] {
         &self.seeds
     }
 
-    /// The seed on `edge` (named exactly), if any.
-    pub fn seed(&self, edge: &GeometryRef) -> Option<&Seed> {
-        self.seeds.binary_search_by(|s| s.edge.cmp(edge)).ok().and_then(|i| self.seeds.get(i))
+    /// The seed on `on` (an edge or face, named exactly), if any.
+    pub fn seed(&self, on: &GeometryRef) -> Option<&Seed> {
+        self.seeds.binary_search_by(|s| s.on.cmp(on)).ok().and_then(|i| self.seeds.get(i))
     }
 
-    /// Seed an edge, replacing a seed it had.
+    /// The seed that sets the divisions of `edge`, which bounds `faces` and is `length` long: the
+    /// first seed on the edge itself (its exact name or its name without the `~k` number), else,
+    /// of the seeds on those faces (or on the faces they are pieces of), the one that gives it
+    /// the most divisions, the first of them on a tie.
+    pub fn edge_seed(&self, edge: &GeometryRef, faces: &[GeometryRef], length: f64) -> Option<&Seed> {
+        let mut finest: Option<(&Seed, u32)> = None;
+        for s in &self.seeds {
+            if s.on.selects(edge) {
+                return Some(s);
+            }
+            if s.on_face() && faces.iter().any(|f| s.on.selects(f)) {
+                let n = s.count(length);
+                if finest.is_none_or(|(_, m)| n > m) {
+                    finest = Some((s, n));
+                }
+            }
+        }
+        finest.map(|(s, _)| s)
+    }
+
+    /// Seed an edge or a face, replacing a seed it had.
     pub fn set_seed(&mut self, seed: Seed) -> Result<()> {
-        let seed = Seed::new(seed.edge, seed.divisions, seed.bias, seed.constraint)?;
-        match self.seeds.binary_search_by(|s| s.edge.cmp(&seed.edge)) {
+        let seed = Seed::new(seed.on, seed.divisions, seed.bias, seed.constraint)?;
+        match self.seeds.binary_search_by(|s| s.on.cmp(&seed.on)) {
             Ok(i) => {
                 if let Some(slot) = self.seeds.get_mut(i) {
                     *slot = seed;
@@ -221,7 +272,7 @@ impl Model {
             }
             Err(i) => {
                 if self.seeds.len() >= MAX_SEEDS {
-                    return Err(Error::Limit(format!("a model holds at most {MAX_SEEDS} edge seeds")));
+                    return Err(Error::Limit(format!("a model holds at most {MAX_SEEDS} seeds")));
                 }
                 self.seeds.insert(i, seed);
             }
@@ -229,9 +280,9 @@ impl Model {
         Ok(())
     }
 
-    /// Remove the seed on `edge`; returns whether there was one.
-    pub fn remove_seed(&mut self, edge: &GeometryRef) -> bool {
-        match self.seeds.binary_search_by(|s| s.edge.cmp(edge)) {
+    /// Remove the seed on `on` (an edge or face); returns whether there was one.
+    pub fn remove_seed(&mut self, on: &GeometryRef) -> bool {
+        match self.seeds.binary_search_by(|s| s.on.cmp(on)) {
             Ok(i) => {
                 self.seeds.remove(i);
                 true
@@ -321,5 +372,55 @@ mod tests {
         assert!(m.remove_seed(&edge("A|B")));
         assert!(!m.remove_seed(&edge("A|B")));
         assert_eq!(m.clear_seeds(), 1);
+    }
+
+    fn face(n: &str) -> GeometryRef {
+        GeometryRef::face("Body1", n).unwrap()
+    }
+
+    #[test]
+    fn face_seeds_are_checked_and_round_trip() {
+        let both = Some(Bias { ratio: 2.0, toward: BiasToward::Both });
+        let s = Seed::new(face("A"), Divisions::Size(2.0), both, SeedConstraint::Min).unwrap();
+        assert!(s.on_face());
+        let json = serde_json::to_value(&s).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({"face": {"body": "Body1", "face": "A"}, "size": 2.0, "bias": {"ratio": 2.0, "toward": "both"}, "constraint": "min"})
+        );
+        assert_eq!(serde_json::from_value::<Seed>(json).unwrap(), s);
+        // A one-sided bias means nothing over a face's edges; a body or vertex is not seeded.
+        let end = Some(Bias { ratio: 2.0, toward: BiasToward::End });
+        assert!(Seed::new(face("A"), Divisions::Count(3), end, SeedConstraint::Exact).is_err());
+        assert!(Seed::new(GeometryRef::new("Body1", Entity::Body).unwrap(), Divisions::Count(3), None, SeedConstraint::Exact).is_err());
+        for bad in [
+            serde_json::json!({"face": {"body": "B", "edge": "e"}, "count": 2}),
+            serde_json::json!({"edge": {"body": "B", "face": "f"}, "count": 2}),
+            serde_json::json!({"edge": {"body": "B", "edge": "e"}, "face": {"body": "B", "face": "f"}, "count": 2}),
+            serde_json::json!({"face": {"body": "B", "face": "f"}, "count": 2, "bias": {"ratio": 2.0, "toward": "start"}}),
+        ] {
+            assert!(serde_json::from_value::<Seed>(bad.clone()).is_err(), "{bad}");
+        }
+    }
+
+    /// An edge's own seed wins over its faces'; of two seeded faces, the one giving the edge more
+    /// divisions wins, and a seed on a face reaches its `#k` pieces.
+    #[test]
+    fn the_edge_seed_is_resolved_from_the_edge_then_its_faces() {
+        let mut m = Model::default();
+        let ab = edge("A|B");
+        let faces = [face("A"), face("B#1")];
+        assert!(m.edge_seed(&ab, &faces, 10.0).is_none());
+        m.set_seed(Seed::new(face("A"), Divisions::Count(4), None, SeedConstraint::Exact).unwrap()).unwrap();
+        assert_eq!(m.edge_seed(&ab, &faces, 10.0).unwrap().on, face("A"));
+        // `B` seeds its piece `B#1`: 10 / 2 = 5 divisions beat 4; on a 6 long edge 3 do not.
+        m.set_seed(Seed::new(face("B"), Divisions::Size(2.0), None, SeedConstraint::Exact).unwrap()).unwrap();
+        assert_eq!(m.edge_seed(&ab, &faces, 10.0).unwrap().on, face("B"));
+        assert_eq!(m.edge_seed(&ab, &faces, 6.0).unwrap().on, face("A"));
+        // The edge's own seed, by its name without the `~k` number, wins over both.
+        m.set_seed(Seed::new(ab.clone(), Divisions::Count(2), None, SeedConstraint::Exact).unwrap()).unwrap();
+        assert_eq!(m.edge_seed(&edge("A|B~1"), &faces, 10.0).unwrap().on, ab);
+        // An edge of neither face takes neither.
+        assert!(m.edge_seed(&edge("C|D"), &[face("C"), face("D")], 10.0).is_none());
     }
 }
