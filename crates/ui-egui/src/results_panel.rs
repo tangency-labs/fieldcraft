@@ -16,6 +16,7 @@ use crate::ModelApp;
 use crate::results::{Plot, components, count, number, number_in, with_unit};
 use crate::theme::Tokens;
 use solidcraft_ui_kit as kit;
+use solidcraft_ui_kit::BackingTooltipExt as _;
 
 /// Width of the panel's drop-down lists.
 const COMBO_WIDTH: f32 = 160.0;
@@ -48,7 +49,7 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect, t: &Tokens) {
     let mut focus = None;
     for (i, (line, node)) in extremes.into_iter().enumerate() {
         let tip = if plot.is_fluid() { "Centre this field extreme".into() } else { format!("Show and probe node {node}") };
-        let r = ui.interact(line, ui.scope_id().with(("fc_legend_extreme", i)), egui::Sense::click()).on_hover_text(tip);
+        let r = ui.interact(line, ui.scope_id().with(("fc_legend_extreme", i)), egui::Sense::click()).backing_on_hover_text(tip);
         if r.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
@@ -376,7 +377,7 @@ pub fn controls(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) 
                 ui.horizontal(|ui| {
                     let mut auto = set.is_none();
                     let tip = format!("Follow the field's {}; untick to clamp the legend", if key == "max" { "maximum" } else { "minimum" });
-                    if kit::checkbox(ui, "Auto", &mut auto).on_hover_text(tip).changed() {
+                    if kit::checkbox(ui, "Auto", &mut auto).backing_on_hover_text(tip).changed() {
                         run.push(("results.contour", legend_params(plot, key, if auto { json!("auto") } else { json!(value) })));
                     }
                     // The clamp is stored in SI; the legend shows the display units.
@@ -401,9 +402,10 @@ pub fn controls(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) 
         ui.label("Show");
         ui.horizontal(|ui| {
             if plot.contour.is_some() {
-                kit::checkbox(ui, "Max/Min", &mut app.ui.result_extremes).on_hover_text("Mark the nodes of the largest and smallest value");
+                kit::checkbox(ui, "Max/Min", &mut app.ui.result_extremes).backing_on_hover_text("Mark the nodes of the largest and smallest value");
             }
-            kit::checkbox(ui, "Loads & BCs", &mut app.ui.result_symbols).on_hover_text("The symbols of the step's boundary conditions and loads");
+            kit::checkbox(ui, "Loads & BCs", &mut app.ui.result_symbols)
+                .backing_on_hover_text("The symbols of the step's boundary conditions and loads");
         });
         ui.end_row();
     });
@@ -427,7 +429,10 @@ pub fn controls(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) 
                 run.push(("results.frame", json!({"frame": frame})));
             }
             let mut animate = plot.view.animate;
-            if kit::checkbox(ui, "Animate", &mut animate).on_hover_text("Play the frames from the start-up transient to the settled flow").changed() {
+            if kit::checkbox(ui, "Animate", &mut animate)
+                .backing_on_hover_text("Play the frames from the start-up transient to the settled flow")
+                .changed()
+            {
                 run.push(("results.animate", json!({"on": animate})));
             }
         });
@@ -479,13 +484,13 @@ pub fn controls(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) 
         ui.separator();
         ui.horizontal(|ui| {
             if kit::button(ui, "Reaction sums", kit::Button::Normal)
-                .on_hover_text("Reaction force and moment per boundary-condition set (results.reactions)")
+                .backing_on_hover_text("Reaction force and moment per boundary-condition set (results.reactions)")
                 .clicked()
             {
                 run.push(("results.reactions", json!({"step": plot.view.step})));
             }
             if kit::button(ui, "Export CSV…", kit::Button::Normal)
-                .on_hover_text("Write the reaction sums to a CSV file (results.export.csv)")
+                .backing_on_hover_text("Write the reaction sums to a CSV file (results.export.csv)")
                 .clicked()
             {
                 export = Some(json!({"what": "reactions", "step": plot.view.step}));
@@ -541,7 +546,8 @@ fn views_row(app: &ModelApp, ui: &mut egui::Ui, run: &mut Vec<(&'static str, Val
         ui.add_enabled_ui(!views.is_empty(), |ui| {
             kit::bounded_dropdown_menu(ui, "fc_results_views", shown, COMBO_WIDTH, |ui| {
                 for v in views {
-                    if ui.selectable_label(current == Some(v.name.as_str()), &v.name).on_hover_text("Show this view (view.restore)").clicked() {
+                    if ui.selectable_label(current == Some(v.name.as_str()), &v.name).backing_on_hover_text("Show this view (view.restore)").clicked()
+                    {
                         run.push(("view.restore", json!({"name": v.name})));
                     }
                 }
@@ -549,7 +555,7 @@ fn views_row(app: &ModelApp, ui: &mut egui::Ui, run: &mut Vec<(&'static str, Val
         });
         save = ui
             .button("Save View…")
-            .on_hover_text("Keep the camera and this results display as a named view, saved with the model (view.save)")
+            .backing_on_hover_text("Keep the camera and this results display as a named view, saved with the model (view.save)")
             .clicked();
     });
     save
@@ -569,7 +575,7 @@ fn deformation_rows(plot: &Plot, ui: &mut egui::Ui, run: &mut Vec<(&'static str,
         } else {
             "Scale the largest displacement to a tenth of the model"
         };
-        if kit::checkbox(ui, "Auto", &mut auto).on_hover_text(tip).changed() {
+        if kit::checkbox(ui, "Auto", &mut auto).backing_on_hover_text(tip).changed() {
             run.push(("results.deformed", json!({"scale": if auto { json!("auto") } else { json!(plot.scale) }})));
         }
         // The scale ticking Deformed draws with, also while it is off.
@@ -589,7 +595,7 @@ fn deformation_rows(plot: &Plot, ui: &mut egui::Ui, run: &mut Vec<(&'static str,
     let mut animate = plot.view.animate;
     if ui
         .checkbox(&mut animate, "")
-        .on_hover_text(
+        .backing_on_hover_text(
             "Animate shape and contours. Linear static results interpolate a proportional load; nonlinear steps play their converged increments with their own stresses, explicit steps play saved fields.",
         )
         .changed()
@@ -641,7 +647,7 @@ fn flow_rows(plot: &Plot, ui: &mut egui::Ui, run: &mut Vec<(&'static str, Value)
                 .range(lo..=hi)
                 .custom_formatter(|v, _| number(v))
                 .custom_parser(|s| s.replace(',', "").trim().parse::<f64>().ok());
-            if ui.add(drag).on_hover_text("Where the slice crosses its axis").changed() {
+            if ui.add(drag).backing_on_hover_text("Where the slice crosses its axis").changed() {
                 run.push(("results.slice", json!({"position": at})));
             }
         }
@@ -649,28 +655,31 @@ fn flow_rows(plot: &Plot, ui: &mut egui::Ui, run: &mut Vec<(&'static str, Value)
     ui.end_row();
     ui.label("Obstacles");
     let mut surface = view.surface;
-    if kit::checkbox(ui, "Coloured", &mut surface).on_hover_text("Colour the part by the selected fluid field or wall heat").changed() {
+    if kit::checkbox(ui, "Coloured", &mut surface).backing_on_hover_text("Colour the part by the selected fluid field or wall heat").changed() {
         run.push(("results.surface", json!({"show": surface})));
     }
     ui.end_row();
     ui.label("Streamlines");
     ui.horizontal(|ui| {
         let mut on = view.streamlines.is_some();
-        if kit::checkbox(ui, "", &mut on).on_hover_text("Streamlines from the inlet, coloured by speed or temperature when selected").changed() {
+        if kit::checkbox(ui, "", &mut on)
+            .backing_on_hover_text("Streamlines from the inlet, coloured by speed or temperature when selected")
+            .changed()
+        {
             run.push(("results.streamlines", json!({"show": on})));
         }
         if let Some(sl) = &view.streamlines {
             if sl.seeds.is_some() {
                 // Given seeds (or a line of them): their number; `count` does not change them.
-                ui.label(format!("{} seeds", flow.seeds)).on_hover_text("The seeds given to results.streamlines");
+                ui.label(format!("{} seeds", flow.seeds)).backing_on_hover_text("The seeds given to results.streamlines");
             } else {
                 let mut count = sl.count;
                 let drag = egui::DragValue::new(&mut count).range(1..=fieldcraft_engine::flow::MAX_STREAMLINES).speed(1.0).suffix(" seeds");
-                if ui.add(drag).on_hover_text("Seeds on the inlet face, upstream of the obstacles").changed() {
+                if ui.add(drag).backing_on_hover_text("Seeds on the inlet face, upstream of the obstacles").changed() {
                     run.push(("results.streamlines", json!({"count": count})));
                 }
                 if flow.seeds != sl.count as usize {
-                    ui.label(format!("{} traced", flow.seeds)).on_hover_text("The seeds the grid across the inlet face fits");
+                    ui.label(format!("{} traced", flow.seeds)).backing_on_hover_text("The seeds the grid across the inlet face fits");
                 }
             }
         }
@@ -693,8 +702,10 @@ fn probed(app: &ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) -> Option<
             ui.end_row();
         }
     });
-    kit::button(ui, "Export CSV…", kit::Button::Normal).on_hover_text("Write the node's results to a CSV file (results.export.csv)").clicked().then(
-        || {
+    kit::button(ui, "Export CSV…", kit::Button::Normal)
+        .backing_on_hover_text("Write the node's results to a CSV file (results.export.csv)")
+        .clicked()
+        .then(|| {
             let mut params = json!({"what": "probe", "step": p.step, "nodes": [p.node]});
             if matches!(plot.result.kind(), Kind::Frequency(_)) {
                 params["mode"] = json!(p.mode);
@@ -703,8 +714,7 @@ fn probed(app: &ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) -> Option<
                 params["frame"] = json!(f);
             }
             params
-        },
-    )
+        })
 }
 
 /// An explicit step: a frame slider (the deformed shape and contours follow it) and the energy
@@ -764,7 +774,7 @@ fn explicit(ui: &mut egui::Ui, e: &ExplicitResult, plot: &Plot, t: &Tokens, run:
     {
         let mut text = vec![format!("t = {}", with_unit(number(axes.x_of(p.x)), time_unit.as_deref()))];
         text.extend(series.iter().map(|(name, _, f)| format!("{name} {}", number_in(energy(f(e)), scale))));
-        response.on_hover_text(text.join("\n"));
+        response.backing_on_hover_text(text.join("\n"));
     }
     // The values at the frame's time.
     let Some(at_now) = h.energies.get(nearest(now)) else { return };
@@ -782,7 +792,7 @@ fn explicit(ui: &mut egui::Ui, e: &ExplicitResult, plot: &Plot, t: &Tokens, run:
             ui.label(with_unit(number_in(energy(f(at_now)), scale), energy_unit.as_deref()));
             ui.end_row();
         }
-        ui.label(RichText::new("Balance").color(t.text_dim)).on_hover_text("The energy balance's relative error");
+        ui.label(RichText::new("Balance").color(t.text_dim)).backing_on_hover_text("The energy balance's relative error");
         ui.label(number(at_now.balance));
         ui.end_row();
     });
@@ -927,7 +937,7 @@ fn xy_section(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens, ru
     ui.horizontal(|ui| {
         ui.label(RichText::new("XY Plot").strong());
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            close = kit::button(ui, "×", kit::Button::Small).on_hover_text("Close the XY plot").clicked();
+            close = kit::button(ui, "×", kit::Button::Small).backing_on_hover_text("Close the XY plot").clicked();
         });
     });
     if close {
@@ -1030,13 +1040,16 @@ fn xy_section(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens, ru
     if let Some(i) = response.hover_pos().filter(|p| axes.rect.contains(*p)).and_then(|p| nearest(axes.x_of(p.x))) {
         let (x, y) = (xs.get(i).copied().unwrap_or(f64::NAN), ys.get(i).copied().unwrap_or(f64::NAN));
         let scale = axes.lo.abs().max(axes.hi.abs());
-        response.on_hover_text(format!("{x_label} {}\n{}", number(x), number_in(y, scale)));
+        response.backing_on_hover_text(format!("{x_label} {}\n{}", number(x), number_in(y, scale)));
     }
     if let Some(i) = current {
         let at = |v: &[f64]| v.get(i).map_or("—".into(), |x| number(*x));
         ui.label(RichText::new(format!("{x_label} {}: {}", at(&xs), at(&ys))).small().color(t.text_dim));
     }
-    kit::button(ui, "Export CSV…", kit::Button::Normal).on_hover_text("Write the series to a CSV file (results.xy)").clicked().then_some(params)
+    kit::button(ui, "Export CSV…", kit::Button::Normal)
+        .backing_on_hover_text("Write the series to a CSV file (results.xy)")
+        .clicked()
+        .then_some(params)
 }
 
 impl ModelApp {
@@ -1170,7 +1183,7 @@ fn component_limits(ui: &mut egui::Ui, f: &FluidResult, units: &fieldcraft_model
             });
             let name = ui.label(RichText::new(format!("{mark}{}", c.body)).color(colour));
             if let Some(tip) = tip {
-                name.on_hover_text(tip);
+                name.backing_on_hover_text(tip);
             }
             ui.label(c.peak.map_or("—".into(), |p| temperature(p.temperature)));
             ui.label(c.limit.map_or("—".into(), temperature));

@@ -27,6 +27,7 @@ use crate::selection::{Filter, Mode};
 use crate::theme::Tokens;
 use crate::{ModelApp, NavMode, Style};
 use solidcraft_ui_kit as kit;
+use solidcraft_ui_kit::BackingTooltipExt as _;
 
 /// Wheel zoom per point scrolled.
 const ZOOM_PER_POINT: f64 = 0.0015;
@@ -319,7 +320,7 @@ fn context_menu(app: &mut ModelApp, response: &egui::Response) {
         }
         let has = !app.pick.selection.is_empty();
         if crate::frame::menu_row(ui, "selection.create_set", "Create set from selection…", None, has)
-            .on_hover_text("model.set.create with the selection as members")
+            .backing_on_hover_text("model.set.create with the selection as members")
             .clicked()
         {
             let _ = app.create_set_from_selection();
@@ -813,7 +814,7 @@ fn nav_bar(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect) {
                         kit::Slider { step: Some(1.0), format: |v| format!("{v:.0} pt"), ..Default::default() },
                     )
                 })
-                .on_hover_text("The size of boundary condition, load and interaction symbols on screen, at any zoom");
+                .backing_on_hover_text("The size of boundary condition, load and interaction symbols on screen, at any zoom");
             });
             crate::frame::menu_separator(ui);
             kit::scope(ui, |ui| {
@@ -826,12 +827,12 @@ fn nav_bar(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect) {
                 let current = navigation::preset(&app.ui.nav_preset);
                 let labels: Vec<&str> = navigation::NAV_PRESETS.iter().map(|p| p.label).collect();
                 let mut selected = navigation::NAV_PRESETS.iter().position(|p| p.id == current.id).unwrap_or(0);
-                kit::choice_row(ui, "Preset", "fc_nav_preset", &mut selected, &labels).on_hover_text(current.help);
+                kit::choice_row(ui, "Preset", "fc_nav_preset", &mut selected, &labels).backing_on_hover_text(current.help);
                 if let Some(p) = navigation::NAV_PRESETS.get(selected).filter(|p| p.id != current.id) {
                     app.ui.nav_preset = p.id.into();
                     app.ui.reverse_zoom = p.reverse_zoom;
                 }
-                kit::checkbox(ui, "Reverse zoom", &mut app.ui.reverse_zoom).on_hover_text("The wheel zooms the other way");
+                kit::checkbox(ui, "Reverse zoom", &mut app.ui.reverse_zoom).backing_on_hover_text("The wheel zooms the other way");
             });
         });
     }

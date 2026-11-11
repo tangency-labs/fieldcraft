@@ -342,7 +342,7 @@ pub fn dropdown(app: &mut ModelApp, ui: &mut egui::Ui, entries: &'static [Capabi
         row.shortcut = soon.as_deref().unwrap_or("");
         let resp = row.show(ui);
         app.toolbar_rects.push((c.id, resp.rect, Fit::Menu));
-        if resp.on_hover_text(Unavailable::tip(&c.tooltip(), missing.as_ref())).clicked() {
+        if resp.backing_on_hover_text(Unavailable::tip(&c.tooltip(), missing.as_ref())).clicked() {
             start = Some(c.id);
         }
         // Its related commands (edit, delete…) follow it, without an icon.
@@ -351,7 +351,7 @@ pub fn dropdown(app: &mut ModelApp, ui: &mut egui::Ui, entries: &'static [Capabi
             let mut row = solidcraft_ui_kit::MenuItem::new(id, crate::command_label(id), "");
             row.enabled = missing.is_none();
             let tip = Unavailable::tip(id, missing.as_ref());
-            if row.show(ui).on_hover_text(tip).clicked() {
+            if row.show(ui).backing_on_hover_text(tip).clicked() {
                 start = Some(id);
             }
         }

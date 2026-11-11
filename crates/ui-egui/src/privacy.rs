@@ -11,6 +11,7 @@ use fieldcraft_engine::usage::{self, Event, Identity, Origin};
 use crate::ModelApp;
 use crate::files::{Prompt, dismissed, message, note};
 use solidcraft_ui_kit as kit;
+use solidcraft_ui_kit::BackingTooltipExt as _;
 
 /// What is sent, event by event.
 pub const PRIVACY_URL: &str = "https://github.com/tangency-labs/fieldcraft/blob/main/docs/privacy.md";
@@ -150,7 +151,7 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
                         message(ui, QUESTION);
                         note(ui, DETAIL);
                         note(ui, "You can change this any time in Help › Settings.");
-                        link = ui.link("What is sent (docs/privacy.md)").on_hover_text(PRIVACY_URL).clicked();
+                        link = ui.link("What is sent (docs/privacy.md)").backing_on_hover_text(PRIVACY_URL).clicked();
                         if app.updates_available() {
                             updates = update_check(ui, app.prefs.update_check);
                         }
@@ -181,22 +182,22 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
                         kit::section_heading(ui, "Updates");
                         updates = update_check(ui, app.prefs.update_check);
                         ui.horizontal(|ui| {
-                            check = kit::button(ui, "Check Now", kit::Button::Small).on_hover_text("Help › Check for Updates").clicked();
+                            check = kit::button(ui, "Check Now", kit::Button::Small).backing_on_hover_text("Help › Check for Updates").clicked();
                             if !app.prefs.update_skip.is_empty() {
                                 unskip = kit::button(ui, "Offer It Again", kit::Button::Small)
-                                    .on_hover_text(format!("Skipping FieldCraft {}", app.prefs.update_skip))
+                                    .backing_on_hover_text(format!("Skipping FieldCraft {}", app.prefs.update_skip))
                                     .clicked();
                             }
                         });
                     }
                     kit::section_heading(ui, "Privacy");
                     ui.add_enabled_ui(available, |ui| {
-                        kit::checkbox(ui, "Share anonymous usage", &mut sharing).on_hover_text(QUESTION);
+                        kit::checkbox(ui, "Share anonymous usage", &mut sharing).backing_on_hover_text(QUESTION);
                     });
                     ui.add_enabled_ui(available && sharing, |ui| {
                         ui.indent("fc_usage_automation", |ui| {
                             kit::checkbox(ui, "Include scripts and AI agents (MCP)", &mut automation)
-                                .on_hover_text("Count the commands scripts, the control channel and AI agents run, apart from yours");
+                                .backing_on_hover_text("Count the commands scripts, the control channel and AI agents run, apart from yours");
                         });
                     });
                     if !available {
@@ -207,7 +208,7 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
                     }
                     note(ui, DETAIL);
                     note(ui, "Crash reports and the log stay on this computer; Help › Report a Bug sends only what you submit.");
-                    link = ui.link("What is sent (docs/privacy.md)").on_hover_text(PRIVACY_URL).clicked();
+                    link = ui.link("What is sent (docs/privacy.md)").backing_on_hover_text(PRIVACY_URL).clicked();
                 });
             if available && (sharing != (app.prefs.usage_sharing == Some(true)) || automation != app.prefs.usage_automation) {
                 app.set_usage(sharing, automation);
@@ -249,7 +250,7 @@ fn units_choice(ui: &mut egui::Ui, current: fieldcraft_model::units::Preset) -> 
 fn update_check(ui: &mut egui::Ui, on: bool) -> Option<bool> {
     let mut checked = on;
     let changed = kit::checkbox(ui, "Check for updates automatically", &mut checked)
-        .on_hover_text(
+        .backing_on_hover_text(
             "At start-up, at most once a day, FieldCraft asks GitHub Releases for the latest version. Nothing installs until you choose Install.",
         )
         .changed();
