@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="24" height="24" viewBox="0 0 24 24">
-  <title>edit.redo</title>
-  <g id="Layer_1" data-name="Layer 1">
-    <path d="M19 9 L10 9 C7.239 9 5 11.239 5 14 C5 16.761 7.239 19 10 19 L16 19" fill="none" stroke="#4f9ce8" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M16 5.5 L19.5 9 L16 12.5" fill="none" stroke="#4f9ce8" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
-  </g>
-</svg>

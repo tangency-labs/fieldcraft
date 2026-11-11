@@ -394,7 +394,6 @@ pub struct ModelApp {
     /// Forms opened so far (numbers each [`ParamsDialog::opening`]).
     forms_opened: u64,
     pub viewport: Viewport,
-    pub icons: icons::IconCache,
     /// The toolbar's buttons drawn last frame, by catalogue id (for the control channel).
     pub toolbar_rects: Vec<(&'static str, egui::Rect, toolbar::Fit)>,
     /// The GPU adapter, for the status bar and diagnostics.
@@ -564,7 +563,6 @@ impl ModelApp {
             node_drag: None,
             forms_opened: 0,
             viewport: Viewport::default(),
-            icons: icons::IconCache::default(),
             toolbar_rects: Vec::new(),
             gpu_info: None,
             #[cfg(not(target_arch = "wasm32"))]

@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="24" height="24" viewBox="0 0 24 24">
-  <title>ui.moon</title>
-  <g id="Layer_1" data-name="Layer 1">
-    <path d="M15 3.5 C9 4 5.5 9 6.5 14 C7.5 19 13 21.5 18 19.5 C13.5 18.5 11 15 11 11 C11 7.5 12.5 5 15 3.5 Z" fill="#2d4e70" stroke="#dde2ea" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M18.5 5.1 L19.088 6.691 L20.783 6.758 L19.451 7.809 L19.911 9.442 L18.5 8.5 L17.089 9.442 L17.549 7.809 L16.217 6.758 L17.912 6.691 Z" fill="#f0b44a" stroke="#f0b44a" stroke-width="0.75" stroke-linecap="round" stroke-linejoin="round"/>
-  </g>
-</svg>

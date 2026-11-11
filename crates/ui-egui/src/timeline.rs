@@ -17,6 +17,8 @@ use crate::theme::Tokens;
 /// The timeline's height.
 pub const HEIGHT: f32 = 40.0;
 const ITEM: f32 = 28.0;
+/// How faint an undone or unreachable item's icon is.
+const FADED: f32 = 0.43;
 const STRIDE: f32 = 30.0;
 
 /// A run of the same command in the journal (`start..end`), or among the undone commands
@@ -238,8 +240,8 @@ pub fn timeline(app: &mut ModelApp, ui: &mut egui::Ui) {
                     let bg = if resp.hovered() && reachable { t.hover } else { t.timeline_item };
                     p.rect(br, 3.0, bg, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
                     let icon = fieldcraft_engine::catalogue::entry_of(&item.command).map_or("ui.views", |c| c.id);
-                    let tint = if undone || !reachable { Color32::from_white_alpha(110) } else { Color32::WHITE };
-                    icons::paint_tinted(app, ui, icon, br.shrink(4.0), Look::of(!undone), tint);
+                    let opacity = if undone || !reachable { FADED } else { 1.0 };
+                    icons::paint_faded(ui, icon, br.shrink(4.0), Look::of(!undone), opacity);
                     if let Some(b) = badge(&item.command) {
                         paint_badge(&p, br, b, &t);
                     }

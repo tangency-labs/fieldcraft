@@ -184,7 +184,6 @@ pub fn toolbar(app: &mut ModelApp, ui: &mut egui::Ui) {
                 }
                 if let Some(c) = shown.first() {
                     icons::paint(
-                        app,
                         ui,
                         c.id,
                         Rect::from_center_size(br.center() - vec2(0.0, 3.0), Vec2::splat(26.0)),
@@ -286,7 +285,7 @@ fn workspace_switcher(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, r: Rect
     let open = app.ui.menu.as_deref() == Some("workspace");
     ui.painter().rect(ws, 4.0, if resp.hovered() || open { t.hover } else { t.field }, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
     let w = app.ui.workspace;
-    icons::paint(app, ui, w.icon(), Rect::from_center_size(pos2(ws.center().x, ws.top() + 24.0), Vec2::splat(26.0)), Look::Normal);
+    icons::paint(ui, w.icon(), Rect::from_center_size(pos2(ws.center().x, ws.top() + 24.0), Vec2::splat(26.0)), Look::Normal);
     let p = ui.painter();
     let label = w.label().to_uppercase();
     let font = label_font(ui.ctx(), 12.0);
@@ -305,7 +304,7 @@ fn workspace_switcher(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, r: Rect
             if resp.hovered() || w == app.ui.workspace {
                 ui.painter().rect_filled(rect, 3.0, if w == app.ui.workspace { t.accent_soft } else { t.hover });
             }
-            icons::paint(app, ui, w.icon(), Rect::from_center_size(pos2(rect.left() + 20.0, rect.center().y), Vec2::splat(24.0)), Look::Normal);
+            icons::paint(ui, w.icon(), Rect::from_center_size(pos2(rect.left() + 20.0, rect.center().y), Vec2::splat(24.0)), Look::Normal);
             let p = ui.painter();
             p.text(pos2(rect.left() + 40.0, rect.top() + 12.0), Align2::LEFT_CENTER, w.label().to_uppercase(), label_font(ui.ctx(), 12.5), t.text);
             p.text(pos2(rect.left() + 40.0, rect.top() + 28.0), Align2::LEFT_CENTER, w.about(), FontId::proportional(11.0), t.text_dim);
@@ -330,7 +329,7 @@ fn button(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, c: &'static Capabil
     } else if resp.hovered() && enabled {
         ui.painter().rect_filled(br, 4.0, t.hover);
     }
-    icons::paint(app, ui, c.id, br.shrink(6.0), Look::of(enabled));
+    icons::paint(ui, c.id, br.shrink(6.0), Look::of(enabled));
     if let Some(m) = c.milestone() {
         badge(ui.painter(), t, br.right_top() + vec2(4.0, -2.0), m);
     }

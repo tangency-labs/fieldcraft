@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="24" height="24" viewBox="0 0 24 24">
-  <title>edit.undo</title>
-  <g id="Layer_1" data-name="Layer 1">
-    <path d="M5 9 L14 9 C16.761 9 19 11.239 19 14 C19 16.761 16.761 19 14 19 L8 19" fill="none" stroke="#4f9ce8" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M8 5.5 L4.5 9 L8 12.5" fill="none" stroke="#4f9ce8" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
-  </g>
-</svg>

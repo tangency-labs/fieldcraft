@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="24" height="24" viewBox="0 0 24 24">
-  <title>results.animate</title>
-  <g id="Layer_1" data-name="Layer 1">
-    <path d="M5 5 L19 5 C20.105 5 21 5.895 21 7 L21 17 C21 18.105 20.105 19 19 19 L5 19 C3.895 19 3 18.105 3 17 L3 7 C3 5.895 3.895 5 5 5 Z" fill="#2d4e70" stroke="#dde2ea" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M10 9 L15.5 12 L10 15 Z" fill="#4f9ce8" stroke="#4f9ce8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M3 8 L6 8 M3 16 L6 16 M18 8 L21 8 M18 16 L21 16" fill="none" stroke="#dde2ea" stroke-linecap="round" stroke-linejoin="round"/>
-  </g>
-</svg>
