@@ -35,6 +35,10 @@ updates:
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
       # The shared Craft components follow VectorCraft's rev.
       - dependency-name: craft-ui
+      # The native file dialogs follow SolidCraft's version, so both apps build one rfd and share
+      # its compiled crates; moved by hand with SolidCraft.
+      - dependency-name: rfd
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
       # The exact predicates' BigInt must be num-rational's (0.4 uses num-bigint 0.4): both move
       # together, by hand.
       - dependency-name: num-bigint
@@ -57,3 +61,8 @@ updates:
       # Actions are pinned by commit SHA with a version comment; Dependabot updates both.
       actions:
         patterns: ["*"]
+    ignore:
+      # The Rust toolchain is one version across FieldCraft, SolidCraft, SolidCore and SurfaceCraft
+      # (rust-toolchain.toml and every workflow's dtolnay/rust-toolchain@<version>), moved by hand
+      # in all of them together.
+      - dependency-name: dtolnay/rust-toolchain
