@@ -8,9 +8,8 @@ use egui::{RichText, vec2};
 use serde_json::{Map, Value};
 
 use crate::browser::{self, Def};
-use crate::frame::{Level, heading};
 use crate::results::{components, count, number, with_unit};
-use crate::theme::{Tokens, label_font};
+use crate::theme::Tokens;
 use crate::{ModelApp, Tab};
 use fieldcraft_engine::results::Quantity;
 use fieldcraft_model::DisplaySystem;
@@ -269,17 +268,11 @@ enum Act {
 pub fn show(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
     let Some(reply) = app.reply.clone() else { return };
     let mut acts = Vec::new();
-    heading(ui, t, Level::Title, |ui| {
-        ui.label(RichText::new(reply.label.to_uppercase()).font(label_font(ui.ctx(), 12.0)));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if kit::button(ui, "×", kit::Button::Small).on_hover_text("Close").clicked() {
-                acts.push(Act::Close);
-            }
-            if kit::button(ui, "Run again", kit::Button::Small).on_hover_text(reply.command.as_str()).clicked() {
-                acts.push(Act::Rerun);
-            }
-        });
-    });
+    kit::panel::header(ui, &reply.command, &reply.label, || acts.push(Act::Close));
+    ui.add_space(4.0);
+    if kit::button(ui, "Run again", kit::Button::Small).on_hover_text(reply.command.as_str()).clicked() {
+        acts.push(Act::Rerun);
+    }
     ui.add_space(4.0);
     ui.add(egui::Label::new(RichText::new(summary_in(&reply.command, &reply.value, Some(app.session.units()))).color(t.text_dim)).wrap());
     ui.add_space(4.0);
