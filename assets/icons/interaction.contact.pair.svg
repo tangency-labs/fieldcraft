@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="24" height="24" viewBox="0 0 24 24">
-  <title>interaction.contact.pair</title>
-  <g id="Layer_1" data-name="Layer 1">
-    <path d="M6 9 C6 5.686 8.686 3 12 3 C15.314 3 18 5.686 18 9 C18 12.314 15.314 15 12 15 C8.686 15 6 12.314 6 9 Z" fill="#2d4e70" stroke="#dde2ea" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M3 15 L21 15 L21 21 L3 21 Z" fill="#2d4e70" stroke="#dde2ea" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M8 15 L16 15" fill="none" stroke="#4f9ce8" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"/>
-  </g>
-</svg>

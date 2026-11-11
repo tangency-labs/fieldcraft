@@ -15,6 +15,7 @@ use fieldcraft_model::ElementKind;
 use fieldcraft_render::Rgb;
 use fieldcraft_render::glyphs::GlyphColors;
 use solidcraft_theme as kit_theme;
+use solidcraft_ui_kit::icons as kit_icons;
 use solidcraft_ui_kit::type_face;
 
 /// The accent in the light theme: teal #0F7F78 (OKLab hue 188°; white on it 4.85:1).
@@ -153,9 +154,8 @@ pub struct Tokens {
     pub ok: Color32,
     /// Warnings, loads and heat in icons.
     pub warm: Color32,
-    /// Icon line work and fills.
+    /// Icon line work.
     pub icon: Color32,
-    pub icon_fill: Color32,
     /// The journal timeline: its strip, its items and the current-position marker.
     pub timeline: Color32,
     pub timeline_item: Color32,
@@ -295,7 +295,6 @@ impl Tokens {
             ok: Color32::from_rgb(0x23, 0x5f, 0x2e),
             warm: chrome,
             icon: chrome,
-            icon_fill: Color32::from_rgb(178, 196, 222),
             timeline: chrome,
             timeline_item: chrome,
             timeline_marker: chrome,
@@ -349,7 +348,6 @@ impl Tokens {
         t.heading_bg = Color32::from_rgb(26, 29, 35);
         t.subheading_bg = Color32::from_rgb(31, 35, 42);
         t.ok = Color32::from_rgb(0x8c, 0xc8, 0x8c);
-        t.icon_fill = Color32::from_rgb(86, 112, 150);
         t.axis_x = Color32::from_rgb(0xe0, 0x5a, 0x50);
         t.axis_y = Color32::from_rgb(0x6c, 0xc0, 0x5a);
         t.axis_z = Color32::from_rgb(0x52, 0x8c, 0xe6);
@@ -448,25 +446,6 @@ pub fn rgb(c: Color32) -> Rgb {
     Rgb(c.r(), c.g(), c.b())
 }
 
-/// Inter SemiBold 4.1 (SIL OFL 1.1, unmodified; fonts/OFL.txt, ATTRIBUTION.md): the kit's semibold
-/// and bold weights (tabs, panel labels, headings), then egui's own proportional fonts for what it
-/// lacks. egui has no bold weight of its default font, so labels need a face of their own to read
-/// at small sizes.
-static INTER_SEMIBOLD: &[u8] = include_bytes!("../fonts/Inter-SemiBold.ttf");
-
-/// The font definitions: egui's defaults with Inter SemiBold for the kit's semibold and bold
-/// weights, and its medium weight in the regular face.
-pub fn fonts() -> egui::FontDefinitions {
-    let mut f = egui::FontDefinitions::default();
-    f.font_data.insert("inter-semibold".into(), std::sync::Arc::new(egui::FontData::from_static(INTER_SEMIBOLD)));
-    let mut family = vec!["inter-semibold".to_string()];
-    family.extend(f.families.get(&egui::FontFamily::Proportional).cloned().unwrap_or_default());
-    for weight in [type_face::SEMIBOLD_FAMILY, type_face::BOLD_FAMILY] {
-        f.families.insert(egui::FontFamily::Name(weight.into()), family.clone());
-    }
-    type_face::with_weight_families(f)
-}
-
 /// The label font at `size`: the kit's semibold once the context has it (fonts set with [`apply`]
 /// take effect from the next pass), the default proportional font until then.
 pub fn label_font(ctx: &egui::Context, size: f32) -> egui::FontId {
@@ -474,14 +453,37 @@ pub fn label_font(ctx: &egui::Context, size: f32) -> egui::FontId {
     if ctx.fonts(|f| f.families().contains(&font.family)) { font } else { egui::FontId::proportional(size) }
 }
 
-/// Style the context for the dark or light theme: FieldCraft's tokens and icons installed in the
-/// kit, the kit's visuals from them, and the interface's fonts. egui draws selected labels' text
-/// and links in the accent's ink, which reads on the selection fill and on panels.
+/// The icons' base accent ramp (`active-1` palest to `active-3` strongest): SolidCraft's blue
+/// re-hued to FieldCraft's teal at the same OKLab lightness and chroma, so icons carry the app's
+/// accent as SolidCraft's carry its own.
+const ICON_RAMP_LIGHT: [[u8; 3]; 3] = [[0xb0, 0xe4, 0xdd], [0x06, 0x9a, 0x90], [0x05, 0x7b, 0x73]];
+const ICON_RAMP_DARK: [[u8; 3]; 3] = [[0x02, 0xb0, 0xa5], [0x0c, 0x96, 0x8d], [0x09, 0x84, 0x7b]];
+
+/// The icon palette for a theme: SolidCraft's, with the base ramp in teal.
+fn icon_palette(dark: bool) -> kit_icons::Palette {
+    let mut palette = kit_icons::Palette::default();
+    palette.accents[0] = Some(if dark { ICON_RAMP_DARK } else { ICON_RAMP_LIGHT });
+    palette
+}
+
+/// SolidCraft's look installed into the kit, once per process: FieldCraft's icon set (SolidCraft's
+/// with ours, [`crate::icons::SET`]), SolidCraft's code-drawn glyphs and its built-in themes.
+pub fn install_look() {
+    crate::icons::install();
+    solidcraft_look::glyphs::install();
+    solidcraft_look::themes::install();
+}
+
+/// Style the context for the dark or light theme: SolidCraft's look installed in the kit, with
+/// FieldCraft's tokens (its teal accent on SolidCraft's chrome) and teal icon accents; the kit's
+/// visuals from them, and SolidCraft's interface faces (IBM Plex). egui draws selected labels'
+/// text and links in the accent's ink, which reads on the selection fill and on panels.
 pub fn apply(ctx: &egui::Context, dark: bool) {
-    crate::icons::install_kit();
+    install_look();
     kit_theme::set_dark(dark);
     kit_theme::set_custom(Some(kit_theme::Custom { dark, tokens: kit(dark) }));
-    ctx.set_fonts(fonts());
+    kit_icons::set_theme_palette(Some((dark, icon_palette(dark))));
+    solidcraft_look::fonts::install(ctx);
     kit_theme::apply(ctx);
     let (k, ink) = (kit(dark), Tokens::get(dark).accent_ink);
     ctx.global_style_mut(|s| {

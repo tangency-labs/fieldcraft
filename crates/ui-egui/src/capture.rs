@@ -15,7 +15,6 @@ use std::collections::HashMap;
 
 use egui::{Color32, ColorImage, Pos2, Rect, TextureId, ViewportId, ViewportInfo};
 
-use crate::icons::IconCache;
 use crate::theme::Tokens;
 use crate::{ModelApp, Viewport};
 
@@ -37,13 +36,12 @@ struct Texture {
     linear: bool,
 }
 
-/// The offscreen context and what belongs to it (textures, icon textures, the viewport image),
+/// The offscreen context and what belongs to it (its textures and the viewport image),
 /// kept between captures.
 #[derive(Default)]
 pub struct Offscreen {
     ctx: egui::Context,
     textures: HashMap<TextureId, Texture>,
-    icons: IconCache,
     viewport: Viewport,
 }
 
@@ -79,9 +77,8 @@ impl ModelApp {
     pub fn capture(&mut self, size: CaptureSize) -> Result<ColorImage, String> {
         let [w, h] = size.pixels()?;
         let mut off = self.offscreen.take().unwrap_or_default();
-        // The UI pass draws with the offscreen context's own icon textures and a viewport with no
-        // GPU target, which renders the model on the CPU into an offscreen texture.
-        std::mem::swap(&mut self.icons, &mut off.icons);
+        // The UI pass draws with the offscreen context's own textures and a viewport with no GPU
+        // target, which renders the model on the CPU into an offscreen texture.
         std::mem::swap(&mut self.viewport, &mut off.viewport);
         let toolbar = std::mem::take(&mut self.toolbar_rects);
         let layout = std::mem::take(&mut self.layout);
@@ -115,7 +112,6 @@ impl ModelApp {
             shapes = out.shapes;
             ppp = out.pixels_per_point;
         }
-        std::mem::swap(&mut self.icons, &mut off.icons);
         std::mem::swap(&mut self.viewport, &mut off.viewport);
         self.capturing = false;
         self.toolbar_rects = toolbar;

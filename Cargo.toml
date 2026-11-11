@@ -60,8 +60,6 @@ sha2 = "0.11"
 
 # images (PNG snapshots and screenshots)
 png = "0.18"
-# SVG toolbar icons rasterised in the UI (no text, fonts or raster images in icons)
-resvg = { version = "0.49", default-features = false }
 
 # ui: the same egui/eframe/egui-wgpu line as SolidCraft
 egui = "0.37"
@@ -70,11 +68,13 @@ egui-wgpu = "0.37"
 # the wgpu egui-wgpu uses, for the offscreen viewport (crates/gpu); backends come per target there
 wgpu = { version = "30", default-features = false, features = ["std", "wgsl"] }
 pollster = "1.0"
-# SolidCraft's UI kit (MIT OR Apache-2.0): the tokenised controls, panels, menus and windows the
-# desktop UI draws with, and the token contract they draw from. Only fieldcraft-ui-egui uses them
-# (docs/adr/0001-libraries.md); the same rev as the geometry crates below.
+# SolidCraft's UI kit, the token contract it draws from and SolidCraft's look (its icons, glyphs,
+# interface faces and built-in themes): the desktop UI draws with them. Under the SolidCraft Brand
+# and Interface Licence, used by the maintainer's written permission (docs/adr/0001-libraries.md);
+# only fieldcraft-ui-egui uses them. The same rev as the geometry crates below.
 solidcraft-ui-kit = { git = "https://github.com/tangency-labs/solidcraft", rev = "5e338283969dcc2ae97260f0ac6d0edf82ec0a2a" }
 solidcraft-theme = { git = "https://github.com/tangency-labs/solidcraft", rev = "5e338283969dcc2ae97260f0ac6d0edf82ec0a2a" }
+solidcraft-look = { git = "https://github.com/tangency-labs/solidcraft", rev = "5e338283969dcc2ae97260f0ac6d0edf82ec0a2a" }
 # native file pickers (the desktop app only; the UI crate takes them as services)
 rfd = "0.17"
 

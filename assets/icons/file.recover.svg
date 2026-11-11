@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="24" height="24" viewBox="0 0 24 24">
-  <title>file.recover</title>
-  <g id="Layer_1" data-name="Layer 1">
-    <path d="M4.5 12 C4.505 15.538 6.981 18.591 10.442 19.327 C13.903 20.062 17.406 18.278 18.849 15.048 C20.291 11.817 19.279 8.018 16.421 5.932 C13.564 3.846 9.637 4.041 7 6.4" fill="none" stroke="#4f9ce8" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M3.4 4.6 L7 6.4 L5.6 10.2" fill="none" stroke="#4f9ce8" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M12 8 L12 12 L15 14" fill="none" stroke="#dde2ea" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
-  </g>
-</svg>

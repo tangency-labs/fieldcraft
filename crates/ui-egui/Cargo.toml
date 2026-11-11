@@ -20,12 +20,12 @@ fieldcraft-update = { workspace = true }
 egui = { workspace = true }
 solidcraft-ui-kit = { workspace = true }
 solidcraft-theme = { workspace = true }
+solidcraft-look = { workspace = true }
 egui-wgpu = { workspace = true }
 fieldcraft-gpu = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
 web-time = { workspace = true }
-resvg = { workspace = true }
 png = { workspace = true }
 

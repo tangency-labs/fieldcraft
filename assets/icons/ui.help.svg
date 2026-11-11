@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="24" height="24" viewBox="0 0 24 24">
-  <title>ui.help</title>
-  <g id="Layer_1" data-name="Layer 1">
-    <path d="M3 12 C3 7.029 7.029 3 12 3 C16.971 3 21 7.029 21 12 C21 16.971 16.971 21 12 21 C7.029 21 3 16.971 3 12 Z" fill="none" stroke="#dde2ea" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M9.4 9.6 C9.4 6.9 14.6 6.9 14.6 9.9 C14.6 12 12 12.1 12 14.3" fill="none" stroke="#4f9ce8" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M11.3 17.3 C11.3 16.913 11.613 16.6 12 16.6 C12.387 16.6 12.7 16.913 12.7 17.3 C12.7 17.687 12.387 18 12 18 C11.613 18 11.3 17.687 11.3 17.3 Z" fill="#4f9ce8" stroke="#4f9ce8" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-  </g>
-</svg>

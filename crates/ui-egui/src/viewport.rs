@@ -703,7 +703,7 @@ fn axis_view(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect, t: &Tokens) {
     if hr.hovered() {
         painter.rect_filled(home.expand(2.0), 3.0, t.hover);
     }
-    icons::paint(app, ui, "ui.home", home, Look::Normal);
+    icons::paint(ui, "ui.home", home, Look::Normal);
     if hr.on_hover_text("Home view").clicked() {
         app.home_view();
     }
@@ -748,7 +748,7 @@ fn nav_bar(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect, t: &Tokens) {
         if active || resp.hovered() {
             ui.painter().rect_filled(br, 4.0, if active { t.accent_soft } else { t.hover });
         }
-        icons::paint(app, ui, icon, br.shrink(4.0), Look::Normal);
+        icons::paint(ui, icon, br.shrink(4.0), Look::Normal);
         resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, active, *tip));
         if resp.on_hover_text(*tip).clicked() {
             match *key {

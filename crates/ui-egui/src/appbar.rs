@@ -174,7 +174,7 @@ pub fn app_bar(app: &mut ModelApp, ui: &mut egui::Ui) {
         ];
         let mut clicked = None;
         for ((q, icon, tip, enabled, selected), rect) in actions.into_iter().zip(lay.quick).chain(tools.into_iter().zip(lay.tools)) {
-            if quick_button(app, ui, q.region(), icon, rect, &tip, enabled, selected) {
+            if quick_button(ui, q.region(), icon, rect, &tip, enabled, selected) {
                 clicked = Some(q);
             }
             anchors.push((q, rect));
@@ -287,7 +287,7 @@ pub fn app_bar(app: &mut ModelApp, ui: &mut egui::Ui) {
 
 /// One quick action: its icon on the dark bar, dimmed when it cannot run now. `true` when clicked.
 #[allow(clippy::too_many_arguments)]
-fn quick_button(app: &mut ModelApp, ui: &mut egui::Ui, key: &str, icon: &'static str, rect: Rect, tip: &str, enabled: bool, selected: bool) -> bool {
+fn quick_button(ui: &mut egui::Ui, key: &str, icon: &'static str, rect: Rect, tip: &str, enabled: bool, selected: bool) -> bool {
     // As the kit's application bar draws its buttons (`solidcraft_ui_kit::app_bar`).
     let k = solidcraft_theme::Tokens::get();
     let resp = ui.interact(rect, ui.scope_id().with(("fc_quick", key)), if enabled { egui::Sense::click() } else { egui::Sense::hover() });
@@ -295,8 +295,8 @@ fn quick_button(app: &mut ModelApp, ui: &mut egui::Ui, key: &str, icon: &'static
     if selected || (enabled && (resp.hovered() || resp.has_focus())) {
         ui.painter().rect_filled(rect, k.radius_sm, if selected { k.app_bar_hover_strong } else { k.app_bar_hover_button });
     }
-    let tint = if enabled { Color32::WHITE } else { Color32::from_white_alpha(90) };
-    icons::paint_tinted(app, ui, icon, rect.shrink(4.0), Look::AppBar, tint);
+    let opacity = if enabled { 1.0 } else { 0.35 };
+    icons::paint_faded(ui, icon, rect.shrink(4.0), Look::AppBar, opacity);
     enabled && resp.on_hover_text(tip).clicked()
 }
 
