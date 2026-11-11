@@ -28,13 +28,16 @@
 //!
 //! **Common steps.** Interval assignment ([`interval`]) picks the division counts of shared curves
 //! together. A curve's goal is its length in units of the size field, and a curved one gets at
-//! least as many divisions as keep each within [`CURVE_TURN`] of turning ([`curve_goal`]): the
-//! geometric size map `h ≤ θ ρ` of a curve of radius `ρ` (P. J. Frey, P.-L. George, *Mesh
-//! Generation: Application to Finite Elements*, 2nd ed., Wiley–ISTE, 2008), the rule the tet
-//! mesher's curvature refinement follows ([`crate::tet::QualityOptions::curvature_angle`]), so a
-//! whole circle has at least 16 nodes whatever the size and however many vertices the kernel
-//! puts on it. Boundary nodes on analytic faces are placed on the exact surface; quadratic hexahedra
-//! (hex20) get their mid-edge nodes projected onto the faces (and onto both faces of a B-rep
+//! least as many divisions as keep each piece's chord within the chordal tolerance of it
+//! ([`curve_goal`]): the geometric size map of a curve of radius `ρ`, whose pieces turn by at most
+//! `2 acos(1 − δ / ρ)` (P. J. Frey, P.-L. George, *Mesh Generation: Application to Finite
+//! Elements*, 2nd ed., Wiley–ISTE, 2008; [`crate::size::curve_divisions`]), so the mesh strays
+//! from a curve no further than the tessellation it was made from, a large circle gets many
+//! divisions and a small fillet few. No piece turns by more than [`MAX_CURVE_TURN`], so a whole
+//! circle has at least four nodes whatever the size and the tolerance, and however many vertices
+//! the kernel puts on it; with no tolerance (an exact boundary) no piece turns by more than the
+//! tet mesher's default curvature angle, 22.5°. Boundary nodes on analytic faces are placed on the exact surface;
+//! quadratic hexahedra (hex20) get their mid-edge nodes projected onto the faces (and onto both faces of a B-rep
 //! edge). Every boundary quadrilateral is tagged with the B-rep face it lies on, so model sets
 //! named by face resolve. The output passes the certified validity gate (every element's
 //! Jacobian determinant proven positive, [`crate::quality`]), a tiling check (the elements'
@@ -83,15 +86,33 @@ use fieldcraft_model::ElementKind;
 /// A projection step this small, relative to the tolerance, has converged.
 const CONVERGED: f64 = 1e-3; // unit-factors: relative to the tolerance
 
-/// The most a boundary curve turns along one element edge: 22.5°, as the tet mesher's default
-/// curvature angle.
-pub(crate) const CURVE_TURN: f64 = std::f64::consts::PI / 8.0;
+/// The most a boundary curve turns along one element edge, whatever the chordal tolerance: a
+/// quarter turn, the most the tet mesher's curvature angle allows, so a whole circle keeps at
+/// least four divisions, the fewest a closed curve can be mapped with (the four sides of an
+/// O-grid's block), and a piece never folds back on its neighbours.
+pub(crate) const MAX_CURVE_TURN: f64 = std::f64::consts::FRAC_PI_2;
+
+/// The most a boundary curve turns along one element edge when no chordal tolerance bounds its
+/// pieces (an exact boundary, or a mesh imported without one): the tet mesher's default curvature
+/// angle, 22.5° ([`crate::tet::QualityOptions::curvature_angle`]), so a whole circle gets 16.
+const UNTOLERANCED_CURVE_TURN: f64 = std::f64::consts::PI / 8.0;
+
+/// The most a curve may turn along one element edge with chordal tolerance `chord`: the chord
+/// bounds it up to [`MAX_CURVE_TURN`] when it is positive, [`UNTOLERANCED_CURVE_TURN`] otherwise.
+pub(crate) fn max_curve_turn(chord: f64) -> f64 {
+    if chord > 0.0 { MAX_CURVE_TURN } else { UNTOLERANCED_CURVE_TURN }
+}
+
+/// The fewest divisions of a curve that keep each piece's chord within `chord` of it and its turn
+/// within [`max_curve_turn`] ([`crate::size::curve_divisions`]; 1 for a straight curve).
+pub(crate) fn curve_floor<const N: usize>(polyline: &[[f64; N]], chord: f64) -> usize {
+    crate::size::curve_divisions(polyline, chord, max_curve_turn(chord))
+}
 
 /// A curve's division goal and its floor: the goal is its length in units of the size field,
-/// raised to the floor, the fewest divisions that keep each piece within [`CURVE_TURN`] of
-/// turning (1 for a straight curve).
-pub(crate) fn curve_goal<const N: usize>(field: &dyn SizeField, polyline: &[[f64; N]]) -> Result<(f64, usize)> {
-    let floor = crate::size::turn_divisions(crate::size::turning(polyline), CURVE_TURN);
+/// raised to the floor ([`curve_floor`]).
+pub(crate) fn curve_goal<const N: usize>(field: &dyn SizeField, polyline: &[[f64; N]], chord: f64) -> Result<(f64, usize)> {
+    let floor = curve_floor(polyline, chord);
     let pts: Vec<P> = polyline.iter().map(|p| std::array::from_fn(|i| p.get(i).copied().unwrap_or(0.0))).collect();
     let goal = crate::size::ideal_divisions(field, &pts)?;
     Ok((goal.max(floor as f64), floor))
@@ -137,7 +158,8 @@ pub struct HexOptions {
     pub quadratic: bool,
     /// The chordal tolerance the boundary surface was tessellated with (0 when exact): copies of a
     /// curve at different levels closer than this are one curve, and the fidelity check allows
-    /// it.
+    /// it. Curved boundary curves are divided so that the mesh's chords stray from them by no
+    /// more than this ([`curve_goal`]); 0 sets no such limit.
     pub chordal_tolerance: f64,
     /// The most hexahedra ([`Error::Limit`] beyond).
     pub max_elements: usize,

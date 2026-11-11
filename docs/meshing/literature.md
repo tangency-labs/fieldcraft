@@ -1064,10 +1064,15 @@ record or the publisher; the others are cited by venue only.
   rounded goals with increments only, chosen by squared relative error; it is bounded and reports an
   infeasible system instead of looping. Mitchell's integer-linear-algebra solver (Hermite normal form plus
   nullspace improvement) is the upgrade if the increment-only scheme proves too coarse. A curve's goal is
-  its length in units of the size field, raised to a floor of one division per 22.5° it turns: the
-  geometric size map `h ≤ θ ρ` (P. J. Frey, P.-L. George, *Mesh Generation: Application to Finite
-  Elements*, 2nd ed., Wiley–ISTE, 2008), as the tet mesher's curvature refinement; the floor is a minimum
-  of the assignment, so a whole circle in one edge gets 16 or more (`hex::curve_goal`).
+  its length in units of the size field, raised to a floor from the curve's chordal deviation: the
+  geometric size map of a curve (P. J. Frey, P.-L. George, *Mesh Generation: Application to Finite
+  Elements*, 2nd ed., Wiley–ISTE, 2008), where a piece of radius `ρ` whose chord stays within the
+  tolerance `δ` turns by at most `2 acos(1 − δ / ρ)` (the angle whose sagitta is `δ`), so a curve gets
+  `∫ dθ / (2 acos(1 − δ / ρ))` divisions (`size::curve_divisions`), with `δ` the chordal tolerance the
+  boundary was tessellated with: the mesh strays from a curve no further than its tessellation, a
+  large circle gets many divisions and a small fillet few. No piece turns by more than a quarter turn,
+  so a whole circle in one edge keeps at least four (the sides of an O-grid's block). The floor is a
+  minimum of the assignment (`hex::curve_goal`).
 
 **B8.6 Whiteley, White, Benzley, Blacker 1996, submapping.** **Verdict: BUILD ON (vertex classification).**
 - **Citation.** M. Whiteley, D. White, S. Benzley, T. Blacker. *Two and three-quarter dimensional meshing

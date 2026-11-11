@@ -513,7 +513,7 @@ pub(crate) fn prepare(ctxs: &[Ctx], setup: Setup) -> Result<Prepared> {
     // again with the cuts.
     let h_ref = levels.first().copied().unwrap_or(0.0);
     let plane = PlaneField { field: ctx.field, frame: *frame, h: h_ref };
-    let settings = decompose::Settings { field: &plane, tol, opts: &ctx.opts.quad };
+    let settings = decompose::Settings { field: &plane, tol, chord: ctx.opts.chordal_tolerance, opts: &ctx.opts.quad };
     let locked = seeded_curves(ctxs, frame, h_ref, &intervals, setup.h_tol, &arr);
     let cut_lines = decompose::cuts(&arr, &used, &locked, &settings)?;
     if !cut_lines.is_empty() {
@@ -542,7 +542,7 @@ pub(crate) fn mesh(ctxs: &[Ctx], prepared: &Prepared, refine: u32) -> Result<(Ra
     };
     let fine = f64::from(1u32 << refine.min(8));
     for c in 0..arr.curves.len() {
-        let (goal, min) = super::curve_goal(ctx.field, &curve3d(c))?;
+        let (goal, min) = super::curve_goal(ctx.field, &curve3d(c), ctx.opts.chordal_tolerance)?;
         ia.var(goal * fine, min);
     }
     let schemes = section::schemes(arr, used, &mut ia);
@@ -581,8 +581,10 @@ pub(crate) fn mesh(ctxs: &[Ctx], prepared: &Prepared, refine: u32) -> Result<(Ra
             }
             Frame::Rotate { .. } => {
                 let path: Vec<P> = (0..=16).map(|k| frame.point([0.0, r_max], lo + (hi - lo) * k as f64 / 16.0)).collect();
-                // Each layer turns by no more than the curves of the cross-section may.
-                edge_divisions(ctx.field, &path)?.max(crate::size::turn_divisions((hi - lo).abs(), super::CURVE_TURN))
+                // The layers divide the circles the cross-section sweeps as curves are divided: the
+                // outermost, the one the chordal tolerance binds most, with its chords within it.
+                let floor = crate::size::arc_divisions(hi - lo, r_max, ctx.opts.chordal_tolerance, super::max_curve_turn(ctx.opts.chordal_tolerance));
+                edge_divisions(ctx.field, &path)?.max(floor)
             }
         };
         if let Some(Some(l)) = seeds.layers.get(layers.len()) {

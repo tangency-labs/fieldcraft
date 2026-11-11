@@ -238,7 +238,7 @@ fn build(ctx: &Ctx, topo: &Topology, refine: u32) -> Result<Raw> {
     let sides: BTreeSet<usize> = topo.rings.iter().flatten().flatten().flat_map(|l| [l.right.0, l.left.0]).collect();
     let fine = f64::from(1u32 << refine.min(8));
     for e in 0..brep.edges.len() {
-        let (goal, min) = super::curve_goal(ctx.field, &brep.edge_points(e, true))?;
+        let (goal, min) = super::curve_goal(ctx.field, &brep.edge_points(e, true), ctx.opts.chordal_tolerance)?;
         // A refined retry refines the cross-section only; the curvature floor holds either way.
         ctx.edge_var(&mut ia, e, if sides.contains(&e) { goal } else { goal * fine }, min);
     }

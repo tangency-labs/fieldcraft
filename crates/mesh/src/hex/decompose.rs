@@ -105,6 +105,8 @@ const ROUNDED: f64 = 0.70;
 pub(crate) struct Settings<'a> {
     pub field: &'a dyn SizeField,
     pub tol: f64,
+    /// The chordal tolerance the curves are divided within ([`super::curve_goal`]).
+    pub chord: f64,
     pub opts: &'a QuadOptions,
 }
 
@@ -167,12 +169,6 @@ impl Poly {
         }
         (curves, starts)
     }
-}
-
-/// The fewest divisions of a curve of the cross-section that keep each piece within
-/// [`super::CURVE_TURN`] of turning, as the section's interval assignment gives it.
-fn turn_floor(c: &[Q]) -> usize {
-    crate::size::turn_divisions(crate::size::turning(c), super::CURVE_TURN)
 }
 
 fn sub(a: Q, b: Q) -> Q {
@@ -548,7 +544,7 @@ fn mesh_score(loops: &[Vec<Vec<Q>>], scheme: Scheme, s: &Settings) -> Option<f64
         for c in lp {
             let l: f64 = c.windows(2).map(|w| len(sub(w[1], w[0]))).sum();
             let mid = c.get(c.len() / 2).copied().unwrap_or([0.0; 2]);
-            let goal = (l / s.size(mid)).max(turn_floor(c) as f64);
+            let goal = (l / s.size(mid)).max(super::curve_floor(c, s.chord) as f64);
             if !(goal.is_finite() && goal <= 1e5) {
                 return None;
             }
@@ -926,7 +922,7 @@ fn assignable(loops: &[Poly], cuts: &[Vec<Q>], s: &Settings) -> bool {
     for curve in &arr.curves {
         let pts: Vec<Q> = curve.points.iter().filter_map(|&p| arr.points.get(p).copied()).collect();
         let length: f64 = pts.windows(2).map(|w| len(sub(w[1], w[0]))).sum();
-        let floor = turn_floor(&pts);
+        let floor = super::curve_floor(&pts, s.chord);
         ia.var((length / s.size(pts.first().copied().unwrap_or([0.0; 2]))).max(floor as f64), floor);
     }
     super::section::schemes(&arr, &used, &mut ia);
@@ -1111,7 +1107,8 @@ fn free_score(loops: &[Poly], s: &Settings) -> f64 {
         let goals: Vec<f64> = curves
             .iter()
             .map(|c| {
-                (c.windows(2).map(|w| len(sub(w[1], w[0]))).sum::<f64>() / s.size(c.first().copied().unwrap_or([0.0; 2]))).max(turn_floor(c) as f64)
+                (c.windows(2).map(|w| len(sub(w[1], w[0]))).sum::<f64>() / s.size(c.first().copied().unwrap_or([0.0; 2])))
+                    .max(super::curve_floor(c, s.chord) as f64)
             })
             .collect();
         if goals.iter().any(|g| !(g.is_finite() && *g <= 1e5)) {
@@ -1228,6 +1225,10 @@ mod tests {
         cuts: usize,
     }
 
+    /// The chordal tolerance at the element size `h` the meshing commands default to: 1e-3 of
+    /// the bounding-box diagonal where the size is a 25th of it.
+    const CHORD_PER_SIZE: f64 = 25e-3;
+
     fn mesh_profile(profile: &Profile, extra: &[Vec<Q>], h: f64) -> Meshed {
         let mut polylines: Vec<(Vec<Q>, usize)> = Vec::new();
         let mut vertices: Vec<Q> = Vec::new();
@@ -1253,7 +1254,7 @@ mod tests {
         let tol = 1e-9;
         let field = UniformSize(h);
         let opts = QuadOptions::default();
-        let settings = Settings { field: &field, tol, opts: &opts };
+        let settings = Settings { field: &field, tol, chord: CHORD_PER_SIZE * h, opts: &opts };
         let filled = |arr: &Arrangement| -> Vec<bool> {
             arr.regions.iter().map(|r| inside(&polys, super::super::layered::interior_point(arr, r).unwrap())).collect()
         };
@@ -1270,7 +1271,7 @@ mod tests {
         let pts = |c: usize| -> Vec<Q> { arr.curves[c].points.iter().map(|&p| arr.points[p]).collect() };
         for c in 0..arr.curves.len() {
             let l: f64 = pts(c).windows(2).map(|w| len(sub(w[1], w[0]))).sum();
-            let floor = turn_floor(&pts(c));
+            let floor = super::super::curve_floor(&pts(c), settings.chord);
             ia.var((l / h).max(floor as f64), floor);
         }
         let schemes = section::schemes(&arr, &used, &mut ia);
@@ -1355,10 +1356,10 @@ mod tests {
     /// from the seam (the curve's one vertex), clockwise, no point on the axes or diagonals. It
     /// gets an O-grid. Before, the best-scored layout (along the axes) left the seam's vertex
     /// inside an arc of a block, whose further cuts no interval assignment fitted, so the block
-    /// fell to the free mesher (smallest corner scaled Jacobian 0.4). The bore now gets at least
-    /// 16 divisions (one per 22.5°) where the size alone gave it 8, so the ring round it grades
-    /// from the bore's 0.8 mm pieces to the block's 4.69 mm and its corners score 0.41 (above 0.5
-    /// with 8): the O-grid is kept, every piece structured.
+    /// fell to the free mesher (smallest corner scaled Jacobian 0.4). At the chordal tolerance the
+    /// meshing commands give it (1e-3 of the assembly's diagonal, 0.117) the Ø4 bore needs 10
+    /// divisions and the O-grid gets 12, its corners scoring 0.58; a fixed 22.5° per piece gave
+    /// it 16, a ring grading from 0.8 mm to the block's 4.69 mm whose corners scored 0.41.
     #[test]
     fn the_clamp_whose_bore_is_one_curve_from_its_seam_gets_an_o_grid() {
         let rim: Vec<Q> = vec![
@@ -1390,7 +1391,7 @@ mod tests {
             w.min(planar_corner(&c, i).1.unwrap())
         });
         let free = m.section.schemes.iter().zip(&m.used).any(|(s, &u)| u && *s == Scheme::Free);
-        assert!(m.cuts >= 4 && !free && worst > 0.4, "{} cuts, free {free}, smallest corner scaled Jacobian {worst}", m.cuts);
+        assert!(m.cuts >= 4 && !free && worst > 0.5, "{} cuts, free {free}, smallest corner scaled Jacobian {worst}", m.cuts);
     }
 
     /// A thin ring of air round a square pedestal (the Pi enclosure's, #397): the opening's sides
@@ -1651,7 +1652,7 @@ mod tests {
         let used: Vec<bool> = arr.regions.iter().map(|r| r.loops.len() == 1).collect();
         let field = UniformSize(2.5);
         let opts = QuadOptions::default();
-        let settings = Settings { field: &field, tol: 1e-9, opts: &opts };
+        let settings = Settings { field: &field, tol: 1e-9, chord: 0.0, opts: &opts };
         let lies_on = |c: &arrangement::Curve, a: Q, b: Q| c.points.iter().all(|&p| seg_dist(arr.points[p], a, b) < 1e-9);
         for (a, b) in [([0.0, 0.0], [40.0, 0.0]), ([0.0, 40.0], [0.0, 0.0])] {
             let locked: Vec<bool> = arr.curves.iter().map(|c| lies_on(c, a, b)).collect();
@@ -1701,7 +1702,7 @@ mod tests {
         let loops = vec![outer, Poly { locked: vec![false; 16], pts: hole, end }];
         let field = UniformSize(2.0);
         let opts = QuadOptions::default();
-        let s = Settings { field: &field, tol: 1e-9, opts: &opts };
+        let s = Settings { field: &field, tol: 1e-9, chord: 0.0, opts: &opts };
         let cut = |k: usize, b: Q| vec![at(k), b];
         // The O-grid: from the hole to the plate's corners.
         let o_grid = vec![cut(2, [10.0, 0.0]), cut(6, [0.0, 0.0]), cut(10, [0.0, 10.0]), cut(14, [10.0, 10.0])];
@@ -1720,7 +1721,7 @@ mod tests {
     fn thin_strips_and_small_pieces_score_low() {
         let field = UniformSize(2.5);
         let opts = QuadOptions::default();
-        let s = Settings { field: &field, tol: 1e-9, opts: &opts };
+        let s = Settings { field: &field, tol: 1e-9, chord: 0.0, opts: &opts };
         let rect = |w: f64, h: f64| vec![corners(&[[0.0, 0.0], [w, 0.0], [w, h], [0.0, h]])];
         let square = score(&rect(10.0, 10.0), &s).unwrap();
         let strip = score(&rect(10.0, 0.3), &s).unwrap();
@@ -1743,7 +1744,7 @@ mod tests {
         let disk = vec![Poly { locked: vec![false; n], pts, end }];
         let field = UniformSize(2.5);
         let opts = QuadOptions::default();
-        let s = Settings { field: &field, tol: 1e-9, opts: &opts };
+        let s = Settings { field: &field, tol: 1e-9, chord: 0.0, opts: &opts };
         let (cuts, _) = decompose_region(&disk, &s);
         assert!(cuts.is_empty(), "{cuts:?}");
     }
@@ -1753,7 +1754,7 @@ mod tests {
         let arr = arrangement::build(&[], &[(vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]], 0)], 1e-9, 0.0).unwrap();
         let field = UniformSize(1.0);
         let opts = QuadOptions::default();
-        assert!(cuts(&arr, &[true], &[], &Settings { field: &field, tol: f64::NAN, opts: &opts }).is_err());
+        assert!(cuts(&arr, &[true], &[], &Settings { field: &field, tol: f64::NAN, chord: 0.0, opts: &opts }).is_err());
         let _ = PI;
     }
 }

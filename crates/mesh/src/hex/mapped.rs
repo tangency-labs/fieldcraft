@@ -154,7 +154,7 @@ pub(crate) fn mesh(ctx: &Ctx) -> Result<Raw> {
     let groups = cube.groups;
     let mut ia = Intervals::default();
     for e in 0..brep.edges.len() {
-        let (goal, min) = super::curve_goal(ctx.field, &brep.edge_points(e, true))?;
+        let (goal, min) = super::curve_goal(ctx.field, &brep.edge_points(e, true), ctx.opts.chordal_tolerance)?;
         ctx.edge_var(&mut ia, e, goal, min);
     }
     for g in &groups {
