@@ -1,6 +1,63 @@
 {
   "note": "The corpus part's accepted results, written by `cargo xtask corpus --bless` (docs/meshing/corpus.md). A stage whose outcome changes, or a value outside its band, fails the corpus run and CI's heavy job. `platforms` lists what each platform blessed measured differently.",
   "platforms": {
+    "linux-x86_64": {
+      "stages": {},
+      "values": {
+        "boundary.vertices": {
+          "band": 0,
+          "value": 610
+        },
+        "build.triangles": {
+          "band": 0,
+          "value": 1216
+        },
+        "cdt.flat": {
+          "band": 0,
+          "value": 0
+        },
+        "cdt.steiner": {
+          "band": 0,
+          "value": 106
+        },
+        "cdt.tets": {
+          "band": 0,
+          "value": 2717
+        },
+        "hex.hex20_min_sj": {
+          "band": 8.452104794139487e-10,
+          "value": 0.8442104794139487
+        },
+        "hex.hex8_min_sj": {
+          "band": 8.452104794139476e-10,
+          "value": 0.8442104794139476
+        },
+        "octree.min_sj": {
+          "band": 5.365312099761965e-10,
+          "value": 0.5355312099761964
+        },
+        "quality.max_dihedral_deg": {
+          "band": 1.3832789330196645e-7,
+          "value": 138.32689330196644
+        },
+        "quality.min_dihedral_deg": {
+          "band": 3.5054094417079024e-8,
+          "value": 35.05309441707902
+        },
+        "quality.min_radius_ratio": {
+          "band": 3.680960840519088e-10,
+          "value": 0.36709608405190874
+        },
+        "quality.slivers_cdt": {
+          "band": 0,
+          "value": 1546
+        },
+        "quality.tets": {
+          "band": 0,
+          "value": 8290
+        }
+      }
+    },
     "macos-aarch64": {
       "stages": {},
       "values": {}
@@ -65,12 +122,12 @@
       "value": 3200
     },
     "hex.hex20_min_sj": {
-      "band": 8.387514088106333e-10,
-      "value": 0.8377514088106333
+      "band": 8.552652754303751e-10,
+      "value": 0.854265275430375
     },
     "hex.hex8_min_sj": {
-      "band": 8.387514088106322e-10,
-      "value": 0.8377514088106321
+      "band": 8.552652754303766e-10,
+      "value": 0.8542652754303766
     },
     "octree.hexes": {
       "band": 0,
