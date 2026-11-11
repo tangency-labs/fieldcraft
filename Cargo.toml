@@ -74,7 +74,7 @@ pollster = "1.0"
 # VectorCraft. MIT OR Apache-2.0.
 craft-ui = { git = "https://github.com/storytold/craft-libs", rev = "5c874d51eeb3de70e735c8ce87a59a7dedd47675" }
 # native file pickers (the desktop app only; the UI crate takes them as services)
-rfd = "0.17"
+rfd = "0.18"
 
 # Geometry: SolidCraft's B-rep kernel (MIT OR Apache-2.0), pinned at a commit on its main branch
 # (5e33828, 2026-11-11, after v0.40.0-rc.4; docs/architecture.md, "SolidCraft pin"). Its
