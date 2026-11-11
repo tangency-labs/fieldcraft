@@ -129,7 +129,7 @@ pub fn hex_mesh_cells(cells: &[Cell], field: &dyn SizeField, opts: &HexOptions) 
         .map(|(b, name)| mapped::recognize(b).map_err(|e| Error::Unsupported(format!("cell `{name}`: {}", super::plain(&e)))))
         .collect::<Result<_>>()?;
     let topo = Topology::new(&breps, &cubes, &names, opts.chordal_tolerance)?;
-    let divisions = topo.intervals(&ctxs, &cubes, field)?;
+    let divisions = topo.intervals(&ctxs, &cubes, field, opts.chordal_tolerance)?;
     let mut builder =
         Builder { topo: &topo, ctxs: &ctxs, cubes: &cubes, divisions: &divisions, field, opts, nodes: Vec::new(), edge_nodes: Vec::new() };
     let (raw, element_cell, blocks) = builder.build()?;
@@ -445,10 +445,10 @@ impl Topology {
 
     /// How every edge is divided, all cells together; graded edges get the counts their
     /// grading asks for.
-    fn intervals(&self, ctxs: &[Ctx], cubes: &[Cube], field: &dyn SizeField) -> Result<Vec<Division>> {
+    fn intervals(&self, ctxs: &[Ctx], cubes: &[Cube], field: &dyn SizeField, chord: f64) -> Result<Vec<Division>> {
         let polylines: Vec<Vec<P>> = self.edges.iter().map(|e| self.polyline(ctxs, e)).collect::<Result<_>>()?;
         let (goals, mins): (Vec<f64>, Vec<usize>) =
-            polylines.iter().map(|p| super::curve_goal(field, p)).collect::<Result<Vec<_>>>()?.into_iter().unzip();
+            polylines.iter().map(|p| super::curve_goal(field, p, chord)).collect::<Result<Vec<_>>>()?.into_iter().unzip();
         // The seed on each edge (a shared edge is one edge, so its seed holds in every cell it
         // bounds), oriented from `a` to `b`.
         let seeds: Vec<Option<(&EdgeSeed, bool)>> = self

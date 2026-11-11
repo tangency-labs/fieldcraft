@@ -808,10 +808,11 @@ fn seamed_tube(ri: f64, ro: f64, h: f64, n: usize) -> (BoundarySurface, Vec<Opti
     (g.surface(&[vec![id(0, 0), id(2, 0)], vec![id(1, 0), id(3, 0)]]), surfaces)
 }
 
-/// A whole circle in one edge, as a kernel gives a seamed tube's ends, is divided into at least
-/// 16 pieces (22.5° each) however coarse the size: at a size of a sixth of the circumference it
-/// got 6, a hexagon whose prism lost 17 % of the tube. Swept, extruded or revolved, the tube's
-/// volume is now the exact one within the 16-gon's chords.
+/// A whole circle in one edge, as a kernel gives a seamed tube's ends, is divided by its chordal
+/// tolerance however coarse the size: at the sagitta of a 16-gon's chords it gets at least 16
+/// pieces, where at a size of a sixth of the circumference it got 6, a hexagon whose prism lost
+/// 17 % of the tube. Swept, extruded or revolved, the tube's volume is now the exact one within
+/// the 16-gon's chords.
 #[test]
 fn a_whole_circle_gets_sixteen_divisions_at_a_coarse_size() {
     use std::f64::consts::PI;
@@ -821,7 +822,7 @@ fn a_whole_circle_gets_sixteen_divisions_at_a_coarse_size() {
     // The 16-gon keeps (16 / 2π) sin(2π / 16) of the circle's area.
     let chords = 1.0 - 16.0 / (2.0 * PI) * (2.0 * PI / 16.0).sin();
     for method in [HexMethod::Sweep, HexMethod::Extrude, HexMethod::Revolve] {
-        let opts = HexOptions { method, chordal_tolerance: ro * (1.0 - (PI / 64.0).cos()), ..HexOptions::default() };
+        let opts = HexOptions { method, chordal_tolerance: ro * (1.0 - (PI / 16.0).cos()), ..HexOptions::default() };
         let m = hex_mesh(&s, &faces, &UniformSize(2.0 * PI * 0.75 / 6.0), &opts).unwrap();
         assert!(m.report.gate.passed(), "{method:?}");
         let outer: std::collections::BTreeSet<[u64; 2]> = m
