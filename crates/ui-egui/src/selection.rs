@@ -290,18 +290,21 @@ pub fn items_from_params(p: &Value) -> Result<Vec<Item>, String> {
 }
 
 /// A drawn geometry surface's names: its body and, by face tag, its faces; by edge index, its
-/// B-rep edges ([`DisplayMesh::curves`]); its B-rep vertices with their points.
+/// B-rep edges ([`DisplayMesh::curves`]) and the faces each bounds; its B-rep vertices with their
+/// points.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct BodyNames {
     pub name: String,
     pub faces: Vec<String>,
     pub edges: Vec<String>,
+    /// By edge index, the faces it bounds, by face tag.
+    pub edge_faces: Vec<Vec<u32>>,
     pub vertices: Vec<(String, Vec3)>,
 }
 
 impl BodyNames {
     /// The reference to face `face` of this body, when it has a name.
-    fn face(&self, face: u32) -> Option<GeometryRef> {
+    pub fn face(&self, face: u32) -> Option<GeometryRef> {
         GeometryRef::face(self.name.clone(), self.faces.get(face as usize)?.clone()).ok()
     }
 
@@ -313,6 +316,11 @@ impl BodyNames {
     /// The reference to B-rep edge `edge` of this body, when it has a name.
     pub fn edge(&self, edge: u32) -> Option<GeometryRef> {
         GeometryRef::new(self.name.clone(), Entity::Edge(self.edges.get(edge as usize)?.clone())).ok()
+    }
+
+    /// The faces B-rep edge `edge` of this body bounds (those with names).
+    pub fn faces_of_edge(&self, edge: u32) -> Vec<GeometryRef> {
+        self.edge_faces.get(edge as usize).into_iter().flatten().filter_map(|&f| self.face(f)).collect()
     }
 }
 
@@ -874,7 +882,7 @@ pub fn target(id: &str, params: &Value) -> Option<Target> {
         "geometry.datum.point" | "geometry.datum.point.edit" => Some(Target::DatumPoint),
         "mesh.cells" => Some(Target::Bodies),
         "mesh.hex.extrude" => Some(Target::ExtrudeFaces),
-        "mesh.node.relax" | "mesh.size.set" => Some(Target::Faces),
+        "mesh.node.relax" | "mesh.size.set" | "mesh.seed.face" => Some(Target::Faces),
         "model.boundary_condition.create" | "model.boundary_condition.edit" => Some(Target::TargetSet),
         "model.section.create" | "model.section.edit" | "model.coupling.create" | "model.coupling.edit" | "interaction.rigid_wall" => {
             Some(Target::Set)
@@ -1233,8 +1241,13 @@ mod tests {
         // Its one B-rep edge: the diagonal between the two faces.
         display.add_curves(&[vec![square[0], square[2]]]);
         display.add_surface(&square, &[[0, 1, 2], [0, 2, 3]], &[0, 1]);
-        let names =
-            [BodyNames { name: "Plate".into(), faces: vec!["F1:a".into(), "F1:b".into()], edges: vec!["F1:a|F1:b".into()], vertices: Vec::new() }];
+        let names = [BodyNames {
+            name: "Plate".into(),
+            faces: vec!["F1:a".into(), "F1:b".into()],
+            edges: vec!["F1:a|F1:b".into()],
+            edge_faces: vec![vec![0, 1]],
+            vertices: Vec::new(),
+        }];
         let model = Model::default();
         let index = Index::new(&model, &display);
         let p = Picker { display: &display, names: &names, model: &model, index: &index, elements: false, geometry: true, curves: true };

@@ -24,7 +24,7 @@ pub enum Target {
     Surface(String),
     /// A model definition, datum or partition.
     Def(Def, String),
-    /// The seed on a design edge.
+    /// The seed on a design edge or face.
     Seed(fieldcraft_model::GeometryRef),
 }
 
@@ -97,8 +97,8 @@ pub fn show(app: &ModelApp, ui: &mut egui::Ui, target: &Target) -> Option<Action
             entry(ui, true, label, &tip, Action::Suppress(!suppressed));
         }
     }
-    if let Target::Seed(_) = target {
-        entry(ui, true, "Edit…", "mesh.seed.edge", Action::Edit);
+    if let Target::Seed(on) = target {
+        entry(ui, true, "Edit…", seed_command(on), Action::Edit);
     }
     if let Some(item) = target.item() {
         if app.session.shows(item.kind, &item.name) {
@@ -161,11 +161,12 @@ pub fn apply(app: &mut ModelApp, target: Target, action: Action) {
                 app.select_definition(Some((*def, name.clone())));
                 app.open_form(&command, params);
             }
-            if let Target::Seed(edge) = target
-                && let Some(params) = app.seed(&edge).and_then(|s| seed_params(s, app.session.units()))
+            if let Target::Seed(on) = target
+                && let Some(params) = app.seed(&on).and_then(|s| seed_params(s, app.session.units()))
             {
-                app.select_seed(edge);
-                app.open_form("mesh.seed.edge", params);
+                let command = seed_command(&on);
+                app.select_seed(on);
+                app.open_form(command, params);
             }
             Ok(Value::Null)
         }
@@ -201,7 +202,7 @@ pub fn apply(app: &mut ModelApp, target: Target, action: Action) {
                 app.ask_delete(def, &name);
                 Ok(Value::Null)
             }
-            Target::Seed(edge) => app.run("mesh.seed.clear", json!({"edges": [edge]})),
+            Target::Seed(on) => app.run("mesh.seed.clear", json!({seed_key(&on): [on]})),
             Target::Body(_) | Target::Surface(_) => Ok(Value::Null),
         },
     };
@@ -218,13 +219,24 @@ fn suppression(app: &ModelApp, kind: Def, name: &str) -> Option<(&'static str, b
     }
 }
 
-/// `mesh.seed.edge`'s parameters that make `seed` as it is, in `units`: its edit form, filled in.
+/// The command that seeds what `on` names: `mesh.seed.face` for a face, else `mesh.seed.edge`.
+pub fn seed_command(on: &fieldcraft_model::GeometryRef) -> &'static str {
+    if matches!(on.entity, fieldcraft_model::Entity::Face(_)) { "mesh.seed.face" } else { "mesh.seed.edge" }
+}
+
+/// The parameter [`seed_command`] and `mesh.seed.clear` name `on` in: `faces` or `edges`.
+fn seed_key(on: &fieldcraft_model::GeometryRef) -> String {
+    format!("{}s", on.entity.kind())
+}
+
+/// The parameters of [`seed_command`] that make `seed` as it is, in `units`: its edit form,
+/// filled in.
 pub fn seed_params(seed: &fieldcraft_model::Seed, units: &fieldcraft_model::DisplaySystem) -> Option<Value> {
     let mut v = serde_json::to_value(seed).ok()?;
     let o = v.as_object_mut()?;
-    let edge = o.remove("edge")?;
-    o.insert("edges".into(), json!([edge]));
-    fieldcraft_engine::units::shown_params("mesh.seed.edge", &v, units).ok()
+    let on = o.remove(seed.on.entity.kind())?;
+    o.insert(seed_key(&seed.on), json!([on]));
+    fieldcraft_engine::units::shown_params(seed_command(&seed.on), &v, units).ok()
 }
 
 /// The question a deletion asks ([`crate::files::Prompt::Delete`]).
@@ -454,6 +466,28 @@ mod tests {
         let mut out = ctx.run_ui(Default::default(), |ui| app.logic(ui.ctx()));
         out.textures_delta.clear();
         assert!(app.selected_seed.is_none(), "a deleted seed is no longer selected");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A face seed is described, edited with Seed Faces and deleted like an edge seed.
+    #[test]
+    fn face_seeds_are_edited_and_deleted_with_their_own_command() {
+        let (mut app, dir) = plate();
+        let bodies = app.run("geometry.bodies", json!({})).unwrap();
+        let face = json!({"body": bodies[0]["name"], "face": bodies[0]["faces"][0]["name"]});
+        app.run("mesh.seed.face", json!({"faces": [face], "size": 2.5, "bias": {"ratio": 3, "toward": "both"}})).unwrap();
+        let seed = app.session.model.seeds()[0].clone();
+        assert!(seed.on_face());
+        let rows = crate::describe::seed_rows(&seed, app.session.units());
+        assert_eq!(rows[0].0, "Face", "{rows:?}");
+        apply(&mut app, Target::Seed(seed.on.clone()), Action::Edit);
+        let d = app.dialog.as_ref().unwrap();
+        assert_eq!(d.command, "mesh.seed.face");
+        let params: Value = serde_json::from_str(&d.text).unwrap();
+        assert_eq!((params["faces"][0].clone(), params["bias"]["toward"].clone()), (face, json!("both")), "{params}");
+        app.close_dialog();
+        apply(&mut app, Target::Seed(seed.on.clone()), Action::Delete);
+        assert!(app.session.model.seeds().is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -358,8 +358,8 @@ fn properties(app: &mut ModelApp, ui: &mut egui::Ui, kind: Def, name: &str) {
     }
 }
 
-/// The selected seed: its edge, divisions, bias and constraint, with Edit (the Seed Edges form,
-/// filled in) and Delete (`mesh.seed.clear`).
+/// The selected seed: its edge or face, divisions, bias and constraint, with Edit (the Seed Edges
+/// or Seed Faces form, filled in) and Delete (`mesh.seed.clear`).
 fn seed_card(app: &mut ModelApp, ui: &mut egui::Ui, edge: fieldcraft_model::GeometryRef) {
     let Some(seed) = app.seed(&edge) else { return };
     let rows = crate::describe::seed_rows(seed, app.session.units());
@@ -370,7 +370,7 @@ fn seed_card(app: &mut ModelApp, ui: &mut egui::Ui, edge: fieldcraft_model::Geom
     ui.add_space(6.0);
     let (mut edit, mut delete) = (false, false);
     ui.horizontal(|ui| {
-        edit = kit::button(ui, "Edit…", kit::Button::Normal).backing_on_hover_text("mesh.seed.edge").clicked();
+        edit = kit::button(ui, "Edit…", kit::Button::Normal).backing_on_hover_text(crate::menu::seed_command(&edge)).clicked();
         delete = kit::button(ui, "Delete", kit::Button::Normal).backing_on_hover_text("mesh.seed.clear (undo brings it back)").clicked();
     });
     let target = crate::menu::Target::Seed(edge);

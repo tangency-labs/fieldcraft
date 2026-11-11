@@ -282,7 +282,11 @@ pub fn handle(app: &mut ModelApp, ctx: &egui::Context, req: &ControlRequest) -> 
             "busy": app.busy(),
             "job": app.loading.as_ref().map(|l| l.to_json()),
             "solve": solve_json(app),
-            "selected": app.selected.as_ref().map(|(k, n)| json!({"kind": k, "name": n})).or_else(|| app.selected_seed.as_ref().map(|e| json!({"kind": "seed", "edge": e}))),
+            "selected": app.selected.as_ref().map(|(k, n)| json!({"kind": k, "name": n})).or_else(|| app.selected_seed.as_ref().map(|on| {
+                let mut v = json!({"kind": "seed"});
+                v[on.entity.kind()] = json!(on);
+                v
+            })),
             "browser": crate::browser::describe(app),
             "nav": app.nav,
             "layout": app.layout.iter().map(|(k, r)| (k.to_string(), json!([r.left(), r.top(), r.width(), r.height()]))).collect::<serde_json::Map<String, Value>>(),

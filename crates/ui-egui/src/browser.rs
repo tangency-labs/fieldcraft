@@ -680,14 +680,15 @@ fn item_icon(m: &Model, kind: Def, name: &str) -> (&'static str, bool) {
     }
 }
 
-/// A seed in a few words: `8 exact`, `2.5 min, bias 4 end`.
+/// A seed in a few words: `8 exact`, `size 2.5 min, bias 4 end`, `face, 8 exact`.
 fn seed_note(s: &fieldcraft_model::Seed) -> String {
     let what = match s.divisions {
         fieldcraft_model::Divisions::Count(n) => format!("{n}"),
         fieldcraft_model::Divisions::Size(h) => format!("size {h}"),
     };
     let bias = s.bias.map(|b| format!(", bias {} {}", b.ratio, json_name(&b.toward))).unwrap_or_default();
-    format!("{what} {}{bias}", s.constraint.name())
+    let face = if s.on_face() { "face, " } else { "" };
+    format!("{face}{what} {}{bias}", s.constraint.name())
 }
 
 fn json_name<T: serde::Serialize>(v: &T) -> String {
@@ -928,8 +929,8 @@ fn rows(app: &mut ModelApp, ui: &mut egui::Ui, acts: &mut Vec<Act>) {
                 &Row { depth: 2, swatch: Some(t.element(kind)), label: kind.name(), note: Some(format!("{n}")), ..Default::default() },
             );
         }
-        // Edge seeds: a click selects the seed (its properties on the right) and its edge in the
-        // viewport; a double click or the menu edits or deletes it.
+        // Seeds on edges and faces: a click selects the seed (its properties on the right) and its
+        // edge or face in the viewport; a double click or the menu edits or deletes it.
         let seeds: Vec<(fieldcraft_model::GeometryRef, String)> = app.session.model.seeds().iter().map(|s| (s.on.clone(), seed_note(s))).collect();
         if !seeds.is_empty() {
             let r = draw_row(

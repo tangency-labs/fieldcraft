@@ -94,9 +94,10 @@ pub fn build(display: &DisplayMesh, style: Style, show: Show, t: &Tokens) -> Sce
 /// Size of a seed's tick (points).
 const SEED_TICK: f64 = 6.0;
 
-/// Draw the model's edge seeds as ticks at the nodes they put along their edges (the drawn
-/// bodies' B-rep edges, [`DisplayMesh::curves`], named by `names`): the seeded count, spaced by
-/// the bias, so a grading shows as ticks crowding toward an end. Where the mesh drawn has
+/// Draw the model's seeds as ticks at the nodes they put along their edges (the drawn bodies'
+/// B-rep edges, [`DisplayMesh::curves`], named by `names`): on each edge the seed that decides it
+/// ([`fieldcraft_model::Model::edge_seed`]: its own, else its seeded faces'), the seeded count,
+/// spaced by the bias, so a grading shows as ticks crowding toward an end. Where the mesh drawn has
 /// another number of element edges along the edge ([`meshed_divisions`]) the ticks are in the
 /// error colour, with a label such as `6 seeded, 20 meshed` (#342).
 pub fn seeds(s: &mut Scene, model: &fieldcraft_model::Model, names: &[crate::selection::BodyNames], display: &DisplayMesh, t: &Tokens) {
@@ -106,14 +107,17 @@ pub fn seeds(s: &mut Scene, model: &fieldcraft_model::Model, names: &[crate::sel
     let color = rgb(t.warm);
     for run in display.curves.chunk_by(|a, b| a.body == b.body && a.edge == b.edge) {
         let Some(first) = run.first() else { continue };
-        let Some(edge) = names.get(first.body as usize).and_then(|b| b.edge(first.edge)) else { continue };
-        let Some(seed) = model.seeds().iter().find(|seed| seed.on.selects(&edge)) else { continue };
+        let Some(body) = names.get(first.body as usize) else { continue };
+        let Some(edge) = body.edge(first.edge) else { continue };
         let lengths: Vec<f64> = run.iter().map(|c| c.a.dist(c.b)).collect();
         let total: f64 = lengths.iter().sum();
         if !(total > 0.0 && total.is_finite()) {
             continue;
         }
-        let count = seed.count(total);
+        // The scene is in metres; seeds, as the geometry, in millimetres.
+        let length = fieldcraft_engine::units::to_geometry_length(total);
+        let Some(seed) = model.edge_seed(&edge, &body.faces_of_edge(first.edge), length) else { continue };
+        let count = seed.count(length);
         let divisions = meshed_divisions(display, run, total);
         let color = if divisions > 0 && divisions != count as usize {
             let mid = run.get(run.len() / 2).map_or(first.a, |c| (c.a + c.b) * 0.5);
@@ -228,7 +232,13 @@ mod tests {
         let mut d = DisplayMesh::default();
         // Two edges of 10 mm; the first in two segments.
         d.add_curves(&[vec![[0.0; 3], [4.0, 0.0, 0.0], [10.0, 0.0, 0.0]], vec![[0.0; 3], [0.0, 10.0, 0.0]]]);
-        let names = [crate::selection::BodyNames { name: "B".into(), faces: vec![], edges: vec!["a|b".into(), "a|c".into()], vertices: Vec::new() }];
+        let names = [crate::selection::BodyNames {
+            name: "B".into(),
+            faces: vec![],
+            edges: vec!["a|b".into(), "a|c".into()],
+            edge_faces: Vec::new(),
+            vertices: Vec::new(),
+        }];
         let mut m = Model::default();
         let edge = GeometryRef::new("B", Entity::Edge("a|b".into())).unwrap();
         m.set_seed(Seed::new(edge, Divisions::Count(4), Some(Bias { ratio: 8.0, toward: BiasToward::Start }), SeedConstraint::Exact).unwrap())
@@ -268,6 +278,36 @@ mod tests {
         let mut s = Scene::default();
         seeds(&mut s, &m, &names, &mesh(4), &Tokens::dark());
         assert!(s.labels.is_empty(), "the mesh follows the seed");
+    }
+
+    /// A face seed ticks every edge of its face, each by its own length in millimetres (the scene
+    /// is in metres), and an edge's own seed in its place.
+    #[test]
+    fn face_seeds_draw_ticks_on_every_edge_of_the_face() {
+        use fieldcraft_model::{Divisions, Entity, GeometryRef, Seed, SeedConstraint};
+        let mut d = DisplayMesh::default();
+        // Edges of 10 mm and 5 mm, both bounding face `a`; a third bounds `b` and `c` only.
+        d.add_curves(&[vec![[0.0; 3], [0.01, 0.0, 0.0]], vec![[0.0; 3], [0.0, 0.005, 0.0]], vec![[0.0; 3], [0.0, 0.0, 0.01]]]);
+        let names = [crate::selection::BodyNames {
+            name: "B".into(),
+            faces: vec!["a".into(), "b".into(), "c".into()],
+            edges: vec!["a|b".into(), "a|c".into(), "b|c".into()],
+            edge_faces: vec![vec![0, 1], vec![0, 2], vec![1, 2]],
+            vertices: Vec::new(),
+        }];
+        let mut m = Model::default();
+        m.set_seed(Seed::new(GeometryRef::face("B", "a").unwrap(), Divisions::Size(2.5), None, SeedConstraint::Exact).unwrap()).unwrap();
+        let ticks = |m: &Model| {
+            let mut s = Scene::default();
+            seeds(&mut s, m, &names, &d, &Tokens::dark());
+            let along = |axis: usize| s.points.iter().filter(|p| [p.p.x, p.p.y, p.p.z][axis] > 0.0).count();
+            (along(0), along(1), along(2))
+        };
+        // 4 and 2 divisions: 4 and 2 ticks past the shared corner.
+        assert_eq!(ticks(&m), (4, 2, 0));
+        let edge = GeometryRef::new("B", Entity::Edge("a|c".into())).unwrap();
+        m.set_seed(Seed::new(edge, Divisions::Count(5), None, SeedConstraint::Exact).unwrap()).unwrap();
+        assert_eq!(ticks(&m), (4, 5, 0));
     }
 
     /// Over the mesh the geometry's outline is drawn along the element edges on geometry edges,
