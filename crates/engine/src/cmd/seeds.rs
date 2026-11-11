@@ -1,9 +1,14 @@
-//! Edge seeds: `mesh.seed.edge` sets a count or a size (with bias and constraint) on design
-//! edges, `mesh.seed.clear` removes seeds and `mesh.seed.list` lists them with the count each
-//! gives on its edge. Seeds live in the model (`fieldcraft_model::seeds`), are saved with it, and
-//! the meshers honour them.
+//! Seeds: `mesh.seed.edge` sets a count or a size (with bias and constraint) on design edges,
+//! `mesh.seed.face` on every edge bounding design faces, `mesh.seed.clear` removes seeds and
+//! `mesh.seed.list` lists them with the count each gives on its edges. Seeds live in the model
+//! (`fieldcraft_model::seeds`), are saved with it, and the meshers honour them: a face seed is
+//! resolved to its edges by the face's persistent name each time a mesher runs, and a seed on an
+//! edge wins over a face's ([`edge_seeds`]).
 
-use fieldcraft_geometry::{Design, Edge};
+use std::collections::BTreeMap;
+
+use fieldcraft_geometry::{Design, Edge, Shape};
+use fieldcraft_mesh::seeds::EdgeSeed;
 use fieldcraft_model::{Bias, Divisions, Entity, GeometryRef, Seed, SeedConstraint};
 use serde_json::{Value, json};
 
@@ -11,23 +16,33 @@ use super::opt;
 use crate::requirement::Requirement;
 use crate::{CommandKind, CommandSpec, EngineError, Result, Session};
 
-/// Most edges one command names.
-const MAX_EDGES: usize = 10_000;
+/// Most edges or faces one command names.
+const MAX_REFS: usize = 10_000;
 
 pub const SEED_EDGE: CommandSpec = CommandSpec {
     id: "mesh.seed.edge",
     label: "Seed Edges",
-    params: r#"{"edges": [{"body": "Body1", "edge": "F2:side:hi|F2:top"}, …], "count": 8 | "size": 2.5, "bias"?: {"ratio": 4, "toward": "start" | "end" | "both"}, "constraint"?: "exact" (default) | "min" | "free"} — seeds design edges (persistent edge names, geometry.bodies): `count` divisions, or `size` (the edge's length over it, rounded up). `bias` grades the elements geometrically, the largest `ratio` times the smallest, small at the edge's start, end or both ends. `constraint`: "exact" keeps the count (a mesher whose other edges cannot match refuses, naming the conflicting edges), "min" keeps at least it, "free" makes it a goal. Replaces a seed the edge had; an edge name without its `~k` number seeds every edge of that name. The hex meshers (sweep, mapped, blocks, cells) use the counts and spacing; the tet mesher uses the spacing on the edge and grades its size field from it"#,
+    params: r#"{"edges": [{"body": "Body1", "edge": "F2:side:hi|F2:top"}, …], "count": 8 | "size": 2.5, "bias"?: {"ratio": 4, "toward": "start" | "end" | "both"}, "constraint"?: "exact" (default) | "min" | "free"} — seeds design edges (persistent edge names, geometry.bodies): `count` divisions, or `size` (the edge's length over it, rounded up). `bias` grades the elements geometrically, the largest `ratio` times the smallest, small at the edge's start, end or both ends. `constraint`: "exact" keeps the count (a mesher whose other edges cannot match refuses, naming the conflicting edges), "min" keeps at least it, "free" makes it a goal. Replaces a seed the edge had; an edge name without its `~k` number seeds every edge of that name. A seed on an edge wins over the seeds of the faces it bounds (mesh.seed.face). The hex meshers (sweep, mapped, blocks, cells) use the counts and spacing; the tet mesher uses the spacing on the edge and grades its size field from it"#,
     form: Some(super::forms::SEED_EDGE),
     kind: CommandKind::Model,
     requires: &[Requirement::Design],
     run: seed_edge,
 };
 
+pub const SEED_FACE: CommandSpec = CommandSpec {
+    id: "mesh.seed.face",
+    label: "Seed Faces",
+    params: r#"{"faces": [{"body": "Body1", "face": "F2:top"}, …], "count": 8 | "size": 2.5, "bias"?: {"ratio": 4, "toward": "both"}, "constraint"?: "exact" (default) | "min" | "free"} — seeds every edge bounding design faces (persistent face names, geometry.bodies; a name without its `#k` number takes every piece) as mesh.seed.edge seeds one: `count` divisions on each edge, or `size` (each edge's length over it, rounded up); `bias` grades toward both ends of each edge only (an edge's start and end are its own curve's: seed the edge for a one-sided grading); `constraint` as mesh.seed.edge's. Resolved by the face's name each time a mesher runs, so it follows the design through edits that keep the name. A seed on an edge wins over a face's, also across bodies on an edge they share (a partition's cut); of two seeded faces sharing an edge, the one giving it more divisions wins. The reply and mesh.seed.list give each edge's count and, where another seed of its body decides it, `overridden_by` (that seed and its count). Replaces a seed the face had. A size control on a face (mesh.size.set) sets a graded element size over the face instead"#,
+    form: Some(super::forms::SEED_FACE),
+    kind: CommandKind::Model,
+    requires: &[Requirement::Design],
+    run: seed_face,
+};
+
 pub const SEED_CLEAR: CommandSpec = CommandSpec {
     id: "mesh.seed.clear",
     label: "Clear Seeds",
-    params: r#"{"edges"?: [{"body", "edge"}, …]} — removes the seeds on these edges (by the names they were seeded with), or every seed"#,
+    params: r#"{"edges"?: [{"body", "edge"}, …], "faces"?: [{"body", "face"}, …]} — removes the seeds on these edges and faces (by the names they were seeded with), or, with neither, every seed"#,
     form: Some(super::forms::SEED_CLEAR),
     kind: CommandKind::Model,
     requires: &[Requirement::Seed],
@@ -37,79 +52,150 @@ pub const SEED_CLEAR: CommandSpec = CommandSpec {
 pub const SEED_LIST: CommandSpec = CommandSpec {
     id: "mesh.seed.list",
     label: "Seeds",
-    params: "{} — the edge seeds, each with the edges of the open design it seeds, their lengths and the count it gives each (`stale`: the design has no such edge)",
+    params: "{} — the seeds on edges and faces, each with the edges of the open design it seeds, their lengths and the count it gives each (a face seed's edges with `overridden_by` where another seed decides them; `stale`: the design has no such edge or face)",
     form: Some(&[]),
     kind: CommandKind::Model,
     requires: &[],
     run: seed_list,
 };
 
-/// The `edges` parameter: a list of edge references.
-fn edge_refs(p: &Value, required: bool) -> Result<Option<Vec<GeometryRef>>> {
-    let refs: Option<Vec<GeometryRef>> = opt(p, "edges")?;
+/// The `edges` or `faces` parameter (`key`, `kind` plural): a list of references to entities of
+/// that kind.
+fn refs(p: &Value, kind: &str, required: bool) -> Result<Option<Vec<GeometryRef>>> {
+    let key = format!("{kind}s");
+    let key = key.as_str();
+    let refs: Option<Vec<GeometryRef>> = opt(p, key)?;
     let Some(refs) = refs else {
-        return if required { Err(EngineError::Params("`edges` is required: a list of {body, edge}".into())) } else { Ok(None) };
+        return if required { Err(EngineError::Params(format!("`{key}` is required: a list of {{body, {kind}}}"))) } else { Ok(None) };
     };
-    if refs.is_empty() || refs.len() > MAX_EDGES {
-        return Err(EngineError::Params(format!("`edges` must list 1 to {MAX_EDGES} edges")));
+    if refs.is_empty() || refs.len() > MAX_REFS {
+        return Err(EngineError::Params(format!("`{key}` must list 1 to {MAX_REFS} {key}")));
     }
-    if let Some(r) = refs.iter().find(|r| !matches!(r.entity, Entity::Edge(_))) {
-        return Err(EngineError::Params(format!("`edges` lists the {r}; name edges as {{body, edge}}")));
+    if let Some(r) = refs.iter().find(|r| r.entity.kind() != kind) {
+        return Err(EngineError::Params(format!("`{key}` lists the {r}; name {key} as {{body, {kind}}}")));
     }
     Ok(Some(refs))
 }
 
-/// The edges of the design a reference selects (its `~k` pieces too).
-pub(crate) fn seeded_edges(design: &Design, r: &GeometryRef) -> Result<Vec<Edge>> {
-    let Some(body) = design.body(&r.body) else { return Ok(Vec::new()) };
-    Ok(body.edges()?.into_iter().filter(|e| GeometryRef::new(r.body.clone(), Entity::Edge(e.name.clone())).is_ok_and(|g| r.selects(&g))).collect())
+/// The reference to face `index` of `body`, when it has a name.
+fn face_ref(body: &Shape, index: u32) -> Option<GeometryRef> {
+    GeometryRef::face(body.name.clone(), body.faces().get(index as usize)?.name.clone()).ok()
 }
 
-/// Every seed on the open design's edges, as the meshers take them. A mesher matches them to its
-/// own curves by position, so a seed on an edge two partition cells share holds in both.
-pub(crate) fn edge_seeds(s: &Session) -> Result<Vec<fieldcraft_mesh::seeds::EdgeSeed>> {
+/// The faces `edge` of `body` bounds.
+fn edge_faces(body: &Shape, edge: &Edge) -> Vec<GeometryRef> {
+    edge.faces.iter().filter_map(|&f| face_ref(body, f)).collect()
+}
+
+fn edge_ref(body: &Shape, edge: &Edge) -> Option<GeometryRef> {
+    GeometryRef::new(body.name.clone(), Entity::Edge(edge.name.clone())).ok()
+}
+
+/// The edges of the design a reference selects: an edge (its `~k` pieces too), or every edge
+/// bounding a face (its `#k` pieces too).
+pub(crate) fn seeded_edges(design: &Design, r: &GeometryRef) -> Result<Vec<Edge>> {
+    let Some(body) = design.body(&r.body) else { return Ok(Vec::new()) };
+    let on_face = matches!(r.entity, Entity::Face(_));
+    Ok(body
+        .edges()?
+        .into_iter()
+        .filter(|e| if on_face { edge_faces(body, e).iter().any(|f| r.selects(f)) } else { edge_ref(body, e).is_some_and(|g| r.selects(&g)) })
+        .collect())
+}
+
+/// Whether the design has what a seed names: its edge, or its face.
+pub(crate) fn resolves(design: &Design, r: &GeometryRef) -> Result<bool> {
+    Ok(match (&r.entity, design.body(&r.body)) {
+        (Entity::Face(_), Some(body)) => {
+            body.faces().iter().filter_map(|f| GeometryRef::face(body.name.clone(), f.name.clone()).ok()).any(|f| r.selects(&f))
+        }
+        _ => !seeded_edges(design, r)?.is_empty(),
+    })
+}
+
+/// Every seed on the open design's edges, as the meshers take them: each edge seed on its edges
+/// (in the order of the seeds, which the meshers' results depend on), then on each edge without
+/// one the face seed that decides it ([`fieldcraft_model::Model::edge_seed`]), less those an edge
+/// seed or a finer face seed of another body holds on the same curve
+/// ([`fieldcraft_mesh::seeds::with_face_seeds`]). A mesher matches them to its own curves by
+/// position, so a seed on an edge two partition cells share holds in both.
+pub(crate) fn edge_seeds(s: &Session) -> Result<Vec<EdgeSeed>> {
     let Some(design) = s.design.as_deref() else { return Ok(Vec::new()) };
-    let mut out = Vec::new();
-    // Each body's edges, found once.
-    let mut edges: std::collections::BTreeMap<&str, (f64, Vec<Edge>)> = std::collections::BTreeMap::new();
-    for seed in s.model.seeds() {
-        let Some(body) = design.body(&seed.on.body) else { continue };
-        let (tolerance, all) = match edges.entry(body.name.as_str()) {
-            std::collections::btree_map::Entry::Occupied(e) => e.into_mut(),
-            std::collections::btree_map::Entry::Vacant(v) => {
-                v.insert(((body.size()? * fieldcraft_geometry::EDGE_TOLERANCE).max(1e-4), body.edges()?))
-            }
-        };
-        let selected = all.iter().filter(|e| GeometryRef::new(body.name.clone(), Entity::Edge(e.name.clone())).is_ok_and(|g| seed.on.selects(&g)));
-        for e in selected.cloned().collect::<Vec<_>>() {
-            let tolerance = *tolerance;
-            out.push(fieldcraft_mesh::seeds::EdgeSeed {
-                name: format!("{}:{}", seed.on.body, e.name),
-                count: seed.count(e.length()) as usize,
-                points: e.points,
-                tolerance,
-                bias: seed.bias,
-                constraint: seed.constraint,
-            });
+    let seeds = s.model.seeds();
+    // Each seeded body's edge tolerance and edges, found once.
+    let mut bodies: BTreeMap<&str, (&Shape, f64, Vec<Edge>)> = BTreeMap::new();
+    for body in design.bodies.iter().filter(|b| seeds.iter().any(|seed| seed.on.body == b.name)) {
+        bodies.insert(body.name.as_str(), (body, (body.size()? * fieldcraft_geometry::EDGE_TOLERANCE).max(1e-4), body.edges()?));
+    }
+    let to_mesh = |seed: &Seed, e: &Edge, tolerance: f64, name: String| EdgeSeed {
+        name,
+        count: seed.count(e.length()) as usize,
+        points: e.points.clone(),
+        tolerance,
+        bias: seed.bias,
+        constraint: seed.constraint,
+    };
+    let mut on_edges = Vec::new();
+    for seed in seeds.iter().filter(|seed| !seed.on_face()) {
+        let Some((body, tolerance, edges)) = bodies.get(seed.on.body.as_str()) else { continue };
+        for e in edges.iter().filter(|e| edge_ref(body, e).is_some_and(|g| seed.on.selects(&g))) {
+            on_edges.push(to_mesh(seed, e, *tolerance, format!("{}:{}", body.name, e.name)));
         }
     }
-    Ok(out)
+    let mut on_faces = Vec::new();
+    if seeds.iter().any(Seed::on_face) {
+        for (body, tolerance, edges) in bodies.values() {
+            for e in edges {
+                let Some(edge) = edge_ref(body, e) else { continue };
+                if let Some(face) = s.model.edge_seed(&edge, &edge_faces(body, e), e.length()).filter(|seed| seed.on_face()) {
+                    let name = format!("{}:{} from the seed on face {}", body.name, e.name, face.on.entity.name().unwrap_or_default());
+                    on_faces.push(to_mesh(face, e, *tolerance, name));
+                }
+            }
+        }
+    }
+    Ok(fieldcraft_mesh::seeds::with_face_seeds(on_edges, on_faces))
 }
 
 fn design(s: &Session) -> Result<&Design> {
     s.design.as_deref().ok_or_else(|| EngineError::Params("open a design first (geometry.open)".into()))
 }
 
-/// A seed's report: its definition and, per edge it seeds, the length and the count it gives.
-fn report(seed: &Seed, edges: &[Edge]) -> Value {
+/// A seed's report: its definition and, per edge it seeds in the open design, the length and
+/// the count it gives; on a face seed's edge another seed decides, `overridden_by` that seed
+/// and its count.
+fn report(s: &Session, seed: &Seed) -> Result<Value> {
     let mut v = json!(seed);
-    v["on"] = edges.iter().map(|e| json!({"edge": e.name, "length": e.length(), "count": seed.count(e.length())})).collect();
-    v["stale"] = json!(edges.is_empty());
-    v
+    let mut on = Vec::new();
+    if let Some(design) = s.design.as_deref()
+        && let Some(body) = design.body(&seed.on.body)
+    {
+        for e in seeded_edges(design, &seed.on)? {
+            let length = e.length();
+            let mut item = json!({"edge": e.name, "length": length, "count": seed.count(length)});
+            if seed.on_face()
+                && let Some(edge) = edge_ref(body, &e)
+                && let Some(by) = s.model.edge_seed(&edge, &edge_faces(body, &e), length).filter(|by| by.on != seed.on)
+            {
+                item["overridden_by"] = json!({"seed": by.on.to_string(), "count": by.count(length)});
+            }
+            on.push(item);
+        }
+    }
+    // An edge seed resolves when it has edges; a face seed when the face is there.
+    v["stale"] = json!(match s.design.as_deref() {
+        Some(design) if seed.on_face() => !resolves(design, &seed.on)?,
+        Some(_) => on.is_empty(),
+        None => true,
+    });
+    v["on"] = Value::Array(on);
+    Ok(v)
 }
 
-fn seed_edge(s: &mut Session, p: &Value) -> Result<Value> {
-    let refs = edge_refs(p, true)?.unwrap_or_default();
+/// Set seeds on the edges or faces (`kind`) `p` names, from its count or size, bias and
+/// constraint.
+fn seed_on(s: &mut Session, p: &Value, kind: &str) -> Result<Value> {
+    let refs = refs(p, kind, true)?.unwrap_or_default();
     let divisions = match (opt::<u32>(p, "count")?, opt::<f64>(p, "size")?) {
         (Some(n), None) => Divisions::Count(n),
         (None, Some(h)) => Divisions::Size(h),
@@ -118,42 +204,48 @@ fn seed_edge(s: &mut Session, p: &Value) -> Result<Value> {
     let bias: Option<Bias> = opt(p, "bias")?;
     let constraint: SeedConstraint = opt(p, "constraint")?.unwrap_or_default();
     let design = design(s)?.clone();
-    let mut out = Vec::with_capacity(refs.len());
+    let mut seeds = Vec::with_capacity(refs.len());
     for r in refs {
-        let edges = seeded_edges(&design, &r)?;
-        if edges.is_empty() {
-            return Err(EngineError::Params(format!("the design has no {r} (geometry.bodies lists the edges)")));
+        if seeded_edges(&design, &r)?.is_empty() {
+            return Err(EngineError::Params(if resolves(&design, &r)? {
+                format!("the {r} has no edges to seed")
+            } else {
+                format!("the design has no {r} (geometry.bodies lists the {kind}s)")
+            }));
         }
-        let seed = Seed::new(r, divisions, bias, constraint)?;
-        out.push(report(&seed, &edges));
-        s.model.set_seed(seed)?;
+        seeds.push(Seed::new(r, divisions, bias, constraint)?);
     }
+    for seed in &seeds {
+        s.model.set_seed(seed.clone())?;
+    }
+    let out = seeds.iter().map(|seed| report(s, seed)).collect::<Result<Vec<_>>>()?;
     Ok(json!({"seeded": out.len(), "seeds": out}))
 }
 
+fn seed_edge(s: &mut Session, p: &Value) -> Result<Value> {
+    seed_on(s, p, "edge")
+}
+
+fn seed_face(s: &mut Session, p: &Value) -> Result<Value> {
+    seed_on(s, p, "face")
+}
+
 fn seed_clear(s: &mut Session, p: &Value) -> Result<Value> {
-    let cleared = match edge_refs(p, false)? {
-        None => s.model.clear_seeds(),
-        Some(refs) => {
-            if let Some(r) = refs.iter().find(|r| s.model.seed(r).is_none()) {
-                return Err(EngineError::Params(format!("the {r} has no seed")));
-            }
-            refs.iter().filter(|r| s.model.remove_seed(r)).count()
+    let (edges, faces) = (refs(p, "edge", false)?, refs(p, "face", false)?);
+    let cleared = if edges.is_none() && faces.is_none() {
+        s.model.clear_seeds()
+    } else {
+        let named: Vec<GeometryRef> = edges.into_iter().chain(faces).flatten().collect();
+        if let Some(r) = named.iter().find(|r| s.model.seed(r).is_none()) {
+            return Err(EngineError::Params(format!("the {r} has no seed")));
         }
+        named.iter().filter(|r| s.model.remove_seed(r)).count()
     };
     Ok(json!({"cleared": cleared, "left": s.model.seeds().len()}))
 }
 
 fn seed_list(s: &mut Session, _: &Value) -> Result<Value> {
-    let mut out = Vec::with_capacity(s.model.seeds().len());
-    for seed in s.model.seeds() {
-        let edges = match s.design.as_deref() {
-            Some(d) => seeded_edges(d, &seed.on)?,
-            None => Vec::new(),
-        };
-        out.push(report(seed, &edges));
-    }
-    Ok(Value::Array(out))
+    s.model.seeds().iter().map(|seed| report(s, seed)).collect::<Result<Vec<_>>>().map(Value::Array)
 }
 
 #[cfg(test)]
@@ -423,5 +515,183 @@ mod tests {
         }
         assert!(s.model.seeds().is_empty());
         assert!(s.journal.is_empty() || s.journal.iter().all(|(c, _)| c != "mesh.seed.edge"));
+    }
+
+    /// The plate's end face (x = 40): two thickness edges of 10 mm and two of 30 mm along y.
+    fn end_face(s: &Session) -> Value {
+        json!({"body": "Body1", "face": super::super::sizes::tests::face_at_x(s, 40.0)})
+    }
+
+    /// The (length, count) a seed report gives each of its edges, sorted.
+    fn counts(report: &Value) -> Vec<(i64, i64)> {
+        let mut c: Vec<(i64, i64)> =
+            report["on"].as_array().unwrap().iter().map(|o| (o["length"].as_f64().unwrap().round() as i64, o["count"].as_i64().unwrap())).collect();
+        c.sort();
+        c
+    }
+
+    /// A thickness edge of the plate's end face, as `{body, edge}`.
+    fn end_thickness_edge(s: &mut Session) -> Value {
+        let design = s.design.clone().unwrap();
+        thickness_edges(s)
+            .into_iter()
+            .find(|e| {
+                let r: GeometryRef = serde_json::from_value(e.clone()).unwrap();
+                seeded_edges(&design, &r).unwrap()[0].points.iter().all(|p| (p[0] - 40.0).abs() < 1e-6)
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn face_seeds_are_set_listed_overridden_cleared_and_undone() {
+        let mut s = plate();
+        let end = end_face(&s);
+        // A size gives each edge of the face its own count.
+        let r = s.execute("mesh.seed.face", &json!({"faces": [end], "size": 2.5})).unwrap();
+        assert_eq!(r["seeded"], 1);
+        assert_eq!(r["seeds"][0]["face"], end, "{r}");
+        assert_eq!(counts(&r["seeds"][0]), [(10, 4), (10, 4), (30, 12), (30, 12)], "{r}");
+        // A count is each edge's count; it replaces the size.
+        let r =
+            s.execute("mesh.seed.face", &json!({"faces": [end], "count": 5, "bias": {"ratio": 2, "toward": "both"}, "constraint": "min"})).unwrap();
+        assert_eq!(counts(&r["seeds"][0]), [(10, 5), (10, 5), (30, 5), (30, 5)], "{r}");
+        assert_eq!(s.model.seeds().len(), 1);
+
+        // An exact seed on one of its edges wins there, and the face seed's report names it.
+        let edge = end_thickness_edge(&mut s);
+        s.execute("mesh.seed.edge", &json!({"edges": [edge], "count": 3})).unwrap();
+        let list = s.execute("mesh.seed.list", &json!({})).unwrap();
+        let list = list.as_array().unwrap();
+        assert_eq!(list.len(), 2, "{list:?}");
+        let face = list.iter().find(|l| l.get("face").is_some()).unwrap();
+        assert_eq!(face["stale"], false);
+        let over: Vec<&Value> = face["on"].as_array().unwrap().iter().filter(|o| o.get("overridden_by").is_some()).collect();
+        assert_eq!(over.len(), 1, "{face}");
+        assert_eq!(over[0]["edge"], edge["edge"]);
+        assert_eq!(over[0]["overridden_by"]["count"], 3);
+        assert!(over[0]["overridden_by"]["seed"].as_str().unwrap().contains(edge["edge"].as_str().unwrap()), "{face}");
+
+        // Clearing the face's seed leaves the edge's; undo brings it back.
+        s.execute("mesh.seed.clear", &json!({"faces": [end]})).unwrap();
+        assert_eq!(s.model.seeds().len(), 1);
+        assert!(s.execute("mesh.seed.clear", &json!({"faces": [end]})).is_err(), "no seed left on the face");
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(s.model.seeds().len(), 2);
+        assert_eq!(s.execute("mesh.seed.clear", &json!({})).unwrap()["cleared"], 2);
+    }
+
+    #[test]
+    fn face_seeds_survive_save_open_and_a_design_edit() {
+        let (mut s, dir) = super::super::datum::tests::plate();
+        let end = end_face(&s);
+        s.execute("mesh.seed.face", &json!({"faces": [end], "size": 2.5})).unwrap();
+        let file = dir.join("face-seeded.fieldcraft");
+        s.execute("file.save", &json!({"path": file.to_str().unwrap()})).unwrap();
+        let mut back = Session::default();
+        back.execute("file.open", &json!({"path": file.to_str().unwrap()})).unwrap();
+        assert_eq!(back.model.seeds(), s.model.seeds());
+        // The plate made thicker: the face keeps its name and its seed, now on 15 mm edges.
+        let design = dir.join("plate.solidcraft");
+        let thick = fieldcraft_geometry::sample::Plate { thickness: 15.0, ..Default::default() };
+        std::fs::write(&design, fieldcraft_geometry::sample::plate_design(&thick).unwrap()).unwrap();
+        let r = back.execute("geometry.open", &json!({"path": design.to_str().unwrap()})).unwrap();
+        assert_eq!(r["stale"]["seeds"], json!([]));
+        let list = back.execute("mesh.seed.list", &json!({})).unwrap();
+        assert_eq!(counts(&list[0]), [(15, 6), (15, 6), (30, 12), (30, 12)], "{list}");
+    }
+
+    /// A face seed sets the hex sweep's layers and the cross-section's divisions along the face's
+    /// edges; an exact edge seed that disagrees with it across the sweep is refused, naming both.
+    #[test]
+    fn the_hex_mesher_honours_face_seeds() {
+        let mut s = plate();
+        let end = end_face(&s);
+        s.execute("mesh.seed.face", &json!({"faces": [end], "size": 2.5})).unwrap();
+        s.execute("mesh.hex.sweep", &json!({"body": "Body1", "size": 4})).unwrap();
+        let on = |s: &Session, len: f64| -> Vec<usize> {
+            let edges = s.design.as_ref().unwrap().body("Body1").unwrap().edges().unwrap();
+            let mut n: Vec<usize> = edges
+                .iter()
+                .filter(|e| e.points.iter().all(|p| (p[0] - 40.0).abs() < 1e-6) && (e.length() - len).abs() < 1e-6)
+                .map(|e| nodes_on(s, &e.points).len() - 1)
+                .collect();
+            n.sort();
+            n
+        };
+        assert_eq!(on(&s, 10.0), [4, 4]);
+        assert_eq!(on(&s, 30.0), [12, 12]);
+        // Three layers on one thickness edge cannot hold beside the face seed's four.
+        let edge = end_thickness_edge(&mut s);
+        s.execute("mesh.seed.edge", &json!({"edges": [edge], "count": 3})).unwrap();
+        let e = s.execute("mesh.hex.sweep", &json!({"body": "Body1", "size": 4})).unwrap_err().to_string();
+        assert!(e.contains(edge["edge"].as_str().unwrap()) && e.contains("from the seed on face") && e.contains("conflict"), "{e}");
+    }
+
+    /// The tet mesher divides every edge of a seeded face at the seed's nodes, and an edge with its
+    /// own seed at that seed's.
+    #[test]
+    fn the_tet_mesher_honours_face_seeds() {
+        let tet = |s: &mut Session| -> Vec<(i64, i64)> {
+            let r = s.execute("mesh.tet.generate", &json!({"body": "Body1", "size": 5})).unwrap();
+            let mut c: Vec<(i64, i64)> = r["bodies"][0]["seeds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|e| (e["count"].as_i64().unwrap(), e["mesh_edges"].as_i64().unwrap()))
+                .collect();
+            c.sort();
+            c
+        };
+        let mut s = plate();
+        let end = end_face(&s);
+        // An exact count of 6 holds on every edge of the face, the 10 mm ones and the 30 mm ones.
+        s.execute("mesh.seed.face", &json!({"faces": [end], "count": 6})).unwrap();
+        assert_eq!(tet(&mut s), [(6, 6); 4]);
+        s.execute("mesh.seed.face", &json!({"faces": [end], "size": 5})).unwrap();
+        assert_eq!(tet(&mut s), [(2, 2), (2, 2), (6, 6), (6, 6)]);
+        // A finer seed on one thickness edge holds there in place of the face's.
+        let edge = end_thickness_edge(&mut s);
+        s.execute("mesh.seed.edge", &json!({"edges": [edge], "count": 8})).unwrap();
+        let r = s.execute("mesh.tet.generate", &json!({"body": "Body1", "size": 5})).unwrap();
+        let seeds = r["bodies"][0]["seeds"].as_array().unwrap();
+        assert_eq!(seeds.len(), 4, "{seeds:?}");
+        let own: Vec<&Value> = seeds.iter().filter(|e| !e["edge"].as_str().unwrap().contains("from the seed on face")).collect();
+        assert_eq!(own.len(), 1, "{seeds:?}");
+        assert!(own[0]["edge"].as_str().unwrap().ends_with(edge["edge"].as_str().unwrap()), "{seeds:?}");
+        assert_eq!((own[0]["count"].clone(), own[0]["mesh_edges"].clone()), (json!(8), json!(8)), "{seeds:?}");
+    }
+
+    #[test]
+    fn hostile_face_seeds_are_refused_and_change_nothing() {
+        let mut s = plate();
+        let f = end_face(&s);
+        for p in [
+            json!({}),
+            json!({"faces": [], "count": 2}),
+            json!({"faces": [f], "count": 2, "size": 1.0}),
+            json!({"faces": [f]}),
+            json!({"faces": [f], "count": 0}),
+            json!({"faces": [f], "count": -3}),
+            json!({"faces": [f], "count": 1e12}),
+            json!({"faces": [f], "size": 0.0}),
+            json!({"faces": [f], "size": -1.0}),
+            json!({"faces": [f], "size": "big"}),
+            json!({"faces": [f], "count": 2, "bias": {"ratio": 1e9, "toward": "both"}}),
+            json!({"faces": [f], "count": 2, "bias": {"ratio": 2, "toward": "end"}}),
+            json!({"faces": [f], "count": 2, "bias": {"ratio": 2, "toward": "start"}}),
+            json!({"faces": [f], "count": 2, "constraint": "loose"}),
+            json!({"faces": [{"body": "Body1", "edge": "a|b"}], "count": 2}),
+            json!({"faces": [{"body": "Body1", "face": "no such"}], "count": 2}),
+            json!({"faces": [{"body": "Nope", "face": "F1"}], "count": 2}),
+            json!({"faces": "all", "count": 2}),
+            json!({"edges": [f], "count": 2}),
+        ] {
+            assert!(s.execute("mesh.seed.face", &p).is_err(), "{p}");
+        }
+        assert!(s.model.seeds().is_empty());
+        for p in [json!({"faces": [f]}), json!({"faces": []}), json!({"faces": [{"body": "Body1", "edge": "a|b"}]})] {
+            assert!(s.execute("mesh.seed.clear", &p).is_err(), "{p}");
+        }
+        assert!(s.journal.iter().all(|(c, _)| c != "mesh.seed.face"));
     }
 }

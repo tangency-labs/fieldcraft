@@ -1895,7 +1895,31 @@ pub const SEED_EDGE: &[Field] = &[
         .def("\"exact\""),
 ];
 
-pub const SEED_CLEAR: &[Field] = &[json("edges", "Edges").help("The edges to clear, as JSON; every seed when empty.").hint("every seed")];
+pub const SEED_FACE: &[Field] = &[
+    face_rows("faces", "Faces").help("Faces whose edges to seed. Pick them, then Use as faces.").req().hint("pick the faces"),
+    int("count", "Count", 1, 100_000).help("Number of elements along each edge of the faces.").hint("or an element size"),
+    positive("size", "Element size", D::Length).help("Element length along each edge, instead of a count.").hint("or a count"),
+    group(
+        "bias",
+        "Bias",
+        &[
+            range("ratio", "Ratio", D::None, 1.0, 1e4).help("Largest element over smallest; 1 is uniform.").req().def("1"),
+            choice("toward", "Small toward", &[("both", "Both ends")])
+                .help("Each edge gets small elements at both ends; seed an edge for a one-sided grading.")
+                .req()
+                .def("\"both\""),
+        ],
+    )
+    .help("Grade the elements along each edge."),
+    choice("constraint", "Constraint", &[("exact", "Exact"), ("min", "At least"), ("free", "Free (a goal)")])
+        .help("Exact: the mesher must match the count. At least: it may add more. Free: a goal only.")
+        .def("\"exact\""),
+];
+
+pub const SEED_CLEAR: &[Field] = &[
+    json("edges", "Edges").help("The edges to clear, as JSON; every seed when empty, and no faces.").hint("every seed"),
+    face_rows("faces", "Faces").help("The faces to clear; every seed when empty, and no edges.").hint("every seed"),
+];
 
 pub const SIZE_SET: &[Field] = &[
     NAME,

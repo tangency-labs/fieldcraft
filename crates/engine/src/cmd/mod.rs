@@ -133,6 +133,7 @@ pub static ALL: &[CommandSpec] = &[
     plan::PLAN,
     plan::APPLY,
     seeds::SEED_EDGE,
+    seeds::SEED_FACE,
     seeds::SEED_CLEAR,
     seeds::SEED_LIST,
     sizes::SIZE_SET,
