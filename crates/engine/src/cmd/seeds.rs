@@ -274,6 +274,68 @@ mod tests {
         assert!(e.contains(&name) && e.contains(edges[1]["edge"].as_str().unwrap()) && e.contains("conflict"), "{e}");
     }
 
+    /// The plate's edges whose polylines lie in the plane `x = 0` (its end face), by name.
+    fn end_face_edges(s: &Session) -> Vec<(String, Vec<[f64; 3]>)> {
+        let mut out: Vec<(String, Vec<[f64; 3]>)> = s
+            .design
+            .as_ref()
+            .unwrap()
+            .body("Body1")
+            .unwrap()
+            .edges()
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.points.iter().all(|p| p[0].abs() < 1e-9))
+            .map(|e| (e.name, e.points))
+            .collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    }
+
+    /// Mesh the plate with tetrahedra; its nodes on each of `edges`, as distances from its start.
+    fn tet_mesh_nodes_on(s: &mut Session, edges: &[(String, Vec<[f64; 3]>)]) -> Vec<Vec<f64>> {
+        s.execute("mesh.tet.generate", &json!({"body": "Body1", "size": 5})).unwrap();
+        edges.iter().map(|(_, line)| nodes_on(s, line)).collect()
+    }
+
+    /// An exact seed's nodes are the only mesh nodes on its edge, at the seed's places (#894:
+    /// a seed of 12 on a 30 mm edge gave 11).
+    #[test]
+    fn an_exact_tet_seed_holds_its_count() {
+        let mut s = plate();
+        let edges = end_face_edges(&s);
+        let (name, line) = edges.iter().find(|(_, l)| (l[0][1] - l.last().unwrap()[1]).abs() > 29.0).unwrap().clone();
+        s.execute("mesh.seed.edge", &json!({"edges": [{"body": "Body1", "edge": name}], "count": 12})).unwrap();
+        let r = s.execute("mesh.tet.generate", &json!({"body": "Body1", "size": 5})).unwrap();
+        let t = nodes_on(&s, &line);
+        assert_eq!(t.len(), 13, "{t:?}");
+        assert_eq!(r["bodies"][0]["seeds"][0]["mesh_edges"], 12, "{}", r["bodies"][0]["seeds"]);
+        for (k, x) in t.iter().enumerate() {
+            assert!((x - 2.5 * k as f64).abs() < 1e-6, "{t:?}");
+        }
+    }
+
+    /// Four edges of one face, each seeded 6, give 6 each, and the mesh does not depend on the
+    /// order the seeds were given in (#894: 8, 6, 5 and 9, changing with the order).
+    #[test]
+    fn exact_tet_seeds_on_a_face_hold_in_any_order() {
+        let mut s = plate();
+        let edges = end_face_edges(&s);
+        assert_eq!(edges.len(), 4, "{edges:?}");
+        let refs: Vec<Value> = edges.iter().map(|(n, _)| json!({"body": "Body1", "edge": n})).collect();
+        s.execute("mesh.seed.edge", &json!({"edges": refs, "count": 6})).unwrap();
+        let forward = tet_mesh_nodes_on(&mut s, &edges);
+        for t in &forward {
+            assert_eq!(t.len(), 7, "{forward:?}");
+        }
+        let mut back = plate();
+        for r in refs.iter().rev() {
+            back.execute("mesh.seed.edge", &json!({"edges": [r], "count": 6})).unwrap();
+        }
+        assert_eq!(tet_mesh_nodes_on(&mut back, &edges), forward);
+        assert!(back.model.nodes() == s.model.nodes() && back.model.elements() == s.model.elements(), "the same mesh");
+    }
+
     #[test]
     fn a_seed_on_a_cut_edge_holds_in_both_cells() {
         let (mut s, _dir) = super::super::datum::tests::plate();
