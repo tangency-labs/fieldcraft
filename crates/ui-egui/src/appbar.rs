@@ -197,6 +197,12 @@ fn bar(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, content: Rect) {
     } else {
         out.controls_left - 8.0
     };
+    // The open search field covers the bar from its right edge leftward, as SolidCraft's does:
+    // the document tab ends before it (and is left out when no room remains).
+    let tabs_end = match out.search.filter(|_| app.ui.palette) {
+        Some(field) => tabs_end.min(crate::palette::open_field_at(ui.ctx().content_rect(), field).x - 8.0),
+        None => tabs_end,
+    };
     document_tab(app, ui, r, out.tabs_start, tabs_end);
     let home_at = solidcraft_ui_registry::rect_of("app_bar:home").unwrap_or(out.file);
     let help_at = solidcraft_ui_registry::rect_of("app_bar:help").unwrap_or(r);
@@ -220,6 +226,11 @@ fn quick_button(ui: &mut egui::Ui, key: &str, icon: &'static str, rect: Rect, ti
 
 /// The command search's closed field (the kit's), opening the command palette when clicked.
 fn search_field(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect, key: &str) {
+    // While the search is open its own field is drawn here, over the bar (`palette::popup`): the
+    // kit's one search editor, drawn once.
+    if app.ui.palette {
+        return;
+    }
     let geometry = solidcraft_ui_kit::SearchFieldGeometry {
         height: rect.height(),
         radius: solidcraft_ui_kit::CommandSearch::field_radius(0.0, false),
@@ -367,8 +378,14 @@ mod tests {
 
     /// The bar's regions after a frame of a window `width` wide.
     fn regions(width: f32, integrated: bool) -> std::collections::BTreeMap<&'static str, Rect> {
+        regions_with(width, integrated, false)
+    }
+
+    /// [`regions`], with the command search open or not.
+    fn regions_with(width: f32, integrated: bool, search: bool) -> std::collections::BTreeMap<&'static str, Rect> {
         let mut app = ModelApp::new(Session::default());
         app.integrated_titlebar = integrated;
+        app.ui.palette = search;
         let ctx = egui::Context::default();
         for _ in 0..2 {
             let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(width, 600.0))), ..Default::default() };
@@ -376,6 +393,21 @@ mod tests {
             out.textures_delta.clear();
         }
         app.layout
+    }
+
+    /// The open command search covers the bar from its field leftward; the document tab ends
+    /// before it, so no part of the model's name shows beside the field.
+    #[test]
+    fn the_open_search_leaves_no_part_of_the_document_tab_beside_it() {
+        for width in [1440.0, 1100.0] {
+            let open = regions_with(width, false, true);
+            let field = open.get("app_bar:search").copied().unwrap_or(Rect::NOTHING);
+            let left = crate::palette::open_field_at(Rect::from_min_size(egui::Pos2::ZERO, vec2(width, 600.0)), field).x;
+            if let Some(tab) = open.get("document_tab") {
+                assert!(tab.right() <= left, "{width}: the tab {tab:?} runs under the open field from {left}");
+            }
+            assert!(regions(width, false).contains_key("document_tab"), "{width}: the tab shows while the search is closed");
+        }
     }
 
     /// Left to right as in SolidCraft: Home, File, its actions, the theme, the document tab, Solve,
