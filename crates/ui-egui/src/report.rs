@@ -289,34 +289,43 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
             .actions("", "Close", Some("Delete All"))
             .apply_enabled(!reports.is_empty())
             .show(ctx, true, |ui| {
-                if reports.is_empty() {
-                    message(ui, "No crash reports are saved on this computer.");
-                    return;
-                }
-                note(
+                // The kit's crash report list, as SolidCraft's Crash Reports window shows its own.
+                let k = solidcraft_theme::Tokens::get();
+                ui.spacing_mut().item_spacing.y = k.space_10;
+                kit::text(
                     ui,
                     "Saved on this computer, newest first. Reporting one opens a GitHub issue you review first; nothing is sent until you submit it.",
+                    kit::Text::Hint("intro"),
                 );
-                for r in &reports {
-                    kit::divider(ui, &format!("crash:{}", r.id));
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(kind_label(&r.kind)).strong());
-                        let when = if r.count > 1 { format!("{} · {} times", r.time, r.count) } else { r.time.clone() };
-                        ui.label(RichText::new(when).color(t.text_dim));
-                    });
-                    note(ui, &r.message);
-                    ui.horizontal(|ui| {
-                        if kit::button(ui, "Report…", kit::Button::Small).clicked() {
-                            act = Some(Act::Report(r.id.clone()));
-                        }
-                        if kit::button(ui, "Copy Path", kit::Button::Small).on_hover_text(&r.path).clicked() {
-                            act = Some(Act::Copy(r.path.clone()));
-                        }
-                        if kit::button(ui, "Delete", kit::Button::Small).clicked() {
-                            act = Some(Act::Delete(r.id.clone()));
-                        }
-                    });
+                if reports.is_empty() {
+                    kit::empty_box(ui, "none", "No crash reports are saved on this computer.");
+                    return;
                 }
+                kit::report_list(ui, "reports", k.control_height * 10.0 + k.space_10 * 4.0, |ui| {
+                    let last = reports.len().saturating_sub(1);
+                    for (index, r) in reports.iter().enumerate() {
+                        ui.push_id(&r.id, |ui| {
+                            ui.spacing_mut().item_spacing.y = k.space_6;
+                            ui.add_space(k.space_10);
+                            kit::report_header(ui, kind_label(&r.kind), r.count, &r.time, &format!("{} · {}", kind_label(&r.kind), r.time), |ui| {
+                                if kit::bin_button(ui, "Delete").clicked() {
+                                    act = Some(Act::Delete(r.id.clone()));
+                                }
+                                if kit::icon_label_button(ui, "Copy Path", "copy", true, false).on_hover_text(&r.path).clicked() {
+                                    act = Some(Act::Copy(r.path.clone()));
+                                }
+                                if kit::icon_label_button(ui, "Report…", "bug_report", true, false).clicked() {
+                                    act = Some(Act::Report(r.id.clone()));
+                                }
+                            });
+                            kit::text(ui, &r.message, kit::Text::Report(&format!("message:{}", r.id), false));
+                            ui.add_space(k.space_6);
+                            if index != last {
+                                kit::report_divider(ui, &format!("end:{}", r.id));
+                            }
+                        });
+                    }
+                });
             });
             match action {
                 kit::Action::Apply => act = Some(Act::DeleteAll),
