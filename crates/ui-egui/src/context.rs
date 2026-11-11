@@ -4,7 +4,7 @@
 //! reply of a report (Check Model, Model Info), so what the person is working on stays on top. Each section has
 //! the kit's panel header (its icon, title and close button); everything acts through commands.
 
-use egui::{RichText, vec2};
+use egui::RichText;
 use serde_json::{Value, json};
 
 use crate::browser::Def;
@@ -59,11 +59,11 @@ pub fn panel(app: &mut ModelApp, ui: &mut egui::Ui) {
                     ui.add_space(10.0);
                 }
                 if let Some((kind, name)) = app.selected.clone() {
-                    properties(app, ui, &t, kind, &name);
+                    properties(app, ui, kind, &name);
                     ui.add_space(10.0);
                 }
                 if let Some(edge) = app.selected_seed.clone() {
-                    seed_card(app, ui, &t, edge);
+                    seed_card(app, ui, edge);
                     ui.add_space(10.0);
                 }
                 if app.selected_mesh {
@@ -334,12 +334,12 @@ fn property_rows(app: &mut ModelApp, kind: Def, name: &str) -> Option<std::sync:
 }
 
 /// The selected definition's fields, with Edit (its form, filled in) and Delete.
-fn properties(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, kind: Def, name: &str) {
+fn properties(app: &mut ModelApp, ui: &mut egui::Ui, kind: Def, name: &str) {
     let Some(rows) = property_rows(app, kind, name) else { return };
     let mut deselect = false;
     kit::panel::header(ui, kind.icon(), &format!("{}: {name}", kind.label()), || deselect = true);
     ui.add_space(4.0);
-    property_grid(ui, t, "fc_properties", &rows);
+    property_grid(ui, "fc_properties", &rows);
     ui.add_space(6.0);
     let (mut edit, mut delete) = (false, false);
     let editing = kind.edit_command(&app.session.model, name);
@@ -360,13 +360,13 @@ fn properties(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, kind: Def, name
 
 /// The selected seed: its edge, divisions, bias and constraint, with Edit (the Seed Edges form,
 /// filled in) and Delete (`mesh.seed.clear`).
-fn seed_card(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, edge: fieldcraft_model::GeometryRef) {
+fn seed_card(app: &mut ModelApp, ui: &mut egui::Ui, edge: fieldcraft_model::GeometryRef) {
     let Some(seed) = app.seed(&edge) else { return };
     let rows = crate::describe::seed_rows(seed, app.session.units());
     let mut deselect = false;
     kit::panel::header(ui, "mesh.seed.edge", "Seed", || deselect = true);
     ui.add_space(4.0);
-    property_grid(ui, t, "fc_seed_properties", &rows);
+    property_grid(ui, "fc_seed_properties", &rows);
     ui.add_space(6.0);
     let (mut edit, mut delete) = (false, false);
     ui.horizontal(|ui| {
@@ -409,7 +409,7 @@ fn mesh_card(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
     ui.add_space(4.0);
     let (nodes, elements) = (app.session.model.nodes().len(), app.session.model.elements().len());
     let size = [("Nodes".to_string(), crate::describe::quantity(nodes as f64)), ("Elements".to_string(), crate::describe::quantity(elements as f64))];
-    property_grid(ui, t, "fc_mesh_size", &size);
+    property_grid(ui, "fc_mesh_size", &size);
     let mut edit = None;
     if made.is_empty() && elements > 0 {
         ui.add_space(4.0);
@@ -421,7 +421,7 @@ fn mesh_card(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
             ui.label(RichText::new(crate::command_label(command)).strong());
             ui.label(RichText::new(command.as_str()).size(11.0).color(t.text_dim));
         });
-        property_grid(ui, t, &format!("fc_mesh_made_{i}"), rows);
+        property_grid(ui, &format!("fc_mesh_made_{i}"), rows);
         if kit::button(ui, "Edit…", kit::Button::Normal).backing_on_hover_text(format!("{command}: its form with these parameters")).clicked() {
             edit = Some((command.clone(), params.clone()));
         }
@@ -434,12 +434,12 @@ fn mesh_card(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
 }
 
 /// Rows of (label, text) as a two-column grid.
-fn property_grid(ui: &mut egui::Ui, t: &Tokens, id: &str, rows: &[(String, String)]) {
-    egui::Grid::new(id).num_columns(2).spacing(vec2(10.0, 3.0)).show(ui, |ui| {
-        for (k, text) in rows {
-            ui.label(RichText::new(k).color(t.text_dim));
-            ui.add(egui::Label::new(text).wrap());
-            ui.end_row();
+/// A card's fields as the kit's form rows (name, then its value), as SolidCraft's cards show
+/// theirs; a value too long for its row shows whole on hover.
+fn property_grid(ui: &mut egui::Ui, id: &str, rows: &[(String, String)]) {
+    ui.push_id(id, |ui| {
+        for (name, text) in rows {
+            kit::row(ui, name, |ui| kit::text(ui, text, kit::Text::Cell).backing_on_hover_text(text.as_str()));
         }
     });
 }
