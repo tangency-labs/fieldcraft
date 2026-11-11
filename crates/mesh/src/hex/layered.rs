@@ -30,7 +30,7 @@
 //! rotated nodes then lie exactly on every surface of revolution.
 
 use std::collections::HashMap;
-use std::f64::consts::{FRAC_PI_4, PI, TAU};
+use std::f64::consts::{PI, TAU};
 
 use super::arrangement::{self, Arrangement, Q};
 use super::brep::{Brep, Face};
@@ -44,7 +44,7 @@ use crate::message;
 use crate::message::Message;
 use crate::predicates::Sign;
 use crate::seeds::EdgeSeed;
-use crate::size::{SizeField, divide_polyline, edge_divisions, ideal_divisions};
+use crate::size::{SizeField, divide_polyline, edge_divisions};
 use crate::vec3::{P, cross, dot, norm, sub};
 use crate::{Error, Result};
 use fieldcraft_model::SeedConstraint;
@@ -504,8 +504,8 @@ pub(crate) fn mesh(ctxs: &[Ctx], prepared: &Prepared, refine: u32) -> Result<(Ra
     };
     let fine = f64::from(1u32 << refine.min(8));
     for c in 0..arr.curves.len() {
-        let goal = ideal_divisions(ctx.field, &curve3d(c))?;
-        ia.var(goal * fine, 1);
+        let (goal, min) = super::curve_goal(ctx.field, &curve3d(c))?;
+        ia.var(goal * fine, min);
     }
     let schemes = section::schemes(arr, used, &mut ia);
     let seeds = Seeds::of(ctxs, frame, h_ref, intervals, setup.h_tol, &(0..arr.curves.len()).map(curve3d).collect::<Vec<_>>())?;
@@ -543,12 +543,10 @@ pub(crate) fn mesh(ctxs: &[Ctx], prepared: &Prepared, refine: u32) -> Result<(Ra
             }
             Frame::Rotate { .. } => {
                 let path: Vec<P> = (0..=16).map(|k| frame.point([0.0, r_max], lo + (hi - lo) * k as f64 / 16.0)).collect();
-                edge_divisions(ctx.field, &path)?
+                // Each layer turns by no more than the curves of the cross-section may.
+                edge_divisions(ctx.field, &path)?.max(crate::size::turn_divisions((hi - lo).abs(), super::CURVE_TURN))
             }
         };
-        if frame.periodic() {
-            n = n.max(((hi - lo) / FRAC_PI_4).ceil() as usize);
-        }
         if let Some(Some(l)) = seeds.layers.get(layers.len()) {
             let seeded = l.fractions.len().saturating_sub(1).max(1);
             n = match l.seed.constraint {

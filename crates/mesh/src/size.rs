@@ -21,7 +21,8 @@
 //!
 //! The integrals use the midpoint rule on [`SAMPLES_PER_SEGMENT`] pieces per polyline segment,
 //! with the size taken constant within a piece.
-//! Every function is deterministic (no transcendental functions, only `+ − × ÷ √`).
+//! Every function is deterministic: only `+ − × ÷ √`, and [`turning`]'s angles from the mesher's
+//! portable `atan2`.
 
 use crate::{Error, Result};
 
@@ -149,6 +150,48 @@ pub fn edge_divisions(field: &dyn SizeField, polyline: &[[f64; 3]]) -> Result<us
 pub fn even_divisions(ideal: f64) -> Result<usize> {
     let half = rounded(ideal / 2.0)?;
     half.checked_mul(2).ok_or_else(|| Error::Limit("division count overflow".into()))
+}
+
+/// How far a polyline turns (radians): the sum of the angles between its consecutive segments.
+/// A closed polyline (its last point its first) also turns at its closing point, so a convex
+/// closed polyline turns by 2π. An open one sampled from a curve misses the turn of half a
+/// segment at each end; it is scaled by `k / (k − 1)` over its `k` segments, which is exact for
+/// an arc sampled evenly. A straight polyline turns by 0, as does one of a single segment.
+/// Segments of zero length are skipped.
+pub fn turning<const N: usize>(polyline: &[[f64; N]]) -> f64 {
+    let segments: Vec<[f64; N]> =
+        polyline.windows(2).map(|w| std::array::from_fn(|i| w[1][i] - w[0][i])).filter(|d: &[f64; N]| d.iter().any(|&x| x != 0.0)).collect();
+    let closed = polyline.len() > 2 && polyline.first() == polyline.last();
+    let angle = |a: &[f64; N], b: &[f64; N]| {
+        let dot: f64 = a.iter().zip(b).map(|(x, y)| x * y).sum();
+        let (aa, bb): (f64, f64) = (a.iter().map(|x| x * x).sum(), b.iter().map(|x| x * x).sum());
+        // |a × b| from Lagrange's identity, in any dimension.
+        crate::vec3::atan2((aa * bb - dot * dot).max(0.0).sqrt(), dot)
+    };
+    let mut turn: f64 = segments.windows(2).map(|w| angle(&w[0], &w[1])).sum();
+    let k = segments.len();
+    if closed {
+        if let (Some(last), Some(first)) = (segments.last(), segments.first()) {
+            turn += angle(last, first);
+        }
+    } else if k >= 2 {
+        turn *= k as f64 / (k - 1) as f64;
+    }
+    if turn.is_finite() { turn } else { 0.0 }
+}
+
+/// How far past a whole number of pieces a curve's turn may be by round-off alone.
+const TURN_ROUND_OFF: f64 = 1e-9; // unit-factors: a relative tolerance
+
+/// The fewest divisions that keep each piece of a curve that turns by `turn` within `max_turn`
+/// (radians): `⌈turn / max_turn⌉`, at least 1 (1 when `max_turn` is not positive).
+pub fn turn_divisions(turn: f64, max_turn: f64) -> usize {
+    if !(max_turn > 0.0 && turn > 0.0 && turn.is_finite()) {
+        return 1;
+    }
+    // A whole circle sampled evenly turns by 2π to the last bits; its count must not round up.
+    let n = (turn / max_turn * (1.0 - TURN_ROUND_OFF)).ceil();
+    if n >= MAX_DIVISIONS as f64 { MAX_DIVISIONS } else { (n as usize).max(1) }
 }
 
 /// The relative spacing error of `n` divisions against `ideal`, as `max(n, x) / min(n, x)`.
@@ -385,6 +428,32 @@ impl SizeField for RegionSize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A curve's turning is the angle its tangent sweeps: 2π for a whole circle (closed), the arc's
+    /// angle for an evenly sampled arc, 0 for a line, in the plane or in space; the turn floor at
+    /// 22.5° is 16 for the circle and 4 for a quarter, never more from the circle's last bits.
+    #[test]
+    fn a_curve_turns_by_its_angle() {
+        use std::f64::consts::{FRAC_PI_2, PI, TAU};
+        let arc = |r: f64, a0: f64, a1: f64, n: usize| -> Vec<[f64; 3]> {
+            (0..=n).map(|k| a0 + (a1 - a0) * k as f64 / n as f64).map(|t| [r * libm::cos(t), r * libm::sin(t), 2.0]).collect()
+        };
+        let mut circle = arc(5.0, 0.0, TAU, 64);
+        circle[64] = circle[0];
+        assert!((turning(&circle) - TAU).abs() < 1e-12, "{}", turning(&circle));
+        assert_eq!(turn_divisions(turning(&circle), PI / 8.0), 16);
+        let quarter = arc(5.0, 0.0, FRAC_PI_2, 8);
+        assert!((turning(&quarter) - FRAC_PI_2).abs() < 1e-12, "{}", turning(&quarter));
+        assert_eq!(turn_divisions(turning(&quarter), PI / 8.0), 4);
+        let flat: Vec<[f64; 2]> = quarter.iter().map(|p| [p[0], p[1]]).collect();
+        assert!((turning(&flat) - FRAC_PI_2).abs() < 1e-12);
+        let line = [[0.0, 0.0, 0.0], [1.0, 1.0, 0.0], [1.0, 1.0, 0.0], [3.0, 3.0, 0.0]];
+        assert_eq!(turning(&line), 0.0);
+        assert_eq!(turn_divisions(turning(&line), PI / 8.0), 1);
+        assert_eq!(turn_divisions(TAU, 0.0), 1);
+        assert_eq!(turn_divisions(f64::NAN, PI / 8.0), 1);
+        assert_eq!(turning::<3>(&[]), 0.0);
+    }
 
     #[test]
     fn uniform_divisions() {

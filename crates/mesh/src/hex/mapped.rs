@@ -16,7 +16,6 @@ use super::brep::Brep;
 use super::interval::Intervals;
 use super::{Ctx, Raw, project_to_face, project_to_faces};
 use crate::quad::{lattice_index, transfinite_faces, transfinite_volume};
-use crate::size::ideal_divisions;
 use crate::vec3::{P, det, sub};
 use crate::{Error, Result};
 
@@ -155,7 +154,8 @@ pub(crate) fn mesh(ctx: &Ctx) -> Result<Raw> {
     let groups = cube.groups;
     let mut ia = Intervals::default();
     for e in 0..brep.edges.len() {
-        ctx.edge_var(&mut ia, e, ideal_divisions(ctx.field, &brep.edge_points(e, true))?);
+        let (goal, min) = super::curve_goal(ctx.field, &brep.edge_points(e, true))?;
+        ctx.edge_var(&mut ia, e, goal, min);
     }
     for g in &groups {
         let first = g.first().map(|x| x.0).unwrap_or(0);

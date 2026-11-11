@@ -1,6 +1,47 @@
 {
   "note": "The corpus part's accepted results, written by `cargo xtask corpus --bless` (docs/meshing/corpus.md). A stage whose outcome changes, or a value outside its band, fails the corpus run and CI's heavy job. `platforms` lists what each platform blessed measured differently.",
   "platforms": {
+    "linux-x86_64": {
+      "stages": {},
+      "values": {
+        "boundary.feature_edges": {
+          "band": 0,
+          "value": 685
+        },
+        "cdt.steiner": {
+          "band": 0,
+          "value": 2224
+        },
+        "cdt.tets": {
+          "band": 0,
+          "value": 10733
+        },
+        "octree.min_sj": {
+          "band": 6.101701068027701e-12,
+          "value": 0.005101701068027701
+        },
+        "quality.max_dihedral_deg": {
+          "band": 1.5767268033738356e-7,
+          "value": 157.67168033738355
+        },
+        "quality.min_dihedral_deg": {
+          "band": 1.75912903889041e-8,
+          "value": 17.590290388904098
+        },
+        "quality.min_radius_ratio": {
+          "band": 8.943332347131368e-11,
+          "value": 0.08843332347131368
+        },
+        "quality.slivers_cdt": {
+          "band": 0,
+          "value": 7763
+        },
+        "quality.tets": {
+          "band": 0,
+          "value": 347863
+        }
+      }
+    },
     "macos-aarch64": {
       "stages": {},
       "values": {}
@@ -62,15 +103,15 @@
     },
     "hex.elements": {
       "band": 0,
-      "value": 8008
+      "value": 7392
     },
     "hex.hex20_min_sj": {
-      "band": 3.92127950791991e-10,
-      "value": 0.391127950791991
+      "band": 4.250288876229732e-10,
+      "value": 0.4240288876229732
     },
     "hex.hex8_min_sj": {
-      "band": 3.9212795079198613e-10,
-      "value": 0.3911279507919861
+      "band": 3.8175374520625235e-10,
+      "value": 0.3807537452062523
     },
     "octree.hexes": {
       "band": 0,

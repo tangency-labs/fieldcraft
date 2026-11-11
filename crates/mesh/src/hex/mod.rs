@@ -27,7 +27,13 @@
 //! layers, so cells that share a sweep conform across their cut faces.
 //!
 //! **Common steps.** Interval assignment ([`interval`]) picks the division counts of shared curves
-//! together. Boundary nodes on analytic faces are placed on the exact surface; quadratic hexahedra
+//! together. A curve's goal is its length in units of the size field, and a curved one gets at
+//! least as many divisions as keep each within [`CURVE_TURN`] of turning ([`curve_goal`]): the
+//! geometric size map `h ≤ θ ρ` of a curve of radius `ρ` (P. J. Frey, P.-L. George, *Mesh
+//! Generation: Application to Finite Elements*, 2nd ed., Wiley–ISTE, 2008), the rule the tet
+//! mesher's curvature refinement follows ([`crate::tet::QualityOptions::curvature_angle`]), so a
+//! whole circle has at least 16 nodes whatever the size and however many vertices the kernel
+//! puts on it. Boundary nodes on analytic faces are placed on the exact surface; quadratic hexahedra
 //! (hex20) get their mid-edge nodes projected onto the faces (and onto both faces of a B-rep
 //! edge). Every boundary quadrilateral is tagged with the B-rep face it lies on, so model sets
 //! named by face resolve. The output passes the certified validity gate (every element's
@@ -76,6 +82,20 @@ use fieldcraft_model::ElementKind;
 
 /// A projection step this small, relative to the tolerance, has converged.
 const CONVERGED: f64 = 1e-3; // unit-factors: relative to the tolerance
+
+/// The most a boundary curve turns along one element edge: 22.5°, as the tet mesher's default
+/// curvature angle.
+pub(crate) const CURVE_TURN: f64 = std::f64::consts::PI / 8.0;
+
+/// A curve's division goal and its floor: the goal is its length in units of the size field,
+/// raised to the floor, the fewest divisions that keep each piece within [`CURVE_TURN`] of
+/// turning (1 for a straight curve).
+pub(crate) fn curve_goal<const N: usize>(field: &dyn SizeField, polyline: &[[f64; N]]) -> Result<(f64, usize)> {
+    let floor = crate::size::turn_divisions(crate::size::turning(polyline), CURVE_TURN);
+    let pts: Vec<P> = polyline.iter().map(|p| std::array::from_fn(|i| p.get(i).copied().unwrap_or(0.0))).collect();
+    let goal = crate::size::ideal_divisions(field, &pts)?;
+    Ok((goal.max(floor as f64), floor))
+}
 
 /// Which structured method to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -229,9 +249,10 @@ impl<'a> Ctx<'a> {
         Some((self.opts.seeds.get(i)?, rev))
     }
 
-    /// A division-count variable for B-rep edge `e` with goal `goal`, its seed applied.
-    pub(crate) fn edge_var(&self, ia: &mut interval::Intervals, e: usize, goal: f64) -> usize {
-        let v = ia.var(goal, 1);
+    /// A division-count variable for B-rep edge `e` with goal `goal` and at least `min`
+    /// divisions ([`curve_goal`]), its seed applied.
+    pub(crate) fn edge_var(&self, ia: &mut interval::Intervals, e: usize, goal: f64, min: usize) -> usize {
+        let v = ia.var(goal, min);
         if let Some((seed, _)) = self.seed_of(e) {
             ia.seed(v, seed);
         }

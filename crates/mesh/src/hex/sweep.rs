@@ -32,7 +32,6 @@ use super::layered::{Frame, PlaneField};
 use super::region;
 use super::{Ctx, Raw, project_to_face, project_to_faces};
 use crate::quad::transfinite_grid;
-use crate::size::ideal_divisions;
 use crate::vec3::{P, dot, sub};
 use crate::{Error, Result};
 
@@ -239,8 +238,9 @@ fn build(ctx: &Ctx, topo: &Topology, refine: u32) -> Result<Raw> {
     let sides: BTreeSet<usize> = topo.rings.iter().flatten().flatten().flat_map(|l| [l.right.0, l.left.0]).collect();
     let fine = f64::from(1u32 << refine.min(8));
     for e in 0..brep.edges.len() {
-        let goal = ideal_divisions(ctx.field, &brep.edge_points(e, true))?;
-        ctx.edge_var(&mut ia, e, if sides.contains(&e) { goal } else { goal * fine });
+        let (goal, min) = super::curve_goal(ctx.field, &brep.edge_points(e, true))?;
+        // A refined retry refines the cross-section only; the curvature floor holds either way.
+        ctx.edge_var(&mut ia, e, if sides.contains(&e) { goal } else { goal * fine }, min);
     }
     let vars = |uses: &[(usize, bool)]| uses.iter().map(|x| x.0).collect::<Vec<_>>();
     for stages in &topo.rings {
