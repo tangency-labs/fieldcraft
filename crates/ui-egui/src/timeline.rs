@@ -1,25 +1,21 @@
 //! The timeline (bottom): the command journal in order, as SolidCraft shows its features. Runs of
 //! the same command make one item with a count; the marker stands after the current state, and
 //! undone commands follow it greyed, ready to redo. Clicking an item (or the transport buttons)
-//! undoes or redoes up to it with `edit.undo` / `edit.redo`; commands older than the undo history
-//! cannot be reached and say so.
+//! undoes or redoes up to it with `edit.undo` / `edit.redo`, as dragging the marker does; commands
+//! older than the undo history cannot be reached and say so.
 //!
-//! Layout follows SolidCraft's `crates/ui-egui/src/timeline.rs` (MIT OR Apache-2.0), see
-//! ATTRIBUTION.md.
+//! The bar is the kit's History bar (`solidcraft_ui_kit::history_bar`), as SolidCraft draws its
+//! own; FieldCraft keeps its journal and undo behind it.
 
-use egui::{Align2, Color32, FontId, Rect, Sense, Stroke, UiBuilder, Vec2, pos2, vec2};
+use egui::{Align2, Color32, FontId, Rect, Stroke, pos2, vec2};
 use serde_json::{Value, json};
+use solidcraft_ui_kit::{self as kit, history_bar};
 
 use crate::ModelApp;
-use crate::icons::{self, Look};
 use crate::theme::Tokens;
 
 /// The timeline's height.
 pub const HEIGHT: f32 = 40.0;
-const ITEM: f32 = 28.0;
-/// How faint an undone or unreachable item's icon is.
-const FADED: f32 = 0.43;
-const STRIDE: f32 = 30.0;
 
 /// A run of the same command in the journal (`start..end`), or among the undone commands
 /// (positions past the journal's end).
@@ -146,128 +142,110 @@ fn tip(item: &Item, reachable: bool) -> String {
     s
 }
 
-/// The transport buttons' glyphs: to the start, back, forward, to the end.
-fn transport_glyph(p: &egui::Painter, c: egui::Pos2, what: &str, col: Color32) {
-    let tri = |x: f32, left: bool| {
-        let (a, b) = if left { (x + 3.5, x - 3.5) } else { (x - 3.5, x + 3.5) };
-        egui::Shape::convex_polygon(vec![pos2(a, c.y - 4.5), pos2(a, c.y + 4.5), pos2(b, c.y)], col, Stroke::NONE)
-    };
-    let bar = |x: f32| egui::Shape::line_segment([pos2(x, c.y - 4.5), pos2(x, c.y + 4.5)], Stroke::new(1.5, col));
-    match what {
-        "first" => {
-            p.add(bar(c.x - 4.5));
-            p.add(tri(c.x + 1.0, true));
-        }
-        "back" => {
-            p.add(tri(c.x, true));
-        }
-        "forward" => {
-            p.add(tri(c.x, false));
-        }
-        _ => {
-            p.add(tri(c.x - 1.0, false));
-            p.add(bar(c.x + 4.5));
+/// Where the History bar publishes its grip, marker, steps and controls.
+const HANDLES: history_bar::Handles<'static> =
+    history_bar::Handles { grip: "timeline:grip", marker: "timeline:marker", step: "timeline:step:", controls: "timeline:" };
+
+/// The journal's items as the kit's History strip lays them out: one step each, the badge of a
+/// deletion or an edit and a run's count drawn over its chip.
+struct Steps<'a> {
+    list: &'a [Item],
+    done: usize,
+    oldest: usize,
+    t: &'a Tokens,
+}
+
+impl history_bar::Contents for Steps<'_> {
+    fn entries(&mut self, strip: &mut history_bar::Strip<'_, '_>) {
+        for (slot, item) in self.list.iter().enumerate() {
+            let reachable = item.end >= self.oldest;
+            let label = describe(item);
+            let tip = || tip(item, reachable);
+            let step = history_bar::Step {
+                id: slot as u64,
+                slot,
+                label: &label,
+                icon: fieldcraft_engine::catalogue::entry_of(&item.command).map_or("ui.views", |c| c.id),
+                icon_accent: None,
+                state: history_bar::StepState { rolled_back: item.start >= self.done, suppressed: !reachable, ..Default::default() },
+                error: false,
+                warning: false,
+                ink: None,
+                tip: &tip,
+            };
+            let chip = strip.step(&step);
+            if !strip.ui().is_rect_visible(chip) {
+                continue;
+            }
+            let p = strip.painter().clone();
+            if let Some(b) = badge(&item.command) {
+                paint_badge(&p, chip, b, self.t);
+            }
+            if item.count() > 1 {
+                let text = p.layout_no_wrap(format!("{}", item.count()), FontId::proportional(9.0), self.t.text);
+                let b = Rect::from_min_size(chip.right_bottom() - text.size() - vec2(3.0, 1.0), text.size() + vec2(3.0, 1.0));
+                p.rect_filled(b, 3.0, self.t.panel_header);
+                p.galley(b.min + vec2(1.5, 0.5), text, self.t.text);
+            }
         }
     }
 }
 
+/// The History bar (bottom): the kit's header (grip, title and the History controls) and strip
+/// (a chip per item, the marker after the current state). Its controls, a click on an item and a
+/// dragged marker undo or redo through [`ModelApp::roll_to`]; the journal cannot be reordered.
 pub fn timeline(app: &mut ModelApp, ui: &mut egui::Ui) {
     let t = Tokens::get(app.ui.dark);
     let mut roll: Option<usize> = None;
     egui::Panel::bottom("fc_timeline").exact_size(HEIGHT).show_separator_line(false).frame(egui::Frame::NONE.fill(t.timeline)).show(ui, |ui| {
         let r = ui.max_rect();
         app.place("timeline", r);
-        let p = ui.painter().clone();
-        p.line_segment([r.left_top(), r.right_top()], Stroke::new(1.0, t.border));
+        ui.painter().line_segment([r.left_top(), r.right_top()], Stroke::new(1.0, t.border));
         let (undo, redo) = app.session.undo_depth();
-        let done = app.session.journal.len();
-        let oldest = done.saturating_sub(undo);
-        let mut x = r.left() + 10.0;
-        for (what, target, tip) in [
-            ("first", oldest, "Undo everything the history holds"),
-            ("back", done.saturating_sub(1), "Undo"),
-            ("forward", done + 1, "Redo"),
-            ("last", done + redo, "Redo everything undone"),
-        ] {
-            let br = Rect::from_center_size(pos2(x + 11.0, r.center().y), Vec2::splat(22.0));
-            let enabled = target != done && target >= oldest && target <= done + redo;
-            let resp = ui.interact(br, ui.scope_id().with(("fc_transport", what)), if enabled { Sense::click() } else { Sense::hover() });
-            if resp.hovered() && enabled {
-                p.rect_filled(br, 3.0, t.hover);
-            }
-            transport_glyph(&p, br.center(), what, if enabled { t.icon } else { t.border });
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, tip));
-            if resp.on_hover_text(tip).clicked() && enabled {
-                roll = Some(target);
-            }
-            x += 24.0;
-        }
-        x += 14.0;
         let (list, done) = cached_items(app);
-        let strip = Rect::from_min_max(pos2(x, r.top()), r.right_bottom());
+        let oldest = done.saturating_sub(undo);
+        let accent = solidcraft_theme::TabAccent::current(ui.ctx());
+        let bar = history_bar::Bar {
+            title: "History",
+            marker_tip: "The model is here: drag to roll it back or forward",
+            play: false,
+            playing: false,
+            play_labels: kit::PlayLabels { play: "Play", stop: "Stop" },
+            accent,
+            drag_accent: accent,
+            marker: list.iter().position(|i| i.start >= done).unwrap_or(list.len()),
+            steps: list.len(),
+            floating: false,
+            handles: HANDLES,
+        };
+        let head = history_bar::header(ui, &bar, r);
+        let mut actions = head.actions;
         if list.is_empty() {
-            p.text(
-                pos2(x, r.center().y),
+            let k = solidcraft_theme::Tokens::get();
+            ui.painter().text(
+                pos2(head.x, r.center().y),
                 Align2::LEFT_CENTER,
-                "The journal is empty: every command that changes the model appears here",
-                FontId::proportional(12.0),
-                t.text_dim,
+                "Every command that changes the model appears here",
+                FontId::proportional(k.font_label),
+                k.text_dim,
             );
-            return;
+        } else {
+            let strip = Rect::from_min_max(pos2(head.x, r.top()), r.right_bottom());
+            let mut steps = Steps { list: &list, done, oldest, t: &t };
+            actions.extend(history_bar::strip(ui, &bar, r, strip, "fc_timeline_strip", &mut steps).actions);
         }
-        ui.scope_builder(UiBuilder::new().max_rect(strip), |ui| {
-            egui::ScrollArea::horizontal().id_salt("fc_timeline_scroll").stick_to_right(true).auto_shrink([false, false]).show(ui, |ui| {
-                let marker_at = list.iter().position(|i| i.start >= done).unwrap_or(list.len());
-                let width = list.len() as f32 * STRIDE + 12.0;
-                let (area, _) = ui.allocate_exact_size(vec2(width, r.height()), Sense::hover());
-                let p = ui.painter().clone();
-                let marker =
-                    |x: f32| p.rect_filled(Rect::from_min_size(pos2(x, r.top() + 5.0), vec2(5.0, r.height() - 10.0)), 2.0, t.timeline_marker);
-                let mut x = area.left();
-                for (k, item) in list.iter().enumerate() {
-                    if k == marker_at {
-                        marker(x);
-                        x += 10.0;
-                    }
-                    let br = Rect::from_min_size(pos2(x, r.top() + 6.0), Vec2::splat(ITEM));
-                    x += STRIDE;
-                    if !ui.is_rect_visible(br) {
-                        continue;
-                    }
-                    let undone = item.start >= done;
-                    let reachable = item.end >= oldest;
-                    let resp = ui.interact(br, ui.scope_id().with(("fc_journal", k)), if reachable { Sense::click() } else { Sense::hover() });
-                    let bg = if resp.hovered() && reachable { t.hover } else { t.timeline_item };
-                    p.rect(br, 3.0, bg, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
-                    let icon = fieldcraft_engine::catalogue::entry_of(&item.command).map_or("ui.views", |c| c.id);
-                    let opacity = if undone || !reachable { FADED } else { 1.0 };
-                    icons::paint_faded(ui, icon, br.shrink(4.0), Look::of(!undone), opacity);
-                    if let Some(b) = badge(&item.command) {
-                        paint_badge(&p, br, b, &t);
-                    }
-                    if item.count() > 1 {
-                        let text = p.layout_no_wrap(format!("{}", item.count()), FontId::proportional(9.0), t.text);
-                        let b = Rect::from_min_size(br.right_bottom() - text.size() - vec2(3.0, 1.0), text.size() + vec2(3.0, 1.0));
-                        p.rect_filled(b, 3.0, t.panel_header);
-                        p.galley(b.min + vec2(1.5, 0.5), text, t.text);
-                    }
-                    let label = describe(item);
-                    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, reachable, &label));
-                    if resp
-                        .on_hover_ui(|ui| {
-                            ui.label(tip(item, reachable));
-                        })
-                        .clicked()
-                        && reachable
-                    {
-                        roll = Some(item.end);
-                    }
-                }
-                if marker_at == list.len() {
-                    marker(x);
-                }
-            });
-        });
+        let start = |slot: usize| list.get(slot).map_or(done + redo, |i| i.start);
+        for action in actions {
+            roll = match action {
+                history_bar::Action::Seek(history_bar::Seek::First) => Some(oldest),
+                history_bar::Action::Seek(history_bar::Seek::Back) => Some(done.saturating_sub(1)),
+                history_bar::Action::Seek(history_bar::Seek::Forward) => Some(done + 1),
+                history_bar::Action::Seek(history_bar::Seek::Last) => Some(done + redo),
+                history_bar::Action::Seek(history_bar::Seek::Slot { slot, .. }) => Some(start(slot)),
+                history_bar::Action::Select { step, .. } => list.get(step as usize).filter(|i| i.end >= oldest).map(|i| i.end),
+                _ => roll,
+            };
+        }
     });
     if let Some(target) = roll {
         app.roll_to(target);
