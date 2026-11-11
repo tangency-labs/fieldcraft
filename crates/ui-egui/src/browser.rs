@@ -15,10 +15,11 @@
 //! stage needs shows a ghost row ("＋ Add material…") that starts the providing command. Optional
 //! stages (seeds and partitions) carry no mark.
 //!
-//! Row drawing follows SolidCraft's `crates/ui-egui/src/browser.rs` (MIT OR Apache-2.0), see
-//! ATTRIBUTION.md.
+//! Rows are the kit's tree rows (`solidcraft_ui_kit::tree_row`), as SolidCraft's browser draws
+//! them; the setup marks' column at their left, the motion arrow on a moving boundary condition's
+//! icon and the ghost rows are FieldCraft's own (the kit's rows have no workflow stages).
 
-use egui::{Color32, FontId, Pos2, Rect, RichText, Sense, Stroke, Vec2, pos2, vec2};
+use egui::{Color32, FontId, Pos2, Rect, Sense, Stroke, Vec2, pos2, vec2};
 use fieldcraft_engine::progress::{Stage, StageState, Status};
 use fieldcraft_engine::schema::Collection;
 use fieldcraft_model::Model;
@@ -26,18 +27,14 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::ModelApp;
-use crate::icons::{self, Look};
 use crate::menu::{self, Action, Target};
 use crate::theme::Tokens;
+use solidcraft_ui_kit as kit;
 
 /// The browser's width.
 pub const WIDTH: f32 = 250.0;
-const ROW_H: f32 = 22.0;
+/// The kit's indent per tree level.
 const INDENT: f32 = 14.0;
-/// Between a row's label and its note.
-const NOTE_GAP: f32 = 6.0;
-/// Free space kept at a row's right end.
-const ROW_PAD: f32 = 4.0;
 /// The state marks' column at the tree's left edge (every row keeps it, so the tree lines up).
 const MARK_W: f32 = 14.0;
 
@@ -467,6 +464,8 @@ struct Row<'a> {
     /// A colour swatch instead of an icon (element kinds).
     swatch: Option<Color32>,
     label: &'a str,
+    /// The label is a name someone gave (shown as typed, never translated).
+    name: bool,
     /// Dim text after the label (a count).
     note: Option<String>,
     selected: bool,
@@ -488,115 +487,66 @@ struct RowResp {
     response: Option<egui::Response>,
 }
 
+/// The setup marks' column, then the kit's tree row.
 fn draw_row(app: &mut ModelApp, ui: &mut egui::Ui, id: egui::Id, row: &Row) -> RowResp {
     let t = Tokens::get(app.ui.dark);
-    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::hover());
-    if !ui.is_rect_visible(r) {
-        return RowResp::default();
-    }
-    let resp = ui.interact(r, id, Sense::click());
-    if row.selected {
-        ui.painter().rect_filled(r, 3.0, t.accent_soft);
-    } else if resp.hovered() {
-        ui.painter().rect_filled(r, 3.0, t.hover);
-    }
-    if let Some(status) = row.mark {
-        paint_mark(ui.painter(), Rect::from_center_size(pos2(r.left() + 1.0 + MARK_W / 2.0, r.center().y), Vec2::splat(9.0)), status, &t);
-    }
-    let mut x = r.left() + 2.0 + MARK_W + row.depth as f32 * INDENT;
-    let cy = r.center().y;
-    let fold_r = Rect::from_min_max(pos2(x - 4.0, r.top()), pos2(x + 15.0, r.bottom()));
-    let eye_r = Rect::from_center_size(pos2(x + 14.0 + 8.0, cy), vec2(19.0, r.height()));
-    let at = |p: Pos2| -> u8 {
-        if row.fold.is_some() && fold_r.contains(p) {
-            1
-        } else if row.eye.is_some() && eye_r.contains(p) {
-            2
-        } else {
-            0
-        }
+    let kit_row = kit::Row {
+        depth: row.depth,
+        fold: row.fold,
+        eye: row.eye,
+        icon: row.icon.unwrap_or(""),
+        label: row.label,
+        name: row.name,
+        selected: row.selected,
+        dim: row.dim,
+        tip: row.tip.as_deref(),
+        swatch: if row.icon.is_none() { row.swatch } else { None },
+        count: row.note.as_deref().unwrap_or(""),
+        ..Default::default()
     };
-    let click_on = resp.interact_pointer_pos().map_or(0, at);
-    let hover_on = resp.hover_pos().map_or(0, at);
-    let mut out = RowResp::default();
-    if let Some(open) = row.fold {
-        let ar = Rect::from_center_size(pos2(x + 6.0, cy), vec2(12.0, 12.0));
-        let pts = if open {
-            vec![pos2(ar.left() + 2.0, ar.top() + 4.0), pos2(ar.right() - 2.0, ar.top() + 4.0), pos2(ar.center().x, ar.bottom() - 3.0)]
+    let r = ui
+        .horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            let (column, _) = ui.allocate_exact_size(vec2(MARK_W, kit::tree_row_rect(ui, &kit_row).height()), Sense::hover());
+            if let Some(status) = row.mark
+                && ui.is_rect_visible(column)
+            {
+                paint_mark(ui.painter(), Rect::from_center_size(column.center() + vec2(1.0, 0.0), Vec2::splat(9.0)), status, &t);
+            }
+            kit::tree_row(ui, id, &kit_row)
+        })
+        .inner;
+    let Some(resp) = r.resp else { return RowResp::default() };
+    if row.moves
+        && let (Some(rect), Some(label_left)) = (r.rect, r.label_left)
+    {
+        // An arrow out of the icon's lower right corner, on a disc of the row's background. The
+        // kit gives where the label starts; its 16 pt icon ends 5 pt before it (`tree_row`).
+        let icon = Rect::from_min_size(pos2(label_left - 21.0, rect.center().y - 8.0), Vec2::splat(16.0));
+        let c = icon.right_bottom() - vec2(3.0, 3.0);
+        let k = solidcraft_theme::Tokens::get();
+        let disc = if row.selected {
+            solidcraft_theme::TabAccent::current(ui.ctx()).soft
+        } else if r.hovered {
+            k.hover
         } else {
-            vec![pos2(ar.left() + 4.0, ar.top() + 2.0), pos2(ar.right() - 3.0, ar.center().y), pos2(ar.left() + 4.0, ar.bottom() - 2.0)]
+            t.panel
         };
-        ui.painter().add(egui::Shape::convex_polygon(pts, if hover_on == 1 { t.text } else { t.text_dim }, Stroke::NONE));
-        out.fold = resp.clicked() && click_on == 1;
+        ui.painter().circle_filled(c, 4.5, disc);
+        let s = Stroke::new(1.4, t.accent);
+        ui.painter().line_segment([c + vec2(-3.0, -3.0), c + vec2(2.5, 2.5)], s);
+        ui.painter().line_segment([c + vec2(2.5, 2.5), c + vec2(-0.5, 2.5)], s);
+        ui.painter().line_segment([c + vec2(2.5, 2.5), c + vec2(2.5, -0.5)], s);
     }
-    x += 14.0;
-    if let Some(vis) = row.eye {
-        let er = Rect::from_center_size(pos2(x + 8.0, cy), Vec2::splat(15.0));
-        icons::paint(ui, "ui.eye", er, Look::of(vis));
-        if !vis {
-            ui.painter().line_segment([er.left_bottom() + vec2(2.0, -2.0), er.right_top() + vec2(-2.0, 2.0)], Stroke::new(1.4, t.text_dim));
-        }
-        out.eye = resp.clicked() && click_on == 2;
-        x += 20.0;
-    }
-    if let Some(icon) = row.icon {
-        let ir = Rect::from_min_size(pos2(x, cy - 8.0), Vec2::splat(16.0));
-        icons::paint(ui, icon, ir, Look::of(!row.dim));
-        if row.moves {
-            // An arrow out of the icon's lower right corner, on a disc of the row's background.
-            let c = ir.right_bottom() - vec2(3.0, 3.0);
-            ui.painter().circle_filled(c, 4.5, if row.selected { t.accent_soft } else { t.panel });
-            let s = Stroke::new(1.4, t.accent);
-            ui.painter().line_segment([c + vec2(-3.0, -3.0), c + vec2(2.5, 2.5)], s);
-            ui.painter().line_segment([c + vec2(2.5, 2.5), c + vec2(-0.5, 2.5)], s);
-            ui.painter().line_segment([c + vec2(2.5, 2.5), c + vec2(2.5, -0.5)], s);
-        }
-        x += 21.0;
-    } else if let Some(c) = row.swatch {
-        ui.painter().rect_filled(Rect::from_center_size(pos2(x + 6.0, cy), Vec2::splat(10.0)), 2.0, c);
-        x += 18.0;
-    }
-    let col = if row.dim { t.text_dim } else { t.text };
-    // The note (a count, a seed's size and bias) keeps its room; the label gets the rest, elided in
-    // the middle when long, whole on hover.
-    let right = r.right() - ROW_PAD;
-    let note = row.note.as_ref().map(|n| ui.painter().layout_no_wrap(n.clone(), FontId::proportional(11.5), t.text_dim));
-    let note_w = note.as_ref().map_or(0.0, |g| g.size().x + NOTE_GAP);
-    let font = FontId::proportional(12.5);
-    let room = (right - note_w - x).max(0.0);
-    let label = crate::elide::middle_in(ui, row.label, &font, room);
-    let elided = matches!(label, std::borrow::Cow::Owned(_));
-    let galley = ui.painter().layout_no_wrap(label.into_owned(), font, col);
-    ui.painter().with_clip_rect(r).galley(pos2(x, cy - galley.size().y / 2.0), galley, col);
-    if let Some(n) = note {
-        let at = pos2(right - n.size().x, cy - n.size().y / 2.0);
-        ui.painter().with_clip_rect(r).galley(at, n, t.text_dim);
-    }
-    let tip = match hover_on {
-        1 => Some((if row.fold == Some(true) { "Collapse" } else { "Expand" }).to_string()),
-        2 => Some((if row.eye == Some(true) { "Hide" } else { "Show" }).to_string()),
-        _ => match (&row.tip, elided) {
-            (Some(tip), true) => Some(format!("{}\n\n{tip}", row.label)),
-            (Some(tip), false) => Some(tip.clone()),
-            (None, true) => Some(row.label.to_string()),
-            (None, false) => None,
-        },
-    };
-    let resp = match tip {
-        Some(tip) => resp.on_hover_text(tip),
-        None => resp,
-    };
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, row.label));
-    out.clicked = resp.clicked() && click_on == 0;
-    out.double = resp.double_clicked() && click_on == 0;
-    out.response = Some(resp);
-    out
+    RowResp { clicked: r.clicked, double: r.double, fold: r.fold, eye: r.eye, response: Some(resp) }
 }
 
 /// A row for one item: its eye when the viewport draws it on its own, selection by a click and
 /// its edit form by a double click (definitions, datums, partitions), and its menu by a right
 /// click.
 fn item_row(app: &mut ModelApp, ui: &mut egui::Ui, id: egui::Id, mut row: Row, target: Target, acts: &mut Vec<Act>) {
+    row.name = true;
     if let Some(item) = target.item() {
         row.eye = Some(app.session.shows(item.kind, &item.name));
     }
@@ -667,7 +617,7 @@ fn paint_mark(p: &egui::Painter, r: Rect, status: Status, t: &Tokens) {
 /// starts the stage's command; true when activated.
 fn draw_ghost(app: &mut ModelApp, ui: &mut egui::Ui, s: &StageState) -> bool {
     let t = Tokens::get(app.ui.dark);
-    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::hover());
+    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), kit::TREE_ROW_HEIGHT), Sense::hover());
     app.place(ghost_region(s.stage), r);
     if !ui.is_rect_visible(r) {
         return false;
@@ -680,14 +630,16 @@ fn draw_ghost(app: &mut ModelApp, ui: &mut egui::Ui, s: &StageState) -> bool {
         ui.painter().rect_stroke(r.shrink(0.5), 3.0, Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);
     }
     let col = if s.status == Status::Next { t.accent_ink } else { t.text_dim };
-    // Aligned with the node's children: past the fold arrow, the plus in the icon's place.
-    let x = r.left() + 2.0 + MARK_W + 2.0 * INDENT + 14.0;
+    // Aligned with the node's children: past the fold arrow and the eye's gap (as the kit's rows
+    // place their icons), the plus in the icon's place.
+    let x = r.left() + MARK_W + 2.0 + 2.0 * INDENT + 14.0 + solidcraft_theme::Tokens::get().space_10;
     let c = pos2(x + 8.0, r.center().y);
     let plus = Stroke::new(1.3, col);
     ui.painter().line_segment([c - vec2(4.0, 0.0), c + vec2(4.0, 0.0)], plus);
     ui.painter().line_segment([c - vec2(0.0, 4.0), c + vec2(0.0, 4.0)], plus);
     let label = ghost_label(s.stage);
-    ui.painter().with_clip_rect(r).text(pos2(x + 21.0, r.center().y), egui::Align2::LEFT_CENTER, label, FontId::proportional(12.5), col);
+    let font = FontId::proportional(solidcraft_theme::Tokens::get().font_label);
+    ui.painter().with_clip_rect(r).text(pos2(x + 21.0, r.center().y), egui::Align2::LEFT_CENTER, label, font, col);
     let resp = resp.on_hover_text(stage_tip(s).unwrap_or_default());
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
     resp.clicked()
@@ -751,7 +703,12 @@ pub fn browser(app: &mut ModelApp, ui: &mut egui::Ui) {
         .frame(egui::Frame::NONE.fill(t.panel).inner_margin(egui::Margin::symmetric(6, 6)))
         .show(ui, |ui| {
             app.place("browser", ui.max_rect());
-            ui.label(RichText::new("BROWSER").font(crate::theme::label_font(ui.ctx(), 10.5)).color(t.text_dim));
+            // The title band as the kit's tree cards draw theirs (`solidcraft_ui_kit::tree_header`).
+            let k = solidcraft_theme::Tokens::get();
+            let (band, _) = ui.allocate_exact_size(vec2(ui.available_width(), k.form_header_height), Sense::hover());
+            let title = Rect::from_min_max(band.min + vec2(k.space_12, 0.0), band.max);
+            kit::paint_text(ui, title, "Browser", kit::type_face::semibold(k.font_heading), k.text, false);
+            k.secondary_hline(ui.painter(), band.x_range(), band.bottom(), k.dialog_rule);
             ui.add_space(4.0);
             egui::ScrollArea::vertical().id_salt("fc_browser_scroll").auto_shrink([false, false]).show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
