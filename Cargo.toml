@@ -75,6 +75,9 @@ pollster = "1.0"
 solidcraft-ui-kit = { git = "https://github.com/tangency-labs/solidcraft", rev = "5e338283969dcc2ae97260f0ac6d0edf82ec0a2a" }
 solidcraft-theme = { git = "https://github.com/tangency-labs/solidcraft", rev = "5e338283969dcc2ae97260f0ac6d0edf82ec0a2a" }
 solidcraft-look = { git = "https://github.com/tangency-labs/solidcraft", rev = "5e338283969dcc2ae97260f0ac6d0edf82ec0a2a" }
+# The kit's widget registry (where its widgets were drawn, by name; MIT OR Apache-2.0): the UI
+# reads the application bar's parts from it and clears it as each frame starts.
+solidcraft-ui-registry = { git = "https://github.com/tangency-labs/solidcraft", rev = "5e338283969dcc2ae97260f0ac6d0edf82ec0a2a" }
 # native file pickers (the desktop app only; the UI crate takes them as services)
 rfd = "0.17"
 

@@ -120,9 +120,8 @@ pub const fn kit(dark: bool) -> kit_theme::Tokens {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Tokens {
-    /// The title bar (dark in both themes) and its text.
+    /// The title bar (dark in both themes).
     pub app_bar: Color32,
-    pub app_bar_text: Color32,
     /// The ribbon.
     pub toolbar: Color32,
     pub panel: Color32,
@@ -238,7 +237,6 @@ impl Tokens {
     const fn with_chrome(mut self, dark: bool) -> Tokens {
         let (k, a) = (kit(dark), accent(dark));
         self.app_bar = k.app_bar;
-        self.app_bar_text = k.app_bar_text;
         self.toolbar = k.toolbar;
         self.panel = k.panel;
         self.panel_header = k.panel_header;
@@ -272,7 +270,6 @@ impl Tokens {
         let chrome = Color32::PLACEHOLDER;
         Tokens {
             app_bar: chrome,
-            app_bar_text: chrome,
             toolbar: chrome,
             panel: chrome,
             panel_header: chrome,
