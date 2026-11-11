@@ -590,6 +590,34 @@ mod tests {
         assert!(e.contains("`Body1`") && e.contains("not a logical cube"), "{e}");
     }
 
+    /// A straight tube (a cylinder with a coaxial bore) revolves about its axis, as it sweeps and
+    /// extrudes (#895): SolidCraft gives its ends as whole annuli with no edge across them, which
+    /// the revolution draws from their meridians.
+    #[test]
+    fn a_straight_tube_revolves() {
+        let script = json!([
+            {"command": "solid.cylinder", "params": {"diameter": 20, "height": 30, "base": [0, 0, 0], "axis": "Z", "body_name": "Tube"}},
+            {"command": "solid.cylinder", "params": {"diameter": 10, "height": 30, "base": [0, 0, 0], "axis": "Z", "operation": "cut", "targets": ["Tube"]}}
+        ]);
+        let bytes = fieldcraft_geometry::script_design(&script.to_string()).unwrap();
+        let (_dir, path) = crate::tests::design_file(&bytes);
+        let mut s = Session::default();
+        s.execute("geometry.open", &json!({"path": path})).unwrap();
+        use std::f64::consts::PI;
+        let exact = PI * (10.0 * 10.0 - 5.0 * 5.0) * 30.0;
+        // The circles are polygons of 16 sides or more, which keep (16 / 2π) sin(2π / 16) of the
+        // outer circle's area.
+        let chords = 1.0 - 16.0 / (2.0 * PI) * (2.0 * PI / 16.0).sin();
+        for method in ["revolve", "sweep", "extrude"] {
+            let r = s.execute("mesh.hex.generate", &json!({"body": "Tube", "method": method, "size": 3})).unwrap();
+            let body = &r["bodies"][0];
+            assert_eq!(body["method"], method, "{r}");
+            assert!(body["quality"]["min_scaled_jacobian"].as_f64().unwrap() > 0.5, "{method}: {r}");
+            let error = (exact - body["volume"].as_f64().unwrap()) / exact;
+            assert!((0.0..=chords).contains(&error), "{method}: {} against {exact}", body["volume"]);
+        }
+    }
+
     #[test]
     fn hostile_params_are_errors_and_change_nothing() {
         let (_dir, mut s) = opened();

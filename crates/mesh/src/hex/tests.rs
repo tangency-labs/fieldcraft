@@ -810,8 +810,8 @@ fn seamed_tube(ri: f64, ro: f64, h: f64, n: usize) -> (BoundarySurface, Vec<Opti
 
 /// A whole circle in one edge, as a kernel gives a seamed tube's ends, is divided into at least
 /// 16 pieces (22.5° each) however coarse the size: at a size of a sixth of the circumference it
-/// got 6, a hexagon whose prism lost 17 % of the tube. Swept or extruded, the tube's volume is now
-/// the exact one within the 16-gon's chords.
+/// got 6, a hexagon whose prism lost 17 % of the tube. Swept, extruded or revolved, the tube's
+/// volume is now the exact one within the 16-gon's chords.
 #[test]
 fn a_whole_circle_gets_sixteen_divisions_at_a_coarse_size() {
     use std::f64::consts::PI;
@@ -820,7 +820,7 @@ fn a_whole_circle_gets_sixteen_divisions_at_a_coarse_size() {
     let exact = PI * (ro * ro - ri * ri) * h;
     // The 16-gon keeps (16 / 2π) sin(2π / 16) of the circle's area.
     let chords = 1.0 - 16.0 / (2.0 * PI) * (2.0 * PI / 16.0).sin();
-    for method in [HexMethod::Sweep, HexMethod::Extrude] {
+    for method in [HexMethod::Sweep, HexMethod::Extrude, HexMethod::Revolve] {
         let opts = HexOptions { method, chordal_tolerance: ro * (1.0 - (PI / 64.0).cos()), ..HexOptions::default() };
         let m = hex_mesh(&s, &faces, &UniformSize(2.0 * PI * 0.75 / 6.0), &opts).unwrap();
         assert!(m.report.gate.passed(), "{method:?}");
@@ -833,6 +833,33 @@ fn a_whole_circle_gets_sixteen_divisions_at_a_coarse_size() {
         assert!(outer.len() >= 16, "{method:?}: {} nodes round the outer circle", outer.len());
         let error = (exact - m.report.volume) / exact;
         assert!((0.0..=chords + 1e-3).contains(&error), "{method:?}: {} against {exact} ({error})", m.report.volume);
+    }
+}
+
+/// A tube whose walls are each one face with a seam and whose ends are whole annuli, with no seam
+/// and no edge across them (as SolidCraft gives a cylinder with a coaxial bore), revolves about
+/// its axis (#895): the ends' outlines are their meridians, so the cross-section is the rectangle
+/// between the walls' seams and the ends. It was refused, "the projected outline encloses no
+/// region", since only edges across the sweep were projected and the ends have none.
+#[test]
+fn a_tube_with_whole_annular_ends_revolves() {
+    let (ri, ro, h) = (0.5, 1.0, 1.0);
+    let (s, faces) = seamed_tube(ri, ro, h, 32);
+    let brep = Brep::new(&s, &faces).unwrap();
+    assert!(brep.faces[2..].iter().all(|f| f.loops.len() == 2 && f.loops.iter().all(|l| l.len() == 1)), "the ends are annuli of two rims");
+    let opts =
+        HexOptions { method: HexMethod::Revolve, chordal_tolerance: ro * (1.0 - (std::f64::consts::PI / 32.0).cos()), ..HexOptions::default() };
+    let m = hex_mesh(&s, &faces, &UniformSize(0.2), &opts).unwrap();
+    assert_eq!(m.report.method, HexMethod::Revolve, "{}", m.report.description);
+    check_curved(&m, &s);
+    assert!(m.report.min_scaled_jacobian > 0.5, "{}", m.report.min_scaled_jacobian);
+    assert!(on_radius(&m, &[0], ro) && on_radius(&m, &[1], ri));
+    for (tag, z) in [(2, 0.0), (3, h)] {
+        let on_end = m.boundary.iter().filter(|b| b.brep_face == tag).all(|b| {
+            let e = m.element(b.element as usize).unwrap();
+            m.kind.faces()[b.face as usize - 1].iter().all(|&i| m.nodes[e[i] as usize][2] == z)
+        });
+        assert!(on_end, "the nodes of end {tag} lie on its plane");
     }
 }
 
