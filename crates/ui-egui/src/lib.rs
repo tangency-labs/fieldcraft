@@ -1166,6 +1166,7 @@ impl ModelApp {
                     name: s.name.clone(),
                     faces: (0..s.faces).map(|f| f.to_string()).collect(),
                     edges: Vec::new(),
+                    edge_faces: Vec::new(),
                     vertices: Vec::new(),
                 });
             }
@@ -1841,9 +1842,9 @@ impl ModelApp {
         }
     }
 
-    /// The seed on `edge`, if it has one.
-    pub fn seed(&self, edge: &fieldcraft_model::GeometryRef) -> Option<&fieldcraft_model::Seed> {
-        self.session.model.seeds().iter().find(|s| s.on == *edge)
+    /// The seed on `on` (an edge or face), if it has one.
+    pub fn seed(&self, on: &fieldcraft_model::GeometryRef) -> Option<&fieldcraft_model::Seed> {
+        self.session.model.seed(on)
     }
 
     /// Select (or with `None` deselect) a definition in the browser, as a click on its row does.
@@ -1904,8 +1905,8 @@ impl ModelApp {
         out
     }
 
-    /// Select the seed on `edge` in the browser: its properties on the right, its edge picked in
-    /// the viewport.
+    /// Select the seed on `edge` (an edge or face) in the browser: its properties on the right,
+    /// its edge or face picked in the viewport.
     pub fn select_seed(&mut self, edge: fieldcraft_model::GeometryRef) {
         self.selected = None;
         self.selected_mesh = false;
@@ -2514,6 +2515,7 @@ fn tessellate(design: &fieldcraft_geometry::Design) -> (BodyMeshes, Vec<String>)
                 name: body.name.clone(),
                 faces: body.faces().iter().map(|f| f.name.clone()).collect(),
                 edges: body.edge_names(&mesh),
+                edge_faces: mesh.edge_faces.clone(),
                 vertices: body.vertex_names(&mesh).into_iter().map(|v| (v.name, m(v.point).into())).collect(),
             };
             mesh.positions.iter_mut().chain(mesh.edges.iter_mut().flatten()).for_each(|p| *p = m(*p));

@@ -82,13 +82,17 @@ pub fn command_rows(command: &str, obj: &Map<String, Value>, units: &DisplaySyst
     out
 }
 
-/// The seed on `edge` as (label, text) rows: the edge, then `mesh.seed.edge`'s fields in `units`.
+/// The seed on an edge or face as (label, text) rows: the edge or face, then the fields of the
+/// command that seeds it (`mesh.seed.edge` or `mesh.seed.face`) in `units`.
 pub fn seed_rows(seed: &fieldcraft_model::Seed, units: &DisplaySystem) -> Vec<(String, String)> {
-    let mut out = vec![("Edge".to_string(), format!("{} · {}", seed.on.body, seed.on.entity.name().unwrap_or_default()))];
+    let what = if seed.on_face() { "Face" } else { "Edge" };
+    let mut out = vec![(what.to_string(), format!("{} · {}", seed.on.body, seed.on.entity.name().unwrap_or_default()))];
     let params = crate::menu::seed_params(seed, units).unwrap_or_default();
-    if let (Some(fields), Some(obj)) = (fieldcraft_engine::find_command("mesh.seed.edge").and_then(|s| s.form), params.as_object()) {
+    let command = crate::menu::seed_command(&seed.on);
+    if let (Some(fields), Some(obj)) = (fieldcraft_engine::find_command(command).and_then(|s| s.form), params.as_object()) {
         let mut obj = obj.clone();
         obj.remove("edges");
+        obj.remove("faces");
         object(fields, &obj, units, &mut out, &mut Vec::new(), 0);
     }
     out
