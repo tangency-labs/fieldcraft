@@ -57,7 +57,7 @@ fn assert_unchanged(s: &Session, before: &Session) {
 }
 
 #[test]
-fn read_replaces_only_after_success_and_reconstrained_bar_solves_the_same() {
+fn read_replaces_only_after_success_and_writer_history_solves_the_same() {
     let dir = folder();
     let path = dir.join("original.inp");
     let mut s = bar();
@@ -67,19 +67,73 @@ fn read_replaces_only_after_success_and_reconstrained_bar_solves_the_same() {
     let result = s.execute("deck.read", &json!({"format":"abaqus","path":path,"units":"mm-t-s-N-MPa"})).unwrap();
     assert_eq!(result["nodes"], 12);
     assert_eq!(result["elements"]["hex8"], 2);
+    assert_eq!(result["steps"], 1);
+    assert_eq!(result["boundary_conditions"], 1);
+    assert_eq!(result["loads"], 1);
     assert_eq!(result["units"], "mm-t-s-N-MPa");
-    assert_eq!(result["history_imported"], false);
-    assert!(result["unknown"].as_array().unwrap().iter().any(|v| v["keyword"] == "STEP" && v["line"].as_u64().unwrap() > 0));
-    assert!(s.model.steps().is_empty() && s.model.loads().is_empty() && s.model.boundary_conditions().is_empty());
+    assert_eq!(result["history_imported"], true);
+    assert!(!s.model.steps().is_empty() && !s.model.loads().is_empty() && !s.model.boundary_conditions().is_empty());
     assert_eq!(s.undo_depth(), (0, 0));
     assert!(s.journal.is_empty() && s.path.is_none() && s.result("Bend").is_none() && s.is_dirty());
     assert!(s.design.is_none() && s.surfaces.is_empty());
-    constrain(&mut s);
     let resumed = s.execute("solve.static", &json!({"step":"Bend"})).unwrap();
     let before = original["max_displacement"]["value"].as_f64().unwrap();
     let after = resumed["max_displacement"]["value"].as_f64().unwrap();
     assert!((before - after).abs() <= before.abs() * 1e-12, "{before} vs {after}");
     assert_eq!(original["max_displacement"]["node"], resumed["max_displacement"]["node"]);
+}
+
+#[test]
+fn writer_roundtrips_fixed_and_symmetry_conditions_with_shared_nodes() {
+    let dir = folder();
+    let path = dir.join("shared-boundary.inp");
+    let mut s = bar();
+    s.execute("model.boundary_condition.create", &json!({"name":"sym","type":"symmetry","target":{"set":"all"},"plane":"x"})).unwrap();
+    s.execute("model.step.activate", &json!({"step":"Bend","boundary_conditions":["sym"]})).unwrap();
+    let original = s.execute("solve.static", &json!({"step":"Bend"})).unwrap();
+    s.execute("deck.write", &json!({"format":"abaqus","path":path,"units":"mm-t-s-N-MPa"})).unwrap();
+    s.execute("deck.read", &json!({"format":"abaqus","path":path,"units":"mm-t-s-N-MPa"})).unwrap();
+    assert_eq!(s.model.steps().len(), 1);
+    assert_eq!(s.model.steps()[0].boundary_conditions.len(), 2);
+    assert!(
+        s.model
+            .boundary_conditions()
+            .values()
+            .any(|bc| matches!(bc, fieldcraft_model::BoundaryCondition::Fixed { target: fieldcraft_model::Target::Set(set) } if set == "root"))
+    );
+    assert!(s.model.boundary_conditions().values().any(|bc| matches!(bc, fieldcraft_model::BoundaryCondition::Symmetry { target: fieldcraft_model::Target::Set(set), plane: fieldcraft_model::Symmetry::X } if set == "all")));
+    let resumed = s.execute("solve.static", &json!({"step":"Bend"})).unwrap();
+    let before = original["max_displacement"]["value"].as_f64().unwrap();
+    let after = resumed["max_displacement"]["value"].as_f64().unwrap();
+    assert!((before - after).abs() <= before.abs() * 1e-12, "{before} vs {after}");
+    assert_eq!(original["max_displacement"]["node"], resumed["max_displacement"]["node"]);
+}
+
+#[test]
+fn command_built_four_node_total_force_roundtrips_through_multiple_steps() {
+    let dir = folder();
+    let path = dir.join("multi-step.inp");
+    let mut s = bar();
+    s.execute("model.step.create", &json!({"name":"Hold","procedure":{"type":"static"},"boundary_conditions":["clamp"],"loads":["push"]})).unwrap();
+    s.execute("model.step.create", &json!({"name":"Modes","procedure":{"type":"frequency","modes":2},"boundary_conditions":["clamp"]})).unwrap();
+    s.execute("deck.write", &json!({"format":"abaqus","path":path,"units":"mm-t-s-N-MPa"})).unwrap();
+    s.execute("deck.read", &json!({"format":"abaqus","path":path,"units":"mm-t-s-N-MPa"})).unwrap();
+    assert_eq!(s.model.steps().iter().map(|step| step.name.as_str()).collect::<Vec<_>>(), ["Bend", "Hold", "Modes"]);
+    assert_eq!(s.model.boundary_conditions().len(), 1);
+    assert_eq!(s.model.loads().len(), 1);
+    let Some(fieldcraft_model::Load::Force {
+        target: fieldcraft_model::Target::Set(set),
+        vector,
+        distribution: fieldcraft_model::Distribution::PerNode,
+    }) = s.model.loads().values().next()
+    else {
+        panic!("{:?}", s.model.loads());
+    };
+    assert_eq!(set, "end");
+    assert_eq!(*vector, [0.0, 0.0, -25.0]);
+    assert_eq!(s.model.set(set).map(|set| set.nodes.len()), Some(4));
+    assert_eq!(s.model.steps()[0].loads, s.model.steps()[1].loads);
+    assert!(s.execute("solve.static", &json!({"step":"Hold"})).is_ok());
 }
 
 #[test]

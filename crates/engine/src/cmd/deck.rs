@@ -22,7 +22,7 @@ pub const WRITE: CommandSpec = CommandSpec {
 pub const READ: CommandSpec = CommandSpec {
     id: "deck.read",
     label: "Read Abaqus Deck",
-    params: r#"{"format":"abaqus","path":"part.inp","units"?:"mm-t-s-N-MPa|m-kg-s-N-Pa|mm-kg-ms-kN-GPa|mm-g-ms-N-MPa|in-lbf-s-psi"} — replaces the model with a flat Abaqus deck's mesh, sets, element surfaces, elastic/density materials and sections; input numbers use this consistent preset (default: the current display preset, ignoring overrides), then store SI; the reply states units, unread keywords with original lines (first 100 and total count), and warnings. No steps, loads, conditions or unknown text are retained; INCLUDE/parts/assemblies and unsupported physical variants are refused. Empty supported data is refused. Success clears old results/design/path/undo and is unsaved; errors leave the whole session intact."#,
+    params: r#"{"format":"abaqus","path":"part.inp","units"?:"mm-t-s-N-MPa|m-kg-s-N-Pa|mm-kg-ms-kN-GPa|mm-g-ms-N-MPa|in-lbf-s-psi"} — replaces the model with a flat Abaqus deck's mesh, sets, element surfaces, elastic/density materials, sections and the linear history written by the current writer (static, frequency and buckling steps, boundary conditions and concentrated loads); input numbers use this consistent preset (default: the current display preset, ignoring overrides), then store SI; the reply states counts for nodes, elements by kind, sets, materials, sections, steps, boundary conditions and loads, plus units, unread keywords with original lines (first 100 and total count), and warnings. Unsupported history remains reported and is not stored; INCLUDE/parts/assemblies and unsupported physical variants are refused. Empty supported data is refused. Success clears old results/design/path/undo and is unsaved; errors leave the whole session intact."#,
     form: Some(super::forms::DECK_READ),
     kind: CommandKind::Session,
     requires: &[],
@@ -47,7 +47,7 @@ fn read(s: &mut Session, p: &Value) -> Result<Value> {
         elements: s.limits.max_import_elements,
         members: s.limits.max_import_members,
     };
-    let imported = fieldcraft_decks::abaqus::read_limited(text, units, limits)?;
+    let imported = fieldcraft_decks::abaqus::read_analysis_limited(text, units, limits)?;
     let model = &imported.model;
     if model.nodes().is_empty()
         && model.elements().is_empty()
@@ -66,8 +66,9 @@ fn read(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let unknown: Vec<Value> = imported.unknown.iter().map(|u| json!({"keyword":u.keyword,"line":u.line})).collect();
     let reply = json!({"format":"abaqus","path":path,"units":units.label(),"nodes":model.nodes().len(),"elements":kinds,
-        "sets":model.sets().len(),"materials":model.materials().len(),"sections":model.sections().len(),"unknown":unknown,
-        "unknown_count":imported.unknown_count,"warnings":imported.warnings,"history_imported":false});
+        "sets":model.sets().len(),"materials":model.materials().len(),"sections":model.sections().len(),
+        "steps":model.steps().len(),"boundary_conditions":model.boundary_conditions().len(),"loads":model.loads().len(),"unknown":unknown,
+        "unknown_count":imported.unknown_count,"warnings":imported.warnings,"history_imported":!model.steps().is_empty()});
     // The new, unsaved document has no journal, but still needs its own dirty revision.
     let opened = Session { model: imported.model, revision: crate::next_revision(), ..Session::default() };
     s.replace_with(opened);
