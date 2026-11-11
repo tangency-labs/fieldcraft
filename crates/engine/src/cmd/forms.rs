@@ -2401,8 +2401,13 @@ pub const DECK: &[Field] = &[
 ];
 
 pub const DECK_READ: &[Field] = &[
-    choice("format", "Format", &[("abaqus", "Abaqus input (.inp)")]).help("The model-data input format to read.").req().def("\"abaqus\""),
-    path("path", "Input deck", false).help("Flat Abaqus model data; replaces the current model only after a successful read.").req(),
+    choice("format", "Format", &[("abaqus", "Abaqus input (.inp)")])
+        .help("The Abaqus model-data and writer-linear-history input format to read.")
+        .req()
+        .def("\"abaqus\""),
+    path("path", "Input deck", false)
+        .help("Abaqus model data plus writer linear history; replaces the current model only after a successful read.")
+        .req(),
     choice(
         "units",
         "Input units",

@@ -280,10 +280,7 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
     let units = Some(app.session.units());
     match reply.command.as_str() {
         "deck.read" => {
-            ui.label(
-                RichText::new("Model data only. Analysis history was not imported; review unread keywords and warnings before solving.")
-                    .color(t.text_dim),
-            );
+            ui.label(RichText::new(deck_read_notice(&reply.value)).color(t.text_dim));
             value(ui, t, egui::Id::unique("fc_deck_read"), &reply.value, 0);
         }
         "model.check" => diagnostics(app, ui, t, &reply.value, &mut acts),
@@ -343,6 +340,18 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
                 let _ = set_defeature(app, &name, all);
             }
         }
+    }
+}
+
+fn deck_read_notice(reply: &Value) -> String {
+    let steps = reply.get("steps").and_then(Value::as_u64).unwrap_or(0);
+    if steps == 0 {
+        "Model data only. Analysis history was not imported; review unread keywords and warnings before solving.".into()
+    } else {
+        format!(
+            "Model data and {steps} analysis {} imported; review unread keywords and warnings before solving.",
+            if steps == 1 { "step" } else { "steps" }
+        )
     }
 }
 
@@ -1164,6 +1173,30 @@ mod tests {
         assert_eq!(summary("any", &json!({"summary": "a\nb"})), "a b");
         assert_eq!(summary("any", &json!({})), "done");
         assert!(summary("any", &json!({"s": "x".repeat(500)})).chars().count() <= MAX_LINE + 1);
+    }
+
+    #[test]
+    fn deck_read_notice_describes_imported_history() {
+        assert_eq!(
+            deck_read_notice(&serde_json::json!({"steps": 1})),
+            "Model data and 1 analysis step imported; review unread keywords and warnings before solving."
+        );
+        assert_eq!(
+            deck_read_notice(&serde_json::json!({"steps": 3})),
+            "Model data and 3 analysis steps imported; review unread keywords and warnings before solving."
+        );
+    }
+
+    #[test]
+    fn deck_read_notice_keeps_model_only_text_without_history() {
+        assert_eq!(
+            deck_read_notice(&serde_json::json!({"steps": 0})),
+            "Model data only. Analysis history was not imported; review unread keywords and warnings before solving."
+        );
+        assert_eq!(
+            deck_read_notice(&serde_json::json!({"history_imported": false})),
+            "Model data only. Analysis history was not imported; review unread keywords and warnings before solving."
+        );
     }
 
     #[test]

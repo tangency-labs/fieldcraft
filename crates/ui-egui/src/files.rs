@@ -1952,10 +1952,21 @@ mod tests {
         path.to_string_lossy().into_owned()
     }
 
+    /// The same model with an unsupported history block, so the import report has unread history.
+    fn input_deck_with_unread_history(dir: &Path) -> String {
+        let path = dir.join("unread-history.inp");
+        std::fs::write(
+            &path,
+            "*NODE\n1,1,0,0\n2,2,0,0\n3,1,1,0\n4,1,0,1\n*ELEMENT,TYPE=C3D4,ELSET=Solid\n10,1,2,3,4\n*MATERIAL,NAME=Steel\n*ELASTIC\n1000,0.3\n*SOLID SECTION,ELSET=Solid,MATERIAL=Steel\n*STEP,NAME=Load\n*STATIC\n1,1\n*DLOAD\nSolid, BX, 1\n*END STEP\n",
+        )
+        .unwrap();
+        path.to_string_lossy().into_owned()
+    }
+
     #[test]
     fn deck_form_confirms_replacement_and_keeps_the_import_report() {
         let dir = temp("deck-form");
-        let path = input_deck(&dir);
+        let path = input_deck_with_unread_history(&dir);
         let mut app = ModelApp::new(Session::default());
         app.run("mesh.node.add", json!({"label":99,"xyz":[0,0,0]})).unwrap();
         app.open_form("deck.read", json!({"format":"abaqus","path":path,"units":"mm-t-s-N-MPa"}));
@@ -1974,18 +1985,30 @@ mod tests {
         let reply = app.reply.as_ref().unwrap();
         assert_eq!(reply.command, "deck.read");
         assert_eq!(reply.value["history_imported"], false);
-        assert_eq!(
-            reply.value["unknown"],
-            json!([
-                {"keyword":"STEP","line":12}, {"keyword":"STATIC","line":13}, {"keyword":"ENDSTEP","line":14}
-            ])
-        );
-        assert!(app.status.as_ref().unwrap().text.contains("3 unread keywords"));
+        assert_eq!(reply.value["steps"], 0);
+        assert!(reply.value["unknown"].as_array().unwrap().iter().any(|item| item["keyword"] == "DLOAD"));
+        assert!(app.status.as_ref().unwrap().text.contains("unread keywords"));
         assert!(app.session.journal.is_empty());
         app.new_model();
         assert_eq!(app.prompt, Some(Prompt::Unsaved(Replace::New)), "an untouched import is still unsaved work");
         app.answer_unsaved(Answer::Cancel);
         assert_eq!(app.session.model.elements().len(), 1);
+    }
+
+    #[test]
+    fn deck_form_reports_imported_history_counts() {
+        let dir = temp("deck-form-history");
+        let path = input_deck(&dir);
+        let mut app = ModelApp::new(Session::default());
+        app.open_form("deck.read", json!({"format":"abaqus","path":path,"units":"mm-t-s-N-MPa"}));
+        app.submit_dialog();
+        app.wait_loaded();
+        let reply = app.reply.as_ref().unwrap();
+        assert_eq!(reply.value["history_imported"], true);
+        assert_eq!(reply.value["steps"], 1);
+        assert_eq!(reply.value["boundary_conditions"], 0);
+        assert_eq!(reply.value["loads"], 0);
+        assert!(app.status.as_ref().unwrap().text.contains("0 unread keywords"));
     }
 
     #[test]

@@ -5,11 +5,13 @@
 //! of the *Abaqus 2017 Keywords Reference Guide*. Material scope: *Abaqus 2025 Materials Guide*,
 //! "Material data definition".
 //! Only original handwritten or FieldCraft-writer-generated decks are used in tests.
-//! No history, assembly, includes or raw-keyword passthrough is imported. Numbers in a deck
-//! have no intrinsic units: callers choose a consistent preset; the model stores SI.
+//! The model-data reader does not import assembly, includes, raw-keyword passthrough, or history;
+//! [`read_analysis_limited`] adds the writer's supported linear history. Numbers in a deck have no
+//! intrinsic units: callers choose a consistent preset; the model stores SI.
 //! Recognized material behaviors keep the active material even when their data are reported
 //! unread. Other model options and unrecognized keywords end that context.
 
+mod history;
 mod lex;
 mod types;
 
@@ -37,13 +39,24 @@ pub struct Unknown {
     pub line: usize,
 }
 
-/// A new model, without history. Unknown output is bounded; `unknown_count` counts all options.
+/// A model-level coordinate transform stays out of the model, but history import must know
+/// which node labels it covers before it maps local concentrated loads or boundary data.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TransformRecord {
+    pub line: usize,
+    pub target: Option<String>,
+}
+
+/// A new model. The result of [`read_limited`] has no history; the analysis variant adds the
+/// supported linear steps. Unknown output is bounded; `unknown_count` counts all options.
 #[derive(Debug, Clone)]
 pub struct Read {
     pub model: Model,
     pub unknown: Vec<Unknown>,
+    pub(crate) unknown_all: Vec<Unknown>,
     pub unknown_count: usize,
     pub warnings: Vec<String>,
+    pub(crate) transforms: Vec<TransformRecord>,
 }
 
 /// Storage and work bounds, checked before each node, element or set member is stored. A host
@@ -76,6 +89,16 @@ pub fn read_in(text: &str, preset: Preset) -> Result<Read> {
 /// [`read_in`] within the caller's storage and work bounds.
 pub fn read_limited(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
     parse(text, preset, limits)
+}
+
+/// Read model data and the linear history written by the Abaqus writer: static, frequency and
+/// buckling steps, their boundary conditions and concentrated loads. A history mapping problem
+/// leaves that step and subsequent steps in the unread-keyword report with a warning; it does not
+/// turn an otherwise readable model into an error or partially mutate it.
+pub fn read_analysis_limited(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
+    let mut read = parse(text, preset, limits)?;
+    history::import(text, &mut read, preset, limits)?;
+    Ok(read)
 }
 
 /// Cooperate with the host without a thread-local lookup for every small token.
@@ -292,7 +315,8 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
     let mut element_labels = BTreeSet::new();
     let mut surfaces = Vec::new();
     let mut sections = Vec::new();
-    let (mut unknown, mut unknown_count) = (Vec::new(), 0usize);
+    let (mut unknown, mut unknown_all, mut unknown_count) = (Vec::new(), Vec::new(), 0usize);
+    let mut transform_targets = Vec::new();
     let mut warnings = Vec::new();
     let (mut material, mut history) = (None, None);
     let mut budget = 0usize;
@@ -316,13 +340,19 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
         let ignored = history.is_some() || k == "ENDSTEP";
         if ignored {
             unknown_count += 1;
+            let record = Unknown { keyword: k.to_string(), line };
+            unknown_all.push(record.clone());
             if unknown.len() < MAX_UNKNOWN_SHOWN {
-                unknown.push(Unknown { keyword: k.to_string(), line });
+                unknown.push(record);
             }
             if k == "ENDSTEP" {
                 history = None;
             }
             continue;
+        }
+        if k == "TRANSFORM" {
+            let target = block.value("NSET").and_then(|value| unquote(value, line).ok()).map(|name| name.to_ascii_uppercase());
+            transform_targets.push((line, target));
         }
         if k != "MATERIAL" && !material_behavior(k) {
             material = None;
@@ -478,8 +508,10 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
                 block.only(&["TYPE", "NAME"])?;
                 if block.value("TYPE").is_some_and(|t| canonical(t) != "ELEMENT") {
                     unknown_count += 1;
+                    let record = Unknown { keyword: k.to_string(), line };
+                    unknown_all.push(record.clone());
                     if unknown.len() < MAX_UNKNOWN_SHOWN {
-                        unknown.push(Unknown { keyword: k.to_string(), line });
+                        unknown.push(record);
                     }
                     if warnings.len() < MAX_UNKNOWN_SHOWN {
                         warnings.push(format!(
@@ -567,8 +599,10 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
             }
             _ => {
                 unknown_count += 1;
+                let record = Unknown { keyword: k.to_string(), line };
+                unknown_all.push(record.clone());
                 if unknown.len() < MAX_UNKNOWN_SHOWN {
-                    unknown.push(Unknown { keyword: k.to_string(), line });
+                    unknown.push(record);
                 }
             }
         }
@@ -687,6 +721,7 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
             return Err(error(surface.line, format!("empty surface `{}`", surface.name)));
         }
     }
+    let transforms = transform_targets.into_iter().map(|(line, target)| TransformRecord { line, target }).collect();
     for (name, set) in sets {
         progress::check()?;
         let spelling = names.get(&name).ok_or_else(|| error(1, "missing set spelling"))?;
@@ -748,7 +783,7 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
             "{unassigned} mesh elements have no section: their input family/formulation is not stored on the mesh element. Assign compatible sections before analysis; reduced/hybrid/shell/plane context is not retained without them."
         ));
     }
-    Ok(Read { model, unknown, unknown_count, warnings })
+    Ok(Read { model, unknown, unknown_all, unknown_count, warnings, transforms })
 }
 
 fn section_kind(raw: &SectionRecord, typ: Type, units: &DisplaySystem) -> Result<SectionKind> {

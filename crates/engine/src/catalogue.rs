@@ -652,7 +652,7 @@ pub static CATALOGUE: &[Capability] = &[
         "Read Deck",
         Solve,
         "Decks",
-        "Read an Abaqus input deck's model data: mesh, sets, materials and sections; unread keywords are listed, not kept",
+        "Read an Abaqus input deck's model data and the current writer's linear history: mesh, sets, materials, sections, static/frequency/buckling steps, boundary conditions and concentrated loads; unread keywords are listed, not kept",
     ),
     ready_more(
         "solve.static",
