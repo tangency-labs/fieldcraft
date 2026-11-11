@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 use crate::ModelApp;
 use crate::files::{Prompt, dismissed, message, note};
 use solidcraft_ui_kit as kit;
+use solidcraft_ui_kit::BackingTooltipExt as _;
 
 /// The Report a Bug form.
 #[derive(Debug, Default)]
@@ -311,7 +312,7 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
                                 if kit::bin_button(ui, "Delete").clicked() {
                                     act = Some(Act::Delete(r.id.clone()));
                                 }
-                                if kit::icon_label_button(ui, "Copy Path", "copy", true, false).on_hover_text(&r.path).clicked() {
+                                if kit::icon_label_button(ui, "Copy Path", "copy", true, false).backing_on_hover_text(&r.path).clicked() {
                                     act = Some(Act::Copy(r.path.clone()));
                                 }
                                 if kit::icon_label_button(ui, "Report…", "bug_report", true, false).clicked() {
@@ -372,11 +373,11 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
                 kit::text_row(ui, "Title", &mut form.title, &hint);
                 kit::multiline_text_field(ui, "What happened", egui::Id::unique("fc_report_observed"), &mut form.observed);
                 kit::checkbox(ui, "Share my session", &mut form.share_session)
-                    .on_hover_text("Attach the commands that built the model, to replay it. They can name your files.");
+                    .backing_on_hover_text("Attach the commands that built the model, to replay it. They can name your files.");
                 note(ui, &format!("The {commands} command(s) that built the model, the version and the OS; they can name your files."));
                 ui.add_enabled_ui(form.share_session, |ui| {
                     kit::checkbox(ui, "Include the model file", &mut form.include_model)
-                        .on_hover_text("Attach the model too (you attach the file yourself).");
+                        .backing_on_hover_text("Attach the model too (you attach the file yourself).");
                 });
                 if !form.share_session {
                     form.include_model = false;

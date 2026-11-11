@@ -14,6 +14,7 @@ use crate::{ModelApp, Tab};
 use fieldcraft_engine::results::Quantity;
 use fieldcraft_model::DisplaySystem;
 use solidcraft_ui_kit as kit;
+use solidcraft_ui_kit::BackingTooltipExt as _;
 
 /// The reply shown in the context panel.
 #[derive(Clone, Debug, PartialEq)]
@@ -270,7 +271,7 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
     let mut acts = Vec::new();
     kit::panel::header(ui, &reply.command, &reply.label, || acts.push(Act::Close));
     ui.add_space(4.0);
-    if kit::button(ui, "Run again", kit::Button::Small).on_hover_text(reply.command.as_str()).clicked() {
+    if kit::button(ui, "Run again", kit::Button::Small).backing_on_hover_text(reply.command.as_str()).clicked() {
         acts.push(Act::Rerun);
     }
     ui.add_space(4.0);
@@ -375,7 +376,7 @@ fn defeature_list(ui: &mut egui::Ui, t: &Tokens, v: &Value, units: &DisplaySyste
     let pending: Vec<u64> = candidates.iter().filter(|c| c["proposed"] == true && c["suppressed"] != true).filter_map(|c| c["id"].as_u64()).collect();
     if !proposal.is_empty() {
         let button = kit::button(ui, format!("Defeature the {} proposed", pending.len()), kit::Button::Enabled(!pending.is_empty()));
-        if button.on_hover_text(format!("Take them out with defeature {name}")).clicked() {
+        if button.backing_on_hover_text(format!("Take them out with defeature {name}")).clicked() {
             acts.push(Act::Propose { name: name.clone(), features: pending });
         }
         ui.add_space(4.0);
@@ -390,14 +391,14 @@ fn defeature_list(ui: &mut egui::Ui, t: &Tokens, v: &Value, units: &DisplaySyste
             let mut on = c["suppressed"] != true;
             let by = c["by"].as_str().unwrap_or(&name).to_string();
             let hover = if on { format!("Switch off: defeature {name} takes it out") } else { format!("Switch on: defeature {by} keeps it") };
-            if kit::checkbox(ui, "", &mut on).on_hover_text(hover).changed() {
+            if kit::checkbox(ui, "", &mut on).backing_on_hover_text(hover).changed() {
                 acts.push(Act::Defeature { name: if on { by } else { name.clone() }, feature: id, on });
             }
             let label = format!("F{id} {}", c["name"].as_str().unwrap_or_default());
             let text = if c["proposed"] == true { RichText::new(label).color(t.warm) } else { RichText::new(label) };
             match c["faces"].as_array().and_then(|f| f.first()).and_then(Value::as_str).filter(|_| on) {
                 Some(face) => {
-                    if ui.link(text).on_hover_text("Pick its face in the viewport").clicked() {
+                    if ui.link(text).backing_on_hover_text("Pick its face in the viewport").clicked() {
                         let entity = fieldcraft_model::Entity::Face(face.to_string());
                         acts.push(Act::Pick(fieldcraft_model::GeometryRef { body: body.to_string(), entity }));
                     }
@@ -486,7 +487,7 @@ fn feature_graph(
                 let rect = inner.response.rect;
                 let resp = ui.interact(rect, id.with("row"), egui::Sense::click());
                 let hover_text = if f.faces.is_empty() { "Show its details" } else { "Select the faces it made; show its details" };
-                let resp = resp.on_hover_text(hover_text);
+                let resp = resp.backing_on_hover_text(hover_text);
                 if resp.hovered() {
                     ui.painter().set(bg, egui::Shape::rect_filled(rect, 3.0, t.hover));
                     hovered = face_items(body, &f.faces);
@@ -543,7 +544,7 @@ fn diagnostics(app: &ModelApp, ui: &mut egui::Ui, t: &Tokens, v: &Value, acts: &
         let message = d["message"].as_str().unwrap_or_default();
         ui.horizontal_top(|ui| {
             let (mark, colour, tip) = if error { ("⛔", t.error, "Error: blocks solving") } else { ("⚠", t.warm, "Warning") };
-            ui.label(RichText::new(mark).color(colour)).on_hover_text(tip);
+            ui.label(RichText::new(mark).color(colour)).backing_on_hover_text(tip);
             ui.vertical(|ui| {
                 ui.set_width(ui.available_width() - 70.0);
                 ui.label(RichText::new(subject).strong());
@@ -551,7 +552,7 @@ fn diagnostics(app: &ModelApp, ui: &mut egui::Ui, t: &Tokens, v: &Value, acts: &
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                 if let Some((kind, name)) = subject_definition(app, subject) {
-                    if kit::button(ui, "Show", kit::Button::Small).on_hover_text(format!("Select {subject} to see and edit it")).clicked() {
+                    if kit::button(ui, "Show", kit::Button::Small).backing_on_hover_text(format!("Select {subject} to see and edit it")).clicked() {
                         acts.push(Act::Select(kind, name));
                     }
                 } else if subject == "model"
@@ -627,7 +628,7 @@ fn quality(ui: &mut egui::Ui, t: &Tokens, v: &Value, acts: &mut Vec<Act>) {
         if !l.is_empty()
             && ui
                 .button(format!("Select the {} {what} elements", count(l.len() as u64)))
-                .on_hover_text("Select and frame them in the viewport")
+                .backing_on_hover_text("Select and frame them in the viewport")
                 .clicked()
         {
             acts.push(Act::Elements(l));
@@ -636,7 +637,7 @@ fn quality(ui: &mut egui::Ui, t: &Tokens, v: &Value, acts: &mut Vec<Act>) {
     if let Some(worst) = v.pointer("/metrics/scaled_jacobian/worst").and_then(Value::as_u64).and_then(|w| u32::try_from(w).ok())
         && ui
             .button("Relax around worst element")
-            .on_hover_text("Open Relax Nodes with its sphere round the element of smallest scaled Jacobian; preview, then OK")
+            .backing_on_hover_text("Open Relax Nodes with its sphere round the element of smallest scaled Jacobian; preview, then OK")
             .clicked()
     {
         acts.push(Act::Relax(worst));
@@ -663,7 +664,7 @@ fn quality(ui: &mut egui::Ui, t: &Tokens, v: &Value, acts: &mut Vec<Act>) {
         if let Some(worst) = m.get("worst").and_then(Value::as_u64).and_then(|w| u32::try_from(w).ok()) {
             let value = if low_bad { f("min") } else { f("max") };
             let text = format!("Worst: element {worst}{}", value.map(|x| format!(" ({})", number(x))).unwrap_or_default());
-            if ui.link(text).on_hover_text("Select and frame it in the viewport").clicked() {
+            if ui.link(text).backing_on_hover_text("Select and frame it in the viewport").clicked() {
                 acts.push(Act::Elements(vec![worst]));
             }
         }
@@ -699,7 +700,7 @@ fn histogram(ui: &mut egui::Ui, t: &Tokens, counts: &[u64], range: (f64, f64), l
         }
     }
     let step = (range.1 - range.0) / bins as f64;
-    resp.on_hover_ui(|ui| {
+    resp.backing_on_hover_ui(|ui| {
         for (i, c) in counts.iter().enumerate() {
             let a = range.0 + step * i as f64;
             ui.label(format!("{} – {}: {}", number(a), number(a + step), count(*c)));
@@ -725,7 +726,7 @@ fn bodies(ui: &mut egui::Ui, t: &Tokens, v: &Value, units: &DisplaySystem, acts:
             .zip(corner(1))
             .map(|(lo, hi)| format!("{} × {} × {} {length}", q(sig(hi[0] - lo[0])), q(sig(hi[1] - lo[1])), q(sig(hi[2] - lo[2]))));
         let id = egui::Id::unique(("fc_reply_body", i));
-        if ui.link(RichText::new(name).strong()).on_hover_text("Pick this body in the viewport").clicked() {
+        if ui.link(RichText::new(name).strong()).backing_on_hover_text("Pick this body in the viewport").clicked() {
             acts.push(Act::Pick(pick(name, fieldcraft_model::Entity::Body)));
         }
         egui::Grid::new(id.with("grid")).num_columns(2).spacing(vec2(10.0, 2.0)).show(ui, |ui| {
@@ -781,7 +782,7 @@ fn body_list(
         for item in items.iter().take(MAX_ENTITIES) {
             let (name, length) = read(item);
             ui.horizontal(|ui| {
-                if ui.link(&name).on_hover_text("Pick it in the viewport").clicked() {
+                if ui.link(&name).backing_on_hover_text("Pick it in the viewport").clicked() {
                     let entity =
                         if title == "Edges" { fieldcraft_model::Entity::Edge(name.clone()) } else { fieldcraft_model::Entity::Face(name.clone()) };
                     acts.push(Act::Pick(fieldcraft_model::GeometryRef { body: body.to_string(), entity }));
@@ -821,12 +822,12 @@ fn activity(ui: &mut egui::Ui, t: &Tokens, v: &Value) {
         egui::Grid::new("fc_reply_activity_grid").striped(true).spacing(vec2(10.0, 3.0)).show(ui, |ui| {
             ui.label("");
             for (s, step) in steps.iter().zip(v["steps"].as_array().into_iter().flatten()) {
-                ui.label(RichText::new(*s).strong()).on_hover_text(step["procedure"].as_str().unwrap_or_default());
+                ui.label(RichText::new(*s).strong()).backing_on_hover_text(step["procedure"].as_str().unwrap_or_default());
             }
             ui.end_row();
             for (key, kind) in [("boundary_conditions", "BC"), ("loads", "Load")] {
                 for (name, active) in v[key].as_object().into_iter().flatten() {
-                    ui.label(name.as_str()).on_hover_text(kind);
+                    ui.label(name.as_str()).backing_on_hover_text(kind);
                     for s in &steps {
                         let on = active.as_array().is_some_and(|a| a.iter().any(|x| x == *s));
                         ui.label(if on { RichText::new("✔").color(t.ok) } else { RichText::new("—").color(t.text_dim) });

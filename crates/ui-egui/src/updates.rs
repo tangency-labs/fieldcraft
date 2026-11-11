@@ -17,6 +17,7 @@ use fieldcraft_update::{Check, Finish, Release, Staged};
 use crate::ModelApp;
 use crate::files::{Prompt, Replace, dismissed, message, note};
 use solidcraft_ui_kit as kit;
+use solidcraft_ui_kit::BackingTooltipExt as _;
 
 /// What the host is asked to do, on its own thread.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -308,7 +309,7 @@ pub fn notice(app: &mut ModelApp, ui: &mut egui::Ui) {
     let small = |s: &str| RichText::new(s).size(solidcraft_theme::Tokens::get().font_body);
     if let Some(reload) = &app.reload {
         let tip = if app.has_unsaved_work() { "Reloads the page; you are asked about the unsaved changes first" } else { "Reloads the page" };
-        if ui.add(egui::Link::new(small("Reload to update"))).on_hover_text(tip).clicked() {
+        if ui.add(egui::Link::new(small("Reload to update"))).backing_on_hover_text(tip).clicked() {
             reload();
         }
         ui.label(small("A new version of FieldCraft is available —").color(t.text));
@@ -323,11 +324,12 @@ pub fn notice(app: &mut ModelApp, ui: &mut egui::Ui) {
     }
     let Some(release) = u.available.clone() else { return };
     // Right to left: the links, then the sentence.
-    let skip = ui.add(egui::Link::new(small("Skip"))).on_hover_text("Don't offer this version again (Help › Settings)").clicked();
+    let skip = ui.add(egui::Link::new(small("Skip"))).backing_on_hover_text("Don't offer this version again (Help › Settings)").clicked();
     ui.label(small("·").color(t.text_dim));
-    let install = ui.add(egui::Link::new(small("Install"))).on_hover_text("Download, verify and install it; you choose when to restart").clicked();
+    let install =
+        ui.add(egui::Link::new(small("Install"))).backing_on_hover_text("Download, verify and install it; you choose when to restart").clicked();
     ui.label(small("·").color(t.text_dim));
-    let notes = ui.add(egui::Link::new(small("What's new"))).on_hover_text(release.url.as_str()).clicked();
+    let notes = ui.add(egui::Link::new(small("What's new"))).backing_on_hover_text(release.url.as_str()).clicked();
     ui.label(small(&format!("FieldCraft {} is available —", release.version)).color(t.text));
     ui.separator();
     if notes {

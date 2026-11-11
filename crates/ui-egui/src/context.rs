@@ -12,6 +12,7 @@ use crate::frame::{Level, heading};
 use crate::theme::Tokens;
 use crate::{ModelApp, selection};
 use solidcraft_ui_kit as kit;
+use solidcraft_ui_kit::BackingTooltipExt as _;
 
 /// The panel's width.
 pub const WIDTH: f32 = 310.0;
@@ -98,7 +99,7 @@ fn refused(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
     for fieldcraft_engine::requirement::Missing(r) in &u.missing {
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(format!("• {}", r.what())).color(t.text));
-            if kit::button(ui, format!("{}…", r.place()), kit::Button::Normal).on_hover_text(r.provider()).clicked() {
+            if kit::button(ui, format!("{}…", r.place()), kit::Button::Normal).backing_on_hover_text(r.provider()).clicked() {
                 start = Some(r.provider());
             }
         });
@@ -163,7 +164,7 @@ fn form(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
                 selection::Target::ExtrudeFaces => "Use as target surface",
                 _ => "Use selection",
             };
-            use_selection = kit::button(ui, button, kit::Button::Enabled(selected.is_some())).on_hover_text(tip).clicked();
+            use_selection = kit::button(ui, button, kit::Button::Enabled(selected.is_some())).backing_on_hover_text(tip).clicked();
             match &selected {
                 Some(text) => ui.add(egui::Label::new(RichText::new(text).color(t.pick_selected)).wrap()),
                 None => ui.add(egui::Label::new(RichText::new("Pick in the viewport, or choose below").color(t.text_dim)).wrap()),
@@ -185,7 +186,7 @@ fn form(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
         ui.label(RichText::new("Parameters").size(12.0));
         if spec.form.is_some() {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.toggle_value(&mut advanced, RichText::new("{ } JSON").small()).on_hover_text("Advanced: edit the parameters as JSON");
+                ui.toggle_value(&mut advanced, RichText::new("{ } JSON").small()).backing_on_hover_text("Advanced: edit the parameters as JSON");
             });
         }
     });
@@ -344,9 +345,9 @@ fn properties(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, kind: Def, name
     let editing = kind.edit_command(&app.session.model, name);
     ui.horizontal(|ui| {
         if let Some(command) = &editing {
-            edit = kit::button(ui, "Edit…", kit::Button::Normal).on_hover_text(command).clicked();
+            edit = kit::button(ui, "Edit…", kit::Button::Normal).backing_on_hover_text(command).clicked();
         }
-        delete = kit::button(ui, "Delete…", kit::Button::Normal).on_hover_text(format!("{} (Delete key)", kind.command("delete"))).clicked();
+        delete = kit::button(ui, "Delete…", kit::Button::Normal).backing_on_hover_text(format!("{} (Delete key)", kind.command("delete"))).clicked();
     });
     if deselect {
         app.select_definition(None);
@@ -369,8 +370,8 @@ fn seed_card(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, edge: fieldcraft
     ui.add_space(6.0);
     let (mut edit, mut delete) = (false, false);
     ui.horizontal(|ui| {
-        edit = kit::button(ui, "Edit…", kit::Button::Normal).on_hover_text("mesh.seed.edge").clicked();
-        delete = kit::button(ui, "Delete", kit::Button::Normal).on_hover_text("mesh.seed.clear (undo brings it back)").clicked();
+        edit = kit::button(ui, "Edit…", kit::Button::Normal).backing_on_hover_text("mesh.seed.edge").clicked();
+        delete = kit::button(ui, "Delete", kit::Button::Normal).backing_on_hover_text("mesh.seed.clear (undo brings it back)").clicked();
     });
     let target = crate::menu::Target::Seed(edge);
     if deselect {
@@ -421,7 +422,7 @@ fn mesh_card(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
             ui.label(RichText::new(command.as_str()).size(11.0).color(t.text_dim));
         });
         property_grid(ui, t, &format!("fc_mesh_made_{i}"), rows);
-        if kit::button(ui, "Edit…", kit::Button::Normal).on_hover_text(format!("{command}: its form with these parameters")).clicked() {
+        if kit::button(ui, "Edit…", kit::Button::Normal).backing_on_hover_text(format!("{command}: its form with these parameters")).clicked() {
             edit = Some((command.clone(), params.clone()));
         }
     }
