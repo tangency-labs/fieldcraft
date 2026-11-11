@@ -133,6 +133,30 @@ pub(crate) fn match_curves(seeds: &[EdgeSeed], curves: &[Vec<P>], tol: f64) -> R
     Ok(out)
 }
 
+/// Whether two seeds lie on one curve (each within the other's tolerance).
+fn same_curve(a: &EdgeSeed, b: &EdgeSeed) -> bool {
+    matches(a, &b.points, b.tolerance).is_some()
+}
+
+/// The seeds of `edges` (seeds on edges) and of `faces` (the seeds face seeds put on their
+/// edges) the meshers take, matched by position as they match them: an edge two bodies share
+/// (a partition's cut) has a name in each, so a seed on it in one body and a face seed on it in
+/// the other meet only here. A seed on the edge wins over a face's; of face seeds on one curve,
+/// the one with the most divisions wins (the first on a tie). Returns `edges` as they are, then
+/// the face seeds kept, in order.
+pub fn with_face_seeds(mut edges: Vec<EdgeSeed>, faces: Vec<EdgeSeed>) -> Vec<EdgeSeed> {
+    let kept: Vec<bool> = faces
+        .iter()
+        .enumerate()
+        .map(|(i, f)| {
+            !edges.iter().any(|e| same_curve(f, e))
+                && !faces.iter().enumerate().any(|(j, g)| j != i && (g.count > f.count || (g.count == f.count && j < i)) && same_curve(f, g))
+        })
+        .collect();
+    edges.extend(faces.into_iter().zip(kept).filter_map(|(f, k)| k.then_some(f)));
+    edges
+}
+
 /// The points at the given arc-length fractions along `poly` (its end points exact).
 pub(crate) fn place(poly: &[P], fractions: &[f64]) -> Result<Vec<P>> {
     let (Some(&first), Some(&last)) = (poly.first(), poly.last()) else {
@@ -263,6 +287,24 @@ mod tests {
         let h = node_sizes(&s);
         assert_eq!(h.len(), 4);
         assert!((h[0].1 - 10.0 * f[1]).abs() < 1e-9);
+    }
+
+    /// On a curve two bodies share, a seed on the edge wins over a face seed, and of two face
+    /// seeds the one with more divisions; face seeds elsewhere are kept.
+    #[test]
+    fn face_seeds_yield_to_edge_seeds_and_finer_face_seeds_on_one_curve() {
+        let named = |name: &str, points: Vec<P>, count| EdgeSeed { name: name.into(), count, bias: None, ..seed(points) };
+        let cut = vec![[0.0; 3], [10.0, 0.0, 0.0]];
+        let back = vec![[10.0, 0.0, 0.0], [0.0; 3]];
+        let other = vec![[0.0; 3], [0.0, 10.0, 0.0]];
+        let edges = vec![named("a:cut", cut.clone(), 4)];
+        let faces = vec![named("b:cut", back.clone(), 9), named("b:other", other.clone(), 3), named("c:other", other.clone(), 6)];
+        let names = |v: &[EdgeSeed]| v.iter().map(|s| s.name.clone()).collect::<Vec<_>>();
+        assert_eq!(names(&with_face_seeds(edges, faces.clone())), ["a:cut", "c:other"]);
+        // Without the edge seed, the face seed holds the cut; equal counts keep the first.
+        let tie = vec![named("b:other", other.clone(), 6), named("c:other", other, 6)];
+        assert_eq!(names(&with_face_seeds(Vec::new(), faces)), ["b:cut", "c:other"]);
+        assert_eq!(names(&with_face_seeds(Vec::new(), tie)), ["b:other"]);
     }
 
     /// A biased seed's spacing carries along the ties to unseeded curves, oriented as each tie
