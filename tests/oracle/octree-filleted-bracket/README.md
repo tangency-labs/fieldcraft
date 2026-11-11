@@ -14,8 +14,8 @@ the fillet, which has no closed form, is checked for convergence against the 4 m
 
 | mesh size | hexahedra | fillet von Mises (MPa) | σ_yy outer / inner at y = 19 (MPa) |
 |---|---|---|---|
-| 7 mm | 4291 | 138.5 | 149.4 / −146.9 |
-| 5 mm | 13273 | 144.5 | 149.3 / −147.3 |
-| 4 mm (reference) | 21508 | 143.2 | 147.4 / −145.5 |
+| 7 mm | 4291 | 137.5 | 149.3 / −146.7 |
+| 5 mm | 13277 | 144.5 | 149.3 / −147.1 |
+| 4 mm (reference) | 21508 | 142.3 | 147.4 / −145.5 |
 
 A 3 mm mesh needs more than the direct solver's factor cap.

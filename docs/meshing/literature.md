@@ -641,6 +641,27 @@ the grid is built, from the thinnest wall (measured to a facing wall only: a ray
 through the face beyond a convex edge measures how near the edge it started, not a wall) and the
 narrowest patch; a part beyond the levels or cells allowed fails at once with the numbers.
 
+**Our own heuristics in `fieldcraft-mesh::octree` (#536), from no paper.** Both were measured on
+the meshing corpus (docs/meshing/corpus.md) and on boxes whose core lies a fraction of a cell
+from a face; neither B1.4 nor B1.9 describes them.
+- **Core recession.** The papers keep the core a fixed offset from the boundary, so on a planar
+  face aligned with the grid the gap for the padding and the pillow lies anywhere in
+  `[offset, 1 + offset)` cells, and at the bottom both layers start crushed. Where the gap is
+  under half a cell, a core boundary vertex moves inward along its normal toward half a cell, by
+  at most 0.35 of its smallest cell, in at most three halving steps, and only while the gap
+  widens, the vertex stays inside, its elements keep a corner scaled Jacobian of 0.5 (or what
+  they had) and every edge at it keeps half its length (a core thinned from both sides). The
+  B1.9 rule is not enforced again after the moves: on bolted-assembly that kept the crushed
+  layers at the clamp's hole (its rebuild fell from a smallest scaled Jacobian of 0.32 to 0.0009),
+  and the certified gate proves every element valid either way.
+- **Quality rebuild.** B1.4 §3.3 refines and rebuilds only where a stage fails. A valid mesh
+  with an element under a scaled Jacobian of 0.1 is also rebuilt, with the leaves around every
+  element under 0.2 split once more, within the same attempt and growth caps; a rebuild is kept
+  only while it raises the smallest scaled Jacobian, and once a valid mesh is in hand a failed
+  rebuild returns it. Triggering at 0.2 too grew filleted-bracket-blocks from 150 k to 232 k
+  hexahedra; splitting only around the elements under 0.1 split too few leaves and left
+  bolted-assembly at 0.046.
+
 ---
 
 ### B2. Polycube maps
