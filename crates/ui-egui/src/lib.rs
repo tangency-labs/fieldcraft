@@ -2315,8 +2315,10 @@ impl ModelApp {
 
     /// Inject synthetic events: one pointer event per frame (egui reads a press and release in
     /// the same frame as a click, but a drag needs frames between its moves), keys up to their
-    /// release.
-    pub fn raw_input_hook(&mut self, raw: &mut egui::RawInput) {
+    /// release. First, a press the OS took for a window move or resize is released where it
+    /// began (the OS may keep that release from the app, X11; see the kit's window chrome).
+    pub fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        titlebar::release_press_taken_by_os(ctx, raw);
         let Some(first) = self.synthetic.first() else { return };
         let n = match first {
             egui::Event::PointerMoved(_) | egui::Event::PointerButton { .. } | egui::Event::MouseWheel { .. } => 1,
@@ -2342,6 +2344,9 @@ impl ModelApp {
 
     /// Lay out the whole window.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
+        // The kit's widgets publish where they are drawn into its registry every frame; last
+        // frame's entries go first (the registry's contract), or they pile up for the session.
+        solidcraft_ui_registry::clear_handles();
         self.show_gpu_errors();
         self.layout.clear();
         appbar::app_bar(self, ui);

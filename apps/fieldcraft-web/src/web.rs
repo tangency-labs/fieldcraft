@@ -316,7 +316,7 @@ impl eframe::App for Shell {
                 deliver(&inbox, &ctx, batch);
             });
         }
-        self.app.raw_input_hook(raw);
+        self.app.raw_input_hook(ctx, raw);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
