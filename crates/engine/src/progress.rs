@@ -187,7 +187,7 @@ impl Session {
         let mut changed = Vec::new();
         for (c, _) in self.journal.get(mesher + 1..).unwrap_or_default() {
             let what = match c.as_str() {
-                "mesh.seed.edge" | "mesh.seed.clear" => "Seeds",
+                "mesh.seed.edge" | "mesh.seed.face" | "mesh.seed.clear" => "Seeds",
                 "geometry.partition" | "geometry.partition.delete" | "geometry.partition.suppress" => "Partitions",
                 "geometry.datum.edit" | "geometry.datum.suppress" => "Datum planes",
                 _ => continue,

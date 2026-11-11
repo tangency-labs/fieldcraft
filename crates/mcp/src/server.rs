@@ -39,7 +39,8 @@ model.boundary_condition.symmetry holds a half model on its symmetry plane (file
 partition, half-mesh and mirror sequence). Edge seeds: mesh.seed.edge {edges: [{body, edge}], count | size, bias?, \
 constraint?} fixes the element count along design edges (inspect_model lists the edge names): seed a thin section's \
 thickness, a fillet or hole edge (biased toward the stress raiser), and partition cells' shared edges so their \
-counts match. Failures leave the model unchanged and name what to fix.";
+counts match; mesh.seed.face {faces: [{body, face}], count | size, bias?, constraint?} seeds every edge \
+around a face (an edge's own seed wins). Failures leave the model unchanged and name what to fix.";
 
 pub struct Server {
     backend: Box<dyn Backend>,

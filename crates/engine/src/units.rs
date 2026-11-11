@@ -717,6 +717,7 @@ const GEOMETRY_REPLIES: &[(&str, Numbers)] = &[
     ),
     ("mesh.node.relax.apply", &[("/max_displacement", Dim::Length)]),
     ("mesh.seed.edge", &[("/seeds/*/size", Dim::Length), ("/seeds/*/on/*/length", Dim::Length)]),
+    ("mesh.seed.face", &[("/seeds/*/size", Dim::Length), ("/seeds/*/on/*/length", Dim::Length)]),
     ("mesh.seed.list", &[("/*/size", Dim::Length), ("/*/on/*/length", Dim::Length)]),
     ("mesh.size.set", SIZE_CONTROL),
     ("mesh.size.list", SIZE_CONTROL),

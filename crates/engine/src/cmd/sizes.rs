@@ -285,7 +285,7 @@ impl Sizing {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn plate() -> (Session, std::path::PathBuf) {
@@ -293,7 +293,7 @@ mod tests {
     }
 
     /// The name of the plate's face that lies in the plane x = `x`.
-    fn face_at_x(s: &Session, x: f64) -> String {
+    pub(crate) fn face_at_x(s: &Session, x: f64) -> String {
         let body = s.design.as_ref().unwrap().body("Body1").unwrap();
         let mesh = body.tessellate(0.1).unwrap();
         let faces = body.faces();

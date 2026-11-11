@@ -138,7 +138,7 @@ impl Requirement {
             Requirement::Stitch => "a stitch",
             Requirement::FaceSplit => "a face split",
             Requirement::Defeature => "a defeature",
-            Requirement::Seed => "an edge seed",
+            Requirement::Seed => "a seed",
             Requirement::SizeControl => "a local size",
             Requirement::Nodes => "mesh nodes",
             Requirement::Mesh | Requirement::Analysable => "a mesh",

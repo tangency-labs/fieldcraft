@@ -81,7 +81,7 @@ impl Cleared {
                 .map(|d| super::names::stale_uses(&s.model, d))
                 .unwrap_or_default()
                 .into_iter()
-                .filter(|u| u.owner == "edge seed" || u.owner.starts_with("size control"))
+                .filter(|u| u.owner.ends_with(" seed") || u.owner.starts_with("size control"))
                 .map(|u| json!(format!("{} was not applied: the design has no {}; pick it again", u.owner, u.reference)))
                 .collect();
             if !skipped.is_empty() {

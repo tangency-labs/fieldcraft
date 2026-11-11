@@ -199,12 +199,12 @@ and `mesh` (each one's parameters: `list_commands`):
 `file.sample {"name": "crank-mirror"}` opens the crank arm built this way: one datum (`Sym`), its
 partition, `hex` on the half and `mirror` (docs/examples.md).
 
-## Edge seeds
+## Edge and face seeds
 
 Seed an edge when its element count matters more than the global size: through a thin
 section's thickness (at least 2–3 elements for bending), around a fillet or hole where the
 stress peaks (a count or a small size, biased toward the stress raiser), or to give the shared
-edges of partition cells matching counts.
+edges of partition cells matching counts. Seed a face to seed every edge around it at once.
 
 1. `inspect_model` lists each body's edges by persistent name (`<face>|<face>`, `~k` when several
    separate the same faces) with their lengths; the names follow the faces through edits and
@@ -220,8 +220,15 @@ edges of partition cells matching counts.
    in both, so their meshes still conform. A biased seed's spacing carries to the unseeded edges
    tied to it (the parallel edges of a mapped block or cell, the opposite side of a mapped face,
    the other side edges of a sweep), so one biased edge grades the whole layer stack.
-4. `mesh.seed.list` lists the seeds and the edges they reach (`stale` when the design has no such
-   edge); `mesh.seed.clear {edges?}` removes them. Seeds are saved with the model.
+4. `mesh.seed.face {faces: [{body, face}], count | size, bias?: {ratio, toward: both},
+   constraint?}` seeds every edge bounding the faces: a count on each, or each edge's length over
+   the size. It is resolved by the face's name whenever a mesher runs. An edge's own seed wins over
+   a face's (also on an edge two partition cells share); of two seeded faces on one edge, the one
+   giving it more divisions wins; the reply and `mesh.seed.list` mark an edge another seed decides
+   with `overridden_by`. A size control on a face (`mesh.size.set`) is the other tool: a graded
+   element size over the face, not counts on its edges.
+5. `mesh.seed.list` lists the seeds and the edges they reach (`stale` when the design has no such
+   edge or face); `mesh.seed.clear {edges?, faces?}` removes them. Seeds are saved with the model.
 
 ## Size controls
 

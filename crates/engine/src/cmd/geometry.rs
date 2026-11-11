@@ -24,7 +24,7 @@ const SAME_AXIS: f64 = 1e-6; // unit-factors: relative to the body's size
 pub const OPEN: CommandSpec = CommandSpec {
     id: "geometry.open",
     label: "Open Design",
-    params: r#"{"path": "part.solidcraft", "model"?: "keep"} — rebuilds the SolidCraft design and makes its bodies the geometry. `model`: "keep" (default) keeps the mesh and every definition, so opening the same design again after an edit picks up the change and sets follow their persistent face names; "new" starts a new model with the design (no mesh, sets, materials, sections, BCs, loads or steps; the unit system stays; the model is untitled until saved, and undo restores the previous file). The reply's `related` is false when the model (before the open) refers to bodies (mesh tags, set geometry) and the design has none of them, and `stale` lists what no longer resolves: `mesh_bodies` (bodies the mesh is tagged with that the design lacks) `sets` (sets naming a body or face it lacks) and `seeds` (edge seeds on edges it lacks), and `references` every definition naming a face, edge or vertex of a body the design has but not that entity ({owner, reference, why}). Such a name is first looked for again as file.open does (`renamed`, `mismatched`). `errors` lists the features that failed to rebuild with the `bodies` each may change, and `warnings` says so in one line each. One undo step"#,
+    params: r#"{"path": "part.solidcraft", "model"?: "keep"} — rebuilds the SolidCraft design and makes its bodies the geometry. `model`: "keep" (default) keeps the mesh and every definition, so opening the same design again after an edit picks up the change and sets follow their persistent face names; "new" starts a new model with the design (no mesh, sets, materials, sections, BCs, loads or steps; the unit system stays; the model is untitled until saved, and undo restores the previous file). The reply's `related` is false when the model (before the open) refers to bodies (mesh tags, set geometry) and the design has none of them, and `stale` lists what no longer resolves: `mesh_bodies` (bodies the mesh is tagged with that the design lacks) `sets` (sets naming a body or face it lacks) and `seeds` (seeds on edges or faces it lacks), and `references` every definition naming a face, edge or vertex of a body the design has but not that entity ({owner, reference, why}). Such a name is first looked for again as file.open does (`renamed`, `mismatched`). `errors` lists the features that failed to rebuild with the `bodies` each may change, and `warnings` says so in one line each. One undo step"#,
     form: Some(super::forms::OPEN_DESIGN),
     kind: CommandKind::Model,
     requires: &[],
@@ -159,7 +159,7 @@ struct Fit {
     mesh_bodies: Vec<String>,
     /// Sets naming a body or a face that is not there.
     sets: Vec<String>,
-    /// Edge seeds on an edge the design lacks.
+    /// Seeds on an edge or a face the design lacks.
     seeds: Vec<String>,
 }
 
@@ -193,7 +193,7 @@ fn fit(s: &Session, design: &Design) -> Fit {
             .model
             .seeds()
             .iter()
-            .filter(|seed| super::seeds::seeded_edges(design, &seed.on).map_or(true, |e| e.is_empty()))
+            .filter(|seed| !super::seeds::resolves(design, &seed.on).unwrap_or(false))
             .map(|seed| seed.on.to_string())
             .collect(),
     }

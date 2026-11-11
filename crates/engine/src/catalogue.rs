@@ -341,8 +341,8 @@ pub static CATALOGUE: &[Capability] = &[
         "Seed Edges",
         Mesh,
         "Size",
-        "Element counts or sizes per design edge, with bias and an exact, minimum or free constraint; the meshers honour them",
-        &["mesh.seed.clear", "mesh.seed.list"],
+        "Element counts or sizes per design edge, or on every edge of a face, with bias and an exact, minimum or free constraint; the meshers honour them",
+        &["mesh.seed.face", "mesh.seed.clear", "mesh.seed.list"],
     ),
     ready_more(
         "mesh.size.set",
