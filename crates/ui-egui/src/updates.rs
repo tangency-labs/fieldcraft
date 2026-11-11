@@ -305,24 +305,24 @@ impl ModelApp {
 /// deployment to reload into.
 pub fn notice(app: &mut ModelApp, ui: &mut egui::Ui) {
     let t = crate::theme::Tokens::get(app.ui.dark);
+    let small = |s: &str| RichText::new(s).size(solidcraft_theme::Tokens::get().font_body);
     if let Some(reload) = &app.reload {
         let tip = if app.has_unsaved_work() { "Reloads the page; you are asked about the unsaved changes first" } else { "Reloads the page" };
-        if ui.add(egui::Link::new(RichText::new("Reload to update").size(11.5))).on_hover_text(tip).clicked() {
+        if ui.add(egui::Link::new(small("Reload to update"))).on_hover_text(tip).clicked() {
             reload();
         }
-        ui.label(RichText::new("A new version of FieldCraft is available —").size(11.5).color(t.text));
-        ui.separator();
+        ui.label(small("A new version of FieldCraft is available —").color(t.text));
+        crate::palette::rule(ui);
         return;
     }
     let Some(u) = &app.updates else { return };
     if let Some(busy) = &u.busy {
-        ui.label(RichText::new(busy).size(11.5).color(t.text_dim));
-        ui.separator();
+        ui.label(small(busy).color(t.text_dim));
+        crate::palette::rule(ui);
         return;
     }
     let Some(release) = u.available.clone() else { return };
     // Right to left: the links, then the sentence.
-    let small = |s: &str| RichText::new(s).size(11.5);
     let skip = ui.add(egui::Link::new(small("Skip"))).on_hover_text("Don't offer this version again (Help › Settings)").clicked();
     ui.label(small("·").color(t.text_dim));
     let install = ui.add(egui::Link::new(small("Install"))).on_hover_text("Download, verify and install it; you choose when to restart").clicked();
