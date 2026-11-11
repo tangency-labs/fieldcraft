@@ -12,7 +12,7 @@ needed most, and how to claim work. The rules every change follows, by a person 
 
 ## Get it running (about 10 minutes on a fast machine)
 
-You need stable Rust 1.95 or newer.
+You need [rustup](https://rustup.rs): it installs the Rust that `rust-toolchain.toml` names (1.98.0) on the first build. Older Rust down to 1.95 (`rust-version`) also builds FieldCraft.
 
 ```sh
 git clone https://github.com/tangency-labs/fieldcraft && cd fieldcraft

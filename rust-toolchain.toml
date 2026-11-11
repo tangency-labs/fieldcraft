@@ -1,0 +1,9 @@
+# One Rust for every rustup build, local and CI: the same version as SolidCraft, SolidCore and
+# SurfaceCraft, so their builds share compiled crates (sccache) and lint alike. The workflows
+# install the same version (`dtolnay/rust-toolchain@<version>`): change them together.
+# `rust-version` in Cargo.toml stays the oldest Rust FieldCraft supports.
+[toolchain]
+channel = "1.98.0"
+components = ["rustfmt", "clippy"]
+targets = ["wasm32-unknown-unknown"]
+profile = "minimal"
