@@ -848,7 +848,7 @@ mod tests {
     fn frame(app: &mut ModelApp, ctx: &egui::Context) {
         let mut raw =
             egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0))), ..Default::default() };
-        app.raw_input_hook(&mut raw);
+        app.raw_input_hook(ctx, &mut raw);
         let mut out = ctx.run_ui(raw, |ui| {
             app.logic(ui.ctx());
             app.ui(ui);

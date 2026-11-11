@@ -1,52 +1,42 @@
-//! The application bar: the window's title bar. The app's mark and name, the quick actions (File
-//! menu, save, undo, redo, Solve, command search, theme, help), the model's document tab and the
-//! version; on Windows and Linux the caption buttons ([`crate::titlebar`]).
+//! The application bar: the window's title bar, drawn by the kit's application bar
+//! (`solidcraft_ui_kit::app_bar`) as SolidCraft's is: FieldCraft's mark and name, Home (the
+//! samples), File and its actions (save, undo, redo), a quick-access button (the theme), the
+//! model's document tab, Solve, the command search, Settings, Help, Report a bug and the version.
+//! The kit's window chrome (`solidcraft_ui_kit::window_chrome`, [`crate::titlebar`]) makes its
+//! empty space move the window and draws the caption buttons on Windows and Linux; macOS keeps
+//! its traffic lights over the bar's left end.
 //!
-//! Layout follows SolidCraft's `toolbar::app_bar` (MIT OR Apache-2.0), see ATTRIBUTION.md; the
-//! buttons and the document tab are drawn as the kit's application bar draws them
-//! (`solidcraft_ui_kit::app_bar`).
+//! What stays FieldCraft's: its mark, Solve (the one prominent action, in the place the kit
+//! leaves for an offer pill) and the single document tab (drawn in the kit's tab shape; the kit's
+//! tab strip closes, adds and reorders documents, which a FieldCraft window does not).
 
-use egui::{Align2, Color32, FontId, Rect, Sense, Stroke, Vec2, pos2, vec2};
+use egui::{Align2, Color32, FontId, Rect, Sense, Stroke, pos2, vec2};
 use serde_json::json;
+use solidcraft_ui_kit::BackingTooltipExt as _;
+use solidcraft_ui_kit::app_bar::{self, BarAction, BarButton};
+use solidcraft_ui_kit::window_chrome;
 
 use crate::ModelApp;
 use crate::icons::{self, Look};
 use crate::theme::Tokens;
 
 /// The bar's height.
-pub const HEIGHT: f32 = 34.0;
-/// A quick-action button's side, and the room each takes.
-const BUTTON: f32 = 26.0;
-const STRIDE: f32 = 30.0;
+pub const HEIGHT: f32 = app_bar::HEIGHT;
 
-/// The title bar's quick actions.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Quick {
-    File,
-    Save,
-    Undo,
-    Redo,
-    Solve,
-    Search,
-    Theme,
-    Help,
-}
-
-impl Quick {
-    /// Its region in `ui.inspect`'s layout.
-    fn region(self) -> &'static str {
-        match self {
-            Quick::File => "app_bar:file",
-            Quick::Save => "app_bar:save",
-            Quick::Undo => "app_bar:undo",
-            Quick::Redo => "app_bar:redo",
-            Quick::Solve => "app_bar:solve",
-            Quick::Search => "app_bar:search",
-            Quick::Theme => "app_bar:theme",
-            Quick::Help => "app_bar:help",
-        }
-    }
-}
+/// Where the kit's bar publishes its parts in the widget registry, under the names `ui.inspect`'s
+/// layout gives them.
+const HANDLES: app_bar::Handles<'static> = app_bar::Handles {
+    home: &["app_bar:home"],
+    home_rect: &["app_bar:home"],
+    file: &["app_bar:file"],
+    file_rect: &["app_bar:file"],
+    button: &["app_bar:"],
+    separator: "app_bar:separator:",
+    search: "app_bar:search",
+    report: "app_bar:report",
+    settings: "app_bar:settings",
+    version: "app_bar:version",
+};
 
 /// FieldCraft's mark: the application icon's fringe cube (`assets/app-icon/icon-small.svg`, after
 /// `xtask/src/app_icon.rs`) drawn in code without its tile or streamline: each visible face split
@@ -84,220 +74,228 @@ fn mark(p: &egui::Painter, c: egui::Pos2) {
     }
 }
 
-/// Where the title bar's parts go.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct BarLayout {
-    /// The mark's centre, and where the app's name starts (none when compact).
-    pub mark: egui::Pos2,
-    pub name: Option<egui::Pos2>,
-    /// File, Save, Undo, Redo: after the mark, at the left.
-    pub quick: [Rect; 4],
-    /// Solve, then Search, Theme and Help: at the right end, before the version.
-    pub solve: Rect,
-    pub tools: [Rect; 3],
-    /// The document tab's room, between the two groups.
-    pub tab_room: (f32, f32),
-    /// The version's right edge.
-    pub version_right: f32,
-    /// Too narrow for labels: no name, and Solve without its word.
-    pub compact: bool,
-}
-
-/// The title bar's layout in `bar`. `traffic_lights`: the macOS window buttons sit over its left
-/// end (an integrated title bar out of full screen, where there are none). `captions`: the width
-/// of the custom caption buttons at its right end; `version_w`: the version text's width.
-pub fn bar_layout(bar: Rect, traffic_lights: bool, captions: f32, version_w: f32) -> BarLayout {
-    let left = bar.left() + if traffic_lights { crate::titlebar::TRAFFIC_LIGHTS } else { 0.0 };
-    let compact = bar.right() - left < 760.0;
-    let cy = bar.center().y;
-    let button = |x: f32| Rect::from_center_size(pos2(x + BUTTON / 2.0, cy), Vec2::splat(BUTTON));
-    let x0 = left + if compact { 44.0 } else { 132.0 };
-    let quick = [0.0, 1.0, 2.0, 3.0].map(|i| button(x0 + i * STRIDE));
-    let version_right = bar.right() - 12.0 - captions;
-    let tools_end = version_right - version_w - 14.0;
-    let tools = [3.0, 2.0, 1.0].map(|i| button(tools_end - i * STRIDE));
-    let solve_w = if compact { 30.0 } else { 74.0 };
-    let solve = Rect::from_min_size(pos2(tools[0].left() - 10.0 - solve_w, cy - 12.0), vec2(solve_w, 24.0));
-    BarLayout {
-        mark: pos2(left + 20.0, cy),
-        name: (!compact).then(|| pos2(left + 36.0, cy)),
-        quick,
-        solve,
-        tools,
-        tab_room: (quick[3].right() + 16.0, solve.left() - 16.0),
-        version_right,
-        compact,
-    }
-}
-
 /// Whether the window is in full screen (no traffic lights to make room for).
 fn fullscreen(ctx: &egui::Context) -> bool {
     ctx.input(|i| i.viewport().fullscreen.unwrap_or(false))
 }
 
+/// This version's release notes.
+fn release_notes() -> String {
+    format!("https://github.com/tangency-labs/fieldcraft/releases/tag/v{}", crate::VERSION)
+}
+
+/// Solve's width with its word, and as just its mark.
+const SOLVE_WIDE: f32 = 74.0;
+const SOLVE_NARROW: f32 = 30.0;
+
 pub fn app_bar(app: &mut ModelApp, ui: &mut egui::Ui) {
     let t = Tokens::get(app.ui.dark);
-    let mut anchors: Vec<(Quick, Rect)> = Vec::new();
     egui::Panel::top("fc_appbar").exact_size(HEIGHT).show_separator_line(false).frame(egui::Frame::NONE.fill(t.app_bar)).show(ui, |ui| {
         let r = ui.max_rect();
         app.place("app_bar", r);
-        if app.custom_titlebar || app.integrated_titlebar {
-            crate::titlebar::drag_area(ui, r);
+        let chrome =
+            window_chrome::TitleBar { traffic_lights: app.integrated_titlebar && !fullscreen(ui.ctx()), caption_buttons: app.custom_titlebar };
+        let action = chrome.show(ui, r, |ui, content| bar(app, ui, r, content));
+        if let Some(action) = action {
+            crate::titlebar::run(app, ui.ctx(), action);
         }
-        let captions = if app.custom_titlebar { crate::titlebar::WIDTH } else { 0.0 };
-        let version = format!("v{}", crate::VERSION);
-        let version_w = ui.painter().layout_no_wrap(version.clone(), FontId::proportional(11.0), t.text_dim).size().x;
-        let lay = bar_layout(r, app.integrated_titlebar && !fullscreen(ui.ctx()), captions, version_w);
-        mark(ui.painter(), lay.mark);
-        if let Some(at) = lay.name {
-            ui.painter().text(at, Align2::LEFT_CENTER, "FieldCraft", FontId::proportional(14.0), t.app_bar_text);
-        }
-        let (undo, redo) = app.session.undo_depth();
-        let busy = app.busy().is_some();
-        let file_open = app.ui.menu.as_deref() == Some("file");
-        let actions: [(Quick, &'static str, String, bool, bool); 4] = [
-            (Quick::File, "file.open", "File: open, save, decks, samples".to_string(), true, file_open),
-            (Quick::Save, "file.save", format!("Save ({})", shortcut("S")), !busy, false),
-            (Quick::Undo, "edit.undo", format!("Undo ({})", shortcut("Z")), undo > 0 && !busy, false),
-            (Quick::Redo, "edit.redo", format!("Redo ({})", shortcut("Shift+Z")), redo > 0 && !busy, false),
-        ];
-        let tools: [(Quick, &'static str, String, bool, bool); 3] = [
-            (Quick::Search, "ui.search", format!("Search commands (S or {})", shortcut("K")), true, app.ui.palette),
-            (
-                Quick::Theme,
-                if app.ui.dark { "ui.sun" } else { "ui.moon" },
-                if app.ui.dark { "Light theme".into() } else { "Dark theme".into() },
-                true,
-                false,
-            ),
-            (Quick::Help, "ui.help", "Help: samples, navigation, about".into(), true, app.ui.menu.as_deref() == Some("help")),
-        ];
-        let mut clicked = None;
-        for ((q, icon, tip, enabled, selected), rect) in actions.into_iter().zip(lay.quick).chain(tools.into_iter().zip(lay.tools)) {
-            if quick_button(ui, q.region(), icon, rect, &tip, enabled, selected) {
-                clicked = Some(q);
-            }
-            anchors.push((q, rect));
-        }
-        // Solve: the one prominent action, a filled button with its label.
-        let solve = lay.solve;
-        // Solve runs `solve.run`: greyed while the model misses what it needs, every missing
-        // piece listed in the tooltip.
-        let missing = app.unavailable("solve.run");
-        let can = missing.is_none() && !busy;
-        let resp = ui.interact(solve, ui.scope_id().with("fc_solve"), if can { Sense::click() } else { Sense::hover() });
-        let fill = if resp.hovered() && can {
-            t.accent_hover
-        } else if can {
-            t.accent
-        } else {
-            Color32::from_white_alpha(24)
-        };
-        ui.painter().rect_filled(solve, 5.0, fill);
-        // The play mark and label in the ink for the accent fill; white on the greyed one (the
-        // title bar is dark in both themes).
-        let ink = if can { t.on_accent } else { Color32::WHITE };
-        let c = pos2(solve.left() + 15.0, solve.center().y);
-        ui.painter().add(egui::Shape::convex_polygon(vec![c + vec2(-3.5, -5.5), c + vec2(5.5, 0.0), c + vec2(-3.5, 5.5)], ink, Stroke::NONE));
-        if !lay.compact {
-            ui.painter().text(
-                pos2(solve.left() + 28.0, solve.center().y),
-                Align2::LEFT_CENTER,
-                "Solve",
-                crate::theme::label_font(ui.ctx(), 13.0),
-                ink,
-            );
-        }
-        let head = if missing.is_some() { "Solve: not ready yet (or try Help › Samples)" } else { "Solve every step and show the results" };
-        let tip = fieldcraft_engine::requirement::Unavailable::tip(head, missing.as_ref());
-        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, can, "Solve"));
-        if resp.on_hover_text(tip).clicked() && can {
-            clicked = Some(Quick::Solve);
-        }
-        anchors.push((Quick::Solve, solve));
-        // The model's document tab, centred in its room.
-        let migrated = app.session.migrated_from.map(|n| format!(" (from format {n})")).unwrap_or_default();
-        let label = format!("{}{migrated}{}", app.model_name(), if app.session.is_dirty() { " •" } else { "" });
-        let text_w = ui.painter().layout_no_wrap(label.clone(), FontId::proportional(13.0), t.text).size().x;
-        let (room_l, room_r) = lay.tab_room;
-        let tab_w = (text_w + 40.0).clamp(120.0, 260.0).min((room_r - room_l).max(0.0));
-        let tab_x = (r.center().x - tab_w / 2.0).clamp(room_l, (room_r - tab_w).max(room_l));
-        if tab_w > 40.0 {
-            let tab = Rect::from_min_size(pos2(tab_x, r.center().y - 13.0), vec2(tab_w, 26.0));
-            let mut tip = app.session.path.clone().unwrap_or_else(|| "Not saved yet".into());
-            if let Some(n) = app.session.migrated_from {
-                tip.push_str(&format!("\nOpened from a format {n} file: the first save keeps that file as a copy beside it"));
-                for note in &app.session.migration_notes {
-                    tip.push_str(&format!("\n{note}"));
-                }
-            }
-            let resp = ui.interact(tab, egui::Id::unique("fc_document_tab"), Sense::hover());
-            resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Tab, true, true, &label));
-            let k = solidcraft_theme::Tokens::get();
-            solidcraft_ui_kit::app_bar::tab_shape(ui.painter(), &k, tab, true, resp.hovered());
-            let clip = tab.shrink2(vec2(10.0, 0.0));
-            ui.painter().with_clip_rect(clip).text(
-                pos2(tab.left() + 14.0, tab.center().y),
-                Align2::LEFT_CENTER,
-                &label,
-                FontId::proportional(k.font_button),
-                k.app_bar_text,
-            );
-            let _ = resp.on_hover_text(&tip);
-            app.place("document_tab", tab);
-        }
-        ui.painter().text(
-            pos2(lay.version_right, r.center().y),
-            Align2::RIGHT_CENTER,
-            version,
-            FontId::proportional(11.0),
-            Color32::from_rgb(160, 168, 182),
-        );
-        if app.custom_titlebar {
-            crate::titlebar::caption_buttons(app, ui, r);
-        }
-        match clicked {
-            Some(Quick::File) => app.toggle_menu("file"),
-            Some(Quick::Help) => app.toggle_menu("help"),
-            Some(Quick::Save) => {
-                app.save();
-            }
-            Some(Quick::Undo) => {
-                let _ = app.run("edit.undo", json!({}));
-            }
-            Some(Quick::Redo) => {
-                let _ = app.run("edit.redo", json!({}));
-            }
-            Some(Quick::Solve) => app.solve_all(),
-            Some(Quick::Search) => {
-                app.ui.palette = !app.ui.palette;
-                app.ui.menu = None;
-            }
-            Some(Quick::Theme) => app.ui.dark = !app.ui.dark,
-            None => {}
-        }
-        for (q, rect) in &anchors {
-            app.place(q.region(), *rect);
-        }
-        let anchor = |q: Quick| anchors.iter().find(|(k, _)| *k == q).map_or(r, |(_, a)| *a);
-        crate::frame::menu(app, ui, "file", anchor(Quick::File), crate::files::file_menu);
-        crate::frame::wide_menu(app, ui, "help", anchor(Quick::Help), help_menu);
     });
 }
 
-/// One quick action: its icon on the dark bar, dimmed when it cannot run now. `true` when clicked.
-#[allow(clippy::too_many_arguments)]
-fn quick_button(ui: &mut egui::Ui, key: &str, icon: &'static str, rect: Rect, tip: &str, enabled: bool, selected: bool) -> bool {
-    // As the kit's application bar draws its buttons (`solidcraft_ui_kit::app_bar`).
-    let k = solidcraft_theme::Tokens::get();
-    let resp = ui.interact(rect, ui.scope_id().with(("fc_quick", key)), if enabled { egui::Sense::click() } else { egui::Sense::hover() });
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, enabled, selected, tip));
-    if selected || (enabled && (resp.hovered() || resp.has_focus())) {
-        ui.painter().rect_filled(rect, k.radius_sm, if selected { k.app_bar_hover_strong } else { k.app_bar_hover_button });
+/// The bar's contents within `content`, the room the window's own buttons leave in `r`.
+fn bar(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, content: Rect) {
+    let (undo, redo) = app.session.undo_depth();
+    let busy = app.busy().is_some();
+    let (save_tip, undo_tip, redo_tip) =
+        (format!("Save ({})", shortcut("S")), format!("Undo ({})", shortcut("Z")), format!("Redo ({})", shortcut("Shift+Z")));
+    let search_key = shortcut("K");
+    let version = format!("v{}", crate::VERSION);
+    let url = release_notes();
+    let button = |id, icon, tip, enabled, wide_only| BarButton { id, icon, tip, enabled, narrow: true, wide_only };
+    let chrome = |id, icon, tip| BarButton { id, icon, tip, enabled: true, narrow: false, wide_only: false };
+    let data = app_bar::AppBar {
+        mark: &mark,
+        name: "FieldCraft",
+        home: chrome("home", "home", "Samples: models ready to solve"),
+        file: "File",
+        file_open: app.ui.menu.as_deref() == Some("file"),
+        actions: vec![
+            button("save", "save", &save_tip, !busy, false),
+            button("undo", "undo", &undo_tip, undo > 0 && !busy, true),
+            button("redo", "redo", &redo_tip, redo > 0 && !busy, true),
+        ],
+        quick: 1,
+        help: chrome("help", "help", "Help: navigation, keys, updates, about"),
+        settings: chrome("settings", "settings", "Settings: privacy and updates"),
+        report: app_bar::Report {
+            label: "Report a bug",
+            tip: "Report a bug: draft a GitHub issue with the version, the OS and the last error; nothing is sent until you submit it",
+            icon_only: false,
+        },
+        search: true,
+        search_shortcut: Some(&search_key),
+        assistant: false,
+        version: Some(app_bar::Version { text: &version, url: &url }),
+        handles: HANDLES,
+    };
+    let out = app_bar::show(ui, &data, r, content);
+    // The kit's buttons, where it published them this frame (`ui.inspect`'s layout).
+    for region in
+        ["app_bar:home", "app_bar:file", "app_bar:save", "app_bar:undo", "app_bar:redo", "app_bar:help", "app_bar:settings", "app_bar:report"]
+    {
+        if let Some(rect) = solidcraft_ui_registry::rect_of(region) {
+            app.place(region, rect);
+        }
     }
-    let opacity = if enabled { 1.0 } else { 0.35 };
-    icons::paint_faded(ui, icon, rect.shrink(4.0), Look::AppBar, opacity);
-    enabled && resp.on_hover_text(tip).clicked()
+    for action in &out.actions {
+        match action {
+            BarAction::Home => app.toggle_menu("home"),
+            BarAction::File { .. } => {
+                app.ui.palette = false;
+                app.toggle_menu("file");
+            }
+            BarAction::Button { id } => match id.as_str() {
+                "save" => {
+                    app.save();
+                }
+                "undo" => {
+                    let _ = app.run("edit.undo", json!({}));
+                }
+                "redo" => {
+                    let _ = app.run("edit.redo", json!({}));
+                }
+                "settings" => app.open_settings(),
+                _ => {}
+            },
+            BarAction::Help { .. } => app.toggle_menu("help"),
+            BarAction::Report => app.report_bug(None),
+            BarAction::Version => ui.ctx().open_url(egui::OpenUrl::new_tab(&url)),
+        }
+    }
+    let cy = r.center().y;
+    // The quick-access button: the theme.
+    if let Some((first, _)) = out.quick {
+        let rect = Rect::from_center_size(pos2(first, cy), vec2(32.0, 32.0));
+        let (icon, tip) = if app.ui.dark { ("ui.sun", "Light theme") } else { ("ui.moon", "Dark theme") };
+        if quick_button(ui, "theme", icon, rect, tip) {
+            app.ui.dark = !app.ui.dark;
+        }
+        app.place("app_bar:theme", rect);
+    }
+    // The closed command search: a click opens the command palette.
+    if let Some(search) = out.search {
+        search_field(app, ui, search, &search_key);
+        app.place("app_bar:search", search);
+    }
+    // Solve: right-aligned where the kit leaves room for an offer pill, before the right cluster.
+    let solve_w = if out.offer_labeled { SOLVE_WIDE } else { SOLVE_NARROW };
+    let solve = Rect::from_min_size(pos2(out.offer.right() - solve_w, cy - 12.0), vec2(solve_w, 24.0));
+    let tabs_end = if out.offer.width() >= solve_w {
+        solve_button(app, ui, solve, out.offer_labeled);
+        app.place("app_bar:solve", solve);
+        solve.left() - 8.0
+    } else {
+        out.controls_left - 8.0
+    };
+    document_tab(app, ui, r, out.tabs_start, tabs_end);
+    let home_at = solidcraft_ui_registry::rect_of("app_bar:home").unwrap_or(out.file);
+    let help_at = solidcraft_ui_registry::rect_of("app_bar:help").unwrap_or(r);
+    crate::frame::menu(app, ui, "file", out.file, crate::files::file_menu);
+    crate::frame::wide_menu(app, ui, "home", home_at, samples_menu);
+    crate::frame::wide_menu(app, ui, "help", help_at, help_menu);
+}
+
+/// The theme's quick-access button, drawn as the kit's bar draws its icon buttons. `true` when
+/// clicked.
+fn quick_button(ui: &mut egui::Ui, key: &str, icon: &'static str, rect: Rect, tip: &str) -> bool {
+    let k = solidcraft_theme::Tokens::get();
+    let resp = ui.interact(rect, ui.scope_id().with(("fc_quick", key)), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tip));
+    if resp.hovered() || resp.has_focus() {
+        ui.painter().rect_filled(rect.shrink(3.0), k.radius_sm, k.app_bar_hover_button);
+    }
+    icons::paint(ui, icon, Rect::from_center_size(rect.center(), vec2(18.0, 18.0)), Look::AppBar);
+    resp.backing_on_hover_text(tip).clicked()
+}
+
+/// The command search's closed field (the kit's), opening the command palette when clicked.
+fn search_field(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect, key: &str) {
+    let geometry = solidcraft_ui_kit::SearchFieldGeometry {
+        height: rect.height(),
+        radius: solidcraft_ui_kit::CommandSearch::field_radius(0.0, false),
+        progress: 0.0,
+    };
+    let mut field = ui.new_child(egui::UiBuilder::new().max_rect(rect).id_salt("fc_app_bar_search"));
+    let mut empty = String::new();
+    solidcraft_ui_kit::CommandSearch::field(&mut field, &mut empty, false, false, false, geometry, Some(key), 0);
+    let resp = ui.interact(rect, ui.scope_id().with("fc_app_bar_search_open"), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Search commands"));
+    if resp.backing_on_hover_text(format!("Search commands (S or {key})")).clicked() {
+        app.ui.palette = !app.ui.palette;
+        app.ui.menu = None;
+    }
+}
+
+/// Solve: the one prominent action, a filled button with its label when `labeled`. It runs
+/// `solve.run`: greyed while the model misses what it needs, every missing piece listed in the
+/// tooltip.
+fn solve_button(app: &mut ModelApp, ui: &mut egui::Ui, solve: Rect, labeled: bool) {
+    let t = Tokens::get(app.ui.dark);
+    let missing = app.unavailable("solve.run");
+    let can = missing.is_none() && app.busy().is_none();
+    let resp = ui.interact(solve, ui.scope_id().with("fc_solve"), if can { Sense::click() } else { Sense::hover() });
+    let fill = if resp.hovered() && can {
+        t.accent_hover
+    } else if can {
+        t.accent
+    } else {
+        Color32::from_white_alpha(24)
+    };
+    ui.painter().rect_filled(solve, solidcraft_theme::Tokens::get().radius_sm, fill);
+    // The play mark and label in the ink for the accent fill; white on the greyed one (the title
+    // bar is dark in both themes).
+    let ink = if can { t.on_accent } else { Color32::WHITE };
+    let c = pos2(solve.left() + 15.0, solve.center().y);
+    ui.painter().add(egui::Shape::convex_polygon(vec![c + vec2(-3.5, -5.5), c + vec2(5.5, 0.0), c + vec2(-3.5, 5.5)], ink, Stroke::NONE));
+    if labeled {
+        ui.painter().text(pos2(solve.left() + 28.0, solve.center().y), Align2::LEFT_CENTER, "Solve", crate::theme::label_font(ui.ctx(), 13.0), ink);
+    }
+    let head = if missing.is_some() { "Solve: not ready yet (or try Home › Samples)" } else { "Solve every step and show the results" };
+    let tip = fieldcraft_engine::requirement::Unavailable::tip(head, missing.as_ref());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, can, "Solve"));
+    if resp.backing_on_hover_text(tip).clicked() && can {
+        app.solve_all();
+    }
+}
+
+/// The model's document tab, centred in the room from `x0` to `x1`, in the kit's tab shape.
+fn document_tab(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
+    let k = solidcraft_theme::Tokens::get();
+    let migrated = app.session.migrated_from.map(|n| format!(" (from format {n})")).unwrap_or_default();
+    let label = format!("{}{migrated}{}", app.model_name(), if app.session.is_dirty() { " •" } else { "" });
+    let font = FontId::proportional(k.font_button);
+    let text_w = crate::elide::width(ui, &label, &font);
+    let tab_w = (text_w + 40.0).clamp(120.0, 260.0).min((x1 - x0).max(0.0));
+    if tab_w <= 40.0 {
+        return;
+    }
+    let tab_x = (r.center().x - tab_w / 2.0).clamp(x0, (x1 - tab_w).max(x0));
+    let tab = Rect::from_min_size(pos2(tab_x, r.center().y - 13.0), vec2(tab_w, 26.0));
+    let mut place = app.session.path.clone().unwrap_or_else(|| "Not saved yet".into());
+    if let Some(n) = app.session.migrated_from {
+        place.push_str(&format!("\nOpened from a format {n} file: the first save keeps that file as a copy beside it"));
+        for note in &app.session.migration_notes {
+            place.push_str(&format!("\n{note}"));
+        }
+    }
+    let resp = ui.interact(tab, egui::Id::unique("fc_document_tab"), Sense::hover());
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Tab, true, true, &label));
+    app_bar::tab_shape(ui.painter(), &k, tab, true, resp.hovered());
+    let shown = crate::elide::middle_in(ui, &label, &font, tab_w - 28.0);
+    let cut = shown != label.as_str();
+    ui.painter().text(pos2(tab.left() + 14.0, tab.center().y), Align2::LEFT_CENTER, shown, font, k.app_bar_text);
+    let _ = resp.backing_on_hover_text(app_bar::tab_tip(&label, &place, cut));
+    app.place("document_tab", tab);
 }
 
 /// The shortcut text with this platform's command key.
@@ -305,12 +303,21 @@ pub fn shortcut(key: &str) -> String {
     format!("{}+{key}", if cfg!(target_os = "macos") { "Cmd" } else { "Ctrl" })
 }
 
-/// Help: the samples (ready to solve), how to navigate, keys, and the version.
-fn help_menu(app: &mut ModelApp, ui: &mut egui::Ui) {
+/// Home: the samples, ready to solve.
+fn samples_menu(app: &mut ModelApp, ui: &mut egui::Ui) {
     let t = Tokens::get(app.ui.dark);
     crate::frame::menu_heading(ui, "Samples");
     let mut open = None;
     crate::samples::rows(ui, &t, &mut open);
+    if let Some(n) = open {
+        app.ui.menu = None;
+        app.open_sample(n);
+    }
+}
+
+/// Help: the samples (ready to solve), how to navigate, keys, updates, crash reports and the version.
+fn help_menu(app: &mut ModelApp, ui: &mut egui::Ui) {
+    samples_menu(app, ui);
     crate::frame::menu_separator(ui);
     crate::frame::menu_heading(ui, "Navigation");
     let note = |ui: &mut egui::Ui, text: &str| {
@@ -350,39 +357,57 @@ fn help_menu(app: &mut ModelApp, ui: &mut egui::Ui) {
     } else if settings {
         app.open_settings();
     }
-    if let Some(n) = open {
-        app.ui.menu = None;
-        app.open_sample(n);
-    }
 }
 
 #[cfg(test)]
 mod tests {
+    use fieldcraft_engine::Session;
+
     use super::*;
 
-    /// Solve and the tools sit at the right end; the left group starts after the traffic lights,
-    /// at the very left in full screen (where there are none).
-    #[test]
-    fn the_title_bar_keeps_solve_right_and_drops_the_traffic_light_inset_in_full_screen() {
-        let bar = Rect::from_min_size(egui::Pos2::ZERO, vec2(1400.0, HEIGHT));
-        let windowed = bar_layout(bar, true, 0.0, 30.0);
-        let full = bar_layout(bar, false, 0.0, 30.0);
-        assert_eq!(windowed.mark.x - full.mark.x, crate::titlebar::TRAFFIC_LIGHTS);
-        assert!(full.mark.x < 30.0 && full.quick[0].left() < 150.0, "{full:?}");
-        for l in [windowed, full] {
-            // Left to right: mark, quick actions, (tab), Solve, search, theme, help, version.
-            assert!(l.quick.windows(2).all(|w| w[0].right() <= w[1].left()));
-            assert!(l.quick[3].right() < l.tab_room.0 && l.tab_room.1 < l.solve.left());
-            assert!(l.solve.right() <= l.tools[0].left() && l.tools.windows(2).all(|w| w[0].right() <= w[1].left()));
-            assert!(l.tools[2].right() < l.version_right - 30.0 && l.version_right <= 1400.0);
-            assert!(l.solve.left() > 1100.0, "Solve is at the right end: {:?}", l.solve);
+    /// The bar's regions after a frame of a window `width` wide.
+    fn regions(width: f32, integrated: bool) -> std::collections::BTreeMap<&'static str, Rect> {
+        let mut app = ModelApp::new(Session::default());
+        app.integrated_titlebar = integrated;
+        let ctx = egui::Context::default();
+        for _ in 0..2 {
+            let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(width, 600.0))), ..Default::default() };
+            let mut out = ctx.run_ui(raw, |ui| app_bar(&mut app, ui));
+            out.textures_delta.clear();
         }
-        // The right group does not move with full screen; custom caption buttons push it left.
-        assert_eq!(windowed.solve, full.solve);
-        let captions = bar_layout(bar, false, crate::titlebar::WIDTH, 30.0);
-        assert!((full.tools[2].right() - captions.tools[2].right() - crate::titlebar::WIDTH).abs() < 0.01);
-        // Narrow: compact, still in order.
-        let narrow = bar_layout(Rect::from_min_size(egui::Pos2::ZERO, vec2(700.0, HEIGHT)), true, 0.0, 30.0);
-        assert!(narrow.compact && narrow.name.is_none() && narrow.quick[3].right() < narrow.solve.left());
+        app.layout
+    }
+
+    /// Left to right as in SolidCraft: Home, File, its actions, the theme, the document tab, Solve,
+    /// the search, Settings, Help and Report a bug; the left group starts after the traffic
+    /// lights, and Solve and the right cluster stay put.
+    #[test]
+    fn the_title_bar_is_laid_out_as_solidcrafts() {
+        let at = |m: &std::collections::BTreeMap<&'static str, Rect>, k: &str| m.get(k).copied().unwrap_or_else(|| panic!("{k} not drawn"));
+        let windowed = regions(1400.0, true);
+        let full = regions(1400.0, false);
+        assert!((at(&windowed, "app_bar:home").left() - at(&full, "app_bar:home").left() - window_chrome::TRAFFIC_LIGHTS).abs() < 0.5);
+        assert_eq!(at(&windowed, "app_bar:solve"), at(&full, "app_bar:solve"));
+        for m in [windowed, full] {
+            let order = [
+                "app_bar:home",
+                "app_bar:file",
+                "app_bar:save",
+                "app_bar:undo",
+                "app_bar:redo",
+                "app_bar:theme",
+                "document_tab",
+                "app_bar:solve",
+                "app_bar:search",
+                "app_bar:settings",
+                "app_bar:help",
+                "app_bar:report",
+            ];
+            for pair in order.windows(2) {
+                let (a, b) = (at(&m, pair[0]), at(&m, pair[1]));
+                assert!(a.right() <= b.left() + 0.5, "{} {a:?} before {} {b:?}", pair[0], pair[1]);
+            }
+            assert!(at(&m, "app_bar:report").right() < 1400.0 && at(&m, "app_bar:solve").left() > 700.0);
+        }
     }
 }
