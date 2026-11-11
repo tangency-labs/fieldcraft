@@ -44,6 +44,10 @@ type Q = [f64; 2];
 /// The most nodes the annulus pairing compares (its cost is quadratic in the loop length).
 const MAX_ANNULUS_NODES: usize = 4096;
 
+/// A disk whose second moments differ by less than this (relative to their sum) has no principal
+/// axis: an ellipse of aspect 1.001 differs by 2e-3, a regular polygon by its round-off.
+const ISOTROPIC: f64 = 1e-3; // unit-factors: a ratio of moments
+
 /// Smoothing sweeps over the interior of a triangle primitive.
 const TRIANGLE_SWEEPS: usize = 20;
 
@@ -434,8 +438,6 @@ fn disk(loops: &[Vec<Q>], size: &dyn SizeField, opts: &QuadOptions) -> Result<Op
     if n < 8 || !n.is_multiple_of(4) || n > MAX_ANNULUS_NODES {
         return Ok(None);
     }
-    let ccw = signed_area(outer) > 0.0;
-    let at = |nodes: &[Q], i: u32| nodes.get(i as usize).copied().unwrap_or([0.0; 2]);
     // The area centroid and second moments about it (Green's theorem over the polygon).
     let (mut a2, mut cx, mut cy) = (0.0, 0.0, 0.0);
     for k in 0..n {
@@ -460,8 +462,48 @@ fn disk(loops: &[Vec<Q>], size: &dyn SizeField, opts: &QuadOptions) -> Result<Op
     }
     // ∫y², ∫x² (both × 12) and ∫xy (× 24), signed as the loop: the region's long direction is
     // the principal axis of the largest ∫ along², the angle of 0.5 · atan2(2 ∫xy, ∫x² − ∫y²).
+    // A region whose moments are the same along every axis (a round disk, a rounded square: any
+    // shape with fourfold symmetry) has no principal axis: the angle would be that of the
+    // round-off, and the middle block's corners would meet the rim wherever it turned it. Its
+    // square is turned from a diagonal through the rim node farthest from the centre (a rounded
+    // square's corner) by none, a quarter and a half of the rim's node spacing, and the best mesh
+    // is kept: through a node or half-way between two, each corner's ring fans evenly. Exactly
+    // half-way the corner's partner is a tie the last bits break, so that square is turned a
+    // thousandth of a step either way (a mirror image on a symmetric rim).
     let sign = a2.signum();
-    let theta = 0.5 * crate::vec3::atan2(sign * ixy, sign * (iyy - ixx));
+    let anisotropy = libm::hypot(ixy, iyy - ixx) / (ixx + iyy).abs();
+    if anisotropy >= ISOTROPIC {
+        return disk_on_axes(outer, centre, 0.5 * crate::vec3::atan2(sign * ixy, sign * (iyy - ixx)), false, size, opts);
+    }
+    let far = outer.iter().copied().max_by(|p, q| {
+        let d = |r: Q| (r[0] - centre[0]).powi(2) + (r[1] - centre[1]).powi(2);
+        d(*p).total_cmp(&d(*q))
+    });
+    let far = far.unwrap_or(centre);
+    let diagonal = crate::vec3::atan2(far[1] - centre[1], far[0] - centre[0]) - 0.25 * PI;
+    let mut best: Option<(f64, QuadMesh)> = None;
+    for steps in [0.0, 0.5, 0.9995, 1.0005] {
+        let theta = diagonal + PI * steps / n as f64;
+        let Some(m) = disk_on_axes(outer, centre, theta, true, size, opts)? else { continue };
+        let worst = m
+            .quads
+            .iter()
+            .flat_map(|q| (0..4).map(move |i| (q, i)))
+            .filter_map(|(q, i)| crate::quality::planar_corner(&q.map(|v| m.nodes.get(v as usize).copied().unwrap_or([0.0; 2])), i).1)
+            .fold(f64::INFINITY, f64::min);
+        if best.as_ref().is_none_or(|(w, _)| worst > *w) {
+            best = Some((worst, m));
+        }
+    }
+    Ok(best.map(|(_, m)| m))
+}
+
+/// The disk's O-grid with its middle block on the axes turned by `theta` about `centre` (a square
+/// when the region is `round`).
+fn disk_on_axes(outer: &[Q], centre: Q, theta: f64, round: bool, size: &dyn SizeField, opts: &QuadOptions) -> Result<Option<QuadMesh>> {
+    let n = outer.len();
+    let ccw = signed_area(outer) > 0.0;
+    let at = |nodes: &[Q], i: u32| nodes.get(i as usize).copied().unwrap_or([0.0; 2]);
     let (u, v) = {
         let (s, c) = (libm::sin(theta), libm::cos(theta));
         ([c, s], [-s, c])
@@ -476,6 +518,11 @@ fn disk(loops: &[Vec<Q>], size: &dyn SizeField, opts: &QuadOptions) -> Result<Op
         let l = local(p);
         a = a.max(l[0].abs());
         b = b.max(l[1].abs());
+    }
+    // A round region's middle block is a square whichever way it is turned: its extent along the
+    // turned axes differs only by where the rim's nodes fall.
+    if round {
+        (a, b) = (a.max(b), a.max(b));
     }
     if !(a > 0.0 && b > 0.0) {
         return Ok(None);
@@ -523,7 +570,7 @@ fn disk(loops: &[Vec<Q>], size: &dyn SizeField, opts: &QuadOptions) -> Result<Op
     let offsets = [0, q1, q1 + q2, 2 * q1 + q2];
     let lengths = [q1, q2, q1, q2];
     let order: Vec<u32> = (0..n).map(|k| ccw_order.get((start + k) % n).copied().unwrap_or(0)).collect();
-    let mut nodes: Vec<Q> = outer.clone();
+    let mut nodes: Vec<Q> = outer.to_vec();
     let mut square: Vec<u32> = Vec::with_capacity(n);
     // Each side's nodes spaced as the loop nodes they pair with (by chord length along the
     // run), so the lines between the two run straight across and do not shear.
@@ -653,6 +700,34 @@ mod tests {
         assert_eq!(m.quads.len(), 16 * 2 + 16);
         let area: f64 = m.quads.iter().map(|q| signed_area(&q.map(|i| m.nodes[i as usize]))).sum();
         assert!((area - signed_area(&circle(5.0, 16, true))).abs() < 1e-9, "{area}");
+    }
+
+    /// A round disk has no principal axes: its second moments are equal to the last bits, which
+    /// turned the middle block's square by whatever angle the round-off gave, so its corners
+    /// missed their partners on the rim and the ring sheared (a torus's section whose rim is one
+    /// curve from its seam: 0.77 where the rim split in halves happened to give 0.85; 0.71 to 0.82
+    /// here by where the rim starts). The square now turns with the rim's nodes, its diagonals
+    /// half-way between two: the same mesh, turned, wherever the rim starts.
+    #[test]
+    fn a_round_disk_gets_the_same_o_grid_wherever_its_rim_starts() {
+        let worst = |start: f64| {
+            let c: Vec<Q> = (0..16)
+                .map(|k| {
+                    let t = (start - 22.5 * k as f64).to_radians();
+                    [8.0 * libm::cos(t) + 3.0, 8.0 * libm::sin(t) - 1.0]
+                })
+                .collect();
+            let (m, s) = mesh(std::slice::from_ref(&c), &[vec![0]], Scheme::Disk, &UniformSize(4.35), &QuadOptions::default()).unwrap();
+            assert_eq!(s, Scheme::Disk, "{start}");
+            m.quads
+                .iter()
+                .flat_map(|q| (0..4).map(move |i| (q, i)))
+                .map(|(q, i)| crate::quality::planar_corner(&q.map(|v| m.nodes[v as usize]), i).1.unwrap())
+                .fold(f64::INFINITY, f64::min)
+        };
+        let all: Vec<f64> = [0.0, 7.0, 11.25, 33.3, 90.0, 200.0].map(worst).to_vec();
+        assert!(all.iter().all(|&w| w > 0.83), "{all:?}");
+        assert!(all.iter().all(|&w| (w - all[0]).abs() < 1e-9), "{all:?}");
     }
 
     #[test]
