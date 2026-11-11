@@ -12,6 +12,7 @@ use serde_json::{Map, Value, json};
 use crate::fields::{self, NumberEdit, Style};
 use crate::theme::Tokens;
 use solidcraft_ui_kit as kit;
+use solidcraft_ui_kit::BackingTooltipExt as _;
 
 /// The label column: as wide as the form's longest label, at least this…
 const LABEL_MIN: f32 = 72.0;
@@ -187,7 +188,7 @@ impl Form<'_> {
 
     /// A value the fields cannot show: it stays as it is, editable in the JSON view.
     fn json_only(&self, ui: &mut Ui) {
-        ui.label(RichText::new("set in JSON").small().color(self.style.dim)).on_hover_text("Edit it in the JSON view");
+        ui.label(RichText::new("set in JSON").small().color(self.style.dim)).backing_on_hover_text("Edit it in the JSON view");
     }
 
     fn names(&mut self, c: Collection) -> &[String] {
@@ -290,7 +291,7 @@ impl Form<'_> {
                 let mut on = value.and_then(Value::as_bool).unwrap_or(f.default == Some("true"));
                 let r = kit::checkbox(ui, "", &mut on);
                 if !f.hint.is_empty() {
-                    r.clone().on_hover_text(f.hint);
+                    r.clone().backing_on_hover_text(f.hint);
                 }
                 r.changed().then(|| json!(on))
             }
@@ -535,7 +536,7 @@ impl Form<'_> {
                     if kit::button(ui, "None", kit::Button::Small).clicked() {
                         changed = Some(Value::Null);
                     }
-                    if kit::button(ui, "Invert", kit::Button::Small).on_hover_text("Tick the unticked ones and untick the others").clicked() {
+                    if kit::button(ui, "Invert", kit::Button::Small).backing_on_hover_text("Tick the unticked ones and untick the others").clicked() {
                         changed = Some(list(shown.iter().filter(|n| !chosen.contains(n)).cloned().collect()));
                     }
                 });
@@ -685,7 +686,7 @@ impl Form<'_> {
             true => format!("Create {}…", c.label()),
             false => format!("{}…", fieldcraft_engine::catalogue::entry_of(r.provider()).map_or(r.provider(), |e| e.label)),
         };
-        if kit::button(ui, text, kit::Button::Normal).on_hover_text(format!("{} ({})", r.place(), r.provider())).clicked() {
+        if kit::button(ui, text, kit::Button::Normal).backing_on_hover_text(format!("{} ({})", r.place(), r.provider())).clicked() {
             self.out.create = Some((c, path.to_string()));
         }
     }
@@ -720,7 +721,11 @@ impl Form<'_> {
             }
             let label = format!("Use selection ({} {}{})", picked.len(), of.label(), if picked.len() == 1 { "" } else { "s" });
             let tip = format!("The {}s picked in the viewport (Select: {}s)", of.label(), of.label());
-            if kit::button(ui, label, kit::Button::Enabled(!picked.is_empty())).on_hover_text(&tip).on_disabled_hover_text(&tip).clicked() {
+            if kit::button(ui, label, kit::Button::Enabled(!picked.is_empty()))
+                .backing_on_hover_text(&tip)
+                .backing_on_disabled_hover_text(&tip)
+                .clicked()
+            {
                 text = fields::format_labels(&picked);
                 out = Some(json!(picked));
             }
@@ -765,7 +770,11 @@ impl Form<'_> {
                 let picked = self.cx.picked.faces.clone();
                 let label = format!("Use selection ({} face{})", picked.len(), if picked.len() == 1 { "" } else { "s" });
                 let tip = "The element faces picked in the viewport (Select: Element faces)";
-                if kit::button(ui, label, kit::Button::Enabled(!picked.is_empty())).on_hover_text(tip).on_disabled_hover_text(tip).clicked() {
+                if kit::button(ui, label, kit::Button::Enabled(!picked.is_empty()))
+                    .backing_on_hover_text(tip)
+                    .backing_on_disabled_hover_text(tip)
+                    .clicked()
+                {
                     text = fields::format_sides(&picked);
                     over = text.clone();
                     out = Some(to_value(&picked));
@@ -816,7 +825,7 @@ impl Form<'_> {
             for (i, p) in current.iter().enumerate() {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = gap;
-                    if kit::button(ui, "×", kit::Button::Small).on_hover_text("Remove this row").clicked() {
+                    if kit::button(ui, "×", kit::Button::Small).backing_on_hover_text("Remove this row").clicked() {
                         remove = Some(i);
                     }
                     if let Some(v) = self.vector(ui, id.with(i), Some(p), f, columns, false, Some(cell))
@@ -892,7 +901,7 @@ impl Form<'_> {
         let mut on = split;
         let mut out = None;
         ui.vertical(|ui| {
-            if kit::checkbox(ui, "Per axis", &mut on).on_hover_text("A different value along each axis").changed() {
+            if kit::checkbox(ui, "Per axis", &mut on).backing_on_hover_text("A different value along each axis").changed() {
                 out = Some(match (on, value) {
                     (true, Some(v)) if v.is_number() => Value::Array(vec![v.clone(); labels.len()]),
                     (true, _) => Value::Null,
@@ -954,7 +963,7 @@ impl Form<'_> {
             kit::checkbox(ui, f.label, &mut on)
         };
         if !help.is_empty() {
-            heading.on_hover_text(help);
+            heading.backing_on_hover_text(help);
         }
         if !f.hint.is_empty() && !present {
             fields::note(ui, &Style { label_width: INDENT, ..self.style }, f.hint, self.style.dim);
@@ -1013,7 +1022,7 @@ impl Form<'_> {
         for (i, row) in list.iter_mut().enumerate().take(max) {
             ui.horizontal(|ui| {
                 ui.label(RichText::new(format!("{}", i + 1)).small().color(self.style.dim));
-                if kit::button(ui, "×", kit::Button::Small).on_hover_text("Remove").clicked() {
+                if kit::button(ui, "×", kit::Button::Small).backing_on_hover_text("Remove").clicked() {
                     remove = Some(i);
                 }
             });

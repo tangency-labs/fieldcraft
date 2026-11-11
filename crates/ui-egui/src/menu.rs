@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 use crate::ModelApp;
 use crate::browser::Def;
 use solidcraft_ui_kit as kit;
+use solidcraft_ui_kit::BackingTooltipExt as _;
 
 /// What the menu is for.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -76,7 +77,7 @@ pub fn show(app: &ModelApp, ui: &mut egui::Ui, target: &Target) -> Option<Action
     let mut entry = |ui: &mut egui::Ui, enabled: bool, label: &str, tip: &str, action: Action| {
         let mut row = kit::MenuItem::new(label, label, "");
         row.enabled = enabled;
-        if row.show(ui).on_hover_text(tip).clicked() {
+        if row.show(ui).backing_on_hover_text(tip).clicked() {
             chosen = Some(action);
         }
     };
@@ -118,7 +119,7 @@ pub fn show(app: &ModelApp, ui: &mut egui::Ui, target: &Target) -> Option<Action
             kit::scope(ui, |ui| {
                 for (step, on) in steps {
                     let mut checked = on;
-                    if kit::checkbox(ui, &step, &mut checked).on_hover_text("model.step.activate").changed() {
+                    if kit::checkbox(ui, &step, &mut checked).backing_on_hover_text("model.step.activate").changed() {
                         chosen = Some(Action::Active { step, active: checked });
                         ui.close();
                     }
@@ -130,7 +131,7 @@ pub fn show(app: &ModelApp, ui: &mut egui::Ui, target: &Target) -> Option<Action
         kit::Menu::separator(ui);
         let mut row = kit::MenuItem::new("delete", label, "");
         row.danger = true;
-        row.show(ui).on_hover_text(tip).clicked()
+        row.show(ui).backing_on_hover_text(tip).clicked()
     };
     if let Target::Def(def, _) = target
         && delete(ui, "Delete…", &format!("{} (Delete key)", def.command("delete")))

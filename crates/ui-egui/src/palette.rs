@@ -206,7 +206,7 @@ pub fn command_line(app: &mut ModelApp, ui: &mut egui::Ui) {
                     let shown = crate::elide::middle_in(ui, text, &font, ui.available_width());
                     let r = ui.add(egui::Label::new(RichText::new(shown.as_ref()).font(font).color(color)));
                     if shown != text {
-                        r.on_hover_text(text);
+                        r.backing_on_hover_text(text);
                     }
                 });
             });

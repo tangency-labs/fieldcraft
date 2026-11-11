@@ -340,7 +340,8 @@ fn help_menu(app: &mut ModelApp, ui: &mut egui::Ui) {
     note(ui, "Left drag orbits (or pans or zooms: the navigation bar), right or middle drag pans, the wheel zooms, F or a double click fits.");
     note(ui, &format!("S or {} searches every command; the command line at the bottom runs `id {{json}}`.", shortcut("K")));
     crate::frame::menu_separator(ui);
-    let row = |ui: &mut egui::Ui, id: &str, label: &str, tip: &str| crate::frame::menu_row(ui, id, label, None, true).on_hover_text(tip).clicked();
+    let row =
+        |ui: &mut egui::Ui, id: &str, label: &str, tip: &str| crate::frame::menu_row(ui, id, label, None, true).backing_on_hover_text(tip).clicked();
     let report = row(
         ui,
         "help.report_bug",

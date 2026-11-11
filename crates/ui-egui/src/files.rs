@@ -28,6 +28,7 @@ use solidcraft_ui_kit as kit;
 
 use crate::inbox::Inbox;
 use crate::{ModelApp, Prebuilt};
+use solidcraft_ui_kit::BackingTooltipExt as _;
 
 /// A file type a picker offers: a name and its extensions (without the dot).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1458,7 +1459,7 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
                             let n = |k: &str| e.get(k).and_then(Value::as_u64).unwrap_or(0);
                             let name = ui.label(path.map_or_else(|| "Untitled".to_string(), file_name));
                             if let Some(path) = path {
-                                name.on_hover_text(path);
+                                name.backing_on_hover_text(path);
                             }
                             ui.label(egui::RichText::new(ago(n("age"))).color(t.text_dim));
                             ui.label(egui::RichText::new(format!("{} nodes, {} elements", n("nodes"), n("elements"))).color(t.text_dim));
@@ -1537,7 +1538,7 @@ pub fn file_menu(app: &mut ModelApp, ui: &mut egui::Ui) {
         crate::frame::menu_heading(ui, "Recent");
         for (i, p) in app.recent.paths.iter().take(6).enumerate() {
             let name = file_name(p);
-            if crate::frame::menu_row(ui, &format!("file.recent.{i}"), &name, None, true).on_hover_text(p).clicked() {
+            if crate::frame::menu_row(ui, &format!("file.recent.{i}"), &name, None, true).backing_on_hover_text(p).clicked() {
                 let p = p.clone();
                 act = Some(Box::new(move |app| app.open_path(&p)));
             }
@@ -1561,7 +1562,7 @@ pub fn file_menu(app: &mut ModelApp, ui: &mut egui::Ui) {
         None,
         app.session.design.is_some() || !app.session.surfaces.is_empty(),
     )
-    .on_hover_text(
+    .backing_on_hover_text(
         "Save As, with a copy of the design and imported meshes inside the file, so it opens anywhere: whoever you send it to gets your geometry too",
     );
     if packed.clicked() {
@@ -1580,7 +1581,7 @@ pub fn file_menu(app: &mut ModelApp, ui: &mut egui::Ui) {
         let format = c.preset().get("format").and_then(Value::as_str).map(str::to_string);
         let soon = c.milestone().map(|m| format!("soon · {m}"));
         let enabled = format.is_some() && soon.is_none();
-        if crate::frame::menu_row(ui, c.id, &format!("{}…", c.label), soon.as_deref(), enabled).on_hover_text(c.tip).clicked()
+        if crate::frame::menu_row(ui, c.id, &format!("{}…", c.label), soon.as_deref(), enabled).backing_on_hover_text(c.tip).clicked()
             && let Some(f) = format
         {
             act = Some(Box::new(move |app| app.write_deck(&f)));
@@ -1588,7 +1589,7 @@ pub fn file_menu(app: &mut ModelApp, ui: &mut egui::Ui) {
     }
     crate::frame::menu_separator(ui);
     if crate::frame::menu_row(ui, "file.recover", "Recover…", None, true)
-        .on_hover_text("Models autosaved by an app that crashed or closed with unsaved changes")
+        .backing_on_hover_text("Models autosaved by an app that crashed or closed with unsaved changes")
         .clicked()
     {
         act = Some(Box::new(|app| app.prompt = Some(Prompt::Recover)));

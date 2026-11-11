@@ -30,6 +30,7 @@ use crate::ModelApp;
 use crate::menu::{self, Action, Target};
 use crate::theme::Tokens;
 use solidcraft_ui_kit as kit;
+use solidcraft_ui_kit::BackingTooltipExt as _;
 
 /// The browser's width.
 pub const WIDTH: f32 = 250.0;
@@ -640,7 +641,7 @@ fn draw_ghost(app: &mut ModelApp, ui: &mut egui::Ui, s: &StageState) -> bool {
     let label = ghost_label(s.stage);
     let font = FontId::proportional(solidcraft_theme::Tokens::get().font_label);
     ui.painter().with_clip_rect(r).text(pos2(x + 21.0, r.center().y), egui::Align2::LEFT_CENTER, label, font, col);
-    let resp = resp.on_hover_text(stage_tip(s).unwrap_or_default());
+    let resp = resp.backing_on_hover_text(stage_tip(s).unwrap_or_default());
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
     resp.clicked()
 }

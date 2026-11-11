@@ -11,6 +11,7 @@ use crate::ModelApp;
 use crate::results::number;
 use crate::theme::Tokens;
 use solidcraft_ui_kit as kit;
+use solidcraft_ui_kit::BackingTooltipExt as _;
 
 const GRAPH_POINTS: usize = 400;
 const OVERLAY_POINTS: usize = 256;
@@ -206,7 +207,7 @@ pub fn controls(app: &mut ModelApp, view: &crate::results::Plot, ui: &mut egui::
     ui.horizontal(|ui| {
         ui.label(RichText::new("Path Plot").strong());
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            close = kit::button(ui, "×", kit::Button::Small).on_hover_text("Close path plot").clicked();
+            close = kit::button(ui, "×", kit::Button::Small).backing_on_hover_text("Close path plot").clicked();
         });
     });
     if close {
@@ -258,7 +259,7 @@ pub fn controls(app: &mut ModelApp, view: &crate::results::Plot, ui: &mut egui::
                             point[k] = stored;
                         }
                     }
-                    if kit::button(ui, "×", kit::Button::Small).on_hover_text("Remove point").clicked() {
+                    if kit::button(ui, "×", kit::Button::Small).backing_on_hover_text("Remove point").clicked() {
                         remove = Some(i);
                     }
                 });
@@ -272,7 +273,7 @@ pub fn controls(app: &mut ModelApp, view: &crate::results::Plot, ui: &mut egui::
                 editor.points.push(editor.points.last().copied().unwrap_or([0.0; 3]));
             }
             kit::checkbox(ui, "Pick surface points", &mut editor.picking)
-                .on_hover_text("Click the visible mesh to add reference-coordinate points, including on deformed and curved element faces.");
+                .backing_on_hover_text("Click the visible mesh to add reference-coordinate points, including on deformed and curved element faces.");
         });
         if editor.picking && editor.step != view.view.step {
             ui.label(RichText::new("Show this step before picking its surface").small().color(t.text_dim));
@@ -447,7 +448,7 @@ fn graph(ui: &mut egui::Ui, distance: &[f64], values: &[Option<f64>], unit: &str
     let x = distance.get(index).copied()?;
     let value = values.get(index).copied().flatten();
     painter.line_segment([pos2(at(x, 0.0).x, rect.top()), pos2(at(x, 0.0).x, rect.bottom())], Stroke::new(1.0, t.text_dim));
-    response.on_hover_text(format!("s {} {unit}\n{}", number(x), value.map_or_else(|| "Gap / undefined".to_string(), number)));
+    response.backing_on_hover_text(format!("s {} {unit}\n{}", number(x), value.map_or_else(|| "Gap / undefined".to_string(), number)));
     Some(index)
 }
 
