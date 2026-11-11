@@ -1063,7 +1063,11 @@ record or the publisher; the others are cited by venue only.
   triangle primitive shorter than the other two together). `hex::interval` uses incremental repair from the
   rounded goals with increments only, chosen by squared relative error; it is bounded and reports an
   infeasible system instead of looping. Mitchell's integer-linear-algebra solver (Hermite normal form plus
-  nullspace improvement) is the upgrade if the increment-only scheme proves too coarse.
+  nullspace improvement) is the upgrade if the increment-only scheme proves too coarse. A curve's goal is
+  its length in units of the size field, raised to a floor of one division per 22.5° it turns: the
+  geometric size map `h ≤ θ ρ` (P. J. Frey, P.-L. George, *Mesh Generation: Application to Finite
+  Elements*, 2nd ed., Wiley–ISTE, 2008), as the tet mesher's curvature refinement; the floor is a minimum
+  of the assignment, so a whole circle in one edge gets 16 or more (`hex::curve_goal`).
 
 **B8.6 Whiteley, White, Benzley, Blacker 1996, submapping.** **Verdict: BUILD ON (vertex classification).**
 - **Citation.** M. Whiteley, D. White, S. Benzley, T. Blacker. *Two and three-quarter dimensional meshing

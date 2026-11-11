@@ -169,6 +169,12 @@ impl Poly {
     }
 }
 
+/// The fewest divisions of a curve of the cross-section that keep each piece within
+/// [`super::CURVE_TURN`] of turning, as the section's interval assignment gives it.
+fn turn_floor(c: &[Q]) -> usize {
+    crate::size::turn_divisions(crate::size::turning(c), super::CURVE_TURN)
+}
+
 fn sub(a: Q, b: Q) -> Q {
     [a[0] - b[0], a[1] - b[1]]
 }
@@ -542,7 +548,7 @@ fn mesh_score(loops: &[Vec<Vec<Q>>], scheme: Scheme, s: &Settings) -> Option<f64
         for c in lp {
             let l: f64 = c.windows(2).map(|w| len(sub(w[1], w[0]))).sum();
             let mid = c.get(c.len() / 2).copied().unwrap_or([0.0; 2]);
-            let goal = l / s.size(mid);
+            let goal = (l / s.size(mid)).max(turn_floor(c) as f64);
             if !(goal.is_finite() && goal <= 1e5) {
                 return None;
             }
@@ -920,7 +926,8 @@ fn assignable(loops: &[Poly], cuts: &[Vec<Q>], s: &Settings) -> bool {
     for curve in &arr.curves {
         let pts: Vec<Q> = curve.points.iter().filter_map(|&p| arr.points.get(p).copied()).collect();
         let length: f64 = pts.windows(2).map(|w| len(sub(w[1], w[0]))).sum();
-        ia.var(length / s.size(pts.first().copied().unwrap_or([0.0; 2])), 1);
+        let floor = turn_floor(&pts);
+        ia.var((length / s.size(pts.first().copied().unwrap_or([0.0; 2]))).max(floor as f64), floor);
     }
     super::section::schemes(&arr, &used, &mut ia);
     ia.solve().is_ok()
@@ -1101,8 +1108,12 @@ fn free_score(loops: &[Poly], s: &Settings) -> f64 {
     let mut nodes: Vec<Vec<Q>> = Vec::with_capacity(loops.len());
     for poly in loops {
         let (curves, _) = poly.curves();
-        let goals: Vec<f64> =
-            curves.iter().map(|c| c.windows(2).map(|w| len(sub(w[1], w[0]))).sum::<f64>() / s.size(c.first().copied().unwrap_or([0.0; 2]))).collect();
+        let goals: Vec<f64> = curves
+            .iter()
+            .map(|c| {
+                (c.windows(2).map(|w| len(sub(w[1], w[0]))).sum::<f64>() / s.size(c.first().copied().unwrap_or([0.0; 2]))).max(turn_floor(c) as f64)
+            })
+            .collect();
         if goals.iter().any(|g| !(g.is_finite() && *g <= 1e5)) {
             return 0.0;
         }
@@ -1259,7 +1270,8 @@ mod tests {
         let pts = |c: usize| -> Vec<Q> { arr.curves[c].points.iter().map(|&p| arr.points[p]).collect() };
         for c in 0..arr.curves.len() {
             let l: f64 = pts(c).windows(2).map(|w| len(sub(w[1], w[0]))).sum();
-            ia.var(l / h, 1);
+            let floor = turn_floor(&pts(c));
+            ia.var((l / h).max(floor as f64), floor);
         }
         let schemes = section::schemes(&arr, &used, &mut ia);
         let counts = ia.solve().unwrap();
@@ -1343,7 +1355,10 @@ mod tests {
     /// from the seam (the curve's one vertex), clockwise, no point on the axes or diagonals. It
     /// gets an O-grid. Before, the best-scored layout (along the axes) left the seam's vertex
     /// inside an arc of a block, whose further cuts no interval assignment fitted, so the block
-    /// fell to the free mesher (smallest corner scaled Jacobian 0.4).
+    /// fell to the free mesher (smallest corner scaled Jacobian 0.4). The bore now gets at least
+    /// 16 divisions (one per 22.5°) where the size alone gave it 8, so the ring round it grades
+    /// from the bore's 0.8 mm pieces to the block's 4.69 mm and its corners score 0.41 (above 0.5
+    /// with 8): the O-grid is kept, every piece structured.
     #[test]
     fn the_clamp_whose_bore_is_one_curve_from_its_seam_gets_an_o_grid() {
         let rim: Vec<Q> = vec![
@@ -1374,7 +1389,8 @@ mod tests {
             let c = q.map(|v| s.nodes[v as usize]);
             w.min(planar_corner(&c, i).1.unwrap())
         });
-        assert!(m.cuts >= 4 && worst > 0.5, "{} cuts, smallest corner scaled Jacobian {worst}", m.cuts);
+        let free = m.section.schemes.iter().zip(&m.used).any(|(s, &u)| u && *s == Scheme::Free);
+        assert!(m.cuts >= 4 && !free && worst > 0.4, "{} cuts, free {free}, smallest corner scaled Jacobian {worst}", m.cuts);
     }
 
     /// A thin ring of air round a square pedestal (the Pi enclosure's, #397): the opening's sides

@@ -774,6 +774,68 @@ fn seamed_cylinder(r: f64, h: f64, n: usize, m: usize) -> (BoundarySurface, Boun
     (g.surface(&[seam]), g.surface(&[]), surfaces)
 }
 
+/// A tube along z (radii `ri` < `ro`, height `h`), its walls each one face with a seam at angle
+/// 0 (tags 0 outer, 1 inner) and its ends annuli (2 bottom, 3 top), `n` segments round.
+fn seamed_tube(ri: f64, ro: f64, h: f64, n: usize) -> (BoundarySurface, Vec<Option<Surface>>) {
+    let mut g = Revolved { pts: Vec::new(), tris: Vec::new(), tags: Vec::new() };
+    for (r, z) in [(ro, 0.0), (ri, 0.0), (ro, h), (ri, h)] {
+        for k in 0..n {
+            let t = angle(k, n);
+            g.pts.push([r * t.cos(), r * t.sin(), z]);
+        }
+    }
+    let id = |ring: usize, k: usize| (ring * n + k % n) as u32;
+    for k in 0..n {
+        let t = angle(2 * k + 1, 2 * n);
+        let out = [t.cos(), t.sin(), 0.0];
+        for (q, outward, tag) in [
+            ([id(0, k), id(0, k + 1), id(2, k + 1), id(2, k)], out, 0),
+            ([id(1, k), id(1, k + 1), id(3, k + 1), id(3, k)], [-out[0], -out[1], 0.0], 1),
+            ([id(0, k), id(0, k + 1), id(1, k + 1), id(1, k)], [0.0, 0.0, -1.0], 2),
+            ([id(2, k), id(2, k + 1), id(3, k + 1), id(3, k)], [0.0, 0.0, 1.0], 3),
+        ] {
+            g.tri([q[0], q[1], q[2]], outward);
+            g.tri([q[0], q[2], q[3]], outward);
+            g.tags.extend([tag, tag]);
+        }
+    }
+    let surfaces = vec![
+        Some(Surface::Cylinder { origin: [0.0; 3], axis: [0.0, 0.0, 1.0], radius: ro }),
+        Some(Surface::Cylinder { origin: [0.0; 3], axis: [0.0, 0.0, 1.0], radius: ri }),
+        Some(Surface::Plane { point: [0.0; 3], normal: [0.0, 0.0, -1.0] }),
+        Some(Surface::Plane { point: [0.0, 0.0, h], normal: [0.0, 0.0, 1.0] }),
+    ];
+    (g.surface(&[vec![id(0, 0), id(2, 0)], vec![id(1, 0), id(3, 0)]]), surfaces)
+}
+
+/// A whole circle in one edge, as a kernel gives a seamed tube's ends, is divided into at least
+/// 16 pieces (22.5° each) however coarse the size: at a size of a sixth of the circumference it
+/// got 6, a hexagon whose prism lost 17 % of the tube. Swept or extruded, the tube's volume is now
+/// the exact one within the 16-gon's chords.
+#[test]
+fn a_whole_circle_gets_sixteen_divisions_at_a_coarse_size() {
+    use std::f64::consts::PI;
+    let (ri, ro, h) = (0.5, 1.0, 1.0);
+    let (s, faces) = seamed_tube(ri, ro, h, 64);
+    let exact = PI * (ro * ro - ri * ri) * h;
+    // The 16-gon keeps (16 / 2π) sin(2π / 16) of the circle's area.
+    let chords = 1.0 - 16.0 / (2.0 * PI) * (2.0 * PI / 16.0).sin();
+    for method in [HexMethod::Sweep, HexMethod::Extrude] {
+        let opts = HexOptions { method, chordal_tolerance: ro * (1.0 - (PI / 64.0).cos()), ..HexOptions::default() };
+        let m = hex_mesh(&s, &faces, &UniformSize(2.0 * PI * 0.75 / 6.0), &opts).unwrap();
+        assert!(m.report.gate.passed(), "{method:?}");
+        let outer: std::collections::BTreeSet<[u64; 2]> = m
+            .nodes
+            .iter()
+            .filter(|p| p[2] == 0.0 && ((p[0] * p[0] + p[1] * p[1]).sqrt() - ro).abs() < 1e-9)
+            .map(|p| [p[0].to_bits(), p[1].to_bits()])
+            .collect();
+        assert!(outer.len() >= 16, "{method:?}: {} nodes round the outer circle", outer.len());
+        let error = (exact - m.report.volume) / exact;
+        assert!((0.0..=chords + 1e-3).contains(&error), "{method:?}: {} against {exact} ({error})", m.report.volume);
+    }
+}
+
 /// A torus about z (radii `major` > `minor`), one face with its two seams: the meridian at
 /// angle 0 round the tube and the parallel on the outer equator round the axis.
 fn seamed_torus(major: f64, minor: f64, nu: usize, nv: usize) -> (BoundarySurface, BoundarySurface, Vec<Option<Surface>>) {

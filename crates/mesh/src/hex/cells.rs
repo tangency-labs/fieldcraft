@@ -447,7 +447,8 @@ impl Topology {
     /// grading asks for.
     fn intervals(&self, ctxs: &[Ctx], cubes: &[Cube], field: &dyn SizeField) -> Result<Vec<Division>> {
         let polylines: Vec<Vec<P>> = self.edges.iter().map(|e| self.polyline(ctxs, e)).collect::<Result<_>>()?;
-        let goals: Vec<f64> = polylines.iter().map(|p| ideal_divisions(field, p)).collect::<Result<_>>()?;
+        let (goals, mins): (Vec<f64>, Vec<usize>) =
+            polylines.iter().map(|p| super::curve_goal(field, p)).collect::<Result<Vec<_>>>()?.into_iter().unzip();
         // The seed on each edge (a shared edge is one edge, so its seed holds in every cell it
         // bounds), oriented from `a` to `b`.
         let seeds: Vec<Option<(&EdgeSeed, bool)>> = self
@@ -462,7 +463,7 @@ impl Topology {
         // cell they bound, oriented along each cell's direction (#257); the counts come from the
         // edges' own seeds alone.
         let carried = crate::seeds::carry(&seeds, |s: &&EdgeSeed| s.bias.is_some(), &self.parallel_ties());
-        let first = self.solve(&goals, &seeds)?;
+        let first = self.solve(&goals, &mins, &seeds)?;
         // Ends of edges that leave a curved face: the spacing along that face there.
         let ends = self.graded_ends(ctxs, cubes, &first);
         let mut graded = goals;
@@ -480,7 +481,7 @@ impl Topology {
             };
             divisions.push(Division { count: 1, ends, polyline: poly, seed: seed.map(|(s, rev)| (s.clone(), rev)) });
         }
-        for (d, n) in divisions.iter_mut().zip(self.solve(&graded, &seeds)?) {
+        for (d, n) in divisions.iter_mut().zip(self.solve(&graded, &mins, &seeds)?) {
             d.count = n;
         }
         Ok(divisions)
@@ -508,10 +509,10 @@ impl Topology {
         ties
     }
 
-    fn solve(&self, goals: &[f64], seeds: &[Option<(&EdgeSeed, bool)>]) -> Result<Vec<usize>> {
+    fn solve(&self, goals: &[f64], mins: &[usize], seeds: &[Option<(&EdgeSeed, bool)>]) -> Result<Vec<usize>> {
         let mut ia = super::interval::Intervals::default();
-        for (&g, seed) in goals.iter().zip(seeds) {
-            let v = ia.var(g, 1);
+        for ((&g, &min), seed) in goals.iter().zip(mins).zip(seeds) {
+            let v = ia.var(g, min);
             if let Some((seed, _)) = seed {
                 ia.seed(v, seed);
             }
