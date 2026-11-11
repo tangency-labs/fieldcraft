@@ -44,7 +44,8 @@ Rules beyond the layer order:
 - Only `fieldcraft-geometry` uses `solidcraft-*` and `solidcore*`, pinned by rev in the workspace `Cargo.toml`
   ("SolidCraft pin" below). One exception (owner decision, 2026-11-10): `fieldcraft-ui-egui` uses
   SolidCraft's UI kit and look, `solidcraft-ui-kit`, `solidcraft-theme` and `solidcraft-look`, with
-  the kit's widget registry `solidcraft-ui-registry`, and nothing else of SolidCraft's.
+  the kit's widget registry `solidcraft-ui-registry` and message catalogues `solidcraft-ui-text`, and
+  nothing else of SolidCraft's.
 - Everything below the apps builds for `wasm32-unknown-unknown`.
 - `fieldcraft-geometry`'s non-default `scripts` feature builds designs from SolidCraft command
   scripts (`script_design`, through `solidcraft-engine`) for the test corpus; the library opens

@@ -78,6 +78,9 @@ solidcraft-look = { git = "https://github.com/tangency-labs/solidcraft", rev = "
 # The kit's widget registry (where its widgets were drawn, by name; MIT OR Apache-2.0): the UI
 # reads the application bar's parts from it and clears it as each frame starts.
 solidcraft-ui-registry = { git = "https://github.com/tangency-labs/solidcraft", rev = "5e338283969dcc2ae97260f0ac6d0edf82ec0a2a" }
+# The kit's message catalogues (MIT OR Apache-2.0): FieldCraft installs its own English text for
+# the kit's message ids (crates/ui-egui/locales/en.json).
+solidcraft-ui-text = { git = "https://github.com/tangency-labs/solidcraft", rev = "5e338283969dcc2ae97260f0ac6d0edf82ec0a2a" }
 # native file pickers (the desktop app only; the UI crate takes them as services)
 rfd = "0.17"
 

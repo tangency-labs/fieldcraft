@@ -1584,6 +1584,7 @@ dependencies = [
  "solidcraft-theme",
  "solidcraft-ui-kit",
  "solidcraft-ui-registry",
+ "solidcraft-ui-text",
  "web-time",
 ]
 
