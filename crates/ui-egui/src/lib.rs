@@ -1843,7 +1843,7 @@ impl ModelApp {
 
     /// The seed on `edge`, if it has one.
     pub fn seed(&self, edge: &fieldcraft_model::GeometryRef) -> Option<&fieldcraft_model::Seed> {
-        self.session.model.seeds().iter().find(|s| s.edge == *edge)
+        self.session.model.seeds().iter().find(|s| s.on == *edge)
     }
 
     /// Select (or with `None` deselect) a definition in the browser, as a click on its row does.

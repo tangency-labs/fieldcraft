@@ -84,7 +84,7 @@ pub fn command_rows(command: &str, obj: &Map<String, Value>, units: &DisplaySyst
 
 /// The seed on `edge` as (label, text) rows: the edge, then `mesh.seed.edge`'s fields in `units`.
 pub fn seed_rows(seed: &fieldcraft_model::Seed, units: &DisplaySystem) -> Vec<(String, String)> {
-    let mut out = vec![("Edge".to_string(), format!("{} · {}", seed.edge.body, seed.edge.entity.name().unwrap_or_default()))];
+    let mut out = vec![("Edge".to_string(), format!("{} · {}", seed.on.body, seed.on.entity.name().unwrap_or_default()))];
     let params = crate::menu::seed_params(seed, units).unwrap_or_default();
     if let (Some(fields), Some(obj)) = (fieldcraft_engine::find_command("mesh.seed.edge").and_then(|s| s.form), params.as_object()) {
         let mut obj = obj.clone();

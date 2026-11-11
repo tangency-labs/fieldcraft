@@ -477,7 +477,7 @@ impl Quantities for Datum {
 
 impl Quantities for Seed {
     fn quantities(&mut self, f: &mut dyn FnMut(Q, &mut f64)) {
-        let Seed { edge: _, divisions, bias: _, constraint: _ } = self;
+        let Seed { on: _, divisions, bias: _, constraint: _ } = self;
         match divisions {
             Divisions::Count(_) => {}
             Divisions::Size(h) => f(Q::Length, h),

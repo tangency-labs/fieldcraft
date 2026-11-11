@@ -930,7 +930,7 @@ fn rows(app: &mut ModelApp, ui: &mut egui::Ui, acts: &mut Vec<Act>) {
         }
         // Edge seeds: a click selects the seed (its properties on the right) and its edge in the
         // viewport; a double click or the menu edits or deletes it.
-        let seeds: Vec<(fieldcraft_model::GeometryRef, String)> = app.session.model.seeds().iter().map(|s| (s.edge.clone(), seed_note(s))).collect();
+        let seeds: Vec<(fieldcraft_model::GeometryRef, String)> = app.session.model.seeds().iter().map(|s| (s.on.clone(), seed_note(s))).collect();
         if !seeds.is_empty() {
             let r = draw_row(
                 app,

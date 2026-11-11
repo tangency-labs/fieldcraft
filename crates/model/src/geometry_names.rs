@@ -4,7 +4,7 @@
 //! When the design is opened again, a name the design no longer has leaves the definition
 //! naming nothing; [`Model::name_uses`] lists every such use so the opener can say which, and
 //! [`Model::rename_entity`] moves every use of a name, and the mesh's tags, to the entity's new
-//! name. The uses: sets, edge seeds, size controls, mesh plans, face merges and splits, fluid
+//! name. The uses: sets, edge and face seeds, size controls, mesh plans, face merges and splits, fluid
 //! domains' obstacle faces and fluid steps' monitors; boundary conditions, loads, contacts and
 //! ties reach geometry through their sets. Defeatures name features by id, which do not change.
 
@@ -46,7 +46,7 @@ impl Model {
             }
         }
         for seed in &self.seeds {
-            push("edge seed".into(), &seed.edge);
+            push(format!("{} seed", seed.on.entity.kind()), &seed.on);
         }
         for (name, c) in &self.size_controls {
             if let SizeRegion::Geometry(refs) = &c.region {
@@ -96,7 +96,7 @@ impl Model {
     /// Rename entity `from` to `to` (a face, edge or vertex of the same body, as the design names
     /// it now) in every use [`Model::name_uses`] lists and in the mesh's tags, so the mesh and
     /// every definition follow it. Only exact uses of `from` move (not the names of its pieces).
-    /// Refused, changing nothing, when `to` is already a tag of the mesh or an edge seed's edge:
+    /// Refused, changing nothing, when `to` is already a tag of the mesh or what a seed seeds:
     /// two names would then become one, which the caller must decide. Returns the uses moved.
     pub fn rename_entity(&mut self, from: &GeometryRef, to: &GeometryRef) -> Result<usize> {
         let (Some(old), Some(new)) = (from.entity.name(), to.entity.name()) else {
@@ -112,7 +112,7 @@ impl Model {
         if tagged && self.classification.entities().contains(to) {
             return Err(Error::Invalid(format!("the mesh is tagged with both {from} and {to}")));
         }
-        if self.seeds.iter().any(|s| &s.edge == from) && self.seeds.iter().any(|s| &s.edge == to) {
+        if self.seeds.iter().any(|s| &s.on == from) && self.seeds.iter().any(|s| &s.on == to) {
             return Err(Error::Invalid(format!("both {from} and {to} are seeded")));
         }
         let uses = self.name_uses();
@@ -161,9 +161,9 @@ impl Model {
             set.geometry.iter_mut().for_each(&mut swap);
         }
         for seed in &mut self.seeds {
-            swap(&mut seed.edge);
+            swap(&mut seed.on);
         }
-        self.seeds.sort_by(|a, b| a.edge.cmp(&b.edge));
+        self.seeds.sort_by(|a, b| a.on.cmp(&b.on));
         for c in self.size_controls.values_mut() {
             if let SizeRegion::Geometry(refs) = &mut c.region {
                 refs.iter_mut().for_each(&mut swap);
@@ -218,7 +218,7 @@ impl Model {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{FaceMerge, FaceSplit, Set, SizeControl};
+    use crate::{Divisions, FaceMerge, FaceSplit, Seed, SeedConstraint, Set, SizeControl};
 
     fn face(n: &str) -> GeometryRef {
         GeometryRef::face("B", n).unwrap()
@@ -233,12 +233,14 @@ mod tests {
         let mut m = Model::default();
         m.add_set("cut", Set::of_geometry(vec![face("F9:face:4"), face("F1:top")])).unwrap();
         m.set_size_control("Fine", SizeControl { region: SizeRegion::Geometry(vec![face("F9:face:4")]), size: 1.0 }).unwrap();
+        m.set_seed(Seed::new(face("F9:face:4"), Divisions::Count(3), None, SeedConstraint::Exact).unwrap()).unwrap();
         m.add_face_merge(FaceMerge { name: "M".into(), body: "B".into(), faces: vec!["F9:face:4".into(), "F1:top".into()], into: None }).ok();
         m.add_datum("D", crate::Datum::Plane { point: [0.0; 3], normal: [0.0, 0.0, 1.0] }).unwrap();
         m.add_face_split(FaceSplit { name: "S".into(), body: "B".into(), face: "F9:face:4".into(), datum: "D".into() }).unwrap();
         let tag = m.geometry_tag(&face("F9:face:4")).unwrap();
         let before = m.name_uses();
         assert!(before.iter().any(|u| u.owner == "set `cut`" && u.reference == face("F9:face:4")));
+        assert!(before.iter().any(|u| u.owner == "face seed" && u.reference == face("F9:face:4")));
         let moved = m.rename_entity(&face("F9:face:4"), &face("F9:section")).unwrap();
         let after = m.name_uses();
         // Every use of the old name moved, nothing else did.

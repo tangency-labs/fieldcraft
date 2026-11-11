@@ -73,18 +73,18 @@ pub(crate) fn edge_seeds(s: &Session) -> Result<Vec<fieldcraft_mesh::seeds::Edge
     // Each body's edges, found once.
     let mut edges: std::collections::BTreeMap<&str, (f64, Vec<Edge>)> = std::collections::BTreeMap::new();
     for seed in s.model.seeds() {
-        let Some(body) = design.body(&seed.edge.body) else { continue };
+        let Some(body) = design.body(&seed.on.body) else { continue };
         let (tolerance, all) = match edges.entry(body.name.as_str()) {
             std::collections::btree_map::Entry::Occupied(e) => e.into_mut(),
             std::collections::btree_map::Entry::Vacant(v) => {
                 v.insert(((body.size()? * fieldcraft_geometry::EDGE_TOLERANCE).max(1e-4), body.edges()?))
             }
         };
-        let selected = all.iter().filter(|e| GeometryRef::new(body.name.clone(), Entity::Edge(e.name.clone())).is_ok_and(|g| seed.edge.selects(&g)));
+        let selected = all.iter().filter(|e| GeometryRef::new(body.name.clone(), Entity::Edge(e.name.clone())).is_ok_and(|g| seed.on.selects(&g)));
         for e in selected.cloned().collect::<Vec<_>>() {
             let tolerance = *tolerance;
             out.push(fieldcraft_mesh::seeds::EdgeSeed {
-                name: format!("{}:{}", seed.edge.body, e.name),
+                name: format!("{}:{}", seed.on.body, e.name),
                 count: seed.count(e.length()) as usize,
                 points: e.points,
                 tolerance,
@@ -148,7 +148,7 @@ fn seed_list(s: &mut Session, _: &Value) -> Result<Value> {
     let mut out = Vec::with_capacity(s.model.seeds().len());
     for seed in s.model.seeds() {
         let edges = match s.design.as_deref() {
-            Some(d) => seeded_edges(d, &seed.edge)?,
+            Some(d) => seeded_edges(d, &seed.on)?,
             None => Vec::new(),
         };
         out.push(report(seed, &edges));

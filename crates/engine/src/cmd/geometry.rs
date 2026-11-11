@@ -193,8 +193,8 @@ fn fit(s: &Session, design: &Design) -> Fit {
             .model
             .seeds()
             .iter()
-            .filter(|seed| super::seeds::seeded_edges(design, &seed.edge).map_or(true, |e| e.is_empty()))
-            .map(|seed| seed.edge.to_string())
+            .filter(|seed| super::seeds::seeded_edges(design, &seed.on).map_or(true, |e| e.is_empty()))
+            .map(|seed| seed.on.to_string())
             .collect(),
     }
 }

@@ -107,7 +107,7 @@ pub fn seeds(s: &mut Scene, model: &fieldcraft_model::Model, names: &[crate::sel
     for run in display.curves.chunk_by(|a, b| a.body == b.body && a.edge == b.edge) {
         let Some(first) = run.first() else { continue };
         let Some(edge) = names.get(first.body as usize).and_then(|b| b.edge(first.edge)) else { continue };
-        let Some(seed) = model.seeds().iter().find(|seed| seed.edge.selects(&edge)) else { continue };
+        let Some(seed) = model.seeds().iter().find(|seed| seed.on.selects(&edge)) else { continue };
         let lengths: Vec<f64> = run.iter().map(|c| c.a.dist(c.b)).collect();
         let total: f64 = lengths.iter().sum();
         if !(total > 0.0 && total.is_finite()) {
