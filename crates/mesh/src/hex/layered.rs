@@ -225,6 +225,31 @@ fn role(brep: &Brep, face: &Face, frame: &Frame, tol: f64) -> std::result::Resul
     }
 }
 
+/// The outline in the cross-section of a wall of a revolution that is a whole band: a face swept
+/// a full turn, bounded by two rims (circles about the axis) and crossed by no edge, such as a
+/// tube's planar end when the kernel gives it as one annulus without a seam (#895). With no edge
+/// across the sweep to project, its outline is its meridian between the rims, a straight segment
+/// for a plane across the axis or a coaxial cylinder or cone. A band of a curved meridian
+/// (sphere, torus) needs its seam, and one without is refused saying so.
+fn band_meridian(brep: &Brep, face: &Face, frame: &Frame) -> Result<Vec<Q>> {
+    let straight = face.plane.is_some() || matches!(face.surface, Some(Surface::Cylinder { .. } | Surface::Cone { .. }));
+    let rims: Vec<Q> = face
+        .loops
+        .iter()
+        .filter_map(|lp| lp.first())
+        .filter_map(|&(e, _)| brep.edges.get(e))
+        .map(|edge| frame.coords(brep.point(edge.first())).0)
+        .collect();
+    match rims.as_slice() {
+        &[a, b] if straight => Ok(vec![a, b]),
+        _ => Err(Error::Unsupported(format!(
+            "face {} goes all round the axis with {} rims and no seam; a revolution needs a seam on it, or a meridian it can draw (a plane, cylinder or cone between two rims)",
+            face.id,
+            rims.len()
+        ))),
+    }
+}
+
 /// Candidate extrusion directions: the normals of planar faces and the axes of cylinders, most
 /// common first, over the faces of every body given.
 pub(crate) fn translations(breps: &[&Brep]) -> Vec<Frame> {
@@ -425,11 +450,15 @@ pub(crate) fn prepare(ctxs: &[Ctx], setup: Setup) -> Result<Prepared> {
         let brep = body.brep;
         let roles = setup.roles.get(c).map(Vec::as_slice).unwrap_or(&[]);
         offsets.push(offset);
+        let mut across = vec![false; brep.edges.len()];
         for (e, edge) in brep.edges.iter().enumerate() {
             let pts: Vec<(Q, f64)> = edge.points.iter().map(|&v| frame.coords(brep.point(v))).collect();
             let Some(&(_, h0)) = pts.first() else { continue };
             if !pts.iter().all(|&(q, h)| frame.span(q, frame.dh(h, h0)) <= tol) {
                 continue;
+            }
+            if let Some(a) = across.get_mut(e) {
+                *a = true;
             }
             // A seam has its one face on both sides: one side's triangle is above it, the other's
             // below, so the face is a wall above the seam once.
@@ -445,6 +474,15 @@ pub(crate) fn prepare(ctxs: &[Ctx], setup: Setup) -> Result<Prepared> {
                 });
                 if above {
                     polylines.push((pts.iter().map(|x| x.0).collect(), offset + f));
+                }
+            }
+        }
+        // A wall of a revolution without an edge across the sweep is a whole band (#895).
+        if frame.periodic() {
+            for (f, face) in brep.faces.iter().enumerate() {
+                let crossed = face.loops.iter().flatten().any(|&(e, _)| across.get(e) == Some(&true));
+                if roles.get(f) == Some(&Role::Wall) && !crossed {
+                    polylines.push((band_meridian(brep, face, frame)?, offset + f));
                 }
             }
         }
