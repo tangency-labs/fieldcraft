@@ -147,14 +147,29 @@ fn placeholder(ui: &egui::Ui, width: f32) -> &'static str {
     PLACEHOLDERS.iter().copied().find(|p| crate::elide::width(ui, p, &font) <= room).unwrap_or(shortest)
 }
 
-/// The command line, the status and the model's size, above the timeline.
+/// The command line's inner margin (points).
+const MARGIN: egui::Vec2 = egui::vec2(8.0, 3.0);
+
+/// A rule between two of the status bar's items, as SolidCraft's status bar divides its own.
+pub(crate) fn rule(ui: &mut egui::Ui) {
+    let k = solidcraft_theme::Tokens::get();
+    let (r, _) = ui.allocate_exact_size(egui::vec2(1.0, ui.available_height()), egui::Sense::hover());
+    k.secondary_vline(ui.painter(), r.center().x, (r.top() + k.space_6)..=(r.bottom() - k.space_6), k.border);
+}
+
+/// The command line, the status and the model's size, above the timeline. The status items
+/// follow SolidCraft's status bar (its body text, a hairline along the top, rules between the
+/// items); the kit has no status bar of its own, and the command line is FieldCraft's.
 pub fn command_line(app: &mut ModelApp, ui: &mut egui::Ui) {
     let t = Tokens::get(app.ui.dark);
+    let k = solidcraft_theme::Tokens::get();
     egui::Panel::bottom("fc_command_line")
         .exact_size(HEIGHT)
-        .frame(egui::Frame::NONE.fill(t.panel).inner_margin(egui::Margin::symmetric(8, 3)))
+        .frame(egui::Frame::NONE.fill(t.panel).inner_margin(egui::Margin::symmetric(MARGIN.x as i8, MARGIN.y as i8)))
         .show(ui, |ui| {
             app.place("command_line", ui.max_rect());
+            let bar = ui.max_rect().expand2(MARGIN);
+            ui.painter().hline(bar.x_range(), bar.top() + 0.5, k.primary_border(k.border));
             ui.horizontal_centered(|ui| {
                 ui.label(RichText::new("›").strong().color(t.accent_ink));
                 // The rest of the bar keeps room for the status and the model's size.
@@ -171,19 +186,20 @@ pub fn command_line(app: &mut ModelApp, ui: &mut egui::Ui) {
                 }
                 let (nodes, elements) = (app.session.model.nodes().len(), app.session.model.elements().len());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(RichText::new(app.gpu_info.as_deref().unwrap_or("CPU renderer")).size(11.5).color(t.text_dim));
-                    ui.separator();
-                    ui.label(RichText::new(if app.ui.perspective { "Perspective" } else { "Orthographic" }).size(11.5).color(t.text_dim));
-                    ui.separator();
-                    ui.label(RichText::new(format!("{nodes} nodes  {elements} elements")).size(11.5).color(t.text_dim));
-                    ui.separator();
+                    let item = |text: &str| RichText::new(text).size(k.font_body).color(t.text_dim);
+                    ui.label(item(app.gpu_info.as_deref().unwrap_or("CPU renderer")));
+                    rule(ui);
+                    ui.label(item(if app.ui.perspective { "Perspective" } else { "Orthographic" }));
+                    rule(ui);
+                    ui.label(item(&format!("{nodes} nodes  {elements} elements")));
+                    rule(ui);
                     crate::updates::notice(app, ui);
                     let (text, color) = match &app.status {
                         Some(s) => (s.text.as_str(), if s.error { t.error } else { t.text }),
                         None => ("Ready", t.text_dim),
                     };
                     // Elided in the middle (both the subject and the outcome stay), whole on hover.
-                    let font = FontId::proportional(11.5);
+                    let font = FontId::proportional(k.font_body);
                     let shown = crate::elide::middle_in(ui, text, &font, ui.available_width());
                     let r = ui.add(egui::Label::new(RichText::new(shown.as_ref()).font(font).color(color)));
                     if shown != text {
