@@ -1,46 +1,60 @@
 //! The ribbon: the workspace switcher, the workspace's tabs, and the current tab's panels, all
-//! from the capability catalogue (`fieldcraft_engine::catalogue`).
+//! from the capability catalogue (`fieldcraft_engine::catalogue`), drawn by the kit's ribbon
+//! (`solidcraft_ui_kit::ribbon`) as SolidCraft's is.
 //!
-//! Each panel shows its ready entries as icon buttons (up to [`MAX_BUTTONS`]; a panel with none
-//! ready shows its first entry, greyed with its milestone) over its label with a caret. The label
-//! opens the panel's drop-down, which lists every entry of the panel: ready ones with their
-//! related commands (edit, delete…) under them, coming-soon ones greyed with their milestone.
-//! When the window is too narrow, panels collapse from the right into one button that opens the
-//! same drop-down, then into the » menu at the end. Nothing is dropped.
+//! Each panel shows its ready entries as labelled buttons (up to [`MAX_BUTTONS`]; a panel with
+//! none ready shows its first entry, greyed with its milestone) over its label. The label opens
+//! the panel's drop-down, which lists every entry of the panel: ready ones with their related
+//! commands (edit, delete…) under them, coming-soon ones greyed with their milestone. When the
+//! window is too narrow the kit's fitting narrows the buttons, hands them to the drop-down,
+//! collapses panels into one button and moves the last ones into its » menu. Nothing is dropped.
 //!
 //! A ready entry starts its command ([`ModelApp::start`]); a coming-soon entry does nothing and
-//! its tooltip says when it comes. Structure follows SolidCraft's `crates/ui-egui/src/toolbar.rs`
-//! (MIT OR Apache-2.0), see ATTRIBUTION.md; the tab row is the kit's (`solidcraft_ui_kit::ribbon`).
+//! its tooltip says when it comes. The milestone badge and the drop-downs are FieldCraft's.
 
-use egui::{Align2, Color32, FontId, Rect, Sense, Stroke, Vec2, pos2, vec2};
+use egui::{FontId, Rect, Stroke, pos2, vec2};
 use fieldcraft_engine::catalogue::{self, Capability, Tab, Workspace};
 use fieldcraft_engine::requirement::Unavailable;
 use serde::Serialize;
 use solidcraft_theme::TabAccent;
-use solidcraft_ui_kit::ribbon;
+use solidcraft_ui_kit::{self as kit, BackingTooltipExt as _, app_bar, ribbon};
 
 use crate::ModelApp;
-use crate::icons::{self, Look};
-use crate::theme::{Tokens, label_font};
+use crate::theme::Tokens;
 
-/// The ribbon's height: the tab row, then the panels.
-pub const HEIGHT: f32 = TABS_HEIGHT + 66.0;
+/// The ribbon's height: the tab row, then the panels with their buttons' labels (the kit's).
+pub const HEIGHT: f32 = TABS_HEIGHT + ribbon::GROUP_HEIGHT + 1.0;
 /// The tab row's height (the kit's).
 const TABS_HEIGHT: f32 = ribbon::TAB_ROW_HEIGHT;
 /// Most buttons a panel shows; the rest are in its drop-down.
 pub const MAX_BUTTONS: usize = 4;
-/// A button's side and the room it takes.
-const BUTTON: f32 = 38.0;
-const STRIDE: f32 = 40.0;
 /// Where the tabs and the panels start, right of the workspace switcher.
 const PANELS_X: f32 = 112.0;
-/// A collapsed panel's width, and the gap after each panel (its separator).
-pub const COLLAPSED_WIDTH: f32 = 72.0;
-const PANEL_GAP: f32 = 2.0;
-/// The » menu's width.
-const MORE_WIDTH: f32 = 40.0;
+/// Room a group's label needs beside its text: the drop-down arrow and the group's insets.
+const LABEL_ROOM: f32 = 30.0;
 
-/// How an entry is shown on a toolbar that may be too narrow for every panel.
+/// Where the ribbon publishes its parts in the widget registry.
+const HANDLES: ribbon::Handles<'static> = ribbon::Handles {
+    button: &["ribbon:"],
+    button_rect: "ribbon_rect:",
+    split: "ribbon_split:",
+    cell: &["ribbon_cell:"],
+    collapsed: "ribbon_collapsed:",
+    section: "ribbon_section:",
+    section_target: "ribbon_section_rect:",
+    group: "ribbon_group:",
+    running: "ribbon_running:",
+    reveal: "ribbon_reveal",
+    more: "ribbon_more",
+    more_row: "ribbon_more:",
+    collapsed_count: "ribbon_collapsed_count",
+    more_count: "ribbon_more_count",
+    trimmed_count: "ribbon_trimmed_count",
+    drag: "ribbon_drag",
+    drag_remove: "ribbon_drag_remove",
+};
+
+/// Where an entry is on a toolbar that may be too narrow for every panel (`ui.toolbar`'s `fit`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Fit {
@@ -52,41 +66,6 @@ pub enum Fit {
     More,
     /// In its panel's drop-down (a row while it is open).
     Menu,
-}
-
-/// A panel's width with `buttons` buttons.
-pub fn panel_width(buttons: usize) -> f32 {
-    (buttons.max(1) as f32 * STRIDE).max(64.0) + 8.0
-}
-
-/// Fit panels of these full widths into `room`: all in full when they fit; otherwise panels
-/// collapse into their drop-down from the right, then (all collapsed and still too wide) the last
-/// ones go into the » menu. Nothing is dropped.
-pub fn fit(widths: &[f32], room: f32) -> Vec<Fit> {
-    let mut fits = vec![Fit::Full; widths.len()];
-    let total = |fits: &[Fit]| -> f32 {
-        let more = if fits.contains(&Fit::More) { MORE_WIDTH } else { 0.0 };
-        more + widths
-            .iter()
-            .zip(fits)
-            .map(|(w, f)| match f {
-                Fit::Full | Fit::Menu => w + PANEL_GAP,
-                Fit::Collapsed => COLLAPSED_WIDTH.min(*w) + PANEL_GAP,
-                Fit::More => 0.0,
-            })
-            .sum::<f32>()
-    };
-    for stage in [Fit::Collapsed, Fit::More] {
-        for i in (0..widths.len()).rev() {
-            if total(&fits) <= room {
-                return fits;
-            }
-            if let Some(f) = fits.get_mut(i) {
-                *f = stage;
-            }
-        }
-    }
-    fits
 }
 
 /// The buttons a panel shows: its ready entries (at most [`MAX_BUTTONS`]), or its first entry
@@ -101,11 +80,6 @@ pub fn panel_key(tab: Tab, panel: &str) -> String {
     format!("{}/{panel}", tab.id())
 }
 
-/// A small drop-down caret.
-pub fn caret(p: &egui::Painter, c: egui::Pos2, col: Color32) {
-    p.add(egui::Shape::convex_polygon(vec![pos2(c.x - 3.5, c.y - 2.0), pos2(c.x + 3.5, c.y - 2.0), pos2(c.x, c.y + 2.5)], col, Stroke::NONE));
-}
-
 /// A milestone badge ("M5") with its top right corner at `corner`.
 fn badge(p: &egui::Painter, t: &Tokens, corner: egui::Pos2, m: &str) {
     let text = p.layout_no_wrap(m.to_string(), FontId::proportional(9.0), t.text_dim);
@@ -113,6 +87,22 @@ fn badge(p: &egui::Painter, t: &Tokens, corner: egui::Pos2, m: &str) {
     p.rect_filled(r, 3.0, t.panel_header);
     p.rect_stroke(r, 3.0, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
     p.galley(r.min + vec2(2.0, 0.0), text, t.text_dim);
+}
+
+/// One entry as the ribbon shows it: can it run now, is its form open, and its hover text.
+struct State {
+    enabled: bool,
+    running: bool,
+    tip: String,
+}
+
+fn state(app: &ModelApp, c: &Capability) -> State {
+    let missing = app.unavailable(c.id);
+    State {
+        enabled: c.command().is_some() && missing.is_none(),
+        running: app.dialog.as_ref().is_some_and(|d| c.command() == Some(d.command)),
+        tip: Unavailable::tip(&c.tooltip(), missing.as_ref()),
+    }
 }
 
 pub fn toolbar(app: &mut ModelApp, ui: &mut egui::Ui) {
@@ -123,8 +113,7 @@ pub fn toolbar(app: &mut ModelApp, ui: &mut egui::Ui) {
         app.place("ribbon", r);
         app.toolbar_rects.clear();
         app.panel_rects.clear();
-        let painter = ui.painter().clone();
-        workspace_switcher(app, ui, &t, r);
+        workspace_switcher(app, ui, r);
         // Tabs: the kit's tab row, in the main accent.
         let tabs = app.ui.workspace.tabs();
         let accent = TabAccent::current(ui.ctx());
@@ -148,125 +137,121 @@ pub fn toolbar(app: &mut ModelApp, ui: &mut egui::Ui) {
                 app.ui.menu = None;
             }
         }
-        // Panels.
+        // Panels: the kit's ribbon row, one group per panel.
         let tab = app.ui.tab;
         let top = r.top() + TABS_HEIGHT;
         let panels: Vec<&'static [Capability]> = catalogue::panels(tab).collect();
         let shown: Vec<Vec<&'static Capability>> = panels.iter().map(|p| buttons(p)).collect();
-        // A panel is as wide as its buttons, and wide enough for its label's longest word (plus
-        // the caret beside it).
-        let label_word = |entries: &[Capability]| {
-            let label = entries.first().map_or(String::new(), |c| c.panel.to_uppercase());
-            label.split_whitespace().map(|w| painter.layout_no_wrap(w.to_string(), label_font(ui.ctx(), 10.5), t.text).size().x).fold(0.0, f32::max)
-        };
-        let widths: Vec<f32> = shown.iter().zip(&panels).map(|(b, p)| panel_width(b.len()).max(label_word(p) + 26.0)).collect();
-        let fits = fit(&widths, r.right() - 8.0 - (r.left() + PANELS_X));
-        let mut px = r.left() + PANELS_X;
-        let mut overflow: Vec<&'static [Capability]> = Vec::new();
-        for ((entries, shown), (fit, full)) in panels.iter().zip(&shown).zip(fits.iter().zip(&widths)) {
-            let Some(panel) = entries.first().map(|c| c.panel) else { continue };
-            if *fit == Fit::More {
+        let keys: Vec<String> = panels.iter().map(|p| panel_key(tab, p.first().map_or("", |c| c.panel))).collect();
+        let states: Vec<Vec<State>> = panels.iter().map(|p| p.iter().map(|c| state(app, c)).collect()).collect();
+        let painter = ui.painter().clone();
+        let groups = panels
+            .iter()
+            .zip(&shown)
+            .zip(keys.iter().zip(&states))
+            .map(|((entries, shown), (key, states))| {
+                let panel = entries.first().map_or("", |c| c.panel);
+                let of = |c: &Capability| entries.iter().position(|e| e.id == c.id).and_then(|i| states.get(i));
+                // A group is as wide as its buttons; its label (and its arrow) must fit under them,
+                // so a short group's buttons widen to its label ("Boundary Conditions" over one
+                // button would run into the next group's label).
+                let widths: Vec<f32> = shown.iter().map(|c| ribbon::button_width(&painter, c.label)).collect();
+                let k = solidcraft_theme::Tokens::get();
+                let label = painter.layout_no_wrap(panel.to_string(), kit::type_face::semibold(k.font_caption), k.text_dim).size().x;
+                let need = label + LABEL_ROOM;
+                let row = widths.iter().sum::<f32>() + widths.len().saturating_sub(1) as f32 * ribbon::BUTTON_GAP + 8.0;
+                let extra = if widths.is_empty() { 0.0 } else { (need - row).max(0.0) / widths.len() as f32 };
+                ribbon::Group {
+                    key,
+                    name: panel,
+                    label: panel,
+                    tip: panel,
+                    buttons: shown
+                        .iter()
+                        .zip(&widths)
+                        .map(|(c, width)| ribbon::Button {
+                            id: c.id,
+                            run: c.id,
+                            label: c.label,
+                            name: c.label,
+                            icon: c.id,
+                            size: ribbon::ButtonSize { width: width + extra, min_width: ribbon::BUTTON_MIN_WIDTH + extra },
+                            enabled: of(c).is_some_and(|s| s.enabled),
+                            pressed: of(c).is_some_and(|s| s.running),
+                            exit: false,
+                            split: None,
+                            app_paints: false,
+                            covers: &[],
+                        })
+                        .collect(),
+                    cells: Vec::new(),
+                    commands: entries.iter().map(|c| c.id).collect(),
+                    icon: shown.first().map(|c| c.id),
+                    enabled: true,
+                    open: app.ui.menu.as_deref() == Some(key.as_str()),
+                    running: None,
+                    more: entries
+                        .iter()
+                        .zip(states)
+                        .map(|(c, s)| ribbon::MoreRow {
+                            id: c.id,
+                            label: c.label,
+                            icon: c.id,
+                            shortcut: "",
+                            enabled: s.enabled,
+                            checked: None,
+                            hint: Some(s.tip.as_str()),
+                        })
+                        .collect(),
+                }
+            })
+            .collect();
+        let row = ribbon::Row { groups, labels: true, accent, exit: false, reveal: None, more_tip: "More toolbar panels", handles: HANDLES };
+        let out = ribbon::show(ui, &row, Rect::from_min_max(pos2(r.left() + PANELS_X, top), r.max), &mut |_, _| false);
+        // FieldCraft's part of each button: its hover text and milestone badge.
+        for d in &out.buttons {
+            let Some(c) = shown.get(d.group).and_then(|s| s.get(d.index)) else { continue };
+            let s = panels.get(d.group).and_then(|p| p.iter().position(|e| e.id == c.id)).and_then(|i| states.get(d.group)?.get(i));
+            if let Some(m) = c.milestone() {
+                badge(ui.painter(), &t, d.whole.right_top() + vec2(-2.0, 2.0), m);
+            }
+            if let Some(s) = s {
+                let _ = d.response.clone().backing_on_hover_text(&s.tip);
+            }
+            app.toolbar_rects.push((c.id, d.whole, Fit::Full));
+        }
+        let mut anchors: Vec<(usize, Rect)> = Vec::new();
+        for g in &out.groups {
+            let (Some(entries), Some(key)) = (panels.get(g.group), keys.get(g.group)) else { continue };
+            app.panel_rects.push((key.clone(), g.label));
+            let (rect, fit) = if g.collapsed { (g.rect, Fit::Collapsed) } else { (Rect::NOTHING, Fit::Menu) };
+            let rest: Vec<&'static str> = entries.iter().map(|c| c.id).filter(|id| !app.toolbar_rects.iter().any(|(on, ..)| on == id)).collect();
+            app.toolbar_rects.extend(rest.into_iter().map(|id| (id, rect, fit)));
+            anchors.push((g.group, if g.collapsed { g.rect } else { g.label }));
+        }
+        for (gi, entries) in panels.iter().enumerate() {
+            if !out.groups.iter().any(|g| g.group == gi) {
                 for c in entries.iter() {
                     app.toolbar_rects.push((c.id, Rect::NOTHING, Fit::More));
                 }
-                overflow.push(entries);
-                continue;
             }
-            let key = panel_key(tab, panel);
-            let collapsed = *fit == Fit::Collapsed;
-            let width = if collapsed { COLLAPSED_WIDTH.min(*full) } else { *full };
-            if collapsed {
-                // One button: the panel's first button's icon over a caret; it opens the drop-down.
-                let br = Rect::from_center_size(pos2(px + width / 2.0, top + 21.0), Vec2::splat(BUTTON));
-                let resp = ui.interact(br, ui.scope_id().with(("fc_collapsed", &key)), Sense::click());
-                if resp.hovered() {
-                    painter.rect_filled(br, 4.0, t.hover);
-                }
-                if let Some(c) = shown.first() {
-                    icons::paint(
-                        ui,
-                        c.id,
-                        Rect::from_center_size(br.center() - vec2(0.0, 3.0), Vec2::splat(26.0)),
-                        Look::of(c.command().is_some() && app.unavailable(c.id).is_none()),
-                    );
-                }
-                caret(&painter, pos2(br.center().x, br.bottom() - 3.0), t.text_dim);
-                for c in entries.iter() {
-                    app.toolbar_rects.push((c.id, br, Fit::Collapsed));
-                }
-                if resp.on_hover_text(format!("{panel} ({})", entries.len())).clicked() {
-                    app.toggle_menu(&key);
-                }
-            } else {
-                let inset = ((width - 8.0 - (shown.len() as f32 * STRIDE - 2.0)) / 2.0).max(0.0).floor();
-                for (i, c) in shown.iter().enumerate() {
-                    let br = Rect::from_min_size(pos2(px + 4.0 + inset + i as f32 * STRIDE, top + 2.0), Vec2::splat(BUTTON));
-                    if let Some(id) = button(app, ui, &t, c, br) {
-                        start = Some(id);
+        }
+        for action in &out.actions {
+            match action {
+                ribbon::Action::Run { id, .. } => start = panels.iter().flat_map(|p| p.iter()).find(|c| c.id == id).map(|c| c.id),
+                ribbon::Action::Section { group } | ribbon::Action::Open { group } => {
+                    if let Some(key) = keys.get(*group) {
+                        app.toggle_menu(key);
                     }
                 }
-                for c in entries.iter().filter(|c| !shown.iter().any(|s| s.id == c.id)) {
-                    app.toolbar_rects.push((c.id, Rect::NOTHING, Fit::Menu));
-                }
+                ribbon::Action::Menu { .. } | ribbon::Action::Drop { .. } => {}
             }
-            // The panel's label with its caret opens the drop-down.
-            // A label too wide wraps between words onto a second line; a single word wider than
-            // the panel stays whole.
-            let label = panel.to_uppercase();
-            let widest_word = label
-                .split_whitespace()
-                .map(|w| painter.layout_no_wrap(w.to_string(), label_font(ui.ctx(), 10.5), t.text).size().x)
-                .fold(0.0, f32::max);
-            let mut job = egui::text::LayoutJob::simple(label, label_font(ui.ctx(), 10.5), t.text, (width - 14.0).max(widest_word + 1.0));
-            job.wrap.overflow_character = None;
-            job.wrap.max_rows = 2;
-            job.halign = egui::Align::Center;
-            let g = painter.layout_job(job);
-            let gw = g.size().x;
-            // One line centred under the buttons; two lines start higher to stay inside the ribbon.
-            let lh = (g.size().y + 2.0).max(18.0);
-            let lr = if lh > 20.0 {
-                Rect::from_min_size(pos2(px, top + 40.0), vec2(width, lh))
-            } else {
-                Rect::from_center_size(pos2(px + width / 2.0, top + 51.0), vec2(width, lh))
-            };
-            let lresp = ui.interact(lr, ui.scope_id().with(("fc_panel", &key)), Sense::click());
-            let open = app.ui.menu.as_deref() == Some(key.as_str());
-            if lresp.hovered() || open {
-                painter.rect_filled(lr, 3.0, t.hover);
-            }
-            let gx = lr.center().x - 4.5;
-            painter.galley(pos2(gx, lr.center().y - g.size().y / 2.0), g, t.text);
-            caret(&painter, pos2(gx + gw / 2.0 + 6.0, lr.center().y), t.text);
-            app.panel_rects.push((key.clone(), lr));
-            if lresp.on_hover_text(format!("All {panel} commands")).clicked() {
-                app.toggle_menu(&key);
-            }
-            if let Some(rect) = crate::frame::wide_menu(app, ui, &key, lr, |app, ui| dropdown(app, ui, entries)) {
+        }
+        for (group, anchor) in anchors {
+            let (Some(entries), Some(key)) = (panels.get(group), keys.get(group)) else { continue };
+            if let Some(rect) = crate::frame::wide_menu(app, ui, key, anchor, |app, ui| dropdown(app, ui, entries)) {
                 app.place("toolbar_dropdown", rect);
             }
-            px += width;
-            painter.line_segment([pos2(px, top + 4.0), pos2(px, top + 58.0)], Stroke::new(1.0, t.border));
-            px += PANEL_GAP;
-        }
-        if !overflow.is_empty() {
-            let mr = Rect::from_min_size(pos2(px.min(r.right() - MORE_WIDTH), top + 4.0), vec2(MORE_WIDTH - 2.0, 52.0));
-            let resp = ui.interact(mr, ui.scope_id().with("fc_more"), Sense::click());
-            if resp.hovered() || app.ui.menu.as_deref() == Some("more") {
-                painter.rect_filled(mr, 4.0, t.hover);
-            }
-            painter.text(mr.center(), Align2::CENTER_CENTER, "»", FontId::proportional(18.0), t.text);
-            if resp.on_hover_text("More toolbar panels").clicked() {
-                app.toggle_menu("more");
-            }
-            crate::frame::menu(app, ui, "more", mr, |app, ui| {
-                for entries in &overflow {
-                    let panel = entries.first().map_or("", |c| c.panel);
-                    let mut item = solidcraft_ui_kit::MenuItem::new(panel, panel, "");
-                    item.submenu = true;
-                    solidcraft_ui_kit::Menu::item_button(ui, &item, |ui| dropdown(app, ui, entries));
-                }
-            });
         }
         painter.line_segment([pos2(r.left(), r.bottom() - 0.5), pos2(r.right(), r.bottom() - 0.5)], Stroke::new(1.0, t.border));
     });
@@ -277,65 +262,71 @@ pub fn toolbar(app: &mut ModelApp, ui: &mut egui::Ui) {
     }
 }
 
-/// The workspace switcher: a box spanning the ribbon's height with the workspace's icon and name;
-/// it opens the list of workspaces.
-fn workspace_switcher(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, r: Rect) {
-    let ws = Rect::from_min_max(pos2(r.left() + 6.0, r.top() + 4.0), pos2(r.left() + 104.0, r.bottom() - 5.0));
-    let resp = ui.interact(ws, ui.scope_id().with("fc_workspace"), Sense::click());
-    let open = app.ui.menu.as_deref() == Some("workspace");
-    ui.painter().rect(ws, 4.0, if resp.hovered() || open { t.hover } else { t.field }, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
-    let w = app.ui.workspace;
-    icons::paint(ui, w.icon(), Rect::from_center_size(pos2(ws.center().x, ws.top() + 24.0), Vec2::splat(26.0)), Look::Normal);
-    let p = ui.painter();
-    let label = w.label().to_uppercase();
-    let font = label_font(ui.ctx(), 12.0);
-    let label_w = p.layout_no_wrap(label.clone(), font.clone(), t.text).size().x;
-    p.text(pos2(ws.center().x - 5.0, ws.top() + 52.0), Align2::CENTER_CENTER, label, font, t.text);
-    caret(p, pos2(ws.center().x - 5.0 + label_w / 2.0 + 7.0, ws.top() + 52.0), t.text);
-    p.text(pos2(ws.center().x, ws.top() + 69.0), Align2::CENTER_CENTER, "workspace", FontId::proportional(10.0), t.text_dim);
-    app.place("workspace_switcher", ws);
-    if resp.on_hover_text("Change workspace").clicked() {
-        app.toggle_menu("workspace");
+/// The message ids of a workspace's line and tab list in the kit's workspace menu; their text is
+/// FieldCraft's ([`Workspace::about`] and its tabs, `crate::theme`'s catalogue).
+pub fn workspace_ids(w: Workspace) -> (&'static str, &'static str) {
+    match w {
+        Workspace::Prepare => ("workspace.prepare.about", "workspace.prepare.tabs"),
+        Workspace::Model => ("workspace.model.about", "workspace.model.tabs"),
+        Workspace::Analysis => ("workspace.analysis.about", "workspace.analysis.tabs"),
+        Workspace::Results => ("workspace.results.about", "workspace.results.tabs"),
     }
-    crate::frame::wide_menu(app, ui, "workspace", ws, |app, ui| {
-        let t = Tokens::get(app.ui.dark);
-        for w in Workspace::ALL {
-            let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::click());
-            if resp.hovered() || w == app.ui.workspace {
-                ui.painter().rect_filled(rect, 3.0, if w == app.ui.workspace { t.accent_soft } else { t.hover });
-            }
-            icons::paint(ui, w.icon(), Rect::from_center_size(pos2(rect.left() + 20.0, rect.center().y), Vec2::splat(24.0)), Look::Normal);
-            let p = ui.painter();
-            p.text(pos2(rect.left() + 40.0, rect.top() + 12.0), Align2::LEFT_CENTER, w.label().to_uppercase(), label_font(ui.ctx(), 12.5), t.text);
-            p.text(pos2(rect.left() + 40.0, rect.top() + 28.0), Align2::LEFT_CENTER, w.about(), FontId::proportional(11.0), t.text_dim);
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, w.label()));
-            if resp.clicked() {
-                app.ui.select_workspace(w);
-                app.ui.menu = None;
-            }
-        }
-    });
 }
 
-/// One entry's button; returns the id to start when it was clicked.
-fn button(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, c: &'static Capability, br: Rect) -> Option<&'static str> {
-    let missing = app.unavailable(c.id);
-    let enabled = c.command().is_some() && missing.is_none();
-    let resp = ui.interact(br, ui.scope_id().with(("fc_button", c.id)), if enabled { Sense::click() } else { Sense::hover() });
-    app.toolbar_rects.push((c.id, br, Fit::Full));
-    let running = app.dialog.as_ref().is_some_and(|d| c.command() == Some(d.command));
-    if running {
-        ui.painter().rect_filled(br, 4.0, t.border.gamma_multiply(0.7));
-    } else if resp.hovered() && enabled {
-        ui.painter().rect_filled(br, 4.0, t.hover);
+/// The workspace switcher: the kit's switcher at the ribbon's left end, spanning its height; it
+/// opens the kit's workspace menu.
+fn workspace_switcher(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect) {
+    let ws = Rect::from_min_max(r.left_top(), pos2(r.left() + PANELS_X - 4.0, r.bottom()));
+    let w = app.ui.workspace;
+    let switcher = app_bar::Switcher {
+        name: w.label(),
+        caption: "Workspace",
+        icon: w.icon(),
+        tip: "Change workspace",
+        open: app.ui.menu.as_deref() == Some("workspace"),
+        floating: false,
+        labels: true,
+        folded: false,
+        stage: false,
+        accent: solidcraft_theme::Tokens::get().accent,
+        handle_rect: "workspace_switcher",
+        handle_target: "ribbon:workspace",
+    };
+    app.place("workspace_switcher", ws);
+    if app_bar::switcher(ui, &switcher, ws) {
+        app.toggle_menu("workspace");
     }
-    icons::paint(ui, c.id, br.shrink(6.0), Look::of(enabled));
-    if let Some(m) = c.milestone() {
-        badge(ui.painter(), t, br.right_top() + vec2(4.0, -2.0), m);
+    let current = app.ui.workspace;
+    let items: Vec<kit::Item> = Workspace::ALL
+        .into_iter()
+        .map(|w| {
+            let mut item = kit::Item::action(w.label(), w.label(), w.icon());
+            if w == current {
+                item.shortcut = "current".into();
+            }
+            item
+        })
+        .collect();
+    let style = |item: &kit::Item| {
+        let w = Workspace::ALL.into_iter().find(|w| w.label() == item.id)?;
+        let (description, tabs) = workspace_ids(w);
+        Some(kit::WorkspaceStyle { slug: w.label(), description, tabs: Some(tabs), ramp: None })
+    };
+    let height = ui.ctx().content_rect().bottom() - ws.bottom();
+    let picked = crate::frame::surface_popup(app, ui, "workspace", ws, |_, ui| {
+        kit::workspace_menu(
+            ui,
+            &kit::WorkspaceMenu { items: &items, style: &style, footer: solidcraft_ui_text::tr("ui.workspace_footer") },
+            None,
+            height,
+        )
+    });
+    if let Some(Some(item)) = picked
+        && let Some(w) = Workspace::ALL.into_iter().find(|w| w.label() == item.id)
+    {
+        app.ui.select_workspace(w);
+        app.ui.menu = None;
     }
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, c.label));
-    let resp = resp.on_hover_text(Unavailable::tip(&c.tooltip(), missing.as_ref()));
-    resp.clicked().then_some(c.id)
 }
 
 /// The rows of a panel's drop-down: every entry with its related commands under it, coming-soon
@@ -417,18 +408,6 @@ pub fn describe(app: &ModelApp) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn panels_collapse_from_the_right_then_go_to_the_more_menu() {
-        let widths = [200.0, 300.0, 100.0];
-        assert_eq!(fit(&widths, 700.0), vec![Fit::Full; 3]);
-        assert_eq!(fit(&widths, 500.0), vec![Fit::Full, Fit::Collapsed, Fit::Collapsed]);
-        assert_eq!(fit(&widths, 230.0), vec![Fit::Collapsed; 3]);
-        let tight = fit(&widths, 120.0);
-        assert_eq!(tight.first(), Some(&Fit::Collapsed));
-        assert!(tight.contains(&Fit::More), "nothing is dropped: {tight:?}");
-        assert!(fit(&[], 0.0).is_empty());
-    }
 
     #[test]
     fn panels_show_their_ready_entries_or_their_first_one() {
