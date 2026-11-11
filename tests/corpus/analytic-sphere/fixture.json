@@ -4,39 +4,6 @@
     "linux-x86_64": {
       "stages": {},
       "values": {}
-    },
-    "macos-aarch64": {
-      "stages": {},
-      "values": {
-        "octree.mean_sj": {
-          "band": 8.668065254044879e-10,
-          "value": 0.8658065254044878
-        },
-        "octree.min_sj": {
-          "band": 5.389729500887628e-10,
-          "value": 0.5379729500887628
-        },
-        "octree.volume_mm3": {
-          "band": 0.00003306038793266275,
-          "value": 33060.38693266275
-        },
-        "quality.max_dihedral_deg": {
-          "band": 1.381895791394498e-7,
-          "value": 138.18857913944979
-        },
-        "quality.min_dihedral_deg": {
-          "band": 3.378763920642617e-8,
-          "value": 33.786639206426166
-        },
-        "quality.min_radius_ratio": {
-          "band": 3.334749886306745e-10,
-          "value": 0.3324749886306745
-        },
-        "quality.tets": {
-          "band": 0,
-          "value": 8611
-        }
-      }
     }
   },
   "stages": {
@@ -114,8 +81,8 @@
       "value": 138.96815397204332
     },
     "quality.min_dihedral_deg": {
-      "band": 3.3952186451227545e-8,
-      "value": 33.95118645122754
+      "band": 3.4206220901396216e-8,
+      "value": 34.20522090139621
     },
     "quality.min_radius_ratio": {
       "band": 3.186213837417644e-10,
@@ -142,8 +109,8 @@
       "value": -0.004682433923943537
     },
     "surface.solidcraft_mm3": {
-      "band": 0.000033507945686522373,
-      "value": 33507.944686522365
+      "band": 0.00003350794568652233,
+      "value": 33507.94468652233
     }
   }
 }

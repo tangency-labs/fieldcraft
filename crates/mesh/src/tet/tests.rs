@@ -427,6 +427,30 @@ mod pipeline {
         assert!(side > 500, "{side}");
     }
 
+    /// Snapping the boundary onto the exact faces does not cost the worst element what
+    /// improvement reached (#777): before, the guarded snap took stars down to the smoothing
+    /// floor (sin 17.5°) and nothing improved them after it. The cylinder of the test above, its
+    /// facets far coarser than its elements, so the snap moves whole layers of vertices.
+    #[test]
+    fn snapping_keeps_the_worst_element_improvement_reached() {
+        let (r, h) = (3.0, 1.5);
+        let s = crate::octree::tests::cylinder_surface(r, h, 8);
+        let cdt = tetrahedralize(&s, &CdtOptions::default()).unwrap();
+        let analytic = vec![
+            Some(AnalyticSurface::Plane { normal: [0.0, 0.0, -1.0], point: [0.0; 3] }),
+            Some(AnalyticSurface::Plane { normal: [0.0, 0.0, 1.0], point: [0.0, 0.0, h] }),
+            Some(AnalyticSurface::Cylinder { origin: [0.0; 3], axis: [0.0, 0.0, 1.0], radius: r }),
+        ];
+        let o = QualityOptions { size: Some(0.5), ..QualityOptions::default() };
+        let m = quality_mesh(&s, &cdt, analytic, &o).unwrap();
+        let reached = m.report.improve.worst.last().copied().unwrap().min(o.improve_options.good);
+        let out = &m.report.output;
+        // The smallest dihedral sine of the mesh, from its extreme angles (24.8° before).
+        let worst = out.min_dihedral.to_radians().sin().min(out.max_dihedral.to_radians().sin());
+        assert!(worst >= reached - 1e-9, "worst sine {worst} below {reached}: {:?}", m.report);
+        assert_eq!((m.report.unsnapped, m.report.snap_gap), (0, 0.0), "{:?}", m.report);
+    }
+
     #[test]
     fn caps_stop_the_stage_without_panicking() {
         let s = box_surface();

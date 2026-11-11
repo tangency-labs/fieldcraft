@@ -60,7 +60,7 @@ use crate::{Error, Result};
 
 use complex::{IdMap, NONE, TetComplex, VertexKind, face_toward, sorted2, sorted3};
 use geometry::{AnalyticSurface, GradedSize, Tessellation};
-use improve::{ImproveOptions, ImproveStats};
+use improve::{ImproveOptions, ImproveStats, RepairStats};
 use refine::{Context, RefineOptions, RefineStats};
 
 /// A node is on a seeded edge within this, relative to the size.
@@ -227,6 +227,9 @@ pub struct QualityReport {
     /// The largest distance of an unsnapped vertex from its face or curve.
     pub snap_gap: f64,
     pub improve: ImproveStats,
+    /// The repair after the snap of the elements it left below the quality improvement had
+    /// reached (#777).
+    pub snap_repair: RepairStats,
     /// The global size used.
     pub size: f64,
     /// Volume of the mesh, and what its boundary encloses.
@@ -493,18 +496,26 @@ fn snap_to_geometry(cx: &mut TetComplex, ctx: &Context, guarded: bool) -> Result
         }
     }
     let mut left = Snapped::default();
-    for &v in &off {
-        if let Some((_, gap, on)) = off_by(cx, ctx, v)?
-            && gap > on
-        {
-            left.off += 1;
-            left.gap = left.gap.max(gap);
-        }
-    }
+    (left.off, left.gap) = left_off(cx, ctx, &off)?;
     if capped && left.off > 0 {
         left.stopped = Some(format!("snapping to the geometry stopped after {SNAP_SWEEPS} sweeps with {} vertices still off it", left.off));
     }
     Ok(left)
+}
+
+/// How many of `verts` are off their face or curve, and the largest distance of one from it.
+fn left_off(cx: &TetComplex, ctx: &Context, verts: &[u32]) -> Result<(usize, f64)> {
+    let (mut off, mut largest) = (0, 0.0_f64);
+    for &v in verts {
+        if cx.is_used(v)
+            && let Some((_, gap, on)) = off_by(cx, ctx, v)?
+            && gap > on
+        {
+            off += 1;
+            largest = largest.max(gap);
+        }
+    }
+    Ok((off, largest))
 }
 
 /// Vertex `v`'s point on its face or curve, its distance from it, and the distance within which
@@ -629,8 +640,24 @@ pub fn quality_mesh(surface: &BoundarySurface, cdt: &TetMesh, analytic: Vec<Opti
     // tolerance of them).
     progress::check()?;
     progress::stage("Snapping to the geometry", None, "");
+    // The snap may lower a star's worst quality down to the smoothing floor, and nothing would
+    // improve what it spoilt (on curved parts the worst dihedral angle fell by 10° and more,
+    // #777): repair the tetrahedra it left below what improvement reached (at most `good`), on
+    // the exact geometry, so what the repair moves or adds stays on it.
+    let reached =
+        if o.improve { Some(ops::worst(&cx, &cx.live_tets().map(|(t, _)| t).collect::<Vec<_>>())?.min(o.improve_options.good)) } else { None };
     let snapped = snap_to_geometry(&mut cx, &exact, true)?;
     (report.unsnapped, report.snap_gap) = (snapped.off, snapped.gap);
+    if let Some(floor) = reached {
+        let budget = o.improve_options.max_insertions.saturating_sub(report.improve.inserted);
+        report.snap_repair = improve::repair(&mut cx, &exact, floor, budget)?;
+        // Smoothing on the exact geometry may have put a vertex the snap left off onto it.
+        if snapped.off > 0 {
+            let boundary: Vec<u32> =
+                (0..cx.point_count() as u32).filter(|&v| matches!(cx.kind(v), VertexKind::Face(_) | VertexKind::Curve(_))).collect();
+            (report.unsnapped, report.snap_gap) = left_off(&cx, &exact, &boundary)?;
+        }
+    }
     report.stopped.extend(snapped.stopped);
     let c = cx.compact()?;
     let boundary: Vec<TaggedFace> = c.boundary.iter().map(|&(tet, k, face)| TaggedFace { tet, opposite: k as u8, face }).collect();

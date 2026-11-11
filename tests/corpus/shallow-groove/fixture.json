@@ -4,10 +4,6 @@
     "linux-x86_64": {
       "stages": {},
       "values": {}
-    },
-    "macos-aarch64": {
-      "stages": {},
-      "values": {}
     }
   },
   "stages": {
@@ -93,16 +89,16 @@
       "value": 47798.527752442926
     },
     "quality.max_dihedral_deg": {
-      "band": 1.336474659408245e-7,
-      "value": 133.6464659408245
+      "band": 1.3359289308660515e-7,
+      "value": 133.59189308660515
     },
     "quality.min_dihedral_deg": {
-      "band": 3.351398092479816e-8,
-      "value": 33.51298092479816
+      "band": 3.493789309953668e-8,
+      "value": 34.936893099536675
     },
     "quality.min_radius_ratio": {
-      "band": 3.66641859927434e-10,
-      "value": 0.365641859927434
+      "band": 3.6070015537484116e-10,
+      "value": 0.3597001553748411
     },
     "quality.slivers": {
       "band": 0,
@@ -114,7 +110,7 @@
     },
     "quality.tets": {
       "band": 0,
-      "value": 6751
+      "value": 6759
     },
     "surface.enclosed_mm3": {
       "band": 0.00004779520536687302,
@@ -125,8 +121,8 @@
       "value": 0.00028766073728085363
     },
     "surface.solidcraft_mm3": {
-      "band": 0.0000477823199110215,
-      "value": 47782.318911021495
+      "band": 0.00004778231991121061,
+      "value": 47782.318911210605
     }
   }
 }

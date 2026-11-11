@@ -4,10 +4,6 @@
     "linux-x86_64": {
       "stages": {},
       "values": {}
-    },
-    "macos-aarch64": {
-      "stages": {},
-      "values": {}
     }
   },
   "stages": {
@@ -97,12 +93,12 @@
       "value": 141.22411565607194
     },
     "quality.min_dihedral_deg": {
-      "band": 2.088227263066512e-8,
-      "value": 20.881272630665116
+      "band": 3.322918308861116e-8,
+      "value": 33.22818308861116
     },
     "quality.min_radius_ratio": {
-      "band": 2.9798938031963743e-10,
-      "value": 0.2969893803196374
+      "band": 3.075232471902343e-10,
+      "value": 0.30652324719023427
     },
     "quality.slivers": {
       "band": 0,
@@ -114,7 +110,7 @@
     },
     "quality.tets": {
       "band": 0,
-      "value": 45028
+      "value": 45061
     },
     "surface.enclosed_mm3": {
       "band": 0.000026822152526870137,
