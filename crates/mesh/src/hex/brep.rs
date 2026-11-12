@@ -363,6 +363,9 @@ impl<'a> Brep<'a> {
                 loops.push(lp);
             }
             if let Some(face) = faces.get_mut(f) {
+                if let Some((_, normal)) = face.plane {
+                    outer_first(&mut loops, normal, |oe| vertices_of(oe).iter().map(|&v| pts.get(v as usize).copied().unwrap_or([0.0; 3])).collect());
+                }
                 face.loops = loops;
             }
         }
@@ -423,6 +426,29 @@ impl<'a> Brep<'a> {
     /// The face tag of triangle `t` in this topology (a composite face's tag for its members).
     pub(crate) fn tag(&self, t: u32) -> Option<u32> {
         self.tags.get(t as usize).copied()
+    }
+}
+
+/// Put a planar face's outer loop first, as every planar-region mesher takes it (the rest keep
+/// their order). The loops run with the face on their left, so seen along the face's outward
+/// `normal` the outer loop is counter-clockwise and the holes clockwise: the outer loop is the
+/// one with the largest signed area about `normal`. The order the loops are walked in follows
+/// the surface's vertex numbering, which says nothing about which is outer.
+fn outer_first(loops: &mut [Vec<(usize, bool)>], normal: P, points: impl Fn((usize, bool)) -> Vec<P>) {
+    let area = |lp: &[(usize, bool)]| {
+        let mut s = [0.0; 3];
+        for &oe in lp {
+            for w in points(oe).windows(2) {
+                if let [a, b] = w {
+                    s = add(s, cross(*a, *b));
+                }
+            }
+        }
+        0.5 * dot(s, normal)
+    };
+    let outer = loops.iter().enumerate().map(|(k, lp)| (area(lp), k)).max_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, k)| k);
+    if let Some(head) = outer.and_then(|k| loops.get_mut(..=k)) {
+        head.rotate_right(1);
     }
 }
 

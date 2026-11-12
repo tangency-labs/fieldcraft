@@ -124,10 +124,7 @@ fn topology(brep: &Brep, s: usize) -> std::result::Result<Topology, String> {
                     run.push((e, fwd));
                     k += 1;
                 }
-                ring.push(link(brep, f, &run).map_err(|e| match cap(brep, s, f) {
-                    Some(why) => why,
-                    None => e,
-                })?);
+                ring.push(link(brep, f, &run).map_err(|e| cap(brep, s, f).or_else(|| levels(brep, s)).unwrap_or(e))?);
             }
             used.extend(ring.iter().map(|l| l.face));
             front = ring.iter().flat_map(|l| l.top.iter().map(move |&(e, fwd)| (e, fwd, l.face))).collect();
@@ -162,6 +159,23 @@ fn cap(brep: &Brep, s: usize, f: usize) -> Option<String> {
             brep.face_tag(f)
         )
     })
+}
+
+/// Why no linking face fits when the body ends at more than one level: its planar faces
+/// parallel to source `s` (the source's own excepted) lie at two or more heights along the
+/// source's normal, and a one-to-one sweep has one target face. The reason [`cap`] gives, for
+/// the first such face, whichever face the rings happened to reach first: with the outer loop
+/// swept first, the crank arm's rings met its round end (a cylinder its seam crosses) before any
+/// cap, and the refusal named that face's broken chain instead of the levels.
+pub(super) fn levels(brep: &Brep, s: usize) -> Option<String> {
+    let (_, ns) = brep.faces.get(s)?.plane?;
+    let tol = super::RELATIVE_TOLERANCE * brep.diagonal;
+    let mut heights = brep.faces.iter().enumerate().filter(|&(f, _)| f != s).filter_map(|(f, face)| {
+        let (p, n) = face.plane?;
+        (dot(ns, n).abs() > 1.0 - SAME_DIRECTION).then(|| (dot(p, ns), f))
+    });
+    let (first, f) = heights.next()?;
+    heights.any(|(h, _)| (h - first).abs() > tol).then(|| cap(brep, s, f)).flatten()
 }
 
 /// Whether the front's edges are exactly one loop of face `t`.

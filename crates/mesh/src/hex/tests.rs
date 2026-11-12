@@ -777,14 +777,24 @@ fn seamed_cylinder(r: f64, h: f64, n: usize, m: usize) -> (BoundarySurface, Boun
 /// A tube along z (radii `ri` < `ro`, height `h`), its walls each one face with a seam at angle
 /// 0 (tags 0 outer, 1 inner) and its ends annuli (2 bottom, 3 top), `n` segments round.
 fn seamed_tube(ri: f64, ro: f64, h: f64, n: usize) -> (BoundarySurface, Vec<Option<Surface>>) {
+    seamed_tube_numbered(ri, ro, h, n, false)
+}
+
+/// [`seamed_tube`], its vertices numbered inner rims first when `inner_first`.
+fn seamed_tube_numbered(ri: f64, ro: f64, h: f64, n: usize, inner_first: bool) -> (BoundarySurface, Vec<Option<Surface>>) {
     let mut g = Revolved { pts: Vec::new(), tris: Vec::new(), tags: Vec::new() };
-    for (r, z) in [(ro, 0.0), (ri, 0.0), (ro, h), (ri, h)] {
+    // Rings 0..4 are the outer and inner rims at z = 0, then at z = h; `slot` is where each is
+    // numbered.
+    let slot = |ring: usize| if inner_first { [1, 0, 3, 2][ring] } else { ring };
+    let rims = [(ro, 0.0), (ri, 0.0), (ro, h), (ri, h)];
+    for s in 0..4 {
+        let (r, z) = rims[(0..4).find(|&ring| slot(ring) == s).unwrap()];
         for k in 0..n {
             let t = angle(k, n);
             g.pts.push([r * t.cos(), r * t.sin(), z]);
         }
     }
-    let id = |ring: usize, k: usize| (ring * n + k % n) as u32;
+    let id = |ring: usize, k: usize| (slot(ring) * n + k % n) as u32;
     for k in 0..n {
         let t = angle(2 * k + 1, 2 * n);
         let out = [t.cos(), t.sin(), 0.0];
@@ -806,6 +816,89 @@ fn seamed_tube(ri: f64, ro: f64, h: f64, n: usize) -> (BoundarySurface, Vec<Opti
         Some(Surface::Plane { point: [0.0, 0.0, h], normal: [0.0, 0.0, 1.0] }),
     ];
     (g.surface(&[vec![id(0, 0), id(2, 0)], vec![id(1, 0), id(3, 0)]]), surfaces)
+}
+
+/// A block stepped along x (top at z = 1 for x < 1, at z = 2 beyond), each face planar, its
+/// tags: bottom 0, low top 1, high top 2, riser 3, x = 0 side 4, x = 2 side 5, y = 0 side 6,
+/// y = 1 side 7.
+fn stepped_block() -> (BoundarySurface, Vec<Option<Surface>>) {
+    let mut g = Revolved { pts: Vec::new(), tris: Vec::new(), tags: Vec::new() };
+    // Per side y = 0 and y = 1: A (0, 0), B (1, 0), C (2, 0), D (0, 1), E (1, 1), F (1, 2), G (2, 2) in (x, z).
+    for y in [0.0, 1.0] {
+        for (x, z) in [(0.0, 0.0), (1.0, 0.0), (2.0, 0.0), (0.0, 1.0), (1.0, 1.0), (1.0, 2.0), (2.0, 2.0)] {
+            g.pts.push([x, y, z]);
+        }
+    }
+    let v = |side: u32, k: u32| side * 7 + k;
+    let (a, b, c, d, e, f, gg) = (0, 1, 2, 3, 4, 5, 6);
+    let quad = |g: &mut Revolved, q: [u32; 4], out: [f64; 3], tag: u32| {
+        g.tri([q[0], q[1], q[2]], out);
+        g.tri([q[0], q[2], q[3]], out);
+        g.tags.extend([tag, tag]);
+    };
+    quad(&mut g, [v(0, a), v(0, b), v(1, b), v(1, a)], [0.0, 0.0, -1.0], 0);
+    quad(&mut g, [v(0, b), v(0, c), v(1, c), v(1, b)], [0.0, 0.0, -1.0], 0);
+    quad(&mut g, [v(0, d), v(0, e), v(1, e), v(1, d)], [0.0, 0.0, 1.0], 1);
+    quad(&mut g, [v(0, f), v(0, gg), v(1, gg), v(1, f)], [0.0, 0.0, 1.0], 2);
+    quad(&mut g, [v(0, e), v(0, f), v(1, f), v(1, e)], [-1.0, 0.0, 0.0], 3);
+    quad(&mut g, [v(0, a), v(0, d), v(1, d), v(1, a)], [-1.0, 0.0, 0.0], 4);
+    quad(&mut g, [v(0, c), v(0, gg), v(1, gg), v(1, c)], [1.0, 0.0, 0.0], 5);
+    for (side, out, tag) in [(0, [0.0, -1.0, 0.0], 6), (1, [0.0, 1.0, 0.0], 7)] {
+        for t in [[a, b, e], [a, e, d], [b, c, gg], [b, gg, e], [e, gg, f]] {
+            g.tri(t.map(|k| v(side, k)), out);
+            g.tags.push(tag);
+        }
+    }
+    let plane = |point: [f64; 3], normal: [f64; 3]| Some(Surface::Plane { point, normal });
+    let faces = vec![
+        plane([0.0; 3], [0.0, 0.0, -1.0]),
+        plane([0.0, 0.0, 1.0], [0.0, 0.0, 1.0]),
+        plane([0.0, 0.0, 2.0], [0.0, 0.0, 1.0]),
+        plane([1.0, 0.0, 0.0], [-1.0, 0.0, 0.0]),
+        plane([0.0; 3], [-1.0, 0.0, 0.0]),
+        plane([2.0, 0.0, 0.0], [1.0, 0.0, 0.0]),
+        plane([0.0; 3], [0.0, -1.0, 0.0]),
+        plane([0.0, 1.0, 0.0], [0.0, 1.0, 0.0]),
+    ];
+    (g.surface(&[]), faces)
+}
+
+/// A body whose planar faces parallel to the source lie at more than one level is refused for
+/// that reason, whichever linking face the rings reach first: the crank arm, its outer loop
+/// swept first, reached its round end (a cylinder its seam crosses) before any cap and was
+/// refused for that face's broken chain. A tube, its ends one level apart, is not.
+#[test]
+fn a_body_ending_at_two_levels_is_refused_for_its_levels() {
+    let (s, faces) = stepped_block();
+    let brep = Brep::new(&s, &faces).unwrap();
+    let bottom = brep.faces.iter().position(|f| f.id == 0).unwrap();
+    let why = super::sweep::levels(&brep, bottom).unwrap();
+    assert!(why.contains("more than one level") && why.contains("method `extrude`"), "{why}");
+    let (s, faces) = seamed_tube(0.5, 1.0, 1.0, 32);
+    let brep = Brep::new(&s, &faces).unwrap();
+    let bottom = brep.faces.iter().position(|f| f.id == 2).unwrap();
+    assert_eq!(super::sweep::levels(&brep, bottom), None);
+}
+
+/// A planar face's outer loop comes first whatever the vertex numbering: with the tube's inner
+/// rims numbered first, the ends' loops were walked inner rim first, and the sweep took the
+/// inner rim for the outer loop ("hole loop 1 lies outside the outer loop"), as a welded
+/// analysis mesh numbers them.
+#[test]
+fn a_planar_face_lists_its_outer_loop_first_however_its_vertices_are_numbered() {
+    let (ri, ro, h) = (0.5, 1.0, 1.0);
+    for inner_first in [false, true] {
+        let (s, faces) = seamed_tube_numbered(ri, ro, h, 32, inner_first);
+        let brep = Brep::new(&s, &faces).unwrap();
+        for f in &brep.faces[2..] {
+            let first = f.loops.first().and_then(|l| l.first()).map(|&(e, fwd)| brep.edge_points(e, fwd)).unwrap();
+            assert!(first.iter().all(|p| (p[0].hypot(p[1]) - ro).abs() < 1e-9), "inner_first {inner_first}: face {} starts with {first:?}", f.id);
+        }
+        let opts = HexOptions { method: HexMethod::Sweep, chordal_tolerance: ro * (1.0 - (std::f64::consts::PI / 32.0).cos()), ..HexOptions::default() };
+        let m = hex_mesh(&s, &faces, &UniformSize(0.2), &opts).unwrap();
+        assert_eq!(m.report.method, HexMethod::Sweep, "inner_first {inner_first}: {}", m.report.description);
+        assert!(m.report.gate.passed(), "inner_first {inner_first}");
+    }
 }
 
 /// A whole circle in one edge, as a kernel gives a seamed tube's ends, is divided by its chordal
