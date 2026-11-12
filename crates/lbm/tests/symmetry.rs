@@ -21,7 +21,7 @@ fn heated_channel(height: f64, roof: FaceCondition, power: f64, top: f64) -> (fi
     let dx = 1.0 / n as f64;
     let mut d = domain([0.0; 3], [3.0, height, dx], dx);
     d.faces.x_min = FaceCondition::Velocity { velocity: [0.05, 0.0, 0.0], profile: Profile::Parabolic };
-    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None };
     d.faces.y_max = roof;
     d.faces.z_min = PERIODIC;
     d.faces.z_max = PERIODIC;
@@ -216,7 +216,7 @@ fn a_powered_solid_short_of_a_symmetry_plane_keeps_its_power() {
 fn an_asymmetric_half_model_is_warned_about_at_setup() {
     let mut d = domain([0.0; 3], [2.0, 0.5, 0.125], 0.125);
     d.faces.x_min = FaceCondition::Velocity { velocity: [0.05, 0.01, 0.0], profile: Profile::Uniform };
-    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None };
     d.faces.y_max = FaceCondition::Symmetry {};
     d.faces.z_min = PERIODIC;
     d.faces.z_max = PERIODIC;
@@ -237,7 +237,7 @@ fn heated_duct(quarter: bool, power: f64) -> Flow {
     let side = if quarter { 0.5 } else { 1.0 };
     let mut d = domain([0.0; 3], [3.0, side, side], dx);
     d.faces.x_min = FaceCondition::Velocity { velocity: [0.05, 0.0, 0.0], profile: Profile::Uniform };
-    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None };
     d.obstacles = vec!["Block".into()];
     let mut t = FluidThermal { initial_temperature: kelvin(1.0), ..FluidThermal::default() };
     t.faces.x_min = ThermalCondition::Temperature { value: kelvin(1.0) };
@@ -339,7 +339,7 @@ fn a_fan_in_a_quarter_duct_runs_on_the_whole_fans_curve() {
 fn an_obstacle_cut_off_its_middle_is_warned_about_at_setup() {
     let mut d = domain([0.0; 3], [2.0, 0.5, 0.125], 0.125);
     d.faces.x_min = FaceCondition::Velocity { velocity: [0.05, 0.0, 0.0], profile: Profile::Uniform };
-    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None };
     d.faces.y_max = FaceCondition::Symmetry {};
     d.faces.z_min = PERIODIC;
     d.faces.z_max = PERIODIC;

@@ -97,7 +97,7 @@ fn a_trt_velocity_inlet_below_the_floor_is_warned_about() {
         let mut d = domain([0.0; 3], [8.0; 3], 1.0);
         if inlet {
             d.faces.x_min = FaceCondition::Velocity { velocity: [0.05, 0.0, 0.0], profile: Profile::Uniform };
-            d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Convective };
+            d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Convective, sigma: None };
         } else {
             d.faces.x_min = FaceCondition::Periodic {};
             d.faces.x_max = FaceCondition::Periodic {};
@@ -127,7 +127,7 @@ fn a_duct_with_the_corrected_inlet_balances_its_mass_at_steady_state() {
     let (n, u, tau, settle, window) = ([24, 8, 8], 0.05, 0.52, 12_000, 2_000);
     let mut d = domain([0.0; 3], n.map(|n| n as f64), 1.0);
     d.faces.x_min = FaceCondition::Velocity { velocity: [u, 0.0, 0.0], profile: Profile::Uniform };
-    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Convective };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Convective, sigma: None };
     d.initial_velocity = [u, 0.0, 0.0];
     let (_, mut flow) = prepare(&model(1.0, (tau - 0.5) / 3.0, d, collide(1e5, 1.0, None, Collision::Trt)), &[]);
     let grid = *flow.grid();

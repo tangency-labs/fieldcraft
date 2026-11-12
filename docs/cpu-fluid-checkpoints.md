@@ -53,6 +53,9 @@ topology is rebuilt and checked. A resumed steady calculation keeps its original
 configured thermal-capacity scaling; its iterations are not relabelled as a physical
 transient.
 
+A domain with a characteristic outflow (`outflow: "characteristic"`) has no restart layout yet: a
+checkpoint path with one is refused before the solve starts.
+
 Numbers are stored as little-endian IEEE bits. The versioned `FCLBM001` container includes the
 input/settings identity and a SHA-256 of the streamed state; lengths, finite values and
 expected shapes are validated, and truncation, a bad checksum or trailing bytes are refused.

@@ -13,6 +13,7 @@ fieldcraft-model = { workspace = true }
 serde = { workspace = true }
 fieldcraft-mesh = { workspace = true }
 fieldcraft-parallel = { workspace = true }
+libm = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]

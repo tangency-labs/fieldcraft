@@ -140,6 +140,8 @@ struct Shape {
     conducting: bool,
     open_faces: [bool; 6],
     inlets: bool,
+    /// The cells of a characteristic outlet's face (each keeps its boundary state).
+    characteristic_cells: u64,
     surface: bool,
     baffle_bytes: u64,
 }
@@ -171,6 +173,13 @@ impl Shape {
             inlets: trt
                 && domain.free_surface.is_none()
                 && fieldcraft_model::BoxFace::ALL.iter().any(|face| matches!(domain.faces.get(*face), FaceCondition::Velocity { .. })),
+            characteristic_cells: {
+                let [nx, ny, nz] = domain.cells()?;
+                domain
+                    .characteristic_outlets()
+                    .map(|(f, _)| [ny * nz, nx * nz, nx * ny].get(f.axis()).copied().unwrap_or(0))
+                    .fold(0, u64::saturating_add)
+            },
             surface: domain.free_surface.is_some(),
             baffle_bytes: {
                 let cells = domain.cells()?;
@@ -280,7 +289,8 @@ impl Memory {
         if s.surface {
             flow += SURFACE;
         }
-        let prepared = per_cell(flow).saturating_add(boundary).saturating_add(s.baffle_bytes);
+        let characteristic = s.characteristic_cells.saturating_mul(size_of::<crate::outlet::Characteristic>() as u64);
+        let prepared = per_cell(flow).saturating_add(boundary).saturating_add(characteristic).saturating_add(s.baffle_bytes);
         // Count every open face conservatively (edges may occur more than once). The pressure
         // rows and their upload bytes coexist on the host while the device buffers are created.
         // With TRT inlet reconstruction, velocity cells take a row as well: counted here too.

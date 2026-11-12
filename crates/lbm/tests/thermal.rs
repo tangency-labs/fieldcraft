@@ -89,7 +89,7 @@ fn the_flow_carries_the_inlet_temperature() {
     let dx = h / 8.0;
     let mut d = domain([0.0; 3], [l, h, dx], dx);
     d.faces.x_min = FaceCondition::Velocity { velocity: [umax, 0.0, 0.0], profile: fieldcraft_model::Profile::Uniform };
-    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None };
     d.faces.y_min = FaceCondition::Slip {};
     d.faces.y_max = FaceCondition::Slip {};
     d.faces.z_min = PERIODIC;
@@ -131,7 +131,7 @@ fn wall_heat_from_plates_that_start_at_the_inlet_is_what_the_fluid_keeps() {
         let alpha = 2.0 / 3.0 * umax * h / peclet;
         let mut d = domain([0.0; 3], [l, h, dx], dx);
         d.faces.x_min = FaceCondition::Velocity { velocity: [umax, 0.0, 0.0], profile: fieldcraft_model::Profile::Parabolic };
-        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None };
         d.faces.z_min = PERIODIC;
         d.faces.z_max = PERIODIC;
         let mut t = FluidThermal { initial_temperature: kelvin(0.0), ..FluidThermal::default() };

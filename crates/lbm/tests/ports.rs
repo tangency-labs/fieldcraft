@@ -9,7 +9,7 @@ fn saved() -> FluidResult {
     let mut d = domain([0.0; 3], [2.0; 3], 1.0);
     d.thermal = Some(Default::default());
     d.faces.x_min = FaceCondition::Velocity { velocity: [0.1, 0.0, 0.0], profile: Default::default() };
-    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Default::default() };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Default::default(), sigma: None };
     let m = hot_model(2.0, 0.1, 0.1, d, step(0.1, 0.1, None));
     let (setup, mut flow) = prepare(&m, &[]);
     let mut r = run(&setup, &mut flow, &Limits::default()).unwrap();
@@ -211,7 +211,7 @@ fn a_solved_heated_flow_s_ports_carry_its_inflow_and_its_heat() {
     let alpha = u * h / peclet;
     let mut d = domain([0.0; 3], [l, h, dx], dx);
     d.faces.x_min = FaceCondition::Velocity { velocity: [u, 0.0, 0.0], profile: Profile::Uniform };
-    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None };
     for f in [&mut d.faces.y_min, &mut d.faces.y_max, &mut d.faces.z_min, &mut d.faces.z_max] {
         *f = FaceCondition::Periodic {};
     }

@@ -96,7 +96,7 @@ fn porous_pressure_drop_and_fan_operating_point_match_the_analytic_laws() {
             let mut d = domain([0.0; 3], [40.0, 2.0, 2.0], 1.0);
             periodic(&mut d);
             d.faces.x_min = FaceCondition::Velocity { velocity: [0.03, 0.0, 0.0], profile: Profile::Uniform };
-            d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+            d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None };
             d.porous = vec![vent([18.0, 0.0, 0.0], [22.0, 2.0, 2.0], resistance)];
             let m = model(1.0, 0.1, d, collide(6000.0, 1.0, None, collision));
             let (setup, flow) = prepare(&m, &[]);
