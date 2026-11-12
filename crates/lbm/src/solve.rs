@@ -447,6 +447,9 @@ fn run_checkpointed(
     if store.is_some() && setup.domain.has_baffles() {
         return Err(Error::Invalid("baffles do not support checkpoint/resume yet".into()));
     }
+    if let Some((face, _)) = setup.domain.characteristic_outlet().filter(|_| store.is_some()) {
+        return Err(Error::Invalid(format!("not supported yet: a checkpoint of a characteristic outflow (box face {})", face.name())));
+    }
     let checkpoint_every = store.as_ref().map_or(0, |s| s.every());
     if store.is_some() && (checkpoint_every == 0 || flow.name() != "cpu") {
         return Err(Error::Invalid("checkpointing needs a positive step interval and the CPU backend".into()));

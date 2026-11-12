@@ -158,7 +158,7 @@ fn conjugate_cell_updates_per_second() {
     let (l, h) = (2.0 * side as f64, side as f64);
     let mut d = domain([0.0; 3], [l, h, h], 1.0);
     d.faces.x_min = FaceCondition::Velocity { velocity: [0.05, 0.0, 0.0], profile: fieldcraft_model::Profile::Uniform };
-    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: fieldcraft_model::Outflow::Convective };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: fieldcraft_model::Outflow::Convective, sigma: None };
     let mut solids = vec![conducting("Base", 1.0)];
     let mut obstacles = vec![obstacle("Base", cuboid([0.3 * l, 0.25 * h, 0.0], [0.6 * l, 0.75 * h, 0.1 * h]), &CUBOID_FACES)];
     for k in 0..6 {
@@ -224,7 +224,7 @@ fn fixed_cost_per_solve() {
     let (l, h) = (32.0, 16.0);
     let mut d = domain([0.0; 3], [l, h, h], 1.0);
     d.faces.x_min = FaceCondition::Velocity { velocity: [0.05, 0.0, 0.0], profile: fieldcraft_model::Profile::Uniform };
-    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: fieldcraft_model::Outflow::Convective };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: fieldcraft_model::Outflow::Convective, sigma: None };
     let obstacles = vec![obstacle("Block", cuboid([8.0, 4.0, 0.0], [16.0, 12.0, 4.0]), &CUBOID_FACES)];
     d.obstacles = vec!["Block".into()];
     d.thermal =

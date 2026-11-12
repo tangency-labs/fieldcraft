@@ -63,7 +63,7 @@ pub fn ball_channel(
 ) -> (Model, Obstacle) {
     let mut d = domain([0.0; 3], [2.0, 1.0, 1.0], 0.05);
     d.faces.x_min = fieldcraft_model::FaceCondition::Velocity { velocity: [0.1, 0.02, 0.0], profile: fieldcraft_model::Profile::Parabolic };
-    d.faces.x_max = fieldcraft_model::FaceCondition::Pressure { pressure: 0.0, outflow: fieldcraft_model::Outflow::Uniform };
+    d.faces.x_max = fieldcraft_model::FaceCondition::Pressure { pressure: 0.0, outflow: fieldcraft_model::Outflow::Uniform, sigma: None };
     d.faces.z_max = fieldcraft_model::FaceCondition::Slip {};
     d.obstacles = vec!["Ball".into()];
     d.acceleration = [0.0, 0.0, -0.01];

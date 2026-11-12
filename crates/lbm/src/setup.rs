@@ -584,6 +584,13 @@ impl Setup {
                 )));
             }
         }
+        // `Flow::characteristic_outlet` keeps one face's state and relaxation rate.
+        if let Some((face, _)) = domain.characteristic_outlets().nth(1) {
+            return Err(Error::Invalid(format!(
+                "not supported yet: a characteristic outflow on more than one box face (a second on `{}`)",
+                face.name()
+            )));
+        }
         // A free surface runs with walls, slip faces, periodic faces and velocity inlets, on a
         // Newtonian isothermal fluid without zones or a turbulence model; everything else is
         // refused by name rather than run unverified.

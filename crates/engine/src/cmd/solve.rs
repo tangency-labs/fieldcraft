@@ -836,6 +836,24 @@ fn run_fluid(s: &mut Session, p: &Value) -> Result<Value> {
     if checkpoint_path.is_some() && estimate.memory.backend != fieldcraft_lbm::Choice::Cpu {
         return Err(EngineError::Params("checkpoint/resume currently supports CPU fluid solves only; choose backend: cpu explicitly".into()));
     }
+    let step = opt::<String>(p, "step")?;
+    let (selected_step, domain) = fieldcraft_lbm::fluid_step(&s.model, step.as_deref())?;
+    // The characteristic outflow steps on the CPU without checkpoints: refused here, before
+    // anything runs, rather than by the solver once it has started.
+    if let Some((face, _)) = domain.characteristic_outlet() {
+        if checkpoint_path.is_some() {
+            return Err(EngineError::Params(format!(
+                "not supported yet: a checkpoint of a characteristic outflow (box face {}); solve without `checkpoint`",
+                face.name()
+            )));
+        }
+        if estimate.memory.backend != fieldcraft_lbm::Choice::Cpu {
+            return Err(EngineError::Params(format!(
+                "the characteristic outflow (box face {}) is not supported on the GPU yet: solve on the CPU (`backend: \"cpu\"`)",
+                face.name()
+            )));
+        }
+    }
     if opt::<bool>(p, "estimate")? == Some(true) {
         let mut reply = json!({"memory": estimate.to_json()});
         if checkpoint_path.is_some() {
@@ -848,8 +866,6 @@ fn run_fluid(s: &mut Session, p: &Value) -> Result<Value> {
     let limits = estimate.limits;
     let backend = estimate.memory.backend;
     let chosen = estimate.backend.clone();
-    let step = opt::<String>(p, "step")?;
-    let (selected_step, domain) = fieldcraft_lbm::fluid_step(&s.model, step.as_deref())?;
     let selected_step = selected_step.name.clone();
     let obstacles = obstacles(s, domain)?;
     let thread_count = threads(s, p)?;
@@ -2262,6 +2278,102 @@ pub(crate) mod tests {
             &json!({"domain": "Duct", "at": "x_max", "condition": {"type": "pressure", "pressure": 0, "outflow": "sponge"}}),
         );
         assert!(e.is_err());
+    }
+
+    /// The box of `fieldcraft-lbm`'s characteristic outlet test (64 × 4 × 4 cells of 1 m, a
+    /// uniform inlet at 0.05 m/s, periodic sides, TRT τ 0.55 at a time step of 1 s, 2000 steps,
+    /// a frame every 100),
+    /// started impulsively from rest, so the inlet sends a pressure wave down the box. In SI.
+    fn acoustic_box(s: &mut Session) {
+        let periodic = json!({"type": "periodic"});
+        let script = json!([
+            {"command": "model.units", "params": {"system": "m-kg-s-N-Pa"}},
+            {"command": "model.material.create", "params": {"name": "Air", "density": 1.0, "fluid": {"type": "newtonian", "viscosity": 0.05 / 3.0}}},
+            {"command": "model.fluid_domain.create", "params": {"name": "Box", "material": "Air", "min": [0, 0, 0], "max": [64, 4, 4], "spacing": 1,
+                "faces": {"x_min": {"type": "velocity", "velocity": [0.05, 0, 0]}, "x_max": {"type": "pressure", "pressure": 0},
+                    "y_min": periodic, "y_max": periodic, "z_min": periodic, "z_max": periodic}}},
+            {"command": "model.step.create", "params": {"name": "Ring", "procedure": {"type": "fluid", "domain": "Box", "end_time": 2000, "time_step": 1,
+                "frames": 20, "collision": "trt"}}},
+        ]);
+        s.run_script(&script).unwrap();
+    }
+
+    /// The gauge pressure's RMS over the box in each frame of the last fluid solve, in Pa.
+    fn pressure_rms(s: &Session) -> Vec<f64> {
+        let StepResult::Fluid(r) = s.result("Ring").unwrap().as_ref() else { panic!("not a fluid result") };
+        r.frames.iter().map(|f| (f.pressure.iter().map(|p| f64::from(*p).powi(2)).sum::<f64>() / f.pressure.len() as f64).sqrt()).collect()
+    }
+
+    /// `outflow: characteristic` set through the boundary command lets the start-up pressure wave
+    /// out of the box, where the uniform outlet reflects it back and forth; the model keeps σ
+    /// only when it is given, and refuses it out of range or with another outflow.
+    #[test]
+    fn a_characteristic_outlet_is_set_by_command_and_lets_the_start_up_wave_out() {
+        let mut s = Session::default();
+        acoustic_box(&mut s);
+        let faces = |s: &Session| serde_json::to_value(s.model.fluid_domain("Box").unwrap().faces).unwrap();
+        let set = |s: &mut Session, condition: Value| {
+            s.execute("model.fluid_domain.boundary", &json!({"domain": "Box", "at": "x_max", "condition": condition}))
+        };
+
+        s.execute("solve.fluid", &json!({"backend": "cpu"})).unwrap();
+        let uniform = pressure_rms(&s);
+
+        let before = s.model.clone();
+        for (condition, why) in [
+            (json!({"type": "pressure", "pressure": 0, "outflow": "characteristic", "sigma": 0}), "above 0 and at most 1"),
+            (json!({"type": "pressure", "pressure": 0, "outflow": "characteristic", "sigma": 1.5}), "above 0 and at most 1"),
+            (json!({"type": "pressure", "pressure": 0, "outflow": "uniform", "sigma": 0.25}), "characteristic outflow only"),
+            (json!({"type": "pressure", "pressure": 0, "sigma": 0.25}), "characteristic outflow only"),
+            (json!({"type": "pressure", "pressure": 0, "outflow": "characteristic", "sigma": "a lot"}), ""),
+        ] {
+            let e = set(&mut s, condition.clone()).unwrap_err().to_string();
+            assert!(e.contains(why), "{condition}: {e}");
+            assert_eq!(s.model, before);
+        }
+        set(&mut s, json!({"type": "pressure", "pressure": 0, "outflow": "characteristic", "sigma": 0.5})).unwrap();
+        assert_eq!(faces(&s)["x_max"], json!({"type": "pressure", "pressure": 0.0, "outflow": "characteristic", "sigma": 0.5}));
+        set(&mut s, json!({"type": "pressure", "pressure": 0, "outflow": "characteristic"})).unwrap();
+        assert_eq!(faces(&s)["x_max"], json!({"type": "pressure", "pressure": 0.0, "outflow": "characteristic"}));
+
+        let r = s.execute("solve.fluid", &json!({"backend": "cpu"})).unwrap();
+        assert_eq!(r["execution"], "completed", "{r}");
+        let characteristic = pressure_rms(&s);
+        for (k, (a, b)) in uniform.iter().zip(&characteristic).enumerate() {
+            println!("frame {k}: pressure RMS {a:.3e} Pa uniform outlet, {b:.3e} Pa characteristic");
+        }
+        // The wave has left: over the last quarter of the run (frames every 100 steps, against the
+        // mode's period of about 440, as the uniform outlet trades pressure for velocity), the
+        // largest RMS left is below a twentieth of the uniform outlet's.
+        let last = |v: &[f64]| v.iter().skip(15).fold(0.0_f64, |m, x| m.max(*x));
+        let (a, b) = (last(&uniform), last(&characteristic));
+        println!("last quarter: largest pressure RMS {a:.3e} Pa uniform outlet, {b:.3e} Pa characteristic");
+        assert!(b < 0.05 * a, "{b} vs {a}");
+    }
+
+    /// A characteristic outflow steps on the CPU without checkpoints: `backend: gpu` and a
+    /// checkpoint path are refused before anything runs or is written.
+    #[test]
+    fn a_characteristic_outlet_refuses_the_gpu_and_checkpoints_before_solving() {
+        let mut s = Session::default();
+        acoustic_box(&mut s);
+        s.execute(
+            "model.fluid_domain.boundary",
+            &json!({"domain": "Box", "at": "x_max", "condition": {"type": "pressure", "pressure": 0, "outflow": "characteristic"}}),
+        )
+        .unwrap();
+        let before = s.model.clone();
+        for p in [json!({"backend": "gpu"}), json!({"backend": "gpu", "estimate": true})] {
+            let e = s.execute("solve.fluid", &p).unwrap_err().to_string();
+            assert!(e.contains("characteristic outflow (box face x_max) is not supported on the GPU"), "{p}: {e}");
+        }
+        let path = std::env::temp_dir().join(format!("fieldcraft-characteristic-{}.restart", std::process::id()));
+        assert!(!path.exists());
+        let e = s.execute("solve.fluid", &json!({"backend": "cpu", "checkpoint": path, "checkpoint_every": 10})).unwrap_err().to_string();
+        assert!(e.contains("checkpoint of a characteristic outflow"), "{e}");
+        assert!(!path.exists(), "a refused solve writes no checkpoint");
+        assert_eq!(s.model, before);
+        assert_eq!(s.solved_steps().count(), 0);
     }
 
     /// The Couette gap with heat: the sliding top wall held at 1, the bottom at 0, the fluid's

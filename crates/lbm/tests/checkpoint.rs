@@ -72,7 +72,7 @@ fn a_convective_outlet_and_relaxed_fan_resume_with_every_bit_and_history() {
     for collision in COLLISIONS {
         let mut d = domain([0.0; 3], [12.0, 2.0, 2.0], 1.0);
         d.faces.x_min = FaceCondition::Velocity { velocity: [0.02, 0.0, 0.0], profile: fieldcraft_model::Profile::Uniform };
-        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Convective };
+        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Convective, sigma: None };
         for f in [&mut d.faces.y_min, &mut d.faces.y_max, &mut d.faces.z_min, &mut d.faces.z_max] {
             *f = FaceCondition::Periodic {};
         }

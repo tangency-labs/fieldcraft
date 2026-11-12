@@ -43,7 +43,7 @@ pub fn model_case(n: usize, padding: usize, segments: usize, end_time: f64, latt
     let alpha = nu / PR;
     let mut d = domain([-extra, 0.0, 0.0], [1.0 + extra, 1.0, dx], dx);
     d.faces.x_min = FaceCondition::Velocity { velocity: [1.0, 0.0, 0.0], profile: Profile::Uniform };
-    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Convective };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Convective, sigma: None };
     d.faces.z_min = PERIODIC;
     d.faces.z_max = PERIODIC;
     d.obstacles = vec!["LeftWall".into(), "RightWall".into(), "Cylinder".into()];

@@ -192,6 +192,9 @@ pub fn backend(choice: Choice, flow: Flow, setup: &Setup) -> Result<Box<dyn Back
         Choice::Cpu => Ok(Box::new(flow)),
         // No device backend has the sheets' exchange yet: refused before one is asked for.
         Choice::Device if flow.has_baffles() => Err(Error::Invalid("baffles are not supported on the GPU yet: solve on the CPU".into())),
+        Choice::Device if setup.domain.characteristic_outlet().is_some() => {
+            Err(Error::Invalid("the characteristic outflow is not supported on the GPU yet: solve on the CPU".into()))
+        }
         Choice::Device => match backend_factory() {
             Some(make) => make(&flow, setup),
             None => Err(Error::Backend("no GPU backend is available in this build: solve on the CPU (`backend: \"cpu\"`)".into())),

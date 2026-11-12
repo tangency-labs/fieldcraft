@@ -941,8 +941,11 @@ impl Flow {
                             }
                             Target::Velocity(setup.to_lattice(velocity).map(|v| v * scale))
                         }
-                        FaceCondition::Pressure { pressure, outflow: Outflow::Uniform } => Target::Density(setup.lattice_density(pressure)),
-                        FaceCondition::Pressure { pressure, outflow: Outflow::Convective } => Target::Convective(setup.lattice_density(pressure)),
+                        // A characteristic outlet starts as a uniform one ([`Flow::characteristic_outlet`]).
+                        FaceCondition::Pressure { pressure, outflow: Outflow::Uniform | Outflow::Characteristic, .. } => {
+                            Target::Density(setup.lattice_density(pressure))
+                        }
+                        FaceCondition::Pressure { pressure, outflow: Outflow::Convective, .. } => Target::Convective(setup.lattice_density(pressure)),
                         _ => break,
                     };
                     if let Some(t) = taken.get_mut(cell) {
@@ -1189,6 +1192,9 @@ impl Flow {
             surface,
         };
         flow.outlets = Outlets::new(&flow.open, &View { flow: &flow, f: &flow.f });
+        if let Some((face, sigma)) = setup.domain.characteristic_outlet() {
+            flow.characteristic_outlet(face, sigma)?;
+        }
         if let Some(s) = &mut flow.surface {
             s.initial_mass = s.total_mass(&flow.f, flow.stride);
         }

@@ -723,11 +723,14 @@ const FACE_CONDITION: &[Variant] = &[
         "Pressure outlet",
         &[
             num("pressure", "Pressure", D::Stress).help("Pressure at the outlet, relative to the domain's reference.").req().def("0"),
-            choice("outflow", "Outflow", &[("uniform", "Uniform"), ("convective", "Convective")])
+            choice("outflow", "Outflow", &[("uniform", "Uniform"), ("convective", "Convective"), ("characteristic", "Characteristic")])
                 .help(
-                    "Uniform: the flow crosses the outlet normally. Convective: the flow leaves as it arrives, for outlets a wake or vortices reach.",
+                    "Uniform: the flow crosses the outlet normally. Convective: the flow leaves as it arrives, for outlets a wake or vortices reach. Characteristic: as uniform, but outgoing pressure waves leave instead of reflecting (CPU only, no checkpoints).",
                 )
                 .def("\"uniform\""),
+            above("sigma", "Relaxation σ", D::None, 0.0, 1.0)
+                .help("A characteristic outflow only: how fast its pressure relaxes to the outlet's (above 0, at most 1). Smaller reflects less of the slow waves but lets the mean pressure drift further.")
+                .hint("0.25"),
         ],
     ),
     variant("periodic", "Periodic", &[]),

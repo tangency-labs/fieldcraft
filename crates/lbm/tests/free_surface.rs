@@ -195,7 +195,7 @@ fn unsupported_combinations_are_refused_by_name() {
         edit(&mut d);
         refused(&model(1.0, 0.01, d, step(1.0, 0.1, None)), what);
     };
-    refuse(&|d| d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Default::default() }, "pressure face");
+    refuse(&|d| d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Default::default(), sigma: None }, "pressure face");
     let mut hot = tank(8, 8, 0.1, &[([0.0; 3], [0.8, 0.1, 0.4])]);
     hot.thermal = Some(Default::default());
     refused(&hot_model(1.0, 0.01, 0.01, hot, step(1.0, 0.1, None)), "heat");

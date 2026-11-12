@@ -287,7 +287,7 @@ fn zou_he_channel_matches_the_cpu() {
         let dx = h / 10.0;
         let mut d = domain([0.0; 3], [l, h, dx], dx);
         d.faces.x_min = FaceCondition::Velocity { velocity: [umax, 0.0, 0.0], profile: Profile::Parabolic };
-        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None };
         d.faces.z_min = PERIODIC;
         d.faces.z_max = PERIODIC;
         let m = model(1.0, nu, d, collide(2.0 * l / umax, 0.05 * dx / umax, None, collision));
@@ -314,7 +314,7 @@ fn convective_outlet_matches_the_cpu_with_a_vortex_and_backflow() {
         let side = n as f64;
         let mut d = domain([0.0; 3], [side, side, 1.0], 1.0);
         d.faces.x_min = FaceCondition::Velocity { velocity: [u0, 0.0, 0.0], profile: Profile::Uniform };
-        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Convective };
+        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Convective, sigma: None };
         for f in [BoxFace::YMin, BoxFace::YMax, BoxFace::ZMin, BoxFace::ZMax] {
             *d.faces.get_mut(f) = PERIODIC;
         }
@@ -354,8 +354,8 @@ fn edges_of_two_pressure_faces_match_the_cpu() {
         for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
             let mut d = domain([0.0; 3], [16.0, 8.0, 1.0], 1.0);
             d.faces.x_min = FaceCondition::Velocity { velocity: [0.05, 0.0, 0.0], profile: Profile::Uniform };
-            d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow };
-            d.faces.y_max = FaceCondition::Pressure { pressure: 0.0, outflow };
+            d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow, sigma: None };
+            d.faces.y_max = FaceCondition::Pressure { pressure: 0.0, outflow, sigma: None };
             d.faces.z_min = PERIODIC;
             d.faces.z_max = PERIODIC;
             let m = model(1.0, 0.05, d, step(800.0, 1.0, None));
@@ -461,7 +461,7 @@ fn a_heated_channel_matches_the_cpu() {
         let dx = h / 8.0;
         let mut d = domain([0.0; 3], [l, h, dx], dx);
         d.faces.x_min = FaceCondition::Velocity { velocity: [umax, 0.0, 0.0], profile: Profile::Parabolic };
-        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None };
         d.faces.z_min = PERIODIC;
         d.faces.z_max = PERIODIC;
         let mut t = FluidThermal::default();
@@ -491,7 +491,7 @@ fn wall_heat_at_a_held_inlet_matches_the_cpu() {
         let alpha = 2.0 / 3.0 * umax * h / 200.0;
         let mut d = domain([0.0; 3], [l, h, dx], dx);
         d.faces.x_min = FaceCondition::Velocity { velocity: [umax, 0.0, 0.0], profile: Profile::Parabolic };
-        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None };
         d.faces.z_min = PERIODIC;
         d.faces.z_max = PERIODIC;
         let mut t = FluidThermal { initial_temperature: kelvin(0.0), ..FluidThermal::default() };
@@ -722,7 +722,7 @@ fn odd_even_and_chunk_readbacks_match_the_cpu_with_heat_open_and_slip_faces() {
     for (collision, streaming) in cases() {
         let mut d = domain([0.0; 3], [16.0, 8.0, 1.0], 1.0);
         d.faces.x_min = FaceCondition::Velocity { velocity: [0.01, 0.0, 0.0], profile: Profile::Uniform };
-        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None };
         d.faces.y_max = FaceCondition::Slip {};
         d.faces.z_min = PERIODIC;
         d.faces.z_max = PERIODIC;
@@ -1872,7 +1872,7 @@ fn a_heated_block_in_a_channel_matches_the_cpu() {
         let dx = 1.0 / n as f64;
         let mut d = domain([0.0; 3], [3.0, 1.0, dx], dx);
         d.faces.x_min = FaceCondition::Velocity { velocity: [0.05, 0.0, 0.0], profile: Profile::Parabolic };
-        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None };
         d.faces.z_min = PERIODIC;
         d.faces.z_max = PERIODIC;
         d.obstacles = vec!["Block".into()];
@@ -1903,7 +1903,7 @@ fn a_conductor_through_the_inlet_and_the_outlet_matches_the_cpu() {
     let dx = 1.0 / n as f64;
     let mut d = domain([0.0; 3], [2.0, 1.0, dx], dx);
     d.faces.x_min = FaceCondition::Velocity { velocity: [0.05, 0.0, 0.0], profile: Profile::Uniform };
-    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None };
     d.faces.z_min = PERIODIC;
     d.faces.z_max = PERIODIC;
     d.obstacles = vec!["Plate".into()];
@@ -4106,7 +4106,7 @@ fn study_taylor_green_vortex_dissipation() {
 fn uniform_pressure_departure(collision: Collision, streaming: Streaming, tau: f64, size: [usize; 3], steps: u64) -> Option<f64> {
     let mut d = domain([0.0; 3], size.map(|n| n as f64), 1.0);
     d.faces.x_min = FaceCondition::Velocity { velocity: [0.05, 0.0, 0.0], profile: Profile::Uniform };
-    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None };
     d.faces.y_min = PERIODIC;
     d.faces.y_max = PERIODIC;
     d.faces.z_min = PERIODIC;
