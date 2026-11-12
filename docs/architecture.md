@@ -56,7 +56,7 @@ Rules beyond the layer order:
 `solidcraft-*` come from https://github.com/tangency-labs/solidcraft (formerly
 bherbruck/solidcraft, which redirects there), pinned in the workspace `Cargo.toml` to the commit
 of a SolidCraft release tag or, when FieldCraft needs a change not yet released, a commit on
-SolidCraft's main branch (now 5e33828, 2026-11-11, after v0.40.0-rc.4). From v0.40 SolidCraft's
+SolidCraft's main branch (now 81dd685, 2026-11-12, after v0.40.1). From v0.40 SolidCraft's
 modelling kernel is solidcore (Apache-2.0, a Rust port of NVIDIA's SMLib), which replaced the
 truck crates; SolidCraft vendors it in its repository (`solidcore/`). SolidCraft's API takes and
 gives solidcore's records (`Vec3`, `Plane`, `Region2`, …), so `fieldcraft-geometry` also depends

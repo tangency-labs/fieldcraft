@@ -216,6 +216,8 @@ pub fn timeline(app: &mut ModelApp, ui: &mut egui::Ui) {
             marker: list.iter().position(|i| i.start >= done).unwrap_or(list.len()),
             steps: list.len(),
             floating: false,
+            // The journal is a record of what was done, in order: its steps never move.
+            reorder: false,
             handles: HANDLES,
         };
         let head = history_bar::header(ui, &bar, r);
