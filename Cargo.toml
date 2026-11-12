@@ -99,6 +99,9 @@ solidcraft-engine = { git = "https://github.com/tangency-labs/solidcraft", rev =
 # crate (Apache-2.0), from the copy of solidcore SolidCraft vendors (its `solidcore/`), at the same
 # rev as the crates above, so the build carries one copy of it and the types match.
 solidcore-record = { git = "https://github.com/tangency-labs/solidcraft", rev = "81dd685a842fbf7906579c351b36a023cf56fc07" }
+# solidcore's tessellator (Apache-2.0), same copy and rev: the analysis meshes of the B-rep faces
+# (`solidcore_tess::mesh`) that fieldcraft-geometry hands the volume meshers.
+solidcore-tess = { git = "https://github.com/tangency-labs/solidcraft", rev = "81dd685a842fbf7906579c351b36a023cf56fc07" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

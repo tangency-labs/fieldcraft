@@ -359,8 +359,20 @@ fn centre(s: &mut Session, p: &Value) -> Result<Value> {
                     Some(fieldcraft_geometry::FaceSurface::Cylinder { origin, axis: d, .. }) => {
                         let len = dot3(d, d).sqrt();
                         let d = scale3(d, 1.0 / len.max(1e-300));
-                        // The face centre's foot on the axis.
-                        let foot = add3(origin, scale3(d, dot3(sub3(c, origin), d)));
+                        // The axis point at the face's mid-depth: halfway between its extremes
+                        // along the axis, which its rims' nodes (on the exact edges) reach
+                        // whatever the triangulation. The area centroid's foot is mid-depth only
+                        // for a symmetric triangulation.
+                        let along = mesh
+                            .triangles
+                            .iter()
+                            .zip(&mesh.tri_face)
+                            .filter(|(_, t)| **t == i)
+                            .flat_map(|(t, _)| t.iter().filter_map(|&v| mesh.positions.get(v as usize)))
+                            .map(|p| dot3(sub3(*p, origin), d))
+                            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), t| (lo.min(t), hi.max(t)));
+                        let mid = if along.0 <= along.1 { 0.5 * (along.0 + along.1) } else { dot3(sub3(c, origin), d) };
+                        let foot = add3(origin, scale3(d, mid));
                         let same = axis.is_none_or(|(o, a)| {
                             let off = sub3(foot, o);
                             let across = sub3(off, scale3(a, dot3(off, a)));
@@ -747,7 +759,10 @@ pub(crate) mod tests {
         near(&r, [15.0, 15.0, 5.0]);
         // A rim arc on top.
         let edges = body.edges().unwrap();
-        let arc = edges.iter().find(|e| e.points.iter().all(|p| (p[2] - 10.0).abs() < 1e-9) && e.points.len() > 3).unwrap();
+        let arc = edges
+            .iter()
+            .find(|e| e.points.iter().all(|p| (p[2] - 10.0).abs() < 1e-9 && ((p[0] - 15.0).hypot(p[1] - 15.0) - 5.0).abs() < 1e-9))
+            .unwrap();
         let r = s.execute("geometry.centre", &json!({"geometry": [{"body": body.name, "edge": arc.name}]})).unwrap();
         near(&r, [15.0, 15.0, 10.0]);
         assert_eq!(r["from"], "circle");

@@ -69,6 +69,15 @@ impl From<KernelError> for Error {
 /// SolidCraft's linear modelling tolerance (mm): points closer than this are the same point.
 const LINEAR_TOLERANCE: f64 = solidcraft_geom::LINEAR_TOL;
 
+/// The smallest triangle angle the analysis mesh of the B-rep faces is shaped to (degrees; at
+/// most `solidcore_tess::MAX_MESH_MIN_ANGLE`, 30). Ruppert refinement is guaranteed to end for
+/// angles up to about 20.7° and in practice reaches 30° on most faces, but not near a sphere's
+/// poles or on faces crowded with boundary segments: asked for 30°, the corpus spheres stop
+/// short (`Crowded`) at 16–23° and their tet meshes break, where 25° is met everywhere but on
+/// sharper corners of the boundary itself (J. Ruppert, J. Algorithms 18(3):548–585, 1995;
+/// J. R. Shewchuk, CGTA 22:21–74, 2002).
+const TESS_MIN_ANGLE: f64 = 25.0;
+
 /// A solid body.
 #[derive(Debug, Clone)]
 pub struct Shape {
@@ -154,11 +163,13 @@ pub struct SurfaceMesh {
     /// The B-rep face each triangle lies on.
     pub tri_face: Vec<u32>,
     /// Copies of one point closer than this are the same point (0: only identical coordinates).
-    /// A [`Shape::tessellate`] result is a triangle soup whose faces each carry their own copy of
-    /// the boundary points they share, accurate to the kernel's linear tolerance, so two copies
-    /// can differ by up to twice it; boundary surface preparation welds at this distance.
+    /// A [`Shape::tessellate`] result of a B-rep body shares its faces' boundary nodes already
+    /// (the analysis mesh is welded); a mesh body's or an imported surface's copies may differ
+    /// by up to twice the kernel's linear tolerance, and boundary surface preparation welds at
+    /// this distance.
     pub weld_distance: f64,
-    /// The B-rep edges as polylines, by edge index (empty for a surface without B-rep edges).
+    /// The B-rep edges as polylines, by edge index (empty for a surface without B-rep edges); a
+    /// closed edge repeats its first point at the end.
     pub edges: Vec<Vec<[f64; 3]>>,
     /// Per edge: the B-rep faces it bounds (one or two), by face index.
     pub edge_faces: Vec<Vec<u32>>,
@@ -310,29 +321,68 @@ impl Shape {
             // Its value is in the geometry's millimetres, which the caller may not show: not named.
             return Err(Error::Invalid("the tessellation tolerance must be a finite, positive length".into()));
         }
-        let m = guard("tessellate", || self.body.mesh(&solidcraft_kernel::MeshTolerance::chord(tolerance)))?;
-        // SolidCraft's mesher leaves out a face it cannot mesh and meshes the rest (it logs why):
-        // a boundary with a hole in it, which no volume mesher takes. Refused here, by name.
-        if !self.body.is_mesh() {
-            let mut meshed = vec![false; self.body.face_count()];
-            for f in &m.tri_face {
-                if let Some(slot) = meshed.get_mut(*f as usize) {
-                    *slot = true;
-                }
-            }
-            let missing: Vec<usize> = meshed.iter().enumerate().filter(|(_, m)| !**m).map(|(i, _)| i).collect();
-            if let Some(&first) = missing.first() {
-                // By B-rep face index; a merged face's name through the merge.
-                let face = if self.face_map.is_empty() { Some(first) } else { self.face_map.get(first).map(|&v| v as usize) };
-                let name = face.and_then(|v| self.faces.get(v)).map_or_else(|| format!("#{first}"), |f| format!("`{}`", f.name));
-                return Err(Error::Failed(format!(
-                    "SolidCraft could not triangulate {} of the {} faces of body `{}` (face {name} first)",
-                    missing.len(),
-                    meshed.len(),
-                    self.name
-                )));
-            }
+        if self.body.is_mesh() {
+            return self.tessellate_mesh_body(tolerance);
         }
+        self.analysis_mesh(tolerance)
+    }
+
+    /// The analysis mesh of the B-rep's faces (`solidcore_tess::mesh`): each face meshed by
+    /// constrained Delaunay in its own parameters to the chordal `tolerance`, shaped to
+    /// [`TESS_MIN_ANGLE`], every edge sampled once so the faces share their boundary nodes. No
+    /// size is asked: the volume mesher grades its own; the surface gives the shape.
+    fn analysis_mesh(&self, tolerance: f64) -> Result<SurfaceMesh> {
+        let record = self.body.record();
+        let spec = solidcore_tess::MeshSpec { chord: tolerance, size: None, min_angle: TESS_MIN_ANGLE };
+        let size = self.body.size();
+        let (plan, stats) = guard("tessellate", || solidcore_tess::mesh(record, &spec, size, None).map_err(KernelError::from))?;
+        let name = |face: usize| {
+            let v = if self.face_map.is_empty() { Some(face) } else { self.face_map.get(face).map(|&v| v as usize) };
+            v.and_then(|v| self.faces.get(v)).map_or_else(|| format!("#{face}"), |f| format!("`{}`", f.name))
+        };
+        // A face a bound limited is listed whether or not it met the tolerance after all.
+        let off: Vec<_> = stats.over_tolerance.iter().filter(|f| !f.within).collect();
+        if let Some(f) = off.first() {
+            return Err(Error::Failed(format!(
+                "SolidCraft could not mesh {} of the faces of body `{}` within the tessellation tolerance (face {} first)",
+                off.len(),
+                self.name,
+                name(f.face)
+            )));
+        }
+        let (m, refused) = plan.welded();
+        if let Some(f) = refused.first() {
+            return Err(Error::Failed(format!(
+                "SolidCraft could not triangulate {} of the faces of body `{}` (face {} first: {})",
+                refused.len(),
+                self.name,
+                name(f.face),
+                f.reason
+            )));
+        }
+        let positions: Vec<[f64; 3]> = m.positions.into_iter().map(xyz).collect();
+        // A closed edge (its start vertex its end) repeats its first point at the end, as the
+        // polylines of `SurfaceMesh::edges` do.
+        let mut edges = Vec::with_capacity(m.edges.len());
+        for (e, ids) in m.edges.iter().enumerate() {
+            let mut line = ids
+                .iter()
+                .map(|&v| positions.get(v as usize).copied().ok_or_else(|| Error::Failed("an edge node outside the mesh".into())))
+                .collect::<Result<Vec<[f64; 3]>>>()?;
+            let closed = record.edges.get(e).is_some_and(|x| x.vertices[0] == x.vertices[1]);
+            if closed && ids.len() > 1 && ids.first() != ids.last() {
+                line.extend(line.first().copied());
+            }
+            edges.push(line);
+        }
+        // The faces each edge separates, once each, in the order of the edge's uses.
+        let edge_faces = plan.edge_faces.clone();
+        Ok(SurfaceMesh { positions, triangles: m.triangles, tri_face: m.tri_face, weld_distance: 2.0 * LINEAR_TOLERANCE, edges, edge_faces })
+    }
+
+    /// A mesh body's own triangles.
+    fn tessellate_mesh_body(&self, tolerance: f64) -> Result<SurfaceMesh> {
+        let m = guard("tessellate", || self.body.mesh(&solidcraft_kernel::MeshTolerance::chord(tolerance)))?;
         Ok(SurfaceMesh {
             positions: m.positions.into_iter().map(xyz).collect(),
             triangles: m.triangles,

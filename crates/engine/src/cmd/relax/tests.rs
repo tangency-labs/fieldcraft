@@ -441,8 +441,9 @@ fn mesh_and_strong_relaxation_are_the_same_bits_everywhere() {
     // The strong morph's harmonic solve runs to round-off since #612, which moved it again, and
     // SolidCraft v0.40's kernel tessellates the plate (its hole one face, its seam a vertex on
     // the hole's rim) otherwise. Dividing the hex mesh's curves along their exact curves (the
-    // hole's rim nodes at even angles) moved it again.
-    assert_eq!(one, 0xac59_f4c7_831d_a8cc, "fingerprint {one:#018x}");
+    // hole's rim nodes at even angles) moved it again, and the analysis tessellation
+    // (`solidcore_tess::mesh`) moved it once more.
+    assert_eq!(one, 0x6ddc_452e_c2ef_69f3, "fingerprint {one:#018x}");
 }
 
 /// A mesher's result depends on the stored model alone: relaxing, undoing and relaxing again

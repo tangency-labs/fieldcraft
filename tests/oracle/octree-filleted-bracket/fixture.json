@@ -2,12 +2,12 @@
   "note": "FieldCraft's accepted results for this case, written by `cargo xtask oracle --bless`. A result outside its band fails CI.",
   "values": {
     "fillet_5": {
-      "band": 1.4452087431216067e-7,
-      "value": 144.52087431216066
+      "band": 1.4321000000000002e-7,
+      "value": 140.80942084699677
     },
     "fillet_7": {
       "band": 1.4321000000000002e-7,
-      "value": 138.59901665298926
+      "value": 138.93930616329223
     },
     "invalid": {
       "band": 0.0,
@@ -15,19 +15,19 @@
     },
     "reaction_x": {
       "band": 2.0000000000000003e-6,
-      "value": -1999.9999999979746
+      "value": -1999.999999999653
     },
     "syy_inner": {
-      "band": 1.472140885283543e-7,
-      "value": -147.2140885283543
+      "band": 1.4731215387285577e-7,
+      "value": -147.31215387285576
     },
     "syy_outer": {
-      "band": 1.4920396809527268e-7,
-      "value": 149.20396809527267
+      "band": 1.49345922282219e-7,
+      "value": 149.345922282219
     },
     "volume": {
-      "band": 0.00003218778440218048,
-      "value": 32187.784402180478
+      "band": 0.00003216051361147646,
+      "value": 32160.513611476457
     }
   }
 }
