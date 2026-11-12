@@ -32,7 +32,7 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@1.98.0  # the version in rust-toolchain.toml
+      - uses: dtolnay/rust-toolchain@1.99.1  # the version in rust-toolchain.toml
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: arm64
@@ -62,7 +62,7 @@ jobs:
       PKG_CONFIG_ALLOW_CROSS: 1
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@1.98.0  # the version in rust-toolchain.toml
+      - uses: dtolnay/rust-toolchain@1.99.1  # the version in rust-toolchain.toml
         with:
           targets: riscv64gc-unknown-linux-gnu
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
