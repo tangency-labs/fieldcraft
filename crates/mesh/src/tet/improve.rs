@@ -23,7 +23,7 @@ use crate::predicates::Point3;
 use super::complex::{EDGES, IdMap, NONE, Step, TetComplex, VertexKind, Walk, face_toward, sorted4};
 use super::measure::{self, P};
 use super::ops::{self, Site, remove_edge_at, remove_face, tet_quality};
-use super::refine::{Context, MAX_CAVITY, MIN_GAP};
+use super::refine::{Context, MIN_GAP};
 use super::smooth::smooth_vertex;
 
 /// Settings of the schedule.
@@ -297,7 +297,7 @@ fn attempt_insert(cx: &mut TetComplex, ctx: &Context, p: Point3, kind: VertexKin
         // tetrahedron that stays below the target would otherwise draw an insertion every pass
         // and pile vertices around one of its own, whose star then grows without bound (#311).
         let gap = MIN_GAP * ctx.h(p.coords(), 0.0);
-        let Some(v) = ops::insert_delaunay_apart(cx, p, kind, site, MAX_CAVITY, gap)? else { return Ok(false) };
+        let Some(v) = ops::insert_delaunay_apart(cx, p, kind, site, gap)? else { return Ok(false) };
         for _ in 0..4 {
             smooth_vertex(cx, ctx, v)?;
             if !cx.is_used(v) {

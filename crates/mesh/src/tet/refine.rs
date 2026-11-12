@@ -96,8 +96,6 @@ pub struct RefineStats {
 /// Refinement never puts a vertex closer than this times the local size to another.
 pub const MIN_GAP: f64 = 0.05;
 
-/// Most tetrahedra a Delaunay cavity may hold.
-pub const MAX_CAVITY: usize = 4096;
 /// Most steps of a point location walk.
 const MAX_WALK: usize = 1 << 16;
 
@@ -131,9 +129,6 @@ fn conflicts(cx: &TetComplex, t: u32, p: &Point3) -> Result<Vec<u32>> {
     let mut i = 0;
     while let Some(&u) = out.get(i) {
         i += 1;
-        if out.len() > MAX_CAVITY {
-            break;
-        }
         for n in cx.adj(u)? {
             if n != NONE && !seen.contains_key(&n) {
                 seen.insert(n, ());
@@ -187,7 +182,7 @@ pub fn split_face(cx: &mut TetComplex, ctx: &Context, t: u32, k: usize, min_face
         if measure::dist(p.coords(), o) > 0.5 * r || x.iter().any(|c| measure::dist(*c, p.coords()) < 0.25 * shortest) {
             return Ok(None);
         }
-        return ops::insert_delaunay_apart(cx, p, kind, Site::Face(t, k), MAX_CAVITY, MIN_GAP * ctx.h(o, r));
+        return ops::insert_delaunay_apart(cx, p, kind, Site::Face(t, k), MIN_GAP * ctx.h(o, r));
     }
     // The longest edge.
     let (mut u, mut w, mut len) = (f[0], f[1], -1.0);
@@ -231,7 +226,7 @@ pub fn split_edge(cx: &mut TetComplex, ctx: &Context, u: u32, w: u32, tag: u32, 
     if measure::dist(p.coords(), m) > 0.25 * len {
         return Ok(None);
     }
-    ops::insert_delaunay_apart(cx, p, kind, Site::Edge(u, w), MAX_CAVITY, MIN_GAP * ctx.h(m, len))
+    ops::insert_delaunay_apart(cx, p, kind, Site::Edge(u, w), MIN_GAP * ctx.h(m, len))
 }
 
 /// A feature-curve edge at one of the vertices `near` whose diametral sphere holds `p`.
@@ -311,7 +306,7 @@ pub fn refine(cx: &mut TetComplex, ctx: &Context, o: &RefineOptions) -> Result<R
                         v
                     }
                     (Some(ti), None) => {
-                        let v = ops::insert_delaunay_apart(cx, p, VertexKind::Interior, Site::Interior(ti), MAX_CAVITY, MIN_GAP * ctx.h(c, 1.0))?;
+                        let v = ops::insert_delaunay_apart(cx, p, VertexKind::Interior, Site::Interior(ti), MIN_GAP * ctx.h(c, 1.0))?;
                         stats.interior += usize::from(v.is_some());
                         v
                     }

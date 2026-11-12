@@ -366,7 +366,7 @@ fn place_seed_node(cx: &mut TetComplex, ctx: &Context, p: [f64; 3], along: &mut 
         return Ok(true);
     }
     let Some(q) = ctx.place(VertexKind::Curve(c), p) else { return Ok(false) };
-    let Some(v) = ops::insert_delaunay_admissible(cx, q, VertexKind::Curve(c), ops::Site::Edge(a, b), refine::MAX_CAVITY, gap)? else {
+    let Some(v) = ops::insert_delaunay_admissible(cx, q, VertexKind::Curve(c), ops::Site::Edge(a, b), gap)? else {
         return Ok(false);
     };
     cx.set_kind(v, VertexKind::Corner);
