@@ -298,20 +298,58 @@ mod tests {
         edges.iter().map(|(_, line)| nodes_on(s, line)).collect()
     }
 
+    /// The plate's thickness edge on its x = 40 end, 10 mm.
+    const SHORT_EDGE: &str = "F2:side:l2|F2:side:l3";
+
+    /// A 30 mm edge of the plate's x = 0 end.
+    fn long_end_edge(s: &Session) -> String {
+        end_face_edges(s).into_iter().find(|(_, l)| (l[0][1] - l.last().unwrap()[1]).abs() > 29.0).unwrap().0
+    }
+
+    /// An exact seed of `count` alone on `edge`, the plate meshed with tetrahedra at size 5,
+    /// gives `count` mesh edges, the seed's nodes at its places and no other node on the edge.
+    fn assert_tet_seed_holds(edge: &str, count: u32) {
+        let mut s = plate();
+        let e = s.design.as_ref().unwrap().body("Body1").unwrap().edges().unwrap().into_iter().find(|e| e.name == edge).unwrap();
+        s.execute("mesh.seed.edge", &json!({"edges": [{"body": "Body1", "edge": edge}], "count": count})).unwrap();
+        let r = s.execute("mesh.tet.generate", &json!({"body": "Body1", "size": 5})).unwrap();
+        let t = nodes_on(&s, &e.points);
+        assert_eq!(t.len(), count as usize + 1, "{edge} seeded {count}: {t:?}");
+        assert_eq!(r["bodies"][0]["seeds"][0]["mesh_edges"], count, "{edge} seeded {count}");
+        for (k, x) in t.iter().enumerate() {
+            assert!((x - e.length() * k as f64 / f64::from(count)).abs() < 1e-6, "{edge} seeded {count}: {t:?}");
+        }
+    }
+
     /// An exact seed's nodes are the only mesh nodes on its edge, at the seed's places (#894:
     /// a seed of 12 on a 30 mm edge gave 11).
     #[test]
     fn an_exact_tet_seed_holds_its_count() {
-        let mut s = plate();
-        let edges = end_face_edges(&s);
-        let (name, line) = edges.iter().find(|(_, l)| (l[0][1] - l.last().unwrap()[1]).abs() > 29.0).unwrap().clone();
-        s.execute("mesh.seed.edge", &json!({"edges": [{"body": "Body1", "edge": name}], "count": 12})).unwrap();
-        let r = s.execute("mesh.tet.generate", &json!({"body": "Body1", "size": 5})).unwrap();
-        let t = nodes_on(&s, &line);
-        assert_eq!(t.len(), 13, "{t:?}");
-        assert_eq!(r["bodies"][0]["seeds"][0]["mesh_edges"], 12, "{}", r["bodies"][0]["seeds"]);
-        for (k, x) in t.iter().enumerate() {
-            assert!((x - 2.5 * k as f64).abs() < 1e-6, "{t:?}");
+        assert_tet_seed_holds(&long_end_edge(&plate()), 12);
+    }
+
+    /// A fine seed on a short edge: 8 on the 10 mm thickness edge, spacing 1.25 against size 5,
+    /// gave 7 (#901: the node at 2.5 mm was refused by a flat cavity).
+    #[test]
+    fn a_fine_exact_tet_seed_on_a_short_edge_holds_its_count() {
+        assert_tet_seed_holds(SHORT_EDGE, 8);
+    }
+
+    /// Exact seeds coarser than the size and much finer than it hold on the short edge (20 gave
+    /// 19).
+    #[test]
+    fn exact_tet_seeds_of_any_count_hold_on_a_short_edge() {
+        for count in [1, 3, 20] {
+            assert_tet_seed_holds(SHORT_EDGE, count);
+        }
+    }
+
+    /// And on a long edge, coarser and finer than the size.
+    #[test]
+    fn exact_tet_seeds_of_any_count_hold_on_a_long_edge() {
+        let long = long_end_edge(&plate());
+        for count in [5, 30] {
+            assert_tet_seed_holds(&long, count);
         }
     }
 
