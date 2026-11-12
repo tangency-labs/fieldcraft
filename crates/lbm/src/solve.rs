@@ -733,6 +733,20 @@ fn run_checkpointed(
     let forces: Vec<_> =
         flow.groups().iter().zip(forces).map(|(g, force)| ForceHistory { name: g.name.clone(), body: g.body.clone(), force }).collect();
     let validity = crate::validity::Report::new(validity.samples, validity.every, every, &forces)?;
+    // The setup's Mach number is an estimate from the characteristic velocity; the sampled fields
+    // give the true largest speed over every fluid cell, open layers included.
+    if let Some(peak) = validity.peak_mach()
+        && peak.mach_max > crate::setup::MACH_WARNING
+    {
+        warnings.push(format!(
+            "the largest local Mach number over the fluid cells is {:.3} (lattice speed {:.3}) at time {:.4e} s, above 0.1: the compressibility error, of order Ma² ≈ {:.0}%, is visible; the setup estimated {:.3} from the characteristic velocity; lower the time step",
+            peak.mach_max,
+            peak.mach_max * crate::lattice::CS2.sqrt(),
+            peak.step as f64 * setup.time_step,
+            100.0 * peak.mach_max * peak.mach_max,
+            setup.mach
+        ));
+    }
     if validity.within_study_envelope == Some(false) {
         warnings.push("sampled fields exceed the proposed low-Mach study envelope (density departure 0.02, local Mach 0.2); execution completion does not establish validity".into());
     }
