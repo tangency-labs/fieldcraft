@@ -692,6 +692,17 @@ fn run_checkpointed(
         }
     }
     if let Some(layer) = flow.wall_layer()
+        && layer.narrow_nodes > 0
+    {
+        warnings.push(format!(
+            "{} of {} wall nodes ({:.1} %) have fewer than {} open cells between them and the opposite wall: the half-way wall's law reads the second open cell, which needs a passage at least about that wide to lie in the log layer; refine the spacing there",
+            layer.narrow_nodes,
+            layer.nodes,
+            100.0 * layer.narrow_share(),
+            crate::wall_layer::NARROW_CELLS
+        ));
+    }
+    if let Some(layer) = flow.wall_layer()
         && layer.unsealed_share > crate::wall_layer::UNSEALED_WARNING
     {
         warnings.push(format!(

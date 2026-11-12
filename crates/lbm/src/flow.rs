@@ -1670,6 +1670,14 @@ impl Flow {
         };
         open.shrink_to_fit();
         let open_cells: Vec<bool> = if surface_model { if bulk.is_empty() { fluid.clone() } else { bulk.clone() } } else { Vec::new() };
+        if surface_model {
+            wall_layer.narrow_nodes = crate::wall_layer::narrow_nodes(
+                &grid,
+                periodic,
+                &open_cells,
+                node_list.iter().filter(|w| w.sampled()).map(|w| (w.interior as usize, usize::from(w.axis), i32::from(w.inward))),
+            );
+        }
         let mut flow = Flow {
             grid,
             n,

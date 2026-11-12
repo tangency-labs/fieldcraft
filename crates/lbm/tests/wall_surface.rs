@@ -92,7 +92,17 @@ fn poiseuille_flow_rates_are_pinned() {
 /// The wall layer: two nodes per slab side, none on a box face, and the node count in the report.
 #[test]
 fn the_slab_channel_has_one_node_row_per_wall() {
-    let open = 8usize;
+    let (report, nodes) = slab_channel(8);
+    assert_eq!(report.nodes, 2 * 16, "a node row of 4 x 4 cells on each side of the channel");
+    assert_eq!(report.plain_faces, 0);
+    assert_eq!(nodes, 32);
+    // 8 open cells between the walls is a narrow passage (fewer than 12); 16 is not.
+    assert_eq!(report.narrow_nodes, report.nodes);
+    assert_eq!(slab_channel(16).0.narrow_nodes, 0);
+}
+
+/// The report and node count of a channel `open` cells wide between two slabs two cells thick.
+fn slab_channel(open: usize) -> (fieldcraft_lbm::wall_layer::WallLayerReport, usize) {
     let dx = 1.0 / open as f64;
     let mut d = domain([0.0, -2.0 * dx, 0.0], [4.0 * dx, 1.0 + 2.0 * dx, 4.0 * dx], dx);
     for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.y_min, &mut d.faces.y_max, &mut d.faces.z_min, &mut d.faces.z_max] {
@@ -109,11 +119,8 @@ fn the_slab_channel_has_one_node_row_per_wall() {
         *t = Some(Turbulence::Smagorinsky { constant: 0.1, prandtl: 0.9, van_driest: None, wall_model: Some(WallModel::SpaldingBounceSurface) });
     }
     let (_, flow) = prepare(&model(1.0, 1.0, d, p), &obstacles);
-    let report = flow.wall_layer_report();
-    assert_eq!(report.nodes, 2 * 16, "a node row of 4 x 4 cells on each side of the channel");
-    assert_eq!(report.plain_faces, 0);
-    assert_eq!(flow.wall_nodes().map(|n| n.nodes().len()), Some(32));
     assert_eq!(flow.wall_nodes().map(|n| n.distance()), Some(0.5));
+    (flow.wall_layer_report(), flow.wall_nodes().map_or(0, |n| n.nodes().len()))
 }
 
 /// A no-slip face of the box with open cells against it is refused: the half-way wall is for

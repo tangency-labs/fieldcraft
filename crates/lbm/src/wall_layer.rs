@@ -42,6 +42,10 @@ pub struct WallLayerReport {
     /// thinner than the spacing has no centre inside it, and the flow leaks through. 0 where not
     /// measured.
     pub unsealed_share: f64,
+    /// Of the nodes, those with fewer than [`NARROW_CELLS`] open cells between the wall and the
+    /// opposite wall (or an obstacle) along the normal: a passage too narrow for the law's
+    /// second cell to lie in the log layer. 0 where not measured.
+    pub narrow_nodes: usize,
 }
 
 impl WallLayerReport {
@@ -49,6 +53,47 @@ impl WallLayerReport {
     pub fn plain_share(&self) -> f64 {
         if self.faces == 0 { 0.0 } else { self.plain_faces as f64 / self.faces as f64 }
     }
+
+    /// The share of the nodes in a passage narrower than [`NARROW_CELLS`] cells, 0 without nodes.
+    pub fn narrow_share(&self) -> f64 {
+        if self.nodes == 0 { 0.0 } else { self.narrow_nodes as f64 / self.nodes as f64 }
+    }
+}
+
+/// The open cells to the opposite wall below which setup warns that a wall's passage is narrow: the
+/// law reads the second open cell, which needs room above it to lie in the log layer and not in the
+/// passage's core (a choice, not a measurement).
+pub const NARROW_CELLS: usize = 12;
+
+/// How many of `starts` (an interior cell, its wall's axis and the sign of its inward normal) have
+/// fewer than [`NARROW_CELLS`] open cells (`open`) in a row along the normal before a cell that is
+/// not open. A run that leaves the box, or that is still open at [`NARROW_CELLS`], is not narrow.
+pub fn narrow_nodes(grid: &Grid, periodic: [bool; 3], open: &[bool], starts: impl IntoIterator<Item = (usize, usize, i32)>) -> usize {
+    let mut narrow = 0;
+    for (cell, axis, sign) in starts {
+        let Some(n) = grid.cells.get(axis).map(|&n| n as i64) else { continue };
+        let mut p = grid.coords(cell);
+        let mut run = 0;
+        let blocked = loop {
+            if !open.get(grid.index(p)).copied().unwrap_or(false) {
+                break true;
+            }
+            run += 1;
+            if run >= NARROW_CELLS {
+                break false;
+            }
+            let Some(next) = p.get(axis).map(|&v| v as i64 + i64::from(sign.signum())) else { break false };
+            let next = if periodic.get(axis).copied().unwrap_or(false) { next.rem_euclid(n) } else { next };
+            if !(0..n).contains(&next) {
+                break false;
+            }
+            if let Some(v) = p.get_mut(axis) {
+                *v = next as usize;
+            }
+        };
+        narrow += usize::from(blocked && run < NARROW_CELLS);
+    }
+    narrow
 }
 
 /// The share of the wall area above which setup warns that walls run plain bounce-back.
@@ -227,6 +272,20 @@ pub fn promote(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_passage_narrower_than_the_limit_is_counted() {
+        // Open runs of 5 and 14 cells between solid cells, periodic along z.
+        let pattern = format!("s{}s{}", "o".repeat(5), "o".repeat(14));
+        let grid = Grid { cells: [1, 1, pattern.len()], spacing: 1.0, origin: [0.0; 3] };
+        let open: Vec<bool> = pattern.chars().map(|c| c == 'o').collect();
+        // From the first open cell of each run, along +z.
+        assert_eq!(narrow_nodes(&grid, [true; 3], &open, [(1, 2, 1), (7, 2, 1)]), 1);
+        // The box edge ends a run on a non-periodic axis without making it narrow.
+        assert_eq!(narrow_nodes(&grid, [true, true, false], &open, [(grid.cells[2] - 1, 2, 1)]), 0);
+        // A cell index outside the grid, or a bad axis, is skipped.
+        assert_eq!(narrow_nodes(&grid, [true; 3], &open, [(1, 7, 1)]), 0);
+    }
 
     /// A column of `len` cells along z, periodic in x and y, with `pattern` ('o' open, 's' solid).
     fn column(pattern: &str) -> (Grid, Vec<bool>, Vec<u32>) {
