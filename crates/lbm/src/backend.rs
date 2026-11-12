@@ -106,6 +106,12 @@ pub trait Backend {
     fn viscosity_clamps(&self) -> Option<crate::rheology::Clamps> {
         None
     }
+    /// With a characteristic outlet: how many cell updates kept their last state because its
+    /// balance was not finite and positive. A backend without one refuses such a flow when it is
+    /// made, so the default is none.
+    fn characteristic_held(&self) -> u64 {
+        0
+    }
     fn groups(&self) -> &[Group];
     fn fluid_cells(&self) -> usize;
     fn is_fluid(&self, cell: usize) -> bool;
