@@ -107,7 +107,7 @@ fn interior_insertion_and_rollback() {
         Walk::Inside(t) => t,
         w => panic!("{w:?}"),
     };
-    let v = insert_delaunay(&mut cx, p, VertexKind::Interior, Site::Interior(t), 1000).unwrap().unwrap();
+    let v = insert_delaunay(&mut cx, p, VertexKind::Interior, Site::Interior(t)).unwrap().unwrap();
     assert!(cx.is_used(v));
     assert!((volume(&cx) - 1.0).abs() < 1e-15);
     assert!(cx.live_count() > 6);
@@ -138,7 +138,7 @@ fn boundary_face_insertion_keeps_tags() {
             }
         }
     }
-    let v = insert_delaunay(&mut cx, p, VertexKind::Face(4), site.unwrap(), 1000).unwrap().unwrap();
+    let v = insert_delaunay(&mut cx, p, VertexKind::Face(4), site.unwrap()).unwrap().unwrap();
     assert!(cx.is_used(v));
     assert!((volume(&cx) - 1.0).abs() < 1e-15);
     let c = cx.compact().unwrap();
@@ -159,7 +159,7 @@ fn edge_and_face_removal_keep_the_mesh_valid() {
     let mut cx = cube();
     let p = Point3::try_from([0.5, 0.45, 0.55]).unwrap();
     let Walk::Inside(t) = cx.walk(0, &p, 100).unwrap().unwrap() else { panic!() };
-    insert_delaunay(&mut cx, p, VertexKind::Interior, Site::Interior(t), 1000).unwrap().unwrap();
+    insert_delaunay(&mut cx, p, VertexKind::Interior, Site::Interior(t)).unwrap().unwrap();
     let mut changed = 0;
     for _ in 0..3 {
         let edges = edges_of(&cx, &cx.live_tets().map(|(t, _)| t).collect::<Vec<_>>()).unwrap();
@@ -264,7 +264,7 @@ mod pipeline {
         use super::super::complex::{NONE, VertexKind, face_toward};
         use super::super::geometry::Tessellation;
         use super::super::ops::{Site, insert_delaunay};
-        use super::super::refine::{Context, MAX_CAVITY, split_edge};
+        use super::super::refine::{Context, split_edge};
         use super::super::{complex_from_cdt, measure};
         use crate::predicates::Point3;
         use crate::size::UniformSize;
@@ -295,7 +295,7 @@ mod pipeline {
             })
             .map(|(t, _, k)| (t, k))
             .unwrap();
-        let v = insert_delaunay(&mut cx, q, VertexKind::Face(4), Site::Face(t, k), MAX_CAVITY).unwrap().unwrap();
+        let v = insert_delaunay(&mut cx, q, VertexKind::Face(4), Site::Face(t, k)).unwrap().unwrap();
         assert!(cx.edge_tet(v, a).unwrap().is_some());
         let w = split_edge(&mut cx, &ctx, v, a, 4, 0.0).unwrap().unwrap();
         assert!(matches!(cx.kind(w), VertexKind::Curve(_)), "{:?}", cx.kind(w));
@@ -437,6 +437,57 @@ mod pipeline {
 
     /// Refined far below its tessellation's facets (8 facets round, sag 0.23, elements 0.5), a
     /// cylinder's boundary nodes lie on the exact cylinder and caps, mid-side nodes included:
+    /// A sphere's boundary vertices are cospherical, so every tetrahedron of its constrained
+    /// Delaunay tetrahedralization has the sphere for its circumsphere and the centre for its
+    /// circumcentre: the first point refinement inserts conflicts with all of them. With more
+    /// than 4096 of them (a cap the cavity once had) nothing was inserted, and improvement alone
+    /// left the corpus sphere 148 slivers.
+    fn fine_sphere() -> (BoundarySurface, crate::cdt::TetMesh) {
+        let (p, t) = uv_sphere(40, 60);
+        let p: Vec<[f64; 3]> = p.iter().map(|c| c.map(|x| 20.0 * x)).collect();
+        let s = surface(&p, &t, [0.0; 3]);
+        let faces = vec![0u32; s.triangles().len()];
+        let s = BoundarySurface::new(s.points(), s.triangles(), &faces, &SurfaceOptions::default()).unwrap();
+        let cdt = tetrahedralize(&s, &CdtOptions::default()).unwrap();
+        assert!(cdt.tets.len() > 4096, "{} tetrahedra", cdt.tets.len());
+        (s, cdt)
+    }
+
+    /// The sphere's centre conflicts with every tetrahedron of its tetrahedralization, and goes
+    /// in: the cavity is bounded by the complex, not by a fixed count.
+    #[test]
+    fn a_point_in_conflict_with_every_tetrahedron_is_inserted() {
+        use super::super::complex::VertexKind;
+        use super::super::complex_from_cdt;
+        use super::super::ops::{Site, insert_delaunay};
+        use crate::predicates::Point3;
+        let (s, cdt) = fine_sphere();
+        let (mut cx, _) = complex_from_cdt(&s, &cdt, &[], &QualityOptions::default()).unwrap();
+        let live = cx.live_count();
+        let centre = Point3::try_from([0.0; 3]).unwrap();
+        let start = cx.live_tets().next().map(|(t, _)| t).unwrap();
+        let ti = match cx.walk(start, &centre, 1 << 20).unwrap() {
+            Some(super::super::complex::Walk::Inside(ti)) => ti,
+            other => panic!("{other:?}"),
+        };
+        let v = insert_delaunay(&mut cx, centre, VertexKind::Interior, Site::Interior(ti)).unwrap();
+        assert!(v.is_some(), "the centre of {live} tetrahedra was refused");
+        cx.validate().unwrap();
+    }
+
+    #[test]
+    #[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+    fn a_sphere_whose_cavity_is_every_tetrahedron_is_refined() {
+        let (s, cdt) = fine_sphere();
+        let analytic = vec![Some(AnalyticSurface::Sphere { center: [0.0; 3], radius: 20.0 })];
+        let o = QualityOptions { size: Some(6.0), ..QualityOptions::default() };
+        let m = quality_mesh(&s, &cdt, analytic, &o).unwrap();
+        let r = &m.report;
+        assert!(r.refine.first().is_some_and(|x| x.interior > 0), "{:?}", r.refine);
+        assert_eq!((r.output.inadmissible, r.output.slivers), (0, 0), "{:?}", r.output);
+        assert!(r.output.min_dihedral > 25.0, "{:?}", r.output);
+    }
+
     /// Refinement splits a feature curve at a point of the exact curve, not of the
     /// tessellation's chord, and smoothing keeps its curve vertices there: the bottom circle of
     /// a cylinder tessellated with 8 facets has its chords' midpoints 0.23 mm inside it.
@@ -744,7 +795,7 @@ fn a_boundary_insertion_never_rings_a_kept_face() {
     let mut cx = TetComplex::new(&p, kinds, &tets, &boundary, &[], 100, 100).unwrap();
     // On the fillet face of tetrahedron 0, as far from the other vertices as the improvement asks.
     let q = Point3::try_from([37.57631755601779, 26.730747346632697, 19.941167252265036]).unwrap();
-    insert_delaunay_apart(&mut cx, q, VertexKind::Face(20), Site::Face(0, 1), 4096, 0.06539086641130744).unwrap();
+    insert_delaunay_apart(&mut cx, q, VertexKind::Face(20), Site::Face(0, 1), 0.06539086641130744).unwrap();
     cx.validate().unwrap();
     let floating: Vec<[u32; 4]> = cx.live_tets().filter(|(t, _)| cx.adj(*t).unwrap().iter().all(|&n| n == NONE)).map(|(_, vs)| vs).collect();
     assert!(floating.is_empty(), "tetrahedra with every face on the boundary: {floating:?}");

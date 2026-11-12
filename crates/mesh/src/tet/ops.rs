@@ -308,15 +308,19 @@ pub enum Site {
 /// cavity on the same B-rep face(s) whose circumcircle holds `p` and that connect to the site
 /// without crossing a feature edge, and fans the new vertex to their outline. Returns the new
 /// vertex, or `None` when no valid cavity exists (nothing changes then).
-pub fn insert_delaunay(cx: &mut TetComplex, p: Point3, kind: VertexKind, site: Site, max_cavity: usize) -> Result<Option<u32>> {
-    insert_delaunay_apart(cx, p, kind, site, max_cavity, 0.0)
+///
+/// The cavity is bounded by the complex alone (each tetrahedron joins it once, and the complex
+/// is capped): a point inside a boundary whose vertices are all cospherical, as a sphere's are,
+/// is in conflict with every tetrahedron, and refinement has to insert it to start.
+pub fn insert_delaunay(cx: &mut TetComplex, p: Point3, kind: VertexKind, site: Site) -> Result<Option<u32>> {
+    insert_delaunay_apart(cx, p, kind, site, 0.0)
 }
 
 /// [`insert_delaunay`], refused when a vertex of the cavity lies closer than `min_gap` to `p`
 /// (the nearest vertex of a Delaunay mesh is a vertex of the cavity), so refinement cannot
 /// pile vertices onto one spot.
-pub fn insert_delaunay_apart(cx: &mut TetComplex, p: Point3, kind: VertexKind, site: Site, max_cavity: usize, min_gap: f64) -> Result<Option<u32>> {
-    insert(cx, p, kind, site, max_cavity, min_gap, false)
+pub fn insert_delaunay_apart(cx: &mut TetComplex, p: Point3, kind: VertexKind, site: Site, min_gap: f64) -> Result<Option<u32>> {
+    insert(cx, p, kind, site, min_gap, false)
 }
 
 /// [`insert_delaunay_apart`] for a vertex that must go in where it is (an edge seed's node): the
@@ -324,18 +328,11 @@ pub fn insert_delaunay_apart(cx: &mut TetComplex, p: Point3, kind: VertexKind, s
 /// admissible ([`TetComplex::admissible_with`]), which [`TetComplex::replace`] refuses, instead
 /// of the whole insertion being refused. Such a face lies almost in a plane with `p`, as one
 /// beside a short curve edge in line with the edge being split does.
-pub fn insert_delaunay_admissible(
-    cx: &mut TetComplex,
-    p: Point3,
-    kind: VertexKind,
-    site: Site,
-    max_cavity: usize,
-    min_gap: f64,
-) -> Result<Option<u32>> {
-    insert(cx, p, kind, site, max_cavity, min_gap, true)
+pub fn insert_delaunay_admissible(cx: &mut TetComplex, p: Point3, kind: VertexKind, site: Site, min_gap: f64) -> Result<Option<u32>> {
+    insert(cx, p, kind, site, min_gap, true)
 }
 
-fn insert(cx: &mut TetComplex, p: Point3, kind: VertexKind, site: Site, max_cavity: usize, min_gap: f64, admissible: bool) -> Result<Option<u32>> {
+fn insert(cx: &mut TetComplex, p: Point3, kind: VertexKind, site: Site, min_gap: f64, admissible: bool) -> Result<Option<u32>> {
     let (roots, root_faces) = site_roots(cx, site)?;
     if roots.is_empty() {
         return Ok(None);
@@ -346,9 +343,6 @@ fn insert(cx: &mut TetComplex, p: Point3, kind: VertexKind, site: Site, max_cavi
     let mut i = 0;
     while let Some(&t) = cavity.get(i) {
         i += 1;
-        if cavity.len() > max_cavity {
-            return Ok(None);
-        }
         for n in cx.adj(t)? {
             if n == NONE || inset.contains_key(&n) {
                 continue;
@@ -374,8 +368,9 @@ fn insert(cx: &mut TetComplex, p: Point3, kind: VertexKind, site: Site, max_cavi
         _ => None,
     };
     // Shrink until star-shaped; boundary faces of the cavity on the site's face(s) are removed
-    // when connected to the site and in conflict.
-    for _ in 0..max_cavity.max(8) {
+    // when connected to the site and in conflict. Each round that does not finish drops a
+    // tetrahedron, so the cavity's size bounds the rounds.
+    for _ in 0..=cavity.len() {
         let plan = plan_cavity(cx, &cavity, &p, site, &root_faces, admissible)?;
         match plan {
             Plan::Ready { new, new_boundary } => {
