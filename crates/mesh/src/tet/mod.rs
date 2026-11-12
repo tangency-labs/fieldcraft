@@ -234,7 +234,8 @@ pub struct QualityReport {
     pub boundary_volume: f64,
     /// Quadratic elements whose curved edges had to stay straight to be valid.
     pub straightened: usize,
-    /// Why a stage stopped early, if one did.
+    /// Why a stage stopped early, if one did, and the edge seeds whose nodes could not all be
+    /// placed.
     pub stopped: Vec<String>,
     /// Per edge seed: its name, the count it asks for and the boundary edges the mesh has along
     /// it.
@@ -310,50 +311,67 @@ fn seed_order(seeds: &[crate::seeds::EdgeSeed]) -> Vec<&crate::seeds::EdgeSeed> 
 }
 
 /// Put the seeds' nodes on their feature curves, pinned (corner vertices, which neither
-/// smoothing nor coarsening moves), so the curve is divided where the seed says. A node within
-/// [`refine::MIN_GAP`] of the local size of a vertex already on the curve takes that vertex,
-/// moved onto the node when it is not a corner already. An `exact` seed's curve then keeps only
-/// its nodes and is locked ([`hold_exact`]); a `min` or `free` seed's edges may still be split.
-fn seed_curves(cx: &mut TetComplex, ctx: &Context, seeds: &[&crate::seeds::EdgeSeed], global: f64) -> Result<()> {
+/// smoothing nor coarsening moves), so the curve is divided where the seed says
+/// ([`place_seed_node`]). An `exact` seed's curve then keeps only its nodes and is locked
+/// ([`hold_exact`]); a `min` or `free` seed's edges may still be split. Returns a line for each
+/// seed some of whose nodes could not be placed, so a count that is not held is said.
+fn seed_curves(cx: &mut TetComplex, ctx: &Context, seeds: &[&crate::seeds::EdgeSeed], global: f64) -> Result<Vec<String>> {
+    let mut short = Vec::new();
     for seed in seeds {
         let tol = 2.0 * seed.tolerance + ON_EDGE * global;
         let on = |x: [f64; 3]| crate::seeds::distance_to(&seed.points, x) <= tol;
         let nodes = crate::seeds::place(&seed.points, &seed.fractions(seed.count, false))?;
         // The curve edges along the seed, kept up to date as nodes split them.
         let mut along = edges_on(cx, &on)?;
-        for p in nodes.iter().skip(1).take(nodes.len().saturating_sub(2)) {
-            // The curve edge along the seed nearest the node.
-            let mut best: Option<(f64, usize)> = None;
-            for (i, &((a, b), _)) in along.iter().enumerate() {
-                let d = crate::seeds::distance_to(&[cx.xyz(a)?, cx.xyz(b)?], *p);
-                if best.is_none_or(|x| d < x.0) {
-                    best = Some((d, i));
-                }
-            }
-            let Some(((a, b), c)) = best.and_then(|(_, i)| along.get(i).copied()) else { continue };
-            let gap = refine::MIN_GAP * ctx.h(*p, global);
-            let near = [a, b].into_iter().map(|v| Ok((measure::dist(cx.xyz(v)?, *p), v))).collect::<Result<Vec<_>>>()?;
-            if let Some(&(_, v)) = near.iter().filter(|x| x.0 <= gap).min_by(|x, y| x.0.total_cmp(&y.0)) {
-                if cx.kind(v) != VertexKind::Corner {
-                    if let Some(q) = ctx.place(cx.kind(v), *p) {
-                        cx.try_move(v, q)?;
-                    }
-                    cx.set_kind(v, VertexKind::Corner);
-                }
-                continue;
-            }
-            let Some(q) = ctx.place(VertexKind::Curve(c), *p) else { continue };
-            if let Some(v) = ops::insert_delaunay_apart(cx, q, VertexKind::Curve(c), ops::Site::Edge(a, b), refine::MAX_CAVITY, gap)? {
-                cx.set_kind(v, VertexKind::Corner);
-                along.retain(|&(e, _)| e != (a, b));
-                along.extend([(sorted2(a, v), c), (sorted2(v, b), c)]);
-            }
+        let mut missed = 0;
+        for &p in nodes.iter().skip(1).take(nodes.len().saturating_sub(2)) {
+            missed += usize::from(!place_seed_node(cx, ctx, p, &mut along, global)?);
+        }
+        if missed > 0 {
+            short.push(format!("{missed} nodes of the edge seed {} could not be placed", seed.describe()));
         }
         if seed.constraint == SeedConstraint::Exact {
             hold_exact(cx, &on, &along)?;
         }
     }
-    Ok(())
+    Ok(short)
+}
+
+/// Put seed node `p` on the curve edge of `along` (the seed's curve edges, updated) nearest it.
+/// Within [`refine::MIN_GAP`] of the local size of a vertex of that edge it takes that vertex,
+/// moved onto the node when it is not a corner already. Otherwise it is inserted with a cavity
+/// that leaves out every tetrahedron whose new one would not be admissible
+/// ([`ops::insert_delaunay_admissible`]): splitting a long edge beside a short one in line with
+/// it, the plain Delaunay cavity makes a flat tetrahedron and the node was lost. Returns whether
+/// the node is placed.
+fn place_seed_node(cx: &mut TetComplex, ctx: &Context, p: [f64; 3], along: &mut Vec<((u32, u32), u32)>, global: f64) -> Result<bool> {
+    let mut best: Option<(f64, ((u32, u32), u32))> = None;
+    for &e in along.iter() {
+        let d = crate::seeds::distance_to(&[cx.xyz(e.0.0)?, cx.xyz(e.0.1)?], p);
+        if best.is_none_or(|x| d < x.0) {
+            best = Some((d, e));
+        }
+    }
+    let Some((_, ((a, b), c))) = best else { return Ok(false) };
+    let gap = refine::MIN_GAP * ctx.h(p, global);
+    let near = [a, b].into_iter().map(|v| Ok((measure::dist(cx.xyz(v)?, p), v))).collect::<Result<Vec<_>>>()?;
+    if let Some(&(_, v)) = near.iter().filter(|x| x.0 <= gap).min_by(|x, y| x.0.total_cmp(&y.0)) {
+        if cx.kind(v) != VertexKind::Corner {
+            if let Some(q) = ctx.place(cx.kind(v), p) {
+                cx.try_move(v, q)?;
+            }
+            cx.set_kind(v, VertexKind::Corner);
+        }
+        return Ok(true);
+    }
+    let Some(q) = ctx.place(VertexKind::Curve(c), p) else { return Ok(false) };
+    let Some(v) = ops::insert_delaunay_admissible(cx, q, VertexKind::Curve(c), ops::Site::Edge(a, b), refine::MAX_CAVITY, gap)? else {
+        return Ok(false);
+    };
+    cx.set_kind(v, VertexKind::Corner);
+    along.retain(|&(e, _)| e != (a, b));
+    along.extend([(sorted2(a, v), c), (sorted2(v, b), c)]);
+    Ok(true)
 }
 
 /// The feature edges (with their curve) with both ends where `on` holds.
@@ -651,7 +669,7 @@ pub fn quality_mesh(surface: &BoundarySurface, cdt: &TetMesh, analytic: Vec<Opti
     cx.index_skin(global)?;
     // Coarsen what the boundary recovery made denser than the size field asks for.
     report.collapsed = refine::coarsen(&mut cx, &ctx, 0.6, 1.4, 0.05, 6)?;
-    seed_curves(&mut cx, &ctx, &seed_order(&o.seeds), global)?;
+    report.stopped.extend(seed_curves(&mut cx, &ctx, &seed_order(&o.seeds), global)?);
     let ropt = RefineOptions { radius_edge: o.radius_edge, ..RefineOptions::default() };
     progress::stage("Refinement round", Some(o.rounds as f64), "");
     for round in 0..o.rounds {

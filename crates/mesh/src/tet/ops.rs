@@ -316,6 +316,26 @@ pub fn insert_delaunay(cx: &mut TetComplex, p: Point3, kind: VertexKind, site: S
 /// (the nearest vertex of a Delaunay mesh is a vertex of the cavity), so refinement cannot
 /// pile vertices onto one spot.
 pub fn insert_delaunay_apart(cx: &mut TetComplex, p: Point3, kind: VertexKind, site: Site, max_cavity: usize, min_gap: f64) -> Result<Option<u32>> {
+    insert(cx, p, kind, site, max_cavity, min_gap, false)
+}
+
+/// [`insert_delaunay_apart`] for a vertex that must go in where it is (an edge seed's node): the
+/// cavity is also shrunk past every face whose new tetrahedron would be positive but not
+/// admissible ([`TetComplex::admissible_with`]), which [`TetComplex::replace`] refuses, instead
+/// of the whole insertion being refused. Such a face lies almost in a plane with `p`, as one
+/// beside a short curve edge in line with the edge being split does.
+pub fn insert_delaunay_admissible(
+    cx: &mut TetComplex,
+    p: Point3,
+    kind: VertexKind,
+    site: Site,
+    max_cavity: usize,
+    min_gap: f64,
+) -> Result<Option<u32>> {
+    insert(cx, p, kind, site, max_cavity, min_gap, true)
+}
+
+fn insert(cx: &mut TetComplex, p: Point3, kind: VertexKind, site: Site, max_cavity: usize, min_gap: f64, admissible: bool) -> Result<Option<u32>> {
     let (roots, root_faces) = site_roots(cx, site)?;
     if roots.is_empty() {
         return Ok(None);
@@ -356,7 +376,7 @@ pub fn insert_delaunay_apart(cx: &mut TetComplex, p: Point3, kind: VertexKind, s
     // Shrink until star-shaped; boundary faces of the cavity on the site's face(s) are removed
     // when connected to the site and in conflict.
     for _ in 0..max_cavity.max(8) {
-        let plan = plan_cavity(cx, &cavity, &p, site, &root_faces)?;
+        let plan = plan_cavity(cx, &cavity, &p, site, &root_faces, admissible)?;
         match plan {
             Plan::Ready { new, new_boundary } => {
                 let len = cx.journal.steps.len();
@@ -437,7 +457,9 @@ enum Plan {
 }
 
 /// Plan the fill of a cavity from `p`.
-fn plan_cavity(cx: &TetComplex, cavity: &[u32], p: &Point3, site: Site, root_faces: &[[u32; 3]]) -> Result<Plan> {
+fn plan_cavity(cx: &TetComplex, cavity: &[u32], p: &Point3, site: Site, root_faces: &[[u32; 3]], admissible: bool) -> Result<Plan> {
+    // Whether a kept face sees p: strictly, and with an admissible tetrahedron when asked.
+    let sees = |f: [u32; 3]| -> Result<bool> { if admissible { cx.admissible_with(f, p) } else { Ok(cx.orient_with(f, p)? == Sign::Positive) } };
     let inset: IdMap<u32, ()> = cavity.iter().map(|&t| (t, ())).collect();
     // Boundary faces of cavity tetrahedra: candidates for removal (only for boundary sites).
     let mut bfaces: Vec<([u32; 3], [u32; 3], u32, u32)> = Vec::new(); // (oriented, sorted, tag, tet)
@@ -526,10 +548,10 @@ fn plan_cavity(cx: &TetComplex, cavity: &[u32], p: &Point3, site: Site, root_fac
             }
         }
     }
-    // Every kept face must see p strictly.
+    // Every kept face must see p ([`sees`]).
     let mut new = Vec::with_capacity(outer.len() + bfaces.len());
     for &(f, t) in &outer {
-        if cx.orient_with(f, p)? != Sign::Positive {
+        if !sees(f)? {
             return Ok(Plan::Drop(t));
         }
         new.push(f);
@@ -538,7 +560,7 @@ fn plan_cavity(cx: &TetComplex, cavity: &[u32], p: &Point3, site: Site, root_fac
         if removed.contains(&j) {
             continue;
         }
-        if cx.orient_with(f, p)? != Sign::Positive {
+        if !sees(f)? {
             return Ok(Plan::Drop(t));
         }
         new.push(f);
