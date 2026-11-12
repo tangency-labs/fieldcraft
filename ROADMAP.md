@@ -52,7 +52,7 @@ pressure) is a degree of freedom of the existing DOF framework, not a separate s
 | M23 Wave propagation and ultrasound | Elastic, acoustic and coupled waves from the explicit solver's 1D bar today to guided and ultrasonic waves, by two methods. Finite differences first, for fast 2D (then 3D) ultrasound on regular grids: staggered-grid velocity–stress FDTD (Virieux) and the elastodynamic finite integration technique for solids, the rotated staggered grid for anisotropic media, a k-space pseudospectral scheme for weakly heterogeneous tissue and water, all on grids voxelised from the face-tagged geometry by the LBM's exact voxeliser, with heterogeneous, layered and fluid–solid media, CPML boundaries, threads and the GPU backend; staircased curved boundaries scatter spuriously, so the FD grid is checked against the finite elements on curved parts. Finite elements for curved geometry and coupling with structures: spectral elements (high-order Gauss–Lobatto–Legendre hexes with diagonal mass) on the hex meshes, and a mesh check in elements per wavelength with the dispersion error it implies; absorbing boundaries (convolutional PML, absorbing layers with increasing damping) and infinite media; tone-burst sources (Hann-windowed cycles), point, line and surface excitation, and piezoelectric transducers (M19); anisotropic media (composites, crystals) and viscoelastic, power-law-in-frequency attenuation; fluid–solid interfaces and fluid-loaded plates; ultrasound in water and tissue, nonlinear acoustics (Westervelt, KZK) for focused ultrasound. Guided waves: dispersion curves by semi-analytical finite elements (SAFE) for plates, pipes, rails and layered and anisotropic laminates — Lamb, Rayleigh, Love and SH modes — with phase and group velocities and mode shapes; mode-selective excitation. Output: A-scans and B-scans at sensors, wavefield snapshots, 2D FFT (frequency–wavenumber) for mode identification, and time–frequency diagrams of any signal — short-time Fourier spectrograms, continuous wavelet transforms (Morlet), reassigned spectrograms and smoothed pseudo Wigner–Ville — with the SAFE or Rayleigh–Lamb group-velocity curves overlaid as arrival times, and group velocities extracted from the ridges. GPU paths (M12's backend) for long runs. Verified by Lamb's problem (point load on a half-space), Rayleigh-wave speed, Rayleigh–Lamb dispersion, Love waves in a layer over a half-space, reflection and transmission at interfaces, and published guided-wave measurements | planned |
 | Continuous: verification and validation | Every capability checked against theory (closed forms), experiments (published measurements) and published benchmarks (NAFEMS, vendor benchmark and verification manuals such as Abaqus's), each case our own model in `tests/oracle/` with its cited reference and tolerance; `cargo xtask oracle` runs them and writes docs/oracle.md; once a case matches, our result is frozen as a fixture so fidelity cannot regress (docs/verification.md). Runner, fixtures and CI job: done; 62 theory cases (patch tests of every solid element, cantilevers, Lamé in 3D, plane strain and axisymmetric, Kirsch in 3D and plane stress, rotating disc and cylinder, beam frequencies, couplings, explicit waves, impact and J2 plasticity, CDT invariants), 16 published benchmarks (the MacNeal–Harder solid tests, the Scordelis–Lo roof with solids and with shells, the pinched cylinder, NAFEMS LE1 in 3D and 2D, LE2, LE3, LE5, LE6, LE7, LE10, FV32) and 8 pending cases with citations (the pinched hemisphere and twisted beam shell meshes, thermal, Cook's membrane, Taylor bar, CFD, explicit Hertz contact); `mesh.block` mapped blocks and 2D patches build their meshes, curved shell patches are written node by node | started |
 | Continuous: performance | CPU first, deterministic: results never depend on the thread count (fixed partitions, sums in a fixed order; checked by hashing results on 1, 2 and 7 threads). Supernodal left-looking Cholesky (11–15× faster than the column solver on one thread), parallel element matrices, stresses and Lanczos products, explicit element updates and LBM cell blocks on rayon threads (done — `fieldcraft-parallel`, `threads` on the solve commands, `FIELDCRAFT_THREADS`); projection blocking's certified quality, scans and coloured smoothing on threads, its coloured sweeps on the GPU (`fieldcraft-mesh-gpu`, `mesh.hex.project` with `backend: "gpu"`, #409: started); parallel forward/back substitution and explicit tet4 assembly; more GPU paths later, within a stated tolerance of the CPU | started |
-| Continuous: desktop and agents | Desktop app (viewport, model tree, commands, control channel, the open design drawn, `ui.capture` of the whole window offscreen: done; toolbar of every capability from the catalogue, ready or coming soon with its milestone, icons drawn with VectorCraft, docs/features.md: done; the Craft-family shell — title bar, workspaces and ribbon drop-downs, browser, context panel, command search, journal timeline, light and dark themes — native file pickers with background opening, drag and drop and recent files, samples and one-click Solve, and an examples gallery of ready-to-solve samples, each checked by a test (docs/examples.md): done; MCP server over stdio, headless or bridged to the app, with read and write roots, docs/mcp.md: done; caps labels in Inter SemiBold; the README's analysis video recorded through MCP by `tools/demo-video`: done; support, load, reference-point and coupling symbols in the viewport and headless renders, with their browser toggles: done; symbols as wireframes, one mark per constrained degree of freedom, a constant size on screen with a size setting, highlighted with their selected definition, concentrated loads drawn over the part: done; selection by picking in the viewport — geometry faces, edges, vertices and bodies, mesh nodes, element faces and elements, box selection, hover, a Target row in command forms, `ui.select`/`ui.selection` and MCP `select`: done; a camera parameter for screenshots, a ribbon that follows the command being run: in progress; the browser build — the same app in a web page with browser file pickers, downloads, drops and autosave to browser storage, deployed to GitHub Pages from each release, docs/web.md: done; in-app updates — a daily check of GitHub Releases, Help › Check for Updates and Reinstall, downloads verified against the release key's signature of SHA256SUMS.txt and swapped in after closing, `app.update.check`, `fieldcraft-cli update`, Reload to update in the browser, docs/updates.md: done), command schema as the public API | started |
+| Continuous: desktop and agents | Desktop app (viewport, model tree, commands, control channel, the open design drawn, `ui.capture` of the whole window offscreen: done; toolbar of every capability from the catalogue, ready or coming soon with its milestone, icons from SolidCraft's set where it has one and drawn with VectorCraft for the CAE concepts it has none for, docs/features.md: done; the Craft-family shell — title bar, workspaces and ribbon drop-downs, browser, context panel, command search, journal timeline, light and dark themes — native file pickers with background opening, drag and drop and recent files, samples and one-click Solve, and an examples gallery of ready-to-solve samples, each checked by a test (docs/examples.md): done; MCP server over stdio, headless or bridged to the app, with read and write roots, docs/mcp.md: done; SolidCraft's UI kit and look (its windows, menus, fields, ribbon, browser rows, History bar, view compass, command search, status bar, tooltips, themes and IBM Plex fonts, under the maintainer's permission in docs/adr/0001) with FieldCraft's teal accent: done; the README's analysis video recorded through MCP by `tools/demo-video`: done; support, load, reference-point and coupling symbols in the viewport and headless renders, with their browser toggles: done; symbols as wireframes, one mark per constrained degree of freedom, a constant size on screen with a size setting, highlighted with their selected definition, concentrated loads drawn over the part: done; selection by picking in the viewport — geometry faces, edges, vertices and bodies, mesh nodes, element faces and elements, box selection, hover, a Target row in command forms, `ui.select`/`ui.selection` and MCP `select`: done; a camera parameter for screenshots, a ribbon that follows the command being run: in progress; the browser build — the same app in a web page with browser file pickers, downloads, drops and autosave to browser storage, deployed to GitHub Pages from each release, docs/web.md: done; in-app updates — a daily check of GitHub Releases, Help › Check for Updates and Reinstall, downloads verified against the release key's signature of SHA256SUMS.txt and swapped in after closing, `app.update.check`, `fieldcraft-cli update`, Reload to update in the browser, docs/updates.md: done), command schema as the public API | started |
 
 ## 0.6.0: the UI/UX release
 
@@ -91,27 +91,56 @@ What landed for 0.6.0 (milestone 0.6.0 on GitHub):
   #311, #364, #374).
 - **Heat:** heat transfer across ties for bonded multi-body thermal models (#358).
 
-## Next
+## 0.8.0: SolidCraft's kernel and look, M1–M3 closed
 
-M12 derived exchanger results (#837), first slice: `results.fluid.measure` reads open-box-face
-area means, separate inflow/outflow mass and volume flow, mixed temperatures and advective heat,
-recorded wall heat rates and pressure differences from a saved frame, as a unit-labelled table
-and CSV. Arbitrary face sets, time-window averages, effectiveness/LMTD and the complete energy
-balance with sources and storage remain open.
+Planned for Friday 2026-11-13, once the gate is green (two tests wait on SolidCraft: the fillet
+round's exact surface, solidcraft#15010 and #15094, and the sphere-on-plate tessellation,
+solidcraft#14915). What landed since 0.7.5:
+
+- **SolidCraft's kernel:** geometry from SolidCraft 5e33828 on the solidcore kernel, its face
+  names adopted; STEP through solidcore's reader (#870). Whole periodic faces keep their seams for
+  the hex meshers (#871), and faces with exact surfaces have no creases inside (#873).
+- **SolidCraft's look:** the UI kit and look on every surface that has one, SolidCraft's icons
+  where it has them, IBM Plex fonts and its themes, with FieldCraft's teal accent (#872).
+- **M1–M3 closed:** M1 and M3 done (#862); M2 with `mesh.verify` per set (#866), exact tet seeds
+  held (#897) and per-face seeds (`mesh.seed.face`, #886).
+- **Hex meshing:** curves divided by their chordal deviation (Frey & George), so a whole circle is
+  never too coarse and small rounds are not over-refined; a hole's and a round disk's O-grids
+  through their rim nodes; a straight tube revolves (#870, #898, #895).
+- **Heat and fluids:** radiation to the surroundings from solid faces, on the structure and the
+  lattice (#850); thin conducting walls between fluid passages (#846); fluid measurements as a
+  table and CSV (#847); sampled numerical validity, carried wall stress and shared LES acceptance
+  (#826–#830, #843).
+- **Solver, decks, model:** contact gaps normalised over the paired secondary faces (#845);
+  LS-DYNA resultant beams (#863); the check names output a step will not write (#864); per-frame
+  heat flux in transient probes (#844); seeds and the hex planner on portable maths (#867); relax
+  round-off (#853).
+- **Build:** Rust 1.98.0 everywhere (#877), a Nix flake (#852), Linux corpus fixtures blessed in
+  CI (#879).
+
+Known after 0.8: the round-disk O-grid's quality depends on its rim count (#899; analytic-torus
+0.829 → 0.773 under the chordal floor).
+
+## Next
 
 In progress, in this order of landing:
 
-1. Tet quality: sliver repair and Delaunay refinement to a size field, so curved and filleted parts
-   (the filleted bracket) solve on tets (M2).
-2. Octree all-hex (M6): concave transitions (Schneiders' modified templates or Livesu's dual schemes) so curved and thin-walled parts mesh without filling their hull with fine cells.
-3. The analysis video regenerated with the setup's symbols (done: support, load, reference-point
-   and coupling symbols in the viewport and headless renders), captions and an orbit (screenshot
-   camera and the ribbon following the command: done).
-4. A Scordelis–Lo refinement study (32×32×2, 64×64×4, hex20 full and reduced) separating
+1. Octree all-hex (M6): concave transitions (Schneiders' modified templates or Livesu's dual
+   schemes) so curved and thin-walled parts mesh without filling their hull with fine cells.
+2. Structured hex (M5): the round-disk O-grid at any rim count (#899), pyramid transitions, and
+   automatic decomposition of 3D parts into sweepable and mappable regions.
+3. The nonlinear implicit core (M15), the gate for contact (M7), elastomers and viscoelasticity
+   (M17), composite failure (M18), adhesion (M20) and tissues (M21): solids, hyperelasticity, J2
+   and follower pressure done; Lee's frame and the hinged cylindrical shell (with shells), the
+   follower pressure's full tangent next.
+4. Quick connections for assemblies (M7): bolts (`interaction.bolt`, linear first) and welds
+   (`interaction.weld`).
+5. Deck readers (M9): history, parts and assemblies after the Abaqus history slice (#891).
+6. The analysis video regenerated with the setup's symbols, captions and an orbit.
+7. A Scordelis–Lo refinement study (32×32×2, 64×64×4, hex20 full and reduced) separating
    discretisation error from the solid-versus-shell model difference (−0.33 % today).
-5. The nonlinear implicit core (M15), the gate for contact (M7), elastomers and viscoelasticity
-   (M17), composite failure (M18), adhesion (M20) and tissues (M21): solids, hyperelasticity and
-   follower pressure done; J2 plasticity and Mooney–Rivlin on the material point interface next.
+8. M12 derived exchanger results (#837): arbitrary face sets, time-window averages,
+   effectiveness/LMTD and the complete energy balance.
 
 ## Gap review (2026-10-14)
 
