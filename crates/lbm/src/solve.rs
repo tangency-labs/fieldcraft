@@ -692,6 +692,12 @@ fn run_checkpointed(
     if let (Some(clamps), Some(r)) = (flow.viscosity_clamps(), &setup.rheology) {
         warnings.extend(clamps.warning(flow.fluid_cells(), r.tau));
     }
+    let held = flow.characteristic_held();
+    if held > 0 {
+        warnings.push(format!(
+            "the characteristic outlet did not absorb in {held} cell updates: there its balance was not finite and positive (check the run for divergence) or the cell has no fluid cell inside it (an obstacle in the outlet's inner layer)"
+        ));
+    }
     for body in flow.empty_obstacles() {
         warnings.push(format!("obstacle `{body}` covers no cell centre: it is smaller than the spacing or outside the box"));
     }
