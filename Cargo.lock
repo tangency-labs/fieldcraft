@@ -1412,6 +1412,7 @@ dependencies = [
  "serde",
  "serde_json",
  "solidcore-record",
+ "solidcore-tess",
  "solidcraft-doc",
  "solidcraft-engine",
  "solidcraft-geom",

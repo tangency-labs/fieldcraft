@@ -117,7 +117,10 @@ Three checks keep the pin current:
 
 ## Meshing pipeline
 
-1. **Boundary surface.** SolidCraft tessellates each body; every triangle carries its B-rep face,
+1. **Boundary surface.** SolidCraft tessellates each body with its analysis mesh path
+   (`solidcore_tess::mesh`, not the display mesher): every face by constrained Delaunay in its own
+   parameters to the chordal tolerance, shaped to a smallest angle of 25°, its edges sampled once so
+   the faces share their nodes. Every triangle carries its B-rep face,
    so feature edges and face-based loads and BCs survive meshing. Faces of an opened design also
    carry SolidCraft's persistent names (`F2:side:l4`, from the feature and sketch curve that made
    them), so a load on a named face follows it when the design is edited and opened again.

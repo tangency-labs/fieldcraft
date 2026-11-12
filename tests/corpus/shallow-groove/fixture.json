@@ -5,24 +5,20 @@
       "stages": {},
       "values": {
         "quality.max_dihedral_deg": {
-          "band": 1.3253264763515925e-7,
-          "value": 132.53164763515923
+          "band": 1.3386442997038742e-7,
+          "value": 133.86342997038741
         },
         "quality.min_dihedral_deg": {
-          "band": 3.8869913615020954e-8,
-          "value": 38.86891361502095
+          "band": 3.902698091918505e-8,
+          "value": 39.025980919185045
         },
         "quality.min_radius_ratio": {
-          "band": 3.8075877723806077e-10,
-          "value": 0.37975877723806073
-        },
-        "quality.slivers_cdt": {
-          "band": 0,
-          "value": 24
+          "band": 3.933989123787044e-10,
+          "value": 0.39239891237870433
         },
         "quality.tets": {
           "band": 0,
-          "value": 5999
+          "value": 6216
         }
       }
     },
@@ -43,7 +39,7 @@
   "values": {
     "boundary.feature_edges": {
       "band": 0,
-      "value": 38
+      "value": 98
     },
     "boundary.genus": {
       "band": 0,
@@ -55,7 +51,7 @@
     },
     "boundary.vertices": {
       "band": 0,
-      "value": 53
+      "value": 194
     },
     "build.bodies": {
       "band": 0,
@@ -67,7 +63,7 @@
     },
     "build.triangles": {
       "band": 0,
-      "value": 102
+      "value": 384
     },
     "cdt.cavities": {
       "band": 0,
@@ -79,51 +75,51 @@
     },
     "cdt.steiner": {
       "band": 0,
-      "value": 30
+      "value": 2
     },
     "cdt.tets": {
       "band": 0,
-      "value": 176
+      "value": 475
     },
     "hex.elements": {
       "band": 0,
       "value": 1960
     },
     "hex.hex20_min_sj": {
-      "band": 9.866170427291384e-10,
-      "value": 0.9856170427291382
+      "band": 9.866170427818312e-10,
+      "value": 0.9856170427818312
     },
     "hex.hex8_min_sj": {
-      "band": 9.924209512379577e-10,
-      "value": 0.9914209512379576
+      "band": 9.92421056662666e-10,
+      "value": 0.9914210566626657
     },
     "octree.hexes": {
       "band": 0,
       "value": 2926
     },
     "octree.mean_sj": {
-      "band": 9.206075197723167e-10,
-      "value": 0.9196075197723166
+      "band": 9.205438689166897e-10,
+      "value": 0.9195438689166897
     },
     "octree.min_sj": {
-      "band": 3.0189700755084423e-10,
-      "value": 0.3008970075508442
+      "band": 3.0365691857740387e-10,
+      "value": 0.30265691857740384
     },
     "octree.volume_mm3": {
-      "band": 0.00004779852875163987,
-      "value": 47798.527751639864
+      "band": 0.00004780544415046182,
+      "value": 47805.44315046181
     },
     "quality.max_dihedral_deg": {
-      "band": 1.3422628201924895e-7,
-      "value": 134.22528201924894
+      "band": 1.3475178680709178e-7,
+      "value": 134.75078680709177
     },
     "quality.min_dihedral_deg": {
-      "band": 3.698783163453955e-8,
-      "value": 36.98683163453954
+      "band": 3.791444601975669e-8,
+      "value": 37.913446019756684
     },
     "quality.min_radius_ratio": {
-      "band": 3.72069922068432e-10,
-      "value": 0.371069922068432
+      "band": 3.7276059190547274e-10,
+      "value": 0.3717605919054727
     },
     "quality.slivers": {
       "band": 0,
@@ -131,19 +127,19 @@
     },
     "quality.slivers_cdt": {
       "band": 0,
-      "value": 22
+      "value": 21
     },
     "quality.tets": {
       "band": 0,
-      "value": 6082
+      "value": 5754
     },
     "surface.enclosed_mm3": {
-      "band": 0.00004779520536690455,
-      "value": 47795.204366904545
+      "band": 0.00004780248355518498,
+      "value": 47802.48255518498
     },
     "surface.enclosed_vs_exact": {
       "band": 1e-9,
-      "value": 0.0002876607379406645
+      "value": 0.0004399831733372714
     },
     "surface.solidcraft_mm3": {
       "band": 0.000047781460517269496,

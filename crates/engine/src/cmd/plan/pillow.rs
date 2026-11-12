@@ -312,11 +312,31 @@ fn slice(inp: &Input, local: &dyn Fn(V3) -> V3, z: f64, join: f64) -> Result<Vec
                 None => return Err(format!("the section at {} does not close", length(z))),
             }
         }
+        drop_point_segments(&mut lp);
         if lp.pts.len() >= 3 {
             loops.push(lp);
         }
     }
     Ok(loops)
+}
+
+/// A loop without its segments of no length. A plane through a vertex of the mesh (an edge the
+/// tessellation sampled at the slab's mid-height) cuts the two triangle edges meeting there at
+/// that vertex, to rounding: a segment from the point to itself, which has no direction.
+fn drop_point_segments(lp: &mut Loop) {
+    let same = |a: V2, b: V2| norm(sub(a, b)) <= 1e-12 * (1.0 + norm(a));
+    let mut i = 0;
+    while lp.pts.len() > 1 && i < lp.pts.len() {
+        let next = lp.pts.get((i + 1) % lp.pts.len()).copied().unwrap_or_default();
+        if lp.pts.get(i).is_some_and(|&p| same(p, next)) {
+            lp.pts.remove(i);
+            if i < lp.face.len() {
+                lp.face.remove(i);
+            }
+        } else {
+            i += 1;
+        }
+    }
 }
 
 /// The grid planes over `[lo, hi]`: the fixed ones inside, and between them (and the ends) planes
@@ -1135,5 +1155,14 @@ mod tests {
         assert_eq!(loops.len(), 1, "{loops:?}");
         assert!((loops[0].area() - 12.0).abs() < 1e-9, "{}", loops[0].area());
         assert!(loops[0].contains([2.0, 1.5]) && !loops[0].contains([5.0, 1.5]));
+        // Through the tessellation's corners: every segment still has a direction.
+        let loops = slice(&inp, &|p| p, 0.0, 1e-6).unwrap();
+        assert_eq!(loops.len(), 1, "{loops:?}");
+        assert!((loops[0].area() - 12.0).abs() < 1e-9, "{}", loops[0].area());
+        assert!((0..loops[0].pts.len()).all(|i| {
+            let (a, b) = loops[0].segment(i);
+            unit(sub(b, a)).is_some()
+        }));
+        assert_eq!(loops[0].pts.len(), loops[0].face.len());
     }
 }

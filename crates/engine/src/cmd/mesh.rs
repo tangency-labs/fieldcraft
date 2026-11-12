@@ -1407,7 +1407,7 @@ mod tests {
         let mesh = fieldcraft_geometry::block([0.0; 3], [2.0, 3.0, 4.0]).unwrap().tessellate(0.01).unwrap();
         let options = SurfaceOptions { weld_distance: mesh.weld_distance, ..SurfaceOptions::default() };
         let s = BoundarySurface::new(&mesh.positions, &mesh.triangles, &mesh.tri_face, &options).unwrap();
-        assert!(s.points().len() < mesh.positions.len(), "the tessellation is a soup that welding joins");
+        assert_eq!(s.points().len(), mesh.positions.len(), "the analysis tessellation's faces share their nodes already");
         assert_eq!((s.shells().len(), s.shells()[0].genus), (1, 0));
         assert!((s.volume() - 24.0).abs() < 1e-9, "{}", s.volume());
         assert!(s.feature_edges().iter().all(|e| e.kind == FeatureKind::FaceBoundary));

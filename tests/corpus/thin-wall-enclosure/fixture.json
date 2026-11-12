@@ -22,7 +22,7 @@
   "values": {
     "boundary.feature_edges": {
       "band": 0,
-      "value": 24
+      "value": 341
     },
     "boundary.genus": {
       "band": 0,
@@ -34,7 +34,7 @@
     },
     "boundary.vertices": {
       "band": 0,
-      "value": 16
+      "value": 691
     },
     "build.bodies": {
       "band": 0,
@@ -46,11 +46,11 @@
     },
     "build.triangles": {
       "band": 0,
-      "value": 28
+      "value": 1378
     },
     "cdt.cavities": {
       "band": 0,
-      "value": 2
+      "value": 14
     },
     "cdt.flat": {
       "band": 0,
@@ -58,11 +58,11 @@
     },
     "cdt.steiner": {
       "band": 0,
-      "value": 16
+      "value": 89
     },
     "cdt.tets": {
       "band": 0,
-      "value": 70
+      "value": 2010
     },
     "hex.elements": {
       "band": 0,
@@ -77,16 +77,16 @@
       "value": 0.7071067811865474
     },
     "quality.max_dihedral_deg": {
-      "band": 1.5047691209419846e-7,
-      "value": 150.47591209419843
+      "band": 1.425984747102326e-7,
+      "value": 142.59747471023258
     },
     "quality.min_dihedral_deg": {
-      "band": 2.6666545242802557e-8,
-      "value": 26.665545242802555
+      "band": 3.2045454133908344e-8,
+      "value": 32.04445413390834
     },
     "quality.min_radius_ratio": {
-      "band": 1.8305434767543028e-10,
-      "value": 0.18205434767543027
+      "band": 2.9102879500097187e-10,
+      "value": 0.29002879500097184
     },
     "quality.slivers": {
       "band": 0,
@@ -94,19 +94,19 @@
     },
     "quality.slivers_cdt": {
       "band": 0,
-      "value": 66
+      "value": 545
     },
     "quality.tets": {
       "band": 0,
-      "value": 17585
+      "value": 29887
     },
     "surface.enclosed_mm3": {
-      "band": 0.000015564001,
-      "value": 15564.0
+      "band": 0.000015564001000000035,
+      "value": 15564.000000000035
     },
     "surface.enclosed_vs_exact": {
       "band": 1e-9,
-      "value": 0.0
+      "value": 2.220560181660966e-15
     },
     "surface.solidcraft_mm3": {
       "band": 0.000015564001,

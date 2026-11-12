@@ -538,7 +538,7 @@ pub fn heated_bracket() -> Value {
     let holes: Vec<Value> = ["F4:bore:side:0", "F5:bore:side:0"].into_iter().map(face).collect();
     json!([
         {"command": "model.units", "params": {"system": "mm-t-s-N-MPa"}},
-        {"command": "mesh.tet.generate", "params": {"body": "Bracket", "size": 4, "order": "quadratic", "tolerance": 0.05}},
+        {"command": "mesh.tet.generate", "params": {"body": "Bracket", "size": 4, "order": "quadratic"}},
         {"command": "model.set.create", "params": {"name": "bracket", "geometry": [{"body": "Bracket"}]}},
         {"command": "model.set.create", "params": {"name": "holes", "geometry": holes}},
         {"command": "model.set.create", "params": {"name": "hot", "geometry": [face("F2:side:l5")]}},
@@ -1091,18 +1091,21 @@ mod tests {
         assert!(r["mass"]["relative_change"].as_f64().unwrap().abs() < 0.01, "{r}");
     }
 
-    /// The heated bracket's 4 mm tet mesh stays near its 9 500 elements. #303: refinement piled
+    /// The heated bracket's 4 mm tet mesh stays near its 7 110 elements. #303: refinement piled
     /// face vertices against a feature curve, and the improvement then grew the mesh to 29 257
     /// elements in about two minutes. The element count is the check: wall time depends on the
     /// machine and the build profile (about 5 s in a release build, far longer on CI). It was
     /// 23 000 while SolidCraft split each bore in two halves, whose seams were feature curves
     /// the refinement crowded; from v0.40 a bore is one face (min dihedral 33.9°, no sliver).
+    /// Band 8 000..=11 000 (about 9 500) → 5 990..=8 230 (7 110, the same ±15.8 %): re-recorded
+    /// after the switch to solidcore_tess::mesh, owner 2026-11-13; the sample now takes the
+    /// default tolerance (1/1000 of the diagonal) instead of 0.05 mm.
     #[test]
     #[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
     fn the_heated_bracket_opens_with_its_usual_mesh() {
         let s = open("heated-bracket");
         let elements = s.model.elements().len();
-        assert!((8_000..=11_000).contains(&elements), "{elements} elements");
+        assert!((5_990..=8_230).contains(&elements), "{elements} elements");
     }
 
     /// The heated bracket's temperatures lie between the air's and the heater's, falling along
