@@ -17,7 +17,7 @@ pub fn box_flow(collision: Collision, tau: f64, sides: &str, seed: f64, size: [u
         }
     } else {
         *d.faces.get_mut(pair[usize::from(sign < 0.0)]) = FaceCondition::Velocity { velocity, profile: Profile::Uniform };
-        *d.faces.get_mut(pair[usize::from(sign > 0.0)]) = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Convective };
+        *d.faces.get_mut(pair[usize::from(sign > 0.0)]) = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Convective, sigma: None };
     }
     d.initial_velocity = velocity;
     let (_, mut flow) = prepare(&model(1.0, (tau - 0.5) / 3.0, d, collide(30_000.0, 1.0, None, collision)), &[]);

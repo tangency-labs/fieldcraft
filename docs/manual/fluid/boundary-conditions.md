@@ -4,16 +4,17 @@ Each of the six faces of a fluid domain's box carries a condition: a no-slip wal
 wall, a velocity inlet, a pressure outlet, or one of a periodic pair. Obstacle faces are no-slip
 walls, at rest or moving tangentially. Walls are halfway bounce-back, or, on obstacles and when the
 step asks for it, interpolated bounce-back where the surface crosses each link; velocity inlets use Zou–He
-(corrected under TRT), with a convective outflow for outlets that a wake reaches, and the force the fluid exerts on every
+(corrected under TRT), with a convective outflow for outlets that a wake reaches and a characteristic,
+partially non-reflecting outflow for outlets that pressure waves reach, and the force the fluid exerts on every
 wall is measured by momentum exchange.
 
 | | |
 |---|---|
 | **Commands** | `model.fluid_domain.create` (`faces`, `surfaces`), `model.fluid_domain.edit`, `model.fluid_domain.boundary` |
 | **Step procedure** | `"fluid"` |
-| **Solver** | `crates/lbm` (CPU, f64); `crates/lbm-gpu` (f32), every condition, interpolated walls included |
-| **Method** | Halfway bounce-back with Ladd's moving-wall term (Ladd 1994); interpolated bounce-back at obstacles (Bouzidi, Firdaouss & Lallemand 2001); Zou & He (1997) with Hecht & Harting's D3Q19 transverse correction; convective outflow (Orlanski 1976); momentum exchange (Ladd 1994; Mei et al. 2002) |
-| **Verified by** | `crates/lbm/tests/verification.rs`, `outlets.rs`, `interpolated.rs`, `interpolated_couette.rs`; `crates/lbm-gpu/tests/verification.rs` |
+| **Solver** | `crates/lbm` (CPU, f64); `crates/lbm-gpu` (f32), every condition, interpolated walls included, except the characteristic outflow (CPU only) |
+| **Method** | Halfway bounce-back with Ladd's moving-wall term (Ladd 1994); interpolated bounce-back at obstacles (Bouzidi, Firdaouss & Lallemand 2001); Zou & He (1997) with Hecht & Harting's D3Q19 transverse correction; convective outflow (Orlanski 1976); characteristic outflow (Poinsot & Lele 1992; Rudy & Strikwerda 1980 for σ; Selle, Nicoud & Poinsot 2004 for its reflection; Guo, Zheng & Shi 2002); momentum exchange (Ladd 1994; Mei et al. 2002) |
+| **Verified by** | `crates/lbm/tests/verification.rs`, `outlets.rs`, `characteristic.rs`, `interpolated.rs`, `interpolated_couette.rs`; `crates/lbm-gpu/tests/verification.rs`; oracle case [`characteristic-outlet-reflection`](../../../tests/oracle/characteristic-outlet-reflection/) |
 
 ## Synopsis
 
@@ -25,6 +26,11 @@ wall is measured by momentum exchange.
 ```json
 {"command": "model.fluid_domain.boundary", "params": {"domain": "Flow", "at": "x_max",
   "condition": {"type": "pressure", "pressure": 0, "outflow": "convective"}}}
+```
+
+```json
+{"command": "model.fluid_domain.boundary", "params": {"domain": "Flow", "at": "x_max",
+  "condition": {"type": "pressure", "pressure": 0, "outflow": "characteristic", "sigma": 0.25}}}
 ```
 
 ```json
@@ -47,7 +53,7 @@ wall is measured by momentum exchange.
 | `slip` | — | box | Frictionless wall: no flow through it, no shear. |
 | `symmetry` | — | box | Symmetry plane of a half model: the flow of a slip face, and no heat through it, in the fluid and in every conducting solid it cuts. Setting it makes the face's thermal condition adiabatic; a held temperature or flux on it is refused. |
 | `velocity` | `velocity: [u, v, w]`, `profile: "uniform" \| "parabolic"` (default uniform) | box | Velocity inlet, or outlet if the velocity points out of the box. `parabolic` multiplies the velocity by 4 s (1 − s) across each direction of the face that ends at walls (not periodic), s from 0 to 1 across the box: fully developed flow between plates (one such direction), or in a rectangular duct approximated by the product (two). The given velocity is the peak. A direction that ends at a symmetry plane is the half of the whole model's: the profile peaks at the plane. |
-| `pressure` | `pressure: p` (gauge), `outflow: "uniform" \| "convective"` (default uniform) | box | Pressure outlet (or inlet). `uniform`: the face at the pressure, the flow crossing it normally. `convective`: each cell at the pressure, the flow leaving as it arrives; for outlets a wake or vortices reach. |
+| `pressure` | `pressure: p` (gauge), `outflow: "uniform" \| "convective" \| "characteristic"` (default uniform), `sigma` (characteristic only, above 0 and at most 1, default 0.25) | box | Pressure outlet (or inlet). `uniform`: the face at the pressure, the flow crossing it normally. `convective`: each cell at the pressure, the flow leaving as it arrives; for outlets a wake or vortices reach. `characteristic`: as uniform, but partially non-reflecting: an outgoing pressure wave leaves instead of coming back, while the face's pressure relaxes towards `p` at a rate set by `sigma` ([Characteristic outlets](#characteristic-outlets)). One face at most, CPU only, no checkpoints; `sigma` with another outflow is refused. |
 | `periodic` | — | box | What leaves through this face enters through the opposite one, which must be periodic too. |
 
 Obstacle faces take only `wall` and `moving_wall`; setting `wall` removes the face's entry, walls
@@ -328,6 +334,38 @@ fallback: Zou–He at the face's density, no tangential velocity, which stays st
 outlet cells. The rule changes only the outlet cells' streamed populations, so it does not depend
 on the collision operator.
 
+### Characteristic outlets
+
+A uniform pressure outlet holds the face's density, so an outgoing pressure wave is reflected almost
+whole: after an impulsive start the box's acoustic mode rings between inlet and outlet until
+viscosity removes it. A characteristic outlet lets each outlet cell carry its own density ρ_b and
+outward normal velocity u_b, advanced every step after streaming by the linearised one-dimensional
+characteristic (LODI) balance of Poinsot & Lele (1992) in density units (p = c_s² ρ), with ρ₁, u₁
+the inner cell's state and ρ₀ the face's density:
+
+```text
+L₅ = (u_b + c_s) [(ρ_b − ρ₁) + (ρ₀ / c_s)(u_b − u₁)]    the outgoing wave, one-sided from the inner cell
+L₁ = K (ρ_b − ρ₀),   K = σ c_s / L                      the incoming wave: only the pressure's relaxation
+ρ_b ← ρ_b − ½ (L₅ + L₁),   u_b ← u_b − (c_s / 2ρ₀)(L₅ − L₁)
+```
+
+with u_b + c_s limited to [0, 1] cells per step, L the box's extent along the face's normal, in
+cells, and σ = 0.25 by default (after Rudy & Strikwerda 1980). ρ₁ and u₁ are read
+as the closure reads them: u₁ is the inner cell's physical velocity, with a fan's, a porous zone's
+or a mushy cell's action included. The cell then takes the equilibrium at (ρ_b, u_b), with no
+tangential velocity, plus the inner cell's non-equilibrium part (Guo, Zheng & Shi 2002): the
+uniform outlet's own closure, at a density and velocity that move.
+
+The relaxation reflects R(ω) = −1 / (1 − 2iω/K) of a normal wave of angular frequency ω (radians
+per step), so |R| = K / √(K² + 4ω²) (Selle, Nicoud & Poinsot 2004): in time, a one-pole low-pass of
+rate K/2 applied to the wave a fully reflecting end returns. Slow waves come back, fast ones leave;
+σ trades how much of the slow waves come back against how far the mean pressure drifts from `p`
+and how fast it returns. Besides the relaxation, the closure itself reflects a little: 0.23 % of an
+incident pulse's peak at σ 0.25, 0.5 and 1.0 (oracle case [`characteristic-outlet-reflection`](../../../tests/oracle/characteristic-outlet-reflection/)). A cell
+counts the steps its balance went non-finite or non-positive and kept its last state, and the
+steps it had no fluid cell inside it (an obstacle in the outlet's inner layer), when it takes the
+local closure at `p` and reflects; the solve warns when any did.
+
 ### Wall forces: momentum exchange
 
 Each wall link transfers momentum to the wall: the population f* leaving the fluid cell towards
@@ -488,6 +526,11 @@ the closed form.
 | The same run 20 s (60 000 steps) | Stable, mass bounded | | | `a_convective_outlet_stays_stable_with_backflow_for_long` (heavy) |
 | Schäfer–Turek 2D-2 (Re 100), convective outlet at 7.5 D and 21 D, D/Δx 20 | c_D,max 3.22–3.24, c_L,max 0.99–1.01, St 0.295–0.305 (benchmark) | 7.5 D: 3.356, 1.072, 0.2989; 21 D: 3.446, 1.102, 0.2984 | the two within 4 %; c_D 8 %, c_L 12 %, St 2 % of the benchmark | `schafer_turek_2d2_does_not_depend_on_the_outlet_distance` (heavy) |
 | Coarse 2D-2, D/Δx 10, τ = 0.51 | Uniform outlet diverges (step 6699), convective runs 24 000 steps | St within 2 % of 0.30 | 2 % | `a_coarse_cylinder_at_re_100_runs_with_a_convective_outlet_where_the_uniform_one_diverges` (heavy) |
+| A uniform stream through a characteristic outlet | The uniform outlet's run | | density and velocity 10⁻¹³ | `the_characteristic_outlet_keeps_a_uniform_stream` |
+| A box's acoustic mode, 64 × 4 × 4 cells, characteristic outlet (σ 0.25) | The uniform outlet reflects it | Density RMS after 2000 steps 2.17e-8 against 4.20e-4 | below a hundredth | `the_characteristic_outlet_lets_the_box_s_acoustic_mode_out` |
+| A plane pulse in a 2048-cell duct (σ 1.0 and 0.25), the reflection in time | The one-pole response of rate K/2 to the uniform outlet's reflection (Selle, Nicoud & Poinsot 2004) | Largest departure 2.28e-3 of the incident peak at both; tail rate over K/2 1.0005 (σ 1.0), 1.0054 (σ 0.25); uniform outlet 0.9928 | departure 4e-3; rate 0.5 % (σ 1.0), 2 % (σ 0.25); control 1 % | oracle case [`characteristic-outlet-reflection`](../../../tests/oracle/characteristic-outlet-reflection/) |
+| A stream through a porous zone ending at the characteristic outlet's inner cell | The steady balance u_b = u₁ + c_s (ρ₁ − ρ₀) / ρ₀ with u₁ the closure's inner velocity | 6e-16 | 10⁻⁹ | `the_characteristic_outlet_reads_the_inner_velocity_of_a_porous_zone` |
+| The same box started from rest through `solve.fluid`, `outflow: "characteristic"` | The uniform outlet reflects the start-up wave | Largest pressure RMS over the last quarter (steps 1500–2000) 4.11e-4 Pa against 2.50e-2 Pa | below a twentieth | `a_characteristic_outlet_is_set_by_command_and_lets_the_start_up_wave_out` (`crates/engine`) |
 | Heated channel, a powered conducting block across the middle: the lower half with a symmetry plane through the block, given the block's whole power, against the whole | The whole channel | velocity 3.6e-15 of the peak, temperature 1.0e-15 of the rise, 2 × half drag and the floor heat equal to 7 digits | 1e-12 | `a_half_channel_with_a_symmetry_plane_is_half_the_whole` |
 | The same half with a slip roof, its parabola ending at the roof | The whole channel | velocity 35 % off | must miss | (same test) |
 | A fan loop driven by a fan across the channel: the lower half with a symmetry plane through the fan, given the whole fan's curve, against the whole | The whole loop | 2 × half flow and the pressure rise equal to 7 digits, velocity 3e-16 | 1e-12 | `a_fan_cut_by_a_symmetry_plane_runs_on_the_whole_fans_curve` |
@@ -514,7 +557,17 @@ this resolution: c_D 3.4 % above).
 - A uniform pressure outlet distorts the last cell layer where an unrecovered wake reaches it. The
   reported speed extremes (`max_speed`, slice ranges) leave every inlet and outlet layer out for
   this reason, convective outlets included.
-- Inlets and outlets reflect pressure waves; there are no absorbing layers.
+- Inlets and outlets reflect pressure waves; there are no absorbing layers. The characteristic
+  outlet is partially non-reflecting, not non-reflecting: its balance is one-dimensional along the
+  face's normal (oblique waves and vortices crossing it were not measured); through its pressure
+  relaxation it reflects waves slower than about K / 2, |R| = K / √(K² + 4ω²); and its closure
+  reflects directly about 0.23 % of an incident pulse's peak at the three measured σ values. Its |R| inside the relaxation
+  band (ω ≈ K/4 to 4K) was not measured: this pulse experiment cannot resolve it before the inlet reflection returns,
+  so the oracle case checks the same one-pole response in time instead. It goes on one face at
+  most and steps on the CPU only, without checkpoints (refused before the solve starts).
+- Where the flow comes back in through a characteristic outlet (u_b < 0), the cell keeps the
+  outflow treatment: a subsonic inflow needs more prescribed waves (Poinsot & Lele 1992), which it
+  does not have. A convective outlet holds reversed cells instead.
 - Fans and porous zones must stay at least one cell inside the inlet and outlet layers.
 
 ## Implementation
@@ -524,7 +577,9 @@ this resolution: c_D 3.4 % above).
 | `crates/model/src/fluids.rs` | `FaceCondition`, `Profile`, `Outflow`, `SurfaceCondition`, `FluidDomain::set_boundary`, validation. |
 | `crates/lbm/src/lattice.rs` | `moving_wall`: Ladd's term. |
 | `crates/lbm/src/flow.rs` | `Rule`, `Link`, `Interpolation`, `bouzidi`, `WallLinks`, `OpenCell`, `Target`; `Flow::new` (links and open cells), `stream` (rules, momentum exchange), `open_boundaries`, `zou_he`, `hold_equilibrium`, `thermal_rule`. |
-| `crates/lbm/src/outlet.rs` | `Outlets::convect`, `record`, `unknowns`, `backflow`. |
+| `crates/lbm/src/outlet.rs` | `Outlets::convect`, `record`, `unknowns`, `backflow`; `pressure_closure` (both pressure closures); `Characteristic::advance` (the LODI balance per outlet cell). |
+| `crates/lbm/src/flow.rs` (characteristic) | `Flow::characteristic_outlet`, `advance_characteristic`, `inner_cell` (the inner cell's state both closures read). |
+| `crates/lbm/src/reflection.rs` | `outlet_reflection`: the plane-pulse duct (`solve.outlet_reflection`). |
 | `crates/model/src/steps.rs` | `WallTreatment` (`walls` on the fluid step). |
 | `crates/lbm/src/voxel.rs` | `TriangleTree::nearest`: the face of each wall link; `link_fraction`, `TriangleTree::crossing`: where the surface crosses a link. |
 | `crates/engine/src/cmd/define.rs` | `model.fluid_domain.boundary`. |
@@ -543,6 +598,9 @@ this resolution: c_D 3.4 % above).
 - I. Orlanski. *A simple boundary condition for unbounded hyperbolic flows.* J. Comput. Phys. 21(3):251–269, 1976.
 - Q. Lou, Z. Guo, B. Shi. *Evaluation of outflow boundary conditions for two-phase lattice Boltzmann equation.* Phys. Rev. E 87:063301, 2013.
 - Z. Yang. *Lattice Boltzmann outflow treatments: convective conditions and others.* Comput. Math. Appl. 65(2):160–171, 2013.
+- T. J. Poinsot, S. K. Lele. *Boundary conditions for direct simulations of compressible viscous flows.* J. Comput. Phys. 101:104–129, 1992. doi:[10.1016/0021-9991(92)90046-2](https://doi.org/10.1016/0021-9991(92)90046-2)
+- L. Selle, F. Nicoud, T. Poinsot. *Actual impedance of nonreflecting boundary conditions: implications for computation of resonators.* AIAA J. 42(5):958–964, 2004.
+- D. H. Rudy, J. C. Strikwerda. *A nonreflecting outflow boundary condition for subsonic Navier–Stokes calculations.* J. Comput. Phys. 36:55–70, 1980.
 - T. Krüger et al. *The Lattice Boltzmann Method: Principles and Practice.* Springer, 2017. doi:[10.1007/978-3-319-44649-3](https://doi.org/10.1007/978-3-319-44649-3)
 - M. Schäfer, S. Turek. *Benchmark computations of laminar flow around a cylinder.* NNFM 52:547–566, 1996. doi:[10.1007/978-3-322-89849-4_39](https://doi.org/10.1007/978-3-322-89849-4_39)
 
