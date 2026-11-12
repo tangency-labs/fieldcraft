@@ -72,33 +72,33 @@ pollster = "1.0"
 # interface faces and built-in themes): the desktop UI draws with them. Under the SolidCraft Brand
 # and Interface Licence, used by the maintainer's written permission (docs/adr/0001-libraries.md);
 # only fieldcraft-ui-egui uses them. The same rev as the geometry crates below.
-solidcraft-ui-kit = { git = "https://github.com/tangency-labs/solidcraft", rev = "5e338283969dcc2ae97260f0ac6d0edf82ec0a2a" }
-solidcraft-theme = { git = "https://github.com/tangency-labs/solidcraft", rev = "5e338283969dcc2ae97260f0ac6d0edf82ec0a2a" }
-solidcraft-look = { git = "https://github.com/tangency-labs/solidcraft", rev = "5e338283969dcc2ae97260f0ac6d0edf82ec0a2a" }
+solidcraft-ui-kit = { git = "https://github.com/tangency-labs/solidcraft", rev = "81dd685a842fbf7906579c351b36a023cf56fc07" }
+solidcraft-theme = { git = "https://github.com/tangency-labs/solidcraft", rev = "81dd685a842fbf7906579c351b36a023cf56fc07" }
+solidcraft-look = { git = "https://github.com/tangency-labs/solidcraft", rev = "81dd685a842fbf7906579c351b36a023cf56fc07" }
 # The kit's widget registry (where its widgets were drawn, by name; MIT OR Apache-2.0): the UI
 # reads the application bar's parts from it and clears it as each frame starts.
-solidcraft-ui-registry = { git = "https://github.com/tangency-labs/solidcraft", rev = "5e338283969dcc2ae97260f0ac6d0edf82ec0a2a" }
+solidcraft-ui-registry = { git = "https://github.com/tangency-labs/solidcraft", rev = "81dd685a842fbf7906579c351b36a023cf56fc07" }
 # The kit's message catalogues (MIT OR Apache-2.0): FieldCraft installs its own English text for
 # the kit's message ids (crates/ui-egui/locales/en.json).
-solidcraft-ui-text = { git = "https://github.com/tangency-labs/solidcraft", rev = "5e338283969dcc2ae97260f0ac6d0edf82ec0a2a" }
+solidcraft-ui-text = { git = "https://github.com/tangency-labs/solidcraft", rev = "81dd685a842fbf7906579c351b36a023cf56fc07" }
 # native file pickers (the desktop app only; the UI crate takes them as services)
 rfd = "0.17"
 
 # Geometry: SolidCraft's B-rep kernel (MIT OR Apache-2.0), pinned at a commit on its main branch
-# (5e33828, 2026-11-11, after v0.40.0-rc.4; docs/architecture.md, "SolidCraft pin"). Its
+# (81dd685, 2026-11-12, after v0.40.1; docs/architecture.md, "SolidCraft pin"). Its
 # modelling kernel is solidcore (Apache-2.0), vendored in SolidCraft's repository. Only
 # crates/geometry uses it (docs/adr/0001-libraries.md).
-solidcraft-geom = { git = "https://github.com/tangency-labs/solidcraft", rev = "5e338283969dcc2ae97260f0ac6d0edf82ec0a2a" }
-solidcraft-kernel = { git = "https://github.com/tangency-labs/solidcraft", rev = "5e338283969dcc2ae97260f0ac6d0edf82ec0a2a" }
-solidcraft-doc = { git = "https://github.com/tangency-labs/solidcraft", rev = "5e338283969dcc2ae97260f0ac6d0edf82ec0a2a" }
-solidcraft-io = { git = "https://github.com/tangency-labs/solidcraft", rev = "5e338283969dcc2ae97260f0ac6d0edf82ec0a2a" }
+solidcraft-geom = { git = "https://github.com/tangency-labs/solidcraft", rev = "81dd685a842fbf7906579c351b36a023cf56fc07" }
+solidcraft-kernel = { git = "https://github.com/tangency-labs/solidcraft", rev = "81dd685a842fbf7906579c351b36a023cf56fc07" }
+solidcraft-doc = { git = "https://github.com/tangency-labs/solidcraft", rev = "81dd685a842fbf7906579c351b36a023cf56fc07" }
+solidcraft-io = { git = "https://github.com/tangency-labs/solidcraft", rev = "81dd685a842fbf7906579c351b36a023cf56fc07" }
 # Runs SolidCraft command scripts (the test corpus recipes); only behind fieldcraft-geometry's
 # `scripts` feature.
-solidcraft-engine = { git = "https://github.com/tangency-labs/solidcraft", rev = "5e338283969dcc2ae97260f0ac6d0edf82ec0a2a" }
+solidcraft-engine = { git = "https://github.com/tangency-labs/solidcraft", rev = "81dd685a842fbf7906579c351b36a023cf56fc07" }
 # The geometry records SolidCraft's API speaks in (points, planes, profiles): solidcore's record
 # crate (Apache-2.0), from the copy of solidcore SolidCraft vendors (its `solidcore/`), at the same
 # rev as the crates above, so the build carries one copy of it and the types match.
-solidcore-record = { git = "https://github.com/tangency-labs/solidcraft", rev = "5e338283969dcc2ae97260f0ac6d0edf82ec0a2a" }
+solidcore-record = { git = "https://github.com/tangency-labs/solidcraft", rev = "81dd685a842fbf7906579c351b36a023cf56fc07" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -164,7 +164,7 @@ debug = "line-tables-only"
 [patch.crates-io]
 # egui-wgpu with SolidCraft's fixes (vendor/egui-wgpu there): MSAA clamped to what the device
 # supports and 1x on OpenGL adapters, so the requested 4x never fails pipeline validation at start.
-egui-wgpu = { git = "https://github.com/tangency-labs/solidcraft", rev = "5e338283969dcc2ae97260f0ac6d0edf82ec0a2a" }
+egui-wgpu = { git = "https://github.com/tangency-labs/solidcraft", rev = "81dd685a842fbf7906579c351b36a023cf56fc07" }
 # winit with SolidCraft's fix (vendor/winit there): trackpad pinch and rotation gestures on Wayland
 # (zwp_pointer_gestures_v1), which winit 0.30 never binds.
-winit = { git = "https://github.com/tangency-labs/solidcraft", rev = "5e338283969dcc2ae97260f0ac6d0edf82ec0a2a" }
+winit = { git = "https://github.com/tangency-labs/solidcraft", rev = "81dd685a842fbf7906579c351b36a023cf56fc07" }
