@@ -37,6 +37,11 @@ use crate::{Error, Result};
 /// finished mesh passes the gate and the solvers whatever the operations did.
 pub const ADMISSIBLE_MARGIN: f64 = 1e3 * fieldcraft_model::MIN_NORMALIZED_JACOBIAN; // unit-factors: a multiple of a normalized Jacobian
 
+/// Whether a tetrahedron's normalized Jacobian clears [`ADMISSIBLE_MARGIN`].
+fn admissible(x: &[[f64; 3]; 4]) -> bool {
+    normalized_jacobian(&tet4_jacobian(x)) > ADMISSIBLE_MARGIN
+}
+
 /// No tetrahedron, no vertex, no tag.
 pub const NONE: u32 = u32::MAX;
 
@@ -534,6 +539,16 @@ impl TetComplex {
         Ok(tet_volume_sign(&self.point(a)?, &self.point(b)?, &self.point(c)?, p))
     }
 
+    /// Whether the tetrahedron of face `f` and `p` is one [`Self::replace`] accepts: positive and
+    /// admissible ([`ADMISSIBLE_MARGIN`]).
+    pub fn admissible_with(&self, f: [u32; 3], p: &Point3) -> Result<bool> {
+        if self.orient_with(f, p)? != Sign::Positive {
+            return Ok(false);
+        }
+        let x = [self.xyz(f[0])?, self.xyz(f[1])?, self.xyz(f[2])?, p.coords()];
+        Ok(admissible(&x))
+    }
+
     /// Whether `p` lies strictly inside the circumsphere of the positive tetrahedron `vs`.
     pub fn in_sphere(&self, vs: [u32; 4], p: &Point3) -> Result<bool> {
         let [a, b, c, d] = [self.point(vs[0])?, self.point(vs[1])?, self.point(vs[2])?, self.point(vs[3])?];
@@ -893,7 +908,7 @@ impl TetComplex {
             if let Some(c) = x.get_mut(k) {
                 *c = p.coords();
             }
-            if !(normalized_jacobian(&tet4_jacobian(&x)) > ADMISSIBLE_MARGIN) {
+            if !admissible(&x) {
                 return Ok(false);
             }
             let adj = self.adj(t)?;
@@ -1002,7 +1017,7 @@ impl TetComplex {
             if vs.iter().any(|&v| v >= n_pts) || (0..4).any(|i| (i + 1..4).any(|j| vs[i] == vs[j])) {
                 return Ok(None);
             }
-            if self.orient(*vs)? != Sign::Positive || !(normalized_jacobian(&tet4_jacobian(&self.coords(*vs)?)) > ADMISSIBLE_MARGIN) {
+            if self.orient(*vs)? != Sign::Positive || !admissible(&self.coords(*vs)?) {
                 return Ok(None);
             }
         }
