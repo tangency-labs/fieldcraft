@@ -280,6 +280,24 @@ pub trait BoundaryGeometry {
     fn project_curve(&self, faces: [u32; 2], p: P) -> Option<P>;
 }
 
+/// Face points from one geometry, feature-curve points from another. During refinement and
+/// improvement, face vertices stay on the tessellation and curve vertices go on the exact curves
+/// (see [`super::quality_mesh`]).
+pub struct ExactCurves<'a> {
+    pub faces: &'a dyn BoundaryGeometry,
+    pub curves: &'a dyn BoundaryGeometry,
+}
+
+impl BoundaryGeometry for ExactCurves<'_> {
+    fn project_face(&self, face: u32, p: P) -> Option<P> {
+        self.faces.project_face(face, p)
+    }
+
+    fn project_curve(&self, faces: [u32; 2], p: P) -> Option<P> {
+        self.curves.project_curve(faces, p)
+    }
+}
+
 /// A bounding-box tree over the boundary's triangles (or its feature segments) for
 /// closest-point queries, filtered by tag.
 #[derive(Debug, Clone)]

@@ -6,7 +6,12 @@
 //! a boundary face (it *encroaches* the face), is not inserted; the encroached boundary face is
 //! split instead, at its circumcentre when that lies inside it and otherwise at the midpoint of
 //! its longest edge (which splits a feature edge when the edge is one), and every boundary point
-//! is projected onto its B-rep face or feature curve ([`super::geometry`]).
+//! is projected onto its B-rep face or feature curve ([`super::geometry`]). A feature curve is
+//! split at a point of the exact curve where its faces' surfaces are known, not of the
+//! tessellation's chord, so a curve refined below the facet size stays on the curve
+//! (C. Boivin, C. Ollivier-Gooch, *Guaranteed-quality triangular mesh generation for domains
+//! with curved boundaries*, IJNME 55(10):1185–1213, 2002; S.-W. Cheng, T. K. Dey, J. R.
+//! Shewchuk, *Delaunay Mesh Generation*, CRC 2012, on piecewise-smooth complexes).
 //!
 //! Sources: J. R. Shewchuk, *Tetrahedral Mesh Generation by Delaunay Refinement*, SoCG 1998
 //! (radius–edge refinement with encroachment rules, termination for B = 2 and input angles of 90°
