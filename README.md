@@ -123,7 +123,7 @@ cargo run -p fieldcraft-cli -- snapshot script.json --out shot.png  # draw it to
 cargo run -p fieldcraft-cli -- mcp              # MCP server on stdio for AI agents (docs/mcp.md)
 ```
 
-Rust 1.98.0 through rustup (`rust-toolchain.toml`, with the `wasm32-unknown-unknown` target `cargo xtask ci` needs); 1.95 or later also builds.
+Rust 1.99.1 through rustup (`rust-toolchain.toml`, with the `wasm32-unknown-unknown` target `cargo xtask ci` needs); 1.95 or later also builds.
 
 With Nix (`flake.nix`, Linux and macOS):
 
